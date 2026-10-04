@@ -21,7 +21,10 @@ version = "0.1.0"
 endian = "little"
 mode = 64
 case_insensitive_regs = true
-comment_char = "#"
+# A64 的 `#` 是**立即数前缀**（`add x0, x1, #5`、`ldr x0, [x1, #8]`），注释是 `//`
+#（GAS 的 aarch64 模式也如此）。历史上这里写成 "#"，生成物于是对每行按 `#` 截断——
+# 所有带立即数的写法都被砍成 `add x0, x1, ` 而解析失败（语料 parsed 长期只有 37/420 的主因）。
+comment_char = "/"
 label_suffix = ":"
 mnemonic_case = "insensitive"
 directive_prefix = "."
@@ -84,6 +87,7 @@ b16   = { offset = 16, width = 16 }  # BR/BLR/RET 顶层 [31:16]
 imm19 = { offset = 5,  width = 19 }  # CBZ/CBNZ/B.cond 相对偏移（[23:5]）
 cbop  = { offset = 24, width = 8 }   # CBZ/CBNZ 顶层（含 sf/op 位）
 rt    = { offset = 0,  width = 5 }   # CBZ/CBNZ 测试寄存器 Rt=[4:0]
+op5   = { offset = 0,  width = 5 }   # 系统/异常指令的低 5 位（svc=1/hvc=2/smc=3/dcps1..3=1..3/brk,hlt=0）
 
 opc2  = { offset = 22, width = 2 }   # LS opc（00 store / 01 load / 10 符号载）
 imm12s= { offset = 10, width = 12 }  # LDR/STR 无符号 imm12（与 ALU imm12 同段）
@@ -188,6 +192,14 @@ name = "BREL"     # B/BL：imm26（[31:26] 为 op6 常量）
 opcode_field = "op6"
 operand_fields = ["imm26"]
 
+
+[[forms]]
+name = "SYSEXC"   # 系统/异常：**顶层是 11 位**（[31:21]，与 mtop 同段）+ imm16（[20:5]）+ op5（[4:0]）
+# 顶层**不能**写成 `b16`（[31:16]）：那与 imm16 在 bit16-20 重叠，imm16 大值会把
+# 顶层常量写坏（编得出、解不回——派生日志守卫实测 `SVC[imm16=65535]` 抓到）。
+opcode_field = "mtop"
+operand_fields = ["imm16"]
+
 [[forms]]
 name = "NOPF"     # 全字常量
 opcode_field = "word"
@@ -198,6 +210,89 @@ operand_fields = []
 #   add  x,w=0x91/0x11、adds=0xB1/0x31、sub=0xD1/0x51、subs=0xF1/0x71
 #   add(reg) x,w=0x8B/0x0B、sub(reg)=0xCB/0x4B
 # op6：b=0x05（0x14000000>>26）、bl=0x25（0x94000000>>26）
+
+# ── 系统/异常生成与返回（A64 的 SYSTEM 族；常量按 corpus 的 `encoding:` 注释核对）──
+# `op5` 指低 5 位常量、`b16` 指 [31:16] 常量、`imm16` 占 [20:5]；文本里的 `#imm` 是
+# 立即数前缀（`[conventions.mem]` 之外，由操作数槽自己吃——见 `[meta].imm_prefix`）。
+# **未实现**：GAS 允许 `dcps1` 省略立即数（默认 0）——那需要"可选操作数"这一新能力，
+# 而声明成第二条第指令会与带立即数的那条**编码重叠**（解码 trie 直接拒），见 README 缺口清单。
+
+[[instructions]]
+name = "SVC"
+form = "SYSEXC"
+opcode = 0x6A0
+fields = { op5 = 1 }
+ops = ["imm:imm16"]
+asm = "svc #{imm}"
+
+[[instructions]]
+name = "HVC"
+form = "SYSEXC"
+opcode = 0x6A0
+fields = { op5 = 2 }
+ops = ["imm:imm16"]
+asm = "hvc #{imm}"
+
+[[instructions]]
+name = "SMC"
+form = "SYSEXC"
+opcode = 0x6A0
+fields = { op5 = 3 }
+ops = ["imm:imm16"]
+asm = "smc #{imm}"
+
+[[instructions]]
+name = "BRK"
+form = "SYSEXC"
+opcode = 0x6A1
+fields = { op5 = 0 }
+ops = ["imm:imm16"]
+asm = "brk #{imm}"
+
+[[instructions]]
+name = "HLT"
+form = "SYSEXC"
+opcode = 0x6A2
+fields = { op5 = 0 }
+ops = ["imm:imm16"]
+asm = "hlt #{imm}"
+
+[[instructions]]
+name = "DCPS1"
+form = "SYSEXC"
+opcode = 0x6A5
+fields = { op5 = 1 }
+ops = ["imm:imm16"]
+asm = "dcps1 #{imm}"
+
+[[instructions]]
+name = "DCPS2"
+form = "SYSEXC"
+opcode = 0x6A5
+fields = { op5 = 2 }
+ops = ["imm:imm16"]
+asm = "dcps2 #{imm}"
+
+[[instructions]]
+name = "DCPS3"
+form = "SYSEXC"
+opcode = 0x6A5
+fields = { op5 = 3 }
+ops = ["imm:imm16"]
+asm = "dcps3 #{imm}"
+
+# 整字常量（无操作数）：ERET=0xD69F03E0、DRPS=0xD6BF03E0
+[[instructions]]
+name = "ERET"
+form = "NOPF"
+opcode = 0xD69F03E0
+asm = "eret"
+
+[[instructions]]
+name = "DRPS"
+form = "NOPF"
+opcode = 0xD6BF03E0
+asm = "drps"
 
 # ── NOP（D503201F）──
 [[instructions]]
@@ -326,6 +421,12 @@ name = "cond4"
 kind = "cond"
 signed = false
 width = 4
+
+[[operand_slots]]
+name = "imm16"
+kind = "imm"
+signed = false
+width = 16
 
 [[operand_slots]]
 name = "off19"
@@ -1353,3 +1454,22 @@ fp = "X29"
 alloc_neg = false
 layout = "fp-inside"
 fp_push_bytes = 16
+
+# ── 系统/异常族（`#` 是立即数前缀，模板里写 `#{imm}`）──
+[[vectors]]
+asm = "brk #1"
+bytes = [0x20, 0x00, 0x20, 0xD4]
+
+[[vectors]]
+asm = "svc #8"
+bytes = [0x01, 0x01, 0x00, 0xD4]
+
+[[vectors]]
+# imm16 取满：顶层 11 位（[31:21]）与 imm16（[20:5]）**不能重叠**——曾写成 b16
+# 导致大立即数"编得出、解不回"（派生日志守卫实测抓到）
+asm = "brk #65535"
+bytes = [0xE0, 0xFF, 0x3F, 0xD4]
+
+[[vectors]]
+asm = "eret"
+bytes = [0xE0, 0x03, 0x9F, 0xD6]

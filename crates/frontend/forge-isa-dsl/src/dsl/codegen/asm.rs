@@ -583,14 +583,21 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
     let (imm_fn_defs, imm_fn_tries) = gen_imm_fns(model)?;
     out.extend(imm_fn_defs);
     {
-        let dollar = model.meta.imm_prefix.as_deref() == Some("$");
+        // 立即数前缀（`[meta].imm_prefix`）：**按声明吃对应 token**——历史上这里硬编码只认
+        // `$`，声明 `#` 的谱（A64 风格）写了却不起作用（静默不生效）。token 只有 `Dollar`/`Hash`
+        // 两种（词法就这些），别的字符在校验期就被拒了。
+        let imm_pref: TokenStream = match model.meta.imm_prefix.as_deref() {
+            Some("$") => quote! { it.eat(&__Tok::Dollar) },
+            Some("#") => quote! { it.eat(&__Tok::Hash) },
+            _ => quote! { false },
+        };
         out.extend(quote! {
             /// 立即数/表达式求值：数字、正负号、括号、算术（+ - * / % << >> & | ^ ~）、
             /// 符号常量（`.equ`/`.set`）。失败回滚 token 位置。
             #[allow(dead_code)]
             fn __imm(it: &mut __Iter, min: i64, max: i64, float: bool) -> Option<i64> {
                 let save = it.pos;
-                let _d = if #dollar { it.eat(&__Tok::Dollar) } else { false };
+                let _d = #imm_pref;
                 let v = __expr(it, float)?;
                 if v < min || v > max { it.pos = save; return None; }
                 Some(v)

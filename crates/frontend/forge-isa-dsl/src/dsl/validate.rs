@@ -528,10 +528,17 @@ fn validate_meta(m: &IsaModel) -> Result<(), String> {
     if m.meta.label_suffix.is_empty() {
         return Err("[meta].label_suffix must not be empty".into());
     }
-    if let Some(p) = &m.meta.imm_prefix
-        && p.chars().count() != 1
-    {
-        return Err("[meta].imm_prefix must be exactly one char or absent".into());
+    if let Some(p) = &m.meta.imm_prefix {
+        if p.chars().count() != 1 {
+            return Err("[meta].imm_prefix must be exactly one char or absent".into());
+        }
+        // 词法只产出 `Dollar`/`Hash` 两种前缀 token：别的字符声明了也吃不到（静默不生效），
+        // 所以在声明期就拒掉——要么用这两个之一，要么把前缀写进 asm 模板当字面量。
+        if !matches!(p.as_str(), "$" | "#") {
+            return Err(format!(
+                "[meta].imm_prefix = {p:?}: 词法只有 `$` / `#` 两个前缀 token（其它字符请写进 asm 模板当字面量）"
+            ));
+        }
     }
     if m.meta.directive_prefix.is_empty() {
         return Err("[meta].directive_prefix must not be empty".into());

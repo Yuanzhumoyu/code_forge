@@ -4,19 +4,19 @@
 [suite llvm-mc]
 files = 3
 lines = 420
-parsed = 37
-no_prefix = 45
+parsed = 47
+no_prefix = 35
 tail_mismatch = 71
 corpus_only = 267
 # mismatch: arm64-branch-encoding.s:11	ret x1	line 3: no matching instruction
-# mismatch: arm64-branch-encoding.s:78	b	line 3: no matching instruction
-# mismatch: arm64-branch-encoding.s:80	b.lt	line 3: no matching instruction
-# mismatch: arm64-branch-encoding.s:82	b.cc	line 3: no matching instruction
-# mismatch: arm64-branch-encoding.s:84	b	line 3: no matching instruction
-# mismatch: arm64-branch-encoding.s:86	b	line 3: no matching instruction
-# mismatch: arm64-branch-encoding.s:101	cbz w1,	line 3: no matching instruction
-# mismatch: arm64-branch-encoding.s:103	cbz     w20,	line 3: no matching instruction
-# mismatch: arm64-logical-encoding.s:8	and   w0, w0,	line 2: no matching instruction
-# mismatch: arm64-logical-encoding.s:9	and   x0, x0,	line 2: no matching instruction
-# mismatch: arm64-logical-encoding.s:10	and   w1, w2,	line 2: no matching instruction
-# mismatch: arm64-logical-encoding.s:11	and   x1, x2,	line 2: no matching instruction
+# mismatch: arm64-branch-encoding.s:78	b #28	line 3: no matching instruction
+# mismatch: arm64-branch-encoding.s:80	b.lt #28	line 3: no matching instruction
+# mismatch: arm64-branch-encoding.s:82	b.cc #1048572	line 3: no matching instruction
+# mismatch: arm64-branch-encoding.s:84	b #134217724	line 3: no matching instruction
+# mismatch: arm64-branch-encoding.s:86	b #-134217728	line 3: no matching instruction
+# mismatch: arm64-branch-encoding.s:101	cbz w1, #28	line 3: no matching instruction
+# mismatch: arm64-branch-encoding.s:103	cbz     w20, #1048572	line 3: no matching instruction
+# mismatch: arm64-logical-encoding.s:8	and   w0, w0, #1	line 2: no matching instruction
+# mismatch: arm64-logical-encoding.s:9	and   x0, x0, #1	line 2: no matching instruction
+# mismatch: arm64-logical-encoding.s:10	and   w1, w2, #15	line 2: no matching instruction
+# mismatch: arm64-logical-encoding.s:11	and   x1, x2, #15	line 2: no matching instruction

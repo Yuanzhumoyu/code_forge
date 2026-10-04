@@ -129,8 +129,15 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
      这需要一类新能力：**命名位集合**操作数（`[conventions.*]` 表 + `kind = "bitset"` 槽：
      解析按表里名字贪心拼接、编码取位或、渲染按声明序拼接）——不是 `fence` 的特例，先登记不做；
   ④ `jal a0, a0`（两寄存器形式的 `jal`）也在这 13 条里；
-- aarch64：`ret lr`（带操作数的两操作数形式）不支持，裸 `ret` 可以；余下 `no_prefix` 是
-  `ands`/`bics`（带 S 的变体）、`tbz`/`tbnz`、`b.al` 与系统指令（`brk`/`svc`/`hvc`/`smc`/`hlt`/`eret`/`drps`/`dcps*`）；
+- aarch64（`no_prefix` 35 条 + 红桶 71 条）：
+  - `ret lr`（两操作数形式）与 `b.al`；
+  - `tbz`/`tbnz`（位序号 + 标签/立即数两种目标）；
+  - **逻辑族的两个大件**：`and/ands/bic/bics … #imm` 的**位掩码立即数**编码（N/immr/imms 由值反算——
+    DSL 现在只能声明"位域 ← 常量/操作数"，没有"值 → 多字段编码"这一环）与 `, lsl/lsr/asr/ror #n`
+    的**移位后缀**操作数（约 24 行 `ands`/`bics` 全卡在这两件上）；
+  - `cbz`/`cbnz`/`b`/`b.cond` 的**立即数目标**形式（`b #28`、`cbz w1, #28`——目标既可以是标签也可以是立即偏移）；
+  - `dcps1`/`dcps2`/`dcps3` **省略立即数**的写法（GAS 默认 0；需要"可选操作数"这类能力——
+    声明成第二条第指令会与带立即数的那条**编码重叠**，解码 trie 直接拒）；
 - x86（余下几条，来自 `intel-syntax-encoding.s`）：`acquire/release lock add …`（锁前缀 + 内存序提示）；
   以及 `apx-rex2-format-intel.s` 整份（APX/REX2：`r16d`、`dword ptr [r16 + rax]` 等）。
 - x86 `movzx` / `movsx` 的**内存源**形式（`movzx eax, byte ptr [rbx]`、`movsx rax, word ptr [rbx]`）：
@@ -257,7 +264,7 @@ mov 族之后的数；riscv64 是补完立即数修饰、基础访存族与 W �
 | x86 | `gnu-gas-intel` | 1 | 64 | **50** | 4 | 7 | 3 | 无（GAS 用例不带期望字节） |
 | x86 | `llvm-mc` | 2 | 447 | **35** | 21 | 55 | 336 | **有**：104 条期望 / **30 条对拍上 / 0 条差异** |
 | riscv64 | `llvm-mc` | 3 | 503 | **129** | **0** | 13 | 361 | **有**：134 条期望 / **129 条逐字节全等** |
-| aarch64 | `llvm-mc` | 3 | 420 | 37 | 45 | 71 | 267 | **有**：119 条期望 / **15 条逐字节全等** |
+| aarch64 | `llvm-mc` | 3 | 420 | **47** | 35 | 71 | 267 | **有**：119 条期望 / **25 条逐字节全等** |
 
 执行档：x86 5 条、riscv64 3 条、aarch64 2 条，**三架构都真跑通**（`ran=10 skipped=0`）。
 

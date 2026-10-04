@@ -61,7 +61,7 @@ fn derived_insts_roundtrip_byte_stable() {
     let arm64 = roundtrip_of!("arm64", crate::arch::arm64::arm64);
     assert!(x86 >= 275, "x86 枚举器条目 {x86} < 指令总数 275");
     assert!(riscv >= 137, "riscv64 枚举器条目 {riscv} < 指令总数 137");
-    assert!(arm64 >= 110, "arm64 枚举器条目 {arm64} < 指令总数 110");
+    assert!(arm64 >= 120, "arm64 枚举器条目 {arm64} < 指令总数 120");
     // 实测条目数（2026-09-24）：x86 **602** / riscv64 **327** / arm64 **360**——
     // 远多于指令总数（当前 261/119/110），因为每条指令还带宽度视图、立即数边界与内存风味。
     // 数字变了 ⇒ 谱的指令/操作数风味变了（或派生逻辑改了），人工复核后同步本行。
@@ -86,7 +86,7 @@ fn derived_insts_roundtrip_byte_stable() {
     //   16 条谓词别名是 `[[pseudo]]` 文本展开，不进枚举器）。
     assert_eq!(
         (x86, riscv, arm64),
-        (1351, 435, 360),
+        (1351, 435, 386),
         "枚举器条目数变了：确认是谱的预期变更还是派生逻辑退化"
     );
 }

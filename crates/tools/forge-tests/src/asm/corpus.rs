@@ -99,7 +99,11 @@ pub const SUITES: &[Suite] = &[
         key: "llvm-mc",
         isa: "aarch64",
         dir: "aarch64/llvm-mc",
-        comments: &[";", "//", "#"],
+        // **没有 `#`**：AArch64 的 `#` 是**立即数前缀**（`tbz x1, #3, foo`、`b #28`、`svc #0`），
+        // 当注释符会把带立即数的行**从中间截断**（`tbz x1, #3, foo` → `tbz x1,`），
+        // 于是它们被误判成"本 ISA 没有这条指令"。实测这批文件里**没有以 `#` 开头的注释行**
+        // （LLVM 的 AArch64 用例用 `;` 与 `//`）。
+        comments: &[";", "//"],
         stmt_sep: Some("%%"),
         source: "llvm/llvm-project@llvmorg-19.1.0 llvm/test/MC/AArch64/",
         license: "Apache-2.0 WITH LLVM-exception",

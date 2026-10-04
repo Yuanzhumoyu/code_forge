@@ -78,13 +78,14 @@ fn generated_spec_tests_cover_every_instruction() {
 /// （`SLLIW`/`SRLIW`/`SRAIW` 3 条；`SLLW`/`SRLW`/`SRAW` 改成 R 型并进 `WW` 模板行，总数不变）
 /// 后 = 128；再补 `BGEU`（`BB` 模板一行）、`FENCE_I`/`FENCE_TSO` 与 **Zicsr 六条**
 /// （`CSRRW`/`CSRRS`/`CSRRC`/`CSRRWI`/`CSRRSI`/`CSRRCI`）→ **137**。`unimp` 是 `[[pseudo]]`
-/// （别名 = `csrrw x0, cycle, x0`），不占指令数）。
+/// （别名 = `csrrw x0, cycle, x0`），不占指令数）。arm64 补**系统/异常生成族**
+/// （`SVC`/`HVC`/`SMC`/`BRK`/`HLT`/`DCPS1..3` 8 条 + `ERET`/`DRPS` 两个整字常量）→ **120**）。
 #[test]
 fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 275), ("riscv64", 137), ("arm64", 110)],
+        vec![("x86", 275), ("riscv64", 137), ("arm64", 120)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }
