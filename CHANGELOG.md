@@ -11,6 +11,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-04) — riscv64：补完 Zicsr/`fence.i`/`fence.tso`/`BGEU` 与别名 `unimp`（`no_prefix` 桶清零）
+
+语料的 `no_prefix` 桶（"没有任何候选的首段能对上" = 缺指令）在上一批之后还剩 14 条，这批清到 **0**：
+
+- **`BGEU`**：`BB` 分支模板只少了这一行（`funct3 = 7`）。
+- **Zicsr 六条**：`CSRRW`/`CSRRS`/`CSRRC`/`CSRRWI`/`CSRRSI`/`CSRRCI`（opcode 0x73，`funct3` 1/2/3/5/6/7）。
+  文本里的操作数序（rd, csr, 源）与字段绑定序（rd, rs1, imm12 = I 型 form）**不必一致**——`asm` 用命名引用，绑定由 `operand_fields` 决定（v15-S3c 的命名操作数设计，这里正好用上）。
+- **`FENCE_I`**（0x0000100F）与 **`FENCE_TSO`**（0x8330000F = `fence rw, rw` + `fm=8`）：整字常量，与 `FENCE` 一样用 `W32` 形态。
+- **`unimp`**：LLVM/GAS 把它定义为 `csrrw x0, cycle, x0`（0xC0001073）——它是**别名**不是新编码，声明成整字指令会与 `CSRRW` 撞车（解码器按"编码不相交"建 trie，直接 `DSL-OTHER ... overlap ... ambiguous` 报错），所以用 `[[pseudo]]` 展开一条。
+
+两个值得记的坑：
+
+1. **CSR 号是 12 位无符号**（`0xfff` = 4095），拿有符号的 `imm12` 槽（load/store 位移用）会让 `csrrw t0, 0xfff, t1` 报越界 ⇒ 新增 `csr12` 槽（unsigned，12 位），三条 `*I` 的 zimm 另用 `zimm5`（unsigned，5 位，与 `shamt_w` 同宽但语义不同，单列）。
+2. `shamt_w` 的注释顺带改正：用它的是 0x1B 的 `slliw`/`srliw`/`sraiw`（0x3B 那三条是寄存器移位）。
+
+结果（`asm/ratchet/`）：riscv64 解析档 `parsed` 115 → **129**、**`no_prefix` 14 → 0**、红桶 13 不变；字节对拍 `checked` 115 → **129 条逐字节全等**，`known` 仍 0。另加 5 条谱内 `[[vectors]]`（`bgeu`/`csrrw t0, 0xfff, t1`/`csrrsi`/`fence.tso`/`unimp`）。riscv64 指令总数 128 → **137**、派生枚举器 383 → **435**（人工复核后就地更新）；x86 275 / arm64 110 不变。
+
+剩余 13 条红桶已按**根因**登记进 `crates/tools/forge-tests/asm/README.md`：① 需要重定位/符号地址（5 条，缺"未定义符号 → 重定位记录"）；② 位置符号 `.`（2 条）；③ **`fence` 的字母集合操作数**（4 条）——需要一类**新能力**「命名位集合」操作数（表 + `kind = "bitset"` 槽：按表里名字贪心拼接解析、取位或编码、按声明序拼接渲染），不是 `fence` 的特例，先登记不做；另加两寄存器形式的 `jal`。
+
 ### Added (2026-10-04) — riscv64：字节/半字访存、W 立即数移位；修掉 W 寄存器移位的编码错误
 
 从语料的 `no_prefix` 桶（"没有任何候选的首段能对上"= 缺指令）按首词归并出来的清单里，补上最基础的一族，并顺带修掉一处**真编码错误**：

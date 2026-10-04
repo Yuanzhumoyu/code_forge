@@ -119,12 +119,16 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 这些是语料跑出来的真实差异（红桶 `TailMismatch` 的样例就写在 `asm/ratchet/*.txt` 里），
 不是"语料不对"：
 
-- riscv64（红桶 13 条，分三类）：
-  ① **需要重定位/符号地址**：`%pcrel_hi(foo)` / `%hi(foo)` / `%lo(foo)` / `%pcrel_lo(.Lpcrel_hi0)`
-     （修饰本身已支持，缺的是"未定义符号 → 重定位记录"这件事，assembler 目前只产出具体立即数）；
-  ② **`.Lpcrel_hi0`/`.` 这类位置符号**：`jal zero, .`（当前位置）、裸 `.`；
-  ③ **两/三寄存器形式的 `jal`/`jalr`**：`jal a0, a0`、`jalr sp, zero, 256`；
-  余下 `no_prefix` 14 条：Zicsr（`csrrw`…）、`fence`/`fence.i`/`fence.tso` 与 `unimp`；
+- riscv64（红桶 13 条，三类，`no_prefix` 已清零）：
+  ① **需要重定位/符号地址**（5 条）：`%pcrel_hi(foo)` / `%hi(foo)` / `%lo(foo)` /
+     `%pcrel_lo(.Lpcrel_hi0)`——修饰本身已支持，缺的是"未定义符号 → 重定位记录"
+     （assembler 目前只产出具体立即数）；
+  ② **位置符号 `.`**（2 条）：`jal zero, .`、`jalr sp, zero, 256` 里的位置/三寄存器写法；
+  ③ **`fence` 的字母集合操作数**（4 条）：`fence iorw, iorw` / `fence io, rw` / `fence r,w` / `fence w,ir`
+     ——pred/succ 各是 i/o/r/w 的**组合**（`ir` = i|r），裸 `fence`/`fence.i`/`fence.tso` 已支持。
+     这需要一类新能力：**命名位集合**操作数（`[conventions.*]` 表 + `kind = "bitset"` 槽：
+     解析按表里名字贪心拼接、编码取位或、渲染按声明序拼接）——不是 `fence` 的特例，先登记不做；
+  ④ `jal a0, a0`（两寄存器形式的 `jal`）也在这 13 条里；
 - aarch64：`ret lr`（带操作数的两操作数形式）不支持，裸 `ret` 可以；余下 `no_prefix` 是
   `ands`/`bics`（带 S 的变体）、`tbz`/`tbnz`、`b.al` 与系统指令（`brk`/`svc`/`hvc`/`smc`/`hlt`/`eret`/`drps`/`dcps*`）；
 - x86（余下几条，来自 `intel-syntax-encoding.s`）：`acquire/release lock add …`（锁前缀 + 内存序提示）；
@@ -234,6 +238,13 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
   结果：riscv64 解析档 `parsed` 89 → **115**、红桶 15 → **13**、`no_prefix` 38 → **14**，
   字节对拍 89 → **115 条逐字节全等**（`known` 仍 0——两族新指令的每个字节都与上游注释相同）。
 
+- riscv64（v20 V10，第十一批：**清空 `no_prefix`**）：`BGEU`（`BB` 模板少的一行）、Zicsr 六条
+  （`CSRRW`/`CSRRS`/`CSRRC`/`CSRRWI`/`CSRRSI`/`CSRRCI`）、`FENCE_I`/`FENCE_TSO` 整字常量，以及别名 `unimp`。
+  两个坑值得记：① CSR 号是 12 位**无符号**（0xfff = 4095），用有符号 `imm12` 槽会让 `csrrw t0, 0xfff, t1` 报越界 ⇒ 新增 `csr12` 槽；
+  ② `unimp` 的真实位型就是 `csrrw x0, cycle, x0`（0xC0001073）——它是**别名**不是新编码，
+  声明成整字指令会与 `CSRRW` 撞车（解码器按"编码不相交"建 trie 直接报错）⇒ 用 `[[pseudo]]` 展开一条。
+  结果：riscv64 `parsed` 115 → **129**、**`no_prefix` 14 → 0**、红桶 13 不变，字节对拍 115 → **129 条逐字节全等**（`known` 仍 0）。
+
 ## 现有语料与计数
 
 （`2026-10-03` 实测；解析档数值以 `asm/ratchet/<isa>.txt` 为准，编码档以
@@ -245,7 +256,7 @@ mov 族之后的数；riscv64 是补完立即数修饰、基础访存族与 W �
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | x86 | `gnu-gas-intel` | 1 | 64 | **50** | 4 | 7 | 3 | 无（GAS 用例不带期望字节） |
 | x86 | `llvm-mc` | 2 | 447 | **35** | 21 | 55 | 336 | **有**：104 条期望 / **30 条对拍上 / 0 条差异** |
-| riscv64 | `llvm-mc` | 3 | 503 | **115** | 14 | 13 | 361 | **有**：134 条期望 / **115 条逐字节全等** |
+| riscv64 | `llvm-mc` | 3 | 503 | **129** | **0** | 13 | 361 | **有**：134 条期望 / **129 条逐字节全等** |
 | aarch64 | `llvm-mc` | 3 | 420 | 37 | 45 | 71 | 267 | **有**：119 条期望 / **15 条逐字节全等** |
 
 执行档：x86 5 条、riscv64 3 条、aarch64 2 条，**三架构都真跑通**（`ran=10 skipped=0`）。

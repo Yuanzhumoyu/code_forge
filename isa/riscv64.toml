@@ -137,10 +137,27 @@ signed = false
 width = 6
 
 # W 变体（RV64 32 位语义）的移位量：字段只有 5 位（`shamt5`，bit25 归 funct7）。
-# **必须独立于 `shamt`（6 位）**——共用 6 位槽会让 `sllw rd, rs1, 32..63` 静默
-# 掩码成 `shamt - 32` 而不是报错（v18 S6 生成自测抓到的第一处真缺陷）。
+# **必须独立于 `shamt`（6 位）**——共用 6 位槽会让 `slliw rd, rs1, 32..63` 静默
+# 掩码成 `shamt - 32` 而不是报错（v18 S6 生成自测抓到的第一处真缺陷；
+# 用它的三条是 opcode 0x1B 的 `slliw`/`srliw`/`sraiw`——0x3B 那三条是寄存器移位，不用本槽）。
 [[operand_slots]]
 name = "shamt_w"
+kind = "imm"
+signed = false
+width = 5
+
+# CSR 立即数变体（`csrrwi`/`csrrsi`/`csrrci`）的 zimm：5 位无符号，占 rs1 位。
+# 与上面的 `shamt_w` 同宽但**语义不同**（一个指 CSR 号、一个是移位量），故单列一槽。
+# CSR 号：12 位**无符号**（0..4095）——与 `imm12`（load/store 位移，有符号）
+# 的读数不同：CSR 号不是"符号扩展的位移"，`csrrw t0, 0xfff, t1` 里 0xfff 是 4095。
+[[operand_slots]]
+name = "csr12"
+kind = "imm"
+signed = false
+width = 12
+
+[[operand_slots]]
+name = "zimm5"
 kind = "imm"
 signed = false
 width = 5
@@ -264,6 +281,7 @@ rows = [
   { inst = "BLT", fields = { funct3 = 4 } },
   { inst = "BGE", fields = { funct3 = 5 } },
   { inst = "BLTU", fields = { funct3 = 6 } },
+  { inst = "BGEU", fields = { funct3 = 7 } },
 ]
 # ── W 变体 R 型（opcode 0x3B）──
 # 移位的 W 变体（`sllw`/`srlw`/`sraw`）也是 **R 型寄存器移位**（rs2 = 移位量），
@@ -603,6 +621,59 @@ form = "OP"
 opcode = 0x73
 asm = "ecall"
 
+# ── Zicsr（opcode 0x73；csr 是 imm12 字段，既收数字也收 `!0` 这类表达式写法）──
+# 文本里的操作数顺序（rd, csr, 源）与**字段绑定顺序**（rd, rs1, imm12，见 I 型 form）
+# 不必一致——`asm` 用命名引用，绑定由 form 的 `operand_fields` 决定（v15-S3c 的命名操作数）。
+# `*I` 三条的源在 rs1 位（5 位 zimm），用 `zimm5` 槽。
+
+[[instructions]]
+name = "CSRRW"
+form = "I"
+opcode = 0x73
+fields = { funct3 = 1 }
+ops = ["dst:gpr:out", "src:gpr", "csr:csr12"]
+asm = "csrrw {dst}, {csr}, {src}"
+
+[[instructions]]
+name = "CSRRS"
+form = "I"
+opcode = 0x73
+fields = { funct3 = 2 }
+ops = ["dst:gpr:out", "src:gpr", "csr:csr12"]
+asm = "csrrs {dst}, {csr}, {src}"
+
+[[instructions]]
+name = "CSRRC"
+form = "I"
+opcode = 0x73
+fields = { funct3 = 3 }
+ops = ["dst:gpr:out", "src:gpr", "csr:csr12"]
+asm = "csrrc {dst}, {csr}, {src}"
+
+[[instructions]]
+name = "CSRRWI"
+form = "I"
+opcode = 0x73
+fields = { funct3 = 5 }
+ops = ["dst:gpr:out", "zimm:zimm5", "csr:csr12"]
+asm = "csrrwi {dst}, {csr}, {zimm}"
+
+[[instructions]]
+name = "CSRRSI"
+form = "I"
+opcode = 0x73
+fields = { funct3 = 6 }
+ops = ["dst:gpr:out", "zimm:zimm5", "csr:csr12"]
+asm = "csrrsi {dst}, {csr}, {zimm}"
+
+[[instructions]]
+name = "CSRRCI"
+form = "I"
+opcode = 0x73
+fields = { funct3 = 7 }
+ops = ["dst:gpr:out", "zimm:zimm5", "csr:csr12"]
+asm = "csrrci {dst}, {csr}, {zimm}"
+
 # ── Zbb 位操作（RV64；规范编码：R 型 0x33，funct7/funct3/rs2 按指令区分——
 #    v10 迁移的 0x13/0x14-0x17 等值为错（QEMU illegal），本表已修正）──
 
@@ -679,6 +750,22 @@ name = "FENCE"
 form = "W32"
 opcode = 0x0FF0000F
 asm = "fence"
+
+# `fence.i`（0x0000100F）与 `fence.tso`（0x8330000F = `fence rw, rw` + fm=8）也是整字常量。
+# **未实现**（另一类能力）：`fence r,w` / `fence w,ir` 那种**字母集合**操作数（pred/succ
+# 各自是 i/o/r/w 的组合）需要"命名位集合"这一新机制——不是这两条指令的特例，见
+# `crates/tools/forge-tests/asm/README.md` 的缺口清单。
+[[instructions]]
+name = "FENCE_I"
+form = "W32"
+opcode = 0x0000100F
+asm = "fence.i"
+
+[[instructions]]
+name = "FENCE_TSO"
+form = "W32"
+opcode = 0x8330000F
+asm = "fence.tso"
 
 # ────────────────────── W 变体（RV64 32 位语义）──────────────────────
 # **立即数**移位的 W 变体是 opcode 0x1B（`slliw`/`srliw`/`sraiw`，shamt 5 位）——
@@ -1543,6 +1630,13 @@ emit = [
     "lui {rd}, (({imm} + 0x800) >> 12)",
     "addi {rd}, {rd}, ((({imm} + 0x800) & 0xfff) - 0x800)",
 ]
+
+# `unimp`：LLVM/GAS 把它定义为 `csrrw x0, cycle, x0`（0xC0001073）——它是**别名**，
+# 不是新编码（真实位型与 CSRRW 撞车，而解码器按"编码不相交"建 trie）⇒ 用伪指令展开一条。
+[[pseudo]]
+name = "unimp"
+asm = "unimp"
+emit = ["csrrw X0, 0xc00, X0"]
 
 [[lowering]]
 op = "GlobalAddr"
@@ -2556,3 +2650,26 @@ bytes = [0x1B, 0x95, 0x35, 0x00]
 # 一元 `!` 是**逻辑非**（≠ 按位取反）：上游语料 `lh t1, !1(zero)` 期望位移 0
 asm = "lh t1, !1(zero)"
 bytes = [0x03, 0x13, 0x00, 0x00]
+
+# ── 第十一批：分支补 BGEU、Zicsr 六条、fence.i/fence.tso 与别名 unimp ──
+[[vectors]]
+asm = "bgeu s8, sp, 512"
+bytes = [0x63, 0x70, 0x2C, 0x20]
+
+[[vectors]]
+# CSR 号是 12 位**无符号**：0xfff 是 4095，不是 -1
+asm = "csrrw t0, 0xfff, t1"
+bytes = [0xF3, 0x12, 0xF3, 0xFF]
+
+[[vectors]]
+asm = "csrrsi t2, 0xfff, 31"
+bytes = [0xF3, 0xE3, 0xFF, 0xFF]
+
+[[vectors]]
+asm = "fence.tso"
+bytes = [0x0F, 0x00, 0x30, 0x83]
+
+[[vectors]]
+# `unimp` 是**别名**（= `csrrw x0, cycle, x0`），字节与那条指令相同
+asm = "unimp"
+bytes = [0x73, 0x10, 0x00, 0xC0]

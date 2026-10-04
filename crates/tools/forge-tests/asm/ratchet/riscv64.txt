@@ -4,8 +4,8 @@
 [suite llvm-mc]
 files = 3
 lines = 503
-parsed = 115
-no_prefix = 14
+parsed = 129
+no_prefix = 0
 tail_mismatch = 13
 corpus_only = 361
 # mismatch: rv32i-valid.s:15	auipc a0, %pcrel_hi(foo)	line 3: no matching instruction
