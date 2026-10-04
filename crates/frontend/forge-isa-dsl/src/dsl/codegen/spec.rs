@@ -1120,9 +1120,13 @@ fn gen_one(
         let mut values = vec![*lo, *hi];
         values.dedup();
         let signed = info.operands[*slot_i].2.signed.unwrap_or(false);
+        // 源值单位（`unit`）：`lo`/`hi` 已是**源单位**的值域，解码也乘回源单位，
+        // 而 `field_expectation` 按**字段**语义算——故先换算到字段单位再乘回来。
+        let ushift = info.operands[*slot_i].2.unit_shift();
+        let uval = info.operands[*slot_i].2.unit();
         for v in values {
             let inst = inst_of(Some((*slot_i, v)));
-            let want = field_expectation(m, fname, signed, v);
+            let want = field_expectation(m, fname, signed, v >> ushift) << ushift;
             let label = syn::LitStr::new(
                 &format!("{name}[{fname}={v}]"),
                 proc_macro2::Span::call_site(),
@@ -1144,7 +1148,17 @@ fn gen_one(
             });
         }
         if *checked {
-            for v in [lo.checked_sub(1), hi.checked_add(1)].into_iter().flatten() {
+            // 越界探针按 **unit** 步进而非 ±1：否则 `unit > 1` 的槽会被
+            // "非整数倍"这条规则先拦下，值域检查就永远测不到。
+            for v in [
+                lo.checked_sub(uval),
+                hi.checked_add(uval),
+                lo.checked_sub(1),
+                hi.checked_add(1),
+            ]
+            .into_iter()
+            .flatten()
+            {
                 let inst = inst_of(Some((*slot_i, v)));
                 let label = syn::LitStr::new(
                     &format!("{name}[{fname}={v} 越界]"),

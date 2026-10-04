@@ -27,6 +27,9 @@ case_insensitive_regs = true
 comment_char = "/"
 label_suffix = ":"
 mnemonic_case = "insensitive"
+# 立即数前缀：模板写 `#{imm}` 时由字面段吃掉，而**分支目标**槽（`b {target}`）前没有
+# 字面 `#`，得由 `[meta].imm_prefix` 来吃——否则真实写法 `b #28`、`cbz w1, #28` 不匹配。
+imm_prefix = "#"
 directive_prefix = "."
 
 # ─────────────────────────── 寄存器组 ───────────────────────────
@@ -171,6 +174,7 @@ name = "off26"
 kind = "label"
 signed = true
 width = 26
+unit = 4    # 源文本/Inst 字段是**字节**偏移；字段数的是 4 字节字（`b #28` ⇒ imm26 = 7）
 
 # ─────────────────────────── 编码形式 ───────────────────────────
 
@@ -460,6 +464,7 @@ name = "off19"
 kind = "label"
 signed = true
 width = 19
+unit = 4    # 源文本/Inst 字段是**字节**偏移；字段数的是 4 字节字（`b #28` ⇒ imm26 = 7）
 
 # ── 乘法 MADD/MSUB/MUL（opcode_field=mtop [31:21]）──
 # X madd word 9B020C20 → mtop=(>>21)&0x7FF=0x4D8；W=0xD8
@@ -1381,13 +1386,23 @@ bytes = [0xA4, 0x10, 0x86, 0xDA]
 asm = "csneg w4, w5, w6, gt"
 bytes = [0xA4, 0xC4, 0x86, 0x5A]
 
+# 分支目标自 `unit = 4` 起按**字节**给：`b.eq 8` = 相对偏移 8 字节 ⇒ imm19 = 2。
 [[vectors]]
-asm = "b.eq 2"
+asm = "b.eq 8"
 bytes = [0x40, 0x00, 0x00, 0x54]
 
 [[vectors]]
-asm = "b.ne 2"
+asm = "b.ne 8"
 bytes = [0x41, 0x00, 0x00, 0x54]
+
+[[vectors]]
+# GAS/LLVM 的字节口径：`b #28` ⇒ imm26 = 7（与 `Arm64RelocPatcher` 的 `offset >> 2` 同单位）
+asm = "b #28"
+bytes = [0x07, 0x00, 0x00, 0x14]
+
+[[vectors]]
+asm = "cbz w1, #28"
+bytes = [0xE1, 0x00, 0x00, 0x34]
 
 [[vectors]]
 asm = "ldr x0, [x1, #0]"

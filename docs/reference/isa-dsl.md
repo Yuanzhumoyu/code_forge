@@ -124,7 +124,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex` |
 | `[[conventions.imm_fn]]` | `name` `text` `expr` | — | 立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值） |
 | `[conventions.mem]` | `templates` | `size_keywords` | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
-| `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `roles` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
+| `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `unit` `roles` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
 | `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `data_width` `implicit_regs` `reloc` `width` `only_variants` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[[templates]]` | `rows` | `name` `body` | 唯一指令复用机制：`body` 共享字段 + `rows` 每行一条指令 |
@@ -663,7 +663,29 @@ width = 32
 min = -2147483648              # 可选：值域约束（缺省按 width/signed 推导）
 max = 2147483647
 wrap = true                    # 可选：字面量按 **32 位位模式**读（见下）
+unit = 1                       # 可选：源值单位（字节）——见下「分支偏移是字节」
+
+[[operand_slots]]
+name = "off26"
+kind = "label"                 # 分支目标：数字是偏移，ident 是标签
+signed = true
+width = 26
+unit = 4                       # 源文本/Inst 字段是**字节**偏移（字段数的是 4 字节字）
 ```
+
+**分支偏移是字节（`unit`）**：真实汇编器里 A64 的 `b #28` 是**字节**偏移，而编码字段
+`imm26` 数的是 4 字节字（`28 / 4 = 7`）——`cbz`（imm19）/`tbz`（imm14）同理；x86 的
+`jmp rel32` 是字节单位，故缺省 `unit = 1` 就够了。写 `unit = N`（2 的幂）后：
+
+1. **值域按源单位**给（`imm_range` = 字段值域 × N），越界报错；
+2. 源值不是 N 的整数倍 ⇒ 该条写法不匹配（与越界同处理，**不静默取整**）；
+3. 编码把源值 `>> log2(N)` 写进字段，**解码乘回来** ⇒ `Inst` 字段与 `disassemble`
+   渲染始终是源单位，`disassemble → assemble` 照旧闭合；
+4. **符号标签**回填"块下标 × N"（= 该块的字节偏移），与数字写法同单位。
+
+这与宿主的 `RelocPatcher` 是同一口径（`Arm64RelocPatcher` 就是 `imm = offset >> 2`），
+于是"汇编器里的数字写法"与"编译器打补丁"不再各说各话。`unit = N` 目前只实现于定宽
+（含 `mixed`）编码/解码——变长（`prefix_scan`）ISA 写它会在校验期被明确拒绝（fail-closed）。
 
 **立即数字面量的两种读数（`wrap`，v20 V10）**：立即数字段是 W 位**位模式**，
 `0x90909090` 与 `-1869574000` 是同一批字节，两种写法在各家汇编器里都合法。缺省只收

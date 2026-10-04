@@ -1245,6 +1245,22 @@ pub struct OperandSlot {
     /// 超出 W 位**仍然报错**（不静默截断/掩码）。
     #[serde(default)]
     pub wrap: Option<bool>,
+    /// imm/label：**源值单位**（缺省 1；只对 `imm`/`label` 槽有意义）。
+    ///
+    /// 源文本与 `Inst` 字段里的值以**字节**计，而编码字段以 `unit` 字节为 1 个单位
+    /// （编码值 = 源值 / unit）。分支偏移就是这么定义的：A64 的 `b #28` 是**字节**偏移，
+    /// 字段 `imm26` 数的是 4 字节字（`28 / 4 = 7`），`cbz`（imm19）/`tbz`（imm14）同理；
+    /// x86 的 `jmp rel32` 是字节单位（缺省 1）。这也正是本仓库 `Arm64RelocPatcher`
+    /// 的口径（`imm = offset >> 2`）——于是"汇编器里的数字写法"与"编译器打补丁"同单位。
+    ///
+    /// 连带语义（全部由本字段派生，谱里不写第二遍）：
+    /// ① 值域按源单位给（[`Self::imm_range`] = 字段值域 × unit），越界报错；
+    /// ② 源值不是 `unit` 的整数倍 ⇒ 汇编不匹配（不静默取整）；
+    /// ③ 解码把字段值**乘回** unit ⇒ `Inst` 字段与 `disassemble` 渲染始终是源单位，
+    ///    `disassemble → assemble` 照旧闭合；
+    /// ④ 符号标签回填 `块下标 × unit`（= 该块的字节偏移；unit = 1 时就是块下标本身）。
+    #[serde(default)]
+    pub unit: Option<u32>,
     /// 该槽可承担的角色；**不写 = 不限制**（任何方向的操作数都能用这个槽）。
     ///
     /// **一个 [`OperandRole`] 就够，不需要集合**：`inout`（读改写）在语义上已经涵盖
@@ -1266,7 +1282,20 @@ impl OperandSlot {
         self.class.map(|c| vec![c])
     }
 
-    /// 立即数/标签槽的值域：(min, max)。缺省由 width/signed 推导。
+    /// 源值单位（缺省 1）。非 imm/label 槽恒为 1。
+    pub fn unit(&self) -> i64 {
+        match self.kind {
+            OperandKind::Imm | OperandKind::Label => self.unit.unwrap_or(1) as i64,
+            _ => 1,
+        }
+    }
+
+    /// `unit` 是 2 的幂 ⇒ 编码值 = 源值 >> `unit_shift()`（校验期保证 2 的幂）。
+    pub fn unit_shift(&self) -> u32 {
+        self.unit().trailing_zeros()
+    }
+
+    /// 立即数/标签槽的值域：(min, max)，已按 `unit` 放大到**源单位**。
     pub fn imm_range(&self) -> Option<(i64, i64)> {
         if self.kind != OperandKind::Imm && self.kind != OperandKind::Label {
             return None;
@@ -1280,7 +1309,16 @@ impl OperandSlot {
         } else {
             (0, (1i64 << w) - 1)
         };
-        Some((self.min.unwrap_or(lo), self.max.unwrap_or(hi)))
+        // 显式 `min`/`max` 与推导值域同一口径（都是**源单位**的约束）。
+        let u = self.unit();
+        Some((
+            self.min
+                .map(|v| v.saturating_mul(u))
+                .unwrap_or_else(|| lo.saturating_mul(u)),
+            self.max
+                .map(|v| v.saturating_mul(u))
+                .unwrap_or_else(|| hi.saturating_mul(u)),
+        ))
     }
 
     /// 立即数槽的**接受**值域：`wrap` 打开时 = W 位位模式两种读数的并集。
@@ -1290,6 +1328,10 @@ impl OperandSlot {
     /// [`Self::imm_wrap_modulus`]。未开 `wrap` ⇒ 与 `imm_range()` 相同。
     pub fn imm_accept_range(&self) -> Option<(i64, i64)> {
         let (lo, hi) = self.imm_range()?;
+        if self.unit() != 1 {
+            // `unit` 缩放与 `wrap`（x86 imm32 的位模式两读数）不是一回事，不叠加。
+            return Some((lo, hi));
+        }
         let Some(m) = self.imm_wrap_modulus() else {
             return Some((lo, hi));
         };

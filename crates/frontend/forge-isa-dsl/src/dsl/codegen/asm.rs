@@ -582,24 +582,34 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
     // 按 `expr` 的值语义求值（复用既有表达式求值器）。
     let (imm_fn_defs, imm_fn_tries) = gen_imm_fns(model)?;
     out.extend(imm_fn_defs);
+    // 立即数前缀（`[meta].imm_prefix`）：**按声明吃对应 token**——历史上这里硬编码只认
+    // `$`，声明 `#` 的谱（A64 风格）写了却不起作用（静默不生效）。token 只有 `Dollar`/`Hash`
+    // 两种（词法就这些），别的字符在校验期就被拒了。
+    //
+    // `__imm`（立即数）与 `__label`（标签/分支目标）两个助手都要吃它——A64 的 `b #28`
+    // 与 `add x0, x1, #5` 都是 `#` 开头的源文本。
+    let imm_pref: TokenStream = match model.meta.imm_prefix.as_deref() {
+        Some("$") => quote! { it.eat(&__Tok::Dollar) },
+        Some("#") => quote! { it.eat(&__Tok::Hash) },
+        _ => quote! { false },
+    };
     {
-        // 立即数前缀（`[meta].imm_prefix`）：**按声明吃对应 token**——历史上这里硬编码只认
-        // `$`，声明 `#` 的谱（A64 风格）写了却不起作用（静默不生效）。token 只有 `Dollar`/`Hash`
-        // 两种（词法就这些），别的字符在校验期就被拒了。
-        let imm_pref: TokenStream = match model.meta.imm_prefix.as_deref() {
-            Some("$") => quote! { it.eat(&__Tok::Dollar) },
-            Some("#") => quote! { it.eat(&__Tok::Hash) },
-            _ => quote! { false },
-        };
         out.extend(quote! {
             /// 立即数/表达式求值：数字、正负号、括号、算术（+ - * / % << >> & | ^ ~）、
             /// 符号常量（`.equ`/`.set`）。失败回滚 token 位置。
+            ///
+            /// `unit` = 该槽的源值单位（缺省 1；`#`-前缀的字节偏移类操作数用它）：
+            /// 源值必须是它的整数倍，否则本条候选**不匹配**（与越界同一处理，
+            /// 不静默取整）。
             #[allow(dead_code)]
-            fn __imm(it: &mut __Iter, min: i64, max: i64, float: bool) -> Option<i64> {
+            fn __imm(it: &mut __Iter, min: i64, max: i64, float: bool, unit: i64) -> Option<i64> {
                 let save = it.pos;
                 let _d = #imm_pref;
                 let v = __expr(it, float)?;
-                if v < min || v > max { it.pos = save; return None; }
+                if v < min || v > max || (unit > 1 && v % unit != 0) {
+                    it.pos = save;
+                    return None;
+                }
                 Some(v)
             }
 
@@ -767,19 +777,27 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
         let mut label_set_arms: Vec<TokenStream> = Vec::new();
         for info in infos {
             let vn = &info.vn;
-            if let Some((n, fid)) = info
-                .operands
-                .iter()
-                .enumerate()
-                .find_map(|(i, (_, fid, s, _))| (s.kind == OperandKind::Label).then_some((i, fid)))
+            if let Some((n, fid, u)) =
+                info.operands
+                    .iter()
+                    .enumerate()
+                    .find_map(|(i, (_, fid, s, _))| {
+                        (s.kind == OperandKind::Label).then_some((i, fid, s.unit()))
+                    })
             {
-                label_set_arms
-                    .push(quote! { (Inst::#vn { #fid, .. }, #n) => { *#fid = val; true } });
+                label_set_arms.push(if u > 1 {
+                    // 符号标签回填**源单位**（字节）偏移 = 块下标 × unit；编码期再除回
+                    // 字段单位（`unit = 4` 的 A64 ⇒ 编出的仍是块下标）。
+                    let unit = proc_macro2::Literal::i64_suffixed(u);
+                    quote! { (Inst::#vn { #fid, .. }, #n) => { *#fid = val * #unit; true } }
+                } else {
+                    quote! { (Inst::#vn { #fid, .. }, #n) => { *#fid = val; true } }
+                });
             }
         }
         out.extend(quote! {
-            /// 标签：数字/表达式 = 偏移；非寄存器 ident = 符号引用（回填期解析）。
-            /// 失败回滚。
+            /// 标签：数字/表达式 = **源单位**偏移；非寄存器 ident = 符号引用
+            /// （回填期解析成 `块下标 × unit`）。失败回滚。
             #[allow(dead_code)]
             fn __label(
                 it: &mut __Iter,
@@ -787,21 +805,26 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                 max: i64,
                 syms: &mut Vec<(usize, String)>,
                 op: usize,
+                unit: i64,
             ) -> Option<i64> {
                 let save = it.pos;
+                // `unit`（缺省 1）：源值必须是它的整数倍——`b #28` 的 28 是字节偏移，
+                // 而字段数的是 4 字节字。不取整、不静默截断，不匹配就退下一条候选。
+                let ok = |v: i64| v >= min && v <= max && (unit <= 1 || v % unit == 0);
+                let _d = #imm_pref;
                 // 优先尝试完整表达式（数字、算术、括号、符号常量）：
-                // `40+2` → 42、`A*2` → 求值。失败回滚到单数字/符号分支。
+                // `40+2` → 42、`A*2` → 求值。失败回滚到**含前缀**的起点。
                 if let Some(v) = __expr(it, false) {
-                    if v < min || v > max { it.pos = save; return None; }
+                    if !ok(v) { it.pos = save; return None; }
                     return Some(v);
                 }
                 it.pos = save;
-                match it.toks.get(it.pos)? {
+                let _d = #imm_pref;
+                let v = match it.toks.get(it.pos)? {
                     __Tok::Num(v) => {
                         let v = *v;
                         it.pos += 1;
-                        if v < min || v > max { it.pos = save; return None; }
-                        Some(v)
+                        v
                     }
                     __Tok::Minus => {
                         it.pos += 1;
@@ -809,21 +832,21 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                             __Tok::Num(v) => { it.pos += 1; *v }
                             _ => { it.pos = save; return None; }
                         };
-                        let v = match v.checked_neg() {
+                        match v.checked_neg() {
                             Some(x) => x,
                             None => { it.pos = save; return None; }
-                        };
-                        if v < min || v > max { it.pos = save; return None; }
-                        Some(v)
+                        }
                     }
                     __Tok::Ident(s) => {
                         if <Reg as FromStr>::from_str(s).is_ok() { return None; }
                         syms.push((op, s.clone()));
                         it.pos += 1;
-                        Some(0)
+                        return Some(0);
                     }
-                    _ => None,
-                }
+                    _ => { it.pos = save; return None; }
+                };
+                if !ok(v) { it.pos = save; return None; }
+                Some(v)
             }
             /// 按操作数序号回填 label 槽值（parse_insts 两遍布局用）。
             fn __set_label_operand(inst: &mut Inst, idx: usize, val: i64) -> bool {
@@ -1173,30 +1196,32 @@ fn operand_parse_tok(
         }
         OperandKind::Imm => {
             // `wrap` 打开时用**接受**值域收字面量，再规范化回 `signed` 的读数
-            // （`0x90909090` → `-1869574000`）：编码/解码/渲染仍用规范值域。
+            // （`0x90909090` → -1869574000）：编码/解码/渲染仍用规范值域。
             let (min, max) = slot.imm_accept_range().unwrap_or((i64::MIN, i64::MAX));
             let float = slot.float == Some(true);
+            let unit = proc_macro2::Literal::i64_suffixed(slot.unit());
             let elem = match (slot.imm_wrap_modulus(), slot.imm_range()) {
                 (Some(m), Some((clo, chi))) => quote! {
                     {
-                        let __w = __imm(&mut it, #min, #max, #float);
+                        let __w = __imm(&mut it, #min, #max, #float, #unit);
                         __w.map(|v| {
                             if v > #chi { v.wrapping_sub(#m) } else { v }
                         })
                         .map(|v| if v < #clo { v.wrapping_add(#m) } else { v })
                     }
                 },
-                _ => quote! { __imm(&mut it, #min, #max, #float) },
+                _ => quote! { __imm(&mut it, #min, #max, #float, #unit) },
             };
             Ok((elem, quote! { Some(#fid) }, None))
         }
         OperandKind::Label => {
             let (min, max) = slot.imm_range().unwrap_or((i64::MIN, i64::MAX));
+            let unit = proc_macro2::Literal::i64_suffixed(slot.unit());
             // 符号写进候选局部的 `__lsyms`（非共享 `__syms`）：元组求值是急切的，
             // 前导 `__eat_name` 失败时 `__label` 仍会被调用；若写入共享缓冲会污染
             // 后续候选的匹配结果（S10c 平铺扫描后暴露）。局部缓冲仅在整条 asm
             // 完全命中时随 `return` 提交。
-            let elem = quote! { __label(&mut it, #min, #max, &mut __lsyms, #n) };
+            let elem = quote! { __label(&mut it, #min, #max, &mut __lsyms, #n, #unit) };
             Ok((elem, quote! { Some(#fid) }, None))
         }
         OperandKind::Mem => Ok((quote! { __mem(&mut it) }, quote! { Some(#fid) }, None)),

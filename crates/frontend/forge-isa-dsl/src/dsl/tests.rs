@@ -3161,6 +3161,7 @@ fn imm_slot_wrap_reads_the_bit_pattern() {
         min: None,
         max: None,
         wrap,
+        unit: None,
         roles: None,
     };
 
@@ -3232,6 +3233,87 @@ asm = "addi {dst}, {imm}"
     let bad = base.replace("width = 12", "width = 64");
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("width < 64"), "err: {err}");
+}
+
+// ─────────────── `unit`：源值单位（分支偏移是字节） ───────────────
+
+/// `unit`（源值单位）：源文本与 `Inst` 字段是**字节**偏移，字段数的是"几个单位"。
+///
+/// 本例 = A64 分支的形状（`imm26` × 4 字节字）：值域按源单位放大、非整数倍不匹配、
+/// 解码乘回来（`Inst` 与 `disassemble` 始终是源单位）、越界报错。
+#[test]
+fn imm_slot_unit_scales_the_field() {
+    let doc = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "fixed"
+bits = 32
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+opcode = { offset = 0, width = 6 }
+imm26 = { offset = 6, width = 26 }
+[[operand_slots]]
+name = "off26"
+kind = "label"
+signed = true
+width = 26
+unit = 4
+[[operand_slots]]
+name = "imm12"
+kind = "imm"
+signed = true
+width = 12
+unit = 1
+[[forms]]
+name = "BR"
+opcode_field = "opcode"
+operand_fields = ["imm26"]
+[[instructions]]
+name = "B"
+form = "BR"
+opcode = 0x05
+ops = ["target:off26"]
+asm = "b {target}"
+"#;
+    let m = parse_and_validate(doc).expect("unit 合法");
+    let off = m
+        .operand_slots
+        .iter()
+        .find(|s| s.name == "off26")
+        .expect("槽存在");
+    assert_eq!(off.unit(), 4);
+    assert_eq!(off.unit_shift(), 2);
+    // 值域放大到源单位：26 位有符号字段 ⇒ ±2^25 个字段单位，×4 = ±2^27 字节。
+    assert_eq!(
+        off.imm_range(),
+        Some((-134_217_728, 134_217_724)),
+        "值域必须是源单位（字段值 × unit），且上界按字段上下取整"
+    );
+    // 非 imm/label 槽恒为 1（`imm12` 没写 unit）。
+    let imm12 = m
+        .operand_slots
+        .iter()
+        .find(|s| s.name == "imm12")
+        .expect("槽存在");
+    assert_eq!((imm12.unit(), imm12.unit_shift()), (1, 0));
+
+    // 声明侧校验：reg 槽写 unit → 报错。
+    let bad = doc.replace("kind = \"label\"", "kind = \"reg\"\nclass = \"gpr4\"");
+    let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("unit"), "err: {err}");
+    // 非 2 的幂 → 报错（编码期按移位换算）。
+    let bad = doc.replace("unit = 4", "unit = 3");
+    let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("2 的幂"), "err: {err}");
+    // 变长（prefix_scan）ISA 还没实现这条换算 → 明确拒绝，不静默当 1。
+    let bad = doc.replace(
+        "kind = \"fixed\"\nbits = 32",
+        "kind = \"prefix_scan\"\nmax_len = 8",
+    );
+    let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("prefix_scan"), "err: {err}");
 }
 
 // ─────────────── W1：栈参数必须由角色（标签）驱动，不按指令名兜底 ───────────────

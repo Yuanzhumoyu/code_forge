@@ -11,6 +11,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-04) — `[[operand_slots]].unit`：源值单位（分支偏移是字节）
+
+真实汇编器里的分支偏移是**字节**：A64 的 `b #28` 编码成 `imm26 = 28 / 4 = 7`（`cbz` 的
+imm19、`tbz` 的 imm14 同理），x86 的 `jmp rel32` 本身就是字节。而 DSL 的 imm/label 槽原先
+把源文本的值**原样**写进字段——于是 `b #134217724` 被判越界（字段最大 33554431）、
+`b 8` 编成 imm26 = 8 而 GAS/LLVM 会编成 2。
+
+新增槽属性 `unit`（2 的幂，缺省 1；只对 `imm`/`label` 有意义）：
+
+1. **值域按源单位**给（`imm_range` = 字段值域 × unit），越界报错；
+2. 源值不是 unit 的整数倍 ⇒ 该条写法**不匹配**（与越界同处理，不静默取整）；
+3. 编码写 `源值 >> log2(unit)`，**解码乘回来** ⇒ `Inst` 字段与 `disassemble` 渲染始终是
+   源单位，`disassemble → assemble` 照旧闭合；
+4. **符号标签**回填"块下标 × unit"（该块的字节偏移），与数字写法同单位。
+
+这与宿主的 `RelocPatcher` 是同一口径（`Arm64RelocPatcher` 就是 `imm = offset >> 2`），
+于是"汇编器里的数字写法"与"编译器打补丁"不再各说各话。**只实现于定宽（含 `mixed`）
+编码/解码**：变长（`prefix_scan`）ISA 写它会**校验期 fail-closed**（明确报错，不静默当 1）。
+编码期的"非整数倍"检查只对 **imm 槽**发——label 槽在编译器路径上塞的是**标签 id 占位**
+（`LabelRef::EPILOGUE.id()`，不是字节偏移，随后由 reloc patcher 整体改写），查对齐只会误报；
+文本路径的对齐检查在 `__imm`/`__label` 里，两条路都覆盖到了。
+
+aarch64 落地：`off26`/`off19` 声明 `unit = 4`；另补 `[meta].imm_prefix = "#"`（模板虽都写
+`#{imm}`，但**分支目标槽前没有字面 `#`**，`b #28` 的前缀得由这条声明来吃）。
+生成期自测同步：立即数边界按字段单位算完再乘回源单位；越界探针按 unit 步进（否则
+"非整数倍"会先把探针拦下，值域检查永远测不到）。
+
+效果：aarch64 语料解析档 `parsed` 115 → **123**、红桶 27 → **19**，字节对拍 93 → **98 条
+逐字节全等**（`known` 仍 0——含上游注释里 `cbz w20, #1048572` 这类期望字节）。
+
 ### Changed (2026-10-04) — `[[operand_slots]].roles` 由列表改为**一个** `OperandRole`（破坏性）
 
 槽的角色声明从 `roles = ["in", "out"]` 改成 `roles = "inout"`——**一个 `OperandRole` 就够**：

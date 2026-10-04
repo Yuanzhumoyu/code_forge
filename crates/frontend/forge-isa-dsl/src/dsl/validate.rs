@@ -1562,6 +1562,27 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                 None => {}
             }
         }
+        // `unit`（源值单位）：只对 imm/label 有意义；必须是 2 的幂（编码期用移位换算）；
+        // 变长（`prefix_scan`）ISA 的编码/解码路径还没有这条换算——明确拒绝，
+        // 不静默当 1 处理。
+        if let Some(u) = s.unit {
+            if !matches!(s.kind, OperandKind::Imm | OperandKind::Label) {
+                return Err(format!(
+                    "{path}: `unit` 只对 kind = \"imm\"/\"label\" 有意义（当前 kind = {}）",
+                    s.kind.kind_name()
+                ));
+            }
+            if u == 0 || !u.is_power_of_two() {
+                return Err(format!(
+                    "{path}: `unit` 必须是 2 的幂（当前 {u}；编码期按 源值 >> log2(unit) 换算）"
+                ));
+            }
+            if m.encoding.kind == EncodingKind::PrefixScan {
+                return Err(format!(
+                    "{path}: `unit` 暂不支持变长（prefix_scan）ISA——只有定宽编码/解码实现了源值单位换算"
+                ));
+            }
+        }
         // `roles` 是**一个** `OperandRole`（`in`/`out`/`inout`），由类型系统保证不会是
         // 空集合或重复项——旧写法 `["in", "out"]` 的两种检查随之删除。
     }

@@ -860,6 +860,29 @@ fn gen_encode(infos: &[InstInfo], m: &IsaModel) -> Result<TokenStream, String> {
                     // 是全局序号，不是物理编号——编码必须用 to_index()
                     //（如 X5/W5 判别值不同但物理号同为 5）
                     quote! { <Reg as forge_ir::PhysReg>::to_index(*#fid) as u64 }
+                } else if slot.unit() > 1 {
+                    // 源值单位（`unit`）：字段值 = 源值 / unit。
+                    //
+                    // **对齐检查只对 imm 槽做**：汇编期的文本路径（`__imm`/`__label`）已经
+                    // 拒掉非整数倍，这里是防"直接构造 Inst"的兜底；而 label 槽在编译器
+                    // 路径上塞的是**标签 id 占位**（`LabelRef::EPILOGUE.id()`，不是字节偏移），
+                    // 随后由 reloc patcher 整体改写——对它查对齐只会误报。
+                    let sh = proc_macro2::Literal::u32_unsuffixed(slot.unit_shift());
+                    let unit_lit = proc_macro2::Literal::i64_suffixed(slot.unit());
+                    if slot.kind == OperandKind::Imm {
+                        quote! {{
+                            let __raw = *#fid as i64;
+                            if __raw % #unit_lit != 0 {
+                                return Err(format!(
+                                    "{}: immediate {} 不是 {} 的整数倍（该槽以字节为单位：{} 字节 = 1 个字段单位）",
+                                    stringify!(#vn), __raw, #unit_lit, #unit_lit
+                                ));
+                            }
+                            (__raw >> #sh) as u64
+                        }}
+                    } else {
+                        quote! { ((*#fid as i64) >> #sh) as u64 }
+                    }
                 } else {
                     quote! { *#fid as u64 }
                 },
@@ -1104,11 +1127,19 @@ fn gen_decode_group(
                 OperandKind::Cond => quote! { #raw as u8 },
                 _ => {
                     let signed = slot.signed.unwrap_or(false) || slot.kind == OperandKind::Label;
-                    if signed {
+                    let base = if signed {
                         let w = slot.width.unwrap_or(64);
                         sign_extend_ts(raw, w)
                     } else {
                         quote! { #raw as i64 }
+                    };
+                    // 源值单位（`unit`）：`Inst` 字段是**源单位**（字节），字段值乘回去
+                    // （A64 `imm26 = 7` ⇒ 目标 = 28 字节），`disassemble` 因此照旧闭合。
+                    if slot.unit() > 1 {
+                        let sh = proc_macro2::Literal::u32_unsuffixed(slot.unit_shift());
+                        quote! { (#base) << #sh }
+                    } else {
+                        base
                     }
                 }
             };
