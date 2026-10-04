@@ -1088,16 +1088,17 @@ fn validate_conventions(m: &IsaModel) -> Result<(), String> {
     Ok(())
 }
 
-/// `[[pseudo]]` 校验（v18 S3e 汇编器伪指令）。
+/// `[[pseudo]]` 校验（v18 S3e 汇编器伪指令；v20 V10 改 `asm` 声明形态）。
 ///
 /// 伪指令是**汇编期**行为，编译器看不到它的调用点，因此声明侧必须自洽：
 ///
 /// - 名字非空、唯一、**不得与任何指令模板的前导字面重名**（伪指令展开先于指令扫描，
 ///   重名会让那个名字开头的指令写法被伪指令吃掉——两者都是最难查的一类错）；
-/// - `params` 非空、每项非空、唯一；
+/// - `asm` 非空、能解析成模板，且**首字面就是 `name`**（伪指令按整词分派）；
+/// - 参数表**从 `asm` 派生**（按首次出现序）——没有第二份清单可以漂移；
 /// - `emit` 非空、每行非空；行首必须**能接到某条指令模板上**（或别的伪指令名、
 ///   `[meta].directive_prefix` 开头的伪操作），否则那是拼错；
-/// - 每行的 `{…}` 必须是已声明参数（拼错即报），且**每个参数都至少用一次**
+/// - 每行的 `{…}` 必须是 `asm` 声明过的参数（拼错即报），且**每个参数都至少用一次**
 ///   （没用到的参数几乎总是写错了名字）。
 ///
 /// **判定不按空白切词猜助记符**：v17 起 `asm` 模板可以操作数前置（首"词"是操作数）、
@@ -1133,18 +1134,13 @@ fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
                 p.name
             ));
         }
-        if p.params.is_empty() {
-            return Err(format!("[[pseudo.{}]]: params 不能为空", p.name));
-        }
-        let mut pseen: BTreeSet<&str> = BTreeSet::new();
-        for a in &p.params {
-            if a.trim().is_empty() {
-                return Err(format!("[[pseudo.{}]]: params 里的名字不能为空", p.name));
-            }
-            if !pseen.insert(a.as_str()) {
-                return Err(format!("[[pseudo.{}]]: 参数 '{a}' 重复", p.name));
-            }
-        }
+        // `asm` 是这条伪指令的**书写规范**，也是参数表的唯一来源。
+        let segs = crate::dsl::codegen::asm::parse_named_template(&p.asm)
+            .map_err(|e| format!("[[pseudo.{}]]: {e}", p.name))?;
+        crate::dsl::codegen::asm::validate_named_template(&segs, &p.name, ci)
+            .map_err(|e| format!("[[pseudo.{}]]: {e}", p.name))?;
+        let params = crate::dsl::codegen::asm::named_params(&segs);
+        let pseen: BTreeSet<&str> = params.iter().map(|s| s.as_str()).collect();
         if p.emit.is_empty() {
             return Err(format!(
                 "[[pseudo.{}]]: emit 不能为空（至少要展开出一行）",
@@ -1173,18 +1169,19 @@ fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
                 let name = tok.trim_start_matches('{').trim_end_matches('}');
                 if !pseen.contains(name) {
                     return Err(format!(
-                        "[[pseudo.{}]]: emit 里的 '{{{name}}}' 不是声明过的参数（可用：{}）",
+                        "[[pseudo.{}]]: emit 里的 '{{{name}}}' 不是 asm '{}' 里声明过的参数（可用：{}）",
                         p.name,
-                        p.params.join(" / ")
+                        p.asm,
+                        params.join(" / ")
                     ));
                 }
                 used.insert(name.to_string());
             }
         }
-        for a in &p.params {
+        for a in &params {
             if !used.contains(a.as_str()) {
                 return Err(format!(
-                    "[[pseudo.{}]]: 参数 '{a}' 在 emit 里没用到（写错了名字？）",
+                    "[[pseudo.{}]]: asm 声明的参数 '{a}' 在 emit 里没用到（写错了名字？）",
                     p.name
                 ));
             }

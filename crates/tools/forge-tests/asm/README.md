@@ -122,8 +122,7 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 - riscv64：`%lo(2048)(x7)` 这类**重定位修饰的立即数**写法（`%lo`/`%hi`/`%pcrel_lo`）不支持；
   余下红桶还有 `jal a0, a0` / `jal zero, .`（两寄存器形式的 `jal`）与 `sllw s8, s9, s10`；
 - aarch64：`ret lr`（带操作数的两操作数形式）不支持，裸 `ret` 可以；
-- x86（余下几条，来自 `intel-syntax-encoding.s`）：`cmpltps`（SSE 比较谓词别名）、
-  `acquire/release lock add …`（锁前缀 + 内存序提示）；
+- x86（余下几条，来自 `intel-syntax-encoding.s`）：`acquire/release lock add …`（锁前缀 + 内存序提示）；
   以及 `apx-rex2-format-intel.s` 整份（APX/REX2：`r16d`、`dword ptr [r16 + rax]` 等）。
 - x86 `movzx` / `movsx` 的**内存源**形式（`movzx eax, byte ptr [rbx]`、`movsx rax, word ptr [rbx]`）：
   瓶颈不在操作码，而在**文本分不出源宽度**——`byte`/`word` 是 `{size}` 组件，按设计**不携带
@@ -203,6 +202,14 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
   这批**不动语料棘轮**（vendored 语料里没有这些写法，全量语料里遍地都是），所以证据换成了
   **真执行**：`asm/exec/x86/` 新增两个小程序（`mem_mov32.s` 32 位存/读、`mem_mov16.s` 16 位
   存/读），`ASM-EXEC-SUMMARY ran=8 → **10** skipped=0`——新编码在 x86 宿主机上**真跑**出期望值。
+
+- x86（v20 V10，第八批：**SSE 比较谓词族 + 别名**）：`cmpltps XMM2, XMM1` 一直是登记的缺口，
+  根因是谱里根本没有 SSE 谓词比较指令。补 `CMPPS`/`CMPPD`/`CMPSS`/`CMPSD_SCALAR`
+  （`0F C2 /r ib`：`ps`/`pd`/`ss`/`sd` 靠强制前缀区分，谓词是立即数第 3 操作数），八个经典
+  packed 别名（`cmpeq/lt/le/unord/neq/nlt/nle/ord` × `ps`/`pd`）用 `[[pseudo]]` **文本展开**
+  表达（一行别名换一行 `cmpps {a}, {b}, <谓词>`）。结果：`llvm-mc` 解析档 `parsed` 35 → **36**
+  （`cmpltps` 从 `no_prefix` 桶进 `parsed`）、字节对拍 x86 `checked` 30 → **31**（上游
+  `0F C2 D1 01` 逐字节相同，`known` 仍 0）。
 
 ## 现有语料与计数
 

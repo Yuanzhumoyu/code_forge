@@ -1998,6 +1998,149 @@ fields = { prefix = 0, w = 0 }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "shufps {dst}, {src}, {imm}"
 
+# ── SSE 比较谓词：`CMPPS/CMPPD/CMPSS/CMPSD`（0F C2 /r ib）（v20 V10 第八批）─────
+#
+# 谓词是**立即数第 3 操作数**（0..7 经典八种：eq/lt/le/unord/neq/nlt/nle/ord）。
+# 指令形态与 `SHUFPS` 同款（0F + 强制前缀 + /r + ib），只是操作码与强制前缀不同：
+# 无前缀 = ps（packed single）、66 = pd、F3 = ss（scalar single）、F2 = sd（scalar double）。
+# 标量双精度那条叫 `CMPSD_SCALAR`（避免与将来可能的字符串指令 `CMPSD` 撞名）。
+#
+# 编译器与手写代码更常写**别名**（`cmpltps xmm2, xmm1`）——那是 `[[pseudo]]` 的活：
+# 见下面 16 条 packed 别名（展开成一条 `cmpps/cmp*` + 谓词立即数，不新增指令）。
+
+[[instructions]]
+name = "CMPPS"
+modrm = { reg = "dst", rm = "src" }
+escape = [0x0F]
+prefix = "field"
+rex_w = "field"
+imm = 8
+opcode = 0xC2
+fields = { prefix = 0, w = 0 }
+ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
+asm = "cmpps {dst}, {src}, {imm}"
+
+[[instructions]]
+name = "CMPPD"
+modrm = { reg = "dst", rm = "src" }
+escape = [0x0F]
+prefix = "field"
+rex_w = "field"
+imm = 8
+opcode = 0xC2
+fields = { prefix = 0x66, w = 0 }
+ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
+asm = "cmppd {dst}, {src}, {imm}"
+
+[[instructions]]
+name = "CMPSS"
+modrm = { reg = "dst", rm = "src" }
+escape = [0x0F]
+prefix = "field"
+rex_w = "field"
+imm = 8
+opcode = 0xC2
+fields = { prefix = 0xF3, w = 0 }
+ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
+asm = "cmpss {dst}, {src}, {imm}"
+
+[[instructions]]
+name = "CMPSD_SCALAR"
+modrm = { reg = "dst", rm = "src" }
+escape = [0x0F]
+prefix = "field"
+rex_w = "field"
+imm = 8
+opcode = 0xC2
+fields = { prefix = 0xF2, w = 0 }
+ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
+asm = "cmpsd {dst}, {src}, {imm}"
+
+# 经典八谓词的 packed 别名（`cmp<谓词>ps` / `cmp<谓词>pd`）。`[[pseudo]]` = **文本级展开**：
+# 一行别名 → 一行 `cmpps/cmppd {a}, {b}, <谓词>`，编码与手写立即数逐字节相同。
+# 谓词编号是 x86 手册的定义（eq=0、lt=1、le=2、unord=3、neq=4、nlt=5、nle=6、ord=7）。
+# 标量（ss/sd）别名**不做**：那会盖掉 `cmpss xmm, xmm, imm8` 这条三操作数写法
+# （伪指令按整词先于指令扫描命中，同名就再也汇编不到三操作数形式）。
+[[pseudo]]
+name = "cmpeqps"
+asm = "cmpeqps {a}, {b}"
+emit = ["cmpps {a}, {b}, 0"]
+
+[[pseudo]]
+name = "cmpltps"
+asm = "cmpltps {a}, {b}"
+emit = ["cmpps {a}, {b}, 1"]
+
+[[pseudo]]
+name = "cmpleps"
+asm = "cmpleps {a}, {b}"
+emit = ["cmpps {a}, {b}, 2"]
+
+[[pseudo]]
+name = "cmpunordps"
+asm = "cmpunordps {a}, {b}"
+emit = ["cmpps {a}, {b}, 3"]
+
+[[pseudo]]
+name = "cmpneqps"
+asm = "cmpneqps {a}, {b}"
+emit = ["cmpps {a}, {b}, 4"]
+
+[[pseudo]]
+name = "cmpnltps"
+asm = "cmpnltps {a}, {b}"
+emit = ["cmpps {a}, {b}, 5"]
+
+[[pseudo]]
+name = "cmpnleps"
+asm = "cmpnleps {a}, {b}"
+emit = ["cmpps {a}, {b}, 6"]
+
+[[pseudo]]
+name = "cmpordps"
+asm = "cmpordps {a}, {b}"
+emit = ["cmpps {a}, {b}, 7"]
+
+[[pseudo]]
+name = "cmpeqpd"
+asm = "cmpeqpd {a}, {b}"
+emit = ["cmppd {a}, {b}, 0"]
+
+[[pseudo]]
+name = "cmpltpd"
+asm = "cmpltpd {a}, {b}"
+emit = ["cmppd {a}, {b}, 1"]
+
+[[pseudo]]
+name = "cmplepd"
+asm = "cmplepd {a}, {b}"
+emit = ["cmppd {a}, {b}, 2"]
+
+[[pseudo]]
+name = "cmpunordpd"
+asm = "cmpunordpd {a}, {b}"
+emit = ["cmppd {a}, {b}, 3"]
+
+[[pseudo]]
+name = "cmpneqpd"
+asm = "cmpneqpd {a}, {b}"
+emit = ["cmppd {a}, {b}, 4"]
+
+[[pseudo]]
+name = "cmpnltpd"
+asm = "cmpnltpd {a}, {b}"
+emit = ["cmppd {a}, {b}, 5"]
+
+[[pseudo]]
+name = "cmpnlepd"
+asm = "cmpnlepd {a}, {b}"
+emit = ["cmppd {a}, {b}, 6"]
+
+[[pseudo]]
+name = "cmpordpd"
+asm = "cmpordpd {a}, {b}"
+emit = ["cmppd {a}, {b}, 7"]
+
 [[instructions]]
 name = "PUSH"
 roles = ["push"]

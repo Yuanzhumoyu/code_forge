@@ -11,6 +11,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-04) — `[[pseudo]]` 改 `asm` 声明形态：参数表从写法里长出来（破坏性，无兼容层）
+
+`[[pseudo]]` 的 `params` 列表**删除**，改成与 `[[instructions]]` 同构的两个键：`name` 是助记符、`asm` 是**这条伪指令的书写规范**，`asm` 里的 `{名字}` **就是**参数——`emit` 里引用的是同一批名字，没有第二份清单可以漂移：
+
+```toml
+[[pseudo]]
+name = "li"                     # 助记符（= 这条写法的首字面）
+asm  = "li {rd}, {imm}"         # 书写规范：`{名字}` 即参数（按首次出现序）
+emit = ["lui {rd}, (({imm} + 0x800) >> 12)", "addi {rd}, {rd}, ((({imm} + 0x800) & 0xfff) - 0x800)"]
+```
+
+- **切参按模板的字面段走**（不再"按逗号位置猜"）：`,` 是模板写死的分隔符，`li x10,0x1234`（无空格）照样认；缺分隔符 / 多一段 / 尾部多东西都**当场报错并回显写法**（`伪指令 'li' 的写法是 'li {rd}, {imm}'：缺 ','`）。
+- **展开行装配失败时点名是哪一行展开出来的**：`li x10, 0x1234 junk` 以前只会得到 "no matching instruction"，现在是 `伪指令展开行 'lui x10, ((0x1234 junk + 0x800) >> 12)' 汇编失败：…`。
+- 校验同步收紧：`asm` 首字面必须**就是 `name`**（伪指令按整词分派）、占位符之间必须有字面分隔、`emit` 里的 `{…}` 必须是 `asm` 声明过的参数（报错时回显 `asm`）、`asm` 声明的参数必须都被用到；零操作数伪指令合法（参数表就是空的）；同一名字在 `asm` 里出现两次表示**前后必须写成一样**。
+- 三个同步点一起改：`dsl/model.rs` 结构体、`src/schema.rs` 键表 + 重新生成的 `isa-dsl.schema.json`、`docs/reference/isa-dsl.md` 的键速查表与 `[[pseudo]]` 小节（`schema_guard` 三方针全绿）。
+
+### Added (2026-10-04) — x86 SSE 比较谓词族 + 八个经典别名（`cmpltps` 等）
+
+上游 `intel-syntax-encoding.s` 的 `cmpltps XMM2, XMM1` 是谱里登记的缺口：x86 从来没有 SSE 谓词比较指令。补 `CMPPS`/`CMPPD`/`CMPSS`/`CMPSD_SCALAR`（`0F C2 /r ib`，`ps/pd/ss/sd` 靠强制前缀区分，谓词是立即数第 3 操作数），八个经典 packed 别名（`cmpeqps`/`cmpltps`/`cmpleps`/`cmpunordps`/`cmpneqps`/`cmpnltps`/`cmpnleps`/`cmpordps` 及 `pd` 同族）用 `[[pseudo]]` **文本展开**表达——一行别名换一行 `cmpps {a}, {b}, <谓词>`，不新增 32 条指令、也不引入第二套分派（标量别名刻意不做：那会盖掉 `cmpss xmm, xmm, imm8` 的三操作数写法）。
+
+证据：`cmpltps XMM2, XMM1` → `0F C2 D1 01` 与上游注释逐字节相同，解析档 `llvm-mc` x86 `parsed` 35 → **36**（`no_prefix` 21 → 20），字节对拍 x86 `checked` 30 → **31**（`known` 仍 0）；四条指令进生成期自测与派生枚举器（x86 指令总数 271 → **275**、枚举器 1327 → **1351**，歧义名单未变）。
+
 ### Added (2026-10-04) — x86 内存形式的 `mov` 族（8/16/32 位）+ `movsxd`/`xchg` 的内存源形式
 
 真实汇编里最常见的 `mov eax, [rbx+8]`、`mov [rbx+8], eax` 在谱里**一条候选都没有**：已有的 `MOV_R_MEM` 系列 rm 引用的是 `reg` 槽（`[{src}]` 简写——那是给 IR 降级用的 **vreg 基址**，没有位移/索引/尺寸前缀），而 `MOV64_RM`/`MOV64_MR` 固定 `opsize = 64`（且带 `stack_arg_*` 角色，不能动）。补 6 条内存形式指令：

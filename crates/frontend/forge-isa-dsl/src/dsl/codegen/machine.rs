@@ -817,16 +817,19 @@ pub(crate) fn gen_disasm(_infos: &[InstInfo]) -> Result<TokenStream, String> {
 
 // ─────────────────────── TargetAssembler ───────────────────────
 
-/// `[[pseudo]]` 的展开助手（v18 S3e）。
+/// `[[pseudo]]` 的展开助手（v18 S3e；v20 V10 按 `asm` 模板切实参）。
 ///
 /// 生成两个函数：
 ///
-/// - `__pseudo_expand(line, depth, out)`：行首词命中某个伪指令名 ⇒ 按 `params` 位置
-///   切分实参、逐行把 `{参数}` 替换成实参文本 push 进 `out`，返回 `true`；不是伪指令
-///   返回 `false`。展开出的行**递归**再判一次（emit 行可以是别的伪指令），
-///   深度上限 16（自引用即报错，不会栈溢出）。
-/// - `__split_args(s)`：**顶层**逗号切分（`()`/`[]` 内的逗号不算——`li x1, (a + b)`
-///   与 `lw x1, [x2, #4]` 都按 2 个参数切）。
+/// - `__pseudo_expand(line, depth, out)`：行首**整词**命中某个伪指令名 ⇒ 按该伪指令的
+///   `asm` 模板（`li {rd}, {imm}`）切实参、逐行把 `{参数}` 替换成实参文本 push 进 `out`，
+///   返回 `true`；不是伪指令返回 `false`。展开出的行**递归**再判一次（emit 行可以是
+///   别的伪指令），深度上限 16（自引用即报错，不会栈溢出）。
+/// - `__cut` / `__cut_ws` / `__split_args`：模板字面切分用的小助手。
+///
+/// **切参不是"按逗号位置猜"**：字面段（`, `、`(`、`)`…）是模板写死的，缺一个/多一段/
+/// 尾部多东西都**当场报错并回显写法**（`伪指令 'li' 的写法是 'li {rd}, {imm}'`），
+/// 与 `[[instructions]]` 的 asm 扫描同一套"照模板匹配"的直觉。
 ///
 /// 没有 `[[pseudo]]` 的 ISA 返回空 token（生成的代码与引入本能力之前逐字相同）。
 pub(crate) fn gen_pseudo_helpers(model: &IsaModel) -> TokenStream {
@@ -834,32 +837,128 @@ pub(crate) fn gen_pseudo_helpers(model: &IsaModel) -> TokenStream {
         return quote! {};
     }
     let mut arms: Vec<TokenStream> = Vec::new();
+    let mut need_ws = false;
     for p in &model.pseudo {
         let name_lit = syn::LitStr::new(&p.name, proc_macro2::Span::call_site());
-        let params_lit = syn::LitStr::new(&p.params.join(", "), proc_macro2::Span::call_site());
-        let n = p.params.len();
-        // 实参绑定：__a0..__a{n-1}
-        let binds: Vec<TokenStream> = (0..n)
-            .map(|i| {
-                let id = format_ident!("__a{i}");
-                quote! { let #id = args[#i].trim(); }
-            })
-            .collect();
-        // 每行 emit：String::from(模板) + 逐个参数 replace
+        let asm_lit = syn::LitStr::new(&p.asm, proc_macro2::Span::call_site());
+        let segs = match crate::dsl::codegen::asm::parse_named_template(&p.asm) {
+            Ok(s) => s,
+            // 校验期已经报过（这里保持生成不 panic：返回一个"永不命中"的臂）。
+            Err(_) => continue,
+        };
+        let params = crate::dsl::codegen::asm::named_params(&segs);
+        let n = params.len();
+        let params_lit = syn::LitStr::new(&params.join(", "), proc_macro2::Span::call_site());
+        // 段序：[Lit(mnemonic 段)] 之后 交替 占位 / 字面。
+        // 每个占位符的"分隔符" = 紧随其后的字面段（没有 = 吃掉剩下的全部）。
+        let mut ops: Vec<(String, usize, Option<&str>)> = Vec::new();
+        let mut cur: Option<(String, usize)> = None;
+        for seg in segs.iter().skip(1) {
+            match seg {
+                crate::dsl::codegen::asm::NamedSeg::Op(nm) => {
+                    let idx = params.iter().position(|x| x == nm).unwrap_or(0);
+                    cur = Some((nm.clone(), idx));
+                }
+                crate::dsl::codegen::asm::NamedSeg::Lit(l) => {
+                    if let Some((nm, idx)) = cur.take() {
+                        ops.push((nm, idx, Some(l.as_str())));
+                    }
+                }
+            }
+        }
+        if let Some((nm, idx)) = cur.take() {
+            ops.push((nm, idx, None));
+        }
+        // 捕获代码：每个占位符一段，最后一个若没有分隔符就吃掉剩下的全部。
+        let mut caps: Vec<TokenStream> = Vec::new();
+        let mut bound: Vec<bool> = vec![false; n];
+        for (k, (nm, idx, sep)) in ops.iter().enumerate() {
+            let id = format_ident!("__a{idx}");
+            let is_last = k + 1 == ops.len();
+            let cap = match sep {
+                // 模板末尾还有字面：最后一个占位符在它之前切，之后再校验余量。
+                Some(s) if !s.trim().is_empty() => {
+                    let lit = syn::LitStr::new(s.trim(), proc_macro2::Span::call_site());
+                    quote! {
+                        match __cut(__rest, #lit) {
+                            Some((a, b)) => { __rest = b; a.trim().to_string() }
+                            None => {
+                                return Err(format!(
+                                    "伪指令 '{}' 的写法是 '{}'：缺 '{}'",
+                                    #name_lit, #asm_lit, #lit
+                                ));
+                            }
+                        }
+                    }
+                }
+                // 纯空白分隔符：按第一段空白切。
+                Some(_) => {
+                    need_ws = true;
+                    quote! {
+                        match __cut_ws(__rest) {
+                            Some((a, b)) => { __rest = b; a.trim().to_string() }
+                            None => {
+                                return Err(format!(
+                                    "伪指令 '{}' 的写法是 '{}'：这里需要空白分隔",
+                                    #name_lit, #asm_lit
+                                ));
+                            }
+                        }
+                    }
+                }
+                // 模板最后一个占位符：吃掉剩下的全部（多一个逗号 = 参数多了）。
+                None => {
+                    if !is_last {
+                        continue;
+                    }
+                    quote! {
+                        {
+                            let __v = __rest.trim().to_string();
+                            __rest = "";
+                            if __split_args(&__v).len() > 1 {
+                                return Err(format!(
+                                    "伪指令 '{}' 需要 {} 个参数（{}），实际多了逗号",
+                                    #name_lit, #n, #params_lit,
+                                ));
+                            }
+                            __v
+                        }
+                    }
+                }
+            };
+            if bound[*idx] {
+                // 同一个名字在模板里出现多次：文本必须一致（`li {x}, {x}` 这种写法）。
+                let dup_lit = syn::LitStr::new(nm, proc_macro2::Span::call_site());
+                caps.push(quote! {
+                    {
+                        let __d = #cap;
+                        if __d != #id {
+                            return Err(format!(
+                                "伪指令 '{}' 的写法是 '{}'：'{}' 前后两次写得不一样（'{}' vs '{}'）",
+                                #name_lit, #asm_lit, #dup_lit, #id, __d,
+                            ));
+                        }
+                    }
+                });
+            } else {
+                bound[*idx] = true;
+                caps.push(quote! { let #id = #cap; });
+            }
+        }
+        // 每行 emit：String::from(模板) + 逐个参数 replace（按名字绑定，不依赖位置）。
         let emits: Vec<TokenStream> = p
             .emit
             .iter()
             .map(|line| {
                 let lit = syn::LitStr::new(line.trim(), proc_macro2::Span::call_site());
-                let reps: Vec<TokenStream> = p
-                    .params
+                let reps: Vec<TokenStream> = params
                     .iter()
                     .enumerate()
                     .map(|(i, a)| {
                         let ph =
                             syn::LitStr::new(&format!("{{{a}}}"), proc_macro2::Span::call_site());
                         let id = format_ident!("__a{i}");
-                        quote! { __l = __l.replace(#ph, #id); }
+                        quote! { __l = __l.replace(#ph, #id.as_str()); }
                     })
                     .collect();
                 quote! {
@@ -873,21 +972,41 @@ pub(crate) fn gen_pseudo_helpers(model: &IsaModel) -> TokenStream {
             .collect();
         arms.push(quote! {
             if head == #name_lit {
-                let args = __split_args(rest);
-                if args.len() != #n {
+                let mut __rest = rest;
+                #(#caps)*
+                if !__rest.trim().is_empty() {
                     return Err(format!(
-                        "伪指令 '{}' 需要 {} 个参数（{}），实际 {}",
-                        #name_lit, #n, #params_lit, args.len()
+                        "伪指令 '{}' 的写法是 '{}'：尾部多出 '{}'",
+                        #name_lit, #asm_lit, __rest.trim(),
                     ));
                 }
-                #(#binds)*
                 #(#emits)*
                 return Ok(true);
             }
         });
     }
+    let cut_ws = if need_ws {
+        quote! {
+            /// 按**第一段空白**切（模板里纯空白分隔符的形态）。
+            fn __cut_ws(s: &str) -> Option<(&str, &str)> {
+                let i = s.find(char::is_whitespace)?;
+                Some((&s[..i], s[i..].trim_start()))
+            }
+        }
+    } else {
+        quote! {}
+    };
     quote! {
+        /// 在 `s` 里找**第一次出现**的字面段 `lit`，切成 (前段, 后段)。
+        fn __cut<'a>(s: &'a str, lit: &str) -> Option<(&'a str, &'a str)> {
+            let i = s.find(lit)?;
+            Some((&s[..i], &s[i + lit.len()..]))
+        }
+
+        #cut_ws
+
         /// 顶层逗号切分（尊重 `()`/`[]`：`li x1, (a + b)`、`lw x1, [x2, #4]` 都算 2 段）。
+        /// 只用于"最后一个实参里有没有多逗号"这一个校验。
         fn __split_args(s: &str) -> Vec<String> {
             let mut out: Vec<String> = Vec::new();
             let mut depth = 0i32;
@@ -947,8 +1066,14 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                     .map_err(|e| line_err(AsmError::Other(e)))?
                 {
                     for __pl in &__plines {
-                        let (inst, syms) =
-                            __assemble(__pl).map_err(|e| line_err(AsmError::Other(e)))?;
+                        // 展开行的失败要**点名是哪一行展开出来的**：实参本身有问题时
+                        // （`li x10, 0x1234 junk`）错误来自展开后的表达式，光看 "no matching
+                        // instruction" 无从下手。
+                        let (inst, syms) = __assemble(__pl).map_err(|e| {
+                            line_err(AsmError::Other(format!(
+                                "伪指令展开行 '{__pl}' 汇编失败：{e}"
+                            )))
+                        })?;
                         __offset += encode(&inst)
                             .map_err(|e| line_err(AsmError::Other(e)))?
                             .len() as u64;

@@ -167,6 +167,132 @@ fn validate_segs(segs: &[Seg], info: &InstInfo) -> Result<(), String> {
     Ok(())
 }
 
+/// 命名占位模板（`[[pseudo]].asm`）的段：`{名字}` 是**参数名**，不是操作数序号。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum NamedSeg {
+    Lit(String),
+    Op(String),
+}
+
+/// 解析命名占位模板（`"li {rd}, {imm}"`）→ 段序列。
+///
+/// 与操作数模板（[`parse_template`]，占位符是**序号**、由 `ops` 声明序规范化后进来）
+/// 分开：伪指令的 `asm` 是**这条伪指令自己的书写规范**，占位符就是**参数名**——
+/// 它是 `emit` 里 `{名字}` 的唯一来源（不再有第二份 `params` 清单可与它漂移）。
+pub(crate) fn parse_named_template(tpl: &str) -> Result<Vec<NamedSeg>, String> {
+    if tpl.trim().is_empty() {
+        return Err("empty asm template".into());
+    }
+    let mut segs: Vec<NamedSeg> = Vec::new();
+    let mut lit = String::new();
+    let mut chars = tpl.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '{' => {
+                let mut inner = String::new();
+                let mut closed = false;
+                for d in chars.by_ref() {
+                    if d == '}' {
+                        closed = true;
+                        break;
+                    }
+                    inner.push(d);
+                }
+                if !closed {
+                    return Err(format!("unterminated '{{' in asm template '{tpl}'"));
+                }
+                let name = inner.trim().to_string();
+                if name.is_empty() {
+                    return Err(format!("empty placeholder '{{}}' in asm template '{tpl}'"));
+                }
+                if !lit.is_empty() {
+                    segs.push(NamedSeg::Lit(std::mem::take(&mut lit)));
+                }
+                segs.push(NamedSeg::Op(name));
+            }
+            '}' => return Err(format!("stray '}}' in asm template '{tpl}'")),
+            _ => lit.push(c),
+        }
+    }
+    if !lit.is_empty() {
+        segs.push(NamedSeg::Lit(lit));
+    }
+    if segs.is_empty() {
+        return Err(format!("empty asm template '{tpl}'"));
+    }
+    Ok(segs)
+}
+
+/// 模板里的参数名（**按首次出现序**、去重）——`[[pseudo]]` 的参数表就长在这里。
+pub(crate) fn named_params(segs: &[NamedSeg]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for s in segs {
+        if let NamedSeg::Op(n) = s
+            && !out.iter().any(|x| x == n)
+        {
+            out.push(n.clone());
+        }
+    }
+    out
+}
+
+/// 命名模板的形状校验：首段必须是**助记符字面**、字面段非空、占位符之间要有字面分隔。
+///
+/// `name` = `[[pseudo]].name`（与 `[[instructions]].name` 一样就是这条写法的首字面）；
+/// `ci` = `[meta].mnemonic_case` 是否大小写不敏感。
+pub(crate) fn validate_named_template(
+    segs: &[NamedSeg],
+    name: &str,
+    ci: bool,
+) -> Result<(), String> {
+    let first = match segs.first() {
+        Some(NamedSeg::Lit(l)) => l,
+        _ => {
+            return Err(format!(
+                "asm 模板必须以助记符 '{name}' 开头（模板以占位符开头就没有可匹配的助记符）"
+            ));
+        }
+    };
+    let head = first.split_whitespace().next().unwrap_or("");
+    let eq = if ci {
+        head.eq_ignore_ascii_case(name)
+    } else {
+        head == name
+    };
+    if !eq {
+        return Err(format!(
+            "asm 模板的首字面是 '{head}'，与 name = '{name}' 不一致——\
+             伪指令按 name 分派，两者必须同一个词"
+        ));
+    }
+    if first.split_whitespace().nth(1).is_some() {
+        return Err(format!(
+            "asm 模板的首段 '{first}' 在助记符之后还有字面——\
+             伪指令按**整词**分派（首词 = name），首段只能是那个词（其余走占位符/分隔符）"
+        ));
+    }
+    let mut prev_op = false;
+    for seg in segs.iter().skip(1) {
+        match seg {
+            NamedSeg::Lit(l) => {
+                if l.is_empty() {
+                    return Err("asm 模板里有空字面段".into());
+                }
+                prev_op = false;
+            }
+            NamedSeg::Op(_) => {
+                if prev_op {
+                    return Err(
+                        "asm 模板里两个占位符相邻——中间至少要有一个字面分隔符（否则切不开）".into(),
+                    );
+                }
+                prev_op = true;
+            }
+        }
+    }
+    Ok(())
+}
+
 // ─────────────────────────────── assemble ───────────────────────────────
 //
 // 汇编器重写（换血式）：**token 化解析 + 类型签名自动分发**。

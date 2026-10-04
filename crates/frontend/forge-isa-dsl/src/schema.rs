@@ -276,11 +276,11 @@ pub const SECTIONS: &[Section] = &[
     Section {
         path: "[[pseudo]]",
         model: "PseudoDef",
-        required: &["name", "params", "emit"],
+        required: &["name", "asm", "emit"],
         optional: &["only_variants"],
         flatten: &[],
         additional: false,
-        doc: "汇编器伪指令：文本级多指令展开（v18 S3e）",
+        doc: "汇编器伪指令：文本级多指令展开（v18 S3e）；`asm` 是写法规范，`{名字}` 就是 emit 用的参数",
     },
     Section {
         path: "[[lowering]]",

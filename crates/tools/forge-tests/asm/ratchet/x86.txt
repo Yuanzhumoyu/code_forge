@@ -18,8 +18,8 @@ corpus_only = 3
 [suite llvm-mc]
 files = 2
 lines = 447
-parsed = 35
-no_prefix = 21
+parsed = 36
+no_prefix = 20
 tail_mismatch = 55
 corpus_only = 336
 # mismatch: apx-rex2-format-intel.s:7	mov	r16d, 1	line 1: no matching instruction

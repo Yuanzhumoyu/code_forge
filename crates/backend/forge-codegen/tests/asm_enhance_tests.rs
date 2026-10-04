@@ -442,6 +442,84 @@ fn memory_mov_family_round_trips() {
     }
 }
 
+// ─────────────────── SSE 比较谓词（`0F C2 /r ib`）与经典别名 ───────────────────
+
+/// 谓词立即数本体（`ps`/`pd`/`ss`/`sd` 靠**强制前缀**区分）与经典八谓词的 packed 别名
+/// （`[[pseudo]]` 文本展开成一条 `cmpps/cmppd`，不新增指令、不加第二套分派）。
+#[test]
+fn sse_compare_predicates() {
+    // 本体：0F C2 /r ib
+    assert_eq!(
+        x86_bytes("cmpps xmm2, xmm1, 1\n"),
+        vec![0x0f, 0xc2, 0xd1, 0x01]
+    );
+    assert_eq!(
+        x86_bytes("cmppd xmm2, xmm1, 1\n"),
+        vec![0x66, 0x0f, 0xc2, 0xd1, 0x01]
+    );
+    assert_eq!(
+        x86_bytes("cmpss xmm2, xmm1, 1\n"),
+        vec![0xf3, 0x0f, 0xc2, 0xd1, 0x01]
+    );
+    assert_eq!(
+        x86_bytes("cmpsd xmm2, xmm1, 1\n"),
+        vec![0xf2, 0x0f, 0xc2, 0xd1, 0x01]
+    );
+    // 别名就是同一条指令——`asm/parse/x86/llvm-mc/intel-syntax-encoding.s` 的
+    // `cmpltps XMM2, XMM1` 期望字节正是 `0F C2 D1 01`
+    assert_eq!(
+        x86_bytes("cmpltps XMM2, XMM1\n"),
+        vec![0x0f, 0xc2, 0xd1, 0x01]
+    );
+    // 八谓词各编出各自的立即数
+    let mut seen = std::collections::BTreeSet::new();
+    for (name, pred) in [
+        ("cmpeqps", 0u8),
+        ("cmpltps", 1),
+        ("cmpleps", 2),
+        ("cmpunordps", 3),
+        ("cmpneqps", 4),
+        ("cmpnltps", 5),
+        ("cmpnleps", 6),
+        ("cmpordps", 7),
+    ] {
+        let got = x86_bytes(&format!("{name} xmm2, xmm1\n"));
+        assert_eq!(got, vec![0x0f, 0xc2, 0xd1, pred], "{name}");
+        assert!(seen.insert(got), "{name} 的字节与别的别名撞了");
+    }
+    assert_eq!(
+        x86_bytes("cmpordpd xmm2, xmm1\n"),
+        vec![0x66, 0x0f, 0xc2, 0xd1, 0x07]
+    );
+    // 别名不会吃掉 `cmp`（整词命中）：`cmp eax, ebx` 仍是 `39 D8`
+    assert_eq!(x86_bytes("cmp eax, ebx\n"), vec![0x39, 0xd8]);
+}
+
+/// 谓词指令的编解码闭环：解码吃满、重编码逐字节相同、反汇编回**本体**写法。
+#[test]
+fn sse_compare_round_trips() {
+    use forge_codegen::x86::{decode, disassemble, encode};
+    for (asm, want) in [
+        ("cmpltps XMM2, XMM1", vec![0x0f, 0xc2, 0xd1, 0x01]),
+        ("cmppd xmm2, xmm1, 7", vec![0x66, 0x0f, 0xc2, 0xd1, 0x07]),
+        ("cmpss xmm3, xmm4, 3", vec![0xf3, 0x0f, 0xc2, 0xdc, 0x03]),
+    ] {
+        let inst = forge_codegen::x86::assemble(asm).unwrap_or_else(|e| panic!("{asm}: {e}"));
+        assert_eq!(encode(&inst).unwrap(), want, "{asm}");
+        let (back, used) = decode(&want).unwrap_or_else(|| panic!("decode `{asm}` 失败"));
+        assert_eq!(used, want.len(), "{asm} 解码未吃满");
+        assert_eq!(encode(&back).unwrap(), want, "{asm} 往返字节变了");
+        let text = disassemble(&back);
+        assert!(
+            text.starts_with("cmpps")
+                || text.starts_with("cmppd")
+                || text.starts_with("cmpss")
+                || text.starts_with("cmpsd"),
+            "{asm} 反汇编应给本体写法：{text}"
+        );
+    }
+}
+
 // ─────────────────── [[pseudo]] 伪指令展开（S3e）───────────────────
 
 fn rv_words(src: &str) -> Vec<u32> {
@@ -475,14 +553,34 @@ fn pseudo_li_expands_to_lui_addi() {
     assert_eq!(rv_words("li x10, 0x1234\nnop\n").len(), 3);
 }
 
-/// 参数个数不符 / 单条 API 装不下多条展开 ⇒ 明确报错。
+/// 新版 `[[pseudo]]`（`asm` 声明形态）：切参按**模板字面**走，写法不符/参数不对
+/// ⇒ 报错**回显写法**；展开行自己装配失败时点名是哪一行展开出来的。
 #[test]
-fn pseudo_errors_are_explicit() {
+fn pseudo_asm_template_is_matched_and_reported() {
     let asm = forge_codegen::riscv64::Assembler;
-    let err = asm.parse_insts("li a0\n").unwrap_err();
-    let msg = format!("{err}");
+    // 合法写法：逗号两侧空格随意（`li x10,0x1234` 也认），表达式实参保原样
+    for src in ["li x10, 0x1234", "li x10 , 0x1234", "li x10,0x1234"] {
+        let n = asm
+            .parse_insts(src)
+            .unwrap_or_else(|e| panic!("{src}: {e}"));
+        assert_eq!(n.len(), 2, "{src} 应展开成两条");
+    }
+    // 缺分隔符 ⇒ 报错并给出写法
+    let msg = format!("{}", asm.parse_insts("li a0").unwrap_err());
+    assert!(
+        msg.contains("伪指令 'li' 的写法是 'li {rd}, {imm}'"),
+        "msg: {msg}"
+    );
+    assert!(msg.contains("缺 ','"), "msg: {msg}");
+    // 多一个参数（最后一个实参里多逗号）
+    let msg = format!("{}", asm.parse_insts("li x10, 1, 2").unwrap_err());
     assert!(msg.contains("需要 2 个参数"), "msg: {msg}");
-
+    assert!(msg.contains("多了逗号"), "msg: {msg}");
+    // 展开行自己装配失败 ⇒ 点名展开后的那一行（否则只有 "no matching instruction"）
+    let msg = format!("{}", asm.parse_insts("li x10, 0x1234 junk").unwrap_err());
+    assert!(msg.contains("伪指令展开行"), "msg: {msg}");
+    assert!(msg.contains("lui x10"), "msg: {msg}");
+    // 单条 API 装不下多条展开 ⇒ 指引改用 parse_insts
     let err = forge_codegen::riscv64::assemble("li x10, 0x1234").unwrap_err();
     assert!(
         err.contains("parse_insts"),

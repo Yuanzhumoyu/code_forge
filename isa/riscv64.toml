@@ -1461,7 +1461,7 @@ slot = "imm12"
 # 这里被编成 imm20=0 —— 真实语料的字节对拍抓到了它（上游 `37 25 00 00`）。
 [[pseudo]]
 name = "li"
-params = ["rd", "imm"]
+asm = "li {rd}, {imm}"
 emit = [
     "lui {rd}, (({imm} + 0x800) >> 12)",
     "addi {rd}, {rd}, ((({imm} + 0x800) & 0xfff) - 0x800)",

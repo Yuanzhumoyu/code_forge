@@ -59,7 +59,7 @@ fn derived_insts_roundtrip_byte_stable() {
     let x86 = roundtrip_of!("x86", crate::arch::x86::x86);
     let riscv = roundtrip_of!("riscv64", crate::arch::riscv64::riscv64);
     let arm64 = roundtrip_of!("arm64", crate::arch::arm64::arm64);
-    assert!(x86 >= 271, "x86 枚举器条目 {x86} < 指令总数 271");
+    assert!(x86 >= 275, "x86 枚举器条目 {x86} < 指令总数 275");
     assert!(riscv >= 119, "riscv64 枚举器条目 {riscv} < 指令总数 119");
     assert!(arm64 >= 110, "arm64 枚举器条目 {arm64} < 指令总数 110");
     // 实测条目数（2026-09-24）：x86 **602** / riscv64 **327** / arm64 **360**——
@@ -76,9 +76,12 @@ fn derived_insts_roundtrip_byte_stable() {
     //   `MOV_R_MEM_AUTO`/`STORE_MEM_R_AUTO` 带 `gpr24` 的 2/4 字节两个宽度视图 + 高低
     //   寄存器视图 + 内存的 disp/index 风味；`MOV_R_MEM_8_AUTO`/`STORE_MEM_R_8_AUTO`
     //   同理带一个高低视图；`MOVSXD_R_MEM`/`XCHG_MEM_R_AUTO` 各带自己的视图与风味）。
+    // 2026-10-04（v20 V10 第八批）：1327 → **1351**（SSE 比较谓词 4 条
+    //   `CMPPS`/`CMPPD`/`CMPSS`/`CMPSD_SCALAR`：各带 fpr 槽的宽度视图 + 立即数边界风味；
+    //   16 条谓词别名是 `[[pseudo]]` 文本展开，不进枚举器）。
     assert_eq!(
         (x86, riscv, arm64),
-        (1327, 341, 360),
+        (1351, 341, 360),
         "枚举器条目数变了：确认是谱的预期变更还是派生逻辑退化"
     );
 }
