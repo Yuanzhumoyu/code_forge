@@ -70,7 +70,7 @@ ptr = "gpr1"
 name = "a8"
 kind = "reg"
 class = "gpr1"
-roles = ["in", "out"]
+roles = "inout"
 
 [[operand_slots]]
 name = "lab"

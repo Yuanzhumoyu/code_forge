@@ -188,7 +188,7 @@ effects = ["rex"]
 name = "gpr"
 kind = "reg"
 class = "gpr8"
-roles = ["in", "out", "inout"]
+roles = "inout"
 
 [[operand_slots]]
 name = "gprx"
@@ -198,7 +198,7 @@ kind = "reg"
 # 显式排除 8 位（gpr1）：8 位 mov 是不同 opcode（88 vs 8B），应声明为
 # 独立 form 而非经由 gprx 误编码（garbage 防护）。
 classes = ["gpr2", "gpr4", "gpr8"]
-roles = ["in", "out", "inout"]
+roles = "inout"
 
 # 16/32 位（2/4 字节）——**不含 64 位**：64 位的内存 mov 是 ABI 的
 # `MOV64_RM`/`MOV64_MR`（`opsize = 64` 固定，带 `stack_arg_*` 角色），
@@ -207,7 +207,7 @@ roles = ["in", "out", "inout"]
 name = "gpr24"
 kind = "reg"
 classes = ["gpr2", "gpr4"]
-roles = ["in", "out", "inout"]
+roles = "inout"
 
 # 「8 位**字段**、64 位**名字**」的槽（v20 V10 加注）：SETCC 的 rm 是 8 位寄存器，
 # 但 lowering 用的是承接布尔结果的 64 位 vreg（`xor {out}, {out}` 先清零，故低字节
@@ -218,14 +218,14 @@ name = "gpr8"
 kind = "reg"
 class = "gpr8"
 byte_reg = true
-roles = ["in", "out", "inout"]
+roles = "inout"
 
 # 16 位寄存器操作数（movzx/movsx 16 位源等）
 [[operand_slots]]
 name = "gpr2"
 kind = "reg"
 class = "gpr2"
-roles = ["in", "out"]
+roles = "inout"
 
 
 [[operand_slots]]
@@ -236,25 +236,25 @@ kind = "reg"
 class = "gpr1"
 byte_reg = true
 # `inout` = 8 位 ALU 的读改写（`add al, imm8` / `add byte ptr […], dl`）。
-roles = ["in", "out", "inout"]
+roles = "inout"
 [[operand_slots]]
 name = "fpr"
 kind = "reg"
 class = "fpr16"
-roles = ["in", "out", "inout"]
+roles = "inout"
 
 
 [[operand_slots]]
 name = "fpr32"
 kind = "reg"
 class = "fpr32"
-roles = ["in", "out"]
+roles = "inout"
 
 [[operand_slots]]
 name = "kreg"
 kind = "reg"
 class = "kreg8"
-roles = ["in", "out"]
+roles = "inout"
 
 [[operand_slots]]
 name = "imm32"
@@ -305,7 +305,7 @@ width = 64
 name = "gpr4"
 kind = "reg"
 class = "gpr4"
-roles = ["in", "out", "inout"]
+roles = "inout"
 
 [[operand_slots]]
 name = "rel"

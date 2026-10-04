@@ -34,7 +34,7 @@ funct3 = { offset = 12, width = 3 }
 name = "gpr"
 kind = "reg"
 class = "gpr8"
-roles = ["in", "out"]
+roles = "inout"
 
 [[operand_slots]]
 name = "imm12"

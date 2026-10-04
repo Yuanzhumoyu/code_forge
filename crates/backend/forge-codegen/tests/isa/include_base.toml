@@ -15,7 +15,7 @@ rs1 = { offset = 4, width = 4 }
 name = "r"
 kind = "reg"
 class = "gpr4"
-roles = ["in", "out"]
+roles = "inout"
 
 [[forms]]
 name = "RR"

@@ -37,13 +37,13 @@ funct7 = { offset = 25, width = 7 }
 name = "r32"
 kind = "reg"
 class = "gpr4"
-roles = ["in", "out"]
+roles = "inout"
 
 [[operand_slots]]
 name = "r64"
 kind = "reg"
 class = "gpr8"
-roles = ["in", "out"]
+roles = "inout"
 
 [[operand_slots]]
 name = "imm12"

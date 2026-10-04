@@ -67,19 +67,19 @@ word   = { offset = 0,  width = 32 }
 name = "r16"
 kind = "reg"
 class = "gpr2"
-roles = ["in", "out"]
+roles = "inout"
 
 [[operand_slots]]
 name = "r32"
 kind = "reg"
 class = "gpr4"
-roles = ["in", "out"]
+roles = "inout"
 
 [[operand_slots]]
 name = "r64"
 kind = "reg"
 class = "gpr8"
-roles = ["in", "out"]
+roles = "inout"
 
 [[operand_slots]]
 name = "lab"

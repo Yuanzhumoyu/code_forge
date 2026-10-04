@@ -35,7 +35,7 @@ funct7 = { offset = 25, width = 7 }
 name = "gpr"
 kind = "reg"
 class = "gpr8"
-roles = ["in", "out"]
+roles = "inout"
 
 [[operand_slots]]
 name = "imm12"
@@ -197,7 +197,7 @@ count = 8
 name = "rm"
 kind = "reg"
 class = "gpr"
-roles = ["inout"]
+roles = "inout"
 [[forms]]
 name = "RM"
 [[instructions]]
@@ -209,11 +209,8 @@ ops = ["dst:rm:inout", "src:rm"]
 asm = "add {dst}, {src}"
 "#;
     let m = parse_and_validate(doc).expect("valid");
-    // 槽能力声明：inout = 读改写
-    assert_eq!(
-        m.operand_slots[0].roles.as_deref(),
-        Some(&[OperandRole::InOut][..])
-    );
+    // 槽能力声明：inout = 读改写（一个 `OperandRole` 就够，不是集合）
+    assert_eq!(m.operand_slots[0].roles, Some(OperandRole::InOut));
     // 序列化往返保留 inout
     let text = toml::to_string(&m).expect("serialize");
     assert!(text.contains("inout"), "got: {text}");
@@ -1571,7 +1568,7 @@ rs1 = { offset = 11, width = 3 }
 name = "g"
 kind = "reg"
 class = "gpr4"
-roles = ["in", "out"]
+roles = "inout"
 [[forms]]
 name = "RR"
 opcode_field = "opcode"
@@ -2116,7 +2113,7 @@ rs1 = {{ offset = 11, width = 3 }}
 name = "g"
 kind = "reg"
 class = "gpr4"
-roles = ["in", "out"]
+roles = "inout"
 [[forms]]
 name = "RR"
 opcode_field = "opcode"
@@ -2236,7 +2233,7 @@ rs1 = {{ offset = 11, width = 3 }}
 name = "g"
 kind = "reg"
 class = "gpr4"
-roles = ["in", "out"]
+roles = "inout"
 [[forms]]
 name = "RR"
 opcode_field = "opcode"
@@ -2582,7 +2579,7 @@ count = 16
 name = "g"
 kind = "reg"
 class = "gpr8"
-roles = ["in", "out"]
+roles = "inout"
 [[instructions]]
 name = "MOVQ_REV"
 modrm = { reg = "src", rm = "dst" }
@@ -2615,7 +2612,7 @@ count = 16
 name = "g"
 kind = "reg"
 class = "gpr8"
-roles = ["in", "out"]
+roles = "inout"
 [[forms]]
 name = "MRR"
 modrm = { reg = "dst", rm = "src" }
@@ -2686,7 +2683,7 @@ count = 16
 name = "gx"
 kind = "reg"
 class = "gpr8"
-roles = ["in", "out", "inout"]
+roles = "inout"
 [[instructions]]
 name = "ADD_RM_R"
 modrm = { reg = "src", rm = "dst" }
@@ -2766,7 +2763,7 @@ count = 16
 name = "gx"
 kind = "reg"
 class = "gpr8"
-roles = ["in", "out", "inout"]
+roles = "inout"
 [[instructions]]
 name = "I"
 modrm = {{ reg = "a", rm = "a" }}
@@ -2837,7 +2834,7 @@ count = 16
 name = "gx"
 kind = "reg"
 class = "gpr8"
-roles = ["in", "out", "inout"]
+roles = "inout"
 [[instructions]]
 name = "I"
 {modrm}
@@ -2863,7 +2860,7 @@ count = 16
 name = "gx"
 kind = "reg"
 class = "gpr8"
-roles = ["in", "out", "inout"]
+roles = "inout"
 [[instructions]]
 name = "I"
 modrm = { reg = "dst", rm = "src" }
@@ -3311,7 +3308,7 @@ names = ["A0", "A1", "A2", "A3"]
 name = "a8"
 kind = "reg"
 class = "gpr1"
-roles = ["in", "out"]
+roles = "inout"
 [[instructions]]
 name = "MOV8"
 form = "RR"
@@ -3373,7 +3370,7 @@ count = 4
 name = "g"
 kind = "reg"
 class = "gpr8"
-roles = ["in", "out"]
+roles = "inout"
 "#;
     let m = parse_and_validate(doc).expect("合法");
     assert_eq!(m.main_gpr_class().unwrap(), RegClass::GPR(8));
@@ -3412,7 +3409,7 @@ count = 8
 name = "f"
 kind = "reg"
 class = "fpr4"
-roles = ["in", "out"]
+roles = "inout"
 "#;
     let msg = validation_msg(doc);
     assert!(msg.contains("GPR"), "msg: {msg}");
@@ -3475,7 +3472,7 @@ rs1 = {{ offset = 11, width = 3 }}
 name = "g"
 kind = "reg"
 class = "gpr8"
-roles = ["in", "out"]
+roles = "inout"
 [[instructions]]
 name = "NOP"
 form = "W"
@@ -3709,7 +3706,7 @@ op = {{ offset = 0, width = {op_w} }}
 name = "g"
 kind = "reg"
 class = "gpr4"
-roles = ["in", "out"]
+roles = "inout"
 [[forms]]
 name = "W"
 opcode_field = "op"
@@ -3770,7 +3767,7 @@ op = { offset = 0, width = 8 }
 name = "g"
 kind = "reg"
 class = "gpr4"
-roles = ["in", "out"]
+roles = "inout"
 [[forms]]
 name = "W"
 opcode_field = "op"
@@ -3811,7 +3808,7 @@ lab = {{ offset = 8, width = 4 }}
 name = "g"
 kind = "reg"
 class = "gpr4"
-roles = ["in", "out"]
+roles = "inout"
 [[operand_slots]]
 name = "l"
 kind = "label"
@@ -3865,7 +3862,7 @@ word = {{ offset = 0, width = 12 }}
 name = "g"
 kind = "reg"
 class = "gpr4"
-roles = ["in", "out"]
+roles = "inout"
 [[forms]]
 name = "W"
 opcode_field = "word"

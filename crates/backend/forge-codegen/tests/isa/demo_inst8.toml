@@ -58,7 +58,7 @@ word = { offset = 0, width = 8 }   # 全字（nop 的常量匹配）
 name = "r2"
 kind = "reg"
 class = "gpr1"
-roles = ["in", "out"]
+roles = "inout"
 
 [[operand_slots]]
 name = "lab"

@@ -653,7 +653,7 @@ kind = "reg"                   # reg / imm / mem / label / cond
 class = "gpr"                  # reg：所属 [reg.*] 组；省略 → 多态槽（宽度由实际寄存器推导）
 # classes = ["gpr8", "gpr16"]  # 多宽度/多类型集合（class 是单元素糖；两者皆无 = 任意寄存器类）
 byte_reg = true                # 可选：8 位寄存器操作数（spl/bpl/sil/dil 无 REX 时编码 ah/ch/dh/bh）
-roles = ["in", "out"]          # 缺省 ["in"]；"inout" = 读改写（in 且 out）
+roles = "inout"                # 不写 = 不限制；一个 OperandRole 就够（inout 涵盖 in 与 out）
 
 [[operand_slots]]
 name = "imm32"

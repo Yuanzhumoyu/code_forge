@@ -60,7 +60,7 @@ rs2 = { offset = 4,  width = 4 }   # 源寄存器 2
 name = "r4"
 kind = "reg"
 class = "gpr1"
-roles = ["in", "out"]
+roles = "inout"
 
 # ─────────────────────────── 编码形式 ───────────────────────────
 

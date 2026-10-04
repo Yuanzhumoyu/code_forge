@@ -1245,9 +1245,15 @@ pub struct OperandSlot {
     /// 超出 W 位**仍然报错**（不静默截断/掩码）。
     #[serde(default)]
     pub wrap: Option<bool>,
-    /// 该槽可承担的角色；缺省 ["in"]。"inout" = 读改写（in 且 out）。
+    /// 该槽可承担的角色；**不写 = 不限制**（任何方向的操作数都能用这个槽）。
+    ///
+    /// **一个 [`OperandRole`] 就够，不需要集合**：`inout`（读改写）在语义上已经涵盖
+    /// `in` 与 `out`，旧的 `["in", "out"]` / `["in", "out", "inout"]` 与 `"inout"` 是
+    /// 同一件事的三种拼法（前两种都得靠"把 inout 也列出来"才能接受读改写操作数）。
+    /// 判定口径：声明 `inout` 的槽接受 `in`/`out`/`inout` 三种操作数声明，声明 `in` 的
+    /// 槽只接受 `in`，声明 `out` 的槽只接受 `out`。
     #[serde(default)]
-    pub roles: Option<Vec<OperandRole>>,
+    pub roles: Option<OperandRole>,
 }
 
 impl OperandSlot {

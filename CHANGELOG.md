@@ -11,6 +11,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-04) — `[[operand_slots]].roles` 由列表改为**一个** `OperandRole`（破坏性）
+
+槽的角色声明从 `roles = ["in", "out"]` 改成 `roles = "inout"`——**一个 `OperandRole` 就够**：
+`inout`（读改写）在语义上已经涵盖 `in` 与 `out`，旧的三种拼法
+（`["in"]` / `["in", "out"]` / `["in", "out", "inout"]`）里后两种是同一件事，而且
+`["in", "out"]` 还**接不住**读改写操作数（必须在集合里再补一个 `inout`）——那正是这次要
+消掉的冗余。
+
+- 判定口径：声明 `inout` 的槽接受 `in`/`out`/`inout` 三种操作数声明，声明 `in` 的槽只接受
+  `in`，声明 `out` 的槽只接受 `out`；**不写 = 不限制**（旧的 `roles` 缺省语义在代码里本就是
+  "不校验"，文档写"缺省 `["in"]`"是漂移，一并改正）。
+- 连带删掉两条只对集合有意义的校验（"roles 不能为空"/"角色不能重复"）。
+- 迁移：三份发行谱 + 7 份夹具 + `forge-isa-dsl` 内的 22 处字符串夹具，合计 45 处
+  （`docs/archive/**` 是历史记录，按仓库约定不动）。
+- 守卫照旧：`forge-isa-dsl` 全绿（含 `inout_role_parses` 改成断言 `Some(OperandRole::InOut)`）、
+  `schema_guard` 绿（schema 里该键只有描述、无类型，`isa-dsl.schema.json` 无需重生成）。
+
 ### Changed (2026-10-04) — 生成物落盘件改写成 prettyplease 规范形（可读 + 编辑器能解析）
 
 `isa_from_file!` 的落盘件（`$OUT_DIR/forge_gen_*.rs`）此前是**紧凑 token 文本**（x86 单行

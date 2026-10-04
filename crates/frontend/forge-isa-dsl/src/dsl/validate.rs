@@ -1562,17 +1562,8 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                 None => {}
             }
         }
-        if let Some(roles) = &s.roles {
-            if roles.is_empty() {
-                return Err(format!("{path}: roles must not be empty"));
-            }
-            let mut rseen = BTreeSet::new();
-            for r in roles {
-                if !rseen.insert(*r) {
-                    return Err(format!("{path}: duplicate role {r:?}"));
-                }
-            }
-        }
+        // `roles` 是**一个** `OperandRole`（`in`/`out`/`inout`），由类型系统保证不会是
+        // 空集合或重复项——旧写法 `["in", "out"]` 的两种检查随之删除。
     }
     Ok(())
 }
@@ -1779,19 +1770,19 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
             ));
         }
         if let Some(slot) = m.operand_slots.iter().find(|s| s.name == op.slot)
-            && let (Some(r), Some(roles)) = (op.role, &slot.roles)
+            && let (Some(r), Some(allowed)) = (op.role, slot.roles)
         {
-            // 兼容性：InOut 槽支持 in/out/inout（读改写能力的子集）；
-            // In 槽仅 in、Out 槽仅 out。
-            let ok = roles.iter().any(|x| match x {
+            // 槽声明的角色是**一个** `OperandRole`：`inout` 涵盖 in/out（读改写能力的
+            // 超集），`in` 槽仅 in、`out` 槽仅 out。
+            let ok = match allowed {
                 OperandRole::InOut => true,
                 OperandRole::In => r == OperandRole::In,
                 OperandRole::Out => r == OperandRole::Out,
-            });
+            };
             if !ok {
                 return Err(format!(
-                    "[[instructions.{}]]: operand role {:?} not allowed by slot '{}' roles {:?}",
-                    inst.name, r, op.slot, roles
+                    "[[instructions.{}]]: operand role {:?} not allowed by slot '{}' roles {allowed:?}",
+                    inst.name, r, op.slot
                 ));
             }
         }

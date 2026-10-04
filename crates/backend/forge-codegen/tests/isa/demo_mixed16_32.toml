@@ -56,7 +56,7 @@ imm12 = { offset = 13, width = 12 }  # 长编码立即数（[24:13]）
 name = "r"
 kind = "reg"
 class = "gpr4"
-roles = ["in", "out"]
+roles = "inout"
 
 [[operand_slots]]
 name = "i12"
