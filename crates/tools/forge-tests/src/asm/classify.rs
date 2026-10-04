@@ -15,7 +15,7 @@
 //! （`false` ⇒ 一定不是本 ISA 的指令），所以 `TailMismatch` 里的每一条都"本 ISA 有能
 //! 对上的开头"，值得逐条人工核对。
 
-use super::corpus::{Extracted, Line, Suite};
+use super::corpus::{Extracted, Line, Suite, with_prelude};
 
 /// 解析失败的粗分类：`UndefinedLabel` 是**上下文不足**（标签在别处），不是方言缺口。
 #[derive(Debug)]
@@ -77,7 +77,7 @@ pub fn classify_extracted(t: &dyn AsmTarget, ex: &Extracted, file: &str) -> File
                 r.tail_mismatch += 1;
                 if r.mismatch_samples.len() < 8 {
                     let ctx = format!("{}:{}\t{}", line.file, line.line_no, line.text);
-                    let err = match t.parse(&with_labels(ex, &line.text)) {
+                    let err = match t.parse(&with_prelude(ex, line.line_no, &line.text)) {
                         Err(ParseErr::Other(e)) => e,
                         _ => String::new(),
                     };
@@ -92,7 +92,7 @@ pub fn classify_extracted(t: &dyn AsmTarget, ex: &Extracted, file: &str) -> File
 
 /// 单行判定。
 pub fn classify_line(t: &dyn AsmTarget, ex: &Extracted, line: &Line) -> Bucket {
-    match t.parse(&with_labels(ex, &line.text)) {
+    match t.parse(&with_prelude(ex, line.line_no, &line.text)) {
         Ok(_) => Bucket::Parsed,
         // 标签在别的文件/别处 ⇒ 判"上下文不足"（记账，不当缺陷）。
         Err(ParseErr::UndefinedLabel) => Bucket::CorpusOnly,
@@ -104,14 +104,5 @@ pub fn classify_line(t: &dyn AsmTarget, ex: &Extracted, line: &Line) -> Bucket {
                 Bucket::NoPrefix
             }
         }
-    }
-}
-
-/// 把本文件的标签定义喂进去当上下文，解掉 `UndefinedLabel`。
-fn with_labels(ex: &Extracted, text: &str) -> String {
-    if ex.labels.is_empty() {
-        text.to_string()
-    } else {
-        format!("{}{text}", ex.labels)
     }
 }

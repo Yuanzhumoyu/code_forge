@@ -4,19 +4,19 @@
 [suite llvm-mc]
 files = 3
 lines = 503
-parsed = 72
+parsed = 82
 no_prefix = 38
-tail_mismatch = 31
-corpus_only = 362
-# mismatch: rv32i-valid.s:15	auipc a0, %pcrel_hi(foo)	line 2: no matching instruction
-# mismatch: rv32i-valid.s:25	lui a0, %hi(2)	line 2: no matching instruction
-# mismatch: rv32i-valid.s:31	lui s11, %hi(0x87000000)	line 2: no matching instruction
-# mismatch: rv32i-valid.s:42	lui a0, %hi(foo)	line 2: no matching instruction
-# mismatch: rv32i-valid.s:45	lui a0, CONST	line 2: no matching instruction
-# mismatch: rv32i-valid.s:48	lui a0, CONST+1	line 2: no matching instruction
-# mismatch: rv32i-valid.s:66	auipc a0, %pcrel_hi(foo)	line 2: no matching instruction
-# mismatch: rv32i-valid.s:69	auipc a0, CONST	line 2: no matching instruction
-# mismatch: rv64i-valid.s:14	lwu x2, +4(x3)	line 1: no matching instruction
-# mismatch: rv64i-valid.s:20	lwu x6, %lo(2048)(x7)	line 1: no matching instruction
-# mismatch: rv64i-valid.s:30	ld x12, %lo(2048)(x13)	line 1: no matching instruction
-# mismatch: rv64i-valid.s:40	sd x18, %lo(2048)(x19)	line 1: no matching instruction
+tail_mismatch = 22
+corpus_only = 361
+# mismatch: rv32i-valid.s:15	auipc a0, %pcrel_hi(foo)	line 3: no matching instruction
+# mismatch: rv32i-valid.s:25	lui a0, %hi(2)	line 3: no matching instruction
+# mismatch: rv32i-valid.s:31	lui s11, %hi(0x87000000)	line 3: no matching instruction
+# mismatch: rv32i-valid.s:42	lui a0, %hi(foo)	line 3: no matching instruction
+# mismatch: rv32i-valid.s:66	auipc a0, %pcrel_hi(foo)	line 3: no matching instruction
+# mismatch: rv32i-valid.s:88	jal a0, a0	line 3: no matching instruction
+# mismatch: rv32i-valid.s:102	jal zero, .	line 3: no matching instruction
+# mismatch: rv32i-valid.s:109	jalr a0, %lo(2048)(a1)	line 3: no matching instruction
+# mismatch: rv64i-valid.s:20	lwu x6, %lo(2048)(x7)	line 2: no matching instruction
+# mismatch: rv64i-valid.s:30	ld x12, %lo(2048)(x13)	line 2: no matching instruction
+# mismatch: rv64i-valid.s:40	sd x18, %lo(2048)(x19)	line 2: no matching instruction
+# mismatch: rv64i-valid.s:101	sllw s8, s9, s10	line 2: no matching instruction

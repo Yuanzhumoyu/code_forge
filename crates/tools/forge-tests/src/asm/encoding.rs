@@ -18,11 +18,13 @@
 //!
 //! # 怎么决定 3/4
 //!
-//! **不猜**：由 `Suite::encoding_sides` **逐文件声明**（`Before` = 注释在指令前，
+//! **不猜**：由 `Suite::encoding_sides` **逐段声明**（带起始行；`Before` = 注释在指令前，
 //! `After` = 注释在指令后）。同一目录里两种风格混着来（`arm64-branch-encoding.s`
-//! 是 After，riscv 与 x86 Intel 用例是 Before），任何"看第一条推断整篇"的启发式
-//! 都会在"首条指令没有期望注释"的文件上整体错位一条（实测 `rv32i-valid.s` 的
-//! 第 15 行 `.Lpcrel_hi0: auipc …` 就是这种情况）。
+//! 是 After，riscv 与 x86 Intel 用例是 Before），**同一个文件里也能中途换侧**
+//! （`intel-syntax-encoding.s` 从第 98 行起是 After）——任何"看第一条推断整篇"的启发式
+//! 会在"首条指令没有期望注释"的文件上整体错位一条（实测 `rv32i-valid.s` 的
+//! 第 15 行 `.Lpcrel_hi0: auipc …` 就是这种情况），而"整篇一个风格"的写法会在混排文件上
+//! 把期望字节配错指令（那条假差异比不配对更难查）。
 //!
 //! 绑定规则：`Before` ⇒ 注释绑给它下面**尚未配对**的第一条指令；`After` ⇒ 绑给它
 //! 上面**尚未配对**的最近一条指令（每条指令只吃一份期望）。
@@ -197,8 +199,7 @@ pub fn extract_cases(suite: &Suite, file: &str, src: &str) -> Extracted {
     }
     runs.push(cur);
 
-    // ── 注释在哪一侧：**逐文件声明**（`Suite::encoding_sides`），不猜 ──
-    let before = suite.encoding_side(file) == EncodingSide::Before;
+    // ── 注释在哪一侧：**逐段声明**（`Suite::encoding_sides`，带起始行），不猜 ──
 
     // ── 第二遍：绑定并产出 case ──
     let mut paired = vec![false; codes.len()];
@@ -221,7 +222,8 @@ pub fn extract_cases(suite: &Suite, file: &str, src: &str) -> Extracted {
             dropped += 1; // 前缀拆开的那几条：不猜
             continue;
         }
-        // 写法 3 / 4：只有字节的单条注释，按声明的侧绑到**尚未配对**的指令上。
+        // 写法 3 / 4：只有字节的单条注释，按**该行**声明的侧绑到**尚未配对**的指令上。
+        let before = suite.encoding_side(file, g.line_no) == EncodingSide::Before;
         let k = if before {
             codes
                 .iter()
@@ -270,10 +272,10 @@ mod tests {
         }
     }
 
-    /// 与 [`suite`] 同，但把"注释在指令后"逐文件声明出来（`arm64-branch-encoding.s` 那种）。
+    /// 与 [`suite`] 同，但把"注释在指令后"逐段声明出来（`arm64-branch-encoding.s` 那种）。
     fn suite_after() -> Suite {
         Suite {
-            encoding_sides: &[("after.s", EncodingSide::After)],
+            encoding_sides: &[("after.s", 1, EncodingSide::After)],
             ..suite()
         }
     }
@@ -345,6 +347,40 @@ and x0, x1, x2
                 ],
                 0
             )
+        );
+    }
+
+    /// **同一文件里混用两种风格**（`intel-syntax-encoding.s` 的尾部两条）：风格逐段声明，
+    /// 从 `from_line` 起换侧。整篇一个风格时 `[0x83,0xf8,0x02]`（= `cmp eax, 2`）会被配给
+    /// **后面**那条指令，凭空造出一条字节差异。
+    #[test]
+    fn style_switches_mid_file() {
+        let suite = Suite {
+            encoding_sides: &[("t.s", 4, EncodingSide::After)],
+            ..suite()
+        };
+        let src = "\
+// CHECK: encoding: [0xc3]
+\tret
+\tnop
+\tcmp eax, 2
+// CHECK: encoding: [0x83,0xf8,0x02]
+\tcmp eax, [eax+2]
+// CHECK: encoding: [0x67,0x3b,0x40,0x02]
+";
+        let e = extract_cases(&suite, "t.s", src);
+        let cases: Vec<_> = e
+            .cases
+            .into_iter()
+            .map(|c| (c.line_no, c.text, c.bytes))
+            .collect();
+        assert_eq!(
+            cases,
+            vec![
+                (2, "ret".into(), vec![0xc3]),
+                (4, "cmp eax, 2".into(), vec![0x83, 0xf8, 0x02]),
+                (6, "cmp eax, [eax+2]".into(), vec![0x67, 0x3b, 0x40, 0x02]),
+            ]
         );
     }
 

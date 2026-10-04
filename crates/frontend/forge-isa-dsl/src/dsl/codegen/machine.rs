@@ -93,6 +93,29 @@ pub(crate) fn gen_reg_enum(model: &IsaModel) -> Result<TokenStream, String> {
     let gpr_class = quote! { #gpr_main };
     let fpr_class = quote! { #fpr_main };
     let addr_toks = quote! { #addr_class };
+    // 地址尺寸覆盖（`[conventions.prefix_scan]` 的 `addr32`/`addr16` 效果，x86 = 0x67）：
+    // 只在变长（prefix_scan）ISA 上有意义。缺省地址类之外再给出**覆盖地址类**，
+    // 编解码两侧据此换 base/index 的宽度（`[eax]` ≠ `[rax]`）。
+    let addr_ovr_class = if model.is_prefix_scan() {
+        match model.addr_size_override()? {
+            Some((_, w)) => Some(model.require_group(RegClass::GPR(w), "地址尺寸覆盖前缀")?),
+            None => None,
+        }
+    } else {
+        None
+    };
+    let addr_classes_toks = match addr_ovr_class {
+        Some(ovr) => quote! {
+            /// 地址尺寸覆盖前缀选中的**地址类**（宽度 = 覆盖宽度的 GPR 组）。
+            pub(crate) const __ADDR_CLASS_OVR: forge_ir::RegClass = #ovr;
+            /// 内存 base/index 可用的地址类：缺省地址类 + 覆盖地址类。
+            pub(crate) const __ADDR_CLASSES: &[forge_ir::RegClass] = &[#addr_toks, #ovr];
+        },
+        None => quote! {
+            /// 内存 base/index 可用的地址类（本 ISA 没有地址尺寸覆盖 ⇒ 只有缺省）。
+            pub(crate) const __ADDR_CLASSES: &[forge_ir::RegClass] = &[#addr_toks];
+        },
+    };
     let value_gpr_toks = quote! { #value_gpr };
     let value_fpr_toks = quote! { #value_fpr };
 
@@ -130,6 +153,7 @@ pub(crate) fn gen_reg_enum(model: &IsaModel) -> Result<TokenStream, String> {
         pub(crate) const __DEFAULT_FPR_CLASS: forge_ir::RegClass = #fpr_class;
         /// 地址/指针类（MemRef base/index、`lea`、sp/fp、帧地址）。
         pub(crate) const __ADDR_CLASS: forge_ir::RegClass = #addr_toks;
+        #addr_classes_toks
         /// 宿主整数值寄存器池类（值 XReg/零值/临时 vreg）。
         pub(crate) const __VALUE_GPR_CLASS: forge_ir::RegClass = #value_gpr_toks;
         /// 宿主浮点值寄存器池类（f64 值池宽；≠ `__DEFAULT_FPR_CLASS`）。
@@ -960,7 +984,7 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                 let mut insts: Vec<Inst> = Vec::new();
                 let mut labels: std::collections::BTreeMap<String, u32> =
                     std::collections::BTreeMap::new();
-                // .equ 符号常量（立即数求值用；thread_local 表）
+                // 符号常量表（.equ/.set 在首行解析期填充；立即数与位移求值读取）
                 __EQU.with(|m| m.borrow_mut().clear());
                 // (指令序号, 操作数序号, 符号名, 行号)
                 let mut pending: Vec<(usize, usize, String, usize)> = Vec::new();
@@ -1013,7 +1037,7 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                     if rest.is_empty() {
                         continue;
                     }
-                    // 伪指令：.byte / .word / .align / .global / .extern / .equ / ...
+                    // 伪指令：.byte / .word / .align / .global / .extern / .equ / .set / ...
                     if let Some(dir) = rest.strip_prefix(#dir_pre_lit) {
                         let (name, args) = match dir.split_once(char::is_whitespace) {
                             Some((n, a)) => (n, a.trim()),
@@ -1021,24 +1045,25 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                         };
                         let dir_err = |msg: String| line_err(AsmError::Other(msg));
                         match name {
-                            "equ" => {
-                                // .equ name, expr —— 符号常量（立即数求值用）
+                            // `.equ` / `.set` 是同一个东西的两种拼法（GAS 两个名字等价，
+                            // LLVM 同样收 `.set`）：符号常量，供立即数与位移求值引用。
+                            "equ" | "set" => {
                                 let (sym, expr) = args.split_once(',').ok_or_else(|| {
-                                    dir_err("`.equ` needs `name, expr`".into())
+                                    dir_err(format!("`.{name}` needs `name, expr`"))
                                 })?;
                                 let sym = sym.trim();
                                 let expr = expr.trim();
                                 if sym.is_empty() || expr.is_empty() {
-                                    return Err(dir_err("`.equ` needs `name, expr`".into()));
+                                    return Err(dir_err(format!("`.{name}` needs `name, expr`")));
                                 }
                                 let toks = __lex(expr).map_err(AsmError::Other)?;
                                 let mut it = __Iter { toks: &toks, pos: 0 };
                                 let v = __expr(&mut it, false).ok_or_else(|| {
-                                    dir_err(format!("`.equ {sym}`: 表达式求值失败 '{expr}'"))
+                                    dir_err(format!(".{name} {sym}: 表达式求值失败 '{expr}'"))
                                 })?;
                                 if !it.eof() {
                                     return Err(dir_err(format!(
-                                        "`.equ {sym}`: 表达式尾部多余 token '{expr}'"
+                                        ".{name} {sym}: 表达式尾部多余 token '{expr}'"
                                     )));
                                 }
                                 __EQU.with(|m| m.borrow_mut().insert(sym.to_string(), v));

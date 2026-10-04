@@ -120,9 +120,9 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 不是"语料不对"：
 
 - riscv64：`%lo(2048)(x7)` 这类**重定位修饰的立即数**写法（`%lo`/`%hi`/`%pcrel_lo`）不支持；
+  余下红桶还有 `jal a0, a0` / `jal zero, .`（两寄存器形式的 `jal`）与 `sllw s8, s9, s10`；
 - aarch64：`ret lr`（带操作数的两操作数形式）不支持，裸 `ret` 可以；
 - x86（余下几条，来自 `intel-syntax-encoding.s`）：`cmpltps`（SSE 比较谓词别名）、
-  `cmp eax, FOO` / `cmp eax, FOO[eax]`（`.set` 符号进立即数/位移）、
   `acquire/release lock add …`（锁前缀 + 内存序提示）；
   以及 `apx-rex2-format-intel.s` 整份（APX/REX2：`r16d`、`dword ptr [r16 + rax]` 等）。
 
@@ -163,18 +163,38 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
   没有基址"（`MemRef.base` 改 `Option<Reg>`），x86 用 `mod=00` + `SIB.base=101` + disp32
   表示它 → `llvm-mc` 解析档 32 → **33**、字节对拍 27 → **28 条逐字节全等**（`known` 仍 0：
   `movsd XMM5, QWORD PTR [-8]` 与上游 `f2 0f 10 2c 25 f8 ff ff ff` 一致）。
+- x86 / riscv64（v20 V10，第六批：**符号常量 + 地址尺寸前缀**）：
+
+  ⑥ **符号常量**（`.equ`/`.set` 同一个伪指令）与**位移与立即数共用一套值语法**：位移改走
+  `__expr`（原来只认字面量），一元 `+` 变恒等（`lwu x2, +4(x3)`）——**语料侧的根因**是抽取
+  只喂标签、不喂符号定义，且整篇一起喂会把 `rv32i-valid.s` 里前后两次 `.equ CONST`（30 → 16）
+  解成同一个值，所以符号定义**按行号**进上下文（只喂本行之前的，标签仍整篇喂）；
+  ⑦ **地址尺寸覆盖前缀**（`[conventions.prefix_scan]` 的 `addr32` 效果 = x86 `0x67`）：
+  内存 base/index 宽度 ≠ `[meta].addr_width` 时编码器发它、解码器按覆盖宽度建 base/index
+  （`[eax]` ≠ `[rax]`；`[base]` 简写的槽也按地址类解）。改前 `add eax, [eax]` **静默编成**
+  `03 00`（真值 `67 03 00`：地址尺寸错，字节却认得出），`gnu-gas-intel` 那 32 条 32 位地址
+  行全靠它才对得上。
+
+  结果：解析档 `gnu-gas-intel` 50 条不变（但 32 位地址那些行的**字节**由错转对）、
+  `llvm-mc` 33 → **35**（`cmp eax, FOO` 与 `cmp eax, FOO[eax]` 都进 `parsed`）、
+  riscv64 72 → **82**；字节对拍 x86 28 → **30 条逐字节全等**、riscv64 72 → **82 条逐字节全等**
+  （`known` 全 0）。
+
+  同一批还修掉一处**配对假象**：`intel-syntax-encoding.s` 前 94 行是"注释在指令前"、
+  尾部两条是"注释在指令后"，整篇一个风格会把 `[0x83,0xf8,0x02]` 配给后一条指令，
+  凭空造出一条字节差异——`encoding_sides` 因此改成**带起始行的逐段声明**。
 
 ## 现有语料与计数
 
 （`2026-10-03` 实测；解析档数值以 `asm/ratchet/<isa>.txt` 为准，编码档以
 `asm/ratchet/encoding.txt` 为准。x86 两套是 v20 V10 补完内存模板、内存形式 ALU 族、
-8 位 ALU 族、立即数 `wrap`、一元 `inc`/`dec` 与无基址寻址之后的数）
+8 位 ALU 族、立即数 `wrap`、一元 `inc`/`dec`、无基址寻址与符号常量/地址尺寸前缀之后的数）
 
 | ISA | suite | 文件 | 行数 | parsed | no_prefix | tail_mismatch | corpus_only | 字节 oracle |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | x86 | `gnu-gas-intel` | 1 | 64 | **50** | 4 | 7 | 3 | 无（GAS 用例不带期望字节） |
-| x86 | `llvm-mc` | 2 | 447 | **33** | 21 | 57 | 336 | **有**：103 条期望 / **28 条对拍上 / 0 条差异** |
-| riscv64 | `llvm-mc` | 3 | 503 | **72** | 38 | 31 | 362 | **有**：134 条期望 / **72 条逐字节全等** |
+| x86 | `llvm-mc` | 2 | 447 | **35** | 21 | 55 | 336 | **有**：104 条期望 / **30 条对拍上 / 0 条差异** |
+| riscv64 | `llvm-mc` | 3 | 503 | **82** | 38 | 22 | 361 | **有**：134 条期望 / **82 条逐字节全等** |
 | aarch64 | `llvm-mc` | 3 | 420 | 37 | 45 | 71 | 267 | **有**：119 条期望 / **15 条逐字节全等** |
 
 执行档：x86 3 条、riscv64 3 条、aarch64 2 条，**三架构都真跑通**（`ran=8 skipped=0`）。

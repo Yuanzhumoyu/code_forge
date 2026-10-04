@@ -40,6 +40,9 @@ struct VlenCtx {
     /// 内存形式**是否无基址**（`bool` 表达式；只有 memref 有）。`true` = x86 的
     /// 无基址形态（`mod=00` + `SIB.base=101` + disp32，即绝对地址）。
     abs_expr: Option<TokenStream>,
+    /// 内存形式的**地址 register 宽度 ≠ 缺省地址宽**（`bool` 表达式；只有内存形式有）。
+    /// `true` ⇒ 需要地址尺寸覆盖前缀（x86 的 `0x67`：`[eax]` 是 32 位地址）。
+    addr_ovr_expr: Option<TokenStream>,
     /// 尾部立即数字节数（form.imm / 8）。
     imm_bytes: usize,
     /// VEX 语义（form.vex 存在时）：map/pp/w/l 值表达式（u64）。
@@ -183,7 +186,7 @@ impl Modrm {
     }
 }
 
-fn vlen_ctx(info: &InstInfo, _m: &IsaModel) -> Result<VlenCtx, String> {
+fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
     let form = &info.form;
     let fields = info.inst.fields.as_ref();
     let field_val = |k: &str| fields.and_then(|f| f.get(k)).copied().unwrap_or(0);
@@ -349,9 +352,9 @@ fn vlen_ctx(info: &InstInfo, _m: &IsaModel) -> Result<VlenCtx, String> {
         reg: None,
         rm: None,
     };
-    let (modrm, reg_expr, rm_expr, disp_expr, abs_expr, reg_is_byte, rm_is_byte) =
+    let (modrm, reg_expr, rm_expr, disp_expr, abs_expr, addr_ovr_expr, reg_is_byte, rm_is_byte) =
         if form.opcode_reg.is_some() || form.modrm_fixed.is_some() {
-            (None, None, None, None, None, false, false)
+            (None, None, None, None, None, None, false, false)
         } else {
             let has_reg = info
                 .operands
@@ -365,7 +368,7 @@ fn vlen_ctx(info: &InstInfo, _m: &IsaModel) -> Result<VlenCtx, String> {
                 }
             });
             match map {
-                None => (None, None, None, None, None, false, false),
+                None => (None, None, None, None, None, None, false, false),
                 Some(modrm_form) => {
                     let modrm = Modrm::resolve(modrm_form, info, &names)?;
                     let fid = |i: usize| -> Result<syn::Ident, String> {
@@ -423,12 +426,38 @@ fn vlen_ctx(info: &InstInfo, _m: &IsaModel) -> Result<VlenCtx, String> {
                     };
                     let reg_is_byte = modrm.reg.map(slot_byte).unwrap_or(false);
                     let rm_is_byte = !modrm.mem && slot_byte(modrm.rm);
+                    // 地址尺寸覆盖：内存形式的基址/索引宽度 ≠ `[meta]` 地址宽（x86 在
+                    // 64 位模式下 `[eax]`）⇒ 要发覆盖前缀（`0x67`）。只有本 ISA 声明了
+                    // 该前缀（`addr_size_override`）时才可能为真；否则前缀字节为 0、
+                    // 不发射。
+                    let addr_ovr_expr = if m.addr_size_override()?.is_some() {
+                        let aw = m.addr_class()?.width();
+                        if modrm.memref {
+                            Some(quote! {
+                                #rm.base.map_or(false, |__r: Reg| {
+                                    <Reg as forge_ir::PhysReg>::width(__r) != #aw
+                                }) || #rm.index.map_or(false, |__r: Reg| {
+                                    <Reg as forge_ir::PhysReg>::width(__r) != #aw
+                                })
+                            })
+                        } else if modrm.mem {
+                            // 编码 arm 是对 `&Inst` 匹配，绑定是引用 ⇒ 解引用取宽度。
+                            Some(quote! {
+                                <Reg as forge_ir::PhysReg>::width(*#rm) != #aw
+                            })
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
                     (
                         Some(modrm),
                         Some(reg_expr),
                         Some(rm_expr),
                         disp_expr,
                         abs_expr,
+                        addr_ovr_expr,
                         reg_is_byte,
                         rm_is_byte,
                     )
@@ -550,6 +579,7 @@ fn vlen_ctx(info: &InstInfo, _m: &IsaModel) -> Result<VlenCtx, String> {
         rm_is_byte,
         disp_expr,
         abs_expr,
+        addr_ovr_expr,
         imm_bytes,
         vex,
         evex,
@@ -973,6 +1003,11 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             if ctx.has_opsize {
                 stmts.push(quote! { if __opsize == 2 { __bytes.push(0x66u8); } });
             }
+            // 地址尺寸覆盖前缀（x86 的 0x67）：地址寄存器不是缺省地址宽时发（`[eax]`）。
+            if let Some(e) = &ctx.addr_ovr_expr {
+                let byte = model.addr_size_override()?.map(|(b, _)| b).unwrap_or(0);
+                stmts.push(quote! { if #e { __bytes.push(#byte as u8); } });
+            }
             let prefix_expr = &ctx.prefix_expr;
             let prefix_push = quote! {
                 let __p = #prefix_expr;
@@ -1178,6 +1213,7 @@ fn gen_vlen_opcode_reg_decode_arm(
 
 /// VEX 解码 arm：C4 + vex2/vex3（map/pp/w/l guard）→ opcode → ModRM（mod=11）。
 fn gen_vlen_vex_decode_arm(
+    model: &IsaModel,
     info: &InstInfo,
     ctx: &VlenCtx,
     endian: Endian,
@@ -1256,7 +1292,7 @@ fn gen_vlen_vex_decode_arm(
                         None
                     } else {
                         Some(<Reg as TryFrom<RegRef>>::try_from(
-                            RegRef::new(__ADDR_CLASS, __base),
+                            RegRef::new(__acl, __base),
                         ).unwrap())
                     },
                     disp: __disp,
@@ -1290,7 +1326,7 @@ fn gen_vlen_vex_decode_arm(
         quote! { Inst::#vn { #(#ctor_fields),* } }
     };
     // 寄存器形式（mod=11）与内存形式（mod≠3）共用 vex guard；长度不同。
-    let mem_decode = gen_mem_decode(&quote! { __b }, &quote! { __x }, true, None);
+    let mem_decode = gen_mem_decode(model, &quote! { __b }, &quote! { __x }, true, None);
     let body: TokenStream = if is_mem {
         quote! {
             let __modrm = bytes[__o + 4];
@@ -1339,6 +1375,7 @@ fn gen_vlen_vex_decode_arm(
 
 /// EVEX 解码 arm：62 + P0/P1/P2（mm/pp/W/L'L/aaa guard）+ opcode + ModRM（mod=11）。
 fn gen_vlen_evex_decode_arm(
+    model: &IsaModel,
     info: &InstInfo,
     ctx: &VlenCtx,
     endian: Endian,
@@ -1443,7 +1480,7 @@ fn gen_vlen_evex_decode_arm(
                         None
                     } else {
                         Some(<Reg as TryFrom<RegRef>>::try_from(
-                            RegRef::new(__ADDR_CLASS, __base),
+                            RegRef::new(__acl, __base),
                         ).unwrap())
                     },
                     disp: __disp,
@@ -1478,7 +1515,13 @@ fn gen_vlen_evex_decode_arm(
     };
     // 寄存器形式（mod=11）与内存形式（mod≠3 + SIB + 压缩位移回乘 scale）
     let __scale_toks = quote! { #scale };
-    let mem_decode = gen_mem_decode(&quote! { __b }, &quote! { __x }, true, Some(&__scale_toks));
+    let mem_decode = gen_mem_decode(
+        model,
+        &quote! { __b },
+        &quote! { __x },
+        true,
+        Some(&__scale_toks),
+    );
     let body: TokenStream = if is_mem {
         quote! {
             let __modrm = bytes[__o + 5];
@@ -1694,12 +1737,12 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
         let key = vlen_decode_key(info, &ctx);
         // EVEX 指令走独立 arm（62 + P0/P1/P2 guard）
         if ctx.evex.is_some() {
-            groups.push((key, gen_vlen_evex_decode_arm(info, &ctx, endian)?));
+            groups.push((key, gen_vlen_evex_decode_arm(model, info, &ctx, endian)?));
             continue;
         }
         // VEX 指令走独立 arm（C4 + vex2/vex3 guard）
         if ctx.vex.is_some() {
-            groups.push((key, gen_vlen_vex_decode_arm(info, &ctx, endian)?));
+            groups.push((key, gen_vlen_vex_decode_arm(model, info, &ctx, endian)?));
             continue;
         }
         // `+r` 形式：opcode 含 reg 低 3 位（50/58/B8/C8...）
@@ -1804,12 +1847,20 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                     if Some(i) == mm.reg {
                         Ok(fe(reg_field))
                     } else if i == mm.rm {
-                        // 内存形式的 rm 是基址寄存器；寄存器形式直接取 rm 字段
-                        Ok(fe(if mm.mem {
-                            quote! { __base }
+                        // 内存形式的 rm 是基址寄存器；寄存器形式直接取 rm 字段。
+                        // `[base]` 简写里的这个槽**就是地址** ⇒ 按**地址类**建
+                        //（`__acl`：带地址尺寸覆盖前缀时是覆盖宽度）——不能按数据槽的
+                        // 宽度视图建，否则 `[RCX]` 编码、`[ECX]` 解码的宽度不对称，
+                        // `0x67` 会凭空多出/丢掉（v20 V10 的宽度视图只对数据有意义）。
+                        if mm.mem {
+                            Ok(quote! {
+                                <Reg as TryFrom<RegRef>>::try_from(
+                                    RegRef::new(__acl, __base),
+                                ).unwrap()
+                            })
                         } else {
-                            rm_field
-                        }))
+                            Ok(fe(rm_field))
+                        }
                     } else {
                         Ok(fe(quote! { __vvvv as u32 }))
                     }
@@ -1825,7 +1876,7 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                                     None
                                 } else {
                                     Some(<Reg as TryFrom<RegRef>>::try_from(
-                                        RegRef::new(__ADDR_CLASS, __base),
+                                        RegRef::new(__acl, __base),
                                     ).unwrap())
                                 },
                                 disp: __disp,
@@ -1903,8 +1954,13 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             };
             // SIB/位移解码是三条路径（普通/VEX/EVEX）共用的一份；`memref=false`
             // （`rm = "[reg]"` 的基址简写）由它拒绝索引、且只认 disp8=0。
-            let mem_decode =
-                gen_mem_decode(&quote! { __rex_b }, &quote! { __rex_x }, m.memref, None);
+            let mem_decode = gen_mem_decode(
+                model,
+                &quote! { __rex_b },
+                &quote! { __rex_x },
+                m.memref,
+                None,
+            );
             groups.push((
                 key,
                 quote! {
@@ -1956,6 +2012,7 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             let mut __o = 0usize;
             let mut __opsize: u16 = #default_opsize;
             let mut __p66 = false;
+            let mut __p_asz = false;
             let mut __pF0 = false;
             let mut __pF2 = false;
             let mut __pF3 = false;
@@ -1979,6 +2036,7 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             let mut __o = 0usize;
             let mut __opsize: u16 = #default_opsize;
             let mut __p66 = false;
+            let mut __p_asz = false;
             let mut __pF0 = false;
             let mut __pF2 = false;
             let mut __pF3 = false;
@@ -1986,7 +2044,7 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             let mut __rex_x: u32 = 0;
             let mut __rex_b: u32 = 0;
             #scan_loop
-            let _ = (__opsize, __p66, __pF0, __pF2, __pF3, __rex_r, __rex_x, __rex_b);
+            let _ = (__opsize, __p66, __p_asz, __pF0, __pF2, __pF3, __rex_r, __rex_x, __rex_b);
             Err(__o)
         }
     })
@@ -2023,50 +2081,10 @@ fn parse_scan_range(s: &str) -> Option<(u64, u64)> {
     Some((lo, hi))
 }
 
-/// x86 缺省前缀扫描集（`[conventions.prefix_scan]` 未声明时使用）。
-fn x86_scan_default() -> Vec<PrefixScanEntry> {
-    vec![
-        PrefixScanEntry {
-            byte: Some(0x66),
-            range: None,
-            effects: vec!["opsize16".into()],
-        },
-        PrefixScanEntry {
-            byte: Some(0xF0),
-            range: None,
-            effects: vec!["lock".into()],
-        },
-        PrefixScanEntry {
-            byte: Some(0xF2),
-            range: None,
-            effects: vec!["repne".into()],
-        },
-        PrefixScanEntry {
-            byte: Some(0xF3),
-            range: None,
-            effects: vec!["repe".into()],
-        },
-        PrefixScanEntry {
-            byte: Some(0x67),
-            range: None,
-            effects: vec!["addr16".into()],
-        },
-        PrefixScanEntry {
-            byte: None,
-            range: Some("0x40..0x4F".into()),
-            effects: vec!["rex".into()],
-        },
-    ]
-}
-
 /// 生成变长解码的前缀扫描循环：每条目一个 `else if`，效果集驱动
-/// `__opsize`/前缀标志/REX 位。非 x86 ISA 声明空表 → 立即 break（零分支）。
+/// `__opsize`/前缀标志/REX 位/地址尺寸覆盖标志。非 x86 ISA 声明空表 → 立即 break。
 fn gen_prefix_scan_loop(model: &IsaModel) -> Result<TokenStream, String> {
-    let entries: Vec<PrefixScanEntry> = model
-        .conventions
-        .prefix_scan
-        .clone()
-        .unwrap_or_else(x86_scan_default);
+    let entries: Vec<PrefixScanEntry> = model.prefix_scan_entries();
     let mut stmts: Vec<TokenStream> = Vec::new();
     for (i, e) in entries.iter().enumerate() {
         let ctx = || format!("[conventions.prefix_scan][{i}]");
@@ -2077,7 +2095,9 @@ fn gen_prefix_scan_loop(model: &IsaModel) -> Result<TokenStream, String> {
                 "lock" => quote! { __pF0 = true; },
                 "repe" => quote! { __pF3 = true; },
                 "repne" => quote! { __pF2 = true; },
-                "addr16" => quote! {},
+                // 地址尺寸覆盖（x86 的 67）：地址寄存器改按覆盖宽度解（见
+                // `gen_mem_decode` 的 `__acl`）。
+                "addr32" | "addr16" => quote! { __p_asz = true; },
                 "rex" => quote! {
                     __rex_r = ((__b >> 2) & 1) as u32;
                     __rex_x = ((__b >> 1) & 1) as u32;
@@ -2086,7 +2106,7 @@ fn gen_prefix_scan_loop(model: &IsaModel) -> Result<TokenStream, String> {
                 },
                 other => {
                     return Err(format!(
-                        "{}: unknown effect '{other}' (opsize16/lock/repe/repne/addr16/rex)",
+                        "{}: unknown effect '{other}' (opsize16/lock/repe/repne/addr32/addr16/rex)",
                         ctx()
                     ));
                 }
@@ -2199,7 +2219,13 @@ fn gen_mem_modrm(disp: &TokenStream, force_toks: &[TokenStream], abs: &TokenStre
 ///
 /// `__base_absent`（v20 V10）= `mod=00` + `SIB.base=101` 且 B=0：x86 的**无基址**
 /// 绝对地址形态（disp32 跟随）——与编码侧的 `gen_mem_modrm` 对称。
+///
+/// 本 ISA 声明了**地址尺寸覆盖前缀**（`[conventions.prefix_scan]` 的 `addr32`/`addr16`
+/// 效果，x86 = `0x67`）时，额外发射 `__acl`（本条的地址类）：解码时看到该前缀
+/// （`__p_asz`）就按覆盖宽度建 base/index——`[eax]` 与 `[rax]` 是**不同地址**，
+/// 不能都建成 64 位。调用方随后用 `__acl` 建 `MemRef::base`。
 fn gen_mem_decode(
+    model: &IsaModel,
     b_bit: &TokenStream,
     x_bit: &TokenStream,
     memref: bool,
@@ -2277,7 +2303,18 @@ fn gen_mem_decode(
             }
         }
     };
+    let addr_ovr = model.addr_size_override().ok().flatten().is_some();
+    let acl = if addr_ovr {
+        quote! {
+            // 地址类：有地址尺寸覆盖前缀（x86 的 67）⇒ 按覆盖宽度建 base/index。
+            let __acl: forge_ir::RegClass =
+                if __p_asz { __ADDR_CLASS_OVR } else { __ADDR_CLASS };
+        }
+    } else {
+        quote! { let __acl: forge_ir::RegClass = __ADDR_CLASS; }
+    };
     quote! {
+        #acl
         let mut __base: u32 = ((__modrm & 7) as u32) | (#b_bit << 3);
         let mut __base_absent = false;
         let mut __index_reg: Option<Reg> = None;
@@ -2298,7 +2335,7 @@ fn gen_mem_decode(
                 } else {
                     __index_reg = Some(
                         <Reg as TryFrom<RegRef>>::try_from(
-                            RegRef::new(__ADDR_CLASS, __idx_full),
+                            RegRef::new(__acl, __idx_full),
                         ).unwrap(),
                     );
                 }

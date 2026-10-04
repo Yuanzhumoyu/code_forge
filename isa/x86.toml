@@ -177,7 +177,7 @@ byte = 0xF3
 effects = ["repe"]
 [[conventions.prefix_scan]]
 byte = 0x67
-effects = ["addr16"]
+effects = ["addr32"]
 [[conventions.prefix_scan]]
 range = "0x40..0x4F"
 effects = ["rex"]
@@ -3902,6 +3902,14 @@ rows = [
 [[vectors]]
 asm = "mov EAX, EBX"
 bytes = [0x8B, 0xC3]
+
+[[vectors]]
+asm = "add eax, [eax]"
+bytes = [0x67, 0x03, 0x00]
+
+[[vectors]]
+asm = "add rax, [rbx+eax*4]"
+bytes = [0x67, 0x48, 0x03, 0x04, 0x83]
 
 [[vectors]]
 asm = "mov R8D, R9D"

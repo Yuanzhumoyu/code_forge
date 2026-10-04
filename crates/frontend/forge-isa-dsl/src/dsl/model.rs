@@ -305,7 +305,7 @@ pub struct Vector {
 
 impl IsaModel {
     /// 校验显式宽度键指向的组是否存在。
-    fn require_group(&self, rc: RegClass, key: &str) -> Result<RegClass, String> {
+    pub(crate) fn require_group(&self, rc: RegClass, key: &str) -> Result<RegClass, String> {
         if self.reg.contains_key(&rc) {
             Ok(rc)
         } else {
@@ -363,6 +363,55 @@ impl IsaModel {
             return self.require_group(RegClass::GPR(w), "[meta].addr_width");
         }
         self.main_gpr_class()
+    }
+
+    /// 前缀扫描表：`[conventions.prefix_scan]` > 缺省表（x86 风格前缀链）。
+    pub(crate) fn prefix_scan_entries(&self) -> Vec<PrefixScanEntry> {
+        self.conventions
+            .prefix_scan
+            .clone()
+            .unwrap_or_else(default_prefix_scan)
+    }
+
+    /// **地址尺寸覆盖**：`[conventions.prefix_scan]` 里声明 `addr32`（→ 4 字节地址）
+    /// 或 `addr16`（→ 2 字节地址）效果的那条前缀 ⇒ `(前缀字节, 覆盖后的地址宽度/字节)`。
+    ///
+    /// 这是"地址寄存器宽度 ≠ `[meta].addr_width` 时该发哪个前缀"的**数据**：x86 在
+    /// 64 位模式下 `[eax]` 走 32 位地址 ⇒ 发 `0x67`；解码侧看到它就把 base/index 建成
+    /// 32 位地址类。一个 ISA **只支持一个**覆盖宽度（声明两个不同的 ⇒ 报错）。
+    ///
+    /// **只看谱自己声明的表**（缺省扫描集不含它）：覆盖宽度要落到一个真实的 GPR 组上
+    /// （`require_group`），不能由"缺省 = x86 集"隐式强加给别的 prefix_scan 谱。
+    /// 没声明 ⇒ 该前缀字节不被扫描集认识，解码在这一字节就失败（fail-closed）。
+    pub(crate) fn addr_size_override(&self) -> Result<Option<(u8, u16)>, String> {
+        let Some(entries) = &self.conventions.prefix_scan else {
+            return Ok(None);
+        };
+        let mut found: Option<(u8, u16)> = None;
+        for (i, e) in entries.iter().enumerate() {
+            for fx in &e.effects {
+                let w = match fx.as_str() {
+                    "addr32" => 4u16,
+                    "addr16" => 2u16,
+                    _ => continue,
+                };
+                let Some(b) = e.byte else {
+                    return Err(format!(
+                        "[conventions.prefix_scan][{i}]: `{fx}` 需要 `byte`（地址尺寸覆盖是单字节前缀）"
+                    ));
+                };
+                match found {
+                    Some((pb, pw)) if (pb, pw) != (b as u8, w) => {
+                        return Err(format!(
+                            "[conventions.prefix_scan][{i}]: 已有地址尺寸覆盖 0x{pb:02X}/{pw} 字节，\
+                             又声明 0x{b:02X}/{w} 字节——一个 ISA 只支持一个地址尺寸覆盖宽度"
+                        ));
+                    }
+                    _ => found = Some((b as u8, w)),
+                }
+            }
+        }
+        Ok(found)
     }
 
     /// 宿主「整数值寄存器池」类：`[meta].value_gpr_width` > 主 GPR 类。
@@ -1045,8 +1094,33 @@ pub struct PrefixScanEntry {
     #[serde(default)]
     pub range: Option<String>,
     /// 效果："opsize16"（66 → opsize=2）、"lock"、"repe"、"repne"、
-    /// "addr16"、"rex"（40-4F：REX.R/B/W 位）。
+    /// "addr32"/"addr16"（地址尺寸覆盖，见 [`IsaModel::addr_size_override`]）、
+    /// "rex"（40-4F：REX.R/B/W 位）。
     pub effects: Vec<String>,
+}
+
+/// 缺省前缀扫描集（`[conventions.prefix_scan]` 未声明时使用；x86 风格前缀链）。
+///
+/// **不含地址尺寸覆盖**（0x67）：那个效果要落到具体的 GPR 组（`addr32`），是**谱自己
+/// 声明的数据**——由缺省表隐式强加会让别的 prefix_scan 谱去找一个它没有的寄存器组。
+/// 没声明的谱遇到 0x67 会在该字节解码失败（fail-closed，不静默当 64 位地址）。
+pub(crate) fn default_prefix_scan() -> Vec<PrefixScanEntry> {
+    let e = |byte: u64, effects: &[&str]| PrefixScanEntry {
+        byte: Some(byte),
+        range: None,
+        effects: effects.iter().map(|s| (*s).to_string()).collect(),
+    };
+    vec![
+        e(0x66, &["opsize16"]),
+        e(0xF0, &["lock"]),
+        e(0xF2, &["repne"]),
+        e(0xF3, &["repe"]),
+        PrefixScanEntry {
+            byte: None,
+            range: Some("0x40..0x4F".into()),
+            effects: vec!["rex".into()],
+        },
+    ]
 }
 
 /// 命名位域：定宽 ISA 的编码单元。

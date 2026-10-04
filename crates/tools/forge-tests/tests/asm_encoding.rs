@@ -18,6 +18,10 @@
 //!
 //! 解析不动的行不算失败（那归解析档的棘轮管）；重刷棘轮：`FORGE_ASM_WRITE_RATCHET=1`。
 //! 想看逐条配对结果：`FORGE_ASM_ENCODING_CASES=1 -- --nocapture`。
+//!
+//! 喂给汇编器的文本走**解析档同一份上下文**（`asm::corpus::with_prelude`：标签 + 该行
+//! 之前的 `.equ`/`.set` 符号定义），否则依赖上游符号常量的用例只会被记成 "unparsed"
+//! 混过去（`cmp eax, FOO` 的 `[0x83,0xf8,0x02]` 就是这么漏掉的）。
 
 use forge_tests::asm::report::EncodingReport;
 use forge_tests::asm::{self, SUITES};
@@ -40,10 +44,15 @@ fn encodings_of_parsable_corpus_lines_match_upstream() {
             };
             for (file, src) in &files {
                 let extracted = asm::encoding::extract_cases(suite, file, src);
+                // 与解析档同一套上下文（标签 + 该行之前的符号常量定义）：上游用例里
+                // `cmp eax, FOO`（`.set FOO, 2`）这种必须先解出符号，才能拿上游注释里的
+                // 期望字节真对拍——否则它只会被记成 "unparsed" 混过去。
+                let corpus = asm::corpus::extract(suite, file, src);
                 r.dropped += extracted.dropped;
                 for case in extracted.cases {
                     r.cases += 1;
-                    match target.parse(&case.text) {
+                    let text = asm::corpus::with_prelude(&corpus, case.line_no, &case.text);
+                    match target.parse(&text) {
                         Ok(_) => {}
                         Err(e) => {
                             report_case(isa, &case, &format!("unparsed {e:?}"));
@@ -52,7 +61,7 @@ fn encodings_of_parsable_corpus_lines_match_upstream() {
                         }
                     }
                     report_case(isa, &case, "extracted");
-                    let got = match asm::targets::assemble_to_bytes(isa, &case.text) {
+                    let got = match asm::targets::assemble_to_bytes(isa, &text) {
                         Ok(b) => b,
                         Err(e) => {
                             r.known.push(format!(

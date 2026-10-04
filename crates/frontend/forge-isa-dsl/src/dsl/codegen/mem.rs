@@ -470,11 +470,14 @@ pub(crate) fn has_base(items: &[Item]) -> bool {
     items.iter().any(|it| matches!(it, Item::Comp(Comp::Base)))
 }
 
-/// 派生 `__mem`（汇编解析）与按需的 `__raw_signed_int` / `__eat_size` 辅助。
+/// 派生 `__mem`（汇编解析）与按需的 `__eat_size` 辅助。
 ///
 /// 每个生效模板各派生一个 `__mem_try<k>`；`__mem` 按列表序依次试，**第一条整条
 /// 走通的赢**（失败的那条把自己回滚干净）。多条模板 = 同一份 `MemRef` 的多种合法
 /// 文本写法（Intel `[base+disp]` / GAS `disp[base]` / 带尺寸前缀），不是"多个指令"。
+///
+/// 组件里的值（`{disp}`/`{scale}`）复用生成物的表达式求值器：位移读 `__expr`
+/// （数字/符号常量/算术），scale 仍是 `1|2|4|8` 字面量。
 pub(crate) fn gen_mem_parser(
     templates: &[Vec<Item>],
     size_kws: &[Vec<LitTok>],
@@ -482,32 +485,13 @@ pub(crate) fn gen_mem_parser(
 ) -> TokenStream {
     let mut tries: Vec<TokenStream> = Vec::new();
     let mut names: Vec<syn::Ident> = Vec::new();
-    let mut any_signed = false;
     let mut any_size = false;
     for (k, items) in templates.iter().enumerate() {
-        let (f, signed, size) = gen_one_mem_try(items, size_kws, case_insensitive, k);
+        let (f, size) = gen_one_mem_try(items, size_kws, case_insensitive, k);
         tries.push(f);
         names.push(format_ident!("__mem_try{k}"));
-        any_signed |= signed;
         any_size |= size;
     }
-    let signed_helper = if any_signed {
-        quote! {
-            fn __raw_signed_int(it: &mut __Iter) -> Option<i64> {
-                let neg = if it.eat(&__Tok::Minus) {
-                    true
-                } else if it.eat(&__Tok::Plus) {
-                    false
-                } else {
-                    false
-                };
-                let v = __raw_int(it)?;
-                Some(if neg { -v } else { v })
-            }
-        }
-    } else {
-        quote! {}
-    };
     let size_helper = if any_size {
         let eat = if case_insensitive {
             quote! { __eat_lit_ci }
@@ -536,13 +520,20 @@ pub(crate) fn gen_mem_parser(
             )*
             None
         }
-        #signed_helper
+        /// 地址寄存器：内存的基址/索引必须是**地址类**寄存器（`__ADDR_CLASSES`：
+        /// 缺省地址类 + 地址尺寸覆盖类，x86 = 64 位与 32 位 GPR）。
+        ///
+        /// 32 位地址寄存器（`[eax]`）在 64 位模式下要发 `0x67` 地址尺寸前缀——那条
+        /// 由**编码器**按基址/索引的实际宽度发（见 `vlen.rs` 的地址尺寸覆盖），这里
+        /// 只保证不是地址类的寄存器（`[al]`、`[xmm0]`）进不来。
+        fn __addr_reg(it: &mut __Iter) -> Option<Reg> {
+            __reg_f(it, __ADDR_CLASSES, None).map(|(r, _)| r)
+        }
         #size_helper
     }
 }
 
-/// 单条模板的解析函数体 + 它需要的辅助（返回值 = 是否需要 `__raw_signed_int` /
-/// `__eat_size`）。
+/// 单条模板的解析函数体 + 它需要的辅助（返回值 = 是否需要 `__eat_size`）。
 ///
 /// `required = !has_base(items)`（无基址写法）：其余组件一律必需——没有基址时，
 /// 位移/索引就是地址本身，`[]` 这种"什么都没写"的形态必须解析失败。
@@ -551,11 +542,10 @@ fn gen_one_mem_try(
     size_kws: &[Vec<LitTok>],
     case_insensitive: bool,
     k: usize,
-) -> (TokenStream, bool, bool) {
+) -> (TokenStream, bool) {
     let fname = format_ident!("__mem_try{k}");
     let required = !has_base(items);
     let mut stmts: Vec<TokenStream> = Vec::new();
-    let mut has_signed_disp = false;
     let mut has_size = false;
     let mut i = 0;
     while i < items.len() {
@@ -596,8 +586,8 @@ fn gen_one_mem_try(
                 }
                 // 模板写了 `{base}` ⇒ 基址必需（缺了整条不匹配），所以这里是 `Some`。
                 stmts.push(quote! {
-                    base = Some(match __reg_cls(it) {
-                        Some((r, _)) => r,
+                    base = Some(match __addr_reg(it) {
+                        Some(r) => r,
                         None => { it.pos = save; return None; }
                     });
                 });
@@ -607,8 +597,8 @@ fn gen_one_mem_try(
                     stmts.push(s.clone());
                 }
                 stmts.push(quote! {
-                    index = Some(match __reg_cls(it) {
-                        Some((r, _)) => r,
+                    index = Some(match __addr_reg(it) {
+                        Some(r) => r,
                         None => { it.pos = save; return None; }
                     });
                 });
@@ -620,7 +610,7 @@ fn gen_one_mem_try(
                         {
                             let p = it.pos;
                             if __eat_lit(it, &[#(#e),*]) {
-                                if let Some((r, _)) = __reg_cls(it) {
+                                if let Some(r) = __addr_reg(it) {
                                     index = Some(r);
                                 } else {
                                     it.pos = p;
@@ -630,7 +620,7 @@ fn gen_one_mem_try(
                     });
                 }
                 None => stmts.push(quote! {
-                    if let Some((r, _)) = __reg_cls(it) { index = Some(r); }
+                    if let Some(r) = __addr_reg(it) { index = Some(r); }
                 }),
             },
             Comp::Scale => {
@@ -675,81 +665,35 @@ fn gen_one_mem_try(
                     }
                 });
             }
-            Comp::Disp if hard => {
-                // 无基址写法：位移就是地址，必须有值（`[+8]`/`[-8]`/`[8]` 都行）。
-                match prefix_toks {
-                    Some(t) if is_single_plus(t) => {
-                        stmts.push(quote! {
-                            if it.eat(&__Tok::Plus) {
-                                let v = match __raw_int(it) {
-                                    Some(v) => v,
-                                    None => { it.pos = save; return None; }
-                                };
-                                disp = v;
-                            } else if it.eat(&__Tok::Minus) {
-                                let v = match __raw_int(it) {
-                                    Some(v) => v,
-                                    None => { it.pos = save; return None; }
-                                };
-                                disp = -v;
-                            } else {
-                                it.pos = save; return None;
-                            }
-                        });
-                    }
-                    _ => {
-                        if let Some(s) = &eat_prefix {
-                            stmts.push(s.clone());
+            Comp::Disp => {
+                // 位移与立即数**共用同一套值语法**（`__expr`）：数字、一元 `+`/`-`、`~`、
+                // 括号、算术、符号常量（`.equ`/`.set`）——`ld x10, 4(x11)` 与
+                // `ld x10, SYM(x11)` 因此是同一条路径，不再有"位移只认字面量"的第二套读数。
+                //
+                // 紧邻 `{disp}` 的**单 `+` 前缀**（Intel `[base+disp]`）**可选**：
+                // `[base+8]` / `[base-8]` / `[base]` 都要能解，所以只"有就吃"；其它字面量
+                // 前缀（多 token 写法）照旧必需。
+                let optional_plus = prefix_toks.is_some_and(is_single_plus);
+                let pre = if optional_plus {
+                    quote! { let _ = it.eat(&__Tok::Plus); }
+                } else {
+                    eat_prefix.clone().unwrap_or_default()
+                };
+                // 前缀可选 ⇒ "有没有值"由模板说了算：**无基址**写法里位移就是地址本身，
+                // 必须有值；有基址写法里位移可缺省。前缀必需 ⇒ 前缀匹配上就必须有值。
+                let required = hard || (prefix_toks.is_some() && !optional_plus);
+                let read = if required {
+                    quote! {
+                        match __expr(it, false) {
+                            Some(v) => disp = v,
+                            None => { it.pos = save; return None; }
                         }
-                        stmts.push(quote! {
-                            let v = match __raw_signed_int(it) {
-                                Some(v) => v,
-                                None => { it.pos = save; return None; }
-                            };
-                            disp = v;
-                        });
-                        has_signed_disp = true;
                     }
-                }
+                } else {
+                    quote! { if let Some(v) = __expr(it, false) { disp = v; } }
+                };
+                stmts.push(quote! { #pre #read });
             }
-            Comp::Disp => match prefix_toks {
-                Some(t) if is_single_plus(t) => {
-                    stmts.push(quote! {
-                        if it.eat(&__Tok::Plus) {
-                            let v = match __raw_int(it) {
-                                Some(v) => v,
-                                None => { it.pos = save; return None; }
-                            };
-                            disp = v;
-                        } else if it.eat(&__Tok::Minus) {
-                            let v = match __raw_int(it) {
-                                Some(v) => v,
-                                None => { it.pos = save; return None; }
-                            };
-                            disp = -v;
-                        }
-                    });
-                }
-                Some(t) => {
-                    let e = toks_expr(t);
-                    stmts.push(quote! {
-                        if __eat_lit(it, &[#(#e),*]) {
-                            let v = match __raw_signed_int(it) {
-                                Some(v) => v,
-                                None => { it.pos = save; return None; }
-                            };
-                            disp = v;
-                        }
-                    });
-                    has_signed_disp = true;
-                }
-                None => {
-                    stmts.push(quote! {
-                        if let Some(v) = __raw_signed_int(it) { disp = v; }
-                    });
-                    has_signed_disp = true;
-                }
-            },
         }
         i += if prefix_toks.is_some() { 2 } else { 1 };
     }
@@ -771,5 +715,5 @@ fn gen_one_mem_try(
         }
     };
     let _ = case_insensitive;
-    (f, has_signed_disp, has_size)
+    (f, has_size)
 }

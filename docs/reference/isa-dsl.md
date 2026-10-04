@@ -121,7 +121,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[conventions.bitfields.<name>.pieces]]` | `offset` `width` | `shift` | 散布位段：`value >> shift` 取 width 位放在 offset |
 | `[conventions.modrm]` | — | `reg_field` `rm_field` `force_disp_base` | ModRM 约定（表存在即启用）：reg/rm 位域名 + 强制位移的 base 寄存器号 |
 | `[conventions.cond]` | `code` | `ir` | 条件码表：键 = 汇编可见的条件名（也允许 `名 = <整数>` 简写）（允许额外键） |
-| `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集） |
+| `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex` |
 | `[conventions.mem]` | `templates` | `size_keywords` | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
 | `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `roles` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
@@ -502,10 +502,20 @@ eq  = 4                        # 简写 = { code = 4 }，且 ir 取键名（键�
 [[conventions.prefix_scan]]
 byte = 0x66
 effects = ["opsize16"]
+[[conventions.prefix_scan]]
+byte = 0x67
+effects = ["addr32"]           # 地址尺寸覆盖：该前缀把地址换成 32 位（4 字节地址类）
 
 [conventions.mem]              # 可选：内存操作数的文本模板列表（见下节；缺省 = x86 `[...]`）
 templates = ["[{base}+{index}*{scale}+{disp}]"]  # 第 0 条 = 渲染形态
 ```
+
+**地址尺寸覆盖**（`effects = ["addr32"]` / `["addr16"]`）：内存的 base/index 寄存器宽度
+≠ `[meta].addr_width` 时（x86 在 64 位模式下写 `[eax]`），**编码器自动发**这条前缀，
+**解码器看到它就把 base/index 建成覆盖宽度的地址类**（`[eax]` 与 `[rax]` 是不同地址，
+不能都建成 64 位）。一个 ISA 只支持一个覆盖宽度（声明两个不同宽度报错），且覆盖宽度
+必须指向本谱已声明的寄存器组。内存 base/index 必须是**地址类**寄存器（`gpr8` 或覆盖类）：
+`[al]`、`[xmm0]` 解析失败。缺省扫描集**不含**这条效果——它是谱自己声明的数据。
 
 > **S1 删除**：`[conventions.rex]`（`w_opsize`）与 `[conventions.opsize_prefix]`
 > 已移除——它们 codegen 从不读取，66 前缀与 REX.W 在 `vlen.rs` 里按 `__opsize`
@@ -1463,9 +1473,12 @@ forge-codegen 的 crate 里生成谱"这件事本身也是守卫（`tests/common
 
 ### 汇编器能力（`TargetAssembler::parse_insts`）
 
-- **`.equ name, expr`**：符号常量（顺序求值，前向引用失败；指令立即数表达式可引用）。
-- **立即数表达式**：`+ - * / % << >> & | ^ ~ ( )` 递归下降求值；label 槽（分支目标）
-  同样支持表达式。
+- **`.equ name, expr` / `.set name, expr`**：符号常量（两个名字等价；**顺序求值**，
+  前向引用失败，同名后定义覆盖前定义）。引用它的地方与字面量走**同一套值语法**：
+  立即数与**内存位移**都能写（`cmp eax, FOO`、`mov rax, FOO[rbx]`、`[rbx+FOO*2]`）。
+- **立即数表达式**：`+ - * / % << >> & | ^ ~ ( )` 递归下降求值（一元 `+` 是恒等）；
+  label 槽（分支目标）同样支持表达式。**位移与立即数共用这一套**（不再有"位移只认
+  字面量"的第二套读数）。
 - **数据伪指令**：`.word`/`.hword`/`.dword`（按 meta.endian 写多字节）、
   `.ascii "..."`/`.asciz "..."`（`\n \t \r \" \\ \0` 转义）、`.zero n`。
 - **`.macro name params` / `.endm`**：文本宏（参数引用 `\arg` 或 `%arg`；嵌套宏

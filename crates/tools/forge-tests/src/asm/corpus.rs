@@ -36,18 +36,25 @@ pub struct Suite {
     pub source: &'static str,
     /// 许可（SPDX）。
     pub license: &'static str,
-    /// `encoding:` 注释的位置：`(文件名后缀, 位置)`，按序取第一个命中；
-    /// 没命中就按 [`EncodingSide::Before`]（上游多数如此）。逐文件写清楚，别让代码猜。
-    pub encoding_sides: &'static [(&'static str, EncodingSide)],
+    /// `encoding:` 注释的位置：`(文件名后缀, 起始行, 位置)`，按**声明序**取最后一个
+    /// `后缀命中 && 起始行 <= 行号` 的声明（1-based；`1` = 全程）。
+    ///
+    /// 为什么带行号：**同一文件里两种风格可以混用**（实测
+    /// `x86/llvm-mc/intel-syntax-encoding.s` 前 94 行是"注释在指令前"，尾两条
+    /// `cmp eax, FOO` / `cmp eax, FOO[eax]` 却是"注释在指令后"——按整篇一个风格配
+    /// 会把 `[0x83,0xf8,0x02]` 配给后一条，得到一条**假**的字节差异）。所以风格是
+    /// **逐段声明**的，不是整篇猜的。
+    pub encoding_sides: &'static [(&'static str, usize, EncodingSide)],
 }
 
 impl Suite {
-    /// 这份语料文件的 `encoding:` 注释在哪一侧。
-    pub fn encoding_side(&self, file: &str) -> EncodingSide {
+    /// 这份语料文件**第 `line_no` 行**处的 `encoding:` 注释在哪一侧。
+    pub fn encoding_side(&self, file: &str, line_no: usize) -> EncodingSide {
         self.encoding_sides
             .iter()
-            .find(|(pat, _)| file.ends_with(pat))
-            .map(|(_, side)| *side)
+            .rev()
+            .find(|(pat, from, _)| file.ends_with(pat) && *from <= line_no)
+            .map(|(_, _, side)| *side)
             .unwrap_or(EncodingSide::Before)
     }
 }
@@ -72,8 +79,10 @@ pub const SUITES: &[Suite] = &[
         stmt_sep: None,
         source: "llvm/llvm-project@llvmorg-19.1.0 llvm/test/MC/X86/（只取 Intel 语法的文件）",
         license: "Apache-2.0 WITH LLVM-exception",
-        // 两份都是"注释在指令前"：`// CHECK: encoding: [..]` + 指令行。
-        encoding_sides: &[],
+        // 整篇是"注释在指令前"，**但从第 98 行起换成"注释在指令后"**（尾两条
+        // `cmp eax, FOO` / `cmp eax, FOO[eax]`；上游字节 `[0x83,0xf8,0x02]` =
+        // `cmp eax, 2` 只可能是前一条的）。逐段声明，别整篇猜。
+        encoding_sides: &[("intel-syntax-encoding.s", 98, EncodingSide::After)],
     },
     Suite {
         key: "llvm-mc",
@@ -94,12 +103,12 @@ pub const SUITES: &[Suite] = &[
         stmt_sep: Some("%%"),
         source: "llvm/llvm-project@llvmorg-19.1.0 llvm/test/MC/AArch64/",
         license: "Apache-2.0 WITH LLVM-exception",
-        // 这一套两种风格都有，**逐文件**写清楚：
+        // 这一套两种风格都有，**逐段**写清楚：
         // - `arm64-branch-encoding.s`：`ret` 换行后跟 `; CHECK: encoding: [..]` ⇒ After；
         // - `arm64-logical-encoding.s`：注释自带汇编文本（`; CHECK: and w0, … ; encoding:`）
         //   且成块放在指令前 ⇒ 位置无所谓（走"注释自带文本"那条路），这里仍标 Before；
         // - `arm64-separator.s`：没有 `encoding:`。
-        encoding_sides: &[("arm64-branch-encoding.s", EncodingSide::After)],
+        encoding_sides: &[("arm64-branch-encoding.s", 1, EncodingSide::After)],
     },
 ];
 
@@ -127,10 +136,50 @@ pub struct Line {
 pub struct Extracted {
     /// 候选指令行。
     pub lines: Vec<Line>,
-    /// 标签定义（`name:`）——解析某一行时作上下文喂进去，解掉 `UndefinedLabel`。
+    /// 标签定义（`name:`）——**整份文件**都当上下文喂进去：汇编器两遍布局，前向标签
+    /// 引用是正常写法。
     pub labels: String,
+    /// 符号常量定义（`.equ`/`.set`）——**带行号**存：它们是**顺序语义**（前向引用是错，
+    /// 同名后定义覆盖前定义，实测 `rv32i-valid.s` 里 `CONST` 先 30 后 16），所以喂的时候
+    /// 只取定义在本行**之前**的那些。不喂会有两类假象：`lui a0, CONST` 被算成"方言缺口"，
+    /// 而整文件一起喂又会把 `CONST` 全解成 16 ⇒ 编码对拍假红。
+    pub symbols: Vec<(usize, String)>,
     /// 被丢掉的行数（注释/伪指令/宏/预处理/空行）。
     pub skipped: usize,
+}
+
+/// 定义**符号常量**的伪指令（`.equ`/`.set`——汇编器里是同一个东西的两种拼法，
+/// 见 `dsl/codegen/machine.rs` 的伪指令分派）。
+///
+/// 这些行**不是**指令（照旧计入 [`Extracted::skipped`]），但它们是后续行的前提。
+const SYMBOL_DIRECTIVES: &[&str] = &["equ", "set"];
+
+/// 这一行是符号常量定义吗（`.equ NAME, expr` / `.set NAME, expr`）。
+fn is_symbol_def(t: &str) -> bool {
+    let Some(rest) = t.strip_prefix('.') else {
+        return false;
+    };
+    SYMBOL_DIRECTIVES.contains(&rest.split_whitespace().next().unwrap_or(""))
+}
+
+/// 把 `line_no` 行的**上下文**（标签 + 该行之前的符号常量定义）与文本拼成一段源码。
+///
+/// 上下文是**语料抽取**的概念，不是汇编器语法：上游文件里符号在别处定义，
+/// 单行喂进去必然解不出来。喂进去之后"解析不动"才说明汇编器真缺东西。
+pub fn with_prelude(ex: &Extracted, line_no: usize, text: &str) -> String {
+    if ex.labels.is_empty() && ex.symbols.is_empty() {
+        return text.to_string();
+    }
+    let mut s = String::with_capacity(ex.labels.len() + text.len() + 32);
+    s.push_str(&ex.labels);
+    for (no, def) in &ex.symbols {
+        if *no < line_no {
+            s.push_str(def);
+            s.push('\n');
+        }
+    }
+    s.push_str(text);
+    s
 }
 
 /// 剥注释：取最左的注释前缀位置截断（同一行内）。
@@ -194,6 +243,10 @@ pub fn extract(suite: &Suite, file: &str, src: &str) -> Extracted {
                 continue;
             }
             if is_directive(t) {
+                // 符号常量定义：行仍不是候选指令，但后续行解析时必须在场。
+                if is_symbol_def(t) {
+                    out.symbols.push((line_no, t.to_string()));
+                }
                 out.skipped += 1;
                 continue;
             }
@@ -254,4 +307,61 @@ fn is_corpus_file(p: &Path) -> bool {
         ext,
         "s" | "S" | "asm" | "hex" | "d" | "l" | "txt" | "reference" | "excerpt"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn suite() -> Suite {
+        Suite {
+            key: "synthetic",
+            isa: "x86",
+            dir: "x86/synthetic",
+            comments: &["#", "//"],
+            stmt_sep: None,
+            source: "-",
+            license: "-",
+            encoding_sides: &[],
+        }
+    }
+
+    /// 符号常量定义**不是**候选指令（照旧计入 `skipped`），但进 `symbols` 且带行号。
+    /// `.equ` 与 `.set` 都要认（上游两种拼法都有）。
+    #[test]
+    fn symbol_definitions_are_collected_not_classified() {
+        let ex = extract(
+            &suite(),
+            "t.s",
+            ".equ A, 30\nmov rax, [A]\n.set B, 2\ncmp eax, B\n",
+        );
+        assert_eq!(
+            ex.symbols,
+            vec![(1, ".equ A, 30".into()), (3, ".set B, 2".into())]
+        );
+        assert_eq!(ex.skipped, 2, "两条符号定义行都不算候选指令");
+        assert_eq!(ex.lines.len(), 2);
+        assert_eq!(ex.lines[0].line_no, 2);
+    }
+
+    /// 上下文只喂**本行之前**的符号定义（顺序语义），标签则整篇都喂（两遍布局）。
+    #[test]
+    fn prelude_is_positional_for_symbols_and_global_for_labels() {
+        let ex = extract(
+            &suite(),
+            "t.s",
+            ".set C, 30\nlui a0, C\n.set C, 16\nlui a0, C\nL0:\n",
+        );
+        let first = with_prelude(&ex, ex.lines[0].line_no, &ex.lines[0].text);
+        assert_eq!(first, "L0:\n.set C, 30\nlui a0, C");
+        let second = with_prelude(&ex, ex.lines[1].line_no, &ex.lines[1].text);
+        assert_eq!(second, "L0:\n.set C, 30\n.set C, 16\nlui a0, C");
+    }
+
+    /// 没有定义时 `with_prelude` 原样返回（不给每一行都白拼一次）。
+    #[test]
+    fn prelude_is_identity_without_context() {
+        let ex = extract(&suite(), "t.s", "mov rax, rbx\n");
+        assert_eq!(with_prelude(&ex, 1, "mov rax, rbx"), "mov rax, rbx");
+    }
 }

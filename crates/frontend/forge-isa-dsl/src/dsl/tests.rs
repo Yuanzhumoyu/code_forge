@@ -2919,8 +2919,8 @@ fn mem_template_parser_mips_style() {
     let s = gen_mem_parser(&[items], &[], false).to_string();
     let c = s.replace(' ', "");
     assert!(
-        c.contains("__raw_signed_int"),
-        "MIPS disp 需有符号立即数：{s}"
+        c.contains("__expr"),
+        "MIPS disp 走共用的值语法（含符号常量/一元 ±）：{s}"
     );
     assert!(c.contains("__Tok::LParen"), "应有 '('：{s}");
     assert!(!c.contains("__Tok::LBracket"), "不应有 '['：{s}");

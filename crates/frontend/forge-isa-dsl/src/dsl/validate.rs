@@ -1023,7 +1023,9 @@ fn validate_conventions(m: &IsaModel) -> Result<(), String> {
         }
     }
     if let Some(ps) = &conv.prefix_scan {
-        const KNOWN: [&str; 6] = ["opsize16", "lock", "repe", "repne", "addr16", "rex"];
+        const KNOWN: [&str; 7] = [
+            "opsize16", "lock", "repe", "repne", "addr32", "addr16", "rex",
+        ];
         for (i, e) in ps.iter().enumerate() {
             let path = format!("[conventions.prefix_scan][{i}]");
             if e.byte.is_none() && e.range.is_none() {
@@ -1040,7 +1042,7 @@ fn validate_conventions(m: &IsaModel) -> Result<(), String> {
             for fx in &e.effects {
                 if !KNOWN.contains(&fx.as_str()) {
                     return Err(format!(
-                        "{path}: unknown effect '{fx}' (opsize16/lock/repe/repne/addr16/rex)"
+                        "{path}: unknown effect '{fx}' (opsize16/lock/repe/repne/addr32/addr16/rex)"
                     ));
                 }
             }

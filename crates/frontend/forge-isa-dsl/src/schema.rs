@@ -185,7 +185,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &["byte", "range", "effects"],
         flatten: &[],
         additional: false,
-        doc: "变长前缀扫描表（缺省 = x86 集）",
+        doc: "变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex`",
     },
     Section {
         path: "[conventions.mem]",

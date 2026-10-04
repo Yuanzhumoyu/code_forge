@@ -223,6 +223,135 @@ fn error_equ_bad_expr() {
     assert!(format!("{err}").contains("line 1"), "err: {err:?}");
 }
 
+// ─────────────────── 符号常量进位移 / 一元 `+` ───────────────────
+
+fn x86_bytes(src: &str) -> Vec<u8> {
+    let asm = forge_codegen::x86::Assembler;
+    let insts = asm
+        .parse_insts(src)
+        .unwrap_or_else(|e| panic!("parse_insts `{src}`: {e}"));
+    let mut out = Vec::new();
+    for i in &insts {
+        out.extend(forge_codegen::x86::encode(i).unwrap_or_else(|e| panic!("encode `{src}`: {e}")));
+    }
+    out
+}
+
+/// `.set` 与 `.equ` 是同一个伪指令的两种拼法（上游 llvm-mc 用例用 `.set`），
+/// 符号常量在**立即数**里可用（x86 `imm32` 槽，上游期望字节 `83 /7 ib`）。
+#[test]
+fn symbol_constant_in_immediate() {
+    // `asm/parse/x86/llvm-mc/intel-syntax-encoding.s`：.set FOO, 2 / cmp eax, FOO
+    assert_eq!(
+        x86_bytes(".set FOO, 2\ncmp eax, FOO\n"),
+        vec![0x83, 0xf8, 0x02]
+    );
+    assert_eq!(
+        x86_bytes(".equ FOO, 2\ncmp eax, FOO\n"),
+        vec![0x83, 0xf8, 0x02]
+    );
+    // 符号参与算术（值语法与字面量完全同一套）
+    assert_eq!(
+        x86_bytes(".set FOO, 1\ncmp eax, FOO+1\n"),
+        vec![0x83, 0xf8, 0x02]
+    );
+}
+
+/// 符号常量在**位移**里同样可用：位移与立即数共用 `__expr`（这条正是旧实现缺的
+/// 第二套读数——位移只认字面量）。GAS Intel 的 `disp[base]` 与 `[base+disp]` 等价。
+#[test]
+fn symbol_constant_in_displacement() {
+    assert_eq!(
+        x86_bytes(".set FOO, 2\nmov rax, FOO[rbx]\n"),
+        vec![0x48, 0x8b, 0x43, 0x02]
+    );
+    assert_eq!(
+        x86_bytes("mov rax, [rbx+2]\n"),
+        vec![0x48, 0x8b, 0x43, 0x02]
+    );
+    // 位移表达式（符号 + 算术）：FOO*2 = 4
+    assert_eq!(
+        x86_bytes(".set FOO, 2\nmov rax, [rbx+FOO*2]\n"),
+        vec![0x48, 0x8b, 0x43, 0x04]
+    );
+    // 无基址的绝对寻址里同样是值语法：`[FOO]` = `[2]`（SIB 无基址 + disp32）
+    assert_eq!(
+        x86_bytes(".set FOO, 2\nmov rax, [FOO]\n"),
+        x86_bytes("mov rax, [2]\n")
+    );
+}
+
+/// `.set`/`.equ` 是**顺序**语义：后面的引用取新值（语料 `rv32i-valid.s` 里
+/// `CONST` 先 30 后 16 就靠这个——整篇一起求值会把两个引用解成同一个值）。
+#[test]
+fn set_redefinition_is_sequential() {
+    assert_eq!(
+        rv_words(".set C, 30\nlui a0, C\n.set C, 16\nlui a0, C\n"),
+        rv_words("lui a0, 30\nlui a0, 16\n")
+    );
+}
+
+/// 一元 `+` 是恒等（上游语料 `lwu x2, +4(x3)`、GAS `[+8]` 都这么写）。
+#[test]
+fn unary_plus_is_identity() {
+    assert_eq!(rv_enc("addi x1, x0, +5"), rv_enc("addi x1, x0, 5"));
+    assert_eq!(rv_enc("addi x1, x0, -(+5)"), rv_enc("addi x1, x0, -5"));
+    assert_eq!(x86_bytes("mov rax, [+8]\n"), x86_bytes("mov rax, [8]\n"));
+    assert_eq!(x86_bytes("mov rax, [-8]\n"), x86_bytes("mov rax, [0-8]\n"));
+}
+
+/// **地址尺寸覆盖（0x67）**：64 位模式下 32 位地址寄存器（`[eax]`）要发 `0x67`，
+/// 否则地址尺寸错（改前实测 `add eax, [eax]` 编成 `03 00`，真值 `67 03 00`）。
+#[test]
+fn address_size_override_prefix() {
+    assert_eq!(x86_bytes("add eax, [eax]\n"), vec![0x67, 0x03, 0x00]);
+    assert_eq!(x86_bytes("mov rax, [eax]\n"), vec![0x67, 0x48, 0x8b, 0x00]);
+    // SIB 索引也参与地址尺寸（`[rbx+eax*4]`）
+    assert_eq!(
+        x86_bytes("add rax, [rbx+eax*4]\n"),
+        vec![0x67, 0x48, 0x03, 0x04, 0x83]
+    );
+    // 上游 llvm-mc 用例的期望字节：`.set FOO, 2` + `cmp eax, FOO[eax]`
+    assert_eq!(
+        x86_bytes(".set FOO, 2\ncmp eax, FOO[eax]\n"),
+        vec![0x67, 0x3b, 0x40, 0x02]
+    );
+    // 64 位地址（缺省）**不发**前缀
+    assert_eq!(x86_bytes("add eax, [rax]\n"), vec![0x03, 0x00]);
+    assert_eq!(
+        x86_bytes("add rax, [rbx+rcx*4]\n"),
+        vec![0x48, 0x03, 0x04, 0x8b]
+    );
+}
+
+/// 地址尺寸覆盖是**编解码对称**的：`67 03 00` 解出来是 `[EAX]`（不是 `[RAX]`），
+/// 重新编码逐字节相同——否则 `[eax]` 与 `[rax]` 会被当成同一条。
+#[test]
+fn address_size_override_round_trips() {
+    use forge_codegen::x86::{decode, disassemble, encode};
+    for (asm, want) in [
+        ("add eax, [eax]", vec![0x67, 0x03, 0x00]),
+        ("add rax, [rbx+eax*4]", vec![0x67, 0x48, 0x03, 0x04, 0x83]),
+    ] {
+        let inst = forge_codegen::x86::assemble(asm).unwrap_or_else(|e| panic!("{asm}: {e}"));
+        assert_eq!(encode(&inst).unwrap(), want, "{asm}");
+        let (back, used) = decode(&want).unwrap_or_else(|| panic!("decode `{asm}` 失败"));
+        assert_eq!(used, want.len(), "{asm} 解码未吃满");
+        assert_eq!(encode(&back).unwrap(), want, "{asm} 往返字节变了");
+        let text = disassemble(&back);
+        assert!(text.contains("EAX"), "{asm} 反汇编应保留 32 位地址：{text}");
+    }
+}
+
+/// 非地址类寄存器当基址/索引仍被拒（`[al]`/`[xmm0]` 不是地址）。
+#[test]
+fn non_address_class_base_is_rejected() {
+    let asm = forge_codegen::x86::Assembler;
+    for src in ["mov rax, [al]", "add eax, [xmm0]", "add rax, [rbx+xmm1*4]"] {
+        assert!(asm.parse_insts(src).is_err(), "`{src}` 应当被拒");
+    }
+}
+
 // ─────────────────── [[pseudo]] 伪指令展开（S3e）───────────────────
 
 fn rv_words(src: &str) -> Vec<u32> {

@@ -246,7 +246,8 @@ fn gen_lexer_ts(_model: &IsaModel) -> Result<TokenStream, String> {
             fn reset(&mut self) { self.pos = 0; }
         }
 
-        /// `.equ` 符号常量表（parse_insts 在汇编前填充；指令立即数求值读取）。
+        /// 符号常量表（`.equ`/`.set`；parse_insts 在汇编前填充，指令的立即数与位移
+        /// 求值读取——两者共用同一套值语法）。
         #[allow(dead_code)]
         thread_local! {
             static __EQU: std::cell::RefCell<std::collections::HashMap<String, i64>> =
@@ -453,16 +454,16 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
             }
         });
     }
-    // 表达式/标签helper **无条件生成**：`.equ` 伪指令与 `parse_insts` 的符号回填
-    // 永远引用它们（`__expr` / `__set_label_operand`），与"本 ISA 有没有 imm/label
-    // 操作数"无关。历史实现按 has_imm/has_label 门控定义 → 只有寄存器操作数的
+    // 表达式/标签helper **无条件生成**：`.equ`/`.set` 伪指令、内存位移与 `parse_insts`
+    // 的符号回填永远引用它们（`__expr` / `__set_label_operand`），与"本 ISA 有没有
+    // imm/label 操作数"无关。历史实现按 has_imm/has_label 门控定义 → 只有寄存器操作数的
     // ISA（夹具 `demo_inst12`）生成出**引用未定义 helper** 的模块（编译不过）。
     // 未被本 ISA 用到的入口函数加 `#[allow(dead_code)]`。
     {
         let dollar = model.meta.imm_prefix.as_deref() == Some("$");
         out.extend(quote! {
-            /// 立即数/表达式求值：数字、负号、括号、算术（+ - * / % << >> & | ^ ~）、
-            /// 符号常量（.equ）。失败回滚 token 位置。
+            /// 立即数/表达式求值：数字、正负号、括号、算术（+ - * / % << >> & | ^ ~）、
+            /// 符号常量（`.equ`/`.set`）。失败回滚 token 位置。
             #[allow(dead_code)]
             fn __imm(it: &mut __Iter, min: i64, max: i64, float: bool) -> Option<i64> {
                 let save = it.pos;
@@ -550,10 +551,15 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                 Some(lhs)
             }
 
-            /// 一元：负号 / 按位非 / 主元（数字、括号、符号常量）。
+            /// 一元：正负号 / 按位非 / 主元（数字、括号、符号常量）。
             fn __unary(it: &mut __Iter, float: bool) -> Option<i64> {
                 let save = it.pos;
                 match it.toks.get(it.pos)? {
+                    // 一元 `+` 是**恒等**：上游语料里 `lwu x2, +4(x3)`、`[+8]` 都这么写。
+                    __Tok::Plus => {
+                        it.pos += 1;
+                        __unary(it, float)
+                    }
                     __Tok::Minus => {
                         it.pos += 1;
                         let v = __unary(it, float)?;
@@ -568,7 +574,7 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                 }
             }
 
-            /// 主元：数字 / 浮点位模式 / 括号表达式 / 符号常量（.equ）。
+            /// 主元：数字 / 浮点位模式 / 括号表达式 / 符号常量（`.equ`/`.set`）。
             /// 未定义符号 → None（由调用方决定回滚或报错）。
             fn __primary(it: &mut __Iter, save: usize, float: bool) -> Option<i64> {
                 match it.toks.get(it.pos)? {
@@ -592,9 +598,8 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                         Some(v)
                     }
                     __Tok::Ident(s) => {
-                        // .equ 符号常量：equ 表在 parse_insts 层维护，经
-                        // __assembler_equ 查找；找不到 → 回滚（调用方可能
-                        // 转标签/寄存器解析）。
+                        // 符号常量（`.equ`/`.set` 定义）：表在 parse_insts 层维护；
+                        // 找不到 → 回滚（调用方可能转标签/寄存器解析）。
                         let v = __lookup_equ(s)?;
                         it.pos += 1;
                         Some(v)
@@ -606,7 +611,7 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                 }
             }
 
-            /// .equ 符号查找（由 gen_assembler 注入的全局常量表）。
+            /// 符号常量查找（表由 `.equ`/`.set` 填充）。
             fn __lookup_equ(name: &str) -> Option<i64> {
                 __EQU.with(|m| m.borrow().get(name).copied())
             }
@@ -698,11 +703,6 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
         out.extend(quote! {
             /// 内存操作数解析（由 `[conventions.mem] templates` 派生；v16/V10）。
             #mem_parser
-            fn __raw_int(it: &mut __Iter) -> Option<i64> {
-                let v = match it.toks.get(it.pos)? { __Tok::Num(v) => *v, _ => return None };
-                it.pos += 1;
-                Some(v)
-            }
             fn __eat_lit(it: &mut __Iter, lit: &[__Tok]) -> bool {
                 let mut p = it.pos;
                 for t in lit {
