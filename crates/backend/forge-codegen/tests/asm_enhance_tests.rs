@@ -352,6 +352,96 @@ fn non_address_class_base_is_rejected() {
     }
 }
 
+// ─────────────────── 内存形式的 mov 族（8/16/32 位）───────────────────
+
+/// 真实汇编里最常见的 `mov r8/16/32, [mem]` 与 `mov [mem], r8/16/32`：**完整内存模板**
+/// （位移 / 索引 / 尺寸前缀 / 无基址）都要能解。改前只有两条窄路：
+/// `MOV_R_MEM` 的 `[{reg}]` 简写（没有位移，是给 IR 的 vreg 基址用的）与 `opsize = 64`
+/// 固定的 `MOV64_RM`/`MOV64_MR` ⇒ `mov eax, [rbx+8]` **一条候选都没有**。
+#[test]
+fn memory_mov_family_8_16_32() {
+    // 8 位是独立操作码（8A/88）
+    assert_eq!(x86_bytes("mov al, [rbx+2]\n"), vec![0x8a, 0x43, 0x02]);
+    assert_eq!(x86_bytes("mov [rbx+2], al\n"), vec![0x88, 0x43, 0x02]);
+    // 16 位：66 由数据寄存器宽度驱动
+    assert_eq!(x86_bytes("mov ax, [rbx+2]\n"), vec![0x66, 0x8b, 0x43, 0x02]);
+    assert_eq!(x86_bytes("mov [rbx+2], ax\n"), vec![0x66, 0x89, 0x43, 0x02]);
+    // 32 位
+    assert_eq!(x86_bytes("mov eax, [rbx+2]\n"), vec![0x8b, 0x43, 0x02]);
+    assert_eq!(x86_bytes("mov [rbx+2], eax\n"), vec![0x89, 0x43, 0x02]);
+    // 高编号寄存器（REX.R/B）
+    assert_eq!(
+        x86_bytes("mov r8d, [rbx+2]\n"),
+        vec![0x44, 0x8b, 0x43, 0x02]
+    );
+    assert_eq!(
+        x86_bytes("mov [rbx+2], r8d\n"),
+        vec![0x44, 0x89, 0x43, 0x02]
+    );
+    assert_eq!(
+        x86_bytes("mov r8w, [rbx+2]\n"),
+        vec![0x66, 0x44, 0x8b, 0x43, 0x02]
+    );
+    // 尺寸前缀只是给人读的提示（不进字节）；索引与无基址风味照旧
+    assert_eq!(
+        x86_bytes("mov al, byte ptr [rbx+2]\n"),
+        x86_bytes("mov al, [rbx+2]\n")
+    );
+    assert_eq!(
+        x86_bytes("mov word ptr [rbx+2], ax\n"),
+        x86_bytes("mov [rbx+2], ax\n")
+    );
+    assert_eq!(
+        x86_bytes("mov eax, [rbx+rcx*4+8]\n"),
+        vec![0x8b, 0x44, 0x8b, 0x08]
+    );
+    assert_eq!(
+        x86_bytes("mov eax, [0x12345678]\n"),
+        vec![0x8b, 0x04, 0x25, 0x78, 0x56, 0x34, 0x12]
+    );
+}
+
+/// `movsxd r64, dword ptr [mem]`（原来只有寄存器源）与带位移的 `xchg [mem], r`
+/// （原来的 `XCHG_MEM_R` 是 `[{reg}]` 简写，表示不了位移）。
+#[test]
+fn memory_movsxd_and_xchg() {
+    assert_eq!(
+        x86_bytes("movsxd rax, dword ptr [rbx]\n"),
+        vec![0x48, 0x63, 0x03]
+    );
+    assert_eq!(
+        x86_bytes("movsxd rax, [rbx+4]\n"),
+        vec![0x48, 0x63, 0x43, 0x04]
+    );
+    assert_eq!(
+        x86_bytes("xchg [rbx+8], rax\n"),
+        vec![0x48, 0x87, 0x43, 0x08]
+    );
+    assert_eq!(x86_bytes("xchg [rbx+8], eax\n"), vec![0x87, 0x43, 0x08]);
+    // 无位移的写法仍由声明在前的 `XCHG_MEM_R` 命中（同字节）
+    assert_eq!(x86_bytes("xchg [rbx], rax\n"), vec![0x48, 0x87, 0x03]);
+}
+
+/// 新增内存 mov 族的**编解码闭环**（解码吃满、重编码逐字节相同）。
+#[test]
+fn memory_mov_family_round_trips() {
+    use forge_codegen::x86::{decode, encode};
+    for (asm, want) in [
+        ("mov eax, [rbx+2]", vec![0x8b, 0x43, 0x02]),
+        ("mov ax, [rbx+2]", vec![0x66, 0x8b, 0x43, 0x02]),
+        ("mov [rbx+2], eax", vec![0x89, 0x43, 0x02]),
+        ("mov al, [rbx+2]", vec![0x8a, 0x43, 0x02]),
+        ("movsxd rax, dword ptr [rbx]", vec![0x48, 0x63, 0x03]),
+        ("xchg [rbx+8], rax", vec![0x48, 0x87, 0x43, 0x08]),
+    ] {
+        let inst = forge_codegen::x86::assemble(asm).unwrap_or_else(|e| panic!("{asm}: {e}"));
+        assert_eq!(encode(&inst).unwrap(), want, "{asm}");
+        let (back, used) = decode(&want).unwrap_or_else(|| panic!("decode `{asm}` 失败"));
+        assert_eq!(used, want.len(), "{asm} 解码未吃满");
+        assert_eq!(encode(&back).unwrap(), want, "{asm} 往返字节变了");
+    }
+}
+
 // ─────────────────── [[pseudo]] 伪指令展开（S3e）───────────────────
 
 fn rv_words(src: &str) -> Vec<u32> {

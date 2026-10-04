@@ -200,6 +200,15 @@ kind = "reg"
 classes = ["gpr2", "gpr4", "gpr8"]
 roles = ["in", "out", "inout"]
 
+# 16/32 位（2/4 字节）——**不含 64 位**：64 位的内存 mov 是 ABI 的
+# `MOV64_RM`/`MOV64_MR`（`opsize = 64` 固定，带 `stack_arg_*` 角色），
+# 再收 64 位就是同一批字节的第二条候选（无冗余）。
+[[operand_slots]]
+name = "gpr24"
+kind = "reg"
+classes = ["gpr2", "gpr4"]
+roles = ["in", "out", "inout"]
+
 # 「8 位**字段**、64 位**名字**」的槽（v20 V10 加注）：SETCC 的 rm 是 8 位寄存器，
 # 但 lowering 用的是承接布尔结果的 64 位 vreg（`xor {out}, {out}` 先清零，故低字节
 # 即结果）——`SETCC_RM8 {out}, …` 的文本里必须是 `RAX` 这类 64 位名，改成 `gpr1`
@@ -1218,6 +1227,75 @@ opcode = 0x89
 ops = ["src:gpr", "mem:mem"]
 asm = "mov {mem}, {src}"
 # 调用方栈参数 store（v20 A5-3 起偏移来自 plan 的 caller_offset(k)，第 5+ 参数写 [sp+shadow+k*槽]）
+
+# ── 内存形式的 mov（8/16/32 位，v20 V10 第七批）──────────────────────────────
+#
+# 已有几条各自都表示不了**完整内存模板**：
+# - `MOV_R_MEM` / `MOV_R_MEM_8` / `STORE_MEM_R` / `STORE_MEM_R_8`：rm 引用的是 `reg`
+#   槽（`[{src}]` 简写）——那是给 IR 降级用的 **vreg 基址**，文本里只认 `[RAX]`
+#   （没有位移、没有索引、没有尺寸前缀）；
+# - `MOV64_RM` / `MOV64_MR`：MemRef 风味但 `opsize = 64` 固定，只覆盖 64 位，
+#   而且它们是 ABI 的 `stack_arg_load`/`stack_arg_store`，不能动。
+# 于是真实汇编里最常见的 `mov eax, [rbx+8]`、`mov al, BYTE PTR [rbx]` 没有候选。
+# 这里按 ALU 内存族同款形状补上（`MRR_MEMREF_AUTO` 的 `opsize = "s0"`：宽度由数据
+# 寄存器驱动，16 → 66 前缀、32 → 无前缀；8 位是独立操作码 8A/88）。
+#
+# **不写 `ref`**（与 ALU 内存族同纪律）：IR 降级仍走 MOV_R_MEM/STORE_MEM_R（vreg
+# 基址），候选集与运行期行为逐字节不动，JIT 矩阵不受影响。
+
+[[instructions]]
+name = "MOV_R_MEM_AUTO"
+form = "MRR_MEMREF_AUTO"
+modrm = { rm = "[mem]" }
+opcode = 0x8B
+ops = ["dst:gpr24:out", "mem:mem"]
+asm = "mov {dst}, {mem}"
+
+[[instructions]]
+name = "STORE_MEM_R_AUTO"
+form = "MRR_MEMREF_AUTO"
+modrm = { rm = "[mem]" }
+opcode = 0x89
+ops = ["src:gpr24", "mem:mem"]
+asm = "mov {mem}, {src}"
+
+[[instructions]]
+name = "MOV_R_MEM_8_AUTO"
+form = "MRR_MEMREF_AUTO"
+modrm = { rm = "[mem]" }
+opcode = 0x8A
+ops = ["dst:gpr1b:out", "mem:mem"]
+asm = "mov {dst}, {mem}"
+
+[[instructions]]
+name = "STORE_MEM_R_8_AUTO"
+form = "MRR_MEMREF_AUTO"
+modrm = { rm = "[mem]" }
+opcode = 0x88
+ops = ["src:gpr1b", "mem:mem"]
+asm = "mov {mem}, {src}"
+
+# `movsxd r64, dword ptr [mem]`：已有的是**寄存器**源（`MOVSXD_R_RM`，`MRR_FIX64`），
+# 内存源没有候选。源宽度由操作码 63 决定（dword），目标由 REX.W 决定（64 位），
+# 所以这里用 `MRR_MEMREF`（opsize 64 固定），与寄存器版的 mod=3 分支互斥。
+[[instructions]]
+name = "MOVSXD_R_MEM"
+form = "MRR_MEMREF"
+modrm = { rm = "[mem]" }
+opcode = 0x63
+ops = ["dst:gpr:out", "mem:mem"]
+asm = "movsxd {dst}, {mem}"
+
+# `xchg [mem], r16/32/64`：已有的 `XCHG_MEM_R`（`MRR_MEM`）是 `[{reg}]` 简写风味
+# ——**没有位移**。带位移的 `xchg [rbx+8], rax` 是真实代码里的常见写法（自旋锁/交换），
+# 这里补 MemRef 风味；无位移的写法仍由声明在前的 `XCHG_MEM_R` 命中（同字节、同类型）。
+[[instructions]]
+name = "XCHG_MEM_R_AUTO"
+form = "MRR_MEMREF_AUTO"
+modrm = { rm = "[mem]" }
+opcode = 0x87
+ops = ["dst:gprx:inout", "mem:mem"]
+asm = "xchg {mem}, {dst}"
 
 [[instructions]]
 name = "MOVSD_RM"

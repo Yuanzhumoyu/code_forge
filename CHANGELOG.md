@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-04) — x86 内存形式的 `mov` 族（8/16/32 位）+ `movsxd`/`xchg` 的内存源形式
+
+真实汇编里最常见的 `mov eax, [rbx+8]`、`mov [rbx+8], eax` 在谱里**一条候选都没有**：已有的 `MOV_R_MEM` 系列 rm 引用的是 `reg` 槽（`[{src}]` 简写——那是给 IR 降级用的 **vreg 基址**，没有位移/索引/尺寸前缀），而 `MOV64_RM`/`MOV64_MR` 固定 `opsize = 64`（且带 `stack_arg_*` 角色，不能动）。补 6 条内存形式指令：
+
+- `MOV_R_MEM_AUTO`(8B) / `STORE_MEM_R_AUTO`(89)：16/32 位 load/store，走**完整内存模板**（位移、`index*scale`、尺寸前缀、无基址），66 前缀由数据寄存器宽度驱动；
+- `MOV_R_MEM_8_AUTO`(8A) / `STORE_MEM_R_8_AUTO`(88)：8 位是独立操作码，同样走完整模板（改前连 `mov al, [rbx+2]` 都解不出来）；
+- `MOVSXD_R_MEM`(63)：`movsxd rax, dword ptr [mem]`（原来只有寄存器源）；
+- `XCHG_MEM_R_AUTO`(87)：带位移的 `xchg [mem], r`（原来的 `XCHG_MEM_R` 是简写、表示不了位移）。
+
+新槽 `gpr24`（16/32 位）刻意**不含 64 位**：64 位的内存 mov 已由 `MOV64_RM`/`MOV64_MR` 覆盖，再收 64 位就是同一批字节的第二条候选（无冗余）。六条都**不写 `ref`**（与 ALU 内存族同纪律）：IR 降级路径不变，候选集与运行期行为逐字节不动，JIT 矩阵不受影响。
+
+证据：字节逐条钉住（`mov ax, [rbx+2]` = `66 8B 43 02`、`mov r8w, [rbx+2]` = `66 44 8B 43 02`、`mov [rbx+2], r8d` = `44 89 43 02`、`movsxd rax, dword ptr [rbx]` = `48 63 03`、无基址 `mov eax, [0x12345678]` = `8B 04 25 …`）+ 编解码闭环测试；并且 `asm/exec/x86/` 新增 `mem_mov32.s` / `mem_mov16.s` 两个小程序**真执行**（`ASM-EXEC-SUMMARY ran=8 → 10 skipped=0`）。守卫同步：x86 指令总数 265 → **271**、派生枚举器 1263 → **1327**（歧义名单未变）。语料棘轮不动（vendored 语料里没有这些写法，全量语料里遍地都是）。
+
+顺带登记一个**设计级**缺口（不在这批修）：`movzx`/`movsx` 的内存源形式卡在"文本分不出源宽度"——`byte`/`word` 是 `{size}` 组件、按设计不携带宽度，两条指令的文本与类型签名完全相同（已在歧义名单登记），照搬一套 16/32 位目的地 variant 只会让 `movzx eax, word ptr [rbx]` 静默编成 byte 那条；要修得先决定 `{size}` 是否携带宽度，或把尺寸关键字写成模板字面量。
+
 ### Added (2026-10-04) — 汇编器：`.set`/`.equ` 符号常量、位移与立即数共用值语法、地址尺寸覆盖前缀 `0x67`
 
 三条都是**汇编器 / DSL 语义**的用户可见变化（破坏性，无兼容层）：

@@ -99,6 +99,14 @@ fn curated_positive_lines_parse() {
         ("x86", "test rax, rbx"),
         ("x86", "mov rax, [rbx]"),
         ("x86", "mov rax, [rbx+8]"),
+        // 内存形式的 mov 族（8/16/32 位）：真实汇编里最常见的写法，走完整内存模板
+        // （位移/索引/尺寸前缀/无基址）——见 `asm_enhance_tests::memory_mov_family_*`
+        ("x86", "mov eax, [rbx+8]"),
+        ("x86", "mov [rbx+8], eax"),
+        ("x86", "mov word ptr [rbx+8], ax"),
+        ("x86", "mov al, byte ptr [rbx+rcx*4+8]"),
+        ("x86", "movsxd rax, dword ptr [rbx+4]"),
+        ("x86", "xchg [rbx+8], rax"),
         // 已知缺口（见 asm/README.md）：32 位目的地的立即数搬运（`mov eax, 0x1234`）谱里没有，
         // 只有 64 位的 `MOV_REG_IMM64`；这里钉住 64 位那条。
         ("x86", "mov rax, 0x1234"),

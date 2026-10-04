@@ -125,6 +125,13 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 - x86（余下几条，来自 `intel-syntax-encoding.s`）：`cmpltps`（SSE 比较谓词别名）、
   `acquire/release lock add …`（锁前缀 + 内存序提示）；
   以及 `apx-rex2-format-intel.s` 整份（APX/REX2：`r16d`、`dword ptr [r16 + rax]` 等）。
+- x86 `movzx` / `movsx` 的**内存源**形式（`movzx eax, byte ptr [rbx]`、`movsx rax, word ptr [rbx]`）：
+  瓶颈不在操作码，而在**文本分不出源宽度**——`byte`/`word` 是 `{size}` 组件，按设计**不携带
+  宽度**（只是给人读的提示），于是 `MOVZX_R8_MEM` 与 `MOVZX_R16_MEM` 的汇编文本与类型签名
+  完全一样（已在 `spec_coverage_guard` 的歧义名单里登记）；再照搬一套 16/32 位目的地的
+  variant 只会让 `movzx eax, word ptr [rbx]` **静默编成 byte 那条**（按声明序取首匹配）。
+  要修得先定一件事：`{size}` 是否携带宽度，或把尺寸关键字写成模板字面量——**独立的 DSL 设计项**。
+  寄存器源的 `movsxd rax, ecx`（源是 32 位寄存器名、指令槽却是 64 位 `gpr`）同理待定。
 
 > **计数口径变化（v20 V10）**：补上一元 `inc`/`dec` 之后，`apx-rex2-format-intel.s` 里
 > 那 8 行 `inc`/`dec`（`inc r16d`、`dec dword ptr [rax + r16]`）从 `no_prefix` 桶
@@ -184,6 +191,19 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
   尾部两条是"注释在指令后"，整篇一个风格会把 `[0x83,0xf8,0x02]` 配给后一条指令，
   凭空造出一条字节差异——`encoding_sides` 因此改成**带起始行的逐段声明**。
 
+- x86（v20 V10，第七批：**内存形式的 mov 族**）：补 6 条 `MRR_MEMREF_AUTO`/`MRR_MEMREF`
+  内存形式的指令——`MOV_R_MEM_AUTO`(8B) / `STORE_MEM_R_AUTO`(89) / `MOV_R_MEM_8_AUTO`(8A) /
+  `STORE_MEM_R_8_AUTO`(88) / `MOVSXD_R_MEM`(63) / `XCHG_MEM_R_AUTO`(87)，加一个 16/32 位
+  寄存器槽 `gpr24`。改前 `mov eax, [rbx+8]` **一条候选都没有**：`MOV_R_MEM` 系列是 `[{reg}]`
+  简写（给 IR 的 vreg 基址用，没有位移/尺寸前缀），`MOV64_RM`/`MOV64_MR` 又固定 `opsize = 64`。
+  现在 8/16/32 位的 `mov r, [mem]` 与 `mov [mem], r` 全部走**完整内存模板**（位移、`index*scale`、
+  尺寸前缀、无基址、高编号寄存器、66 前缀），`movsxd r64, dword ptr [mem]` 与带位移的
+  `xchg [mem], r` 也补上了。
+
+  这批**不动语料棘轮**（vendored 语料里没有这些写法，全量语料里遍地都是），所以证据换成了
+  **真执行**：`asm/exec/x86/` 新增两个小程序（`mem_mov32.s` 32 位存/读、`mem_mov16.s` 16 位
+  存/读），`ASM-EXEC-SUMMARY ran=8 → **10** skipped=0`——新编码在 x86 宿主机上**真跑**出期望值。
+
 ## 现有语料与计数
 
 （`2026-10-03` 实测；解析档数值以 `asm/ratchet/<isa>.txt` 为准，编码档以
@@ -197,7 +217,7 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 | riscv64 | `llvm-mc` | 3 | 503 | **82** | 38 | 22 | 361 | **有**：134 条期望 / **82 条逐字节全等** |
 | aarch64 | `llvm-mc` | 3 | 420 | 37 | 45 | 71 | 267 | **有**：119 条期望 / **15 条逐字节全等** |
 
-执行档：x86 3 条、riscv64 3 条、aarch64 2 条，**三架构都真跑通**（`ran=8 skipped=0`）。
+执行档：x86 5 条、riscv64 3 条、aarch64 2 条，**三架构都真跑通**（`ran=10 skipped=0`）。
 
 ## 刷新语料
 

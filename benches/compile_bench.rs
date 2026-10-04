@@ -31,7 +31,7 @@
 //! lexer matching — near-linear now); `ir_parse_big_text_256` samples the
 //! scaled-up input.
 
-use code_forge::backend::x86_v12::{TargetMachine, ensure_registered};
+use code_forge::backend::x86::{TargetMachine, ensure_registered};
 use code_forge::backend::{CompiledFunction, FunctionCompiler};
 use code_forge::ir::*;
 use code_forge::optimize::*;
