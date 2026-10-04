@@ -4,9 +4,9 @@
 [suite llvm-mc]
 files = 3
 lines = 420
-parsed = 47
-no_prefix = 35
-tail_mismatch = 71
+parsed = 115
+no_prefix = 11
+tail_mismatch = 27
 corpus_only = 267
 # mismatch: arm64-branch-encoding.s:11	ret x1	line 3: no matching instruction
 # mismatch: arm64-branch-encoding.s:78	b #28	line 3: no matching instruction

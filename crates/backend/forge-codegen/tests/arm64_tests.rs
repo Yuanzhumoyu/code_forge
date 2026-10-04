@@ -108,6 +108,48 @@ fn golden_register_encoding_pattern() {
 
 // ─────────────────── decode → encode 字节往返 ───────────────────
 
+/// **位 trie 的平铺 `if` 链回归**（v20 V10 第十二批）：同一节点上"位区间不相交、却能同时
+/// 命中同一个字"的两条边——逻辑族的 `shift`（[22,24)）与 `bics` 的 N 位（[21,22)）。
+/// 生成器若把边展开成 `else if` 链，前一条边一旦"条件为真但叶子 guard 没过"就会跳出整条链，
+/// 后一条边成了**死代码**：`bics x0, x1, x2` 编得出、解不回（被 `ands` 的移位边吞掉）。
+#[test]
+fn decode_bit_trie_disjoint_edges_fall_through() {
+    for asm in [
+        "bics x0, x1, x2",
+        "bics w0, w1, w2",
+        "ands x0, x1, x2",
+        "bics x1, x2, x3, asr #3",
+        "orn w1, w2, w3, lsl #7",
+    ] {
+        let b = enc(asm);
+        let (d, n) = decode(&b).unwrap_or_else(|| panic!("`{asm}` 编得出却解不回：{b:02x?}"));
+        assert_eq!(n, 4, "`{asm}` 消费字节 != 4");
+        assert_eq!(encode(&d).unwrap(), b, "`{asm}` decode→encode 字节不一致");
+    }
+}
+
+/// 逻辑（移位寄存器）族的字节 golden（来自语料上游 oracle 的 `encoding:` 注释）。
+#[test]
+fn golden_logical_shifted_register_family() {
+    for (asm, word) in [
+        ("and w1, w2, w3, lsl #2", 0x0A03_0841u32),
+        ("and x1, x2, x3, lsr #2", 0x8A43_0841),
+        ("and x1, x2, x3, asr #2", 0x8A83_0841),
+        ("and x1, x2, x3, ror #2", 0x8AC3_0841),
+        ("ands x1, x2, x3, ror #2", 0xEAC3_0841),
+        ("bic x1, x2, x3, lsl #3", 0x8A23_0C41),
+        ("bics x1, x2, x3, asr #3", 0xEAA3_0C41),
+        ("orn w1, w2, w3, lsl #7", 0x2A23_1C41),
+        ("bics x1, x2, x3", 0xEA23_0041),
+        ("ands w1, w2, w3", 0x6A03_0041),
+    ] {
+        assert_eq!(enc(asm), word_le(word), "`{asm}`");
+        // 反汇编往返：模板文本原样（寄存器渲染为大写，故比大写形）
+        let inst = assemble(asm).unwrap();
+        assert_eq!(disassemble(&inst).to_lowercase(), asm, "`{asm}` 反汇编往返");
+    }
+}
+
 /// MOVZ/MOVK hw 变体（P3① 大立即数多序列）：clang oracle 词 → decode →
 /// encode 字节往返。词 = base | (imm16<<5) | (hw<<21) | rd（imm16 值放
 /// [20:5]、hw 值放 [22:21]——A64 movz/movk 移宽立即数族）。
@@ -143,7 +185,7 @@ fn invalid_asm_rejected() {
     assert!(assemble("frob x0, x1").is_err());
     assert!(assemble("add x0, x1").is_err());
     assert!(assemble("add x0, x1, #4096").is_err()); // imm12 上界 4095
-    assert!(assemble("add x0, x1, x2, lsl #1").is_err()); // A1 未支持移位后缀
+    assert!(assemble("add x0, x1, x2, lsl #1").is_err()); // 加/减族的移位后缀仍未声明（逻辑族已支持）
     assert!(assemble("").is_err());
     // 寄存器宽度混用拒绝
     assert!(assemble("add x0, x1, w2").is_err());

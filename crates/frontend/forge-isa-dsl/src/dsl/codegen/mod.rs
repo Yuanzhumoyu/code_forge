@@ -1015,26 +1015,31 @@ fn check_bit_trie_overlaps(nodes: &[BitTrieNode]) -> Result<(), String> {
     Ok(())
 }
 
-/// 将位 trie 展开为嵌套 `if`（叶 arm 先试，随后按边 descend）。
+/// 将位 trie 展开：**叶 arm 先试，随后按声明序逐条试边**。
+///
+/// 边之间**必须平铺成互不嵌套的 `if`，不能写成 `else if` 链**：同一节点上两条边的位区间
+/// **可以不相交却同时匹配同一个字**（例：A64 逻辑族 `shift` 在 [22,24)、`bics` 的 N 位在
+/// [21,22)——`and …` 的移位边与 `bics` 的 N 边能同时命中）。`else if` 只在**前一条边的
+/// 条件为假**时才试下一条，于是"前一条边的子树匹配上了条件、但叶子 guard 没过而返回不了"
+/// 会直接跳出整条链，把后面的边变成**死代码**——实测 `bics x0, x1, x2` 编得出、解不回
+/// （同字能被 `ands` 的移位边接住，`bics` 那条永远到不了）。平铺则"试一条、没返回就试下一条"，
+/// 与定宽 decode 的文档语义（叶优先 + 声明序）一致。
+///
+/// 与变长（字节）decode 的 `emit_dec_trie` 不同：那里同一节点的掩码由
+/// `check_dec_trie_overlaps` 保证**互斥**，`else if` 链既安全又完整。
 fn emit_bit_trie(nodes: &[BitTrieNode], idx: usize) -> TokenStream {
     let node = &nodes[idx];
     let mut body = TokenStream::new();
     for arm in &node.arms {
         body.extend(arm.clone());
     }
-    if !node.edges.is_empty() {
-        let mut chain = quote! {};
-        for (bit, w, value, child) in node.edges.iter().rev() {
-            let sub = emit_bit_trie(nodes, *child);
-            chain = quote! {
-                if __bits(&__word, #bit as usize, #w) == #value {
-                    #sub
-                } else {
-                    #chain
-                }
-            };
-        }
-        body.extend(chain);
+    for (bit, w, value, child) in &node.edges {
+        let sub = emit_bit_trie(nodes, *child);
+        body.extend(quote! {
+            if __bits(&__word, #bit as usize, #w) == #value {
+                #sub
+            }
+        });
     }
     body
 }

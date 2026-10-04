@@ -65,7 +65,13 @@ rm    = { offset = 16, width = 5 }
 imm12 = { offset = 10, width = 12 } # 加立即数（sh 在 [23:22]，A1 恒 0）
 imm16 = { offset = 5,  width = 16 } # MOVZ/N/K 半字立即数（[20:5]）
 hw    = { offset = 21, width = 2 }  # MOVZ/N/K 半字选择（A2 恒 0）
-nbit  = { offset = 21, width = 1 }  # 逻辑族 NOT 位（BIC/ORN/EON=1）
+nbit  = { offset = 21, width = 1 }
+# 逻辑（移位寄存器）族的移位字段：`shift` 是 2 位常量（LSL=0/LSR=1/ASR=2/ROR=3，逐指令给常量），
+# 移位量 X 形式 6 位、W 形式 5 位——A64 规定 32 位形式 imm6<32，5 位槽就是这条约束本身
+# （用 6 位槽收 `lsl #40` 会编出未分配的字，故 W 形式另设一槽）。
+shift = { offset = 22, width = 2 }
+imm6  = { offset = 10, width = 6 }
+imm5  = { offset = 10, width = 5 }  # 逻辑族 NOT 位（BIC/ORN/EON=1）
 # 顶层固定段：
 #  - op8 = 位[31:24]（立即数 ALU 与寄存器 ALU 顶层 8 位；X(sf=1)/W(sf=0)
 #    各自为不同 8 位常量，故 X/W 分立 family、opcode 各含 sf）
@@ -149,6 +155,18 @@ signed = false
 width = 16
 
 [[operand_slots]]
+name = "imm6"
+kind = "imm"
+signed = false
+width = 6
+
+[[operand_slots]]
+name = "imm5"
+kind = "imm"
+signed = false
+width = 5
+
+[[operand_slots]]
 name = "off26"
 kind = "label"
 signed = true
@@ -200,6 +218,15 @@ name = "SYSEXC"   # 系统/异常：**顶层是 11 位**（[31:21]，与 mtop �
 opcode_field = "mtop"
 operand_fields = ["imm16"]
 
+[[forms]]
+name = "ALUSH6"   # 逻辑（移位寄存器，64 位）：rd/rn/rm/imm6（`shift` 是逐指令常量）
+opcode_field = "op8"
+operand_fields = ["rd", "rn", "rm", "imm6"]
+
+[[forms]]
+name = "ALUSH5"   # 同上，32 位形式：移位量 5 位（= 同一约束 imm6<32）
+opcode_field = "op8"
+operand_fields = ["rd", "rn", "rm", "imm5"]
 [[forms]]
 name = "NOPF"     # 全字常量
 opcode_field = "word"
@@ -840,6 +867,130 @@ rows = [
   { inst = "EONREGX", slot = "r64", opcode = 0xCA },
   { inst = "EONREGW", slot = "r32", opcode = 0x4A },
 ]
+
+# ── 逻辑（移位寄存器）**带移位后缀**：`{mn} {dst}, {src}, {src2}, lsl|lsr|asr|ror #{sh}` ──
+# 移位种类是 2 位**常量**（`fields.shift`），移位量是操作数槽；无后缀形态仍是 `ALUREG`
+# （其余位恒 0 = imm6 0/shift 0）——解码时它先命中，故 `, lsl #0` 与无后缀等价。
+# X/W 只差 opcode、寄存器槽与移位量槽宽（imm6/imm5），落在行上。
+[[templates]]
+name = "AND_SHIFT"
+body = { form = "{form}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}", "sh:{shslot}"], asm = "and {dst}, {src}, {src2}, {shname} #{sh}", fields = { shift = "{shcode}" } }
+rows = [
+  { inst = "AND_LSLX", form = "ALUSH6", opcode = 0x8A, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
+  { inst = "AND_LSRX", form = "ALUSH6", opcode = 0x8A, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
+  { inst = "AND_ASRX", form = "ALUSH6", opcode = 0x8A, slot = "r64", shslot = "imm6", shname = "asr", shcode = 2 },
+  { inst = "AND_RORX", form = "ALUSH6", opcode = 0x8A, slot = "r64", shslot = "imm6", shname = "ror", shcode = 3 },
+  { inst = "AND_LSLW", form = "ALUSH5", opcode = 0x0A, slot = "r32", shslot = "imm5", shname = "lsl", shcode = 0 },
+  { inst = "AND_LSRW", form = "ALUSH5", opcode = 0x0A, slot = "r32", shslot = "imm5", shname = "lsr", shcode = 1 },
+  { inst = "AND_ASRW", form = "ALUSH5", opcode = 0x0A, slot = "r32", shslot = "imm5", shname = "asr", shcode = 2 },
+  { inst = "AND_RORW", form = "ALUSH5", opcode = 0x0A, slot = "r32", shslot = "imm5", shname = "ror", shcode = 3 },
+]
+[[templates]]
+name = "ANDS_SHIFT"
+body = { form = "{form}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}", "sh:{shslot}"], asm = "ands {dst}, {src}, {src2}, {shname} #{sh}", fields = { shift = "{shcode}" } }
+rows = [
+  { inst = "ANDS_LSLX", form = "ALUSH6", opcode = 0xEA, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
+  { inst = "ANDS_LSRX", form = "ALUSH6", opcode = 0xEA, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
+  { inst = "ANDS_ASRX", form = "ALUSH6", opcode = 0xEA, slot = "r64", shslot = "imm6", shname = "asr", shcode = 2 },
+  { inst = "ANDS_RORX", form = "ALUSH6", opcode = 0xEA, slot = "r64", shslot = "imm6", shname = "ror", shcode = 3 },
+  { inst = "ANDS_LSLW", form = "ALUSH5", opcode = 0x6A, slot = "r32", shslot = "imm5", shname = "lsl", shcode = 0 },
+  { inst = "ANDS_LSRW", form = "ALUSH5", opcode = 0x6A, slot = "r32", shslot = "imm5", shname = "lsr", shcode = 1 },
+  { inst = "ANDS_ASRW", form = "ALUSH5", opcode = 0x6A, slot = "r32", shslot = "imm5", shname = "asr", shcode = 2 },
+  { inst = "ANDS_RORW", form = "ALUSH5", opcode = 0x6A, slot = "r32", shslot = "imm5", shname = "ror", shcode = 3 },
+]
+[[templates]]
+name = "BIC_SHIFT"
+body = { form = "{form}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}", "sh:{shslot}"], asm = "bic {dst}, {src}, {src2}, {shname} #{sh}", fields = { shift = "{shcode}", nbit = 1 } }
+rows = [
+  { inst = "BIC_LSLX", form = "ALUSH6", opcode = 0x8A, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
+  { inst = "BIC_LSRX", form = "ALUSH6", opcode = 0x8A, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
+  { inst = "BIC_ASRX", form = "ALUSH6", opcode = 0x8A, slot = "r64", shslot = "imm6", shname = "asr", shcode = 2 },
+  { inst = "BIC_RORX", form = "ALUSH6", opcode = 0x8A, slot = "r64", shslot = "imm6", shname = "ror", shcode = 3 },
+  { inst = "BIC_LSLW", form = "ALUSH5", opcode = 0x0A, slot = "r32", shslot = "imm5", shname = "lsl", shcode = 0 },
+  { inst = "BIC_LSRW", form = "ALUSH5", opcode = 0x0A, slot = "r32", shslot = "imm5", shname = "lsr", shcode = 1 },
+  { inst = "BIC_ASRW", form = "ALUSH5", opcode = 0x0A, slot = "r32", shslot = "imm5", shname = "asr", shcode = 2 },
+  { inst = "BIC_RORW", form = "ALUSH5", opcode = 0x0A, slot = "r32", shslot = "imm5", shname = "ror", shcode = 3 },
+]
+[[templates]]
+name = "BICS_SHIFT"
+body = { form = "{form}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}", "sh:{shslot}"], asm = "bics {dst}, {src}, {src2}, {shname} #{sh}", fields = { shift = "{shcode}", nbit = 1 } }
+rows = [
+  { inst = "BICS_LSLX", form = "ALUSH6", opcode = 0xEA, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
+  { inst = "BICS_LSRX", form = "ALUSH6", opcode = 0xEA, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
+  { inst = "BICS_ASRX", form = "ALUSH6", opcode = 0xEA, slot = "r64", shslot = "imm6", shname = "asr", shcode = 2 },
+  { inst = "BICS_RORX", form = "ALUSH6", opcode = 0xEA, slot = "r64", shslot = "imm6", shname = "ror", shcode = 3 },
+  { inst = "BICS_LSLW", form = "ALUSH5", opcode = 0x6A, slot = "r32", shslot = "imm5", shname = "lsl", shcode = 0 },
+  { inst = "BICS_LSRW", form = "ALUSH5", opcode = 0x6A, slot = "r32", shslot = "imm5", shname = "lsr", shcode = 1 },
+  { inst = "BICS_ASRW", form = "ALUSH5", opcode = 0x6A, slot = "r32", shslot = "imm5", shname = "asr", shcode = 2 },
+  { inst = "BICS_RORW", form = "ALUSH5", opcode = 0x6A, slot = "r32", shslot = "imm5", shname = "ror", shcode = 3 },
+]
+[[templates]]
+name = "ORR_SHIFT"
+body = { form = "{form}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}", "sh:{shslot}"], asm = "orr {dst}, {src}, {src2}, {shname} #{sh}", fields = { shift = "{shcode}" } }
+rows = [
+  { inst = "ORR_LSLX", form = "ALUSH6", opcode = 0xAA, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
+  { inst = "ORR_LSRX", form = "ALUSH6", opcode = 0xAA, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
+  { inst = "ORR_ASRX", form = "ALUSH6", opcode = 0xAA, slot = "r64", shslot = "imm6", shname = "asr", shcode = 2 },
+  { inst = "ORR_RORX", form = "ALUSH6", opcode = 0xAA, slot = "r64", shslot = "imm6", shname = "ror", shcode = 3 },
+  { inst = "ORR_LSLW", form = "ALUSH5", opcode = 0x2A, slot = "r32", shslot = "imm5", shname = "lsl", shcode = 0 },
+  { inst = "ORR_LSRW", form = "ALUSH5", opcode = 0x2A, slot = "r32", shslot = "imm5", shname = "lsr", shcode = 1 },
+  { inst = "ORR_ASRW", form = "ALUSH5", opcode = 0x2A, slot = "r32", shslot = "imm5", shname = "asr", shcode = 2 },
+  { inst = "ORR_RORW", form = "ALUSH5", opcode = 0x2A, slot = "r32", shslot = "imm5", shname = "ror", shcode = 3 },
+]
+[[templates]]
+name = "ORN_SHIFT"
+body = { form = "{form}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}", "sh:{shslot}"], asm = "orn {dst}, {src}, {src2}, {shname} #{sh}", fields = { shift = "{shcode}", nbit = 1 } }
+rows = [
+  { inst = "ORN_LSLX", form = "ALUSH6", opcode = 0xAA, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
+  { inst = "ORN_LSRX", form = "ALUSH6", opcode = 0xAA, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
+  { inst = "ORN_ASRX", form = "ALUSH6", opcode = 0xAA, slot = "r64", shslot = "imm6", shname = "asr", shcode = 2 },
+  { inst = "ORN_RORX", form = "ALUSH6", opcode = 0xAA, slot = "r64", shslot = "imm6", shname = "ror", shcode = 3 },
+  { inst = "ORN_LSLW", form = "ALUSH5", opcode = 0x2A, slot = "r32", shslot = "imm5", shname = "lsl", shcode = 0 },
+  { inst = "ORN_LSRW", form = "ALUSH5", opcode = 0x2A, slot = "r32", shslot = "imm5", shname = "lsr", shcode = 1 },
+  { inst = "ORN_ASRW", form = "ALUSH5", opcode = 0x2A, slot = "r32", shslot = "imm5", shname = "asr", shcode = 2 },
+  { inst = "ORN_RORW", form = "ALUSH5", opcode = 0x2A, slot = "r32", shslot = "imm5", shname = "ror", shcode = 3 },
+]
+[[templates]]
+name = "EOR_SHIFT"
+body = { form = "{form}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}", "sh:{shslot}"], asm = "eor {dst}, {src}, {src2}, {shname} #{sh}", fields = { shift = "{shcode}" } }
+rows = [
+  { inst = "EOR_LSLX", form = "ALUSH6", opcode = 0xCA, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
+  { inst = "EOR_LSRX", form = "ALUSH6", opcode = 0xCA, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
+  { inst = "EOR_ASRX", form = "ALUSH6", opcode = 0xCA, slot = "r64", shslot = "imm6", shname = "asr", shcode = 2 },
+  { inst = "EOR_RORX", form = "ALUSH6", opcode = 0xCA, slot = "r64", shslot = "imm6", shname = "ror", shcode = 3 },
+  { inst = "EOR_LSLW", form = "ALUSH5", opcode = 0x4A, slot = "r32", shslot = "imm5", shname = "lsl", shcode = 0 },
+  { inst = "EOR_LSRW", form = "ALUSH5", opcode = 0x4A, slot = "r32", shslot = "imm5", shname = "lsr", shcode = 1 },
+  { inst = "EOR_ASRW", form = "ALUSH5", opcode = 0x4A, slot = "r32", shslot = "imm5", shname = "asr", shcode = 2 },
+  { inst = "EOR_RORW", form = "ALUSH5", opcode = 0x4A, slot = "r32", shslot = "imm5", shname = "ror", shcode = 3 },
+]
+[[templates]]
+name = "EON_SHIFT"
+body = { form = "{form}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}", "sh:{shslot}"], asm = "eon {dst}, {src}, {src2}, {shname} #{sh}", fields = { shift = "{shcode}", nbit = 1 } }
+rows = [
+  { inst = "EON_LSLX", form = "ALUSH6", opcode = 0xCA, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
+  { inst = "EON_LSRX", form = "ALUSH6", opcode = 0xCA, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
+  { inst = "EON_ASRX", form = "ALUSH6", opcode = 0xCA, slot = "r64", shslot = "imm6", shname = "asr", shcode = 2 },
+  { inst = "EON_RORX", form = "ALUSH6", opcode = 0xCA, slot = "r64", shslot = "imm6", shname = "ror", shcode = 3 },
+  { inst = "EON_LSLW", form = "ALUSH5", opcode = 0x4A, slot = "r32", shslot = "imm5", shname = "lsl", shcode = 0 },
+  { inst = "EON_LSRW", form = "ALUSH5", opcode = 0x4A, slot = "r32", shslot = "imm5", shname = "lsr", shcode = 1 },
+  { inst = "EON_ASRW", form = "ALUSH5", opcode = 0x4A, slot = "r32", shslot = "imm5", shname = "asr", shcode = 2 },
+  { inst = "EON_RORW", form = "ALUSH5", opcode = 0x4A, slot = "r32", shslot = "imm5", shname = "ror", shcode = 3 },
+]
+# `ands`/`bics` 的**无后缀**形态（此前整族都没声明）。
+[[templates]]
+name = "ANDSREG"
+body = { ref = "ands", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "ands {dst}, {src}, {src2}" }
+rows = [
+  { inst = "ANDSREGX", slot = "r64", opcode = 0xEA },
+  { inst = "ANDSREGW", slot = "r32", opcode = 0x6A },
+]
+[[templates]]
+name = "BICSREG"
+body = { ref = "bics", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "bics {dst}, {src}, {src2}", fields = { nbit = 1 } }
+rows = [
+  { inst = "BICSREGX", slot = "r64", opcode = 0xEA },
+  { inst = "BICSREGW", slot = "r32", opcode = 0x6A },
+]
 [[templates]]
 name = "MOV"
 body = { ref = "mov", form = "MOVR", opcode = "{opcode}", ops = ["dst:{slot}:out", "src2:{slot}"], asm = "mov {dst}, {src2}", fields = { rn = 31 } }
@@ -1473,3 +1624,22 @@ bytes = [0xE0, 0xFF, 0x3F, 0xD4]
 [[vectors]]
 asm = "eret"
 bytes = [0xE0, 0x03, 0x9F, 0xD6]
+
+# ── 逻辑（移位寄存器）族：移位种类是 2 位常量、移位量是操作数槽；`ands`/`bics` 带 N 位 ──
+[[vectors]]
+asm = "and x1, x2, x3, ror #2"
+bytes = [0x41, 0x08, 0xC3, 0x8A]
+
+[[vectors]]
+# `bics` 的 N 位在 [21,22)、移位在 [22,24)：两条边位区间不相交**却能同时命中一个字**，
+# 这条钉住"平铺 if 链"（写成 else if 链会变成死代码 → 编得出、解不回）
+asm = "bics x0, x1, x2"
+bytes = [0x20, 0x00, 0x22, 0xEA]
+
+[[vectors]]
+asm = "bics x1, x2, x3, asr #3"
+bytes = [0x41, 0x0C, 0xA3, 0xEA]
+
+[[vectors]]
+asm = "orn w1, w2, w3, lsl #7"
+bytes = [0x41, 0x1C, 0x23, 0x2A]

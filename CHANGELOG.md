@@ -11,6 +11,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-04) — 定宽解码位 trie 的 `else if` 链把后一条边变成死代码
+
+**症状**：`bics x0, x1, x2`（以及 `bics` 的移位形态、`bics w0, w1, w2`）**编得出、解不回**——
+`encode` 给出正确字节 `20 00 22 ea`，`decode` 却返回 `None`。同族的 `ands` 一切正常。
+
+**根因**（`forge-isa-dsl` 的 `dsl/codegen/mod.rs::emit_bit_trie`）：定宽解码的位级 trie 把同一
+节点上的边展开成 **`else if` 链**。但同一节点上两条边的位区间**可以不相交、却同时命中同一个
+字**——`bics` 的 N 位在 bit21、逻辑族的移位在 bits[22,24)，`0xEA220020` 两条都命中。`else if`
+只在**前一条边的条件为假**时才试下一条，于是"条件为真、但子树的叶子 guard 没过而返回不了"
+会**直接跳出整条链**：`ands` 的移位边先接住这个字、guard 不过，`bics` 那条边永远到不了。
+
+**修法**：边**平铺成互不嵌套的 `if`**（试一条、没返回就试下一条），与定宽 decode 的既有语义
+（叶 arm 优先 + 声明序）一致。变长（字节）decode 的 `emit_dec_trie` 不受影响——那里同一节点的
+掩码由 `check_dec_trie_overlaps` 保证互斥，`else if` 既安全又完整（该处注释已写明这个区别）。
+
+**回归**：`crates/backend/forge-codegen/tests/arm64_tests.rs::decode_bit_trie_disjoint_edges_fall_through`
+（5 条真实写法编解码往返）、`isa/arm64.toml` 的 `bics x0, x1, x2` 谱内向量，以及生成期自测
+（`spec_bics*` 全部由红转绿）。这条缺陷此前不显形，是因为**没有任何谱在同一 opcode 节点上同时
+用到"位区间不相交却不是同一位域"的两条边**；补 aarch64 逻辑族（移位后缀 + N 位）才第一次踩到。
+
+### Added (2026-10-04) — aarch64：补逻辑（移位寄存器）族（移位后缀 + `ands`/`bics`）
+
+语料 `arm64-logical-encoding.s` 里 68 行卡在逻辑族的**移位后缀**与 `ands`/`bics` 的无后缀形态上，
+这批补齐（**纯谱数据，生成器零改动**）：
+
+- 位域新增 `shift`（[22,24)，2 位常量）、`imm6`（[10,16)）、`imm5`（[10,16) 的 5 位读法）；
+  表单 `ALUSH6`/`ALUSH5`（`rd/rn/rm` + 移位量）；操作数槽/模板各若干。
+- 指令 64 条 = `and`/`ands`/`bic`/`bics`/`orr`/`orn`/`eor`/`eon` × `lsl`/`lsr`/`asr`/`ror` × X/W，
+  另加 `ands`/`bics` 的无后缀形态 4 条（此前整族未声明）→ arm64 指令总数 120 → **188**。
+- **为什么移位种类是"逐指令常量"而不是新语法**：移位量是操作数（6 位/5 位槽），移位种类是 2 位
+  常量——`[[templates]]` 的行正好是"同一形状、逐行给常量"的载体，故 8 条模板 × 8 行即可，
+  DSL 不需要"值 → 多字段"这类新能力（位掩码立即数与 `tbz`/`tbnz` 仍需要，见
+  `crates/tools/forge-tests/asm/README.md` 的缺口清单）。
+- **W 形式用 5 位槽**：A64 规定 32 位形式的 `imm6<32`；用 6 位槽会静默编出未分配的字。
+- 4 条谱内 `[[vectors]]`（`and … ror #2`、`bics x0, x1, x2`、`bics … asr #3`、`orn w … lsl #7`）。
+
+效果：aarch64 解析档 `parsed` 47 → **115**、`no_prefix` 35 → **11**、红桶 71 → **27**；
+字节对拍 `checked` 25 → **93 条逐字节全等**（`known` 仍 0）——新族的每个字节都与 LLVM 上游注释相同。
+
 ### Fixed (2026-10-04) — aarch64：两处把 `#` 当注释的缺陷（立即数全被截断）+ 系统/异常族
 
 补 aarch64 系统/异常族时撞出**两处独立缺陷**，根因都是"`#` 被当成注释"——AArch64 的 `#` 是**立即数前缀**（注释是 `//`）：
