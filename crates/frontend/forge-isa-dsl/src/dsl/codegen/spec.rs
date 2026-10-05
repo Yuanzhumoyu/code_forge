@@ -52,6 +52,11 @@ pub(crate) fn imm_encode_checked(
     if info.inst.reloc.is_some() || m.encoding.kind == EncodingKind::PrefixScan {
         return None;
     }
+    // 多字段落点（`encode` + `fields`）：一个值摊到多个位域，没有"那一个字段"可查值域——
+    // 值域/可编码性由编码方案负责（生成期自测改断言"解码回同一个值"，见 `gen_spec_tests`）。
+    if slot.encode.is_some() {
+        return None;
+    }
     let bf = m.conventions.bitfields.get(field)?;
     let preshifted = bf
         .pieces
@@ -791,7 +796,13 @@ fn sample_operands(
                     &format!("{name}: 立即数 {fname} 未按位域语义解码"),
                     proc_macro2::Span::call_site(),
                 );
-                let want = field_expectation(m, fname, slot.signed.unwrap_or(false), base);
+                // 多字段落点：`Inst` 里存的就是**值**（各段是它的切片），基线期望即该值
+                // ——按某个位域算会把"值 ≠ 该位域看到的位"误判成缺陷。
+                let want = if slot.encode.is_some() {
+                    base
+                } else {
+                    field_expectation(m, fname, slot.signed.unwrap_or(false), base)
+                };
                 let base_lit = Literal::i64_suffixed(want);
                 checks.push(quote! { assert_eq!(*#fid, #base_lit, #msg); });
                 let checked = imm_encode_checked(m, info, slot, fname).is_some();
@@ -1124,9 +1135,16 @@ fn gen_one(
         // 而 `field_expectation` 按**字段**语义算——故先换算到字段单位再乘回来。
         let ushift = info.operands[*slot_i].2.unit_shift();
         let uval = info.operands[*slot_i].2.unit();
+        let multi = info.operands[*slot_i].2.encode.is_some();
         for v in values {
             let inst = inst_of(Some((*slot_i, v)));
-            let want = field_expectation(m, fname, signed, v >> ushift) << ushift;
+            // 多字段槽：`Inst` 里存的就是**值**本身（各段只是它的切片），解码拼回来仍是它
+            // ——不做"按某个位域算"的换算。
+            let want = if multi {
+                v
+            } else {
+                field_expectation(m, fname, signed, v >> ushift) << ushift
+            };
             let label = syn::LitStr::new(
                 &format!("{name}[{fname}={v}]"),
                 proc_macro2::Span::call_site(),

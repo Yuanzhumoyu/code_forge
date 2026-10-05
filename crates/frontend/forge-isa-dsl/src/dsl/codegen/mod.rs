@@ -854,6 +854,27 @@ fn gen_encode(infos: &[InstInfo], m: &IsaModel) -> Result<TokenStream, String> {
                     }
                 });
             }
+            // 多字段落点（`encode` + `fields`）：一个值摊到多个位域——按声明序从低位切起，
+            // 每段长度 = 该位域宽度（校验期已保证 Σ宽度 == 槽宽）。值域检查由方案负责
+            // （`slice` 是纯切片，任何槽宽内的值都能编）。
+            if let (Some(enc), Some(sfields)) = (slot.encode, &slot.fields) {
+                stmts.push(quote! {
+                    let __mv = *#fid as u64;
+                });
+                let mut sh: u32 = 0;
+                for sname in sfields {
+                    let sbf = single_field(m, sname, "fields")?;
+                    let (so, sw) = single(sbf);
+                    let smask = if sw >= 64 { u64::MAX } else { (1u64 << sw) - 1 };
+                    let shl = proc_macro2::Literal::u32_unsuffixed(sh);
+                    let smask = proc_macro2::Literal::u64_unsuffixed(smask);
+                    let _ = enc;
+                    stmts.extend(place_ts(quote! { (__mv >> #shl) & #smask }, sbf));
+                    sh += sw;
+                    let _ = so;
+                }
+                continue;
+            }
             stmts.extend(place_ts(
                 if slot.kind == OperandKind::Reg {
                     // 多宽度视图组（base_index=0 共享物理号）时 Reg 枚举判别值
@@ -1106,10 +1127,19 @@ fn gen_decode_group(
                 covered_ranges.extend(bf_ranges(bf));
             }
         }
-        // 操作数位域（其位不被零 guard 约束）
-        for (fname, _, _, _) in &info.operands {
-            let bf = get_bf(m, fname)?;
-            covered_ranges.extend(bf_ranges(bf));
+        // 操作数位域（其位不被零 guard 约束）——**多字段落点要把该槽的每个字段都算上**：
+        // 只算 `operand_fields` 里那一个（首字段）会把其余字段（如 `tbz` 的 `b5`[31]）
+        // 误当"保留位"，于是 guard 要求它们为 0，而它们恰恰是操作数的一部分（实测
+        // `TBZX[bit=63]` ⇒ bit31 = 1 ⇒ 解不回）。
+        for (fname, _, slot, _) in &info.operands {
+            match (&slot.encode, &slot.fields) {
+                (Some(_), Some(sfields)) => {
+                    for sname in sfields {
+                        covered_ranges.extend(bf_ranges(get_bf(m, sname)?));
+                    }
+                }
+                _ => covered_ranges.extend(bf_ranges(get_bf(m, fname)?)),
+            }
         }
         // 补集零 guard：**按字节**生成（字长任意，不能用 u64 掩码）——
         // 未覆盖的位（含非 8 倍数位宽在末字节的填充位）必须为 0。
@@ -1120,6 +1150,30 @@ fn gen_decode_group(
         for (fname, fid, slot, _) in &info.operands {
             let bf = get_bf(m, fname)?;
             let raw = extract_ts(bf);
+            // 多字段落点（`encode` + `fields`）：把各段按声明序拼回源值
+            // （与编码侧的"从低位切起"对称）。`slice` 是纯拼接，没有方案特有的逆向逻辑。
+            if let (Some(_), Some(sfields)) = (slot.encode, &slot.fields) {
+                let mut parts: Vec<TokenStream> = Vec::new();
+                let mut sh: u32 = 0;
+                for sname in sfields {
+                    let sbf = get_bf(m, sname)?;
+                    let piece = extract_ts(sbf);
+                    let shl = proc_macro2::Literal::u32_unsuffixed(sh);
+                    parts.push(quote! { ((#piece) << #shl) });
+                    sh += single(sbf).1;
+                }
+                let combined = quote! { (#(#parts)|*) };
+                let signed = slot.signed.unwrap_or(false) || slot.kind == OperandKind::Label;
+                let expr: TokenStream = if signed {
+                    let w = slot.width.unwrap_or(64);
+                    sign_extend_ts(quote! { (#combined) as u64 }, w)
+                } else {
+                    quote! { (#combined) as i64 }
+                };
+                binds.push(quote! { let #fid = #expr; });
+                ctor_fields.push(quote! { #fid });
+                continue;
+            }
             let expr: TokenStream = match slot.kind {
                 OperandKind::Reg => field_ctor_expr(slot, quote! { #raw as u32 }),
                 // 条件码槽在 `Inst` 里是 `u8`（与编码侧 `*fid as u64` 对称）——

@@ -1270,6 +1270,22 @@ pub struct OperandSlot {
     /// 槽只接受 `in`，声明 `out` 的槽只接受 `out`。
     #[serde(default)]
     pub roles: Option<OperandRole>,
+    /// imm/label：**值的多字段编码方案**（缺省 None = 单字段，落 `operand_fields` 那一个）。
+    ///
+    /// 声明它 + [`Self::fields`] 后，一个操作数的值会**摊到多个位域**上——这是"编码方案
+    /// 由谱声明、实现由 DSL 提供"的那类能力（同 `kind = "cond"`/`wrap`/`unit`）：
+    ///
+    /// - [`SlotEncode::Slice`]：**位切片**——按 `fields` 的**声明序**把值从低位切起，
+    ///   每段长度 = 该位域的宽度（`b40`(5 位) + `b5`(1 位) 正好吃完 6 位的位序号）。
+    ///   解码反向拼回。A64 `tbz/tbnz` 的位序号（`b5` 在 bit31、`b40` 在 [4:0]）就是它。
+    ///
+    /// 单字段槽（绝大多数）不写这两个键，生成物与从前逐字相同。
+    #[serde(default)]
+    pub encode: Option<SlotEncode>,
+    /// 多字段落点：目标位域名，**声明序 = 取值的顺序**（见 [`Self::encode`]）。
+    /// 表单 `operand_fields` 里这一项仍写**首字段**（`fields[0]`，校验期一致）。
+    #[serde(default)]
+    pub fields: Option<Vec<String>>,
 }
 
 impl OperandSlot {
@@ -1362,6 +1378,31 @@ pub enum OperandKind {
     Mem,
     Label,
     Cond,
+}
+
+/// 值的**多字段编码方案**（`[[operand_slots]].encode`）。
+///
+/// 一个操作数的值 → 多个位域（反向亦然）。方案由**谱按名字选择**，实现由 DSL 提供——
+/// 与 `kind = "cond"`/`wrap`/`unit` 同类：能力是声明的，不是隐含的；没声明的谱生成物
+/// 逐字不变。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SlotEncode {
+    /// **位切片**：按 `fields` 的**声明序**从值的最低位切起，每段长度 = 该位域宽度；
+    /// 解码把各段拼回。用于"一个数被拆到不相邻的两个位域"的编码（A64 `tbz`/`tbnz` 的
+    /// 位序号 = `b40`[4:0] + `b5`[31]）。
+    ///
+    /// 前提：各字段宽度之和 == 槽的 `width`（校验期钉死，切完不剩也不缺）。
+    Slice,
+}
+
+impl SlotEncode {
+    /// 人类可读名称（诊断用）。
+    pub fn name(self) -> &'static str {
+        match self {
+            SlotEncode::Slice => "slice",
+        }
+    }
 }
 
 impl OperandKind {

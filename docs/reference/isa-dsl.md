@@ -124,7 +124,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex` |
 | `[[conventions.imm_fn]]` | `name` `text` `expr` | — | 立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值） |
 | `[conventions.mem]` | `templates` | `size_keywords` | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
-| `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `unit` `roles` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
+| `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `unit` `roles` `encode` `fields` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
 | `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `data_width` `implicit_regs` `reloc` `width` `only_variants` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[[templates]]` | `rows` | `name` `body` | 唯一指令复用机制：`body` 共享字段 + `rows` 每行一条指令 |
@@ -672,6 +672,27 @@ signed = true
 width = 26
 unit = 4                       # 源文本/Inst 字段是**字节**偏移（字段数的是 4 字节字）
 ```
+
+**一个值摊到多个字段（`encode` + `fields`）**：有些操作数在编码里不是"一段连续的位"，
+而是被拆到几个不相邻的位域。声明 `encode` 方案 + 目标字段表后，槽的值 ↔ 那几个字段
+由 DSL 统一换算（编码/解码/反汇编/生成期自测同源），谱里不写第二遍：
+
+```toml
+[[operand_slots]]
+name = "bitpos"                # A64 tbz/tbnz 的位序号 0..63
+kind = "imm"
+signed = false
+width = 6
+encode = "slice"               # 位切片：按 fields 声明序从值的最低位切起
+fields = ["b40", "b5"]         # b40(5 位)[23:19] + b5(1 位)[31]——两段不相邻
+```
+
+- **`slice`**：第 i 段 = 值右移(前面各段的宽度之和)，长度 = 该位域的宽度；解码反向拼回。
+  校验期要求**各字段宽度之和 == 槽的 `width`**（切完不剩也不缺）；
+- 表单 `operand_fields` 里这一项仍写**首字段**（`fields[0]`），其余字段由槽声明
+  （写别的会被校验期拒绝）；
+- 方案由**谱按名字选择**、实现由 DSL 提供（与 `kind = "cond"`/`wrap`/`unit` 同类）；
+  只实现于定宽（含 `mixed`）编码/解码，变长（`prefix_scan`）ISA 写它会在校验期 fail-closed。
 
 **分支偏移是字节（`unit`）**：真实汇编器里 A64 的 `b #28` 是**字节**偏移，而编码字段
 `imm26` 数的是 4 字节字（`28 / 4 = 7`）——`cbz`（imm19）/`tbz`（imm14）同理；x86 的

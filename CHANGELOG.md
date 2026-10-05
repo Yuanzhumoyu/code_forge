@@ -11,6 +11,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-04) — `[[operand_slots]]` 的 `encode` + `fields`：一个值摊到多个字段
+
+有些操作数在编码里不是"一段连续的位"：A64 的 `tbz`/`tbnz` 位序号（0..63）被拆到**两个
+不相邻**的位域——低 5 位进 `b40`[23:19]、第 5 位进 `b5`[31]。DSL 此前只能声明"位域 ← 常量
+或操作数"，没有"一个值 → 多个字段"这一环，于是 `tbz`/`tbnz` 整族写不出来。
+
+新增两个槽属性（成对出现）：
+
+```toml
+[[operand_slots]]
+name = "bitpos64"              # 位序号 0..63
+kind = "imm"
+signed = false
+width = 6
+encode = "slice"               # 位切片：按 fields 声明序从值的最低位切起
+fields = ["b40", "b5"]         # b40(5 位)[23:19] + b5(1 位)[31]
+```
+
+- **`slice`**：第 i 段 = 值 `>>`(前面各段宽度之和)，长度 = 该位域宽度；解码反向拼回
+  （编码、解码、反汇编、生成期自测四处同源）。校验期要求 **Σ字段宽度 == 槽的 `width`**；
+- 表单 `operand_fields` 里这一项仍写**首字段**（`fields[0]`），其余字段由槽声明
+  （写别的 → 校验期拒绝）；
+- 方案由**谱按名字选择**、实现由 DSL 提供（与 `kind = "cond"`/`wrap`/`unit` 同一类：
+  能力是声明的，不是隐含的；没声明的谱生成物逐字不变）；只实现于定宽（含 `mixed`）
+  编码/解码，变长（`prefix_scan`）ISA 写它 → 校验期 fail-closed；
+- 解码的**补集零 guard 要把槽的每个字段都算作"操作数位"**：只算 `operand_fields` 那一个
+  会把 `b5`[31] 当成保留位、要求它为 0——实测 `TBZX[bit=63]` 编得出但解不回。
+
+aarch64 落地：新增 `op7`/`b5`/`b40`/`imm14` 位域与 `off14`（label，`unit = 4`）、
+`bitpos64`（slice 槽）、`bitpos32` 槽，表单 `TBZ` 与 `TBZ`/`TBNZ` 模板 × X/W = 4 条指令
+（arm64 指令总数 188 → **192**，派生枚举器 778 → **802**）。3 条谱内 `[[vectors]]`
+（含 `tbz w3, #5, #32764` 与 `tbnz x3, #8, #-32768` 两条上游注释里的真实字节）。
+
+效果：aarch64 语料解析档 `parsed` 123 → **130**、**`no_prefix` 11 → 4**、红桶 19 不变，
+字节对拍 `checked` 98 → **100 条逐字节全等**（`known` 仍 0）。
+
 ### Added (2026-10-04) — `[[operand_slots]].unit`：源值单位（分支偏移是字节）
 
 真实汇编器里的分支偏移是**字节**：A64 的 `b #28` 编码成 `imm26 = 28 / 4 = 7`（`cbz` 的

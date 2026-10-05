@@ -3163,6 +3163,8 @@ fn imm_slot_wrap_reads_the_bit_pattern() {
         wrap,
         unit: None,
         roles: None,
+        encode: None,
+        fields: None,
     };
 
     // 32 位有符号 + wrap：规范域是 i32，接受域多收 `0x90909090` 这类无符号写法。
@@ -3313,6 +3315,105 @@ asm = "b {target}"
         "kind = \"prefix_scan\"\nmax_len = 8",
     );
     let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("prefix_scan"), "err: {err}");
+}
+
+// ─────────────── `encode`/`fields`：一个值摊到多个字段（位切片） ───────────────
+
+/// 多字段落点（`encode = "slice"`）：值的**低位段**按 `fields` 声明序切给各位域，
+/// 每段长度 = 该位域宽度（校验期要求 Σ宽度 == 槽宽）。
+///
+/// 形状取自 A64 `tbz/tbnz`：6 位位序号 = `b40`[23:19]（低 5 位）+ `b5`[31]（第 5 位）——
+/// 两个位域**不相邻**，正是"一个值 → 多字段"的用武之地。
+#[test]
+fn slot_fields_slice_splits_the_value() {
+    let doc = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "fixed"
+bits = 32
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+op7 = { offset = 24, width = 7 }
+b5 = { offset = 31, width = 1 }
+b40 = { offset = 19, width = 5 }
+imm14 = { offset = 5, width = 14 }
+rt = { offset = 0, width = 5 }
+[[operand_slots]]
+name = "bitpos"
+kind = "imm"
+signed = false
+width = 6
+encode = "slice"
+fields = ["b40", "b5"]
+[[operand_slots]]
+name = "r"
+kind = "reg"
+class = "gpr4"
+[[operand_slots]]
+name = "off14"
+kind = "label"
+signed = true
+width = 14
+[[forms]]
+name = "TBZ"
+opcode_field = "op7"
+operand_fields = ["rt", "b40", "imm14"]
+[[instructions]]
+name = "TBZ"
+form = "TBZ"
+opcode = 0x36
+ops = ["src:r", "bit:bitpos", "target:off14"]
+asm = "tbz {src}, #{bit}, {target}"
+"#;
+    let m = parse_and_validate(doc).expect("slice 合法");
+    let bit = m
+        .operand_slots
+        .iter()
+        .find(|s| s.name == "bitpos")
+        .expect("槽存在");
+    assert_eq!(bit.encode, Some(super::model::SlotEncode::Slice));
+    assert_eq!(
+        bit.fields.as_deref(),
+        Some(["b40".to_string(), "b5".to_string()].as_slice())
+    );
+    // 槽宽 6 = 5 + 1（各字段宽度之和）——值域就是位序号 0..63。
+    assert_eq!(bit.imm_range(), Some((0, 63)));
+
+    // 校验：`encode` 与 `fields` 必须成对；字段必须已声明；Σ宽度必须等于槽宽。
+    let err = parse_and_validate(&doc.replace("fields = [\"b40\", \"b5\"]\n", ""))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("encode"), "err: {err}");
+    let err = parse_and_validate(&doc.replace("encode = \"slice\"\n", ""))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("fields"), "err: {err}");
+    let err = parse_and_validate(&doc.replace("\"b5\"]", "\"b7\"]"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("b7"), "err: {err}");
+    let err = parse_and_validate(&doc.replace("width = 6\nencode", "width = 7\nencode"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("宽度之和"), "err: {err}");
+    // 表单里的 `operand_fields` 必须写**首字段**（其余字段由槽声明）。
+    let err = parse_and_validate(&doc.replace(
+        "[\"rt\", \"b40\", \"imm14\"]",
+        "[\"rt\", \"b5\", \"imm14\"]",
+    ))
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("首字段"), "err: {err}");
+    // 变长 ISA 还没实现多字段落点 → 明确拒绝。
+    let err = parse_and_validate(&doc.replace(
+        "kind = \"fixed\"\nbits = 32",
+        "kind = \"prefix_scan\"\nmax_len = 8",
+    ))
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("prefix_scan"), "err: {err}");
 }
 

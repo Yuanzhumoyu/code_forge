@@ -97,6 +97,10 @@ imm19 = { offset = 5,  width = 19 }  # CBZ/CBNZ/B.cond 相对偏移（[23:5]）
 cbop  = { offset = 24, width = 8 }   # CBZ/CBNZ 顶层（含 sf/op 位）
 rt    = { offset = 0,  width = 5 }   # CBZ/CBNZ 测试寄存器 Rt=[4:0]
 op5   = { offset = 0,  width = 5 }   # 系统/异常指令的低 5 位（svc=1/hvc=2/smc=3/dcps1..3=1..3/brk,hlt=0）
+op7   = { offset = 24, width = 7 }   # TBZ/TBNZ 顶层 [30:24]（bit31 让给位序号的高位 b5）
+b5    = { offset = 31, width = 1 }   # TBZ/TBNZ 位序号第 5 位（32 位形式必须为 0）
+b40   = { offset = 19, width = 5 }   # TBZ/TBNZ 位序号低 5 位（实测 [0xe3,0xff,0x2b,0x36]）
+imm14 = { offset = 5,  width = 14 }  # TBZ/TBNZ 相对偏移（[18:5]；与 imm19 同段但不同顶层）
 
 opc2  = { offset = 22, width = 2 }   # LS opc（00 store / 01 load / 10 符号载）
 imm12s= { offset = 10, width = 12 }  # LDR/STR 无符号 imm12（与 ALU imm12 同段）
@@ -441,6 +445,11 @@ opcode_field = "cbop"
 operand_fields = ["imm19"]
 
 [[forms]]
+name = "TBZ"      # TBZ/TBNZ：rt + 位序号（b40[23:19] + b5[31]）+ imm14[18:5]
+opcode_field = "op7"
+operand_fields = ["rt", "b40", "imm14"]
+
+[[forms]]
 name = "CSEL4"    # CSEL 族：rd rn cond rm（位低→高；cond 在 rm 之下）
 opcode_field = "mtop"
 operand_fields = ["rd", "rn", "cond", "rm"]
@@ -465,6 +474,29 @@ kind = "label"
 signed = true
 width = 19
 unit = 4    # 源文本/Inst 字段是**字节**偏移；字段数的是 4 字节字（`b #28` ⇒ imm26 = 7）
+
+[[operand_slots]]
+name = "off14"
+kind = "label"
+signed = true
+width = 14
+unit = 4    # TBZ/TBNZ 的相对偏移（±32768 字节，步进 4）
+
+# 位序号：6 位值被**切成两段**——低 5 位进 b40[23:19]、第 5 位进 b5[31]（不相邻！）。
+# 槽声明 encode = "slice" + fields（声明序 = 从低位切起），编码/解码两侧同源。
+[[operand_slots]]
+name = "bitpos64"
+kind = "imm"
+signed = false
+width = 6
+encode = "slice"
+fields = ["b40", "b5"]
+
+[[operand_slots]]
+name = "bitpos32"
+kind = "imm"
+signed = false
+width = 5    # 32 位形式：第 5 位不存在（b5 必须为 0，由补集零 guard 保证）
 
 # ── 乘法 MADD/MSUB/MUL（opcode_field=mtop [31:21]）──
 # X madd word 9B020C20 → mtop=(>>21)&0x7FF=0x4D8；W=0xD8
@@ -1094,6 +1126,22 @@ rows = [
   { inst = "CBNZX", slot = "r64", opcode = 0xB5 },
   { inst = "CBNZW", slot = "r32", opcode = 0x35 },
 ]
+# TBZ/TBNZ：位序号是**一个操作数摊到两个位域**（`encode = "slice"` 的位切片），
+# 目标仍是 label 槽（`unit = 4`）——数字写法 `#32764` 与标签写法 `foo` 共用一条。
+[[templates]]
+name = "TBZ"
+body = { form = "TBZ", opcode = "{opcode}", ops = ["src:{slot}", "bit:{bitslot}", "target:off14"], asm = "tbz {src}, #{bit}, {target}" }
+rows = [
+  { inst = "TBZX", slot = "r64", bitslot = "bitpos64", opcode = 0x36 },
+  { inst = "TBZW", slot = "r32", bitslot = "bitpos32", opcode = 0x36 },
+]
+[[templates]]
+name = "TBNZ"
+body = { form = "TBZ", opcode = "{opcode}", ops = ["src:{slot}", "bit:{bitslot}", "target:off14"], asm = "tbnz {src}, #{bit}, {target}" }
+rows = [
+  { inst = "TBNZX", slot = "r64", bitslot = "bitpos64", opcode = 0x37 },
+  { inst = "TBNZW", slot = "r32", bitslot = "bitpos32", opcode = 0x37 },
+]
 [[templates]]
 name = "CSEL"
 body = { ref = "csel", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:cond4", "src2:{slot}"], asm = "csel {dst}, {src}, {src2}, {cc}" }
@@ -1658,3 +1706,17 @@ bytes = [0x41, 0x0C, 0xA3, 0xEA]
 [[vectors]]
 asm = "orn w1, w2, w3, lsl #7"
 bytes = [0x41, 0x1C, 0x23, 0x2A]
+
+# TBZ/TBNZ：位序号一个操作数摊到两个位域（`b40`[23:19] + `b5`[31]），目标按字节（unit = 4）
+[[vectors]]
+asm = "tbz w3, #5, #32764"
+bytes = [0xE3, 0xFF, 0x2B, 0x36]
+
+[[vectors]]
+asm = "tbnz x3, #8, #-32768"
+bytes = [0x03, 0x00, 0x44, 0x37]
+
+[[vectors]]
+# 位序号第 5 位（bit31）与 imm14 相邻但不同段——分开钉住
+asm = "tbnz x1, #63, #4"
+bytes = [0x21, 0x00, 0xF8, 0xB7]

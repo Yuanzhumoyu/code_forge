@@ -82,13 +82,14 @@ fn generated_spec_tests_cover_every_instruction() {
 /// （`SVC`/`HVC`/`SMC`/`BRK`/`HLT`/`DCPS1..3` 8 条 + `ERET`/`DRPS` 两个整字常量）→ **120**。
 /// arm64 再补**逻辑（移位寄存器）族**：带移位后缀的 8 助记符（`and`/`ands`/`bic`/`bics`/
 /// `orr`/`orn`/`eor`/`eon`）× 4 种移位（`lsl`/`lsr`/`asr`/`ror`）× X/W = 64 条（移位种类
-/// 是 2 位常量、移位量是操作数槽），外加 `ands`/`bics` 的**无后缀**形态 4 条 → **188**）。
+/// 是 2 位常量、移位量是操作数槽），外加 `ands`/`bics` 的**无后缀**形态 4 条 → **188**；
+/// 再补 `TBZ`/`TBNZ` × X/W 4 条（位序号一个操作数摊到 `b40`+`b5` 两个位域）→ **192**）。
 #[test]
 fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 275), ("riscv64", 137), ("arm64", 188)],
+        vec![("x86", 275), ("riscv64", 137), ("arm64", 192)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }

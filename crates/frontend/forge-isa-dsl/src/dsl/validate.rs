@@ -1583,6 +1583,57 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                 ));
             }
         }
+        // 多字段编码方案（`encode` + `fields`）：两个键必须成对出现，字段必须已声明，
+        // `slice` 还要求"各字段宽度之和 == 槽宽"（切完不剩也不缺）。
+        match (&s.encode, &s.fields) {
+            (None, None) => {}
+            (Some(enc), Some(fields)) => {
+                if !matches!(s.kind, OperandKind::Imm | OperandKind::Label) {
+                    return Err(format!(
+                        "{path}: `encode` 只对 kind = \"imm\"/\"label\" 有意义（当前 kind = {}）",
+                        s.kind.kind_name()
+                    ));
+                }
+                if fields.is_empty() {
+                    return Err(format!("{path}: `fields` 不能为空"));
+                }
+                if m.encoding.kind == EncodingKind::PrefixScan {
+                    return Err(format!(
+                        "{path}: `encode` 暂不支持变长（prefix_scan）ISA——只有定宽编码/解码实现了多字段落点"
+                    ));
+                }
+                let mut total: u32 = 0;
+                for (i, fname) in fields.iter().enumerate() {
+                    let Some(bf) = m.conventions.bitfields.get(fname) else {
+                        return Err(format!(
+                            "{path}: fields[{i}] '{fname}' 不是 [conventions.bitfields] 里声明的位域"
+                        ));
+                    };
+                    if bf.pieces.is_some() {
+                        return Err(format!(
+                            "{path}: fields[{i}] '{fname}' 是多段散布位域——多字段落点只支持单段位域"
+                        ));
+                    }
+                    total = total.saturating_add(bf.width.unwrap_or(64));
+                }
+                let sw = s.width.unwrap_or(0);
+                if sw == 0 || total != sw {
+                    return Err(format!(
+                        "{path}: {enc:?} 要求各字段宽度之和 == 槽宽（当前 Σ={total}、槽宽={sw}）"
+                    ));
+                }
+            }
+            (Some(_), None) => {
+                return Err(format!(
+                    "{path}: 声明了 `encode` 就必须给 `fields`（目标位域）"
+                ));
+            }
+            (None, Some(_)) => {
+                return Err(format!(
+                    "{path}: 声明了 `fields` 就必须给 `encode`（编码方案）"
+                ));
+            }
+        }
         // `roles` 是**一个** `OperandRole`（`in`/`out`/`inout`），由类型系统保证不会是
         // 空集合或重复项——旧写法 `["in", "out"]` 的两种检查随之删除。
     }
@@ -1827,6 +1878,29 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
                 uses.len(),
                 of_len
             ));
+        }
+        // 多字段落点的操作数：`operand_fields` 里写的是**首字段**（其余字段由槽的
+        // `fields` 声明）——写别的会让"表单说的落点"与"槽摊开的落点"不一致。
+        if let Some(ofs) = enc.operand_fields.as_ref() {
+            for (i, op) in uses.iter().enumerate() {
+                let Some(slot) = m.operand_slots.iter().find(|s| s.name == op.slot) else {
+                    continue;
+                };
+                let (Some(_), Some(sfields)) = (&slot.encode, &slot.fields) else {
+                    continue;
+                };
+                if ofs.get(i).map(String::as_str) != sfields.first().map(String::as_str) {
+                    return Err(format!(
+                        "[[instructions.{}]]: 操作数 {i} 的槽 '{}' 是多字段落点（{:?}），\
+                         operand_fields[{i}] 必须写首字段 '{:?}'（当前 {:?}）",
+                        inst.name,
+                        op.slot,
+                        sfields,
+                        sfields.first(),
+                        ofs.get(i)
+                    ));
+                }
+            }
         }
     }
     if let Some(fields) = &inst.fields

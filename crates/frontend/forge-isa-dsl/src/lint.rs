@@ -350,6 +350,23 @@ fn used_bit_ranges(m: &IsaModel, inst: &Instruction) -> BTreeMap<String, Vec<(u3
         names.push(f.clone());
     }
     names.extend(enc.operand_fields.iter().flatten().cloned());
+    // 多字段落点（`[[operand_slots]].encode` + `fields`）：一个操作数摊到多个位域，
+    // `operand_fields` 只写了首字段——其余字段也是这条指令**真的用到**的位，必须进视图，
+    // 否则规则 7 会把它们报成"没有任何位域覆盖"（实测 `TBZX` 的 `b5`[31] 被误报）。
+    if let Ok((uses, _)) = crate::dsl::codegen::parse_asm_decl(
+        &inst.asm,
+        inst.ops.as_deref(),
+        &inst.name,
+        &m.variant_param_names(),
+    ) {
+        for op in &uses {
+            if let Some(slot) = m.operand_slots.iter().find(|s| s.name == op.slot)
+                && let (Some(_), Some(sfields)) = (&slot.encode, &slot.fields)
+            {
+                names.extend(sfields.iter().cloned());
+            }
+        }
+    }
     if (enc.modrm.is_some() || enc.modrm_fixed.is_some())
         && let Some(md) = &m.conventions.modrm
     {
