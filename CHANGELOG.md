@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-05) — 谱统一落在严格 TOML 1.0 子集（`isa/riscv64.toml` 的多行内联表）
+
+`isa/riscv64.toml` 的寄存器别名原先写成跨 5 行的内联表（`aliases = { zero = 0, … ,` … `t6 = 31 }`）——那是 **TOML 1.1** 才允许的写法（多行内联表 + 尾逗号）：本仓库的 `toml` 依赖是 spec 1.1 实现（`toml-1.1.x+spec-1.1.0`），所以构建全绿；而编辑器、Python `tomllib` 等 1.0 解析器会报语法错。改成标准子表（写法等价）：
+
+```toml
+[reg.gpr8.aliases]
+zero = 0
+```
+
+生成物与语料计数**零变化**，并补一条窄守卫 `crates/frontend/forge-isa-dsl/tests/schema_guard.rs::shipped_specs_are_strict_toml_1_0`（只钉"内联表内不许有裸换行"这一条，扫描器口径另有自测）与规范说明（`docs/reference/isa-dsl.md`「谱的书写约束：严格 TOML 1.0 子集」）。
+
 ### Added (2026-10-04) — `[[operand_slots]].symbols`：立即数位置上的符号引用（`%hi(foo)`）
 
 真实汇编里立即数常常是**符号**：`lui a0, %hi(foo)`、`addi ra, sp, %lo(foo)`、

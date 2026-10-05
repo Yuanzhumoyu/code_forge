@@ -753,3 +753,163 @@ fn array(b: &[char], i: &mut usize, depth: usize) {
         }
     }
 }
+
+// ──────────────────── 谱必须落在严格 TOML 1.0 子集 ────────────────────
+
+/// **谱必须写在严格 TOML 1.0 子集里**——这里只钉**实际踩到过的那一条规则**：
+/// 内联表（`{ … }`）里不许出现裸换行。
+///
+/// 为什么值得一条守卫：承载谱的 `toml` crate 是 **spec 1.1** 实现
+/// （`toml-1.1.x+spec-1.1.0`），1.1 **允许**多行内联表 + 尾逗号，而 1.0 解析器
+/// （编辑器的 TOML 语言服务、Python `tomllib`、别的工具）**都不收**。谱里写了这种写法，
+/// 本仓库的构建全绿、别人的工具报语法错（2026-10-05 实测：`isa/riscv64.toml` 的
+/// `aliases = { … }` 跨了 5 行——只有本仓库能解析；改成 `[reg.gpr8.aliases]` 子表）。
+///
+/// **范围声明**：这不是完整的 TOML 1.0 校验器（那需要真的 1.0 解析器，本仓库的
+/// `toml` 依赖是 1.1）。它只查"内联表内裸换行"这一条——**假红必须为零**：
+/// 换行在**数组**里（含内联表里的数组）、字符串里、注释里都合法，扫描器逐一区分。
+#[test]
+fn shipped_specs_are_strict_toml_1_0() {
+    let root = repo_root();
+    let mut specs: Vec<PathBuf> = Vec::new();
+    for dir in ["isa", "crates/backend/forge-codegen/tests/isa"] {
+        for e in std::fs::read_dir(root.join(dir)).expect("读谱目录") {
+            let p = e.expect("entry").path();
+            if p.extension().is_some_and(|x| x == "toml") {
+                specs.push(p);
+            }
+        }
+    }
+    assert!(specs.len() >= 9, "只找到 {} 份谱", specs.len());
+
+    let mut bad: Vec<String> = Vec::new();
+    for spec in &specs {
+        let text = read_lf(spec).expect("读谱");
+        for line in inline_table_bare_newlines(&text) {
+            bad.push(format!("{}:{line}", spec.display()));
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "以下谱用了 TOML 1.1 才允许的**多行内联表**（严格 1.0 解析器会报语法错）：\n  {}\n\
+         修法：改成子表（`[reg.gpr8.aliases]` + 每行一个键）或把整张内联表压成一行。",
+        bad.join("\n  ")
+    );
+}
+
+/// 扫描器自测：**假红为零**是这条守卫成立的前提，所以先把口径钉住。
+///
+/// 用例取自本仓库真实写法（多行数组、内联表里套数组、注释里的花括号）与
+/// 2026-10-05 修掉的那段 `aliases` 原文。
+#[test]
+fn inline_table_scanner_is_not_a_liar() {
+    // 合法：单行内联表、多行数组（元素是内联表）、内联表里套多行数组。
+    let legal = [
+        "a = { x = 1, y = 2 }\n",
+        "rows = [\n  { inst = \"A\" },\n  { inst = \"B\" },\n]\n",
+        "imm = { pieces = [ { offset = 1, width = 2 },   # 注释里的 { 花括号\n                  { offset = 3, width = 4 } ] }\n",
+        "names = [\n  \"X0\",\n  \"X1\",\n]\n",
+        "s = \"{ 字符串里的花括号 }\"\n",
+        "# 整行注释 { 未闭合的花括号\n",
+    ];
+    for src in legal {
+        assert!(
+            inline_table_bare_newlines(src).is_empty(),
+            "假红（这段是合法 TOML 1.0）：{src:?} → {:?}",
+            inline_table_bare_newlines(src)
+        );
+    }
+    // 非法：多行内联表——2026-10-05 `isa/riscv64.toml` 修掉的那段原文（首行 = 第 1 行）。
+    let bad = "aliases = { zero = 0, ra = 1,\n            s0 = 8, fp = 8 }\n";
+    assert_eq!(
+        inline_table_bare_newlines(bad),
+        vec![1],
+        "多行内联表没被认出来"
+    );
+}
+
+/// 内联表里出现**裸换行**的**行号**（1-based，指换行所在行）。
+///
+/// 判定只认括号栈：换行时栈顶是 `{` ⇒ 违规（栈顶是 `[` ⇒ 合法的多行数组）。
+/// 注释、`"…"`/`'…'`、`"""…"""`/`'''…'''` 里的花括号与换行都先剥掉。
+fn inline_table_bare_newlines(text: &str) -> Vec<usize> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum St {
+        Code,
+        Comment,
+        Str(char),
+        MlStr(char),
+    }
+    let cs: Vec<char> = text.chars().collect();
+    let mut st = St::Code;
+    let mut stack: Vec<char> = Vec::new();
+    let mut hits: Vec<usize> = Vec::new();
+    let mut i = 0usize;
+    while i < cs.len() {
+        let c = cs[i];
+        match st {
+            St::Comment => {
+                if c == '\n' {
+                    st = St::Code;
+                }
+                i += 1;
+            }
+            St::Str(q) => {
+                if c == '\\' {
+                    i += 2;
+                    continue;
+                }
+                if c == q {
+                    st = St::Code;
+                }
+                i += 1;
+            }
+            St::MlStr(q) => {
+                if c == '\\' {
+                    i += 2;
+                    continue;
+                }
+                if c == q && cs.get(i + 1) == Some(&q) && cs.get(i + 2) == Some(&q) {
+                    st = St::Code;
+                    i += 3;
+                    continue;
+                }
+                i += 1;
+            }
+            St::Code => match c {
+                '#' => {
+                    st = St::Comment;
+                    i += 1;
+                }
+                '"' | '\'' => {
+                    let q = c;
+                    if cs.get(i + 1) == Some(&q) && cs.get(i + 2) == Some(&q) {
+                        st = St::MlStr(q);
+                        i += 3;
+                    } else {
+                        st = St::Str(q);
+                        i += 1;
+                    }
+                }
+                '[' | '{' => {
+                    stack.push(c);
+                    i += 1;
+                }
+                ']' | '}' => {
+                    stack.pop();
+                    i += 1;
+                }
+                '\n' => {
+                    if stack.last() == Some(&'{') {
+                        hits.push(i);
+                    }
+                    i += 1;
+                }
+                _ => i += 1,
+            },
+        }
+    }
+    hits.iter()
+        .map(|&idx| cs[..idx].iter().filter(|c| **c == '\n').count() + 1)
+        .collect()
+}

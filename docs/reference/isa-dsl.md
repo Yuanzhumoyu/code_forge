@@ -165,6 +165,30 @@ forge_dsl::isa_from_file!("tests/isa/demo.toml", spec_tests = false);
 最小可抄的**完整宿主** = `examples/isa-host-demo`（运行期只依赖 `forge-isa-runtime` +
 build-dependency `forge-isa-dsl`，自带玩具谱与依赖面守卫；v19 V2 的 G1 实证）。
 
+### 谱的书写约束：严格 TOML 1.0 子集
+
+谱必须能被**严格 TOML 1.0** 解析器读出来。承载谱的 `toml` crate 是 **spec 1.1** 实现
+（`toml-1.1.x+spec-1.1.0`），比 1.0 宽——"只在本仓库构建通过、编辑器与别的工具却报语法错"的
+写法一律不写：
+
+- **不允许多行内联表**：`{ … }` 必须在一行内闭合；跨行只允许出现在**数组**里
+  （含内联表内部的数组）。映射类键（如 `[reg.<名>].aliases`）一律写成**子表**：
+
+  ```toml
+  [reg.gpr8.aliases]
+  zero = 0
+  ra = 1
+  ```
+
+  守卫：`crates/frontend/forge-isa-dsl/tests/schema_guard.rs::shipped_specs_are_strict_toml_1_0`
+  （只钉这一条规则；扫描器口径由 `inline_table_scanner_is_not_a_liar` 自测钉住，假红为零）。
+
+编辑器若报**未知键**（`Additional properties are not allowed (… was unexpected)`），先跑
+`cargo test -p forge-isa-dsl --test schema_guard`：它钉住 `isa-dsl.schema.json` 与发射器**逐字相同**，
+且三份发行谱里**每一个键**都在 schema 里。两边都绿 ⇒ 是编辑器侧的旧状态（重载窗口即可），
+不是 schema 漏更新；真漏更新时那条守卫会直接红，重新生成用
+`cargo run -p forge-isa -- schema --out isa-dsl.schema.json`。
+
 ### 宿主接入（**必须**：v18 S10d 起生成物由 build script 预生成）
 
 生成物不是宏展开出来的，而是 `$OUT_DIR/forge_gen_<模块名>_<参数哈希>.rs` 这个**文件**，
