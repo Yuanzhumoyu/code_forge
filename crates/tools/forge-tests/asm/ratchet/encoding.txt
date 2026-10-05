@@ -3,8 +3,8 @@
 #       known 多一条 = 新出现的字节差异（缺陷或新缺口）；少一条 = 修好了。
 [isa x86]
 cases = 104
-checked = 90
-unparsed = 14
+checked = 104
+unparsed = 0
 dropped = 8
 variants = 0
 known = 0

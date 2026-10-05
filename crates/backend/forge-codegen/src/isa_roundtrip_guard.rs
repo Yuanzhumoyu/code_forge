@@ -101,9 +101,11 @@ fn derived_insts_roundtrip_byte_stable() {
     // 2026-10-05（APX 语料批次）：x86 1354 → **1426**（14 条新指令；主体是 8 条一元内存形态
     //   ——每条带内存的 disp/index 三个风味 = 4 条，8 × 4 = 32；`MUL_RM`/`IMUL_RM`/
     //   `MOVSXD_R_RM32` 带 `gprx`/`gpr4` 的宽度与高视图；`IMUL_R_MEM`/`NOP_MEM32` 带风味）。
+    // 2026-10-05（助记符条件后缀批次）：1426 → **1450**（`SETCC_RM8_B` / `SETCC_R_MEM` /
+    //   `CMOVCC_R_MEM` 三条的视图与内存风味；`CMOVCC_R_RM` 放宽到 `gprx` 后多出 16/32 位视图）。
     assert_eq!(
         (x86, riscv, arm64),
-        (1426, 442, 825),
+        (1450, 442, 825),
         "枚举器条目数变了：确认是谱的预期变更还是派生逻辑退化"
     );
 }

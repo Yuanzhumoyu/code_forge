@@ -130,17 +130,11 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 - aarch64：**没有剩余缺口**——语料里本汇编器能认出来的写法全部通过（`parsed` 153、
   `no_prefix` 0、红桶 0、编码对拍 118/119 逐字节全等）；余下 267 行是语料特性（伪指令/宏/一行多语句/
   跨文件标签）。已修的各族见下面「已经修掉的」里的第十二～十六批。
-- x86：**红桶已清零**（`asm/ratchet/x86.txt` 的 `tail_mismatch = 0`）。余下 16 条 `no_prefix`
-  都是"上游写法我们还没建模"，各自有明确路线：
-  - `acquire/release lock add [rax], rax`（2 条，`intel-syntax-encoding.s`）：**两条前缀**
+- x86：**红桶已清零**（`tail_mismatch = 0`），**带期望字节的用例也全部逐字节对上**
+  （`checked` 104 / `unparsed` 0 / `known` 0）。余下 **2 条** `no_prefix`：
+  - `acquire/release lock add [rax], rax`（`intel-syntax-encoding.s`）：**两条前缀**
     （`F2`/`F3` + `F0`），而 `EncKeys.prefix` 目前只收一个字节 ⇒ 要把 `prefix` 放成**列表**
     （与 `escape` 同一形状：按序发，解码侧按前缀标志逐个判）。
-  - `cmovl …`（10 条）与 `sete …`（4 条，`apx-rex2-format-intel.s`）：**助记符自带条件后缀**，
-    我们只建了通用形态（`cmovcc {dst}, {src}, {cc}` / `setcc {dst}, {cc}`，供 lowering 用）。
-    两条路都试过并被否决，写在 `isa/x86.toml` 的对应注释里：① `asm = "set{cc} {dst}"` 需要
-    扫描器让"紧贴操作数的字面段"按 ident **前缀**匹配（`sete` 是一个 token，现在匹配不上）；
-    ② 按条件码逐条声明会与通用形态的**掩码边**在解码树上共存不能（`0F 9x` 的掩码 0xF0 覆盖
-    `0F 94`，`check_dec_trie_overlaps` 且这是**真**歧义：同一批字节两种 `Inst` 形状）。
 - x86 `movzx` / `movsx` 的**内存源**形式（`movzx eax, byte ptr [rbx]`、`movsx rax, word ptr [rbx]`）：
   瓶颈不在操作码，而在**文本分不出源宽度**——`byte`/`word` 是 `{size}` 组件，按设计**不携带
   宽度**（只是给人读的提示），于是 `MOVZX_R8_MEM` 与 `MOVZX_R16_MEM` 的汇编文本与类型签名
@@ -326,6 +320,23 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
   结果：`llvm-mc` 解析档 `parsed` 36 → **95**、**红桶 55 → 0**、`no_prefix` 20 → **16**；
   字节对拍 x86 `checked` 31 → **90 条逐字节全等**、`known` 全 0。
 
+- x86（v20 V10，第十九批：**助记符条件后缀 → 语料里带期望字节的用例全部对上**）：
+  上游写 `sete r16b` / `cmovl eax, r16d`（助记符**自带条件**、没有 `cc` 操作数），而我们只建了
+  通用形态（`setcc {dst}, {cc}` / `cmovcc {dst}, {src}, {cc}`，供 lowering 用）。两条"把它做成
+  指令"的路都被**解码树**挡住，原因写在 `isa/x86.toml` 注释里：① 把 `{cc}` 嵌进助记符要扫描器
+  让"紧贴操作数的字面段"按 ident 前缀匹配（`sete` 是一个 token）；② 按条件码建**精确** opcode
+  （`0F 94`）会与通用形态的**掩码**边（`0F 9x`）重叠——那是真歧义（同一批字节两种 `Inst` 形状），
+  `check_dec_trie_overlaps` 直接拒。
+  **解法是既有机制**：`[[pseudo]]` 文本展开（分派键是**整词** `sete`/`cmovl`，不产生解码 arm；
+  SSE 的八个比较别名就是这么做的）。配套补三条**同掩码**的兄弟指令（`SETCC_RM8_B` 8 位名、
+  `SETCC_R_MEM` 内存、`CMOVCC_R_MEM`；同掩码 ⇒ 归到同一解码节点、按声明序试，靠 mod 守卫区分，
+  互不遮蔽），并把 `CMOVCC_R_RM` 从固定 64 位放宽到 16/32/64。
+  顺带修掉同一族的一处**恒假守卫**：`opsize = 8`（`setcc byte ptr`）会生成 `__opsize == 1` 的
+  解码条件，而 `__opsize` 只可能取 2/4/8 ⇒ arm 永远解不出来（8 位没有 opsize 前缀可查——
+  与 v20 V10 加 8 位 ALU 族时实测过的那条同源，这次补在 `Opsize::Reg` 分支上）。
+  结果：`llvm-mc` 解析档 `parsed` 95 → **109**、`no_prefix` 16 → **2**（只剩两条 lock 提示前缀）；
+  编码对拍 **checked 104 / unparsed 0 / known 0**——**语料里带期望字节的用例全部逐字节对上**。
+
 ## 现有语料与计数
 
 （`2026-10-05` 实测；解析档数值以 `asm/ratchet/<isa>.txt` 为准，编码档以
@@ -335,7 +346,7 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 | ISA | suite | 文件 | 行数 | parsed | no_prefix | tail_mismatch | corpus_only | 字节 oracle |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | x86 | `gnu-gas-intel` | 1 | 64 | **50** | 4 | 7 | 3 | 无（GAS 用例不带期望字节） |
-| x86 | `llvm-mc` | 2 | 447 | **95** | 16 | **0** | 336 | **有**：104 条期望 / **90 条逐字节全等 / 0 条差异** |
+| x86 | `llvm-mc` | 2 | 447 | **109** | 2 | **0** | 336 | **有**：104 条期望 / **104 条逐字节全等 / 0 条差异** |
 | riscv64 | `llvm-mc` | 3 | 503 | **136** | **0** | **1** | 366 | **有**：134 条期望 / **134 条逐字节全等** |
 | aarch64 | `llvm-mc` | 3 | 420 | **153** | **0** | **0** | 267 | **有**：119 条期望 / **118 条逐字节全等** |
 

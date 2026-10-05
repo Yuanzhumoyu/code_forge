@@ -2524,10 +2524,34 @@ modrm = { reg = 0, rm = "dst" }
 escape = [0x0F]
 opcode = 0x90            # 条件码 = opcode 低 4 位（0x90..0x9F）；reg=0 固定、rm=op0
 # 目的写**64 位名**（`setcc RAX, 4`）——lowering 用 64 位 vreg 承接布尔结果
-# （先 `xor` 清零，故低字节即结果），见槽 `gpr8` 的注释。真实汇编的 8 位名写法
-# （`sete al`）是**按条件码声明**的 `SETE_RM8_B`（见下）。
+# （先 `xor` 清零，故低字节即结果），见槽 `gpr8` 的注释。
 ops = ["dst:gpr8:out", "cc:cond"]
 asm = "setcc {dst}, {cc}"
+effect = ["Pure"]
+
+# 同编码的**8 位名**形态（`setcc AL, 4`）：真实汇编写 `sete al`（走下面的伪指令），
+# 伪指令展开出来的就是这条。两条是**同一掩码边**（0F 9x）⇒ 解码树把它们归到同一
+# 节点、按声明序试，不构成重叠（真正的重叠是"掩码边 vs 精确边"，见文末注释）。
+[[instructions]]
+name = "SETCC_RM8_B"
+modrm = { reg = 0, rm = "dst" }
+escape = [0x0F]
+opcode = 0x90
+ops = ["dst:gpr1b:out", "cc:cond"]
+asm = "setcc {dst}, {cc}"
+effect = ["Pure"]
+
+# `setcc m8`（`0F 9x /0`，rm = 内存）：宽度靠模板里的字面 `byte ptr`（一元形态无寄存器
+# 驱动宽度，同 `NOT_MEM32` 一族）。
+[[instructions]]
+name = "SETCC_R_MEM"
+form = "MRR_MEMREF_AUTO"
+escape = [0x0F]
+modrm = { reg = 0, rm = "[mem]" }
+opcode = 0x90
+opsize = 8               # 写 1 字节：`opsize` 取不了 `s0`（op0 是内存）
+ops = ["mem:mem:out", "cc:cond"]
+asm = "setcc byte ptr {mem}, {cc}"
 effect = ["Pure"]
 
 [[instructions]]
@@ -2561,29 +2585,60 @@ reloc = "abs64"
 
 [[instructions]]
 name = "CMOVCC_R_RM"
-form = "MRR_0F_FIX64"
-modrm = { reg = "dst", rm = "src" }            # 固定 64 位（REX.W）；cond 编码进 opcode 低 4 位
+# 宽度由目的槽驱动（`MRR_0F` 的 `opsize = s0`）：`cmovl rax, rcx`（64 位）与
+# `cmovl eax, r16d`（32 位，真实语料）都要收——原来固定 64 位（`MRR_0F_FIX64`）。
+form = "MRR_0F"
+modrm = { reg = "dst", rm = "src" }            # cond 编码进 opcode 低 4 位
 opcode = 0x40                    # 条件码 = opcode 低 4 位（0x40..0x4F）
-ops = ["dst:gpr:inout", "src:gpr", "cc:cond"]
+ops = ["dst:gprx:inout", "src:gprx", "cc:cond"]
 asm = "cmovcc {dst}, {src}, {cc}"
 effect = ["Pure"]
 
-# ── 真实汇编写法：**条件码烘进 opcode**（助记符后缀）—— 见 asm/README.md 的缺口清单 ──
+# `cmovcc r, m`（`0F 4x /r`，rm = 内存）：与寄存器形式同编码、同掩码边（0F 4x）。
+[[instructions]]
+name = "CMOVCC_R_MEM"
+form = "MRR_MEMREF_AUTO"
+escape = [0x0F]
+modrm = { reg = "dst", rm = "[mem]" }
+opcode = 0x40
+ops = ["dst:gprx:inout", "mem:mem", "cc:cond"]
+asm = "cmovcc {dst}, {mem}, {cc}"
+effect = ["Pure"]
+
+# ── 真实汇编写法：**助记符自带条件后缀**（`sete`/`cmovl`）——走 `[[pseudo]]` 文本展开 ──
 #
-# 上游语料写的是 `cmovl eax, r16d` / `sete al`：助记符**自带条件**、没有 `cc` 操作数。
-# 我们目前只建模了通用形态（`cmovcc {dst}, {src}, {cc}` / `setcc {dst}, {cc}`，供 lowering
-# 使用）。两条路子都试过并被否决，原因记在这里（省得下轮重踩）：
+# 上游语料写的是 `cmovl eax, r16d` / `sete r16b`：助记符自带条件、没有 `cc` 操作数。
+# 为什么用伪指令而不是**按条件码建指令**（两条路都试过，原因记下来省得重踩）：
 #
-# 1. `asm = "set{cc} {dst}"`（占位符嵌进助记符）：**扫描器按整个 token 匹配字面段**，
-#    而 `sete` 是一个 token ⇒ 字面段 `"set"` 匹配不上。要支持就得让"紧贴操作数的
-#    字面段"按 ident **前缀**匹配、余下部分由该操作数消费（改 asm.rs 扫描器；影响
-#    所有 ISA，因此单独一轮做）。
-# 2. 按条件码逐条声明（`SETE_RM8_B`，opcode 0x94）：**解码树不容许掩码边共存**——
-#    通用形态的 `0F 9x` 是掩码边（掩码 0xF0），固定条件的 `0F 94` 落在同一掩码空间，
-#    `check_dec_trie_overlaps` 直接拒；且这是**真**歧义（同一批字节对应两种 Inst 形状）。
+# 1. `asm = "set{cc} {dst}"`（把条件占位符嵌进助记符）：扫描器按**整个 token** 匹配
+#    字面段，而 `sete` 是一个 token ⇒ 字面段 `"set"` 匹配不上。要支持得让"紧贴操作数的
+#    字面段"按 ident 前缀匹配、余下部分由该操作数消费（引擎改动，影响所有 ISA）。
+# 2. 按条件码逐条声明指令（`SETE_RM8_B` opcode 0x94）：条件码在 opcode 低 4 位，通用
+#    形态是**掩码边**（`0F 9x`，掩码 0xF0），精确边 `0F 94` 落在同一掩码空间 ⇒
+#    `check_dec_trie_overlaps` 直接拒；而且这是**真**歧义（同一批字节两种 Inst 形状）。
+# 同掩码的两条（`SETCC_RM8` 与 `SETCC_RM8_B`）反而没事——它们被归到同一节点按声明序试。
 #
-# 语料里的 14 行（cmovl ×10、sete ×4）因此停在 `NoPrefix` 桶（"上游比我们全"），
-# 不影响门禁（门禁只看 tail_mismatch）。
+# 伪指令是**文本层**展开（没有解码 arm），因此与通用形态互不干扰；SSE 的八个比较别名
+# 就是这么做的。代价是"每种条件码 × 每种写法 = 一行"，本批只建语料用到的 `e`/`l`。
+[[pseudo]]
+name = "sete_r8"
+asm = "sete {dst}"
+emit = ["setcc {dst}, e"]
+
+[[pseudo]]
+name = "sete_m8"
+asm = "sete byte ptr {mem}"
+emit = ["setcc byte ptr {mem}, e"]
+
+[[pseudo]]
+name = "cmovl_rr"
+asm = "cmovl {dst}, {src}"
+emit = ["cmovcc {dst}, {src}, l"]
+
+[[pseudo]]
+name = "cmovl_mem"
+asm = "cmovl {dst}, {mem}"
+emit = ["cmovcc {dst}, {mem}, l"]
 
 [[instructions]]
 name = "ROUNDSD_I"
@@ -4903,6 +4958,19 @@ bytes = [0xD5, 0x70, 0x89, 0x14, 0x08]
 [[vectors]]
 asm = "mov byte ptr [r16 + r14], bpl"
 bytes = [0xD5, 0x12, 0x88, 0x2C, 0x30]
+
+# 助记符条件后缀（`[[pseudo]]` 展开成通用形态）：字节取自上游同文件。
+[[vectors]]
+asm = "sete r16b"
+bytes = [0xD5, 0x90, 0x94, 0xC0]
+
+[[vectors]]
+asm = "sete byte ptr [r16 + r17]"
+bytes = [0xD5, 0xB0, 0x94, 0x04, 0x08]
+
+[[vectors]]
+asm = "cmovl r17d, r16d"
+bytes = [0xD5, 0xD0, 0x4C, 0xC8]
 
 # ── 向量区段结束
 

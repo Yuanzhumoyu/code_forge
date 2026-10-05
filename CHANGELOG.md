@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-05) — x86 助记符条件后缀（`sete`/`cmovl`）→ 语料带期望字节的用例全部逐字节对上
+
+上游写 `sete r16b` / `cmovl eax, r16d`（助记符**自带条件**、没有 `cc` 操作数），我们只有通用形态（`setcc {dst}, {cc}` / `cmovcc {dst}, {src}, {cc}`，供 lowering 用）。两条"做成指令"的路都被**解码树**挡住（原因留在 `isa/x86.toml` 注释里）：`{cc}` 嵌进助记符要扫描器让"紧贴操作数的字面段"按 ident 前缀匹配（`sete` 是一个 token）；按条件码建**精确** opcode（`0F 94`）会与通用形态的**掩码**边（`0F 9x`）重叠——那是**真**歧义（同一批字节两种 `Inst` 形状），`check_dec_trie_overlaps` 直接拒。
+
+**解法是既有机制**：`[[pseudo]]` 文本展开（分派键是**整词** `sete`/`cmovl`，不产生解码 arm；SSE 的八个比较别名就是先例）。配套补三条**同掩码**的兄弟指令（`SETCC_RM8_B` 8 位名、`SETCC_R_MEM` 内存、`CMOVCC_R_MEM`；同掩码 ⇒ 归到同一解码节点按声明序试，靠 mod 守卫区分），并把 `CMOVCC_R_RM` 从固定 64 位放宽到 16/32/64。
+
+顺带修掉同族一处**恒假守卫**：`opsize = 8`（`setcc byte ptr`）生成 `__opsize == 1` 的解码条件，而 `__opsize` 只可能取 2/4/8 ⇒ arm 永远解不出来（8 位没有 opsize 前缀可查——与 v20 V10 加 8 位 ALU 族时实测过的那条同源，这次补在 `Opsize::Reg` 分支上）。
+
+效果：x86 `llvm-mc` `parsed` 95 → **109**、`no_prefix` 16 → **2**（只剩 `acquire/release lock`）；编码对拍 **checked 104 / unparsed 0 / known 0**——**语料里带期望字节的用例全部逐字节对上**。落地 3 条新谱内向量（`sete r16b`、`sete byte ptr [r16 + r17]`、`cmovl r17d, r16d`）。
+
 ### Added (2026-10-05) — x86 补 APX 语料用到的真实形态；`llvm-mc` 解析档红桶清零
 
 承接 APX/REX2：把 `apx-rex2-format-intel.s` 里**谱里根本没有的形态**补上（14 条指令），x86 `llvm-mc` 的 `tail_mismatch` 从 39 降到 **0**：

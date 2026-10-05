@@ -346,7 +346,11 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
         (None, false)
     } else if let Some(n) = &form_opsize {
         match n {
-            Opsize::Reg(width) => (Some(*width), false),
+            // `r<宽>`：固定宽度要求。**1 字节（8 位）不发守卫**——同下面 Slot 分支的
+            // 长注释：`__opsize` 只可能取 2/4/8，要求 `== 1` 会让 arm 永远解不出来
+            // （v20 V10 实测：`opsize = 8` 的 `setcc byte ptr [mem], cc` 解不回来）。
+            Opsize::Reg(width) if matches!(*width, 2 | 4 | 8) => (Some(*width), false),
+            Opsize::Reg(_) => (None, false),
             Opsize::Slot(idx) => match reg_view.get(*idx as usize).copied().flatten() {
                 // 多类槽（gprx）：宽度由前缀扫描的 __opsize 决定（字段按
                 // __opsize 视图构造）——decode guard 必须放宽（无条件），

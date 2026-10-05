@@ -97,12 +97,16 @@ fn generated_spec_tests_cover_every_instruction() {
 /// 写死 `dword ptr`）、一元 `MUL_RM`/`IMUL_RM`（`F7 /4,/5`）、两操作数 `IMUL_R_MEM`
 /// （`0F AF` + 内存源）、`NOP_RM`/`NOP_MEM32`（`0F 1F /0`）与 `MOVSXD_R_RM32`
 /// （真实汇编的 32 位源写法，与 lowering 用的 64 位源那条同编码）→ **290**。
+/// 最后补**助记符条件后缀**（`sete`/`cmovl`）需要的三条通用形态的兄弟指令：
+/// `SETCC_RM8_B`（8 位名 `setcc al, e`）、`SETCC_R_MEM`（`setcc byte ptr [m], e`）与
+/// `CMOVCC_R_MEM`（`cmovcc r, m, cc`；`CMOVCC_R_RM` 同时从固定 64 位放宽到 16/32/64）
+/// → **293**。真实写法本身是 `[[pseudo]]` 文本展开（不占指令数）。
 #[test]
 fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 290), ("riscv64", 139), ("arm64", 206)],
+        vec![("x86", 293), ("riscv64", 139), ("arm64", 206)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }
