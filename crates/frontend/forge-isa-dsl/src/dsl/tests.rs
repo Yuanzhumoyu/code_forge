@@ -3167,6 +3167,7 @@ fn imm_slot_wrap_reads_the_bit_pattern() {
         fields: None,
         table: None,
         table_entries: Vec::new(),
+        symbols: None,
     };
 
     // 32 位有符号 + wrap：规范域是 i32，接受域多收 `0x90909090` 这类无符号写法。
@@ -3566,6 +3567,80 @@ asm = "fence {pred}, {succ}"
         .unwrap_err()
         .to_string();
     assert!(err.contains("bits"), "err: {err}");
+}
+
+// ─────────────── `symbols`：立即数位置上的符号引用 ───────────────
+
+/// `[[operand_slots]].symbols`：声明后 imm/label 槽的值可以是**符号引用**（`%hi(foo)`、
+/// 裸 `foo`）——解析期当 0 参与算术、两遍回填时解析成"标签的块下标"并**过一遍立即数修饰**；
+/// 未声明的槽照旧"未知 ident 即不匹配"（**能力是声明的**）。
+///
+/// 端到端由 riscv64 语料守：`%hi(foo)`/`%pcrel_hi(foo)` 这类**未定义**符号 → `UndefinedLabel`
+/// （准确诊断，不再是"没有这条指令"），而 `.Lpcrel_hi0` 这类**已定义**的局部标签 → 真装配；
+/// 顺带钉住"点开头的局部标签名是一个 ident"（`__lex` 的 `is_ident_start`）。
+#[test]
+fn slot_symbols_capability_contract() {
+    let doc = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "fixed"
+bits = 32
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+opcode = { offset = 0, width = 7 }
+rd = { offset = 7, width = 5 }
+imm = { offset = 12, width = 20 }
+[[operand_slots]]
+name = "sym20"
+kind = "imm"
+signed = false
+width = 20
+symbols = true
+[[operand_slots]]
+name = "off12"
+kind = "imm"
+signed = true
+width = 12
+unit = 4
+[[operand_slots]]
+name = "r"
+kind = "reg"
+class = "gpr4"
+[[forms]]
+name = "U"
+opcode_field = "opcode"
+operand_fields = ["rd", "imm"]
+[[instructions]]
+name = "LUI"
+form = "U"
+opcode = 0x37
+ops = ["dst:r:out", "imm:sym20"]
+asm = "lui {dst}, {imm}"
+"#;
+    let m = parse_and_validate(doc).expect("symbols 合法");
+    let s = m
+        .operand_slots
+        .iter()
+        .find(|s| s.name == "sym20")
+        .expect("槽存在");
+    assert_eq!(s.symbols, Some(true));
+
+    // 只对 imm/label 有意义：reg 槽写它 → 报错。
+    let bad = doc.replace(
+        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr4\"",
+        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr4\"\nsymbols = true",
+    );
+    let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("symbols"), "err: {err}");
+    // `unit != 1` 的槽写它 → 直接拒（"修饰作用于块下标还是字节偏移"有歧义）。
+    let bad = doc.replace(
+        "width = 12\nunit = 4",
+        "width = 12\nunit = 4\nsymbols = true",
+    );
+    let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("unit == 1"), "err: {err}");
 }
 
 // ─────────────── W1：栈参数必须由角色（标签）驱动，不按指令名兜底 ───────────────

@@ -1295,6 +1295,17 @@ pub struct OperandSlot {
     /// 表单 `operand_fields` 里这一项仍写**首字段**（`fields[0]`，校验期一致）。
     #[serde(default)]
     pub fields: Option<Vec<String>>,
+    /// imm/label：值可以是**符号引用**（`%hi(foo)` 这类；缺省 false）。
+    ///
+    /// 打开后：解析时未知 ident 被记成"符号引用 + 当前立即数修饰"，当 0 参与算术（`.equ`
+    /// 常量仍然优先），整条命中后由两遍回填解析成"标签的块下标（或 `.` 的自引用）"并**过一遍
+    /// 修饰**（`%hi(foo)` = `hi(foo 的块下标)`）。未打开的槽照旧"未知 ident 即不匹配"——能力是
+    /// 声明的，不是隐含的。
+    ///
+    /// 只对 `imm`/`label` 槽有意义，且要求 `unit == 1`（否则"修饰作用于块下标还是字节偏移"
+    /// 有歧义，校验期直接拒）。
+    #[serde(default)]
+    pub symbols: Option<bool>,
     /// bits：本槽用的命名位集合表名（`[conventions.bitsets.<table>]`）。
     #[serde(default)]
     pub table: Option<String>,

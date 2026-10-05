@@ -11,6 +11,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-04) — `[[operand_slots]].symbols`：立即数位置上的符号引用（`%hi(foo)`）
+
+真实汇编里立即数常常是**符号**：`lui a0, %hi(foo)`、`addi ra, sp, %lo(foo)`、
+`auipc a0, %pcrel_hi(foo)`、`jal rd, .Lpcrel_hi0`。此前这类行一律报"没有这条指令"——**诊断是错的**
+（那是合法写法，只是符号要等重定位）。
+
+新增槽属性 `symbols = true`（只对 `imm`/`label` 有意义，且要求 `unit == 1`）：
+
+- **解析**：未定义的 ident（`.equ` 常量优先）被记成**符号引用 + 当前立即数修饰**，当 0 参与算术；
+  整条命中后随 `__lsyms` 一起提交。未声明 `symbols` 的槽照旧"未知 ident 即不匹配"——**能力是
+  声明的，不是隐含的**；`.equ`/`.set` 的表达式也不受影响（那里不武装）。
+- **回填**（两遍布局的第二遍）：符号解析成"该标签的**块下标**"（`.` = 本条指令自身的下标），
+  再**过一遍修饰**（复用 `[[conventions.imm_fn]]` 生成的 `__imm_fn<i>`）——`%hi(foo)` 就是
+  `hi(foo 的块下标)`（= 3，与 `foo` 在 3 号指令处一致）；**未定义**的符号报 `UndefinedLabel`，
+  这正是想要的准确诊断。
+- riscv64 落地：`imm12`/`imm20` 打开 `symbols`；补 `%pcrel_hi`/`%pcrel_lo` 两个修饰（值与
+  `%hi`/`%lo` 同义——重定位**种类**是 linker/patcher 的事，本仓库记在 `[[reloc]]`/`reloc` 上）。
+- 顺带修掉一处**词法缺陷**：`.` 开头的局部标签名（`.Lp`、`.Lpcrel_hi0`——真实语料里遍地都是）
+  原先被切成 `Dot` + `Ident`，既当不了标签也解析不了。`__lex` 现在只在 `.` 后面**不跟字母**时
+  才当位置符号（`jal zero, .` 照旧）。
+
+效果：riscv64 语料 `parsed` 135 → **136**、红桶 7 → **1**（只剩 `jal a0, a0`——上游把第二操作数当
+**未定义符号 a0**（`jal rd, symbol` 只收符号），我们拒了"寄存器样子的 ident"当符号以免 `jmp rax`
+这类走错候选，已登记为设计取舍），`corpus_only` 361 → **366**（5 条未定义符号行归因到"符号在别处"，
+不再误报成"缺指令"）。x86/aarch64 计数不变（词法改动无回归）。
+
 ### Added (2026-10-04) — `kind = "bits"`：命名位集合操作数（`fence pred, succ`）+ riscv 收尾三条写法
 
 **命名位集合**：有些操作数在文本里是**若干名字的拼接**——RISC-V `fence` 的 pred/succ 就是

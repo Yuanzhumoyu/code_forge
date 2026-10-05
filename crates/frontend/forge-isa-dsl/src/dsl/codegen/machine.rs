@@ -1219,8 +1219,8 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                         __offset += encode(&inst)
                             .map_err(|e| line_err(AsmError::Other(e)))?
                             .len() as u64;
-                        for (oi, s) in syms {
-                            pending.push((insts.len(), oi, s, __line_no + 1));
+                        for (oi, mi, s) in syms {
+                            pending.push((insts.len(), oi, mi, s, __line_no + 1));
                         }
                         insts.push(inst);
                     }
@@ -1254,7 +1254,9 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                 // 符号常量表（.equ/.set 在首行解析期填充；立即数与位移求值读取）
                 __EQU.with(|m| m.borrow_mut().clear());
                 // (指令序号, 操作数序号, 符号名, 行号)
-                let mut pending: Vec<(usize, usize, String, usize)> = Vec::new();
+                // (指令下标, 操作数下标, 修饰下标, 符号名, 行号)——修饰下标 = 该值上面的
+                // `[[conventions.imm_fn]]`（`%hi(foo)` 要在回填值上再过一遍修饰）。
+                let mut pending: Vec<(usize, usize, Option<usize>, String, usize)> = Vec::new();
                 let mut __offset: u64 = 0;
                 for (__line_no, line) in expanded.lines().enumerate() {
                     let line = strip_comment(line, #comment);
@@ -1426,13 +1428,13 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                     #pseudo_call
                     let (inst, syms) = __assemble(rest).map_err(|e| line_err(AsmError::Other(e)))?;
                     __offset += encode(&inst).map_err(|e| line_err(AsmError::Other(e)))?.len() as u64;
-                    for (oi, s) in syms {
-                        pending.push((insts.len(), oi, s, __line_no + 1));
+                    for (oi, mi, s) in syms {
+                        pending.push((insts.len(), oi, mi, s, __line_no + 1));
                     }
                     insts.push(inst);
                 }
                 // ── 第二遍：符号回填 ──
-                for (i, oi, sym, line_no) in &pending {
+                for (i, oi, mi, sym, line_no) in &pending {
                     // 空名 = **自引用**（`__label` 里的 `.`）：值为本条指令自身的下标。
                     let block = if sym.is_empty() {
                         *i as u32
@@ -1441,7 +1443,12 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                             AsmError::UndefinedLabel(format!("line {line_no}: {sym}"))
                         })?
                     };
-                    if !__set_label_operand(&mut insts[*i], *oi, block as i64) {
+                    // 修饰作用于**块下标**（`%hi(foo)` = `hi(foo 的块下标)`）——与源文本同义。
+                    let val = match mi {
+                        Some(m) => __apply_imm_fn(*m, block as i64),
+                        None => block as i64,
+                    };
+                    if !__set_symbol_operand(&mut insts[*i], *oi, val) {
                         return Err(AsmError::Other(format!(
                             "line {line_no}: cannot resolve label '{sym}' at operand {oi}"
                         )));

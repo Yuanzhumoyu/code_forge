@@ -384,14 +384,40 @@ fn gen_lexer_ts(_model: &IsaModel) -> Result<TokenStream, String> {
                 std::cell::RefCell::new(std::collections::HashMap::new());
         }
 
+        /// **符号引用收集**（`[[operand_slots]].symbols`）：`__primary` 遇到未知 ident 且
+        /// 被**武装**时写这里（`(修饰下标, 名字)`），当 0 参与算术；命中后随 `__lsyms` 一起
+        /// 提交、由两遍回填解析成"标签的块下标（或 `.` 的自引用）"。只有声明了 `symbols` 的槽
+        /// 在解析自己的值时武装——`.equ`/`.set` 的表达式与其它槽照旧"未知 ident 即不匹配"。
         #[allow(dead_code)]
+        thread_local! {
+            static __SYMREF: std::cell::RefCell<Vec<(Option<usize>, String)>> =
+                std::cell::RefCell::new(Vec::new());
+            static __SYMREF_ON: std::cell::Cell<bool> = std::cell::Cell::new(false);
+            static __SYMREF_MOD: std::cell::Cell<Option<usize>> = std::cell::Cell::new(None);
+        }
+
+        #[allow(dead_code)]
+        /// `.` 是否算 ident 的开头：下一字符是 ident 片段才算
+        /// （`.Lp` 是局部标签名；裸 `.` 是位置符号，走 `__Tok::Dot`）。
+        fn is_ident_start(cs: &mut std::iter::Peekable<std::str::Chars<'_>>) -> bool {
+            if cs.peek() != Some(&'.') {
+                return true;
+            }
+            let mut t = cs.clone();
+            t.next();
+            t.peek()
+                .is_some_and(|c| c.is_alphabetic() || *c == '_' || *c == '.')
+        }
         fn __lex(s: &str) -> Result<Vec<__Tok>, String> {
             let mut out: Vec<__Tok> = Vec::new();
             let mut cs = s.chars().peekable();
             while let Some(&c) = cs.peek() {
                 match c {
                     ' ' | '\t' | '\r' | '\n' | '\u{0c}' => { cs.next(); }
-                    'a'..='z' | 'A'..='Z' | '_' => {
+                    // **点开头的局部标签名**（`.Lp`、`.Lpcrel_hi0`——真实语料里遍地都是）：
+                    // 下一个字符还是 ident 片段时**整个当一个 ident**；单独一个 `.` 才是
+                    // 位置符号（`jal zero, .`，走下面的 '.' 分支）。
+                    'a'..='z' | 'A'..='Z' | '_' | '.' if is_ident_start(&mut cs) => {
                         let mut id = String::new();
                         while let Some(&c) = cs.peek() {
                             if c.is_alphanumeric() || c == '_' || c == '.' || c == '$' {
@@ -608,19 +634,42 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
     {
         out.extend(quote! {
             /// 立即数/表达式求值：数字、正负号、括号、算术（+ - * / % << >> & | ^ ~）、
-            /// 符号常量（`.equ`/`.set`）。失败回滚 token 位置。
+            /// 符号常量（`.equ`/`.set`）、**（声明了 `symbols` 的槽）符号引用**。
+            /// 失败回滚 token 位置。
             ///
             /// `unit` = 该槽的源值单位（缺省 1；`#`-前缀的字节偏移类操作数用它）：
             /// 源值必须是它的整数倍，否则本条候选**不匹配**（与越界同一处理，
             /// 不静默取整）。
+            ///
+            /// `syms`/`op`/`allow_sym`：声明了 `symbols` 的槽在求值期间**武装**符号收集
+            /// （`__primary` 把未知 ident 记成"符号引用 + 当前修饰下标"并当 0 参与运算），
+            /// 命中后随 `__lsyms` 一起提交、由两遍回填解析。未声明 `symbols` 的槽
+            /// 不武装——未知 ident 照旧是不匹配（**能力是声明的，不是隐含的**）。
             #[allow(dead_code)]
-            fn __imm(it: &mut __Iter, min: i64, max: i64, float: bool, unit: i64) -> Option<i64> {
+            fn __imm(
+                it: &mut __Iter,
+                min: i64,
+                max: i64,
+                float: bool,
+                unit: i64,
+                syms: &mut Vec<(usize, Option<usize>, String)>,
+                op: usize,
+                allow_sym: bool,
+            ) -> Option<i64> {
                 let save = it.pos;
                 let _d = #imm_pref;
-                let v = __expr(it, float)?;
+                __SYMREF.with(|r| r.borrow_mut().clear());
+                __SYMREF_ON.with(|a| a.set(allow_sym));
+                let v = __expr(it, float);
+                __SYMREF_ON.with(|a| a.set(false));
+                let v = v?;
                 if v < min || v > max || (unit > 1 && v % unit != 0) {
+                    __SYMREF.with(|r| r.borrow_mut().clear());
                     it.pos = save;
                     return None;
+                }
+                for (m, n) in __SYMREF.with(|r| r.borrow_mut().split_off(0)) {
+                    syms.push((op, m, n));
                 }
                 Some(v)
             }
@@ -767,10 +816,20 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                     }
                     __Tok::Ident(s) => {
                         // 符号常量（`.equ`/`.set` 定义）：表在 parse_insts 层维护；
-                        // 找不到 → 回滚（调用方可能转标签/寄存器解析）。
-                        let v = __lookup_equ(s)?;
-                        it.pos += 1;
-                        Some(v)
+                        // 找不到 → （声明了 `symbols` 的槽被武装时）记成**符号引用**，
+                        // 当 0 参与算术、由两遍回填解析；否则回滚。
+                        if let Some(v) = __lookup_equ(s) {
+                            it.pos += 1;
+                            return Some(v);
+                        }
+                        if __SYMREF_ON.with(|a| a.get()) {
+                            __SYMREF.with(|r| {
+                                r.borrow_mut().push((__SYMREF_MOD.with(|m| m.get()), s.clone()))
+                            });
+                            it.pos += 1;
+                            return Some(0);
+                        }
+                        None
                     }
                     _ => {
                         it.pos = save;
@@ -786,36 +845,19 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
         });
     }
     {
-        let mut label_set_arms: Vec<TokenStream> = Vec::new();
-        for info in infos {
-            let vn = &info.vn;
-            if let Some((n, fid, u)) =
-                info.operands
-                    .iter()
-                    .enumerate()
-                    .find_map(|(i, (_, fid, s, _))| {
-                        (s.kind == OperandKind::Label).then_some((i, fid, s.unit()))
-                    })
-            {
-                label_set_arms.push(if u > 1 {
-                    // 符号标签回填**源单位**（字节）偏移 = 块下标 × unit；编码期再除回
-                    // 字段单位（`unit = 4` 的 A64 ⇒ 编出的仍是块下标）。
-                    let unit = proc_macro2::Literal::i64_suffixed(u);
-                    quote! { (Inst::#vn { #fid, .. }, #n) => { *#fid = val * #unit; true } }
-                } else {
-                    quote! { (Inst::#vn { #fid, .. }, #n) => { *#fid = val; true } }
-                });
-            }
-        }
+        out.extend(gen_symbol_setter(infos, model));
+        // 标签/分支目标槽的解析助手（`__label`）：数字/表达式 = 源单位偏移；
+        // 非寄存器 ident = 符号引用（回填期解析成"块下标 × unit"）；`.` = 自引用。
         out.extend(quote! {
             /// 标签：数字/表达式 = **源单位**偏移；非寄存器 ident = 符号引用
-            /// （回填期解析成 `块下标 × unit`）。失败回滚。
+            /// （回填期解析成 `块下标 × unit`）；`.` = **本条指令自身的地址**（自引用，
+            /// 回填期换成当前指令的下标）。失败回滚。
             #[allow(dead_code)]
             fn __label(
                 it: &mut __Iter,
                 min: i64,
                 max: i64,
-                syms: &mut Vec<(usize, String)>,
+                syms: &mut Vec<(usize, Option<usize>, String)>,
                 op: usize,
                 unit: i64,
             ) -> Option<i64> {
@@ -849,17 +891,16 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                             None => { it.pos = save; return None; }
                         }
                     }
-                    __Tok::Dot => {
-                        // `.` = **本条指令自身的地址**（汇编器里就是它的块下标）。真实语料
-                        // 用它表达相对自身（`jal zero, .`）。记成**自引用**（空名），回填期
-                        // 换成当前指令的下标——与"标签回填块下标"同一口径。
-                        syms.push((op, String::new()));
+                    __Tok::Ident(s) => {
+                        if <Reg as FromStr>::from_str(s).is_ok() { return None; }
+                        syms.push((op, None, s.clone()));
                         it.pos += 1;
                         return Some(0);
                     }
-                    __Tok::Ident(s) => {
-                        if <Reg as FromStr>::from_str(s).is_ok() { return None; }
-                        syms.push((op, s.clone()));
+                    __Tok::Dot => {
+                        // `.` = 本条指令自身的地址：记成**自引用**（空名），回填期换成
+                        // 当前指令的下标——与"标签回填块下标"同一口径。
+                        syms.push((op, None, String::new()));
                         it.pos += 1;
                         return Some(0);
                     }
@@ -867,13 +908,6 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                 };
                 if !ok(v) { it.pos = save; return None; }
                 Some(v)
-            }
-            /// 按操作数序号回填 label 槽值（parse_insts 两遍布局用）。
-            fn __set_label_operand(inst: &mut Inst, idx: usize, val: i64) -> bool {
-                match (inst, idx) {
-                    #(#label_set_arms,)*
-                    _ => false,
-                }
             }
         });
     }
@@ -1054,7 +1088,13 @@ fn gen_imm_fns(model: &IsaModel) -> Result<(TokenStream, TokenStream), String> {
             {
                 let __msave = it.pos;
                 if #pre_match {
-                    if let Some(__inner) = __expr(it, float) {
+                    let __inner = {
+                        __SYMREF_MOD.with(|m| m.set(Some(#i)));
+                        let __r = __expr(it, float);
+                        __SYMREF_MOD.with(|m| m.set(None));
+                        __r
+                    };
+                    if let Some(__inner) = __inner {
                         if #post_match {
                             if let Some(__v) = #fname(__inner) { return Some(__v); }
                         }
@@ -1220,17 +1260,20 @@ fn operand_parse_tok(
             let (min, max) = slot.imm_accept_range().unwrap_or((i64::MIN, i64::MAX));
             let float = slot.float == Some(true);
             let unit = proc_macro2::Literal::i64_suffixed(slot.unit());
+            let allow_sym = slot.symbols.unwrap_or(false);
             let elem = match (slot.imm_wrap_modulus(), slot.imm_range()) {
                 (Some(m), Some((clo, chi))) => quote! {
                     {
-                        let __w = __imm(&mut it, #min, #max, #float, #unit);
+                        let __w = __imm(&mut it, #min, #max, #float, #unit, &mut __lsyms, #n, #allow_sym);
                         __w.map(|v| {
                             if v > #chi { v.wrapping_sub(#m) } else { v }
                         })
                         .map(|v| if v < #clo { v.wrapping_add(#m) } else { v })
                     }
                 },
-                _ => quote! { __imm(&mut it, #min, #max, #float, #unit) },
+                _ => {
+                    quote! { __imm(&mut it, #min, #max, #float, #unit, &mut __lsyms, #n, #allow_sym) }
+                }
             };
             Ok((elem, quote! { Some(#fid) }, None))
         }
@@ -1325,7 +1368,7 @@ fn gen_assemble_try_tok(info: &InstInfo, case_insensitive: bool) -> Result<Token
         {
             // 每候选独立的符号缓冲：失败即弃（不污染共享 __syms），整条 asm
             // 完全命中时才随 return 提交。见 S10c 平铺扫描后 label 候选被误试的修复。
-            let mut __lsyms: Vec<(usize, String)> = Vec::new();
+            let mut __lsyms: Vec<(usize, Option<usize>, String)> = Vec::new();
             let mut it = __Iter { toks: &__toks, pos: 0 };
             if let (#(#pats),*) = (#(#elems),*) {
                 if #consistency {
@@ -1410,6 +1453,79 @@ fn type_signature(info: &InstInfo) -> Result<String, String> {
 /// 操作数）从左到右逐 token 匹配，首个完整命中即停。候选全局按 `form_specificity`
 /// 排序（窄约束先，声明序稳定）并做真重复去重（`type_signature`）——同助记符多
 /// 形状的自动分发语义保留，只是不再经过 `match 助记符` 这道前置分派。
+/// **符号引用回填**的生成（`[[operand_slots]].symbols` + 标签槽）。
+///
+/// 两遍布局的产出：`(指令下标, 操作数下标, 修饰下标, 符号名)`——符号名 = 标签名（或 `.` 的
+/// 自引用 = 空名）、修饰下标 = `[[conventions.imm_fn]]` 的下标（`%hi(foo)` 的 `foo` 要连
+/// 修饰一起回填：值 = `hi(标签的块下标)`）。
+///
+/// 生成两件事：
+/// 1. `__set_symbol_operand`：按 `(指令, 操作数)` 写值（label/imm 槽直接写字段）；
+/// 2. `__apply_imm_fn`：按修饰下标把值过一遍修饰（没有 `imm_fn` 的谱不发这个函数）。
+fn gen_symbol_setter(infos: &[InstInfo], model: &IsaModel) -> TokenStream {
+    let mut arms: Vec<TokenStream> = Vec::new();
+    for info in infos {
+        let vn = &info.vn;
+        for (n, (_, fid, s, _)) in info.operands.iter().enumerate() {
+            // **两个 kind 的准入条件不同，不能合并判断**——这正是这里出过回归的地方：
+            // 早先把「imm 槽要 `symbols`」与「label 槽天然是符号」写成一个条件，
+            // 顺手对两者一起跳过 `unit > 1`，于是 A64 的 `b L1`（label 槽 + `unit = 4`）
+            // 不再生成回填臂，语料红桶 0 → 25（棘轮抓到）。两条规则分别写：
+            // - label：天然可回填，`unit` 由下面的乘法负责；
+            // - imm：要显式声明 `symbols`（能力是声明的），且校验期已保证 `unit == 1`
+            //   （`unit != 1` 的 `symbols` 是歧义，直接拒——见 validate.rs），故此处不再判。
+            let ok = match s.kind {
+                OperandKind::Label => true,
+                OperandKind::Imm => s.symbols.unwrap_or(false),
+                _ => false,
+            };
+            if !ok {
+                continue;
+            }
+            let unit = s.unit();
+            let arm = if unit > 1 {
+                // 标签槽的**源单位**（A64 分支偏移按字节）：块下标 × unit 写进 Inst 字段，
+                // 编码期再除回字段单位。
+                let u = proc_macro2::Literal::i64_suffixed(unit);
+                quote! { (Inst::#vn { #fid, .. }, #n) => { *#fid = val * #u; true } }
+            } else {
+                quote! { (Inst::#vn { #fid, .. }, #n) => { *#fid = val; true } }
+            };
+            arms.push(arm);
+        }
+    }
+    let n_fns = model.conventions.imm_fn.as_ref().map_or(0, |d| d.len());
+    // **无条件发射**：回填路径总是调用它（没有修饰的谱只剩 `_ => val` 那一条臂）。
+    let apply = {
+        let cases: Vec<TokenStream> = (0..n_fns)
+            .map(|i| {
+                let f = format_ident!("__imm_fn{i}");
+                quote! { #i => #f(val).unwrap_or(val), }
+            })
+            .collect();
+        quote! {
+            /// 按 `[[conventions.imm_fn]]` 的下标把回填值过一遍修饰
+            /// （`%hi(foo)` 这类：修饰作用于**标签的块下标**，与源文本里的写法同义）。
+            fn __apply_imm_fn(idx: usize, val: i64) -> i64 {
+                match idx {
+                    #(#cases)*
+                    _ => val,
+                }
+            }
+        }
+    };
+    quote! {
+        /// 回填（两遍布局的第二遍）：把符号的值写进对应操作数。
+        fn __set_symbol_operand(inst: &mut Inst, idx: usize, val: i64) -> bool {
+            match (inst, idx) {
+                #(#arms,)*
+                _ => false,
+            }
+        }
+
+        #apply
+    }
+}
 pub(crate) fn gen_assemble(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, String> {
     let lexer = gen_lexer_ts(model)?;
     let primitives = gen_asm_primitives(model, infos)?;
@@ -1509,7 +1625,7 @@ pub(crate) fn gen_assemble(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             }
         }
         /// 内部装配：返回 (指令, 未解析符号引用列表 (操作数序号, 符号名))。
-        pub(crate) fn __assemble(text: &str) -> Result<(Inst, Vec<(usize, String)>), String> {
+        pub(crate) fn __assemble(text: &str) -> Result<(Inst, Vec<(usize, Option<usize>, String)>), String> {
             let __toks = __lex(text)?;
             #(#tries)*
             Err("no matching instruction".into())

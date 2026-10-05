@@ -96,6 +96,18 @@ imm_j  = { pieces = [ { offset = 31, width = 1, shift = 20 }, { offset = 21, wid
 
 # 立即数修饰（谱声明的数据，DSL 不认识任何修饰名）：GAS/RISC-V 的 `%hi`/`%lo`。
 # text = 源文本形态（`{0}` 是内层表达式）；expr = 值语义（`{0}` 是内层值，复用既有表达式语言）。
+# `%pcrel_hi`/`%pcrel_lo`：**值与 `%hi`/`%lo` 同义**（装配侧只产出值；重定位**种类**是
+# linker/patcher 的事，本仓库记在指令的 `[[reloc]]`/`reloc` 上）。
+[[conventions.imm_fn]]
+name = "pcrel_hi"
+text = "%pcrel_hi({0})"
+expr = "({0} + 0x800) >> 12"
+
+[[conventions.imm_fn]]
+name = "pcrel_lo"
+text = "%pcrel_lo({0})"
+expr = "(({0} & 0xfff) ^ 0x800) - 0x800"
+
 [[conventions.imm_fn]]
 name = "hi"
 text = "%hi({0})"
@@ -139,12 +151,14 @@ name = "imm12"
 kind = "imm"
 signed = true
 width = 12
+symbols = true   # `%lo(foo)` / 裸 `foo` 这类**符号引用**（回填成"块下标"再过修饰）
 
 [[operand_slots]]
 name = "imm20"
 kind = "imm"
 signed = false
 width = 20
+symbols = true   # `%hi(foo)` / `%pcrel_hi(foo)` 同样
 
 [[operand_slots]]
 name = "shamt"

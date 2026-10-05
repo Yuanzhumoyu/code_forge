@@ -125,7 +125,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[conventions.bitsets.<table>]` | — | — | 命名位集合表（kind = "bits" 的槽用）：表名 → （名字 → 位）——源文本是名字拼接，编码取位或（允许额外键） |
 | `[[conventions.imm_fn]]` | `name` `text` `expr` | — | 立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值） |
 | `[conventions.mem]` | `templates` | `size_keywords` | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
-| `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `unit` `roles` `encode` `fields` `table` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
+| `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `unit` `roles` `encode` `fields` `table` `symbols` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
 | `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `data_width` `implicit_regs` `reloc` `width` `only_variants` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[[templates]]` | `rows` | `name` `body` | 唯一指令复用机制：`body` 共享字段 + `rows` 每行一条指令 |
@@ -721,6 +721,21 @@ width = 4
   整串必须吃干净（`iow` 里剩下的字符不是名字 ⇒ 这条写法不匹配，不静默当空集）；
 - 渲染：按名字的**字典序**把置位的名字拼起来（确定性，与 `[conventions.cond]` 的"同码取字母序最小名"
   同一口径）；
+**立即数位置上的符号引用（`symbols`）**：真实汇编里立即数常常是**符号**——RISC-V 的
+`lui a0, %hi(foo)`、`addi ra, sp, %lo(foo)`、`jal rd, .Lpcrel_hi0`。槽声明 `symbols = true` 后：
+
+- 解析：未定义的 ident（`.equ` 常量优先）被记成**符号引用 + 当前立即数修饰**，当 0 参与算术；
+- 回填（两遍布局的第二遍）：符号解析成"该标签的**块下标**"（`.` = 本条指令自身的下标），
+  再**过一遍修饰**——`%hi(foo)` 就是 `hi(foo 的块下标)`；未定义的符号报 `UndefinedLabel`
+  （**准确的诊断**：不再说"没有这条指令"）；
+- `symbols` 是**立即数槽**的能力开关，且只对它有意义；`label` 槽**天然**是符号引用
+  （不用写、写了也无效）。**两类槽的值域条件不同，别混着看**：`symbols = true` 要求
+  `unit == 1`（否则"修饰作用于块下标还是字节偏移"有歧义，校验期直接拒）；**label 槽不受
+  此限**——A64 的 `b`/`cbz` 就是 label 槽 + `unit = 4`，回填值 = 块下标 × 4（见下面的 `unit` 节）。
+- 未声明 `symbols` 的 **imm 槽**照旧"未知 ident 即不匹配"——能力是声明的，不是隐含的。
+- 顺带：**点开头的局部标签名是一个 ident**（`.Lp`、`.Lpcrel_hi0`——`__lex` 只在 `.` 后面不跟
+  字母时才当位置符号）。
+
 - 校验：表必须已声明且非空、`width` 必填、每个位必须落在槽宽内、名字必须是 ident 片段；
   变长（`prefix_scan`）ISA 写它会在校验期 fail-closed。
 

@@ -1694,6 +1694,21 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                 ));
             }
         }
+        // `symbols`（立即数位置上的符号引用）：只对 imm/label 有意义；`unit != 1` 时有
+        // "修饰作用于块下标还是字节偏移"的歧义——直接拒（本仓库没有这种组合的需求）。
+        if s.symbols.unwrap_or(false) {
+            if !matches!(s.kind, OperandKind::Imm | OperandKind::Label) {
+                return Err(format!(
+                    "{path}: `symbols` 只对 kind = \"imm\"/\"label\" 有意义（当前 kind = {}）",
+                    s.kind.kind_name()
+                ));
+            }
+            if s.unit() != 1 {
+                return Err(format!(
+                    "{path}: `symbols` 要求 `unit == 1`——否则\"立即数修饰作用于块下标还是字节偏移\"有歧义"
+                ));
+            }
+        }
         if s.table.is_some() && s.kind != OperandKind::Bits {
             return Err(format!("{path}: `table` 只对 kind = \"bits\" 有意义"));
         }
