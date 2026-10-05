@@ -4,17 +4,7 @@
 [suite llvm-mc]
 files = 3
 lines = 420
-parsed = 130
-no_prefix = 4
-tail_mismatch = 19
+parsed = 153
+no_prefix = 0
+tail_mismatch = 0
 corpus_only = 267
-# mismatch: arm64-branch-encoding.s:11	ret x1	line 3: no matching instruction
-# mismatch: arm64-logical-encoding.s:8	and   w0, w0, #1	line 2: no matching instruction
-# mismatch: arm64-logical-encoding.s:9	and   x0, x0, #1	line 2: no matching instruction
-# mismatch: arm64-logical-encoding.s:10	and   w1, w2, #15	line 2: no matching instruction
-# mismatch: arm64-logical-encoding.s:11	and   x1, x2, #15	line 2: no matching instruction
-# mismatch: arm64-logical-encoding.s:12	and   sp, x5, #~15	line 2: no matching instruction
-# mismatch: arm64-logical-encoding.s:13	ands  w0, w0, #1	line 2: no matching instruction
-# mismatch: arm64-logical-encoding.s:14	ands  x0, x0, #1	line 2: no matching instruction
-# mismatch: arm64-logical-encoding.s:15	ands  w1, w2, #15	line 2: no matching instruction
-# mismatch: arm64-separator.s:18	ret	lr	line 2: no matching instruction

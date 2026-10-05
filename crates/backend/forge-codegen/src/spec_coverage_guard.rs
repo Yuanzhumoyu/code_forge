@@ -83,13 +83,15 @@ fn generated_spec_tests_cover_every_instruction() {
 /// arm64 再补**逻辑（移位寄存器）族**：带移位后缀的 8 助记符（`and`/`ands`/`bic`/`bics`/
 /// `orr`/`orn`/`eor`/`eon`）× 4 种移位（`lsl`/`lsr`/`asr`/`ror`）× X/W = 64 条（移位种类
 /// 是 2 位常量、移位量是操作数槽），外加 `ands`/`bics` 的**无后缀**形态 4 条 → **188**；
-/// 再补 `TBZ`/`TBNZ` × X/W 4 条（位序号一个操作数摊到 `b40`+`b5` 两个位域）→ **192**）。
+/// 再补 `TBZ`/`TBNZ` × X/W 4 条（位序号一个操作数摊到 `b40`+`b5` 两个位域）→ **192**；
+/// 再补**逻辑（立即数）族**（`and`/`orr`/`eor`/`ands` × X/W = 8 条，值 → N/immr/imms 三分量）→ **200**；
+/// 再补 `ret xN`（`RETR`）、`b.al`/`b.nv`（A64 保留码，上游汇编器收）与裸 `dcps1/2/3`（= `dcpsN #0`）6 条 → **206**）。`n/// `XZR`/`WZR`/`LR` 是 `[reg.*].aliases`（解析认、渲染出主名），不占指令数。
 #[test]
 fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 275), ("riscv64", 137), ("arm64", 192)],
+        vec![("x86", 275), ("riscv64", 137), ("arm64", 206)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }

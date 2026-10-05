@@ -48,6 +48,9 @@ names = [
     "X16","X17","X18","X19","X20","X21","X22","X23",
     "X24","X25","X26","X27","X28","X29","X30","SP",
 ]
+# ABI/架构别名（解析认、渲染仍出主名）：31 号在"零寄存器"语境下是 XZR（与 SP 同号），
+# LR/FP 是 X30/X29 的惯用名（语料里 `ret lr` 就这么写）。
+aliases = { XZR = 31, LR = 30 }
 
 [reg.gpr4]
 base_index = 0
@@ -57,6 +60,7 @@ names = [
     "W16","W17","W18","W19","W20","W21","W22","W23",
     "W24","W25","W26","W27","W28","W29","W30","WSP",
 ]
+aliases = { WZR = 31 }
 
 # ─────────────────────── 命名位域（A64）───────────────────────
 # 通用寄存器位域位置在全 A64 固定：Rd=[4:0]、Rn=[9:5]、Rm=[20:16]。
@@ -98,6 +102,9 @@ cbop  = { offset = 24, width = 8 }   # CBZ/CBNZ 顶层（含 sf/op 位）
 rt    = { offset = 0,  width = 5 }   # CBZ/CBNZ 测试寄存器 Rt=[4:0]
 op5   = { offset = 0,  width = 5 }   # 系统/异常指令的低 5 位（svc=1/hvc=2/smc=3/dcps1..3=1..3/brk,hlt=0）
 op7   = { offset = 24, width = 7 }   # TBZ/TBNZ 顶层 [30:24]（bit31 让给位序号的高位 b5）
+nbit_l= { offset = 22, width = 1 }   # 逻辑立即数的 N（64 位元素=1；32 位形式恒 0）
+immr  = { offset = 16, width = 6 }   # 逻辑立即数的旋转量
+imms  = { offset = 10, width = 6 }   # 逻辑立即数的"1 的个数 - 1"与元素尺寸
 b5    = { offset = 31, width = 1 }   # TBZ/TBNZ 位序号第 5 位（32 位形式必须为 0）
 b40   = { offset = 19, width = 5 }   # TBZ/TBNZ 位序号低 5 位（实测 [0xe3,0xff,0x2b,0x36]）
 imm14 = { offset = 5,  width = 14 }  # TBZ/TBNZ 相对偏移（[18:5]；与 imm19 同段但不同顶层）
@@ -318,6 +325,26 @@ asm = "dcps3 #{imm}"
 
 # 整字常量（无操作数）：ERET=0xD69F03E0、DRPS=0xD6BF03E0
 [[instructions]]
+name = "DCPS1B"   # 裸 `dcps1` = `dcps1 #0`（GAS 缺省 0；imm16==0 的叶 arm 先命中）
+form = "SYSEXC"
+opcode = 0x6A5
+fields = { op5 = 1, imm16 = 0 }
+asm = "dcps1"
+
+[[instructions]]
+name = "DCPS2B"   # 裸 `dcps2` = `dcps2 #0`（GAS 缺省 0；imm16==0 的叶 arm 先命中）
+form = "SYSEXC"
+opcode = 0x6A5
+fields = { op5 = 2, imm16 = 0 }
+asm = "dcps2"
+
+[[instructions]]
+name = "DCPS3B"   # 裸 `dcps3` = `dcps3 #0`（GAS 缺省 0；imm16==0 的叶 arm 先命中）
+form = "SYSEXC"
+opcode = 0x6A5
+fields = { op5 = 3, imm16 = 0 }
+asm = "dcps3"
+[[instructions]]
 name = "ERET"
 form = "NOPF"
 opcode = 0xD69F03E0
@@ -445,6 +472,12 @@ opcode_field = "cbop"
 operand_fields = ["imm19"]
 
 [[forms]]
+name = "LOGIMM"   # 逻辑（立即数）：rd rn N/immr/imms。顶层用 **op9**（[31:23]，含恒 0 的 bit23）
+# ——用 op8（[31:24]）会与 MOVZ/MOVN/MOVK 的 op9 在 bit23 上撞成同一条 trie 边（0x1A4 vs 0x1A5）。
+opcode_field = "op9"
+operand_fields = ["rd", "rn", "nbit_l"]
+
+[[forms]]
 name = "TBZ"      # TBZ/TBNZ：rt + 位序号（b40[23:19] + b5[31]）+ imm14[18:5]
 opcode_field = "op7"
 operand_fields = ["rt", "b40", "imm14"]
@@ -498,6 +531,28 @@ kind = "imm"
 signed = false
 width = 5    # 32 位形式：第 5 位不存在（b5 必须为 0，由补集零 guard 保证）
 
+# 逻辑（位掩码）立即数：值必须是"一段连续 1 循环填充整个宽度"的位模式，编码成 N/immr/imms
+# 三个分量（非线性映射，故走 `logical_imm` 方案而不是位切片）。
+# W 形式：`wrap` 收下 `#~15`、`#~(0xfe<<24)` 这类**按位取反**写出来的负数（两种读数都收，
+# 规范化到无符号位模式）；`min` 放宽到 -2^32 才容得下 `~(0xfe<<24)` 这种绝对值大于 2^31 的写法。
+[[operand_slots]]
+name = "logicimm32"
+kind = "imm"
+signed = false
+width = 32
+wrap = true
+min = -4294967296
+encode = "logical_imm"
+fields = ["nbit_l", "immr", "imms"]
+
+[[operand_slots]]
+name = "logicimm64"
+kind = "imm"
+signed = false
+width = 64
+encode = "logical_imm"
+fields = ["nbit_l", "immr", "imms"]
+
 # ── 乘法 MADD/MSUB/MUL（opcode_field=mtop [31:21]）──
 # X madd word 9B020C20 → mtop=(>>21)&0x7FF=0x4D8；W=0xD8
 # X msub 9B069CA4、W 1B069CA4（o0=1）；mul= madd ra=31（9B027C20/1B027C20）
@@ -524,6 +579,14 @@ form = "RETF"
 opcode = 0xD65F
 fields = { rn = 30 }
 asm = "ret"
+
+[[instructions]]
+name = "RETR"   # `ret xN`：rn 是操作数（裸 `ret` 本身 = `ret x30`）；与 RET 共用 b16 常量，
+# 解码靠"叶 arm 先试 + 平铺 if"回退（RET 的 guard 钉死 rn==30）。
+form = "BRREG2"
+opcode = 0xD65F
+ops = ["src:r64"]
+asm = "ret {src}"
 
 # ── 别名 ──
 
@@ -1143,6 +1206,37 @@ rows = [
   { inst = "TBNZW", slot = "r32", bitslot = "bitpos32", opcode = 0x37 },
 ]
 [[templates]]
+name = "ANDIMM"
+body = { form = "LOGIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:{islot}"], asm = "and {dst}, {src}, #{imm}" }
+rows = [
+  { inst = "ANDIMMX", slot = "r64", islot = "logicimm64", opcode = 0x124 },
+  { inst = "ANDIMMW", slot = "r32", islot = "logicimm32", opcode = 0x024 },
+]
+
+[[templates]]
+name = "ORRIMM"
+body = { form = "LOGIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:{islot}"], asm = "orr {dst}, {src}, #{imm}" }
+rows = [
+  { inst = "ORRIMMX", slot = "r64", islot = "logicimm64", opcode = 0x164 },
+  { inst = "ORRIMMW", slot = "r32", islot = "logicimm32", opcode = 0x064 },
+]
+
+[[templates]]
+name = "EORIMM"
+body = { form = "LOGIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:{islot}"], asm = "eor {dst}, {src}, #{imm}" }
+rows = [
+  { inst = "EORIMMX", slot = "r64", islot = "logicimm64", opcode = 0x1A4 },
+  { inst = "EORIMMW", slot = "r32", islot = "logicimm32", opcode = 0x0A4 },
+]
+
+[[templates]]
+name = "ANDSIMM"
+body = { form = "LOGIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:{islot}"], asm = "ands {dst}, {src}, #{imm}" }
+rows = [
+  { inst = "ANDSIMMX", slot = "r64", islot = "logicimm64", opcode = 0x1E4 },
+  { inst = "ANDSIMMW", slot = "r32", islot = "logicimm32", opcode = 0x0E4 },
+]
+[[templates]]
 name = "CSEL"
 body = { ref = "csel", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:cond4", "src2:{slot}"], asm = "csel {dst}, {src}, {src2}, {cc}" }
 rows = [
@@ -1195,6 +1289,9 @@ rows = [
   { inst = "B_LT", cname = "lt", fields = { bcond = 11 } },
   { inst = "B_GT", cname = "gt", fields = { bcond = 12 } },
   { inst = "B_LE", cname = "le", fields = { bcond = 13 } },
+  # AL/NV 在 A64 里是保留码，但上游汇编器收（语料 `b.al L1` 实测 cond=0b1110）
+  { inst = "B_AL", cname = "al", fields = { bcond = 14 } },
+  { inst = "B_NV", cname = "nv", fields = { bcond = 15 } },
 ]
 
 # ── 谱内测试向量（v19 V3））────────────────────────────────────────────
@@ -1720,3 +1817,53 @@ bytes = [0x03, 0x00, 0x44, 0x37]
 # 位序号第 5 位（bit31）与 imm14 相邻但不同段——分开钉住
 asm = "tbnz x1, #63, #4"
 bytes = [0x21, 0x00, 0xF8, 0xB7]
+
+# 逻辑（立即数）族：值是"一段连续 1 循环填充"的位掩码 ⇒ N/immr/imms 三分量（字节取自上游注释）
+[[vectors]]
+asm = "and w0, w0, #1"
+bytes = [0x00, 0x00, 0x00, 0x12]
+
+[[vectors]]
+asm = "and x0, x0, #1"
+bytes = [0x00, 0x00, 0x40, 0x92]
+
+[[vectors]]
+asm = "ands x1, x2, #15"
+bytes = [0x41, 0x0C, 0x40, 0xF2]
+
+[[vectors]]
+# X 形式：immr = 60、imms = 59（~15 的 64 位位模式是"4 个 0 后 60 个 1"）
+asm = "and sp, x5, #~15"
+bytes = [0xBF, 0xEC, 0x7C, 0x92]
+
+[[vectors]]
+# W 形式按位取反写出来的负数（wrap 收下，规范化到无符号位模式 0x1ffffff——
+# 与上游 CHECK 注释里的规范渲染 `and w0, w0, #0x1ffffff` 一致）
+asm = "and w0, w0, #~(0xfe<<24)"
+bytes = [0x00, 0x60, 0x00, 0x12]
+
+[[vectors]]
+asm = "orr w8, wzr, #0x1"
+bytes = [0xE8, 0x03, 0x00, 0x32]
+
+[[vectors]]
+asm = "eor x1, x2, #0x8000"
+bytes = [0x41, 0x00, 0x71, 0xD2]
+
+# `ret xN` / `ret lr`（LR 是 X30 的别名）与裸 `dcps1`（= `dcps1 #0`）：
+[[vectors]]
+asm = "ret x1"
+bytes = [0x20, 0x00, 0x5F, 0xD6]
+
+[[vectors]]
+asm = "ret lr"
+bytes = [0xC0, 0x03, 0x5F, 0xD6]
+
+[[vectors]]
+asm = "dcps1"
+bytes = [0x01, 0x00, 0xA0, 0xD4]
+
+[[vectors]]
+# `b.al`：A64 里是保留码，上游汇编器收（cond = 0b1110）
+asm = "b.al 0"
+bytes = [0x0E, 0x00, 0x00, 0x54]

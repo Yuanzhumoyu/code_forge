@@ -3417,6 +3417,76 @@ asm = "tbz {src}, #{bit}, {target}"
     assert!(err.contains("prefix_scan"), "err: {err}");
 }
 
+// ─────────────── `encode = "logical_imm"`：值 → N/immr/imms 三分量 ───────────────
+
+/// 逻辑立即数方案的**声明侧契约**：三个位域（宽度依序 1/6/6）、槽宽 = 元素宽度（32|64）。
+///
+/// 算法本身（值 ↔ 分量）由生成物里的 `__encode_logical_imm`/`__decode_logical_imm` 实现；
+/// 端到端由 `isa/arm64.toml` 的谱内向量与语料字节对拍守（上游注释里的
+/// `and w0, w0, #1`、`and sp, x5, #~15`、`eor x1, x2, #0x8000` 逐字节相同）。
+#[test]
+fn slot_fields_logical_imm_contract() {
+    let doc = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "fixed"
+bits = 32
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+op9 = { offset = 23, width = 9 }
+nbit = { offset = 22, width = 1 }
+immr = { offset = 16, width = 6 }
+imms = { offset = 10, width = 6 }
+rd = { offset = 0, width = 5 }
+rn = { offset = 5, width = 5 }
+[[operand_slots]]
+name = "logicimm"
+kind = "imm"
+signed = false
+width = 32
+encode = "logical_imm"
+fields = ["nbit", "immr", "imms"]
+[[operand_slots]]
+name = "r"
+kind = "reg"
+class = "gpr4"
+[[forms]]
+name = "LOGIMM"
+opcode_field = "op9"
+operand_fields = ["rd", "rn", "nbit"]
+[[instructions]]
+name = "ANDI"
+form = "LOGIMM"
+opcode = 0x24
+ops = ["dst:r:out", "src:r", "imm:logicimm"]
+asm = "and {dst}, {src}, #{imm}"
+"#;
+    let m = parse_and_validate(doc).expect("logical_imm 合法");
+    let imm = m
+        .operand_slots
+        .iter()
+        .find(|s| s.name == "logicimm")
+        .expect("槽存在");
+    let enc = imm.encode.expect("方案");
+    assert_eq!(enc, super::model::SlotEncode::LogicalImm);
+    // 可编码集不是区间 ⇒ 不生成 lo/hi 边界风味；代表值由方案给（最低位单个 1 恒合法）。
+    assert!(!enc.wants_boundary_flavors());
+    assert_eq!(enc.sample_value(), 1);
+
+    // 校验：字段个数/宽度不对 → 报错；槽宽不是 32/64 → 报错。
+    let bad = doc.replace(
+        "fields = [\"nbit\", \"immr\", \"imms\"]",
+        "fields = [\"nbit\", \"immr\"]",
+    );
+    let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("1/6/6"), "err: {err}");
+    let bad = doc.replace("width = 32\nencode", "width = 16\nencode");
+    let err = parse_and_validate(&bad).unwrap_err().to_string();
+    assert!(err.contains("32 或 64"), "err: {err}");
+}
+
 // ─────────────── W1：栈参数必须由角色（标签）驱动，不按指令名兜底 ───────────────
 
 /// 栈参数的**能力申报**是角色（v20 A5-3 起谱面没有 `[abi.stack_args]` 键可写了）：

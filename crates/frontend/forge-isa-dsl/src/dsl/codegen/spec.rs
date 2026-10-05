@@ -789,7 +789,13 @@ fn sample_operands(
             }
             OperandKind::Imm => {
                 let (lo, hi) = slot.imm_range().unwrap_or((0, 0));
-                let base = if lo <= 0 && 0 <= hi { 0 } else { lo };
+                // 多字段落点的代表值由**方案**给：`logical_imm` 的可编码集不是区间
+                // （0 与全 1 都不可编码），按 lo/hi 采样必取到编不出来的值。
+                let base = match slot.encode {
+                    Some(enc) => enc.sample_value(),
+                    None if lo <= 0 && 0 <= hi => 0,
+                    None => lo,
+                };
                 let lit = Literal::i64_suffixed(base);
                 exprs.push(quote! { #lit });
                 let msg = syn::LitStr::new(
@@ -805,8 +811,12 @@ fn sample_operands(
                 };
                 let base_lit = Literal::i64_suffixed(want);
                 checks.push(quote! { assert_eq!(*#fid, #base_lit, #msg); });
-                let checked = imm_encode_checked(m, info, slot, fname).is_some();
-                imm_slots.push((i, fname.clone(), lo, hi, checked));
+                // 边界风味（lo/hi）只对**线性**方案有意义：`logical_imm` 的可编码集不是
+                // 区间，采样 lo/hi 只会造出"编不出来"的用例。
+                if slot.encode.is_none_or(|e| e.wants_boundary_flavors()) {
+                    let checked = imm_encode_checked(m, info, slot, fname).is_some();
+                    imm_slots.push((i, fname.clone(), lo, hi, checked));
+                }
             }
             OperandKind::Label => {
                 exprs.push(quote! { 0i64 });

@@ -177,7 +177,9 @@ fn overlap_guard_can_fail() {
 ///   "32 位形式 imm6<32" 那条约束位，故 W 用 5 位槽 `imm5`），另有 `ands`/`bics` 无后缀形态 4 条；
 ///   2026-10-04 补 `tbz`/`tbnz` 后 123 → **125**：X 形式（`TBZX`/`TBNZX`）的 `b5`[31] 是
 ///   位序号的一部分（多字段落点，已进位域视图），W 形式（`TBZW`/`TBNZW`）的 bit31
-///   才是**真正的保留位**（32 位形式的位序号只有 5 位，bit31 必须为 0）——各 +1）。
+///   才是**真正的保留位**（32 位形式的位序号只有 5 位，bit31 必须为 0）——各 +1；
+///   2026-10-04 收尾三条写法后 125 → **128**（`RETR` 的 [0,5)+[10,16)、`B_AL`/`B_NV` 的 bit4
+///   ——B.cond 的固定 0 位）。
 ///   全是保留位（A64 里 `BR`/`RET`/`B.cond`/`LDUR` 一类的固定 0 段），
 ///   抽查 `[4,5)`（B.cond 的固定 0 位）、`[0,5)`+`[10,16)`（BR/BLR/RET）、`[10,12)`+`[21,24)`
 ///   （LDUR 族）都对得上参考编码——**不是谱的缺陷**，因此保持 opt-in 的评审清单。
@@ -186,7 +188,7 @@ fn unassigned_bits_inventory() {
     for (isa, want) in [
         ("x86.toml", 0usize),
         ("riscv64.toml", 3),
-        ("arm64.toml", 125),
+        ("arm64.toml", 128),
     ] {
         let path = root().join("isa").join(isa);
         let spec = report::load_spec(&path).expect("加载谱");

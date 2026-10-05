@@ -1603,24 +1603,46 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                     ));
                 }
                 let mut total: u32 = 0;
+                let mut widths: Vec<u32> = Vec::new();
                 for (i, fname) in fields.iter().enumerate() {
                     let Some(bf) = m.conventions.bitfields.get(fname) else {
                         return Err(format!(
                             "{path}: fields[{i}] '{fname}' 不是 [conventions.bitfields] 里声明的位域"
                         ));
                     };
-                    if bf.pieces.is_some() {
+                    if bf.pieces.as_ref().is_some_and(|ps| !ps.is_empty()) {
                         return Err(format!(
                             "{path}: fields[{i}] '{fname}' 是多段散布位域——多字段落点只支持单段位域"
                         ));
                     }
-                    total = total.saturating_add(bf.width.unwrap_or(64));
+                    let w = bf.width.unwrap_or(64);
+                    widths.push(w);
+                    total = total.saturating_add(w);
                 }
-                let sw = s.width.unwrap_or(0);
-                if sw == 0 || total != sw {
-                    return Err(format!(
-                        "{path}: {enc:?} 要求各字段宽度之和 == 槽宽（当前 Σ={total}、槽宽={sw}）"
-                    ));
+                match enc {
+                    SlotEncode::Slice => {
+                        // 位切片：切完不剩也不缺。
+                        let sw = s.width.unwrap_or(0);
+                        if sw == 0 || total != sw {
+                            return Err(format!(
+                                "{path}: slice 要求各字段宽度之和 == 槽宽（当前 Σ={total}、槽宽={sw}）"
+                            ));
+                        }
+                    }
+                    SlotEncode::LogicalImm => {
+                        // 逻辑立即数：三分量 N(1)/immr(6)/imms(6)，槽宽 = 元素宽度 32|64。
+                        if widths.as_slice() != [1, 6, 6] {
+                            return Err(format!(
+                                "{path}: logical_imm 的 fields 必须是三个位域、宽度依序为 1/6/6（N、immr、imms），当前 {widths:?}"
+                            ));
+                        }
+                        if !matches!(s.width, Some(32) | Some(64)) {
+                            return Err(format!(
+                                "{path}: logical_imm 的 width 必须是 32 或 64（元素/寄存器宽度），当前 {:?}",
+                                s.width
+                            ));
+                        }
+                    }
                 }
             }
             (Some(_), None) => {

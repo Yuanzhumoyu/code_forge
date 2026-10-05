@@ -1394,6 +1394,14 @@ pub enum SlotEncode {
     ///
     /// 前提：各字段宽度之和 == 槽的 `width`（校验期钉死，切完不剩也不缺）。
     Slice,
+    /// **逻辑立即数**（"位掩码立即数"）：值必须是"一段连续 1 循环填充整个宽度"的位模式
+    /// （A64/ARM32 的逻辑运算立即数就是这样定义的），编码成三分量
+    /// `N`(1 位) / `immr`(6 位) / `imms`(6 位)——`fields` 按这个顺序给三个位域，
+    /// 槽的 `width` = 元素/寄存器宽度（32 或 64）。
+    ///
+    /// 这是**非线性**映射（由值的位结构反算分量），故不做位切片；不可编码的值
+    /// （全 0、全 1、非"连续 1 段"）在编码期报错。
+    LogicalImm,
 }
 
 impl SlotEncode {
@@ -1401,7 +1409,23 @@ impl SlotEncode {
     pub fn name(self) -> &'static str {
         match self {
             SlotEncode::Slice => "slice",
+            SlotEncode::LogicalImm => "logical_imm",
         }
+    }
+
+    /// 生成期自测的**代表值**：方案保证它一定可编码（`logical_imm` 的 0/全 1 不可编码，
+    /// 取最低位单个 1 恒合法）。
+    pub fn sample_value(self) -> i64 {
+        match self {
+            SlotEncode::Slice => 0,
+            SlotEncode::LogicalImm => 1,
+        }
+    }
+
+    /// 是否要生成"立即数边界"风味（lo/hi）：位切片是线性的，边界有意义；
+    /// `logical_imm` 可编码集不是区间，按 lo/hi 采样只会取到不可编码的值。
+    pub fn wants_boundary_flavors(self) -> bool {
+        matches!(self, SlotEncode::Slice)
     }
 }
 

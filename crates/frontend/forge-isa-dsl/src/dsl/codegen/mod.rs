@@ -252,6 +252,18 @@ pub fn generate_with_parts(
     } else {
         gen_bit_helpers()
     };
+    // 逻辑立即数助手（`encode = "logical_imm"` 的槽才要）：值 ↔ (N, immr, imms)。
+    // 与位域助手一样**与 `parts` 无关**——encode/decode 哪天被切开，助手也还在。
+    let logic_imm_helpers = if !prefix_scan
+        && model
+            .operand_slots
+            .iter()
+            .any(|s| s.encode == Some(SlotEncode::LogicalImm))
+    {
+        gen_logic_imm_helpers()
+    } else {
+        quote! {}
+    };
     // ── 可选部件（`parts = [...]`，v18 S7d）──
     let (disasm_fn, asm_fn) = if parts.asm {
         (
@@ -314,6 +326,7 @@ pub fn generate_with_parts(
         #mem_support
         #inst_enum
         #bit_helpers
+        #logic_imm_helpers
         #pseudo_helpers
         #encode_fn
         #decode_fn
@@ -854,24 +867,47 @@ fn gen_encode(infos: &[InstInfo], m: &IsaModel) -> Result<TokenStream, String> {
                     }
                 });
             }
-            // 多字段落点（`encode` + `fields`）：一个值摊到多个位域——按声明序从低位切起，
-            // 每段长度 = 该位域宽度（校验期已保证 Σ宽度 == 槽宽）。值域检查由方案负责
-            // （`slice` 是纯切片，任何槽宽内的值都能编）。
+            // 多字段落点（`encode` + `fields`）：一个值摊到多个位域。值域检查由方案负责
+            // （`slice` 是纯切片；`logical_imm` 走下面的非线性编码）。
             if let (Some(enc), Some(sfields)) = (slot.encode, &slot.fields) {
-                stmts.push(quote! {
-                    let __mv = *#fid as u64;
-                });
-                let mut sh: u32 = 0;
-                for sname in sfields {
-                    let sbf = single_field(m, sname, "fields")?;
-                    let (so, sw) = single(sbf);
-                    let smask = if sw >= 64 { u64::MAX } else { (1u64 << sw) - 1 };
-                    let shl = proc_macro2::Literal::u32_unsuffixed(sh);
-                    let smask = proc_macro2::Literal::u64_unsuffixed(smask);
-                    let _ = enc;
-                    stmts.extend(place_ts(quote! { (__mv >> #shl) & #smask }, sbf));
-                    sh += sw;
-                    let _ = so;
+                match enc {
+                    SlotEncode::Slice => {
+                        stmts.push(quote! {
+                            let __mv = *#fid as u64;
+                        });
+                        let mut sh: u32 = 0;
+                        for sname in sfields {
+                            let sbf = single_field(m, sname, "fields")?;
+                            let (_so, sw) = single(sbf);
+                            let smask = if sw >= 64 { u64::MAX } else { (1u64 << sw) - 1 };
+                            let shl = proc_macro2::Literal::u32_unsuffixed(sh);
+                            let smask = proc_macro2::Literal::u64_unsuffixed(smask);
+                            stmts.extend(place_ts(quote! { (__mv >> #shl) & #smask }, sbf));
+                            sh += sw;
+                        }
+                    }
+                    SlotEncode::LogicalImm => {
+                        let width = proc_macro2::Literal::u32_unsuffixed(slot.width.unwrap_or(0));
+                        stmts.push(quote! {
+                            let (__lin, __lir, __lis) =
+                                match __encode_logical_imm(*#fid as u64, #width) {
+                                    Some(t) => t,
+                                    None => return Err(format!(
+                                        "{}: 立即数 {:#x} 不是 {}-bit 的合法逻辑立即数（要求\"一段连续 1 循环填充\"）",
+                                        stringify!(#vn), *#fid as u64, #width
+                                    )),
+                                };
+                        });
+                        for (i, sname) in sfields.iter().enumerate() {
+                            let sbf = single_field(m, sname, "fields")?;
+                            let v = match i {
+                                0 => quote! { __lin },
+                                1 => quote! { __lir },
+                                _ => quote! { __lis },
+                            };
+                            stmts.extend(place_ts(v, sbf));
+                        }
+                    }
                 }
                 continue;
             }
@@ -942,8 +978,85 @@ fn gen_encode(infos: &[InstInfo], m: &IsaModel) -> Result<TokenStream, String> {
     })
 }
 
-/// 定宽字位域助手（每个定宽模块生成一次）：
-/// `__word: [u8; n]` 是 LE 位序的字（bit 0 = 第 0 字节 LSB），字长任意。
+/// **逻辑立即数**助手（`encode = "logical_imm"`，每个用到它的模块生成一次）。
+///
+/// ARM 系逻辑运算的立即数不是任意值：它是"一段连续 1 循环填充整个宽度"的位模式，编码成
+/// `N`(1) / `immr`(6) / `imms`(6) 三个分量（元素尺寸 + 旋转量 + 1 的个数）。这是**非线性**
+/// 映射（值 → 分量），所以它不走位切片，而由这两个助手实现；谱只声明"这个槽用这套方案、
+/// 三个分量落到哪些位域"。
+///
+/// 算法（与 ARM ARM 的 `DecodeBitMasks` 互为逆）：
+/// ① 找**最小的重复元素**尺寸 `esize = 2^len`（值在 `esize` 上循环）；
+/// ② 把元素里那段 1 旋到最低位，检查它确实是**连续一段**（否则不可编码）；
+/// ③ `immr` = 反向的旋转量、`imms` = 元素尺寸与 1 的个数按规范拼进 6 位。
+///
+/// `width` ∈ {32, 64}（32 位形式 `N` 恒 0）。
+fn gen_logic_imm_helpers() -> TokenStream {
+    quote! {
+        /// 值的位模式按 `width` 位循环右移。
+        #[inline]
+        fn __ror(v: u64, r: u32, width: u32) -> u64 {
+            let r = r % width;
+            let mask: u64 = if width >= 64 { u64::MAX } else { (1u64 << width) - 1 };
+            if r == 0 { v & mask } else { ((v >> r) | (v << (width - r))) & mask }
+        }
+
+        /// 逻辑立即数编码：值 → `(N, immr, imms)`；不是合法位掩码 ⇒ `None`。
+        fn __encode_logical_imm(value: u64, width: u32) -> Option<(u64, u64, u64)> {
+            let mask: u64 = if width >= 64 { u64::MAX } else { (1u64 << width) - 1 };
+            let v = value & mask;
+            // 全 0 / 全 1 没有"一段 1"可分（它们由 MOV 而不是逻辑立即数表达）。
+            if v == 0 || v == mask { return None; }
+            // ① 最小重复元素尺寸：两半不同 ⇒ 元素 = 2 × 半宽。
+            let mut size = width;
+            loop {
+                size /= 2;
+                let em: u64 = if size >= 64 { u64::MAX } else { (1u64 << size) - 1 };
+                if (v & em) != ((v >> size) & em) { size *= 2; break; }
+                if size <= 2 { break; }
+            }
+            let em: u64 = if size >= 64 { u64::MAX } else { (1u64 << size) - 1 };
+            let pat = v & em;
+            let ones = pat.count_ones();
+            if ones == 0 || ones == size { return None; }
+            // ② 元素内必须是一段**连续的 1**（可环绕元素边界）。
+            let rot = pat.trailing_zeros() % size;
+            let rotated = __ror(pat, rot, size);
+            if rotated != (1u64 << ones) - 1 { return None; }
+            // ③ 分量：`immr` 是把那段 1 转回原位所需的右旋量；
+            //    `imms` = 元素尺寸取反左移一位（低 6 位）| (1 的个数 - 1)。
+            let immr = (size - rot) % size;
+            let len = size.trailing_zeros();
+            let n = if len == 6 { 1u64 } else { 0 };
+            let sz = size as u64;
+            let imms = (((!(sz - 1)) << 1) & 0x3F) | (ones as u64 - 1);
+            Some((n, immr as u64, imms))
+        }
+
+        /// 逻辑立即数解码：`(N, immr, imms)` → 值的位模式（`width` 位）。
+        fn __decode_logical_imm(n: u64, immr: u64, imms: u64, width: u32) -> u64 {
+            // `len` = `N:NOT(imms)` 的最高位；元素尺寸 = 2^len。
+            let t = ((n & 1) << 6) | ((!imms) & 0x3F);
+            let len = 63 - t.leading_zeros();
+            let size = 1u32 << len;
+            let levels: u64 = if len >= 6 { 0x3F } else { (1u64 << len) - 1 };
+            let ones = (imms & levels) as u32 + 1;
+            let welem: u64 = if ones >= 64 { u64::MAX } else { (1u64 << ones) - 1 };
+            let elem = __ror(welem, (immr & 0x3F) as u32, size);
+            if width <= size { return elem; }
+            // 元素循环填充到整宽。
+            let mut out = 0u64;
+            let mut sh = 0u32;
+            while sh < width {
+                out |= elem << sh;
+                sh += size;
+            }
+            out
+        }
+    }
+}
+
+/// 定宽字位域助手（每个定宽模块生成一次）：/// `__word: [u8; n]` 是 LE 位序的字（bit 0 = 第 0 字节 LSB），字长任意。
 /// `__place` 写 [off, off+width)、`__bits` 读 [off, off+width)（width ≤ 64）。
 /// 用 u128 中间量覆盖"跨字节 + 非字节对齐"的位段（shift ≤ 7，width ≤ 64 → ≤ 71 位）。
 fn gen_bit_helpers() -> TokenStream {
@@ -1150,25 +1263,38 @@ fn gen_decode_group(
         for (fname, fid, slot, _) in &info.operands {
             let bf = get_bf(m, fname)?;
             let raw = extract_ts(bf);
-            // 多字段落点（`encode` + `fields`）：把各段按声明序拼回源值
-            // （与编码侧的"从低位切起"对称）。`slice` 是纯拼接，没有方案特有的逆向逻辑。
-            if let (Some(_), Some(sfields)) = (slot.encode, &slot.fields) {
-                let mut parts: Vec<TokenStream> = Vec::new();
-                let mut sh: u32 = 0;
-                for sname in sfields {
-                    let sbf = get_bf(m, sname)?;
-                    let piece = extract_ts(sbf);
-                    let shl = proc_macro2::Literal::u32_unsuffixed(sh);
-                    parts.push(quote! { ((#piece) << #shl) });
-                    sh += single(sbf).1;
-                }
-                let combined = quote! { (#(#parts)|*) };
+            // 多字段落点（`encode` + `fields`）：把各段拼回源值（与编码侧对称）。
+            if let (Some(enc), Some(sfields)) = (slot.encode, &slot.fields) {
                 let signed = slot.signed.unwrap_or(false) || slot.kind == OperandKind::Label;
-                let expr: TokenStream = if signed {
-                    let w = slot.width.unwrap_or(64);
-                    sign_extend_ts(quote! { (#combined) as u64 }, w)
-                } else {
-                    quote! { (#combined) as i64 }
+                let expr: TokenStream = match enc {
+                    SlotEncode::Slice => {
+                        let mut parts: Vec<TokenStream> = Vec::new();
+                        let mut sh: u32 = 0;
+                        for sname in sfields {
+                            let sbf = get_bf(m, sname)?;
+                            let piece = extract_ts(sbf);
+                            let shl = proc_macro2::Literal::u32_unsuffixed(sh);
+                            parts.push(quote! { ((#piece) << #shl) });
+                            sh += single(sbf).1;
+                        }
+                        let combined = quote! { (#(#parts)|*) };
+                        if signed {
+                            let w = slot.width.unwrap_or(64);
+                            sign_extend_ts(quote! { (#combined) as u64 }, w)
+                        } else {
+                            quote! { (#combined) as i64 }
+                        }
+                    }
+                    SlotEncode::LogicalImm => {
+                        let width = proc_macro2::Literal::u32_unsuffixed(slot.width.unwrap_or(0));
+                        let mut pieces: Vec<TokenStream> = Vec::new();
+                        for sname in sfields {
+                            pieces.push(extract_ts(get_bf(m, sname)?));
+                        }
+                        quote! {
+                            __decode_logical_imm(#(#pieces),*, #width) as i64
+                        }
+                    }
                 };
                 binds.push(quote! { let #fid = #expr; });
                 ctor_fields.push(quote! { #fid });

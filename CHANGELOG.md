@@ -11,6 +11,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-04) — `encode = "logical_imm"`：位掩码立即数（值 → N/immr/imms）+ aarch64 语料清零
+
+**逻辑（位掩码）立即数**：ARM 系逻辑运算的立即数不是任意值——它必须是"一段连续 1 循环填充
+整个宽度"的位模式，编码成三分量 `N`(1 位) / `immr`(6 位) / `imms`(6 位)。这是**非线性**映射
+（由值的位结构反算分量），位切片表达不了，于是 `encode` 增加第二个方案：
+
+```toml
+[[operand_slots]]
+name = "logicimm64"
+kind = "imm"
+signed = false
+width = 64                     # 元素宽度（32 或 64）
+encode = "logical_imm"
+fields = ["nbit_l", "immr", "imms"]   # 依序 = N、immr、imms（校验期钉死宽度 1/6/6）
+```
+
+- 实现（`__encode_logical_imm`/`__decode_logical_imm`，只在用到它的谱里发射）：① 找最小的
+  重复元素尺寸；② 把那段 1 旋到最低位并确认它**连续**（可环绕）；③ 反算 `immr` 与 `imms`。
+  不可编码的值（全 0、全 1、非连续段）在编码期报错、可编码集不是区间 ⇒ 生成期自测不按
+  lo/hi 采样边界（代表值由方案给）。
+- 方案由**谱按名字选择**、实现由 DSL 提供（与 `kind = "cond"`/`wrap`/`unit` 同一类）。
+
+aarch64 落地（+8 条指令：`and`/`orr`/`eor`/`ands` × X/W）：
+
+- 顶层用 **op9**（[31:23]）而不是 op8——`MOVZ/MOVN/MOVK` 的 op9 只在 bit23 上与逻辑立即数
+  不同（0x1A5 vs 0x1A4），用 op8 会被位 trie 判成同一条边（生成期直接报 ambiguous）；
+- W 形式 `wrap = true, min = -2^32`：收得下 `#~15`、`#~(0xfe<<24)` 这类按位取反写出来的负数，
+  规范化到无符号位模式；
+- 字节与上游注释逐条相同（`and w0, w0, #1` = `12 00 00 00`、`and sp, x5, #~15` 的
+  immr=60/imms=59、`eor x1, x2, #0x8000` 的 immr=49 都对上）。
+
+**aarch64 语料清零**（余下三条写法，全是纯数据）：`ret xN`（第二条 RET，rn 成操作数，解码靠
+"叶 arm 先试 + 平铺 if" 回退）、`b.al`/`b.nv`（A64 里是保留码，上游汇编器照样收）、裸
+`dcps1/2/3`（= `dcpsN #0`，声明成 imm16==0 的叶 arm；先试过 `[[pseudo]]`，但伪指令的前导
+字面与指令重名会被校验期正确拒绝）。另加 `[reg.*].aliases` 的 `XZR`/`WZR`（31 号在"零寄存器"
+语境下）与 `LR`——`orr w8, wzr, #0x1`、`ret lr` 才解析得动。
+
+效果：aarch64 语料解析档 `parsed` 130 → **153**、**`no_prefix` 4 → 0、红桶 19 → 0**（语料里
+能认出来的写法全部通过），字节对拍 `checked` 100 → **118 条逐字节全等**（`known` 仍 0）。
+arm64 指令 200 → **206**、派生枚举器 818 → **825**。
+
 ### Added (2026-10-04) — `[[operand_slots]]` 的 `encode` + `fields`：一个值摊到多个字段
 
 有些操作数在编码里不是"一段连续的位"：A64 的 `tbz`/`tbnz` 位序号（0..63）被拆到**两个
