@@ -1620,6 +1620,33 @@ pub enum OperandRole {
 
 // ──────────────────── [[forms]] / 编码语义键 ────────────────────
 
+/// 变长 ISA 的**固定前缀来源**（`prefix` 键）。
+///
+/// - `"field"`：取 `fields.prefix` 的字节（SSE 的 66/F2/F3/0 就是这么表达的）；
+/// - `"opsize"`：由操作数宽度驱动的 66（不在 `prefix` 处发射，见 `has_opsize`）；
+/// - 数字字符串：固定字节；
+/// - **列表**：**多条前缀**，按书写顺序发射。x86 的"锁 + 内存序提示"就是两条
+///   （`acquire lock add …` = `F2` + `F0`，`release lock …` = `F3` + `F0`）：
+///   编码按序发，解码按各条对应的**前缀扫描标志**逐个判（顺序无关）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PrefixKey {
+    /// 单个来源：`prefix = "field"` / `prefix = "0x66"` / `prefix = "opsize"`。
+    One(String),
+    /// 多个来源：`prefix = ["0xF2", "0xF0"]`。
+    Many(Vec<String>),
+}
+
+impl PrefixKey {
+    /// 各个来源（书写序）。
+    pub fn parts(&self) -> &[String] {
+        match self {
+            Self::One(s) => std::slice::from_ref(s),
+            Self::Many(v) => v,
+        }
+    }
+}
+
 /// 编码语义键集合——`[[forms]]`（预设）与 `[[instructions]]`（逐键覆盖）
 /// **共用同一组字段**。
 ///
@@ -1654,10 +1681,9 @@ pub struct EncKeys {
     /// L'L=128/256/512 位）。
     #[serde(default)]
     pub evex: Option<VexSpec>,
-    /// 变长：固定前缀来源。`"field"` → fields.prefix（SSE 的 66/F2/F3/0）；
-    /// 数字字符串 → 固定字节。缺省无前缀。
+    /// 变长：固定前缀来源（见 [`PrefixKey`]）。缺省无前缀。
     #[serde(default)]
-    pub prefix: Option<String>,
+    pub prefix: Option<PrefixKey>,
     /// 变长：编码宽度语义（见 [`Opsize`]）。
     #[serde(default)]
     pub opsize: Option<Opsize>,

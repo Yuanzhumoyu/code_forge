@@ -20,7 +20,8 @@ struct VlenCtx {
     /// opsize 值表达式（u64）：操作数 Reg 的 width()。
     opsize_expr: Option<TokenStream>,
     /// 固定前缀字节表达式（u8）：fields.prefix / 数字 / 0。
-    prefix_expr: TokenStream,
+    /// 固定前缀字节表达式序列（多条时按书写序发射；求值为 0 = 该条不产字节）。
+    prefix_exprs: Vec<TokenStream>,
     /// REX.W 位表达式（u64）：auto（opsize==64）/ fields.w / 0。
     rex_w_expr: TokenStream,
     /// ModRM 语义（`+r` 形式为 None）。
@@ -383,17 +384,24 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
             false,
         )
     };
-    // 前缀
-    let prefix_expr: TokenStream = match form.prefix.as_deref() {
-        None => quote! { 0u8 },
-        Some("field") => {
-            let v = field_val("prefix");
-            quote! { #v as u8 }
-        }
-        Some(p) => {
-            let v = parse_u64(p).unwrap_or(0);
-            quote! { #v as u8 }
-        }
+    // 前缀（**可以是多条**：x86 的 `acquire lock` = F2 + F0，按书写序发射）
+    let prefix_exprs: Vec<TokenStream> = match &form.prefix {
+        None => Vec::new(),
+        Some(p) => p
+            .parts()
+            .iter()
+            .map(|s| match s.as_str() {
+                "field" => {
+                    let v = field_val("prefix");
+                    quote! { #v as u8 }
+                }
+                // `"opsize"`：66 由 opsize 驱动（上面的 66 分支发），这里不产字节。
+                other => {
+                    let v = parse_u64(other).unwrap_or(0);
+                    quote! { #v as u8 }
+                }
+            })
+            .collect(),
     };
     // REX.W：显式声明优先；有 opsize 语义且未声明 → 默认 opsize==64 驱动。
     // 指令级覆盖（Instruction.rex_w）优先于 form 级。
@@ -682,7 +690,7 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
     Ok(VlenCtx {
         has_opsize,
         opsize_expr,
-        prefix_expr,
+        prefix_exprs,
         rex_w_expr,
         modrm,
         modrm_fixed: form.modrm_fixed,
@@ -1116,11 +1124,13 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             if ctx.rex_w_always {
                 stmts.push(quote! { __bytes.push(0x48u8); });
             }
-            let prefix_expr = &ctx.prefix_expr;
-            stmts.push(quote! {
-                let __p = #prefix_expr;
-                if __p != 0 { __bytes.push(__p); }
-            });
+            // 多条前缀按书写序发射（同 ModRM 路径）。
+            let pushes: Vec<TokenStream> = ctx
+                .prefix_exprs
+                .iter()
+                .map(|e| quote! { let __p = #e; if __p != 0 { __bytes.push(__p); } })
+                .collect();
+            stmts.push(quote! { #(#pushes)* });
             if let Some(esc) = &info.form.escape {
                 for e in esc {
                     stmts.push(quote! { __bytes.push(#e as u8); });
@@ -1184,10 +1194,14 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                 let byte = model.addr_size_override()?.map(|(b, _)| b).unwrap_or(0);
                 stmts.push(quote! { if #e { __bytes.push(#byte as u8); } });
             }
-            let prefix_expr = &ctx.prefix_expr;
-            let prefix_push = quote! {
-                let __p = #prefix_expr;
-                if __p != 0 { __bytes.push(__p); }
+            // 多条前缀按书写序发射（`acquire lock` = F2 + F0）。
+            let prefix_push = {
+                let pushes: Vec<TokenStream> = ctx
+                    .prefix_exprs
+                    .iter()
+                    .map(|e| quote! { let __p = #e; if __p != 0 { __bytes.push(__p); } })
+                    .collect();
+                quote! { #(#pushes)* }
             };
             stmts.push(prefix_push);
             let rex_w = &ctx.rex_w_expr;
@@ -1805,21 +1819,24 @@ fn vlen_decode_key(info: &InstInfo, ctx: &VlenCtx) -> Vec<(u8, u8)> {
         return key;
     }
     let mut key = Vec::new();
-    // 显式非扫描前缀字节（x86 恒为 0；通用 ISA 兼容）。
-    if let Some(p) = info.form.prefix.as_deref() {
-        let v = if p == "field" {
-            info.inst
-                .fields
-                .as_ref()
-                .and_then(|f| f.get("prefix"))
-                .copied()
-                .unwrap_or(0)
-        } else {
-            parse_u64(p).unwrap_or(0)
-        };
-        // 扫描标志前缀（66/F0/F2/F3/无）不进 key；其他显式字节为首字节。
-        if !matches!(v, 0 | 0x66 | 0xF0 | 0xF2 | 0xF3) {
-            key.push((0xFF, v as u8));
+    // 显式非扫描前缀字节（x86 恒为 0；通用 ISA 兼容）。**多条前缀逐个看**
+    // （只有"不是扫描标志"的那些才进 key）。
+    if let Some(p) = &info.form.prefix {
+        for part in p.parts() {
+            let v = if part == "field" {
+                info.inst
+                    .fields
+                    .as_ref()
+                    .and_then(|f| f.get("prefix"))
+                    .copied()
+                    .unwrap_or(0)
+            } else {
+                parse_u64(part).unwrap_or(0)
+            };
+            // 扫描标志前缀（66/F0/F2/F3/无）不进 key；其他显式字节为首字节。
+            if !matches!(v, 0 | 0x66 | 0xF0 | 0xF2 | 0xF3) {
+                key.push((0xFF, v as u8));
+            }
         }
     }
     if let Some(esc) = &info.form.escape {
@@ -1961,21 +1978,51 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
         }
         let form = &info.form;
         let mut conds: Vec<TokenStream> = Vec::new();
-        // 前缀匹配条件：66/F2/F3 → 扫描标志（无长度）；其他（LOCK 0xF0 等）→
-        // 显式字节检查（占 1 字节，escape/opcode 偏移 +1）
-        let (prefix_cond, prefix_len) = match form.prefix.as_deref() {
-            None | Some("opsize") => (None, 0),
-            Some("field") => {
-                let v = info
-                    .inst
-                    .fields
-                    .as_ref()
-                    .and_then(|f| f.get("prefix"))
-                    .copied()
-                    .unwrap_or(0);
-                prefix_cond_ts(v)
+        // 前缀匹配条件：66/F2/F3/F0 → 扫描标志（无长度，顺序无关）；其他字节 →
+        // 显式字节检查（占 1 字节，escape/opcode 偏移 +1）。**多条前缀全部要满足**
+        // （`acquire lock` = F2 + F0 ⇒ `__pF2 && __pF0`）。
+        let (prefix_cond, prefix_len) = match &form.prefix {
+            None => (None, 0),
+            Some(p) => {
+                let parts = p.parts();
+                let single = parts.len() == 1;
+                let mut cs: Vec<TokenStream> = Vec::new();
+                let mut len = 0usize;
+                for part in parts {
+                    // `"opsize"` 由操作数宽度驱动（66 在别处发），这里无字节可判。
+                    if part == "opsize" {
+                        continue;
+                    }
+                    let v = if part == "field" {
+                        info.inst
+                            .fields
+                            .as_ref()
+                            .and_then(|f| f.get("prefix"))
+                            .copied()
+                            .unwrap_or(0)
+                    } else {
+                        parse_u64(part).unwrap_or(0)
+                    };
+                    // **单条来源里的 0 = "没有前缀"**（`prefix_cond_ts(0)` 断言四个前缀标志
+                    // 全假）——这条断言不能省：SSE 的 66/F2/F3 变体与无前缀变体同 opcode
+                    // （`ADDPD` 对 `ADDPS`），少了"无前缀"守卫，后者会先命中前者的字节。
+                    // 列表里的 0 没有说话（多个前缀的组合里不允许出现），跳过。
+                    if v == 0 && !single {
+                        continue;
+                    }
+                    let (c, l) = prefix_cond_ts(v);
+                    if let Some(c) = c {
+                        cs.push(c);
+                    }
+                    len += l;
+                }
+                let cond = if cs.is_empty() {
+                    None
+                } else {
+                    Some(quote! { #(#cs)&&* })
+                };
+                (cond, len)
             }
-            Some(p) => prefix_cond_ts(parse_u64(p).unwrap_or(0)),
         };
         if let Some(c) = prefix_cond {
             conds.push(c);

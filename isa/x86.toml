@@ -628,6 +628,30 @@ rows = [
   { inst = "CMP_MR",  opcode = 0x39, asm = "cmp {mem}, {src}", ops = ["src:gprx", "mem:mem"] },
 ]
 
+# ── 锁 + 内存序提示（Intel：`F2`/`F3` 前缀 + `LOCK`）──
+#
+# `acquire lock add [mem], r` = `F2 F0 01 /r`、`release lock add …` = `F3 F0 01 /r`：
+# **两条前缀**，所以 `prefix` 写成**列表**（按书写序发：66 → 前缀 → REX → opcode）。
+# 上游 CHECK 实测 `f2 f0 48 01 00` / `f3 f0 48 01 00`。其他 ALU 助记符照抄一行即可
+# （本批只建语料出现的 `add`）。
+[[instructions]]
+name = "ACQUIRE_LOCK_ADD_MR"
+form = "MRR_MEMREF_AUTO"
+prefix = ["0xF2", "0xF0"]
+modrm = { rm = "[mem]" }
+opcode = 0x01
+ops = ["src:gprx", "mem:mem:inout"]
+asm = "acquire lock add {mem}, {src}"
+
+[[instructions]]
+name = "RELEASE_LOCK_ADD_MR"
+form = "MRR_MEMREF_AUTO"
+prefix = ["0xF3", "0xF0"]
+modrm = { rm = "[mem]" }
+opcode = 0x01
+ops = ["src:gprx", "mem:mem:inout"]
+asm = "release lock add {mem}, {src}"
+
 [[templates]]
 name = "ALU_R_MEM"
 body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" }, ops = ["dst:gprx:out", "mem:mem"] }

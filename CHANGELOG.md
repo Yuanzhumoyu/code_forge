@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-05) — x86 `prefix` 收列表（`acquire/release lock`）；x86 语料全部归因完毕
+
+`acquire lock add [mem], r` = `F2` + `F0`、`release lock add …` = `F3` + `F0`：x86 的锁 + 内存序提示是**两条前缀**，而 `EncKeys.prefix` 只收一个字节。现在 `prefix` 收**列表**（`prefix = ["0xF2", "0xF0"]`）：编码按书写序发（66 → 前缀 → REX → opcode），解码逐个按**前缀扫描标志**判（顺序无关）；校验期拒掉列表里的 `"opsize"`（混进列表会让"发不发"含糊）与第二个 `"field"`。
+
+改这里踩到一个**必须保留的旧语义**：单条前缀值为 `0` 时生成的"**没有前缀**"断言（`!__p66 && !__pF0 && !__pF2 && !__pF3`）不能省——SSE 的 `66` 变体（`ADDPD`）与无前缀变体（`ADDPS`）同 opcode，少了它后者会先命中前者的字节（全量套件实测 `spec_addpd` 解成 `Addps`）。
+
+效果：x86 `llvm-mc` 解析档 `parsed` 109 → **111**、`no_prefix` 2 → **0** —— 该档 447 行（111 parsed + 336 corpus_only）**全部归因完毕**；两条锁前缀的字节人工核对 `f2 f0 48 01 00` / `f3 f0 48 01 00` 与上游一致（它们不在编码档的 104 条里：上游把长编码拆成两条 `CHECK: encoding:` 注释，抽取器按"run ≥ 2 就整段丢掉"保守处理——已记入 `asm/README.md`）。
+
 ### Added (2026-10-05) — x86 助记符条件后缀（`sete`/`cmovl`）→ 语料带期望字节的用例全部逐字节对上
 
 上游写 `sete r16b` / `cmovl eax, r16d`（助记符**自带条件**、没有 `cc` 操作数），我们只有通用形态（`setcc {dst}, {cc}` / `cmovcc {dst}, {src}, {cc}`，供 lowering 用）。两条"做成指令"的路都被**解码树**挡住（原因留在 `isa/x86.toml` 注释里）：`{cc}` 嵌进助记符要扫描器让"紧贴操作数的字面段"按 ident 前缀匹配（`sete` 是一个 token）；按条件码建**精确** opcode（`0F 94`）会与通用形态的**掩码**边（`0F 9x`）重叠——那是**真**歧义（同一批字节两种 `Inst` 形状），`check_dec_trie_overlaps` 直接拒。

@@ -18,7 +18,7 @@ corpus_only = 3
 [suite llvm-mc]
 files = 2
 lines = 447
-parsed = 109
-no_prefix = 2
+parsed = 111
+no_prefix = 0
 tail_mismatch = 0
 corpus_only = 336

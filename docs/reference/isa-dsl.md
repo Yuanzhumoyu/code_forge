@@ -842,6 +842,14 @@ width = 4
 `opcode_reg`/`imm`/`escape`/`opcode_field`/`operand_fields`），指令可逐键覆盖
 （`EncKeys::over`，指令优先），`form` 本身可省略——组合不再需要预先命名。
 
+**`prefix` 键（固定前缀字节）**：`"field"` = 取 `fields.prefix` 的字节（SSE 的 66/F2/F3
+与"无前缀"就这么表达）；`"opsize"` = 由操作数宽度驱动的 66（不在 `prefix` 处发字节）；
+数字 = 固定字节。**也可以是列表**（`prefix = ["0xF2", "0xF0"]`）——按书写序发射，
+解码侧逐个按**前缀扫描标志**判（顺序无关）：x86 的"锁 + 内存序提示"就是两条
+（`acquire lock add [mem], r` = `F2` + `F0`）。单条来源的 **0 = 没有前缀**是一条**真断言**
+（四个前缀标志全假），SSE 的 `66` 变体与无前缀变体同 opcode，靠它区分；列表里不允许出现
+`"opsize"`（混进列表会让"到底发不发"含糊）与第二个 `"field"`，校验期直接拒。
+
 ```toml
 [[forms]]
 name = "MRR"                   # @modrm：reg=op0, rm=op1, opsize auto

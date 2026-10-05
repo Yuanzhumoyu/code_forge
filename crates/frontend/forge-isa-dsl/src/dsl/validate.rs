@@ -1752,15 +1752,46 @@ fn validate_forms(m: &IsaModel) -> Result<(), String> {
             }
         }
         // 变长语义键校验
-        if let Some(p) = &f.keys.prefix
-            && p != "field"
-            && p != "opsize"
-            && parse_u64(p).is_none()
-        {
-            return Err(format!(
-                "[[forms.{}]].prefix must be \"field\", \"opsize\" or a byte literal, got '{p}'",
-                f.name
-            ));
+        //
+        // `prefix` 可以是**一条**（`"field"`/`"opsize"`/字节字面量）或**一列**
+        // （`["0xF2", "0xF0"]` = x86 的锁 + 内存序提示）。列表里每一项都要合法；
+        // 另外：`"opsize"` 只能单独出现（它不在 `prefix` 处产字节，混进列表会让
+        // "这条前缀到底发不发"含糊），`"field"` 至多一条（一个动态字节）。
+        if let Some(p) = &f.keys.prefix {
+            let parts = p.parts();
+            if parts.is_empty() {
+                return Err(format!("[[forms.{}]].prefix: 列表不能为空", f.name));
+            }
+            let mut n_field = 0usize;
+            for part in parts {
+                if part == "opsize" {
+                    if parts.len() > 1 {
+                        return Err(format!(
+                            "[[forms.{}]].prefix: \"opsize\" 只能单独出现（它由操作数宽度驱动，\
+                             不在 prefix 处产字节）",
+                            f.name
+                        ));
+                    }
+                    continue;
+                }
+                if part == "field" {
+                    n_field += 1;
+                    continue;
+                }
+                if parse_u64(part).is_none() {
+                    return Err(format!(
+                        "[[forms.{}]].prefix: 每项必须是 \"field\"、\"opsize\" 或字节字面量，\
+                         而 '{part}' 都不是",
+                        f.name
+                    ));
+                }
+            }
+            if n_field > 1 {
+                return Err(format!(
+                    "[[forms.{}]].prefix: \"field\" 至多出现一次（它只来自 fields.prefix 一个字节）",
+                    f.name
+                ));
+            }
         }
         if let Some(o) = &f.keys.opsize {
             // opsize = 操作数序号（宽度由该操作数寄存器推导）；
