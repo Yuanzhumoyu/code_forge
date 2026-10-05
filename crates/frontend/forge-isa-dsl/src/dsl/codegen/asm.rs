@@ -438,8 +438,12 @@ fn gen_lexer_ts(_model: &IsaModel) -> Result<TokenStream, String> {
                                 if d.is_ascii_hexdigit() { h.push(d); cs.next(); } else { break; }
                             }
                             if h.is_empty() { return Err("bad hex immediate".into()); }
+                            // **十六进制字面量是位模式**（不是"数学值"）：先按 u64 读、再按位
+                            // 重解释成 i64——否则 64 位槽写不了 `0xfffffffffffffff0`（= -16）、
+                            // `0x8000000000000000` 这类写法（实测 `and sp, x5, #0xfffffffffffffff0`
+                            // 报 "bad hex immediate"）。十进制仍是**值**（超 i64 就报错）。
                             out.push(__Tok::Num(
-                                i64::from_str_radix(&h, 16).map_err(|_| "bad hex immediate".to_string())?,
+                                u64::from_str_radix(&h, 16).map_err(|_| "bad hex immediate".to_string())? as i64,
                             ));
                         } else if first == '0' && matches!(cs.peek(), Some('b') | Some('B')) {
                             cs.next();
@@ -448,8 +452,9 @@ fn gen_lexer_ts(_model: &IsaModel) -> Result<TokenStream, String> {
                                 if d == '0' || d == '1' { b.push(d); cs.next(); } else { break; }
                             }
                             if b.is_empty() { return Err("bad binary immediate".into()); }
+                            // 二进制同上：位模式（`0b1000…` 64 位写法）。
                             out.push(__Tok::Num(
-                                i64::from_str_radix(&b, 2).map_err(|_| "bad binary immediate".to_string())?,
+                                u64::from_str_radix(&b, 2).map_err(|_| "bad binary immediate".to_string())? as i64,
                             ));
                         } else {
                             while let Some(&d) = cs.peek() {

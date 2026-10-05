@@ -2,10 +2,10 @@
 # 判定：计数或下面的 known 清单与实测不一致就红（两个方向）——
 #       known 多一条 = 新出现的字节差异（缺陷或新缺口）；少一条 = 修好了。
 [isa x86]
-cases = 104
-checked = 104
+cases = 110
+checked = 110
 unparsed = 0
-dropped = 8
+dropped = 0
 variants = 0
 known = 0
 [isa riscv64]
@@ -17,8 +17,8 @@ variants = 0
 known = 0
 [isa aarch64]
 cases = 119
-checked = 118
-unparsed = 1
+checked = 119
+unparsed = 0
 dropped = 0
 variants = 0
 known = 0

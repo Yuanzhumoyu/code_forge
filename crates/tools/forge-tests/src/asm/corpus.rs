@@ -82,7 +82,16 @@ pub const SUITES: &[Suite] = &[
         // 整篇是"注释在指令前"，**但从第 98 行起换成"注释在指令后"**（尾两条
         // `cmp eax, FOO` / `cmp eax, FOO[eax]`；上游字节 `[0x83,0xf8,0x02]` =
         // `cmp eax, 2` 只可能是前一条的）。逐段声明，别整篇猜。
-        encoding_sides: &[("intel-syntax-encoding.s", 98, EncodingSide::After)],
+        // 这一篇**内部风格不统一**（逐段声明就是为了这个）：
+        //   1..53   注释在指令**前**（缺省，无需声明）
+        //   54..60  锁前缀那两条：指令在前、两条 `CHECK: encoding:` 在后（长编码拆两行）
+        //   61..97  回到"注释在前"
+        //   98..    尾部两条 `cmp eax, FOO`：注释在指令后
+        encoding_sides: &[
+            ("intel-syntax-encoding.s", 54, EncodingSide::After),
+            ("intel-syntax-encoding.s", 61, EncodingSide::Before),
+            ("intel-syntax-encoding.s", 98, EncodingSide::After),
+        ],
     },
     Suite {
         key: "llvm-mc",

@@ -205,6 +205,105 @@ pub fn extract_cases(suite: &Suite, file: &str, src: &str) -> Extracted {
     let mut paired = vec![false; codes.len()];
     let mut out: Vec<EncodingCase> = Vec::new();
     let mut dropped = 0usize;
+    // ── 长编码拆成**多条** `encoding:` 注释（run 长 ≥ 2）──
+    //
+    // 上游对长编码会写成一串只有字节的注释（`acquire lock add …` 就是
+    // `[0xf2]` + `[0xf0,0x48,0x01,0x00]` 两行）。**按声明的侧把 run 切成同侧的块**，
+    // 每块各自处理（同一个 run 里两种排版可以并存——`intel-syntax-encoding.s` 尾部
+    // 就是"release lock 的两行在后 + pushf/popf 的两行在前"，中间只有一个空行）：
+    //
+    // - **注释在指令后**（`After`）：这些注释跟**同一条**指令 ⇒ 按序**拼接**成一份
+    //   期望，绑给该块之前最近的一条未配对指令；
+    // - **注释在指令前**（`Before`）：这些注释是**逐条**的（`pushf`/`popf` 那种
+    //   「两条 CHECK 后面跟同样多条指令」）⇒ 按序 **1:1** 配给后面同样多条未配对指令。
+    //
+    // 两种都不做跨指令的推断：绑不上（那一侧没有足够多未配对指令）就整块计入
+    // `dropped`，绝不猜。
+    let mut in_long_run = vec![false; groups.len()];
+    for r in runs.iter().filter(|r| r.len() > 1) {
+        for &gi in r {
+            in_long_run[gi] = true;
+        }
+        // 按侧切块（保持书写序）。
+        let mut chunks: Vec<Vec<usize>> = Vec::new();
+        for &gi in r {
+            let side = suite.encoding_side(file, groups[gi].line_no);
+            match chunks.last_mut() {
+                Some(c)
+                    if suite.encoding_side(file, groups[*c.last().unwrap()].line_no) == side =>
+                {
+                    c.push(gi)
+                }
+                _ => chunks.push(vec![gi]),
+            }
+        }
+        for chunk in &chunks {
+            let g0 = &groups[chunk[0]];
+            let last_line = groups[*chunk.last().unwrap()].line_no;
+            let before = suite.encoding_side(file, g0.line_no) == EncodingSide::Before;
+            // **块内相邻**：只认"与本块之间没有别的注释"的那些指令——跨过一个注释块
+            // 再往远处配就是猜（`unbindable_split_run_is_dropped_without_shifting` 钉住）。
+            let prev_group = groups
+                .iter()
+                .map(|g| g.line_no)
+                .filter(|&n| n < g0.line_no)
+                .max()
+                .unwrap_or(0);
+            let next_group = groups
+                .iter()
+                .map(|g| g.line_no)
+                .filter(|&n| n > last_line)
+                .min()
+                .unwrap_or(usize::MAX);
+            if before {
+                // 逐条：块里第 i 条 → 紧随其后第 i 条指令。
+                let avail: Vec<usize> = (0..codes.len())
+                    .filter(|&k| codes[k].0 > last_line && codes[k].0 < next_group && !paired[k])
+                    .collect();
+                if avail.len() < chunk.len() {
+                    dropped += chunk.len(); // 紧跟的指令不够 ⇒ 不猜
+                    continue;
+                }
+                for (&gi, &k) in chunk.iter().zip(avail.iter()) {
+                    paired[k] = true;
+                    match &groups[gi].bytes {
+                        Some(b) => out.push(EncodingCase {
+                            file: file.to_string(),
+                            line_no: groups[gi].line_no,
+                            text: codes[k].1.clone(),
+                            bytes: b.clone(),
+                        }),
+                        None => dropped += 1,
+                    }
+                }
+                continue;
+            }
+            let k = (0..codes.len())
+                .rev()
+                .find(|&k| codes[k].0 > prev_group && codes[k].0 < g0.line_no && !paired[k]);
+            let Some(k) = k else {
+                dropped += chunk.len(); // 紧邻的前一条指令已被配对 ⇒ 不猜
+                continue;
+            };
+            paired[k] = true;
+            let mut bytes: Vec<u8> = Vec::new();
+            for &gi in chunk {
+                if let Some(b) = &groups[gi].bytes {
+                    bytes.extend_from_slice(b);
+                }
+            }
+            if bytes.is_empty() {
+                dropped += chunk.len();
+                continue;
+            }
+            out.push(EncodingCase {
+                file: file.to_string(),
+                line_no: g0.line_no,
+                text: codes[k].1.clone(),
+                bytes,
+            });
+        }
+    }
     for (gi, g) in groups.iter().enumerate() {
         // 写法 1 / 2：注释自己带得动文本。
         if let Some(t) = g.same_line.clone().or_else(|| g.text.clone()) {
@@ -218,9 +317,8 @@ pub fn extract_cases(suite: &Suite, file: &str, src: &str) -> Extracted {
             }
             continue;
         }
-        if runs.iter().any(|r| r.len() > 1 && r.contains(&gi)) {
-            dropped += 1; // 前缀拆开的那几条：不猜
-            continue;
+        if in_long_run[gi] {
+            continue; // 已随 run 拼成一份 case（绑不上时上面已计入 dropped）
         }
         // 写法 3 / 4：只有字节的单条注释，按**该行**声明的侧绑到**尚未配对**的指令上。
         let before = suite.encoding_side(file, g.line_no) == EncodingSide::Before;
@@ -411,37 +509,77 @@ lui s11, (0x87000000>>12)
         );
     }
 
-    /// **写法 4 的文件相位** + 前缀被拆开的期望（`intel-syntax-encoding.s` 的
-    /// `acquire/release lock add`）：连续两条只有字节的注释中间没有指令 ⇒ 整段丢掉，
-    /// **后面的用例不许因此错位**。
+    /// **写法 4/长编码拆行**：只有字节的注释连成 run（中间没有指令）时，按声明的侧分两种。
+    ///
+    /// 夹具照抄 `intel-syntax-encoding.s` 尾部的真实排版：`acquire/release lock` 是
+    /// "指令在前 + 两条 CHECK"，`pushf/popf` 是"两条 CHECK + 两条指令"——**同一篇里两种
+    /// 并存**，中间只有一个空行，所以必须按侧切块（逐段声明就是这份知识）。
     #[test]
-    fn before_phase_drops_split_prefix_expectations_without_shifting() {
+    fn split_runs_bind_by_declared_side() {
         let src = "\
-// CHECK: encoding: [0x66,0x83,0xf0,0x0c]
-\txor\tax, 12
-// CHECK: encoding: [0x83,0xf0,0x0c]
-\txor\teax, 12
   acquire lock add [rax], rax
 // CHECK: encoding: [0xf2]
 // CHECK: encoding: [0xf0,0x48,0x01,0x00]
   release lock add [rax], rax
 // CHECK: encoding: [0xf3]
 // CHECK: encoding: [0xf0,0x48,0x01,0x00]
-  nop
+
+// CHECK: encoding: [0x9c]
+// CHECK: encoding: [0x9d]
+pushf
+popf
+";
+        // 逐段声明：54 前的行照抄真实文件（1..9 = "指令在前"，10.. = "注释在前"）。
+        let sides: &[(&str, usize, EncodingSide)] = &[
+            ("t.s", 1, EncodingSide::After),
+            ("t.s", 8, EncodingSide::Before),
+        ];
+        let s = Suite {
+            encoding_sides: sides,
+            ..suite()
+        };
+        let e = extract_cases(&s, "t.s", src);
+        let cases: Vec<(usize, String, Vec<u8>)> = e
+            .cases
+            .into_iter()
+            .map(|c| (c.line_no, c.text, c.bytes))
+            .collect();
+        assert_eq!(e.dropped, 0, "两种排版都该绑上：{cases:?}");
+        assert_eq!(
+            cases,
+            vec![
+                // 指令在前、注释在后（After）⇒ 两条注释**拼接**成一份期望。
+                (
+                    2,
+                    "acquire lock add [rax], rax".into(),
+                    vec![0xf2, 0xf0, 0x48, 0x01, 0x00]
+                ),
+                (
+                    5,
+                    "release lock add [rax], rax".into(),
+                    vec![0xf3, 0xf0, 0x48, 0x01, 0x00]
+                ),
+                // 注释在前（Before）⇒ **逐条**配给后面同样多条指令。
+                (8, "pushf".into(), vec![0x9c]),
+                (9, "popf".into(), vec![0x9d]),
+            ]
+        );
+    }
+
+    /// 绑不上时**不许错位**：注释在前、但后面指令不够 ⇒ 整块丢掉，后续配对照旧。
+    #[test]
+    fn unbindable_split_run_is_dropped_without_shifting() {
+        let src = "\
+// CHECK: encoding: [0x9c]
+// CHECK: encoding: [0x9d]
+pushf
 // CHECK: encoding: [0xc3]
     ret
 ";
         assert_eq!(
             got(src),
-            (
-                vec![
-                    (2, "xor\tax, 12".into(), vec![0x66, 0x83, 0xf0, 0x0c]),
-                    (4, "xor\teax, 12".into(), vec![0x83, 0xf0, 0x0c]),
-                    (13, "ret".into(), vec![0xc3]),
-                ],
-                4
-            ),
-            "前缀拆开的 4 条注释都该丢掉，`ret` 仍应拿到 0xc3"
+            (vec![(5, "ret".into(), vec![0xc3])], 2),
+            "只有 1 条指令、2 条注释 ⇒ 那块丢掉，`ret` 仍应拿到 0xc3（不错位）"
         );
     }
 

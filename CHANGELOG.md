@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-05) — 字节对拍三架构全清：长编码拆行纳入对拍 + 十六进制立即数是位模式
+
+① **上游把长编码写成多条只有字节的注释**（`acquire lock add …` 是 `[0xf2]` + `[0xf0,0x48,0x01,0x00]`；`pushf`/`popf` 是"两条 CHECK 后面跟两条指令"），抽取器原先按"run ≥ 2 就整段丢掉"保守处理。现在按**声明的侧**绑定、且**只在块内相邻**：注释在指令**后** ⇒ 按序**拼接**成一份期望；注释在指令**前** ⇒ 按序 **1:1** 配给紧随其后的同样多条指令；绑不上就整块丢掉、后续不错位（三条单测钉住；`intel-syntax-encoding.s` 补上逐段声明）。
+
+② **十六进制立即量是位模式**：词法器原先按 `i64::from_str_radix` 读，64 位槽写不出 `#0xfffffffffffffff0`（= -16）——aarch64 的 `and sp, x5, #0xfffffffffffffff0` 报 "bad hex immediate"。改成按 `u64` 读、再按位重解释（二进制同理；**十进制仍是值**，超 i64 报错）。
+
+效果：编码对拍 x86 `cases` 104 → **110**、`dropped` 8 → **0**；aarch64 `unparsed` 1 → **0**、`checked` → **119** —— **三架构都是 `cases = checked`、`known` 全 0**（语料里每一条期望字节都逐字节对上）。
+
 ### Added (2026-10-05) — x86 `prefix` 收列表（`acquire/release lock`）；x86 语料全部归因完毕
 
 `acquire lock add [mem], r` = `F2` + `F0`、`release lock add …` = `F3` + `F0`：x86 的锁 + 内存序提示是**两条前缀**，而 `EncKeys.prefix` 只收一个字节。现在 `prefix` 收**列表**（`prefix = ["0xF2", "0xF0"]`）：编码按书写序发（66 → 前缀 → REX → opcode），解码逐个按**前缀扫描标志**判（顺序无关）；校验期拒掉列表里的 `"opsize"`（混进列表会让"发不发"含糊）与第二个 `"field"`。
