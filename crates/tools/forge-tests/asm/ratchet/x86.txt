@@ -18,15 +18,15 @@ corpus_only = 3
 [suite llvm-mc]
 files = 2
 lines = 447
-parsed = 36
+parsed = 52
 no_prefix = 20
-tail_mismatch = 55
+tail_mismatch = 39
 corpus_only = 336
-# mismatch: apx-rex2-format-intel.s:7	mov	r16d, 1	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:13	movsxd	rax, r16d	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:17	movsxd	r16, eax	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:21	movsxd	r17, r16d	line 1: no matching instruction
-# mismatch: apx-rex2-format-intel.s:25	popcnt r17d, r16d	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:45	imul	ebx, dword ptr [r16 + rax]	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:49	imul	ebx, dword ptr [rax + r16]	line 1: no matching instruction
 # mismatch: apx-rex2-format-intel.s:53	imul	r16d, dword ptr [rax + rbx]	line 1: no matching instruction
+# mismatch: apx-rex2-format-intel.s:57	imul	eax, dword ptr [r16 + r17]	line 1: no matching instruction
+# mismatch: apx-rex2-format-intel.s:61	imul	r17d, dword ptr [rax + r16]	line 1: no matching instruction

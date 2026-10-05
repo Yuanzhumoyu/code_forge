@@ -119,7 +119,14 @@ pub const SECTIONS: &[Section] = &[
         path: "[reg.<name>]",
         model: "RegGroup",
         required: &[],
-        optional: &["names", "prefix", "base_index", "count", "aliases"],
+        optional: &[
+            "names",
+            "prefix",
+            "base_index",
+            "count",
+            "alloc_count",
+            "aliases",
+        ],
         flatten: &[],
         additional: false,
         doc: "寄存器组；组名的数字 = 字节宽（gpr8 = 64 位）；aliases = { 别名 = 组内下标 }",
@@ -185,7 +192,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &["byte", "range", "effects"],
         flatten: &[],
         additional: false,
-        doc: "变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex`",
+        doc: "变长前缀扫描表（缺省 = x86 集）",
     },
     Section {
         path: "[conventions.bitsets.<table>]",
@@ -433,6 +440,22 @@ fn json_arr(items: &[&str]) -> String {
     format!("[{}]", body.join(","))
 }
 
+/// 节的描述文本。
+///
+/// `[[conventions.prefix_scan]]` 的**效果清单**从 `PrefixEffect::NAMES` 现取：效果名是
+/// **闭集**，取值域的唯一来源是那个枚举（解析、诊断、schema 共用一份）——在 schema 的
+/// 描述里再抄一遍名字，加一个效果就会漏一处。
+fn section_doc(s: &Section) -> String {
+    if s.path == "[[conventions.prefix_scan]]" {
+        let names: Vec<String> = crate::dsl::model::PrefixEffect::NAMES
+            .iter()
+            .map(|n| format!("`{n}`"))
+            .collect();
+        return format!("{}；效果清单 = {}", s.doc, names.join(" "));
+    }
+    s.doc.to_string()
+}
+
 /// 生成 JSON Schema（draft 2020-12）文本。
 pub fn schema_json() -> String {
     // 每个节一个 `$defs` 条目：properties/required/additionalProperties。
@@ -458,7 +481,7 @@ pub fn schema_json() -> String {
              \"required\":{},\"additionalProperties\":{}}}",
             json_str(&format!("section{i}")),
             json_str(s.path),
-            json_str(s.doc),
+            json_str(&section_doc(s)),
             props.join(","),
             json_arr(s.required),
             if s.additional { "true" } else { "false" }
@@ -584,7 +607,7 @@ pub fn markdown_table() -> String {
         } else {
             ""
         };
-        let doc = s.doc.replace('|', "\\|");
+        let doc = section_doc(s).replace('|', "\\|");
         out.push_str(&format!(
             "| `{}` | {} | {} | {}{} |\n",
             s.path, req, opt, doc, extra

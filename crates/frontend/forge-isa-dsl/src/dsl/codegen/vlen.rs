@@ -53,6 +53,11 @@ struct VlenCtx {
     opcode_reg: Option<u64>,
     /// rex_w = "always"：恒发 REX.W（+r 的 mov_imm64/bswap）。
     rex_w_always: bool,
+    /// 本指令的寄存器字段**能不能装下 EGPR**（索引 ≥ 16）——x86 = 槽的寄存器组 >16 项
+    /// （APX 的 r16..r31）。true 才发射 REX2 分支：16 项的槽永远走老路，生成物里
+    /// 一行都不多（"能力由数据声明"）。同时它也是"本指令能不能用 EGPR"的唯一判据
+    /// （VEX/EVEX 与 0F38/0F3A 表达不了 ⇒ 生成期 fail-closed，见 `vlen_ctx`）。
+    egpr: bool,
     /// 每个操作数的寄存器视图：(槽 class 组名, 固定宽度位)。固定宽度 =
     /// 槽 class 组的宽度（如 [gpr32] → 32）；class=None → 多态（None）。
     reg_view: Vec<Option<u16>>,
@@ -184,6 +189,67 @@ impl Modrm {
             memref: mem && rm_kind == OperandKind::Mem,
         })
     }
+}
+
+/// 本指令的映射位（REX2 的 M0）：escape 恰为 `[0x0F]` ⇒ 1（0F 映射），否则 0（legacy）。
+///
+/// REX2 的 M0 **取代** `0F` 字节，所以这个位必须与"要不要发 escape 字节"同源判断
+/// （编码侧 `if !__rex2 { push(0x0F) }`、译码侧给译码器补一个虚拟 `0F`）。
+fn escape_m0(esc: Option<&[u8]>) -> bool {
+    matches!(esc, Some([0x0F]))
+}
+
+/// REX2 前缀发射（APX）：`0xD5` + payload = `M0 R4 X4 B4 W R3 X3 B3`。
+///
+/// `reg`/`idx`/`rm` 是三个寄存器字段的**值表达式**（u64；`+r` 形式没有的字段传常量 0）。
+/// 第 4 位（bit 4）分别进 payload 的 R4/X4/B4，低 3 位（bit 3..0）进 payload 的
+/// R3/X3/B3——与 legacy REX 的位置一致（所以 W 仍在 payload 的 bit 3）。
+fn gen_rex2_push(
+    m0: bool,
+    reg: &TokenStream,
+    idx: Option<&TokenStream>,
+    rm: Option<&TokenStream>,
+    rex_w: &TokenStream,
+) -> TokenStream {
+    let m0 = if m0 {
+        quote! { 0x80u64 }
+    } else {
+        quote! { 0u64 }
+    };
+    let zero = quote! { 0u64 };
+    let idx = idx.unwrap_or(&zero);
+    let rm = rm.unwrap_or(&zero);
+    quote! {
+        __bytes.push(0xD5u8);
+        __bytes.push((#m0 | (((#reg >> 4) & 1) << 6) | (((#idx >> 4) & 1) << 5)
+            | (((#rm >> 4) & 1) << 4) | ((#rex_w) << 3) | (((#reg >> 3) & 1) << 2)
+            | (((#idx >> 3) & 1) << 1) | ((#rm >> 3) & 1)) as u8);
+    }
+}
+
+/// 槽可能装下的**最大 GPR 个数**（多类槽取最大的组）；非寄存器/内存槽 = `None`。
+///
+/// 只有一个用途：判断这条指令的寄存器字段能不能装 **APX 的 EGPR**（GPR 索引 ≥ 16）。
+/// 组有 32 项才可能有索引 ≥16，编码器才需要发 REX2——判据来自**谱数据**（组大小），
+/// 不是又加一个开关。
+///
+/// **只数 GPR 类**：`fpr32`（zmm0..zmm31）也是 32 项，但那是 EVEX 自己的扩展位
+/// （X'/V'/R'），与 REX2 无关——把它算进来会让所有 AVX-512 指令被误判成
+/// "需要 EGPR 编码"。
+fn slot_reg_capacity(m: &IsaModel, slot: &OperandSlot) -> Option<usize> {
+    if !matches!(slot.kind, OperandKind::Reg | OperandKind::Mem) {
+        return None;
+    }
+    let classes: Vec<RegClass> = match (&slot.class, &slot.classes) {
+        (Some(c), _) => vec![*c],
+        (None, Some(cs)) => cs.clone(),
+        (None, None) => Vec::new(),
+    };
+    classes
+        .iter()
+        .filter(|c| matches!(c, RegClass::GPR(_)))
+        .filter_map(|c| m.names_of(*c).ok().map(|n| n.len()))
+        .max()
 }
 
 fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
@@ -566,6 +632,49 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
     } else {
         None
     };
+    // ── EGPR（APX 的 r16..r31）能不能出现在本指令的寄存器字段里 ──
+    // 判据 = 槽的寄存器组 >16 项（谱数据），出现即必须改发 REX2。
+    let slot_egpr = |i: usize| -> bool {
+        info.operands
+            .get(i)
+            .and_then(|(_, _, s, _)| slot_reg_capacity(m, s))
+            .is_some_and(|n| n > 16)
+    };
+    let egpr = match modrm {
+        // ModRM 路径：reg 字段 / rm 字段（内存形式下 rm 是**地址**，它的组同时管
+        // SIB 的 index 与 base）都可能装 EGPR。
+        Some(mm) => mm.reg.map(slot_egpr).unwrap_or(false) || slot_egpr(mm.rm),
+        // `+r` 路径：寄存器在 opcode 低 3 位（B8+rd 等）。
+        None => form.opcode_reg.is_some() && slot_egpr(0),
+    };
+    // 只有**寄存器操作数**能装 EGPR 才值得生成期报错：内存形式的地址寄存器来自共享的
+    // 地址类（`mem` 槽），让每条 VEX 指令都去换一个 16 项的地址槽不合理——那类走
+    // **编码期 fail-closed**（VEX/EVEX arm 里守 `__rm/__idx >= 16`）。
+    let egpr_reg = match modrm {
+        Some(mm) => mm.reg.map(slot_egpr).unwrap_or(false) || (!mm.mem && slot_egpr(mm.rm)),
+        None => form.opcode_reg.is_some() && slot_egpr(0),
+    };
+    // **fail-closed**：两种前缀格式表达不了 EGPR——VEX/EVEX 是另一套编码（寄存器
+    // 字段是 4/5 位但语义不同），REX2 的单个 M0 位只能选 legacy/0F 两个映射
+    // （0F38/0F3A 只能靠 EVEX 扩展）。槽装得下 r16..r31 却编不出来时，在生成期
+    // 就报错，而不是让汇编器收下一条编不出字节的指令。
+    if egpr_reg {
+        if form.vex.is_some() || form.evex.is_some() {
+            return Err(format!(
+                "[[instructions.{}]]: 操作数槽的寄存器组有 EGPR（r16..r31），但本指令是 VEX/EVEX \
+                 编码——那套前缀表达不了 EGPR。请把该槽限到 16 项的组（或改用 legacy/0F 映射）",
+                info.inst.name
+            ));
+        }
+        if form.escape.as_ref().is_some_and(|e| e.len() > 1) {
+            return Err(format!(
+                "[[instructions.{}]]: escape = {:?}（0F38/0F3A 映射）表达不了 EGPR——REX2 的 M0 位\
+                 只能选 legacy/0F。请把该槽限到 16 项的组",
+                info.inst.name,
+                form.escape.as_deref().unwrap_or(&[])
+            ));
+        }
+    }
     Ok(VlenCtx {
         has_opsize,
         opsize_expr,
@@ -585,6 +694,7 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
         evex,
         opcode_reg: form.opcode_reg,
         rex_w_always: form.rex_w == Some(RexW::Always),
+        egpr,
         reg_view,
         decode_width_guard,
         decode_width_neq64,
@@ -613,6 +723,8 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
     for info in infos {
         let vn = &info.vn;
         let ctx = vlen_ctx(info, model)?;
+        // REX2 的 M0 位 = "本指令的映射是 0F"（escape 恰为 `[0x0F]`）；M0 取代那个字节。
+        let m0 = escape_m0(info.form.escape.as_deref());
         let mut stmts: Vec<TokenStream> = Vec::new();
         // opsize → __opsize 局部（必须先于 66/REX 检查）
         let opsize_bind = if let Some(oe) = &ctx.opsize_expr {
@@ -644,17 +756,42 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
         if let Some(base) = ctx.opcode_reg {
             let reg0 = info.operands[0].1.clone();
             let rex_always = ctx.rex_w_always;
-            stmts.push(quote! {
-                let __reg = #reg0.to_index() as u64;
+            let w_bit: TokenStream = if rex_always {
+                quote! { 1u64 }
+            } else {
+                quote! { 0u64 }
+            };
+            let legacy = quote! {
                 if #rex_always {
                     __bytes.push((0x48u64 | ((__reg >> 3) & 1)) as u8);
                 } else if (__reg & 8) != 0 {
                     __bytes.push(0x41u8);
                 }
+            };
+            let rex_emit: TokenStream = if ctx.egpr {
+                // `+r` 的寄存器在 **opcode 低 3 位**（B8+rd / 50+rd）：扩展位走
+                // **B4/B3**（REX.B 那一列），不是 R——放错列编出来是另一条指令。
+                let push =
+                    gen_rex2_push(m0, &quote! { 0u64 }, None, Some(&quote! { __reg }), &w_bit);
+                quote! {
+                    let __rex2 = __reg >= 16;
+                    if __rex2 { #push } else { #legacy }
+                }
+            } else {
+                legacy
+            };
+            stmts.push(quote! {
+                let __reg = #reg0.to_index() as u64;
+                #rex_emit
             });
             if let Some(esc) = &info.form.escape {
+                let m0_only = ctx.egpr && esc.len() == 1;
                 for e in esc {
-                    stmts.push(quote! { __bytes.push(#e as u8); });
+                    if m0_only {
+                        stmts.push(quote! { if !__rex2 { __bytes.push(#e as u8); } });
+                    } else {
+                        stmts.push(quote! { __bytes.push(#e as u8); });
+                    }
                 }
             }
             stmts.push(quote! { __bytes.push((#base | (__reg & 7)) as u8); });
@@ -787,10 +924,29 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             } else {
                 quote! { __bytes.push(((3u64 << 6) | ((__reg & 7) << 3) | (__rm & 7)) as u8); }
             };
+            // EGPR **地址**寄存器：VEX/EVEX 的 B/X 只有 4 位（APX 的 EVEX 扩展 B4/X4
+            // 本实现没做），索引 ≥16 会被**静默截断**成低位 ⇒ 编码期 fail-closed。
+            // （寄存器操作数装 EGPR 的谱在 `vlen_ctx` 就已经报错了，走到这里的
+            //  `ctx.egpr` 只可能是地址类。）
+            let addr_guard: TokenStream = if ctx.egpr {
+                let msg = format!(
+                    "{}: EVEX 前缀表达不了 EGPR 地址寄存器（base={{}} index={{}}）——地址只能是 r0..r15",
+                    info.inst.name
+                );
+                let lit = proc_macro2::Literal::string(&msg);
+                quote! {
+                    if __rm >= 16 || (__idx as u64) >= 16 {
+                        return Err(format!(#lit, __rm, __idx));
+                    }
+                }
+            } else {
+                quote! {}
+            };
             stmts.push(quote! {
                 let __reg = #reg;
                 let __rm = #rm;
                 #idx_bind
+                #addr_guard
                 __bytes.push(0x62u8);
                 // P0: R'(7) X'(6) B'(5) R(4) 0(3) 0(2) mm(1-0)（各位取反存储）
                 //   reg：R = reg bit3、R' = reg bit4；
@@ -894,10 +1050,26 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             } else {
                 quote! { __bytes.push(((3u64 << 6) | ((__reg & 7) << 3) | (__rm & 7)) as u8); }
             };
+            // EGPR **地址**寄存器：VEX 的 B/X 只有 4 位，索引 ≥16 会静默截断 ⇒ fail-closed。
+            let addr_guard: TokenStream = if ctx.egpr {
+                let msg = format!(
+                    "{}: VEX 前缀表达不了 EGPR 地址寄存器（base={{}} index={{}}）——地址只能是 r0..r15",
+                    info.inst.name
+                );
+                let lit = proc_macro2::Literal::string(&msg);
+                quote! {
+                    if __rm >= 16 || (__idx as u64) >= 16 {
+                        return Err(format!(#lit, __rm, __idx));
+                    }
+                }
+            } else {
+                quote! {}
+            };
             stmts.push(quote! {
                 let __reg = #reg;
                 let __rm = #rm;
                 #vex_idx_bind
+                #addr_guard
                 __bytes.push(0xC4u8);
                 let __b: u8 = if (__rm & 8) != 0 { 0 } else { 1 };
                 let __x: u8 = 1;
@@ -1051,22 +1223,45 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                     let __sc: u8 = 0;
                 }
             };
+            // REX 发射：有 EGPR 能力时先看要不要 REX2（5 位字段），否则老路。
+            let rex_legacy = quote! {
+                let __rex: u8 = ((0x40u64 | (__rex_w << 3)
+                    | ((__reg >> 3) & 1) << 2 | (((__idx as u64) >> 3) & 1) << 1
+                    | ((__rm >> 3) & 1)) & 0xFF) as u8;
+                __bytes.push(__rex);
+            };
+            let rex_emit: TokenStream = if ctx.egpr {
+                let push = gen_rex2_push(
+                    m0,
+                    &quote! { __reg },
+                    Some(&quote! { __idx as u64 }),
+                    Some(&quote! { __rm }),
+                    &quote! { __rex_w },
+                );
+                quote! {
+                    let __rex2 = __reg >= 16 || (__idx as u64) >= 16 || __rm >= 16;
+                    if __rex2 { #push } else if #rex_cond { #rex_legacy }
+                }
+            } else {
+                quote! { if #rex_cond { #rex_legacy } }
+            };
             stmts.push(quote! {
                 let __reg = #reg;
                 let __rm = #rm;
                 #idx_bind
                 let __rex_w = #rex_w;
-                if #rex_cond {
-                    let __rex: u8 = ((0x40u64 | (__rex_w << 3)
-                        | ((__reg >> 3) & 1) << 2 | (((__idx as u64) >> 3) & 1) << 1
-                        | ((__rm >> 3) & 1)) & 0xFF) as u8;
-                    __bytes.push(__rex);
-                }
+                #rex_emit
             });
             // escape + opcode（cond 操作数 → opcode 低 4 位：JCC/SETCC/CMOVCC）
             if let Some(esc) = &info.form.escape {
+                // REX2 的 M0 位**取代** `0F` 字节：走 REX2 时不许再发它。
+                let m0_only = ctx.egpr && esc.len() == 1;
                 for e in esc {
-                    stmts.push(quote! { __bytes.push(#e as u8); });
+                    if m0_only {
+                        stmts.push(quote! { if !__rex2 { __bytes.push(#e as u8); } });
+                    } else {
+                        stmts.push(quote! { __bytes.push(#e as u8); });
+                    }
                 }
             }
             let opcode = info.inst.opcode.unwrap();
@@ -1171,7 +1366,7 @@ fn gen_vlen_opcode_reg_decode_arm(
         let expr: TokenStream = match slot.kind {
             OperandKind::Reg if i == 0 => field_ctor_expr(
                 slot,
-                quote! { ((bytes[__o + #opcode_off] & 7) as u32) | (__rex_b << 3) },
+                quote! { ((bytes[__o + #opcode_off] & 7) as u32) | __rex_b },
             ),
             OperandKind::Imm => {
                 let raw = imm_read_ts(opcode_off + 1, imm_bytes, endian);
@@ -1206,7 +1401,7 @@ fn gen_vlen_opcode_reg_decode_arm(
     Ok(quote! {
         if __o + #total <= bytes.len() && #cond {
             #(#binds)*
-            return Some((#ctor, __o + #total));
+            return Some((#ctor, __o + #total - __virt));
         }
     })
 }
@@ -1326,7 +1521,13 @@ fn gen_vlen_vex_decode_arm(
         quote! { Inst::#vn { #(#ctor_fields),* } }
     };
     // 寄存器形式（mod=11）与内存形式（mod≠3）共用 vex guard；长度不同。
-    let mem_decode = gen_mem_decode(model, &quote! { __b }, &quote! { __x }, true, None);
+    let mem_decode = gen_mem_decode(
+        model,
+        &quote! { __b << 3 },
+        &quote! { __x << 3 },
+        true,
+        None,
+    );
     let body: TokenStream = if is_mem {
         quote! {
             let __modrm = bytes[__o + 4];
@@ -1339,7 +1540,7 @@ fn gen_vlen_vex_decode_arm(
                 #mem_decode
                 if __sib_ok && __disp_ok {
                     #(#binds)*
-                    return Some((#ctor, __o2 + #imm_bytes));
+                    return Some((#ctor, __o2 + #imm_bytes - __virt));
                 }
             }
         }
@@ -1351,7 +1552,7 @@ fn gen_vlen_vex_decode_arm(
                 let __b: u32 = ((!((__vex2 >> 5) & 1)) & 1) as u32;
                 let __vvvv: u32 = ((!((__vex3 >> 3) & 0xF)) & 0xF) as u32;
                 #(#binds)*
-                return Some((#ctor, __o + #total));
+                return Some((#ctor, __o + #total - __virt));
             }
         }
     };
@@ -1517,8 +1718,9 @@ fn gen_vlen_evex_decode_arm(
     let __scale_toks = quote! { #scale };
     let mem_decode = gen_mem_decode(
         model,
-        &quote! { __b },
-        &quote! { __x },
+        // `gen_mem_decode` 收的是**已移位**的扩展值（0/8/…）——EVEX 也是 4 位地址字段。
+        &quote! { __b << 3 },
+        &quote! { __x << 3 },
         true,
         Some(&__scale_toks),
     );
@@ -1535,7 +1737,7 @@ fn gen_vlen_evex_decode_arm(
                 #mem_decode
                 if __sib_ok && __disp_ok {
                     #(#binds)*
-                    return Some((#ctor, __o2 + #imm_bytes));
+                    return Some((#ctor, __o2 + #imm_bytes - __virt));
                 }
             }
         }
@@ -1551,7 +1753,7 @@ fn gen_vlen_evex_decode_arm(
                 let __vvvv: u32 = ((!(((__p1 >> 3) & 0xF) as u32)) & 0xF)
                     | (((!((__p2 >> 3) & 1)) & 1) as u32) << 4;
                 #(#binds)*
-                return Some((#ctor, __o + #total));
+                return Some((#ctor, __o + #total - __virt));
             }
         }
     };
@@ -1825,8 +2027,8 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
         // 字段提取表达式：modrm 语义决定 reg/rm/base/mem 的来源
         let imm_start = total - ctx.imm_bytes;
         let field_expr = |i: usize, slot: &OperandSlot| -> Result<TokenStream, String> {
-            let reg_field = quote! { ((__modrm >> 3) & 7) as u32 | (__rex_r << 3) };
-            let rm_field = quote! { ((__modrm & 7) as u32) | (__rex_b << 3) };
+            let reg_field = quote! { ((__modrm >> 3) & 7) as u32 | __rex_r };
+            let rm_field = quote! { ((__modrm & 7) as u32) | __rex_b };
             // Reg 构造按宽度视图（固定宽度组 / 多态 __opsize）。
             // modrm 只在 Reg/Mem 操作数上有意义——无 ModRM 形式（REL32/NOOP）
             // 仍会走本闭包处理 imm/label/cond，故不能在这里无条件 unwrap。
@@ -1942,7 +2144,7 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                 quote! {
                     if __o + #total <= bytes.len() && #cond {
                         #(#binds)*
-                        return Some((#ctor, __o + #len));
+                        return Some((#ctor, __o + #len - __virt));
                     }
                 },
             ));
@@ -1976,7 +2178,7 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                             #mem_decode
                             if __sib_ok && __disp_ok {
                                 #(#binds)*
-                                return Some((#ctor, __o2));
+                                return Some((#ctor, __o2 - __virt));
                             }
                         }
                     }
@@ -1990,7 +2192,7 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                         let __modrm = bytes[__o + #modrm_idx];
                         if (__modrm >> 6) == 3 #modrm_guard {
                             #(#binds)*
-                            return Some((#ctor, __o + #len));
+                            return Some((#ctor, __o + #len - __virt));
                         }
                     }
                 },
@@ -2001,6 +2203,7 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
     check_dec_trie_overlaps(&nodes)?;
     let dispatch = emit_dec_trie(&nodes, 0, 0);
     let scan_loop = gen_prefix_scan_loop(model)?;
+    let normalize = gen_rex2_normalize(model)?;
     // E-②：default_opsize（[encoding].default_opsize，位）作为 decode 的 __opsize
     // 初始值（无前缀时的缺省宽度；缺省 4 = 32 位——现状语义）。
     let default_opsize: u16 = model
@@ -2013,6 +2216,10 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
         /// 声明驱动）+ 字节前缀决策树，无匹配 → None。返回 (指令, 消费字节数)。
         #[allow(clippy::int_plus_one)]
         pub fn decode(bytes: &[u8]) -> Option<(Inst, usize)> {
+            // APX REX2 归一化（`__virt` = 补了几个虚拟字节，返回长度时减回）。
+            let mut __virt: usize = 0;
+            let mut __owned: Vec<u8> = Vec::new();
+            #normalize
             let mut __o = 0usize;
             let mut __opsize: u16 = #default_opsize;
             let mut __p66 = false;
@@ -2023,7 +2230,10 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             let mut __rex_r: u32 = 0;
             let mut __rex_x: u32 = 0;
             let mut __rex_b: u32 = 0;
+            let mut __rex2 = false;
+            let mut __m0 = false;
             #scan_loop
+            let _ = (__rex2, __m0, __virt);
             #dispatch
             None
         }
@@ -2036,7 +2246,9 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             if let Some(r) = decode(bytes) {
                 return Ok(r);
             }
-            // 失败：扫描前缀（与 decode 内部一致），报告部分匹配偏移
+            // 失败：扫描前缀（与 decode 内部一致），报告部分匹配偏移。
+            // 这里**不做归一化**：报的是原字节流里被消费的前缀字节数
+            // （REX2 算 2——`0xD5` + payload，虚拟的那个 `0F` 不属于输入）。
             let mut __o = 0usize;
             let mut __opsize: u16 = #default_opsize;
             let mut __p66 = false;
@@ -2047,8 +2259,13 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             let mut __rex_r: u32 = 0;
             let mut __rex_x: u32 = 0;
             let mut __rex_b: u32 = 0;
+            let mut __rex2 = false;
+            let mut __m0 = false;
             #scan_loop
-            let _ = (__opsize, __p66, __p_asz, __pF0, __pF2, __pF3, __rex_r, __rex_x, __rex_b);
+            let _ = (
+                __opsize, __p66, __p_asz, __pF0, __pF2, __pF3, __rex_r, __rex_x, __rex_b,
+                __rex2, __m0,
+            );
             Err(__o)
         }
     })
@@ -2085,56 +2302,75 @@ fn parse_scan_range(s: &str) -> Option<(u64, u64)> {
     Some((lo, hi))
 }
 
+/// 前缀扫描条目的字节匹配条件（`__b` = 当前字节）——扫描循环与 REX2 归一化前置步
+/// 共用一份（`0xD5` 也必须被"这就是个前缀"的判定覆盖，两侧不能各判一套）。
+fn scan_guard_ts(i: usize, e: &PrefixScanEntry) -> Result<TokenStream, String> {
+    let ctx = || format!("[conventions.prefix_scan][{i}]");
+    if let Some(b) = e.byte {
+        Ok(quote! { __b == #b as u8 })
+    } else if let Some(r) = &e.range {
+        let (lo, hi) = parse_scan_range(r).ok_or_else(|| {
+            format!(
+                "{}: bad range '{r}' (expect '0x40..0x4F' or '0x40..=0x4F')",
+                ctx()
+            )
+        })?;
+        Ok(quote! { ((#lo as u8)..=(#hi as u8)).contains(&__b) })
+    } else {
+        Err(format!("{}: entry needs `byte` or `range`", ctx()))
+    }
+}
+
 /// 生成变长解码的前缀扫描循环：每条目一个 `else if`，效果集驱动
 /// `__opsize`/前缀标志/REX 位/地址尺寸覆盖标志。非 x86 ISA 声明空表 → 立即 break。
 fn gen_prefix_scan_loop(model: &IsaModel) -> Result<TokenStream, String> {
     let entries: Vec<PrefixScanEntry> = model.prefix_scan_entries();
     let mut stmts: Vec<TokenStream> = Vec::new();
     for (i, e) in entries.iter().enumerate() {
-        let ctx = || format!("[conventions.prefix_scan][{i}]");
         let mut eff: Vec<TokenStream> = Vec::new();
         for fx in &e.effects {
-            eff.push(match fx.as_str() {
-                "opsize16" => quote! { __p66 = true; __opsize = 2; },
-                "lock" => quote! { __pF0 = true; },
-                "repe" => quote! { __pF3 = true; },
-                "repne" => quote! { __pF2 = true; },
+            eff.push(match *fx {
+                PrefixEffect::Opsize16 => quote! { __p66 = true; __opsize = 2; },
+                PrefixEffect::Lock => quote! { __pF0 = true; },
+                PrefixEffect::Repe => quote! { __pF3 = true; },
+                PrefixEffect::Repne => quote! { __pF2 = true; },
                 // 地址尺寸覆盖（x86 的 67）：地址寄存器改按覆盖宽度解（见
-                // `gen_mem_decode` 的 `__acl`）。
-                "addr32" | "addr16" => quote! { __p_asz = true; },
-                "rex" => quote! {
-                    __rex_r = ((__b >> 2) & 1) as u32;
-                    __rex_x = ((__b >> 1) & 1) as u32;
-                    __rex_b = (__b & 1) as u32;
+                // `gen_mem_decode` 的 `__acl`）。位宽本身由模型侧选覆盖地址类
+                // （`__ADDR_CLASS_OVR`），这里只要"见过这个前缀"这一个事实。
+                PrefixEffect::AddrSize(_) => quote! { __p_asz = true; },
+                PrefixEffect::Rex => quote! {
+                    __rex_r = (((__b >> 2) & 1) as u32) << 3;
+                    __rex_x = (((__b >> 1) & 1) as u32) << 3;
+                    __rex_b = ((__b & 1) as u32) << 3;
                     if (__b & 0x08) != 0 { __opsize = 8; }
                 },
-                other => {
-                    return Err(format!(
-                        "{}: unknown effect '{other}' (opsize16/lock/repe/repne/addr32/addr16/rex)",
-                        ctx()
-                    ));
-                }
+                // APX 的 REX2（`0xD5` + payload）：**吃两个字节**。payload =
+                // `M0 R4 X4 B4 W R3 X3 B3`——低 4 位就是 REX 的 W/R3/X3/B3，高半的
+                // R4/X4/B4 是 5 位寄存器字段的第 4 位（与低 3 位一起存进同一变量，
+                // 使用处直接 `| __rex_r`）。
+                PrefixEffect::Rex2 => quote! {
+                    let __b2 = *bytes.get(__o + 1).unwrap_or(&0);
+                    __rex2 = true;
+                    __m0 = (__b2 & 0x80) != 0;
+                    __rex_r = ((((__b2 >> 2) & 1) as u32) << 3)
+                        | ((((__b2 >> 6) & 1) as u32) << 4);
+                    __rex_x = ((((__b2 >> 1) & 1) as u32) << 3)
+                        | ((((__b2 >> 5) & 1) as u32) << 4);
+                    __rex_b = (((__b2 & 1) as u32) << 3)
+                        | ((((__b2 >> 4) & 1) as u32) << 4);
+                    if (__b2 & 0x08) != 0 { __opsize = 8; }
+                },
             });
         }
-        let guard = if let Some(b) = e.byte {
-            quote! { __b == #b as u8 }
-        } else if let Some(r) = &e.range {
-            let (lo, hi) = parse_scan_range(r).ok_or_else(|| {
-                format!(
-                    "{}: bad range '{r}' (expect '0x40..0x4F' or '0x40..=0x4F')",
-                    ctx()
-                )
-            })?;
-            quote! { ((#lo as u8)..=(#hi as u8)).contains(&__b) }
-        } else {
-            return Err(format!("{}: entry needs `byte` or `range`", ctx()));
-        };
+        // 效果可能**多吃一个字节**（`rex2` 是 `0xD5` + payload 两字节）。
+        let width = 1 + e.effects.iter().map(|f| f.extra_bytes()).sum::<usize>();
+        let guard = scan_guard_ts(i, e)?;
         let kw = if i == 0 {
             quote! { if }
         } else {
             quote! { else if }
         };
-        stmts.push(quote! { #kw #guard { #(#eff)* __o += 1; } });
+        stmts.push(quote! { #kw #guard { #(#eff)* __o += #width; } });
     }
     Ok(quote! {
         while __o < bytes.len() {
@@ -2142,6 +2378,63 @@ fn gen_prefix_scan_loop(model: &IsaModel) -> Result<TokenStream, String> {
             #(#stmts)*
             else { break; }
         }
+    })
+}
+
+/// REX2（APX）归一化的**前置步**：把被 `M0` 取代的 `0F` 字节补回字节流。
+///
+/// 为什么要补：译码派发树按"escape + opcode + ModRM"的**静态偏移**匹配（这正是它能
+/// 用 trie 的原因）。REX2 的 `M0=1` 表示映射是 `0F`、却没有那个字节——补齐之后 REX2
+/// 的字节流与 legacy `0F` **完全同形**，整棵派发树一行都不用改，只是 arm 返回的消费
+/// 长度要减掉补进去的字节数（`__virt`）。
+///
+/// 谱没声明 `rex2` 前缀效果（非 x86）⇒ 返回空 TokenStream（生成物里一行不发）。
+fn gen_rex2_normalize(model: &IsaModel) -> Result<TokenStream, String> {
+    let entries: Vec<PrefixScanEntry> = model.prefix_scan_entries();
+    if !entries
+        .iter()
+        .any(|e| e.effects.contains(&PrefixEffect::Rex2))
+    {
+        return Ok(quote! {});
+    }
+    let mut guards: Vec<(TokenStream, usize)> = Vec::new();
+    for (i, e) in entries.iter().enumerate() {
+        // REX2 条目**不进这个前置扫**：它是"要找的东西"，扫到它就停下（`else break`），
+        // 由下面的检查按 `D5` + payload 处理。把它当普通前缀跳过去会读不到 payload。
+        if e.effects.contains(&PrefixEffect::Rex2) {
+            continue;
+        }
+        // 其余前缀按自己的**宽度**前进（普通前缀都是 1 字节；宽度由效果声明）。
+        let width = 1 + e.effects.iter().map(|f| f.extra_bytes()).sum::<usize>();
+        guards.push((scan_guard_ts(i, e)?, width));
+    }
+    let mut arms: Vec<TokenStream> = Vec::new();
+    for (i, (g, w)) in guards.iter().enumerate() {
+        let kw = if i == 0 {
+            quote! { if }
+        } else {
+            quote! { else if }
+        };
+        arms.push(quote! { #kw #g { __v += #w; } });
+    }
+    Ok(quote! {
+        // 扫过 REX2 **之外**的前缀，停在第一条"不是前缀"的字节上（REX2 就在那里）。
+        let mut __v = 0usize;
+        while let Some(&__b) = bytes.get(__v) {
+            #(#arms)*
+            else { break; }
+        }
+        // REX2 且 M0=1（payload bit7）：映射是 0F，补一个虚拟的 0F 字节。
+        if bytes.get(__v) == Some(&0xD5u8)
+            && bytes.get(__v + 1).is_some_and(|p| p & 0x80 != 0)
+        {
+            __owned.reserve(bytes.len() + 1);
+            __owned.extend_from_slice(&bytes[..__v + 2]);
+            __owned.push(0x0Fu8);
+            __owned.extend_from_slice(&bytes[__v + 2..]);
+            __virt = 1;
+        }
+        let bytes: &[u8] = if __virt == 0 { bytes } else { &__owned };
     })
 }
 
@@ -2319,7 +2612,7 @@ fn gen_mem_decode(
     };
     quote! {
         #acl
-        let mut __base: u32 = ((__modrm & 7) as u32) | (#b_bit << 3);
+        let mut __base: u32 = ((__modrm & 7) as u32) | #b_bit;
         let mut __base_absent = false;
         let mut __index_reg: Option<Reg> = None;
         let mut __scale: u8 = 1;
@@ -2329,10 +2622,10 @@ fn gen_mem_decode(
                 let __sib_byte = bytes[__o2];
                 __o2 += 1;
                 let __idx4: u32 = ((__sib_byte >> 3) & 7) as u32;
-                let __idx_full: u32 = __idx4 | (#x_bit << 3);
+                let __idx_full: u32 = __idx4 | #x_bit;
                 let __sc_bits = (__sib_byte >> 6) & 3;
                 __scale = match __sc_bits { 1 => 2, 2 => 4, 3 => 8, _ => 1 };
-                __base = ((__sib_byte & 7) as u32) | (#b_bit << 3);
+                __base = ((__sib_byte & 7) as u32) | #b_bit;
                 #base_absent_detect
                 if __idx_full == 4 {
                     __index_reg = None;

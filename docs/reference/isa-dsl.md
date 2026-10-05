@@ -114,14 +114,14 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `types` `stack` `operand_slots` `forms` `instructions` `templates` `reloc` `derive` `pseudo` `lowering` `pattern` `machine` `emit` `spill` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
 | `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `default_gpr_width` `default_fpr_width` `addr_width` `value_gpr_width` `value_fpr_width` `vector_tiers` | 元信息 + 宽度元数据（缺省从 [reg.*] 派生） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
-| `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `aliases` | 寄存器组；组名的数字 = 字节宽（gpr8 = 64 位）；aliases = { 别名 = 组内下标 } |
+| `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `alloc_count` `aliases` | 寄存器组；组名的数字 = 字节宽（gpr8 = 64 位）；aliases = { 别名 = 组内下标 } |
 | `[stack]` | — | `slot` `align` `fp_save` | 栈槽单位/对齐/帧指针保存槽（缺省全部派生） |
 | `[types]` | — | — | 类型 → 寄存器组名（或 "unsupported"）的显式映射；键 = 类型名（允许额外键） |
 | `[conventions.bitfields.<name>]` | — | `offset` `width` `pieces` | 命名位域：offset/width，或 pieces 列出散布位段 |
 | `[[conventions.bitfields.<name>.pieces]]` | `offset` `width` | `shift` | 散布位段：`value >> shift` 取 width 位放在 offset |
 | `[conventions.modrm]` | — | `reg_field` `rm_field` `force_disp_base` | ModRM 约定（表存在即启用）：reg/rm 位域名 + 强制位移的 base 寄存器号 |
 | `[conventions.cond]` | `code` | `ir` | 条件码表：键 = 汇编可见的条件名（也允许 `名 = <整数>` 简写）（允许额外键） |
-| `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex` |
+| `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex` `rex2` |
 | `[conventions.bitsets.<table>]` | — | — | 命名位集合表（kind = "bits" 的槽用）：表名 → （名字 → 位）——源文本是名字拼接，编码取位或（允许额外键） |
 | `[[conventions.imm_fn]]` | `name` `text` `expr` | — | 立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值） |
 | `[conventions.mem]` | `templates` | `size_keywords` | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
@@ -305,8 +305,18 @@ names = ["RAX", "RCX", "..."] # 显式名单；或 count + prefix 生成式声�
 count = 16                    # 与 names 同时给出时必须等长
 prefix = "XMM"                # 生成式：XMM0, XMM1, …
 base_index = 4                # 物理编号偏移（如 gpr8h 高字节组）
+alloc_count = 16              # **进分配池**的个数（缺省 = 全组；见下）
 aliases = { a0 = 10, fp = 8 } # 别名表：`别名 = 组内下标`（可选）
 ```
+
+**分配池 ≠ 寄存器文件（`alloc_count`）**：`names` 说"这台机器**能编码**哪些寄存器"，
+`alloc_count` 说"后端**敢分配**哪些"。两者在 x86 上分了家：APX 让 GPR 文件有 32 个
+（r16..r31 = EGPR，只有 REX2 能编码），但本后端不假设跑它的 CPU 支持 APX、ABI 也不认
+它们——分配器一旦用了 r16+，JIT 产物在没有 APX 的机器上就是**非法指令**（实测
+`STATUS_ILLEGAL_INSTRUCTION`）。于是 `[reg.gpr8]` 写 `names = [32 个]` +
+`alloc_count = 16`：EGPR **能编码**（`mov r16d, eax` 这类写法成立，语料里的 APX 行
+照编），但**不进分配池**。只对**主 GPR 组**（`[meta].default_gpr_width` 或最宽的 GPR 组）
+有意义；超过组大小报错。
 
 **别名（`aliases`，v20 V9）**：真实汇编写法里的 ABI 名（riscv 的 `a0`/`s0`/`fp`…）与
 我们反汇编输出的规范名（`x10`）是**两件事**——别名表就是这件事的唯一位置：
@@ -542,6 +552,27 @@ templates = ["[{base}+{index}*{scale}+{disp}]"]  # 第 0 条 = 渲染形态
 不能都建成 64 位）。一个 ISA 只支持一个覆盖宽度（声明两个不同宽度报错），且覆盖宽度
 必须指向本谱已声明的寄存器组。内存 base/index 必须是**地址类**寄存器（`gpr8` 或覆盖类）：
 `[al]`、`[xmm0]` 解析失败。缺省扫描集**不含**这条效果——它是谱自己声明的数据。
+
+**效果清单**（`effects` 里的名字；取值域的唯一来源是 `dsl/model.rs::PrefixEffect` 枚举，
+schema/诊断/生成器共用它，不另抄名单）：
+
+| 效果 | 含义 |
+| --- | --- |
+| `opsize16` | 操作数尺寸前缀（x86 `0x66`）：`__opsize` 置 16 位 |
+| `lock` | LOCK（x86 `0xF0`） |
+| `repe` / `repne` | REP/REPE（`0xF3`）/ REPNE（`0xF2`） |
+| `addr<位宽>` | 地址尺寸覆盖（x86 `0x67`）：地址换成该位宽 —— `addr32`/`addr16` 是**同一支效果的两个参数**（8 的正整数倍；位宽要有对应的 GPR 组） |
+| `rex` | REX（`0x40..0x4F`）：3 位扩展 + W |
+| `rex2` | APX 的 REX2（`0xD5` + 1 字节 payload）：**吃两个字节**，5 位寄存器字段（R4/X4/B4）+ `M0` 映射位（**取代 `0F` 字节**） |
+
+**REX2 什么时候发**（x86，v20 A7）：编码器看到任一 GPR 字段的索引 ≥ 16（= 谱里那个 GPR
+组超过 16 项，也就是 APX 的 EGPR）就改发 REX2，第 4 位进 payload 的 R4/X4/B4；`M0` 由
+指令的映射决定（`escape = [0x0F]` ⇒ 1，否则 0），因此**走 REX2 时不再发 `0F` 字节**。
+解码侧对称：`M0=1` 时解码入口先补一个**虚拟 `0F`** 再走原来的派发树（返回的消费长度
+减掉那一字节）——整棵派发树不用为 REX2 写第二份。两条 fail-closed：① **VEX/EVEX 与
+0F38/0F3A** 表达不了 EGPR（本实现里它们的 GPR 字段只有 4 位）——寄存器槽装得下 EGPR 的
+谱在**生成期**报错，内存**地址**是 EGPR 的在**编码期**报错（地址来自共享的地址类，不能
+要求每条 VEX 指令换一个窄组）；② 高编号寄存器视图按同一能力封顶（编不出来就取到 15）。
 
 > **S1 删除**：`[conventions.rex]`（`w_opsize`）与 `[conventions.opsize_prefix]`
 > 已移除——它们 codegen 从不读取，66 前缀与 REX.W 在 `vlen.rs` 里按 `__opsize`

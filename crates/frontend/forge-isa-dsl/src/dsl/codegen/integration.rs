@@ -574,7 +574,12 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
     let reserved_list = resolve_reg_list(&name_to_idx, reserved_names, "[machine].fixed_regs")?;
     let scratch_idx: std::collections::HashSet<u32> = scratch_list.iter().copied().collect();
     let reserved_idx: std::collections::HashSet<u32> = reserved_list.iter().copied().collect();
-    let gp_alloc: Vec<TokenStream> = (0..gpr_count)
+    // 分配池的上限 = `[reg.<主 GPR 组>].alloc_count`（缺省 = 组大小）。APX 的 EGPR
+    // （r16..r31）**能编码但不该分配**：本后端不假设跑它的 CPU 支持 APX、ABI 也不认
+    // 它们——分配器一用，JIT 产物在没有 APX 的机器上就是非法指令（实测
+    // STATUS_ILLEGAL_INSTRUCTION）。见 `RegGroup::alloc_count`。
+    let gp_alloc_max = model.gpr_alloc_count()?;
+    let gp_alloc: Vec<TokenStream> = (0..gp_alloc_max)
         .filter(|&i| {
             i != sp_idx && i != fp_idx && !scratch_idx.contains(&i) && !reserved_idx.contains(&i)
         })

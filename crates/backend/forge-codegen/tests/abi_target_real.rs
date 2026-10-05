@@ -33,10 +33,27 @@ fn adapter_exposes_the_real_register_file() {
     let tm = TargetMachine::new();
     let t = MachineAbiTarget::new(&tm);
     assert_eq!(t.isa_name(), "x86_64");
-    assert_eq!(t.reg_count(), 32, "16 GPR + 16 XMM");
-    // 名字解析与 A1 的绑定文件口径一致（RCX=1、XMM0=16）。
+    // **可编码**的寄存器文件 = 32 GPR（APX 的 r16..r31 也能编——REX2）+ 16 XMM。
+    assert_eq!(t.reg_count(), 48, "32 可编码 GPR（含 APX EGPR）+ 16 XMM");
+    // 但**分配池**只到 r15：`[reg.gpr8].alloc_count = 16`——EGPR 能编码不该分配
+    // （分配器一用，JIT 产物在没有 APX 的机器上就是非法指令）。
+    let (r15, r16, r31) = (
+        t.reg_index("R15").expect("R15"),
+        t.reg_index("R16").expect("R16"),
+        t.reg_index("R31").expect("R31"),
+    );
+    assert!(
+        t.allocatable().contains(&r15),
+        "R15 仍应在分配池里（alloc_count = 16）"
+    );
+    assert!(
+        !t.allocatable().contains(&r16) && !t.allocatable().contains(&r31),
+        "EGPR（r16..r31）不该进分配池：allocatable = {:?}",
+        t.allocatable()
+    );
+    // 名字解析与 A1 的绑定文件口径一致（RCX=1；浮点区跟在**全部** GPR 之后 ⇒ XMM0 = 32）。
     assert_eq!(t.reg_index("RCX"), Some(1));
-    assert_eq!(t.reg_index("XMM0"), Some(16));
+    assert_eq!(t.reg_index("XMM0"), Some(32));
     assert_eq!(t.reg_name(1).as_deref(), Some("RCX"));
     // sp/fp 固定用途（生成器已把它们从可分配表里排除）。
     let rsp = t.reg_index("RSP").expect("RSP");

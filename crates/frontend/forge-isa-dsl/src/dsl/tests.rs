@@ -4366,3 +4366,42 @@ fn imm_fn_absent_keeps_generated_code_unchanged() {
         "声明了就该有修饰机制：{s2}"
     );
 }
+
+/// `PrefixEffect`：谱面拼法 ↔ 枚举变体（**有值变体** `addr<bits>` 也在内）。
+///
+/// 这条单测盯着三件事：① 每个效果名的谱面写法能往返；② `addr32`/`addr16` 是**同一支
+/// 效果的参数**（不是两个变体）；③ 未知/坏拼写在**解析期**就报错——校验期因此不再维护
+/// 第二份效果名单（名单只有 `PrefixEffect::NAMES` 一份）。
+#[test]
+fn prefix_effects_parse_from_their_spec_spellings() {
+    use crate::dsl::model::{PrefixEffect as P, PrefixScanEntry};
+    for (s, want) in [
+        ("opsize16", P::Opsize16),
+        ("lock", P::Lock),
+        ("repe", P::Repe),
+        ("repne", P::Repne),
+        ("rex", P::Rex),
+        ("rex2", P::Rex2),
+        // 有值变体：位宽是参数（模型内部换算成字节，见 `addr_size_override`）。
+        ("addr32", P::AddrSize(32)),
+        ("addr16", P::AddrSize(16)),
+    ] {
+        assert_eq!(P::try_from(s).ok(), Some(want), "解析 {s}");
+        assert_eq!(want.name(), s, "{s} 的谱面写法应当往返");
+    }
+    // REX2 是唯一**多吃一个字节**的效果（`0xD5` + payload）——前缀扫描的宽度靠它。
+    assert_eq!(P::Rex2.extra_bytes(), 1);
+    assert_eq!(P::Rex.extra_bytes(), 0);
+    assert_eq!(P::AddrSize(32).extra_bytes(), 0);
+
+    for bad in ["rex3", "addr0", "addr7", "addr12", "OPSIZE16", ""] {
+        assert!(P::try_from(bad).is_err(), "{bad:?} 应当被拒");
+    }
+    // 走一遍反序列化（谱里写错名字 → 解析期报错，不是静默忽略）。
+    let ok: PrefixScanEntry = toml::from_str("byte = 0xD5\neffects = [\"rex2\"]").unwrap();
+    assert_eq!(ok.effects, vec![P::Rex2]);
+    let bad = toml::from_str::<PrefixScanEntry>("byte = 0xD5\neffects = [\"rex3\"]");
+    assert!(bad.is_err(), "未知效果名必须在解析期就拒：{bad:?}");
+    let msg = format!("{}", bad.unwrap_err());
+    assert!(msg.contains("rex3"), "报错要点名那个拼法：{msg}");
+}

@@ -316,6 +316,26 @@ impl IsaModel {
         }
     }
 
+    /// 主 GPR 组的**分配池大小**：`[reg.<主 GPR 组>].alloc_count`，缺省 = 组大小。
+    ///
+    /// 见 [`RegGroup::alloc_count`]——APX 的 EGPR（r16..r31）能编码但不进分配池：
+    /// 分配器一旦用了它们，JIT 产物在没有 APX 的机器上就是非法指令。
+    pub(crate) fn gpr_alloc_count(&self) -> Result<u32, String> {
+        let cls = self.main_gpr_class()?;
+        let n = self.names_of(cls)?.len() as u32;
+        let cap = self
+            .reg
+            .get(&cls)
+            .and_then(|g| g.alloc_count)
+            .map_or(n, u32::from);
+        if cap > n {
+            return Err(format!(
+                "[reg.{cls}].alloc_count = {cap} 超过组大小 {n}（分配池不能比寄存器文件大）"
+            ));
+        }
+        Ok(cap)
+    }
+
     /// 主 GPR 类：`[meta].default_gpr_width` > 已声明 GPR 组中最宽者 > Err。
     /// 主 GPR 类是 GPR 名字/索引解析的**唯一锚点**（取代历史 `GPR(8).or(GPR(4))`）。
     pub(crate) fn main_gpr_class(&self) -> Result<RegClass, String> {
@@ -390,14 +410,16 @@ impl IsaModel {
         let mut found: Option<(u8, u16)> = None;
         for (i, e) in entries.iter().enumerate() {
             for fx in &e.effects {
-                let w = match fx.as_str() {
-                    "addr32" => 4u16,
-                    "addr16" => 2u16,
-                    _ => continue,
+                let PrefixEffect::AddrSize(bits) = *fx else {
+                    continue;
                 };
+                // 位宽 → 字节（解析期已保证是 8 的整数倍）；这个宽度必须有对应的
+                // GPR 组（`require_group`，见 `machine.rs` 的 `__ADDR_CLASS_OVR`）。
+                let w = bits / 8;
+                let name = fx.name();
                 let Some(b) = e.byte else {
                     return Err(format!(
-                        "[conventions.prefix_scan][{i}]: `{fx}` 需要 `byte`（地址尺寸覆盖是单字节前缀）"
+                        "[conventions.prefix_scan][{i}]: `{name}` 需要 `byte`（地址尺寸覆盖是单字节前缀）"
                     ));
                 };
                 match found {
@@ -927,6 +949,15 @@ pub struct RegGroup {
     /// 组内寄存器数（仅 `names` 缺省时需要）。
     #[serde(default)]
     pub count: Option<u16>,
+    /// **进分配池的寄存器个数**（缺省 = 全组）。只对**主 GPR 组**有意义。
+    ///
+    /// 为什么需要：APX 让 x86 的 GPR 文件有 32 个寄存器（r16..r31 = EGPR），但
+    /// **能编码 ≠ 该分配**——本后端不假设跑它的 CPU 支持 APX，ABI 也不认它们；
+    /// 一旦分配器用了 r16+，JIT 产物在没有 APX 的机器上是**非法指令**（实测
+    /// `STATUS_ILLEGAL_INSTRUCTION`）。于是这个数字是"这台机器实际拿来分配的
+    /// 通用寄存器数"，其余只供谱里**显式**编码（`mov r16d, eax` 这类写法仍然成立）。
+    #[serde(default)]
+    pub alloc_count: Option<u16>,
     /// **别名表**：`别名 = 组内下标`（人体工学：别名不必与主名等长对齐，也不再靠下标猜；
     /// 一个寄存器可以有多个别名——riscv `x8` 既是 `s0` 也是 `fp`）。
     ///
@@ -1124,6 +1155,106 @@ impl IsaModel {
     }
 }
 
+/// `[conventions.prefix_scan].effects` 的**效果**（谱里写成字符串，模型里是枚举）。
+///
+/// 为什么是枚举而不是 `Vec<String>`：效果是**闭集**，而"效果名"在生成器、校验器、
+/// 模型查询里各比一次字符串——三处硬编码的名字集一旦不同步就是静默漏派发。枚举把
+/// 取值域钉在类型上，穷尽匹配由编译器兜底。
+///
+/// **带值变体**表示"同一个效果、参数不同"的那一族（不是两个效果）：
+/// `addr32`/`addr16` 都是"地址尺寸覆盖"，只有位宽不同 ⇒ [`PrefixEffect::AddrSize`]。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrefixEffect {
+    /// 操作数尺寸前缀（x86 `0x66`）：`__opsize` 置 16 位。
+    Opsize16,
+    /// LOCK（x86 `0xF0`）。
+    Lock,
+    /// REP / REPE（x86 `0xF3`）。
+    Repe,
+    /// REPNE（x86 `0xF2`）。
+    Repne,
+    /// 地址尺寸覆盖（x86 `0x67`）：地址改按该**位宽**解（32 或 16）。
+    /// 值 = 位宽（与谱里的名字 `addr32`/`addr16` 同一口径；模型内部用**字节**，
+    /// 两者在 [`IsaModel::addr_size_override`] 一处换算）。
+    AddrSize(u16),
+    /// REX（`0x40..0x4F`）：3 位扩展 + W，另加 `__opsize = 8`。
+    Rex,
+    /// APX 的 REX2（`0xD5` + 1 字节 payload）：**吃两个字节**，5 位寄存器字段
+    /// （R4/X4/B4）+ `M0` 映射位（取代 `0F` 字节）。
+    Rex2,
+}
+
+impl PrefixEffect {
+    /// 谱里能写的全部**定值**效果名（带值变体另按 `addr<位宽>` 拼）。
+    /// 这是诊断与文档的**唯一**来源。
+    pub const NAMES: [&'static str; 8] = [
+        "opsize16", "lock", "repe", "repne", "addr32", "addr16", "rex", "rex2",
+    ];
+
+    /// 谱里的写法（`AddrSize(n)` ⇒ `addr<n>`，与解析同一套拼法）。
+    pub fn name(self) -> std::borrow::Cow<'static, str> {
+        match self {
+            Self::Opsize16 => "opsize16".into(),
+            Self::Lock => "lock".into(),
+            Self::Repe => "repe".into(),
+            Self::Repne => "repne".into(),
+            Self::AddrSize(bits) => format!("addr{bits}").into(),
+            Self::Rex => "rex".into(),
+            Self::Rex2 => "rex2".into(),
+        }
+    }
+
+    /// 这条效果**多吃几个字节**（除前缀字节本身）：只有 REX2 吃 1 个（它的 payload）。
+    pub fn extra_bytes(self) -> usize {
+        usize::from(self == Self::Rex2)
+    }
+}
+
+impl TryFrom<&str> for PrefixEffect {
+    type Error = String;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        // `addr<位宽>` 是**一支**效果（不是枚举里再加变体）：解析按"前缀 + 位宽"，
+        // 位宽必须是 8 的整数倍（下面 `addr_size_override` 要把位换算成字节）；
+        // 位宽有没有对应的寄存器组，由模型那边查组时 fail-closed。
+        if let Some(digits) = s.strip_prefix("addr")
+            && let Ok(bits) = digits.parse::<u16>()
+        {
+            if bits == 0 || bits % 8 != 0 {
+                return Err(format!(
+                    "invalid effect '{s}': 地址尺寸覆盖的位宽要是 8 的正整数倍"
+                ));
+            }
+            return Ok(Self::AddrSize(bits));
+        }
+        match s {
+            "opsize16" => Ok(Self::Opsize16),
+            "lock" => Ok(Self::Lock),
+            "repe" => Ok(Self::Repe),
+            "repne" => Ok(Self::Repne),
+            "rex" => Ok(Self::Rex),
+            "rex2" => Ok(Self::Rex2),
+            other => Err(format!(
+                "unknown effect '{other}'（可选：{}）",
+                Self::NAMES.join("/")
+            )),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for PrefixEffect {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        Self::try_from(s.as_str()).map_err(serde::de::Error::custom)
+    }
+}
+
+impl Serialize for PrefixEffect {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.name())
+    }
+}
+
 /// 前缀扫描条目：`byte`（单字节）与 `range`（如 "0x40..0x4F"）二选一。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1133,10 +1264,8 @@ pub struct PrefixScanEntry {
     /// "0x40..0x4F" / "0x40..=0x4F"（闭区间）。
     #[serde(default)]
     pub range: Option<String>,
-    /// 效果："opsize16"（66 → opsize=2）、"lock"、"repe"、"repne"、
-    /// "addr32"/"addr16"（地址尺寸覆盖，见 [`IsaModel::addr_size_override`]）、
-    /// "rex"（40-4F：REX.R/B/W 位）。
-    pub effects: Vec<String>,
+    /// 效果（见 [`PrefixEffect`]）。
+    pub effects: Vec<PrefixEffect>,
 }
 
 /// 缺省前缀扫描集（`[conventions.prefix_scan]` 未声明时使用；x86 风格前缀链）。
@@ -1145,20 +1274,21 @@ pub struct PrefixScanEntry {
 /// 声明的数据**——由缺省表隐式强加会让别的 prefix_scan 谱去找一个它没有的寄存器组。
 /// 没声明的谱遇到 0x67 会在该字节解码失败（fail-closed，不静默当 64 位地址）。
 pub(crate) fn default_prefix_scan() -> Vec<PrefixScanEntry> {
-    let e = |byte: u64, effects: &[&str]| PrefixScanEntry {
+    use PrefixEffect::*;
+    let e = |byte: u64, effects: &[PrefixEffect]| PrefixScanEntry {
         byte: Some(byte),
         range: None,
-        effects: effects.iter().map(|s| (*s).to_string()).collect(),
+        effects: effects.to_vec(),
     };
     vec![
-        e(0x66, &["opsize16"]),
-        e(0xF0, &["lock"]),
-        e(0xF2, &["repne"]),
-        e(0xF3, &["repe"]),
+        e(0x66, &[Opsize16]),
+        e(0xF0, &[Lock]),
+        e(0xF2, &[Repne]),
+        e(0xF3, &[Repe]),
         PrefixScanEntry {
             byte: None,
             range: Some("0x40..0x4F".into()),
-            effects: vec!["rex".into()],
+            effects: vec![Rex],
         },
     ]
 }

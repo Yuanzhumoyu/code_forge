@@ -89,12 +89,15 @@ fn generated_spec_tests_cover_every_instruction() {
 /// `XZR`/`WZR`/`LR` 是 `[reg.*].aliases`（解析认、渲染出主名），不占指令数。
 /// riscv64 再补**三操作数 `jalr rd, rs1, imm`**（`JALR3`，与两操作数写法同编码）与
 /// **`fence pred, succ`**（`FENCE_PS`，pred/succ 是字母集合 → 新的 `kind = "bits"`）→ **139**。
+/// x86 补 **APX（REX2）能力**：四个 GPR 宽度组扩到 32 项（r16..r31 四个视图，编码器见到
+/// ≥16 就改发 REX2），并补上 **16/32 位的 `89`（MR）形态** `MOV_RM_R_24`（上游 LLVM 对
+/// reg-reg 用 MR 形态；我们原先只给 64 位建了它 ⇒ 那类上游编码我们**解不回来**）→ **276**。
 #[test]
 fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 275), ("riscv64", 139), ("arm64", 206)],
+        vec![("x86", 276), ("riscv64", 139), ("arm64", 206)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }
@@ -106,6 +109,11 @@ fn spec_coverage_totals_are_pinned() {
 /// （一个是 `mov [RAX], RBX`，一个是 `mov RAX, [RBX]`），此前被歧义键按"操作数声明序"
 /// 建键误判成同形。键改成"按模板占位符序 + 不带操作数序号"后，这几条恢复**强断言**
 /// （`disasm → asm → encode` 必须回到同一字节），实测全部通过。
+///
+/// APX 批次多的一条 `MOV_RM_R_24`：16/32 位 reg-reg `mov` 的 **MR 形态**（`89`）与
+/// `MOV_R_RM`（`8B`）文本都是 `mov A, B`——**同一条指令的两种合法编码**，汇编器按
+/// "更具体的槽签名优先"选 `89`（与上游 LLVM 一致），`8B` 那条留给解码。这正是已有的
+/// `MOV_RM_R`/`MOV_R_RM`（64 位）与 `MOV64_RR` 那一类的格局。
 #[test]
 fn spec_text_ambiguity_lists_are_pinned() {
     let x86 = [
@@ -131,6 +139,7 @@ fn spec_text_ambiguity_lists_are_pinned() {
         "MOV_REG_IMM64",
         "MOV_RM8_R64",
         "MOV_RM_R",
+        "MOV_RM_R_24",
         "MOV_R_RM",
         "OR_R_IMM32",
         "OR_R_IMM8S",

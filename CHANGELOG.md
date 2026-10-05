@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-05) — x86 APX：REX2 前缀与 EGPR（`r16`..`r31`）编码/解码；16/32 位 `mov` 的 MR 形态
+
+**能力由谱数据声明，不新增开关**：x86 的四个 GPR 宽度组扩到 32 项（`r16`..`r31` 四个视图 = APX 的 EGPR），编码器看到任一 GPR 字段的索引 ≥ 16 就改发 **REX2**（`0xD5` + payload `M0 R4 X4 B4 W R3 X3 B3`），第 4 位进 payload、`M0` **取代 `0F` 字节**；解码侧在 `M0=1` 时先补一个虚拟 `0F` 再走原有派发树（消费长度减一），因此派发树不用写第二份。`[[conventions.prefix_scan]]` 的效果从 `Vec<String>` 改成**枚举** `PrefixEffect`（`addr32`/`addr16` 合并成有值变体 `AddrSize(32|16)`），编码器/校验器/schema 不再各处比字符串。
+
+新增键 `[reg.<组>].alloc_count`（**分配池 ≠ 寄存器文件**）：`[reg.gpr8]` 现在 `names` 32 项 + `alloc_count = 16`——EGPR **能编码**（`mov r16d, eax` 这类写法成立），但**不进分配池**。这是安全阀：分配器一用 r16+，JIT 产物在没有 APX 的机器上就是**非法指令**（实测 `STATUS_ILLEGAL_INSTRUCTION`，全量套件当场抓到）。
+
+两条 fail-closed：VEX/EVEX 与 0F38/0F3A 表达不了 EGPR（本实现里 GPR 字段只有 4 位）——寄存器槽装得下 EGPR 的谱在**生成期**报错，内存地址是 EGPR 的在**编码期**报错；高编号寄存器视图按同一能力封顶（取到 15）。
+
+顺带补上 x86 **16/32 位 `mov` 的 MR 形态**（`89`，`MOV_RM_R_24`）：上游 LLVM 对 reg-reg 用 MR，我们原先只给 64 位建了它 ⇒ 那类上游编码我们**解不回来**。字节变化（16/32 位 reg-reg `mov` 由 `8B` 变 `89`，与上游一致）属破坏性更新：谱内向量与相关测试已同步。
+
+效果（语料 `apx-rex2-format-intel.s`）：x86 llvm-mc 档 `parsed` 36 → **52**、红桶 55 → **39**；编码对拍 `checked` 31 → **47**、`known` 保持 **0**（16 条 APX 行与上游 CHECK 逐字节一致）。落地 5 条 APX 谱内向量。
+
 ### Fixed (2026-10-05) — 谱统一落在严格 TOML 1.0 子集（`isa/riscv64.toml` 的多行内联表）
 
 `isa/riscv64.toml` 的寄存器别名原先写成跨 5 行的内联表（`aliases = { zero = 0, … ,` … `t6 = 31 }`）——那是 **TOML 1.1** 才允许的写法（多行内联表 + 尾逗号）：本仓库的 `toml` 依赖是 spec 1.1 实现（`toml-1.1.x+spec-1.1.0`），所以构建全绿；而编辑器、Python `tomllib` 等 1.0 解析器会报语法错。改成标准子表（写法等价）：

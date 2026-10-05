@@ -56,31 +56,44 @@ mnemonic_case = "insensitive"
 directive_prefix = "."
 
 # ─────────────────────────── 寄存器组 ───────────────────────────
-# GPR 四宽度视图共用物理编号 0-15（base_index=0）：同一物理寄存器的
+# GPR 四宽度视图共用物理编号 0-31（base_index=0）：同一物理寄存器的
 # 8/16/32/64 位视图。opsize 由操作数寄存器宽度自动推导（Phase 2 起）。
 # gpr8 不含 AH/CH/DH/BH（byte_reg 强制 REX，索引 4-7 恒为 SPL/BPL/SIL/DIL）。
+# 索引 16-31 = **APX 的 EGPR**（r16..r31 四个宽度视图）：只有 REX2 前缀能编码，
+# 编码器见到 ≥16 就改发 REX2（见 codegen/vlen.rs 的 `__rex2` 分支）。
 [encoding]
 kind = "prefix_scan"
 max_len = 15
 
 [reg.gpr8]
 names = ["RAX","RCX","RDX","RBX","RSP","RBP","RSI","RDI",
-         "R8","R9","R10","R11","R12","R13","R14","R15"]
+         "R8","R9","R10","R11","R12","R13","R14","R15",
+         "R16","R17","R18","R19","R20","R21","R22","R23",
+         "R24","R25","R26","R27","R28","R29","R30","R31"]
+# 分配池只到 r15：EGPR（r16..r31）**能编码不能分配**——本后端不假设跑它的 CPU 支持
+# APX，ABI 也不认它们；分配器一用，JIT 产物在没有 APX 的机器上就是非法指令。
+alloc_count = 16
 
 [reg.gpr4]
 base_index = 0
 names = ["EAX","ECX","EDX","EBX","ESP","EBP","ESI","EDI",
-         "R8D","R9D","R10D","R11D","R12D","R13D","R14D","R15D"]
+         "R8D","R9D","R10D","R11D","R12D","R13D","R14D","R15D",
+         "R16D","R17D","R18D","R19D","R20D","R21D","R22D","R23D",
+         "R24D","R25D","R26D","R27D","R28D","R29D","R30D","R31D"]
 
 [reg.gpr2]
 base_index = 0
 names = ["AX","CX","DX","BX","SP","BP","SI","DI",
-         "R8W","R9W","R10W","R11W","R12W","R13W","R14W","R15W"]
+         "R8W","R9W","R10W","R11W","R12W","R13W","R14W","R15W",
+         "R16W","R17W","R18W","R19W","R20W","R21W","R22W","R23W",
+         "R24W","R25W","R26W","R27W","R28W","R29W","R30W","R31W"]
 
 [reg.gpr1]
 base_index = 0
 names = ["AL","CL","DL","BL","SPL","BPL","SIL","DIL",
-         "R8B","R9B","R10B","R11B","R12B","R13B","R14B","R15B"]
+         "R8B","R9B","R10B","R11B","R12B","R13B","R14B","R15B",
+         "R16B","R17B","R18B","R19B","R20B","R21B","R22B","R23B",
+         "R24B","R25B","R26B","R27B","R28B","R29B","R30B","R31B"]
 
 [reg.fpr8]
 base_index = 0
@@ -181,6 +194,13 @@ effects = ["addr32"]
 [[conventions.prefix_scan]]
 range = "0x40..0x4F"
 effects = ["rex"]
+# APX 的 REX2（`0xD5` + 1 字节 payload）：**吃两个字节**——payload 低 4 位是 REX
+# 的低 4 位（W/R3/X3/B3），高位是 5 位寄存器字段的第 4 位（R4/X4/B4）+ M0。M0 取代
+# `0F` escape 字节（M0=1 = 0F 映射），所以译码有两条 M0 分支（见 vlen.rs 的 `__m0`）。
+# 64 位模式下 `0xD5` 没有别的含义（32 位模式的 `aad` 在长模式已删）。
+[[conventions.prefix_scan]]
+byte = 0xD5
+effects = ["rex2"]
 
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
@@ -444,6 +464,22 @@ ref = "mov"
 form = "MRR"
 opcode = 0x89
 ops = ["src:gpr", "dst:gpr:inout"]
+asm = "mov {dst}, {src}"
+effect = ["Move"]
+
+# 16/32 位的 **MR 形态**（`89 /r`）：`mov r/m16(r/m32), r16(r32)`。
+#
+# 汇编器**不选**它（16/32 位的 reg-reg 走上面的 `MOV_R_RM`/`8B`，与上游 LLVM 选的
+# 形态不同但同义），声明它的理由是**解码**：上游编出的 `mov r16d, eax` 是
+# `d5 10 89 c0`（EGPR 在 rm 字段），我们的解码器必须解得回来——否则语料对拍只能把
+# 这条**合法编码**记成"字节差异"。与 64 位那对（`MOV_RM_R` / `MOV64_RR`）同一格局：
+# 每条合法编码都要有人认领，认领方式就是把形态建全。
+[[instructions]]
+name = "MOV_RM_R_24"
+ref = "mov"
+form = "MRR"
+opcode = 0x89
+ops = ["src:gpr24", "dst:gpr24:inout"]
 asm = "mov {dst}, {src}"
 effect = ["Move"]
 
@@ -4122,7 +4158,7 @@ rows = [
 
 [[vectors]]
 asm = "mov EAX, EBX"
-bytes = [0x8B, 0xC3]
+bytes = [0x89, 0xD8]
 
 [[vectors]]
 asm = "add eax, [eax]"
@@ -4134,7 +4170,7 @@ bytes = [0x67, 0x48, 0x03, 0x04, 0x83]
 
 [[vectors]]
 asm = "mov R8D, R9D"
-bytes = [0x45, 0x8B, 0xC1]
+bytes = [0x45, 0x89, 0xC8]
 
 [[vectors]]
 asm = "mov RAX, RBX"
@@ -4657,6 +4693,30 @@ asm = "bswap R12"
 
 [[vectors]]
 asm = "mov RAX, 0x1234"
+
+# ── APX（REX2）向量：字节取自上游 LLVM 语料 `apx-rex2-format-intel.s` 的 CHECK 注释。
+# 覆盖三条 REX2 发射路径：`+r`（B8+rd，寄存器进 **B4/B3**）、ModRM reg/rm（r16+ 在
+# reg 或 rm 字段）、内存形式（base/index 是 EGPR）与 mandatory prefix（popcnt 的 F3
+# 在 REX2 **之前**）。M0 位取代 `0F` 字节这一点由 popcnt / cmov / imul 三条覆盖。
+[[vectors]]
+asm = "mov r16d, 1"
+bytes = [0xD5, 0x10, 0xB8, 0x01, 0x00, 0x00, 0x00]
+
+[[vectors]]
+asm = "popcnt r17d, r16d"
+bytes = [0xF3, 0xD5, 0xD0, 0xB8, 0xC8]
+
+[[vectors]]
+asm = "mov dword ptr [r16 + rax], ebx"
+bytes = [0xD5, 0x10, 0x89, 0x1C, 0x00]
+
+[[vectors]]
+asm = "mov dword ptr [r16 + r17], r18d"
+bytes = [0xD5, 0x70, 0x89, 0x14, 0x08]
+
+[[vectors]]
+asm = "mov byte ptr [r16 + r14], bpl"
+bytes = [0xD5, 0x12, 0x88, 0x2C, 0x30]
 
 # ── 向量区段结束
 

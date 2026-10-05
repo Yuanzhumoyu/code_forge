@@ -52,14 +52,14 @@ macro_rules! roundtrip_of {
 
 /// 三份发行谱：谱里每条指令（含宽度视图/立即数边界/内存风味）编解码闭环。
 ///
-/// 下界钉住的是**枚举器不许退化**：指令总数见 `spec_coverage_guard`（x86 265 /
-/// riscv64 119 / arm64 110），枚举器条目只会更多（视图与风味），少于总数就是派生漏了。
+/// 下界钉住的是**枚举器不许退化**：指令总数见 `spec_coverage_guard`（x86 276 /
+/// riscv64 139 / arm64 206），枚举器条目只会更多（视图与风味），少于总数就是派生漏了。
 #[test]
 fn derived_insts_roundtrip_byte_stable() {
     let x86 = roundtrip_of!("x86", crate::arch::x86::x86);
     let riscv = roundtrip_of!("riscv64", crate::arch::riscv64::riscv64);
     let arm64 = roundtrip_of!("arm64", crate::arch::arm64::arm64);
-    assert!(x86 >= 275, "x86 枚举器条目 {x86} < 指令总数 275");
+    assert!(x86 >= 276, "x86 枚举器条目 {x86} < 指令总数 276");
     assert!(riscv >= 139, "riscv64 枚举器条目 {riscv} < 指令总数 139");
     assert!(arm64 >= 206, "arm64 枚举器条目 {arm64} < 指令总数 206");
     // 实测条目数（2026-09-24）：x86 **602** / riscv64 **327** / arm64 **360**——
@@ -96,9 +96,11 @@ fn derived_insts_roundtrip_byte_stable() {
     //   裸 `DCPS1B`/`DCPS2B`/`DCPS3B` 各 1）。
     // 2026-10-04（v20 V10 第十七批）：riscv64 435 → **442**（`JALR3` 6 条 = 2 视图 ×
     //   (1 基线 + imm12 两个边界)；`FENCE_PS` 1 条——位集合槽不进边界风味）。
+    // 2026-10-05（APX/REX2 批次）：x86 1351 → **1354**（新增 16/32 位 MR 形态 `MOV_RM_R_24`
+    //   1 条：`gpr24` 两个宽度视图 × 1 基线 + 1 高编号寄存器视图 = 3 条）。
     assert_eq!(
         (x86, riscv, arm64),
-        (1351, 442, 825),
+        (1354, 442, 825),
         "枚举器条目数变了：确认是谱的预期变更还是派生逻辑退化"
     );
 }

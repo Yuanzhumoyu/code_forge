@@ -729,6 +729,30 @@ struct SampleOperands {
     mem_cls: Vec<(usize, TokenStream)>,
 }
 
+/// 槽的寄存器类里有没有 GPR（EGPR 只可能出现在 GPR 组）。
+fn slot_has_gpr(slot: &OperandSlot) -> bool {
+    let cs: Vec<crate::dsl::model::RegClass> = match (&slot.class, &slot.classes) {
+        (Some(c), _) => vec![*c],
+        (None, Some(cs)) => cs.clone(),
+        (None, None) => Vec::new(),
+    };
+    cs.iter()
+        .any(|c| matches!(c, crate::dsl::model::RegClass::GPR(_)))
+}
+
+/// 本指令的 **GPR 字段最多能编到几号**（高编号视图的上限）。
+///
+/// REX2（APX）是唯一能编 r16..r31 的前缀；VEX/EVEX 与 0F38/0F3A 在本实现里 GPR
+/// 字段只有 4 位（EVEX 扩展的 B4/X4 没做）。取高点取到编不出来的寄存器时，**编码器
+/// 会 fail-closed**——那是对的；但用例本身要求"取高点"这条路径可编码，所以这里按
+/// 编码能力取上限（与 `imm_encode_checked` 对不可编码立即数跳过边界风味同一口径）。
+fn gpr_index_cap(info: &InstInfo) -> u32 {
+    let f = &info.form;
+    let rex2_able =
+        f.vex.is_none() && f.evex.is_none() && f.escape.as_ref().is_none_or(|e| e.len() <= 1);
+    if rex2_able { u32::MAX } else { 15 }
+}
+
 /// 生成一个视图下的样本操作数（见 [`SampleOperands`]）。
 fn sample_operands(
     info: &InstInfo,
@@ -743,6 +767,8 @@ fn sample_operands(
     let mut imm_slots: Vec<(usize, String, i64, i64, bool)> = Vec::new();
     let mut mem_cls: Vec<(usize, TokenStream)> = Vec::new();
     let mut has_cond = false;
+    // GPR 高编号视图的上限（见 `gpr_index_cap`）。
+    let gpr_cap = gpr_index_cap(info);
 
     for (i, (fname, fid, slot, _)) in info.operands.iter().enumerate() {
         match slot.kind {
@@ -776,6 +802,12 @@ fn sample_operands(
                         .min(count.saturating_sub(1))
                 } else {
                     (i as u32).min(count.saturating_sub(1))
+                };
+                // GPR 字段：按**本指令的编码能力**封顶（VEX/EVEX 编不了 EGPR）。
+                let idx = if slot_has_gpr(slot) {
+                    idx.min(gpr_cap)
+                } else {
+                    idx
                 };
                 exprs.push(quote! { <Reg as forge_ir::PhysReg>::from_index(#idx, #cls) });
                 let msg = syn::LitStr::new(

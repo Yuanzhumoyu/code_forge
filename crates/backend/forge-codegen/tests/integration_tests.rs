@@ -19,7 +19,9 @@ fn target_machine_assembles() {
     assert!(tm.decoder().is_some());
     // RegInfo 基本查询
     let ri = tm.reg_info();
-    assert_eq!(ri.num_gp_regs(), 16, "x86 GPR 数");
+    // 可编码 GPR 数 = 32（APX 的 r16..r31 也能编）；**分配池**只有前 16 个
+    // （`[reg.gpr8].alloc_count = 16`，见 `abi_target_real.rs`）。
+    assert_eq!(ri.num_gp_regs(), 32, "x86 可编码 GPR 数（含 APX EGPR）");
     assert!(ri.num_fp_regs() >= 16, "x86 XMM 数");
 }
 
@@ -98,14 +100,26 @@ fn encoder_decoder_via_tm() {
             dst: Reg::from_index(0, forge_ir::RegClass::GPR64),
         }]
     );
-    // "mov eax, ebx"（32 位）→ MOV_R_RM（0x8B 方向）
+    // "mov eax, ebx"（32 位）→ **MR 形态**（`89`）：与 64 位那条同一个方向（也与上游
+    // LLVM 一致）。签名更具体 ⇒ 胜出；`8B` 方向那条（`MOV_R_RM`）仍在谱里**认领解码**。
     let insts = a.parse_insts("mov eax, ebx").expect("assemble 32 位");
     assert_eq!(
         insts,
-        vec![Inst::MovRRm {
-            dst: Reg::from_index(0, forge_ir::RegClass::GPR(4)),
+        vec![Inst::MovRmR24 {
             src: Reg::from_index(3, forge_ir::RegClass::GPR(4)),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR(4)),
         }]
+    );
+    // 8B 形态（别的汇编器会编出来）必须解得回来：两条合法编码收敛到同一段文本。
+    let (back, n8) = tm
+        .decoder()
+        .expect("decoder")
+        .decode(&[0x8B, 0xC3])
+        .expect("decode 8B 形态");
+    assert_eq!(n8, 2);
+    assert!(
+        matches!(back, Inst::MovRRm { .. }),
+        "8B 形态应解成 MOV_R_RM：{back:?}"
     );
 }
 

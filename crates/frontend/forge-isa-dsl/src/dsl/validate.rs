@@ -1030,9 +1030,6 @@ fn validate_conventions(m: &IsaModel) -> Result<(), String> {
         }
     }
     if let Some(ps) = &conv.prefix_scan {
-        const KNOWN: [&str; 7] = [
-            "opsize16", "lock", "repe", "repne", "addr32", "addr16", "rex",
-        ];
         for (i, e) in ps.iter().enumerate() {
             let path = format!("[conventions.prefix_scan][{i}]");
             if e.byte.is_none() && e.range.is_none() {
@@ -1046,13 +1043,8 @@ fn validate_conventions(m: &IsaModel) -> Result<(), String> {
             {
                 return Err(format!("{path}: byte 0x{b:x} exceeds one byte"));
             }
-            for fx in &e.effects {
-                if !KNOWN.contains(&fx.as_str()) {
-                    return Err(format!(
-                        "{path}: unknown effect '{fx}' (opsize16/lock/repe/repne/addr32/addr16/rex)"
-                    ));
-                }
-            }
+            // `effects` 的取值域由**类型**保证（`PrefixEffect` 的 `Deserialize` 在
+            // 解析期就拒未知名字），这里不再维护第二份名单。
         }
     }
     if let Some(mt) = &conv.mem {
