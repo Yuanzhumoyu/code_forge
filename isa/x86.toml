@@ -488,7 +488,25 @@ name = "MOVSXD_R_RM"
 ref = "movsxd"
 form = "MRR_FIX64"
 opcode = 0x63
+# 源槽用 `gpr`（64 位）：lowering 的 `movsxd {out}, {0}` 送来的是 I32 **值**，而它住在
+# 64 位值池寄存器里（`movsxd RAX, RBX` 是既有向量）。
 ops = ["dst:gpr:out", "src:gpr"]
+asm = "movsxd {dst}, {src}"
+
+# 同一编码的第二个真实形态：`movsxd r64, r/m32` 在**真实汇编**里写 32 位名
+# （`movsxd rax, r16d`、`movsxd r16, eax`）。与上面那条的差别只有源槽的类
+# （`gpr4` vs `gpr`）——文本里的寄存器名不同，所以两条各自命中、互不歧义；
+# 解码按声明序（先 64 位源那条），编码字节完全相同（`MRR_FIX64`）。
+# 为什么不用一个多类槽收两边：`opsize = r64`（= 固定宽度要求）会对**多类** GPR 槽
+# 过滤宽度 ⇒ `ecx`/`r16d` 全被拒；换成 `opsize = s0` 又会要求两个操作数同宽 ⇒
+# `movsxd rax, ecx` 这种"64←32"的真实写法同样被拒。两条同编码指令是既有格局
+# （`MOV_R_RM`/`MOV_RM_R`、`MOV64_RR` 那几对）。
+[[instructions]]
+name = "MOVSXD_R_RM32"
+ref = "movsxd"
+form = "MRR_FIX64"
+opcode = 0x63
+ops = ["dst:gpr:out", "src:gpr4"]
 asm = "movsxd {dst}, {src}"
 
 # RM_R 两地址算术/逻辑（ADD/SUB/XOR/AND/OR）：opsize 必须取 **inout 目的槽
@@ -523,6 +541,18 @@ form = "MRR_0F"
 opcode = 0xAF
 ops = ["dst:gprx:out", "src:gprx"]
 asm = "imul {dst}, {src}"
+
+# 两操作数 `imul` 的**内存源**形态（`0F AF /r`，rm = 内存）。
+# 与 `IMUL_R_RM` 同编码、同模板，只是 rm 是 MemRef——宽度由目的寄存器（`s0`）驱动，
+# 所以 `imul ebx, dword ptr […]` 与 `imul rbx, qword ptr […]` 都成立。
+[[instructions]]
+name = "IMUL_R_MEM"
+form = "MRR_MEMREF_AUTO"
+escape = [0x0F]
+modrm = { reg = "dst", rm = "[mem]" }
+opcode = 0xAF
+ops = ["dst:gprx:out", "mem:mem"]
+asm = "imul {dst}, {mem}"
 
 [[instructions]]
 name = "XOR_RM_R"
@@ -1892,8 +1922,97 @@ name = "NOT_RM"
 form = "MRR_EXT_OP"
 modrm = { reg = 2, rm = "dst" }
 opcode = 0xF7
-ops = ["dst:gpr:inout"]
+# 目的槽用 `gprx`（16/32/64）：`not eax`/`not r16d` 是真实语料里的常态；原来固定 64 位。
+ops = ["dst:gprx:inout"]
 asm = "not {dst}"
+
+# ── 一元族的**内存形态**（FF /0,/1 与 F7 /2../7）──
+#
+# 为什么模板里写死尺寸前缀（`not dword ptr {mem}`）而不是靠 `{size}` 提示：一元形态
+# **没有寄存器操作数**，编码宽度无从上推——`{size}` 按设计只是给人读的冗余提示、不进
+# MemRef（见 docs/reference/isa-dsl.md 的 `[conventions.mem]`）。写成字面量之后
+# `dword ptr` 是**模板的一部分**：`not byte ptr [rax]` 不会命中这条（真汇编器同样要求
+# 一元内存形态给尺寸提示），不会静默按 32 位编出来。其他宽度照这个形状加一行即可。
+[[instructions]]
+name = "NOT_MEM32"
+form = "MRR_MEMREF_AUTO"
+modrm = { reg = 2, rm = "[mem]" }
+opcode = 0xF7
+opsize = 32
+ops = ["mem:mem:inout"]
+asm = "not dword ptr {mem}"
+
+[[instructions]]
+name = "NEG_MEM32"
+form = "MRR_MEMREF_AUTO"
+modrm = { reg = 3, rm = "[mem]" }
+opcode = 0xF7
+opsize = 32
+ops = ["mem:mem:inout"]
+asm = "neg dword ptr {mem}"
+
+[[instructions]]
+name = "INC_MEM32"
+form = "MRR_MEMREF_AUTO"
+modrm = { reg = 0, rm = "[mem]" }
+opcode = 0xFF
+opsize = 32
+ops = ["mem:mem:inout"]
+asm = "inc dword ptr {mem}"
+
+[[instructions]]
+name = "DEC_MEM32"
+form = "MRR_MEMREF_AUTO"
+modrm = { reg = 1, rm = "[mem]" }
+opcode = 0xFF
+opsize = 32
+ops = ["mem:mem:inout"]
+asm = "dec dword ptr {mem}"
+
+[[instructions]]
+name = "MUL_MEM32"
+form = "MRR_MEMREF_AUTO"
+modrm = { reg = 4, rm = "[mem]" }
+opcode = 0xF7
+opsize = 32
+effect = ["Write"]
+# mul 隐式读 RAX 并写 RAX:RDX（128 位积）
+implicit_regs = ["RAX", "RDX"]
+ops = ["mem:mem"]
+asm = "mul dword ptr {mem}"
+
+[[instructions]]
+name = "IMUL_MEM32"
+form = "MRR_MEMREF_AUTO"
+modrm = { reg = 5, rm = "[mem]" }
+opcode = 0xF7
+opsize = 32
+effect = ["Write"]
+implicit_regs = ["RAX", "RDX"]
+ops = ["mem:mem"]
+asm = "imul dword ptr {mem}"
+
+[[instructions]]
+name = "DIV_MEM32"
+form = "MRR_MEMREF_AUTO"
+modrm = { reg = 6, rm = "[mem]" }
+opcode = 0xF7
+opsize = 32
+effect = ["Write"]
+implicit_regs = ["RAX", "RDX"]
+ops = ["mem:mem"]
+asm = "div dword ptr {mem}"
+
+[[instructions]]
+name = "IDIV_MEM32"
+form = "MRR_MEMREF_AUTO"
+modrm = { reg = 7, rm = "[mem]" }
+opcode = 0xF7
+opsize = 32
+effect = ["Write"]
+implicit_regs = ["RAX", "RDX"]
+ops = ["mem:mem"]
+asm = "idiv dword ptr {mem}"
 
 # ── 移位：按立即数（`D1 /n` 的 1、`C1 /n ib` 的一般计数）──
 #
@@ -1995,7 +2114,8 @@ opcode = 0xF7
 effect = ["Write"]
 # div 隐式读 RAX:RDX（128 位被除数）并写 RAX(商)/RDX(余数)
 implicit_regs = ["RAX", "RDX"]
-ops = ["src:gpr"]
+# `gprx`（16/32/64）：`div ecx`/`div r16d` 同样常见；原来固定 64 位。
+ops = ["src:gprx"]
 asm = "div {src}"
 
 [[instructions]]
@@ -2006,8 +2126,30 @@ opcode = 0xF7
 effect = ["Write"]
 # idiv 隐式读 RAX:RDX（128 位被除数）并写 RAX(商)/RDX(余数)
 implicit_regs = ["RAX", "RDX"]
-ops = ["src:gpr"]
+ops = ["src:gprx"]
 asm = "idiv {src}"
+
+# 一元 `mul`/`imul`（`F7 /4`、`F7 /5`）：隐式读 RAX、写 RAX:RDX。
+# 与两条目 `imul {dst}, {src}`（`0F AF`）不撞：操作数个数与槽类型都不同。
+[[instructions]]
+name = "MUL_RM"
+form = "MRR_EXT_OP"
+modrm = { reg = 4, rm = "src" }
+opcode = 0xF7
+effect = ["Write"]
+implicit_regs = ["RAX", "RDX"]
+ops = ["src:gprx"]
+asm = "mul {src}"
+
+[[instructions]]
+name = "IMUL_RM"
+form = "MRR_EXT_OP"
+modrm = { reg = 5, rm = "src" }
+opcode = 0xF7
+effect = ["Write"]
+implicit_regs = ["RAX", "RDX"]
+ops = ["src:gprx"]
+asm = "imul {src}"
 
 
 [[instructions]]
@@ -2308,6 +2450,30 @@ name = "NOP"
 opcode = 0x90
 asm = "nop"
 
+# `nop r/m`（`0F 1F /0`）：不是空操作助记符的别名，而是**带操作数**的 NOP——Intel 明确
+# 用它做多字节填充/对齐。寄存器形态（`nop r16d`）由寄存器驱动宽度；内存形态用字面
+# `dword ptr`（同 `NOT_MEM32` 一族：一元形态没有寄存器可驱动宽度）。
+[[instructions]]
+name = "NOP_RM"
+form = "MRR_EXT_OP"
+escape = [0x0F]
+modrm = { reg = 0, rm = "dst" }
+opcode = 0x1F
+ops = ["dst:gprx"]
+asm = "nop {dst}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "NOP_MEM32"
+form = "MRR_MEMREF_AUTO"
+escape = [0x0F]
+modrm = { reg = 0, rm = "[mem]" }
+opcode = 0x1F
+opsize = 32
+ops = ["mem:mem"]
+asm = "nop dword ptr {mem}"
+effect = ["Pure"]
+
 [[instructions]]
 name = "UD2"
 escape = [0x0F]
@@ -2357,6 +2523,9 @@ name = "SETCC_RM8"
 modrm = { reg = 0, rm = "dst" }
 escape = [0x0F]
 opcode = 0x90            # 条件码 = opcode 低 4 位（0x90..0x9F）；reg=0 固定、rm=op0
+# 目的写**64 位名**（`setcc RAX, 4`）——lowering 用 64 位 vreg 承接布尔结果
+# （先 `xor` 清零，故低字节即结果），见槽 `gpr8` 的注释。真实汇编的 8 位名写法
+# （`sete al`）是**按条件码声明**的 `SETE_RM8_B`（见下）。
 ops = ["dst:gpr8:out", "cc:cond"]
 asm = "setcc {dst}, {cc}"
 effect = ["Pure"]
@@ -2398,6 +2567,23 @@ opcode = 0x40                    # 条件码 = opcode 低 4 位（0x40..0x4F）
 ops = ["dst:gpr:inout", "src:gpr", "cc:cond"]
 asm = "cmovcc {dst}, {src}, {cc}"
 effect = ["Pure"]
+
+# ── 真实汇编写法：**条件码烘进 opcode**（助记符后缀）—— 见 asm/README.md 的缺口清单 ──
+#
+# 上游语料写的是 `cmovl eax, r16d` / `sete al`：助记符**自带条件**、没有 `cc` 操作数。
+# 我们目前只建模了通用形态（`cmovcc {dst}, {src}, {cc}` / `setcc {dst}, {cc}`，供 lowering
+# 使用）。两条路子都试过并被否决，原因记在这里（省得下轮重踩）：
+#
+# 1. `asm = "set{cc} {dst}"`（占位符嵌进助记符）：**扫描器按整个 token 匹配字面段**，
+#    而 `sete` 是一个 token ⇒ 字面段 `"set"` 匹配不上。要支持就得让"紧贴操作数的
+#    字面段"按 ident **前缀**匹配、余下部分由该操作数消费（改 asm.rs 扫描器；影响
+#    所有 ISA，因此单独一轮做）。
+# 2. 按条件码逐条声明（`SETE_RM8_B`，opcode 0x94）：**解码树不容许掩码边共存**——
+#    通用形态的 `0F 9x` 是掩码边（掩码 0xF0），固定条件的 `0F 94` 落在同一掩码空间，
+#    `check_dec_trie_overlaps` 直接拒；且这是**真**歧义（同一批字节对应两种 Inst 形状）。
+#
+# 语料里的 14 行（cmovl ×10、sete ×4）因此停在 `NoPrefix` 桶（"上游比我们全"），
+# 不影响门禁（门禁只看 tail_mismatch）。
 
 [[instructions]]
 name = "ROUNDSD_I"

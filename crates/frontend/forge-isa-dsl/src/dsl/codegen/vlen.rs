@@ -2173,7 +2173,11 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                     if __o + #total <= bytes.len() && #cond {
                         let __modrm = bytes[__o + #modrm_idx];
                         let __mod = __modrm >> 6;
-                        if #mod_guard && !(__mod == 0 && (__modrm & 7) == 5) {
+                        // `#modrm_guard` = 固定扩展码（`F7 /2` 的 2）也**必须**在内存分支
+                        // 上判：同一 opcode 的一元族（not/neg/mul/imul/div/idiv）只差
+                        // ModRM.reg 那 3 位，漏判就会全部解成**声明在前**的那一条
+                        // （实测 `neg dword ptr [rax]` 解成 `NotMem32`）。
+                        if #mod_guard #modrm_guard && !(__mod == 0 && (__modrm & 7) == 5) {
                             let mut __o2 = __o + #len;
                             #mem_decode
                             if __sib_ok && __disp_ok {

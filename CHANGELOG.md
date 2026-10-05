@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-05) — x86 补 APX 语料用到的真实形态；`llvm-mc` 解析档红桶清零
+
+承接 APX/REX2：把 `apx-rex2-format-intel.s` 里**谱里根本没有的形态**补上（14 条指令），x86 `llvm-mc` 的 `tail_mismatch` 从 39 降到 **0**：
+
+- **一元族的内存形态** 8 条（`NOT/NEG/INC/DEC/MUL/IMUL/DIV/IDIV_MEM32`，`FF /0./1`、`F7 /2../7`）。宽度没有寄存器可驱动，所以模板里**写死字面 `dword ptr`**——`not byte ptr [rax]` 不会命中（真实汇编器同样要求一元内存形态给尺寸提示），不会静默按 32 位编出来。
+- 一元 **`MUL_RM`/`IMUL_RM`**（`F7 /4`、`F7 /5`）；拓宽 `NOT_RM`/`DIV_RM`/`IDIV_RM` 到 16/32/64 位（原来固定 64）。
+- 两操作数 **`IMUL_R_MEM`**（`0F AF` + 内存源）、**`NOP_RM`/`NOP_MEM32`**（`0F 1F /0`，Intel 的多字节填充形态）。
+- **`MOVSXD_R_RM32`**：真实汇编写 32 位源名（`movsxd rax, r16d`），与 lowering 用的 64 位源那条**同编码**（`MRR_FIX64`）——两条同编码指令是既有格局（`MOV_R_RM`/`MOV_RM_R`）。
+
+顺带修掉一处**解码树漏洞**：固定扩展码（`F7 /2` 的 2）的守卫只加在寄存器分支、**内存分支漏了** ⇒ `neg dword ptr [rax]` 会解成**声明在前**的 `NotMem32`。一元内存形态是第一批"固定 ext + 内存"指令，所以现在才暴露。
+
+效果：x86 `llvm-mc` `parsed` 36 → **95**、红桶 55 → **0**、`no_prefix` 20 → 16；字节对拍 `checked` 31 → **90 条逐字节全等**、`known` 仍 **0**。余下 16 条 `no_prefix` 已逐条登记（14 条助记符条件后缀 `cmovl`/`sete`、2 条 `acquire/release lock`），各自的实现路线写在 `asm/README.md` 与 `isa/x86.toml` 注释里。
+
 ### Added (2026-10-05) — x86 APX：REX2 前缀与 EGPR（`r16`..`r31`）编码/解码；16/32 位 `mov` 的 MR 形态
 
 **能力由谱数据声明，不新增开关**：x86 的四个 GPR 宽度组扩到 32 项（`r16`..`r31` 四个视图 = APX 的 EGPR），编码器看到任一 GPR 字段的索引 ≥ 16 就改发 **REX2**（`0xD5` + payload `M0 R4 X4 B4 W R3 X3 B3`），第 4 位进 payload、`M0` **取代 `0F` 字节**；解码侧在 `M0=1` 时先补一个虚拟 `0F` 再走原有派发树（消费长度减一），因此派发树不用写第二份。`[[conventions.prefix_scan]]` 的效果从 `Vec<String>` 改成**枚举** `PrefixEffect`（`addr32`/`addr16` 合并成有值变体 `AddrSize(32|16)`），编码器/校验器/schema 不再各处比字符串。

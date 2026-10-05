@@ -130,15 +130,25 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 - aarch64：**没有剩余缺口**——语料里本汇编器能认出来的写法全部通过（`parsed` 153、
   `no_prefix` 0、红桶 0、编码对拍 118/119 逐字节全等）；余下 267 行是语料特性（伪指令/宏/一行多语句/
   跨文件标签）。已修的各族见下面「已经修掉的」里的第十二～十六批。
-- x86（余下几条，来自 `intel-syntax-encoding.s`）：`acquire/release lock add …`（锁前缀 + 内存序提示）；
-  以及 `apx-rex2-format-intel.s` 整份（APX/REX2：`r16d`、`dword ptr [r16 + rax]` 等）。
+- x86：**红桶已清零**（`asm/ratchet/x86.txt` 的 `tail_mismatch = 0`）。余下 16 条 `no_prefix`
+  都是"上游写法我们还没建模"，各自有明确路线：
+  - `acquire/release lock add [rax], rax`（2 条，`intel-syntax-encoding.s`）：**两条前缀**
+    （`F2`/`F3` + `F0`），而 `EncKeys.prefix` 目前只收一个字节 ⇒ 要把 `prefix` 放成**列表**
+    （与 `escape` 同一形状：按序发，解码侧按前缀标志逐个判）。
+  - `cmovl …`（10 条）与 `sete …`（4 条，`apx-rex2-format-intel.s`）：**助记符自带条件后缀**，
+    我们只建了通用形态（`cmovcc {dst}, {src}, {cc}` / `setcc {dst}, {cc}`，供 lowering 用）。
+    两条路都试过并被否决，写在 `isa/x86.toml` 的对应注释里：① `asm = "set{cc} {dst}"` 需要
+    扫描器让"紧贴操作数的字面段"按 ident **前缀**匹配（`sete` 是一个 token，现在匹配不上）；
+    ② 按条件码逐条声明会与通用形态的**掩码边**在解码树上共存不能（`0F 9x` 的掩码 0xF0 覆盖
+    `0F 94`，`check_dec_trie_overlaps` 且这是**真**歧义：同一批字节两种 `Inst` 形状）。
 - x86 `movzx` / `movsx` 的**内存源**形式（`movzx eax, byte ptr [rbx]`、`movsx rax, word ptr [rbx]`）：
   瓶颈不在操作码，而在**文本分不出源宽度**——`byte`/`word` 是 `{size}` 组件，按设计**不携带
   宽度**（只是给人读的提示），于是 `MOVZX_R8_MEM` 与 `MOVZX_R16_MEM` 的汇编文本与类型签名
   完全一样（已在 `spec_coverage_guard` 的歧义名单里登记）；再照搬一套 16/32 位目的地的
   variant 只会让 `movzx eax, word ptr [rbx]` **静默编成 byte 那条**（按声明序取首匹配）。
   要修得先定一件事：`{size}` 是否携带宽度，或把尺寸关键字写成模板字面量——**独立的 DSL 设计项**。
-  寄存器源的 `movsxd rax, ecx`（源是 32 位寄存器名、指令槽却是 64 位 `gpr`）同理待定。
+  一元族的**内存形态**（`inc dword ptr [rax]` 这类）已经按同一个思路解决：模板里写死
+  `dword ptr` 字面量（`NOT_MEM32` 一族），文本因此不歧义。
 
 - riscv64（v20 V10，第十七批：**`fence` 的字母集合 + 三操作数 `jalr` + 位置符号 `.`**）：
   ① `fence pred, succ` 的 pred/succ 是 i/o/r/w 的**组合**（`iorw`、`io`、`r,w`、`w,ir`）——
@@ -151,12 +161,6 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
   自身的块下标"，与"标签回填块下标"同一口径。
   结果：riscv64 `parsed` 129 → **135**、红桶 13 → **7**，字节对拍 **129 → 134 条逐字节全等
   （`unparsed` 5 → 0）**——即"有期望字节的用例全部对上"（`known` 仍 0）。
-
-> **计数口径变化（v20 V10）**：补上一元 `inc`/`dec` 之后，`apx-rex2-format-intel.s` 里
-> 那 8 行 `inc`/`dec`（`inc r16d`、`dec dword ptr [rax + r16]`）从 `no_prefix` 桶
-> （"没有候选的首段能对上"）挪进了 `tail_mismatch` 桶（"首段对得上、后面没对上"）——
-> 它们本来就是 APX 形态（超出本谱范围），只是**归因更准了**：以前连 `inc` 都不认识，
-> 现在知道助记符对、错在 APX 操作数。`parsed` 不变，红桶数字变化仅此一项。
 
 **不是缺口：`gnu-gas-intel` 余下的是 32 位模式专有语法**（`asm/parse/x86/gnu-gas-intel`
 摘自 GAS 的 32 位 Intel 用例）。`push es` / `pop ds` 这类**段寄存器 push/pop 在 64 位
@@ -305,17 +309,33 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
   写法全部通过；余下 267 行是语料特性/伪指令/宏），字节对拍 100 → **118 条逐字节全等**
   （`known` 仍 0）。
 
+- x86 / riscv64（v20 V10，第十八批：**APX/REX2 + 真实形态补齐——x86 红桶清零**）：
+  ① **REX2 / EGPR**：四个 GPR 宽度组扩到 32 项（`r16`..`r31` 四个视图），编码器见任一 GPR
+  字段索引 ≥16 就改发 `D5` + payload（`M0 R4 X4 B4 W R3 X3 B3`，`M0` **取代 `0F` 字节**）；
+  解码侧在 `M0=1` 时补一个虚拟 `0F` 再走原派发树（消费长度减一），派发树一行不改。
+  `[[conventions.prefix_scan]]` 的 `rex2` 效果吃两个字节。新键 `[reg.<组>].alloc_count`
+  （`[reg.gpr8]` = 16）：EGPR **能编码不能分配**——分配器一用 r16+，JIT 产物在没有 APX 的
+  机器上就是非法指令（全量套件实测 `STATUS_ILLEGAL_INSTRUCTION`）。
+  ② 补 **16/32 位 `mov` 的 MR 形态**（`89`，`MOV_RM_R_24`）：上游 LLVM 对 reg-reg 用 MR，
+  我们原先只给 64 位建了它 ⇒ 那类上游编码**解不回来**。
+  ③ 补 APX 语料用到的**真实形态**（14 条）：一元族内存形态 8 条（`NOT/NEG/INC/DEC/MUL/IMUL/
+  DIV/IDIV_MEM32`，模板里写死 `dword ptr`）、`MUL_RM`/`IMUL_RM`（`F7 /4,/5`）、
+  `IMUL_R_MEM`（`0F AF` + 内存源）、`NOP_RM`/`NOP_MEM32`（`0F 1F /0`）、`MOVSXD_R_RM32`
+  （真实汇编的 32 位源写法）。顺带修掉一处**解码树漏洞**：固定扩展码（`F7 /2` 的 2）
+  的守卫只加在寄存器分支、内存分支漏了 ⇒ `neg dword ptr [rax]` 解成 `NotMem32`。
+  结果：`llvm-mc` 解析档 `parsed` 36 → **95**、**红桶 55 → 0**、`no_prefix` 20 → **16**；
+  字节对拍 x86 `checked` 31 → **90 条逐字节全等**、`known` 全 0。
+
 ## 现有语料与计数
 
-（`2026-10-03` 实测；解析档数值以 `asm/ratchet/<isa>.txt` 为准，编码档以
-`asm/ratchet/encoding.txt` 为准。x86 两套是 v20 V10 补完内存模板、内存形式 ALU 族、
-8 位 ALU 族、立即数 `wrap`、一元 `inc`/`dec`、无基址寻址、符号常量/地址尺寸前缀与内存形式
-mov 族之后的数；riscv64 是补完立即数修饰、基础访存族与 W 立即数移位之后的数）
+（`2026-10-05` 实测；解析档数值以 `asm/ratchet/<isa>.txt` 为准，编码档以
+`asm/ratchet/encoding.txt` 为准。x86 是补完 APX/REX2 与真实形态之后的数；riscv64 / aarch64
+分别在立即数修饰/访存族与逻辑立即数族之后，此后未变）
 
 | ISA | suite | 文件 | 行数 | parsed | no_prefix | tail_mismatch | corpus_only | 字节 oracle |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | x86 | `gnu-gas-intel` | 1 | 64 | **50** | 4 | 7 | 3 | 无（GAS 用例不带期望字节） |
-| x86 | `llvm-mc` | 2 | 447 | **35** | 21 | 55 | 336 | **有**：104 条期望 / **30 条对拍上 / 0 条差异** |
+| x86 | `llvm-mc` | 2 | 447 | **95** | 16 | **0** | 336 | **有**：104 条期望 / **90 条逐字节全等 / 0 条差异** |
 | riscv64 | `llvm-mc` | 3 | 503 | **136** | **0** | **1** | 366 | **有**：134 条期望 / **134 条逐字节全等** |
 | aarch64 | `llvm-mc` | 3 | 420 | **153** | **0** | **0** | 267 | **有**：119 条期望 / **118 条逐字节全等** |
 

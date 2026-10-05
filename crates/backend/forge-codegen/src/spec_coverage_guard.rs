@@ -92,12 +92,17 @@ fn generated_spec_tests_cover_every_instruction() {
 /// x86 补 **APX（REX2）能力**：四个 GPR 宽度组扩到 32 项（r16..r31 四个视图，编码器见到
 /// ≥16 就改发 REX2），并补上 **16/32 位的 `89`（MR）形态** `MOV_RM_R_24`（上游 LLVM 对
 /// reg-reg 用 MR 形态；我们原先只给 64 位建了它 ⇒ 那类上游编码我们**解不回来**）→ **276**。
+/// 再补 **APX 语料用到的真实形态**（14 条）：一元族的**内存形态** 8 条
+/// （`{NOT,NEG,INC,DEC,MUL,IMUL,DIV,IDIV}_MEM32`——一元形态没有寄存器驱动宽度，模板里
+/// 写死 `dword ptr`）、一元 `MUL_RM`/`IMUL_RM`（`F7 /4,/5`）、两操作数 `IMUL_R_MEM`
+/// （`0F AF` + 内存源）、`NOP_RM`/`NOP_MEM32`（`0F 1F /0`）与 `MOVSXD_R_RM32`
+/// （真实汇编的 32 位源写法，与 lowering 用的 64 位源那条同编码）→ **290**。
 #[test]
 fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 276), ("riscv64", 139), ("arm64", 206)],
+        vec![("x86", 290), ("riscv64", 139), ("arm64", 206)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }
