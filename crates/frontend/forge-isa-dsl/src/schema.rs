@@ -188,6 +188,15 @@ pub const SECTIONS: &[Section] = &[
         doc: "变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex`",
     },
     Section {
+        path: "[conventions.bitsets.<table>]",
+        model: "",
+        required: &[],
+        optional: &[],
+        flatten: &[],
+        additional: true,
+        doc: "命名位集合表（kind = \"bits\" 的槽用）：表名 → （名字 → 位）——源文本是名字拼接，编码取位或",
+    },
+    Section {
         path: "[[conventions.imm_fn]]",
         model: "ImmFnDef",
         required: &["name", "text", "expr"],
@@ -211,7 +220,7 @@ pub const SECTIONS: &[Section] = &[
         required: &["name", "kind"],
         optional: &[
             "class", "classes", "byte_reg", "width", "signed", "float", "min", "max", "wrap",
-            "unit", "roles", "encode", "fields",
+            "unit", "roles", "encode", "fields", "table",
         ],
         flatten: &[],
         additional: false,

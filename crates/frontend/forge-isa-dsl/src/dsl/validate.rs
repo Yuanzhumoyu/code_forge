@@ -1534,6 +1534,44 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                 }
                 _ => {}
             },
+            OperandKind::Bits => {
+                // 命名位集合：必须给 `table`（指向 [conventions.bitsets.<表名>]）与 `width`；
+                // 位必须落在槽宽内；名字必须能作为 ident 片段（解析靠"名字拼接"）。
+                let Some(tname) = &s.table else {
+                    return Err(format!(
+                        "{path}: kind = \"bits\" 的槽必须给 `table`（[conventions.bitsets.<table>]）"
+                    ));
+                };
+                if m.encoding.kind == EncodingKind::PrefixScan {
+                    return Err(format!(
+                        "{path}: kind = \"bits\" 暂不支持变长（prefix_scan）ISA"
+                    ));
+                }
+                let Some(entries) = m.conventions.bitsets.as_ref().and_then(|bs| bs.get(tname))
+                else {
+                    return Err(format!(
+                        "{path}: 位集合表 '{tname}' 未在 [conventions.bitsets] 里声明"
+                    ));
+                };
+                if entries.is_empty() {
+                    return Err(format!("{path}: 位集合表 '{tname}' 是空的"));
+                }
+                let Some(w) = s.width.filter(|w| *w > 0) else {
+                    return Err(format!("{path}: kind = \"bits\" 的槽必须给 `width`（> 0）"));
+                };
+                for (name, bit) in entries {
+                    if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                        return Err(format!(
+                            "{path}: 位集合名 '{name}' 必须是 ident 片段（字母/数字/下划线）"
+                        ));
+                    }
+                    if *bit == 0 || (w < 64 && *bit >= (1u64 << w)) {
+                        return Err(format!(
+                            "{path}: 位集合 '{name}' = {bit} 超出 {w} 位槽（位必须在 [1, 2^{w}) 内）"
+                        ));
+                    }
+                }
+            }
             _ => {}
         }
         // 立即数约束一致性：min ≤ max。
@@ -1655,6 +1693,9 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                     "{path}: 声明了 `fields` 就必须给 `encode`（编码方案）"
                 ));
             }
+        }
+        if s.table.is_some() && s.kind != OperandKind::Bits {
+            return Err(format!("{path}: `table` 只对 kind = \"bits\" 有意义"));
         }
         // `roles` 是**一个** `OperandRole`（`in`/`out`/`inout`），由类型系统保证不会是
         // 空集合或重复项——旧写法 `["in", "out"]` 的两种检查随之删除。

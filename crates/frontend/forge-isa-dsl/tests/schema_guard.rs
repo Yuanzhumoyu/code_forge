@@ -50,6 +50,11 @@ const INTERNAL_FIELDS: &[(&str, &str, &str)] = &[
         "derived_preds",
         "派生谓词表（v18 S3f），解析期派生、不参与序列化",
     ),
+    (
+        "OperandSlot",
+        "table_entries",
+        "命名位集合表摊平结果（解析期填、不参与序列化）",
+    ),
 ];
 
 /// serde `#[serde(flatten)]` 字段 → 它展开出的键空间（`""` = 自由表，额外键由节声明）。

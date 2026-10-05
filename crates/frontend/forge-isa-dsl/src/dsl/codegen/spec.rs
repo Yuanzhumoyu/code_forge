@@ -671,6 +671,10 @@ fn describe_operand(info: &InstInfo, view: &ViewSel, cond_first: Option<u8>, j: 
             format!("imm={v}")
         }
         OperandKind::Label => "label".to_string(),
+        OperandKind::Bits => {
+            let names: Vec<&str> = slot.table_entries.iter().map(|(n, _)| n.as_str()).collect();
+            format!("bits[{}]", names.join("|"))
+        }
         OperandKind::Cond => format!("cond={}", cond_first.unwrap_or(0)),
     }
 }
@@ -820,6 +824,17 @@ fn sample_operands(
             }
             OperandKind::Label => {
                 exprs.push(quote! { 0i64 });
+            }
+            OperandKind::Bits => {
+                // 代表值 = **所有位都置**（渲染出的名字串非空；空集渲染成空串、装配不回去）。
+                let all: u64 = slot.table_entries.iter().fold(0u64, |a, (_, b)| a | *b);
+                let lit = Literal::i64_suffixed(all as i64);
+                exprs.push(quote! { #lit });
+                let msg = syn::LitStr::new(
+                    &format!("{name}: 位集合 {fname} 未按位域语义解码"),
+                    proc_macro2::Span::call_site(),
+                );
+                checks.push(quote! { assert_eq!(*#fid, #lit, #msg); });
             }
             OperandKind::Cond => {
                 has_cond = true;

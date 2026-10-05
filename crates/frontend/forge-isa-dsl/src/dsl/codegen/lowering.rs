@@ -2695,6 +2695,24 @@ fn gen_lowering_insts(
                                 .map_err(|_| format!("lowering 模板立即数 '{op}' 无法解析"))?;
                             (quote! { #v }, quote! { 0u32 })
                         }
+                        OperandKind::Bits => {
+                            // 命名位集合：模板里写死的是**名字串**（如 `iorw`），按表折算成位或。
+                            let mut v: i64 = 0;
+                            let mut rest = op;
+                            'outer: while !rest.is_empty() {
+                                for (n, b) in &slot.table_entries {
+                                    if let Some(r) = rest.strip_prefix(n.as_str()) {
+                                        v |= *b as i64;
+                                        rest = r;
+                                        continue 'outer;
+                                    }
+                                }
+                                return Err(format!(
+                                    "lowering 模板位集合 '{op}' 里 '{rest}' 不是表里的名字"
+                                ));
+                            }
+                            (quote! { #v }, quote! { 0u32 })
+                        }
                     }
                 };
                 bindings.push((fid.to_string(), ctor_expr, xreg_expr));

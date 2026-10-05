@@ -3165,6 +3165,8 @@ fn imm_slot_wrap_reads_the_bit_pattern() {
         roles: None,
         encode: None,
         fields: None,
+        table: None,
+        table_entries: Vec::new(),
     };
 
     // 32 位有符号 + wrap：规范域是 i32，接受域多收 `0x90909090` 这类无符号写法。
@@ -3485,6 +3487,85 @@ asm = "and {dst}, {src}, #{imm}"
     let bad = doc.replace("width = 32\nencode", "width = 16\nencode");
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("32 或 64"), "err: {err}");
+}
+
+// ─────────────── `kind = "bits"`：命名位集合（字母拼接） ───────────────
+
+/// 命名位集合：源文本是表里若干名字的**拼接**（`iorw` = i|o|r|w），编码取位或。
+///
+/// 表是**数据**（`[conventions.bitsets.<table>]`），DSL 不认识任何名字；`kind = "bits"` 的槽
+/// 必须给 `table`（解析期摊平进 `slot.table_entries`，反汇编按名字字典序拼回）。
+#[test]
+fn slot_kind_bits_named_sets() {
+    let doc = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "fixed"
+bits = 32
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+opcode = { offset = 0, width = 7 }
+pred = { offset = 24, width = 4 }
+succ = { offset = 20, width = 4 }
+[conventions.bitsets.fence]
+i = 8
+o = 4
+r = 2
+w = 1
+[[operand_slots]]
+name = "fset"
+kind = "bits"
+table = "fence"
+width = 4
+[[forms]]
+name = "FENCE"
+opcode_field = "opcode"
+operand_fields = ["pred", "succ"]
+[[instructions]]
+name = "FENCE"
+form = "FENCE"
+opcode = 0x0F
+ops = ["pred:fset", "succ:fset"]
+asm = "fence {pred}, {succ}"
+"#;
+    let m = parse_and_validate(doc).expect("bits 槽合法");
+    let s = m
+        .operand_slots
+        .iter()
+        .find(|s| s.name == "fset")
+        .expect("槽存在");
+    // 解析期摊平：名字 → 位，按名字字典序（渲染口径）。
+    assert_eq!(
+        s.table_entries,
+        vec![
+            ("i".to_string(), 8),
+            ("o".to_string(), 4),
+            ("r".to_string(), 2),
+            ("w".to_string(), 1),
+        ]
+    );
+    assert_eq!(s.imm_range(), None, "位集合槽不是立即数槽（没有区间）");
+
+    // 校验：缺 table / 表未声明 / 位超宽 都要报错。
+    let err = parse_and_validate(&doc.replace("table = \"fence\"\n", ""))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("table"), "err: {err}");
+    let err = parse_and_validate(&doc.replace("table = \"fence\"", "table = \"nope\""))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("nope"), "err: {err}");
+    let err = parse_and_validate(&doc.replace("i = 8", "i = 16"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("超出") || err.contains("16"), "err: {err}");
+    // `table` 只对 bits 槽有意义：写到 imm 槽上要报错。
+    let err = parse_and_validate(&doc.replace("kind = \"bits\"", "kind = \"imm\"\nsigned = false"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("bits"), "err: {err}");
 }
 
 // ─────────────── W1：栈参数必须由角色（标签）驱动，不按指令名兜底 ───────────────

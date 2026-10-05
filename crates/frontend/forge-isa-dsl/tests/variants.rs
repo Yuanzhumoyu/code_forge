@@ -90,14 +90,15 @@ fn undeclared_or_out_of_domain_param_is_an_error() {
     );
 }
 
-/// ③ 发行谱投影账目快照：RV32 视角 = 137 → 120 条指令，且连带丢 14 条 lowering。
+/// ③ 发行谱投影账目快照：RV32 视角 = 139 → 122 条指令，且连带丢 14 条 lowering。
 ///
 /// 数字随 riscv64 谱增长而变（更新前先跑 `forge-isa insts isa/riscv64.toml --params xlen=32`
 /// 看账目，人工核对后被投影掉的是不是**真的都是 RV64 专属**）：
 /// 119 → **137**（2026-10-04 riscv64 补字节/半字访存 6 条、W 立即数移位 3 条、`BGEU`、
 /// `FENCE_I`/`FENCE_TSO`、Zicsr 6 条），被投影掉的 RV64 专属指令 14 → **17**
 /// （新补的 `SLLIW`/`SRLIW`/`SRAIW` 是 RV64 专属，`LB`/`LHU`/`CSRRW` 一类在 RV32 上都在），
-/// 故 RV32 视角 105 → **120**；`lowering` 108 与逐节丢弃合计 15 不变
+/// 故 RV32 视角 105 → **122**（2026-10-04 再补 `JALR3` 与 `FENCE_PS`：两者都不标 `xlen`，
+/// RV32 视角同样保留）；`lowering` 108 与逐节丢弃合计 15 不变
 /// （被丢的 lowering 全是"点了被投影掉的引用名"的那 14 条）。
 #[test]
 fn riscv_rv32_projection_snapshot() {
@@ -127,8 +128,8 @@ fn riscv_rv32_projection_snapshot() {
     }
     // 104 → 105（2026-10-01）：riscv 补了 `FSGNJ_D`（`fpr_mov` 的 64 位档）。它**不标**
     // `xlen`——RV32D 同样定义 `fsgnj.d`（D 扩展在 RV32 上存在），所以 RV32 视角该留下它。
-    assert_eq!(p.inst_count, 120, "RV32 投影剩 120 条");
-    assert_eq!(rows.len(), 120);
+    assert_eq!(p.inst_count, 122, "RV32 投影剩 122 条");
+    assert_eq!(rows.len(), 122);
     // 96 → 100（2026-10-01）：riscv 补了 `Fload`/`Fstore` 各两条（单/双精度）lowering，
     // 它们的 `when` 只按宽度分派、引用的 `FLW`/`FSW` 与 `FLD`/`FSD` 在 RV32 视角下都还在。
     // 100 → 108（同日）：再补浮点算术 `Fadd`/`Fsub`/`Fmul`/`Fdiv` 各两条（单/双精度），
@@ -147,9 +148,9 @@ fn riscv_rv32_projection_snapshot() {
             p.dropped_decls
         );
     }
-    // 默认档对照：同一份谱不传参数 = 137/122（投影是纯 opt-in）。
+    // 默认档对照：同一份谱不传参数 = 139/122（投影是纯 opt-in）。
     let (_, def_rows, def_p) = insts("riscv64.toml", &[]);
-    assert_eq!(def_rows.len(), 137);
+    assert_eq!(def_rows.len(), 139);
     assert_eq!(def_p.lowering_count, 122);
 }
 
@@ -171,7 +172,7 @@ fn cascade_keeps_unrelated_lowering() {
 #[test]
 fn only_supplied_params_gate() {
     let (_, rows, p) = insts("riscv64.toml", &["xlen=64"]);
-    assert_eq!(rows.len(), 137, "xlen=64 是原生视角，一条都不该丢");
+    assert_eq!(rows.len(), 139, "xlen=64 是原生视角，一条都不该丢");
     assert!(p.dropped_insts.is_empty());
     assert_eq!(p.lowering_count, 122);
 }

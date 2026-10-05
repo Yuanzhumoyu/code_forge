@@ -165,7 +165,8 @@ fn overlap_guard_can_fail() {
 ///
 /// - **x86 0 条**：`prefix_scan` 变长 ISA，前缀/REX/ModRM/VEX 由编码器发射、不在位域表里
 ///   建模——按表判必成误报，所以这条规则整个跳过它；
-/// - **riscv64 3 条**：`NOP`/`ECALL`/`EBREAK`——系统指令的"固定位型"（高位恒 0），
+/// - **riscv64 7 条**：`NOP`/`ECALL`/`EBREAK`（2026-10-04 起 + `FENCE`/`FENCE_PS`/`FENCE_I`/`FENCE_TSO`
+///   4 条——fence 族改成字段形后，rd/rs1/funct3/fm 是真正的固定 0 段）——系统指令的"固定位型"（高位恒 0），
 ///   故意只声明 `opcode` 而不逐位声明 0（语义上它们是固定字，不是带保留位的指令字）；
 ///   AMO/LR/SC 的 `aq`/`rl` 原本也在这张清单里（8 条），**已修谱**：显式声明两个位域
 ///   （RV64A 的 acquire/release）并在四条模板体里写 0——逐字节不变（`cargo test -p
@@ -187,7 +188,7 @@ fn overlap_guard_can_fail() {
 fn unassigned_bits_inventory() {
     for (isa, want) in [
         ("x86.toml", 0usize),
-        ("riscv64.toml", 3),
+        ("riscv64.toml", 7),
         ("arm64.toml", 128),
     ] {
         let path = root().join("isa").join(isa);

@@ -1839,6 +1839,10 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                 })
             };
             match slot.kind {
+                OperandKind::Bits => Err(format!(
+                    "[[instructions.{}]]: kind = \"bits\" 暂不支持变长（prefix_scan）ISA",
+                    info.inst.name
+                )),
                 OperandKind::Reg => {
                     let mm = need_modrm()?;
                     let view = ctx.reg_view.get(i).copied().flatten();

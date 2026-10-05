@@ -962,6 +962,15 @@ pub struct Conventions {
     /// （**不再回退 x86 的 16 项表**；真的用到就报错）。
     #[serde(default, deserialize_with = "de_cond_map")]
     pub cond: Option<BTreeMap<String, CondEntry>>,
+    /// **命名位集合表**（`kind = "bits"` 的槽用）：表名 → （名字 → 位）。
+    ///
+    /// 源文本里一个操作数由**若干名字拼接**而成（RISC-V `fence` 的 `iorw` = i|o|r|w），
+    /// 编码取各位的**按位或**；解码按名字的**字典序**把位复现成名字串（确定性渲染，
+    /// 与 `cond` 的"同码取字母序最小名"同一口径）。
+    ///
+    /// 表是**数据**：DSL 不认识任何具体名字（i/o/r/w 只是某份谱里的一行）。
+    #[serde(default)]
+    pub bitsets: Option<BTreeMap<String, BTreeMap<String, u64>>>,
     /// 变长解码前缀扫描表：条目 = 单字节或范围 + 效果集
     /// （"opsize16"/"lock"/"repe"/"repne"/"addr16"/"rex"）。缺省 = x86 扫描集。
     #[serde(default)]
@@ -1286,6 +1295,13 @@ pub struct OperandSlot {
     /// 表单 `operand_fields` 里这一项仍写**首字段**（`fields[0]`，校验期一致）。
     #[serde(default)]
     pub fields: Option<Vec<String>>,
+    /// bits：本槽用的命名位集合表名（`[conventions.bitsets.<table>]`）。
+    #[serde(default)]
+    pub table: Option<String>,
+    /// bits：**解析期从表里摊平出来的条目**（名字 → 位，按名字字典序）。
+    /// 生成器与反汇编直接用这份，不再回头查表（见 [`IsaModel::resolve_bitset_tables`]）。
+    #[serde(skip)]
+    pub table_entries: Vec<(String, u64)>,
 }
 
 impl OperandSlot {
@@ -1378,6 +1394,10 @@ pub enum OperandKind {
     Mem,
     Label,
     Cond,
+    /// **命名位集合**：源文本 = `[conventions.bitsets.<table>]` 里若干名字的**拼接**
+    /// （贪心最长匹配，整串吃干净才算命中），编码值 = 各位的按位或。
+    /// 槽必须给 `table` 与 `width`。
+    Bits,
 }
 
 /// 值的**多字段编码方案**（`[[operand_slots]].encode`）。
@@ -1438,6 +1458,7 @@ impl OperandKind {
             OperandKind::Mem => "mem",
             OperandKind::Label => "label",
             OperandKind::Cond => "cond",
+            OperandKind::Bits => "bits",
         }
     }
 }
@@ -2546,6 +2567,40 @@ impl IsaModel {
             expanded.extend(t.expand(i)?);
         }
         self.instructions.extend(expanded);
+        Ok(())
+    }
+
+    /// 把 `kind = "bits"` 槽引用的**命名位集合表**摊平进槽（解析期一次）。
+    ///
+    /// `[conventions.bitsets.<table>]` 是**数据**（名字 → 位），DSL 不认识任何具体名字；
+    /// 摊平后生成器只读 `slot.table_entries`，反汇编渲染按**名字字典序**拼串（确定性，
+    /// 与 `[conventions.cond]` 的"同码取字母序最小名"同一口径）。
+    pub fn resolve_bitset_tables(&mut self) -> Result<(), String> {
+        for (i, s) in self.operand_slots.iter_mut().enumerate() {
+            if s.kind != OperandKind::Bits {
+                continue;
+            }
+            let path = format!("[[operand_slots]] #{i} ('{}')", s.name);
+            let Some(tname) = s.table.clone() else {
+                return Err(format!(
+                    "{path}: kind = \"bits\" 的槽必须给 `table`（[conventions.bitsets.<table>]）"
+                ));
+            };
+            let Some(entries) = self
+                .conventions
+                .bitsets
+                .as_ref()
+                .and_then(|bs| bs.get(&tname))
+            else {
+                return Err(format!(
+                    "{path}: 位集合表 '{tname}' 未在 [conventions.bitsets] 里声明"
+                ));
+            };
+            if entries.is_empty() {
+                return Err(format!("{path}: 位集合表 '{tname}' 是空的"));
+            }
+            s.table_entries = entries.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        }
         Ok(())
     }
 }

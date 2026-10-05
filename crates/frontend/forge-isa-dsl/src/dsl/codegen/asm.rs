@@ -69,6 +69,18 @@ fn render_expr(slot: &OperandSlot, fid: &syn::Ident) -> TokenStream {
             quote! { <&str as From<Reg>>::from(*#fid) }
         }
         OperandKind::Mem => quote! { __render_mem(#fid) },
+        OperandKind::Bits => {
+            let pairs: Vec<TokenStream> = slot
+                .table_entries
+                .iter()
+                .map(|(n, b)| {
+                    let n = syn::LitStr::new(n, proc_macro2::Span::call_site());
+                    let b = proc_macro2::Literal::u64_unsuffixed(*b);
+                    quote! { (#n, #b) }
+                })
+                .collect();
+            quote! { __render_bitset(*#fid, &[#(#pairs),*]) }
+        }
         OperandKind::Cond => quote! { __render_cond(*#fid as u8) },
         _ => quote! { #fid.to_string() },
     }
@@ -837,6 +849,14 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                             None => { it.pos = save; return None; }
                         }
                     }
+                    __Tok::Dot => {
+                        // `.` = **本条指令自身的地址**（汇编器里就是它的块下标）。真实语料
+                        // 用它表达相对自身（`jal zero, .`）。记成**自引用**（空名），回填期
+                        // 换成当前指令的下标——与"标签回填块下标"同一口径。
+                        syms.push((op, String::new()));
+                        it.pos += 1;
+                        return Some(0);
+                    }
                     __Tok::Ident(s) => {
                         if <Reg as FromStr>::from_str(s).is_ok() { return None; }
                         syms.push((op, s.clone()));
@@ -1224,6 +1244,23 @@ fn operand_parse_tok(
             let elem = quote! { __label(&mut it, #min, #max, &mut __lsyms, #n, #unit) };
             Ok((elem, quote! { Some(#fid) }, None))
         }
+        OperandKind::Bits => {
+            // 命名位集合：源文本是表里若干名字的**拼接**（贪心最长匹配，整串吃干净才算命中）。
+            let pairs: Vec<TokenStream> = slot
+                .table_entries
+                .iter()
+                .map(|(n, b)| {
+                    let n = syn::LitStr::new(n, proc_macro2::Span::call_site());
+                    let b = proc_macro2::Literal::u64_unsuffixed(*b);
+                    quote! { (#n, #b) }
+                })
+                .collect();
+            Ok((
+                quote! { __bitset(&mut it, &[#(#pairs),*]) },
+                quote! { Some(#fid) },
+                None,
+            ))
+        }
         OperandKind::Mem => Ok((quote! { __mem(&mut it) }, quote! { Some(#fid) }, None)),
         OperandKind::Cond => Ok((quote! { __cond(&mut it) }, quote! { Some(#fid) }, None)),
     }
@@ -1357,6 +1394,8 @@ fn type_signature(info: &InstInfo) -> Result<String, String> {
                     OperandKind::Label => "L".to_string(),
                     OperandKind::Mem => "M".to_string(),
                     OperandKind::Cond => "C".to_string(),
+                    // 命名位集合：签名带上表（不同表的名字空间不同，不能互相当候选）
+                    OperandKind::Bits => format!("S{}", slot.table.as_deref().unwrap_or("")),
                 };
                 s.push_str(&format!("O{n}:{sig}"));
             }

@@ -81,7 +81,9 @@ funct6 = { offset = 26, width = 6 }   # 移位立即数高位（SLLI/SRLI/SRAI�
 shamt6 = { offset = 20, width = 6 }
 shamt5 = { offset = 20, width = 5 }   # W 变体移位（RV64：shamt 5 位，bit25 归 funct7）
 opcode = { offset = 0,  width = 7 }
-word   = { offset = 0,  width = 32 }  # FENCE 全字常量
+pred   = { offset = 24, width = 4 }  # FENCE 的前驱集合（i=8/o=4/r=2/w=1）
+succ   = { offset = 20, width = 4 }  # FENCE 的后继集合
+fm     = { offset = 28, width = 4 }  # FENCE 的 fm 字段（fence.tso = 8）
 imm12  = { offset = 20, width = 12 }  # I 型
 imm20  = { pieces = [ { offset = 12, width = 20, shift = 0 } ] }                        # U 型 LUI（**立即数就是字段值**，与 GAS/LLVM 一致：`lui a0, 2` → rd = 8192）
 imm_s  = { pieces = [ { offset = 7,  width = 5, shift = 0 }, { offset = 25, width = 7, shift = 5 } ] }   # S 型
@@ -105,6 +107,20 @@ name = "lo"
 # 也就落在 imm12 的有符号值域里（`jalr a0, %lo(2048)(a1)` == `jalr a0, -2048(a1)`）。
 text = "%lo({0})"
 expr = "(({0} & 0xfff) ^ 0x800) - 0x800"
+
+# 命名位集合表（`kind = "bits"`）：RISC-V fence 的 pred/succ 是 i/o/r/w 的组合，
+# 源文本就写成字母拼接（`iorw`、`io`、`r,w`），编码取位的或。表是**数据**。
+[conventions.bitsets.fence]
+i = 8
+o = 4
+r = 2
+w = 1
+
+[[operand_slots]]
+name = "fence_set"
+kind = "bits"
+table = "fence"
+width = 4
 
 [[operand_slots]]
 name = "gpr"
@@ -226,10 +242,11 @@ name = "OP"
 opcode_field = "opcode"
 operand_fields = []
 
+
 [[forms]]
-name = "W32"
-opcode_field = "word"
-operand_fields = []
+name = "FENCEPS"   # FENCE：pred[27:24] + succ[23:20]（其余位 = 0 → 补集零 guard）
+opcode_field = "opcode"
+operand_fields = ["pred", "succ"]
 
 
 # ── R 型整数 + Zbb R（opcode 0x33；funct3/funct7 区分）──
@@ -606,6 +623,16 @@ fields = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "jalr {dst}, {imm}({src})"
 
+# 三操作数写法 `jalr rd, rs1, imm`（RISC-V 手册里的规范形）——与两操作数的 `jalr rd, imm(rs1)`
+# **同编码**，只是文本不同；解码同键（叶 arm 按声明序取先者，渲染仍是两操作数形）。
+[[instructions]]
+name = "JALR3"
+form = "I"
+opcode = 0x67
+fields = { funct3 = 0 }
+ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
+asm = "jalr {dst}, {src}, {imm}"
+
 # ── 系统 ──
 
 
@@ -747,24 +774,35 @@ reloc = "pcrel_lo"
 
 [[instructions]]
 name = "FENCE"
-form = "W32"
-opcode = 0x0FF0000F
+# 裸 `fence` = `fence iorw, iorw`（顶层仍是 opcode + 两个 4 位字段常量；
+# 与下面带操作数的 FENCE_PS 共用同一条 trie 边上的不同叶）
+form = "FENCEPS"
+opcode = 0x0F
+fields = { pred = 15, succ = 15 }
 asm = "fence"
 
-# `fence.i`（0x0000100F）与 `fence.tso`（0x8330000F = `fence rw, rw` + fm=8）也是整字常量。
-# **未实现**（另一类能力）：`fence r,w` / `fence w,ir` 那种**字母集合**操作数（pred/succ
-# 各自是 i/o/r/w 的组合）需要"命名位集合"这一新机制——不是这两条指令的特例，见
-# `crates/tools/forge-tests/asm/README.md` 的缺口清单。
+# `fence pred, succ`：pred/succ 各是 i/o/r/w 的**字母集合**（新版能力 `kind = "bits"`）
+[[instructions]]
+name = "FENCE_PS"
+form = "FENCEPS"
+opcode = 0x0F
+ops = ["pred:fence_set", "succ:fence_set"]
+asm = "fence {pred}, {succ}"
+
+# `fence.i`（= funct3 1）与 `fence.tso`（= `fence rw, rw` + fm=8）**不再用整字常量**：
+# 三者共用 opcode 0x0F 这条 trie 边（整字常量会与 `fence pred, succ` 在 [0,7) 上判成同一条边）。
 [[instructions]]
 name = "FENCE_I"
-form = "W32"
-opcode = 0x0000100F
+form = "FENCEPS"
+opcode = 0x0F
+fields = { funct3 = 1 }
 asm = "fence.i"
 
 [[instructions]]
 name = "FENCE_TSO"
-form = "W32"
-opcode = 0x8330000F
+form = "FENCEPS"
+opcode = 0x0F
+fields = { fm = 8, pred = 3, succ = 3 }
 asm = "fence.tso"
 
 # ────────────────────── W 变体（RV64 32 位语义）──────────────────────
@@ -2673,3 +2711,26 @@ bytes = [0x0F, 0x00, 0x30, 0x83]
 # `unimp` 是**别名**（= `csrrw x0, cycle, x0`），字节与那条指令相同
 asm = "unimp"
 bytes = [0x73, 0x10, 0x00, 0xC0]
+
+# `fence pred, succ`：pred/succ 是命名位集合（i=8/o=4/r=2/w=1 的字母拼接）；字节取自上游注释
+[[vectors]]
+asm = "fence iorw, iorw"
+bytes = [0x0F, 0x00, 0xF0, 0x0F]
+
+[[vectors]]
+# `io` = i|o = 12、`rw` = r|w = 3 —— "字母拼接"不是特例，就是位或
+asm = "fence io, rw"
+bytes = [0x0F, 0x00, 0x30, 0x0C]
+
+[[vectors]]
+asm = "fence r, w"
+bytes = [0x0F, 0x00, 0x10, 0x02]
+
+[[vectors]]
+asm = "fence w, ir"
+bytes = [0x0F, 0x00, 0xA0, 0x01]
+
+[[vectors]]
+# 三操作数 jalr（与两操作数写法同编码）
+asm = "jalr sp, zero, 256"
+bytes = [0x67, 0x01, 0x00, 0x10]

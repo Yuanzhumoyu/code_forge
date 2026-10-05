@@ -201,6 +201,7 @@ fn semantic_operand_name(op: &OperandUse, slot: &OperandSlot, _i: usize) -> Stri
         OperandKind::Mem => "mem",
         OperandKind::Imm => "imm",
         OperandKind::Label => "target",
+        OperandKind::Bits => "fence",
     }
     .to_string()
 }
@@ -261,6 +262,17 @@ pub fn generate_with_parts(
             .any(|s| s.encode == Some(SlotEncode::LogicalImm))
     {
         gen_logic_imm_helpers()
+    } else {
+        quote! {}
+    };
+    // 命名位集合助手（`kind = "bits"` 的槽才要）：与 parts 无关（同位域助手）。
+    let bitset_helpers = if !prefix_scan
+        && model
+            .operand_slots
+            .iter()
+            .any(|s| s.kind == OperandKind::Bits)
+    {
+        gen_bitset_helpers()
     } else {
         quote! {}
     };
@@ -327,6 +339,7 @@ pub fn generate_with_parts(
         #inst_enum
         #bit_helpers
         #logic_imm_helpers
+        #bitset_helpers
         #pseudo_helpers
         #encode_fn
         #decode_fn
@@ -976,6 +989,54 @@ fn gen_encode(infos: &[InstInfo], m: &IsaModel) -> Result<TokenStream, String> {
             }
         }
     })
+}
+
+/// **命名位集合**助手（`kind = "bits"` 的槽才要）。
+///
+/// 源文本是一个 ident，由表里若干**名字拼接**而成（RISC-V `fence` 的 `iorw` = i|o|r|w）；
+/// 编码值 = 各位的**按位或**。解析按**最长匹配优先**贪心（表里若同时有 `rw` 与 `r`，
+/// 先吃长的），整串必须吃干净才算命中——拼错一个字母就不匹配，不静默当空集。
+/// 渲染反向：按表的名字**字典序**把置位的名字拼起来（确定性，与 `cond` 的"同码取字母序
+/// 最小名"同一口径）。表是**数据**（`[conventions.bitsets.<table>]`），DSL 不认识任何名字。
+fn gen_bitset_helpers() -> TokenStream {
+    quote! {
+        /// 命名位集合解析：贪心最长匹配拼名，返回按位或；整串吃不干净 ⇒ `None`。
+        #[allow(dead_code)]
+        fn __bitset(it: &mut __Iter, names: &[(&str, u64)]) -> Option<i64> {
+            let Some(__Tok::Ident(text)) = it.toks.get(it.pos) else {
+                return None;
+            };
+            let mut rest: &str = text;
+            let mut val: u64 = 0;
+            while !rest.is_empty() {
+                let hit = names
+                    .iter()
+                    .filter(|(n, _)| !n.is_empty() && rest.starts_with(*n))
+                    .max_by_key(|(n, _)| n.len());
+                match hit {
+                    Some((n, b)) => {
+                        val |= *b;
+                        rest = &rest[n.len()..];
+                    }
+                    None => return None,
+                }
+            }
+            it.pos += 1;
+            Some(val as i64)
+        }
+
+        /// 命名位集合渲染：按表的名字**字典序**拼出置位的名字（全 0 ⇒ 空串）。
+        #[allow(dead_code)]
+        fn __render_bitset(v: i64, names: &[(&str, u64)]) -> String {
+            let mut out = String::new();
+            for (n, b) in names {
+                if *b != 0 && (v as u64) & *b == *b {
+                    out.push_str(n);
+                }
+            }
+            out
+        }
+    }
 }
 
 /// **逻辑立即数**助手（`encode = "logical_imm"`，每个用到它的模块生成一次）。

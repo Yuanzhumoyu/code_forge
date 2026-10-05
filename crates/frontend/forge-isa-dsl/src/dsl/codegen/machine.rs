@@ -1433,9 +1433,14 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                 }
                 // ── 第二遍：符号回填 ──
                 for (i, oi, sym, line_no) in &pending {
-                    let block = labels.get(sym).copied().ok_or_else(|| {
-                        AsmError::UndefinedLabel(format!("line {line_no}: {sym}"))
-                    })?;
+                    // 空名 = **自引用**（`__label` 里的 `.`）：值为本条指令自身的下标。
+                    let block = if sym.is_empty() {
+                        *i as u32
+                    } else {
+                        labels.get(sym).copied().ok_or_else(|| {
+                            AsmError::UndefinedLabel(format!("line {line_no}: {sym}"))
+                        })?
+                    };
                     if !__set_label_operand(&mut insts[*i], *oi, block as i64) {
                         return Err(AsmError::Other(format!(
                             "line {line_no}: cannot resolve label '{sym}' at operand {oi}"

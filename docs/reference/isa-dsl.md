@@ -122,9 +122,10 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[conventions.modrm]` | — | `reg_field` `rm_field` `force_disp_base` | ModRM 约定（表存在即启用）：reg/rm 位域名 + 强制位移的 base 寄存器号 |
 | `[conventions.cond]` | `code` | `ir` | 条件码表：键 = 汇编可见的条件名（也允许 `名 = <整数>` 简写）（允许额外键） |
 | `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex` |
+| `[conventions.bitsets.<table>]` | — | — | 命名位集合表（kind = "bits" 的槽用）：表名 → （名字 → 位）——源文本是名字拼接，编码取位或（允许额外键） |
 | `[[conventions.imm_fn]]` | `name` `text` `expr` | — | 立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值） |
 | `[conventions.mem]` | `templates` | `size_keywords` | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
-| `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `unit` `roles` `encode` `fields` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
+| `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `unit` `roles` `encode` `fields` `table` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
 | `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `data_width` `implicit_regs` `reloc` `width` `only_variants` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[[templates]]` | `rows` | `name` `body` | 唯一指令复用机制：`body` 共享字段 + `rows` 每行一条指令 |
@@ -698,6 +699,30 @@ fields = ["b40", "b5"]         # b40(5 位)[23:19] + b5(1 位)[31]——两段�
   （写别的会被校验期拒绝）；
 - 方案由**谱按名字选择**、实现由 DSL 提供（与 `kind = "cond"`/`wrap`/`unit` 同类）；
   只实现于定宽（含 `mixed`）编码/解码，变长（`prefix_scan`）ISA 写它会在校验期 fail-closed。
+**命名位集合（`kind = "bits"`）**：有些操作数在文本里是**若干名字的拼接**——RISC-V
+`fence` 的 pred/succ 就是 `i`/`o`/`r`/`w` 的组合（`fence iorw, iorw`、`fence w, ir`）。表是**数据**，
+写在 `[conventions.bitsets.<表名>]` 里（名字 → 位）；槽只声明用哪张表：
+
+```toml
+[conventions.bitsets.fence]
+i = 8
+o = 4
+r = 2
+w = 1
+
+[[operand_slots]]
+name = "fence_set"
+kind = "bits"
+table = "fence"
+width = 4
+```
+
+- 解析：取一个 ident，按表里的名字**贪心最长匹配**逐段吃掉，编码值 = 各位的**按位或**；
+  整串必须吃干净（`iow` 里剩下的字符不是名字 ⇒ 这条写法不匹配，不静默当空集）；
+- 渲染：按名字的**字典序**把置位的名字拼起来（确定性，与 `[conventions.cond]` 的"同码取字母序最小名"
+  同一口径）；
+- 校验：表必须已声明且非空、`width` 必填、每个位必须落在槽宽内、名字必须是 ident 片段；
+  变长（`prefix_scan`）ISA 写它会在校验期 fail-closed。
 
 **分支偏移是字节（`unit`）**：真实汇编器里 A64 的 `b #28` 是**字节**偏移，而编码字段
 `imm26` 数的是 4 字节字（`28 / 4 = 7`）——`cbz`（imm19）/`tbz`（imm14）同理；x86 的

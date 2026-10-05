@@ -11,6 +11,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-04) — `kind = "bits"`：命名位集合操作数（`fence pred, succ`）+ riscv 收尾三条写法
+
+**命名位集合**：有些操作数在文本里是**若干名字的拼接**——RISC-V `fence` 的 pred/succ 就是
+`i`/`o`/`r`/`w` 的组合（`fence iorw, iorw`、`fence w, ir`、`fence r,w`）。表是**数据**：
+
+```toml
+[conventions.bitsets.fence]
+i = 8
+o = 4
+r = 2
+w = 1
+
+[[operand_slots]]
+name = "fence_set"
+kind = "bits"      # 新 kind
+table = "fence"
+width = 4
+```
+
+- 解析：取一个 ident，按表里的名字**贪心最长匹配**逐段吃掉，编码值 = 各位的**按位或**；整串必须
+  吃干净（剩余字符不是名字 ⇒ 这条写法不匹配，不静默当空集）；表在**解析期**摊平进槽
+  （`resolve_bitset_tables`，`#[serde(skip)]` 字段），生成器不再回头查表；
+- 渲染：按名字**字典序**把置位的名字拼起来（确定性，与 `[conventions.cond]` 的"同码取字母序
+  最小名"同一口径）；
+- 校验：表必须已声明且非空、`width` 必填、位必须落在槽宽内、名字必须是 ident 片段；变长
+  （`prefix_scan`）ISA 写它 → 校验期 fail-closed。三方针同步：`schema.rs` 新增
+  `[conventions.bitsets.<table>]` 段与 `[[operand_slots]].table` 键、`docs/reference/isa-dsl.md`
+  的键表与专节、schema_guard 的 `INTERNAL_FIELDS` 登记（`table_entries`）。
+
+**riscv64 收尾三条写法**（都是纯数据/小改）：
+
+- `jalr rd, rs1, imm`（三操作数，手册里的规范形；与两操作数写法**同编码**，只是文本不同）；
+- 位置符号 `.`：`__label` 把它记成**自引用**（空名），两遍回填时换成"当前指令自身的块下标"，
+  与"标签回填块下标"同一口径（`jal zero, .`）；
+- `fence`/`fence.i`/`fence.tso` 从**整字常量**改成字段形——整字常量会与 `fence pred, succ` 的
+  opcode 边在 [0,7) 上判成同一条 trie 边（生成期直接报 ambiguous）；顺带删掉因此失效的
+  `W32` 表单与 `word` 位域（lint 的"写了却用不上"当场抓到）。
+
+效果：riscv64 语料 `parsed` 129 → **135**、红桶 13 → **7**，字节对拍 **129 → 134 条逐字节全等
+（`unparsed` 5 → 0）**——"有期望字节的用例全部对上"（`known` 仍 0）。riscv64 指令 137 → **139**、
+派生枚举器 435 → **442**、未指定位评审清单 3 → **7**（fence 族字段形的固定 0 段）。
+余下 7 条红桶是**一类**：立即数位置上的未定义符号（`%hi(foo)` 等，需要"imm 槽符号引用 +
+回填后才算得出 hi/lo"这一设计项）与 `jal a0, a0`（上游当未定义符号 `a0`，我们拒了寄存器样子的
+ident 当符号——已登记不改）。详见 `crates/tools/forge-tests/asm/README.md`。
+
 ### Added (2026-10-04) — `encode = "logical_imm"`：位掩码立即数（值 → N/immr/imms）+ aarch64 语料清零
 
 **逻辑（位掩码）立即数**：ARM 系逻辑运算的立即数不是任意值——它必须是"一段连续 1 循环填充
