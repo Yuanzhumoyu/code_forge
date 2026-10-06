@@ -48,18 +48,36 @@ fn run_isa(isa: &str) -> IsaReport {
 /// 计数棘轮（三架构）。
 #[test]
 fn corpus_parse_counts_match_the_ratchet() {
-    for isa in ["x86", "riscv64", "aarch64"] {
-        let report = run_isa(isa);
+    let reports: Vec<IsaReport> = ["x86", "riscv64", "aarch64"]
+        .iter()
+        .map(|isa| run_isa(isa))
+        .collect();
+    // 机读记分板**先写全部三档**（含逐文件计数）：它是**语料取舍的唯一事实源**
+    // （`asm/fetch.mjs` 按逐文件计数从上游全集里算 vendored 集），而棘轮不一致会
+    // `panic!` —— 先写后判，才不会因为前一个 ISA 红掉就缺后面的记分板。
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join("target/asm-suite");
+    let _ = std::fs::create_dir_all(&out);
+    for report in &reports {
         let line = report.summary_line();
         println!("{line}");
         asm::report::emit_event("ASM-SUMMARY", &line);
+        if report.corpus_present {
+            let _ = std::fs::write(out.join(format!("{}.json", report.isa)), report.to_json());
+        }
+    }
+    for report in &reports {
         if !report.corpus_present {
-            println!("ASM-SKIP {isa}: 语料未下载——跑 `crates/tools/forge-tests/asm/fetch.ps1`");
+            println!(
+                "ASM-SKIP {}: 语料未下载——跑 `node crates/tools/forge-tests/asm/fetch.mjs`",
+                report.isa
+            );
             continue;
         }
         let path = asm::corpus_root()
             .join("ratchet")
-            .join(format!("{isa}.txt"));
+            .join(format!("{}.txt", report.isa));
         // 重刷棘轮（bless）：`FORGE_ASM_WRITE_RATCHET=1`——只在**看过差异**后手工用，
         // CI 与日常跑都不设它（否则棘轮就白设了）。
         if std::env::var_os("FORGE_ASM_WRITE_RATCHET").is_some() {
@@ -69,15 +87,9 @@ fn corpus_parse_counts_match_the_ratchet() {
             continue;
         }
         if let Err(e) = report.check_ratchet(&path) {
-            asm::report::emit_event("ASM-FAIL", &format!("{isa}: 棘轮不一致"));
+            asm::report::emit_event("ASM-FAIL", &format!("{}: 棘轮不一致", report.isa));
             panic!("{e}");
         }
-        // 机读记分板（每次跑都刷新，便于 CI artifact）。
-        let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../..")
-            .join("target/asm-suite");
-        let _ = std::fs::create_dir_all(&out);
-        let _ = std::fs::write(out.join(format!("{isa}.json")), report.to_json());
     }
 }
 

@@ -16,9 +16,9 @@ corpus_only = 3
 # mismatch: intel.excerpt.s:33	push   ds	line 2: no matching instruction
 # mismatch: intel.excerpt.s:34	pop    ds	line 2: no matching instruction
 [suite llvm-mc]
-files = 2
-lines = 447
-parsed = 111
-no_prefix = 0
+files = 4
+lines = 471
+parsed = 116
+no_prefix = 1
 tail_mismatch = 0
-corpus_only = 336
+corpus_only = 354

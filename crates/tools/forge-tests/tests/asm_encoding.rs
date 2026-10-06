@@ -23,7 +23,7 @@
 //! 之前的 `.equ`/`.set` 符号定义），否则依赖上游符号常量的用例只会被记成 "unparsed"
 //! 混过去（`cmp eax, FOO` 的 `[0x83,0xf8,0x02]` 就是这么漏掉的）。
 
-use forge_tests::asm::report::EncodingReport;
+use forge_tests::asm::report::{EncodingFileRow, EncodingReport};
 use forge_tests::asm::{self, SUITES};
 
 /// 三架构的"上游字节 oracle"对拍 + 棘轮。
@@ -49,14 +49,20 @@ fn encodings_of_parsable_corpus_lines_match_upstream() {
                 // 期望字节真对拍——否则它只会被记成 "unparsed" 混过去。
                 let corpus = asm::corpus::extract(suite, file, src);
                 r.dropped += extracted.dropped;
+                let mut row = EncodingFileRow {
+                    file: file.clone(),
+                    ..Default::default()
+                };
                 for case in extracted.cases {
                     r.cases += 1;
+                    row.cases += 1;
                     let text = asm::corpus::with_prelude(&corpus, case.line_no, &case.text);
                     match target.parse(&text) {
                         Ok(_) => {}
                         Err(e) => {
                             report_case(isa, &case, &format!("unparsed {e:?}"));
                             r.unparsed += 1;
+                            row.unparsed += 1;
                             continue;
                         }
                     }
@@ -68,10 +74,12 @@ fn encodings_of_parsable_corpus_lines_match_upstream() {
                                 "{}:{} `{}` 解析通过却汇编失败：{e}",
                                 case.file, case.line_no, case.text
                             ));
+                            row.known += 1;
                             continue;
                         }
                     };
                     r.checked += 1;
+                    row.checked += 1;
                     if got == case.bytes {
                         report_case(isa, &case, "ok");
                         continue;
@@ -92,13 +100,18 @@ fn encodings_of_parsable_corpus_lines_match_upstream() {
                     match (&ours_dis, &upstream_dis) {
                         (Ok(a), Ok(b)) if a == b => {
                             r.variants += 1;
+                            row.variants += 1;
                             variants.push(format!("{what} —— 同为 `{a}`"));
                         }
-                        _ => r.known.push(format!(
-                            "{what}（我们解出 {ours_dis:?} / 上游解出 {upstream_dis:?}）"
-                        )),
+                        _ => {
+                            row.known += 1;
+                            r.known.push(format!(
+                                "{what}（我们解出 {ours_dis:?} / 上游解出 {upstream_dis:?}）"
+                            ));
+                        }
                     }
                 }
+                r.file_rows.push(row);
             }
         }
         let line = r.summary_line();
@@ -116,6 +129,17 @@ fn encodings_of_parsable_corpus_lines_match_upstream() {
         }
         reports.push(r);
     }
+
+    // 逐文件记分板**先写**：`asm/fetch.mjs` 的语料取舍 = 「解析全绿 **且** 编码无差异」，
+    // 判据从这里读；棘轮不一致会 panic，所以先写后判（与解析档同一条纪律）。
+    let out = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .join("target/asm-suite");
+    let _ = std::fs::create_dir_all(&out);
+    let _ = std::fs::write(
+        out.join("encoding-files.json"),
+        asm::report::encoding_files_json(&reports),
+    );
 
     // 棘轮：计数 + 已知差异清单，两个方向都红。
     let path = asm::corpus_root().join("ratchet").join("encoding.txt");

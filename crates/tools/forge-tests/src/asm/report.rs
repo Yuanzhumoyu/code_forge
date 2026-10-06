@@ -27,6 +27,10 @@ pub struct SuiteReport {
     pub corpus_only: usize,
     /// 红桶样例（`file:line\ttext\terror`）。
     pub mismatch_samples: Vec<String>,
+    /// **逐文件**计数（按传入序 = 路径序）。棘轮只记汇总（逐文件计数进机读记分板），
+    /// 但它是**语料取舍**的唯一事实源：`asm/fetch.mjs` 用「整条接得住、一条都不红」
+    /// 从上游全集里挑出 vendored 集，判据就是这张表，不靠手抄清单。
+    pub file_rows: Vec<FileReport>,
 }
 
 /// 一个 ISA 的全部 suite 计数。
@@ -57,6 +61,7 @@ impl IsaReport {
                 }
             }
         }
+        s.file_rows = files;
         s
     }
 
@@ -82,7 +87,8 @@ impl IsaReport {
         for (i, s) in self.suites.iter().enumerate() {
             out.push_str(&format!(
                 "    {{\"key\": \"{}\", \"files\": {}, \"lines\": {}, \"parsed\": {}, \
-                 \"no_prefix\": {}, \"tail_mismatch\": {}, \"corpus_only\": {}}}",
+                 \"no_prefix\": {}, \"tail_mismatch\": {}, \"corpus_only\": {},\n     \
+                 \"file_rows\": [\n",
                 esc(&s.key),
                 s.files,
                 s.lines,
@@ -91,6 +97,24 @@ impl IsaReport {
                 s.tail_mismatch,
                 s.corpus_only
             ));
+            for (j, f) in s.file_rows.iter().enumerate() {
+                out.push_str(&format!(
+                    "      {{\"file\": \"{}\", \"lines\": {}, \"parsed\": {}, \"no_prefix\": {}, \
+                     \"tail_mismatch\": {}, \"corpus_only\": {}}}",
+                    esc(&f.file),
+                    f.lines,
+                    f.parsed,
+                    f.no_prefix,
+                    f.tail_mismatch,
+                    f.corpus_only
+                ));
+                out.push_str(if j + 1 == s.file_rows.len() {
+                    "\n"
+                } else {
+                    ",\n"
+                });
+            }
+            out.push_str("     ]}");
             out.push_str(if i + 1 == self.suites.len() {
                 "\n"
             } else {
@@ -207,6 +231,23 @@ pub struct EncodingReport {
     pub variants: usize,
     /// **已知差异**（每条一句话，含文件:行、两边字节与判定原因）。
     pub known: Vec<String>,
+    /// 逐文件计数（`target/asm-suite/encoding-files.json`）。与解析档的 `file_rows` 同用：
+    /// `asm/fetch.mjs` 的语料取舍 = 「解析全绿 **且** 编码无差异」，判据都从这里读。
+    pub file_rows: Vec<EncodingFileRow>,
+}
+
+/// 一份语料文件的编码对拍计数。
+#[derive(Debug, Clone, Default)]
+pub struct EncodingFileRow {
+    pub file: String,
+    pub cases: usize,
+    pub checked: usize,
+    /// 上游给了期望字节、但本谱**解析不动**的条数（记账：解析档的棘轮管这一段）。
+    pub unparsed: usize,
+    /// 等价编码（解码后反汇编文本相同）——不算差异。
+    pub variants: usize,
+    /// **已知差异**条数（> 0 ⇒ 该文件不是"逐字节可复现"的语料，取舍时会淘汰）。
+    pub known: usize,
 }
 
 impl EncodingReport {
@@ -223,6 +264,34 @@ impl EncodingReport {
             self.known.len()
         )
     }
+}
+
+/// 逐文件编码对拍记分板（`target/asm-suite/encoding-files.json`；键 = `<isa>/<文件名>`）。
+pub fn encoding_files_json(reports: &[EncodingReport]) -> String {
+    let mut out = String::from("{\n");
+    let mut rows: Vec<(&str, &EncodingFileRow)> = Vec::new();
+    for r in reports {
+        for f in &r.file_rows {
+            rows.push((&r.isa, f));
+        }
+    }
+    for (i, (isa, f)) in rows.iter().enumerate() {
+        let name = f.file.rsplit('/').next().unwrap_or(&f.file);
+        out.push_str(&format!(
+            "  \"{}/{}\": {{\"cases\": {}, \"checked\": {}, \"unparsed\": {}, \
+             \"variants\": {}, \"known\": {}}}",
+            esc(isa),
+            esc(name),
+            f.cases,
+            f.checked,
+            f.unparsed,
+            f.variants,
+            f.known
+        ));
+        out.push_str(if i + 1 == rows.len() { "\n" } else { ",\n" });
+    }
+    out.push_str("}\n");
+    out
 }
 
 /// 三架构的编码对拍棘轮文本（重新刷 = 覆盖 `asm/ratchet/encoding.txt`）。

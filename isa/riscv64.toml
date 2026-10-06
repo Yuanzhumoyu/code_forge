@@ -278,11 +278,6 @@ opcode_field = "opcode"
 operand_fields = ["rd", "rs1", "shamt5"]
 
 [[forms]]
-name = "ZBB"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "rs2"]
-
-[[forms]]
 name = "OP"
 opcode_field = "opcode"
 operand_fields = []
@@ -759,33 +754,33 @@ asm = "ebreak"
 
 [[instructions]]
 name = "CLZ"
-form = "ZBB"
-opcode = 0x33
-fields = { funct3 = 1, funct7 = 0x30, rs2 = 0 }
+form = "I"
+opcode = 0x13
+fields = { funct3 = 1, imm12 = 0x600 }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "clz {dst}, {src}"
 
 [[instructions]]
 name = "CTZ"
-form = "ZBB"
-opcode = 0x33
-fields = { funct3 = 1, funct7 = 0x30, rs2 = 1 }
+form = "I"
+opcode = 0x13
+fields = { funct3 = 1, imm12 = 0x601 }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "ctz {dst}, {src}"
 
 [[instructions]]
 name = "CPOP"
-form = "ZBB"
-opcode = 0x33
-fields = { funct3 = 1, funct7 = 0x30, rs2 = 2 }
+form = "I"
+opcode = 0x13
+fields = { funct3 = 1, imm12 = 0x602 }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "cpop {dst}, {src}"
 
 [[instructions]]
 name = "REV8"
-form = "ZBB"
-opcode = 0x33
-fields = { funct3 = 5, funct7 = 0x68, rs2 = 8 }
+form = "I"
+opcode = 0x13
+fields = { funct3 = 5, imm12 = 0x6b8 }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "rev8 {dst}, {src}"
 
@@ -2308,19 +2303,19 @@ bytes = [0x0F, 0x00, 0xF0, 0x0F]
 
 [[vectors]]
 asm = "clz X1, X2"
-bytes = [0xB3, 0x10, 0x01, 0x60]
+bytes = [0x93, 0x10, 0x01, 0x60]
 
 [[vectors]]
 asm = "ctz X1, X2"
-bytes = [0xB3, 0x10, 0x11, 0x60]
+bytes = [0x93, 0x10, 0x11, 0x60]
 
 [[vectors]]
 asm = "cpop X1, X2"
-bytes = [0xB3, 0x10, 0x21, 0x60]
+bytes = [0x93, 0x10, 0x21, 0x60]
 
 [[vectors]]
 asm = "rev8 X1, X2"
-bytes = [0xB3, 0x50, 0x81, 0xD0]
+bytes = [0x93, 0x50, 0x81, 0x6B]
 
 [[vectors]]
 asm = "rol X1, X2, X3"

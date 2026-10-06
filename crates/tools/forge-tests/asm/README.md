@@ -16,8 +16,8 @@ asm/
 ├── parse/<isa>/<suite>/**    # 上游语料原文（vendored，逐字不改；见 PROVENANCE.md）
 ├── exec/<isa>/<名>.s         # 我们写的真语法小程序 + 同名 .expect（args/ret）
 ├── ratchet/<isa>.txt         # 计数棘轮（各桶计数 + 人工核过的缺口样例）
-├── fetch.ps1                 # 拉取/刷新语料（需 TLS，见「刷新语料」）
-├── PROVENANCE.md             # 每个语料文件的出处/ref/许可/摘要
+├── fetch.mjs                 # 拉取/取舍/写出处（Node，一条命令；见「刷新语料」）
+├── PROVENANCE.md             # 每个语料文件的出处/ref/许可/摘要（**由 fetch.mjs 生成**）
 └── README.md                 # 本文件
 ```
 
@@ -43,7 +43,7 @@ asm/
 | `Parsed` | 线性扫描整条命中 | 正常 |
 | `NoPrefix` | 失败，且没有任何候选的**首段**能对上（探针说"不可能"） | 记账（上游比我们全 / 别家方言） |
 | `TailMismatch` | 失败，但某条候选的**首段**对得上——首段之后没对上 | **唯一红桶** |
-| `CorpusOnly` | 失败原因是标签在别处（`UndefinedLabel`） | 记账（上下文不足） |
+| `CorpusOnly` | 失败原因是标签在别处（`UndefinedLabel`），**或者这行根本不是指令**（注释/伪指令/宏/预处理——语料抽取时记的 `skipped`，也照算进 `lines`） | 记账（上下文不足 / 语料特性） |
 
 **桶判定不问"首词是不是助记符"**，而是问扫描器自己：`could_be_instruction`（生成物的线性
 扫描探针）只跑扫描的第一步——"本 ISA 有没有哪条候选的首段能吃掉这段开头"。它是**必要
@@ -120,7 +120,7 @@ QEMU 路径：`$env:QEMU_RISCV64` / `$env:QEMU_AARCH64`，否则用默认安装�
 不是"语料不对"。**x86 与 aarch64 现在没有汇编器侧缺口**（x86 连"设计内非缺口"都在下一节列明），
 riscv64 只剩一条登记为设计取舍：
 
-- riscv64（红桶 **1** 条，已登记为设计取舍；`no_prefix` 已清零）：
+- riscv64（红桶 **1** 条，已登记为设计取舍）：
   - `jal a0, a0`：**不是**"两寄存器形式的 `jal`"——RISC-V 的 `jal rd, symbol` 只收符号，上游把它当
     **未定义符号 a0**（`CHECK-OBJ: R_RISCV_JAL a0`）。我们拒了"寄存器样子的 ident"当符号（以免
     `jmp rax` 这类走错候选），所以它落在红桶——**不改**（改法牵动所有 ISA 的 label 槽）。
@@ -128,12 +128,14 @@ riscv64 只剩一条登记为设计取舍：
     `fence` 的**字母集合**（`kind = "bits"` + `[conventions.bitsets.<表名>]`）、以及**立即数位置上的
     符号引用**（`symbols = true`：`%hi(foo)` 这类未定义符号现在报 `UndefinedLabel`（准确诊断）、
     `.Lpcrel_hi0` 这类已定义局部标签真装配；顺带修掉"点开头的标签名被切成 `.` + `Lp`"的**词法缺陷**）。
-- aarch64：**没有剩余缺口**——语料里本汇编器能认出来的写法全部通过（`parsed` 153、
-  `no_prefix` 0、红桶 0、编码对拍 **119/119** 逐字节全等）；余下 267 行是语料特性（伪指令/宏/一行多语句/
+- aarch64：**没有剩余缺口**——语料里本汇编器能认出来的写法全部通过（`parsed` 197、
+  红桶 0、编码对拍 **125/125** 逐字节全等）；余下 390 条 `no_prefix` + 1450 行 `corpus_only`
+  是"上游比我们全"（SVE/SME/NEON 之外那批不收，见下节）与语料特性（伪指令/宏/一行多语句/
   跨文件标签）。已修的各族见下面「已经修掉的」里的第十二～十六批。
-- x86：**语料全部归因完毕**——`llvm-mc` 档 `parsed` 111 + `corpus_only` 336 = 447 行全覆盖，
-  `no_prefix` **0**、红桶 **0**；编码对拍 **checked 110 / unparsed 0 / dropped 0 / known 0**。
-  `gnu-gas-intel` 余下的 7 条红桶是 32 位模式专有语法（下面「不是缺口」那节）。
+- x86：**语料全部归因完毕**——`llvm-mc` 档 `parsed` 116 + `corpus_only` 354 =
+  471 行全覆盖（`no_prefix` 1），红桶 **0**；编码对拍 **checked 110 / unparsed 0 /
+  dropped 0 / known 0**。`gnu-gas-intel` 余下的 7 条红桶是 32 位模式专有语法
+  （下面「不是缺口」那节）。
 
 - riscv64（v20 V10，第十七批：**`fence` 的字母集合 + 三操作数 `jalr` + 位置符号 `.`**）：
   ① `fence pred, succ` 的 pred/succ 是 i/o/r/w 的**组合**（`iorw`、`io`、`r,w`、`w,ir`）——
@@ -365,37 +367,79 @@ riscv64 只剩一条登记为设计取舍：
   另外把简写的基址槽收窄成单一 64 位地址类（多类槽会被**生成期采样器**强推 2/4 字节**地址**，
   那是无意义的组合：地址宽度不是数据宽度）。落地 4 条谱内向量。
 
+- riscv64（**语料抓出来的真缺陷**，第二十三批：`clz`/`ctz`/`cpop`/`rev8` 的编码错了）：
+  这四条 Zbb 指令原先写成 **R 型**（`opcode = 0x33` + `funct7`），实际是 **OP-IMM**
+  （`opcode = 0x13` + 12 位立即数：`clz = 0x600` / `ctz = 0x601` / `cpop = 0x602` /
+  `rev8 = 0x6b8`）。症状由上游语料**直接暴露**：`rv64zbb-valid.s` 的 `rev8 t0, t1` 期望
+  `0x93,0x52,0x83,0x6b`，我们出 `0xb3,0x52,0x83,0xd0`；更糟的是**原编码与 `rol` 撞车**
+  （同 `funct3=1`/`funct7=0x30`，只差 `rs2`），我们自己的解码器把 `clz X5, X6` 的字节解成
+  `rol X5, X6, X0`——也就是说这三条**编出来解不回自己**。修法就是把 form 换成 `I` 型 +
+  固定 `imm12`（编码键机制本来就有），谱内 4 条向量同步改成上游字节；修完
+  `rv64zbb-valid.s` / `rv64zbkb-valid.s` 从"有字节差异"变成**逐字节全等**、进了 vendored 集。
+
+### 上游全集里没收的那一层（**算出来的**淘汰面，2026-10-06）
+
+`asm/fetch.mjs` 把上游 LLVM MC 三套目录的**顶层**候选全拉下来评了一遍
+（riscv64 339 + aarch64 337 + x86 只取 Intel 语法名的 57 = **733** 个 `.s`），
+按「整条解析得住 + 不产生红桶 + 编码逐字节相等」留下 **83** 个；淘汰的 **651** 个分三类：
+
+| 淘汰原因 | 个数 | 典型 |
+| --- | ---: | --- |
+| `parsed = 0`（一个候选都不认识） | 576 | SVE/SME/FP8（aarch64 子目录）、AVX-512/AMX/APX 之外的 SIMD（x86）、RVV/corev（riscv 子目录）、加密与位操作扩展 |
+| 出红（有候选首段对得上、整条没对上） | 66 | aarch64 移位/扩展寄存器操作数（`add x2, x4, w5, uxtb`）、立即数 `lsl #12`、`stp/ldp`、寄存器偏移寻址、`ldr x0, =…`；riscv64 带符号 **CSR 名**（`csrrs t1, mstatus, zero`）、重定位表达式（`%tlsdesc_hi(a-4)`） |
+| 有字节差异（解析得过、编码不一样） | 9 | RVC 压缩编码（`compress-*.s`、`option-rvc.s`、`xwchc-compress.s`）、Zcb、RV32 变体的替换编码（`rv32zbb-*`/`rv32zbkb-*`；本谱是 riscv64） |
+
+这不是"忘了收"：这三类都会把红桶喂成"永久红"或让编码对拍清单全是噪声，门禁就废了。
+**谱长本事之后重跑 `fetch.mjs` 会自动把它们补回来**（判据在脚本里，不在人脑里）。
+
 ## 现有语料与计数
 
-（`2026-10-05` 实测；解析档数值以 `asm/ratchet/<isa>.txt` 为准，编码档以
-`asm/ratchet/encoding.txt` 为准。x86 是补完 APX/REX2 与真实形态之后的数；riscv64 / aarch64
-分别在立即数修饰/访存族与逻辑立即数族之后，此后未变）
+（`2026-10-06` 实测；解析档数值以 `asm/ratchet/<isa>.txt` 为准，编码档以
+`asm/ratchet/encoding.txt` 为准。本表是"上游全集 → 全绿子集"那一轮之后的数：
+候选 733 收 83（+1 份 GAS 节选），riscv64 `parsed` 136 → **526**、aarch64 153 → **197**、
+编码对拍 riscv64 134 → **221**）
 
 | ISA | suite | 文件 | 行数 | parsed | no_prefix | tail_mismatch | corpus_only | 字节 oracle |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | x86 | `gnu-gas-intel` | 1 | 64 | **50** | 4 | 7 | 3 | 无（GAS 用例不带期望字节） |
-| x86 | `llvm-mc` | 2 | 447 | **111** | **0** | **0** | 336 | **有**：110 条期望 / **110 条逐字节全等 / 0 条差异** |
-| riscv64 | `llvm-mc` | 3 | 503 | **136** | **0** | **1** | 366 | **有**：134 条期望 / **134 条逐字节全等** |
-| aarch64 | `llvm-mc` | 3 | 420 | **153** | **0** | **0** | 267 | **有**：119 条期望 / **119 条逐字节全等** |
+| x86 | `llvm-mc` | 4 | 471 | **116** | 1 | **0** | 354 | **有**：110 条期望 / **110 条逐字节全等 / 0 条差异** |
+| riscv64 | `llvm-mc` | 53 | 3766 | **526** | 182 | **1** | 3057 | **有**：339 条期望 / 221 条对拍上 / **0 条差异** |
+| aarch64 | `llvm-mc` | 26 | 2037 | **197** | 390 | **0** | 1450 | **有**：488 条期望 / 125 条对拍上 / **0 条差异** |
+
+> 三档都有一份**逐文件**记分板（`target/asm-suite/`）：解析档的 `<isa>.json`（`file_rows`）
+> 与编码档的 `encoding-files.json`。它们不是"报告附件"，而是**语料取舍的输入**
+> （见「刷新语料」）——被砍掉的文件名与原因也落盘（`target/asm-dropped.json`）。
 
 执行档：x86 5 条、riscv64 3 条、aarch64 2 条，**三架构都真跑通**（`ran=10 skipped=0`）。
 
 ## 刷新语料
 
-`asm/fetch.ps1` 按固定 ref 拉取上游文件、算 sha256、打印可直接粘进 `PROVENANCE.md` 的表格行：
-
-```powershell
-pwsh crates/tools/forge-tests/asm/fetch.ps1 -Isa x86      # 只拉一套
-pwsh crates/tools/forge-tests/asm/fetch.ps1 -List         # 列出各套的来源与固定 ref
+```bash
+node crates/tools/forge-tests/asm/fetch.mjs              # 默认：拉全集 → 打分 → 取舍 → 重写 PROVENANCE.md
+node crates/tools/forge-tests/asm/fetch.mjs --list       # 只打印计划（不下网）
+node crates/tools/forge-tests/asm/fetch.mjs --isa riscv64 # 只处理一套
+node crates/tools/forge-tests/asm/fetch.mjs --all        # 连子目录一起拉（SVE/SME/AMX/apx/rvv，评估全量用）
+node crates/tools/forge-tests/asm/fetch.mjs --keep-all   # 拉全集但不裁剪（评估模式）
+node crates/tools/forge-tests/asm/fetch.mjs --no-fetch   # 跳过下载，只用本地文件重算
 ```
 
-**当前机器没有 TLS**（`curl`/`git` 都报 `SEC_E_NO_CREDENTIALS`），网络通道只有 `web_fetch`
-（走 jsDelivr 的文本文件），所以语料是**一份份取回**的（`PROVENANCE.md` 逐条记了 URL 与
-sha256）；`fetch.ps1` 供能联网的机器按目录**批量**补齐全量（LLVM MC X86/AArch64/RISCV 全量、
-XED `tests-syntax`/`bulk-tests`、NASM `test/`+`golden`、YASM、GAS 全量 i386/aarch64）。
+一条命令做三件事：① 按钉死的 ref（`llvmorg-19.1.0`）拉候选全集（x86 只取 Intel 语法
+文件名那批；**只改落盘名不改内容**，子目录段折进文件名）；② 跑两个档拿逐文件记分板，
+按「**整条解析得住（`parsed >= 1`）**、**不产生红桶（`tail_mismatch` ≤ 已登记缺口）**、
+**编码对拍没有字节差异**」三条淘汰——判据是**算出来的**，淘汰清单落
+`target/asm-dropped.json`；③ 重写 `asm/PROVENANCE.md`（逐文件 字节/行/sha256）。
 
-新增语料的三步：① 在 `src/asm/corpus.rs` 的 `SUITES` 里登记（key/目录/注释前缀/许可/来源，
-`encoding:` 注释位置与 suite 缺省不同时再补 `encoding_sides`）；② 把文件放进
-`asm/parse/<isa>/<suite>/`；③ 刷棘轮（解析档与编码档各一次）并在 `PROVENANCE.md` 记出处。
+跑完**必须**刷棘轮并**看 diff**（脚本会打印命令）：
+
+```powershell
+$env:FORGE_ASM_WRITE_RATCHET = "1"; cargo test -p forge-tests --test asm_parse --test asm_encoding
+```
+
+新增**一整套**语料（比如 XED/NASM）时另有四步：① 在 `src/asm/corpus.rs` 的 `SUITES` 里登记
+（key/目录/注释前缀/许可/来源；`encoding:` 注释位置与缺省不同时补 `encoding_sides`）；
+② 让 `fetch.mjs` 的 `SOURCES`/`MANUAL` 认它；③ 刷两个棘轮；④ `PROVENANCE.md` 由脚本重写，
+**不要手抄行**——`tests/asm_provenance.rs` 会守（表里表外、字节数、行数，两个方向都红）。
+
 **许可**：LLVM MC 与 XED = `Apache-2.0 WITH LLVM-exception`，NASM/YASM = `BSD-2-Clause`，
-GAS = `GPL-3.0-or-later`（上游各文件的许可，逐条见 `PROVENANCE.md`）。
+GAS = `GPL-3.0-or-later`（上游各文件的许可逐条见 `PROVENANCE.md`；GAS 那份在独立目录
+`parse/x86/gnu-gas-intel/`）。

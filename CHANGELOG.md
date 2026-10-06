@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-06) — 真实汇编语料从"三份小样"扩到**上游全集里全绿的那一层**（取舍自动化 + 出处守卫）
+
+① **取舍不再手抄**：新工具 `crates/tools/forge-tests/asm/fetch.mjs`（Node 自带根证书，替掉需要系统 TLS 的 `fetch.ps1`）一条命令做三件事——按钉死的 ref（`llvmorg-19.1.0`）拉上游 LLVM MC 三套目录的**顶层** `.s`（x86 只取 Intel 语法的文件名那批），跑解析档 + 编码对拍档拿**逐文件**记分板，再按「**整条解析得住（`parsed >= 1`）+ 不产生红桶（`tail_mismatch` ≤ 已登记缺口）+ **编码对拍没有字节差异**」淘汰，最后**重写** `asm/PROVENANCE.md`（逐文件 字节/行/sha256）。两个档因此新增机读产物：`target/asm-suite/<isa>.json` 的 `file_rows` 与 `encoding-files.json`（逐文件记分板），淘汰清单落 `target/asm-dropped.json`——判据在脚本里，不在人脑里：谱长本事后重跑即自动补回。
+
+② **评了 733 个候选、收 83 个**（riscv64 339 / aarch64 337 / x86 57 顶层；淘汰 651 = 576「本谱一个候选都不认识」+ 66「出红」+ 9「有字节差异」）。成果：`parsed` riscv64 136 → **526**、aarch64 153 → **197**、x86 llvm-mc 111 → **116**；编码对拍 riscv64 134 → **221**、aarch64 119 → **125**、x86 110 不变，**三架构 `known` 仍然全 0**（每一条对拍上的期望字节都逐字节相等）；红桶只有 riscv64 那 1 条已登记的 `jal a0, a0`。淘汰面（SVE/SME/AVX-512/AMX/RVV/RVC 压缩编码/带符号 CSR 名/重定位表达式/移位与扩展寄存器操作数…）逐类记在 `asm/README.md`。
+
+③ **语料抓出一处真缺陷并修掉**：riscv64 `clz`/`ctz`/`cpop`/`rev8` 原先写成 **R 型**（`opcode = 0x33` + `funct7`），实际是 **OP-IMM**（`opcode = 0x13` + 立即数 `0x600`/`0x601`/`0x602`/`0x6b8`）——原编码与 `rol` 撞车（同 `funct3=1`/`funct7=0x30`，只差 `rs2`），**我们自己的解码器把 `clz X5, X6` 的字节解成 `rol X5, X6, X0`**，即这三条编出来解不回自己。上游 `rv64zbb-valid.s` 的期望字节 `0x93,0x52,0x83,0x6b` 一比就露（`isa/riscv64.toml` 换 `form = "I"` + 固定 `imm12`，谱内 4 条向量同步改）；修完 `rv64zbb-valid.s`/`rv64zbkb-valid.s` 由"有字节差异"转为**逐字节全等**并进了语料集。
+
+④ **新守卫 `crates/tools/forge-tests/tests/asm_provenance.rs`**：`asm/PROVENANCE.md`（生成物）与磁盘语料**双向一致**——磁盘有表里没有 / 表里有磁盘没有 / 字节数或行数对不上，三者都红（sha256 由 `fetch.mjs` 拉取时校验，守卫只比字节数与行数以免引入哈希依赖）。`gnu-gas-intel` 那份节选同时**钉到 commit** `19cc5b7efb3e…`（按内容寻址，任一镜像同 sha），并核出它其实是上游**前 64 行逐字未改**（原先 PROVENANCE 里"空白已归一化"的说法不成立，已删）。
+
 ### Added (2026-10-05) — x86 `movzx`/`movsx` 的内存源形态（最后一个已登记的汇编器缺口）
 
 `movzx eax, byte ptr [rbx]` 的**源宽度只能由尺寸关键字给**（`0F B6` 与 `0F B7` 的差别在操作码，没有任何寄存器能表达源宽），而 `{size}` 按设计只是"给人读的提示"、不进类型签名 ⇒ 原来那对 `MOVZX_R{8,16}_MEM`（`[src]` 简写、asm 里**没有关键字**）文本一模一样，只能挂在歧义名单上；再照搬 16/32 位目的地的变体只会让 `movzx eax, word ptr [rbx]` 静默编成 byte 那条。

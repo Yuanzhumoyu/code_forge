@@ -9,16 +9,16 @@ dropped = 0
 variants = 0
 known = 0
 [isa riscv64]
-cases = 134
-checked = 134
-unparsed = 0
-dropped = 0
+cases = 339
+checked = 221
+unparsed = 118
+dropped = 1
 variants = 0
 known = 0
 [isa aarch64]
-cases = 119
-checked = 119
-unparsed = 0
+cases = 488
+checked = 125
+unparsed = 363
 dropped = 0
 variants = 0
 known = 0

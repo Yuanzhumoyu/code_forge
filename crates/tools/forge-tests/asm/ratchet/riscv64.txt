@@ -2,10 +2,10 @@
 # 判定：tail_mismatch（有候选首段对得上、整条没对上）多一个 = 新缺陷/换了语料；
 #       少一个 = 修好了/漏跑。两个方向都红。
 [suite llvm-mc]
-files = 3
-lines = 503
-parsed = 136
-no_prefix = 0
+files = 53
+lines = 3766
+parsed = 526
+no_prefix = 182
 tail_mismatch = 1
-corpus_only = 366
+corpus_only = 3057
 # mismatch: rv32i-valid.s:88	jal a0, a0	line 3: no matching instruction
