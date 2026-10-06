@@ -1974,6 +1974,27 @@ fields = { shift = 0 }
 ops = ["dst:r64:out", "src:r64", "src2:r64", "sh:imm6"]
 asm = "subs {dst}, {src}, {src2}, lsl #{sh}"
 
+# ── `mov <Rd>, #imm`（立即数别名：`movz #imm, lsl #0`）──
+#
+# 与寄存器形态 `mov {dst}, {src}` 形状不同（带 `#`）⇒ 共存不遮蔽。
+# 上游把 `mov x0, #0` 编成 `movz x0, #0`（0xD2800000），正是这两条的编码。
+
+[[instructions]]
+name = "MOVXIMM"
+form = "MOVW16"
+opcode = 0x1A5
+fields = { hw = 0 }
+ops = ["dst:r64:out", "imm:imm16u"]
+asm = "mov {dst}, #{imm}"
+
+[[instructions]]
+name = "MOVWIMM"
+form = "MOVW16"
+opcode = 0xA5
+fields = { hw = 0 }
+ops = ["dst:r32:out", "imm:imm16u"]
+asm = "mov {dst}, #{imm}"
+
 # ── `movz`/`movk`/`movn` 的 `abs_g*` 类重定位（`movz x2, #:abs_g0:sym`）──
 #
 # 与数值形态同编码；`hw` 由**修饰名**决定（`abs_g0..g3` ⇒ `hw` 0..3），所以槽按 hw 分并

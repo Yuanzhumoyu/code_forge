@@ -11,6 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-07) — aarch64：`mov <Rd>, #imm` 立即数别名（2 条）
+
+`mov x0, #0` / `mov w0, #imm`——上游把它展开成 `movz #imm, lsl #0`（`mov x0, #0` = `0xD2800000`）。与寄存器形态 `mov {dst}, {src}` **形状不同**（带 `#`）⇒ 共存不遮蔽，正是前几轮反复验证过的"同关键字、异形状"路子。生成器入库 `crates/tools/forge-tests/asm/gen-aarch64-mov-imm.mjs`。守卫同步：`spec_coverage_guard` arm64 444 → **446**、`isa_roundtrip_guard` arm64 枚举器 2153 → **2165**；全工作区门禁 exit 0。
+
 ### Added (2026-10-07) — aarch64：`movz`/`movk`/`movn` 的 `abs_g*` 类重定位 24 条
 
 `movz x2, #:abs_g0:sym`、`movk x3, #:abs_g1:foo` 这类写法。关键点是 **`hw` 由修饰名决定**（`abs_g0..g3` ⇒ `hw` 0..3），所以四个**按 hw 分组的符号槽**各自用 `imm_fns`（上一轮落的新键）过滤修饰表——过滤表列到 20/20/18/6 个名字（带 `#` 与不带 `#` 两种写法都列）；不这么分就会把 `movz … #:abs_g2:foo` 编成 `hw = 0`、**静默写错字段**。24 条 = 3 助记符 × 4 hw × {X, W}，opcode 照 `[[templates]]` 的 rows 抄（`MOVZX`=0x1A5 / `MOVZW`=0xA5 / `MOVNX`=0x125 / `MOVNW`=0x25 / `MOVKX`=0x1E5 / `MOVKW`=0xE5）；模板**不带 `#`**（修饰文本自带）以与数值形态保持"形状隔离"。生成器入库 `crates/tools/forge-tests/asm/gen-aarch64-mov-reloc.mjs`。
