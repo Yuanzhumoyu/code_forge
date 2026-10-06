@@ -618,6 +618,15 @@ $env:FORGE_ASM_WRITE_RATCHET = "1"; cargo test -p forge-tests --test asm_parse -
 机械生成并**语料对账**后原地重写——换 ref/加 CSR 时跑它，别手改那张表；
 它幂等（连跑两次无 diff），对账不过（缺名/值不符/语料自相矛盾）会直接失败。
 
+**同一套做法的第二条**：`asm/gen-aarch64-byteloads.mjs` 生成 aarch64 的**字节/半字 GPR 访存**
+（`ldrb`/`ldrh`/`ldrsb`/`ldrsh`/`ldrsw`/`strb`/`strh`，9 组 × {带位移, 无位移} = 18 条指令 +
+两个按单位分的 imm12 槽）。它的内容是**量出来的**：`op8` = 0x38/0x78/0xB8 与
+`opc2` = 00 store / 01 无符号载 / 10 符号载到 X / 11 符号载到 W 来自语料
+（117 行、逐条解期望字节），imm12 的单位 = 访问宽度（byte 1 / halfword 2 / word 4）。
+生成后 `validate`/`lint` 均过；**尚未入库到 `isa/arm64.toml`**——落地还差"快照守卫钉死值 →
+全集语料的字节对拍（`known` 必须为 0）→ 裁回全绿层 → 刷棘轮 → 全门禁 → 文档/CHANGELOG"这一条链，
+按顺序跑完再提交（`git checkout -- isa/arm64.toml` 可随时回到干净状态）。
+
 **许可**：LLVM MC 与 XED = `Apache-2.0 WITH LLVM-exception`，NASM/YASM = `BSD-2-Clause`，
 GAS = `GPL-3.0-or-later`（上游各文件的许可逐条见 `PROVENANCE.md`；GAS 那份在独立目录
 `parse/x86/gnu-gas-intel/`）。
