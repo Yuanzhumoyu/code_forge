@@ -673,6 +673,7 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                 syms: &mut Vec<(usize, Option<usize>, String)>,
                 op: usize,
                 allow_sym: bool,
+                require_sym: bool,
             ) -> Option<i64> {
                 let save = it.pos;
                 let _d = #imm_pref;
@@ -681,6 +682,14 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                 let v = __expr(it, float);
                 __SYMREF_ON.with(|a| a.set(false));
                 let v = v?;
+                // `require_symbol`：本槽**只**接受"记到了符号/带修饰"的写法（重定位修饰形态）。
+                // 必须在**提交清空之前**判——`__imm` 成功时会把 `__SYMREF` 交给 `syms` 清空，
+                // 外层再测长度增量恒为 0（实测踩过）。
+                if require_sym && __SYMREF.with(|r| r.borrow().is_empty()) {
+                    __SYMREF.with(|r| r.borrow_mut().clear());
+                    it.pos = save;
+                    return None;
+                }
                 if v < min || v > max || (unit > 1 && v % unit != 0) {
                     __SYMREF.with(|r| r.borrow_mut().clear());
                     it.pos = save;
@@ -1279,10 +1288,13 @@ fn operand_parse_tok(
             let float = slot.float == Some(true);
             let unit = proc_macro2::Literal::i64_suffixed(slot.unit());
             let allow_sym = slot.symbols.unwrap_or(false);
+            // `require_symbol`（重定位修饰形态）：本槽只接受"记到了符号/带修饰"的写法——
+            // 判据在 `__imm` 内部判（`__imm` 成功时会提交并清空 `__SYMREF`，外层测长度增量恒为 0）。
+            let require_sym = slot.require_symbol.unwrap_or(false);
             let elem = match (slot.imm_wrap_modulus(), slot.imm_range()) {
                 (Some(m), Some((clo, chi))) => quote! {
                     {
-                        let __w = __imm(&mut it, #min, #max, #float, #unit, &mut __lsyms, #n, #allow_sym);
+                        let __w = __imm(&mut it, #min, #max, #float, #unit, &mut __lsyms, #n, #allow_sym, #require_sym);
                         __w.map(|v| {
                             if v > #chi { v.wrapping_sub(#m) } else { v }
                         })
@@ -1290,7 +1302,7 @@ fn operand_parse_tok(
                     }
                 },
                 _ => {
-                    quote! { __imm(&mut it, #min, #max, #float, #unit, &mut __lsyms, #n, #allow_sym) }
+                    quote! { __imm(&mut it, #min, #max, #float, #unit, &mut __lsyms, #n, #allow_sym, #require_sym) }
                 }
             };
             // 命名立即数（`names`）：先试表里的名字，没命中再走普通字面量/表达式路径

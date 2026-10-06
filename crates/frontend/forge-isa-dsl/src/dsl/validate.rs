@@ -1742,6 +1742,20 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                 ));
             }
         }
+        if s.require_symbol.unwrap_or(false) {
+            if !matches!(s.kind, OperandKind::Imm) {
+                return Err(format!(
+                    "{path}: `require_symbol` 只对 kind = \"imm\" 有意义（当前 kind = {}）",
+                    s.kind.kind_name()
+                ));
+            }
+            if !s.symbols.unwrap_or(false) {
+                return Err(format!(
+                    "{path}: `require_symbol` 要求同时声明 `symbols = true`——本开关只是把该槽\
+                     收窄成\"必须记到符号\"，符号能力仍由 `symbols` 声明"
+                ));
+            }
+        }
         if s.table.is_some() && s.kind != OperandKind::Bits {
             return Err(format!("{path}: `table` 只对 kind = \"bits\" 有意义"));
         }

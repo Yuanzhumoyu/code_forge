@@ -2849,6 +2849,103 @@ asm = "i {{dst}}, {{src}}"
 /// 含一条助记符为 `i` 的指令（`asm = "i {dst}, {src}"`）的最小合法模型——
 /// `[[pattern]].insts` 用 `i …` 引用它（助记符已声明），叶变量 `{a}`/`{b}` 走
 /// extra_known 通道。
+/// `require_symbol`（重定位修饰形态专用）：只接受符号/带修饰的引用。
+///
+/// 校验层钉住三条：① 必须同时声明 `symbols = true`；② 只能落在 `imm` 槽上；
+/// ③ 与 `symbols` 同款要求 `unit == 1`。**运行时行为**（数值写法落回数值槽）交给
+/// aarch64 语料的字节对拍档验证——那里有真实的反例（`ldr x0, [x1, #8]` 曾被带修饰的
+/// 变体接走、编成字段 8 而不是 1）。
+#[test]
+fn require_symbol_validates() {
+    const BASE: &str = r#"
+[meta]
+name = "x"
+[encoding]
+kind = "fixed"
+bits = 32
+[reg.gpr8]
+count = 16
+[[operand_slots]]
+name = "gx"
+kind = "reg"
+class = "gpr8"
+roles = "inout"
+"#;
+    // ③ unit != 1：`symbols` 那条先拦（`require_symbol` 依赖它）
+    let doc = BASE.to_string()
+        + r#"
+[[operand_slots]]
+name = "sym12"
+kind = "imm"
+signed = false
+width = 12
+unit = 8
+symbols = true
+require_symbol = true
+[[instructions]]
+name = "I"
+opcode = 1
+ops = ["dst:gx:inout", "imm:sym12"]
+asm = "i {dst}, {imm}"
+"#;
+    let err = parse_and_validate(&doc).expect_err("unit != 1 必须报错");
+    assert!(format!("{err:?}").contains("unit == 1"), "{err:?}");
+
+    // ① 没声明 `symbols`
+    let doc = BASE.to_string()
+        + r#"
+[[operand_slots]]
+name = "sym12"
+kind = "imm"
+signed = false
+width = 12
+require_symbol = true
+[[instructions]]
+name = "I"
+opcode = 1
+ops = ["dst:gx:inout", "imm:sym12"]
+asm = "i {dst}, {imm}"
+"#;
+    let err = parse_and_validate(&doc).expect_err("缺 symbols 必须报错");
+    assert!(format!("{err:?}").contains("require_symbol"), "{err:?}");
+
+    // ② 非 imm 槽
+    let doc = BASE.to_string()
+        + r#"
+[[operand_slots]]
+name = "gl"
+kind = "label"
+width = 4
+symbols = true
+require_symbol = true
+[[instructions]]
+name = "I"
+opcode = 1
+ops = ["dst:gx:inout", "t:gl"]
+asm = "i {dst}, {t}"
+"#;
+    let err = parse_and_validate(&doc).expect_err("非 imm 槽必须报错");
+    assert!(format!("{err:?}").contains("require_symbol"), "{err:?}");
+
+    // 正例：symbols + require_symbol + unit 1 通过校验
+    let doc = BASE.to_string()
+        + r#"
+[[operand_slots]]
+name = "sym12"
+kind = "imm"
+signed = false
+width = 12
+symbols = true
+require_symbol = true
+[[instructions]]
+name = "I"
+opcode = 1
+ops = ["dst:gx:inout", "imm:sym12"]
+asm = "i {dst}, {imm}"
+"#;
+    parse_and_validate(&doc).expect("symbols + require_symbol + unit 1 必须通过");
+}
+
 const PATTERN_BASE: &str = r#"
 [meta]
 name = "x"
@@ -3170,6 +3267,7 @@ fn imm_slot_wrap_reads_the_bit_pattern() {
         table_entries: Vec::new(),
         name_entries: Vec::new(),
         symbols: None,
+        require_symbol: None,
     };
 
     // 32 位有符号 + wrap：规范域是 i32，接受域多收 `0x90909090` 这类无符号写法。

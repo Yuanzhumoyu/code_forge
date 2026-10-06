@@ -1447,6 +1447,15 @@ pub struct OperandSlot {
     /// 有歧义，校验期直接拒）。
     #[serde(default)]
     pub symbols: Option<bool>,
+    /// **必须**是符号（或带修饰的）引用（`require_symbol`）：本槽**只**接受符号写法。
+    ///
+    /// 用途是**重定位修饰形态**（A64 的 `add x0, x0, #:lo12:sym`）：符号位置必须开在
+    /// `unit == 1` 的槽上（见上一条），而"立即数槽"的候选特异性**按接受域**裁决——
+    /// unit 更细的槽接受域更窄 ⇒ 它会**优先命中**，把数值写法也接走（`ldr x0, [x1, #8]`
+    /// 会被编成字段 8 而不是 1，静默错编码）。打开本开关后该槽在"没记到符号"时**直接不匹配**，
+    /// 数值写法自然落回数值槽。要求 `symbols = true`（校验期）。
+    #[serde(default, rename = "require_symbol")]
+    pub require_symbol: Option<bool>,
     /// bits：本槽用的命名位集合表名（`[conventions.bitsets.<table>]`）。
     #[serde(default)]
     pub table: Option<String>,

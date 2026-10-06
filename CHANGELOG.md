@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-07) — 汇编器两遍布局把「第一个冒号之前的一切」当标签（A64 重定位族 382 行一直落红的根因）
+
+生成的 `parse_insts` 按 `name:` 识别标签定义，但判据是"**见到冒号就切**"：`add x8, x8, :lo12:sizes` 因此被切成"标签 `add x8, x8,` + 指令 `lo12:sizes`"，报 `no matching instruction`。语料抽取侧本就有"名字不含空白"的守卫，生成侧没有——**这是 A64 重定位修饰族（382 行、47 个修饰名、十几个文件）从来没解析过的真正原因**，而不是"缺指令"。修法 = 同一口径的判据：名字非空且不含空白/逗号/括号/`#` 才算标签。修后 `add x8, x8, :lo12:sizes` 装配为 `imm: 0`（与上游未重定位字段 = 0 一致），未定义符号报 `UndefinedLabel`（准确诊断 ⇒ 归入"上下文不足"桶而非缺陷）。
+
+### Added (2026-10-07) — ISA-DSL：`[[operand_slots]].require_symbol`（只收符号/带修饰的写法）
+
+重定位修饰形态的符号位置必须开在 `unit == 1` 的槽上（校验硬要求），而立即数槽的候选**特异性按接受域**裁决——unit-1 槽比 unit-8 窄 ⇒ 优先命中，会把**数值写法**接走（实测 `ldr x0, [x1, #8]` 被编成字段 8 而不是 1，静默错编码）。`require_symbol = true` 让该槽在"没记到符号/修饰"时**直接不匹配**，数值写法自然落回数值槽；要求 `kind = "imm"` 且同时声明 `symbols = true`。判据在 `__imm` **内部**判（它成功时会提交并清空 `__SYMREF`，外层测长度增量恒为 0）。四处同步：`model.rs` 字段、`validate.rs` 校验、`schema.rs` + 重新生成的 `isa-dsl.schema.json`、`docs/reference/isa-dsl.md`（键表 + 专节）+ 单测 `require_symbol_validates`（四种情形）。另外：含 `require_symbol` 槽的指令是**仅装配**形态（渲染出的无修饰文本由数值兄弟接手），生成期自测对它们**跳过文本闭环**、只测编解码闭环。
+
+### Added (2026-10-07) — aarch64：重定位修饰族 12 条（`add x0, x0, #:lo12:sym`）
+
+ALU 立即数 8 条（`add`/`sub`/`adds`/`subs` × X/W）+ LDR/STR 4 条，槽是 `imm12sym`（unit 1 + `symbols` + `require_symbol`）。修饰名做成全局数据 `[[conventions.imm_fn]]` **98 条**（49 个名字 × 带 `#`/不带 `#`）——**一个变体收全部修饰**；`text` 里带 `#`、指令模板**不带**，使重定位变体的**文本形状**与数值变体不同（同一形状的多候选里分派会提交到排第一的那条，不按操作数失败回退；形状相同会互相遮蔽，实测 `add W0, W1, #0` 因此装配不出来）。
+
+效果：aarch64 `parsed` 1572 → **1618**、红 1877 → **1734**、`corpus_only` +97、编码 `known` 仍 **53**（无字节回归）；**4 个文件整文件转绿**（`arm64-ilp32.s`、`basic-pic.s`、`jump-table.s`、`tls-add-shift.s`）⇒ 全绿集 **109 → 112**（PROVENANCE 114 行）、淘汰 624 → **621**；aarch64 棘轮随之刷新。守卫同步：`spec_coverage_guard` arm64 336 → **348**、`isa_roundtrip_guard` arm64 枚举器 1505 → **1577**。仍缺（留在红桶）：`#:lo12:sym, lsl #12`、`str q0, …`（FP 视图）、`movz/movk/movn` 的 `abs_g*`、`adrp/adr` 的 `:got:`、`ldr x0, =sym`。
+
 ### Added (2026-10-07) — aarch64：字节/半字 GPR 访存 18 条（`ldrb`/`ldrh`/`ldrsb`/`ldrsh`/`ldrsw`/`strb`/`strh`）
 
 9 组助记符/类别 × {带位移, 无位移} = **18 条**（语料 117 行）。编码与既有 LDR/STR 同族：`size 111 V 00 opc imm12 Rn Rt`——`opc` 00 = store / 01 = 无符号载 / 10 = 符号载到 X / 11 = 符号载到 W；imm12 的**单位 = 访问宽度**（byte 1 / halfword 2 / word 4，按单位分成 `imm12b`/`imm12h`/`imm12w` 三个槽）。

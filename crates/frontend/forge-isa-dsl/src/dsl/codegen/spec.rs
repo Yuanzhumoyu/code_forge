@@ -1256,6 +1256,27 @@ fn gen_one(
         }
     };
 
+    // `require_symbol` 槽（重定位修饰形态）**跳过文本闭环**：这类形态是"仅装配"的——
+    // 渲染出来的文本按设计不带修饰（上游 objdump 也把未重定位字段显示成 `#0`），
+    // 该文本由**数值兄弟**接手，因此"渲染 → 回装配"对本条指令天然不成立。
+    // 编解码闭环（`__spec_roundtrip`）照旧，所以字节稳定仍被测。
+    let text_closure = if info
+        .operands
+        .iter()
+        .any(|(_, _, s, _)| s.require_symbol.unwrap_or(false))
+    {
+        let doc = syn::LitStr::new(
+            &format!(
+                "{name}: 含 `require_symbol` 槽（重定位修饰形态，仅装配）——跳过文本闭环；\
+                 渲染出的无修饰文本由数值兄弟接手"
+            ),
+            proc_macro2::Span::call_site(),
+        );
+        quote! { let _ = #doc; }
+    } else {
+        quote! { __spec_text(#name_lit, &__base, &__bytes, #strict_lit); }
+    };
+
     Ok(quote! {
         /// `#name`：闭环 + 字段原样 + 文本幂等 + 立即数边界。
         #peers_doc
@@ -1263,7 +1284,7 @@ fn gen_one(
         fn #fn_ident() {
             let __base = #base_inst;
             let (__dec, __bytes) = __spec_roundtrip(#name_lit, &__base, #want_len_ts);
-            __spec_text(#name_lit, &__base, &__bytes, #strict_lit);
+            #text_closure
             #field_checks
             #(#imm_tests)*
             #cond_loop

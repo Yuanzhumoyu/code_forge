@@ -1293,13 +1293,24 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                         }
                     };
                     // 标签定义：`name + label_suffix`
+                    //
+                    // **只有"纯标识符"才当标签**：修饰文本里就有冒号
+                    // （`add x8, x8, :lo12:sizes`、`ldr x0, [x0, #:got_lo12:var]`），
+                    // 若"见到冒号就切"，整行会被切成"标签 `add x8, x8,` + 指令 `lo12:sizes`"
+                    // 并报 NoMatch —— 实测这就是 A64 重定位族 382 行一直落红的原因。
+                    // 判据与语料抽取侧同口径：名字非空、且不含空白/逗号/括号/`#`。
                     let rest = if let Some(pos) = line.find(#label_suf_lit) {
                         let name = line[..pos].trim();
-                        if name.is_empty() {
-                            return Err(line_err(AsmError::ParseError("empty label name".into())));
+                        let is_label = !name.is_empty()
+                            && !name
+                                .chars()
+                                .any(|c| c.is_whitespace() || matches!(c, ',' | '[' | ']' | '#' | '('));
+                        if is_label {
+                            labels.insert(name.to_string(), insts.len() as u32);
+                            line[pos + #label_suf_len..].trim()
+                        } else {
+                            line
                         }
-                        labels.insert(name.to_string(), insts.len() as u32);
-                        line[pos + #label_suf_len..].trim()
                     } else {
                         line
                     };
