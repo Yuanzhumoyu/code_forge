@@ -473,6 +473,24 @@ fn gen_lexer_ts(_model: &IsaModel) -> Result<TokenStream, String> {
                             while let Some(&d) = cs.peek() {
                                 if d.is_ascii_digit() { num.push(d); cs.next(); } else { break; }
                             }
+                            // **数字局部标签引用**（GNU as / LLVM MC 的 `1b` / `1f`）：数字紧跟
+                            // `b`/`f` 且后面不再接标识符字符或 `.` 时，整体吐成一个 **Ident**。
+                            // 这么做是为了**通用与零冗余**：下游的"符号引用收集 + 立即数修饰"
+                            // 原样可用（`#:abs_g0_s:1b` 里的 `1b` 就是一个普通符号名），不需要新的
+                            // 操作数种类、也不需要新的槽键。`v0.16b` 那类元素后缀以 `.` 开头、
+                            // 由 dot-ident 规则吃掉，不会走到这里。
+                            if matches!(cs.peek(), Some('b') | Some('f')) {
+                                let mut t = cs.clone();
+                                t.next();
+                                let standalone = t.peek().map_or(true, |c| {
+                                    !(c.is_alphanumeric() || *c == '_' || *c == '.' || *c == '$')
+                                });
+                                if standalone {
+                                    num.push(cs.next().unwrap());
+                                    out.push(__Tok::Ident(num));
+                                    continue;
+                                }
+                            }
                             let mut is_float = false;
                             if cs.peek() == Some(&'.') {
                                 let mut t = cs.clone();

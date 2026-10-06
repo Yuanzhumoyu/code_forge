@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-07) — 汇编器：数字局部标签 `1b`/`1f`（GNU as / LLVM MC 语义，ISA 无关）
+
+设计取"通用 + 人体工学、零冗余"：
+
+- **词法器**把 `数字 + b/f` 吐成一个普通 `Ident`（判据：其后不再接标识符字符或 `.`）——于是下游的**符号引用收集 + 立即数修饰**原样可用（`mov x0, #:abs_g0_s:1b` 里的 `1b` 就是一个普通符号名），**不需要新的操作数种类，也不需要新的槽键**；
+- 两遍布局里数字标签**单独收集**成"编号 → 定义位置列表"（同一编号可反复定义），回填时 `1b` 取**最近的上一个**（允许与分支同址：`1: b 1b`），`1f` 取**下一个**；找不到 → `UndefinedLabel`（准确诊断 ⇒ 语料侧归入"上下文不足"桶而不是缺陷）；
+- 与 NEON 元素后缀**互不干扰**：`v0.16b` 那类以 `.` 开头、由既有的 dot-ident 规则吃掉，不会走到这条分支。
+
+效果：**全绿集 117 → 123（+6，六个都是 riscv64 文件）**——能力坐在共享汇编器里、与 ISA 无关，所以 riscv64 一起受益（"通用"的直接回报）；PROVENANCE 125 行；riscv64 棘轮随之刷新。aarch64 侧那 5 个含局部标签的文件仍被**别的缺口**挡着（`arm64-adr.s` 缺 ADR/ADRP 指令本身；`mov-expr-as-immediate.s` 缺 `mov` 立即数的**符号/表达式**形态）——是下一轮的靶子，本轮的能力是它们的前置件。
+
 ### Added (2026-10-07) — aarch64：`mov <Rd>, #imm` 立即数别名（2 条）
 
 `mov x0, #0` / `mov w0, #imm`——上游把它展开成 `movz #imm, lsl #0`（`mov x0, #0` = `0xD2800000`）。与寄存器形态 `mov {dst}, {src}` **形状不同**（带 `#`）⇒ 共存不遮蔽，正是前几轮反复验证过的"同关键字、异形状"路子。生成器入库 `crates/tools/forge-tests/asm/gen-aarch64-mov-imm.mjs`。守卫同步：`spec_coverage_guard` arm64 444 → **446**、`isa_roundtrip_guard` arm64 枚举器 2153 → **2165**；全工作区门禁 exit 0。

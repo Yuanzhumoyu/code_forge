@@ -1254,6 +1254,10 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                 let mut insts: Vec<Inst> = Vec::new();
                 let mut labels: std::collections::BTreeMap<String, u32> =
                     std::collections::BTreeMap::new();
+                // **数字局部标签**（`1:`）：同一个编号可以**反复定义**，所以按"编号 → 定义位置列表"
+                // 收集；引用 `1b` 取最近的上一个、`1f` 取下一个（GNU as / LLVM MC 同款语义）。
+                let mut locals: std::collections::BTreeMap<u32, Vec<u32>> =
+                    std::collections::BTreeMap::new();
                 // 符号常量表（.equ/.set 在首行解析期填充；立即数与位移求值读取）
                 __EQU.with(|m| m.borrow_mut().clear());
                 // (指令序号, 操作数序号, 符号名, 行号)
@@ -1309,7 +1313,14 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                                 .chars()
                                 .any(|c| c.is_whitespace() || matches!(c, ',' | '[' | ']' | '#' | '('));
                         if is_label {
-                            labels.insert(name.to_string(), insts.len() as u32);
+                            // 纯数字的名字 = **数字局部标签**（可重复定义 ⇒ 进 `locals` 列表）；
+                            // 其余名字进 `labels`（名字 → 位置，后定义覆盖前定义，与既有行为一致）。
+                            match name.parse::<u32>() {
+                                Ok(n) => locals.entry(n).or_default().push(insts.len() as u32),
+                                Err(_) => {
+                                    labels.insert(name.to_string(), insts.len() as u32);
+                                }
+                            }
                             line[pos + #label_suf_len..].trim()
                         } else {
                             line
@@ -1452,6 +1463,24 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                     // 空名 = **自引用**（`__label` 里的 `.`）：值为本条指令自身的下标。
                     let block = if sym.is_empty() {
                         *i as u32
+                    } else if let Some((num, dir)) = __local_sym(sym) {
+                        // 数字局部标签：`1b` = 最近的上一个 `1:`、`1f` = 下一个 `1:`。
+                        let at = *i as u32;
+                        locals
+                            .get(&num)
+                            .and_then(|list| {
+                                if dir == 'b' {
+                                    // `<=`：标签可以**与分支同址**（`1: b 1b` —— 标签紧贴它标注的指令，
+                                    // 此时两者的块下标相同），这是 GNU as 的行为。
+                                    list.iter().rev().find(|&&x| x <= at)
+                                } else {
+                                    list.iter().find(|&&x| x > at)
+                                }
+                            })
+                            .copied()
+                            .ok_or_else(|| {
+                                AsmError::UndefinedLabel(format!("line {line_no}: {sym}"))
+                            })?
                     } else {
                         labels.get(sym).copied().ok_or_else(|| {
                             AsmError::UndefinedLabel(format!("line {line_no}: {sym}"))
@@ -1470,6 +1499,22 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                 }
                 Ok(insts)
             }
+        }
+
+        /// 数字局部标签引用（`1b`/`1f`）→ `(编号, 方向)`；其它名字 → `None`。
+        ///
+        /// GNU as / LLVM MC 同款语义：`1b` 取**最近的上一个** `1:`、`1f` 取**下一个** `1:`。
+        /// 判据只认"全数字 + 单个 `b`/`f`"，所以普通标签名（`.L1`、`foo1` 等）不受影响。
+        fn __local_sym(s: &str) -> Option<(u32, char)> {
+            let dir = s.chars().last()?;
+            if dir != 'b' && dir != 'f' {
+                return None;
+            }
+            let num = &s[..s.len() - 1];
+            if num.is_empty() || !num.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            num.parse::<u32>().ok().map(|n| (n, dir))
         }
 
         /// 行内注释剥离（`[meta].comment_char`，**整串**匹配：`#` / `//` / `;`）。
