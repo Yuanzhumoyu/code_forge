@@ -746,3 +746,12 @@ GAS = `GPL-3.0-or-later`（上游各文件的许可逐条见 `PROVENANCE.md`；G
   PROVENANCE 125 行。aarch64 侧含局部标签的 5 个文件仍被别的缺口挡着（`arm64-adr.s` 缺
   ADR/ADRP 本身；`mov-expr-as-immediate.s` 缺 `mov` 立即数的符号/表达式形态），是本轮能力的
   下一批靶子。
+
+- aarch64（第四十批：**mov 立即数的符号/表达式形态 8 条 + 同型指令模板化**）：形态侧零新增
+  概念（槽复用 movz/movk/movn 重定位那批的 `imm16g0..g3`，编码沿用 `MOVXIMM`/`MOVWIMM`，
+  模板不带 `#` 保持形状隔离）。效果：`parsed` 1922 → **1924**、红 1376 → **1369**；
+  **`mov-expr-as-immediate.s` 与 `mov-unsupported-expr-as-immediate.s` 转绿** ⇒ 全绿集
+  123 → **125**（PROVENANCE 127 行）。同时按仓库既有风格把最近三批 **34 条逐条声明压成
+  21 个 `[[templates]]` + rows**（`isa/arm64.toml` 减约 **99 行**）：**展开后完全等价**——
+  两处计数（454 / 2213）与歧义名单（38 条）重构前后一字未变；三个一次性生成器已删除，
+  免得"谱已紧凑、生成器还吐冗长版本"。

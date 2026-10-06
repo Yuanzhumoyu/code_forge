@@ -127,7 +127,7 @@ fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 299), ("riscv64", 173), ("arm64", 446)],
+        vec![("x86", 299), ("riscv64", 173), ("arm64", 454)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }
@@ -194,7 +194,7 @@ fn spec_text_ambiguity_lists_are_pinned() {
         // 取舍（宽度在指令里、不在名字里）；要消掉就得给 S/D/Q 各开一组别名寄存器。
         (
             "arm64",
-            &["FMOV_D", "FMOV_S", "LDURD", "LDURS", "MOVKW_G0_RELO", "MOVKW_G1_RELO", "MOVKW_G2_RELO", "MOVKW_G3_RELO", "MOVKX_G0_RELO", "MOVKX_G1_RELO", "MOVKX_G2_RELO", "MOVKX_G3_RELO", "MOVNW_G0_RELO", "MOVNW_G1_RELO", "MOVNW_G2_RELO", "MOVNW_G3_RELO", "MOVNX_G0_RELO", "MOVNX_G1_RELO", "MOVNX_G2_RELO", "MOVNX_G3_RELO", "MOVZW_G0_RELO", "MOVZW_G1_RELO", "MOVZW_G2_RELO", "MOVZW_G3_RELO", "MOVZX_G0_RELO", "MOVZX_G1_RELO", "MOVZX_G2_RELO", "MOVZX_G3_RELO", "STURD", "STURS"],
+            &["FMOV_D", "FMOV_S", "LDURD", "LDURS", "MOVKW_G0_RELO", "MOVKW_G1_RELO", "MOVKW_G2_RELO", "MOVKW_G3_RELO", "MOVKX_G0_RELO", "MOVKX_G1_RELO", "MOVKX_G2_RELO", "MOVKX_G3_RELO", "MOVNW_G0_RELO", "MOVNW_G1_RELO", "MOVNW_G2_RELO", "MOVNW_G3_RELO", "MOVNX_G0_RELO", "MOVNX_G1_RELO", "MOVNX_G2_RELO", "MOVNX_G3_RELO", "MOVWIMM_SYM_G0", "MOVWIMM_SYM_G1", "MOVWIMM_SYM_G2", "MOVWIMM_SYM_G3", "MOVXIMM_SYM_G0", "MOVXIMM_SYM_G1", "MOVXIMM_SYM_G2", "MOVXIMM_SYM_G3", "MOVZW_G0_RELO", "MOVZW_G1_RELO", "MOVZW_G2_RELO", "MOVZW_G3_RELO", "MOVZX_G0_RELO", "MOVZX_G1_RELO", "MOVZX_G2_RELO", "MOVZX_G3_RELO", "STURD", "STURS"],
         ),
     ];
     for r in reports() {

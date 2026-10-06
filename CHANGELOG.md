@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-07) — aarch64：`mov` 立即数的**符号/表达式**形态（8 条）+ 同型指令改用模板（谱减 ~99 行）
+
+**形态**：`mov x0, #:abs_g0_s:sym`、`mov x0, 1b - 0b` 这类写法。**零新增概念**：槽复用 movz/movk/movn 重定位那批已有的 `imm16g0..g3`（按 hw 分组、各带 `imm_fns` 过滤 + `require_symbol`），编码沿用 `MOVXIMM`/`MOVWIMM`（`mov <Rd>, #imm` = `movz hw=0`）的 form/opcode，模板**不带 `#`**（修饰文本/符号文本自带）以与数值形态保持形状隔离。效果：`parsed` 1922 → **1924**、红 1376 → **1369**；**`mov-expr-as-immediate.s` 与 `mov-unsupported-expr-as-immediate.s` 两个文件转绿** ⇒ 全绿集 **123 → 125**（PROVENANCE 127 行）。
+
+**同型指令改用 `[[templates]]` + `rows`**（按仓库既有风格，紧凑且更省体积）：把最近三批**34 条**逐条 `[[instructions]]` 压成 **21 个模板**（`mov` 立即数 1 个；符号/表达式形态按 hw 8 个；`movz`/`movk`/`movn` 的 `abs_g*` 按 (助记符, hw) 12 个），`isa/arm64.toml` 减少约 **99 行**。**展开后的指令名与编码完全等价**——证据就是两处计数钉死值（arm64 **454**、枚举器 **2213**）与文本歧义名单（38 条）在重构前后**一字未变**、codegen 全绿。同时删掉三个一次性生成器（`gen-aarch64-mov-{reloc,imm,imm-sym}.mjs`）：谱里已是紧凑模板形式，留着只会重新吐出冗长版本。
+
 ### Added (2026-10-07) — 汇编器：数字局部标签 `1b`/`1f`（GNU as / LLVM MC 语义，ISA 无关）
 
 设计取"通用 + 人体工学、零冗余"：

@@ -1974,223 +1974,20 @@ fields = { shift = 0 }
 ops = ["dst:r64:out", "src:r64", "src2:r64", "sh:imm6"]
 asm = "subs {dst}, {src}, {src2}, lsl #{sh}"
 
+# ── `mov <Rd>, #:abs_g0_s:sym` / `mov x0, 1b - 0b`（符号/表达式立即数）──
+#
+# 与 `mov {dst}, #{imm}` 形状不同（后者带 `#`）；槽复用按 hw 分组的 `imm16g*`，
+# 于是 `hw` 依旧由修饰名决定，且"符号必须记到"由 `require_symbol` 把关。
+
 # ── `mov <Rd>, #imm`（立即数别名：`movz #imm, lsl #0`）──
 #
 # 与寄存器形态 `mov {dst}, {src}` 形状不同（带 `#`）⇒ 共存不遮蔽。
 # 上游把 `mov x0, #0` 编成 `movz x0, #0`（0xD2800000），正是这两条的编码。
 
-[[instructions]]
-name = "MOVXIMM"
-form = "MOVW16"
-opcode = 0x1A5
-fields = { hw = 0 }
-ops = ["dst:r64:out", "imm:imm16u"]
-asm = "mov {dst}, #{imm}"
-
-[[instructions]]
-name = "MOVWIMM"
-form = "MOVW16"
-opcode = 0xA5
-fields = { hw = 0 }
-ops = ["dst:r32:out", "imm:imm16u"]
-asm = "mov {dst}, #{imm}"
-
 # ── `movz`/`movk`/`movn` 的 `abs_g*` 类重定位（`movz x2, #:abs_g0:sym`）──
 #
 # 与数值形态同编码；`hw` 由**修饰名**决定（`abs_g0..g3` ⇒ `hw` 0..3），所以槽按 hw 分并
 # 用 `imm_fns` 过滤。模板**不带 `#`**（修饰文本自带），与数值形态形状不同、不互相遮蔽。
-
-[[instructions]]
-name = "MOVZX_G0_RELO"
-form = "MOVW16"
-opcode = 0x1A5
-fields = { hw = 0 }
-ops = ["dst:r64:out", "imm:imm16g0"]
-asm = "movz {dst}, {imm}"
-
-[[instructions]]
-name = "MOVZX_G1_RELO"
-form = "MOVW16"
-opcode = 0x1A5
-fields = { hw = 1 }
-ops = ["dst:r64:out", "imm:imm16g1"]
-asm = "movz {dst}, {imm}"
-
-[[instructions]]
-name = "MOVZX_G2_RELO"
-form = "MOVW16"
-opcode = 0x1A5
-fields = { hw = 2 }
-ops = ["dst:r64:out", "imm:imm16g2"]
-asm = "movz {dst}, {imm}"
-
-[[instructions]]
-name = "MOVZX_G3_RELO"
-form = "MOVW16"
-opcode = 0x1A5
-fields = { hw = 3 }
-ops = ["dst:r64:out", "imm:imm16g3"]
-asm = "movz {dst}, {imm}"
-
-[[instructions]]
-name = "MOVZW_G0_RELO"
-form = "MOVW16"
-opcode = 0xA5
-fields = { hw = 0 }
-ops = ["dst:r32:out", "imm:imm16g0"]
-asm = "movz {dst}, {imm}"
-
-[[instructions]]
-name = "MOVZW_G1_RELO"
-form = "MOVW16"
-opcode = 0xA5
-fields = { hw = 1 }
-ops = ["dst:r32:out", "imm:imm16g1"]
-asm = "movz {dst}, {imm}"
-
-[[instructions]]
-name = "MOVZW_G2_RELO"
-form = "MOVW16"
-opcode = 0xA5
-fields = { hw = 2 }
-ops = ["dst:r32:out", "imm:imm16g2"]
-asm = "movz {dst}, {imm}"
-
-[[instructions]]
-name = "MOVZW_G3_RELO"
-form = "MOVW16"
-opcode = 0xA5
-fields = { hw = 3 }
-ops = ["dst:r32:out", "imm:imm16g3"]
-asm = "movz {dst}, {imm}"
-
-[[instructions]]
-name = "MOVNX_G0_RELO"
-form = "MOVW16"
-opcode = 0x125
-fields = { hw = 0 }
-ops = ["dst:r64:out", "imm:imm16g0"]
-asm = "movn {dst}, {imm}"
-
-[[instructions]]
-name = "MOVNX_G1_RELO"
-form = "MOVW16"
-opcode = 0x125
-fields = { hw = 1 }
-ops = ["dst:r64:out", "imm:imm16g1"]
-asm = "movn {dst}, {imm}"
-
-[[instructions]]
-name = "MOVNX_G2_RELO"
-form = "MOVW16"
-opcode = 0x125
-fields = { hw = 2 }
-ops = ["dst:r64:out", "imm:imm16g2"]
-asm = "movn {dst}, {imm}"
-
-[[instructions]]
-name = "MOVNX_G3_RELO"
-form = "MOVW16"
-opcode = 0x125
-fields = { hw = 3 }
-ops = ["dst:r64:out", "imm:imm16g3"]
-asm = "movn {dst}, {imm}"
-
-[[instructions]]
-name = "MOVNW_G0_RELO"
-form = "MOVW16"
-opcode = 0x25
-fields = { hw = 0 }
-ops = ["dst:r32:out", "imm:imm16g0"]
-asm = "movn {dst}, {imm}"
-
-[[instructions]]
-name = "MOVNW_G1_RELO"
-form = "MOVW16"
-opcode = 0x25
-fields = { hw = 1 }
-ops = ["dst:r32:out", "imm:imm16g1"]
-asm = "movn {dst}, {imm}"
-
-[[instructions]]
-name = "MOVNW_G2_RELO"
-form = "MOVW16"
-opcode = 0x25
-fields = { hw = 2 }
-ops = ["dst:r32:out", "imm:imm16g2"]
-asm = "movn {dst}, {imm}"
-
-[[instructions]]
-name = "MOVNW_G3_RELO"
-form = "MOVW16"
-opcode = 0x25
-fields = { hw = 3 }
-ops = ["dst:r32:out", "imm:imm16g3"]
-asm = "movn {dst}, {imm}"
-
-[[instructions]]
-name = "MOVKX_G0_RELO"
-form = "MOVW16"
-opcode = 0x1E5
-fields = { hw = 0 }
-ops = ["dst:r64:out", "imm:imm16g0"]
-asm = "movk {dst}, {imm}"
-
-[[instructions]]
-name = "MOVKX_G1_RELO"
-form = "MOVW16"
-opcode = 0x1E5
-fields = { hw = 1 }
-ops = ["dst:r64:out", "imm:imm16g1"]
-asm = "movk {dst}, {imm}"
-
-[[instructions]]
-name = "MOVKX_G2_RELO"
-form = "MOVW16"
-opcode = 0x1E5
-fields = { hw = 2 }
-ops = ["dst:r64:out", "imm:imm16g2"]
-asm = "movk {dst}, {imm}"
-
-[[instructions]]
-name = "MOVKX_G3_RELO"
-form = "MOVW16"
-opcode = 0x1E5
-fields = { hw = 3 }
-ops = ["dst:r64:out", "imm:imm16g3"]
-asm = "movk {dst}, {imm}"
-
-[[instructions]]
-name = "MOVKW_G0_RELO"
-form = "MOVW16"
-opcode = 0xE5
-fields = { hw = 0 }
-ops = ["dst:r32:out", "imm:imm16g0"]
-asm = "movk {dst}, {imm}"
-
-[[instructions]]
-name = "MOVKW_G1_RELO"
-form = "MOVW16"
-opcode = 0xE5
-fields = { hw = 1 }
-ops = ["dst:r32:out", "imm:imm16g1"]
-asm = "movk {dst}, {imm}"
-
-[[instructions]]
-name = "MOVKW_G2_RELO"
-form = "MOVW16"
-opcode = 0xE5
-fields = { hw = 2 }
-ops = ["dst:r32:out", "imm:imm16g2"]
-asm = "movk {dst}, {imm}"
-
-[[instructions]]
-name = "MOVKW_G3_RELO"
-form = "MOVW16"
-opcode = 0xE5
-fields = { hw = 3 }
-ops = ["dst:r32:out", "imm:imm16g3"]
-asm = "movk {dst}, {imm}"
 
 # ── SIMD&FP 访存（`ldr d8, [sp, #8]` / `str s7, [sp, #4]` / `stp d8, d9, [sp, #-64]!`）──
 #
@@ -3975,6 +3772,146 @@ rows = [
   # AL/NV 在 A64 里是保留码，但上游汇编器收（语料 `b.al L1` 实测 cond=0b1110）
   { inst = "B_AL", cname = "al", fields = { bcond = 14 } },
   { inst = "B_NV", cname = "nv", fields = { bcond = 15 } },
+]
+
+[[templates]]
+name = "MOVIMM"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 0 }, ops = ["dst:{slot}:out", "imm:imm16u"], asm = "mov {dst}, #{imm}" }
+rows = [
+  { inst = "MOVXIMM", slot = "r64", opcode = 0x1A5 },
+  { inst = "MOVWIMM", slot = "r32", opcode = 0xA5 },
+]
+[[templates]]
+name = "MOVXIMM_SYM_G0"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 0 }, ops = ["dst:{slot}:out", "imm:imm16g0"], asm = "mov {dst}, {imm}" }
+rows = [
+  { inst = "MOVXIMM_SYM_G0", slot = "r64", opcode = 0x1A5 },
+]
+[[templates]]
+name = "MOVXIMM_SYM_G1"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 1 }, ops = ["dst:{slot}:out", "imm:imm16g1"], asm = "mov {dst}, {imm}" }
+rows = [
+  { inst = "MOVXIMM_SYM_G1", slot = "r64", opcode = 0x1A5 },
+]
+[[templates]]
+name = "MOVXIMM_SYM_G2"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 2 }, ops = ["dst:{slot}:out", "imm:imm16g2"], asm = "mov {dst}, {imm}" }
+rows = [
+  { inst = "MOVXIMM_SYM_G2", slot = "r64", opcode = 0x1A5 },
+]
+[[templates]]
+name = "MOVXIMM_SYM_G3"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 3 }, ops = ["dst:{slot}:out", "imm:imm16g3"], asm = "mov {dst}, {imm}" }
+rows = [
+  { inst = "MOVXIMM_SYM_G3", slot = "r64", opcode = 0x1A5 },
+]
+[[templates]]
+name = "MOVWIMM_SYM_G0"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 0 }, ops = ["dst:{slot}:out", "imm:imm16g0"], asm = "mov {dst}, {imm}" }
+rows = [
+  { inst = "MOVWIMM_SYM_G0", slot = "r32", opcode = 0xA5 },
+]
+[[templates]]
+name = "MOVWIMM_SYM_G1"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 1 }, ops = ["dst:{slot}:out", "imm:imm16g1"], asm = "mov {dst}, {imm}" }
+rows = [
+  { inst = "MOVWIMM_SYM_G1", slot = "r32", opcode = 0xA5 },
+]
+[[templates]]
+name = "MOVWIMM_SYM_G2"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 2 }, ops = ["dst:{slot}:out", "imm:imm16g2"], asm = "mov {dst}, {imm}" }
+rows = [
+  { inst = "MOVWIMM_SYM_G2", slot = "r32", opcode = 0xA5 },
+]
+[[templates]]
+name = "MOVWIMM_SYM_G3"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 3 }, ops = ["dst:{slot}:out", "imm:imm16g3"], asm = "mov {dst}, {imm}" }
+rows = [
+  { inst = "MOVWIMM_SYM_G3", slot = "r32", opcode = 0xA5 },
+]
+[[templates]]
+name = "MOVZ_RELO_G0"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 0 }, ops = ["dst:{slot}:out", "imm:imm16g0"], asm = "movz {dst}, {imm}" }
+rows = [
+  { inst = "MOVZX_G0_RELO", slot = "r64", opcode = 0x1A5 },
+  { inst = "MOVZW_G0_RELO", slot = "r32", opcode = 0xA5 },
+]
+[[templates]]
+name = "MOVZ_RELO_G1"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 1 }, ops = ["dst:{slot}:out", "imm:imm16g1"], asm = "movz {dst}, {imm}" }
+rows = [
+  { inst = "MOVZX_G1_RELO", slot = "r64", opcode = 0x1A5 },
+  { inst = "MOVZW_G1_RELO", slot = "r32", opcode = 0xA5 },
+]
+[[templates]]
+name = "MOVZ_RELO_G2"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 2 }, ops = ["dst:{slot}:out", "imm:imm16g2"], asm = "movz {dst}, {imm}" }
+rows = [
+  { inst = "MOVZX_G2_RELO", slot = "r64", opcode = 0x1A5 },
+  { inst = "MOVZW_G2_RELO", slot = "r32", opcode = 0xA5 },
+]
+[[templates]]
+name = "MOVZ_RELO_G3"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 3 }, ops = ["dst:{slot}:out", "imm:imm16g3"], asm = "movz {dst}, {imm}" }
+rows = [
+  { inst = "MOVZX_G3_RELO", slot = "r64", opcode = 0x1A5 },
+  { inst = "MOVZW_G3_RELO", slot = "r32", opcode = 0xA5 },
+]
+[[templates]]
+name = "MOVK_RELO_G0"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 0 }, ops = ["dst:{slot}:out", "imm:imm16g0"], asm = "movk {dst}, {imm}" }
+rows = [
+  { inst = "MOVKX_G0_RELO", slot = "r64", opcode = 0x1E5 },
+  { inst = "MOVKW_G0_RELO", slot = "r32", opcode = 0xE5 },
+]
+[[templates]]
+name = "MOVK_RELO_G1"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 1 }, ops = ["dst:{slot}:out", "imm:imm16g1"], asm = "movk {dst}, {imm}" }
+rows = [
+  { inst = "MOVKX_G1_RELO", slot = "r64", opcode = 0x1E5 },
+  { inst = "MOVKW_G1_RELO", slot = "r32", opcode = 0xE5 },
+]
+[[templates]]
+name = "MOVK_RELO_G2"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 2 }, ops = ["dst:{slot}:out", "imm:imm16g2"], asm = "movk {dst}, {imm}" }
+rows = [
+  { inst = "MOVKX_G2_RELO", slot = "r64", opcode = 0x1E5 },
+  { inst = "MOVKW_G2_RELO", slot = "r32", opcode = 0xE5 },
+]
+[[templates]]
+name = "MOVK_RELO_G3"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 3 }, ops = ["dst:{slot}:out", "imm:imm16g3"], asm = "movk {dst}, {imm}" }
+rows = [
+  { inst = "MOVKX_G3_RELO", slot = "r64", opcode = 0x1E5 },
+  { inst = "MOVKW_G3_RELO", slot = "r32", opcode = 0xE5 },
+]
+[[templates]]
+name = "MOVN_RELO_G0"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 0 }, ops = ["dst:{slot}:out", "imm:imm16g0"], asm = "movn {dst}, {imm}" }
+rows = [
+  { inst = "MOVNX_G0_RELO", slot = "r64", opcode = 0x125 },
+  { inst = "MOVNW_G0_RELO", slot = "r32", opcode = 0x25 },
+]
+[[templates]]
+name = "MOVN_RELO_G1"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 1 }, ops = ["dst:{slot}:out", "imm:imm16g1"], asm = "movn {dst}, {imm}" }
+rows = [
+  { inst = "MOVNX_G1_RELO", slot = "r64", opcode = 0x125 },
+  { inst = "MOVNW_G1_RELO", slot = "r32", opcode = 0x25 },
+]
+[[templates]]
+name = "MOVN_RELO_G2"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 2 }, ops = ["dst:{slot}:out", "imm:imm16g2"], asm = "movn {dst}, {imm}" }
+rows = [
+  { inst = "MOVNX_G2_RELO", slot = "r64", opcode = 0x125 },
+  { inst = "MOVNW_G2_RELO", slot = "r32", opcode = 0x25 },
+]
+[[templates]]
+name = "MOVN_RELO_G3"
+body = { form = "MOVW16", opcode = "{opcode}", fields = { hw = 3 }, ops = ["dst:{slot}:out", "imm:imm16g3"], asm = "movn {dst}, {imm}" }
+rows = [
+  { inst = "MOVNX_G3_RELO", slot = "r64", opcode = 0x125 },
+  { inst = "MOVNW_G3_RELO", slot = "r32", opcode = 0x25 },
 ]
 
 # ── 谱内测试向量（v19 V3））────────────────────────────────────────────
