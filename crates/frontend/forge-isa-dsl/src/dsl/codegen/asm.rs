@@ -1056,8 +1056,34 @@ pub(crate) fn split_hole(s: &str) -> Option<(&str, &str)> {
 ///
 /// 返回 `(定义块, __unary 里逐个试的语句)`；谱没声明 → 两者都空（生成物逐字不变）。
 fn gen_imm_fns(model: &IsaModel) -> Result<(TokenStream, TokenStream), String> {
+    // `imm_fns` 的运行时守卫：**无条件的**（`__imm` 总在用它，哪怕本谱一个修饰都没有）——
+    // 只随修饰一起发会让没有 imm_fn 的谱（demo 宿主）生成物缺类型、编译不过。
+    let allow_helper = quote! {
+        /// 本槽允许的修饰下标（`[[operand_slots]].imm_fns`；空表 = **全部允许**）。
+        thread_local! {
+            static __IMM_FN_ALLOW: std::cell::RefCell<Vec<usize>> =
+                const { std::cell::RefCell::new(Vec::new()) };
+        }
+
+        /// 当前槽允不允许第 `i` 个修饰（`__imm` 在解析前装表，`__AllowGuard` 负责恢复）。
+        fn __imm_fn_allowed(i: usize) -> bool {
+            __IMM_FN_ALLOW.with(|a| {
+                let v = a.borrow();
+                v.is_empty() || v.contains(&i)
+            })
+        }
+
+        /// 恢复上一层允许表（`__imm` 的任何返回路径都会走到这里）。
+        struct __AllowGuard(Vec<usize>);
+        impl Drop for __AllowGuard {
+            fn drop(&mut self) {
+                let v = std::mem::take(&mut self.0);
+                __IMM_FN_ALLOW.with(|a| *a.borrow_mut() = v);
+            }
+        }
+    };
     let Some(defs) = model.conventions.imm_fn.as_ref().filter(|d| !d.is_empty()) else {
-        return Ok((quote! {}, quote! {}));
+        return Ok((allow_helper, quote! {}));
     };
     let ci = matches!(model.meta.mnemonic_case, MnemonicCase::Insensitive);
     let mut fns: Vec<TokenStream> = Vec::new();
@@ -1137,29 +1163,7 @@ fn gen_imm_fns(model: &IsaModel) -> Result<(TokenStream, TokenStream), String> {
         });
     }
     let helper = quote! {
-        /// 本槽允许的修饰下标（`[[operand_slots]].imm_fns`；空表 = **全部允许**）。
-        thread_local! {
-            static __IMM_FN_ALLOW: std::cell::RefCell<Vec<usize>> =
-                const { std::cell::RefCell::new(Vec::new()) };
-        }
-
-        /// 当前槽允不允许第 `i` 个修饰（`__imm` 在解析前装表，`__AllowGuard` 负责恢复）。
-        fn __imm_fn_allowed(i: usize) -> bool {
-            __IMM_FN_ALLOW.with(|a| {
-                let v = a.borrow();
-                v.is_empty() || v.contains(&i)
-            })
-        }
-
-        /// 恢复上一层允许表（`__imm` 的任何返回路径都会走到这里）。
-        struct __AllowGuard(Vec<usize>);
-        impl Drop for __AllowGuard {
-            fn drop(&mut self) {
-                let v = std::mem::take(&mut self.0);
-                __IMM_FN_ALLOW.with(|a| *a.borrow_mut() = v);
-            }
-        }
-
+        #allow_helper
         /// 立即数修饰的**字面**匹配（`ci` = Ident token 豁免大小写）。
         fn __imm_fn_lit(it: &mut __Iter, lit: &[__Tok], ci: bool) -> bool {
             let mut p = it.pos;
