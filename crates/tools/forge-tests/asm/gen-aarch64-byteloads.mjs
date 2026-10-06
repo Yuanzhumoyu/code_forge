@@ -11,16 +11,18 @@ const SPEC = 'isa/arm64.toml';
 const DIR = 'crates/tools/forge-tests/asm/parse/aarch64/llvm-mc';
 
 // (助记符, size 位, opc, 目的/源 槽, imm12 单位, 是否无位移)
+// **无符号偏移族**（imm12）的 [25:24] = 01 ⇒ op8 是 0x39/0x79/0xB9（**不是** unscaled 族的
+// 0x38/0x78/0xB8——这一处写错由全集语料的字节对拍档当场抓到，见 README 的登记）。
 const DEFS = [
-  ['ldrb', 0x38, 1, 'r32', 1],
-  ['strb', 0x38, 0, 'r32', 1],
-  ['ldrh', 0x78, 1, 'r32', 2],
-  ['strh', 0x78, 0, 'r32', 2],
-  ['ldrsb', 0x38, 2, 'r64', 1],
-  ['ldrsb', 0x38, 3, 'r32', 1],
-  ['ldrsh', 0x78, 2, 'r64', 2],
-  ['ldrsh', 0x78, 3, 'r32', 2],
-  ['ldrsw', 0xb8, 2, 'r64', 4],
+  ['ldrb', 0x39, 1, 'r32', 1],
+  ['strb', 0x39, 0, 'r32', 1],
+  ['ldrh', 0x79, 1, 'r32', 2],
+  ['strh', 0x79, 0, 'r32', 2],
+  ['ldrsb', 0x39, 2, 'r64', 1],
+  ['ldrsb', 0x39, 3, 'r32', 1],
+  ['ldrsh', 0x79, 2, 'r64', 2],
+  ['ldrsh', 0x79, 3, 'r32', 2],
+  ['ldrsw', 0xb9, 2, 'r64', 4],
 ];
 
 let t = fs.readFileSync(SPEC, 'utf8');
@@ -69,9 +71,10 @@ form = "LSUI"
 opcode = 0x${op8.toString(16).toUpperCase()}
 fields = { opc2 = ${opc2} }
 ops = ["${reg}:${slot}${isLoad ? ':out' : ''}", "base:r64", "imm:${imm}"]
-asm = "${mn} {${reg}}, [{base}, #{imm}]"
-
-[[instructions]]
+asm = "${mn} {${reg}}, [{base}, #{imm}]"`);
+  // `ldrsw` 也在做：它的无符号偏移族 op8 是 `0xB9`（不是 unscaled 家族 `LDURSW` 的 `0xB8`），
+  // 因此不再与 `LDURSW` 的 `mode`（bit10 起 2 位）在位 trie 里重叠。
+  blocks.push(`[[instructions]]
 name = "${nameBase}_ND"
 form = "LSUIND"
 opcode = 0x${op8.toString(16).toUpperCase()}
