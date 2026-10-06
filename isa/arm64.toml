@@ -162,6 +162,24 @@ kind = "imm"
 signed = false
 width = 12
 
+# 访存族（LDR/STR）的 imm12 **单位是访问宽度**：真实汇编写**字节**偏移，字段存"字节 ÷ 访问尺寸"
+# （`ldr x2, [sp, #32]` 的 imm12 = 4、`ldr w5, [x4, #20]` 的 = 5——语料 CHECK 行的期望字节直接量得）。
+# 与上面的 `imm12u`（ALU/CMP/CMN 的立即数**不缩放**：`add x0, x1, #5` 就是 5）是同一段位的
+# **两种解释**，所以分成两个槽——"单位"不是全局约定，而是每条指令的语义。
+[[operand_slots]]
+name = "imm12x"
+kind = "imm"
+signed = false
+width = 12
+unit = 8    # 64 位访问
+
+[[operand_slots]]
+name = "imm12w"
+kind = "imm"
+signed = false
+width = 12
+unit = 4    # 32 位访问
+
 [[operand_slots]]
 name = "imm16u"
 kind = "imm"
@@ -608,11 +626,21 @@ kind = "imm"
 signed = true
 width = 9
 
+# LDP/STP 的 imm7 同理：文本是**字节**、字段 = 字节 ÷ 元素尺寸，且字段是**有符号**的
+# （`stp x29, x30, [sp, #-16]` 的 imm7 = -2；A64 的 pair 偏移可以向下）。
 [[operand_slots]]
-name = "imm7u"
+name = "imm7x"
 kind = "imm"
-signed = false
+signed = true
 width = 7
+unit = 8
+
+[[operand_slots]]
+name = "imm7w"
+kind = "imm"
+signed = true
+width = 7
+unit = 4
 
 # ─────────────────────────── 指令 ───────────────────────────
 
@@ -621,7 +649,7 @@ name = "LDRX"
 form = "LSUI"
 opcode = 0xF9
 fields = { opc2 = 1 }
-ops = ["dst:r64:out", "base:r64", "imm:imm12u"]
+ops = ["dst:r64:out", "base:r64", "imm:imm12x"]
 asm = "ldr {dst}, [{base}, #{imm}]"
 
 [[instructions]]
@@ -629,7 +657,7 @@ name = "LDRW"
 form = "LSUI"
 opcode = 0xB9
 fields = { opc2 = 1 }
-ops = ["dst:r32:out", "base:r64", "imm:imm12u"]
+ops = ["dst:r32:out", "base:r64", "imm:imm12w"]
 asm = "ldr {dst}, [{base}, #{imm}]"
 
 [[instructions]]
@@ -637,7 +665,7 @@ name = "STRX"
 form = "LSUI"
 opcode = 0xF9
 fields = { opc2 = 0 }
-ops = ["src:r64", "base:r64", "imm:imm12u"]
+ops = ["src:r64", "base:r64", "imm:imm12x"]
 asm = "str {src}, [{base}, #{imm}]"
 
 [[instructions]]
@@ -645,7 +673,7 @@ name = "STRW"
 form = "LSUI"
 opcode = 0xB9
 fields = { opc2 = 0 }
-ops = ["src:r32", "base:r64", "imm:imm12u"]
+ops = ["src:r32", "base:r64", "imm:imm12w"]
 asm = "str {src}, [{base}, #{imm}]"
 
 [[instructions]]
@@ -689,6 +717,18 @@ name = "PAIR"     # LDP/STP：rt rn rt2 imm7（位低→高）
 opcode_field = "op8"
 operand_fields = ["rt", "rn", "rt2", "imm7"]
 
+# 无位移形态的形式：`[Xn]` 就是"位移 = 0"的那一格，位域由 `fields` 固定为 0，
+# 因此形式里没有位移操作数位（与 DCPS1B "裸 dcps1 = dcps1 #0" 同款）。
+[[forms]]
+name = "LSUIND"   # LDR/STR 无位移：rt rn
+opcode_field = "op8"
+operand_fields = ["rt", "rn"]
+
+[[forms]]
+name = "PAIRND"   # LDP/STP 无位移：rt rn rt2
+opcode_field = "op8"
+operand_fields = ["rt", "rn", "rt2"]
+
 # ─────────────────────────── 指令 ───────────────────────────
 
 [[instructions]]
@@ -696,7 +736,7 @@ name = "STPX"
 form = "PAIR"
 opcode = 0xA9
 fields = { idx2 = 0 }
-ops = ["t1:r64", "base:r64", "t2:r64", "imm:imm7u"]
+ops = ["t1:r64", "base:r64", "t2:r64", "imm:imm7x"]
 asm = "stp {t1}, {t2}, [{base}, #{imm}]"
 
 [[instructions]]
@@ -704,7 +744,7 @@ name = "LDPX"
 form = "PAIR"
 opcode = 0xA9
 fields = { idx2 = 1 }
-ops = ["t1:r64:out", "base:r64", "t2:r64:out", "imm:imm7u"]
+ops = ["t1:r64:out", "base:r64", "t2:r64:out", "imm:imm7x"]
 asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
 
 [[instructions]]
@@ -712,7 +752,7 @@ name = "STPW"
 form = "PAIR"
 opcode = 0x29
 fields = { idx2 = 0 }
-ops = ["t1:r32", "base:r64", "t2:r32", "imm:imm7u"]
+ops = ["t1:r32", "base:r64", "t2:r32", "imm:imm7w"]
 asm = "stp {t1}, {t2}, [{base}, #{imm}]"
 
 [[instructions]]
@@ -720,8 +760,78 @@ name = "LDPW"
 form = "PAIR"
 opcode = 0x29
 fields = { idx2 = 1 }
-ops = ["t1:r32:out", "base:r64", "t2:r32:out", "imm:imm7u"]
+ops = ["t1:r32:out", "base:r64", "t2:r32:out", "imm:imm7w"]
 asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
+
+# ── 无位移形态（`[Xn]`）──
+#
+# 真实汇编里最常见的写法就是不带位移（`ldr x4, [x3]`、`str w9, [x8]`），它编码上是
+# "位移 = 0"的那一格（与带位移的形态**同编码**）。照 DCPS1B 的先例：声明序放在带位移的
+# 指令**之后**，解码仍走带位移那条（渲染出 `, #0`），这里只承担"省略写法能装配"。
+# 上游期望字节见谱内向量（`ldr x4, [x3]` = 64 00 40 f9，来自 `arm64-memory.s` 的 CHECK 行）。
+[[instructions]]
+name = "LDRX_ND"
+form = "LSUIND"
+opcode = 0xF9
+fields = { opc2 = 1, imm12s = 0 }
+ops = ["dst:r64:out", "base:r64"]
+asm = "ldr {dst}, [{base}]"
+
+[[instructions]]
+name = "LDRW_ND"
+form = "LSUIND"
+opcode = 0xB9
+fields = { opc2 = 1, imm12s = 0 }
+ops = ["dst:r32:out", "base:r64"]
+asm = "ldr {dst}, [{base}]"
+
+[[instructions]]
+name = "STRX_ND"
+form = "LSUIND"
+opcode = 0xF9
+fields = { opc2 = 0, imm12s = 0 }
+ops = ["src:r64", "base:r64"]
+asm = "str {src}, [{base}]"
+
+[[instructions]]
+name = "STRW_ND"
+form = "LSUIND"
+opcode = 0xB9
+fields = { opc2 = 0, imm12s = 0 }
+ops = ["src:r32", "base:r64"]
+asm = "str {src}, [{base}]"
+
+[[instructions]]
+name = "STPX_ND"
+form = "PAIRND"
+opcode = 0xA9
+fields = { idx2 = 0, imm7 = 0 }
+ops = ["t1:r64", "base:r64", "t2:r64"]
+asm = "stp {t1}, {t2}, [{base}]"
+
+[[instructions]]
+name = "LDPX_ND"
+form = "PAIRND"
+opcode = 0xA9
+fields = { idx2 = 1, imm7 = 0 }
+ops = ["t1:r64:out", "base:r64", "t2:r64:out"]
+asm = "ldp {t1}, {t2}, [{base}]"
+
+[[instructions]]
+name = "STPW_ND"
+form = "PAIRND"
+opcode = 0x29
+fields = { idx2 = 0, imm7 = 0 }
+ops = ["t1:r32", "base:r64", "t2:r32"]
+asm = "stp {t1}, {t2}, [{base}]"
+
+[[instructions]]
+name = "LDPW_ND"
+form = "PAIRND"
+opcode = 0x29
+fields = { idx2 = 1, imm7 = 0 }
+ops = ["t1:r32:out", "base:r64", "t2:r32:out"]
+asm = "ldp {t1}, {t2}, [{base}]"
 
 # ── 别名 ──
 
@@ -1554,7 +1664,7 @@ asm = "ldr x0, [x1, #0]"
 bytes = [0x20, 0x00, 0x40, 0xF9]
 
 [[vectors]]
-asm = "ldr x0, [x1, #1]"
+asm = "ldr x0, [x1, #8]"
 bytes = [0x20, 0x04, 0x40, 0xF9]
 
 [[vectors]]
@@ -1566,11 +1676,11 @@ asm = "str w2, [x3, #0]"
 bytes = [0x62, 0x00, 0x00, 0xB9]
 
 [[vectors]]
-asm = "ldr w2, [x3, #1]"
+asm = "ldr w2, [x3, #4]"
 bytes = [0x62, 0x04, 0x40, 0xB9]
 
 [[vectors]]
-asm = "ldr w2, [x3, #0x3FF]"
+asm = "ldr w2, [x3, #0xFFC]"
 bytes = [0x62, 0xFC, 0x4F, 0xB9]
 
 [[vectors]]
@@ -1598,11 +1708,11 @@ asm = "add x29, sp, #0"
 bytes = [0xFD, 0x03, 0x00, 0x91]
 
 [[vectors]]
-asm = "stp x29, x30, [sp, #2]"
+asm = "stp x29, x30, [sp, #16]"
 bytes = [0xFD, 0x7B, 0x01, 0xA9]
 
 [[vectors]]
-asm = "ldp x29, x30, [sp, #2]"
+asm = "ldp x29, x30, [sp, #16]"
 bytes = [0xFD, 0x7B, 0x41, 0xA9]
 
 [[vectors]]
@@ -1618,12 +1728,35 @@ asm = "stp w0, w1, [x2, #0]"
 bytes = [0x40, 0x04, 0x00, 0x29]
 
 [[vectors]]
-asm = "str x0, [sp, #1]"
+asm = "str x0, [sp, #8]"
 bytes = [0xE0, 0x07, 0x00, 0xF9]
 
 [[vectors]]
-asm = "ldr x1, [sp, #1]"
+asm = "ldr x1, [sp, #8]"
 bytes = [0xE1, 0x07, 0x40, 0xF9]
+[[vectors]]
+asm = "ldr x4, [x3]"
+bytes = [0x64, 0x00, 0x40, 0xF9]
+
+[[vectors]]
+asm = "str x4, [x3]"
+bytes = [0x64, 0x00, 0x00, 0xF9]
+
+[[vectors]]
+asm = "ldr x2, [sp, #32]"
+bytes = [0xE2, 0x13, 0x40, 0xF9]
+
+[[vectors]]
+asm = "str x2, [sp, #32]"
+bytes = [0xE2, 0x13, 0x00, 0xF9]
+
+[[vectors]]
+asm = "ldr w5, [x4, #20]"
+bytes = [0x85, 0x14, 0x40, 0xB9]
+
+[[vectors]]
+asm = "str w5, [x4, #20]"
+bytes = [0x85, 0x14, 0x00, 0xB9]
 
 
 # ── 闭环向量（只给 `asm`；v19 V3c：从 Rust 往返清单迁入）──
