@@ -709,3 +709,10 @@ $env:FORGE_ASM_WRITE_RATCHET = "1"; cargo test -p forge-tests --test asm_parse -
 **许可**：LLVM MC 与 XED = `Apache-2.0 WITH LLVM-exception`，NASM/YASM = `BSD-2-Clause`，
 GAS = `GPL-3.0-or-later`（上游各文件的许可逐条见 `PROVENANCE.md`；GAS 那份在独立目录
 `parse/x86/gnu-gas-intel/`）。
+
+- aarch64（第三十七批：**movz/movk/movn 的 abs_g* 类重定位 24 条**）：批本身是**纯解析**能力
+  （新变体与数值形态同 opcode、一律 require_symbol 把关），落地后第一次量账：parsed 1918 →
+  **1919**、**红行 1428 → 1379（−49）**、corpus_only +48（那些行的符号在别处 ⇒ 归入"上下文
+  不足"而不是缺陷）、编码 known 仍 **57**（**零字节风险得到验证**）。取舍账本与棘轮**逐字不变**
+  （这些行都在因别的原因而落红的文件里）。仍红的 mov-expr-as-immediate.s 卡的是**数字局部标签**
+  （`mov x0, #:abs_g0_s:1b` 的 `1b`）与 mov 的立即数别名，不是修饰族本身。
