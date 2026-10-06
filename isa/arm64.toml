@@ -17,6 +17,11 @@
 
 [meta]
 name = "arm64"
+# 主 FPR 类基准：AAPCS64 的浮点值池是 8 字节（v8-v15 的低 64 位），而 FP 的**宽度视图**
+# （`fpr1`/`fpr2`/`fpr4`/`fpr16` = B/H/S/Q）里最宽的是 16——不钉住的话"主 FPR 类"会按
+# 最宽组取到 Q，ABI 拿它去找 `V0` 就找不到（实测 aapcs64 计划报 `UnresolvedReg`）。
+# 显式声明 ⇒ 主类恒为 FPR(8)（V/D 视图）。
+default_fpr_width = 8
 version = "0.1.0"
 endian = "little"
 mode = 64
@@ -731,6 +736,46 @@ unit = 8    # 64 位访问
 # 字节/半字访存的 imm12：单位同样是"字节 ÷ 访问宽度"（`ldrb w5, [x4, #20]` ⇒ 字段 20；
 # `ldrh w2, [sp, #32]` ⇒ 字段 16）。LDRSW 是 word 访问 ⇒ 复用 `imm12w`。
 [[operand_slots]]
+name = "imm12fp1"
+kind = "imm"
+signed = false
+width = 12
+unit = 1
+# FP 访存（B 视图）
+
+[[operand_slots]]
+name = "imm12fp2"
+kind = "imm"
+signed = false
+width = 12
+unit = 2
+# FP 访存（H 视图）
+
+[[operand_slots]]
+name = "imm12fp4"
+kind = "imm"
+signed = false
+width = 12
+unit = 4
+# FP 访存（S 视图）
+
+[[operand_slots]]
+name = "imm12fp8"
+kind = "imm"
+signed = false
+width = 12
+unit = 8
+# FP 访存（D 视图）
+
+[[operand_slots]]
+name = "imm12fp16"
+kind = "imm"
+signed = false
+width = 12
+unit = 16
+# FP 访存（Q 视图）
+
+[[operand_slots]]
 name = "imm12b"
 kind = "imm"
 signed = false
@@ -1305,6 +1350,16 @@ name = "LSUIR"   # LDR/STR 寄存器偏移：rt rn rm
 opcode_field = "op8"
 operand_fields = ["rt", "rn", "rm"]
 
+[[forms]]
+name = "FPLSUI"   # SIMD&FP 单寄存器无符号偏移：rt rn imm12
+opcode_field = "op8"
+operand_fields = ["rt", "rn", "imm12"]
+
+[[forms]]
+name = "FPPAIR"   # SIMD&FP 成对：rt rn rt2 imm7
+opcode_field = "op8"
+operand_fields = ["rt", "rn", "rt2", "imm7"]
+
 # 扩展寄存器操作数（`add x8, x8, w5, sxtw #2`）：`option` 是**操作数**（命名立即数表），
 # `imm3` 是量；`bit21 = 1` 与移位寄存器族（bit21 = 0）区分。cmp/cmn 用无 rd 的两条形式。
 [[forms]]
@@ -1858,6 +1913,397 @@ opcode = 0xEB
 fields = { shift = 0 }
 ops = ["dst:r64:out", "src:r64", "src2:r64", "sh:imm6"]
 asm = "subs {dst}, {src}, {src2}, lsl #{sh}"
+
+# ── SIMD&FP 访存（`ldr d8, [sp, #8]` / `str s7, [sp, #4]` / `stp d8, d9, [sp, #-64]!`）──
+#
+# 宽度只体现在寄存器名上（助记符都是 `ldr`/`str`/`ldp`/`stp`），所以按**视图**分槽
+# （见 [reg.fpr1..fpr16] 的说明）；imm12/imm7 的单位 = 访问宽度。
+
+[[instructions]]
+name = "LDRB_FP"
+form = "FPLSUI"
+opcode = 0x3D
+fields = { opc2 = 1 }
+ops = ["dst:fprb:out", "base:r64", "imm:imm12fp1"]
+asm = "ldr {dst}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "LDURB_FP"
+form = "LSUN"
+opcode = 0x3C
+fields = { opc2 = 1, mode = 0, zero21 = 0 }
+ops = ["dst:fprb:out", "base:r64", "off:imm9s"]
+asm = "ldur {dst}, [{base}, #{off}]"
+
+[[instructions]]
+name = "LDRB_FP_PRE"
+form = "LSUN"
+opcode = 0x3C
+fields = { opc2 = 1, mode = 3, zero21 = 0 }
+ops = ["dst:fprb:out", "base:r64", "off:imm9s"]
+asm = "ldr {dst}, [{base}, #{off}]!"
+
+[[instructions]]
+name = "LDRB_FP_POST"
+form = "LSUN"
+opcode = 0x3C
+fields = { opc2 = 1, mode = 1, zero21 = 0 }
+ops = ["dst:fprb:out", "base:r64", "off:imm9s"]
+asm = "ldr {dst}, [{base}], #{off}"
+
+[[instructions]]
+name = "STRB_FP"
+form = "FPLSUI"
+opcode = 0x3D
+fields = { opc2 = 0 }
+ops = ["src:fprb", "base:r64", "imm:imm12fp1"]
+asm = "str {src}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "STURB_FP"
+form = "LSUN"
+opcode = 0x3C
+fields = { opc2 = 0, mode = 0, zero21 = 0 }
+ops = ["src:fprb", "base:r64", "off:imm9s"]
+asm = "stur {src}, [{base}, #{off}]"
+
+[[instructions]]
+name = "STRB_FP_PRE"
+form = "LSUN"
+opcode = 0x3C
+fields = { opc2 = 0, mode = 3, zero21 = 0 }
+ops = ["src:fprb", "base:r64", "off:imm9s"]
+asm = "str {src}, [{base}, #{off}]!"
+
+[[instructions]]
+name = "STRB_FP_POST"
+form = "LSUN"
+opcode = 0x3C
+fields = { opc2 = 0, mode = 1, zero21 = 0 }
+ops = ["src:fprb", "base:r64", "off:imm9s"]
+asm = "str {src}, [{base}], #{off}"
+
+[[instructions]]
+name = "LDRH_FP"
+form = "FPLSUI"
+opcode = 0x7D
+fields = { opc2 = 1 }
+ops = ["dst:fprh:out", "base:r64", "imm:imm12fp2"]
+asm = "ldr {dst}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "LDURH_FP"
+form = "LSUN"
+opcode = 0x7C
+fields = { opc2 = 1, mode = 0, zero21 = 0 }
+ops = ["dst:fprh:out", "base:r64", "off:imm9s"]
+asm = "ldur {dst}, [{base}, #{off}]"
+
+[[instructions]]
+name = "LDRH_FP_PRE"
+form = "LSUN"
+opcode = 0x7C
+fields = { opc2 = 1, mode = 3, zero21 = 0 }
+ops = ["dst:fprh:out", "base:r64", "off:imm9s"]
+asm = "ldr {dst}, [{base}, #{off}]!"
+
+[[instructions]]
+name = "LDRH_FP_POST"
+form = "LSUN"
+opcode = 0x7C
+fields = { opc2 = 1, mode = 1, zero21 = 0 }
+ops = ["dst:fprh:out", "base:r64", "off:imm9s"]
+asm = "ldr {dst}, [{base}], #{off}"
+
+[[instructions]]
+name = "STRH_FP"
+form = "FPLSUI"
+opcode = 0x7D
+fields = { opc2 = 0 }
+ops = ["src:fprh", "base:r64", "imm:imm12fp2"]
+asm = "str {src}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "STURH_FP"
+form = "LSUN"
+opcode = 0x7C
+fields = { opc2 = 0, mode = 0, zero21 = 0 }
+ops = ["src:fprh", "base:r64", "off:imm9s"]
+asm = "stur {src}, [{base}, #{off}]"
+
+[[instructions]]
+name = "STRH_FP_PRE"
+form = "LSUN"
+opcode = 0x7C
+fields = { opc2 = 0, mode = 3, zero21 = 0 }
+ops = ["src:fprh", "base:r64", "off:imm9s"]
+asm = "str {src}, [{base}, #{off}]!"
+
+[[instructions]]
+name = "STRH_FP_POST"
+form = "LSUN"
+opcode = 0x7C
+fields = { opc2 = 0, mode = 1, zero21 = 0 }
+ops = ["src:fprh", "base:r64", "off:imm9s"]
+asm = "str {src}, [{base}], #{off}"
+
+[[instructions]]
+name = "LDRS_FP"
+form = "FPLSUI"
+opcode = 0xBD
+fields = { opc2 = 1 }
+ops = ["dst:fprs:out", "base:r64", "imm:imm12fp4"]
+asm = "ldr {dst}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "LDURS_FP"
+form = "LSUN"
+opcode = 0xBC
+fields = { opc2 = 1, mode = 0, zero21 = 0 }
+ops = ["dst:fprs:out", "base:r64", "off:imm9s"]
+asm = "ldur {dst}, [{base}, #{off}]"
+
+[[instructions]]
+name = "LDRS_FP_PRE"
+form = "LSUN"
+opcode = 0xBC
+fields = { opc2 = 1, mode = 3, zero21 = 0 }
+ops = ["dst:fprs:out", "base:r64", "off:imm9s"]
+asm = "ldr {dst}, [{base}, #{off}]!"
+
+[[instructions]]
+name = "LDRS_FP_POST"
+form = "LSUN"
+opcode = 0xBC
+fields = { opc2 = 1, mode = 1, zero21 = 0 }
+ops = ["dst:fprs:out", "base:r64", "off:imm9s"]
+asm = "ldr {dst}, [{base}], #{off}"
+
+[[instructions]]
+name = "STRS_FP"
+form = "FPLSUI"
+opcode = 0xBD
+fields = { opc2 = 0 }
+ops = ["src:fprs", "base:r64", "imm:imm12fp4"]
+asm = "str {src}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "STURS_FP"
+form = "LSUN"
+opcode = 0xBC
+fields = { opc2 = 0, mode = 0, zero21 = 0 }
+ops = ["src:fprs", "base:r64", "off:imm9s"]
+asm = "stur {src}, [{base}, #{off}]"
+
+[[instructions]]
+name = "STRS_FP_PRE"
+form = "LSUN"
+opcode = 0xBC
+fields = { opc2 = 0, mode = 3, zero21 = 0 }
+ops = ["src:fprs", "base:r64", "off:imm9s"]
+asm = "str {src}, [{base}, #{off}]!"
+
+[[instructions]]
+name = "STRS_FP_POST"
+form = "LSUN"
+opcode = 0xBC
+fields = { opc2 = 0, mode = 1, zero21 = 0 }
+ops = ["src:fprs", "base:r64", "off:imm9s"]
+asm = "str {src}, [{base}], #{off}"
+
+[[instructions]]
+name = "LDRD_FP"
+form = "FPLSUI"
+opcode = 0xFD
+fields = { opc2 = 1 }
+ops = ["dst:fpr:out", "base:r64", "imm:imm12fp8"]
+asm = "ldr {dst}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "LDRD_FP_PRE"
+form = "LSUN"
+opcode = 0xFC
+fields = { opc2 = 1, mode = 3, zero21 = 0 }
+ops = ["dst:fpr:out", "base:r64", "off:imm9s"]
+asm = "ldr {dst}, [{base}, #{off}]!"
+
+[[instructions]]
+name = "LDRD_FP_POST"
+form = "LSUN"
+opcode = 0xFC
+fields = { opc2 = 1, mode = 1, zero21 = 0 }
+ops = ["dst:fpr:out", "base:r64", "off:imm9s"]
+asm = "ldr {dst}, [{base}], #{off}"
+
+[[instructions]]
+name = "STRD_FP"
+form = "FPLSUI"
+opcode = 0xFD
+fields = { opc2 = 0 }
+ops = ["src:fpr", "base:r64", "imm:imm12fp8"]
+asm = "str {src}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "STRD_FP_PRE"
+form = "LSUN"
+opcode = 0xFC
+fields = { opc2 = 0, mode = 3, zero21 = 0 }
+ops = ["src:fpr", "base:r64", "off:imm9s"]
+asm = "str {src}, [{base}, #{off}]!"
+
+[[instructions]]
+name = "STRD_FP_POST"
+form = "LSUN"
+opcode = 0xFC
+fields = { opc2 = 0, mode = 1, zero21 = 0 }
+ops = ["src:fpr", "base:r64", "off:imm9s"]
+asm = "str {src}, [{base}], #{off}"
+
+# 成对 LDP/STP（SIMD&FP）：`opc 101 V idx imm7 …`；opc 00=S、01=D、10=Q；idx 010/011/001。
+
+[[instructions]]
+name = "STPS_FP"
+form = "FPPAIR"
+opcode = 0x2D
+fields = { idx2 = 0 }
+ops = ["t1:fprs", "base:r64", "t2:fprs", "imm:imm12fp4"]
+asm = "stp {t1}, {t2}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "STPS_FP_PRE"
+form = "FPPAIR"
+opcode = 0x2D
+fields = { idx2 = 2 }
+ops = ["t1:fprs", "base:r64", "t2:fprs", "imm:imm12fp4"]
+asm = "stp {t1}, {t2}, [{base}, #{imm}]!"
+
+[[instructions]]
+name = "STPS_FP_POST"
+form = "FPPAIR"
+opcode = 0x2C
+fields = { idx2 = 2 }
+ops = ["t1:fprs", "base:r64", "t2:fprs", "imm:imm12fp4"]
+asm = "stp {t1}, {t2}, [{base}], #{imm}"
+
+[[instructions]]
+name = "LDPS_FP"
+form = "FPPAIR"
+opcode = 0x2D
+fields = { idx2 = 1 }
+ops = ["t1:fprs:out", "base:r64", "t2:fprs:out", "imm:imm12fp4"]
+asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "LDPS_FP_PRE"
+form = "FPPAIR"
+opcode = 0x2D
+fields = { idx2 = 3 }
+ops = ["t1:fprs:out", "base:r64", "t2:fprs:out", "imm:imm12fp4"]
+asm = "ldp {t1}, {t2}, [{base}, #{imm}]!"
+
+[[instructions]]
+name = "LDPS_FP_POST"
+form = "FPPAIR"
+opcode = 0x2C
+fields = { idx2 = 3 }
+ops = ["t1:fprs:out", "base:r64", "t2:fprs:out", "imm:imm12fp4"]
+asm = "ldp {t1}, {t2}, [{base}], #{imm}"
+
+[[instructions]]
+name = "STPD_FP"
+form = "FPPAIR"
+opcode = 0x6D
+fields = { idx2 = 0 }
+ops = ["t1:fpr", "base:r64", "t2:fpr", "imm:imm12fp8"]
+asm = "stp {t1}, {t2}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "STPD_FP_PRE"
+form = "FPPAIR"
+opcode = 0x6D
+fields = { idx2 = 2 }
+ops = ["t1:fpr", "base:r64", "t2:fpr", "imm:imm12fp8"]
+asm = "stp {t1}, {t2}, [{base}, #{imm}]!"
+
+[[instructions]]
+name = "STPD_FP_POST"
+form = "FPPAIR"
+opcode = 0x6C
+fields = { idx2 = 2 }
+ops = ["t1:fpr", "base:r64", "t2:fpr", "imm:imm12fp8"]
+asm = "stp {t1}, {t2}, [{base}], #{imm}"
+
+[[instructions]]
+name = "LDPD_FP"
+form = "FPPAIR"
+opcode = 0x6D
+fields = { idx2 = 1 }
+ops = ["t1:fpr:out", "base:r64", "t2:fpr:out", "imm:imm12fp8"]
+asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "LDPD_FP_PRE"
+form = "FPPAIR"
+opcode = 0x6D
+fields = { idx2 = 3 }
+ops = ["t1:fpr:out", "base:r64", "t2:fpr:out", "imm:imm12fp8"]
+asm = "ldp {t1}, {t2}, [{base}, #{imm}]!"
+
+[[instructions]]
+name = "LDPD_FP_POST"
+form = "FPPAIR"
+opcode = 0x6C
+fields = { idx2 = 3 }
+ops = ["t1:fpr:out", "base:r64", "t2:fpr:out", "imm:imm12fp8"]
+asm = "ldp {t1}, {t2}, [{base}], #{imm}"
+
+[[instructions]]
+name = "STPQ_FP"
+form = "FPPAIR"
+opcode = 0xAD
+fields = { idx2 = 0 }
+ops = ["t1:fprq", "base:r64", "t2:fprq", "imm:imm12fp16"]
+asm = "stp {t1}, {t2}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "STPQ_FP_PRE"
+form = "FPPAIR"
+opcode = 0xAD
+fields = { idx2 = 2 }
+ops = ["t1:fprq", "base:r64", "t2:fprq", "imm:imm12fp16"]
+asm = "stp {t1}, {t2}, [{base}, #{imm}]!"
+
+[[instructions]]
+name = "STPQ_FP_POST"
+form = "FPPAIR"
+opcode = 0xAC
+fields = { idx2 = 2 }
+ops = ["t1:fprq", "base:r64", "t2:fprq", "imm:imm12fp16"]
+asm = "stp {t1}, {t2}, [{base}], #{imm}"
+
+[[instructions]]
+name = "LDPQ_FP"
+form = "FPPAIR"
+opcode = 0xAD
+fields = { idx2 = 1 }
+ops = ["t1:fprq:out", "base:r64", "t2:fprq:out", "imm:imm12fp16"]
+asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "LDPQ_FP_PRE"
+form = "FPPAIR"
+opcode = 0xAD
+fields = { idx2 = 3 }
+ops = ["t1:fprq:out", "base:r64", "t2:fprq:out", "imm:imm12fp16"]
+asm = "ldp {t1}, {t2}, [{base}, #{imm}]!"
+
+[[instructions]]
+name = "LDPQ_FP_POST"
+form = "FPPAIR"
+opcode = 0xAC
+fields = { idx2 = 3 }
+ops = ["t1:fprq:out", "base:r64", "t2:fprq:out", "imm:imm12fp16"]
+asm = "ldp {t1}, {t2}, [{base}], #{imm}"
 
 # ── 移位立即数（`add w3, w4, #1024, lsl #12`）──
 #
@@ -3721,6 +4167,22 @@ bytes = [0x41, 0x00, 0x23, 0x8B]
 [[vectors]]
 asm = "add x1, x2, w3, sxtw"
 bytes = [0x41, 0xC0, 0x23, 0x8B]
+# FP unscaled 访存（LDUR/STUR 的 D/S 形态）：字节取自语料的上游期望值（`d8`/`s7` 对应的编码）。
+[[vectors]]
+asm = "ldur v8, [sp, #8]"
+bytes = [0xE8, 0x83, 0x40, 0xFC]
+
+[[vectors]]
+asm = "stur v8, [sp, #8]"
+bytes = [0xE8, 0x83, 0x00, 0xFC]
+
+[[vectors]]
+asm = "ldur s7, [sp, #4]"
+bytes = [0xE7, 0x43, 0x40, 0xBC]
+
+[[vectors]]
+asm = "stur s7, [sp, #4]"
+bytes = [0xE7, 0x43, 0x00, 0xBC]
 
 # 字节/半字访存：字节取自语料 CHECK 行的上游期望值（每种助记符一条）。
 [[vectors]]
@@ -3790,6 +4252,50 @@ names = ["V0", "V1", "V2", "V3", "V4", "V5", "V6", "V7",
          "V16", "V17", "V18", "V19", "V20", "V21", "V22", "V23",
          "V24", "V25", "V26", "V27", "V28", "V29", "V30", "V31"]
 
+# ── FP 的**宽度视图**：宽度必须由寄存器组承载 ──
+# 既有 `[reg.fpr8]`（V0..V31）就是 **D 视图**，下面给它挂 `D0..D31` 别名；
+# B/H/S/Q 各开一组。若共用一个组，`ldr s0,…` 与 `ldr d0,…` 的文本形状相同、分派只能取
+# 先声明的那条（实测把 S 编成了 D）——所以宽度不能只靠"名字在同一个池里"。
+aliases = { D0 = 0, D1 = 1, D2 = 2, D3 = 3, D4 = 4, D5 = 5, D6 = 6, D7 = 7, D8 = 8, D9 = 9, D10 = 10, D11 = 11, D12 = 12, D13 = 13, D14 = 14, D15 = 15, D16 = 16, D17 = 17, D18 = 18, D19 = 19, D20 = 20, D21 = 21, D22 = 22, D23 = 23, D24 = 24, D25 = 25, D26 = 26, D27 = 27, D28 = 28, D29 = 29, D30 = 30, D31 = 31 }
+[reg.fpr1]
+prefix = "B"
+count = 32
+aliases = {}
+
+[reg.fpr2]
+prefix = "H"
+count = 32
+aliases = {}
+
+[reg.fpr4]
+prefix = "S"
+count = 32
+aliases = {}
+
+[reg.fpr16]
+prefix = "Q"
+count = 32
+aliases = {}
+[[operand_slots]]
+name = "fprb"
+kind = "reg"
+class = "fpr1"
+
+[[operand_slots]]
+name = "fprh"
+kind = "reg"
+class = "fpr2"
+
+[[operand_slots]]
+name = "fprs"
+kind = "reg"
+class = "fpr4"
+
+[[operand_slots]]
+name = "fprq"
+kind = "reg"
+class = "fpr16"
+
 [[operand_slots]]
 name = "fpr"
 kind = "reg"
@@ -3821,11 +4327,16 @@ ops = ["dst:fpr:out", "src:fpr"]
 asm = "fmov {dst}, {src}"
 
 # LDUR/STUR (SIMD&FP, unscaled imm9)：与 LDURX/STURX 同形，只是寄存器文件不同——
-#   D：0xFD… (size=11)、S：0xBD… (size=10)；opc2 = 01 载 / 00 存。
+#   D：**0xFC**… (size=11, V=1, [25:24]=00 unscaled)、S：**0xBC**… (size=10)；opc2 = 01 载 / 00 存。
+# **勘误（2026-10-07）**：这两条原先写成 0xFD/0xBD——那是**无符号偏移族**（imm12）的 op8，
+# 于是 `ldur d8, [sp, #8]` 会编出无符号族、imm9 落到 imm12 的错位（上游期望 `e8 83 40 fc`，
+# 我们出 `e8 83 40 fd`）。潜伏这么久是因为 FP 槽用 V 名、语料写的是 `d8`/`s7`，
+# 那批行从来没解析过 ⇒ 字节对拍档看不见它。带 callee_save/callee_load 角色的两条尤其要紧：
+# arm64 JIT 的 FPR 保存/恢复一直按错族发偏移。
 [[instructions]]
 name = "LDURD"
 form = "LSUN"
-opcode = 0xFD
+opcode = 0xFC
 fields = { opc2 = 1, mode = 0, zero21 = 0 }
 ops = ["dst:fpr:out", "base:r64", "off:imm9s"]
 asm = "ldur {dst}, [{base}, #{off}]"
@@ -3836,7 +4347,7 @@ roles = [{ role = "callee_load", class = "fpr" }]
 [[instructions]]
 name = "STURD"
 form = "LSUN"
-opcode = 0xFD
+opcode = 0xFC
 fields = { opc2 = 0, mode = 0, zero21 = 0 }
 ops = ["src:fpr", "base:r64", "off:imm9s"]
 asm = "stur {src}, [{base}, #{off}]"
@@ -3845,7 +4356,7 @@ roles = [{ role = "callee_save", class = "fpr" }]
 [[instructions]]
 name = "LDURS"
 form = "LSUN"
-opcode = 0xBD
+opcode = 0xBC
 fields = { opc2 = 1, mode = 0, zero21 = 0 }
 ops = ["dst:fpr:out", "base:r64", "off:imm9s"]
 asm = "ldur {dst}, [{base}, #{off}]"
@@ -3853,15 +4364,86 @@ asm = "ldur {dst}, [{base}, #{off}]"
 [[instructions]]
 name = "STURS"
 form = "LSUN"
-opcode = 0xBD
+opcode = 0xBC
 fields = { opc2 = 0, mode = 0, zero21 = 0 }
 ops = ["src:fpr", "base:r64", "off:imm9s"]
 asm = "stur {src}, [{base}, #{off}]"
 
 # FP 溢出（与 [spill.GPR] 同口径：base = X29、真字节 imm9 偏移）。
+# ── Q（128 位）单寄存器访存：size=00、opc 位型与 Q 的成对一致（[31:24] = 0x3C/0x3D）──
+
+[[instructions]]
+name = "LDRQ_FP"
+form = "FPLSUI"
+opcode = 0x3D
+fields = { opc2 = 3 }
+ops = ["dst:fprq:out", "base:r64", "imm:imm12fp16"]
+asm = "ldr {dst}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "LDURQ_FP"
+form = "LSUN"
+opcode = 0x3C
+fields = { opc2 = 3, mode = 0, zero21 = 0 }
+ops = ["dst:fprq:out", "base:r64", "off:imm9s"]
+asm = "ldur {dst}, [{base}, #{off}]"
+
+[[instructions]]
+name = "LDRQ_FP_PRE"
+form = "LSUN"
+opcode = 0x3C
+fields = { opc2 = 3, mode = 3, zero21 = 0 }
+ops = ["dst:fprq:out", "base:r64", "off:imm9s"]
+asm = "ldr {dst}, [{base}, #{off}]!"
+
+[[instructions]]
+name = "LDRQ_FP_POST"
+form = "LSUN"
+opcode = 0x3C
+fields = { opc2 = 3, mode = 1, zero21 = 0 }
+ops = ["dst:fprq:out", "base:r64", "off:imm9s"]
+asm = "ldr {dst}, [{base}], #{off}"
+
+[[instructions]]
+name = "STRQ_FP"
+form = "FPLSUI"
+opcode = 0x3D
+fields = { opc2 = 2 }
+ops = ["src:fprq", "base:r64", "imm:imm12fp16"]
+asm = "str {src}, [{base}, #{imm}]"
+
+[[instructions]]
+name = "STURQ_FP"
+form = "LSUN"
+opcode = 0x3C
+fields = { opc2 = 2, mode = 0, zero21 = 0 }
+ops = ["src:fprq", "base:r64", "off:imm9s"]
+asm = "stur {src}, [{base}, #{off}]"
+
+[[instructions]]
+name = "STRQ_FP_PRE"
+form = "LSUN"
+opcode = 0x3C
+fields = { opc2 = 2, mode = 3, zero21 = 0 }
+ops = ["src:fprq", "base:r64", "off:imm9s"]
+asm = "str {src}, [{base}, #{off}]!"
+
+[[instructions]]
+name = "STRQ_FP_POST"
+form = "LSUN"
+opcode = 0x3C
+fields = { opc2 = 2, mode = 1, zero21 = 0 }
+ops = ["src:fprq", "base:r64", "off:imm9s"]
+asm = "str {src}, [{base}], #{off}"
+
 [spill.FPR]
 load = "LDURD {0}, X29, {1}"
 store = "STURD {0}, X29, {1}"
+
+# Q（128 位）视图的溢出：与 FPR 同口径（base = X29、真字节 imm9），只是走 16 字节的访存。
+[spill.FPR16]
+load = "LDURQ_FP {0}, X29, {1}"
+store = "STURQ_FP {0}, X29, {1}"
 
 [machine]
 # 机器事实（v20 A5）：溢出与栈参数收参用的 scratch（emission 的 spill load/store 也用它）。

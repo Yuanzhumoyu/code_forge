@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-07) — aarch64 FP unscaled 访存的 op8 用错了族（`LDURD`/`STURD`/`LDURS`/`STURS`）
+
+这四条写的是 `0xFD`/`0xBD`——那是**无符号偏移族**（imm12）；unscaled 族是 `0xFC`/`0xBC`（`ldur d8, [sp, #8]` 上游 = `e8 83 40 fc`）。潜伏至今的原因是 FP 槽用 V 名、语料写 `d8`/`s7`，那批行从来没解析过 ⇒ 字节对拍档看不见它。**影响不止编码**：`LDURD`/`STURD` 带 `callee_load`/`callee_save` 角色、`[spill.FPR]` 也引用它们 ⇒ arm64 后端的 FPR 保存/恢复与 FP 溢出一直在按错族发偏移。修后用 4 条谱内向量钉住（字节取自语料的上游期望值）。
+
+### Added (2026-10-07) — aarch64：FP/NEON 宽度视图 + SIMD&FP 访存全族（60 条）
+
+**宽度必须由寄存器组承载**：FP 访存的助记符都是 `ldr`/`str`/`ldp`/`stp`，宽度只在寄存器名上；若 B/H/S/D/Q 同属一个组（都算 FPR(8)），`ldr s0,…` 与 `ldr d0,…` 的**文本形状完全相同**，分派会提交到先声明的那条（实测 S 被编成 D、Q 被编成 B）。做法：既有 `[reg.fpr8]`（V0..V31）作 **D 视图** + `D0..D31` 别名，另开 `fpr1`/`fpr2`/`fpr4`/`fpr16`（B/H/S/Q）；**`[meta].default_fpr_width = 8` 必须显式写**（否则"主 FPR 类"按最宽组取到 Q，ABI 找 `V0` 报 `UnresolvedReg`）；新增 `[spill.FPR16]`。
+
+指令：单寄存器 B/H/S/D/Q × {无符号偏移, unscaled, 前索引, 后索引} × {ldr, str} + S/D/Q 成对 LDP/STP × {有符号偏移, 前索引, 后索引}（D 视图的无位移形态沿用既有 `LDURD`/`STURD`，避免同形重复）。**本批也抓到我自己的一处编码错**：Q（128 位）单寄存器的 opc 是 **11 载 / 10 存**（不是 D 的 01/00），照 D 写会让 `ldr q9, …` 变成 `ldr B9, …`——被新解析出来的语料行（26 条 FP 形态差异）当场抓出，改完 FP 形态差异归零。
+
+效果：aarch64 `parsed` 1640 → **1909**、红 1706 → **1437**、编码 `checked` 785 → **945**、`known` 53 → **57**（+4 为新解析出的 `sp` 别名写法暴露的既有编码口径差异，非 FP）；全绿集 **112 → 113**（PROVENANCE 115 行）。守卫同步：`spec_coverage_guard` arm64 364 → **420**、`isa_roundtrip_guard` arm64 枚举器 1673 → **2009**。
+
 ### Added (2026-10-07) — aarch64：移位立即数 16 条（`add w3, w4, #1024, lsl #12`）
 
 A64 的 add/subtract (immediate) 用 **bit22 = sh** 表示"左移 12 位"，且文本里的立即数**始终是未移位的值**（`#1024, lsl #12` ⇒ 字段 1024，槽的 `unit` 不受影响）。16 条 = 数值形态 8 条（`add`/`sub`/`adds`/`subs` × X/W，槽 `imm12u`）+ **重定位 + 移位** 8 条（槽 `imm12sym`，覆盖 `add x2, x3, #:lo12:sym, lsl #12`）。效果：aarch64 红行 **1734 → 1706**、`parsed` 1618 → **1640**、`corpus_only` +6。守卫同步：`spec_coverage_guard` arm64 348 → **364**、`isa_roundtrip_guard` arm64 枚举器 1577 → **1673**。
