@@ -123,7 +123,7 @@ fn derived_insts_roundtrip_byte_stable() {
     //   宽度视图；`require_symbol` 形态跳过文本闭环，只测编解码闭环）。
     assert_eq!(
         (x86, riscv, arm64),
-        (1542, 622, 1577),
+        (1542, 622, 1673),
         "枚举器条目数变了：确认是谱的预期变更还是派生逻辑退化"
     );
 }

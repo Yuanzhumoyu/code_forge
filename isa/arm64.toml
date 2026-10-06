@@ -1859,6 +1859,142 @@ fields = { shift = 0 }
 ops = ["dst:r64:out", "src:r64", "src2:r64", "sh:imm6"]
 asm = "subs {dst}, {src}, {src2}, lsl #{sh}"
 
+# ── 移位立即数（`add w3, w4, #1024, lsl #12`）──
+#
+# bit22 = sh（0 = 无移位 / 1 = 左移 12 位）；文本里的立即数**始终是未移位的值**（字段 = 1024）。
+# 数值形态用 `imm12u`（不缩放），重定位形态用 `imm12sym`（unit 1 + symbols + require_symbol）——
+# 后者的模板形状（`#:lo12:sym, lsl #12`）与数值形态不同，不会互相遮蔽。
+
+[[instructions]]
+name = "ADD_X_LSL12"
+form = "ALUIMM"
+opcode = 0x91
+fields = { shift = 1 }
+ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
+asm = "add {dst}, {src}, #{imm}, lsl #12"
+
+[[instructions]]
+name = "ADD_W_LSL12"
+form = "ALUIMM"
+opcode = 0x11
+fields = { shift = 1 }
+ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
+asm = "add {dst}, {src}, #{imm}, lsl #12"
+
+[[instructions]]
+name = "ADDS_X_LSL12"
+form = "ALUIMM"
+opcode = 0xB1
+fields = { shift = 1 }
+ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
+asm = "adds {dst}, {src}, #{imm}, lsl #12"
+
+[[instructions]]
+name = "ADDS_W_LSL12"
+form = "ALUIMM"
+opcode = 0x31
+fields = { shift = 1 }
+ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
+asm = "adds {dst}, {src}, #{imm}, lsl #12"
+
+[[instructions]]
+name = "SUB_X_LSL12"
+form = "ALUIMM"
+opcode = 0xD1
+fields = { shift = 1 }
+ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
+asm = "sub {dst}, {src}, #{imm}, lsl #12"
+
+[[instructions]]
+name = "SUB_W_LSL12"
+form = "ALUIMM"
+opcode = 0x51
+fields = { shift = 1 }
+ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
+asm = "sub {dst}, {src}, #{imm}, lsl #12"
+
+[[instructions]]
+name = "SUBS_X_LSL12"
+form = "ALUIMM"
+opcode = 0xF1
+fields = { shift = 1 }
+ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
+asm = "subs {dst}, {src}, #{imm}, lsl #12"
+
+[[instructions]]
+name = "SUBS_W_LSL12"
+form = "ALUIMM"
+opcode = 0x71
+fields = { shift = 1 }
+ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
+asm = "subs {dst}, {src}, #{imm}, lsl #12"
+
+# 重定位 + 移位：`add x2, x3, #:lo12:sym, lsl #12`（`elf-reloc-addsubimm.s` 就这一条）。
+
+[[instructions]]
+name = "ADD_X_RELO_LSL12"
+form = "ALUIMM"
+opcode = 0x91
+fields = { shift = 1 }
+ops = ["dst:r64:out", "src:r64", "imm:imm12sym"]
+asm = "add {dst}, {src}, {imm}, lsl #12"
+
+[[instructions]]
+name = "ADD_W_RELO_LSL12"
+form = "ALUIMM"
+opcode = 0x11
+fields = { shift = 1 }
+ops = ["dst:r32:out", "src:r32", "imm:imm12sym"]
+asm = "add {dst}, {src}, {imm}, lsl #12"
+
+[[instructions]]
+name = "ADDS_X_RELO_LSL12"
+form = "ALUIMM"
+opcode = 0xB1
+fields = { shift = 1 }
+ops = ["dst:r64:out", "src:r64", "imm:imm12sym"]
+asm = "adds {dst}, {src}, {imm}, lsl #12"
+
+[[instructions]]
+name = "ADDS_W_RELO_LSL12"
+form = "ALUIMM"
+opcode = 0x31
+fields = { shift = 1 }
+ops = ["dst:r32:out", "src:r32", "imm:imm12sym"]
+asm = "adds {dst}, {src}, {imm}, lsl #12"
+
+[[instructions]]
+name = "SUB_X_RELO_LSL12"
+form = "ALUIMM"
+opcode = 0xD1
+fields = { shift = 1 }
+ops = ["dst:r64:out", "src:r64", "imm:imm12sym"]
+asm = "sub {dst}, {src}, {imm}, lsl #12"
+
+[[instructions]]
+name = "SUB_W_RELO_LSL12"
+form = "ALUIMM"
+opcode = 0x51
+fields = { shift = 1 }
+ops = ["dst:r32:out", "src:r32", "imm:imm12sym"]
+asm = "sub {dst}, {src}, {imm}, lsl #12"
+
+[[instructions]]
+name = "SUBS_X_RELO_LSL12"
+form = "ALUIMM"
+opcode = 0xF1
+fields = { shift = 1 }
+ops = ["dst:r64:out", "src:r64", "imm:imm12sym"]
+asm = "subs {dst}, {src}, {imm}, lsl #12"
+
+[[instructions]]
+name = "SUBS_W_RELO_LSL12"
+form = "ALUIMM"
+opcode = 0x71
+fields = { shift = 1 }
+ops = ["dst:r32:out", "src:r32", "imm:imm12sym"]
+asm = "subs {dst}, {src}, {imm}, lsl #12"
+
 # ── 重定位修饰形态（`add x0, x0, #:lo12:sym` / `ldr w0, [sp, #:lo12:...]`）──
 #
 # 与数值形态**同编码、同 opcode**，差别只在立即数槽是**符号槽**（unit 1 + symbols +

@@ -542,6 +542,17 @@ riscv64 只剩一条登记为设计取舍；aarch64 有一条**已定位、未�
   "上下文不足"）、`known` 仍 **53**；**4 个文件整文件转绿**（`arm64-ilp32.s`、`basic-pic.s`、
   `jump-table.s`、`tls-add-shift.s`）——全绿集 109 → **112**、淘汰 624 → **621**。
 
+- aarch64（第三十三批：**移位立即数** `add w3, w4, #1024, lsl #12`）：A64 的 add/sub(imm) 用
+  **bit22 = sh** 表示"左移 12 位"，文本里的立即数**始终是未移位的值**（`#1024, lsl #12` ⇒ 字段 1024）。
+  16 条：数值形态 8 条（`add`/`sub`/`adds`/`subs` × X/W，槽 `imm12u`）+ **重定位 + 移位** 8 条
+  （槽 `imm12sym`，覆盖 `add x2, x3, #:lo12:sym, lsl #12`——`elf-reloc-addsubimm.s` 就那一条）。
+  结果：aarch64 红行 1734 → **1706**、`parsed` 1618 → **1640**、`corpus_only` +6
+  （重定位 + 移位的写法现在解析得住，未定义符号按"上下文不足"记账）。
+  **一处要注意的 `known` +1**（不是我们的回归）：`basic-a64-instructions.s:312`
+  `subs xzr, sp, #20, lsl #12` 我们编成 64 位形态（`0xf1`，与文本里的 `xzr`/`sp` 一致），
+  而上游那行的 CHECK 期望是 **32 位**形态（`0x31`）——那是**语料抽取把 CHECK 行配错了对**
+  （该文件另有 `subs wzr, wsp, …` 的行）。该文件本就不在全绿层，`known` 也只影响它自己。
+
 - aarch64（第三十一批：**字节/半字 GPR 访存**）：`ldrb`/`ldrh`/`ldrsb`/`ldrsh`/`ldrsw`/`strb`/
   `strh` —— 9 组助记符/类别 × {带位移, 无位移} = **18 条**（语料 117 行）。编码与既有 LDR/STR
   同族：`size 111 V 00 opc imm12 Rn Rt`，`opc` 00 = store / 01 = 无符号载 / 10 = 符号载到 X /

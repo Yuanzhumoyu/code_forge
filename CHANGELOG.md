@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-07) — aarch64：移位立即数 16 条（`add w3, w4, #1024, lsl #12`）
+
+A64 的 add/subtract (immediate) 用 **bit22 = sh** 表示"左移 12 位"，且文本里的立即数**始终是未移位的值**（`#1024, lsl #12` ⇒ 字段 1024，槽的 `unit` 不受影响）。16 条 = 数值形态 8 条（`add`/`sub`/`adds`/`subs` × X/W，槽 `imm12u`）+ **重定位 + 移位** 8 条（槽 `imm12sym`，覆盖 `add x2, x3, #:lo12:sym, lsl #12`）。效果：aarch64 红行 **1734 → 1706**、`parsed` 1618 → **1640**、`corpus_only` +6。守卫同步：`spec_coverage_guard` arm64 348 → **364**、`isa_roundtrip_guard` arm64 枚举器 1577 → **1673**。
+
+一处**语料侧**的 `known` +1（不是我们的回归，已登记进 `asm/README.md`）：`basic-a64-instructions.s:312` 的 `subs xzr, sp, #20, lsl #12` 我们编出 64 位形态（与文本里的 `xzr`/`sp` 一致），而那一行的 CHECK 期望是 32 位形态——语料抽取把 CHECK 行配对错了（该文件另有 `subs wzr, wsp, …`）。
+
 ### Fixed (2026-10-07) — 汇编器两遍布局把「第一个冒号之前的一切」当标签（A64 重定位族 382 行一直落红的根因）
 
 生成的 `parse_insts` 按 `name:` 识别标签定义，但判据是"**见到冒号就切**"：`add x8, x8, :lo12:sizes` 因此被切成"标签 `add x8, x8,` + 指令 `lo12:sizes`"，报 `no matching instruction`。语料抽取侧本就有"名字不含空白"的守卫，生成侧没有——**这是 A64 重定位修饰族（382 行、47 个修饰名、十几个文件）从来没解析过的真正原因**，而不是"缺指令"。修法 = 同一口径的判据：名字非空且不含空白/逗号/括号/`#` 才算标签。修后 `add x8, x8, :lo12:sizes` 装配为 `imm: 0`（与上游未重定位字段 = 0 一致），未定义符号报 `UndefinedLabel`（准确诊断 ⇒ 归入"上下文不足"桶而非缺陷）。
