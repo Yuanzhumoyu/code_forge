@@ -116,12 +116,15 @@ fn generated_spec_tests_cover_every_instruction() {
 /// （X/W × ldr/str × 8 种 option/S 组合）+ ADD/SUB(S) 移位寄存器带量 8 条。
 /// 2026-10-07（aarch64 扩展寄存器批次）：arm64 270 → **318**——扩展寄存器 48 条
 /// （6 助记符 × 2 宽度 × {W,X} 扩展 × {带量, 省略量}）。
+/// 2026-10-07（aarch64 字节/半字访存批次）：arm64 318 → **336**——字节/半字 GPR 访存 18 条
+/// （9 组助记符/类别 × {带位移, 无位移}）；`op8` 是无符号偏移族的 `0x39`/`0x79`/`0xB9`，
+/// 这处写错正是被全集语料的字节对拍档抓出来的。
 #[test]
 fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 299), ("riscv64", 173), ("arm64", 318)],
+        vec![("x86", 299), ("riscv64", 173), ("arm64", 336)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }

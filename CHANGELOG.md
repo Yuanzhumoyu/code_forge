@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-07) — aarch64：字节/半字 GPR 访存 18 条（`ldrb`/`ldrh`/`ldrsb`/`ldrsh`/`ldrsw`/`strb`/`strh`）
+
+9 组助记符/类别 × {带位移, 无位移} = **18 条**（语料 117 行）。编码与既有 LDR/STR 同族：`size 111 V 00 opc imm12 Rn Rt`——`opc` 00 = store / 01 = 无符号载 / 10 = 符号载到 X / 11 = 符号载到 W；imm12 的**单位 = 访问宽度**（byte 1 / halfword 2 / word 4，按单位分成 `imm12b`/`imm12h`/`imm12w` 三个槽）。
+
+**一处真错由字节对拍档当场抓到**：无符号偏移族（imm12）的 `[25:24] = 01` ⇒ op8 是 `0x39`/`0x79`/`0xB9`，我最初按 unscaled 族的 `0x38`/`0x78`/`0xB8` 写（`ldrb w4, [x3]` 我们 `0x…38` ≠ 上游 `0x…39`）；修正后该族 `known` 清零。顺带：`0xB9` 让 `ldrsw` 的无位移形态不再与既有 `LDURSW`（`0xB8`、`mode` 占 bit10 起 2 位）在**解码位 trie** 里重叠——生成期本会把这种结构冲突直接喊出来。谱内向量 5 条（生成器从语料 CHECK 行自动挑具体字节样本：`ldrb`/`ldrsh`/`strb`/`ldrsw`/`strh`），codegen 全过。
+
+效果：aarch64 `parsed` 1547 → **1572**、`no_prefix` 14558 → **14322**、编码 `known` 78 → **53**；新认出的 236 行里 25 条整条通过、211 条**按归因落红**（地址形态/寄存器族尚未做，非回归）。取舍账本（留 109 / 砍 624）与两个棘轮逐字不变。守卫同步：`spec_coverage_guard` arm64 318 → **336**、`isa_roundtrip_guard` arm64 枚举器 1433 → **1505**。
+
 ### Added (2026-10-07) — aarch64：扩展寄存器操作数（48 条，300 行那一族）——关键字做成「命名立即数操作数」
 
 `add x8, x8, w5, sxtw #2`、`cmp w0, w1, uxtb` 这类"第三个操作数带扩展关键字、可再带量"的写法此前整族落红。**不新增 DSL 能力**：关键字做成**命名立即数操作数**（`{ext}` → `option` [15:13]），量做成 `imm3` 操作数（[12:10]）——于是每 (助记符, 宽度) 只需 **4 条**（W 扩展 / X 扩展 × 带量 / 省略量），
