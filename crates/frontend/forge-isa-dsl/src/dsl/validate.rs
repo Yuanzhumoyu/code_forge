@@ -1760,6 +1760,37 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                 ));
             }
         }
+        if let Some(fns) = &s.imm_fns {
+            if !matches!(s.kind, OperandKind::Imm) {
+                return Err(format!(
+                    "{path}: `imm_fns` 只对 kind = \"imm\" 有意义（当前 kind = {}）",
+                    s.kind.kind_name()
+                ));
+            }
+            if !s.symbols.unwrap_or(false) {
+                return Err(format!(
+                    "{path}: `imm_fns` 要求同时声明 `symbols = true`（它只把该槽收窄到一部分修饰）"
+                ));
+            }
+            if fns.is_empty() {
+                return Err(format!("{path}: `imm_fns` 不能是空表（省略 = 收全部修饰）"));
+            }
+            let known: Vec<&str> = m
+                .conventions
+                .imm_fn
+                .as_ref()
+                .map(|v| v.iter().map(|d| d.name.as_str()).collect())
+                .unwrap_or_default();
+            for f in fns {
+                if !known.contains(&f.as_str()) {
+                    return Err(format!(
+                        "{path}: `imm_fns` 里的 `{f}` 不是已声明的 `[[conventions.imm_fn]]` 名\
+                         （已声明：{}）",
+                        known.join(", ")
+                    ));
+                }
+            }
+        }
         if s.table.is_some() && s.kind != OperandKind::Bits {
             return Err(format!("{path}: `table` 只对 kind = \"bits\" 有意义"));
         }

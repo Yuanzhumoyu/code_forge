@@ -674,9 +674,14 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                 op: usize,
                 allow_sym: bool,
                 require_sym: bool,
+                allow: &[usize],
             ) -> Option<i64> {
                 let save = it.pos;
                 let _d = #imm_pref;
+                // `imm_fns`：把本槽允许的修饰下标装进线程局部（空 = 全部允许），由
+                // `__imm_fn_allowed` 在每个修饰 try 前判；`__AllowGuard` 在任何返回路径上恢复。
+                let __allow_save = __IMM_FN_ALLOW.with(|a| a.replace(allow.to_vec()));
+                let _allow_guard = __AllowGuard(__allow_save);
                 __SYMREF.with(|r| r.borrow_mut().clear());
                 __SYMREF_ON.with(|a| a.set(allow_sym));
                 let v = __expr(it, float);
@@ -1112,7 +1117,7 @@ fn gen_imm_fns(model: &IsaModel) -> Result<(TokenStream, TokenStream), String> {
             quote! { __imm_fn_lit(it, &[#(#post_lits),*], #ci) }
         };
         tries.push(quote! {
-            {
+            if __imm_fn_allowed(#i) {
                 let __msave = it.pos;
                 if #pre_match {
                     let __inner = {
@@ -1132,6 +1137,29 @@ fn gen_imm_fns(model: &IsaModel) -> Result<(TokenStream, TokenStream), String> {
         });
     }
     let helper = quote! {
+        /// 本槽允许的修饰下标（`[[operand_slots]].imm_fns`；空表 = **全部允许**）。
+        thread_local! {
+            static __IMM_FN_ALLOW: std::cell::RefCell<Vec<usize>> =
+                const { std::cell::RefCell::new(Vec::new()) };
+        }
+
+        /// 当前槽允不允许第 `i` 个修饰（`__imm` 在解析前装表，`__AllowGuard` 负责恢复）。
+        fn __imm_fn_allowed(i: usize) -> bool {
+            __IMM_FN_ALLOW.with(|a| {
+                let v = a.borrow();
+                v.is_empty() || v.contains(&i)
+            })
+        }
+
+        /// 恢复上一层允许表（`__imm` 的任何返回路径都会走到这里）。
+        struct __AllowGuard(Vec<usize>);
+        impl Drop for __AllowGuard {
+            fn drop(&mut self) {
+                let v = std::mem::take(&mut self.0);
+                __IMM_FN_ALLOW.with(|a| *a.borrow_mut() = v);
+            }
+        }
+
         /// 立即数修饰的**字面**匹配（`ci` = Ident token 豁免大小写）。
         fn __imm_fn_lit(it: &mut __Iter, lit: &[__Tok], ci: bool) -> bool {
             let mut p = it.pos;
@@ -1239,6 +1267,7 @@ fn gen_scan_probe(infos: &[InstInfo], case_insensitive: bool) -> Result<TokenStr
 /// 单操作数的解析表达式 + 匹配模式 + （可选）宽度一致性绑定名。
 /// `wreq`：form opsize = r<宽> 时对全 GPR 槽的固定宽度过滤（位）。
 fn operand_parse_tok(
+    model: &IsaModel,
     slot: &OperandSlot,
     fid: &syn::Ident,
     n: usize,
@@ -1291,10 +1320,24 @@ fn operand_parse_tok(
             // `require_symbol`（重定位修饰形态）：本槽只接受"记到了符号/带修饰"的写法——
             // 判据在 `__imm` 内部判（`__imm` 成功时会提交并清空 `__SYMREF`，外层测长度增量恒为 0）。
             let require_sym = slot.require_symbol.unwrap_or(false);
+            // `imm_fns`（按槽过滤修饰表）：名字 → `[[conventions.imm_fn]]` 的下标
+            // （校验期已保证名字都存在；空 = 不过滤 ⇒ 传空切片）。
+            let allow_ts = match &slot.imm_fns {
+                Some(names) => {
+                    let defs = model.conventions.imm_fn.clone().unwrap_or_default();
+                    let lits: Vec<proc_macro2::Literal> = names
+                        .iter()
+                        .filter_map(|n| defs.iter().position(|d| &d.name == n))
+                        .map(proc_macro2::Literal::usize_unsuffixed)
+                        .collect();
+                    quote! { &[#(#lits),*] }
+                }
+                None => quote! { &[] },
+            };
             let elem = match (slot.imm_wrap_modulus(), slot.imm_range()) {
                 (Some(m), Some((clo, chi))) => quote! {
                     {
-                        let __w = __imm(&mut it, #min, #max, #float, #unit, &mut __lsyms, #n, #allow_sym, #require_sym);
+                        let __w = __imm(&mut it, #min, #max, #float, #unit, &mut __lsyms, #n, #allow_sym, #require_sym, #allow_ts);
                         __w.map(|v| {
                             if v > #chi { v.wrapping_sub(#m) } else { v }
                         })
@@ -1302,7 +1345,7 @@ fn operand_parse_tok(
                     }
                 },
                 _ => {
-                    quote! { __imm(&mut it, #min, #max, #float, #unit, &mut __lsyms, #n, #allow_sym, #require_sym) }
+                    quote! { __imm(&mut it, #min, #max, #float, #unit, &mut __lsyms, #n, #allow_sym, #require_sym, #allow_ts) }
                 }
             };
             // 命名立即数（`names`）：先试表里的名字，没命中再走普通字面量/表达式路径
@@ -1364,7 +1407,11 @@ fn operand_parse_tok(
 /// 逐段消费 token（字面段 = token 序列匹配；占位符段 = 按槽类型解析）。任一失败
 /// 静默回退下一形状（多形状回退语义）。前导字面段（助记符位）按 `case_insensitive`
 /// 豁免大小写（`__eat_name`），其余字面段严格遵守 asm 格式（`__eat_lit`）。
-fn gen_assemble_try_tok(info: &InstInfo, case_insensitive: bool) -> Result<TokenStream, String> {
+fn gen_assemble_try_tok(
+    model: &IsaModel,
+    info: &InstInfo,
+    case_insensitive: bool,
+) -> Result<TokenStream, String> {
     let vn = &info.vn;
     let segs = parse_template(&info.inst.asm)?;
     validate_segs(&segs, info)?;
@@ -1382,7 +1429,7 @@ fn gen_assemble_try_tok(info: &InstInfo, case_insensitive: bool) -> Result<Token
             }
             Seg::Op(n) => {
                 let (_, fid, slot, _) = &info.operands[*n];
-                let (e, p, cb) = operand_parse_tok(slot, fid, *n, info)?;
+                let (e, p, cb) = operand_parse_tok(model, slot, fid, *n, info)?;
                 elems.push(e);
                 pats.push(p);
                 if let Some(c) = cb {
@@ -1594,7 +1641,7 @@ pub(crate) fn gen_assemble(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             continue;
         }
         seen.push(sig);
-        tries.push(gen_assemble_try_tok(info, case_insensitive)?);
+        tries.push(gen_assemble_try_tok(model, info, case_insensitive)?);
     }
     // `[[pseudo]]`（v18 S3e）：单条 API 只接受展开成 1 条的伪指令；多条明确报错，
     // 让调用方改用 `parse_insts`（整段汇编）。

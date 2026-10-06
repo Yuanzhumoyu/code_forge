@@ -1456,6 +1456,14 @@ pub struct OperandSlot {
     /// 数值写法自然落回数值槽。要求 `symbols = true`（校验期）。
     #[serde(default, rename = "require_symbol")]
     pub require_symbol: Option<bool>,
+    /// **只接受这些立即数修饰**（`imm_fns` = `[[conventions.imm_fn]].name` 的子集；空/省略 = 全部）。
+    ///
+    /// 为什么需要：修饰是**全局**的表（`[[conventions.imm_fn]]`），但有些 ISA 里**修饰名决定字段值**——
+    /// A64 的 `movz/movk/movn` 就是例子：`#:abs_g0:foo` 的 `hw = 0`、`#:abs_g1:foo` 的 `hw = 1`……
+    /// 若不按槽过滤，`movz … #:abs_g2:foo` 会被 `hw = 0` 的变体接走、**静默写错 hw**。
+    /// 要求 `symbols = true`（本键只是把该槽收窄到一部分修饰）。
+    #[serde(default, rename = "imm_fns")]
+    pub imm_fns: Option<Vec<String>>,
     /// bits：本槽用的命名位集合表名（`[conventions.bitsets.<table>]`）。
     #[serde(default)]
     pub table: Option<String>,

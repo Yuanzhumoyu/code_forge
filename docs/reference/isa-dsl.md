@@ -126,7 +126,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[conventions.imm_names.<table>]` | — | — | 命名立即数表（kind = "imm" 的槽用 `names` 指名）：表名 → （名字 → 值）——一个名字 = 一个值；解析认名字也认数字，渲染时值在表里就写名字（允许额外键） |
 | `[[conventions.imm_fn]]` | `name` `text` `expr` | — | 立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值） |
 | `[conventions.mem]` | `templates` | `size_keywords` | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
-| `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `unit` `roles` `encode` `fields` `table` `names` `symbols` `require_symbol` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
+| `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `unit` `roles` `encode` `fields` `table` `names` `symbols` `require_symbol` `imm_fns` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
 | `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `data_width` `implicit_regs` `reloc` `width` `only_variants` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[[templates]]` | `rows` | `name` `body` | 唯一指令复用机制：`body` 共享字段 + `rows` 每行一条指令 |
@@ -828,6 +828,11 @@ names = "csr"
   `unit == 1`（否则"修饰作用于块下标还是字节偏移"有歧义，校验期直接拒）；**label 槽不受
   此限**——A64 的 `b`/`cbz` 就是 label 槽 + `unit = 4`，回填值 = 块下标 × 4（见下面的 `unit` 节）。
 - 未声明 `symbols` 的 **imm 槽**照旧"未知 ident 即不匹配"——能力是声明的，不是隐含的。
+- **`imm_fns = ["abs_g0", …]`**（按槽**过滤**修饰表）：只接受列出的 `[[conventions.imm_fn]]`。
+  修饰表是**全局**的，但有些 ISA 里**修饰名决定字段值**：A64 的 `movz/movk/movn` 就是例子
+  （`#:abs_g0:foo` ⇒ `hw = 0`、`#:abs_g1:foo` ⇒ `hw = 1`…），不按槽过滤的话
+  `movz … #:abs_g2:foo` 会被 `hw = 0` 的变体接走、**静默写错 `hw`**。要求 `kind = "imm"`
+  且同时声明 `symbols = true`；名字必须是已声明的修饰名（校验期点名）。省略 = 收全部修饰。
 - **`require_symbol = true`**（重定位修饰形态专用）：本槽**只**接受符号/带修饰的引用，
   没记到符号就**直接不匹配**。为什么需要它：符号位置必须开在 `unit == 1` 的槽上（上一条），
   而立即数槽的候选**特异性按接受域**裁决——单位更细的槽接受域更窄 ⇒ 它会优先命中，
