@@ -1002,6 +1002,17 @@ pub struct Conventions {
     /// 表是**数据**：DSL 不认识任何具体名字（i/o/r/w 只是某份谱里的一行）。
     #[serde(default)]
     pub bitsets: Option<BTreeMap<String, BTreeMap<String, u64>>>,
+    /// **命名立即数表**（`kind = "imm"` + `names` 的槽用）：表名 → （名字 → 值）。
+    ///
+    /// 与 [`Self::bitsets`] 的分工：位集合是"**若干名字的拼接**、编码取按位或"（`iorw`），
+    /// 本表是"**一个名字 = 一个值**"（RISC-V 的 CSR 名 `mstatus` = 0x300、浮点舍入模式
+    /// `rtz` = 1）。源文本写表里的名字或普通字面量都行；渲染时值在表里就写名字
+    /// （**同值多名取字典序最小者**，与 `cond` 的口径一致），保证 `disassemble → assemble`
+    /// 闭合。
+    ///
+    /// 表是**数据**：DSL 不认识任何具体名字（`mstatus`/`rtz` 只是某份谱里的一行）。
+    #[serde(default)]
+    pub imm_names: Option<BTreeMap<String, BTreeMap<String, i64>>>,
     /// 变长解码前缀扫描表：条目 = 单字节或范围 + 效果集
     /// （"opsize16"/"lock"/"repe"/"repne"/"addr16"/"rex"）。缺省 = x86 扫描集。
     #[serde(default)]
@@ -1439,10 +1450,21 @@ pub struct OperandSlot {
     /// bits：本槽用的命名位集合表名（`[conventions.bitsets.<table>]`）。
     #[serde(default)]
     pub table: Option<String>,
+    /// imm：本槽用的**命名立即数表**名（`[conventions.imm_names.<table>]`）。
+    ///
+    /// 打开后这一格既收表里的名字（`csrrs t1, mstatus, zero`）、也收普通字面量
+    /// （`csrrs t2, 0xF11, zero`）；渲染时值在表里就写名字。只对 `kind = "imm"` 有意义。
+    #[serde(default)]
+    pub names: Option<String>,
     /// bits：**解析期从表里摊平出来的条目**（名字 → 位，按名字字典序）。
     /// 生成器与反汇编直接用这份，不再回头查表（见 [`IsaModel::resolve_bitset_tables`]）。
     #[serde(skip)]
     pub table_entries: Vec<(String, u64)>,
+    /// imm：**解析期从命名立即数表里摊平出来的条目**（名字 → 值，按名字字典序）。
+    /// 与 `table_entries` 同款：生成器与反汇编只读这份（见
+    /// [`IsaModel::resolve_imm_name_tables`]）。
+    #[serde(skip)]
+    pub name_entries: Vec<(String, i64)>,
 }
 
 impl OperandSlot {
@@ -2767,6 +2789,41 @@ impl IsaModel {
                 return Err(format!("{path}: 位集合表 '{tname}' 是空的"));
             }
             s.table_entries = entries.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        }
+        Ok(())
+    }
+
+    /// 把 `kind = "imm"` + `names` 的槽引用的**命名立即数表**摊平进槽（解析期一次）。
+    ///
+    /// `[conventions.imm_names.<table>]` 是**数据**（名字 → 值），DSL 不认识任何具体名字；
+    /// 摊平后生成器只读 `slot.name_entries`（BTreeMap 的序 = 名字字典序，渲染取同值多名里
+    /// 字典序最小者，确定性与 `[conventions.cond]` 同口径）。
+    pub fn resolve_imm_name_tables(&mut self) -> Result<(), String> {
+        for (i, s) in self.operand_slots.iter_mut().enumerate() {
+            let Some(tname) = s.names.clone() else {
+                continue;
+            };
+            let path = format!("[[operand_slots]] #{i} ('{}')", s.name);
+            if s.kind != OperandKind::Imm {
+                return Err(format!(
+                    "{path}: `names` 只对 kind = \"imm\" 的槽有意义（本槽是 {:?}）",
+                    s.kind
+                ));
+            }
+            let Some(entries) = self
+                .conventions
+                .imm_names
+                .as_ref()
+                .and_then(|t| t.get(&tname))
+            else {
+                return Err(format!(
+                    "{path}: 命名立即数表 '{tname}' 未在 [conventions.imm_names] 里声明"
+                ));
+            };
+            if entries.is_empty() {
+                return Err(format!("{path}: 命名立即数表 '{tname}' 是空的"));
+            }
+            s.name_entries = entries.iter().map(|(k, v)| (k.clone(), *v)).collect();
         }
         Ok(())
     }

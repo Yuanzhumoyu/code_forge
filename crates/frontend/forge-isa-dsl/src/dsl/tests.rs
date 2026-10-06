@@ -3166,7 +3166,9 @@ fn imm_slot_wrap_reads_the_bit_pattern() {
         encode: None,
         fields: None,
         table: None,
+        names: None,
         table_entries: Vec::new(),
+        name_entries: Vec::new(),
         symbols: None,
     };
 
@@ -3567,6 +3569,99 @@ asm = "fence {pred}, {succ}"
         .unwrap_err()
         .to_string();
     assert!(err.contains("bits"), "err: {err}");
+}
+
+// ─────────────── `kind = "imm"` + `names`：命名立即数（一个名字 = 一个值） ───────────────
+
+/// 命名立即数：与 `kind = "bits"`（名字**拼接**、按位或）相反——**一个名字 = 一个值**
+/// （RISC-V 的 CSR 名 `mstatus` = 0x300、浮点舍入模式 `rtz` = 1）。
+///
+/// 表是**数据**（`[conventions.imm_names.<table>]`），DSL 不认识任何名字；解析期摊平进
+/// `slot.name_entries`（按名字字典序，渲染取**同值多名**里字典序最小者）。端到端由
+/// riscv64 语料守：9 个 CSR 名字文件（`machine-csr-names.s` 等）整文件解析通过，
+/// 而语料自带的上游期望字节保证值没错。
+#[test]
+fn slot_names_named_immediates() {
+    let doc = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "fixed"
+bits = 32
+[reg.gpr4]
+count = 8
+[conventions.bitfields]
+opcode = { offset = 0, width = 7 }
+rd = { offset = 7, width = 5 }
+csr = { offset = 20, width = 12 }
+[conventions.imm_names.csr]
+# 故意乱序：摊平后必须按**名字字典序**（渲染口径）。
+mstatus = 0x300
+fflags = 0x001
+stval = 0x143
+sbadaddr = 0x143
+[[operand_slots]]
+name = "r"
+kind = "reg"
+class = "gpr4"
+[[operand_slots]]
+name = "csr12"
+kind = "imm"
+signed = false
+width = 12
+names = "csr"
+[[forms]]
+name = "I"
+opcode_field = "opcode"
+operand_fields = ["rd", "csr"]
+[[instructions]]
+name = "CSRRS"
+form = "I"
+opcode = 0x73
+ops = ["dst:r:out", "csr:csr12"]
+asm = "csrrs {dst}, {csr}"
+"#;
+    let m = parse_and_validate(doc).expect("names 槽合法");
+    let s = m
+        .operand_slots
+        .iter()
+        .find(|s| s.name == "csr12")
+        .expect("槽存在");
+    assert_eq!(
+        s.name_entries,
+        vec![
+            ("fflags".to_string(), 0x001),
+            ("mstatus".to_string(), 0x300),
+            ("sbadaddr".to_string(), 0x143),
+            ("stval".to_string(), 0x143),
+        ],
+        "摊平按名字字典序（同值多名时渲染取字典序最小者）"
+    );
+    assert_eq!(s.imm_range(), Some((0, 0xFFF)), "命名表不改变槽的值域");
+
+    // 表未声明。
+    let err = parse_and_validate(&doc.replace("names = \"csr\"", "names = \"nope\""))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("nope"), "err: {err}");
+    // 值超出本槽的接受值域（12 位无符号 ⇒ 0..4095）。
+    let err = parse_and_validate(&doc.replace("mstatus = 0x300", "mstatus = 0x1000"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("mstatus"), "err: {err}");
+    // 名字不是 ident。
+    let err = parse_and_validate(&doc.replace("sbadaddr = 0x143", "\"sb-ad\" = 0x143"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("ident"), "err: {err}");
+    // `names` 只对 imm 槽有意义。
+    let err = parse_and_validate(&doc.replace(
+        "name = \"csr12\"\nkind = \"imm\"\nsigned = false\nwidth = 12\nnames = \"csr\"",
+        "name = \"csr12\"\nkind = \"reg\"\nclass = \"gpr4\"\nnames = \"csr\"",
+    ))
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("imm"), "err: {err}");
 }
 
 // ─────────────── `symbols`：立即数位置上的符号引用 ───────────────

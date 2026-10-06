@@ -1517,15 +1517,50 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                     }
                 }
             }
-            OperandKind::Imm => match s.width {
-                None => {
-                    return Err(format!("{path}: imm slot requires `width` (value bits)"));
+            OperandKind::Imm => {
+                match s.width {
+                    None => {
+                        return Err(format!("{path}: imm slot requires `width` (value bits)"));
+                    }
+                    Some(0) => {
+                        return Err(format!("{path}: width must be > 0"));
+                    }
+                    _ => {}
                 }
-                Some(0) => {
-                    return Err(format!("{path}: width must be > 0"));
+                // 命名立即数表（`names`）：表要在场、名字得是 ident、值要落进本槽的**接受**
+                // 值域（否则这个名字永远编不出来——那是写错数据，不是运行期才知道的事）。
+                if let Some(tname) = &s.names {
+                    if m.encoding.kind == EncodingKind::PrefixScan {
+                        return Err(format!(
+                            "{path}: 命名立即数表（`names`）暂不支持变长（prefix_scan）ISA"
+                        ));
+                    }
+                    let Some(entries) = m.conventions.imm_names.as_ref().and_then(|t| t.get(tname))
+                    else {
+                        return Err(format!(
+                            "{path}: 命名立即数表 '{tname}' 未在 [conventions.imm_names] 里声明"
+                        ));
+                    };
+                    if entries.is_empty() {
+                        return Err(format!("{path}: 命名立即数表 '{tname}' 是空的"));
+                    }
+                    let (lo, hi) = s.imm_accept_range().unwrap_or((i64::MIN, i64::MAX));
+                    for (name, value) in entries {
+                        if name.is_empty()
+                            || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                        {
+                            return Err(format!(
+                                "{path}: 命名立即数 '{name}' 必须是 ident（字母/数字/下划线）"
+                            ));
+                        }
+                        if *value < lo || *value > hi {
+                            return Err(format!(
+                                "{path}: 命名立即数 '{name}' = {value} 超出本槽的接受值域 [{lo}, {hi}]"
+                            ));
+                        }
+                    }
                 }
-                _ => {}
-            },
+            }
             OperandKind::Bits => {
                 // 命名位集合：必须给 `table`（指向 [conventions.bitsets.<表名>]）与 `width`；
                 // 位必须落在槽宽内；名字必须能作为 ident 片段（解析靠"名字拼接"）。
@@ -1564,7 +1599,13 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                     }
                 }
             }
-            _ => {}
+            _ => {
+                if s.names.is_some() {
+                    return Err(format!(
+                        "{path}: `names`（命名立即数表）只对 kind = \"imm\" 的槽有意义"
+                    ));
+                }
+            }
         }
         // 立即数约束一致性：min ≤ max。
         if let (Some(lo), Some(hi)) = (s.min, s.max)

@@ -82,6 +82,19 @@ fn render_expr(slot: &OperandSlot, fid: &syn::Ident) -> TokenStream {
             quote! { __render_bitset(*#fid, &[#(#pairs),*]) }
         }
         OperandKind::Cond => quote! { __render_cond(*#fid as u8) },
+        // 命名立即数（`kind = "imm"` + `names`）：值在表里 ⇒ 写名字。
+        OperandKind::Imm if !slot.name_entries.is_empty() => {
+            let pairs: Vec<TokenStream> = slot
+                .name_entries
+                .iter()
+                .map(|(n, v)| {
+                    let n = syn::LitStr::new(n, proc_macro2::Span::call_site());
+                    let v = proc_macro2::Literal::i64_suffixed(*v);
+                    quote! { (#n, #v) }
+                })
+                .collect();
+            quote! { __render_named_imm(*#fid, &[#(#pairs),*]) }
+        }
         _ => quote! { #fid.to_string() },
     }
 }
@@ -1278,6 +1291,27 @@ fn operand_parse_tok(
                 },
                 _ => {
                     quote! { __imm(&mut it, #min, #max, #float, #unit, &mut __lsyms, #n, #allow_sym) }
+                }
+            };
+            // 命名立即数（`names`）：先试表里的名字，没命中再走普通字面量/表达式路径
+            // （`csrrs t2, 0xF11, zero` 与 `csrrs t1, mvendorid, zero` 都成立）。
+            let elem = if slot.name_entries.is_empty() {
+                elem
+            } else {
+                let pairs: Vec<TokenStream> = slot
+                    .name_entries
+                    .iter()
+                    .map(|(n, v)| {
+                        let n = syn::LitStr::new(n, proc_macro2::Span::call_site());
+                        let v = proc_macro2::Literal::i64_suffixed(*v);
+                        quote! { (#n, #v) }
+                    })
+                    .collect();
+                quote! {
+                    match __named_imm(&mut it, &[#(#pairs),*]) {
+                        Some(v) => Some(v),
+                        None => #elem,
+                    }
                 }
             };
             Ok((elem, quote! { Some(#fid) }, None))

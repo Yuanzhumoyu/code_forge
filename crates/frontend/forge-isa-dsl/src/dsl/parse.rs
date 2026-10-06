@@ -64,5 +64,9 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
     // 命名位集合表摊平进槽（`kind = "bits"`）：生成器与反汇编直接用槽上的条目，
     // 不再回头查 `[conventions.bitsets]`。
     model.resolve_bitset_tables().map_err(anchor_err)?;
+    // 命名立即数表同理（`kind = "imm"` + `names`）。
+    model
+        .resolve_imm_name_tables()
+        .map_err(anchor_err)?;
     Ok(model)
 }

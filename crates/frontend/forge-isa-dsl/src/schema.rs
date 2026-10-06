@@ -204,6 +204,15 @@ pub const SECTIONS: &[Section] = &[
         doc: "命名位集合表（kind = \"bits\" 的槽用）：表名 → （名字 → 位）——源文本是名字拼接，编码取位或",
     },
     Section {
+        path: "[conventions.imm_names.<table>]",
+        model: "",
+        required: &[],
+        optional: &[],
+        flatten: &[],
+        additional: true,
+        doc: "命名立即数表（kind = \"imm\" 的槽用 `names` 指名）：表名 → （名字 → 值）——一个名字 = 一个值；解析认名字也认数字，渲染时值在表里就写名字",
+    },
+    Section {
         path: "[[conventions.imm_fn]]",
         model: "ImmFnDef",
         required: &["name", "text", "expr"],
@@ -227,7 +236,7 @@ pub const SECTIONS: &[Section] = &[
         required: &["name", "kind"],
         optional: &[
             "class", "classes", "byte_reg", "width", "signed", "float", "min", "max", "wrap",
-            "unit", "roles", "encode", "fields", "table", "symbols",
+            "unit", "roles", "encode", "fields", "table", "names", "symbols",
         ],
         flatten: &[],
         additional: false,
@@ -533,7 +542,7 @@ pub fn schema_json() -> String {
                 json_str(key),
                 json_str(match key {
                     "types" => "类型 → 寄存器组名 / \"unsupported\"",
-                    "conventions" => "bitfields / modrm / cond / prefix_scan / mem",
+                    "conventions" => "bitfields / modrm / cond / prefix_scan / bitsets / imm_names / imm_fn / mem",
                     _ => "溢出模板表（键 = 名字）",
                 })
             ));

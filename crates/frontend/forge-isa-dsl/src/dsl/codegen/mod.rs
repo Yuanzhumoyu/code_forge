@@ -276,6 +276,16 @@ pub fn generate_with_parts(
     } else {
         quote! {}
     };
+    // 命名立即数助手（`kind = "imm"` + `names` 的槽才要）：同样与 parts 无关。
+    let imm_name_helpers = if model
+        .operand_slots
+        .iter()
+        .any(|s| !s.name_entries.is_empty())
+    {
+        gen_imm_name_helpers()
+    } else {
+        quote! {}
+    };
     // ── 可选部件（`parts = [...]`，v18 S7d）──
     let (disasm_fn, asm_fn) = if parts.asm {
         (
@@ -340,6 +350,7 @@ pub fn generate_with_parts(
         #bit_helpers
         #logic_imm_helpers
         #bitset_helpers
+        #imm_name_helpers
         #pseudo_helpers
         #encode_fn
         #decode_fn
@@ -1035,6 +1046,39 @@ fn gen_bitset_helpers() -> TokenStream {
                 }
             }
             out
+        }
+    }
+}
+
+/// **命名立即数**助手（`kind = "imm"` + `names` 的槽才要）。
+///
+/// 源文本可以写表里的名字（`csrrs t1, mstatus, zero`）或普通字面量（`csrrs t2, 0xF11, zero`）；
+/// 名字按**大小写不敏感**匹配（与寄存器名同一口径），命中即取表里的值。渲染反向：值在表里
+/// 就写名字（**同值多名取字典序最小者**——表按名字字典序摊平，`find` 即得；与 `cond` 的
+/// "同码取字母序最小名"同一口径），否则照旧写十进制。表是**数据**
+/// （`[conventions.imm_names.<table>]`），DSL 不认识任何名字。
+fn gen_imm_name_helpers() -> TokenStream {
+    quote! {
+        /// 命名立即数解析：当前 token 是表里的名字 ⇒ 消费它并返回该值。
+        #[allow(dead_code)]
+        fn __named_imm(it: &mut __Iter, names: &[(&str, i64)]) -> Option<i64> {
+            let Some(__Tok::Ident(text)) = it.toks.get(it.pos) else {
+                return None;
+            };
+            let hit = names
+                .iter()
+                .find(|(n, _)| n.eq_ignore_ascii_case(text))?;
+            it.pos += 1;
+            Some(hit.1)
+        }
+
+        /// 命名立即数渲染：值在表里 ⇒ 写名字；不在 ⇒ 写十进制。
+        #[allow(dead_code)]
+        fn __render_named_imm(v: i64, names: &[(&str, i64)]) -> String {
+            match names.iter().find(|(_, x)| *x == v) {
+                Some((n, _)) => (*n).to_string(),
+                None => v.to_string(),
+            }
         }
     }
 }

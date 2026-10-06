@@ -123,9 +123,10 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[conventions.cond]` | `code` | `ir` | 条件码表：键 = 汇编可见的条件名（也允许 `名 = <整数>` 简写）（允许额外键） |
 | `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex` `rex2` |
 | `[conventions.bitsets.<table>]` | — | — | 命名位集合表（kind = "bits" 的槽用）：表名 → （名字 → 位）——源文本是名字拼接，编码取位或（允许额外键） |
+| `[conventions.imm_names.<table>]` | — | — | 命名立即数表（kind = "imm" 的槽用 `names` 指名）：表名 → （名字 → 值）——一个名字 = 一个值；解析认名字也认数字，渲染时值在表里就写名字（允许额外键） |
 | `[[conventions.imm_fn]]` | `name` `text` `expr` | — | 立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值） |
 | `[conventions.mem]` | `templates` | `size_keywords` | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
-| `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `unit` `roles` `encode` `fields` `table` `symbols` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
+| `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `unit` `roles` `encode` `fields` `table` `names` `symbols` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
 | `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `data_width` `implicit_regs` `reloc` `width` `only_variants` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[[templates]]` | `rows` | `name` `body` | 唯一指令复用机制：`body` 共享字段 + `rows` 每行一条指令 |
@@ -783,6 +784,38 @@ width = 4
   整串必须吃干净（`iow` 里剩下的字符不是名字 ⇒ 这条写法不匹配，不静默当空集）；
 - 渲染：按名字的**字典序**把置位的名字拼起来（确定性，与 `[conventions.cond]` 的"同码取字母序最小名"
   同一口径）；
+
+**命名立即数（`kind = "imm"` + `names`）**：与上面的位集合表**相反**的一类——**一个名字 = 一个值**
+（不是拼接、不按位或）。真实 ISA 里这类名字很多：RISC-V 的 CSR 名（`mstatus` = 0x300、
+`mvendorid` = 0xF11）与浮点舍入模式（`rtz` = 1、`dyn` = 7）。表是**数据**，写在
+`[conventions.imm_names.<表名>]` 里（名字 → 值）；槽只声明用哪张表：
+
+```toml
+[conventions.imm_names.csr]
+mstatus = 0x300
+mvendorid = 0xF11
+# …（riscv64 这张表有 432 条，来自上游 LLVM 的 RISCVSystemOperands.td）
+
+[[operand_slots]]
+name = "csr12"
+kind = "imm"
+signed = false
+width = 12
+names = "csr"
+```
+
+- 解析：这一格**既收名字、也收普通字面量**（真实语料两种都写：`csrrs t1, mvendorid, zero`
+  与 `csrrs t2, 0xF11, zero` 是同一批测试里的相邻两行）。名字按**大小写不敏感**匹配
+  （与寄存器名同一口径），没命中就落回原来的字面量/表达式路径；
+- 渲染：值在表里 ⇒ 写**名字**（否则照旧十进制），因此 `disassemble → assemble` 仍然闭合；
+  **同值多名取字典序最小者**（上游有 `stval`/`sbadaddr`、`satp`/`sptbr` 这类别名对），
+  与 `cond` 的口径一致；
+- 校验：表必须已声明且非空、名字必须是 ident、**每个值要落在槽的接受值域内**
+  （写错值/名字在 `validate` 期就报，不留到运行期）；`names` 只对 `kind = "imm"` 有意义，
+  变长（`prefix_scan`）ISA 写它会在校验期 fail-closed；
+- 与 `symbols` 的分工：`symbols` 是"未定义 ident ⇒ **符号引用**（等回填）"，本表是
+  "**已知名字 ⇒ 立即数值**"（名字优先命中，比符号引用先决）。
+
 **立即数位置上的符号引用（`symbols`）**：真实汇编里立即数常常是**符号**——RISC-V 的
 `lui a0, %hi(foo)`、`addi ra, sp, %lo(foo)`、`jal rd, .Lpcrel_hi0`。槽声明 `symbols = true` 后：
 

@@ -55,6 +55,11 @@ const INTERNAL_FIELDS: &[(&str, &str, &str)] = &[
         "table_entries",
         "命名位集合表摊平结果（解析期填、不参与序列化）",
     ),
+    (
+        "OperandSlot",
+        "name_entries",
+        "命名立即数表摊平结果（解析期填、不参与序列化）",
+    ),
 ];
 
 /// serde `#[serde(flatten)]` 字段 → 它展开出的键空间（`""` = 自由表，额外键由节声明）。

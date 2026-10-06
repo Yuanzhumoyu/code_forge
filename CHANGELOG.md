@@ -11,6 +11,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-07) — 命名立即数表（`[conventions.imm_names.<表名>]` + 槽 `names`）；riscv64 命名 CSR 全量落地
+
+① **新能力：一个名字 = 一个值**。与既有的 `kind = "bits"`（名字**拼接**、编码取按位或，`fence iorw`）相反，真实 ISA 里另一类是**单名单值**：RISC-V 的 CSR 名（`mstatus` = 0x300）、浮点舍入模式（`rtz` = 1、`dyn` = 7）。谱里写一张表、槽上写 `names = "<表名>"` 即可：
+
+```toml
+[conventions.imm_names.csr]
+mstatus = 0x300
+mvendorid = 0xF11
+
+[[operand_slots]]
+name = "csr12"
+kind = "imm"
+signed = false
+width = 12
+names = "csr"
+```
+
+运行时**双向**：解析**既认名字也认字面量**（真实语料两种都写：`csrrs t1, mvendorid, zero` 与 `csrrs t2, 0xF11, zero` 是同一批测试里的相邻两行），名字按大小写不敏感匹配（与寄存器名同口径）、没命中就落回原来的字面量/表达式路径；渲染时**值在表里就写名字**，所以 `disassemble → assemble` 照旧闭合，**同值多名取字典序最小者**（上游有 `stval`/`sbadaddr`、`satp`/`sptbr`、`mtval`/`mbadaddr`、`dscratch`/`dscratch0` 这类别名对）。校验期 fail-closed：表必须已声明且非空、名字必须是 ident、**每个值要落在槽的接受值域内**；`names` 只对 `kind = "imm"` 有意义，变长（`prefix_scan`）ISA 写它直接拒。表是**数据**——DSL 不认识任何 CSR 名/舍入模式名。
+
+② **riscv64：CSR 名表 432 条**，从上游 `llvm/lib/Target/RISCV/RISCVSystemOperands.td`（ref `llvmorg-19.1.0`）机械生成（含 `foreach` 区间 `hpmcounter3..31`/`pmpaddr0..63` 与 `AltName`/`DeprecatedName` 别名），并**用语料自带的期望字节逐条对账**：语料里出现的 429 个名字全部命中、值**零不符**。此前 `csr12` 槽只收数字，于是 `machine-csr-names.s`、`user-`/`supervisor-`/`hypervisor-csr-names.s` 与其 rv32 变体**整文件**落红桶。
+
+③ 效果（`fetch.mjs` 重跑取舍 + 刷棘轮）：riscv64 **红行 1056 → 465**、红文件 72 → 58；**13 个文件自动进全绿层**（全绿集 84 → **97**、PROVENANCE 98 份 LLVM + 1 份手工；riscv64 语料 55 → **68** 份）。编码对拍档同时大涨，且**逐字节全等**：riscv64 `cases` 339 → **1139**、`checked` 221 → **1021**、`known` 仍 **0**（新进来的 CSR 文件自带 ~800 条上游期望字节，全部对上——这是 432 条表值正确性的直接证据）。生成物自测（`forge-codegen --lib` 1863 条）与三方针守卫全绿。
+
+> 新进集的文件里有 `machine-csr-names-invalid.s`（上游"故意写错"的文件）：它那些行在 rv32 目标上被 LLVM 拒（"requires an option to be enabled"），但在 **riscv64** 目标上名字 → 12 位编码本身完全合法（上游 `rv64-machine-csr-names.s` 的注释也这么说），不是假绿。
+
 ### Added (2026-10-07) — riscv64 浮点寄存器 ABI 别名（`ft0`/`fa0`/`fs0`…）；逐文件记分板带上红桶原文
 
 ① **纯谱数据修掉一整类红桶**：`[reg.gpr8.aliases]`（`a0`/`s0`/`fp`…）早就有，`[reg.fpr4]` 却只有 `F0`…`F31` 数字名——而**真实语料里浮点操作数几乎全写 ABI 名**（实测全集 `ft*`/`fa*`/`fs*` 出现 **1840** 次，数字名只有 **47** 次），于是整批 FP 用例文件（`rv32f-valid.s`、`rv32d-valid.s`、`numeric-reg-names-*.s`、`fp-*-default-rounding-mode.s`…）**整文件**落进红桶。补上 psABI 那套映射（0–7 = `ft0`–`ft7`、8–9 = `fs0`–`fs1`、10–17 = `fa0`–`fa7`、18–27 = `fs2`–`fs11`、28–31 = `ft8`–`ft11`），口径与 GPR 别名**完全一致**：**解析认、渲染仍出规范名**（`F`），不新增任何 DSL 键、不动生成器。
