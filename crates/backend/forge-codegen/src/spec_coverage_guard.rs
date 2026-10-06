@@ -112,12 +112,14 @@ fn generated_spec_tests_cover_every_instruction() {
 /// **无位移**形态（`ldr x4, [x3]`，编码上就是位移为 0 的那一格；`ldp`/`stp` 同理）。
 /// 2026-10-07（aarch64 前后索引批次）：arm64 214 → **230**——单寄存器 4 宽 × 前/后索引
 /// （`ldr x0, [x1, #16]!` / `ldr x0, [x1], #16`）+ pair 4 宽 × 前/后索引共 16 条。
+/// 2026-10-07（aarch64 寄存器偏移批次）：arm64 230 → **270**——寄存器偏移 32 条
+/// （X/W × ldr/str × 8 种 option/S 组合）+ ADD/SUB(S) 移位寄存器带量 8 条。
 #[test]
 fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 299), ("riscv64", 173), ("arm64", 230)],
+        vec![("x86", 299), ("riscv64", 173), ("arm64", 270)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }

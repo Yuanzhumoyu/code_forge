@@ -115,6 +115,9 @@ imm12s= { offset = 10, width = 12 }  # LDR/STR 无符号 imm12（与 ALU imm12 �
 imm9  = { offset = 12, width = 9 }   # LDUR/STUR 符号偏移（真字节）
 mode  = { offset = 10, width = 2 }   # LDUR 族 [11:10]：00 无偏移 / 01 后索引 / 11 前索引
 zero21= { offset = 21, width = 1 }   # LDUR 族 [21] 恒 0（保留位；显式声明出来，免得靠缺省）
+one21 = { offset = 21, width = 1 }   # 寄存器偏移寻址 [21] 恒 1（与 imm9 家族的唯一区分位）
+option= { offset = 13, width = 3 }   # 访存索引的扩展/移位类型：UXTW=2 / LSL=3 / SXTW=6 / SXTX=7
+sbit  = { offset = 12, width = 1 }   # 该类型是否自带缩放（S=1 ⇔ 文本里写 `#N`，N = log2(宽度)）
 idx2  = { offset = 22, width = 2 }   # LDP/STP index 低位（bit24 由 op8 常量给：100 off STP/101 off LDP ⇒ idx2 = 0/1）
 rt2   = { offset = 10, width = 5 }   # LDP/STP 第二寄存器
 op8b  = { offset = 16, width = 8 }   # FMOV 的中间常量（S=0x20 / D=0x60）
@@ -732,6 +735,12 @@ name = "PAIRND"   # LDP/STP 无位移：rt rn rt2
 opcode_field = "op8"
 operand_fields = ["rt", "rn", "rt2"]
 
+# 寄存器偏移寻址：`[Xn, Xm{ext}]` —— 索引寄存器进 `rm`，`option`/`sbit` 是逐指令常量。
+[[forms]]
+name = "LSUIR"   # LDR/STR 寄存器偏移：rt rn rm
+opcode_field = "op8"
+operand_fields = ["rt", "rn", "rm"]
+
 # ─────────────────────────── 指令 ───────────────────────────
 
 [[instructions]]
@@ -942,6 +951,338 @@ opcode = 0xA8
 fields = { idx2 = 3 }
 ops = ["t1:r64:out", "base:r64", "t2:r64:out", "imm:imm7x"]
 asm = "ldp {t1}, {t2}, [{base}], #{imm}"
+
+# ── 寄存器偏移寻址（`[Xn, Xm{, ext}]`）──
+#
+# 编码：`size 111 V 00 opc 1 Rm option S 10 Rn Rt`——与 imm9 家族共用 `op8 = 0xF8`(X)/`0xB8`(W)，
+# 靠 **bit21 = 1** 与 **[11:10] = 10** 区分（19 条上游期望字节逐条核对过）。
+# `option`/`S` 与文本关键字的对应也是**量**出来的：LSL=3 / UXTW=2 / SXTW=6 / SXTX=7；
+# S=1 ⇔ 文本带 `#N`，且 **N 恒 = log2(访问宽度)**（X 形式 3、W 形式 2）——所以每种组合都是一条
+# 完整的文本模板，不需要"可选片段"机制。索引寄存器的类由 option 决定：LSL/SXTX 收 X 寄存器（r64），
+# UXTW/SXTW 收 W 寄存器（r32）；`xzr`/`wzr` 当索引合法（走别名）。
+
+[[instructions]]
+name = "LDRX_RO"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 3, sbit = 0 }
+ops = ["dst:r64:out", "base:r64", "idx:r64"]
+asm = "ldr {dst}, [{base}, {idx}]"
+
+[[instructions]]
+name = "LDRX_RO_LSL"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 3, sbit = 1 }
+ops = ["dst:r64:out", "base:r64", "idx:r64"]
+asm = "ldr {dst}, [{base}, {idx}, lsl #3]"
+
+[[instructions]]
+name = "LDRX_RO_UXTW"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 2, sbit = 0 }
+ops = ["dst:r64:out", "base:r64", "idx:r32"]
+asm = "ldr {dst}, [{base}, {idx}, uxtw]"
+
+[[instructions]]
+name = "LDRX_RO_UXTW_S"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 2, sbit = 1 }
+ops = ["dst:r64:out", "base:r64", "idx:r32"]
+asm = "ldr {dst}, [{base}, {idx}, uxtw #3]"
+
+[[instructions]]
+name = "LDRX_RO_SXTW"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 6, sbit = 0 }
+ops = ["dst:r64:out", "base:r64", "idx:r32"]
+asm = "ldr {dst}, [{base}, {idx}, sxtw]"
+
+[[instructions]]
+name = "LDRX_RO_SXTW_S"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 6, sbit = 1 }
+ops = ["dst:r64:out", "base:r64", "idx:r32"]
+asm = "ldr {dst}, [{base}, {idx}, sxtw #3]"
+
+[[instructions]]
+name = "LDRX_RO_SXTX"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 7, sbit = 0 }
+ops = ["dst:r64:out", "base:r64", "idx:r64"]
+asm = "ldr {dst}, [{base}, {idx}, sxtx]"
+
+[[instructions]]
+name = "LDRX_RO_SXTX_S"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 7, sbit = 1 }
+ops = ["dst:r64:out", "base:r64", "idx:r64"]
+asm = "ldr {dst}, [{base}, {idx}, sxtx #3]"
+
+[[instructions]]
+name = "STRX_RO"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 3, sbit = 0 }
+ops = ["src:r64", "base:r64", "idx:r64"]
+asm = "str {src}, [{base}, {idx}]"
+
+[[instructions]]
+name = "STRX_RO_LSL"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 3, sbit = 1 }
+ops = ["src:r64", "base:r64", "idx:r64"]
+asm = "str {src}, [{base}, {idx}, lsl #3]"
+
+[[instructions]]
+name = "STRX_RO_UXTW"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 2, sbit = 0 }
+ops = ["src:r64", "base:r64", "idx:r32"]
+asm = "str {src}, [{base}, {idx}, uxtw]"
+
+[[instructions]]
+name = "STRX_RO_UXTW_S"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 2, sbit = 1 }
+ops = ["src:r64", "base:r64", "idx:r32"]
+asm = "str {src}, [{base}, {idx}, uxtw #3]"
+
+[[instructions]]
+name = "STRX_RO_SXTW"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 6, sbit = 0 }
+ops = ["src:r64", "base:r64", "idx:r32"]
+asm = "str {src}, [{base}, {idx}, sxtw]"
+
+[[instructions]]
+name = "STRX_RO_SXTW_S"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 6, sbit = 1 }
+ops = ["src:r64", "base:r64", "idx:r32"]
+asm = "str {src}, [{base}, {idx}, sxtw #3]"
+
+[[instructions]]
+name = "STRX_RO_SXTX"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 7, sbit = 0 }
+ops = ["src:r64", "base:r64", "idx:r64"]
+asm = "str {src}, [{base}, {idx}, sxtx]"
+
+[[instructions]]
+name = "STRX_RO_SXTX_S"
+form = "LSUIR"
+opcode = 0xF8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 7, sbit = 1 }
+ops = ["src:r64", "base:r64", "idx:r64"]
+asm = "str {src}, [{base}, {idx}, sxtx #3]"
+
+[[instructions]]
+name = "LDRW_RO"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 3, sbit = 0 }
+ops = ["dst:r32:out", "base:r64", "idx:r64"]
+asm = "ldr {dst}, [{base}, {idx}]"
+
+[[instructions]]
+name = "LDRW_RO_LSL"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 3, sbit = 1 }
+ops = ["dst:r32:out", "base:r64", "idx:r64"]
+asm = "ldr {dst}, [{base}, {idx}, lsl #2]"
+
+[[instructions]]
+name = "LDRW_RO_UXTW"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 2, sbit = 0 }
+ops = ["dst:r32:out", "base:r64", "idx:r32"]
+asm = "ldr {dst}, [{base}, {idx}, uxtw]"
+
+[[instructions]]
+name = "LDRW_RO_UXTW_S"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 2, sbit = 1 }
+ops = ["dst:r32:out", "base:r64", "idx:r32"]
+asm = "ldr {dst}, [{base}, {idx}, uxtw #2]"
+
+[[instructions]]
+name = "LDRW_RO_SXTW"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 6, sbit = 0 }
+ops = ["dst:r32:out", "base:r64", "idx:r32"]
+asm = "ldr {dst}, [{base}, {idx}, sxtw]"
+
+[[instructions]]
+name = "LDRW_RO_SXTW_S"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 6, sbit = 1 }
+ops = ["dst:r32:out", "base:r64", "idx:r32"]
+asm = "ldr {dst}, [{base}, {idx}, sxtw #2]"
+
+[[instructions]]
+name = "LDRW_RO_SXTX"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 7, sbit = 0 }
+ops = ["dst:r32:out", "base:r64", "idx:r64"]
+asm = "ldr {dst}, [{base}, {idx}, sxtx]"
+
+[[instructions]]
+name = "LDRW_RO_SXTX_S"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 1, one21 = 1, mode = 2, option = 7, sbit = 1 }
+ops = ["dst:r32:out", "base:r64", "idx:r64"]
+asm = "ldr {dst}, [{base}, {idx}, sxtx #2]"
+
+[[instructions]]
+name = "STRW_RO"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 3, sbit = 0 }
+ops = ["src:r32", "base:r64", "idx:r64"]
+asm = "str {src}, [{base}, {idx}]"
+
+[[instructions]]
+name = "STRW_RO_LSL"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 3, sbit = 1 }
+ops = ["src:r32", "base:r64", "idx:r64"]
+asm = "str {src}, [{base}, {idx}, lsl #2]"
+
+[[instructions]]
+name = "STRW_RO_UXTW"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 2, sbit = 0 }
+ops = ["src:r32", "base:r64", "idx:r32"]
+asm = "str {src}, [{base}, {idx}, uxtw]"
+
+[[instructions]]
+name = "STRW_RO_UXTW_S"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 2, sbit = 1 }
+ops = ["src:r32", "base:r64", "idx:r32"]
+asm = "str {src}, [{base}, {idx}, uxtw #2]"
+
+[[instructions]]
+name = "STRW_RO_SXTW"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 6, sbit = 0 }
+ops = ["src:r32", "base:r64", "idx:r32"]
+asm = "str {src}, [{base}, {idx}, sxtw]"
+
+[[instructions]]
+name = "STRW_RO_SXTW_S"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 6, sbit = 1 }
+ops = ["src:r32", "base:r64", "idx:r32"]
+asm = "str {src}, [{base}, {idx}, sxtw #2]"
+
+[[instructions]]
+name = "STRW_RO_SXTX"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 7, sbit = 0 }
+ops = ["src:r32", "base:r64", "idx:r64"]
+asm = "str {src}, [{base}, {idx}, sxtx]"
+
+[[instructions]]
+name = "STRW_RO_SXTX_S"
+form = "LSUIR"
+opcode = 0xB8
+fields = { opc2 = 0, one21 = 1, mode = 2, option = 7, sbit = 1 }
+ops = ["src:r32", "base:r64", "idx:r64"]
+asm = "str {src}, [{base}, {idx}, sxtx #2]"
+
+# ADD/SUB（移位寄存器）**带移位量**的形态：`shift` 是逐指令常量（LSL = 0），移位量是
+# 操作数（X 形式 imm6、W 形式 imm5）。与既有的 `ADDREG`/`SUBREG`（LSL #0）同编码空间——
+# 声明序在后，解码仍走前者；这里只承担"带量的写法能装配"。
+
+[[instructions]]
+name = "ADD_LSLX"
+form = "ALUSH6"
+opcode = 0x8B
+fields = { shift = 0 }
+ops = ["dst:r64:out", "src:r64", "src2:r64", "sh:imm6"]
+asm = "add {dst}, {src}, {src2}, lsl #{sh}"
+
+[[instructions]]
+name = "ADD_LSLW"
+form = "ALUSH5"
+opcode = 0xB
+fields = { shift = 0 }
+ops = ["dst:r32:out", "src:r32", "src2:r32", "sh:imm5"]
+asm = "add {dst}, {src}, {src2}, lsl #{sh}"
+
+[[instructions]]
+name = "SUB_LSLX"
+form = "ALUSH6"
+opcode = 0xCB
+fields = { shift = 0 }
+ops = ["dst:r64:out", "src:r64", "src2:r64", "sh:imm6"]
+asm = "sub {dst}, {src}, {src2}, lsl #{sh}"
+
+[[instructions]]
+name = "SUB_LSLW"
+form = "ALUSH5"
+opcode = 0x4B
+fields = { shift = 0 }
+ops = ["dst:r32:out", "src:r32", "src2:r32", "sh:imm5"]
+asm = "sub {dst}, {src}, {src2}, lsl #{sh}"
+[[instructions]]
+name = "ADDS_LSLX"
+form = "ALUSH6"
+opcode = 0xAB
+fields = { shift = 0 }
+ops = ["dst:r64:out", "src:r64", "src2:r64", "sh:imm6"]
+asm = "adds {dst}, {src}, {src2}, lsl #{sh}"
+
+[[instructions]]
+name = "ADDS_LSLW"
+form = "ALUSH5"
+opcode = 0x2B
+fields = { shift = 0 }
+ops = ["dst:r32:out", "src:r32", "src2:r32", "sh:imm5"]
+asm = "adds {dst}, {src}, {src2}, lsl #{sh}"
+
+[[instructions]]
+name = "SUBS_LSLX"
+form = "ALUSH6"
+opcode = 0xEB
+fields = { shift = 0 }
+ops = ["dst:r64:out", "src:r64", "src2:r64", "sh:imm6"]
+asm = "subs {dst}, {src}, {src2}, lsl #{sh}"
+
+[[instructions]]
+name = "SUBS_LSLW"
+form = "ALUSH5"
+opcode = 0x6B
+fields = { shift = 0 }
+ops = ["dst:r32:out", "src:r32", "src2:r32", "sh:imm5"]
+asm = "subs {dst}, {src}, {src2}, lsl #{sh}"
 
 [[instructions]]
 name = "STPW_PRE"
@@ -1926,6 +2267,54 @@ bytes = [0x40, 0x04, 0x00, 0xA9]
 [[vectors]]
 asm = "ldp x0, x1, [x2]"
 bytes = [0x40, 0x04, 0x40, 0xA9]
+# 寄存器偏移与 ADD/SUB 带量：字节来自语料 CHECK 行的上游期望值（`arm64-memory.s` 等）。
+[[vectors]]
+asm = "ldr w0, [x0, x0]"
+bytes = [0x00, 0x68, 0x60, 0xB8]
+
+[[vectors]]
+asm = "ldr w0, [x0, x0, lsl #2]"
+bytes = [0x00, 0x78, 0x60, 0xB8]
+
+[[vectors]]
+asm = "ldr x0, [x0, x0]"
+bytes = [0x00, 0x68, 0x60, 0xF8]
+
+[[vectors]]
+asm = "ldr x0, [x0, x0, lsl #3]"
+bytes = [0x00, 0x78, 0x60, 0xF8]
+
+[[vectors]]
+asm = "ldr x0, [x0, x0, sxtx]"
+bytes = [0x00, 0xE8, 0x60, 0xF8]
+
+[[vectors]]
+asm = "str x9, [x27, x6]"
+bytes = [0x69, 0x6B, 0x26, 0xF8]
+
+[[vectors]]
+asm = "str w14, [x26, w6, uxtw]"
+bytes = [0x4E, 0x4B, 0x26, 0xB8]
+
+[[vectors]]
+asm = "str w13, [x27, x5, sxtx #2]"
+bytes = [0x6D, 0xFB, 0x25, 0xB8]
+
+[[vectors]]
+asm = "add w12, w13, w14, lsl #12"
+bytes = [0xAC, 0x31, 0x0E, 0x0B]
+
+[[vectors]]
+asm = "add x12, x13, x14, lsl #12"
+bytes = [0xAC, 0x31, 0x0E, 0x8B]
+
+[[vectors]]
+asm = "sub w12, w13, w14, lsl #12"
+bytes = [0xAC, 0x31, 0x0E, 0x4B]
+
+[[vectors]]
+asm = "sub x12, x13, x14, lsl #12"
+bytes = [0xAC, 0x31, 0x0E, 0xCB]
 
 
 # ── 闭环向量（只给 `asm`；v19 V3c：从 Rust 往返清单迁入）──

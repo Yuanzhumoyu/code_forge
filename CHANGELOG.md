@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-07) — aarch64：寄存器偏移寻址（32 条）+ ADD/SUB 移位寄存器带量（8 条）
+
+① **寄存器偏移**（`ldr x9, [x27, x6]`、`ldr w0, [x0, x0, lsl #2]`、`str w14, [x26, w6, uxtw]`、`str w13, [x27, x5, sxtx #2]`）：编码是 `size 111 V 00 opc **1** Rm option S **10** Rn Rt`——与 imm9 家族**共用 `op8 = 0xF8`(X)/`0xB8`(W)**，只靠 **bit21 = 1** 与 **[11:10] = 10** 区分（这两条固定位是 **19 条上游期望字节逐条核对**出来的）。`option`/`S` 与文本关键字的对应同样是**量**出来的：LSL = 3 / UXTW = 2 / SXTW = 6 / SXTX = 7，且 **S=1 ⇔ 文本带 `#N`，N 恒 = log2(访问宽度)**（X 形式 3、W 形式 2）
+⇒ 每种组合都是一条**完整的文本模板**，不需要"可选片段"机制。索引寄存器的类由 option 决定（LSL/SXTX 收 X、UXTW/SXTW 收 W；`xzr`/`wzr` 走别名）。语料里出现的 8 种组合全做，× 2 宽度 × ldr/str = **32 条**。
+
+② **ADD/SUB(S) 移位寄存器带量**（`add w12, w13, w14, lsl #12`）：与既有的逻辑族（`ALUSH6`/`ALUSH5`）同格局——`shift` 是逐指令常量（LSL = 0），移位量是**操作数**（X 用 `imm6`、W 用 `imm5`），4 助记符 × 2 宽度 = **8 条**。
+
+③ **字节证据**：谱内一次性加 12 条向量（8 条寄存器偏移 + 4 条 ADD/SUB 带量），字节全部取自语料 CHECK 行的**上游期望值**（`00 68 60 b8` = `ldr w0, [x0, x0]`、`69 6b 26 f8` = `str x9, [x27, x6]`、`ac 31 0e 8b` = `add x12, x13, x14, lsl #12`…）——**首跑全过**。
+
+④ 效果：aarch64 语料红行 **1945 → 1872**、`parsed` 1268 → **1341**；与第二十七批末（aarch64 红 2122）相比 `arm64-leaf-compact-unwind.s` 16 → **1**（只差最后一条）、`arm64-memory.s` 121 → 100、`arm64-arithmetic-encoding.s` 122 → 110、`seh-packed-unwind.s` 111 → 48。本轮**没有文件跨过"整文件无红"的门槛**（近门的几个都在 1–4 条），所以取舍账本（109 / 625）与两个棘轮**逐字不变**。守卫同步：`spec_coverage_guard` arm64 230 → **270**、`isa_roundtrip_guard` arm64 枚举器 937 → **1049**。
+
 ### Added (2026-10-07) — aarch64：寄存器惯用名 `fp`/`ip0`/`ip1`；16 条前后索引（writeback）形态
 
 ① **别名表漏了 `FP`**：真实序言/尾声写的是惯用名而不是编号（`mov x29, fp`、`stp x29, lr, [sp, #-16]!`），而我们 `[reg.gpr8].aliases` 只有 `XZR`/`LR`——**注释里写着 FP、表里没写**，一行之差就让 `cfi.s`/`seh-*.s` 这些整文件落红。补 `FP = 29`，顺带 `IP0 = 16`/`IP1 = 17`（链接器 scratch 的惯用名）。

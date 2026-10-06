@@ -185,7 +185,12 @@ fn invalid_asm_rejected() {
     assert!(assemble("frob x0, x1").is_err());
     assert!(assemble("add x0, x1").is_err());
     assert!(assemble("add x0, x1, #4096").is_err()); // imm12 上界 4095
-    assert!(assemble("add x0, x1, x2, lsl #1").is_err()); // 加/减族的移位后缀仍未声明（逻辑族已支持）
+    // 加/减族的移位后缀**已声明**（2026-10-07 第二十九批），但移位量有上界：X 形式 imm6（≤63）、
+    // W 形式 imm5（≤31）——超出即拒，这里钉住两端。
+    assert!(assemble("add x0, x1, x2, lsl #64").is_err());
+    assert!(assemble("add w0, w1, w2, lsl #32").is_err());
+    assert!(assemble("add x0, x1, x2, lsl #63").is_ok());
+    assert!(assemble("add w0, w1, w2, lsl #31").is_ok());
     assert!(assemble("").is_err());
     // 寄存器宽度混用拒绝
     assert!(assemble("add x0, x1, w2").is_err());

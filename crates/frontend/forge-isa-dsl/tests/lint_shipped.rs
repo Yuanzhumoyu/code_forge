@@ -188,12 +188,16 @@ fn overlap_guard_can_fail() {
 ///   8 条 LDUR/STUR 系（GPR 4 + FP 4）都把 `mode`（[11:10]，unscaled = 00）与保留位
 ///   `zero21`（[21]）**显式声明**了（编码器本来就发 0 ⇒ 字节不变），这 16 条的未指定位
 ///   因此从清单里消失。
+///   2026-10-07（aarch64 寄存器偏移批次）：120 → **128**——新加的 8 条 `ADD/SUB(S) …, lsl #N`
+///   与**既有逻辑族同指纹**（`[21,22)` = 移位寄存器族的 N 位恒 0、W 形式还有 `[15,16)` =
+///   imm6 的最高位恒 0），这几条按现状靠"缺省 0 发射"⇒ 清单 +8。要清掉得连整个移位寄存器族
+///   一起显式声明（另有其批），不是本轮的缺陷。
 #[test]
 fn unassigned_bits_inventory() {
     for (isa, want) in [
         ("x86.toml", 0usize),
         ("riscv64.toml", 7),
-        ("arm64.toml", 120),
+        ("arm64.toml", 128),
     ] {
         let path = root().join("isa").join(isa);
         let spec = report::load_spec(&path).expect("加载谱");
