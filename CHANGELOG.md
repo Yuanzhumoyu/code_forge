@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-07) — riscv64 浮点寄存器 ABI 别名（`ft0`/`fa0`/`fs0`…）；逐文件记分板带上红桶原文
+
+① **纯谱数据修掉一整类红桶**：`[reg.gpr8.aliases]`（`a0`/`s0`/`fp`…）早就有，`[reg.fpr4]` 却只有 `F0`…`F31` 数字名——而**真实语料里浮点操作数几乎全写 ABI 名**（实测全集 `ft*`/`fa*`/`fs*` 出现 **1840** 次，数字名只有 **47** 次），于是整批 FP 用例文件（`rv32f-valid.s`、`rv32d-valid.s`、`numeric-reg-names-*.s`、`fp-*-default-rounding-mode.s`…）**整文件**落进红桶。补上 psABI 那套映射（0–7 = `ft0`–`ft7`、8–9 = `fs0`–`fs1`、10–17 = `fa0`–`fa7`、18–27 = `fs2`–`fs11`、28–31 = `ft8`–`ft11`），口径与 GPR 别名**完全一致**：**解析认、渲染仍出规范名**（`F`），不新增任何 DSL 键、不动生成器。
+
+② 实测（`asm/fetch.mjs` 重跑取舍 + 刷棘轮）：riscv64 红行 **1240 → 1056**、红文件 76 → 72；`numeric-reg-names-f.s` / `numeric-reg-names-d.s` **整文件解析通过**并自动进全绿层（全绿集 83 → **84** 份、PROVENANCE 85 份 LLVM + 1 份手工；riscv64 语料 53 → **55** 份、`parsed` 526 → **654**）；同族文件红行同步下降（`rv32f-valid.s` 26 → 16、`rv32d-valid.s` 27 → 18、`fp-default-rounding-mode.s` 16 → 8、`rvf-aliases-valid.s` 10 → 5）。三架构**编码对拍 `known` 仍全 0**（棘轮只动 riscv64 解析档），x86/aarch64 计数逐字不变。
+
+③ **工具：逐文件记分板带红桶原文**（`target/asm-suite/<isa>.json` 的 `file_rows[].samples`）：每条是 `文件:行号 ⇥ 原文 ⇥ 错误`（每文件最多 8 条），此前只进棘轮的总样例（每套 12 条）——按文件归因时反面看不到"错在哪一行"。JSON 里的控制字符（制表符）现在**转义**（`esc`），否则消费方解析整份记分板会失败；`fetch.mjs` 不读该字段，**取舍判据不变**。
+
 ### Added (2026-10-06) — 真实汇编语料从"三份小样"扩到**上游全集里全绿的那一层**（取舍自动化 + 出处守卫）
 
 ① **取舍不再手抄**：新工具 `crates/tools/forge-tests/asm/fetch.mjs`（Node 自带根证书，替掉需要系统 TLS 的 `fetch.ps1`）一条命令做三件事——按钉死的 ref（`llvmorg-19.1.0`）拉上游 LLVM MC 三套目录的**顶层** `.s`（x86 只取 Intel 语法的文件名那批），跑解析档 + 编码对拍档拿**逐文件**记分板，再按「**整条解析得住（`parsed >= 1`）+ 不产生红桶（`tail_mismatch` ≤ 已登记缺口）+ **编码对拍没有字节差异**」淘汰，最后**重写** `asm/PROVENANCE.md`（逐文件 字节/行/sha256）。两个档因此新增机读产物：`target/asm-suite/<isa>.json` 的 `file_rows` 与 `encoding-files.json`（逐文件记分板），淘汰清单落 `target/asm-dropped.json`——判据在脚本里，不在人脑里：谱长本事后重跑即自动补回。

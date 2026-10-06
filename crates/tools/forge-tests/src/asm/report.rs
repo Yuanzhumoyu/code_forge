@@ -98,15 +98,25 @@ impl IsaReport {
                 s.corpus_only
             ));
             for (j, f) in s.file_rows.iter().enumerate() {
+                // 红桶样例（原文 + 错误）**逐文件**进记分板：修谱前先要知道"哪些行、
+                // 错在哪"，而棘轮里只留 12 条总样例——不够按文件归因。JSON 里
+                // 制表符必须转义（`esc` 负责），否则消费方解析不了。
+                let samples = f
+                    .mismatch_samples
+                    .iter()
+                    .map(|x| format!("\"{}\"", esc(x)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 out.push_str(&format!(
                     "      {{\"file\": \"{}\", \"lines\": {}, \"parsed\": {}, \"no_prefix\": {}, \
-                     \"tail_mismatch\": {}, \"corpus_only\": {}}}",
+                     \"tail_mismatch\": {}, \"corpus_only\": {}, \"samples\": [{}]}}",
                     esc(&f.file),
                     f.lines,
                     f.parsed,
                     f.no_prefix,
                     f.tail_mismatch,
-                    f.corpus_only
+                    f.corpus_only,
+                    samples
                 ));
                 out.push_str(if j + 1 == s.file_rows.len() {
                     "\n"
@@ -411,6 +421,50 @@ pub fn emit_event(kind: &str, msg: &str) {
     }
 }
 
+/// JSON 字符串转义（**含控制字符**）：红桶样例是 `行号\t文本\t错误`，裸制表符在 JSON
+/// 里非法——不转义的话消费方（`fetch.mjs` 只是恰好没读这个字段）解析整份记分板会失败。
 fn esc(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    let mut out = String::with_capacity(s.len() + 8);
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 记分板是**机读产物**（`fetch.mjs` 直接 `JSON.parse`）：红桶样例里的制表符必须
+    /// 转义，否则整份 JSON 解析失败——那时语料取舍会连着挂，且报错点离病因很远。
+    #[test]
+    fn scoreboard_json_escapes_mismatch_samples() {
+        let mut report = IsaReport {
+            isa: "x86".into(),
+            corpus_present: true,
+            ..Default::default()
+        };
+        let mut file = FileReport {
+            file: "a.s".into(),
+            lines: 1,
+            tail_mismatch: 1,
+            ..Default::default()
+        };
+        file.mismatch_samples
+            .push("a.s:1\tmov r16d, eax\t没有这条指令（含 \"引号\"）".into());
+        report.suites.push(IsaReport::from_files("llvm-mc", vec![file]));
+        let json = report.to_json();
+        assert!(json.contains("\"samples\": ["), "逐文件样例要进记分板：{json}");
+        assert!(json.contains("\\t"), "制表符必须转义：{json}");
+        assert!(!json.contains('\t'), "记分板里不许出现裸制表符：{json}");
+        assert!(json.contains("\\\"引号\\\""), "引号必须转义：{json}");
+    }
 }
