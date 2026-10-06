@@ -14,27 +14,16 @@ let t = fs.readFileSync(SPEC, 'utf8');
 const eol = t.includes('\r\n') ? '\r\n' : '\n';
 const J = (a) => a.join(eol);
 
-// ── ① 从谱里读数值形态：mnemonic × 宽度 → (form, opcode)，以及 hw 的固定值 ──
-const read = (name) => {
-  const m = t.match(new RegExp(`\\[\\[instructions\\]\\]\\r?\\n(?:#[^\\n]*\\r?\\n)*name = "${name}"\\r?\\n([\\s\\S]*?)(?:\\r?\\n\\r?\\n|$)`));
-  if (!m) throw new Error(`找不到 ${name}`);
-  const op = m[1].match(/opcode = (0x[0-9A-Fa-f]+)/);
-  const form = m[1].match(/form = "(\w+)"/);
-  return { form: form ? form[1] : 'MOVW16', opcode: op ? op[1] : null };
+// ── ① 数值形态的 (form, opcode)：来自谱里 `[[templates]]` 的 rows（**不是**独立的
+//        [[instructions]] 块——所以这张表是照 rows 抄的，X/W 六条都有）──
+const base = {
+  movzX: { form: 'MOVW16', opcode: '0x1A5', mnem: 'movz', w: 'X' },
+  movzW: { form: 'MOVW16', opcode: '0xA5', mnem: 'movz', w: 'W' },
+  movnX: { form: 'MOVW16', opcode: '0x125', mnem: 'movn', w: 'X' },
+  movnW: { form: 'MOVW16', opcode: '0x25', mnem: 'movn', w: 'W' },
+  movkX: { form: 'MOVW16', opcode: '0x1E5', mnem: 'movk', w: 'X' },
+  movkW: { form: 'MOVW16', opcode: '0xE5', mnem: 'movk', w: 'W' },
 };
-// 只做 **X 宽度**：谱里现有的数值形态是 `MOVZ`/`MOVK`/`MOVN`（外加 `MOVZX1..3`/`MOVKX1..2`
-// 等 hw 变体），**没有** `MOVZW`/`MOVKW`/`MOVNW` ⇒ W 的 opcode 无从抄起，留到补 W 数值形态那批。
-const NAMES = [
-  ['MOVZ', 'movz', 'X'],
-  ['MOVK', 'movk', 'X'],
-  ['MOVN', 'movn', 'X'],
-];
-const base = {};
-for (const [n, mnem, w] of NAMES) {
-  const r = read(n);
-  if (!r.opcode) throw new Error(`${n} 没读到 opcode`);
-  base[`${mnem}${w}`] = { ...r, mnem, w };
-}
 
 // ── ② 按 hw 分组的修饰名（两种写法都进过滤表）——直接从谱里的 imm_fn 名单读 ──
 const GROUPS = { 0: [], 1: [], 2: [], 3: [] };
@@ -77,8 +66,8 @@ blocks.push(`# ── \`movz\`/\`movk\`/\`movn\` 的 \`abs_g*\` 类重定位（\
 #
 # 与数值形态同编码；\`hw\` 由**修饰名**决定（\`abs_g0..g3\` ⇒ \`hw\` 0..3），所以槽按 hw 分并
 # 用 \`imm_fns\` 过滤。模板**不带 \`#\`**（修饰文本自带），与数值形态形状不同、不互相遮蔽。`);
-for (const [, mnem, w] of NAMES) {
-  const b = base[`${mnem}${w}`];
+for (const b of Object.values(base)) {
+  const { mnem, w } = b;
   for (const hw of [0, 1, 2, 3]) {
     const slot = w === 'X' ? 'r64' : 'r32';
     blocks.push(`[[instructions]]
