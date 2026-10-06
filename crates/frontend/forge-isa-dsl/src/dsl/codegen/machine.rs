@@ -1187,7 +1187,10 @@ fn gen_pseudo_capture(
 }
 
 pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
-    let comment = model.meta.comment_char.chars().next().unwrap_or('#');
+    // 注释标记是**字符串**（`#` / `//` / `;`）：整串匹配，不再"取首字符"——A64 的 `/`
+    // 因此不会把 `#(32 / 2)` 从中间切开。
+    let comment = model.meta.comment_char.clone();
+    let comment_lit = syn::LitStr::new(&comment, proc_macro2::Span::call_site());
     let label_suf = model.meta.label_suffix.clone();
     let label_suf_lit = syn::LitStr::new(&label_suf, proc_macro2::Span::call_site());
     let label_suf_len = label_suf.len();
@@ -1259,7 +1262,7 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                 let mut pending: Vec<(usize, usize, Option<usize>, String, usize)> = Vec::new();
                 let mut __offset: u64 = 0;
                 for (__line_no, line) in expanded.lines().enumerate() {
-                    let line = strip_comment(line, #comment);
+                    let line = strip_comment(line, #comment_lit);
                     let line = line.trim();
                     if line.is_empty() {
                         continue;
@@ -1469,9 +1472,12 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
             }
         }
 
-        /// 行内注释剥离（`[meta].comment_char`）。
-        fn strip_comment(line: &str, c: char) -> &str {
-            line.split_once(c).map_or(line, |(head, _)| head)
+        /// 行内注释剥离（`[meta].comment_char`，**整串**匹配：`#` / `//` / `;`）。
+        fn strip_comment<'a>(line: &'a str, c: &str) -> &'a str {
+            match line.find(c) {
+                Some(i) => &line[..i],
+                None => line,
+            }
         }
 
         #pseudo_helpers

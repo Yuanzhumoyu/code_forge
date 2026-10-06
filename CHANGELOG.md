@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-07) — `[meta].comment_char` 是单字符 ⇒ A64 的 `/` 会把立即数里的除法截断
+
+`strip_comment` 按**单个字符**切注释，而 A64/GAS 的注释是 `//`：`isa/arm64.toml` 写 `comment_char = "/"` 就使 `movz x0, #(32 / 2)` 从 `/` 处被截成 `movz x0, #(32 ` ⇒ 报"没有匹配的指令"。上游为此专门写了 `single-slash.s`，所以这条是可复现的语料证据而非猜测。修法 = 注释标记改成 **1–4 个字符的字符串**（`#` / `//` / `;`），生成物的 `strip_comment` 按**整串**匹配，并把 `isa/arm64.toml` 改成 `comment_char = "//"`。校验放宽到 1..=4 字符（原为"必须恰好一个字符"），文档同步。
+
+效果：aarch64 `parsed` 1917 → **1918**、红 1429 → **1428**；`single-slash.s` 整文件转绿 ⇒ 全绿集 **115 → 116**（PROVENANCE 118 行）、淘汰 618 → **617**。
+
 ### Fixed (2026-10-07) — aarch64 FP 成对的前/后索引用不了：imm7 槽是无符号的
 
 `stp d8, d9, [sp, #-64]!` 这类写法原先借用了**无符号**的 `imm12fp*` 槽 ⇒ 负偏移直接越界、报"没有匹配的指令"（`stp d10, d11, [sp, #16]` 这类正偏移则正常，所以只有前/后索引的成对形态受影响）。修法 = 镜像 GPR 成对的 `imm7x`/`imm7w`，补 `imm7fp4`/`imm7fp8`/`imm7fp16`（**有符号**、width 7、单位 = 元素尺寸）并替换 18 条 FP 成对的 imm 槽。

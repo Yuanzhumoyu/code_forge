@@ -522,8 +522,12 @@ fn validate_meta(m: &IsaModel) -> Result<(), String> {
             "[meta].name '{name}' is not a valid ISA name (letters/digits/_/-, must start with a letter or _)"
         ));
     }
-    if m.meta.comment_char.chars().count() != 1 {
-        return Err("[meta].comment_char must be exactly one char".into());
+    // 注释标记：1–4 个字符的**字符串**（`#`、`//`、`;`）。历史上只允许单字符，于是 A64 写
+    // `comment_char = "/"` 会把 `movz x0, #(32 / 2)` 从 `/` 截断（语料 `single-slash.s`
+    // 正是上游为这件事写的用例）——而 A64/GAS 的注释是 `//`，本来就该整串匹配。
+    let n = m.meta.comment_char.chars().count();
+    if !(1..=4).contains(&n) {
+        return Err("[meta].comment_char must be 1..=4 chars".into());
     }
     if m.meta.label_suffix.is_empty() {
         return Err("[meta].label_suffix must not be empty".into());

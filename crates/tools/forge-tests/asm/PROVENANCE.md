@@ -11,7 +11,7 @@ ref `llvmorg-19.1.0`）——请勿手改；重跑脚本即可刷新。方法、
    `.gitattributes` 把 `crates/tools/forge-tests/asm/**` 钉成 `text eol=lf`，
    否则 `core.autocrlf` 在 Windows 上会改工作区、摘要立刻对不上。
 2. **取舍是算出来的**：本次拉了上游 **733** 个候选（顶层 `.s`；x86 只取
-   Intel 语法的文件名那批），按判据留下 **115** 个、砍掉 **618** 个
+   Intel 语法的文件名那批），按判据留下 **116** 个、砍掉 **617** 个
    （判据 = 解析档「整条接得住且不产生红桶」+ 编码对拍档「没有字节差异」，两份逐文件记分板
    在 `target/asm-suite/`）。被砍掉的那些不是"忘了"，而是**本谱现在还不认识**（SVE/SME/
    AVX-512/压缩指令/带符号 CSR 名/重定位表达式…）——它们会让红桶变成"永久红"，门禁就废了。
@@ -20,7 +20,7 @@ ref `llvmorg-19.1.0`）——请勿手改；重跑脚本即可刷新。方法、
    一并登记在下面。
 3. `asm/exec/**`、`asm/ratchet/**` 是本仓库自己写的，不在下表。
 
-## LLVM MC（116 份）
+## LLVM MC（117 份）
 
 | 路径 | 上游 | 固定 ref | 许可 | 字节 | 行 | 摘要（sha256） | 处理 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -136,6 +136,7 @@ ref `llvmorg-19.1.0`）——请勿手改；重跑脚本即可刷新。方法、
 | `parse/aarch64/llvm-mc/seh-optimize.s` | [llvm/llvm-project `llvm/test/MC/AArch64/seh-optimize.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/seh-optimize.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 3311 | 102 | `cb0fc2523a02e6948ac2a62669116e635783fbe2edd51c6a09e8ce66be070324` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/seh-packed-epilog.s` | [llvm/llvm-project `llvm/test/MC/AArch64/seh-packed-epilog.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/seh-packed-epilog.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 6698 | 219 | `e7b7873a877009b3a1de023e49f2ae1bb46b04a756d38fe89077315141203260` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/seh.s` | [llvm/llvm-project `llvm/test/MC/AArch64/seh.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/seh.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 7508 | 237 | `2a7eb36e1b803cf33ea43b7d67fb074a041fc9c3c1ff7061de6cfae2e4a7c362` | **整文件**，逐字未改 |
+| `parse/aarch64/llvm-mc/single-slash.s` | [llvm/llvm-project `llvm/test/MC/AArch64/single-slash.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/single-slash.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 185 | 6 | `d956bfee855637250566b9bab2d5d882c939924469ca2eba1c20c95342c18c86` | **整文件**，逐字未改 |
 | `parse/x86/llvm-mc/apx-rex2-format-intel.s` | [llvm/llvm-project `llvm/test/MC/X86/apx/rex2-format-intel.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/X86/apx/rex2-format-intel.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 8611 | 347 | `84d1cc1bc069fcfcc366288af642788a63015cd8ff57bf21490cb14a92a19de3` | **整文件**，逐字未改 |
 | `parse/x86/llvm-mc/intel-syntax-directional-label.s` | [llvm/llvm-project `llvm/test/MC/X86/intel-syntax-directional-label.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/X86/intel-syntax-directional-label.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 317 | 17 | `a0468b4e2080b1443bcd015d0c34201465599521cf3d813a6c9902bd4807ca4f` | **整文件**，逐字未改 |
 | `parse/x86/llvm-mc/intel-syntax-encoding.s` | [llvm/llvm-project `llvm/test/MC/X86/intel-syntax-encoding.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/X86/intel-syntax-encoding.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 2222 | 100 | `410889ee7fecc9e727029624111907a63e51f5a33b1a32015c5c8711638c9cdb` | **整文件**，逐字未改 |

@@ -29,7 +29,7 @@ case_insensitive_regs = true
 # A64 的 `#` 是**立即数前缀**（`add x0, x1, #5`、`ldr x0, [x1, #8]`），注释是 `//`
 #（GAS 的 aarch64 模式也如此）。历史上这里写成 "#"，生成物于是对每行按 `#` 截断——
 # 所有带立即数的写法都被砍成 `add x0, x1, ` 而解析失败（语料 parsed 长期只有 37/420 的主因）。
-comment_char = "/"
+comment_char = "//"
 label_suffix = ":"
 mnemonic_case = "insensitive"
 # 立即数前缀：模板写 `#{imm}` 时由字面段吃掉，而**分支目标**槽（`b {target}`）前没有
