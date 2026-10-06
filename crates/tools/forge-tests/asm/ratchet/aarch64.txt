@@ -2,9 +2,9 @@
 # 判定：tail_mismatch（有候选首段对得上、整条没对上）多一个 = 新缺陷/换了语料；
 #       少一个 = 修好了/漏跑。两个方向都红。
 [suite llvm-mc]
-files = 26
-lines = 2037
-parsed = 197
+files = 30
+lines = 2642
+parsed = 267
 no_prefix = 390
 tail_mismatch = 0
-corpus_only = 1450
+corpus_only = 1985

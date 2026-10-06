@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-07) — aarch64：寄存器惯用名 `fp`/`ip0`/`ip1`；16 条前后索引（writeback）形态
+
+① **别名表漏了 `FP`**：真实序言/尾声写的是惯用名而不是编号（`mov x29, fp`、`stp x29, lr, [sp, #-16]!`），而我们 `[reg.gpr8].aliases` 只有 `XZR`/`LR`——**注释里写着 FP、表里没写**，一行之差就让 `cfi.s`/`seh-*.s` 这些整文件落红。补 `FP = 29`，顺带 `IP0 = 16`/`IP1 = 17`（链接器 scratch 的惯用名）。
+
+② **前后索引（writeback）16 条**：单寄存器 4 宽 × 前/后索引（`ldr x0, [x1, #16]!` / `ldr x0, [x1], #16`）——与 unscaled 家族共用 `op8 = 0xF8`(X)/`0xB8`(W)，靠新位域 `mode`（[11:10]：`11` 前索引 / `01` 后索引）区分；pair 4 宽 × 前/后索引——[25:23]：`011` 前 / `001` 后 ⇒ `op8 = 0xA9`/`0xA8`（W 形式 `0x29`/`0x28`）、`idx2 = 2`/`3`。imm 一律真字节且有符号（pair 的 imm7 三种模式下都按元素尺寸缩放，沿用上一批的 `imm7x`/`imm7w`）。
+
+③ **字节证据**：仓库自己的 A64 编码基准 [`docs/reference/aarch64-encoding-ref.md`](docs/reference/aarch64-encoding-ref.md) 第 121/124 行给出权威值——`ldr x0,[x1],#16` = `F8410420`、`ldr x0,[x1,#16]!` = `F8410C20`、`stp x29,x30,[sp,#-16]!` = `A9BF7BFD`、`ldp x29,x30,[sp],#16` = `A8C17BFD`，外加无位移 pair 的 `A9000440`/`A9400440`。6 条谱内向量**一次通过**，说明新形态的编码与模式位都对得上。
+
+④ 效果：aarch64 语料红行 **2122 → 1945**、红文件 76 → **72**、`parsed` 1091 → 1268；**4 个文件整文件转绿**（`cfi.s`、`seh-multi-epilog.s`、`seh-large-func.s`、`seh-large-func-multi-epilog.s`——它们此前只差这条序言/尾声写法），全绿集 104 → **109**（aarch64 26 → **30** 份）、aarch64 棘轮 `parsed` 197 → **267**；`seh-packed-unwind.s` 111 → 48、`basic-a64-instructions.s` 482 → 442。守卫同步：`spec_coverage_guard` arm64 214 → **230**、`isa_roundtrip_guard` arm64 枚举器 841 → **937**。
+
 ### Fixed (2026-10-07) — aarch64 访存立即数的「单位」：文本是字节、字段按访问宽度缩放（+ 8 条无位移形态）
 
 A64 的 `LDR`/`STR`/`LDP`/`STP` 立即数在**文本里是字节**、在**字段里是"字节 ÷ 访问尺寸"**：`ldr x2, [sp, #32]` ⇒ `imm12 = 4`、`ldr w5, [x4, #20]` ⇒ `imm12 = 5`、`stp x29, x30, [sp, #-16]` ⇒ `imm7 = -2`（这些值直接来自语料 CHECK 行里的上游期望字节）。我们谱里 `imm12u`/`imm7u` 一直按**字段单位**收文本（`ldr x0, [x1, #1]` ⇒ 字段 1 = 8 字节），于是真实语料里**每一条带非零字节偏移**的访存都会编出错字节——只是 vendored 集里一个这样的文件都没有，字节对拍档一直看不见它。

@@ -184,12 +184,16 @@ fn overlap_guard_can_fail() {
 ///   全是保留位（A64 里 `BR`/`RET`/`B.cond`/`LDUR` 一类的固定 0 段），
 ///   抽查 `[4,5)`（B.cond 的固定 0 位）、`[0,5)`+`[10,16)`（BR/BLR/RET）、`[10,12)`+`[21,24)`
 ///   （LDUR 族）都对得上参考编码——**不是谱的缺陷**，因此保持 opt-in 的评审清单。
+///   2026-10-07（aarch64 前后索引批次）：128 → **120**——新加的 8 条前后索引形态与已有的
+///   8 条 LDUR/STUR 系（GPR 4 + FP 4）都把 `mode`（[11:10]，unscaled = 00）与保留位
+///   `zero21`（[21]）**显式声明**了（编码器本来就发 0 ⇒ 字节不变），这 16 条的未指定位
+///   因此从清单里消失。
 #[test]
 fn unassigned_bits_inventory() {
     for (isa, want) in [
         ("x86.toml", 0usize),
         ("riscv64.toml", 7),
-        ("arm64.toml", 128),
+        ("arm64.toml", 120),
     ] {
         let path = root().join("isa").join(isa);
         let spec = report::load_spec(&path).expect("加载谱");

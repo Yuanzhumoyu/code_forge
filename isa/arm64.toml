@@ -49,8 +49,9 @@ names = [
     "X24","X25","X26","X27","X28","X29","X30","SP",
 ]
 # ABI/架构别名（解析认、渲染仍出主名）：31 号在"零寄存器"语境下是 XZR（与 SP 同号），
-# LR/FP 是 X30/X29 的惯用名（语料里 `ret lr` 就这么写）。
-aliases = { XZR = 31, LR = 30 }
+# LR/FP 是 X30/X29 的惯用名（语料里 `ret lr`、`mov x29, fp`、`stp x29, lr, [sp, #-16]!` 就这么写），
+# IP0/IP1 是 X16/X17（链接器 scratch）。**少一个都整行落红**——序言/尾声那批文件全用惯用名。
+aliases = { XZR = 31, LR = 30, FP = 29, IP0 = 16, IP1 = 17 }
 
 [reg.gpr4]
 base_index = 0
@@ -112,6 +113,8 @@ imm14 = { offset = 5,  width = 14 }  # TBZ/TBNZ 相对偏移（[18:5]；与 imm1
 opc2  = { offset = 22, width = 2 }   # LS opc（00 store / 01 load / 10 符号载）
 imm12s= { offset = 10, width = 12 }  # LDR/STR 无符号 imm12（与 ALU imm12 同段）
 imm9  = { offset = 12, width = 9 }   # LDUR/STUR 符号偏移（真字节）
+mode  = { offset = 10, width = 2 }   # LDUR 族 [11:10]：00 无偏移 / 01 后索引 / 11 前索引
+zero21= { offset = 21, width = 1 }   # LDUR 族 [21] 恒 0（保留位；显式声明出来，免得靠缺省）
 idx2  = { offset = 22, width = 2 }   # LDP/STP index 低位（bit24 由 op8 常量给：100 off STP/101 off LDP ⇒ idx2 = 0/1）
 rt2   = { offset = 10, width = 5 }   # LDP/STP 第二寄存器
 op8b  = { offset = 16, width = 8 }   # FMOV 的中间常量（S=0x20 / D=0x60）
@@ -680,7 +683,7 @@ asm = "str {src}, [{base}, #{imm}]"
 name = "LDURX"
 form = "LSUN"
 opcode = 0xF8
-fields = { opc2 = 1 }
+fields = { opc2 = 1, mode = 0, zero21 = 0 }
 ops = ["dst:r64:out", "base:r64", "off:imm9s"]
 asm = "ldur {dst}, [{base}, #{off}]"
 roles = ["callee_load"]
@@ -689,7 +692,7 @@ roles = ["callee_load"]
 name = "LDURW"
 form = "LSUN"
 opcode = 0xB8
-fields = { opc2 = 1 }
+fields = { opc2 = 1, mode = 0, zero21 = 0 }
 ops = ["dst:r32:out", "base:r64", "off:imm9s"]
 asm = "ldur {dst}, [{base}, #{off}]"
 
@@ -697,7 +700,7 @@ asm = "ldur {dst}, [{base}, #{off}]"
 name = "STURX"
 form = "LSUN"
 opcode = 0xF8
-fields = { opc2 = 0 }
+fields = { opc2 = 0, mode = 0, zero21 = 0 }
 ops = ["src:r64", "base:r64", "off:imm9s"]
 asm = "stur {src}, [{base}, #{off}]"
 roles = ["callee_save"]
@@ -706,7 +709,7 @@ roles = ["callee_save"]
 name = "STURW"
 form = "LSUN"
 opcode = 0xB8
-fields = { opc2 = 0 }
+fields = { opc2 = 0, mode = 0, zero21 = 0 }
 ops = ["src:r32", "base:r64", "off:imm9s"]
 asm = "stur {src}, [{base}, #{off}]"
 
@@ -832,6 +835,145 @@ opcode = 0x29
 fields = { idx2 = 1, imm7 = 0 }
 ops = ["t1:r32:out", "base:r64", "t2:r32:out"]
 asm = "ldp {t1}, {t2}, [{base}]"
+
+# ── 前后索引（writeback）──
+#
+# A64 的三种寻址模式挤在同一族编码里，靠 mode 位区分：
+#   单寄存器在 [11:10]（`00` 无偏移 / `01` 后索引 / `11` 前索引，前后索引与前两者共用
+#   `op8 = 0xF8`(X)/`0xB8`(W) 的 unscaled 家族），文本形如 `[Xn, #imm]!` / `[Xn], #imm`；
+#   pair 在 [25:23]（`010` 有符号偏移 / `011` 前索引 / `001` 后索引——bit24 进 `op8`、
+#   bit23 进 `idx2`），故前索引 `op8 = 0xA9`、后索引 `op8 = 0xA8`（W 形式 `0x29`/`0x28`），
+#   而 `idx2` = 2/3（bit23=1）与"有符号偏移"的 0/1 区分开。
+# imm 一律**真字节且有符号**；pair 的 imm7 在三种模式下都按元素尺寸缩放（见 imm7x/imm7w 的 unit）。
+# 上游期望字节见谱内向量（`stp x29, x30, [sp, #-16]!` = fd 7b bf a9、
+# `ldp x29, x30, [sp], #16` = fd 7b c1 a8）。
+[[instructions]]
+name = "LDRX_PRE"
+form = "LSUN"
+opcode = 0xF8
+fields = { opc2 = 1, mode = 3, zero21 = 0 }
+ops = ["dst:r64:out", "base:r64", "off:imm9s"]
+asm = "ldr {dst}, [{base}, #{off}]!"
+
+[[instructions]]
+name = "LDRX_POST"
+form = "LSUN"
+opcode = 0xF8
+fields = { opc2 = 1, mode = 1, zero21 = 0 }
+ops = ["dst:r64:out", "base:r64", "off:imm9s"]
+asm = "ldr {dst}, [{base}], #{off}"
+
+[[instructions]]
+name = "STRX_PRE"
+form = "LSUN"
+opcode = 0xF8
+fields = { opc2 = 0, mode = 3, zero21 = 0 }
+ops = ["src:r64", "base:r64", "off:imm9s"]
+asm = "str {src}, [{base}, #{off}]!"
+
+[[instructions]]
+name = "STRX_POST"
+form = "LSUN"
+opcode = 0xF8
+fields = { opc2 = 0, mode = 1, zero21 = 0 }
+ops = ["src:r64", "base:r64", "off:imm9s"]
+asm = "str {src}, [{base}], #{off}"
+
+[[instructions]]
+name = "LDRW_PRE"
+form = "LSUN"
+opcode = 0xB8
+fields = { opc2 = 1, mode = 3, zero21 = 0 }
+ops = ["dst:r32:out", "base:r64", "off:imm9s"]
+asm = "ldr {dst}, [{base}, #{off}]!"
+
+[[instructions]]
+name = "LDRW_POST"
+form = "LSUN"
+opcode = 0xB8
+fields = { opc2 = 1, mode = 1, zero21 = 0 }
+ops = ["dst:r32:out", "base:r64", "off:imm9s"]
+asm = "ldr {dst}, [{base}], #{off}"
+
+[[instructions]]
+name = "STRW_PRE"
+form = "LSUN"
+opcode = 0xB8
+fields = { opc2 = 0, mode = 3, zero21 = 0 }
+ops = ["src:r32", "base:r64", "off:imm9s"]
+asm = "str {src}, [{base}, #{off}]!"
+
+[[instructions]]
+name = "STRW_POST"
+form = "LSUN"
+opcode = 0xB8
+fields = { opc2 = 0, mode = 1, zero21 = 0 }
+ops = ["src:r32", "base:r64", "off:imm9s"]
+asm = "str {src}, [{base}], #{off}"
+
+[[instructions]]
+name = "STPX_PRE"
+form = "PAIR"
+opcode = 0xA9
+fields = { idx2 = 2 }
+ops = ["t1:r64", "base:r64", "t2:r64", "imm:imm7x"]
+asm = "stp {t1}, {t2}, [{base}, #{imm}]!"
+
+[[instructions]]
+name = "STPX_POST"
+form = "PAIR"
+opcode = 0xA8
+fields = { idx2 = 2 }
+ops = ["t1:r64", "base:r64", "t2:r64", "imm:imm7x"]
+asm = "stp {t1}, {t2}, [{base}], #{imm}"
+
+[[instructions]]
+name = "LDPX_PRE"
+form = "PAIR"
+opcode = 0xA9
+fields = { idx2 = 3 }
+ops = ["t1:r64:out", "base:r64", "t2:r64:out", "imm:imm7x"]
+asm = "ldp {t1}, {t2}, [{base}, #{imm}]!"
+
+[[instructions]]
+name = "LDPX_POST"
+form = "PAIR"
+opcode = 0xA8
+fields = { idx2 = 3 }
+ops = ["t1:r64:out", "base:r64", "t2:r64:out", "imm:imm7x"]
+asm = "ldp {t1}, {t2}, [{base}], #{imm}"
+
+[[instructions]]
+name = "STPW_PRE"
+form = "PAIR"
+opcode = 0x29
+fields = { idx2 = 2 }
+ops = ["t1:r32", "base:r64", "t2:r32", "imm:imm7w"]
+asm = "stp {t1}, {t2}, [{base}, #{imm}]!"
+
+[[instructions]]
+name = "STPW_POST"
+form = "PAIR"
+opcode = 0x28
+fields = { idx2 = 2 }
+ops = ["t1:r32", "base:r64", "t2:r32", "imm:imm7w"]
+asm = "stp {t1}, {t2}, [{base}], #{imm}"
+
+[[instructions]]
+name = "LDPW_PRE"
+form = "PAIR"
+opcode = 0x29
+fields = { idx2 = 3 }
+ops = ["t1:r32:out", "base:r64", "t2:r32:out", "imm:imm7w"]
+asm = "ldp {t1}, {t2}, [{base}, #{imm}]!"
+
+[[instructions]]
+name = "LDPW_POST"
+form = "PAIR"
+opcode = 0x28
+fields = { idx2 = 3 }
+ops = ["t1:r32:out", "base:r64", "t2:r32:out", "imm:imm7w"]
+asm = "ldp {t1}, {t2}, [{base}], #{imm}"
 
 # ── 别名 ──
 
@@ -1757,6 +1899,33 @@ bytes = [0x85, 0x14, 0x40, 0xB9]
 [[vectors]]
 asm = "str w5, [x4, #20]"
 bytes = [0x85, 0x14, 0x00, 0xB9]
+# 前后索引（writeback）与无位移 pair：字节来自 `docs/reference/aarch64-encoding-ref.md`
+# （`ldr x0,[x1],#16` = F8410420、`ldr x0,[x1,#16]!` = F8410C20、
+# `stp x29,x30,[sp,#-16]!` = A9BF7BFD、`ldp x29,x30,[sp],#16` = A8C17BFD、
+# `stp x0,x1,[x2]` = A9000440、`ldp x0,x1,[x2]` = A9400440）。
+[[vectors]]
+asm = "ldr x0, [x1], #16"
+bytes = [0x20, 0x04, 0x41, 0xF8]
+
+[[vectors]]
+asm = "ldr x0, [x1, #16]!"
+bytes = [0x20, 0x0C, 0x41, 0xF8]
+
+[[vectors]]
+asm = "stp x29, x30, [sp, #-16]!"
+bytes = [0xFD, 0x7B, 0xBF, 0xA9]
+
+[[vectors]]
+asm = "ldp x29, x30, [sp], #16"
+bytes = [0xFD, 0x7B, 0xC1, 0xA8]
+
+[[vectors]]
+asm = "stp x0, x1, [x2]"
+bytes = [0x40, 0x04, 0x00, 0xA9]
+
+[[vectors]]
+asm = "ldp x0, x1, [x2]"
+bytes = [0x40, 0x04, 0x40, 0xA9]
 
 
 # ── 闭环向量（只给 `asm`；v19 V3c：从 Rust 往返清单迁入）──
@@ -1841,7 +2010,7 @@ asm = "fmov {dst}, {src}"
 name = "LDURD"
 form = "LSUN"
 opcode = 0xFD
-fields = { opc2 = 1 }
+fields = { opc2 = 1, mode = 0, zero21 = 0 }
 ops = ["dst:fpr:out", "base:r64", "off:imm9s"]
 asm = "ldur {dst}, [{base}, #{off}]"
 # 帧内保存/恢复的 **FPR 类**那条：AAPCS64 要求 v8-v15 的低 64 位由被调方保存，
@@ -1852,7 +2021,7 @@ roles = [{ role = "callee_load", class = "fpr" }]
 name = "STURD"
 form = "LSUN"
 opcode = 0xFD
-fields = { opc2 = 0 }
+fields = { opc2 = 0, mode = 0, zero21 = 0 }
 ops = ["src:fpr", "base:r64", "off:imm9s"]
 asm = "stur {src}, [{base}, #{off}]"
 roles = [{ role = "callee_save", class = "fpr" }]
@@ -1861,7 +2030,7 @@ roles = [{ role = "callee_save", class = "fpr" }]
 name = "LDURS"
 form = "LSUN"
 opcode = 0xBD
-fields = { opc2 = 1 }
+fields = { opc2 = 1, mode = 0, zero21 = 0 }
 ops = ["dst:fpr:out", "base:r64", "off:imm9s"]
 asm = "ldur {dst}, [{base}, #{off}]"
 
@@ -1869,7 +2038,7 @@ asm = "ldur {dst}, [{base}, #{off}]"
 name = "STURS"
 form = "LSUN"
 opcode = 0xBD
-fields = { opc2 = 0 }
+fields = { opc2 = 0, mode = 0, zero21 = 0 }
 ops = ["src:fpr", "base:r64", "off:imm9s"]
 asm = "stur {src}, [{base}, #{off}]"
 

@@ -110,12 +110,14 @@ fn generated_spec_tests_cover_every_instruction() {
 /// 两条并列（36 条），删掉 6 条固定 `rtz` 的旧声明与 6 条把省略写法写死 `rne` 的声明。
 /// 2026-10-07（aarch64 访存单位批次）：arm64 206 → **214**——LDR/STR/LDP/STP 各加一条
 /// **无位移**形态（`ldr x4, [x3]`，编码上就是位移为 0 的那一格；`ldp`/`stp` 同理）。
+/// 2026-10-07（aarch64 前后索引批次）：arm64 214 → **230**——单寄存器 4 宽 × 前/后索引
+/// （`ldr x0, [x1, #16]!` / `ldr x0, [x1], #16`）+ pair 4 宽 × 前/后索引共 16 条。
 #[test]
 fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 299), ("riscv64", 173), ("arm64", 214)],
+        vec![("x86", 299), ("riscv64", 173), ("arm64", 230)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }
