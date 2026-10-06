@@ -825,6 +825,15 @@ fn sample_operands(
             }
             OperandKind::Imm => {
                 let (lo, hi) = slot.imm_range().unwrap_or((0, 0));
+                // 带**单位**的槽（`unit`）：采样值/边界都必须是 `unit` 的整数倍，否则编码期的
+                // 整除检查会把自测用例拒掉（实测：切片 + unit 的槽报"立即数未按位域语义解码"）。
+                // 对齐方向朝**零**（正数向下、负数向上），保证仍落在 `lo..=hi` 内。
+                let (lo, hi) = if slot.unit() > 1 {
+                    let u = slot.unit();
+                    (lo / u * u, hi / u * u)
+                } else {
+                    (lo, hi)
+                };
                 // 多字段落点的代表值由**方案**给：`logical_imm` 的可编码集不是区间
                 // （0 与全 1 都不可编码），按 lo/hi 采样必取到编不出来的值。
                 let base = match slot.encode {

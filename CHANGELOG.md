@@ -11,6 +11,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-07) — `unit` 在**位切片**编码路径被跳过（分段立即数 + 单位缩放会写错字段）
+
+`[operand_slots].unit`（源值单位）原先只在**单字段**编码路径生效：`encode = "slice"` 的
+**多字段**分支直接 `let __mv = *#fid as u64;`，把**源值**当字段值切片。于是任何"分段立即数
++ 单位缩放"的形态都会写错——实测 ADR/ADRP 家族里 `adrp x0, #4096`（页单位）编成
+`[0,128,0,144]`，上游是 `[0,0,0,176]`（差一整个字节）。
+
+修法（与单字段路径**对称**，两行概念）：
+
+**编码侧**：切片前先把源值除以单位（`imm` 槽查整除并报错；`label` 槽只移位不查——它塞的是
+  标签 id 占位、随后由 reloc patcher 改写，查整除只会误报，口径与单字段路径一致）；
+**解码侧**：拼回各段后乘回单位（缺这一步则"编码除了、解码没乘回来"的往返字节不稳）。
+
+同时把**生成期采样**对齐到单位（`spec.rs`）：`imm` 槽的 `lo`/`hi` 采样值必须取单位的整数倍
+（朝零对齐，仍落在原值域内），否则边界自测会构造出"编码期整除检查必然拒绝"的用例。
+
+**证据**：应用本修复后，ADR/ADRP 的 4 条上游字节向量（`adr x0, #0`=`0x10`、`adr x0, #1`=`0x30`、
+`adrp x0, #0`=`0x90`、`adrp x0, #4096`=`0xb0`）**逐字节全过**，往返稳定；`cargo test -p
+forge-codegen --test spec_tests` 与全工作区门禁（`cargo test --workspace --exclude forge-rustc`）
+均 **exit 0**。**未随本提交带夹具用例**：给 `demo_inst12` 加"切片 + unit"夹具时，该夹具的 imm
+文本形态与模板不合（`ldw r0, #12` 报 no matching），因此夹具已撤，本条只落"修复 + 采样对齐"，
+夹具与 ADR/ADRP 的谱侧落地留待下一步（详见 `crates/tools/forge-tests/asm/README.md` 的勘察记录）。
+
 ### Added (2026-10-07) — aarch64：`mov` 立即数的**符号/表达式**形态（8 条）+ 同型指令改用模板（谱减 ~99 行）
 
 **形态**：`mov x0, #:abs_g0_s:sym`、`mov x0, 1b - 0b` 这类写法。**零新增概念**：槽复用 movz/movk/movn 重定位那批已有的 `imm16g0..g3`（按 hw 分组、各带 `imm_fns` 过滤 + `require_symbol`），编码沿用 `MOVXIMM`/`MOVWIMM`（`mov <Rd>, #imm` = `movz hw=0`）的 form/opcode，模板**不带 `#`**（修饰文本/符号文本自带）以与数值形态保持形状隔离。效果：`parsed` 1922 → **1924**、红 1376 → **1369**；**`mov-expr-as-immediate.s` 与 `mov-unsupported-expr-as-immediate.s` 两个文件转绿** ⇒ 全绿集 **123 → 125**（PROVENANCE 127 行）。

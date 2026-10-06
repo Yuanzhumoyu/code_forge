@@ -896,9 +896,32 @@ fn gen_encode(infos: &[InstInfo], m: &IsaModel) -> Result<TokenStream, String> {
             if let (Some(enc), Some(sfields)) = (slot.encode, &slot.fields) {
                 match enc {
                     SlotEncode::Slice => {
-                        stmts.push(quote! {
-                            let __mv = *#fid as u64;
-                        });
+                        // 源值单位（`unit`）在**切片路径**同样要生效：先除再切。此前这里直接
+                        // `let __mv = *#fid as u64;` ⇒ 带单位的切片槽把**源值**写进字段。
+                        // 对齐检查与单字段路径同口径：**只对 imm 槽查**（label 槽塞的是标签 id
+                        // 占位，随后由 reloc patcher 改写，查整除只会误报）。
+                        if slot.unit() > 1 {
+                            let sh = proc_macro2::Literal::u32_unsuffixed(slot.unit_shift());
+                            let unit_lit = proc_macro2::Literal::i64_suffixed(slot.unit());
+                            if slot.kind == OperandKind::Imm {
+                                stmts.push(quote! {
+                                    let __raw = *#fid as i64;
+                                    if __raw % #unit_lit != 0 {
+                                        return Err(format!(
+                                            "{}: immediate {} 不是 {} 的整数倍（该槽以字节为单位：{} 字节 = 1 个字段单位）",
+                                            stringify!(#vn), __raw, #unit_lit, #unit_lit
+                                        ));
+                                    }
+                                    let __mv = (__raw >> #sh) as u64;
+                                });
+                            } else {
+                                stmts.push(quote! { let __mv = ((*#fid as i64) >> #sh) as u64; });
+                            }
+                        } else {
+                            stmts.push(quote! {
+                                let __mv = *#fid as u64;
+                            });
+                        }
                         let mut sh: u32 = 0;
                         for sname in sfields {
                             let sbf = single_field(m, sname, "fields")?;
@@ -1383,6 +1406,14 @@ fn gen_decode_group(
                             sh += single(sbf).1;
                         }
                         let combined = quote! { (#(#parts)|*) };
+                        // 源值单位（`unit`）：与单字段路径**对称**——字段值乘回源单位。
+                        // 缺这一步会让"编码除了 unit、解码没乘回来"的往返字节不稳。
+                        let combined = if slot.unit() > 1 {
+                            let sh = proc_macro2::Literal::u32_unsuffixed(slot.unit_shift());
+                            quote! { ((#combined) << #sh) }
+                        } else {
+                            combined
+                        };
                         if signed {
                             let w = slot.width.unwrap_or(64);
                             sign_extend_ts(quote! { (#combined) as u64 }, w)
