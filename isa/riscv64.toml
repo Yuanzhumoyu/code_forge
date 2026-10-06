@@ -224,6 +224,18 @@ w = 1
 #
 # 运行时**双向**：解析认名字也认数字；渲染时值在表里就写名字（`disassemble → assemble` 闭合）。
 # 改这张表＝改数据，不动生成器；名字非法/值超出槽的接受值域在 `validate` 期报错。
+# 浮点**舍入模式**（`rm`，RISC-V F/D 的 `funct3` 那 3 位）：与 CSR 名同一机制的第二张表。
+# 汇编里既是显式操作数（`fadd.s f1, f2, f3, rtz`），也是"省略 rm"时的**缺省值 `dyn`**
+# （`fadd.s f1, f2, f3` ≡ `fadd.s f1, f2, f3, dyn`——上游把省略写法当 `dyn` 的别名，
+# 见 `asm/parse/riscv64/llvm-mc/fp-default-rounding-mode.s` 的 `CHECK-INST`）。
+[conventions.imm_names.rm]
+rne = 0
+rtz = 1
+rdn = 2
+rup = 3
+rmm = 4
+dyn = 7
+
 [conventions.imm_names.csr]
 fflags = 0x001
 frm = 0x002
@@ -722,6 +734,15 @@ signed = false
 width = 12
 names = "csr"
 
+# 浮点舍入模式（`funct3` 那 3 位）：**名字表**（`rne`/`rtz`/`rdn`/`rup`/`rmm`/`dyn`）。
+# 与 CSR 槽同一机制：解析认名字也认数字（`..., 1` 也行），渲染时写名字。
+[[operand_slots]]
+name = "rm3"
+kind = "imm"
+signed = false
+width = 3
+names = "rm"
+
 [[operand_slots]]
 name = "zimm5"
 kind = "imm"
@@ -746,6 +767,18 @@ width = 21
 name = "R"
 opcode_field = "opcode"
 operand_fields = ["rd", "rs1", "rs2"]
+
+# R 型的**浮点**变体：`funct3` 是 rm（舍入模式）⇒ 它是**操作数**而不是固定字段。
+# 两条形态：三操作数（`fadd`/`fsub`/`fmul`/`fdiv`）与两操作数（`fsqrt`/`fcvt`，rs2 由指令固定）。
+[[forms]]
+name = "R_RM"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1", "rs2", "funct3"]
+
+[[forms]]
+name = "R_RM2"
+opcode_field = "opcode"
+operand_fields = ["rd", "rs1", "funct3"]
 
 [[forms]]
 name = "I"
@@ -917,37 +950,363 @@ fields = { funct3 = 2, funct7 = 0x10 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "fsgnjx.s {dst}, {src}, {src2}"
 
-[[instructions]]
-name = "FCVT_W_S_RTZ"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 1, funct7 = 0x60 }
-ops = ["dst:gpr:out", "src:fpr"]
-asm = "fcvt.w.s {dst}, {src}, rtz"
+# ── 浮点转换（`fcvt.*`）：rm 是操作数（`funct3`）；**省略 rm = `dyn`** ──
+#
+# 与浮点算术同一格局，每族两条并列声明：
+#   ① `<名>`     —— 显式 rm 操作数（`fcvt.w.s a0, fs5, dyn`、`..., rne`…），form `R_RM2`；
+#   ② `<名>_DYN` —— **省略 rm** 的写法（`fcvt.w.s a0, fs5`）：上游把它当 `dyn` 的别名，
+#      所以 `funct3 = 7` 固定。声明序把 ① 放前 ⇒ 解码走 ①（渲染出 `, dyn`，与上游一致）。
+#
+# 从前这里把"省略写法"写成 `funct3 = 0`（= `rne`）——那是**字节错**（上游的缺省是 `dyn`），
+# 由 `fp-default-rounding-mode.s` 的上游期望字节直接守住。`rs2` 挑转换源类型
+# （`fcvt.w.s`/`fcvt.wu.s`/`fcvt.l.s`/`fcvt.lu.s` = rs2 0/1/2/3）：编译期固定字段，不是操作数。
+# L/LU 那 8 条（`fcvt.l.s`、`fcvt.s.l`…）是 **RV64-only**，标 `only_variants`。
+
+# ── 浮点转换（`fcvt.*`）：rm 是操作数（`funct3`）；**省略 rm = `rne`(0)** ──
+#
+# 与浮点算术同一格局，每族两条并列声明：
+#   ① `<名>`     —— 显式 rm 操作数（`fcvt.w.s a0, fs5, dyn`、`..., rne`…），form `R_RM2`；
+#   ② `<名>_RNE` —— **省略 rm** 的写法（`fcvt.w.s a0, fs5`）：`funct3 = 0` 固定。
+#      声明序把 ① 放前 ⇒ 解码走 ①（渲染出 `..., 0` 的名字）。`rs2` 挑转换源类型
+#      （`fcvt.w.s`/`fcvt.wu.s`/`fcvt.l.s`/`fcvt.lu.s` = rs2 0/1/2/3）：编译期固定字段。
+#
+# **为什么算术族是 `dyn` 而转换族是 `rne`**：这不是猜的，是从语料自带的期望字节里**量**出来的
+# （`rv32d-valid.s:15 fadd.s f26, f27, f28` = funct3 7；`rv32d-valid.s:98/120/126`、
+# `rv32zdinx-valid.s:61/83/89`、`rv32zfhmin-valid.s:53/62`、`rv64zhinxmin-valid.s:9`
+# 的 `fcvt.*` 省略写法全是 funct3 0）。两者都是上游自己的 `CHECK-ASM: encoding`。
+# L/LU 那 8 条（`fcvt.l.s`、`fcvt.s.l`…）是 **RV64-only**，标 `only_variants`。
+
+# ── 浮点转换（`fcvt.*`）：rm 是操作数（`funct3`）；**省略 rm = `rne`(0)** ──
+#
+# 与浮点算术同一格局，每族两条并列声明：
+#   ① `<名>`     —— 显式 rm 操作数（`fcvt.w.s a0, fs5, dyn`、`..., rne`…），form `R_RM2`；
+#   ② `<名>_RNE` —— **省略 rm** 的写法（`fcvt.w.s a0, fs5`）：`funct3 = 0` 固定。
+#      声明序把 ① 放前 ⇒ 解码走 ①（渲染出 `..., 0` 的名字）。`rs2` 挑转换源类型
+#      （`fcvt.w.s`/`fcvt.wu.s`/`fcvt.l.s`/`fcvt.lu.s` = rs2 0/1/2/3）：编译期固定字段。
+#
+# **为什么算术族是 `dyn` 而转换族是 `rne`**：这不是猜的，是从语料自带的期望字节里**量**出来的
+# （`rv32d-valid.s:15 fadd.s f26, f27, f28` = funct3 7；`rv32d-valid.s:98/120/126`、
+# `rv32zdinx-valid.s:61/83/89`、`rv32zfhmin-valid.s:53/62`、`rv64zhinxmin-valid.s:9`
+# 的 `fcvt.*` 省略写法全是 funct3 0）。两者都是上游自己的 `CHECK-ASM: encoding`。
+# L/LU 那 8 条（`fcvt.l.s`、`fcvt.s.l`…）是 **RV64-only**，标 `only_variants`。
+
+# ── 浮点转换（`fcvt.*`）：rm 是操作数（`funct3`）；**省略 rm = `rne`(0)** ──
+#
+# 与浮点算术同一格局，每族两条并列声明：
+#   ① `<名>`     —— 显式 rm 操作数（`fcvt.w.s a0, fs5, dyn`、`..., rne`…），form `R_RM2`；
+#   ② `<名>_RNE` —— **省略 rm** 的写法（`fcvt.w.s a0, fs5`）：`funct3 = 0` 固定。
+#      声明序把 ① 放前 ⇒ 解码走 ①（渲染出 `..., 0` 的名字）。`rs2` 挑转换源类型
+#      （`fcvt.w.s`/`fcvt.wu.s`/`fcvt.l.s`/`fcvt.lu.s` = rs2 0/1/2/3）：编译期固定字段。
+#
+# **为什么算术族是 `dyn` 而转换族是 `rne`**：这不是猜的，是从语料自带的期望字节里**量**出来的
+# （`rv32d-valid.s:15 fadd.s f26, f27, f28` = funct3 7；`rv32d-valid.s:98/120/126`、
+# `rv32zdinx-valid.s:61/83/89`、`rv32zfhmin-valid.s:53/62`、`rv64zhinxmin-valid.s:9`
+# 的 `fcvt.*` 省略写法全是 funct3 0）。两者都是上游自己的 `CHECK-ASM: encoding`。
+# L/LU 那 8 条（`fcvt.l.s`、`fcvt.s.l`…）是 **RV64-only**，标 `only_variants`。
 
 [[instructions]]
-name = "FCVT_WU_S_RTZ"
-form = "R"
+name = "FCVT_W_S"
+form = "R_RM2"
 opcode = 0x53
-fields = { funct3 = 1, funct7 = 0x60, rs2 = 1 }
-ops = ["dst:gpr:out", "src:fpr"]
-asm = "fcvt.wu.s {dst}, {src}, rtz"
+fields = { funct7 = 0x60, rs2 = 0 }
+ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
+asm = "fcvt.w.s {dst}, {src}, {rm}"
 
 [[instructions]]
 name = "FCVT_W_S_RNE"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x60 }
+fields = { funct3 = 0, funct7 = 0x60, rs2 = 0 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.w.s {dst}, {src}"
 
 [[instructions]]
-name = "FCVT_S_W"
+name = "FCVT_WU_S"
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x60, rs2 = 1 }
+ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
+asm = "fcvt.wu.s {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_WU_S_RNE"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x68 }
+fields = { funct3 = 0, funct7 = 0x60, rs2 = 1 }
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fcvt.wu.s {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_L_S"
+only_variants = { xlen = [64] }
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x60, rs2 = 2 }
+ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
+asm = "fcvt.l.s {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_L_S_RNE"
+only_variants = { xlen = [64] }
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x60, rs2 = 2 }
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fcvt.l.s {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_LU_S"
+only_variants = { xlen = [64] }
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x60, rs2 = 3 }
+ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
+asm = "fcvt.lu.s {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_LU_S_RNE"
+only_variants = { xlen = [64] }
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x60, rs2 = 3 }
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fcvt.lu.s {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_W_D"
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x61, rs2 = 0 }
+ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
+asm = "fcvt.w.d {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_W_D_RNE"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x61, rs2 = 0 }
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fcvt.w.d {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_WU_D"
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x61, rs2 = 1 }
+ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
+asm = "fcvt.wu.d {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_WU_D_RNE"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x61, rs2 = 1 }
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fcvt.wu.d {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_L_D"
+only_variants = { xlen = [64] }
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x61, rs2 = 2 }
+ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
+asm = "fcvt.l.d {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_L_D_RNE"
+only_variants = { xlen = [64] }
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x61, rs2 = 2 }
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fcvt.l.d {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_LU_D"
+only_variants = { xlen = [64] }
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x61, rs2 = 3 }
+ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
+asm = "fcvt.lu.d {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_LU_D_RNE"
+only_variants = { xlen = [64] }
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x61, rs2 = 3 }
+ops = ["dst:gpr:out", "src:fpr"]
+asm = "fcvt.lu.d {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_S_W"
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x68, rs2 = 0 }
+ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
+asm = "fcvt.s.w {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_S_W_RNE"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x68, rs2 = 0 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.s.w {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_S_WU"
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x68, rs2 = 1 }
+ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
+asm = "fcvt.s.wu {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_S_WU_RNE"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x68, rs2 = 1 }
+ops = ["dst:fpr:out", "src:gpr"]
+asm = "fcvt.s.wu {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_S_L"
+only_variants = { xlen = [64] }
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x68, rs2 = 2 }
+ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
+asm = "fcvt.s.l {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_S_L_RNE"
+only_variants = { xlen = [64] }
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x68, rs2 = 2 }
+ops = ["dst:fpr:out", "src:gpr"]
+asm = "fcvt.s.l {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_S_LU"
+only_variants = { xlen = [64] }
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x68, rs2 = 3 }
+ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
+asm = "fcvt.s.lu {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_S_LU_RNE"
+only_variants = { xlen = [64] }
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x68, rs2 = 3 }
+ops = ["dst:fpr:out", "src:gpr"]
+asm = "fcvt.s.lu {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_D_W"
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x69, rs2 = 0 }
+ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
+asm = "fcvt.d.w {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_D_W_RNE"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x69, rs2 = 0 }
+ops = ["dst:fpr:out", "src:gpr"]
+asm = "fcvt.d.w {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_D_WU"
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x69, rs2 = 1 }
+ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
+asm = "fcvt.d.wu {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_D_WU_RNE"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x69, rs2 = 1 }
+ops = ["dst:fpr:out", "src:gpr"]
+asm = "fcvt.d.wu {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_D_L"
+only_variants = { xlen = [64] }
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x69, rs2 = 2 }
+ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
+asm = "fcvt.d.l {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_D_L_RNE"
+only_variants = { xlen = [64] }
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x69, rs2 = 2 }
+ops = ["dst:fpr:out", "src:gpr"]
+asm = "fcvt.d.l {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_D_LU"
+only_variants = { xlen = [64] }
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x69, rs2 = 3 }
+ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
+asm = "fcvt.d.lu {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_D_LU_RNE"
+only_variants = { xlen = [64] }
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x69, rs2 = 3 }
+ops = ["dst:fpr:out", "src:gpr"]
+asm = "fcvt.d.lu {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_S_D"
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x20, rs2 = 1 }
+ops = ["dst:fpr:out", "src:fpr", "rm:rm3"]
+asm = "fcvt.s.d {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_S_D_RNE"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x20, rs2 = 1 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "fcvt.s.d {dst}, {src}"
+
+[[instructions]]
+name = "FCVT_D_S"
+form = "R_RM2"
+opcode = 0x53
+fields = { funct7 = 0x21, rs2 = 0 }
+ops = ["dst:fpr:out", "src:fpr", "rm:rm3"]
+asm = "fcvt.d.s {dst}, {src}, {rm}"
+
+[[instructions]]
+name = "FCVT_D_S_RNE"
+form = "R"
+opcode = 0x53
+fields = { funct3 = 0, funct7 = 0x21, rs2 = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "fcvt.d.s {dst}, {src}"
 
 [[instructions]]
 name = "FMV_W_X"
@@ -961,70 +1320,6 @@ asm = "fmv.w.x {dst}, {src}"
 # `docs/plans/varargs-plan.md` §5）、Zfinx/软浮点约定。缺这条角色 ⇒ 那条落点在生成物里
 # fail-closed（拿同类搬移顶上会把 FPR 的号当 GPR 号用 = **静默错值**）。
 data_width = 32
-
-[[instructions]]
-name = "FCVT_W_D_RTZ"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 1, funct7 = 0x61 }
-ops = ["dst:gpr:out", "src:fpr"]
-asm = "fcvt.w.d {dst}, {src}, rtz"
-
-[[instructions]]
-name = "FCVT_WU_D_RTZ"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 1, funct7 = 0x61, rs2 = 1 }
-ops = ["dst:gpr:out", "src:fpr"]
-asm = "fcvt.wu.d {dst}, {src}, rtz"
-
-[[instructions]]
-name = "FCVT_L_D_RTZ"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 1, funct7 = 0x61, rs2 = 2 }
-ops = ["dst:gpr:out", "src:fpr"]
-asm = "fcvt.l.d {dst}, {src}, rtz"
-
-[[instructions]]
-name = "FCVT_LU_D_RTZ"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 1, funct7 = 0x61, rs2 = 3 }
-ops = ["dst:gpr:out", "src:fpr"]
-asm = "fcvt.lu.d {dst}, {src}, rtz"
-
-[[instructions]]
-name = "FCVT_D_W"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x69 }
-ops = ["dst:fpr:out", "src:gpr"]
-asm = "fcvt.d.w {dst}, {src}"
-
-[[instructions]]
-name = "FCVT_D_WU"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 1, funct7 = 0x69 }
-ops = ["dst:fpr:out", "src:gpr"]
-asm = "fcvt.d.wu {dst}, {src}"
-
-[[instructions]]
-name = "FCVT_S_D"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x20 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "fcvt.s.d {dst}, {src}"
-
-[[instructions]]
-name = "FCVT_D_S"
-form = "R"
-opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x21 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "fcvt.d.s {dst}, {src}"
 
 [[instructions]]
 name = "FMV_D_X"
@@ -2123,30 +2418,30 @@ insts = ["FDIV_D {out}, {0}, {1}"]
 [[lowering]]
 op = "Fptosi"
 when = { eq = ["rs1_width", 32] }
-insts = ["FCVT_W_S_RTZ {out}, {0}"]
+insts = ["FCVT_W_S {out}, {0}, 1"]
 
 [[lowering]]
 op = "Fptosi"
 when = { eq = ["rd", 32] }
-insts = ["FCVT_W_D_RTZ {out}, {0}"]
+insts = ["FCVT_W_D {out}, {0}, 1"]
 
 [[lowering]]
 op = "Fptosi"
-insts = ["FCVT_L_D_RTZ {out}, {0}"]
+insts = ["FCVT_L_D {out}, {0}, 1"]
 
 [[lowering]]
 op = "Fptoui"
 when = { eq = ["rs1_width", 32] }
-insts = ["FCVT_WU_S_RTZ {out}, {0}"]
+insts = ["FCVT_WU_S {out}, {0}, 1"]
 
 [[lowering]]
 op = "Fptoui"
 when = { eq = ["rd", 32] }
-insts = ["FCVT_WU_D_RTZ {out}, {0}"]
+insts = ["FCVT_WU_D {out}, {0}, 1"]
 
 [[lowering]]
 op = "Fptoui"
-insts = ["FCVT_LU_D_RTZ {out}, {0}"]
+insts = ["FCVT_LU_D {out}, {0}, 1"]
 
 # ── 饱和（32 位）：UaddSat 进位时 = 0xFFFFFFFF；UsubSat 借位时 = 0 ──
 
@@ -2567,37 +2862,80 @@ insts = [
 # 助记符后缀由 `{p.lower}` 插值得到（`fadd.{p.lower}`），因此 `fadd.s` 这种**带点**的
 # 助记符也能派生——旧 `[[families]]` 的 `{name}` 只能给"变体名小写"，表达不了。
 
+# 浮点算术：**rm 是操作数**（它就是 `funct3` 那 3 位）。每族两条并列声明：
+#   ① **显式 rm**（`fadd.s f1, f2, f3, rtz`）—— form `R_RM`，第 4 个操作数落 `funct3`；
+#   ② **省略 rm**（`fadd.s f1, f2, f3`）—— 上游把省略写法当 **`dyn`（= 7）** 的别名，
+#      所以这里 `funct3 = 7` 固定。**这不是"另一条指令"**，而是同一编码空间里最常用的一格：
+#      声明序把 ① 放在前，于是 `..., dyn` 解出来落在 ①（文本带 `, dyn`，与上游 `CHECK-INST`
+#      的写法一致），② 只承担"省略写法能装配"这一件事。
+# 修这里同时修掉一处**字节错**：从前 ② 把 `funct3` 写成 `0`（= rne），而省略 rm 的语义是
+# `dyn`——语料铺开后由 `fp-default-rounding-mode.s` 的上游期望字节直接守住。
 [[templates]]
-name = "FADD"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fadd.{p.lower} {dst}, {src}, {src2}" }
+name = "FADD_RM"
+body = { form = "R_RM", opcode = 0x53, fields = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fadd.{p.lower} {dst}, {src}, {src2}, {rm}" }
+rows = [
+  { inst = "FADD_S_RM", p = "S", funct7 = 0x00 },
+  { inst = "FADD_D_RM", p = "D", funct7 = 0x01 },
+]
+[[templates]]
+name = "FADD_DYN"
+body = { form = "R", opcode = 0x53, fields = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fadd.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FADD_S", p = "S", funct7 = 0x00 },
   { inst = "FADD_D", p = "D", funct7 = 0x01 },
 ]
 [[templates]]
-name = "FSUB"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fsub.{p.lower} {dst}, {src}, {src2}" }
+name = "FSUB_RM"
+body = { form = "R_RM", opcode = 0x53, fields = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fsub.{p.lower} {dst}, {src}, {src2}, {rm}" }
+rows = [
+  { inst = "FSUB_S_RM", p = "S", funct7 = 0x04 },
+  { inst = "FSUB_D_RM", p = "D", funct7 = 0x05 },
+]
+[[templates]]
+name = "FSUB_DYN"
+body = { form = "R", opcode = 0x53, fields = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fsub.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FSUB_S", p = "S", funct7 = 0x04 },
   { inst = "FSUB_D", p = "D", funct7 = 0x05 },
 ]
 [[templates]]
-name = "FMUL"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmul.{p.lower} {dst}, {src}, {src2}" }
+name = "FMUL_RM"
+body = { form = "R_RM", opcode = 0x53, fields = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fmul.{p.lower} {dst}, {src}, {src2}, {rm}" }
+rows = [
+  { inst = "FMUL_S_RM", p = "S", funct7 = 0x08 },
+  { inst = "FMUL_D_RM", p = "D", funct7 = 0x09 },
+]
+[[templates]]
+name = "FMUL_DYN"
+body = { form = "R", opcode = 0x53, fields = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmul.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FMUL_S", p = "S", funct7 = 0x08 },
   { inst = "FMUL_D", p = "D", funct7 = 0x09 },
 ]
 [[templates]]
-name = "FDIV"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fdiv.{p.lower} {dst}, {src}, {src2}" }
+name = "FDIV_RM"
+body = { form = "R_RM", opcode = 0x53, fields = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fdiv.{p.lower} {dst}, {src}, {src2}, {rm}" }
+rows = [
+  { inst = "FDIV_S_RM", p = "S", funct7 = 0x0C },
+  { inst = "FDIV_D_RM", p = "D", funct7 = 0x0D },
+]
+[[templates]]
+name = "FDIV_DYN"
+body = { form = "R", opcode = 0x53, fields = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fdiv.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FDIV_S", p = "S", funct7 = 0x0C },
   { inst = "FDIV_D", p = "D", funct7 = 0x0D },
 ]
 [[templates]]
-name = "FSQRT"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr"], asm = "fsqrt.{p.lower} {dst}, {src}" }
+name = "FSQRT_RM"
+body = { form = "R_RM2", opcode = 0x53, fields = { rs2 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "rm:rm3"], asm = "fsqrt.{p.lower} {dst}, {src}, {rm}" }
+rows = [
+  { inst = "FSQRT_S_RM", p = "S", funct7 = 0x2C },
+  { inst = "FSQRT_D_RM", p = "D", funct7 = 0x2D },
+]
+[[templates]]
+name = "FSQRT_DYN"
+body = { form = "R", opcode = 0x53, fields = { funct3 = 7, rs2 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr"], asm = "fsqrt.{p.lower} {dst}, {src}" }
 rows = [
   { inst = "FSQRT_S", p = "S", funct7 = 0x2C },
   { inst = "FSQRT_D", p = "D", funct7 = 0x2D },
@@ -2852,23 +3190,23 @@ bytes = [0xAF, 0xA0, 0x21, 0x00]
 
 [[vectors]]
 asm = "fadd.s F1, F2, F3"
-bytes = [0xD3, 0x00, 0x31, 0x00]
+bytes = [0xD3, 0x70, 0x31, 0x00]
 
 [[vectors]]
 asm = "fsub.s F1, F2, F3"
-bytes = [0xD3, 0x00, 0x31, 0x08]
+bytes = [0xD3, 0x70, 0x31, 0x08]
 
 [[vectors]]
 asm = "fmul.s F1, F2, F3"
-bytes = [0xD3, 0x00, 0x31, 0x10]
+bytes = [0xD3, 0x70, 0x31, 0x10]
 
 [[vectors]]
 asm = "fdiv.s F1, F2, F3"
-bytes = [0xD3, 0x00, 0x31, 0x18]
+bytes = [0xD3, 0x70, 0x31, 0x18]
 
 [[vectors]]
 asm = "fsqrt.s F1, F2"
-bytes = [0xD3, 0x00, 0x01, 0x58]
+bytes = [0xD3, 0x70, 0x01, 0x58]
 
 [[vectors]]
 asm = "fsgnj.s F1, F2, F3"

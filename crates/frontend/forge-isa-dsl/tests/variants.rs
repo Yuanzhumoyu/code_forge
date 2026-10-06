@@ -90,7 +90,7 @@ fn undeclared_or_out_of_domain_param_is_an_error() {
     );
 }
 
-/// ③ 发行谱投影账目快照：RV32 视角 = 139 → 122 条指令，且连带丢 14 条 lowering。
+/// ③ 发行谱投影账目快照：RV32 视角 = 173 → 140 条指令，且连带丢 16 条 lowering。
 ///
 /// 数字随 riscv64 谱增长而变（更新前先跑 `forge-isa insts isa/riscv64.toml --params xlen=32`
 /// 看账目，人工核对后被投影掉的是不是**真的都是 RV64 专属**）：
@@ -100,13 +100,18 @@ fn undeclared_or_out_of_domain_param_is_an_error() {
 /// 故 RV32 视角 105 → **122**（2026-10-04 再补 `JALR3` 与 `FENCE_PS`：两者都不标 `xlen`，
 /// RV32 视角同样保留）；`lowering` 108 与逐节丢弃合计 15 不变
 /// （被丢的 lowering 全是"点了被投影掉的引用名"的那 14 条）。
+/// 2026-10-07（浮点 rm 批次）：139 → **173**（`fcvt` 族每条拆成"rm 操作数 + 省略 rm"两条、
+/// 浮点算术 5 族各加一条显式 rm），RV64 专属从 17 → **33**——新增的 16 条是
+/// `FCVT_{L,LU}_{S,D}` 与 `FCVT_{S,D}_{L,LU}` 两两成对（`.l`/`.lu` 源或目的都是 RV64 才有），
+/// 故 RV32 视角 122 → **140**；`lowering` 108 → **106**（`Fptosi`/`Fptoui` 里那 2 条点
+/// `FCVT_L_D`/`FCVT_LU_D` 的规则随引用名被投影掉），逐节丢弃合计 15 → **17**。
 #[test]
 fn riscv_rv32_projection_snapshot() {
     let (_, rows, p) = insts("riscv64.toml", &["xlen=32"]);
     assert_eq!(
         p.dropped_insts.len(),
-        17,
-        "丢掉 17 条 RV64 专属指令（含 v20 V9 补的 LWU/ADDIW 与 W 立即数移位）"
+        33,
+        "丢掉 33 条 RV64 专属指令（含 16 条 L/LU 浮点转换与 LWU/ADDIW、W 立即数移位）"
     );
     for name in [
         "LD",
@@ -115,6 +120,10 @@ fn riscv_rv32_projection_snapshot() {
         "ADDW", "SUBW", "MULW", "DIVW", "DIVUW", "REMW", "REMUW", // W 族 R 型
         "SLLW", "SRLW", "SRAW", // W 族寄存器移位
         "SLLIW", "SRLIW", "SRAIW", // W 族立即数移位（2026-10-04 补）
+        "FCVT_L_S", "FCVT_L_S_RNE", "FCVT_LU_S", "FCVT_LU_S_RNE", // 2026-10-07 浮点 rm 批次
+        "FCVT_L_D", "FCVT_L_D_RNE", "FCVT_LU_D", "FCVT_LU_D_RNE",
+        "FCVT_S_L", "FCVT_S_L_RNE", "FCVT_S_LU", "FCVT_S_LU_RNE",
+        "FCVT_D_L", "FCVT_D_L_RNE", "FCVT_D_LU", "FCVT_D_LU_RNE",
     ] {
         assert!(
             p.dropped_insts.contains(&name.to_string()),
@@ -128,17 +137,19 @@ fn riscv_rv32_projection_snapshot() {
     }
     // 104 → 105（2026-10-01）：riscv 补了 `FSGNJ_D`（`fpr_mov` 的 64 位档）。它**不标**
     // `xlen`——RV32D 同样定义 `fsgnj.d`（D 扩展在 RV32 上存在），所以 RV32 视角该留下它。
-    assert_eq!(p.inst_count, 122, "RV32 投影剩 122 条");
-    assert_eq!(rows.len(), 122);
+    assert_eq!(p.inst_count, 140, "RV32 投影剩 140 条");
+    assert_eq!(rows.len(), 140);
     // 96 → 100（2026-10-01）：riscv 补了 `Fload`/`Fstore` 各两条（单/双精度）lowering，
     // 它们的 `when` 只按宽度分派、引用的 `FLW`/`FSW` 与 `FLD`/`FSD` 在 RV32 视角下都还在。
     // 100 → 108（同日）：再补浮点算术 `Fadd`/`Fsub`/`Fmul`/`Fdiv` 各两条（单/双精度），
     // 引用的是 `FADD_S`/`FADD_D` 等 F 扩展指令，同样不随 `xlen` 投影消失。
-    assert_eq!(p.lowering_count, 108, "RV32 投影的 lowering 剩 108 条");
+    // 108 → 106（2026-10-07）：`Fptosi`/`Fptoui` 里点 `FCVT_L_D`/`FCVT_LU_D` 的两条规则
+    // 随引用名（现在叫 `FCVT_L_D`/`FCVT_LU_D`，标了 `xlen=[64]`）被投影掉。
+    assert_eq!(p.lowering_count, 106, "RV32 投影的 lowering 剩 106 条");
     let dropped: usize = p.dropped_decls.iter().map(|(_, n)| n).sum();
     assert_eq!(
-        dropped, 15,
-        "逐节丢弃合计 15 项（v20 A4 起序/尾声不再由谱写）：{:#?}",
+        dropped, 17,
+        "逐节丢弃合计 17 项（v20 A4 起序/尾声不再由谱写）：{:#?}",
         p.dropped_decls
     );
     for what in ["[spill.GPR]", "[[lowering]]"] {
@@ -148,9 +159,9 @@ fn riscv_rv32_projection_snapshot() {
             p.dropped_decls
         );
     }
-    // 默认档对照：同一份谱不传参数 = 139/122（投影是纯 opt-in）。
+    // 默认档对照：同一份谱不传参数 = 173/140（投影是纯 opt-in）。
     let (_, def_rows, def_p) = insts("riscv64.toml", &[]);
-    assert_eq!(def_rows.len(), 139);
+    assert_eq!(def_rows.len(), 173);
     assert_eq!(def_p.lowering_count, 122);
 }
 
@@ -159,20 +170,21 @@ fn riscv_rv32_projection_snapshot() {
 fn cascade_keeps_unrelated_lowering() {
     let (_, _, p) = insts("riscv64.toml", &["xlen=32"]);
     // RV64 的 64 位 Iadd/Isub/Imul/Load/Store 与帧件的通用规则都不该因投影消失过头：
-    // 122 - 108 = 14 条全是"点了被投影掉的引用名"的规则。
+    // 140 - 106 = 34 条全是"点了被投影掉的引用名"的规则（2026-10-07 起含
+    // `Fptosi`/`Fptoui` 点 `FCVT_L_D`/`FCVT_LU_D` 的两条）。
     assert_eq!(
-        122 - p.lowering_count,
-        14,
-        "只该丢那 14 条：{:#?}",
+        140 - p.lowering_count,
+        34,
+        "只该丢那 34 条：{:#?}",
         p.dropped_decls
     );
 }
 
-/// ⑤ 只对**调用方传了的参数**做排除：传 `xlen=64` 时 W 族指令照常在（原生 137 条）。
+/// ⑤ 只对**调用方传了的参数**做排除：传 `xlen=64` 时 W 族指令照常在（原生 173 条）。
 #[test]
 fn only_supplied_params_gate() {
     let (_, rows, p) = insts("riscv64.toml", &["xlen=64"]);
-    assert_eq!(rows.len(), 139, "xlen=64 是原生视角，一条都不该丢");
+    assert_eq!(rows.len(), 173, "xlen=64 是原生视角，一条都不该丢");
     assert!(p.dropped_insts.is_empty());
     assert_eq!(p.lowering_count, 122);
 }

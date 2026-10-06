@@ -105,12 +105,15 @@ fn generated_spec_tests_cover_every_instruction() {
 /// 尺寸关键字给 ⇒ 关键字写成模板字面量，歧义随之消失）→ **299**。
 /// 最后补**锁 + 内存序提示**（`acquire/release lock add [mem], r` = `F2`/`F3` + `F0`：
 /// `prefix` 收**列表**，编码按序发、解码逐个判前缀标志）→ **295**。
+/// 2026-10-07（riscv64 浮点 rm 批次）：riscv64 139 → **173**——浮点算术 5 族各加"显式 rm"形态
+/// （`FADD/FSUB/FMUL/FDIV/FSQRT` × S/D = 10 条），`fcvt` 族 18 条改成"rm 操作数 + 省略 rm(=dyn)"
+/// 两条并列（36 条），删掉 6 条固定 `rtz` 的旧声明与 6 条把省略写法写死 `rne` 的声明。
 #[test]
 fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 299), ("riscv64", 139), ("arm64", 206)],
+        vec![("x86", 299), ("riscv64", 173), ("arm64", 206)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }

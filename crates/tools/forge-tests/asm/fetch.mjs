@@ -155,9 +155,13 @@ async function download(f) {
 /** 跑解析档 + 编码对拍档：写 `target/asm-suite/*.json`（**棘轮不一致会 panic，但记分板先写**，忽略退出码）。 */
 function score() {
   console.log('\n== 打分（cargo test --test asm_parse --test asm_encoding；棘轮此刻多半不一致，非零退出属正常）');
+  // `--no-fail-fast` 是**必需**的：cargo 默认在第一个失败的测试目标就停，而这两个档的棘轮几乎
+  // 必然同时不一致（换了谱/换了语料）——少了它，排在后面的 `asm_parse` 根本不跑，解析档记分板
+  // 就停在**上一轮**的旧内容上；于是"这一轮才下载、还没打过分"的候选被记成 `not-scored` 砍掉
+  // （判据被静默绕过，2026-10-07 实测踩到：364 个候选被误记）。
   const r = spawnSync(
     'cargo',
-    ['test', '-p', 'forge-tests', '--test', 'asm_parse', '--test', 'asm_encoding', '--', '--nocapture'],
+    ['test', '-p', 'forge-tests', '--test', 'asm_parse', '--test', 'asm_encoding', '--no-fail-fast', '--', '--nocapture'],
     { cwd: REPO, stdio: 'inherit', shell: process.platform === 'win32' },
   );
   if (r.error) throw r.error;

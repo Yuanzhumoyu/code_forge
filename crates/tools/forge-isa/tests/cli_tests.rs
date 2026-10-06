@@ -105,7 +105,7 @@ asm = "i"
 fn insts_lists_expanded_instructions() {
     let out = run(&["insts", &isa("riscv64.toml")]);
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
-    assert!(out.stdout.contains("139 条指令"), "{}", out.stdout);
+    assert!(out.stdout.contains("173 条指令"), "{}", out.stdout);
     // 模板展开出的实例也在列表里（SLLW 来自 [[templates]] 行）。
     assert!(out.stdout.contains("SLLW"), "{}", out.stdout);
     assert!(out.stdout.contains("template="), "{}", out.stdout);
