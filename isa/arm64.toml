@@ -708,6 +708,44 @@ width = 3
 # ── 重定位修饰的**符号位置**：unit == 1（校验硬要求）+ symbols + require_symbol ──
 # `require_symbol` 把本槽收窄成"必须记到符号"——否则数值写法会被它抢走
 # （unit 更细 ⇒ 接受域更窄 ⇒ 特异性裁决里优先命中），见 model.rs 的字段注释。
+# `movz`/`movk`/`movn` 的符号立即数：**`hw` 由修饰名决定**，所以按 hw 分四个槽、
+# 每个槽用 `imm_fns` 过滤修饰表（否则会把 `abs_g2` 的写法编成 `hw = 0`）。
+[[operand_slots]]
+name = "imm16g0"
+kind = "imm"
+signed = false
+width = 16
+symbols = true
+require_symbol = true
+imm_fns = ["abs_g0", "abs_g0_n", "abs_g0_nc", "abs_g0_nc_n", "abs_g0_s", "abs_g0_s_n", "prel_g0", "prel_g0_n", "prel_g0_nc", "prel_g0_nc_n", "gottprel_g0_nc", "gottprel_g0_nc_n", "tprel_g0", "tprel_g0_n", "tprel_g0_nc", "tprel_g0_nc_n", "dtprel_g0", "dtprel_g0_n", "dtprel_g0_nc", "dtprel_g0_nc_n"]
+
+[[operand_slots]]
+name = "imm16g1"
+kind = "imm"
+signed = false
+width = 16
+symbols = true
+require_symbol = true
+imm_fns = ["abs_g1", "abs_g1_n", "abs_g1_nc", "abs_g1_nc_n", "abs_g1_s", "abs_g1_s_n", "prel_g1", "prel_g1_n", "prel_g1_nc", "prel_g1_nc_n", "gottprel_g1", "gottprel_g1_n", "tprel_g1", "tprel_g1_n", "tprel_g1_nc", "tprel_g1_nc_n", "dtprel_g1", "dtprel_g1_n", "dtprel_g1_nc", "dtprel_g1_nc_n"]
+
+[[operand_slots]]
+name = "imm16g2"
+kind = "imm"
+signed = false
+width = 16
+symbols = true
+require_symbol = true
+imm_fns = ["abs_g2", "abs_g2_n", "abs_g2_nc", "abs_g2_nc_n", "abs_g2_s", "abs_g2_s_n", "prel_g2", "prel_g2_n", "prel_g2_nc", "prel_g2_nc_n", "tprel_g2", "tprel_g2_n", "tprel_g2_nc", "tprel_g2_nc_n", "dtprel_g2", "dtprel_g2_n", "dtprel_g2_nc", "dtprel_g2_nc_n"]
+
+[[operand_slots]]
+name = "imm16g3"
+kind = "imm"
+signed = false
+width = 16
+symbols = true
+require_symbol = true
+imm_fns = ["abs_g3", "abs_g3_n", "prel_g3", "prel_g3_n", "tprel_g3", "tprel_g3_n"]
+
 [[operand_slots]]
 name = "imm12sym"
 kind = "imm"
@@ -1935,6 +1973,203 @@ opcode = 0xEB
 fields = { shift = 0 }
 ops = ["dst:r64:out", "src:r64", "src2:r64", "sh:imm6"]
 asm = "subs {dst}, {src}, {src2}, lsl #{sh}"
+
+# ── `movz`/`movk`/`movn` 的 `abs_g*` 类重定位（`movz x2, #:abs_g0:sym`）──
+#
+# 与数值形态同编码；`hw` 由**修饰名**决定（`abs_g0..g3` ⇒ `hw` 0..3），所以槽按 hw 分并
+# 用 `imm_fns` 过滤。模板**不带 `#`**（修饰文本自带），与数值形态形状不同、不互相遮蔽。
+
+[[instructions]]
+name = "MOVZX_G0_RELO"
+form = "MOVW16"
+opcode = 0x1A5
+fields = { hw = 0 }
+ops = ["dst:r64:out", "imm:imm16g0"]
+asm = "movz {dst}, {imm}"
+
+[[instructions]]
+name = "MOVZX_G1_RELO"
+form = "MOVW16"
+opcode = 0x1A5
+fields = { hw = 1 }
+ops = ["dst:r64:out", "imm:imm16g1"]
+asm = "movz {dst}, {imm}"
+
+[[instructions]]
+name = "MOVZX_G2_RELO"
+form = "MOVW16"
+opcode = 0x1A5
+fields = { hw = 2 }
+ops = ["dst:r64:out", "imm:imm16g2"]
+asm = "movz {dst}, {imm}"
+
+[[instructions]]
+name = "MOVZX_G3_RELO"
+form = "MOVW16"
+opcode = 0x1A5
+fields = { hw = 3 }
+ops = ["dst:r64:out", "imm:imm16g3"]
+asm = "movz {dst}, {imm}"
+
+[[instructions]]
+name = "MOVZW_G0_RELO"
+form = "MOVW16"
+opcode = 0xA5
+fields = { hw = 0 }
+ops = ["dst:r32:out", "imm:imm16g0"]
+asm = "movz {dst}, {imm}"
+
+[[instructions]]
+name = "MOVZW_G1_RELO"
+form = "MOVW16"
+opcode = 0xA5
+fields = { hw = 1 }
+ops = ["dst:r32:out", "imm:imm16g1"]
+asm = "movz {dst}, {imm}"
+
+[[instructions]]
+name = "MOVZW_G2_RELO"
+form = "MOVW16"
+opcode = 0xA5
+fields = { hw = 2 }
+ops = ["dst:r32:out", "imm:imm16g2"]
+asm = "movz {dst}, {imm}"
+
+[[instructions]]
+name = "MOVZW_G3_RELO"
+form = "MOVW16"
+opcode = 0xA5
+fields = { hw = 3 }
+ops = ["dst:r32:out", "imm:imm16g3"]
+asm = "movz {dst}, {imm}"
+
+[[instructions]]
+name = "MOVNX_G0_RELO"
+form = "MOVW16"
+opcode = 0x125
+fields = { hw = 0 }
+ops = ["dst:r64:out", "imm:imm16g0"]
+asm = "movn {dst}, {imm}"
+
+[[instructions]]
+name = "MOVNX_G1_RELO"
+form = "MOVW16"
+opcode = 0x125
+fields = { hw = 1 }
+ops = ["dst:r64:out", "imm:imm16g1"]
+asm = "movn {dst}, {imm}"
+
+[[instructions]]
+name = "MOVNX_G2_RELO"
+form = "MOVW16"
+opcode = 0x125
+fields = { hw = 2 }
+ops = ["dst:r64:out", "imm:imm16g2"]
+asm = "movn {dst}, {imm}"
+
+[[instructions]]
+name = "MOVNX_G3_RELO"
+form = "MOVW16"
+opcode = 0x125
+fields = { hw = 3 }
+ops = ["dst:r64:out", "imm:imm16g3"]
+asm = "movn {dst}, {imm}"
+
+[[instructions]]
+name = "MOVNW_G0_RELO"
+form = "MOVW16"
+opcode = 0x25
+fields = { hw = 0 }
+ops = ["dst:r32:out", "imm:imm16g0"]
+asm = "movn {dst}, {imm}"
+
+[[instructions]]
+name = "MOVNW_G1_RELO"
+form = "MOVW16"
+opcode = 0x25
+fields = { hw = 1 }
+ops = ["dst:r32:out", "imm:imm16g1"]
+asm = "movn {dst}, {imm}"
+
+[[instructions]]
+name = "MOVNW_G2_RELO"
+form = "MOVW16"
+opcode = 0x25
+fields = { hw = 2 }
+ops = ["dst:r32:out", "imm:imm16g2"]
+asm = "movn {dst}, {imm}"
+
+[[instructions]]
+name = "MOVNW_G3_RELO"
+form = "MOVW16"
+opcode = 0x25
+fields = { hw = 3 }
+ops = ["dst:r32:out", "imm:imm16g3"]
+asm = "movn {dst}, {imm}"
+
+[[instructions]]
+name = "MOVKX_G0_RELO"
+form = "MOVW16"
+opcode = 0x1E5
+fields = { hw = 0 }
+ops = ["dst:r64:out", "imm:imm16g0"]
+asm = "movk {dst}, {imm}"
+
+[[instructions]]
+name = "MOVKX_G1_RELO"
+form = "MOVW16"
+opcode = 0x1E5
+fields = { hw = 1 }
+ops = ["dst:r64:out", "imm:imm16g1"]
+asm = "movk {dst}, {imm}"
+
+[[instructions]]
+name = "MOVKX_G2_RELO"
+form = "MOVW16"
+opcode = 0x1E5
+fields = { hw = 2 }
+ops = ["dst:r64:out", "imm:imm16g2"]
+asm = "movk {dst}, {imm}"
+
+[[instructions]]
+name = "MOVKX_G3_RELO"
+form = "MOVW16"
+opcode = 0x1E5
+fields = { hw = 3 }
+ops = ["dst:r64:out", "imm:imm16g3"]
+asm = "movk {dst}, {imm}"
+
+[[instructions]]
+name = "MOVKW_G0_RELO"
+form = "MOVW16"
+opcode = 0xE5
+fields = { hw = 0 }
+ops = ["dst:r32:out", "imm:imm16g0"]
+asm = "movk {dst}, {imm}"
+
+[[instructions]]
+name = "MOVKW_G1_RELO"
+form = "MOVW16"
+opcode = 0xE5
+fields = { hw = 1 }
+ops = ["dst:r32:out", "imm:imm16g1"]
+asm = "movk {dst}, {imm}"
+
+[[instructions]]
+name = "MOVKW_G2_RELO"
+form = "MOVW16"
+opcode = 0xE5
+fields = { hw = 2 }
+ops = ["dst:r32:out", "imm:imm16g2"]
+asm = "movk {dst}, {imm}"
+
+[[instructions]]
+name = "MOVKW_G3_RELO"
+form = "MOVW16"
+opcode = 0xE5
+fields = { hw = 3 }
+ops = ["dst:r32:out", "imm:imm16g3"]
+asm = "movk {dst}, {imm}"
 
 # ── SIMD&FP 访存（`ldr d8, [sp, #8]` / `str s7, [sp, #4]` / `stp d8, d9, [sp, #-64]!`）──
 #

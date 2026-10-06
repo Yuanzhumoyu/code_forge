@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-07) — aarch64：`movz`/`movk`/`movn` 的 `abs_g*` 类重定位 24 条
+
+`movz x2, #:abs_g0:sym`、`movk x3, #:abs_g1:foo` 这类写法。关键点是 **`hw` 由修饰名决定**（`abs_g0..g3` ⇒ `hw` 0..3），所以四个**按 hw 分组的符号槽**各自用 `imm_fns`（上一轮落的新键）过滤修饰表——过滤表列到 20/20/18/6 个名字（带 `#` 与不带 `#` 两种写法都列）；不这么分就会把 `movz … #:abs_g2:foo` 编成 `hw = 0`、**静默写错字段**。24 条 = 3 助记符 × 4 hw × {X, W}，opcode 照 `[[templates]]` 的 rows 抄（`MOVZX`=0x1A5 / `MOVZW`=0xA5 / `MOVNX`=0x125 / `MOVNW`=0x25 / `MOVKX`=0x1E5 / `MOVKW`=0xE5）；模板**不带 `#`**（修饰文本自带）以与数值形态保持"形状隔离"。生成器入库 `crates/tools/forge-tests/asm/gen-aarch64-mov-reloc.mjs`。
+
+守卫同步：`spec_coverage_guard` arm64 420 → **444**、文本歧义名单 6 → **30** 条（12 组 X/W 同形、靠寄存器类分派，与既有 `LDRX`/`LDRW` 同一模式）、`isa_roundtrip_guard` arm64 枚举器 2009 → **2153**。本批是**纯解析**能力（新变体同 opcode、且 `require_symbol` 把关），既有字节对拍不受影响。
+
 ### Fixed (2026-10-07) — `[meta].comment_char` 是单字符 ⇒ A64 的 `/` 会把立即数里的除法截断
 
 `strip_comment` 按**单个字符**切注释，而 A64/GAS 的注释是 `//`：`isa/arm64.toml` 写 `comment_char = "/"` 就使 `movz x0, #(32 / 2)` 从 `/` 处被截成 `movz x0, #(32` ⇒ 报"没有匹配的指令"。上游为此专门写了 `single-slash.s`，所以这条是可复现的语料证据而非猜测。修法 = 注释标记改成 **1–4 个字符的字符串**（`#` / `//` / `;`），生成物的 `strip_comment` 按**整串**匹配，并把 `isa/arm64.toml` 改成 `comment_char = "//"`。校验放宽到 1..=4 字符（原为"必须恰好一个字符"），文档同步。
