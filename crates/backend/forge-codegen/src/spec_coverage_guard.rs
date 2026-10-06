@@ -101,6 +101,8 @@ fn generated_spec_tests_cover_every_instruction() {
 /// `SETCC_RM8_B`（8 位名 `setcc al, e`）、`SETCC_R_MEM`（`setcc byte ptr [m], e`）与
 /// `CMOVCC_R_MEM`（`cmovcc r, m, cc`；`CMOVCC_R_RM` 同时从固定 64 位放宽到 16/32/64）
 /// → **293**。真实写法本身是 `[[pseudo]]` 文本展开（不占指令数）。
+/// 再补 `movzx`/`movsx` 的**完整内存源形态** 4 条（`MOVZX/MOVSX_MEM{8,16}`：源宽度只能由
+/// 尺寸关键字给 ⇒ 关键字写成模板字面量，歧义随之消失）→ **299**。
 /// 最后补**锁 + 内存序提示**（`acquire/release lock add [mem], r` = `F2`/`F3` + `F0`：
 /// `prefix` 收**列表**，编码按序发、解码逐个判前缀标志）→ **295**。
 #[test]
@@ -108,7 +110,7 @@ fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 295), ("riscv64", 139), ("arm64", 206)],
+        vec![("x86", 299), ("riscv64", 139), ("arm64", 206)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }
@@ -144,8 +146,6 @@ fn spec_text_ambiguity_lists_are_pinned() {
         "MOVQ_XMM_FREG",
         "MOVSD",
         "MOVSD_XMM_FREG",
-        "MOVZX_R16_MEM",
-        "MOVZX_R8_MEM",
         "MOV_R8_RM64",
         "MOV_REG_IMM64",
         "MOV_RM8_R64",

@@ -103,11 +103,13 @@ fn derived_insts_roundtrip_byte_stable() {
     //   `MOVSXD_R_RM32` 带 `gprx`/`gpr4` 的宽度与高视图；`IMUL_R_MEM`/`NOP_MEM32` 带风味）。
     // 2026-10-05（助记符条件后缀批次）：1426 → **1450**（`SETCC_RM8_B` / `SETCC_R_MEM` /
     //   `CMOVCC_R_MEM` 三条的视图与内存风味；`CMOVCC_R_RM` 放宽到 `gprx` 后多出 16/32 位视图）。
+    // 2026-10-05（movzx/movsx 内存源批次）：1482 → **1542**（4 条完整内存形态的宽度视图 + 内存风味；
+    //   简写形态的基址槽收窄成单一 64 位地址类 ⇒ 少了无意义的宽度视图）。
     // 2026-10-05（锁 + 内存序提示批次）：1450 → **1482**（两条 `ACQUIRE/RELEASE_LOCK_ADD_MR`：
     //   `gprx` 的宽度/高视图 + 内存的 disp/index 风味）。
     assert_eq!(
         (x86, riscv, arm64),
-        (1482, 442, 825),
+        (1542, 442, 825),
         "枚举器条目数变了：确认是谱的预期变更还是派生逻辑退化"
     );
 }

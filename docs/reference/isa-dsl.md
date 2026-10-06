@@ -692,6 +692,13 @@ size_keywords = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"
   （`mov QWORD PTR [rsp-16], rax` 与 `mov [rsp-16], rax` 编出同样的字节）。渲染时它
   输出空串，所以 `disassemble → assemble` 仍然闭合。模板里用了 `{size}` 却没声明
   `size_keywords` ⇒ 生成期报错。
+- **源宽度只有尺寸关键字能表达时，把关键字写成模板字面量**（v20 V10）：`movzx eax, byte ptr
+  [rbx]` 与 `movzx eax, word ptr [rbx]` 的差别在**操作码**（`0F B6` / `0F B7`），没有任何
+  寄存器能表达"源读几字节"——靠 `{size}` 提示的话两条写法文本完全一样（`{size}` 不进签名），
+  只能算文本歧义。写成字面量（`asm = "movzx {dst}, byte ptr {mem}"`）之后：文本天然区分、
+  候选各自命中，**渲染也带关键字** ⇒ `disassemble → assemble` 闭合；同族的 `inc dword ptr
+  [rax]`（一元形态没有寄存器驱动宽度）用的也是这一招。代价是"每种宽度一条模板行"，
+  换来的是"不会静默按别的宽度编出来"。
 - **缺省**（整节不写）= 单条 `"[{base}+{index}*{scale}+{disp}]"`（x86 现行为）。
 - **无基址在 x86 上是 `mod=00` + `rm=100` + `SIB.base=101` + disp32**：ModRM 的
   `mod=00/rm=101` 是 RIP 相对（本 DSL 仍明确拒绝），`SIB.base=101` 才是"没有基址"。

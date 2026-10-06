@@ -718,27 +718,83 @@ rows = [
   { inst = "CMP_RM8_IMM8", opcode = 0x80, modrm = { reg = 7, rm = "dst" }, asm = "cmp {dst}, {imm}" },
 ]
 
+# ── movzx / movsx：源宽度只能由**尺寸关键字**给 ──
+#
+# `movzx eax, byte ptr [rbx]`（`0F B6 /r`）与 `movzx eax, word ptr [rbx]`（`0F B7 /r`）
+# 的差别在**操作码**，而源宽度没有任何寄存器能表达 ⇒ 尺寸关键字必须进文本。做法与本谱的
+# `NOT_MEM32` 一族一致：**把关键字写成模板字面量**。于是 ① 两条写法文本不同、汇编各自
+# 命中（原来那对 `[{src}]` 简写没有关键字、文本一模一样 ⇒ 只能挂在歧义名单上）；
+# ② 反汇编渲染也带关键字 ⇒ `disassemble → assemble` 闭合。
+#
+# 两套并存，分工不同（与 `MOV_R_MEM` 的 `[reg]` 简写 vs `MOV_R_MEM_AUTO` 的完整模板同理）：
+# - `MOVZX_R{8,16}_MEM`：**`[reg]` 简写**（rm 引用的是寄存器槽 ⇒ 无位移、disp 恒 0），
+#   这是 lowering 的零扩展加载用的形态（`{0}` 是地址 vreg ⇒ 绑到寄存器槽）；
+# - `MOVZX/MOVSX_MEM{8,16}`：**完整内存模板**（base/index*scale/disp/无基址），真实汇编
+#   的常态写法（`movzx eax, byte ptr [rdi+8]`）。
+# 目的宽度由寄存器驱动（`opsize = s0`）：16 位目的发 66、64 位目的发 REX.W——这正是
+# `0F B6/B7/BE/BF` 的宽度语义。
 [[instructions]]
 name = "MOVZX_R8_MEM"
+# `[reg]` 简写：源宽度由**操作码**（B6 = byte）+ 模板里的尺寸关键字表达，目的宽度由
+# 寄存器驱动（`opsize = "s0"`；这里目的恒为 64 位 ⇒ 发 REX.W）。旧写法把
+# `prefix`/`rex_w` 写成固定值：R8 那条（prefix=0、w=1）恰好对，**R16 那条写死 `66`
+# 是错的**——`66` 是"16 位目的"的编码，配 64 位目的会编出 `66 48 0F B7`（轴不对），
+# 而 `movzx rax, word ptr [m]` 应当是 `48 0F B7`（无 66）。
 modrm = { rm = "[src]" }
-prefix = "field"
-rex_w = "field"
 escape = [0x0F]
 opcode = 0xB6
-fields = { prefix = 0, w = 1 }
-ops = ["dst:gpr:out", "src:gprx"]
-asm = "movzx {dst}, [{src}]"
+opsize = "s0"
+ops = ["dst:gpr:out", "src:gpr"]
+asm = "movzx {dst}, byte ptr [{src}]"
 
 [[instructions]]
 name = "MOVZX_R16_MEM"
 modrm = { rm = "[src]" }
-prefix = "field"
-rex_w = "field"
 escape = [0x0F]
 opcode = 0xB7
-fields = { prefix = 0x66, w = 1 }
-ops = ["dst:gpr:out", "src:gprx"]
-asm = "movzx {dst}, [{src}]"
+opsize = "s0"
+ops = ["dst:gpr:out", "src:gpr"]
+asm = "movzx {dst}, word ptr [{src}]"
+
+[[instructions]]
+name = "MOVZX_MEM8"
+form = "MRR_MEMREF_AUTO"
+escape = [0x0F]
+modrm = { reg = "dst", rm = "[mem]" }
+opcode = 0xB6
+ops = ["dst:gprx:out", "mem:mem"]
+asm = "movzx {dst}, byte ptr {mem}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "MOVZX_MEM16"
+form = "MRR_MEMREF_AUTO"
+escape = [0x0F]
+modrm = { reg = "dst", rm = "[mem]" }
+opcode = 0xB7
+ops = ["dst:gprx:out", "mem:mem"]
+asm = "movzx {dst}, word ptr {mem}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "MOVSX_MEM8"
+form = "MRR_MEMREF_AUTO"
+escape = [0x0F]
+modrm = { reg = "dst", rm = "[mem]" }
+opcode = 0xBE
+ops = ["dst:gprx:out", "mem:mem"]
+asm = "movsx {dst}, byte ptr {mem}"
+effect = ["Pure"]
+
+[[instructions]]
+name = "MOVSX_MEM16"
+form = "MRR_MEMREF_AUTO"
+escape = [0x0F]
+modrm = { reg = "dst", rm = "[mem]" }
+opcode = 0xBF
+ops = ["dst:gprx:out", "mem:mem"]
+asm = "movsx {dst}, word ptr {mem}"
+effect = ["Pure"]
 
 [[instructions]]
 name = "CMPXCHG_RM_R"
@@ -4995,6 +5051,24 @@ bytes = [0xD5, 0xB0, 0x94, 0x04, 0x08]
 [[vectors]]
 asm = "cmovl r17d, r16d"
 bytes = [0xD5, 0xD0, 0x4C, 0xC8]
+
+# movzx / movsx 的内存源形态：源宽度只能由**尺寸关键字**给（模板字面量），
+# 目的宽度由寄存器驱动（16 位目的发 66、64 位目的发 REX.W）。
+[[vectors]]
+asm = "movzx eax, byte ptr [rbx]"
+bytes = [0x0F, 0xB6, 0x03]
+
+[[vectors]]
+asm = "movzx rax, word ptr [rbx]"
+bytes = [0x48, 0x0F, 0xB7, 0x03]
+
+[[vectors]]
+asm = "movsx eax, byte ptr [rbx]"
+bytes = [0x0F, 0xBE, 0x03]
+
+[[vectors]]
+asm = "movsx rax, word ptr [rsi + rcx*4]"
+bytes = [0x48, 0x0F, 0xBF, 0x04, 0x8E]
 
 # ── 向量区段结束
 
