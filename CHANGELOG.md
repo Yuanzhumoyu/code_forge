@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-07) — aarch64 FP 成对的前/后索引用不了：imm7 槽是无符号的
+
+`stp d8, d9, [sp, #-64]!` 这类写法原先借用了**无符号**的 `imm12fp*` 槽 ⇒ 负偏移直接越界、报"没有匹配的指令"（`stp d10, d11, [sp, #16]` 这类正偏移则正常，所以只有前/后索引的成对形态受影响）。修法 = 镜像 GPR 成对的 `imm7x`/`imm7w`，补 `imm7fp4`/`imm7fp8`/`imm7fp16`（**有符号**、width 7、单位 = 元素尺寸）并替换 18 条 FP 成对的 imm 槽。
+
+效果：aarch64 `parsed` 1909 → **1917**、红 1437 → **1429**；**`seh-optimize.s`、`seh.s` 整文件转绿** ⇒ 全绿集 **113 → 115**（PROVENANCE 117 行）、淘汰 620 → **618**；aarch64 棘轮随之刷新。
+
 ### Fixed (2026-10-07) — aarch64 FP unscaled 访存的 op8 用错了族（`LDURD`/`STURD`/`LDURS`/`STURS`）
 
 这四条写的是 `0xFD`/`0xBD`——那是**无符号偏移族**（imm12）；unscaled 族是 `0xFC`/`0xBC`（`ldur d8, [sp, #8]` 上游 = `e8 83 40 fc`）。潜伏至今的原因是 FP 槽用 V 名、语料写 `d8`/`s7`，那批行从来没解析过 ⇒ 字节对拍档看不见它。**影响不止编码**：`LDURD`/`STURD` 带 `callee_load`/`callee_save` 角色、`[spill.FPR]` 也引用它们 ⇒ arm64 后端的 FPR 保存/恢复与 FP 溢出一直在按错族发偏移。修后用 4 条谱内向量钉住（字节取自语料的上游期望值）。

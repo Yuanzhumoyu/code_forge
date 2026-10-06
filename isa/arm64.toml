@@ -735,6 +735,28 @@ unit = 8    # 64 位访问
 
 # 字节/半字访存的 imm12：单位同样是"字节 ÷ 访问宽度"（`ldrb w5, [x4, #20]` ⇒ 字段 20；
 # `ldrh w2, [sp, #32]` ⇒ 字段 16）。LDRSW 是 word 访问 ⇒ 复用 `imm12w`。
+# FP 成对（LDP/STP）的 imm7：**有符号**（前/后索引会写 `#-64`），单位 = 元素尺寸。
+[[operand_slots]]
+name = "imm7fp4"
+kind = "imm"
+signed = true
+width = 7
+unit = 4
+
+[[operand_slots]]
+name = "imm7fp8"
+kind = "imm"
+signed = true
+width = 7
+unit = 8
+
+[[operand_slots]]
+name = "imm7fp16"
+kind = "imm"
+signed = true
+width = 7
+unit = 16
+
 [[operand_slots]]
 name = "imm12fp1"
 kind = "imm"
@@ -2166,7 +2188,7 @@ name = "STPS_FP"
 form = "FPPAIR"
 opcode = 0x2D
 fields = { idx2 = 0 }
-ops = ["t1:fprs", "base:r64", "t2:fprs", "imm:imm12fp4"]
+ops = ["t1:fprs", "base:r64", "t2:fprs", "imm:imm7fp4"]
 asm = "stp {t1}, {t2}, [{base}, #{imm}]"
 
 [[instructions]]
@@ -2174,7 +2196,7 @@ name = "STPS_FP_PRE"
 form = "FPPAIR"
 opcode = 0x2D
 fields = { idx2 = 2 }
-ops = ["t1:fprs", "base:r64", "t2:fprs", "imm:imm12fp4"]
+ops = ["t1:fprs", "base:r64", "t2:fprs", "imm:imm7fp4"]
 asm = "stp {t1}, {t2}, [{base}, #{imm}]!"
 
 [[instructions]]
@@ -2182,7 +2204,7 @@ name = "STPS_FP_POST"
 form = "FPPAIR"
 opcode = 0x2C
 fields = { idx2 = 2 }
-ops = ["t1:fprs", "base:r64", "t2:fprs", "imm:imm12fp4"]
+ops = ["t1:fprs", "base:r64", "t2:fprs", "imm:imm7fp4"]
 asm = "stp {t1}, {t2}, [{base}], #{imm}"
 
 [[instructions]]
@@ -2190,7 +2212,7 @@ name = "LDPS_FP"
 form = "FPPAIR"
 opcode = 0x2D
 fields = { idx2 = 1 }
-ops = ["t1:fprs:out", "base:r64", "t2:fprs:out", "imm:imm12fp4"]
+ops = ["t1:fprs:out", "base:r64", "t2:fprs:out", "imm:imm7fp4"]
 asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
 
 [[instructions]]
@@ -2198,7 +2220,7 @@ name = "LDPS_FP_PRE"
 form = "FPPAIR"
 opcode = 0x2D
 fields = { idx2 = 3 }
-ops = ["t1:fprs:out", "base:r64", "t2:fprs:out", "imm:imm12fp4"]
+ops = ["t1:fprs:out", "base:r64", "t2:fprs:out", "imm:imm7fp4"]
 asm = "ldp {t1}, {t2}, [{base}, #{imm}]!"
 
 [[instructions]]
@@ -2206,7 +2228,7 @@ name = "LDPS_FP_POST"
 form = "FPPAIR"
 opcode = 0x2C
 fields = { idx2 = 3 }
-ops = ["t1:fprs:out", "base:r64", "t2:fprs:out", "imm:imm12fp4"]
+ops = ["t1:fprs:out", "base:r64", "t2:fprs:out", "imm:imm7fp4"]
 asm = "ldp {t1}, {t2}, [{base}], #{imm}"
 
 [[instructions]]
@@ -2214,7 +2236,7 @@ name = "STPD_FP"
 form = "FPPAIR"
 opcode = 0x6D
 fields = { idx2 = 0 }
-ops = ["t1:fpr", "base:r64", "t2:fpr", "imm:imm12fp8"]
+ops = ["t1:fpr", "base:r64", "t2:fpr", "imm:imm7fp8"]
 asm = "stp {t1}, {t2}, [{base}, #{imm}]"
 
 [[instructions]]
@@ -2222,7 +2244,7 @@ name = "STPD_FP_PRE"
 form = "FPPAIR"
 opcode = 0x6D
 fields = { idx2 = 2 }
-ops = ["t1:fpr", "base:r64", "t2:fpr", "imm:imm12fp8"]
+ops = ["t1:fpr", "base:r64", "t2:fpr", "imm:imm7fp8"]
 asm = "stp {t1}, {t2}, [{base}, #{imm}]!"
 
 [[instructions]]
@@ -2230,7 +2252,7 @@ name = "STPD_FP_POST"
 form = "FPPAIR"
 opcode = 0x6C
 fields = { idx2 = 2 }
-ops = ["t1:fpr", "base:r64", "t2:fpr", "imm:imm12fp8"]
+ops = ["t1:fpr", "base:r64", "t2:fpr", "imm:imm7fp8"]
 asm = "stp {t1}, {t2}, [{base}], #{imm}"
 
 [[instructions]]
@@ -2238,7 +2260,7 @@ name = "LDPD_FP"
 form = "FPPAIR"
 opcode = 0x6D
 fields = { idx2 = 1 }
-ops = ["t1:fpr:out", "base:r64", "t2:fpr:out", "imm:imm12fp8"]
+ops = ["t1:fpr:out", "base:r64", "t2:fpr:out", "imm:imm7fp8"]
 asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
 
 [[instructions]]
@@ -2246,7 +2268,7 @@ name = "LDPD_FP_PRE"
 form = "FPPAIR"
 opcode = 0x6D
 fields = { idx2 = 3 }
-ops = ["t1:fpr:out", "base:r64", "t2:fpr:out", "imm:imm12fp8"]
+ops = ["t1:fpr:out", "base:r64", "t2:fpr:out", "imm:imm7fp8"]
 asm = "ldp {t1}, {t2}, [{base}, #{imm}]!"
 
 [[instructions]]
@@ -2254,7 +2276,7 @@ name = "LDPD_FP_POST"
 form = "FPPAIR"
 opcode = 0x6C
 fields = { idx2 = 3 }
-ops = ["t1:fpr:out", "base:r64", "t2:fpr:out", "imm:imm12fp8"]
+ops = ["t1:fpr:out", "base:r64", "t2:fpr:out", "imm:imm7fp8"]
 asm = "ldp {t1}, {t2}, [{base}], #{imm}"
 
 [[instructions]]
@@ -2262,7 +2284,7 @@ name = "STPQ_FP"
 form = "FPPAIR"
 opcode = 0xAD
 fields = { idx2 = 0 }
-ops = ["t1:fprq", "base:r64", "t2:fprq", "imm:imm12fp16"]
+ops = ["t1:fprq", "base:r64", "t2:fprq", "imm:imm7fp16"]
 asm = "stp {t1}, {t2}, [{base}, #{imm}]"
 
 [[instructions]]
@@ -2270,7 +2292,7 @@ name = "STPQ_FP_PRE"
 form = "FPPAIR"
 opcode = 0xAD
 fields = { idx2 = 2 }
-ops = ["t1:fprq", "base:r64", "t2:fprq", "imm:imm12fp16"]
+ops = ["t1:fprq", "base:r64", "t2:fprq", "imm:imm7fp16"]
 asm = "stp {t1}, {t2}, [{base}, #{imm}]!"
 
 [[instructions]]
@@ -2278,7 +2300,7 @@ name = "STPQ_FP_POST"
 form = "FPPAIR"
 opcode = 0xAC
 fields = { idx2 = 2 }
-ops = ["t1:fprq", "base:r64", "t2:fprq", "imm:imm12fp16"]
+ops = ["t1:fprq", "base:r64", "t2:fprq", "imm:imm7fp16"]
 asm = "stp {t1}, {t2}, [{base}], #{imm}"
 
 [[instructions]]
@@ -2286,7 +2308,7 @@ name = "LDPQ_FP"
 form = "FPPAIR"
 opcode = 0xAD
 fields = { idx2 = 1 }
-ops = ["t1:fprq:out", "base:r64", "t2:fprq:out", "imm:imm12fp16"]
+ops = ["t1:fprq:out", "base:r64", "t2:fprq:out", "imm:imm7fp16"]
 asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
 
 [[instructions]]
@@ -2294,7 +2316,7 @@ name = "LDPQ_FP_PRE"
 form = "FPPAIR"
 opcode = 0xAD
 fields = { idx2 = 3 }
-ops = ["t1:fprq:out", "base:r64", "t2:fprq:out", "imm:imm12fp16"]
+ops = ["t1:fprq:out", "base:r64", "t2:fprq:out", "imm:imm7fp16"]
 asm = "ldp {t1}, {t2}, [{base}, #{imm}]!"
 
 [[instructions]]
@@ -2302,7 +2324,7 @@ name = "LDPQ_FP_POST"
 form = "FPPAIR"
 opcode = 0xAC
 fields = { idx2 = 3 }
-ops = ["t1:fprq:out", "base:r64", "t2:fprq:out", "imm:imm12fp16"]
+ops = ["t1:fprq:out", "base:r64", "t2:fprq:out", "imm:imm7fp16"]
 asm = "ldp {t1}, {t2}, [{base}], #{imm}"
 
 # ── 移位立即数（`add w3, w4, #1024, lsl #12`）──

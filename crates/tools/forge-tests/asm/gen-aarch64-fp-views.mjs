@@ -110,10 +110,11 @@ const VIEWS = [
   // Q 与 B 同为 size 00（128 位靠 opc 位型区分）——槽的类不同，靠寄存器名分派。
   ['Q', 'fprq', 'imm12fp16', 0b00],
 ];
+// 成对的 imm7 是**有符号**的（前/后索引写负偏移），单位 = 元素尺寸。
 const PAIRS = [
-  ['S', 'fprs', 'imm12fp4', 0b00],
-  ['D', 'fpr', 'imm12fp8', 0b01],
-  ['Q', 'fprq', 'imm12fp16', 0b10],
+  ['S', 'fprs', 'imm7fp4', 0b00],
+  ['D', 'fpr', 'imm7fp8', 0b01],
+  ['Q', 'fprq', 'imm7fp16', 0b10],
 ];
 const base8 = (size, v24) => ((size << 6) | (0b111 << 3) | (1 << 2) | v24) & 0xff; // size 111 V [25:24]
 
