@@ -13,7 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed (2026-10-07) — `[meta].comment_char` 是单字符 ⇒ A64 的 `/` 会把立即数里的除法截断
 
-`strip_comment` 按**单个字符**切注释，而 A64/GAS 的注释是 `//`：`isa/arm64.toml` 写 `comment_char = "/"` 就使 `movz x0, #(32 / 2)` 从 `/` 处被截成 `movz x0, #(32 ` ⇒ 报"没有匹配的指令"。上游为此专门写了 `single-slash.s`，所以这条是可复现的语料证据而非猜测。修法 = 注释标记改成 **1–4 个字符的字符串**（`#` / `//` / `;`），生成物的 `strip_comment` 按**整串**匹配，并把 `isa/arm64.toml` 改成 `comment_char = "//"`。校验放宽到 1..=4 字符（原为"必须恰好一个字符"），文档同步。
+`strip_comment` 按**单个字符**切注释，而 A64/GAS 的注释是 `//`：`isa/arm64.toml` 写 `comment_char = "/"` 就使 `movz x0, #(32 / 2)` 从 `/` 处被截成 `movz x0, #(32` ⇒ 报"没有匹配的指令"。上游为此专门写了 `single-slash.s`，所以这条是可复现的语料证据而非猜测。修法 = 注释标记改成 **1–4 个字符的字符串**（`#` / `//` / `;`），生成物的 `strip_comment` 按**整串**匹配，并把 `isa/arm64.toml` 改成 `comment_char = "//"`。校验放宽到 1..=4 字符（原为"必须恰好一个字符"），文档同步。
 
 效果：aarch64 `parsed` 1917 → **1918**、红 1429 → **1428**；`single-slash.s` 整文件转绿 ⇒ 全绿集 **115 → 116**（PROVENANCE 118 行）、淘汰 618 → **617**。
 
