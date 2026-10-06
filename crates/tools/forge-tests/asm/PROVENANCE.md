@@ -11,7 +11,7 @@ ref `llvmorg-19.1.0`）——请勿手改；重跑脚本即可刷新。方法、
    `.gitattributes` 把 `crates/tools/forge-tests/asm/**` 钉成 `text eol=lf`，
    否则 `core.autocrlf` 在 Windows 上会改工作区、摘要立刻对不上。
 2. **取舍是算出来的**：本次拉了上游 **733** 个候选（顶层 `.s`；x86 只取
-   Intel 语法的文件名那批），按判据留下 **108** 个、砍掉 **625** 个
+   Intel 语法的文件名那批），按判据留下 **109** 个、砍掉 **624** 个
    （判据 = 解析档「整条接得住且不产生红桶」+ 编码对拍档「没有字节差异」，两份逐文件记分板
    在 `target/asm-suite/`）。被砍掉的那些不是"忘了"，而是**本谱现在还不认识**（SVE/SME/
    AVX-512/压缩指令/带符号 CSR 名/重定位表达式…）——它们会让红桶变成"永久红"，门禁就废了。
@@ -20,7 +20,7 @@ ref `llvmorg-19.1.0`）——请勿手改；重跑脚本即可刷新。方法、
    一并登记在下面。
 3. `asm/exec/**`、`asm/ratchet/**` 是本仓库自己写的，不在下表。
 
-## LLVM MC（109 份）
+## LLVM MC（110 份）
 
 | 路径 | 上游 | 固定 ref | 许可 | 字节 | 行 | 摘要（sha256） | 处理 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -103,6 +103,7 @@ ref `llvmorg-19.1.0`）——请勿手改；重跑脚本即可刷新。方法、
 | `parse/aarch64/llvm-mc/ELF_ARM64_large-relocations.s` | [llvm/llvm-project `llvm/test/MC/AArch64/ELF_ARM64_large-relocations.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/ELF_ARM64_large-relocations.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 1122 | 20 | `7727e5d5c902df950050f022103acbf62b1fe3946613702833fb9ca2b15f072f` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/arm64-branch-encoding.s` | [llvm/llvm-project `llvm/test/MC/AArch64/arm64-branch-encoding.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/arm64-branch-encoding.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 6175 | 169 | `078fa982f97aa47dff06efe8a692b14e5cf572c8da0d6b9130bbcf737d68d186` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/arm64-directive_loh.s` | [llvm/llvm-project `llvm/test/MC/AArch64/arm64-directive_loh.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/arm64-directive_loh.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 2416 | 97 | `564729f36630698c9644062e66350cd7638b24ba02de3164795555145670d384` | **整文件**，逐字未改 |
+| `parse/aarch64/llvm-mc/arm64-leaf-compact-unwind.s` | [llvm/llvm-project `llvm/test/MC/AArch64/arm64-leaf-compact-unwind.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/arm64-leaf-compact-unwind.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 4788 | 190 | `c8847ad655634c9088a06e23d2d0c6799e52772360dae40bd293374ace29abfe` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/arm64-logical-encoding.s` | [llvm/llvm-project `llvm/test/MC/AArch64/arm64-logical-encoding.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/arm64-logical-encoding.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 9619 | 231 | `fc6cc18123d4892ad182a364383c4b90d2cf03eca750ceaeb00e43f65ee3114f` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/arm64-nv-cond.s` | [llvm/llvm-project `llvm/test/MC/AArch64/arm64-nv-cond.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/arm64-nv-cond.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 450 | 11 | `6075af1f3091c52dda96726f8511c0aa67efb0708eb464952f141686ff177368` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/arm64-separator.s` | [llvm/llvm-project `llvm/test/MC/AArch64/arm64-separator.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/arm64-separator.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 694 | 20 | `8aaf885c997862cdb1639481f250d9f129620e410ed7fcd0be4e3947711fbdbf` | **整文件**，逐字未改 |

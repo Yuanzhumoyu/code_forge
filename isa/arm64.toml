@@ -118,6 +118,7 @@ zero21= { offset = 21, width = 1 }   # LDUR 族 [21] 恒 0（保留位；显式�
 one21 = { offset = 21, width = 1 }   # 寄存器偏移寻址 [21] 恒 1（与 imm9 家族的唯一区分位）
 option= { offset = 13, width = 3 }   # 访存索引的扩展/移位类型：UXTW=2 / LSL=3 / SXTW=6 / SXTX=7
 sbit  = { offset = 12, width = 1 }   # 该类型是否自带缩放（S=1 ⇔ 文本里写 `#N`，N = log2(宽度)）
+imm3  = { offset = 10, width = 3 }   # 扩展寄存器操作数的量（`sxtw #2` 的 2；省略 = 0）
 idx2  = { offset = 22, width = 2 }   # LDP/STP index 低位（bit24 由 op8 常量给：100 off STP/101 off LDP ⇒ idx2 = 0/1）
 rt2   = { offset = 10, width = 5 }   # LDP/STP 第二寄存器
 op8b  = { offset = 16, width = 8 }   # FMOV 的中间常量（S=0x20 / D=0x60）
@@ -128,6 +129,22 @@ imm7  = { offset = 15, width = 7 }   # LDP/STP 偏移（对元素，缩放单元
 # 这张表两处用：CSEL 族的 `cond` 槽（符号名）与下面 B.cond 模板的固定字段。
 # 不写 `ir` = 不映射 IR 整数条件（本 ISA 的 lowering 目前不用 `{cc}`；
 # 将来加 Icmp lowering 时再补 ir，validate 会强制补全 10 个）。
+# 扩展寄存器操作数的关键字（`add x8, x8, w5, sxtw #2` 的 `sxtw`）。**分两张表是按操作数类别**：
+# W 表收全部 8 个（`add w1, w2, w3, uxtx` 也合法——32 位视图下 uxtx 是恒等），X 表只收 uxtx/sxtx。
+[conventions.imm_names.extend_w]
+uxtb = 0
+uxth = 1
+uxtw = 2
+uxtx = 3
+sxtb = 4
+sxth = 5
+sxtw = 6
+sxtx = 7
+
+[conventions.imm_names.extend_x]
+uxtx = 3
+sxtx = 7
+
 [conventions.cond]
 eq = 0
 ne = 1
@@ -161,6 +178,28 @@ name = "r32"
 kind = "reg"
 class = "gpr4"
 roles = "inout"
+
+# ── 扩展寄存器操作数的三段：关键字（命名立即数）+ 量 ──
+# `extw3`/`extx3` 是同一段位（option [15:13]）的两张表：前者收 W 寄存器的扩展、后者收 X 的。
+[[operand_slots]]
+name = "extw3"
+kind = "imm"
+signed = false
+width = 3
+names = "extend_w"
+
+[[operand_slots]]
+name = "extx3"
+kind = "imm"
+signed = false
+width = 3
+names = "extend_x"
+
+[[operand_slots]]
+name = "amt3"
+kind = "imm"
+signed = false
+width = 3
 
 [[operand_slots]]
 name = "imm12u"
@@ -741,6 +780,25 @@ name = "LSUIR"   # LDR/STR 寄存器偏移：rt rn rm
 opcode_field = "op8"
 operand_fields = ["rt", "rn", "rm"]
 
+# 扩展寄存器操作数（`add x8, x8, w5, sxtw #2`）：`option` 是**操作数**（命名立即数表），
+# `imm3` 是量；`bit21 = 1` 与移位寄存器族（bit21 = 0）区分。cmp/cmn 用无 rd 的两条形式。
+[[forms]]
+name = "EXTREG"   # 扩展寄存器：rd rn rm option imm3
+opcode_field = "op8"
+operand_fields = ["rd", "rn", "rm", "option", "imm3"]
+[[forms]]
+name = "EXTREG_NA"   # 同上但省略量（imm3 = 0，由 fields 固定）
+opcode_field = "op8"
+operand_fields = ["rd", "rn", "rm", "option"]
+[[forms]]
+name = "EXTREG2"   # 扩展寄存器（cmp/cmn：rd 由 fields 固定 31）
+opcode_field = "op8"
+operand_fields = ["rn", "rm", "option", "imm3"]
+[[forms]]
+name = "EXTREG2_NA"   # 同上但省略量
+opcode_field = "op8"
+operand_fields = ["rn", "rm", "option"]
+
 # ─────────────────────────── 指令 ───────────────────────────
 
 [[instructions]]
@@ -1275,6 +1333,398 @@ opcode = 0xEB
 fields = { shift = 0 }
 ops = ["dst:r64:out", "src:r64", "src2:r64", "sh:imm6"]
 asm = "subs {dst}, {src}, {src2}, lsl #{sh}"
+
+# ── 扩展寄存器操作数（`add x8, x8, w5, sxtw #2` / `cmp w0, w1, uxtb`）──
+#
+# 编码 `sf op S 01011 00 **1** Rm option imm3 Rn Rd`——**与移位寄存器族共用 op8**
+# （0x8B/0x0B/0xAB/0x2B/0xCB/0x4B/0xEB/0x6B），靠 **bit21 = 1** 区分。
+# **关键字是操作数**（{ext} 走命名立即数表 → option），量也是操作数（imm3）；
+# 所以每 (助记符, 宽度) 只有 4 条：W 扩展 / X 扩展 × 带量 / 不带量（省略量 = imm3 0）。
+# uxtx/sxtx 收 X 寄存器，其余六种收 W —— 这是**表的分法**，不是两个机制。
+
+[[instructions]]
+name = "ADD_X_EXTW"
+form = "EXTREG"
+opcode = 0x8B
+fields = { one21 = 1 }
+ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3", "amt:amt3"]
+asm = "add {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "ADD_X_EXTW_NA"
+form = "EXTREG_NA"
+opcode = 0x8B
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3"]
+asm = "add {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "ADD_X_EXTX"
+form = "EXTREG"
+opcode = 0x8B
+fields = { one21 = 1 }
+ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3", "amt:amt3"]
+asm = "add {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "ADD_X_EXTX_NA"
+form = "EXTREG_NA"
+opcode = 0x8B
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3"]
+asm = "add {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "ADD_W_EXTW"
+form = "EXTREG"
+opcode = 0xB
+fields = { one21 = 1 }
+ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3", "amt:amt3"]
+asm = "add {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "ADD_W_EXTW_NA"
+form = "EXTREG_NA"
+opcode = 0xB
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3"]
+asm = "add {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "ADD_W_EXTX"
+form = "EXTREG"
+opcode = 0xB
+fields = { one21 = 1 }
+ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3", "amt:amt3"]
+asm = "add {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "ADD_W_EXTX_NA"
+form = "EXTREG_NA"
+opcode = 0xB
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3"]
+asm = "add {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "ADDS_X_EXTW"
+form = "EXTREG"
+opcode = 0xAB
+fields = { one21 = 1 }
+ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3", "amt:amt3"]
+asm = "adds {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "ADDS_X_EXTW_NA"
+form = "EXTREG_NA"
+opcode = 0xAB
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3"]
+asm = "adds {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "ADDS_X_EXTX"
+form = "EXTREG"
+opcode = 0xAB
+fields = { one21 = 1 }
+ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3", "amt:amt3"]
+asm = "adds {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "ADDS_X_EXTX_NA"
+form = "EXTREG_NA"
+opcode = 0xAB
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3"]
+asm = "adds {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "ADDS_W_EXTW"
+form = "EXTREG"
+opcode = 0x2B
+fields = { one21 = 1 }
+ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3", "amt:amt3"]
+asm = "adds {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "ADDS_W_EXTW_NA"
+form = "EXTREG_NA"
+opcode = 0x2B
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3"]
+asm = "adds {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "ADDS_W_EXTX"
+form = "EXTREG"
+opcode = 0x2B
+fields = { one21 = 1 }
+ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3", "amt:amt3"]
+asm = "adds {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "ADDS_W_EXTX_NA"
+form = "EXTREG_NA"
+opcode = 0x2B
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3"]
+asm = "adds {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "SUB_X_EXTW"
+form = "EXTREG"
+opcode = 0xCB
+fields = { one21 = 1 }
+ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3", "amt:amt3"]
+asm = "sub {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "SUB_X_EXTW_NA"
+form = "EXTREG_NA"
+opcode = 0xCB
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3"]
+asm = "sub {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "SUB_X_EXTX"
+form = "EXTREG"
+opcode = 0xCB
+fields = { one21 = 1 }
+ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3", "amt:amt3"]
+asm = "sub {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "SUB_X_EXTX_NA"
+form = "EXTREG_NA"
+opcode = 0xCB
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3"]
+asm = "sub {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "SUB_W_EXTW"
+form = "EXTREG"
+opcode = 0x4B
+fields = { one21 = 1 }
+ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3", "amt:amt3"]
+asm = "sub {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "SUB_W_EXTW_NA"
+form = "EXTREG_NA"
+opcode = 0x4B
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3"]
+asm = "sub {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "SUB_W_EXTX"
+form = "EXTREG"
+opcode = 0x4B
+fields = { one21 = 1 }
+ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3", "amt:amt3"]
+asm = "sub {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "SUB_W_EXTX_NA"
+form = "EXTREG_NA"
+opcode = 0x4B
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3"]
+asm = "sub {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "SUBS_X_EXTW"
+form = "EXTREG"
+opcode = 0xEB
+fields = { one21 = 1 }
+ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3", "amt:amt3"]
+asm = "subs {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "SUBS_X_EXTW_NA"
+form = "EXTREG_NA"
+opcode = 0xEB
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3"]
+asm = "subs {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "SUBS_X_EXTX"
+form = "EXTREG"
+opcode = 0xEB
+fields = { one21 = 1 }
+ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3", "amt:amt3"]
+asm = "subs {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "SUBS_X_EXTX_NA"
+form = "EXTREG_NA"
+opcode = 0xEB
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3"]
+asm = "subs {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "SUBS_W_EXTW"
+form = "EXTREG"
+opcode = 0x6B
+fields = { one21 = 1 }
+ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3", "amt:amt3"]
+asm = "subs {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "SUBS_W_EXTW_NA"
+form = "EXTREG_NA"
+opcode = 0x6B
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3"]
+asm = "subs {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "SUBS_W_EXTX"
+form = "EXTREG"
+opcode = 0x6B
+fields = { one21 = 1 }
+ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3", "amt:amt3"]
+asm = "subs {dst}, {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "SUBS_W_EXTX_NA"
+form = "EXTREG_NA"
+opcode = 0x6B
+fields = { one21 = 1, imm3 = 0 }
+ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3"]
+asm = "subs {dst}, {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "CMP_X_EXTW"
+form = "EXTREG2"
+opcode = 0xEB
+fields = { one21 = 1, rd = 31 }
+ops = ["src:r64", "src2:r32", "ext:extw3", "amt:amt3"]
+asm = "cmp {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "CMP_X_EXTW_NA"
+form = "EXTREG2_NA"
+opcode = 0xEB
+fields = { one21 = 1, imm3 = 0, rd = 31 }
+ops = ["src:r64", "src2:r32", "ext:extw3"]
+asm = "cmp {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "CMP_X_EXTX"
+form = "EXTREG2"
+opcode = 0xEB
+fields = { one21 = 1, rd = 31 }
+ops = ["src:r64", "src2:r64", "ext:extx3", "amt:amt3"]
+asm = "cmp {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "CMP_X_EXTX_NA"
+form = "EXTREG2_NA"
+opcode = 0xEB
+fields = { one21 = 1, imm3 = 0, rd = 31 }
+ops = ["src:r64", "src2:r64", "ext:extx3"]
+asm = "cmp {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "CMP_W_EXTW"
+form = "EXTREG2"
+opcode = 0x6B
+fields = { one21 = 1, rd = 31 }
+ops = ["src:r32", "src2:r32", "ext:extw3", "amt:amt3"]
+asm = "cmp {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "CMP_W_EXTW_NA"
+form = "EXTREG2_NA"
+opcode = 0x6B
+fields = { one21 = 1, imm3 = 0, rd = 31 }
+ops = ["src:r32", "src2:r32", "ext:extw3"]
+asm = "cmp {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "CMP_W_EXTX"
+form = "EXTREG2"
+opcode = 0x6B
+fields = { one21 = 1, rd = 31 }
+ops = ["src:r32", "src2:r64", "ext:extx3", "amt:amt3"]
+asm = "cmp {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "CMP_W_EXTX_NA"
+form = "EXTREG2_NA"
+opcode = 0x6B
+fields = { one21 = 1, imm3 = 0, rd = 31 }
+ops = ["src:r32", "src2:r64", "ext:extx3"]
+asm = "cmp {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "CMN_X_EXTW"
+form = "EXTREG2"
+opcode = 0xAB
+fields = { one21 = 1, rd = 31 }
+ops = ["src:r64", "src2:r32", "ext:extw3", "amt:amt3"]
+asm = "cmn {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "CMN_X_EXTW_NA"
+form = "EXTREG2_NA"
+opcode = 0xAB
+fields = { one21 = 1, imm3 = 0, rd = 31 }
+ops = ["src:r64", "src2:r32", "ext:extw3"]
+asm = "cmn {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "CMN_X_EXTX"
+form = "EXTREG2"
+opcode = 0xAB
+fields = { one21 = 1, rd = 31 }
+ops = ["src:r64", "src2:r64", "ext:extx3", "amt:amt3"]
+asm = "cmn {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "CMN_X_EXTX_NA"
+form = "EXTREG2_NA"
+opcode = 0xAB
+fields = { one21 = 1, imm3 = 0, rd = 31 }
+ops = ["src:r64", "src2:r64", "ext:extx3"]
+asm = "cmn {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "CMN_W_EXTW"
+form = "EXTREG2"
+opcode = 0x2B
+fields = { one21 = 1, rd = 31 }
+ops = ["src:r32", "src2:r32", "ext:extw3", "amt:amt3"]
+asm = "cmn {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "CMN_W_EXTW_NA"
+form = "EXTREG2_NA"
+opcode = 0x2B
+fields = { one21 = 1, imm3 = 0, rd = 31 }
+ops = ["src:r32", "src2:r32", "ext:extw3"]
+asm = "cmn {src}, {src2}, {ext}"
+
+[[instructions]]
+name = "CMN_W_EXTX"
+form = "EXTREG2"
+opcode = 0x2B
+fields = { one21 = 1, rd = 31 }
+ops = ["src:r32", "src2:r64", "ext:extx3", "amt:amt3"]
+asm = "cmn {src}, {src2}, {ext} #{amt}"
+
+[[instructions]]
+name = "CMN_W_EXTX_NA"
+form = "EXTREG2_NA"
+opcode = 0x2B
+fields = { one21 = 1, imm3 = 0, rd = 31 }
+ops = ["src:r32", "src2:r64", "ext:extx3"]
+asm = "cmn {src}, {src2}, {ext}"
 
 [[instructions]]
 name = "SUBS_LSLW"
@@ -2315,6 +2765,46 @@ bytes = [0xAC, 0x31, 0x0E, 0x4B]
 [[vectors]]
 asm = "sub x12, x13, x14, lsl #12"
 bytes = [0xAC, 0x31, 0x0E, 0xCB]
+# 扩展寄存器操作数：8 个 option 的字节全部取自语料 CHECK 行的上游期望值。
+[[vectors]]
+asm = "add w1, w2, w3, uxtb"
+bytes = [0x41, 0x00, 0x23, 0x0B]
+
+[[vectors]]
+asm = "add w1, w2, w3, uxth"
+bytes = [0x41, 0x20, 0x23, 0x0B]
+
+[[vectors]]
+asm = "add w1, w2, w3, uxtw"
+bytes = [0x41, 0x40, 0x23, 0x0B]
+
+[[vectors]]
+asm = "add w1, w2, w3, uxtx"
+bytes = [0x41, 0x60, 0x23, 0x0B]
+
+[[vectors]]
+asm = "add w1, w2, w3, sxtb"
+bytes = [0x41, 0x80, 0x23, 0x0B]
+
+[[vectors]]
+asm = "add w1, w2, w3, sxth"
+bytes = [0x41, 0xA0, 0x23, 0x0B]
+
+[[vectors]]
+asm = "add w1, w2, w3, sxtw"
+bytes = [0x41, 0xC0, 0x23, 0x0B]
+
+[[vectors]]
+asm = "add w1, w2, w3, sxtx"
+bytes = [0x41, 0xE0, 0x23, 0x0B]
+
+[[vectors]]
+asm = "add x1, x2, w3, uxtb"
+bytes = [0x41, 0x00, 0x23, 0x8B]
+
+[[vectors]]
+asm = "add x1, x2, w3, sxtw"
+bytes = [0x41, 0xC0, 0x23, 0x8B]
 
 
 # ── 闭环向量（只给 `asm`；v19 V3c：从 Rust 往返清单迁入）──
