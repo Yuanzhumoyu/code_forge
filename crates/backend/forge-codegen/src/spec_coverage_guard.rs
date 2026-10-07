@@ -119,17 +119,70 @@ fn generated_spec_tests_cover_every_instruction() {
 /// 2026-10-07（aarch64 字节/半字访存批次）：arm64 318 → **336**——字节/半字 GPR 访存 18 条
 /// （9 组助记符/类别 × {带位移, 无位移}）；`op8` 是无符号偏移族的 `0x39`/`0x79`/`0xB9`，
 /// 这处写错正是被全集语料的字节对拍档抓出来的。
+/// 钉死值**快照**路径（B2）：所有"数字/名单"集中在 `asm/ratchet/pins.txt`，Rust 源里零字面量。
+pub(crate) fn pins_path() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../crates/tools/forge-tests/asm/ratchet/pins.txt")
+}
+
+fn read_pins() -> std::collections::BTreeMap<String, String> {
+    let Ok(s) = std::fs::read_to_string(pins_path()) else {
+        return Default::default();
+    };
+    s.lines()
+        .filter(|l| !l.trim_start().starts_with('#') && l.contains('='))
+        .filter_map(|l| {
+            l.split_once('=')
+                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        })
+        .collect()
+}
+
+/// 比对一项钉死值；`FORGE_PIN_WRITE=1` 时**写回**（整表重写、排序稳定）。
+///
+/// 刷新后**必须看 diff**：只提交被日志证明变了的值（"盲补写坏"就是这么来的）。
+pub(crate) fn check_or_write_pin(key: &str, actual: &str) {
+    let mut pins = read_pins();
+    if std::env::var_os("FORGE_PIN_WRITE").is_some() {
+        pins.insert(key.to_string(), actual.to_string());
+        let mut out = String::from(
+            "# 门禁钉死值快照（B2）：刷新 = FORGE_PIN_WRITE=1 cargo test -p forge-codegen --lib\n\
+             # 然后 cargo test -p forge-isa-dsl（lint 清点）。刷新后看 diff 再提交。\n",
+        );
+        for (k, v) in &pins {
+            out.push_str(&format!("{k} = {v}\n"));
+        }
+        std::fs::write(pins_path(), out).expect("写 pins.txt");
+        return;
+    }
+    match pins.get(key) {
+        Some(v) if v == actual => {}
+        Some(v) => panic!(
+            "钉死值 {key} 与快照不符：\n  实测 = {actual}\n  快照 = {v}\n\
+             （谱/语料的预期变更 ⇒ 用 FORGE_PIN_WRITE=1 刷新并看 diff；否则是指令丢失/回归）"
+        ),
+        None => panic!(
+            "快照 {} 缺少键 {key}（用 FORGE_PIN_WRITE=1 生成）",
+            pins_path().display()
+        ),
+    }
+}
+
+/// 计数钉死值：只对**总数**断言（逐 ISA）——值在 `asm/ratchet/pins.txt`（B2 快照）。
+///
 /// 2026-10-07（aarch64 重定位修饰批次）：arm64 336 → **348**——ALU 立即数 8 条
 /// （`add`/`sub`/`adds`/`subs` × X/W）+ LDR/STR 4 条，槽是 `imm12sym`（unit 1 + symbols +
 /// **require_symbol**：只收符号/带修饰的写法，否则数值写法会被它抢走）。
 #[test]
 fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
-    assert_eq!(
-        totals,
-        vec![("x86", 299), ("riscv64", 173), ("arm64", 544)],
-        "指令总数变了：确认是谱的预期变更还是指令丢失"
-    );
+    // 值在 `asm/ratchet/pins.txt`（B2 快照）：刷新 = `FORGE_PIN_WRITE=1 cargo test -p forge-codegen --lib`
+    let actual = totals
+        .iter()
+        .map(|(n, v)| format!("{n}:{v}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    check_or_write_pin("spec_totals", &actual);
 }
 
 /// 文本歧义名单钉死（更新前先跑 `print_spec_coverage_report` 看当前值）。
