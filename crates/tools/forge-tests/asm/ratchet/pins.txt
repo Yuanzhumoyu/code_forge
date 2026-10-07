@@ -1,4 +1,15 @@
-# 门禁钉死值快照（B2）：刷新 = FORGE_PIN_WRITE=1 cargo test -p forge-codegen --lib
-# 然后 cargo test -p forge-isa-dsl（lint 清点）。刷新后看 diff 再提交。
+# 门禁钉死值**快照**（B2）：所有"数字/名单"集中在这里，Rust 源里零字面量。
+#
+# 为什么：这些值原先散在 spec_coverage_guard / isa_roundtrip_guard / lint_shipped 的源码里，
+# 谱一变就要手改，而且"两个同名 arm64 条目"这种坑会让人改错方向（本会话吃过 4 次，
+# 其中 2 次是我自己盲补写坏的：`(1542, 622, )` 空第三项、`("arm64", 542)` 残留试验值）。
+# 集中后：**刷新 = 一条命令**，源码里不再有数字；刷新器会**保留本注释头**。
+#
+# 刷新：FORGE_PIN_WRITE=1 cargo test -p forge-codegen --lib   （forge-codegen 两处）
+#       （lint 清点同格式，见 lint_shipped.rs）
+#       写回后**看一眼 diff** 再提交（纪律：只提交被日志证明变了的值）。
+# 平时：只比对，不一致即红，报错里直接给"实测 / 快照 / 怎么刷新"三件事。
+#
+# 格式：键 = 值（`,` 分隔多项；`名:数` 表示每个 ISA 一项；`名,名` 表示有序三元组）。roundtrip.derived = 1542,622,2565
 roundtrip.derived = 1542,622,2565
 spec_totals = x86:299,riscv64:173,arm64:544

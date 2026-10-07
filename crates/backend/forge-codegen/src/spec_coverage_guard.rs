@@ -145,10 +145,18 @@ pub(crate) fn check_or_write_pin(key: &str, actual: &str) {
     let mut pins = read_pins();
     if std::env::var_os("FORGE_PIN_WRITE").is_some() {
         pins.insert(key.to_string(), actual.to_string());
-        let mut out = String::from(
-            "# 门禁钉死值快照（B2）：刷新 = FORGE_PIN_WRITE=1 cargo test -p forge-codegen --lib\n\
-             # 然后 cargo test -p forge-isa-dsl（lint 清点）。刷新后看 diff 再提交。\n",
-        );
+        // **保留原有注释头**（刷新只该改值，不该吃掉说明——"刷新即丢文档"是个隐性陷阱）。
+        let head = std::fs::read_to_string(pins_path()).unwrap_or_default();
+        let head: String = head
+            .lines()
+            .take_while(|l| l.trim_start().starts_with('#') || l.trim().is_empty())
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let mut out = if head.trim().is_empty() {
+            String::from("# 门禁钉死值快照（B2）：刷新 = FORGE_PIN_WRITE=1 cargo test -p forge-codegen --lib\n")
+        } else {
+            head
+        };
         for (k, v) in &pins {
             out.push_str(&format!("{k} = {v}\n"));
         }
