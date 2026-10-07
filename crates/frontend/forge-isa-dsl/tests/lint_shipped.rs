@@ -103,15 +103,40 @@ fn op_gap_matches_section_10_3() {
 ///
 /// arm64 的 27 条是该谱"还没写的整数 lowering"预留的多态名（arm64 只有 8 条 lowering）；
 /// x86 的 1 条（`vmovups`）疑似残留。数字变了 ⇒ 人工复核是"补了引用"还是"新残留"。
+/// 钉死值**快照**路径（B2）：与 `crates/backend/forge-codegen` 的守卫**共用同一份文件**。
+///
+/// 为什么这里也有一份 12 行读取器：快照的**文件与格式**是单一事实源，但 forge-codegen 的
+/// 读取器在 `#[cfg(test)]` 模块里、跨 crate 不可见；把 lint 清点搬过去会与它自己的
+/// `#[cfg(test)]` 撞车（反向 dev-dep 还会成环）。所以只重复读取，**值一律集中在
+/// `asm/ratchet/pins.txt`**；刷新器（任一侧）会**保留注释头与所有键**，不会吃掉别人的条目。
+fn pins_path() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../crates/tools/forge-tests/asm/ratchet/pins.txt")
+}
+
+fn read_pins() -> std::collections::BTreeMap<String, String> {
+    let Ok(s) = std::fs::read_to_string(pins_path()) else {
+        return Default::default();
+    };
+    s.lines()
+        .filter(|l| !l.trim_start().starts_with('#') && l.contains('='))
+        .filter_map(|l| {
+            l.split_once('=')
+                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        })
+        .collect()
+}
+
 #[test]
 fn unreferenced_ref_inventory() {
-    for (isa, want) in [
-        ("x86.toml", 1usize),
-        ("riscv64.toml", 0),
-        // 27：**只**统计"声明了却没被任何模板行首引用"的 ref（`--refs` opt-in 档）。
-        // 别再和 `unassigned_bits_inventory` 的 262 混（两者都叫 arm64.toml，改错方向会一直红）。
-        ("arm64.toml", 27),
-    ] {
+    for isa in ["x86.toml", "riscv64.toml", "arm64.toml"] {
+        // 值在 `asm/ratchet/pins.txt`（B2 快照）。**键名带用途前缀**：`lint.refs.*` 与
+        // `lint.unassigned_bits.*` 都指向 `arm64.toml`，本会话就因两者同名把 27/262 改反过 ✗。
+        let want: usize = read_pins()
+            .get(&format!("lint.refs.{isa}"))
+            .unwrap_or_else(|| panic!("快照缺少 lint.refs.{isa}（见 asm/ratchet/pins.txt）"))
+            .parse()
+            .expect("lint.refs.* 应为整数");
         let path = root().join("isa").join(isa);
         let spec = report::load_spec(&path).expect("加载谱");
         let opts = LintOpts {
@@ -200,11 +225,13 @@ fn overlap_guard_can_fail() {
 ///   不是漏字段；真要清掉得连移位/扩展两族一起显式声明。
 #[test]
 fn unassigned_bits_inventory() {
-    for (isa, want) in [
-        ("x86.toml", 0usize),
-        ("riscv64.toml", 7),
-        ("arm64.toml", 262), // 2026-10-07: NEON abs 族新增 vec_a/vec_c/vec_d/vq/vu/vsize 六个位域 => 176 -> 182
-    ] {
+    for isa in ["x86.toml", "riscv64.toml", "arm64.toml"] {
+        // 值在 `asm/ratchet/pins.txt`（B2 快照）：键名带用途前缀，别和 `lint.refs.*` 混。
+        let want: usize = read_pins()
+            .get(&format!("lint.unassigned_bits.{isa}"))
+            .unwrap_or_else(|| panic!("快照缺少 lint.unassigned_bits.{isa}"))
+            .parse()
+            .expect("lint.unassigned_bits.* 应为整数");
         let path = root().join("isa").join(isa);
         let spec = report::load_spec(&path).expect("加载谱");
         let opts = LintOpts {

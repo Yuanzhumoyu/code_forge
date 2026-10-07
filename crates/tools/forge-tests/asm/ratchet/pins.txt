@@ -13,3 +13,9 @@
 # 格式：键 = 值（`,` 分隔多项；`名:数` 表示每个 ISA 一项；`名,名` 表示有序三元组）。roundtrip.derived = 1542,622,2565
 roundtrip.derived = 1542,622,2565
 spec_totals = x86:299,riscv64:173,arm64:544
+lint.refs.x86.toml = 1
+lint.refs.riscv64.toml = 0
+lint.refs.arm64.toml = 27
+lint.unassigned_bits.x86.toml = 0
+lint.unassigned_bits.riscv64.toml = 7
+lint.unassigned_bits.arm64.toml = 262
