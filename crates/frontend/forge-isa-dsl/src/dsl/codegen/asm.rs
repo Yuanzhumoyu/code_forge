@@ -421,6 +421,19 @@ fn gen_lexer_ts(_model: &IsaModel) -> Result<TokenStream, String> {
             t.peek()
                 .is_some_and(|c| c.is_alphabetic() || *c == '_' || *c == '.')
         }
+        /// 排列后缀的**读时切分**判定（与宿主侧 \`split_reg_arr_str\` 同源）。
+        fn __split_reg_arr(s: &str) -> Option<(&str, &str)> {
+            let (r, a) = s.split_once('.')?;
+            if r.is_empty() || !r.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') {
+                return None;
+            }
+            let b = a.as_bytes();
+            let ok = !b.is_empty()
+                && b[..b.len() - 1].iter().all(|c| c.is_ascii_digit())
+                && matches!(b[b.len() - 1], b'b' | b'h' | b's' | b'd');
+            ok.then_some((r, a))
+        }
+
         fn __lex(s: &str) -> Result<Vec<__Tok>, String> {
             let mut out: Vec<__Tok> = Vec::new();
             let mut cs = s.chars().peekable();
@@ -580,6 +593,24 @@ fn gen_lexer_ts(_model: &IsaModel) -> Result<TokenStream, String> {
                     }
                     other => return Err(format!("unexpected char '{other}'")),
                 }
+            }
+            // **读时切分**：`V0.8b` → `Ident("V0")` + `Dot` + `Ident("8b")`（与宿主侧同源）。
+            if out.iter().any(|x| matches!(x, __Tok::Ident(s) if __split_reg_arr(s).is_some())) {
+                let mut split: Vec<__Tok> = Vec::with_capacity(out.len() + 4);
+                for x in out.drain(..) {
+                    match x {
+                        __Tok::Ident(s) => match __split_reg_arr(&s) {
+                            Some((r, a)) => {
+                                split.push(__Tok::Ident(r.to_string()));
+                                split.push(__Tok::Dot);
+                                split.push(__Tok::Ident(a.to_string()));
+                            }
+                            None => split.push(__Tok::Ident(s)),
+                        },
+                        other => split.push(other),
+                    }
+                }
+                out = split;
             }
             Ok(out)
         }
@@ -1210,8 +1241,45 @@ fn gen_imm_fns(model: &IsaModel) -> Result<(TokenStream, TokenStream), String> {
 ///
 /// 只说"段"不说"助记符"：v17 起 asm 模板可以**操作数前置**（首段不是字面），
 /// 所以"首段是不是指令名"这件事既不能假设、也不能提取（见 `gen_scan_probe`）。
+/// \`名字.数字?[bhsd]\` ⇒ \`(名字, 排列)\`（与运行时 \`__split_reg_arr\` 同源）。
+fn split_reg_arr_str(s: &str) -> Option<(&str, &str)> {
+    let (r, a) = s.split_once('.')?;
+    if r.is_empty() || !r.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') {
+        return None;
+    }
+    let b = a.as_bytes();
+    let ok = !b.is_empty()
+        && b[..b.len() - 1].iter().all(|c| c.is_ascii_digit())
+        && matches!(b[b.len() - 1], b'b' | b'h' | b's' | b'd');
+    ok.then_some((r, a))
+}
+
+/// **同源切分**：把宿主侧烤出来的词元与运行时 \`__lex\` 的形状对齐——
+/// \`v0.16b\` 要切成 \`Ident("v0")\` + \`Dot\` + \`Ident("16b")\`，孤立的 \`"."\` 归一为 \`Dot\`。
+/// 不同源就会"运行时切了、生成期没切"，字面段匹配不上（实测 \`abs.8b\` 族全红）。
+fn split_arrangement_ident(toks: Vec<Tok>) -> Vec<Tok> {
+    let mut out: Vec<Tok> = Vec::with_capacity(toks.len() + 4);
+    for t in toks {
+        if let Tok::Ident(s) = &t {
+            if s == "." {
+                out.push(Tok::Dot);
+                continue;
+            }
+            if let Some((r, a)) = split_reg_arr_str(s) {
+                out.push(Tok::Ident(r.to_string()));
+                out.push(Tok::Dot);
+                out.push(Tok::Ident(a.to_string()));
+                continue;
+            }
+        }
+        out.push(t);
+    }
+    out
+}
+
 fn lit_seg_expr(l: &str, idx: usize, case_insensitive: bool) -> Result<TokenStream, String> {
     let toks = tokenize(l).map_err(|e| format!("asm template literal '{l}': {e}"))?;
+    let toks = split_arrangement_ident(toks);
     let leading_name = if idx == 0 && case_insensitive && toks.len() == 1 {
         match &toks[0] {
             Tok::Ident(s) => Some(s.as_str()),

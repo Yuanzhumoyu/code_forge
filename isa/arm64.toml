@@ -145,6 +145,15 @@ imm7  = { offset = 15, width = 7 }   # LDP/STP 偏移（对元素，缩放单元
 # 将来加 Icmp lowering 时再补 ir，validate 会强制补全 10 个）。
 # 扩展寄存器操作数的关键字（`add x8, x8, w5, sxtw #2` 的 `sxtw`）。**分两张表是按操作数类别**：
 # W 表收全部 8 个（`add w1, w2, w3, uxtx` 也合法——32 位视图下 uxtx 是恒等），X 表只收 uxtx/sxtx。
+[conventions.imm_names.arr]   # NEON ????? = size*2 + q???? fields=["vq","vsize"] ?????
+"8b"  = 0
+"16b" = 1
+"4h"  = 2
+"8h"  = 3
+"2s"  = 4
+"4s"  = 5
+"2d"  = 7
+
 [conventions.imm_names.extend_w]
 uxtb = 0
 uxth = 1
@@ -681,6 +690,14 @@ nv = 15
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
 [[operand_slots]]
+name = "varr"      # NEON ?????`v0.16b` ? `.16b` ?????????? + ?????????
+kind = "imm"
+width = 3
+names = "arr"
+encode = "slice"
+fields = ["vq", "vsize"]
+
+[[operand_slots]]
 name = "r64"
 kind = "reg"
 class = "gpr8"
@@ -1078,6 +1095,11 @@ name = "VEC3R"   # NEON ?????Rd, Rn, Rm?
 opcode_field = "vec_a"
 operand_fields = ["rt", "rn", "rm"]
 
+[[forms]]
+name = "VEC3RA"   # NEON ???? + ???????????????? vq???????? fields ?????
+opcode_field = "vec_a"
+operand_fields = ["rt", "rn", "rm", "vq", "vq", "vq"]
+
 [[instructions]]
 name = "ABS8B"
 form = "VEC2R"
@@ -1177,7 +1199,17 @@ fields = { vq = 1, vu = 1, vsize = 2, vec_c = 1, vec_d = 46, rm = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "neg.4s {dst}, {src}"
 
-# add????????????????
+# NEON?**?????????**????????????2026-10-07 ???????
+[[instructions]]
+name = "VADD"
+form = "VEC3RA"
+opcode = 0x0E
+fields = { vec_c = 1, vec_d = 33 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+asm = "add {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+
+# 助记符带后缀的**另一种拼法**（与 `VADD` 并存：语料两种都写 —— 这是两种语法，不是冗余）
+
 [[instructions]]
 name = "VADD8B"
 form = "VEC3R"
@@ -1226,6 +1258,7 @@ fields = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 33 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "add.4s {dst}, {src}, {src2}"
 
+# add????????????????
 # and????????????????
 [[instructions]]
 name = "VAND8B"
@@ -5463,27 +5496,31 @@ asm = "neg.4s v0, v0"
 bytes = [0x00, 0xB8, 0xA0, 0x6E]
 
 [[vectors]]
-asm = "add.8b v0, v0, v0"
-bytes = [0x00, 0x84, 0x20, 0x0E]
-
-[[vectors]]
-asm = "add.16b v0, v0, v0"
+asm = "add v0.16b, v0.16b, v0.16b"
 bytes = [0x00, 0x84, 0x20, 0x4E]
 
 [[vectors]]
-asm = "add.4h v0, v0, v0"
+asm = "add v0.8b, v0.8b, v0.8b"
+bytes = [0x00, 0x84, 0x20, 0x0E]
+
+[[vectors]]
+asm = "add v0.16b, v0.16b, v0.16b"
+bytes = [0x00, 0x84, 0x20, 0x4E]
+
+[[vectors]]
+asm = "add v0.4h, v0.4h, v0.4h"
 bytes = [0x00, 0x84, 0x60, 0x0E]
 
 [[vectors]]
-asm = "add.8h v0, v0, v0"
+asm = "add v0.8h, v0.8h, v0.8h"
 bytes = [0x00, 0x84, 0x60, 0x4E]
 
 [[vectors]]
-asm = "add.2s v0, v0, v0"
+asm = "add v0.2s, v0.2s, v0.2s"
 bytes = [0x00, 0x84, 0xA0, 0x0E]
 
 [[vectors]]
-asm = "add.4s v0, v0, v0"
+asm = "add v0.4s, v0.4s, v0.4s"
 bytes = [0x00, 0x84, 0xA0, 0x4E]
 
 [[vectors]]
