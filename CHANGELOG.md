@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-07) — asm 语料**不入 git**（本地缓存 + 缺语料显式跳过）
+
+`asm/parse/**` 进 `.gitignore` 并从索引移除（133 个文件；盘上保留）。**为什么**：语料体积大、
+"留哪些"由 `fetch.mjs` 的逐文件取舍**算出来**，签进仓库只带来 churn、`git add -A` 误跟踪、
+以及"裁回没跑成 ⇒ 棘轮拿错值"这类错。**怎么用**：`node crates/tools/forge-tests/asm/fetch.mjs`
+（默认裁剪）/ `--keep-all`（量全集）；`asm/PROVENANCE.md` 仍跟踪，作语料身份的单一事实源。
+**干净克隆**：`asm/parse` 缺失时三档套件打 `ASM-CORPUS-MISSING` **显式跳过**（退 0），不假绿——
+判据 `asm::corpus::corpus_present()`。实测：语料在盘 ⇒ 四档 `verify=0`；移开后 ⇒ 两条跳过且退 0 ✓。
+
 ### Added (2026-10-07) — aarch64 `adr`/`adrp`（数值 + 符号两形态，117 行）
 
 **位布局**：`adr_op[31]`（adr=0/adrp=1）+ `adr_fix[28:24]`（固定 `10000`）+ `immlo[30:29]` +

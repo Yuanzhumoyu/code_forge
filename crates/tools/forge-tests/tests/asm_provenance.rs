@@ -63,6 +63,13 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<String>) -> std::io::Result<()
 
 #[test]
 fn provenance_matches_the_vendored_corpus() {
+    if !forge_tests::asm::corpus::corpus_present() {
+        eprintln!(
+            "ASM-CORPUS-MISSING: asm/parse 下没有语料（B1 起语料是**本地缓存**，不入 git）——\
+             先跑 `node crates/tools/forge-tests/asm/fetch.mjs` 拉取；本测试跳过"
+        );
+        return;
+    }
     let root: PathBuf = forge_tests::asm::corpus_root();
     let doc = std::fs::read_to_string(root.join("PROVENANCE.md"))
         .expect("asm/PROVENANCE.md 应当存在（由 asm/fetch.mjs 生成）");

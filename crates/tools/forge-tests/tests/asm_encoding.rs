@@ -29,6 +29,13 @@ use forge_tests::asm::{self, SUITES};
 /// 三架构的"上游字节 oracle"对拍 + 棘轮。
 #[test]
 fn encodings_of_parsable_corpus_lines_match_upstream() {
+    if !asm::corpus::corpus_present() {
+        eprintln!(
+            "ASM-CORPUS-MISSING: asm/parse 下没有语料（B1 起语料是**本地缓存**，不入 git）——\
+             先跑 `node crates/tools/forge-tests/asm/fetch.mjs` 拉取；本测试跳过"
+        );
+        return;
+    }
     let mut reports: Vec<EncodingReport> = Vec::new();
     let mut checked_total = 0usize;
     for isa in ["x86", "riscv64", "aarch64"] {

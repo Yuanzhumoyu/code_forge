@@ -46,6 +46,13 @@ fn run_isa(isa: &str) -> IsaReport {
 /// 计数棘轮（三架构）。
 #[test]
 fn corpus_parse_counts_match_the_ratchet() {
+    if !asm::corpus::corpus_present() {
+        eprintln!(
+            "ASM-CORPUS-MISSING: asm/parse 下没有语料（B1 起语料是**本地缓存**，不入 git）——\
+             先跑 `node crates/tools/forge-tests/asm/fetch.mjs` 拉取；本测试跳过"
+        );
+        return;
+    }
     let reports: Vec<IsaReport> = ["x86", "riscv64", "aarch64"]
         .iter()
         .map(|isa| run_isa(isa))

@@ -273,6 +273,35 @@ pub fn extract(suite: &Suite, file: &str, src: &str) -> Extracted {
     out
 }
 
+/// 语料是否**在盘上**。
+///
+/// B1 起语料**不再是 git 跟踪件**（`asm/parse/**` 进 `.gitignore`），而是本地缓存：
+/// 上游语料体积大、且"留哪些文件"是**算出来的**（`fetch.mjs` 取舍），把它签进仓库
+/// 只会带来 600 文件级别的 churn 与"裁回没跑成"这类错值。
+///
+/// 判据 = `asm/parse` 下至少有一个 `.s`。**缺失时三档套件显式跳过**（打
+/// `ASM-CORPUS-MISSING`），既不在干净克隆上假红，也不假装跑过——棘轮与 PROVENANCE 的
+/// 比对必须建立在真语料之上。
+pub fn corpus_present() -> bool {
+    fn any_s(dir: &Path) -> bool {
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return false;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if any_s(&p) {
+                    return true;
+                }
+            } else if p.extension().is_some_and(|x| x == "s") {
+                return true;
+            }
+        }
+        false
+    }
+    any_s(&corpus_root().join("parse"))
+}
+
 /// 读一套语料的全部文件（递归；按路径排序保证 deterministic）。
 pub fn read_suite(suite: &Suite) -> Result<Vec<(String, String)>, String> {
     let dir = corpus_root().join("parse").join(suite.dir);

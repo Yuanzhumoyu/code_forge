@@ -8,3 +8,7 @@
 
 # rustc ICE 崩溃转储（codegen backend panic 时自动生成，调试垃圾）
 **/rustc-ice-*.txt
+
+# asm 语料是**本地缓存**、不入 git（B1：体积大 + "留哪些"是 fetch.mjs 算出来的）。
+# 拉取：node crates/tools/forge-tests/asm/fetch.mjs；缺失时三档套件打 ASM-CORPUS-MISSING 显式跳过。
+crates/tools/forge-tests/asm/parse/
