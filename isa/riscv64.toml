@@ -1455,6 +1455,17 @@ opcode = 0x6F
 ops = ["dst:gpr:out", "target:off_j"]
 asm = "jal {dst}, {target}"
 
+# `jal rd, rs` = `jalr rd, rs, 0` 的别名（LLVM 接受；语料 `rv32i-valid.s:88` 就是这么写的）。
+# 与 `jal {dst}, {target}` 同首段 ⇒ 靠**第二操作数的槽类型**分派：reg 槽比标签/偏移槽更具体 ✓。
+# form "I" 的 imm12 字段不绑定操作数 ⇒ 编码缺省发 0、解码的补集零守卫要求它为 0 ✓（正是别名语义）。
+[[instructions]]
+name = "JAL_R"
+form = "I"
+opcode = 0x67
+fields = { funct3 = 0 }
+ops = ["dst:gpr:out", "src:gpr"]
+asm = "jal {dst}, {src}"
+
 [[instructions]]
 name = "JALR"
 form = "I"

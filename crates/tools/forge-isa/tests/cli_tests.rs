@@ -105,7 +105,23 @@ asm = "i"
 fn insts_lists_expanded_instructions() {
     let out = run(&["insts", &isa("riscv64.toml")]);
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
-    assert!(out.stdout.contains("173 条指令"), "{}", out.stdout);
+    // 指令总数**不写字面量**（B2 口径）：读 `asm/ratchet/pins.txt` 的 `spec_totals` 快照，
+    // 与守卫/棘轮同源。谱变了只需 `FORGE_PIN_WRITE=1` 刷快照一次，这里不会再漂 ✗。
+    let pins = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../crates/tools/forge-tests/asm/ratchet/pins.txt"),
+    )
+    .expect("asm/ratchet/pins.txt 应当存在");
+    let want_riscv = pins
+        .lines()
+        .find_map(|l| l.strip_prefix("spec_totals = "))
+        .and_then(|v| v.split(',').find_map(|kv| kv.strip_prefix("riscv64:")))
+        .expect("spec_totals 里应有 riscv64:<数>");
+    assert!(
+        out.stdout.contains(&format!("{want_riscv} 条指令")),
+        "期望 {want_riscv} 条指令：{}",
+        out.stdout
+    );
     // 模板展开出的实例也在列表里（SLLW 来自 [[templates]] 行）。
     assert!(out.stdout.contains("SLLW"), "{}", out.stdout);
     assert!(out.stdout.contains("template="), "{}", out.stdout);

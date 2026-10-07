@@ -137,8 +137,8 @@ fn riscv_rv32_projection_snapshot() {
     }
     // 104 → 105（2026-10-01）：riscv 补了 `FSGNJ_D`（`fpr_mov` 的 64 位档）。它**不标**
     // `xlen`——RV32D 同样定义 `fsgnj.d`（D 扩展在 RV32 上存在），所以 RV32 视角该留下它。
-    assert_eq!(p.inst_count, 140, "RV32 投影剩 140 条");
-    assert_eq!(rows.len(), 140);
+    assert_eq!(p.inst_count, 141, "RV32 投影剩 141 条");
+    assert_eq!(rows.len(), 141);
     // 96 → 100（2026-10-01）：riscv 补了 `Fload`/`Fstore` 各两条（单/双精度）lowering，
     // 它们的 `when` 只按宽度分派、引用的 `FLW`/`FSW` 与 `FLD`/`FSD` 在 RV32 视角下都还在。
     // 100 → 108（同日）：再补浮点算术 `Fadd`/`Fsub`/`Fmul`/`Fdiv` 各两条（单/双精度），
@@ -159,9 +159,9 @@ fn riscv_rv32_projection_snapshot() {
             p.dropped_decls
         );
     }
-    // 默认档对照：同一份谱不传参数 = 173/140（投影是纯 opt-in）。
+    // 默认档对照：同一份谱不传参数 = 174/141（投影是纯 opt-in）。
     let (_, def_rows, def_p) = insts("riscv64.toml", &[]);
-    assert_eq!(def_rows.len(), 173);
+    assert_eq!(def_rows.len(), 174);
     assert_eq!(def_p.lowering_count, 122);
 }
 
@@ -184,7 +184,7 @@ fn cascade_keeps_unrelated_lowering() {
 #[test]
 fn only_supplied_params_gate() {
     let (_, rows, p) = insts("riscv64.toml", &["xlen=64"]);
-    assert_eq!(rows.len(), 173, "xlen=64 是原生视角，一条都不该丢");
+    assert_eq!(rows.len(), 174, "xlen=64 是原生视角，一条都不该丢");
     assert!(p.dropped_insts.is_empty());
     assert_eq!(p.lowering_count, 122);
 }

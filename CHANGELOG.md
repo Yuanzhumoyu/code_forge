@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-07) — riscv64：`jal rd, rs` 别名（清掉棘轮里最后一条已登记红桶）
+
+`rv32i-valid.s:88` 的 `jal a0, a0` 是 `jalr rd, rs, 0` 的**别名**（LLVM 接受该写法）。新增 `JAL_R`
+（`form = "I"`、`opcode = 0x67`、`funct3 = 0`、`ops = ["dst:gpr:out", "src:gpr"]`）：与
+`jal {dst}, {target}` 首段相同 ⇒ 靠**第二操作数的槽类型**分派（reg 槽比标签/偏移槽更具体 ✓）；
+`I` 形式的 `imm12` 不绑操作数 ⇒ 编码缺省发 0、解码的补集零守卫要求它 0 ✓（正是别名语义）。
+
+实测：riscv64 `parsed` 1776 → **1777**、**`tail_mismatch 1 → 0`**（棘轮里最后一条已登记红桶清零 ✓）。
+**加一条 riscv 指令牵动多处钉死值**（都已同步 ✓）：`pins.txt` 的 `spec_totals`（173 → 174）与
+`roundtrip.derived`（622 → 624）；`forge-isa` CLI 测试的 `"173 条指令"`（**已改为读快照** ✓，不再手写
+数字 ✗）；`variants.rs` 里该测试的原生视角计数（173 → 174）与 RV32 投影计数（140 → 141，多处）。
+
 ### Fixed (2026-10-07) — x86 EVEX 双精度（PD）族的 **W 位**：`vaddpd zmm…` 一直编错
 
 `VADDPD_ZMM`/`VSUBPD_ZMM`/`VMULPD_ZMM`/`VDIVPD_ZMM` 四条行复用了**单精度**模板（`evex_w = 0`），

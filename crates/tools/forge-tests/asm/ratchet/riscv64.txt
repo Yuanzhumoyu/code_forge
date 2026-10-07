@@ -4,8 +4,7 @@
 [suite llvm-mc]
 files = 81
 lines = 11313
-parsed = 1776
+parsed = 1777
 no_prefix = 242
-tail_mismatch = 1
+tail_mismatch = 0
 corpus_only = 9294
-# mismatch: rv32i-valid.s:88	jal a0, a0	line 3: no matching instruction
