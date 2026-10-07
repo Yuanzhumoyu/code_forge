@@ -1684,10 +1684,10 @@ rows = [
 name = "PD_BIN_EV"
 body = { form = "EVEX_RRV", modrm = { reg = "dst", rm = "src2" }, fields = { evex_map = 1, evex_pp = 1, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr32:out", "src:fpr32", "src2:fpr32"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
-  { inst = "VADDPD_ZMM", ref = "vaddpd", opcode = 0x58, asm = "vaddpd {dst}, {src}, {src2}" },
-  { inst = "VSUBPD_ZMM", ref = "vsubpd", opcode = 0x5C, asm = "vsubpd {dst}, {src}, {src2}" },
-  { inst = "VMULPD_ZMM", ref = "vmulpd", opcode = 0x59, asm = "vmulpd {dst}, {src}, {src2}" },
-  { inst = "VDIVPD_ZMM", ref = "vdivpd", opcode = 0x5E, asm = "vdivpd {dst}, {src}, {src2}" },
+  { inst = "VADDPD_ZMM", ref = "vaddpd", opcode = 0x58, fields = { evex_w = 1 }, asm = "vaddpd {dst}, {src}, {src2}" },
+  { inst = "VSUBPD_ZMM", ref = "vsubpd", opcode = 0x5C, fields = { evex_w = 1 }, asm = "vsubpd {dst}, {src}, {src2}" },
+  { inst = "VMULPD_ZMM", ref = "vmulpd", opcode = 0x59, fields = { evex_w = 1 }, asm = "vmulpd {dst}, {src}, {src2}" },
+  { inst = "VDIVPD_ZMM", ref = "vdivpd", opcode = 0x5E, fields = { evex_w = 1 }, asm = "vdivpd {dst}, {src}, {src2}" },
 ]
 # EVEX 整数（vpaddd/vpsubd/vpaddq/vpsubq，pp=1）
 [[templates]]

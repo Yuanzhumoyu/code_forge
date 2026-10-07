@@ -11,6 +11,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-07) — x86 EVEX 双精度（PD）族的 **W 位**：`vaddpd zmm…` 一直编错
+
+`VADDPD_ZMM`/`VSUBPD_ZMM`/`VMULPD_ZMM`/`VDIVPD_ZMM` 四条行复用了**单精度**模板（`evex_w = 0`），
+而 EVEX 的双精度必须 **W=1** ⇒ 编码字节的 **P1 位 7** 少 1：
+
+```text
+vaddpd zmm1, zmm1, zmm2 : 我们 62 F1 75 48 58 CA ≠ 上游 62 F1 f5 48 58 CA
+                                   ^^ P1              ^^ P1（W=1）
+```
+
+修法：给这 4 行各自补 `fields = { evex_w = 1 }`（其余 P0/P2/opcode/ModRM 本来就对）。
+
+**实测**：全集编码 `known` **157 → 148（−9）**（`avx512-intel.s` 里的 PD 条目全部消失）；
+`validate`/`lint` 干净 ✓，四档 `verify=0` ✓，`ws=0` ✓。
+（`known` 只在全集运行里非空——vendored 集恒 0，所以这条修复不会让门禁数字变化，只会让**真错编码**消失。）
+
 ### Changed (2026-10-07) — asm 语料**不入 git**（本地缓存 + 缺语料显式跳过）
 
 `asm/parse/**` 进 `.gitignore` 并从索引移除（133 个文件；盘上保留）。**为什么**：语料体积大、
