@@ -11,7 +11,7 @@ ref `llvmorg-19.1.0`）——请勿手改；重跑脚本即可刷新。方法、
    `.gitattributes` 把 `crates/tools/forge-tests/asm/**` 钉成 `text eol=lf`，
    否则 `core.autocrlf` 在 Windows 上会改工作区、摘要立刻对不上。
 2. **取舍是算出来的**：本次拉了上游 **733** 个候选（顶层 `.s`；x86 只取
-   Intel 语法的文件名那批），按判据留下 **131** 个、砍掉 **602** 个
+   Intel 语法的文件名那批），按判据留下 **135** 个、砍掉 **598** 个
    （判据 = 解析档「整条接得住且不产生红桶」+ 编码对拍档「没有字节差异」，两份逐文件记分板
    在 `target/asm-suite/`）。被砍掉的那些不是"忘了"，而是**本谱现在还不认识**（SVE/SME/
    AVX-512/压缩指令/带符号 CSR 名/重定位表达式…）——它们会让红桶变成"永久红"，门禁就废了。
@@ -20,7 +20,7 @@ ref `llvmorg-19.1.0`）——请勿手改；重跑脚本即可刷新。方法、
    一并登记在下面。
 3. `asm/exec/**`、`asm/ratchet/**` 是本仓库自己写的，不在下表。
 
-## LLVM MC（132 份）
+## LLVM MC（136 份）
 
 | 路径 | 上游 | 固定 ref | 许可 | 字节 | 行 | 摘要（sha256） | 处理 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -107,6 +107,9 @@ ref `llvmorg-19.1.0`）——请勿手改；重跑脚本即可刷新。方法、
 | `parse/riscv64/llvm-mc/user-csr-names.s` | [llvm/llvm-project `llvm/test/MC/RISCV/user-csr-names.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/RISCV/user-csr-names.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 12449 | 482 | `ee90a4cceacba67965c43f0ca38eff68976eb23f1f90b165a649a22be2c8153f` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/CheckDataSymbol.s` | [llvm/llvm-project `llvm/test/MC/AArch64/CheckDataSymbol.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/CheckDataSymbol.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 399 | 15 | `7ab76b4a14bc8d659540eb6236e68225e72e75ccf4e91decdcd0a411f5f1e372` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/ELF_ARM64_large-relocations.s` | [llvm/llvm-project `llvm/test/MC/AArch64/ELF_ARM64_large-relocations.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/ELF_ARM64_large-relocations.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 1122 | 20 | `7727e5d5c902df950050f022103acbf62b1fe3946613702833fb9ca2b15f072f` | **整文件**，逐字未改 |
+| `parse/aarch64/llvm-mc/adrp-annotation.s` | [llvm/llvm-project `llvm/test/MC/AArch64/adrp-annotation.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/adrp-annotation.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 229 | 9 | `37e62679133ed4dbf457a00e8b967bece1aee5f5e8dc8a45bb87e801ab64b83d` | **整文件**，逐字未改 |
+| `parse/aarch64/llvm-mc/adrp-relocation.s` | [llvm/llvm-project `llvm/test/MC/AArch64/adrp-relocation.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/adrp-relocation.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 1053 | 23 | `8768388eace237fde65c4dd7d5c6bf97cd17187ea4702edd617ac1820cdc60ee` | **整文件**，逐字未改 |
+| `parse/aarch64/llvm-mc/adrp-relocation2.s` | [llvm/llvm-project `llvm/test/MC/AArch64/adrp-relocation2.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/adrp-relocation2.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 186 | 7 | `e4a98ac68f5ffcbb16dc3a3542bbee622799e527f91a0f335b040c95601890ce` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/align.s` | [llvm/llvm-project `llvm/test/MC/AArch64/align.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/align.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 441 | 14 | `879dcbc374ec0c0d7ee8cdb490eb7bbdfbe95c84b9205f9f001b2593bba45b08` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/arm64-branch-encoding.s` | [llvm/llvm-project `llvm/test/MC/AArch64/arm64-branch-encoding.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/arm64-branch-encoding.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 6175 | 169 | `078fa982f97aa47dff06efe8a692b14e5cf572c8da0d6b9130bbcf737d68d186` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/arm64-directive_loh.s` | [llvm/llvm-project `llvm/test/MC/AArch64/arm64-directive_loh.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/arm64-directive_loh.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 2416 | 97 | `564729f36630698c9644062e66350cd7638b24ba02de3164795555145670d384` | **整文件**，逐字未改 |
@@ -126,6 +129,7 @@ ref `llvmorg-19.1.0`）——请勿手改；重跑脚本即可刷新。方法、
 | `parse/aarch64/llvm-mc/cfi-bad-nesting-elf.s` | [llvm/llvm-project `llvm/test/MC/AArch64/cfi-bad-nesting-elf.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/cfi-bad-nesting-elf.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 585 | 20 | `84c7fea201d34f044f82db30fff923d026f99b428c1dc4d61ec259eee2859938` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/cfi.s` | [llvm/llvm-project `llvm/test/MC/AArch64/cfi.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/cfi.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 536 | 23 | `248799f6ab3f60e3ae2b736f62a8e17ac3f015f4e2999f25576d1d963f657711` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/coff-align.s` | [llvm/llvm-project `llvm/test/MC/AArch64/coff-align.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/coff-align.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 171 | 7 | `a408d3c1f0a81c4521ba436e9bd1fb981ea74a2d244e5bb9aa8289d3dce6c4bf` | **整文件**，逐字未改 |
+| `parse/aarch64/llvm-mc/coff-relocations-offset.s` | [llvm/llvm-project `llvm/test/MC/AArch64/coff-relocations-offset.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/coff-relocations-offset.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 1549 | 49 | `859cdc2c2b7a08c361f973bcb9a2095d598d41a0dc4e3c4d91035f0035e92044` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/coff-separator.s` | [llvm/llvm-project `llvm/test/MC/AArch64/coff-separator.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/coff-separator.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 499 | 13 | `022508d29593e3113b52807e53b616254b360776da3945e0746112ff3a2435d2` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/cold.s` | [llvm/llvm-project `llvm/test/MC/AArch64/cold.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/cold.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 365 | 13 | `a9dd90e11e3fe5339fdef3f6067994d89d19ca780df4a08111efdf81f858f61b` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/directive-arch.s` | [llvm/llvm-project `llvm/test/MC/AArch64/directive-arch.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/directive-arch.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 512 | 23 | `f1b8e0609a4803f1af780d99cc5a24cecef41eaaa96e79feef611e4bbe561161` | **整文件**，逐字未改 |

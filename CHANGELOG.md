@@ -11,6 +11,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-07) — aarch64 `adr`/`adrp`（数值 + 符号两形态，117 行）
+
+**位布局**：`adr_op[31]`（adr=0/adrp=1）+ `adr_fix[28:24]`（固定 `10000`）+ `immlo[30:29]` +
+`immhi[23:5]` = 21 位有符号立即数**拆两段**，用既有 `encode = "slice"` 落点（LSB 先切）。
+
+**值语义**：`adrp` 的操作数是**页号** —— 槽写 `unit = 4096`（语料 `adrp x0,#4096` = `00 00 00 b0`
+⇒ `immlo=1, immhi=0` 反证，即字节地址 ÷ 4096）；`adr` 是字节偏移（`unit = 1`）。
+
+**两形态 + 分派**：数值槽（`adr_off`/`adrp_off`）与符号槽（`adr_sym`，占位 0 由重定位填）同形共存，
+符号槽必须写 **`require_symbol = true`**——只写 `symbols = true` 时它会**连普通字面量一起收**
+⇒ 抢走数值写法、把 `#4096` 送进页重定位通路（实测编成 `0x90008000` 而非 `0xB0000000`，
+根因就是这里）。`require_symbol` 让"没记到符号 ⇒ 直接不匹配"，数值写法自然落回数值槽。
+
+实测：`parsed` 2068 → **2093**、编码 **`known` 57 不变** ✓；守卫 540 → **544**、枚举器 2541 → **2565**。
+（`tail_mismatch` 同步 +36：新语法让相邻方言写法 `foo@PAGE` / `:lo12:` 之类由 `no_prefix` 变红桶，
+属已归因的"可见化"，在**已淘汰**文件内、棘轮不受影响。）
+
 ### Fixed (2026-10-07) — 切片+单位槽的解码符号丢位（阻塞 ADR/ADRP）；`forge-rustc` 漏注册编译管线（6 条 CLI e2e 红）
 
 **① 切片解码：先符号扩展、再乘回单位**（`dsl/codegen/mod.rs`）

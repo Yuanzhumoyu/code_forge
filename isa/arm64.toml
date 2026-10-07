@@ -72,6 +72,10 @@ aliases = { WZR = 31 }
 # 通用寄存器位域位置在全 A64 固定：Rd=[4:0]、Rn=[9:5]、Rm=[20:16]。
 
 [conventions.bitfields]
+adr_op = { offset = 31, width = 1 }
+adr_fix = { offset = 24, width = 5 }
+immlo = { offset = 29, width = 2 }
+immhi = { offset = 5, width = 19 }
 rd    = { offset = 0,  width = 5 }
 rn    = { offset = 5,  width = 5 }
 rm    = { offset = 16, width = 5 }
@@ -699,6 +703,33 @@ nv = 15
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
 [[operand_slots]]
+name = "adr_off"      # ADR 数值：21 位有符号字节偏移 -> 切片进 immlo+immhi
+kind = "imm"
+width = 21
+signed = true
+encode = "slice"
+fields = ["immlo", "immhi"]
+
+[[operand_slots]]
+name = "adrp_off"     # ADRP 数值：值 = 页号（unit 4096；语料 adrp x0,#4096 => immlo=1,immhi=0）
+kind = "imm"
+width = 21
+signed = true
+unit = 4096
+encode = "slice"
+fields = ["immlo", "immhi"]
+
+[[operand_slots]]
+name = "adr_sym"      # 符号写法：占位 0，实际地址由重定位填（adr x0, foo / adr x0, 1f）
+kind = "imm"
+width = 21
+signed = true
+symbols = true
+require_symbol = true
+encode = "slice"
+fields = ["immlo", "immhi"]
+
+[[operand_slots]]
 name = "varr_q"    # 同 varr，但只写 Q（逻辑族用）
 kind = "imm"
 width = 1
@@ -924,6 +955,43 @@ width = 26
 unit = 4    # 源文本/Inst 字段是**字节**偏移；字段数的是 4 字节字（`b #28` ⇒ imm26 = 7）
 
 # ─────────────────────────── 编码形式 ───────────────────────────
+
+[[forms]]
+name = "ADR_F"
+opcode_field = "adr_fix"
+operand_fields = ["rd", "immlo", "immhi"]
+
+[[instructions]]
+name = "ADR"
+form = "ADR_F"
+opcode = 0x10
+fields = { adr_op = 0 }
+ops = ["dst:r64:out", "off:adr_off"]
+asm = "adr {dst}, {off}"
+
+[[instructions]]
+name = "ADRP"
+form = "ADR_F"
+opcode = 0x10
+fields = { adr_op = 1 }
+ops = ["dst:r64:out", "off:adrp_off"]
+asm = "adrp {dst}, {off}"
+
+[[instructions]]
+name = "ADR_SYM"
+form = "ADR_F"
+opcode = 0x10
+fields = { adr_op = 0 }
+ops = ["dst:r64:out", "sym:adr_sym"]
+asm = "adr {dst}, {sym}"
+
+[[instructions]]
+name = "ADRP_SYM"
+form = "ADR_F"
+opcode = 0x10
+fields = { adr_op = 1 }
+ops = ["dst:r64:out", "sym:adr_sym"]
+asm = "adrp {dst}, {sym}"
 
 [[forms]]
 name = "ALUIMM"   # ADD(S)/SUB(S) (imm)：rd/rn/imm12（[23:22] sh=0 → 零 guard）
@@ -5719,3 +5787,15 @@ bytes = [0x00, 0x08, 0x20, 0x2E]
 [[vectors]]
 asm = "rev64.8b v0, v0"
 bytes = [0x00, 0x08, 0x20, 0x0E]
+
+[[vectors]]
+asm = "adr x0, #0"
+bytes = [0x00, 0x00, 0x00, 0x10]
+
+[[vectors]]
+asm = "adrp x0, #0"
+bytes = [0x00, 0x00, 0x00, 0x90]
+
+[[vectors]]
+asm = "adrp x0, #4096"
+bytes = [0x00, 0x00, 0x00, 0xB0]
