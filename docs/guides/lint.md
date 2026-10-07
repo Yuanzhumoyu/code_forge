@@ -16,8 +16,13 @@ npx markdownlint-cli2 docs/reference/isa-dsl.md CLAUDE.md
 npx markdownlint-cli2 "**/*.md" "!target"
 ```
 
-通过 = `Summary: 0 error(s)` 且退出码 0。**未跑过上面任一命令前，
-不要声称文档 lint 干净**（规则有版本/配置差异，凭肉眼判断不可靠）。
+通过 = `Linting: N files` 且 `Summary: N issues in 0 files`、退出码 0。**读摘要要小心**：
+`Summary: N issues in M files` 里的 **M = 有问题的文件数**（不是被 lint 的文件数，后者由
+`Linting: N files` 那行给出）——只看摘要会把"干净的 N 个文件"误读成"一个都没跑"
+（2026-10-07 实测踩过：`Linting: 2 files` + `Summary: 0 issues in 0 files` = 两文件都干净）。
+**未跑过上面任一命令前，不要声称文档 lint 干净**（规则有版本/配置差异，凭肉眼判断不可靠）。
+另：子目录里的单个文件请用**文档化命令的相对路径形式**（`npx markdownlint-cli2 docs/… CLAUDE.md`
+会打印 `Finding:`/`Linting:` 两行，据此确认真的跑到了它）。
 
 ## 仓库配置（根目录 .markdownlint.json）
 
@@ -48,18 +53,25 @@ npx markdownlint-cli2 "**/*.md" "!target"
   aarch64-encoding-ref.md`）：
   `<!-- markdownlint-configure-file { "MD013": { "line_length": 300, ... } } -->`
 
-## 存量基线（2026-09-05 实测，`Summary: 85 error(s)`）
+## 存量基线（2026-10-07 实测，`Summary: 114 issues in 6 files`）
 
-全仓现存违规**仅限历史归档正文**（`docs/archive/forge-ir/` 5 篇长文档，
-按归档纪律"内容以记录时点为准"未做格式重构）：
+命令：`npx markdownlint-cli2 "**/*.md" "!target"`（仓库根、markdownlint v0.41.1）。
+**archive 之外全树零警告**（含根 README/CLAUDE/CHANGELOG、docs/ 现行文档、crates README）；
+114 条**全部**落在历史归档正文（归档纪律：内容以记录时点为准，未做格式重构）：
 
 | 文件 | 处数 | 主要规则 |
 | --- | --- | --- |
-| `archive/forge-ir/code-quality-audit.md` | 37 | MD013/032/031（正文长行、列表与代码围栏空行） |
-| `archive/forge-ir/iteration-roadmap.md` | 30 | MD031/032/013 |
-| `archive/forge-ir/next-iterations.md` | 10 | MD032/031/013 |
+| `archive/forge-ir/code-quality-audit.md` | 33 | MD013/032/031 |
+| `archive/forge-ir/iteration-roadmap.md` | 13 + 若干单条 | MD060/032/013 |
+| `archive/forge-ir/next-iterations.md` | 12 | MD031/032/013 |
 | `archive/forge-ir/iteration-checklist.md` | 6 | MD013/031 |
 | `archive/forge-ir/display-gaps.md` | 2 | MD013 |
+| `archive/isa-dsl-v12-roadmap.md` | 1 | MD033 |
+
+（按文件聚合的行会与逐条列出的行重复计数，逐条总数以摘要为准。）
+与 2026-09-05 的 85 条/5 篇相比，差额来自**规则集变化**（新增 MD060 表格风格、MD033）与
+多出的那篇 archive 文档——不是新写的正文。**本轮另修**：`CHANGELOG.md` 的 **766 条 MD004**
+（列表符号风格漂移：文档首个列表是 `+`，多年正文用 `-`）已统一为 `+`，该文件回到零警告。
 
 处理纪律：**不得以"懒豁免"掩盖新违规**——新写/新改文档必须零警告；
 上述冻结正文如需改写（如从 archive 恢复为 active），在改写同时顺手清理。
