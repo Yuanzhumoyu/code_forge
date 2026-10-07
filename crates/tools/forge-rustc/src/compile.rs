@@ -50,6 +50,13 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
             }
         }
     }
+    // 注册**两件事**，缺一不可：
+    // ① 生成物注册（ISA 表 + reloc patcher）——`backend::<isa>::ensure_registered`；
+    // ② **编译管线工厂**——`backend::pipeline_hooks::ensure_registered()`。
+    // 漏掉 ② 时任何编译入口都会报 "backend: Unsupported: ISA `x86_64` 未注册编译管线：
+    // 宿主需调用 forge_isa_runtime::register_pipeline(...)"（CLI 经 backend dll 调用时最先撞上，
+    // 2026-10-07 实测：cargo-forge 的 6 条 cli_tests 全部因此红）。
+    code_forge::backend::pipeline_hooks::ensure_registered();
     code_forge::backend::x86::ensure_registered();
     let r = compile_with_isa(&func, isa_name);
     crate::trace::set_panic_context(None);
@@ -66,6 +73,9 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
 /// lowering；SIMD/浮点/系统寄存器/跨函数 Call 等缺口会以显式错误报出
 /// （不静默错码）。
 pub fn auto_register_isa_for_target(target_triple: &str) {
+    // 管线注册与目标无关（三后端一起注册，幂等且便宜）——与上面同一个理由：
+    // 只注册生成物、不注册管线 ⇒ 编译期 "未注册编译管线"。
+    code_forge::backend::pipeline_hooks::ensure_registered();
     if target_triple.contains("x86_64") || target_triple.contains("amd64") {
         code_forge::backend::x86::ensure_registered();
     } else if target_triple.contains("aarch64") || target_triple.contains("arm64") {

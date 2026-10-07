@@ -1406,19 +1406,23 @@ fn gen_decode_group(
                             sh += single(sbf).1;
                         }
                         let combined = quote! { (#(#parts)|*) };
-                        // 源值单位（`unit`）：与单字段路径**对称**——字段值乘回源单位。
-                        // 缺这一步会让"编码除了 unit、解码没乘回来"的往返字节不稳。
-                        let combined = if slot.unit() > 1 {
-                            let sh = proc_macro2::Literal::u32_unsuffixed(slot.unit_shift());
-                            quote! { ((#combined) << #sh) }
-                        } else {
-                            combined
-                        };
-                        if signed {
-                            let w = slot.width.unwrap_or(64);
-                            sign_extend_ts(quote! { (#combined) as u64 }, w)
+                        // **顺序是硬要求**：先按**切片总宽**（Σ 字段宽，= 循环累加的 `sh`）做符号
+                        // 扩展，**再**乘回源单位。反过来的话符号位在左移时被推出去、扩展拿到的是
+                        // 高位全 0 的图案 ⇒ 负值解成 0（实测 `adrp x0,#4096` 的最小值 `-2^32`
+                        // 被解成 `0`，生成期用例 `encode∘decode 字节不稳定`）。
+                        // 用 `slot.width` 也不行：那只在"槽宽恰好等于切片总宽"时成立（ADR 是 21=21，
+                        // 但这是巧合，不是契约）。
+                        let val = if signed {
+                            sign_extend_ts(quote! { (#combined) as u64 }, sh)
                         } else {
                             quote! { (#combined) as i64 }
+                        };
+                        // 源值单位（`unit`）：与单字段路径**对称**——字段值乘回源单位。
+                        if slot.unit() > 1 {
+                            let shu = proc_macro2::Literal::u32_unsuffixed(slot.unit_shift());
+                            quote! { (#val) << #shu }
+                        } else {
+                            val
                         }
                     }
                     SlotEncode::LogicalImm => {

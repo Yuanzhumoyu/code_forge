@@ -108,7 +108,9 @@ fn unreferenced_ref_inventory() {
     for (isa, want) in [
         ("x86.toml", 1usize),
         ("riscv64.toml", 0),
-        ("arm64.toml", 262),
+        // 27：**只**统计"声明了却没被任何模板行首引用"的 ref（`--refs` opt-in 档）。
+        // 别再和 `unassigned_bits_inventory` 的 262 混（两者都叫 arm64.toml，改错方向会一直红）。
+        ("arm64.toml", 27),
     ] {
         let path = root().join("isa").join(isa);
         let spec = report::load_spec(&path).expect("加载谱");

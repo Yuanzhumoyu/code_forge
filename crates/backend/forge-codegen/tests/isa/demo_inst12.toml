@@ -105,10 +105,12 @@ asm = "mov {dst}, {src}"
 # ── 切片 + 单位缩放：unit 必须在位切片路径同样生效（编码先除、解码再乘）──
 # ldw {dst}, {off}：off 是字节偏移（unit = 4）⇒ 字段值 = off/4；6 位字段切成两段
 # （olo 最低 2 位 + ohi 其余 4 位，不相邻）。此前切片路径整条跳过 unit。
+# `signed = true` 是**回归开关**：切片 + unit + 有符号三者叠加时必须"先按切片总宽符号扩展、
+# 再乘回 unit"——顺序反了负值会被解成 0（arm64 `adrp x0,#4096` 的最小值就是这样丢的）。
 [[operand_slots]]
 name = "off_scale4"
 kind = "imm"
-signed = false
+signed = true
 width = 6
 unit = 4
 encode = "slice"
@@ -130,3 +132,10 @@ asm = "ldw {dst}, {off}"
 [[vectors]]
 asm = "ldw A0, 12"
 bytes = [0x03, 0x06]
+
+# ldw A0, -4（**负值回归**）：字段 = -4/4 = -1 ⇒ 6 位图案 0x3F ⇒ olo = 3、ohi = 15
+# ⇒ op(3)<<9 | rd(0)<<6 | olo(3)<<0 | ohi(15)<<2 = 0x63F。解码侧若不"先符号扩展再乘 unit"
+# 会把它解成 0（正是 ADR/ADRP 最小值丢符号的那条通路）。
+[[vectors]]
+asm = "ldw A0, -4"
+bytes = [0x3F, 0x06]

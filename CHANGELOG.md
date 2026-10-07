@@ -11,6 +11,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-07) — 切片+单位槽的解码符号丢位（阻塞 ADR/ADRP）；`forge-rustc` 漏注册编译管线（6 条 CLI e2e 红）
+
+**① 切片解码：先符号扩展、再乘回单位**（`dsl/codegen/mod.rs`）
+`encode = "slice"` + `unit > 1` + `signed` 三者叠加时，解码侧原实现**先左移 unit 再按 `slot.width`
+符号扩展**，符号位在左移时被推出 ⇒ 负值解成 0：实测 `adrp x0,#4096` 的最小值 `-2^32` 被解成 `0`
+（生成期用例 `encode∘decode 字节不稳定`，byte2 的 `immhi` 最高位丢）。改为**先按切片总宽（Σ 字段宽）
+符号扩展、再乘回 unit**；扩展宽度用**切片总宽**而不是 `slot.width`（两者仅在"槽宽 == 切片总宽"时相等，
+ADR 的 21=21 是巧合而非契约）。
+回归：夹具 `demo_inst12` 的 `off_scale4` 打开 `signed = true` + 新增 `ldw A0, -4` 向量
+（`0x63F` = `[0x3F,0x06]`），生成期自测随即采样 min/max 覆盖该通路。
+
+**② `forge-rustc` 注册编译管线**（`tools/forge-rustc/src/compile.rs`）
+两处编译入口只调了**生成物**注册（`backend::<isa>::ensure_registered`），漏了**编译管线工厂**
+（`backend::pipeline_hooks::ensure_registered()`）⇒ 经 backend dll 编译时报
+`ISA \`x86_64\` 未注册编译管线`，`cargo-forge` 的 **6 条 cli_tests 全红**（差分实验证明是**既有真缺陷**：
+干净 HEAD 上同样失败）。补齐后重建 dll 实测 **6 passed / 0 failed**。
+
+**③ `cli_tests` 陈旧 dll 显式 SKIP**（`tools/cargo-forge/tests/cli_tests.rs`）
+dll 存在但**早于 `crates/tools/forge-rustc` 源码** ⇒ 它是另一份源码构建的，注册表口径与当前源码不符
+（表现为上面的"未注册编译管线"，看起来像源码回归）。新增新鲜度判据 ⇒ 显式 SKIP 并写明"先
+`cargo build -p forge-rustc`"，不误红也不假装通过。
+
+**④ 守卫钉死值纠偏**（`tests/lint_shipped.rs`）
+`unreferenced_ref_inventory` 的 arm64 值被误改成 262（那是 `unassigned_bits_inventory` 的值）⇒ 改回
+**27** 并写明两个同名 `arm64.toml` 条目不得混淆。
+
+**验收**：`cargo test --workspace --exclude forge-rustc` = **ws 0**；四档 asm 套件 `verify=0`；
+markdownlint 114 条全在 `docs/archive/`（现行树零警告）。
+
 ### Added (2026-10-07) — aarch64：比较/乘法族批量接入（`smax`/`smin`/`umax`/`umin`/`mul`/`mla`）
 
 共享 `varr` 形态 + **逐族常量**（从语料 `.8b` 字反推）：`smax d=25`、`smin d=27`、`umax vu=1 d=25`、

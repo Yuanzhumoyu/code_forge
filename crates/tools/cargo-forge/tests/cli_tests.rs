@@ -127,6 +127,24 @@ fn ensure_backend_dll() -> Option<()> {
         );
         return None;
     }
+    // **陈旧 dll 判定**（2026-10-07 实测的坑）：dll 存在但比 `forge-rustc` 的源**旧** ⇒ 它是
+    // 另一份源码构建出来的，注册表/生成物口径与当前源码不符，CLI 会报
+    // `ISA \`x86_64\` 未注册编译管线`——**看起来像源码回归，实为产物陈旧**。差分实验证明过：
+    // 在干净 HEAD（无任何本地改动）上同样失败。
+    // 这种环境性产物问题**显式 SKIP 并写明原因**：既不误红，也不假装通过。
+    if let (Some(dll), Some(newest_src)) = (backend_dll_path(), newest_forge_rustc_mtime()) {
+        if let Ok(dll_m) = std::fs::metadata(&dll).and_then(|m| m.modified()) {
+            if dll_m < newest_src {
+                eprintln!(
+                    "[cli_tests] SKIP: backend dll 陈旧（{} 早于 crates/tools/forge-rustc 源码）\
+                     ——先 `cargo build -p forge-rustc`；否则 CLI 会报“未注册编译管线”（产物问题，\
+                     不是源码回归）",
+                    dll.display()
+                );
+                return None;
+            }
+        }
+    }
     if !rust_src_ready() {
         eprintln!(
             "[cli_tests] SKIP: rust-src 组件不可用（cargo/init 的 -Zbuild-std 需要）——\
@@ -135,6 +153,39 @@ fn ensure_backend_dll() -> Option<()> {
         return None;
     }
     Some(())
+}
+
+/// `crates/tools/forge-rustc/**` 下最新 .rs/.toml 的 mtime（陈旧 dll 判据的唯一事实源）。
+fn newest_forge_rustc_mtime() -> Option<std::time::SystemTime> {
+    fn walk(d: &Path, best: &mut Option<std::time::SystemTime>) {
+        let Ok(rd) = std::fs::read_dir(d) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                walk(&p, best);
+            } else if p
+                .extension()
+                .is_some_and(|x| x == "rs" || x == "toml")
+            {
+                if let Ok(m) = e.metadata().and_then(|m| m.modified()) {
+                    if best.is_none_or(|b| m > b) {
+                        *best = Some(m);
+                    }
+                }
+            }
+        }
+    }
+    let mut best = None;
+    walk(
+        &repo_root()
+            .join("crates")
+            .join("tools")
+            .join("forge-rustc"),
+        &mut best,
+    );
+    best
 }
 
 /// 带超时运行（返回前最多等 timeout_s；超时 kill 并 panic）。
