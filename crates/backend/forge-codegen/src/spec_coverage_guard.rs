@@ -207,62 +207,29 @@ fn spec_coverage_totals_are_pinned() {
 /// `MOV_RM_R`/`MOV_R_RM`（64 位）与 `MOV64_RR` 那一类的格局。
 #[test]
 fn spec_text_ambiguity_lists_are_pinned() {
-    let x86 = [
-        "ADC_R_IMM32",
-        "ADC_R_IMM8S",
-        "ADD_R_IMM32",
-        "ADD_R_IMM8S",
-        "AND_R_IMM32",
-        "AND_R_IMM8S",
-        "CMP_R_IMM32",
-        "CMP_R_IMM8S",
-        "LEA_R64_SIB",
-        "LEA_RBP_OFF",
-        "MOV64_RR",
-        "MOVABS_GLOBAL",
-        "MOVQ_FREG_XMM",
-        "MOVQ_XMM_FREG",
-        "MOVSD",
-        "MOVSD_XMM_FREG",
-        "MOV_R8_RM64",
-        "MOV_REG_IMM64",
-        "MOV_RM8_R64",
-        "MOV_RM_R",
-        "MOV_RM_R_24",
-        "MOV_R_RM",
-        "OR_R_IMM32",
-        "OR_R_IMM8S",
-        "SBB_R_IMM32",
-        "SBB_R_IMM8S",
-        "SUB_R_IMM32",
-        "SUB_R_IMM8S",
-        "VADDPS_ZMM_MASK",
-        "VADDPS_ZMM_MASKZ",
-        "VMOVUPS_MR",
-        "VMOVUPS_RM",
-        "VMOVUPS_ZMM_MEM",
-        "VMOVUPS_ZMM_MR",
-        "XOR_R_IMM32",
-        "XOR_R_IMM8S",
-    ];
-    let riscv = ["ADDI", "ADDI_GLOBAL", "AUIPC", "AUIPC_GLOBAL"];
-    let pinned: &[(&str, &[&str])] = &[
-        ("x86", &x86),
-        ("riscv64", &riscv),
-        // v20 A5：arm64 的 FP 寄存器组用统一的 `V0..V31` 命名（不像 x86 那样 S/D 名字本身带宽度），
-        // 因此 `fmov v0, v1` / `ldur v0, [x29, #8]` 的 S/D 两种编码**汇编文本相同**——
-        // 反汇编按声明序取第一条（S），文本往返对这两族只能取其一。这是**已知且刻意**的
-        // 取舍（宽度在指令里、不在名字里）；要消掉就得给 S/D/Q 各开一组别名寄存器。
-        (
-            "arm64",
-            &["ADR", "ADRP", "ADRP_SYM", "ADR_SYM", "FMOV_D", "FMOV_S", "LDURD", "LDURS", "MOVKW_G0_RELO", "MOVKW_G1_RELO", "MOVKW_G2_RELO", "MOVKW_G3_RELO", "MOVKX_G0_RELO", "MOVKX_G1_RELO", "MOVKX_G2_RELO", "MOVKX_G3_RELO", "MOVNW_G0_RELO", "MOVNW_G1_RELO", "MOVNW_G2_RELO", "MOVNW_G3_RELO", "MOVNX_G0_RELO", "MOVNX_G1_RELO", "MOVNX_G2_RELO", "MOVNX_G3_RELO", "MOVWIMM_SYM_G0", "MOVWIMM_SYM_G1", "MOVWIMM_SYM_G2", "MOVWIMM_SYM_G3", "MOVXIMM_SYM_G0", "MOVXIMM_SYM_G1", "MOVXIMM_SYM_G2", "MOVXIMM_SYM_G3", "MOVZW_G0_RELO", "MOVZW_G1_RELO", "MOVZW_G2_RELO", "MOVZW_G3_RELO", "MOVZX_G0_RELO", "MOVZX_G1_RELO", "MOVZX_G2_RELO", "MOVZX_G3_RELO", "STURD", "STURS"],
-        ),
-    ];
+    // 名单在 `asm/ratchet/pins.txt`（B2 快照）：`ambiguity.<isa> = 名字,名字,…`
+    // （名单随谱增删、是最常被手改的地方；快照化后只改一处，且刷新器不会吃掉别人的键。）
+    let pinned: Vec<(String, Vec<String>)> = ["x86", "riscv64", "arm64"]
+        .iter()
+        .map(|isa| {
+            let raw = read_pins()
+                .get(&format!("ambiguity.{isa}"))
+                .unwrap_or_else(|| panic!("快照缺少 ambiguity.{isa}（见 asm/ratchet/pins.txt）"))
+                .clone();
+            (
+                isa.to_string(),
+                raw.split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+            )
+        })
+        .collect();
     for r in reports() {
         let want = pinned
             .iter()
-            .find(|(n, _)| *n == r.name)
-            .map(|(_, l)| l.to_vec())
+            .find(|(n, _)| n == r.name)
+            .map(|(_, l)| l.clone())
             .unwrap_or_default();
         let mut got = r.ambiguous.clone();
         got.sort_unstable();
