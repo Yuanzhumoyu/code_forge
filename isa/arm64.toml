@@ -1241,6 +1241,38 @@ fields = { vsize = 2, vec_c = 1, vec_d = 7 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr_q", "arrs:varr_q", "arrs2:varr_q"]
 asm = "orr {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
+[[instructions]]
+name = "VAND_ARR"
+form = "VEC3RA"
+opcode = 0x0E
+fields = { vu = 0, vsize = 0, vec_c = 1, vec_d = 7 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr_q", "arrs:varr_q", "arrs2:varr_q"]
+asm = "and {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+
+[[instructions]]
+name = "VEOR_ARR"
+form = "VEC3RA"
+opcode = 0x0E
+fields = { vu = 1, vsize = 0, vec_c = 1, vec_d = 7 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr_q", "arrs:varr_q", "arrs2:varr_q"]
+asm = "eor {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+
+[[instructions]]
+name = "VBIC_ARR"
+form = "VEC3RA"
+opcode = 0x0E
+fields = { vu = 0, vsize = 1, vec_c = 1, vec_d = 7 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr_q", "arrs:varr_q", "arrs2:varr_q"]
+asm = "bic {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+
+[[instructions]]
+name = "VORN_ARR"
+form = "VEC3RA"
+opcode = 0x0E
+fields = { vu = 0, vsize = 3, vec_c = 1, vec_d = 7 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr_q", "arrs:varr_q", "arrs2:varr_q"]
+asm = "orn {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+
 # 助记符带后缀的**另一种拼法**（与 `VADD` 并存：语料两种都写 —— 这是两种语法，不是冗余）
 
 [[instructions]]

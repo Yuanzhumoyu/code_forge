@@ -2,9 +2,21 @@
 # 判定：tail_mismatch（有候选首段对得上、整条没对上）多一个 = 新缺陷/换了语料；
 #       少一个 = 修好了/漏跑。两个方向都红。
 [suite llvm-mc]
-files = 42
-lines = 3714
-parsed = 512
-no_prefix = 418
-tail_mismatch = 0
-corpus_only = 2784
+files = 337
+lines = 59619
+parsed = 2010
+no_prefix = 14219
+tail_mismatch = 1386
+corpus_only = 42004
+# mismatch: alias-addsubimm.s:8	add w0, w2, #4096	line 1: no matching instruction
+# mismatch: alias-addsubimm.s:9	sub w0, w2, #4096	line 1: no matching instruction
+# mismatch: alias-addsubimm.s:13	add w0, w2, #-4096	line 1: no matching instruction
+# mismatch: alias-addsubimm.s:14	sub w0, w2, #-4096	line 1: no matching instruction
+# mismatch: alias-addsubimm.s:21	sub w0, w2, #2, lsl 12	line 1: no matching instruction
+# mismatch: alias-addsubimm.s:22	add w0, w2, #-2, lsl 12	line 1: no matching instruction
+# mismatch: alias-addsubimm.s:26	sub x1, x3, #2, lsl 12	line 1: no matching instruction
+# mismatch: alias-addsubimm.s:27	add x1, x3, #-2, lsl 12	line 1: no matching instruction
+# mismatch: alias-logicalimm.s:7	and x0, x1, #~2	line 1: Andimmx: 立即数 0xfffffffffffffffd 不是 64-bit 的合法逻辑立即数（要求"一段连续 1 循环填充"）
+# mismatch: alias-logicalimm.s:8	bic x0, x1, #2	line 1: no matching instruction
+# mismatch: alias-logicalimm.s:13	and w0, w1, #~2	line 1: Andimmw: 立即数 0xfffffffffffffffd 不是 32-bit 的合法逻辑立即数（要求"一段连续 1 循环填充"）
+# mismatch: alias-logicalimm.s:14	bic w0, w1, #2	line 1: no matching instruction
