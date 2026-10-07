@@ -1,6 +1,6 @@
 # 语料出处（`asm/`）
 
-本文件由 `crates/tools/forge-tests/asm/fetch.mjs` **生成**（采集日期：2026-10-06，
+本文件由 `crates/tools/forge-tests/asm/fetch.mjs` **生成**（采集日期：2026-10-07，
 ref `llvmorg-19.1.0`）——请勿手改；重跑脚本即可刷新。方法、取舍判据与已知缺口见
 [`README.md`](README.md)。
 
