@@ -1510,3 +1510,34 @@ vaddpd zmm1, zmm1, zmm2 : 我们 62 F1 75 48 58 CA ≠ 上游 62 F1 f5 48 58 CA
 **方法论**：`known` 只在**全集**运行里出现 ✓（vendored 集恒 0 ✓）——取清单 =
 `fetch.mjs --keep-all` → `FORGE_ASM_WRITE_RATCHET=1` 跑 `asm_encoding` → 读 `encoding.txt` 的 `# known:` 行；
 **取完必须裁回并重刷棘轮**（否则棘轮与 vendored 集不一致 ⇒ 门禁红 ✗）。
+
+### Investigated (2026-10-07) — riscv64 RVC（压缩指令）的**范围与所需机制**（B4b-B 定案）
+
+语料 `compress-rv32{i,f,d}.s` 里被我们**认得出、却编成 4 字节**的行（`known` 清单口径 ✓）：
+
+```text
+addi a0, a1, 0       我们 13 85 05 00 ≠ 上游 2e 85      （上游 = c.mv / c.li 等压缩形态）
+addi s0, sp, 1020    我们 13 04 c1 3f ≠ 上游 e0 1f      （c.addi4spn 族）
+lw   s0, 124(a5)     我们 03 a4 c7 07 ≠ 上游 e0 5f      （c.lw）
+sw   s0, 124(a5)     我们 23 ae 87 06 ≠ 上游 e0 df      （c.sw）
+nop                  我们 13 00 00 00 ≠ 上游 01 00      （c.nop）
+fld/fsd/flw/fsw …    我们 4 字节        ≠ 上游 2 字节     （c.fld/c.fsd/c.flw/c.fsw）
+```
+
+⇒ **一个指令面补不齐**：这不是"缺几条 `[[instructions]]`"✗，而是要**同文本优先选短编码** ✓ —— 同一条
+`addi a0, a1, 0` 既能用 I 型（4 字节）也能用 C 型（2 字节），LLVM 选压缩形态 ✓，而我们的分派是
+"**声明序首匹配** + 槽特异性" ✓ ⇒ 需要一条**明确的机制**（三选一，必须先定，别混着做 ✗）：
+
+1. **`[[instructions]]` 加 `priority` 键**（数值小者先试）✓ —— 与 lowering 已有的 `priority` 同构 ✓，
+   最小改动、语义清楚；压缩形态给更小的值 ⇒ "能用压缩就用压缩" ✓。
+2. **借用 `[meta]` 的"压缩优先"开关**（按 ISA 全局开）✗ —— 覆盖面更大但会牵动既有 4 字节形态的顺序。
+3. **让压缩形态只由"显式 `c.` 助记符"触发**（`c.nop`/`c.lw` …）✗ —— 与语料写法不符（语料写的是
+   `addi`/`lw` ✓），**解决不了本批** ✗。
+
+⇒ **建议 1**：给分派加 `priority`（生成期排序：priority 升序 → 原有声明序 ✓），riscv64 谱补 C 扩展
+指令面（先覆盖语料直接命中的：`c.nop`/`c.mv`/`c.li`/`c.lw`/`c.sw`/`c.addi`/`c.addi4spn`/`c.fld`/
+`c.fsd`/`c.flw`/`c.fsw` ✓），压缩条目给更小 priority ✓。
+
+**验收**：全集 `known` 只能**降**（本批涉及的 `compress-*` 条目归零 ✓）、四档 `verify=0`、`ws=0`；
+**一批一次提交** ✓。风险：JIT/矩阵路径也会跟着选压缩形态 ⇒ 需 QEMU 通道（`jit_matrix_riscv64` ✓）
+复验真执行 ✓（该 target 支持 C ✓；不支持时应在谱侧按变体关掉 ✗，不能静默出压缩码 ✗）。
