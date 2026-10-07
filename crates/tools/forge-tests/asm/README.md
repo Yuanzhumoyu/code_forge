@@ -1633,3 +1633,7 @@ rv32zbb-only-valid.s:13 `rev8 t0, t1`：我们 93 52 83 6b ≠ 上游 93 52 83 6
 
 **本轮选择：回退** ✓（不留解析不过/改动不完整的谱 ✗）；**结论、证据与两条出路已入库** ✓，
 `known` 保持 **148**（B4 起点 157 ✓）。
+
+**出路 2（已选）**：按变体给字段值的方案文档见
+[isa-dsl-variant-field-values.md](../../../docs/plans/isa-dsl-variant-field-values.md) ✓
+（不新增/删除声明 ⇒ 投影两条断言与歧义名单都不动 ✓）。
