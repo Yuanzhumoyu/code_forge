@@ -201,7 +201,7 @@ fn unassigned_bits_inventory() {
     for (isa, want) in [
         ("x86.toml", 0usize),
         ("riscv64.toml", 7),
-        ("arm64.toml", 176),
+        ("arm64.toml", 182), // 2026-10-07: NEON abs 族新增 vec_a/vec_c/vec_d/vq/vu/vsize 六个位域 => 176 -> 182
     ] {
         let path = root().join("isa").join(isa);
         let spec = report::load_spec(&path).expect("加载谱");

@@ -16,9 +16,21 @@ corpus_only = 3
 # mismatch: intel.excerpt.s:33	push   ds	line 2: no matching instruction
 # mismatch: intel.excerpt.s:34	pop    ds	line 2: no matching instruction
 [suite llvm-mc]
-files = 4
-lines = 471
-parsed = 116
-no_prefix = 1
-tail_mismatch = 0
-corpus_only = 354
+files = 58
+lines = 52729
+parsed = 216
+no_prefix = 12622
+tail_mismatch = 551
+corpus_only = 39340
+# mismatch: avx512-intel.s:5	vaddps zmm1, zmm1, zmmword ptr [rax]	line 1: no matching instruction
+# mismatch: avx512-intel.s:390	vaddpd zmm8, zmm27, zmmword ptr [rcx]	line 1: no matching instruction
+# mismatch: avx512-intel.s:394	vaddpd zmm8, zmm27, zmmword ptr [rax + 8*r14 + 291]	line 1: no matching instruction
+# mismatch: avx512-intel.s:402	vaddpd zmm8, zmm27, zmmword ptr [rdx + 8128]	line 1: no matching instruction
+# mismatch: avx512-intel.s:406	vaddpd zmm8, zmm27, zmmword ptr [rdx + 8192]	line 1: no matching instruction
+# mismatch: avx512-intel.s:410	vaddpd zmm8, zmm27, zmmword ptr [rdx - 8192]	line 1: no matching instruction
+# mismatch: avx512-intel.s:414	vaddpd zmm8, zmm27, zmmword ptr [rdx - 8256]	line 1: no matching instruction
+# mismatch: avx512-intel.s:462	vaddps zmm18, zmm13, zmmword ptr [rcx]	line 1: no matching instruction
+# mismatch: intel-syntax-2.s:6	mov	DWORD PTR [RSP - 4], 257	line 4: no matching instruction
+# mismatch: intel-syntax-2.s:13	mov	DWORD PTR [RSP - 4], 255	line 4: no matching instruction
+# mismatch: intel-syntax-32.s:4	lea ax, [bp+si]	line 1: no matching instruction
+# mismatch: intel-syntax-32.s:6	lea ax, [si+bp]	line 1: no matching instruction

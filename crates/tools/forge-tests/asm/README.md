@@ -613,7 +613,7 @@ riscv64 只剩一条登记为设计取舍；aarch64 有一条**已定位、未�
 
 | 淘汰原因 | 个数 | 典型 |
 | --- | ---: | --- |
-| `parsed = 0`（一个候选都不认识） | 576 | SVE/SME/FP8（aarch64 子目录）、AVX-512/AMX/APX 之外的 SIMD（x86）、RVV/corev（riscv 子目录）、加密与位操作扩展 |
+| `parsed = 0`（一个候选都不认识） | 576 | SVE/SME/FP8（aarch64 子目录）、AVX-512/AMX/APX 之外的 SIMD（x86）、RVV/corev（riscv 子目录）、 加密与位操作扩展 |
 | 出红（有候选首段对得上、整条没对上） | 66 | aarch64 移位/扩展寄存器操作数（`add x2, x4, w5, uxtb`）、立即数 `lsl #12`、`stp/ldp`、寄存器偏移寻址、`ldr x0, =…`；riscv64 带符号 **CSR 名**（`csrrs t1, mstatus, zero`）、重定位表达式（`%tlsdesc_hi(a-4)`） |
 | 有字节差异（解析得过、编码不一样） | 9 | RVC 压缩编码（`compress-*.s`、`option-rvc.s`、`xwchc-compress.s`）、Zcb、RV32 变体的替换编码（`rv32zbb-*`/`rv32zbkb-*`；本谱是 riscv64） |
 
@@ -855,3 +855,10 @@ GAS = `GPL-3.0-or-later`（上游各文件的许可逐条见 `PROVENANCE.md`；G
 > ⇒ 常量段至少要到 `[15:11] = 0x17`；② 编出的字里 `[28:24]` 出现多余置位（`0x0F…` 而非 `0x0E…`），
 > 说明 `vec_a`/`vsize` 这一带的落点也要重核。**正确做法**：先把 `abs.8b v0, v0` 一条按"上游字节
 > 逐位反推字段"做对（一位一位对 `0x0E20B800`），再复制到其余排列——而不是一次铺 6 条。
+
+- aarch64（第四十一批：**NEON `abs` 族 6 条**）：排列写在**助记符后缀**上，**零机制改动**（`v0` 就是既有 `fpr` 槽里的名字）——这是 NEON"两步走"第一步的首次落地。编码
+  `0 Q U 01110 size 10000 01000 Rn Rd`，常量段不连续 ⇒ 三段 `vec_a[28:24]=0x0E`、`vec_c[21]=1`、`vec_d[15:10]=0x2E` + 变量段
+  `vq[30]`/`vu[29]`/`vsize[23:22]`（**`vsize` 的 offset 是 22 不是 23**：写成 23 会与 `vec_a` 在 bit 24 重叠，
+  `LINT-BITFIELD-OVERLAP` 会抓出来）。6 条字节取自语料 `arm64-advsimd.s` 上游 CHECK 行并进 `[[vectors]]`。
+  结果：parsed 1924 → **1930**、`no_prefix` −6、**红行 1369 不变**（零红增益）；
+  守卫：454 → **460**、枚举器 2213 → **2225**、未指定位 176 → **182**；棘轮刷新。
