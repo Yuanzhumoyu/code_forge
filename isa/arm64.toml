@@ -1172,6 +1172,349 @@ fields = { vq = 1, vu = 1, vsize = 2, vec_c = 1, vec_d = 46, rm = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "neg.4s {dst}, {src}"
 
+# cnt: (U=0, c=1, [15:10]=22) ?? ??? .8b ?????????? Q/size
+[[instructions]]
+name = "CNT8B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 22, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "cnt.8b {dst}, {src}"
+
+[[instructions]]
+name = "CNT16B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 0, vec_c = 1, vec_d = 22, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "cnt.16b {dst}, {src}"
+
+[[instructions]]
+name = "CNT4H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 1, vec_c = 1, vec_d = 22, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "cnt.4h {dst}, {src}"
+
+[[instructions]]
+name = "CNT8H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 1, vec_c = 1, vec_d = 22, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "cnt.8h {dst}, {src}"
+
+[[instructions]]
+name = "CNT2S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 2, vec_c = 1, vec_d = 22, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "cnt.2s {dst}, {src}"
+
+[[instructions]]
+name = "CNT4S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 22, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "cnt.4s {dst}, {src}"
+
+# mvn: (U=1, c=1, [15:10]=22) ?? ??? .8b ?????????? Q/size
+[[instructions]]
+name = "MVN8B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 22, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "mvn.8b {dst}, {src}"
+
+[[instructions]]
+name = "MVN16B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 1, vsize = 0, vec_c = 1, vec_d = 22, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "mvn.16b {dst}, {src}"
+
+[[instructions]]
+name = "MVN4H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 1, vec_c = 1, vec_d = 22, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "mvn.4h {dst}, {src}"
+
+[[instructions]]
+name = "MVN8H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 1, vsize = 1, vec_c = 1, vec_d = 22, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "mvn.8h {dst}, {src}"
+
+[[instructions]]
+name = "MVN2S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 2, vec_c = 1, vec_d = 22, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "mvn.2s {dst}, {src}"
+
+[[instructions]]
+name = "MVN4S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 1, vsize = 2, vec_c = 1, vec_d = 22, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "mvn.4s {dst}, {src}"
+
+# cls: (U=0, c=1, [15:10]=18) ?? ??? .8b ?????????? Q/size
+[[instructions]]
+name = "CLS8B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 18, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "cls.8b {dst}, {src}"
+
+[[instructions]]
+name = "CLS16B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 0, vec_c = 1, vec_d = 18, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "cls.16b {dst}, {src}"
+
+[[instructions]]
+name = "CLS4H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 1, vec_c = 1, vec_d = 18, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "cls.4h {dst}, {src}"
+
+[[instructions]]
+name = "CLS8H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 1, vec_c = 1, vec_d = 18, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "cls.8h {dst}, {src}"
+
+[[instructions]]
+name = "CLS2S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 2, vec_c = 1, vec_d = 18, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "cls.2s {dst}, {src}"
+
+[[instructions]]
+name = "CLS4S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 18, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "cls.4s {dst}, {src}"
+
+# clz: (U=1, c=1, [15:10]=18) ?? ??? .8b ?????????? Q/size
+[[instructions]]
+name = "CLZ8B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 18, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "clz.8b {dst}, {src}"
+
+[[instructions]]
+name = "CLZ16B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 1, vsize = 0, vec_c = 1, vec_d = 18, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "clz.16b {dst}, {src}"
+
+[[instructions]]
+name = "CLZ4H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 1, vec_c = 1, vec_d = 18, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "clz.4h {dst}, {src}"
+
+[[instructions]]
+name = "CLZ8H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 1, vsize = 1, vec_c = 1, vec_d = 18, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "clz.8h {dst}, {src}"
+
+[[instructions]]
+name = "CLZ2S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 2, vec_c = 1, vec_d = 18, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "clz.2s {dst}, {src}"
+
+[[instructions]]
+name = "CLZ4S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 1, vsize = 2, vec_c = 1, vec_d = 18, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "clz.4s {dst}, {src}"
+
+# rev16: (U=0, c=1, [15:10]=6) ?? ??? .8b ?????????? Q/size
+[[instructions]]
+name = "REV168B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 6, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev16.8b {dst}, {src}"
+
+[[instructions]]
+name = "REV1616B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 0, vec_c = 1, vec_d = 6, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev16.16b {dst}, {src}"
+
+[[instructions]]
+name = "REV164H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 1, vec_c = 1, vec_d = 6, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev16.4h {dst}, {src}"
+
+[[instructions]]
+name = "REV168H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 1, vec_c = 1, vec_d = 6, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev16.8h {dst}, {src}"
+
+[[instructions]]
+name = "REV162S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 2, vec_c = 1, vec_d = 6, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev16.2s {dst}, {src}"
+
+[[instructions]]
+name = "REV164S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 6, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev16.4s {dst}, {src}"
+
+# rev32: (U=1, c=1, [15:10]=2) ?? ??? .8b ?????????? Q/size
+[[instructions]]
+name = "REV328B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 2, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev32.8b {dst}, {src}"
+
+[[instructions]]
+name = "REV3216B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 1, vsize = 0, vec_c = 1, vec_d = 2, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev32.16b {dst}, {src}"
+
+[[instructions]]
+name = "REV324H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 1, vec_c = 1, vec_d = 2, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev32.4h {dst}, {src}"
+
+[[instructions]]
+name = "REV328H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 1, vsize = 1, vec_c = 1, vec_d = 2, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev32.8h {dst}, {src}"
+
+[[instructions]]
+name = "REV322S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 2, vec_c = 1, vec_d = 2, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev32.2s {dst}, {src}"
+
+[[instructions]]
+name = "REV324S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 1, vsize = 2, vec_c = 1, vec_d = 2, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev32.4s {dst}, {src}"
+
+# rev64: (U=0, c=1, [15:10]=2) ?? ??? .8b ?????????? Q/size
+[[instructions]]
+name = "REV648B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 2, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev64.8b {dst}, {src}"
+
+[[instructions]]
+name = "REV6416B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 0, vec_c = 1, vec_d = 2, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev64.16b {dst}, {src}"
+
+[[instructions]]
+name = "REV644H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 1, vec_c = 1, vec_d = 2, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev64.4h {dst}, {src}"
+
+[[instructions]]
+name = "REV648H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 1, vec_c = 1, vec_d = 2, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev64.8h {dst}, {src}"
+
+[[instructions]]
+name = "REV642S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 2, vec_c = 1, vec_d = 2, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev64.2s {dst}, {src}"
+
+[[instructions]]
+name = "REV644S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 2, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "rev64.4s {dst}, {src}"
+
 # ── ADD/ADDS/SUB/SUBS (immediate) ──
 # oracle 校验样本：add x5,x6,#42 = 9100A8C5；adds w5,w6,#42=3100A8C5；
 #   sub x5,x6,#42=D100A8C5；subs x5,x6,#42=F100A8C5
@@ -4948,3 +5291,35 @@ bytes = [0x00, 0xB8, 0xA0, 0x2E]
 [[vectors]]
 asm = "neg.4s v0, v0"
 bytes = [0x00, 0xB8, 0xA0, 0x6E]
+
+[[vectors]]
+asm = "cnt.8b v0, v0"
+bytes = [0x00, 0x58, 0x20, 0x0E]
+
+[[vectors]]
+asm = "mvn.8b v0, v0"
+bytes = [0x00, 0x58, 0x20, 0x2E]
+
+[[vectors]]
+asm = "mvn.16b v0, v0"
+bytes = [0x00, 0x58, 0x20, 0x6E]
+
+[[vectors]]
+asm = "cls.8b v0, v0"
+bytes = [0x00, 0x48, 0x20, 0x0E]
+
+[[vectors]]
+asm = "clz.8b v0, v0"
+bytes = [0x00, 0x48, 0x20, 0x2E]
+
+[[vectors]]
+asm = "rev16.8b v0, v0"
+bytes = [0x00, 0x18, 0x20, 0x0E]
+
+[[vectors]]
+asm = "rev32.8b v0, v0"
+bytes = [0x00, 0x08, 0x20, 0x2E]
+
+[[vectors]]
+asm = "rev64.8b v0, v0"
+bytes = [0x00, 0x08, 0x20, 0x0E]
