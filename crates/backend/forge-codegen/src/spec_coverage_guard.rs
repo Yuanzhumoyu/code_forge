@@ -127,7 +127,7 @@ fn spec_coverage_totals_are_pinned() {
     let totals: Vec<(&str, usize)> = reports().iter().map(|r| (r.name, r.total)).collect();
     assert_eq!(
         totals,
-        vec![("x86", 299), ("riscv64", 173), ("arm64", 528)],
+        vec![("x86", 299), ("riscv64", 173), ("arm64", 529)],
         "指令总数变了：确认是谱的预期变更还是指令丢失"
     );
 }

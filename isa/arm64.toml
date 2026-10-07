@@ -1208,6 +1208,14 @@ fields = { vec_c = 1, vec_d = 33 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
 asm = "add {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
+[[instructions]]
+name = "VSUB_ARR"
+form = "VEC3RA"
+opcode = 0x0E
+fields = { vu = 1, vec_c = 1, vec_d = 33 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+asm = "sub {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+
 # 助记符带后缀的**另一种拼法**（与 `VADD` 并存：语料两种都写 —— 这是两种语法，不是冗余）
 
 [[instructions]]

@@ -11,7 +11,7 @@ ref `llvmorg-19.1.0`）——请勿手改；重跑脚本即可刷新。方法、
    `.gitattributes` 把 `crates/tools/forge-tests/asm/**` 钉成 `text eol=lf`，
    否则 `core.autocrlf` 在 Windows 上会改工作区、摘要立刻对不上。
 2. **取舍是算出来的**：本次拉了上游 **733** 个候选（顶层 `.s`；x86 只取
-   Intel 语法的文件名那批），按判据留下 **125** 个、砍掉 **608** 个
+   Intel 语法的文件名那批），按判据留下 **126** 个、砍掉 **607** 个
    （判据 = 解析档「整条接得住且不产生红桶」+ 编码对拍档「没有字节差异」，两份逐文件记分板
    在 `target/asm-suite/`）。被砍掉的那些不是"忘了"，而是**本谱现在还不认识**（SVE/SME/
    AVX-512/压缩指令/带符号 CSR 名/重定位表达式…）——它们会让红桶变成"永久红"，门禁就废了。
@@ -20,7 +20,7 @@ ref `llvmorg-19.1.0`）——请勿手改；重跑脚本即可刷新。方法、
    一并登记在下面。
 3. `asm/exec/**`、`asm/ratchet/**` 是本仓库自己写的，不在下表。
 
-## LLVM MC（126 份）
+## LLVM MC（127 份）
 
 | 路径 | 上游 | 固定 ref | 许可 | 字节 | 行 | 摘要（sha256） | 处理 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -138,6 +138,7 @@ ref `llvmorg-19.1.0`）——请勿手改；重跑脚本即可刷新。方法、
 | `parse/aarch64/llvm-mc/mapping-within-section.s` | [llvm/llvm-project `llvm/test/MC/AArch64/mapping-within-section.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/mapping-within-section.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 620 | 30 | `af894de64d5ccb15cdceb613402531951c1d49a04caf2a6df35adf54ce7ce3ea` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/mov-expr-as-immediate.s` | [llvm/llvm-project `llvm/test/MC/AArch64/mov-expr-as-immediate.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/mov-expr-as-immediate.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 427 | 17 | `fe0c4926f461142bc8f72bd1db06dafbb1754576857ed7db5cb7fb027e25f3d8` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/mov-unsupported-expr-as-immediate.s` | [llvm/llvm-project `llvm/test/MC/AArch64/mov-unsupported-expr-as-immediate.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/mov-unsupported-expr-as-immediate.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 415 | 17 | `732a47bc02de7d0f9dd92a48e050d93d03d830d1d5a7b5cdba873f5d65b67aa6` | **整文件**，逐字未改 |
+| `parse/aarch64/llvm-mc/neon-add-sub-instructions.s` | [llvm/llvm-project `llvm/test/MC/AArch64/neon-add-sub-instructions.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/neon-add-sub-instructions.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 3574 | 76 | `8e0a779b062d415f1ec270880fe3bfd27cfce2b91194e59966f49d10cb2addad` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/reloc-directive.s` | [llvm/llvm-project `llvm/test/MC/AArch64/reloc-directive.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/reloc-directive.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 1383 | 48 | `b819ee17aa5c9e85c3f7755acfa26203717a71c1570e13c3a5911154c495580e` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/seh-large-func-multi-epilog.s` | [llvm/llvm-project `llvm/test/MC/AArch64/seh-large-func-multi-epilog.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/seh-large-func-multi-epilog.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 11405 | 308 | `bddb14c04070f357e0def6c491b468c5e27dc8933ff22eadca49456fc49d67c7` | **整文件**，逐字未改 |
 | `parse/aarch64/llvm-mc/seh-large-func.s` | [llvm/llvm-project `llvm/test/MC/AArch64/seh-large-func.s`](https://github.com/llvm/llvm-project/blob/llvmorg-19.1.0/llvm/test/MC/AArch64/seh-large-func.s) | `llvmorg-19.1.0` | `Apache-2.0 WITH LLVM-exception` | 7676 | 212 | `0ad200376a3e13850e4e48a97b5a298229731a105625b2611bb3c0968cabecb0` | **整文件**，逐字未改 |
