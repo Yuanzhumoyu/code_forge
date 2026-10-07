@@ -1466,22 +1466,27 @@ pub struct OperandSlot {
     pub imm_fns: Option<Vec<String>>,
     /// **可选排列后缀**（NEON：`v0.16b` / `v1.8h`）——排列是**槽的参数**，不是指令的身份。
     ///
-    /// 形状：`键 = 该排列写进哪些字段的什么值`（**一个键自带全部信息**，不再需要第二张映射表）：
+    /// 形状：`排列名 = 代码值`（**与既有的 `encode = "slice"` 机制对齐**，不引入第二张映射表）：
     ///
     /// ```toml
-    /// arrangement = { "8b" = { vq = 0, vsize = 0 }, "16b" = { vq = 1, vsize = 0 } }
+    /// [[operand_slots]]
+    /// name = "v"
+    /// kind = "reg"
+    /// class = "fpr16"
+    /// arrangement = { "8b" = 0, "16b" = 1, "4h" = 2, "8h" = 3, "2s" = 4, "4s" = 5, "2d" = 6 }
+    /// encode = "slice"                 # 代码值按 fields 声明序从最低位切起
+    /// fields = ["vq", "vsize"]         # 例：16b ⇒ vq=1, vsize=0（代码 1 = 0b001）
     /// ```
     ///
     /// **为什么这么设计**（2026-10-07 破坏性重设计）：此前把排列展开成"每族 × 每排列一条指令"
-    /// （A64 NEON 约 100 条，彼此只差 `Q`/`size` 两个字段）——既冗余，又**接不住语料主流写法**
-    /// （`add v0.16b, v1.16b, v2.16b` 的助记符**不带**后缀）。改成槽参数后：**一条指令覆盖全排列**、
-    /// 谱面净减，且后缀真正进**编码依据**（而不是被"吃掉"丢掉）。
+    /// （A64 NEON 约 100 条，彼此只差 `Q`/`size`）——既冗余，又**接不住语料主流写法**
+    /// （`add v0.16b, v1.16b, v2.16b` 的助记符**不带**后缀）。改成槽参数后：**一条指令覆盖全排列**，
+    /// 后缀真正进**编码依据**（不是被"吃掉"丢掉），且复用既有 `slice` 编解码，零新机制。
     ///
-    /// 只对 `kind = "reg"` 有意义；键名必须是 `<数字><b|h|s|d>`；各条目的字段集必须**一致**、
-    /// 字段名必须真实存在（都在校验期钉死）。空/省略 = 本槽**不带**后缀（照旧行为）。
+    /// 只对 `kind = "reg"` 有意义；键名必须是 `<数字><b|h|s|d>`；代码值必须**互不相同**
+    /// 且能由 `fields` 的位宽装下（都在校验期钉死）。空/省略 = 本槽**不带**后缀（照旧行为）。
     #[serde(default)]
-    pub arrangement:
-        Option<std::collections::BTreeMap<String, std::collections::BTreeMap<String, i64>>>,
+    pub arrangement: Option<std::collections::BTreeMap<String, i64>>,
     /// bits：本槽用的命名位集合表名（`[conventions.bitsets.<table>]`）。
     #[serde(default)]
     pub table: Option<String>,

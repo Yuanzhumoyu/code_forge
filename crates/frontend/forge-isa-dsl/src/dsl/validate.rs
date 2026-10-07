@@ -1761,7 +1761,8 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
             }
         }
         // `arrangement`（排列后缀，2026-10-07 破坏性重设计）：排列是**槽的参数**而非指令身份。
-        // 规则：只对 reg 槽；键名必须是「数字+元素字母」；各条目的字段集必须一致；字段必须已声明。
+        // 形状 = `排列名 → 代码值`，配合槽自己的 `encode = "slice"` + `fields` 落进多个位域
+        // （例：`16b ⇒ 1`，`fields = ["vq","vsize"]` ⇒ vq=1、vsize=0）。规则见下。
         if let Some(arr) = &s.arrangement {
             if !matches!(s.kind, OperandKind::Reg) {
                 return Err(format!(
@@ -1770,12 +1771,23 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                 ));
             }
             if arr.is_empty() {
+                return Err(format!("{path}: `arrangement` 不能是空表（省略即可表示本槽不带后缀）"));
+            }
+            if s.encode != Some(crate::dsl::model::SlotEncode::Slice) {
                 return Err(format!(
-                    "{path}: `arrangement` 不能是空表（省略即可表示本槽不带后缀）"
+                    "{path}: `arrangement` 要求该槽同时写 `encode = \"slice\"`——排列的代码值要按 \
+                     `fields` 声明序切进多个位域（复用既有切片机制，不另开一套）"
                 ));
             }
-            let mut shape: Option<Vec<String>> = None;
-            for (name, fields) in arr {
+            let widths: u32 = s
+                .fields
+                .as_ref()
+                .map(|f| f.len() as u32)
+                .unwrap_or(0);
+            if widths == 0 {
+                return Err(format!("{path}: `arrangement` 要求该槽声明 `fields = [...]`"));
+            }
+            for (name, code) in arr {
                 let b = name.as_bytes();
                 let ok = b.len() >= 2
                     && b[..b.len() - 1].iter().all(|c| c.is_ascii_digit())
@@ -1785,26 +1797,18 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                         "{path}: `arrangement` 的键 `{name}` 不是「数字 + b/h/s/d」（如 8b/16b/4h/8h/2s/4s/2d）"
                     ));
                 }
-                if fields.is_empty() {
-                    return Err(format!("{path}: `arrangement.{name}` 没有给任何字段值"));
+                if *code < 0 {
+                    return Err(format!("{path}: `arrangement.{name}` 的代码值不能是负数"));
                 }
-                for f in fields.keys() {
-                    if !m.conventions.bitfields.contains_key(f) {
-                        return Err(format!(
-                            "{path}: `arrangement.{name}` 里的字段 `{f}` 不是已声明的位域"
-                        ));
-                    }
-                }
-                let mut ks: Vec<String> = fields.keys().cloned().collect();
-                ks.sort_unstable();
-                match &shape {
-                    None => shape = Some(ks),
-                    Some(prev) if prev != &ks => {
-                        return Err(format!(
-                            "{path}: `arrangement` 各条目的字段集必须一致（`{name}` 是 {ks:?}，前一条是 {prev:?}）"
-                        ));
-                    }
-                    _ => {}
+            }
+            // 代码值必须互不相同（否则渲染时无法从字段反推回后缀 ⇒ disassemble 会漂移）。
+            let mut seen: std::collections::BTreeMap<i64, &String> = std::collections::BTreeMap::new();
+            for (name, code) in arr {
+                if let Some(prev) = seen.insert(*code, name) {
+                    return Err(format!(
+                        "{path}: `arrangement` 的代码值 `{code}` 被 `{prev}` 与 `{name}` 重复使用——\
+                         渲染时无法唯一反推后缀"
+                    ));
                 }
             }
         }
