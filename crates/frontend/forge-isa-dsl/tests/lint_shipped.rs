@@ -116,29 +116,6 @@ fn op_gap_matches_section_10_3() {
 ///
 /// arm64 的 27 条是该谱"还没写的整数 lowering"预留的多态名（arm64 只有 8 条 lowering）；
 /// x86 的 1 条（`vmovups`）疑似残留。数字变了 ⇒ 人工复核是"补了引用"还是"新残留"。
-/// 钉死值**快照**路径（B2）：与 `crates/backend/forge-codegen` 的守卫**共用同一份文件**。
-///
-/// 为什么这里也有一份 12 行读取器：快照的**文件与格式**是单一事实源，但 forge-codegen 的
-/// 读取器在 `#[cfg(test)]` 模块里、跨 crate 不可见；把 lint 清点搬过去会与它自己的
-/// `#[cfg(test)]` 撞车（反向 dev-dep 还会成环）。所以只重复读取，**值一律集中在
-/// `asm/ratchet/pins.txt`**；刷新器（任一侧）会**保留注释头与所有键**，不会吃掉别人的条目。
-fn pins_path() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../crates/tools/forge-tests/asm/ratchet/pins.txt")
-}
-
-fn read_pins() -> std::collections::BTreeMap<String, String> {
-    let Ok(s) = std::fs::read_to_string(pins_path()) else {
-        return Default::default();
-    };
-    s.lines()
-        .filter(|l| !l.trim_start().starts_with('#') && l.contains('='))
-        .filter_map(|l| {
-            l.split_once('=')
-                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
-        })
-        .collect()
-}
 
 #[test]
 fn unreferenced_ref_inventory() {
@@ -276,11 +253,13 @@ fn unassigned_bits_inventory() {
 /// 建议（S 版有 `when`、D 版是兜底，合并成 `vary` 会丢掉"哪条是兜底"的直观性）。
 #[test]
 fn vary_candidate_inventory() {
-    for (isa, want) in [
-        ("x86.toml", 55usize),
-        ("riscv64.toml", 28),
-        ("arm64.toml", 7),
-    ] {
+    for isa in ["x86.toml", "riscv64.toml", "arm64.toml"] {
+        // 值在 `asm/ratchet/pins.txt`（B2 快照）：`lint.vary_candidates.<isa>`
+        let want: usize = read_pins()
+            .get(&format!("lint.vary_candidates.{isa}"))
+            .unwrap_or_else(|| panic!("快照缺少 lint.vary_candidates.{isa}"))
+            .parse()
+            .expect("lint.vary_candidates.* 应为整数");
         let path = root().join("isa").join(isa);
         let spec = report::load_spec(&path).expect("加载谱");
         let opts = LintOpts {
@@ -320,4 +299,28 @@ fn coverage(isa: &str, host_ops: &[String]) -> OpsCoverage {
         .expect("谱合法")
         .ops_coverage
         .expect("给了 host_ops 就有覆盖率口径")
+}
+
+/// 钉死值**快照**路径（B2）：与 `crates/backend/forge-codegen` 的守卫**共用同一份文件**。
+///
+/// 为什么这里也有一份 12 行读取器：快照的**文件与格式**是单一事实源，但 forge-codegen 的
+/// 读取器在 `#[cfg(test)]` 模块里、跨 crate 不可见；把 lint 清点搬过去会与它自己的
+/// `#[cfg(test)]` 撞车（反向 dev-dep 还会成环）。所以只重复读取，**值一律集中在
+/// `asm/ratchet/pins.txt`**；刷新器（任一侧）会**保留注释头与所有键**，不会吃掉别人的条目。
+fn pins_path() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../crates/tools/forge-tests/asm/ratchet/pins.txt")
+}
+
+fn read_pins() -> std::collections::BTreeMap<String, String> {
+    let Ok(s) = std::fs::read_to_string(pins_path()) else {
+        return Default::default();
+    };
+    s.lines()
+        .filter(|l| !l.trim_start().starts_with('#') && l.contains('='))
+        .filter_map(|l| {
+            l.split_once('=')
+                .map(|(k, v)| (k.trim().to_string(), v.trim().to_string()))
+        })
+        .collect()
 }
