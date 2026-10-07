@@ -16,7 +16,8 @@ for (const raw of fs.readFileSync(CORPUS, "utf8").split(/\r?\n/)) {
   const b = toks.map((t) => parseInt(t, 16));
   const asm = (m[1] + " " + m[2]).replace(/[;#].*$/, "").replace(/\s+/g, " ").trim();
   const ops = asm.split(/\s+/).slice(1).join(" ").split(",").map((s) => s.trim()).filter(Boolean);
-  if (ops.length !== 3) continue;                       // ????????
+  if (ops.length !== 3) continue;                       // three-register form only
+  if (ops.some((o) => o.includes("["))) continue;       // lane forms (`v0[1]`) are a different family
   const [mnem, arr] = m[1].split(".");
   if (!WANT.includes(mnem) || !ARR6.includes(arr)) continue;
   pairs.push({ asm, bytes: b, mnem, arr, word: b[3] * 0x1000000 + b[2] * 0x10000 + b[1] * 0x100 + b[0] });
