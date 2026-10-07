@@ -1475,10 +1475,38 @@ cargo test -p forge-codegen --lib spec_vector_198 -- --nocapture
 `asm/parse/**` 已进 `.gitignore` 并从索引移除（文件仍在盘上 ✓）。理由与做法：
 
 - **为什么**：上游语料体积大（全集 600+ 文件），而"留哪些"是**算出来的**
+
   （`fetch.mjs` 按逐文件四桶取舍 ⇒ vendored 集）——把它签进仓库只会带来 600 文件级别的 churn、
   `git add -A` 误跟踪一整批 `??` 文件、以及"裁回没跑成 ⇒ 棘轮/守卫拿到错值"这一类错 ✗；
   本会话就因此吃过四次亏 ✓。
+
 - **怎么用**：`node crates/tools/forge-tests/asm/fetch.mjs` 拉取（默认裁剪）/ `--keep-all` 量全集；
   `asm/PROVENANCE.md`（逐文件 sha256/字节/行）**仍跟踪** ✓，它是语料身份的单一事实源 ✓。
 - **干净克隆的行为**：`asm/parse` 不存在 ⇒ 三档套件打 **`ASM-CORPUS-MISSING`** 并**显式跳过**（退 0 ✓），
   绝不假绿（棘轮/PROVENANCE 的比对只在真语料上做 ✓）。判据 = `asm::corpus::corpus_present()`。
+
+### Investigated (2026-10-07) — 编码 `known` 全集 **157** 条的分类（B4 第一步）
+
+`asm/ratchet/encoding.txt` 的 `# known:` 清单（只有**全集**运行才非空；vendored 集是 0）**逐条取回**后，
+157 条集中在两个大类，剩余是小尾巴：
+
+**A 类 · x86 EVEX 的 W 位**（占多数，样本全来自 `avx512-intel.s`）：
+
+```text
+vaddpd zmm1, zmm1, zmm2 : 我们 62 F1 75 48 58 CA ≠ 上游 62 F1 f5 48 58 CA
+                                   ^^ P1              ^^ P1
+```
+
+差异只在 **EVEX P1 的 bit7（W）**：`vaddpd`（双精度）要求 **W=1**，我们发 0 ✗。
+⇒ **我们的真缺陷**（不是方言差异）：`evex_w` 到编码器之间有一处没接上（P0/P2/opcode/ModRM 全对 ✓）。
+修点：`crates/frontend/forge-isa-dsl/src/dsl/codegen/vlen.rs` 的 EVEX 编码 arm（P1 组装在 `vlen.rs:975-978`
+附近）与 `evex_w` 的取值来源（`vex_val("w", "evex_w")` ✓、`form.evex` 的 `w_expr` ✓）。
+
+**B 类 · riscv64 压缩指令（RVC）**：`fsd ft0, 64(sp)` 我们发 **4 字节**、上游 **2 字节**（`06 20` ✓）⇒
+汇编器的**压缩指令选择**未实现 ✗（= 计划里的 riscv RVC 项 ✓）。
+
+**小尾巴**：其余零散条目（含 aarch64 的 57 条分节计数）待逐条归类。
+
+**方法论**：`known` 只在**全集**运行里出现 ✓（vendored 集恒 0 ✓）——取清单 =
+`fetch.mjs --keep-all` → `FORGE_ASM_WRITE_RATCHET=1` 跑 `asm_encoding` → 读 `encoding.txt` 的 `# known:` 行；
+**取完必须裁回并重刷棘轮**（否则棘轮与 vendored 集不一致 ⇒ 门禁红 ✗）。
