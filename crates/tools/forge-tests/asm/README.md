@@ -1030,3 +1030,31 @@ asm = "add {dst}, {src}, {src2}"        # 助记符**不带**后缀（与语料�
 **建议顺序**（一次做完、一次提交）：① 按候选 1 生成附加字段 + 编码/解码/渲染三处接通；
 ② 在 `add` 一族用 `arrangement = { "8b" = 0, … }` + `fields = ["vq","vsize"]` 打通全链（配向量）；
 ③ 通过后**破坏性替换**：删掉约 100 条 `族×排列` 声明、改为每族一条，重算守卫计数（预期下降）。
+
+### 排列机制第三次尝试：**命名立即数 + 切片**（结构可行，卡在一个匹配细节）
+
+新发现的最省路线（**不需要 `arrangement` 槽键、也不需要动 `Inst`**）：
+
+```toml
+[conventions.imm_names.arr]        # 直接键（不是 names = {...} 包裹！模型是 name -> i64）
+"8b" = 0 ; "16b" = 1 ; "4h" = 2 ; "8h" = 3 ; "2s" = 4 ; "4s" = 5 ; "2d" = 6
+
+[[operand_slots]]
+name = "varr" ; kind = "imm" ; width = 3 ; names = "arr"
+encode = "slice" ; fields = ["vq", "vsize"]      # 代码 = size*2 + q
+
+[[forms]]  name = "VEC3RA" ; operand_fields = ["rt","rn","rm","vq","vq","vq"]
+[[instructions]] name = "VADD" ; form = "VEC3RA"
+ops = ["dst:fpr:out","src:fpr","src2:fpr","arrd:varr","arrs:varr","arrs2:varr"]
+asm = "add {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+```
+
+**已实测到的**：`validate`/`lint` **通过** ✓；删掉 `add` 的 6 条 `族×排列` 变体、只留 1 条 ⇒
+指令总数 **527 → 522**（冗余确实在减少 ✓）；旧拼法的上游向量可**同字节改写**成新拼法
+（`add.16b v0, v0, v0` → `add v0.16b, v0.16b, v0.16b`，证据不丢 ✓）。
+
+**卡住的一步**：生成期用例渲染出 `add V0.8b, V1.8b, V2.8b` 后**解析不回来**
+（`no matching instruction`）✗ —— 即 `{arrd}` 的**命名立即数匹配**没吃下 `.8b` 这一段
+（token 流是 `Ident("V0") Dot Ident("8b")`；模板字面 `.` 该匹配 `Dot`，随后命名表该匹配 `"8b"`，
+但实际没匹配上）。下一步只需查清"命名立即数的名字是**按 token 匹配**还是按**文本**匹配"
+（`dsl/codegen/asm.rs` 的 names 分支），据此调一处即可——**机制方向已被证明可行**。
