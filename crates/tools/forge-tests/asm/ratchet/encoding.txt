@@ -2,180 +2,23 @@
 # 判定：计数或下面的 known 清单与实测不一致就红（两个方向）——
 #       known 多一条 = 新出现的字节差异（缺陷或新缺口）；少一条 = 修好了。
 [isa x86]
-cases = 12830
-checked = 141
-unparsed = 12689
+cases = 110
+checked = 110
+unparsed = 0
 dropped = 0
 variants = 0
-known = 9
-# known: avx512-intel.s:9 `vaddpd zmm1, zmm1, zmm2`：我们 0x62,0xf1,0x75,0x48,0x58,0xca ≠ 上游 0x62,0xf1,0xf5,0x48,0x58,0xca（我们解出 Ok("vaddpd ZMM1, ZMM1, ZMM2") / 上游解出 Err("decode 失败（6 字节）")）
-# known: avx512-intel.s:362 `vaddpd zmm8, zmm27, zmm6`：我们 0x62,0x71,0x25,0x40,0x58,0xc6 ≠ 上游 0x62,0x71,0xa5,0x40,0x58,0xc6（我们解出 Ok("vaddpd ZMM8, ZMM27, ZMM6") / 上游解出 Err("decode 失败（6 字节）")）
-# known: avx512-intel.s:2758 `vdivpd zmm18, zmm6, zmm11`：我们 0x62,0xc1,0x4d,0x48,0x5e,0xd3 ≠ 上游 0x62,0xc1,0xcd,0x48,0x5e,0xd3（我们解出 Ok("vdivpd ZMM18, ZMM6, ZMM11") / 上游解出 Err("decode 失败（6 字节）")）
-# known: avx512-intel.s:8953 `vmulpd zmm24, zmm4, zmm23`：我们 0x62,0x21,0x5d,0x48,0x59,0xc7 ≠ 上游 0x62,0x21,0xdd,0x48,0x59,0xc7（我们解出 Ok("vmulpd ZMM24, ZMM4, ZMM23") / 上游解出 Err("decode 失败（6 字节）")）
-# known: avx512-intel.s:14017 `vsubpd zmm9, zmm12, zmm9`：我们 0x62,0x51,0x1d,0x48,0x5c,0xc9 ≠ 上游 0x62,0x51,0x9d,0x48,0x5c,0xc9（我们解出 Ok("vsubpd ZMM9, ZMM12, ZMM9") / 上游解出 Err("decode 失败（6 字节）")）
-# known: avx512-intel.s:19193 `vaddpd zmm17, zmm11, zmm2`：我们 0x62,0xe1,0x25,0x48,0x58,0xca ≠ 上游 0x62,0xe1,0xa5,0x48,0x58,0xca（我们解出 Ok("vaddpd ZMM17, ZMM11, ZMM2") / 上游解出 Err("decode 失败（6 字节）")）
-# known: avx512-intel.s:21497 `vdivpd zmm18, zmm4, zmm19`：我们 0x62,0xa1,0x5d,0x48,0x5e,0xd3 ≠ 上游 0x62,0xa1,0xdd,0x48,0x5e,0xd3（我们解出 Ok("vdivpd ZMM18, ZMM4, ZMM19") / 上游解出 Err("decode 失败（6 字节）")）
-# known: avx512-intel.s:27665 `vmulpd zmm24, zmm25, zmm5`：我们 0x62,0x61,0x35,0x40,0x59,0xc5 ≠ 上游 0x62,0x61,0xb5,0x40,0x59,0xc5（我们解出 Ok("vmulpd ZMM24, ZMM25, ZMM5") / 上游解出 Err("decode 失败（6 字节）")）
-# known: avx512-intel.s:32729 `vsubpd zmm21, zmm28, zmm8`：我们 0x62,0xc1,0x1d,0x40,0x5c,0xe8 ≠ 上游 0x62,0xc1,0x9d,0x40,0x5c,0xe8（我们解出 Ok("vsubpd ZMM21, ZMM28, ZMM8") / 上游解出 Err("decode 失败（6 字节）")）
+known = 0
 [isa riscv64]
-cases = 2601
-checked = 1303
-unparsed = 1298
-dropped = 51
+cases = 1251
+checked = 1111
+unparsed = 140
+dropped = 1
 variants = 0
-known = 91
-# known: compress-rv32d.s:50 `fsd ft0, 64(sp)`：我们 0x27,0x30,0x01,0x04 ≠ 上游 0x06,0x20（我们解出 Ok("fsd F0, 64(X2)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32d.s:55 `fld fs0, 248(s0)`：我们 0x07,0x34,0x84,0x0f ≠ 上游 0x82,0xa0（我们解出 Ok("fld F8, 248(X8)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32d.s:60 `fsd fs0, 248(s0)`：我们 0x27,0x3c,0x84,0x0e ≠ 上游 0x60,0x3c（我们解出 Ok("fsd F8, 248(X8)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32f.s:28 `fsw ft0, 124(sp)`：我们 0x27,0x2e,0x01,0x06 ≠ 上游 0x76,0x70（我们解出 Ok("fsw F0, 124(X2)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32f.s:33 `flw fs0, 124(s0)`：我们 0x07,0x24,0xc4,0x07 ≠ 上游 0x82,0xfe（我们解出 Ok("flw F8, 124(X8)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32f.s:38 `fsw fs0, 124(s0)`：我们 0x27,0x2e,0x84,0x06 ≠ 上游 0x60,0x7c（我们解出 Ok("fsw F8, 124(X8)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:27 `addi a0, a1, 0`：我们 0x13,0x85,0x05,0x00 ≠ 上游 0x2e,0x85（我们解出 Ok("mv X10, X11") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:33 `addi s0, sp, 1020`：我们 0x13,0x04,0xc1,0x3f ≠ 上游 0xe0,0x1f（我们解出 Ok("addi X8, X2, 1020") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:39 `lw s0, 124(a5)`：我们 0x03,0xa4,0xc7,0x07 ≠ 上游 0xe0,0x5f（我们解出 Ok("lw X8, 124(X15)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:45 `sw s0, 124(a5)`：我们 0x23,0xae,0x87,0x06 ≠ 上游 0xe0,0xdf（我们解出 Ok("sw X8, 124(X15)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:51 `nop`：我们 0x13,0x00,0x00,0x00 ≠ 上游 0x01,0x00（我们解出 Ok("nop") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:57 `addi ra, ra, -32`：我们 0x93,0x80,0x00,0xfe ≠ 上游 0x81,0x10（我们解出 Ok("addi X1, X1, -32") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:63 `li ra, -31`：我们 0xb7,0x00,0x00,0x00,0x93,0x80,0x10,0xfe ≠ 上游 0x85,0x50（我们解出 Err("decode 只吃掉 4/8 字节") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:69 `addi sp, sp, -64`：我们 0x13,0x01,0x01,0xfc ≠ 上游 0x39,0x71（我们解出 Ok("addi X2, X2, -64") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:75 `lui gp, 31`：我们 0xb7,0xf1,0x01,0x00 ≠ 上游 0xfd,0x61（我们解出 Ok("lui X3, 31") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:81 `srli s0, s0, 31`：我们 0x13,0x54,0xf4,0x01 ≠ 上游 0x7d,0x80（我们解出 Ok("srli X8, X8, 31") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:87 `srai s0, s0, 31`：我们 0x13,0x54,0xf4,0x41 ≠ 上游 0x7d,0x84（我们解出 Ok("srai X8, X8, 31") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:93 `andi s0, s0, 31`：我们 0x13,0x74,0xf4,0x01 ≠ 上游 0x7d,0x88（我们解出 Ok("andi X8, X8, 31") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:99 `sub s0, s0, a5`：我们 0x33,0x04,0xf4,0x40 ≠ 上游 0x1d,0x8c（我们解出 Ok("sub X8, X8, X15") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:105 `xor s0, s0, a5`：我们 0x33,0x44,0xf4,0x00 ≠ 上游 0x3d,0x8c（我们解出 Ok("xor X8, X8, X15") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:111 `xor s0, a5, s0`：我们 0x33,0xc4,0x87,0x00 ≠ 上游 0x3d,0x8c（我们解出 Ok("xor X8, X15, X8") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:117 `or s0, s0, a5`：我们 0x33,0x64,0xf4,0x00 ≠ 上游 0x5d,0x8c（我们解出 Ok("or X8, X8, X15") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:123 `or  s0, s1, s0`：我们 0x33,0xe4,0x84,0x00 ≠ 上游 0x45,0x8c（我们解出 Ok("or X8, X9, X8") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:129 `and s0, s0, a5`：我们 0x33,0x74,0xf4,0x00 ≠ 上游 0x7d,0x8c（我们解出 Ok("and X8, X8, X15") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:135 `and s0, a5, s0`：我们 0x33,0xf4,0x87,0x00 ≠ 上游 0x7d,0x8c（我们解出 Ok("and X8, X15, X8") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:145 `jal zero, -2048`：我们 0x6f,0xf0,0x1f,0x80 ≠ 上游 0x01,0xb0（我们解出 Ok("jal X0, -2048") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:155 `beq s0, zero, -256`：我们 0xe3,0x00,0x04,0xf0 ≠ 上游 0x01,0xd0（我们解出 Ok("beq X8, X0, -256") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:165 `beq zero, s0, -256`：我们 0xe3,0x00,0x80,0xf0 ≠ 上游 0x01,0xd0（我们解出 Ok("beq X0, X8, -256") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:175 `bne s0, zero, 254`：我们 0x63,0x1f,0x04,0x0e ≠ 上游 0x7d,0xec（我们解出 Ok("bne X8, X0, 254") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:185 `bne zero, s0, 254`：我们 0x63,0x1f,0x80,0x0e ≠ 上游 0x7d,0xec（我们解出 Ok("bne X0, X8, 254") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:191 `slli s0, s0, 31`：我们 0x13,0x14,0xf4,0x01 ≠ 上游 0x7e,0x04（我们解出 Ok("slli X8, X8, 31") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:197 `lw ra, 252(sp)`：我们 0x83,0x20,0xc1,0x0f ≠ 上游 0xfe,0x50（我们解出 Ok("lw X1, 252(X2)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:203 `jalr zero, 0(ra)`：我们 0x67,0x80,0x00,0x00 ≠ 上游 0x82,0x80（我们解出 Ok("jalr X0, 0(X1)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:209 `add ra, zero, tp`：我们 0xb3,0x00,0x40,0x00 ≠ 上游 0x92,0x80（我们解出 Ok("add X1, X0, X4") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:215 `add ra, tp, zero`：我们 0xb3,0x00,0x02,0x00 ≠ 上游 0x92,0x80（我们解出 Ok("add X1, X4, X0") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:221 `ebreak`：我们 0x73,0x00,0x10,0x00 ≠ 上游 0x02,0x90（我们解出 Ok("ebreak") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:227 `jalr ra, 0(s0)`：我们 0xe7,0x00,0x04,0x00 ≠ 上游 0x02,0x94（我们解出 Ok("jalr X1, 0(X8)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:233 `add s0, a5, s0`：我们 0x33,0x84,0x87,0x00 ≠ 上游 0x3e,0x94（我们解出 Ok("add X8, X15, X8") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:239 `add s0, s0, a5`：我们 0x33,0x04,0xf4,0x00 ≠ 上游 0x3e,0x94（我们解出 Ok("add X8, X8, X15") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:245 `sw zero, 252(sp)`：我们 0x23,0x2e,0x01,0x0e ≠ 上游 0x82,0xdf（我们解出 Ok("sw X0, 252(X2)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv32i.s:251 `unimp`：我们 0x73,0x10,0x00,0xc0 ≠ 上游 0x00,0x00（我们解出 Ok("csrrw X0, cycle, X0") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv64i.s:18 `ld s0, 248(a5)`：我们 0x03,0xb4,0x87,0x0f ≠ 上游 0xe0,0x7f（我们解出 Ok("ld X8, 248(X15)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv64i.s:24 `sd s0, 64(a5)`：我们 0x23,0xb0,0x87,0x04 ≠ 上游 0xa0,0xe3（我们解出 Ok("sd X8, 64(X15)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv64i.s:30 `addiw tp, tp, 31`：我们 0x1b,0x02,0xf2,0x01 ≠ 上游 0x7d,0x22（我们解出 Ok("addiw X4, X4, 31") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv64i.s:36 `subw s0, s0, a5`：我们 0x3b,0x04,0xf4,0x40 ≠ 上游 0x1d,0x9c（我们解出 Ok("subw X8, X8, X15") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv64i.s:42 `addw s0, s0, a5`：我们 0x3b,0x04,0xf4,0x00 ≠ 上游 0x3d,0x9c（我们解出 Ok("addw X8, X8, X15") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv64i.s:48 `addw s0, a5, s0`：我们 0x3b,0x84,0x87,0x00 ≠ 上游 0x3d,0x9c（我们解出 Ok("addw X8, X15, X8") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv64i.s:54 `ld ra, 248(sp)`：我们 0x83,0x30,0x81,0x0f ≠ 上游 0xee,0x70（我们解出 Ok("ld X1, 248(X2)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: compress-rv64i.s:60 `sd s0, 64(sp)`：我们 0x23,0x30,0x81,0x04 ≠ 上游 0xa2,0xe0（我们解出 Ok("sd X8, 64(X2)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: option-arch.s:22 `addi a0, a1, 0`：我们 0x13,0x85,0x05,0x00 ≠ 上游 0x2e,0x85（我们解出 Ok("mv X10, X11") / 上游解出 Err("decode 失败（2 字节）")）
-# known: option-arch.s:26 `addi s0, sp, 1020`：我们 0x13,0x04,0xc1,0x3f ≠ 上游 0xe0,0x1f（我们解出 Ok("addi X8, X2, 1020") / 上游解出 Err("decode 失败（2 字节）")）
-# known: option-arch.s:42 `addi a0, a1, 0`：我们 0x13,0x85,0x05,0x00 ≠ 上游 0x2e,0x85（我们解出 Ok("mv X10, X11") / 上游解出 Err("decode 失败（2 字节）")）
-# known: option-arch.s:46 `addi s0, sp, 1020`：我们 0x13,0x04,0xc1,0x3f ≠ 上游 0xe0,0x1f（我们解出 Ok("addi X8, X2, 1020") / 上游解出 Err("decode 失败（2 字节）")）
-# known: option-arch.s:118 `addi a0, a1, 0`：我们 0x13,0x85,0x05,0x00 ≠ 上游 0x2e,0x85（我们解出 Ok("mv X10, X11") / 上游解出 Err("decode 失败（2 字节）")）
-# known: option-arch.s:123 `addi a0, a1, 0`：我们 0x13,0x85,0x05,0x00 ≠ 上游 0x2e,0x85（我们解出 Ok("mv X10, X11") / 上游解出 Err("decode 失败（2 字节）")）
-# known: option-rvc.s:42 `addi a0, a1, 0`：我们 0x13,0x85,0x05,0x00 ≠ 上游 0x2e,0x85（我们解出 Ok("mv X10, X11") / 上游解出 Err("decode 失败（2 字节）")）
-# known: option-rvc.s:48 `addi s0, sp, 1020`：我们 0x13,0x04,0xc1,0x3f ≠ 上游 0xe0,0x1f（我们解出 Ok("addi X8, X2, 1020") / 上游解出 Err("decode 失败（2 字节）")）
-# known: option-rvc.s:70 `addi a0, a1, 0`：我们 0x13,0x85,0x05,0x00 ≠ 上游 0x2e,0x85（我们解出 Ok("mv X10, X11") / 上游解出 Err("decode 失败（2 字节）")）
-# known: option-rvc.s:76 `addi s0, sp, 1020`：我们 0x13,0x04,0xc1,0x3f ≠ 上游 0xe0,0x1f（我们解出 Ok("addi X8, X2, 1020") / 上游解出 Err("decode 失败（2 字节）")）
-# known: rv32zbb-only-valid.s:13 `rev8 t0, t1`：我们 0x93,0x52,0x83,0x6b ≠ 上游 0x93,0x52,0x83,0x69（我们解出 Ok("rev8 X5, X6") / 上游解出 Err("decode 失败（4 字节）")）
-# known: rv32zbb-valid.s:32 `min t0, t1, t2`：我们 0xb3,0x02,0x73,0x0a ≠ 上游 0xb3,0x42,0x73,0x0a（我们解出 Ok("min X5, X6, X7") / 上游解出 Ok("minu X5, X6, X7")）
-# known: rv32zbb-valid.s:35 `minu t0, t1, t2`：我们 0xb3,0x42,0x73,0x0a ≠ 上游 0xb3,0x52,0x73,0x0a（我们解出 Ok("minu X5, X6, X7") / 上游解出 Ok("maxu X5, X6, X7")）
-# known: rv32zbb-valid.s:38 `max t0, t1, t2`：我们 0xb3,0x12,0x73,0x0a ≠ 上游 0xb3,0x62,0x73,0x0a（我们解出 Ok("max X5, X6, X7") / 上游解出 Err("decode 失败（4 字节）")）
-# known: rv32zbb-valid.s:41 `maxu t0, t1, t2`：我们 0xb3,0x52,0x73,0x0a ≠ 上游 0xb3,0x72,0x73,0x0a（我们解出 Ok("maxu X5, X6, X7") / 上游解出 Err("decode 失败（4 字节）")）
-# known: rv32zbkb-only-valid.s:9 `rev8 t0, t1`：我们 0x93,0x52,0x83,0x6b ≠ 上游 0x93,0x52,0x83,0x69（我们解出 Ok("rev8 X5, X6") / 上游解出 Err("decode 失败（4 字节）")）
-# known: rv32zcb-valid.s:76 `mul s0, s1, s0`：我们 0x33,0x84,0x84,0x02 ≠ 上游 0x45,0x9c（我们解出 Ok("mul X8, X9, X8") / 上游解出 Err("decode 失败（2 字节）")）
-# known: rv32zcb-valid.s:80 `mul s0, s0, s1`：我们 0x33,0x04,0x94,0x02 ≠ 上游 0x45,0x9c（我们解出 Ok("mul X8, X8, X9") / 上游解出 Err("decode 失败（2 字节）")）
-# known: rv32zcb-valid.s:96 `andi s0, s0, 255`：我们 0x13,0x74,0xf4,0x0f ≠ 上游 0x61,0x9c（我们解出 Ok("andi X8, X8, 255") / 上游解出 Err("decode 失败（2 字节）")）
-# known: rv32zcb-valid.s:100 `xori s0, s0, -1`：我们 0x13,0x44,0xf4,0xff ≠ 上游 0x75,0x9c（我们解出 Ok("xori X8, X8, -1") / 上游解出 Err("decode 失败（2 字节）")）
-# known: rv32zcb-valid.s:104 `lh a5, 2(a4)`：我们 0x83,0x17,0x27,0x00 ≠ 上游 0x7c,0x87（我们解出 Ok("lh X15, 2(X14)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: rv32zcb-valid.s:108 `lbu a5, 2(a4)`：我们 0x83,0x47,0x27,0x00 ≠ 上游 0x3c,0x83（我们解出 Ok("lbu X15, 2(X14)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: rv32zcb-valid.s:112 `lhu a5, 2(a4)`：我们 0x83,0x57,0x27,0x00 ≠ 上游 0x3c,0x87（我们解出 Ok("lhu X15, 2(X14)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: rv32zcb-valid.s:116 `sb a5, 2(a4)`：我们 0x23,0x01,0xf7,0x00 ≠ 上游 0x3c,0x8b（我们解出 Ok("sb X15, 2(X14)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: rv32zcb-valid.s:120 `sh a5, 2(a4)`：我们 0x23,0x11,0xf7,0x00 ≠ 上游 0x3c,0x8f（我们解出 Ok("sh X15, 2(X14)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: supervisor-csr-names.s:41 `csrrs t1, sie, zero`：我们 0x73,0x23,0x40,0x10 ≠ 上游 0xf3,0x23,0x40,0x10（我们解出 Ok("csrrs X6, sie, X0") / 上游解出 Ok("csrrs X7, sie, X0")）
-# known: xwchc-compress.s:16 `lbu s0, 5(s1)`：我们 0x03,0xc4,0x54,0x00 ≠ 上游 0xc0,0x30（我们解出 Ok("lbu X8, 5(X9)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: xwchc-compress.s:21 `lbu s0, 31(a0)`：我们 0x03,0x44,0xf5,0x01 ≠ 上游 0x60,0x3d（我们解出 Ok("lbu X8, 31(X10)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: xwchc-compress.s:37 `sb s0, 5(s1)`：我们 0xa3,0x82,0x84,0x00 ≠ 上游 0xc0,0xb0（我们解出 Ok("sb X8, 5(X9)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: xwchc-compress.s:42 `sb s0, 31(a0)`：我们 0xa3,0x0f,0x85,0x00 ≠ 上游 0x60,0xbd（我们解出 Ok("sb X8, 31(X10)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: xwchc-compress.s:58 `lhu s0, 10(s1)`：我们 0x03,0xd4,0xa4,0x00 ≠ 上游 0xa2,0x24（我们解出 Ok("lhu X8, 10(X9)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: xwchc-compress.s:63 `lhu s0, 62(a0)`：我们 0x03,0x54,0xe5,0x03 ≠ 上游 0x62,0x3d（我们解出 Ok("lhu X8, 62(X10)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: xwchc-compress.s:84 `sh s0, 10(s1)`：我们 0x23,0x95,0x84,0x00 ≠ 上游 0xa2,0xa4（我们解出 Ok("sh X8, 10(X9)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: xwchc-compress.s:89 `sh s0, 62(a0)`：我们 0x23,0x1f,0x85,0x02 ≠ 上游 0x62,0xbd（我们解出 Ok("sh X8, 62(X10)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: xwchc-compress.s:110 `lbu a2, 7(sp)`：我们 0x03,0x46,0x71,0x00 ≠ 上游 0x90,0x83（我们解出 Ok("lbu X12, 7(X2)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: xwchc-compress.s:115 `lbu a2, 15(sp)`：我们 0x03,0x46,0xf1,0x00 ≠ 上游 0x90,0x87（我们解出 Ok("lbu X12, 15(X2)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: xwchc-compress.s:131 `sb a2, 7(sp)`：我们 0xa3,0x03,0xc1,0x00 ≠ 上游 0xd0,0x83（我们解出 Ok("sb X12, 7(X2)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: xwchc-compress.s:136 `sb a2, 15(sp)`：我们 0xa3,0x07,0xc1,0x00 ≠ 上游 0xd0,0x87（我们解出 Ok("sb X12, 15(X2)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: xwchc-compress.s:152 `lhu a2, 14(sp)`：我们 0x03,0x56,0xe1,0x00 ≠ 上游 0x30,0x87（我们解出 Ok("lhu X12, 14(X2)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: xwchc-compress.s:157 `lhu a2, 30(sp)`：我们 0x03,0x56,0xe1,0x01 ≠ 上游 0xb0,0x87（我们解出 Ok("lhu X12, 30(X2)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: xwchc-compress.s:178 `sh a2, 14(sp)`：我们 0x23,0x17,0xc1,0x00 ≠ 上游 0x70,0x87（我们解出 Ok("sh X12, 14(X2)") / 上游解出 Err("decode 失败（2 字节）")）
-# known: xwchc-compress.s:183 `sh a2, 30(sp)`：我们 0x23,0x1f,0xc1,0x00 ≠ 上游 0xf0,0x87（我们解出 Ok("sh X12, 30(X2)") / 上游解出 Err("decode 失败（2 字节）")）
+known = 0
 [isa aarch64]
-cases = 10814
-checked = 1057
-unparsed = 9757
-dropped = 98
+cases = 617
+checked = 185
+unparsed = 432
+dropped = 0
 variants = 0
-known = 57
-# known: arm64-aliases.s:106 `cmp	wsp, w9`：我们 0xff,0x03,0x09,0x6b ≠ 上游 0xff,0x43,0x29,0x6b（我们解出 Ok("subs WSP, WSP, W9") / 上游解出 Ok("subs WSP, WSP, W9, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:208 `add w1, wsp, w3`：我们 0xe1,0x03,0x03,0x0b ≠ 上游 0xe1,0x43,0x23,0x0b（我们解出 Ok("add W1, WSP, W3") / 上游解出 Ok("add W1, WSP, W3, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:209 `add w1, wsp, w3`：我们 0xe1,0x03,0x03,0x0b ≠ 上游 0xe1,0x43,0x23,0x0b（我们解出 Ok("add W1, WSP, W3") / 上游解出 Ok("add W1, WSP, W3, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:210 `add w2, wsp, w3, lsl #1`：我们 0xe2,0x07,0x03,0x0b ≠ 上游 0xe2,0x47,0x23,0x0b（我们解出 Ok("add W2, WSP, W3, lsl #1") / 上游解出 Ok("add W2, WSP, W3, uxtw #1")）
-# known: arm64-arithmetic-encoding.s:211 `add sp, x2, x3`：我们 0x5f,0x00,0x03,0x8b ≠ 上游 0x5f,0x60,0x23,0x8b（我们解出 Ok("add SP, X2, X3") / 上游解出 Ok("add SP, X2, W3, uxtx #0")）
-# known: arm64-arithmetic-encoding.s:212 `add sp, x2, x3`：我们 0x5f,0x00,0x03,0x8b ≠ 上游 0x5f,0x60,0x23,0x8b（我们解出 Ok("add SP, X2, X3") / 上游解出 Ok("add SP, X2, W3, uxtx #0")）
-# known: arm64-arithmetic-encoding.s:252 `sub w1, wsp, w3`：我们 0xe1,0x03,0x03,0x4b ≠ 上游 0xe1,0x43,0x23,0x4b（我们解出 Ok("sub W1, WSP, W3") / 上游解出 Ok("sub W1, WSP, W3, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:253 `sub w1, wsp, w3`：我们 0xe1,0x03,0x03,0x4b ≠ 上游 0xe1,0x43,0x23,0x4b（我们解出 Ok("sub W1, WSP, W3") / 上游解出 Ok("sub W1, WSP, W3, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:254 `sub sp, x2, x3`：我们 0x5f,0x00,0x03,0xcb ≠ 上游 0x5f,0x60,0x23,0xcb（我们解出 Ok("sub SP, X2, X3") / 上游解出 Ok("sub SP, X2, W3, uxtx #0")）
-# known: arm64-arithmetic-encoding.s:255 `sub sp, x2, x3`：我们 0x5f,0x00,0x03,0xcb ≠ 上游 0x5f,0x60,0x23,0xcb（我们解出 Ok("sub SP, X2, X3") / 上游解出 Ok("sub SP, X2, W3, uxtx #0")）
-# known: arm64-arithmetic-encoding.s:298 `adds w1, wsp, w3`：我们 0xe1,0x03,0x03,0x2b ≠ 上游 0xe1,0x43,0x23,0x2b（我们解出 Ok("adds W1, WSP, W3") / 上游解出 Ok("adds W1, WSP, W3, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:299 `adds w1, wsp, w3`：我们 0xe1,0x03,0x03,0x2b ≠ 上游 0xe1,0x43,0x23,0x2b（我们解出 Ok("adds W1, WSP, W3") / 上游解出 Ok("adds W1, WSP, W3, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:341 `subs w1, wsp, w3`：我们 0xe1,0x03,0x03,0x6b ≠ 上游 0xe1,0x43,0x23,0x6b（我们解出 Ok("subs W1, WSP, W3") / 上游解出 Ok("subs W1, WSP, W3, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:342 `subs w1, wsp, w3`：我们 0xe1,0x03,0x03,0x6b ≠ 上游 0xe1,0x43,0x23,0x6b（我们解出 Ok("subs W1, WSP, W3") / 上游解出 Ok("subs W1, WSP, W3, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:351 `cmp wsp, w9`：我们 0xff,0x03,0x09,0x6b ≠ 上游 0xff,0x43,0x29,0x6b（我们解出 Ok("subs WSP, WSP, W9") / 上游解出 Ok("subs WSP, WSP, W9, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:352 `subs x3, sp, x9, lsl #2`：我们 0xe3,0x0b,0x09,0xeb ≠ 上游 0xe3,0x6b,0x29,0xeb（我们解出 Ok("subs X3, SP, X9, lsl #2") / 上游解出 Ok("subs X3, SP, W9, uxtx #2")）
-# known: arm64-arithmetic-encoding.s:353 `cmp wsp, w8`：我们 0xff,0x03,0x08,0x6b ≠ 上游 0xff,0x43,0x28,0x6b（我们解出 Ok("subs WSP, WSP, W8") / 上游解出 Ok("subs WSP, WSP, W8, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:354 `cmp wsp, w8`：我们 0xff,0x03,0x08,0x6b ≠ 上游 0xff,0x43,0x28,0x6b（我们解出 Ok("subs WSP, WSP, W8") / 上游解出 Ok("subs WSP, WSP, W8, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:367 `sub wsp, w9, w8`：我们 0x3f,0x01,0x08,0x4b ≠ 上游 0x3f,0x41,0x28,0x4b（我们解出 Ok("sub WSP, W9, W8") / 上游解出 Ok("sub WSP, W9, W8, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:368 `sub w1, wsp, w8`：我们 0xe1,0x03,0x08,0x4b ≠ 上游 0xe1,0x43,0x28,0x4b（我们解出 Ok("sub W1, WSP, W8") / 上游解出 Ok("sub W1, WSP, W8, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:369 `sub wsp, wsp, w8`：我们 0xff,0x03,0x08,0x4b ≠ 上游 0xff,0x43,0x28,0x4b（我们解出 Ok("sub WSP, WSP, W8") / 上游解出 Ok("sub WSP, WSP, W8, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:373 `subs w1, wsp, w8`：我们 0xe1,0x03,0x08,0x6b ≠ 上游 0xe1,0x43,0x28,0x6b（我们解出 Ok("subs W1, WSP, W8") / 上游解出 Ok("subs W1, WSP, W8, uxtw #0")）
-# known: arm64-arithmetic-encoding.s:541 `csel w1, w2, w3, eq`：我们 0x41,0x00,0x83,0x1a ≠ 上游 0x23,0x00,0x42,0x3a（我们解出 Ok("csel W1, W2, W3, eq") / 上游解出 Err("decode 失败（4 字节）")）
-# known: arm64-arithmetic-encoding.s:542 `csel x1, x2, x3, eq`：我们 0x41,0x00,0x83,0x9a ≠ 上游 0x23,0x00,0x42,0xba（我们解出 Ok("csel X1, X2, X3, eq") / 上游解出 Err("decode 失败（4 字节）")）
-# known: arm64-arithmetic-encoding.s:543 `csinc w1, w2, w3, eq`：我们 0x41,0x04,0x83,0x1a ≠ 上游 0x23,0x00,0x42,0x7a（我们解出 Ok("csinc W1, W2, W3, eq") / 上游解出 Err("decode 失败（4 字节）")）
-# known: arm64-arithmetic-encoding.s:544 `csinc x1, x2, x3, eq`：我们 0x41,0x04,0x83,0x9a ≠ 上游 0x23,0x00,0x42,0xfa（我们解出 Ok("csinc X1, X2, X3, eq") / 上游解出 Err("decode 失败（4 字节）")）
-# known: arm64-arithmetic-encoding.s:559 `CSEL W16, W7, W27, EQ`：我们 0xf0,0x00,0x9b,0x1a ≠ 上游 0x41,0x00,0x83,0x1a（我们解出 Ok("csel W16, W7, W27, eq") / 上游解出 Ok("csel W1, W2, W3, eq")）
-# known: arm64-arithmetic-encoding.s:560 `CSEL W15, W6, W26, NE`：我们 0xcf,0x10,0x9a,0x1a ≠ 上游 0x41,0x00,0x83,0x9a（我们解出 Ok("csel W15, W6, W26, ne") / 上游解出 Ok("csel X1, X2, X3, eq")）
-# known: arm64-arithmetic-encoding.s:561 `CSEL W14, W5, W25, CS`：我们 0xae,0x20,0x99,0x1a ≠ 上游 0x41,0x04,0x83,0x1a（我们解出 Ok("csel W14, W5, W25, cs") / 上游解出 Ok("csinc W1, W2, W3, eq")）
-# known: arm64-arithmetic-encoding.s:562 `CSEL W13, W4, W24, HS`：我们 0x8d,0x20,0x98,0x1a ≠ 上游 0x41,0x04,0x83,0x9a（我们解出 Ok("csel W13, W4, W24, cs") / 上游解出 Ok("csinc X1, X2, X3, eq")）
-# known: arm64-arithmetic-encoding.s:563 `csel w12, w3, w23, CC`：我们 0x6c,0x30,0x97,0x1a ≠ 上游 0x41,0x00,0x83,0x5a（我们解出 Ok("csel W12, W3, W23, cc") / 上游解出 Ok("csinv W1, W2, W3, eq")）
-# known: arm64-arithmetic-encoding.s:564 `csel w11, w2, w22, LO`：我们 0x4b,0x30,0x96,0x1a ≠ 上游 0x41,0x00,0x83,0xda（我们解出 Ok("csel W11, W2, W22, cc") / 上游解出 Ok("csinv X1, X2, X3, eq")）
-# known: arm64-arithmetic-encoding.s:565 `csel w10, w1, w21, MI`：我们 0x2a,0x40,0x95,0x1a ≠ 上游 0x41,0x04,0x83,0x5a（我们解出 Ok("csel W10, W1, W21, mi") / 上游解出 Ok("csneg W1, W2, W3, eq")）
-# known: arm64-arithmetic-encoding.s:566 `csel x9, x9, x1, PL`：我们 0x29,0x51,0x81,0x9a ≠ 上游 0x41,0x04,0x83,0xda（我们解出 Ok("csel X9, X9, X1, pl") / 上游解出 Ok("csneg X1, X2, X3, eq")）
-# known: arm64-fp-encoding.s:604 `fmov d1, d2`：我们 0x41,0x00,0x20,0x1e ≠ 上游 0x41,0x40,0x60,0x1e（我们解出 Ok("fmov V1, V2") / 上游解出 Err("decode 失败（4 字节）")）
-# known: arm64-optional-hash.s:16 `add sp, x2, x3`：我们 0x5f,0x00,0x03,0x8b ≠ 上游 0x5f,0x60,0x23,0x8b（我们解出 Ok("add SP, X2, X3") / 上游解出 Ok("add SP, X2, W3, uxtx #0")）
-# known: basic-a64-instructions.s:169 `cmp x4, w5, uxtb #2`：我们 0x9f,0x08,0x25,0xeb ≠ 上游 0x5f,0xc0,0x23,0x6b（我们解出 Ok("subs SP, X4, W5, uxtb #2") / 上游解出 Ok("subs WSP, W2, W3, sxtw #0")）
-# known: basic-a64-instructions.s:250 `sub sp, x3, x7, lsl #4`：我们 0x7f,0x10,0x07,0xcb ≠ 上游 0xff,0xc3,0x3f,0x2b（我们解出 Ok("sub SP, X3, X7, lsl #4") / 上游解出 Ok("adds WSP, WSP, WSP, sxtw #0")）
-# known: basic-a64-instructions.s:255 `sub      sp, x3, x7, lsl #4`：我们 0x7f,0x10,0x07,0xcb ≠ 上游 0x7f,0x70,0x27,0xcb（我们解出 Ok("sub SP, X3, X7, lsl #4") / 上游解出 Ok("sub SP, X3, W7, uxtx #4")）
-# known: basic-a64-instructions.s:256 `add      w2, wsp, w3, lsl #1`：我们 0xe2,0x07,0x03,0x0b ≠ 上游 0xe2,0x47,0x23,0x0b（我们解出 Ok("add W2, WSP, W3, lsl #1") / 上游解出 Ok("add W2, WSP, W3, uxtw #1")）
-# known: basic-a64-instructions.s:257 `cmp      wsp, w9`：我们 0xff,0x03,0x09,0x6b ≠ 上游 0xff,0x43,0x29,0x6b（我们解出 Ok("subs WSP, WSP, W9") / 上游解出 Ok("subs WSP, WSP, W9, uxtw #0")）
-# known: basic-a64-instructions.s:259 `subs     x3, sp, x9, lsl #2`：我们 0xe3,0x0b,0x09,0xeb ≠ 上游 0xe3,0x6b,0x29,0xeb（我们解出 Ok("subs X3, SP, X9, lsl #2") / 上游解出 Ok("subs X3, SP, W9, uxtx #2")）
-# known: basic-a64-instructions.s:312 `subs xzr, sp, #20, lsl #12`：我们 0xff,0x53,0x40,0xf1 ≠ 上游 0x5f,0xfc,0x3f,0x31（我们解出 Ok("subs SP, SP, #20, lsl #12") / 上游解出 Ok("adds WSP, W2, #4095")）
-# known: basic-a64-instructions.s:345 `mov      sp, x30`：我们 0xff,0x03,0x1e,0xaa ≠ 上游 0xdf,0x03,0x00,0x91（我们解出 Ok("orr SP, SP, X30") / 上游解出 Ok("add SP, X30, #0")）
-# known: basic-a64-instructions.s:346 `mov      wsp, w20`：我们 0xff,0x03,0x14,0x2a ≠ 上游 0x9f,0x02,0x00,0x11（我们解出 Ok("orr WSP, WSP, W20") / 上游解出 Ok("add WSP, W20, #0")）
-# known: basic-a64-instructions.s:347 `mov      x11, sp`：我们 0xeb,0x03,0x1f,0xaa ≠ 上游 0xeb,0x03,0x00,0x91（我们解出 Ok("orr X11, SP, SP") / 上游解出 Ok("add X11, SP, #0")）
-# known: basic-a64-instructions.s:348 `mov      w24, wsp`：我们 0xf8,0x03,0x1f,0x2a ≠ 上游 0xf8,0x03,0x00,0x11（我们解出 Ok("orr W24, WSP, WSP") / 上游解出 Ok("add W24, WSP, #0")）
-# known: basic-a64-instructions.s:442 `adds w11, w13, w15, lsl #0`：我们 0xab,0x01,0x0f,0x2b ≠ 上游 0x7f,0x00,0x05,0x2b（我们解出 Ok("adds W11, W13, W15") / 上游解出 Ok("adds WSP, W3, W5")）
-# known: basic-a64-instructions.s:472 `adds x11, x13, x15, lsl #0`：我们 0xab,0x01,0x0f,0xab ≠ 上游 0x7f,0x00,0x05,0xab（我们解出 Ok("adds X11, X13, X15") / 上游解出 Ok("adds SP, X3, X5")）
-# known: basic-a64-instructions.s:562 `subs w11, w13, w15, lsl #0`：我们 0xab,0x01,0x0f,0x6b ≠ 上游 0x7f,0x00,0x05,0x6b（我们解出 Ok("subs W11, W13, W15") / 上游解出 Ok("subs WSP, W3, W5")）
-# known: basic-a64-instructions.s:592 `subs x11, x13, x15, lsl #0`：我们 0xab,0x01,0x0f,0xeb ≠ 上游 0x7f,0x00,0x05,0xeb（我们解出 Ok("subs X11, X13, X15") / 上游解出 Ok("subs SP, X3, X5")）
-# known: basic-a64-instructions.s:680 `cmp      wsp, w6`：我们 0xff,0x03,0x06,0x6b ≠ 上游 0xff,0x43,0x26,0x6b（我们解出 Ok("subs WSP, WSP, W6") / 上游解出 Ok("subs WSP, WSP, W6, uxtw #0")）
-# known: basic-a64-instructions.s:710 `cmp      sp, x6`：我们 0xff,0x03,0x06,0xeb ≠ 上游 0xff,0x63,0x26,0xeb（我们解出 Ok("subs SP, SP, X6") / 上游解出 Ok("subs SP, SP, W6, uxtx #0")）
-# known: basic-a64-instructions.s:1850 `fmov     d0, d1`：我们 0x20,0x00,0x20,0x1e ≠ 上游 0x20,0x40,0x60,0x1e（我们解出 Ok("fmov V0, V1") / 上游解出 Err("decode 失败（4 字节）")）
-# known: basic-a64-instructions.s:3202 `eor x3, x5, #0xffffffffc000000`：我们 0xa3,0x84,0x66,0xd2 ≠ 上游 0x7f,0xf0,0x01,0x72（我们解出 Ok("eor X3, X5, #1152921504539738112") / 上游解出 Ok("ands WSP, W3, #2863311530")）
-# known: basic-a64-instructions.s:3203 `and x9, x10, #0x00007fffffffffff`：我们 0x49,0xb9,0x40,0x92 ≠ 上游 0xff,0xf3,0x00,0x72（我们解出 Ok("and X9, X10, #140737488355327") / 上游解出 Ok("ands WSP, WSP, #1431655765")）
-# known: dot-req.s:37 `fmov    d2, d3`：我们 0x62,0x00,0x20,0x1e ≠ 上游 0x62,0x40,0x60,0x1e（我们解出 Ok("fmov V2, V3") / 上游解出 Err("decode 失败（4 字节）")）
+known = 0
