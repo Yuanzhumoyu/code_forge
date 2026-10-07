@@ -1160,3 +1160,34 @@ size 变化（`smax/smin/umax/umin` 这类带"有符号/宽度"语义的族最�
    每族的"排列↔位模式"本来就不同 ✓；
 
 4. 每族落地后**必须复核 `known` 不变**（判据），再进下一族。
+
+## lane 族的**可执行方案**（2026-10-07 定稿，零新机制）
+
+**形状**（`[]` 走模板字面段、索引走普通 imm 槽 —— 与"助记符后缀"同一套思路 ✓）：
+
+```toml
+[[operand_slots]]
+name = "lane5"          # 元素索引：普通 imm 槽（宽度按族的 imm4/imm5 取）
+kind = "imm"
+width = 5
+
+[[instructions]]
+name = "VMLA_LANE_8H"   # 助记符带排列后缀（语料就是这么写的）
+form = "VEC3RL"         # 新表单：rt/rn/rm + lane（lane 的位域按 ARM ARM 给）
+opcode = 0x0E
+fields = { vu = 0, vsize = 1, vec_c = 1, vec_d = 37 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "lane:lane5"]
+asm = "mla.8h {dst}, {src}, {src2}[{lane}]"
+```
+
+**证据约束（已实测钉死，别再试）**：
+- 语料里有 **157 条** lane 写法及其上游字 ✓（`mla.8h v0, v0, v0[1]`、`dup.2d`、`mov.s/d/h/b`、`fmla.s` … ✓）；
+- 但**无法从字节差反推索引落点** ✗ —— 我把"去掉索引后操作数完全相同、仅索引不同"的行配对做 XOR，
+  跑遍 157 条**一组都没配上**（lane 行的寄存器也各不相同）✗；
+- ⇒ **索引位必须查 ARM ARM**（各族 imm4/imm5 的位置不同），再用**现有向量**校验 ✓。
+
+**收益**：这些族的 lane 行如今由 `no_prefix`（不计缺陷）变成 `tail_mismatch`（红）——累计 **+96**（`+57` 来自
+三寄存器族批、`+39` 来自比较/乘法族批）✓。实现 lane 族即可**全部回收** ✓，并解锁更多解析。
+
+**顺序建议**：先做**形态单一**的族（`mla.8h/4s/2d` 这类"向量 + lane"✓），避开 `dup`（源可能是通用寄存器 ✗）
+与 `mov.<t>`（寄存器 ↔ lane 混合 ✗）；每族配 1~2 条谱内 `[[vectors]]`，仍以 **`known` 不变**为提交前提 ✓。
