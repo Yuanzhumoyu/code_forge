@@ -26,6 +26,7 @@
 
 pub mod classify;
 pub mod corpus;
+pub mod par;
 pub mod encoding;
 pub mod exec;
 pub mod report;

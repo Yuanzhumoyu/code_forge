@@ -27,10 +27,8 @@ fn run_isa(isa: &str) -> IsaReport {
     for suite in SUITES.iter().filter(|s| s.isa == isa) {
         match asm::corpus::read_suite(suite) {
             Ok(files) => {
-                let reports: Vec<_> = files
-                    .iter()
-                    .map(|(f, src)| asm::classify_file(target, suite, f, src))
-                    .collect();
+                let reports =
+                    asm::par::map_parallel(&files, |(f, src)| asm::classify_file(target, suite, f, src));
                 report
                     .suites
                     .push(IsaReport::from_files(suite.key, reports));

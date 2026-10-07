@@ -25,7 +25,7 @@ pub enum ParseErr {
 }
 
 /// 一个 ISA 的汇编器适配面（[`super::targets`] 里逐个实现）。
-pub trait AsmTarget {
+pub trait AsmTarget: Sync {
     fn isa(&self) -> &'static str;
     /// 解析一段汇编源码；返回指令条数。
     fn parse(&self, src: &str) -> Result<usize, ParseErr>;
