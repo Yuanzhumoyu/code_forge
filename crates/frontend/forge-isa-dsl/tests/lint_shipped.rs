@@ -108,7 +108,7 @@ fn unreferenced_ref_inventory() {
     for (isa, want) in [
         ("x86.toml", 1usize),
         ("riscv64.toml", 0),
-        ("arm64.toml", 27),
+        ("arm64.toml", 262),
     ] {
         let path = root().join("isa").join(isa);
         let spec = report::load_spec(&path).expect("加载谱");
