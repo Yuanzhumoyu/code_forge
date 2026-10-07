@@ -19,3 +19,6 @@ lint.refs.arm64.toml = 27
 lint.unassigned_bits.x86.toml = 0
 lint.unassigned_bits.riscv64.toml = 7
 lint.unassigned_bits.arm64.toml = 262
+lint.op_gap.x86.toml = 100,6,8,3
+lint.op_gap.riscv64.toml = 67,6,8,36
+lint.op_gap.arm64.toml = 8,6,8,95

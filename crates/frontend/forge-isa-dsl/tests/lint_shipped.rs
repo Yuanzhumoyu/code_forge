@@ -73,11 +73,24 @@ fn op_gap_matches_section_10_3() {
     // riscv 覆盖 63 → 67 / 真缺口 40 → 36（2026-10-01）：补了浮点算术
     // `Fadd`/`Fsub`/`Fmul`/`Fdiv`（单/双精度各一条；此前这些 op 全是真缺口，
     // 矩阵里所有浮点算术用例因此整条 Skip）。
-    for (isa, want) in [
-        ("x86.toml", (100usize, 6usize, 8usize, 3usize)),
-        ("riscv64.toml", (67, 6, 8, 36)),
-        ("arm64.toml", (8, 6, 8, 95)),
-    ] {
+    for isa in ["x86.toml", "riscv64.toml", "arm64.toml"] {
+        // 值在 `asm/ratchet/pins.txt`（B2 快照）：`lint.op_gap.<isa> = 覆盖,终结,宿主管线,真缺口`
+        let want: (usize, usize, usize, usize) = {
+            let raw = read_pins()
+                .get(&format!("lint.op_gap.{isa}"))
+                .unwrap_or_else(|| panic!("快照缺少 lint.op_gap.{isa}"))
+                .clone();
+            let v: Vec<usize> = raw
+                .split(',')
+                .map(|x| {
+                    x.trim()
+                        .parse()
+                        .expect("lint.op_gap.* 应为 4 个整数")
+                })
+                .collect();
+            assert_eq!(v.len(), 4, "lint.op_gap.{isa} 应为 4 个整数");
+            (v[0], v[1], v[2], v[3])
+        };
         let cov = coverage(isa, &host_ops);
         assert_eq!(
             (
