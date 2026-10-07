@@ -1760,6 +1760,54 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                 ));
             }
         }
+        // `arrangement`（排列后缀，2026-10-07 破坏性重设计）：排列是**槽的参数**而非指令身份。
+        // 规则：只对 reg 槽；键名必须是「数字+元素字母」；各条目的字段集必须一致；字段必须已声明。
+        if let Some(arr) = &s.arrangement {
+            if !matches!(s.kind, OperandKind::Reg) {
+                return Err(format!(
+                    "{path}: `arrangement` 只对 kind = \"reg\" 有意义（当前 kind = {}）",
+                    s.kind.kind_name()
+                ));
+            }
+            if arr.is_empty() {
+                return Err(format!(
+                    "{path}: `arrangement` 不能是空表（省略即可表示本槽不带后缀）"
+                ));
+            }
+            let mut shape: Option<Vec<String>> = None;
+            for (name, fields) in arr {
+                let b = name.as_bytes();
+                let ok = b.len() >= 2
+                    && b[..b.len() - 1].iter().all(|c| c.is_ascii_digit())
+                    && matches!(b[b.len() - 1], b'b' | b'h' | b's' | b'd');
+                if !ok {
+                    return Err(format!(
+                        "{path}: `arrangement` 的键 `{name}` 不是「数字 + b/h/s/d」（如 8b/16b/4h/8h/2s/4s/2d）"
+                    ));
+                }
+                if fields.is_empty() {
+                    return Err(format!("{path}: `arrangement.{name}` 没有给任何字段值"));
+                }
+                for f in fields.keys() {
+                    if !m.conventions.bitfields.contains_key(f) {
+                        return Err(format!(
+                            "{path}: `arrangement.{name}` 里的字段 `{f}` 不是已声明的位域"
+                        ));
+                    }
+                }
+                let mut ks: Vec<String> = fields.keys().cloned().collect();
+                ks.sort_unstable();
+                match &shape {
+                    None => shape = Some(ks),
+                    Some(prev) if prev != &ks => {
+                        return Err(format!(
+                            "{path}: `arrangement` 各条目的字段集必须一致（`{name}` 是 {ks:?}，前一条是 {prev:?}）"
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
         if let Some(fns) = &s.imm_fns {
             if !matches!(s.kind, OperandKind::Imm) {
                 return Err(format!(

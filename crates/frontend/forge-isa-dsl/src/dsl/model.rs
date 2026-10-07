@@ -1464,6 +1464,24 @@ pub struct OperandSlot {
     /// 要求 `symbols = true`（本键只是把该槽收窄到一部分修饰）。
     #[serde(default, rename = "imm_fns")]
     pub imm_fns: Option<Vec<String>>,
+    /// **可选排列后缀**（NEON：`v0.16b` / `v1.8h`）——排列是**槽的参数**，不是指令的身份。
+    ///
+    /// 形状：`键 = 该排列写进哪些字段的什么值`（**一个键自带全部信息**，不再需要第二张映射表）：
+    ///
+    /// ```toml
+    /// arrangement = { "8b" = { vq = 0, vsize = 0 }, "16b" = { vq = 1, vsize = 0 } }
+    /// ```
+    ///
+    /// **为什么这么设计**（2026-10-07 破坏性重设计）：此前把排列展开成"每族 × 每排列一条指令"
+    /// （A64 NEON 约 100 条，彼此只差 `Q`/`size` 两个字段）——既冗余，又**接不住语料主流写法**
+    /// （`add v0.16b, v1.16b, v2.16b` 的助记符**不带**后缀）。改成槽参数后：**一条指令覆盖全排列**、
+    /// 谱面净减，且后缀真正进**编码依据**（而不是被"吃掉"丢掉）。
+    ///
+    /// 只对 `kind = "reg"` 有意义；键名必须是 `<数字><b|h|s|d>`；各条目的字段集必须**一致**、
+    /// 字段名必须真实存在（都在校验期钉死）。空/省略 = 本槽**不带**后缀（照旧行为）。
+    #[serde(default)]
+    pub arrangement:
+        Option<std::collections::BTreeMap<String, std::collections::BTreeMap<String, i64>>>,
     /// bits：本槽用的命名位集合表名（`[conventions.bitsets.<table>]`）。
     #[serde(default)]
     pub table: Option<String>,

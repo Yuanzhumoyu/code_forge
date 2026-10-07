@@ -3269,6 +3269,7 @@ fn imm_slot_wrap_reads_the_bit_pattern() {
         symbols: None,
         require_symbol: None,
         imm_fns: None,
+        arrangement: None,
     };
 
     // 32 位有符号 + wrap：规范域是 i32，接受域多收 `0x90909090` 这类无符号写法。
