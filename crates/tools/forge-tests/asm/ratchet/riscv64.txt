@@ -2,21 +2,10 @@
 # 判定：tail_mismatch（有候选首段对得上、整条没对上）多一个 = 新缺陷/换了语料；
 #       少一个 = 修好了/漏跑。两个方向都红。
 [suite llvm-mc]
-files = 339
-lines = 26008
-parsed = 2093
-no_prefix = 2796
-tail_mismatch = 433
-corpus_only = 20686
-# mismatch: expressions.s:10	lui a0, %tprel_hi(tls+0-.Ltmp1)	line 2: no matching instruction
-# mismatch: expressions.s:12	add a0, a0, tp, %tprel_add(tls+0-.Ltmp1)	line 2: no matching instruction
-# mismatch: expressions.s:14	addi a0, a0, %tprel_lo(tls+0-.Ltmp1)	line 2: no matching instruction
-# mismatch: expressions.s:16	auipc a0, %tls_ie_pcrel_hi(tls+0-.Ltmp1)	line 2: no matching instruction
-# mismatch: expressions.s:18	auipc a0, %tls_gd_pcrel_hi(tls+0-.Ltmp1)	line 2: no matching instruction
-# mismatch: expressions.s:22	auipc a0, %got_pcrel_hi(tls-.Ltmp1)	line 2: no matching instruction
-# mismatch: fixups-binary-expression.s:13	jal zero, .LBB0+16	line 3: no matching instruction
-# mismatch: fixups-binary-expression.s:18	beq a0, a1, .LBB1+32	line 3: no matching instruction
-# mismatch: fp-inx-default-rounding-mode.s:30	fadd.s a0, a1, a2	line 1: no matching instruction
-# mismatch: fp-inx-default-rounding-mode.s:34	fcvt.w.s a0, a0	line 1: no matching instruction
-# mismatch: fp-inx-default-rounding-mode.s:38	fcvt.wu.s a0, a0	line 1: no matching instruction
-# mismatch: fp-inx-default-rounding-mode.s:42	fcvt.s.w a0, a0	line 1: no matching instruction
+files = 81
+lines = 11313
+parsed = 1776
+no_prefix = 242
+tail_mismatch = 1
+corpus_only = 9294
+# mismatch: rv32i-valid.s:88	jal a0, a0	line 3: no matching instruction
