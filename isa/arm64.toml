@@ -145,6 +145,15 @@ imm7  = { offset = 15, width = 7 }   # LDP/STP 偏移（对元素，缩放单元
 # 将来加 Icmp lowering 时再补 ir，validate 会强制补全 10 个）。
 # 扩展寄存器操作数的关键字（`add x8, x8, w5, sxtw #2` 的 `sxtw`）。**分两张表是按操作数类别**：
 # W 表收全部 8 个（`add w1, w2, w3, uxtx` 也合法——32 位视图下 uxtx 是恒等），X 表只收 uxtx/sxtx。
+[conventions.imm_names.arr_q]   # 逻辑/位运算族：排列只决定 Q（[23:22] 是常量，非元素宽）
+"8b"  = 0
+"16b" = 1
+"4h"  = 0
+"8h"  = 1
+"2s"  = 0
+"4s"  = 1
+"2d"  = 1
+
 [conventions.imm_names.arr]   # NEON ????? = size*2 + q???? fields=["vq","vsize"] ?????
 "8b"  = 0
 "16b" = 1
@@ -690,6 +699,14 @@ nv = 15
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
 [[operand_slots]]
+name = "varr_q"    # 同 varr，但只写 Q（逻辑族用）
+kind = "imm"
+width = 1
+names = "arr_q"
+encode = "slice"
+fields = ["vq"]
+
+[[operand_slots]]
 name = "varr"      # NEON ?????`v0.16b` ? `.16b` ?????????? + ?????????
 kind = "imm"
 width = 3
@@ -1215,6 +1232,14 @@ opcode = 0x0E
 fields = { vu = 1, vec_c = 1, vec_d = 33 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
 asm = "sub {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+
+[[instructions]]
+name = "VORR_ARR"
+form = "VEC3RA"
+opcode = 0x0E
+fields = { vsize = 2, vec_c = 1, vec_d = 7 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr_q", "arrs:varr_q", "arrs2:varr_q"]
+asm = "orr {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
 # 助记符带后缀的**另一种拼法**（与 `VADD` 并存：语料两种都写 —— 这是两种语法，不是冗余）
 
