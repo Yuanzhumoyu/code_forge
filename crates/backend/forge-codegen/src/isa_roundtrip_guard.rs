@@ -121,9 +121,10 @@ fn derived_insts_roundtrip_byte_stable() {
     //   命名表逐个名字采样 + `amt3` 的边界风味，带量/省略量各一套）。
     // 2026-10-07（aarch64 重定位修饰批次）：arm64 1505 → **1577**（12 条：`imm12sym` 的边界风味 +
     //   宽度视图；`require_symbol` 形态跳过文本闭环，只测编解码闭环）。
-    assert_eq!(
-        (x86, riscv, arm64),
-        (1542, 622, 2565),
-        "枚举器条目数变了：确认是谱的预期变更还是派生逻辑退化"
+    // 值在 `asm/ratchet/pins.txt`（B2 快照）：刷新 = `FORGE_PIN_WRITE=1 cargo test -p forge-codegen --lib`
+    // （这处曾被我"盲补"写坏成 `(1542, 622, )`——快照化后源里不再有数字，改哪一处不靠猜）。
+    crate::spec_coverage_guard::check_or_write_pin(
+        "roundtrip.derived",
+        &format!("{x86},{riscv},{arm64}"),
     );
 }

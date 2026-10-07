@@ -1,3 +1,4 @@
 # 门禁钉死值快照（B2）：刷新 = FORGE_PIN_WRITE=1 cargo test -p forge-codegen --lib
 # 然后 cargo test -p forge-isa-dsl（lint 清点）。刷新后看 diff 再提交。
+roundtrip.derived = 1542,622,2565
 spec_totals = x86:299,riscv64:173,arm64:544
