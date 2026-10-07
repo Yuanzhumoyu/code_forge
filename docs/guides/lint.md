@@ -53,11 +53,11 @@ npx markdownlint-cli2 "**/*.md" "!target"
   aarch64-encoding-ref.md`）：
   `<!-- markdownlint-configure-file { "MD013": { "line_length": 300, ... } } -->`
 
-## 存量基线（2026-10-07 实测，`Summary: 114 issues in 6 files`）
+## 存量基线（2026-10-07 实测，`Summary: 115 issues in 7 files`）
 
 命令：`npx markdownlint-cli2 "**/*.md" "!target"`（仓库根、markdownlint v0.41.1）。
 **archive 之外全树零警告**（含根 README/CLAUDE/CHANGELOG、docs/ 现行文档、crates README）；
-114 条**全部**落在历史归档正文（归档纪律：内容以记录时点为准，未做格式重构）：
+115 条**全部**落在历史归档正文（归档纪律：内容以记录时点为准，未做格式重构）：
 
 | 文件 | 处数 | 主要规则 |
 | --- | --- | --- |
