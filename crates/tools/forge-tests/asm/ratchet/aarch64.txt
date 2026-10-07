@@ -4,9 +4,9 @@
 [suite llvm-mc]
 files = 337
 lines = 59619
-parsed = 2010
-no_prefix = 14219
-tail_mismatch = 1386
+parsed = 2053
+no_prefix = 14137
+tail_mismatch = 1425
 corpus_only = 42004
 # mismatch: alias-addsubimm.s:8	add w0, w2, #4096	line 1: no matching instruction
 # mismatch: alias-addsubimm.s:9	sub w0, w2, #4096	line 1: no matching instruction

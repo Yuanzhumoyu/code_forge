@@ -117,8 +117,8 @@ known = 91
 # known: xwchc-compress.s:183 `sh a2, 30(sp)`：我们 0x23,0x1f,0xc1,0x00 ≠ 上游 0xf0,0x87（我们解出 Ok("sh X12, 30(X2)") / 上游解出 Err("decode 失败（2 字节）")）
 [isa aarch64]
 cases = 10814
-checked = 1021
-unparsed = 9793
+checked = 1057
+unparsed = 9757
 dropped = 98
 variants = 0
 known = 57

@@ -1273,6 +1273,54 @@ fields = { vu = 0, vsize = 3, vec_c = 1, vec_d = 7 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr_q", "arrs:varr_q", "arrs2:varr_q"]
 asm = "orn {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
+[[instructions]]
+name = "VSMAX_ARR"
+form = "VEC3RA"
+opcode = 0x0E
+fields = { vu = 0, vec_c = 1, vec_d = 25 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+asm = "smax {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+
+[[instructions]]
+name = "VSMIN_ARR"
+form = "VEC3RA"
+opcode = 0x0E
+fields = { vu = 0, vec_c = 1, vec_d = 27 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+asm = "smin {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+
+[[instructions]]
+name = "VUMAX_ARR"
+form = "VEC3RA"
+opcode = 0x0E
+fields = { vu = 1, vec_c = 1, vec_d = 25 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+asm = "umax {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+
+[[instructions]]
+name = "VUMIN_ARR"
+form = "VEC3RA"
+opcode = 0x0E
+fields = { vu = 1, vec_c = 1, vec_d = 27 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+asm = "umin {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+
+[[instructions]]
+name = "VMUL_ARR"
+form = "VEC3RA"
+opcode = 0x0E
+fields = { vu = 0, vec_c = 1, vec_d = 39 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+asm = "mul {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+
+[[instructions]]
+name = "VMLA_ARR"
+form = "VEC3RA"
+opcode = 0x0E
+fields = { vu = 0, vec_c = 1, vec_d = 37 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+asm = "mla {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+
 # 助记符带后缀的**另一种拼法**（与 `VADD` 并存：语料两种都写 —— 这是两种语法，不是冗余）
 
 [[instructions]]
