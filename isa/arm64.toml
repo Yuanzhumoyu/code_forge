@@ -1121,6 +1121,57 @@ fields = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 46, rm = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "abs.4s {dst}, {src}"
 
+# ── NEON：neg（向量）——与 abs 同形，只差 U=1 ──
+# 语料 `neg.8b v0, v0` = 0x2E20B800 = `abs.8b` | (1 << 29) ⇒ 规则被上游证实；
+# 其余排列按同一规则推得（U 位 + Q/size），并由生成期编解码往返与 `[[vectors]]` 双重钉住。
+[[instructions]]
+name = "NEG8B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 46, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "neg.8b {dst}, {src}"
+
+[[instructions]]
+name = "NEG16B"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 1, vsize = 0, vec_c = 1, vec_d = 46, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "neg.16b {dst}, {src}"
+
+[[instructions]]
+name = "NEG4H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 1, vec_c = 1, vec_d = 46, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "neg.4h {dst}, {src}"
+
+[[instructions]]
+name = "NEG8H"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 1, vsize = 1, vec_c = 1, vec_d = 46, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "neg.8h {dst}, {src}"
+
+[[instructions]]
+name = "NEG2S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 2, vec_c = 1, vec_d = 46, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "neg.2s {dst}, {src}"
+
+[[instructions]]
+name = "NEG4S"
+form = "VEC2R"
+opcode = 0x0E
+fields = { vq = 1, vu = 1, vsize = 2, vec_c = 1, vec_d = 46, rm = 0 }
+ops = ["dst:fpr:out", "src:fpr"]
+asm = "neg.4s {dst}, {src}"
+
 # ── ADD/ADDS/SUB/SUBS (immediate) ──
 # oracle 校验样本：add x5,x6,#42 = 9100A8C5；adds w5,w6,#42=3100A8C5；
 #   sub x5,x6,#42=D100A8C5；subs x5,x6,#42=F100A8C5
@@ -4872,3 +4923,28 @@ bytes = [0x00, 0xB8, 0xA0, 0x0E]
 [[vectors]]
 asm = "abs.4s v0, v0"
 bytes = [0x00, 0xB8, 0xA0, 0x4E]
+
+# NEON neg：`neg.8b` 的上游字节取自语料；其余排列 = 同排列的 abs 字翻转 bit29（U 位）。
+[[vectors]]
+asm = "neg.8b v0, v0"
+bytes = [0x00, 0xB8, 0x20, 0x2E]
+
+[[vectors]]
+asm = "neg.16b v0, v0"
+bytes = [0x00, 0xB8, 0x20, 0x6E]
+
+[[vectors]]
+asm = "neg.4h v0, v0"
+bytes = [0x00, 0xB8, 0x60, 0x2E]
+
+[[vectors]]
+asm = "neg.8h v0, v0"
+bytes = [0x00, 0xB8, 0x60, 0x6E]
+
+[[vectors]]
+asm = "neg.2s v0, v0"
+bytes = [0x00, 0xB8, 0xA0, 0x2E]
+
+[[vectors]]
+asm = "neg.4s v0, v0"
+bytes = [0x00, 0xB8, 0xA0, 0x6E]
