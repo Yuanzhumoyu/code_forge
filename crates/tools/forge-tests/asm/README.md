@@ -885,3 +885,5 @@ GAS = `GPL-3.0-or-later`（上游各文件的许可逐条见 `PROVENANCE.md`；G
 `{ row, dropped, variants, known, events: Vec<(case, verdict)> }`（`report_case` 的三元进 `events`
 而不当场发），用 `asm::par::map_parallel(&files, …)` 并行算，然后**按文件序**回放：累加 `r`、
 按序 `report_case` 发事件、pushes 两个 Vec。这样记分板/棘轮/事件序与串行完全一致。
+
+> 编码档内部并行已落地（每文件纯函数 + 按文件序回放，erify 证明与串行逐字节一致）：sm_encoding **3 秒**、etch.mjs 整轮 167 → **96 秒**（20 核、125 份）。

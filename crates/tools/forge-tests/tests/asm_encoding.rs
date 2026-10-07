@@ -42,49 +42,58 @@ fn encodings_of_parsable_corpus_lines_match_upstream() {
             let Ok(files) = asm::corpus::read_suite(suite) else {
                 continue;
             };
-            for (file, src) in &files {
+            // 逐文件**并行**计算（文件多、逐例汇编+反汇编是主要开销）；结果按文件序回放，
+            // 记分板/棘轮/事件序与串行**逐字节一致**（序由 `asm::par::map_parallel` 保证）。
+            struct EncFileOut {
+                row: EncodingFileRow,
+                dropped: usize,
+                variants: Vec<String>,
+                known: Vec<String>,
+                events: Vec<(asm::EncodingCase, String)>,
+            }
+            let outs = asm::par::map_parallel(&files, |(file, src)| {
                 let extracted = asm::encoding::extract_cases(suite, file, src);
                 // 与解析档同一套上下文（标签 + 该行之前的符号常量定义）：上游用例里
                 // `cmp eax, FOO`（`.set FOO, 2`）这种必须先解出符号，才能拿上游注释里的
                 // 期望字节真对拍——否则它只会被记成 "unparsed" 混过去。
                 let corpus = asm::corpus::extract(suite, file, src);
-                r.dropped += extracted.dropped;
-                let mut row = EncodingFileRow {
-                    file: file.clone(),
-                    ..Default::default()
+                let mut o = EncFileOut {
+                    row: EncodingFileRow { file: file.clone(), ..Default::default() },
+                    dropped: extracted.dropped,
+                    variants: Vec::new(),
+                    known: Vec::new(),
+                    events: Vec::new(),
                 };
                 for case in extracted.cases {
-                    r.cases += 1;
-                    row.cases += 1;
+                    o.row.cases += 1;
                     let text = asm::corpus::with_prelude(&corpus, case.line_no, &case.text);
                     match target.parse(&text) {
                         Ok(_) => {}
                         Err(e) => {
-                            report_case(isa, &case, &format!("unparsed {e:?}"));
-                            r.unparsed += 1;
-                            row.unparsed += 1;
+                            o.row.unparsed += 1;
+                            o.events.push((case, format!("unparsed {e:?}")));
                             continue;
                         }
                     }
-                    report_case(isa, &case, "extracted");
+                    let mut __verdict = "extracted".to_string();
                     let got = match asm::targets::assemble_to_bytes(isa, &text) {
                         Ok(b) => b,
                         Err(e) => {
-                            r.known.push(format!(
+                            o.known.push(format!(
                                 "{}:{} `{}` 解析通过却汇编失败：{e}",
                                 case.file, case.line_no, case.text
                             ));
-                            row.known += 1;
+                            o.row.known += 1;
+                            o.events.push((case, __verdict));
                             continue;
                         }
                     };
-                    r.checked += 1;
-                    row.checked += 1;
+                    o.row.checked += 1;
                     if got == case.bytes {
-                        report_case(isa, &case, "ok");
+                        o.events.push((case, "ok".to_string()));
                         continue;
                     }
-                    report_case(isa, &case, "MISMATCH");
+                    __verdict = "MISMATCH".to_string();
                     let what = format!(
                         "{}:{} `{}`：我们 {} ≠ 上游 {}",
                         case.file,
@@ -99,19 +108,34 @@ fn encodings_of_parsable_corpus_lines_match_upstream() {
                     let upstream_dis = asm::targets::disassemble_bytes(isa, &case.bytes);
                     match (&ours_dis, &upstream_dis) {
                         (Ok(a), Ok(b)) if a == b => {
-                            r.variants += 1;
-                            row.variants += 1;
-                            variants.push(format!("{what} —— 同为 `{a}`"));
+                            o.row.variants += 1;
+                            o.row.variants += 1;
+                            o.variants.push(format!("{what} —— 同为 `{a}`"));
                         }
                         _ => {
-                            row.known += 1;
-                            r.known.push(format!(
+                            o.row.known += 1;
+                            o.known.push(format!(
                                 "{what}（我们解出 {ours_dis:?} / 上游解出 {upstream_dis:?}）"
                             ));
                         }
                     }
+                    o.events.push((case, __verdict));
                 }
-                r.file_rows.push(row);
+                o
+            });
+            // 按文件序回放（累加 + 发事件），保证与串行一致。
+            for o in outs {
+                r.dropped += o.dropped;
+                r.cases += o.row.cases;
+                r.checked += o.row.checked;
+                r.unparsed += o.row.unparsed;
+                r.variants += o.row.variants;
+                r.known.extend(o.known);
+                variants.extend(o.variants);
+                for (case, verdict) in o.events {
+                    report_case(isa, &case, &verdict);
+                }
+                r.file_rows.push(o.row);
             }
         }
         let line = r.summary_line();
