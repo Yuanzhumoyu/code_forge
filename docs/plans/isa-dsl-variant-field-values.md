@@ -68,6 +68,23 @@ asm = "rev8 {dst}, {src}"
    本方案不新增指令 ⇒ **歧义名单也不动** ✓）；
 4. 三方守卫：`cargo test -p forge-isa-dsl --test schema_guard` ✓、`lint_shipped` ✓、四档 asm ✓。
 
+## 4.1 两处校正（2026-10-07 实测，覆盖上文）
+
+**其一，字段值是 `u64` 不是 `i64`**：`crates/frontend/forge-isa-dsl/src/dsl/model.rs:2071` 是
+`Option<BTreeMap<String, u64>>` ✓（第 3 节表里写的 `i64` 是笔误 ✓）。
+
+**其二，落地顺序要改**：第 3 节第 1 行"把 `fields` 的类型扩成枚举"**不是可编译的一步** ✗ ——
+读它的点很多，一改就整片编译不过。正确顺序是**先纯附加、再解析、最后收编**，每步都能编译：
+
+1. **纯附加**：新增一个承载未解析形态的键（如 `fields_variant: Option<BTreeMap<String, FieldVal>>` ✓），
+   `fields` 与全部既有读点**一字不动** ✓ ⇒ 编译通过、行为不变 ✓；
+2. **解析**：在投影通路（`dsl/validate.rs:32` 那条 ✓）里把 `fields_variant` 按 params 合并进 `fields`
+   （缺省用 `default` ✓）⇒ 仍然零读点改动 ✓，下游只见常量 ✓；
+3. **校验**：三条负例（缺 `default` / 参数未声明 / 域外键 ✓）+ 复用 `only_variants` 的 `VariantGate` 查表 ✓；
+4. **收编语法**（最后做 ✓）：让 serde 在该键位同时接受"整数"与"表"两种形状 ✓，把附加键折回 `fields` ✓
+   —— 这一步才动类型，且此时所有读点已在第 2 步统一走常量通路 ✓（之后**只留一套**读法 ✗ 两套并存 ✗）；
+5. **schema / 文档 / 用例**：`schema.rs` 放行 + 重生成 ✓、`docs/reference/isa-dsl.md` 同步 ✓、落 `rev8` 验证 ✓。
+
 ## 5. 被否掉的替代方案（记录理由，别再试）
 
 - **加一条 RV32-only 指令 + `only_variants`** ✗：被"原生视角不丢指令"的不变量拦下（且实测有效：
