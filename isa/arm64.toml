@@ -1073,6 +1073,11 @@ name = "VEC2R"   # NEON 双寄存器（Rd, Rn）：常量段在 vec_a/vec_c/vec_
 opcode_field = "vec_a"
 operand_fields = ["rt", "rn"]
 
+[[forms]]
+name = "VEC3R"   # NEON ?????Rd, Rn, Rm?
+opcode_field = "vec_a"
+operand_fields = ["rt", "rn", "rm"]
+
 [[instructions]]
 name = "ABS8B"
 form = "VEC2R"
@@ -1171,6 +1176,171 @@ opcode = 0x0E
 fields = { vq = 1, vu = 1, vsize = 2, vec_c = 1, vec_d = 46, rm = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "neg.4s {dst}, {src}"
+
+# add????????????????
+[[instructions]]
+name = "VADD8B"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 33 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "add.8b {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "VADD16B"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 0, vec_c = 1, vec_d = 33 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "add.16b {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "VADD4H"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 1, vec_c = 1, vec_d = 33 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "add.4h {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "VADD8H"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 1, vec_c = 1, vec_d = 33 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "add.8h {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "VADD2S"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 2, vec_c = 1, vec_d = 33 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "add.2s {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "VADD4S"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 33 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "add.4s {dst}, {src}, {src2}"
+
+# and????????????????
+[[instructions]]
+name = "VAND8B"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 7 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "and.8b {dst}, {src}, {src2}"
+
+[[instructions]]
+name = "VAND16B"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 1, vu = 0, vsize = 0, vec_c = 1, vec_d = 7 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "and.16b {dst}, {src}, {src2}"
+
+# bic????????????????
+[[instructions]]
+name = "VBIC8B"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 1, vec_c = 1, vec_d = 7 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "bic.8b {dst}, {src}, {src2}"
+
+# mla????????????????
+[[instructions]]
+name = "VMLA8B"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 37 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "mla.8b {dst}, {src}, {src2}"
+
+# mul????????????????
+[[instructions]]
+name = "VMUL8B"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 39 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "mul.8b {dst}, {src}, {src2}"
+
+# smax????????????????
+[[instructions]]
+name = "VSMAX8B"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 25 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "smax.8b {dst}, {src}, {src2}"
+
+# smin????????????????
+[[instructions]]
+name = "VSMIN8B"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 27 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "smin.8b {dst}, {src}, {src2}"
+
+# sub????????????????
+[[instructions]]
+name = "VSUB8B"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 33 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "sub.8b {dst}, {src}, {src2}"
+
+# umax????????????????
+[[instructions]]
+name = "VUMAX8B"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 25 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "umax.8b {dst}, {src}, {src2}"
+
+# umin????????????????
+[[instructions]]
+name = "VUMIN8B"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 27 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "umin.8b {dst}, {src}, {src2}"
+
+# eor????????????????
+[[instructions]]
+name = "VEOR8B"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 7 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "eor.8b {dst}, {src}, {src2}"
+
+# orn????????????????
+[[instructions]]
+name = "VORN8B"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 3, vec_c = 1, vec_d = 7 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "orn.8b {dst}, {src}, {src2}"
+
+# orr????????????????
+[[instructions]]
+name = "VORR8B"
+form = "VEC3R"
+opcode = 0x0E
+fields = { vq = 0, vu = 0, vsize = 2, vec_c = 1, vec_d = 7 }
+ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
+asm = "orr.8b {dst}, {src}, {src2}"
 
 # cnt: (U=0, c=1, [15:10]=22) ?? ??? .8b ?????????? Q/size
 [[instructions]]
@@ -5291,6 +5461,82 @@ bytes = [0x00, 0xB8, 0xA0, 0x2E]
 [[vectors]]
 asm = "neg.4s v0, v0"
 bytes = [0x00, 0xB8, 0xA0, 0x6E]
+
+[[vectors]]
+asm = "add.8b v0, v0, v0"
+bytes = [0x00, 0x84, 0x20, 0x0E]
+
+[[vectors]]
+asm = "add.16b v0, v0, v0"
+bytes = [0x00, 0x84, 0x20, 0x4E]
+
+[[vectors]]
+asm = "add.4h v0, v0, v0"
+bytes = [0x00, 0x84, 0x60, 0x0E]
+
+[[vectors]]
+asm = "add.8h v0, v0, v0"
+bytes = [0x00, 0x84, 0x60, 0x4E]
+
+[[vectors]]
+asm = "add.2s v0, v0, v0"
+bytes = [0x00, 0x84, 0xA0, 0x0E]
+
+[[vectors]]
+asm = "add.4s v0, v0, v0"
+bytes = [0x00, 0x84, 0xA0, 0x4E]
+
+[[vectors]]
+asm = "and.8b v0, v0, v0"
+bytes = [0x00, 0x1C, 0x20, 0x0E]
+
+[[vectors]]
+asm = "and.16b v0, v0, v0"
+bytes = [0x00, 0x1C, 0x20, 0x4E]
+
+[[vectors]]
+asm = "bic.8b v0, v0, v0"
+bytes = [0x00, 0x1C, 0x60, 0x0E]
+
+[[vectors]]
+asm = "mla.8b v0, v0, v0"
+bytes = [0x00, 0x94, 0x20, 0x0E]
+
+[[vectors]]
+asm = "mul.8b v0, v0, v0"
+bytes = [0x00, 0x9C, 0x20, 0x0E]
+
+[[vectors]]
+asm = "smax.8b v0, v0, v0"
+bytes = [0x00, 0x64, 0x20, 0x0E]
+
+[[vectors]]
+asm = "smin.8b v0, v0, v0"
+bytes = [0x00, 0x6C, 0x20, 0x0E]
+
+[[vectors]]
+asm = "sub.8b v0, v0, v0"
+bytes = [0x00, 0x84, 0x20, 0x2E]
+
+[[vectors]]
+asm = "umax.8b v0, v0, v0"
+bytes = [0x00, 0x64, 0x20, 0x2E]
+
+[[vectors]]
+asm = "umin.8b v0, v0, v0"
+bytes = [0x00, 0x6C, 0x20, 0x2E]
+
+[[vectors]]
+asm = "eor.8b v0, v0, v0"
+bytes = [0x00, 0x1C, 0x20, 0x2E]
+
+[[vectors]]
+asm = "orn.8b v0, v0, v0"
+bytes = [0x00, 0x1C, 0xE0, 0x0E]
+
+[[vectors]]
+asm = "orr.8b v0, v0, v1"
+bytes = [0x00, 0x1C, 0xA1, 0x0E]
 
 [[vectors]]
 asm = "cnt.8b v0, v0"
