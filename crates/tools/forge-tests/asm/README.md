@@ -12,6 +12,7 @@
 ## 目录
 
 ```text
+
 asm/
 ├── parse/<isa>/<suite>/**    # 上游语料原文（vendored，逐字不改；见 PROVENANCE.md）
 ├── exec/<isa>/<名>.s         # 我们写的真语法小程序 + 同名 .expect（args/ret）
@@ -19,6 +20,7 @@ asm/
 ├── fetch.mjs                 # 拉取/取舍/写出处（Node，一条命令；见「刷新语料」）
 ├── PROVENANCE.md             # 每个语料文件的出处/ref/许可/摘要（**由 fetch.mjs 生成**）
 └── README.md                 # 本文件
+
 ```
 
 ## 三档测试
@@ -718,12 +720,14 @@ riscv64 只剩一条登记为设计取舍；aarch64 有一条**已定位、未�
 ## 刷新语料
 
 ```bash
+
 node crates/tools/forge-tests/asm/fetch.mjs              # 默认：拉全集 → 打分 → 取舍 → 重写 PROVENANCE.md
 node crates/tools/forge-tests/asm/fetch.mjs --list       # 只打印计划（不下网）
 node crates/tools/forge-tests/asm/fetch.mjs --isa riscv64 # 只处理一套
 node crates/tools/forge-tests/asm/fetch.mjs --all        # 连子目录一起拉（SVE/SME/AMX/apx/rvv，评估全量用）
 node crates/tools/forge-tests/asm/fetch.mjs --keep-all   # 拉全集但不裁剪（评估模式）
 node crates/tools/forge-tests/asm/fetch.mjs --no-fetch   # 跳过下载，只用本地文件重算
+
 ```
 
 一条命令做三件事：① 按钉死的 ref（`llvmorg-19.1.0`）拉候选全集（x86 只取 Intel 语法
@@ -738,7 +742,9 @@ node crates/tools/forge-tests/asm/fetch.mjs --no-fetch   # 跳过下载，只用
 跑完**必须**刷棘轮并**看 diff**（脚本会打印命令）：
 
 ```powershell
+
 $env:FORGE_ASM_WRITE_RATCHET = "1"; cargo test -p forge-tests --test asm_parse --test asm_encoding
+
 ```
 
 新增**一整套**语料（比如 XED/NASM）时另有四步：① 在 `src/asm/corpus.rs` 的 `SUITES` 里登记
@@ -967,8 +973,10 @@ GAS = `GPL-3.0-or-later`（上游各文件的许可逐条见 `PROVENANCE.md`；G
 **结论：不需要任何新机制**——把方括号写成**模板里的字面段**、把索引当成**普通 imm 槽**即可：
 
 ```toml
+
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "lane:imm_lane5"]
 asm = "mla.8h {dst}, {src}, {src2}[{lane}]"
+
 ```
 
 `{lane}` 用普通 imm 槽（宽度按族取，如 5 位），字面段 `[` / `]` 由模板承担 —— 与"助记符后缀"那批
@@ -976,9 +984,11 @@ asm = "mla.8h {dst}, {src}, {src2}[{lane}]"
 `target/lane-extract.mjs`，输出 `target/lane-pairs.json`），例如
 
 ```text
+
 dup.2d  0x4E180460 / dup.2s 0x0E0C0460 / dup.16b 0x4E030460
 mla.8h  v0, v0, v0[1]（此前被三寄存器过滤误收，是第四十四批 +2 红行的来源）
 mov x16, … 0x5E030483（寄存器↔lane 的混合族）
+
 ```
 
 按族落地时照既有两个 NEON 生成器的三步走：**取上游字节 → 反推 (Q,U,size,imm 落点) → 写指令 + 向量**；
@@ -1017,8 +1027,10 @@ mov x16, … 0x5E030483（寄存器↔lane 的混合族）
 （`parsed` 1960 不动）⇒ 因为语料里带寄存器后缀的行大多是**助记符不带后缀**的写法：
 
 ```text
+
 add v0.16b, v1.16b, v2.16b      ← 排列信息**只在寄存器上**
 add.16b v0, v1, v2              ← 排列写在助记符上（这批已落地：双/三寄存器族）
+
 ```
 
 第一种写法里，**排列正是编码依据**（决定 `Q` 与 `size`）⇒ **"吃掉"是错的**（丢掉了选择变体所需的
@@ -1049,6 +1061,7 @@ add.16b v0, v1, v2              ← 排列写在助记符上（这批已落地�
 **目标设计（一条指令覆盖全排列）**：排列**是寄存器的后缀**，因此它是**槽的参数**，不是指令的身份。
 
 ```toml
+
 [[operand_slots]]
 name = "v"
 kind  = "reg"
@@ -1062,6 +1075,7 @@ form = "VEC3R"
 opcode = 0x0E
 ops = ["dst:v:out", "src:v", "src2:v"]
 asm = "add {dst}, {src}, {src2}"        # 助记符**不带**后缀（与语料一致）
+
 ```
 
 **要落地的三件事（一次做完，不逐族打补丁）**：
@@ -1113,6 +1127,7 @@ asm = "add {dst}, {src}, {src2}"        # 助记符**不带**后缀（与语料�
 新发现的最省路线（**不需要 `arrangement` 槽键、也不需要动 `Inst`**）：
 
 ```toml
+
 [conventions.imm_names.arr]        # 直接键（不是 names = {...} 包裹！模型是 name -> i64）
 "8b" = 0 ; "16b" = 1 ; "4h" = 2 ; "8h" = 3 ; "2s" = 4 ; "4s" = 5 ; "2d" = 6
 
@@ -1124,6 +1139,7 @@ encode = "slice" ; fields = ["vq", "vsize"]      # 代码 = size*2 + q
 [[instructions]] name = "VADD" ; form = "VEC3RA"
 ops = ["dst:fpr:out","src:fpr","src2:fpr","arrd:varr","arrs:varr","arrs2:varr"]
 asm = "add {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+
 ```
 
 **已实测到的**：`validate`/`lint` **通过** ✓；删掉 `add` 的 6 条 `族×排列` 变体、只留 1 条 ⇒
@@ -1157,7 +1173,9 @@ asm = "add {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 但整跑里 **`abs` 族全体失败** ✗，断言原文是**渲染文本回不去**：
 
 ```text
+
 [ABS8B] assemble("abs.8b V0, V1") 失败: no matching instruction
+
 ```
 
 **根因（一致性，不是设计）**：我的"读时切分"只作用于**运行时文本**的词元流 ✓，而模板里的**字面段
@@ -1229,6 +1247,7 @@ size 变化（`smax/smin/umax/umin` 这类带"有符号/宽度"语义的族最�
 **形状**（`[]` 走模板字面段、索引走普通 imm 槽 —— 与"助记符后缀"同一套思路 ✓）：
 
 ```toml
+
 [[operand_slots]]
 name = "lane5"          # 元素索引：普通 imm 槽（宽度按族的 imm4/imm5 取）
 kind = "imm"
@@ -1241,6 +1260,7 @@ opcode = 0x0E
 fields = { vu = 0, vsize = 1, vec_c = 1, vec_d = 37 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "lane:lane5"]
 asm = "mla.8h {dst}, {src}, {src2}[{lane}]"
+
 ```
 
 **证据约束（已实测钉死，别再试）**：
@@ -1295,7 +1315,9 @@ XOR，并**屏蔽已知字段**（寄存器 `rt[4:0]`/`rn[9:5]`/`rm[20:16]` + �
 **更正**：它们是**非对称排列**：
 
 ```text
+
 sqshrn v0.8b, v1.8h, #4      ← 目的比源**窄**（源排列由目的推出，不是独立操作数）
+
 ```
 
 ⇒ **单个 `varr` 槽驱动不了两边** ✗（`add`/`sub`/`mla` 那类是**同排列**，两边共用一个槽 ✓）；
@@ -1336,10 +1358,12 @@ sqshrn v0.8b, v1.8h, #4      ← 目的比源**窄**（源排列由目的推出�
 语料里的写法只有三类 ✓：
 
 ```text
+
 adr  x0, #0          ← 数值（已在谱里）
 adrp x0, #4096       ← 数值（已在谱里）
 adr  x0, 1f          ← **数字局部标签引用**（本会话刚建好的通路 ✓）
 adr  x0, foo         ← 普通符号（`symbols = true` 槽 ✓）
+
 ```
 
 ⇒ 与 `add x0, x0, #:lo12:sym` 那轮**同一条路** ✓：`symbols`/`require_symbol` 槽键 + 数字局部标签
@@ -1400,14 +1424,48 @@ op 位 `adr` bit31=0 / `adrp` bit31=1 ✓；三个数值锚点 ✓）。
 `no_prefix` 14137 → **14030**），剩余两处**必须一起修掉才能落地**：
 
 1. **生成期用例 `spec_adrp`** ✗：断言 `[ADRP[immlo=-4294967296]] encode∘decode 字节不稳定`，
+
    `left [31,0,0,144]` vs `right [31,0,128,144]`（差 **byte2 = immhi 最低位** ✓）。采样值 = **槽的最小值**
    （`lo × unit` = -2^32 ✓，`unit = 4096` ✓）⇒ 编码侧 `(__raw >> 12) as u64` 与解码侧读回后的**符号
    扩展**之间有一处不对齐 ✗ —— 我加的"切片按总宽取模"是**另一条路径**（非单位路径 ✗），对本例无效 ✗
    ⇒ 修点在 **`unit` 分支**（`mod.rs` 约 915 行 `let __mv = (__raw >> #sh) as u64;`）与**解码侧**
    （是否把 21 位字段按 `signed` 扩展 ✓）——两处要一起看 ✓。
+
 2. **两处守卫** ✗：`("arm64", 540)` → **542** ✓（已实测 ✓）；`(1542, 622, 2541)` 的**枚举器**新值
+
    尚未取到（守卫那轮未打印元组 ✗）⇒ 下次让它自己报或在 `--nocapture` 下读 ✓。
 
 ⇒ 结论：`adr`/`adrp` **不是"机制问题"**，而是"**unit 槽的编码/解码符号对齐**"这一个小缺陷 ✗；
 修好后照上面**一次插入**即可落地 ✓（位域 `immlo[30:29]`/`immhi[23:5]`/`adr_op[31]`/`adr_fix[28:24]`、
 槽 `adr_off`(unit 1)/`adrp_off`(unit 4096)、表单 `ADR_F`、两条指令、三个锚点向量 ✓）。
+
+### B3（ADR/ADRP）半程记录：机制正确，卡在**第三条 unit 通路**（2026-10-07）
+
+按计划 F2 定向插入 ADR/ADRP（位域 `adr_op[31]`/`adr_fix[28:24]`/`immlo[30:29]`/`immhi[23:5]` +
+槽 `adr_off`(unit 1)/`adrp_off`(unit 4096)/`adr_sym`(symbols) + 表单 `ADR_F` + 4 条指令 + 3 向量）：
+`validate`/`lint` **干净** ✓、指令数 540 → **544** ✓、枚举器 2541 → **2565** ✓。
+
+**但 `adrp x0, #4096` 编出 `0x90008000`，语料为 `0xB0000000`** ✗。逐层定位结果：
+
+- **DUMP 生成物（OUT_DIR）证明编码臂是对的** ✓：`let __mv = (__raw >> 12) as u64;` + `(__mv>>0)&3 @29` +
+
+  `(__mv>>2)&524287 @5` + `adr_fix=16 @24` + `adr_op=1 @31` ⇒ 只要送进 `off = 4096` 就得到 `0xB0000000` ✓；
+
+- 反推观测值 `0x90008000` ⇒ 送进编码臂的是 **`2^24`**（= 4096×4096 ✗）⇒ **第三条 unit 通路**出问题
+
+  （文本/解析侧把 `#4096` 变成了 `4096×unit` ✗）——与 B0 修的"解码侧符号+单位"不同一条通路 ✗。
+
+**复现（供下一轮直接开工）**：
+
+```text
+
+cargo test -p forge-codegen --lib spec_vector_198 -- --nocapture
+[向量 198] "adrp x0, #4096" 编码字节不符   left(我们)=0x90008000  right(语料)=0xB0000000
+
+```
+
+排查建议：在生成物的**汇编臂**里找 `Adrp {`（`parse` 侧），沿 `__imm(...)` 的单位参数看它是否把源值
+乘了 unit；对照夹具 `demo_inst12` 的 `off_scale4`（unit 4，向量 `ldw A0, 12` 期望字段 3 ✓ 是**通过**的）
+——两者差异点就是缺陷所在（一个通过、一个不通过）。
+**本轮 spec 已回退**（不留半成品）；机制、配方与三处锚点（`adr x0,#0`=`00 00 00 10`、`adrp x0,#0`=`00 00 00 90`、
+`adrp x0,#4096`=`00 00 00 b0`）均已记录，修掉第三条通路后照本配方**一次插入**即可落地（117 行）。
