@@ -106,6 +106,7 @@ fn undeclared_or_out_of_domain_param_is_an_error() {
 /// 故 RV32 视角 122 → **140**；`lowering` 108 → **106**（`Fptosi`/`Fptoui` 里那 2 条点
 /// `FCVT_L_D`/`FCVT_LU_D` 的规则随引用名被投影掉），逐节丢弃合计 15 → **17**。
 #[test]
+
 fn riscv_rv32_projection_snapshot() {
     let (_, rows, p) = insts("riscv64.toml", &["xlen=32"]);
     assert_eq!(
@@ -137,7 +138,7 @@ fn riscv_rv32_projection_snapshot() {
     }
     // 104 → 105（2026-10-01）：riscv 补了 `FSGNJ_D`（`fpr_mov` 的 64 位档）。它**不标**
     // `xlen`——RV32D 同样定义 `fsgnj.d`（D 扩展在 RV32 上存在），所以 RV32 视角该留下它。
-    assert_eq!(p.inst_count, 141, "RV32 投影剩 141 条");
+    assert_eq!(p.inst_count, pin_usize("projection.rv32.riscv64"), "RV32 投影剩 141 条");
     assert_eq!(rows.len(), 141);
     // 96 → 100（2026-10-01）：riscv 补了 `Fload`/`Fstore` 各两条（单/双精度）lowering，
     // 它们的 `when` 只按宽度分派、引用的 `FLW`/`FSW` 与 `FLD`/`FSD` 在 RV32 视角下都还在。
@@ -161,7 +162,7 @@ fn riscv_rv32_projection_snapshot() {
     }
     // 默认档对照：同一份谱不传参数 = 174/141（投影是纯 opt-in）。
     let (_, def_rows, def_p) = insts("riscv64.toml", &[]);
-    assert_eq!(def_rows.len(), 174);
+    assert_eq!(def_rows.len(), pin_usize("projection.native.riscv64"));
     assert_eq!(def_p.lowering_count, 122);
 }
 
@@ -341,4 +342,21 @@ effect = ["Pure"]
     // `[meta].variants` 自身：空取值域 = 任何取值都不合法，声明处就要拒。
     let e = err_of(&base("", "variants = { xlen = [] }"));
     assert!(e.contains("取值域为空"), "空取值域必须报错：{e}");
+}
+
+/// 钉死值**快照**（B2）：与 forge-codegen 守卫、lint 清点共用 `asm/ratchet/pins.txt`。
+///
+/// 该文件是**值**的单一事实源；此处只重复 8 行读取（测试二进制之间不能直接共享代码，
+/// 除非另开 `tests/common` 模块——后续可合并，值本身不会分叉）。
+fn pin_usize(key: &str) -> usize {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../crates/tools/forge-tests/asm/ratchet/pins.txt");
+    std::fs::read_to_string(p)
+        .expect("asm/ratchet/pins.txt")
+        .lines()
+        .find_map(|l| l.strip_prefix(&format!("{key} = ")))
+        .unwrap_or_else(|| panic!("快照缺少 {key}"))
+        .trim()
+        .parse()
+        .expect("快照值应为整数")
 }

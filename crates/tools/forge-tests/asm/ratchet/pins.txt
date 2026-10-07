@@ -28,3 +28,5 @@ lint.vary_candidates.riscv64.toml = 28
 lint.vary_candidates.x86.toml = 55
 roundtrip.derived = 1542,624,2565
 spec_totals = x86:299,riscv64:174,arm64:544
+projection.native.riscv64 = 174
+projection.rv32.riscv64 = 141
