@@ -33,7 +33,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const REF = 'llvmorg-19.1.0';
 const DLLLM = 'llvm/llvm-project';
@@ -153,18 +153,25 @@ async function download(f) {
 }
 
 /** 跑解析档 + 编码对拍档：写 `target/asm-suite/*.json`（**棘轮不一致会 panic，但记分板先写**，忽略退出码）。 */
-function score() {
-  console.log('\n== 打分（cargo test --test asm_parse --test asm_encoding；棘轮此刻多半不一致，非零退出属正常）');
+async function score() {
+  console.log('\n== 打分（两个档**并发**跑：asm_parse 与 asm_encoding 各起一个 cargo 子进程；棘轮此刻多半不一致，非零退出属正常）');
   // `--no-fail-fast` 是**必需**的：cargo 默认在第一个失败的测试目标就停，而这两个档的棘轮几乎
   // 必然同时不一致（换了谱/换了语料）——少了它，排在后面的 `asm_parse` 根本不跑，解析档记分板
   // 就停在**上一轮**的旧内容上；于是"这一轮才下载、还没打过分"的候选被记成 `not-scored` 砍掉
   // （判据被静默绕过，2026-10-07 实测踩到：364 个候选被误记）。
-  const r = spawnSync(
-    'cargo',
-    ['test', '-p', 'forge-tests', '--test', 'asm_parse', '--test', 'asm_encoding', '--no-fail-fast', '--', '--nocapture'],
-    { cwd: REPO, stdio: 'inherit', shell: process.platform === 'win32' },
-  );
-  if (r.error) throw r.error;
+  // **并发**：两个档各起一个 cargo 子进程（此前一条命令串行跑两个目标）。顺带保证两档都真跑
+  // ——即使某一档的棘轮不一致，也不影响另一档的记分板落盘（`--no-fail-fast` 的双保险）。
+  const run = (t) =>
+    new Promise((res, rej) => {
+      const c = spawn(
+        'cargo',
+        ['test', '-p', 'forge-tests', '--test', t, '--no-fail-fast', '--', '--nocapture'],
+        { cwd: REPO, stdio: 'inherit', shell: process.platform === 'win32' },
+      );
+      c.on('error', rej);
+      c.on('close', () => res());
+    });
+  await Promise.all([run('asm_parse'), run('asm_encoding')]);
 }
 
 /** 逐文件计数（记分板 → Map<"<isa>/<文件>", row>）。 */
@@ -302,7 +309,7 @@ if (!NO_FETCH) {
 
 let stats = { candidates: jobs.length, kept: jobs.length, dropped: 0 };
 if (!KEEP_ALL) {
-  score();
+  await score();
   const scores = readScores();
   const encScores = readEncodingScores();
   // 记分板缺档 ⇒ **拒绝裁剪**（否则会把语料删空——这条由 2026-10-06 的一次真实事故换来）。
