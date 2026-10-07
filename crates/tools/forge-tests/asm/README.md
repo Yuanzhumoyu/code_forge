@@ -872,3 +872,16 @@ GAS = `GPL-3.0-or-later`（上游各文件的许可逐条见 `PROVENANCE.md`；G
 
 - aarch64（第四十三批：**NEON 双寄存器 7 族 42 条**）：新工具 `gen-aarch64-neon-pairs.mjs` **读语料自动派生**——从各族 .8b 的上游字反推 (U,c,d)，其余排列只换 (Q,size)。
   向量只写**有上游字节**的排列（8 条），其余靠生成期往返钉住；守卫 466 → **508**、枚举器 2237 → **2321**。
+
+## 语料扫描的并行度（2026-10-07）
+
+已并行：`src/asm/par.rs::map_parallel`（`std::thread::scope` + 原子取号，结果按入参序归并 ⇒ 与串行
+逐字节一致；`AsmTarget: Sync`），`asm_parse` 接入；`fetch.mjs` 的打分改成两个档**并发**子进程。
+实测（20 核、vendored 集 125 份）：`asm_parse` **3 秒**、`fetch.mjs` 裁回整轮 **167 秒**。
+
+**还剩一处（结构已看清，可直接照做）**：`tests/asm_encoding.rs` 的逐文件循环（第 45–115 行的
+`for (file, src) in &files {}`）仍是串行。它与共享累加器耦合（逐例改 `r`/`row`、发事件、pushes
+`variants`/`known`）。改法：把该段抽成**每文件纯函数**返回一个局部结构
+`{ row, dropped, variants, known, events: Vec<(case, verdict)> }`（`report_case` 的三元进 `events`
+而不当场发），用 `asm::par::map_parallel(&files, …)` 并行算，然后**按文件序**回放：累加 `r`、
+按序 `report_case` 发事件、pushes 两个 Vec。这样记分板/棘轮/事件序与串行完全一致。
