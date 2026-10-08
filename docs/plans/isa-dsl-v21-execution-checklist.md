@@ -239,6 +239,15 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
    → 跑打印器 → 脚本改写全部 TOML（发行谱 + 夹具）→ 恢复 `skip`
    → 门禁（`isa_roundtrip_guard`/`spec_coverage_guard`/asm 三档棘轮/双矩阵逐数字不变）。
 5. `lint_shipped` 的 `LINT-BITFIELD-OVERLAP` 例外随旧键消失而一并撤除。
+6. **⚠ 第二次实测发现的缺口（必须先解）**：迁移**不只是** form 的 `fields`——旧模型靠
+   **位置**绑定（`operand_fields[i]` ↔ 第 i 个操作数），新语法靠**名字**绑定；而发行谱里
+   操作数名与位域名本来就不同（riscv：`ops = ["dst:gpr:out","src:gpr"]` ↔ 字段 `rd`/`rs1`）。
+   所以**每条指令还要生成 `bind = { dst = "rd", src = "rs1", … }`**（仅在同名之外的那些），
+   否则 `lower_field_syntax` 报"操作数 `dst` 绑定到字段 `dst`，但该字段未声明"，
+   实测一次暴露 30+ 条（`MOV_RM8_R64`/`FSGNJ_*`/`FCVT_*`…）。
+   ⇒ 打印器要**同时输出两份产物**：① 每个 form 的 `fields`；② 每条指令的 `bind`
+   （riscv 167 + arm64 537 + 夹具 ≈700 条，脚本可批量写入）。
+   幸而 `bind_operands` 的重构已被 a8c7e6e 的单测证明等价，产物同样不可能偏离。
 
 ---
 
