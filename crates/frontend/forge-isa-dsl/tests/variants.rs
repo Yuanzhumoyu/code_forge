@@ -209,8 +209,7 @@ bits = 16
 [reg.gpr8]
 names = ["R0", "R1", "R2", "R3"]
 
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr8"
 
@@ -281,8 +280,7 @@ bits = 16
 [reg.gpr8]
 names = ["R0", "R1"]
 
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr8"
 

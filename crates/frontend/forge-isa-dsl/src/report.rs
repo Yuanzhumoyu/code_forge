@@ -599,8 +599,7 @@ kind = "fixed"
 bits = 16
 [reg.gpr4]
 names = ["R0", "R1", "R2", "R3"]
-[[operand_slots]]
-name = "r"
+[operand.r]
 kind = "reg"
 class = "gpr4"
 roles = "inout"

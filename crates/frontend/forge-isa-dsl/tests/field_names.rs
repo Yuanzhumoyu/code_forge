@@ -30,8 +30,7 @@ kind = "fixed"
 bits = 16
 [reg.gpr32]
 count = 4
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr32"
 [[forms]]

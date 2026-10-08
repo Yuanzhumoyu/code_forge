@@ -42,17 +42,15 @@ names = ["A0", "A1", "A2", "A3"]
 
 # ─────────────────────── 命名位域（全部落在 8 位字内）───────────────────────
 
-[[operand_slots]]
-name = "r2"
+[operand.r2]
 kind = "reg"
 class = "gpr8"
 roles = "inout"
 
-[[operand_slots]]
-name = "lab"
+[operand.lab]
 kind = "label"
 signed = true
-width = 2
+bits = 2
 
 # ─────────────────────────── 编码形式 ───────────────────────────
 

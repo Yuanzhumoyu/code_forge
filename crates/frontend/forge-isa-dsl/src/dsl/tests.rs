@@ -23,17 +23,15 @@ names = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8", "X9", "X10", "X11
          "X12", "X13", "X14", "X15", "X16", "X17", "X18", "X19", "X20", "X21",
          "X22", "X23", "X24", "X25", "X26", "X27", "X28", "X29", "X30", "X31"]
 
-[[operand_slots]]
-name = "gpr"
+[operand.gpr]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
 
-[[operand_slots]]
-name = "imm12"
+[operand.imm12]
 kind = "imm"
 signed = true
-width = 12
+bits = 12
 
 [[forms]]
 name = "R"
@@ -102,21 +100,18 @@ reg_field = "modrm_reg"
 rm_field = "modrm_rm"
 force_disp_base = [5, 13]
 
-[[operand_slots]]
-name = "gpr"
+[operand.gpr]
 kind = "reg"
 class = "gpr64"
 
-[[operand_slots]]
-name = "fpr"
+[operand.fpr]
 kind = "reg"
 class = "fpr128"
 
-[[operand_slots]]
-name = "imm32"
+[operand.imm32]
 kind = "imm"
 signed = true
-width = 32
+bits = 32
 
 [[forms]]
 name = "RR"
@@ -149,8 +144,7 @@ fn default_flags_and_roles() {
 name = "x"
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 "#;
@@ -170,7 +164,8 @@ class = "gpr"
 fn roundtrip_serialize() {
     let m1 = parse_and_validate(X86_DOC).expect("parse");
     let text = toml::to_string(&m1).expect("serialize");
-    let m2 = parse(&text).expect("reparse");
+    // 操作数槽是**派生**字段（v21 W3）：往返要经解析+降级，故用 parse_and_validate。
+    let m2 = parse_and_validate(&text).expect("reparse");
     assert_eq!(m1, m2, "serialize → parse round-trip must be lossless");
     // 往返后 modrm 约定内容不变
     assert_eq!(
@@ -187,8 +182,7 @@ fn inout_role_parses() {
 name = "x"
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "rm"
+[operand.rm]
 kind = "reg"
 class = "gpr"
 roles = "inout"
@@ -208,7 +202,8 @@ asm = "add {dst}, {src}"
     // 序列化往返保留 inout
     let text = toml::to_string(&m).expect("serialize");
     assert!(text.contains("inout"), "got: {text}");
-    let m2 = parse(&text).expect("reparse");
+    // 操作数槽是**派生**字段（v21 W3）：往返要经解析+降级，故用 parse_and_validate。
+    let m2 = parse_and_validate(&text).expect("reparse");
     assert_eq!(m, m2);
 }
 
@@ -256,8 +251,7 @@ fn rejects_unknown_operand_slot_key() {
 name = "x"
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 garbage = 1
@@ -279,8 +273,7 @@ fn rejects_bad_operand_kind() {
 name = "x"
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.x]
 kind = "float"
 "#;
     let err = parse(doc).unwrap_err();
@@ -297,7 +290,6 @@ kind = "float"
 #[test]
 fn rejects_v11_isa_file() {
     let v11 = r#"[meta]
-name = "x"
 version = "11.0"
 [reg.gpr64]
 count = 16
@@ -329,8 +321,7 @@ kind = "fixed"
 bits = 128
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr32"
 [[forms]]
@@ -355,8 +346,7 @@ fn slot_doc(extra: &str) -> String {
 name = "x"
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 {extra}
@@ -370,8 +360,7 @@ fn required_sections_missing_is_parse_error() {
     let no_reg = r#"
 [meta]
 name = "x"
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 "#;
@@ -385,11 +374,12 @@ name = "x"
 [reg.gpr32]
 count = 8
 "#;
-    match parse(no_slots).unwrap_err() {
-        DslError::Parse { msg, .. } => {
-            assert!(msg.contains("missing field `operand_slots`"), "msg: {msg}");
+    // v21 W3：`[operand.<名字>]` 是可选表 ⇒ 缺声明在**校验期**报（不是解析期必填字段）。
+    match parse_and_validate(no_slots).unwrap_err() {
+        DslError::Validation { msg, .. } => {
+            assert!(msg.contains("[operand."), "msg: {msg}");
         }
-        other => panic!("expected Parse error, got {other:?}"),
+        other => panic!("expected Validation error, got {other:?}"),
     }
 }
 
@@ -400,8 +390,7 @@ fn validation_empty_reg() {
 [meta]
 name = "x"
 [reg]
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 "#;
@@ -416,7 +405,7 @@ class = "gpr"
 #[test]
 fn validation_empty_operand_slots() {
     let doc = r#"
-operand_slots = []
+
 [meta]
 name = "x"
 [reg.gpr32]
@@ -425,7 +414,7 @@ count = 8
     let err = parse_and_validate(doc).unwrap_err();
     match err {
         DslError::Validation { msg, .. } => {
-            assert!(msg.contains("[[operand_slots]]"), "msg: {msg}");
+            assert!(msg.contains("[operand."), "msg: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
     }
@@ -474,8 +463,7 @@ fn validation_unknown_form() {
 name = "x"
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 [[forms]]
@@ -501,8 +489,7 @@ fn validation_instruction_unknown_slot() {
 name = "x"
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 [[forms]]
@@ -530,8 +517,7 @@ fn validation_instruction_exceeds_operand_fields() {
 name = "x"
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 [[forms]]
@@ -563,8 +549,7 @@ fn validation_duplicate_instruction() {
 name = "x"
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 [[forms]]
@@ -598,8 +583,7 @@ fn validation_template_row_needs_encoding() {
 name = "x"
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 [[forms]]
@@ -625,8 +609,7 @@ fn validation_duplicate_reg_names() {
 name = "x"
 [reg.gpr32]
 names = ["R0", "R0"]
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 "#;
@@ -652,8 +635,7 @@ bits = 32
 widths = [16, 32]
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 "#;
@@ -669,8 +651,7 @@ kind = "prefix_scan"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 "#;
@@ -686,8 +667,7 @@ name = "x"
 kind = "fixed"
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 [[instructions]]
@@ -706,8 +686,7 @@ asm = "i"
 name = "x"
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 "#;
@@ -723,8 +702,7 @@ fn validation_bad_isa_name() {
 name = "123"
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 "#;
@@ -752,8 +730,7 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 [[forms]]
@@ -794,8 +771,7 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 [[forms]]
@@ -840,8 +816,7 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 [[forms]]
@@ -873,15 +848,13 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
-[[operand_slots]]
-name = "i"
+[operand.i]
 kind = "imm"
 signed = true
-width = 12
+bits = 12
 [[forms]]
 name = "I"
 fields = [
@@ -984,12 +957,10 @@ bits = 32
 count = 8
 [conventions.cond]
 {tbl}
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
-[[operand_slots]]
-name = "cc"
+[operand.cc]
 kind = "cond"
 [[forms]]
 name = "C"
@@ -1505,15 +1476,13 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
-[[operand_slots]]
-name = "i"
+[operand.i]
 kind = "imm"
 signed = true
-width = 12
+bits = 12
 [[forms]]
 name = "I"
 fields = [
@@ -1574,8 +1543,7 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr32"
 roles = "inout"
@@ -1651,8 +1619,7 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 [[forms]]
@@ -1685,8 +1652,7 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
 [[forms]]
@@ -1766,15 +1732,13 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr"
-[[operand_slots]]
-name = "i"
+[operand.i]
 kind = "imm"
 signed = true
-width = 12
+bits = 12
 [[forms]]
 name = "I"
 fields = [
@@ -1814,14 +1778,12 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr32"
-[[operand_slots]]
-name = "imm20"
+[operand.imm20]
 kind = "imm"
-width = 20
+bits = 20
 [[forms]]
 name = "U"
 fields = [
@@ -1891,7 +1853,7 @@ fn reloc_bad_slot_rejected() {
         "",
     );
     let msg = validation_msg(&doc);
-    assert!(msg.contains("未在 [[operand_slots]] 声明"), "msg: {msg}");
+    assert!(msg.contains("未在 [operand."), "msg: {msg}");
 
     let doc = reloc_doc(
         "[[reloc]]\nname = \"x\"\nsemantics = \"pc_relative\"\nslot = \"g\"\n",
@@ -1975,8 +1937,7 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr32"
 [[forms]]
@@ -2113,8 +2074,7 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr32"
 roles = "inout"
@@ -2232,8 +2192,7 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr32"
 roles = "inout"
@@ -2581,8 +2540,7 @@ kind = "prefix_scan"
 max_len = 15
 [reg.gpr64]
 count = 16
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
@@ -2614,8 +2572,7 @@ name = "x"
 kind = "prefix_scan"
 [reg.gpr64]
 count = 16
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
@@ -2685,8 +2642,7 @@ name = "x"
 kind = "prefix_scan"
 [reg.gpr64]
 count = 16
-[[operand_slots]]
-name = "gx"
+[operand.gx]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
@@ -2765,8 +2721,7 @@ name = "x"
 kind = "prefix_scan"
 [reg.gpr64]
 count = 16
-[[operand_slots]]
-name = "gx"
+[operand.gx]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
@@ -2836,8 +2791,7 @@ name = "x"
 kind = "prefix_scan"
 [reg.gpr64]
 count = 16
-[[operand_slots]]
-name = "gx"
+[operand.gx]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
@@ -2871,8 +2825,7 @@ kind = "fixed"
 bits = 32
 [reg.gpr64]
 count = 16
-[[operand_slots]]
-name = "gx"
+[operand.gx]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
@@ -2880,14 +2833,12 @@ roles = "inout"
     // ③ unit != 1：`symbols` 那条先拦（`require_symbol` 依赖它）
     let doc = BASE.to_string()
         + r#"
-[[operand_slots]]
-name = "sym12"
+[operand.sym12]
 kind = "imm"
 signed = false
-width = 12
+bits = 12
 unit = 8
-symbols = true
-require_symbol = true
+symbol = { allow = true, require = true }
 [[instructions]]
 name = "I"
 opcode = 1
@@ -2900,12 +2851,11 @@ asm = "i {dst}, {imm}"
     // ① 没声明 `symbols`
     let doc = BASE.to_string()
         + r#"
-[[operand_slots]]
-name = "sym12"
+[operand.sym12]
 kind = "imm"
 signed = false
-width = 12
-require_symbol = true
+bits = 12
+symbol = { require = true }
 [[instructions]]
 name = "I"
 opcode = 1
@@ -2913,17 +2863,15 @@ ops = ["dst:gx:inout", "imm:sym12"]
 asm = "i {dst}, {imm}"
 "#;
     let err = parse_and_validate(&doc).expect_err("缺 symbols 必须报错");
-    assert!(format!("{err:?}").contains("require_symbol"), "{err:?}");
+    assert!(format!("{err:?}").contains("symbol.require"), "{err:?}");
 
     // ② 非 imm 槽
     let doc = BASE.to_string()
         + r#"
-[[operand_slots]]
-name = "gl"
+[operand.gl]
 kind = "label"
-width = 4
-symbols = true
-require_symbol = true
+bits = 4
+symbol = { allow = true, require = true }
 [[instructions]]
 name = "I"
 opcode = 1
@@ -2931,18 +2879,16 @@ ops = ["dst:gx:inout", "t:gl"]
 asm = "i {dst}, {t}"
 "#;
     let err = parse_and_validate(&doc).expect_err("非 imm 槽必须报错");
-    assert!(format!("{err:?}").contains("require_symbol"), "{err:?}");
+    assert!(format!("{err:?}").contains("symbol.require"), "{err:?}");
 
     // 正例：symbols + require_symbol + unit 1 通过校验
     let doc = BASE.to_string()
         + r#"
-[[operand_slots]]
-name = "sym12"
+[operand.sym12]
 kind = "imm"
 signed = false
-width = 12
-symbols = true
-require_symbol = true
+bits = 12
+symbol = { allow = true, require = true }
 [[instructions]]
 name = "I"
 opcode = 1
@@ -2959,8 +2905,7 @@ name = "x"
 kind = "prefix_scan"
 [reg.gpr64]
 count = 16
-[[operand_slots]]
-name = "gx"
+[operand.gx]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
@@ -3121,10 +3066,10 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.mem]
-templates = ["{disp}({base})"]
-[[operand_slots]]
-name = "g"
+[operand.mem]
+kind = "mem"
+text = ["{disp}({base})"]
+[operand.g]
 kind = "reg"
 class = "gpr"
 [[forms]]
@@ -3143,50 +3088,50 @@ asm = "add {dst}"
     parse_and_validate(base).expect("MIPS 模板合法");
     // 不写 `{base}` = **无基址写法**（v20 V10）：只要有 {disp}/{index} 就合法。
     let ok = base.replace(
-        r#"templates = ["{disp}({base})"]"#,
-        r#"templates = ["{disp}"]"#,
+        r#"text = ["{disp}({base})"]"#,
+        r#"text = ["{disp}"]"#,
     );
     parse_and_validate(&ok).expect("无基址模板（只有 {disp}）合法");
     // 无基址且**没有任何地址组件** → 报错（那只能匹配空文本）
-    let bad = base.replace(r#"templates = ["{disp}({base})"]"#, r#"templates = ["[]"]"#);
+    let bad = base.replace(r#"text = ["{disp}({base})"]"#, r#"text = ["[]"]"#);
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("无基址模板"), "err: {err}");
     // 两个 {base} → 报错
     let bad = base.replace(
-        r#"templates = ["{disp}({base})"]"#,
-        r#"templates = ["[{base}+{base}]"]"#,
+        r#"text = ["{disp}({base})"]"#,
+        r#"text = ["[{base}+{base}]"]"#,
     );
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("最多只能有一个"), "err: {err}");
     // scale 未紧随 index → 报错
     let bad = base.replace(
-        r#"templates = ["{disp}({base})"]"#,
-        r#"templates = ["[{base}*{scale}]"]"#,
+        r#"text = ["{disp}({base})"]"#,
+        r#"text = ["[{base}*{scale}]"]"#,
     );
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("index"), "err: {err}");
     // 未知占位符 → 报错
     let bad = base.replace(
-        r#"templates = ["{disp}({base})"]"#,
-        r#"templates = ["[{base}+{foo}]"]"#,
+        r#"text = ["{disp}({base})"]"#,
+        r#"text = ["[{base}+{foo}]"]"#,
     );
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("foo"), "err: {err}");
     // 空列表 → 报错（第 0 条是渲染形态，不能省）
-    let bad = base.replace(r#"templates = ["{disp}({base})"]"#, r#"templates = []"#);
+    let bad = base.replace(r#"text = ["{disp}({base})"]"#, r#"text = []"#);
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("templates"), "err: {err}");
     // 用了 {size} 却没说 size_keywords → 报错
     let bad = base.replace(
-        r#"templates = ["{disp}({base})"]"#,
-        r#"templates = ["{size}{disp}({base})"]"#,
+        r#"text = ["{disp}({base})"]"#,
+        r#"text = ["{size}{disp}({base})"]"#,
     );
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("size_keywords"), "err: {err}");
     // 声明了 size_keywords 但模板里没 {size} → 合法（表只是能力申报）
     let ok = base.replace(
-        r#"templates = ["{disp}({base})"]"#,
-        "templates = [\"{disp}({base})\"]\nsize_keywords = [\"qword ptr\"]",
+        r#"text = ["{disp}({base})"]"#,
+        "text = [\"{disp}({base})\"]\nsize_words = [\"qword ptr\"]",
     );
     parse_and_validate(&ok).expect("多余的 size_keywords 不报错");
 }
@@ -3309,14 +3254,12 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "imm12"
+[operand.imm12]
 kind = "imm"
 signed = true
-width = 12
-wrap = true
-[[operand_slots]]
-name = "r"
+bits = 12
+literal = "bits"
+[operand.r]
 kind = "reg"
 class = "gpr32"
 [[forms]]
@@ -3335,16 +3278,16 @@ asm = "addi {dst}, {imm}"
 "#;
     parse_and_validate(base).expect("12 位有符号 + wrap 合法");
     // wrap 用在 reg 槽 → 报错
-    let bad = base.replace("\nwrap = true", "").replace(
-        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr32\"",
-        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr32\"\nwrap = true",
+    let bad = base.replace("\nliteral = \"bits\"", "").replace(
+        "[operand.r]\nkind = \"reg\"\nclass = \"gpr32\"",
+        "[operand.r]\nkind = \"reg\"\nclass = \"gpr32\"\nliteral = \"bits\"",
     );
     let err = parse_and_validate(&bad).unwrap_err().to_string();
-    assert!(err.contains("wrap"), "err: {err}");
-    // wrap + width 64 → 报错
-    let bad = base.replace("width = 12", "width = 64");
+    assert!(err.contains("literal"), "err: {err}");
+    // literal + bits 64 → 报错
+    let bad = base.replace("bits = 12", "bits = 64");
     let err = parse_and_validate(&bad).unwrap_err().to_string();
-    assert!(err.contains("width < 64"), "err: {err}");
+    assert!(err.contains("bits < 64"), "err: {err}");
 }
 
 // ─────────────── `unit`：源值单位（分支偏移是字节） ───────────────
@@ -3363,17 +3306,15 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "off26"
+[operand.off26]
 kind = "label"
 signed = true
-width = 26
+bits = 26
 unit = 4
-[[operand_slots]]
-name = "imm12"
+[operand.imm12]
 kind = "imm"
 signed = true
-width = 12
+bits = 12
 unit = 1
 [[forms]]
 name = "BR"
@@ -3444,22 +3385,19 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "bitpos"
+[operand.bitpos]
 kind = "imm"
 signed = false
-width = 6
+bits = 6
 encode = "slice"
 fields = ["b40", "b5"]
-[[operand_slots]]
-name = "r"
+[operand.r]
 kind = "reg"
 class = "gpr32"
-[[operand_slots]]
-name = "off14"
+[operand.off14]
 kind = "label"
 signed = true
-width = 14
+bits = 14
 [[forms]]
 name = "TBZ"
 fields = [
@@ -3503,7 +3441,7 @@ asm = "tbz {src}, #{bit}, {target}"
         .unwrap_err()
         .to_string();
     assert!(err.contains("b7"), "err: {err}");
-    let err = parse_and_validate(&doc.replace("width = 6\nencode", "width = 7\nencode"))
+    let err = parse_and_validate(&doc.replace("bits = 6\nencode", "bits = 7\nencode"))
         .unwrap_err()
         .to_string();
     assert!(err.contains("宽度之和"), "err: {err}");
@@ -3540,15 +3478,13 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "logicimm"
+[operand.logicimm]
 kind = "imm"
 signed = false
-width = 32
+bits = 32
 encode = "logical_imm"
 fields = ["nbit", "immr", "imms"]
-[[operand_slots]]
-name = "r"
+[operand.r]
 kind = "reg"
 class = "gpr32"
 [[forms]]
@@ -3587,7 +3523,7 @@ asm = "and {dst}, {src}, #{imm}"
     );
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("1/6/6"), "err: {err}");
-    let bad = doc.replace("width = 32\nencode", "width = 16\nencode");
+    let bad = doc.replace("bits = 32\nencode", "bits = 16\nencode");
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("32 或 64"), "err: {err}");
 }
@@ -3613,11 +3549,10 @@ i = 8
 o = 4
 r = 2
 w = 1
-[[operand_slots]]
-name = "fset"
+[operand.fset]
 kind = "bits"
-table = "fence"
-width = 4
+enum = "fence"
+bits = 4
 [[forms]]
 name = "FENCE"
 fields = [
@@ -3651,11 +3586,11 @@ asm = "fence {pred}, {succ}"
     assert_eq!(s.imm_range(), None, "位集合槽不是立即数槽（没有区间）");
 
     // 校验：缺 table / 表未声明 / 位超宽 都要报错。
-    let err = parse_and_validate(&doc.replace("table = \"fence\"\n", ""))
+    let err = parse_and_validate(&doc.replace("enum = \"fence\"\n", ""))
         .unwrap_err()
         .to_string();
     assert!(err.contains("table"), "err: {err}");
-    let err = parse_and_validate(&doc.replace("table = \"fence\"", "table = \"nope\""))
+    let err = parse_and_validate(&doc.replace("enum = \"fence\"", "enum = \"nope\""))
         .unwrap_err()
         .to_string();
     assert!(err.contains("nope"), "err: {err}");
@@ -3695,16 +3630,14 @@ mstatus = 0x300
 fflags = 0x001
 stval = 0x143
 sbadaddr = 0x143
-[[operand_slots]]
-name = "r"
+[operand.r]
 kind = "reg"
 class = "gpr32"
-[[operand_slots]]
-name = "csr12"
+[operand.csr12]
 kind = "imm"
 signed = false
-width = 12
-names = "csr"
+bits = 12
+enum = "csr"
 [[forms]]
 name = "I"
 fields = [
@@ -3738,7 +3671,7 @@ asm = "csrrs {dst}, {csr}"
     assert_eq!(s.imm_range(), Some((0, 0xFFF)), "命名表不改变槽的值域");
 
     // 表未声明。
-    let err = parse_and_validate(&doc.replace("names = \"csr\"", "names = \"nope\""))
+    let err = parse_and_validate(&doc.replace("enum = \"csr\"", "enum = \"nope\""))
         .unwrap_err()
         .to_string();
     assert!(err.contains("nope"), "err: {err}");
@@ -3754,8 +3687,8 @@ asm = "csrrs {dst}, {csr}"
     assert!(err.contains("ident"), "err: {err}");
     // `names` 只对 imm 槽有意义。
     let err = parse_and_validate(&doc.replace(
-        "name = \"csr12\"\nkind = \"imm\"\nsigned = false\nwidth = 12\nnames = \"csr\"",
-        "name = \"csr12\"\nkind = \"reg\"\nclass = \"gpr32\"\nnames = \"csr\"",
+        "[operand.csr12]\nkind = \"imm\"\nsigned = false\nbits = 12\nenum = \"csr\"",
+        "[operand.csr12]\nkind = \"reg\"\nclass = \"gpr32\"\nenum = \"csr\"",
     ))
     .unwrap_err()
     .to_string();
@@ -3781,20 +3714,17 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "sym20"
+[operand.sym20]
 kind = "imm"
 signed = false
-width = 20
-symbols = true
-[[operand_slots]]
-name = "off12"
+bits = 20
+symbol = { allow = true }
+[operand.off12]
 kind = "imm"
 signed = true
-width = 12
+bits = 12
 unit = 4
-[[operand_slots]]
-name = "r"
+[operand.r]
 kind = "reg"
 class = "gpr32"
 [[forms]]
@@ -3821,15 +3751,15 @@ asm = "lui {dst}, {imm}"
 
     // 只对 imm/label 有意义：reg 槽写它 → 报错。
     let bad = doc.replace(
-        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr32\"",
-        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr32\"\nsymbols = true",
+        "[operand.r]\nkind = \"reg\"\nclass = \"gpr32\"",
+        "[operand.r]\nkind = \"reg\"\nclass = \"gpr32\"\nsymbol = { allow = true }",
     );
     let err = parse_and_validate(&bad).unwrap_err().to_string();
-    assert!(err.contains("symbols"), "err: {err}");
+    assert!(err.contains("symbol"), "err: {err}");
     // `unit != 1` 的槽写它 → 直接拒（"修饰作用于块下标还是字节偏移"有歧义）。
     let bad = doc.replace(
-        "width = 12\nunit = 4",
-        "width = 12\nunit = 4\nsymbols = true",
+        "bits = 12\nunit = 4",
+        "bits = 12\nunit = 4\nsymbol = { allow = true }",
     );
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("unit == 1"), "err: {err}");
@@ -3905,8 +3835,7 @@ bits = 32
 {enc_extra}
 [reg.gpr8]
 names = ["A0", "A1", "A2", "A3"]
-[[operand_slots]]
-name = "a8"
+[operand.a8]
 kind = "reg"
 class = "gpr8"
 roles = "inout"
@@ -3966,8 +3895,7 @@ count = 4
 [reg.gpr64]
 base_index = 0
 count = 4
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
@@ -4010,8 +3938,7 @@ fn width_metadata_missing_gpr_group_is_error() {
 name = "floatonly"
 [reg.fpr32]
 count = 8
-[[operand_slots]]
-name = "f"
+[operand.f]
 kind = "reg"
 class = "fpr32"
 roles = "inout"
@@ -4069,8 +3996,7 @@ names = ["E0", "E1", "E2", "E3"]
 [reg.fpr128]
 base_index = 0
 names = ["F0", "F1"]
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
@@ -4317,8 +4243,7 @@ kind = "fixed"
 bits = {bits}
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr32"
 roles = "inout"
@@ -4376,8 +4301,7 @@ kind = "fixed"
 bits = 100
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr32"
 roles = "inout"
@@ -4415,16 +4339,14 @@ kind = "fixed"
 bits = {bits}
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr32"
 roles = "inout"
-[[operand_slots]]
-name = "l"
+[operand.l]
 kind = "label"
 signed = true
-width = 4
+bits = 4
 [[forms]]
 name = "B"
 fields = [
@@ -4469,8 +4391,7 @@ kind = "fixed"
 bits = 12
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr32"
 roles = "inout"

@@ -29,8 +29,7 @@ bits = 32
 base_index = 0
 names = ["T0", "T1"]
 
-[[operand_slots]]
-name = "r"
+[operand.r]
 kind = "reg"
 class = "gpr"
 

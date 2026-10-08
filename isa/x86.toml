@@ -130,19 +130,6 @@ force_disp_base = [5, 13]
 #     覆盖带不带尺寸前缀两种写法）。
 #   * **没写 {base} 的模板 = 无基址写法**（第 2 条）：x86 用它表示绝对地址
 #     （movsd XMM5, [-8] → mod=00 + SIB.base=101 + disp32）。
-[conventions.mem]
-templates = [
-  "{size}[{base}+{index}*{scale}+{disp}]",  # 第 0 条 = 渲染形态
-  "{size}{disp}[{base}]",                   # GAS Intel 的 disp[base]
-  "{size}[{disp}]",                         # **无基址**：只写地址（绝对寻址）
-]
-size_keywords = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"]
-
-# v13/v18-S3b：条件码表（**唯一一份**；jcc/setcc/cmovcc 的 cond 槽查它、
-# 反汇编按码渲染、lowering 的 `{cc}` 按 ir 字段查它）。
-#   键   = 汇编/反汇编可见的条件名（反汇编取同码里字母序最小者）
-#   code = 编码（进 opcode 低 4 位）
-#   ir   = 该名实现的 IR 整数条件（仅有符号/无符号比较的 10 个；纯别名省略）
 [conventions.cond]
 o   = { code = 0 }
 no  = { code = 1 }
@@ -204,14 +191,12 @@ effects = ["rex2"]
 
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
-[[operand_slots]]
-name = "gpr"
+[operand.gpr]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
 
-[[operand_slots]]
-name = "gprx"
+[operand.gprx]
 kind = "reg"
 # 多宽度视图（16/32/64 位）——类型签名分发的核心：一个槽接纳宽度集合，
 # 实际宽度由操作数寄存器决定（opsize auto 推导 66/REX.W 前缀）。
@@ -223,8 +208,7 @@ roles = "inout"
 # 16/32 位（2/4 字节）——**不含 64 位**：64 位的内存 mov 是 ABI 的
 # `MOV64_RM`/`MOV64_MR`（`opsize = 64` 固定，带 `stack_arg_*` 角色），
 # 再收 64 位就是同一批字节的第二条候选（无冗余）。
-[[operand_slots]]
-name = "gpr192"
+[operand.gpr192]
 kind = "reg"
 classes = ["gpr16", "gpr32"]
 roles = "inout"
@@ -233,110 +217,101 @@ roles = "inout"
 # 但 lowering 用的是承接布尔结果的 64 位 vreg（`xor {out}, {out}` 先清零，故低字节
 # 即结果）——`SETCC_RM8 {out}, …` 的文本里必须是 `RAX` 这类 64 位名，改成 `gpr8`
 # 会让所有 Cmp/Fcmp 降级当场汇编失败。真正的 8 位名字槽是下面的 `gpr8b`。
-[[operand_slots]]
-name = "gpr64"
+[operand.gpr64]
 kind = "reg"
 class = "gpr64"
-byte_reg = true
+byte = true
 roles = "inout"
 
 # 16 位寄存器操作数（movzx/movsx 16 位源等）
-[[operand_slots]]
-name = "gpr16"
+[operand.gpr16]
 kind = "reg"
 class = "gpr16"
 roles = "inout"
 
 
-[[operand_slots]]
-name = "gpr8b"
+[operand.gpr8b]
 kind = "reg"
 # 8 位寄存器操作数（SETCC 目标等）：索引 4-7（spl/bpl/sil/dil）无 REX 前缀
 # 会被解码为 ah/ch/dh/bh，必须强制 REX（见 codegen REX 条件）。
 class = "gpr8"
-byte_reg = true
+byte = true
 # `inout` = 8 位 ALU 的读改写（`add al, imm8` / `add byte ptr […], dl`）。
 roles = "inout"
-[[operand_slots]]
-name = "fpr"
+[operand.fpr]
 kind = "reg"
 class = "fpr128"
 roles = "inout"
 
 
-[[operand_slots]]
-name = "fpr256"
+[operand.fpr256]
 kind = "reg"
 class = "fpr256"
 roles = "inout"
 
-[[operand_slots]]
-name = "kreg"
+[operand.kreg]
 kind = "reg"
 class = "kreg64"
 roles = "inout"
 
-[[operand_slots]]
-name = "imm32"
+[operand.imm32]
 kind = "imm"
 signed = true
-width = 32
+bits = 32
 # 32 位立即数字段是**位模式**：`0x90909090` 与 `-1869574000` 是同一批字节，GAS/LLVM
 # 两种写法都收。`wrap` 让汇编器额外接受无符号读数并规范化到有符号读数；解码/反汇编
 # 渲染/边界检查仍用规范域（`-2^31..2^31-1`），所以 `add rax, -12` 的文本与字节不变。
-wrap = true
+literal = "bits"
 
-[[operand_slots]]
-name = "mem"
+[operand.mem]
+text = [
+  "{size}[{base}+{index}*{scale}+{disp}]",  # 第 0 条 = 渲染形态
+  "{size}{disp}[{base}]",                   # GAS Intel 的 disp[base]
+  "{size}[{disp}]",                         # **无基址**：只写地址（绝对寻址）
+]
+size_words = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"]
 kind = "mem"
 class = "gpr64"
 
-[[operand_slots]]
-name = "imm8"
+[operand.imm8]
 kind = "imm"
 signed = false
-width = 8
+bits = 8
 
 # 符号扩展的 8 位立即数（`83 /n ib`）：**必须有符号**——CPU 把它符号扩展到操作数宽度，
 # 所以 `0x80..0xff` 在这里是负数。`imm8`（无符号 8 位）是给位域类立即数用的
 # （SSE `imm8` lane 索引、VEXTRACT 等），不能混用。
-[[operand_slots]]
-name = "imm8s"
+[operand.imm8s]
 kind = "imm"
 signed = true
-width = 8
+bits = 8
 
 # 无符号 16 位立即数（`ret imm16` / `retf imm16`）。
-[[operand_slots]]
-name = "imm16"
+[operand.imm16]
 kind = "imm"
 signed = false
-width = 16
+bits = 16
 
-[[operand_slots]]
-name = "imm64"
+[operand.imm64]
 kind = "imm"
 signed = false
-width = 64
+bits = 64
 
 # 32 位寄存器操作数（`mov r32, imm32` 的 `B8+r id`：16/64 位的立即数宽度不同，
 # 不能共用一个多宽度槽）。
-[[operand_slots]]
-name = "gpr32"
+[operand.gpr32]
 kind = "reg"
 class = "gpr32"
 roles = "inout"
 
-[[operand_slots]]
-name = "rel"
+[operand.rel]
 kind = "label"
 signed = true
-width = 32
+bits = 32
 
-[[operand_slots]]
-name = "cond"
+[operand.cond]
 kind = "cond"
-width = 8
+bits = 8
 
 # ─────────────────────────── 编码形式 ───────────────────────────
 

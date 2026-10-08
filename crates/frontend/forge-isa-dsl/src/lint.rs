@@ -232,7 +232,7 @@ fn checks(m: &IsaModel, source: &str, idx: &DeclIndex, opts: &LintOpts) -> LintR
         if !used_slots.contains(&s.name) {
             out.push(anchor(
                 idx,
-                &format!("[[operand_slots]] #{i} ('{}')", s.name),
+                &format!("[operand.{}]", s.name),
                 "LINT-UNUSED-SLOT",
                 format!(
                     "槽 '{}' 没有被任何 `ops` 引用（写了却用不上）——删掉它，或把它写进某条指令的 `ops`",
@@ -779,15 +779,13 @@ bits = 16
 [reg.gpr1]
 names = ["R0", "R1"]
 
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr1"
 
-[[operand_slots]]
-name = "unused_slot"
+[operand.unused_slot]
 kind = "imm"
-width = 5
+bits = 5
 
 [[forms]]
 name = "RR"
@@ -839,7 +837,7 @@ rows = [
     fn clean_spec_has_no_findings() {
         let clean = SPEC
             .replace(
-                "[[operand_slots]]\nname = \"unused_slot\"\nkind = \"imm\"\nwidth = 5\n",
+                "[operand.unused_slot]\nkind = \"imm\"\nbits = 5\n",
                 "",
             )
             .replace(

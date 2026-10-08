@@ -1424,7 +1424,7 @@ fn validate_relocs(m: &IsaModel) -> Result<(), String> {
         }
         let Some(slot) = m.operand_slots.iter().find(|s| s.name == r.slot) else {
             return Err(format!(
-                "[[reloc.{}]]: 绑定的操作数槽 '{}' 未在 [[operand_slots]] 声明",
+                "[[reloc.{}]]: 绑定的操作数槽 '{}' 未在 [operand.<名字>] 声明",
                 r.name, r.slot
             ));
         };
@@ -1552,17 +1552,17 @@ fn validate_cond(m: &IsaModel) -> Result<(), String> {
 
 fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
     if m.operand_slots.is_empty() {
-        return Err("missing [[operand_slots]]: at least one operand slot is required".into());
+        return Err("missing [operand.<名字>]: at least one operand declaration is required".into());
     }
     let mut seen = BTreeSet::new();
     for (i, s) in m.operand_slots.iter().enumerate() {
-        let path = format!("[[operand_slots]] #{i} ('{}')", s.name);
+        let path = format!("[operand.{}]", s.name);
         if !is_valid_meta_name(&s.name) {
             return Err(format!("{path}: invalid slot name '{}'", s.name));
         }
         if !seen.insert(s.name.clone()) {
             return Err(format!(
-                "[[operand_slots]]: duplicate slot name '{}'",
+                "多文件合并后出现重复的操作数声明 '{}'（表键唯一，重复只能来自 [[override]]）",
                 s.name
             ));
         }
@@ -1605,6 +1605,19 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                     }
                     let Some(entries) = m.conventions.imm_names.as_ref().and_then(|t| t.get(tname))
                     else {
+                        // 表名其实是**位集合表**：v21 W3 起两种表都由槽的 `enum` 指向，
+                        // 指错了要**点名**（否则只报"未声明"会让人去查错地方）。
+                        if m
+                            .conventions
+                            .bitsets
+                            .as_ref()
+                            .is_some_and(|bs| bs.contains_key(tname))
+                        {
+                            return Err(format!(
+                                "{path}: `enum = \"{tname}\"` 指到的是**位集合表**（`kind = \"bits\"` 用）；\
+                                 本槽是 imm——请改用 [conventions.imm_names.{tname}] 或把 kind 改成 \"bits\""
+                            ));
+                        }
                         return Err(format!(
                             "{path}: 命名立即数表 '{tname}' 未在 [conventions.imm_names] 里声明"
                         ));
@@ -1686,7 +1699,7 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
         if s.wrap.unwrap_or(false) {
             if s.kind != OperandKind::Imm {
                 return Err(format!(
-                    "{path}: `wrap` 只对 kind = \"imm\" 有意义（当前 kind = {}）",
+                    "{path}: `literal` 只对 kind = \"imm\" 有意义（当前 kind = {}）",
                     s.kind.kind_name()
                 ));
             }
@@ -1694,7 +1707,7 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                 Some(w) if w < 64 => {}
                 Some(w) => {
                     return Err(format!(
-                        "{path}: `wrap` 需要 width < 64（当前 {w}：i64 已容纳两种读数，无回绕可言）"
+                        "{path}: `literal` 需要 bits < 64（当前 {w}：i64 已容纳两种读数，无回绕可言）"
                     ));
                 }
                 // 到不了：imm 槽的 width 必填（上面已查）。
@@ -1813,7 +1826,7 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
         if s.require_symbol.unwrap_or(false) {
             if !matches!(s.kind, OperandKind::Imm) {
                 return Err(format!(
-                    "{path}: `require_symbol` 只对 kind = \"imm\" 有意义（当前 kind = {}）",
+                    "{path}: `symbol.require` 只对 kind = \"imm\" 有意义（当前 kind = {}）",
                     s.kind.kind_name()
                 ));
             }
@@ -2144,7 +2157,7 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
     for op in &uses {
         if !slot_exists(m, &op.slot) {
             return Err(format!(
-                "[[instructions.{}]]: operand slot '{}' is not declared in [[operand_slots]] (asm '{}')",
+                "[[instructions.{}]]: operand slot '{}' is not declared in [operand.<名字>] (asm '{}')",
                 inst.name, op.slot, asm
             ));
         }

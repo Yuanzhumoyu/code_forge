@@ -636,53 +636,46 @@ mhartid = 0xF14
 mconfigptr = 0xF15
 mtopi = 0xFB0
 
-[[operand_slots]]
-name = "fence_set"
+[operand.fence_set]
 kind = "bits"
-table = "fence"
-width = 4
+enum = "fence"
+bits = 4
 
-[[operand_slots]]
-name = "gpr"
+[operand.gpr]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
 
-[[operand_slots]]
-name = "fpr"
+[operand.fpr]
 kind = "reg"
 class = "fpr32"
 roles = "inout"
 
-[[operand_slots]]
-name = "imm12"
+[operand.imm12]
 kind = "imm"
 signed = true
-width = 12
-symbols = true   # `%lo(foo)` / 裸 `foo` 这类**符号引用**（回填成"块下标"再过修饰）
+bits = 12
+symbol = { allow = true }   # `%lo(foo)` / 裸 `foo` 这类**符号引用**（回填成"块下标"再过修饰）
 
-[[operand_slots]]
-name = "imm20"
+[operand.imm20]
 kind = "imm"
 signed = false
-width = 20
-symbols = true   # `%hi(foo)` / `%pcrel_hi(foo)` 同样
+bits = 20
+symbol = { allow = true }   # `%hi(foo)` / `%pcrel_hi(foo)` 同样
 
-[[operand_slots]]
-name = "shamt"
+[operand.shamt]
 kind = "imm"
 signed = false
-width = 6
+bits = 6
 
 # W 变体（RV64 32 位语义）的移位量：字段只有 5 位（`shamt5`，bit25 归 funct7）。
 # **必须独立于 `shamt`（6 位）**——共用 6 位槽会让 `slliw rd, rs1, 32..63` 静默
 # 掩码成 `shamt - 32` 而不是报错（v18 S6 生成自测抓到的第一处真缺陷；
 # 用它的三条是 opcode 0x1B 的 `slliw`/`srliw`/`sraiw`——0x3B 那三条是寄存器移位，不用本槽）。
-[[operand_slots]]
-name = "shamt_w"
+[operand.shamt_w]
 kind = "imm"
 signed = false
-width = 5
+bits = 5
 
 # CSR 立即数变体（`csrrwi`/`csrrsi`/`csrrci`）的 zimm：5 位无符号，占 rs1 位。
 # 与上面的 `shamt_w` 同宽但**语义不同**（一个指 CSR 号、一个是移位量），故单列一槽。
@@ -693,39 +686,34 @@ width = 5
 # 与 `csrrs t2, 0xF11, zero` 是同一批测试里的相邻两行）。名字表在
 # `[conventions.imm_names.csr]`，是从上游 LLVM 的 `RISCVSystemOperands.td`（钉死 ref
 # `llvmorg-19.1.0`）机械生成的**数据**——DSL 不认识任何具体 CSR 名。
-[[operand_slots]]
-name = "csr12"
+[operand.csr12]
 kind = "imm"
 signed = false
-width = 12
-names = "csr"
+bits = 12
+enum = "csr"
 
 # 浮点舍入模式（`funct3` 那 3 位）：**名字表**（`rne`/`rtz`/`rdn`/`rup`/`rmm`/`dyn`）。
 # 与 CSR 槽同一机制：解析认名字也认数字（`..., 1` 也行），渲染时写名字。
-[[operand_slots]]
-name = "rm3"
+[operand.rm3]
 kind = "imm"
 signed = false
-width = 3
-names = "rm"
+bits = 3
+enum = "rm"
 
-[[operand_slots]]
-name = "zimm5"
+[operand.zimm5]
 kind = "imm"
 signed = false
-width = 5
+bits = 5
 
-[[operand_slots]]
-name = "off_b"
+[operand.off_b]
 kind = "label"
 signed = true
-width = 13
+bits = 13
 
-[[operand_slots]]
-name = "off_j"
+[operand.off_j]
 kind = "label"
 signed = true
-width = 21
+bits = 21
 
 # ─────────────────────────── 编码形式 ───────────────────────────
 

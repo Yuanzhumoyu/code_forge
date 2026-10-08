@@ -46,8 +46,7 @@ names = [
 
 # ─────────────────────── 命名位域（落在 100 位字内，含 bit 92+）───────────────────────
 
-[[operand_slots]]
-name = "r4"
+[operand.r4]
 kind = "reg"
 class = "gpr8"
 roles = "inout"

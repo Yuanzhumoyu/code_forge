@@ -51,23 +51,20 @@ names = ["A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7"]
 [types]
 ptr = "gpr8"
 
-[[operand_slots]]
-name = "a8"
+[operand.a8]
 kind = "reg"
 class = "gpr8"
 roles = "inout"
 
-[[operand_slots]]
-name = "lab"
+[operand.lab]
 kind = "label"
 signed = true
-width = 8
+bits = 8
 
-[[operand_slots]]
-name = "imm8"
+[operand.imm8]
 kind = "imm"
 signed = true
-width = 8
+bits = 8
 
 # ─────────────────────────── 编码形式 ───────────────────────────
 

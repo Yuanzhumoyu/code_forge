@@ -53,35 +53,30 @@ f32 = "gpr64"
 f64 = "gpr64"
 
 # ─────────────────────── 命名位域 ───────────────────────
-[[operand_slots]]
-name = "r16"
+[operand.r16]
 kind = "reg"
 class = "gpr16"
 roles = "inout"
 
-[[operand_slots]]
-name = "r32"
+[operand.r32]
 kind = "reg"
 class = "gpr32"
 roles = "inout"
 
-[[operand_slots]]
-name = "r64"
+[operand.r64]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
 
-[[operand_slots]]
-name = "lab"
+[operand.lab]
 kind = "label"
 signed = true
-width = 16
+bits = 16
 
-[[operand_slots]]
-name = "imm16"
+[operand.imm16]
 kind = "imm"
 signed = true
-width = 16
+bits = 16
 
 # ─────────────────────────── 编码形式 ───────────────────────────
 

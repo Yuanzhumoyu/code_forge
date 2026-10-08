@@ -15,15 +15,13 @@ bits = 16
 [reg.gpr8]
 names = ["R0", "R1", "R2", "R3"]
 
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr8"
 
-[[operand_slots]]
-name = "imm5"
+[operand.imm5]
 kind = "imm"
-width = 5
+bits = 5
 signed = true
 
 [[forms]]

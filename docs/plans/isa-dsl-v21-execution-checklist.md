@@ -297,6 +297,27 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 ## 5. W3 操作数层收敛
 
+> ✅ **W3a 已完成并提交（2026-10-08）**：`[[operand_slots]]` → **`[operand.<名字>]` 表** + 键收敛。
+>
+> - **结构**：键名即槽名（`[operand.csr12]`），`IsaModel.operand_slots` 改 `#[serde(skip)]`
+>   派生字段，由 `operand_decl::lower_operand_layer` 降级而来——**编码器/生成物一行未改**。
+> - **键收敛（8 个一次性开关 → 正交键）**：`width → bits`、`min`+`max → range = [lo, hi]`、
+>   `float → value = "float"`、`wrap → literal = "bits"`、`table`/`names → enum`、
+>   `arrangement → suffix`、`symbols`/`require_symbol`/`imm_fns → symbol = { allow, require, modifiers }`、
+>   `zr31 → zero`/`sp`；`[conventions.mem].templates/size_keywords → [operand.mem].text/size_words`。
+> - **`byte_reg` 不挂寄存器组**（设计文档那条假设被实证推翻）：x86 `setcc` 的 rm 用 64 位名字
+>   （`class = "gpr64"`）却按 8 位寄存器编码 ⇒ 是**槽**的事实，落成槽级 `byte = true`。
+> - **一处顺序修复**：命名位集合/命名立即数的**摊平**原本跑在 `parse()` 里，而槽现在是降级产物
+>   ⇒ 改到操作数降级之后（否则 `table_entries`/`name_entries` 恒空）。
+> - **诊断**：槽相关文案从 `[[operand_slots]] #i ('名')` 改为 `[operand.名]`；imm 槽的 `enum`
+>   指到位集合表时**点名**（"这是位集合表，kind = bits 用"），不再只报"未定义的表"。
+> - **迁移**：三谱 + 夹具谱 + ~90 处内联夹具 + 教程 TOY16 谱；实测
+>   `cargo test --workspace --exclude forge-rustc` → **exit 0、0 编译错误、0 失败二进制**
+>   （含 `isa_roundtrip_guard` 字节闭环、asm 三档棘轮、x86/riscv64 双矩阵）。
+>
+> **剩下的 W3b（未做）**：`[enum.*]` 节取代 `[conventions.cond]`/`[conventions.bitsets.*]`/
+> `[conventions.imm_names.*]`（槽上已经写 `enum = "<表名>"`，只差把三张表搬进统一的 `[enum.*]`）。
+
 **目标**：`[operand.*]` + `[enum.*]` + `[encode.*]`；8 个一次性开关 → 5 个正交键。
 
 - [ ] `kind`/`bits`/`signed`/`range`/`unit` 定稿；`min`+`max` 合一为 `range`。

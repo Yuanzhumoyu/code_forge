@@ -47,7 +47,7 @@ fn the_guard_can_fail() {
     let path = root().join("isa/arm64.toml");
     let spec = report::load_spec(&path).expect("加载 arm64");
     let mutated = format!(
-        "{}\n[[operand_slots]]\nname = \"dead_slot\"\nkind = \"imm\"\nwidth = 4\n",
+        "{}\n[operand.dead_slot]\nkind = \"imm\"\nbits = 4\n",
         spec.text
     );
     let found = lint_source(&mutated).expect("变异谱仍合法");

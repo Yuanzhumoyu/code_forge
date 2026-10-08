@@ -16,6 +16,7 @@ pub(crate) mod codegen;
 pub(crate) mod diag;
 pub(crate) mod field_decl;
 pub(crate) mod match_tree;
+pub(crate) mod operand_decl;
 pub(crate) mod model;
 mod parse;
 mod pred;
@@ -119,6 +120,18 @@ pub(crate) fn parse_and_validate_projected(
     let mut model = parse(source)?;
     let idx = diag::DeclIndex::build(source);
     let mut diags = diag::Diags::new();
+    // v21 W3：`[operand.<名字>]` 降级成内部槽数组（**先做**：字段展开与校验都读它）。
+    if let Err(msg) = operand_decl::lower_operand_layer(&mut model) {
+        diags.push_anchored(&idx, &msg);
+    }
+    // 命名位集合 / 命名立即数的**摊平**读的是 `operand_slots` ⇒ 必须在降级之后再跑一遍
+    //（`parse()` 里那次现在读不到槽——它是 `[operand.<名字>]` 降级出来的）。
+    if let Err(msg) = model
+        .resolve_bitset_tables()
+        .and_then(|()| model.resolve_imm_name_tables())
+    {
+        diags.push_anchored(&idx, &msg);
+    }
     // v21 W2：`[[forms]].fields` 展开进内部表示（位域表 / opcode_field / operand_fields）。
     if let Err(msg) = field_decl::lower_field_syntax(&mut model) {
         diags.push_anchored(&idx, &msg);

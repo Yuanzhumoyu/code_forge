@@ -23,17 +23,15 @@ bits = 32
 [reg.gpr64]
 names = ["X0", "X1", "X2", "X3", "X8", "X9", "X10"]
 
-[[operand_slots]]
-name = "gpr"
+[operand.gpr]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
 
-[[operand_slots]]
-name = "imm12"
+[operand.imm12]
 kind = "imm"
 signed = true
-width = 12
+bits = 12
 
 [[forms]]
 name = "R"
@@ -147,15 +145,15 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
             "wide",
         ),
         (
-            "槽重复",
-            plus("[[operand_slots]]\nname = \"gpr\"\nkind = \"reg\"\nclass = \"gpr64\""),
-            "DSL-SLOT",
-            "gpr",
+            "槽声明含未知键",
+            plus("[operand.bad]\nkind = \"reg\"\nnope = 1"),
+            "DSL-TOML",
+            "nope",
         ),
         (
             "槽宽为 0",
-            plus("[[operand_slots]]\nname = \"imm0\"\nkind = \"imm\"\nwidth = 0"),
-            "DSL-SLOT",
+            plus("[operand.imm0]\nkind = \"imm\"\nbits = 0"),
+            "DSL-OTHER",
             "imm0",
         ),
         (

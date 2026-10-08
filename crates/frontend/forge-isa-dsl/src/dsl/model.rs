@@ -229,8 +229,13 @@ pub struct IsaModel {
     /// 取代散落在 `[meta]`/`[abi]` 的同类键（2026-09-13 归并）。
     #[serde(default)]
     pub stack: Option<StackSection>,
-    /// 操作数槽（`[[operand_slots]]`）。
+    /// 操作数槽（v21 W3：用户面是 `[operand.<名字>]` 表，由
+    /// [`crate::dsl::operand_decl::lower_operand_layer`] 降级成本数组）。
+    #[serde(skip)]
     pub operand_slots: Vec<OperandSlot>,
+    /// **v21 W3 操作数声明**（`[operand.<名字>]`）：键名即槽名。
+    #[serde(default, rename = "operand")]
+    pub operands: BTreeMap<String, OperandDecl>,
     /// 编码形式（`[[forms]]`）。
     #[serde(default)]
     pub forms: Vec<Form>,
@@ -1350,9 +1355,115 @@ pub struct ModrmConvention {
     pub force_disp_base: Vec<u8>,
 }
 
-// ──────────────────── [[operand_slots]] ────────────────────
+// ──────────────────── [operand.<名字>]（v21 W3） ────────────────────
 
-/// 操作数槽：指令操作数的抽象类别。
+/// v21 W3：**值类别**（取代 `float = true` 这类一次性布尔开关）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ValueKind {
+    /// 整数值（缺省）。
+    Int,
+    /// IEEE-754 位模式存储的浮点立即数。
+    Float,
+    /// 任意位模式（不解释符号）。
+    Bits,
+}
+
+/// v21 W3：**字面量读法**（取代 `wrap = true`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LiteralKind {
+    /// 按 W 位**位模式**读：有符号槽也收无符号写法、反之亦然。
+    Bits,
+    /// 按槽的 `signed` 读（缺省）。
+    Signed,
+}
+
+/// v21 W3：**符号引用**声明（合并原 `symbols` / `require_symbol` / `imm_fns`）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct SymbolDecl {
+    /// 允许符号引用（原 `symbols`）。
+    #[serde(default)]
+    pub allow: Option<bool>,
+    /// **必须**是符号引用（原 `require_symbol`）。
+    #[serde(default)]
+    pub require: Option<bool>,
+    /// 只接受这些立即数修饰（原 `imm_fns`；空 = 全部）。
+    #[serde(default)]
+    pub modifiers: Option<Vec<String>>,
+}
+
+/// v21 W3：**操作数声明**（`[operand.<名字>]`）。
+///
+/// 键名即槽名；8 个一次性开关收敛成 5 个正交键 `bits`/`signed`/`range`/`unit`/`value`，
+/// 外加语义子表 `enum`/`suffix`/`symbol`/`text`。由
+/// [`crate::dsl::operand_decl::lower_operand_layer`] 降级成内部的 [`OperandSlot`]。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperandDecl {
+    pub kind: OperandKind,
+    /// 值宽度（位）——原 `width`。
+    #[serde(default)]
+    pub bits: Option<u32>,
+    #[serde(default)]
+    pub signed: Option<bool>,
+    /// 值域 `[lo, hi]`——原 `min` + `max` 合一。
+    #[serde(default)]
+    pub range: Option<(i64, i64)>,
+    /// 源值单位（原 `unit`）。
+    #[serde(default)]
+    pub unit: Option<u32>,
+    /// 值类别（原 `float`）。
+    #[serde(default)]
+    pub value: Option<ValueKind>,
+    /// 字面量读法（原 `wrap`）。
+    #[serde(default)]
+    pub literal: Option<LiteralKind>,
+    /// 命名取值表名——原 `table`（bits）/ `names`（imm）。见 `[enum.*]`（W3b）。
+    #[serde(default, rename = "enum")]
+    pub enum_table: Option<String>,
+    /// 排列后缀 → 代码值（原 `arrangement`）。
+    #[serde(default)]
+    pub suffix: Option<BTreeMap<String, i64>>,
+    /// 符号引用声明（原 `symbols` / `require_symbol` / `imm_fns`）。
+    #[serde(default)]
+    pub symbol: Option<SymbolDecl>,
+    /// **8 位寄存器编码**（原 `byte_reg = true`）：索引 4-7 必须强制 REX。
+    ///
+    /// 设计文档原打算把它挂到 `[reg.*].rex_required`，但 x86 `setcc` 实证推翻：
+    /// 它的 rm 用 64 位名字（`class = "gpr64"`）却按 8 位寄存器编码 ⇒ 这是**槽**的事实。
+    #[serde(default)]
+    pub byte: Option<bool>,
+    /// 31 号寄存器 = ZR（原 `zr31 = true`）。
+    #[serde(default)]
+    pub zero: Option<bool>,
+    /// 31 号寄存器 = SP（`zero` 的反面；原 `zr31 = false`）。
+    #[serde(default)]
+    pub sp: Option<bool>,
+    /// 内存文本形态（原 `[conventions.mem].templates`）：第 0 条 = 渲染形态。
+    #[serde(default)]
+    pub text: Option<Vec<String>>,
+    /// 内存尺寸关键字（原 `[conventions.mem].size_keywords`）。
+    #[serde(default)]
+    pub size_words: Option<Vec<String>>,
+    /// 多字段落点方案（`"slice"`）+ `fields` 声明序 = 取值序。
+    #[serde(default)]
+    pub encode: Option<SlotEncode>,
+    #[serde(default)]
+    pub fields: Option<Vec<String>>,
+    #[serde(default)]
+    pub roles: Option<OperandRole>,
+    #[serde(default)]
+    pub class: Option<RegClass>,
+    #[serde(default)]
+    pub classes: Option<Vec<RegClass>>,
+}
+
+// ──────────────────── 内部降级后的槽 ────────────────────
+
+/// 操作数槽：指令操作数的抽象类别（v21 W3 起由 `[operand.<名字>]` 降级而来，
+/// 用户面不再有 `[[operand_slots]]`）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperandSlot {
@@ -2833,7 +2944,7 @@ impl IsaModel {
             if s.kind != OperandKind::Bits {
                 continue;
             }
-            let path = format!("[[operand_slots]] #{i} ('{}')", s.name);
+            let path = format!("[operand.{}]", s.name);
             let Some(tname) = s.table.clone() else {
                 return Err(format!(
                     "{path}: kind = \"bits\" 的槽必须给 `table`（[conventions.bitsets.<table>]）"
@@ -2867,7 +2978,7 @@ impl IsaModel {
             let Some(tname) = s.names.clone() else {
                 continue;
             };
-            let path = format!("[[operand_slots]] #{i} ('{}')", s.name);
+            let path = format!("[operand.{}]", s.name);
             if s.kind != OperandKind::Imm {
                 return Err(format!(
                     "{path}: `names` 只对 kind = \"imm\" 的槽有意义（本槽是 {:?}）",

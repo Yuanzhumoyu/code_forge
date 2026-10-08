@@ -449,7 +449,7 @@ fn quoted_values(msg: &str) -> Vec<String> {
 /// 解析消息前缀 → (节, 可选名字)。
 fn parse_prefix(msg: &str) -> (Option<String>, Option<String>) {
     // `[[operand_slots]] #3 ('gprx'): …`
-    if let Some(rest) = msg.strip_prefix("[[operand_slots]]")
+    if let Some(rest) = msg.strip_prefix("[operand.")
         && let Some(open) = rest.find("('")
         && let Some(close) = rest[open + 2..].find("')")
     {

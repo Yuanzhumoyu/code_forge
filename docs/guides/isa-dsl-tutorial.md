@@ -28,15 +28,13 @@ names = ["R0", "R1", "R2", "R3"]
 
 # v21 W2 起：字段**就地声明在 form 里**（不再有 [conventions.bitfields] 节）
 
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr8"
 
-[[operand_slots]]
-name = "imm5"
+[operand.imm5]
 kind = "imm"
-width = 5
+bits = 5
 signed = true
 
 [[forms]]
@@ -154,8 +152,7 @@ pub use self::toy16::*;
 一次声明"这类操作数长什么样"，指令里按名字引用：
 
 ```toml
-[[operand_slots]]
-name = "g"          # 指令里写 "dst:g:out"
+[operand.g]
 kind = "reg"        # reg | imm | mem | label | cond
 class = "gpr8"      # 引用 [reg.gpr8]；多宽度用 classes = [...]
 ```

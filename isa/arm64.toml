@@ -619,268 +619,224 @@ nv = 15
 
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
-[[operand_slots]]
-name = "adr_off"      # ADR 数值：21 位有符号字节偏移 -> 切片进 immlo+immhi
+[operand.adr_off]
 kind = "imm"
-width = 21
+bits = 21
 signed = true
 encode = "slice"
 fields = ["immlo", "immhi"]
 
-[[operand_slots]]
-name = "adrp_off"     # ADRP 数值：值 = 页号（unit 4096；语料 adrp x0,#4096 => immlo=1,immhi=0）
+[operand.adrp_off]
 kind = "imm"
-width = 21
+bits = 21
 signed = true
 unit = 4096
 encode = "slice"
 fields = ["immlo", "immhi"]
 
-[[operand_slots]]
-name = "adr_sym"      # 符号写法：占位 0，实际地址由重定位填（adr x0, foo / adr x0, 1f）
+[operand.adr_sym]
 kind = "imm"
-width = 21
+bits = 21
 signed = true
-symbols = true
-require_symbol = true
+symbol = { allow = true, require = true }
 encode = "slice"
 fields = ["immlo", "immhi"]
 
-[[operand_slots]]
-name = "varr_q"    # 同 varr，但只写 Q（逻辑族用）
+[operand.varr_q]
 kind = "imm"
-width = 1
-names = "arr_q"
+bits = 1
+enum = "arr_q"
 encode = "slice"
 fields = ["vq"]
 
-[[operand_slots]]
-name = "varr"      # NEON ?????`v0.16b` ? `.16b` ?????????? + ?????????
+[operand.varr]
 kind = "imm"
-width = 3
-names = "arr"
+bits = 3
+enum = "arr"
 encode = "slice"
 fields = ["vq", "vsize"]
 
-[[operand_slots]]
-name = "rz64"
+[operand.rz64]
 kind = "reg"
 class = "gpr64"
-zr31 = true
+zero = true
 
-[[operand_slots]]
-name = "rz32"
+[operand.rz32]
 kind = "reg"
 class = "gpr32"
-zr31 = true
+zero = true
 
-[[operand_slots]]
-name = "r64"
+[operand.r64]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
 
-[[operand_slots]]
-name = "r32"
+[operand.r32]
 kind = "reg"
 class = "gpr32"
 roles = "inout"
 
 # ── 扩展寄存器操作数的三段：关键字（命名立即数）+ 量 ──
 # `extw3`/`extx3` 是同一段位（option [15:13]）的两张表：前者收 W 寄存器的扩展、后者收 X 的。
-[[operand_slots]]
-name = "extw3"
+[operand.extw3]
 kind = "imm"
 signed = false
-width = 3
-names = "extend_w"
+bits = 3
+enum = "extend_w"
 
-[[operand_slots]]
-name = "extx3"
+[operand.extx3]
 kind = "imm"
 signed = false
-width = 3
-names = "extend_x"
+bits = 3
+enum = "extend_x"
 
-[[operand_slots]]
-name = "amt3"
+[operand.amt3]
 kind = "imm"
 signed = false
-width = 3
+bits = 3
 
 # ── 重定位修饰的**符号位置**：unit == 1（校验硬要求）+ symbols + require_symbol ──
 # `require_symbol` 把本槽收窄成"必须记到符号"——否则数值写法会被它抢走
 # （unit 更细 ⇒ 接受域更窄 ⇒ 特异性裁决里优先命中），见 model.rs 的字段注释。
 # `movz`/`movk`/`movn` 的符号立即数：**`hw` 由修饰名决定**，所以按 hw 分四个槽、
 # 每个槽用 `imm_fns` 过滤修饰表（否则会把 `abs_g2` 的写法编成 `hw = 0`）。
-[[operand_slots]]
-name = "imm16g0"
+[operand.imm16g0]
 kind = "imm"
 signed = false
-width = 16
-symbols = true
-require_symbol = true
-imm_fns = ["abs_g0", "abs_g0_n", "abs_g0_nc", "abs_g0_nc_n", "abs_g0_s", "abs_g0_s_n", "prel_g0", "prel_g0_n", "prel_g0_nc", "prel_g0_nc_n", "gottprel_g0_nc", "gottprel_g0_nc_n", "tprel_g0", "tprel_g0_n", "tprel_g0_nc", "tprel_g0_nc_n", "dtprel_g0", "dtprel_g0_n", "dtprel_g0_nc", "dtprel_g0_nc_n"]
+bits = 16
+symbol = { allow = true, require = true, modifiers = ["abs_g0", "abs_g0_n", "abs_g0_nc", "abs_g0_nc_n", "abs_g0_s", "abs_g0_s_n", "prel_g0", "prel_g0_n", "prel_g0_nc", "prel_g0_nc_n", "gottprel_g0_nc", "gottprel_g0_nc_n", "tprel_g0", "tprel_g0_n", "tprel_g0_nc", "tprel_g0_nc_n", "dtprel_g0", "dtprel_g0_n", "dtprel_g0_nc", "dtprel_g0_nc_n"] }
 
-[[operand_slots]]
-name = "imm16g1"
+[operand.imm16g1]
 kind = "imm"
 signed = false
-width = 16
-symbols = true
-require_symbol = true
-imm_fns = ["abs_g1", "abs_g1_n", "abs_g1_nc", "abs_g1_nc_n", "abs_g1_s", "abs_g1_s_n", "prel_g1", "prel_g1_n", "prel_g1_nc", "prel_g1_nc_n", "gottprel_g1", "gottprel_g1_n", "tprel_g1", "tprel_g1_n", "tprel_g1_nc", "tprel_g1_nc_n", "dtprel_g1", "dtprel_g1_n", "dtprel_g1_nc", "dtprel_g1_nc_n"]
+bits = 16
+symbol = { allow = true, require = true, modifiers = ["abs_g1", "abs_g1_n", "abs_g1_nc", "abs_g1_nc_n", "abs_g1_s", "abs_g1_s_n", "prel_g1", "prel_g1_n", "prel_g1_nc", "prel_g1_nc_n", "gottprel_g1", "gottprel_g1_n", "tprel_g1", "tprel_g1_n", "tprel_g1_nc", "tprel_g1_nc_n", "dtprel_g1", "dtprel_g1_n", "dtprel_g1_nc", "dtprel_g1_nc_n"] }
 
-[[operand_slots]]
-name = "imm16g2"
+[operand.imm16g2]
 kind = "imm"
 signed = false
-width = 16
-symbols = true
-require_symbol = true
-imm_fns = ["abs_g2", "abs_g2_n", "abs_g2_nc", "abs_g2_nc_n", "abs_g2_s", "abs_g2_s_n", "prel_g2", "prel_g2_n", "prel_g2_nc", "prel_g2_nc_n", "tprel_g2", "tprel_g2_n", "tprel_g2_nc", "tprel_g2_nc_n", "dtprel_g2", "dtprel_g2_n", "dtprel_g2_nc", "dtprel_g2_nc_n"]
+bits = 16
+symbol = { allow = true, require = true, modifiers = ["abs_g2", "abs_g2_n", "abs_g2_nc", "abs_g2_nc_n", "abs_g2_s", "abs_g2_s_n", "prel_g2", "prel_g2_n", "prel_g2_nc", "prel_g2_nc_n", "tprel_g2", "tprel_g2_n", "tprel_g2_nc", "tprel_g2_nc_n", "dtprel_g2", "dtprel_g2_n", "dtprel_g2_nc", "dtprel_g2_nc_n"] }
 
-[[operand_slots]]
-name = "imm16g3"
+[operand.imm16g3]
 kind = "imm"
 signed = false
-width = 16
-symbols = true
-require_symbol = true
-imm_fns = ["abs_g3", "abs_g3_n", "prel_g3", "prel_g3_n", "tprel_g3", "tprel_g3_n"]
+bits = 16
+symbol = { allow = true, require = true, modifiers = ["abs_g3", "abs_g3_n", "prel_g3", "prel_g3_n", "tprel_g3", "tprel_g3_n"] }
 
-[[operand_slots]]
-name = "imm12sym"
+[operand.imm12sym]
 kind = "imm"
 signed = false
-width = 12
-symbols = true
-require_symbol = true
+bits = 12
+symbol = { allow = true, require = true }
 
-[[operand_slots]]
-name = "imm12u"
+[operand.imm12u]
 kind = "imm"
 signed = false
-width = 12
+bits = 12
 
 # 访存族（LDR/STR）的 imm12 **单位是访问宽度**：真实汇编写**字节**偏移，字段存"字节 ÷ 访问尺寸"
 # （`ldr x2, [sp, #32]` 的 imm12 = 4、`ldr w5, [x4, #20]` 的 = 5——语料 CHECK 行的期望字节直接量得）。
 # 与上面的 `imm12u`（ALU/CMP/CMN 的立即数**不缩放**：`add x0, x1, #5` 就是 5）是同一段位的
 # **两种解释**，所以分成两个槽——"单位"不是全局约定，而是每条指令的语义。
-[[operand_slots]]
-name = "imm12x"
+[operand.imm12x]
 kind = "imm"
 signed = false
-width = 12
+bits = 12
 unit = 8    # 64 位访问
 
 # 字节/半字访存的 imm12：单位同样是"字节 ÷ 访问宽度"（`ldrb w5, [x4, #20]` ⇒ 字段 20；
 # `ldrh w2, [sp, #32]` ⇒ 字段 16）。LDRSW 是 word 访问 ⇒ 复用 `imm12w`。
 # FP 成对（LDP/STP）的 imm7：**有符号**（前/后索引会写 `#-64`），单位 = 元素尺寸。
-[[operand_slots]]
-name = "imm7fp4"
+[operand.imm7fp4]
 kind = "imm"
 signed = true
-width = 7
+bits = 7
 unit = 4
 
-[[operand_slots]]
-name = "imm7fp8"
+[operand.imm7fp8]
 kind = "imm"
 signed = true
-width = 7
+bits = 7
 unit = 8
 
-[[operand_slots]]
-name = "imm7fp16"
+[operand.imm7fp16]
 kind = "imm"
 signed = true
-width = 7
+bits = 7
 unit = 16
 
-[[operand_slots]]
-name = "imm12fp1"
+[operand.imm12fp1]
 kind = "imm"
 signed = false
-width = 12
+bits = 12
 unit = 1
 # FP 访存（B 视图）
 
-[[operand_slots]]
-name = "imm12fp2"
+[operand.imm12fp2]
 kind = "imm"
 signed = false
-width = 12
+bits = 12
 unit = 2
 # FP 访存（H 视图）
 
-[[operand_slots]]
-name = "imm12fp4"
+[operand.imm12fp4]
 kind = "imm"
 signed = false
-width = 12
+bits = 12
 unit = 4
 # FP 访存（S 视图）
 
-[[operand_slots]]
-name = "imm12fp8"
+[operand.imm12fp8]
 kind = "imm"
 signed = false
-width = 12
+bits = 12
 unit = 8
 # FP 访存（D 视图）
 
-[[operand_slots]]
-name = "imm12fp16"
+[operand.imm12fp16]
 kind = "imm"
 signed = false
-width = 12
+bits = 12
 unit = 16
 # FP 访存（Q 视图）
 
-[[operand_slots]]
-name = "imm12b"
+[operand.imm12b]
 kind = "imm"
 signed = false
-width = 12
+bits = 12
 unit = 1
 
-[[operand_slots]]
-name = "imm12h"
+[operand.imm12h]
 kind = "imm"
 signed = false
-width = 12
+bits = 12
 unit = 2
-[[operand_slots]]
-name = "imm12w"
+[operand.imm12w]
 kind = "imm"
 signed = false
-width = 12
+bits = 12
 unit = 4    # 32 位访问
 
-[[operand_slots]]
-name = "imm16u"
+[operand.imm16u]
 kind = "imm"
 signed = false
-width = 16
+bits = 16
 
-[[operand_slots]]
-name = "imm6"
+[operand.imm6]
 kind = "imm"
 signed = false
-width = 6
+bits = 6
 
-[[operand_slots]]
-name = "imm5"
+[operand.imm5]
 kind = "imm"
 signed = false
-width = 5
+bits = 5
 
-[[operand_slots]]
-name = "off26"
+[operand.off26]
 kind = "label"
 signed = true
-width = 26
+bits = 26
 unit = 4    # 源文本/Inst 字段是**字节**偏移；字段数的是 4 字节字（`b #28` ⇒ imm26 = 7）
 
 # ─────────────────────────── 编码形式 ───────────────────────────
@@ -2088,67 +2044,59 @@ fields = [
 
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
-[[operand_slots]]
-name = "cond4"
+[operand.cond4]
 kind = "cond"
 signed = false
-width = 4
+bits = 4
 
-[[operand_slots]]
-name = "imm16"
+[operand.imm16]
 kind = "imm"
 signed = false
-width = 16
+bits = 16
 
-[[operand_slots]]
-name = "off19"
+[operand.off19]
 kind = "label"
 signed = true
-width = 19
+bits = 19
 unit = 4    # 源文本/Inst 字段是**字节**偏移；字段数的是 4 字节字（`b #28` ⇒ imm26 = 7）
 
-[[operand_slots]]
-name = "off14"
+[operand.off14]
 kind = "label"
 signed = true
-width = 14
+bits = 14
 unit = 4    # TBZ/TBNZ 的相对偏移（±32768 字节，步进 4）
 
 # 位序号：6 位值被**切成两段**——低 5 位进 b40[23:19]、第 5 位进 b5[31]（不相邻！）。
 # 槽声明 encode = "slice" + fields（声明序 = 从低位切起），编码/解码两侧同源。
-[[operand_slots]]
-name = "bitpos64"
+[operand.bitpos64]
 kind = "imm"
 signed = false
-width = 6
+bits = 6
 encode = "slice"
 fields = ["b40", "b5"]
 
-[[operand_slots]]
-name = "bitpos32"
+[operand.bitpos32]
 kind = "imm"
 signed = false
-width = 5    # 32 位形式：第 5 位不存在（b5 必须为 0，由补集零 guard 保证）
+bits = 5    # 32 位形式：第 5 位不存在（b5 必须为 0，由补集零 guard 保证）
 
 # 逻辑（位掩码）立即数：值必须是"一段连续 1 循环填充整个宽度"的位模式，编码成 N/immr/imms
 # 三个分量（非线性映射，故走 `logical_imm` 方案而不是位切片）。
 # W 形式：`wrap` 收下 `#~15`、`#~(0xfe<<24)` 这类**按位取反**写出来的负数（两种读数都收，
 # 规范化到无符号位模式）；`min` 放宽到 -2^32 才容得下 `~(0xfe<<24)` 这种绝对值大于 2^31 的写法。
-[[operand_slots]]
-name = "logicimm32"
+[operand.logicimm32]
 kind = "imm"
 signed = false
-width = 32
-wrap = true
-min = -4294967296
+bits = 32
+literal = "bits"
+range = [-4294967296, 9223372036854775807]
 encode = "logical_imm"
 fields = ["nbit_l", "immr", "imms"]
 
-[[operand_slots]]
-name = "logicimm64"
+[operand.logicimm64]
 kind = "imm"
 signed = false
-width = 64
+bits = 64
 encode = "logical_imm"
 fields = ["nbit_l", "immr", "imms"]
 
@@ -2213,26 +2161,23 @@ fields = [
 
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
-[[operand_slots]]
-name = "imm9s"
+[operand.imm9s]
 kind = "imm"
 signed = true
-width = 9
+bits = 9
 
 # LDP/STP 的 imm7 同理：文本是**字节**、字段 = 字节 ÷ 元素尺寸，且字段是**有符号**的
 # （`stp x29, x30, [sp, #-16]` 的 imm7 = -2；A64 的 pair 偏移可以向下）。
-[[operand_slots]]
-name = "imm7x"
+[operand.imm7x]
 kind = "imm"
 signed = true
-width = 7
+bits = 7
 unit = 8
 
-[[operand_slots]]
-name = "imm7w"
+[operand.imm7w]
 kind = "imm"
 signed = true
-width = 7
+bits = 7
 unit = 4
 
 # ─────────────────────────── 指令 ───────────────────────────
@@ -5474,28 +5419,23 @@ aliases = {}
 prefix = "Q"
 count = 32
 aliases = {}
-[[operand_slots]]
-name = "fprb"
+[operand.fprb]
 kind = "reg"
 class = "fpr8"
 
-[[operand_slots]]
-name = "fprh"
+[operand.fprh]
 kind = "reg"
 class = "fpr16"
 
-[[operand_slots]]
-name = "fprs"
+[operand.fprs]
 kind = "reg"
 class = "fpr32"
 
-[[operand_slots]]
-name = "fprq"
+[operand.fprq]
 kind = "reg"
 class = "fpr128"
 
-[[operand_slots]]
-name = "fpr"
+[operand.fpr]
 kind = "reg"
 class = "fpr64"
 

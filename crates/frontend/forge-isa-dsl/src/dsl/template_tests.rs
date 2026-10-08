@@ -25,23 +25,20 @@ names = ["W0", "W1", "W2", "W3"]
 [reg.gpr64]
 names = ["X0", "X1", "X2", "X3"]
 
-[[operand_slots]]
-name = "r32"
+[operand.r32]
 kind = "reg"
 class = "gpr32"
 roles = "inout"
 
-[[operand_slots]]
-name = "r64"
+[operand.r64]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
 
-[[operand_slots]]
-name = "imm12"
+[operand.imm12]
 kind = "imm"
 signed = true
-width = 12
+bits = 12
 
 [[forms]]
 name = "R"

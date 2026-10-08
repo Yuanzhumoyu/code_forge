@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W3a：操作数声明收敛（**破坏性**）
+
+`[[operand_slots]]`（数组）改为 **`[operand.<名字>]` 表**，8 个一次性开关收敛成正交键：
+
++ `width → bits`、`min`+`max → range = [lo, hi]`、`float → value = "float"`、
+  `wrap → literal = "bits"`、`table`/`names → enum = "<表名>"`、`arrangement → suffix`、
+  `symbols`/`require_symbol`/`imm_fns → symbol = { allow, require, modifiers }`、`zr31 → zero`/`sp`；
+  内存文本形态从 `[conventions.mem]` 移到槽上（`text` / `size_words`）。
++ `byte_reg` 落成槽级 **`byte = true`**：x86 `setcc` 的 rm 用 64 位名字却按 8 位寄存器编码
+  ⇒ 是槽的事实，不是寄存器组的事实（设计文档原打算挂 `[reg.*].rex_required`，实证推翻）。
++ 槽相关的诊断文案改为 `[operand.名]`；imm 槽的 `enum` 指到位集合表时**点名**指错。
++ **编码字节逐条不变**：`isa_roundtrip_guard`、谱内向量、asm 三档棘轮、双 JIT 矩阵全过；
+  `cargo test --workspace --exclude forge-rustc` → exit 0、0 编译错误、0 失败二进制。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W2：字段就地声明（**破坏性**，无兼容层）
 
 `[conventions.bitfields]` + `[[forms]].opcode_field`/`operand_fields` + 指令的 `fields = {…}` 三处往返，被**一处就地声明**取代：

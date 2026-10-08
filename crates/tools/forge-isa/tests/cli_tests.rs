@@ -74,8 +74,7 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[[operand_slots]]
-name = "g"
+[operand.g]
 kind = "reg"
 class = "gpr32"
 [[instructions]]
@@ -221,7 +220,7 @@ fn validate_accepts_schema_comment() {
     // `#:schema` 只是 TOML 注释：不得影响解析（编辑器补全用）。
     let spec = temp_spec(
         "with_schema_comment.toml",
-        "#:schema ../../../isa-dsl.schema.json\n[meta]\nname = \"cmt\"\n[encoding]\nkind = \"fixed\"\nbits = 16\n[reg.gpr32]\ncount = 8\n[[operand_slots]]\nname = \"g\"\nkind = \"reg\"\nclass = \"gpr32\"\n[[instructions]]\nname = \"N\"\nform = \"R\"\nopcode = 1\nops = [\"d:g:out\"]\nasm = \"n {d}\"\n[[forms]]\nname = \"R\"\nfields = [\n  \"u8[7:0]:op\",\n  \"u3[10:8]:rd\",\n]\n",
+        "#:schema ../../../isa-dsl.schema.json\n[meta]\nname = \"cmt\"\n[encoding]\nkind = \"fixed\"\nbits = 16\n[reg.gpr32]\ncount = 8\n[operand.g]\nkind = \"reg\"\nclass = \"gpr32\"\n[[instructions]]\nname = \"N\"\nform = \"R\"\nopcode = 1\nops = [\"d:g:out\"]\nasm = \"n {d}\"\n[[forms]]\nname = \"R\"\nfields = [\n  \"u8[7:0]:op\",\n  \"u3[10:8]:rd\",\n]\n",
     );
     let out = run(&["validate", spec.to_str().unwrap()]);
     let _ = std::fs::remove_file(&spec);
@@ -322,7 +321,7 @@ fn diagnostics_point_at_the_included_file() {
     // 片段里故意写一个未声明的寄存器类：错误必须落在 `frag.toml` 上。
     let (dir, root) = temp_multi_file(
         "diag",
-        "[reg.gpr32]\ncount = 4\n\n[[operand_slots]]\nname = \"r\"\nkind = \"reg\"\nclass = \"nope\"\n",
+        "[reg.gpr32]\ncount = 4\n\n[operand.r]\nkind = \"reg\"\nclass = \"nope\"\n",
         "include = [\"frag.toml\"]\n\n[meta]\nname = \"multi\"\n\n[encoding]\nkind = \"fixed\"\nbits = 16\n\n[[instructions]]\nname = \"BAD\"\nopcode = 1\nops = [\"d:r:out\"]\nasm = \"bad {d}\"\n",
     );
     let out = run(&["validate", root.to_str().unwrap()]);

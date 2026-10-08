@@ -41,8 +41,7 @@ names = ["A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7"]
 
 # ─────────────────────── 命名位域（全部落在 12 位字内）───────────────────────
 
-[[operand_slots]]
-name = "r3"
+[operand.r3]
 kind = "reg"
 class = "gpr8"
 roles = "inout"
@@ -100,11 +99,10 @@ asm = "mov {dst}, {src}"
 # （olo 最低 2 位 + ohi 其余 4 位，不相邻）。此前切片路径整条跳过 unit。
 # `signed = true` 是**回归开关**：切片 + unit + 有符号三者叠加时必须"先按切片总宽符号扩展、
 # 再乘回 unit"——顺序反了负值会被解成 0（arm64 `adrp x0,#4096` 的最小值就是这样丢的）。
-[[operand_slots]]
-name = "off_scale4"
+[operand.off_scale4]
 kind = "imm"
 signed = true
-width = 6
+bits = 6
 unit = 4
 encode = "slice"
 fields = ["olo", "ohi"]
