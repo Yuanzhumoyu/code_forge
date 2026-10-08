@@ -624,6 +624,28 @@ fn validate_variant_gates(m: &IsaModel) -> Result<(), String> {
     };
     for i in &m.instructions {
         check(i.only_variants.as_ref())?;
+        // `fields_variant` 的声明一致性（出路 2 第③步）：参数名必须在 `[meta].variants` 里、
+        // `by` 的键必须在声明域内——与 `only_variants` **同一套判据**（复用上面的 `declared`/`known`，
+        // 不写第二份 ✗）。`default` 的"必填"由**类型**保证（它不是 `Option` ⇒ 缺了就是反序列化错误 ✓）。
+        if let Some(fv) = &i.fields_variant {
+            for (field, spec) in fv {
+                let Some(allowed) = declared.get(&spec.param) else {
+                    return Err(format!(
+                        "[instructions.{}]: `fields_variant.{field}` 用了未声明的参数 `{}`（已声明：{}）——\
+                         未声明的参数永远不会传进来，这条分派恒不生效",
+                        i.name,
+                        spec.param,
+                        known()
+                    ));
+                };
+                if let Some(bad) = spec.by.keys().find(|v| !allowed.contains(v)) {
+                    return Err(format!(
+                        "[instructions.{}]: `fields_variant.{field}` 的取值 {bad} 不在参数 `{}` 的声明域 {allowed:?} 内",
+                        i.name, spec.param
+                    ));
+                }
+            }
+        }
     }
     for s in m.spill.values() {
         check(s.only_variants.as_ref())?;
