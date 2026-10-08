@@ -21,16 +21,54 @@ use super::model::{
 
 /// 把 `kind = "stream"`（写了 `segments`）的 form 降级回语义键 + `fields`。
 pub fn lower_stream_forms(m: &mut IsaModel) -> Result<(), String> {
+    let fixed = m.encoding.kind != super::model::EncodingKind::PrefixScan;
     for form in &mut m.forms {
         if form.segments.is_none() {
             continue;
         }
-        lower_one(form)?;
+        lower_one(form, fixed)?;
     }
+    // v21 W4.3：stream form 的指令用 `match` 给**段字段**赋值 ⇒ 翻译成编码器读的标量
+    //（`opcode` → `Instruction.opcode`）。**编码器一行不改**，字节按构造不变——这正是
+    // "降级到既有内部表示"这条主线在段模型上的延续。
+    lower_stream_instructions(m);
     Ok(())
 }
 
-fn lower_one(form: &mut Form) -> Result<(), String> {
+/// 段字段值 → 经典标量（目前只做 `opcode`；`escape`/扩展码/`imm` 值留给后续片）。
+fn lower_stream_instructions(m: &mut IsaModel) {
+    let stream_forms: Vec<String> = m
+        .forms
+        .iter()
+        .filter(|f| f.segments.is_some())
+        .map(|f| f.name.clone())
+        .collect();
+    if stream_forms.is_empty() {
+        return;
+    }
+    for inst in &mut m.instructions {
+        let Some(fname) = inst.form.clone() else {
+            continue;
+        };
+        if !stream_forms.contains(&fname) {
+            continue;
+        }
+        let Some(mt) = inst.fields.clone() else {
+            continue;
+        };
+        let mut rest = std::collections::BTreeMap::new();
+        for (k, v) in mt {
+            if k == "opcode" {
+                inst.opcode = Some(u64::try_from(v).map_err(|_| ()).unwrap_or(0));
+            } else {
+                rest.insert(k, v);
+            }
+        }
+        inst.fields = Some(rest);
+    }
+}
+
+fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
     let segs = form.segments.clone().unwrap_or_default();
     if segs.is_empty() {
         return Err(format!(
@@ -145,7 +183,15 @@ fn lower_one(form: &mut Form) -> Result<(), String> {
             SegKind::Opcode => {
                 // 操作码字段必须叫 `opcode`（值由指令的 `match = { opcode = … }` 给）。
                 match form_opcode_field(&fields) {
-                    Some(name) => keys.opcode_field = Some(name),
+                    Some(name) => {
+                        // **只有定宽 ISA 才写 `opcode_field`**：`validate` 用
+                        // `opcode_field.is_some()` 判"这是定宽 ISA"（`is_fixed`），vlen 上写它
+                        // 会把校验带进定宽分支。vlen 的操作码值走 `Instruction.opcode`
+                        // （由 `lower_stream_instructions` 从 `match` 翻译过来）。
+                        if fixed {
+                            keys.opcode_field = Some(name);
+                        }
+                    }
                     None => {
                         return Err(format!(
                             "[[forms.{fname}]].opcode: 段里必须有名为 `opcode` 的字段\
@@ -340,7 +386,9 @@ asm = "n {dst}, {src}"
         assert_eq!(s.keys.escape, c.keys.escape, "escape");
         assert_eq!(s.keys.rex, c.keys.rex, "rex");
         assert_eq!(s.keys.rex_w, c.keys.rex_w, "rex_w");
-        assert_eq!(s.keys.opcode_field.as_deref(), Some("opcode"));
+        // vlen ISA：`opcode_field` 是**定宽**键（`validate` 用它判 `is_fixed`），不设；
+        // 指令侧的值由 `match = { opcode = … }` 翻译成 `Instruction.opcode`。
+        assert!(s.keys.opcode_field.is_none(), "vlen 不该设 opcode_field");
         // vlen 的 ModRM 发射由操作数驱动 ⇒ form 的 keys 里**不该**被塞一个默认 ModrmMap。
         assert!(s.keys.modrm.is_none(), "modrm 段不应强设 keys.modrm");
         // 段内位域并进了 form.fields（于是 W2 的展开照旧）
@@ -364,6 +412,18 @@ asm = "n {dst}, {src}"
         assert!(err.contains("prefix"), "闭集应列在消息里：{err}");
     }
 
+    /// v21 W4.3：段字段值 → 经典标量。指令用 `match = { opcode = … }` 给段字段赋值，
+    /// 降级把它翻译成编码器读的 `Instruction.opcode`（**编码器一行不改** ⇒ 字节按构造不变）。
+    #[test]
+    fn match_opcode_translates_to_instruction_opcode_scalar() {
+        let m = crate::dsl::parse_and_validate(STREAM).expect("谱合法");
+        let inst = m.instructions.iter().find(|i| i.name == "N").expect("指令 N");
+        assert_eq!(inst.opcode, Some(0x8B), "match.opcode 应翻译成标量");
+        assert!(
+            !inst.fields.as_ref().is_some_and(|f| f.contains_key("opcode")),
+            "翻译后 match 里不该再留 opcode"
+        );
+    }
     /// v21 W4.3：变长 ISA 的 `bind` 落到 `modrm`（此前 vlen 完全不读 `bind`，
     /// ModRM 的角色只能靠位置缺省）。
     #[test]

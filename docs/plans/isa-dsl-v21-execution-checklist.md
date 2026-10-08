@@ -358,7 +358,18 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > 于是"保留 form 作段载体（方案 A）"在 x86 上**不成立**：要么让指令能给**段字段赋值**
 > （= `match` 推广到 stream，并让 vlen 编码器改读段字段值——动编码器、需 200 条字节对拍），
 > 要么承认段模型对 x86 现有编码面**不适用**、W4 停在"模型可用但 x86 不迁"。
-> 建议：先做前者（`match` 推广到 stream + 编码器改数据源），并立"200 条指令逐字节不变"守卫。
+> 评审结论（2026-10-08）：**选 (a)**。落地方式不需要动编码器——见下。
+> ✅ **batch 1 第 2 步已落地**：**`match` → 经典标量翻译**。stream form 声明段布局，
+> 指令用 `match = { opcode = 0x8B }` 给段字段赋值，降级把 `match.opcode` 翻译成
+> `Instruction.opcode`（编码器读的那个标量）⇒ **编码器一行不改，字节按构造不变**。
+> 同片修掉两个"vlen 被塞定宽键"的地雷（`opcode_field` 是 `validate` 判 `is_fixed` 的
+> 依据、`operand_fields` 是定宽位域索引）：现在 vlen 的 form 即便带字段也不写
+> `opcode_field`，vlen 的 `bind` 只写 `modrm`、不写 `operand_fields`。
+> 实测（`forge-isa insts` 一份段形态谱）：`enc={modrm={ reg = "dst", rm = "src" }}`、
+> `opcode=0x8b`——没有 `opcode_field`/`operand_fields` 混入。
+> ⏭ **batch 1 第 3 步**：把 14 条核心 RR 指令迁到段骨架 form（`opcode` + `modrm` 段），
+> 指令侧 `opcode = X` → `match = { opcode = X }`；对拍 asm_encoding 棘轮 + encoder_fuzz +
+> roundtrip 三条守卫（它们本来就是"200 条指令逐字节不变"的守卫）。
 > 迁到一个段骨架 form（`opcode` + `modrm` 段），指令侧 `opcode = X` → `match = { opcode = X }`；
 > 移位族（SHL/SHR/SAR 带扩展位）留在原 `MRR`，不混读；对拍 asm_encoding 棘轮 + encoder_fuzz + roundtrip。
 > （删 `default_prefix_scan()`）→ 再迁 x86 谱（20 forms / 200 insts / 18 templates；键用量

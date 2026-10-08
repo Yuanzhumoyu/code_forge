@@ -412,6 +412,10 @@ pub fn bind_operands(
 /// **不把字段默认值注入 `inst.fields`**——那会把"未提及的位"变成解码期必须为 0 的约束
 /// （收紧解码接受集）；显式常量仍只由 `match` 给出（D-6：未覆盖的位保持 wildcard）。
 pub fn lower_field_syntax(m: &mut super::model::IsaModel) -> Result<(), String> {
+    // vlen（`prefix_scan`）与定宽 ISA 的派生键不同：`opcode_field`/`operand_fields` 是
+    // **定宽**的机制（`validate` 拿 `opcode_field` 判 `is_fixed`，编码器按索引取位域），
+    // vlen 上不该出现（v21 W4 的段模型让 vlen 的 form 也可能带字段 ⇒ 必须显式分流）。
+    let vlen = m.encoding.kind == super::model::EncodingKind::PrefixScan;
     // ① 每个 form 自己的位域表（先只读，避开对 `m` 的双重借用）。
     let mut own: Vec<(String, BTreeMap<String, Bitfield>)> = Vec::new();
     for form in &m.forms {
@@ -485,7 +489,12 @@ pub fn lower_field_syntax(m: &mut super::model::IsaModel) -> Result<(), String> 
         let fname = form.name.clone();
         let names_here: Vec<String> = names.keys().cloned().collect();
         let opname = names_here.iter().find(|n| n.as_str() == "opcode").cloned();
-        form.keys.opcode_field = opname.as_ref().map(|n| qual(&fname, n, &names[n]));
+        // **只有定宽 ISA 才写 `opcode_field`**：`validate`（`is_fixed`）与编码器都拿
+        // "`opcode_field` 是否在"当"这是定宽 ISA"的判据。vlen（`prefix_scan`）的 form
+        // 现在也可能有字段（v21 W4 的段模型），写了会把它们带进定宽分支。
+        if !vlen {
+            form.keys.opcode_field = opname.as_ref().map(|n| qual(&fname, n, &names[n]));
+        }
         form_info.push((fname, names_here, opname));
     }
     // ④b 逐指令：`match` 键改名 + `ops`/`bind` → `operand_fields`（口径 A）。
@@ -495,9 +504,7 @@ pub fn lower_field_syntax(m: &mut super::model::IsaModel) -> Result<(), String> 
         .filter_map(|f| f.fields.clone().map(|d| (f.name.clone(), d)))
         .collect();
     // v21 W4.3：**变长 ISA 的 `bind`** 也要落地——`bind = { reg = "dst", rm = "src" }`
-    // 说的是"哪个操作数进 ModRM 的 reg/rm 字段"（定宽 ISA 走 `operand_fields`，那条路
-    // 上面已经在用）。此前 vlen 完全不读 `bind`，于是 ModRM 的角色只能靠位置缺省。
-    let vlen = m.encoding.kind == super::model::EncodingKind::PrefixScan;
+    // 说的是"哪个操作数进 ModRM 的 reg/rm 字段"（定宽 ISA 走 `operand_fields`）。
     for inst in &mut m.instructions {
         let Some(fname) = inst.form.clone() else {
             continue;
@@ -541,7 +548,11 @@ pub fn lower_field_syntax(m: &mut super::model::IsaModel) -> Result<(), String> 
                 }
             })
             .collect();
-        inst.enc.operand_fields = Some(of);
+        // `operand_fields` 是**定宽** ISA 的位域位置绑定（编码器按索引取位域）；
+        // vlen 不读它（vlen 走 `modrm`/立即数键）⇒ 别在 vlen 上塞一个没人读的派生值。
+        if !vlen {
+            inst.enc.operand_fields = Some(of);
+        }
         if vlen && !bind.is_empty() {
             // `reg` 的值是操作数名 ⇒ `ModrmReg::Op`；`rm` 的值是操作数名（`[名]` = 内存形式）。
             // **扩展码（`/4`）不在 `bind` 的表达面内**：它是整数，仍写 `modrm = { reg = 4 }`。

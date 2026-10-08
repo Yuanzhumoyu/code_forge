@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W4.3：段字段值 → 经典标量（`match` 推广到 stream）
+
++ stream form 声明段布局；指令用 `match = { opcode = 0x8B }` 给段的 `opcode` 字段赋值，
+  降级把它翻译成 `Instruction.opcode`（编码器读的标量）——**编码器一行不改**，
+  字节按构造不变（vlen 的 opcode 原本来自专用标量、不读 `match`，这是补齐的那一段）。
++ 同片修掉两个"把定宽键塞进 vlen"的地雷：`opcode_field`（`validate` 拿它判 `is_fixed`）
+  与 `operand_fields`（定宽位域索引）在 `prefix_scan` ISA 上一律不写——否则 v21 段模型
+  给 vlen form 加了字段就会把校验/编码带进定宽分支。
+
 ### Fixed (2026-10-08) — ISA-DSL v21 W4.3 batch1：`modrm` 段不再强设 `keys.modrm`
 
 + 实测 `MOV_R_RM` 的生效编码键只有 `{opsize="s0"}`（**没有** `modrm`）而字节正确
