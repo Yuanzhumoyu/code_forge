@@ -403,7 +403,15 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > 降级成 `keys.imm = 32`），指令侧的内联 `imm = N` 随之删掉。生效键实测：
 > `ADD_R_IMM8S → enc={imm=8, modrm={ reg = 0, rm = "dst" }, opsize="s0"}`、`ADD_R_IMM32 → imm=32` ✔。
 > 累计已段化 **54 条**（14 + 13 + 8 + 19）。
-> ⏭ **W4.3 batch 5（下一片）**：`MRR_MEMREF_AUTO` 剩下的 2 条（带 `prefix`）、
+> ✅ **batch 5 完成（2026-10-08）**：**`SSE_RR` 21 条**迁到 `SSE_RR_SEG`——段化"最实"的一组：
+> SSE 的 66/F2/F3 前缀与 REX.W 本来就是**段字段**（指令侧早已写 `match = { prefix = 0xF2, w = 0 }`）。
+> 同片为段模型补两项能力：① **前缀段取字段**（`{ kind = "prefix", fields = [...] }` ⇒ 经典
+> `prefix = "field"`），与"字节 → 效果名"的常量形态并存；② **`rex_w` 来自字段**（rex 段的 `w`
+> 字段**无默认值** ⇒ 经典 `rex_w = "field"`；带默认值 ⇒ 固定 0/1）。
+> 另修一处 lint 误报：段内字段各自属于**自己的字节空间**，不按"同一个字里的位"判重叠
+> （`prefix`[0,8) 与 `w`[7,8) 曾被判成抢同一批位）——段字段现在从重叠判定里排除。
+> 累计已段化 **75 条**（14+13+8+19+21）。
+> ⏭ **W4.3 batch 6（下一片）**：`MRR_MEMREF_AUTO` 剩下的 2 条（带 `prefix`）、
 > `SSE_RR` 21（`escape`+`prefix`+`rex_w` 骨架，需把 `prefix`/`w` 变成段字段的 `match`）、
 > `MRR_EXT` 19 / `MRR` 17（移位族留待扩展码问题定案）/ `VEX_*` / `EVEX_*`；
 > 每批跑三条守卫（asm_encoding 棘轮 + encoder_fuzz + isa_roundtrip_guard）再提交。

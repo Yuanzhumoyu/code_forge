@@ -384,6 +384,16 @@ escape = [0x0F]
 prefix = "field"
 rex_w = "field"
 
+
+[[forms]]
+name = "SSE_RR_SEG"       # v21 W4：段形态（prefix 字段 + 0F escape + rex.W 字段 + opcode + modrm）
+segments = [
+  { kind = "prefix", fields = ["u8[7:0]:prefix"] },
+  { kind = "escape", bytes = ["0x0F"] },
+  { kind = "rex", fields = ["u1[7]:w"] },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "EVEX_RR_MEMREF"   # EVEX 内存：reg=op0、MemRef op1；压缩位移 ×evex_disp_scale
 evex = { map = "field", pp = "field", w = "field", l = "field", disp_scale = "field" }
@@ -1058,17 +1068,17 @@ asm = "cmp {src}, {imm}"
 
 [[instructions]]
 name = "SQRTSD"
-form = "SSE_RR"
-opcode = 0x51
-match = { prefix = 0xF2, w = 0 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x51, prefix = 0xF2, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "sqrtsd {dst}, {src}"
 
 [[instructions]]
 name = "SQRTSS"
-form = "SSE_RR"
-opcode = 0x51
-match = { prefix = 0, w = 0 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x51, prefix = 0, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "sqrtss {dst}, {src}"
 
@@ -1076,9 +1086,9 @@ asm = "sqrtss {dst}, {src}"
 # 驱动 REX.W（eax → 0、rax → 1），汇编器按操作数实际宽度自动分发。
 [[instructions]]
 name = "CVTSI2SD"
-form = "SSE_RR"
-opcode = 0x2A
-match = { prefix = 0xF2 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x2A, prefix = 0xF2 }
 opsize = "src"
 rex_w = "auto"
 ops = ["dst:fpr:out", "src:gprx"]
@@ -1086,9 +1096,9 @@ asm = "cvtsi2sd {dst}, {src}"
 
 [[instructions]]
 name = "CVTSD2SS"
-form = "SSE_RR"
-opcode = 0x5A
-match = { prefix = 0xF2, w = 0 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x5A, prefix = 0xF2, w = 0 }
 # 变参取值时的"窄回"能力（v20 V4 + D5）：C/LLVM 的默认实参提升把 float 传成 double，
 # `va_arg(ap, f32)` 得取 double 再窄回来——这条就是那一步（bits = 目的位宽）。
 ops = ["dst:fpr:out", "src:fpr"]
@@ -1096,49 +1106,49 @@ asm = "cvtsd2ss {dst}, {src}"
 
 [[instructions]]
 name = "CVTSS2SD"
-form = "SSE_RR"
-opcode = 0x5A
-match = { prefix = 0xF3, w = 0 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x5A, prefix = 0xF3, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "cvtss2sd {dst}, {src}"
 
 [[instructions]]
 name = "ANDPD"
-form = "SSE_RR"
-opcode = 0x54
-match = { prefix = 0x66, w = 0 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x54, prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "andpd {dst}, {src}"
 
 [[instructions]]
 name = "XORPD"
-form = "SSE_RR"
-opcode = 0x57
-match = { prefix = 0x66, w = 0 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x57, prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "xorpd {dst}, {src}"
 
 [[instructions]]
 name = "COMISD"
-form = "SSE_RR"
-opcode = 0x2F
-match = { prefix = 0x66, w = 0 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x2F, prefix = 0x66, w = 0 }
 ops = ["src:fpr", "src2:fpr"]
 asm = "comisd {src}, {src2}"
 
 [[instructions]]
 name = "COMISS"
-form = "SSE_RR"
-opcode = 0x2F
-match = { prefix = 0, w = 0 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x2F, prefix = 0, w = 0 }
 ops = ["src:fpr", "src2:fpr"]
 asm = "comiss {src}, {src2}"
 
 [[instructions]]
 name = "MOVSD_XMM_FREG"
-form = "SSE_RR"
-opcode = 0x10
-match = { prefix = 0xF2, w = 0 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x10, prefix = 0xF2, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "movsd {dst}, {src}"
 effect = ["Move"]
@@ -1148,9 +1158,9 @@ effect = ["Move"]
 
 [[instructions]]
 name = "CVTSI2SS"
-form = "SSE_RR"
-opcode = 0x2A
-match = { prefix = 0xF3 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x2A, prefix = 0xF3 }
 opsize = "src"
 rex_w = "auto"
 ops = ["dst:fpr:out", "src:gprx"]
@@ -1158,9 +1168,9 @@ asm = "cvtsi2ss {dst}, {src}"
 
 [[instructions]]
 name = "MOVD_FREG_IREG"
-form = "SSE_RR"
-opcode = 0x6E
-match = { prefix = 0x66, w = 0 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x6E, prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "movd {dst}, {src}"
 # **类间位搬移**（v20 V7）：GPR 的位模式 → FPR。x86 的 SysV64 正常情况下浮点走 XMM，
@@ -1170,44 +1180,44 @@ data_width = 32
 
 [[instructions]]
 name = "MOVD_IREG_FREG"
-modrm = { reg = "src", rm = "dst" }
-form = "SSE_RR"
-opcode = 0x7E
-match = { prefix = 0x66, w = 0 }
+bind = { reg = "src", rm = "dst" }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x7E, prefix = 0x66, w = 0 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "movd {dst}, {src}"
 data_width = 32
 
 [[instructions]]
 name = "PUNPCKLDQ"
-form = "SSE_RR"
-opcode = 0x62
-match = { prefix = 0x66, w = 0 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x62, prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "punpckldq {dst}, {src}"
 
 [[instructions]]
 name = "PUNPCKLQDQ"
-form = "SSE_RR"
-opcode = 0x6C
-match = { prefix = 0x66, w = 0 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x6C, prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "punpcklqdq {dst}, {src}"
 
 [[instructions]]
 name = "PUNPCKHDQ"
-form = "SSE_RR"
-opcode = 0x6A
-match = { prefix = 0x66, w = 0 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x6A, prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "punpckhdq {dst}, {src}"
 
 [[instructions]]
 name = "MOVSS"
 data_width = 32
-form = "SSE_RR"
-opcode = 0x10
-match = { prefix = 0xF3, w = 0 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x10, prefix = 0xF3, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "movss {dst}, {src}"
 effect = ["Move"]
@@ -1557,9 +1567,9 @@ asm = "movss [{src2}], {src}"
 # opsize=s0 驱动 REX.W（eax → 0、rax → 1），按操作数实际宽度自动分发。
 [[instructions]]
 name = "CVTSS2SI"
-form = "SSE_RR"
-opcode = 0x2D
-match = { prefix = 0xF3 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x2D, prefix = 0xF3 }
 opsize = "dst"
 rex_w = "auto"
 ops = ["dst:gprx:out", "src:fpr"]
@@ -1567,9 +1577,9 @@ asm = "cvtss2si {dst}, {src}"
 
 [[instructions]]
 name = "CVTTSS2SI"
-form = "SSE_RR"
-opcode = 0x2C
-match = { prefix = 0xF3, w = 0 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x2C, prefix = 0xF3, w = 0 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "cvttss2si {dst}, {src}"
 
@@ -1577,9 +1587,9 @@ asm = "cvttss2si {dst}, {src}"
 # opsize=s0 驱动 REX.W，按操作数实际宽度自动分发。
 [[instructions]]
 name = "CVTSD2SI"
-form = "SSE_RR"
-opcode = 0x2D
-match = { prefix = 0xF2 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x2D, prefix = 0xF2 }
 opsize = "dst"
 rex_w = "auto"
 ops = ["dst:gprx:out", "src:fpr"]
@@ -1587,9 +1597,9 @@ asm = "cvtsd2si {dst}, {src}"
 
 [[instructions]]
 name = "CVTTSD2SI"
-form = "SSE_RR"
-opcode = 0x2C
-match = { prefix = 0xF2 }
+form = "SSE_RR_SEG"
+
+match = { opcode = 0x2C, prefix = 0xF2 }
 opsize = "dst"
 rex_w = "auto"
 ops = ["dst:gprx:out", "src:fpr"]

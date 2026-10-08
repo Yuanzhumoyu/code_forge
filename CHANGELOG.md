@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 5：x86 SSE 族 21 条段化 + 段模型两项能力
+
++ `isa/x86.toml`：`SSE_RR` 21 条迁到 `SSE_RR_SEG`（prefix + 0F escape + rex.W + opcode + modrm）。
++ **前缀段可取字段**：`{ kind = "prefix", fields = ["u8[7:0]:prefix"] }` 降级成经典
+  `prefix = "field"`（值与"字节 → 效果名"的常量形态并存）。
++ **`rex_w` 可来自字段**：rex 段的 `w` 字段**无默认值** ⇒ 经典 `rex_w = "field"`（值由指令的
+  `match = { w = … }` 给）；带默认值 ⇒ 固定 0/1。
++ 修 lint 误报：**段内字段各自属于自己的字节空间**（前缀字节/REX 字节/ModRM 字节），
+  不按"同一个字里的位"判重叠——此前 `prefix`[0,8) 与 `w`[7,8) 被误报为抢同一批位。
++ 逐字节不变：`isa_roundtrip_guard` + asm 棘轮 + 谱内向量 + 双 JIT 矩阵；累计 **75 条**已段化。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 4：x86 imm32/imm8 族 19 条段化
 
 + `isa/x86.toml`：`MRR_EXT` 19 条按 `imm` 宽度拆成两个段形态 form——

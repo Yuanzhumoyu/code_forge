@@ -120,6 +120,21 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
         }
         match seg.kind {
             SegKind::Prefix => {
+                // 两种前缀段：
+                // ① `bytes = { "0x66" = "opsize16" }`——**字节是常量**（哪个字节代表什么效果）；
+                // ② `fields = ["u8[7:0]:prefix"]`——**字节由字段给**（SSE 的 66/F2/F3/0 逐指令不同，
+                //    值写在指令的 `match = { prefix = 0xF2 }` 里）。
+                if seg.bytes.is_none() && seg.fields.is_some() {
+                    keys.prefix = Some(PrefixKey::One("field".to_string()));
+                    // 段内字段已经并入 `fields`（上面统一处理），指令的 `match.prefix` 继续生效。
+                    // 效果名/字节校验留给后续片（那时前缀表按 form 显式化）。
+                    if seg.fields.as_ref().is_some_and(|f| f.is_empty()) {
+                        return Err(format!(
+                            "[[forms.{fname}]].prefix: 字段形式的前缀段不能给空的 `fields`"
+                        ));
+                    }
+                    // 跳过下面的 bytes 分支
+                } else {
                 let effects = match seg.bytes.clone() {
                     Some(SegmentBytes::Effects(map)) => map,
                     Some(SegmentBytes::Raw(_)) => {
@@ -165,6 +180,7 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
                 } else {
                     PrefixKey::Many(parts)
                 });
+                }
             }
             SegKind::Escape => {
                 let raw = match seg.bytes.clone() {
@@ -192,16 +208,22 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
                 //（设计文档的例子写了 `u4[3:0]=0x4`；无名常量槽不在 W2 支持面内，而
                 // "这堆字节是 REX"本来就是结构承载的事实 ⇒ 不再写第二遍）。
                 //
-                // W 位来源：段里 `w` 字段带显式默认值 ⇒ 恒 1 / 恒 0；否则按宽度规则（auto）。
+                // W 位来源：段里 `w` 字段**带显式默认值** ⇒ 固定（`=0` 不置位 / `=1` 恒置位）；
+                // **没有默认值** ⇒ 值由指令的 `match = { w = 0|1 }` 给（经典 `rex_w = "field"`）。
                 let w_default = seg.fields.as_ref().and_then(|fs| {
                     fs.iter()
                         .find(|f| f.name.as_deref() == Some("w"))
                         .and_then(|f| f.default)
                 });
-                keys.rex_w = Some(match w_default {
-                    Some(0) => RexW::Auto,
-                    Some(_) => RexW::Always,
-                    None => RexW::Auto,
+                let has_w_field = seg
+                    .fields
+                    .as_ref()
+                    .is_some_and(|fs| fs.iter().any(|f| f.name.as_deref() == Some("w")));
+                keys.rex_w = Some(match (has_w_field, w_default) {
+                    (true, None) => RexW::Field,
+                    (_, Some(0)) => RexW::Auto,
+                    (_, Some(_)) => RexW::Always,
+                    (false, None) => RexW::Auto,
                 });
             }
             SegKind::Opcode => {
@@ -391,7 +413,7 @@ name = "S"
 prefix = "0xF0"
 escape = [0x0F]
 rex = "auto"
-rex_w = "auto"
+rex_w = "field"
 [[instructions]]
 name = "N"
 form = "S"
@@ -412,6 +434,7 @@ asm = "n {dst}, {src}"
         assert_eq!(s.keys.prefix, c.keys.prefix, "prefix");
         assert_eq!(s.keys.escape, c.keys.escape, "escape");
         assert_eq!(s.keys.rex, c.keys.rex, "rex");
+        // 段里 `w` 字段**无默认值** ⇒ 值来自指令的 `match`（经典 `rex_w = "field"`）。
         assert_eq!(s.keys.rex_w, c.keys.rex_w, "rex_w");
         // vlen ISA：`opcode_field` 是**定宽**键（`validate` 用它判 `is_fixed`），不设；
         // 指令侧的值由 `match = { opcode = … }` 翻译成 `Instruction.opcode`。

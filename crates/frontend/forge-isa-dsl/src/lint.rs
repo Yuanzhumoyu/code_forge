@@ -426,11 +426,34 @@ fn used_bit_ranges(m: &IsaModel, inst: &Instruction) -> BTreeMap<String, Vec<(u3
 }
 
 /// 逐指令判"两个字段抢同一批位"。消息里给出双方区间，便于直接改 TOML。
+///
+/// **段内字段（v21 W4 的 stream）不参与**：它们各自属于**自己的段**（前缀字节、REX 字节、
+/// ModRM 字节各占一个字节空间），位区间是**段内偏移**而非同一个字里的位——按字内区间判
+/// 会把 `prefix`[0,8) 与 `w`[7,8) 判成"抢同一批位"（实测误报）。
 fn bitfield_overlaps(m: &IsaModel, idx: &DeclIndex) -> Vec<DiagLine> {
     let mut out = Vec::new();
+    // 所有段内字段名（跨全部 form 收集；同名即视为段内字段——段字段名是谱作者的命名空间）。
+    let mut seg_fields: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for f in &m.forms {
+        if let Some(segs) = &f.segments {
+            for s in segs {
+                if let Some(fs) = &s.fields {
+                    for d in fs {
+                        if let Some(n) = &d.name {
+                            seg_fields.insert(n.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
     for inst in &m.instructions {
         let ranges = used_bit_ranges(m, inst);
-        let names: Vec<&str> = ranges.keys().map(String::as_str).collect();
+        let names: Vec<&str> = ranges
+            .keys()
+            .map(String::as_str)
+            .filter(|n| !seg_fields.contains(*n))
+            .collect();
         for (i, a) in names.iter().enumerate() {
             for b in names.iter().skip(i + 1) {
                 let Some((ra, rb)) = overlapping(&ranges[*a], &ranges[*b]) else {
