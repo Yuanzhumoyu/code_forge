@@ -367,9 +367,108 @@ pub fn bind_operands(
     Ok(out)
 }
 
+/// W2 迁移算法（执行清单 §4.2）：把一个 form 的既有声明折叠成 v21 的 `fields` 列表。
+///
+/// - `opcode_field`：既有 `[[forms]].opcode_field`（`Some` ⇒ 定宽 ISA，本机制适用）
+/// - `operand_fields`：既有位置绑定（第 i 个操作数 → 第 i 个位域名）
+/// - `const_names`：用该 form 的指令在 `match` 里出现的**位域名**（首次出现序）
+/// - `bitfields`：既有 `[conventions.bitfields]`
+///
+/// 输出顺序 = `opcode` → `operand_fields`（去重）→ 常量字段；类型统一写 `u<字段宽>`
+/// （旧模型没有类型信息，`u` 是诚实的默认；语义类型由后续 W2b 的槽绑定校验补）。
+pub fn form_field_decls(
+    opcode_field: Option<&str>,
+    operand_fields: &[String],
+    const_names: &[String],
+    bitfields: &BTreeMap<String, Bitfield>,
+) -> Result<Vec<FieldDecl>, String> {
+    let mut names: Vec<String> = Vec::new();
+    let mut add = |n: &str, names: &mut Vec<String>| {
+        if !names.iter().any(|x| x == n) {
+            names.push(n.to_string());
+        }
+    };
+    if let Some(o) = opcode_field {
+        add(o, &mut names);
+    }
+    for n in operand_fields {
+        add(n, &mut names);
+    }
+    for n in const_names {
+        // 只收**位域名**：vlen ISA 的 `match` 里还有编码键（prefix/w/vex_map…），
+        // 那些不属于本机制。
+        if bitfields.contains_key(n) {
+            add(n, &mut names);
+        }
+    }
+    let mut out = Vec::new();
+    for n in &names {
+        let bf = bitfields
+            .get(n)
+            .ok_or_else(|| format!("字段 `{n}` 未在 [conventions.bitfields] 里声明"))?;
+        out.push(bitfield_to_decl(n, bf)?);
+    }
+    Ok(out)
+}
+
+/// 既有 [`Bitfield`] → 声明：`offset/width` 走连续形态；`pieces` 按 `shift` 排序
+/// （值低位 → 高位）走 `->` 散射形态。
+pub fn bitfield_to_decl(name: &str, bf: &Bitfield) -> Result<FieldDecl, String> {
+    match (&bf.offset, &bf.width, &bf.pieces) {
+        (Some(off), Some(w), None) => {
+            if *w == 0 {
+                return Err(format!("字段 `{name}` 的 width 为 0"));
+            }
+            Ok(FieldDecl {
+                types: vec![FieldType::U(*w)],
+                value: (w - 1, 0),
+                chunks: vec![(off + w - 1, *off)],
+                name: Some(name.to_string()),
+                default: None,
+            })
+        }
+        (None, None, Some(ps)) => {
+            if ps.is_empty() {
+                return Err(format!("字段 `{name}` 的 pieces 为空"));
+            }
+            let mut ps = ps.clone();
+            ps.sort_by_key(|p| p.shift);
+            let total: u32 = ps.iter().map(|p| p.width).sum();
+            let lo = ps[0].shift;
+            Ok(FieldDecl {
+                types: vec![FieldType::U(total)],
+                value: (lo + total - 1, lo),
+                chunks: ps
+                    .iter()
+                    .map(|p| (p.offset + p.width - 1, p.offset))
+                    .collect(),
+                name: Some(name.to_string()),
+                default: None,
+            })
+        }
+        _ => Err(format!(
+            "字段 `{name}` 的声明形态不合法（`offset`+`width` 与 `pieces` 二选一）"
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 位域的**规范形式**：`(词偏移, 宽度, 值偏移)` 列表，按值偏移排序。
+    /// `offset/width` 等价于"单段、shift 0"的 `pieces`。
+    fn canon(b: &Bitfield) -> Vec<(u32, u32, u32)> {
+        match (&b.offset, &b.width, &b.pieces) {
+            (Some(o), Some(w), None) => vec![(*o, *w, 0)],
+            (None, None, Some(ps)) => {
+                let mut v: Vec<(u32, u32, u32)> = ps.iter().map(|p| (p.offset, p.width, p.shift)).collect();
+                v.sort_by_key(|x| x.2);
+                v
+            }
+            _ => panic!("非法位域声明"),
+        }
+    }
 
     fn bf(offset: Option<u32>, width: Option<u32>) -> Bitfield {
         Bitfield {
@@ -489,6 +588,100 @@ mod tests {
             let again = FieldDecl::parse(&d.to_string()).unwrap();
             assert_eq!(again, d, "parse∘Display 是恒等");
             assert_eq!(again.to_string(), canonical, "Display 幂等");
+        }
+    }
+
+    /// **迁移算法在三份发行谱上的等价性证明**（W2.2b 的前置证据）。
+    ///
+    /// 对每个**定宽** form：把它折叠成 `fields` 声明、再降级回位域表，必须与既有
+    /// `[conventions.bitfields]` **逐字段相等**；每条指令的 `operand_fields` 也必须能被
+    /// "同名绑定 + `bind`" 还原。TOML 的实际改写由本算法产出的文本驱动 ⇒ 不可能偏离。
+    #[test]
+    fn migration_algorithm_is_equivalent_on_shipped_specs() {
+        // 第三项 = 该谱是否应当有可校验的定宽 form（x86 是变长谱，全部 form 都没有
+        // `opcode_field`，本机制不适用——它跟着 `match` 改名走，字段语法留给 W4 的 stream）。
+        for (label, src, expect_fixed) in [
+            ("x86", include_str!("../../../../../isa/x86.toml"), false),
+            ("riscv64", include_str!("../../../../../isa/riscv64.toml"), true),
+            ("arm64", include_str!("../../../../../isa/arm64.toml"), true),
+        ] {
+            let m = crate::dsl::parse_and_validate(src)
+                .unwrap_or_else(|e| panic!("{label} 解析失败：{e}"));
+            let bf = &m.conventions.bitfields;
+            let (mut nf, mut ni) = (0usize, 0usize);
+            for form in &m.forms {
+                let Some(opcode_field) = form.keys.opcode_field.as_deref() else {
+                    continue; // 变长 form（x86）不走本机制
+                };
+                let opf = form.keys.operand_fields.clone().unwrap_or_default();
+                let insts: Vec<&crate::dsl::model::Instruction> = m
+                    .instructions
+                    .iter()
+                    .filter(|i| i.form.as_deref() == Some(form.name.as_str()))
+                    .collect();
+                let mut consts: Vec<String> = Vec::new();
+                for i in &insts {
+                    if let Some(fs) = &i.fields {
+                        for k in fs.keys() {
+                            if !consts.iter().any(|x| x == k) {
+                                consts.push(k.clone());
+                            }
+                        }
+                    }
+                }
+                let decls = form_field_decls(Some(opcode_field), &opf, &consts, bf)
+                    .unwrap_or_else(|e| panic!("{label}/{}: {e}", form.name));
+                // ① 降级回位域表：**按语义**逐字段相等（`offset/width` 与"单段 shift=0 的
+                // `pieces`"是同一种编码，规范形式统一后比较）。
+                let lowered = lower_bitfields(&decls).unwrap();
+                for (n, got) in &lowered {
+                    let want = bf
+                        .get(n)
+                        .unwrap_or_else(|| panic!("{label}/{}: 字段 `{n}` 原本不存在", form.name));
+                    assert_eq!(
+                        canon(got),
+                        canon(want),
+                        "{label}/{}: 字段 `{n}` 迁移前后不等价",
+                        form.name
+                    );
+                }
+                // ② 绑定迁移：同名绑定 + bind 必须还原既有 operand_fields。
+                for i in &insts {
+                    let ops_names: Vec<String> = i
+                        .ops
+                        .as_deref()
+                        .unwrap_or(&[])
+                        .iter()
+                        .map(|e| e.split(':').next().unwrap_or("").trim().to_string())
+                        .collect();
+                    let mut bind = BTreeMap::new();
+                    for (k, op) in ops_names.iter().enumerate() {
+                        if let Some(f) = opf.get(k)
+                            && f != op
+                        {
+                            bind.insert(op.clone(), f.clone());
+                        }
+                    }
+                    if ops_names.is_empty() || ops_names.len() > opf.len() {
+                        continue;
+                    }
+                    let got = bind_operands(&decls, &ops_names, &bind)
+                        .unwrap_or_else(|e| panic!("{label}/{}: {e}", i.name));
+                    assert_eq!(
+                        got,
+                        opf[..ops_names.len()].to_vec(),
+                        "{label}/{}: operand_fields 绑定迁移不等价",
+                        i.name
+                    );
+                    ni += 1;
+                }
+                nf += 1;
+            }
+            assert!(
+                !expect_fixed || nf > 0,
+                "{label}: 没有可校验的定宽 form（expected={expect_fixed}）"
+            );
+            eprintln!("{label}: {nf} forms / {ni} insts 迁移等价 ✔");
         }
     }
 
