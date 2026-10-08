@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 2：x86 内存族 13 条段化 + 扩展码表达定案
+
++ `isa/x86.toml`：`MRR_MEMREF_AUTO` 的干净子集（MOV/STORE/XCHG 内存形式 + NOT/NEG/INC/DEC/
+  MUL/IMUL/DIV/IDIV）迁到段形态 form `MRR_MEM_SEG`（`opcode` + `modrm` 段）。
++ **扩展码（`/2`、`/7`）的表达定案**：**常量进 `match`（整数）、操作数绑定进 `bind`（名字）**——
+  `modrm = { reg = 2, rm = "[mem]" }` 迁成 `match = { opcode = 0xF7, reg = 2 }` +
+  `bind = { rm = "[mem]" }`；降级把 `match.reg` 翻成 `Modrm.reg = Ext(n)`。
++ 逐字节不变：`isa_roundtrip_guard` + asm 棘轮 + 谱内向量 + 双 JIT 矩阵；累计 27 条已段化。
+
 ### Fixed (2026-10-08) — ISA-DSL v21 W4.3：段降级不再覆写 form 的既有编码键
 
 + `form.keys = keys`（段键**整体覆写**）会把 form 自己写的语义键（`opsize`/`prefix`/

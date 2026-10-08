@@ -413,6 +413,14 @@ prefix = "field"
 name = "MRR_MEMREF_AUTO"  # MemRef 内存（base/index/disp）+ opsize 由首个 Reg 操作数驱动
 opsize = "s0"
 
+
+[[forms]]
+name = "MRR_MEM_SEG"      # v21 W4：段形态（opcode + modrm，MemRef 内存）
+opsize = "s0"
+segments = [
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "MRR_MEMREF"       # MemRef 内存（base+disp）+ opsize 64（spill）
 opsize = 64
@@ -1374,33 +1382,33 @@ asm = "mov {mem}, {src}"
 
 [[instructions]]
 name = "MOV_R_MEM_AUTO"
-form = "MRR_MEMREF_AUTO"
-modrm = { rm = "[mem]" }
-opcode = 0x8B
+form = "MRR_MEM_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0x8B }
 ops = ["dst:gpr192:out", "mem:mem"]
 asm = "mov {dst}, {mem}"
 
 [[instructions]]
 name = "STORE_MEM_R_AUTO"
-form = "MRR_MEMREF_AUTO"
-modrm = { rm = "[mem]" }
-opcode = 0x89
+form = "MRR_MEM_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0x89 }
 ops = ["src:gpr192", "mem:mem"]
 asm = "mov {mem}, {src}"
 
 [[instructions]]
 name = "MOV_R_MEM_8_AUTO"
-form = "MRR_MEMREF_AUTO"
-modrm = { rm = "[mem]" }
-opcode = 0x8A
+form = "MRR_MEM_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0x8A }
 ops = ["dst:gpr8b:out", "mem:mem"]
 asm = "mov {dst}, {mem}"
 
 [[instructions]]
 name = "STORE_MEM_R_8_AUTO"
-form = "MRR_MEMREF_AUTO"
-modrm = { rm = "[mem]" }
-opcode = 0x88
+form = "MRR_MEM_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0x88 }
 ops = ["src:gpr8b", "mem:mem"]
 asm = "mov {mem}, {src}"
 
@@ -1420,9 +1428,9 @@ asm = "movsxd {dst}, {mem}"
 # 这里补 MemRef 风味；无位移的写法仍由声明在前的 `XCHG_MEM_R` 命中（同字节、同类型）。
 [[instructions]]
 name = "XCHG_MEM_R_AUTO"
-form = "MRR_MEMREF_AUTO"
-modrm = { rm = "[mem]" }
-opcode = 0x87
+form = "MRR_MEM_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0x87 }
 ops = ["dst:gprx:inout", "mem:mem"]
 asm = "xchg {mem}, {dst}"
 
@@ -1998,45 +2006,45 @@ asm = "not {dst}"
 # 一元内存形态给尺寸提示），不会静默按 32 位编出来。其他宽度照这个形状加一行即可。
 [[instructions]]
 name = "NOT_MEM32"
-form = "MRR_MEMREF_AUTO"
-modrm = { reg = 2, rm = "[mem]" }
-opcode = 0xF7
+form = "MRR_MEM_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0xF7, reg = 2 }
 opsize = 32
 ops = ["mem:mem:inout"]
 asm = "not dword ptr {mem}"
 
 [[instructions]]
 name = "NEG_MEM32"
-form = "MRR_MEMREF_AUTO"
-modrm = { reg = 3, rm = "[mem]" }
-opcode = 0xF7
+form = "MRR_MEM_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0xF7, reg = 3 }
 opsize = 32
 ops = ["mem:mem:inout"]
 asm = "neg dword ptr {mem}"
 
 [[instructions]]
 name = "INC_MEM32"
-form = "MRR_MEMREF_AUTO"
-modrm = { reg = 0, rm = "[mem]" }
-opcode = 0xFF
+form = "MRR_MEM_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0xFF, reg = 0 }
 opsize = 32
 ops = ["mem:mem:inout"]
 asm = "inc dword ptr {mem}"
 
 [[instructions]]
 name = "DEC_MEM32"
-form = "MRR_MEMREF_AUTO"
-modrm = { reg = 1, rm = "[mem]" }
-opcode = 0xFF
+form = "MRR_MEM_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0xFF, reg = 1 }
 opsize = 32
 ops = ["mem:mem:inout"]
 asm = "dec dword ptr {mem}"
 
 [[instructions]]
 name = "MUL_MEM32"
-form = "MRR_MEMREF_AUTO"
-modrm = { reg = 4, rm = "[mem]" }
-opcode = 0xF7
+form = "MRR_MEM_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0xF7, reg = 4 }
 opsize = 32
 effect = ["Write"]
 # mul 隐式读 RAX 并写 RAX:RDX（128 位积）
@@ -2046,9 +2054,9 @@ asm = "mul dword ptr {mem}"
 
 [[instructions]]
 name = "IMUL_MEM32"
-form = "MRR_MEMREF_AUTO"
-modrm = { reg = 5, rm = "[mem]" }
-opcode = 0xF7
+form = "MRR_MEM_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0xF7, reg = 5 }
 opsize = 32
 effect = ["Write"]
 implicit_regs = ["RAX", "RDX"]
@@ -2057,9 +2065,9 @@ asm = "imul dword ptr {mem}"
 
 [[instructions]]
 name = "DIV_MEM32"
-form = "MRR_MEMREF_AUTO"
-modrm = { reg = 6, rm = "[mem]" }
-opcode = 0xF7
+form = "MRR_MEM_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0xF7, reg = 6 }
 opsize = 32
 effect = ["Write"]
 implicit_regs = ["RAX", "RDX"]
@@ -2068,9 +2076,9 @@ asm = "div dword ptr {mem}"
 
 [[instructions]]
 name = "IDIV_MEM32"
-form = "MRR_MEMREF_AUTO"
-modrm = { reg = 7, rm = "[mem]" }
-opcode = 0xF7
+form = "MRR_MEM_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0xF7, reg = 7 }
 opsize = 32
 effect = ["Write"]
 implicit_regs = ["RAX", "RDX"]

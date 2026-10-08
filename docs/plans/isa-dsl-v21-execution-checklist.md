@@ -385,7 +385,14 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > 14 条全迁 + `cargo test --workspace --exclude forge-rustc` → **exit 0、0 编译错误、0 失败**。
 > ⇒ **W4.3 batch 1 完成**：14 条核心 RR 指令（MOV/ADD/SUB/XOR/AND/OR/CMP/TEST/ADC/SBB…）
 > 已迁到段骨架 form `RR_SEG`（`opcode` + `modrm` 段），指令侧只写 `match = { opcode = X }`。
-> ⏭ **W4.3 batch 2（下一片）**：同模板推进其余组——`MRR_MEMREF_AUTO` 23 / `SSE_RR` 21 /
+> ✅ **batch 2 完成（2026-10-08）**：`MRR_MEMREF_AUTO` 的**干净子集 13 条**迁到段形态 form
+> `MRR_MEM_SEG`。同片定下**扩展码的表达**（此前悬着的问题）：`modrm = { reg = 2, rm = "[mem]" }`
+> → **`match = { opcode = 0xF7, reg = 2 }` + `bind = { rm = "[mem]" }`**——
+> 分工是「**常量进 `match`（整数）、操作数绑定进 `bind`（名字）**」，`match.reg` 降级成
+> `Modrm.reg = Ext(n)`。生效键实测：`NOT_MEM32` 的 `enc` 里 `modrm={ reg = 2, rm = "[mem]" }` + `opsize=32` ✔。
+> 累计已段化 **27 条**（batch1 14 + batch2 13）。
+> ⏭ **W4.3 batch 3（下一片）**：`MRR_MEMREF_AUTO` 剩下的 10 条（带 `escape`/`prefix`，各需自己的骨架）、
+> `SSE_RR` 21（`escape`+`prefix`+`rex_w` 骨架，需把 `prefix`/`w` 变成段字段的 `match`）、
 > `MRR_EXT` 19 / `MRR` 17（移位族留待扩展码问题定案）/ `VEX_*` / `EVEX_*`；
 > 每批跑三条守卫（asm_encoding 棘轮 + encoder_fuzz + isa_roundtrip_guard）再提交。
 > ~~真正的拦路虎（语义，不是崩溃）~~（已解决，保留作方法论记录）：迁移后 `x86 MOV64_RR` 的 REX.W 丢了——

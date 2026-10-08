@@ -57,12 +57,36 @@ fn lower_stream_instructions(m: &mut IsaModel) {
             continue;
         };
         let mut rest = std::collections::BTreeMap::new();
+        // 段字段的**常量**值走 `match`（整数），**操作数绑定**走 `bind`（名字）——两者分工：
+        //   match = { opcode = 0x8B }            → Instruction.opcode
+        //   match = { reg = 2 }                  → Modrm.reg = Ext(2)（x86 的 `/2` 扩展码）
+        //   bind  = { reg = "dst", rm = "[mem]" }→ Modrm.reg = Op("dst") / rm = "[mem]"
+        let mut ext_reg: Option<u64> = None;
         for (k, v) in mt {
-            if k == "opcode" {
-                inst.opcode = Some(u64::try_from(v).map_err(|_| ()).unwrap_or(0));
-            } else {
-                rest.insert(k, v);
+            match k.as_str() {
+                "opcode" => {
+                    inst.opcode = Some(v);
+                }
+                "reg" => {
+                    // 扩展码（x86 的 `/0`..`/7`）：整数常量。
+                    ext_reg = Some(v);
+                }
+                _ => {
+                    rest.insert(k, v);
+                }
             }
+        }
+        if let Some(n) = ext_reg {
+            // 与 `bind`（可能已经设了 rm）**合并**，不覆盖另一半。
+            let base = inst
+                .enc
+                .modrm
+                .clone()
+                .unwrap_or(super::model::ModrmMap { reg: None, rm: None });
+            inst.enc.modrm = Some(super::model::ModrmMap {
+                reg: Some(super::model::ModrmReg::Ext(n)),
+                rm: base.rm,
+            });
         }
         inst.fields = Some(rest);
     }
