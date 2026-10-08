@@ -222,6 +222,24 @@ cargo test -p forge-tests --lib jit_matrix_riscv64 -- --test-threads=1 --nocaptu
 4. **`opcode_field = "word"`（整字常量，如 NOP/RET）**：整字字段与其它位段重叠 ⇒ 依赖
    "同一条指令不得同时绑定相交两段"的校验口径（D-6 的逐指令视图）。
 
+### 4.3 实测：收尾工作量在**夹具**，不在三谱（2026-10-08）
+
+W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并已整体撤回**——当前 `serde(skip)`
+会让所有仍写旧键的 TOML 解析失败，实测波及的是**夹具**而非发行谱：
+
+1. **三谱迁移很快**：打印器（对 `form_field_decls` 取文本）一次产出并改写
+   **riscv64 12 forms + arm64 38 forms = 50 个 form**，`[conventions.bitfields]` 整节删除；
+   算法已被 a8c7e6e 的单测证明等价 ⇒ 产物不可能偏离。
+2. **大头是夹具**：`diag_matrix_tests.rs`（56 处内联谱）、`dsl/tests.rs`（约 28 处）、
+   `dsl/template_tests.rs`（5 处）、`src/lint.rs` 测试夹具（4 处）、
+   `crates/backend/forge-codegen/tests/isa/*.toml`（6 份）、
+   `examples/isa-host-demo/isa/toy16.toml`、`tests/*.rs` 里的内联谱。
+3. **打印器跑两遍**：第一遍发行谱（已做），第二遍把夹具谱也加进 `include_str!` 列表。
+4. **可行的操作顺序**（已实测）：临时把三处 `serde(skip)` 还原成 `serde(default)`
+   → 跑打印器 → 脚本改写全部 TOML（发行谱 + 夹具）→ 恢复 `skip`
+   → 门禁（`isa_roundtrip_guard`/`spec_coverage_guard`/asm 三档棘轮/双矩阵逐数字不变）。
+5. `lint_shipped` 的 `LINT-BITFIELD-OVERLAP` 例外随旧键消失而一并撤除。
+
 ---
 
 ## 5. W3 操作数层收敛
