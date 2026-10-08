@@ -372,6 +372,9 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > **`forge-codegen` 的预生成器（build script）以 `STATUS_ACCESS_VIOLATION` 退出**——
 > 生成期崩溃，不是测试失败。已 `git checkout` 回退 `isa/x86.toml`，回退后 `forge-codegen`
 > 与 `forge-isa-dsl` 两套全绿。
+> **复现收窄（2026-10-08）**：迁移后的 x86 谱副本走 `forge-isa test`（临时宿主，只取部分 parts）
+> **不崩**（154 条向量、正常出宿主）；崩的是 `forge-codegen` 的 build script（**全量 parts**，
+> 含 lowering/machine/decode）⇒ 崩溃点在**临时宿主不生成的那些 parts**里。
 > 下一步是**用最小复现定位生成器**（建议：把该迁移应用到 `target/tmp/` 的一份副本 +
 > `FGE_DEBUG_GEN=1`，或先用 CLI 的生成路径二分"段形态 form × vlen 指令键"的组合），
 > 修好再重做第 3 步。可疑方向：段形态 form 与 vlen 指令键（`opsize`/`match`）共存时，
