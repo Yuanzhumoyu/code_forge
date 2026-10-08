@@ -1591,7 +1591,8 @@ asm = "cpop {dst}, {src}"
 name = "REV8"
 form = "I"
 opcode = 0x13
-fields = { funct3 = 5, imm12 = 0x6b8 }
+fields = { funct3 = 5 }
+fields_variant = { imm12 = { param = "xlen", by = { 32 = 0x698 }, default = 0x6b8 } }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "rev8 {dst}, {src}"
 
