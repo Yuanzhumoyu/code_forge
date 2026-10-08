@@ -275,7 +275,10 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
         }
     }
     form.fields = Some(fields);
-    form.keys = keys;
+    // **段键覆盖、既有键兜底**：form 自己写的语义键（`opsize`/`prefix`/`rex_w`/`escape`…）
+    // 必须留下——段只描述"这堆字节怎么排"。整体覆写会把 `opsize = "out"` 这类键冲掉，
+    // 后果是解码/编码按错误宽度裁决（实测：`MOV64_RR` 的 `48 89 C1` 被解成 32 位）。
+    form.keys = keys.over(&form.keys);
     Ok(())
 }
 

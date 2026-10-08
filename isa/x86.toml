@@ -319,6 +319,14 @@ bits = 8
 name = "MRR"            # @modrm：reg=op0, rm=op1, opsize auto
 opsize = "out"
 
+
+[[forms]]
+name = "RR_SEG"         # v21 W4：段形态（opcode + modrm），语义同 MRR
+opsize = "out"
+segments = [
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "MRR_FIX64"      # @modrm：opsize 固定 64（恒 REX.W）
 opsize = 64
@@ -412,8 +420,8 @@ opsize = 64
 [[instructions]]
 name = "MOV_R_RM"
 ref = "mov"
-form = "MRR"
-opcode = 0x8B
+form = "RR_SEG"
+match = { opcode = 0x8B }
 # v13-：与 MOV_RM_R/MOV64_RR 合并为同一助记符 `mov`——16/32/64 位寄存器
 # 版本按实际类型自动分发（mov EAX,EBX → 8B 32 位无前缀、mov RAX,RBX →
 # 89 D8、mov AX,BX → 66 8B）。gprx 显式排除 8 位（见槽声明）。
@@ -436,8 +444,8 @@ effect = ["Move"]
 [[instructions]]
 name = "MOV_RM_R"
 ref = "mov"
-form = "MRR"
-opcode = 0x89
+form = "RR_SEG"
+match = { opcode = 0x89 }
 ops = ["src:gpr", "dst:gpr:inout"]
 asm = "mov {dst}, {src}"
 effect = ["Move"]
@@ -452,8 +460,8 @@ effect = ["Move"]
 [[instructions]]
 name = "MOV_RM_R_24"
 ref = "mov"
-form = "MRR"
-opcode = 0x89
+form = "RR_SEG"
+match = { opcode = 0x89 }
 ops = ["src:gpr192", "dst:gpr192:inout"]
 asm = "mov {dst}, {src}"
 effect = ["Move"]
@@ -494,8 +502,8 @@ asm = "movsxd {dst}, {src}"
 [[instructions]]
 name = "ADD_RM_R"
 ref = "add"
-form = "MRR"
-opcode = 0x01
+form = "RR_SEG"
+match = { opcode = 0x01 }
 # v14：数据槽 gprx——宽度由 IR 类型 auto（I32→无 REX.W 32 位、I64→REX.W）。
 # 固定 _32 变体已删（DSL 回填修复后同 opcode 由 66/REX.W 前缀分发——WA-35）。
 ops = ["src:gprx", "dst:gprx:inout"]
@@ -504,8 +512,8 @@ asm = "add {dst}, {src}"
 [[instructions]]
 name = "SUB_RM_R"
 ref = "sub"
-form = "MRR"
-opcode = 0x29
+form = "RR_SEG"
+match = { opcode = 0x29 }
 ops = ["src:gprx", "dst:gprx:inout"]
 asm = "sub {dst}, {src}"
 
@@ -532,24 +540,24 @@ asm = "imul {dst}, {mem}"
 [[instructions]]
 name = "XOR_RM_R"
 ref = "xor"
-form = "MRR"
-opcode = 0x31
+form = "RR_SEG"
+match = { opcode = 0x31 }
 ops = ["src:gprx", "dst:gprx:inout"]
 asm = "xor {dst}, {src}"
 
 [[instructions]]
 name = "AND_RM_R"
 ref = "and"
-form = "MRR"
-opcode = 0x21
+form = "RR_SEG"
+match = { opcode = 0x21 }
 ops = ["src:gprx", "dst:gprx:inout"]
 asm = "and {dst}, {src}"
 
 [[instructions]]
 name = "OR_RM_R"
 ref = "or"
-form = "MRR"
-opcode = 0x09
+form = "RR_SEG"
+match = { opcode = 0x09 }
 ops = ["src:gprx", "dst:gprx:inout"]
 asm = "or {dst}, {src}"
 
@@ -561,8 +569,8 @@ asm = "or {dst}, {src}"
 [[instructions]]
 name = "CMP_RM_R"
 ref = "cmp"
-form = "MRR"
-opcode = 0x39
+form = "RR_SEG"
+match = { opcode = 0x39 }
 opsize = "max"
 ops = ["src:gprx", "src2:gprx"]
 asm = "cmp {src2}, {src}"
@@ -570,8 +578,8 @@ asm = "cmp {src2}, {src}"
 [[instructions]]
 name = "TEST_RM_R"
 roles = ["test"]
-form = "MRR"
-opcode = 0x85
+form = "RR_SEG"
+match = { opcode = 0x85 }
 opsize = "max"
 ops = ["src:gprx", "src2:gprx"]
 asm = "test {src2}, {src}"
@@ -818,16 +826,16 @@ asm = "btc {src2}, {src}"
 name = "MOV_RM8_R64"
 ref = "mov"
 data_width = 64
-form = "MRR"
-opcode = 0x89
+form = "RR_SEG"
+match = { opcode = 0x89 }
 ops = ["src:gpr", "dst:gpr:inout"]
 asm = "mov {dst}, {src}"   # v13：与 MOV_RM_R 合并（真重复，生成期去重保留首个）
 effect = ["Move"]
 
 [[instructions]]
 name = "MOV_R8_RM64"
-form = "MRR"
-opcode = 0x8B
+form = "RR_SEG"
+match = { opcode = 0x8B }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "mov {dst}, {src}"
 effect = ["Move"]
@@ -921,15 +929,15 @@ asm = "cmp {src}, {imm}"
 # ADC/SBB 的寄存器-寄存器形式（`11 /r`、`19 /r`）——与立即数形式配套。
 [[instructions]]
 name = "ADC_RM_R"
-form = "MRR"
-opcode = 0x11
+form = "RR_SEG"
+match = { opcode = 0x11 }
 ops = ["src:gprx", "dst:gprx:inout"]
 asm = "adc {dst}, {src}"
 
 [[instructions]]
 name = "SBB_RM_R"
-form = "MRR"
-opcode = 0x19
+form = "RR_SEG"
+match = { opcode = 0x19 }
 ops = ["src:gprx", "dst:gprx:inout"]
 asm = "sbb {dst}, {src}"
 

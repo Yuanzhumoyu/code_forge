@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-08) — ISA-DSL v21 W4.3：段降级不再覆写 form 的既有编码键
+
++ `form.keys = keys`（段键**整体覆写**）会把 form 自己写的语义键（`opsize`/`prefix`/
+  `rex_w`/`escape`…）冲掉 ⇒ 编码/解码按错误宽度裁决（实测：x86 `MOV64_RR` 的 `48 89 C1`
+  被解成 32 位）。改为 **段键覆盖、既有键兜底**（`keys.over(&form.keys)`）。
++ 同片：`isa/x86.toml` 的 **14 条**核心 RR 指令（MOV/ADD/SUB/XOR/AND/OR/CMP/TEST/ADC/SBB…）
+  迁到段骨架 form（`segments` 声明 `opcode` + `modrm` 布局，指令只写 `match = { opcode = X }`），
+  逐字节不变由 `isa_roundtrip_guard` + asm 棘轮 + 谱内向量共同守住。
+
 ### Added (2026-10-08) — ISA-DSL v21 W4.3：段字段值 → 经典标量（`match` 推广到 stream）
 
 + stream form 声明段布局；指令用 `match = { opcode = 0x8B }` 给段的 `opcode` 字段赋值，

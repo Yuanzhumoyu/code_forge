@@ -378,7 +378,17 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > （`(?m)^` 只数到 1 节）。重写成**纯行内替换**后：`cargo build -p forge-codegen`
 > **连跑 3 次全 exit 0**；工作区 `cargo test` 也确实崩，但**发生在一个真失败之后**
 > （`isa_roundtrip_guard` FAILED），是与失败同现的次生现象。
-> ⛔ **真正的拦路虎（语义，不是崩溃）**：迁移后 `x86 MOV64_RR` 的 REX.W 丢了——
+> ✅ **已解决（2026-10-08）**：根因是我的 W4 降级 **整体覆写** form 的键（`form.keys = keys;`）——
+> 把 form 自己写的 `opsize = "out"` 冲掉了，于是被迁指令丢失 opsize，解码按错误宽度裁决
+> （`MOV64_RR` 的 `48 89 C1` 被解成 32 位）。改成 **段键覆盖、既有键兜底**
+> （`keys.over(&form.keys)`）后：单条迁移的 `isa_roundtrip_guard` 立刻转绿，
+> 14 条全迁 + `cargo test --workspace --exclude forge-rustc` → **exit 0、0 编译错误、0 失败**。
+> ⇒ **W4.3 batch 1 完成**：14 条核心 RR 指令（MOV/ADD/SUB/XOR/AND/OR/CMP/TEST/ADC/SBB…）
+> 已迁到段骨架 form `RR_SEG`（`opcode` + `modrm` 段），指令侧只写 `match = { opcode = X }`。
+> ⏭ **W4.3 batch 2（下一片）**：同模板推进其余组——`MRR_MEMREF_AUTO` 23 / `SSE_RR` 21 /
+> `MRR_EXT` 19 / `MRR` 17（移位族留待扩展码问题定案）/ `VEX_*` / `EVEX_*`；
+> 每批跑三条守卫（asm_encoding 棘轮 + encoder_fuzz + isa_roundtrip_guard）再提交。
+> ~~真正的拦路虎（语义，不是崩溃）~~（已解决，保留作方法论记录）：迁移后 `x86 MOV64_RR` 的 REX.W 丢了——
 > `isa_roundtrip_guard::derived_insts_roundtrip_byte_stable` 报
 > `decode→encode 往返字节不一致：left [137,193]（89 C1）right [72,137,193]（48 89 C1）`。
 > `MOV64_RR` 自己用 `MRR_FIX64`（`opsize = 64`）、**没被迁**，但它与被迁走的 `MOV_RM_R`
