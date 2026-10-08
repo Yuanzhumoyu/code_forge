@@ -512,6 +512,15 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > `[[pseudo]]` 吞进块里，插入点落到伪指令上——实测污染过一次）；② `imm` 段的字段名要**带宽度**
 > （`imm8`/`imm32`），叫 `imm` 会与他人撞名并被 W2 的 form 局部命名空间限定成 `SEGxxx.imm`，
 > 于是被 `LINT-UNUSED-BITFIELD` 报"只声明没人用"。
+> ✅ **W4.3 收尾完成（2026-10-08，一次提交）**：剩余 13 条一次迁完，并把**指令级段**扩到
+> `opcode_reg`/`imm`/`rex`/`vex`/`evex`/`modrm`(固定值) 六种 kind：
+> `PUSH`/`POP`/`MOV_REG_IMM64`/`MOV_R_IMM32`/`BSWAP_R`/`MOVABS_GLOBAL`（`opcode_reg`）、
+> `RET_IMM16`/`RETF_IMM16`/`JMP_REL32`/`CALL_RIP_REL`（`imm`）、`CQO`（`rex`）、
+> `VMOVAPS_ZMM`（`evex`）、`MFENCE`（`modrm` 的**固定字节** `value = 0xF0` ⇒ `modrm_fixed`）。
+> 生效键抽查全部一致（`MFENCE → enc={escape=[15],modrm_fixed=240}`、`CQO → rex_w="always"`、
+> `PUSH → opcode_reg=80` …）。**余下仅靠 `opcode` + 操作数驱动编码的 6 条**（如 `RET`/`NOP`/`PUSHF`）
+> 本就无结构可声明 ⇒ **无需段**。
+> ⇒ **W4.3 编码面迁移完成**：x86 谱里**凡有编码键的指令都已段化**。
 > ⚠️ **（旧记录）剩余 21 条里有一类需要 form**：带 `imm`/`rex_w`/`vex`/`evex` 的指令（`ROUNDSS_I`/`PSHUFD`/
 > `SHUFPS`/`CMPPS`/`JCC_REL32`/`VEXTRACTF128`/`VINSERTF128`/`VINSERTF32X4` …）——指令级段
 > **只收结构段**（escape/prefix/modrm），这些 kind 会被明确拒绝 ⇒ 要么给它们各自的 form，

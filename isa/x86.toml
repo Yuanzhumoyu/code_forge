@@ -1843,7 +1843,7 @@ rows = [
 [[instructions]]
 name = "VMOVAPS_ZMM"
 ref = "vmovaps"
-evex = { map = "field", pp = "field", w = "field", l = "field" }
+segments = [  { kind = "evex",  map = "field", pp = "field", w = "field", l = "field"  }, ]
 opcode = 0x28
 match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
 ops = ["dst:fpr256:out", "src:fpr256"]
@@ -2510,7 +2510,7 @@ emit = ["cmppd {a}, {b}, 7"]
 [[instructions]]
 name = "PUSH"
 roles = ["push"]
-opcode_reg = 0x50
+segments = [  { kind = "opcode_reg", value = 0x50 }, ]
 effect = ["Write"]
 ops = ["src:gpr"]
 asm = "push {src}"
@@ -2518,7 +2518,7 @@ asm = "push {src}"
 [[instructions]]
 name = "POP"
 roles = ["pop"]
-opcode_reg = 0x58
+segments = [  { kind = "opcode_reg", value = 0x58 }, ]
 effect = ["Read"]
 ops = ["dst:gpr:out"]
 asm = "pop {dst}"
@@ -2529,9 +2529,7 @@ name = "MOV_REG_IMM64"
 # v20 V7 起也用于**变参元信息寄存器**（SysV 的 `%al`）：调用点按布局算出"用了几个向量
 # 寄存器"再写进去——数字是运行期的，所以必须是"立即数 → 寄存器"这条能力。
 data_width = 64
-opcode_reg = 0xB8
-rex_w = "always"
-imm = 0x40
+segments = [  { kind = "opcode_reg", value = 0xB8 },   { kind = "rex", value = 1 },   { kind = "imm", value = 64 }, ]
 ops = ["dst:gpr:out", "imm:imm64"]
 asm = "mov {dst}, {imm}"
 
@@ -2541,17 +2539,14 @@ asm = "mov {dst}, {imm}"
 # 也是 P1 时登记的 `mov eax, 0x1234` 缺口）。
 [[instructions]]
 name = "MOV_R_IMM32"
-opcode_reg = 0xB8
+segments = [  { kind = "opcode_reg", value = 0xB8 },   { kind = "imm", value = 32 }, ]
 opsize = 32
-imm = 32
 ops = ["dst:gpr32:out", "imm:imm32"]
 asm = "mov {dst}, {imm}"
 
 [[instructions]]
 name = "BSWAP_R"
-opcode_reg = 0xC8
-rex_w = "always"
-escape = [0x0F]
+segments = [  { kind = "opcode_reg", value = 0xC8 },   { kind = "rex", value = 1 },   { kind = "escape", bytes = ["0x0F"] }, ]
 
 # ── 控制流（迭代 6：JMP/CALL/RET + rel32）──
 
@@ -2570,7 +2565,7 @@ asm = "ret"
 [[instructions]]
 name = "RET_IMM16"
 opcode = 0xC2
-imm = 16
+segments = [  { kind = "imm", value = 16 }, ]
 ops = ["imm:imm16"]
 asm = "ret {imm}"
 
@@ -2582,7 +2577,7 @@ asm = "retf"
 [[instructions]]
 name = "RETF_IMM16"
 opcode = 0xCA
-imm = 16
+segments = [  { kind = "imm", value = 16 }, ]
 ops = ["imm:imm16"]
 asm = "retf {imm}"
 
@@ -2613,7 +2608,7 @@ asm = "popf"
 [[instructions]]
 name = "JMP_REL32"
 roles = ["jump"]
-imm = 0x20
+segments = [  { kind = "imm", value = 32 }, ]
 opcode = 0xE9
 ops = ["target:rel"]
 asm = "jmp {target}"
@@ -2622,7 +2617,7 @@ effect = ["Jump"]
 [[instructions]]
 name = "CALL_RIP_REL"
 roles = ["call"]
-imm = 0x20
+segments = [  { kind = "imm", value = 32 }, ]
 opcode = 0xE8
 ops = ["target:rel"]
 asm = "call {target}"
@@ -2669,8 +2664,7 @@ asm = "ud2"
 
 [[instructions]]
 name = "MFENCE"
-escape = [0x0F]
-modrm_fixed = 0xF0
+segments = [  { kind = "escape", bytes = ["0x0F"] },   { kind = "modrm", value = 0xF0 }, ]
 opcode = 0xAE
 match = { prefix = 0, w = 0 }
 effect = ["Write"]
@@ -2678,7 +2672,7 @@ asm = "mfence"
 
 [[instructions]]
 name = "CQO"
-rex_w = "always"
+segments = [  { kind = "rex", value = 1 }, ]
 opcode = 0x99
 effect = ["Write"]
 # cqo 把 RAX 符号扩展到 RDX：RDX 隐式破坏（regalloc 在本指令点避开）
@@ -2764,9 +2758,7 @@ effect = ["Pure"]
 
 [[instructions]]
 name = "MOVABS_GLOBAL"
-opcode_reg = 0xB8
-rex_w = "always"
-imm = 0x40
+segments = [  { kind = "opcode_reg", value = 0xB8 },   { kind = "rex", value = 1 },   { kind = "imm", value = 64 }, ]
 ops = ["dst:gpr:out", "imm:imm64"]
 asm = "mov {dst}, {imm}"
 effect = ["Pure"]

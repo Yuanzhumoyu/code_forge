@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W4.3 收尾：指令级段扩六种 kind，x86 编码面迁移完成
+
++ 指令级段（选项 B）现支持：`opcode_reg`（`value` = 基值）、`imm`（`value` = 位数）、
+  `rex`（`value` 0/1 ⇒ auto/always）、`vex`/`evex`（`map`/`pp`/`w`/`l` 来源键）、
+  `modrm` 的**固定字节**（`value` ⇒ 经典 `modrm_fixed`）。
++ `isa/x86.toml`：剩余 13 条迁完（PUSH/POP/MOV_REG_IMM64/MOV_R_IMM32/BSWAP_R/MOVABS_GLOBAL/
+  RET_IMM16/RETF_IMM16/JMP_REL32/CALL_RIP_REL/CQO/VMOVAPS_ZMM/MFENCE）；生效键抽查全一致。
++ **x86 谱里凡有编码键的指令都已段化**；仅靠 `opcode` + 操作数驱动编码的 6 条（RET/NOP/PUSHF 等）
+  本就无结构可声明。
++ 逐字节不变：`isa_roundtrip_guard` + asm 棘轮 + 谱内向量 + 双 JIT 矩阵。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 12b 收尾：x86 段化 181/194
 
 + 剩余 20 条一次迁完：7 条走**指令级结构段**（MOVSD_RM/MOVSD_MR/MOVUPS_RM/MOVUPS_MR/PUSHFW/

@@ -94,11 +94,62 @@ fn lower_instr_segments(m: &mut IsaModel) -> Result<(), String> {
                 SegKind::Modrm => {
                     // 结构上表示"这条指令有 ModRM"。vlen 的 ModRM 发射由操作数驱动
                     // （实测：`MOV_R_RM` 的生效键里没有 `modrm`）⇒ 此处不设键。
+                    // 但**固定 ModRM 字节**（`modrm_fixed`，如 `MFENCE` 的 `0xF0`）在段上
+                    // 用 `value` 表达——段模型里它没有别的等价物。
+                    if let Some(v) = seg.value {
+                        keys.modrm_fixed = Some(v);
+                    }
+                }
+                SegKind::OpcodeReg => {
+                    // `+r` 形式：opcode 字节 = 基值 | (op0 & 7)。
+                    keys.opcode_reg = Some(seg.value.ok_or_else(|| {
+                        format!(
+                            "[[instructions.{}]].opcode_reg: 必须给 `value`（操作码基值）",
+                            inst.name
+                        )
+                    })?);
+                }
+                SegKind::Imm => {
+                    // 指令级只声明**宽度**（`value` = 位数）；立即数的值来自操作数。
+                    let bits = seg.value.ok_or_else(|| {
+                        format!(
+                            "[[instructions.{}]].imm: 必须给 `value`（位数，如 8/16/32）",
+                            inst.name
+                        )
+                    })?;
+                    keys.imm = Some(bits as u32);
+                }
+                SegKind::Rex => {
+                    keys.rex = Some("auto".to_string());
+                    keys.rex_w = Some(match seg.value {
+                        Some(0) => RexW::Auto,
+                        Some(_) => RexW::Always,
+                        None => RexW::Field,
+                    });
+                }
+                SegKind::Vex | SegKind::Evex => {
+                    // 头字段来源键写在段自己的键上（与 form 的 `vex = {…}` 同组）；
+                    // 值仍由指令的 `match = { vex_map = … }` 给（不需要字段声明——
+                    // 经典路径本就是按 `"field"` 约定去读那几个名字）。
+                    let spec = seg.vex_spec();
+                    if spec.map.is_none() && spec.pp.is_none() && spec.w.is_none() && spec.l.is_none()
+                    {
+                        return Err(format!(
+                            "[[instructions.{}]].{}: 头段至少要给一个来源键（map/pp/w/l）",
+                            inst.name,
+                            kind_name(seg.kind)
+                        ));
+                    }
+                    if seg.kind == SegKind::Vex {
+                        keys.vex = Some(spec);
+                    } else {
+                        keys.evex = Some(spec);
+                    }
                 }
                 other => {
                     return Err(format!(
-                        "[[instructions.{}]]: 指令级段只支持 `escape`/`prefix`/`modrm`\
-                         （`{}` 需要布局字段，请放进 form）",
+                        "[[instructions.{}]]: 指令级段不支持 `{}`\
+                         （需要布局字段的段请放进 form）",
                         inst.name,
                         kind_name(other)
                     ));
@@ -712,7 +763,7 @@ asm = "n {dst}, {src}"
         assert_eq!(ia.enc.modrm, ib.enc.modrm, "modrm（扩展码 + rm 绑定）");
     }
 
-    /// 指令级段只接受结构段：`vex` 这类需要布局字段的要放进 form。
+    /// 指令级段只接受"能直译成经典键"的 kind：`sib`（布局段）之类仍要放进 form。
     #[test]
     fn instruction_level_segment_rejects_non_structural_kinds() {
         let bad = r#"
@@ -728,14 +779,14 @@ kind = "reg"
 class = "gpr64"
 [[instructions]]
 name = "N"
-segments = [{ kind = "vex", map = "field" }]
+segments = [{ kind = "sib" }]
 opcode = 0x10
 ops = ["dst:g:out"]
 asm = "n {dst}"
 "#;
         let err = format!("{:?}", crate::dsl::parse_and_validate(bad).unwrap_err());
-        assert!(err.contains("只支持"), "err: {err}");
-        assert!(err.contains("vex"), "err: {err}");
+        assert!(err.contains("不支持"), "err: {err}");
+        assert!(err.contains("sib"), "err: {err}");
     }
 
     #[test]
