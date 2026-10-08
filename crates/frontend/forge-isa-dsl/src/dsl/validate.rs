@@ -1555,7 +1555,7 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
         return Err("missing [operand.<名字>]: at least one operand declaration is required".into());
     }
     let mut seen = BTreeSet::new();
-    for (i, s) in m.operand_slots.iter().enumerate() {
+    for s in m.operand_slots.iter() {
         let path = format!("[operand.{}]", s.name);
         if !is_valid_meta_name(&s.name) {
             return Err(format!("{path}: invalid slot name '{}'", s.name));

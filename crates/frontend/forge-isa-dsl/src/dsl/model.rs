@@ -2032,6 +2032,41 @@ pub struct SegmentDecl {
     /// `opcode_reg`：操作码基值（`+r` 形式）。
     #[serde(default)]
     pub value: Option<u64>,
+    /// `vex`/`evex` 段：头字段来源（与 `[forms].vex` 是**同一组键**，降级后原样搬过去）。
+    #[serde(default)]
+    pub map: Option<String>,
+    #[serde(default)]
+    pub pp: Option<String>,
+    #[serde(default)]
+    pub w: Option<String>,
+    #[serde(default)]
+    pub l: Option<String>,
+    #[serde(default)]
+    pub b: Option<String>,
+    #[serde(default)]
+    pub z: Option<String>,
+    #[serde(default)]
+    pub disp_scale: Option<String>,
+}
+
+impl SegmentDecl {
+    /// `vex`/`evex` 段的头字段（降级到既有 [`VexSpec`]）。
+    pub fn vex_spec(&self) -> VexSpec {
+        VexSpec {
+            map: self.map.clone(),
+            pp: self.pp.clone(),
+            w: self.w.clone(),
+            l: self.l.clone(),
+            b: self.b.clone(),
+            z: self.z.clone(),
+            disp_scale: self.disp_scale.clone(),
+        }
+    }
+
+    /// 是否是"只有布局、没有语义键"的段（`sib`/`disp`：字节由编码器按内存操作数派生）。
+    pub fn is_layout_only(&self) -> bool {
+        matches!(self.kind, SegKind::Sib | SegKind::Disp)
+    }
 }
 
 /// 段的字节声明：效果名字典（前缀）或裸字节列表（转义）。
@@ -3052,7 +3087,7 @@ impl IsaModel {
     /// 摊平后生成器只读 `slot.table_entries`，反汇编渲染按**名字字典序**拼串（确定性，
     /// 与 `[enum.cond]` 的"同码取字母序最小名"同一口径）。
     pub fn resolve_bitset_tables(&mut self) -> Result<(), String> {
-        for (i, s) in self.operand_slots.iter_mut().enumerate() {
+        for s in self.operand_slots.iter_mut() {
             if s.kind != OperandKind::Bits {
                 continue;
             }
@@ -3086,7 +3121,7 @@ impl IsaModel {
     /// 摊平后生成器只读 `slot.name_entries`（BTreeMap 的序 = 名字字典序，渲染取同值多名里
     /// 字典序最小者，确定性与 `[enum.cond]` 同口径）。
     pub fn resolve_imm_name_tables(&mut self) -> Result<(), String> {
-        for (i, s) in self.operand_slots.iter_mut().enumerate() {
+        for s in self.operand_slots.iter_mut() {
             let Some(tname) = s.names.clone() else {
                 continue;
             };

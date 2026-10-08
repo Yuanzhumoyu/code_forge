@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 
-use super::model::{CondEntry, EnumDecl, EnumEntry, EnumKind, IsaModel};
+use super::model::{CondEntry, EnumEntry, EnumKind, IsaModel};
 
 /// 把 `[enum.<表名>]` 降级回内部三处。
 pub fn lower_enum_layer(m: &mut IsaModel) -> Result<(), String> {

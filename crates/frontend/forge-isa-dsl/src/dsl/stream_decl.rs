@@ -16,7 +16,7 @@
 
 use super::field_decl::FieldDecl;
 use super::model::{
-    EncKeys, Form, IsaModel, ModrmMap, PrefixKey, RexW, SegmentBytes, SegmentDecl, SegKind,
+    EncKeys, Form, IsaModel, ModrmMap, PrefixKey, RexW, SegmentBytes, SegKind,
 };
 
 /// 把 `kind = "stream"`（写了 `segments`）的 form 降级回语义键 + `fields`。
@@ -146,6 +146,49 @@ fn lower_one(form: &mut Form) -> Result<(), String> {
                     rm: None,
                 });
             }
+            SegKind::OpcodeReg => {
+                // `+r` 形式：opcode 字节 = 基值 | (op0 & 7)，REX.B = op0>>3。
+                let base = seg.value.ok_or_else(|| {
+                    format!(
+                        "[[forms.{fname}]].opcode_reg: `+r` 段必须给 `value`（操作码基值，\
+                         低 3 位留给寄存器号）"
+                    )
+                })?;
+                keys.opcode_reg = Some(base);
+            }
+            SegKind::Vex => {
+                let spec = seg.vex_spec();
+                if spec.map.is_none()
+                    && spec.pp.is_none()
+                    && spec.w.is_none()
+                    && spec.l.is_none()
+                {
+                    return Err(format!(
+                        "[[forms.{fname}]].vex: VEX 段至少要给一个来源键\
+                         （`map`/`pp`/`w`/`l`）——空头等于没声明"
+                    ));
+                }
+                keys.vex = Some(spec);
+            }
+            SegKind::Evex => {
+                let spec = seg.vex_spec();
+                if spec.map.is_none()
+                    && spec.pp.is_none()
+                    && spec.w.is_none()
+                    && spec.l.is_none()
+                {
+                    return Err(format!(
+                        "[[forms.{fname}]].evex: EVEX 段至少要给一个来源键\
+                         （`map`/`pp`/`w`/`l`）——空头等于没声明"
+                    ));
+                }
+                keys.evex = Some(spec);
+            }
+            SegKind::Sib | SegKind::Disp => {
+                // 布局段：**没有**对应的语义键——SIB/位移字节由编码器按内存操作数派生
+                //（base/index/scale/disp）。段在这里的价值是"把字节布局写进谱"、
+                // 让段内字段进 `form.fields` 参与声明期校验与 `--bits` 清点。
+            }
             SegKind::Imm => {
                 let fs = seg.fields.as_ref().ok_or_else(|| {
                     format!("[[forms.{fname}]].imm: 立即数段必须给 `fields`（声明宽度）")
@@ -154,13 +197,6 @@ fn lower_one(form: &mut Form) -> Result<(), String> {
                     imm_bits = imm_bits.max(f.bits());
                 }
                 keys.imm = Some(imm_bits);
-            }
-            other => {
-                return Err(format!(
-                    "[[forms.{fname}]]: 段 kind `{}` 的降级尚未实现（本片覆盖 prefix/escape/\
-                     rex/opcode/modrm/imm）——x86 迁移时再补",
-                    kind_name(other)
-                ));
             }
         }
     }
@@ -311,14 +347,80 @@ asm = "n {dst}, {src}"
     }
 
     #[test]
-    fn unimplemented_segment_kind_fails_closed() {
+    fn vex_segment_without_any_source_key_is_rejected() {
         let bad = STREAM.replace(
             "{ kind = \"opcode\", fields = [\"u8[7:0]:opcode\"] }",
-            "{ kind = \"opcode\", fields = [\"u8[7:0]:opcode\"] },\n  { kind = \"vex\" }",
+            "{ kind = \"opcode\", fields = [\"u8[7:0]:opcode\"] }, { kind = \"vex\" }",
         );
         let err = format!("{:?}", crate::dsl::parse_and_validate(&bad).unwrap_err());
         assert!(err.contains("vex"), "err: {err}");
-        assert!(err.contains("尚未实现"), "err: {err}");
+        assert!(err.contains("至少要给一个来源键"), "err: {err}");
+    }
+
+    #[test]
+    fn opcode_reg_segment_needs_value() {
+        let bad = STREAM.replace(
+            "{ kind = \"opcode\", fields = [\"u8[7:0]:opcode\"] }",
+            "{ kind = \"opcode_reg\" }",
+        );
+        let err = format!("{:?}", crate::dsl::parse_and_validate(&bad).unwrap_err());
+        assert!(err.contains("opcode_reg"), "err: {err}");
+        assert!(err.contains("value"), "err: {err}");
+    }
+
+    /// VEX 段 + `+r` 段 + 布局段（sib/disp）与经典写法等价。
+    #[test]
+    fn vex_and_opcode_reg_segments_lower_like_classic_keys() {
+        let src = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "prefix_scan"
+max_len = 15
+[reg.gpr64]
+count = 16
+[reg.fpr128]
+count = 16
+[operand.g]
+kind = "reg"
+class = "gpr64"
+[operand.f]
+kind = "reg"
+class = "fpr128"
+[[forms]]
+name = "V"
+segments = [
+  { kind = "vex", map = "field", pp = "0x0F", w = "0", l = "0" },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+  { kind = "sib", fields = ["u2[7:6]:scale", "u3[5:3]:index", "u3[2:0]:base"] },
+  { kind = "disp", fields = ["u8[7:0]:disp8"] },
+]
+[[instructions]]
+name = "N"
+form = "V"
+match = { opcode = 0x58 }
+ops = ["dst:f:out", "src:f"]
+bind = { reg = "dst", rm = "src" }
+asm = "n {dst}, {src}"
+"#;
+        let m = crate::dsl::parse_and_validate(src).expect("谱合法");
+        let f = m.forms.iter().find(|f| f.name == "V").unwrap();
+        let vex = f.keys.vex.as_ref().expect("vex 键");
+        assert_eq!(vex.map.as_deref(), Some("field"));
+        assert_eq!(vex.pp.as_deref(), Some("0x0F"));
+        assert_eq!(vex.w.as_deref(), Some("0"));
+        // 布局段的字段也进了 form.fields（参与校验与 --bits 清点）
+        let names: Vec<&str> = f
+            .fields
+            .as_ref()
+            .unwrap()
+            .iter()
+            .filter_map(|x| x.name.as_deref())
+            .collect();
+        for n in ["opcode", "mod", "reg", "rm", "scale", "index", "base", "disp8"] {
+            assert!(names.contains(&n), "缺字段 {n}：{names:?}");
+        }
     }
 
     #[test]

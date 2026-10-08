@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W4.1：段 kind 闭集全部落地
+
++ `opcode_reg` 段（`+r` 形式，需 `value` 基值）、`vex`/`evex` 段（头字段来源键 `map`/`pp`/
+  `w`/`l`，与 `[forms].vex` **同一组键**，降级原样搬进 `EncKeys`）。
++ `sib`/`disp` 段是**布局段**：没有对应的语义键（SIB/位移字节由编码器按内存操作数派生），
+  价值在"把字节布局写进谱并进 `form.fields` 参与校验与 `--bits` 清点"。
++ fail-closed：空的 VEX/EVEX 头（一个来源键都没有）、缺 `value` 的 `opcode_reg` 报错；
+  重复段 kind、坏字节字面量、未知段 kind 也各有明确报错。
+
 ### Added (2026-10-08) — ISA-DSL v21 W4.0：指令流段模型（骨架，暂无谱使用）
 
 + `[[forms]].segments`：`[{ kind = "prefix" | "escape" | "rex" | "opcode" | "opcode_reg" |

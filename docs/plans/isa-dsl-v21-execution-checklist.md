@@ -333,7 +333,11 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > 且"这堆字节是 REX"本就是结构事实）。
 > **已记录的 W4.0 限制**：经典校验要求 `prefix = "opsize"` **单独出现**，所以"同时有 opsize
 > 与其它前缀"的 form 现在还降不过去；W4 的"前缀表按 form 显式化"会取代该限制。
-> ⏭ **W4.1（下一片）**：`opcode_reg`/`sib`/`disp`/`vex`/`evex` 段的降级 + 按 form 的前缀扫描表
+> ✅ **W4.1 已完成（2026-10-08）**：段 kind **闭集全部实现降级**——`opcode_reg`（要 `value`）
+> 与 `vex`/`evex`（头字段来源键与 `[forms].vex` 同组，降级原样搬进 `EncKeys`）；`sib`/`disp` 是
+> **布局段**（无对应语义键——字节由编码器按内存操作数派生），价值在"把字节布局写进谱并进校验"。
+> 空 VEX 头、缺 `value` 的 `opcode_reg` 都 fail-closed 报错。
+> ⏭ **W4.2（下一片）**：按 form 的前缀扫描表（删 `default_prefix_scan()`）
 > （删 `default_prefix_scan()`）→ 再迁 x86 谱（20 forms / 200 insts / 18 templates；键用量
 > `modrm 159 / vex 154 / evex 72 / prefix 114 / opsize 81 / escape 47 / imm 242`）。
 **目标**：`[operand.*]` + `[enum.*]` + `[encode.*]`；8 个一次性开关 → 5 个正交键。

@@ -228,7 +228,7 @@ fn checks(m: &IsaModel, source: &str, idx: &DeclIndex, opts: &LintOpts) -> LintR
             used_slots.insert(slot.trim().to_string());
         }
     }
-    for (i, s) in m.operand_slots.iter().enumerate() {
+    for s in m.operand_slots.iter() {
         if !used_slots.contains(&s.name) {
             out.push(anchor(
                 idx,

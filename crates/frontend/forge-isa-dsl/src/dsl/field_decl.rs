@@ -498,7 +498,7 @@ pub fn lower_field_syntax(m: &mut super::model::IsaModel) -> Result<(), String> 
         let Some(fname) = inst.form.clone() else {
             continue;
         };
-        let Some((_, names_here, opname)) = form_info.iter().find(|(f, _, _)| *f == fname) else {
+        let Some((_, _names_here, opname)) = form_info.iter().find(|(f, _, _)| *f == fname) else {
             continue;
         };
         if let Some(fs) = &mut inst.fields {
@@ -558,7 +558,7 @@ pub fn form_field_decls(
     bitfields: &BTreeMap<String, Bitfield>,
 ) -> Result<Vec<FieldDecl>, String> {
     let mut names: Vec<String> = Vec::new();
-    let mut add = |n: &str, names: &mut Vec<String>| {
+    let add = |n: &str, names: &mut Vec<String>| {
         if !names.iter().any(|x| x == n) {
             names.push(n.to_string());
         }
