@@ -420,7 +420,7 @@ impl IsaModel {
         self.conventions
             .prefix_scan
             .clone()
-            .unwrap_or_else(default_prefix_scan)
+            .unwrap_or_default()
     }
 
     /// **地址尺寸覆盖**：`[conventions.prefix_scan]` 里声明 `addr32`（→ 4 字节地址）
@@ -1298,25 +1298,7 @@ pub struct PrefixScanEntry {
 /// **不含地址尺寸覆盖**（0x67）：那个效果要落到具体的 GPR 组（`addr32`），是**谱自己
 /// 声明的数据**——由缺省表隐式强加会让别的 prefix_scan 谱去找一个它没有的寄存器组。
 /// 没声明的谱遇到 0x67 会在该字节解码失败（fail-closed，不静默当 64 位地址）。
-pub(crate) fn default_prefix_scan() -> Vec<PrefixScanEntry> {
-    use PrefixEffect::*;
-    let e = |byte: u64, effects: &[PrefixEffect]| PrefixScanEntry {
-        byte: Some(byte),
-        range: None,
-        effects: effects.to_vec(),
-    };
-    vec![
-        e(0x66, &[Opsize16]),
-        e(0xF0, &[Lock]),
-        e(0xF2, &[Repne]),
-        e(0xF3, &[Repe]),
-        PrefixScanEntry {
-            byte: None,
-            range: Some("0x40..0x4F".into()),
-            effects: vec![Rex],
-        },
-    ]
-}
+
 
 /// 命名位域：定宽 ISA 的编码单元。
 ///

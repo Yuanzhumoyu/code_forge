@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W4.4 主体：删掉内置前缀扫描兜底 + 常驻等价性守卫
+
++ **删掉 `default_prefix_scan()`**：生效前缀扫描表 = 谱声明的 `[[conventions.prefix_scan]]`；
+  **未声明即空表**（fail-closed）。前缀知识从此只在谱里——不再有"x86 风格内置兜底"
+  隐式强加给别的谱。
++ 新增常驻守卫 `segment_prefixes_are_covered_by_the_scan_table`：段里声明的前缀字节必须在生效
+  扫描表里，字典形态写了效果名时**效果必须一致**（x86/arm64/riscv64 三谱都跑）。
++ 逐字节不变：`isa_roundtrip_guard` + asm 棘轮 + 谱内向量 + 双 JIT 矩阵全绿。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W4.3 收尾：指令级段扩六种 kind，x86 编码面迁移完成
 
 + 指令级段（选项 B）现支持：`opcode_reg`（`value` = 基值）、`imm`（`value` = 位数）、

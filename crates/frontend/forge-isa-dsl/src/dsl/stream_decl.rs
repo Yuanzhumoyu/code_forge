@@ -162,6 +162,78 @@ fn lower_instr_segments(m: &mut IsaModel) -> Result<(), String> {
     Ok(())
 }
 
+/// 效果名 → [`PrefixEffect`]（[`PrefixEffect::NAMES`] 是闭集，这里是它的解析）。
+fn effect_from_name(n: &str) -> Option<super::model::PrefixEffect> {
+    use super::model::PrefixEffect as E;
+    Some(match n {
+        "opsize16" => E::Opsize16,
+        "lock" => E::Lock,
+        "repe" => E::Repe,
+        "repne" => E::Repne,
+        "addr16" => E::AddrSize(16),
+        "addr32" => E::AddrSize(32),
+        "rex" => E::Rex,
+        "rex2" => E::Rex2,
+        _ => return None,
+    })
+}
+
+/// **生效的前缀扫描表**：谱声明了就用它，**否则为空**（v21 W4.4 起没有内置兜底——
+/// 前缀知识按 form 的前缀段落在谱里，未声明就是"这个谱没有前缀链"）。
+pub fn effective_prefix_scan(m: &IsaModel) -> Vec<super::model::PrefixScanEntry> {
+    m.conventions
+        .prefix_scan
+        .clone()
+        .unwrap_or_default()
+}
+
+/// v21 W4.4 **守卫**用：把段里声明的**前缀字节**抽出来，带上（若写了的）效果集。
+///
+/// `字节 → Option<效果集>`：字典形态给 `Some`；有序字节列表与字段形态给 `None`
+/// （它们的语义要靠别处还原 ⇒ 只对 `Some` 对账）。
+pub fn segment_prefix_bytes(
+    m: &IsaModel,
+) -> Result<std::collections::BTreeMap<u8, Option<Vec<super::model::PrefixEffect>>>, String> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut take = |where_: &str, seg: &SegmentDecl| -> Result<(), String> {
+        if seg.kind != SegKind::Prefix {
+            return Ok(());
+        }
+        match seg.bytes.clone() {
+            Some(SegmentBytes::Effects(map)) => {
+                for (byte, effect) in map {
+                    let b = parse_byte(&byte).map_err(|e| format!("{where_}.prefix: {e}"))?;
+                    let e = effect_from_name(&effect)
+                        .ok_or_else(|| format!("{where_}.prefix: 未知的前缀效果名 `{effect}`"))?;
+                    out.insert(b, Some(vec![e]));
+                }
+            }
+            Some(SegmentBytes::Raw(list)) => {
+                for byte in list {
+                    let b = parse_byte(&byte).map_err(|e| format!("{where_}.prefix: {e}"))?;
+                    out.insert(b, None);
+                }
+            }
+            None => {}
+        }
+        Ok(())
+    };
+    for form in &m.forms {
+        if let Some(segs) = &form.segments {
+            for seg in segs {
+                take(&format!("[[forms.{}]]", form.name), seg)?;
+            }
+        }
+    }
+    for inst in &m.instructions {
+        if let Some(segs) = &inst.segments {
+            for seg in segs {
+                take(&format!("[[instructions.{}]]", inst.name), seg)?;
+            }
+        }
+    }
+    Ok(out)
+}
 /// 前缀段 → 经典 `PrefixKey`（三种形态一处实现，form 与指令级共用）。
 fn prefix_key(where_: &str, seg: &SegmentDecl) -> Result<PrefixKey, String> {
     if seg.bytes.is_none() && seg.fields.is_some() {
@@ -707,6 +779,29 @@ asm = "n {dst}, {src}"
         assert_eq!(modrm.rm.as_deref(), Some("src"));
     }
 
+    /// **v21 W4.4 守卫**：段里声明的**前缀字节**必须被生效扫描表覆盖，字典形态写了效果名时
+    /// 效果必须一致（删 `default_prefix_scan()`、解码条件按 form 前缀段生成之前的安全网）。
+    #[test]
+    fn segment_prefixes_are_covered_by_the_scan_table() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../isa");
+        for (name, file) in [("x86", "x86.toml"), ("arm64", "arm64.toml"), ("riscv64", "riscv64.toml")] {
+            let text = std::fs::read_to_string(format!("{root}/{file}")).expect("读发行谱");
+            let m = crate::dsl::parse_and_validate(&text)
+                .unwrap_or_else(|e| panic!("{name} 谱应合法：{e}"));
+            let table = effective_prefix_scan(&m);
+            for (byte, want) in segment_prefix_bytes(&m).expect("段前缀可抽") {
+                let hit = table
+                    .iter()
+                    .find(|e| e.byte == Some(u64::from(byte)))
+                    .unwrap_or_else(|| {
+                        panic!("{name}: 段里声明的前缀字节 0x{byte:02X} 不在生效扫描表里")
+                    });
+                if let Some(want) = want {
+                    assert_eq!(hit.effects, want, "{name}: 0x{byte:02X} 的效果与扫描表不一致");
+                }
+            }
+        }
+    }
     /// v21 W4.3b：**指令级结构段**（选项 B）与经典内联键等价。
     #[test]
     fn instruction_level_segments_match_classic_inline_keys() {
