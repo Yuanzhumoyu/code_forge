@@ -348,7 +348,17 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > ✅ **batch 1 第 1 步已完成**：**变长 ISA 的 `bind` 落到 `modrm`**——`bind = { reg = "dst", rm = "src" }`
 > 在 `prefix_scan` ISA 上写进 `ModrmMap`（此前 vlen 完全不读 `bind`，ModRM 的角色只能靠位置缺省）。
 > 扩展码（`/4` 这类**整数**）不在 `bind` 的表达面内，仍写 `modrm = { reg = 4 }`——已在注释与清单注明。
-> ⏭ **batch 1 第 2 步**：把 14 条核心 RR 指令（MOV/ADD/SUB/XOR/AND/OR/CMP/TEST/ADC/SBB…）
+> ✅ **batch 1 第 1.5 步（实测修正）**：段里声明 `modrm` **不再**强设 `keys.modrm`。
+> 实测 `MOV_R_RM` 的生效键只有 `{opsize="s0"}`（没有 `modrm`）而字节正确 ⇒ vlen 编码器
+> **由操作数驱动**发射 ModRM；强设默认 `ModrmMap` 会把"操作数驱动"改成"键驱动"（行为改变）。
+> 段的职责是声明**字节布局**（`mod`/`reg`/`rm` 进 `form.fields`，供 `bind`/`match`/`--bits` 用）。
+> ⛔ **batch 1 第 2 步受阻（设计结论，需评审）**：vlen 的 opcode 值来自**专用标量**
+> `Instruction.opcode`（`model.rs` 的字段 + `codegen/vlen.rs` 9 处 `info.inst.opcode.unwrap()`），
+> 而 W2 的 `match` 是**定宽位域**机制、vlen 不读它 ⇒ **共用 form 装不下 194 个不同的 opcode 值**。
+> 于是"保留 form 作段载体（方案 A）"在 x86 上**不成立**：要么让指令能给**段字段赋值**
+> （= `match` 推广到 stream，并让 vlen 编码器改读段字段值——动编码器、需 200 条字节对拍），
+> 要么承认段模型对 x86 现有编码面**不适用**、W4 停在"模型可用但 x86 不迁"。
+> 建议：先做前者（`match` 推广到 stream + 编码器改数据源），并立"200 条指令逐字节不变"守卫。
 > 迁到一个段骨架 form（`opcode` + `modrm` 段），指令侧 `opcode = X` → `match = { opcode = X }`；
 > 移位族（SHL/SHR/SAR 带扩展位）留在原 `MRR`，不混读；对拍 asm_encoding 棘轮 + encoder_fuzz + roundtrip。
 > （删 `default_prefix_scan()`）→ 再迁 x86 谱（20 forms / 200 insts / 18 templates；键用量

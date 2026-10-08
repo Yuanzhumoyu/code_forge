@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-08) — ISA-DSL v21 W4.3 batch1：`modrm` 段不再强设 `keys.modrm`
+
++ 实测 `MOV_R_RM` 的生效编码键只有 `{opsize="s0"}`（**没有** `modrm`）而字节正确
+  ⇒ vlen 编码器**由操作数驱动**发射 ModRM。段里声明 `modrm` 时若强设一个默认
+  `ModrmMap`，就把"操作数驱动"改成了"键驱动"——是行为改变，已去掉。
++ 段在此的职责是声明**字节布局**（`mod`/`reg`/`rm` 三个字段进 `form.fields`，
+  供 `bind`/`match` 引用与 `--bits` 清点）；谁进 reg/rm 由指令 `bind` 给出。
+
 ### Added (2026-10-08) — ISA-DSL v21 W4.3 batch 1：变长 ISA 的 `bind` 落到 `modrm`
 
 + `bind = { reg = "dst", rm = "src" }` 在 `kind = "prefix_scan"` 的 ISA 上写进指令的

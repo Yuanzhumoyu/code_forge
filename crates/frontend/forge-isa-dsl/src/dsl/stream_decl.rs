@@ -16,7 +16,7 @@
 
 use super::field_decl::FieldDecl;
 use super::model::{
-    EncKeys, Form, IsaModel, ModrmMap, PrefixKey, RexW, SegmentBytes, SegKind,
+    EncKeys, Form, IsaModel, PrefixKey, RexW, SegmentBytes, SegKind,
 };
 
 /// 把 `kind = "stream"`（写了 `segments`）的 form 降级回语义键 + `fields`。
@@ -155,11 +155,13 @@ fn lower_one(form: &mut Form) -> Result<(), String> {
                 }
             }
             SegKind::Modrm => {
+                // **不设 `keys.modrm`**：vlen 编码器是**由操作数驱动**发射 ModRM 的
+                //（实测 `MOV_R_RM` 的生效键只有 `{opsize="s0"}`，没有 `modrm`，字节仍正确）。
+                // 段在这里的职责是声明**字节布局**（`mod`/`reg`/`rm` 三个字段 ⇒ 进
+                // `form.fields`，供 `bind`/`match` 引用与 `--bits` 清点）；谁进 reg、谁进 rm
+                // 由指令的 `bind` 给出（见 `field_decl` 的 vlen 分支）。强设一个默认
+                // `ModrmMap` 会把"操作数驱动"改成"键驱动"，是**行为改变**。
                 has_modrm = true;
-                keys.modrm = Some(ModrmMap {
-                    reg: None,
-                    rm: None,
-                });
             }
             SegKind::OpcodeReg => {
                 // `+r` 形式：opcode 字节 = 基值 | (op0 & 7)，REX.B = op0>>3。
@@ -339,7 +341,8 @@ asm = "n {dst}, {src}"
         assert_eq!(s.keys.rex, c.keys.rex, "rex");
         assert_eq!(s.keys.rex_w, c.keys.rex_w, "rex_w");
         assert_eq!(s.keys.opcode_field.as_deref(), Some("opcode"));
-        assert!(s.keys.modrm.is_some(), "modrm 段应打开 modrm");
+        // vlen 的 ModRM 发射由操作数驱动 ⇒ form 的 keys 里**不该**被塞一个默认 ModrmMap。
+        assert!(s.keys.modrm.is_none(), "modrm 段不应强设 keys.modrm");
         // 段内位域并进了 form.fields（于是 W2 的展开照旧）
         let names: Vec<&str> = s
             .fields
