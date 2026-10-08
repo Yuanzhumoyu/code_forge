@@ -372,7 +372,22 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > **`forge-codegen` 的预生成器（build script）以 `STATUS_ACCESS_VIOLATION` 退出**——
 > 生成期崩溃，不是测试失败。已 `git checkout` 回退 `isa/x86.toml`，回退后 `forge-codegen`
 > 与 `forge-isa-dsl` 两套全绿。
-> **二分结果（2026-10-08，三次全量 build）**：
+> ✅ **更正（2026-10-08，重做后）**：`STATUS_ACCESS_VIOLATION` **不是**段模型与 x86 不兼容，
+> 也不（至少不直接）是生成器缺陷——它是被**我自己的畸形迁移文件**污染出来的：
+> 旧迁移脚本用 `Split` + 字符串拼接重组文件，给第 2 个起的 `[[instructions]]` 头**插了一个空格**
+> （`(?m)^` 只数到 1 节）。重写成**纯行内替换**后：`cargo build -p forge-codegen`
+> **连跑 3 次全 exit 0**；工作区 `cargo test` 也确实崩，但**发生在一个真失败之后**
+> （`isa_roundtrip_guard` FAILED），是与失败同现的次生现象。
+> ⛔ **真正的拦路虎（语义，不是崩溃）**：迁移后 `x86 MOV64_RR` 的 REX.W 丢了——
+> `isa_roundtrip_guard::derived_insts_roundtrip_byte_stable` 报
+> `decode→encode 往返字节不一致：left [137,193]（89 C1）right [72,137,193]（48 89 C1）`。
+> `MOV64_RR` 自己用 `MRR_FIX64`（`opsize = 64`）、**没被迁**，但它与被迁走的 `MOV_RM_R`
+> **共用 opcode 0x89** ⇒ 解码 `48 89 C1` 现在落到 32 位那条。
+> **下一步（下轮第一件事）**：查**降级顺序**——`inst.opcode` 由 `lower_stream_instructions`
+> 写出，若有更早的 pass（vlen 解码表 / `collect_inst_infos` / 生成期去重）在读它，
+> 被迁的指令在那一步就是"没有 opcode" ⇒ 解码表里少了 RR_SEG 那条。修法二选一：
+> 把翻译**提前**（进 `parse`），或让解码表读段字段值。**判据仍是那三条守卫。**
+> （以下为作废的旧记录）**二分结果（2026-10-08，三次全量 build）**：
 > ① 只加 `RR_SEG` form（不迁指令）⇒ `cargo build -p forge-codegen` **exit 0**（段形态 form 本身无害）；
 > ② form + 迁移 **1 条**（MOV_R_RM）⇒ **exit 0**；
 > ③ form + 迁移 **14 条** ⇒ `STATUS_ACCESS_VIOLATION`。
