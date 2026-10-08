@@ -1495,6 +1495,7 @@ cargo test -p forge-codegen --lib spec_vector_198 -- --nocapture
 ```text
 vaddpd zmm1, zmm1, zmm2 : 我们 62 F1 75 48 58 CA ≠ 上游 62 F1 f5 48 58 CA
                                    ^^ P1              ^^ P1
+
 ```
 
 差异只在 **EVEX P1 的 bit7（W）**：`vaddpd`（双精度）要求 **W=1**，我们发 0 ✗。
@@ -1522,6 +1523,7 @@ lw   s0, 124(a5)     我们 03 a4 c7 07 ≠ 上游 e0 5f      （c.lw）
 sw   s0, 124(a5)     我们 23 ae 87 06 ≠ 上游 e0 df      （c.sw）
 nop                  我们 13 00 00 00 ≠ 上游 01 00      （c.nop）
 fld/fsd/flw/fsw …    我们 4 字节        ≠ 上游 2 字节     （c.fld/c.fsd/c.flw/c.fsw）
+
 ```
 
 ⇒ **一个指令面补不齐**：这不是"缺几条 `[[instructions]]`"✗，而是要**同文本优先选短编码** ✓ —— 同一条
@@ -1560,6 +1562,7 @@ name = "NOP"
 form = "OP"             # ← 4 字节形态（13 00 00 00）
 opcode = 0x13
 asm = "nop"
+
 ```
 
 ⇒ 2 字节的 `c.nop`（`01 00`）**在定宽 32 位谱里根本表达不出来** ✗：生成物按 `ceil(bits/8)` 决定
@@ -1569,6 +1572,7 @@ asm = "nop"
 [encoding]
 kind = "mixed"
 widths = [16, 32]       # 16 位压缩形态 + 32 位常规形态
+
 ```
 
 **因此 B4b-B 的正确形状 = 三步一体、一次提交**（缺任一步都做不成 ✗）：
@@ -1600,6 +1604,7 @@ widths = [16, 32]       # 16 位压缩形态 + 32 位常规形态
 ```text
 rv32zbb-only-valid.s:13 `rev8 t0, t1`：我们 93 52 83 6b ≠ 上游 93 52 83 69
                                                    ^^        ^^ 仅 bit1 不同
+
 ```
 
 ⇒ `rev8` 在 **RV64** 是 `funct7 = 0x6B`、在 **RV32** 是 `0x69` ✓ —— 而这个文件正是 `rv32zbb-only-valid.s` ✗
@@ -1637,3 +1642,23 @@ rv32zbb-only-valid.s:13 `rev8 t0, t1`：我们 93 52 83 6b ≠ 上游 93 52 83 6
 **出路 2（已选）**：按变体给字段值的方案文档见
 [isa-dsl-variant-field-values.md](../../../docs/plans/isa-dsl-variant-field-values.md) ✓
 （不新增/删除声明 ⇒ 投影两条断言与歧义名单都不动 ✓）。
+
+## 编码 `known` 的三族分类（2026-10-07，全集取数）
+
+`known` 只在**全集**运行里非空（取法与"取完必须裁回并重刷棘轮"见上一节）。157 → 148 之后剩 148 条，
+按"我们 vs 上游的差异形状"分三族：
+
+- **aarch64 `sp`/`wsp` 操作数（约 44 条）**：**真缺陷**，根因是**形态选择**。
+
+  `add w1, wsp, w3` 我们 `0B0303E1`、上游 `0B2343E1`，XOR = `0x00204000` ⇒ **bit21 = 1**
+  （extended-register 标志）与 **bit13 = 1**（`option` = `0b010` = `uxtw`）。两种形态都合法，
+  差别只在**选择**：LLVM 对 SP 操作数选 extended 形态。
+
+  修法 = 让 shifted-register 变体的寄存器槽**不接受 SP**，SP 写法自然落到 extended 变体
+  （判据：全集 `known` **148 → ~104**）。
+
+- **riscv64 Zbb 的 RV32/RV64 变体（约 14 条）**：**变体未区分**，与 `rev8` 同一修法
+  （`fields_variant` + `param = "xlen"`）；差异位可由语料字节**直接读出**。
+
+- **其余零散（约 6 条）**：逐条读差异位，多为某字段的域/常量未与上游对齐
+  （例：`csrrs` 的 CSR 编号高位域）。
