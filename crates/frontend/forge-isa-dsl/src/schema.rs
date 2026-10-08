@@ -249,7 +249,7 @@ pub const SECTIONS: &[Section] = &[
             "form",
             "opcode",
             "match",
-            "fields",
+            "fields", "segments",
             "bind",
             "ops",
             "when",

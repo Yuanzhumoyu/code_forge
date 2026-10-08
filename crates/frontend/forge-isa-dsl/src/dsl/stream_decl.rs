@@ -16,10 +16,11 @@
 
 use super::field_decl::FieldDecl;
 use super::model::{
-    EncKeys, Form, IsaModel, PrefixKey, RexW, SegmentBytes, SegKind,
+    EncKeys, Form, IsaModel, PrefixKey, RexW, SegmentBytes, SegmentDecl, SegKind,
 };
 
-/// 把 `kind = "stream"`（写了 `segments`）的 form 降级回语义键 + `fields`。
+/// 把 `kind = "stream"`（写了 `segments`）的 form 降级回语义键 + `fields`；
+/// 并把**指令级结构段**（选项 B）也降级。
 pub fn lower_stream_forms(m: &mut IsaModel) -> Result<(), String> {
     let fixed = m.encoding.kind != super::model::EncodingKind::PrefixScan;
     for form in &mut m.forms {
@@ -28,6 +29,7 @@ pub fn lower_stream_forms(m: &mut IsaModel) -> Result<(), String> {
         }
         lower_one(form, fixed)?;
     }
+    lower_instr_segments(m)?;
     // v21 W4.3：stream form 的指令用 `match` 给**段字段**赋值 ⇒ 翻译成编码器读的标量
     //（`opcode` → `Instruction.opcode`）。**编码器一行不改**，字节按构造不变——这正是
     // "降级到既有内部表示"这条主线在段模型上的延续。
@@ -35,7 +37,139 @@ pub fn lower_stream_forms(m: &mut IsaModel) -> Result<(), String> {
     Ok(())
 }
 
-/// 段字段值 → 经典标量（目前只做 `opcode`；`escape`/扩展码/`imm` 值留给后续片）。
+/// v21 W4.3b **指令级结构段**（选项 B）：不依赖 form 的指令也能声明 `escape`/`prefix`/`modrm`。
+///
+/// 只接受**结构段**（段内不给字段）：`opcode` 的值走 [`Instruction::opcode`] 标量，
+/// 操作数到 reg/rm 的绑定走 `bind`，常量走 `match`——需要**布局字段**的场合请用 form。
+fn lower_instr_segments(m: &mut IsaModel) -> Result<(), String> {
+    for inst in &mut m.instructions {
+        let Some(segs) = inst.segments.clone() else {
+            continue;
+        };
+        if segs.is_empty() {
+            return Err(format!(
+                "[[instructions.{}]]: `segments` 不能为空（要么不写，要么至少一段）",
+                inst.name
+            ));
+        }
+        let mut keys = EncKeys::default();
+        for seg in &segs {
+            if seg.fields.as_ref().is_some_and(|f| !f.is_empty()) {
+                return Err(format!(
+                    "[[instructions.{}]]: 指令级段不支持 `fields`（结构段只写 kind + bytes；\
+                     需要布局字段请把段放进 form）",
+                    inst.name
+                ));
+            }
+            match seg.kind {
+                SegKind::Escape => {
+                    let raw = match seg.bytes.clone() {
+                        Some(SegmentBytes::Raw(v)) => v,
+                        _ => {
+                            return Err(format!(
+                                "[[instructions.{}]].escape: 转义段要写裸字节列表（`bytes = [\"0x0F\"]`）",
+                                inst.name
+                            ));
+                        }
+                    };
+                    let mut out = Vec::new();
+                    for b in raw {
+                        out.push(
+                            parse_byte(&b)
+                                .map_err(|e| format!("[[instructions.{}]].escape: {e}", inst.name))?,
+                        );
+                    }
+                    keys.escape = Some(out);
+                }
+                SegKind::Prefix => {
+                    let k = prefix_key(&format!("[[instructions.{}]]", inst.name), seg)?;
+                    if matches!(k, PrefixKey::One(ref s) if s == "field") {
+                        return Err(format!(
+                            "[[instructions.{}]].prefix: 字段形态的前缀请放进 form（指令级段只做结构）",
+                            inst.name
+                        ));
+                    }
+                    keys.prefix = Some(k);
+                }
+                SegKind::Modrm => {
+                    // 结构上表示"这条指令有 ModRM"。vlen 的 ModRM 发射由操作数驱动
+                    // （实测：`MOV_R_RM` 的生效键里没有 `modrm`）⇒ 此处不设键。
+                }
+                other => {
+                    return Err(format!(
+                        "[[instructions.{}]]: 指令级段只支持 `escape`/`prefix`/`modrm`\
+                         （`{}` 需要布局字段，请放进 form）",
+                        inst.name,
+                        kind_name(other)
+                    ));
+                }
+            }
+        }
+        // 与 form 同口径：**段键覆盖、既有键兜底**。
+        inst.enc = keys.over(&inst.enc);
+    }
+    Ok(())
+}
+
+/// 前缀段 → 经典 `PrefixKey`（三种形态一处实现，form 与指令级共用）。
+fn prefix_key(where_: &str, seg: &SegmentDecl) -> Result<PrefixKey, String> {
+    if seg.bytes.is_none() && seg.fields.is_some() {
+        // ② 字段形态：字节由指令的 `match = { prefix = … }` 给。
+        if seg.fields.as_ref().is_some_and(|f| f.is_empty()) {
+            return Err(format!("{where_}.prefix: 字段形式的前缀段不能给空的 `fields`"));
+        }
+        return Ok(PrefixKey::One("field".to_string()));
+    }
+    if let Some(SegmentBytes::Raw(list)) = seg.bytes.clone() {
+        // ③ 有序字节列表：发射序 = 写序。
+        if list.is_empty() {
+            return Err(format!("{where_}.prefix: 有序字节列表不能为空"));
+        }
+        let mut out = Vec::new();
+        for b in list {
+            parse_byte(&b).map_err(|e| format!("{where_}.prefix: {e}"))?;
+            out.push(b);
+        }
+        return Ok(if out.len() == 1 {
+            PrefixKey::One(out.remove(0))
+        } else {
+            PrefixKey::Many(out)
+        });
+    }
+    // ① 字节 → 效果名字典。
+    let effects = match seg.bytes.clone() {
+        Some(SegmentBytes::Effects(map)) => map,
+        None => {
+            return Err(format!(
+                "{where_}.prefix: 前缀段必须给 `bytes`（字节 → 效果名字典、或有序字节列表）\
+                 或 `fields`（字节由字段给）"
+            ));
+        }
+        Some(SegmentBytes::Raw(_)) => unreachable!("裸字节列表已在上面处理"),
+    };
+    let mut parts = Vec::new();
+    for (byte, effect) in effects {
+        if !super::model::PrefixEffect::NAMES.contains(&effect.as_str()) {
+            return Err(format!(
+                "{where_}.prefix: 未知的前缀效果名 `{effect}`（可用：{}）",
+                super::model::PrefixEffect::NAMES.join(" / ")
+            ));
+        }
+        parse_byte(&byte).map_err(|e| format!("{where_}.prefix: {e}"))?;
+        if effect == "opsize16" {
+            parts.push("opsize".to_string());
+        } else {
+            parts.push(byte);
+        }
+    }
+    Ok(if parts.len() == 1 {
+        PrefixKey::One(parts.remove(0))
+    } else {
+        PrefixKey::Many(parts)
+    })
+}
+
+/// 段字段值 → 经典标量（目前只做 `opcode`/扩展码；`imm` 值留给后续片）。
 fn lower_stream_instructions(m: &mut IsaModel) {
     let stream_forms: Vec<String> = m
         .forms
@@ -43,14 +177,13 @@ fn lower_stream_instructions(m: &mut IsaModel) {
         .filter(|f| f.segments.is_some())
         .map(|f| f.name.clone())
         .collect();
-    if stream_forms.is_empty() {
-        return;
-    }
     for inst in &mut m.instructions {
-        let Some(fname) = inst.form.clone() else {
-            continue;
-        };
-        if !stream_forms.contains(&fname) {
+        // 走段路径的两种指令：**form 是段形态**，或**自己带结构段**（选项 B）。
+        let via_form = inst
+            .form
+            .as_ref()
+            .is_some_and(|f| stream_forms.contains(f));
+        if !via_form && inst.segments.is_none() {
             continue;
         }
         let Some(mt) = inst.fields.clone() else {
@@ -89,6 +222,25 @@ fn lower_stream_instructions(m: &mut IsaModel) {
             });
         }
         inst.fields = Some(rest);
+        // **无 form 的指令**（选项 B）拿不到 `field_decl` 里的 vlen `bind` 翻译
+        //（那条路要求指令有 form）⇒ 在这里补上同样的 reg/rm 绑定。
+        if !via_form && let Some(bind) = inst.bind.clone() {
+            let reg = bind
+                .get("reg")
+                .map(|n| super::model::ModrmReg::Op(n.clone()));
+            let rm = bind.get("rm").cloned();
+            if reg.is_some() || rm.is_some() {
+                let base = inst
+                    .enc
+                    .modrm
+                    .clone()
+                    .unwrap_or(super::model::ModrmMap { reg: None, rm: None });
+                inst.enc.modrm = Some(super::model::ModrmMap {
+                    reg: reg.or(base.reg),
+                    rm: rm.or(base.rm),
+                });
+            }
+        }
     }
 }
 
@@ -500,6 +652,88 @@ asm = "n {dst}, {src}"
         let modrm = inst.enc.modrm.as_ref().expect("bind 应写进 modrm");
         assert_eq!(modrm.reg, Some(crate::dsl::model::ModrmReg::Op("dst".into())));
         assert_eq!(modrm.rm.as_deref(), Some("src"));
+    }
+
+    /// v21 W4.3b：**指令级结构段**（选项 B）与经典内联键等价。
+    #[test]
+    fn instruction_level_segments_match_classic_inline_keys() {
+        let stream = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "prefix_scan"
+max_len = 15
+[reg.gpr64]
+count = 16
+[operand.g]
+kind = "reg"
+class = "gpr64"
+[[instructions]]
+name = "N"
+segments = [
+  { kind = "prefix", bytes = ["0xF2"] },
+  { kind = "escape", bytes = ["0x0F"] },
+  { kind = "modrm" },
+]
+opcode = 0x10
+match = { reg = 2 }
+bind = { rm = "dst" }
+ops = ["dst:g:out", "src:g"]
+asm = "n {dst}, {src}"
+"#;
+        let classic = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "prefix_scan"
+max_len = 15
+[reg.gpr64]
+count = 16
+[operand.g]
+kind = "reg"
+class = "gpr64"
+[[instructions]]
+name = "N"
+prefix = "0xF2"
+escape = [0x0F]
+opcode = 0x10
+modrm = { reg = 2, rm = "dst" }
+ops = ["dst:g:out", "src:g"]
+asm = "n {dst}, {src}"
+"#;
+        let a = crate::dsl::parse_and_validate(stream).expect("段形态合法");
+        let b = crate::dsl::parse_and_validate(classic).expect("经典形态合法");
+        let (ia, ib) = (&a.instructions[0], &b.instructions[0]);
+        assert_eq!(ia.opcode, ib.opcode, "opcode");
+        assert_eq!(ia.enc.escape, ib.enc.escape, "escape");
+        assert_eq!(ia.enc.prefix, ib.enc.prefix, "prefix");
+        assert_eq!(ia.enc.modrm, ib.enc.modrm, "modrm（扩展码 + rm 绑定）");
+    }
+
+    /// 指令级段只接受结构段：`vex` 这类需要布局字段的要放进 form。
+    #[test]
+    fn instruction_level_segment_rejects_non_structural_kinds() {
+        let bad = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "prefix_scan"
+max_len = 15
+[reg.gpr64]
+count = 16
+[operand.g]
+kind = "reg"
+class = "gpr64"
+[[instructions]]
+name = "N"
+segments = [{ kind = "vex", map = "field" }]
+opcode = 0x10
+ops = ["dst:g:out"]
+asm = "n {dst}"
+"#;
+        let err = format!("{:?}", crate::dsl::parse_and_validate(bad).unwrap_err());
+        assert!(err.contains("只支持"), "err: {err}");
+        assert!(err.contains("vex"), "err: {err}");
     }
 
     #[test]

@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W4.3 batch 12a：指令级段载体（选项 B）
+
++ `[[instructions]].segments`：不依赖 form 的指令可直接声明**结构段**
+  （`escape` / `prefix` / `modrm`；段内**不给字段**——需要布局字段的场合仍用 form，
+  非结构 kind 会明确报错并指路）。
++ `opcode` 值继续走指令的 `opcode` 标量；扩展码/常量走 `match`；操作数绑定走 `bind`
+  （此前无 form 的指令拿不到 `bind` → `modrm` 的翻译，现已补上）。
++ 前缀解析收敛为**一处实现**（form 与指令级共用）；单测覆盖"指令级段 ≡ 经典内联键"与
+  "`vex` 段在指令级被拒"。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 11：x86 最后一个 form 组段化（form 面收尾）
 
 + `isa/x86.toml`：`MRR_0F_FIX64` 的 5 条（MOVQ 系列）迁到 `MRR_0F_F64_PFX_SEG`；旧 form 已删。

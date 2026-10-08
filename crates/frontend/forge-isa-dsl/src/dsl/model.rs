@@ -2338,6 +2338,11 @@ pub struct Instruction {
     /// 主 opcode（值或首个 opcode 字节）。
     #[serde(default)]
     pub opcode: Option<u64>,
+    /// **v21 W4.3b 指令级段**（选项 B）：不依赖 form 的指令可以直接声明**结构段**
+    /// （`escape`/`prefix`/`modrm`；段内**不给字段**——opcode 值仍走上面的 `opcode` 标量，
+    /// 操作数到 reg/rm 的绑定走 `bind`）。需要布局字段的场合请用 form。
+    #[serde(default)]
+    pub segments: Option<Vec<SegmentDecl>>,
     /// **固定字段值**（funct3/funct7/前缀字节/vex 键…），按位域名或编码键名引用。
     /// TOML 键是 `match`（v21 W2.1 改名；旧的 `fields` 键让位给"字段声明列表"）。
     #[serde(rename = "match", default)]
