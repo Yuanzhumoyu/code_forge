@@ -367,7 +367,16 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > `opcode_field`，vlen 的 `bind` 只写 `modrm`、不写 `operand_fields`。
 > 实测（`forge-isa insts` 一份段形态谱）：`enc={modrm={ reg = "dst", rm = "src" }}`、
 > `opcode=0x8b`——没有 `opcode_field`/`operand_fields` 混入。
-> ⏭ **batch 1 第 3 步**：把 14 条核心 RR 指令迁到段骨架 form（`opcode` + `modrm` 段），
+> ⛔ **batch 1 第 3 步受阻（生成期崩溃，已回退）**：把 14 条核心 RR 指令迁到段骨架 form 后，
+> `validate` 通过、`forge-isa insts` 的生效键也对（`form=RR_SEG`、`opcode=0x8b`），但
+> **`forge-codegen` 的预生成器（build script）以 `STATUS_ACCESS_VIOLATION` 退出**——
+> 生成期崩溃，不是测试失败。已 `git checkout` 回退 `isa/x86.toml`，回退后 `forge-codegen`
+> 与 `forge-isa-dsl` 两套全绿。
+> 下一步是**用最小复现定位生成器**（建议：把该迁移应用到 `target/tmp/` 的一份副本 +
+> `FGE_DEBUG_GEN=1`，或先用 CLI 的生成路径二分"段形态 form × vlen 指令键"的组合），
+> 修好再重做第 3 步。可疑方向：段形态 form 与 vlen 指令键（`opsize`/`match`）共存时，
+> 生成器里某处按"定宽/变长"二分的分支走进了不终止的路径。
+> （原计划）⏭ **batch 1 第 3 步**：把 14 条核心 RR 指令迁到段骨架 form（`opcode` + `modrm` 段），
 > 指令侧 `opcode = X` → `match = { opcode = X }`；对拍 asm_encoding 棘轮 + encoder_fuzz +
 > roundtrip 三条守卫（它们本来就是"200 条指令逐字节不变"的守卫）。
 > 迁到一个段骨架 form（`opcode` + `modrm` 段），指令侧 `opcode = X` → `match = { opcode = X }`；
