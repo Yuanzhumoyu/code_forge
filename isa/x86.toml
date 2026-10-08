@@ -330,12 +330,14 @@ segments = [
 [[forms]]
 name = "MRR_FIX64"      # @modrm：opsize 固定 64（恒 REX.W）
 opsize = 64
-
 [[forms]]
-name = "MRR_0F"         # @modrm + 0F escape
+name = "MRR_0F_SEG"        # v21 W4：段形态（0F escape + opcode + modrm）
 opsize = "s0"
-escape = [0x0F]
-
+segments = [
+  { kind = "escape", bytes = ["0x0F"] },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "MRR_0F_NOOS"    # @modrm + 0F escape + 无 opsize（movzx/movsx：dest/src
                         # 宽度不同合法——8/16 位源零/符号扩展到 64，不做一致性检查）
@@ -418,6 +420,14 @@ vex = { map = "field", pp = "field", w = "field", l = "field" }
 name = "MRR_EXT_OP"       # @op_rm：F7 /digit（reg=fields.ext, rm=op0，无 imm）
 opsize = "s0"
 
+
+[[forms]]
+name = "MRR_EXT_OP_SEG"    # v21 W4：段形态（opcode + modrm(/ext)，无 imm）
+opsize = "s0"
+segments = [
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "MRR_EXT_OP_FIX64" # @shift_reg：D3 /digit（rm=op0），opsize 固定 64（REX.W）
 opsize = 64
@@ -565,8 +575,8 @@ asm = "sub {dst}, {src}"
 # IMUL 是 reg-form（目的 = op0 = modrm.reg）——form 缺省 s0 已是目的槽。
 [[instructions]]
 name = "IMUL_R_RM"
-form = "MRR_0F"
-opcode = 0xAF
+form = "MRR_0F_SEG"
+match = { opcode = 0xAF }
 ops = ["dst:gprx:out", "src:gprx"]
 asm = "imul {dst}, {src}"
 
@@ -826,44 +836,44 @@ effect = ["Pure"]
 
 [[instructions]]
 name = "CMPXCHG_RM_R"
-form = "MRR_0F"
-opcode = 0xB1
+form = "MRR_0F_SEG"
+match = { opcode = 0xB1 }
 ops = ["src:gpr", "dst:gpr:inout"]
 asm = "cmpxchg {dst}, {src}"
 
 [[instructions]]
 name = "XADD_RM_R"
 ref = "xadd"
-form = "MRR_0F"
-opcode = 0xC1
+form = "MRR_0F_SEG"
+match = { opcode = 0xC1 }
 ops = ["src:gpr", "dst:gpr:inout"]
 asm = "xadd {dst}, {src}"
 
 [[instructions]]
 name = "BT_RM_R"
-form = "MRR_0F"
-opcode = 0xA3
+form = "MRR_0F_SEG"
+match = { opcode = 0xA3 }
 ops = ["src:gpr", "src2:gpr"]
 asm = "bt {src2}, {src}"
 
 [[instructions]]
 name = "BTS_RM_R"
-form = "MRR_0F"
-opcode = 0xAB
+form = "MRR_0F_SEG"
+match = { opcode = 0xAB }
 ops = ["src:gpr", "src2:gpr"]
 asm = "bts {src2}, {src}"
 
 [[instructions]]
 name = "BTR_RM_R"
-form = "MRR_0F"
-opcode = 0xB3
+form = "MRR_0F_SEG"
+match = { opcode = 0xB3 }
 ops = ["src:gpr", "src2:gpr"]
 asm = "btr {src2}, {src}"
 
 [[instructions]]
 name = "BTC_RM_R"
-form = "MRR_0F"
-opcode = 0xBB
+form = "MRR_0F_SEG"
+match = { opcode = 0xBB }
 ops = ["src:gpr", "src2:gpr"]
 asm = "btc {src2}, {src}"
 
@@ -2027,9 +2037,9 @@ rows = [
 ]
 [[instructions]]
 name = "NOT_RM"
-form = "MRR_EXT_OP"
-modrm = { reg = 2, rm = "dst" }
-opcode = 0xF7
+form = "MRR_EXT_OP_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0xF7, reg = 2 }
 # 目的槽用 `gprx`（16/32/64）：`not eax`/`not r16d` 是真实语料里的常态；原来固定 64 位。
 ops = ["dst:gprx:inout"]
 asm = "not {dst}"
@@ -2208,17 +2218,17 @@ asm = "sar {dst}, cl"
 
 [[instructions]]
 name = "NEG_RM"
-form = "MRR_EXT_OP"
-modrm = { reg = 3, rm = "dst" }
-opcode = 0xF7
+form = "MRR_EXT_OP_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0xF7, reg = 3 }
 ops = ["dst:gprx:inout"]
 asm = "neg {dst}"
 
 [[instructions]]
 name = "DIV_RM"
-form = "MRR_EXT_OP"
-modrm = { reg = 6, rm = "src" }
-opcode = 0xF7
+form = "MRR_EXT_OP_SEG"
+bind = { rm = "src" }
+match = { opcode = 0xF7, reg = 6 }
 effect = ["Write"]
 # div 隐式读 RAX:RDX（128 位被除数）并写 RAX(商)/RDX(余数)
 implicit_regs = ["RAX", "RDX"]
@@ -2228,9 +2238,9 @@ asm = "div {src}"
 
 [[instructions]]
 name = "IDIV_RM"
-form = "MRR_EXT_OP"
-modrm = { reg = 7, rm = "src" }
-opcode = 0xF7
+form = "MRR_EXT_OP_SEG"
+bind = { rm = "src" }
+match = { opcode = 0xF7, reg = 7 }
 effect = ["Write"]
 # idiv 隐式读 RAX:RDX（128 位被除数）并写 RAX(商)/RDX(余数)
 implicit_regs = ["RAX", "RDX"]
@@ -2241,9 +2251,9 @@ asm = "idiv {src}"
 # 与两条目 `imul {dst}, {src}`（`0F AF`）不撞：操作数个数与槽类型都不同。
 [[instructions]]
 name = "MUL_RM"
-form = "MRR_EXT_OP"
-modrm = { reg = 4, rm = "src" }
-opcode = 0xF7
+form = "MRR_EXT_OP_SEG"
+bind = { rm = "src" }
+match = { opcode = 0xF7, reg = 4 }
 effect = ["Write"]
 implicit_regs = ["RAX", "RDX"]
 ops = ["src:gprx"]
@@ -2251,9 +2261,9 @@ asm = "mul {src}"
 
 [[instructions]]
 name = "IMUL_RM"
-form = "MRR_EXT_OP"
-modrm = { reg = 5, rm = "src" }
-opcode = 0xF7
+form = "MRR_EXT_OP_SEG"
+bind = { rm = "src" }
+match = { opcode = 0xF7, reg = 5 }
 effect = ["Write"]
 implicit_regs = ["RAX", "RDX"]
 ops = ["src:gprx"]
@@ -2695,9 +2705,9 @@ reloc = "abs64"
 name = "CMOVCC_R_RM"
 # 宽度由目的槽驱动（`MRR_0F` 的 `opsize = s0`）：`cmovl rax, rcx`（64 位）与
 # `cmovl eax, r16d`（32 位，真实语料）都要收——原来固定 64 位（`MRR_0F_FIX64`）。
-form = "MRR_0F"
-modrm = { reg = "dst", rm = "src" }            # cond 编码进 opcode 低 4 位
-opcode = 0x40                    # 条件码 = opcode 低 4 位（0x40..0x4F）
+form = "MRR_0F_SEG"
+bind = { reg = "dst", rm = "src" }            # cond 编码进 opcode 低 4 位
+match = { opcode = 0x40 }                    # 条件码 = opcode 低 4 位（0x40..0x4F）
 ops = ["dst:gprx:inout", "src:gprx", "cc:cond"]
 asm = "cmovcc {dst}, {src}, {cc}"
 effect = ["Pure"]
@@ -2852,18 +2862,18 @@ effect = ["Pure"]
 
 [[instructions]]
 name = "ROL_RM"
-form = "MRR_EXT_OP"
-modrm = { reg = 0, rm = "dst" }
-opcode = 0xD3
+form = "MRR_EXT_OP_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0xD3, reg = 0 }
 effect = ["Pure"]
 ops = ["dst:gprx:inout"]
 asm = "rol {dst}"
 
 [[instructions]]
 name = "ROR_RM"
-form = "MRR_EXT_OP"
-modrm = { reg = 1, rm = "dst" }
-opcode = 0xD3
+form = "MRR_EXT_OP_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0xD3, reg = 1 }
 effect = ["Pure"]
 ops = ["dst:gprx:inout"]
 asm = "ror {dst}"

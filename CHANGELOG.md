@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 6：x86 两组共 16 条段化
+
++ `isa/x86.toml`：`MRR_EXT_OP` 的 8 条 → `MRR_EXT_OP_SEG`（opcode + modrm(/ext)）；
++ `MRR_0F` 的 8 条 → `MRR_0F_SEG`（0F escape + opcode + modrm）；零引用的 `MRR_0F` 已删。
++ 逐字节不变：`isa_roundtrip_guard` + asm 棘轮 + 谱内向量 + 双 JIT 矩阵；累计 **91 条**已段化。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 5：x86 SSE 族 21 条段化 + 段模型两项能力
 
 + `isa/x86.toml`：`SSE_RR` 21 条迁到 `SSE_RR_SEG`（prefix + 0F escape + rex.W + opcode + modrm）。

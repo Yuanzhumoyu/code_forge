@@ -411,7 +411,17 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > 另修一处 lint 误报：段内字段各自属于**自己的字节空间**，不按"同一个字里的位"判重叠
 > （`prefix`[0,8) 与 `w`[7,8) 曾被判成抢同一批位）——段字段现在从重叠判定里排除。
 > 累计已段化 **75 条**（14+13+8+19+21）。
-> ⏭ **W4.3 batch 6（下一片）**：`MRR_MEMREF_AUTO` 剩下的 2 条（带 `prefix`）、
+> ✅ **batch 6 完成（2026-10-08）**：两组一起迁——`MRR_EXT_OP` 的 8 条（无 escape）→ `MRR_EXT_OP_SEG`
+> （opcode + modrm(/ext)）、`MRR_0F` 的 8 条 → `MRR_0F_SEG`（0F escape + opcode + modrm）；
+> 零引用的 `MRR_0F` form 已删（lint 是权威判据）。带 escape 的 `NOP_RM` 留在原 form，下批处理。
+> 累计已段化 **91 条**（14+13+8+19+21+16）。
+> **迁移脚本的两处教训（都真实踩到）**：
+> ① **行尾注释会让正则落空**——`opcode = 0x40    # 条件码…` 这种写法使 `^opcode = X$` 不匹配，
+> 于是 `CMOVCC_R_RM` 被静默跳过（batch 3 的 `CMOVCC_R_MEM` 同因）。判据一律写成
+> `^键 = 值\s*(#.*)?$`，且**每批回读条数**不能省。
+> ② 迁移后**老的 form 可能变成零引用** ⇒ lint 的 `LINT-UNUSED-FORM` 会红；按 lint 逐条删掉即可
+> （validate + lint 干净再进守卫）。
+> ⏭ **W4.3 batch 7（下一片）**：`MRR_MEMREF_AUTO` 剩下的 2 条（带 `prefix`）、
 > `SSE_RR` 21（`escape`+`prefix`+`rex_w` 骨架，需把 `prefix`/`w` 变成段字段的 `match`）、
 > `MRR_EXT` 19 / `MRR` 17（移位族留待扩展码问题定案）/ `VEX_*` / `EVEX_*`；
 > 每批跑三条守卫（asm_encoding 棘轮 + encoder_fuzz + isa_roundtrip_guard）再提交。
