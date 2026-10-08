@@ -34,6 +34,8 @@
 | `plans/forge-ir-s8-design.md` | forge-ir S8 可选项设计（二进制序列化 / MemorySSA-lite / crate 拆分：逐个给设计与成本、验证方案、触发条件；2026-09-19 拍板：**只做二进制序列化**，另两项不做） | progress |
 | `plans/forge-ir-binary-serialization-plan.md` | forge-ir 二进制序列化**执行方案**（格式 v1 字节级规范、B1–B5 切片、每片门禁与负向对照、基线数字） | progress |
 | `plans/forge-isa-dsl-v19-plan.md` | forge-isa-dsl 改进方案（ISA-DSL v19：**可独立接入**——生成物只依赖 `forge-isa-runtime`、删 `krate`；**数据化验证**——谱内 `[[vectors]]` + `forge-isa test`；**规范体检**——`forge-isa lint`；**参数化变体**——一份源谱出 RV32/RV64；V0–V7 切片（MVP = V0–V4 + V6 确定性部分），外部参考 TableGen/ISLE/decodetree/SLEIGH/GCC .md/Sail 的对比与取舍见 §3） | progress |
+| `plans/isa-dsl-v21-redesign-plan.md` | ISA-DSL v21 重设计方案（**待评审，实施另开**：宽度只在名字里、字段就地声明（`[conventions.bitfields]` + `opcode_field` + `operand_fields` 合并为 form 内 `fields`）、节 21→13、15 处后门清除表、键级破坏性清单、切片 W0–W11） | progress |
+| `plans/isa-dsl-v21-execution-checklist.md` | ISA-DSL v21 **执行清单**（S0 决策冻结 + W0 基线 + W1–W11 逐片步骤/门禁/回滚 + 最终验收 + 中止条件） | progress |
 | `plans/calling-convention-redesign-plan.md` | 调用约定重设计（v20 A1–A8：约定是**使用者的数据**、ISA 只申报能力；A1 `forge-abi` + `forge-isa abi` / A2 IR `CallConvId` / A3–A4 管线按 `AbiPlan` 发射 / A5 删谱里 `[abi]` 换 `[machine]` / A6 fail-closed + 多值返回 + 调用点形状摊成员 / A7 异域钩子示例 / A8 文档一致性 + 自定义约定的端到端证据） | progress |
 | `plans/varargs-plan.md` | 变参（varargs）方案：**规划已完成、发射与前端为空**的现状索引 + 四份内置约定的 `va_list` 形态（由引擎输出钉住）+ 五个决策点 + 五期切片 + "为什么现在不做"的触发条件 | progress |
 
