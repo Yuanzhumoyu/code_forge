@@ -176,8 +176,17 @@ cargo test -p forge-tests --lib jit_matrix_riscv64 -- --test-threads=1 --nocaptu
       三谱 + 夹具 + schema + 文档键表同步。实测：**704 处 / 13 文件**，
       `forge-isa-dsl` 与 `forge-codegen` 全绿（`fields = {` 残留 0，
       `[[operand_slots]].fields = [...]` 的 58 处保持不动）。
-- [ ] `dsl/model.rs`：字段声明类型（`FieldDecl`：类型表达式 / 位区间列表 / 接口名 / 默认值）
-      + `[[forms]].fields` / `[[instructions]].fields` 两个新键 + `bind` 键。
+- [x] **W2.2a 字段声明的解析与降级**（纯新增、暂无读者：编码器/生成物一行不动）：
+      `dsl/field_decl.rs`（`FieldDecl` 类型 + 解析 + `to_bitfield` + `lower_bitfields` +
+      `bind_operands`），8 条单测全绿。**关键证据**：新语法对 riscv 散射**逐段等价**于既有 `pieces`
+      （`imm_b` = `i13[12:1 -> 11:8,30:25,7,31]` ↔ `[{31,1,12},{25,6,5},{8,4,1},{7,1,11}]`；
+      `imm_j` = `i21[20:1 -> 30:21,20,19:12,31]` ↔ `[{31,1,20},{21,10,1},{20,1,11},{12,8,12}]`）。
+- [ ] **语法扩展决策（需评审）**：你的语法里 `[begin:end]` 是**连续**位域；riscv 的 S/B/J
+      是**散射**且值自身 bit 0 不参与（`off_b` 无 `unit`，见下 §4.2 风险 3），连续形式表达不了。
+      W2 补了最小扩展：`type[值位段 -> 词位块, …]`（值位段低位在前，词位块按值低位→高位放置）。
+      **若你要别的写法（例如保持单括号只写词位、值偏移另开一个键），现在改代价最小。**
+- [ ] `dsl/model.rs`：接线（`[[forms]].fields` / `[[instructions]].fields` + `bind`），
+      内部 `bitfields`/`opcode_field`/`operand_fields` 改 `#[serde(skip)]` 派生。
 - [ ] 解析与诊断：位区间语法错误、类型不存在、宽度不符、`ops` 引用未知槽名 —— 报错点名
       `[[forms.<名>]].fields[i] = "<原文>"` 与原因（TOML 层无 span，与既有诊断口径一致）。
 - [ ] lowering pass（§4.0）+ 绑定规则：**`ops` 列出的槽 = 操作数槽；其余 = 常量槽**（D-1/D-3）。
