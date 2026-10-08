@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 11：x86 最后一个 form 组段化（form 面收尾）
+
++ `isa/x86.toml`：`MRR_0F_FIX64` 的 5 条（MOVQ 系列）迁到 `MRR_0F_F64_PFX_SEG`；旧 form 已删。
++ 该 form 未声明 `rex_w = "field"`，故新段形态**不带 rex 段**——否则 `match.w` 会由"无意义"
+  变成真字段，把 `rex_w` 从 Auto 改成 Field，语义就变了。
++ **x86 谱里所有 form 都已是段形态**；剩余 50 条是"把编码键写在指令上"的无 form 指令
++ （`segments` 目前只挂在 form 上，需给指令加段载体——即 A/B 分叉里的选项 B）。
++ 逐字节不变：`isa_roundtrip_guard` + asm 棘轮 + 谱内向量 + 双 JIT 矩阵；**150/200 段化**。
+
 ### Added/Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 10：前缀段有序列表 + LOCK 族段化
 
 + **前缀段的第三种形态**：`bytes = ["0xF2", "0xF0"]`（**有序字节列表**，发射序 = 写序）。
