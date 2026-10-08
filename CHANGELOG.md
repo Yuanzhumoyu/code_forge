@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-08) — ISA-DSL v21 W4.2：前缀效果名闭集校验
+
++ 段（`prefix`）里的效果名以 `PrefixEffect::NAMES` 为唯一来源（`opsize16`/`lock`/`repe`/
+  `repne`/`addr32`/`addr16`/`rex`/`rex2`）——写错在**声明期**报错并列出全集。
+  （W4.0 的实现不做校验，垃圾效果名会静默通过。）
++ `opsize16` ⇔ 经典 `prefix` 键的 `"opsize"`（两处拼法不同，降级时换算）；
+  单来源降级成 `PrefixKey::One`、多来源成 `Many`（与序列化往返一致）。
+
 ### Added (2026-10-08) — ISA-DSL v21 W4.1：段 kind 闭集全部落地
 
 + `opcode_reg` 段（`+r` 形式，需 `value` 基值）、`vex`/`evex` 段（头字段来源键 `map`/`pp`/

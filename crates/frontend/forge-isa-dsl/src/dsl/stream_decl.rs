@@ -63,7 +63,7 @@ fn lower_one(form: &mut Form) -> Result<(), String> {
                     Some(SegmentBytes::Raw(_)) => {
                         return Err(format!(
                             "[[forms.{fname}]].prefix: 前缀段要写「字节 → 效果名」的字典\
-                             （`bytes = {{ \"0x66\" = \"opsize\" }}`），不是裸字节列表"
+                             （`bytes = {{ \"0x66\" = \"opsize16\" }}`），不是裸字节列表"
                         ));
                     }
                     None => {
@@ -72,22 +72,37 @@ fn lower_one(form: &mut Form) -> Result<(), String> {
                         ));
                     }
                 };
-                // 经典模型里 `prefix` 只在 `"opsize"` 处表达**语义**（0x66 由操作数宽度驱动），
-                // 其余前缀按**字节**写。降级据此分流。
+                // 效果名是**闭集**（[`PrefixEffect::NAMES`] 是唯一来源）：写错在这里报，
+                // 不留给下游按字符串比对（三处硬编码名字集一旦不同步就是静默漏派发）。
                 //
-                // 已知限制（W4.0）：经典校验要求 `"opsize"` **单独出现**，所以"同时有
-                // opsize 与其它前缀"的 form 现在还降不过去——W4 的"前缀表按 form 显式化"
-                // 会取代该限制（那时前缀段就是唯一事实源）。
+                // 降级到经典 `prefix` 键时口径不同：经典键只在 `"opsize"` 处表达语义
+                //（`PrefixEffect::Opsize16` ⇔ 经典写法的 `"opsize"`），其余前缀按**字节**写。
+                //
+                // 已知限制（记入执行清单）：经典校验要求 `"opsize"` **单独出现**，所以
+                // "同时有 opsize 与其它前缀"的 form 现在还降不过去；W4 的"前缀表按 form
+                // 显式化"（段成为唯一事实源）会取代该限制。
                 let mut parts = Vec::new();
                 for (byte, effect) in effects {
-                    if effect == "opsize" {
+                    if !super::model::PrefixEffect::NAMES.contains(&effect.as_str()) {
+                        return Err(format!(
+                            "[[forms.{fname}]].prefix: 未知的前缀效果名 `{effect}`\
+                             （可用：{}）",
+                            super::model::PrefixEffect::NAMES.join(" / ")
+                        ));
+                    }
+                    parse_byte(&byte).map_err(|e| format!("[[forms.{fname}]].prefix: {e}"))?;
+                    if effect == "opsize16" {
                         parts.push("opsize".to_string());
                     } else {
-                        parse_byte(&byte).map_err(|e| format!("[[forms.{fname}]].prefix: {e}"))?;
                         parts.push(byte);
                     }
                 }
-                keys.prefix = Some(PrefixKey::Many(parts));
+                // 单来源写 `One`（与经典写法/序列化往返一致），多来源写 `Many`。
+                keys.prefix = Some(if parts.len() == 1 {
+                    PrefixKey::One(parts.remove(0))
+                } else {
+                    PrefixKey::Many(parts)
+                });
             }
             SegKind::Escape => {
                 let raw = match seg.bytes.clone() {
@@ -298,7 +313,7 @@ kind = "reg"
 class = "gpr64"
 [[forms]]
 name = "S"
-prefix = ["0xF0"]
+prefix = "0xF0"
 escape = [0x0F]
 rex = "auto"
 rex_w = "auto"
@@ -344,6 +359,27 @@ asm = "n {dst}, {src}"
         let err = format!("{:?}", crate::dsl::parse_and_validate(&bad).unwrap_err());
         assert!(err.contains("unknown variant"), "err: {err}");
         assert!(err.contains("prefix"), "闭集应列在消息里：{err}");
+    }
+
+    #[test]
+    fn unknown_prefix_effect_is_rejected_with_the_closed_set() {
+        let bad = STREAM.replace("\"0xF0\" = \"lock\"", "\"0xF0\" = \"locked\"");
+        let err = format!("{:?}", crate::dsl::parse_and_validate(&bad).unwrap_err());
+        assert!(err.contains("locked"), "err: {err}");
+        assert!(err.contains("opsize16"), "闭集应列在消息里：{err}");
+    }
+
+    /// `opsize16`（闭集名）降级到经典键的 `"opsize"`（经典口径），单独出现时合法。
+    #[test]
+    fn opsize16_effect_lowers_to_classic_opsize() {
+        let stream = STREAM.replace(
+            "{ kind = \"prefix\", bytes = { \"0xF0\" = \"lock\" } },",
+            "{ kind = \"prefix\", bytes = { \"0x66\" = \"opsize16\" } },",
+        );
+        let classic = CLASSIC.replace("prefix = \"0xF0\"", "prefix = \"opsize\"");
+        let s = form_of(&stream);
+        let c = form_of(&classic);
+        assert_eq!(s.keys.prefix, c.keys.prefix, "opsize16 ⇔ 经典 \"opsize\"");
     }
 
     #[test]
