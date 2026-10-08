@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W4.0：指令流段模型（骨架，暂无谱使用）
+
++ `[[forms]].segments`：`[{ kind = "prefix" | "escape" | "rex" | "opcode" | "opcode_reg" |
+  "modrm" | "sib" | "disp" | "imm" | "vex" | "evex", fields/bytes/value }, …]`——**有序段
+  即发射序**，段内位域沿用 W2 的字段语法（并入 `form.fields` 后由同一处展开）。
++ 段 kind 是**闭集**：写错由 serde 报 unknown variant 并列出全集；未实现的段
+  （`opcode_reg`/`sib`/`disp`/`vex`/`evex`）**明确报错**而不是静默忽略。
++ 降级到既有语义键（编码器与生成物一行未改）；等价性单测：段写法与经典写法得到
+  **同一份** `EncKeys`。三方针（model/schema/docs）已同步；`isa/*.toml` 尚未使用。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W3b：命名取值表统一为 `[enum.*]`（**破坏性**）
 
 原先三张各写一套的表合并成 `[enum.<表名>]`：

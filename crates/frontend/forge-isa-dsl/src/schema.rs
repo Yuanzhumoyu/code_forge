@@ -235,7 +235,7 @@ pub const SECTIONS: &[Section] = &[
         path: "[[forms]]",
         model: "Form",
         required: &["name"],
-        optional: &["fields"],
+        optional: &["fields", "segments"],
         // Form 的编码键是 `#[serde(flatten)]` 的 EncKeys：TOML 里与本节的键同级。
         flatten: ENC_KEYS,
         additional: false,

@@ -1974,8 +1974,74 @@ pub struct Form {
     /// 见 [`crate::dsl::field_decl`]。
     #[serde(default)]
     pub fields: Option<Vec<FieldDecl>>,
+    /// **v21 W4 段（stream）形态**：有序段 = 发射序，每段自带 `kind` 与自己的字节布局。
+    ///
+    /// 与设计文档的偏离（记入执行清单）：段用**内联表数组**而不是"`segments = [名字…]`
+    /// + 命名子表"——`[[forms]]` 是数组元素，子表路径在 TOML 里有二义性；顺序即发射序
+    /// 也免去"名字列表 + 子表"两处重复。段是闭集，见 [`SegKind`]。
+    ///
+    /// 只降级 `kind = "stream"` 的 form；`bits`（缺省）路径不看它。
+    #[serde(default)]
+    pub segments: Option<Vec<SegmentDecl>>,
     #[serde(flatten)]
     pub keys: EncKeys,
+}
+
+/// **v21 W4 段 kind 闭集**：这堆字节在指令流里扮演什么角色。
+///
+/// 枚举而不是自由串——写错由 serde 直接报 "unknown variant" 并列出闭集；
+/// 每段用 W2 的同一套字段语法声明自己的字节布局（`fields`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SegKind {
+    /// 前缀字节 → 效果名（`opsize`/`lock`/`repe`/`repne`/`addr16`…）。
+    Prefix,
+    /// 转义字节（x86 的 `0x0F` 等）。
+    Escape,
+    /// REX 字节（W/R/X/B 位）。
+    Rex,
+    /// 操作码字节。
+    Opcode,
+    /// 操作码内联寄存器低 3 位（`+r` 形式）。
+    OpcodeReg,
+    /// ModRM 字节。
+    Modrm,
+    /// SIB 字节。
+    Sib,
+    /// 位移。
+    Disp,
+    /// 立即数。
+    Imm,
+    /// VEX 头。
+    Vex,
+    /// EVEX 头。
+    Evex,
+}
+
+/// v21 W4：**指令流里的一段**（`segments = [{ kind = …, … }, …]`）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SegmentDecl {
+    pub kind: SegKind,
+    /// 段内位域（W2 的同一套语法：`"u1[7]:w"`）。
+    #[serde(default)]
+    pub fields: Option<Vec<FieldDecl>>,
+    /// 固定字节/字节 → 效果名（`prefix`：`{ "0x66" = "opsize" }`；`escape`：`["0x0F"]`）。
+    #[serde(default)]
+    pub bytes: Option<SegmentBytes>,
+    /// `opcode_reg`：操作码基值（`+r` 形式）。
+    #[serde(default)]
+    pub value: Option<u64>,
+}
+
+/// 段的字节声明：效果名字典（前缀）或裸字节列表（转义）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SegmentBytes {
+    /// 字节 → 效果名（`{ "0x66" = "opsize" }`）。
+    Effects(BTreeMap<String, String>),
+    /// 裸字节（`["0x0F"]`）。
+    Raw(Vec<String>),
 }
 
 /// ModRM 映射：哪个操作数进 `reg` 字段、哪个进 `rm` 字段。

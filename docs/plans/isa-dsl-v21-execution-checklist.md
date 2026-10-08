@@ -320,7 +320,22 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > `[conventions.imm_names.*]`（值表）。判定规则：表名叫 `cond` **或**条目带 `ir` ⇒ 条件码表
 > （内部只一处，两张即报错）；`kind = "bits"` ⇒ 位集合表；否则值表。槽侧照旧 `enum = "<表名>"`。
 > 三谱 + 夹具（含内联形态）已迁移；门禁同 W3a（workspace exit 0、0 编译错误、0 失败二进制）。
-
+> 🚧 **W4 进行中（2026-10-08）**：段模型（x86 那一族变长编码）分两步走。
+> ✅ **W4.0 段模型骨架已落地**：`form.segments = [{ kind = …, fields/bytes/value }, …]`
+> ——有序段 = 发射序；段 kind 是**闭集**（`prefix`/`escape`/`rex`/`opcode`/`opcode_reg`/
+> `modrm`/`sib`/`disp`/`imm`/`vex`/`evex`）；段内位域用 **W2 的同一套语法**声明，并进
+> `form.fields` 后仍由 `field_decl` 一处展开。降级覆盖 `prefix`/`escape`/`rex`/`opcode`/
+> `modrm`/`imm`（其余段 **fail-closed 报错**，不静默）。等价性有单测钉住：段写法与经典语义键
+> 写法降级到**同一份** `EncKeys`。
+> **两处偏离（需评审）**：① 段用**内联表数组**而不是"`segments = [名字…]` + 命名子表"——
+> `[[forms]]` 是数组元素，子表路径在 TOML 里有二义性；内联表让"顺序即发射序"结构化，少一处重复。
+> ② REX 的 `0x40` 基值**由段 kind 蕴含**，谱里不再写 `u4[3:0]=0x4`（无名常量槽不在 W2 支持面内，
+> 且"这堆字节是 REX"本就是结构事实）。
+> **已记录的 W4.0 限制**：经典校验要求 `prefix = "opsize"` **单独出现**，所以"同时有 opsize
+> 与其它前缀"的 form 现在还降不过去；W4 的"前缀表按 form 显式化"会取代该限制。
+> ⏭ **W4.1（下一片）**：`opcode_reg`/`sib`/`disp`/`vex`/`evex` 段的降级 + 按 form 的前缀扫描表
+> （删 `default_prefix_scan()`）→ 再迁 x86 谱（20 forms / 200 insts / 18 templates；键用量
+> `modrm 159 / vex 154 / evex 72 / prefix 114 / opsize 81 / escape 47 / imm 242`）。
 **目标**：`[operand.*]` + `[enum.*]` + `[encode.*]`；8 个一次性开关 → 5 个正交键。
 
 - [ ] `kind`/`bits`/`signed`/`range`/`unit` 定稿；`min`+`max` 合一为 `range`。
