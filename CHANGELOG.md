@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W4.4 尾巴：守卫覆盖字段形态前缀（`match.prefix` 实际值）
+
++ 新增 `match_prefix_bytes`：把指令 `match = { prefix = … }` 的**实际前缀字节值**
+  （`0` = 无前缀，排除）纳入守卫——解码正是靠这些字节区分指令
+  （`MOVUPS_*`(0) vs `MOVSS_*`(0xF3) 共用 `0F 10 /r`）。守卫至此覆盖三种前缀形态
+  （字节→效果名字典、有序字节列表、字段形态）。
++ 结论记录：共享前缀扫描循环已由"生效表"驱动，而生效表被守卫保证覆盖全部已声明前缀 ⇒
+  "解码条件按 form 前缀段生成"**已等效成立**；把表改成从段派生是整洁项，暂无行为收益，
+  且受"有序列表/字段形态不带效果名"所限（计划写在清单里）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W4.4 主体：删掉内置前缀扫描兜底 + 常驻等价性守卫
 
 + **删掉 `default_prefix_scan()`**：生效前缀扫描表 = 谱声明的 `[[conventions.prefix_scan]]`；

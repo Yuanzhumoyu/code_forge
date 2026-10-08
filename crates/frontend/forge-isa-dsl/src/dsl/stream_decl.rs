@@ -162,6 +162,21 @@ fn lower_instr_segments(m: &mut IsaModel) -> Result<(), String> {
     Ok(())
 }
 
+/// v21 W4.4 守卫用：收集指令 **`match = { prefix = … }`** 里的前缀字节值
+/// （字段形态的前缀实际值就在这儿；`0` = **无前缀**，不是字节 0x00，要排除）。
+pub fn match_prefix_bytes(m: &IsaModel) -> std::collections::BTreeSet<u8> {
+    let mut out = std::collections::BTreeSet::new();
+    for inst in &m.instructions {
+        if let Some(fields) = &inst.fields
+            && let Some(v) = fields.get("prefix")
+            && *v != 0
+            && *v <= 0xFF
+        {
+            out.insert(*v as u8);
+        }
+    }
+    out
+}
 /// 效果名 → [`PrefixEffect`]（[`PrefixEffect::NAMES`] 是闭集，这里是它的解析）。
 fn effect_from_name(n: &str) -> Option<super::model::PrefixEffect> {
     use super::model::PrefixEffect as E;
@@ -799,6 +814,14 @@ asm = "n {dst}, {src}"
                 if let Some(want) = want {
                     assert_eq!(hit.effects, want, "{name}: 0x{byte:02X} 的效果与扫描表不一致");
                 }
+            }
+            // **字段形态**的前缀实际值（`match = { prefix = … }`）也要在表里——
+            // 解码靠这些字节区分指令（如 `MOVUPS_*`(0) vs `MOVSS_*`(0xF3)）。
+            for byte in match_prefix_bytes(&m) {
+                assert!(
+                    table.iter().any(|e| e.byte == Some(u64::from(byte))),
+                    "{name}: 指令 match.prefix = 0x{byte:02X} 不在生效扫描表里"
+                );
             }
         }
     }
