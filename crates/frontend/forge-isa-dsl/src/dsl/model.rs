@@ -3363,6 +3363,9 @@ pub fn variants_keep(gate: Option<&VariantGate>, params: &BTreeMap<String, i64>)
 /// 解析点将来只在投影通路（见 docs/plans/isa-dsl-variant-field-values.md）。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct VariantFieldValue {
-    pub by: std::collections::BTreeMap<u64, u64>,
+    /// 参数名（如 `xlen`）；空串 = 永不命中 ⇒ 一律取 `default`。
+    #[serde(default)]
+    pub param: String,
+    pub by: std::collections::BTreeMap<i64, u64>,
     pub default: u64,
 }

@@ -100,7 +100,22 @@ pub fn apply_variants(
         .into_iter()
         .filter(|n| !refs_after.contains(n))
         .collect();
-    // ② 其余承载指令引用的声明节：逐节 retain + 记账（节名 = TOML 里的写法）。
+    // ②′ 字段值的**变体分派**（出路 2 第②步）：把 `fields_variant` 按 params 解析后合并进 `fields`。
+    //     **这是唯一的解析点** ⇒ 解析完下游只见常量（生成器/解码/渲染零改动 ✓）。
+    //     命中规则：`params[参数]` 在 `by` 里 ⇒ 用它的值；参数没传 / 未命中 / param 为空 ⇒ `default`。
+    //     校验期已保证 `default` 必填、参数名已声明、`by` 的键在声明域内（见 `validate_variant_gates`）。
+    for inst in m.instructions.iter_mut() {
+        let Some(fv) = inst.fields_variant.take() else { continue };
+        for (field, spec) in fv {
+            let chosen = params
+                .get(&spec.param)
+                .and_then(|v| spec.by.get(v).copied())
+                .unwrap_or(spec.default);
+            inst.fields
+                .get_or_insert_with(std::collections::BTreeMap::new)
+                .insert(field, chosen);
+        }
+    }    // ② 其余承载指令引用的声明节：逐节 retain + 记账（节名 = TOML 里的写法）。
     let dropped_spills: Vec<String> = m
         .spill
         .iter()
