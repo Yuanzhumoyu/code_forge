@@ -22,46 +22,87 @@
 ## 目录
 
 - [ISA-DSL v18 — 语法规范（唯一 DSL 语法）](#isa-dsl-v18--语法规范唯一-dsl-语法)
+
   - [目录](#目录)
+
   - [版本与现状（v18）](#版本与现状v18)
+
   - [键总览（速查表，v18 S7c）](#键总览速查表v18-s7c)
+
   - [快速开始](#快速开始)
+
     - [宿主接入（**必须**：v18 S10d 起生成物由 build script 预生成）](#宿主接入必须v18-s10d-起生成物由-build-script-预生成)
+
   - [`[meta]` — 元信息与寄存器组](#meta--元信息与寄存器组)
+
   - [`[encoding]` — 指令宽度三态（v18 S4）](#encoding--指令宽度三态v18-s4)
+
   - [宽度元数据（去「宽度写死」）](#宽度元数据去宽度写死)
+
     - [键与派生规则](#键与派生规则)
+
     - [指令字宽（`[encoding].bits` / 逐指令 `width`，**无白名单/上限**）](#指令字宽encodingbits--逐指令-width无白名单上限)
+
     - [生成的访问器](#生成的访问器)
+
     - [fail-closed 契约](#fail-closed-契约)
+
     - [`[types]` — 类型 → 类（ISA 数据，B2 接口通用化）](#types--类型--类isa-数据b2-接口通用化)
+
     - [最小示例](#最小示例)
+
   - [`[conventions]` — ISA 约定](#conventions--isa-约定)
+
     - [`[conventions.cond]` — 条件码表（一张表，三处用）](#conventionscond--条件码表一张表三处用)
+
     - [`[conventions.mem]` — 内存操作数的文本形态（v20 V10）](#conventionsmem--内存操作数的文本形态v20-v10)
+
   - [`[[operand_slots]]` — 操作数槽](#operand_slots--操作数槽)
+
   - [`[[forms]]` — 编码形式（可选预设）](#forms--编码形式可选预设)
+
   - [`[[instructions]]` — 指令](#instructions--指令)
+
   - [多文件组合（`include` / `[[override]]`，v18 S7d）](#多文件组合include--overridev18-s7d)
+
   - [`[[reloc]]` — 重定位表（v18 S3d）](#reloc--重定位表v18-s3d)
+
   - [`[[pseudo]]` — 汇编器伪指令（v18 S3e；v20 V10 改 `asm` 声明形态）](#pseudo--汇编器伪指令v18-s3ev20-v10-改-asm-声明形态)
+
   - [`[[templates]]` — 参数化指令模板（唯一复用机制）](#templates--参数化指令模板唯一复用机制)
+
   - [结构化谓词](#结构化谓词)
+
     - [`[[derive]]` — 给谓词起名字（v18 S3f）](#derive--给谓词起名字v18-s3f)
+
   - [`[[lowering]]` — 指令选择](#lowering--指令选择)
+
   - [`[[pattern]]` — 树型多指令匹配](#pattern--树型多指令匹配)
+
   - [`[machine]` — 机器事实](#machine--机器事实)
+
   - [`[abi]` — 已删除（v20 A5-3）](#abi--已删除v20-a5-3-收口)
+
   - [`[machine.frame]` — 帧布局](#machineframe--帧布局)
+
 - [`[emit]` — 代码对齐与尾声标签](#emit--代码对齐与尾声标签)
+
   - [`[spill.*]` — 溢出模板](#spill--溢出模板)
+
   - [asm 模板](#asm-模板)
+
   - [代码生成输出](#代码生成输出)
+
     - [生成代码依赖的运行面（generated-code runtime surface）](#生成代码依赖的运行面generated-code-runtime-surface)
+
     - [汇编器能力（`TargetAssembler::parse_insts`）](#汇编器能力targetassemblerparse_insts)
+
     - [解码器能力](#解码器能力)
+
     - [工具链：`forge-isa` CLI（v18 S7b）](#工具链forge-isa-cliv18-s7b)
+
     - [生成期自测（`__spec_tests`，v18 S6）](#生成期自测__spec_testsv18-s6)
+
   - [已有 ISA 谱](#已有-isa-谱)
 
 ---
@@ -86,9 +127,11 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 1. **通用，不服务个别指令集**——生成器里不再有某个 ISA 的缺省（条件码表、前缀扫描、
    `[abi]` 旋钮、宽度类）：缺声明就 fail-closed 报错，而不是静默套别家形状；
 2. **数据化**——条件码、重定位语义、伪指令、派生谓词、内存操作数文本、指令字宽都写在 TOML 里；
+
 3. **作者面一致**——`ops` 里声明的名字同时是 `asm` 占位符名与生成的 `Inst` 字段名；
    位域名 / 语义角色名只做内部编码键；
 4. **一次列全的诊断** + 可点击的 `路径:行:列`（多文件谱指向真正写那一行的文件）；
+
 5. **每条指令自动进回归网**（生成期自测），CLI 不接后端就能校验/查看展开结果/做规格 diff。
 
 > 历史：v15 的 S1–S6（删死键、`vary` 行表、命名操作数、`roles` 枚举、帧布局推导、`[[pattern]]`）
@@ -200,7 +243,9 @@ build-dependency `forge-isa-dsl`，自带玩具谱与依赖面守卫；v19 V2 �
 宿主 crate 需要两处各三行：
 
 ```toml
+
 # Cargo.toml
+
 [build-dependencies]
 forge-isa-dsl = { path = "../../frontend/forge-isa-dsl" }
 ```
@@ -287,7 +332,9 @@ comment_char = "#"           # 行注释标记（1–4 个字符的**字符串**
 label_suffix = ":"           # 标签定义后缀（缺省 ":"）
 directive_prefix = "."       # 伪指令前缀（缺省 "."）
 imm_prefix = "$"             # 可选：立即数前缀（x86 AT&T "$"、ARM "#"）
+
 # ── 宽度元数据（可选；缺省从 [reg.*] 派生，见下节）──
+
 default_gpr_width = 8        # 主 GPR 类宽度（字节）；缺省 = 最宽已声明 GPR 组
 default_fpr_width = 16       # 主 FPR 类宽度（字节）；缺省 = fpr16 优先，其次最宽
 addr_width = 8               # 地址/指针类（MemRef base/index、lea、sp/fp）
@@ -296,6 +343,7 @@ value_fpr_width = 8          # 宿主浮点值池类宽（缺省 8 = f64 值池�
 vector_tiers = [16, 32, 64]  # 向量类字节档位（升序；缺省 = x86 XMM/YMM/ZMM）
 
 # ── 栈与帧（可选；缺省全部派生）──
+
 [stack]
 slot = 8                     # 栈槽单位字节（alloca/聚合/spill 槽对齐）；缺省 = addr_width
 align = 16                   # 栈对齐字节；缺省 = slot
@@ -325,6 +373,7 @@ aliases = { a0 = 10, fp = 8 } # 别名表：`别名 = 组内下标`（可选）
 - **解析认别名**（`Reg::from_str`，与主名同样受 `[meta].case_insensitive_regs` 影响），
   **渲染只出主名**（反汇编 `X10`，不是 `A0`）；
 - 与 `names` 的**位置无关**：`fp = 8, s0 = 8` 允许（同一寄存器多个别名），不必与主名对齐；
+
 - 校验（`validate_regs`）：下标必须在组内、别名非空、不得与本组主名撞车、
   **跨组也不得重名**（重名会让 `Reg::from_str` 的 match 静默按声明序取第一个）。
 
@@ -345,10 +394,13 @@ kind = "fixed"          # fixed | mixed | prefix_scan（必填）
 bits = 32               # fixed：字长（位，任意 ≥ 1）
 
 # ── kind = "mixed"（短编码与长编码共存，如 RVC/Thumb）──
+
 # bits = 16             # 可选：逐指令 width 缺省时用它
+
 # widths = [16, 32]     # 必填：允许的字长集（位；不得重复）
 
 # ── kind = "prefix_scan"（x86：长度由前缀链决定）──
+
 # max_len = 15          # 可选：最长指令字节数（缺省 15）
 
 default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode 时的
@@ -417,10 +469,12 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
 定宽 ISA 的指令字宽是 ISA 数据，可写**任意 ≥ 1 位**（不只是 32）：
 
 - 存储字节数 = `ceil(位 / 8)`（100 位 → 13 字节；12 位 → 2 字节）；
+
 - 生成代码把字表示为**字节数组**（`[u8; n]`，LE 位序：bit 0 = 第 0 字节 LSB），
   位域读写走生成的 `__place` / `__bits` 助手，因此字长**不受 u64/u128 限制**，
   位域可以落在机器字之外（如 bit 92..100）、跨字节或非字节对齐；
 - **大端 ISA**（`[meta].endian = "big"`）的内存序 = 该字节数组反转；
+
 - `kind = "prefix_scan"` 是唯一的"无固定字长"形态（`bits` 与它互斥）；
   `mixed` 逐指令取 `width`，每一条指令的字长同样可以任意；
 - 定宽/混合 label/global fixup 的 `RelocKind` 宽度 = **该指令**字长的字节数
@@ -599,13 +653,16 @@ schema/诊断/生成器共用它，不另抄名单）：
 **两种"条件出现在语法里"的写法**（都用这张表，不需要第二处声明）：
 
 ```toml
+
 # 1) 条件当**操作数**：槽 kind = "cond"，汇编/反汇编按名解析与渲染
+
 [[instructions]]
 name = "CSELX"
 ops = ["dst:r64:out", "src:r64", "cc:cond4", "src2:r64"]   # cond4 槽 kind = "cond"
 asm = "csel {dst}, {src}, {src2}, {cc}"
 
 # 2) 条件在**助记符里**（A64 `b.eq`）：条件码做成固定字段，助记符用行键插值
+
 [[templates]]
 name = "BCOND"
 body = { form = "BCF", opcode = 0x54, ops = ["target:off19"], asm = "b.{cname} {target}" }
@@ -701,6 +758,7 @@ size_keywords = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"
   [rax]`（一元形态没有寄存器驱动宽度）用的也是这一招。代价是"每种宽度一条模板行"，
   换来的是"不会静默按别的宽度编出来"。
 - **缺省**（整节不写）= 单条 `"[{base}+{index}*{scale}+{disp}]"`（x86 现行为）。
+
 - **无基址在 x86 上是 `mod=00` + `rm=100` + `SIB.base=101` + disp32**：ModRM 的
   `mod=00/rm=101` 是 RIP 相对（本 DSL 仍明确拒绝），`SIB.base=101` 才是"没有基址"。
   编解码两侧对称（`gen_mem_modrm` / `gen_mem_decode`），测得的字节与上游一致
@@ -715,7 +773,9 @@ size_keywords = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"
 name = "gpr"
 kind = "reg"                   # reg / imm / mem / label / cond
 class = "gpr"                  # reg：所属 [reg.*] 组；省略 → 多态槽（宽度由实际寄存器推导）
+
 # classes = ["gpr8", "gpr16"]  # 多宽度/多类型集合（class 是单元素糖；两者皆无 = 任意寄存器类）
+
 byte_reg = true                # 可选：8 位寄存器操作数（spl/bpl/sil/dil 无 REX 时编码 ah/ch/dh/bh）
 roles = "inout"                # 不写 = 不限制；一个 OperandRole 就够（inout 涵盖 in 与 out）
 
@@ -794,6 +854,7 @@ width = 4
 [conventions.imm_names.csr]
 mstatus = 0x300
 mvendorid = 0xF11
+
 # …（riscv64 这张表有 432 条，来自上游 LLVM 的 RISCVSystemOperands.td）
 
 [[operand_slots]]
@@ -820,6 +881,7 @@ names = "csr"
 `lui a0, %hi(foo)`、`addi ra, sp, %lo(foo)`、`jal rd, .Lpcrel_hi0`。槽声明 `symbols = true` 后：
 
 - 解析：未定义的 ident（`.equ` 常量优先）被记成**符号引用 + 当前立即数修饰**，当 0 参与算术；
+
 - 回填（两遍布局的第二遍）：符号解析成"该标签的**块下标**"（`.` = 本条指令自身的下标），
   再**过一遍修饰**——`%hi(foo)` 就是 `hi(foo 的块下标)`；未定义的符号报 `UndefinedLabel`
   （**准确的诊断**：不再说"没有这条指令"）；
@@ -828,6 +890,7 @@ names = "csr"
   `unit == 1`（否则"修饰作用于块下标还是字节偏移"有歧义，校验期直接拒）；**label 槽不受
   此限**——A64 的 `b`/`cbz` 就是 label 槽 + `unit = 4`，回填值 = 块下标 × 4（见下面的 `unit` 节）。
 - 未声明 `symbols` 的 **imm 槽**照旧"未知 ident 即不匹配"——能力是声明的，不是隐含的。
+
 - **`imm_fns = ["abs_g0", …]`**（按槽**过滤**修饰表）：只接受列出的 `[[conventions.imm_fn]]`。
   修饰表是**全局**的，但有些 ISA 里**修饰名决定字段值**：A64 的 `movz/movk/movn` 就是例子
   （`#:abs_g0:foo` ⇒ `hw = 0`、`#:abs_g1:foo` ⇒ `hw = 1`…），不按槽过滤的话
@@ -850,7 +913,9 @@ names = "csr"
 `jmp rel32` 是字节单位，故缺省 `unit = 1` 就够了。写 `unit = N`（2 的幂）后：
 
 1. **值域按源单位**给（`imm_range` = 字段值域 × N），越界报错；
+
 2. 源值不是 N 的整数倍 ⇒ 该条写法不匹配（与越界同处理，**不静默取整**）；
+
 3. 编码把源值 `>> log2(N)` 写进字段，**解码乘回来** ⇒ `Inst` 字段与 `disassemble`
    渲染始终是源单位，`disassemble → assemble` 照旧闭合；
 4. **符号标签**回填"块下标 × N"（= 该块的字节偏移），与数字写法同单位。
@@ -1063,6 +1128,7 @@ x86 的 `MOVSS`/`MOVSD`（共用 `fpr16` 槽）、riscv 的 `FSGNJ_S`/`FSGNJ_D`�
 非搬运的角色条目有两种写法：
 
 - `"call"` —— 裸声明：无限定，全 ISA 唯一（validate 强制）；
+
 - `{ role = "callee_save", class = "fpr" }` —— **有寄存器类语义**的角色
   （v20 A6）：同一个能力在 GPR 与 FPR 上要用**不同指令**时分开申报，
   靠 `class`（`"gpr"`/`"fpr"`）区分，同类唯一。arm64 的帧内保存就是
@@ -1113,7 +1179,9 @@ idiv 用 RAX:RDX、cqo 写 RDX），生成的 `MachineInst::clobbers()` 供 rega
 大 ISA（或"公共骨架 + 各扩展"）不必挤在一个文件里：
 
 ```toml
+
 # riscv_fd.toml（根文件）
+
 include = ["common/rv_base.toml"]        # 数组；相对**本文件**所在目录解析
 
 [[override]]                             # 显式覆盖被包含文件里的某个键
@@ -1135,6 +1203,7 @@ value = "18.0-fd"
 - **诊断指向真正写那一行的文件**：多文件谱的 `路径:行:列` 是合并后的来源映射，
   不是"合并文本里的第 N 行"；
 - **递归深度上限 8**；同一文件被包含两次（含成环）报错；
+
 - 生成物登记**所有来源文件**的 `include_bytes!`，改任一片段都触发重编译。
 
 `include` 与 `[[override]]` 是**组合键**：合并后的文本里不再出现它们，因此模型
@@ -1242,6 +1311,7 @@ rows = [                              # 每行一条指令：inst 必填，其�
 三句话讲完语义：
 
 - **`rows` 是事实载体**：一行 = 一条指令，`inst` = 指令名（全 ISA 唯一）；
+
 - **`body` 是共享默认值**：行里的同名字段覆盖它，表（`fields`/`modrm`/…）**递归合并**；
   不给 `body` 就是"一组各自独立的指令"（原先 `[[aliases]]` 的常见形态）；
 - **插值**：字符串里的 `{键}` 取该行的值（`{inst}` = 实例名，`{键.lower}` 取小写）；
@@ -1265,6 +1335,7 @@ rows = [                              # 每行一条指令：inst 必填，其�
 - `rows` 是 TOML 数组：`rows = [ { … }, … ]`（一行一条，推荐）与 `[[templates.rows]]`
   是**同一个结构的两种写法**（TOML 数组的两种拼法），后者适合字段多、需要换行的行；
 - 展开在**解析期**完成：下游（校验/代码生成）只看到普通指令，生成器一行未改；
+
 - 诊断锚在**模板声明**：消息前缀改写为 `[[templates.X]]`（X = 模板名），并在块内精准
   到出错的那一行/那个 `inst`——不会指向源里根本不存在的 `[[instructions.实例名]]`；
 - `rows` 为空、`inst` 为空、行键拼错的参数名、`body` 非内联表都是编译期错误。
@@ -1396,7 +1467,9 @@ insts = ["xor {out}, {out}", "cmp32 {1}, {0}", "setcc {out}, {cc}"]
 `{键}` 引用；否则是纯替换变量。消除"一个 op 一堆只差助记符的规则"：
 
 ```toml
+
 # v14：8 条 Vadd（4 elem × 2 宽度）→ v15：2 条
+
 [[lowering]]
 op = "Vadd"
 vary = { elem = [1, 2, 3, 4], m = ["vaddps", "vaddpd", "vpaddd", "vpaddq"] }
@@ -1408,6 +1481,7 @@ vary = { elem = [1, 2, 3], m = ["addps", "addpd", "paddd"] }
 insts = ["movaps {out}, {0}", "{m} {out}, {1}"]
 
 # Fcmp 32 条（16 cond × 2 elem）→ 4 条
+
 [[lowering]]
 op = "Fcmp"
 vary = { cond = [1, 2, 4, 7, 8, 11, 14, 15], k = [11, 10, 5, 7, 3, 4, 2, 6] }
@@ -1645,13 +1719,16 @@ push 机制 = `push fp` → `frame_set` → 逐 `push` → **收参** → `frame
 callee-saved 保存/恢复与寄存器溢出用的 load/store 指令 + 基址寄存器。两种形态：
 
 ```toml
+
 # x86 式（Mem 槽）：
+
 [spill.GPR]
 load = "MOV64_RM {0}, {1}"     # {0}=目标寄存器、{1}=MemRef{base, __off}
 store = "MOV64_MR {0}, {1}"    # {0}=源寄存器、{1}=MemRef{base, __off}
 base = "RBP"
 
 # riscv 式三操作数（reg + reg + imm，无 Mem 槽）：
+
 [spill.GPR]
 load = "LD {0}, X8, {1}"       # {0}=目标寄存器、字面 X8=基址、{1}=__off 立即数
 store = "SD {0}, X8, {1}"
@@ -1840,7 +1917,9 @@ REX.R/B/X、8 位寄存器的 REX 强制、EVEX 的 ZMM16-31）。
 `sample_operands`）：
 
 - 每条指令 × 每个宽度视图一条；
+
 - 每个 imm 槽追加 `lo`/`hi` 两条（手抄清单里"负数/最大值"用例的替代）；
+
 - 每个 mem 槽追加 `disp=8` / `disp=-8` / `index+scale=4` 三条（自测基线只用 `disp=0`）。
 
 实测条目数（2026-09-24）：x86 **602** / riscv64 **327** / arm64 **332**（远多于指令总数，
@@ -1938,10 +2017,15 @@ partial = 1
 `forge-isa insts --params xlen=32 isa/riscv64.toml` 的实测账目（2026-09-24）：
 
 ```text
+
 # riscv64 （version 13.0；encoding = fixed 32 位；104 条指令 / 19 条模板 / 96 条 lowering）
+
 # 变体投影 xlen=32：指令 116 → 104（-12：LD, SD, SLLW, SRLW, SRAW, ADDW, SUBW, MULW,
+
 #   DIVW, DIVUW, REMW, REMUW）；连带/逐节丢弃：
+
 #   [spill.GPR] ×1、[[lowering]] ×14；lowering 剩 96
+
 ```
 
 **MVP 边界（如实记录）**：这是**只读投影**——不注册后端、不生成变体专属运行期表，
@@ -1970,6 +2054,7 @@ RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不�
 后三档为什么默认关（都属"作者意图"，只有作者能判）：
 
 - `--refs`：`ref` 有"给还没写的 lowering 预留多态名"的合法用法（实测三谱 28 条）；
+
 - `--bits`：变长 ISA 的前缀/REX/ModRM 由编码器发射、不在位域表里建模（按表判必成误报，
   所以该规则跳过 `prefix_scan`）；即便定宽谱，**保留位故意不声明**也是常见写法。
   实测：x86 0 / riscv64 3（`NOP`/`ECALL`/`EBREAK` 的固定位型）/ arm64 67（全是保留位，
@@ -1993,7 +2078,9 @@ RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不�
 后，工具只把**真缺口**报成结论，另打印一行覆盖率口径：
 
 ```text
+
 # isa/x86.toml: 宿主 op 覆盖 = [[lowering]]+[[pattern]] 100 / 终结指令 6（谱里不该有）/ 宿主管线 7（宿主直查）/ 真缺口 3
+
 ```
 
 - **终结指令**（`Ret`/`Jmp`/`Br`/`Switch`/`Unreachable`/`Invoke`）由生成的
@@ -2003,6 +2090,34 @@ RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不�
 - 剩下才是真缺口：x86 **3**（`AddrSpaceCast`/`Resume`/`VaArg`，宿主与谱都没有）、
   riscv64 **42**、arm64 **95**（后两者是各自的谱侧工作量）。
   宿主 op 表是**宿主自己的数据**（DSL 侧不留第二份会漂移的清单），因此换宿主就换一份表。
+
+### 字段值的按变体分派（`fields_variant`）
+
+同一条指令在不同**变体参数**下可能需要不同的字段值。用例是 riscv64 的 `rev8`：RV64 的 `imm12 = 0x6b8`、
+RV32 的 `imm12 = 0x698`（只差 imm12 的 bit5 = word bit 25 = `funct7[0]`，证据是语料 `rv32zbb-only-valid.s:13`）。
+
+```toml
+[[instructions]]
+name = "REV8"
+form = "I"
+opcode = 0x13
+fields = { funct3 = 5 }
+fields_variant = { imm12 = { param = "xlen", by = { 32 = 0x698 }, default = 0x6b8 } }
+ops = ["dst:gpr:out", "src:gpr"]
+asm = "rev8 {dst}, {src}"
+```
+
+语义与约束：
+
+- **一条声明解决两种编码** ✓ —— 不新增/不删除声明 ⇒ 投影计数、歧义名单都不受影响 ✓；
+
+- `param` 必须是 `[meta].variants` 里声明过的参数名；`by` 的键必须在该参数的声明域内；
+
+- `default` **必填** ✓ —— 不传参数（原生视角）时取它 ✓（因此解析**无条件执行**，早于"空参数直接返回"）；
+
+- **解析点唯一**：只读投影通路（`apply_variants`）里把 `fields_variant` 合并进 `fields` ✓；
+  解析后**下游只见常量** ⇒ 生成器 / 解码 / 渲染 / 生成期自测零改动 ✓；
+- `fields` 里同名键若同时存在，**`fields_variant` 覆盖它** ✓（写法上仍建议只留一处，别重复 ✗）。
 
 ## 已有 ISA 谱
 
@@ -2024,6 +2139,7 @@ RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不�
 `tests/common/mod.rs` 用 `isa_from_file!(…)` 宿住）：
 
 - **`demo.toml`**：同助记符多宽度自动分发演示基线。
+
 - **`demo8.toml`**：**1 字节寄存器**回归夹具（唯一 `[reg.gpr1]` 组，宽度
   元数据全 = 1）；用例见 `tests/demo8_tests.rs`。
 - **`demo_mixed16_32.toml`**：**混合字长**夹具（`kind = "mixed"`、
