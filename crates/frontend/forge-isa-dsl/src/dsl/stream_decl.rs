@@ -361,6 +361,17 @@ asm = "n {dst}, {src}"
         assert!(err.contains("prefix"), "闭集应列在消息里：{err}");
     }
 
+    /// v21 W4.3：变长 ISA 的 `bind` 落到 `modrm`（此前 vlen 完全不读 `bind`，
+    /// ModRM 的角色只能靠位置缺省）。
+    #[test]
+    fn vlen_bind_lands_on_modrm() {
+        let m = crate::dsl::parse_and_validate(STREAM).expect("谱合法");
+        let inst = m.instructions.iter().find(|i| i.name == "N").expect("指令 N");
+        let modrm = inst.enc.modrm.as_ref().expect("bind 应写进 modrm");
+        assert_eq!(modrm.reg, Some(crate::dsl::model::ModrmReg::Op("dst".into())));
+        assert_eq!(modrm.rm.as_deref(), Some("src"));
+    }
+
     #[test]
     fn unknown_prefix_effect_is_rejected_with_the_closed_set() {
         let bad = STREAM.replace("\"0xF0\" = \"lock\"", "\"0xF0\" = \"locked\"");

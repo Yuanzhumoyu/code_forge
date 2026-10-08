@@ -344,6 +344,13 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > **顺序更正**：原先计划的"W4.2 删全局前缀表"排在迁谱**之前**是错的——发行 x86 谱的
 > `prefix = ["0x…"]` **只有字节、没有效果**，字节→效果的知识目前在全局表里；先删会丢知识。
 > 正确顺序：**先迁谱（W4.3）**（段携带"字节 = 效果"）→ **再删全局表 / 逐 form 条件（W4.4）**。
+> 🚧 **W4.3 进行中（2026-10-08）**：形态采 **A（保留 form 作段载体，按段骨架重新分组指令）**。
+> ✅ **batch 1 第 1 步已完成**：**变长 ISA 的 `bind` 落到 `modrm`**——`bind = { reg = "dst", rm = "src" }`
+> 在 `prefix_scan` ISA 上写进 `ModrmMap`（此前 vlen 完全不读 `bind`，ModRM 的角色只能靠位置缺省）。
+> 扩展码（`/4` 这类**整数**）不在 `bind` 的表达面内，仍写 `modrm = { reg = 4 }`——已在注释与清单注明。
+> ⏭ **batch 1 第 2 步**：把 14 条核心 RR 指令（MOV/ADD/SUB/XOR/AND/OR/CMP/TEST/ADC/SBB…）
+> 迁到一个段骨架 form（`opcode` + `modrm` 段），指令侧 `opcode = X` → `match = { opcode = X }`；
+> 移位族（SHL/SHR/SAR 带扩展位）留在原 `MRR`，不混读；对拍 asm_encoding 棘轮 + encoder_fuzz + roundtrip。
 > （删 `default_prefix_scan()`）→ 再迁 x86 谱（20 forms / 200 insts / 18 templates；键用量
 > `modrm 159 / vex 154 / evex 72 / prefix 114 / opsize 81 / escape 47 / imm 242`）。
 **目标**：`[operand.*]` + `[enum.*]` + `[encode.*]`；8 个一次性开关 → 5 个正交键。

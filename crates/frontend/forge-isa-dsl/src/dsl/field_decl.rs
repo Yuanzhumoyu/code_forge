@@ -494,6 +494,10 @@ pub fn lower_field_syntax(m: &mut super::model::IsaModel) -> Result<(), String> 
         .iter()
         .filter_map(|f| f.fields.clone().map(|d| (f.name.clone(), d)))
         .collect();
+    // v21 W4.3：**变长 ISA 的 `bind`** 也要落地——`bind = { reg = "dst", rm = "src" }`
+    // 说的是"哪个操作数进 ModRM 的 reg/rm 字段"（定宽 ISA 走 `operand_fields`，那条路
+    // 上面已经在用）。此前 vlen 完全不读 `bind`，于是 ModRM 的角色只能靠位置缺省。
+    let vlen = m.encoding.kind == super::model::EncodingKind::PrefixScan;
     for inst in &mut m.instructions {
         let Some(fname) = inst.form.clone() else {
             continue;
@@ -538,6 +542,22 @@ pub fn lower_field_syntax(m: &mut super::model::IsaModel) -> Result<(), String> 
             })
             .collect();
         inst.enc.operand_fields = Some(of);
+        if vlen && !bind.is_empty() {
+            // `reg` 的值是操作数名 ⇒ `ModrmReg::Op`；`rm` 的值是操作数名（`[名]` = 内存形式）。
+            // **扩展码（`/4`）不在 `bind` 的表达面内**：它是整数，仍写 `modrm = { reg = 4 }`。
+            let reg = bind.get("reg").map(|n| super::model::ModrmReg::Op(n.clone()));
+            let rm = bind.get("rm").cloned();
+            if reg.is_some() || rm.is_some() {
+                let base = inst.enc.modrm.clone().unwrap_or(super::model::ModrmMap {
+                    reg: None,
+                    rm: None,
+                });
+                inst.enc.modrm = Some(super::model::ModrmMap {
+                    reg: reg.or(base.reg),
+                    rm: rm.or(base.rm),
+                });
+            }
+        }
     }
     Ok(())
 }

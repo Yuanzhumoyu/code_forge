@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W4.3 batch 1：变长 ISA 的 `bind` 落到 `modrm`
+
++ `bind = { reg = "dst", rm = "src" }` 在 `kind = "prefix_scan"` 的 ISA 上写进指令的
+  `ModrmMap`——此前 vlen 路径**完全不读** `bind`（定宽 ISA 走 `operand_fields`），
+  ModRM 的 reg/rm 归属只能靠位置缺省。
++ 扩展码（`/4`/`/5`/`/7` 这类整数）不在 `bind` 的表达面内（`bind` 的值是字符串），
+  仍写 `modrm = { reg = 4 }`；两者可叠加（`bind` 只覆盖它给出的那半边）。
+
 ### Fixed (2026-10-08) — ISA-DSL v21 W4.2：前缀效果名闭集校验
 
 + 段（`prefix`）里的效果名以 `PrefixEffect::NAMES` 为唯一来源（`opsize16`/`lock`/`repe`/
