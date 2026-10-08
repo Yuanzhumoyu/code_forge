@@ -438,7 +438,20 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > ⚠️ **两条 LOCK 原子指令（`ACQUIRE_LOCK_ADD_MR`/`RELEASE_LOCK_ADD_MR`）暂不迁**：
 > 它们写 `prefix = ["0xF2","0xF0"]`——**有序两字节**，而段形态的前缀字典按字节**字典序**排
 > （`0xF0` 会排到 `0xF2` 前），发射序会反。要迁需要给前缀段加**有序列表**形态（下一片给方案）。
-> ⏭ **W4.3 batch 9（下一片）**：**VEX/EVEX**（`VEX_RRV` 6、`EVEX_RR_MEMREF` 5、`VEX_RR_MEMREF` 5、
+> ✅ **batch 9 完成（2026-10-08）**：**VEX/EVEX 五组共 21 条**迁走——`VEX_RRV`(6)、`VEX_RR`(3)、
+> `VEX_RR_MEMREF`(5)、`EVEX_RRV`(2)、`EVEX_RR_MEMREF`(5)；三个零引用旧 form 已删。
+> **段模型的 `vex`/`evex` 两个 arm 首次被真实谱走到**：`{ kind = "vex", map/pp/w/l = "field" }`
+> （EVEX 另加 `disp_scale = "field"`）——头字段的来源键与旧 form 的 `vex = {…}` 完全一致，
+> 值仍由指令的 `match = { vex_map = … }` 给。生效键实测：
+> `VADDPS_ZMM_MASK` 的 `enc` 里 `evex={disp_scale="field",l="field",map="field",pp="field",w="field"}`、
+> `modrm={reg="dst",rm="src2"}` ✔
+> 同片修一处 vlen 误用定宽路径：`lower_field_syntax` 的**位置绑定**（`bind_operands`，要求每个
+> 操作数都能找到字段）现在对 vlen **整体跳过**——段字段是各段自己的字节布局，硬跑会报
+> "操作数 src3 找不到字段"。
+> 累计已段化 **143 条**（…+21）。
+> ⏭ **W4.3 batch 10（下一片）**：剩下的是 `MRR_MEMREF_AUTO` 的 2 条 LOCK（需前缀段的**有序列表**
+> 形态）、以及若干零散组；之后 W4 的编码面迁移就收尾，可进 **W4.4**（删 `default_prefix_scan()`、
+> 解码条件按 form 的前缀段生成）。
 > `VEX_RR` 3、`EVEX_RRV` 2 …）——段模型里 `vex`/`evex` 两个 arm 将首次被真实谱走到；
 > 外加前缀段的**有序列表**形态（解 LOCK 那两条）。
 > `MRR_0F_PREFIX` 3 条（`match.w` 的归属要单独定，别让 `w` 误进 rex 段而改变 REX.W 语义）、

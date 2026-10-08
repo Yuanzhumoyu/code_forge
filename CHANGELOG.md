@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 9：x86 VEX/EVEX 五组 21 条段化
+
++ `isa/x86.toml`：`VEX_RRV`(6)、`VEX_RR`(3)、`VEX_RR_MEMREF`(5)、`EVEX_RRV`(2)、`EVEX_RR_MEMREF`(5)
+  迁到段形态 form；三个零引用旧 form 已删。
++ **`vex`/`evex` 段首次被真实谱使用**：`{ kind = "vex"|"evex", map/pp/w/l = "field" }`
+  （EVEX 另加 `disp_scale = "field"`）——来源键与旧 form 的 `vex = {…}` 一致，
+  值仍由指令 `match = { vex_map = … }` 给。
++ 修一处 vlen 误用定宽路径：`lower_field_syntax` 的位置绑定（`bind_operands`）对 vlen 整体跳过。
++ 逐字节不变：`isa_roundtrip_guard` + asm 棘轮 + 谱内向量 + 双 JIT 矩阵；累计 **143 条**已段化。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 8：x86 零散组 10 条段化
 
 + `isa/x86.toml`：`MRR_MEM_0F_FIX32`(6)、`MRR_0F_PREFIX`(3)、`NOP_RM`(1) 迁到各自的段形态 form；

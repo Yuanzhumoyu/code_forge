@@ -537,20 +537,22 @@ pub fn lower_field_syntax(m: &mut super::model::IsaModel) -> Result<(), String> 
         }
         let decls = decls_of.get(&fname).cloned().unwrap_or_default();
         let bind = inst.bind.clone().unwrap_or_default();
-        let of = bind_operands(&decls, &ops, &bind, opname.as_deref())
-            .map_err(|e| format!("[[instructions.{}]]: {e}", inst.name))?
-            .into_iter()
-            .map(|n| {
-                if let Some(v) = own_map[&fname].get(&n) {
-                    qual(&fname, &n, v)
-                } else {
-                    n
-                }
-            })
-            .collect();
-        // `operand_fields` 是**定宽** ISA 的位域位置绑定（编码器按索引取位域）；
-        // vlen 不读它（vlen 走 `modrm`/立即数键）⇒ 别在 vlen 上塞一个没人读的派生值。
+        // **vlen 不走定宽的位置绑定**：`bind_operands` 要求"每个操作数都能找到一个字段"
+        // （定宽 ISA 的位域编码确实如此），但 vlen 的段字段是**各段自己的字节布局**
+        // （`opcode`/`mod`/`reg`/`rm`），操作数与它们的对应由 `modrm` 的 reg/rm 与
+        // `match`（常量）决定 ⇒ 在这里硬跑位置绑定会报"操作数 src3 找不到字段"。
         if !vlen {
+            let of = bind_operands(&decls, &ops, &bind, opname.as_deref())
+                .map_err(|e| format!("[[instructions.{}]]: {e}", inst.name))?
+                .into_iter()
+                .map(|n| {
+                    if let Some(v) = own_map[&fname].get(&n) {
+                        qual(&fname, &n, v)
+                    } else {
+                        n
+                    }
+                })
+                .collect();
             inst.enc.operand_fields = Some(of);
         }
         if vlen && !bind.is_empty() {

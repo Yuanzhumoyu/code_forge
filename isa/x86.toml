@@ -404,25 +404,50 @@ segments = [
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
 [[forms]]
-name = "EVEX_RR_MEMREF"   # EVEX 内存：reg=op0、MemRef op1；压缩位移 ×evex_disp_scale
-evex = { map = "field", pp = "field", w = "field", l = "field", disp_scale = "field" }
-
+name = "EVEX_RR_MEM_SEG"
+segments = [
+  { kind = "evex", map = "field", pp = "field", w = "field", l = "field", disp_scale = "field" },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "EVEX_RRV"        # EVEX 三操作数（AVX-512）：reg=op0、vvvv=~op1、rm=op2；L'L 由 evex_l（0/1/2）
 evex = { map = "field", pp = "field", w = "field", l = "field" }
 
+
+[[forms]]
+name = "EVEX_RRV_SEG"
+segments = [
+  { kind = "evex", map = "field", pp = "field", w = "field", l = "field", disp_scale = "field" },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "VEX_RRV"        # VEX 三操作数：reg=op0(dest)、rm=op2(src2)、vvvv=~op1(src1)
 vex = { map = "field", pp = "field", w = "field", l = "field" }
 
-[[forms]]
-name = "VEX_RR"         # VEX 两操作数：vvvv=0x0F（无源）
-vex = { map = "field", pp = "field", w = "field", l = "field" }
 
 [[forms]]
-name = "VEX_RR_MEMREF"  # VEX 内存形式：reg=op0(dest)、MemRef base/disp=op1（vmovaps xmm, [rax+disp]）
-vex = { map = "field", pp = "field", w = "field", l = "field" }
-
+name = "VEX_RRV_SEG"
+segments = [
+  { kind = "vex", map = "field", pp = "field", w = "field", l = "field" },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
+[[forms]]
+name = "VEX_RR_SEG"
+segments = [
+  { kind = "vex", map = "field", pp = "field", w = "field", l = "field" },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
+[[forms]]
+name = "VEX_RR_MEM_SEG"
+segments = [
+  { kind = "vex", map = "field", pp = "field", w = "field", l = "field" },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "MRR_EXT_OP"       # @op_rm：F7 /digit（reg=fields.ext, rm=op0，无 imm）
 opsize = "s0"
@@ -1774,10 +1799,10 @@ asm = "vmovaps {dst}, {src}"
 [[instructions]]
 name = "VMOVAPS_ZMM_MEM"
 ref = "vmovaps"
-form = "EVEX_RR_MEMREF"
-modrm = { rm = "[mem]" }
-opcode = 0x28
-match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
+form = "EVEX_RR_MEM_SEG"
+bind = { rm = "[mem]" }
+
+match = { opcode = 0x28, evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 # v13：EVEX 内存形式（512 位，压缩位移 scale=64）——vmovaps zmm, [rax±disp]
 ops = ["dst:fpr256:out", "mem:mem"]
 asm = "vmovaps {dst}, {mem}"
@@ -1787,10 +1812,10 @@ asm = "vmovaps {dst}, {mem}"
 name = "VMOVUPS_ZMM_MEM"
 ref = "vmovups"
 data_width = 512
-form = "EVEX_RR_MEMREF"
-modrm = { rm = "[mem]" }
-opcode = 0x10
-match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
+form = "EVEX_RR_MEM_SEG"
+bind = { rm = "[mem]" }
+
+match = { opcode = 0x10, evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 ops = ["dst:fpr256:out", "mem:mem"]
 asm = "vmovups {dst}, {mem}"
 
@@ -1799,29 +1824,29 @@ asm = "vmovups {dst}, {mem}"
 name = "VMOVUPS_ZMM_MR"
 ref = "vmovups"
 data_width = 512
-form = "EVEX_RR_MEMREF"
-modrm = { rm = "[mem]" }
-opcode = 0x11
-match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
+form = "EVEX_RR_MEM_SEG"
+bind = { rm = "[mem]" }
+
+match = { opcode = 0x11, evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 ops = ["src:fpr256", "mem:mem:out"]
 asm = "vmovups {src}, {mem}"
 
 # 宽向量 IR Load/Store 的 gpr 基址形式（EVEX 512 位；见 VMOVUPS_256_R_MEM 的说明）
 [[instructions]]
 name = "VMOVUPS_512_R_MEM"
-form = "EVEX_RR_MEMREF"
-modrm = { rm = "[src]" }
-opcode = 0x10
-match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
+form = "EVEX_RR_MEM_SEG"
+bind = { rm = "[src]" }
+
+match = { opcode = 0x10, evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 ops = ["dst:fpr256:out", "src:gpr"]
 asm = "vmovups {dst}, [{src}]"
 
 [[instructions]]
 name = "VMOVUPS_512_MEM_R"
-form = "EVEX_RR_MEMREF"
-modrm = { rm = "[src2]" }
-opcode = 0x11
-match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
+form = "EVEX_RR_MEM_SEG"
+bind = { rm = "[src2]" }
+
+match = { opcode = 0x11, evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 ops = ["src:fpr256", "src2:gpr"]
 asm = "vmovups [{src2}], {src}"
 
@@ -1831,20 +1856,20 @@ asm = "vmovups [{src2}], {src}"
 [[instructions]]
 name = "VADDPS_ZMM_MASK"
 ref = "vaddps"
-form = "EVEX_RRV"
-modrm = { reg = "dst", rm = "src2" }
-opcode = 0x58
-match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
+form = "EVEX_RRV_SEG"
+bind = { reg = "dst", rm = "src2" }
+
+match = { opcode = 0x58, evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
 ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256", "src3:kreg"]
 asm = "vaddps {dst}, {src}, {src2}, {src3}"
 
 # EVEX 零掩码（z=1）：vaddps zmm, zmm, zmm, k1（P2 z 位 = 1；与 z=0 同助记符去重）
 [[instructions]]
 name = "VADDPS_ZMM_MASKZ"
-form = "EVEX_RRV"
-modrm = { reg = "dst", rm = "src2" }
-opcode = 0x58
-match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_z = 1 }
+form = "EVEX_RRV_SEG"
+bind = { reg = "dst", rm = "src2" }
+
+match = { opcode = 0x58, evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_z = 1 }
 ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256", "src3:kreg"]
 asm = "vaddps {dst}, {src}, {src2}, {src3}"
 
@@ -1853,19 +1878,19 @@ asm = "vaddps {dst}, {src}, {src2}, {src3}"
 [[instructions]]
 name = "VMOVAPS"
 ref = "vmovaps"
-form = "VEX_RR"
-opcode = 0x28
-match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+form = "VEX_RR_SEG"
+
+match = { opcode = 0x28, vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "vmovaps {dst}, {src}"
 
 [[instructions]]
 name = "VMOVAPS_RM"
 ref = "vmovaps"
-form = "VEX_RR_MEMREF"
-modrm = { rm = "[mem]" }
-opcode = 0x28
-match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+form = "VEX_RR_MEM_SEG"
+bind = { rm = "[mem]" }
+
+match = { opcode = 0x28, vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "mem:mem"]
 asm = "vmovaps {dst}, {mem}"
 
@@ -1874,10 +1899,10 @@ asm = "vmovaps {dst}, {mem}"
 name = "VMOVUPS_RM"
 ref = "vmovups"
 data_width = 256
-form = "VEX_RR_MEMREF"
-modrm = { rm = "[mem]" }
-opcode = 0x10
-match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+form = "VEX_RR_MEM_SEG"
+bind = { rm = "[mem]" }
+
+match = { opcode = 0x10, vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "mem:mem"]
 asm = "vmovups {dst}, {mem}"
 
@@ -1886,10 +1911,10 @@ asm = "vmovups {dst}, {mem}"
 name = "VMOVUPS_MR"
 ref = "vmovups"
 data_width = 256
-form = "VEX_RR_MEMREF"
-modrm = { rm = "[mem]" }
-opcode = 0x11
-match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+form = "VEX_RR_MEM_SEG"
+bind = { rm = "[mem]" }
+
+match = { opcode = 0x11, vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["src:fpr", "mem:mem:out"]
 asm = "vmovups {src}, {mem}"
 
@@ -1902,87 +1927,87 @@ asm = "vmovups {src}, {mem}"
 # 二者编码键相同（同一机器码的两种操作数建模）；汇编/解码按其操作数形状分发。
 [[instructions]]
 name = "VMOVUPS_256_R_MEM"
-form = "VEX_RR_MEMREF"
-modrm = { rm = "[src]" }
-opcode = 0x10
-match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+form = "VEX_RR_MEM_SEG"
+bind = { rm = "[src]" }
+
+match = { opcode = 0x10, vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "vmovups {dst}, [{src}]"
 
 [[instructions]]
 name = "VMOVUPS_256_MEM_R"
-form = "VEX_RR_MEMREF"
-modrm = { rm = "[src2]" }
-opcode = 0x11
-match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+form = "VEX_RR_MEM_SEG"
+bind = { rm = "[src2]" }
+
+match = { opcode = 0x11, vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["src:fpr", "src2:gpr"]
 asm = "vmovups [{src2}], {src}"
 
 [[instructions]]
 name = "VBROADCASTSS"
-form = "VEX_RR"
-opcode = 0x18
-match = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
+form = "VEX_RR_SEG"
+
+match = { opcode = 0x18, vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "vbroadcastss {dst}, {src}"
 
 [[instructions]]
 name = "VBROADCASTSD"
-form = "VEX_RR"
-opcode = 0x19
-match = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
+form = "VEX_RR_SEG"
+
+match = { opcode = 0x19, vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "vbroadcastsd {dst}, {src}"
 
 [[instructions]]
 name = "VPXOR"
-form = "VEX_RRV"
-opcode = 0xEF
-match = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+form = "VEX_RRV_SEG"
+
+match = { opcode = 0xEF, vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "vpxor {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "VPADDD"
 ref = "vpaddd"
-form = "VEX_RRV"
-opcode = 0xFE
-match = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+form = "VEX_RRV_SEG"
+
+match = { opcode = 0xFE, vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "vpaddd {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "VPSUBD"
 ref = "vpsubd"
-form = "VEX_RRV"
-opcode = 0xFA
-match = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+form = "VEX_RRV_SEG"
+
+match = { opcode = 0xFA, vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "vpsubd {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "VPADDQ"
 ref = "vpaddq"
-form = "VEX_RRV"
-opcode = 0xD4
-match = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+form = "VEX_RRV_SEG"
+
+match = { opcode = 0xD4, vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "vpaddq {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "VPSUBQ"
 ref = "vpsubq"
-form = "VEX_RRV"
-opcode = 0xFB
-match = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+form = "VEX_RRV_SEG"
+
+match = { opcode = 0xFB, vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "vpsubq {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "VPMULLD"
-form = "VEX_RRV"
-opcode = 0x40
-match = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
+form = "VEX_RRV_SEG"
+
+match = { opcode = 0x40, vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "vpmulld {dst}, {src}, {src2}"
 
