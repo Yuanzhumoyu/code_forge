@@ -542,6 +542,54 @@ segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
+
+[[forms]]
+name = "SSE_IMM_0F3A_SEG"   # v21 W4：段形态（由无 form 指令的骨架自动归组）
+segments = [
+  { kind = "prefix", fields = ["u8[7:0]:prefix"] },
+  { kind = "escape", bytes = ["0x0F", "0x3A"] },
+  { kind = "rex", fields = ["u1[7]:w"] },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+  { kind = "imm", fields = ["u8[7:0]:imm8"] },
+]
+
+[[forms]]
+name = "SSE_IMM_0F_SEG"   # v21 W4：段形态（由无 form 指令的骨架自动归组）
+segments = [
+  { kind = "prefix", fields = ["u8[7:0]:prefix"] },
+  { kind = "escape", bytes = ["0x0F"] },
+  { kind = "rex", fields = ["u1[7]:w"] },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+  { kind = "imm", fields = ["u8[7:0]:imm8"] },
+]
+
+[[forms]]
+name = "JCC_REL32_SEG"   # v21 W4：段形态（由无 form 指令的骨架自动归组）
+segments = [
+  { kind = "escape", bytes = ["0x0F"] },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "imm", fields = ["u32[31:0]:imm32"] },
+]
+
+[[forms]]
+name = "VEX_IMM_SEG"   # v21 W4：段形态（由无 form 指令的骨架自动归组）
+segments = [
+  { kind = "vex", map = "field", pp = "field", w = "field", l = "field" },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+  { kind = "imm", fields = ["u8[7:0]:imm8"] },
+]
+
+[[forms]]
+name = "EVEX_IMM_SEG"   # v21 W4：段形态（由无 form 指令的骨架自动归组）
+segments = [
+  { kind = "evex", map = "field", pp = "field", w = "field", l = "field" },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+  { kind = "imm", fields = ["u8[7:0]:imm8"] },
+]
 [[instructions]]
 name = "MOV_R_RM"
 ref = "mov"
@@ -1549,23 +1597,19 @@ asm = "xchg {mem}, {dst}"
 
 [[instructions]]
 name = "MOVSD_RM"
-modrm = { rm = "[mem]" }
+segments = [  { kind = "prefix", bytes = ["0xF2"] },   { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
+bind = { rm = "[mem]" }
 opsize = 32
-escape = [0x0F]
-prefix = "field"
 opcode = 0x10
-match = { prefix = 0xF2 }
 ops = ["dst:fpr:out", "mem:mem"]
 asm = "movsd {dst}, {mem}"
 
 [[instructions]]
 name = "MOVSD_MR"
-modrm = { rm = "[mem]" }
+segments = [  { kind = "prefix", bytes = ["0xF2"] },   { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
+bind = { rm = "[mem]" }
 opsize = 32
-escape = [0x0F]
-prefix = "field"
 opcode = 0x11
-match = { prefix = 0xF2 }
 # 浮点写内存的能力（v20 变参 V4）：调用方把**浮点栈实参**写进传出区用它
 # （`{ role = "stack_arg_store", class = "fpr" }`——与 MOV64_MR 的整数版分工）。
 roles = [{ role = "stack_arg_store", class = "fpr" }]
@@ -1599,23 +1643,19 @@ asm = "movups [{src2}], {src}"
 # 表达不了 `[RBP - off]`）。与 MOVSD_RM/MR 同形，只是无 F2 前缀 = 16 字节。
 [[instructions]]
 name = "MOVUPS_RM"
-modrm = { rm = "[mem]" }
+segments = [  { kind = "prefix", bytes = ["0x00"] },   { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
+bind = { rm = "[mem]" }
 opsize = 32
-escape = [0x0F]
-prefix = "field"
 opcode = 0x10
-match = { prefix = 0 }
 ops = ["dst:fpr:out", "mem:mem"]
 asm = "movups {dst}, {mem}"
 
 [[instructions]]
 name = "MOVUPS_MR"
-modrm = { rm = "[mem]" }
+segments = [  { kind = "prefix", bytes = ["0x00"] },   { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
+bind = { rm = "[mem]" }
 opsize = 32
-escape = [0x0F]
-prefix = "field"
 opcode = 0x11
-match = { prefix = 0 }
 ops = ["src:fpr", "mem:mem:out"]
 asm = "movups {mem}, {src}"
 
@@ -1683,13 +1723,9 @@ asm = "cvttsd2si {dst}, {src}"
 
 [[instructions]]
 name = "ROUNDSS_I"
-modrm = { reg = "dst", rm = "src" }
-escape = [0x0F, 0x3A]
-prefix = "field"
-rex_w = "field"
-imm = 8
-opcode = 0x0A
-match = { prefix = 0x66, w = 0 }
+form = "SSE_IMM_0F3A_SEG"
+match = { opcode = 0x0A, prefix = 0x66, w = 0 }
+bind = { reg = "dst", rm = "src" }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "roundss {dst}, {src}, {imm}"
 effect = ["Pure"]
@@ -2030,21 +2066,17 @@ asm = "vpmulld {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "VEXTRACTF128"
-vex = { map = "field", pp = "field", w = "field", l = "field" }
-modrm = { reg = "src", rm = "dst" }
-imm = 8
-opcode = 0x19
-match = { vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
+form = "VEX_IMM_SEG"
+match = { opcode = 0x19, vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
+bind = { reg = "src", rm = "dst" }
 ops = ["src:fpr", "dst:fpr:out", "imm:imm8"]
 asm = "vextractf128 {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "VINSERTF128"
-vex = { map = "field", pp = "field", w = "field", l = "field" }
-modrm = { reg = "dst", rm = "src2" }
-imm = 8
-opcode = 0x18
-match = { vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
+form = "VEX_IMM_SEG"
+match = { opcode = 0x18, vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
+bind = { reg = "dst", rm = "src2" }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "imm:imm8"]
 asm = "vinsertf128 {dst}, {src}, {src2}, {imm}"
 
@@ -2054,11 +2086,9 @@ asm = "vinsertf128 {dst}, {src}, {src2}, {imm}"
 # 用途：V512 常量（Vconst rd=512）——四个 128 位段各自装好后按 imm=0..3 插入。
 [[instructions]]
 name = "VINSERTF32X4"
-evex = { map = "field", pp = "field", w = "field", l = "field" }
-modrm = { reg = "dst", rm = "src2" }
-imm = 8
-opcode = 0x18
-match = { evex_map = 3, evex_pp = 1, evex_w = 0, evex_l = 2 }
+form = "EVEX_IMM_SEG"
+match = { opcode = 0x18, evex_map = 3, evex_pp = 1, evex_w = 0, evex_l = 2 }
+bind = { reg = "dst", rm = "src2" }
 ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr", "imm:imm8"]
 asm = "vinsertf32x4 {dst}, {src}, {src2}, {imm}"
 
@@ -2069,11 +2099,9 @@ asm = "vinsertf32x4 {dst}, {src}, {src2}, {imm}"
 # 用途：V512（64B）按 lane 提取——先取段（0..3），再段内 PSHUFD 取 dword/qword。
 [[instructions]]
 name = "VEXTRACTF32X4"
-evex = { map = "field", pp = "field", w = "field", l = "field" }
-modrm = { reg = "src", rm = "dst" }
-imm = 8
-opcode = 0x19
-match = { evex_map = 3, evex_pp = 1, evex_w = 0, evex_l = 2 }
+form = "EVEX_IMM_SEG"
+match = { opcode = 0x19, evex_map = 3, evex_pp = 1, evex_w = 0, evex_l = 2 }
+bind = { reg = "src", rm = "dst" }
 ops = ["src:fpr256", "dst:fpr:out", "imm:imm8"]
 asm = "vextractf32x4 {dst}, {src}, {imm}"
 # ── 收官：@op_rm / @op_rm_imm32 / @sse_rr_imm8 / +r 形式 ──
@@ -2338,25 +2366,17 @@ asm = "imul {src}"
 
 [[instructions]]
 name = "PSHUFD"
-modrm = { reg = "dst", rm = "src" }
-escape = [0x0F]
-prefix = "field"
-rex_w = "field"
-imm = 8
-opcode = 0x70
-match = { prefix = 0x66, w = 0 }
+form = "SSE_IMM_0F_SEG"
+match = { opcode = 0x70, prefix = 0x66, w = 0 }
+bind = { reg = "dst", rm = "src" }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "pshufd {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "SHUFPS"
-modrm = { reg = "dst", rm = "src" }
-escape = [0x0F]
-prefix = "field"
-rex_w = "field"
-imm = 8
-opcode = 0xC6
-match = { prefix = 0, w = 0 }
+form = "SSE_IMM_0F_SEG"
+match = { opcode = 0xC6, prefix = 0, w = 0 }
+bind = { reg = "dst", rm = "src" }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "shufps {dst}, {src}, {imm}"
 
@@ -2372,49 +2392,33 @@ asm = "shufps {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "CMPPS"
-modrm = { reg = "dst", rm = "src" }
-escape = [0x0F]
-prefix = "field"
-rex_w = "field"
-imm = 8
-opcode = 0xC2
-match = { prefix = 0, w = 0 }
+form = "SSE_IMM_0F_SEG"
+match = { opcode = 0xC2, prefix = 0, w = 0 }
+bind = { reg = "dst", rm = "src" }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "cmpps {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "CMPPD"
-modrm = { reg = "dst", rm = "src" }
-escape = [0x0F]
-prefix = "field"
-rex_w = "field"
-imm = 8
-opcode = 0xC2
-match = { prefix = 0x66, w = 0 }
+form = "SSE_IMM_0F_SEG"
+match = { opcode = 0xC2, prefix = 0x66, w = 0 }
+bind = { reg = "dst", rm = "src" }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "cmppd {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "CMPSS"
-modrm = { reg = "dst", rm = "src" }
-escape = [0x0F]
-prefix = "field"
-rex_w = "field"
-imm = 8
-opcode = 0xC2
-match = { prefix = 0xF3, w = 0 }
+form = "SSE_IMM_0F_SEG"
+match = { opcode = 0xC2, prefix = 0xF3, w = 0 }
+bind = { reg = "dst", rm = "src" }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "cmpss {dst}, {src}, {imm}"
 
 [[instructions]]
 name = "CMPSD_SCALAR"
-modrm = { reg = "dst", rm = "src" }
-escape = [0x0F]
-prefix = "field"
-rex_w = "field"
-imm = 8
-opcode = 0xC2
-match = { prefix = 0xF2, w = 0 }
+form = "SSE_IMM_0F_SEG"
+match = { opcode = 0xC2, prefix = 0xF2, w = 0 }
+bind = { reg = "dst", rm = "src" }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "cmpsd {dst}, {src}, {imm}"
 
@@ -2585,15 +2589,13 @@ asm = "retf {imm}"
 [[instructions]]
 name = "PUSHFW"
 opcode = 0x9C
-prefix = "field"
-match = { prefix = 0x66 }
+segments = [  { kind = "prefix", bytes = ["0x66"] }, ]
 asm = "pushfw"
 
 [[instructions]]
 name = "POPFW"
 opcode = 0x9D
-prefix = "field"
-match = { prefix = 0x66 }
+segments = [  { kind = "prefix", bytes = ["0x66"] }, ]
 asm = "popfw"
 [[instructions]]
 name = "PUSHF"
@@ -2696,10 +2698,9 @@ effect = ["Call"]
 
 [[instructions]]
 name = "JCC_REL32"
+form = "JCC_REL32_SEG"
+match = { opcode = 0x80 }
 roles = ["branch"]
-escape = [0x0F]
-imm = 0x20
-opcode = 0x80            # 条件码 = opcode 低 4 位（0x80..0x8F）
 ops = ["cc:cond", "target:rel"]
 asm = "jcc {cc}, {target}"
 effect = ["Branch"]
@@ -2830,13 +2831,9 @@ emit = ["cmovcc {dst}, {mem}, l"]
 
 [[instructions]]
 name = "ROUNDSD_I"
-modrm = { reg = "dst", rm = "src" }
-escape = [0x0F, 0x3A]
-prefix = "field"
-rex_w = "field"
-imm = 8
-opcode = 0x0B            # ROUNDSD = 66 0F 3A 0B /r ib（0A 是 ROUNDSS）
-match = { prefix = 0x66, w = 1 }
+form = "SSE_IMM_0F3A_SEG"
+match = { opcode = 0x0B, prefix = 0x66, w = 1 }
+bind = { reg = "dst", rm = "src" }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "roundsd {dst}, {src}, {imm}"
 effect = ["Pure"]
@@ -2844,9 +2841,9 @@ effect = ["Pure"]
 [[instructions]]
 name = "PMULLD"
 opsize = 64
-escape = [0x0F, 0x38]
+segments = [  { kind = "escape", bytes = ["0x0F", "0x38"] }, ]
 opcode = 0x40
-match = { prefix = 0x66, w = 0 }
+match = { w = 0 }
 ops = ["dst:fpr:inout", "src:fpr"]
 asm = "pmulld {dst}, {src}"
 effect = ["Pure"]

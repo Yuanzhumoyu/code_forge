@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 12b 收尾：x86 段化 181/194
+
++ 剩余 20 条一次迁完：7 条走**指令级结构段**（MOVSD_RM/MOVSD_MR/MOVUPS_RM/MOVUPS_MR/PUSHFW/
+  POPFW/PMULLD），13 条按骨架建 **5 个段形态 form**（SSE_IMM_0F_SEG/SSE_IMM_0F3A_SEG/
+  JCC_REL32_SEG/VEX_IMM_SEG/EVEX_IMM_SEG，含 imm/rex.w/vex/evex 段）。
++ 生效键与迁移前逐条一致；`prefix = "field"` 按常量折叠。
++ `MFENCE` 不迁：它用 `modrm_fixed = 0xF0`，段模型暂无等价物。
++ 逐字节不变：`isa_roundtrip_guard` + asm 棘轮 + 谱内向量 + 双 JIT 矩阵。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 12b chunk2：6 条无 form 指令用指令级段
 
 + `isa/x86.toml`：`MOV_R_MEM_8`/`STORE_MEM_R_8`/`UD2`/`SETCC_RM8`/`SETCC_RM8_B`/`CALL_RM`

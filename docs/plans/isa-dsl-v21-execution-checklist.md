@@ -500,7 +500,19 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > ✅ **chunk 2 成功（2026-10-08）**：6 条无 form 指令迁入（`MOV_R_MEM_8`/`STORE_MEM_R_8`/`UD2`/
 > `SETCC_RM8`/`SETCC_RM8_B`/`CALL_RM`）——**生效键前后逐条一致**，三条守卫全绿。
 > 进度：**161/200**（150 + 5 + 6）。
-> ⚠️ **剩余 21 条里有一类需要 form**：带 `imm`/`rex_w`/`vex`/`evex` 的指令（`ROUNDSS_I`/`PSHUFD`/
+> ✅ **batch 12b 收尾成功（2026-10-08，一次提交）**：剩余 **20 条**一次做完——
+> **Group A 7 条**走**指令级结构段**（`MOVSD_RM`/`MOVSD_MR`/`MOVUPS_RM`/`MOVUPS_MR`/`PUSHFW`/`POPFW`/`PMULLD`）；
+> **Group B 13 条**按骨架建 **5 个段形态 form**（`SSE_IMM_0F_SEG`/`SSE_IMM_0F3A_SEG`/`JCC_REL32_SEG`/
+> `VEX_IMM_SEG`/`EVEX_IMM_SEG`，含 `imm`/`rex.w`/`vex`/`evex` 段）。
+> 生效键抽查与迁移前**逐条一致**（如 `ROUNDSS_I → enc={escape=[15,58],imm=8,modrm={reg="dst",rm="src"},prefix="field",rex="auto",rex_w="field"}`）；
+> `prefix = "field"` 仍按常量折叠（`PUSHFW → prefix="0x66"`）。
+> **`MFENCE` 不迁**（它用 `modrm_fixed = 0xF0`，段模型没有对应等价物——不动它比硬造一个安全）。
+> 进度：**181 / 194 段化**（其余 13 条 = MFENCE + 12 条无 `opcode` 的别名/伪指令）。
+> **脚本两条新教训**：① 指令块边界必须取**下一个任意 `[[` 段**（只认 `[[instructions]]` 会把中间的
+> `[[pseudo]]` 吞进块里，插入点落到伪指令上——实测污染过一次）；② `imm` 段的字段名要**带宽度**
+> （`imm8`/`imm32`），叫 `imm` 会与他人撞名并被 W2 的 form 局部命名空间限定成 `SEGxxx.imm`，
+> 于是被 `LINT-UNUSED-BITFIELD` 报"只声明没人用"。
+> ⚠️ **（旧记录）剩余 21 条里有一类需要 form**：带 `imm`/`rex_w`/`vex`/`evex` 的指令（`ROUNDSS_I`/`PSHUFD`/
 > `SHUFPS`/`CMPPS`/`JCC_REL32`/`VEXTRACTF128`/`VINSERTF128`/`VINSERTF32X4` …）——指令级段
 > **只收结构段**（escape/prefix/modrm），这些 kind 会被明确拒绝 ⇒ 要么给它们各自的 form，
 > 要么把指令级段扩展到"带字段"（需要给指令加字段载体，成本更高）。下一片先定这个。
