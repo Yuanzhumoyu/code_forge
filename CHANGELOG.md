@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 8：x86 零散组 10 条段化
+
++ `isa/x86.toml`：`MRR_MEM_0F_FIX32`(6)、`MRR_0F_PREFIX`(3)、`NOP_RM`(1) 迁到各自的段形态 form；
+  两个零引用旧 form 已删。
++ 两条 LOCK 原子指令**暂不迁**（`prefix = ["0xF2","0xF0"]` 是有序两字节，段形态的前缀字典
+  按字节字典序排会反序）——待前缀段的**有序列表**形态落地。
++ 逐字节不变：`isa_roundtrip_guard` + asm 棘轮 + 谱内向量 + 双 JIT 矩阵；累计 **122 条**已段化。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 7：x86 六个小组共 21 条段化
 
 + `isa/x86.toml`：`MRR_MEM_PRE`(4)、`MRR_MEM`(3)、`MRR_FIX64`(3)、`MRR_MEMREF`(5)、`MRR`(3)、

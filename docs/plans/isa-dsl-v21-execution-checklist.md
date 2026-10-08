@@ -430,7 +430,17 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > ① 生成 form 时漏引号（`opsize = s0`）⇒ TOML 解析失败；值一律按字符串写。
 > ② 指令**本就有 `match = { prefix = 0xF0 }`**，脚本又加一行 `match` ⇒ 同块重复键；
 > 已加通用修复：同块多个 `match` 自动合并成一行。
-> ⏭ **W4.3 batch 8（下一片）**：`MRR_MEMREF_AUTO` 剩 2 条（LOCK 原子族，带 prefix 字节）、
+> ✅ **batch 8 完成（2026-10-08）**：**10 条**迁走——`MRR_MEM_0F_FIX32`(6)→`MRR_MEM_0F_PFX32_SEG`、
+> `MRR_0F_PREFIX`(3)→`MRR_0F_PFX_SEG`、`NOP_RM`(1)→`MRR_EXT_OP_0F_SEG`；两个零引用旧 form 已删。
+> `MRR_0F_PREFIX` 的处理按计划：**只声明 prefix/escape/opcode/modrm 段**，`w` 不进 rex 段，
+> 因此 `match.w` 维持原状（REX.W 语义不变）。
+> 累计已段化 **122 条**（14+13+8+19+21+16+21+10）。
+> ⚠️ **两条 LOCK 原子指令（`ACQUIRE_LOCK_ADD_MR`/`RELEASE_LOCK_ADD_MR`）暂不迁**：
+> 它们写 `prefix = ["0xF2","0xF0"]`——**有序两字节**，而段形态的前缀字典按字节**字典序**排
+> （`0xF0` 会排到 `0xF2` 前），发射序会反。要迁需要给前缀段加**有序列表**形态（下一片给方案）。
+> ⏭ **W4.3 batch 9（下一片）**：**VEX/EVEX**（`VEX_RRV` 6、`EVEX_RR_MEMREF` 5、`VEX_RR_MEMREF` 5、
+> `VEX_RR` 3、`EVEX_RRV` 2 …）——段模型里 `vex`/`evex` 两个 arm 将首次被真实谱走到；
+> 外加前缀段的**有序列表**形态（解 LOCK 那两条）。
 > `MRR_0F_PREFIX` 3 条（`match.w` 的归属要单独定，别让 `w` 误进 rex 段而改变 REX.W 语义）、
 > `MRR_MEM_0F_FIX32` 6 条（prefix 字段 + 0F escape + opsize 32）、`NOP_RM` 1 条；
 > 之后进 **VEX/EVEX**（`vex`/`evex` 段首次被真实谱使用）。

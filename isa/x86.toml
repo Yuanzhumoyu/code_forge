@@ -355,13 +355,15 @@ name = "MRR_0F_FIX64"   # @modrm + 0F escape + opsize 固定 64（MOVQ 系列；
 opsize = 64
 escape = [0x0F]
 prefix = "field"
-
 [[forms]]
-name = "MRR_0F_PREFIX"  # @modrm + 0F escape + 指令级 prefix（LZCNT/TZCNT/POPCNT 的 F3）
+name = "MRR_0F_PFX_SEG"
 opsize = "s0"
-escape = [0x0F]
-prefix = "field"
-
+segments = [
+  { kind = "prefix", fields = ["u8[7:0]:prefix"] },
+  { kind = "escape", bytes = ["0x0F"] },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "MRR_EXT"        # @modrm_imm32：reg=fields.ext, rm=op0, imm32
 opsize = "s0"
@@ -426,6 +428,15 @@ name = "MRR_EXT_OP"       # @op_rm：F7 /digit（reg=fields.ext, rm=op0，无 im
 opsize = "s0"
 
 
+
+[[forms]]
+name = "MRR_EXT_OP_0F_SEG"
+opsize = "s0"
+segments = [
+  { kind = "escape", bytes = ["0x0F"] },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "MRR_EXT_OP_SEG"    # v21 W4：段形态（opcode + modrm(/ext)，无 imm）
 opsize = "s0"
@@ -449,11 +460,14 @@ segments = [
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
 [[forms]]
-name = "MRR_MEM_0F_FIX32" # 内存 + 0F + prefix=field + opsize 32（MOVSD 内存标量）
+name = "MRR_MEM_0F_PFX32_SEG"
 opsize = 32
-escape = [0x0F]
-prefix = "field"
-
+segments = [
+  { kind = "prefix", fields = ["u8[7:0]:prefix"] },
+  { kind = "escape", bytes = ["0x0F"] },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "MRR_MEMREF_AUTO"  # MemRef 内存（base/index/disp）+ opsize 由首个 Reg 操作数驱动
 opsize = "s0"
@@ -1373,20 +1387,20 @@ asm = "mov [{src2}], {src}"
 
 [[instructions]]
 name = "MOVSD_R_MEM"
-form = "MRR_MEM_0F_FIX32"
-modrm = { rm = "[src]" }
-opcode = 0x10
-match = { prefix = 0xF2 }
+form = "MRR_MEM_0F_PFX32_SEG"
+bind = { rm = "[src]" }
+
+match = { opcode = 0x10, prefix = 0xF2 }
 # 按 vreg 基址读**浮点**的能力（v20 变参 V4）：`va_arg(ap, f64)` 取值用它
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "movsd {dst}, [{src}]"
 
 [[instructions]]
 name = "MOVSD_MEM_R"
-form = "MRR_MEM_0F_FIX32"
-modrm = { rm = "[src2]" }
-opcode = 0x11
-match = { prefix = 0xF2 }
+form = "MRR_MEM_0F_PFX32_SEG"
+bind = { rm = "[src2]" }
+
+match = { opcode = 0x11, prefix = 0xF2 }
 ops = ["src:fpr", "src2:gpr"]
 asm = "movsd [{src2}], {src}"
 
@@ -1523,19 +1537,19 @@ asm = "movsd {mem}, {src}"
 #    StackAddr 先 lea 地址到寄存器）。──
 [[instructions]]
 name = "MOVUPS_128_R_MEM"
-form = "MRR_MEM_0F_FIX32"
-modrm = { rm = "[src]" }
-opcode = 0x10
-match = { prefix = 0 }
+form = "MRR_MEM_0F_PFX32_SEG"
+bind = { rm = "[src]" }
+
+match = { opcode = 0x10, prefix = 0 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "movups {dst}, [{src}]"
 
 [[instructions]]
 name = "MOVUPS_128_MEM_R"
-form = "MRR_MEM_0F_FIX32"
-modrm = { rm = "[src2]" }
-opcode = 0x11
-match = { prefix = 0 }
+form = "MRR_MEM_0F_PFX32_SEG"
+bind = { rm = "[src2]" }
+
+match = { opcode = 0x11, prefix = 0 }
 ops = ["src:fpr", "src2:gpr"]
 asm = "movups [{src2}], {src}"
 
@@ -1567,19 +1581,19 @@ asm = "movups {mem}, {src}"
 
 [[instructions]]
 name = "MOVSS_R_MEM"
-form = "MRR_MEM_0F_FIX32"
-modrm = { rm = "[src]" }
-opcode = 0x10
-match = { prefix = 0xF3 }
+form = "MRR_MEM_0F_PFX32_SEG"
+bind = { rm = "[src]" }
+
+match = { opcode = 0x10, prefix = 0xF3 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "movss {dst}, [{src}]"
 
 [[instructions]]
 name = "MOVSS_MEM_R"
-form = "MRR_MEM_0F_FIX32"
-modrm = { rm = "[src2]" }
-opcode = 0x11
-match = { prefix = 0xF3 }
+form = "MRR_MEM_0F_PFX32_SEG"
+bind = { rm = "[src2]" }
+
+match = { opcode = 0x11, prefix = 0xF3 }
 ops = ["src:fpr", "src2:gpr"]
 asm = "movss [{src2}], {src}"
 
@@ -2583,10 +2597,10 @@ asm = "nop"
 # `dword ptr`（同 `NOT_MEM32` 一族：一元形态没有寄存器可驱动宽度）。
 [[instructions]]
 name = "NOP_RM"
-form = "MRR_EXT_OP"
-escape = [0x0F]
-modrm = { reg = 0, rm = "dst" }
-opcode = 0x1F
+form = "MRR_EXT_OP_0F_SEG"
+
+bind = { rm = "dst" }
+match = { opcode = 0x1F, reg = 0 }
 ops = ["dst:gprx"]
 asm = "nop {dst}"
 effect = ["Pure"]
@@ -2841,9 +2855,9 @@ effect = ["Write"]
 
 [[instructions]]
 name = "LZCNT_R"
-form = "MRR_0F_PREFIX"
-opcode = 0xBD
-match = { prefix = 0xF3, w = 0 }
+form = "MRR_0F_PFX_SEG"
+
+match = { opcode = 0xBD, prefix = 0xF3, w = 0 }
 # v14：槽 gprx——宽度由 IR 类型 auto（I32 输入 → 无 REX.W lzcntl 返回 31
 # 位语义；I64 → REX.W lzcntq）。固定 _32 变体（LZCNT_R32）已删。
 ops = ["dst:gprx:out", "src:gprx"]
@@ -2852,18 +2866,18 @@ effect = ["Pure"]
 
 [[instructions]]
 name = "TZCNT_R"
-form = "MRR_0F_PREFIX"
-opcode = 0xBC
-match = { prefix = 0xF3, w = 0 }
+form = "MRR_0F_PFX_SEG"
+
+match = { opcode = 0xBC, prefix = 0xF3, w = 0 }
 ops = ["dst:gprx:out", "src:gprx"]
 asm = "tzcnt {dst}, {src}"
 effect = ["Pure"]
 
 [[instructions]]
 name = "POPCNT_R"
-form = "MRR_0F_PREFIX"
-opcode = 0xB8
-match = { prefix = 0xF3, w = 0 }
+form = "MRR_0F_PFX_SEG"
+
+match = { opcode = 0xB8, prefix = 0xF3, w = 0 }
 ops = ["dst:gprx:out", "src:gprx"]
 asm = "popcnt {dst}, {src}"
 effect = ["Pure"]
