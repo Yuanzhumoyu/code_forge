@@ -314,12 +314,13 @@ kind = "cond"
 bits = 8
 
 # ─────────────────────────── 编码形式 ───────────────────────────
-
 [[forms]]
-name = "MRR"            # @modrm：reg=op0, rm=op1, opsize auto
+name = "MRR_SHIFT_SEG"
 opsize = "out"
-
-
+segments = [
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "RR_SEG"         # v21 W4：段形态（opcode + modrm），语义同 MRR
 opsize = "out"
@@ -328,8 +329,12 @@ segments = [
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
 [[forms]]
-name = "MRR_FIX64"      # @modrm：opsize 固定 64（恒 REX.W）
+name = "MRR_FIX64_SEG"
 opsize = 64
+segments = [
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "MRR_0F_SEG"        # v21 W4：段形态（0F escape + opcode + modrm）
 opsize = "s0"
@@ -429,18 +434,20 @@ segments = [
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
 [[forms]]
-name = "MRR_EXT_OP_FIX64" # @shift_reg：D3 /digit（rm=op0），opsize 固定 64（REX.W）
+name = "MRR_EXT_OP_F64_SEG"
 opsize = 64
-
+segments = [
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
-name = "MRR_MEM"          # [reg 基址 + disp 0]；无 escape（XCHG/MOV_R_MEM/STORE_MEM_R）
+name = "MRR_MEM_PRE_SEG"
 opsize = "s0"
-
-[[forms]]
-name = "MRR_MEM_PRE"      # 内存 + prefix=field、无 escape（LOCK 原子族 29/21/09/31）
-opsize = "s0"
-prefix = "field"
-
+segments = [
+  { kind = "prefix", fields = ["u8[7:0]:prefix"] },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "MRR_MEM_0F_FIX32" # 内存 + 0F + prefix=field + opsize 32（MOVSD 内存标量）
 opsize = 32
@@ -469,9 +476,12 @@ segments = [
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
 [[forms]]
-name = "MRR_MEMREF"       # MemRef 内存（base+disp）+ opsize 64（spill）
+name = "MRR_MEMREF_SEG"
 opsize = 64
-
+segments = [
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[instructions]]
 name = "MOV_R_RM"
 ref = "mov"
@@ -524,8 +534,8 @@ effect = ["Move"]
 [[instructions]]
 name = "MOVSXD_R_RM"
 ref = "movsxd"
-form = "MRR_FIX64"
-opcode = 0x63
+form = "MRR_FIX64_SEG"
+match = { opcode = 0x63 }
 # 源槽用 `gpr`（64 位）：lowering 的 `movsxd {out}, {0}` 送来的是 I32 **值**，而它住在
 # 64 位值池寄存器里（`movsxd RAX, RBX` 是既有向量）。
 ops = ["dst:gpr:out", "src:gpr"]
@@ -536,14 +546,14 @@ asm = "movsxd {dst}, {src}"
 # （`gpr32` vs `gpr`）——文本里的寄存器名不同，所以两条各自命中、互不歧义；
 # 解码按声明序（先 64 位源那条），编码字节完全相同（`MRR_FIX64`）。
 # 为什么不用一个多类槽收两边：`opsize = r64`（= 固定宽度要求）会对**多类** GPR 槽
-# 过滤宽度 ⇒ `ecx`/`r16d` 全被拒；换成 `opsize = s0` 又会要求两个操作数同宽 ⇒
+# 过滤宽度 ⇒ `ecx`/`r16d` 全被拒；换成 `opsize = "s0"` 又会要求两个操作数同宽 ⇒
 # `movsxd rax, ecx` 这种"64←32"的真实写法同样被拒。两条同编码指令是既有格局
 # （`MOV_R_RM`/`MOV_RM_R`、`MOV64_RR` 那几对）。
 [[instructions]]
 name = "MOVSXD_R_RM32"
 ref = "movsxd"
-form = "MRR_FIX64"
-opcode = 0x63
+form = "MRR_FIX64_SEG"
+match = { opcode = 0x63 }
 ops = ["dst:gpr:out", "src:gpr32"]
 asm = "movsxd {dst}, {src}"
 
@@ -769,7 +779,7 @@ rows = [
 #   这是 lowering 的零扩展加载用的形态（`{0}` 是地址 vreg ⇒ 绑到寄存器槽）；
 # - `MOVZX/MOVSX_MEM{8,16}`：**完整内存模板**（base/index*scale/disp/无基址），真实汇编
 #   的常态写法（`movzx eax, byte ptr [rdi+8]`）。
-# 目的宽度由寄存器驱动（`opsize = s0`）：16 位目的发 66、64 位目的发 REX.W——这正是
+# 目的宽度由寄存器驱动（`opsize = "s0"`）：16 位目的发 66、64 位目的发 REX.W——这正是
 # `0F B6/B7/BE/BF` 的宽度语义。
 [[instructions]]
 name = "MOVZX_R8_MEM"
@@ -1283,54 +1293,54 @@ asm = "xadd [{src}], {dst}"
 
 [[instructions]]
 name = "XCHG_MEM_R"
-form = "MRR_MEM"
-modrm = { rm = "[src]" }
-opcode = 0x87
+form = "MRR_MEM_SEG"
+bind = { rm = "[src]" }
+match = { opcode = 0x87 }
 ops = ["dst:gprx:inout", "src:gprx"]
 asm = "xchg [{src}], {dst}"
 
 [[instructions]]
 name = "SUB_MEM_R"
-form = "MRR_MEM_PRE"
-modrm = { rm = "[src2]" }
-opcode = 0x29
-match = { prefix = 0xF0 }
+form = "MRR_MEM_PRE_SEG"
+bind = { rm = "[src2]" }
+match = { opcode = 0x29, prefix = 0xF0 }
+
 ops = ["src:gpr", "src2:gpr"]
 asm = "lock sub [{src2}], {src}"
 
 [[instructions]]
 name = "AND_MEM_R"
-form = "MRR_MEM_PRE"
-modrm = { rm = "[src2]" }
-opcode = 0x21
-match = { prefix = 0xF0 }
+form = "MRR_MEM_PRE_SEG"
+bind = { rm = "[src2]" }
+match = { opcode = 0x21, prefix = 0xF0 }
+
 ops = ["src:gpr", "src2:gpr"]
 asm = "lock and [{src2}], {src}"
 
 [[instructions]]
 name = "OR_MEM_R"
-form = "MRR_MEM_PRE"
-modrm = { rm = "[src2]" }
-opcode = 0x09
-match = { prefix = 0xF0 }
+form = "MRR_MEM_PRE_SEG"
+bind = { rm = "[src2]" }
+match = { opcode = 0x09, prefix = 0xF0 }
+
 ops = ["src:gpr", "src2:gpr"]
 asm = "lock or [{src2}], {src}"
 
 [[instructions]]
 name = "XOR_MEM_R"
-form = "MRR_MEM_PRE"
-modrm = { rm = "[src2]" }
-opcode = 0x31
-match = { prefix = 0xF0 }
+form = "MRR_MEM_PRE_SEG"
+bind = { rm = "[src2]" }
+match = { opcode = 0x31, prefix = 0xF0 }
+
 ops = ["src:gpr", "src2:gpr"]
 asm = "lock xor [{src2}], {src}"
 
 [[instructions]]
 name = "MOV_R_MEM"
-form = "MRR_MEM"
+form = "MRR_MEM_SEG"
 # 按 vreg 基址读内存的能力（v20 变参 V4）：`dst ← [src]`，宽度随目标类自动。
-modrm = { rm = "[src]" }
-opcode = 0x8B
+bind = { rm = "[src]" }
+match = { opcode = 0x8B }
 # v14：数据槽 gprx——内存 load 宽度由 IR 类型 auto（I16→66、I32→无
 # REX.W、I64→REX.W）。固定 _32 变体已删（WA-35 DSL 修复）。
 # 基址槽 gprx（assemble 兼容 EAX/RAX 视图；编码取同编号寻址）。
@@ -1348,9 +1358,9 @@ asm = "mov {dst}, [{src}]"
 
 [[instructions]]
 name = "STORE_MEM_R"
-form = "MRR_MEM"
-modrm = { rm = "[src2]" }
-opcode = 0x89
+form = "MRR_MEM_SEG"
+bind = { rm = "[src2]" }
+match = { opcode = 0x89 }
 ops = ["src:gprx", "src2:gprx"]
 asm = "mov [{src2}], {src}"
 
@@ -1385,8 +1395,8 @@ name = "MOV64_RR"
 ref = "mov"
 # 建立/恢复帧指针（v20 A4）：`mov rbp, rsp`（序言）/ `mov rsp, rbp`（尾声）。
 roles = ["frame_set"]
-form = "MRR_FIX64"
-opcode = 0x89
+form = "MRR_FIX64_SEG"
+match = { opcode = 0x89 }
 # 与 MOV_RM_R（mov {1}, {0}）同模板同槽类型 → 生成期去重跳过（64 位经 MOV_RM_R 分发）。
 ops = ["src:gpr", "dst:gpr:inout"]
 asm = "mov {dst}, {src}"
@@ -1395,9 +1405,9 @@ effect = ["Move"]
 [[instructions]]
 name = "MOV64_RM"
 roles = ["stack_arg_load"]
-form = "MRR_MEMREF"
-modrm = { rm = "[mem]" }
-opcode = 0x8B
+form = "MRR_MEMREF_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0x8B }
 ops = ["dst:gpr:out", "mem:mem"]
 asm = "mov {dst}, {mem}"
 # 被调方栈参数 load（v20 A5-3 起偏移来自 plan 的 ArgPlace::Stack{offset}，从 [fp+offset] 收第 5+ 参数）
@@ -1405,9 +1415,9 @@ asm = "mov {dst}, {mem}"
 [[instructions]]
 name = "MOV64_MR"
 roles = ["stack_arg_store"]
-form = "MRR_MEMREF"
-modrm = { rm = "[mem]" }
-opcode = 0x89
+form = "MRR_MEMREF_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0x89 }
 ops = ["src:gpr", "mem:mem"]
 asm = "mov {mem}, {src}"
 # 调用方栈参数 store（v20 A5-3 起偏移来自 plan 的 caller_offset(k)，第 5+ 参数写 [sp+shadow+k*槽]）
@@ -1464,9 +1474,9 @@ asm = "mov {mem}, {src}"
 # 所以这里用 `MRR_MEMREF`（opsize 64 固定），与寄存器版的 mod=3 分支互斥。
 [[instructions]]
 name = "MOVSXD_R_MEM"
-form = "MRR_MEMREF"
-modrm = { rm = "[mem]" }
-opcode = 0x63
+form = "MRR_MEMREF_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0x63 }
 ops = ["dst:gpr:out", "mem:mem"]
 asm = "movsxd {dst}, {mem}"
 
@@ -2141,25 +2151,25 @@ asm = "idiv dword ptr {mem}"
 
 [[instructions]]
 name = "SHL_RM_ONE"
-form = "MRR"
-modrm = { reg = 4, rm = "dst" }
-opcode = 0xD1
+form = "MRR_SHIFT_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0xD1, reg = 4 }
 ops = ["dst:gprx:inout"]
 asm = "shl {dst}, 1"
 
 [[instructions]]
 name = "SHR_RM_ONE"
-form = "MRR"
-modrm = { reg = 5, rm = "dst" }
-opcode = 0xD1
+form = "MRR_SHIFT_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0xD1, reg = 5 }
 ops = ["dst:gprx:inout"]
 asm = "shr {dst}, 1"
 
 [[instructions]]
 name = "SAR_RM_ONE"
-form = "MRR"
-modrm = { reg = 7, rm = "dst" }
-opcode = 0xD1
+form = "MRR_SHIFT_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0xD1, reg = 7 }
 ops = ["dst:gprx:inout"]
 asm = "sar {dst}, 1"
 
@@ -2194,25 +2204,25 @@ asm = "sar {dst}, {imm}"
 
 [[instructions]]
 name = "SHL_RM_CL"
-form = "MRR_EXT_OP_FIX64"
-modrm = { reg = 4, rm = "dst" }
-opcode = 0xD3
+form = "MRR_EXT_OP_F64_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0xD3, reg = 4 }
 ops = ["dst:gpr:inout"]
 asm = "shl {dst}, cl"
 
 [[instructions]]
 name = "SHR_RM_CL"
-form = "MRR_EXT_OP_FIX64"
-modrm = { reg = 5, rm = "dst" }
-opcode = 0xD3
+form = "MRR_EXT_OP_F64_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0xD3, reg = 5 }
 ops = ["dst:gpr:inout"]
 asm = "shr {dst}, cl"
 
 [[instructions]]
 name = "SAR_RM_CL"
-form = "MRR_EXT_OP_FIX64"
-modrm = { reg = 7, rm = "dst" }
-opcode = 0xD3
+form = "MRR_EXT_OP_F64_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0xD3, reg = 7 }
 ops = ["dst:gpr:inout"]
 asm = "sar {dst}, cl"
 
@@ -2674,9 +2684,9 @@ effect = ["Pure"]
 
 [[instructions]]
 name = "LEA_R64_SIB"
-form = "MRR_MEMREF"
-modrm = { rm = "[mem]" }
-opcode = 0x8D
+form = "MRR_MEMREF_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0x8D }
 ops = ["dst:gpr:out", "mem:mem"]
 asm = "lea {dst}, {mem}"
 effect = ["Pure"]
@@ -2684,9 +2694,9 @@ effect = ["Pure"]
 [[instructions]]
 name = "LEA_RBP_OFF"
 roles = ["frame_addr"]
-form = "MRR_MEMREF"
-modrm = { rm = "[mem]" }
-opcode = 0x8D
+form = "MRR_MEMREF_SEG"
+bind = { rm = "[mem]" }
+match = { opcode = 0x8D }
 ops = ["dst:gpr:out", "mem:mem"]
 asm = "lea {dst}, {mem}"
 effect = ["Pure"]
@@ -2703,7 +2713,7 @@ reloc = "abs64"
 
 [[instructions]]
 name = "CMOVCC_R_RM"
-# 宽度由目的槽驱动（`MRR_0F` 的 `opsize = s0`）：`cmovl rax, rcx`（64 位）与
+# 宽度由目的槽驱动（`MRR_0F` 的 `opsize = "s0"`）：`cmovl rax, rcx`（64 位）与
 # `cmovl eax, r16d`（32 位，真实语料）都要收——原来固定 64 位（`MRR_0F_FIX64`）。
 form = "MRR_0F_SEG"
 bind = { reg = "dst", rm = "src" }            # cond 编码进 opcode 低 4 位

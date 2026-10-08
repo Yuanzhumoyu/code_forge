@@ -421,7 +421,19 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > `^键 = 值\s*(#.*)?$`，且**每批回读条数**不能省。
 > ② 迁移后**老的 form 可能变成零引用** ⇒ lint 的 `LINT-UNUSED-FORM` 会红；按 lint 逐条删掉即可
 > （validate + lint 干净再进守卫）。
-> ⏭ **W4.3 batch 7（下一片）**：`MRR_MEMREF_AUTO` 剩下的 2 条（带 `prefix`）、
+> ✅ **batch 7 完成（2026-10-08）**：六个小组共 **21 条**迁走——`MRR_MEM_PRE`(4)、`MRR_MEM`(3)、
+> `MRR_FIX64`(3)、`MRR_MEMREF`(5)、`MRR`(3)、`MRR_EXT_OP_FIX64`(3)；各自一个新段形态 form
+> （`MRR_MEM_PRE_SEG` / `MRR_MEM_SEG` / `MRR_FIX64_SEG` / `MRR_MEMREF_SEG` / `MRR_SHIFT_SEG` /
+> `MRR_EXT_OP_F64_SEG`），并删掉 6 个零引用旧 form。
+> 累计已段化 **112 条**（14+13+8+19+21+16+21）。
+> **本片又踩到两个脚本坑（都已修）**：
+> ① 生成 form 时漏引号（`opsize = s0`）⇒ TOML 解析失败；值一律按字符串写。
+> ② 指令**本就有 `match = { prefix = 0xF0 }`**，脚本又加一行 `match` ⇒ 同块重复键；
+> 已加通用修复：同块多个 `match` 自动合并成一行。
+> ⏭ **W4.3 batch 8（下一片）**：`MRR_MEMREF_AUTO` 剩 2 条（LOCK 原子族，带 prefix 字节）、
+> `MRR_0F_PREFIX` 3 条（`match.w` 的归属要单独定，别让 `w` 误进 rex 段而改变 REX.W 语义）、
+> `MRR_MEM_0F_FIX32` 6 条（prefix 字段 + 0F escape + opsize 32）、`NOP_RM` 1 条；
+> 之后进 **VEX/EVEX**（`vex`/`evex` 段首次被真实谱使用）。
 > `SSE_RR` 21（`escape`+`prefix`+`rex_w` 骨架，需把 `prefix`/`w` 变成段字段的 `match`）、
 > `MRR_EXT` 19 / `MRR` 17（移位族留待扩展码问题定案）/ `VEX_*` / `EVEX_*`；
 > 每批跑三条守卫（asm_encoding 棘轮 + encoder_fuzz + isa_roundtrip_guard）再提交。
