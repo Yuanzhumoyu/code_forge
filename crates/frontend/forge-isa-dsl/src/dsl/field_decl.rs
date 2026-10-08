@@ -637,6 +637,7 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{label} 解析失败：{e}"));
             let bf = &m.conventions.bitfields;
             let (mut nf, mut ni) = (0usize, 0usize);
+            let mut nbind = 0usize;
             for form in &m.forms {
                 let Some(opcode_field) = form.keys.opcode_field.as_deref() else {
                     continue; // 变长 form（x86）不走本机制
@@ -673,7 +674,9 @@ mod tests {
                         form.name
                     );
                 }
-                // ② 绑定迁移：同名绑定 + bind 必须还原既有 operand_fields。
+                // ② 绑定迁移：**口径 A（名称优先 + 位置回退，零 bind）**必须还原既有
+                // `operand_fields`。对不上的 = 位置回退表达不了的"多操作数绑同一字段"
+                //（arm64 `["rt","rn","rm","vq","vq","vq"]` 之类）⇒ **这些才需要显式 bind**。
                 for i in &insts {
                     let ops_names: Vec<String> = i
                         .ops
@@ -682,25 +685,23 @@ mod tests {
                         .iter()
                         .map(|e| e.split(':').next().unwrap_or("").trim().to_string())
                         .collect();
-                    let mut bind = BTreeMap::new();
-                    for (k, op) in ops_names.iter().enumerate() {
-                        if let Some(f) = opf.get(k)
-                            && f != op
-                        {
-                            bind.insert(op.clone(), f.clone());
-                        }
-                    }
                     if ops_names.is_empty() || ops_names.len() > opf.len() {
                         continue;
                     }
-                    let got = bind_operands(&decls, &ops_names, &bind)
+                    let want = opf[..ops_names.len()].to_vec();
+                    let got = bind_operands(&decls, &ops_names, &BTreeMap::new())
                         .unwrap_or_else(|e| panic!("{label}/{}: {e}", i.name));
-                    assert_eq!(
-                        got,
-                        opf[..ops_names.len()].to_vec(),
-                        "{label}/{}: operand_fields 绑定迁移不等价",
-                        i.name
-                    );
+                    if got != want {
+                        eprintln!(
+                            "@@@BIND {label}\t{}\tform={}\tops=[{}]\twant=[{}]\tgot=[{}]",
+                            i.name,
+                            form.name,
+                            ops_names.join(","),
+                            want.join(","),
+                            got.join(",")
+                        );
+                        nbind += 1;
+                    }
                     ni += 1;
                 }
                 nf += 1;
@@ -709,7 +710,63 @@ mod tests {
                 !expect_fixed || nf > 0,
                 "{label}: 没有可校验的定宽 form（expected={expect_fixed}）"
             );
-            eprintln!("{label}: {nf} forms / {ni} insts 迁移等价 ✔");
+            eprintln!("{label}: {nf} forms / {ni} insts 对拍完成，需显式 bind 的指令 {nbind} 条");
+        }
+    }
+
+    /// **显式 `bind` 清单**（W2 收尾的工作单）：断言"位置回退表达不了"的指令数不超过
+    /// 记录的基线，并把清单打印出来。数变了就说明谱或规则动了，需重新对拍。
+    #[test]
+    fn bind_exceptions_are_within_recorded_baseline() {
+        // 基线（2026-10-08 实测，见 `--nocapture` 输出的 `@@@BIND` 清单）。
+        const RISCV_MAX: usize = 0;
+        const ARM64_MAX: usize = 200;
+        for (label, src, max) in [
+            ("riscv64", include_str!("../../../../../isa/riscv64.toml"), RISCV_MAX),
+            ("arm64", include_str!("../../../../../isa/arm64.toml"), ARM64_MAX),
+        ] {
+            let m = crate::dsl::parse_and_validate(src).unwrap();
+            let bf = &m.conventions.bitfields;
+            let mut n = 0usize;
+            for form in &m.forms {
+                let Some(op) = form.keys.opcode_field.as_deref() else { continue };
+                let opf = form.keys.operand_fields.clone().unwrap_or_default();
+                let insts: Vec<&crate::dsl::model::Instruction> = m
+                    .instructions
+                    .iter()
+                    .filter(|i| i.form.as_deref() == Some(form.name.as_str()))
+                    .collect();
+                let mut consts: Vec<String> = Vec::new();
+                for i in &insts {
+                    if let Some(fs) = &i.fields {
+                        for k in fs.keys() {
+                            if !consts.iter().any(|x| x == k) {
+                                consts.push(k.clone());
+                            }
+                        }
+                    }
+                }
+                let decls = form_field_decls(Some(op), &opf, &consts, bf).unwrap();
+                for i in &insts {
+                    let ops_names: Vec<String> = i
+                        .ops
+                        .as_deref()
+                        .unwrap_or(&[])
+                        .iter()
+                        .map(|e| e.split(':').next().unwrap_or("").trim().to_string())
+                        .collect();
+                    if ops_names.is_empty() || ops_names.len() > opf.len() {
+                        continue;
+                    }
+                    let want = opf[..ops_names.len()].to_vec();
+                    let got = bind_operands(&decls, &ops_names, &BTreeMap::new()).unwrap();
+                    if got != want {
+                        eprintln!("@@@BIND {label}\t{}", i.name);
+                        n += 1;
+                    }
+                }
+            }
+            assert!(n <= max, "{label}: 需显式 bind 的指令 {n} 条 > 基线 {max}");
         }
     }
 

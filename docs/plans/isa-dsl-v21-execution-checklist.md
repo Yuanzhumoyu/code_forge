@@ -250,6 +250,21 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
    arm64 有 `operand_fields = ["rt","rn","rm","vq","vq","vq"]` 这类三连（向量排列）。
    ⇒ 收尾时先跑一次"位置回退 vs 旧 `operand_fields`"的对拍，**只给对不上的那几条指令**
    写 `bind = { … = "vq" }`（预计是个位数），其余一律不写。
+8. **⚠ 第三次对拍的决定性发现（必须先解，否则迁移必错）**：
+   `bind_operands` 现在按"字段名 ≠ `opcode`"排除主 opcode 字段，**arm64 不成立**——
+   它的 form 用 **10 种**名字：`op8`(20) `op9`(2) `op6` `op7` `mtop`(5) `word` `vec_a`(3)
+   `b16`(2) `cbop`(2) `adr_fix`。⇒ 位置回退整体错一位，**arm64 537/537 条全部对不上**
+   （riscv64 **0 条**，因为它的 opcode 字段就叫 `opcode`）。
+   修法两条，且**必须一起做**：
+   - `bind_operands` 接收"本 form 的 opcode 字段名"而不是硬编码 `"opcode"`；
+   - `lower_field_syntax` 判定 `opcode_field` 时也不能只看"名字叫 opcode"的字段。
+9. **由此暴露的设计点（v21 真正要改的地方）**：v18 的 `[conventions.bitfields]` 是
+   **全局命名空间**，而 v21 的 `fields` 是 **form 局部**的。arm64 多个 form 各自需要
+   一个"opcode"字段（位区间还不同：`op8` 与 `op9` 就不同）⇒ 全局合并必然报
+   "字段 `opcode` 在多个 form 里声明不一致"。**W2 的降级方案必须让内部位域表按 form 分区**
+   （或给内部键加 form 前缀），否则只能保留 `op8`/`op9` 这类 ISA 私有名——那样
+   "字段名就是接口名"的可读性目标就打折了。**这一步是 W2 里唯一需要动 codegen 的地方**，
+   也是它值得单列一片（W2.5）的原因。
 
 ---
 
