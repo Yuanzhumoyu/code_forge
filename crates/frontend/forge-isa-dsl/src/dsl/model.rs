@@ -2139,6 +2139,9 @@ pub struct Instruction {
     /// 判定实现只有一处：[`variants_keep`]。
     #[serde(default)]
     pub only_variants: Option<VariantGate>,
+    /// 按变体分派的字段值（`fields_variant`，出路 2 第①步：纯附加、暂无读取者）。
+    #[serde(default, rename = "fields_variant")]
+    pub fields_variant: Option<std::collections::BTreeMap<String, VariantFieldValue>>,
     /// 展开来源（v18 S2）：由 `[[templates.NAME]]` 展开而来时记下模板名。
     ///
     /// 不参与序列化（`serde(skip)`）；诊断据此把错误锚回**模板声明行**而不是
@@ -3352,4 +3355,14 @@ pub fn variants_keep(gate: Option<&VariantGate>, params: &BTreeMap<String, i64>)
         ov.iter()
             .all(|(k, allowed)| params.get(k).is_none_or(|v| allowed.contains(v)))
     })
+}
+
+/// 字段值的**按变体分派**形态（出路 2 第①步：纯附加键，暂时没有读取者）。
+///
+/// `by` = 参数取值 → 字段值；`default` = 参数未命中、或压根不传参数时的取值。
+/// 解析点将来只在投影通路（见 docs/plans/isa-dsl-variant-field-values.md）。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct VariantFieldValue {
+    pub by: std::collections::BTreeMap<u64, u64>,
+    pub default: u64,
 }

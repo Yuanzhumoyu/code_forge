@@ -270,6 +270,7 @@ pub const SECTIONS: &[Section] = &[
             "reloc",
             "width",
             "only_variants",
+            "fields_variant",
             // TOML 键是 `ref`（模型字段名 `reference` + `#[serde(rename = "ref")]`）。
             // 守卫按 `#[serde(rename = …)]` 取键名，所以这里必须写 **用户在 TOML 里
             // 实际写的那个键**——写字段名会让编辑器对每一行 `ref = …` 报未知键

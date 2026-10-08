@@ -128,7 +128,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[conventions.mem]` | `templates` | `size_keywords` | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
 | `[[operand_slots]]` | `name` `kind` | `class` `classes` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `unit` `roles` `encode` `fields` `table` `names` `symbols` `require_symbol` `imm_fns` `arrangement` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
-| `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `data_width` `implicit_regs` `reloc` `width` `only_variants` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
+| `[[instructions]]` | `name` `asm` | `form` `opcode` `fields` `ops` `when` `effect` `roles` `data_width` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[[templates]]` | `rows` | `name` `body` | 唯一指令复用机制：`body` 共享字段 + `rows` 每行一条指令 |
 | `[[reloc]]` | `name` `semantics` `slot` | `addend` | 重定位表：semantics = absolute \| pc_relative（v18 S3d） |
 | `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
