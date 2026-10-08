@@ -3251,6 +3251,7 @@ fn imm_slot_wrap_reads_the_bit_pattern() {
         kind,
         class: None,
         classes: None,
+        zr31: None,
         byte_reg: None,
         width,
         signed,

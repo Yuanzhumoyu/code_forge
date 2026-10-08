@@ -235,7 +235,7 @@ pub const SECTIONS: &[Section] = &[
         model: "OperandSlot",
         required: &["name", "kind"],
         optional: &[
-            "class", "classes", "byte_reg", "width", "signed", "float", "min", "max", "wrap",
+            "class", "classes", "zr31", "byte_reg", "width", "signed", "float", "min", "max", "wrap",
             "unit", "roles", "encode", "fields", "table", "names", "symbols", "require_symbol",
             "imm_fns", "arrangement",
         ],

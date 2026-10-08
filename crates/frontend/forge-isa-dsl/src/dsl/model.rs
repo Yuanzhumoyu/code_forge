@@ -1364,6 +1364,14 @@ pub struct OperandSlot {
     /// 两者皆无 = 任意寄存器类（不推荐，会吞掉更具体的重载形式）。
     #[serde(default)]
     pub classes: Option<Vec<RegClass>>,
+    /// reg：**该槽把 31 号视为 ZR 而不是 SP**（A64 shifted-register 形态的专属语义）。
+    ///
+    /// 两侧一起变 ✓（**只改匹配会让解码把 `xzr` 渲染回 `sp`，镜像同一个 bug** ✗）：
+    /// 匹配侧拒收 `SP`/`WSP` 两种拼写（`XZR`/`WZR` 照收），渲染侧把 31 号出成 `XZR`/`WZR`。
+    /// 依据：`add w1, wsp, w3` 上游走 extended 形态（`bit21 = 1` + `option = uxtw`），
+    /// 而 shifted 形态里 SP 非法 ⇒ 谱必须能把这类槽钉成 ZR 视图。
+    #[serde(default)]
+    pub zr31: Option<bool>,
     /// reg：8 位寄存器操作数（spl/bpl/sil/dil 无 REX 时编码为 ah/ch/dh/bh，
     /// 索引 4-7 必须强制 REX 前缀）。
     #[serde(default)]
