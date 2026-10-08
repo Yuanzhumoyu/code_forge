@@ -200,10 +200,21 @@ fn summary(m: &IsaModel) -> IsaSummary {
 /// 编码键 → `(key, value)` 列表（字典序）。用 serde 把 `EncKeys` 折成 TOML 表，
 /// **不维护第二份键名清单**（新增编码键自动出现在 `insts`/`explain`/`diff` 里）。
 fn enc_pairs(keys: &crate::dsl::model::EncKeys) -> Vec<(String, String)> {
+    // v21 W2：`opcode_field`/`operand_fields` 是 `#[serde(skip)]` 的**派生**键（由
+    // `[[forms]].fields` 展开），序列化拿不到——但它们是排查"这条指令编到哪"的关键，
+    // 所以在这里显式补回。
+    let mut extra: Vec<(String, String)> = Vec::new();
+    if let Some(f) = &keys.opcode_field {
+        extra.push(("opcode_field".to_string(), f.clone()));
+    }
+    if let Some(fs) = &keys.operand_fields {
+        extra.push(("operand_fields".to_string(), format!("{fs:?}")));
+    }
     let Ok(toml::Value::Table(t)) = toml::Value::try_from(keys) else {
         return Vec::new();
     };
     let mut out: Vec<(String, String)> = t.into_iter().map(|(k, v)| (k, v.to_string())).collect();
+    out.extend(extra);
     out.sort();
     out
 }

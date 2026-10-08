@@ -317,6 +317,37 @@ encoding = "@modrm 0x01 /r"
 
 // ─────────────────────── 语义校验 ───────────────────────
 
+/// v21 W2：字段**就地声明在 form 里**——需要"字段声明"的夹具用这个（128 位字，容得下
+/// 超出 64 位的字侧偏移）。
+fn field_doc(decls: &str) -> String {
+    format!(
+        r#"
+[meta]
+name = "x"
+[encoding]
+kind = "fixed"
+bits = 128
+[reg.gpr32]
+count = 8
+[[operand_slots]]
+name = "g"
+kind = "reg"
+class = "gpr32"
+[[forms]]
+name = "F"
+fields = [
+{decls}
+]
+[[instructions]]
+name = "NOP"
+form = "F"
+opcode = 0
+ops = ["dst:g:out"]
+asm = "nop {{dst}}"
+"#
+    )
+}
+
 fn slot_doc(extra: &str) -> String {
     format!(
         r#"
@@ -403,7 +434,7 @@ count = 8
 #[test]
 fn validation_bitfield_overflow() {
     // 值表示上限：单个位域 > 64 位（位域值承载在 u64/i64 上）→ 报错
-    let doc = slot_doc("[conventions.bitfields]\nbig = { offset = 0, width = 65 }");
+    let doc = field_doc("\"u65[64:0]:big\",");
     let err = parse_and_validate(&doc).unwrap_err();
     match err {
         DslError::Validation { msg, .. } => {
@@ -413,9 +444,7 @@ fn validation_bitfield_overflow() {
         other => panic!("expected Validation error, got {other:?}"),
     }
     // 字侧偏移**无上限**（字长是 ISA 数据，字由字节数组承载）：offset 63 合法
-    parse_and_validate(&slot_doc(
-        "[conventions.bitfields]\nhi = { offset = 63, width = 2 }",
-    ))
+    parse_and_validate(&field_doc("\"u2[64:63]:hi\","))
     .expect("字侧偏移不受 64 位限制（字长任意）");
 }
 
@@ -818,8 +847,8 @@ class = "gpr"
 [[forms]]
 name = "R"
 fields = [
-  "u7[6:0]:opcode",
-  "u3[9:7]:rd",
+  "u7[6:0 -> 3:0,10:8]:opcode",
+  "u3[13:11]:rd",
 ]
 [[instructions]]
 name = "FOO"
@@ -3478,14 +3507,12 @@ asm = "tbz {src}, #{bit}, {target}"
         .unwrap_err()
         .to_string();
     assert!(err.contains("宽度之和"), "err: {err}");
-    // 表单里的 `operand_fields` 必须写**首字段**（其余字段由槽声明）。
-    let err = parse_and_validate(&doc.replace(
-        "[\"rt\", \"b40\", \"imm14\"]",
-        "[\"rt\", \"b5\", \"imm14\"]",
-    ))
-    .unwrap_err()
-    .to_string();
-    assert!(err.contains("首字段"), "err: {err}");
+    // v21 W2：`operand_fields` 由 `fields` + `ops` 派生——多字段落点的**每个分片**都要在
+    // form 的 `fields` 里声明；少一个就报"不是声明的字段"。
+    let err = parse_and_validate(&doc.replace("  \"u5[23:19]:b40\",\n", ""))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("b40"), "err: {err}");
     // 变长 ISA 还没实现多字段落点 → 明确拒绝。
     let err = parse_and_validate(&doc.replace(
         "kind = \"fixed\"\nbits = 32",
@@ -3892,10 +3919,43 @@ asm = "mov {{dst}}, {{src}}"
 [[forms]]
 name = "RR"
 fields = [
-  "u7[6:0]:opcode",
-  "u5[11:7]:rd",
-  "u20[31:12]:imm",
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
 ]
+"#
+    )
+}
+
+/// 1 字节寄存器 ISA：`main_gpr_class`/`addr_class`/`slot_bytes`/`fp_overhead_bytes`
+/// 全部 = 1 字节；名字表可解析（不再为空）。
+#[test]
+fn width_metadata_one_byte_gpr_is_derived() {
+    let m = parse_and_validate(&one_byte_doc("")).expect("1 字节寄存器 ISA 必须合法");
+    assert_eq!(m.main_gpr_class().unwrap(), RegClass::GPR(8));
+    assert_eq!(m.addr_class().unwrap(), RegClass::GPR(8));
+    assert_eq!(m.value_gpr_class().unwrap(), RegClass::GPR(8));
+    assert_eq!(m.slot_bytes().unwrap(), 1, "栈槽单位 = 地址宽（1 字节）");
+    assert_eq!(m.fp_overhead_bytes().unwrap(), 1);
+    assert_eq!(m.main_fpr_class().unwrap(), None, "无 FPR 组");
+    assert_eq!(m.value_fpr_class().unwrap(), None, "无 fpr64 组");
+    let idx = m.main_gpr_name_to_idx().expect("名字表必须解析成功");
+    assert_eq!(idx.get("A0"), Some(&0));
+    assert_eq!(idx.get("A3"), Some(&3));
+    assert_eq!(idx.len(), 4);
+    // 索引含 base_index（历史实现只按组内序号，base_index≠0 的组会错位）。
+    let m2 = parse_and_validate(&one_byte_doc("")).unwrap();
+    assert!(
+        m2.names_of(RegClass::GPR(8))
+            .unwrap()
+            .contains(&"A2".into())
+    );
+}
+
+/// 主 GPR 类 = 已声明 GPR 组中最宽者（x86 四视图 → 8）。
+#[test]
+fn width_metadata_main_gpr_is_widest_group() {
+    let doc = r#"
 [meta]
 name = "w"
 [reg.gpr8]
@@ -3917,6 +3977,8 @@ roles = "inout"
     assert_eq!(m.addr_class().unwrap(), RegClass::GPR(64));
     assert_eq!(m.slot_bytes().unwrap(), 8);
 }
+
+
 
 /// 主 FPR 类保留历史规则：**优先 16 字节组**（XMM 基准），而非"最宽"
 /// （x86 最宽是 32 字节 ZMM——若按最宽推导，SSE/ABI 占位会变成 ZMM 视图）。
@@ -4242,6 +4304,10 @@ fn types_ptr_uses_isa_address_width() {
 /// 单个位域 ≤ 64 位是值表示上限，与字长无关）。
 fn word_doc(bits: u32) -> String {
     let op_w = bits.min(8);
+    // v21：没有"全字 opcode"后门——必须显式声明字段，且单个位域 ≤ 64 位
+    //（值承载在 u64/i64）。超出的高位不声明 = 未指定位（合法，按缺省 0 发射）。
+    let fw = bits.clamp(1, 64);
+    let fhi = fw - 1;
     format!(
         r#"
 [meta]
@@ -4258,15 +4324,16 @@ class = "gpr32"
 roles = "inout"
 [[forms]]
 name = "W"
-fields = ["u{bits}[{hi}:0]:opcode"]
+fields = ["u{fw}[{fhi}:0]:opcode"]
 [[instructions]]
 name = "NOP"
 form = "W"
 opcode = 0
 asm = "nop"
 "#,
+        fw = fw,
+        fhi = fhi,
         bits = bits,
-        hi = bits - 1,
         b = bits
     )
 }
@@ -4392,7 +4459,7 @@ asm = "brz {{src}}, {{target}}"
 #[test]
 fn inst_width_rejects_bitfield_beyond_word() {
     // 用 4 位 opcode 位域（可移位到字内任意位置）+ 全字常量指令
-    let doc = |op: &str| {
+    let doc = |field: &str| {
         format!(
             r#"
 [meta]
@@ -4410,7 +4477,7 @@ roles = "inout"
 [[forms]]
 name = "W"
 fields = [
-  "u12[11:0]:word",
+  "{field}",
 ]
 [[instructions]]
 name = "NOP"
@@ -4420,8 +4487,8 @@ asm = "nop"
 "#
         )
     };
-    parse_and_validate(&doc("op = { offset = 8, width = 4 }")).expect("bits 8..12 落在 12 位字内");
-    let msg = validation_msg(&doc("op = { offset = 9, width = 4 }"));
+    parse_and_validate(&doc("u4[11:8]:word")).expect("bits 8..12 落在 12 位字内");
+    let msg = validation_msg(&doc("u4[12:9]:word"));
     assert!(
         msg.contains("超出指令字宽"),
         "13 位 > 12 位字宽 → 报错：{msg}"

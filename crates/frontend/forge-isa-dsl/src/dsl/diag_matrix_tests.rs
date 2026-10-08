@@ -139,10 +139,11 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "位域越界",
             BASE.replace(
-                "funct3 = { offset = 12, width = 3 }",
-                "funct3 = { offset = 12, width = 3 }\nwide = { offset = 30, width = 8 }",
+                "  \"u3[14:12]:funct3\",",
+                "  \"u3[14:12]:funct3\", \"u8[37:30]:wide\",",
             ),
-            "DSL-CONV",
+            // v21 W2：字段就地声明在 form 里 ⇒ 越界检查由 form 锚点的降级期报出（DSL-FORM）
+            "DSL-FORM",
             "wide",
         ),
         (
@@ -158,11 +159,12 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
             "imm0",
         ),
         (
-            "form 引用未声明位域",
+            "指令 match 引用未声明字段",
             plus(
-                "[[forms]]\nname = \"BAD\"\nopcode_field = \"opcode\"\noperand_fields = [\"nope\"]",
+                "[[instructions]]\nname = \"BAD2\"\nform = \"R\"\nopcode = 0x33\n\
+                 match = { nope = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"bad2 {dst}\"",
             ),
-            "DSL-FORM",
+            "DSL-INST",
             "nope",
         ),
         (

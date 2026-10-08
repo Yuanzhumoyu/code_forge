@@ -422,6 +422,28 @@ pub fn lower_field_syntax(m: &mut super::model::IsaModel) -> Result<(), String> 
     if own.is_empty() {
         return Ok(());
     }
+    // ①b 字段位区间不得超出指令字宽（定宽 ISA）：**带 form 名**报错，诊断才能锚到行
+    //（validate 侧那条路径没有 form 上下文，只能落到第 1 行）。
+    // 只对**定宽** ISA 判：`mixed` 的每条指令字宽可不同，用缺省字宽判会误伤。
+    if m.encoding.kind == super::model::EncodingKind::Fixed
+        && let Some(bits) = m.encoding.bits
+    {
+        for (form, bf) in &own {
+            for (n, v) in bf {
+                let hi = match (&v.offset, &v.width, &v.pieces) {
+                    (Some(o), Some(w), None) => *o + *w,
+                    (_, _, Some(ps)) => ps.iter().map(|p| p.offset + p.width).max().unwrap_or(0),
+                    _ => 0,
+                };
+                if hi > bits {
+                    return Err(format!(
+                        "[[forms.{form}]]: 字段 `{n}` 最高位 {} 超出指令字宽 {bits} 位（[encoding]）",
+                        hi - 1
+                    ));
+                }
+            }
+        }
+    }
     // ② 冲突判定（**首次声明保原名**）：同一个名字被多个 form 声明且区间不同时，
     //    **首个**声明（含被槽引用的名字，如 arm64 `b5`/`b40`）保留原名，
     //    后续不同区间的 form 用限定名 `<form>.<名字>`。

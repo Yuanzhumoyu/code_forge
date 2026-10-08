@@ -1073,7 +1073,9 @@ fn validate_conventions(m: &IsaModel) -> Result<(), String> {
             }
         }
     }
-    if let Some(modrm) = &conv.modrm {
+    if let Some(modrm) = &conv.modrm
+        && m.encoding.kind != EncodingKind::PrefixScan
+    {
         for f in [&modrm.reg_field, &modrm.rm_field].into_iter().flatten() {
             if !conv.bitfields.contains_key(f) {
                 return Err(format!(
