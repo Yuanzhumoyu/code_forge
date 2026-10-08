@@ -120,10 +120,13 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
         }
         match seg.kind {
             SegKind::Prefix => {
-                // 两种前缀段：
-                // ① `bytes = { "0x66" = "opsize16" }`——**字节是常量**（哪个字节代表什么效果）；
+                // 三种前缀段：
+                // ① `bytes = { "0x66" = "opsize16" }`——**字节是常量 + 效果名**（哪个字节代表什么效果）；
                 // ② `fields = ["u8[7:0]:prefix"]`——**字节由字段给**（SSE 的 66/F2/F3/0 逐指令不同，
-                //    值写在指令的 `match = { prefix = 0xF2 }` 里）。
+                //    值写在指令的 `match = { prefix = 0xF2 }` 里）；
+                // ③ `bytes = ["0xF2", "0xF0"]`——**有序字节列表**（发射序 = 写序；效果名沿用
+                //    全局前缀表，W4.4 才收敛到 form）。XACQUIRE+XACQUIRE 这类多前缀指令必须用它：
+                //    字典形态按字节字典序排，会把 `0xF2 0xF0` 排反。
                 if seg.bytes.is_none() && seg.fields.is_some() {
                     keys.prefix = Some(PrefixKey::One("field".to_string()));
                     // 段内字段已经并入 `fields`（上面统一处理），指令的 `match.prefix` 继续生效。
@@ -134,18 +137,32 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
                         ));
                     }
                     // 跳过下面的 bytes 分支
+                } else if let Some(SegmentBytes::Raw(list)) = seg.bytes.clone() {
+                    // ③ 有序字节列表：**发射序 = 写序**（效果名沿用全局前缀表，W4.4 才收敛到 form）。
+                    if list.is_empty() {
+                        return Err(format!(
+                            "[[forms.{fname}]].prefix: 有序字节列表不能为空"
+                        ));
+                    }
+                    let mut out = Vec::new();
+                    for b in list {
+                        parse_byte(&b).map_err(|e| format!("[[forms.{fname}]].prefix: {e}"))?;
+                        out.push(b);
+                    }
+                    keys.prefix = Some(if out.len() == 1 {
+                        PrefixKey::One(out.remove(0))
+                    } else {
+                        PrefixKey::Many(out)
+                    });
                 } else {
                 let effects = match seg.bytes.clone() {
                     Some(SegmentBytes::Effects(map)) => map,
-                    Some(SegmentBytes::Raw(_)) => {
-                        return Err(format!(
-                            "[[forms.{fname}]].prefix: 前缀段要写「字节 → 效果名」的字典\
-                             （`bytes = {{ \"0x66\" = \"opsize16\" }}`），不是裸字节列表"
-                        ));
-                    }
+                    // 裸字节列表在上面的 `else if` 里已经处理；这里不可能到达。
+                    Some(SegmentBytes::Raw(_)) => Vec::new().into_iter().collect(),
                     None => {
                         return Err(format!(
-                            "[[forms.{fname}]].prefix: 前缀段必须给 `bytes`（字节 → 效果名）"
+                            "[[forms.{fname}]].prefix: 前缀段必须给 `bytes`（字节 → 效果名字典、\
+                             或有序字节列表）或 `fields`（字节由字段给）"
                         ));
                     }
                 };

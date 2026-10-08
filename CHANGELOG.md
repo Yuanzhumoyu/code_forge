@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added/Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 10：前缀段有序列表 + LOCK 族段化
+
++ **前缀段的第三种形态**：`bytes = ["0xF2", "0xF0"]`（**有序字节列表**，发射序 = 写序）。
+  必需：字节→效果名字典按字节字典序排，会把 XACQUIRE/XRELEASE 的 `0xF2 0xF0` 排反。
+  前缀段至此三形态齐备：① 字节→效果名（常量+语义）② `fields`（值在指令 `match`）③ 有序字节列表。
++ `isa/x86.toml`：`ACQUIRE_LOCK_ADD_MR`/`RELEASE_LOCK_ADD_MR` 迁到 `MRR_MEM_XACQ_SEG`/`MRR_MEM_XREL_SEG`。
++ 逐字节不变：`isa_roundtrip_guard` + asm 棘轮 + 谱内向量 + 双 JIT 矩阵；累计 **145 条**已段化。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 9：x86 VEX/EVEX 五组 21 条段化
 
 + `isa/x86.toml`：`VEX_RRV`(6)、`VEX_RR`(3)、`VEX_RR_MEMREF`(5)、`EVEX_RRV`(2)、`EVEX_RR_MEMREF`(5)

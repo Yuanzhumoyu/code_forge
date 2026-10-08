@@ -499,6 +499,24 @@ opsize = "s0"
 
 
 
+
+
+[[forms]]
+name = "MRR_MEM_XREL_SEG"
+opsize = "s0"
+segments = [
+  { kind = "prefix", bytes = ["0xF3", "0xF0"] },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
+[[forms]]
+name = "MRR_MEM_XACQ_SEG"
+opsize = "s0"
+segments = [
+  { kind = "prefix", bytes = ["0xF2", "0xF0"] },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "MRR_MEM_0F_SEG"   # v21 W4：段形态（0F escape + opcode + modrm，MemRef 内存）
 opsize = "s0"
@@ -723,19 +741,19 @@ rows = [
 # （本批只建语料出现的 `add`）。
 [[instructions]]
 name = "ACQUIRE_LOCK_ADD_MR"
-form = "MRR_MEMREF_AUTO"
-prefix = ["0xF2", "0xF0"]
-modrm = { rm = "[mem]" }
-opcode = 0x01
+form = "MRR_MEM_XACQ_SEG"
+
+bind = { rm = "[mem]" }
+match = { opcode = 0x01 }
 ops = ["src:gprx", "mem:mem:inout"]
 asm = "acquire lock add {mem}, {src}"
 
 [[instructions]]
 name = "RELEASE_LOCK_ADD_MR"
-form = "MRR_MEMREF_AUTO"
-prefix = ["0xF3", "0xF0"]
-modrm = { rm = "[mem]" }
-opcode = 0x01
+form = "MRR_MEM_XREL_SEG"
+
+bind = { rm = "[mem]" }
+match = { opcode = 0x01 }
 ops = ["src:gprx", "mem:mem:inout"]
 asm = "release lock add {mem}, {src}"
 
