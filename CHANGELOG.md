@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 3：x86 0F 转义族 8 条段化
+
++ `isa/x86.toml`：`MRR_MEMREF_AUTO` 的 `escape` 子集 8 条（IMUL_R_MEM、MOVZX/MOVSX_MEM8/16、
+  NOP_MEM32、SETCC_R_MEM、CMOVCC_R_MEM）迁到段形态 form `MRR_MEM_0F_SEG`——
+  `escape` 是**结构事实**（`bytes = ["0x0F"]`），由 form 的段承载，指令侧只写 `match`/`bind`。
++ 逐字节不变：`isa_roundtrip_guard` + asm 棘轮 + 谱内向量 + 双 JIT 矩阵；累计 **35 条**已段化。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 2：x86 内存族 13 条段化 + 扩展码表达定案
 
 + `isa/x86.toml`：`MRR_MEMREF_AUTO` 的干净子集（MOV/STORE/XCHG 内存形式 + NOT/NEG/INC/DEC/

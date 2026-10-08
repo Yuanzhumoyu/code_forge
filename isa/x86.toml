@@ -414,6 +414,15 @@ name = "MRR_MEMREF_AUTO"  # MemRef 内存（base/index/disp）+ opsize 由首个
 opsize = "s0"
 
 
+
+[[forms]]
+name = "MRR_MEM_0F_SEG"   # v21 W4：段形态（0F escape + opcode + modrm，MemRef 内存）
+opsize = "s0"
+segments = [
+  { kind = "escape", bytes = ["0x0F"] },
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
 [[forms]]
 name = "MRR_MEM_SEG"      # v21 W4：段形态（opcode + modrm，MemRef 内存）
 opsize = "s0"
@@ -538,10 +547,10 @@ asm = "imul {dst}, {src}"
 # 所以 `imul ebx, dword ptr […]` 与 `imul rbx, qword ptr […]` 都成立。
 [[instructions]]
 name = "IMUL_R_MEM"
-form = "MRR_MEMREF_AUTO"
-escape = [0x0F]
-modrm = { reg = "dst", rm = "[mem]" }
-opcode = 0xAF
+form = "MRR_MEM_0F_SEG"
+
+bind = { reg = "dst", rm = "[mem]" }
+match = { opcode = 0xAF }
 ops = ["dst:gprx:out", "mem:mem"]
 asm = "imul {dst}, {mem}"
 
@@ -749,40 +758,40 @@ asm = "movzx {dst}, word ptr [{src}]"
 
 [[instructions]]
 name = "MOVZX_MEM8"
-form = "MRR_MEMREF_AUTO"
-escape = [0x0F]
-modrm = { reg = "dst", rm = "[mem]" }
-opcode = 0xB6
+form = "MRR_MEM_0F_SEG"
+
+bind = { reg = "dst", rm = "[mem]" }
+match = { opcode = 0xB6 }
 ops = ["dst:gprx:out", "mem:mem"]
 asm = "movzx {dst}, byte ptr {mem}"
 effect = ["Pure"]
 
 [[instructions]]
 name = "MOVZX_MEM16"
-form = "MRR_MEMREF_AUTO"
-escape = [0x0F]
-modrm = { reg = "dst", rm = "[mem]" }
-opcode = 0xB7
+form = "MRR_MEM_0F_SEG"
+
+bind = { reg = "dst", rm = "[mem]" }
+match = { opcode = 0xB7 }
 ops = ["dst:gprx:out", "mem:mem"]
 asm = "movzx {dst}, word ptr {mem}"
 effect = ["Pure"]
 
 [[instructions]]
 name = "MOVSX_MEM8"
-form = "MRR_MEMREF_AUTO"
-escape = [0x0F]
-modrm = { reg = "dst", rm = "[mem]" }
-opcode = 0xBE
+form = "MRR_MEM_0F_SEG"
+
+bind = { reg = "dst", rm = "[mem]" }
+match = { opcode = 0xBE }
 ops = ["dst:gprx:out", "mem:mem"]
 asm = "movsx {dst}, byte ptr {mem}"
 effect = ["Pure"]
 
 [[instructions]]
 name = "MOVSX_MEM16"
-form = "MRR_MEMREF_AUTO"
-escape = [0x0F]
-modrm = { reg = "dst", rm = "[mem]" }
-opcode = 0xBF
+form = "MRR_MEM_0F_SEG"
+
+bind = { reg = "dst", rm = "[mem]" }
+match = { opcode = 0xBF }
 ops = ["dst:gprx:out", "mem:mem"]
 asm = "movsx {dst}, word ptr {mem}"
 effect = ["Pure"]
@@ -2536,10 +2545,10 @@ effect = ["Pure"]
 
 [[instructions]]
 name = "NOP_MEM32"
-form = "MRR_MEMREF_AUTO"
-escape = [0x0F]
-modrm = { reg = 0, rm = "[mem]" }
-opcode = 0x1F
+form = "MRR_MEM_0F_SEG"
+
+bind = { rm = "[mem]" }
+match = { opcode = 0x1F, reg = 0 }
 opsize = 32
 ops = ["mem:mem"]
 asm = "nop dword ptr {mem}"
@@ -2616,10 +2625,10 @@ effect = ["Pure"]
 # 驱动宽度，同 `NOT_MEM32` 一族）。
 [[instructions]]
 name = "SETCC_R_MEM"
-form = "MRR_MEMREF_AUTO"
-escape = [0x0F]
-modrm = { reg = 0, rm = "[mem]" }
-opcode = 0x90
+form = "MRR_MEM_0F_SEG"
+
+bind = { rm = "[mem]" }
+match = { opcode = 0x90, reg = 0 }
 opsize = 8               # 写 1 字节：`opsize` 取不了 `s0`（op0 是内存）
 ops = ["mem:mem:out", "cc:cond"]
 asm = "setcc byte ptr {mem}, {cc}"
@@ -2668,10 +2677,10 @@ effect = ["Pure"]
 # `cmovcc r, m`（`0F 4x /r`，rm = 内存）：与寄存器形式同编码、同掩码边（0F 4x）。
 [[instructions]]
 name = "CMOVCC_R_MEM"
-form = "MRR_MEMREF_AUTO"
-escape = [0x0F]
-modrm = { reg = "dst", rm = "[mem]" }
-opcode = 0x40
+form = "MRR_MEM_0F_SEG"
+
+bind = { reg = "dst", rm = "[mem]" }
+match = { opcode = 0x40 }
 ops = ["dst:gprx:inout", "mem:mem", "cc:cond"]
 asm = "cmovcc {dst}, {mem}, {cc}"
 effect = ["Pure"]

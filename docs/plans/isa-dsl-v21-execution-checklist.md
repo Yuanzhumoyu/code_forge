@@ -391,7 +391,13 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > 分工是「**常量进 `match`（整数）、操作数绑定进 `bind`（名字）**」，`match.reg` 降级成
 > `Modrm.reg = Ext(n)`。生效键实测：`NOT_MEM32` 的 `enc` 里 `modrm={ reg = 2, rm = "[mem]" }` + `opsize=32` ✔。
 > 累计已段化 **27 条**（batch1 14 + batch2 13）。
-> ⏭ **W4.3 batch 3（下一片）**：`MRR_MEMREF_AUTO` 剩下的 10 条（带 `escape`/`prefix`，各需自己的骨架）、
+> ✅ **batch 3 完成（2026-10-08）**：`MRR_MEMREF_AUTO` 的 **`escape` 子集 8 条**（IMUL_R_MEM、
+> MOVZX/MOVSX_MEM8/16、NOP_MEM32、SETCC_R_MEM、CMOVCC_R_MEM）迁到段形态 form `MRR_MEM_0F_SEG`
+> （骨架 = `escape` + `opcode` + `modrm` 三段；`escape` 是**结构事实** ⇒ 由 form 承载，
+> 指令侧只留 `match`/`bind`）。累计已段化 **35 条**（batch1 14 + batch2 13 + batch3 8）。
+> ⚠️ 迁移脚本漏了 `CMOVCC_R_MEM`（判据与它的键集有一处不吻合），已手工按同模板补上——
+> **每批都要回读条数并逐条抽查生效键**，不能只看脚本自报。
+> ⏭ **W4.3 batch 4（下一片）**：`MRR_MEMREF_AUTO` 剩下的 2 条（带 `prefix`）、
 > `SSE_RR` 21（`escape`+`prefix`+`rex_w` 骨架，需把 `prefix`/`w` 变成段字段的 `match`）、
 > `MRR_EXT` 19 / `MRR` 17（移位族留待扩展码问题定案）/ `VEX_*` / `EVEX_*`；
 > 每批跑三条守卫（asm_encoding 棘轮 + encoder_fuzz + isa_roundtrip_guard）再提交。
