@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W2：字段就地声明（**破坏性**，无兼容层）
+
+`[conventions.bitfields]` + `[[forms]].opcode_field`/`operand_fields` + 指令的 `fields = {…}` 三处往返，被**一处就地声明**取代：
+
++ **`fields = ["类型[位区间]:名字=默认值", …]`**（写在 `[[forms]]` 或 `[[instructions]]` 上）：连续写 `"u5[11:7]:rd"`；散射写 `"i13[12:1 -> 31,30:25,11:8,7]:imm_b"`（值位段 → 词位块，按值低位→高位；与 riscv S/B/J 既有 `pieces` **逐段等价**，有单测证明）。类型支持 `uN`/`iN`/联合 `|`/寄存器组名/槽名，默认值支持 `0x`/`0b`/负数。
++ **主 opcode 字段统一叫 `opcode`**：v18 的 `opcode_field` 名是 ISA 私有的（arm64 有 `op8`/`op9`/`mtop`/`word`/`vec_a` 等 **10 种**），现在按"名字即接口"统一。
++ **操作数 → 字段绑定 = 口径 A**：`bind` 显式优先 → 否则**同名** → 否则按 `fields` **声明序**取第 i 个（跳过 `opcode`）= v18 `operand_fields` 的位置口径。三谱迁移因此**零 `bind`**（只有 arm64 向量排列族 13 条"三操作数绑同一字段"需显式写）。
++ **指令固定值键 `fields` → `match`**（同一提交内完成，先解键冲突）。
++ **内部命名空间按 form 分区**：同名不同区间时内部键为 `<form>.<名字>`——v18 的位域表是全局命名空间，v21 的字段是 form 局部的（arm64 多个 form 各要一个 `opcode`，区间还不同）。对编码器零改动：下游一律"按名字查表"。
++ **迁移范围**：三份发行谱 + 全部夹具谱，共 **76 个 form** 改写 + 13 条显式 `bind`；`opcode_field`/`operand_fields`/`bitfields` 三个键改为 `#[serde(skip)]` 派生，写了即报未知键。
++ **编码字节逐条不变**：`isa_roundtrip_guard`、谱内向量、asm 三档棘轮、x86/riscv64 JIT 矩阵**全部与迁移前逐数字相同**。
++ `lint --bits` 清单如实变长（riscv 7→13、arm64 262→264）：form 声明但**本指令未绑定**的槽不再算作该指令的覆盖（那些位按缺省 0 发射）——口径更精确，快照已同步并注明原因。
+
 ### Added (2026-10-07) — riscv64：`jal rd, rs` 别名（清掉棘轮里最后一条已登记红桶）
 
 `rv32i-valid.s:88` 的 `jal a0, a0` 是 `jalr rd, rs, 0` 的**别名**（LLVM 接受该写法）。新增 `JAL_R`

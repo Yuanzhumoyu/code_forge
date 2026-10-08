@@ -44,8 +44,6 @@ const ENC_KEYS: &[&str] = &[
     "opcode_reg",
     "imm",
     "escape",
-    "opcode_field",
-    "operand_fields",
 ];
 
 /// 全部节（含嵌套子表）。守卫按 `model` 字段与模型结构体逐键对照。
@@ -145,24 +143,6 @@ pub const SECTIONS: &[Section] = &[
         doc: "类型 → 寄存器组名（或 \"unsupported\"）的显式映射；键 = 类型名",
     },
     Section {
-        path: "[conventions.bitfields.<name>]",
-        model: "Bitfield",
-        required: &[],
-        optional: &["offset", "width", "pieces"],
-        flatten: &[],
-        additional: false,
-        doc: "命名位域：offset/width，或 pieces 列出散布位段",
-    },
-    Section {
-        path: "[[conventions.bitfields.<name>.pieces]]",
-        model: "BitfieldPiece",
-        required: &["offset", "width"],
-        optional: &["shift"],
-        flatten: &[],
-        additional: false,
-        doc: "散布位段：`value >> shift` 取 width 位放在 offset",
-    },
-    Section {
         path: "[conventions.modrm]",
         model: "ModrmConvention",
         required: &[],
@@ -242,7 +222,7 @@ pub const SECTIONS: &[Section] = &[
         path: "[[forms]]",
         model: "Form",
         required: &["name"],
-        optional: &[],
+        optional: &["fields"],
         // Form 的编码键是 `#[serde(flatten)]` 的 EncKeys：TOML 里与本节的键同级。
         flatten: ENC_KEYS,
         additional: false,
@@ -256,6 +236,8 @@ pub const SECTIONS: &[Section] = &[
             "form",
             "opcode",
             "match",
+            "fields",
+            "bind",
             "ops",
             "when",
             "effect",

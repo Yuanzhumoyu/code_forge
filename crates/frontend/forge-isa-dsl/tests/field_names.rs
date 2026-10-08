@@ -30,18 +30,17 @@ kind = "fixed"
 bits = 16
 [reg.gpr32]
 count = 4
-[conventions.bitfields]
-op = {{ offset = 12, width = 4 }}
-f0 = {{ offset = 8, width = 4 }}
-f1 = {{ offset = 4, width = 4 }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
 class = "gpr32"
 [[forms]]
 name = "RR"
-opcode_field = "op"
-operand_fields = ["f0", "f1"]
+fields = [
+  "u4[15:12]:opcode",
+  "u4[11:8]:f0",
+  "u4[7:4]:f1",
+]
 [[instructions]]
 name = "ADD"
 form = "RR"

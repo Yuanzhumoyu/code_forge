@@ -42,16 +42,6 @@ names = ["A0", "A1", "A2", "A3"]
 
 # ─────────────────────── 命名位域（全部落在 8 位字内）───────────────────────
 
-[conventions.bitfields]
-op   = { offset = 6, width = 2 }   # 操作码（4 条指令）
-rd   = { offset = 4, width = 2 }   # 目的寄存器
-rs1  = { offset = 2, width = 2 }   # 源寄存器 1
-rs2  = { offset = 0, width = 2 }   # 源寄存器 2
-lab  = { offset = 0, width = 2 }   # 分支目标（字内 2 位：正相对偏移 0..=3；见测试）
-word = { offset = 0, width = 8 }   # 全字（nop 的常量匹配）
-
-# ─────────────────────────── 操作数槽 ───────────────────────────
-
 [[operand_slots]]
 name = "r2"
 kind = "reg"
@@ -68,23 +58,34 @@ width = 2
 
 [[forms]]
 name = "R3"
-opcode_field = "op"
-operand_fields = ["rd", "rs1", "rs2"]
+fields = [
+  "u2[7:6]:opcode",
+  "u2[5:4]:rd",
+  "u2[3:2]:rs1",
+  "u2[1:0]:rs2",
+]
 
 [[forms]]
 name = "R2"
-opcode_field = "op"
-operand_fields = ["rd", "rs1"]
+fields = [
+  "u2[7:6]:opcode",
+  "u2[5:4]:rd",
+  "u2[3:2]:rs1",
+]
 
 [[forms]]
 name = "B"
-opcode_field = "op"
-operand_fields = ["rs1", "lab"]
+fields = [
+  "u2[7:6]:opcode",
+  "u2[3:2]:rs1",
+  "u2[1:0]:lab",
+]
 
 [[forms]]
 name = "W"
-opcode_field = "word"
-operand_fields = []
+fields = [
+  "u8[7:0]:opcode",
+]
 
 # ─────────────────────────── 指令 ───────────────────────────
 

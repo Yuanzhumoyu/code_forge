@@ -31,12 +31,6 @@ bits = 16
 [reg.gpr8]
 names = ["R0", "R1", "R2", "R3"]
 
-[conventions.bitfields]
-op  = {{ offset = 12, width = 4 }}
-rd  = {{ offset = 8, width = 3 }}
-rs1 = {{ offset = 5, width = 3 }}
-imm = {{ offset = 0, width = 5 }}
-
 [[operand_slots]]
 name = "g"
 kind = "reg"
@@ -50,13 +44,21 @@ signed = true
 
 [[forms]]
 name = "RR"
-opcode_field = "op"
-operand_fields = ["rd", "rs1"]
+fields = [
+  "u4[15:12]:opcode",
+  "u3[10:8]:rd",
+  "u3[7:5]:rs1",
+  "u5[4:0]:imm",
+]
 
 [[forms]]
 name = "RI"
-opcode_field = "op"
-operand_fields = ["rd", "imm"]
+fields = [
+  "u4[15:12]:opcode",
+  "u3[10:8]:rd",
+  "u5[4:0]:imm",
+  "u3[7:5]:rs1",
+]
 
 [[instructions]]
 name = "ADD"

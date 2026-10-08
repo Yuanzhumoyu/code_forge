@@ -29,11 +29,6 @@ bits = 32
 base_index = 0
 names = ["T0", "T1"]
 
-[conventions.bitfields]
-op = {{ offset = 24, width = 8 }}
-rd = {{ offset = 7, width = 5 }}
-imm = {{ offset = 8, width = 5 }}
-
 [[operand_slots]]
 name = "r"
 kind = "reg"
@@ -41,8 +36,11 @@ class = "gpr"
 
 [[forms]]
 name = "F"
-opcode_field = "op"
-operand_fields = ["rd", "imm"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[11:7]:rd",
+  "u5[12:8]:imm",
+]
 
 [[instructions]]
 name = "FV"

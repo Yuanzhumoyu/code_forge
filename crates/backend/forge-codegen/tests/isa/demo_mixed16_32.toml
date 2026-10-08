@@ -40,16 +40,6 @@ names = ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7"]
 
 # ─────────────────────────── 位域 ───────────────────────────
 
-[conventions.bitfields]
-sel   = { offset = 0,  width = 2 }   # 分组判别位：短编码 0、长编码 3
-rd    = { offset = 2,  width = 3 }   # 目的寄存器（两形态共用低 5 位布局）
-rs1   = { offset = 5,  width = 3 }   # 源寄存器
-cop   = { offset = 13, width = 3 }   # 短编码 opcode（[15:13]）
-lop   = { offset = 25, width = 7 }   # 长编码 opcode（[31:25]）
-imm12 = { offset = 13, width = 12 }  # 长编码立即数（[24:13]）
-
-# ─────────────────────────── 操作数槽 ───────────────────────────
-
 [[operand_slots]]
 name = "r"
 kind = "reg"
@@ -66,18 +56,29 @@ width = 12
 
 [[forms]]
 name = "C16"      # 16 位：两个寄存器
-opcode_field = "cop"
-operand_fields = ["rd", "rs1"]
+fields = [
+  "u3[15:13]:opcode",
+  "u3[4:2]:rd",
+  "u3[7:5]:rs1",
+  "u2[1:0]:sel",
+]
 
 [[forms]]
 name = "L32I"     # 32 位：两个寄存器 + 12 位立即数
-opcode_field = "lop"
-operand_fields = ["rd", "rs1", "imm12"]
+fields = [
+  "u7[31:25]:opcode",
+  "u3[4:2]:rd",
+  "u3[7:5]:rs1",
+  "u12[24:13]:imm12",
+  "u2[1:0]:sel",
+]
 
 [[forms]]
 name = "L32N"     # 32 位：无操作数
-opcode_field = "lop"
-operand_fields = []
+fields = [
+  "u7[31:25]:opcode",
+  "u2[1:0]:sel",
+]
 
 # ─────────────────────────── 指令 ───────────────────────────
 

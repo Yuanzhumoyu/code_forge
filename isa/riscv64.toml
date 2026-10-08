@@ -135,40 +135,6 @@ ft11 = 31
 
 # ─────────────────────── 命名位域（一次声明）───────────────────────
 
-[conventions.bitfields]
-rd     = { offset = 7,  width = 5 }
-rs1    = { offset = 15, width = 5 }
-rs2    = { offset = 20, width = 5 }
-funct3 = { offset = 12, width = 3 }
-
-funct7 = { offset = 25, width = 7 }
-funct5 = { offset = 27, width = 5 }   # AMO 的 funct5（bits 31:27；aq=26、rl=25）
-# AMO/LR/SC 的 aq/rl（RV64A 的 acquire/release 位）。**本后端只发 relaxed（两者恒 0）**，
-# 但显式声明出来：一是把"这两位固定为 0"从注释变成谱里的数据（`--bits` 体检可核对），
-# 二是将来要支持 acquire/release 时只改 lowering 的取值、不动编码定义。
-aq     = { offset = 26, width = 1 }
-rl     = { offset = 25, width = 1 }
-funct6 = { offset = 26, width = 6 }   # 移位立即数高位（SLLI/SRLI/SRAI）
-shamt6 = { offset = 20, width = 6 }
-shamt5 = { offset = 20, width = 5 }   # W 变体移位（RV64：shamt 5 位，bit25 归 funct7）
-opcode = { offset = 0,  width = 7 }
-pred   = { offset = 24, width = 4 }  # FENCE 的前驱集合（i=8/o=4/r=2/w=1）
-succ   = { offset = 20, width = 4 }  # FENCE 的后继集合
-fm     = { offset = 28, width = 4 }  # FENCE 的 fm 字段（fence.tso = 8）
-imm12  = { offset = 20, width = 12 }  # I 型
-imm20  = { pieces = [ { offset = 12, width = 20, shift = 0 } ] }                        # U 型 LUI（**立即数就是字段值**，与 GAS/LLVM 一致：`lui a0, 2` → rd = 8192）
-imm_s  = { pieces = [ { offset = 7,  width = 5, shift = 0 }, { offset = 25, width = 7, shift = 5 } ] }   # S 型
-imm_b  = { pieces = [ { offset = 31, width = 1, shift = 12 }, { offset = 25, width = 6, shift = 5 },     # B 型
-                       { offset = 8,  width = 4, shift = 1 },  { offset = 7,  width = 1, shift = 11 } ] }
-imm_j  = { pieces = [ { offset = 31, width = 1, shift = 20 }, { offset = 21, width = 10, shift = 1 },    # J 型
-                       { offset = 20, width = 1, shift = 11 }, { offset = 12, width = 8, shift = 12 } ] }
-
-# ─────────────────────────── 操作数槽 ───────────────────────────
-
-# 立即数修饰（谱声明的数据，DSL 不认识任何修饰名）：GAS/RISC-V 的 `%hi`/`%lo`。
-# text = 源文本形态（`{0}` 是内层表达式）；expr = 值语义（`{0}` 是内层值，复用既有表达式语言）。
-# `%pcrel_hi`/`%pcrel_lo`：**值与 `%hi`/`%lo` 同义**（装配侧只产出值；重定位**种类**是
-# linker/patcher 的事，本仓库记在指令的 `[[reloc]]`/`reloc` 上）。
 [[conventions.imm_fn]]
 name = "pcrel_hi"
 text = "%pcrel_hi({0})"
@@ -765,66 +731,127 @@ width = 21
 
 [[forms]]
 name = "R"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "rs2"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u5[19:15]:rs1",
+  "u5[24:20]:rs2",
+  "u3[14:12]:funct3",
+  "u7[31:25]:funct7",
+  "u1[26]:aq",
+  "u5[31:27]:funct5",
+  "u1[25]:rl",
+]
 
 # R 型的**浮点**变体：`funct3` 是 rm（舍入模式）⇒ 它是**操作数**而不是固定字段。
 # 两条形态：三操作数（`fadd`/`fsub`/`fmul`/`fdiv`）与两操作数（`fsqrt`/`fcvt`，rs2 由指令固定）。
 [[forms]]
 name = "R_RM"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "rs2", "funct3"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u5[19:15]:rs1",
+  "u5[24:20]:rs2",
+  "u3[14:12]:funct3",
+  "u7[31:25]:funct7",
+]
 
 [[forms]]
 name = "R_RM2"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "funct3"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u5[19:15]:rs1",
+  "u3[14:12]:funct3",
+  "u7[31:25]:funct7",
+  "u5[24:20]:rs2",
+]
 
 [[forms]]
 name = "I"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "imm12"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u5[19:15]:rs1",
+  "u12[31:20]:imm12",
+  "u3[14:12]:funct3",
+]
 
 [[forms]]
 name = "S"
-opcode_field = "opcode"
-operand_fields = ["rs2", "rs1", "imm_s"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[24:20]:rs2",
+  "u5[19:15]:rs1",
+  "u12[11:0 -> 11:7,31:25]:imm_s",
+  "u3[14:12]:funct3",
+]
 
 [[forms]]
 name = "U"
-opcode_field = "opcode"
-operand_fields = ["rd", "imm20"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u20[31:12]:imm20",
+]
 
 [[forms]]
 name = "B"
-opcode_field = "opcode"
-operand_fields = ["rs1", "rs2", "imm_b"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[19:15]:rs1",
+  "u5[24:20]:rs2",
+  "u12[12:1 -> 11:8,30:25,7,31]:imm_b",
+  "u3[14:12]:funct3",
+]
 
 [[forms]]
 name = "J"
-opcode_field = "opcode"
-operand_fields = ["rd", "imm_j"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u20[20:1 -> 30:21,20,19:12,31]:imm_j",
+]
 
 [[forms]]
 name = "SHIFT"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "shamt6"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u5[19:15]:rs1",
+  "u6[25:20]:shamt6",
+  "u3[14:12]:funct3",
+  "u6[31:26]:funct6",
+]
 
 [[forms]]
 name = "SHIFT5"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "shamt5"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u5[19:15]:rs1",
+  "u5[24:20]:shamt5",
+  "u3[14:12]:funct3",
+  "u7[31:25]:funct7",
+]
 
 [[forms]]
 name = "OP"
-opcode_field = "opcode"
-operand_fields = []
+fields = [
+  "u7[6:0]:opcode",
+  "u12[31:20]:imm12",
+]
 
 
 [[forms]]
 name = "FENCEPS"   # FENCE：pred[27:24] + succ[23:20]（其余位 = 0 → 补集零 guard）
-opcode_field = "opcode"
-operand_fields = ["pred", "succ"]
+fields = [
+  "u7[6:0]:opcode",
+  "u4[27:24]:pred",
+  "u4[23:20]:succ",
+  "u3[14:12]:funct3",
+  "u4[31:28]:fm",
+]
 
 
 # ── R 型整数 + Zbb R（opcode 0x33；funct3/funct7 区分）──

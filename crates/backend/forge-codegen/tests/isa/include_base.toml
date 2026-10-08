@@ -6,11 +6,6 @@
 [reg.gpr32]
 names = ["R0", "R1", "R2", "R3"]
 
-[conventions.bitfields]
-op  = { offset = 12, width = 4 }
-rd  = { offset = 8, width = 4 }
-rs1 = { offset = 4, width = 4 }
-
 [[operand_slots]]
 name = "r"
 kind = "reg"
@@ -19,8 +14,11 @@ roles = "inout"
 
 [[forms]]
 name = "RR"
-opcode_field = "op"
-operand_fields = ["rd", "rs1"]
+fields = [
+  "u4[15:12]:opcode",
+  "u4[11:8]:rd",
+  "u4[7:4]:rs1",
+]
 
 [[instructions]]
 name = "IADD"

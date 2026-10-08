@@ -23,13 +23,6 @@ bits = 32
 [reg.gpr64]
 names = ["X0", "X1", "X2", "X3", "X8", "X9", "X10"]
 
-[conventions.bitfields]
-rd     = { offset = 7,  width = 5 }
-rs1    = { offset = 15, width = 5 }
-rs2    = { offset = 20, width = 5 }
-opcode = { offset = 0,  width = 7 }
-funct3 = { offset = 12, width = 3 }
-
 [[operand_slots]]
 name = "gpr"
 kind = "reg"
@@ -44,8 +37,13 @@ width = 12
 
 [[forms]]
 name = "R"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "rs2"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u5[19:15]:rs1",
+  "u5[24:20]:rs2",
+  "u3[14:12]:funct3",
+]
 
 [[instructions]]
 name = "ADD"

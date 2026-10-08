@@ -148,6 +148,33 @@ cargo test -p forge-tests --lib jit_matrix_riscv64 -- --test-threads=1 --nocaptu
 
 ## 4. W2 字段语法
 
+> ✅ **已完成并提交（2026-10-08）**。最终形态与证据：
+>
+> - **新语法**：`fields = ["类型[位区间]:名字=默认值", …]`（写 `[[forms]]` / `[[instructions]]` 上）。
+>   连续 `"u5[11:7]:rd"`；散射 `"i13[12:1 -> 31,30:25,11:8,7]:imm_b"`（值位段 → 词位块，值低位→高位）。
+>   类型支持 `uN`/`iN`/联合 `|`/寄存器组名/槽名；默认值 `0x`/`0b`/负数十进制。
+> - **实现的降级（lowering）**：`field_decl::lower_field_syntax` 把声明展开成内部
+>   `bitfields` + 逐指令 `operand_fields` + form 的 `opcode_field`；三个旧键改 `#[serde(skip)]`，
+>   用户写即报未知键。**编码器/解码器/生成物一行未改**——字节等价由构造保证。
+> - **W2.5 命名空间**：同名不同区间时内部键取限定名 `<form>.<名字>`（v18 位域表是全局命名空间，
+>   v21 字段是 form 局部的；arm64 有 10 个 form 各要一个 opcode 字段，区间还不同）。
+> - **绑定口径 A**：`bind` 显式 → 同名 → 按 `fields` 声明序取第 i 个（跳过 opcode）。
+> - **主 opcode 字段统一叫 `opcode`**（v18 的 `op8`/`mtop`/`word` 等 10 种名字从不被 `match` 引用，
+>   改名零牵连）。
+> - **迁移范围**：三谱 + 夹具谱 **76 个 form** 改写、**13 条显式 `bind`**（arm64 向量排列族
+>   `VADD`/`VSUB_ARR`/…/`VMLA_ARR`，三个操作数绑同一个 `vq`）、~93 处内联夹具、`include_base.toml`。
+> - **门禁（实测）**：`isa_roundtrip_guard` 通过；谱内向量全过；asm 三档棘轮逐项不变；
+>   x86 197/3/0、riscv64 136/64/0 与迁移前**逐数字相同**；`cargo test --workspace --exclude
+>   forge-rustc` **0 个失败二进制**。
+> - **口径变化（如实记录）**：`lint --bits` 清单变长（riscv 7→13、arm64 262→264）——form 声明但
+>   **本指令未绑定**的槽不再算该指令的覆盖（那些位按缺省 0 发射）；`pins.txt` 已同步并注明原因。
+> - **语法扩展决策**：`->`（值位段 → 词位块）不在原始语法里，是为表达 riscv S/B/J 的散射而加；
+>   riscv `off_b` 无 `unit`、值自身 bit 0 不参与，连续写法表达不了。
+> - 迁移期工具：`field_decl::print_migrated_form_fields`（打印器）、两条 `#[ignore]` 的
+>   迁移前证据测试（等价性与 `bind` 工作单）。
+>
+> 以下为原计划步骤，全部已并入上面的实现：
+
 **目标**：`form` 内就地 `fields` 声明；删 `[conventions.bitfields]` + `opcode_field` + `operand_fields`。
 
 ### 4.0 实现口径（本片决策，2026-10-08）

@@ -26,11 +26,7 @@ bits = 16
 [reg.gpr8]
 names = ["R0", "R1", "R2", "R3"]
 
-[conventions.bitfields]
-op  = { offset = 12, width = 4 }
-rd  = { offset = 8, width = 3 }
-rs1 = { offset = 5, width = 3 }
-imm = { offset = 0, width = 5 }
+# v21 W2 起：字段**就地声明在 form 里**（不再有 [conventions.bitfields] 节）
 
 [[operand_slots]]
 name = "g"
@@ -45,13 +41,19 @@ signed = true
 
 [[forms]]
 name = "RR"
-opcode_field = "op"
-operand_fields = ["rd", "rs1"]
+fields = [
+  "u4[15:12]:opcode",
+  "u3[11:8]:rd",
+  "u3[7:5]:rs1",
+]
 
 [[forms]]
 name = "RI"
-opcode_field = "op"
-operand_fields = ["rd", "imm"]
+fields = [
+  "u4[15:12]:opcode",
+  "u3[11:8]:rd",
+  "u5[4:0]:imm",
+]
 
 [[instructions]]
 name = "ADD"
@@ -136,7 +138,7 @@ pub use self::toy16::*;
 | `[meta]` | ISA 名（`ensure_registered` 用它注册）、端序、地址位宽 | `IsaInfo::name/version/address_size/endianness` |
 | `[encoding]` | `kind = "fixed"` + `bits = 16` | 每条指令的字长（字节数组 `[u8; 2]`）与编解码路径 |
 | `[reg.gpr8]` | 寄存器组名 + 名字表或 `count` | `Reg` 枚举、`PhysReg` impl、寄存器名表 |
-| `[conventions.bitfields]` | 位域名 → `{offset, width}` | 编解码用的位域布局（散布位段用 `pieces`） |
+| `fields = ["u4[15:12]:opcode", …]`（在 form/指令上） | 就地声明位域：`类型[位区间]:名字=默认值`（散射写 `[值位段 -> 词位块,…]`） | 编解码用的位域布局 + 接口名 + 常量 |
 
 注意三点：
 
@@ -175,8 +177,8 @@ asm = "add {dst}, {src}"                      # 只引用名字，不声明
 
 - **`ops` 的名字就是生成的 `Inst` 字段名**：上面生成 `Inst::Add { dst: Reg, src: Reg }`。
   字段名不能直接当 Rust 标识符时按最小规则归一（`type` → `r#type`、`8bit` → `_8bit`）。
-- **`operand_fields = ["rd", "rs1"]`（在 form 上）按下标把操作数绑到位域**：第 0 个 `dst` → `rd`、
-  第 1 个 `src` → `rs1`。这也是为什么位域名与字段名可以不同、且互不影响。
+- **操作数 → 位域的绑定（口径 A）**：`bind` 显式优先 → 否则**同名** → 否则按 `fields` 的**声明序**取第 i 个（跳过 `opcode`）。
+  所以第 0 个 `dst` → `rd`、第 1 个 `src` → `rs1`；位域名与字段名可以不同，互不影响。
 - **`asm` 是必填的**，助记符就是模板首段字面量；`disassemble` 由同一个模板反向渲染。
 - `effect = ["Branch"]`/`["Move"]` 等语义标签驱动 `MachineInst::is_branch/effects()`——生成器
   **不按指令名判断**。
@@ -193,7 +195,7 @@ ISA toy16 （encoding = fixed 16 位；4 条指令）
     opcode = 0x1
     ops = dst:g:out,src:g
     asm = add {0}, {1}
-    enc = opcode_field="op",operand_fields=["rd", "rs1"]
+    enc = opcode_field="op", operand_fields=["rd", "rs1"]   # 由 fields 展开（派生）
 ```
 
 `explain` 给出这条指令的完整来源（来自哪个模板哪一行、生效的编码键逐字段），是排查"我写的键到底

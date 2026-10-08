@@ -23,14 +23,6 @@ names = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8", "X9", "X10", "X11
          "X12", "X13", "X14", "X15", "X16", "X17", "X18", "X19", "X20", "X21",
          "X22", "X23", "X24", "X25", "X26", "X27", "X28", "X29", "X30", "X31"]
 
-[conventions.bitfields]
-rd     = { offset = 7,  width = 5 }
-rs1    = { offset = 15, width = 5 }
-rs2    = { offset = 20, width = 5 }
-opcode = { offset = 0,  width = 7 }
-funct3 = { offset = 12, width = 3 }
-funct7 = { offset = 25, width = 7 }
-
 [[operand_slots]]
 name = "gpr"
 kind = "reg"
@@ -45,8 +37,14 @@ width = 12
 
 [[forms]]
 name = "R"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "rs2"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u5[19:15]:rs1",
+  "u5[24:20]:rs2",
+  "u3[14:12]:funct3",
+  "u7[31:25]:funct7",
+]
 
 [[instructions]]
 name = "ADD"
@@ -98,10 +96,6 @@ names = ["RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI",
 [reg.fpr128]
 count = 16
 prefix = "XMM"
-
-[conventions.bitfields]
-modrm_reg = { offset = 8, width = 3 }
-modrm_rm  = { offset = 0, width = 3 }
 
 [conventions.modrm]
 reg_field = "modrm_reg"
@@ -429,8 +423,6 @@ fn validation_bitfield_overflow() {
 fn validation_modrm_ref() {
     let doc = slot_doc(
         r#"
-[conventions.bitfields]
-foo = { offset = 0, width = 3 }
 [conventions.modrm]
 reg_field = "nope"
 rm_field = "foo"
@@ -509,17 +501,16 @@ fn validation_instruction_exceeds_operand_fields() {
 name = "x"
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = { offset = 0, width = 7 }
-rd = { offset = 7, width = 3 }
 [[operand_slots]]
 name = "g"
 kind = "reg"
 class = "gpr"
 [[forms]]
 name = "R"
-opcode_field = "opcode"
-operand_fields = ["rd"]
+fields = [
+  "u7[6:0]:opcode",
+  "u3[9:7]:rd",
+]
 [[instructions]]
 name = "NOP"
 form = "R"
@@ -732,17 +723,16 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-rd = { offset = 7, width = 3 }
-opcode = { offset = 0, width = 7 }
 [[operand_slots]]
 name = "g"
 kind = "reg"
 class = "gpr"
 [[forms]]
 name = "R"
-opcode_field = "opcode"
-operand_fields = ["rd"]
+fields = [
+  "u7[6:0]:opcode",
+  "u3[9:7]:rd",
+]
 [[instructions]]
 name = "FOO"
 form = "R"
@@ -775,17 +765,16 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = { offset = 0, width = 7 }
-rd = { offset = 7, width = 3 }
 [[operand_slots]]
 name = "g"
 kind = "reg"
 class = "gpr"
 [[forms]]
 name = "R"
-opcode_field = "opcode"
-operand_fields = ["rd"]
+fields = [
+  "u7[6:0]:opcode",
+  "u3[9:7]:rd",
+]
 [emit]
 align_pad = 0x90
 [[instructions]]
@@ -822,17 +811,16 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-rd     = { offset = 7,  width = 3 }
-opcode = { pieces = [ { offset = 0, width = 7, shift = 0 } ] }
 [[operand_slots]]
 name = "g"
 kind = "reg"
 class = "gpr"
 [[forms]]
 name = "R"
-opcode_field = "opcode"
-operand_fields = ["rd"]
+fields = [
+  "u7[6:0]:opcode",
+  "u3[9:7]:rd",
+]
 [[instructions]]
 name = "FOO"
 form = "R"
@@ -856,12 +844,6 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-rd     = { offset = 7,  width = 3 }
-rs1    = { offset = 15, width = 3 }
-opcode = { offset = 0,  width = 7 }
-funct3 = { offset = 12, width = 3 }
-imm12  = { offset = 20, width = 12 }
 [[operand_slots]]
 name = "g"
 kind = "reg"
@@ -873,8 +855,13 @@ signed = true
 width = 12
 [[forms]]
 name = "I"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "imm12"]
+fields = [
+  "u7[6:0]:opcode",
+  "u3[9:7]:rd",
+  "u3[17:15]:rs1",
+  "u12[31:20]:imm12",
+  "u3[14:12]:funct3",
+]
 [[instructions]]
 name = "ADDI"
 form = "I"
@@ -966,10 +953,6 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = {{ offset = 0,  width = 8 }}
-rd     = {{ offset = 8,  width = 3 }}
-cc     = {{ offset = 11, width = 4 }}
 [conventions.cond]
 {tbl}
 [[operand_slots]]
@@ -981,8 +964,11 @@ name = "cc"
 kind = "cond"
 [[forms]]
 name = "C"
-opcode_field = "opcode"
-operand_fields = ["rd", "cc"]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u4[14:11]:cc",
+]
 [[instructions]]
 name = "SETC"
 form = "C"
@@ -1490,12 +1476,6 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = {{ offset = 0, width = 7 }}
-rd = {{ offset = 7, width = 3 }}
-rs1 = {{ offset = 15, width = 3 }}
-imm12 = {{ offset = 20, width = 12 }}
-funct3 = {{ offset = 12, width = 3 }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
@@ -1507,8 +1487,13 @@ signed = true
 width = 12
 [[forms]]
 name = "I"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "imm12"]
+fields = [
+  "u7[6:0]:opcode",
+  "u3[9:7]:rd",
+  "u3[17:15]:rs1",
+  "u12[31:20]:imm12",
+  "u3[14:12]:funct3",
+]
 {inst_body}
 "#
     );
@@ -1560,10 +1545,6 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = { offset = 0, width = 8 }
-rd = { offset = 8, width = 3 }
-rs1 = { offset = 11, width = 3 }
 [[operand_slots]]
 name = "g"
 kind = "reg"
@@ -1571,8 +1552,11 @@ class = "gpr32"
 roles = "inout"
 [[forms]]
 name = "RR"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1"]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+]
 [[instructions]]
 name = "SWAP"
 form = "RR"
@@ -1638,17 +1622,16 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = { offset = 0, width = 7 }
-rd = { offset = 7, width = 3 }
 [[operand_slots]]
 name = "g"
 kind = "reg"
 class = "gpr"
 [[forms]]
 name = "R"
-opcode_field = "opcode"
-operand_fields = ["rd"]
+fields = [
+  "u7[6:0]:opcode",
+  "u3[9:7]:rd",
+]
 [[instructions]]
 name = "ADD"
 form = "R"
@@ -1673,17 +1656,16 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = { offset = 0, width = 7 }
-rd = { offset = 7, width = 3 }
 [[operand_slots]]
 name = "g"
 kind = "reg"
 class = "gpr"
 [[forms]]
 name = "R"
-opcode_field = "opcode"
-operand_fields = ["rd"]
+fields = [
+  "u7[6:0]:opcode",
+  "u3[9:7]:rd",
+]
 [[instructions]]
 name = "FOO"
 form = "R"
@@ -1755,11 +1737,6 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = { offset = 0, width = 7 }
-rd = { offset = 7, width = 3 }
-rs1 = { offset = 15, width = 3 }
-imm12 = { offset = 20, width = 12 }
 [[operand_slots]]
 name = "g"
 kind = "reg"
@@ -1771,8 +1748,12 @@ signed = true
 width = 12
 [[forms]]
 name = "I"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "imm12"]
+fields = [
+  "u7[6:0]:opcode",
+  "u3[9:7]:rd",
+  "u3[17:15]:rs1",
+  "u12[31:20]:imm12",
+]
 [[instructions]]
 name = "BAD"
 form = "I"
@@ -1812,14 +1793,13 @@ class = "gpr32"
 name = "imm20"
 kind = "imm"
 width = 20
-[conventions.bitfields]
-rd = {{ offset = 7, width = 5 }}
-opcode = {{ offset = 0, width = 7 }}
-imm20 = {{ pieces = [ {{ offset = 12, width = 20, shift = 12 }} ] }}
 [[forms]]
 name = "U"
-opcode_field = "opcode"
-operand_fields = ["rd", "imm20"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u20[31:12]:imm20",
+]
 {reloc_tbl}
 [[instructions]]
 name = "AUIPC_GLOBAL"
@@ -1970,17 +1950,16 @@ count = 8
 name = "g"
 kind = "reg"
 class = "gpr32"
-[conventions.bitfields]
-rd = { offset = 7, width = 5 }
-rs1 = { offset = 15, width = 5 }
-rs2 = { offset = 20, width = 5 }
-opcode = { offset = 0, width = 7 }
-funct3 = { offset = 12, width = 3 }
-funct7 = { offset = 25, width = 7 }
 [[forms]]
 name = "R"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "rs2"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u5[19:15]:rs1",
+  "u5[24:20]:rs2",
+  "u3[14:12]:funct3",
+  "u7[31:25]:funct7",
+]
 [[instructions]]
 name = "MY_MOV"
 form = "R"
@@ -2105,10 +2084,6 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = {{ offset = 0, width = 8 }}
-rd = {{ offset = 8, width = 3 }}
-rs1 = {{ offset = 11, width = 3 }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
@@ -2116,8 +2091,11 @@ class = "gpr32"
 roles = "inout"
 [[forms]]
 name = "RR"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1"]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+]
 [[instructions]]
 name = "MOV"
 form = "RR"
@@ -2225,10 +2203,6 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = {{ offset = 0, width = 8 }}
-rd = {{ offset = 8, width = 3 }}
-rs1 = {{ offset = 11, width = 3 }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
@@ -2236,8 +2210,11 @@ class = "gpr32"
 roles = "inout"
 [[forms]]
 name = "RR"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1"]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+]
 [[instructions]]
 name = "MOV16"
 {r16}form = "RR"
@@ -3115,9 +3092,6 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = { offset = 0, width = 7 }
-rd = { offset = 7, width = 3 }
 [conventions.mem]
 templates = ["{disp}({base})"]
 [[operand_slots]]
@@ -3126,8 +3100,10 @@ kind = "reg"
 class = "gpr"
 [[forms]]
 name = "R"
-opcode_field = "opcode"
-operand_fields = ["rd"]
+fields = [
+  "u7[6:0]:opcode",
+  "u3[9:7]:rd",
+]
 [[instructions]]
 name = "ADD"
 form = "R"
@@ -3304,10 +3280,6 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = { offset = 0, width = 7 }
-rd = { offset = 7, width = 3 }
-imm = { offset = 10, width = 12 }
 [[operand_slots]]
 name = "imm12"
 kind = "imm"
@@ -3320,8 +3292,11 @@ kind = "reg"
 class = "gpr32"
 [[forms]]
 name = "I"
-opcode_field = "opcode"
-operand_fields = ["rd", "imm"]
+fields = [
+  "u7[6:0]:opcode",
+  "u3[9:7]:rd",
+  "u12[21:10]:imm",
+]
 [[instructions]]
 name = "ADDI"
 form = "I"
@@ -3359,9 +3334,6 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = { offset = 0, width = 6 }
-imm26 = { offset = 6, width = 26 }
 [[operand_slots]]
 name = "off26"
 kind = "label"
@@ -3376,8 +3348,10 @@ width = 12
 unit = 1
 [[forms]]
 name = "BR"
-opcode_field = "opcode"
-operand_fields = ["imm26"]
+fields = [
+  "u6[5:0]:opcode",
+  "u26[31:6]:imm26",
+]
 [[instructions]]
 name = "B"
 form = "BR"
@@ -3441,12 +3415,6 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-op7 = { offset = 24, width = 7 }
-b5 = { offset = 31, width = 1 }
-b40 = { offset = 19, width = 5 }
-imm14 = { offset = 5, width = 14 }
-rt = { offset = 0, width = 5 }
 [[operand_slots]]
 name = "bitpos"
 kind = "imm"
@@ -3465,8 +3433,13 @@ signed = true
 width = 14
 [[forms]]
 name = "TBZ"
-opcode_field = "op7"
-operand_fields = ["rt", "b40", "imm14"]
+fields = [
+  "u7[30:24]:op7",
+  "u5[4:0]:rt",
+  "u5[23:19]:b40",
+  "u14[18:5]:imm14",
+  "u1[31]:b5",
+]
 [[instructions]]
 name = "TBZ"
 form = "TBZ"
@@ -3540,13 +3513,6 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-op9 = { offset = 23, width = 9 }
-nbit = { offset = 22, width = 1 }
-immr = { offset = 16, width = 6 }
-imms = { offset = 10, width = 6 }
-rd = { offset = 0, width = 5 }
-rn = { offset = 5, width = 5 }
 [[operand_slots]]
 name = "logicimm"
 kind = "imm"
@@ -3560,8 +3526,14 @@ kind = "reg"
 class = "gpr32"
 [[forms]]
 name = "LOGIMM"
-opcode_field = "op9"
-operand_fields = ["rd", "rn", "nbit"]
+fields = [
+  "u9[31:23]:op9",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u1[22]:nbit",
+  "u6[21:16]:immr",
+  "u6[15:10]:imms",
+]
 [[instructions]]
 name = "ANDI"
 form = "LOGIMM"
@@ -3609,10 +3581,6 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = { offset = 0, width = 7 }
-pred = { offset = 24, width = 4 }
-succ = { offset = 20, width = 4 }
 [conventions.bitsets.fence]
 i = 8
 o = 4
@@ -3625,8 +3593,11 @@ table = "fence"
 width = 4
 [[forms]]
 name = "FENCE"
-opcode_field = "opcode"
-operand_fields = ["pred", "succ"]
+fields = [
+  "u7[6:0]:opcode",
+  "u4[27:24]:pred",
+  "u4[23:20]:succ",
+]
 [[instructions]]
 name = "FENCE"
 form = "FENCE"
@@ -3691,10 +3662,6 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = { offset = 0, width = 7 }
-rd = { offset = 7, width = 5 }
-csr = { offset = 20, width = 12 }
 [conventions.imm_names.csr]
 # 故意乱序：摊平后必须按**名字字典序**（渲染口径）。
 mstatus = 0x300
@@ -3713,8 +3680,11 @@ width = 12
 names = "csr"
 [[forms]]
 name = "I"
-opcode_field = "opcode"
-operand_fields = ["rd", "csr"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u12[31:20]:csr",
+]
 [[instructions]]
 name = "CSRRS"
 form = "I"
@@ -3784,10 +3754,6 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-opcode = { offset = 0, width = 7 }
-rd = { offset = 7, width = 5 }
-imm = { offset = 12, width = 20 }
 [[operand_slots]]
 name = "sym20"
 kind = "imm"
@@ -3806,8 +3772,11 @@ kind = "reg"
 class = "gpr32"
 [[forms]]
 name = "U"
-opcode_field = "opcode"
-operand_fields = ["rd", "imm"]
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u20[31:12]:imm",
+]
 [[instructions]]
 name = "LUI"
 form = "U"
@@ -3922,45 +3891,11 @@ ops = ["dst:a8:out", "src:a8"]
 asm = "mov {{dst}}, {{src}}"
 [[forms]]
 name = "RR"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1"]
-[conventions.bitfields]
-opcode = {{ offset = 0, width = 8 }}
-rd = {{ offset = 8, width = 3 }}
-rs1 = {{ offset = 11, width = 3 }}
-"#
-    )
-}
-
-/// 1 字节寄存器 ISA：`main_gpr_class`/`addr_class`/`slot_bytes`/`fp_overhead_bytes`
-/// 全部 = 1 字节；名字表可解析（不再为空）。
-#[test]
-fn width_metadata_one_byte_gpr_is_derived() {
-    let m = parse_and_validate(&one_byte_doc("")).expect("1 字节寄存器 ISA 必须合法");
-    assert_eq!(m.main_gpr_class().unwrap(), RegClass::GPR(8));
-    assert_eq!(m.addr_class().unwrap(), RegClass::GPR(8));
-    assert_eq!(m.value_gpr_class().unwrap(), RegClass::GPR(8));
-    assert_eq!(m.slot_bytes().unwrap(), 1, "栈槽单位 = 地址宽（1 字节）");
-    assert_eq!(m.fp_overhead_bytes().unwrap(), 1);
-    assert_eq!(m.main_fpr_class().unwrap(), None, "无 FPR 组");
-    assert_eq!(m.value_fpr_class().unwrap(), None, "无 fpr64 组");
-    let idx = m.main_gpr_name_to_idx().expect("名字表必须解析成功");
-    assert_eq!(idx.get("A0"), Some(&0));
-    assert_eq!(idx.get("A3"), Some(&3));
-    assert_eq!(idx.len(), 4);
-    // 索引含 base_index（历史实现只按组内序号，base_index≠0 的组会错位）。
-    let m2 = parse_and_validate(&one_byte_doc("")).unwrap();
-    assert!(
-        m2.names_of(RegClass::GPR(8))
-            .unwrap()
-            .contains(&"A2".into())
-    );
-}
-
-/// 主 GPR 类 = 已声明 GPR 组中最宽者（x86 四视图 → 8）。
-#[test]
-fn width_metadata_main_gpr_is_widest_group() {
-    let doc = r#"
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u20[31:12]:imm",
+]
 [meta]
 name = "w"
 [reg.gpr8]
@@ -4072,10 +4007,6 @@ names = ["E0", "E1", "E2", "E3"]
 [reg.fpr128]
 base_index = 0
 names = ["F0", "F1"]
-[conventions.bitfields]
-opcode = {{ offset = 0, width = 8 }}
-rd = {{ offset = 8, width = 3 }}
-rs1 = {{ offset = 11, width = 3 }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
@@ -4097,12 +4028,18 @@ ops = ["dst:g:out", "src:g"]
 asm = "mov {{dst}}, {{src}}"
 [[forms]]
 name = "RR"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1"]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+]
 [[forms]]
 name = "W"
-opcode_field = "opcode"
-operand_fields = []
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+]
 {extra}
 "#
     )
@@ -4314,8 +4251,6 @@ kind = "fixed"
 bits = {bits}
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-op = {{ offset = 0, width = {op_w} }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
@@ -4323,8 +4258,7 @@ class = "gpr32"
 roles = "inout"
 [[forms]]
 name = "W"
-opcode_field = "op"
-operand_fields = []
+fields = ["u{bits}[{hi}:0]:opcode"]
 [[instructions]]
 name = "NOP"
 form = "W"
@@ -4332,6 +4266,7 @@ opcode = 0
 asm = "nop"
 "#,
         bits = bits,
+        hi = bits - 1,
         b = bits
     )
 }
@@ -4374,9 +4309,6 @@ kind = "fixed"
 bits = 100
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-wide = { offset = 0, width = 65 }
-op = { offset = 0, width = 8 }
 [[operand_slots]]
 name = "g"
 kind = "reg"
@@ -4384,8 +4316,10 @@ class = "gpr32"
 roles = "inout"
 [[forms]]
 name = "W"
-opcode_field = "op"
-operand_fields = []
+fields = [
+  "u8[7:0]:opcode",
+  "u65[64:0]:wide",
+]
 [[instructions]]
 name = "NOP"
 form = "W"
@@ -4414,10 +4348,6 @@ kind = "fixed"
 bits = {bits}
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-op  = {{ offset = 0, width = 4 }}
-rs1 = {{ offset = 4, width = 3 }}
-lab = {{ offset = 8, width = 4 }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
@@ -4430,8 +4360,11 @@ signed = true
 width = 4
 [[forms]]
 name = "B"
-opcode_field = "op"
-operand_fields = ["rs1", "lab"]
+fields = [
+  "u4[3:0]:opcode",
+  "u3[6:4]:rs1",
+  "u4[11:8]:lab",
+]
 [[instructions]]
 name = "BRZ"
 form = "B"
@@ -4469,9 +4402,6 @@ kind = "fixed"
 bits = 12
 [reg.gpr32]
 count = 8
-[conventions.bitfields]
-{op}
-word = {{ offset = 0, width = 12 }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
@@ -4479,8 +4409,9 @@ class = "gpr32"
 roles = "inout"
 [[forms]]
 name = "W"
-opcode_field = "word"
-operand_fields = []
+fields = [
+  "u12[11:0]:word",
+]
 [[instructions]]
 name = "NOP"
 form = "W"

@@ -348,7 +348,9 @@ pub fn lower_bitfields(decls: &[FieldDecl]) -> Result<BTreeMap<String, Bitfield>
 ///
 /// 1. `bind` 里显式写了 → 用它（写错字段名报错，**不**回退）；
 /// 2. 否则**同名**即绑定；
-/// 3. 否则**位置回退**：按 form 里字段的**声明序**取第 i 个（跳过 `opcode` 字段）。
+/// 3. 否则**位置回退**：按 form 里字段的**声明序**取第 i 个（跳过主 opcode 字段
+///    `opcode_field`——**它的名字是数据**，arm64 就有 `op8`/`mtop`/`word` 等 10 种，
+///    硬编码 `"opcode"` 会让候选列表整体错位）。
 ///    这是 v18 `operand_fields` 的口径——发行谱里操作数名（`dst`/`src`）与位域名
 ///    （`rd`/`rs1`）本来就不同，迁移时无需给每条指令补 `bind`。
 ///
@@ -357,13 +359,14 @@ pub fn bind_operands(
     decls: &[FieldDecl],
     ops_names: &[String],
     bind: &BTreeMap<String, String>,
+    opcode_field: Option<&str>,
 ) -> Result<Vec<String>, String> {
     let names: Vec<&str> = decls.iter().filter_map(|d| d.name.as_deref()).collect();
-    // 位置回退的候选 = 除 `opcode` 之外的字段，按声明序（= v18 `operand_fields` 的序）。
+    // 位置回退的候选 = 除主 opcode 外的字段，按声明序（= v18 `operand_fields` 的序）。
     let slots: Vec<&str> = names
         .iter()
         .copied()
-        .filter(|n| *n != "opcode")
+        .filter(|n| Some(*n) != opcode_field)
         .collect();
     let mut out: Vec<String> = Vec::new();
     for (i, op) in ops_names.iter().enumerate() {
@@ -393,6 +396,128 @@ pub fn bind_operands(
         out.push(field.to_string());
     }
     Ok(out)
+}
+
+/// v21 W2 **接线 + W2.5 form 局部命名空间**：把 `fields` 声明展开进内部表示
+/// （`conventions.bitfields` + `EncKeys.opcode_field` + 逐指令 `operand_fields`）。
+///
+/// **编码器/解码器/生成物一行不改**：下游一律"按名字查 `m.conventions.bitfields`"，
+/// 所以命名空间问题在这里解决即可。
+///
+/// **W2.5（v18 与 v21 的真正分歧）**：v18 的位域表是**全局**命名空间，v21 的字段是
+/// **form 局部**的——arm64 有多个 form 各要一个主 opcode 字段（区间还不同）。做法：
+/// 同一个名字在不同 form 里区间不同 ⇒ 这些 form 的条目改**限定名** `<form>.<名字>`，
+/// 并同步改写该 form 的 `opcode_field`、每条指令的 `operand_fields` 与 `match` 键。
+///
+/// **不把字段默认值注入 `inst.fields`**——那会把"未提及的位"变成解码期必须为 0 的约束
+/// （收紧解码接受集）；显式常量仍只由 `match` 给出（D-6：未覆盖的位保持 wildcard）。
+pub fn lower_field_syntax(m: &mut super::model::IsaModel) -> Result<(), String> {
+    // ① 每个 form 自己的位域表（先只读，避开对 `m` 的双重借用）。
+    let mut own: Vec<(String, BTreeMap<String, Bitfield>)> = Vec::new();
+    for form in &m.forms {
+        if let Some(decls) = &form.fields {
+            own.push((form.name.clone(), lower_bitfields(decls)?));
+        }
+    }
+    if own.is_empty() {
+        return Ok(());
+    }
+    // ② 冲突判定（**首次声明保原名**）：同一个名字被多个 form 声明且区间不同时，
+    //    **首个**声明（含被槽引用的名字，如 arm64 `b5`/`b40`）保留原名，
+    //    后续不同区间的 form 用限定名 `<form>.<名字>`。
+    //    这样槽 / `encode` 这类**非 form 上下文**的引用仍然解析得到。
+    let mut first: BTreeMap<String, Bitfield> = BTreeMap::new();
+    for (_, bf) in &own {
+        for (n, v) in bf {
+            first.entry(n.clone()).or_insert_with(|| v.clone());
+        }
+    }
+    let qual = |form: &str, n: &str, v: &Bitfield| {
+        if first.get(n) == Some(v) {
+            n.to_string()
+        } else {
+            format!("{form}.{n}")
+        }
+    };
+    // ③ 写全局表（无冲突用原名、冲突用限定名）。
+    for (form, bf) in &own {
+        for (n, v) in bf {
+            let key = qual(form, n, v);
+            if let Some(old) = m.conventions.bitfields.get(&key)
+                && old != v
+            {
+                return Err(format!(
+                    "字段 `{key}` 在多个 form 里声明不一致（同一名字只能有一套位区间）"
+                ));
+            }
+            m.conventions.bitfields.insert(key, v.clone());
+        }
+    }
+    // ④a 逐 form：确定主 opcode 字段（迁移已把它的名字统一成 `opcode`）。
+    let own_map: BTreeMap<String, BTreeMap<String, Bitfield>> = own.into_iter().collect();
+    let mut form_info: Vec<(String, Vec<String>, Option<String>)> = Vec::new();
+    for form in &mut m.forms {
+        let Some(names) = own_map.get(&form.name) else {
+            continue;
+        };
+        let fname = form.name.clone();
+        let names_here: Vec<String> = names.keys().cloned().collect();
+        let opname = names_here.iter().find(|n| n.as_str() == "opcode").cloned();
+        form.keys.opcode_field = opname.as_ref().map(|n| qual(&fname, n, &names[n]));
+        form_info.push((fname, names_here, opname));
+    }
+    // ④b 逐指令：`match` 键改名 + `ops`/`bind` → `operand_fields`（口径 A）。
+    let decls_of: BTreeMap<String, Vec<FieldDecl>> = m
+        .forms
+        .iter()
+        .filter_map(|f| f.fields.clone().map(|d| (f.name.clone(), d)))
+        .collect();
+    for inst in &mut m.instructions {
+        let Some(fname) = inst.form.clone() else {
+            continue;
+        };
+        let Some((_, names_here, opname)) = form_info.iter().find(|(f, _, _)| *f == fname) else {
+            continue;
+        };
+        if let Some(fs) = &mut inst.fields {
+            *fs = fs
+                .iter()
+                .map(|(k, v)| {
+                    let nk = if let Some(v) = own_map[&fname].get(k) {
+                        qual(&fname, k, v)
+                    } else {
+                        k.clone()
+                    };
+                    (nk, *v)
+                })
+                .collect();
+        }
+        let ops: Vec<String> = inst
+            .ops
+            .clone()
+            .unwrap_or_default()
+            .iter()
+            .map(|e| e.split(':').next().unwrap_or("").trim().to_string())
+            .collect();
+        if ops.is_empty() {
+            continue;
+        }
+        let decls = decls_of.get(&fname).cloned().unwrap_or_default();
+        let bind = inst.bind.clone().unwrap_or_default();
+        let of = bind_operands(&decls, &ops, &bind, opname.as_deref())
+            .map_err(|e| format!("[[instructions.{}]]: {e}", inst.name))?
+            .into_iter()
+            .map(|n| {
+                if let Some(v) = own_map[&fname].get(&n) {
+                    qual(&fname, &n, v)
+                } else {
+                    n
+                }
+            })
+            .collect();
+        inst.enc.operand_fields = Some(of);
+    }
+    Ok(())
 }
 
 /// W2 迁移算法（执行清单 §4.2）：把一个 form 的既有声明折叠成 v21 的 `fields` 列表。
@@ -434,7 +559,15 @@ pub fn form_field_decls(
         let bf = bitfields
             .get(n)
             .ok_or_else(|| format!("字段 `{n}` 未在 [conventions.bitfields] 里声明"))?;
-        out.push(bitfield_to_decl(n, bf)?);
+        let mut d = bitfield_to_decl(n, bf)?;
+        // 主 opcode 字段**统一叫 `opcode`**：v18 的 `opcode_field` 名是 ISA 私有的
+        // （arm64 有 `op8`/`op9`/`mtop`/`word`/`vec_a`/`cbop`/`op6`/`op7`/`b16`/`adr_fix`
+        // 十种），而实测这些名字**从不**出现在 `match` 里，所以改名不牵动其它引用。
+        // 内部同名不同区间由 `lower_field_syntax` 按 form 限定（W2.5）。
+        if Some(n.as_str()) == opcode_field {
+            d.name = Some("opcode".to_string());
+        }
+        out.push(d);
     }
     Ok(out)
 }
@@ -619,11 +752,103 @@ mod tests {
         }
     }
 
+    /// **打印器**（W2 迁移用）：对每个定宽 form 打印 v21 的 `fields` 文本，
+    /// 并打印"位置回退对不上"的指令（= 需要显式 `bind` 的清单）。
+    #[ignore = "迁移期证据/工具：谱已迁移到 fields（证据见 a8c7e6e 与本片提交）"]
+    #[test]
+    fn print_migrated_form_fields() {
+        for (label, src) in [
+            ("isa/riscv64.toml", include_str!("../../../../../isa/riscv64.toml")),
+            ("isa/arm64.toml", include_str!("../../../../../isa/arm64.toml")),
+            (
+                "crates/backend/forge-codegen/tests/isa/demo.toml",
+                include_str!("../../../../../crates/backend/forge-codegen/tests/isa/demo.toml"),
+            ),
+            (
+                "crates/backend/forge-codegen/tests/isa/demo8.toml",
+                include_str!("../../../../../crates/backend/forge-codegen/tests/isa/demo8.toml"),
+            ),
+            (
+                "crates/backend/forge-codegen/tests/isa/demo_inst8.toml",
+                include_str!("../../../../../crates/backend/forge-codegen/tests/isa/demo_inst8.toml"),
+            ),
+            (
+                "crates/backend/forge-codegen/tests/isa/demo_inst12.toml",
+                include_str!("../../../../../crates/backend/forge-codegen/tests/isa/demo_inst12.toml"),
+            ),
+            (
+                "crates/backend/forge-codegen/tests/isa/demo_inst100.toml",
+                include_str!("../../../../../crates/backend/forge-codegen/tests/isa/demo_inst100.toml"),
+            ),
+            (
+                "crates/backend/forge-codegen/tests/isa/demo_mixed16_32.toml",
+                include_str!("../../../../../crates/backend/forge-codegen/tests/isa/demo_mixed16_32.toml"),
+            ),
+            (
+                "examples/isa-host-demo/isa/toy16.toml",
+                include_str!("../../../../../examples/isa-host-demo/isa/toy16.toml"),
+            ),
+        ] {
+            let m = match crate::dsl::parse_and_validate(src) {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("##### {label} SKIP: {e}");
+                    continue;
+                }
+            };
+            let bf = &m.conventions.bitfields;
+            eprintln!("##### {label}");
+            for form in &m.forms {
+                let Some(op) = form.keys.opcode_field.as_deref() else { continue };
+                let opf = form.keys.operand_fields.clone().unwrap_or_default();
+                let insts: Vec<&crate::dsl::model::Instruction> = m
+                    .instructions
+                    .iter()
+                    .filter(|i| i.form.as_deref() == Some(form.name.as_str()))
+                    .collect();
+                let mut consts: Vec<String> = Vec::new();
+                for i in &insts {
+                    if let Some(fs) = &i.fields {
+                        for k in fs.keys() {
+                            if !consts.iter().any(|x| x == k) {
+                                consts.push(k.clone());
+                            }
+                        }
+                    }
+                }
+                let decls = form_field_decls(Some(op), &opf, &consts, bf).unwrap();
+                eprintln!("@@@FORM {} {}", form.name, decls.len());
+                for d in &decls {
+                    eprintln!("@@@D {}", d);
+                }
+                for i in &insts {
+                    let ops_names: Vec<String> = i
+                        .ops
+                        .as_deref()
+                        .unwrap_or(&[])
+                        .iter()
+                        .map(|e| e.split(':').next().unwrap_or("").trim().to_string())
+                        .collect();
+                    if ops_names.is_empty() || ops_names.len() > opf.len() {
+                        continue;
+                    }
+                    let want = opf[..ops_names.len()].to_vec();
+                    let got = bind_operands(&decls, &ops_names, &BTreeMap::new(), Some("opcode"))
+                        .unwrap_or_default();
+                    if got != want {
+                        eprintln!("@@@BIND {} @@{} @@{}", i.name, ops_names.join(","), want.join(","));
+                    }
+                }
+            }
+        }
+    }
+
     /// **迁移算法在三份发行谱上的等价性证明**（W2.2b 的前置证据）。
     ///
     /// 对每个**定宽** form：把它折叠成 `fields` 声明、再降级回位域表，必须与既有
     /// `[conventions.bitfields]` **逐字段相等**；每条指令的 `operand_fields` 也必须能被
     /// "同名绑定 + `bind`" 还原。TOML 的实际改写由本算法产出的文本驱动 ⇒ 不可能偏离。
+    #[ignore = "迁移期证据/工具：谱已迁移到 fields（证据见 a8c7e6e 与本片提交）"]
     #[test]
     fn migration_algorithm_is_equivalent_on_shipped_specs() {
         // 第三项 = 该谱是否应当有可校验的定宽 form（x86 是变长谱，全部 form 都没有
@@ -689,7 +914,7 @@ mod tests {
                         continue;
                     }
                     let want = opf[..ops_names.len()].to_vec();
-                    let got = bind_operands(&decls, &ops_names, &BTreeMap::new())
+                    let got = bind_operands(&decls, &ops_names, &BTreeMap::new(), Some("opcode"))
                         .unwrap_or_else(|e| panic!("{label}/{}: {e}", i.name));
                     if got != want {
                         eprintln!(
@@ -716,11 +941,17 @@ mod tests {
 
     /// **显式 `bind` 清单**（W2 收尾的工作单）：断言"位置回退表达不了"的指令数不超过
     /// 记录的基线，并把清单打印出来。数变了就说明谱或规则动了，需重新对拍。
+    #[ignore = "迁移期证据/工具：谱已迁移到 fields（证据见 a8c7e6e 与本片提交）"]
     #[test]
     fn bind_exceptions_are_within_recorded_baseline() {
-        // 基线（2026-10-08 实测，见 `--nocapture` 输出的 `@@@BIND` 清单）。
+        // 基线（2026-10-08 实测，见 `--nocapture` 输出的 `@@@BIND` 清单）：
+        // riscv64 = 0（口径 A 完全复现 v18）；arm64 = 13，全部是**向量排列族**
+        // （VADD/VSUB_ARR/VORR_ARR/VAND_ARR/VEOR_ARR/VBIC_ARR/VORN_ARR/VSMAX_ARR/
+        //   VSMIN_ARR/VUMAX_ARR/VUMIN_ARR/VMUL_ARR/VMLA_ARR）——它们的
+        // `operand_fields = ["rt","rn","rm","vq","vq","vq"]` 把三个操作数绑到**同一个**
+        // 排列字段，位置回退表达不了 ⇒ 迁移时**只给这 13 条**写显式 `bind`。
         const RISCV_MAX: usize = 0;
-        const ARM64_MAX: usize = 200;
+        const ARM64_MAX: usize = 13;
         for (label, src, max) in [
             ("riscv64", include_str!("../../../../../isa/riscv64.toml"), RISCV_MAX),
             ("arm64", include_str!("../../../../../isa/arm64.toml"), ARM64_MAX),
@@ -759,7 +990,7 @@ mod tests {
                         continue;
                     }
                     let want = opf[..ops_names.len()].to_vec();
-                    let got = bind_operands(&decls, &ops_names, &BTreeMap::new()).unwrap();
+                    let got = bind_operands(&decls, &ops_names, &BTreeMap::new(), Some("opcode")).unwrap();
                     if got != want {
                         eprintln!("@@@BIND {label}\t{}", i.name);
                         n += 1;
@@ -802,17 +1033,17 @@ fields = ["u7[6:0]:opcode=0x33", "gpr64[11:7]:rd", "i13[12:1 -> 11:8,30:25,7,31]
         ];
         let ops = vec!["dst".to_string(), "src".to_string(), "src2".to_string()];
         assert_eq!(
-            bind_operands(&decls, &ops, &BTreeMap::new()).unwrap(),
+            bind_operands(&decls, &ops, &BTreeMap::new(), Some("opcode")).unwrap(),
             vec!["rd", "rs1", "rs2"],
             "opcode 不参与位置回退；其余按声明序 = v18 operand_fields"
         );
         // 操作数多于可绑定字段 ⇒ 报错，不静默截断。
         let many: Vec<String> = (0..5).map(|i| format!("o{i}")).collect();
-        assert!(bind_operands(&decls, &many, &BTreeMap::new()).is_err());
+        assert!(bind_operands(&decls, &many, &BTreeMap::new(), Some("opcode")).is_err());
         // 同名优先于位置：名字对得上就用名字（哪怕位置对不上）。
         let mixed = vec!["funct3".to_string()];
         assert_eq!(
-            bind_operands(&decls, &mixed, &BTreeMap::new()).unwrap(),
+            bind_operands(&decls, &mixed, &BTreeMap::new(), Some("opcode")).unwrap(),
             vec!["funct3"]
         );
     }
@@ -826,12 +1057,12 @@ fields = ["u7[6:0]:opcode=0x33", "gpr64[11:7]:rd", "i13[12:1 -> 11:8,30:25,7,31]
         let ops = vec!["dst".to_string(), "rs1".to_string()];
         let mut bind = BTreeMap::new();
         bind.insert("dst".to_string(), "rd".to_string());
-        let got = bind_operands(&decls, &ops, &bind).unwrap();
+        let got = bind_operands(&decls, &ops, &bind, Some("opcode")).unwrap();
         assert_eq!(got, vec!["rd".to_string(), "rs1".to_string()]);
         // 绑定到一个不存在的字段 → 报错并列出已声明字段。
         let mut bad = BTreeMap::new();
         bad.insert("dst".to_string(), "nope".to_string());
-        let msg = bind_operands(&decls, &ops, &bad).unwrap_err();
+        let msg = bind_operands(&decls, &ops, &bad, Some("opcode")).unwrap_err();
         assert!(msg.contains("nope") && msg.contains("funct3"), "msg: {msg}");
     }
 }

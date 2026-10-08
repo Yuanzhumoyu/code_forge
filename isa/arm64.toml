@@ -66,84 +66,6 @@ aliases = { WZR = 31 }
 # ─────────────────────── 命名位域（A64）───────────────────────
 # 通用寄存器位域位置在全 A64 固定：Rd=[4:0]、Rn=[9:5]、Rm=[20:16]。
 
-[conventions.bitfields]
-adr_op = { offset = 31, width = 1 }
-adr_fix = { offset = 24, width = 5 }
-immlo = { offset = 29, width = 2 }
-immhi = { offset = 5, width = 19 }
-rd    = { offset = 0,  width = 5 }
-rn    = { offset = 5,  width = 5 }
-rm    = { offset = 16, width = 5 }
-imm12 = { offset = 10, width = 12 } # 加立即数（sh 在 [23:22]，A1 恒 0）
-imm16 = { offset = 5,  width = 16 } # MOVZ/N/K 半字立即数（[20:5]）
-hw    = { offset = 21, width = 2 }  # MOVZ/N/K 半字选择（A2 恒 0）
-# ── NEON（AdvSIMD）常量段：**不连续** ⇒ 切成互不重叠的几段（逐位对上游字反推，勿猜）──
-# `abs.8b v0, v0` 上游 = 0x0E20B800 ⇒ Q=0[30]、U=0[29]、[28:24]=01110、size=[23:22]、
-# [21]=1、Rm=[20:16]、[15:10]=101110、Rn=[9:5]、Rd=[4:0]。
-vec_a = { offset = 24, width = 5 }   # [28:24] = 01110（0x0E）
-vec_c = { offset = 21, width = 1 }   # [21] = 1
-vec_d = { offset = 10, width = 6 }   # [15:10] = 101110（0x2E）
-vq    = { offset = 30, width = 1 }   # Q：0 = 64 位排列、1 = 128 位
-vu    = { offset = 29, width = 1 }   # U：0 = abs 系、1 = neg 系
-vsize = { offset = 22, width = 2 }   # 元素宽：00 = b、01 = h、10 = s（位 [23:22]，勿写成 23）
-nbit  = { offset = 21, width = 1 }
-# 逻辑（移位寄存器）族的移位字段：`shift` 是 2 位常量（LSL=0/LSR=1/ASR=2/ROR=3，逐指令给常量），
-# 移位量 X 形式 6 位、W 形式 5 位——A64 规定 32 位形式 imm6<32，5 位槽就是这条约束本身
-# （用 6 位槽收 `lsl #40` 会编出未分配的字，故 W 形式另设一槽）。
-shift = { offset = 22, width = 2 }
-imm6  = { offset = 10, width = 6 }
-imm5  = { offset = 10, width = 5 }  # 逻辑族 NOT 位（BIC/ORN/EON=1）
-# 顶层固定段：
-#  - op8 = 位[31:24]（立即数 ALU 与寄存器 ALU 顶层 8 位；X(sf=1)/W(sf=0)
-#    各自为不同 8 位常量，故 X/W 分立 family、opcode 各含 sf）
-op8   = { offset = 24, width = 8 }
-op9   = { offset = 23, width = 9 } # MOV 宽立即数族（含 bit23=1 的 100101）
-#  - op6 = 位[31:26]（B/BL 的 6 位顶层常量；imm26 占 [25:0]）
-op6   = { offset = 26, width = 6 }
-imm26 = { offset = 0,  width = 26 } # B/BL 相对偏移（与 op6 互补覆盖全字）
-word  = { offset = 0,  width = 32 } # 全字常量（NOP）
-# A3 扩展
-ra    = { offset = 10, width = 5 }   # MADD/MSUB 累加器
-o0    = { offset = 15, width = 1 }   # madd=0 / msub=1
-op2d  = { offset = 10, width = 6 }   # sdiv=000011 / udiv=000010（位[15:10]）
-cond  = { offset = 12, width = 4 }   # CSEL/CSINC/CSINV/CSNEG 条件码（[15:12]）
-bcond = { offset = 0,  width = 4 }   # B.cond 条件码（[3:0]；bit4 恒 0，未用位天然 0）
-csop2 = { offset = 10, width = 2 }   # CSEL 族 op2（sel=0 inc=1）
-mtop  = { offset = 21, width = 11 }  # 乘除/条件族顶层 [31:21]（含 sf）
-b16   = { offset = 16, width = 16 }  # BR/BLR/RET 顶层 [31:16]
-imm19 = { offset = 5,  width = 19 }  # CBZ/CBNZ/B.cond 相对偏移（[23:5]）
-cbop  = { offset = 24, width = 8 }   # CBZ/CBNZ 顶层（含 sf/op 位）
-rt    = { offset = 0,  width = 5 }   # CBZ/CBNZ 测试寄存器 Rt=[4:0]
-op5   = { offset = 0,  width = 5 }   # 系统/异常指令的低 5 位（svc=1/hvc=2/smc=3/dcps1..3=1..3/brk,hlt=0）
-op7   = { offset = 24, width = 7 }   # TBZ/TBNZ 顶层 [30:24]（bit31 让给位序号的高位 b5）
-nbit_l= { offset = 22, width = 1 }   # 逻辑立即数的 N（64 位元素=1；32 位形式恒 0）
-immr  = { offset = 16, width = 6 }   # 逻辑立即数的旋转量
-imms  = { offset = 10, width = 6 }   # 逻辑立即数的"1 的个数 - 1"与元素尺寸
-b5    = { offset = 31, width = 1 }   # TBZ/TBNZ 位序号第 5 位（32 位形式必须为 0）
-b40   = { offset = 19, width = 5 }   # TBZ/TBNZ 位序号低 5 位（实测 [0xe3,0xff,0x2b,0x36]）
-imm14 = { offset = 5,  width = 14 }  # TBZ/TBNZ 相对偏移（[18:5]；与 imm19 同段但不同顶层）
-
-opc2  = { offset = 22, width = 2 }   # LS opc（00 store / 01 load / 10 符号载）
-imm12s= { offset = 10, width = 12 }  # LDR/STR 无符号 imm12（与 ALU imm12 同段）
-imm9  = { offset = 12, width = 9 }   # LDUR/STUR 符号偏移（真字节）
-mode  = { offset = 10, width = 2 }   # LDUR 族 [11:10]：00 无偏移 / 01 后索引 / 11 前索引
-zero21= { offset = 21, width = 1 }   # LDUR 族 [21] 恒 0（保留位；显式声明出来，免得靠缺省）
-one21 = { offset = 21, width = 1 }   # 寄存器偏移寻址 [21] 恒 1（与 imm9 家族的唯一区分位）
-option= { offset = 13, width = 3 }   # 访存索引的扩展/移位类型：UXTW=2 / LSL=3 / SXTW=6 / SXTX=7
-sbit  = { offset = 12, width = 1 }   # 该类型是否自带缩放（S=1 ⇔ 文本里写 `#N`，N = log2(宽度)）
-imm3  = { offset = 10, width = 3 }   # 扩展寄存器操作数的量（`sxtw #2` 的 2；省略 = 0）
-idx2  = { offset = 22, width = 2 }   # LDP/STP index 低位（bit24 由 op8 常量给：100 off STP/101 off LDP ⇒ idx2 = 0/1）
-rt2   = { offset = 10, width = 5 }   # LDP/STP 第二寄存器
-op8b  = { offset = 16, width = 8 }   # FMOV 的中间常量（S=0x20 / D=0x60）
-zero6 = { offset = 10, width = 6 }   # FMOV 保留位（[15:10] = 0）
-imm7  = { offset = 15, width = 7 }   # LDP/STP 偏移（对元素，缩放单元）
-
-# A64 条件码（v18 S3c）：键 = 汇编/反汇编可见的条件名，code = 4 位编码。
-# 这张表两处用：CSEL 族的 `cond` 槽（符号名）与下面 B.cond 模板的固定字段。
-# 不写 `ir` = 不映射 IR 整数条件（本 ISA 的 lowering 目前不用 `{cc}`；
-# 将来加 Icmp lowering 时再补 ir，validate 会强制补全 10 个）。
-# 扩展寄存器操作数的关键字（`add x8, x8, w5, sxtw #2` 的 `sxtw`）。**分两张表是按操作数类别**：
-# W 表收全部 8 个（`add w1, w2, w3, uxtx` 也合法——32 位视图下 uxtx 是恒等），X 表只收 uxtx/sxtx。
 [conventions.imm_names.arr_q]   # 逻辑/位运算族：排列只决定 Q（[23:22] 是常量，非元素宽）
 "8b"  = 0
 "16b" = 1
@@ -965,8 +887,13 @@ unit = 4    # 源文本/Inst 字段是**字节**偏移；字段数的是 4 字�
 
 [[forms]]
 name = "ADR_F"
-opcode_field = "adr_fix"
-operand_fields = ["rd", "immlo", "immhi"]
+fields = [
+  "u5[28:24]:opcode",
+  "u5[4:0]:rd",
+  "u2[30:29]:immlo",
+  "u19[23:5]:immhi",
+  "u1[31]:adr_op",
+]
 
 [[instructions]]
 name = "ADR"
@@ -1002,61 +929,107 @@ asm = "adrp {dst}, {sym}"
 
 [[forms]]
 name = "ALUIMM"   # ADD(S)/SUB(S) (imm)：rd/rn/imm12（[23:22] sh=0 → 零 guard）
-opcode_field = "op8"
-operand_fields = ["rd", "rn", "imm12"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u12[21:10]:imm12",
+  "u2[23:22]:shift",
+]
 
 [[forms]]
 name = "ALUREG"   # ADD/SUB (shifted reg, LSL#0)：rd/rn/rm
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u1[21]:nbit",
+]
                   #（[15:10] imm6=0、[23:22] shift=0 → 零 guard）
-opcode_field = "op8"
-operand_fields = ["rd", "rn", "rm"]
 
 [[forms]]
 name = "MOVR"     # MOV 别名：rd/rm（rn 经 fields=31 常量）
-opcode_field = "op8"
-operand_fields = ["rd", "rm"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rd",
+  "u5[20:16]:rm",
+  "u5[9:5]:rn",
+]
 
 [[forms]]
 name = "MOVW16"   # MOVZ/MOVN/MOVK：rd/imm16（顶层 [31:23] 常量，hw 经 fields）
-opcode_field = "op9"
-operand_fields = ["rd", "imm16"]
+fields = [
+  "u9[31:23]:opcode",
+  "u5[4:0]:rd",
+  "u16[20:5]:imm16",
+  "u2[22:21]:hw",
+]
 
 [[forms]]
 name = "CMPIMM"   # CMP/CMN(imm)：rn/imm12（rd 经 fields=31 常量）
-opcode_field = "op8"
-operand_fields = ["rn", "imm12"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[9:5]:rn",
+  "u12[21:10]:imm12",
+  "u5[4:0]:rd",
+]
 
 [[forms]]
 name = "CMPREG"   # CMP(reg)：rn/rm（rd 经 fields=31 常量）
-opcode_field = "op8"
-operand_fields = ["rn", "rm"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u5[4:0]:rd",
+]
 
 [[forms]]
 name = "BREL"     # B/BL：imm26（[31:26] 为 op6 常量）
-opcode_field = "op6"
-operand_fields = ["imm26"]
+fields = [
+  "u6[31:26]:opcode",
+  "u26[25:0]:imm26",
+]
 
 
 [[forms]]
 name = "SYSEXC"   # 系统/异常：**顶层是 11 位**（[31:21]，与 mtop 同段）+ imm16（[20:5]）+ op5（[4:0]）
+fields = [
+  "u11[31:21]:opcode",
+  "u16[20:5]:imm16",
+  "u5[4:0]:op5",
+]
 # 顶层**不能**写成 `b16`（[31:16]）：那与 imm16 在 bit16-20 重叠，imm16 大值会把
 # 顶层常量写坏（编得出、解不回——派生日志守卫实测 `SVC[imm16=65535]` 抓到）。
-opcode_field = "mtop"
-operand_fields = ["imm16"]
 
 [[forms]]
 name = "ALUSH6"   # 逻辑（移位寄存器，64 位）：rd/rn/rm/imm6（`shift` 是逐指令常量）
-opcode_field = "op8"
-operand_fields = ["rd", "rn", "rm", "imm6"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u6[15:10]:imm6",
+  "u2[23:22]:shift",
+  "u1[21]:nbit",
+]
 
 [[forms]]
 name = "ALUSH5"   # 同上，32 位形式：移位量 5 位（= 同一约束 imm6<32）
-opcode_field = "op8"
-operand_fields = ["rd", "rn", "rm", "imm5"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u5[14:10]:imm5",
+  "u2[23:22]:shift",
+  "u1[21]:nbit",
+]
 [[forms]]
 name = "NOPF"     # 全字常量
-opcode_field = "word"
-operand_fields = []
+fields = [
+  "u32[31:0]:opcode",
+]
 
 # ─────────────────────────── 指令 ───────────────────────────
 # op8 常量 = 该指令 (word>>24)&0xFF（oracle 实测）：
@@ -1179,18 +1152,45 @@ asm = "nop"
 # 64 位排列（.8b/.4h/.2s）用 D 视图槽 `fpr`，128 位排列（.16b/.8h/.4s）用 Q 视图槽 `fprq`。
 [[forms]]
 name = "VEC2R"   # NEON 双寄存器（Rd, Rn）：常量段在 vec_a/vec_c/vec_d
-opcode_field = "vec_a"
-operand_fields = ["rt", "rn"]
+fields = [
+  "u5[28:24]:opcode",
+  "u5[4:0]:rt",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u1[21]:vec_c",
+  "u6[15:10]:vec_d",
+  "u1[30]:vq",
+  "u2[23:22]:vsize",
+  "u1[29]:vu",
+]
 
 [[forms]]
 name = "VEC3R"   # NEON ?????Rd, Rn, Rm?
-opcode_field = "vec_a"
-operand_fields = ["rt", "rn", "rm"]
+fields = [
+  "u5[28:24]:opcode",
+  "u5[4:0]:rt",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u1[21]:vec_c",
+  "u6[15:10]:vec_d",
+  "u1[30]:vq",
+  "u2[23:22]:vsize",
+  "u1[29]:vu",
+]
 
 [[forms]]
 name = "VEC3RA"   # NEON ???? + ???????????????? vq???????? fields ?????
-opcode_field = "vec_a"
-operand_fields = ["rt", "rn", "rm", "vq", "vq", "vq"]
+fields = [
+  "u5[28:24]:opcode",
+  "u5[4:0]:rt",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u1[30]:vq",
+  "u1[21]:vec_c",
+  "u6[15:10]:vec_d",
+  "u1[29]:vu",
+  "u2[23:22]:vsize",
+]
 
 [[instructions]]
 name = "ABS8B"
@@ -1298,6 +1298,7 @@ form = "VEC3RA"
 opcode = 0x0E
 match = { vec_c = 1, vec_d = 33 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
 asm = "add {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
 [[instructions]]
@@ -1306,6 +1307,7 @@ form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 1, vec_c = 1, vec_d = 33 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
 asm = "sub {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
 [[instructions]]
@@ -1314,6 +1316,7 @@ form = "VEC3RA"
 opcode = 0x0E
 match = { vsize = 2, vec_c = 1, vec_d = 7 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr_q", "arrs:varr_q", "arrs2:varr_q"]
+bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
 asm = "orr {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
 [[instructions]]
@@ -1322,6 +1325,7 @@ form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 0, vsize = 0, vec_c = 1, vec_d = 7 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr_q", "arrs:varr_q", "arrs2:varr_q"]
+bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
 asm = "and {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
 [[instructions]]
@@ -1330,6 +1334,7 @@ form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 1, vsize = 0, vec_c = 1, vec_d = 7 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr_q", "arrs:varr_q", "arrs2:varr_q"]
+bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
 asm = "eor {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
 [[instructions]]
@@ -1338,6 +1343,7 @@ form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 0, vsize = 1, vec_c = 1, vec_d = 7 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr_q", "arrs:varr_q", "arrs2:varr_q"]
+bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
 asm = "bic {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
 [[instructions]]
@@ -1346,6 +1352,7 @@ form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 0, vsize = 3, vec_c = 1, vec_d = 7 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr_q", "arrs:varr_q", "arrs2:varr_q"]
+bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
 asm = "orn {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
 [[instructions]]
@@ -1354,6 +1361,7 @@ form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 0, vec_c = 1, vec_d = 25 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
 asm = "smax {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
 [[instructions]]
@@ -1362,6 +1370,7 @@ form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 0, vec_c = 1, vec_d = 27 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
 asm = "smin {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
 [[instructions]]
@@ -1370,6 +1379,7 @@ form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 1, vec_c = 1, vec_d = 25 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
 asm = "umax {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
 [[instructions]]
@@ -1378,6 +1388,7 @@ form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 1, vec_c = 1, vec_d = 27 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
 asm = "umin {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
 [[instructions]]
@@ -1386,6 +1397,7 @@ form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 0, vec_c = 1, vec_d = 39 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
 asm = "mul {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
 [[instructions]]
@@ -1394,6 +1406,7 @@ form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 0, vec_c = 1, vec_d = 37 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "arrd:varr", "arrs:varr", "arrs2:varr"]
+bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
 asm = "mla {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
 # 助记符带后缀的**另一种拼法**（与 `VADD` 并存：语料两种都写 —— 这是两种语法，不是冗余）
@@ -1981,54 +1994,97 @@ asm = "movk {dst}, #{imm}, lsl #32"
 
 [[forms]]
 name = "MULADD"   # MADD/MSUB：rd rn ra rm（位低→高）
-opcode_field = "mtop"
-operand_fields = ["rd", "rn", "ra", "rm"]
+fields = [
+  "u11[31:21]:opcode",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u5[14:10]:ra",
+  "u5[20:16]:rm",
+  "u1[15]:o0",
+]
 
 [[forms]]
 name = "MUL3"     # MUL 别名（ra=31 fields）
-opcode_field = "mtop"
-operand_fields = ["rd", "rn", "rm"]
+fields = [
+  "u11[31:21]:opcode",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u5[14:10]:ra",
+]
 
 [[forms]]
 name = "DIV2A"    # SDIV/UDIV：rd rn rm（[15:10] op2d 经 fields）
-opcode_field = "mtop"
-operand_fields = ["rd", "rn", "rm"]
+fields = [
+  "u11[31:21]:opcode",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u6[15:10]:op2d",
+]
 
 [[forms]]
 name = "BRREG2"   # BR/BLR：rn（[31:16] b16 常量；[15:10]/[4:0] 零 guard）
-opcode_field = "b16"
-operand_fields = ["rn"]
+fields = [
+  "u16[31:16]:opcode",
+  "u5[9:5]:rn",
+]
 
 [[forms]]
 name = "RETF"     # RET：无操作数（rn=30 fields）
-opcode_field = "b16"
-operand_fields = []
+fields = [
+  "u16[31:16]:opcode",
+  "u5[9:5]:rn",
+]
 
 [[forms]]
 name = "CBZF"     # CBZ/CBNZ：rn + imm19
-opcode_field = "cbop"
-operand_fields = ["rt", "imm19"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rt",
+  "u19[23:5]:imm19",
+]
 
 [[forms]]
 name = "BCF"      # B.cond：imm19（cond 经 fields 常量）
-opcode_field = "cbop"
-operand_fields = ["imm19"]
+fields = [
+  "u8[31:24]:opcode",
+  "u19[23:5]:imm19",
+  "u4[3:0]:bcond",
+]
 
 [[forms]]
 name = "LOGIMM"   # 逻辑（立即数）：rd rn N/immr/imms。顶层用 **op9**（[31:23]，含恒 0 的 bit23）
+fields = [
+  "u9[31:23]:opcode",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u1[22]:nbit_l",
+  "u6[21:16]:immr",
+  "u6[15:10]:imms",
+]
 # ——用 op8（[31:24]）会与 MOVZ/MOVN/MOVK 的 op9 在 bit23 上撞成同一条 trie 边（0x1A4 vs 0x1A5）。
-opcode_field = "op9"
-operand_fields = ["rd", "rn", "nbit_l"]
 
 [[forms]]
 name = "TBZ"      # TBZ/TBNZ：rt + 位序号（b40[23:19] + b5[31]）+ imm14[18:5]
-opcode_field = "op7"
-operand_fields = ["rt", "b40", "imm14"]
+fields = [
+  "u7[30:24]:opcode",
+  "u5[4:0]:rt",
+  "u5[23:19]:b40",
+  "u14[18:5]:imm14",
+  "u1[31]:b5",
+]
 
 [[forms]]
 name = "CSEL4"    # CSEL 族：rd rn cond rm（位低→高；cond 在 rm 之下）
-opcode_field = "mtop"
-operand_fields = ["rd", "rn", "cond", "rm"]
+fields = [
+  "u11[31:21]:opcode",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u4[15:12]:cond",
+  "u5[20:16]:rm",
+  "u2[11:10]:csop2",
+]
 
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
@@ -2135,13 +2191,25 @@ asm = "ret {src}"
 
 [[forms]]
 name = "LSUI"     # LDR/STR(unsigned)：rt rn imm12s
-opcode_field = "op8"
-operand_fields = ["rt", "rn", "imm12s"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rt",
+  "u5[9:5]:rn",
+  "u12[21:10]:imm12s",
+  "u2[23:22]:opc2",
+]
 
 [[forms]]
 name = "LSUN"     # LDUR/STUR：rt rn imm9
-opcode_field = "op8"
-operand_fields = ["rt", "rn", "imm9"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rt",
+  "u5[9:5]:rn",
+  "u9[20:12]:imm9",
+  "u2[11:10]:mode",
+  "u2[23:22]:opc2",
+  "u1[21]:zero21",
+]
 
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
@@ -2239,55 +2307,120 @@ asm = "stur {src}, [{base}, #{off}]"
 
 [[forms]]
 name = "PAIR"     # LDP/STP：rt rn rt2 imm7（位低→高）
-opcode_field = "op8"
-operand_fields = ["rt", "rn", "rt2", "imm7"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rt",
+  "u5[9:5]:rn",
+  "u5[14:10]:rt2",
+  "u7[21:15]:imm7",
+  "u2[23:22]:idx2",
+]
 
 # 无位移形态的形式：`[Xn]` 就是"位移 = 0"的那一格，位域由 `fields` 固定为 0，
 # 因此形式里没有位移操作数位（与 DCPS1B "裸 dcps1 = dcps1 #0" 同款）。
 [[forms]]
 name = "LSUIND"   # LDR/STR 无位移：rt rn
-opcode_field = "op8"
-operand_fields = ["rt", "rn"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rt",
+  "u5[9:5]:rn",
+  "u12[21:10]:imm12s",
+  "u2[23:22]:opc2",
+]
 
 [[forms]]
 name = "PAIRND"   # LDP/STP 无位移：rt rn rt2
-opcode_field = "op8"
-operand_fields = ["rt", "rn", "rt2"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rt",
+  "u5[9:5]:rn",
+  "u5[14:10]:rt2",
+  "u2[23:22]:idx2",
+  "u7[21:15]:imm7",
+]
 
 # 寄存器偏移寻址：`[Xn, Xm{ext}]` —— 索引寄存器进 `rm`，`option`/`sbit` 是逐指令常量。
 [[forms]]
 name = "LSUIR"   # LDR/STR 寄存器偏移：rt rn rm
-opcode_field = "op8"
-operand_fields = ["rt", "rn", "rm"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rt",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u2[11:10]:mode",
+  "u1[21]:one21",
+  "u2[23:22]:opc2",
+  "u3[15:13]:option",
+  "u1[12]:sbit",
+]
 
 [[forms]]
 name = "FPLSUI"   # SIMD&FP 单寄存器无符号偏移：rt rn imm12
-opcode_field = "op8"
-operand_fields = ["rt", "rn", "imm12"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rt",
+  "u5[9:5]:rn",
+  "u12[21:10]:imm12",
+  "u2[23:22]:opc2",
+]
 
 [[forms]]
 name = "FPPAIR"   # SIMD&FP 成对：rt rn rt2 imm7
-opcode_field = "op8"
-operand_fields = ["rt", "rn", "rt2", "imm7"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rt",
+  "u5[9:5]:rn",
+  "u5[14:10]:rt2",
+  "u7[21:15]:imm7",
+  "u2[23:22]:idx2",
+]
 
 # 扩展寄存器操作数（`add x8, x8, w5, sxtw #2`）：`option` 是**操作数**（命名立即数表），
 # `imm3` 是量；`bit21 = 1` 与移位寄存器族（bit21 = 0）区分。cmp/cmn 用无 rd 的两条形式。
 [[forms]]
 name = "EXTREG"   # 扩展寄存器：rd rn rm option imm3
-opcode_field = "op8"
-operand_fields = ["rd", "rn", "rm", "option", "imm3"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u3[15:13]:option",
+  "u3[12:10]:imm3",
+  "u1[21]:one21",
+]
 [[forms]]
 name = "EXTREG_NA"   # 同上但省略量（imm3 = 0，由 fields 固定）
-opcode_field = "op8"
-operand_fields = ["rd", "rn", "rm", "option"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u3[15:13]:option",
+  "u3[12:10]:imm3",
+  "u1[21]:one21",
+]
 [[forms]]
 name = "EXTREG2"   # 扩展寄存器（cmp/cmn：rd 由 fields 固定 31）
-opcode_field = "op8"
-operand_fields = ["rn", "rm", "option", "imm3"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u3[15:13]:option",
+  "u3[12:10]:imm3",
+  "u1[21]:one21",
+  "u5[4:0]:rd",
+]
 [[forms]]
 name = "EXTREG2_NA"   # 同上但省略量
-opcode_field = "op8"
-operand_fields = ["rn", "rm", "option"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u3[15:13]:option",
+  "u3[12:10]:imm3",
+  "u1[21]:one21",
+  "u5[4:0]:rd",
+]
 
 # ─────────────────────────── 指令 ───────────────────────────
 
@@ -5368,8 +5501,13 @@ class = "fpr64"
 
 [[forms]]
 name = "FMOVR"    # FMOV（标量寄存器）：rd/rn（[31:24] = op8 常量、[23:16]/[15:10] 保留位）
-opcode_field = "op8"
-operand_fields = ["rd", "rn"]
+fields = [
+  "u8[31:24]:opcode",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u8[23:16]:op8b",
+  "u6[15:10]:zero6",
+]
 
 # FMOV (register) S/D = 0x1E204000 / 0x1E604000：
 #   [31:24]=0x1E、[23:16]=0x20(S)/0x60(D)、[15:10]=0、[9:5]=Rn、[4:0]=Rd

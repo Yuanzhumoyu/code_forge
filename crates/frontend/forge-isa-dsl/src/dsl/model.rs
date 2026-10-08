@@ -9,6 +9,7 @@
 //!   ModRM/REX/VEX 等 x86 机制降级为 form 的**语义键**（`modrm = "rr"` 等），
 //!   实现为 forge-dsl 内部函数，语义键集合在迭代 3/4 定型。
 
+use super::field_decl::FieldDecl;
 use super::shared::group_names;
 use quote::quote;
 use serde::{Deserialize, Serialize, de::Visitor};
@@ -975,7 +976,7 @@ pub struct RegGroup {
 #[serde(deny_unknown_fields)]
 pub struct Conventions {
     /// 命名位域（SLEIGH 风格），form/指令引用。
-    #[serde(default)]
+    #[serde(skip)]
     pub bitfields: BTreeMap<String, Bitfield>,
     /// ModRM 结构约定（x86 家族）。
     #[serde(default)]
@@ -1772,11 +1773,11 @@ pub struct EncKeys {
     #[serde(default)]
     pub escape: Option<Vec<u8>>,
     /// 定宽：主 opcode 所在位域名。
-    #[serde(default)]
+    #[serde(skip)]
     pub opcode_field: Option<String>,
     /// 定宽：按操作数位置绑定位域名（第 i 个操作数 → bitfields[i]）。
     /// 操作数少于该列表时，多余位域取 `fields` 固定值或隐式 0。
-    #[serde(default)]
+    #[serde(skip)]
     pub operand_fields: Option<Vec<String>>,
 }
 
@@ -1811,6 +1812,11 @@ impl EncKeys {
 #[serde(deny_unknown_fields)]
 pub struct Form {
     pub name: String,
+    /// **v21 W2 字段声明列表**：就地声明位域（类型/位区间/接口名/默认值），
+    /// 取代 `opcode_field` + `operand_fields` + `[conventions.bitfields]` 三处往返。
+    /// 见 [`crate::dsl::field_decl`]。
+    #[serde(default)]
+    pub fields: Option<Vec<FieldDecl>>,
     #[serde(flatten)]
     pub keys: EncKeys,
 }
@@ -2078,6 +2084,12 @@ pub struct Instruction {
     /// TOML 键是 `match`（v21 W2.1 改名；旧的 `fields` 键让位给"字段声明列表"）。
     #[serde(rename = "match", default)]
     pub fields: Option<BTreeMap<String, u64>>,
+    /// **v21 W2 字段声明列表**（本指令自己的，补充/覆盖 form 的）。
+    #[serde(rename = "fields", default)]
+    pub field_decls: Option<Vec<FieldDecl>>,
+    /// **操作数 → 字段名**的显式改名（v21 W2；缺省 = 同名 → 位置回退，见口径 A）。
+    #[serde(default)]
+    pub bind: Option<BTreeMap<String, String>>,
     /// **命名操作数声明**（v15）：每项 `"名字:槽[:角色]"`，**数组序 = 编码序**
     /// （modrm reg/rm、定宽位域绑定都按这个序）。角色缺省 `in`。
     ///

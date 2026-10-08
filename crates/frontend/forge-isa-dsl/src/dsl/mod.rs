@@ -119,6 +119,10 @@ pub(crate) fn parse_and_validate_projected(
     let mut model = parse(source)?;
     let idx = diag::DeclIndex::build(source);
     let mut diags = diag::Diags::new();
+    // v21 W2：`[[forms]].fields` 展开进内部表示（位域表 / opcode_field / operand_fields）。
+    if let Err(msg) = field_decl::lower_field_syntax(&mut model) {
+        diags.push_anchored(&idx, &msg);
+    }
     // 变体投影（v19 V5）在**校验之前**：投影掉的东西不该再报它的错。
     let projection = match validate::apply_variants(&mut model, &opts.params) {
         Ok(p) => p,

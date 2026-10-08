@@ -46,14 +46,6 @@ names = [
 
 # ─────────────────────── 命名位域（落在 100 位字内，含 bit 92+）───────────────────────
 
-[conventions.bitfields]
-op  = { offset = 92, width = 8 }   # 操作码（bit 92..100：机器字之外）
-rd  = { offset = 76, width = 4 }   # 目的寄存器
-rs1 = { offset = 64, width = 4 }   # 源寄存器 1（恰好从第 8 字节开始）
-rs2 = { offset = 4,  width = 4 }   # 源寄存器 2
-
-# ─────────────────────────── 操作数槽 ───────────────────────────
-
 [[operand_slots]]
 name = "r4"
 kind = "reg"
@@ -64,13 +56,20 @@ roles = "inout"
 
 [[forms]]
 name = "R3"
-opcode_field = "op"
-operand_fields = ["rd", "rs1", "rs2"]
+fields = [
+  "u8[99:92]:opcode",
+  "u4[79:76]:rd",
+  "u4[67:64]:rs1",
+  "u4[7:4]:rs2",
+]
 
 [[forms]]
 name = "R2"
-opcode_field = "op"
-operand_fields = ["rd", "rs1"]
+fields = [
+  "u8[99:92]:opcode",
+  "u4[79:76]:rd",
+  "u4[67:64]:rs1",
+]
 
 # ─────────────────────────── 指令 ───────────────────────────
 

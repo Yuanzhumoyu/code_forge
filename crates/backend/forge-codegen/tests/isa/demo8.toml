@@ -48,19 +48,6 @@ names = ["A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7"]
 
 # ─────────────────────── 命名位域 ───────────────────────
 
-[conventions.bitfields]
-opcode = { offset = 0, width = 8 }
-rd     = { offset = 8,  width = 3 }
-rs1    = { offset = 11, width = 3 }
-rs2    = { offset = 14, width = 3 }
-imm8   = { offset = 16, width = 8 }
-word   = { offset = 0,  width = 32 }
-
-# ─────────────────────────── 操作数槽 ───────────────────────────
-
-# ─────────────────── 类型 → 类（ISA 数据，可选）───────────────────
-# 1 字节地址的 ISA：指针就是 GPR(1)（`TypeId::bits()` 对 ptr 恒 8，但本 ISA 的
-# 地址宽 = [meta].addr_width = 1 —— 显式映射优先于通用值池规则）。
 [types]
 ptr = "gpr8"
 
@@ -86,33 +73,51 @@ width = 8
 
 [[forms]]
 name = "R"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "rs2"]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+  "u3[16:14]:rs2",
+]
 
 [[forms]]
 name = "RR"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1"]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+]
 
 [[forms]]
 name = "RI"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "imm8"]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+  "u8[23:16]:imm8",
+]
 
 [[forms]]
 name = "RI2"
-opcode_field = "opcode"
-operand_fields = ["rd", "imm8"]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u8[23:16]:imm8",
+]
 
 [[forms]]
 name = "B"
-opcode_field = "opcode"
-operand_fields = ["rs1", "imm8"]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[13:11]:rs1",
+  "u8[23:16]:imm8",
+]
 
 [[forms]]
 name = "W"
-opcode_field = "word"
-operand_fields = []
+fields = [
+  "u32[31:0]:opcode",
+]
 
 # ─────────────────────────── 指令 ───────────────────────────
 

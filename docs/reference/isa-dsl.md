@@ -160,8 +160,6 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `alloc_count` `aliases` | 寄存器组；组名的数字 = **位**宽（`gpr64` = 64 位）；aliases = { 别名 = 组内下标 } |
 | `[stack]` | — | `slot` `align` `fp_save` | 栈槽单位/对齐/帧指针保存槽（缺省全部派生） |
 | `[types]` | — | — | 类型 → 寄存器组名（或 "unsupported"）的显式映射；键 = 类型名（允许额外键） |
-| `[conventions.bitfields.<name>]` | — | `offset` `width` `pieces` | 命名位域：offset/width，或 pieces 列出散布位段 |
-| `[[conventions.bitfields.<name>.pieces]]` | `offset` `width` | `shift` | 散布位段：`value >> shift` 取 width 位放在 offset |
 | `[conventions.modrm]` | — | `reg_field` `rm_field` `force_disp_base` | ModRM 约定（表存在即启用）：reg/rm 位域名 + 强制位移的 base 寄存器号 |
 | `[conventions.cond]` | `code` | `ir` | 条件码表：键 = 汇编可见的条件名（也允许 `名 = <整数>` 简写）（允许额外键） |
 | `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex` `rex2` |
@@ -170,8 +168,8 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[conventions.imm_fn]]` | `name` `text` `expr` | — | 立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值） |
 | `[conventions.mem]` | `templates` | `size_keywords` | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
 | `[[operand_slots]]` | `name` `kind` | `class` `classes` `zr31` `byte_reg` `width` `signed` `float` `min` `max` `wrap` `unit` `roles` `encode` `fields` `table` `names` `symbols` `require_symbol` `imm_fns` `arrangement` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
-| `[[forms]]` | `name` | `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
-| `[[instructions]]` | `name` `asm` | `form` `opcode` `match` `ops` `when` `effect` `roles` `data_width` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
+| `[[forms]]` | `name` | `fields` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 编码形式：可选的键预设（指令可逐键覆盖） |
+| `[[instructions]]` | `name` `asm` | `form` `opcode` `match` `fields` `bind` `ops` `when` `effect` `roles` `data_width` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† `opcode_field`† `operand_fields`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[[templates]]` | `rows` | `name` `body` | 唯一指令复用机制：`body` 共享字段 + `rows` 每行一条指令 |
 | `[[reloc]]` | `name` `semantics` `slot` | `addend` | 重定位表：semantics = absolute \| pc_relative（v18 S3d） |
 | `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
@@ -584,10 +582,9 @@ O1 开启后（含墓碑值）仍可编译、`i64` 的编译期拒绝。
 一次声明、指令引用，避免逐指令写位域。
 
 ```toml
-[conventions.bitfields]        # 命名位域（SLEIGH 风格；定宽 ISA 用）
-rd  = { offset = 7,  width = 5 }
-rs1 = { offset = 15, width = 5 }
-imm_b = { pieces = [ { offset = 31, width = 1, shift = 12 }, ... ] }  # 散布位段
+# v21 W2：字段**就地声明在 form 里**（`[[forms]].fields`），不再有 [conventions.bitfields]
+#   "u5[11:7]:rd"                          连续位域（值低位对齐词低位）
+#   "i13[12:1 -> 31,30:25,11:8,7]:imm_b"     散射（值位段 -> 词位块，按值低位→高位）
 
 [conventions.modrm]            # 表存在即启用 ModRM 语义
 reg_field = "modrm_reg"        # （定宽 ISA；变长 x86 直接用 ModRM 字节）
@@ -831,7 +828,7 @@ fields = ["b40", "b5"]         # b40(5 位)[23:19] + b5(1 位)[31]——两段�
   （`fields` 按这个顺序给三个位域，校验期钉死宽度 1/6/6；槽的 `width` = 元素宽度 32 或 64）。
   这是**非线性**映射，故不做位切片：不可编码的值（全 0、全 1、非"连续 1 段"）在编码期报错；
   可编码集不是区间 ⇒ 生成期自测不按 lo/hi 采样边界（代表值由方案给）；
-- 表单 `operand_fields` 里这一项仍写**首字段**（`fields[0]`），其余字段由槽声明
+- 多字段落点的操作数：`fields` 里**每个分片都声明**（各占一个名字），槽的 `encode` 指出怎么摊；
   （写别的会被校验期拒绝）；
 - 方案由**谱按名字选择**、实现由 DSL 提供（与 `kind = "cond"`/`wrap`/`unit` 同类）；
   只实现于定宽（含 `mixed`）编码/解码，变长（`prefix_scan`）ISA 写它会在校验期 fail-closed。
@@ -973,8 +970,9 @@ names = "csr"
 形式 = 语义键组合（结构化配置，实现为生成器内部函数；开放可扩展集合）。
 
 **S3 起 form 是可选预设**：`[[forms]]` 与 `[[instructions]]` **共用同一组编码键**
-（`EncKeys`：`modrm`/`modrm_fixed`/`rex`/`vex`/`evex`/`prefix`/`opsize`/`rex_w`/
-`opcode_reg`/`imm`/`escape`/`opcode_field`/`operand_fields`），指令可逐键覆盖
+`opcode_reg`/`imm`/`escape`），指令可逐键覆盖
+（v21 W2 起 `opcode_field`/`operand_fields` **不再是用户面键**：它们由
+`[[forms]].fields` + `ops`/`bind` 展开派生，见「字段声明」节）
 （`EncKeys::over`，指令优先），`form` 本身可省略——组合不再需要预先命名。
 
 **`prefix` 键（固定前缀字节）**：`"field"` = 取 `fields.prefix` 的字节（SSE 的 66/F2/F3
@@ -1000,14 +998,21 @@ name = "VEX_RRV"               # AVX 三操作数：reg=dest、rm=src2、vvvv=~s
 vex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = { reg = "dst", rm = "src2" }
 
-[[forms]]
 name = "R"                     # riscv R-type（定宽）
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "rs2"]   # = **位域名**（编码位置），按下标绑定 ops 的第 i 个操作数
+fields = [
+  "u7[6:0]:opcode",
+  "u5[11:7]:rd",
+  "u3[14:12]:funct3",
+  "u5[19:15]:rs1",
+  "u5[24:20]:rs2",
+  "u7[31:25]:funct7",
+]
 ```
 
-`operand_fields` 里的名字是 `[conventions.bitfields]` 的**位域名**（上例 `rd`/`rs1`/`rs2`），
-只决定"第 i 个操作数编到哪个位域"；指令的 `ops` 名字与生成字段名不受它影响（v18 S7d）。
+字段名即**接口名**：`ops` 里的操作数与之**同名**即绑定；不同名时用 `bind = { dst = "rd" }`
+显式改名，再否则按 `fields` 的**声明序**取第 i 个（跳过主 opcode 字段）——这就是 v18
+`operand_fields` 的位置口径，所以三份发行谱迁移时**零 `bind`**（只有 arm64 向量排列族那
+13 条"三个操作数绑同一个字段"需要显式写）。指令的生成字段名仍由 `ops` 的名字决定。
 
 `modrm` 的显式映射（S3）：`modrm = { reg = <操作数名 | 固定扩展码>, rm = <操作数名> }`
 ——哪个命名操作数进 `reg` 字段、哪个进 `rm` 字段直接写出来。`reg = 3` = 固定扩展码
@@ -1089,8 +1094,8 @@ bug 就出在 `s0` 恰好是**源**）。v14 的 asm 内联声明 `{i:[槽:角�
 **声明名 = 生成的 `Inst` 字段名**（v18 S7d）：`ops = ["dst:r:out", "src:r"]`
 生成 `Inst::Iadd { dst, src }`——作者在 DSL 里写的名字就是用户面看到的字段名
 （定宽与变长的指令一律如此）。**编码键名与之彻底分离**：定宽 ISA 的位域名
-（`[forms].operand_fields` 的 `rd`/`rs1`…）与变长 ISA 的语义角色名（`dest`/`src`/
-`cond`/`mem`/`imm`/`target`）只在生成器内部用于查 `[conventions.bitfields]`、
+（`fields` 里声明的那些）与变长 ISA 的语义角色名（`dest`/`src`/
+`cond`/`mem`/`imm`/`target`）只在生成器内部用于查字段表、
 modrm 角色与立即数编码表，**不再冒充字段名**（历史实现把位域名当字段名，于是
 `ops` 里写的 `dst`/`src` 在用户面毫无意义）。名字不能直接作标识符时按最小规则归一：
 Rust 关键字 → 原始标识符（`type` → `r#type`）、数字开头 → 前缀 `_`（`8bit` → `_8bit`），
@@ -1206,7 +1211,7 @@ value = "18.0-fd"
 
 - **include 序在前、根文件在后**：数组节（`[[instructions]]`/`[[operand_slots]]`/
   `[[forms]]`/`[[templates]]`…）因此天然"先公共后扩展"；
-- **表节合并**：`[meta]`/`[conventions.bitfields]` 这类表跨文件合并，重复的
+- **表节合并**：`[meta]`/`[conventions.cond]` 这类表跨文件合并，重复的
   `[表头]` 视为续写（同一节的键写在不同文件里是允许的）；
 - **同名标量冲突报错**（消息带两个来源文件与 `include` 链），要用
   `[[override]]` 显式覆盖——取代"后出现的赢"这种隐式规则；
@@ -2078,7 +2083,7 @@ RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不�
 
 两条判据上的讲究（都来自实测，别按直觉改）：
 
-- **重叠必须按"逐指令视图"判**：按整张 `[conventions.bitfields]` 表判会把 riscv 的
+- **重叠必须按"逐指令视图"判**：按整张字段表判会把 riscv 的
   `shamt5`/`shamt6`、`funct5`/`funct6`/`funct7`、arm64 的 `op6`+`imm26`、两边用于全字常量的
   `word` 这类"同一批位的多种解释"全判成错——它们不在同一条指令里共存，完全合法。
   首次落地即在 arm64 抓到 4 条真阳性（STP/LDP 的 X/W：`idx3` 的 bit24 与 `op8` 常量重复写

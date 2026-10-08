@@ -273,12 +273,44 @@ fn checks(m: &IsaModel, source: &str, idx: &DeclIndex, opts: &LintOpts) -> LintR
 
     // ── 3. 未被任何地方引用的位域 ──
     //
-    // 判据是**文本出现次数**：位域名在整份（合并后的）谱里只出现在声明那一处 ⇒ 定义上就是
-    // 死声明。比"遍历模型找引用点"更稳——引用点有 form 的 `operand_fields`、指令/模板行的
-    // `fields`、编码键（`imm = "imm12"`、`opcode_field = "op"`）、asm 模板占位符等多种形态，
-    // 逐个枚举必然漏，漏了就变成误报。代价是**注释里提到**也算引用（漏报，可接受）。
+    // v21 W2 起**声明在 form 的 `fields` 里**，而引用可能是**隐含的**（`operand_fields`
+    // 由 `ops` 序按口径 A 派生、不写进 TOML）⇒ 旧的"文本出现次数 ≤ 1"判据会误报
+    // （实测：riscv `imm_b`/`imm_j`/`imm_s`/`shamt6`、arm64 各 form 的 `<form>.opcode`）。
+    // 新判据 = 文本计数 **且** 不在模型引用集里：
+    //   opcode_field + 逐指令 operand_fields + `match` 键 + 槽的多字段落点。
+    let mut referenced: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for inst in &m.instructions {
+        if let Some(fs) = &inst.fields {
+            referenced.extend(fs.keys().cloned());
+        }
+        let preset = inst
+            .form
+            .as_ref()
+            .and_then(|name| m.forms.iter().find(|f| &f.name == name));
+        let enc = inst
+            .enc
+            .over(&preset.map(|f| f.keys.clone()).unwrap_or_default());
+        if let Some(f) = &enc.opcode_field {
+            referenced.insert(f.clone());
+        }
+        referenced.extend(enc.operand_fields.iter().flatten().cloned());
+        if let Ok((uses, _)) = crate::dsl::codegen::parse_asm_decl(
+            &inst.asm,
+            inst.ops.as_deref(),
+            &inst.name,
+            &m.variant_param_names(),
+        ) {
+            for op in &uses {
+                if let Some(slot) = m.operand_slots.iter().find(|s| s.name == op.slot)
+                    && let Some(sfields) = &slot.fields
+                {
+                    referenced.extend(sfields.iter().cloned());
+                }
+            }
+        }
+    }
     for (i, name) in m.conventions.bitfields.keys().enumerate() {
-        if count_ident(source, name) <= 1 {
+        if !referenced.contains(name) && count_ident(source, name) <= 1 {
             out.push(anchor(
                 idx,
                 &format!("[conventions.bitfields] #{i} ('{name}')"),
@@ -350,6 +382,12 @@ fn used_bit_ranges(m: &IsaModel, inst: &Instruction) -> BTreeMap<String, Vec<(u3
         names.push(f.clone());
     }
     names.extend(enc.operand_fields.iter().flatten().cloned());
+    // 注（v21 W2 口径）：**不**把 form 里声明的全部字段算作本指令的覆盖——
+    // 那样会让互斥常量（riscv `funct7` vs `aq`/`funct5`、arm64 各 form 的 `opcode`）
+    // 在同一条指令的视图里互相重叠（LINT-BITFIELD-OVERLAP 误报）。
+    // 代价：form 声明但本指令**未绑定**的槽（如 `I` 形的 `imm12` 对 `mv`）不再算覆盖，
+    // 于是 `--bits` 清单会如实变长——那是"这些位按缺省 0 发射"的真实描述，
+    // 基线在 `tests/lint_shipped.rs` 里随之上调并注明原因。
     // 多字段落点（`[[operand_slots]].encode` + `fields`）：一个操作数摊到多个位域，
     // `operand_fields` 只写了首字段——其余字段也是这条指令**真的用到**的位，必须进视图，
     // 否则规则 7 会把它们报成"没有任何位域覆盖"（实测 `TBZX` 的 `b5`[31] 被误报）。
@@ -741,11 +779,6 @@ bits = 16
 [reg.gpr1]
 names = ["R0", "R1"]
 
-[conventions.bitfields]
-op = { offset = 12, width = 4 }
-rd = { offset = 8, width = 3 }
-funct3 = { offset = 0, width = 3 }
-
 [[operand_slots]]
 name = "g"
 kind = "reg"
@@ -758,13 +791,19 @@ width = 5
 
 [[forms]]
 name = "RR"
-opcode_field = "op"
-operand_fields = ["rd"]
+fields = [
+  "u4[15:12]:opcode",
+  "u3[10:8]:rd",
+  "u3[2:0]:funct3",
+]
 
 [[forms]]
 name = "UNUSED_FORM"
-opcode_field = "op"
-operand_fields = ["rd"]
+fields = [
+  "u4[15:12]:opcode",
+  "u3[10:8]:rd",
+  "u3[2:0]:funct3",
+]
 
 [[instructions]]
 name = "ADD"

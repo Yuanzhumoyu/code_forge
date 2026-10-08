@@ -53,16 +53,6 @@ f32 = "gpr64"
 f64 = "gpr64"
 
 # ─────────────────────── 命名位域 ───────────────────────
-[conventions.bitfields]
-opcode = { offset = 0, width = 8 }
-rd     = { offset = 8,  width = 3 }
-rs1    = { offset = 11, width = 3 }
-rs2    = { offset = 14, width = 3 }
-imm16  = { offset = 16, width = 16 }
-word   = { offset = 0,  width = 32 }
-
-# ─────────────────────────── 操作数槽 ───────────────────────────
-
 [[operand_slots]]
 name = "r16"
 kind = "reg"
@@ -97,28 +87,43 @@ width = 16
 
 [[forms]]
 name = "R"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "rs2"]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+  "u3[16:14]:rs2",
+]
 
 [[forms]]
 name = "RR"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1"]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+]
 
 [[forms]]
 name = "RI"
-opcode_field = "opcode"
-operand_fields = ["rd", "rs1", "imm16"]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+  "u16[31:16]:imm16",
+]
 
 [[forms]]
 name = "B"
-opcode_field = "opcode"
-operand_fields = ["rs1", "imm16"]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[13:11]:rs1",
+  "u16[31:16]:imm16",
+]
 
 [[forms]]
 name = "W"
-opcode_field = "word"
-operand_fields = []
+fields = [
+  "u32[31:0]:opcode",
+]
 
 # ─────────────────────────── 指令 ───────────────────────────
 

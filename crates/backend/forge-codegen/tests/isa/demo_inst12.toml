@@ -41,19 +41,6 @@ names = ["A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7"]
 
 # ─────────────────────── 命名位域（全部落在 12 位字内）───────────────────────
 
-[conventions.bitfields]
-op   = { offset = 9, width = 3 }    # 操作码（bits 9..12）
-rd   = { offset = 6, width = 3 }    # 目的寄存器
-rs1  = { offset = 3, width = 3 }    # 源寄存器 1
-rs2  = { offset = 0, width = 3 }    # 源寄存器 2
-word = { offset = 0, width = 12 }   # 全字（nop 的常量匹配；12 位，不是 16）
-# ── 切片 + 单位缩放夹具的两段（Σ 宽 = 6 = off_scale4 槽宽）──
-# 复用 rs1/rs2 那片位（同一批位的另一种解释；逐指令视图互不相干）：
-olo  = { offset = 0, width = 2 }    # 低 2 位（rs2 的位 0-1）
-ohi  = { offset = 2, width = 4 }    # 其余 4 位（rs2 的位 2 + rs1 的位 3-5，与 olo 不相邻、与 rd[8:6] 不重叠）
-
-# ─────────────────────────── 操作数槽 ───────────────────────────
-
 [[operand_slots]]
 name = "r3"
 kind = "reg"
@@ -64,18 +51,26 @@ roles = "inout"
 
 [[forms]]
 name = "R3"
-opcode_field = "op"
-operand_fields = ["rd", "rs1", "rs2"]
+fields = [
+  "u3[11:9]:opcode",
+  "u3[8:6]:rd",
+  "u3[5:3]:rs1",
+  "u3[2:0]:rs2",
+]
 
 [[forms]]
 name = "R2"
-opcode_field = "op"
-operand_fields = ["rd", "rs1"]
+fields = [
+  "u3[11:9]:opcode",
+  "u3[8:6]:rd",
+  "u3[5:3]:rs1",
+]
 
 [[forms]]
 name = "W"
-opcode_field = "word"
-operand_fields = []
+fields = [
+  "u12[11:0]:opcode",
+]
 
 # ─────────────────────────── 指令 ───────────────────────────
 
@@ -116,8 +111,12 @@ fields = ["olo", "ohi"]
 
 [[forms]]
 name = "RI"
-opcode_field = "op"
-operand_fields = ["rd", "olo"]
+fields = [
+  "u3[11:9]:opcode",
+  "u3[8:6]:rd",
+  "u2[1:0]:olo",
+  "u4[5:2]:ohi",
+]
 
 [[instructions]]
 name = "LDW12"
