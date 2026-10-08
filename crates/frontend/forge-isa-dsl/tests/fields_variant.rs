@@ -80,9 +80,6 @@ fn fields_variant_accepts_a_well_formed_dispatch() {
 }
 
 #[test]
-#[ignore = "暂不可达：`validate_variant_gates` 在 `validate_file` 这条路上未被触达（错误文本为空）。\
-            要让这条负例真正生效，需要把该函数接进 validate_all 的常跑路径，或在投影路径上验证。\
-            先留痕：别把缺口固化成期望。"]
 fn fields_variant_rejects_an_undeclared_param() {
     let e = run(
         "badparam",
@@ -95,7 +92,6 @@ fn fields_variant_rejects_an_undeclared_param() {
 }
 
 #[test]
-#[ignore = "同上：域外键的负例需要 `validate_variant_gates` 先接进常跑路径；留痕不固化成期望。"]
 fn fields_variant_rejects_a_key_outside_the_domain() {
     let e = run(
         "baddomain",

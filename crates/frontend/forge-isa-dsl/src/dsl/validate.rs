@@ -70,7 +70,10 @@ pub fn apply_variants(
     // 命中规则：`params[参数]` 在 `by` 里 ⇒ 用它的值；参数没传 / 未命中 / param 为空 ⇒ `default`。
     // 解析后**下游只见常量** ⇒ 生成器 / 解码 / 渲染零改动 ✓。
     for inst in m.instructions.iter_mut() {
-        let Some(fv) = inst.fields_variant.take() else {
+        // **`clone` 而不是 `take`**：投影跑在**校验之前**（`parse_and_validate_projected` 的顺序），
+        // 取走字段会让随后的 `validate_variant_gates` 看不到它 ⇒ 声明一致性检查**静默失效** ✗
+        // （实测：参数名未声明/域外键两条负例都打不出错误）。键只在这类谱里出现，开销可忽略 ✓。
+        let Some(fv) = inst.fields_variant.clone() else {
             continue;
         };
         for (field, spec) in fv {
