@@ -23,7 +23,7 @@ mode = 16
 kind = "fixed"
 bits = 16
 
-[reg.gpr1]
+[reg.gpr8]
 names = ["R0", "R1", "R2", "R3"]
 
 [conventions.bitfields]
@@ -35,7 +35,7 @@ imm = { offset = 0, width = 5 }
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr1"
+class = "gpr8"
 
 [[operand_slots]]
 name = "imm5"
@@ -135,12 +135,12 @@ pub use self::toy16::*;
 | --- | --- | --- |
 | `[meta]` | ISA 名（`ensure_registered` 用它注册）、端序、地址位宽 | `IsaInfo::name/version/address_size/endianness` |
 | `[encoding]` | `kind = "fixed"` + `bits = 16` | 每条指令的字长（字节数组 `[u8; 2]`）与编解码路径 |
-| `[reg.gpr1]` | 寄存器组名 + 名字表或 `count` | `Reg` 枚举、`PhysReg` impl、寄存器名表 |
+| `[reg.gpr8]` | 寄存器组名 + 名字表或 `count` | `Reg` 枚举、`PhysReg` impl、寄存器名表 |
 | `[conventions.bitfields]` | 位域名 → `{offset, width}` | 编解码用的位域布局（散布位段用 `pieces`） |
 
 注意三点：
 
-1. **寄存器组名的数字是字节宽**：`gpr1` = 1 字节，`gpr8` = 8 字节。生成物里的类/宽度/栈槽全都由它派生，
+1. **寄存器组名的数字是字节宽**：`gpr8` = 1 字节，`gpr64` = 8 字节。生成物里的类/宽度/栈槽全都由它派生，
    不需要在别处再写一遍"8 字节"。
 2. **位域名（`rd`/`rs1`/`imm`）不是生成的字段名**——它只决定"第 i 个操作数编到哪一段位"。生成的
    `Inst` 字段名取 `ops` 里作者声明的名字（见第 3 步）。
@@ -155,12 +155,12 @@ pub use self::toy16::*;
 [[operand_slots]]
 name = "g"          # 指令里写 "dst:g:out"
 kind = "reg"        # reg | imm | mem | label | cond
-class = "gpr1"      # 引用 [reg.gpr1]；多宽度用 classes = [...]
+class = "gpr8"      # 引用 [reg.gpr8]；多宽度用 classes = [...]
 ```
 
 - `kind = "imm"` 的槽要写 `width`（位）与 `signed`；越界立即数在 `encode` 层**报错**而不是静默截断。
 - `kind = "label"` 的槽用于分支目标：汇编接受数字偏移或符号，生成物里字段类型是 `i64`（IR 块号）。
-- 多宽度寄存器槽（`classes = ["gpr4", "gpr8"]`）会让生成期自测逐宽度各生成一条用例。
+- 多宽度寄存器槽（`classes = ["gpr32", "gpr64"]`）会让生成期自测逐宽度各生成一条用例。
 
 ## 3. 指令：`ops` 声明 + `asm` 引用
 

@@ -25,8 +25,6 @@ endian = "little"
 mode = 8
 # 1 字节指令字（8/16/32/64 皆可；越界位域由 validate 拒绝）
 # 位（= 生成代码里 __opsize 的 1 字节）
-addr_width = 1
-value_gpr_width = 1
 case_insensitive_regs = true
 comment_char = "#"
 label_suffix = ":"
@@ -38,7 +36,7 @@ kind = "fixed"
 bits = 8
 default_opsize = 8
 
-[reg.gpr1]
+[reg.gpr8]
 base_index = 0
 names = ["A0", "A1", "A2", "A3"]
 
@@ -57,7 +55,7 @@ word = { offset = 0, width = 8 }   # 全字（nop 的常量匹配）
 [[operand_slots]]
 name = "r2"
 kind = "reg"
-class = "gpr1"
+class = "gpr8"
 roles = "inout"
 
 [[operand_slots]]
@@ -123,3 +121,7 @@ ops = ["src:r2", "target:lab"]
 asm = "brz {src}, {target}"
 
 # ── 显式别名（多态引用名 → 指令名列表）──
+
+[machine]
+addr = "gpr8"
+value_gpr = "gpr8"

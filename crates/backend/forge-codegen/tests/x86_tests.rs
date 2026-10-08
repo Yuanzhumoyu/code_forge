@@ -19,13 +19,13 @@ use forge_ir::{PhysReg, RegClass};
 #[test]
 fn opsize_prefix_and_rex_w() {
     // opsize 由寄存器宽度视图推导——AX→0x66 前缀、EAX→无、RAX→REX.W。
-    // from_index_grp 按组名构造视图（gpr16/gpr32/gpr64 共享物理编号 0-15）。
+    // from_index_grp 按组名构造视图（gpr128/gpr256/gpr512 共享物理编号 0-15）。
     let cases: &[(RegClass, u32, u32, &[u8])] = &[
-        (RegClass::GPR(2), 0, 1, &[0x66, 0x8B, 0xC1]), // movrr ax, cx
-        (RegClass::GPR(4), 0, 1, &[0x8B, 0xC1]),       // movrr eax, ecx
-        (RegClass::GPR(8), 0, 1, &[0x48, 0x8B, 0xC1]), // movrr RAX, rcx
-        (RegClass::GPR(8), 8, 9, &[0x4D, 0x8B, 0xC1]), // movrr R8, r9（REX.W+R+B）
-        (RegClass::GPR(8), 1, 8, &[0x49, 0x8B, 0xC8]), // movrr rcx, r8（REX.W+B）
+        (RegClass::GPR(16), 0, 1, &[0x66, 0x8B, 0xC1]), // movrr ax, cx
+        (RegClass::GPR(32), 0, 1, &[0x8B, 0xC1]),       // movrr eax, ecx
+        (RegClass::GPR(64), 0, 1, &[0x48, 0x8B, 0xC1]), // movrr RAX, rcx
+        (RegClass::GPR(64), 8, 9, &[0x4D, 0x8B, 0xC1]), // movrr R8, r9（REX.W+R+B）
+        (RegClass::GPR(64), 1, 8, &[0x49, 0x8B, 0xC8]), // movrr rcx, r8（REX.W+B）
     ];
     for (gpr, dest, src, expected) in cases {
         let enc = encode(&Inst::MovRRm {
@@ -117,28 +117,28 @@ fn decode_identity_canonical() {
             imm: -1,
         },
         Inst::Sqrtsd {
-            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
-            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(128)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(128)),
         },
         Inst::Cvtsi2sd {
-            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(128)),
             src: Reg::from_index(1, forge_ir::RegClass::GPR64),
         },
         Inst::Andpd {
-            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
-            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(128)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(128)),
         },
         Inst::Comiss {
-            src: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
-            src2: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+            src: Reg::from_index(0, forge_ir::RegClass::FPR(128)),
+            src2: Reg::from_index(1, forge_ir::RegClass::FPR(128)),
         },
         Inst::Movss {
-            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
-            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(128)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(128)),
         },
         Inst::Punpcklqdq {
-            dst: Reg::from_index(0, forge_ir::RegClass::FPR(16)),
-            src: Reg::from_index(1, forge_ir::RegClass::FPR(16)),
+            dst: Reg::from_index(0, forge_ir::RegClass::FPR(128)),
+            src: Reg::from_index(1, forge_ir::RegClass::FPR(128)),
         },
     ];
     for inst in canonical {
@@ -178,22 +178,22 @@ fn class_table_is_declared_isa_data() {
         .map(|c| c.reg_class)
         .collect();
     for want in [
-        RegClass::GPR(1),
-        RegClass::GPR(2),
-        RegClass::GPR(4),
         RegClass::GPR(8),
-        RegClass::FPR(8),
-        RegClass::FPR(16),
-        RegClass::FPR(32),
-        RegClass::VEC(16),
-        RegClass::VEC(32),
-        RegClass::VEC(64),
+        RegClass::GPR(16),
+        RegClass::GPR(32),
+        RegClass::GPR(64),
+        RegClass::FPR(64),
+        RegClass::FPR(128),
+        RegClass::FPR(256),
+        RegClass::VEC(128),
+        RegClass::VEC(256),
+        RegClass::VEC(512),
     ] {
         assert!(classes.contains(&want), "类表缺少 {want:?}：{classes:?}");
     }
-    // `fpr4` 未声明（x86 只有 fpr8/fpr16/fpr32）→ 不得凭空出现。
+    // `fpr32` 未声明（x86 只有 fpr64/fpr128/fpr256）→ 不得凭空出现。
     assert!(
-        !classes.contains(&RegClass::FPR(4)),
+        !classes.contains(&RegClass::FPR(32)),
         "未声明的 FPR(4) 不得出现：{classes:?}"
     );
     // 每个类都必须有非空可分配池（否则 regalloc 会在该类的值上死循环/报错）。
@@ -209,7 +209,7 @@ fn class_table_is_declared_isa_data() {
     let v512 = forge_codegen::TargetMachine::reg_info(&tm)
         .register_classes()
         .into_iter()
-        .find(|c| c.reg_class == RegClass::VEC(64))
+        .find(|c| c.reg_class == RegClass::VEC(512))
         .expect("VEC(64)");
     assert_eq!(v512.width, 64, "VEC(64).width 必须是 64（spill 槽按值宽）");
     assert!(v512.allocatable.contains(&15), "池应含 XMM15：{v512:?}");

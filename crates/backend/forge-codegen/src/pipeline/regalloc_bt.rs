@@ -906,7 +906,7 @@ impl<'a> BtState<'a> {
                 .config
                 .param_xregs
                 .iter()
-                .map(|v| v.class().is_fp() && v.width() > 16)
+                .map(|v| v.class().is_fp() && v.bytes() > 16)
                 .collect(),
             // S2：sret 由 CompileState 在分配后填充（LowerCtx.is_sret_return）
             sret: false,
@@ -917,7 +917,7 @@ impl<'a> BtState<'a> {
                 .config
                 .param_xregs
                 .iter()
-                .map(|v| v.width() == 4)
+                .map(|v| v.bytes() == 4)
                 .collect(),
             // 参数字节宽由 CompileState 分配后按 xreg_types 填充（regalloc
             // 不持有 IR 类型；见 AllocResult::param_bytes 文档）。
@@ -993,11 +993,11 @@ mod tests {
         // 是不同物理寄存器，不冲突。
         let config = make_config(8, 8);
         let mut state = BtState::new(&config, HashMap::new());
-        let gpr4 = PReg::new(0, RegClass::GPR(4));
-        let gpr8 = PReg::new(0, RegClass::GPR(8));
-        let fpr8 = PReg::new(0, RegClass::FPR(8));
-        let v4 = XReg::new(512, RegClass::GPR(4));
-        let v8 = XReg::new(513, RegClass::GPR(8));
+        let gpr4 = PReg::new(0, RegClass::GPR(32));
+        let gpr8 = PReg::new(0, RegClass::GPR(64));
+        let fpr8 = PReg::new(0, RegClass::FPR(64));
+        let v4 = XReg::new(512, RegClass::GPR(32));
+        let v8 = XReg::new(513, RegClass::GPR(64));
 
         assert!(!state.phys_conflicts(gpr4));
         state.set_reg_owner(gpr4, v4);

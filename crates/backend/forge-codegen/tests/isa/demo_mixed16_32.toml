@@ -22,8 +22,6 @@ name = "demo_mixed16_32"
 version = "18.0"
 endian = "little"
 mode = 32
-addr_width = 4
-value_gpr_width = 4
 comment_char = "#"
 label_suffix = ":"
 mnemonic_case = "insensitive"
@@ -36,7 +34,7 @@ widths = [16, 32]
 
 # ─────────────────────────── 寄存器组 ───────────────────────────
 
-[reg.gpr4]
+[reg.gpr32]
 base_index = 0
 names = ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7"]
 
@@ -55,7 +53,7 @@ imm12 = { offset = 13, width = 12 }  # 长编码立即数（[24:13]）
 [[operand_slots]]
 name = "r"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 roles = "inout"
 
 [[operand_slots]]
@@ -117,3 +115,7 @@ opcode = 2
 fields = { sel = 3 }
 ops = ["dst:r:out", "src:r", "imm:i12"]
 asm = "ladd {dst}, {src}, {imm}"
+
+[machine]
+addr = "gpr32"
+value_gpr = "gpr32"

@@ -135,7 +135,7 @@ pub struct LowerCtx {
     /// VReg → IR 类型映射（用于 `.if` 条件汇编中的类型查询）。
     pub vreg_types: SecondaryMap<VReg, TypeId>,
     /// VReg → 字节宽度（用于寄存器分配器宽度感知）。
-    pub vreg_widths: SecondaryMap<VReg, u8>,
+    pub vreg_widths: SecondaryMap<VReg, u16>,
     /// 是否为浮点返回值（影响 Return 降低时使用 RetVal 还是 RetValFloat）。
     pub is_float_return: bool,
     /// 是否 sret 返回（函数返回宽向量 >16 字节——隐藏 sret 指针参数占首
@@ -308,7 +308,9 @@ impl LowerCtx {
                 // 未声明任何档位（手写后端/测试替身）：按**真实字节数**成类，
                 // 不再回退 x86 的常量 64。
                 .unwrap_or(bytes.max(1) as u16);
-            return RegClass::VEC(tier.max(1));
+            // 档位 `vector_tiers` 是**字节**（ISA 数据口径），`RegClass` 的 payload
+            // 是**位** ⇒ 构造类时 ×8（v21 W1：单位只在边界换算一次）。
+            return RegClass::VEC(tier.max(1) * 8);
         }
         RegClass::from_type_id(*ty)
     }
@@ -330,7 +332,7 @@ impl LowerCtx {
 
     /// 查询 XReg 的字节宽度（位宽内嵌在值上）。
     pub fn xreg_width(&self, x: XReg) -> u16 {
-        x.width()
+        x.bytes()
     }
 
     /// 查询 VReg 对应的 IR 类型是否为浮点类型。
@@ -420,7 +422,7 @@ impl LowerCtx {
         let vreg = VReg::new(self.next_vreg);
         self.next_vreg += 1;
         self.vreg_classes.insert(vreg, class);
-        self.vreg_widths.insert(vreg, class.default_width());
+        self.vreg_widths.insert(vreg, class.default_bits());
         vreg
     }
 

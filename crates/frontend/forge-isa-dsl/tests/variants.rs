@@ -206,7 +206,7 @@ mode = 16
 kind = "fixed"
 bits = 16
 
-[reg.gpr1]
+[reg.gpr8]
 names = ["R0", "R1", "R2", "R3"]
 
 [conventions.bitfields]
@@ -217,7 +217,7 @@ rs1 = { offset = 5, width = 3 }
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr1"
+class = "gpr8"
 
 [[forms]]
 name = "RR"
@@ -280,7 +280,7 @@ mode = 16
 kind = "fixed"
 bits = 16
 
-[reg.gpr1]
+[reg.gpr8]
 names = ["R0", "R1"]
 
 [conventions.bitfields]
@@ -290,7 +290,7 @@ rd = {{ offset = 8, width = 3 }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr1"
+class = "gpr8"
 
 [[forms]]
 name = "RR"

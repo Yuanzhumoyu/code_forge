@@ -18,8 +18,6 @@ name = "demo_include"
 version = "0.1"
 endian = "little"
 mode = 32
-addr_width = 4
-value_gpr_width = 4
 comment_char = "#"
 label_suffix = ":"
 mnemonic_case = "insensitive"
@@ -34,3 +32,7 @@ form = "RR"
 opcode = 2
 ops = ["dst:r:out", "src:r"]
 asm = "isub {dst}, {src}"
+
+[machine]
+addr = "gpr32"
+value_gpr = "gpr32"

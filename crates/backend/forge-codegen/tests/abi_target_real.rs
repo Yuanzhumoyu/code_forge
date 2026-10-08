@@ -35,7 +35,7 @@ fn adapter_exposes_the_real_register_file() {
     assert_eq!(t.isa_name(), "x86_64");
     // **可编码**的寄存器文件 = 32 GPR（APX 的 r16..r31 也能编——REX2）+ 16 XMM。
     assert_eq!(t.reg_count(), 48, "32 可编码 GPR（含 APX EGPR）+ 16 XMM");
-    // 但**分配池**只到 r15：`[reg.gpr8].alloc_count = 16`——EGPR 能编码不该分配
+    // 但**分配池**只到 r15：`[reg.gpr64].alloc_count = 16`——EGPR 能编码不该分配
     // （分配器一用，JIT 产物在没有 APX 的机器上就是非法指令）。
     let (r15, r16, r31) = (
         t.reg_index("R15").expect("R15"),
@@ -333,7 +333,7 @@ fn plan_converts_into_the_runtime_call_layout() {
             ext,
             sret,
         } => {
-            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(8), 1));
+            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(64), 1));
             assert_eq!(*ext, forge_isa_runtime::machine::call_layout::Ext::None);
             assert!(!*sret, "普通参数不是 sret");
         }
@@ -342,14 +342,14 @@ fn plan_converts_into_the_runtime_call_layout() {
     let xmm1 = layout.arg(1).expect("arg1");
     match &xmm1.place {
         ArgPlace::Reg { class, index, .. } => {
-            assert_eq!((*class, *index), (forge_ir::RegClass::FPR(16), 1));
+            assert_eq!((*class, *index), (forge_ir::RegClass::FPR(128), 1));
         }
         other => panic!("{other:?}"),
     }
     // 返回：RAX（GPR 类 0 号）。
     match layout.ret.as_ref().expect("ret") {
         RetPlace::Reg { class, index, .. } => {
-            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(8), 0))
+            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(64), 0))
         }
         other => panic!("{other:?}"),
     }
@@ -358,7 +358,7 @@ fn plan_converts_into_the_runtime_call_layout() {
         layout
             .callee_saved
             .iter()
-            .any(|(c, i)| *c == forge_ir::RegClass::GPR(8) && *i == 3),
+            .any(|(c, i)| *c == forge_ir::RegClass::GPR(64) && *i == 3),
         "{:?}",
         layout.callee_saved
     );
@@ -397,13 +397,13 @@ fn the_default_convention_plans_and_reaches_the_frame_lowering() {
     assert_eq!(layout.conv, "win64");
     match &layout.args[0].place {
         ArgPlace::Reg { class, index, .. } => {
-            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(8), 1))
+            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(64), 1))
         }
         other => panic!("{other:?}"),
     }
     match &layout.args[1].place {
         ArgPlace::Reg { class, index, .. } => {
-            assert_eq!((*class, *index), (forge_ir::RegClass::FPR(16), 1), "XMM1")
+            assert_eq!((*class, *index), (forge_ir::RegClass::FPR(128), 1), "XMM1")
         }
         other => panic!("{other:?}"),
     }
@@ -429,7 +429,7 @@ fn alloc_result_carries_the_call_layout_for_the_frame_lowering() {
     // 首个实参落在 RCX = (GPR(8), 1)——与 plan/既有路径一致。
     match &layout.args[0].place {
         forge_isa_runtime::machine::call_layout::ArgPlace::Reg { class, index, .. } => {
-            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(8), 1))
+            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(64), 1))
         }
         other => panic!("{other:?}"),
     }
@@ -1136,8 +1136,8 @@ fn two_value_return_is_plan_driven() {
     assert_eq!(
         layout.ret,
         Some(RetPlace::Pair {
-            lo: (forge_ir::RegClass::GPR(8), 0),
-            hi: (forge_ir::RegClass::GPR(8), 2),
+            lo: (forge_ir::RegClass::GPR(64), 0),
+            hi: (forge_ir::RegClass::GPR(64), 2),
         }),
         "两个 i64 返回值 → RAX:RDX（由绑定的 ret_int 池给，不写死类内号）"
     );

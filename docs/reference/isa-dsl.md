@@ -155,9 +155,9 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
 | --- | --- | --- | --- |
 | `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `types` `stack` `operand_slots` `forms` `instructions` `templates` `reloc` `derive` `pseudo` `lowering` `pattern` `machine` `emit` `spill` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
-| `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `default_gpr_width` `default_fpr_width` `addr_width` `value_gpr_width` `value_fpr_width` `vector_tiers` | 元信息 + 宽度元数据（缺省从 [reg.*] 派生） |
+| `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `vector_tiers` | 元信息 + 文本约定（宽度只在 [reg.<名>] 表头里，见 [machine] 的类指针键） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
-| `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `alloc_count` `aliases` | 寄存器组；组名的数字 = 字节宽（gpr8 = 64 位）；aliases = { 别名 = 组内下标 } |
+| `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `alloc_count` `aliases` | 寄存器组；组名的数字 = **位**宽（`gpr64` = 64 位）；aliases = { 别名 = 组内下标 } |
 | `[stack]` | — | `slot` `align` `fp_save` | 栈槽单位/对齐/帧指针保存槽（缺省全部派生） |
 | `[types]` | — | — | 类型 → 寄存器组名（或 "unsupported"）的显式映射；键 = 类型名（允许额外键） |
 | `[conventions.bitfields.<name>]` | — | `offset` `width` `pieces` | 命名位域：offset/width，或 pieces 列出散布位段 |
@@ -178,7 +178,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[pseudo]]` | `name` `asm` `emit` | `only_variants` | 汇编器伪指令：文本级多指令展开（v18 S3e）；name 只是唯一标识，分派按 asm 的前导字面，`{名字}` 就是 emit 用的参数 |
 | `[[lowering]]` | `op` `insts` | `when` `vary` `priority` | 指令选择规则 |
 | `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
-| `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` `frame` `callee_saved_gpr` `callee_save_slots` `frame_padding` `arg_slot` `vector_by_ref_bytes` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 帧形状 / callee-saved 推入槽数 / 帧填充 / 位置计数规则） |
+| `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` `gpr` `fpr` `addr` `value_gpr` `value_fpr` `frame` `callee_saved_gpr` `callee_save_slots` `frame_padding` `arg_slot` `vector_by_ref_bytes` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / callee-saved 推入槽数 / 帧填充 / 位置计数规则） |
 | `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（唯一位置；`[abi.frame]` 已删除） |
 | `[emit]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（序/尾声由生成器按约定生成，谱里不再写） |
 | `[spill.<name>]` | — | `load` `store` `base` `only_variants` | 溢出/回填模板（`{N}` = 寄存器序号占位符） |
@@ -219,7 +219,7 @@ build-dependency `forge-isa-dsl`，自带玩具谱与依赖面守卫；v19 V2 �
   （含内联表内部的数组）。映射类键（如 `[reg.<名>].aliases`）一律写成**子表**：
 
   ```toml
-  [reg.gpr8.aliases]
+  [reg.gpr64.aliases]
   zero = 0
   ra = 1
   ```
@@ -333,27 +333,36 @@ label_suffix = ":"           # 标签定义后缀（缺省 ":"）
 directive_prefix = "."       # 伪指令前缀（缺省 "."）
 imm_prefix = "$"             # 可选：立即数前缀（x86 AT&T "$"、ARM "#"）
 
-# ── 宽度元数据（可选；缺省从 [reg.*] 派生，见下节）──
+# ── 宽度元数据（v21 W1：**宽度只在 [reg.<名>] 表头里**）──
+#
+# 旧 `[meta].default_gpr_width` / `default_fpr_width` / `addr_width` /
+# `value_gpr_width` / `value_fpr_width` 五个**字节**宽度键**已删除**：组名自己
+# 承载宽度（`[reg.gpr64]` = 64 位），"哪个类是主类"由 `[machine]` 的**组名指针**
+# 给出（见下），不再有第二处宽度声明。
 
-default_gpr_width = 8        # 主 GPR 类宽度（字节）；缺省 = 最宽已声明 GPR 组
-default_fpr_width = 16       # 主 FPR 类宽度（字节）；缺省 = fpr16 优先，其次最宽
-addr_width = 8               # 地址/指针类（MemRef base/index、lea、sp/fp）
-value_gpr_width = 8          # 宿主整数值池类宽（lowering 值 XReg）
-value_fpr_width = 8          # 宿主浮点值池类宽（缺省 8 = f64 值池）
 vector_tiers = [16, 32, 64]  # 向量类字节档位（升序；缺省 = x86 XMM/YMM/ZMM）
+
+# ── 寄存器类指针（`[machine]`；值是 `[reg.*]` 的组名）──
+
+[machine]
+gpr = "gpr64"                # 主 GPR 类（名字/索引锚点 + 整数值池）；缺省 = 最宽 GPR 组
+fpr = "fpr128"               # 主 FPR 类（ABI/SSE 占位基准）；缺省 = 128 位组优先
+addr = "gpr64"               # 地址/指针类；缺省 = gpr
+value_gpr = "gpr64"          # 整数值池；缺省 = gpr
+value_fpr = "fpr64"          # 浮点值池；缺省 = fpr64 组（f64 值池宽）
 
 # ── 栈与帧（可选；缺省全部派生）──
 
 [stack]
-slot = 8                     # 栈槽单位字节（alloca/聚合/spill 槽对齐）；缺省 = addr_width
+slot = 8                     # 栈槽单位字节（alloca/聚合/spill 槽对齐）；缺省 = 地址类**字节**宽
 align = 16                   # 栈对齐字节；缺省 = slot
-fp_save = 8                  # 帧指针保存槽字节数；缺省 = addr_width
+fp_save = 8                  # 帧指针保存槽字节数；缺省 = 地址类字节宽
 
-[reg.gpr8]                   # 寄存器组（组名的数字 = **字节**宽：gpr8 = 64 位）
+[reg.gpr64]                   # 寄存器组（组名的数字 = **位**宽：gpr64 = 64 位；fpr128 = 128 位）
 names = ["RAX", "RCX", "..."] # 显式名单；或 count + prefix 生成式声明
 count = 16                    # 与 names 同时给出时必须等长
 prefix = "XMM"                # 生成式：XMM0, XMM1, …
-base_index = 4                # 物理编号偏移（如 gpr8h 高字节组）
+base_index = 4                # 物理编号偏移（如 gpr64h 高字节组）
 alloc_count = 16              # **进分配池**的个数（缺省 = 全组；见下）
 aliases = { a0 = 10, fp = 8 } # 别名表：`别名 = 组内下标`（可选）
 ```
@@ -362,9 +371,9 @@ aliases = { a0 = 10, fp = 8 } # 别名表：`别名 = 组内下标`（可选）
 `alloc_count` 说"后端**敢分配**哪些"。两者在 x86 上分了家：APX 让 GPR 文件有 32 个
 （r16..r31 = EGPR，只有 REX2 能编码），但本后端不假设跑它的 CPU 支持 APX、ABI 也不认
 它们——分配器一旦用了 r16+，JIT 产物在没有 APX 的机器上就是**非法指令**（实测
-`STATUS_ILLEGAL_INSTRUCTION`）。于是 `[reg.gpr8]` 写 `names = [32 个]` +
+`STATUS_ILLEGAL_INSTRUCTION`）。于是 `[reg.gpr64]` 写 `names = [32 个]` +
 `alloc_count = 16`：EGPR **能编码**（`mov r16d, eax` 这类写法成立，语料里的 APX 行
-照编），但**不进分配池**。只对**主 GPR 组**（`[meta].default_gpr_width` 或最宽的 GPR 组）
+照编），但**不进分配池**。只对**主 GPR 组**（`[machine].gpr` 或最宽的 GPR 组）
 有意义；超过组大小报错。
 
 **别名（`aliases`，v20 V9）**：真实汇编写法里的 ABI 名（riscv 的 `a0`/`s0`/`fp`…）与
@@ -380,8 +389,9 @@ aliases = { a0 = 10, fp = 8 } # 别名表：`别名 = 组内下标`（可选）
 指令字宽**不再**写在 `[meta]`——它是独立的 `[encoding]` 段（见下节）。
 
 寄存器物理编号 = **组内索引**（`Reg::to_index()`），这是 现行与 v11
-（`16+i` 浮点索引，产生非规范字节）的根本区别。`[reg.*]` 的组名编码宽度
-（`gpr8`/`fpr4`/`vec8`/`kreg8`），`RegClass` 四族 GPR/FPR/VEC/KReg 各带字节宽。
+（`16+i` 浮点索引，产生非规范字节）的根本区别。`[reg.*]` 的**组名编码宽度**
+（`gpr64`/`fpr32`/`vec64`/`kreg64` —— 数字是**位**），`RegClass` 四族
+GPR/FPR/VEC/KReg 各带**位**宽（字节口径用 `bytes()` 派生）。
 
 ## `[encoding]` — 指令宽度三态（v18 S4）
 
@@ -438,7 +448,7 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
 寄存器类/宽度**全部**从元数据派生；生成期与宿主流水线里不存留任何 x86 的
 8 字节缺省（2026-09-12 重构）。这使「1 字节寄存器」这类非常规 ISA 可用；
 历史实现在这种 ISA 上会"生成成功但语义错误"——主 GPR 组锚定
-`GPR(8).or(GPR(4))` 取不到组 ⇒ 名字表为空 ⇒ `sp`/`fp`/`scratch`/`callee_saved`
+`GPR(64).or(GPR(32))` 取不到组 ⇒ 名字表为空 ⇒ `sp`/`fp`/`scratch`/`callee_saved`
 与物理 clobber **静默丢弃**，或落回 `from_index(0, GPR64)` 构造一个该 ISA
 根本不存在的类。
 
@@ -448,21 +458,24 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
 
 | 键 | 单位 | 缺省派生 | 用途 |
 | --- | --- | --- | --- |
-| `[meta].default_gpr_width` | 字节 | 最宽已声明 GPR 组 | 主 GPR 类；GPR 名字/索引解析锚点 |
-| `[meta].default_fpr_width` | 字节 | `fpr16`（XMM 基准）优先，其次最宽 | 主 FPR 类（ABI/SSE 占位基准） |
-| `[meta].addr_width` | 字节 | `default_gpr_width` | 地址类：MemRef base/index、`lea`、sp/fp、帧地址 |
-| `[meta].value_gpr_width` | 字节 | `default_gpr_width` | 宿主整数值池（值 XReg / 零值 / 临时 vreg） |
-| `[meta].value_fpr_width` | 字节 | `8`（f64 值池；**不按最宽 FPR 组推导**） | 宿主浮点值池 |
-| `[stack].slot` | 字节 | `addr_width` | ABI 栈槽单位、alloca/聚合拆分、spill 槽对齐 |
+| `[machine].gpr` | 组名 | 最宽已声明 GPR 组 | 主 GPR 类；GPR 名字/索引解析锚点 |
+| `[machine].fpr` | 组名 | 128 位组优先，其次最宽 | 主 FPR 类（ABI/SSE 占位基准） |
+| `[machine].addr` | 组名 | `gpr` | 地址类：MemRef base/index、`lea`、sp/fp、帧地址 |
+| `[machine].value_gpr` | 组名 | `gpr` | 宿主整数值池（值 XReg / 零值 / 临时 vreg） |
+| `[machine].value_fpr` | 组名 | `fpr64` 组（f64 值池；**不按最宽 FPR 组推导**） | 宿主浮点值池 |
+| `[stack].slot` | 字节 | 地址类的**字节**宽 | ABI 栈槽单位、alloca/聚合拆分、spill 槽对齐 |
 | `[stack].align` | 字节 | `slot` | 栈对齐（prologue 帧分配对齐；x86 = 16） |
-| `[stack].fp_save` | 字节 | `addr_width` | `RegInfo::frame_pointer_overhead()` |
+| `[stack].fp_save` | 字节 | 地址类的字节宽 | `RegInfo::frame_pointer_overhead()` |
 | `[meta].vector_tiers` | 字节（升序） | `[16, 32, 64]` | 向量类档位（`reg_class_for` 取最小 ≥ 请求值） |
 | `[encoding].default_opsize` | **位** | 无（decode 初始化 4 字节 = 32 位） | 生成代码里 `__opsize`（**字节**）的缺省；1 字节寄存器 ISA 写 `8` |
-| `[machine.frame].fp_push_bytes` | 字节 | 地址类宽度 | prologue 在帧指针上方 push 的字节数 |
+| `[machine.frame].fp_push_bytes` | 字节 | 地址类的字节宽 | prologue 在帧指针上方 push 的字节数 |
 | `[machine].vector_by_ref_bytes` | 字节 | — | 向量 by-value 阈值（超过则 by-ref 传参），同时是收参侧 by-value 判定 |
 
-显式宽度键必须指向**已声明组**（如 `addr_width = 2` 要求存在 `[reg.gpr2]`），
-否则 `validate` 报错；`vector_tiers` 必须严格升序且非 0。
+**组名就是宽度**（v21 W1）：`[reg.gpr64]` = 64 位、`[reg.fpr128]` = 128 位、
+`[reg.kreg64]` = 64 位掩码；`RegClass` 的 payload 也统一为**位**，字节口径一律由
+`bytes()` 派生。`[machine]` 的五个指针键只指"哪一组"，不重复写宽度；指向未声明组
+或非法组名 ⇒ `validate` 报错点名该键（如 `[machine].addr = "gpr16"` 要求存在 `[reg.gpr16]`）。
+`vector_tiers` 必须严格升序且非 0。
 
 ### 指令字宽（`[encoding].bits` / 逐指令 `width`，**无白名单/上限**）
 
@@ -523,7 +536,7 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
    （软浮点 / 非常规宽度 / 1 字节地址都靠它）。被 DCE 墓碑化的值
    （`TypeId::VOID`，不承载寄存器）跳过。**不**按 8 字节池生成不存在的类。
 5. **向量 by-value/by-ref**：超过 `[machine].vector_by_ref_bytes` 的
-   向量按引用传参；按值收参判定用同一阈值（不再写死 `VEC(16)`）。
+   向量按引用传参；按值收参判定用同一阈值（不再写死 `VEC(128)`）。
 
 ### `[types]` — 类型 → 类（ISA 数据，B2 接口通用化）
 
@@ -532,9 +545,9 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
 
 ```toml
 [types]
-i8  = "gpr1"        # 值 = 已声明 [reg.*] 组名（类宽必须 ≥ 类型字节宽）
-f64 = "gpr8"        # 软浮点：没有 FPR 组的 ISA 也能声明 f64 走 GPR
-ptr = "gpr1"        # 1 字节地址的 ISA（ptr 的健全性按 [meta].addr_width 判）
+i8  = "gpr8"        # 值 = 已声明 [reg.*] 组名（类宽必须 ≥ 类型字节宽）
+f64 = "gpr64"        # 软浮点：没有 FPR 组的 ISA 也能声明 f64 走 GPR
+ptr = "gpr8"        # 1 字节地址的 ISA（ptr 的健全性按 [meta].addr_width 判）
 i64 = "unsupported" # 显式拒绝（等价于通用门拒绝，但写出来更清楚）
 ```
 
@@ -544,14 +557,14 @@ i64 = "unsupported" # 显式拒绝（等价于通用门拒绝，但写出来更�
 - 校验：类型名必须是 `bool/i8/i16/i32/i64/i128/f16/f32/f64/f128/ptr/v64/v128/
   v256/void`；目标必须已声明；类宽 ≥ 类型字节宽（`ptr` 按 `addr_width`，
   否则报"会静默截断"）；`void` 只能写 `"unsupported"`。
-- 用例：`crates/backend/forge-codegen/tests/isa/demo8.toml`（`ptr = "gpr1"`）、
-  `demo.toml`（`f32/f64 = "gpr8"` 软浮点演示）。
+- 用例：`crates/backend/forge-codegen/tests/isa/demo8.toml`（`ptr = "gpr8"`）、
+  `demo.toml`（`f32/f64 = "gpr64"` 软浮点演示）。
 
 ### 最小示例
 
-`crates/backend/forge-codegen/tests/isa/demo8.toml`（**唯一 `[reg.gpr1]` 组**，`addr_width`/
+`crates/backend/forge-codegen/tests/isa/demo8.toml`（**唯一 `[reg.gpr8]` 组**，`addr_width`/
 `value_gpr_width` = 1、`[stack] slot/align/fp_save` = 1、`[encoding] default_opsize = 8`）是这条路径的
-回归夹具：`tests/demo8_tests.rs` 断言元数据派生（`GPR(1)`、1 字节槽、
+回归夹具：`tests/demo8_tests.rs` 断言元数据派生（`GPR(8)`、1 字节槽、
 sp/fp/scratch 名字解析成功、`allocatable = A0..A3`）、值池门（`i8` 可承载；
 `i16/i32/i64/ptr` 与 `f32/f64/v64/v128/v256` 全部 `None`）、编码布局、
 汇编→编码→解码→反汇编往返，以及宿主编译 i8 函数（机器码反汇编为
@@ -605,7 +618,7 @@ templates = ["[{base}+{index}*{scale}+{disp}]"]  # 第 0 条 = 渲染形态
 ≠ `[meta].addr_width` 时（x86 在 64 位模式下写 `[eax]`），**编码器自动发**这条前缀，
 **解码器看到它就把 base/index 建成覆盖宽度的地址类**（`[eax]` 与 `[rax]` 是不同地址，
 不能都建成 64 位）。一个 ISA 只支持一个覆盖宽度（声明两个不同宽度报错），且覆盖宽度
-必须指向本谱已声明的寄存器组。内存 base/index 必须是**地址类**寄存器（`gpr8` 或覆盖类）：
+必须指向本谱已声明的寄存器组。内存 base/index 必须是**地址类**寄存器（`gpr64` 或覆盖类）：
 `[al]`、`[xmm0]` 解析失败。缺省扫描集**不含**这条效果——它是谱自己声明的数据。
 
 **效果清单**（`effects` 里的名字；取值域的唯一来源是 `dsl/model.rs::PrefixEffect` 枚举，
@@ -774,7 +787,7 @@ name = "gpr"
 kind = "reg"                   # reg / imm / mem / label / cond
 class = "gpr"                  # reg：所属 [reg.*] 组；省略 → 多态槽（宽度由实际寄存器推导）
 
-# classes = ["gpr8", "gpr16"]  # 多宽度/多类型集合（class 是单元素糖；两者皆无 = 任意寄存器类）
+# classes = ["gpr64", "gpr16"]  # 多宽度/多类型集合（class 是单元素糖；两者皆无 = 任意寄存器类）
 
 byte_reg = true                # 可选：8 位寄存器操作数（spl/bpl/sil/dil 无 REX 时编码 ah/ch/dh/bh）
 roles = "inout"                # 不写 = 不限制；一个 OperandRole 就够（inout 涵盖 in 与 out）
@@ -951,7 +964,7 @@ names = "csr"
 
 > **S1 删除 `field_width`**：v14 的 `operand_slots.field_width` 是死键（validate
 > 强制要求、codegen 从不读取）。操作数宽度语义由**寄存器视图**推导（Reg 枚举多
-> 宽度视图 gpr8/gpr16/gpr32/gpr64，`Reg::width()`），不再有显式 opsize 操作数
+> 宽度视图 gpr64/gpr16/gpr32/gpr64，`Reg::width()`），不再有显式 opsize 操作数
 > 或 `field_width`。class 固定的槽 → 固定宽度；class 省略的槽（如 `gprx` 多态）
 > → 宽度随分配到的寄存器。
 
@@ -1119,7 +1132,7 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
   不设"钉选"注解——那就是第二套机制）；
 - 该形状一条都没有 ⇒ 生成物里 fail-closed `Unsupported`（不退化、不猜）。
 
-x86 的 `MOVSS`/`MOVSD`（共用 `fpr16` 槽）、riscv 的 `FSGNJ_S`/`FSGNJ_D`（共用 `fpr4` 槽）
+x86 的 `MOVSS`/`MOVSD`（共用 `fpr128` 槽）、riscv 的 `FSGNJ_S`/`FSGNJ_D`（共用 `fpr32` 槽）
 正是"宽度只能写出来"的例子——槽分不出 32/64。三操作数形态（riscv `fsgnj.d rd, rs, rs`）
 的**第三槽自动填成源**（额外的 `in` 寄存器槽都拿同一个源）；内存操作数当目的（store）也
 自然成立（`mem:mem:out`）。守卫 `crates/frontend/forge-isa-dsl/tests/move_derive.rs`
@@ -2140,7 +2153,7 @@ asm = "rev8 {dst}, {src}"
 
 - **`demo.toml`**：同助记符多宽度自动分发演示基线。
 
-- **`demo8.toml`**：**1 字节寄存器**回归夹具（唯一 `[reg.gpr1]` 组，宽度
+- **`demo8.toml`**：**1 字节寄存器**回归夹具（唯一 `[reg.gpr8]` 组，宽度
   元数据全 = 1）；用例见 `tests/demo8_tests.rs`。
 - **`demo_mixed16_32.toml`**：**混合字长**夹具（`kind = "mixed"`、
   `widths = [16, 32]`，低 2 位判别短/长编码）；用例见

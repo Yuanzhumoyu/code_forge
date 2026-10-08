@@ -141,8 +141,11 @@ pub(crate) fn field_ctor_expr_view(
             // 多类 GPR（宽度视图）：按 decode 扫描出的 `__opsize`（**字节**，
             // 由 `[encoding].default_opsize` 提供缺省）选择视图——assemble/encode
             // 侧已按实际寄存器宽度还原，decode 反向。
+            // v21 W1：`RegClass` 的 payload 是**位** ⇒ 这里把字节换算成位。
             quote! {
-                <Reg as TryFrom<RegRef>>::try_from(RegRef::new(RegClass::GPR(__opsize),#v)).unwrap()
+                <Reg as TryFrom<RegRef>>::try_from(RegRef::new(
+                    RegClass::GPR((__opsize as u16) * 8), #v
+                )).unwrap()
             }
         }
     }

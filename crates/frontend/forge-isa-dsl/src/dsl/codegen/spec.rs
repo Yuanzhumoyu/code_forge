@@ -509,12 +509,9 @@ struct ViewSel {
     high: bool,
 }
 
-/// `RegClass` 的字节宽度。
+/// `RegClass` 的字节宽度（payload 是位宽，故由 `bytes()` 派生）。
 fn class_bytes(c: crate::dsl::model::RegClass) -> u16 {
-    use crate::dsl::model::RegClass;
-    match c {
-        RegClass::GPR(w) | RegClass::FPR(w) | RegClass::VEC(w) | RegClass::KReg(w) => w,
-    }
+    c.bytes()
 }
 
 /// 槽里与给定宽度匹配的类（`classes` 列表里的那一项）。

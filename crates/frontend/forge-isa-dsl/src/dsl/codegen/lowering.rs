@@ -54,7 +54,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     // 生成器里不再出现 `gpr_mov`/`fpr_mov`/… 这些手写角色名。
     let moves = MoveTable::collect(infos)?;
     // 值寄存器的位宽基准（地址类/主 GPR 类）：无宽度语义的值（指针、void）按它折算。
-    let addr_bits: u16 = model.addr_class()?.width() * 8;
+    let addr_bits: u16 = model.addr_class()?.bits();
     // 生成物里 	ype_bits_of 是 u32：字面量按 u32 插值（u16 会让 unwrap_or 类型不符）。
     let addr_bits32 = addr_bits as u32;
 
@@ -1294,7 +1294,7 @@ fn gen_call_lowering(
     let fids = |n: &str| inst_fids(infos, n);
     // **搬运表**（v20 V8）：调用点的实参搬运/返回值搬运/变参元信息全走这张派生表。
     let moves = MoveTable::collect(infos)?;
-    let addr_bits: u16 = model.addr_class()?.width() * 8;
+    let addr_bits: u16 = model.addr_class()?.bits();
     // 生成物里 	ype_bits_of 是 u32：字面量按 u32 插值（u16 会让 unwrap_or 类型不符）。
     let addr_bits32 = addr_bits as u32;
     // 整数搬运请求（GPR ← GPR）与浮点搬运请求（FPR ← FPR）——谱里没有对应形状的搬运
@@ -2499,7 +2499,8 @@ fn pred_width_hint(p: &Pred) -> Option<u32> {
         Pred::And(ps) => ps.iter().find_map(pred_width_hint),
         Pred::Or(ps) => ps.iter().find_map(pred_width_hint),
         Pred::Not(p) => pred_width_hint(p),
-        Pred::Cmp(CmpOp::Eq, name, v) if name == "rs1_width" => Some((*v as u32) / 8),
+        // `rs1_width` 谓词的值是**位**（v21 W1：与 `RegClass::bits()` 同口径）。
+        Pred::Cmp(CmpOp::Eq, name, v) if name == "rs1_width" => Some(*v as u32),
         _ => None,
     }
 }
@@ -2599,7 +2600,7 @@ fn gen_lowering_insts(
                             && s.classes()
                                 .map(|cs| {
                                     cs.len() == 1 && {
-                                        let cw = cs[0].width();
+                                        let cw = cs[0].bits();
                                         if *role == OperandRole::Out {
                                             // Out：宽 < w 必错；宽 > w 且无 Reg 源
                                             //（Load）也错；有 Reg 源（movzx）豁免

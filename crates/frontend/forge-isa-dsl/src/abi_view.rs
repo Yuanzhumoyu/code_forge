@@ -134,8 +134,8 @@ pub fn build(model: &IsaModel, spec: &LoadedSpec) -> Result<MachineView, String>
         regs.push(RegEntry {
             index: i as u32,
             name: n.clone(),
-            class: format!("GPR({})", addr.width()),
-            width: addr.width() as u8,
+            class: format!("GPR({})", addr.bits()),
+            width: addr.bytes() as u8,
             pinned: false,
         });
         names.insert(n.clone(), i as u32);
@@ -151,8 +151,8 @@ pub fn build(model: &IsaModel, spec: &LoadedSpec) -> Result<MachineView, String>
             regs.push(RegEntry {
                 index: n_gpr + i as u32,
                 name: n.clone(),
-                class: format!("FPR({})", fpr.width()),
-                width: fpr.width() as u8,
+                class: format!("FPR({})", fpr.bits()),
+                width: fpr.bytes() as u8,
                 pinned: false,
             });
             names.insert(n.clone(), n_gpr + i as u32);
@@ -295,8 +295,8 @@ fn group_names_of(model: &IsaModel, rc: RegClass) -> Result<Vec<String>, String>
     let g = model.reg.get(&rc).ok_or_else(|| {
         format!(
             "谱里没有 [reg.gpr{}]/[reg.fpr{}] 组（{rc:?}）",
-            rc.width(),
-            rc.width()
+            rc.bits(),
+            rc.bits()
         )
     })?;
     group_names(g)

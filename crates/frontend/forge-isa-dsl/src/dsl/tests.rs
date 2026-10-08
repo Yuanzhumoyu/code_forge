@@ -18,7 +18,7 @@ mode = 64
 kind = "fixed"
 bits = 32
 
-[reg.gpr8]
+[reg.gpr64]
 names = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7", "X8", "X9", "X10", "X11",
          "X12", "X13", "X14", "X15", "X16", "X17", "X18", "X19", "X20", "X21",
          "X22", "X23", "X24", "X25", "X26", "X27", "X28", "X29", "X30", "X31"]
@@ -34,7 +34,7 @@ funct7 = { offset = 25, width = 7 }
 [[operand_slots]]
 name = "gpr"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 roles = "inout"
 
 [[operand_slots]]
@@ -63,13 +63,13 @@ fn parse_minimal_riscv_style() {
     assert_eq!(m.meta.name, "riscv64");
     assert_eq!(m.encoding.bits, Some(32));
     assert!(!m.is_variable_length());
-    assert_eq!(m.reg[&RegClass::GPR(8)].names.as_ref().unwrap().len(), 32);
+    assert_eq!(m.reg[&RegClass::GPR(64)].names.as_ref().unwrap().len(), 32);
     assert_eq!(m.conventions.bitfields.len(), 6);
     assert_eq!(m.conventions.bitfields["rd"].offset, Some(7));
     assert_eq!(m.conventions.bitfields["rd"].width, Some(5));
     assert_eq!(m.operand_slots.len(), 2);
     assert_eq!(m.operand_slots[0].kind, OperandKind::Reg);
-    assert_eq!(m.operand_slots[0].class.as_ref(), Some(&RegClass::GPR(8)));
+    assert_eq!(m.operand_slots[0].class.as_ref(), Some(&RegClass::GPR(64)));
     assert_eq!(m.operand_slots[1].kind, OperandKind::Imm);
     assert_eq!(m.operand_slots[1].signed, Some(true));
     let form = &m.forms[0];
@@ -91,11 +91,11 @@ mode = 64
 kind = "prefix_scan"
 max_len = 15
 
-[reg.gpr8]
+[reg.gpr64]
 names = ["RAX", "RCX", "RDX", "RBX", "RSP", "RBP", "RSI", "RDI",
          "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15"]
 
-[reg.fpr16]
+[reg.fpr128]
 count = 16
 prefix = "XMM"
 
@@ -111,12 +111,12 @@ force_disp_base = [5, 13]
 [[operand_slots]]
 name = "gpr"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 
 [[operand_slots]]
 name = "fpr"
 kind = "reg"
-class = "fpr16"
+class = "fpr128"
 
 [[operand_slots]]
 name = "imm32"
@@ -135,8 +135,8 @@ fn parse_x86_conventions() {
     assert!(m.is_variable_length());
     assert_eq!(m.encoding.max_len, Some(15));
     // 生成式寄存器组：count + prefix
-    assert_eq!(m.reg[&RegClass::FPR(16)].count, Some(16));
-    assert_eq!(m.reg[&RegClass::FPR(16)].prefix.as_deref(), Some("XMM"));
+    assert_eq!(m.reg[&RegClass::FPR(128)].count, Some(16));
+    assert_eq!(m.reg[&RegClass::FPR(128)].prefix.as_deref(), Some("XMM"));
     // ModRM 约定
     let modrm = m.conventions.modrm.as_ref().expect("modrm present");
     assert_eq!(modrm.reg_field.as_deref(), Some("modrm_reg"));
@@ -153,7 +153,7 @@ fn default_flags_and_roles() {
     let doc = r#"
 [meta]
 name = "x"
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
@@ -191,7 +191,7 @@ fn inout_role_parses() {
     let doc = r#"
 [meta]
 name = "x"
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "rm"
@@ -226,7 +226,7 @@ fn rejects_unknown_top_level_key() {
 [meta]
 name = "x"
 bogus = 1
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 "#;
     let err = parse(doc).unwrap_err();
@@ -245,7 +245,7 @@ fn rejects_unknown_meta_key() {
 [meta]
 name = "x"
 no_default_lowering = true
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 "#;
     let err = parse(doc).unwrap_err();
@@ -260,7 +260,7 @@ fn rejects_unknown_operand_slot_key() {
     let doc = r#"
 [meta]
 name = "x"
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
@@ -283,7 +283,7 @@ fn rejects_bad_operand_kind() {
     let doc = r#"
 [meta]
 name = "x"
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
@@ -305,7 +305,7 @@ fn rejects_v11_isa_file() {
     let v11 = r#"[meta]
 name = "x"
 version = "11.0"
-[reg.gpr8]
+[reg.gpr64]
 count = 16
 [abi]
 arg_regs = ["RCX", "RDX"]
@@ -328,7 +328,7 @@ fn slot_doc(extra: &str) -> String {
         r#"
 [meta]
 name = "x"
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
@@ -357,7 +357,7 @@ class = "gpr"
     let no_slots = r#"
 [meta]
 name = "x"
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 "#;
     match parse(no_slots).unwrap_err() {
@@ -394,7 +394,7 @@ fn validation_empty_operand_slots() {
 operand_slots = []
 [meta]
 name = "x"
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 "#;
     let err = parse_and_validate(doc).unwrap_err();
@@ -451,7 +451,7 @@ fn validation_unknown_form() {
     let doc = r#"
 [meta]
 name = "x"
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
@@ -478,7 +478,7 @@ fn validation_instruction_unknown_slot() {
     let doc = r#"
 [meta]
 name = "x"
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
@@ -507,7 +507,7 @@ fn validation_instruction_exceeds_operand_fields() {
     let doc = r#"
 [meta]
 name = "x"
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = { offset = 0, width = 7 }
@@ -541,7 +541,7 @@ fn validation_duplicate_instruction() {
     let doc = r#"
 [meta]
 name = "x"
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
@@ -576,7 +576,7 @@ fn validation_template_row_needs_encoding() {
     let doc = r#"
 [meta]
 name = "x"
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
@@ -603,7 +603,7 @@ fn validation_duplicate_reg_names() {
     let doc = r#"
 [meta]
 name = "x"
-[reg.gpr4]
+[reg.gpr32]
 names = ["R0", "R0"]
 [[operand_slots]]
 name = "g"
@@ -630,7 +630,7 @@ name = "x"
 kind = "fixed"
 bits = 32
 widths = [16, 32]
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
@@ -647,7 +647,7 @@ name = "x"
 [encoding]
 kind = "prefix_scan"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
@@ -664,7 +664,7 @@ class = "gpr"
 name = "x"
 [encoding]
 kind = "fixed"
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
@@ -684,7 +684,7 @@ asm = "i"
     let doc = r#"
 [meta]
 name = "x"
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
@@ -701,7 +701,7 @@ fn validation_bad_isa_name() {
     let doc = r#"
 [meta]
 name = "123"
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
@@ -730,7 +730,7 @@ endian = "big"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 rd = { offset = 7, width = 3 }
@@ -773,7 +773,7 @@ name = "x"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = { offset = 0, width = 7 }
@@ -820,7 +820,7 @@ name = "x"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 rd     = { offset = 7,  width = 3 }
@@ -854,7 +854,7 @@ name = "x"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 rd     = { offset = 7,  width = 3 }
@@ -964,7 +964,7 @@ name = "x"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = {{ offset = 0,  width = 8 }}
@@ -1488,7 +1488,7 @@ name = "x"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = {{ offset = 0, width = 7 }}
@@ -1558,7 +1558,7 @@ name = "x"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = { offset = 0, width = 8 }
@@ -1567,7 +1567,7 @@ rs1 = { offset = 11, width = 3 }
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 roles = "inout"
 [[forms]]
 name = "RR"
@@ -1636,7 +1636,7 @@ name = "x"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = { offset = 0, width = 7 }
@@ -1671,7 +1671,7 @@ name = "x"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = { offset = 0, width = 7 }
@@ -1753,7 +1753,7 @@ name = "x"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = { offset = 0, width = 7 }
@@ -1802,12 +1802,12 @@ name = "t"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 [[operand_slots]]
 name = "imm20"
 kind = "imm"
@@ -1964,12 +1964,12 @@ name = "t"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 [conventions.bitfields]
 rd = { offset = 7, width = 5 }
 rs1 = { offset = 15, width = 5 }
@@ -2103,7 +2103,7 @@ name = "x"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = {{ offset = 0, width = 8 }}
@@ -2112,7 +2112,7 @@ rs1 = {{ offset = 11, width = 3 }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 roles = "inout"
 [[forms]]
 name = "RR"
@@ -2223,7 +2223,7 @@ name = "x"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = {{ offset = 0, width = 8 }}
@@ -2232,7 +2232,7 @@ rs1 = {{ offset = 11, width = 3 }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 roles = "inout"
 [[forms]]
 name = "RR"
@@ -2573,12 +2573,12 @@ name = "x"
 [encoding]
 kind = "prefix_scan"
 max_len = 15
-[reg.gpr8]
+[reg.gpr64]
 count = 16
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 roles = "inout"
 [[instructions]]
 name = "MOVQ_REV"
@@ -2606,12 +2606,12 @@ fn instruction_enc_keys_override_form_preset() {
 name = "x"
 [encoding]
 kind = "prefix_scan"
-[reg.gpr8]
+[reg.gpr64]
 count = 16
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 roles = "inout"
 [[forms]]
 name = "MRR"
@@ -2677,12 +2677,12 @@ fn named_ops_declare_and_reference() {
 name = "x"
 [encoding]
 kind = "prefix_scan"
-[reg.gpr8]
+[reg.gpr64]
 count = 16
 [[operand_slots]]
 name = "gx"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 roles = "inout"
 [[instructions]]
 name = "ADD_RM_R"
@@ -2757,12 +2757,12 @@ fn ops_doc(body: &str) -> String {
 name = "x"
 [encoding]
 kind = "prefix_scan"
-[reg.gpr8]
+[reg.gpr64]
 count = 16
 [[operand_slots]]
 name = "gx"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 roles = "inout"
 [[instructions]]
 name = "I"
@@ -2828,12 +2828,12 @@ fn modrm_doc(modrm: &str) -> String {
 name = "x"
 [encoding]
 kind = "prefix_scan"
-[reg.gpr8]
+[reg.gpr64]
 count = 16
 [[operand_slots]]
 name = "gx"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 roles = "inout"
 [[instructions]]
 name = "I"
@@ -2863,12 +2863,12 @@ name = "x"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr8]
+[reg.gpr64]
 count = 16
 [[operand_slots]]
 name = "gx"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 roles = "inout"
 "#;
     // ③ unit != 1：`symbols` 那条先拦（`require_symbol` 依赖它）
@@ -2951,12 +2951,12 @@ const PATTERN_BASE: &str = r#"
 name = "x"
 [encoding]
 kind = "prefix_scan"
-[reg.gpr8]
+[reg.gpr64]
 count = 16
 [[operand_slots]]
 name = "gx"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 roles = "inout"
 [[instructions]]
 name = "I"
@@ -3113,7 +3113,7 @@ name = "mips"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = { offset = 0, width = 7 }
@@ -3302,7 +3302,7 @@ name = "t"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = { offset = 0, width = 7 }
@@ -3317,7 +3317,7 @@ wrap = true
 [[operand_slots]]
 name = "r"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 [[forms]]
 name = "I"
 opcode_field = "opcode"
@@ -3332,8 +3332,8 @@ asm = "addi {dst}, {imm}"
     parse_and_validate(base).expect("12 位有符号 + wrap 合法");
     // wrap 用在 reg 槽 → 报错
     let bad = base.replace("\nwrap = true", "").replace(
-        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr4\"",
-        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr4\"\nwrap = true",
+        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr32\"",
+        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr32\"\nwrap = true",
     );
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("wrap"), "err: {err}");
@@ -3357,7 +3357,7 @@ name = "t"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = { offset = 0, width = 6 }
@@ -3408,7 +3408,7 @@ asm = "b {target}"
     assert_eq!((imm12.unit(), imm12.unit_shift()), (1, 0));
 
     // 声明侧校验：reg 槽写 unit → 报错。
-    let bad = doc.replace("kind = \"label\"", "kind = \"reg\"\nclass = \"gpr4\"");
+    let bad = doc.replace("kind = \"label\"", "kind = \"reg\"\nclass = \"gpr32\"");
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("unit"), "err: {err}");
     // 非 2 的幂 → 报错（编码期按移位换算）。
@@ -3439,7 +3439,7 @@ name = "t"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 op7 = { offset = 24, width = 7 }
@@ -3457,7 +3457,7 @@ fields = ["b40", "b5"]
 [[operand_slots]]
 name = "r"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 [[operand_slots]]
 name = "off14"
 kind = "label"
@@ -3538,7 +3538,7 @@ name = "t"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 op9 = { offset = 23, width = 9 }
@@ -3557,7 +3557,7 @@ fields = ["nbit", "immr", "imms"]
 [[operand_slots]]
 name = "r"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 [[forms]]
 name = "LOGIMM"
 opcode_field = "op9"
@@ -3607,7 +3607,7 @@ name = "t"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = { offset = 0, width = 7 }
@@ -3689,7 +3689,7 @@ name = "t"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = { offset = 0, width = 7 }
@@ -3704,7 +3704,7 @@ sbadaddr = 0x143
 [[operand_slots]]
 name = "r"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 [[operand_slots]]
 name = "csr12"
 kind = "imm"
@@ -3758,7 +3758,7 @@ asm = "csrrs {dst}, {csr}"
     // `names` 只对 imm 槽有意义。
     let err = parse_and_validate(&doc.replace(
         "name = \"csr12\"\nkind = \"imm\"\nsigned = false\nwidth = 12\nnames = \"csr\"",
-        "name = \"csr12\"\nkind = \"reg\"\nclass = \"gpr4\"\nnames = \"csr\"",
+        "name = \"csr12\"\nkind = \"reg\"\nclass = \"gpr32\"\nnames = \"csr\"",
     ))
     .unwrap_err()
     .to_string();
@@ -3782,7 +3782,7 @@ name = "t"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 opcode = { offset = 0, width = 7 }
@@ -3803,7 +3803,7 @@ unit = 4
 [[operand_slots]]
 name = "r"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 [[forms]]
 name = "U"
 opcode_field = "opcode"
@@ -3825,8 +3825,8 @@ asm = "lui {dst}, {imm}"
 
     // 只对 imm/label 有意义：reg 槽写它 → 报错。
     let bad = doc.replace(
-        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr4\"",
-        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr4\"\nsymbols = true",
+        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr32\"",
+        "name = \"r\"\nkind = \"reg\"\nclass = \"gpr32\"\nsymbols = true",
     );
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("symbols"), "err: {err}");
@@ -3907,12 +3907,12 @@ name = "tiny8"
 kind = "fixed"
 bits = 32
 {enc_extra}
-[reg.gpr1]
+[reg.gpr8]
 names = ["A0", "A1", "A2", "A3"]
 [[operand_slots]]
 name = "a8"
 kind = "reg"
-class = "gpr1"
+class = "gpr8"
 roles = "inout"
 [[instructions]]
 name = "MOV8"
@@ -3937,13 +3937,13 @@ rs1 = {{ offset = 11, width = 3 }}
 #[test]
 fn width_metadata_one_byte_gpr_is_derived() {
     let m = parse_and_validate(&one_byte_doc("")).expect("1 字节寄存器 ISA 必须合法");
-    assert_eq!(m.main_gpr_class().unwrap(), RegClass::GPR(1));
-    assert_eq!(m.addr_class().unwrap(), RegClass::GPR(1));
-    assert_eq!(m.value_gpr_class().unwrap(), RegClass::GPR(1));
+    assert_eq!(m.main_gpr_class().unwrap(), RegClass::GPR(8));
+    assert_eq!(m.addr_class().unwrap(), RegClass::GPR(8));
+    assert_eq!(m.value_gpr_class().unwrap(), RegClass::GPR(8));
     assert_eq!(m.slot_bytes().unwrap(), 1, "栈槽单位 = 地址宽（1 字节）");
     assert_eq!(m.fp_overhead_bytes().unwrap(), 1);
     assert_eq!(m.main_fpr_class().unwrap(), None, "无 FPR 组");
-    assert_eq!(m.value_fpr_class().unwrap(), None, "无 fpr8 组");
+    assert_eq!(m.value_fpr_class().unwrap(), None, "无 fpr64 组");
     let idx = m.main_gpr_name_to_idx().expect("名字表必须解析成功");
     assert_eq!(idx.get("A0"), Some(&0));
     assert_eq!(idx.get("A3"), Some(&3));
@@ -3951,7 +3951,7 @@ fn width_metadata_one_byte_gpr_is_derived() {
     // 索引含 base_index（历史实现只按组内序号，base_index≠0 的组会错位）。
     let m2 = parse_and_validate(&one_byte_doc("")).unwrap();
     assert!(
-        m2.names_of(RegClass::GPR(1))
+        m2.names_of(RegClass::GPR(8))
             .unwrap()
             .contains(&"A2".into())
     );
@@ -3963,23 +3963,23 @@ fn width_metadata_main_gpr_is_widest_group() {
     let doc = r#"
 [meta]
 name = "w"
-[reg.gpr1]
+[reg.gpr8]
 count = 4
-[reg.gpr2]
+[reg.gpr16]
 base_index = 0
 count = 4
-[reg.gpr8]
+[reg.gpr64]
 base_index = 0
 count = 4
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 roles = "inout"
 "#;
     let m = parse_and_validate(doc).expect("合法");
-    assert_eq!(m.main_gpr_class().unwrap(), RegClass::GPR(8));
-    assert_eq!(m.addr_class().unwrap(), RegClass::GPR(8));
+    assert_eq!(m.main_gpr_class().unwrap(), RegClass::GPR(64));
+    assert_eq!(m.addr_class().unwrap(), RegClass::GPR(64));
     assert_eq!(m.slot_bytes().unwrap(), 8);
 }
 
@@ -3988,18 +3988,21 @@ roles = "inout"
 #[test]
 fn width_metadata_main_fpr_prefers_xmm16() {
     let doc = one_byte_doc("").replace(
-        "[reg.gpr1]",
-        "[reg.fpr4]\ncount = 8\n[reg.fpr16]\ncount = 16\n[reg.fpr32]\ncount = 32\n[reg.gpr1]",
+        "[reg.gpr8]",
+        "[reg.fpr32]\ncount = 8\n[reg.fpr128]\ncount = 16\n[reg.fpr256]\ncount = 32\n[reg.gpr8]",
     );
     let m = parse_and_validate(&doc).expect("合法");
-    assert_eq!(m.main_fpr_class().unwrap(), Some(RegClass::FPR(16)));
+    assert_eq!(m.main_fpr_class().unwrap(), Some(RegClass::FPR(128)));
     // 显式键优先。
-    let forced = parse_and_validate(&one_byte_doc("default_fpr_width = 4").replace(
-        "[reg.gpr1]",
-        "[reg.fpr4]\ncount = 8\n[reg.fpr16]\ncount = 16\n[reg.gpr1]",
+    let forced = parse_and_validate(&format!(
+        "{}\n[machine]\nfpr = \"fpr32\"\n",
+        one_byte_doc("").replace(
+            "[reg.gpr8]",
+            "[reg.fpr32]\ncount = 8\n[reg.fpr128]\ncount = 16\n[reg.gpr8]",
+        )
     ))
     .expect("合法");
-    assert_eq!(forced.main_fpr_class().unwrap(), Some(RegClass::FPR(4)));
+    assert_eq!(forced.main_fpr_class().unwrap(), Some(RegClass::FPR(32)));
 }
 
 /// 没有任何 GPR 组 → 派生失败（历史实现静默回退 `GPR(8)`/`GPR(4)` + 空名字表）。
@@ -4008,28 +4011,28 @@ fn width_metadata_missing_gpr_group_is_error() {
     let doc = r#"
 [meta]
 name = "floatonly"
-[reg.fpr4]
+[reg.fpr32]
 count = 8
 [[operand_slots]]
 name = "f"
 kind = "reg"
-class = "fpr4"
+class = "fpr32"
 roles = "inout"
 "#;
     let msg = validation_msg(doc);
     assert!(msg.contains("GPR"), "msg: {msg}");
 }
 
-/// 显式宽度键必须指向已声明组（不允许"声明一个不存在的类"）。
+/// 显式类指针键必须指向已声明组（不允许"声明一个不存在的类"）。
 #[test]
 fn width_metadata_explicit_key_needs_group() {
-    let msg = validation_msg(&one_byte_doc("default_gpr_width = 8"));
-    assert!(msg.contains("default_gpr_width"), "msg: {msg}");
-    let msg = validation_msg(&one_byte_doc("addr_width = 2"));
-    assert!(msg.contains("addr_width"), "msg: {msg}");
+    let msg = validation_msg(&format!("{}\n[machine]\ngpr = \"gpr128\"\n", one_byte_doc("")));
+    assert!(msg.contains("[machine].gpr"), "msg: {msg}");
+    let msg = validation_msg(&format!("{}\n[machine]\naddr = \"gpr16\"\n", one_byte_doc("")));
+    assert!(msg.contains("[machine].addr"), "msg: {msg}");
     // `[stack]` 键值域（2026-09-13 从 [meta]/[abi] 归并而来）
     let msg =
-        validation_msg(&one_byte_doc("").replace("[reg.gpr1]", "[stack]\nslot = 0\n\n[reg.gpr1]"));
+        validation_msg(&one_byte_doc("").replace("[reg.gpr8]", "[stack]\nslot = 0\n\n[reg.gpr8]"));
     assert!(msg.contains("slot"), "msg: {msg}");
 }
 
@@ -4039,11 +4042,11 @@ fn width_metadata_explicit_key_needs_group() {
 fn width_metadata_default_opsize_needs_matching_group() {
     let m = parse_and_validate(&one_byte_doc_enc("default_opsize = 8")).expect("合法");
     assert_eq!(m.encoding.default_opsize, Some(8));
-    let msg = validation_msg(&one_byte_doc_enc("default_opsize = 8").replace("gpr1", "gpr8"));
-    // 注意：替换后 class = "gpr8" 与组一致，但 default_opsize=8 找不到 gpr1 → 报错。
+    let msg = validation_msg(&one_byte_doc_enc("default_opsize = 8").replace("gpr8", "gpr64"));
+    // 注意：替换后 class = "gpr64" 与组一致，但 default_opsize=8 找不到 gpr8 → 报错。
     assert!(
         msg.contains("default_opsize"),
-        "1 字节 opsize 必须要求 [reg.gpr1]：{msg}"
+        "1 字节 opsize 必须要求 [reg.gpr8]：{msg}"
     );
     let msg = validation_msg(&one_byte_doc_enc("default_opsize = 12"));
     assert!(msg.contains("8 的倍数"), "msg: {msg}");
@@ -4051,7 +4054,7 @@ fn width_metadata_default_opsize_needs_matching_group() {
 
 // ─────────── 残余收敛（2026-09-13）：冲突/静默丢弃类缺口逐条 fail-closed ───────────
 
-/// 两宽度视图的最小 ISA（主 GPR = gpr8；`gpr4` 用来制造"声明在别组"的名字），
+/// 两宽度视图的最小 ISA（主 GPR = gpr64；`gpr32` 用来制造"声明在别组"的名字），
 /// 可注入 `[abi]`/`[[instructions]]`/`[spill.*]` 片段。
 fn two_view_doc(extra: &str) -> String {
     format!(
@@ -4061,12 +4064,12 @@ name = "twoview"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr8]
+[reg.gpr64]
 names = ["R0", "R1", "R2", "R3"]
-[reg.gpr4]
+[reg.gpr32]
 base_index = 0
 names = ["E0", "E1", "E2", "E3"]
-[reg.fpr16]
+[reg.fpr128]
 base_index = 0
 names = ["F0", "F1"]
 [conventions.bitfields]
@@ -4076,7 +4079,7 @@ rs1 = {{ offset = 11, width = 3 }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 roles = "inout"
 [[instructions]]
 name = "NOP"
@@ -4200,7 +4203,7 @@ asm = "cqo"
 /// 缺失在校验期点名（历史实现要等 IR 编译期才报 Unsupported）。
 #[test]
 fn wide_fpr_class_requires_spill_tier() {
-    // fpr16（16 字节 > 缺省标量 8）但没有 [spill.FPR16]
+    // fpr128（16 字节 > 缺省标量 8）但没有 [spill.FPR16]
     let msg = validation_msg(&two_view_doc(
         r#"
 [spill.GPR]
@@ -4212,7 +4215,7 @@ store = "NOP"
 "#,
     ));
     assert!(msg.contains("FPR16"), "必须点名缺哪个键：{msg}");
-    assert!(msg.contains("reg.fpr16"), "必须点名哪个类：{msg}");
+    assert!(msg.contains("reg.fpr128"), "必须点名哪个类：{msg}");
     // 声明档位后合法
     let m = parse_and_validate(&two_view_doc(
         r#"
@@ -4236,20 +4239,22 @@ store = "NOP"
 /// 合法：显式映射到已声明组；`"unsupported"` 也合法；`ptr` 按 ISA 地址宽判定。
 #[test]
 fn types_explicit_map_parses_and_validates() {
-    let doc = two_view_doc(
-        r#"
+    let doc = format!(
+        "{}\n[machine]\naddr = \"gpr32\"\n",
+        two_view_doc(
+            r#"
 [types]
-i8 = "gpr8"
-f64 = "fpr16"
-ptr = "gpr4"
+i8 = "gpr64"
+f64 = "fpr128"
+ptr = "gpr32"
 i64 = "unsupported"
 "#,
-    )
-    .replace("[meta]", "[meta]\naddr_width = 4");
+        )
+    );
     let m = parse_and_validate(&doc).expect("合法显式映射");
     let map = m.explicit_type_map().unwrap();
-    assert!(map.contains(&("i8".to_string(), Some(RegClass::GPR(8)))));
-    assert!(map.contains(&("ptr".to_string(), Some(RegClass::GPR(4)))));
+    assert!(map.contains(&("i8".to_string(), Some(RegClass::GPR(64)))));
+    assert!(map.contains(&("ptr".to_string(), Some(RegClass::GPR(32)))));
     assert!(
         map.contains(&("i64".to_string(), None)),
         "unsupported 记 None"
@@ -4259,33 +4264,37 @@ i64 = "unsupported"
 /// 非法：类型名未知 / 目标组未声明 / 类宽 < 类型字节宽（会静默截断）/ void 映射。
 #[test]
 fn types_explicit_map_rejects_bad_entries() {
-    let msg = validation_msg(&two_view_doc("[types]\nfoo = \"gpr8\"\n"));
+    let msg = validation_msg(&two_view_doc("[types]\nfoo = \"gpr64\"\n"));
     assert!(msg.contains("未知类型名"), "msg: {msg}");
-    let msg = validation_msg(&two_view_doc("[types]\ni8 = \"gpr32\"\n"));
+    let msg = validation_msg(&two_view_doc("[types]\ni8 = \"gpr256\"\n"));
     assert!(msg.contains("未声明"), "msg: {msg}");
-    let msg = validation_msg(&two_view_doc("[types]\ni64 = \"gpr4\"\n"));
+    let msg = validation_msg(&two_view_doc("[types]\ni64 = \"gpr32\"\n"));
     assert!(msg.contains("静默截断"), "msg: {msg}");
-    let msg = validation_msg(&two_view_doc("[types]\nvoid = \"gpr8\"\n"));
+    let msg = validation_msg(&two_view_doc("[types]\nvoid = \"gpr64\"\n"));
     assert!(msg.contains("void"), "msg: {msg}");
 }
 
 /// `ptr` 的健全性按 **ISA 地址宽**（不是 `TypeId::bits()` 的 8）：
-/// 地址宽 4 的 ISA 可以 `ptr = "gpr4"`；地址宽 2 的 ISA 不能 `ptr = "gpr1"`。
+/// 地址宽 4 的 ISA 可以 `ptr = "gpr32"`；地址宽 2 的 ISA 不能 `ptr = "gpr8"`。
 #[test]
 fn types_ptr_uses_isa_address_width() {
-    let doc = two_view_doc("[types]\nptr = \"gpr4\"\n").replace("[meta]", "[meta]\naddr_width = 4");
-    parse_and_validate(&doc).expect("地址宽 4 → ptr = gpr4 合法");
-    let doc2 = two_view_doc("[types]\nptr = \"gpr1\"\n")
-        .replace("[meta]", "[meta]\naddr_width = 2")
-        .replace(
-            "[reg.gpr8]",
-            "[reg.gpr2]\nbase_index = 0\nnames = [\"E0\", \"E1\"]\n\n\
-             [reg.gpr1]\nbase_index = 0\nnames = [\"B0\", \"B1\"]\n\n[reg.gpr8]",
-        );
+    let doc = format!(
+        "{}\n[machine]\naddr = \"gpr32\"\n",
+        two_view_doc("[types]\nptr = \"gpr32\"\n")
+    );
+    parse_and_validate(&doc).expect("地址宽 4 → ptr = gpr32 合法");
+    let doc2 = format!(
+        "{}\n[machine]\naddr = \"gpr16\"\n",
+        two_view_doc("[types]\nptr = \"gpr8\"\n").replace(
+            "[reg.gpr64]",
+            "[reg.gpr16]\nbase_index = 0\nnames = [\"E0\", \"E1\"]\n\n\
+             [reg.gpr8]\nbase_index = 0\nnames = [\"B0\", \"B1\"]\n\n[reg.gpr64]",
+        )
+    );
     let msg = validation_msg(&doc2);
     assert!(
         msg.contains("静默截断"),
-        "addr_width=2 > gpr1 → 报错：{msg}"
+        "addr_width=2 > gpr8 → 报错：{msg}"
     );
 }
 
@@ -4303,14 +4312,14 @@ name = "w{b}"
 [encoding]
 kind = "fixed"
 bits = {bits}
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 op = {{ offset = 0, width = {op_w} }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 roles = "inout"
 [[forms]]
 name = "W"
@@ -4363,7 +4372,7 @@ name = "wide"
 [encoding]
 kind = "fixed"
 bits = 100
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 wide = { offset = 0, width = 65 }
@@ -4371,7 +4380,7 @@ op = { offset = 0, width = 8 }
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 roles = "inout"
 [[forms]]
 name = "W"
@@ -4403,7 +4412,7 @@ name = "br{b}"
 [encoding]
 kind = "fixed"
 bits = {bits}
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 op  = {{ offset = 0, width = 4 }}
@@ -4412,7 +4421,7 @@ lab = {{ offset = 8, width = 4 }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 roles = "inout"
 [[operand_slots]]
 name = "l"
@@ -4458,7 +4467,7 @@ name = "fit"
 [encoding]
 kind = "fixed"
 bits = 12
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [conventions.bitfields]
 {op}
@@ -4466,7 +4475,7 @@ word = {{ offset = 0, width = 12 }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 roles = "inout"
 [[forms]]
 name = "W"

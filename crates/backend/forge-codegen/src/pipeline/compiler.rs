@@ -1770,8 +1770,8 @@ impl<M: TargetMachine> FunctionCompiler<M> {
                     ty.builtin_scalar_bits()
                         .map(|b| b.to_string())
                         .unwrap_or_else(|| "非标量".to_string()),
-                    gpr.width(),
-                    fpr.width()
+                    gpr.bytes(),
+                    fpr.bytes()
                 )));
             }
         }
@@ -2267,14 +2267,14 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 main_gpr,
                 ClassConfig {
                     allocatable: ri.allocatable_gp_order(),
-                    reg_width: main_gpr.default_width(),
+                    reg_width: main_gpr.bytes() as u8,
                 },
             );
             classes.insert(
                 main_fpr,
                 ClassConfig {
                     allocatable: ri.allocatable_fp_order(),
-                    reg_width: main_fpr.default_width(),
+                    reg_width: main_fpr.bytes() as u8,
                 },
             );
         }
@@ -2835,11 +2835,11 @@ mod alloc_integration_tests {
     }
 
     /// **WA-46 宽度分档守卫（类映射）**：向量值的寄存器类必须按**值宽**分档——
-    /// ≤16B → `VEC(16)`、≤32B → `VEC(32)`、>32B → **`VEC(64)`**。旧实现 >128 位
-    /// 一律 `VEC(32)`，而类的 `reg_width` 决定 spill 槽大小与 `xreg.width()`
+    /// ≤16B → `VEC(128)`、≤32B → `VEC(256)`、>32B → **`VEC(512)`**。旧实现 >128 位
+    /// 一律 `VEC(256)`，而类的 `reg_width` 决定 spill 槽大小与 `xreg.width()`
     /// ⇒ 64B 的 V512 值只有 32B 槽、搬运宽度也只报 32（溢出后高半区静默截断）。
-    /// 这里同时锁住链路：`VEC(64).default_width() == 64`（类表 fallback 用
-    /// `class.default_width()` 作 `reg_width`，见上方 classes 构建）。
+    /// 这里同时锁住链路：`VEC(512).bytes() == 64`（类表 fallback 用
+    /// `class.bytes()` 作 `reg_width`，见上方 classes 构建）。
     #[test]
     fn test_vector_reg_class_widths() {
         let tc = TypeContext::new();
@@ -2849,18 +2849,18 @@ mod alloc_integration_tests {
         let v512 = tc.vector_ty(TypeId::F32, 16);
         let mut ctx = LowerCtx::new();
         ctx.type_store = Some(tc.borrow());
-        assert_eq!(ctx.reg_class_for(&v64), RegClass::VEC(16));
-        assert_eq!(ctx.reg_class_for(&v128), RegClass::VEC(16));
-        assert_eq!(ctx.reg_class_for(&v256), RegClass::VEC(32));
+        assert_eq!(ctx.reg_class_for(&v64), RegClass::VEC(128));
+        assert_eq!(ctx.reg_class_for(&v128), RegClass::VEC(128));
+        assert_eq!(ctx.reg_class_for(&v256), RegClass::VEC(256));
         assert_eq!(
             ctx.reg_class_for(&v512),
-            RegClass::VEC(64),
-            "64 字节向量必须归 VEC(64)（槽宽/搬运宽度按值宽；WA-46）"
+            RegClass::VEC(512),
+            "64 字节向量必须归 VEC(512)（槽宽/搬运宽度按值宽；WA-46）"
         );
         assert_eq!(
-            RegClass::VEC(64).default_width(),
+            RegClass::VEC(512).bytes(),
             64,
-            "VEC(64) 的 reg_width 必须是 64（spill 槽 = 64 字节）"
+            "VEC(512) 的 reg_width 必须是 64 字节（spill 槽 = 64 字节）"
         );
     }
 

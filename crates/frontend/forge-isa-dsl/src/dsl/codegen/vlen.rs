@@ -257,13 +257,14 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
     let form = &info.form;
     let fields = info.inst.fields.as_ref();
     let field_val = |k: &str| fields.and_then(|f| f.get(k)).copied().unwrap_or(0);
-    // 每个 Reg 操作数的固定宽度（槽 class 组宽度；class=None → 多态 None）
+    // 每个 Reg 操作数的固定宽度（槽 class 组宽**字节**；class=None → 多态 None）。
+    // 单位是字节：与生成代码里的 `__opsize`（字节）同口径。
     let reg_view: Vec<Option<u16>> = info
         .operands
         .iter()
         .map(|(_, _, s, _)| {
             if s.kind == OperandKind::Reg {
-                s.class.as_ref().map(|c| c.width())
+                s.class.as_ref().map(|c| c.bytes())
             } else {
                 None
             }
@@ -296,7 +297,8 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
                         slot.kind.kind_name()
                     ));
                 }
-                (true, Some(quote! { #fid.width() }))
+                // 生成代码的 `__opsize` 是**字节**，`PhysReg::width()` 是**位**。
+                (true, Some(quote! { (#fid.width() / 8) }))
             }
             // Named 在 collect_inst_infos 已解析成 Slot（按 ops 声明序）
             Opsize::Named(n) => {
@@ -319,7 +321,7 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
                     .operands
                     .iter()
                     .filter(|(_, _, s, _)| s.kind == OperandKind::Reg)
-                    .map(|(_, fid, _, _)| quote! { #fid.width() })
+                    .map(|(_, fid, _, _)| quote! { (#fid.width() / 8) })
                     .collect();
                 let Some((first, rest)) = widths.split_first() else {
                     return Err(format!(
@@ -509,7 +511,7 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
                     // 该前缀（`addr_size_override`）时才可能为真；否则前缀字节为 0、
                     // 不发射。
                     let addr_ovr_expr = if m.addr_size_override()?.is_some() {
-                        let aw = m.addr_class()?.width();
+                        let aw = m.addr_class()?.bits();
                         if modrm.memref {
                             Some(quote! {
                                 #rm.base.map_or(false, |__r: Reg| {
@@ -754,10 +756,10 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             if let Some(Some(w)) = ctx.reg_view.get(i) {
                 let name_lit = syn::LitStr::new(&info.inst.name, proc_macro2::Span::call_site());
                 width_checks.push(quote! {
-                    if #fid.width() != #w {
+                    if #fid.width() != (#w as u16) * 8 {
                         return Err(format!(
                             "{}: operand {} must be a {}-bit register (got {}-bit)",
-                            #name_lit, #i, #w, #fid.width()
+                            #name_lit, #i, (#w as u16) * 8, #fid.width()
                         ));
                     }
                 });

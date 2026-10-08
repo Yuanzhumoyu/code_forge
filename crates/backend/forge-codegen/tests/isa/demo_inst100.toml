@@ -26,8 +26,6 @@ version = "15.0"
 endian = "little"
 mode = 8
 # 100 位字（13 字节；字长任意，无白名单/上限）
-addr_width = 1
-value_gpr_width = 1
 case_insensitive_regs = true
 comment_char = "#"
 label_suffix = ":"
@@ -39,7 +37,7 @@ kind = "fixed"
 bits = 100
 default_opsize = 8
 
-[reg.gpr1]
+[reg.gpr8]
 base_index = 0
 names = [
     "A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7",
@@ -59,7 +57,7 @@ rs2 = { offset = 4,  width = 4 }   # 源寄存器 2
 [[operand_slots]]
 name = "r4"
 kind = "reg"
-class = "gpr1"
+class = "gpr8"
 roles = "inout"
 
 # ─────────────────────────── 编码形式 ───────────────────────────
@@ -97,3 +95,7 @@ form = "R2"
 opcode = 2
 ops = ["dst:r4:out", "src:r4"]
 asm = "mov {dst}, {src}"
+
+[machine]
+addr = "gpr8"
+value_gpr = "gpr8"

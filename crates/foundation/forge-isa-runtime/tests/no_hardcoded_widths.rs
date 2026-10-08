@@ -24,31 +24,31 @@
 /// `[stack].fp_save` 派生，其中**栈参数**（`roles = ["stack_arg_load"]`）与
 /// `wide_vec_*` / `frame_rbp_addr` 路径的角色目前只有 x86 声明）。
 const FORBIDDEN: &[&str] = &[
-    "RegClass::GPR(1)",
-    "RegClass::GPR(2)",
-    "RegClass::GPR(4)",
     "RegClass::GPR(8)",
     "RegClass::GPR(16)",
     "RegClass::GPR(32)",
     "RegClass::GPR(64)",
+    "RegClass::GPR(128)",
+    "RegClass::GPR(256)",
+    "RegClass::GPR(512)",
     "RegClass::GPR64",
-    "RegClass::FPR(4)",
-    "RegClass::FPR(8)",
-    "RegClass::FPR(16)",
     "RegClass::FPR(32)",
     "RegClass::FPR(64)",
+    "RegClass::FPR(128)",
+    "RegClass::FPR(256)",
+    "RegClass::FPR(512)",
     "RegClass::FPR64",
-    "RegClass::VEC(8)",
-    "RegClass::VEC(16)",
-    "RegClass::VEC(32)",
     "RegClass::VEC(64)",
     "RegClass::VEC(128)",
     "RegClass::VEC(256)",
-    "RegClass::KReg(4)",
-    "RegClass::KReg(8)",
-    "RegClass::KReg(16)",
+    "RegClass::VEC(512)",
+    "RegClass::VEC(1024)",
+    "RegClass::VEC(2048)",
     "RegClass::KReg(32)",
     "RegClass::KReg(64)",
+    "RegClass::KReg(128)",
+    "RegClass::KReg(256)",
+    "RegClass::KReg(512)",
 ];
 
 /// 白名单：(相对 `src/` 的路径, 该行 trim 后的内容, 理由)。
@@ -93,7 +93,7 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ),
     (
         "machine/reg_info.rs",
-        "RegClass::FPR(8)",
+        "RegClass::FPR(64)",
         "TargetRegInfo::value_fpr_class 的 trait 缺省 = 历史 FPR64（f64 值池宽），\
          **不等于** default_fpr_class（后者是 ABI/SSE 占位基准，x86 = FPR(16)）",
     ),

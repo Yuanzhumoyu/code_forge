@@ -55,13 +55,13 @@ pub trait TargetRegInfo: Send + Sync + 'static {
     /// **不等于** `default_fpr_class()`——后者是 ABI/SSE 占位基准（x86 = FPR(16)
     /// = XMM）。元数据驱动：DSL 从 `[meta].value_fpr_width` 生成。
     fn value_fpr_class(&self) -> RegClass {
-        RegClass::FPR(8)
+        RegClass::FPR(64)
     }
 
     /// ABI 栈槽单位（字节）：alloca/聚合拆分/传参栈槽/spill 槽对齐。
     /// 元数据驱动：DSL 从 `[meta].slot_bytes` 或地址类宽度派生（x86 = 8）。
     fn slot_bytes(&self) -> u16 {
-        self.addr_class().width()
+        self.addr_class().bytes()
     }
 
     /// 向量类的字节档位（升序）：`reg_class_for` 把向量字节数夹到"最小的
@@ -73,7 +73,7 @@ pub trait TargetRegInfo: Send + Sync + 'static {
 
     /// 类型 → 寄存器类；`None` = 本 ISA 无法承载该类型（调用方必须报
     /// `Unsupported`，**不得**静默降级到某个宽度缺省）。
-    /// 缺省实现 = `RegClass::from_type_id`（i8→GPR(1)/i64→GPR(8)/f64→FPR(8)/…）。
+    /// 缺省实现 = `RegClass::from_type_id`（i8→GPR(8)/i64→GPR(64)/f64→FPR(64)/…）。
     /// DSL 生成的实现：① 先查 `[types]` 显式映射（ISA 数据，可表达软浮点
     /// `f64 = "gpr8"`、1 字节地址 `ptr = "gpr1"` 等非常规映射）；② 再走
     /// `class_for_type_in_pool`（族 + 值池宽 + 寄存器文件存在性）。
@@ -89,9 +89,9 @@ pub trait TargetRegInfo: Send + Sync + 'static {
     }
 
     /// 寄存器类的字节宽度（从 ISA TOML [reg_classes] 读取）。
-    /// 默认使用 RegClass::default_width()。
+    /// 默认使用 `RegClass::bytes()`（payload 是位宽，字节宽由它派生）。
     fn reg_class_width(&self, class: RegClass) -> u8 {
-        class.default_width()
+        class.bytes() as u8
     }
 
     /// 栈指针寄存器。
@@ -126,7 +126,7 @@ pub trait TargetRegInfo: Send + Sync + 'static {
     /// 缺省 = **地址类宽度**（元数据派生：1 字节寄存器 ISA = 1；DSL 生成的
     /// `RegInfo` 一律用 `[meta].fp_overhead_bytes` 覆写）。
     fn frame_pointer_overhead(&self) -> u32 {
-        self.addr_class().width() as u32
+        self.addr_class().bytes() as u32
     }
 
     /// 预着色的 VReg → PReg 映射（如 RAX = VReg(0) 用于返回值）。
@@ -158,23 +158,25 @@ pub fn class_for_type_in_pool(
     vector_tiers: &[u16],
 ) -> Option<RegClass> {
     match RegClass::from_type_id(ty) {
-        RegClass::GPR(w) => (w <= gpr_pool.width()).then_some(RegClass::GPR(w)),
+        RegClass::GPR(w) => (w <= gpr_pool.bits()).then_some(RegClass::GPR(w)),
         RegClass::FPR(w) => {
             let pool = fpr_pool?;
-            (w <= pool.width()).then_some(RegClass::FPR(w))
+            (w <= pool.bits()).then_some(RegClass::FPR(w))
         }
         RegClass::VEC(_) => {
             // 无浮点寄存器文件的 ISA 也没有向量寄存器（x86 的 XMM/VEC 与
             // FPR 同组）——不能放行，否则会构造该 ISA 不存在的 VEC 类。
             let _ = fpr_pool?;
-            // 内建向量常量有静态总位宽；动态向量（None→0）按旧行为取最小档
+            // 内建向量常量有静态总位宽；动态向量（None→0）按旧行为取最小档。
+            // `vector_tiers` 是**字节**档位（[meta].vector_tiers 的口径），
+            // 所以夹取用字节，构造 RegClass 时再换算回位。
             let bytes = (ty.builtin_vector_bits().unwrap_or(0) / 8) as u16;
             let tier = vector_tiers
                 .iter()
                 .copied()
                 .find(|t| *t >= bytes)
                 .or_else(|| vector_tiers.last().copied())?;
-            Some(RegClass::VEC(tier.max(1)))
+            Some(RegClass::VEC(tier.max(1) * 8))
         }
         RegClass::KReg(w) => Some(RegClass::KReg(w)),
     }

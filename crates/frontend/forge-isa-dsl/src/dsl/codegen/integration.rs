@@ -603,21 +603,23 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
             .reg
             .keys()
             .filter_map(|rc| match rc {
-                RegClass::GPR(w) => Some(*w),
+                // 类表 `width` 字段是**字节**（`RegisterClassInfo.width: u8`）。
+                RegClass::GPR(w) => Some(*w / 8),
                 _ => None,
             })
             .collect();
         for w in [1u16, 2, 4, 8] {
-            if w <= gpr_main.width() {
+            if w <= gpr_main.bytes() {
                 gpr_widths.push(w);
             }
         }
-        gpr_widths.push(model.addr_class()?.width());
-        gpr_widths.push(model.value_gpr_class()?.width());
+        gpr_widths.push(model.addr_class()?.bytes());
+        gpr_widths.push(model.value_gpr_class()?.bytes());
         gpr_widths.sort_unstable();
         gpr_widths.dedup();
         for w in gpr_widths {
-            let cls = RegClass::GPR(w);
+            let w_bits = w * 8;
+            let cls = RegClass::GPR(w_bits);
             let gname = cls.to_string();
             class_entries.push(quote! {
                 crate::machine::isa_info::RegisterClassInfo {
@@ -625,7 +627,7 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
                     count: #gpr_count as u16,
                     width: #w,
                     prefix: "",
-                    reg_class: forge_ir::RegClass::GPR(#w),
+                    reg_class: forge_ir::RegClass::GPR(#w_bits),
                     allocatable: vec![#(#gp_alloc),*],
                 }
             });
@@ -635,17 +637,18 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
             // 同规则：`value_fpr_class()` 缺省 FPR(8)）。riscv 这类"只有 fpr4 组、
             // 但浮点值类为 FPR(8)"的 ISA 必须把 FPR(8) 也登记进类表，否则浮点值
             // vreg 的类不在分配器配置里 —— riscv 矩阵 fcmp 系列实测错值。
-            let value_fpr_eff = model.value_fpr_class()?.unwrap_or(RegClass::FPR(8));
-            let mut fpr_widths: Vec<u16> = vec![value_fpr_eff.width(), fpr_main.width()];
+            let value_fpr_eff = model.value_fpr_class()?.unwrap_or(RegClass::FPR(64));
+            let mut fpr_widths: Vec<u16> = vec![value_fpr_eff.bytes(), fpr_main.bytes()];
             for rc in model.reg.keys() {
                 if let RegClass::FPR(w) = rc {
-                    fpr_widths.push(*w);
+                    fpr_widths.push(*w / 8);
                 }
             }
             fpr_widths.sort_unstable();
             fpr_widths.dedup();
             for w in fpr_widths {
-                let gname = RegClass::FPR(w).to_string();
+                let w_bits = w * 8;
+                let gname = RegClass::FPR(w_bits).to_string();
                 // 池 = 浮点寄存器文件的分配序（`0..num_fp_regs`）：同一物理文件
                 // 的不同宽度视图共用池（x86 FPR(8)/FPR(16)/FPR(32) 共享 XMM/ZMM
                 // 编号空间；riscv FPR(4)/FPR(8) 共享 fa 编号空间）。
@@ -655,13 +658,14 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
                         count: #fpr_count as u16,
                         width: #w,
                         prefix: "",
-                        reg_class: forge_ir::RegClass::FPR(#w),
+                        reg_class: forge_ir::RegClass::FPR(#w_bits),
                         allocatable: vec![#(#fp_alloc),*],
                     }
                 });
             }
             for t in model.vector_tiers() {
-                let cls = RegClass::VEC(t);
+                let t_bits = t * 8;
+                let cls = RegClass::VEC(t_bits);
                 let gname = cls.to_string();
                 class_entries.push(quote! {
                     crate::machine::isa_info::RegisterClassInfo {
@@ -669,7 +673,7 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
                         count: #fpr_count as u16,
                         width: #t,
                         prefix: "",
-                        reg_class: forge_ir::RegClass::VEC(#t),
+                        reg_class: forge_ir::RegClass::VEC(#t_bits),
                         allocatable: vec![#(#fp_alloc),*],
                     }
                 });
@@ -816,7 +820,7 @@ fn gen_target_machine(model: &IsaModel) -> Result<TokenStream, String> {
     // ② **搬运族派生**（`data_width` + 操作数结构 → 方向/寄存器族/宽度，
     // 与 `forge-isa abi check` 的静态视图同源，都走 `moves::MoveTable`）。
     // 无宽度语义的能力按地址宽折算。
-    let default_bits: u16 = model.addr_class().map(|c| c.width()).unwrap_or(8) * 8;
+    let default_bits: u16 = model.addr_class().map(|c| c.bits()).unwrap_or(64);
     let mut caps: Vec<(&'static str, u16)> = Vec::new();
     let mut push_cap =
         |name: &'static str, bits: u16| match caps.iter_mut().find(|(n, _)| *n == name) {

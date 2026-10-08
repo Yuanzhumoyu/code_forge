@@ -3,7 +3,7 @@
 # 与 `include_root.toml` 一起验证：数组节按 include 序追加、表节跨文件合并、
 # 以及 `[[override]]` 显式覆盖（根文件把 base 的 `[meta].version` 改掉）。
 
-[reg.gpr4]
+[reg.gpr32]
 names = ["R0", "R1", "R2", "R3"]
 
 [conventions.bitfields]
@@ -14,7 +14,7 @@ rs1 = { offset = 4, width = 4 }
 [[operand_slots]]
 name = "r"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 roles = "inout"
 
 [[forms]]

@@ -373,7 +373,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 Some(ty) => self.ctx.opsize_from_type(&ty),
                 // 无类型信息可用（罕见）：用 ISA 的值池宽（x86/riscv = 64 位；
                 // 1 字节寄存器 ISA = 8 位）——不再是 x86 的常量 64。
-                None => (self.ctx.value_gpr_class.width() as u8).saturating_mul(8),
+                None => self.ctx.value_gpr_class.bits() as u8,
             };
             // Load/Store 用真实内存宽度：opsize_from_type 对 <4 字节类型返回 32
             // 是寄存器安全折中（窄类型算术用 32 位避免残留高位），但 load/store

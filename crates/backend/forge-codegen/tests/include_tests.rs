@@ -126,11 +126,11 @@ fn parts_encode_only_module_still_encodes() {
     );
 }
 
-/// 生成物仍带 `[reg.gpr4]` 派生的元数据（该部件的公共前提恒定发射）。
+/// 生成物仍带 `[reg.gpr32]` 派生的元数据（该部件的公共前提恒定发射）。
 #[test]
 fn parts_encode_only_keeps_reg_class_metadata() {
     let tm = TargetMachine::new();
     let ri = TargetMachineTrait::reg_info(&tm);
-    assert_eq!(ri.default_gpr_class(), RegClass::GPR(4), "4 个寄存器一组");
+    assert_eq!(ri.default_gpr_class(), RegClass::GPR(32), "4 个寄存器一组");
     assert_eq!(ri.num_gp_regs(), 4);
 }

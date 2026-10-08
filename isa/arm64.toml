@@ -17,11 +17,6 @@
 
 [meta]
 name = "arm64"
-# 主 FPR 类基准：AAPCS64 的浮点值池是 8 字节（v8-v15 的低 64 位），而 FP 的**宽度视图**
-# （`fpr1`/`fpr2`/`fpr4`/`fpr16` = B/H/S/Q）里最宽的是 16——不钉住的话"主 FPR 类"会按
-# 最宽组取到 Q，ABI 拿它去找 `V0` 就找不到（实测 aapcs64 计划报 `UnresolvedReg`）。
-# 显式声明 ⇒ 主类恒为 FPR(8)（V/D 视图）。
-default_fpr_width = 8
 version = "0.1.0"
 endian = "little"
 mode = 64
@@ -38,14 +33,14 @@ imm_prefix = "#"
 directive_prefix = "."
 
 # ─────────────────────────── 寄存器组 ───────────────────────────
-# X0-X30（gpr8，64 位）与 W0-W30（gpr4，32 位）共享物理编号 0-30
+# X0-X30（gpr64，64 位）与 W0-W30（gpr32，32 位）共享物理编号 0-30
 # （A64 中 Xn/Wn 是同一寄存器组的不同宽度视图）。SP/XZR（31 号上下
 # 文语义）后续迭代。
 [encoding]
 kind = "fixed"
 bits = 32
 
-[reg.gpr8]
+[reg.gpr64]
 base_index = 0
 names = [
     "X0","X1","X2","X3","X4","X5","X6","X7",
@@ -58,7 +53,7 @@ names = [
 # IP0/IP1 是 X16/X17（链接器 scratch）。**少一个都整行落红**——序言/尾声那批文件全用惯用名。
 aliases = { XZR = 31, LR = 30, FP = 29, IP0 = 16, IP1 = 17 }
 
-[reg.gpr4]
+[reg.gpr32]
 base_index = 0
 names = [
     "W0","W1","W2","W3","W4","W5","W6","W7",
@@ -748,25 +743,25 @@ fields = ["vq", "vsize"]
 [[operand_slots]]
 name = "rz64"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 zr31 = true
 
 [[operand_slots]]
 name = "rz32"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 zr31 = true
 
 [[operand_slots]]
 name = "r64"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 roles = "inout"
 
 [[operand_slots]]
 name = "r32"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 roles = "inout"
 
 # ── 扩展寄存器操作数的三段：关键字（命名立即数）+ 量 ──
@@ -2847,7 +2842,7 @@ asm = "subs {dst}, {src}, {src2}, lsl #{sh}"
 # ── SIMD&FP 访存（`ldr d8, [sp, #8]` / `str s7, [sp, #4]` / `stp d8, d9, [sp, #-64]!`）──
 #
 # 宽度只体现在寄存器名上（助记符都是 `ldr`/`str`/`ldp`/`stp`），所以按**视图**分槽
-# （见 [reg.fpr1..fpr16] 的说明）；imm12/imm7 的单位 = 访问宽度。
+# （见 [reg.fpr8..fpr128] 的说明）；imm12/imm7 的单位 = 访问宽度。
 
 [[instructions]]
 name = "LDRB_FP"
@@ -5316,60 +5311,60 @@ asm = "sub x0, x0, x0"
 # 追加到 isa/arm64.toml 末尾：浮点/向量搬运能力（A5 子集）
 
 # ── 浮点/向量寄存器组（AAPCS64：v0-v7 传参、v0 返回；宽度由指令决定）──
-[reg.fpr8]
+[reg.fpr64]
 names = ["V0", "V1", "V2", "V3", "V4", "V5", "V6", "V7",
          "V8", "V9", "V10", "V11", "V12", "V13", "V14", "V15",
          "V16", "V17", "V18", "V19", "V20", "V21", "V22", "V23",
          "V24", "V25", "V26", "V27", "V28", "V29", "V30", "V31"]
 
 # ── FP 的**宽度视图**：宽度必须由寄存器组承载 ──
-# 既有 `[reg.fpr8]`（V0..V31）就是 **D 视图**，下面给它挂 `D0..D31` 别名；
+# 既有 `[reg.fpr64]`（V0..V31）就是 **D 视图**，下面给它挂 `D0..D31` 别名；
 # B/H/S/Q 各开一组。若共用一个组，`ldr s0,…` 与 `ldr d0,…` 的文本形状相同、分派只能取
 # 先声明的那条（实测把 S 编成了 D）——所以宽度不能只靠"名字在同一个池里"。
 aliases = { D0 = 0, D1 = 1, D2 = 2, D3 = 3, D4 = 4, D5 = 5, D6 = 6, D7 = 7, D8 = 8, D9 = 9, D10 = 10, D11 = 11, D12 = 12, D13 = 13, D14 = 14, D15 = 15, D16 = 16, D17 = 17, D18 = 18, D19 = 19, D20 = 20, D21 = 21, D22 = 22, D23 = 23, D24 = 24, D25 = 25, D26 = 26, D27 = 27, D28 = 28, D29 = 29, D30 = 30, D31 = 31 }
-[reg.fpr1]
+[reg.fpr8]
 prefix = "B"
 count = 32
 aliases = {}
 
-[reg.fpr2]
+[reg.fpr16]
 prefix = "H"
 count = 32
 aliases = {}
 
-[reg.fpr4]
+[reg.fpr32]
 prefix = "S"
 count = 32
 aliases = {}
 
-[reg.fpr16]
+[reg.fpr128]
 prefix = "Q"
 count = 32
 aliases = {}
 [[operand_slots]]
 name = "fprb"
 kind = "reg"
-class = "fpr1"
+class = "fpr8"
 
 [[operand_slots]]
 name = "fprh"
 kind = "reg"
-class = "fpr2"
+class = "fpr16"
 
 [[operand_slots]]
 name = "fprs"
 kind = "reg"
-class = "fpr4"
+class = "fpr32"
 
 [[operand_slots]]
 name = "fprq"
 kind = "reg"
-class = "fpr16"
+class = "fpr128"
 
 [[operand_slots]]
 name = "fpr"
 kind = "reg"
-class = "fpr8"
+class = "fpr64"
 
 [[forms]]
 name = "FMOVR"    # FMOV（标量寄存器）：rd/rn（[31:24] = op8 常量、[23:16]/[15:10] 保留位）
@@ -5516,6 +5511,15 @@ load = "LDURQ_FP {0}, X29, {1}"
 store = "STURQ_FP {0}, X29, {1}"
 
 [machine]
+# ── 寄存器类指针（v21 W1）：宽度只在 `[reg.<名>]` 表头里，这里只指"哪一组" ──
+# 主 FPR 类基准：AAPCS64 的浮点值池是 8 字节（v8-v15 的低 64 位），FP 的宽度视图里
+# 最宽的是 Q（fpr128）——不钉住的话"主 FPR 类"会按最宽组取到 Q，ABI 拿它去找 `V0`
+# 就找不到（实测 aapcs64 计划报 `UnresolvedReg`）。显式声明 ⇒ 主类恒为 D 视图。
+gpr = "gpr64"
+fpr = "fpr64"
+addr = "gpr64"
+value_gpr = "gpr64"
+value_fpr = "fpr64"
 # 机器事实（v20 A5）：溢出与栈参数收参用的 scratch（emission 的 spill load/store 也用它）。
 spill_scratch = ["X16", "X17"]
 # 帧为 callee-saved 预留的推入槽数（机器事实，v20 A6；与 `[abi.callee_saved]` 的 10 条同义）。

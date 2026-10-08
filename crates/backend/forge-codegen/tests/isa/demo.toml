@@ -8,7 +8,7 @@
 # `mov64` 等拆分名（[[operand_slots]] 多类型 + 类型签名特异性排序）。
 #
 # 演示要点：
-# - 三个宽度视图组 gpr2(16 位 W0-W7)/gpr4(32 位 R0-R7)/gpr8(64 位 X0-X7)
+# - 三个宽度视图组 gpr16(16 位 W0-W7)/gpr32(32 位 R0-R7)/gpr64(64 位 X0-X7)
 #   共用物理编号 0-7（base_index=0）。
 # - `add`：三个 form（opcode 0x10/0x11/0x12），asm 助记符均为 "add"——
 #   `add w1, w2, w3` → ADD16、`add r1, r2, r3` → ADD32、`add x1, x2, x3` → ADD64。
@@ -33,15 +33,15 @@ mnemonic_case = "insensitive"
 kind = "fixed"
 bits = 32
 
-[reg.gpr2]
+[reg.gpr16]
 base_index = 0
 names = ["W0", "W1", "W2", "W3", "W4", "W5", "W6", "W7"]
 
-[reg.gpr4]
+[reg.gpr32]
 base_index = 0
 names = ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7"]
 
-[reg.gpr8]
+[reg.gpr64]
 base_index = 0
 names = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7"]
 
@@ -49,8 +49,8 @@ names = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7"]
 # 软浮点演示：本 ISA 没有 FPR 组，但显式声明 f32/f64 走 64 位 GPR
 #（值池里就是 8 字节寄存器）——"非常规映射"是 ISA 数据，不是宿主代码。
 [types]
-f32 = "gpr8"
-f64 = "gpr8"
+f32 = "gpr64"
+f64 = "gpr64"
 
 # ─────────────────────── 命名位域 ───────────────────────
 [conventions.bitfields]
@@ -66,19 +66,19 @@ word   = { offset = 0,  width = 32 }
 [[operand_slots]]
 name = "r16"
 kind = "reg"
-class = "gpr2"
+class = "gpr16"
 roles = "inout"
 
 [[operand_slots]]
 name = "r32"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 roles = "inout"
 
 [[operand_slots]]
 name = "r64"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 roles = "inout"
 
 [[operand_slots]]

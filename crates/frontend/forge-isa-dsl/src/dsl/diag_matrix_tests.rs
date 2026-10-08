@@ -20,7 +20,7 @@ name = "s1_base"
 kind = "fixed"
 bits = 32
 
-[reg.gpr8]
+[reg.gpr64]
 names = ["X0", "X1", "X2", "X3", "X8", "X9", "X10"]
 
 [conventions.bitfields]
@@ -33,7 +33,7 @@ funct3 = { offset = 12, width = 3 }
 [[operand_slots]]
 name = "gpr"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 roles = "inout"
 
 [[operand_slots]]
@@ -134,7 +134,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         ),
         (
             "缺 GPR 组",
-            BASE.replace("[reg.gpr8]", "[reg.fpr4]"),
+            BASE.replace("[reg.gpr64]", "[reg.fpr32]"),
             "DSL-REG",
             "GPR",
         ),
@@ -149,7 +149,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         ),
         (
             "槽重复",
-            plus("[[operand_slots]]\nname = \"gpr\"\nkind = \"reg\"\nclass = \"gpr8\""),
+            plus("[[operand_slots]]\nname = \"gpr\"\nkind = \"reg\"\nclass = \"gpr64\""),
             "DSL-SLOT",
             "gpr",
         ),

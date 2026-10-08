@@ -19,10 +19,10 @@ name = "s2_base"
 kind = "fixed"
 bits = 32
 
-[reg.gpr4]
+[reg.gpr32]
 names = ["W0", "W1", "W2", "W3"]
 
-[reg.gpr8]
+[reg.gpr64]
 names = ["X0", "X1", "X2", "X3"]
 
 [conventions.bitfields]
@@ -36,13 +36,13 @@ funct7 = { offset = 25, width = 7 }
 [[operand_slots]]
 name = "r32"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 roles = "inout"
 
 [[operand_slots]]
 name = "r64"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 roles = "inout"
 
 [[operand_slots]]

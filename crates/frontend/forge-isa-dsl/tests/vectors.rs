@@ -28,7 +28,7 @@ mode = 16
 kind = "fixed"
 bits = 16
 
-[reg.gpr1]
+[reg.gpr8]
 names = ["R0", "R1", "R2", "R3"]
 
 [conventions.bitfields]
@@ -40,7 +40,7 @@ imm = {{ offset = 0, width = 5 }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr1"
+class = "gpr8"
 
 [[operand_slots]]
 name = "imm5"

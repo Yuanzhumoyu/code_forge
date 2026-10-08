@@ -72,12 +72,12 @@ name = "bad"
 [encoding]
 kind = "fixed"
 bits = 32
-[reg.gpr4]
+[reg.gpr32]
 count = 8
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 [[instructions]]
 name = "I"
 form = "NOPE"
@@ -221,7 +221,7 @@ fn validate_accepts_schema_comment() {
     // `#:schema` 只是 TOML 注释：不得影响解析（编辑器补全用）。
     let spec = temp_spec(
         "with_schema_comment.toml",
-        "#:schema ../../../isa-dsl.schema.json\n[meta]\nname = \"cmt\"\n[encoding]\nkind = \"fixed\"\nbits = 16\n[reg.gpr4]\ncount = 8\n[[operand_slots]]\nname = \"g\"\nkind = \"reg\"\nclass = \"gpr4\"\n[[instructions]]\nname = \"N\"\nform = \"R\"\nopcode = 1\nops = [\"d:g:out\"]\nasm = \"n {d}\"\n[[forms]]\nname = \"R\"\nopcode_field = \"op\"\noperand_fields = [\"rd\"]\n[conventions.bitfields]\nop = { offset = 0, width = 8 }\nrd = { offset = 8, width = 3 }\n",
+        "#:schema ../../../isa-dsl.schema.json\n[meta]\nname = \"cmt\"\n[encoding]\nkind = \"fixed\"\nbits = 16\n[reg.gpr32]\ncount = 8\n[[operand_slots]]\nname = \"g\"\nkind = \"reg\"\nclass = \"gpr32\"\n[[instructions]]\nname = \"N\"\nform = \"R\"\nopcode = 1\nops = [\"d:g:out\"]\nasm = \"n {d}\"\n[[forms]]\nname = \"R\"\nopcode_field = \"op\"\noperand_fields = [\"rd\"]\n[conventions.bitfields]\nop = { offset = 0, width = 8 }\nrd = { offset = 8, width = 3 }\n",
     );
     let out = run(&["validate", spec.to_str().unwrap()]);
     let _ = std::fs::remove_file(&spec);
@@ -322,7 +322,7 @@ fn diagnostics_point_at_the_included_file() {
     // 片段里故意写一个未声明的寄存器类：错误必须落在 `frag.toml` 上。
     let (dir, root) = temp_multi_file(
         "diag",
-        "[reg.gpr4]\ncount = 4\n\n[[operand_slots]]\nname = \"r\"\nkind = \"reg\"\nclass = \"nope\"\n",
+        "[reg.gpr32]\ncount = 4\n\n[[operand_slots]]\nname = \"r\"\nkind = \"reg\"\nclass = \"nope\"\n",
         "include = [\"frag.toml\"]\n\n[meta]\nname = \"multi\"\n\n[encoding]\nkind = \"fixed\"\nbits = 16\n\n[[instructions]]\nname = \"BAD\"\nopcode = 1\nops = [\"d:r:out\"]\nasm = \"bad {d}\"\n",
     );
     let out = run(&["validate", root.to_str().unwrap()]);
@@ -345,7 +345,7 @@ fn diagnostics_point_at_the_included_file() {
 fn include_errors_are_explicit() {
     let (dir, root) = temp_multi_file(
         "missing",
-        "[reg.gpr4]\ncount = 4\n",
+        "[reg.gpr32]\ncount = 4\n",
         "include = [\"nope.toml\"]\n[meta]\nname = \"x\"\n[encoding]\nkind = \"fixed\"\nbits = 16\n",
     );
     let out = run(&["validate", root.to_str().unwrap()]);
@@ -359,7 +359,7 @@ fn include_errors_are_explicit() {
     // `[[override]]` 指向不存在的键 → 明确报错（拼错不静默）。
     let (dir2, root2) = temp_multi_file(
         "override",
-        "[reg.gpr4]\ncount = 4\n",
+        "[reg.gpr32]\ncount = 4\n",
         "include = [\"frag.toml\"]\n[[override]]\nkey = \"meta.version\"\nvalue = \"9\"\n[meta]\nname = \"x\"\n[encoding]\nkind = \"fixed\"\nbits = 16\n",
     );
     let out2 = run(&["validate", root2.to_str().unwrap()]);

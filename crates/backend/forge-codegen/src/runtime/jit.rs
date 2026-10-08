@@ -2821,8 +2821,8 @@ ret_int = ["RAX"]
             assert_eq!(
                 regs,
                 vec![
-                    vec![(forge_ir::RegClass::GPR(8), 8)],
-                    vec![(forge_ir::RegClass::GPR(8), 9)]
+                    vec![(forge_ir::RegClass::GPR(64), 8)],
+                    vec![(forge_ir::RegClass::GPR(64), 9)]
                 ],
                 "实参落点必须来自自定义绑定（R8/R9），不是 C 的 RCX/RDX"
             );

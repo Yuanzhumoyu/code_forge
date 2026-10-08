@@ -45,7 +45,7 @@ pub(crate) fn setup_conv<M: TargetMachine>(
         .expect("约定注册表被投毒");
 
     // ② 约定级整数返回槽：空参 + 整数返回的合成请求。
-    let w = ctx.value_gpr_class.width() as u32;
+    let w = ctx.value_gpr_class.bytes() as u32;
     let ret_probe = forge_isa_runtime::machine::call_plan::CallRequest::new(ctx.conv.name.clone())
         .rets([ArgShape::int(w.max(1), w.max(1))]);
     if let Ok(p) = crate::pipeline::abi_target::plan_for_shapes(machine, &reg, &ret_probe)
@@ -136,7 +136,7 @@ mod tests {
         let (index, class) = ctx.conv.ret_gpr.expect("约定级返回槽");
         assert_eq!(
             (index, class),
-            (0, forge_ir::RegClass::GPR(8)),
+            (0, forge_ir::RegClass::GPR(64)),
             "win64 的标量整数返回在 RAX（类内号 0）"
         );
         let layout = ctx.conv.layout().expect("函数级布局");

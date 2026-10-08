@@ -20,7 +20,7 @@ fn target_machine_assembles() {
     // RegInfo 基本查询
     let ri = tm.reg_info();
     // 可编码 GPR 数 = 32（APX 的 r16..r31 也能编）；**分配池**只有前 16 个
-    // （`[reg.gpr8].alloc_count = 16`，见 `abi_target_real.rs`）。
+    // （`[reg.gpr64].alloc_count = 16`，见 `abi_target_real.rs`）。
     assert_eq!(ri.num_gp_regs(), 32, "x86 可编码 GPR 数（含 APX EGPR）");
     assert!(ri.num_fp_regs() >= 16, "x86 XMM 数");
 }
@@ -53,7 +53,7 @@ fn machine_inst_queries() {
         }
         _ => panic!("expected MovRRm"),
     }
-    // PhysReg：谱内物理编号 = 组内索引（x86 gpr64 0..15；xmm 组内 0..15）
+    // PhysReg：谱内物理编号 = 组内索引（x86 gpr512 0..15；xmm 组内 0..15）
     assert_eq!(Reg::RAX.to_index(), 0);
     assert_eq!(Reg::R8.to_index(), 8);
     assert_eq!(Reg::XMM0.to_index(), 0);
@@ -106,8 +106,8 @@ fn encoder_decoder_via_tm() {
     assert_eq!(
         insts,
         vec![Inst::MovRmR24 {
-            src: Reg::from_index(3, forge_ir::RegClass::GPR(4)),
-            dst: Reg::from_index(0, forge_ir::RegClass::GPR(4)),
+            src: Reg::from_index(3, forge_ir::RegClass::GPR(32)),
+            dst: Reg::from_index(0, forge_ir::RegClass::GPR(32)),
         }]
     );
     // 8B 形态（别的汇编器会编出来）必须解得回来：两条合法编码收敛到同一段文本。

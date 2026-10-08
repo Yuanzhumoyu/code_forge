@@ -295,7 +295,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 纯 def 的 XReg 也 load（其值会被指令覆盖，无害但保证 use/def 语义统一）。
         for (i, &xreg) in spilled.iter().enumerate() {
             let spill_off = alloc_result.spill_slot(xreg).offset;
-            let width = xreg.width();
+            let width = xreg.bytes();
             frame_lowering.emit_spill_load(
                 spill_scratch[i].num,
                 sp_base + spill_off,
@@ -331,7 +331,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // Store spilled defs back to stack
         for (i, &xreg) in spilled.iter().enumerate() {
             let spill_off = alloc_result.spill_slot(xreg).offset;
-            let width = xreg.width();
+            let width = xreg.bytes();
             if crate::pipeline::trace_enabled("FORGE_TRACE_SPILL") {
                 eprintln!(
                     "[spill] {fname} store x{} width={} off={} fp={}",

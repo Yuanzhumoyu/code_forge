@@ -211,14 +211,14 @@ impl XReg {
         self.class
     }
 
-    /// 位宽（字节数，如 2=16 位、4=32 位、8=64 位）。
-    pub fn width(&self) -> u16 {
-        self.class.width()
+    /// 字节宽（由位宽派生；位宽非 8 的倍数时向上取整）。
+    pub fn bytes(&self) -> u16 {
+        self.class.bytes()
     }
 
-    /// 位宽（bit，如 16/32/64）。
+    /// 位宽（bit，如 8/16/32/64/128）。
     pub fn bits(&self) -> u16 {
-        self.width() * 8
+        self.class.bits()
     }
 }
 
@@ -426,54 +426,60 @@ impl TypeId {
 /// VEC256 (YMM) 包含 VEC128 子寄存器。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RegClass {
-    /// 通用整数寄存器，payload = 字节宽度（任意 ISA 自定义宽度）。
+    /// 通用整数寄存器，payload = **位宽**（任意 ISA 自定义宽度）。
     GPR(u16),
-    /// 浮点寄存器，payload = 字节宽度。
+    /// 浮点寄存器，payload = **位宽**。
     FPR(u16),
-    /// 向量寄存器，payload = 字节宽度。
+    /// 向量寄存器，payload = **位宽**。
     VEC(u16),
-    /// 掩码寄存器（如 x86 AVX-512 k0-k7），payload = 字节宽度。
+    /// 掩码寄存器（如 x86 AVX-512 k0-k7），payload = **位宽**。
     KReg(u16),
 }
 
 /// 向后兼容别名与便捷常量。
 impl RegClass {
     // ── 旧裸变体名的便捷常量（64 位主视图）──
-    /// [`RegClass::GPR(8)`]（64 位整数）。
-    pub const GPR64: Self = Self::GPR(8);
-    /// [`RegClass::FPR(8)`]（64 位浮点）。
-    pub const FPR64: Self = Self::FPR(8);
+    /// [`RegClass::GPR(64)`]（64 位整数）。
+    pub const GPR64: Self = Self::GPR(64);
+    /// [`RegClass::FPR(64)`]（64 位浮点）。
+    pub const FPR64: Self = Self::FPR(64);
     /// [`RegClass::GPR64`] 的旧称（64 位视图）。
     #[allow(nonstandard_style)]
-    pub const Int: Self = Self::GPR(8);
+    pub const Int: Self = Self::GPR(64);
     /// [`RegClass::FPR64`] 的旧称（64 位视图）。
     #[allow(nonstandard_style)]
-    pub const Float: Self = Self::FPR(8);
+    pub const Float: Self = Self::FPR(64);
 
     // ── 宽度子类常量（原 GPR8/GPR16/GPR32/VEC128/VEC256 变体）──
-    /// 8 位整数（1 字节）。
-    pub const GPR8: Self = Self::GPR(1);
-    /// 16 位整数（2 字节）。
-    pub const GPR16: Self = Self::GPR(2);
-    /// 32 位整数（4 字节）。
-    pub const GPR32: Self = Self::GPR(4);
-    /// 128 位向量（16 字节，如 x86 XMM）。
-    pub const VEC128: Self = Self::VEC(16);
-    /// 256 位向量（32 字节，如 x86 YMM）。
-    pub const VEC256: Self = Self::VEC(32);
-    /// 64 位掩码寄存器（8 字节，如 x86 k0-k7）。
-    pub const KREG64: Self = Self::KReg(8);
+    /// 8 位整数。
+    pub const GPR8: Self = Self::GPR(8);
+    /// 16 位整数。
+    pub const GPR16: Self = Self::GPR(16);
+    /// 32 位整数。
+    pub const GPR32: Self = Self::GPR(32);
+    /// 128 位向量（如 x86 XMM）。
+    pub const VEC128: Self = Self::VEC(128);
+    /// 256 位向量（如 x86 YMM）。
+    pub const VEC256: Self = Self::VEC(256);
+    /// 64 位掩码寄存器（如 x86 k0-k7）。
+    pub const KREG64: Self = Self::KReg(64);
 
-    /// 此类寄存器的宽度（字节）—— 由 payload 决定，支持任意 ISA 宽度。
-    pub fn width(self) -> u16 {
+    /// 此类寄存器的**位宽**—— 由 payload 决定，支持任意 ISA 宽度。
+    pub fn bits(self) -> u16 {
         match self {
             Self::GPR(w) | Self::FPR(w) | Self::VEC(w) | Self::KReg(w) => w,
         }
     }
 
-    /// 此类寄存器的默认宽度（字节）—— 等价于 payload。
-    pub fn default_width(self) -> u8 {
-        self.width() as u8
+    /// 此类寄存器的**字节宽**—— 由位宽派生（向上取整；位宽非 8 的倍数时
+    /// 字节口径必然有损，这类 ISA 的栈/帧计算应改用 `bits()` 口径）。
+    pub fn bytes(self) -> u16 {
+        self.bits().div_ceil(8)
+    }
+
+    /// 此类寄存器的默认**位宽**—— 等价于 payload。
+    pub fn default_bits(self) -> u16 {
+        self.bits()
     }
 
     /// 是否为整数类（GPR 族）。
@@ -515,25 +521,25 @@ impl RegClass {
     pub fn from_type_id(ty: TypeId) -> Self {
         match ty {
             // bool, ptr, i64
-            TypeId::BOOL | TypeId::PTR | TypeId::I64 => Self::GPR(8),
+            TypeId::BOOL | TypeId::PTR | TypeId::I64 => Self::GPR(64),
             // i8
-            TypeId::I8 => Self::GPR(1),
+            TypeId::I8 => Self::GPR(8),
             // i16
-            TypeId::I16 => Self::GPR(2),
+            TypeId::I16 => Self::GPR(16),
             // i32
-            TypeId::I32 => Self::GPR(4),
+            TypeId::I32 => Self::GPR(32),
             // f32, f64
-            TypeId::F32 | TypeId::F64 => Self::FPR(8),
+            TypeId::F32 | TypeId::F64 => Self::FPR(64),
             // I128（x86 由双 GPR 模拟，宽度按主视图）
-            TypeId::I128 => Self::GPR(8),
+            TypeId::I128 => Self::GPR(64),
             // F16, F128
-            TypeId::F16 | TypeId::F128 => Self::FPR(8),
+            TypeId::F16 | TypeId::F128 => Self::FPR(64),
             // V64, V128
-            TypeId::V64 | TypeId::V128 => Self::VEC(16),
+            TypeId::V64 | TypeId::V128 => Self::VEC(128),
             // V256
-            TypeId::V256 => Self::VEC(32),
+            TypeId::V256 => Self::VEC(256),
             // void (0), composite (9, 16+), unknown → GPR fallback
-            _ => Self::GPR(8),
+            _ => Self::GPR(64),
         }
     }
 }
@@ -900,14 +906,17 @@ mod tests {
         // 向后兼容别名
         assert_eq!(RegClass::Int, RegClass::GPR64);
         assert_eq!(RegClass::Float, RegClass::FPR64);
-        // default_width
-        assert_eq!(RegClass::GPR64.default_width(), 8);
-        assert_eq!(RegClass::GPR8.default_width(), 1);
-        assert_eq!(RegClass::GPR16.default_width(), 2);
-        assert_eq!(RegClass::GPR32.default_width(), 4);
-        assert_eq!(RegClass::FPR64.default_width(), 8);
-        assert_eq!(RegClass::VEC128.default_width(), 16);
-        assert_eq!(RegClass::VEC256.default_width(), 32);
+        // default_bits / bytes
+        assert_eq!(RegClass::GPR64.default_bits(), 64);
+        assert_eq!(RegClass::GPR8.default_bits(), 8);
+        assert_eq!(RegClass::GPR16.default_bits(), 16);
+        assert_eq!(RegClass::GPR32.default_bits(), 32);
+        assert_eq!(RegClass::FPR64.default_bits(), 64);
+        assert_eq!(RegClass::VEC128.default_bits(), 128);
+        assert_eq!(RegClass::VEC256.default_bits(), 256);
+        assert_eq!(RegClass::GPR64.bytes(), 8);
+        assert_eq!(RegClass::VEC128.bytes(), 16);
+        assert_eq!(RegClass::VEC256.bytes(), 32);
     }
 
     #[test]
@@ -931,7 +940,8 @@ mod tests {
         assert!(!RegClass::KREG64.is_int());
         assert!(!RegClass::KREG64.is_fp());
         assert!(!RegClass::GPR64.is_mask());
-        assert_eq!(RegClass::KREG64.width(), 8);
+        assert_eq!(RegClass::KREG64.bits(), 64);
+        assert_eq!(RegClass::KREG64.bytes(), 8);
     }
 
     #[test]

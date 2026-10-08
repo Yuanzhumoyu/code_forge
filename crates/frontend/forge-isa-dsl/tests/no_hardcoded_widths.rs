@@ -18,31 +18,31 @@
 /// `fp_overhead_bytes` 派生并由各自测试守护（见
 /// `docs/reference/isa-dsl.md` 的「宽度元数据」节）。
 const FORBIDDEN: &[&str] = &[
-    "RegClass::GPR(1)",
-    "RegClass::GPR(2)",
-    "RegClass::GPR(4)",
     "RegClass::GPR(8)",
     "RegClass::GPR(16)",
     "RegClass::GPR(32)",
     "RegClass::GPR(64)",
+    "RegClass::GPR(128)",
+    "RegClass::GPR(256)",
+    "RegClass::GPR(512)",
     "RegClass::GPR64",
-    "RegClass::FPR(4)",
-    "RegClass::FPR(8)",
-    "RegClass::FPR(16)",
     "RegClass::FPR(32)",
     "RegClass::FPR(64)",
+    "RegClass::FPR(128)",
+    "RegClass::FPR(256)",
+    "RegClass::FPR(512)",
     "RegClass::FPR64",
-    "RegClass::VEC(8)",
-    "RegClass::VEC(16)",
-    "RegClass::VEC(32)",
     "RegClass::VEC(64)",
     "RegClass::VEC(128)",
     "RegClass::VEC(256)",
-    "RegClass::KReg(4)",
-    "RegClass::KReg(8)",
-    "RegClass::KReg(16)",
+    "RegClass::VEC(512)",
+    "RegClass::VEC(1024)",
+    "RegClass::VEC(2048)",
     "RegClass::KReg(32)",
     "RegClass::KReg(64)",
+    "RegClass::KReg(128)",
+    "RegClass::KReg(256)",
+    "RegClass::KReg(512)",
 ];
 
 /// 白名单：(文件后缀, 该行 trim 后的内容, 理由)。
@@ -50,41 +50,41 @@ const FORBIDDEN: &[&str] = &[
 const ALLOWED: &[(&str, &str, &str)] = &[
     (
         "model.rs",
-        "return Ok(RegClass::GPR(4));",
+        "return Ok(RegClass::GPR(32));",
         "`\"gpr\"` 缩写的文档化缺省（RegClass::from_str；显式宽度键才是正路）",
     ),
     (
         "model.rs",
-        "return Ok(RegClass::FPR(4));",
+        "return Ok(RegClass::FPR(32));",
         "`\"fpr\"` 缩写的文档化缺省",
     ),
     (
         "model.rs",
-        "return Ok(RegClass::KReg(8));",
+        "return Ok(RegClass::KReg(64));",
         "`\"kreg\"` 缩写的文档化缺省",
     ),
     (
         "model.rs",
-        "Ok(Some(RegClass::FPR(8)).filter(|rc| self.reg.contains_key(rc)))",
+        "Ok(Some(RegClass::FPR(64)).filter(|rc| self.reg.contains_key(rc)))",
         "浮点值池缺省 = FPR(8)（历史 FPR64 的 f64 值语义，**不得**按最宽 FPR 组推导——\
-         x86 最宽是 ZMM、fpr8 是 MMX）",
+         x86 最宽是 ZMM、fpr64 是 MMX）",
     ),
     (
         "machine.rs",
-        "let fpr_main = model.main_fpr_class()?.unwrap_or(RegClass::FPR(8));",
+        "let fpr_main = model.main_fpr_class()?.unwrap_or(RegClass::FPR(64));",
         "无 FPR 组的 ISA（arm64/demo）缺省浮点类 = FPR(8)（历史 `unwrap_or(8)` 语义：\
          它只作 `alloc_xreg` 的浮点目标类，需有浮点指令才可达）",
     ),
     (
         "machine.rs",
-        "let value_fpr = model.value_fpr_class()?.unwrap_or(RegClass::FPR(8));",
+        "let value_fpr = model.value_fpr_class()?.unwrap_or(RegClass::FPR(64));",
         "同上：宿主浮点值池缺省（无 FPR 组时保持历史语义）",
     ),
     (
         "integration.rs",
-        "let value_fpr_eff = model.value_fpr_class()?.unwrap_or(RegClass::FPR(8));",
+        "let value_fpr_eff = model.value_fpr_class()?.unwrap_or(RegClass::FPR(64));",
         "类表登记时用**同一个**有效浮点值池类（与 machine.rs 的 __VALUE_FPR_CLASS \
-         同规则）——riscv（只有 fpr4 组、值类为 FPR(8)）必须把 FPR(8) 也登记为可分配类",
+         同规则）——riscv（只有 fpr32 组、值类为 FPR(8)）必须把 FPR(8) 也登记为可分配类",
     ),
 ];
 

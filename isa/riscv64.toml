@@ -37,7 +37,7 @@ directive_prefix = "."
 kind = "fixed"
 bits = 32
 
-[reg.gpr8]
+[reg.gpr64]
 names = [
     "X0","X1","X2","X3","X4","X5","X6","X7",
     "X8","X9","X10","X11","X12","X13","X14","X15",
@@ -50,7 +50,7 @@ names = [
 # （不再靠"再声明一份寄存器组"来兜）。注意 `x8` 同时是 `s0` 与 `fp`。
 # 别名写成**子表**而不是 `aliases = { ... }` 内联表：严格 TOML 1.0 允许多行数组、
 # **不允许多行内联表**（Rust 的 `toml` crate 收，别的解析器不一定收）——谱统一走严格 1.0 子集。
-[reg.gpr8.aliases]
+[reg.gpr64.aliases]
 zero = 0
 ra = 1
 sp = 2
@@ -85,21 +85,21 @@ t4 = 29
 t5 = 30
 t6 = 31
 
-[reg.fpr4]
+[reg.fpr32]
 names = [
     "F0","F1","F2","F3","F4","F5","F6","F7",
     "F8","F9","F10","F11","F12","F13","F14","F15",
     "F16","F17","F18","F19","F20","F21","F22","F23",
     "F24","F25","F26","F27","F28","F29","F30","F31",
 ]
-# 浮点寄存器的 ABI 别名（与上面的 `[reg.gpr8.aliases]` 同款、同口径：**解析认、渲染仍出
+# 浮点寄存器的 ABI 别名（与上面的 `[reg.gpr64.aliases]` 同款、同口径：**解析认、渲染仍出
 # `F` 名**）。真实语料里浮点操作数**几乎全是**别名（`fadd.s fa0, fa1, fa2`、`fmv.d ft0, fa1`）
 # ——上游 LLVM MC 的 FP 用例整篇如此，缺这张表会让它们**整文件**落在红桶里（实测语料里
 # `ft*`/`fa*`/`fs*` 出现 1840 次，而 `f0` 这类数字名只有 47 次）。
 #
 # 映射就是 psABI 的那套：0–7 = ft0–ft7、8–9 = fs0–fs1、10–17 = fa0–fa7、
 # 18–27 = fs2–fs11、28–31 = ft8–ft11。
-[reg.fpr4.aliases]
+[reg.fpr32.aliases]
 ft0 = 0
 ft1 = 1
 ft2 = 2
@@ -679,13 +679,13 @@ width = 4
 [[operand_slots]]
 name = "gpr"
 kind = "reg"
-class = "gpr8"
+class = "gpr64"
 roles = "inout"
 
 [[operand_slots]]
 name = "fpr"
 kind = "reg"
-class = "fpr4"
+class = "fpr32"
 roles = "inout"
 
 [[operand_slots]]
@@ -3524,6 +3524,11 @@ asm = "ecall"
 # ── 向量区段结束
 
 [machine]
+# ── 寄存器类指针（v21 W1）：宽度只在 `[reg.<名>]` 表头里，这里只指"哪一组" ──
+gpr = "gpr64"
+fpr = "fpr32"
+addr = "gpr64"
+value_gpr = "gpr64"
 # 机器事实（v20 A5）：溢出与栈参数收参用的 scratch（emission 的 spill load/store 也用它）。
 spill_scratch = ["X5", "X6"]
 # 帧为 callee-saved 预留的推入槽数（机器事实，v20 A6；与 `[abi.callee_saved]` 的 11 条同义）。

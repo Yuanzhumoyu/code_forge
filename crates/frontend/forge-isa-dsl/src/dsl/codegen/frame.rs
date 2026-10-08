@@ -68,7 +68,7 @@ pub(crate) fn gen_abi(model: &IsaModel) -> Result<TokenStream, String> {
     let fp_push = model
         .machine_frame()
         .and_then(|f| f.fp_push_bytes)
-        .unwrap_or(model.addr_class()?.width() as u32);
+        .unwrap_or(model.addr_class()?.bytes() as u32);
     // 返回寄存器：v20 A5-3 起谱面不再声明（`[abi].ret_regs` 已删除）——生成物沿用
     // trait 的缺省空表（返回槽由 plan / `LowerCtx::conv_ret_gpr` 给）。
     let ret_regs: Vec<TokenStream> = Vec::new();
@@ -867,7 +867,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
         let fp_push = model
             .machine_frame()
             .and_then(|f| f.fp_push_bytes)
-            .unwrap_or(model.addr_class()?.width() as u32) as i64;
+            .unwrap_or(model.addr_class()?.bytes() as u32) as i64;
         // **机器事实**（v20 A6）：帧按几个推入槽算——与「哪些寄存器必须保住」（约定）
         // 分开；`[machine].callee_save_slots` 缺省回退谱面 `[abi].callee_saved` 的表长。
         let cs = model.machine_callee_save_slots() as i64 * slot_bytes_lit;
@@ -902,7 +902,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
     if !moves.has(&gpr_want) {
         return Ok(quote! {});
     }
-    let addr_bits: u16 = model.addr_class()?.width() * 8;
+    let addr_bits: u16 = model.addr_class()?.bits();
     let mov_arm = moves.pick(&gpr_want, addr_bits)?;
     let mov_vn = mov_arm.vn.clone();
     let (m_src, m_dest) = (mov_arm.src.clone(), mov_arm.dst.clone());
@@ -1085,8 +1085,10 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
     // by-value 向量阈值 = `[abi.arg_class].limit`（by-ref 策略，字节；
     // x86 = 16B）——元数据驱动，取代写死的 `class == VEC(16)` 判定
     // （1 字节/非常规宽度 ISA 的向量类不是 VEC(16)）。
-    let fpr_pool_w = model.value_fpr_class()?.map_or(16, |c| c.width());
+    let fpr_pool_w = model.value_fpr_class()?.map_or(16, |c| c.bytes());
     let vec_by_val_max = model.vector_by_ref_limit_bytes()?.unwrap_or(fpr_pool_w);
+    // 生成物里的类宽是**位**（`RegClass` payload 口径），阈值是**字节** ⇒ 换算一次。
+    let vec_by_val_max_bits: u16 = vec_by_val_max * 8;
     // by-ref 向量 load：宽向量参数（>16 字节）按引用传参——ABI 传 GPR
     // 指针（int 槽位），收参时从 [ptr] load 到目标向量寄存器。
     // **按形状 + 精确宽度派生**（v20 V8）：内存 ↔ 向量寄存器的搬运指令由 `MoveTable`
@@ -1297,7 +1299,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
     // `has_vec_mov` = 本 ISA 真有 128 位档（riscv 只有 fsgnj.s/d ⇒ 一律按类型宽度）。
     let fp_from_class: TokenStream = if has_vec_mov && has_fpr_mov {
         quote! {
-            if class.width() <= #vec_by_val_max {
+            if class.bits() <= #vec_by_val_max_bits {
                 #vec_mov_body
             } else {
                 #fpr_by_size_body
@@ -1545,8 +1547,8 @@ fn gen_fpr_spill_dispatch(
     // 标量缺省档上限 = 浮点值**池**类宽（x86 = 8）；池未声明时退回主浮点类宽，
     // 仍无 → 0（表示"没有标量档"，全部宽度走 `[spill.FPR<bytes>]` 档位）。
     let scalar_max = match model.value_fpr_class()? {
-        Some(c) => c.width(),
-        None => model.main_fpr_class()?.map(|c| c.width()).unwrap_or(0),
+        Some(c) => c.bytes(),
+        None => model.main_fpr_class()?.map(|c| c.bytes()).unwrap_or(0),
     };
     // 宽度档：从已声明模板键 `FPR<bytes>` 派生（`m.spill` 是 BTreeMap，键序稳定）。
     let mut tiers: Vec<(String, u16)> = Vec::new();

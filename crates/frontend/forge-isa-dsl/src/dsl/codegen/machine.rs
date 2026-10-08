@@ -56,11 +56,11 @@ pub(crate) fn gen_reg_enum(model: &IsaModel) -> Result<TokenStream, String> {
     let gpr_main = model.main_gpr_class()?;
     // 无 FPR 组（arm64/demo）= FPR(8)：`from_index` 的 FPR 视图按 FPR 区映射，
     // 不需要同名宽度组（历史 `unwrap_or(8)` 语义，保留）。
-    let fpr_main = model.main_fpr_class()?.unwrap_or(RegClass::FPR(8));
+    let fpr_main = model.main_fpr_class()?.unwrap_or(RegClass::FPR(64));
     // 地址类 / 值池 / 栈槽单位 / 帧开销（全部元数据驱动，缺组即 Err）。
     let addr_class = model.addr_class()?;
     let value_gpr = model.value_gpr_class()?;
-    let value_fpr = model.value_fpr_class()?.unwrap_or(RegClass::FPR(8));
+    let value_fpr = model.value_fpr_class()?.unwrap_or(RegClass::FPR(64));
     let slot_bytes = model.slot_bytes()?;
     let fp_overhead = model.fp_overhead_bytes()?;
     let vector_tiers = model.vector_tiers();
@@ -98,7 +98,12 @@ pub(crate) fn gen_reg_enum(model: &IsaModel) -> Result<TokenStream, String> {
     // 编解码两侧据此换 base/index 的宽度（`[eax]` ≠ `[rax]`）。
     let addr_ovr_class = if model.is_prefix_scan() {
         match model.addr_size_override()? {
-            Some((_, w)) => Some(model.require_group(RegClass::GPR(w), "地址尺寸覆盖前缀")?),
+            // `addr_size_override` 返回的第二个值是**字节**宽（前缀语义都是字节），
+            // 而组名/payload 是位 ⇒ 这里 ×8 换算。
+            Some((_, bytes)) => Some(model.require_group(
+                RegClass::GPR(bytes.saturating_mul(8)),
+                "地址尺寸覆盖前缀",
+            )?),
             None => None,
         }
     } else {

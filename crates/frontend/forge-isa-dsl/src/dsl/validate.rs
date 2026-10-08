@@ -686,7 +686,7 @@ fn validate_regs(m: &IsaModel) -> Result<(), String> {
     let fold = |s: &str| if ci { s.to_lowercase() } else { s.to_string() };
     let mut alias_seen: BTreeMap<String, String> = BTreeMap::new();
     for (gname, g) in &m.reg {
-        if gname.width() == 0 {
+        if gname.bits() == 0 {
             return Err(format!("[reg.{gname}].width must be > 0"));
         }
         match &g.names {
@@ -788,17 +788,33 @@ fn validate_widths(m: &IsaModel) -> Result<(), String> {
     }
     // `[abi.stack_args]` 已删除（v20 A5-3）：栈参数布局由 plan 的 `CallLayout` 给
     //（rules 的 `stack.*` + `shadow_bytes`），谱面不再有这几个键。
-    for (key, w) in [
-        ("default_gpr_width", m.meta.default_gpr_width),
-        ("default_fpr_width", m.meta.default_fpr_width),
-        ("addr_width", m.meta.addr_width),
-        ("value_gpr_width", m.meta.value_gpr_width),
-        ("value_fpr_width", m.meta.value_fpr_width),
+    // `[machine]` 的类指针键：值是 `[reg.<名>]` 的**组名**（宽度在组名里），
+    // 必须能解析成合法组名且组已声明。
+    // 旧 `[meta].default_gpr_width`/`default_fpr_width`/`addr_width`/
+    // `value_gpr_width`/`value_fpr_width` 五个**宽度**键已删除（v21 W1）——
+    // 宽度只写在 `[reg.<名>]` 表头里，不再有第二处声明。
+    for (key, name) in [
+        ("gpr", m.machine.as_ref().and_then(|x| x.gpr.as_deref())),
+        ("fpr", m.machine.as_ref().and_then(|x| x.fpr.as_deref())),
+        ("addr", m.machine.as_ref().and_then(|x| x.addr.as_deref())),
+        (
+            "value_gpr",
+            m.machine.as_ref().and_then(|x| x.value_gpr.as_deref()),
+        ),
+        (
+            "value_fpr",
+            m.machine.as_ref().and_then(|x| x.value_fpr.as_deref()),
+        ),
     ] {
-        if let Some(w) = w
-            && w == 0
-        {
-            return Err(format!("[meta].{key} must be > 0"));
+        if let Some(name) = name {
+            let rc: RegClass = name.parse().map_err(|e: String| {
+                format!("[machine].{key} = \"{name}\" 不是合法的寄存器组名：{e}")
+            })?;
+            if !m.reg.contains_key(&rc) {
+                return Err(format!(
+                    "[machine].{key} = \"{name}\" 没有对应的 [reg.{name}] 寄存器组"
+                ));
+            }
         }
     }
     // 向量档位：升序、非 0、去重（生成代码按"最小的 ≥ 请求字节数的档位"选择）。
@@ -825,14 +841,14 @@ fn validate_widths(m: &IsaModel) -> Result<(), String> {
                 "[encoding].default_opsize = {bits} 必须是 8 的倍数（单位：位）"
             ));
         }
-        let want = (bits / 8) as u16;
+        // `default_opsize` 是**位**；组名也按位（`gpr8` = 8 位）⇒ 直接按位比。
         if !m
             .reg
             .keys()
-            .any(|rc| matches!(rc, RegClass::GPR(w) if *w == want))
+            .any(|rc| matches!(rc, RegClass::GPR(w) if *w == bits as u16))
         {
             return Err(format!(
-                "[encoding].default_opsize = {bits}（{want} 字节）没有对应的 [reg.gpr{want}] 组"
+                "[encoding].default_opsize = {bits} 位没有对应的 [reg.gpr{bits}] 组"
             ));
         }
     }
@@ -851,7 +867,7 @@ fn validate_widths(m: &IsaModel) -> Result<(), String> {
 /// 地址宽；`void` 只能 unsupported）——防止把 `i64` 映射到 1 字节组这类
 /// "看起来能用、实际截断"的配置。**显式条目优先于通用值池规则**。
 fn validate_types(m: &IsaModel) -> Result<(), String> {
-    let addr_w = m.addr_class()?.width();
+    let addr_w = m.addr_class()?.bytes();
     for (ty, target) in m.explicit_type_map()? {
         let Some(rc) = target else {
             // 显式 unsupported：合法（把"宿主会拒绝"变成"ISA 明确声明不支持"）。
@@ -866,11 +882,11 @@ fn validate_types(m: &IsaModel) -> Result<(), String> {
             other => crate::dsl::model::type_name_bytes(other),
         };
         if let Some(need) = need
-            && rc.width() < need
+            && rc.bytes() < need
         {
             return Err(format!(
                 "[types].{ty} = \"{rc}\": 类宽 {} 字节 < 该类型 {} 字节（会静默截断）",
-                rc.width(),
+                rc.bytes(),
                 need
             ));
         }
@@ -885,7 +901,7 @@ fn validate_types(m: &IsaModel) -> Result<(), String> {
 /// 这里把它提前到 DSL 校验期：点名"哪个类需要哪个键"。（没有浮点组、或只有
 /// 标量宽度的 ISA 不需要任何档位。）
 fn validate_spill_coverage(m: &IsaModel) -> Result<(), String> {
-    let scalar = m.value_fpr_class()?.map(|c| c.width()).unwrap_or(0);
+    let scalar = m.value_fpr_class()?.map(|c| c.bytes()).unwrap_or(0);
     // 有 `[spill.FPR]` 才谈档位（否则 FPR 溢出整条路径本来就是 no-op）。
     let Some(_base) = m.spill.get("FPR") else {
         return Ok(());
@@ -897,8 +913,9 @@ fn validate_spill_coverage(m: &IsaModel) -> Result<(), String> {
         .filter_map(|n| n.parse::<u16>().ok())
         .collect();
     for rc in m.reg.keys() {
+        // 类宽是**位**（payload 口径），溢出档键名与浮点值池都是**字节** ⇒ 这里换算。
         let w = match rc {
-            RegClass::FPR(w) | RegClass::VEC(w) => *w,
+            RegClass::FPR(w) | RegClass::VEC(w) => w.div_ceil(8),
             _ => continue,
         };
         if w <= scalar || declared_tiers.contains(&w) {

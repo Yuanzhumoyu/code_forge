@@ -4,7 +4,7 @@
 # ============================================================
 #
 # 目的：证明「寄存器宽度写死」已从 DSL 生成期与宿主流水线中消除——
-# 本 ISA **只有一个 1 字节 GPR 组** `[reg.gpr1]`（没有 gpr2/gpr4/gpr8），
+# 本 ISA **只有一个 1 字节 GPR 组** `[reg.gpr8]`（没有 gpr16/gpr32/gpr64），
 # 历史实现（主 GPR 组锚定 `GPR(8).or(GPR(4))`、地址/槽宽内置 8 字节）在
 # 这个文件上会退化成"生成成功但语义错误"或构造不存在的类：
 #
@@ -31,8 +31,6 @@ version = "15.0"
 endian = "little"
 mode = 8
 # 位（= 生成代码里 __opsize 的 1 字节）
-addr_width = 1
-value_gpr_width = 1
 case_insensitive_regs = true
 comment_char = "#"
 label_suffix = ":"
@@ -44,7 +42,7 @@ kind = "fixed"
 bits = 32
 default_opsize = 8
 
-[reg.gpr1]
+[reg.gpr8]
 base_index = 0
 names = ["A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7"]
 
@@ -64,12 +62,12 @@ word   = { offset = 0,  width = 32 }
 # 1 字节地址的 ISA：指针就是 GPR(1)（`TypeId::bits()` 对 ptr 恒 8，但本 ISA 的
 # 地址宽 = [meta].addr_width = 1 —— 显式映射优先于通用值池规则）。
 [types]
-ptr = "gpr1"
+ptr = "gpr8"
 
 [[operand_slots]]
 name = "a8"
 kind = "reg"
-class = "gpr1"
+class = "gpr8"
 roles = "inout"
 
 [[operand_slots]]
@@ -222,6 +220,8 @@ fp_save = 1
 
 
 [machine]
+addr = "gpr8"
+value_gpr = "gpr8"
 # 机器事实（v20 A5-3 起是正式位置，旧 `[abi]` 同名键已删除）：
 # spill 搬运临时寄存器（regalloc 不可分配）+ A6/A7 是 fp/sp（已在 RegInfo 排除；
 # 显式列出以验证名字解析）+ 帧件会保存的那组 GPR（本夹具不保存任何寄存器）。

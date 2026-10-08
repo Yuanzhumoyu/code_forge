@@ -186,12 +186,12 @@ mod type_map_tests {
     fn reg_class_for_honours_isa_type_map() {
         let mut ctx = LowerCtx::new();
         // 无映射时：F64 走 `from_type_id` 的族规则 → FPR(8)。
-        assert_eq!(ctx.reg_class_for(&TypeId::F64), RegClass::FPR(8));
+        assert_eq!(ctx.reg_class_for(&TypeId::F64), RegClass::FPR(64));
         // 软浮点 ISA 显式声明 f64 → GPR(8)：映射优先。
-        ctx.type_map = vec![(TypeId::F64, RegClass::GPR(8))];
-        assert_eq!(ctx.reg_class_for(&TypeId::F64), RegClass::GPR(8));
+        ctx.type_map = vec![(TypeId::F64, RegClass::GPR(64))];
+        assert_eq!(ctx.reg_class_for(&TypeId::F64), RegClass::GPR(64));
         // 未列出的类型不受影响。
-        assert_eq!(ctx.reg_class_for(&TypeId::I32), RegClass::GPR(4));
+        assert_eq!(ctx.reg_class_for(&TypeId::I32), RegClass::GPR(32));
     }
 }
 

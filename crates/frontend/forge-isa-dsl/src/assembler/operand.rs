@@ -249,22 +249,22 @@ mod tests {
             RegEntry {
                 name: "RAX".into(),
                 index: 0,
-                class: RegClass::GPR(8),
+                class: RegClass::GPR(64),
             },
             RegEntry {
                 name: "EAX".into(),
                 index: 0,
-                class: RegClass::GPR(4),
+                class: RegClass::GPR(32),
             },
             RegEntry {
                 name: "AX".into(),
                 index: 0,
-                class: RegClass::GPR(2),
+                class: RegClass::GPR(16),
             },
             RegEntry {
                 name: "RBX".into(),
                 index: 3,
-                class: RegClass::GPR(8),
+                class: RegClass::GPR(64),
             },
         ]
     }
@@ -273,19 +273,19 @@ mod tests {
     fn reg_constraint_filtering() {
         let toks = lex::tokenize("rax, eax").unwrap();
         let mut p = Parser::new(&toks);
-        let (idx, cls) = p.reg_in(&regs(), &[RegClass::GPR(8)]).unwrap();
-        assert_eq!((idx, cls), (0, RegClass::GPR(8)));
+        let (idx, cls) = p.reg_in(&regs(), &[RegClass::GPR(64)]).unwrap();
+        assert_eq!((idx, cls), (0, RegClass::GPR(64)));
         assert!(p.eat(&Tok::Comma));
         // eax 不在 GPR(8) 约束集内
-        assert!(p.reg_in(&regs(), &[RegClass::GPR(8)]).is_none());
+        assert!(p.reg_in(&regs(), &[RegClass::GPR(64)]).is_none());
         // 但多类型约束集接纳
         let (idx, cls) = p
             .reg_in(
                 &regs(),
-                &[RegClass::GPR(2), RegClass::GPR(4), RegClass::GPR(8)],
+                &[RegClass::GPR(16), RegClass::GPR(32), RegClass::GPR(64)],
             )
             .unwrap();
-        assert_eq!((idx, cls), (0, RegClass::GPR(4)));
+        assert_eq!((idx, cls), (0, RegClass::GPR(32)));
     }
 
     #[test]

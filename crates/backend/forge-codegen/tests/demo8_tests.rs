@@ -1,6 +1,6 @@
 //! demo8 — **1 字节寄存器 ISA** 回归测试（去「寄存器类型/宽度写死」）。
 //!
-//! 夹具（`isa/demo8.toml`）只有唯一的 1 字节 GPR 组 `[reg.gpr1]`：历史实现
+//! 夹具（`isa/demo8.toml`）只有唯一的 1 字节 GPR 组 `[reg.gpr8]`：历史实现
 //! 在生成期锚定 `GPR(8).or(GPR(4))`、把地址类/值池/栈槽/帧开销写死 8 字节，会在
 //! 这个 ISA 上静默退化（空名字表、构造不存在的类）。本文件断言三件事：
 //!
@@ -43,13 +43,13 @@ fn one_byte_register_metadata_is_derived() {
     let ri = TargetMachineTrait::reg_info(&tm);
     assert_eq!(
         ri.default_gpr_class(),
-        RegClass::GPR(1),
-        "主 GPR 类 = 最宽已声明组（唯一 [reg.gpr1]）"
+        RegClass::GPR(8),
+        "主 GPR 类 = 最宽已声明组（唯一 [reg.gpr8]）"
     );
-    assert_eq!(ri.addr_class(), RegClass::GPR(1), "[meta].addr_width = 1");
+    assert_eq!(ri.addr_class(), RegClass::GPR(8), "[meta].addr_width = 1");
     assert_eq!(
         ri.value_gpr_class(),
-        RegClass::GPR(1),
+        RegClass::GPR(8),
         "[meta].value_gpr_width = 1（宿主值池）"
     );
     assert_eq!(ri.slot_bytes(), 1, "[meta].slot_bytes = 1（栈槽单位）");
@@ -88,11 +88,11 @@ fn one_byte_register_metadata_is_derived() {
 fn one_byte_pool_rejects_wide_types() {
     let tm = TargetMachine::new();
     let ri = TargetMachineTrait::reg_info(&tm);
-    assert_eq!(ri.class_for_type(TypeId::I8), Some(RegClass::GPR(1)));
+    assert_eq!(ri.class_for_type(TypeId::I8), Some(RegClass::GPR(8)));
     assert_eq!(ri.class_for_type(TypeId::I16), None, "无 GPR(2) 组");
     assert_eq!(ri.class_for_type(TypeId::I32), None, "无 GPR(4) 组");
     assert_eq!(ri.class_for_type(TypeId::I64), None, "无 GPR(8) 组");
-    // 注：PTR 由夹具的 `[types] ptr = "gpr1"` 显式映射承载 —— 见
+    // 注：PTR 由夹具的 `[types] ptr = "gpr8"` 显式映射承载 —— 见
     // `class_table_has_only_declared_classes` 与 `explicit_type_map_*` 断言。
     // 无 FPR 组 → 浮点/向量寄存器文件不存在（值池门必须看**文件存在性**，
     // 只看宽度会让 f64 落到一个该 ISA 没有的 FPR(8) 类上）。
@@ -102,15 +102,15 @@ fn one_byte_pool_rejects_wide_types() {
     assert_eq!(ri.class_for_type(TypeId::V128), None, "无向量寄存器组");
     assert_eq!(ri.class_for_type(TypeId::V256), None, "无向量寄存器组");
     assert_eq!(ri.class_for_type(TypeId::VOID), None, "void = 无寄存器");
-    // `[types] ptr = "gpr1"`：**显式映射优先于通用规则**——本 ISA 地址宽 1 字节，
+    // `[types] ptr = "gpr8"`：**显式映射优先于通用规则**——本 ISA 地址宽 1 字节，
     // 所以指针可承载（通用规则会按 `TypeId::bits()` 的 8 字节把它拒掉）。
     assert_eq!(
         ri.class_for_type(TypeId::PTR),
-        Some(RegClass::GPR(1)),
+        Some(RegClass::GPR(8)),
         "[types] 显式映射必须生效"
     );
     assert!(
-        ri.type_map().contains(&(TypeId::PTR, RegClass::GPR(1))),
+        ri.type_map().contains(&(TypeId::PTR, RegClass::GPR(8))),
         "type_map 必须暴露给 lowering：{:?}",
         ri.type_map()
     );
@@ -128,8 +128,8 @@ fn class_table_has_only_declared_classes() {
     let list: Vec<RegClass> = classes.iter().map(|c| c.reg_class).collect();
     assert_eq!(
         list,
-        vec![RegClass::GPR(1)],
-        "唯一声明组 [reg.gpr1] ⇒ 类表只能有 GPR(1)：{list:?}"
+        vec![RegClass::GPR(8)],
+        "唯一声明组 [reg.gpr8] ⇒ 类表只能有 GPR(1)：{list:?}"
     );
     assert_eq!(classes[0].width, 1, "类宽 = 1 字节");
     assert_eq!(classes[0].allocatable, vec![0, 1, 2, 3], "池 = A0..A3");

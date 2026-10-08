@@ -28,7 +28,7 @@ name = "names_demo"
 [encoding]
 kind = "fixed"
 bits = 16
-[reg.gpr4]
+[reg.gpr32]
 count = 4
 [conventions.bitfields]
 op = {{ offset = 12, width = 4 }}
@@ -37,7 +37,7 @@ f1 = {{ offset = 4, width = 4 }}
 [[operand_slots]]
 name = "g"
 kind = "reg"
-class = "gpr4"
+class = "gpr32"
 [[forms]]
 name = "RR"
 opcode_field = "op"

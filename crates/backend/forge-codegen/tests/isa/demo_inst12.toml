@@ -24,8 +24,6 @@ version = "15.0"
 endian = "little"
 mode = 8
 # 12 位字（非 8 倍数；1..=64 位任意取值，无白名单）
-addr_width = 1
-value_gpr_width = 1
 case_insensitive_regs = true
 comment_char = "#"
 label_suffix = ":"
@@ -37,7 +35,7 @@ kind = "fixed"
 bits = 12
 default_opsize = 8
 
-[reg.gpr1]
+[reg.gpr8]
 base_index = 0
 names = ["A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7"]
 
@@ -59,7 +57,7 @@ ohi  = { offset = 2, width = 4 }    # 其余 4 位（rs2 的位 2 + rs1 的位 3
 [[operand_slots]]
 name = "r3"
 kind = "reg"
-class = "gpr1"
+class = "gpr8"
 roles = "inout"
 
 # ─────────────────────────── 编码形式 ───────────────────────────
@@ -139,3 +137,7 @@ bytes = [0x03, 0x06]
 [[vectors]]
 asm = "ldw A0, -4"
 bytes = [0x3F, 0x06]
+
+[machine]
+addr = "gpr8"
+value_gpr = "gpr8"

@@ -58,8 +58,8 @@ fn compile_state_tables_are_dense() {
 /// 下标的密集表会改变语义——这是 `xreg_types` 等表保持 `HashMap` 的理由。
 #[test]
 fn xreg_is_index_plus_class_so_not_dense() {
-    let a = XReg::new(7, RegClass::GPR(8));
-    let b = XReg::new(7, RegClass::GPR(4));
+    let a = XReg::new(7, RegClass::GPR(64));
+    let b = XReg::new(7, RegClass::GPR(32));
     assert_eq!(a.index(), b.index(), "同一分配下标");
     assert_ne!(a, b, "不同类 ⇒ 不同的 XReg（键含 class）");
 

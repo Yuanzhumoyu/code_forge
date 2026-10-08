@@ -114,7 +114,7 @@ fn tm_decode_roundtrip() {
 }
 
 /// `[types]` 显式类型→类映射（B2 接口通用化）：demo **没有 FPR 组**，
-/// 通用值池门会拒绝全部浮点类型；夹具显式声明 `f32/f64 = "gpr8"`（软浮点），
+/// 通用值池门会拒绝全部浮点类型；夹具显式声明 `f32/f64 = "gpr64"`（软浮点），
 /// 门与 lowering 必须都按这份 ISA 数据走。
 #[test]
 fn explicit_type_map_overrides_generic_pool_rule() {
@@ -124,14 +124,14 @@ fn explicit_type_map_overrides_generic_pool_rule() {
     let tm = TargetMachine::new();
     let ri = TargetMachineTrait::reg_info(&tm);
     // 通用规则：无 FPR 组 → f32/f64 拒绝。
-    assert_eq!(ri.class_for_type(TypeId::F64), Some(RegClass::GPR(8)));
+    assert_eq!(ri.class_for_type(TypeId::F64), Some(RegClass::GPR(64)));
     assert!(
-        ri.type_map().contains(&(TypeId::F64, RegClass::GPR(8))),
+        ri.type_map().contains(&(TypeId::F64, RegClass::GPR(64))),
         "type_map 必须暴露软浮点映射：{:?}",
         ri.type_map()
     );
-    // 未列出的类型仍按通用规则（本 ISA 有 gpr2/4/8）。
-    assert_eq!(ri.class_for_type(TypeId::I8), Some(RegClass::GPR(1)));
+    // 未列出的类型仍按通用规则（本 ISA 有 gpr16/4/8）。
+    assert_eq!(ri.class_for_type(TypeId::I8), Some(RegClass::GPR(8)));
 }
 
 /// **demo 夹具同样真的有 plan**（v20 A5-3 的前置）：`demo` 的测试本地约定注册后，
