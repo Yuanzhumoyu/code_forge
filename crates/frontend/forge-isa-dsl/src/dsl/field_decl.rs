@@ -344,7 +344,13 @@ pub fn lower_bitfields(decls: &[FieldDecl]) -> Result<BTreeMap<String, Bitfield>
     Ok(out)
 }
 
-/// 把操作数名绑定到字段名（§4.0 的 ②）：同名即绑定，`bind` 显式改名。
+/// 把操作数名绑定到字段名（§4.0 的 ②）。**规则（口径 A，2026-10-08 定）**：
+///
+/// 1. `bind` 里显式写了 → 用它（写错字段名报错，**不**回退）；
+/// 2. 否则**同名**即绑定；
+/// 3. 否则**位置回退**：按 form 里字段的**声明序**取第 i 个（跳过 `opcode` 字段）。
+///    这是 v18 `operand_fields` 的口径——发行谱里操作数名（`dst`/`src`）与位域名
+///    （`rd`/`rs1`）本来就不同，迁移时无需给每条指令补 `bind`。
 ///
 /// 返回按 `ops` 序排列的字段名列表（= 内部 `operand_fields`）。
 pub fn bind_operands(
@@ -353,15 +359,37 @@ pub fn bind_operands(
     bind: &BTreeMap<String, String>,
 ) -> Result<Vec<String>, String> {
     let names: Vec<&str> = decls.iter().filter_map(|d| d.name.as_deref()).collect();
-    let mut out = Vec::new();
-    for op in ops_names {
-        let field = bind.get(op).map(String::as_str).unwrap_or(op.as_str());
-        if !names.contains(&field) {
-            return Err(format!(
-                "操作数 `{op}` 绑定到字段 `{field}`，但该字段未在本 form 的 fields 里声明（已声明：{}）",
-                names.join(", ")
-            ));
-        }
+    // 位置回退的候选 = 除 `opcode` 之外的字段，按声明序（= v18 `operand_fields` 的序）。
+    let slots: Vec<&str> = names
+        .iter()
+        .copied()
+        .filter(|n| *n != "opcode")
+        .collect();
+    let mut out: Vec<String> = Vec::new();
+    for (i, op) in ops_names.iter().enumerate() {
+        let field = match bind.get(op) {
+            Some(f) => {
+                let f = f.as_str();
+                if !names.contains(&f) {
+                    return Err(format!(
+                        "操作数 `{op}` 的 bind 指向字段 `{f}`，但它未在本 form 的 fields 里声明（已声明：{}）",
+                        names.join(", ")
+                    ));
+                }
+                f
+            }
+            None if names.contains(&op.as_str()) => op.as_str(),
+            None => match slots.get(i) {
+                Some(f) => f,
+                None => {
+                    return Err(format!(
+                        "操作数 `{op}` 既没有同名字段、也没有第 {} 个可绑定字段（已声明：{}）",
+                        i + 1,
+                        names.join(", ")
+                    ));
+                }
+            },
+        };
         out.push(field.to_string());
     }
     Ok(out)
@@ -704,9 +732,36 @@ fields = ["u7[6:0]:opcode=0x33", "gpr64[11:7]:rd", "i13[12:1 -> 11:8,30:25,7,31]
         assert!(bad.is_err());
     }
 
+    /// **位置回退（口径 A）**：发行谱的操作数名（`dst`/`src`）与位域名（`rd`/`rs1`）
+    /// 不同，位置回退必须复现 v18 的 `operand_fields`，从而迁移时零 `bind`。
     #[test]
-    fn bind_by_same_name_and_by_explicit_map() {
+    fn positional_fallback_matches_v18_operand_fields() {
         let decls = vec![
+            FieldDecl::parse("u7[6:0]:opcode").unwrap(),
+            FieldDecl::parse("u5[11:7]:rd").unwrap(),
+            FieldDecl::parse("u5[19:15]:rs1").unwrap(),
+            FieldDecl::parse("u5[24:20]:rs2").unwrap(),
+            FieldDecl::parse("u3[14:12]:funct3").unwrap(),
+        ];
+        let ops = vec!["dst".to_string(), "src".to_string(), "src2".to_string()];
+        assert_eq!(
+            bind_operands(&decls, &ops, &BTreeMap::new()).unwrap(),
+            vec!["rd", "rs1", "rs2"],
+            "opcode 不参与位置回退；其余按声明序 = v18 operand_fields"
+        );
+        // 操作数多于可绑定字段 ⇒ 报错，不静默截断。
+        let many: Vec<String> = (0..5).map(|i| format!("o{i}")).collect();
+        assert!(bind_operands(&decls, &many, &BTreeMap::new()).is_err());
+        // 同名优先于位置：名字对得上就用名字（哪怕位置对不上）。
+        let mixed = vec!["funct3".to_string()];
+        assert_eq!(
+            bind_operands(&decls, &mixed, &BTreeMap::new()).unwrap(),
+            vec!["funct3"]
+        );
+    }
+
+    #[test]
+    fn bind_by_same_name_and_by_explicit_map() {        let decls = vec![
             FieldDecl::parse("gpr64[11:7]:rd").unwrap(),
             FieldDecl::parse("u3[14:12]:funct3").unwrap(),
             FieldDecl::parse("u5[19:15]:rs1").unwrap(),

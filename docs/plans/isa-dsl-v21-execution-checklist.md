@@ -239,15 +239,17 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
    → 跑打印器 → 脚本改写全部 TOML（发行谱 + 夹具）→ 恢复 `skip`
    → 门禁（`isa_roundtrip_guard`/`spec_coverage_guard`/asm 三档棘轮/双矩阵逐数字不变）。
 5. `lint_shipped` 的 `LINT-BITFIELD-OVERLAP` 例外随旧键消失而一并撤除。
-6. **⚠ 第二次实测发现的缺口（必须先解）**：迁移**不只是** form 的 `fields`——旧模型靠
-   **位置**绑定（`operand_fields[i]` ↔ 第 i 个操作数），新语法靠**名字**绑定；而发行谱里
+6. **⚠ 第二次实测发现的缺口（已定口径解决）**：迁移**不只是** form 的 `fields`——旧模型靠
+   **位置**绑定（`operand_fields[i]` ↔ 第 i 个操作数），新语法按**名字**绑定；而发行谱里
    操作数名与位域名本来就不同（riscv：`ops = ["dst:gpr:out","src:gpr"]` ↔ 字段 `rd`/`rs1`）。
-   所以**每条指令还要生成 `bind = { dst = "rd", src = "rs1", … }`**（仅在同名之外的那些），
-   否则 `lower_field_syntax` 报"操作数 `dst` 绑定到字段 `dst`，但该字段未声明"，
-   实测一次暴露 30+ 条（`MOV_RM8_R64`/`FSGNJ_*`/`FCVT_*`…）。
-   ⇒ 打印器要**同时输出两份产物**：① 每个 form 的 `fields`；② 每条指令的 `bind`
-   （riscv 167 + arm64 537 + 夹具 ≈700 条，脚本可批量写入）。
-   幸而 `bind_operands` 的重构已被 a8c7e6e 的单测证明等价，产物同样不可能偏离。
+   **口径 A（2026-10-08 定）**：① `bind` 显式优先（写错字段名报错，不回退）；② 否则同名；
+   ③ 否则**位置回退**＝按 form 字段声明序取第 i 个（跳过 `opcode`）——即 v18 `operand_fields`
+   的口径。⇒ 迁移时**零 `bind`**，76 个 form 改写即可（已实测）。
+   实现与单测：`field_decl::bind_operands`（`positional_fallback_matches_v18_operand_fields`）。
+7. **仍需显式 `bind` 的例外**：位置回退表达不了"**多个操作数绑同一个字段**"——
+   arm64 有 `operand_fields = ["rt","rn","rm","vq","vq","vq"]` 这类三连（向量排列）。
+   ⇒ 收尾时先跑一次"位置回退 vs 旧 `operand_fields`"的对拍，**只给对不上的那几条指令**
+   写 `bind = { … = "vq" }`（预计是个位数），其余一律不写。
 
 ---
 
