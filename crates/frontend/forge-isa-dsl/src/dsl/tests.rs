@@ -955,7 +955,7 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.cond]
+[enum.cond]
 {tbl}
 [operand.g]
 kind = "reg"
@@ -1058,7 +1058,7 @@ fn cond_cc_requires_all_ir_conditions() {
 /// `cond` 槽没有条件码表 ⇒ 报错（v18 S3b 起不再回退 x86 的 16 项表）。
 #[test]
 fn cond_slot_without_table_is_rejected() {
-    let doc = gen_cond_doc("", "").replace("[conventions.cond]\n", "");
+    let doc = gen_cond_doc("", "").replace("[enum.cond]\n", "");
     let msg = validation_msg(&doc);
     assert!(msg.contains("需要条件码表"), "msg: {msg}");
 }
@@ -3544,7 +3544,8 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.bitsets.fence]
+[enum.fence]
+kind = "bits"
 i = 8
 o = 4
 r = 2
@@ -3624,7 +3625,7 @@ kind = "fixed"
 bits = 32
 [reg.gpr32]
 count = 8
-[conventions.imm_names.csr]
+[enum.csr]
 # 故意乱序：摊平后必须按**名字字典序**（渲染口径）。
 mstatus = 0x300
 fflags = 0x001

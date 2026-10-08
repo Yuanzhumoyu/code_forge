@@ -66,7 +66,7 @@ aliases = { WZR = 31 }
 # ─────────────────────── 命名位域（A64）───────────────────────
 # 通用寄存器位域位置在全 A64 固定：Rd=[4:0]、Rn=[9:5]、Rm=[20:16]。
 
-[conventions.imm_names.arr_q]   # 逻辑/位运算族：排列只决定 Q（[23:22] 是常量，非元素宽）
+[enum.arr_q]   # 逻辑/位运算族：排列只决定 Q（[23:22] 是常量，非元素宽）
 "8b"  = 0
 "16b" = 1
 "4h"  = 0
@@ -75,7 +75,7 @@ aliases = { WZR = 31 }
 "4s"  = 1
 "2d"  = 1
 
-[conventions.imm_names.arr]   # NEON ????? = size*2 + q???? fields=["vq","vsize"] ?????
+[enum.arr]   # NEON ????? = size*2 + q???? fields=["vq","vsize"] ?????
 "8b"  = 0
 "16b" = 1
 "4h"  = 2
@@ -84,7 +84,7 @@ aliases = { WZR = 31 }
 "4s"  = 5
 "2d"  = 7
 
-[conventions.imm_names.extend_w]
+[enum.extend_w]
 uxtb = 0
 uxth = 1
 uxtw = 2
@@ -94,7 +94,7 @@ sxth = 5
 sxtw = 6
 sxtx = 7
 
-[conventions.imm_names.extend_x]
+[enum.extend_x]
 uxtx = 3
 sxtx = 7
 
@@ -597,7 +597,7 @@ name = "lo12_n"
 text = ":lo12:{0}"
 expr = "{0}"
 
-[conventions.cond]
+[enum.cond]
 eq = 0
 ne = 1
 cs = 2

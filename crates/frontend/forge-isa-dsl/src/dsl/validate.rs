@@ -1471,7 +1471,7 @@ fn validate_relocs(m: &IsaModel) -> Result<(), String> {
     Ok(())
 }
 
-/// `[conventions.cond]` 校验（v18 S3b 条件码数据化）。
+/// `[enum.cond]` 校验（v18 S3b 条件码数据化）。
 ///
 /// 这张表同时服务三处（汇编解析名、反汇编渲染名、lowering 的 `{cc}`），因此校验也
 /// 三面都盖：
@@ -1487,30 +1487,30 @@ fn validate_cond(m: &IsaModel) -> Result<(), String> {
     if let Some(t) = table {
         if t.is_empty() {
             return Err(
-                "[conventions.cond]: 条件码表不能为空（要么整节不写，要么至少一条）".into(),
+                "[enum.cond]: 条件码表不能为空（要么整节不写，要么至少一条）".into(),
             );
         }
         let mut owner: BTreeMap<&str, &str> = BTreeMap::new();
         for (name, e) in t {
             if name.trim().is_empty() {
-                return Err("[conventions.cond]: 条件名不能为空".into());
+                return Err("[enum.cond]: 条件名不能为空".into());
             }
             if e.code > 15 {
                 return Err(format!(
-                    "[conventions.cond.{name}]: code {} 超出条件字段宽度（4 位，0..=15）",
+                    "[enum.cond.{name}]: code {} 超出条件字段宽度（4 位，0..=15）",
                     e.code
                 ));
             }
             if let Some(ir) = e.ir_condition(name.as_str()) {
                 if !IR_INT_COND_NAMES.contains(&ir) {
                     return Err(format!(
-                        "[conventions.cond.{name}].ir '{ir}' 不是 IR 整数条件名（可用：{}）",
+                        "[enum.cond.{name}].ir '{ir}' 不是 IR 整数条件名（可用：{}）",
                         IR_INT_COND_NAMES.join(" / ")
                     ));
                 }
                 if let Some(prev) = owner.insert(ir, name) {
                     return Err(format!(
-                        "[conventions.cond]: IR 条件 '{ir}' 被 '{prev}' 与 '{name}' 重复映射\
+                        "[enum.cond]: IR 条件 '{ir}' 被 '{prev}' 与 '{name}' 重复映射\
                          （每个 IR 条件只能映射到一个编码）"
                     ));
                 }
@@ -1522,8 +1522,8 @@ fn validate_cond(m: &IsaModel) -> Result<(), String> {
         && let Some(slot) = m.operand_slots.iter().find(|s| s.kind == OperandKind::Cond)
     {
         return Err(format!(
-            "[conventions.cond]: 操作数槽 '{}' 的 kind = \"cond\" 需要条件码表——\
-             声明 [conventions.cond]（键 = 本 ISA 汇编可见的条件名）",
+            "[enum.cond]: 操作数槽 '{}' 的 kind = \"cond\" 需要条件码表——\
+             声明 [enum.cond]（键 = 本 ISA 汇编可见的条件名）",
             slot.name
         ));
     }
@@ -1539,7 +1539,7 @@ fn validate_cond(m: &IsaModel) -> Result<(), String> {
             .collect();
         if !missing.is_empty() {
             return Err(format!(
-                "[[lowering]]: 用了 `{{cc}}`（当前 IR 条件 → 本 ISA 编码）但 [conventions.cond] \
+                "[[lowering]]: 用了 `{{cc}}`（当前 IR 条件 → 本 ISA 编码）但 [enum.cond] \
                  没把所有 IR 整数条件映射全——缺 {}（每条用 ir = \"<条件名>\" 指出它实现哪个条件）",
                 missing.join(" / ")
             ));
@@ -1615,11 +1615,11 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                         {
                             return Err(format!(
                                 "{path}: `enum = \"{tname}\"` 指到的是**位集合表**（`kind = \"bits\"` 用）；\
-                                 本槽是 imm——请改用 [conventions.imm_names.{tname}] 或把 kind 改成 \"bits\""
+                                 本槽是 imm——请改用 [enum.{tname}] 或把 kind 改成 \"bits\""
                             ));
                         }
                         return Err(format!(
-                            "{path}: 命名立即数表 '{tname}' 未在 [conventions.imm_names] 里声明"
+                            "{path}: 命名立即数表 '{tname}' 未在 [enum.<表名>] 里声明"
                         ));
                     };
                     if entries.is_empty() {
@@ -1647,7 +1647,7 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                 // 位必须落在槽宽内；名字必须能作为 ident 片段（解析靠"名字拼接"）。
                 let Some(tname) = &s.table else {
                     return Err(format!(
-                        "{path}: kind = \"bits\" 的槽必须给 `table`（[conventions.bitsets.<table>]）"
+                        "{path}: kind = \"bits\" 的槽必须给 `table`（[enum.<表名>]（`kind = \"bits\"`））"
                     ));
                 };
                 if m.encoding.kind == EncodingKind::PrefixScan {
@@ -1658,7 +1658,7 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                 let Some(entries) = m.conventions.bitsets.as_ref().and_then(|bs| bs.get(tname))
                 else {
                     return Err(format!(
-                        "{path}: 位集合表 '{tname}' 未在 [conventions.bitsets] 里声明"
+                        "{path}: 位集合表 '{tname}' 未在 [enum.<表名>] 里声明"
                     ));
                 };
                 if entries.is_empty() {

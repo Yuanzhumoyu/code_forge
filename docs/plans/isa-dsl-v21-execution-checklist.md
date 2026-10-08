@@ -315,8 +315,11 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 >   `cargo test --workspace --exclude forge-rustc` → **exit 0、0 编译错误、0 失败二进制**
 >   （含 `isa_roundtrip_guard` 字节闭环、asm 三档棘轮、x86/riscv64 双矩阵）。
 >
-> **剩下的 W3b（未做）**：`[enum.*]` 节取代 `[conventions.cond]`/`[conventions.bitsets.*]`/
-> `[conventions.imm_names.*]`（槽上已经写 `enum = "<表名>"`，只差把三张表搬进统一的 `[enum.*]`）。
+> ✅ **W3b 也已完成（2026-10-08）**：`[enum.<表名>]` 统一了原先的三张表——
+> `[conventions.cond]`（条件码，条目 `{ code, ir }`）、`[conventions.bitsets.*]`（`kind = "bits"`）、
+> `[conventions.imm_names.*]`（值表）。判定规则：表名叫 `cond` **或**条目带 `ir` ⇒ 条件码表
+> （内部只一处，两张即报错）；`kind = "bits"` ⇒ 位集合表；否则值表。槽侧照旧 `enum = "<表名>"`。
+> 三谱 + 夹具（含内联形态）已迁移；门禁同 W3a（workspace exit 0、0 编译错误、0 失败二进制）。
 
 **目标**：`[operand.*]` + `[enum.*]` + `[encode.*]`；8 个一次性开关 → 5 个正交键。
 

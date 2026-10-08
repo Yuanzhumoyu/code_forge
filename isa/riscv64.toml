@@ -159,7 +159,8 @@ expr = "(({0} & 0xfff) ^ 0x800) - 0x800"
 
 # 命名位集合表（`kind = "bits"`）：RISC-V fence 的 pred/succ 是 i/o/r/w 的组合，
 # 源文本就写成字母拼接（`iorw`、`io`、`r,w`），编码取位的或。表是**数据**。
-[conventions.bitsets.fence]
+[enum.fence]
+kind = "bits"
 i = 8
 o = 4
 r = 2
@@ -194,7 +195,7 @@ w = 1
 # 汇编里既是显式操作数（`fadd.s f1, f2, f3, rtz`），也是"省略 rm"时的**缺省值 `dyn`**
 # （`fadd.s f1, f2, f3` ≡ `fadd.s f1, f2, f3, dyn`——上游把省略写法当 `dyn` 的别名，
 # 见 `asm/parse/riscv64/llvm-mc/fp-default-rounding-mode.s` 的 `CHECK-INST`）。
-[conventions.imm_names.rm]
+[enum.rm]
 rne = 0
 rtz = 1
 rdn = 2
@@ -202,7 +203,7 @@ rup = 3
 rmm = 4
 dyn = 7
 
-[conventions.imm_names.csr]
+[enum.csr]
 fflags = 0x001
 frm = 0x002
 fcsr = 0x003

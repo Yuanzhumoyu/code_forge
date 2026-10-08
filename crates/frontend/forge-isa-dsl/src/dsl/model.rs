@@ -236,6 +236,11 @@ pub struct IsaModel {
     /// **v21 W3 操作数声明**（`[operand.<名字>]`）：键名即槽名。
     #[serde(default, rename = "operand")]
     pub operands: BTreeMap<String, OperandDecl>,
+    /// **v21 W3b 命名取值表**（`[enum.<表名>]`）：统一原 `[enum.cond]` /
+    /// `[conventions.bitsets.*]` / `[conventions.imm_names.*]` 三张表，由
+    /// [`crate::dsl::enum_decl::lower_enum_layer`] 降级回内部三处。
+    #[serde(default, rename = "enum")]
+    pub enums: BTreeMap<String, EnumDecl>,
     /// 编码形式（`[[forms]]`）。
     #[serde(default)]
     pub forms: Vec<Form>,
@@ -997,7 +1002,8 @@ pub struct Conventions {
     ///
     /// 缺省（未声明）= 该 ISA 不能用 `cond` 槽、也不能在 lowering 里用 `{cc}`
     /// （**不再回退 x86 的 16 项表**；真的用到就报错）。
-    #[serde(default, deserialize_with = "de_cond_map")]
+    /// v21 W3b：由 [enum.<表名>]（带 ir 的那张）降级而来。
+    #[serde(skip)]
     pub cond: Option<BTreeMap<String, CondEntry>>,
     /// **命名位集合表**（`kind = "bits"` 的槽用）：表名 → （名字 → 位）。
     ///
@@ -1006,7 +1012,8 @@ pub struct Conventions {
     /// 与 `cond` 的"同码取字母序最小名"同一口径）。
     ///
     /// 表是**数据**：DSL 不认识任何具体名字（i/o/r/w 只是某份谱里的一行）。
-    #[serde(default)]
+    /// v21 W3b：由 [enum.<表名>] kind = "bits" 降级而来。
+    #[serde(skip)]
     pub bitsets: Option<BTreeMap<String, BTreeMap<String, u64>>>,
     /// **命名立即数表**（`kind = "imm"` + `names` 的槽用）：表名 → （名字 → 值）。
     ///
@@ -1017,7 +1024,8 @@ pub struct Conventions {
     /// 闭合。
     ///
     /// 表是**数据**：DSL 不认识任何具体名字（`mstatus`/`rtz` 只是某份谱里的一行）。
-    #[serde(default)]
+    /// v21 W3b：由 [enum.<表名>]（值表）降级而来。
+    #[serde(skip)]
     pub imm_names: Option<BTreeMap<String, BTreeMap<String, i64>>>,
     /// 变长解码前缀扫描表：条目 = 单字节或范围 + 效果集
     /// （"opsize16"/"lock"/"repe"/"repne"/"addr16"/"rex"）。缺省 = x86 扫描集。
@@ -1080,7 +1088,7 @@ pub struct MemTemplate {
 
 /// IR 整数条件的规范名（与 `forge_ir::INTCC_NAMES` / `IntCC::mnemonic()` 一一对应）。
 ///
-/// 这是**宿主契约**、不是 ISA 数据：`[conventions.cond]` 的 `ir` 字段用它作键空间。
+/// 这是**宿主契约**、不是 ISA 数据：`[enum.cond]` 的 `ir` 字段用它作键空间。
 /// forge-dsl 是 proc-macro crate（不依赖 forge-ir），故在此复述一份；两边的
 /// 一致性由 x86 编译期校验 + 三架构 JIT 矩阵的比较用例端到端守着（若名字漂移，
 /// 该 ISA 的 `{cc}` 会退化成 0 = 溢出条件，矩阵立刻红）。
@@ -1093,7 +1101,7 @@ pub const IR_INT_COND_NAMES: [&str; 10] = [
 /// 允许两种写法（同一张表，值的长短写法）：
 ///
 /// ```toml
-/// [conventions.cond]
+/// [enum.cond]
 /// eq  = 4                              # 简写 = { code = 4 }；`ir` 取键名
 /// e   = { code = 4, ir = "eq" }        # 全写：汇编名 `e` 实现 IR 条件 `eq`
 /// z   = { code = 4 }                   # 纯汇编别名（不映射 IR 条件）
@@ -1123,7 +1131,7 @@ impl CondEntry {
     }
 }
 
-/// `[conventions.cond]` 的值：整数简写或 [`CondEntry`]（`untagged`）。
+/// `[enum.cond]` 的值：整数简写或 [`CondEntry`]（`untagged`）。
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum CondEntryOrCode {
@@ -1140,7 +1148,7 @@ impl From<CondEntryOrCode> for CondEntry {
     }
 }
 
-/// `[conventions.cond]` 的反序列化：整数值 = `{ code = n }` 简写。
+/// `[enum.cond]` 的反序列化：整数值 = `{ code = n }` 简写。
 fn de_cond_map<'de, D>(d: D) -> Result<Option<BTreeMap<String, CondEntry>>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -1150,7 +1158,7 @@ where
 }
 
 impl IsaModel {
-    /// `[conventions.cond]` 的"IR 条件 → 本 ISA 编码"有序表（按 [`IR_INT_COND_NAMES`]
+    /// `[enum.cond]` 的"IR 条件 → 本 ISA 编码"有序表（按 [`IR_INT_COND_NAMES`]
     /// 的规范顺序，只含已映射的条件）。
     ///
     /// lowering 的 `{cc}` 占位符按这个顺序发 match 臂；校验器用"是否覆盖全部 10 个"
@@ -1394,6 +1402,44 @@ pub struct SymbolDecl {
     pub modifiers: Option<Vec<String>>,
 }
 
+/// v21 W3b：**命名取值表的类别**。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EnumKind {
+    /// 一个名字 = 一个值（原 `[conventions.imm_names.*]`；带 `ir` 的那张是条件码表）。
+    Value,
+    /// 若干名字的**拼接**，编码取按位或（原 `[conventions.bitsets.*]`）。
+    Bits,
+}
+
+/// v21 W3b：命名取值表的一条。两种写法：`z = 4` 与 `e = { code = 4, ir = "eq" }`。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EnumEntry {
+    /// 简写：直接给值。
+    Value(i64),
+    /// 完整：值 + 可选 IR 条件（`ir` = 该名实现的 IR 整数条件，仅比较类需要）。
+    Table {
+        #[serde(default)]
+        code: Option<i64>,
+        #[serde(default)]
+        ir: Option<String>,
+    },
+}
+
+/// v21 W3b：**`[enum.<表名>]` 声明**——统一原三张表（`cond` / `bitsets` / `imm_names`）。
+///
+/// 判定规则（见 `enum_decl::lower_enum_layer`）：`kind = "bits"` ⇒ 位集合表；条目里出现
+/// `ir` ⇒ 条件码表（**全局只能有一张**）；否则 ⇒ 命名立即数表。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct EnumDecl {
+    #[serde(default)]
+    pub kind: Option<EnumKind>,
+    /// 名字 → 条目（`deny_unknown_fields` 与 `flatten` 不能共存，故此处从宽）。
+    #[serde(flatten)]
+    pub entries: BTreeMap<String, EnumEntry>,
+}
+
 /// v21 W3：**操作数声明**（`[operand.<名字>]`）。
 ///
 /// 键名即槽名；8 个一次性开关收敛成 5 个正交键 `bits`/`signed`/`range`/`unit`/`value`，
@@ -1607,7 +1653,7 @@ pub struct OperandSlot {
     /// 且能由 `fields` 的位宽装下（都在校验期钉死）。空/省略 = 本槽**不带**后缀（照旧行为）。
     #[serde(default)]
     pub arrangement: Option<std::collections::BTreeMap<String, i64>>,
-    /// bits：本槽用的命名位集合表名（`[conventions.bitsets.<table>]`）。
+    /// bits：本槽用的命名位集合表名（`[enum.<表名>]（`kind = \"bits\"`）`）。
     #[serde(default)]
     pub table: Option<String>,
     /// imm：本槽用的**命名立即数表**名（`[conventions.imm_names.<table>]`）。
@@ -1717,7 +1763,7 @@ pub enum OperandKind {
     Mem,
     Label,
     Cond,
-    /// **命名位集合**：源文本 = `[conventions.bitsets.<table>]` 里若干名字的**拼接**
+    /// **命名位集合**：源文本 = `[enum.<表名>]（`kind = \"bits\"`）` 里若干名字的**拼接**
     /// （贪心最长匹配，整串吃干净才算命中），编码值 = 各位的按位或。
     /// 槽必须给 `table` 与 `width`。
     Bits,
@@ -2936,9 +2982,9 @@ impl IsaModel {
 
     /// 把 `kind = "bits"` 槽引用的**命名位集合表**摊平进槽（解析期一次）。
     ///
-    /// `[conventions.bitsets.<table>]` 是**数据**（名字 → 位），DSL 不认识任何具体名字；
+    /// `[enum.<表名>]（`kind = \"bits\"`）` 是**数据**（名字 → 位），DSL 不认识任何具体名字；
     /// 摊平后生成器只读 `slot.table_entries`，反汇编渲染按**名字字典序**拼串（确定性，
-    /// 与 `[conventions.cond]` 的"同码取字母序最小名"同一口径）。
+    /// 与 `[enum.cond]` 的"同码取字母序最小名"同一口径）。
     pub fn resolve_bitset_tables(&mut self) -> Result<(), String> {
         for (i, s) in self.operand_slots.iter_mut().enumerate() {
             if s.kind != OperandKind::Bits {
@@ -2947,7 +2993,7 @@ impl IsaModel {
             let path = format!("[operand.{}]", s.name);
             let Some(tname) = s.table.clone() else {
                 return Err(format!(
-                    "{path}: kind = \"bits\" 的槽必须给 `table`（[conventions.bitsets.<table>]）"
+                    "{path}: kind = \"bits\" 的槽必须给 `table`（[enum.<表名>]（`kind = \"bits\"`））"
                 ));
             };
             let Some(entries) = self
@@ -2957,7 +3003,7 @@ impl IsaModel {
                 .and_then(|bs| bs.get(&tname))
             else {
                 return Err(format!(
-                    "{path}: 位集合表 '{tname}' 未在 [conventions.bitsets] 里声明"
+                    "{path}: 位集合表 '{tname}' 未在 [enum.<表名>]（`kind = \"bits\"`）里声明"
                 ));
             };
             if entries.is_empty() {
@@ -2972,7 +3018,7 @@ impl IsaModel {
     ///
     /// `[conventions.imm_names.<table>]` 是**数据**（名字 → 值），DSL 不认识任何具体名字；
     /// 摊平后生成器只读 `slot.name_entries`（BTreeMap 的序 = 名字字典序，渲染取同值多名里
-    /// 字典序最小者，确定性与 `[conventions.cond]` 同口径）。
+    /// 字典序最小者，确定性与 `[enum.cond]` 同口径）。
     pub fn resolve_imm_name_tables(&mut self) -> Result<(), String> {
         for (i, s) in self.operand_slots.iter_mut().enumerate() {
             let Some(tname) = s.names.clone() else {
@@ -2992,7 +3038,7 @@ impl IsaModel {
                 .and_then(|t| t.get(&tname))
             else {
                 return Err(format!(
-                    "{path}: 命名立即数表 '{tname}' 未在 [conventions.imm_names] 里声明"
+                    "{path}: 命名立即数表 '{tname}' 未在 [enum.<表名>] 里声明"
                 ));
             };
             if entries.is_empty() {

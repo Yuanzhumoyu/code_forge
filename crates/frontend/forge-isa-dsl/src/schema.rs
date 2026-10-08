@@ -61,6 +61,7 @@ pub const SECTIONS: &[Section] = &[
             "types",
             "stack",
             "operand",
+            "enum",
             "forms",
             "instructions",
             "templates",
@@ -204,6 +205,17 @@ pub const SECTIONS: &[Section] = &[
         flatten: &[],
         additional: false,
         doc: "内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size）",
+    },
+    Section {
+        // v21 W3b：命名取值表（键名即表名）——`[enum.<表名>]`。
+        path: "[enum.<表名>]",
+        model: "EnumDecl",
+        required: &[],
+        optional: &["kind"],
+        // 条目表是 `#[serde(flatten)]` 的自由表（名字 → 值/`{ code, ir }`），键名任意。
+        flatten: &["entries"],
+        additional: true,
+        doc: "命名取值表：kind = value（名字 = 值；带 `ir` 的那张是条件码表）| bits（名字拼接、按位或）",
     },
     Section {
         // v21 W3：操作数声明是**表**（键名即槽名）——`[operand.<名字>]`。
@@ -507,6 +519,7 @@ pub fn schema_json() -> String {
         ("conventions", "", false),
         ("stack", "[stack]", false),
         ("operands", "[operand.<名字>]", true),
+        ("enums", "[enum.<表名>]", true),
         ("forms", "[[forms]]", true),
         ("instructions", "[[instructions]]", true),
         ("templates", "[[templates]]", true),

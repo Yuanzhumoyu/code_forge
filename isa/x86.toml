@@ -130,7 +130,7 @@ force_disp_base = [5, 13]
 #     覆盖带不带尺寸前缀两种写法）。
 #   * **没写 {base} 的模板 = 无基址写法**（第 2 条）：x86 用它表示绝对地址
 #     （movsd XMM5, [-8] → mod=00 + SIB.base=101 + disp32）。
-[conventions.cond]
+[enum.cond]
 o   = { code = 0 }
 no  = { code = 1 }
 b   = { code = 2, ir = "ult" }

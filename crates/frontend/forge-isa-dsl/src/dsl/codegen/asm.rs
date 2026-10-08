@@ -1035,7 +1035,7 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
         // 那等于把别家的条件名与编码写进通用生成器）。键 = 汇编可见的名字。
         let Some(table) = model.conventions.cond.as_ref() else {
             return Err(
-                "[conventions.cond]: 本 ISA 有 `cond` 槽操作数，必须声明条件码表\
+                "[enum.cond]: 本 ISA 有 `cond` 槽操作数，必须声明条件码表\
                  （键 = 汇编可见的条件名；每条给 code，并用 ir = \"<IR 条件名>\" 指出\
                  它实现哪个 IR 整数条件）——不按某个 ISA 的表兜底"
                     .into(),

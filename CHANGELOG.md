@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W3b：命名取值表统一为 `[enum.*]`（**破坏性**）
+
+原先三张各写一套的表合并成 `[enum.<表名>]`：
+
++ `[conventions.cond]` → **`[enum.cond]`**（条目形状不变：`e = { code = 4, ir = "eq" }`；纯别名写 `c = { code = 2 }`）。
++ `[conventions.bitsets.<表>]` → **`[enum.<表>]` + `kind = "bits"`**（名字拼接、编码取按位或）。
++ `[conventions.imm_names.<表>]` → **`[enum.<表>]`**（一个名字 = 一个值；也支持简写 `mstatus = 0x300`）。
++ 判定：表名叫 `cond` **或**任一条目带 `ir` ⇒ 条件码表（内部只有一处，两张就报错）；
+  `kind = "bits"` ⇒ 位集合表；否则值表。槽侧照旧用 `enum = "<表名>"` 引用。
++ **编码字节逐条不变**；`cargo test --workspace --exclude forge-rustc` → exit 0、0 编译错误、0 失败二进制。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W3a：操作数声明收敛（**破坏性**）
 
 `[[operand_slots]]`（数组）改为 **`[operand.<名字>]` 表**，8 个一次性开关收敛成正交键：
