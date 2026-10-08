@@ -148,18 +148,62 @@ cargo test -p forge-tests --lib jit_matrix_riscv64 -- --test-threads=1 --nocaptu
 
 ## 4. W2 字段语法
 
-**目标**：`form` 内就地 `fields` 语法；删 `[conventions.bitfields]` + `opcode_field` + `operand_fields`。
+**目标**：`form` 内就地 `fields` 声明；删 `[conventions.bitfields]` + `opcode_field` + `operand_fields`。
 
-- [ ] `dsl/model.rs`：新增字段声明类型（类型表达式 / 位区间列表 / 接口名 / 默认值）。
-- [ ] 解析与诊断：位区间语法错误、类型不存在、宽度不符、`ops` 引用未知槽名 —— 全部带 `路径:行:列`。
-- [ ] 绑定规则落地：**`ops` 列出的槽 = 操作数槽（wildcard）；其余 = 常量槽**（决策 D-1/D-3）。
-- [ ] `match` 覆盖（常量槽换值 / 操作数槽钉常量）；`bind` 改名（决策 D-4）。
+### 4.0 实现口径（本片决策，2026-10-08）
+
+**把新语法"下降（lower）"到既有内部表示**，编码器/解码器/生成物**一行不改** —— 于是
+"字节等价"由构造保证，风险集中在 model/解析/校验与三谱迁移：
+
+- 一个新的 **lowering pass** 把 `fields` 声明列表展开成内部已有的三样东西：
+  ① `conventions.bitfields`（字段名 → `offset/width` 或 `pieces`）；② 每条指令的
+  `EncKeys.operand_fields`（按 `ops` 序 → 绑定的字段名）；③ `Instruction.opcode` 与
+  `Instruction.fields`（常量值与 `match` 覆盖）。
+- **多段位区间 → `pieces` 的换算**（唯一需要小心的地方）：按"值低位 → 高位"列出，
+  第 i 段的 `shift` = 前面各段宽度之和，`offset`/`width` = 该段位置与宽度。
+  这与既有 `pieces` 编码器（`word |= ((value >> shift) & mask) << offset`）逐位等价。
+- 内部字段（`bitfields`/`opcode_field`/`operand_fields`）改为 **`#[serde(skip)]` 派生**：
+  用户写不了，只能由 `fields` 展开产生。
+
+**本片不做（留 W2b，并在 W5 重载解析时一并落地）**：`ops` 的 `名字:槽[:角色]` 三token形态
+**保留**——字段类型只做**校验**（`uN/iN` 宽度 == 字段总位宽；寄存器组编号放得下；槽名存在），
+不替换 `ops` 的类型来源。把类型搬进字段、`ops` 收敛成"名字 + 角色"是独立一步。
+
+### 4.1 步骤
+
+- [x] **W2.1 `fields` 值映射改名 `match`**（先解键冲突：v21 要让 `fields` 表示"声明列表"）。
+      `Instruction.fields` 只改 serde 键名（`#[serde(rename = "match")]`），Rust 侧零改动；
+      三谱 + 夹具 + schema + 文档键表同步。实测：**704 处 / 13 文件**，
+      `forge-isa-dsl` 与 `forge-codegen` 全绿（`fields = {` 残留 0，
+      `[[operand_slots]].fields = [...]` 的 58 处保持不动）。
+- [ ] `dsl/model.rs`：字段声明类型（`FieldDecl`：类型表达式 / 位区间列表 / 接口名 / 默认值）
+      + `[[forms]].fields` / `[[instructions]].fields` 两个新键 + `bind` 键。
+- [ ] 解析与诊断：位区间语法错误、类型不存在、宽度不符、`ops` 引用未知槽名 —— 报错点名
+      `[[forms.<名>]].fields[i] = "<原文>"` 与原因（TOML 层无 span，与既有诊断口径一致）。
+- [ ] lowering pass（§4.0）+ 绑定规则：**`ops` 列出的槽 = 操作数槽；其余 = 常量槽**（D-1/D-3）。
+- [ ] `match` 覆盖（常量槽换值 / 操作数槽钉成常量）；`bind` 改名（D-4）。
 - [ ] 位段相交的逐指令校验（同一条指令不得同时绑定相交两段）。
-- [ ] 删除 `[conventions.bitfields]` / `opcode_field` / `operand_fields` 的模型、schema、校验、lint 码。
-- [ ] 三谱迁移：riscv（R/I/S/B/U/J + 散射）、arm64（含 TBZ 双段、保留位）、x86（先只做**定宽字段部分**，stream 留 W4）。
-- [ ] `lint --bits` 口径确认：未被字段覆盖的位仍按现状报出（决策 D-6）。
+- [ ] 删除 `[conventions.bitfields]` / `opcode_field` / `operand_fields` 的用户面（model 键、schema、docs）。
+- [ ] 三谱迁移（脚本 + 人工复核，见 §4.2）：riscv、arm64 全量；x86 无 bitfields 节 ⇒ 只跟着 `match` 改名。
+- [ ] `lint --bits` 口径确认：未被字段覆盖的位仍按现状报出（D-6）。
 - [ ] 门禁：§2 全绿；`spec_coverage_guard` 三谱指令数不变；`LINT-BITFIELD-OVERLAP` 不再需要例外。
-- [ ] 迁移脚本与人工决策分开：脚本只搬位置，**保留位/散射方向**逐条人工复核（arm64 最高风险）。
+
+### 4.2 迁移算法与已知风险
+
+算法（逐谱）：① 读 `[conventions.bitfields]` 得"字段名 → 位区间"；② 对每个 form，
+把 `opcode_field` + `operand_fields`（**去重**）+ 用该 form 的指令 `match` 里出现的字段名
+合成该 form 的 `fields` 列表（默认值统一 0，值仍走各指令的 `match`；`opcode` 若全族同值则写进默认）；
+③ 指令保留 `match`，删掉 `opcode`（若已进 form 默认）。
+
+风险（按严重度）：
+
+1. **arm64 `operand_fields` 的重复占位**（`["rt","rn","rm","vq","vq","vq"]`）：三个位置绑同一字段，
+   新语法按**名字**绑定 ⇒ 必须改用 `bind = { <操作数名> = "vq" }`，且**逐条重新验证编码字节**。
+2. **指令级常量**（arm64 `one21 = 1`、`rm = 0` 等数百处）：留在 `match`，但字段必须在 form 的
+   `fields` 里被声明（否则报未知字段）——合成时要保证不漏。
+3. **散射方向**（riscv S/B/J）：按"值低位 → 高位"重排，必须与既有 `pieces.shift` 逐段对拍。
+4. **`opcode_field = "word"`（整字常量，如 NOP/RET）**：整字字段与其它位段重叠 ⇒ 依赖
+   "同一条指令不得同时绑定相交两段"的校验口径（D-6 的逐指令视图）。
 
 ---
 

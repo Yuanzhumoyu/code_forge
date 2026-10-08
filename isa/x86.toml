@@ -1042,7 +1042,7 @@ asm = "cmp {src}, {imm}"
 name = "SQRTSD"
 form = "SSE_RR"
 opcode = 0x51
-fields = { prefix = 0xF2, w = 0 }
+match = { prefix = 0xF2, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "sqrtsd {dst}, {src}"
 
@@ -1050,7 +1050,7 @@ asm = "sqrtsd {dst}, {src}"
 name = "SQRTSS"
 form = "SSE_RR"
 opcode = 0x51
-fields = { prefix = 0, w = 0 }
+match = { prefix = 0, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "sqrtss {dst}, {src}"
 
@@ -1060,7 +1060,7 @@ asm = "sqrtss {dst}, {src}"
 name = "CVTSI2SD"
 form = "SSE_RR"
 opcode = 0x2A
-fields = { prefix = 0xF2 }
+match = { prefix = 0xF2 }
 opsize = "src"
 rex_w = "auto"
 ops = ["dst:fpr:out", "src:gprx"]
@@ -1070,7 +1070,7 @@ asm = "cvtsi2sd {dst}, {src}"
 name = "CVTSD2SS"
 form = "SSE_RR"
 opcode = 0x5A
-fields = { prefix = 0xF2, w = 0 }
+match = { prefix = 0xF2, w = 0 }
 # 变参取值时的"窄回"能力（v20 V4 + D5）：C/LLVM 的默认实参提升把 float 传成 double，
 # `va_arg(ap, f32)` 得取 double 再窄回来——这条就是那一步（bits = 目的位宽）。
 ops = ["dst:fpr:out", "src:fpr"]
@@ -1080,7 +1080,7 @@ asm = "cvtsd2ss {dst}, {src}"
 name = "CVTSS2SD"
 form = "SSE_RR"
 opcode = 0x5A
-fields = { prefix = 0xF3, w = 0 }
+match = { prefix = 0xF3, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "cvtss2sd {dst}, {src}"
 
@@ -1088,7 +1088,7 @@ asm = "cvtss2sd {dst}, {src}"
 name = "ANDPD"
 form = "SSE_RR"
 opcode = 0x54
-fields = { prefix = 0x66, w = 0 }
+match = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "andpd {dst}, {src}"
 
@@ -1096,7 +1096,7 @@ asm = "andpd {dst}, {src}"
 name = "XORPD"
 form = "SSE_RR"
 opcode = 0x57
-fields = { prefix = 0x66, w = 0 }
+match = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "xorpd {dst}, {src}"
 
@@ -1104,7 +1104,7 @@ asm = "xorpd {dst}, {src}"
 name = "COMISD"
 form = "SSE_RR"
 opcode = 0x2F
-fields = { prefix = 0x66, w = 0 }
+match = { prefix = 0x66, w = 0 }
 ops = ["src:fpr", "src2:fpr"]
 asm = "comisd {src}, {src2}"
 
@@ -1112,7 +1112,7 @@ asm = "comisd {src}, {src2}"
 name = "COMISS"
 form = "SSE_RR"
 opcode = 0x2F
-fields = { prefix = 0, w = 0 }
+match = { prefix = 0, w = 0 }
 ops = ["src:fpr", "src2:fpr"]
 asm = "comiss {src}, {src2}"
 
@@ -1120,7 +1120,7 @@ asm = "comiss {src}, {src2}"
 name = "MOVSD_XMM_FREG"
 form = "SSE_RR"
 opcode = 0x10
-fields = { prefix = 0xF2, w = 0 }
+match = { prefix = 0xF2, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "movsd {dst}, {src}"
 effect = ["Move"]
@@ -1132,7 +1132,7 @@ effect = ["Move"]
 name = "CVTSI2SS"
 form = "SSE_RR"
 opcode = 0x2A
-fields = { prefix = 0xF3 }
+match = { prefix = 0xF3 }
 opsize = "src"
 rex_w = "auto"
 ops = ["dst:fpr:out", "src:gprx"]
@@ -1142,7 +1142,7 @@ asm = "cvtsi2ss {dst}, {src}"
 name = "MOVD_FREG_IREG"
 form = "SSE_RR"
 opcode = 0x6E
-fields = { prefix = 0x66, w = 0 }
+match = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "movd {dst}, {src}"
 # **类间位搬移**（v20 V7）：GPR 的位模式 → FPR。x86 的 SysV64 正常情况下浮点走 XMM，
@@ -1155,7 +1155,7 @@ name = "MOVD_IREG_FREG"
 modrm = { reg = "src", rm = "dst" }
 form = "SSE_RR"
 opcode = 0x7E
-fields = { prefix = 0x66, w = 0 }
+match = { prefix = 0x66, w = 0 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "movd {dst}, {src}"
 data_width = 32
@@ -1164,7 +1164,7 @@ data_width = 32
 name = "PUNPCKLDQ"
 form = "SSE_RR"
 opcode = 0x62
-fields = { prefix = 0x66, w = 0 }
+match = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "punpckldq {dst}, {src}"
 
@@ -1172,7 +1172,7 @@ asm = "punpckldq {dst}, {src}"
 name = "PUNPCKLQDQ"
 form = "SSE_RR"
 opcode = 0x6C
-fields = { prefix = 0x66, w = 0 }
+match = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "punpcklqdq {dst}, {src}"
 
@@ -1180,7 +1180,7 @@ asm = "punpcklqdq {dst}, {src}"
 name = "PUNPCKHDQ"
 form = "SSE_RR"
 opcode = 0x6A
-fields = { prefix = 0x66, w = 0 }
+match = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "punpckhdq {dst}, {src}"
 
@@ -1189,7 +1189,7 @@ name = "MOVSS"
 data_width = 32
 form = "SSE_RR"
 opcode = 0x10
-fields = { prefix = 0xF3, w = 0 }
+match = { prefix = 0xF3, w = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "movss {dst}, {src}"
 effect = ["Move"]
@@ -1201,7 +1201,7 @@ opsize = "src"
 escape = [0x0F]
 prefix = "field"
 opcode = 0xB1
-fields = { prefix = 0xF0 }
+match = { prefix = 0xF0 }
 # v14：数据槽 gprx 多类——DSL 回填携带 IR 值宽度（I16→66 前缀、I32→无
 # REX.W、I64→RAX 视图 REX.W），rm_mem 宽度自动分发（16/32/64 同 opcode
 # 0F B1 + 66/REX.W；8 位是独立 opcode 0F B0——见 CMPXCHG_MEM_R_8）。
@@ -1221,7 +1221,7 @@ modrm = { rm = "[src2]" }
 escape = [0x0F]
 prefix = "field"
 opcode = 0xB0
-fields = { prefix = 0xF0 }
+match = { prefix = 0xF0 }
 # 8 位 LOCK CMPXCHG：0F B0（r/m8，隐式 AL——mov RAX 后 AL 即期望值低
 # 字节）。数据槽 gpr8b（byte_reg 强制 REX：spl/bpl/sil/dil）。
 ops = ["src:gpr8b", "src2:gprx"]
@@ -1237,7 +1237,7 @@ opsize = "dst"
 escape = [0x0F]
 prefix = "field"
 opcode = 0xC1
-fields = { prefix = 0xF0 }
+match = { prefix = 0xF0 }
 # v14：数据槽 gprx（16/32/64 auto）——AtomicRmw Add/Sub lowering 的 {g1}
 # 临时恒 64 位池（窄域 Add/Sub 走 intrinsics cmpxchg 循环，i64 域用本指令）。
 ops = ["dst:gprx:inout", "src:gprx"]
@@ -1256,7 +1256,7 @@ name = "SUB_MEM_R"
 form = "MRR_MEM_PRE"
 modrm = { rm = "[src2]" }
 opcode = 0x29
-fields = { prefix = 0xF0 }
+match = { prefix = 0xF0 }
 ops = ["src:gpr", "src2:gpr"]
 asm = "lock sub [{src2}], {src}"
 
@@ -1265,7 +1265,7 @@ name = "AND_MEM_R"
 form = "MRR_MEM_PRE"
 modrm = { rm = "[src2]" }
 opcode = 0x21
-fields = { prefix = 0xF0 }
+match = { prefix = 0xF0 }
 ops = ["src:gpr", "src2:gpr"]
 asm = "lock and [{src2}], {src}"
 
@@ -1274,7 +1274,7 @@ name = "OR_MEM_R"
 form = "MRR_MEM_PRE"
 modrm = { rm = "[src2]" }
 opcode = 0x09
-fields = { prefix = 0xF0 }
+match = { prefix = 0xF0 }
 ops = ["src:gpr", "src2:gpr"]
 asm = "lock or [{src2}], {src}"
 
@@ -1283,7 +1283,7 @@ name = "XOR_MEM_R"
 form = "MRR_MEM_PRE"
 modrm = { rm = "[src2]" }
 opcode = 0x31
-fields = { prefix = 0xF0 }
+match = { prefix = 0xF0 }
 ops = ["src:gpr", "src2:gpr"]
 asm = "lock xor [{src2}], {src}"
 
@@ -1328,7 +1328,7 @@ name = "MOVSD_R_MEM"
 form = "MRR_MEM_0F_FIX32"
 modrm = { rm = "[src]" }
 opcode = 0x10
-fields = { prefix = 0xF2 }
+match = { prefix = 0xF2 }
 # 按 vreg 基址读**浮点**的能力（v20 变参 V4）：`va_arg(ap, f64)` 取值用它
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "movsd {dst}, [{src}]"
@@ -1338,7 +1338,7 @@ name = "MOVSD_MEM_R"
 form = "MRR_MEM_0F_FIX32"
 modrm = { rm = "[src2]" }
 opcode = 0x11
-fields = { prefix = 0xF2 }
+match = { prefix = 0xF2 }
 ops = ["src:fpr", "src2:gpr"]
 asm = "movsd [{src2}], {src}"
 
@@ -1450,7 +1450,7 @@ opsize = 32
 escape = [0x0F]
 prefix = "field"
 opcode = 0x10
-fields = { prefix = 0xF2 }
+match = { prefix = 0xF2 }
 ops = ["dst:fpr:out", "mem:mem"]
 asm = "movsd {dst}, {mem}"
 
@@ -1461,7 +1461,7 @@ opsize = 32
 escape = [0x0F]
 prefix = "field"
 opcode = 0x11
-fields = { prefix = 0xF2 }
+match = { prefix = 0xF2 }
 # 浮点写内存的能力（v20 变参 V4）：调用方把**浮点栈实参**写进传出区用它
 # （`{ role = "stack_arg_store", class = "fpr" }`——与 MOV64_MR 的整数版分工）。
 roles = [{ role = "stack_arg_store", class = "fpr" }]
@@ -1478,7 +1478,7 @@ name = "MOVUPS_128_R_MEM"
 form = "MRR_MEM_0F_FIX32"
 modrm = { rm = "[src]" }
 opcode = 0x10
-fields = { prefix = 0 }
+match = { prefix = 0 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "movups {dst}, [{src}]"
 
@@ -1487,7 +1487,7 @@ name = "MOVUPS_128_MEM_R"
 form = "MRR_MEM_0F_FIX32"
 modrm = { rm = "[src2]" }
 opcode = 0x11
-fields = { prefix = 0 }
+match = { prefix = 0 }
 ops = ["src:fpr", "src2:gpr"]
 asm = "movups [{src2}], {src}"
 
@@ -1500,7 +1500,7 @@ opsize = 32
 escape = [0x0F]
 prefix = "field"
 opcode = 0x10
-fields = { prefix = 0 }
+match = { prefix = 0 }
 ops = ["dst:fpr:out", "mem:mem"]
 asm = "movups {dst}, {mem}"
 
@@ -1511,7 +1511,7 @@ opsize = 32
 escape = [0x0F]
 prefix = "field"
 opcode = 0x11
-fields = { prefix = 0 }
+match = { prefix = 0 }
 ops = ["src:fpr", "mem:mem:out"]
 asm = "movups {mem}, {src}"
 
@@ -1522,7 +1522,7 @@ name = "MOVSS_R_MEM"
 form = "MRR_MEM_0F_FIX32"
 modrm = { rm = "[src]" }
 opcode = 0x10
-fields = { prefix = 0xF3 }
+match = { prefix = 0xF3 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "movss {dst}, [{src}]"
 
@@ -1531,7 +1531,7 @@ name = "MOVSS_MEM_R"
 form = "MRR_MEM_0F_FIX32"
 modrm = { rm = "[src2]" }
 opcode = 0x11
-fields = { prefix = 0xF3 }
+match = { prefix = 0xF3 }
 ops = ["src:fpr", "src2:gpr"]
 asm = "movss [{src2}], {src}"
 
@@ -1541,7 +1541,7 @@ asm = "movss [{src2}], {src}"
 name = "CVTSS2SI"
 form = "SSE_RR"
 opcode = 0x2D
-fields = { prefix = 0xF3 }
+match = { prefix = 0xF3 }
 opsize = "dst"
 rex_w = "auto"
 ops = ["dst:gprx:out", "src:fpr"]
@@ -1551,7 +1551,7 @@ asm = "cvtss2si {dst}, {src}"
 name = "CVTTSS2SI"
 form = "SSE_RR"
 opcode = 0x2C
-fields = { prefix = 0xF3, w = 0 }
+match = { prefix = 0xF3, w = 0 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "cvttss2si {dst}, {src}"
 
@@ -1561,7 +1561,7 @@ asm = "cvttss2si {dst}, {src}"
 name = "CVTSD2SI"
 form = "SSE_RR"
 opcode = 0x2D
-fields = { prefix = 0xF2 }
+match = { prefix = 0xF2 }
 opsize = "dst"
 rex_w = "auto"
 ops = ["dst:gprx:out", "src:fpr"]
@@ -1571,7 +1571,7 @@ asm = "cvtsd2si {dst}, {src}"
 name = "CVTTSD2SI"
 form = "SSE_RR"
 opcode = 0x2C
-fields = { prefix = 0xF2 }
+match = { prefix = 0xF2 }
 opsize = "dst"
 rex_w = "auto"
 ops = ["dst:gprx:out", "src:fpr"]
@@ -1585,7 +1585,7 @@ prefix = "field"
 rex_w = "field"
 imm = 8
 opcode = 0x0A
-fields = { prefix = 0x66, w = 0 }
+match = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "roundss {dst}, {src}, {imm}"
 effect = ["Pure"]
@@ -1594,7 +1594,7 @@ effect = ["Pure"]
 
 [[templates]]
 name = "SD_BIN"
-body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, fields = { prefix = 0xF2, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
+body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, match = { prefix = 0xF2, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
   { inst = "MOVSD", data_width = 64, opcode = 0x10 },
   { inst = "MINSD", opcode = 0x5D },
@@ -1606,7 +1606,7 @@ rows = [
 ]
 [[templates]]
 name = "SS_FMOV"
-body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, fields = { prefix = 0xF3, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
+body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, match = { prefix = 0xF3, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
   { inst = "ADDSS", opcode = 0x58 },
   { inst = "SUBSS", opcode = 0x5C },
@@ -1630,7 +1630,7 @@ rows = [
 ]
 [[templates]]
 name = "PD_BIN"
-body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, fields = { prefix = 0x66, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
+body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, match = { prefix = 0x66, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
   { inst = "ADDPD", opcode = 0x58 },
   { inst = "SUBPD", opcode = 0x5C },
@@ -1639,7 +1639,7 @@ rows = [
 ]
 [[templates]]
 name = "PI_BIN"
-body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, fields = { prefix = 0x66, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
+body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, match = { prefix = 0x66, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
   { inst = "PADDD", opcode = 0xFE },
   { inst = "PSUBD", opcode = 0xFA },
@@ -1649,7 +1649,7 @@ rows = [
 # ── VEX 家族（256 位向量，三操作数）──
 [[templates]]
 name = "PS_BIN_V"
-body = { form = "VEX_RRV", modrm = { reg = "dst", rm = "src2" }, fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
+body = { form = "VEX_RRV", modrm = { reg = "dst", rm = "src2" }, match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "VADDPS", ref = "vaddps", opcode = 0x58 },
   { inst = "VSUBPS", ref = "vsubps", opcode = 0x5C },
@@ -1660,7 +1660,7 @@ rows = [
 ]
 [[templates]]
 name = "PD_BIN_V"
-body = { form = "VEX_RRV", modrm = { reg = "dst", rm = "src2" }, fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
+body = { form = "VEX_RRV", modrm = { reg = "dst", rm = "src2" }, match = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "VADDPD", ref = "vaddpd", opcode = 0x58 },
   { inst = "VSUBPD", ref = "vsubpd", opcode = 0x5C },
@@ -1672,7 +1672,7 @@ rows = [
 # 按操作数实际寄存器类（fpr256 vs fpr）自动分发。
 [[templates]]
 name = "PS_BIN_EV"
-body = { form = "EVEX_RRV", modrm = { reg = "dst", rm = "src2" }, fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256"], asm = "{inst.lower} {dst}, {src}, {src2}" }
+body = { form = "EVEX_RRV", modrm = { reg = "dst", rm = "src2" }, match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "VADDPS_ZMM", ref = "vaddps", opcode = 0x58, asm = "vaddps {dst}, {src}, {src2}" },
   { inst = "VSUBPS_ZMM", ref = "vsubps", opcode = 0x5C, asm = "vsubps {dst}, {src}, {src2}" },
@@ -1682,22 +1682,22 @@ rows = [
 # EVEX 双精度（pd，pp=1）
 [[templates]]
 name = "PD_BIN_EV"
-body = { form = "EVEX_RRV", modrm = { reg = "dst", rm = "src2" }, fields = { evex_map = 1, evex_pp = 1, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256"], asm = "{inst.lower} {dst}, {src}, {src2}" }
+body = { form = "EVEX_RRV", modrm = { reg = "dst", rm = "src2" }, match = { evex_map = 1, evex_pp = 1, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
-  { inst = "VADDPD_ZMM", ref = "vaddpd", opcode = 0x58, fields = { evex_w = 1 }, asm = "vaddpd {dst}, {src}, {src2}" },
-  { inst = "VSUBPD_ZMM", ref = "vsubpd", opcode = 0x5C, fields = { evex_w = 1 }, asm = "vsubpd {dst}, {src}, {src2}" },
-  { inst = "VMULPD_ZMM", ref = "vmulpd", opcode = 0x59, fields = { evex_w = 1 }, asm = "vmulpd {dst}, {src}, {src2}" },
-  { inst = "VDIVPD_ZMM", ref = "vdivpd", opcode = 0x5E, fields = { evex_w = 1 }, asm = "vdivpd {dst}, {src}, {src2}" },
+  { inst = "VADDPD_ZMM", ref = "vaddpd", opcode = 0x58, match = { evex_w = 1 }, asm = "vaddpd {dst}, {src}, {src2}" },
+  { inst = "VSUBPD_ZMM", ref = "vsubpd", opcode = 0x5C, match = { evex_w = 1 }, asm = "vsubpd {dst}, {src}, {src2}" },
+  { inst = "VMULPD_ZMM", ref = "vmulpd", opcode = 0x59, match = { evex_w = 1 }, asm = "vmulpd {dst}, {src}, {src2}" },
+  { inst = "VDIVPD_ZMM", ref = "vdivpd", opcode = 0x5E, match = { evex_w = 1 }, asm = "vdivpd {dst}, {src}, {src2}" },
 ]
 # EVEX 整数（vpaddd/vpsubd/vpaddq/vpsubq，pp=1）
 [[templates]]
 name = "INT_BIN_EV"
-body = { form = "EVEX_RRV", modrm = { reg = "dst", rm = "src2" }, fields = { evex_map = 1, evex_pp = 1, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256"], asm = "{inst.lower} {dst}, {src}, {src2}" }
+body = { form = "EVEX_RRV", modrm = { reg = "dst", rm = "src2" }, match = { evex_map = 1, evex_pp = 1, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "VPADDD_ZMM", ref = "vpaddd", opcode = 0xFE, asm = "vpaddd {dst}, {src}, {src2}" },
   { inst = "VPSUBD_ZMM", ref = "vpsubd", opcode = 0xFA, asm = "vpsubd {dst}, {src}, {src2}" },
-  { inst = "VPADDQ_ZMM", ref = "vpaddq", opcode = 0xD4, fields = { evex_w = 1 }, asm = "vpaddq {dst}, {src}, {src2}" },   # EVEX 下 W 位区分 dword/qword（vpaddd=W0、vpaddq=W1）
-  { inst = "VPSUBQ_ZMM", ref = "vpsubq", opcode = 0xFB, fields = { evex_w = 1 }, asm = "vpsubq {dst}, {src}, {src2}" },
+  { inst = "VPADDQ_ZMM", ref = "vpaddq", opcode = 0xD4, match = { evex_w = 1 }, asm = "vpaddq {dst}, {src}, {src2}" },   # EVEX 下 W 位区分 dword/qword（vpaddd=W0、vpaddq=W1）
+  { inst = "VPSUBQ_ZMM", ref = "vpsubq", opcode = 0xFB, match = { evex_w = 1 }, asm = "vpsubq {dst}, {src}, {src2}" },
 ]
 # EVEX 无源（2 操作数）：vmovaps zmm, zmm
 [[instructions]]
@@ -1705,7 +1705,7 @@ name = "VMOVAPS_ZMM"
 ref = "vmovaps"
 evex = { map = "field", pp = "field", w = "field", l = "field" }
 opcode = 0x28
-fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
+match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
 ops = ["dst:fpr256:out", "src:fpr256"]
 asm = "vmovaps {dst}, {src}"
 
@@ -1715,7 +1715,7 @@ ref = "vmovaps"
 form = "EVEX_RR_MEMREF"
 modrm = { rm = "[mem]" }
 opcode = 0x28
-fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
+match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 # v13：EVEX 内存形式（512 位，压缩位移 scale=64）——vmovaps zmm, [rax±disp]
 ops = ["dst:fpr256:out", "mem:mem"]
 asm = "vmovaps {dst}, {mem}"
@@ -1728,7 +1728,7 @@ data_width = 512
 form = "EVEX_RR_MEMREF"
 modrm = { rm = "[mem]" }
 opcode = 0x10
-fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
+match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 ops = ["dst:fpr256:out", "mem:mem"]
 asm = "vmovups {dst}, {mem}"
 
@@ -1740,7 +1740,7 @@ data_width = 512
 form = "EVEX_RR_MEMREF"
 modrm = { rm = "[mem]" }
 opcode = 0x11
-fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
+match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 ops = ["src:fpr256", "mem:mem:out"]
 asm = "vmovups {src}, {mem}"
 
@@ -1750,7 +1750,7 @@ name = "VMOVUPS_512_R_MEM"
 form = "EVEX_RR_MEMREF"
 modrm = { rm = "[src]" }
 opcode = 0x10
-fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
+match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 ops = ["dst:fpr256:out", "src:gpr"]
 asm = "vmovups {dst}, [{src}]"
 
@@ -1759,7 +1759,7 @@ name = "VMOVUPS_512_MEM_R"
 form = "EVEX_RR_MEMREF"
 modrm = { rm = "[src2]" }
 opcode = 0x11
-fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
+match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 ops = ["src:fpr256", "src2:gpr"]
 asm = "vmovups [{src2}], {src}"
 
@@ -1772,7 +1772,7 @@ ref = "vaddps"
 form = "EVEX_RRV"
 modrm = { reg = "dst", rm = "src2" }
 opcode = 0x58
-fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
+match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
 ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256", "src3:kreg"]
 asm = "vaddps {dst}, {src}, {src2}, {src3}"
 
@@ -1782,7 +1782,7 @@ name = "VADDPS_ZMM_MASKZ"
 form = "EVEX_RRV"
 modrm = { reg = "dst", rm = "src2" }
 opcode = 0x58
-fields = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_z = 1 }
+match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_z = 1 }
 ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256", "src3:kreg"]
 asm = "vaddps {dst}, {src}, {src2}, {src3}"
 
@@ -1793,7 +1793,7 @@ name = "VMOVAPS"
 ref = "vmovaps"
 form = "VEX_RR"
 opcode = 0x28
-fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "vmovaps {dst}, {src}"
 
@@ -1803,7 +1803,7 @@ ref = "vmovaps"
 form = "VEX_RR_MEMREF"
 modrm = { rm = "[mem]" }
 opcode = 0x28
-fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "mem:mem"]
 asm = "vmovaps {dst}, {mem}"
 
@@ -1815,7 +1815,7 @@ data_width = 256
 form = "VEX_RR_MEMREF"
 modrm = { rm = "[mem]" }
 opcode = 0x10
-fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "mem:mem"]
 asm = "vmovups {dst}, {mem}"
 
@@ -1827,7 +1827,7 @@ data_width = 256
 form = "VEX_RR_MEMREF"
 modrm = { rm = "[mem]" }
 opcode = 0x11
-fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["src:fpr", "mem:mem:out"]
 asm = "vmovups {src}, {mem}"
 
@@ -1843,7 +1843,7 @@ name = "VMOVUPS_256_R_MEM"
 form = "VEX_RR_MEMREF"
 modrm = { rm = "[src]" }
 opcode = 0x10
-fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "vmovups {dst}, [{src}]"
 
@@ -1852,7 +1852,7 @@ name = "VMOVUPS_256_MEM_R"
 form = "VEX_RR_MEMREF"
 modrm = { rm = "[src2]" }
 opcode = 0x11
-fields = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
+match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
 ops = ["src:fpr", "src2:gpr"]
 asm = "vmovups [{src2}], {src}"
 
@@ -1860,7 +1860,7 @@ asm = "vmovups [{src2}], {src}"
 name = "VBROADCASTSS"
 form = "VEX_RR"
 opcode = 0x18
-fields = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
+match = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "vbroadcastss {dst}, {src}"
 
@@ -1868,7 +1868,7 @@ asm = "vbroadcastss {dst}, {src}"
 name = "VBROADCASTSD"
 form = "VEX_RR"
 opcode = 0x19
-fields = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
+match = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "vbroadcastsd {dst}, {src}"
 
@@ -1876,7 +1876,7 @@ asm = "vbroadcastsd {dst}, {src}"
 name = "VPXOR"
 form = "VEX_RRV"
 opcode = 0xEF
-fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+match = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "vpxor {dst}, {src}, {src2}"
 
@@ -1885,7 +1885,7 @@ name = "VPADDD"
 ref = "vpaddd"
 form = "VEX_RRV"
 opcode = 0xFE
-fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+match = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "vpaddd {dst}, {src}, {src2}"
 
@@ -1894,7 +1894,7 @@ name = "VPSUBD"
 ref = "vpsubd"
 form = "VEX_RRV"
 opcode = 0xFA
-fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+match = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "vpsubd {dst}, {src}, {src2}"
 
@@ -1903,7 +1903,7 @@ name = "VPADDQ"
 ref = "vpaddq"
 form = "VEX_RRV"
 opcode = 0xD4
-fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+match = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "vpaddq {dst}, {src}, {src2}"
 
@@ -1912,7 +1912,7 @@ name = "VPSUBQ"
 ref = "vpsubq"
 form = "VEX_RRV"
 opcode = 0xFB
-fields = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
+match = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "vpsubq {dst}, {src}, {src2}"
 
@@ -1920,7 +1920,7 @@ asm = "vpsubq {dst}, {src}, {src2}"
 name = "VPMULLD"
 form = "VEX_RRV"
 opcode = 0x40
-fields = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
+match = { vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "vpmulld {dst}, {src}, {src2}"
 
@@ -1930,7 +1930,7 @@ vex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = { reg = "src", rm = "dst" }
 imm = 8
 opcode = 0x19
-fields = { vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
+match = { vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["src:fpr", "dst:fpr:out", "imm:imm8"]
 asm = "vextractf128 {dst}, {src}, {imm}"
 
@@ -1940,7 +1940,7 @@ vex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = { reg = "dst", rm = "src2" }
 imm = 8
 opcode = 0x18
-fields = { vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
+match = { vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "imm:imm8"]
 asm = "vinsertf128 {dst}, {src}, {src2}, {imm}"
 
@@ -1954,7 +1954,7 @@ evex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = { reg = "dst", rm = "src2" }
 imm = 8
 opcode = 0x18
-fields = { evex_map = 3, evex_pp = 1, evex_w = 0, evex_l = 2 }
+match = { evex_map = 3, evex_pp = 1, evex_w = 0, evex_l = 2 }
 ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr", "imm:imm8"]
 asm = "vinsertf32x4 {dst}, {src}, {src2}, {imm}"
 
@@ -1969,7 +1969,7 @@ evex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = { reg = "src", rm = "dst" }
 imm = 8
 opcode = 0x19
-fields = { evex_map = 3, evex_pp = 1, evex_w = 0, evex_l = 2 }
+match = { evex_map = 3, evex_pp = 1, evex_w = 0, evex_l = 2 }
 ops = ["src:fpr256", "dst:fpr:out", "imm:imm8"]
 asm = "vextractf32x4 {dst}, {src}, {imm}"
 # ── 收官：@op_rm / @op_rm_imm32 / @sse_rr_imm8 / +r 形式 ──
@@ -2240,7 +2240,7 @@ prefix = "field"
 rex_w = "field"
 imm = 8
 opcode = 0x70
-fields = { prefix = 0x66, w = 0 }
+match = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "pshufd {dst}, {src}, {imm}"
 
@@ -2252,7 +2252,7 @@ prefix = "field"
 rex_w = "field"
 imm = 8
 opcode = 0xC6
-fields = { prefix = 0, w = 0 }
+match = { prefix = 0, w = 0 }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "shufps {dst}, {src}, {imm}"
 
@@ -2274,7 +2274,7 @@ prefix = "field"
 rex_w = "field"
 imm = 8
 opcode = 0xC2
-fields = { prefix = 0, w = 0 }
+match = { prefix = 0, w = 0 }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "cmpps {dst}, {src}, {imm}"
 
@@ -2286,7 +2286,7 @@ prefix = "field"
 rex_w = "field"
 imm = 8
 opcode = 0xC2
-fields = { prefix = 0x66, w = 0 }
+match = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "cmppd {dst}, {src}, {imm}"
 
@@ -2298,7 +2298,7 @@ prefix = "field"
 rex_w = "field"
 imm = 8
 opcode = 0xC2
-fields = { prefix = 0xF3, w = 0 }
+match = { prefix = 0xF3, w = 0 }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "cmpss {dst}, {src}, {imm}"
 
@@ -2310,7 +2310,7 @@ prefix = "field"
 rex_w = "field"
 imm = 8
 opcode = 0xC2
-fields = { prefix = 0xF2, w = 0 }
+match = { prefix = 0xF2, w = 0 }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "cmpsd {dst}, {src}, {imm}"
 
@@ -2482,14 +2482,14 @@ asm = "retf {imm}"
 name = "PUSHFW"
 opcode = 0x9C
 prefix = "field"
-fields = { prefix = 0x66 }
+match = { prefix = 0x66 }
 asm = "pushfw"
 
 [[instructions]]
 name = "POPFW"
 opcode = 0x9D
 prefix = "field"
-fields = { prefix = 0x66 }
+match = { prefix = 0x66 }
 asm = "popfw"
 [[instructions]]
 name = "PUSHF"
@@ -2502,7 +2502,7 @@ opcode = 0x9D
 asm = "popf"
 
 # 16 位（`66` 前缀）变体。`opsize = 16` 对**无操作数**指令发不出前缀（它按操作数推宽度），
-# 所以显式走 prefix 字段：`prefix = "field"` + `fields = { prefix = 0x66 }`（与 SSE 族同款）。
+# 所以显式走 prefix 字段：`prefix = "field"` + `match = { prefix = 0x66 }`（与 SSE 族同款）。
 
 [[instructions]]
 name = "JMP_REL32"
@@ -2566,7 +2566,7 @@ name = "MFENCE"
 escape = [0x0F]
 modrm_fixed = 0xF0
 opcode = 0xAE
-fields = { prefix = 0, w = 0 }
+match = { prefix = 0, w = 0 }
 effect = ["Write"]
 asm = "mfence"
 
@@ -2728,7 +2728,7 @@ prefix = "field"
 rex_w = "field"
 imm = 8
 opcode = 0x0B            # ROUNDSD = 66 0F 3A 0B /r ib（0A 是 ROUNDSS）
-fields = { prefix = 0x66, w = 1 }
+match = { prefix = 0x66, w = 1 }
 ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "roundsd {dst}, {src}, {imm}"
 effect = ["Pure"]
@@ -2738,7 +2738,7 @@ name = "PMULLD"
 opsize = 64
 escape = [0x0F, 0x38]
 opcode = 0x40
-fields = { prefix = 0x66, w = 0 }
+match = { prefix = 0x66, w = 0 }
 ops = ["dst:fpr:inout", "src:fpr"]
 asm = "pmulld {dst}, {src}"
 effect = ["Pure"]
@@ -2747,7 +2747,7 @@ effect = ["Pure"]
 name = "MOVQ_XMM_R64"
 form = "MRR_0F_FIX64"
 opcode = 0x6E
-fields = { prefix = 0x66, w = 1 }
+match = { prefix = 0x66, w = 1 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "movq {dst}, {src}"
 effect = ["Pure"]
@@ -2758,7 +2758,7 @@ name = "MOVQ_R64_XMM"
 modrm = { reg = "src", rm = "dst" }
 form = "MRR_0F_FIX64"
 opcode = 0x7E
-fields = { prefix = 0x66, w = 1 }
+match = { prefix = 0x66, w = 1 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "movq {dst}, {src}"
 effect = ["Pure"]
@@ -2768,7 +2768,7 @@ data_width = 64
 name = "MOVQ_XMM_FREG"
 form = "MRR_0F_FIX64"
 opcode = 0x6E
-fields = { prefix = 0x66, w = 1 }
+match = { prefix = 0x66, w = 1 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "movq {dst}, {src}"
 effect = ["Pure"]
@@ -2777,7 +2777,7 @@ effect = ["Pure"]
 name = "MOVQ_FREG_XMM"
 form = "MRR_0F_FIX64"
 opcode = 0x7E
-fields = { prefix = 0x66, w = 1 }
+match = { prefix = 0x66, w = 1 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "movq {dst}, {src}"
 effect = ["Pure"]
@@ -2786,7 +2786,7 @@ effect = ["Pure"]
 name = "MOVAPS_MR"
 form = "MRR_0F_FIX64"
 opcode = 0x29
-fields = { prefix = 0, w = 0 }
+match = { prefix = 0, w = 0 }
 ops = ["src:gpr", "src2:fpr"]
 asm = "movaps {src}, {src2}"
 effect = ["Write"]
@@ -2795,7 +2795,7 @@ effect = ["Write"]
 name = "LZCNT_R"
 form = "MRR_0F_PREFIX"
 opcode = 0xBD
-fields = { prefix = 0xF3, w = 0 }
+match = { prefix = 0xF3, w = 0 }
 # v14：槽 gprx——宽度由 IR 类型 auto（I32 输入 → 无 REX.W lzcntl 返回 31
 # 位语义；I64 → REX.W lzcntq）。固定 _32 变体（LZCNT_R32）已删。
 ops = ["dst:gprx:out", "src:gprx"]
@@ -2806,7 +2806,7 @@ effect = ["Pure"]
 name = "TZCNT_R"
 form = "MRR_0F_PREFIX"
 opcode = 0xBC
-fields = { prefix = 0xF3, w = 0 }
+match = { prefix = 0xF3, w = 0 }
 ops = ["dst:gprx:out", "src:gprx"]
 asm = "tzcnt {dst}, {src}"
 effect = ["Pure"]
@@ -2815,7 +2815,7 @@ effect = ["Pure"]
 name = "POPCNT_R"
 form = "MRR_0F_PREFIX"
 opcode = 0xB8
-fields = { prefix = 0xF3, w = 0 }
+match = { prefix = 0xF3, w = 0 }
 ops = ["dst:gprx:out", "src:gprx"]
 asm = "popcnt {dst}, {src}"
 effect = ["Pure"]
@@ -4460,7 +4460,7 @@ insts = [
 # 4 条指令结构完全相同（同 form、同 fields 形状、同 ops 形状），只差 opcode/prefix/
 # 源槽/助记符；行里的 `ref` 顺带取代原先手写的 movzx/movsx 引用名（同引用名 = 多态）。
 [[templates]]
-body = { form = "MRR_0F_NOOS", opcode = "{opcode}", fields = { prefix = "{pfx}", w = 1 }, ops = ["dst:gpr:out", "src:{slot}"], asm = "{mn} {dst}, {src}" }
+body = { form = "MRR_0F_NOOS", opcode = "{opcode}", match = { prefix = "{pfx}", w = 1 }, ops = ["dst:gpr:out", "src:{slot}"], asm = "{mn} {dst}, {src}" }
 rows = [
   { inst = "MOVZX_R8_RM", ref = "movzx", mn = "movzx", opcode = 0xB6, pfx = 0, slot = "gpr8b" },
   { inst = "MOVZX_R16_RM", ref = "movzx", mn = "movzx", opcode = 0xB7, pfx = 0x66, slot = "gpr16" },

@@ -2074,8 +2074,9 @@ pub struct Instruction {
     /// 主 opcode（值或首个 opcode 字节）。
     #[serde(default)]
     pub opcode: Option<u64>,
-    /// 固定字段值（funct3/funct7/前缀字节...），按位域名引用。
-    #[serde(default)]
+    /// **固定字段值**（funct3/funct7/前缀字节/vex 键…），按位域名或编码键名引用。
+    /// TOML 键是 `match`（v21 W2.1 改名；旧的 `fields` 键让位给"字段声明列表"）。
+    #[serde(rename = "match", default)]
     pub fields: Option<BTreeMap<String, u64>>,
     /// **命名操作数声明**（v15）：每项 `"名字:槽[:角色]"`，**数组序 = 编码序**
     /// （modrm reg/rm、定宽位域绑定都按这个序）。角色缺省 `in`。

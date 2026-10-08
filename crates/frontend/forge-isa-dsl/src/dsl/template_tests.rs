@@ -112,14 +112,14 @@ fn body_is_shared_defaults_and_rows_deep_merge() {
         r#"
 [[templates]]
 name = "ADD"
-body = { form = "R", opcode = 0x33, ops = ["rd:{slot}:out", "rs1:{slot}", "rs2:{slot}"], asm = "add {rd}, {rs1}, {rs2}", fields = { funct3 = 0, funct7 = 0 } }
+body = { form = "R", opcode = 0x33, ops = ["rd:{slot}:out", "rs1:{slot}", "rs2:{slot}"], asm = "add {rd}, {rs1}, {rs2}", match = { funct3 = 0, funct7 = 0 } }
 [[templates.rows]]
 inst = "ADDW"
 slot = "r32"
 [[templates.rows]]
 inst = "ADDX"
 slot = "r64"
-fields = { funct7 = 1 }
+match = { funct7 = 1 }
 "#,
     );
     let m = parse_and_validate(&doc).expect("展开");
@@ -144,10 +144,10 @@ name = "RR"
 body = { form = "R", opcode = 0x33, ops = ["rd:r64:out", "rs1:r64", "rs2:r64"], asm = "{inst.lower} {rd}, {rs1}, {rs2}" }
 [[templates.rows]]
 inst = "ADD"
-fields = { funct3 = 0, funct7 = 0 }
+match = { funct3 = 0, funct7 = 0 }
 [[templates.rows]]
 inst = "SUB"
-fields = { funct3 = 0, funct7 = 0x20 }
+match = { funct3 = 0, funct7 = 0x20 }
 "#,
     );
     let m = parse_and_validate(&doc).expect("展开");
@@ -161,7 +161,7 @@ fn whole_string_placeholder_keeps_the_type() {
     let doc = plus(
         r#"
 [[templates]]
-body = { form = "R", opcode = "{op}", ops = ["rd:{slot}:out"], asm = "op {rd}", fields = { funct3 = "{f3}" } }
+body = { form = "R", opcode = "{op}", ops = ["rd:{slot}:out"], asm = "op {rd}", match = { funct3 = "{f3}" } }
 [[templates.rows]]
 inst = "OPW"
 op = 0x33

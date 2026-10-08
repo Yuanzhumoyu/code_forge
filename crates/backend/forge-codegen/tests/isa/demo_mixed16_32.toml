@@ -8,8 +8,8 @@
 # 编码按该指令字长发字节、解码按 `widths` **升序**分组尝试（短编码优先）。
 #
 # 低 2 位是分组判别位（RVC/Thumb 同构）：
-#   - 16 位短编码：bits[1:0] = 00（`fields = { sel = 0 }`）
-#   - 32 位长编码：bits[1:0] = 11（`fields = { sel = 3 }`）
+#   - 16 位短编码：bits[1:0] = 00（`match = { sel = 0 }`）
+#   - 32 位长编码：bits[1:0] = 11（`match = { sel = 3 }`）
 # 因此长编码的低 16 位永远不可能匹配任何短编码（前缀互斥）——"首个完整匹配即停"
 # 不会把长指令误判成短指令。
 #
@@ -86,7 +86,7 @@ name = "CADD16"
 width = 16
 form = "C16"
 opcode = 1
-fields = { sel = 0 }
+match = { sel = 0 }
 ops = ["dst:r:out", "src:r"]
 asm = "cadd {dst}, {src}"
 
@@ -95,7 +95,7 @@ name = "CMOV16"
 width = 16
 form = "C16"
 opcode = 2
-fields = { sel = 0 }
+match = { sel = 0 }
 ops = ["dst:r:out", "src:r"]
 asm = "cmov {dst}, {src}"
 
@@ -104,7 +104,7 @@ name = "LNOP32"
 width = 32
 form = "L32N"
 opcode = 1
-fields = { sel = 3 }
+match = { sel = 3 }
 asm = "lnop"
 
 [[instructions]]
@@ -112,7 +112,7 @@ name = "LADD32"
 width = 32
 form = "L32I"
 opcode = 2
-fields = { sel = 3 }
+match = { sel = 3 }
 ops = ["dst:r:out", "src:r", "imm:i12"]
 asm = "ladd {dst}, {src}, {imm}"
 

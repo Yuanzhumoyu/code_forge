@@ -52,7 +52,7 @@ name = "ADD"
 form = "R"
 ref = "add"
 opcode = 0x33
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
 asm = "add {dst}, {src}, {src2}"
 
@@ -177,7 +177,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
             "指令引用未声明槽",
             plus(
                 "[[instructions]]\nname = \"SUB\"\nform = \"R\"\nopcode = 0x33\n\
-                 fields = { funct3 = 0 }\nops = [\"dst:nope:out\"]\nasm = \"sub {dst}\"",
+                 match = { funct3 = 0 }\nops = [\"dst:nope:out\"]\nasm = \"sub {dst}\"",
             ),
             "DSL-INST",
             "nope",
@@ -186,14 +186,14 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
             "指令重名",
             plus(
                 "[[instructions]]\nname = \"ADD\"\nform = \"R\"\nopcode = 0x33\n\
-                 fields = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"add {dst}\"",
+                 match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"add {dst}\"",
             ),
             "DSL-INST",
             "duplicate instruction name",
         ),
         (
             "指令定宽字段未声明",
-            BASE.replace("fields = { funct3 = 0 }", "fields = { nope = 0 }"),
+            BASE.replace("match = { funct3 = 0 }", "match = { nope = 0 }"),
             "DSL-INST",
             "nope",
         ),
@@ -221,7 +221,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
             "引用名与指令名冲突",
             plus(
                 "[[instructions]]\nname = \"SUB\"\nref = \"ADD\"\nform = \"R\"\nopcode = 0x33\n\
-                 fields = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"sub {dst}\"",
+                 match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"sub {dst}\"",
             ),
             "DSL-INST",
             "与指令名冲突",
@@ -230,7 +230,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
             "引用名为空",
             plus(
                 "[[instructions]]\nname = \"SUB\"\nref = \"\"\nform = \"R\"\nopcode = 0x33\n\
-                 fields = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"sub {dst}\"",
+                 match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"sub {dst}\"",
             ),
             "DSL-INST",
             "ref 不能为空",
@@ -307,7 +307,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
             "角色名拼错（v20 A4 的 frame_set 写成 frame_sett）",
             plus(
                 "[[instructions]]\nname = \"SETF\"\nform = \"R\"\nopcode = 0x7F\n\
-                 fields = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"setf {dst}\"\n\
+                 match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"setf {dst}\"\n\
                  roles = [\"frame_sett\"]",
             ),
             "DSL-TOML",
@@ -398,7 +398,7 @@ fn headline_positions_are_exact() {
     // 重名：诊断必须落在**第二处**声明上，并附注第一处。
     let dup = plus(
         "[[instructions]]\nname = \"ADD\"\nform = \"R\"\nopcode = 0x33\n\
-         fields = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"add {dst}\"",
+         match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"add {dst}\"",
     );
     let d = errs(&dup)
         .into_iter()
@@ -460,7 +460,7 @@ fn three_independent_errors_are_reported_together() {
 name = "ADD"
 form = "R"
 opcode = 0x33
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["dst:gpr:out"]
 asm = "add {dst}"
 
@@ -496,7 +496,7 @@ when = { eq = ["rd_width", 32] }
 fn duplicate_declaration_points_at_both_lines() {
     let doc = plus(
         "[[instructions]]\nname = \"ADD\"\nform = \"R\"\nopcode = 0x33\n\
-         fields = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"add {dst}\"",
+         match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"add {dst}\"",
     );
     let dups = errs(&doc)
         .into_iter()
@@ -521,7 +521,7 @@ fn diagnostics_are_capped_with_a_tail_note() {
     for i in 0..40 {
         extra.push_str(&format!(
             "\n[[instructions]]\nname = \"X{i}\"\nform = \"NOPE\"\nopcode = 0x33\n\
-             fields = {{ funct3 = 0 }}\nops = [\"dst:gpr:out\"]\nasm = \"x {{dst}}\"\n"
+             match = {{ funct3 = 0 }}\nops = [\"dst:gpr:out\"]\nasm = \"x {{dst}}\"\n"
         ));
     }
     let doc = format!("{BASE}{extra}");

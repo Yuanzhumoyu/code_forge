@@ -159,7 +159,7 @@ fn overlap_guard_can_fail() {
     let path = root().join("isa/arm64.toml");
     let spec = report::load_spec(&path).expect("加载 arm64");
     let injected = "[[instructions]]\nname = \"OVERLAPTOY\"\nform = \"PAIR\"\nopcode = 0xA9\n\
-                    fields = { idx2 = 0, opc2 = 0 }\n\
+                    match = { idx2 = 0, opc2 = 0 }\n\
                     ops = [\"t1:r64\", \"base:r64\", \"t2:r64\", \"imm:imm7x\"]\n\
                     asm = \"stp {t1}, {t2}, [{base}, #{imm}]\"\n\n";
     let mutated = spec.text.replace(

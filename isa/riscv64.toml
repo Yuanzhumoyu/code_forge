@@ -833,50 +833,50 @@ operand_fields = ["pred", "succ"]
 name = "RR"
 body = { form = "R", opcode = 0x33, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
-  { inst = "ADD", fields = { funct3 = 0, funct7 = 0x00 } },
-  { inst = "SUB", fields = { funct3 = 0, funct7 = 0x20 } },
-  { inst = "SLL", fields = { funct3 = 1, funct7 = 0x00 } },
-  { inst = "SLT", fields = { funct3 = 2, funct7 = 0x00 } },
-  { inst = "SLTU", fields = { funct3 = 3, funct7 = 0x00 } },
-  { inst = "XOR", fields = { funct3 = 4, funct7 = 0x00 } },
-  { inst = "SRL", fields = { funct3 = 5, funct7 = 0x00 } },
-  { inst = "SRA", fields = { funct3 = 5, funct7 = 0x20 } },
-  { inst = "OR", fields = { funct3 = 6, funct7 = 0x00 } },
-  { inst = "AND", fields = { funct3 = 7, funct7 = 0x00 } },
-  { inst = "MUL", fields = { funct3 = 0, funct7 = 0x01 } },
-  { inst = "DIV", fields = { funct3 = 4, funct7 = 0x01 } },
-  { inst = "DIVU", fields = { funct3 = 5, funct7 = 0x01 } },
-  { inst = "REM", fields = { funct3 = 6, funct7 = 0x01 } },
-  { inst = "REMU", fields = { funct3 = 7, funct7 = 0x01 } },
-  { inst = "ROL", fields = { funct3 = 1, funct7 = 0x30 } },
-  { inst = "ROR", fields = { funct3 = 5, funct7 = 0x30 } },
-  { inst = "MIN", fields = { funct3 = 0, funct7 = 0x05 } },
-  { inst = "MAX", fields = { funct3 = 1, funct7 = 0x05 } },
-  { inst = "MINU", fields = { funct3 = 4, funct7 = 0x05 } },
-  { inst = "MAXU", fields = { funct3 = 5, funct7 = 0x05 } },
+  { inst = "ADD", match = { funct3 = 0, funct7 = 0x00 } },
+  { inst = "SUB", match = { funct3 = 0, funct7 = 0x20 } },
+  { inst = "SLL", match = { funct3 = 1, funct7 = 0x00 } },
+  { inst = "SLT", match = { funct3 = 2, funct7 = 0x00 } },
+  { inst = "SLTU", match = { funct3 = 3, funct7 = 0x00 } },
+  { inst = "XOR", match = { funct3 = 4, funct7 = 0x00 } },
+  { inst = "SRL", match = { funct3 = 5, funct7 = 0x00 } },
+  { inst = "SRA", match = { funct3 = 5, funct7 = 0x20 } },
+  { inst = "OR", match = { funct3 = 6, funct7 = 0x00 } },
+  { inst = "AND", match = { funct3 = 7, funct7 = 0x00 } },
+  { inst = "MUL", match = { funct3 = 0, funct7 = 0x01 } },
+  { inst = "DIV", match = { funct3 = 4, funct7 = 0x01 } },
+  { inst = "DIVU", match = { funct3 = 5, funct7 = 0x01 } },
+  { inst = "REM", match = { funct3 = 6, funct7 = 0x01 } },
+  { inst = "REMU", match = { funct3 = 7, funct7 = 0x01 } },
+  { inst = "ROL", match = { funct3 = 1, funct7 = 0x30 } },
+  { inst = "ROR", match = { funct3 = 5, funct7 = 0x30 } },
+  { inst = "MIN", match = { funct3 = 0, funct7 = 0x05 } },
+  { inst = "MAX", match = { funct3 = 1, funct7 = 0x05 } },
+  { inst = "MINU", match = { funct3 = 4, funct7 = 0x05 } },
+  { inst = "MAXU", match = { funct3 = 5, funct7 = 0x05 } },
 ]
 # ── I 型立即数 ALU（opcode 0x13；ADDI 保留顶层：roles + 与 MOV/ADDI_GLOBAL 同键）──
 [[templates]]
 name = "II"
 body = { form = "I", opcode = 0x13, ops = ["dst:gpr:out", "src:gpr", "imm:imm12"], asm = "{inst.lower} {dst}, {src}, {imm}" }
 rows = [
-  { inst = "SLTI", fields = { funct3 = 2 } },
-  { inst = "SLTIU", fields = { funct3 = 3 } },
-  { inst = "XORI", fields = { funct3 = 4 } },
-  { inst = "ORI", fields = { funct3 = 6 } },
-  { inst = "ANDI", fields = { funct3 = 7 } },
+  { inst = "SLTI", match = { funct3 = 2 } },
+  { inst = "SLTIU", match = { funct3 = 3 } },
+  { inst = "XORI", match = { funct3 = 4 } },
+  { inst = "ORI", match = { funct3 = 6 } },
+  { inst = "ANDI", match = { funct3 = 7 } },
 ]
 # ── B 型分支（opcode 0x63；funct3 区分）──
 [[templates]]
 name = "BB"
 body = { form = "B", opcode = 0x63, ops = ["src:gpr", "src2:gpr", "target:off_b"], asm = "{inst.lower} {src}, {src2}, {target}" }
 rows = [
-  { inst = "BEQ", fields = { funct3 = 0 }, roles = ["branch"] },
-  { inst = "BNE", fields = { funct3 = 1 } },
-  { inst = "BLT", fields = { funct3 = 4 } },
-  { inst = "BGE", fields = { funct3 = 5 } },
-  { inst = "BLTU", fields = { funct3 = 6 } },
-  { inst = "BGEU", fields = { funct3 = 7 } },
+  { inst = "BEQ", match = { funct3 = 0 }, roles = ["branch"] },
+  { inst = "BNE", match = { funct3 = 1 } },
+  { inst = "BLT", match = { funct3 = 4 } },
+  { inst = "BGE", match = { funct3 = 5 } },
+  { inst = "BLTU", match = { funct3 = 6 } },
+  { inst = "BGEU", match = { funct3 = 7 } },
 ]
 # ── W 变体 R 型（opcode 0x3B）──
 # 移位的 W 变体（`sllw`/`srlw`/`sraw`）也是 **R 型寄存器移位**（rs2 = 移位量），
@@ -886,16 +886,16 @@ rows = [
 name = "WW"
 body = { only_variants = { xlen = [64] }, form = "R", opcode = 0x3b, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
-  { inst = "ADDW", fields = { funct3 = 0, funct7 = 0x00 } },
-  { inst = "SUBW", fields = { funct3 = 0, funct7 = 0x20 } },
-  { inst = "SLLW", fields = { funct3 = 1, funct7 = 0x00 } },
-  { inst = "SRLW", fields = { funct3 = 5, funct7 = 0x00 } },
-  { inst = "SRAW", fields = { funct3 = 5, funct7 = 0x20 } },
-  { inst = "MULW", fields = { funct3 = 0, funct7 = 0x01 } },
-  { inst = "DIVW", fields = { funct3 = 4, funct7 = 0x01 } },
-  { inst = "DIVUW", fields = { funct3 = 5, funct7 = 0x01 } },
-  { inst = "REMW", fields = { funct3 = 6, funct7 = 0x01 } },
-  { inst = "REMUW", fields = { funct3 = 7, funct7 = 0x01 } },
+  { inst = "ADDW", match = { funct3 = 0, funct7 = 0x00 } },
+  { inst = "SUBW", match = { funct3 = 0, funct7 = 0x20 } },
+  { inst = "SLLW", match = { funct3 = 1, funct7 = 0x00 } },
+  { inst = "SRLW", match = { funct3 = 5, funct7 = 0x00 } },
+  { inst = "SRAW", match = { funct3 = 5, funct7 = 0x20 } },
+  { inst = "MULW", match = { funct3 = 0, funct7 = 0x01 } },
+  { inst = "DIVW", match = { funct3 = 4, funct7 = 0x01 } },
+  { inst = "DIVUW", match = { funct3 = 5, funct7 = 0x01 } },
+  { inst = "REMW", match = { funct3 = 6, funct7 = 0x01 } },
+  { inst = "REMUW", match = { funct3 = 7, funct7 = 0x01 } },
 ]
 # ─────────────────────────── 指令（顺序 = v11 声明序）───────────────────────────
 # ADDI 复制（收参用）；与 ADDI 同编码（imm=0），解码首匹配
@@ -904,7 +904,7 @@ name = "MOV_RM8_R64"
 data_width = 64
 form = "I"
 opcode = 0x13
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 effect = ["Move"]
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "mv {dst}, {src}"
@@ -915,7 +915,7 @@ asm = "mv {dst}, {src}"
 name = "FSGNJ_S"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x10 }
+match = { funct3 = 0, funct7 = 0x10 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "fsgnj.s {dst}, {src}, {src2}"
 # 寄存器搬移（32 位）：`fsgnj.s rd, rs, rs`（汇编伪指令 `fmv.s`）——`data_width = 32`
@@ -929,7 +929,7 @@ data_width = 32
 name = "FSGNJ_D"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x11 }
+match = { funct3 = 0, funct7 = 0x11 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "fsgnj.d {dst}, {src}, {src2}"
 data_width = 64
@@ -938,7 +938,7 @@ data_width = 64
 name = "FSGNJN_S"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 1, funct7 = 0x10 }
+match = { funct3 = 1, funct7 = 0x10 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "fsgnjn.s {dst}, {src}, {src2}"
 
@@ -946,7 +946,7 @@ asm = "fsgnjn.s {dst}, {src}, {src2}"
 name = "FSGNJX_S"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 2, funct7 = 0x10 }
+match = { funct3 = 2, funct7 = 0x10 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "fsgnjx.s {dst}, {src}, {src2}"
 
@@ -1008,7 +1008,7 @@ asm = "fsgnjx.s {dst}, {src}, {src2}"
 name = "FCVT_W_S"
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x60, rs2 = 0 }
+match = { funct7 = 0x60, rs2 = 0 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.w.s {dst}, {src}, {rm}"
 
@@ -1016,7 +1016,7 @@ asm = "fcvt.w.s {dst}, {src}, {rm}"
 name = "FCVT_W_S_RNE"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x60, rs2 = 0 }
+match = { funct3 = 0, funct7 = 0x60, rs2 = 0 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.w.s {dst}, {src}"
 
@@ -1024,7 +1024,7 @@ asm = "fcvt.w.s {dst}, {src}"
 name = "FCVT_WU_S"
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x60, rs2 = 1 }
+match = { funct7 = 0x60, rs2 = 1 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.wu.s {dst}, {src}, {rm}"
 
@@ -1032,7 +1032,7 @@ asm = "fcvt.wu.s {dst}, {src}, {rm}"
 name = "FCVT_WU_S_RNE"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x60, rs2 = 1 }
+match = { funct3 = 0, funct7 = 0x60, rs2 = 1 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.wu.s {dst}, {src}"
 
@@ -1041,7 +1041,7 @@ name = "FCVT_L_S"
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x60, rs2 = 2 }
+match = { funct7 = 0x60, rs2 = 2 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.l.s {dst}, {src}, {rm}"
 
@@ -1050,7 +1050,7 @@ name = "FCVT_L_S_RNE"
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x60, rs2 = 2 }
+match = { funct3 = 0, funct7 = 0x60, rs2 = 2 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.l.s {dst}, {src}"
 
@@ -1059,7 +1059,7 @@ name = "FCVT_LU_S"
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x60, rs2 = 3 }
+match = { funct7 = 0x60, rs2 = 3 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.lu.s {dst}, {src}, {rm}"
 
@@ -1068,7 +1068,7 @@ name = "FCVT_LU_S_RNE"
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x60, rs2 = 3 }
+match = { funct3 = 0, funct7 = 0x60, rs2 = 3 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.lu.s {dst}, {src}"
 
@@ -1076,7 +1076,7 @@ asm = "fcvt.lu.s {dst}, {src}"
 name = "FCVT_W_D"
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x61, rs2 = 0 }
+match = { funct7 = 0x61, rs2 = 0 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.w.d {dst}, {src}, {rm}"
 
@@ -1084,7 +1084,7 @@ asm = "fcvt.w.d {dst}, {src}, {rm}"
 name = "FCVT_W_D_RNE"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x61, rs2 = 0 }
+match = { funct3 = 0, funct7 = 0x61, rs2 = 0 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.w.d {dst}, {src}"
 
@@ -1092,7 +1092,7 @@ asm = "fcvt.w.d {dst}, {src}"
 name = "FCVT_WU_D"
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x61, rs2 = 1 }
+match = { funct7 = 0x61, rs2 = 1 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.wu.d {dst}, {src}, {rm}"
 
@@ -1100,7 +1100,7 @@ asm = "fcvt.wu.d {dst}, {src}, {rm}"
 name = "FCVT_WU_D_RNE"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x61, rs2 = 1 }
+match = { funct3 = 0, funct7 = 0x61, rs2 = 1 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.wu.d {dst}, {src}"
 
@@ -1109,7 +1109,7 @@ name = "FCVT_L_D"
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x61, rs2 = 2 }
+match = { funct7 = 0x61, rs2 = 2 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.l.d {dst}, {src}, {rm}"
 
@@ -1118,7 +1118,7 @@ name = "FCVT_L_D_RNE"
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x61, rs2 = 2 }
+match = { funct3 = 0, funct7 = 0x61, rs2 = 2 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.l.d {dst}, {src}"
 
@@ -1127,7 +1127,7 @@ name = "FCVT_LU_D"
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x61, rs2 = 3 }
+match = { funct7 = 0x61, rs2 = 3 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.lu.d {dst}, {src}, {rm}"
 
@@ -1136,7 +1136,7 @@ name = "FCVT_LU_D_RNE"
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x61, rs2 = 3 }
+match = { funct3 = 0, funct7 = 0x61, rs2 = 3 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.lu.d {dst}, {src}"
 
@@ -1144,7 +1144,7 @@ asm = "fcvt.lu.d {dst}, {src}"
 name = "FCVT_S_W"
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x68, rs2 = 0 }
+match = { funct7 = 0x68, rs2 = 0 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.s.w {dst}, {src}, {rm}"
 
@@ -1152,7 +1152,7 @@ asm = "fcvt.s.w {dst}, {src}, {rm}"
 name = "FCVT_S_W_RNE"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x68, rs2 = 0 }
+match = { funct3 = 0, funct7 = 0x68, rs2 = 0 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.s.w {dst}, {src}"
 
@@ -1160,7 +1160,7 @@ asm = "fcvt.s.w {dst}, {src}"
 name = "FCVT_S_WU"
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x68, rs2 = 1 }
+match = { funct7 = 0x68, rs2 = 1 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.s.wu {dst}, {src}, {rm}"
 
@@ -1168,7 +1168,7 @@ asm = "fcvt.s.wu {dst}, {src}, {rm}"
 name = "FCVT_S_WU_RNE"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x68, rs2 = 1 }
+match = { funct3 = 0, funct7 = 0x68, rs2 = 1 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.s.wu {dst}, {src}"
 
@@ -1177,7 +1177,7 @@ name = "FCVT_S_L"
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x68, rs2 = 2 }
+match = { funct7 = 0x68, rs2 = 2 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.s.l {dst}, {src}, {rm}"
 
@@ -1186,7 +1186,7 @@ name = "FCVT_S_L_RNE"
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x68, rs2 = 2 }
+match = { funct3 = 0, funct7 = 0x68, rs2 = 2 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.s.l {dst}, {src}"
 
@@ -1195,7 +1195,7 @@ name = "FCVT_S_LU"
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x68, rs2 = 3 }
+match = { funct7 = 0x68, rs2 = 3 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.s.lu {dst}, {src}, {rm}"
 
@@ -1204,7 +1204,7 @@ name = "FCVT_S_LU_RNE"
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x68, rs2 = 3 }
+match = { funct3 = 0, funct7 = 0x68, rs2 = 3 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.s.lu {dst}, {src}"
 
@@ -1212,7 +1212,7 @@ asm = "fcvt.s.lu {dst}, {src}"
 name = "FCVT_D_W"
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x69, rs2 = 0 }
+match = { funct7 = 0x69, rs2 = 0 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.d.w {dst}, {src}, {rm}"
 
@@ -1220,7 +1220,7 @@ asm = "fcvt.d.w {dst}, {src}, {rm}"
 name = "FCVT_D_W_RNE"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x69, rs2 = 0 }
+match = { funct3 = 0, funct7 = 0x69, rs2 = 0 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.d.w {dst}, {src}"
 
@@ -1228,7 +1228,7 @@ asm = "fcvt.d.w {dst}, {src}"
 name = "FCVT_D_WU"
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x69, rs2 = 1 }
+match = { funct7 = 0x69, rs2 = 1 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.d.wu {dst}, {src}, {rm}"
 
@@ -1236,7 +1236,7 @@ asm = "fcvt.d.wu {dst}, {src}, {rm}"
 name = "FCVT_D_WU_RNE"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x69, rs2 = 1 }
+match = { funct3 = 0, funct7 = 0x69, rs2 = 1 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.d.wu {dst}, {src}"
 
@@ -1245,7 +1245,7 @@ name = "FCVT_D_L"
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x69, rs2 = 2 }
+match = { funct7 = 0x69, rs2 = 2 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.d.l {dst}, {src}, {rm}"
 
@@ -1254,7 +1254,7 @@ name = "FCVT_D_L_RNE"
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x69, rs2 = 2 }
+match = { funct3 = 0, funct7 = 0x69, rs2 = 2 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.d.l {dst}, {src}"
 
@@ -1263,7 +1263,7 @@ name = "FCVT_D_LU"
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x69, rs2 = 3 }
+match = { funct7 = 0x69, rs2 = 3 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.d.lu {dst}, {src}, {rm}"
 
@@ -1272,7 +1272,7 @@ name = "FCVT_D_LU_RNE"
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x69, rs2 = 3 }
+match = { funct3 = 0, funct7 = 0x69, rs2 = 3 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.d.lu {dst}, {src}"
 
@@ -1280,7 +1280,7 @@ asm = "fcvt.d.lu {dst}, {src}"
 name = "FCVT_S_D"
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x20, rs2 = 1 }
+match = { funct7 = 0x20, rs2 = 1 }
 ops = ["dst:fpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.s.d {dst}, {src}, {rm}"
 
@@ -1288,7 +1288,7 @@ asm = "fcvt.s.d {dst}, {src}, {rm}"
 name = "FCVT_S_D_RNE"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x20, rs2 = 1 }
+match = { funct3 = 0, funct7 = 0x20, rs2 = 1 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "fcvt.s.d {dst}, {src}"
 
@@ -1296,7 +1296,7 @@ asm = "fcvt.s.d {dst}, {src}"
 name = "FCVT_D_S"
 form = "R_RM2"
 opcode = 0x53
-fields = { funct7 = 0x21, rs2 = 0 }
+match = { funct7 = 0x21, rs2 = 0 }
 ops = ["dst:fpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.d.s {dst}, {src}, {rm}"
 
@@ -1304,7 +1304,7 @@ asm = "fcvt.d.s {dst}, {src}, {rm}"
 name = "FCVT_D_S_RNE"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x21, rs2 = 0 }
+match = { funct3 = 0, funct7 = 0x21, rs2 = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "fcvt.d.s {dst}, {src}"
 
@@ -1312,7 +1312,7 @@ asm = "fcvt.d.s {dst}, {src}"
 name = "FMV_W_X"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x78 }
+match = { funct3 = 0, funct7 = 0x78 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fmv.w.x {dst}, {src}"
 # **类间位搬移**（v20 V7）：GPR 的位模式 → FPR。用于"ABI 落点的寄存器类与值的类**不同**"的
@@ -1325,7 +1325,7 @@ data_width = 32
 name = "FMV_D_X"
 form = "R"
 opcode = 0x53
-fields = { funct3 = 0, funct7 = 0x79 }
+match = { funct3 = 0, funct7 = 0x79 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fmv.d.x {dst}, {src}"
 data_width = 64
@@ -1334,7 +1334,7 @@ data_width = 64
 name = "FLD"
 form = "I"
 opcode = 0x07
-fields = { funct3 = 3 }
+match = { funct3 = 3 }
 ops = ["dst:fpr:out", "src:gpr", "imm:imm12"]
 asm = "fld {dst}, {imm}({src})"
 
@@ -1342,7 +1342,7 @@ asm = "fld {dst}, {imm}({src})"
 name = "FSD"
 form = "S"
 opcode = 0x27
-fields = { funct3 = 3 }
+match = { funct3 = 3 }
 ops = ["src:fpr", "src2:gpr", "imm:imm12"]
 asm = "fsd {src}, {imm}({src2})"
 # `stack_arg_store`（浮点类）：调用方把**浮点**栈实参写进传出区（变参的未命名浮点实参也走这条）。
@@ -1353,7 +1353,7 @@ roles = [{ role = "stack_arg_store", class = "fpr" }]
 name = "FLW"
 form = "I"
 opcode = 0x07
-fields = { funct3 = 2 }
+match = { funct3 = 2 }
 ops = ["dst:fpr:out", "src:gpr", "imm:imm12"]
 asm = "flw {dst}, {imm}({src})"
 
@@ -1361,7 +1361,7 @@ asm = "flw {dst}, {imm}({src})"
 name = "FSW"
 form = "S"
 opcode = 0x27
-fields = { funct3 = 2 }
+match = { funct3 = 2 }
 ops = ["src:fpr", "src2:gpr", "imm:imm12"]
 asm = "fsw {src}, {imm}({src2})"
 
@@ -1372,7 +1372,7 @@ name = "ADDI"
 roles = ["frame_alloc", "frame_free", "frame_set"]
 form = "I"
 opcode = 0x13
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "addi {dst}, {src}, {imm}"
 
@@ -1382,7 +1382,7 @@ name = "ADDIW"
 only_variants = { xlen = [64] }
 form = "I"
 opcode = 0x1B
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "addiw {dst}, {src}, {imm}"
 
@@ -1390,7 +1390,7 @@ asm = "addiw {dst}, {src}, {imm}"
 name = "SLLI"
 form = "SHIFT"
 opcode = 0x13
-fields = { funct3 = 1, funct6 = 0x00 }
+match = { funct3 = 1, funct6 = 0x00 }
 ops = ["dst:gpr:out", "src:gpr", "imm:shamt"]
 asm = "slli {dst}, {src}, {imm}"
 
@@ -1398,7 +1398,7 @@ asm = "slli {dst}, {src}, {imm}"
 name = "SRLI"
 form = "SHIFT"
 opcode = 0x13
-fields = { funct3 = 5, funct6 = 0x00 }
+match = { funct3 = 5, funct6 = 0x00 }
 ops = ["dst:gpr:out", "src:gpr", "imm:shamt"]
 asm = "srli {dst}, {src}, {imm}"
 
@@ -1406,7 +1406,7 @@ asm = "srli {dst}, {src}, {imm}"
 name = "SRAI"
 form = "SHIFT"
 opcode = 0x13
-fields = { funct3 = 5, funct6 = 0x10 }
+match = { funct3 = 5, funct6 = 0x10 }
 ops = ["dst:gpr:out", "src:gpr", "imm:shamt"]
 asm = "srai {dst}, {src}, {imm}"
 
@@ -1426,7 +1426,7 @@ name = "LD"
 only_variants = { xlen = [64] }
 form = "I"
 opcode = 0x03
-fields = { funct3 = 3 }
+match = { funct3 = 3 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "ld {dst}, {imm}({src})"
 roles = ["callee_load"]
@@ -1436,7 +1436,7 @@ name = "SD"
 only_variants = { xlen = [64] }
 form = "S"
 opcode = 0x23
-fields = { funct3 = 3 }
+match = { funct3 = 3 }
 ops = ["src:gpr", "src2:gpr", "imm:imm12"]
 asm = "sd {src}, {imm}({src2})"
 # `callee_save`：序言保存被调方保存寄存器。
@@ -1462,7 +1462,7 @@ asm = "jal {dst}, {target}"
 name = "JAL_R"
 form = "I"
 opcode = 0x67
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "jal {dst}, {src}"
 
@@ -1470,7 +1470,7 @@ asm = "jal {dst}, {src}"
 name = "JALR"
 form = "I"
 opcode = 0x67
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "jalr {dst}, {imm}({src})"
 
@@ -1480,7 +1480,7 @@ asm = "jalr {dst}, {imm}({src})"
 name = "JALR3"
 form = "I"
 opcode = 0x67
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "jalr {dst}, {src}, {imm}"
 
@@ -1508,7 +1508,7 @@ asm = "ecall"
 name = "CSRRW"
 form = "I"
 opcode = 0x73
-fields = { funct3 = 1 }
+match = { funct3 = 1 }
 ops = ["dst:gpr:out", "src:gpr", "csr:csr12"]
 asm = "csrrw {dst}, {csr}, {src}"
 
@@ -1516,7 +1516,7 @@ asm = "csrrw {dst}, {csr}, {src}"
 name = "CSRRS"
 form = "I"
 opcode = 0x73
-fields = { funct3 = 2 }
+match = { funct3 = 2 }
 ops = ["dst:gpr:out", "src:gpr", "csr:csr12"]
 asm = "csrrs {dst}, {csr}, {src}"
 
@@ -1524,7 +1524,7 @@ asm = "csrrs {dst}, {csr}, {src}"
 name = "CSRRC"
 form = "I"
 opcode = 0x73
-fields = { funct3 = 3 }
+match = { funct3 = 3 }
 ops = ["dst:gpr:out", "src:gpr", "csr:csr12"]
 asm = "csrrc {dst}, {csr}, {src}"
 
@@ -1532,7 +1532,7 @@ asm = "csrrc {dst}, {csr}, {src}"
 name = "CSRRWI"
 form = "I"
 opcode = 0x73
-fields = { funct3 = 5 }
+match = { funct3 = 5 }
 ops = ["dst:gpr:out", "zimm:zimm5", "csr:csr12"]
 asm = "csrrwi {dst}, {csr}, {zimm}"
 
@@ -1540,7 +1540,7 @@ asm = "csrrwi {dst}, {csr}, {zimm}"
 name = "CSRRSI"
 form = "I"
 opcode = 0x73
-fields = { funct3 = 6 }
+match = { funct3 = 6 }
 ops = ["dst:gpr:out", "zimm:zimm5", "csr:csr12"]
 asm = "csrrsi {dst}, {csr}, {zimm}"
 
@@ -1548,7 +1548,7 @@ asm = "csrrsi {dst}, {csr}, {zimm}"
 name = "CSRRCI"
 form = "I"
 opcode = 0x73
-fields = { funct3 = 7 }
+match = { funct3 = 7 }
 ops = ["dst:gpr:out", "zimm:zimm5", "csr:csr12"]
 asm = "csrrci {dst}, {csr}, {zimm}"
 
@@ -1559,7 +1559,7 @@ asm = "csrrci {dst}, {csr}, {zimm}"
 name = "EBREAK"
 form = "OP"
 opcode = 0x73
-fields = { imm12 = 1 }
+match = { imm12 = 1 }
 effect = ["Trap"]
 asm = "ebreak"
 
@@ -1567,7 +1567,7 @@ asm = "ebreak"
 name = "CLZ"
 form = "I"
 opcode = 0x13
-fields = { funct3 = 1, imm12 = 0x600 }
+match = { funct3 = 1, imm12 = 0x600 }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "clz {dst}, {src}"
 
@@ -1575,7 +1575,7 @@ asm = "clz {dst}, {src}"
 name = "CTZ"
 form = "I"
 opcode = 0x13
-fields = { funct3 = 1, imm12 = 0x601 }
+match = { funct3 = 1, imm12 = 0x601 }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "ctz {dst}, {src}"
 
@@ -1583,7 +1583,7 @@ asm = "ctz {dst}, {src}"
 name = "CPOP"
 form = "I"
 opcode = 0x13
-fields = { funct3 = 1, imm12 = 0x602 }
+match = { funct3 = 1, imm12 = 0x602 }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "cpop {dst}, {src}"
 
@@ -1591,7 +1591,7 @@ asm = "cpop {dst}, {src}"
 name = "REV8"
 form = "I"
 opcode = 0x13
-fields = { funct3 = 5 }
+match = { funct3 = 5 }
 fields_variant = { imm12 = { param = "xlen", by = { 32 = 0x698 }, default = 0x6b8 } }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "rev8 {dst}, {src}"
@@ -1618,7 +1618,7 @@ reloc = "pcrel_hi"
 name = "ADDI_GLOBAL"
 form = "I"
 opcode = 0x13
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "addi {dst}, {src}, {imm}"
 reloc = "pcrel_lo"
@@ -1630,7 +1630,7 @@ name = "FENCE"
 # 与下面带操作数的 FENCE_PS 共用同一条 trie 边上的不同叶）
 form = "FENCEPS"
 opcode = 0x0F
-fields = { pred = 15, succ = 15 }
+match = { pred = 15, succ = 15 }
 asm = "fence"
 
 # `fence pred, succ`：pred/succ 各是 i/o/r/w 的**字母集合**（新版能力 `kind = "bits"`）
@@ -1647,14 +1647,14 @@ asm = "fence {pred}, {succ}"
 name = "FENCE_I"
 form = "FENCEPS"
 opcode = 0x0F
-fields = { funct3 = 1 }
+match = { funct3 = 1 }
 asm = "fence.i"
 
 [[instructions]]
 name = "FENCE_TSO"
 form = "FENCEPS"
 opcode = 0x0F
-fields = { fm = 8, pred = 3, succ = 3 }
+match = { fm = 8, pred = 3, succ = 3 }
 asm = "fence.tso"
 
 # ────────────────────── W 变体（RV64 32 位语义）──────────────────────
@@ -1668,7 +1668,7 @@ name = "SLLIW"
 only_variants = { xlen = [64] }
 form = "SHIFT5"
 opcode = 0x1B
-fields = { funct3 = 1, funct7 = 0x00 }
+match = { funct3 = 1, funct7 = 0x00 }
 ops = ["dst:gpr:out", "src:gpr", "imm:shamt_w"]
 asm = "slliw {dst}, {src}, {imm}"
 
@@ -1677,7 +1677,7 @@ name = "SRLIW"
 only_variants = { xlen = [64] }
 form = "SHIFT5"
 opcode = 0x1B
-fields = { funct3 = 5, funct7 = 0x00 }
+match = { funct3 = 5, funct7 = 0x00 }
 ops = ["dst:gpr:out", "src:gpr", "imm:shamt_w"]
 asm = "srliw {dst}, {src}, {imm}"
 
@@ -1686,7 +1686,7 @@ name = "SRAIW"
 only_variants = { xlen = [64] }
 form = "SHIFT5"
 opcode = 0x1B
-fields = { funct3 = 5, funct7 = 0x20 }
+match = { funct3 = 5, funct7 = 0x20 }
 ops = ["dst:gpr:out", "src:gpr", "imm:shamt_w"]
 asm = "sraiw {dst}, {src}, {imm}"
 
@@ -1698,7 +1698,7 @@ asm = "sraiw {dst}, {src}, {imm}"
 name = "LB"
 form = "I"
 opcode = 0x03
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "lb {dst}, {imm}({src})"
 
@@ -1706,7 +1706,7 @@ asm = "lb {dst}, {imm}({src})"
 name = "LH"
 form = "I"
 opcode = 0x03
-fields = { funct3 = 1 }
+match = { funct3 = 1 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "lh {dst}, {imm}({src})"
 
@@ -1714,7 +1714,7 @@ asm = "lh {dst}, {imm}({src})"
 name = "LBU"
 form = "I"
 opcode = 0x03
-fields = { funct3 = 4 }
+match = { funct3 = 4 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "lbu {dst}, {imm}({src})"
 
@@ -1722,7 +1722,7 @@ asm = "lbu {dst}, {imm}({src})"
 name = "LHU"
 form = "I"
 opcode = 0x03
-fields = { funct3 = 5 }
+match = { funct3 = 5 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "lhu {dst}, {imm}({src})"
 
@@ -1730,7 +1730,7 @@ asm = "lhu {dst}, {imm}({src})"
 name = "SB"
 form = "S"
 opcode = 0x23
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["src:gpr", "src2:gpr", "imm:imm12"]
 asm = "sb {src}, {imm}({src2})"
 
@@ -1738,7 +1738,7 @@ asm = "sb {src}, {imm}({src2})"
 name = "SH"
 form = "S"
 opcode = 0x23
-fields = { funct3 = 1 }
+match = { funct3 = 1 }
 ops = ["src:gpr", "src2:gpr", "imm:imm12"]
 asm = "sh {src}, {imm}({src2})"
 
@@ -1746,7 +1746,7 @@ asm = "sh {src}, {imm}({src2})"
 name = "LW"
 form = "I"
 opcode = 0x03
-fields = { funct3 = 2 }
+match = { funct3 = 2 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "lw {dst}, {imm}({src})"
 
@@ -1754,7 +1754,7 @@ asm = "lw {dst}, {imm}({src})"
 name = "SW"
 form = "S"
 opcode = 0x23
-fields = { funct3 = 2 }
+match = { funct3 = 2 }
 ops = ["src:gpr", "src2:gpr", "imm:imm12"]
 asm = "sw {src}, {imm}({src2})"
 
@@ -1765,7 +1765,7 @@ name = "LWU"
 only_variants = { xlen = [64] }
 form = "I"
 opcode = 0x03
-fields = { funct3 = 6 }
+match = { funct3 = 6 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "lwu {dst}, {imm}({src})"
 
@@ -1775,7 +1775,7 @@ name = "RET"
 roles = ["ret"]
 form = "I"
 opcode = 0x67
-fields = { funct3 = 0, rd = 0, rs1 = 1, imm12 = 0 }
+match = { funct3 = 0, rd = 0, rs1 = 1, imm12 = 0 }
 asm = "ret"
 
 # ════════════════════════════════════════════════════════════
@@ -2884,112 +2884,112 @@ insts = [
 # `dyn`——语料铺开后由 `fp-default-rounding-mode.s` 的上游期望字节直接守住。
 [[templates]]
 name = "FADD_RM"
-body = { form = "R_RM", opcode = 0x53, fields = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fadd.{p.lower} {dst}, {src}, {src2}, {rm}" }
+body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fadd.{p.lower} {dst}, {src}, {src2}, {rm}" }
 rows = [
   { inst = "FADD_S_RM", p = "S", funct7 = 0x00 },
   { inst = "FADD_D_RM", p = "D", funct7 = 0x01 },
 ]
 [[templates]]
 name = "FADD_DYN"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fadd.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fadd.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FADD_S", p = "S", funct7 = 0x00 },
   { inst = "FADD_D", p = "D", funct7 = 0x01 },
 ]
 [[templates]]
 name = "FSUB_RM"
-body = { form = "R_RM", opcode = 0x53, fields = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fsub.{p.lower} {dst}, {src}, {src2}, {rm}" }
+body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fsub.{p.lower} {dst}, {src}, {src2}, {rm}" }
 rows = [
   { inst = "FSUB_S_RM", p = "S", funct7 = 0x04 },
   { inst = "FSUB_D_RM", p = "D", funct7 = 0x05 },
 ]
 [[templates]]
 name = "FSUB_DYN"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fsub.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fsub.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FSUB_S", p = "S", funct7 = 0x04 },
   { inst = "FSUB_D", p = "D", funct7 = 0x05 },
 ]
 [[templates]]
 name = "FMUL_RM"
-body = { form = "R_RM", opcode = 0x53, fields = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fmul.{p.lower} {dst}, {src}, {src2}, {rm}" }
+body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fmul.{p.lower} {dst}, {src}, {src2}, {rm}" }
 rows = [
   { inst = "FMUL_S_RM", p = "S", funct7 = 0x08 },
   { inst = "FMUL_D_RM", p = "D", funct7 = 0x09 },
 ]
 [[templates]]
 name = "FMUL_DYN"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmul.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmul.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FMUL_S", p = "S", funct7 = 0x08 },
   { inst = "FMUL_D", p = "D", funct7 = 0x09 },
 ]
 [[templates]]
 name = "FDIV_RM"
-body = { form = "R_RM", opcode = 0x53, fields = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fdiv.{p.lower} {dst}, {src}, {src2}, {rm}" }
+body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fdiv.{p.lower} {dst}, {src}, {src2}, {rm}" }
 rows = [
   { inst = "FDIV_S_RM", p = "S", funct7 = 0x0C },
   { inst = "FDIV_D_RM", p = "D", funct7 = 0x0D },
 ]
 [[templates]]
 name = "FDIV_DYN"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fdiv.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fdiv.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FDIV_S", p = "S", funct7 = 0x0C },
   { inst = "FDIV_D", p = "D", funct7 = 0x0D },
 ]
 [[templates]]
 name = "FSQRT_RM"
-body = { form = "R_RM2", opcode = 0x53, fields = { rs2 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "rm:rm3"], asm = "fsqrt.{p.lower} {dst}, {src}, {rm}" }
+body = { form = "R_RM2", opcode = 0x53, match = { rs2 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "rm:rm3"], asm = "fsqrt.{p.lower} {dst}, {src}, {rm}" }
 rows = [
   { inst = "FSQRT_S_RM", p = "S", funct7 = 0x2C },
   { inst = "FSQRT_D_RM", p = "D", funct7 = 0x2D },
 ]
 [[templates]]
 name = "FSQRT_DYN"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 7, rs2 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr"], asm = "fsqrt.{p.lower} {dst}, {src}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 7, rs2 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr"], asm = "fsqrt.{p.lower} {dst}, {src}" }
 rows = [
   { inst = "FSQRT_S", p = "S", funct7 = 0x2C },
   { inst = "FSQRT_D", p = "D", funct7 = 0x2D },
 ]
 [[templates]]
 name = "FLT"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 1, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr", "src2:fpr"], asm = "flt.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 1, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr", "src2:fpr"], asm = "flt.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FLT_S", p = "S", funct7 = 0x50 },
   { inst = "FLT_D", p = "D", funct7 = 0x51 },
 ]
 [[templates]]
 name = "FEQ"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 2, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr", "src2:fpr"], asm = "feq.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 2, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr", "src2:fpr"], asm = "feq.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FEQ_S", p = "S", funct7 = 0x50 },
   { inst = "FEQ_D", p = "D", funct7 = 0x51 },
 ]
 [[templates]]
 name = "FLE"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr", "src2:fpr"], asm = "fle.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr", "src2:fpr"], asm = "fle.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FLE_S", p = "S", funct7 = 0x50 },
   { inst = "FLE_D", p = "D", funct7 = 0x51 },
 ]
 [[templates]]
 name = "FMIN"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmin.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmin.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FMIN_S", p = "S", funct7 = 0x14 },
   { inst = "FMIN_D", p = "D", funct7 = 0x15 },
 ]
 [[templates]]
 name = "FMAX"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 1, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmax.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 1, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmax.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FMAX_S", p = "S", funct7 = 0x14 },
   { inst = "FMAX_D", p = "D", funct7 = 0x15 },
 ]
 [[templates]]
 name = "FMV_X"
-body = { form = "R", opcode = 0x53, fields = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr"], asm = "fmv.x.{p.lower} {dst}, {src}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr"], asm = "fmv.x.{p.lower} {dst}, {src}" }
 rows = [
   # FPR 的位模式 → GPR（类间位搬移，见 `FMV_W_X` 上的注释）——`data_width` 说宽度。
   { inst = "FMV_X_W", p = "W", funct7 = 0x70, data_width = 32 },
@@ -2997,28 +2997,28 @@ rows = [
 ]
 [[templates]]
 name = "AMOADD"
-body = { form = "R", opcode = 0x2F, fields = { funct5 = 0, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "amoadd.{p.lower} {dst}, {src2}, ({src})" }
+body = { form = "R", opcode = 0x2F, match = { funct5 = 0, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "amoadd.{p.lower} {dst}, {src2}, ({src})" }
 rows = [
   { inst = "AMOADD_W", p = "W", funct3 = 2 },
   { inst = "AMOADD_D", p = "D", funct3 = 3 },
 ]
 [[templates]]
 name = "AMOSWAP"
-body = { form = "R", opcode = 0x2F, fields = { funct5 = 1, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "amoswap.{p.lower} {dst}, {src2}, ({src})" }
+body = { form = "R", opcode = 0x2F, match = { funct5 = 1, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "amoswap.{p.lower} {dst}, {src2}, ({src})" }
 rows = [
   { inst = "AMOSWAP_W", p = "W", funct3 = 2 },
   { inst = "AMOSWAP_D", p = "D", funct3 = 3 },
 ]
 [[templates]]
 name = "LR"
-body = { form = "R", opcode = 0x2F, fields = { funct5 = 2, aq = 0, rl = 0, funct3 = "{funct3}", rs2 = 0 }, ops = ["dst:gpr:out", "src:gpr"], asm = "lr.{p.lower} {dst}, ({src})" }
+body = { form = "R", opcode = 0x2F, match = { funct5 = 2, aq = 0, rl = 0, funct3 = "{funct3}", rs2 = 0 }, ops = ["dst:gpr:out", "src:gpr"], asm = "lr.{p.lower} {dst}, ({src})" }
 rows = [
   { inst = "LR_W", p = "W", funct3 = 2 },
   { inst = "LR_D", p = "D", funct3 = 3 },
 ]
 [[templates]]
 name = "SC"
-body = { form = "R", opcode = 0x2F, fields = { funct5 = 3, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "sc.{p.lower} {dst}, {src2}, ({src})" }
+body = { form = "R", opcode = 0x2F, match = { funct5 = 3, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "sc.{p.lower} {dst}, {src2}, ({src})" }
 rows = [
   { inst = "SC_W", p = "W", funct3 = 2 },
   { inst = "SC_D", p = "D", funct3 = 3 },

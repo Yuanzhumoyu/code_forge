@@ -52,7 +52,7 @@ operand_fields = ["rd", "rs1", "rs2"]
 name = "ADD"
 form = "R"
 opcode = 0x33
-fields = { funct3 = 0, funct7 = 0 }
+match = { funct3 = 0, funct7 = 0 }
 ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
 asm = "add {dst}, {src}, {src2}"
 "#;
@@ -879,7 +879,7 @@ operand_fields = ["rd", "rs1", "imm12"]
 name = "ADDI"
 form = "I"
 opcode = 0x13
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["dst:g:out", "src:g", "src2:i"]
 asm = "addi {dst}, {src}, {src2}"
 [[instructions]]
@@ -1524,7 +1524,7 @@ fn asm_full_template_renders_and_scans() {
 name = "ADDI"
 form = "I"
 opcode = 0x13
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["dst:g:out", "src:g", "src2:i"]
 asm = "addi {dst}, {src}, {src2}"
 "#,
@@ -1606,7 +1606,7 @@ fn asm_scan_probe_replaces_mnemonic_table() {
 name = "ADDI"
 form = "I"
 opcode = 0x13
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["dst:g:out", "src:g", "src2:i"]
 asm = "addi {dst}, {src}, {src2}"
 "#,
@@ -1708,7 +1708,7 @@ fn generic_template_segments() {
 name = "LDB"
 form = "I"
 opcode = 0x03
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["dst:g:out", "src:g", "src2:i"]
 asm = "ldb {dst}, byte ptr [{src}+{src2}]"
 "#,
@@ -1734,7 +1734,7 @@ fn generic_template_adjacent_placeholder_rejected() {
 name = "BAD"
 form = "I"
 opcode = 0x13
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["dst:g:out", "src:g", "src2:i"]
 asm = "bad {dst}{src} {src2}"
 "#,
@@ -1777,7 +1777,7 @@ operand_fields = ["rd", "rs1", "imm12"]
 name = "BAD"
 form = "I"
 opcode = 0x13
-fields = { funct3 = 0 }
+match = { funct3 = 0 }
 ops = ["dst:g:out", "src:g"]
 asm = "bad {dst}, {srcc}"
 "#;
@@ -1909,7 +1909,7 @@ fn reloc_duplicate_name_rejected() {
 fn reloc_slot_not_in_operands_rejected() {
     let doc = reloc_doc(
         "[[reloc]]\nname = \"x\"\nsemantics = \"absolute\"\nslot = \"imm20\"\n",
-        "reloc = \"x\"\nfields = { rd = 0 }",
+        "reloc = \"x\"\nmatch = { rd = 0 }",
     )
     .replace(
         "ops = [\"dst:g:out\", \"imm:imm20\"]",
@@ -1985,7 +1985,7 @@ operand_fields = ["rd", "rs1", "rs2"]
 name = "MY_MOV"
 form = "R"
 opcode = 0x33
-fields = { funct3 = 0, funct7 = 0 }
+match = { funct3 = 0, funct7 = 0 }
 ops = ["dst:g:out", "src:g", "src2:g"]
 asm = "mymov {dst}, {src}, {src2}"
 effect = ["Move"]
@@ -2587,7 +2587,7 @@ opsize = 64
 escape = [0x0F]
 prefix = "field"
 opcode = 0x7E
-fields = { prefix = 0x66, w = 1 }
+match = { prefix = 0x66, w = 1 }
 ops = ["dst:g:out", "src:g"]
 asm = "movq {dst}, {src}"
 "#;

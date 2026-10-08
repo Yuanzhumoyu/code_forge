@@ -487,7 +487,7 @@ fn include_targets(text: &str) -> Vec<String> {
 /// 规则：`path` 处若正好匹配某个节，则键必须在该节（+`ENC_KEYS` flatten）里，且
 /// `additional = false` 的节不允许额外键；否则 `path` 是**中间表**，键必须是某个节
 /// 路径的下一段（含 `<name>` 通配）。**只有"下面还有节"的子表才继续下钻**——
-/// `fields = { hw = 0 }`、`[[templates]].body`、`when = { eq = [...] }` 这类自由表的
+/// `match = { hw = 0 }`、`[[templates]].body`、`when = { eq = [...] }` 这类自由表的
 /// 内容在 schema 里本就没有约束（属性只有 description、没有子 schema），编辑器不会报错，
 /// 守卫也不该报。
 fn check_keys(table: &toml::Table, path: &[String], bad: &mut Vec<String>) {
@@ -531,7 +531,7 @@ fn check_keys(table: &toml::Table, path: &[String], bad: &mut Vec<String>) {
             }
             continue;
         }
-        // ③ 自由表（`fields = {…}`、`[[templates]].body`、`when = {…}`）：内容不受约束。
+        // ③ 自由表（`match = {…}`、`[[templates]].body`、`when = {…}`）：内容不受约束。
     }
 }
 

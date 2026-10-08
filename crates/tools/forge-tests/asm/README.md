@@ -574,7 +574,7 @@ riscv64 只剩一条登记为设计取舍；aarch64 有一条**已定位、未�
   于是每 (助记符, 宽度) 只需 **4 条**（W 扩展 / X 扩展 × 带量 / 省略量），
   6 助记符（`add`/`sub`/`adds`/`subs`/`cmp`/`cmn`）× 2 宽度 × 4 = **48 条**。
   编码与移位寄存器族**共用 `op8`**（0x8B/0x0B/0xAB/0x2B/0xCB/0x4B/0xEB/0x6B），靠 **bit21 = 1** 区分；
-  `cmp`/`cmn` 用无 `rd` 的两条形式 + `fields = { rd = 31 }`。
+  `cmp`/`cmn` 用无 `rd` 的两条形式 + `match = { rd = 31 }`。
   **字节证据**：8 个 option 的上游字节全在语料里排成一组（`add w1, w2, w3, <ext>` 从 `41 00 23 0b`
   逐项递增到 `41 e0 23 0b`，正好是 option 0..7），谱内一次加 **10 条向量**（含 X 形式的
   `add x1, x2, w3, uxtb` = `41 00 23 8b`）——**首跑全过**。
@@ -898,9 +898,9 @@ GAS = `GPL-3.0-or-later`（上游各文件的许可逐条见 `PROVENANCE.md`；G
 > 所以字段要这样切（每段都与 `Q`/`U`/`size`/`Rn`/`Rd`/`Rm` 不相交）：
 > `vec_a = [28:24] = 0x0E`、`vec_c = [21:21] = 1`、`vec_d = [15:12] = 0x8`；
 > 变量段 `vq = [30]`、`vu = [29]`、`vsize = [23:22]`、`rn`、`rd`、`rm`（2 寄存器族的 `rm = 0`，
-> 用 `fields = { rm = 0 }` 常量即可，与 `MOVR` 的 `fields = { rn = 31 }` 同法）。
+> 用 `match = { rm = 0 }` 常量即可，与 `MOVR` 的 `match = { rn = 31 }` 同法）。
 > ⇒ 一个 `[[forms]]`（`opcode_field = "vec_a"`, `opcode = 0x0E`, `operand_fields = ["rd", "rn"]`）
-> 再加 6 条指令（各带 `fields = { vq = …, vu = 0, vsize = …, vec_c = 1, vec_d = 8, rm = 0 }`）
+> 再加 6 条指令（各带 `match = { vq = …, vu = 0, vsize = …, vec_c = 1, vec_d = 8, rm = 0 }`）
 > 与 6 条 `[[vectors]]`（上表字节）。`neg` 同形、`vu = 1`（其字节同法从语料取，别凭记忆写）。
 >
 > **`abs` 族首落地受挫（2026-10-07，已回退）**：按上表字节与字段分解生成 6 条 `abs.<arr>`（槽先取
@@ -1067,7 +1067,7 @@ name = "v"
 kind  = "reg"
 class = "fpr16"
 arrangement = ["8b", "16b", "4h", "8h", "2s", "4s", "2d"]   # 允许的排列（空/省略 = 不带后缀）
-arrangement_fields = { q = "vq", size = "vsize" }           # 后缀 → 字段：16b/8h/4s/2d ⇒ q=1；size 按 b/h/s/d
+arrangement_match = { q = "vq", size = "vsize" }           # 后缀 → 字段：16b/8h/4s/2d ⇒ q=1；size 按 b/h/s/d
 
 [[instructions]]
 name = "VADD"
@@ -1257,7 +1257,7 @@ width = 5
 name = "VMLA_LANE_8H"   # 助记符带排列后缀（语料就是这么写的）
 form = "VEC3RL"         # 新表单：rt/rn/rm + lane（lane 的位域按 ARM ARM 给）
 opcode = 0x0E
-fields = { vu = 0, vsize = 1, vec_c = 1, vec_d = 37 }
+match = { vu = 0, vsize = 1, vec_c = 1, vec_d = 37 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "lane:lane5"]
 asm = "mla.8h {dst}, {src}, {src2}[{lane}]"
 
@@ -1634,7 +1634,7 @@ rv32zbb-only-valid.s:13 `rev8 t0, t1`：我们 93 52 83 6b ≠ 上游 93 52 83 6
 1. **放宽不变量**：允许"原生视角也丢指令"，但要求**丢的都是显式标了 `only_variants` 的** ✓（把断言改成
    "丢掉集合 == 标了门且不含 64 的集合" ✓）——语义更准确 ✓，但要同步 `variants.rs` 的两条断言与文档 ✓；
 2. **加"按变体给字段值"的机制**：同一条声明在 `xlen=32/64` 下取不同 `fields` ✓（如
-   `fields = { imm12 = { variant = "xlen32" } }` ✗ 现无此键）——能力更通用 ✓，但属新机制 ✓。
+   `match = { imm12 = { variant = "xlen32" } }` ✗ 现无此键）——能力更通用 ✓，但属新机制 ✓。
 
 **本轮选择：回退** ✓（不留解析不过/改动不完整的谱 ✗）；**结论、证据与两条出路已入库** ✓，
 `known` 保持 **148**（B4 起点 157 ✓）。

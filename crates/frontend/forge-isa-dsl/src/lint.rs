@@ -777,7 +777,7 @@ asm = "add {dst}"
 name = "T"
 body = { form = "RR", opcode = 2, ops = ["dst:g:out"], asm = "t {dst}" }
 rows = [
-  { inst = "T1", fields = { funct3 = 0 } },
+  { inst = "T1", match = { funct3 = 0 } },
 ]
 "#;
 
@@ -842,7 +842,7 @@ rows = [
     #[test]
     fn row_key_typos_are_validate_errors_not_lint_findings() {
         let bad = SPEC.replace(
-            "  { inst = \"T1\", fields = { funct3 = 0 } },",
+            "  { inst = \"T1\", match = { funct3 = 0 } },",
             "  { inst = \"T1\", typo_key = 1 },",
         );
         let err = lint_source(&bad).expect_err("行键笔误必须由 validate 报");
@@ -865,8 +865,8 @@ rows = [
                 "[conventions.bitfields]\nover = { offset = 2, width = 2 }",
             )
             .replace(
-                "  { inst = \"T1\", fields = { funct3 = 0 } },",
-                "  { inst = \"T1\", fields = { funct3 = 0, over = 0 } },",
+                "  { inst = \"T1\", match = { funct3 = 0 } },",
+                "  { inst = \"T1\", match = { funct3 = 0, over = 0 } },",
             );
         let found = lint_source(&bad).expect("谱合法");
         let hits: Vec<&DiagLine> = found

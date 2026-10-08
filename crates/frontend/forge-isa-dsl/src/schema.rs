@@ -255,7 +255,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &[
             "form",
             "opcode",
-            "fields",
+            "match",
             "ops",
             "when",
             "effect",
