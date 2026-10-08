@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 4：x86 imm32/imm8 族 19 条段化
+
++ `isa/x86.toml`：`MRR_EXT` 19 条按 `imm` 宽度拆成两个段形态 form——
+  `MRR_EXT_IMM32_SEG`（8 条）与 `MRR_EXT_IMM8_SEG`（11 条）。
++ 首次使用 **`imm` 段**：立即数**宽度是结构事实** ⇒ 进 form 的段
+  （`{ kind = "imm", fields = ["u32[31:0]:imm32"] }` 降级成 `keys.imm = 32`），
+  指令侧的内联 `imm = N` 随之删除。
++ 逐字节不变：`isa_roundtrip_guard` + asm 棘轮 + 谱内向量 + 双 JIT 矩阵；累计 **54 条**已段化。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 3：x86 0F 转义族 8 条段化
 
 + `isa/x86.toml`：`MRR_MEMREF_AUTO` 的 `escape` 子集 8 条（IMUL_R_MEM、MOVZX/MOVSX_MEM8/16、

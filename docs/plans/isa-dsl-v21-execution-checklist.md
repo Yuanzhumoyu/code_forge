@@ -397,7 +397,13 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > 指令侧只留 `match`/`bind`）。累计已段化 **35 条**（batch1 14 + batch2 13 + batch3 8）。
 > ⚠️ 迁移脚本漏了 `CMOVCC_R_MEM`（判据与它的键集有一处不吻合），已手工按同模板补上——
 > **每批都要回读条数并逐条抽查生效键**，不能只看脚本自报。
-> ⏭ **W4.3 batch 4（下一片）**：`MRR_MEMREF_AUTO` 剩下的 2 条（带 `prefix`）、
+> ✅ **batch 4 完成（2026-10-08）**：`MRR_EXT` **19 条**按 `imm` 宽度拆成两个骨架迁走——
+> `MRR_EXT_IMM32_SEG`（8 条，继承 form 的 `imm = 32`）与 `MRR_EXT_IMM8_SEG`（11 条，内联 `imm = 8`）。
+> 这是第一次用 **`imm` 段**：宽度是**结构事实** ⇒ 进 form 的段（`{ kind = "imm", fields = ["u32[31:0]:imm32"] }`
+> 降级成 `keys.imm = 32`），指令侧的内联 `imm = N` 随之删掉。生效键实测：
+> `ADD_R_IMM8S → enc={imm=8, modrm={ reg = 0, rm = "dst" }, opsize="s0"}`、`ADD_R_IMM32 → imm=32` ✔。
+> 累计已段化 **54 条**（14 + 13 + 8 + 19）。
+> ⏭ **W4.3 batch 5（下一片）**：`MRR_MEMREF_AUTO` 剩下的 2 条（带 `prefix`）、
 > `SSE_RR` 21（`escape`+`prefix`+`rex_w` 骨架，需把 `prefix`/`w` 变成段字段的 `match`）、
 > `MRR_EXT` 19 / `MRR` 17（移位族留待扩展码问题定案）/ `VEX_*` / `EVEX_*`；
 > 每批跑三条守卫（asm_encoding 棘轮 + encoder_fuzz + isa_roundtrip_guard）再提交。

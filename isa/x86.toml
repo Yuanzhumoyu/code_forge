@@ -360,6 +360,24 @@ name = "MRR_EXT"        # @modrm_imm32：reg=fields.ext, rm=op0, imm32
 opsize = "s0"
 imm = 32
 
+
+[[forms]]
+name = "MRR_EXT_IMM32_SEG"  # v21 W4：段形态（opcode + modrm(/ext) + imm32）
+opsize = "s0"
+segments = [
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+  { kind = "imm", fields = ["u32[31:0]:imm32"] },
+]
+
+[[forms]]
+name = "MRR_EXT_IMM8_SEG"   # v21 W4：段形态（opcode + modrm(/ext) + imm8）
+opsize = "s0"
+segments = [
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+  { kind = "imm", fields = ["u8[7:0]:imm8"] },
+]
 [[forms]]
 name = "SSE_RR"         # @sse_rr：0F opcode /r，prefix=fields.prefix, w=fields.w
 escape = [0x0F]
@@ -873,73 +891,73 @@ effect = ["Move"]
 
 [[instructions]]
 name = "ADD_R_IMM8S"
-form = "MRR_EXT"
-modrm = { reg = 0, rm = "dst" }
-opcode = 0x83
-imm = 8
+form = "MRR_EXT_IMM8_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0x83, reg = 0 }
+
 ops = ["dst:gprx:inout", "imm:imm8s"]
 asm = "add {dst}, {imm}"
 
 [[instructions]]
 name = "OR_R_IMM8S"
-form = "MRR_EXT"
-modrm = { reg = 1, rm = "dst" }
-opcode = 0x83
-imm = 8
+form = "MRR_EXT_IMM8_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0x83, reg = 1 }
+
 ops = ["dst:gprx:inout", "imm:imm8s"]
 asm = "or {dst}, {imm}"
 
 [[instructions]]
 name = "ADC_R_IMM8S"
-form = "MRR_EXT"
-modrm = { reg = 2, rm = "dst" }
-opcode = 0x83
-imm = 8
+form = "MRR_EXT_IMM8_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0x83, reg = 2 }
+
 ops = ["dst:gprx:inout", "imm:imm8s"]
 asm = "adc {dst}, {imm}"
 
 [[instructions]]
 name = "SBB_R_IMM8S"
-form = "MRR_EXT"
-modrm = { reg = 3, rm = "dst" }
-opcode = 0x83
-imm = 8
+form = "MRR_EXT_IMM8_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0x83, reg = 3 }
+
 ops = ["dst:gprx:inout", "imm:imm8s"]
 asm = "sbb {dst}, {imm}"
 
 [[instructions]]
 name = "AND_R_IMM8S"
-form = "MRR_EXT"
-modrm = { reg = 4, rm = "dst" }
-opcode = 0x83
-imm = 8
+form = "MRR_EXT_IMM8_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0x83, reg = 4 }
+
 ops = ["dst:gprx:inout", "imm:imm8s"]
 asm = "and {dst}, {imm}"
 
 [[instructions]]
 name = "SUB_R_IMM8S"
-form = "MRR_EXT"
-modrm = { reg = 5, rm = "dst" }
-opcode = 0x83
-imm = 8
+form = "MRR_EXT_IMM8_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0x83, reg = 5 }
+
 ops = ["dst:gprx:inout", "imm:imm8s"]
 asm = "sub {dst}, {imm}"
 
 [[instructions]]
 name = "XOR_R_IMM8S"
-form = "MRR_EXT"
-modrm = { reg = 6, rm = "dst" }
-opcode = 0x83
-imm = 8
+form = "MRR_EXT_IMM8_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0x83, reg = 6 }
+
 ops = ["dst:gprx:inout", "imm:imm8s"]
 asm = "xor {dst}, {imm}"
 
 [[instructions]]
 name = "CMP_R_IMM8S"
-form = "MRR_EXT"
-modrm = { reg = 7, rm = "src" }
-opcode = 0x83
-imm = 8
+form = "MRR_EXT_IMM8_SEG"
+bind = { rm = "src" }
+match = { opcode = 0x83, reg = 7 }
+
 ops = ["src:gprx", "imm:imm8s"]
 asm = "cmp {src}, {imm}"
 
@@ -967,43 +985,43 @@ ref = "add"
 # 于是 `add rax, -12` 会被那条排到前面、编成 7 字节 imm32（字节 oracle 抓到的缺陷）。
 # 现在只留这一条多宽度的：帧调整传进来的恒是 64 位栈指针 vreg，编码与原来逐字节一致。
 roles = ["frame_free"]
-form = "MRR_EXT"
-modrm = { reg = 0, rm = "dst" }
-opcode = 0x81
+form = "MRR_EXT_IMM32_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0x81, reg = 0 }
 ops = ["dst:gprx:inout", "imm:imm32"]
 asm = "add {dst}, {imm}"
 
 [[instructions]]
 name = "OR_R_IMM32"
 ref = "or"
-form = "MRR_EXT"
-modrm = { reg = 1, rm = "dst" }
-opcode = 0x81
+form = "MRR_EXT_IMM32_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0x81, reg = 1 }
 ops = ["dst:gprx:inout", "imm:imm32"]
 asm = "or {dst}, {imm}"
 
 [[instructions]]
 name = "ADC_R_IMM32"
-form = "MRR_EXT"
-modrm = { reg = 2, rm = "dst" }
-opcode = 0x81
+form = "MRR_EXT_IMM32_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0x81, reg = 2 }
 ops = ["dst:gprx:inout", "imm:imm32"]
 asm = "adc {dst}, {imm}"
 
 [[instructions]]
 name = "SBB_R_IMM32"
-form = "MRR_EXT"
-modrm = { reg = 3, rm = "dst" }
-opcode = 0x81
+form = "MRR_EXT_IMM32_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0x81, reg = 3 }
 ops = ["dst:gprx:inout", "imm:imm32"]
 asm = "sbb {dst}, {imm}"
 
 [[instructions]]
 name = "AND_R_IMM32"
 ref = "and"
-form = "MRR_EXT"
-modrm = { reg = 4, rm = "dst" }
-opcode = 0x81
+form = "MRR_EXT_IMM32_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0x81, reg = 4 }
 ops = ["dst:gprx:inout", "imm:imm32"]
 asm = "and {dst}, {imm}"
 
@@ -1012,27 +1030,27 @@ name = "SUB_R_IMM32"
 ref = "sub"
 # 同上：`frame_alloc` 角色挂在多宽度这条上（原来由只差 `dst:gpr` 的 `SUB64_R_IMM32` 承载）。
 roles = ["frame_alloc"]
-form = "MRR_EXT"
-modrm = { reg = 5, rm = "dst" }
-opcode = 0x81
+form = "MRR_EXT_IMM32_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0x81, reg = 5 }
 ops = ["dst:gprx:inout", "imm:imm32"]
 asm = "sub {dst}, {imm}"
 
 [[instructions]]
 name = "XOR_R_IMM32"
 ref = "xor"
-form = "MRR_EXT"
-modrm = { reg = 6, rm = "dst" }
-opcode = 0x81
+form = "MRR_EXT_IMM32_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0x81, reg = 6 }
 ops = ["dst:gprx:inout", "imm:imm32"]
 asm = "xor {dst}, {imm}"
 
 [[instructions]]
 name = "CMP_R_IMM32"
 ref = "cmp"
-form = "MRR_EXT"
-modrm = { reg = 7, rm = "src" }
-opcode = 0x81
+form = "MRR_EXT_IMM32_SEG"
+bind = { rm = "src" }
+match = { opcode = 0x81, reg = 7 }
 ops = ["src:gprx", "imm:imm32"]
 asm = "cmp {src}, {imm}"
 
@@ -2127,28 +2145,28 @@ asm = "sar {dst}, 1"
 
 [[instructions]]
 name = "SHL_RM_IMM8"
-form = "MRR_EXT"
-modrm = { reg = 4, rm = "dst" }
-opcode = 0xC1
-imm = 8
+form = "MRR_EXT_IMM8_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0xC1, reg = 4 }
+
 ops = ["dst:gprx:inout", "imm:imm8"]
 asm = "shl {dst}, {imm}"
 
 [[instructions]]
 name = "SHR_RM_IMM8"
-form = "MRR_EXT"
-modrm = { reg = 5, rm = "dst" }
-opcode = 0xC1
-imm = 8
+form = "MRR_EXT_IMM8_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0xC1, reg = 5 }
+
 ops = ["dst:gprx:inout", "imm:imm8"]
 asm = "shr {dst}, {imm}"
 
 [[instructions]]
 name = "SAR_RM_IMM8"
-form = "MRR_EXT"
-modrm = { reg = 7, rm = "dst" }
-opcode = 0xC1
-imm = 8
+form = "MRR_EXT_IMM8_SEG"
+bind = { rm = "dst" }
+match = { opcode = 0xC1, reg = 7 }
+
 ops = ["dst:gprx:inout", "imm:imm8"]
 asm = "sar {dst}, {imm}"
 
