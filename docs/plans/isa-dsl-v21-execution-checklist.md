@@ -496,7 +496,14 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > 同片修掉降级里的**早退 bug**：`lower_stream_instructions` 里 `let Some(mt) = inst.fields else { continue }`
 > 让"只有 segments + bind、没有 match"的指令跳过整个函数 ⇒ `modrm` 绑定丢失（`validate` 不报）。
 > 现在没有 `match` 也继续走 `bind` 分支。**这正是"validate 通过不算数"那条规矩抓到的第二例。**
-> 进度：**155/200**（150 form 面 + 5 指令面）。剩 39 条无 form 指令按同一模板分块推进。
+> 进度：**155/200**（150 form 面 + 5 指令面）。
+> ✅ **chunk 2 成功（2026-10-08）**：6 条无 form 指令迁入（`MOV_R_MEM_8`/`STORE_MEM_R_8`/`UD2`/
+> `SETCC_RM8`/`SETCC_RM8_B`/`CALL_RM`）——**生效键前后逐条一致**，三条守卫全绿。
+> 进度：**161/200**（150 + 5 + 6）。
+> ⚠️ **剩余 21 条里有一类需要 form**：带 `imm`/`rex_w`/`vex`/`evex` 的指令（`ROUNDSS_I`/`PSHUFD`/
+> `SHUFPS`/`CMPPS`/`JCC_REL32`/`VEXTRACTF128`/`VINSERTF128`/`VINSERTF32X4` …）——指令级段
+> **只收结构段**（escape/prefix/modrm），这些 kind 会被明确拒绝 ⇒ 要么给它们各自的 form，
+> 要么把指令级段扩展到"带字段"（需要给指令加字段载体，成本更高）。下一片先定这个。
 > ⏭ **batch 12b（重做计划）**：按**小块**推进（每块 5–8 条、一次提交），每块都用
 > "块内替换 + 生成时加引号 + 数量断言"，并跑三条守卫；`[[vectors]]` 节**不碰**。
 > （以下为旧计划）⏭ **W4.3 batch 11（下一片）**：清掉剩余零散组

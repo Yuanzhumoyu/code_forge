@@ -1403,7 +1403,8 @@ asm = "mov {dst}, [{src}]"
 
 [[instructions]]
 name = "MOV_R_MEM_8"
-modrm = { rm = "[src]" }
+segments = [  { kind = "modrm" }, ]
+bind = { rm = "[src]" }
 opcode = 0x8A
 # 8 位内存 load：独立 opcode 8A（gprx 显式排除 gpr8——8 位 mov 是 8A 非
 # 8B）。数据槽 gpr8b（byte_reg：spl/bpl/sil/dil 强制 REX）。
@@ -1420,7 +1421,8 @@ asm = "mov [{src2}], {src}"
 
 [[instructions]]
 name = "STORE_MEM_R_8"
-modrm = { rm = "[src2]" }
+segments = [  { kind = "modrm" }, ]
+bind = { rm = "[src2]" }
 opcode = 0x88
 ops = ["src:gpr8b", "src2:gprx"]
 asm = "mov [{src2}], {src}"
@@ -2658,7 +2660,7 @@ effect = ["Pure"]
 
 [[instructions]]
 name = "UD2"
-escape = [0x0F]
+segments = [  { kind = "escape", bytes = ["0x0F"] }, ]
 opcode = 0x0B
 effect = ["Trap"]
 asm = "ud2"
@@ -2682,9 +2684,11 @@ implicit_regs = ["RDX"]
 asm = "cqo"
 
 [[instructions]]
+match = { reg = 2 }
 name = "CALL_RM"
 roles = ["call_indirect"]
-modrm = { reg = 2, rm = "src" }
+segments = [  { kind = "modrm" }, ]
+bind = { rm = "src" }
 opcode = 0xFF
 ops = ["src:gpr"]
 asm = "call {src}"
@@ -2701,9 +2705,10 @@ asm = "jcc {cc}, {target}"
 effect = ["Branch"]
 
 [[instructions]]
+match = { reg = 0 }
 name = "SETCC_RM8"
-modrm = { reg = 0, rm = "dst" }
-escape = [0x0F]
+segments = [  { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
+bind = { rm = "dst" }
 opcode = 0x90            # 条件码 = opcode 低 4 位（0x90..0x9F）；reg=0 固定、rm=op0
 # 目的写**64 位名**（`setcc RAX, 4`）——lowering 用 64 位 vreg 承接布尔结果
 # （先 `xor` 清零，故低字节即结果），见槽 `gpr64` 的注释。
@@ -2715,9 +2720,10 @@ effect = ["Pure"]
 # 伪指令展开出来的就是这条。两条是**同一掩码边**（0F 9x）⇒ 解码树把它们归到同一
 # 节点、按声明序试，不构成重叠（真正的重叠是"掩码边 vs 精确边"，见文末注释）。
 [[instructions]]
+match = { reg = 0 }
 name = "SETCC_RM8_B"
-modrm = { reg = 0, rm = "dst" }
-escape = [0x0F]
+segments = [  { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
+bind = { rm = "dst" }
 opcode = 0x90
 ops = ["dst:gpr8b:out", "cc:cond"]
 asm = "setcc {dst}, {cc}"
