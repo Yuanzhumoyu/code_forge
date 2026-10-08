@@ -372,6 +372,13 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > **`forge-codegen` 的预生成器（build script）以 `STATUS_ACCESS_VIOLATION` 退出**——
 > 生成期崩溃，不是测试失败。已 `git checkout` 回退 `isa/x86.toml`，回退后 `forge-codegen`
 > 与 `forge-isa-dsl` 两套全绿。
+> **二分结果（2026-10-08，三次全量 build）**：
+> ① 只加 `RR_SEG` form（不迁指令）⇒ `cargo build -p forge-codegen` **exit 0**（段形态 form 本身无害）；
+> ② form + 迁移 **1 条**（MOV_R_RM）⇒ **exit 0**；
+> ③ form + 迁移 **14 条** ⇒ `STATUS_ACCESS_VIOLATION`。
+> ⇒ 不是"机制不成立"，而是**随迁移条数出现**的问题（某条指令的组合，或与规模相关的
+> 递归/栈/二次增长）。下一步：在 14 条上做二分（先 7 条），必要时把 `FGE_DEBUG_GEN=1`
+> 的生成物按 parts 段比对，定位到具体生成函数。
 > **复现收窄（2026-10-08）**：迁移后的 x86 谱副本走 `forge-isa test`（临时宿主，只取部分 parts）
 > **不崩**（154 条向量、正常出宿主）；崩的是 `forge-codegen` 的 build script（**全量 parts**，
 > 含 lowering/machine/decode）⇒ 崩溃点在**临时宿主不生成的那些 parts**里。
