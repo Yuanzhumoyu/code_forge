@@ -32,6 +32,9 @@
 //! `pieces = [{31,1,12},{25,6,5},{8,4,1},{7,1,11}]` **逐段等价**（见本模块单测）。
 
 use std::collections::BTreeMap;
+use std::fmt;
+
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use super::model::{Bitfield, BitfieldPiece};
 
@@ -102,8 +105,11 @@ impl FieldDecl {
         // ③ 值位段与词位块。
         let (value, chunks) = match body.split_once("->") {
             None => {
+                // 连续形态：词位段就是 `[hi:lo]`，值位段**归一化**为 `[宽度-1 : 0]`
+                //（值的最低位落在词的最低位）——`[11:7]` 是 5 位值、不是 shift 7。
                 let w = parse_span(body.trim()).map_err(|e| format!("{e}（`{s}`）"))?;
-                (w, vec![w])
+                let width = w.0 - w.1 + 1;
+                ((width - 1, 0), vec![w])
             }
             Some((v, ws)) => {
                 let v = parse_span(v.trim()).map_err(|e| format!("值位段：{e}（`{s}`）"))?;
@@ -159,10 +165,10 @@ impl FieldDecl {
         })
     }
 
-    /// 降级成内部 [`Bitfield`]：连续 → `offset/width`；散射 → `pieces`
-    ///（`shift` = 值偏移，`offset`/`width` = 词位置）。
+    /// 降级成内部 [`Bitfield`]：值位段无前导空缺且只有一块 → `offset/width`；
+    /// 否则 → `pieces`（`shift` = 值偏移，`offset`/`width` = 词位置）。
     pub fn to_bitfield(&self) -> Bitfield {
-        if self.chunks.len() == 1 {
+        if self.chunks.len() == 1 && self.value.1 == 0 {
             let (hi, lo) = self.chunks[0];
             return Bitfield {
                 offset: Some(lo),
@@ -186,6 +192,67 @@ impl FieldDecl {
             width: None,
             pieces: Some(pieces),
         }
+    }
+}
+
+impl fmt::Display for FieldDecl {
+    /// 规范化重建（`parse` 的逆）：用于 serde 输出与诊断回显。
+    /// 连续形态（值位段恰为 `[宽度-1:0]`）不写 `->`。
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let ty = self
+            .types
+            .iter()
+            .map(|t| match t {
+                FieldType::U(n) => format!("u{n}"),
+                FieldType::I(n) => format!("i{n}"),
+                FieldType::Named(n) => n.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join("|");
+        let span = |(hi, lo): (u32, u32)| {
+            if hi == lo {
+                format!("{hi}")
+            } else {
+                format!("{hi}:{lo}")
+            }
+        };
+        write!(f, "{ty}[")?;
+        let plain = self.chunks.len() == 1
+            && self.value.1 == 0
+            && self.value.0 == self.chunks[0].0 - self.chunks[0].1;
+        if plain {
+            write!(f, "{}", span(self.chunks[0]))?;
+        } else {
+            write!(f, "{}", span(self.value))?;
+            let ws = self
+                .chunks
+                .iter()
+                .map(|c| span(*c))
+                .collect::<Vec<_>>()
+                .join(",");
+            write!(f, " -> {ws}")?;
+        }
+        write!(f, "]")?;
+        if let Some(n) = &self.name {
+            write!(f, ":{n}")?;
+        }
+        if let Some(v) = self.default {
+            write!(f, "={v}")?;
+        }
+        Ok(())
+    }
+}
+
+impl Serialize for FieldDecl {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for FieldDecl {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        FieldDecl::parse(&s).map_err(serde::de::Error::custom)
     }
 }
 
@@ -391,6 +458,57 @@ mod tests {
         assert!(FieldDecl::parse("u5[7:11]").unwrap_err().contains("高位小于低位"));
         assert!(FieldDecl::parse("u5").unwrap_err().contains("缺少"));
         assert!(FieldDecl::parse("u0[3:0]").unwrap_err().contains("正整数"));
+    }
+
+    /// 连续形态的值位段**归一化**：`[11:7]` 是 5 位值（shift 0），不是 shift 7。
+    #[test]
+    fn contiguous_span_is_normalised() {
+        let d = FieldDecl::parse("gpr64[11:7]:rd").unwrap();
+        assert_eq!(d.value, (4, 0), "值位段 = [宽度-1 : 0]");
+        assert_eq!(d.bits(), 5);
+        // 单块但**有前导空缺**（值 bit 0 不参与）⇒ 必须走 pieces。
+        let gap = FieldDecl::parse("i12[12:1 -> 11:0]:off").unwrap();
+        let p = gap.to_bitfield().pieces.expect("有前导空缺 ⇒ pieces");
+        assert_eq!((p[0].offset, p[0].width, p[0].shift), (0, 12, 1));
+    }
+
+    /// 规范化重建：`Display` 是**规范形式**（默认值写十进制），`parse∘Display` 稳定。
+    #[test]
+    fn display_round_trips() {
+        for (src, canonical) in [
+            ("u7[6:0]:opcode=0x33", "u7[6:0]:opcode=51"),
+            ("gpr64|gpr32[11:7]:rd", "gpr64|gpr32[11:7]:rd"),
+            (
+                "i13[12:1 -> 11:8,30:25,7,31]:imm_b",
+                "i13[12:1 -> 11:8,30:25,7,31]:imm_b",
+            ),
+            ("u1[21]", "u1[21]"),
+        ] {
+            let d = FieldDecl::parse(src).unwrap();
+            assert_eq!(d.to_string(), canonical, "规范形式");
+            let again = FieldDecl::parse(&d.to_string()).unwrap();
+            assert_eq!(again, d, "parse∘Display 是恒等");
+            assert_eq!(again.to_string(), canonical, "Display 幂等");
+        }
+    }
+
+    /// serde 面就绪（接线到 `Form`/`Instruction` 的前提）：字符串 ⇄ `FieldDecl`。
+    #[test]
+    fn serde_round_trips_through_toml() {
+        #[derive(serde::Deserialize)]
+        struct Holder {
+            fields: Vec<FieldDecl>,
+        }
+        let src = r#"
+fields = ["u7[6:0]:opcode=0x33", "gpr64[11:7]:rd", "i13[12:1 -> 11:8,30:25,7,31]:imm_b"]
+"#;
+        let h: Holder = toml::from_str(src).unwrap();
+        assert_eq!(h.fields.len(), 3);
+        assert_eq!(h.fields[0].name.as_deref(), Some("opcode"));
+        assert_eq!(h.fields[2].bits(), 12);
+        // 解析失败必须变成 TOML 反序列化错误（接线后即声明期诊断）。
+        let bad: Result<Holder, _> = toml::from_str("fields = [\"u5[7:11]\"]");
+        assert!(bad.is_err());
     }
 
     #[test]
