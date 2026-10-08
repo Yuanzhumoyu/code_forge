@@ -848,8 +848,8 @@ name = "MOVZX_R8_MEM"
 # `prefix`/`rex_w` 写成固定值：R8 那条（prefix=0、w=1）恰好对，**R16 那条写死 `66`
 # 是错的**——`66` 是"16 位目的"的编码，配 64 位目的会编出 `66 48 0F B7`（轴不对），
 # 而 `movzx rax, word ptr [m]` 应当是 `48 0F B7`（无 66）。
-modrm = { rm = "[src]" }
-escape = [0x0F]
+segments = [  { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
+bind = { rm = "[src]" }
 opcode = 0xB6
 opsize = "s0"
 ops = ["dst:gpr:out", "src:gpr"]
@@ -857,8 +857,8 @@ asm = "movzx {dst}, byte ptr [{src}]"
 
 [[instructions]]
 name = "MOVZX_R16_MEM"
-modrm = { rm = "[src]" }
-escape = [0x0F]
+segments = [  { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
+bind = { rm = "[src]" }
 opcode = 0xB7
 opsize = "s0"
 ops = ["dst:gpr:out", "src:gpr"]
@@ -1304,12 +1304,10 @@ effect = ["Move"]
 
 [[instructions]]
 name = "CMPXCHG_MEM_R"
-modrm = { rm = "[src2]" }
+segments = [  { kind = "prefix", bytes = ["0xF0"] },   { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
+bind = { rm = "[src2]" }
 opsize = "src"
-escape = [0x0F]
-prefix = "field"
 opcode = 0xB1
-match = { prefix = 0xF0 }
 # v14：数据槽 gprx 多类——DSL 回填携带 IR 值宽度（I16→66 前缀、I32→无
 # REX.W、I64→RAX 视图 REX.W），rm_mem 宽度自动分发（16/32/64 同 opcode
 # 0F B1 + 66/REX.W；8 位是独立 opcode 0F B0——见 CMPXCHG_MEM_R_8）。
@@ -1325,11 +1323,9 @@ implicit_regs = ["RAX"]
 
 [[instructions]]
 name = "CMPXCHG_MEM_R_8"
-modrm = { rm = "[src2]" }
-escape = [0x0F]
-prefix = "field"
+segments = [  { kind = "prefix", bytes = ["0xF0"] },   { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
+bind = { rm = "[src2]" }
 opcode = 0xB0
-match = { prefix = 0xF0 }
 # 8 位 LOCK CMPXCHG：0F B0（r/m8，隐式 AL——mov RAX 后 AL 即期望值低
 # 字节）。数据槽 gpr8b（byte_reg 强制 REX：spl/bpl/sil/dil）。
 ops = ["src:gpr8b", "src2:gprx"]
@@ -1340,12 +1336,10 @@ implicit_regs = ["RAX"]
 [[instructions]]
 name = "XADD_MEM_R"
 ref = "xadd"
-modrm = { rm = "[src]" }
+segments = [  { kind = "prefix", bytes = ["0xF0"] },   { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
+bind = { rm = "[src]" }
 opsize = "dst"
-escape = [0x0F]
-prefix = "field"
 opcode = 0xC1
-match = { prefix = 0xF0 }
 # v14：数据槽 gprx（16/32/64 auto）——AtomicRmw Add/Sub lowering 的 {g1}
 # 临时恒 64 位池（窄域 Add/Sub 走 intrinsics cmpxchg 循环，i64 域用本指令）。
 ops = ["dst:gprx:inout", "src:gprx"]

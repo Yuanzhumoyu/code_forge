@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W4.3 batch 12b chunk1：首批无 form 指令用指令级段
+
++ `isa/x86.toml`：`MOVZX_R8_MEM`/`MOVZX_R16_MEM`/`CMPXCHG_MEM_R`/`CMPXCHG_MEM_R_8`/`XADD_MEM_R`
+  迁到**指令级结构段**（选项 B）；生效键与迁移前一致（`prefix = "field"` + `match.prefix`
+  折叠成常量 `bytes = ["0xF0"]`，字节等价）。
++ 修降级早退：`lower_stream_instructions` 在指令没有 `match` 时曾跳过整个函数，
+  使"只有 segments + bind"的指令**丢掉 `modrm` 绑定**（且 `validate` 不报）——
+  现在没有 `match` 也继续走 `bind` 分支。
++ 逐字节不变：`isa_roundtrip_guard` + asm 棘轮 + 谱内向量 + 双 JIT 矩阵；累计 **155/200** 段化。
+
 ### Added (2026-10-08) — ISA-DSL v21 W4.3 batch 12a：指令级段载体（选项 B）
 
 + `[[instructions]].segments`：不依赖 form 的指令可直接声明**结构段**

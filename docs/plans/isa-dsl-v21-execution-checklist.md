@@ -489,6 +489,14 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > ⇒ **两条硬规矩**：① 每个指令块必须**整块重建成新的行列表再替换**，**禁止**就地改索引
 > （插入会使其后行号全部失效）；② **`validate` 通过不算数**，每块必须跑**生效键抽查**
 > （`forge-isa insts` 比对迁移前后 `enc`）**加**三条守卫。
+> ✅ **chunk 1 成功（2026-10-08）**：按新规矩（**整块重建** + 生效键前后比对）迁了 5 条无 form 指令
+> （`MOVZX_R8_MEM`/`MOVZX_R16_MEM`/`CMPXCHG_MEM_R`/`CMPXCHG_MEM_R_8`/`XADD_MEM_R`）。
+> 生效键实测与迁移前一致（`MOVZX_R8_MEM` 的 `enc={escape=[15],modrm={rm="[src]"},opsize="s0"}`）；
+> `prefix = "field"` + `match = { prefix = 0xF0 }` 在迁移时**折叠成常量** `bytes = ["0xF0"]`（字节等价）。
+> 同片修掉降级里的**早退 bug**：`lower_stream_instructions` 里 `let Some(mt) = inst.fields else { continue }`
+> 让"只有 segments + bind、没有 match"的指令跳过整个函数 ⇒ `modrm` 绑定丢失（`validate` 不报）。
+> 现在没有 `match` 也继续走 `bind` 分支。**这正是"validate 通过不算数"那条规矩抓到的第二例。**
+> 进度：**155/200**（150 form 面 + 5 指令面）。剩 39 条无 form 指令按同一模板分块推进。
 > ⏭ **batch 12b（重做计划）**：按**小块**推进（每块 5–8 条、一次提交），每块都用
 > "块内替换 + 生成时加引号 + 数量断言"，并跑三条守卫；`[[vectors]]` 节**不碰**。
 > （以下为旧计划）⏭ **W4.3 batch 11（下一片）**：清掉剩余零散组
