@@ -1643,19 +1643,21 @@ asm = "movups [{src2}], {src}"
 # 表达不了 `[RBP - off]`）。与 MOVSD_RM/MR 同形，只是无 F2 前缀 = 16 字节。
 [[instructions]]
 name = "MOVUPS_RM"
-segments = [  { kind = "prefix", bytes = ["0x00"] },   { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
+form = "MRR_MEM_0F_PFX32_SEG"
+
 bind = { rm = "[mem]" }
 opsize = 32
-opcode = 0x10
+match = { opcode = 0x10, prefix = 0 }
 ops = ["dst:fpr:out", "mem:mem"]
 asm = "movups {dst}, {mem}"
 
 [[instructions]]
 name = "MOVUPS_MR"
-segments = [  { kind = "prefix", bytes = ["0x00"] },   { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
+form = "MRR_MEM_0F_PFX32_SEG"
+
 bind = { rm = "[mem]" }
 opsize = 32
-opcode = 0x11
+match = { opcode = 0x11, prefix = 0 }
 ops = ["src:fpr", "mem:mem:out"]
 asm = "movups {mem}, {src}"
 
