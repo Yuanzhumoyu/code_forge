@@ -746,6 +746,18 @@ encode = "slice"
 fields = ["vq", "vsize"]
 
 [[operand_slots]]
+name = "rz64"
+kind = "reg"
+class = "gpr8"
+zr31 = true
+
+[[operand_slots]]
+name = "rz32"
+kind = "reg"
+class = "gpr4"
+zr31 = true
+
+[[operand_slots]]
 name = "r64"
 kind = "reg"
 class = "gpr8"
@@ -2767,7 +2779,7 @@ name = "ADD_LSLX"
 form = "ALUSH6"
 opcode = 0x8B
 fields = { shift = 0 }
-ops = ["dst:r64:out", "src:r64", "src2:r64", "sh:imm6"]
+ops = ["dst:rz64:out", "src:rz64", "src2:rz64", "sh:imm6"]
 asm = "add {dst}, {src}, {src2}, lsl #{sh}"
 
 [[instructions]]
@@ -2775,7 +2787,7 @@ name = "ADD_LSLW"
 form = "ALUSH5"
 opcode = 0xB
 fields = { shift = 0 }
-ops = ["dst:r32:out", "src:r32", "src2:r32", "sh:imm5"]
+ops = ["dst:rz32:out", "src:rz32", "src2:rz32", "sh:imm5"]
 asm = "add {dst}, {src}, {src2}, lsl #{sh}"
 
 [[instructions]]
@@ -2783,7 +2795,7 @@ name = "SUB_LSLX"
 form = "ALUSH6"
 opcode = 0xCB
 fields = { shift = 0 }
-ops = ["dst:r64:out", "src:r64", "src2:r64", "sh:imm6"]
+ops = ["dst:rz64:out", "src:rz64", "src2:rz64", "sh:imm6"]
 asm = "sub {dst}, {src}, {src2}, lsl #{sh}"
 
 [[instructions]]
@@ -2791,14 +2803,14 @@ name = "SUB_LSLW"
 form = "ALUSH5"
 opcode = 0x4B
 fields = { shift = 0 }
-ops = ["dst:r32:out", "src:r32", "src2:r32", "sh:imm5"]
+ops = ["dst:rz32:out", "src:rz32", "src2:rz32", "sh:imm5"]
 asm = "sub {dst}, {src}, {src2}, lsl #{sh}"
 [[instructions]]
 name = "ADDS_LSLX"
 form = "ALUSH6"
 opcode = 0xAB
 fields = { shift = 0 }
-ops = ["dst:r64:out", "src:r64", "src2:r64", "sh:imm6"]
+ops = ["dst:rz64:out", "src:rz64", "src2:rz64", "sh:imm6"]
 asm = "adds {dst}, {src}, {src2}, lsl #{sh}"
 
 [[instructions]]
@@ -2806,7 +2818,7 @@ name = "ADDS_LSLW"
 form = "ALUSH5"
 opcode = 0x2B
 fields = { shift = 0 }
-ops = ["dst:r32:out", "src:r32", "src2:r32", "sh:imm5"]
+ops = ["dst:rz32:out", "src:rz32", "src2:rz32", "sh:imm5"]
 asm = "adds {dst}, {src}, {src2}, lsl #{sh}"
 
 [[instructions]]
@@ -2814,7 +2826,7 @@ name = "SUBS_LSLX"
 form = "ALUSH6"
 opcode = 0xEB
 fields = { shift = 0 }
-ops = ["dst:r64:out", "src:r64", "src2:r64", "sh:imm6"]
+ops = ["dst:rz64:out", "src:rz64", "src2:rz64", "sh:imm6"]
 asm = "subs {dst}, {src}, {src2}, lsl #{sh}"
 
 # ── `mov <Rd>, #:abs_g0_s:sym` / `mov x0, 1b - 0b`（符号/表达式立即数）──
@@ -4011,7 +4023,7 @@ name = "SUBS_LSLW"
 form = "ALUSH5"
 opcode = 0x6B
 fields = { shift = 0 }
-ops = ["dst:r32:out", "src:r32", "src2:r32", "sh:imm5"]
+ops = ["dst:rz32:out", "src:rz32", "src2:rz32", "sh:imm5"]
 asm = "subs {dst}, {src}, {src2}, lsl #{sh}"
 
 [[instructions]]
