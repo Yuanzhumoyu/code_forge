@@ -2434,83 +2434,68 @@ asm = "cmpsd {dst}, {src}, {imm}"
 # 谓词编号是 x86 手册的定义（eq=0、lt=1、le=2、unord=3、neq=4、nlt=5、nle=6、ord=7）。
 # 标量（ss/sd）别名**不做**：那会盖掉 `cmpss xmm, xmm, imm8` 这条三操作数写法
 # （伪指令按整词先于指令扫描命中，同名就再也汇编不到三操作数形式）。
-[[pseudo]]
-name = "cmpeqps"
+# v21 W7：伪指令搬进 `[asm.pseudo.<名>]`（表头即名字 ✗）。
+[asm.pseudo.cmpeqps]
 asm = "cmpeqps {a}, {b}"
 emit = ["cmpps {a}, {b}, 0"]
 
-[[pseudo]]
-name = "cmpltps"
+[asm.pseudo.cmpltps]
 asm = "cmpltps {a}, {b}"
 emit = ["cmpps {a}, {b}, 1"]
 
-[[pseudo]]
-name = "cmpleps"
+[asm.pseudo.cmpleps]
 asm = "cmpleps {a}, {b}"
 emit = ["cmpps {a}, {b}, 2"]
 
-[[pseudo]]
-name = "cmpunordps"
+[asm.pseudo.cmpunordps]
 asm = "cmpunordps {a}, {b}"
 emit = ["cmpps {a}, {b}, 3"]
 
-[[pseudo]]
-name = "cmpneqps"
+[asm.pseudo.cmpneqps]
 asm = "cmpneqps {a}, {b}"
 emit = ["cmpps {a}, {b}, 4"]
 
-[[pseudo]]
-name = "cmpnltps"
+[asm.pseudo.cmpnltps]
 asm = "cmpnltps {a}, {b}"
 emit = ["cmpps {a}, {b}, 5"]
 
-[[pseudo]]
-name = "cmpnleps"
+[asm.pseudo.cmpnleps]
 asm = "cmpnleps {a}, {b}"
 emit = ["cmpps {a}, {b}, 6"]
 
-[[pseudo]]
-name = "cmpordps"
+[asm.pseudo.cmpordps]
 asm = "cmpordps {a}, {b}"
 emit = ["cmpps {a}, {b}, 7"]
 
-[[pseudo]]
-name = "cmpeqpd"
+[asm.pseudo.cmpeqpd]
 asm = "cmpeqpd {a}, {b}"
 emit = ["cmppd {a}, {b}, 0"]
 
-[[pseudo]]
-name = "cmpltpd"
+[asm.pseudo.cmpltpd]
 asm = "cmpltpd {a}, {b}"
 emit = ["cmppd {a}, {b}, 1"]
 
-[[pseudo]]
-name = "cmplepd"
+[asm.pseudo.cmplepd]
 asm = "cmplepd {a}, {b}"
 emit = ["cmppd {a}, {b}, 2"]
 
-[[pseudo]]
-name = "cmpunordpd"
+[asm.pseudo.cmpunordpd]
 asm = "cmpunordpd {a}, {b}"
 emit = ["cmppd {a}, {b}, 3"]
 
-[[pseudo]]
-name = "cmpneqpd"
+[asm.pseudo.cmpneqpd]
 asm = "cmpneqpd {a}, {b}"
 emit = ["cmppd {a}, {b}, 4"]
 
-[[pseudo]]
-name = "cmpnltpd"
+[asm.pseudo.cmpnltpd]
 asm = "cmpnltpd {a}, {b}"
 emit = ["cmppd {a}, {b}, 5"]
 
-[[pseudo]]
-name = "cmpnlepd"
+[asm.pseudo.cmpnlepd]
 asm = "cmpnlepd {a}, {b}"
 emit = ["cmppd {a}, {b}, 6"]
 
-[[pseudo]]
-name = "cmpordpd"
+[asm.pseudo.cmpordpd]
 asm = "cmpordpd {a}, {b}"
 emit = ["cmppd {a}, {b}, 7"]
 
@@ -2808,23 +2793,19 @@ effect = ["Pure"]
 #
 # 伪指令是**文本层**展开（没有解码 arm），因此与通用形态互不干扰；SSE 的八个比较别名
 # 就是这么做的。代价是"每种条件码 × 每种写法 = 一行"，本批只建语料用到的 `e`/`l`。
-[[pseudo]]
-name = "sete_r8"
+[asm.pseudo.sete_r8]
 asm = "sete {dst}"
 emit = ["setcc {dst}, e"]
 
-[[pseudo]]
-name = "sete_m8"
+[asm.pseudo.sete_m8]
 asm = "sete byte ptr {mem}"
 emit = ["setcc byte ptr {mem}, e"]
 
-[[pseudo]]
-name = "cmovl_rr"
+[asm.pseudo.cmovl_rr]
 asm = "cmovl {dst}, {src}"
 emit = ["cmovcc {dst}, {src}, l"]
 
-[[pseudo]]
-name = "cmovl_mem"
+[asm.pseudo.cmovl_mem]
 asm = "cmovl {dst}, {mem}"
 emit = ["cmovcc {dst}, {mem}, l"]
 

@@ -11,6 +11,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W7 第十三片：撤掉旧 `[[pseudo]]` 面（只留 `[asm.pseudo.<名>]`）
+
++ 承接第十二片：三谱 **22 条**伪指令（x86 20 / riscv64 2）全部搬进 `[asm.pseudo.<名>]`（表头即名字），
+  夹具谱 `crates/backend/forge-codegen/tests/isa/demo.toml` 的 2 条一并搬迁 ⇒ 全仓 `[[pseudo]]` 残留 **0**。
++ **旧键撤除**：`IsaModel.pseudo` 改成 `#[serde(skip)]` 的内部载体（并在 `INTERNAL_FIELDS` 登记），
+  schema 根键去掉 `pseudo`、旧 `[[pseudo]]` Section 换成 `[asm.pseudo.<名>]`（模型 `PseudoBody`），
+  键表两行与文档该小节（含 TOC 锚点）同步改写 ⇒ 写 `[[pseudo]]` 现在解析期即被拒。
++ 伪指令回归测试的夹具全部迁移（15 处）：“名字重复”一例改为说明它现在由 TOML 重复表头拒绝；
+  新增/保留 `asm_pseudo_section_lowers_to_pseudo`（新居可解析并降级 + 旧键被拒）。
++ 踩坑（两个都实测）：① 撤 Section 时漏了 `schema.rs` 根键→Section 映射表里的
+  `("pseudo", "[[pseudo]]", …)`，`forge-codegen` 的 build script 直接 panic；② 文档键表两行必须与
+  schema 的 `doc` 逐字一致，任一侧不同即红。
++ 另修本片连带的两处文档/模式泄露：`[lower.<终结 op>]` 的 schema `doc` 与键表行曾同时含同一标记字符，
+  因此守卫“侥幸通过”——两侧已一并清干净。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制；三谱 `validate` 全通过。
+
 ### Added (2026-10-08) — ISA-DSL v21 W7 第十二片：`[asm.pseudo.<名>]` 新居（表头即名字）
 
 + 新增 **`[asm]`** 节 ✗（v21 §6.9 ✗）与首张表 **`[asm.pseudo.<名>]`** ✗：**表头就是伪指令名** ✗

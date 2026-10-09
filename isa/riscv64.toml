@@ -2436,8 +2436,7 @@ slot = "imm12"
 # `{iconst_hi20}`/`{iconst_lo12}`（占位符里做同一套算术）一致。
 # v20 V9 之前 `imm20` 是**预移位**位域（编码器负责 `>>12`），于是 `lui a0, 2` 在我们
 # 这里被编成 imm20=0 —— 真实语料的字节对拍抓到了它（上游 `37 25 00 00`）。
-[[pseudo]]
-name = "li"
+[asm.pseudo.li]
 asm = "li {rd}, {imm}"
 emit = [
     "lui {rd}, (({imm} + 0x800) >> 12)",
@@ -2446,8 +2445,7 @@ emit = [
 
 # `unimp`：LLVM/GAS 把它定义为 `csrrw x0, cycle, x0`（0xC0001073）——它是**别名**，
 # 不是新编码（真实位型与 CSRRW 撞车，而解码器按"编码不相交"建 trie）⇒ 用伪指令展开一条。
-[[pseudo]]
-name = "unimp"
+[asm.pseudo.unimp]
 asm = "unimp"
 emit = ["csrrw X0, 0xc00, X0"]
 

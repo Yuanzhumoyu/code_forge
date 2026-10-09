@@ -67,7 +67,7 @@
 
   - [`[[reloc]]` — 重定位表（v18 S3d）](#reloc--重定位表v18-s3d)
 
-  - [`[[pseudo]]` — 汇编器伪指令（v18 S3e；v20 V10 改 `asm` 声明形态）](#pseudo--汇编器伪指令v18-s3ev20-v10-改-asm-声明形态)
+  - [`[asm.pseudo.<名>]` — 汇编器伪指令（v21 W7：表头即名字）](#asmpseudo名--汇编器伪指令v21-w7表头即名字)
 
   - [`[[templates]]` — 参数化指令模板（唯一复用机制）](#templates--参数化指令模板唯一复用机制)
 
@@ -154,7 +154,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 <!-- BEGIN: schema-keys（由 tests/schema_guard.rs 校验，改 schema 时同步这一段）-->
 | 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
 | --- | --- | --- | --- |
-| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `types` `stack` `operand` `enum` `forms` `instructions` `family` `lower` `asm` `reloc` `derive` `pseudo` `lowering` `pattern` `machine` `emit` `spill` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
+| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `types` `stack` `operand` `enum` `forms` `instructions` `family` `lower` `asm` `reloc` `derive` `lowering` `pattern` `machine` `emit` `spill` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
 | `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `vector_tiers` | 元信息 + 文本约定（宽度只在 [reg.<名>] 表头里，见 [machine] 的类指针键） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
 | `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `alloc_count` `aliases` | 寄存器组；组名的数字 = **位**宽（`gpr64` = 64 位）；aliases = { 别名 = 组内下标 } |
@@ -173,8 +173,8 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[instructions]]` | `name` `asm` | `form` `opcode` `match` `fields` `segments` `bind` `ops` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[[reloc]]` | `name` `semantics` `slot` | `addend` | 重定位表：semantics = absolute \| pc_relative（v18 S3d） |
 | `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
-| `[[pseudo]]` | `name` `asm` `emit` | `only_variants` | 汇编器伪指令：文本级多指令展开（v18 S3e）；name 只是唯一标识，分派按 asm 的前导字面，`{名字}` 就是 emit 用的参数 |
-| `[lower.<终结 op>]` | `insts` | — | 终结指令的 lowering 序列（Br/Jmp/Ret ✗）：可用 {true}/{false}/{target} 符号值 |
+| `[asm.pseudo.<名>]` | `asm` `emit` | `only_variants` | 汇编器伪指令（v21 W7：**表头即名字**；旧 `[[pseudo]]` 已撤）：文本级多指令展开，分派按 `asm` 的前导字面，`{名字}` 就是 `emit` 用的参数 |
+| `[lower.<终结 op>]` | `insts` | — | 终结指令的 lowering 序列（Br/Jmp/Ret）：可用 {true}/{false}/{target} 符号值 |
 | `[[lowering]]` | `op` `insts` | `when` `vary` `dispatch` `temps` `priority` | 指令选择规则 |
 | `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
 | `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` `gpr` `fpr` `addr` `value_gpr` `value_fpr` `frame` `callee_saved_gpr` `callee_save_slots` `frame_padding` `arg_slot` `vector_by_ref_bytes` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / callee-saved 推入槽数 / 帧填充 / 位置计数规则） |
@@ -1265,13 +1265,12 @@ slot = "imm20"
 - 校验：表项名非空唯一、`slot` 已声明且是 imm 槽、指令引用的名字必须存在、
   该指令确实有那个槽的操作数、语义名必须是宿主已知的两个之一。
 
-## `[[pseudo]]` — 汇编器伪指令（v18 S3e；v20 V10 改 `asm` 声明形态）
+## `[asm.pseudo.<名>]` — 汇编器伪指令（v21 W7：表头即名字）
 
 汇编期的**文本级**多指令展开（`.equ`/`.macro` 的结构化兄弟）：不碰编码器、不碰 lowering。
 
 ```toml
-[[pseudo]]
-name = "li"                     # 声明标识：唯一即可，与写法无关（诊断/变体门用它）
+[asm.pseudo.li]
 asm  = "li {rd}, {imm}"         # **书写规范**：首段首词是分派键，`{名字}` 就是参数
 emit = [                        # 至少一行；每行都是普通汇编文本
   "lui {rd}, (({imm} + 0x800) >> 12)",
@@ -1279,9 +1278,9 @@ emit = [                        # 至少一行；每行都是普通汇编文本
 ]
 ```
 
-**`name` 只是标识**（非空、唯一即可）——它不必出现在写法里，也**不参与匹配**
-（`name = "load_imm"` + `asm = "li {rd}, {imm}"` 合法）。分派看**写法**：`asm` 首段的
-首词是分派键，运行时按它选候选（同一分派键下可以有多条写法，按声明序逐个试）。
+**表头就是名字**（v21 W7）：非空、唯一即可——它不必出现在写法里，也**不参与匹配**。
+分派看**写法**：`asm` 首段的首词是分派键，运行时按它选候选（同一分派键下可以有多条写法，
+按声明序逐个试）。
 **参数表就是 `asm` 里的 `{名字}`**（按首次出现序）——没有第二份 `params` 清单：
 声明与引用只有一处事实源，名字对不上是**校验期错误**而不是运行期静默错替换。
 
@@ -1297,7 +1296,7 @@ emit = [                        # 至少一行；每行都是普通汇编文本
 | 括号 | 实参是**文本**：`{imm}` 参与算术时请自己加括号（`({imm} + 0x800)`），否则会撞上运算符优先级 |
 | 嵌套 | emit 行可以是**别的伪指令**（递归展开，深度上限 16 防自引用成环） |
 | 单条 API | `assemble()` 只接受展开成 **1 条**指令的伪指令；多条要用 `TargetAssembler::parse_insts`（整段汇编），错误消息会指引 |
-| 校验 | `name` 非空且**唯一**（只此一条要求）；`asm` 非空、**字面开头**、占位符之间要有字面分隔；**分派键不得与任何指令模板的前导字面重名**（伪指令展开先于指令扫描，重名会把那条指令的写法吃掉）、两条伪指令的 `asm` 不能完全相同（后者永远命中不到）；emit 行首必须**接得上某条指令模板**（比前导字面的 token，与扫描器同一份词法——不是"按空白切词查助记符"）、或是别的伪指令的写法、或 `[meta].directive_prefix` 开头的伪操作；`{…}` 必须是 `asm` 声明过的参数，且每个参数都得用到 |
+| 校验 | **表头（名字）唯一**（v21 W7：`[asm.pseudo.<名>]` 重复表头由 TOML 自身拒绝）；`asm` 非空、**字面开头**、占位符之间要有字面分隔；**分派键不得与任何指令模板的前导字面重名**（伪指令展开先于指令扫描，重名会把那条指令的写法吃掉）、两条伪指令的 `asm` 不能完全相同（后者永远命中不到）；emit 行首必须**接得上某条指令模板**（比前导字面的 token，与扫描器同一份词法——不是"按空白切词查助记符"）、或是别的伪指令的写法、或 `[meta].directive_prefix` 开头的伪操作；`{…}` 必须是 `asm` 声明过的参数，且每个参数都得用到 |
 
 零操作数的伪指令也合法（`asm = "pause"`，参数表就是空的）。同一个名字在 `asm` 里出现
 两次表示**前后必须写成一样**（`li {x}, {x}` 这种对称写法，汇编期校验）。

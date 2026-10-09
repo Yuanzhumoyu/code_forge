@@ -1253,7 +1253,7 @@ fn derive_cannot_reference_another_derive() {
 #[test]
 fn pseudo_decl_compiles_into_expander() {
     let doc = lowering_doc(
-        "[[pseudo]]\nname = \"mv\"\nasm = \"mv {dst}, {src}\"\nemit = [\"mov {dst}, {src}\"]",
+        "[asm.pseudo.mv]\nasm = \"mv {dst}, {src}\"\nemit = [\"mov {dst}, {src}\"]",
     );
     let m = parse_and_validate(&doc).expect("合法伪指令必须通过");
     let s: String = super::codegen::generate(&m)
@@ -1284,7 +1284,7 @@ fn pseudo_absent_keeps_assembler_unchanged() {
 #[test]
 fn pseudo_name_must_not_shadow_mnemonic() {
     let doc = lowering_doc(
-        "[[pseudo]]\nname = \"mov\"\nasm = \"mov {dst}, {src}\"\nemit = [\"mov {dst}, {src}\"]",
+        "[asm.pseudo.mov]\nasm = \"mov {dst}, {src}\"\nemit = [\"mov {dst}, {src}\"]",
     );
     let msg = validation_msg(&doc);
     assert!(msg.contains("重名"), "msg: {msg}");
@@ -1292,34 +1292,30 @@ fn pseudo_name_must_not_shadow_mnemonic() {
 
 /// `asm` 的形状校验：**字面开头**（分派前缀）、不能为空、占位符之间要有字面分隔。
 ///
-/// `name` **不在**这些规则里：它只是声明的唯一标识，与写法无关。
+/// 名字（v21 W7 起 = **表头** ✗）**不在**这些规则里：它只是声明的唯一标识，与写法无关。
 #[test]
 fn pseudo_asm_shape_is_validated() {
-    // name 与写法可以完全不同（name 只是标识）——合法
+    // 名字与写法可以完全不同（名字只是标识）——合法
     parse_and_validate(&lowering_doc(
-        "[[pseudo]]\nname = \"load_imm\"\nasm = \"li {a}, {b}\"\nemit = [\"mov {a}, {b}\"]",
+        "[asm.pseudo.load_imm]\nasm = \"li {a}, {b}\"\nemit = [\"mov {a}, {b}\"]",
     ))
-    .expect("name 与写法不必相同");
+    .expect("名字与写法不必相同");
 
     // 空 asm / 模板以占位符开头
-    let empty = lowering_doc("[[pseudo]]\nname = \"mv\"\nasm = \"\"\nemit = [\"mov {a}, {a}\"]");
+    let empty = lowering_doc("[asm.pseudo.mv]\nasm = \"\"\nemit = [\"mov {a}, {a}\"]");
     assert!(validation_msg(&empty).contains("empty asm template"));
 
     let op_first =
-        lowering_doc("[[pseudo]]\nname = \"mv\"\nasm = \"{a} mv\"\nemit = [\"mov {a}, {a}\"]");
+        lowering_doc("[asm.pseudo.mv]\nasm = \"{a} mv\"\nemit = [\"mov {a}, {a}\"]");
     assert!(validation_msg(&op_first).contains("必须以**字面**开头"));
 
     // 两个占位符相邻（切不开）
     let adjacent =
-        lowering_doc("[[pseudo]]\nname = \"mv\"\nasm = \"mv {a}{b}\"\nemit = [\"mov {a}, {b}\"]");
+        lowering_doc("[asm.pseudo.mv]\nasm = \"mv {a}{b}\"\nemit = [\"mov {a}, {b}\"]");
     assert!(validation_msg(&adjacent).contains("相邻"));
 
-    // name 重复（name 的唯一要求就是唯一）
-    let dup = lowering_doc(
-        "[[pseudo]]\nname = \"mv\"\nasm = \"mv {a}\"\nemit = [\"mov {a}, {a}\"]\n\
-         [[pseudo]]\nname = \"mv\"\nasm = \"mv2 {a}\"\nemit = [\"mov {a}, {a}\"]",
-    );
-    assert!(validation_msg(&dup).contains("name 重复"), "{dup}");
+    // 名字重复：v21 W7 起**由 TOML 自身**拒绝（`[asm.pseudo.mv]` 写两次 = 重复表头 ✗）——
+    // "表头即名字"的连带好处之一；跨旧面同名由 `asm_pseudo_section_lowers_to_pseudo` 覆盖 ✔。
 }
 
 /// 分派键（`asm` 首段的首词）与指令模板的前导字面重名 ⇒ 报错（伪指令先于指令扫描）；
@@ -1328,7 +1324,7 @@ fn pseudo_asm_shape_is_validated() {
 fn pseudo_dispatch_key_and_duplicate_asm_are_validated() {
     // name 无害，但**写法**首词撞上指令 ⇒ 报错（遮蔽风险在写法上，不在名字上）
     let shadow = lowering_doc(
-        "[[pseudo]]\nname = \"alias_mov\"\nasm = \"mov {a}, {b}\"\nemit = [\"mov {a}, {b}\"]",
+        "[asm.pseudo.alias_mov]\nasm = \"mov {a}, {b}\"\nemit = [\"mov {a}, {b}\"]",
     );
     let msg = validation_msg(&shadow);
     assert!(msg.contains("重名"), "msg: {msg}");
@@ -1336,15 +1332,15 @@ fn pseudo_dispatch_key_and_duplicate_asm_are_validated() {
 
     // 同一写法声明两次
     let dup = lowering_doc(
-        "[[pseudo]]\nname = \"a1\"\nasm = \"mv {x}, {y}\"\nemit = [\"mov {x}, {y}\"]\n\
-         [[pseudo]]\nname = \"a2\"\nasm = \"mv {x}, {y}\"\nemit = [\"mov {y}, {x}\"]",
+        "[asm.pseudo.a1]\nasm = \"mv {x}, {y}\"\nemit = [\"mov {x}, {y}\"]\n\
+         [asm.pseudo.a2]\nasm = \"mv {x}, {y}\"\nemit = [\"mov {y}, {x}\"]",
     );
     assert!(validation_msg(&dup).contains("完全相同"), "{dup}");
 
     // 同一分派键下的**不同**写法合法（运行时按声明序逐个试）
     parse_and_validate(&lowering_doc(
-        "[[pseudo]]\nname = \"a1\"\nasm = \"mv {x}, {y}\"\nemit = [\"mov {x}, {y}\"]\n\
-         [[pseudo]]\nname = \"a2\"\nasm = \"mv {x}\"\nemit = [\"mov {x}, {x}\"]",
+        "[asm.pseudo.a1]\nasm = \"mv {x}, {y}\"\nemit = [\"mov {x}, {y}\"]\n\
+         [asm.pseudo.a2]\nasm = \"mv {x}\"\nemit = [\"mov {x}, {x}\"]",
     ))
     .expect("同键多条写法合法");
 }
@@ -1354,14 +1350,14 @@ fn pseudo_dispatch_key_and_duplicate_asm_are_validated() {
 #[test]
 fn pseudo_params_come_from_asm() {
     let typo = lowering_doc(
-        "[[pseudo]]\nname = \"mv\"\nasm = \"mv {dst}, {src}\"\nemit = [\"mov {dst}, {srcc}\"]",
+        "[asm.pseudo.mv]\nasm = \"mv {dst}, {src}\"\nemit = [\"mov {dst}, {srcc}\"]",
     );
     let msg = validation_msg(&typo);
     assert!(msg.contains("不是 asm"), "msg: {msg}");
     assert!(msg.contains("srcc"), "msg: {msg}");
 
     let unused = lowering_doc(
-        "[[pseudo]]\nname = \"mv\"\nasm = \"mv {dst}, {src}\"\nemit = [\"mov {dst}, {dst}\"]",
+        "[asm.pseudo.mv]\nasm = \"mv {dst}, {src}\"\nemit = [\"mov {dst}, {dst}\"]",
     );
     let msg = validation_msg(&unused);
     assert!(msg.contains("没用到"), "msg: {msg}");
@@ -1369,19 +1365,19 @@ fn pseudo_params_come_from_asm() {
 
     // 同一个名字在 asm 里出现两次是合法的（`li {x}, {x}` 这种对称写法）
     parse_and_validate(&lowering_doc(
-        "[[pseudo]]\nname = \"mv\"\nasm = \"mv {a}, {a}\"\nemit = [\"mov {a}, {a}\"]",
+        "[asm.pseudo.mv]\nasm = \"mv {a}, {a}\"\nemit = [\"mov {a}, {a}\"]",
     ))
     .expect("同名的重复占位符合法");
 
     // 零操作数的伪指令也合法（`asm = "mv"`，参数表为空；emit 可以展开成伪操作）
     parse_and_validate(&lowering_doc(
-        "[[pseudo]]\nname = \"mv\"\nasm = \"mv\"\nemit = [\".byte 1\"]",
+        "[asm.pseudo.mv]\nasm = \"mv\"\nemit = [\".byte 1\"]",
     ))
     .expect("零参数伪指令（参数表为空）合法");
 
     // 但 `asm` 里没有占位符时，emit 里出现 `{a}` 就是"用了没声明的参数" ⇒ 报错
     let undeclared =
-        lowering_doc("[[pseudo]]\nname = \"mv\"\nasm = \"mv\"\nemit = [\"mov {a}, {a}\"]");
+        lowering_doc("[asm.pseudo.mv]\nasm = \"mv\"\nemit = [\"mov {a}, {a}\"]");
     assert!(
         validation_msg(&undeclared).contains("不是 asm"),
         "msg: {undeclared}"
@@ -1391,14 +1387,14 @@ fn pseudo_params_come_from_asm() {
 /// `emit` 的空行/空表、行首接不上任何指令模板、`{…}` 不是参数 ⇒ 都要报错。
 #[test]
 fn pseudo_emit_is_validated() {
-    let empty = lowering_doc("[[pseudo]]\nname = \"mv\"\nasm = \"mv {a}\"\nemit = []");
+    let empty = lowering_doc("[asm.pseudo.mv]\nasm = \"mv {a}\"\nemit = []");
     assert!(validation_msg(&empty).contains("emit 不能为空"));
 
-    let blank = lowering_doc("[[pseudo]]\nname = \"mv\"\nasm = \"mv {a}\"\nemit = [\"  \"]");
+    let blank = lowering_doc("[asm.pseudo.mv]\nasm = \"mv {a}\"\nemit = [\"  \"]");
     assert!(validation_msg(&blank).contains("emit 里有空行"));
 
     let typo_head =
-        lowering_doc("[[pseudo]]\nname = \"mv\"\nasm = \"mv {a}\"\nemit = [\"moov {a}, {a}\"]");
+        lowering_doc("[asm.pseudo.mv]\nasm = \"mv {a}\"\nemit = [\"moov {a}, {a}\"]");
     assert!(validation_msg(&typo_head).contains("接不到任何指令模板上"));
 }
 
@@ -1406,8 +1402,8 @@ fn pseudo_emit_is_validated() {
 #[test]
 fn pseudo_may_emit_another_pseudo() {
     let doc = lowering_doc(
-        "[[pseudo]]\nname = \"mv\"\nasm = \"mv {a}\"\nemit = [\"mov {a}, {a}\"]\n\
-         [[pseudo]]\nname = \"twice\"\nasm = \"twice {a}, {b}\"\nemit = [\"mv {a}\", \"mv {b}\"]",
+        "[asm.pseudo.mv]\nasm = \"mv {a}\"\nemit = [\"mov {a}, {a}\"]\n\
+         [asm.pseudo.twice]\nasm = \"twice {a}, {b}\"\nemit = [\"mv {a}\", \"mv {b}\"]",
     );
     parse_and_validate(&doc).expect("emit 引用别的伪指令必须通过");
 }
@@ -1420,12 +1416,12 @@ fn pseudo_checks_do_not_assume_first_word_is_mnemonic() {
     //    旧实现按空白切词（首词 `{dst}`）判定，会把合法的 emit 行判成拼错。
     let operand_first = lowering_doc("")
         .replace("asm = \"mov {dst}, {src}\"", "asm = \"{dst} = {src}\"")
-        + "[[pseudo]]\nname = \"assign\"\nasm = \"assign {a}, {b}\"\nemit = [\"{a} = {b}\"]\n";
+        + "[asm.pseudo.assign]\nasm = \"assign {a}, {b}\"\nemit = [\"{a} = {b}\"]\n";
     parse_and_validate(&operand_first).expect("操作数前置的模板不该被当成助记符表");
     //    同理，伪指令名不以任何模板的**前导字面**开头 ⇒ 不算重名（首段是操作数，比不了）。
     let op_first_name = lowering_doc("")
         .replace("asm = \"mov {dst}, {src}\"", "asm = \"{dst} = {src}\"")
-        + "[[pseudo]]\nname = \"dst\"\nasm = \"dst {a}\"\nemit = [\"{a} = {a}\"]\n";
+        + "[asm.pseudo.dst]\nasm = \"dst {a}\"\nemit = [\"{a} = {a}\"]\n";
     parse_and_validate(&op_first_name).expect("首段是操作数时，名字不构成遮蔽");
 
     // ② 多 token 前导字面：`set if …` 的 emit 行以 `set if` 开头 ⇒ 接得上；
@@ -1435,10 +1431,10 @@ fn pseudo_checks_do_not_assume_first_word_is_mnemonic() {
         "asm = \"set if {dst}, {src}\"",
     );
     let ok = two_tok.clone()
-        + "[[pseudo]]\nname = \"si\"\nasm = \"si {a}, {b}\"\nemit = [\"set if {a}, {b}\"]\n";
+        + "[asm.pseudo.si]\nasm = \"si {a}, {b}\"\nemit = [\"set if {a}, {b}\"]\n";
     parse_and_validate(&ok).expect("多 token 前导字面的 emit 行必须通过");
     let bad =
-        two_tok + "[[pseudo]]\nname = \"si\"\nasm = \"si {a}, {b}\"\nemit = [\"sett {a}, {b}\"]\n";
+        two_tok + "[asm.pseudo.si]\nasm = \"si {a}, {b}\"\nemit = [\"sett {a}, {b}\"]\n";
     assert!(
         validation_msg(&bad).contains("接不到任何指令模板上"),
         "多 token 前导字面只有首个 token 相同不算接得上"
@@ -1448,13 +1444,13 @@ fn pseudo_checks_do_not_assume_first_word_is_mnemonic() {
     //    显式 `mnemonic_case = "sensitive"` 的 ISA 里不撞（`__eat_name` 只在
     //    不敏感档忽略大小写）。
     let ci =
-        lowering_doc("[[pseudo]]\nname = \"MOV\"\nasm = \"MOV {a}\"\nemit = [\"mov {a}, {a}\"]");
+        lowering_doc("[asm.pseudo.MOV]\nasm = \"MOV {a}\"\nemit = [\"mov {a}, {a}\"]");
     assert!(
         validation_msg(&ci).contains("重名"),
         "大小写不敏感 ISA（缺省）里 MOV 与 mov 是同一个写法"
     );
     let cs =
-        lowering_doc("[[pseudo]]\nname = \"MOV\"\nasm = \"MOV {a}\"\nemit = [\"mov {a}, {a}\"]")
+        lowering_doc("[asm.pseudo.MOV]\nasm = \"MOV {a}\"\nemit = [\"mov {a}, {a}\"]")
             .replace(
                 "name = \"x\"",
                 "name = \"x\"\nmnemonic_case = \"sensitive\"",
@@ -4835,7 +4831,8 @@ fn imm_fn_texts_multi_spelling() {
 }
 
 /// v21 W7：`[asm.pseudo.<名>]` ✗ —— **表头即名字** ✗，解析期降级进内部 `pseudo` ✗；
-/// 与 `[[pseudo]]` 同名报错 ✗（名字必须唯一 ✗）。
+/// v21 W7：`[asm.pseudo.<名>]` ✗ —— **表头即名字** ✗，解析期降级进内部 `pseudo` ✗；
+/// 旧键 `[[pseudo]]` 已被**拒绝** ✗（v21 无兼容层 ✗）。
 #[test]
 fn asm_pseudo_section_lowers_to_pseudo() {
     let doc = gen_cond_doc(
@@ -4846,15 +4843,11 @@ fn asm_pseudo_section_lowers_to_pseudo() {
     let p = m.pseudo.iter().find(|p| p.name == "li").expect("li 应在 ✗");
     assert_eq!(p.emit.len(), 1);
     assert_eq!(p.asm.render(), "li {rd}, {cond}");
-    // 与 `[[pseudo]]` 同名 ⇒ 报错 ✗
-    let dup = gen_cond_doc(
+    // 旧键 `[[pseudo]]` ⇒ 解析期就被拒 ✗（`IsaModel` 上没有这个 TOML 键了 ✗）
+    let old = gen_cond_doc(
         CC_ALL_FULL,
-        "[[pseudo]]\nname = \"li\"\nasm = \"li {rd}, {cond}\"\nemit = [\"setc {rd}, {cond}\"]\n\n\
-         [asm.pseudo.li]\nasm = \"li {rd}, {cond}\"\nemit = [\"setc {rd}, {cond}\"]",
+        "[[pseudo]]\nname = \"li\"\nasm = \"li {rd}, {cond}\"\nemit = [\"setc {rd}, {cond}\"]",
     );
-    let err = super::parse_and_validate(&dup).unwrap_err().to_string();
-    assert!(
-        err.contains("同名") || err.contains("asm.pseudo"),
-        "err: {err}"
-    );
+    let err = super::parse_and_validate(&old).unwrap_err().to_string();
+    assert!(err.contains("pseudo"), "旧键应被拒并点名：{err}");
 }

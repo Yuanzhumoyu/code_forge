@@ -398,9 +398,9 @@ pub struct IsaModel {
 
     /// 汇编器伪指令（`[[pseudo]]`，v18 S3e：汇编期的文本级多指令展开 ✗）。
     ///
-    /// v21 W7 起它是**内部载体** ✗：TOML 面改成 `[asm.pseudo.<名>]` ✗（表头 = 名字 ✗），
-    /// 解析期由 [`AsmSection`] 降级填进来 ✗。
-    #[serde(default)]
+    /// v21 W7 起它是**内部载体** ✗：TOML 面是 `[asm.pseudo.<名>]` ✗（表头 = 名字 ✗，
+    /// 旧键 `[[pseudo]]` 已被拒 ✗），解析期由 [`AsmSection`] 降级填进来 ✗。
+    #[serde(default, skip)]
     pub pseudo: Vec<PseudoDef>,
 
     /// **汇编器侧数据**（v21 W7 ✗）：`[asm]` 下的按名字索引的表 ✗（表头 = 名字 ✗）。
