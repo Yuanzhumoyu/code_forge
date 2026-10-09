@@ -687,6 +687,10 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
   3. 三方针：`src/schema.rs` 加 `[family.<名>]` 节（`body`/`rows`/`vary`）+ `docs/reference/isa-dsl.md`
      速查表加一行 + `cargo run -p forge-isa -- schema --out isa-dsl.schema.json`；
   4. 单测：`[family.X]` 与等价 `[[templates]]` 展开后**指令集逐条相同**（沿用 W4 的"新面 ≡ 旧面"测法）；
+  4b. ⚠️ **插入位置陷阱（2026-10-08 实测踩到）**：新增 `FamilyDecl` 必须插在 `Template` 的
+     **`#[derive(...)]` 属性块之上**——插在 derive 与 `pub struct Template {` 之间会把 derive
+     挂到新结构体上，报 `duplicate serde attribute` + `cannot find attribute serde`。
+     锚点用**上一条 `#[derive` 行**，不要用 `pub struct` 行。
   5. 迁三谱 112 处（机械）+ 删 `[[templates]]`（`--suggest`/lint 复查），四条判据全绿后一次提交。
 - [ ] `family.vary` 与 `[lower.*].vary` 共用一套 zip 语义（一处实现）。
 - [ ] 重载解析：按声明类型（字段类型）选行；歧义 → 生成期报错并列候选；无候选 → 生成物 `Unsupported`。
