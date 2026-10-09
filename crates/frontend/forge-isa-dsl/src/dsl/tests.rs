@@ -4672,3 +4672,41 @@ fn explicit_temps_are_enforced() {
     let err2 = super::codegen::generate(&m_badcls).unwrap_err();
     assert!(err2.contains("vec"), "应点名不认识的类别：{err2}");
 }
+
+
+/// v21 W6 **第四形态夹具**：DSL **禁止**同一份谱两条 `branch` 角色（同角色只能一条 ✗），
+/// 所以"两个分支形态"不能按字面造 ✗；等价且更硬的验证是——让 `[lower.Br]` 点名**另一条无角色指令** ✗：
+/// 旧实现**只会**用角色表里那条 ✗，谱面却能任意选 ✗ ⇒ 断言生成物用的是**谱面点名的那条** ✔。
+#[test]
+fn branch_form_comes_from_spec_not_role_table() {
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[instructions]]\nname = \"BRROLE\"\nform = \"C\"\nopcode = 0x92\n\
+ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"brrole {dst}, {cond}\"\nroles = [\"branch\"]\n\
+[[instructions]]\nname = \"BRCHOSEN\"\nform = \"C\"\nopcode = 0x93\n\
+ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"brchosen {dst}, {cond}\"\n\
+[lower.Br]\ninsts = [\"BRCHOSEN {cond}, {cc}\"]",
+    );
+    let m = super::parse_and_validate(&doc).expect("谱合法");
+    let s = super::codegen::generate(&m).expect("生成").to_string();
+    let flat: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    // 探针：`__true_block` 只有谱面路径才会产生 ✗
+    assert!(
+        flat.contains("__true_block"),
+        "应走谱面路径（__true_block 缺）：{s}"
+    );
+    let snip = {
+        let i = s.find("__false_block").unwrap_or(0);
+        s[i..(i + 400).min(s.len())].to_string()
+    };
+    assert!(
+        flat.contains("Inst::Brchosen"),
+        "应使用 `[lower.Br]` 点名的 BRCHOSEN。片段：{snip}"
+    );
+    // 否定断言必须**限定在 Br 分支体片段内** ✗ —— 每条声明过的指令都会在枚举/表里出现变体 ✗，
+    // 全串搜 `Inst::Brrole` 必然命中（那是指令表，不是终结体 ✗）。
+    assert!(
+        !snip.contains("Brrole"),
+        "Br 分支体不得回落到角色表里的 BRROLE（形态必须来自谱面 ✗）：{snip}"
+    );
+}

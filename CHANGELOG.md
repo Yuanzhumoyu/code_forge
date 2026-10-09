@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W6：第四形态夹具（验证形态**只由谱面决定** ✗）
+
++ 清单原话是"同一份谱里两个分支形态" ✗ —— **实测造不出来** ✗：DSL 禁止同角色同类两条声明 ✗
+  （"角色 \"branch\" 与 … 冲突 ✗"）✔。改用**等价且更硬**的验证 ✗：让 `[lower.Br]` 点名**另一条无角色指令** ✗
+  —— 旧实现**只会**用角色表里那条 ✗，谱面却能任意选 ✗。
++ 新测试 `dsl::tests::branch_form_comes_from_spec_not_role_table` ✗：断言 `Br` 分支体里出现
+  **谱面点名的** `Inst::Brchosen` ✗，且该片段内**不得**出现角色表里的 `Brrole` ✗。
++ 三个实测坑（都写进注释 ✗）：① 谱面序列**不能**用 `{out}` ✗（那是*规则*操作数角色 ✗，终结层没有 ✗）⇒
+  用 `{cond}` ✗；② 变体名是 mnemonic 的 **Pascal 形式** ✗（`Brchosen` ✗，不是 `BRCHOSEN` ✗）；
+  ③ 否定断言必须**限定在分支体片段** ✗ —— 每条声明过的指令都会在枚举/表里出现变体 ✗，全串搜必然命中 ✗。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（三矩阵计数不变 ✗）。
+
 ### Added (2026-10-08) — ISA-DSL v21 W6：`[[lowering]].temps` 显式临时寄存器（可选 ✗，声明即强制 ✗）
 
 + 新增可选键 **`temps = ["g1:gpr", "f2:fpr"]`** ✗：把"靠 `g`/`f` 前缀 + 数字**猜类别**"的隐式魔法
