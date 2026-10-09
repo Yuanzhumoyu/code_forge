@@ -437,12 +437,24 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
         // 从 asm 模板解析操作数声明（命名形态：ops 声明 + asm 引用；v17 起不再拆助记符）。
         let asm = inst.asm.clone();
         let (uses, norm_asm) = parse_asm_decl(
-            &asm,
+            asm.render(),
             inst.ops.as_deref(),
             &inst.name,
             &m.variant_param_names(),
         )?;
-        // `opsize = "<操作数名>"` → 按声明序解析成位置索引（下游只见索引）
+            // v21 W7：**备选写法也要各自规范化** ✗（下游只认索引形态 ✗）；`uses` 只统计渲染形态 ✗。
+        let mut norm_all: Vec<String> = vec![norm_asm];
+        for tpl in asm.all().iter().skip(1) {
+            let (_, n) = parse_asm_decl(
+                tpl,
+                inst.ops.as_deref(),
+                &inst.name,
+                &m.variant_param_names(),
+            )?;
+            norm_all.push(n);
+        }
+        let norm_asm = crate::dsl::model::AsmList(norm_all);
+    // `opsize = "<操作数名>"` → 按声明序解析成位置索引（下游只见索引）
         if let Some(Opsize::Named(n)) = &enc.opsize {
             let names = inst.ops.as_deref().unwrap_or(&[]);
             let idx = names
@@ -549,7 +561,7 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
             // asm 规范化：命名形态的 `{dst}` 已换成 `{1}`，下游（asm/machine/
             // decode 生成）只认索引形态，无需感知命名。
             inst: Instruction {
-                asm: norm_asm.into(),
+                asm: norm_asm,
                 ..inst.clone()
             },
             form: enc.clone(),

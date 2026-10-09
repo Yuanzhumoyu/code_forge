@@ -1320,11 +1320,16 @@ fn lit_seg_expr(l: &str, idx: usize, case_insensitive: bool) -> Result<TokenStre
 fn gen_scan_probe(infos: &[InstInfo], case_insensitive: bool) -> Result<TokenStream, String> {
     let mut probes: Vec<TokenStream> = Vec::new();
     for info in infos {
-        let segs = parse_template(&info.inst.asm)?;
-        let first_lit = match segs.first() {
-            Some(Seg::Lit(l)) => Some(l.clone()),
-            _ => None,
-        };
+        // v21 W7：任一写法的首字面段都算"本 ISA 可能认这条" ✗。
+        let mut first_lit: Option<String> = None;
+        for tpl in info.inst.asm.all() {
+            if let Some(Seg::Lit(l)) = parse_template(tpl)?.first() {
+                first_lit = Some(l.clone());
+                break;
+            }
+        }
+        let _ = &first_lit;
+        let first_lit = first_lit;
         probes.push(match first_lit {
             Some(l) => {
                 let e = lit_seg_expr(&l, 0, case_insensitive)?;
@@ -1501,9 +1506,11 @@ fn gen_assemble_try_tok(
     model: &IsaModel,
     info: &InstInfo,
     case_insensitive: bool,
+    tpl: &str,
 ) -> Result<TokenStream, String> {
     let vn = &info.vn;
-    let segs = parse_template(&info.inst.asm)?;
+    // v21 W7：尝试的是**指定的一条写法** ✗（调用方按 `asm` 列表序逐条试 ✗）。
+    let segs = parse_template(tpl)?;
     validate_segs(&segs, info)?;
     let mut elems: Vec<TokenStream> = Vec::new();
     let mut pats: Vec<TokenStream> = Vec::new();
@@ -1727,11 +1734,17 @@ pub(crate) fn gen_assemble(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     let mut tries: Vec<TokenStream> = Vec::new();
     for info in cands {
         let sig = type_signature(info)?;
-        if seen.contains(&sig) {
-            continue;
+        // v21 W7：**每个可接受写法**都生成一次尝试 ✗ —— 解析按 `asm` 列表序尝试 ✗，
+        // 第 0 条（渲染形态 ✗）优先 ⇒ 与旧行为逐字节一致 ✔。去重键带上写法 ✗，
+        // 否则备选写法会被"同签名"误跳过 ✗。
+        for tpl in info.inst.asm.all() {
+            let key = format!("{sig}|{tpl}");
+            if seen.contains(&key) {
+                continue;
+            }
+            seen.push(key);
+            tries.push(gen_assemble_try_tok(model, info, case_insensitive, tpl)?);
         }
-        seen.push(sig);
-        tries.push(gen_assemble_try_tok(model, info, case_insensitive)?);
     }
     // `[[pseudo]]`（v18 S3e）：单条 API 只接受展开成 1 条的伪指令；多条明确报错，
     // 让调用方改用 `parse_insts`（整段汇编）。

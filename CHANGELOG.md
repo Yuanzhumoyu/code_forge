@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W7 第二片：解析器**按序尝试备选写法**
+
++ `gen_assemble_try_tok` 改为接受**一条写法** ✗；`gen_assemble` 为每条指令的**每个可接受写法**各生成一次尝试 ✗
+  （去重键带上写法 ✗，否则备选会被"同类型签名"误跳过 ✗）⇒ 解析按 `asm` 列表序尝试 ✗、**第 0 条优先** ⇒ 旧行为逐字节一致 ✔。
++ `gen_scan_probe`（`could_be_instruction` ✗）改认**全部**写法的首字面段 ✗。
++ **关键一环**：`codegen/mod.rs` 的 asm 规范化原先只处理渲染形态 ✗ ⇒ 备选写法在入口就被丢掉 ✗；现在**逐条写法各自规范化** ✗
+  （下游 asm/machine/decode 只认索引形态 ✗），`uses` 仍只统计渲染形态 ✗（各写法应一致 ✗）。
++ 单测 `dsl::tests::alternative_spellings_are_emitted` ✗：生成物里同时出现主写法与备选写法的字面段 ✗。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（1326 处单写法谱零变化 ✗）。
+
 ### Added (2026-10-08) — ISA-DSL v21 W7 第一片：`asm` 支持**可接受写法列表**
 
 + 新增 `model::AsmList` ✗：`asm = "add {dst}, {src}"` 与 `asm = ["add {dst}, {src}", "add {src}, {dst}"]`

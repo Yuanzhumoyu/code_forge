@@ -4728,3 +4728,22 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = [\"alt {dst}, {cond}\", \"alt {cond}, 
     assert_eq!(s.asm.all().len(), 1, "单字符串等价于单元素列表 ✗");
     assert_eq!(s.asm.render(), "setc {dst}, {cond}");
 }
+
+
+/// v21 W7：`asm` 的**备选写法**要真的进入解析尝试 ✗（生成物里出现备选的首字面段 ✗），
+/// 而不只是进模型 ✗。
+#[test]
+fn alternative_spellings_are_emitted() {
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[instructions]]\nname = \"ALT\"\nform = \"C\"\nopcode = 0x94\n\
+ops = [\"dst:g:out\", \"cond:cc\"]\nasm = [\"altone {dst}, {cond}\", \"alttwo {dst}, {cond}\"]",
+    );
+    let m = super::parse_and_validate(&doc).expect("谱合法");
+    let s = super::codegen::generate(&m).expect("生成").to_string();
+    assert!(s.contains("altone"), "渲染/主写法应在：{s}");
+    assert!(
+        s.contains("alttwo"),
+        "备选写法的尝试也应生成（按序尝试 ✗）：{s}"
+    );
+}
