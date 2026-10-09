@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W6：`[lower.Jmp]` 谱面路径的**行为测试**
+
++ 新增 `dsl::tests::lower_jmp_spec_path_is_used`：夹具声明 `[lower.Jmp]` ✗ 并带一条
+  `roles = ["jump"]` 的指令（**触发条件**：`has_ret || has_jmp || has_jcc` 才会生成终结实体 ✗），
+  断言生成物里出现 **`__target_block`** —— 该符号**只可能来自谱面路径** ✗（旧硬编码体用的是
+  `target.index()` ✗）⇒ 证明"声明了就真的走谱面" ✔。
++ 踩坑：终结 lowering 的实体**只在有终结角色指令时生成** ✗，否则落到 `Err(Unsupported)` 的桩 ✗
+  ⇒ 没有角色指令的夹具**测不到**这条路径 ✗（第一次就这么红了 ✗）。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6：终结层开始消费 `[lower.Br]`/`[lower.Jmp]`
 
 + 新增三个**块号符号值**（终结层专用 ✗）：`{true}` / `{false}` / `{target}` ⇒ 展开成生成代码里的

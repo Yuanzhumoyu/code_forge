@@ -4582,3 +4582,31 @@ fn lower_terminator_section_parses() {
     assert!(lower["Jmp"].insts[0].contains("{target}"));
     assert_eq!(lower["Ret"].insts, vec!["ret".to_string()]);
 }
+
+
+/// v21 W6：**谱里声明了 `[lower.Jmp]` 就必须走谱面序列**（未声明才回落旧硬编码路径 ✗）。
+///
+/// 用轻夹具即可：终结 lowering 的**生成**不要求角色指令存在（缺角色时生成期发 `Err(Unsupported)` 体 ✗），
+/// 所以这里只验证"生成物里出现谱面写的指令 + 块号符号值 `{target}` 落到 `__target_block`" ✗。
+#[test]
+fn lower_jmp_spec_path_is_used() {
+    // 需要一条**终结角色**指令才会生成 `lower_terminator` 实体（`has_ret || has_jmp || has_jcc` ✗）
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[instructions]]\nname = \"MYJMP\"\nform = \"C\"\nopcode = 0x91\n\
+ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"myjmp {dst}, {cond}\"\nroles = [\"jump\"]\n\
+[lower.Jmp]\ninsts = [\"SETC {out}, {cc}\"]",
+    );
+    let m = super::parse_and_validate(&doc).expect("谱合法");
+    let s = super::codegen::generate(&m).expect("生成").to_string();
+    let flat: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    // `__target_block` 只可能来自**谱面路径**（旧硬编码体用的是 `target.index()` ✗）
+    assert!(
+        flat.contains("__target_block"),
+        "声明了 [lower.Jmp] 就该走谱面路径（应出现 __target_block）：{s}"
+    );
+    assert!(
+        flat.contains("fnlower_terminator"),
+        "终结实体应被生成：{s}"
+    );
+}
