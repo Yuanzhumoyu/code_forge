@@ -549,7 +549,7 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
             // asm 规范化：命名形态的 `{dst}` 已换成 `{1}`，下游（asm/machine/
             // decode 生成）只认索引形态，无需感知命名。
             inst: Instruction {
-                asm: norm_asm,
+                asm: norm_asm.into(),
                 ..inst.clone()
             },
             form: enc.clone(),

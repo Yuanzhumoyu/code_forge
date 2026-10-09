@@ -240,7 +240,7 @@ fn row_of(m: &IsaModel, info: &crate::dsl::codegen::InstInfo<'_>) -> InstRow {
         form: inst.form.clone(),
         opcode: inst.opcode,
         ops: inst.ops.clone().unwrap_or_default(),
-        asm: inst.asm.clone(),
+        asm: inst.asm.render().to_string(),
         reference: inst.reference.clone(),
         reloc: inst.reloc.clone(),
         enc: enc_pairs(&info.form),

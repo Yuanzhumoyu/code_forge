@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W7 第一片：`asm` 支持**可接受写法列表**
+
++ 新增 `model::AsmList` ✗：`asm = "add {dst}, {src}"` 与 `asm = ["add {dst}, {src}", "add {src}, {dst}"]`
+  **两种写法都接受** ✗ —— **第 0 条 = 渲染形态** ✗（反汇编只吐它 ✗），其余为**解析专用备选** ✗
+  （按列表序尝试 ✗，与 `[conventions.mem].templates` 同一口径 ✗）。
++ 设计要点：`Deref<Target = str>`（指向渲染形态 ✗）+ `AsRef<str>` + `PartialEq<str>` + `Display`
+  ⇒ **既有 43 个读取点只需改 3 处** ✔（`validate` 参数替换 ✗、`report` 渲染文本 ✗、`codegen` 规范化 asm ✗）；
+  参数替换现在作用于**全部写法** ✗。
++ 单测 `dsl::tests::asm_accepts_a_list_of_spellings`（列表两条都在 ✗、`render()` = 第 0 条 ✗、
+  单字符串等价单元素列表 ✗）；另修两处测试的 `.as_str()` ✗（经 `Deref` 会落到不稳定的 `str::as_str` ✗）。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（1326 处 `asm = "…"` 逐字节不变 ✗）。
++ **下一片**：让**解析器**真的按序尝试备选写法 ✗（本片只落模型/渲染口径 ✗）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6：`frame.rs` 尾声跳转不再"按字段个数猜"
 
 + `frame.rs:167` 的 `let (jal_dest, jal_target) = if jump_f.len() >= 2 { … }` ✗ 与

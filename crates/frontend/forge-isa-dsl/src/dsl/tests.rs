@@ -74,7 +74,7 @@ fn parse_minimal_riscv_style() {
     let add = &m.instructions[0];
     assert_eq!(add.opcode, Some(0x33));
     assert_eq!(add.fields.as_ref().unwrap()["funct3"], 0);
-    assert_eq!(add.asm.as_str(), "add {dst}, {src}, {src2}");
+    assert_eq!(add.asm.render(), "add {dst}, {src}, {src2}");
 }
 
 const X86_DOC: &str = r#"
@@ -2665,7 +2665,7 @@ asm = "add {dst}, {src}"
         Some(crate::dsl::model::Opsize::Named("dst".into()))
     );
     // 打印序与编码序无关：asm 先打 dst（= 编码序 1）
-    assert_eq!(inst.asm.as_str(), "add {dst}, {src}");
+    assert_eq!(inst.asm.render(), "add {dst}, {src}");
 }
 
 #[test]
@@ -4709,4 +4709,22 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"brchosen {dst}, {cond}\"\n\
         !snip.contains("Brrole"),
         "Br 分支体不得回落到角色表里的 BRROLE（形态必须来自谱面 ✗）：{snip}"
     );
+}
+
+
+/// v21 W7：`asm` 接受**可接受写法列表** ✗（第 0 条 = 渲染形态 ✗）；单字符串等价于单元素列表 ✗。
+#[test]
+fn asm_accepts_a_list_of_spellings() {
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[instructions]]\nname = \"ALT\"\nform = \"C\"\nopcode = 0x94\n\
+ops = [\"dst:g:out\", \"cond:cc\"]\nasm = [\"alt {dst}, {cond}\", \"alt {cond}, {dst}\"]",
+    );
+    let m = super::parse_and_validate(&doc).expect("谱合法");
+    let a = m.instructions.iter().find(|i| i.name == "ALT").expect("ALT");
+    assert_eq!(a.asm.render(), "alt {dst}, {cond}", "第 0 条 = 渲染形态 ✗");
+    assert_eq!(a.asm.all().len(), 2, "两条写法都在 ✗");
+    let s = m.instructions.iter().find(|i| i.name == "SETC").expect("SETC");
+    assert_eq!(s.asm.all().len(), 1, "单字符串等价于单元素列表 ✗");
+    assert_eq!(s.asm.render(), "setc {dst}, {cond}");
 }

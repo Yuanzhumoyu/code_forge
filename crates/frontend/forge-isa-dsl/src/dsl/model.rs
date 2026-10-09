@@ -2481,7 +2481,7 @@ pub struct Instruction {
     pub ops: Option<Vec<String>>,
     /// 汇编模板（完整格式）。**必填**（v17：回退自动派生，asm 就地显性编写）。
     /// 有 `ops` 时用 `{名字}` 引用；无 `ops` 时用 `{i:[槽:角色]}` 内联声明。
-    pub asm: String,
+    pub asm: AsmList,
     /// 结构化谓词（迭代 4 定型：{ and = [...], eq = [...] }）。
     #[serde(default)]
     pub when: Option<toml::Value>,
@@ -2858,7 +2858,7 @@ pub struct PseudoDef {
     /// 声明标识：非空、**唯一**即可（诊断与变体门用它；与 `asm` 的写法无关）。
     pub name: String,
     /// 书写模板（`li {rd}, {imm}`）：首段首词是**分派键**，`{名字}` 就是参数。
-    pub asm: String,
+    pub asm: AsmList,
     /// 展开模板行（至少一行；`{参数}` 会被实参文本替换）。
     pub emit: Vec<String>,
     /// **只在给定参数取值下存在**（v19 V5）——见 [`variants_keep`]。
@@ -2986,6 +2986,98 @@ pub struct OperandUse {
 pub struct TermSeq {
     /// 指令序列（与 `[[lowering]].insts` 同一套占位符/替换语义）。
     pub insts: Vec<String>,
+}
+
+// ──────────────────────── `asm` 写法列表（v21 W7）────────────────────────
+
+/// **`asm` 可接受写法列表**（v21 W7 ✗）：第 0 条 = **渲染形态** ✗（反汇编只吐它 ✗），
+/// 其余是**解析专用备选**（按列表序尝试 ✗，第一条整条走通的赢 ✗）。
+///
+/// TOML 两种写法都接受 ✗：`asm = "add {dst}, {src}"`（等价于单元素列表 ✗）与
+/// `asm = ["add {dst}, {src}", "add {src}, {dst}"]`。
+///
+/// `Deref<Target = str>` 指向**渲染形态** ✗ ⇒ 既有"当字符串用"的读取点大多不用改 ✔。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AsmList(pub Vec<String>);
+
+impl AsmList {
+    /// 渲染形态（第 0 条 ✗；空列表给空串 ✗）。
+    pub fn render(&self) -> &str {
+        self.0.first().map(|s| s.as_str()).unwrap_or("")
+    }
+
+    /// 全部可接受写法（解析按序尝试 ✗）。
+    pub fn all(&self) -> &[String] {
+        &self.0
+    }
+}
+
+impl std::ops::Deref for AsmList {
+    type Target = str;
+    fn deref(&self) -> &str {
+        self.render()
+    }
+}
+
+impl AsRef<str> for AsmList {
+    fn as_ref(&self) -> &str {
+        self.render()
+    }
+}
+
+impl From<String> for AsmList {
+    fn from(s: String) -> Self {
+        AsmList(vec![s])
+    }
+}
+
+impl From<&str> for AsmList {
+    fn from(s: &str) -> Self {
+        AsmList(vec![s.to_string()])
+    }
+}
+
+impl PartialEq<str> for AsmList {
+    fn eq(&self, other: &str) -> bool {
+        self.render() == other
+    }
+}
+
+impl PartialEq<&str> for AsmList {
+    fn eq(&self, other: &&str) -> bool {
+        self.render() == *other
+    }
+}
+
+impl std::fmt::Display for AsmList {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.render())
+    }
+}
+
+impl Serialize for AsmList {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        if self.0.len() == 1 {
+            s.serialize_str(self.render())
+        } else {
+            self.0.serialize(s)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AsmList {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum OneOrMany {
+            One(String),
+            Many(Vec<String>),
+        }
+        Ok(match OneOrMany::deserialize(d)? {
+            OneOrMany::One(s) => AsmList(vec![s]),
+            OneOrMany::Many(v) => AsmList(v),
+        })
+    }
 }
 
 // ──────────────────────── [[templates]] ────────────────────────

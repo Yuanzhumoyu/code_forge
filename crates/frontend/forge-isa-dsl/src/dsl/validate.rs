@@ -162,7 +162,13 @@ pub fn apply_variants(
     }
     // ④ 文本替换：`{参数名}` → 取值（模板里既有的 `{inst.lower}` 等不受影响）。
     for i in &mut m.instructions {
-        i.asm = substitute_params(&i.asm, params);
+        // v21 W7：参数替换要作用于**所有可接受写法** ✗（不只渲染形态 ✗）。
+        i.asm = crate::dsl::model::AsmList(
+            i.asm.all()
+                .iter()
+                .map(|a| substitute_params(a, params))
+                .collect(),
+        );
     }
     for l in &mut m.lowering {
         for line in &mut l.insts {
