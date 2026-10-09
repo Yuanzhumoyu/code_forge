@@ -238,7 +238,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     let has_ret = inst_exists(infos, &ret_inst);
     let has_jmp = inst_exists(infos, &jump_inst);
     let has_jcc = inst_exists(infos, &branch_inst);
-    let has_test = inst_exists(infos, &test_inst);
+    let _has_test = inst_exists(infos, &test_inst);
     // v21 W6：**终结序列已谱面化** ⇒ 有角色却没声明 `[lower.Jmp]`/`[lower.Br]` 就是谱的缺陷 ✗，
     // 生成期直接报错（不再静默走"按字段个数猜 ISA"的旧路径 ✗）。
     let declares = |op: &str| {
@@ -261,7 +261,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     }
     // 定宽跳转（JAL 语义）：jump_inst 指令存在即启用（非按 ISA 形态猜——
     // demo 等无跳转指令的定宽 ISA 自然降级，不生成不存在的变体引用）。
-    let has_jal = has_jmp && !model.is_prefix_scan();
+    let _has_jal = has_jmp && !model.is_prefix_scan();
     // 定宽（riscv）跳转：JAL x0（rd=index0、label 槽 = 块号 → encoder 定宽
     // fixup Relative(4,0)）。JAL 字段 = [dest(gpr out), target(label)]。
     let jal_f = inst_fids(infos, &jump_inst);
@@ -305,7 +305,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     let fids =
         |name: &str| -> Vec<syn::Ident> { inst_fids(infos, name).into_iter().cloned().collect() };
     let jmp_f = fids(&jump_inst);
-    let jmp_rel = jmp_f
+    let _jmp_rel = jmp_f
         .first()
         .cloned()
         .unwrap_or_else(|| format_ident!("target"));
@@ -591,7 +591,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     //   单 label 槽（arm64 B：imm26，无 dest 寄存器）→ `b target`（bare）。
     //   变长（x86 JMP_REL32 语义）→ label 槽 = 尾部 imm（REL4 fixup）。
     // 变体名按键派生，避免硬编码 Inst::JmpRel32/Inst::Jal/Inst::B。
-    let jump_vn = crate::dsl::codegen::pascal_ident(&jump_inst);
+    let _jump_vn = crate::dsl::codegen::pascal_ident(&jump_inst);
     // v21 W6：谱声明了 `[lower.Jmp]` 就用**谱面序列**（未声明则走下面的旧路径 ✗）。
     let spec_jump_body: Option<TokenStream> = match model
         .lower_terms
@@ -610,27 +610,12 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     };
     let jump_body: TokenStream = if let Some(b) = spec_jump_body {
         b
-    } else if has_jal && jal_f.len() >= 2 {
-
-        quote! {
-            __pack.push_inst(Inst::#jump_vn {
-                #jal_dest: Reg::from_index(0, __DEFAULT_GPR_CLASS),
-                #jal_target: target.index() as i64,
-            });
-            Ok(__pack)
-        }
-    } else if has_jmp {
-        quote! {
-            // 定宽 bare（arm64 B：仅 label 槽，imm26 位段 → patcher）与
-            // 变长（x86 JMP_REL32：label 槽 = 尾部 imm → REL4 fixup）的
-            // 指令形态都是单 label 槽，同一发射路径。
-            __pack.push_inst(Inst::#jump_vn { #jmp_rel: target.index() as i64 });
-            Ok(__pack)
-        }
     } else {
         quote! {
             let _ = __pack;
-            Err(crate::prelude::IrError::Unsupported("ISA-DSL jump lowering (JMP_REL32/JAL/B missing)".into()))
+            Err(crate::prelude::IrError::Unsupported(
+                "ISA-DSL jump lowering: 谱缺 `[lower.Jmp]`（v21 W6：终结序列唯一来源 = 谱面 ✗）".into(),
+            ))
         }
     };
     // Branch：终结符条件分派按 ISA 声明形状：
@@ -639,9 +624,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     //   riscv = beq cond, X0, false → jal x0, true（BEQ 3 字段 + JAL 定宽）
     //   arm64 = cbz cond, false → b true（branch 指令 [reg, label] 两字段 +
     //           bare 定宽 jump：cond 寄存器 == 0 → else，否则落 b true）
-    let test_vn = crate::dsl::codegen::pascal_ident(&test_inst);
-    let branch_vn = crate::dsl::codegen::pascal_ident(&branch_inst);
-    let beq_vn = crate::dsl::codegen::pascal_ident(&branch_inst);
+    let _test_vn = crate::dsl::codegen::pascal_ident(&test_inst);
+    let _branch_vn = crate::dsl::codegen::pascal_ident(&branch_inst);
+    let _beq_vn = crate::dsl::codegen::pascal_ident(&branch_inst);
     // v21 W6：`test`+`jcc` 这一对里，"条件不成立就跳 false"原来**硬编码 `4u8`**
     // （= x86 的 `je`）。现在从 `[enum.cond]` 取本 ISA 的 **`eq` 码**（数据驱动 ✗）；
     // 谱没映射 `eq` 时回落 4 以保持旧行为（过渡态 ✗，等 `[lower.Br]` 下放到谱后彻底删掉）。
@@ -689,67 +674,12 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     };
     let branch_body: TokenStream = if let Some(b) = spec_branch_body {
         b
-    } else if has_test && has_jcc && has_jmp {
-
-        quote! {
-            let cond = value_to_xreg.get(cond_val).copied()
-                .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
-            let true_block = then_block.index() as i64;
-            let false_block = else_block.index() as i64;
-            // TEST cond, cond（85 /r：reg=op0、rm=op1）
-            let __idx = __pack.push_inst(Inst::#test_vn {
-                #t_a: Reg::from_index(0, __DEFAULT_GPR_CLASS),
-                #t_b: Reg::from_index(0, __DEFAULT_GPR_CLASS),
-
-            });
-            __pack.map_reg_field(cond, __idx, 0u8, false);
-            __pack.map_reg_field(cond, __idx, 1u8, false);
-            // je false_block（cond=4=e）
-            __pack.push_inst(Inst::#branch_vn { #jcc_cond: #eq_code, #jcc_rel: false_block });
-            // jmp true_block
-            __pack.push_inst(Inst::#jump_vn { #jmp_rel: true_block });
-            Ok(__pack)
-        }
-    } else if has_jal && jal_f.len() >= 2 && beq_f.len() >= 3 {
-        quote! {
-            let cond = value_to_xreg.get(cond_val).copied()
-                .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
-            let true_block = then_block.index() as i64;
-            let false_block = else_block.index() as i64;
-            // beq cond, X0, false_block（cond==0 → false）
-            let __idx = __pack.push_inst(Inst::#beq_vn {
-                #b_src: Reg::from_index(0, __DEFAULT_GPR_CLASS),
-                #b_src2: Reg::from_index(0, __DEFAULT_GPR_CLASS),
-                #b_target: false_block,
-            });
-            __pack.map_reg_field(cond, __idx, 0u8, false);
-            // jal x0, true_block
-            __pack.push_inst(Inst::#jump_vn {
-                #jal_dest: Reg::from_index(0, __DEFAULT_GPR_CLASS),
-                #jal_target: true_block,
-            });
-            Ok(__pack)
-        }
-    } else if has_jcc && has_jmp && !has_test && jcc_f.len() == 2 && jmp_f.len() == 1 {
-        quote! {
-            let cond = value_to_xreg.get(cond_val).copied()
-                .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
-            let true_block = then_block.index() as i64;
-            let false_block = else_block.index() as i64;
-            // cbz cond, false_block（cond == 0 → else；不跳则落下一指令）
-            let __idx = __pack.push_inst(Inst::#branch_vn {
-                #jcc_cond: Reg::from_index(0, __DEFAULT_GPR_CLASS),
-                #jcc_rel: false_block,
-            });
-            __pack.map_reg_field(cond, __idx, 0u8, false);
-            // b true_block
-            __pack.push_inst(Inst::#jump_vn { #jmp_rel: true_block });
-            Ok(__pack)
-        }
     } else {
         quote! {
             let _ = __pack;
-            Err(crate::prelude::IrError::Unsupported("ISA-DSL branch lowering (TEST/JCC/JMP, BEQ/JAL or CBZ/B missing)".into()))
+            Err(crate::prelude::IrError::Unsupported(
+                "ISA-DSL branch lowering: 谱缺 `[lower.Br]`（v21 W6：终结序列唯一来源 = 谱面 ✗）".into(),
+            ))
         }
     };
 

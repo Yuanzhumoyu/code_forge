@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Removed (2026-10-08) — ISA-DSL v21 W6：删除终结 lowering 里已成死代码的"猜测回落"
+
++ `jump_body` / `branch_body` 的 `else if …` 链**整条删除** ✗ —— 它们包含清单点名要删的
+  `jal_f.len() >= 2` / `beq_f.len() >= 3` / `test_f.len() == 2` / `jcc_f.len() == 2` 与 `eq_code` ✗。
+  现在只剩："谱面声明的序列" ⊕ "缺 `[lower.*]` ⇒ `Unsupported`" ✗ —— **终结序列唯一来源 = 谱面** ✔。
++ 顺带清掉随之无用的局部（`has_test`/`has_jal`/`jump_vn`/`jal_dest`… ✗）。**仍剩几处来自元组解构的
+  未使用告警** ✗（`let (jal_dest, jal_target) = …` 这类 ✗，纯装饰 ✗，下轮清 ✗）。
++ 验证：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（x86/riscv64 JIT 矩阵 + 汇编三档 +
+  三矩阵计数全不变 ✗）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6：终结序列**唯一来源 = 谱面**（旧猜测路径 fail-closed）
 
 + 生成期新增检查：谱若声明了 `roles = ["jump"]` / `roles = ["branch"]` 的指令 ✗，就**必须**给出
