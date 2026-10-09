@@ -4859,18 +4859,75 @@ fn asm_immfn_section_lowers_to_conventions_imm_fn() {
     assert!(err.contains("imm_fn"), "旧键应被拒并点名：{err}");
 }
 
+/// 含 **imm 槽**的最小谱：`{k?}` 的渲染/解析/校验三条都用它。
+fn optional_placeholder_doc(asm: &str) -> String {
+    format!(
+        r#"
+[meta]
+name = "x"
+[encoding]
+kind = "fixed"
+bits = 32
+[reg.gpr32]
+count = 8
+[operand.g]
+kind = "reg"
+class = "gpr32"
+[operand.k]
+kind = "imm"
+signed = false
+bits = 8
+[[forms]]
+name = "RI"
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u8[23:16]:imm8",
+]
+[[instructions]]
+name = "ADDI"
+form = "RI"
+opcode = 2
+ops = ["dst:g:out", "k:k"]
+asm = "{asm}"
+"#
+    )
+}
+
 /// v21 W7：`{n?}` 的**渲染语义**（按取值缺省省略，连同紧邻字面词缀一起不输出）——
 /// 生成物里应出现在场判定 `__p{n}` 与条件词缀 `__l{n}`。
 #[test]
 fn optional_placeholder_renders_conditionally() {
-    let doc = gen_cond_doc(
-        CC_ALL_FULL,
-        "[[instructions]]\nname = \"OPT\"\nform = \"C\"\nopcode = 0x98\n\
-ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"opt {dst}, {cond?}\"",
-    );
-    let m = super::parse_and_validate(&doc).expect("谱合法");
+    let doc = optional_placeholder_doc("addi {dst}, {k?}");
+    let m = parse_and_validate(&doc).expect("谱合法");
     let s = super::codegen::generate(&m).expect("生成").to_string();
     let flat: String = s.chars().filter(|c| !c.is_whitespace()).collect();
     assert!(flat.contains("__p1"), "应有在场判定 __p1：{flat}");
     assert!(flat.contains("__l1"), "紧邻字面词缀应条件输出 __l1：{flat}");
+}
+
+/// v21 W7：`{n?}` 的**解析半边**——整块缺席 ⇒ 该字段填 0（元素永不失败）。
+#[test]
+fn optional_placeholder_parse_binds_zero() {
+    let doc = optional_placeholder_doc("addi {dst}, {k?}");
+    let m = parse_and_validate(&doc).expect("谱合法");
+    let s = super::codegen::generate(&m).expect("生成").to_string();
+    let flat: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(
+        flat.contains("__imm(&mutit,float).unwrap_or(0)"),
+        "缺席应绑 0：{flat}"
+    );
+}
+
+/// v21 W7：`{n?}` 只允许用在 `kind = "imm"` 的槽上（寄存器槽没有缺省值）⇒ 报错。
+/// 注意 `validate_segs` 属 **codegen**（`parse_and_validate` 不跑它），故断言生成期报错。
+#[test]
+fn optional_placeholder_rejects_non_imm_slot() {
+    let doc = optional_placeholder_doc("addi {dst?}, {k}");
+    let m = parse_and_validate(&doc).expect("谱合法（校验在 codegen）");
+    let err = super::codegen::generate(&m).unwrap_err();
+    assert!(
+        err.contains("只允许用在") && err.contains("imm"),
+        "err: {err}"
+    );
 }

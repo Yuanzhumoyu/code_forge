@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W7 第十八片：`{n?}` 解析半边（缺席绑 0，只允许 imm 槽）
+
++ 语义已定：整块缺席 ⇒ 该字段填 **0**；且 `{n?}` **只允许**用在 `kind = "imm"` 的槽上。
++ 解析侧（`gen_assemble_try_tok`）：`{n?}` 的元素改成“永不失败”——
+  `__imm(&mut it, float).unwrap_or(0)`，模式直接绑字段；于是同一条写法既能匹配带该操作数的文本，
+  也能匹配省略它的文本（与渲染半边“值为 0 ⇒ 不输出”对称）。
++ 声明期校验（`validate_segs`）：非 imm 槽写 `?` 直接报错（寄存器/内存没有缺省值，
+  不留运行期的静默行为）。
++ 测试三条（自建含 imm 槽的最小谱 `optional_placeholder_doc`）：渲染条件分支 `__p1`/`__l1`、
+  解析绑 0、非 imm 槽报错。
++ 坑（写进测试注释）：`validate_segs` 属 **codegen**，`parse_and_validate` 不跑它 ⇒ 负例必须断言
+  `generate()` 的报错——与 `temps` 那片是同一个坑。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（三谱未用 `?`，生成物逐字节不变）。
+
 ### Added (2026-10-08) — ISA-DSL v21 W7 第十七片：`{n?}` 渲染语义（按取值缺省省略）
 
 + 语义已定：`{n?}` = **按取值缺省**省略——渲染文本为 `"0"` 时，该组件连同**紧邻的字面词缀**

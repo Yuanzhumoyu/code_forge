@@ -252,9 +252,18 @@ fn validate_segs(segs: &[Seg], info: &InstInfo) -> Result<(), String> {
                 }
                 prev_op = false;
             }
-            Seg::Op { idx: n, .. } => {
+            Seg::Op { idx: n, optional, .. } => {
                 if *n >= info.operands.len() {
                     return Err(format!("{}: placeholder {{{n}}} out of range", ctx()));
+                }
+                // v21 W7：`{n?}` 的"缺席 ⇒ 字段 0"只对**立即数槽**成立（值语义有缺省 0）；
+                // 寄存器/内存槽没有缺省值 ⇒ 声明期就报错，不留运行期的静默行为。
+                if *optional && !matches!(info.operands[*n].2.kind, OperandKind::Imm) {
+                    return Err(format!(
+                        "{}: `{{{}?}}` 只允许用在 kind = \"imm\" 的槽上",
+                        ctx(),
+                        info.operands[*n].0
+                    ));
                 }
                 if prev_op {
                     return Err(format!(
@@ -1614,21 +1623,28 @@ fn gen_assemble_try_tok(
                 elems.push(quote! { #e.then_some(()) });
                 pats.push(quote! { Some(()) });
             }
-            Seg::Op { idx: n, affix, .. } => {
+            Seg::Op { idx: n, optional, affix, .. } => {
                 let (_, fid, slot, _) = &info.operands[*n];
-                // v21 W7：`{n:affix}` ⇒ 解析侧**先尝试吃词缀** ✗。`__eat_lit` 失败会回退 `it.pos` ✗
-            // ⇒ "吃了也算、没吃也行"是安全的 ✗（`+` 对负值被渲染抑制 ✗ ⇒ 此时文本里本就没有词缀 ✗）。
-            if let Some(a) = affix {
-                let ae = lit_seg_expr(a, idx, false)?;
-                elems.push(quote! { { let _ = #ae; Some(()) } });
-                pats.push(quote! { Some(()) });
-            }
-
-                let (e, p, cb) = operand_parse_tok(model, slot, fid, *n, info)?;
-                elems.push(e);
-                pats.push(p);
-                if let Some(c) = cb {
-                    cls_binds.push(c);
+                // v21 W7：`{n:affix}` ⇒ 解析侧**先尝试吃词缀**。`__eat_lit` 失败会回退 `it.pos`，
+                // 因此"吃了也算、没吃也行"是安全的（`+` 对负值被渲染抑制时文本里本就没有词缀）。
+                if let Some(a) = affix {
+                    let ae = lit_seg_expr(a, idx, false)?;
+                    elems.push(quote! { { let _ = #ae; Some(()) } });
+                    pats.push(quote! { Some(()) });
+                }
+                if *optional {
+                    // v21 W7：`{n?}` 的**解析半边**——整块缺席 ⇒ 该字段填 0。
+                    // 元素**永不失败**（`unwrap_or(0)`），所以同一条写法也能匹配更短的文本；
+                    // 只允许 `kind = "imm"` 的槽（声明期由 `validate_segs` 拦）。
+                    elems.push(quote! { __imm(&mut it, float).unwrap_or(0) });
+                    pats.push(quote! { #fid });
+                } else {
+                    let (e, p, cb) = operand_parse_tok(model, slot, fid, *n, info)?;
+                    elems.push(e);
+                    pats.push(p);
+                    if let Some(c) = cb {
+                        cls_binds.push(c);
+                    }
                 }
             }
         }
