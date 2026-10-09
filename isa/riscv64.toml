@@ -3522,3 +3522,7 @@ bytes = [0x0F, 0x00, 0xA0, 0x01]
 # 三操作数 jalr（与两操作数写法同编码）
 asm = "jalr sp, zero, 256"
 bytes = [0x67, 0x01, 0x00, 0x10]
+
+# v21 W6：终结层谱面——跳转序列。
+[lower.Jmp]
+insts = ["JAL X0, {target}"]

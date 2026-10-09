@@ -5102,3 +5102,7 @@ vector_by_ref_bytes = 16
 sp = "RSP"
 fp = "RBP"
 fp_push_bytes = 8
+
+# v21 W6：终结层谱面——跳转序列（原硬编码在编译器里 ✗）。
+[lower.Jmp]
+insts = ["JMP_REL32 {target}"]

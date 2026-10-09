@@ -5799,3 +5799,7 @@ bytes = [0x00, 0x00, 0x00, 0x90]
 [[vectors]]
 asm = "adrp x0, #4096"
 bytes = [0x00, 0x00, 0x00, 0xB0]
+
+# v21 W6：终结层谱面——跳转序列。
+[lower.Jmp]
+insts = ["B {target}"]

@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6：三谱落地 `[lower.Jmp]`（谱面 ≡ 硬编码，行为逐字节不变）
+
++ 三谱写出等价的跳转序列：x86 `JMP_REL32 {target}` · riscv64 `JAL X0, {target}` · arm64 `B {target}`
+  ⇒ **首批真实谱面**开始驱动终结 lowering（此前只在测试夹具里验证过 ✗）。
++ **token 种类**要一起教 ✗：块号符号值 `{true}`/`{false}`/`{target}` 在 `kind_matches` 里
+  **同时接受 Imm 与 Label** ✗ —— 各 ISA 的目标槽种类不同（x86 `target:rel` ✗、riscv `target:off_j` ✗、
+  arm64 `target:off26` ✗）；否则会落到"字面立即数"分支并报
+  `lowering 模板立即数 '{target}' 无法解析` ✗。
++ 验证：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（JIT 矩阵 + 汇编三档 + 三矩阵计数全不变 ✗）
+  ⇒ 谱面路径与旧硬编码**等价** ✔。
++ 仍未做：`[lower.Ret]` 接线、`Br` 的谱面落地（它需要 `map_reg_field` 这类"条件寄存器映射" ✗，
+  当前占位符体系表达不了 ⇒ 是 W6 后续要设计的一环 ✗）、删旧猜测路径 ✗。
+
 ### Added (2026-10-08) — ISA-DSL v21 W6：`[lower.Jmp]` 谱面路径的**行为测试**
 
 + 新增 `dsl::tests::lower_jmp_spec_path_is_used`：夹具声明 `[lower.Jmp]` ✗ 并带一条

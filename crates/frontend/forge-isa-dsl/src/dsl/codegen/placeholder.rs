@@ -872,6 +872,12 @@ fn numbered_xreg(name: &str) -> TokenStream {
 /// 槽类型约束检查：占位符是否可用于该槽（编号临时归入 Reg；loose 不约束；
 /// {N} 编号操作数同符号寄存器——loose，任何槽可用）。
 pub(crate) fn kind_matches(name: &str, slot_kind: OperandKind) -> bool {
+    // v21 W6：终结层的**块号符号值**可落 Imm/Label 两种槽——各 ISA 的目标槽种类不同
+    // （x86 `target:rel` ✗、riscv `target:off_j` ✗、arm64 `target:off26` ✗）。
+    let bare = name.trim();
+    if matches!(bare, "{true}" | "{false}" | "{target}") {
+        return matches!(slot_kind, OperandKind::Imm | OperandKind::Label);
+    }
     if let Some(p) = lookup(name) {
         if p.loose {
             return true;
