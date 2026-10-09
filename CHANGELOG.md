@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：x86 lowering 去重 +1（任意单差异对）
+
++ 打法推广：不只认 `SS`/`SD`，而是**自动求两条 insts 的单一连续差异段**（等长、前后缀全同），
+  把它作为 zip 键的值对（`sfx = [左, 右]`）——只能**证明**等价的才合并，其余保持原样。
++ `x86.toml` 的 `[[lowering]]` 块数 **182 → 181**（累计 191 → 181）；本轮 3 组差异段不唯一 ⇒ 不动。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：x86 lowering 去重再 +2 组（显式 `when` 对）
 
 + 新增打法：两条规则**都显式写** `when = { eq = ["K", V] }` 时，从两条读出 zip 值

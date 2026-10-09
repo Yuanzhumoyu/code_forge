@@ -4148,13 +4148,8 @@ insts = ["MOVSD {out}, {0}", "PUNPCKLQDQ {out}, {out}"]
 
 [[lowering]]
 op = "Vsplit"
-when = { eq = ["imm0", 0] }
-insts = ["VEXTRACTF128 {0}, {out}, 0"]
-
-[[lowering]]
-op = "Vsplit"
-when = { eq = ["imm0", 1] }
-insts = ["VEXTRACTF128 {0}, {out}, 1"]
+vary = { imm0 = [0, 1], sfx = ["0", "1"] }
+insts = ["VEXTRACTF128 {0}, {out}, {sfx}"]
 
 [[lowering]]
 op = "Vconcat"
