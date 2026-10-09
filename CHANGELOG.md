@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W7 第十片：arm64 `imm_fn` 多拼写折叠（进行中 ✗）
+
++ 用新 `texts` 把 arm64 **成对**的 `imm_fn` 折叠 ✗：`abs_g0`（`#:abs_g0:{0}` ✗）与 `abs_g0_n`
+  （`:abs_g0:{0}` ✗）这类"只差开头 `#`"的两条 ⇒ 合成一条声明收两种写法 ✗
+  （98 条 → 目标约 49 条 ✗；**本片折掉 18 条** ✗，余 80 条下次继续 ✗）。
++ **踩到的真风险**（值得记 ✗）：折叠会**删掉** `*_n` 名字 ✗，而 `[operand.<槽>]` 的
+  `symbol = { allow = …, modifiers = [...] }` 过滤器**按名字**引用它们 ✗ ⇒ 折叠后 arm64
+  **validate 直接红** ✗。已把这四处 `modifiers` 列表里的 `*_n` 条目去掉 ✗（基名已覆盖该拼写 ✗）。
+  教训 ✗：侦察"谁引用了这些名字"时 `grep 'imm_fns = \['` **不够** ✗ —— v21 W3 已把过滤声明合并进
+  `symbol = { modifiers = [...] }` ✗。
++ 折叠**可证等价** ✗：98 条 `expr` 实测**全为恒等** `"{0}"` ✗（98/98 ✗），且 `#`/非 `#` 两种拼写
+  首 token 不同 ⇒ 不会互相遮蔽 ✗、匹配结果与顺序无关 ✔。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Added (2026-10-08) — ISA-DSL v21 W7 第九片：`[[conventions.imm_fn]]` 支持**多拼写** `texts`
 
 + `ImmFnDef` 的 `text` 变为可选 ✗、新增 `texts = ["…", "…"]` ✗（同一语义的**多条等价写法** ✗）：

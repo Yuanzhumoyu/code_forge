@@ -109,182 +109,92 @@ sxtx = 7
 # 名字清单 = A64 的重定位修饰集合（语料普查 47 个名字）。
 [[conventions.imm_fn]]
 name = "abs_g0"
-text = "#:abs_g0:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "abs_g0_n"
-text = ":abs_g0:{0}"
+texts = ["#:abs_g0:{0}", ":abs_g0:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "abs_g0_nc"
-text = "#:abs_g0_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "abs_g0_nc_n"
-text = ":abs_g0_nc:{0}"
+texts = ["#:abs_g0_nc:{0}", ":abs_g0_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "abs_g0_s"
-text = "#:abs_g0_s:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "abs_g0_s_n"
-text = ":abs_g0_s:{0}"
+texts = ["#:abs_g0_s:{0}", ":abs_g0_s:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "abs_g1"
-text = "#:abs_g1:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "abs_g1_n"
-text = ":abs_g1:{0}"
+texts = ["#:abs_g1:{0}", ":abs_g1:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "abs_g1_nc"
-text = "#:abs_g1_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "abs_g1_nc_n"
-text = ":abs_g1_nc:{0}"
+texts = ["#:abs_g1_nc:{0}", ":abs_g1_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "abs_g1_s"
-text = "#:abs_g1_s:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "abs_g1_s_n"
-text = ":abs_g1_s:{0}"
+texts = ["#:abs_g1_s:{0}", ":abs_g1_s:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "abs_g2"
-text = "#:abs_g2:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "abs_g2_n"
-text = ":abs_g2:{0}"
+texts = ["#:abs_g2:{0}", ":abs_g2:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "abs_g2_nc"
-text = "#:abs_g2_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "abs_g2_nc_n"
-text = ":abs_g2_nc:{0}"
+texts = ["#:abs_g2_nc:{0}", ":abs_g2_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "abs_g2_s"
-text = "#:abs_g2_s:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "abs_g2_s_n"
-text = ":abs_g2_s:{0}"
+texts = ["#:abs_g2_s:{0}", ":abs_g2_s:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "abs_g3"
-text = "#:abs_g3:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "abs_g3_n"
-text = ":abs_g3:{0}"
+texts = ["#:abs_g3:{0}", ":abs_g3:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "prel_g0"
-text = "#:prel_g0:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "prel_g0_n"
-text = ":prel_g0:{0}"
+texts = ["#:prel_g0:{0}", ":prel_g0:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "prel_g0_nc"
-text = "#:prel_g0_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "prel_g0_nc_n"
-text = ":prel_g0_nc:{0}"
+texts = ["#:prel_g0_nc:{0}", ":prel_g0_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "prel_g1"
-text = "#:prel_g1:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "prel_g1_n"
-text = ":prel_g1:{0}"
+texts = ["#:prel_g1:{0}", ":prel_g1:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "prel_g1_nc"
-text = "#:prel_g1_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "prel_g1_nc_n"
-text = ":prel_g1_nc:{0}"
+texts = ["#:prel_g1_nc:{0}", ":prel_g1_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "prel_g2"
-text = "#:prel_g2:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "prel_g2_n"
-text = ":prel_g2:{0}"
+texts = ["#:prel_g2:{0}", ":prel_g2:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "prel_g2_nc"
-text = "#:prel_g2_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "prel_g2_nc_n"
-text = ":prel_g2_nc:{0}"
+texts = ["#:prel_g2_nc:{0}", ":prel_g2_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "prel_g3"
-text = "#:prel_g3:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "prel_g3_n"
-text = ":prel_g3:{0}"
+texts = ["#:prel_g3:{0}", ":prel_g3:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "pg_hi21_nc"
-text = "#:pg_hi21_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "pg_hi21_nc_n"
-text = ":pg_hi21_nc:{0}"
+texts = ["#:pg_hi21_nc:{0}", ":pg_hi21_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
@@ -704,25 +614,25 @@ bits = 3
 kind = "imm"
 signed = false
 bits = 16
-symbol = { allow = true, require = true, modifiers = ["abs_g0", "abs_g0_n", "abs_g0_nc", "abs_g0_nc_n", "abs_g0_s", "abs_g0_s_n", "prel_g0", "prel_g0_n", "prel_g0_nc", "prel_g0_nc_n", "gottprel_g0_nc", "gottprel_g0_nc_n", "tprel_g0", "tprel_g0_n", "tprel_g0_nc", "tprel_g0_nc_n", "dtprel_g0", "dtprel_g0_n", "dtprel_g0_nc", "dtprel_g0_nc_n"] }
+symbol = { allow = true, require = true, modifiers = ["abs_g0", "abs_g0_nc", "abs_g0_s", "prel_g0", "prel_g0_nc", "gottprel_g0_nc", "tprel_g0", "tprel_g0_nc", "dtprel_g0", "dtprel_g0_nc"] }
 
 [operand.imm16g1]
 kind = "imm"
 signed = false
 bits = 16
-symbol = { allow = true, require = true, modifiers = ["abs_g1", "abs_g1_n", "abs_g1_nc", "abs_g1_nc_n", "abs_g1_s", "abs_g1_s_n", "prel_g1", "prel_g1_n", "prel_g1_nc", "prel_g1_nc_n", "gottprel_g1", "gottprel_g1_n", "tprel_g1", "tprel_g1_n", "tprel_g1_nc", "tprel_g1_nc_n", "dtprel_g1", "dtprel_g1_n", "dtprel_g1_nc", "dtprel_g1_nc_n"] }
+symbol = { allow = true, require = true, modifiers = ["abs_g1", "abs_g1_nc", "abs_g1_s", "prel_g1", "prel_g1_nc", "gottprel_g1", "tprel_g1", "tprel_g1_nc", "dtprel_g1", "dtprel_g1_nc"] }
 
 [operand.imm16g2]
 kind = "imm"
 signed = false
 bits = 16
-symbol = { allow = true, require = true, modifiers = ["abs_g2", "abs_g2_n", "abs_g2_nc", "abs_g2_nc_n", "abs_g2_s", "abs_g2_s_n", "prel_g2", "prel_g2_n", "prel_g2_nc", "prel_g2_nc_n", "tprel_g2", "tprel_g2_n", "tprel_g2_nc", "tprel_g2_nc_n", "dtprel_g2", "dtprel_g2_n", "dtprel_g2_nc", "dtprel_g2_nc_n"] }
+symbol = { allow = true, require = true, modifiers = ["abs_g2", "abs_g2_nc", "abs_g2_s", "prel_g2", "prel_g2_nc", "tprel_g2", "tprel_g2_nc", "dtprel_g2", "dtprel_g2_nc"] }
 
 [operand.imm16g3]
 kind = "imm"
 signed = false
 bits = 16
-symbol = { allow = true, require = true, modifiers = ["abs_g3", "abs_g3_n", "prel_g3", "prel_g3_n", "tprel_g3", "tprel_g3_n"] }
+symbol = { allow = true, require = true, modifiers = ["abs_g3", "prel_g3", "tprel_g3"] }
 
 [operand.imm12sym]
 kind = "imm"

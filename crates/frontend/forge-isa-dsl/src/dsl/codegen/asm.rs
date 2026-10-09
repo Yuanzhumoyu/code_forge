@@ -210,7 +210,7 @@ fn validate_segs(segs: &[Seg], info: &InstInfo) -> Result<(), String> {
                 }
                 prev_op = false;
             }
-            Seg::Op { idx: n, affix, .. } => {
+            Seg::Op { idx: n, .. } => {
                 if *n >= info.operands.len() {
                     return Err(format!("{}: placeholder {{{n}}} out of range", ctx()));
                 }
