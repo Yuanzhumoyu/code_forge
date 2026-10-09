@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-08) — ISA-DSL v21 W6：清掉删除死回落后的残留告警（含元组解构）
+
++ 上一片删掉终结回落链后留下 17 个"未使用变量"告警 ✗（其中多数来自**元组解构** ✗：
+  `let (jal_dest, jal_target) = …`、`let (b_src, b_src2, b_target) = …` ✗）。已全部清成 0 告警 ✗。
++ 侦察清单第三处猜测（`frame.rs:167` / `:182` ✗）：**尾声跳转**也按 `jump_f.len() >= 2` 猜字段 ✗，
+  但它的发射 API 是 `encoder.encode(&inst, …)` ✗（不是 `push_inst` ✗）⇒ **谱面序列无法直接复用** ✗
+  ⇒ 记为独立小项 ✔（要引入"以编码器为宿主的序列发射"✗ 才能谱面化 ✗），不硬塞进本片 ✔。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Removed (2026-10-08) — ISA-DSL v21 W6：删除终结 lowering 里已成死代码的"猜测回落"
 
 + `jump_body` / `branch_body` 的 `else if …` 链**整条删除** ✗ —— 它们包含清单点名要删的
