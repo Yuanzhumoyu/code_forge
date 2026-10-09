@@ -770,8 +770,7 @@ asm = "test {src2}, {src}"
 # `*_R_MEM` = r ← r op r/m（源在内存）。宽度由旁边的寄存器驱动
 # （`MRR_MEMREF_AUTO` 的 `opsize = "s0"`）——内存操作数自己不携带宽度语义。
 
-[[templates]]
-name = "ALU_MR"
+[family.ALU_MR]
 body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" }, ops = ["src:gprx", "mem:mem:inout"] }
 rows = [
   { inst = "ADD_MR",  opcode = 0x01, asm = "add {mem}, {src}" },
@@ -808,8 +807,7 @@ match = { opcode = 0x01 }
 ops = ["src:gprx", "mem:mem:inout"]
 asm = "release lock add {mem}, {src}"
 
-[[templates]]
-name = "ALU_R_MEM"
+[family.ALU_R_MEM]
 body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" }, ops = ["dst:gprx:out", "mem:mem"] }
 rows = [
   { inst = "ADD_R_MEM", opcode = 0x03, asm = "add {dst}, {mem}" },
@@ -832,8 +830,7 @@ rows = [
 # 扩展），目前只有汇编器入口需要它。名字后缀 `_8` 沿用 `MOV_R_MEM_8` /
 # `STORE_MEM_R_8` 的既有写法。
 
-[[templates]]
-name = "ALU8_MR"
+[family.ALU8_MR]
 body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" }, ops = ["src:gpr8b", "mem:mem:inout"] }
 rows = [
   { inst = "ADD_MR_8", opcode = 0x00, asm = "add {mem}, {src}" },
@@ -846,8 +843,7 @@ rows = [
   { inst = "CMP_MR_8", opcode = 0x38, asm = "cmp {mem}, {src}", ops = ["src:gpr8b", "mem:mem"] },
 ]
 
-[[templates]]
-name = "ALU8_R_MEM"
+[family.ALU8_R_MEM]
 body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" }, ops = ["dst:gpr8b:out", "mem:mem"] }
 rows = [
   { inst = "ADD_R_MEM_8", opcode = 0x02, asm = "add {dst}, {mem}" },
@@ -860,8 +856,7 @@ rows = [
   { inst = "CMP_R_MEM_8", opcode = 0x3A, asm = "cmp {src}, {mem}", ops = ["src:gpr8b", "mem:mem"] },
 ]
 
-[[templates]]
-name = "ALU8_RM_IMM8"
+[family.ALU8_RM_IMM8]
 body = { form = "MRR_EXT", imm = 8, ops = ["dst:gpr8b:inout", "imm:imm8"] }
 rows = [
   { inst = "ADD_RM8_IMM8", opcode = 0x80, modrm = { reg = 0, rm = "dst" }, asm = "add {dst}, {imm}" },
@@ -1734,8 +1729,7 @@ effect = ["Pure"]
 
 # ── SSE 模板（v11 opcodes 数组 → families → v18 `[[templates]]` + rows）──
 
-[[templates]]
-name = "SD_BIN"
+[family.SD_BIN]
 body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, match = { prefix = 0xF2, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
   { inst = "MOVSD", data_width = 64, opcode = 0x10 },
@@ -1746,8 +1740,7 @@ rows = [
   { inst = "MULSD", opcode = 0x59 },
   { inst = "DIVSD", opcode = 0x5E },
 ]
-[[templates]]
-name = "SS_FMOV"
+[family.SS_FMOV]
 body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, match = { prefix = 0xF3, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
   { inst = "ADDSS", opcode = 0x58 },
@@ -1757,8 +1750,7 @@ rows = [
   { inst = "MINSS", opcode = 0x5D },
   { inst = "MAXSS", opcode = 0x5F },
 ]
-[[templates]]
-name = "PS_BIN"
+[family.PS_BIN]
 body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
   { inst = "MOVAPS", data_width = 128, opcode = 0x28 },
@@ -1770,8 +1762,7 @@ rows = [
   { inst = "ANDPS", opcode = 0x54 },
   { inst = "ORPS", opcode = 0x56 },
 ]
-[[templates]]
-name = "PD_BIN"
+[family.PD_BIN]
 body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, match = { prefix = 0x66, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
   { inst = "ADDPD", opcode = 0x58 },
@@ -1779,8 +1770,7 @@ rows = [
   { inst = "MULPD", opcode = 0x59 },
   { inst = "DIVPD", opcode = 0x5E },
 ]
-[[templates]]
-name = "PI_BIN"
+[family.PI_BIN]
 body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, match = { prefix = 0x66, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
   { inst = "PADDD", opcode = 0xFE },
@@ -1789,8 +1779,7 @@ rows = [
   { inst = "PSUBQ", opcode = 0xFB },
 ]
 # ── VEX 家族（256 位向量，三操作数）──
-[[templates]]
-name = "PS_BIN_V"
+[family.PS_BIN_V]
 body = { form = "VEX_RRV", modrm = { reg = "dst", rm = "src2" }, match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "VADDPS", group = "vaddps", opcode = 0x58 },
@@ -1800,8 +1789,7 @@ rows = [
   { inst = "VXORPS", opcode = 0x57 },
   { inst = "VANDPS", opcode = 0x54 },
 ]
-[[templates]]
-name = "PD_BIN_V"
+[family.PD_BIN_V]
 body = { form = "VEX_RRV", modrm = { reg = "dst", rm = "src2" }, match = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "VADDPD", group = "vaddpd", opcode = 0x58 },
@@ -1812,8 +1800,7 @@ rows = [
 # ── EVEX（AVX-512）三操作数（512 位 ZMM；L'L=2）──
 # 助记符与 VEX 版共享（vaddps zmm0,... → EVEX；vaddps xmm0,... → VEX）——
 # 按操作数实际寄存器类（fpr256 vs fpr）自动分发。
-[[templates]]
-name = "PS_BIN_EV"
+[family.PS_BIN_EV]
 body = { form = "EVEX_RRV", modrm = { reg = "dst", rm = "src2" }, match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "VADDPS_ZMM", group = "vaddps", opcode = 0x58, asm = "vaddps {dst}, {src}, {src2}" },
@@ -1822,8 +1809,7 @@ rows = [
   { inst = "VDIVPS_ZMM", group = "vdivps", opcode = 0x5E, asm = "vdivps {dst}, {src}, {src2}" },
 ]
 # EVEX 双精度（pd，pp=1）
-[[templates]]
-name = "PD_BIN_EV"
+[family.PD_BIN_EV]
 body = { form = "EVEX_RRV", modrm = { reg = "dst", rm = "src2" }, match = { evex_map = 1, evex_pp = 1, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "VADDPD_ZMM", group = "vaddpd", opcode = 0x58, match = { evex_w = 1 }, asm = "vaddpd {dst}, {src}, {src2}" },
@@ -1832,8 +1818,7 @@ rows = [
   { inst = "VDIVPD_ZMM", group = "vdivpd", opcode = 0x5E, match = { evex_w = 1 }, asm = "vdivpd {dst}, {src}, {src2}" },
 ]
 # EVEX 整数（vpaddd/vpsubd/vpaddq/vpsubq，pp=1）
-[[templates]]
-name = "INT_BIN_EV"
+[family.INT_BIN_EV]
 body = { form = "EVEX_RRV", modrm = { reg = "dst", rm = "src2" }, match = { evex_map = 1, evex_pp = 1, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "VPADDD_ZMM", group = "vpaddd", opcode = 0xFE, asm = "vpaddd {dst}, {src}, {src2}" },
@@ -2116,16 +2101,14 @@ asm = "vextractf32x4 {dst}, {src}, {imm}"
 #
 # 不写 `ref`：IR 降级不用它们（`+1`/`-1` 走 ADD/SUB 的立即数形式），只有汇编器入口需要。
 
-[[templates]]
-name = "INCDEC_RM"
+[family.INCDEC_RM]
 body = { form = "MRR_EXT_OP", opcode = 0xFF, ops = ["dst:gprx:inout"] }
 rows = [
   { inst = "INC_RM", modrm = { reg = 0, rm = "dst" }, asm = "inc {dst}" },
   { inst = "DEC_RM", modrm = { reg = 1, rm = "dst" }, asm = "dec {dst}" },
 ]
 
-[[templates]]
-name = "INCDEC_RM_8"
+[family.INCDEC_RM_8]
 body = { form = "MRR_EXT_OP", opcode = 0xFE, ops = ["dst:gpr8b:inout"] }
 rows = [
   { inst = "INC_RM_8", modrm = { reg = 0, rm = "dst" }, asm = "inc {dst}" },
@@ -4558,7 +4541,7 @@ insts = [
 # ═══════════════════ 参数化模板（v18 S2c：movzx/movsx 的 R8/R16 对）═══════════════════
 # 4 条指令结构完全相同（同 form、同 fields 形状、同 ops 形状），只差 opcode/prefix/
 # 源槽/助记符；行里的 `ref` 顺带取代原先手写的 movzx/movsx 引用名（同引用名 = 多态）。
-[[templates]]
+[family.MOVZX_R8_RM_FAM]
 body = { form = "MRR_0F_NOOS", opcode = "{opcode}", match = { prefix = "{pfx}", w = 1 }, ops = ["dst:gpr:out", "src:{slot}"], asm = "{mn} {dst}, {src}" }
 rows = [
   { inst = "MOVZX_R8_RM", group = "movzx", mn = "movzx", opcode = 0xB6, pfx = 0, slot = "gpr8b" },

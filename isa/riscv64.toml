@@ -845,8 +845,7 @@ fields = [
 
 # ── R 型整数 + Zbb R（opcode 0x33；funct3/funct7 区分）──
 
-[[templates]]
-name = "RR"
+[family.RR]
 body = { form = "R", opcode = 0x33, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "ADD", match = { funct3 = 0, funct7 = 0x00 } },
@@ -872,8 +871,7 @@ rows = [
   { inst = "MAXU", match = { funct3 = 5, funct7 = 0x05 } },
 ]
 # ── I 型立即数 ALU（opcode 0x13；ADDI 保留顶层：roles + 与 MOV/ADDI_GLOBAL 同键）──
-[[templates]]
-name = "II"
+[family.II]
 body = { form = "I", opcode = 0x13, ops = ["dst:gpr:out", "src:gpr", "imm:imm12"], asm = "{inst.lower} {dst}, {src}, {imm}" }
 rows = [
   { inst = "SLTI", match = { funct3 = 2 } },
@@ -883,8 +881,7 @@ rows = [
   { inst = "ANDI", match = { funct3 = 7 } },
 ]
 # ── B 型分支（opcode 0x63；funct3 区分）──
-[[templates]]
-name = "BB"
+[family.BB]
 body = { form = "B", opcode = 0x63, ops = ["src:gpr", "src2:gpr", "target:off_b"], asm = "{inst.lower} {src}, {src2}, {target}" }
 rows = [
   { inst = "BEQ", match = { funct3 = 0 }, roles = ["branch"] },
@@ -898,8 +895,7 @@ rows = [
 # 移位的 W 变体（`sllw`/`srlw`/`sraw`）也是 **R 型寄存器移位**（rs2 = 移位量），
 # 与 ADDW…REMUW 同形 ⇒ 同一个模板加三行。**立即数**那条是 0x1B 的
 # `slliw`/`srliw`/`sraiw`（见下方 SHIFT5 三条），两者的操作码不同、别混。
-[[templates]]
-name = "WW"
+[family.WW]
 body = { only_variants = { xlen = [64] }, form = "R", opcode = 0x3b, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "ADDW", match = { funct3 = 0, funct7 = 0x00 } },
@@ -2898,142 +2894,122 @@ insts = [
 #      的写法一致），② 只承担"省略写法能装配"这一件事。
 # 修这里同时修掉一处**字节错**：从前 ② 把 `funct3` 写成 `0`（= rne），而省略 rm 的语义是
 # `dyn`——语料铺开后由 `fp-default-rounding-mode.s` 的上游期望字节直接守住。
-[[templates]]
-name = "FADD_RM"
+[family.FADD_RM]
 body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fadd.{p.lower} {dst}, {src}, {src2}, {rm}" }
 rows = [
   { inst = "FADD_S_RM", p = "S", funct7 = 0x00 },
   { inst = "FADD_D_RM", p = "D", funct7 = 0x01 },
 ]
-[[templates]]
-name = "FADD_DYN"
+[family.FADD_DYN]
 body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fadd.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FADD_S", p = "S", funct7 = 0x00 },
   { inst = "FADD_D", p = "D", funct7 = 0x01 },
 ]
-[[templates]]
-name = "FSUB_RM"
+[family.FSUB_RM]
 body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fsub.{p.lower} {dst}, {src}, {src2}, {rm}" }
 rows = [
   { inst = "FSUB_S_RM", p = "S", funct7 = 0x04 },
   { inst = "FSUB_D_RM", p = "D", funct7 = 0x05 },
 ]
-[[templates]]
-name = "FSUB_DYN"
+[family.FSUB_DYN]
 body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fsub.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FSUB_S", p = "S", funct7 = 0x04 },
   { inst = "FSUB_D", p = "D", funct7 = 0x05 },
 ]
-[[templates]]
-name = "FMUL_RM"
+[family.FMUL_RM]
 body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fmul.{p.lower} {dst}, {src}, {src2}, {rm}" }
 rows = [
   { inst = "FMUL_S_RM", p = "S", funct7 = 0x08 },
   { inst = "FMUL_D_RM", p = "D", funct7 = 0x09 },
 ]
-[[templates]]
-name = "FMUL_DYN"
+[family.FMUL_DYN]
 body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmul.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FMUL_S", p = "S", funct7 = 0x08 },
   { inst = "FMUL_D", p = "D", funct7 = 0x09 },
 ]
-[[templates]]
-name = "FDIV_RM"
+[family.FDIV_RM]
 body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fdiv.{p.lower} {dst}, {src}, {src2}, {rm}" }
 rows = [
   { inst = "FDIV_S_RM", p = "S", funct7 = 0x0C },
   { inst = "FDIV_D_RM", p = "D", funct7 = 0x0D },
 ]
-[[templates]]
-name = "FDIV_DYN"
+[family.FDIV_DYN]
 body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fdiv.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FDIV_S", p = "S", funct7 = 0x0C },
   { inst = "FDIV_D", p = "D", funct7 = 0x0D },
 ]
-[[templates]]
-name = "FSQRT_RM"
+[family.FSQRT_RM]
 body = { form = "R_RM2", opcode = 0x53, match = { rs2 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "rm:rm3"], asm = "fsqrt.{p.lower} {dst}, {src}, {rm}" }
 rows = [
   { inst = "FSQRT_S_RM", p = "S", funct7 = 0x2C },
   { inst = "FSQRT_D_RM", p = "D", funct7 = 0x2D },
 ]
-[[templates]]
-name = "FSQRT_DYN"
+[family.FSQRT_DYN]
 body = { form = "R", opcode = 0x53, match = { funct3 = 7, rs2 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr"], asm = "fsqrt.{p.lower} {dst}, {src}" }
 rows = [
   { inst = "FSQRT_S", p = "S", funct7 = 0x2C },
   { inst = "FSQRT_D", p = "D", funct7 = 0x2D },
 ]
-[[templates]]
-name = "FLT"
+[family.FLT]
 body = { form = "R", opcode = 0x53, match = { funct3 = 1, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr", "src2:fpr"], asm = "flt.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FLT_S", p = "S", funct7 = 0x50 },
   { inst = "FLT_D", p = "D", funct7 = 0x51 },
 ]
-[[templates]]
-name = "FEQ"
+[family.FEQ]
 body = { form = "R", opcode = 0x53, match = { funct3 = 2, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr", "src2:fpr"], asm = "feq.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FEQ_S", p = "S", funct7 = 0x50 },
   { inst = "FEQ_D", p = "D", funct7 = 0x51 },
 ]
-[[templates]]
-name = "FLE"
+[family.FLE]
 body = { form = "R", opcode = 0x53, match = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr", "src2:fpr"], asm = "fle.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FLE_S", p = "S", funct7 = 0x50 },
   { inst = "FLE_D", p = "D", funct7 = 0x51 },
 ]
-[[templates]]
-name = "FMIN"
+[family.FMIN]
 body = { form = "R", opcode = 0x53, match = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmin.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FMIN_S", p = "S", funct7 = 0x14 },
   { inst = "FMIN_D", p = "D", funct7 = 0x15 },
 ]
-[[templates]]
-name = "FMAX"
+[family.FMAX]
 body = { form = "R", opcode = 0x53, match = { funct3 = 1, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmax.{p.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "FMAX_S", p = "S", funct7 = 0x14 },
   { inst = "FMAX_D", p = "D", funct7 = 0x15 },
 ]
-[[templates]]
-name = "FMV_X"
+[family.FMV_X]
 body = { form = "R", opcode = 0x53, match = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr"], asm = "fmv.x.{p.lower} {dst}, {src}" }
 rows = [
   # FPR 的位模式 → GPR（类间位搬移，见 `FMV_W_X` 上的注释）——`data_width` 说宽度。
   { inst = "FMV_X_W", p = "W", funct7 = 0x70, data_width = 32 },
   { inst = "FMV_X_D", p = "D", funct7 = 0x71, data_width = 64 },
 ]
-[[templates]]
-name = "AMOADD"
+[family.AMOADD]
 body = { form = "R", opcode = 0x2F, match = { funct5 = 0, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "amoadd.{p.lower} {dst}, {src2}, ({src})" }
 rows = [
   { inst = "AMOADD_W", p = "W", funct3 = 2 },
   { inst = "AMOADD_D", p = "D", funct3 = 3 },
 ]
-[[templates]]
-name = "AMOSWAP"
+[family.AMOSWAP]
 body = { form = "R", opcode = 0x2F, match = { funct5 = 1, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "amoswap.{p.lower} {dst}, {src2}, ({src})" }
 rows = [
   { inst = "AMOSWAP_W", p = "W", funct3 = 2 },
   { inst = "AMOSWAP_D", p = "D", funct3 = 3 },
 ]
-[[templates]]
-name = "LR"
+[family.LR]
 body = { form = "R", opcode = 0x2F, match = { funct5 = 2, aq = 0, rl = 0, funct3 = "{funct3}", rs2 = 0 }, ops = ["dst:gpr:out", "src:gpr"], asm = "lr.{p.lower} {dst}, ({src})" }
 rows = [
   { inst = "LR_W", p = "W", funct3 = 2 },
   { inst = "LR_D", p = "D", funct3 = 3 },
 ]
-[[templates]]
-name = "SC"
+[family.SC]
 body = { form = "R", opcode = 0x2F, match = { funct5 = 3, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "sc.{p.lower} {dst}, {src2}, ({src})" }
 rows = [
   { inst = "SC_W", p = "W", funct3 = 2 },

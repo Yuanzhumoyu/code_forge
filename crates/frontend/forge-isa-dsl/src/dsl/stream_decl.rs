@@ -25,12 +25,26 @@ use super::model::{
 ///
 /// **代码生成一行不改**：`family` 只是 `[[templates]]` 的"名字来自表键 + 名字即多态引用名"
 /// 写法，降级后与模板完全同构。
-pub(crate) fn lower_families(m: &mut IsaModel) -> Result<(), String> {
+pub(crate) fn lower_families(m: &mut IsaModel, source: &str) -> Result<(), String> {
     let Some(fams) = m.families.clone() else {
         return Ok(());
     };
     m.families = None;
-    for (name, decl) in fams {
+    // ⚠️ **必须按源码里的声明序展开**（2026-10-08 二分定位到的根因）：`families` 是
+    // `BTreeMap` ⇒ 按名字**字母序**迭代；而模板/指令的**声明序**决定别名首匹配与 lowering
+    // 解析结果 ⇒ 顺序一变，生成物就可能选到别的指令（实测 `PS_BIN_V` 一族即可让 JIT 矩阵
+    // 跑出非法指令）。这里按 `[family.<名>]` 在源码里的出现位置排序，恢复声明序。
+    let mut ordered: Vec<(usize, String, super::model::FamilyDecl)> = fams
+        .into_iter()
+        .map(|(name, decl)| {
+            let at = source
+                .find(&format!("[family.{name}]"))
+                .unwrap_or(usize::MAX);
+            (at, name, decl)
+        })
+        .collect();
+    ordered.sort_by_key(|(at, _, _)| *at);
+    for (_, name, decl) in ordered {
         if decl.vary.is_some() {
             return Err(format!(
                 "[[family.{name}]].vary: **尚未实现**（W5 第④步：与 `[[lowering]].vary` \
@@ -52,7 +66,7 @@ pub(crate) fn lower_families(m: &mut IsaModel) -> Result<(), String> {
     Ok(())
 }
 pub fn lower_stream_forms(m: &mut IsaModel) -> Result<(), String> {
-    lower_families(m)?;    let fixed = m.encoding.kind != super::model::EncodingKind::PrefixScan;
+    let fixed = m.encoding.kind != super::model::EncodingKind::PrefixScan;
     for form in &mut m.forms {
         if form.segments.is_none() {
             continue;

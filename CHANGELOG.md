@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：三谱 112 处模板迁到 `[family.<族名>]`（**破坏性**）
+
++ **112 处 `[[templates]]` 全部迁成 `[family.<族名>]`**（x86 18 / riscv64 24 / arm64 70），残留 0。
++ **关键修复**：`families` 是 `BTreeMap`（按名字字母序迭代），而**模板/指令声明序**决定别名首匹配与
+  lowering 解析 ⇒ 直接按下标展开会**打乱指令表顺序**（实测 JIT 矩阵跑出非法指令）。现在按
+  `[family.<名>]` 在**源码中的出现位置**排序展开，恢复声明序（迁移前后指令表**顺序+集合逐条相同**）。
++ 族名与指令名同池：arm64 8 个同名族加 `_FAM` 后缀；x86 无名模板取 `MOVZX_R8_RM_FAM` 并保留行上显式 `group`。
++ 逐字节不变：`isa_roundtrip_guard` + asm 棘轮 + 谱内向量 + 双 JIT 矩阵全绿。
+
 ### Fixed (2026-10-08) — ISA-DSL v21 W5：`family` 不再自动把族名铺成 `group`
 
 + `lower_families` 原先会把**族名自动注入为每行的 `group`**——而 `group` 是**多态引用名**，
