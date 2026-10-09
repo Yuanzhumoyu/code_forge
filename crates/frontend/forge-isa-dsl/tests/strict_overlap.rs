@@ -36,7 +36,7 @@ fn overlaps(isa: &str, strict: bool) -> usize {
 
 #[test]
 fn strict_overlap_inventory_matches_snapshot() {
-    for (isa, want) in [("x86.toml", 32), ("arm64.toml", 8), ("riscv64.toml", 20)] {
+    for (isa, want) in [("x86.toml", 32), ("arm64.toml", 8), ("riscv64.toml", 16)] {
         assert_eq!(
             overlaps(isa, true),
             want,

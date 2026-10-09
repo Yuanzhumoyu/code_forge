@@ -2335,17 +2335,7 @@ insts = ["FEQ_S {g}, {0}, {0}", "FEQ_S {g2}, {1}, {1}", "AND {g}, {g}, {g2}", "X
 # 单/双精度按源位宽分派——与 `Fcmp`/`Fptosi` 同一套口径（`rs1_width`）。
 [[lowering]]
 op = "Fadd"
-when = { eq = ["rs1_width", 32] }
-insts = ["FADD_S {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Fadd"
 insts = ["FADD_D {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Fsub"
-when = { eq = ["rs1_width", 32] }
-insts = ["FSUB_S {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Fsub"
@@ -2353,23 +2343,12 @@ insts = ["FSUB_D {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Fmul"
-when = { eq = ["rs1_width", 32] }
-insts = ["FMUL_S {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Fmul"
 insts = ["FMUL_D {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Fdiv"
-when = { eq = ["rs1_width", 32] }
-insts = ["FDIV_S {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Fdiv"
 insts = ["FDIV_D {out}, {0}, {1}"]
 
-# Fptosi/Fptoui：向零截断（rtz）
 [[lowering]]
 op = "Fptosi"
 when = { eq = ["rs1_width", 32] }
@@ -2823,8 +2802,8 @@ rows = [
 [family.FADD_DYN]
 body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fadd.{p.lower} {dst}, {src}, {src2}" }
 rows = [
-  { inst = "FADD_S", p = "S", funct7 = 0x00 },
-  { inst = "FADD_D", p = "D", funct7 = 0x01 },
+  { inst = "FADD_S", group = "fadd_xlen", word_size = 32, p = "S", funct7 = 0x00 },
+  { inst = "FADD_D", group = "fadd_xlen", word_size = 64, p = "D", funct7 = 0x01 },
 ]
 [family.FSUB_RM]
 body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fsub.{p.lower} {dst}, {src}, {src2}, {rm}" }
@@ -2835,8 +2814,8 @@ rows = [
 [family.FSUB_DYN]
 body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fsub.{p.lower} {dst}, {src}, {src2}" }
 rows = [
-  { inst = "FSUB_S", p = "S", funct7 = 0x04 },
-  { inst = "FSUB_D", p = "D", funct7 = 0x05 },
+  { inst = "FSUB_S", group = "fsub_xlen", word_size = 32, p = "S", funct7 = 0x04 },
+  { inst = "FSUB_D", group = "fsub_xlen", word_size = 64, p = "D", funct7 = 0x05 },
 ]
 [family.FMUL_RM]
 body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fmul.{p.lower} {dst}, {src}, {src2}, {rm}" }
@@ -2847,8 +2826,8 @@ rows = [
 [family.FMUL_DYN]
 body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmul.{p.lower} {dst}, {src}, {src2}" }
 rows = [
-  { inst = "FMUL_S", p = "S", funct7 = 0x08 },
-  { inst = "FMUL_D", p = "D", funct7 = 0x09 },
+  { inst = "FMUL_S", group = "fmul_xlen", word_size = 32, p = "S", funct7 = 0x08 },
+  { inst = "FMUL_D", group = "fmul_xlen", word_size = 64, p = "D", funct7 = 0x09 },
 ]
 [family.FDIV_RM]
 body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fdiv.{p.lower} {dst}, {src}, {src2}, {rm}" }
@@ -2859,8 +2838,8 @@ rows = [
 [family.FDIV_DYN]
 body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fdiv.{p.lower} {dst}, {src}, {src2}" }
 rows = [
-  { inst = "FDIV_S", p = "S", funct7 = 0x0C },
-  { inst = "FDIV_D", p = "D", funct7 = 0x0D },
+  { inst = "FDIV_S", group = "fdiv_xlen", word_size = 32, p = "S", funct7 = 0x0C },
+  { inst = "FDIV_D", group = "fdiv_xlen", word_size = 64, p = "D", funct7 = 0x0D },
 ]
 [family.FSQRT_RM]
 body = { form = "R_RM2", opcode = 0x53, match = { rs2 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "rm:rm3"], asm = "fsqrt.{p.lower} {dst}, {src}, {rm}" }

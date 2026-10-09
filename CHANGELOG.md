@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：riscv64 宽度分派再删 4 组（浮点算术 S/D 对）
+
++ 给 `FADD/FSUB/FMUL/FDIV` 的 `_S`/`_D` 对补 `group` + `word_size`（8 行），严格折叠 4 对
+  ⇒ `riscv64.toml` 的 `[[lowering]]` 块数 **104 → 100**（本轮累计 118 → 100，删掉 **18** 条宽度分派）。
++ 随动：`lint.refs.riscv64` 10 → 14；`--strict-overlap` riscv64 20 → 16（被删的正是"特化 + 兜底"形状）。
++ JIT 矩阵 58 passed / 0 failed ⇒ 行为不变。未覆盖：`Store`/`Fstore`（`SW/SD/FSW/FSD` 行写法不同，下批处理）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：riscv64 宽度分派再删 8 组（累计 14 条），修展开误改，快照随动
 
 + 给 `ADD/SUB/MUL/DIV/DIVU/REM/REMU` 的 **W 变体对**补 `group` + `word_size`（14 行），再严格折叠 8 对
