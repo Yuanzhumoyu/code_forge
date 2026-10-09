@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：riscv64 浮点比较族补 `group` + `word_size`（重载前置）
+
++ `[family.FEQ]` / `[family.FLE]` / `[family.FLT]` 的 rows 补上 **`group` = 族名**（族名即多态
+  引用名）与 **`word_size`**（`_S` = 32 / `_D` = 64）——这是"降级重载自动按宽度选行"能工作的前提。
++ `validate` + `lint` 干净；`forge-tests`（JIT 矩阵）58 passed / 0 failed ⇒ 加族名未改变任何行为。
++ 下一步：把 29 条 `when = { eq = ["rs1_width", …] }` 规则折成宽度无关的一条（脚本需处理
+  **交错**的成对规则，不能只认相邻两条）。
+
 ### Added (2026-10-08) — ISA-DSL v21 W5：降级重载（`word_size` + 自动按宽度选行）
 
 + 新指令级键 **`word_size`**（位）：本条**指令形态**操作的数据宽度。与 `data_width`（纯搬运专用、

@@ -2957,20 +2957,20 @@ rows = [
 [family.FLT]
 body = { form = "R", opcode = 0x53, match = { funct3 = 1, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr", "src2:fpr"], asm = "flt.{p.lower} {dst}, {src}, {src2}" }
 rows = [
-  { inst = "FLT_S", p = "S", funct7 = 0x50 },
-  { inst = "FLT_D", p = "D", funct7 = 0x51 },
+  { inst = "FLT_S", group = "FLT", word_size = 32, p = "S", funct7 = 0x50  },
+  { inst = "FLT_D", group = "FLT", word_size = 64, p = "D", funct7 = 0x51  },
 ]
 [family.FEQ]
 body = { form = "R", opcode = 0x53, match = { funct3 = 2, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr", "src2:fpr"], asm = "feq.{p.lower} {dst}, {src}, {src2}" }
 rows = [
-  { inst = "FEQ_S", p = "S", funct7 = 0x50 },
-  { inst = "FEQ_D", p = "D", funct7 = 0x51 },
+  { inst = "FEQ_S", group = "FEQ", word_size = 32, p = "S", funct7 = 0x50 },
+  { inst = "FEQ_D", group = "FEQ", word_size = 64, p = "D", funct7 = 0x51 },
 ]
 [family.FLE]
 body = { form = "R", opcode = 0x53, match = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:gpr:out", "src:fpr", "src2:fpr"], asm = "fle.{p.lower} {dst}, {src}, {src2}" }
 rows = [
-  { inst = "FLE_S", p = "S", funct7 = 0x50 },
-  { inst = "FLE_D", p = "D", funct7 = 0x51 },
+  { inst = "FLE_S", group = "FLE", word_size = 32, p = "S", funct7 = 0x50  },
+  { inst = "FLE_D", group = "FLE", word_size = 64, p = "D", funct7 = 0x51  },
 ]
 [family.FMIN]
 body = { form = "R", opcode = 0x53, match = { funct3 = 0, funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "fmin.{p.lower} {dst}, {src}, {src2}" }
