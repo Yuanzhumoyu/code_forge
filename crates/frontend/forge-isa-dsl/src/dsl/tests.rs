@@ -4747,3 +4747,30 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = [\"altone {dst}, {cond}\", \"alttwo {d
         "备选写法的尝试也应生成（按序尝试 ✗）：{s}"
     );
 }
+
+
+/// v21 W7：**同助记符 + 同操作数类 ⇒ 两条写法都能匹配**时，可选档 `--ambiguity` 报
+/// `LINT-ASM-AMBIG` ✗（清单要求：报歧义、不靠声明序兜 ✗）；默认档**不报** ✗。
+#[test]
+fn asm_ambiguity_is_reported_when_opted_in() {
+    // 两条同助记符同操作数类的指令 ✗
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[instructions]]\nname = \"AMB1\"\nform = \"C\"\nopcode = 0x95\n\
+ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"amb {dst}, {cond}\"\n\
+[[instructions]]\nname = \"AMB2\"\nform = \"C\"\nopcode = 0x96\n\
+ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"amb {dst}, {cond}\"",
+    );
+    // 默认档：不报歧义 ✗
+    let off = super::codegen::lint_for_test(&doc, false);
+    assert!(
+        off.iter().all(|c| c != "LINT-ASM-AMBIG"),
+        "默认档不该报歧义：{off:?}"
+    );
+    // 可选档：报歧义 ✗
+    let on = super::codegen::lint_for_test(&doc, true);
+    assert!(
+        on.iter().any(|c| c == "LINT-ASM-AMBIG"),
+        "可选档应报歧义：{on:?}"
+    );
+}

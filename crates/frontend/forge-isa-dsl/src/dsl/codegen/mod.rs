@@ -1730,3 +1730,16 @@ fn bf_ranges(bf: &Bitfield) -> Vec<(u32, u32)> {
         Some(ps) => ps.iter().map(|p| (p.offset, p.offset + p.width)).collect(),
     }
 }
+
+
+/// **仅供单测**：跑一次 lint，回**结论码**（避开 `DiagLine` 的可见性 ✗）。
+#[cfg(test)]
+pub(crate) fn lint_for_test(source: &str, ambiguity: bool) -> Vec<String> {
+    let opts = crate::lint::LintOpts {
+        check_asm_ambiguity: ambiguity,
+        ..Default::default()
+    };
+    crate::lint::lint_source_opts(source, &opts)
+        .map(|r| r.findings.into_iter().map(|d| d.code).collect())
+        .unwrap_or_default()
+}

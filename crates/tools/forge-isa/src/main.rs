@@ -35,7 +35,7 @@ forge-isa — ISA-DSL 工具链（v18 S7b）
   forge-isa diff     <a.toml> <b.toml> [--json]
                                              两份谱的规格 diff（增/删/改字段）
   forge-isa test     <谱.toml> [--json]      跑谱里的自测（谱内向量 + 每条指令闭环用例）
-  forge-isa lint     <谱.toml>... [--json] [--ops <宿主 op 表.toml>] [--refs] [--bits] [--suggest]
+  forge-isa lint     <谱.toml>... [--json] [--ops <宿主 op 表.toml>] [--refs] [--bits] [--suggest] [--ambiguity]
                                              静态体检（未用的槽/form/位域、位域重叠…）；
                                              `--ops` 报能力缺口（终结/宿主管线/真缺口三类分开）、
                                              `--refs` 未引用的 ref、`--bits` 未指定位、`--suggest` 可合并的 vary 族
@@ -117,8 +117,12 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             let refs = has_flag(&rest, "--refs");
             let bits = has_flag(&rest, "--bits");
             let suggest = has_flag(&rest, "--suggest");
+    let ambiguity = has_flag(&rest, "--ambiguity");
             let json = has_flag(&rest, "--json");
-            let files = paths(&rest, &["--json", "--refs", "--bits", "--suggest"])?;
+            let files = paths(
+        &rest,
+        &["--json", "--refs", "--bits", "--suggest", "--ambiguity"],
+    )?;
             if files.is_empty() {
                 return Err("lint 需要一个或多个谱文件".into());
             }
@@ -129,6 +133,7 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 ops_path.as_deref(),
                 bits,
                 suggest,
+                ambiguity,
             ))
         }
         "test" => {
@@ -221,11 +226,13 @@ fn cmd_lint(
     ops_path: Option<&Path>,
     bits: bool,
     suggest: bool,
+    ambiguity: bool,
 ) -> ExitCode {
     let mut opts = forge_isa_dsl::lint::LintOpts {
         check_unused_refs: refs,
         check_unassigned_bits: bits,
         suggest_vary: suggest,
+        check_asm_ambiguity: ambiguity,
         ..Default::default()
     };
     if let Some(p) = ops_path {

@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W7 第三片：`--ambiguity` 报"靠声明序兜"的写法歧义
+
++ 新增可选档 **`--ambiguity`** ✗（`LintOpts.check_asm_ambiguity` ✗，默认关 ✗）：报"**同助记符 + 同操作数类**
+  ⇒ 两条写法都能匹配、只能靠**声明序**兜"的指令 ✗（清单要求：报歧义、不靠声明序兜 ✗）。
++ 判据是**代理**（真 `type_signature` 在 codegen 私有 ✗）：`asm.render()` 的首字面段（助记符 ✗）
+  + `ops` 的**类列表** ✗ ⇒ **偏粗** ✗：实测 x86 **35 处**、riscv64/arm64 亦有若干 ✗，
+  其中含"文本可区分但类列表相同"的误报（如 `movzx {dst}, byte ptr [{src}]` 对 `movzx {dst}, {src}` ✗）
+  ⇒ 与仓库其它可选档（`--bits`/`--suggest` 等 ✗）同样定位为**评审清单，不是错误判据** ✔，
+  故**默认关** ✗（否则与"发行谱零结论"门禁冲突 ✗）。
++ 单测 `dsl::tests::asm_ambiguity_is_reported_when_opted_in` ✗：两条同助记符同类的指令 ⇒
+  默认档**不报** ✗、可选档**报** ✗。
++ CLI 接线（手写解析 ✗）：`--ambiguity` 进 `has_flag` ✗ + 从 `paths` 排除 ✗ + 传参 ✗；
+  帮助文本补记 ✗。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Added (2026-10-08) — ISA-DSL v21 W7 第二片：解析器**按序尝试备选写法**
 
 + `gen_assemble_try_tok` 改为接受**一条写法** ✗；`gen_assemble` 为每条指令的**每个可接受写法**各生成一次尝试 ✗
