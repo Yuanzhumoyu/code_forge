@@ -572,7 +572,26 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     //   变长（x86 JMP_REL32 语义）→ label 槽 = 尾部 imm（REL4 fixup）。
     // 变体名按键派生，避免硬编码 Inst::JmpRel32/Inst::Jal/Inst::B。
     let jump_vn = crate::dsl::codegen::pascal_ident(&jump_inst);
-    let jump_body: TokenStream = if has_jal && jal_f.len() >= 2 {
+    // v21 W6：谱声明了 `[lower.Jmp]` 就用**谱面序列**（未声明则走下面的旧路径 ✗）。
+    let spec_jump_body: Option<TokenStream> = match model
+        .lower_terms
+        .as_ref()
+        .and_then(|m| m.get("Jmp"))
+    {
+        Some(tl) => Some({
+            let seq = gen_lowering_insts(&tl.insts, infos, &name_to_vn, None)?;
+            quote! {
+                let __target_block = target.index() as i64;
+                #(#seq)*
+                Ok(__pack)
+            }
+        }),
+        None => None,
+    };
+    let jump_body: TokenStream = if let Some(b) = spec_jump_body {
+        b
+    } else if has_jal && jal_f.len() >= 2 {
+
         quote! {
             __pack.push_inst(Inst::#jump_vn {
                 #jal_dest: Reg::from_index(0, __DEFAULT_GPR_CLASS),
@@ -612,7 +631,27 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         .find(|(n, _)| *n == "eq")
         .map(|(_, c)| c as u8)
         .unwrap_or(4);
-    let branch_body: TokenStream = if has_test && has_jcc && has_jmp {
+    // v21 W6：谱声明了 `[lower.Br]` 就用谱面序列（未声明则走旧路径 ✗）。
+    let spec_branch_body: Option<TokenStream> = match model
+        .lower_terms
+        .as_ref()
+        .and_then(|m| m.get("Br"))
+    {
+        Some(tl) => Some({
+            let seq = gen_lowering_insts(&tl.insts, infos, &name_to_vn, None)?;
+            quote! {
+                let __true_block = then_block.index() as i64;
+                let __false_block = else_block.index() as i64;
+                #(#seq)*
+                Ok(__pack)
+            }
+        }),
+        None => None,
+    };
+    let branch_body: TokenStream = if let Some(b) = spec_branch_body {
+        b
+    } else if has_test && has_jcc && has_jmp {
+
         quote! {
             let cond = value_to_xreg.get(cond_val).copied()
                 .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));

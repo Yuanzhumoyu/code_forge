@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6：终结层开始消费 `[lower.Br]`/`[lower.Jmp]`
+
++ 新增三个**块号符号值**（终结层专用 ✗）：`{true}` / `{false}` / `{target}` ⇒ 展开成生成代码里的
+  `__true_block` / `__false_block` / `__target_block`（值来自 `dfg.term_branch`/`term_jump` 的块号 ✗）。
++ `lower_terminator` 的 `Br`/`Jmp` 体现在**谱面优先** ✗：谱里声明了 `[lower.Br]`/`[lower.Jmp]` 就用
+  `gen_lowering_insts(&insts, …)` 生成的序列（自行定义那三个块号局部 ✗）；**未声明则完全走旧路径**
+  ⇒ 三谱行为与三矩阵计数**逐字节不变** ✔。
++ 踩坑：那个通用发射器在终结层里拿到的 `name_to_vn` 是**值**而非引用 ✗ ⇒ 要写 `&name_to_vn` ✔。
++ **尚未做**：`[lower.Ret]` 的接线（返回体还含"整数值→RAX / 浮点→XMM0"的搬移 ✗，比 Br/Jmp 复杂 ✗）、
+  谱面路径的**行为测试**（需要一个带 Jump/Branch 角色的夹具 ✗）、三谱写出这三节 ✗。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Added (2026-10-08) — ISA-DSL v21 W6：`[lower.<终结 op>]` 谱面落地（模型 + schema + 文档 + 解析测试）
 
 + 新增谱面 **`[lower.Br]` / `[lower.Jmp]` / `[lower.Ret]`**（各带 `insts = [...]`）：

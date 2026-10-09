@@ -644,6 +644,39 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             xreg: "0u32",
             ctor: Some(|_| quote! { __cc }),
         },
+        // v21 W6：终结层的**块号符号值**。`Br` 有 then/else 两个后继 ✗、`Jmp` 一个目标 ✗；
+        // 取值由终结 lowering 在生成代码里定义成 `__true_block`/`__false_block`/`__target_block`
+        // （`dfg.term_branch`/`term_jump` 的块号 ✗）。
+        Ph {
+            name: "{true}",
+            kind: PhKind::Cond,
+            loose: false,
+            token_kind: "label",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { __true_block }),
+        },
+        Ph {
+            name: "{false}",
+            kind: PhKind::Cond,
+            loose: false,
+            token_kind: "label",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { __false_block }),
+        },
+        Ph {
+            name: "{target}",
+            kind: PhKind::Cond,
+            loose: false,
+            token_kind: "label",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { __target_block }),
+        },
         // v21 W6：**条件取反**——IR 条件的逆（eq↔ne、slt↔sge…）在本 ISA 的编码。
         // 编码不是硬编码，而是从 `[enum.cond]` 反查（见 `lowering.rs` 的 `__cc_inv`）。
         Ph {
