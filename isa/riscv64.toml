@@ -135,26 +135,22 @@ ft11 = 31
 
 # ─────────────────────── 命名位域（一次声明）───────────────────────
 
-[[conventions.imm_fn]]
-name = "pcrel_hi"
-text = "%pcrel_hi({0})"
+[asm.immfn.pcrel_hi]
+texts = ["%pcrel_hi({0})"]
 expr = "({0} + 0x800) >> 12"
 
-[[conventions.imm_fn]]
-name = "pcrel_lo"
-text = "%pcrel_lo({0})"
+[asm.immfn.pcrel_lo]
+texts = ["%pcrel_lo({0})"]
 expr = "(({0} & 0xfff) ^ 0x800) - 0x800"
 
-[[conventions.imm_fn]]
-name = "hi"
-text = "%hi({0})"
+[asm.immfn.hi]
+texts = ["%hi({0})"]
 expr = "({0} + 0x800) >> 12"
 
-[[conventions.imm_fn]]
-name = "lo"
+[asm.immfn.lo]
 # 低 12 位**按有符号读数**（0x800..0xfff → 负）：`%lo(2048)` 与 `-2048` 是同一批位，
 # 也就落在 imm12 的有符号值域里（`jalr a0, %lo(2048)(a1)` == `jalr a0, -2048(a1)`）。
-text = "%lo({0})"
+texts = ["%lo({0})"]
 expr = "(({0} & 0xfff) ^ 0x800) - 0x800"
 
 # 命名位集合表（`kind = "bits"`）：RISC-V fence 的 pred/succ 是 i/o/r/w 的组合，

@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W7 第十五片：55 条 `imm_fn` 搬进 `[asm.immfn.<名>]`
+
++ 三谱与夹具的 `[[conventions.imm_fn]]` **全部搬迁**：arm64 **49** + riscv64 **4** + 夹具
+  `crates/backend/forge-codegen/tests/isa/demo.toml` **2** = **55 条**，改成 `[asm.immfn.<名>]`
+  （**表头即修饰名**、体内 `texts`/`expr`；单写法也写成单元素 `texts`，与设计案 L743 一致）。
++ 全仓残留 **0** 条；三谱 `validate` 通过；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制
+  （两面对等期间生成物逐字节不变）。
++ 本片**只改数据**，不动生成器；旧面 `[[conventions.imm_fn]]` 仍被接受，**撤旧键**留下一片
+  （模型 `Conventions.imm_fn` 标 `skip` + `INTERNAL_FIELDS` + schema/文档去 Section/行 + 测试夹具迁移）。
+
 ### Added (2026-10-08) — ISA-DSL v21 W7 第十四片：`[asm.immfn.<名>]` 新居（表头即修饰名）
 
 + 新增 `[asm.immfn.<名>]`（按设计案 §6.9 与迁移表 L743）：**表头就是修饰名**，体内键 = `texts` / `expr`

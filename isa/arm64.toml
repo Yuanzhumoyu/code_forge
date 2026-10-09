@@ -107,248 +107,199 @@ sxtx = 7
 # （不按操作数失败回退），形状相同就会互相遮蔽（实测：加了重定位变体后
 # `add W0, W1, #0` 反而装配不出来）。一张表覆盖带 `#` 与不带 `#` 两种写法。
 # 名字清单 = A64 的重定位修饰集合（语料普查 47 个名字）。
-[[conventions.imm_fn]]
-name = "abs_g0"
+[asm.immfn.abs_g0]
 texts = ["#:abs_g0:{0}", ":abs_g0:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "abs_g0_nc"
+[asm.immfn.abs_g0_nc]
 texts = ["#:abs_g0_nc:{0}", ":abs_g0_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "abs_g0_s"
+[asm.immfn.abs_g0_s]
 texts = ["#:abs_g0_s:{0}", ":abs_g0_s:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "abs_g1"
+[asm.immfn.abs_g1]
 texts = ["#:abs_g1:{0}", ":abs_g1:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "abs_g1_nc"
+[asm.immfn.abs_g1_nc]
 texts = ["#:abs_g1_nc:{0}", ":abs_g1_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "abs_g1_s"
+[asm.immfn.abs_g1_s]
 texts = ["#:abs_g1_s:{0}", ":abs_g1_s:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "abs_g2"
+[asm.immfn.abs_g2]
 texts = ["#:abs_g2:{0}", ":abs_g2:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "abs_g2_nc"
+[asm.immfn.abs_g2_nc]
 texts = ["#:abs_g2_nc:{0}", ":abs_g2_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "abs_g2_s"
+[asm.immfn.abs_g2_s]
 texts = ["#:abs_g2_s:{0}", ":abs_g2_s:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "abs_g3"
+[asm.immfn.abs_g3]
 texts = ["#:abs_g3:{0}", ":abs_g3:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "prel_g0"
+[asm.immfn.prel_g0]
 texts = ["#:prel_g0:{0}", ":prel_g0:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "prel_g0_nc"
+[asm.immfn.prel_g0_nc]
 texts = ["#:prel_g0_nc:{0}", ":prel_g0_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "prel_g1"
+[asm.immfn.prel_g1]
 texts = ["#:prel_g1:{0}", ":prel_g1:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "prel_g1_nc"
+[asm.immfn.prel_g1_nc]
 texts = ["#:prel_g1_nc:{0}", ":prel_g1_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "prel_g2"
+[asm.immfn.prel_g2]
 texts = ["#:prel_g2:{0}", ":prel_g2:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "prel_g2_nc"
+[asm.immfn.prel_g2_nc]
 texts = ["#:prel_g2_nc:{0}", ":prel_g2_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "prel_g3"
+[asm.immfn.prel_g3]
 texts = ["#:prel_g3:{0}", ":prel_g3:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "pg_hi21_nc"
+[asm.immfn.pg_hi21_nc]
 texts = ["#:pg_hi21_nc:{0}", ":pg_hi21_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "got"
+[asm.immfn.got]
 texts = ["#:got:{0}", ":got:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "got_lo12"
+[asm.immfn.got_lo12]
 texts = ["#:got_lo12:{0}", ":got_lo12:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "gotpage_lo15"
+[asm.immfn.gotpage_lo15]
 texts = ["#:gotpage_lo15:{0}", ":gotpage_lo15:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "gottprel"
+[asm.immfn.gottprel]
 texts = ["#:gottprel:{0}", ":gottprel:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "gottprel_g0_nc"
+[asm.immfn.gottprel_g0_nc]
 texts = ["#:gottprel_g0_nc:{0}", ":gottprel_g0_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "gottprel_g1"
+[asm.immfn.gottprel_g1]
 texts = ["#:gottprel_g1:{0}", ":gottprel_g1:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "gottprel_lo12"
+[asm.immfn.gottprel_lo12]
 texts = ["#:gottprel_lo12:{0}", ":gottprel_lo12:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "tlsdesc"
+[asm.immfn.tlsdesc]
 texts = ["#:tlsdesc:{0}", ":tlsdesc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "tlsdesc_lo12"
+[asm.immfn.tlsdesc_lo12]
 texts = ["#:tlsdesc_lo12:{0}", ":tlsdesc_lo12:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "tprel_g0"
+[asm.immfn.tprel_g0]
 texts = ["#:tprel_g0:{0}", ":tprel_g0:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "tprel_g0_nc"
+[asm.immfn.tprel_g0_nc]
 texts = ["#:tprel_g0_nc:{0}", ":tprel_g0_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "tprel_g1"
+[asm.immfn.tprel_g1]
 texts = ["#:tprel_g1:{0}", ":tprel_g1:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "tprel_g1_nc"
+[asm.immfn.tprel_g1_nc]
 texts = ["#:tprel_g1_nc:{0}", ":tprel_g1_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "tprel_g2"
+[asm.immfn.tprel_g2]
 texts = ["#:tprel_g2:{0}", ":tprel_g2:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "tprel_g2_nc"
+[asm.immfn.tprel_g2_nc]
 texts = ["#:tprel_g2_nc:{0}", ":tprel_g2_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "tprel_g3"
+[asm.immfn.tprel_g3]
 texts = ["#:tprel_g3:{0}", ":tprel_g3:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "tprel_hi12"
+[asm.immfn.tprel_hi12]
 texts = ["#:tprel_hi12:{0}", ":tprel_hi12:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "tprel_lo12"
+[asm.immfn.tprel_lo12]
 texts = ["#:tprel_lo12:{0}", ":tprel_lo12:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "tprel_lo12_nc"
+[asm.immfn.tprel_lo12_nc]
 texts = ["#:tprel_lo12_nc:{0}", ":tprel_lo12_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "dtprel_g0"
+[asm.immfn.dtprel_g0]
 texts = ["#:dtprel_g0:{0}", ":dtprel_g0:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "dtprel_g0_nc"
+[asm.immfn.dtprel_g0_nc]
 texts = ["#:dtprel_g0_nc:{0}", ":dtprel_g0_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "dtprel_g1"
+[asm.immfn.dtprel_g1]
 texts = ["#:dtprel_g1:{0}", ":dtprel_g1:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "dtprel_g1_nc"
+[asm.immfn.dtprel_g1_nc]
 texts = ["#:dtprel_g1_nc:{0}", ":dtprel_g1_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "dtprel_g2"
+[asm.immfn.dtprel_g2]
 texts = ["#:dtprel_g2:{0}", ":dtprel_g2:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "dtprel_g2_nc"
+[asm.immfn.dtprel_g2_nc]
 texts = ["#:dtprel_g2_nc:{0}", ":dtprel_g2_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "dtprel_hi12"
+[asm.immfn.dtprel_hi12]
 texts = ["#:dtprel_hi12:{0}", ":dtprel_hi12:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "dtprel_lo12"
+[asm.immfn.dtprel_lo12]
 texts = ["#:dtprel_lo12:{0}", ":dtprel_lo12:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "dtprel_lo12_nc"
+[asm.immfn.dtprel_lo12_nc]
 texts = ["#:dtprel_lo12_nc:{0}", ":dtprel_lo12_nc:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "secrel_hi12"
+[asm.immfn.secrel_hi12]
 texts = ["#:secrel_hi12:{0}", ":secrel_hi12:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "secrel_lo12"
+[asm.immfn.secrel_lo12]
 texts = ["#:secrel_lo12:{0}", ":secrel_lo12:{0}"]
 expr = "{0}"
 
-[[conventions.imm_fn]]
-name = "lo12"
+[asm.immfn.lo12]
 texts = ["#:lo12:{0}", ":lo12:{0}"]
 expr = "{0}"
 
