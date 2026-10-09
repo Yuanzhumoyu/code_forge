@@ -239,6 +239,26 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     let has_jmp = inst_exists(infos, &jump_inst);
     let has_jcc = inst_exists(infos, &branch_inst);
     let has_test = inst_exists(infos, &test_inst);
+    // v21 W6：**终结序列已谱面化** ⇒ 有角色却没声明 `[lower.Jmp]`/`[lower.Br]` 就是谱的缺陷 ✗，
+    // 生成期直接报错（不再静默走"按字段个数猜 ISA"的旧路径 ✗）。
+    let declares = |op: &str| {
+        model
+            .lower_terms
+            .as_ref()
+            .is_some_and(|m| m.contains_key(op))
+    };
+    if has_jmp && !declares("Jmp") {
+        return Err(format!(
+            "谱声明了 `roles = [\"jump\"]` 的指令 `{jump_inst}`，但缺 `[lower.Jmp]` \
+             （v21 W6：终结序列已谱面化，见 docs/reference/isa-dsl.md ✗）"
+        ));
+    }
+    if has_jcc && !declares("Br") {
+        return Err(format!(
+            "谱声明了 `roles = [\"branch\"]` 的指令 `{branch_inst}`，但缺 `[lower.Br]` \
+             （v21 W6：终结序列已谱面化，见 docs/reference/isa-dsl.md ✗）"
+        ));
+    }
     // 定宽跳转（JAL 语义）：jump_inst 指令存在即启用（非按 ISA 形态猜——
     // demo 等无跳转指令的定宽 ISA 自然降级，不生成不存在的变体引用）。
     let has_jal = has_jmp && !model.is_prefix_scan();

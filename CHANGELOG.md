@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6：终结序列**唯一来源 = 谱面**（旧猜测路径 fail-closed）
+
++ 生成期新增检查：谱若声明了 `roles = ["jump"]` / `roles = ["branch"]` 的指令 ✗，就**必须**给出
+  `[lower.Jmp]` / `[lower.Br]` ✗ —— 否则**生成期直接报错**（报错点名缺哪一节、为什么 ✗）。
++ 意义：`lowering.rs` 里"按字段个数猜 ISA"的旧回落（`jal_f.len() >= 2`、`beq_f.len() >= 3`、
+  `test_f.len() == 2`、`jcc_f.len() == 2` 与 `eq_code` ✗）从此**不可达** ✗ —— 它不再是"静默兜底"✗，
+  而是被谱面契约取代 ✔。
++ 验证：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制 ⇒ 证明**没有任何夹具依赖旧路径** ✗
+  （三谱都声明了这两节 ✗，其余夹具没有终结角色 ✗）。
++ 后续（同一目标内 ✗）：删掉已成死代码的回落分支本身 ✗、`[lower.Ret]` 的谱面表达 ✗、
+  以及 `frame.rs:172-208` 的同类猜测 ✗。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6：riscv64/arm64 落地 `[lower.Br]`（三谱分支全部谱面化）
 
 + riscv64：`insts = ["BEQ {cond}, X0, {false}", "JAL X0, {true}"]` ✗（条件形态是 `beq cond,x0` ✗，
