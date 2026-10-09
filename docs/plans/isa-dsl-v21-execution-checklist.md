@@ -654,6 +654,25 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
   内部字段名 `reference` 保留；**族名即多态引用名**语义不变。
   教训：① 批量改名要覆盖**行首**与**转义串里的 `\nref`**（`\bref` 在 `n` 后无词边界）；
   ② 三方针（模型/schema/文档）里 **schema 的 doc 文案**也算比对内容——改名要连它一起改。
+- [x] **前置侦察（2026-10-08）**：`family` 在代码里**根本不存在**（全仓 0 处）；`vary` 目前只挂在
+  `[[lowering]]` 上（`model.rs::expand_vary`）。⇒ 第 ② 步的前置是**先把 `family` 造出来**，
+  否则"两处共用 zip 语义"无对象可共用。
+  **设计既定形态**（`docs/plans/isa-dsl-v21-redesign-plan.md` §6.6 / 迁移总表 L190）：
+  `family` = `[[templates]]` + 族名（= 多态引用名）的**唯一复用机制**，形状 = body + rows + vary：
+
+  ```toml
+  [family.rev]                # 族名同时是"多态引用名"（即今天指令上的 group）
+  form = "vec2r"
+  asm = "rev{bits}.{arr} {dst}, {src}"
+  [[family.rev.rows]]
+  inst = "REV164H"
+  bits = 16
+  arr = "4h"
+  ```
+
+  ⇒ 实施顺序应是：**`family` 构造（body + rows + vary）→ 迁移三谱的 `[[templates]]` 到 `family`
+  （顺带让族名= group 生效）→ 再谈 `family.vary` 与 `[lower.*].vary` 共用一套 zip 语义**。
+  前置量化：三谱 `[[templates]]` 数量与行数（下一轮先量，再动）。
 - [ ] `family.vary` 与 `[lower.*].vary` 共用一套 zip 语义（一处实现）。
 - [ ] 重载解析：按声明类型（字段类型）选行；歧义 → 生成期报错并列候选；无候选 → 生成物 `Unsupported`。
 - [ ] 先做机械合并：x86 的 122 条同签名块、riscv 的 28 组候选、arm64 的 REV/abs-neg 族。
