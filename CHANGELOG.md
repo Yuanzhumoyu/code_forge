@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：x86 `Load` 的 `rd` 对折叠（累计 37/52）
+
++ 给 `MOVZX_R8_MEM`/`MOVZX_R16_MEM` 补 `group = "load_rd"` + `word_size`（`rd` 用**位**：8/16），
+  把两条 `when = { eq = ["rd", N] }` 折成一条 `dispatch = "rd"` 的宽度无关规则
+  ⇒ x86 `[[lowering]]` 块数 **175 → 174**。
++ 第 (4) 项累计删除 **37 / 52** 条（riscv64 24 + x86 7 + arm64 6）。棘轮随动；
+  `validate` + `lint` 干净；JIT 58/0；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：arm64 宽度分派清 6 条（累计 36/52）
 
 + 给 `[family.ADDREG]`/`SUBREG`/`MUL`/`ANDREG`/`ORRREG`/`EORREG` 的 12 条 rows 补 `word_size`

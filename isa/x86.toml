@@ -886,6 +886,8 @@ rows = [
 # `0F B6/B7/BE/BF` 的宽度语义。
 [[instructions]]
 name = "MOVZX_R8_MEM"
+group = "load_rd"
+word_size = 8
 # `[reg]` 简写：源宽度由**操作码**（B6 = byte）+ 模板里的尺寸关键字表达，目的宽度由
 # 寄存器驱动（`opsize = "s0"`；这里目的恒为 64 位 ⇒ 发 REX.W）。旧写法把
 # `prefix`/`rex_w` 写成固定值：R8 那条（prefix=0、w=1）恰好对，**R16 那条写死 `66`
@@ -900,6 +902,8 @@ asm = "movzx {dst}, byte ptr [{src}]"
 
 [[instructions]]
 name = "MOVZX_R16_MEM"
+group = "load_rd"
+word_size = 16
 segments = [  { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
 bind = { rm = "[src]" }
 opcode = 0xB7
@@ -3044,13 +3048,8 @@ insts = ["xor {out}, {out}", "cmp {1}, {0}", "SETCC_RM8 {out}, {cc}"]
 
 [[lowering]]
 op = "Load"
-when = { eq = ["rd", 8] }
+dispatch = "rd"
 insts = ["MOVZX_R8_MEM {out}, [{0}]"]
-
-[[lowering]]
-op = "Load"
-when = { eq = ["rd", 16] }
-insts = ["MOVZX_R16_MEM {out}, [{0}]"]
 
 # 向量（Direct 值）内存 load——WA-37 D3 全宽往返 + W3 宽向量：
 # V128（16B）→ movups（0F 10 无前缀，16 字节非对齐）；V64（8B）
