@@ -380,6 +380,9 @@ pub struct IsaModel {
     /// 会被未知键守卫拒绝（`serde(skip)`）。
     #[serde(default, skip)]
     pub templates: Vec<Template>,
+    /// 终结指令 lowering（v21 W6，`[lower.Br]`/`[lower.Jmp]`/`[lower.Ret]`）。
+    #[serde(default, rename = "lower")]
+    pub lower_terms: Option<BTreeMap<String, TermLowering>>,
 
     /// 重定位表（`[[reloc]]`，v18 S3d）：指令用 `reloc = "<name>"` 引用。
     #[serde(default)]
@@ -2967,6 +2970,22 @@ pub struct OperandUse {
     /// 角色覆盖（缺省 "in"）。
     #[serde(default)]
     pub role: Option<OperandRole>,
+}
+
+// ──────────────────── [lower.<终结 op>] ────────────────────
+
+/// **终结指令的 lowering 序列**（v21 W6）：`[lower.Br]` / `[lower.Jmp]` / `[lower.Ret]`。
+///
+/// 与 `[[lowering]]` 分家的原因（实测 ✗）：分支的 `then`/`else` 块号只有终结层拿得到
+/// （`dfg.term_branch(block)` ✗），per-op 的规则路径没有这个上下文 ⇒ 分支/跳转/返回
+/// 的序列写在终结层谱面里，由终结 lowering 消费。
+///
+/// `insts` 里的符号值除了既有占位符外，还可用 `{true}` / `{false}`（Br 的两个后继块号 ✗）
+/// 与 `{target}`（Jmp 的目标块号 ✗）。
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TermLowering {
+    /// 指令序列（与 `[[lowering]].insts` 同一套占位符/替换语义）。
+    pub insts: Vec<String>,
 }
 
 // ──────────────────────── [[templates]] ────────────────────────

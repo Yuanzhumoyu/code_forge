@@ -65,6 +65,7 @@ pub const SECTIONS: &[Section] = &[
             "forms",
             "instructions",
             "family",
+            "lower",
                         "reloc",
             "derive",
             "pseudo",
@@ -299,6 +300,15 @@ pub const SECTIONS: &[Section] = &[
         flatten: &[],
         additional: false,
         doc: "汇编器伪指令：文本级多指令展开（v18 S3e）；name 只是唯一标识，分派按 asm 的前导字面，`{名字}` 就是 emit 用的参数",
+    },
+    Section {
+        path: "[lower.<终结 op>]",
+        model: "TermLowering",
+        required: &["insts"],
+        optional: &[],
+        flatten: &[],
+        additional: false,
+        doc: "终结指令的 lowering 序列（Br/Jmp/Ret ✗）：可用 {true}/{false}/{target} 符号值",
     },
     Section {
         path: "[[lowering]]",

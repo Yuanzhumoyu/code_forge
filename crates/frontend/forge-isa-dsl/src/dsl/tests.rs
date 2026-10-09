@@ -4562,3 +4562,23 @@ fn cc_inv_uses_inverse_condition_code() {
         "只用 {{cc_inv}} 时不该发射 __cc：{s}"
     );
 }
+
+
+/// v21 W6：`[lower.Br]`/`[lower.Jmp]`/`[lower.Ret]` 能被解析并进模型（可带 `{true}`/`{false}`/
+/// `{target}` 符号值 ✗）。本片只验"谱面可用"；codegen 接线在下一片。
+#[test]
+fn lower_terminator_section_parses() {
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[lower.Br]\ninsts = [\"test {0}, {0}\", \"jcc {cc_inv}, {false}\", \"jmp {true}\"]\n\
+[lower.Jmp]\ninsts = [\"jmp {target}\"]\n\
+[lower.Ret]\ninsts = [\"ret\"]",
+    );
+    let m = super::parse_and_validate(&doc).expect("谱合法");
+    let lower = m.lower_terms.as_ref().expect("lower 节应进模型");
+    assert_eq!(lower.len(), 3, "三个终结 op 都该在：{lower:?}");
+    assert_eq!(lower["Br"].insts.len(), 3);
+    assert!(lower["Br"].insts[1].contains("{cc_inv}"));
+    assert!(lower["Jmp"].insts[0].contains("{target}"));
+    assert_eq!(lower["Ret"].insts, vec!["ret".to_string()]);
+}

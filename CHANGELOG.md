@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W6：`[lower.<终结 op>]` 谱面落地（模型 + schema + 文档 + 解析测试）
+
++ 新增谱面 **`[lower.Br]` / `[lower.Jmp]` / `[lower.Ret]`**（各带 `insts = [...]`）：
+  分支/跳转/返回的序列从编译器搬进谱 ✔。
++ **为什么与 `[[lowering]]` 分家**（本轮勘明 ✗）：`then`/`else` 块号只有终结层拿得到
+  （`dfg.term_branch(block)` ✗），per-op 的规则路径**没有这个上下文** ✗ ⇒ 终结序列必须由
+  `lower_terminator` 消费 ✗，故独立成节 ✔。
++ 该谱面可用既有占位符，并预留 W6 的三个新符号值 **`{true}` / `{false}`（Br 两个后继块号 ✗）
+  与 `{target}`（Jmp 目标块号 ✗）**——本片只落地"能被解析并进模型"（含解析测试 ✗），
+  codegen 接线留下一片（保持三矩阵不变 ✗）。
++ 三方针同步：`model.rs` + `schema.rs` + 文档生成表（**整段粘贴** ✗）+ `isa-dsl.schema.json` 重生成；
+  `schema_guard` **9 passed / 0 failed**。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6：`Br` 的条件码从硬编码 `4u8` 改为数据驱动
 
 + `test`+`jcc` 那条分支体里"条件不成立就跳 false"原先**硬编码 `4u8`**（= x86 的 `je`）✗ ——
