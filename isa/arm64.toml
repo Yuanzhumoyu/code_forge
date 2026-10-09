@@ -199,312 +199,157 @@ expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "got"
-text = "#:got:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "got_n"
-text = ":got:{0}"
+texts = ["#:got:{0}", ":got:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "got_lo12"
-text = "#:got_lo12:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "got_lo12_n"
-text = ":got_lo12:{0}"
+texts = ["#:got_lo12:{0}", ":got_lo12:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "gotpage_lo15"
-text = "#:gotpage_lo15:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "gotpage_lo15_n"
-text = ":gotpage_lo15:{0}"
+texts = ["#:gotpage_lo15:{0}", ":gotpage_lo15:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "gottprel"
-text = "#:gottprel:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "gottprel_n"
-text = ":gottprel:{0}"
+texts = ["#:gottprel:{0}", ":gottprel:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "gottprel_g0_nc"
-text = "#:gottprel_g0_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "gottprel_g0_nc_n"
-text = ":gottprel_g0_nc:{0}"
+texts = ["#:gottprel_g0_nc:{0}", ":gottprel_g0_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "gottprel_g1"
-text = "#:gottprel_g1:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "gottprel_g1_n"
-text = ":gottprel_g1:{0}"
+texts = ["#:gottprel_g1:{0}", ":gottprel_g1:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "gottprel_lo12"
-text = "#:gottprel_lo12:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "gottprel_lo12_n"
-text = ":gottprel_lo12:{0}"
+texts = ["#:gottprel_lo12:{0}", ":gottprel_lo12:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "tlsdesc"
-text = "#:tlsdesc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "tlsdesc_n"
-text = ":tlsdesc:{0}"
+texts = ["#:tlsdesc:{0}", ":tlsdesc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "tlsdesc_lo12"
-text = "#:tlsdesc_lo12:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "tlsdesc_lo12_n"
-text = ":tlsdesc_lo12:{0}"
+texts = ["#:tlsdesc_lo12:{0}", ":tlsdesc_lo12:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "tprel_g0"
-text = "#:tprel_g0:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "tprel_g0_n"
-text = ":tprel_g0:{0}"
+texts = ["#:tprel_g0:{0}", ":tprel_g0:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "tprel_g0_nc"
-text = "#:tprel_g0_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "tprel_g0_nc_n"
-text = ":tprel_g0_nc:{0}"
+texts = ["#:tprel_g0_nc:{0}", ":tprel_g0_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "tprel_g1"
-text = "#:tprel_g1:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "tprel_g1_n"
-text = ":tprel_g1:{0}"
+texts = ["#:tprel_g1:{0}", ":tprel_g1:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "tprel_g1_nc"
-text = "#:tprel_g1_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "tprel_g1_nc_n"
-text = ":tprel_g1_nc:{0}"
+texts = ["#:tprel_g1_nc:{0}", ":tprel_g1_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "tprel_g2"
-text = "#:tprel_g2:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "tprel_g2_n"
-text = ":tprel_g2:{0}"
+texts = ["#:tprel_g2:{0}", ":tprel_g2:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "tprel_g2_nc"
-text = "#:tprel_g2_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "tprel_g2_nc_n"
-text = ":tprel_g2_nc:{0}"
+texts = ["#:tprel_g2_nc:{0}", ":tprel_g2_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "tprel_g3"
-text = "#:tprel_g3:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "tprel_g3_n"
-text = ":tprel_g3:{0}"
+texts = ["#:tprel_g3:{0}", ":tprel_g3:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "tprel_hi12"
-text = "#:tprel_hi12:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "tprel_hi12_n"
-text = ":tprel_hi12:{0}"
+texts = ["#:tprel_hi12:{0}", ":tprel_hi12:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "tprel_lo12"
-text = "#:tprel_lo12:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "tprel_lo12_n"
-text = ":tprel_lo12:{0}"
+texts = ["#:tprel_lo12:{0}", ":tprel_lo12:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "tprel_lo12_nc"
-text = "#:tprel_lo12_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "tprel_lo12_nc_n"
-text = ":tprel_lo12_nc:{0}"
+texts = ["#:tprel_lo12_nc:{0}", ":tprel_lo12_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "dtprel_g0"
-text = "#:dtprel_g0:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "dtprel_g0_n"
-text = ":dtprel_g0:{0}"
+texts = ["#:dtprel_g0:{0}", ":dtprel_g0:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "dtprel_g0_nc"
-text = "#:dtprel_g0_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "dtprel_g0_nc_n"
-text = ":dtprel_g0_nc:{0}"
+texts = ["#:dtprel_g0_nc:{0}", ":dtprel_g0_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "dtprel_g1"
-text = "#:dtprel_g1:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "dtprel_g1_n"
-text = ":dtprel_g1:{0}"
+texts = ["#:dtprel_g1:{0}", ":dtprel_g1:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "dtprel_g1_nc"
-text = "#:dtprel_g1_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "dtprel_g1_nc_n"
-text = ":dtprel_g1_nc:{0}"
+texts = ["#:dtprel_g1_nc:{0}", ":dtprel_g1_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "dtprel_g2"
-text = "#:dtprel_g2:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "dtprel_g2_n"
-text = ":dtprel_g2:{0}"
+texts = ["#:dtprel_g2:{0}", ":dtprel_g2:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "dtprel_g2_nc"
-text = "#:dtprel_g2_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "dtprel_g2_nc_n"
-text = ":dtprel_g2_nc:{0}"
+texts = ["#:dtprel_g2_nc:{0}", ":dtprel_g2_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "dtprel_hi12"
-text = "#:dtprel_hi12:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "dtprel_hi12_n"
-text = ":dtprel_hi12:{0}"
+texts = ["#:dtprel_hi12:{0}", ":dtprel_hi12:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "dtprel_lo12"
-text = "#:dtprel_lo12:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "dtprel_lo12_n"
-text = ":dtprel_lo12:{0}"
+texts = ["#:dtprel_lo12:{0}", ":dtprel_lo12:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "dtprel_lo12_nc"
-text = "#:dtprel_lo12_nc:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "dtprel_lo12_nc_n"
-text = ":dtprel_lo12_nc:{0}"
+texts = ["#:dtprel_lo12_nc:{0}", ":dtprel_lo12_nc:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "secrel_hi12"
-text = "#:secrel_hi12:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "secrel_hi12_n"
-text = ":secrel_hi12:{0}"
+texts = ["#:secrel_hi12:{0}", ":secrel_hi12:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "secrel_lo12"
-text = "#:secrel_lo12:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "secrel_lo12_n"
-text = ":secrel_lo12:{0}"
+texts = ["#:secrel_lo12:{0}", ":secrel_lo12:{0}"]
 expr = "{0}"
 
 [[conventions.imm_fn]]
 name = "lo12"
-text = "#:lo12:{0}"
-expr = "{0}"
-
-[[conventions.imm_fn]]
-name = "lo12_n"
-text = ":lo12:{0}"
+texts = ["#:lo12:{0}", ":lo12:{0}"]
 expr = "{0}"
 
 [enum.cond]

@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W7 第十一片：arm64 `imm_fn` 折叠**完成**（98 → 49 ✗）
+
++ 承接第十片 ✗：剩余 31 对全部折叠 ✗ ⇒ arm64 `[[conventions.imm_fn]]` **98 → 49** ✗
+  （`texts` 49 条 ✗、残留单写法 `text` **0** 条 ✗），`validate` 通过 ✔、整仓 `-j 2` exit 0 ✔。
++ 清单 §9 的"arm64 98 个 `imm_fn` → 约 49 个名字"**达成** ✔。等价性依据同前 ✗：98 条 `expr` 全为
+  恒等 `"{0}"` ✗、两种拼写首 token 不同（`#` vs `:`）⇒ 不互相遮蔽 ✗、与尝试顺序无关 ✔；
+  另有 arm64 的 `[[vectors]]` 89 条 + 生成期自测 + 汇编三档棘轮兜底 ✔。
++ 本片只改**数据**✗（`isa/arm64.toml` ✗），未动生成器 ✗。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W7 第十片：arm64 `imm_fn` 多拼写折叠（进行中 ✗）
 
 + 用新 `texts` 把 arm64 **成对**的 `imm_fn` 折叠 ✗：`abs_g0`（`#:abs_g0:{0}` ✗）与 `abs_g0_n`
