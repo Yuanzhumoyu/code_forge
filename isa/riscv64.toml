@@ -3526,3 +3526,7 @@ bytes = [0x67, 0x01, 0x00, 0x10]
 # v21 W6：终结层谱面——跳转序列。
 [lower.Jmp]
 insts = ["JAL X0, {target}"]
+
+# v21 W6：终结层谱面——条件分支（riscv 用 beq cond,x0,false 再 jal x0,true）。
+[lower.Br]
+insts = ["BEQ {cond}, X0, {false}", "JAL X0, {true}"]

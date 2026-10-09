@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6：riscv64/arm64 落地 `[lower.Br]`（三谱分支全部谱面化）
+
++ riscv64：`insts = ["BEQ {cond}, X0, {false}", "JAL X0, {true}"]` ✗（条件形态是 `beq cond,x0` ✗，
+  条件码**不参与** ✗）；arm64：`insts = ["CBZX {cond}, {false}", "B {true}"]` ✗（用 `cbz` ✗）。
++ 至此 **`[lower.Jmp]` + `[lower.Br]` 三谱全部落地且与旧硬编码等价** ✗：
+  整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（riscv64 JIT 矩阵 + x86 JIT 矩阵 + 汇编三档 +
+  三矩阵计数全不变 ✗）。
++ 踩坑：三谱的 `branch` 角色是写在**族行内联表**里的 ✗（`{ inst = "BEQ", …, roles = ["branch"] }` ✗），
+  按行找 `name =` 会落空 ✗；另外用 PowerShell 拼接含 `{}` 的**注释**会把内容吃掉 ✗
+  （arm64/riscv64 各因此红一次 ✗，改成纯文本注释后通过 ✔）。
++ 仍关着：`[lower.Ret]`（返回搬移的谱面表达未落地 ✗）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6：`{cond}` 符号值 + x86 落地 `[lower.Br]`（谱面 ≡ 硬编码）
 
 + 新增终结层符号值 **`{cond}`**（`[lower.Br]` 的条件寄存器 ✗）：与 `{g}` 同形（字段先填 0 ✗、

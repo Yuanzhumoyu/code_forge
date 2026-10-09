@@ -5803,3 +5803,7 @@ bytes = [0x00, 0x00, 0x00, 0xB0]
 # v21 W6：终结层谱面——跳转序列。
 [lower.Jmp]
 insts = ["B {target}"]
+
+# v21 W6：终结层谱面——条件分支（arm64 用 cbz cond,false 再 b，条件码不参与）。
+[lower.Br]
+insts = ["CBZX {cond}, {false}", "B {true}"]
