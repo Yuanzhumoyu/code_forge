@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：riscv64 再删 2 组（`Fcmp` cond 1/2 的 `FEQ_S/D` 对）
+
++ 折叠判据放宽一档：除"单一差异段/纯插入"外，新增**同长度 + 各处差异都是孤立的 1 字符替换**
+  （≤4 处）的判定 —— 用于同一侧出现**多次**的 `_S`/`_D`（如 `"FEQ_D {g}, {0}, {0}", "FEQ_D {g2}, {1}, {1}"`）。
+  同时把 `[",\[\]{}]` 单 token 守卫**限定在单段路径**（多次替换时 `$ra/$rb` 会跨 `", "`，此前被误拒）。
++ `riscv64.toml` 的 `[[lowering]]` 块数 **98 → 96**（本轮累计 118 → 96，删掉 **22** 条宽度分派）。
++ `validate` + `lint` 干净；JIT 矩阵 58 passed / 0 failed；整仓 `-j 2` → exit 0、0 编译错误、0 失败。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：riscv64 宽度分派再删 2 组（`Store`/`Fstore`）
 
 + 给 `SW/SD/FSW/FSD`（`[[instructions]]` 形态）补 `group` + `word_size`，严格折叠 2 对

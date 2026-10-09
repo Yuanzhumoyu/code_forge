@@ -2305,29 +2305,14 @@ insts = ["FLE_S {out}, {1}, {0}"]
 
 [[lowering]]
 op = "Fcmp"
-when = { and = [ { eq = ["cond", 1] }, { eq = ["rs1_width", 64] } ] }
-insts = ["FEQ_D {g}, {0}, {0}", "FEQ_D {g2}, {1}, {1}", "AND {out}, {g}, {g2}"]
-
-[[lowering]]
-op = "Fcmp"
-when = { and = [ { eq = ["cond", 1] }, { eq = ["rs1_width", 32] } ] }
+when = { eq = ["cond", 1] }
 insts = ["FEQ_S {g}, {0}, {0}", "FEQ_S {g2}, {1}, {1}", "AND {out}, {g}, {g2}"]
 
 [[lowering]]
 op = "Fcmp"
-when = { and = [ { eq = ["cond", 2] }, { eq = ["rs1_width", 64] } ] }
-insts = ["FEQ_D {g}, {0}, {0}", "FEQ_D {g2}, {1}, {1}", "AND {g}, {g}, {g2}", "XORI {out}, {g}, 1"]
-
-[[lowering]]
-op = "Fcmp"
-when = { and = [ { eq = ["cond", 2] }, { eq = ["rs1_width", 32] } ] }
+when = { eq = ["cond", 2] }
 insts = ["FEQ_S {g}, {0}, {0}", "FEQ_S {g2}, {1}, {1}", "AND {g}, {g}, {g2}", "XORI {out}, {g}, 1"]
 
-# ── 浮点算术（v20 V6+ 补，2026-10-01）──
-# 此前 riscv 谱只有浮点的比较/转换/搬移，没有算术 ⇒ 矩阵里所有浮点算术用例都因
-# "缺 Fadd 能力"整条跳过（`MATRIX-SKIP … (capability)`）。补上浮点寄存器搬移的 `data_width`（收参/返回/
-# 实参都能发指令）之后，这几条让浮点路径**真的跑起来**（QEMU 通道真执行）。
-# 单/双精度按源位宽分派——与 `Fcmp`/`Fptosi` 同一套口径（`rs1_width`）。
 [[lowering]]
 op = "Fadd"
 insts = ["FADD_D {out}, {0}, {1}"]
