@@ -46,6 +46,11 @@ const INTERNAL_FIELDS: &[(&str, &str, &str)] = &[
         "展开来源（v18 S2），解析期填、不参与序列化",
     ),
     (
+        "Template",
+        "from_family",
+        "v21 W5 族降级标记：诊断锚点据此打印 [family.X]",
+    ),
+    (
         "IsaModel",
         "derived_preds",
         "派生谓词表（v18 S3f），解析期派生、不参与序列化",

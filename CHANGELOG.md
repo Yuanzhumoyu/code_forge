@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-08) — ISA-DSL v21 W5 ⑥b 完成：族感知诊断锚点 + 全部夹具迁到 `[family.*]`
+
++ **产品行为修复**：`[family.<名>]` 降级出的载体原先锚回内部名 `[[templates.X]]`（源里没有这一节）
+  ⇒ `push_anchored` 找不到节、**诊断行号退化成 1**。现在 `Template` 带内部标记 `from_family`
+  （`serde(skip)` + `schema_guard::INTERNAL_FIELDS` 登记 ✗），`Template::expand` 的路径前缀与
+  `validate` 的锚点替换都输出 **`[family.<名>]`**；`diag.rs` 加 `"family" => "DSL-TEMPLATE"`。
++ **夹具迁移收口**：`dsl/tests.rs` · `dsl/lint.rs` · `report.rs` · `dsl/stream_decl.rs` ·
+  `dsl/template_tests.rs` · `dsl/diag_matrix_tests.rs` 全部改 `[family.*]` ⇒ 7 个文件代码里
+  `[[templates]]` **归零**。迁移器 `target/tmp/migrate_tpl.py` + `fix_cont.py`：三条硬教训——
+  停止条件含原始字符串终结符 `"#`；内联 `rows` 与行标记**二选一**；替换模式容忍 `\r?\n`。
++ **⑥ a+c（撤出 TOML 面）未完成、已回退保绿** ✗：它要求三方针同时改，其中文档键速查表是
+  **生成物**（`schema::markdown_table()`）⇒ 必须整段粘贴生成文本，不能手改；下轮先取该文本再动。
++ `cargo test -p forge-isa-dsl` → 276 passed；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5 ⑥ b：4 个文件的模板夹具迁到 `[family.*]`
 
 + 本轮**一次做完**：`dsl/tests.rs` · `lint.rs` · `report.rs` · `dsl/stream_decl.rs` 的夹具全部迁移，

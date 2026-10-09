@@ -90,7 +90,8 @@ pub(crate) fn lower_families(m: &mut IsaModel, source: &str) -> Result<(), Strin
             name: Some(name),
             body: decl.body,
             rows,
-        });
+        
+            from_family: true,});
     }
     Ok(())
 }

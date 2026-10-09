@@ -374,7 +374,10 @@ pub struct IsaModel {
     #[serde(default, rename = "family")]
     pub families: Option<std::collections::BTreeMap<String, FamilyDecl>>,
 
-    /// 参数化指令模板（`[[templates]]`，v18 S2）：解析期展开为指令 + 别名。
+    /// 参数化指令模板（**内部载体**，v21 W5 起不再是 TOML 面）。
+    ///
+    /// `[family.<名>]` 在解析期降级进这里，再展开为指令 + 别名；TOML 里写 `[[templates]]`
+    /// 会被未知键守卫拒绝（`serde(skip)`）。
     #[serde(default)]
     pub templates: Vec<Template>,
 
@@ -3015,6 +3018,10 @@ pub struct Template {
     pub body: Option<toml::Table>,
     /// 行：每行一条指令实例（`inst` 必填，其余键即指令字段）。
     pub rows: Vec<TemplateRow>,
+    /// 是否由 `[family.<名>]` 降级而来（v21 W5，内部字段）：诊断锚点据此打印
+    /// `[family.X]`（源里真实存在的节），而不是内部载体名 `[[templates.X]]`。
+    #[serde(default, skip)]
+    pub from_family: bool,
 }
 
 /// 模板的一行：`inst` = 实例名，其余键是**任意指令字段**（可含 `ref`）。
@@ -3161,9 +3168,15 @@ impl Template {
     ///   的反序列化点名拒绝，例如把 `slot` 写成 `slott`）。
     pub fn expand(&self, index: usize) -> Result<Vec<Instruction>, String> {
         let label = self.label(index);
-        let path = format!("[[templates.{label}]]");
+        // v21 W5：族降级来的载体锚到源里真实存在的 `[family.<名>]` 节（否则
+        // `push_anchored` 找不到节、诊断行号退化成 1）。
+        let path = if self.from_family {
+            format!("[family.{label}]")
+        } else {
+            format!("[[templates.{label}]]")
+        };
         if self.rows.is_empty() {
-            return Err(format!("{path}: rows 不能为空（模板至少要一行）"));
+            return Err(format!("{path}: rows 不能为空（至少要一行）"));
         }
         let body = self.body.clone().unwrap_or_default();
         let mut referenced = std::collections::BTreeSet::new();

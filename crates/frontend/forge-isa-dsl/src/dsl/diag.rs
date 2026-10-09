@@ -186,6 +186,8 @@ pub(crate) fn section_code(kind: &str) -> &'static str {
         "forms" => "DSL-FORM",
         "instructions" => "DSL-INST",
         "templates" => "DSL-TEMPLATE",
+        // v21 W5：族降级来的载体锚到 `[family.<名>]`，码与模板同族。
+        "family" => "DSL-TEMPLATE",
         "reloc" => "DSL-RELOC",
         "derive" => "DSL-DERIVE",
         "pseudo" => "DSL-PSEUDO",

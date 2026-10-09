@@ -198,7 +198,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "模板行缺编码信息",
             plus(
-                "[[templates]]\nname = \"F\"\n\
+                "[family.F]\n\
                  body = { form = \"R\", ops = [\"dst:gpr:out\"], asm = \"f {dst}\" }\n\
                  rows = [ { inst = \"V1\" } ]",
             ),
@@ -208,7 +208,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "模板实例重名",
             plus(
-                "[[templates]]\nname = \"F\"\n\
+                "[family.F]\n\
                  body = { form = \"R\", opcode = 0x33, ops = [\"dst:gpr:out\"], asm = \"f {dst}\" }\n\
                  rows = [ { inst = \"V1\" }, { inst = \"V1\" } ]",
             ),
@@ -340,7 +340,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "模板 rows 为空",
             plus(
-                "[[templates]]\nname = \"F\"\n\
+                "[family.F]\n\
                  body = { form = \"R\", opcode = 0x33, ops = [\"dst:gpr:out\"], asm = \"f {dst}\" }\n\
                  rows = []",
             ),

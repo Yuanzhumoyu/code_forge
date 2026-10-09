@@ -2115,13 +2115,20 @@ fn validate_instructions_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
             // 模板展开出的实例：把错误锚回**模板声明**（`[[templates.X]]`），
             // 而不是一个在源里根本不存在的 `[[instructions.实例名]]`。
             let msg = match &inst.from_template {
-                Some(t) => msg
-                    .replacen(
-                        &format!("[[instructions.{}]]", inst.name),
-                        &format!("[[templates.{t}]]"),
-                        1,
-                    )
-                    .replacen("[[instructions]]", &format!("[[templates.{t}]]"), 1),
+                Some(t) => {
+                    // v21 W5：族降级来的实例锚到**源里真实存在的** `[family.X]` 节
+                    // （`push_anchored` 按节名找行，锚到内部载体名会找不到节、行号退化成 1）。
+                    let from_family = m.templates.iter().any(|tt| {
+                        tt.from_family && tt.name.as_deref() == Some(&**t)
+                    });
+                    let sec = if from_family {
+                        format!("[family.{t}]")
+                    } else {
+                        format!("[[templates.{t}]]")
+                    };
+                    msg.replacen(&format!("[[instructions.{}]]", inst.name), &sec, 1)
+                        .replacen("[[instructions]]", &sec, 1)
+                }
                 None => msg,
             };
             d.push_anchored(idx, &msg);

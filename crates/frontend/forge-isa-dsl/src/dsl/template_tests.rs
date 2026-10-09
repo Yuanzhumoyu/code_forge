@@ -291,7 +291,7 @@ rows = [
     );
     let msg = err_msg(&doc);
     assert!(
-        msg.contains("slott") && msg.contains("[[templates."),
+        msg.contains("slott") && msg.contains("[family."),
         "应点名拼错的键并锚回模板：{msg}"
     );
 }
