@@ -645,7 +645,22 @@ fn normalize_named_template(
         let Some(end) = rest[i..].find('}') else {
             return Err(format!("{}: 未闭合的 '{{'", ctx()));
         };
-        let inner = rest[i + 1..i + end].trim();
+        let inner_raw = rest[i + 1..i + end].trim();
+        // v21 W7：占位修饰 `{name?}` / `{name:affix}` 要先**剥掉**再查名 ✗，
+        // 查出索引后**原样带回**（否则修饰在规范化这一步就丢了 ✗）。
+        let (inner, mods): (&str, String) = match inner_raw.split_once(':') {
+            Some((a, b)) => {
+                let (a2, q) = match a.trim().strip_suffix('?') {
+                    Some(r) => (r.trim(), "?"),
+                    None => (a.trim(), ""),
+                };
+                (a2, format!("{q}:{}", b.trim()))
+            }
+            None => match inner_raw.strip_suffix('?') {
+                Some(r) => (r.trim(), "?".to_string()),
+                None => (inner_raw, String::new()),
+            },
+        };
         let idx = names.iter().position(|n| n == inner).ok_or_else(|| {
             if variant_params.contains(inner) {
                 format!(
@@ -662,7 +677,7 @@ fn normalize_named_template(
                 )
             }
         })?;
-        out.push_str(&format!("{{{idx}}}"));
+        out.push_str(&format!("{{{idx}{mods}}}"));
         for _ in 0..end - 1 {
             chars.next();
         }
@@ -705,7 +720,7 @@ pub(crate) fn parse_asm_decl(
     for (n, name) in names.iter().enumerate() {
         let refs = segs
             .iter()
-            .filter(|s| matches!(s, asm::Seg::Op(k) if *k == n))
+            .filter(|s| matches!(s, asm::Seg::Op { idx: k, .. } if *k == n))
             .count();
         if refs > 1 {
             return Err(format!(

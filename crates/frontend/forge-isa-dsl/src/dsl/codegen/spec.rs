@@ -621,7 +621,7 @@ fn text_key(info: &InstInfo, view: &ViewSel, cond_first: Option<u8>) -> String {
         .iter()
         .filter_map(|s| match s {
             Seg::Lit(l) => Some(l.clone()),
-            Seg::Op(_) => None,
+            Seg::Op { .. } => None,
         })
         .collect();
     // 字段名不入键（文本里看不见字段名——两条指令字段名不同但文本一样时，
@@ -629,7 +629,7 @@ fn text_key(info: &InstInfo, view: &ViewSel, cond_first: Option<u8>) -> String {
     let args: Vec<String> = segs
         .iter()
         .filter_map(|s| match s {
-            Seg::Op(n) => Some(describe_operand(info, view, cond_first, *n)),
+            Seg::Op { idx: n, .. } => Some(describe_operand(info, view, cond_first, *n)),
             Seg::Lit(_) => None,
         })
         .collect();

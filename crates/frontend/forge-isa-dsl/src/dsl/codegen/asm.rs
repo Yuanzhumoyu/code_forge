@@ -26,7 +26,7 @@ pub(crate) fn gen_disassemble(infos: &[InstInfo]) -> Result<TokenStream, String>
         for seg in segs {
             match seg {
                 Seg::Lit(l) => fmt.push_str(&l),
-                Seg::Op(n) => {
+                Seg::Op { idx: n, .. } => {
                     let (_, fid, slot, _) = &info.operands[n];
                     let local = format_ident!("__o{n}");
                     let expr = render_expr(slot, fid);
@@ -107,8 +107,14 @@ fn render_expr(slot: &OperandSlot, fid: &syn::Ident) -> TokenStream {
 pub(crate) enum Seg {
     /// 字面文本（分隔符/方括号/括号/关键字等，原样匹配与输出）。
     Lit(String),
-    /// 操作数占位符 `{n}`（索引 = 指令操作数位置）。
-    Op(usize),
+    /// 操作数占位符（索引 = 指令操作数位置 ✗），带**占位修饰**（v21 W7 ✗）：
+    /// - `optional`：`{n?}` ⇒ 该操作数与其**紧邻字面词缀**可整体省略 ✗；
+    /// - `affix`：`{n:affix}` ⇒ 词缀随组件出现（`+` 对已带 `-` 的数值抑制 ✗）。
+    Op {
+        idx: usize,
+        optional: bool,
+        affix: Option<String>,
+    },
 }
 
 /// 解析操作数模板为段序列（字面与占位符交替，任意字面格式）。
@@ -140,16 +146,30 @@ pub(crate) fn parse_template(tpl: &str) -> Result<Vec<Seg>, String> {
             if chars.next() != Some('}') {
                 return Err(format!("unterminated '{{' in asm template '{tpl}'"));
             }
-            let n: usize = inner.trim().parse().map_err(|_| {
+            // v21 W7：`{N}` / `{N?}` / `{N:affix}` / `{N?:affix}` ✗
+            let inner_t = inner.trim();
+            let (num_part, affix) = match inner_t.split_once(':') {
+                Some((a, b)) => (a.trim(), Some(b.trim().to_string())),
+                None => (inner_t, None),
+            };
+            let (num_part, optional) = match num_part.strip_suffix('?') {
+                Some(rest) => (rest.trim(), true),
+                None => (num_part, false),
+            };
+            let n: usize = num_part.parse().map_err(|_| {
                 format!(
                     "bad placeholder '{{{inner}}}' in asm template '{tpl}'：\
-                     模板只能引用操作数序号（命名引用需在 `ops` 里声明）"
+                     模板只能引用操作数序号（命名引用需在 `ops` 里声明）+ 可选修饰 `?` / `:affix` ✗"
                 )
             })?;
             if !lit.is_empty() {
                 segs.push(Seg::Lit(std::mem::take(&mut lit)));
             }
-            segs.push(Seg::Op(n));
+            segs.push(Seg::Op {
+                idx: n,
+                optional,
+                affix,
+            });
         } else {
             lit.push(c);
         }
@@ -175,7 +195,7 @@ fn validate_segs(segs: &[Seg], info: &InstInfo) -> Result<(), String> {
                 }
                 prev_op = false;
             }
-            Seg::Op(n) => {
+            Seg::Op { idx: n, .. } => {
                 if *n >= info.operands.len() {
                     return Err(format!("{}: placeholder {{{n}}} out of range", ctx()));
                 }
@@ -1524,7 +1544,7 @@ fn gen_assemble_try_tok(
                 elems.push(quote! { #e.then_some(()) });
                 pats.push(quote! { Some(()) });
             }
-            Seg::Op(n) => {
+            Seg::Op { idx: n, .. } => {
                 let (_, fid, slot, _) = &info.operands[*n];
                 let (e, p, cb) = operand_parse_tok(model, slot, fid, *n, info)?;
                 elems.push(e);
@@ -1621,7 +1641,7 @@ fn type_signature(info: &InstInfo) -> Result<String, String> {
                     s.push_str(&format!("T{:?}", t));
                 }
             }
-            Seg::Op(n) => {
+            Seg::Op { idx: n, .. } => {
                 let slot = &info.operands[*n].2;
                 let sig = match slot.kind {
                     OperandKind::Reg => format!("R{:?}", slot.classes().unwrap_or_default()),

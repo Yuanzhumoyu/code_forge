@@ -4774,3 +4774,41 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"amb {dst}, {cond}\"",
         "可选档应报歧义：{on:?}"
     );
 }
+
+
+/// v21 W7 语法层：`{N}` / `{N?}` / `{N:affix}` / `{N?:affix}` 都能解析并**承载修饰** ✗。
+#[test]
+fn placeholder_modifiers_parse() {
+    use super::codegen::asm::{parse_template, Seg};
+    let segs = parse_template("x {0?}, {1:plus}, {2?:both}").expect("应能解析 ✗");
+    let ops: Vec<(usize, bool, Option<String>)> = segs
+        .iter()
+        .filter_map(|s| match s {
+            Seg::Op { idx, optional, affix } => Some((*idx, *optional, affix.clone())),
+            Seg::Lit(_) => None,
+        })
+        .collect();
+    assert_eq!(
+        ops,
+        vec![
+            (0, true, None),
+            (1, false, Some("plus".to_string())),
+            (2, true, Some("both".to_string())),
+        ]
+    );
+}
+
+/// v21 W7：**规范化路径**（`{名字}` → `{索引}` ✗）必须**保留占位修饰** ✗，不能悄悄丢掉 ✗。
+#[test]
+fn normalization_keeps_placeholder_modifiers() {
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[instructions]]\nname = \"MODS\"\nform = \"C\"\nopcode = 0x97\n\
+ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"mods {dst?}, {cond:plus}\"",
+    );
+    let m = super::parse_and_validate(&doc).expect("谱合法");
+    let i = m.instructions.iter().find(|i| i.name == "MODS").expect("MODS");
+    let r = i.asm.render();
+    assert!(r.contains('?'), "规范化后应保留 `?` ✗：{r}");
+    assert!(r.contains(":plus"), "规范化后应保留 `:affix` ✗：{r}");
+}

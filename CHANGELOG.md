@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W7 第四片：占位修饰 `{name?}` / `{name:affix}` 的**语法层**
+
++ `Seg::Op(usize)` 扩成 **`Seg::Op { idx, optional, affix }`** ✗：`parse_template` 现在认四种写法 ✗
+  —— `{N}` / `{N?}`（可选 ✗）/ `{N:affix}`（词缀随组件出现 ✗）/ `{N?:affix}` ✗。
++ **规范化必须保留修饰** ✗：`{名字}` → `{索引}` 的改写器原先按整串查名 ✗ ⇒ `{dst?}` 被当成操作数名
+  `dst?` ✗ 报"不是已声明的操作数名" ✗。现在先**剥掉修饰**查名 ✗、查出索引后**原样带回** ✗
+  （否则修饰会在规范化这一步静默丢失 ✗）。
++ 测试 ✗：`dsl::tests::placeholder_modifiers_parse` ✗（四种写法逐项断言 ✗）；
+  `dsl::tests::normalization_keeps_placeholder_modifiers` ✗（规范化后 `?` 与 `:affix` 仍在 ✗）。
++ 12 处 `Seg::Op` 匹配点随改 ✗（先被我的通配正则误伤了另一个枚举 `NamedSeg::Op(…)` ✗ ⇒ 已还原 ✗）。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
++ **下一片**：修饰的**语义**（`{name?}` 的"连同紧邻字面词缀一起省略" ✗、`{name:affix}` 的渲染/解析 ✗、
+  `+` 对已带 `-` 的数值抑制 ✗）＋ 尺寸关键字迁到 `[operand.mem].size_words` ✗。
+
 ### Added (2026-10-08) — ISA-DSL v21 W7 第三片：`--ambiguity` 报"靠声明序兜"的写法歧义
 
 + 新增可选档 **`--ambiguity`** ✗（`LintOpts.check_asm_ambiguity` ✗，默认关 ✗）：报"**同助记符 + 同操作数类**
