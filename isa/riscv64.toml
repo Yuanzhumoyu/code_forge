@@ -2445,22 +2445,12 @@ insts = [
 
 [[lowering]]
 op = "AtomicRmw"
-when = { and = [ { eq = ["imm0", 0] }, { eq = ["rs1_width", 64] } ] }
-insts = ["AMOSWAP_D {out}, {0}, {1}"]
-
-[[lowering]]
-op = "AtomicRmw"
-when = { and = [ { eq = ["imm0", 0] }, { eq = ["rs1_width", 32] } ] }
+when = { eq = ["imm0", 0] }
 insts = ["AMOSWAP_W {out}, {0}, {1}"]
 
 [[lowering]]
 op = "AtomicRmw"
-when = { and = [ { eq = ["imm0", 1] }, { eq = ["rs1_width", 64] } ] }
-insts = ["AMOADD_D {out}, {0}, {1}"]
-
-[[lowering]]
-op = "AtomicRmw"
-when = { and = [ { eq = ["imm0", 1] }, { eq = ["rs1_width", 32] } ] }
+when = { eq = ["imm0", 1] }
 insts = ["AMOADD_W {out}, {0}, {1}"]
 
 [[lowering]]
@@ -2873,20 +2863,20 @@ rows = [
 [family.AMOADD]
 body = { form = "R", opcode = 0x2F, match = { funct5 = 0, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "amoadd.{p.lower} {dst}, {src2}, ({src})" }
 rows = [
-  { inst = "AMOADD_W", p = "W", funct3 = 2 },
-  { inst = "AMOADD_D", p = "D", funct3 = 3 },
+  { inst = "AMOADD_W", group = "amo_add", word_size = 32, p = "W", funct3 = 2 },
+  { inst = "AMOADD_D", group = "amo_add", word_size = 64, p = "D", funct3 = 3 },
 ]
 [family.AMOSWAP]
 body = { form = "R", opcode = 0x2F, match = { funct5 = 1, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "amoswap.{p.lower} {dst}, {src2}, ({src})" }
 rows = [
-  { inst = "AMOSWAP_W", p = "W", funct3 = 2 },
-  { inst = "AMOSWAP_D", p = "D", funct3 = 3 },
+  { inst = "AMOSWAP_W", group = "amo_swap", word_size = 32, p = "W", funct3 = 2 },
+  { inst = "AMOSWAP_D", group = "amo_swap", word_size = 64, p = "D", funct3 = 3 },
 ]
 [family.LR]
 body = { form = "R", opcode = 0x2F, match = { funct5 = 2, aq = 0, rl = 0, funct3 = "{funct3}", rs2 = 0 }, ops = ["dst:gpr:out", "src:gpr"], asm = "lr.{p.lower} {dst}, ({src})" }
 rows = [
-  { inst = "LR_W", p = "W", funct3 = 2 },
-  { inst = "LR_D", p = "D", funct3 = 3 },
+  { inst = "LR_W", group = "lr_xlen", word_size = 32, p = "W", funct3 = 2 },
+  { inst = "LR_D", group = "lr_xlen", word_size = 64, p = "D", funct3 = 3 },
 ]
 [family.SC]
 body = { form = "R", opcode = 0x2F, match = { funct5 = 3, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "sc.{p.lower} {dst}, {src2}, ({src})" }

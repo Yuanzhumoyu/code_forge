@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：riscv64 再删 2 组（原子 `AMOSWAP`/`AMOADD` 的 `_W/_D`）
+
++ 给 `AMOSWAP_W/D`、`AMOADD_W/D`、`LR_W/D`（`[family.AMO*]` 的 rows）补 `group` + `word_size`，
+  严格折叠 **2 对**（`AtomicRmw` 的 Xchg/Add）⇒ `riscv64.toml` 的 `[[lowering]]` 块数
+  **96 → 94**（本轮累计 118 → 94，删掉 **24** 条宽度分派）。
++ **折叠安全守卫（新）**：差异必须**全落在行首段**（第一条 `", "` 之前）——重载只重写行首名，
+  若宽度名出现在序列中段（如 `Cmpxchg` 的 `LR_*` + `SC_*`），改一行会留下不一致 ⇒ 这类**自动跳过**。
++ 插入器改为**逐行字符串手术**（在行内 `inst = "X",` 之后插键），比正则可靠；
+  `$` 吃 `\r` 的坑同样规避。
++ 棘轮随动（`lint.refs.riscv64` 16 → 19）；`validate` + `lint` 干净；JIT 58/0；整仓 `-j 2` → exit 0。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：riscv64 再删 2 组（`Fcmp` cond 1/2 的 `FEQ_S/D` 对）
 
 + 折叠判据放宽一档：除"单一差异段/纯插入"外，新增**同长度 + 各处差异都是孤立的 1 字符替换**
