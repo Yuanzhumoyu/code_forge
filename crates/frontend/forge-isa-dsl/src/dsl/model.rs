@@ -3879,3 +3879,23 @@ mod ir_inverse_cond_tests {
         assert_eq!(ir_inverse_cond("nope"), None);
     }
 }
+
+/// v21 W6 **进行中**的安全闸：`[lower.*]` 目前只有 `Jmp` 完成接线并验证等价 ✗。
+///
+/// `Br` 的旧硬编码体还带一步 `map_reg_field`（把 IR 条件寄存器写进 test/branch 的操作数 ✗），
+/// 当前占位符体系表达不了；`Ret` 的体含"整数值→返回寄存器 / 浮点→浮点返回寄存器"的搬移 ✗。
+/// 让谱声明它们会**静默生成错代码** ✗ ⇒ 解析期明确拒绝 ✗，等后续 W6 落地再放行 ✔。
+pub fn check_term_lowering_supported(m: &IsaModel) -> Result<(), String> {
+    let Some(lower) = m.lower_terms.as_ref() else {
+        return Ok(());
+    };
+    for op in lower.keys() {
+        if op != "Jmp" {
+            return Err(format!(
+                "[lower.{op}]: 该终结 lowering 尚未支持（v21 W6 进行中）——目前只有 `[lower.Jmp]` \
+                 完成接线并验证等价；`Br` 还缺条件寄存器的操作数映射、`Ret` 还缺返回搬移的谱面表达"
+            ));
+        }
+    }
+    Ok(())
+}

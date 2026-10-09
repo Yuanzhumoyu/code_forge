@@ -39,6 +39,8 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
         }
     };
     model.expand_derives().map_err(anchor_err)?;
+    // v21 W6 进行中：只放行已完成接线并验证等价的 `[lower.Jmp]` ✗
+    crate::dsl::model::check_term_lowering_supported(&model).map_err(anchor_err)?;
     let mut expanded = Vec::with_capacity(model.lowering.len());
     for rule in &model.lowering {
         // 先展开 `op` 名单（一个规则服务多个同类 op）→ 再展开 `vary` 行表。

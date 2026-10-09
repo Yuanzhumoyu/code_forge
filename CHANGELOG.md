@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W6：`[lower.Br]`/`[lower.Ret]` 的**解析期安全闸**
+
++ **问题**：`Br` 的旧硬编码体还带一步 `map_reg_field`（把 IR 条件寄存器写进 test/branch 的操作数 ✗），
+  当前占位符体系表达不了 ✗；`Ret` 的体含"整数值→返回寄存器 / 浮点→浮点返回寄存器"的搬移与 bank 选择 ✗。
+  ⇒ 若让谱现在就声明 `[lower.Br]`/`[lower.Ret]`，会**静默生成错代码** ✗。
++ **闸门**：`model::check_term_lowering_supported`（接在 `parse_and_validate` 链上 ✗）——目前
+  **只放行已完成接线并验证等价的 `[lower.Jmp]`** ✔；`Br`/`Ret` 声明即解析期报错，并点明"W6 进行中"
+  与缺什么（条件寄存器映射 ✗ / 返回搬移的谱面表达 ✗）。
++ 测试：`unsupported_term_lowering_is_rejected`（两种都拒 ✗ + `Jmp` 放行 ✗）；
+  `lower_terminator_section_parses` 随动为只验 `Jmp` ✔。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6：三谱落地 `[lower.Jmp]`（谱面 ≡ 硬编码，行为逐字节不变）
 
 + 三谱写出等价的跳转序列：x86 `JMP_REL32 {target}` · riscv64 `JAL X0, {target}` · arm64 `B {target}`

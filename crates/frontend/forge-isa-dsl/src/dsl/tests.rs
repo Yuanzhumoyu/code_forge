@@ -4568,19 +4568,16 @@ fn cc_inv_uses_inverse_condition_code() {
 /// `{target}` 符号值 ✗）。本片只验"谱面可用"；codegen 接线在下一片。
 #[test]
 fn lower_terminator_section_parses() {
+    // 只声明**已放行**的 `Jmp` ✗：`Br`/`Ret` 的谱面表达未落地，被安全闸有意拒绝
+    // （见 `unsupported_term_lowering_is_rejected` ✗）。
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[lower.Br]\ninsts = [\"test {0}, {0}\", \"jcc {cc_inv}, {false}\", \"jmp {true}\"]\n\
-[lower.Jmp]\ninsts = [\"jmp {target}\"]\n\
-[lower.Ret]\ninsts = [\"ret\"]",
+        "[lower.Jmp]\ninsts = [\"SETC {out}, {cc}\"]",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let lower = m.lower_terms.as_ref().expect("lower 节应进模型");
-    assert_eq!(lower.len(), 3, "三个终结 op 都该在：{lower:?}");
-    assert_eq!(lower["Br"].insts.len(), 3);
-    assert!(lower["Br"].insts[1].contains("{cc_inv}"));
-    assert!(lower["Jmp"].insts[0].contains("{target}"));
-    assert_eq!(lower["Ret"].insts, vec!["ret".to_string()]);
+    assert_eq!(lower.len(), 1, "目前只放行 Jmp：{lower:?}");
+    assert!(lower["Jmp"].insts[0].contains("{cc}"));
 }
 
 
@@ -4609,4 +4606,26 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"myjmp {dst}, {cond}\"\nroles = [\"ju
         flat.contains("fnlower_terminator"),
         "终结实体应被生成：{s}"
     );
+}
+
+
+/// v21 W6 **进行中**的安全闸：`[lower.Br]`/`[lower.Ret]` 的谱面表达还没落地（`Br` 缺条件寄存器的
+/// 操作数映射 ✗、`Ret` 缺返回搬移 ✗）⇒ 声明它们必须**解析期报错**，而不是静默生成错代码 ✗。
+#[test]
+fn unsupported_term_lowering_is_rejected() {
+    for (op, needle) in [("Br", "lower.Br"), ("Ret", "lower.Ret")] {
+        let doc = gen_cond_doc(
+            CC_ALL_FULL,
+            &format!("[lower.{op}]\ninsts = [\"SETC {{out}}, {{cc}}\"]"),
+        );
+        let err = super::parse_and_validate(&doc).unwrap_err().to_string();
+        assert!(err.contains(needle), "{op} 应被拒：{err}");
+        assert!(err.contains("W6"), "{op} 的报错应点明进行中：{err}");
+    }
+    // 已支持的 `Jmp` 仍要放行 ✗
+    let ok = gen_cond_doc(
+        CC_ALL_FULL,
+        "[lower.Jmp]\ninsts = [\"SETC {out}, {cc}\"]",
+    );
+    assert!(super::parse_and_validate(&ok).is_ok(), "Jmp 应放行");
 }
