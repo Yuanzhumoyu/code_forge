@@ -65,7 +65,7 @@
 
   - [多文件组合（`include` / `[[override]]`，v18 S7d）](#多文件组合include--overridev18-s7d)
 
-  - [`[[reloc]]` — 重定位表（v18 S3d）](#reloc--重定位表v18-s3d)
+  - [重定位表 `[asm.reloc.*]`](#重定位表-asmreloc)
 
   - [`[asm.pseudo.<名>]` — 汇编器伪指令（v21 W7：表头即名字）](#asmpseudo名--汇编器伪指令v21-w7表头即名字)
 
@@ -117,7 +117,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | 指令属性 `group` | `[[aliases]]` 别名清单 | 同上 |
 | 命名操作数 `ops` + `asm` 只引用 `{名字}` | v14 的 asm 内联声明 `{i:[槽:角色]}`、位置名 `s0`/`s1` | [`[[instructions]]`](#instructions--指令) |
 | `[encoding]` 宽度三态 | `[meta].default_inst_width`/`variable_length`/`max_inst_len` | [`[encoding]`](#encoding--指令宽度三态v18-s4) |
-| `[[reloc]]` / `[[pseudo]]` / `[[derive]]` | `global_reloc` 枚举、汇编器硬编码伪指令、Rust 侧谓词表 | 各自小节 |
+| `[asm.reloc.<名>]` / `[asm.pseudo.<名>]` / `[[derive]]` | `global_reloc` 枚举、汇编器硬编码伪指令、Rust 侧谓词表 | 各自小节 |
 | `[conventions.cond]`（数据表） | 生成器里的 x86 条件码表 | [`[conventions]`](#conventions--isa-约定) |
 | `include` + `[[override]]` | "后出现的赢"这种隐式覆盖 | [多文件组合](#多文件组合include--overridev18-s7d) |
 | 生成期自测 `__spec_tests` | 手抄的样板往返测试 | [生成期自测](#生成期自测__spec_testsv18-s6) |
@@ -154,7 +154,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 <!-- BEGIN: schema-keys（由 tests/schema_guard.rs 校验，改 schema 时同步这一段）-->
 | 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
 | --- | --- | --- | --- |
-| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `types` `stack` `operand` `enum` `forms` `instructions` `family` `lower` `asm` `reloc` `derive` `lowering` `pattern` `machine` `emit` `spill` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
+| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `types` `stack` `operand` `enum` `forms` `instructions` `family` `lower` `asm` `derive` `lowering` `pattern` `machine` `emit` `spill` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
 | `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `vector_tiers` | 元信息 + 文本约定（宽度只在 [reg.<名>] 表头里，见 [machine] 的类指针键） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
 | `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `alloc_count` `aliases` | 寄存器组；组名的数字 = **位**宽（`gpr64` = 64 位）；aliases = { 别名 = 组内下标 } |
@@ -170,7 +170,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` `classes` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `fields` `segments` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖） |
 | `[[instructions]]` | `name` `asm` | `form` `opcode` `match` `fields` `segments` `bind` `ops` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
-| `[[reloc]]` | `name` `semantics` `slot` | `addend` | 重定位表：semantics = absolute \| pc_relative（v18 S3d） |
+| `[asm.reloc.<名>]` | `semantics` `operand` | `addend` | 重定位（v21 W8：**表头即重定位名**；旧 `[[reloc]]` 已撤）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减 |
 | `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
 | `[asm.pseudo.<名>]` | `asm` `emit` | `only_variants` | 汇编器伪指令（v21 W7：**表头即名字**；旧 `[[pseudo]]` 已撤）：文本级多指令展开，分派按 `asm` 的前导字面，`{名字}` 就是 `emit` 用的参数 |
 | `[asm.immfn.<名>]` | `texts` `expr` | — | 立即数修饰（v21 W7：**表头即修饰名**；旧 `[[conventions.imm_fn]]` 待撤）：`texts` = 同一语义的等价写法列表（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值） |
@@ -1081,7 +1081,7 @@ roles = ["ret"]
 asm = "ret"
 
 [[instructions]]
-name = "MOVABS_GLOBAL"         # 全局地址重定位：只写引用名，语义在 [[reloc]] 表里
+name = "MOVABS_GLOBAL"         # 全局地址重定位：只写引用名，语义在 [asm.reloc.<名>] 表里
 reloc = "abs64"
 asm = "movabs {0}, {1}"
 ```
@@ -1188,7 +1188,7 @@ x86 的 `MOVSS`/`MOVSD`（共用 `fpr128` 槽）、riscv 的 `FSGNJ_S`/`FSGNJ_D`
 `VMOVUPS_RM`/`VMOVUPS_MR`/`VMOVUPS_ZMM_MEM`/`VMOVUPS_ZMM_MR` 上）——**不按指令名探测、
 也不做"非对齐优先/对齐兜底"的隐式回退**（那样等于把某个 ISA 的指令名约定写进通用生成器）。
 
-**`reloc`**（引用名，v18 S3d）：指令声明它用哪个 `[[reloc]]` 表项；语义与绑定槽都在表里
+**`reloc`**（引用名，v21 W8）：指令声明它用哪个 `[asm.reloc.<名>]` 表项；语义与绑定槽都在表里
 （见下节）。生成器据此发 encoder 重定位臂，不按指令名特判。
 
 **asm 占位符语法**：有 `ops` 时 `{名字}` 引用；助记符 = asm 首词（唯一事实来源，
@@ -1235,19 +1235,17 @@ value = "18.0-fd"
 "多文件"折叠成一份可读、可继续编辑、可单文件分发的 TOML（夹具
 `crates/backend/forge-codegen/tests/isa/include_root.toml` 就是活例子）。
 
-## `[[reloc]]` — 重定位表（v18 S3d）
+## 重定位表 `[asm.reloc.*]`
 
 ```toml
-[[reloc]]
-name = "abs64"                 # 指令引用：reloc = "abs64"
+[asm.reloc.abs64]              # 表头 = 重定位名；指令引用：reloc = "abs64"
 semantics = "absolute"         # 宿主语义（有限集合）：absolute / pc_relative
-slot = "imm64"                 # 绑定到哪个操作数槽（须是 imm 槽）
+operand = "imm64"              # 绑定到哪个操作数槽（须是 imm 槽）
 addend = 0                     # 可选：重定位值的链接期加减（缺省 0）
 
-[[reloc]]                      # riscv 的 %pcrel_hi/%pcrel_lo 对（patcher 按 opcode 分写位段）
-name = "pcrel_hi"
+[asm.reloc.pcrel_hi]           # riscv 的 %pcrel_hi/%pcrel_lo 对（patcher 按 opcode 分写位段）
 semantics = "pc_relative"
-slot = "imm20"
+operand = "imm20"
 ```
 
 | 语义 | fixup 落点 | 宿主 `RelocKind` |
@@ -1255,9 +1253,10 @@ slot = "imm20"
 | `absolute` | 指令**末尾该槽的字节区间**（补丁宽度 = `ceil(槽宽/8)`） | `Absolute(槽字节数)` |
 | `pc_relative` | **指令起始**（补丁宽度 = 指令字长） | `Relative(字长, 0)` |
 
-- **语义是宿主契约**（有限、ISA 无关）：新增语义才需要宿主代码；具体把重定位值写进
-  哪些**位段**由该 ISA 的 reloc patcher 负责（arm64 写 imm26/imm19、riscv 按
-  opcode 0x17/0x13 分写 hi20/lo12）——这是 ISA 数据之外唯一的宿主代码。
+- **语义是宿主契约**（有限、ISA 无关）：新增语义才需要宿主代码。当前"具体把重定位值写进
+  哪些**位段**"仍由宿主侧 `RelocPatcher` 负责（arm64 写 imm26/imm19、riscv 按 opcode
+  0x17/0x13 分写 hi20/lo12）；v21 W8 的目标是改为**由谱面字段位区间生成**，
+  从而删掉宿主按 ISA 名的分发与这两个手写补丁器（**尚未落地**）。
 - 指令侧只有 `reloc = "<名>"`：编码器对该指令发固定重定位（汇编期 imm 槽 < 0 时
   = 全局符号引用 `"G{id}"`，≥ 0 时是普通立即数），**不按指令名特判**。
 - 校验：表项名非空唯一、`slot` 已声明且是 imm 槽、指令引用的名字必须存在、

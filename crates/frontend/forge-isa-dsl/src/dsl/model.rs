@@ -384,8 +384,8 @@ pub struct IsaModel {
     #[serde(default, rename = "lower")]
     pub lower_terms: Option<BTreeMap<String, TermSeq>>,
 
-    /// 重定位表（`[[reloc]]`，v18 S3d）：指令用 `reloc = "<name>"` 引用。
-    #[serde(default)]
+    /// 重定位表（内部载体；TOML 面是 `[asm.reloc.<名>]`）：指令用 `reloc = "<name>"` 引用。
+    #[serde(default, skip)]
     pub reloc: Vec<RelocDef>,
 
     /// 派生谓词属性（`[[derive]]`，v18 S3f）：给 `when` 用的命名布尔属性。
@@ -2912,14 +2912,25 @@ pub struct ImmFnBody {
     pub expr: String,
 }
 
-/// **汇编器侧数据**（v21 W7）：`[asm]` —— 按名字索引的表（**表头 = 名字**，
+/// **`[asm.reloc.<名>]` 的体**（v21 W8）：表头就是重定位名。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelocBody {
+    /// 宿主语义——有限集合，新增语义才需要宿主代码。
+    pub semantics: RelocSemantics,
+    /// 绑定的操作数槽（须是 `kind = "imm"` 的槽）。
+    pub operand: String,
+    /// 重定位值的链接期加减（缺省 0）。
+    #[serde(default)]
+    pub addend: Option<i64>,
+}
+
+/// **汇编器侧数据**（v21 W7/W8）：`[asm]` —— 按名字索引的表（**表头 = 名字**，
 /// 与 `[family.<名>]` 同一形态）。
 ///
 /// 解析期降级进既有内部载体：`[asm.pseudo.<名>]` → [`IsaModel::pseudo`]、
-/// `[asm.immfn.<名>]` → [`Conventions::imm_fn`]；因此生成器与校验只见内部表示
-/// （与 `[family.<名>]` → `templates` 同一手法）。
-///
-/// 规划中的另一张表（本片未落地）：`[asm.reloc.<名>]`。
+/// `[asm.immfn.<名>]` → [`Conventions::imm_fn`]、`[asm.reloc.<名>]` → [`IsaModel::reloc`]；
+/// 因此生成器与校验只见内部表示（与 `[family.<名>]` → `templates` 同一手法）。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AsmSection {
@@ -2929,6 +2940,9 @@ pub struct AsmSection {
     /// 立即数修饰（`[[conventions.imm_fn]]` 的 v21 新居）：表头 = 修饰名。
     #[serde(default)]
     pub immfn: BTreeMap<String, ImmFnBody>,
+    /// 重定位（`[[reloc]]` 的 v21 新居）：表头 = 重定位名。
+    #[serde(default)]
+    pub reloc: BTreeMap<String, RelocBody>,
 }
 
 /// 汇编器伪指令（`[[pseudo]]`，v18 S3e）：汇编期的文本级多指令展开。
@@ -2997,7 +3011,7 @@ pub struct RelocDef {
     /// 宿主语义——有限集合，新增语义才需要宿主代码。
     pub semantics: RelocSemantics,
     /// 绑定的操作数槽（须是 `kind = "imm"` 的槽）。
-    pub slot: String,
+    pub operand: String,
     /// 重定位值的链接期加减（缺省 0）。
     #[serde(default)]
     pub addend: Option<i64>,

@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W8 第一片：`[asm.reloc.<名>]` 取代 `[[reloc]]`
+
++ 重定位表搬进 `[asm]` 家族：**表头即重定位名**，键改为 `semantics` / `operand`（原 `slot`）/ `addend`
+  —— 与 `[asm.pseudo.<名>]` / `[asm.immfn.<名>]` 同一形态（设计案 §6.9）。
++ 解析期降级进内部 `IsaModel.reloc`（表头 → `name`、`operand` → `RelocDef.operand`）；旧键 `[[reloc]]`
+  成为内部载体（`serde(skip)` + `INTERNAL_FIELDS` 登记），schema 的根键与 Section 同步撤换。
++ 三谱 **3 条**一次性搬迁（x86 `abs64`；riscv64 `pcrel_hi` / `pcrel_lo`）＋ 测试夹具 **8 处**迁移；
+  “名字重复”一例改为断言 **TOML 重复表头被拒**（表头即名字的连带效果）。
++ 报错文案改指新面（`[asm.reloc.<名>]`）；文档键表两行、目录锚点、正文小节与两处散文同步。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（本次是 surface-only：生成物逐字节不变）。
++ **W8 的正题未做**（留下一片）：按谱面字段位区间**生成**补丁器 ⇒ 删掉宿主侧按 ISA 名的
+  `RelocPatcher` 分发与两个手写补丁器（`reloc_patcher.rs:77-84`、`Arm64RelocPatcher`/`RiscvRelocPatcher`）。
+
 ### Added (2026-10-08) — ISA-DSL v21 W7 第二十片：`{size}` 渲染尺寸关键字（机制就位）
 
 + 已定规则：宽度（字节）= `size_words` 下标 ⇒ `1 << i`。渲染器改为收一个宽度参数

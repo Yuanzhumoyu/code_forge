@@ -88,6 +88,20 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
                 expr: body.expr,
             });
         }
+        // `[asm.reloc.<名>]` 降级进内部 `reloc`（表头 = 重定位名）。
+        for (name, body) in asm.reloc {
+            if model.reloc.iter().any(|r| r.name == name) {
+                return Err(anchor_err(format!(
+                    "[asm.reloc.{name}]: 重定位名重复（v21 W8：名字必须唯一）"
+                )));
+            }
+            model.reloc.push(crate::dsl::model::RelocDef {
+                name,
+                semantics: body.semantics,
+                operand: body.operand,
+                addend: body.addend,
+            });
+        }
     }
     model.expand_templates().map_err(|msg| {
         let idx = diag::DeclIndex::build(source);

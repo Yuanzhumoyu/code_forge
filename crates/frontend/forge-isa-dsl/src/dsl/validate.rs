@@ -1424,31 +1424,31 @@ fn validate_derives(m: &IsaModel) -> Result<(), String> {
     Ok(())
 }
 
-/// `[[reloc]]` 校验（v18 S3d 重定位数据化）。
+/// `[asm.reloc.<名>]` 校验（v21 W8：表头即重定位名）。
 ///
-/// - 表项名非空、唯一；
-/// - `slot` 必须已声明且是 `kind = "imm"` 的槽（absolute 的补丁宽度 = 槽宽；
+/// - 表项名非空、唯一（重复表头由 TOML 自身拒绝，这里守内部一致性）；
+/// - `operand` 必须已声明且是 `kind = "imm"` 的槽（absolute 的补丁宽度 = 槽宽；
 ///   pc_relative 的 fixup 落在指令起始，槽只是"这条指令把重定位值承载在哪"）；
 /// - 指令的 `reloc = "<名>"` 必须指向已声明表项，且该指令确实有那个槽的操作数。
 fn validate_relocs(m: &IsaModel) -> Result<(), String> {
     let mut seen = BTreeSet::new();
     for r in &m.reloc {
         if r.name.trim().is_empty() {
-            return Err("[[reloc]]: name must not be empty".into());
+            return Err("[asm.reloc.<名>]: name must not be empty".into());
         }
         if !seen.insert(r.name.clone()) {
-            return Err(format!("[[reloc.{}]]: 重定位名重复", r.name));
+            return Err(format!("[asm.reloc.{}]: 重定位名重复", r.name));
         }
-        let Some(slot) = m.operand_slots.iter().find(|s| s.name == r.slot) else {
+        let Some(slot) = m.operand_slots.iter().find(|s| s.name == r.operand) else {
             return Err(format!(
-                "[[reloc.{}]]: 绑定的操作数槽 '{}' 未在 [operand.<名字>] 声明",
-                r.name, r.slot
+                "[asm.reloc.{}]: `operand` 指向的槽 '{}' 未在 [operand.<名字>] 声明",
+                r.name, r.operand
             ));
         };
         if slot.kind != OperandKind::Imm {
             return Err(format!(
-                "[[reloc.{}]]: 绑定的槽 '{}' 必须是 imm 槽（重定位值要写进一个数值槽），实际是 {:?}",
-                r.name, r.slot, slot.kind
+                "[asm.reloc.{}]: `operand` 指向的槽 '{}' 必须是 imm 槽（重定位值要写进一个数值槽），实际是 {:?}",
+                r.name, r.operand, slot.kind
             ));
         }
     }
@@ -1458,7 +1458,7 @@ fn validate_relocs(m: &IsaModel) -> Result<(), String> {
         };
         let Some(def) = m.reloc.iter().find(|r| r.name == name) else {
             return Err(format!(
-                "[[instructions.{}]]: reloc '{name}' 未在 [[reloc]] 声明（可用：{}）",
+                "[[instructions.{}]]: reloc '{name}' 未在 [asm.reloc.<名>] 声明（可用：{}）",
                 inst.name,
                 if m.reloc.is_empty() {
                     "<空>".to_string()
@@ -1478,10 +1478,10 @@ fn validate_relocs(m: &IsaModel) -> Result<(), String> {
             &m.variant_param_names(),
         )?
         .0;
-        if !ops.iter().any(|o| o.slot == def.slot) {
+        if !ops.iter().any(|o| o.slot == def.operand) {
             return Err(format!(
-                "[[instructions.{}]]: reloc '{name}' 绑定的槽 '{}' 不在该指令的操作数里（asm '{}'）",
-                inst.name, def.slot, inst.asm
+                "[[instructions.{}]]: reloc '{name}' 的 `operand` '{}' 不在该指令的操作数里（asm '{}'）",
+                inst.name, def.operand, inst.asm
             ));
         }
     }

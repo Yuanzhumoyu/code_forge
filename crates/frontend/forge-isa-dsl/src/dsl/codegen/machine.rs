@@ -692,18 +692,18 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
         let slot_fid = info
             .operands
             .iter()
-            .find(|(_, _, s, _)| s.name == def.slot)
+            .find(|(_, _, s, _)| s.name == def.operand)
             .map(|(_, fid, _, _)| fid.clone())
             .ok_or_else(|| {
                 format!(
                     "[[instructions.{}]]: reloc '{reloc_name}' 绑定的槽 '{}' 不在该指令的操作数里",
-                    info.inst.name, def.slot
+                    info.inst.name, def.operand
                 )
             })?;
         let slot_bits = model
             .operand_slots
             .iter()
-            .find(|s| s.name == def.slot)
+            .find(|s| s.name == def.operand)
             .and_then(|s| s.width)
             .unwrap_or(64);
         let slot_bytes_lit = proc_macro2::Literal::u32_unsuffixed(slot_bits.div_ceil(8));

@@ -1760,9 +1760,9 @@ asm = "bad {dst}, {srcc}"
     }
 }
 
-// ─────────────────────── [[reloc]]（v18 S3d 重定位数据化）───────────────────────
+// ─────────────────────── [asm.reloc.<名>]（v21 W8 重定位数据化）───────────────────────
 
-/// 重定位夹具：`[[reloc]]` 表 + 一条引用它的指令（pc_relative / 20 位立即数槽）。
+/// 重定位夹具：`[asm.reloc.<名>]` 表 + 一条引用它的指令（pc_relative / 20 位立即数槽）。
 fn reloc_doc(reloc_tbl: &str, inst_reloc: &str) -> String {
     format!(
         r#"
@@ -1802,7 +1802,7 @@ asm = "auipc.g {{dst}}, {{imm}}"
 #[test]
 fn reloc_ref_resolves_through_the_table() {
     let doc = reloc_doc(
-        "[[reloc]]\nname = \"pcrel_hi\"\nsemantics = \"pc_relative\"\nslot = \"imm20\"\n",
+        "[asm.reloc.pcrel_hi]\nsemantics = \"pc_relative\"\noperand = \"imm20\"\n",
         "reloc = \"pcrel_hi\"",
     );
     let m = parse_and_validate(&doc).expect("合法 reloc 表必须通过");
@@ -1832,11 +1832,11 @@ fn reloc_ref_resolves_through_the_table() {
 #[test]
 fn reloc_unknown_name_rejected() {
     let doc = reloc_doc(
-        "[[reloc]]\nname = \"pcrel_hi\"\nsemantics = \"pc_relative\"\nslot = \"imm20\"\n",
+        "[asm.reloc.pcrel_hi]\nsemantics = \"pc_relative\"\noperand = \"imm20\"\n",
         "reloc = \"bogus\"",
     );
     let msg = validation_msg(&doc);
-    assert!(msg.contains("未在 [[reloc]] 声明"), "msg: {msg}");
+    assert!(msg.contains("未在 [asm.reloc.<名>] 声明"), "msg: {msg}");
     assert!(msg.contains("pcrel_hi"), "应列出可用名：{msg}");
 }
 
@@ -1844,37 +1844,38 @@ fn reloc_unknown_name_rejected() {
 #[test]
 fn reloc_bad_slot_rejected() {
     let doc = reloc_doc(
-        "[[reloc]]\nname = \"x\"\nsemantics = \"pc_relative\"\nslot = \"nope\"\n",
+        "[asm.reloc.x]\nsemantics = \"pc_relative\"\noperand = \"nope\"\n",
         "",
     );
     let msg = validation_msg(&doc);
     assert!(msg.contains("未在 [operand."), "msg: {msg}");
 
     let doc = reloc_doc(
-        "[[reloc]]\nname = \"x\"\nsemantics = \"pc_relative\"\nslot = \"g\"\n",
+        "[asm.reloc.x]\nsemantics = \"pc_relative\"\noperand = \"g\"\n",
         "",
     );
     let msg = validation_msg(&doc);
     assert!(msg.contains("必须是 imm 槽"), "msg: {msg}");
 }
 
-/// 表项名重复 ⇒ 报错。
+/// 表头重复（写两次同一个 `[asm.reloc.x]`）⇒ **TOML 自身**拒绝。
 #[test]
 fn reloc_duplicate_name_rejected() {
     let doc = reloc_doc(
-        "[[reloc]]\nname = \"x\"\nsemantics = \"pc_relative\"\nslot = \"imm20\"\n\
-         [[reloc]]\nname = \"x\"\nsemantics = \"absolute\"\nslot = \"imm20\"\n",
+        "[asm.reloc.x]\nsemantics = \"pc_relative\"\noperand = \"imm20\"\n\
+         [asm.reloc.x]\nsemantics = \"absolute\"\noperand = \"imm20\"\n",
         "",
     );
-    let msg = validation_msg(&doc);
-    assert!(msg.contains("重定位名重复"), "msg: {msg}");
+    let err = parse_and_validate(&doc).unwrap_err();
+    let msg = format!("{err:?}");
+    assert!(msg.contains('x'), "应点名重复的表头：{msg}");
 }
 
 /// 指令有 reloc 但操作数里没有那个槽 ⇒ 报错（否则 encoder 会 panic 到 unreachable）。
 #[test]
 fn reloc_slot_not_in_operands_rejected() {
     let doc = reloc_doc(
-        "[[reloc]]\nname = \"x\"\nsemantics = \"absolute\"\nslot = \"imm20\"\n",
+        "[asm.reloc.x]\nsemantics = \"absolute\"\noperand = \"imm20\"\n",
         "reloc = \"x\"\nmatch = { rd = 0 }",
     )
     .replace(
@@ -1891,7 +1892,7 @@ fn reloc_slot_not_in_operands_rejected() {
 #[test]
 fn reloc_absolute_width_comes_from_slot() {
     let doc = reloc_doc(
-        "[[reloc]]\nname = \"abs\"\nsemantics = \"absolute\"\nslot = \"imm20\"\n",
+        "[asm.reloc.abs]\nsemantics = \"absolute\"\noperand = \"imm20\"\n",
         "reloc = \"abs\"",
     );
     let m = parse_and_validate(&doc).expect("合法");
@@ -1909,7 +1910,7 @@ fn reloc_absolute_width_comes_from_slot() {
 #[test]
 fn reloc_semantics_must_be_host_known() {
     let doc = reloc_doc(
-        "[[reloc]]\nname = \"x\"\nsemantics = \"got\"\nslot = \"imm20\"\n",
+        "[asm.reloc.x]\nsemantics = \"got\"\noperand = \"imm20\"\n",
         "",
     );
     let err = parse_and_validate(&doc).unwrap_err();

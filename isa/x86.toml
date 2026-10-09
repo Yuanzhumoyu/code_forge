@@ -2984,13 +2984,12 @@ base = "RBP"
 align_pad = 0x90   # `.align` 伪指令填充字节 = NOP
 
 
-# ── 重定位表（v18 S3d）：指令写 `reloc = "<名>"`，语义与绑定槽在此 ──
+# ── 重定位表（v21 W8：表头即重定位名，`operand` 指向槽）：指令写 `reloc = "<名>"` ──
 # x86 的全局地址用 10 字节移动绝对立即数：fixup = 指令末尾 imm64 的 8 字节，
 # 宿主语义 = Absolute(8)（补丁宽度取自槽宽）。
-[[reloc]]
-name = "abs64"
+[asm.reloc.abs64]
 semantics = "absolute"
-slot = "imm64"
+operand = "imm64"
 
 # ── 引用名（多态分派）：见各指令的 `ref`（S10e 的 [[aliases]] 已并入指令属性）──
 [[lowering]]

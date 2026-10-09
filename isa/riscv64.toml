@@ -2410,19 +2410,17 @@ insts = [
     "SRLI {out}, {out}, 32",
 ]
 
-# ── GlobalAddr：auipc+addi PC-relative（v18 S3d：重定位来自 [[reloc]] 表；
+# ── GlobalAddr：auipc+addi PC-relative（v21 W8：表头即重定位名，`operand` 指向槽；
 #    encoder 对 imm<0 发 Relative(4,0) 的 "G{id}"；patcher 按 opcode
 #    0x17=auipc 写 hi20、0x13=addi 写 lo12）──
 
-[[reloc]]
-name = "pcrel_hi"
+[asm.reloc.pcrel_hi]
 semantics = "pc_relative"
-slot = "imm20"
+operand = "imm20"
 
-[[reloc]]
-name = "pcrel_lo"
+[asm.reloc.pcrel_lo]
 semantics = "pc_relative"
-slot = "imm12"
+operand = "imm12"
 
 # ── 汇编器伪指令（v18 S3e）：`li rd, imm` → lui + addi（32 位符号扩展形式）──
 # 汇编期文本展开：实参按 `{名字}` 代入 emit 行，算术由既有表达式求值器算
