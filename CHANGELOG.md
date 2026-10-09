@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：riscv64 宽度分派再删 2 组（`Store`/`Fstore`）
+
++ 给 `SW/SD/FSW/FSD`（`[[instructions]]` 形态）补 `group` + `word_size`，严格折叠 2 对
+  ⇒ `riscv64.toml` 的 `[[lowering]]` 块数 **100 → 98**（本轮累计 118 → 98，删掉 **20** 条宽度分派）。
++ **踩坑记录**：`(?m)$` 在 .NET 里会**吃掉行尾 `\r`**——把我的插入值拼上 `\r\n` 后写成 `\r\r\n`，
+  报 `carriage return must be followed by newline`。修法：捕获值先 `TrimEnd("\r")` 再拼换行。
++ 随动：`lint.refs.riscv64` 14 → 16；`--strict-overlap` riscv64 16 → 14。JIT 矩阵 58/0。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：riscv64 宽度分派再删 4 组（浮点算术 S/D 对）
 
 + 给 `FADD/FSUB/FMUL/FDIV` 的 `_S`/`_D` 对补 `group` + `word_size`（8 行），严格折叠 4 对

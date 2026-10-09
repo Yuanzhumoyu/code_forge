@@ -1352,6 +1352,8 @@ asm = "fld {dst}, {imm}({src})"
 
 [[instructions]]
 name = "FSD"
+group = "fstore_xlen"
+word_size = 64
 form = "S"
 opcode = 0x27
 match = { funct3 = 3 }
@@ -1371,6 +1373,8 @@ asm = "flw {dst}, {imm}({src})"
 
 [[instructions]]
 name = "FSW"
+group = "fstore_xlen"
+word_size = 32
 form = "S"
 opcode = 0x27
 match = { funct3 = 2 }
@@ -1445,6 +1449,8 @@ roles = ["callee_load"]
 
 [[instructions]]
 name = "SD"
+group = "store_xlen"
+word_size = 64
 only_variants = { xlen = [64] }
 form = "S"
 opcode = 0x23
@@ -1764,6 +1770,8 @@ asm = "lw {dst}, {imm}({src})"
 
 [[instructions]]
 name = "SW"
+group = "store_xlen"
+word_size = 32
 form = "S"
 opcode = 0x23
 match = { funct3 = 2 }
@@ -1870,16 +1878,8 @@ insts = ["LD {out}, {0}, 0"]
 
 [[lowering]]
 op = "Store"
-when = { eq = ["rs1_width", 32] }
-insts = ["SW {0}, {1}, 0"]
-
-[[lowering]]
-op = "Store"
 insts = ["SD {0}, {1}, 0"]
 
-# Fload/Fstore：浮点访存（v20 V6+）——变参的**浮点支**要 f64 从栈/保存区读出来
-# （`va_arg(ap, f64)` 由管线展开成 `Fload`，见 `forge-codegen/src/pipeline/va_expand.rs`），
-# 此前 riscv 谱里 `FLD`/`FSD` 有指令却没有 lowering ⇒ 浮点变参编不出来。
 [[lowering]]
 op = "Fload"
 when = { eq = ["rd", 32] }
@@ -1888,11 +1888,6 @@ insts = ["FLW {out}, {0}, 0"]
 [[lowering]]
 op = "Fload"
 insts = ["FLD {out}, {0}, 0"]
-
-[[lowering]]
-op = "Fstore"
-when = { eq = ["rs1_width", 32] }
-insts = ["FSW {0}, {1}, 0"]
 
 [[lowering]]
 op = "Fstore"
