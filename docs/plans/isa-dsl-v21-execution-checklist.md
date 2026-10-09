@@ -976,3 +976,24 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 4. 之后才重做 x86 向量组 ✔（此时"只加组属性"不再有副作用 ✔）。
 
 **期间不要动** x86 的向量组 ✔。
+
+#### 第 (4) 项：x86 store 侧遇到**分组冲突**（2026-10-08，已回退）
+
+现象：给 `MOVSD_MEM_R` 补 `group = "store_vec"` 后 **TOML 解析失败**（重复键 ✗）——因为它
+**已经在** Fstore 族里（`group = "fstore_x86"` + `word_size = 64`，上一轮为折 `Fstore` 加的）。
+
+**结构性约束**：指令的 `group` 只能有**一个** ✗，而同一指令可能被**两个不同 op** 用不同分派键引用：
+
+| op | 分派键 | 单位 | 参与的指令 |
+| --- | --- | --- | --- |
+| `Fstore` | `rs1_width` | **位** | `MOVSS_MEM_R`(32) · `MOVSD_MEM_R`(64) |
+| `Store` | `rs1_vec` | **字节** | `MOVSD_MEM_R`(8) · `MOVUPS_128_MEM_R`(16) · `VMOVUPS_256_MEM_R`(32) · `VMOVUPS_512_MEM_R`(64) |
+
+⇒ 两者共用 `MOVSD_MEM_R`，但**键与单位都不同** ⇒ 一个 `group`+`word_size` 表达不了 ✗。
+
+**待定方案（下轮先定，再动手）**：
+1. **按 op 分组**：把 `group` 的意义限定为"同一 op 的多档引用名" ✗ ⇒ 需要新的键（如 `groups = { fstore = …, store_vec = … }` ✗）
+   或按 op 命名空间隔离（`group` 只在同一 op 的规则里解析 ✗）；
+2. **或**给指令加"按 key 的 word_size"（`word_sizes = { rs1_width = 64, rs1_vec = 8 }` ✗），
+   重载按 `dispatch` 取对应值 ✔；
+3. 在方案定下来之前，**不要再动** x86 的 store 侧 ✗。
