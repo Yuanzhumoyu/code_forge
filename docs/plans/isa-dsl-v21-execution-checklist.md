@@ -696,6 +696,13 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
     `group`**（没显式写时），处理后清空字段（幂等）；调用点在 **`parse.rs` 的 `expand_templates()`
     之前**（挂 `lower_stream_forms` 里太晚——那时模板已展开，实测 `family` 产出 0 条指令）。
     `vary` 现**明确报错**（fail-closed）。三方针已同步。单测：`[family.X]` ≡ 等价 `[[templates]]`。
+    ⚠️ **迁移首次尝试：机械成功、语义失败（2026-10-08，已回退，树全绿）**：112 处一次迁完、
+    三谱 `validate` + `lint` 全干净、7 个族名冲突用 `_FAM` 修好——但 **JIT 矩阵崩**
+    （`forge-tests --lib`，`STATUS_ILLEGAL_INSTRUCTION`）。**根因**：`lower_families` 把**族名自动
+    注入为每行的 `group`**，而 `group` 是**多态引用名**——`[[lowering]]`/`[[pattern]]`/`emit` 行首
+    写这个名字时**解析到的指令集合变了** ⇒ 降低规则选到别的指令 ⇒ 生成物跑非法指令。
+    ⇒ "族名即多态引用名"**有语义后果**，不是写法糖。下一步：**只对"被 lowering 引用的族"注入
+    `group`**（先求交 lowering/pattern/emit 行首名单与族名），再迁三谱；棘轮 `lint.refs.*` 会随之上调。
   5. 迁三谱 112 处（机械）+ 删 `[[templates]]`（`--suggest`/lint 复查），四条判据全绿后一次提交。
 - [ ] `family.vary` 与 `[lower.*].vary` 共用一套 zip 语义（一处实现）。
 - [ ] 重载解析：按声明类型（字段类型）选行；歧义 → 生成期报错并列候选；无候选 → 生成物 `Unsupported`。
