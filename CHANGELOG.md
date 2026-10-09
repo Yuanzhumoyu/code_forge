@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W6：`{cc_inv}` 补**端到端生成测试**
+
++ 新增 `dsl::tests::cc_inv_uses_inverse_condition_code`：用同一张 `[enum.cond]` 夹具跑真实生成，
+  断言 ① 发射 `__cc_inv`；② **逆映射正确**（`eq→ne` 的码、`ne→eq`、`slt→sge`、`uge→ult`）；
+  ③ **零死代码**（只用 `{cc_inv}` 时不发射 `__cc`）。
++ 踩坑：`TokenStream::to_string()` 是**美化打印**（`::`/`=>` 两侧可能带空格 ✗）⇒ 断言前先抹掉空白 ✗。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Added (2026-10-08) — ISA-DSL v21 W6 第一片：`{cc_inv}` 占位符（条件取反）
 
 + `lowering` 的 `insts` 现可用 **`{cc_inv}`**：IR 条件的**逆**在本 ISA 的编码。

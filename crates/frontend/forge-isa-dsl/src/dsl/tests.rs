@@ -4529,3 +4529,36 @@ fn prefix_effects_parse_from_their_spec_spellings() {
     let msg = format!("{}", bad.unwrap_err());
     assert!(msg.contains("rex3"), "报错要点名那个拼法：{msg}");
 }
+
+
+/// v21 W6：`{cc_inv}` 用**逆条件**反查同一张 `[enum.cond]` 表。
+///
+/// 断言三条：① 发射了 `__cc_inv`；② 逆映射正确（`eq`→`ne` 的码、`ne`→`eq` 的码、
+/// `slt`→`sge` 的码）；③ **零死代码**——只用 `{cc_inv}` 时不发射 `__cc`。
+#[test]
+fn cc_inv_uses_inverse_condition_code() {
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[lowering]]\nop = \"Icmp\"\ninsts = [\"SETC {out}, {cc_inv}\"]",
+    );
+    let model = super::parse_and_validate(&doc).expect("谱合法");
+    let s = super::codegen::generate(&model)
+        .expect("生成")
+        .to_string();
+    assert!(s.contains("__cc_inv"), "应发射 __cc_inv：{s}");
+    // `TokenStream::to_string()` 是**美化打印**（`::` 两侧、`=>` 两侧都可能带空格 ✗）
+    // ⇒ 断言前先抹掉全部空白，再去匹配。
+    let flat: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    for needle in [
+        "Some(\"eq\")=>5u8",
+        "Some(\"ne\")=>4u8",
+        "Some(\"slt\")=>13u8",
+        "Some(\"uge\")=>2u8",
+    ] {
+        assert!(flat.contains(needle), "逆条件表缺 `{needle}`：{s}");
+    }
+    assert!(
+        !flat.contains("let__cc:"),
+        "只用 {{cc_inv}} 时不该发射 __cc：{s}"
+    );
+}
