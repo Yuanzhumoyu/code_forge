@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5 ⑥：模板夹具迁移到 `[family.*]`（`template_tests.rs` 完成）
+
++ `template_tests.rs` 的 **15 个 `[[templates]]` 夹具**全部机械迁移为 `[family.<名>]`
+  （`body` 保留、行折进 `rows = [ … ]`；无名模板按 `lower_families` 的同款规则派生成 `<inst>_FAM`）。
+  变换脚本的停止条件必须包含**原始字符串终结符 `"#`**——否则会把夹具之后的 Rust 代码吞进行里
+  （本轮实测踩到 ✗，`git checkout` 回退后修正 ✗）。
++ 唯一非机械期望：`from_template` 由模板名 `"ADDW"` 变为派生族名 `"ADDW_FAM"`（断言已随动 ✗）。
++ 该文件仅剩 **1 处** `[[templates` 字样 = 一条断言**内部锚点**的期望 ✗（内部路径仍以模板名锚定诊断 ✗）。
++ `cargo test -p forge-isa-dsl --lib template` → **30 passed / 0 failed**；整仓 `-j 2` → exit 0、
+  0 编译错误、0 失败二进制。
+
 ### Added (2026-10-08) — ISA-DSL v21 W5 ⑥ 第一步：**发行谱零 `[[templates]]` 守卫**
 
 + 实测确认：三份发行谱已**归零**（`isa/x86.toml` 那处命中只是**注释里的字样**，已改写为

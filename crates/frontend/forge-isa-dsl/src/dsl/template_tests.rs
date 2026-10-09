@@ -1,7 +1,7 @@
-//! S2 验收：**`[[templates]]`（唯一指令分组机制）**的展开语义。
+//! S2 验收 + v21 W5 迁移：**`[family.<名>]`（唯一指令分组机制）**的展开语义。
 //!
 //! v18 的最终形态：**一个**机制覆盖原先三套（`[[families]]` / `[[aliases]]` /
-//! 平行参数表版模板）——行（`[[templates.rows]]`）是事实载体，`body` 是共享默认值，
+//! 平行参数表版模板）——行（`rows`）是事实载体，`body` 是共享默认值，
 //! `ref` 是指令的引用名（多条指令共用即多态）。
 //!
 //! 覆盖：逐行展开、`body`+行深合并、`{inst.lower}` 派生、`ref` 共用/逐行、
@@ -78,19 +78,11 @@ fn err_msg(doc: &str) -> String {
 fn one_row_one_instruction() {
     let doc = plus(
         r#"
-[[templates]]
-[[templates.rows]]
-inst = "ADDW"
-form = "R"
-opcode = 0x33
-ops = ["rd:r32:out", "rs1:r32", "rs2:r32"]
-asm = "add {rd}, {rs1}, {rs2}"
-[[templates.rows]]
-inst = "ADDX"
-form = "R"
-opcode = 0x3B
-ops = ["rd:r64:out", "rs1:r64", "rs2:r64"]
-asm = "add {rd}, {rs1}, {rs2}"
+[family.ADDW_FAM]
+rows = [
+    { inst = "ADDW", form = "R", opcode = 0x33, ops = ["rd:r32:out", "rs1:r32", "rs2:r32"], asm = "add {rd}, {rs1}, {rs2}" },
+    { inst = "ADDX", form = "R", opcode = 0x3B, ops = ["rd:r64:out", "rs1:r64", "rs2:r64"], asm = "add {rd}, {rs1}, {rs2}" },
+]
 "#,
     );
     let m = parse_and_validate(&doc).expect("展开");
@@ -98,23 +90,19 @@ asm = "add {rd}, {rs1}, {rs2}"
     assert_eq!(m.instructions[0].opcode, Some(0x33));
     assert_eq!(m.instructions[1].opcode, Some(0x3B));
     assert_eq!(m.instructions[1].ops.as_ref().unwrap()[0], "rd:r64:out");
-    assert_eq!(m.instructions[0].from_template.as_deref(), Some("ADDW"));
+    assert_eq!(m.instructions[0].from_template.as_deref(), Some("ADDW_FAM"));
 }
 
 #[test]
 fn body_is_shared_defaults_and_rows_deep_merge() {
     let doc = plus(
         r#"
-[[templates]]
-name = "ADD"
+[family.ADD]
 body = { form = "R", opcode = 0x33, ops = ["rd:{slot}:out", "rs1:{slot}", "rs2:{slot}"], asm = "add {rd}, {rs1}, {rs2}", match = { funct3 = 0, funct7 = 0 } }
-[[templates.rows]]
-inst = "ADDW"
-slot = "r32"
-[[templates.rows]]
-inst = "ADDX"
-slot = "r64"
-match = { funct7 = 1 }
+rows = [
+    { inst = "ADDW", slot = "r32" },
+    { inst = "ADDX", slot = "r64", match = { funct7 = 1 } },
+]
 "#,
     );
     let m = parse_and_validate(&doc).expect("展开");
@@ -134,15 +122,12 @@ fn inst_lower_derives_the_mnemonic() {
     // 原先 `[[families]]` 的"变体名小写即助记符"由此**显式**表达。
     let doc = plus(
         r#"
-[[templates]]
-name = "RR"
+[family.RR]
 body = { form = "R", opcode = 0x33, ops = ["rd:r64:out", "rs1:r64", "rs2:r64"], asm = "{inst.lower} {rd}, {rs1}, {rs2}" }
-[[templates.rows]]
-inst = "ADD"
-match = { funct3 = 0, funct7 = 0 }
-[[templates.rows]]
-inst = "SUB"
-match = { funct3 = 0, funct7 = 0x20 }
+rows = [
+    { inst = "ADD", match = { funct3 = 0, funct7 = 0 } },
+    { inst = "SUB", match = { funct3 = 0, funct7 = 0x20 } },
+]
 "#,
     );
     let m = parse_and_validate(&doc).expect("展开");
@@ -155,18 +140,12 @@ match = { funct3 = 0, funct7 = 0x20 }
 fn whole_string_placeholder_keeps_the_type() {
     let doc = plus(
         r#"
-[[templates]]
+[family.OPW_FAM]
 body = { form = "R", opcode = "{op}", ops = ["rd:{slot}:out"], asm = "op {rd}", match = { funct3 = "{f3}" } }
-[[templates.rows]]
-inst = "OPW"
-op = 0x33
-f3 = 0
-slot = "r32"
-[[templates.rows]]
-inst = "OPX"
-op = 0x3B
-f3 = 1
-slot = "r64"
+rows = [
+    { inst = "OPW", op = 0x33, f3 = 0, slot = "r32" },
+    { inst = "OPX", op = 0x3B, f3 = 1, slot = "r64" },
+]
 "#,
     );
     let m = parse_and_validate(&doc).expect("展开");
@@ -183,14 +162,12 @@ fn rows_can_carry_nested_values() {
     // 行键空间就是 TOML：可以让**整条 `ops` 数组**逐行不同（旧平行参数表做不到）。
     let doc = plus(
         r#"
-[[templates]]
+[family.OPA_FAM]
 body = { form = "R", opcode = 0x33, asm = "op {rd}" }
-[[templates.rows]]
-inst = "OPA"
-ops = ["rd:r64:out", "rs1:r64", "rs2:r64"]
-[[templates.rows]]
-inst = "OPB"
-ops = ["rd:r64:out", "rs1:r64"]
+rows = [
+    { inst = "OPA", ops = ["rd:r64:out", "rs1:r64", "rs2:r64"] },
+    { inst = "OPB", ops = ["rd:r64:out", "rs1:r64"] },
+]
 "#,
     );
     let m = parse_and_validate(&doc).expect("展开");
@@ -204,16 +181,12 @@ ops = ["rd:r64:out", "rs1:r64"]
 fn rows_sharing_a_ref_form_one_polymorphic_reference() {
     let doc = plus(
         r#"
-[[templates]]
+[family.ADDW_FAM]
 body = { form = "R", asm = "add {rd}, {rs1}, {rs2}", group = "add" }
-[[templates.rows]]
-inst = "ADDW"
-opcode = 0x33
-ops = ["rd:r32:out", "rs1:r32", "rs2:r32"]
-[[templates.rows]]
-inst = "ADDX"
-opcode = 0x3B
-ops = ["rd:r64:out", "rs1:r64", "rs2:r64"]
+rows = [
+    { inst = "ADDW", opcode = 0x33, ops = ["rd:r32:out", "rs1:r32", "rs2:r32"] },
+    { inst = "ADDX", opcode = 0x3B, ops = ["rd:r64:out", "rs1:r64", "rs2:r64"] },
+]
 
 [[lowering]]
 op = "Iadd"
@@ -233,17 +206,12 @@ insts = ["add {out}, {0}, {1}"]
 fn ref_can_be_overridden_per_row() {
     let doc = plus(
         r#"
-[[templates]]
+[family.LDW_FAM]
 body = { form = "R", ops = ["rd:r64:out", "rs1:r64"], group = "ld" }
-[[templates.rows]]
-inst = "LDW"
-opcode = 0x03
-asm = "ldw {rd}, {rs1}"
-[[templates.rows]]
-inst = "LDX"
-opcode = 0x13
-asm = "ldx {rd}, {rs1}"
-group = "ldx64"
+rows = [
+    { inst = "LDW", opcode = 0x03, asm = "ldw {rd}, {rs1}" },
+    { inst = "LDX", opcode = 0x13, asm = "ldx {rd}, {rs1}", group = "ldx64" },
+]
 "#,
     );
     let m = parse_and_validate(&doc).expect("行级 ref 覆盖");
@@ -263,14 +231,10 @@ opcode = 0x33
 ops = ["rd:r32:out", "rs1:r32"]
 asm = "mov {rd}, {rs1}"
 
-[[templates]]
-[[templates.rows]]
-inst = "MOVX"
-group = "mov"
-form = "R"
-opcode = 0x3B
-ops = ["rd:r64:out", "rs1:r64"]
-asm = "mov {rd}, {rs1}"
+[family.MOVX_FAM]
+rows = [
+    { inst = "MOVX", group = "mov", form = "R", opcode = 0x3B, ops = ["rd:r64:out", "rs1:r64"], asm = "mov {rd}, {rs1}" },
+]
 
 [[lowering]]
 op = "Copy"
@@ -290,7 +254,7 @@ insts = ["mov {out}, {0}"]
 
 #[test]
 fn rejects_empty_rows_and_empty_inst() {
-    let empty = plus("[[templates]]\nrows = []\n");
+    let empty = plus("[family.EMPTY]\nrows = []\n");
     assert!(
         err_msg(&empty).contains("rows 不能为空"),
         "{}",
@@ -299,13 +263,10 @@ fn rejects_empty_rows_and_empty_inst() {
 
     let bad_inst = plus(
         r#"
-[[templates]]
-[[templates.rows]]
-inst = "  "
-form = "R"
-opcode = 0x33
-ops = ["rd:r32:out"]
-asm = "op {rd}"
+[family.  _FAM]
+rows = [
+    { inst = "  ", form = "R", opcode = 0x33, ops = ["rd:r32:out"], asm = "op {rd}" },
+]
 "#,
     );
     assert!(
@@ -321,11 +282,11 @@ fn param_typo_is_caught_by_operand_validation() {
     // 由既有的槽校验拒绝——诊断锚回**模板声明行**。
     let doc = plus(
         r#"
-[[templates]]
+[family.OPW_FAM]
 body = { form = "R", opcode = 0x33, ops = ["rd:{slot}:out"], asm = "op {rd}" }
-[[templates.rows]]
-inst = "OPW"
-slott = "r32"
+rows = [
+    { inst = "OPW", slott = "r32" },
+]
 "#,
     );
     let msg = err_msg(&doc);
@@ -340,11 +301,11 @@ fn inner_dsl_placeholders_survive_untouched() {
     // `asm` 里的 `{rd}`/`{imm}` 是**操作数**占位符，不参与模板插值。
     let doc = plus(
         r#"
-[[templates]]
+[family.OPW_FAM]
 body = { form = "R", opcode = 0x33, ops = ["rd:{slot}:out", "rs1:{slot}", "imm:imm12"], asm = "op {rd}, {rs1}, #{imm}" }
-[[templates.rows]]
-inst = "OPW"
-slot = "r32"
+rows = [
+    { inst = "OPW", slot = "r32" },
+]
 "#,
     );
     let m = parse_and_validate(&doc).expect("展开");
@@ -356,10 +317,10 @@ slot = "r32"
 fn rejects_scalar_body_and_bad_row_field() {
     let scalar = plus(
         r#"
-[[templates]]
-body = "not a table"
-[[templates.rows]]
-inst = "OPW"
+[family.OPW_FAM]
+rows = [
+    { inst = "OPW" },
+]
 "#,
     );
     let msg = err_msg(&scalar);
@@ -368,13 +329,10 @@ inst = "OPW"
     // 行里拼错的指令字段由 Instruction 的反序列化拒绝（点名实例）
     let bad_field = plus(
         r#"
-[[templates]]
-[[templates.rows]]
-inst = "OPW"
-form = "R"
-opcode = 0x33
-opss = ["rd:r32:out"]
-asm = "op {rd}"
+[family.OPW_FAM]
+rows = [
+    { inst = "OPW", form = "R", opcode = 0x33, opss = ["rd:r32:out"], asm = "op {rd}" },
+]
 "#,
     );
     let msg = err_msg(&bad_field);
@@ -385,12 +343,12 @@ asm = "op {rd}"
 fn duplicate_instance_names_are_rejected() {
     let doc = plus(
         r#"
-[[templates]]
+[family.OPW_FAM]
 body = { form = "R", opcode = 0x33, ops = ["rd:r32:out"], asm = "op {rd}" }
-[[templates.rows]]
-inst = "OPW"
-[[templates.rows]]
-inst = "OPW"
+rows = [
+    { inst = "OPW" },
+    { inst = "OPW" },
+]
 "#,
     );
     let msg = err_msg(&doc);
@@ -409,14 +367,10 @@ opcode = 0x33
 ops = ["rd:r32:out"]
 asm = "op {rd}"
 
-[[templates]]
-[[templates.rows]]
-inst = "OPX"
-group = "OPW"
-form = "R"
-opcode = 0x3B
-ops = ["rd:r64:out"]
-asm = "op {rd}"
+[family.OPX_FAM]
+rows = [
+    { inst = "OPX", group = "OPW", form = "R", opcode = 0x3B, ops = ["rd:r64:out"], asm = "op {rd}" },
+]
 "#,
     );
     let msg = err_msg(&doc);
