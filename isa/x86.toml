@@ -1633,6 +1633,8 @@ asm = "movups {dst}, [{src}]"
 
 [[instructions]]
 name = "MOVUPS_128_MEM_R"
+group = "store_vec"
+word_size = 16
 form = "MRR_MEM_0F_PFX32_SEG"
 bind = { rm = "[src2]" }
 
@@ -1893,6 +1895,8 @@ asm = "vmovups {dst}, [{src}]"
 
 [[instructions]]
 name = "VMOVUPS_512_MEM_R"
+group = "store_vec"
+word_size = 64
 form = "EVEX_RR_MEM_SEG"
 bind = { rm = "[src2]" }
 
@@ -1988,6 +1992,8 @@ asm = "vmovups {dst}, [{src}]"
 
 [[instructions]]
 name = "VMOVUPS_256_MEM_R"
+group = "store_vec"
+word_size = 32
 form = "VEX_RR_MEM_SEG"
 bind = { rm = "[src2]" }
 
@@ -3071,17 +3077,7 @@ insts = ["STORE_MEM_R_8 [{0}], {1}"]
 
 [[lowering]]
 op = "Store"
-when = { eq = ["rs1_vec", 64] }
-insts = ["VMOVUPS_512_MEM_R [{0}], {1}"]
-
-[[lowering]]
-op = "Store"
-when = { eq = ["rs1_vec", 32] }
-insts = ["VMOVUPS_256_MEM_R [{0}], {1}"]
-
-[[lowering]]
-op = "Store"
-when = { eq = ["rs1_vec", 16] }
+dispatch = "rs1_vec"
 insts = ["MOVUPS_128_MEM_R [{0}], {1}"]
 
 [[lowering]]

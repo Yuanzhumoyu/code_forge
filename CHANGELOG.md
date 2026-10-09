@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：x86 向量 `Store` 组折叠（3 条 → 1 条，累计 30/52）
+
++ 给 `MOVUPS_128_MEM_R`/`VMOVUPS_256_MEM_R`/`VMOVUPS_512_MEM_R` 补 `group = "store_vec"` +
+  `word_size`（字节 16/32/64），把 3 条 `rs1_vec` 规则折成一条 `dispatch = "rs1_vec"` 的规则
+  ⇒ x86 `[[lowering]]` 块数 **177 → 175**。
++ **解开分组冲突的做法**（不改设计）：`MOVSD_MEM_R` 已属 Fstore 族（`rs1_width`/位），
+  不要重复归组 ⇒ `Store` 的 **8 字节那条保留显式 `when`**（`rs1_vec = 8`），向量组只管 16/32/64。
+  两组谓词**不相交** ⇒ 语义等价 ✔（JIT 58/0 验证）。
++ 第 (4) 项累计删除 **30 / 52** 条（riscv64 24 + x86 6）。棘轮随动；
+  `validate` + `lint` 干净；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：x86 向量 `Load` 组折叠（4 条 → 1 条，累计 28 条）
 
 + 给 `MOVSD_R_MEM`/`MOVUPS_128_R_MEM`/`VMOVUPS_256_R_MEM`/`VMOVUPS_512_R_MEM` 补
