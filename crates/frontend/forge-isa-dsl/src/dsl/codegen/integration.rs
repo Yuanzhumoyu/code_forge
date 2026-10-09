@@ -921,7 +921,15 @@ fn gen_target_machine(model: &IsaModel) -> Result<TokenStream, String> {
 
 /// 解析 lowering/emit 模板中的内存操作数文本 → MemRef 构造表达式。
 /// 支持 `{base}+{off}`（base = 物理寄存器名或 `{off}` 偏移符号）。
-pub(crate) fn parse_mem_template(text: &str, ctx: &str) -> Result<TokenStream, String> {
+///
+/// v21 W7：偏移符号（`{off}`/`{alloca}` ✗）的取值**统一取占位符注册表** ✗
+/// （`placeholder::ctor_for` ✗，此处有真实 `slot` ⇒ 不需要伪造 ✗）——
+/// 这里不再手抄第二份语义 ✗。
+pub(crate) fn parse_mem_template(
+    text: &str,
+    ctx: &str,
+    slot: &crate::dsl::model::OperandSlot,
+) -> Result<TokenStream, String> {
     let t = text.trim().trim_start_matches('[').trim_end_matches(']');
     let (base_part, disp_part) = match t.split_once('+') {
         Some((b, d)) => (b.trim().to_string(), Some(d.trim().to_string())),
@@ -930,20 +938,24 @@ pub(crate) fn parse_mem_template(text: &str, ctx: &str) -> Result<TokenStream, S
             None => (t.trim().to_string(), None),
         },
     };
-    let base: TokenStream = if base_part == "{off}" {
-        quote! { ctx.current_offset }
+    // 占位符注册表是**唯一**的偏移符号语义来源 ✗（`{off}`/`{alloca}` 等 ✗）。
+    let sym = |name: &str| super::placeholder::ctor_for(name, slot);
+    let base: TokenStream = if let Some(e) = sym(&base_part) {
+        e
     } else {
         let reg = format_ident!("{base_part}");
         quote! { Reg::#reg }
     };
     let disp: TokenStream = match disp_part {
-        Some(d) if d == "{off}" => quote! { ctx.current_offset },
-        Some(d) if d == "{alloca}" => quote! { ctx.current_alloca_offset as i64 },
         Some(d) => {
-            let v: i64 = d
-                .parse()
-                .map_err(|_| format!("{ctx}: mem disp '{d}' 无法解析"))?;
-            quote! { #v }
+            if let Some(e) = sym(&d) {
+                e
+            } else {
+                let v: i64 = d
+                    .parse()
+                    .map_err(|_| format!("{ctx}: mem disp '{d}' 无法解析"))?;
+                quote! { #v }
+            }
         }
         None => quote! { 0i64 },
     };

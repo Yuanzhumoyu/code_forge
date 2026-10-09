@@ -2754,8 +2754,9 @@ fn gen_lowering_insts(
                             (quote! { Reg::#reg }, quote! { 0u32 })
                         }
                         OperandKind::Mem => {
-                            // 内存操作数：`{base}+{off}` → MemRef（base 物理寄存器 + 偏移）
-                            let m = parse_mem_template(op, "lowering 模板")?;
+                            // 内存操作数：`{base}+{off}` → MemRef（base 物理寄存器 + 偏移）；
+                            // v21 W7：偏移符号走**占位符注册表**（传真实 slot ✗）⇒ 语义单点 ✗。
+                            let m = parse_mem_template(op, "lowering 模板", slot)?;
                             (quote! { #m }, quote! { 0u32 })
                         }
                         OperandKind::Imm | OperandKind::Label => {

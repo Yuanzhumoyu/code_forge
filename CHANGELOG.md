@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W7 第八片：emit 路径的内存偏移**统一取占位符注册表**
+
++ `integration.rs::parse_mem_template`（清单点名的"私有内存语法" ✗）原先**手抄**了偏移符号语义 ✗
+  （`{off}` → `ctx.current_offset` ✗、`{alloca}` → `ctx.current_alloca_offset as i64` ✗）——
+  与 `placeholder.rs` 的注册表条目**逐字重复** ✗。现在改为调 `placeholder::ctor_for(name, slot)` ✗
+  （该路径**有真实 `slot`** ✗ ⇒ 无需伪造 ✗）⇒ 偏移符号语义**单点** ✔。
++ 实测使用面 ✗：这条语法**只有两处**在用 ✗ —— `isa/x86.toml` 的 `[RBP+{off}]` 与 `[RBP+{alloca}]` ✗
+  （arm64/riscv64 命中都是 `asm` 里的**操作数名** ✗，不是内存文本 ✗）⇒ 改动面极小、且被 x86 矩阵直接覆盖 ✔。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（生成物表达式与旧路径逐字相同 ✗）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W7 第七片：尺寸关键字**只认** `[operand.<mem>].size_words`
 
 + 清单 §9 的"尺寸关键字属于 `[operand.mem].size_words`"落地 ✗：**撤掉**旧键
