@@ -4851,3 +4851,29 @@ fn asm_pseudo_section_lowers_to_pseudo() {
     let err = super::parse_and_validate(&old).unwrap_err().to_string();
     assert!(err.contains("pseudo"), "旧键应被拒并点名：{err}");
 }
+
+/// v21 W7：`[asm.immfn.<名>]` —— **表头即修饰名**，解析期降级进内部 `conventions.imm_fn`；
+/// 与旧面（`[[conventions.imm_fn]]`）同名报错。
+#[test]
+fn asm_immfn_section_lowers_to_conventions_imm_fn() {
+    let doc = lowering_doc("[asm.immfn.hi]\ntexts = [\"%hi({0})\"]\nexpr = \"({0} + 0x800) >> 12\"");
+    let m = parse_and_validate(&doc).expect("谱合法");
+    let d = m
+        .conventions
+        .imm_fn
+        .as_ref()
+        .and_then(|v| v.iter().find(|d| d.name == "hi"))
+        .expect("hi 应在");
+    assert_eq!(d.all_texts(), vec!["%hi({0})"]);
+    assert_eq!(d.expr, "({0} + 0x800) >> 12");
+    // 与旧面同名 ⇒ 报错
+    let dup = lowering_doc(
+        "[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi({0})\"\nexpr = \"{0}\"\n\n\
+         [asm.immfn.hi]\ntexts = [\"%hi({0})\"]\nexpr = \"{0}\"",
+    );
+    let err = super::parse_and_validate(&dup).unwrap_err().to_string();
+    assert!(
+        err.contains("重复") || err.contains("asm.immfn"),
+        "err: {err}"
+    );
+}

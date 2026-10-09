@@ -72,6 +72,22 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
                 only_variants: body.only_variants,
             });
         }
+        // `[asm.immfn.<名>]` 降级进内部 `conventions.imm_fn`（表头 = 修饰名）。
+        for (name, body) in asm.immfn {
+            let defs = model.conventions.imm_fn.get_or_insert_with(Vec::new);
+            if defs.iter().any(|d| d.name == name) {
+                return Err(anchor_err(format!(
+                    "[asm.immfn.{name}]: 修饰名与已有的 `[[conventions.imm_fn]]` 重复\
+                     （v21 W7：名字必须唯一）"
+                )));
+            }
+            defs.push(crate::dsl::model::ImmFnDef {
+                name,
+                text: None,
+                texts: Some(body.texts),
+                expr: body.expr,
+            });
+        }
     }
     model.expand_templates().map_err(|msg| {
         let idx = diag::DeclIndex::build(source);

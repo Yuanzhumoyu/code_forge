@@ -174,6 +174,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[reloc]]` | `name` `semantics` `slot` | `addend` | 重定位表：semantics = absolute \| pc_relative（v18 S3d） |
 | `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
 | `[asm.pseudo.<名>]` | `asm` `emit` | `only_variants` | 汇编器伪指令（v21 W7：**表头即名字**；旧 `[[pseudo]]` 已撤）：文本级多指令展开，分派按 `asm` 的前导字面，`{名字}` 就是 `emit` 用的参数 |
+| `[asm.immfn.<名>]` | `texts` `expr` | — | 立即数修饰（v21 W7：**表头即修饰名**；旧 `[[conventions.imm_fn]]` 待撤）：`texts` = 同一语义的等价写法列表（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值） |
 | `[lower.<终结 op>]` | `insts` | — | 终结指令的 lowering 序列（Br/Jmp/Ret）：可用 {true}/{false}/{target} 符号值 |
 | `[[lowering]]` | `op` `insts` | `when` `vary` `dispatch` `temps` `priority` | 指令选择规则 |
 | `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |

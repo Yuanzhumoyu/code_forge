@@ -2899,19 +2899,33 @@ pub struct PseudoBody {
     pub only_variants: Option<VariantGate>,
 }
 
-/// **汇编器侧数据**（v21 W7 ✗）：`[asm]` —— 按名字索引的表 ✗（**表头 = 名字** ✗，
-/// 与 `[family.<名>]` 同一形态 ✗）。
+/// **`[asm.immfn.<名>]` 的体**（v21 W7）：表头就是修饰名。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImmFnBody {
+    /// 同一语义的若干**等价写法**（至少一条）：`{0}` = 内层表达式的位置。
+    pub texts: Vec<String>,
+    /// 值语义：`{0}` = 内层表达式的值，按既有表达式语言求值。
+    pub expr: String,
+}
+
+/// **汇编器侧数据**（v21 W7）：`[asm]` —— 按名字索引的表（**表头 = 名字**，
+/// 与 `[family.<名>]` 同一形态）。
 ///
-/// 解析期降级进既有内部载体 ✗：`[asm.pseudo.<名>]` → [`IsaModel::pseudo`] ✗；
-/// 因此生成器与校验只见内部表示 ✗（与 `[family.<名>]` → `templates` 同一手法 ✗）。
+/// 解析期降级进既有内部载体：`[asm.pseudo.<名>]` → [`IsaModel::pseudo`]、
+/// `[asm.immfn.<名>]` → [`Conventions::imm_fn`]；因此生成器与校验只见内部表示
+/// （与 `[family.<名>]` → `templates` 同一手法）。
 ///
-/// 规划中的另外两张表（本片未落地 ✗）：`[asm.reloc.<名>]` ✗、`[asm.immfn.<名>]` ✗。
+/// 规划中的另一张表（本片未落地）：`[asm.reloc.<名>]`。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AsmSection {
-    /// 伪指令（`[[pseudo]]` 的 v21 新居 ✗）：表头 = 名字 ✗。
+    /// 伪指令（`[[pseudo]]` 的 v21 新居）：表头 = 名字。
     #[serde(default)]
     pub pseudo: BTreeMap<String, PseudoBody>,
+    /// 立即数修饰（`[[conventions.imm_fn]]` 的 v21 新居）：表头 = 修饰名。
+    #[serde(default)]
+    pub immfn: BTreeMap<String, ImmFnBody>,
 }
 
 /// 汇编器伪指令（`[[pseudo]]`，v18 S3e）：汇编期的文本级多指令展开。

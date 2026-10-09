@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W7 第十四片：`[asm.immfn.<名>]` 新居（表头即修饰名）
+
++ 新增 `[asm.immfn.<名>]`（按设计案 §6.9 与迁移表 L743）：**表头就是修饰名**，体内键 = `texts` / `expr`
+  —— 与 `[asm.pseudo.<名>]` 同一形态，共用 `AsmSection` 与"降级进内部载体"的手法。
++ 解析期降级进内部 `Conventions.imm_fn`（表头 → `name`、`texts` → `ImmFnDef.texts`），
+  与旧面 `[[conventions.imm_fn]]` **同名报错**；生成器与校验继续只读内部表示。
++ `asm` 根键在 schema 里改为**自由表**（它下面挂多张按名字索引的表），两张表各有一条
+  Section 与一条文档键表行。
++ 单测 `dsl::tests::asm_immfn_section_lowers_to_conventions_imm_fn`（新居可降级 + 与旧面同名报错）。
++ **本片是"加新居"**：旧面仍被接受（搬迁未做）——三谱 **55 条**（arm64 49 / riscv64 4）加夹具 2 条
+  的搬迁与旧键撤除留下一片。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（三谱未用新居，生成物逐字节不变）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W7 第十三片：撤掉旧 `[[pseudo]]` 面（只留 `[asm.pseudo.<名>]`）
 
 + 承接第十二片：三谱 **22 条**伪指令（x86 20 / riscv64 2）全部搬进 `[asm.pseudo.<名>]`（表头即名字），
