@@ -366,7 +366,7 @@ fn is_single_plus(toks: &[LitTok]) -> bool {
 ///
 /// `required` = 本模板**没有** `{base}`（无基址写法，见模块文档）：此时其余组件
 /// 按必需处理（前缀与值都恒发出，含 `{disp} == 0`），否则保持"可选组件缺省不输出"。
-pub(crate) fn gen_render_mem(items: &[Item]) -> TokenStream {
+pub(crate) fn gen_render_mem(items: &[Item], kws: &[String]) -> TokenStream {
     let required = !has_base(items);
     let mut stmts: Vec<TokenStream> = Vec::new();
     let mut i = 0;
@@ -446,13 +446,41 @@ pub(crate) fn gen_render_mem(items: &[Item]) -> TokenStream {
                     }
                 }),
             },
-            // `{size}` 解析专用：`MemRef` 不带尺寸，渲染一律不输出。
-            Comp::Size => {}
+            // v21 W7：`{size}` 渲染**尺寸关键字**（宽度 = `size_words` 下标 ⇒ `1 << i` 字节）；
+            // 宽度未知（0）或谱未声明关键字表 ⇒ 空串（不谎报尺寸），此时条件前缀也不发出。
+            Comp::Size => stmts.push(quote! {
+                let __kw = __size_keyword(__size_bytes);
+                if !__kw.is_empty() {
+                    #p
+                    s.push_str(__kw);
+                }
+            }),
         }
         i += if prefix_text.is_some() { 2 } else { 1 };
     }
+    // v21 W7：尺寸关键字表——宽度（字节）由 `size_words` 的**下标**给出（`1 << i`）。
+    let kw_lits: Vec<syn::LitStr> = kws
+        .iter()
+        .map(|k| syn::LitStr::new(k, proc_macro2::Span::call_site()))
+        .collect();
+    let size_arms: Vec<TokenStream> = (0..kws.len())
+        .map(|i| {
+            let w = 1u32 << i;
+            quote! { #w => __SIZE_KWS[#i], }
+        })
+        .collect();
     quote! {
-        fn __render_mem(m: &MemRef) -> String {
+        const __SIZE_KWS: &[&str] = &[#(#kw_lits),*];
+
+        /// 宽度（字节）⇒ 尺寸关键字；未知宽度 ⇒ 空串。
+        fn __size_keyword(bytes: u32) -> &'static str {
+            match bytes {
+                #(#size_arms)*
+                _ => "",
+            }
+        }
+
+        fn __render_mem(m: &MemRef, __size_bytes: u32) -> String {
             let mut s = String::new();
             #(#stmts)*
             s

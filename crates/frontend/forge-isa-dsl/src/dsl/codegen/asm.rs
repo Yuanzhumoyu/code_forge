@@ -125,7 +125,12 @@ fn render_expr(slot: &OperandSlot, fid: &syn::Ident) -> TokenStream {
         OperandKind::Reg => {
             quote! { <&str as From<Reg>>::from(*#fid) }
         }
-        OperandKind::Mem => quote! { __render_mem(#fid) },
+        OperandKind::Mem => {
+            // v21 W7：把操作数**位宽**（字节）交给渲染器，`{size}` 才有尺寸关键字可打印；
+            // 宽度未声明 ⇒ 传 0（渲染空串，不谎报尺寸）。
+            let bytes = slot.width.unwrap_or(0) / 8;
+            quote! { __render_mem(#fid, #bytes) }
+        }
         OperandKind::Bits => {
             let pairs: Vec<TokenStream> = slot
                 .table_entries

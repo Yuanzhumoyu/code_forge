@@ -3017,7 +3017,7 @@ fn mem_template_parse_default() {
 fn mem_template_render_mips_style() {
     use super::codegen::mem::{gen_render_mem, parse_mem_template};
     let items = parse_mem_template("{disp}({base})").unwrap();
-    let s = gen_render_mem(&items).to_string();
+    let s = gen_render_mem(&items, &[]).to_string();
     let c = s.replace(' ', "");
     assert!(!c.contains("\"[\""), "MIPS 不应有方括号：{s}");
     assert!(c.contains("\"(\""), "应有 '('：{s}");
@@ -3043,7 +3043,7 @@ fn mem_template_parser_mips_style() {
 fn mem_template_default_render_matches_x86() {
     use super::codegen::mem::{gen_render_mem, parse_mem_template};
     let items = parse_mem_template("[{base}+{index}*{scale}+{disp}]").unwrap();
-    let s = gen_render_mem(&items).to_string();
+    let s = gen_render_mem(&items, &[]).to_string();
     let c = s.replace(' ', "");
     assert!(c.contains("\"[\""), "x86 应有 '['：{s}");
     assert!(c.contains("\"+\""), "x86 应有 '+'：{s}");
@@ -3147,7 +3147,7 @@ fn mem_template_list_and_size_component() {
     assert!(matches!(&items[2], Item::Comp(Comp::Base)));
 
     // 渲染只用第 0 条：`{size}` 输出空串，紧邻它的 `[` **不**被当条件前缀吞掉。
-    let render = gen_render_mem(&items).to_string().replace(' ', "");
+    let render = gen_render_mem(&items, &[]).to_string().replace(' ', "");
     assert!(
         render.contains("\"[\""),
         "紧邻 {{size}} 的字面量应恒发出：{render}"

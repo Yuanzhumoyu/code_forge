@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W7 第二十片：`{size}` 渲染尺寸关键字（机制就位）
+
++ 已定规则：宽度（字节）= `size_words` 下标 ⇒ `1 << i`。渲染器改为收一个宽度参数
+  （`__render_mem(m, size_bytes)`），`Comp::Size` 按宽度查关键字表：命中则**连同其条件前缀**
+  一起输出；未知宽度（0）或谱未声明关键字表 ⇒ 空串（不谎报尺寸）。
++ 两处调用点随签名改：`codegen` 生成处传 `size_keywords(&model.conventions.mem)`；
+  `asm` 渲染处传操作数槽位宽（`slot.width / 8`，未声明 ⇒ 0）。
++ **零行为变化**：三谱的 `[operand.mem]` 都没有声明 `width` ⇒ x86 的 `{size}` 仍渲染空串，
+  汇编棘轮与全部测试不变（整仓 `-j 2` 全绿，`corpus_parse_counts_match_the_ratchet` 通过）。
++ **实测结论（如实记录）**：x86 的内存访问宽度是**逐指令**的（`movzx` byte/word、`mov` qword…），
+  而 `[operand.mem]` 只是槽声明、不带宽度 ⇒ 要让 x86 真的打印 `qword ptr`，需要给相关槽/指令补
+  宽度声明（或把逐指令的 `data_width`/`opsize` 穿进渲染）——那属于**谱面与设计取舍**，
+  不在本片擅自决定。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W7 第十九片：删掉“紧邻 `{size}` 字面量例外”
 
 + `mem.rs` 渲染分支里那条特例（紧跟在 `{size}` **前面**的字面量恒发出）已删除：`{size}` 现在与其它

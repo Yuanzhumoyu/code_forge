@@ -376,7 +376,9 @@ fn gen_mem_support(model: &IsaModel, _infos: &[InstInfo]) -> Result<TokenStream,
         .first()
         .ok_or("[conventions.mem]: `templates` 不能为空".to_string())?;
     let items = mem::parse_mem_template(first)?;
-    let render_mem = mem::gen_render_mem(&items);
+    // v21 W7：`{size}` 渲染关键字 ⇒ 渲染器要拿到关键字表（宽度 = 下标 ⇒ `1 << i` 字节）。
+    let kws = mem::size_keywords(&model.conventions.mem);
+    let render_mem = mem::gen_render_mem(&items, &kws);
     Ok(quote! {
         /// 内存操作数（自包含；base 为物理寄存器索引，disp 为字节位移；
         /// index 为可选索引寄存器（x86 SIB index），scale 为缩放 1/2/4/8）。
