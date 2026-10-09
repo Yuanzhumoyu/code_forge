@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：riscv64 宽度分派再删 8 组（累计 14 条），修展开误改，快照随动
+
++ 给 `ADD/SUB/MUL/DIV/DIVU/REM/REMU` 的 **W 变体对**补 `group` + `word_size`（14 行），再严格折叠 8 对
+  ⇒ `riscv64.toml` 的 `[[lowering]]` 块数 **112 → 104**（本轮合计 118 → 104）。
++ **展开误改修复**：重载原先把行首名替换到**所有行**——`Popcnt` 序列里 `ADDI {g2}, …` 恰好以 `ADD`
+  开头，被改成不存在的 `ADDWI`（`validate` 抓到）。现在只重写**提供行首名的那一行**。
++ 折叠判据另修两处：允许**不等长**（`ADDW` vs `ADD`）与**一侧为空**（纯插入/删除），安全性由
+  "两侧必须同族"保证。
++ 快照/棘轮随动：`--strict-overlap` riscv64 27 → 20；`variants.rs`（RV32 投影 106 → 105、
+  原生 122 → 125、丢弃 17 → 21、级联边界 34 → 35）；`pins.txt` 的 `lint.refs/vary_candidates`。
++ 整仓 `cargo test --workspace --exclude forge-rustc -j 2` → exit 0、0 编译错误、0 失败二进制
+  （JIT 矩阵 58/0；`validate` + `lint` 干净）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：riscv64 删除 6 组宽度分派（降级重载接管，全门禁绿）
 
 + **只折叠"两侧都能被重载接住"的对**：先建"指令名 → (族名, word_size)"表，只对**同族**、

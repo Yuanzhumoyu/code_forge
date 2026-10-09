@@ -156,11 +156,21 @@ pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
             out.push(rule);
             continue;
         }
-        let head = rule
+        // 行首名**只从第一条非空非注释行**取，且展开时**只改那一行**——
+        // 否则同一段序列里别的行若恰好以同名开头（如 `ADDI` 以 `ADD` 开头）会被误改。
+        let head_idx = rule
             .insts
             .iter()
-            .find(|l| !l.trim().is_empty() && !l.trim().starts_with('#'))
-            .map(|l| l.trim().split_whitespace().next().unwrap_or("").to_string())
+            .position(|l| !l.trim().is_empty() && !l.trim().starts_with('#'));
+        let head = head_idx
+            .map(|i| {
+                rule.insts[i]
+                    .trim()
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            })
             .unwrap_or_default();
         // head 可能是**指令名**（取其族名）或**族名**本身
         let key = name_to_ref.get(&head).cloned().unwrap_or_else(|| head.clone());
@@ -170,14 +180,12 @@ pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
         };
         for (name, w) in list {
             let mut r = rule.clone();
-            r.insts = r
-                .insts
-                .iter()
-                .map(|l| match l.trim_start().strip_prefix(&head) {
+            if let Some(hi) = head_idx {
+                r.insts[hi] = match r.insts[hi].trim_start().strip_prefix(&head) {
                     Some(rest) => format!("{name}{rest}"),
-                    None => l.clone(),
-                })
-                .collect();
+                    None => r.insts[hi].clone(),
+                };
+            }
             // 把 `rs1_width` 叶子**合并**进原有 `when`（原 `when` 作为 `and` 的一项）
             let leaf = toml::Value::Table(
                 [(

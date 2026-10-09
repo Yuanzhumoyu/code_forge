@@ -848,8 +848,8 @@ fields = [
 [family.RR]
 body = { form = "R", opcode = 0x33, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
-  { inst = "ADD", match = { funct3 = 0, funct7 = 0x00 } },
-  { inst = "SUB", match = { funct3 = 0, funct7 = 0x20 } },
+  { inst = "ADD", group = "add_xlen", word_size = 64, match = { funct3 = 0, funct7 = 0x00 } },
+  { inst = "SUB", group = "sub_xlen", word_size = 64, match = { funct3 = 0, funct7 = 0x20 } },
   { inst = "SLL", match = { funct3 = 1, funct7 = 0x00 } },
   { inst = "SLT", match = { funct3 = 2, funct7 = 0x00 } },
   { inst = "SLTU", match = { funct3 = 3, funct7 = 0x00 } },
@@ -858,11 +858,11 @@ rows = [
   { inst = "SRA", match = { funct3 = 5, funct7 = 0x20 } },
   { inst = "OR", match = { funct3 = 6, funct7 = 0x00 } },
   { inst = "AND", match = { funct3 = 7, funct7 = 0x00 } },
-  { inst = "MUL", match = { funct3 = 0, funct7 = 0x01 } },
-  { inst = "DIV", match = { funct3 = 4, funct7 = 0x01 } },
-  { inst = "DIVU", match = { funct3 = 5, funct7 = 0x01 } },
-  { inst = "REM", match = { funct3 = 6, funct7 = 0x01 } },
-  { inst = "REMU", match = { funct3 = 7, funct7 = 0x01 } },
+  { inst = "MUL", group = "mul_xlen", word_size = 64, match = { funct3 = 0, funct7 = 0x01 } },
+  { inst = "DIV", group = "div_xlen", word_size = 64, match = { funct3 = 4, funct7 = 0x01 } },
+  { inst = "DIVU", group = "divu_xlen", word_size = 64, match = { funct3 = 5, funct7 = 0x01 } },
+  { inst = "REM", group = "rem_xlen", word_size = 64, match = { funct3 = 6, funct7 = 0x01 } },
+  { inst = "REMU", group = "remu_xlen", word_size = 64, match = { funct3 = 7, funct7 = 0x01 } },
   { inst = "ROL", match = { funct3 = 1, funct7 = 0x30 } },
   { inst = "ROR", match = { funct3 = 5, funct7 = 0x30 } },
   { inst = "MIN", match = { funct3 = 0, funct7 = 0x05 } },
@@ -898,16 +898,16 @@ rows = [
 [family.WW]
 body = { only_variants = { xlen = [64] }, form = "R", opcode = 0x3b, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
-  { inst = "ADDW", match = { funct3 = 0, funct7 = 0x00 } },
-  { inst = "SUBW", match = { funct3 = 0, funct7 = 0x20 } },
+  { inst = "ADDW", group = "add_xlen", word_size = 32, match = { funct3 = 0, funct7 = 0x00 } },
+  { inst = "SUBW", group = "sub_xlen", word_size = 32, match = { funct3 = 0, funct7 = 0x20 } },
   { inst = "SLLW", match = { funct3 = 1, funct7 = 0x00 } },
   { inst = "SRLW", match = { funct3 = 5, funct7 = 0x00 } },
   { inst = "SRAW", match = { funct3 = 5, funct7 = 0x20 } },
-  { inst = "MULW", match = { funct3 = 0, funct7 = 0x01 } },
-  { inst = "DIVW", match = { funct3 = 4, funct7 = 0x01 } },
-  { inst = "DIVUW", match = { funct3 = 5, funct7 = 0x01 } },
-  { inst = "REMW", match = { funct3 = 6, funct7 = 0x01 } },
-  { inst = "REMUW", match = { funct3 = 7, funct7 = 0x01 } },
+  { inst = "MULW", group = "mul_xlen", word_size = 32, match = { funct3 = 0, funct7 = 0x01 } },
+  { inst = "DIVW", group = "div_xlen", word_size = 32, match = { funct3 = 4, funct7 = 0x01 } },
+  { inst = "DIVUW", group = "divu_xlen", word_size = 32, match = { funct3 = 5, funct7 = 0x01 } },
+  { inst = "REMW", group = "rem_xlen", word_size = 32, match = { funct3 = 6, funct7 = 0x01 } },
+  { inst = "REMUW", group = "remu_xlen", word_size = 32, match = { funct3 = 7, funct7 = 0x01 } },
 ]
 # ─────────────────────────── 指令（顺序 = v11 声明序）───────────────────────────
 # ADDI 复制（收参用）；与 ADDI 同编码（imm=0），解码首匹配
@@ -1830,26 +1830,11 @@ epilogue_label = true
 
 [[lowering]]
 op = "Iadd"
-when = { eq = ["rs1_width", 32] }
-insts = ["ADDW {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Iadd"
 insts = ["ADD {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Isub"
-when = { eq = ["rs1_width", 32] }
-insts = ["SUBW {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Isub"
 insts = ["SUB {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Imul"
-when = { eq = ["rs1_width", 32] }
-insts = ["MULW {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Imul"
@@ -2014,17 +1999,7 @@ insts = ["SLTU {g}, {0}, {1}", "XORI {out}, {g}, 1"]
 
 [[lowering]]
 op = "Sdiv"
-when = { eq = ["rs1_width", 32] }
-insts = ["DIVW {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Sdiv"
 insts = ["DIV {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Udiv"
-when = { eq = ["rs1_width", 32] }
-insts = ["DIVUW {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Udiv"
@@ -2032,25 +2007,11 @@ insts = ["DIVU {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Srem"
-when = { eq = ["rs1_width", 32] }
-insts = ["REMW {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Srem"
 insts = ["REM {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Urem"
-when = { eq = ["rs1_width", 32] }
-insts = ["REMUW {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Urem"
 insts = ["REMU {out}, {0}, {1}"]
-
-# ── min/max（基础指令序列，不依赖 Zbb——QEMU 11.0.92 默认/显式 CPU 均不
-#    译码 Zbb 的 min/max（LLVM 确认编码规范，QEMU rc 版 TCG 未接）；用
-#    `slt + neg + xor + and + xor` 算术选择：min(a,b) = b ^ ((a^b) & -(a<b))）──
 
 [[lowering]]
 op = "Smin"
@@ -2545,19 +2506,8 @@ insts = ["AMOADD_W {out}, {0}, {1}"]
 
 [[lowering]]
 op = "AtomicRmw"
-when = { and = [ { eq = ["imm0", 2] }, { eq = ["rs1_width", 64] } ] }
-insts = ["SUB {g}, X0, {1}", "AMOADD_D {out}, {0}, {g}"]
-
-[[lowering]]
-op = "AtomicRmw"
-when = { and = [ { eq = ["imm0", 2] }, { eq = ["rs1_width", 32] } ] }
+when = { eq = ["imm0", 2] }
 insts = ["SUB {g}, X0, {1}", "AMOADD_W {out}, {0}, {g}"]
-
-# ── Cmpxchg：**无分支** LR/SC 序列（单线程 QEMU 下 sc.d 不失败，无需
-#    重试循环；模板层无函数内 label）──
-#    lr.d 读旧值 → 与期望比较 → 掩码选择写入值（匹配→new、不匹配→old
-#    即无操作写回）→ sc.d；结果 = 旧值。32 位用 lr.w/sc.w + 掩码截断。
-#    sc.d {out0}, {0}, {g4}：rd=成功标志（丢弃）、rs1=addr、rs2=写入值。
 
 [[lowering]]
 op = "Cmpxchg"

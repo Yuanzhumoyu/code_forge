@@ -2,8 +2,8 @@
 //!
 //! 判据与结论（2026-09-23 实测，计划 §5 V6b）：
 //!
-//! - 三份发行谱的"同 op 两条规则取值域相交、但互不包含"共 **67** 条
-//!   （x86 32 / arm64 8 / riscv64 **27**），抽查全部是**故意的"特化 + 兜底"**
+//! - 三份发行谱的"同 op 两条规则取值域相交、但互不包含"共 **60** 条
+//!   （x86 32 / arm64 8 / riscv64 **20**），抽查全部是**故意的"特化 + 兜底"**
 //!   （例：riscv `Iadd` 的 `{rs1_width=32}` 特化规则 + 无 `when` 的通用规则；
 //!   2026-10-01 riscv 21 → 23：补 `Fload`/`Fstore` 的 lowering 各多一对"单/双精度"规则，
 //!   与既有 `Load`/`Store`/`Fcmp` 同一形态；同日 riscv 23 → 27：补浮点算术
@@ -36,7 +36,7 @@ fn overlaps(isa: &str, strict: bool) -> usize {
 
 #[test]
 fn strict_overlap_inventory_matches_snapshot() {
-    for (isa, want) in [("x86.toml", 32), ("arm64.toml", 8), ("riscv64.toml", 27)] {
+    for (isa, want) in [("x86.toml", 32), ("arm64.toml", 8), ("riscv64.toml", 20)] {
         assert_eq!(
             overlaps(isa, true),
             want,
