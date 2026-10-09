@@ -121,7 +121,7 @@ fn insts_lists_expanded_instructions() {
         "期望 {want_riscv} 条指令：{}",
         out.stdout
     );
-    // 模板展开出的实例也在列表里（SLLW 来自 [[templates]] 行）。
+    // 模板展开出的实例也在列表里（SLLW 来自 [family.*] 的 rows 行）。
     assert!(out.stdout.contains("SLLW"), "{}", out.stdout);
     assert!(out.stdout.contains("template="), "{}", out.stdout);
 }
@@ -142,7 +142,7 @@ fn explain_shows_template_provenance() {
     let out = run(&["explain", &isa("arm64.toml"), "ADDREGW"]);
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
     assert!(
-        out.stdout.contains("[[templates.ADDREG]] 第 2 行"),
+        out.stdout.contains("[family.ADDREG] 第 2 行"),
         "{}",
         out.stdout
     );

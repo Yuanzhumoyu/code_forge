@@ -155,6 +155,8 @@ impl InstRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateRow {
     pub template: String,
+    /// 是否由 `[family.<名>]` 降级而来（v21 W5）：`explain` 据此打印 `[family.X]`。
+    pub from_family: bool,
     /// 行号（1-based，`rows` 里的位置）。
     pub index: usize,
     /// 模板级 `body`（键值对，`key = value` 原样文本）。
@@ -323,6 +325,7 @@ pub fn explain(source: &str, name: &str) -> Result<Explain, Vec<DiagLine>> {
             let idx = inst.template_row.unwrap_or(1);
             TemplateRow {
                 template: tname.clone(),
+                from_family: t.from_family,
                 index: idx,
                 body: t.body.as_ref().map(table_pairs).unwrap_or_default(),
                 row: t

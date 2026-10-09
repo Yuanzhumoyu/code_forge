@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-08) — ISA-DSL v21 W5 遗留：`explain` 的 provenance 打印族感知
+
++ `forge-isa explain` 原先恒打印 `[[templates.<名>]]`（族降级来的实例也照旧）——这是最后
+  一处**用户可见**的旧面残留。现在 `report::TemplateRow` 带 `from_family`，打印按来源输出
+  **`[family.<名>]`** 或 `[[templates.<名>]]`；`cli_tests` 的期望随动。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5 ⑥ 完成：`[[templates]]` **撤出 TOML 面**
 
 + `IsaModel.templates` 改为**内部载体**（`#[serde(default, skip)]`，并在

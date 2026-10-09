@@ -650,7 +650,12 @@ fn print_explain(e: &Explain) {
     );
     println!("指令 {}", e.inst.name);
     if let Some(t) = &e.template {
-        println!("  来源：[[templates.{}]] 第 {} 行", t.template, t.index);
+        let sec = if t.from_family {
+            format!("[family.{}]", t.template)
+        } else {
+            format!("[[templates.{}]]", t.template)
+        };
+        println!("  来源：{sec} 第 {} 行", t.index);
         if !t.body.is_empty() {
             println!("  模板 body：");
             for (k, v) in &t.body {
