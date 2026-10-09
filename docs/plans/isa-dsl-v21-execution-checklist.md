@@ -672,7 +672,22 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
   ⇒ 实施顺序应是：**`family` 构造（body + rows + vary）→ 迁移三谱的 `[[templates]]` 到 `family`
   （顺带让族名= group 生效）→ 再谈 `family.vary` 与 `[lower.*].vary` 共用一套 zip 语义**。
-  前置量化：三谱 `[[templates]]` 数量与行数（下一轮先量，再动）。
+  **前置量化（2026-10-08 实测）**：三谱共 **112 个 `[[templates]]`**（x86 18 / riscv64 24 / arm64 70），
+  **全部用内联 `rows = [...]`**（无 `[[templates.rows]]` 子表）。
+  **关键发现**：`templates` 的形状**已经是** `name` + `body` + `rows` ⇒ **`family` 本质是"改名 +
+  让族名兼作多态引用名"**，因此可以**降级到既有 `Template` 表示**——**代码生成一行不改**
+  （沿用 W3a/W3b/W4 一路的"把新面降级到既有内部表示"打法）。
+  **实施计划（逐条可机械执行）**：
+  1. `dsl/model.rs`：加 `pub families: Option<BTreeMap<String, FamilyDecl>>`（`FamilyDecl` =
+     `body` 与 `rows` 与 `vary`；`name` 来自表键）；`IsaModel` 上加
+     `#[serde(default, rename = "family")]`；
+  2. `dsl/stream_decl.rs`（或新建 `dsl/family_decl.rs`）：`lower_families()` 把每个 `[family.<名>]`
+     展开成一条 `Template { name: <族名>, body, rows }` 追加进 `model.templates`，并让**族名自动成为
+     rows 里各指令的 `group`**（若该行没显式写 `group`）；
+  3. 三方针：`src/schema.rs` 加 `[family.<名>]` 节（`body`/`rows`/`vary`）+ `docs/reference/isa-dsl.md`
+     速查表加一行 + `cargo run -p forge-isa -- schema --out isa-dsl.schema.json`；
+  4. 单测：`[family.X]` 与等价 `[[templates]]` 展开后**指令集逐条相同**（沿用 W4 的"新面 ≡ 旧面"测法）；
+  5. 迁三谱 112 处（机械）+ 删 `[[templates]]`（`--suggest`/lint 复查），四条判据全绿后一次提交。
 - [ ] `family.vary` 与 `[lower.*].vary` 共用一套 zip 语义（一处实现）。
 - [ ] 重载解析：按声明类型（字段类型）选行；歧义 → 生成期报错并列候选；无候选 → 生成物 `Unsupported`。
 - [ ] 先做机械合并：x86 的 122 条同签名块、riscv 的 28 组候选、arm64 的 REV/abs-neg 族。
