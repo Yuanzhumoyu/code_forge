@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-08) — ISA-DSL v21 W5：重载展开改为**显式 opt-in**（修两轮 JIT 崩溃的根因）
+
++ **根因（二分定位）**：只给 4 条向量 load 指令补 `group`（lowering 规则一条未动）JIT 就崩 ⇒
+  问题不在"折叠"，而在**组属性本身**：既有那些"引用它们、没写宽度叶子"的规则被重载**自动展开**，
+  从"对任意宽度适用"变成"只在某一档适用" ⇒ 覆盖丢失 ⇒ 行为改变。
++ **修法**：展开改为**显式 opt-in** —— 只有规则自己写了 `dispatch = "<键>"` 才展开，缺省一律不动。
+  连带修掉一个**遮蔽 bug**：叶子构造处 `key` 被"族名查找"重新绑定 ⇒ 叶子属性写成了**族名**
+  （`when = { eq = ["addw", …] }`）—— 这正是前两轮崩溃的直接原因（`validate` 报"未知属性 addw"抓到）。
++ **迁移**：给已折叠的规则补 `dispatch = "rs1_width"`（riscv64 **27** 条含 3 条多行 `insts` 规则 +
+  x86 **1** 条）；行为逐字节不变 ⇒ JIT 矩阵 **58 passed / 0 failed**。
++ 棘轮随动（`lint.vary_candidates.riscv64` 28 → 31）；三谱 `validate` + `lint` 干净；
+  整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：x86 首条宽度分派删除（`Fstore`，累计 25 条）
 
 + `MOVSS_MEM_R`/`MOVSD_MEM_R` 补 `group = "fstore_x86"` + `word_size`（32/64 位），把 `Fstore` 的

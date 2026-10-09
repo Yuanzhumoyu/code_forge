@@ -156,6 +156,16 @@ pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
             out.push(rule);
             continue;
         }
+        // **必须显式 opt-in**：只有规则自己写了 `dispatch` 才展开，缺省**一律不动**。
+        // 理由（x86 实测）：给某族补 `group` 后，**既有**那些"引用它们、没写宽度叶子"的规则
+        // 若被自动展开，就会从"对任意宽度适用"变成"只在某一档适用" ⇒ 覆盖丢失 ⇒ JIT 崩。
+        let disp_key = match rule.dispatch.clone() {
+            Some(k) => k,
+            None => {
+                out.push(rule);
+                continue;
+            }
+        };
         // 行首名**只从第一条非空非注释行**取，且展开时**只改那一行**——
         // 否则同一段序列里别的行若恰好以同名开头（如 `ADDI` 以 `ADD` 开头）会被误改。
         let head_idx = rule
@@ -173,8 +183,8 @@ pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
             })
             .unwrap_or_default();
         // head 可能是**指令名**（取其族名）或**族名**本身
-        let key = name_to_ref.get(&head).cloned().unwrap_or_else(|| head.clone());
-        let Some(list) = cands.get(&key).cloned() else {
+        let grp_key = name_to_ref.get(&head).cloned().unwrap_or_else(|| head.clone());
+        let Some(list) = cands.get(&grp_key).cloned() else {
             out.push(rule);
             continue;
         };
@@ -191,9 +201,7 @@ pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
                 [(
                     "eq".to_string(),
                     toml::Value::Array(vec![
-                        toml::Value::String(
-                            rule.dispatch.clone().unwrap_or_else(|| "rs1_width".to_string()),
-                        ),
+                        toml::Value::String(disp_key.clone()),
                         toml::Value::Integer(i64::from(w)),
                     ]),
                 )]

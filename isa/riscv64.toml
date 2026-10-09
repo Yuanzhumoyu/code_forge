@@ -1837,14 +1837,17 @@ epilogue_label = true
 # ─────────────────────── lowering（64 位主；32 位 W 变体按 rs1_width）───────────────────────
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Iadd"
 insts = ["ADD {out}, {0}, {1}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Isub"
 insts = ["SUB {out}, {0}, {1}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Imul"
 insts = ["MUL {out}, {0}, {1}"]
 
@@ -1877,6 +1880,7 @@ op = "Load"
 insts = ["LD {out}, {0}, 0"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Store"
 insts = ["SD {0}, {1}, 0"]
 
@@ -1890,6 +1894,7 @@ op = "Fload"
 insts = ["FLD {out}, {0}, 0"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Fstore"
 insts = ["FSD {0}, {1}, 0"]
 
@@ -1993,18 +1998,22 @@ insts = ["SLTU {g}, {0}, {1}", "XORI {out}, {g}, 1"]
 # ── 除法/取模（32 位 W 变体按 rs1_width 分派）──
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Sdiv"
 insts = ["DIV {out}, {0}, {1}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Udiv"
 insts = ["DIVU {out}, {0}, {1}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Srem"
 insts = ["REM {out}, {0}, {1}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Urem"
 insts = ["REMU {out}, {0}, {1}"]
 
@@ -2274,58 +2283,70 @@ insts = [
 # 按 TOML 顺序生成 if-else 链，无宽度规则的 `cond=N` 会截胡后面的 32 位规则
 #（实测 f32 用例被 feq.d/flt.d 抢走 → QEMU NaN-box 语义下结果错）。
 [[lowering]]
+dispatch = "rs1_width"
 op = "Fcmp"
 when = { eq = ["cond", 3] }
 insts = ["FEQ_S {out}, {0}, {1}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Fcmp"
 when = { eq = ["cond", 4] }
 insts = ["FEQ_S {out}, {0}, {1}", "XORI {out}, {out}, 1"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Fcmp"
 when = { eq = ["cond", 5] }
 insts = ["FLT_S {out}, {0}, {1}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Fcmp"
 when = { eq = ["cond", 6] }
 insts = ["FLE_S {out}, {0}, {1}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Fcmp"
 when = { eq = ["cond", 7] }
 insts = ["FLT_S {out}, {1}, {0}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Fcmp"
 when = { eq = ["cond", 8] }
 insts = ["FLE_S {out}, {1}, {0}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Fcmp"
 when = { eq = ["cond", 1] }
 insts = ["FEQ_S {g}, {0}, {0}", "FEQ_S {g2}, {1}, {1}", "AND {out}, {g}, {g2}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Fcmp"
 when = { eq = ["cond", 2] }
 insts = ["FEQ_S {g}, {0}, {0}", "FEQ_S {g2}, {1}, {1}", "AND {g}, {g}, {g2}", "XORI {out}, {g}, 1"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Fadd"
 insts = ["FADD_D {out}, {0}, {1}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Fsub"
 insts = ["FSUB_D {out}, {0}, {1}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Fmul"
 insts = ["FMUL_D {out}, {0}, {1}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Fdiv"
 insts = ["FDIV_D {out}, {0}, {1}"]
 
@@ -2444,16 +2465,19 @@ insts = [
 # {0}=addr→rs1、{1}/src→rs2（不能用括号——括号 token 判 mem 类型）。
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "AtomicRmw"
 when = { eq = ["imm0", 0] }
 insts = ["AMOSWAP_W {out}, {0}, {1}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "AtomicRmw"
 when = { eq = ["imm0", 1] }
 insts = ["AMOADD_W {out}, {0}, {1}"]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "AtomicRmw"
 when = { eq = ["imm0", 2] }
 insts = ["SUB {g}, X0, {1}", "AMOADD_W {out}, {0}, {g}"]
@@ -2563,6 +2587,7 @@ insts = [
 # Ctz：ctz(x) = popcnt((x & -x) - 1)。
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Popcnt"
 insts = [
     "ADD {g}, {0}, X0",
@@ -2598,6 +2623,7 @@ insts = [
 ]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Clz"
 insts = [
     "ADD {g}, {0}, X0",
@@ -2647,6 +2673,7 @@ insts = [
 ]
 
 [[lowering]]
+dispatch = "rs1_width"
 op = "Ctz"
 insts = [
     "SUB {g}, X0, {0}",

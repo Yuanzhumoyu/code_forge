@@ -899,6 +899,7 @@ ops = ["dst:g:out", "src:g", "src2:g"]
 asm = "addw {dst}, {src}, {src2}"
 [[lowering]]
 op = "Copy"
+dispatch = "rs1_width"
 insts = ["ADD {out}, {0}, {1}"]
 "#;
         let m = crate::dsl::parse_and_validate(src).expect("谱合法");
