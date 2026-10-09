@@ -333,7 +333,7 @@ riscv64 只剩一条登记为设计取舍；aarch64 有一条**已定位、未�
   **字节**（`28 / 4 = 7` 进 imm26），而槽原先直接收原值——于是 >imm26 的合法偏移被判越界、
   能编的又编成错的数。本次给 `[[operand_slots]]` 加**源值单位** `unit`（本例 `unit = 4`）：
   值域按源单位给、非整数倍不匹配、解码乘回来（`Inst`/`disassemble` 始终是字节）、符号标签
-  回填"块下标 × unit"。这与宿主 `Arm64RelocPatcher` 的 `offset >> 2` 是同一口径，于是
+  回填"块下标 × unit"。这与**生成的重定位补丁器**（v21 W8）的 `offset >> log2(unit)` 是同一口径，于是
   "汇编器里的数字写法"与"编译器打补丁"不再各说各话（`unit` 只实现于定宽/mixed 编解码，
   `prefix_scan` 写它会在校验期 fail-closed）。另补 `[meta].imm_prefix = "#"`——A64 的模板
   虽然都写 `#{imm}`，但**分支目标槽前面没有字面 `#`**，前缀得由这条声明来吃。
@@ -1579,7 +1579,7 @@ widths = [16, 32]       # 16 位压缩形态 + 32 位常规形态
 
 1. **结构**：riscv64 谱切 `kind = "mixed"` + `widths = [16,32]` ✓（既有 4 字节指令全部显式 `width = 32`
    或依赖缺省 ✓ —— 这一步要跑**全量回归**：三档 riscv 套件 + `jit_matrix_riscv64`（QEMU 真执行 ✓）
-   + `isa_roundtrip_guard` 的 riscv 计数 ✓）；
+   - `isa_roundtrip_guard` 的 riscv 计数 ✓）；
 
 2. **指令面**：按 RISC-V C 扩展表补压缩形态（`c.nop`/`c.mv`/`c.li`/`c.addi`/`c.addi4spn`/`c.lw`/
    `c.sw`/`c.fld`/`c.fsd`/`c.flw`/`c.fsw` ✓，共 49 条语料命中 ✓）——**位布局必须查 RISC-V 官方 C 表** ✗

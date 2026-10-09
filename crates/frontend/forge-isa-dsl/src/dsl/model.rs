@@ -1717,7 +1717,7 @@ pub struct OperandSlot {
     /// 源文本与 `Inst` 字段里的值以**字节**计，而编码字段以 `unit` 字节为 1 个单位
     /// （编码值 = 源值 / unit）。分支偏移就是这么定义的：A64 的 `b #28` 是**字节**偏移，
     /// 字段 `imm26` 数的是 4 字节字（`28 / 4 = 7`），`cbz`（imm19）/`tbz`（imm14）同理；
-    /// x86 的 `jmp rel32` 是字节单位（缺省 1）。这也正是本仓库 `Arm64RelocPatcher`
+    /// x86 的 `jmp rel32` 是字节单位（缺省 1）。这也正是本仓库定宽 ISA 的
     /// 的口径（`imm = offset >> 2`）——于是"汇编器里的数字写法"与"编译器打补丁"同单位。
     ///
     /// 连带语义（全部由本字段派生，谱里不写第二遍）：
@@ -2923,6 +2923,10 @@ pub struct RelocBody {
     /// 重定位值的链接期加减（缺省 0）。
     #[serde(default)]
     pub addend: Option<i64>,
+    /// **值变换**（v21 W8，可选）：先把 `d = target − site + addend` 过一遍该
+    /// `[asm.immfn.<名>]` 的 `expr` 再放进 `operand` 的位段（riscv 的 hi/lo）。
+    #[serde(default)]
+    pub via: Option<String>,
 }
 
 /// **汇编器侧数据**（v21 W7/W8）：`[asm]` —— 按名字索引的表（**表头 = 名字**，
@@ -3015,6 +3019,10 @@ pub struct RelocDef {
     /// 重定位值的链接期加减（缺省 0）。
     #[serde(default)]
     pub addend: Option<i64>,
+    /// **值变换**（v21 W8，可选）：`d = target − site + addend` 先过该 `[asm.immfn.<名>]`
+    /// 的 `expr` 再进字段（riscv 的 hi/lo 走这条路，于是宿主补丁器可整条删除）。
+    #[serde(default)]
+    pub via: Option<String>,
 }
 
 /// 重定位的**宿主语义**（与宿主 `RelocKind` 一一对应）。

@@ -100,6 +100,7 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
                 semantics: body.semantics,
                 operand: body.operand,
                 addend: body.addend,
+                via: body.via,
             });
         }
     }

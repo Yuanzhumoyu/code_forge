@@ -413,14 +413,16 @@ pub fn exec_riscv64_f32(compiled: &CompiledFunction, args: &[u32]) -> Result<u64
 /// 数据段，符号 "G{id}" 与全局名均指向其地址（GlobalAddr 的 PC-relative
 /// reloc 在打包时 patch）。crt0 的 main 经 `main_name` 定位（jal 目标 =
 /// 该函数入口）。跨函数 reloc（符号 `@N` = 函数序号）在打包时用
-/// `RiscvRelocPatcher` 直接 patch（目标 = ENTRY + 函数布局偏移）。
+/// 生成的补丁器直接 patch（目标 = ENTRY + 函数布局偏移）。
 pub fn exec_riscv64_module(
     funcs: &[(String, CompiledFunction)],
     globals: &[(String, Vec<u8>)],
     main_name: &str,
     args: &[u64],
 ) -> Result<u64, String> {
-    use code_forge::{RelocPatcher, RiscvRelocPatcher};
+    use code_forge::RelocPatcher;
+    // v21 W8：补丁器由谱面生成（riscv64 后端模块导出），不再是宿主手写实现。
+    use code_forge::backend::riscv64::RelocPatcherImpl;
 
     // 1. 布局：crt0 在前，函数顺序排列，数据段（globals）随后，末尾栈区。
     let placeholder = gen_crt0(args, 0);
@@ -491,8 +493,8 @@ pub fn exec_riscv64_module(
         }
     };
 
-    // 4. 重定位 patch（RiscvRelocPatcher 编码 JAL/B 型位段）
-    let patcher = RiscvRelocPatcher;
+    // 4. 重定位 patch（谱面生成的补丁器：JAL/B 型散布位段）
+    let patcher = RelocPatcherImpl;
     let mut func_off = crt0_len;
     for (name, cf) in funcs {
         for reloc in &cf.relocations {
@@ -683,7 +685,7 @@ mod tests {
     #[test]
     fn module_cross_function_call_real() {
         // 真实跨函数 Call：callee(a,b)=a+b；main()=callee(20,22)=42。
-        // 覆盖：Call lowering（jal ra, @N）→ reloc patch（RiscvRelocPatcher）
+        // 覆盖：Call lowering（jal ra, @N）→ reloc patch（生成的补丁器）
         // → QEMU 模块执行。
         use code_forge::backend::FunctionCompiler;
         use code_forge::prelude::{

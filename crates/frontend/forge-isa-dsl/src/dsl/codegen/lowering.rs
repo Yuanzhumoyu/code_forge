@@ -1727,7 +1727,7 @@ fn gen_call_lowering(
     // Call：CALL_RIP_REL target = -(FuncRef+1)；指令缺失 → Unsupported。
     // 指令名由指令角色决定（roles = ["call"]，v15-S4 起不再有
     // [abi].call_inst 名指针——riscv "JAL"：jal ra, @N——label 槽负值 →
-    // encoder 转 Relative(4,0) "@N" 符号 reloc，RiscvRelocPatcher 编码 UJ 位段）。
+    // encoder 转 Relative(4,0) "@N" 符号 reloc，生成的补丁器编码 UJ 位段）。
     let call_inst = role_name(infos, Role::Call).unwrap_or_default();
     let call_f = fids(&call_inst);
     let mut call_is_err = false;

@@ -1618,7 +1618,7 @@ ops = ["dst:gpr:out", "imm:imm20"]
 asm = "auipc {dst}, {imm}"
 
 # GlobalAddr 专用：auipc+addi PC-relative 对（encoder 特判 imm<0 →
-# Relative(4,0) "G{id}" reloc；RiscvRelocPatcher 按 opcode 0x17/0x13
+# Relative(4,0) "G{id}" reloc；生成的重定位补丁器按解码结果分写 hi20/lo12
 # 分写 hi20/lo12 位段）。普通 AUIPC/ADDI 无 reloc 不受影响。
 [[instructions]]
 name = "AUIPC_GLOBAL"
@@ -1987,7 +1987,7 @@ op = "Icmp"
 when = { eq = ["cond", 10] } # UnsignedGreaterThanOrEqual = !(a <u b)
 insts = ["SLTU {g}, {0}, {1}", "XORI {out}, {g}, 1"]
 
-# Call：jal ra, @N（跨函数符号；RiscvRelocPatcher 编码 UJ 位段）
+# Call：jal ra, @N（跨函数符号；生成的补丁器编码 UJ 位段）
 # 注意：Call 是 terminator 级 lowering（gen_call_lowering），不走此表——
 # 该规则仅占位声明，实际接线见 integration.rs 的 call_inst 泛化。
 
@@ -2417,10 +2417,16 @@ insts = [
 [asm.reloc.pcrel_hi]
 semantics = "pc_relative"
 operand = "imm20"
+# 值变换：hi20 = (d + 0x800) >> 12（复用 [asm.immfn.hi] 的 expr；v21 W8）
+via = "hi"
 
 [asm.reloc.pcrel_lo]
 semantics = "pc_relative"
 operand = "imm12"
+# addend = 4：本指令（addi）紧跟 auipc，偏移要相对 **auipc** 地址算；
+# 低 12 位按有符号读数（复用 [asm.immfn.lo]）。
+addend = 4
+via = "lo"
 
 # ── 汇编器伪指令（v18 S3e）：`li rd, imm` → lui + addi（32 位符号扩展形式）──
 # 汇编期文本展开：实参按 `{名字}` 代入 emit 行，算术由既有表达式求值器算

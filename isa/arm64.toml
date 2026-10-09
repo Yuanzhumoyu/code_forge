@@ -3863,7 +3863,7 @@ base = "X29"
 [emit]
 align_pad = 0
 # 独立尾声标签开启：arm64 B（imm26）与 CBZ（imm19）label 槽经定宽 fixup
-# （Relative(4,0)）+ Arm64RelocPatcher 位段重排 → return block 经
+# （Relative(4,0)）+ 生成的重定位补丁器位段重排 → return block 经
 # `b epilogue_label` 跳到统一尾声，多 return block / 跨块分支函数可用
 # （emission.rs 按 needs_epilogue_label=true 布局）。单块函数仍走
 # fall-through 尾声（epilogue 紧跟 return block 时 emission 不空发跳转）。
@@ -4701,7 +4701,7 @@ asm = "b.ne 8"
 bytes = [0x41, 0x00, 0x00, 0x54]
 
 [[vectors]]
-# GAS/LLVM 的字节口径：`b #28` ⇒ imm26 = 7（与 `Arm64RelocPatcher` 的 `offset >> 2` 同单位）
+# GAS/LLVM 的字节口径：`b #28` ⇒ imm26 = 7（与补丁器的 `offset >> 2` 同单位）
 asm = "b #28"
 bytes = [0x07, 0x00, 0x00, 0x14]
 

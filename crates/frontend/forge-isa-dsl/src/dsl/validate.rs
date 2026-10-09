@@ -1451,6 +1451,20 @@ fn validate_relocs(m: &IsaModel) -> Result<(), String> {
                 r.name, r.operand, slot.kind
             ));
         }
+        // v21 W8：`via` 必须指向已声明的立即数修饰（值变换是谱面数据）。
+        if let Some(via) = &r.via {
+            let known = m
+                .conventions
+                .imm_fn
+                .as_ref()
+                .is_some_and(|d| d.iter().any(|f| &f.name == via));
+            if !known {
+                return Err(format!(
+                    "[asm.reloc.{}]: `via` 指向的修饰 '{}' 未在 [asm.immfn.<名>] 声明",
+                    r.name, via
+                ));
+            }
+        }
     }
     for inst in &m.instructions {
         let Some(name) = inst.reloc.as_deref() else {

@@ -577,8 +577,8 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
     // 变长（x86）：label 槽是尾部连续 imm（REL32 form.imm），fixup 位置 =
     // 指令末尾 - imm_bytes，reloc = Relative(4,-4)（相对下一条指令）。
     // 定宽（riscv）：label 槽（off_j/off_b）是散布位段，fixup 位置 = 指令
-    // 起始，reloc = Relative(4,0)（相对指令地址本身；位段重排由
-    // RiscvRelocPatcher 编码）。
+    // 起始，reloc = Relative(4,0)（相对指令地址本身；位段重排由**生成的重定位补丁器**
+    // 做，见 `gen_reloc_patcher`）。
     // fixed 与 mixed 的 label 槽都散布在位段中（fixup 从指令起始算），
     // 只有 prefix_scan 的 label 是尾部连续 imm。
     let fixed = !model.is_prefix_scan();
@@ -709,6 +709,19 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
         let slot_bytes_lit = proc_macro2::Literal::u32_unsuffixed(slot_bits.div_ceil(8));
         let reloc_bytes_lit = proc_macro2::Literal::u32_unsuffixed(fixed_bytes_of(&info.inst)?);
         let addend = def.addend.unwrap_or(0);
+        // `RelocKind::Relative` 的修正字段是 **i8**（v21 W8：谱面 `addend` 经它进补丁器）。
+        // 发射**无后缀**字面量（整数按字段类型推断），于是生成文本仍是 `Relative(4,0)`；
+        // 负值写成 `-N`（proc_macro2 的 Literal 不表示负数）。
+        i8::try_from(addend).map_err(|_| {
+            format!("[asm.reloc.{reloc_name}]: addend {addend} 超出 i8 范围（RelocKind 的修正字段）")
+        })?;
+        let addend_kind_tok: TokenStream = if addend < 0 {
+            let v = proc_macro2::Literal::u8_unsuffixed((-addend) as u8);
+            quote! { -#v }
+        } else {
+            let v = proc_macro2::Literal::u8_unsuffixed(addend as u8);
+            quote! { #v }
+        };
         let body = match def.semantics {
             RelocSemantics::Absolute => quote! {
                 let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
@@ -739,7 +752,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
                 if imm < 0 {
                     sink.add_reloc(
                         __base,
-                        crate::RelocKind::Relative(#reloc_bytes_lit, 0),
+                        crate::RelocKind::Relative(#reloc_bytes_lit, #addend_kind_tok),
                         &format!("G{}", -imm - 1),
                         #addend,
                     );
@@ -782,6 +795,163 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
             }
         }
     })
+}
+
+// ─────────────────────── RelocPatcher（由谱面生成，v21 W8） ───────────────────────
+
+/// **由谱面生成**的定宽重定位补丁器（v21 W8）。
+///
+/// 返回 `(结构体+impl, TargetMachine 的覆写方法)`；变长（`prefix_scan`）ISA 返回两个空
+/// token —— 那边 label 槽是尾部连续 imm，通用路径本就正确（x86 因此不需要 patcher）。
+///
+/// 语义与旧的两个手写补丁器**逐字节等价**，但数据全来自谱面：
+/// 1. 读回指令字 → `decode_partial`（占位值不影响识别：只按 opcode/常量位选变体）；
+/// 2. 值 `d = target − site + adj`（`adj` 来自 `RelocKind::Relative`，即 reloc 的 `addend`）；
+///    `via` 声明了就把 `d` 过一遍该 `[asm.immfn.<名>]` 的 `expr`（riscv 的 hi/lo）；
+/// 3. 写进该变体的 **label 槽字段**（有 `reloc` 声明时用声明的 `operand`，否则用 `Label` 槽）
+///    —— 字段里存**字节偏移**（编码器按 `unit` 除回字段单位）；
+/// 4. `encode` 重放整字写回，散布位段与编码器**同一份**字段放置代码。
+///
+/// 已知边界：识别靠 `decode_partial`，因此"解码先命中的变体没有该槽"的位模式
+/// （**imm = 0** 的 `addi` 形状会命中 riscv 的 `MOV_RM8_R64`/`Nop`，都没有 imm 操作数）
+/// 会**明确报错**而不是静默不动——真实 GlobalAddr 序列的 imm 是负占位值，走 `Addi`，
+/// 不受影响（见 `crates/backend/forge-codegen/tests/reloc_patcher_generated.rs`）。
+pub(crate) fn gen_reloc_patcher(
+    infos: &[InstInfo],
+    model: &IsaModel,
+) -> Result<(TokenStream, TokenStream), String> {
+    if model.is_prefix_scan() {
+        return Ok((quote! {}, quote! {}));
+    }
+    let imm_fn_names: Vec<String> = model
+        .conventions
+        .imm_fn
+        .as_ref()
+        .map(|d| d.iter().map(|f| f.name.clone()).collect())
+        .unwrap_or_default();
+    let mut arms: Vec<TokenStream> = Vec::new();
+    // 一条变体只发一条臂（先到先得，按声明序确定）：同一编码可能有多条声明
+    // （riscv 的 `AUIPC`/`AUIPC_GLOBAL` 共享 opcode，解码只还原出**先声明**的那条），
+    // 所以臂要按**槽名**匹配 reloc，而不是按"谁声明了 reloc"。
+    let mut covered: Vec<(String, String)> = Vec::new();
+    for info in infos {
+        let vn = &info.vn;
+        // ① 该指令的某个槽被某条 reloc 点名 ⇒ 用声明里的 `via` 做值变换。
+        let mut done = false;
+        for def in &model.reloc {
+            let Some(fid) = info
+                .operands
+                .iter()
+                .find(|(_, _, s, _)| s.name == def.operand)
+                .map(|(_, fid, _, _)| fid.clone())
+            else {
+                continue;
+            };
+            let key = (vn.to_string(), fid.to_string());
+            if covered.contains(&key) {
+                done = true;
+                break;
+            }
+            let value = match def.via.as_deref() {
+                Some(via) => {
+                    let idx = imm_fn_names.iter().position(|n| n == via).ok_or_else(|| {
+                        format!("[asm.reloc.{}]: `via` 指向的修饰 '{via}' 未声明", def.name)
+                    })?;
+                    let idx_lit = proc_macro2::Literal::usize_unsuffixed(idx);
+                    quote! { __apply_imm_fn(#idx_lit, d) }
+                }
+                None => quote! { d },
+            };
+            arms.push(quote! { Inst::#vn { #fid, .. } => { *#fid = #value; } });
+            covered.push(key);
+            done = true;
+            break;
+        }
+        if done {
+            continue;
+        }
+        // ② 无 reloc 点名但有 `Label` 槽：分支/跳转的 in-function fixup（无值变换）。
+        if let Some(fid) = info
+            .operands
+            .iter()
+            .find(|(_, _, s, _)| s.kind == OperandKind::Label)
+            .map(|(_, fid, _, _)| fid.clone())
+        {
+            let key = (vn.to_string(), fid.to_string());
+            if covered.contains(&key) {
+                continue;
+            }
+            arms.push(quote! { Inst::#vn { #fid, .. } => { *#fid = d; } });
+            covered.push(key);
+        }
+    }
+    if arms.is_empty() {
+        return Ok((quote! {}, quote! {}));
+    }
+    let isa = syn::LitStr::new(&model.meta.name, proc_macro2::Span::call_site());
+    let patcher = quote! {
+        /// **由谱面生成**的定宽重定位补丁器（v21 W8）：散布位段复用编码器的字段放置。
+        pub struct RelocPatcherImpl;
+
+        impl crate::machine::reloc_patcher::RelocPatcher for RelocPatcherImpl {
+            fn apply(
+                &self,
+                code: &mut [u8],
+                offset: usize,
+                kind: crate::RelocKind,
+                target: u64,
+                site: u64,
+            ) -> Result<(), crate::IrError> {
+                let (width, adj) = match kind {
+                    crate::RelocKind::Relative(w, a) => (w as usize, a as i64),
+                    other => {
+                        return Err(crate::IrError::Internal(format!(
+                            "{}: 不支持的重定位 {:?}（定宽 ISA 的 label/global 只发 pc_relative）",
+                            #isa, other
+                        )));
+                    }
+                };
+                if offset + width > code.len() {
+                    return Err(crate::IrError::Internal(format!(
+                        "{}: 重定位越界（offset {} + 宽 {} > 缓冲 {}）",
+                        #isa, offset, width, code.len()
+                    )));
+                }
+                let (inst, _) = decode_partial(&code[offset..]).map_err(|n| {
+                    crate::IrError::Internal(format!(
+                        "{}: 重定位点解不出指令（已消费 {} 字节）",
+                        #isa, n
+                    ))
+                })?;
+                let d = target as i64 - site as i64 + adj;
+                let mut inst = inst;
+                match &mut inst {
+                    #(#arms)*
+                    other => {
+                        return Err(crate::IrError::Internal(format!(
+                            "{}: 该指令不承载重定位：{:?}",
+                            #isa, other
+                        )));
+                    }
+                }
+                let bytes = encode(&inst).map_err(|e| {
+                    crate::IrError::Internal(format!("{}: 重定位重编码失败：{}", #isa, e))
+                })?;
+                let n = width.min(bytes.len());
+                code[offset..offset + n].copy_from_slice(&bytes[..n]);
+                Ok(())
+            }
+        }
+    };
+    let override_method = quote! {
+        /// v21 W8：定宽 ISA 的重定位补丁器由谱面生成（不再有宿主按 ISA 名的分发）。
+        fn reloc_patcher(
+            &self,
+        ) -> Option<std::sync::Arc<dyn crate::machine::reloc_patcher::RelocPatcher>> {
+            Some(std::sync::Arc::new(RelocPatcherImpl))
+        }
+    };
+    Ok((patcher, override_method))
 }
 
 // ─────────────────────── TargetDecoder ───────────────────────

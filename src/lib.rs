@@ -62,7 +62,7 @@ pub use forge_codegen::EncodeError;
 #[cfg(feature = "jit")]
 pub use forge_codegen::jit;
 pub use forge_codegen::{AllocResult, CompiledFunction, RelocKind, Relocation};
-pub use forge_codegen::{RelocPatcher, RiscvRelocPatcher};
+pub use forge_codegen::RelocPatcher;
 
 // Optional tools
 #[cfg(feature = "object-file")]

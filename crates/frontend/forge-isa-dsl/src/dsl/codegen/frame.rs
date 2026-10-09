@@ -211,7 +211,7 @@ pub(crate) fn gen_frame_lowering(
         quote! {
             // 定宽 bare 跳（arm64 B 语义：仅 label 槽，无 dest 寄存器）：
             // b epilogue_block——label 槽 = 块号 → encoder 定宽 fixup
-            // Relative(4,0)，位段重排由 Arm64RelocPatcher（imm26）。
+            // Relative(4,0)，位段重排由生成的重定位补丁器（imm26）。
             let inst = Inst::#jump_vn { #jmp_rel: epilogue_block.id() as i64 };
             encoder.encode(&inst, reg_map, sink).map_err(|e| {
                 crate::IrError::Internal(format!("epilogue jump encode: {e}"))

@@ -170,7 +170,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` `classes` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `fields` `segments` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖） |
 | `[[instructions]]` | `name` `asm` | `form` `opcode` `match` `fields` `segments` `bind` `ops` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
-| `[asm.reloc.<名>]` | `semantics` `operand` | `addend` | 重定位（v21 W8：**表头即重定位名**；旧 `[[reloc]]` 已撤）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减 |
+| `[asm.reloc.<名>]` | `semantics` `operand` | `addend` `via` | 重定位（v21 W8：**表头即重定位名**；旧 `[[reloc]]` 已撤）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`） |
 | `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
 | `[asm.pseudo.<名>]` | `asm` `emit` | `only_variants` | 汇编器伪指令（v21 W7：**表头即名字**；旧 `[[pseudo]]` 已撤）：文本级多指令展开，分派按 `asm` 的前导字面，`{名字}` 就是 `emit` 用的参数 |
 | `[asm.immfn.<名>]` | `texts` `expr` | — | 立即数修饰（v21 W7：**表头即修饰名**；旧 `[[conventions.imm_fn]]` 待撤）：`texts` = 同一语义的等价写法列表（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值） |
@@ -933,7 +933,8 @@ names = "csr"
    渲染始终是源单位，`disassemble → assemble` 照旧闭合；
 4. **符号标签**回填"块下标 × N"（= 该块的字节偏移），与数字写法同单位。
 
-这与宿主的 `RelocPatcher` 是同一口径（`Arm64RelocPatcher` 就是 `imm = offset >> 2`），
+这与**生成的重定位补丁器**是同一口径（它把 `d` 按 `unit` 除回字段单位，等价于
+`imm = offset >> log2(N)`；A64 的 imm26 就是 `offset >> 2`），
 于是"汇编器里的数字写法"与"编译器打补丁"不再各说各话。`unit = N` 目前只实现于定宽
 （含 `mixed`）编码/解码——变长（`prefix_scan`）ISA 写它会在校验期被明确拒绝（fail-closed）。
 
@@ -1253,10 +1254,19 @@ operand = "imm20"
 | `absolute` | 指令**末尾该槽的字节区间**（补丁宽度 = `ceil(槽宽/8)`） | `Absolute(槽字节数)` |
 | `pc_relative` | **指令起始**（补丁宽度 = 指令字长） | `Relative(字长, 0)` |
 
-- **语义是宿主契约**（有限、ISA 无关）：新增语义才需要宿主代码。当前"具体把重定位值写进
-  哪些**位段**"仍由宿主侧 `RelocPatcher` 负责（arm64 写 imm26/imm19、riscv 按 opcode
-  0x17/0x13 分写 hi20/lo12）；v21 W8 的目标是改为**由谱面字段位区间生成**，
-  从而删掉宿主按 ISA 名的分发与这两个手写补丁器（**尚未落地**）。
+- **补丁器由谱面生成**（v21 W8，已落地）：定宽 ISA 的补丁器读回指令字 →
+  `decode_partial` 还原指令 → 把 `d` 写进该变体的 **label 槽字段**（有 `reloc` 声明时
+  用声明的 `operand`，否则用 `Label` 槽）→ `encode` 重放整字。散布位段用的是编码器
+  **同一份字段放置代码**，因此"汇编器里的数字写法"与"编译器打补丁"必然同口径。
+  生成物在 `impl TargetMachine` 里覆写 `reloc_patcher()` ⇒ **宿主没有按 ISA 名的分发，
+  也没有手写补丁器**（变长 ISA 走通用路径：那边 label 槽是尾部连续 imm）。
+  `addend` 经 `RelocKind::Relative` 的修正字段进来（因此它**参与**补丁值）。
+- `via`（可选）：值先过该 `[asm.immfn.<名>]` 的 `expr` —— riscv 的 `pcrel_hi`/`pcrel_lo`
+  就是这样复用已声明的 `hi = ({0} + 0x800) >> 12` 与 `lo = (({0} & 0xfff) ^ 0x800) - 0x800`，
+  于是谱面不再需要宿主为它写代码。`pcrel_lo` 另写 `addend = 4`：`addi` 紧跟 `auipc`，
+  偏移要相对 **auipc** 地址算。
+- **已知边界**：识别靠解码，因此"解码先命中的变体没有该槽"的位模式（`imm = 0` 的 `addi`
+  形状会命中 riscv 的 `MOV_RM8_R64`/`Nop`）会**明确报错**而不是静默不动。
 - 指令侧只有 `reloc = "<名>"`：编码器对该指令发固定重定位（汇编期 imm 槽 < 0 时
   = 全局符号引用 `"G{id}"`，≥ 0 时是普通立即数），**不按指令名特判**。
 - 校验：表项名非空唯一、`slot` 已声明且是 imm 槽、指令引用的名字必须存在、
@@ -1817,7 +1827,7 @@ memory0（`({J})`）。寄存器名大小写不敏感（`xmm0` / `XMM0` 等价�
   `frame::TargetFrameLowering`、`inst::{MachineInst, OperandConstraint}`、
   `isa_info::{IsaCapabilities, IsaInfo}`、`lowering::TargetLowering`、
   `reg_info::{TargetRegInfo, class_for_type_in_pool}`、
-  `reloc_patcher::{register_default_reloc_patcher, RelocPatcher}`、
+  `reloc_patcher::{register_reloc_patcher, reloc_patcher_for, RelocPatcher}`、
   `target::TargetMachine`。
 
 `forge-codegen` 全部 `pub use` 转发这些项（内部路径不变）；运行时侧的守卫是

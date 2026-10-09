@@ -11,6 +11,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W8 第三片：重定位补丁器**由谱面生成**（宿主分发与两个手写补丁器删除）
+
++ 生成器新增 `gen_reloc_patcher`：定宽 ISA 发射 `RelocPatcherImpl` —— 读回指令字 →
+  `decode_partial` 还原指令 → 把 `d = target − site + adj` 写进该变体的 label 槽字段
+  （有 `reloc` 声明时用声明的 `operand`，否则用 `Label` 槽）→ `encode` 重放整字。
+  散布位段复用编码器**同一份字段放置代码**；臂按**槽名**匹配（riscv 的 `AUIPC`/`AUIPC_GLOBAL`
+  共享编码，解码只会还原出先声明的那条）。
++ 生成物在 `impl TargetMachine` 里覆写 `reloc_patcher()`；`register_default_reloc_patcher`
+  （按 ISA 名的懒惰注册分发）、`RiscvRelocPatcher`、`Arm64RelocPatcher`（含单测）整条删除。
+  宿主 `reloc_patcher.rs` 现在只剩 trait + 显式注册表 + 通用路径的两条钉子测试。
++ 新键 `[asm.reloc.<名>].via`：值先过该 `[asm.immfn.<名>]` 的 `expr`（riscv 复用已声明的
+  `hi`/`lo`，谱面不再需要宿主为它写代码）；`addend` 改为经 `RelocKind::Relative` 的修正字段
+  进补丁器（riscv `pcrel_lo` 写 `addend = 4`），即它**参与**补丁值。
++ 覆盖迁移：删掉的手写补丁器单测改在**生成物**上重建
+  （`crates/backend/forge-codegen/tests/reloc_patcher_generated.rs` 9 条：riscv J/U/B 散布位段、
+  hi20/lo12 变换、占位值必须被覆盖、arm64 imm26/imm19、不支持的 kind 报错、报错时不动字节）。
++ **已知边界（明确报错，不静默）**：识别靠解码 ⇒ `imm = 0` 的 `addi` 形状会命中 riscv 自己的
+  `MOV_RM8_R64`/`Nop`（都无 imm 操作数）⇒ 报错；真实 GlobalAddr 的 imm 是负占位值，走 `Addi`，
+  不受影响（riscv64 JIT 矩阵覆盖）。
++ 证据：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（含 riscv64 QEMU 矩阵与 arm64 全套）；
+  **x86 JIT 矩阵 197 passed / 3 skipped / 0 failed**。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W8 第二片：删掉 x86 的**冗余** RelocPatcher
 
 + `X86RelocPatcher` 与 `CodeSink::finish` 的通用路径**逐字节等价**（同样的 `kind.encode_value`

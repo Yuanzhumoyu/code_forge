@@ -372,7 +372,9 @@ pub fn gen_integration(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStre
     let lowering = super::lowering::gen_lowering(infos, model)?;
     let isa_info = gen_isa_info(model, infos)?;
     let reg_info = gen_reg_info(model)?;
-    let target_machine = gen_target_machine(model)?;
+    // v21 W8：定宽 ISA 的重定位补丁器由谱面生成（变长 ISA 返回空 token）。
+    let (reloc_patcher, reloc_patcher_method) = super::machine::gen_reloc_patcher(infos, model)?;
+    let target_machine = gen_target_machine(model, reloc_patcher_method)?;
     let supported_ops = gen_supported_ops(model);
     Ok(quote! {
         // ── TargetMachine 集成层（迭代 5/6）──
@@ -390,6 +392,7 @@ pub fn gen_integration(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStre
         #reg_info
         #target_machine
         #supported_ops
+        #reloc_patcher
     })
 }
 
@@ -813,7 +816,10 @@ fn resolve_reg_list(
 
 // ─────────────────────── TargetMachine ───────────────────────
 
-fn gen_target_machine(model: &IsaModel) -> Result<TokenStream, String> {
+fn gen_target_machine(
+    model: &IsaModel,
+    reloc_patcher_method: TokenStream,
+) -> Result<TokenStream, String> {
     let isa_name_str = &model.meta.name;
     // 能力表（v20 A3/V8）：**两个来源**——① `[[instructions]].roles` 里那些
     // 操作数结构说不出来的语义（调用/返回/跳转/帧/栈参数/保存恢复）；
@@ -895,6 +901,8 @@ fn gen_target_machine(model: &IsaModel) -> Result<TokenStream, String> {
             fn assembler(&self) -> Option<&std::sync::Arc<dyn crate::machine::assembler::TargetAssembler<Inst = Self::Inst>>> { Some(&self.assembler) }
             fn decoder(&self) -> Option<&std::sync::Arc<dyn crate::machine::decoder::TargetDecoder<Inst = Self::Inst>>> { Some(&self.decoder) }
 
+            #reloc_patcher_method
+
             /// ISA 申报的能力（谱里 `roles` 声明折算；与 `forge-isa abi check` 同源）。
             fn role_bits(&self, role: &str) -> Option<u16> {
                 match role {
@@ -910,7 +918,6 @@ fn gen_target_machine(model: &IsaModel) -> Result<TokenStream, String> {
         pub fn ensure_registered() {
             static INIT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
             INIT.get_or_init(|| {
-                crate::machine::reloc_patcher::register_default_reloc_patcher(#isa_name_str);
                 if !crate::Registry::global().contains(#isa_name_str) {
                     crate::Registry::global().register_backend(TargetMachine::new_arc());
                 }
