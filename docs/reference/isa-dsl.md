@@ -184,7 +184,8 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[vectors]]` | — | `asm` `bytes` `error` `partial` `comment` | 数据化测试向量（v19 V3）：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = "DECODE", partial}` 解码错误 / `{bytes}` 解码正向 |
 | `enc / vex / evex / modrm（内联子表）` | — | `reg` `rm` | `modrm = { reg = <名\|整数>, rm = <名\|"[base]"> }` |
 | `vex / evex（内联子表）` | — | `map` `pp` `w` `l` `b` `z` `disp_scale` | VEX/EVEX 结构键（map/pp/w/l + AVX-512 的 b/z/disp_scale） |
-| `[[override]]` | `key` `value` | — | 多文件组合：显式覆盖被包含文件里的键（点分路径 + 新值；由 loader 消费） |<!-- END: schema-keys -->
+| `[[override]]` | `key` `value` | — | 多文件组合：显式覆盖被包含文件里的键（点分路径 + 新值；由 loader 消费） |
+<!-- END: schema-keys -->
 
 ## 快速开始
 
