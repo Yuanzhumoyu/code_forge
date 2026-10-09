@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5 ⑥：`report.rs` 夹具迁到 `[family.*]`
+
++ `report.rs` 的 3 处 `[[templates]]` 全部迁走（该文件现已 **0 处**）：
+  ① 原始字符串夹具 `[[templates]] + name = "ALU" + body + rows = [ … ]` **与 `[family.ALU]` 完全同形**
+  ⇒ 一行替换；② `diff` 用例里的两处 `.replace("[[templates]]", …)` 随动为 `[family.ALU]`。
++ **行尾坑（本轮实测）**：同一次提交里，`report.rs` 在盘上是 **LF**（git 尚未落 CRLF 转换），
+  而其他文件可能是 CRLF ⇒ 替换模式必须写成 `\r?\n` 容忍两种，否则**静默 0 命中**
+  （本轮连续两次 0 命中 ✗，第三次改正则后 1 处命中 ✗）。
++ `cargo test -p forge-isa-dsl --lib report` → **13 passed / 0 failed**；整仓 `-j 2` → exit 0、
+  0 编译错误、0 失败二进制。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5 ⑥：模板夹具迁移到 `[family.*]`（`template_tests.rs` 完成）
 
 + `template_tests.rs` 的 **15 个 `[[templates]]` 夹具**全部机械迁移为 `[family.<名>]`

@@ -616,8 +616,7 @@ form = "RR"
 opcode = 1
 ops = ["dst:r:out", "src:r"]
 asm = "mov {dst}, {src}"
-[[templates]]
-name = "ALU"
+[family.ALU]
 body = { form = "RR", ops = ["dst:r:out", "src:r"], asm = "alu {dst}, {src}" }
 rows = [
   { inst = "ADD", opcode = 2 },
@@ -700,8 +699,8 @@ rows = [
         let other = SPEC
             .replace("{ inst = \"SUB\", opcode = 3 }", "{ inst = \"SUB\", opcode = 7 }")
             .replace(
-                "[[templates]]",
-                "[[instructions]]\nname = \"NOP\"\nform = \"RR\"\nopcode = 0\nops = [\"dst:r:out\", \"src:r\"]\nasm = \"nop {dst}, {src}\"\n\n[[templates]]",
+                "[family.ALU]",
+                "[[instructions]]\nname = \"NOP\"\nform = \"RR\"\nopcode = 0\nops = [\"dst:r:out\", \"src:r\"]\nasm = \"nop {dst}, {src}\"\n\n[family.ALU]",
             );
         let d = diff(SPEC, &other).expect("合法");
         assert_eq!(d.added, vec!["NOP"]);
