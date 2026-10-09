@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：x86 向量 `Load` 组折叠（4 条 → 1 条，累计 28 条）
+
++ 给 `MOVSD_R_MEM`/`MOVUPS_128_R_MEM`/`VMOVUPS_256_R_MEM`/`VMOVUPS_512_R_MEM` 补
+  `group = "load_vec"` + `word_size`（**字节** 8/16/32/64，与既有 `rd_vec` 规则一一对应），
+  把 4 条 `when = { eq = ["rd_vec", N] }` 折成一条 `dispatch = "rd_vec"` 的宽度无关规则
+  ⇒ x86 `[[lowering]]` 块数 **180 → 177**。
++ **关键**：这次之所以能做，是因为上一轮把展开改成**显式 opt-in** —— 否则给这些指令补 `group`
+  会让既有规则被误展开（前两轮 JIT 崩的根因）。
++ 第 (4) 项累计删除 **28 / 52** 条（riscv64 24 + x86 4）。棘轮随动；
+  `validate` + `lint` 干净；JIT 58/0；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Fixed (2026-10-08) — ISA-DSL v21 W5：重载展开改为**显式 opt-in**（修两轮 JIT 崩溃的根因）
 
 + **根因（二分定位）**：只给 4 条向量 load 指令补 `group`（lowering 规则一条未动）JIT 就崩 ⇒

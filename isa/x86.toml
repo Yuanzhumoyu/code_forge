@@ -1472,6 +1472,8 @@ asm = "mov [{src2}], {src}"
 
 [[instructions]]
 name = "MOVSD_R_MEM"
+group = "load_vec"
+word_size = 8
 form = "MRR_MEM_0F_PFX32_SEG"
 bind = { rm = "[src]" }
 
@@ -1620,6 +1622,8 @@ asm = "movsd {mem}, {src}"
 #    StackAddr 先 lea 地址到寄存器）。──
 [[instructions]]
 name = "MOVUPS_128_R_MEM"
+group = "load_vec"
+word_size = 16
 form = "MRR_MEM_0F_PFX32_SEG"
 bind = { rm = "[src]" }
 
@@ -1878,6 +1882,8 @@ asm = "vmovups {src}, {mem}"
 # 宽向量 IR Load/Store 的 gpr 基址形式（EVEX 512 位；见 VMOVUPS_256_R_MEM 的说明）
 [[instructions]]
 name = "VMOVUPS_512_R_MEM"
+group = "load_vec"
+word_size = 64
 form = "EVEX_RR_MEM_SEG"
 bind = { rm = "[src]" }
 
@@ -1971,6 +1977,8 @@ asm = "vmovups {src}, {mem}"
 # 二者编码键相同（同一机器码的两种操作数建模）；汇编/解码按其操作数形状分发。
 [[instructions]]
 name = "VMOVUPS_256_R_MEM"
+group = "load_vec"
+word_size = 32
 form = "VEX_RR_MEM_SEG"
 bind = { rm = "[src]" }
 
@@ -3047,22 +3055,7 @@ insts = ["MOVZX_R16_MEM {out}, [{0}]"]
 # AVX-512F（EVEX），无则显式拒绝（不发射本机无法执行的指令）。
 [[lowering]]
 op = "Load"
-when = { eq = ["rd_vec", 64] }
-insts = ["VMOVUPS_512_R_MEM {out}, [{0}]"]
-
-[[lowering]]
-op = "Load"
-when = { eq = ["rd_vec", 32] }
-insts = ["VMOVUPS_256_R_MEM {out}, [{0}]"]
-
-[[lowering]]
-op = "Load"
-when = { eq = ["rd_vec", 16] }
-insts = ["MOVUPS_128_R_MEM {out}, [{0}]"]
-
-[[lowering]]
-op = "Load"
-when = { eq = ["rd_vec", 8] }
+dispatch = "rd_vec"
 insts = ["MOVSD_R_MEM {out}, [{0}]"]
 
 # 默认（非向量 / 未覆盖宽度）——8 字节 MOV。宽向量**不会**落到这里：
