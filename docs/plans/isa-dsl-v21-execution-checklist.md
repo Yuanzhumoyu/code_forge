@@ -822,3 +822,18 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 - [ ] 某片门禁连续两轮不过，且根因是设计（不是实现）。
 - [ ] 出现必须"为某个 ISA 加编译器分支"才能表达的写法 ⇒ 说明"slots × patterns"层没设计够，回到设计文档补。
 - [ ] 迁移人工判断量超出设计文档 §10 的 40% 估算 1.5 倍以上 ⇒ 重新评估是否拆分或缩小范围。
+
+## 附：W5 第 ⑥ 步（删 `[[templates]]` TOML 面）的精确计划（2026-10-08 实测）
+
+**目标**：谱里写 `[[templates]]` 被拒绝；`Template`/`TemplateRow` 仅作 `family` 的**内部降级目标**。
+
+1. `model.rs`：`templates` 字段改 `#[serde(skip, default)]`（键消失 ⇒ `deny_unknown_fields` 会拒绝旧写法）；
+2. `schema.rs`：root 的 optional 去掉 `"templates"`；`docs/reference/isa-dsl.md` 速查表 root 行同步；
+   重生成 `isa-dsl.schema.json`；
+3. **连带面（本次没做完的原因）**：`.rs` 夹具里的 `[[templates]]` 全要改写——
+   `template_tests.rs` **17 处**（多为多行形态：`[[templates]]\nname = "X"\n…`）、
+   `generality_guard.rs` 2 处、`schema_guard.rs` 2 处、`diag_matrix_tests.rs` 3 处（含**诊断期望**）、
+   `tests.rs` 1 处。多行形态的替换要按"块"处理（表键 + 去掉 `name` 行），且**无 `name` 的夹具**
+   要取首行 `inst` 加 `_FAM`（族名与指令名同池）；
+4. `diag_matrix_tests.rs` 的那条期望（"引用名与指令名冲突"用例）要**按新面改写**，不是纯替换；
+5. 验证：`cargo test -p forge-isa-dsl`（快）→ `cargo test --workspace --exclude forge-rustc -j 2`。
