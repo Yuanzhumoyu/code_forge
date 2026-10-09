@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W7 第十六片：撤掉旧 `[[conventions.imm_fn]]` 面
+
++ 旧键撤除：`Conventions.imm_fn` 改成 `#[serde(skip)]` 的内部载体（在 `INTERNAL_FIELDS` 登记），
+  schema 去掉 `[[conventions.imm_fn]]` Section（键表行随动），文档该小节整段改写为
+  `[asm.immfn.<名>]`（标题、TOML 示例、要点表，并新增“多拼写”一行说明）。
++ 测试夹具迁移：`imm_fn` 形状组（“名字重复/为空”两例改为说明它们现在由**表头**本身管）、
+  多拼写组（新面只有 `texts`）、`imm_fn_absent_keeps_generated_code_unchanged` 的声明一处，
+  以及“与旧面同名报错”改为“旧面被拒”。
++ 结果：`[asm]` 家族两张表（`pseudo` / `immfn`）都只剩新面——全仓 `[[conventions.imm_fn]]` 残留 **0**，
+  `[[pseudo]]` 残留 **0**。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制；三谱 `validate` 通过。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W7 第十五片：55 条 `imm_fn` 搬进 `[asm.immfn.<名>]`
 
 + 三谱与夹具的 `[[conventions.imm_fn]]` **全部搬迁**：arm64 **49** + riscv64 **4** + 夹具

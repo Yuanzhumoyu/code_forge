@@ -1177,10 +1177,13 @@ pub struct Conventions {
     /// 单条 `"[{base}+{index}*{scale}+{disp}]"`（x86 现行为）。
     #[serde(default)]
     pub mem: Option<MemTemplate>,
-    /// **立即数修饰函数**（`[[conventions.imm_fn]]`，v20 V10）：谱自己声明的表达式修饰，
-    /// 例 `%hi(x)`、`:lower16:x`、`hi(x)`。DSL 不认识任何具体修饰名——文本形态与值语义
-    /// 全在这张表里（见 [`ImmFnDef`]）。缺省 = 没有任何修饰。
-    #[serde(default)]
+    /// **立即数修饰函数**（v20 V10；v21 W7 起 TOML 面是 `[asm.immfn.<名>]`）：谱自己声明的
+    /// 表达式修饰，例 `%hi(x)`、`:lower16:x`、`hi(x)`。DSL 不认识任何具体修饰名——文本形态与
+    /// 值语义全在这张表里（见 [`ImmFnDef`]）。缺省 = 没有任何修饰。
+    ///
+    /// **内部载体**：只由 [`AsmSection`] 降级时写入（表头 → `name`），旧键
+    /// `[[conventions.imm_fn]]` 已被拒。
+    #[serde(default, skip)]
     pub imm_fn: Option<Vec<ImmFnDef>>,
 }
 

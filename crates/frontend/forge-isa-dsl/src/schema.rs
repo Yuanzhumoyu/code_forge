@@ -190,15 +190,6 @@ pub const SECTIONS: &[Section] = &[
         doc: "命名立即数表（kind = \"imm\" 的槽用 `names` 指名）：表名 → （名字 → 值）——一个名字 = 一个值；解析认名字也认数字，渲染时值在表里就写名字",
     },
     Section {
-        path: "[[conventions.imm_fn]]",
-        model: "ImmFnDef",
-        required: &["name", "expr"],
-        optional: &["text", "texts"],
-        flatten: &[],
-        additional: false,
-        doc: "立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`texts` = 多拼写等价写法（二者只给一个），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值）",
-    },
-    Section {
         path: "[conventions.mem]",
         model: "MemTemplate",
         required: &["templates"],

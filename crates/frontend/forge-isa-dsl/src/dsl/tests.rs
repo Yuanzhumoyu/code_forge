@@ -4414,57 +4414,47 @@ asm = "nop"
 
 // ─────────── v20 V10：立即数修饰（谱声明的数据） ───────────
 
-/// `[[conventions.imm_fn]]`：**怎么写（text）+ 算成什么值（expr）**两行数据。
-/// 形状非法要在声明期报出来（它是汇编期行为的全部依据，写错不该拖到运行期）。
+/// `[asm.immfn.<名>]`（v21 W7；旧 `[[conventions.imm_fn]]` 已撤）：
+/// **怎么写（texts）+ 算成什么值（expr）**两行数据，形状非法要在声明期报出来。
 #[test]
 fn imm_fn_decl_shape_is_validated() {
     // 合法：带括号的 GAS 风格、不带括号的前缀风格、纯后缀风格都收
     for block in [
-        "[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi({0})\"\nexpr = \"({0} + 0x800) >> 12\"",
-        "[[conventions.imm_fn]]\nname = \"lower16\"\ntext = \":lower16:{0}\"\nexpr = \"{0} & 0xffff\"",
-        "[[conventions.imm_fn]]\nname = \"suffix\"\ntext = \"{0}:lo\"\nexpr = \"{0} & 0xff\"",
+        "[asm.immfn.hi]\ntexts = [\"%hi({0})\"]\nexpr = \"({0} + 0x800) >> 12\"",
+        "[asm.immfn.lower16]\ntexts = [\":lower16:{0}\"]\nexpr = \"{0} & 0xffff\"",
+        "[asm.immfn.suffix]\ntexts = [\"{0}:lo\"]\nexpr = \"{0} & 0xff\"",
     ] {
         parse_and_validate(&lowering_doc(block)).unwrap_or_else(|e| panic!("{block}: {e:?}"));
     }
 
     // text / expr 各必须恰好一个 `{0}`
-    let no_hole =
-        lowering_doc("[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi(x)\"\nexpr = \"{0}\"");
+    let no_hole = lowering_doc("[asm.immfn.hi]\ntexts = [\"%hi(x)\"]\nexpr = \"{0}\"");
     assert!(
         validation_msg(&no_hole).contains("text 必须恰好含一个"),
         "{}",
         validation_msg(&no_hole)
     );
-    let two_holes = lowering_doc(
-        "[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi({0})-{0}\"\nexpr = \"{0}\"",
-    );
+    let two_holes = lowering_doc("[asm.immfn.hi]\ntexts = [\"%hi({0})-{0}\"]\nexpr = \"{0}\"");
     assert!(validation_msg(&two_holes).contains("恰好含一个"));
-    let expr_no_hole =
-        lowering_doc("[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi({0})\"\nexpr = \"1\"");
+    let expr_no_hole = lowering_doc("[asm.immfn.hi]\ntexts = [\"%hi({0})\"]\nexpr = \"1\"");
     assert!(validation_msg(&expr_no_hole).contains("expr 必须恰好含一个"));
 
     // text 光一个 `{0}` = 通配（会吞掉任意表达式）⇒ 拒
-    let bare =
-        lowering_doc("[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"{0}\"\nexpr = \"{0}\"");
+    let bare = lowering_doc("[asm.immfn.hi]\ntexts = [\"{0}\"]\nexpr = \"{0}\"");
     assert!(
         validation_msg(&bare).contains("没有任何字面"),
         "{}",
         validation_msg(&bare)
     );
 
-    // name 重复 / 为空
-    let dup = lowering_doc(concat!(
-        "[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi({0})\"\nexpr = \"{0}\"\n",
-        "[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%HI({0})\"\nexpr = \"{0}\"",
-    ));
+    // `texts` 为空表 ⇒ 报错（至少一条写法）。旧面的"名字重复/为空"由**表头**本身管：
+    // 重复表头是 TOML 解析错，空表头不可能出现。
+    let empty = lowering_doc("[asm.immfn.hi]\ntexts = []\nexpr = \"{0}\"");
     assert!(
-        validation_msg(&dup).contains("重复"),
+        validation_msg(&empty).contains("text"),
         "{}",
-        validation_msg(&dup)
+        validation_msg(&empty)
     );
-    let empty =
-        lowering_doc("[[conventions.imm_fn]]\nname = \"\"\ntext = \"%hi({0})\"\nexpr = \"{0}\"");
-    assert!(validation_msg(&empty).contains("name 不能为空"));
 }
 
 /// 没声明 `imm_fn` 的 ISA：生成物里**没有**修饰机制（与引入前逐字相同）——
@@ -4477,7 +4467,7 @@ fn imm_fn_absent_keeps_generated_code_unchanged() {
     assert!(!s.contains("__imm_fn0"), "不该生成修饰值函数：{s}");
 
     let m2 = parse_and_validate(&lowering_doc(
-        "[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi({0})\"\nexpr = \"({0} + 0x800) >> 12\"",
+        "[asm.immfn.hi]\ntexts = [\"%hi({0})\"]\nexpr = \"({0} + 0x800) >> 12\"",
     ))
     .expect("合法");
     let s2 = super::codegen::generate(&m2).unwrap().to_string();
@@ -4809,25 +4799,20 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"mods {dst?}, {cond:plus}\"",
     assert!(r.contains(":plus"), "规范化后应保留 `:affix` ✗：{r}");
 }
 
-/// v21 W7：`imm_fn` 的**多拼写**（`texts` ✗）——`texts` 与 `text` 互斥 ✗、两者都不给报错 ✗、
-/// 多拼写本身合法 ✗（同一 `expr`、同一下标 ⇒ 值语义唯一 ✗）。
+/// v21 W7：`[asm.immfn.<名>]` 的**多拼写**（`texts`）——至少一条、每条都要自洽；
+/// 旧面的"`text` 与 `texts` 互斥"随旧面一起消失（新面**只有** `texts`）。
 #[test]
 fn imm_fn_texts_multi_spelling() {
-    // ✅ 多拼写合法 ✗
-    let ok = lowering_doc(
-        "[[conventions.imm_fn]]\nname = \"a\"\ntexts = [\"#:a:{0}\", \":a:{0}\"]\nexpr = \"{0}\"",
-    );
+    // 多拼写合法
+    let ok = lowering_doc("[asm.immfn.a]\ntexts = [\"#:a:{0}\", \":a:{0}\"]\nexpr = \"{0}\"");
     super::parse_and_validate(&ok).expect("多拼写应合法");
-    // ❌ `text` 与 `texts` 同时给 ⇒ 报错 ✗
-    let both = lowering_doc(
-        "[[conventions.imm_fn]]\nname = \"a\"\ntext = \"#:a:{0}\"\ntexts = [\":a:{0}\"]\nexpr = \"{0}\"",
-    );
-    let err = super::parse_and_validate(&both).unwrap_err().to_string();
-    assert!(err.contains("只能给一个"), "err: {err}");
-    // ❌ 两者都不给 ⇒ 报错 ✗
-    let neither = lowering_doc("[[conventions.imm_fn]]\nname = \"a\"\nexpr = \"{0}\"");
-    let err = super::parse_and_validate(&neither).unwrap_err().to_string();
+    // 空列表 ⇒ 报错（至少一条写法）
+    let empty = lowering_doc("[asm.immfn.a]\ntexts = []\nexpr = \"{0}\"");
+    let err = super::parse_and_validate(&empty).unwrap_err().to_string();
     assert!(err.contains("text"), "err: {err}");
+    // 缺 `texts` ⇒ 解析期报错（它是必填键）
+    let missing = lowering_doc("[asm.immfn.a]\nexpr = \"{0}\"");
+    assert!(super::parse_and_validate(&missing).is_err());
 }
 
 /// v21 W7：`[asm.pseudo.<名>]` ✗ —— **表头即名字** ✗，解析期降级进内部 `pseudo` ✗；
@@ -4866,14 +4851,10 @@ fn asm_immfn_section_lowers_to_conventions_imm_fn() {
         .expect("hi 应在");
     assert_eq!(d.all_texts(), vec!["%hi({0})"]);
     assert_eq!(d.expr, "({0} + 0x800) >> 12");
-    // 与旧面同名 ⇒ 报错
-    let dup = lowering_doc(
-        "[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi({0})\"\nexpr = \"{0}\"\n\n\
-         [asm.immfn.hi]\ntexts = [\"%hi({0})\"]\nexpr = \"{0}\"",
+    // 旧面 `[[conventions.imm_fn]]` ⇒ 解析期被拒
+    let old = lowering_doc(
+        "[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi({0})\"\nexpr = \"{0}\"",
     );
-    let err = super::parse_and_validate(&dup).unwrap_err().to_string();
-    assert!(
-        err.contains("重复") || err.contains("asm.immfn"),
-        "err: {err}"
-    );
+    let err = super::parse_and_validate(&old).unwrap_err().to_string();
+    assert!(err.contains("imm_fn"), "旧键应被拒并点名：{err}");
 }

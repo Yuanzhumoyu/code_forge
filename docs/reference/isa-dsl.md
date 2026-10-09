@@ -165,7 +165,6 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex` `rex2` |
 | `[conventions.bitsets.<table>]` | — | — | 命名位集合表（kind = "bits" 的槽用）：表名 → （名字 → 位）——源文本是名字拼接，编码取位或（允许额外键） |
 | `[conventions.imm_names.<table>]` | — | — | 命名立即数表（kind = "imm" 的槽用 `names` 指名）：表名 → （名字 → 值）——一个名字 = 一个值；解析认名字也认数字，渲染时值在表里就写名字（允许额外键） |
-| `[[conventions.imm_fn]]` | `name` `expr` | `text` `texts` | 立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`texts` = 多拼写等价写法（二者只给一个），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值） |
 | `[conventions.mem]` | `templates` | — | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
 | `[enum.<表名>]` | — | `kind` `entries`† | 命名取值表：kind = value（名字 = 值；带 `ir` 的那张是条件码表）\| bits（名字拼接、按位或）（允许额外键） |
 | `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` `classes` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
@@ -690,7 +689,7 @@ rows = [
 `word |= ((value >> shift) & mask) << offset`；解码 `value |= ((word >> offset)
 & mask) << shift`（可逆）。
 
-### `[[conventions.imm_fn]]` — 立即数修饰（v20 V10）
+### `[asm.immfn.<名>]` — 立即数修饰（v21 W7：表头即修饰名）
 
 各家的汇编器都有一批**立即数修饰写法**：GAS/RISC-V 的 `%hi(x)` / `%lo(x)`、GAS/ARM 的
 `:lower16:x` / `:upper16:x`、MIPS 的 `hi(x)` / `lo(x)`……它们不是同一套拼写，值语义也不同
@@ -699,24 +698,23 @@ rows = [
 **DSL 里没有任何修饰名**——它只知道"有一张表"，每条声明两件事：
 
 ```toml
-[[conventions.imm_fn]]
-name = "hi"                  # 名字（唯一的诊断名；不参与文本匹配）
-text = "%hi({0})"            # 源文本形态：`{0}` 处是内层表达式，其余按字面 token 匹配
-expr = "({0} + 0x800) >> 12" # 值语义：`{0}` 处是内层表达式的**值**
+[asm.immfn.hi]                # 表头 = 修饰名（唯一的诊断名；不参与文本匹配）
+texts = ["%hi({0})"]          # 源文本形态（可多条等价写法）
+expr = "({0} + 0x800) >> 12"  # 值语义：`{0}` 处是内层表达式的**值**
 
-[[conventions.imm_fn]]
-name = "lower16"             # 同机制换一种拼写与语义（ARM 风格：无括号、掩码）
-text = ":lower16:{0}"
+[asm.immfn.lower16]           # 同机制换一种拼写与语义（ARM 风格：无括号、掩码）
+texts = [":lower16:{0}"]
 expr = "{0} & 0xffff"
 ```
 
 | 要点 | 说明 |
 | --- | --- |
-| 匹配 | `text` 的两段是**字面 token**（`mnemonic_case = insensitive` 时 Ident 豁免大小写），中间的 `{0}` 递归解析成一个表达式；前缀/后缀/两侧都有字面都行（`{0}:lo` 也合法） |
+| 匹配 | `texts` 里每条的两段是**字面 token**（`mnemonic_case = insensitive` 时 Ident 豁免大小写），中间的 `{0}` 递归解析成一个表达式；前缀/后缀/两侧都有字面都行（`{0}:lo` 也合法） |
+| 多拼写 | 同一修饰的若干**等价写法**写在 `texts` 列表里（如 ARM 的 `#:abs_g0:{0}` 与 `:abs_g0:{0}`）：值语义共用同一个 `expr`，条数与下标无关 |
 | 求值 | `expr` 用**既有表达式语言**求值：生成期把 `expr` 词法化，运行期把 `{0}` 换成数值 token 再走 `__expr`——任意算术、任意嵌套（`%hi(%lo(x))`、`expr` 里再用别的修饰）都天然成立，**不引入第二套表达式语言** |
 | 作用域 | 只在**前缀位置**参与解析（`__unary`），逐个试、失败回滚；没声明的修饰名 ⇒ 那条写法不匹配（不猜语义、不当常量） |
-| 缺省 | 没声明 `imm_fn` 的谱：生成物里根本没有修饰机制（与引入本能力之前逐字相同） |
-| 校验 | `name` 非空唯一；`text`/`expr` 各含**恰好一个** `{0}`；`text` 必须含**至少一个字面**（光一个 `{0}` 是通配，会吞掉任意表达式） |
+| 缺省 | 没声明修饰的谱：生成物里根本没有修饰机制（与引入本能力之前逐字相同） |
+| 校验 | 表头（名字）唯一——重复表头由 TOML 自身拒绝；`texts` **至少一条**，每条各含**恰好一个** `{0}` 且必须含**至少一个字面**（光一个 `{0}` 是通配，会吞掉任意表达式）；`expr` 恰含一个 `{0}` |
 
 > **为什么是数据而不是内置**：把 `%hi`/`%lo` 写进求值器 = 让通用 DSL 变成"为 RISC-V 设计"
 > 的系统。同一机制下，RISC-V 的 `%hi(x)`（带括号、进位补偿）、ARM 的 `:lower16:x`
