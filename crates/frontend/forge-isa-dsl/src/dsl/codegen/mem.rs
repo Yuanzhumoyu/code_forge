@@ -29,7 +29,7 @@
 //! 值本身不进 `MemRef`——指令的宽度由操作数槽/`opsize` 决定，尺寸前缀只是给
 //! 汇编器读的冗余提示（`mov QWORD PTR [rsp-16], rax` 与 `mov [rsp-16], rax` 编出
 //! 同样的字节）。渲染时它输出空串，因此 `disassemble → assemble` 仍然闭合；写在
-//! `{size}` 紧前面的字面量照常恒发出（渲染时不被当作条件前缀吞掉）。
+//! `{size}` 紧前面的字面量按**同一套条件前缀规则**处理（v21 W7 起不再有例外）。
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -373,13 +373,8 @@ pub(crate) fn gen_render_mem(items: &[Item]) -> TokenStream {
     while i < items.len() {
         let (prefix_text, comp) = match &items[i] {
             Item::Lit { text, .. } => match items.get(i + 1) {
-                // 紧随 `{size}` 的字面量**不是**它的条件前缀：`{size}` 渲染输出空串，
-                // 字面量照常恒发出（否则 `[` 会随尺寸前缀一起消失，渲染出半个操作数）。
-                Some(Item::Comp(Comp::Size)) => {
-                    stmts.push(quote! { s.push_str(#text); });
-                    i += 1;
-                    continue;
-                }
+                // v21 W7：`{size}` 不再特殊——紧跟其后的字面量就是它的条件前缀（与其它组件同一规则）。
+                // 三谱里只有 x86 用 `{size}`，且它位于模板首位（前面没有字面量），故本改动零行为变化。
                 Some(Item::Comp(c)) => (Some(text.as_str()), Some(*c)),
                 _ => {
                     // 末尾字面：恒发出

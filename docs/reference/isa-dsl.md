@@ -754,8 +754,7 @@ size_words = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"]
   匹配 `[]`，是漏写而非意图）。
 - 一个紧跟在**可选**组件前的字面量是该组件的"条件前缀"：只在组件出现时发出/消费
   （`{disp}` 的 `+` 前缀额外对非正位移抑制——`-8` 不写成 `+-8`）；紧跟在**必需**组件
-  前、或位于末尾的字面量恒发出。**紧邻 `{size}` 的字面量例外**——它不是 `{size}` 的
-  条件前缀（否则 `qword ptr [rax]` 的 `[` 会随尺寸前缀一起消失）。
+  前、或位于末尾的字面量恒发出。**`{size}` 不再有例外**（v21 W7）：它按同一套规则处理。
 - `{size}` 吃掉 `[operand.<mem>].size_words` 里的任一关键字（大小写按 `[meta].mnemonic_case`；
   v21 W7 起**唯一**的声明处——旧键 `[conventions.mem].size_keywords` 已撤，写了会被拒），
   **值不进 `MemRef`**：操作数宽度由槽 /`opsize` 决定，尺寸前缀只是给人读的冗余提示
