@@ -5106,3 +5106,7 @@ fp_push_bytes = 8
 # v21 W6：终结层谱面——跳转序列（原硬编码在编译器里 ✗）。
 [lower.Jmp]
 insts = ["JMP_REL32 {target}"]
+
+# v21 W6：终结层谱面——条件分支（cond, then, else ✗）。`test` 置 ZF ⇒ 条件码 = 本 ISA 的 eq ✗。
+[lower.Br]
+insts = ["TEST_RM_R {cond}, {cond}", "JCC_REL32 {cc}, {false}", "JMP_REL32 {true}"]

@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6：`{cond}` 符号值 + x86 落地 `[lower.Br]`（谱面 ≡ 硬编码）
+
++ 新增终结层符号值 **`{cond}`**（`[lower.Br]` 的条件寄存器 ✗）：与 `{g}` 同形（字段先填 0 ✗、
+  映射期由 `xreg: "__cond"` 改写成真寄存器 ✗），但**不分配**临时——直接用终结层算好的 `__cond` ✔。
++ 终结层 `Br` 谱面体在**生成期**（`quote!` 之外 ✗）算好 `{cc}`/`{cc_inv}` 的**字面**再插值 ✗
+  （`Br` 里 `test` 置 ZF ⇒ 条件码语义固定为本 ISA 的 `eq`/`ne` ✗）；生成代码里绑定
+  `__cc`/`__cc_inv`/`__cond`/`__true_block`/`__false_block` ✗。
++ 放行 `Br`，给 **x86** 落地真名序列 ✗：
+  `insts = ["TEST_RM_R {cond}, {cond}", "JCC_REL32 {cc}, {false}", "JMP_REL32 {true}"]`
+  （硬编码走**角色查表** ✗，谱面必须写指令真名 ✗）。
++ 安全闸测试随动：现在只拦 `Ret` ✗，`Jmp`/`Br` 放行 ✗。
++ 验证：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（x86 JIT 矩阵 + 汇编三档 + 三矩阵计数不变 ✗）
+  ⇒ 谱面路径与旧硬编码**等价** ✔。
++ 仍关着：`[lower.Ret]`（返回搬移的谱面表达未落地 ✗）；riscv64/arm64 的 `[lower.Br]` 未落地 ✗。
+
 ### Added (2026-10-08) — ISA-DSL v21 W6：`[lower.Br]`/`[lower.Ret]` 的**解析期安全闸**
 
 + **问题**：`Br` 的旧硬编码体还带一步 `map_reg_field`（把 IR 条件寄存器写进 test/branch 的操作数 ✗），

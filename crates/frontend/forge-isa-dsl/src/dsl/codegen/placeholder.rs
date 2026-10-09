@@ -647,6 +647,18 @@ pub(crate) fn placeholders() -> &'static [Ph] {
         // v21 W6：终结层的**块号符号值**。`Br` 有 then/else 两个后继 ✗、`Jmp` 一个目标 ✗；
         // 取值由终结 lowering 在生成代码里定义成 `__true_block`/`__false_block`/`__target_block`
         // （`dfg.term_branch`/`term_jump` 的块号 ✗）。
+        // v21 W6：`[lower.Br]` 的**条件寄存器**。与 `{g}` 同形（字段先填 0 ✗，映射期由 `xreg`
+        // 改写成真寄存器 ✗），但 **不分配**临时——直接用终结层算好的 `__cond` ✗。
+        Ph {
+            name: "{cond}",
+            kind: PhKind::Reg,
+            loose: false,
+            token_kind: "reg",
+            temp: None,
+            temp_class: None,
+            xreg: "__cond",
+            ctor: Some(|s| field_ctor_expr(s, quote! { 0u32 })),
+        },
         Ph {
             name: "{true}",
             kind: PhKind::Cond,

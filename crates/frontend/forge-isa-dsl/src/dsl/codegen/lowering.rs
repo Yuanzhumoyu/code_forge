@@ -639,7 +639,26 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     {
         Some(tl) => Some({
             let seq = gen_lowering_insts(&tl.insts, infos, &name_to_vn, None)?;
+            // 生成期（**在 `quote!` 之外** ✗）算好条件码字面：`Br` 里 `test` 置 ZF ⇒ 条件码
+            // 语义固定为本 ISA 的 `eq`/`ne` ✗；谱面写 `{cc}`/`{cc_inv}` 时用它们 ✗。
+            let cc_of = |ir: &str| -> u8 {
+                model
+                    .cond_ir_codes()
+                    .into_iter()
+                    .find(|(n, _)| *n == ir)
+                    .map(|(_, c)| c as u8)
+                    .unwrap_or(4)
+            };
+            let cc_eq = cc_of("eq");
+            let cc_ne = cc_of("ne");
             quote! {
+                let __cc: u8 = #cc_eq;
+                let __cc_inv: u8 = #cc_ne;
+                // 条件寄存器（旧硬编码体的 `cond` ✗）：供 `{cond}` 用 ✗。
+                let __cond = value_to_xreg
+                    .get(cond_val)
+                    .copied()
+                    .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
                 let __true_block = then_block.index() as i64;
                 let __false_block = else_block.index() as i64;
                 #(#seq)*

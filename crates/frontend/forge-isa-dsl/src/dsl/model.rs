@@ -3890,9 +3890,9 @@ pub fn check_term_lowering_supported(m: &IsaModel) -> Result<(), String> {
         return Ok(());
     };
     for op in lower.keys() {
-        if op != "Jmp" {
+        if op != "Jmp" && op != "Br" {
             return Err(format!(
-                "[lower.{op}]: 该终结 lowering 尚未支持（v21 W6 进行中）——目前只有 `[lower.Jmp]` \
+                "[lower.{op}]: 该终结 lowering 尚未支持（v21 W6 进行中）——目前只有 `[lower.Jmp]`/`[lower.Br]` \
                  完成接线并验证等价；`Br` 还缺条件寄存器的操作数映射、`Ret` 还缺返回搬移的谱面表达"
             ));
         }

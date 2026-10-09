@@ -4613,19 +4613,20 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"myjmp {dst}, {cond}\"\nroles = [\"ju
 /// 操作数映射 ✗、`Ret` 缺返回搬移 ✗）⇒ 声明它们必须**解析期报错**，而不是静默生成错代码 ✗。
 #[test]
 fn unsupported_term_lowering_is_rejected() {
-    for (op, needle) in [("Br", "lower.Br"), ("Ret", "lower.Ret")] {
-        let doc = gen_cond_doc(
+    // `Ret` 仍被闸门关着（返回搬移的谱面表达未落地 ✗）。
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[lower.Ret]\ninsts = [\"SETC {out}, {cc}\"]",
+    );
+    let err = super::parse_and_validate(&doc).unwrap_err().to_string();
+    assert!(err.contains("lower.Ret"), "Ret 应被拒：{err}");
+    assert!(err.contains("W6"), "报错应点明进行中：{err}");
+    // 已放行的 `Jmp`/`Br` 都要通过 ✗。
+    for op in ["Jmp", "Br"] {
+        let ok = gen_cond_doc(
             CC_ALL_FULL,
             &format!("[lower.{op}]\ninsts = [\"SETC {{out}}, {{cc}}\"]"),
         );
-        let err = super::parse_and_validate(&doc).unwrap_err().to_string();
-        assert!(err.contains(needle), "{op} 应被拒：{err}");
-        assert!(err.contains("W6"), "{op} 的报错应点明进行中：{err}");
+        assert!(super::parse_and_validate(&ok).is_ok(), "{op} 应放行");
     }
-    // 已支持的 `Jmp` 仍要放行 ✗
-    let ok = gen_cond_doc(
-        CC_ALL_FULL,
-        "[lower.Jmp]\ninsts = [\"SETC {out}, {cc}\"]",
-    );
-    assert!(super::parse_and_validate(&ok).is_ok(), "Jmp 应放行");
 }
