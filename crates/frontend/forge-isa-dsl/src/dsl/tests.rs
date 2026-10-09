@@ -575,9 +575,9 @@ asm = "nop"
     }
 }
 
-/// 模板行必须给出编码信息（`opcode` 或 `fields`），否则校验失败。
+/// 族行必须给出编码信息（`opcode` 或 `fields`），否则校验失败。
 #[test]
-fn validation_template_row_needs_encoding() {
+fn validation_family_row_needs_encoding() {
     let doc = r#"
 [meta]
 name = "x"
@@ -588,15 +588,14 @@ kind = "reg"
 class = "gpr"
 [[forms]]
 name = "R"
-[[templates]]
-name = "F"
+[family.F]
 body = { form = "R", ops = ["dst:g:out"], asm = "f {dst}" }
 rows = [ { inst = "V1" } ]
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
         DslError::Validation { msg, .. } => {
-            assert!(msg.contains("缺少编码信息"), "msg: {msg}");
+            assert!(msg.contains("编码"), "msg: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
     }
@@ -2168,7 +2167,7 @@ fn lowering_allows_same_insts_with_different_when() {
 /// 模板展开出的实例指令名也算已声明（实例名 = `rows[].inst`）。
 #[test]
 fn lowering_accepts_template_instance_name() {
-    let rule = "[[templates]]\nname = \"F\"\n\
+    let rule = "[family.F]\n\
                 body = { form = \"RR\", ops = [\"dst:g:out\", \"src:g\"], \
                 asm = \"{inst.lower} {dst}, {src}\" }\n\
                 rows = [ { inst = \"NEG\", opcode = 9 } ]\n\

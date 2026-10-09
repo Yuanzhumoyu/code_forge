@@ -833,8 +833,7 @@ opcode = 1
 ops = ["dst:g:out"]
 asm = "add {dst}"
 
-[[templates]]
-name = "T"
+[family.T]
 body = { form = "RR", opcode = 2, ops = ["dst:g:out"], asm = "t {dst}" }
 rows = [
   { inst = "T1", match = { funct3 = 0 } },
@@ -1025,8 +1024,8 @@ name = "Resume"
         assert_eq!(ops, vec!["Call", "Copy", "Resume", "Ret", "VaArg"]);
 
         let src = SPEC.replace(
-            "[[templates]]",
-            "[[lowering]]\nop = \"Copy\"\ninsts = [\"ADD {out}\"]\n\n[[templates]]",
+            "[family.T]",
+            "[[lowering]]\nop = \"Copy\"\ninsts = [\"ADD {out}\"]\n\n[family.T]",
         );
         let report = lint_source_opts(
             &src,
@@ -1153,10 +1152,10 @@ name = "Resume"
     fn vary_candidates_only_when_opted_in() {
         // 同一 op 两条规则，形状相同（只差助记符：`ADD` vs 模板实例 `T1`）⇒ 一条建议。
         let two = SPEC.replace(
-            "[[templates]]",
+            "[family.T]",
             "[[lowering]]\nop = \"Iadd\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"ADD {out}\"]\n\n\
              [[lowering]]\nop = \"Iadd\"\nwhen = { eq = [\"rd\", 16] }\ninsts = [\"T1 {out}\"]\n\n\
-             [[templates]]",
+             [family.T]",
         );
         let on = LintOpts {
             suggest_vary: true,
@@ -1181,10 +1180,10 @@ name = "Resume"
         );
         // 形状不同（行数不同）不报。
         let differ = SPEC.replace(
-            "[[templates]]",
+            "[family.T]",
             "[[lowering]]\nop = \"Iadd\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"ADD {out}\"]\n\n\
              [[lowering]]\nop = \"Iadd\"\nwhen = { eq = [\"rd\", 16] }\n\
-             insts = [\"ADD {out}\", \"T1 {out}\"]\n\n[[templates]]",
+             insts = [\"ADD {out}\", \"T1 {out}\"]\n\n[family.T]",
         );
         let report = lint_source_opts(&differ, &on).expect("谱合法");
         assert!(

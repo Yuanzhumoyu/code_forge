@@ -11,6 +11,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5 ⑥ b：4 个文件的模板夹具迁到 `[family.*]`
+
++ 本轮**一次做完**：`dsl/tests.rs` · `lint.rs` · `report.rs` · `dsl/stream_decl.rs` 的夹具全部迁移，
+  四个文件**代码里 0 处** `[[templates]]`；`dsl/template_tests.rs` 上一轮已完成（仅剩 1 处**断言**里
+  的内部锚点期望）。
++ 迁移器 `target/tmp/migrate_tpl.py`（Python ✗）：吃"原始字符串式 / 单行转义式"，配 `fix_cont.py`
+  吃"Rust `\` 续行转义串"。**三条硬教训**（都实测踩到 ✗）：
+  ① 停止条件必须含原始字符串终结符 `"#` 与空行，否则吞掉夹具之后的 Rust 代码；
+  ② 模板**同时**有内联 `rows = [ … ]` 与 `[[templates.rows]]` 时会重复输出 `rows = [` 并吃掉行内容
+  ⇒ 必须二选一（本轮踩到 2 处，手工按已知实例名 `T1`/`V1` 修复 ✗）；
+  ③ 替换模式必须容忍 `\r?\n`（同一次提交里文件行尾可能 LF/CRLF 混合 ✗，否则静默 0 命中）。
++ 顺带改名：`validation_template_row_needs_encoding` → `validation_family_row_needs_encoding`
+  （函数体在转换中被吞 ✗，已按邻居测试的写法补回 ✗）。
++ **暂缓项**：`dsl/diag_matrix_tests.rs` 的 3 处**已回退** ✗ —— 迁移后"族 `rows` 为空"的诊断
+  **退化成第 1 行**（族形态报错**缺行锚点** ✗），而该测试的 `d.line > 1` 是合理不变量 ⇒
+  **先给族报错补锚点**，再迁这 3 处 ✔（记为下一步 ✗）。
++ `cargo test -p forge-isa-dsl` → 275+ passed；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5 ⑥：`report.rs` 夹具迁到 `[family.*]`
 
 + `report.rs` 的 3 处 `[[templates]]` 全部迁走（该文件现已 **0 处**）：
