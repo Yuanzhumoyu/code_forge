@@ -603,6 +603,15 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     let test_vn = crate::dsl::codegen::pascal_ident(&test_inst);
     let branch_vn = crate::dsl::codegen::pascal_ident(&branch_inst);
     let beq_vn = crate::dsl::codegen::pascal_ident(&branch_inst);
+    // v21 W6：`test`+`jcc` 这一对里，"条件不成立就跳 false"原来**硬编码 `4u8`**
+    // （= x86 的 `je`）。现在从 `[enum.cond]` 取本 ISA 的 **`eq` 码**（数据驱动 ✗）；
+    // 谱没映射 `eq` 时回落 4 以保持旧行为（过渡态 ✗，等 `[lower.Br]` 下放到谱后彻底删掉）。
+    let eq_code: u8 = model
+        .cond_ir_codes()
+        .into_iter()
+        .find(|(n, _)| *n == "eq")
+        .map(|(_, c)| c as u8)
+        .unwrap_or(4);
     let branch_body: TokenStream = if has_test && has_jcc && has_jmp {
         quote! {
             let cond = value_to_xreg.get(cond_val).copied()
@@ -618,7 +627,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             __pack.map_reg_field(cond, __idx, 0u8, false);
             __pack.map_reg_field(cond, __idx, 1u8, false);
             // je false_block（cond=4=e）
-            __pack.push_inst(Inst::#branch_vn { #jcc_cond: 4u8, #jcc_rel: false_block });
+            __pack.push_inst(Inst::#branch_vn { #jcc_cond: #eq_code, #jcc_rel: false_block });
             // jmp true_block
             __pack.push_inst(Inst::#jump_vn { #jmp_rel: true_block });
             Ok(__pack)

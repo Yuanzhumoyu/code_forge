@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6：`Br` 的条件码从硬编码 `4u8` 改为数据驱动
+
++ `test`+`jcc` 那条分支体里"条件不成立就跳 false"原先**硬编码 `4u8`**（= x86 的 `je`）✗ ——
+  正是 W6 清单点名要删的那处。现在生成期从谱的 **`[enum.cond]`** 取本 ISA 的 **`eq` 码** ✗；
+  谱没映射 `eq` 时回落 4 以保持旧行为（**过渡态** ✗，等 `[lower.Br]` 下放到谱后彻底删掉）。
++ 踩坑：`quote!` 里的**裸标识符是原样发射**的 ✗ —— 第一版写成 `#jcc_cond: eq_code` ⇒ 生成物里出现
+  `cc: eq_code` ✗（`forge-codegen` 编译期报 `cannot find value` ✗）。正确写法是插值 `#eq_code` ✔。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（三谱行为逐字节不变 ✗）。
+
 ### Added (2026-10-08) — ISA-DSL v21 W6：`{cc_inv}` 补**端到端生成测试**
 
 + 新增 `dsl::tests::cc_inv_uses_inverse_condition_code`：用同一张 `[enum.cond]` 夹具跑真实生成，
