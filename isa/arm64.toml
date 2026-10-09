@@ -4169,29 +4169,17 @@ epilogue_label = true
 
 [[lowering]]
 op = "Iadd"
-when = { eq = ["rs1_width", 32] }
-insts = ["ADDREGW {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Iadd"
+dispatch = "rs1_width"
 insts = ["ADDREGX {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Isub"
-when = { eq = ["rs1_width", 32] }
-insts = ["SUBREGW {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Isub"
+dispatch = "rs1_width"
 insts = ["SUBREGX {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Imul"
-when = { eq = ["rs1_width", 32] }
-insts = ["MULW {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Imul"
+dispatch = "rs1_width"
 insts = ["MULX {out}, {0}, {1}"]
 
 # Iconst 值分派（按常量池解析真值 attr `iconst`；⚠️ 不能用 `imm0` 判符号——
@@ -4248,29 +4236,17 @@ insts = ["MOVX {out}, {0}"]
 
 [[lowering]]
 op = "Band"
-when = { eq = ["rs1_width", 32] }
-insts = ["ANDREGW {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Band"
+dispatch = "rs1_width"
 insts = ["ANDREGX {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Bor"
-when = { eq = ["rs1_width", 32] }
-insts = ["ORRREGW {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Bor"
+dispatch = "rs1_width"
 insts = ["ORRREGX {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Bxor"
-when = { eq = ["rs1_width", 32] }
-insts = ["EORREGW {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Bxor"
+dispatch = "rs1_width"
 insts = ["EORREGX {out}, {0}, {1}"]
 
 # ═══════════════════════ 参数化模板（v18 S2c：X/W 对）═══════════════════════
@@ -4304,14 +4280,14 @@ rows = [
 [family.ADDREG]
 body = { group = "add", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "add {dst}, {src}, {src2}" }
 rows = [
-  { inst = "ADDREGX", slot = "r64", opcode = 0x8B },
-  { inst = "ADDREGW", slot = "r32", opcode = 0x0B },
+  { inst = "ADDREGX", word_size = 64, slot = "r64", opcode = 0x8B },
+  { inst = "ADDREGW", word_size = 32, slot = "r32", opcode = 0x0B },
 ]
 [family.SUBREG]
 body = { group = "sub", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "sub {dst}, {src}, {src2}" }
 rows = [
-  { inst = "SUBREGX", slot = "r64", opcode = 0xCB },
-  { inst = "SUBREGW", slot = "r32", opcode = 0x4B },
+  { inst = "SUBREGX", word_size = 64, slot = "r64", opcode = 0xCB },
+  { inst = "SUBREGW", word_size = 32, slot = "r32", opcode = 0x4B },
 ]
 [family.ADDSREG]
 body = { group = "adds", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "adds {dst}, {src}, {src2}" }
@@ -4328,8 +4304,8 @@ rows = [
 [family.ANDREG]
 body = { group = "and", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "and {dst}, {src}, {src2}" }
 rows = [
-  { inst = "ANDREGX", slot = "r64", opcode = 0x8A },
-  { inst = "ANDREGW", slot = "r32", opcode = 0x0A },
+  { inst = "ANDREGX", word_size = 64, slot = "r64", opcode = 0x8A },
+  { inst = "ANDREGW", word_size = 32, slot = "r32", opcode = 0x0A },
 ]
 [family.BICREG]
 body = { group = "bic", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "bic {dst}, {src}, {src2}", match = { nbit = 1 } }
@@ -4340,8 +4316,8 @@ rows = [
 [family.ORRREG]
 body = { group = "orr", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "orr {dst}, {src}, {src2}" }
 rows = [
-  { inst = "ORRREGX", slot = "r64", opcode = 0xAA },
-  { inst = "ORRREGW", slot = "r32", opcode = 0x2A },
+  { inst = "ORRREGX", word_size = 64, slot = "r64", opcode = 0xAA },
+  { inst = "ORRREGW", word_size = 32, slot = "r32", opcode = 0x2A },
 ]
 [family.ORNREG]
 body = { group = "orn", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "orn {dst}, {src}, {src2}", match = { nbit = 1 } }
@@ -4352,8 +4328,8 @@ rows = [
 [family.EORREG]
 body = { group = "eor", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "eor {dst}, {src}, {src2}" }
 rows = [
-  { inst = "EORREGX", slot = "r64", opcode = 0xCA },
-  { inst = "EORREGW", slot = "r32", opcode = 0x4A },
+  { inst = "EORREGX", word_size = 64, slot = "r64", opcode = 0xCA },
+  { inst = "EORREGW", word_size = 32, slot = "r32", opcode = 0x4A },
 ]
 [family.EONREG]
 body = { group = "eon", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "eon {dst}, {src}, {src2}", match = { nbit = 1 } }
@@ -4532,8 +4508,8 @@ rows = [
 [family.MUL]
 body = { group = "mul", form = "MUL3", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "mul {dst}, {src}, {src2}", match = { ra = 31 } }
 rows = [
-  { inst = "MULX", slot = "r64", opcode = 0x4D8 },
-  { inst = "MULW", slot = "r32", opcode = 0xD8 },
+  { inst = "MULX", word_size = 64, slot = "r64", opcode = 0x4D8 },
+  { inst = "MULW", word_size = 32, slot = "r32", opcode = 0xD8 },
 ]
 [family.SDIV]
 body = { group = "sdiv", form = "DIV2A", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "sdiv {dst}, {src}, {src2}", match = { op2d = 3 } }

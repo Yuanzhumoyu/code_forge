@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：arm64 宽度分派清 6 条（累计 36/52）
+
++ 给 `[family.ADDREG]`/`SUBREG`/`MUL`/`ANDREG`/`ORRREG`/`EORREG` 的 12 条 rows 补 `word_size`
+  （`X` = 64 / `W` = 32；`group` 已由族体给出，**不覆盖**），把 6 对 `rs1_width` 分派折成 6 条
+  `dispatch = "rs1_width"` 的宽度无关规则 ⇒ arm64 `[[lowering]]` 块数 **19 → 13**。
++ **注意**：arm64 **没有 JIT 矩阵**（只有 x86/riscv64）⇒ 本批的行为验证靠整仓门禁里的
+  `isa_roundtrip_guard` + 谱内向量 + asm 棘轮 + `strict_overlap` 快照。
++ 快照随动：`--strict-overlap` arm64 **8 → 2**（被删的正是"`{rs1_width=32}` 特化 + 无 `when` 兜底"形状）。
++ 第 (4) 项累计删除 **36 / 52** 条（riscv64 24 + x86 6 + arm64 6）。
++ 三谱 `validate` + `lint` 干净；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：x86 向量 `Store` 组折叠（3 条 → 1 条，累计 30/52）
 
 + 给 `MOVUPS_128_MEM_R`/`VMOVUPS_256_MEM_R`/`VMOVUPS_512_MEM_R` 补 `group = "store_vec"` +
