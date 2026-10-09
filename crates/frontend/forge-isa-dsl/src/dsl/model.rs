@@ -145,7 +145,14 @@ pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
     let old = std::mem::take(&mut m.lowering);
     let mut out = Vec::with_capacity(old.len());
     for rule in old {
-        if rule.when.is_some() {
+        // 作者**已经**在 `when` 里分派宽度时不接管（那是显式意图）；否则（无 `when`，或
+        // `when` 只分派别的键如 `cond`）由本展开补上 `rs1_width` 叶子。
+        let has_width_leaf = rule
+            .when
+            .as_ref()
+            .map(|w| toml::to_string(w).unwrap_or_default().contains("rs1_width"))
+            .unwrap_or(false);
+        if has_width_leaf {
             out.push(rule);
             continue;
         }
@@ -171,7 +178,8 @@ pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
                     None => l.clone(),
                 })
                 .collect();
-            r.when = Some(toml::Value::Table(
+            // 把 `rs1_width` 叶子**合并**进原有 `when`（原 `when` 作为 `and` 的一项）
+            let leaf = toml::Value::Table(
                 [(
                     "eq".to_string(),
                     toml::Value::Array(vec![
@@ -181,7 +189,18 @@ pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
                 )]
                 .into_iter()
                 .collect(),
-            ));
+            );
+            r.when = Some(match r.when.take() {
+                None => leaf,
+                Some(prev) => toml::Value::Table(
+                    [(
+                        "and".to_string(),
+                        toml::Value::Array(vec![prev, leaf]),
+                    )]
+                    .into_iter()
+                    .collect(),
+                ),
+            });
             out.push(r);
         }
     }

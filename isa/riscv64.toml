@@ -2319,62 +2319,32 @@ insts = [
 #（实测 f32 用例被 feq.d/flt.d 抢走 → QEMU NaN-box 语义下结果错）。
 [[lowering]]
 op = "Fcmp"
-when = { and = [ { eq = ["cond", 3] }, { eq = ["rs1_width", 64] } ] }
-insts = ["FEQ_D {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Fcmp"
-when = { and = [ { eq = ["cond", 3] }, { eq = ["rs1_width", 32] } ] }
+when = { eq = ["cond", 3] }
 insts = ["FEQ_S {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Fcmp"
-when = { and = [ { eq = ["cond", 4] }, { eq = ["rs1_width", 64] } ] }
-insts = ["FEQ_D {out}, {0}, {1}", "XORI {out}, {out}, 1"]
-
-[[lowering]]
-op = "Fcmp"
-when = { and = [ { eq = ["cond", 4] }, { eq = ["rs1_width", 32] } ] }
+when = { eq = ["cond", 4] }
 insts = ["FEQ_S {out}, {0}, {1}", "XORI {out}, {out}, 1"]
 
 [[lowering]]
 op = "Fcmp"
-when = { and = [ { eq = ["cond", 5] }, { eq = ["rs1_width", 64] } ] }
-insts = ["FLT_D {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Fcmp"
-when = { and = [ { eq = ["cond", 5] }, { eq = ["rs1_width", 32] } ] }
+when = { eq = ["cond", 5] }
 insts = ["FLT_S {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Fcmp"
-when = { and = [ { eq = ["cond", 6] }, { eq = ["rs1_width", 64] } ] }
-insts = ["FLE_D {out}, {0}, {1}"]
-
-[[lowering]]
-op = "Fcmp"
-when = { and = [ { eq = ["cond", 6] }, { eq = ["rs1_width", 32] } ] }
+when = { eq = ["cond", 6] }
 insts = ["FLE_S {out}, {0}, {1}"]
 
 [[lowering]]
 op = "Fcmp"
-when = { and = [ { eq = ["cond", 7] }, { eq = ["rs1_width", 64] } ] }
-insts = ["FLT_D {out}, {1}, {0}"]
-
-[[lowering]]
-op = "Fcmp"
-when = { and = [ { eq = ["cond", 7] }, { eq = ["rs1_width", 32] } ] }
+when = { eq = ["cond", 7] }
 insts = ["FLT_S {out}, {1}, {0}"]
 
 [[lowering]]
 op = "Fcmp"
-when = { and = [ { eq = ["cond", 8] }, { eq = ["rs1_width", 64] } ] }
-insts = ["FLE_D {out}, {1}, {0}"]
-
-[[lowering]]
-op = "Fcmp"
-when = { and = [ { eq = ["cond", 8] }, { eq = ["rs1_width", 32] } ] }
+when = { eq = ["cond", 8] }
 insts = ["FLE_S {out}, {1}, {0}"]
 
 [[lowering]]

@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：riscv64 删除 6 组宽度分派（降级重载接管，全门禁绿）
+
++ **只折叠"两侧都能被重载接住"的对**：先建"指令名 → (族名, word_size)"表，只对**同族**、
+  两侧都带 `group` + `word_size`、且 `insts` 只差一个 token 的成对规则动手。本轮命中 **6 对**
+  （`FEQ`/`FLE`/`FLT` 的 `_S`/`_D`），`riscv64.toml` 的 `[[lowering]]` 块数 **118 → 112**。
++ **展开语义修正**（JIT 矩阵抓到的真 bug）：重载在"`when` 里没有 `rs1_width` 叶子"时触发，
+  并把自动叶子**合并**进原 `when`（原 `when` 成为 `and` 的一项），**不覆盖**——否则作者的
+  `cond` 分派会被丢掉，行为改变。
++ 棘轮：`lint.refs.riscv64` 0 → 3（新增族名）。`validate` + `lint` 干净；
+  整仓 `cargo test --workspace --exclude forge-rustc -j 2` → exit 0、0 编译错误、0 失败二进制
+  （含 JIT 矩阵 riscv64 通道与变体投影快照）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：riscv64 浮点比较族补 `group` + `word_size`（重载前置）
 
 + `[family.FEQ]` / `[family.FLE]` / `[family.FLT]` 的 rows 补上 **`group` = 族名**（族名即多态
