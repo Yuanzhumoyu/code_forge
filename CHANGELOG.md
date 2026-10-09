@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6：`frame.rs` 尾声跳转不再"按字段个数猜"
+
++ `frame.rs:167` 的 `let (jal_dest, jal_target) = if jump_f.len() >= 2 { … }` ✗ 与
+  `} else if has_jump && jump_f.len() >= 2 {` ✗ —— 清单点名的**第三处**字段个数猜测 ✗ —— 全部改成
+  **声明数据判定** ✔：jump 指令若有 `Reg` 类操作数（riscv `JAL dst, target` ✗）⇒ 需要填 dest ✗；
+  否则是单 label 槽（x86 `JMP_REL32 target` ✗）。dest/label 的**字段名**也从槽种类推出 ✗，
+  不再固定取 `jump_f[0]`/`jump_f[1]` ✗。
++ 验证：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（尾声跳转影响三谱 ⇒ x86/riscv64 JIT 矩阵 +
+  汇编三档 + 三矩阵计数全不变 ✗）⇒ 与旧行为**等价** ✔。
++ 至此清单「删除编译器三处按字段个数猜 ISA」**全部完成** ✗（`lowering.rs:202`、`:527-625`、
+  `frame.rs:172-208` ✗）。
+
 ### Added (2026-10-08) — ISA-DSL v21 W6：第四形态夹具（验证形态**只由谱面决定** ✗）
 
 + 清单原话是"同一份谱里两个分支形态" ✗ —— **实测造不出来** ✗：DSL 禁止同角色同类两条声明 ✗

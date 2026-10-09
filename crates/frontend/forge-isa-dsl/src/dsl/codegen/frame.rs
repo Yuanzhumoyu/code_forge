@@ -164,10 +164,22 @@ pub(crate) fn gen_frame_lowering(
         .first()
         .map(|f| (*f).clone())
         .unwrap_or_else(|| format_ident!("target"));
-    let (jal_dest, jal_target) = if jump_f.len() >= 2 {
-        (jump_f[0].clone(), jump_f[1].clone())
-    } else {
-        (format_ident!("dest"), format_ident!("target"))
+    // v21 W6：**不再按字段个数猜** ✗ —— 用**声明数据**判定形态：jump 指令若有 `Reg` 类
+    // 操作数（riscv `JAL dst, target` ✗）⇒ 需要填 dest ✗；否则是单 label 槽（x86 `JMP_REL32 target` ✗）。
+    let jump_kinds: Vec<crate::dsl::model::OperandKind> = infos
+        .iter()
+        .find(|i| i.inst.name == jump_inst)
+        .map(|i| i.operands.iter().map(|(_, _, s, _)| s.kind).collect())
+        .unwrap_or_default();
+    let jump_has_dest = jump_kinds
+        .iter()
+        .any(|k| matches!(k, crate::dsl::model::OperandKind::Reg));
+    let jump_label_idx = jump_kinds
+        .iter()
+        .position(|k| !matches!(k, crate::dsl::model::OperandKind::Reg));
+    let (jal_dest, jal_target) = match (jump_has_dest, jump_label_idx, jump_f.len()) {
+        (true, Some(j), n) if j < n => (jump_f[0].clone(), jump_f[j].clone()),
+        _ => (format_ident!("dest"), format_ident!("target")),
     };
     let epilogue_jump_body: TokenStream = if has_jump && model.is_prefix_scan() {
         quote! {
@@ -179,7 +191,7 @@ pub(crate) fn gen_frame_lowering(
             })?;
             Ok(())
         }
-    } else if has_jump && jump_f.len() >= 2 {
+    } else if has_jump && jump_has_dest {
         // 定宽（riscv JAL 语义）：jal x0, epilogue_block——label 槽 = 块号
         // → encoder 编码时 use_label_at（定宽 fixup = 指令起始；位段重排由
         // patcher）。dest 用该槽声明的类（缺省 = 主 GPR 类，元数据派生，
