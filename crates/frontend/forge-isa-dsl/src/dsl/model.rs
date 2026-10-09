@@ -150,7 +150,7 @@ pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
         let has_width_leaf = rule
             .when
             .as_ref()
-            .map(|w| toml::to_string(w).unwrap_or_default().contains("rs1_width"))
+            .map(|w| { let k = rule.dispatch.clone().unwrap_or_else(|| "rs1_width".to_string()); toml::to_string(w).unwrap_or_default().contains(&k) })
             .unwrap_or(false);
         if has_width_leaf {
             out.push(rule);
@@ -191,7 +191,9 @@ pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
                 [(
                     "eq".to_string(),
                     toml::Value::Array(vec![
-                        toml::Value::String("rs1_width".to_string()),
+                        toml::Value::String(
+                            rule.dispatch.clone().unwrap_or_else(|| "rs1_width".to_string()),
+                        ),
                         toml::Value::Integer(i64::from(w)),
                     ]),
                 )]
@@ -3310,6 +3312,10 @@ pub struct Lowering {
     /// → 2 条，`Fcmp` 32 条（16 cond × 2 elem）→ 4 条。
     #[serde(default)]
     pub vary: Option<BTreeMap<String, Vec<VaryValue>>>,
+    /// **重载分派键**（v21 W5，可选）：本规则的宽度分派用哪个谓词属性做叶子，
+    /// 缺省 `rs1_width`；用于"按结果宽度分派"（`rd`/`rd_vec`）或"按源向量宽度分派"（`rs1_vec`）。
+    #[serde(default, rename = "dispatch")]
+    pub dispatch: Option<String>,
     /// 显式优先级（缺省 0，大者先试）。规则**排序不依赖声明序**：
     /// 按 (priority 降, 谓词叶子数降, 声明序升) 裁决。
     ///
@@ -3631,6 +3637,7 @@ impl Lowering {
                 insts,
                 when,
                 vary: None,
+                dispatch: self.dispatch.clone(),
                 priority: self.priority,
             });
         }

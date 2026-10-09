@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W5：降级重载支持**可选分派键** `dispatch`
+
++ `[[lowering]]` 新增可选键 **`dispatch = "<谓词属性>"`**（缺省 `rs1_width`）：重载自动补的
+  宽度叶子改用该属性 —— 用于"按结果宽度分派"（`rd`/`rd_vec`）或"按源向量宽度分派"（`rs1_vec`）
+  的场合（x86 的向量 Load/Store 就是这一类）。
++ 触发条件同步按该键判断（`when` 里已有该键的叶子 ⇒ 不接管）。
++ 三方针同步（模型 / schema / 文档速查表 / `isa-dsl.schema.json`）；`schema_guard` 9 passed。
++ 动机：x86 的 46 条宽度类分派里，`rd_vec`/`rs1_vec`/`elem` 多键并存，硬编码 `rs1_width`
+  无法覆盖；有了 `dispatch` 才能继续折叠 x86 的向量对。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：riscv64 再删 2 组（原子 `AMOSWAP`/`AMOADD` 的 `_W/_D`）
 
 + 给 `AMOSWAP_W/D`、`AMOADD_W/D`、`LR_W/D`（`[family.AMO*]` 的 rows）补 `group` + `word_size`，
