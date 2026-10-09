@@ -66,6 +66,7 @@ pub const SECTIONS: &[Section] = &[
             "instructions",
             "family",
             "lower",
+            "asm",
                         "reloc",
             "derive",
             "pseudo",

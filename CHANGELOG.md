@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W7 第十二片：`[asm.pseudo.<名>]` 新居（表头即名字）
+
++ 新增 **`[asm]`** 节 ✗（v21 §6.9 ✗）与首张表 **`[asm.pseudo.<名>]`** ✗：**表头就是伪指令名** ✗
+  （`name` 不再是字段 ✗），体内键 = `asm` / `emit` / `only_variants` ✗ —— 与 `[family.<名>]` 同一形态 ✔。
++ 解析期**降级**进既有内部载体 `IsaModel.pseudo` ✗（与 `[family.<名>]` → `templates` 同一手法 ✗）：
+  生成器与校验只见内部表示 ✗，不留第二份事实 ✗；与 `[[pseudo]]` **同名 ⇒ 报错** ✗（名字必须唯一 ✗）。
++ 单测 `dsl::tests::asm_pseudo_section_lowers_to_pseudo` ✗：新居可解析并降级 ✔ / 与旧面同名报错 ✔。
++ 三方针同步 ✗：模型（`AsmSection`/`PseudoBody` ✗ + `IsaModel.asm` ✗）+ schema 根键 `asm` ✗
+  + 文档键表 `<root>` 行 ✗ + 重生成 `isa-dsl.schema.json` ✗。
++ **本片是"加新居"** ✗：旧 `[[pseudo]]` **仍被接受**（迁移尚未做 ✗）⇒ 三谱 22 条（x86 20 / riscv64 2 ✗）
+  的搬迁与旧键撤除留下一片 ✔；`[asm.reloc.*]` / `[asm.immfn.*]` 两张表亦未落地（属 W8 与后续 ✗）。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（三谱未用新居 ⇒ 生成物逐字节不变 ✗）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W7 第十一片：arm64 `imm_fn` 折叠**完成**（98 → 49 ✗）
 
 + 承接第十片 ✗：剩余 31 对全部折叠 ✗ ⇒ arm64 `[[conventions.imm_fn]]` **98 → 49** ✗

@@ -396,9 +396,17 @@ pub struct IsaModel {
     #[serde(skip, default)]
     pub derived_preds: BTreeMap<String, super::pred::Pred>,
 
-    /// 汇编器伪指令（`[[pseudo]]`，v18 S3e）：汇编期的文本级多指令展开。
+    /// 汇编器伪指令（`[[pseudo]]`，v18 S3e：汇编期的文本级多指令展开 ✗）。
+    ///
+    /// v21 W7 起它是**内部载体** ✗：TOML 面改成 `[asm.pseudo.<名>]` ✗（表头 = 名字 ✗），
+    /// 解析期由 [`AsmSection`] 降级填进来 ✗。
     #[serde(default)]
     pub pseudo: Vec<PseudoDef>,
+
+    /// **汇编器侧数据**（v21 W7 ✗）：`[asm]` 下的按名字索引的表 ✗（表头 = 名字 ✗）。
+    /// 解析期降级进 `pseudo`/… ✗，不留第二份事实 ✗。
+    #[serde(default)]
+    pub asm: Option<AsmSection>,
 
     /// 指令选择规则（`[[lowering]]`）。
     #[serde(default)]
@@ -2878,6 +2886,35 @@ pub enum Effect {
 ///
 /// 未实现（如实记录）：按谓词分派同名多条（汇编期没有 IR 属性可判）、
 /// `pseudo_fold`（反汇编折叠回伪指令——那是指令级模式识别，属另一件事）。
+/// **`[asm.pseudo.<名>]` 的体**（v21 W7 ✗）：表头就是 [`PseudoDef::name`] ✗。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PseudoBody {
+    /// 书写模板（`li {rd}, {imm}`）：首段首词是**分派键**，`{名字}` 就是参数。
+    pub asm: AsmList,
+    /// 展开模板行（至少一行；`{参数}` 会被实参文本替换）。
+    pub emit: Vec<String>,
+    /// **只在给定参数取值下存在**（v19 V5）——见 [`variants_keep`]。
+    #[serde(default)]
+    pub only_variants: Option<VariantGate>,
+}
+
+/// **汇编器侧数据**（v21 W7 ✗）：`[asm]` —— 按名字索引的表 ✗（**表头 = 名字** ✗，
+/// 与 `[family.<名>]` 同一形态 ✗）。
+///
+/// 解析期降级进既有内部载体 ✗：`[asm.pseudo.<名>]` → [`IsaModel::pseudo`] ✗；
+/// 因此生成器与校验只见内部表示 ✗（与 `[family.<名>]` → `templates` 同一手法 ✗）。
+///
+/// 规划中的另外两张表（本片未落地 ✗）：`[asm.reloc.<名>]` ✗、`[asm.immfn.<名>]` ✗。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AsmSection {
+    /// 伪指令（`[[pseudo]]` 的 v21 新居 ✗）：表头 = 名字 ✗。
+    #[serde(default)]
+    pub pseudo: BTreeMap<String, PseudoBody>,
+}
+
+/// 汇编器伪指令（`[[pseudo]]`，v18 S3e）：汇编期的文本级多指令展开。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PseudoDef {

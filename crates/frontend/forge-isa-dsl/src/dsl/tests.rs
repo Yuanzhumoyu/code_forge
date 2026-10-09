@@ -4833,3 +4833,28 @@ fn imm_fn_texts_multi_spelling() {
     let err = super::parse_and_validate(&neither).unwrap_err().to_string();
     assert!(err.contains("text"), "err: {err}");
 }
+
+/// v21 W7：`[asm.pseudo.<名>]` ✗ —— **表头即名字** ✗，解析期降级进内部 `pseudo` ✗；
+/// 与 `[[pseudo]]` 同名报错 ✗（名字必须唯一 ✗）。
+#[test]
+fn asm_pseudo_section_lowers_to_pseudo() {
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[asm.pseudo.li]\nasm = \"li {rd}, {cond}\"\nemit = [\"setc {rd}, {cond}\"]",
+    );
+    let m = super::parse_and_validate(&doc).expect("谱合法");
+    let p = m.pseudo.iter().find(|p| p.name == "li").expect("li 应在 ✗");
+    assert_eq!(p.emit.len(), 1);
+    assert_eq!(p.asm.render(), "li {rd}, {cond}");
+    // 与 `[[pseudo]]` 同名 ⇒ 报错 ✗
+    let dup = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[pseudo]]\nname = \"li\"\nasm = \"li {rd}, {cond}\"\nemit = [\"setc {rd}, {cond}\"]\n\n\
+         [asm.pseudo.li]\nasm = \"li {rd}, {cond}\"\nemit = [\"setc {rd}, {cond}\"]",
+    );
+    let err = super::parse_and_validate(&dup).unwrap_err().to_string();
+    assert!(
+        err.contains("同名") || err.contains("asm.pseudo"),
+        "err: {err}"
+    );
+}

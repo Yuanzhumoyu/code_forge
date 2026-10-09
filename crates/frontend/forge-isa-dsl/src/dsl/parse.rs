@@ -56,6 +56,23 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
     // `[[templates]]` 展开（v18 S2）：实例拼进指令表，`ref` 合成别名——下游只见普通指令。
     // v21 W5：`[family.<名>]` 先降级成 `[[templates]]`（族名兼作 `group`），**再**展开模板。
     crate::dsl::stream_decl::lower_families(&mut model, source).map_err(anchor_err)?;
+    // v21 W7：`[asm.pseudo.<名>]` 降级进内部 `pseudo` ✗（**表头 = 名字** ✗；与 `[[pseudo]]`
+    // 撞名报错 ✗）——与 `[family.<名>]` → `templates` 同一手法 ✔：下游只见内部表示 ✗。
+    if let Some(asm) = model.asm.take() {
+        for (name, body) in asm.pseudo {
+            if model.pseudo.iter().any(|p| p.name == name) {
+                return Err(anchor_err(format!(
+                    "[asm.pseudo.{name}]: 与已有的 `[[pseudo]]` 声明同名（v21 W7：名字必须唯一 ✗）"
+                )));
+            }
+            model.pseudo.push(crate::dsl::model::PseudoDef {
+                name,
+                asm: body.asm,
+                emit: body.emit,
+                only_variants: body.only_variants,
+            });
+        }
+    }
     model.expand_templates().map_err(|msg| {
         let idx = diag::DeclIndex::build(source);
         let a = idx.anchor(&msg);
