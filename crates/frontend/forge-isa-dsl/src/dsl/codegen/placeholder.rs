@@ -760,6 +760,12 @@ pub(crate) fn numbered_operand(name: &str) -> Option<usize> {
 /// lowering_token_kind 的形状签名（token → reg/imm/cond/num/mem）。
 /// 注册表查不到（字面量/物理寄存器/内存表达式）时回退旧规则。
 pub(crate) fn token_kind(op: &str) -> &'static str {
+    // v21 W6：算术表达式占位符 ⇒ 种类按首个操作数 ✗（`{imm0 - 4}` 是 imm ✗）。
+    if is_arith_expr(op) {
+        if let Some(f) = first_operand(op) {
+            return token_kind(&f);
+        }
+    }
     // 剥外层方括号（内存基址写法 [{n}]）
     let inner = if let Some(op) = op.strip_circumfix('[', ']') {
         op
@@ -881,9 +887,130 @@ fn numbered_xreg(name: &str) -> TokenStream {
     quote! { #id }
 }
 
+
+/// **算术表达式占位符**（v21 W6）：`{a + b}` / `{iconst >> 12 & 0xfffff}` 这类写法。
+///
+/// 认法：整串被一层 `{}` 包住 ✗、且**顶层**（不嵌套在更内层花括号里 ✗）出现运算符 ✗。
+/// 每个操作数必须是**已注册占位符** ✗（`{imm0}` 之类 ✗）或整数字面量 ✗。
+pub(crate) fn is_arith_expr(op: &str) -> bool {
+    let Some(inner) = op.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
+        return false;
+    };
+    let mut depth = 0i32;
+    for c in inner.chars() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            '+' | '-' | '*' | '/' | '&' | '|' | '^' if depth == 0 => return true,
+            '<' | '>' if depth == 0 => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// 表达式里**首个操作数**的内层片段（去掉外层 `{}` 与结尾运算符 ✗）✗。
+fn first_operand(op: &str) -> Option<String> {
+    let inner = op.strip_prefix('{')?.strip_suffix('}')?;
+    let mut out = String::new();
+    let mut depth = 0i32;
+    for c in inner.chars() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth -= 1,
+            '+' | '-' | '*' | '/' | '&' | '|' | '^' | '<' | '>' if depth == 0 => break,
+            _ => {}
+        }
+        out.push(c);
+    }
+    let s = out.trim().to_string();
+    if s.is_empty() {
+        return None;
+    }
+    // 注册名形如 `{imm0}` ✗ ⇒ 补回花括号再交给 lookup/kind_matches ✗。
+    if s.starts_with('{') {
+        Some(s)
+    } else {
+        Some(format!("{{{s}}}"))
+    }
+}
+
+/// 表达式 ctor：逐段把操作数换成各自 ctor 的产物 ✗（运算符原样 ❗）。
+pub(crate) fn expr_ctor(op: &str, slot: &OperandSlot) -> Option<TokenStream> {
+    if !is_arith_expr(op) {
+        return None;
+    }
+    let inner = op.strip_prefix('{')?.strip_suffix('}')?;
+    let mut toks: Vec<TokenStream> = Vec::new();
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    let flush = |cur: &mut String, toks: &mut Vec<TokenStream>| -> Option<()> {
+        let s = cur.trim().to_string();
+        cur.clear();
+        if s.is_empty() {
+            return Some(());
+        }
+        if let Ok(v) = s.parse::<i64>() {
+            toks.push(quote! { (#v as i64) });
+            return Some(());
+        }
+        let name = if s.starts_with('{') { s.clone() } else { format!("{{{s}}}") };
+        let ph = lookup(&name)?;
+        let ctor = ph.ctor?;
+        toks.push(ctor(slot));
+        Some(())
+    };
+    for c in inner.chars() {
+        match c {
+            '{' => { depth += 1; cur.push(c); }
+            '}' => { depth -= 1; cur.push(c); }
+            '+' | '-' | '*' | '/' | '&' | '|' | '^' | '<' | '>' if depth == 0 => {
+                flush(&mut cur, &mut toks)?;
+                let ops = if (c == '<' || c == '>') && inner.contains(&format!("{c}{c}")) {
+                    format!("{c}{c}")
+                } else {
+                    c.to_string()
+                };
+                toks.push(match ops.as_str() {
+                    "+" => quote! { + },
+                    "-" => quote! { - },
+                    "*" => quote! { * },
+                    "/" => quote! { / },
+                    "&" => quote! { & },
+                    "|" => quote! { | },
+                    "^" => quote! { ^ },
+                    "<<" => quote! { << },
+                    ">>" => quote! { >> },
+                    _ => return None,
+                });
+            }
+            _ => cur.push(c),
+        }
+    }
+    flush(&mut cur, &mut toks)?;
+    // 末尾可能是重复吃到的运算符（`<<` 被拆两次 ✗）⇒ 去掉悬挂运算符 ✗
+    if toks.len() >= 2 {
+        let mut expr = quote! {};
+        let mut i = 0;
+        while i < toks.len() {
+            let tk = &toks[i];
+            expr = quote! { #expr #tk };
+            i += 1;
+        }
+        return Some(quote! { ( #expr ) });
+    }
+    None
+}
+
 /// 槽类型约束检查：占位符是否可用于该槽（编号临时归入 Reg；loose 不约束；
 /// {N} 编号操作数同符号寄存器——loose，任何槽可用）。
 pub(crate) fn kind_matches(name: &str, slot_kind: OperandKind) -> bool {
+    // v21 W6：算术表达式占位符 ⇒ 按**首个操作数**的槽适配判定 ✗。
+    if is_arith_expr(name) {
+        return first_operand(name)
+            .map(|f| kind_matches(&f, slot_kind))
+            .unwrap_or(false);
+    }
     // v21 W6：终结层的**块号符号值**可落 Imm/Label 两种槽——各 ISA 的目标槽种类不同
     // （x86 `target:rel` ✗、riscv `target:off_j` ✗、arm64 `target:off26` ✗）。
     let bare = name.trim();
@@ -931,4 +1058,11 @@ pub(crate) fn assert_unique() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+
+/// **仅供单测**：表达式占位符的种类（等于 `token_kind` ✗，但名字更直白 ✗）。
+#[cfg(test)]
+pub(crate) fn first_operand_kind_of_test(op: &str) -> &'static str {
+    token_kind(op)
 }

@@ -2722,7 +2722,10 @@ fn gen_lowering_insts(
                 } else {
                     op
                 };
-                let (ctor_expr,  xreg_expr) = if super::placeholder::kind_matches(op, slot.kind) {
+                // v21 W6：算术表达式占位符（`{imm0 - 4}` 之类 ✗）优先——ctor 由各操作数拼接 ✗。
+                let (ctor_expr, xreg_expr) = if let Some(e) = super::placeholder::expr_ctor(op, slot) {
+                    (e, quote! { 0u32 })
+                } else if super::placeholder::kind_matches(op, slot.kind) {
                     // 注册表占位符（{out}/{iconst}/{g}…）：ctor 由注册表闭包
                     // 构建，xreg 绑定来自注册表。新增占位符只改 placeholder.rs。
                     let ctor = super::placeholder::ctor_for(op, slot)

@@ -4630,3 +4630,16 @@ fn unsupported_term_lowering_is_rejected() {
         assert!(super::parse_and_validate(&ok).is_ok(), "{op} 应放行");
     }
 }
+
+
+/// v21 W6：**算术表达式占位符**（`{imm0 - 4}`、`{iconst >> 12 & 0xfffff}` ✗）的认法与种类判定 ✗。
+#[test]
+fn arith_expr_placeholder_is_recognized() {
+    use super::codegen::placeholder::{first_operand_kind_of_test as kind_of, is_arith_expr};
+    assert!(is_arith_expr("{imm0 - 4}"));
+    assert!(is_arith_expr("{iconst >> 12 & 0xfffff}"));
+    assert!(!is_arith_expr("{imm0}"), "纯占位符不算表达式");
+    assert!(!is_arith_expr("imm0 - 4"), "没有外层花括号不算");
+    // 种类按**首个操作数** ✗ ⇒ `{imm0 - 4}` 是 imm ✗
+    assert_eq!(kind_of("{imm0 - 4}"), kind_of("{imm0}"));
+}

@@ -11,6 +11,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W6：`insts` 支持**算术表达式占位符**（`{imm0 - 4}` 等 ✗）
+
++ 新增 `placeholder::{is_arith_expr, expr_ctor}` ✗：`insts` 可写 `{imm0 - 4}`、`{iconst >> 12 & 0xfffff}`
+  这类**表达式** ✗ —— 认法 = "整串被一层 `{}` 包住 + 顶层出现运算符" ✗，操作数必须是**已注册占位符**
+  或整数字面量 ✗。
++ 槽适配（`kind_matches`）与 token 种类（`token_kind`）都**按首个操作数**判定 ✗（`{imm0 - 4}` 与
+  `{imm0}` 同槽适配 ✗）；ctor 由各操作数既有 ctor 拼接运算符 ✗，**纯生成期展开** ✗（生成物里就是
+  `(<imm0 表达式> - 4)` ✗）。
++ 单测：`dsl::tests::arith_expr_placeholder_is_recognized` ✗（认法 ✗ + 两个反例 ✗ + 首操作数种类一致 ✗）。
++ 踩坑：首操作数最初返回**不带花括号**的 `imm0` ✗ ⇒ `lookup` 找不到（注册名是 `{imm0}` ✗）⇒ 落到
+  "物理寄存器"启发式返回 `"reg"` ✗ ⇒ 单测当场抓到 ✗ ✔。
++ **下一步**：用它替换谱里的派生 token ✗（`imm0_sub4` ✗、`iconst_hi20`/`_lo12`/`_hi32_*`/`_lo32_*` ✗、
+  `fconst_hi32_*`/`lo32_*` ✗ 等 20 余个 ✗）并删掉这些注册条目 ✗；`vconst_*`/`seg`/`ph`/`iconst_c16`
+  依赖常量池/相位/类型 ✗，不是算术 ✗，保留 ✗。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Fixed (2026-10-08) — ISA-DSL v21 W6：清掉删除死回落后的残留告警（含元组解构）
 
 + 上一片删掉终结回落链后留下 17 个"未使用变量"告警 ✗（其中多数来自**元组解构** ✗：
