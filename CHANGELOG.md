@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：x86 lowering 去重再 +2 组（显式 `when` 对）
+
++ 新增打法：两条规则**都显式写** `when = { eq = ["K", V] }` 时，从两条读出 zip 值
+  （`vary = { K = [V1, V2], sfx = ["SS", "SD"] }`）——**不猜默认值**，只合并能证明等价的。
++ `x86.toml` 的 `[[lowering]]` 块数 **184 → 182**（累计 191 → 182）；4 组形状不符保持原样。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：x86 浮点 lowering 去重（13 组 → `vary` 族）
 
 + 把"同一 op 的两条规则只差 `elem` 谓词与 `SS`/`SD` 后缀"的 **13 组**折成一条 `vary` 规则：

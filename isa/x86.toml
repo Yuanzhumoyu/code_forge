@@ -3109,12 +3109,7 @@ insts = ["mov {out}, {0}"]
 
 [[lowering]]
 op = "Sextend"
-when = { eq = ["rs1_width", 8] }
-insts = ["movsx {out}, {0}"]
-
-[[lowering]]
-op = "Sextend"
-when = { eq = ["rs1_width", 16] }
+vary = { rs1_width = [8, 16], sfx = ["SS", "SD"] }
 insts = ["movsx {out}, {0}"]
 
 [[lowering]]
@@ -3213,12 +3208,7 @@ insts = [
 
 [[lowering]]
 op = "Uextend"
-when = { eq = ["rs1_width", 8] }
-insts = ["movzx {out}, {0}"]
-
-[[lowering]]
-op = "Uextend"
-when = { eq = ["rs1_width", 16] }
+vary = { rs1_width = [8, 16], sfx = ["SS", "SD"] }
 insts = ["movzx {out}, {0}"]
 
 [[lowering]]
