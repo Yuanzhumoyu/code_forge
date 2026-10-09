@@ -45,18 +45,47 @@ pub(crate) fn lower_families(m: &mut IsaModel, source: &str) -> Result<(), Strin
         .collect();
     ordered.sort_by_key(|(at, _, _)| *at);
     for (_, name, decl) in ordered {
-        if decl.vary.is_some() {
-            return Err(format!(
-                "[[family.{name}]].vary: **尚未实现**（W5 第④步：与 `[[lowering]].vary` \
-                 统一 zip 语义）——现在写它会明确报错，而不是被静默忽略"
-            ));
-        }
         // ⚠️ **不自动注入 `group`**（2026-10-08 实测教训）：`group` 是**多态引用名**，
         // 给每一行都塞上族名会改变 `[[lowering]]`/`[[pattern]]`/`emit` 行首解析到的指令集合
         // （三谱实测量：**0 处**引用模板/族名，纯属无用户的语义变更），JIT 矩阵会因此崩
         // （`STATUS_ILLEGAL_INSTRUCTION`）。族名要生效，由**行里显式写 `group`** 或后续
         // 合并族时按需引用——不在这里铺开。
-        let rows = decl.rows;
+        // **`vary` 生成行**（v21 W5，与 `[[lowering]].vary` 共用 `Lowering::zip_vary`）：
+        // `name` 列表给每行的 `inst`，其余键成为该行的字段；与显式 `rows` 互斥。
+        let rows = if let Some(v) = &decl.vary {
+            if !decl.rows.is_empty() {
+                return Err(format!(
+                    "[[family.{name}]]: `vary` 与 `rows` 不能同时给（`vary` 自己生成行）"
+                ));
+            }
+            let zipped = super::model::Lowering::zip_vary(
+                &format!("[[family.{name}]].vary"),
+                v,
+            )?;
+            let mut rs = Vec::with_capacity(zipped.len());
+            for row in zipped {
+                let mut fields = toml::Table::new();
+                let mut inst: Option<String> = None;
+                for (k, val) in row {
+                    if k == "name" {
+                        inst = Some(val.as_text());
+                    } else if let Some(i) = val.as_int() {
+                        fields.insert(k, toml::Value::Integer(i));
+                    } else {
+                        fields.insert(k, toml::Value::String(val.as_text()));
+                    }
+                }
+                let Some(inst) = inst else {
+                    return Err(format!(
+                        "[[family.{name}]].vary: 缺少 `name` 列表（它就是每行的指令名）"
+                    ));
+                };
+                rs.push(super::model::TemplateRow { inst, fields });
+            }
+            rs
+        } else {
+            decl.rows.clone()
+        };
         m.templates.push(super::model::Template {
             name: Some(name),
             body: decl.body,
@@ -886,6 +915,70 @@ rows = [
             "不应自动注入 group（会改变 lowering 解析）"
         );
     }
+    /// **v21 W5**：`family.vary` 与等价显式 `rows` 展开后**指令集逐条相同**
+    /// （zip 语义与 `[[lowering]].vary` 同源：一处实现）。
+    #[test]
+    fn family_vary_equals_explicit_rows() {
+        let head = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "fixed"
+bits = 32
+[reg.gpr64]
+count = 16
+[operand.g]
+kind = "reg"
+class = "gpr64"
+"#;
+        let vary = format!(
+            r#"{head}
+[family.ALU]
+body = {{ ops = ["dst:g", "src:g"], asm = "{{mn}} {{dst}}, {{src}}" }}
+vary = {{ name = ["FADD", "FSUB"], opcode = [0x10, 0x11], mn = ["fadd", "fsub"] }}
+"#
+        );
+        let rows = format!(
+            r#"{head}
+[family.ALU]
+body = {{ ops = ["dst:g", "src:g"], asm = "{{mn}} {{dst}}, {{src}}" }}
+rows = [
+  {{ inst = "FADD", opcode = 0x10, mn = "fadd" }},
+  {{ inst = "FSUB", opcode = 0x11, mn = "fsub" }},
+]
+"#
+        );
+        let a = crate::dsl::parse_and_validate(&vary).expect("vary 形态合法");
+        let b = crate::dsl::parse_and_validate(&rows).expect("rows 形态合法");
+        let na: Vec<&str> = a.instructions.iter().map(|i| i.name.as_str()).collect();
+        let nb: Vec<&str> = b.instructions.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(na, nb, "指令集（vary 应等价于显式 rows）");
+        assert_eq!(a.instructions.len(), 2, "vary 应生成两行");
+    }
+
+    /// **v21 W5**：`family` 里 `vary` 与 `rows` 互斥（同时给要明确报错，不静默取一个）。
+    #[test]
+    fn family_vary_and_rows_are_mutually_exclusive() {
+        let bad = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "fixed"
+bits = 32
+[reg.gpr64]
+count = 16
+[operand.g]
+kind = "reg"
+class = "gpr64"
+[family.ALU]
+body = { ops = ["dst:g", "src:g"], asm = "{mn} {dst}, {src}" }
+rows = [{ inst = "FADD", opcode = 0x10, mn = "fadd" }]
+vary = { name = ["FADD"], opcode = [0x10], mn = ["fadd"] }
+"#;
+        let err = format!("{:?}", crate::dsl::parse_and_validate(bad).unwrap_err());
+        assert!(err.contains("不能同时给"), "err: {err}");
+    }
+
     /// **v21 W4.4 守卫**：段里声明的**前缀字节**必须被生效扫描表覆盖，字典形态写了效果名时
     /// 效果必须一致（删 `default_prefix_scan()`、解码条件按 form 前缀段生成之前的安全网）。
     #[test]

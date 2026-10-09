@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W5：`family.vary` 落地（zip 语义与 lowering 共用一处）
+
++ **`vary` 的 zip 语义抽成唯一实现** `Lowering::zip_vary`：校验（非空、各列表等长）后按下标
+  zip 成行，返回"每行一列键 → 取值"。`[[lowering]].vary` 与 `[family.<名>].vary` **共用它**。
++ **`[family.<名>].vary`**：与 `[[lowering]].vary` 同一类型；`name` 列表给每行的指令名 `inst`，
+  其余键成为该行的字段（整数→整数字段，其余→字符串字段）。与显式 `rows` **互斥**（同时给明确报错）。
++ 单测：`family.vary` 与等价显式 `rows` 展开后**指令集逐条相同**；`rows` + `vary` 同时给要报错。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：三谱 112 处模板迁到 `[family.<族名>]`（**破坏性**）
 
 + **112 处 `[[templates]]` 全部迁成 `[family.<族名>]`**（x86 18 / riscv64 24 / arm64 70），残留 0。

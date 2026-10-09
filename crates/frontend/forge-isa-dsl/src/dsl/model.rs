@@ -2867,11 +2867,14 @@ pub struct FamilyDecl {
     #[serde(default)]
     pub body: Option<toml::Table>,
     /// 行：每行一条指令实例（`inst` 必填，其余键即指令字段）。
-    pub rows: Vec<TemplateRow>,
-    /// **尚未实现**（W5 第④步）：与 `[[lowering]].vary` 共用一套 zip 语义。
-    /// 现在写它会**明确报错**（fail-closed，不静默忽略）。
+    /// 与 `vary` **互斥**（写了 `vary` 就不需要 `rows`）。
     #[serde(default)]
-    pub vary: Option<toml::Table>,
+    pub rows: Vec<TemplateRow>,
+    /// **`vary` 行表**（v21 W5）：与 `[[lowering]].vary` **同一类型、同一 zip 语义**
+    /// （`Lowering::zip_vary`）。约定：`name` 列表给每行的指令名 `inst`，其余键成为该行的字段。
+    /// 与显式 `rows` **互斥**（同时给会报错）。
+    #[serde(default)]
+    pub vary: Option<BTreeMap<String, Vec<VaryValue>>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -3417,15 +3420,13 @@ impl Lowering {
             .collect())
     }
 
-    /// 展开 `vary` 行表 → 多条具体规则（无 `vary` 时返回自身单元素）。
-    ///
-    /// 每行：模板里 `{键}` 换成该行取值；键若是谓词属性（`PRED_ATTRS`）则
-    /// 额外把 `eq = [键, 值]` 合入 `when`（与原 `when` 取 `and`）。
-    pub fn expand_vary(&self, pred_attrs: &[String]) -> Result<Vec<Lowering>, String> {
-        let Some(vary) = &self.vary else {
-            return Ok(vec![self.clone()]);
-        };
-        let path = format!("[[lowering.{}]].vary", self.op.name());
+    /// **`vary` 的 zip 语义**（v21 W5）：`[[lowering]].vary` 与 `[family.<名>].vary`
+    /// **共用这唯一一处实现**——校验（非空、各列表等长）后按下标 zip 成行，
+    /// 返回"每行一列键 → 取值"。
+    pub fn zip_vary(
+        path: &str,
+        vary: &BTreeMap<String, Vec<VaryValue>>,
+    ) -> Result<Vec<BTreeMap<String, VaryValue>>, String> {
         if vary.is_empty() {
             return Err(format!("{path}: 不能为空表"));
         }
@@ -3443,10 +3444,31 @@ impl Lowering {
         }
         let mut out = Vec::with_capacity(rows);
         for row in 0..rows {
+            let mut m = BTreeMap::new();
+            for (k, v) in vary {
+                m.insert(k.clone(), v[row].clone());
+            }
+            out.push(m);
+        }
+        Ok(out)
+    }
+
+    /// 展开 `vary` 行表 → 多条具体规则（无 `vary` 时返回自身单元素）。
+    ///
+    /// 每行：模板里 `{键}` 换成该行取值；键若是谓词属性（`PRED_ATTRS`）则
+    /// 额外把 `eq = [键, 值]` 合入 `when`（与原 `when` 取 `and`）。
+    /// **zip 语义在 [`Lowering::zip_vary`]**（与 `family.vary` 共用，勿复制）。
+    pub fn expand_vary(&self, pred_attrs: &[String]) -> Result<Vec<Lowering>, String> {
+        let Some(vary) = &self.vary else {
+            return Ok(vec![self.clone()]);
+        };
+        let path = format!("[[lowering.{}]].vary", self.op.name());
+        let zipped = Self::zip_vary(&path, vary)?;
+        let mut out = Vec::with_capacity(zipped.len());
+        for row in &zipped {
             let mut insts = self.insts.clone();
             let mut extra: Vec<toml::Value> = Vec::new();
-            for (k, vals) in vary {
-                let val = &vals[row];
+            for (k, val) in row {
                 let needle = format!("{{{k}}}");
                 let text = val.as_text();
                 for line in insts.iter_mut() {
