@@ -1741,7 +1741,7 @@ ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
 asm = "roundss {dst}, {src}, {imm}"
 effect = ["Pure"]
 
-# ── SSE 模板（v11 opcodes 数组 → families → v18 `[[templates]]` + rows）──
+# ── SSE 族（v11 opcodes 数组 → families → v21 `[family.*]` + rows；`[[templates]]` 已废）──
 
 [family.SD_BIN]
 body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, match = { prefix = 0xF2, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }

@@ -324,3 +324,21 @@ fn read_pins() -> std::collections::BTreeMap<String, String> {
         })
         .collect()
 }
+
+/// v21 W5 ⑥：**发行谱不得再用 `[[templates]]`**（模板面已废，唯一复用机制是 `[family.*]`）。
+/// 这条守卫把"迁移已归零"锁死——回潮时它红，而不是等到删 TOML 面时才发现。
+#[test]
+fn shipped_specs_have_no_template_sections() {
+    const SPECS: &[&str] = &["x86.toml", "riscv64.toml", "arm64.toml"];
+    for isa in SPECS {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../isa")
+            .join(isa);
+        let text = std::fs::read_to_string(&path).expect("读谱");
+        let hits = text
+            .lines()
+            .filter(|l| l.trim_start().starts_with("[[templates"))
+            .count();
+        assert_eq!(hits, 0, "{isa} 仍在用已废弃的 `[[templates]]`（应为 `[family.<名>]`）");
+    }
+}

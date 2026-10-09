@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W5 ⑥ 第一步：**发行谱零 `[[templates]]` 守卫**
+
++ 实测确认：三份发行谱已**归零**（`isa/x86.toml` 那处命中只是**注释里的字样**，已改写为
+  `[family.*]` 的正确说明）——即 112 处模板迁移的**收口条件已满足**。
++ 新增守卫 `lint_shipped.rs::shipped_specs_have_no_template_sections`：三谱出现 `[[templates`
+  段即红，把"迁移已归零"锁死（回潮当场可见，而不是等到删 TOML 面时才发现）。
++ 剩余工作（下一步）：把 `templates` 从 **TOML 面**降为**内部载体**（`serde(skip)` + schema/文档
+  三方针同步），并迁移 ~25 处 Rust 夹具（`template_tests.rs` 17 处等）到 `[family.*]`。
++ `validate` + `lint` 干净；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：x86 `Load` 的 `rd` 对折叠（累计 37/52）
 
 + 给 `MOVZX_R8_MEM`/`MOVZX_R16_MEM` 补 `group = "load_rd"` + `word_size`（`rd` 用**位**：8/16），
