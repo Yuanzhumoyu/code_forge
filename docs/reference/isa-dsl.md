@@ -175,7 +175,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
 | `[[pseudo]]` | `name` `asm` `emit` | `only_variants` | 汇编器伪指令：文本级多指令展开（v18 S3e）；name 只是唯一标识，分派按 asm 的前导字面，`{名字}` 就是 emit 用的参数 |
 | `[lower.<终结 op>]` | `insts` | — | 终结指令的 lowering 序列（Br/Jmp/Ret ✗）：可用 {true}/{false}/{target} 符号值 |
-| `[[lowering]]` | `op` `insts` | `when` `vary` `dispatch` `priority` | 指令选择规则 |
+| `[[lowering]]` | `op` `insts` | `when` `vary` `dispatch` `temps` `priority` | 指令选择规则 |
 | `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
 | `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` `gpr` `fpr` `addr` `value_gpr` `value_fpr` `frame` `callee_saved_gpr` `callee_save_slots` `frame_padding` `arg_slot` `vector_by_ref_bytes` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / callee-saved 推入槽数 / 帧填充 / 位置计数规则） |
 | `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（唯一位置；`[abi.frame]` 已删除） |

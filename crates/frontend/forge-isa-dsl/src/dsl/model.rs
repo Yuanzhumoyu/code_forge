@@ -382,7 +382,7 @@ pub struct IsaModel {
     pub templates: Vec<Template>,
     /// 终结指令 lowering（v21 W6，`[lower.Br]`/`[lower.Jmp]`/`[lower.Ret]`）。
     #[serde(default, rename = "lower")]
-    pub lower_terms: Option<BTreeMap<String, TermLowering>>,
+    pub lower_terms: Option<BTreeMap<String, TermSeq>>,
 
     /// 重定位表（`[[reloc]]`，v18 S3d）：指令用 `reloc = "<name>"` 引用。
     #[serde(default)]
@@ -2983,7 +2983,7 @@ pub struct OperandUse {
 /// `insts` 里的符号值除了既有占位符外，还可用 `{true}` / `{false}`（Br 的两个后继块号 ✗）
 /// 与 `{target}`（Jmp 的目标块号 ✗）。
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
-pub struct TermLowering {
+pub struct TermSeq {
     /// 指令序列（与 `[[lowering]].insts` 同一套占位符/替换语义）。
     pub insts: Vec<String>,
 }
@@ -3352,6 +3352,12 @@ pub struct Lowering {
     /// → 2 条，`Fcmp` 32 条（16 cond × 2 elem）→ 4 条。
     #[serde(default)]
     pub vary: Option<BTreeMap<String, Vec<VaryValue>>>,
+    /// **显式临时寄存器**（v21 W6，可选）：`["g1:gpr", "f1:fpr"]`。
+    ///
+    /// 声明了它 ⇒ 本规则**必须**用显式集合（出现未声明的 `{gN}`/`{fN}` ⇒ 编译期报错 ✗）；
+    /// 不声明 ⇒ 沿用旧行为（按 `g`/`f` 前缀 + 数字推断类别 ✗）。**不强制迁移** ✔。
+    #[serde(default, rename = "temps")]
+    pub temps: Option<Vec<String>>,
     /// **重载分派键**（v21 W5，可选）：本规则的宽度分派用哪个谓词属性做叶子，
     /// 缺省 `rs1_width`；用于"按结果宽度分派"（`rd`/`rd_vec`）或"按源向量宽度分派"（`rs1_vec`）。
     #[serde(default, rename = "dispatch")]
@@ -3678,6 +3684,7 @@ impl Lowering {
                 when,
                 vary: None,
                 dispatch: self.dispatch.clone(),
+                temps: None,
                 priority: self.priority,
             });
         }

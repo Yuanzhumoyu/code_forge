@@ -804,6 +804,44 @@ pub(crate) fn token_kind(op: &str) -> &'static str {
 
 /// 模板中出现的全部临时寄存器声明（去重）：
 /// `(变量名, 类别)` 列表——gen_lowering 按此预声明。
+/// **显式临时声明**（v21 W6）：`["g1:gpr", "f2:fpr"]` ⇒ `(变量名, 类别)` ✗。
+///
+/// 声明了显式集合 ⇒ `templates` 里用到的每个 `{gN}`/`{fN}` 都必须已声明 ✗，
+/// 否则返回错误（点名是哪一个 ✗）——把"靠前缀猜类别"的隐式魔法变成**可选显式** ✔。
+pub(crate) fn explicit_temps(
+    decl: &[String],
+    templates: &[String],
+) -> Result<Vec<(String, PhTemp)>, String> {
+    let mut out: Vec<(String, PhTemp)> = Vec::new();
+    for d in decl {
+        let (name, cls) = d
+            .split_once(':')
+            .ok_or_else(|| format!("temps: `{d}` 缺类别（写法如 `g1:gpr` / `f2:fpr` ✗）"))?;
+        let temp_class = match cls.trim() {
+            "gpr" => PhTemp::Gpr,
+            "fpr" => PhTemp::Fpr,
+            other => return Err(format!("temps: `{d}` 的类别 `{other}` 不认识（只认 gpr/fpr ✗）")),
+        };
+        let tok = format!("{{{}}}", name.trim());
+        let var = numbered_temp(&tok)
+            .map(|(v, _)| v)
+            .ok_or_else(|| format!("temps: `{d}` 不是合法临时名（要 `{{gN}}`/`{{fN}}` 形式 ✗）"))?;
+        if !out.iter().any(|(v, _)| *v == var) {
+            out.push((var, temp_class));
+        }
+    }
+    // 校验：用到的临时都得声明 ✗
+    for (var, _) in collect_temps(templates) {
+        if !out.iter().any(|(v, _)| *v == var) {
+            let shown = var.trim_start_matches("__").to_string();
+            return Err(format!(
+                "temps: `insts` 用了 `{{{shown}}}`，但它不在本规则的 `temps` 里（声明了 temps 就必须显式列出 ✗）"
+            ));
+        }
+    }
+    Ok(out)
+}
+
 pub(crate) fn collect_temps(templates: &[String]) -> Vec<(String, PhTemp)> {
     let mut out: Vec<(String, PhTemp)> = Vec::new();
     for t in templates {

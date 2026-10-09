@@ -303,7 +303,7 @@ pub const SECTIONS: &[Section] = &[
     },
     Section {
         path: "[lower.<终结 op>]",
-        model: "TermLowering",
+        model: "TermSeq",
         required: &["insts"],
         optional: &[],
         flatten: &[],
@@ -314,8 +314,7 @@ pub const SECTIONS: &[Section] = &[
         path: "[[lowering]]",
         model: "Lowering",
         required: &["op", "insts"],
-        optional: &["when", "vary",
-            "dispatch", "priority"],
+        optional: &["when", "vary", "dispatch", "temps", "priority"],
         flatten: &[],
         additional: false,
         doc: "指令选择规则",

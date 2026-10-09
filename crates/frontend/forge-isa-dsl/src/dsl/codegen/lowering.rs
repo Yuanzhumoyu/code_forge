@@ -90,7 +90,12 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             // {f}/{fN} → FPR）。新增临时占位符只改 placeholder.rs。
             let mut t_binds: Vec<TokenStream> = Vec::new();
             let mut tf_binds: Vec<TokenStream> = Vec::new();
-            for (var, cls) in super::placeholder::collect_temps(&rule.insts) {
+            // v21 W6：声明了 `temps` ⇒ 用显式集合（并校验无未声明临时 ✗）；否则沿用旧扫描 ✗。
+        let rule_temps = match rule.temps.as_ref() {
+            Some(decl) => super::placeholder::explicit_temps(decl, &rule.insts)?,
+            None => super::placeholder::collect_temps(&rule.insts),
+        };
+        for (var, cls) in rule_temps {
                 let vid = format_ident!("{var}");
                 match cls {
                     super::placeholder::PhTemp::Gpr => {

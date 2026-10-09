@@ -11,6 +11,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W6：`[[lowering]].temps` 显式临时寄存器（可选 ✗，声明即强制 ✗）
+
++ 新增可选键 **`temps = ["g1:gpr", "f2:fpr"]`** ✗：把"靠 `g`/`f` 前缀 + 数字**猜类别**"的隐式魔法
+  变成**可选显式** ✔ —— 声明了它 ✗ 就必须列出本规则用到的**全部**临时 ✗，出现未声明者 ⇒
+  **codegen 报错并点名** ✗；不声明 ⇒ 沿用旧扫描（**不强制迁移** ✔）。
++ 实测迁移成本：三谱隐式临时共 **1222 处**（x86 289+196 ✗、riscv64 737 ✗、arm64 0 ✗）⇒
+  按"可选 + 仅当声明才强制"落地 ✗，避免 1222 处机械重写 ✗。
++ 校验在 **codegen** ✗（`parse_and_validate` 不跑 codegen ✗）⇒ 单测用 `codegen::generate` 断言 ✗：
+  合规通过 ✗ / 未声明点名 `g2` ✗ / 类别写错点名 `vec` ✗。
++ **两个串扰坑（都实测踩到 ✗）**：① 守卫用 `struct …Lowering` 的**子串匹配** ✗ ⇒ 我新增的
+  `TermLowering` 被当成 `Lowering` ✗ ⇒ 已改名 **`TermSeq`** ✔；② 文档注释里写了**孤立的 `{`**
+  （`` `{g`/`{f` `` ✗）⇒ 守卫的**朴素花括号扫描失衡** ✗ ⇒ 把整个文件后半都当成 `Lowering` 的字段 ✗
+  ⇒ 注释里不再出现不配对花括号 ✔。
++ 三方针同步（模型 ✗ + schema ✗ + 文档生成表该行 ✗ + 重生成 `isa-dsl.schema.json` ✗）；
+  整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Added (2026-10-08) — ISA-DSL v21 W6：`insts` 支持**算术表达式占位符**（`{imm0 - 4}` 等 ✗）
 
 + 新增 `placeholder::{is_arith_expr, expr_ctor}` ✗：`insts` 可写 `{imm0 - 4}`、`{iconst >> 12 & 0xfffff}`

@@ -4643,3 +4643,32 @@ fn arith_expr_placeholder_is_recognized() {
     // 种类按**首个操作数** ✗ ⇒ `{imm0 - 4}` 是 imm ✗
     assert_eq!(kind_of("{imm0 - 4}"), kind_of("{imm0}"));
 }
+
+
+/// v21 W6：`temps = [...]` 显式临时寄存器 ✗ —— 声明了就必须显式（未声明即报错并点名 ✗）。
+#[test]
+fn explicit_temps_are_enforced() {
+    // 合规：声明的临时都在 ✗（校验发生在 **codegen** ✗，故用 generate 跑 ✗）
+    let ok = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[lowering]]\nop = \"Icmp\"\ntemps = [\"g1:gpr\"]\ninsts = [\"SETC {out}, {cc}\", \"SETC {g1}, {cc}\"]",
+    );
+    let m_ok = super::parse_and_validate(&ok).expect("谱合法");
+    assert!(super::codegen::generate(&m_ok).is_ok(), "显式合规应通过");
+    // 用到未声明 ⇒ 报错并点名 `{g2}` ✗
+    let bad = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[lowering]]\nop = \"Icmp\"\ntemps = [\"g1:gpr\"]\ninsts = [\"SETC {out}, {cc}\", \"SETC {g2}, {cc}\"]",
+    );
+    let m_bad = super::parse_and_validate(&bad).expect("谱合法（校验在 codegen ✗）");
+    let err = super::codegen::generate(&m_bad).unwrap_err();
+    assert!(err.contains("g2") && err.contains("temps"), "应点名 g2 与 temps：{err}");
+    // 类别写错 ⇒ 报错 ✗
+    let badcls = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[lowering]]\nop = \"Icmp\"\ntemps = [\"g1:vec\"]\ninsts = [\"SETC {out}, {cc}\"]",
+    );
+    let m_badcls = super::parse_and_validate(&badcls).expect("谱合法");
+    let err2 = super::codegen::generate(&m_badcls).unwrap_err();
+    assert!(err2.contains("vec"), "应点名不认识的类别：{err2}");
+}
