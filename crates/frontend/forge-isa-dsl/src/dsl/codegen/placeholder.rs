@@ -644,11 +644,11 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             xreg: "0u32",
             ctor: Some(|_| quote! { __cc }),
         },
-        // v21 W6：终结层的**块号符号值**。`Br` 有 then/else 两个后继 ✗、`Jmp` 一个目标 ✗；
+        // v21 W6：终结层的**块号符号值**。`Br` 有 then/else 两个后继、`Jmp` 一个目标；
         // 取值由终结 lowering 在生成代码里定义成 `__true_block`/`__false_block`/`__target_block`
-        // （`dfg.term_branch`/`term_jump` 的块号 ✗）。
-        // v21 W6：`[lower.Br]` 的**条件寄存器**。与 `{g}` 同形（字段先填 0 ✗，映射期由 `xreg`
-        // 改写成真寄存器 ✗），但 **不分配**临时——直接用终结层算好的 `__cond` ✗。
+        // （`dfg.term_branch`/`term_jump` 的块号）。
+        // v21 W6：`[lower.Br]` 的**条件寄存器**。与 `{g}` 同形（字段先填 0，映射期由 `xreg`
+        // 改写成真寄存器），但 **不分配**临时——直接用终结层算好的 `__cond`。
         Ph {
             name: "{cond}",
             kind: PhKind::Reg,
@@ -760,7 +760,7 @@ pub(crate) fn numbered_operand(name: &str) -> Option<usize> {
 /// lowering_token_kind 的形状签名（token → reg/imm/cond/num/mem）。
 /// 注册表查不到（字面量/物理寄存器/内存表达式）时回退旧规则。
 pub(crate) fn token_kind(op: &str) -> &'static str {
-    // v21 W6：算术表达式占位符 ⇒ 种类按首个操作数 ✗（`{imm0 - 4}` 是 imm ✗）。
+    // v21 W6：算术表达式占位符 ⇒ 种类按首个操作数（`{imm0 - 4}` 是 imm）。
     if is_arith_expr(op) {
         if let Some(f) = first_operand(op) {
             return token_kind(&f);
@@ -804,10 +804,10 @@ pub(crate) fn token_kind(op: &str) -> &'static str {
 
 /// 模板中出现的全部临时寄存器声明（去重）：
 /// `(变量名, 类别)` 列表——gen_lowering 按此预声明。
-/// **显式临时声明**（v21 W6）：`["g1:gpr", "f2:fpr"]` ⇒ `(变量名, 类别)` ✗。
+/// **显式临时声明**（v21 W6）：`["g1:gpr", "f2:fpr"]` ⇒ `(变量名, 类别)`。
 ///
-/// 声明了显式集合 ⇒ `templates` 里用到的每个 `{gN}`/`{fN}` 都必须已声明 ✗，
-/// 否则返回错误（点名是哪一个 ✗）——把"靠前缀猜类别"的隐式魔法变成**可选显式** ✔。
+/// 声明了显式集合 ⇒ `templates` 里用到的每个 `{gN}`/`{fN}` 都必须已声明，
+/// 否则返回错误（点名是哪一个）——把"靠前缀猜类别"的隐式魔法变成**可选显式**。
 pub(crate) fn explicit_temps(
     decl: &[String],
     templates: &[String],
@@ -816,26 +816,26 @@ pub(crate) fn explicit_temps(
     for d in decl {
         let (name, cls) = d
             .split_once(':')
-            .ok_or_else(|| format!("temps: `{d}` 缺类别（写法如 `g1:gpr` / `f2:fpr` ✗）"))?;
+            .ok_or_else(|| format!("temps: `{d}` 缺类别（写法如 `g1:gpr` / `f2:fpr`）"))?;
         let temp_class = match cls.trim() {
             "gpr" => PhTemp::Gpr,
             "fpr" => PhTemp::Fpr,
-            other => return Err(format!("temps: `{d}` 的类别 `{other}` 不认识（只认 gpr/fpr ✗）")),
+            other => return Err(format!("temps: `{d}` 的类别 `{other}` 不认识（只认 gpr/fpr）")),
         };
         let tok = format!("{{{}}}", name.trim());
         let var = numbered_temp(&tok)
             .map(|(v, _)| v)
-            .ok_or_else(|| format!("temps: `{d}` 不是合法临时名（要 `{{gN}}`/`{{fN}}` 形式 ✗）"))?;
+            .ok_or_else(|| format!("temps: `{d}` 不是合法临时名（要 `{{gN}}`/`{{fN}}` 形式）"))?;
         if !out.iter().any(|(v, _)| *v == var) {
             out.push((var, temp_class));
         }
     }
-    // 校验：用到的临时都得声明 ✗
+    // 校验：用到的临时都得声明
     for (var, _) in collect_temps(templates) {
         if !out.iter().any(|(v, _)| *v == var) {
             let shown = var.trim_start_matches("__").to_string();
             return Err(format!(
-                "temps: `insts` 用了 `{{{shown}}}`，但它不在本规则的 `temps` 里（声明了 temps 就必须显式列出 ✗）"
+                "temps: `insts` 用了 `{{{shown}}}`，但它不在本规则的 `temps` 里（声明了 temps 就必须显式列出）"
             ));
         }
     }
@@ -928,8 +928,8 @@ fn numbered_xreg(name: &str) -> TokenStream {
 
 /// **算术表达式占位符**（v21 W6）：`{a + b}` / `{iconst >> 12 & 0xfffff}` 这类写法。
 ///
-/// 认法：整串被一层 `{}` 包住 ✗、且**顶层**（不嵌套在更内层花括号里 ✗）出现运算符 ✗。
-/// 每个操作数必须是**已注册占位符** ✗（`{imm0}` 之类 ✗）或整数字面量 ✗。
+/// 认法：整串被一层 `{}` 包住、且**顶层**（不嵌套在更内层花括号里）出现运算符。
+/// 每个操作数必须是**已注册占位符**（`{imm0}` 之类）或整数字面量。
 pub(crate) fn is_arith_expr(op: &str) -> bool {
     let Some(inner) = op.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
         return false;
@@ -947,7 +947,7 @@ pub(crate) fn is_arith_expr(op: &str) -> bool {
     false
 }
 
-/// 表达式里**首个操作数**的内层片段（去掉外层 `{}` 与结尾运算符 ✗）✗。
+/// 表达式里**首个操作数**的内层片段（去掉外层 `{}` 与结尾运算符）。
 fn first_operand(op: &str) -> Option<String> {
     let inner = op.strip_prefix('{')?.strip_suffix('}')?;
     let mut out = String::new();
@@ -965,7 +965,7 @@ fn first_operand(op: &str) -> Option<String> {
     if s.is_empty() {
         return None;
     }
-    // 注册名形如 `{imm0}` ✗ ⇒ 补回花括号再交给 lookup/kind_matches ✗。
+    // 注册名形如 `{imm0}` ⇒ 补回花括号再交给 lookup/kind_matches。
     if s.starts_with('{') {
         Some(s)
     } else {
@@ -973,7 +973,7 @@ fn first_operand(op: &str) -> Option<String> {
     }
 }
 
-/// 表达式 ctor：逐段把操作数换成各自 ctor 的产物 ✗（运算符原样 ❗）。
+/// 表达式 ctor：逐段把操作数换成各自 ctor 的产物（运算符原样 ❗）。
 pub(crate) fn expr_ctor(op: &str, slot: &OperandSlot) -> Option<TokenStream> {
     if !is_arith_expr(op) {
         return None;
@@ -1026,7 +1026,7 @@ pub(crate) fn expr_ctor(op: &str, slot: &OperandSlot) -> Option<TokenStream> {
         }
     }
     flush(&mut cur, &mut toks)?;
-    // 末尾可能是重复吃到的运算符（`<<` 被拆两次 ✗）⇒ 去掉悬挂运算符 ✗
+    // 末尾可能是重复吃到的运算符（`<<` 被拆两次）⇒ 去掉悬挂运算符
     if toks.len() >= 2 {
         let mut expr = quote! {};
         let mut i = 0;
@@ -1043,14 +1043,14 @@ pub(crate) fn expr_ctor(op: &str, slot: &OperandSlot) -> Option<TokenStream> {
 /// 槽类型约束检查：占位符是否可用于该槽（编号临时归入 Reg；loose 不约束；
 /// {N} 编号操作数同符号寄存器——loose，任何槽可用）。
 pub(crate) fn kind_matches(name: &str, slot_kind: OperandKind) -> bool {
-    // v21 W6：算术表达式占位符 ⇒ 按**首个操作数**的槽适配判定 ✗。
+    // v21 W6：算术表达式占位符 ⇒ 按**首个操作数**的槽适配判定。
     if is_arith_expr(name) {
         return first_operand(name)
             .map(|f| kind_matches(&f, slot_kind))
             .unwrap_or(false);
     }
     // v21 W6：终结层的**块号符号值**可落 Imm/Label 两种槽——各 ISA 的目标槽种类不同
-    // （x86 `target:rel` ✗、riscv `target:off_j` ✗、arm64 `target:off26` ✗）。
+    // （x86 `target:rel`、riscv `target:off_j`、arm64 `target:off26`）。
     let bare = name.trim();
     if matches!(bare, "{true}" | "{false}" | "{target}") {
         return matches!(slot_kind, OperandKind::Imm | OperandKind::Label);
@@ -1099,7 +1099,7 @@ pub(crate) fn assert_unique() -> Result<(), String> {
 }
 
 
-/// **仅供单测**：表达式占位符的种类（等于 `token_kind` ✗，但名字更直白 ✗）。
+/// **仅供单测**：表达式占位符的种类（等于 `token_kind`，但名字更直白）。
 #[cfg(test)]
 pub(crate) fn first_operand_kind_of_test(op: &str) -> &'static str {
     token_kind(op)

@@ -2137,7 +2137,7 @@ asm = "rev8 {dst}, {src}"
 
 - **解析点唯一**：只读投影通路（`apply_variants`）里把 `fields_variant` 合并进 `fields` ✓；
   解析后**下游只见常量** ⇒ 生成器 / 解码 / 渲染 / 生成期自测零改动 ✓；
-- `fields` 里同名键若同时存在，**`fields_variant` 覆盖它** ✓（写法上仍建议只留一处，别重复 ✗）。
+- `fields` 里同名键若同时存在，**`fields_variant` 覆盖它** ✓（写法上仍建议只留一处，别重复）。
 
 ## 已有 ISA 谱
 

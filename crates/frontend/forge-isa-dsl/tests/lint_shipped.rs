@@ -121,7 +121,7 @@ fn op_gap_matches_section_10_3() {
 fn unreferenced_ref_inventory() {
     for isa in ["x86.toml", "riscv64.toml", "arm64.toml"] {
         // 值在 `asm/ratchet/pins.txt`（B2 快照）。**键名带用途前缀**：`lint.refs.*` 与
-        // `lint.unassigned_bits.*` 都指向 `arm64.toml`，本会话就因两者同名把 27/262 改反过 ✗。
+        // `lint.unassigned_bits.*` 都指向 `arm64.toml`，本会话就因两者同名把 27/262 改反过。
         let want: usize = read_pins()
             .get(&format!("lint.refs.{isa}"))
             .unwrap_or_else(|| panic!("快照缺少 lint.refs.{isa}（见 asm/ratchet/pins.txt）"))

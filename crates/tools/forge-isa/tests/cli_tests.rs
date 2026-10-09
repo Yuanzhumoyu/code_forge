@@ -105,7 +105,7 @@ fn insts_lists_expanded_instructions() {
     let out = run(&["insts", &isa("riscv64.toml")]);
     assert_eq!(out.code, 0, "stderr={}", out.stderr);
     // 指令总数**不写字面量**（B2 口径）：读 `asm/ratchet/pins.txt` 的 `spec_totals` 快照，
-    // 与守卫/棘轮同源。谱变了只需 `FORGE_PIN_WRITE=1` 刷快照一次，这里不会再漂 ✗。
+    // 与守卫/棘轮同源。谱变了只需 `FORGE_PIN_WRITE=1` 刷快照一次，这里不会再漂。
     let pins = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../crates/tools/forge-tests/asm/ratchet/pins.txt"),

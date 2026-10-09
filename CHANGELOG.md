@@ -117,347 +117,347 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added (2026-10-08) — ISA-DSL v21 W7 第十二片：`[asm.pseudo.<名>]` 新居（表头即名字）
 
-+ 新增 **`[asm]`** 节 ✗（v21 §6.9 ✗）与首张表 **`[asm.pseudo.<名>]`** ✗：**表头就是伪指令名** ✗
-  （`name` 不再是字段 ✗），体内键 = `asm` / `emit` / `only_variants` ✗ —— 与 `[family.<名>]` 同一形态 ✔。
-+ 解析期**降级**进既有内部载体 `IsaModel.pseudo` ✗（与 `[family.<名>]` → `templates` 同一手法 ✗）：
-  生成器与校验只见内部表示 ✗，不留第二份事实 ✗；与 `[[pseudo]]` **同名 ⇒ 报错** ✗（名字必须唯一 ✗）。
-+ 单测 `dsl::tests::asm_pseudo_section_lowers_to_pseudo` ✗：新居可解析并降级 ✔ / 与旧面同名报错 ✔。
-+ 三方针同步 ✗：模型（`AsmSection`/`PseudoBody` ✗ + `IsaModel.asm` ✗）+ schema 根键 `asm` ✗
-  + 文档键表 `<root>` 行 ✗ + 重生成 `isa-dsl.schema.json` ✗。
-+ **本片是"加新居"** ✗：旧 `[[pseudo]]` **仍被接受**（迁移尚未做 ✗）⇒ 三谱 22 条（x86 20 / riscv64 2 ✗）
-  的搬迁与旧键撤除留下一片 ✔；`[asm.reloc.*]` / `[asm.immfn.*]` 两张表亦未落地（属 W8 与后续 ✗）。
-+ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（三谱未用新居 ⇒ 生成物逐字节不变 ✗）。
++ 新增 **`[asm]`** 节（v21 §6.9）与首张表 **`[asm.pseudo.<名>]`**：**表头就是伪指令名**
+  （`name` 不再是字段），体内键 = `asm` / `emit` / `only_variants` —— 与 `[family.<名>]` 同一形态。
++ 解析期**降级**进既有内部载体 `IsaModel.pseudo`（与 `[family.<名>]` → `templates` 同一手法）：
+  生成器与校验只见内部表示，不留第二份事实；与 `[[pseudo]]` **同名 ⇒ 报错**（名字必须唯一）。
++ 单测 `dsl::tests::asm_pseudo_section_lowers_to_pseudo`：新居可解析并降级 / 与旧面同名报错。
++ 三方针同步：模型（`AsmSection`/`PseudoBody` + `IsaModel.asm`）+ schema 根键 `asm`
+  + 文档键表 `<root>` 行 + 重生成 `isa-dsl.schema.json`。
++ **本片是"加新居"**：旧 `[[pseudo]]` **仍被接受**（迁移尚未做）⇒ 三谱 22 条（x86 20 / riscv64 2）
+  的搬迁与旧键撤除留下一片；`[asm.reloc.*]` / `[asm.immfn.*]` 两张表亦未落地（属 W8 与后续）。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（三谱未用新居 ⇒ 生成物逐字节不变）。
 
-### Changed (2026-10-08) — ISA-DSL v21 W7 第十一片：arm64 `imm_fn` 折叠**完成**（98 → 49 ✗）
+### Changed (2026-10-08) — ISA-DSL v21 W7 第十一片：arm64 `imm_fn` 折叠**完成**（98 → 49）
 
-+ 承接第十片 ✗：剩余 31 对全部折叠 ✗ ⇒ arm64 `[[conventions.imm_fn]]` **98 → 49** ✗
-  （`texts` 49 条 ✗、残留单写法 `text` **0** 条 ✗），`validate` 通过 ✔、整仓 `-j 2` exit 0 ✔。
-+ 清单 §9 的"arm64 98 个 `imm_fn` → 约 49 个名字"**达成** ✔。等价性依据同前 ✗：98 条 `expr` 全为
-  恒等 `"{0}"` ✗、两种拼写首 token 不同（`#` vs `:`）⇒ 不互相遮蔽 ✗、与尝试顺序无关 ✔；
-  另有 arm64 的 `[[vectors]]` 89 条 + 生成期自测 + 汇编三档棘轮兜底 ✔。
-+ 本片只改**数据**✗（`isa/arm64.toml` ✗），未动生成器 ✗。
++ 承接第十片：剩余 31 对全部折叠 ⇒ arm64 `[[conventions.imm_fn]]` **98 → 49**
+  （`texts` 49 条、残留单写法 `text` **0** 条），`validate` 通过、整仓 `-j 2` exit 0。
++ 清单 §9 的"arm64 98 个 `imm_fn` → 约 49 个名字"**达成**。等价性依据同前：98 条 `expr` 全为
+  恒等 `"{0}"`、两种拼写首 token 不同（`#` vs `:`）⇒ 不互相遮蔽、与尝试顺序无关；
+  另有 arm64 的 `[[vectors]]` 89 条 + 生成期自测 + 汇编三档棘轮兜底。
++ 本片只改**数据**（`isa/arm64.toml`），未动生成器。
 
-### Changed (2026-10-08) — ISA-DSL v21 W7 第十片：arm64 `imm_fn` 多拼写折叠（进行中 ✗）
+### Changed (2026-10-08) — ISA-DSL v21 W7 第十片：arm64 `imm_fn` 多拼写折叠（进行中）
 
-+ 用新 `texts` 把 arm64 **成对**的 `imm_fn` 折叠 ✗：`abs_g0`（`#:abs_g0:{0}` ✗）与 `abs_g0_n`
-  （`:abs_g0:{0}` ✗）这类"只差开头 `#`"的两条 ⇒ 合成一条声明收两种写法 ✗
-  （98 条 → 目标约 49 条 ✗；**本片折掉 18 条** ✗，余 80 条下次继续 ✗）。
-+ **踩到的真风险**（值得记 ✗）：折叠会**删掉** `*_n` 名字 ✗，而 `[operand.<槽>]` 的
-  `symbol = { allow = …, modifiers = [...] }` 过滤器**按名字**引用它们 ✗ ⇒ 折叠后 arm64
-  **validate 直接红** ✗。已把这四处 `modifiers` 列表里的 `*_n` 条目去掉 ✗（基名已覆盖该拼写 ✗）。
-  教训 ✗：侦察"谁引用了这些名字"时 `grep 'imm_fns = \['` **不够** ✗ —— v21 W3 已把过滤声明合并进
-  `symbol = { modifiers = [...] }` ✗。
-+ 折叠**可证等价** ✗：98 条 `expr` 实测**全为恒等** `"{0}"` ✗（98/98 ✗），且 `#`/非 `#` 两种拼写
-  首 token 不同 ⇒ 不会互相遮蔽 ✗、匹配结果与顺序无关 ✔。
++ 用新 `texts` 把 arm64 **成对**的 `imm_fn` 折叠：`abs_g0`（`#:abs_g0:{0}`）与 `abs_g0_n`
+  （`:abs_g0:{0}`）这类"只差开头 `#`"的两条 ⇒ 合成一条声明收两种写法
+  （98 条 → 目标约 49 条；**本片折掉 18 条**，余 80 条下次继续）。
++ **踩到的真风险**（值得记）：折叠会**删掉** `*_n` 名字，而 `[operand.<槽>]` 的
+  `symbol = { allow = …, modifiers = [...] }` 过滤器**按名字**引用它们 ⇒ 折叠后 arm64
+  **validate 直接红**。已把这四处 `modifiers` 列表里的 `*_n` 条目去掉（基名已覆盖该拼写）。
+  教训：侦察"谁引用了这些名字"时 `grep 'imm_fns = \['` **不够** —— v21 W3 已把过滤声明合并进
+  `symbol = { modifiers = [...] }`。
++ 折叠**可证等价**：98 条 `expr` 实测**全为恒等** `"{0}"`（98/98），且 `#`/非 `#` 两种拼写
+  首 token 不同 ⇒ 不会互相遮蔽、匹配结果与顺序无关。
 + 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 
 ### Added (2026-10-08) — ISA-DSL v21 W7 第九片：`[[conventions.imm_fn]]` 支持**多拼写** `texts`
 
-+ `ImmFnDef` 的 `text` 变为可选 ✗、新增 `texts = ["…", "…"]` ✗（同一语义的**多条等价写法** ✗）：
-  两者**只能给一个** ✗、至少给一个 ✗（校验期报错 ✗）；`all_texts()` 给出全部写法 ✗。
-+ 生成期改为**两相** ✗：① 值语义（`expr` ✗）每条声明**一次** ✗ —— 多拼写共享同一个求值函数
-  `__imm_fn{i}` 与同一个下标 ✗；② 文本形态**每条写法各一次匹配尝试** ✗（`__imm_fn_lit` ✗）。
-  ⇒ 多拼写不会产生第二份值语义 ✗，也不会改变任何既有写法的匹配结果 ✔。
-+ 单测 `dsl::tests::imm_fn_texts_multi_spelling` ✗：多拼写合法 ✔ / `text` 与 `texts` 同时给报错 ✔ /
-  两者都不给报错 ✔。
-+ 三方针同步 ✗：模型 ✗ + schema（`required` 去掉 `text` ✗、`optional` 加 `text`/`texts` ✗）
-  + 文档键表该行 ✗ + 重生成 `isa-dsl.schema.json` ✗。
-+ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（三谱未用 `texts` ⇒ 生成物逐字节不变 ✗）。
-+ **下一片**：用 `texts` 把 arm64 的 98 条 `imm_fn` 折叠成约 49 条 ✗（成对的 `abs_g0` 与
-  `abs_g0_n` 只差开头的 `#` ✗）。
++ `ImmFnDef` 的 `text` 变为可选、新增 `texts = ["…", "…"]`（同一语义的**多条等价写法**）：
+  两者**只能给一个**、至少给一个（校验期报错）；`all_texts()` 给出全部写法。
++ 生成期改为**两相**：① 值语义（`expr`）每条声明**一次** —— 多拼写共享同一个求值函数
+  `__imm_fn{i}` 与同一个下标；② 文本形态**每条写法各一次匹配尝试**（`__imm_fn_lit`）。
+  ⇒ 多拼写不会产生第二份值语义，也不会改变任何既有写法的匹配结果。
++ 单测 `dsl::tests::imm_fn_texts_multi_spelling`：多拼写合法 / `text` 与 `texts` 同时给报错 /
+  两者都不给报错。
++ 三方针同步：模型 + schema（`required` 去掉 `text`、`optional` 加 `text`/`texts`）
+  + 文档键表该行 + 重生成 `isa-dsl.schema.json`。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（三谱未用 `texts` ⇒ 生成物逐字节不变）。
++ **下一片**：用 `texts` 把 arm64 的 98 条 `imm_fn` 折叠成约 49 条（成对的 `abs_g0` 与
+  `abs_g0_n` 只差开头的 `#`）。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W7 第八片：emit 路径的内存偏移**统一取占位符注册表**
 
-+ `integration.rs::parse_mem_template`（清单点名的"私有内存语法" ✗）原先**手抄**了偏移符号语义 ✗
-  （`{off}` → `ctx.current_offset` ✗、`{alloca}` → `ctx.current_alloca_offset as i64` ✗）——
-  与 `placeholder.rs` 的注册表条目**逐字重复** ✗。现在改为调 `placeholder::ctor_for(name, slot)` ✗
-  （该路径**有真实 `slot`** ✗ ⇒ 无需伪造 ✗）⇒ 偏移符号语义**单点** ✔。
-+ 实测使用面 ✗：这条语法**只有两处**在用 ✗ —— `isa/x86.toml` 的 `[RBP+{off}]` 与 `[RBP+{alloca}]` ✗
-  （arm64/riscv64 命中都是 `asm` 里的**操作数名** ✗，不是内存文本 ✗）⇒ 改动面极小、且被 x86 矩阵直接覆盖 ✔。
-+ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（生成物表达式与旧路径逐字相同 ✗）。
++ `integration.rs::parse_mem_template`（清单点名的"私有内存语法"）原先**手抄**了偏移符号语义
+  （`{off}` → `ctx.current_offset`、`{alloca}` → `ctx.current_alloca_offset as i64`）——
+  与 `placeholder.rs` 的注册表条目**逐字重复**。现在改为调 `placeholder::ctor_for(name, slot)`
+  （该路径**有真实 `slot`** ⇒ 无需伪造）⇒ 偏移符号语义**单点**。
++ 实测使用面：这条语法**只有两处**在用 —— `isa/x86.toml` 的 `[RBP+{off}]` 与 `[RBP+{alloca}]`
+  （arm64/riscv64 命中都是 `asm` 里的**操作数名**，不是内存文本）⇒ 改动面极小、且被 x86 矩阵直接覆盖。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（生成物表达式与旧路径逐字相同）。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W7 第七片：尺寸关键字**只认** `[operand.<mem>].size_words`
 
-+ 清单 §9 的"尺寸关键字属于 `[operand.mem].size_words`"落地 ✗：**撤掉**旧键
-  `[conventions.mem].size_keywords`（写它现在被拒 ✗）——`MemTemplate.size_keywords` 改成
-  `#[serde(skip)]` 的**内部载体** ✗，只由 `[operand.<mem>].size_words` 降级时写入 ✗
-  （与 `IsaModel.templates` / `Template.from_family` 同一手法 ✗），并在 `INTERNAL_FIELDS` 登记 ✗。
-+ 实测：**三谱本来就已经用新键** ✗（x86 `[operand.mem].size_words` ✗；riscv64/arm64 不用 `{size}` ✗）
-  ⇒ 本片是"删旧家"而非迁移 ✗，生成物与谱文本零变化 ✔。
-+ 三方针同步 ✗：模型（`skip` ✗）+ schema（`[conventions.mem]` 的可选键清空 ✗）+ 文档键表该行 ✗
-  + 文档 TOML 示例（改为 `[operand.mem]` + `text`/`size_words` ✗）+ `{size}` 散文说明 ✗
-  + 生成物 `isa-dsl.schema.json` ✗；报错文案与单测断言同步指向新键 ✗。
++ 清单 §9 的"尺寸关键字属于 `[operand.mem].size_words`"落地：**撤掉**旧键
+  `[conventions.mem].size_keywords`（写它现在被拒）——`MemTemplate.size_keywords` 改成
+  `#[serde(skip)]` 的**内部载体**，只由 `[operand.<mem>].size_words` 降级时写入
+  （与 `IsaModel.templates` / `Template.from_family` 同一手法），并在 `INTERNAL_FIELDS` 登记。
++ 实测：**三谱本来就已经用新键**（x86 `[operand.mem].size_words`；riscv64/arm64 不用 `{size}`）
+  ⇒ 本片是"删旧家"而非迁移，生成物与谱文本零变化。
++ 三方针同步：模型（`skip`）+ schema（`[conventions.mem]` 的可选键清空）+ 文档键表该行
+  + 文档 TOML 示例（改为 `[operand.mem]` + `text`/`size_words`）+ `{size}` 散文说明
+  + 生成物 `isa-dsl.schema.json`；报错文案与单测断言同步指向新键。
 + 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 
 ### Added (2026-10-08) — ISA-DSL v21 W7 第六片：`{name:affix}` 的**解析语义**
 
-+ 解析侧（`gen_assemble_try_tok` ✗）现在**先尝试吃词缀** ✗：写法里带 `{n:affix}` 时，源文本可以带该词缀 ✗。
-+ **为什么"吃了也算、没吃也行"是安全的** ✗：`__eat_lit` 只在**整段匹配成功**时才提交 `it.pos` ✗，
-  失败会回退 ✗ ⇒ 把词缀元素写成"尝试后无条件通过"既不误吞 ✗，又覆盖了 `+` 被渲染抑制（负值 ✗）
-  时文本里本就没有词缀的情形 ✗ ✔。
-+ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（无谱使用词缀 ⇒ 生成物逐字节不变 ✗）。
++ 解析侧（`gen_assemble_try_tok`）现在**先尝试吃词缀**：写法里带 `{n:affix}` 时，源文本可以带该词缀。
++ **为什么"吃了也算、没吃也行"是安全的**：`__eat_lit` 只在**整段匹配成功**时才提交 `it.pos`，
+  失败会回退 ⇒ 把词缀元素写成"尝试后无条件通过"既不误吞，又覆盖了 `+` 被渲染抑制（负值）
+  时文本里本就没有词缀的情形。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（无谱使用词缀 ⇒ 生成物逐字节不变）。
 
 ### Added (2026-10-08) — ISA-DSL v21 W7 第五片：`{name:affix}` 的**渲染语义**
 
-+ 渲染侧（`gen_disassemble` ✗）实现词缀：`{n:affix}` ⇒ 词缀**随组件出现** ✗，且 **`+` 对已带 `-`** 的
-  渲染值**抑制** ✗（生成期算出 `__aN` 局部，格式串用 `{__aN}{__oN}` ✗）——即设计案 §6.9 的原话 ✗。
-+ 未做（下一片 ✗）：**解析侧**接受词缀 ✗（现在解析只认 `{n}` 本身 ✗）、`{name?}` 的**省略**语义 ✗
-  （"连同紧邻字面词缀一起省略" ✗ 需要"该操作数是否在场"的信号 ✗ —— 设计案未定义该信号从哪来 ✗，
-  需先定：是按**取值缺省**还是按**谱面声明** ✗）。
++ 渲染侧（`gen_disassemble`）实现词缀：`{n:affix}` ⇒ 词缀**随组件出现**，且 **`+` 对已带 `-`** 的
+  渲染值**抑制**（生成期算出 `__aN` 局部，格式串用 `{__aN}{__oN}`）——即设计案 §6.9 的原话。
++ 未做（下一片）：**解析侧**接受词缀（现在解析只认 `{n}` 本身）、`{name?}` 的**省略**语义
+  （"连同紧邻字面词缀一起省略" 需要"该操作数是否在场"的信号 —— 设计案未定义该信号从哪来，
+  需先定：是按**取值缺省**还是按**谱面声明**）。
 + 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 
 ### Added (2026-10-08) — ISA-DSL v21 W7 第四片：占位修饰 `{name?}` / `{name:affix}` 的**语法层**
 
-+ `Seg::Op(usize)` 扩成 **`Seg::Op { idx, optional, affix }`** ✗：`parse_template` 现在认四种写法 ✗
-  —— `{N}` / `{N?}`（可选 ✗）/ `{N:affix}`（词缀随组件出现 ✗）/ `{N?:affix}` ✗。
-+ **规范化必须保留修饰** ✗：`{名字}` → `{索引}` 的改写器原先按整串查名 ✗ ⇒ `{dst?}` 被当成操作数名
-  `dst?` ✗ 报"不是已声明的操作数名" ✗。现在先**剥掉修饰**查名 ✗、查出索引后**原样带回** ✗
-  （否则修饰会在规范化这一步静默丢失 ✗）。
-+ 测试 ✗：`dsl::tests::placeholder_modifiers_parse` ✗（四种写法逐项断言 ✗）；
-  `dsl::tests::normalization_keeps_placeholder_modifiers` ✗（规范化后 `?` 与 `:affix` 仍在 ✗）。
-+ 12 处 `Seg::Op` 匹配点随改 ✗（先被我的通配正则误伤了另一个枚举 `NamedSeg::Op(…)` ✗ ⇒ 已还原 ✗）。
++ `Seg::Op(usize)` 扩成 **`Seg::Op { idx, optional, affix }`**：`parse_template` 现在认四种写法
+  —— `{N}` / `{N?}`（可选）/ `{N:affix}`（词缀随组件出现）/ `{N?:affix}`。
++ **规范化必须保留修饰**：`{名字}` → `{索引}` 的改写器原先按整串查名 ⇒ `{dst?}` 被当成操作数名
+  `dst?` 报"不是已声明的操作数名"。现在先**剥掉修饰**查名、查出索引后**原样带回**
+  （否则修饰会在规范化这一步静默丢失）。
++ 测试：`dsl::tests::placeholder_modifiers_parse`（四种写法逐项断言）；
+  `dsl::tests::normalization_keeps_placeholder_modifiers`（规范化后 `?` 与 `:affix` 仍在）。
++ 12 处 `Seg::Op` 匹配点随改（先被我的通配正则误伤了另一个枚举 `NamedSeg::Op(…)` ⇒ 已还原）。
 + 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
-+ **下一片**：修饰的**语义**（`{name?}` 的"连同紧邻字面词缀一起省略" ✗、`{name:affix}` 的渲染/解析 ✗、
-  `+` 对已带 `-` 的数值抑制 ✗）＋ 尺寸关键字迁到 `[operand.mem].size_words` ✗。
++ **下一片**：修饰的**语义**（`{name?}` 的"连同紧邻字面词缀一起省略"、`{name:affix}` 的渲染/解析、
+  `+` 对已带 `-` 的数值抑制）＋ 尺寸关键字迁到 `[operand.mem].size_words`。
 
 ### Added (2026-10-08) — ISA-DSL v21 W7 第三片：`--ambiguity` 报"靠声明序兜"的写法歧义
 
-+ 新增可选档 **`--ambiguity`** ✗（`LintOpts.check_asm_ambiguity` ✗，默认关 ✗）：报"**同助记符 + 同操作数类**
-  ⇒ 两条写法都能匹配、只能靠**声明序**兜"的指令 ✗（清单要求：报歧义、不靠声明序兜 ✗）。
-+ 判据是**代理**（真 `type_signature` 在 codegen 私有 ✗）：`asm.render()` 的首字面段（助记符 ✗）
-  + `ops` 的**类列表** ✗ ⇒ **偏粗** ✗：实测 x86 **35 处**、riscv64/arm64 亦有若干 ✗，
-  其中含"文本可区分但类列表相同"的误报（如 `movzx {dst}, byte ptr [{src}]` 对 `movzx {dst}, {src}` ✗）
-  ⇒ 与仓库其它可选档（`--bits`/`--suggest` 等 ✗）同样定位为**评审清单，不是错误判据** ✔，
-  故**默认关** ✗（否则与"发行谱零结论"门禁冲突 ✗）。
-+ 单测 `dsl::tests::asm_ambiguity_is_reported_when_opted_in` ✗：两条同助记符同类的指令 ⇒
-  默认档**不报** ✗、可选档**报** ✗。
-+ CLI 接线（手写解析 ✗）：`--ambiguity` 进 `has_flag` ✗ + 从 `paths` 排除 ✗ + 传参 ✗；
-  帮助文本补记 ✗。
++ 新增可选档 **`--ambiguity`**（`LintOpts.check_asm_ambiguity`，默认关）：报"**同助记符 + 同操作数类**
+  ⇒ 两条写法都能匹配、只能靠**声明序**兜"的指令（清单要求：报歧义、不靠声明序兜）。
++ 判据是**代理**（真 `type_signature` 在 codegen 私有）：`asm.render()` 的首字面段（助记符）
+  + `ops` 的**类列表** ⇒ **偏粗**：实测 x86 **35 处**、riscv64/arm64 亦有若干，
+  其中含"文本可区分但类列表相同"的误报（如 `movzx {dst}, byte ptr [{src}]` 对 `movzx {dst}, {src}`）
+  ⇒ 与仓库其它可选档（`--bits`/`--suggest` 等）同样定位为**评审清单，不是错误判据**，
+  故**默认关**（否则与"发行谱零结论"门禁冲突）。
++ 单测 `dsl::tests::asm_ambiguity_is_reported_when_opted_in`：两条同助记符同类的指令 ⇒
+  默认档**不报**、可选档**报**。
++ CLI 接线（手写解析）：`--ambiguity` 进 `has_flag` + 从 `paths` 排除 + 传参；
+  帮助文本补记。
 + 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 
 ### Added (2026-10-08) — ISA-DSL v21 W7 第二片：解析器**按序尝试备选写法**
 
-+ `gen_assemble_try_tok` 改为接受**一条写法** ✗；`gen_assemble` 为每条指令的**每个可接受写法**各生成一次尝试 ✗
-  （去重键带上写法 ✗，否则备选会被"同类型签名"误跳过 ✗）⇒ 解析按 `asm` 列表序尝试 ✗、**第 0 条优先** ⇒ 旧行为逐字节一致 ✔。
-+ `gen_scan_probe`（`could_be_instruction` ✗）改认**全部**写法的首字面段 ✗。
-+ **关键一环**：`codegen/mod.rs` 的 asm 规范化原先只处理渲染形态 ✗ ⇒ 备选写法在入口就被丢掉 ✗；现在**逐条写法各自规范化** ✗
-  （下游 asm/machine/decode 只认索引形态 ✗），`uses` 仍只统计渲染形态 ✗（各写法应一致 ✗）。
-+ 单测 `dsl::tests::alternative_spellings_are_emitted` ✗：生成物里同时出现主写法与备选写法的字面段 ✗。
-+ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（1326 处单写法谱零变化 ✗）。
++ `gen_assemble_try_tok` 改为接受**一条写法**；`gen_assemble` 为每条指令的**每个可接受写法**各生成一次尝试
+  （去重键带上写法，否则备选会被"同类型签名"误跳过）⇒ 解析按 `asm` 列表序尝试、**第 0 条优先** ⇒ 旧行为逐字节一致。
++ `gen_scan_probe`（`could_be_instruction`）改认**全部**写法的首字面段。
++ **关键一环**：`codegen/mod.rs` 的 asm 规范化原先只处理渲染形态 ⇒ 备选写法在入口就被丢掉；现在**逐条写法各自规范化**
+  （下游 asm/machine/decode 只认索引形态），`uses` 仍只统计渲染形态（各写法应一致）。
++ 单测 `dsl::tests::alternative_spellings_are_emitted`：生成物里同时出现主写法与备选写法的字面段。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（1326 处单写法谱零变化）。
 
 ### Added (2026-10-08) — ISA-DSL v21 W7 第一片：`asm` 支持**可接受写法列表**
 
-+ 新增 `model::AsmList` ✗：`asm = "add {dst}, {src}"` 与 `asm = ["add {dst}, {src}", "add {src}, {dst}"]`
-  **两种写法都接受** ✗ —— **第 0 条 = 渲染形态** ✗（反汇编只吐它 ✗），其余为**解析专用备选** ✗
-  （按列表序尝试 ✗，与 `[conventions.mem].templates` 同一口径 ✗）。
-+ 设计要点：`Deref<Target = str>`（指向渲染形态 ✗）+ `AsRef<str>` + `PartialEq<str>` + `Display`
-  ⇒ **既有 43 个读取点只需改 3 处** ✔（`validate` 参数替换 ✗、`report` 渲染文本 ✗、`codegen` 规范化 asm ✗）；
-  参数替换现在作用于**全部写法** ✗。
-+ 单测 `dsl::tests::asm_accepts_a_list_of_spellings`（列表两条都在 ✗、`render()` = 第 0 条 ✗、
-  单字符串等价单元素列表 ✗）；另修两处测试的 `.as_str()` ✗（经 `Deref` 会落到不稳定的 `str::as_str` ✗）。
-+ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（1326 处 `asm = "…"` 逐字节不变 ✗）。
-+ **下一片**：让**解析器**真的按序尝试备选写法 ✗（本片只落模型/渲染口径 ✗）。
++ 新增 `model::AsmList`：`asm = "add {dst}, {src}"` 与 `asm = ["add {dst}, {src}", "add {src}, {dst}"]`
+  **两种写法都接受** —— **第 0 条 = 渲染形态**（反汇编只吐它），其余为**解析专用备选**
+  （按列表序尝试，与 `[conventions.mem].templates` 同一口径）。
++ 设计要点：`Deref<Target = str>`（指向渲染形态）+ `AsRef<str>` + `PartialEq<str>` + `Display`
+  ⇒ **既有 43 个读取点只需改 3 处**（`validate` 参数替换、`report` 渲染文本、`codegen` 规范化 asm）；
+  参数替换现在作用于**全部写法**。
++ 单测 `dsl::tests::asm_accepts_a_list_of_spellings`（列表两条都在、`render()` = 第 0 条、
+  单字符串等价单元素列表）；另修两处测试的 `.as_str()`（经 `Deref` 会落到不稳定的 `str::as_str`）。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（1326 处 `asm = "…"` 逐字节不变）。
++ **下一片**：让**解析器**真的按序尝试备选写法（本片只落模型/渲染口径）。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W6：`frame.rs` 尾声跳转不再"按字段个数猜"
 
-+ `frame.rs:167` 的 `let (jal_dest, jal_target) = if jump_f.len() >= 2 { … }` ✗ 与
-  `} else if has_jump && jump_f.len() >= 2 {` ✗ —— 清单点名的**第三处**字段个数猜测 ✗ —— 全部改成
-  **声明数据判定** ✔：jump 指令若有 `Reg` 类操作数（riscv `JAL dst, target` ✗）⇒ 需要填 dest ✗；
-  否则是单 label 槽（x86 `JMP_REL32 target` ✗）。dest/label 的**字段名**也从槽种类推出 ✗，
-  不再固定取 `jump_f[0]`/`jump_f[1]` ✗。
++ `frame.rs:167` 的 `let (jal_dest, jal_target) = if jump_f.len() >= 2 { … }` 与
+  `} else if has_jump && jump_f.len() >= 2 {` —— 清单点名的**第三处**字段个数猜测 —— 全部改成
+  **声明数据判定**：jump 指令若有 `Reg` 类操作数（riscv `JAL dst, target`）⇒ 需要填 dest；
+  否则是单 label 槽（x86 `JMP_REL32 target`）。dest/label 的**字段名**也从槽种类推出，
+  不再固定取 `jump_f[0]`/`jump_f[1]`。
 + 验证：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（尾声跳转影响三谱 ⇒ x86/riscv64 JIT 矩阵 +
-  汇编三档 + 三矩阵计数全不变 ✗）⇒ 与旧行为**等价** ✔。
-+ 至此清单「删除编译器三处按字段个数猜 ISA」**全部完成** ✗（`lowering.rs:202`、`:527-625`、
-  `frame.rs:172-208` ✗）。
+  汇编三档 + 三矩阵计数全不变）⇒ 与旧行为**等价**。
++ 至此清单「删除编译器三处按字段个数猜 ISA」**全部完成**（`lowering.rs:202`、`:527-625`、
+  `frame.rs:172-208`）。
 
-### Added (2026-10-08) — ISA-DSL v21 W6：第四形态夹具（验证形态**只由谱面决定** ✗）
+### Added (2026-10-08) — ISA-DSL v21 W6：第四形态夹具（验证形态**只由谱面决定**）
 
-+ 清单原话是"同一份谱里两个分支形态" ✗ —— **实测造不出来** ✗：DSL 禁止同角色同类两条声明 ✗
-  （"角色 \"branch\" 与 … 冲突 ✗"）✔。改用**等价且更硬**的验证 ✗：让 `[lower.Br]` 点名**另一条无角色指令** ✗
-  —— 旧实现**只会**用角色表里那条 ✗，谱面却能任意选 ✗。
-+ 新测试 `dsl::tests::branch_form_comes_from_spec_not_role_table` ✗：断言 `Br` 分支体里出现
-  **谱面点名的** `Inst::Brchosen` ✗，且该片段内**不得**出现角色表里的 `Brrole` ✗。
-+ 三个实测坑（都写进注释 ✗）：① 谱面序列**不能**用 `{out}` ✗（那是*规则*操作数角色 ✗，终结层没有 ✗）⇒
-  用 `{cond}` ✗；② 变体名是 mnemonic 的 **Pascal 形式** ✗（`Brchosen` ✗，不是 `BRCHOSEN` ✗）；
-  ③ 否定断言必须**限定在分支体片段** ✗ —— 每条声明过的指令都会在枚举/表里出现变体 ✗，全串搜必然命中 ✗。
-+ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（三矩阵计数不变 ✗）。
++ 清单原话是"同一份谱里两个分支形态" —— **实测造不出来**：DSL 禁止同角色同类两条声明
+  （"角色 \"branch\" 与 … 冲突"）。改用**等价且更硬**的验证：让 `[lower.Br]` 点名**另一条无角色指令**
+  —— 旧实现**只会**用角色表里那条，谱面却能任意选。
++ 新测试 `dsl::tests::branch_form_comes_from_spec_not_role_table`：断言 `Br` 分支体里出现
+  **谱面点名的** `Inst::Brchosen`，且该片段内**不得**出现角色表里的 `Brrole`。
++ 三个实测坑（都写进注释）：① 谱面序列**不能**用 `{out}`（那是*规则*操作数角色，终结层没有）⇒
+  用 `{cond}`；② 变体名是 mnemonic 的 **Pascal 形式**（`Brchosen`，不是 `BRCHOSEN`）；
+  ③ 否定断言必须**限定在分支体片段** —— 每条声明过的指令都会在枚举/表里出现变体，全串搜必然命中。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（三矩阵计数不变）。
 
-### Added (2026-10-08) — ISA-DSL v21 W6：`[[lowering]].temps` 显式临时寄存器（可选 ✗，声明即强制 ✗）
+### Added (2026-10-08) — ISA-DSL v21 W6：`[[lowering]].temps` 显式临时寄存器（可选，声明即强制）
 
-+ 新增可选键 **`temps = ["g1:gpr", "f2:fpr"]`** ✗：把"靠 `g`/`f` 前缀 + 数字**猜类别**"的隐式魔法
-  变成**可选显式** ✔ —— 声明了它 ✗ 就必须列出本规则用到的**全部**临时 ✗，出现未声明者 ⇒
-  **codegen 报错并点名** ✗；不声明 ⇒ 沿用旧扫描（**不强制迁移** ✔）。
-+ 实测迁移成本：三谱隐式临时共 **1222 处**（x86 289+196 ✗、riscv64 737 ✗、arm64 0 ✗）⇒
-  按"可选 + 仅当声明才强制"落地 ✗，避免 1222 处机械重写 ✗。
-+ 校验在 **codegen** ✗（`parse_and_validate` 不跑 codegen ✗）⇒ 单测用 `codegen::generate` 断言 ✗：
-  合规通过 ✗ / 未声明点名 `g2` ✗ / 类别写错点名 `vec` ✗。
-+ **两个串扰坑（都实测踩到 ✗）**：① 守卫用 `struct …Lowering` 的**子串匹配** ✗ ⇒ 我新增的
-  `TermLowering` 被当成 `Lowering` ✗ ⇒ 已改名 **`TermSeq`** ✔；② 文档注释里写了**孤立的 `{`**
-  （`` `{g`/`{f` `` ✗）⇒ 守卫的**朴素花括号扫描失衡** ✗ ⇒ 把整个文件后半都当成 `Lowering` 的字段 ✗
-  ⇒ 注释里不再出现不配对花括号 ✔。
-+ 三方针同步（模型 ✗ + schema ✗ + 文档生成表该行 ✗ + 重生成 `isa-dsl.schema.json` ✗）；
++ 新增可选键 **`temps = ["g1:gpr", "f2:fpr"]`**：把"靠 `g`/`f` 前缀 + 数字**猜类别**"的隐式魔法
+  变成**可选显式** —— 声明了它 就必须列出本规则用到的**全部**临时，出现未声明者 ⇒
+  **codegen 报错并点名**；不声明 ⇒ 沿用旧扫描（**不强制迁移**）。
++ 实测迁移成本：三谱隐式临时共 **1222 处**（x86 289+196、riscv64 737、arm64 0）⇒
+  按"可选 + 仅当声明才强制"落地，避免 1222 处机械重写。
++ 校验在 **codegen**（`parse_and_validate` 不跑 codegen）⇒ 单测用 `codegen::generate` 断言：
+  合规通过 / 未声明点名 `g2` / 类别写错点名 `vec`。
++ **两个串扰坑（都实测踩到）**：① 守卫用 `struct …Lowering` 的**子串匹配** ⇒ 我新增的
+  `TermLowering` 被当成 `Lowering` ⇒ 已改名 **`TermSeq`**；② 文档注释里写了**孤立的 `{`**
+  （`` `{g`/`{f` ``）⇒ 守卫的**朴素花括号扫描失衡** ⇒ 把整个文件后半都当成 `Lowering` 的字段
+  ⇒ 注释里不再出现不配对花括号。
++ 三方针同步（模型 + schema + 文档生成表该行 + 重生成 `isa-dsl.schema.json`）；
   整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 
-### Added (2026-10-08) — ISA-DSL v21 W6：`insts` 支持**算术表达式占位符**（`{imm0 - 4}` 等 ✗）
+### Added (2026-10-08) — ISA-DSL v21 W6：`insts` 支持**算术表达式占位符**（`{imm0 - 4}` 等）
 
-+ 新增 `placeholder::{is_arith_expr, expr_ctor}` ✗：`insts` 可写 `{imm0 - 4}`、`{iconst >> 12 & 0xfffff}`
-  这类**表达式** ✗ —— 认法 = "整串被一层 `{}` 包住 + 顶层出现运算符" ✗，操作数必须是**已注册占位符**
-  或整数字面量 ✗。
-+ 槽适配（`kind_matches`）与 token 种类（`token_kind`）都**按首个操作数**判定 ✗（`{imm0 - 4}` 与
-  `{imm0}` 同槽适配 ✗）；ctor 由各操作数既有 ctor 拼接运算符 ✗，**纯生成期展开** ✗（生成物里就是
-  `(<imm0 表达式> - 4)` ✗）。
-+ 单测：`dsl::tests::arith_expr_placeholder_is_recognized` ✗（认法 ✗ + 两个反例 ✗ + 首操作数种类一致 ✗）。
-+ 踩坑：首操作数最初返回**不带花括号**的 `imm0` ✗ ⇒ `lookup` 找不到（注册名是 `{imm0}` ✗）⇒ 落到
-  "物理寄存器"启发式返回 `"reg"` ✗ ⇒ 单测当场抓到 ✗ ✔。
-+ **下一步**：用它替换谱里的派生 token ✗（`imm0_sub4` ✗、`iconst_hi20`/`_lo12`/`_hi32_*`/`_lo32_*` ✗、
-  `fconst_hi32_*`/`lo32_*` ✗ 等 20 余个 ✗）并删掉这些注册条目 ✗；`vconst_*`/`seg`/`ph`/`iconst_c16`
-  依赖常量池/相位/类型 ✗，不是算术 ✗，保留 ✗。
++ 新增 `placeholder::{is_arith_expr, expr_ctor}`：`insts` 可写 `{imm0 - 4}`、`{iconst >> 12 & 0xfffff}`
+  这类**表达式** —— 认法 = "整串被一层 `{}` 包住 + 顶层出现运算符"，操作数必须是**已注册占位符**
+  或整数字面量。
++ 槽适配（`kind_matches`）与 token 种类（`token_kind`）都**按首个操作数**判定（`{imm0 - 4}` 与
+  `{imm0}` 同槽适配）；ctor 由各操作数既有 ctor 拼接运算符，**纯生成期展开**（生成物里就是
+  `(<imm0 表达式> - 4)`）。
++ 单测：`dsl::tests::arith_expr_placeholder_is_recognized`（认法 + 两个反例 + 首操作数种类一致）。
++ 踩坑：首操作数最初返回**不带花括号**的 `imm0` ⇒ `lookup` 找不到（注册名是 `{imm0}`）⇒ 落到
+  "物理寄存器"启发式返回 `"reg"` ⇒ 单测当场抓到。
++ **下一步**：用它替换谱里的派生 token（`imm0_sub4`、`iconst_hi20`/`_lo12`/`_hi32_*`/`_lo32_*`、
+  `fconst_hi32_*`/`lo32_*` 等 20 余个）并删掉这些注册条目；`vconst_*`/`seg`/`ph`/`iconst_c16`
+  依赖常量池/相位/类型，不是算术，保留。
 + 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 
 ### Fixed (2026-10-08) — ISA-DSL v21 W6：清掉删除死回落后的残留告警（含元组解构）
 
-+ 上一片删掉终结回落链后留下 17 个"未使用变量"告警 ✗（其中多数来自**元组解构** ✗：
-  `let (jal_dest, jal_target) = …`、`let (b_src, b_src2, b_target) = …` ✗）。已全部清成 0 告警 ✗。
-+ 侦察清单第三处猜测（`frame.rs:167` / `:182` ✗）：**尾声跳转**也按 `jump_f.len() >= 2` 猜字段 ✗，
-  但它的发射 API 是 `encoder.encode(&inst, …)` ✗（不是 `push_inst` ✗）⇒ **谱面序列无法直接复用** ✗
-  ⇒ 记为独立小项 ✔（要引入"以编码器为宿主的序列发射"✗ 才能谱面化 ✗），不硬塞进本片 ✔。
++ 上一片删掉终结回落链后留下 17 个"未使用变量"告警（其中多数来自**元组解构**：
+  `let (jal_dest, jal_target) = …`、`let (b_src, b_src2, b_target) = …`）。已全部清成 0 告警。
++ 侦察清单第三处猜测（`frame.rs:167` / `:182`）：**尾声跳转**也按 `jump_f.len() >= 2` 猜字段，
+  但它的发射 API 是 `encoder.encode(&inst, …)`（不是 `push_inst`）⇒ **谱面序列无法直接复用**
+  ⇒ 记为独立小项（要引入"以编码器为宿主的序列发射" 才能谱面化），不硬塞进本片。
 + 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 
 ### Removed (2026-10-08) — ISA-DSL v21 W6：删除终结 lowering 里已成死代码的"猜测回落"
 
-+ `jump_body` / `branch_body` 的 `else if …` 链**整条删除** ✗ —— 它们包含清单点名要删的
-  `jal_f.len() >= 2` / `beq_f.len() >= 3` / `test_f.len() == 2` / `jcc_f.len() == 2` 与 `eq_code` ✗。
-  现在只剩："谱面声明的序列" ⊕ "缺 `[lower.*]` ⇒ `Unsupported`" ✗ —— **终结序列唯一来源 = 谱面** ✔。
-+ 顺带清掉随之无用的局部（`has_test`/`has_jal`/`jump_vn`/`jal_dest`… ✗）。**仍剩几处来自元组解构的
-  未使用告警** ✗（`let (jal_dest, jal_target) = …` 这类 ✗，纯装饰 ✗，下轮清 ✗）。
++ `jump_body` / `branch_body` 的 `else if …` 链**整条删除** —— 它们包含清单点名要删的
+  `jal_f.len() >= 2` / `beq_f.len() >= 3` / `test_f.len() == 2` / `jcc_f.len() == 2` 与 `eq_code`。
+  现在只剩："谱面声明的序列" ⊕ "缺 `[lower.*]` ⇒ `Unsupported`" —— **终结序列唯一来源 = 谱面**。
++ 顺带清掉随之无用的局部（`has_test`/`has_jal`/`jump_vn`/`jal_dest`…）。**仍剩几处来自元组解构的
+  未使用告警**（`let (jal_dest, jal_target) = …` 这类，纯装饰，下轮清）。
 + 验证：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（x86/riscv64 JIT 矩阵 + 汇编三档 +
-  三矩阵计数全不变 ✗）。
+  三矩阵计数全不变）。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W6：终结序列**唯一来源 = 谱面**（旧猜测路径 fail-closed）
 
-+ 生成期新增检查：谱若声明了 `roles = ["jump"]` / `roles = ["branch"]` 的指令 ✗，就**必须**给出
-  `[lower.Jmp]` / `[lower.Br]` ✗ —— 否则**生成期直接报错**（报错点名缺哪一节、为什么 ✗）。
++ 生成期新增检查：谱若声明了 `roles = ["jump"]` / `roles = ["branch"]` 的指令，就**必须**给出
+  `[lower.Jmp]` / `[lower.Br]` —— 否则**生成期直接报错**（报错点名缺哪一节、为什么）。
 + 意义：`lowering.rs` 里"按字段个数猜 ISA"的旧回落（`jal_f.len() >= 2`、`beq_f.len() >= 3`、
-  `test_f.len() == 2`、`jcc_f.len() == 2` 与 `eq_code` ✗）从此**不可达** ✗ —— 它不再是"静默兜底"✗，
-  而是被谱面契约取代 ✔。
-+ 验证：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制 ⇒ 证明**没有任何夹具依赖旧路径** ✗
-  （三谱都声明了这两节 ✗，其余夹具没有终结角色 ✗）。
-+ 后续（同一目标内 ✗）：删掉已成死代码的回落分支本身 ✗、`[lower.Ret]` 的谱面表达 ✗、
-  以及 `frame.rs:172-208` 的同类猜测 ✗。
+  `test_f.len() == 2`、`jcc_f.len() == 2` 与 `eq_code`）从此**不可达** —— 它不再是"静默兜底"，
+  而是被谱面契约取代。
++ 验证：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制 ⇒ 证明**没有任何夹具依赖旧路径**
+  （三谱都声明了这两节，其余夹具没有终结角色）。
++ 后续（同一目标内）：删掉已成死代码的回落分支本身、`[lower.Ret]` 的谱面表达、
+  以及 `frame.rs:172-208` 的同类猜测。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W6：riscv64/arm64 落地 `[lower.Br]`（三谱分支全部谱面化）
 
-+ riscv64：`insts = ["BEQ {cond}, X0, {false}", "JAL X0, {true}"]` ✗（条件形态是 `beq cond,x0` ✗，
-  条件码**不参与** ✗）；arm64：`insts = ["CBZX {cond}, {false}", "B {true}"]` ✗（用 `cbz` ✗）。
-+ 至此 **`[lower.Jmp]` + `[lower.Br]` 三谱全部落地且与旧硬编码等价** ✗：
++ riscv64：`insts = ["BEQ {cond}, X0, {false}", "JAL X0, {true}"]`（条件形态是 `beq cond,x0`，
+  条件码**不参与**）；arm64：`insts = ["CBZX {cond}, {false}", "B {true}"]`（用 `cbz`）。
++ 至此 **`[lower.Jmp]` + `[lower.Br]` 三谱全部落地且与旧硬编码等价**：
   整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（riscv64 JIT 矩阵 + x86 JIT 矩阵 + 汇编三档 +
-  三矩阵计数全不变 ✗）。
-+ 踩坑：三谱的 `branch` 角色是写在**族行内联表**里的 ✗（`{ inst = "BEQ", …, roles = ["branch"] }` ✗），
-  按行找 `name =` 会落空 ✗；另外用 PowerShell 拼接含 `{}` 的**注释**会把内容吃掉 ✗
-  （arm64/riscv64 各因此红一次 ✗，改成纯文本注释后通过 ✔）。
-+ 仍关着：`[lower.Ret]`（返回搬移的谱面表达未落地 ✗）。
+  三矩阵计数全不变）。
++ 踩坑：三谱的 `branch` 角色是写在**族行内联表**里的（`{ inst = "BEQ", …, roles = ["branch"] }`），
+  按行找 `name =` 会落空；另外用 PowerShell 拼接含 `{}` 的**注释**会把内容吃掉
+  （arm64/riscv64 各因此红一次，改成纯文本注释后通过）。
++ 仍关着：`[lower.Ret]`（返回搬移的谱面表达未落地）。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W6：`{cond}` 符号值 + x86 落地 `[lower.Br]`（谱面 ≡ 硬编码）
 
-+ 新增终结层符号值 **`{cond}`**（`[lower.Br]` 的条件寄存器 ✗）：与 `{g}` 同形（字段先填 0 ✗、
-  映射期由 `xreg: "__cond"` 改写成真寄存器 ✗），但**不分配**临时——直接用终结层算好的 `__cond` ✔。
-+ 终结层 `Br` 谱面体在**生成期**（`quote!` 之外 ✗）算好 `{cc}`/`{cc_inv}` 的**字面**再插值 ✗
-  （`Br` 里 `test` 置 ZF ⇒ 条件码语义固定为本 ISA 的 `eq`/`ne` ✗）；生成代码里绑定
-  `__cc`/`__cc_inv`/`__cond`/`__true_block`/`__false_block` ✗。
-+ 放行 `Br`，给 **x86** 落地真名序列 ✗：
++ 新增终结层符号值 **`{cond}`**（`[lower.Br]` 的条件寄存器）：与 `{g}` 同形（字段先填 0、
+  映射期由 `xreg: "__cond"` 改写成真寄存器），但**不分配**临时——直接用终结层算好的 `__cond`。
++ 终结层 `Br` 谱面体在**生成期**（`quote!` 之外）算好 `{cc}`/`{cc_inv}` 的**字面**再插值
+  （`Br` 里 `test` 置 ZF ⇒ 条件码语义固定为本 ISA 的 `eq`/`ne`）；生成代码里绑定
+  `__cc`/`__cc_inv`/`__cond`/`__true_block`/`__false_block`。
++ 放行 `Br`，给 **x86** 落地真名序列：
   `insts = ["TEST_RM_R {cond}, {cond}", "JCC_REL32 {cc}, {false}", "JMP_REL32 {true}"]`
-  （硬编码走**角色查表** ✗，谱面必须写指令真名 ✗）。
-+ 安全闸测试随动：现在只拦 `Ret` ✗，`Jmp`/`Br` 放行 ✗。
-+ 验证：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（x86 JIT 矩阵 + 汇编三档 + 三矩阵计数不变 ✗）
-  ⇒ 谱面路径与旧硬编码**等价** ✔。
-+ 仍关着：`[lower.Ret]`（返回搬移的谱面表达未落地 ✗）；riscv64/arm64 的 `[lower.Br]` 未落地 ✗。
+  （硬编码走**角色查表**，谱面必须写指令真名）。
++ 安全闸测试随动：现在只拦 `Ret`，`Jmp`/`Br` 放行。
++ 验证：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（x86 JIT 矩阵 + 汇编三档 + 三矩阵计数不变）
+  ⇒ 谱面路径与旧硬编码**等价**。
++ 仍关着：`[lower.Ret]`（返回搬移的谱面表达未落地）；riscv64/arm64 的 `[lower.Br]` 未落地。
 
 ### Added (2026-10-08) — ISA-DSL v21 W6：`[lower.Br]`/`[lower.Ret]` 的**解析期安全闸**
 
-+ **问题**：`Br` 的旧硬编码体还带一步 `map_reg_field`（把 IR 条件寄存器写进 test/branch 的操作数 ✗），
-  当前占位符体系表达不了 ✗；`Ret` 的体含"整数值→返回寄存器 / 浮点→浮点返回寄存器"的搬移与 bank 选择 ✗。
-  ⇒ 若让谱现在就声明 `[lower.Br]`/`[lower.Ret]`，会**静默生成错代码** ✗。
-+ **闸门**：`model::check_term_lowering_supported`（接在 `parse_and_validate` 链上 ✗）——目前
-  **只放行已完成接线并验证等价的 `[lower.Jmp]`** ✔；`Br`/`Ret` 声明即解析期报错，并点明"W6 进行中"
-  与缺什么（条件寄存器映射 ✗ / 返回搬移的谱面表达 ✗）。
-+ 测试：`unsupported_term_lowering_is_rejected`（两种都拒 ✗ + `Jmp` 放行 ✗）；
-  `lower_terminator_section_parses` 随动为只验 `Jmp` ✔。
++ **问题**：`Br` 的旧硬编码体还带一步 `map_reg_field`（把 IR 条件寄存器写进 test/branch 的操作数），
+  当前占位符体系表达不了；`Ret` 的体含"整数值→返回寄存器 / 浮点→浮点返回寄存器"的搬移与 bank 选择。
+  ⇒ 若让谱现在就声明 `[lower.Br]`/`[lower.Ret]`，会**静默生成错代码**。
++ **闸门**：`model::check_term_lowering_supported`（接在 `parse_and_validate` 链上）——目前
+  **只放行已完成接线并验证等价的 `[lower.Jmp]`**；`Br`/`Ret` 声明即解析期报错，并点明"W6 进行中"
+  与缺什么（条件寄存器映射 / 返回搬移的谱面表达）。
++ 测试：`unsupported_term_lowering_is_rejected`（两种都拒 + `Jmp` 放行）；
+  `lower_terminator_section_parses` 随动为只验 `Jmp`。
 + 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W6：三谱落地 `[lower.Jmp]`（谱面 ≡ 硬编码，行为逐字节不变）
 
 + 三谱写出等价的跳转序列：x86 `JMP_REL32 {target}` · riscv64 `JAL X0, {target}` · arm64 `B {target}`
-  ⇒ **首批真实谱面**开始驱动终结 lowering（此前只在测试夹具里验证过 ✗）。
-+ **token 种类**要一起教 ✗：块号符号值 `{true}`/`{false}`/`{target}` 在 `kind_matches` 里
-  **同时接受 Imm 与 Label** ✗ —— 各 ISA 的目标槽种类不同（x86 `target:rel` ✗、riscv `target:off_j` ✗、
-  arm64 `target:off26` ✗）；否则会落到"字面立即数"分支并报
-  `lowering 模板立即数 '{target}' 无法解析` ✗。
-+ 验证：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（JIT 矩阵 + 汇编三档 + 三矩阵计数全不变 ✗）
-  ⇒ 谱面路径与旧硬编码**等价** ✔。
-+ 仍未做：`[lower.Ret]` 接线、`Br` 的谱面落地（它需要 `map_reg_field` 这类"条件寄存器映射" ✗，
-  当前占位符体系表达不了 ⇒ 是 W6 后续要设计的一环 ✗）、删旧猜测路径 ✗。
+  ⇒ **首批真实谱面**开始驱动终结 lowering（此前只在测试夹具里验证过）。
++ **token 种类**要一起教：块号符号值 `{true}`/`{false}`/`{target}` 在 `kind_matches` 里
+  **同时接受 Imm 与 Label** —— 各 ISA 的目标槽种类不同（x86 `target:rel`、riscv `target:off_j`、
+  arm64 `target:off26`）；否则会落到"字面立即数"分支并报
+  `lowering 模板立即数 '{target}' 无法解析`。
++ 验证：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（JIT 矩阵 + 汇编三档 + 三矩阵计数全不变）
+  ⇒ 谱面路径与旧硬编码**等价**。
++ 仍未做：`[lower.Ret]` 接线、`Br` 的谱面落地（它需要 `map_reg_field` 这类"条件寄存器映射"，
+  当前占位符体系表达不了 ⇒ 是 W6 后续要设计的一环）、删旧猜测路径。
 
 ### Added (2026-10-08) — ISA-DSL v21 W6：`[lower.Jmp]` 谱面路径的**行为测试**
 
-+ 新增 `dsl::tests::lower_jmp_spec_path_is_used`：夹具声明 `[lower.Jmp]` ✗ 并带一条
-  `roles = ["jump"]` 的指令（**触发条件**：`has_ret || has_jmp || has_jcc` 才会生成终结实体 ✗），
-  断言生成物里出现 **`__target_block`** —— 该符号**只可能来自谱面路径** ✗（旧硬编码体用的是
-  `target.index()` ✗）⇒ 证明"声明了就真的走谱面" ✔。
-+ 踩坑：终结 lowering 的实体**只在有终结角色指令时生成** ✗，否则落到 `Err(Unsupported)` 的桩 ✗
-  ⇒ 没有角色指令的夹具**测不到**这条路径 ✗（第一次就这么红了 ✗）。
++ 新增 `dsl::tests::lower_jmp_spec_path_is_used`：夹具声明 `[lower.Jmp]` 并带一条
+  `roles = ["jump"]` 的指令（**触发条件**：`has_ret || has_jmp || has_jcc` 才会生成终结实体），
+  断言生成物里出现 **`__target_block`** —— 该符号**只可能来自谱面路径**（旧硬编码体用的是
+  `target.index()`）⇒ 证明"声明了就真的走谱面"。
++ 踩坑：终结 lowering 的实体**只在有终结角色指令时生成**，否则落到 `Err(Unsupported)` 的桩
+  ⇒ 没有角色指令的夹具**测不到**这条路径（第一次就这么红了）。
 + 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W6：终结层开始消费 `[lower.Br]`/`[lower.Jmp]`
 
-+ 新增三个**块号符号值**（终结层专用 ✗）：`{true}` / `{false}` / `{target}` ⇒ 展开成生成代码里的
-  `__true_block` / `__false_block` / `__target_block`（值来自 `dfg.term_branch`/`term_jump` 的块号 ✗）。
-+ `lower_terminator` 的 `Br`/`Jmp` 体现在**谱面优先** ✗：谱里声明了 `[lower.Br]`/`[lower.Jmp]` 就用
-  `gen_lowering_insts(&insts, …)` 生成的序列（自行定义那三个块号局部 ✗）；**未声明则完全走旧路径**
-  ⇒ 三谱行为与三矩阵计数**逐字节不变** ✔。
-+ 踩坑：那个通用发射器在终结层里拿到的 `name_to_vn` 是**值**而非引用 ✗ ⇒ 要写 `&name_to_vn` ✔。
-+ **尚未做**：`[lower.Ret]` 的接线（返回体还含"整数值→RAX / 浮点→XMM0"的搬移 ✗，比 Br/Jmp 复杂 ✗）、
-  谱面路径的**行为测试**（需要一个带 Jump/Branch 角色的夹具 ✗）、三谱写出这三节 ✗。
++ 新增三个**块号符号值**（终结层专用）：`{true}` / `{false}` / `{target}` ⇒ 展开成生成代码里的
+  `__true_block` / `__false_block` / `__target_block`（值来自 `dfg.term_branch`/`term_jump` 的块号）。
++ `lower_terminator` 的 `Br`/`Jmp` 体现在**谱面优先**：谱里声明了 `[lower.Br]`/`[lower.Jmp]` 就用
+  `gen_lowering_insts(&insts, …)` 生成的序列（自行定义那三个块号局部）；**未声明则完全走旧路径**
+  ⇒ 三谱行为与三矩阵计数**逐字节不变**。
++ 踩坑：那个通用发射器在终结层里拿到的 `name_to_vn` 是**值**而非引用 ⇒ 要写 `&name_to_vn`。
++ **尚未做**：`[lower.Ret]` 的接线（返回体还含"整数值→RAX / 浮点→XMM0"的搬移，比 Br/Jmp 复杂）、
+  谱面路径的**行为测试**（需要一个带 Jump/Branch 角色的夹具）、三谱写出这三节。
 + 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 
 ### Added (2026-10-08) — ISA-DSL v21 W6：`[lower.<终结 op>]` 谱面落地（模型 + schema + 文档 + 解析测试）
 
 + 新增谱面 **`[lower.Br]` / `[lower.Jmp]` / `[lower.Ret]`**（各带 `insts = [...]`）：
-  分支/跳转/返回的序列从编译器搬进谱 ✔。
-+ **为什么与 `[[lowering]]` 分家**（本轮勘明 ✗）：`then`/`else` 块号只有终结层拿得到
-  （`dfg.term_branch(block)` ✗），per-op 的规则路径**没有这个上下文** ✗ ⇒ 终结序列必须由
-  `lower_terminator` 消费 ✗，故独立成节 ✔。
-+ 该谱面可用既有占位符，并预留 W6 的三个新符号值 **`{true}` / `{false}`（Br 两个后继块号 ✗）
-  与 `{target}`（Jmp 目标块号 ✗）**——本片只落地"能被解析并进模型"（含解析测试 ✗），
-  codegen 接线留下一片（保持三矩阵不变 ✗）。
-+ 三方针同步：`model.rs` + `schema.rs` + 文档生成表（**整段粘贴** ✗）+ `isa-dsl.schema.json` 重生成；
+  分支/跳转/返回的序列从编译器搬进谱。
++ **为什么与 `[[lowering]]` 分家**（本轮勘明）：`then`/`else` 块号只有终结层拿得到
+  （`dfg.term_branch(block)`），per-op 的规则路径**没有这个上下文** ⇒ 终结序列必须由
+  `lower_terminator` 消费，故独立成节。
++ 该谱面可用既有占位符，并预留 W6 的三个新符号值 **`{true}` / `{false}`（Br 两个后继块号）
+  与 `{target}`（Jmp 目标块号）**——本片只落地"能被解析并进模型"（含解析测试），
+  codegen 接线留下一片（保持三矩阵不变）。
++ 三方针同步：`model.rs` + `schema.rs` + 文档生成表（**整段粘贴**）+ `isa-dsl.schema.json` 重生成；
   `schema_guard` **9 passed / 0 failed**。
 + 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W6：`Br` 的条件码从硬编码 `4u8` 改为数据驱动
 
-+ `test`+`jcc` 那条分支体里"条件不成立就跳 false"原先**硬编码 `4u8`**（= x86 的 `je`）✗ ——
-  正是 W6 清单点名要删的那处。现在生成期从谱的 **`[enum.cond]`** 取本 ISA 的 **`eq` 码** ✗；
-  谱没映射 `eq` 时回落 4 以保持旧行为（**过渡态** ✗，等 `[lower.Br]` 下放到谱后彻底删掉）。
-+ 踩坑：`quote!` 里的**裸标识符是原样发射**的 ✗ —— 第一版写成 `#jcc_cond: eq_code` ⇒ 生成物里出现
-  `cc: eq_code` ✗（`forge-codegen` 编译期报 `cannot find value` ✗）。正确写法是插值 `#eq_code` ✔。
-+ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（三谱行为逐字节不变 ✗）。
++ `test`+`jcc` 那条分支体里"条件不成立就跳 false"原先**硬编码 `4u8`**（= x86 的 `je`） ——
+  正是 W6 清单点名要删的那处。现在生成期从谱的 **`[enum.cond]`** 取本 ISA 的 **`eq` 码**；
+  谱没映射 `eq` 时回落 4 以保持旧行为（**过渡态**，等 `[lower.Br]` 下放到谱后彻底删掉）。
++ 踩坑：`quote!` 里的**裸标识符是原样发射**的 —— 第一版写成 `#jcc_cond: eq_code` ⇒ 生成物里出现
+  `cc: eq_code`（`forge-codegen` 编译期报 `cannot find value`）。正确写法是插值 `#eq_code`。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（三谱行为逐字节不变）。
 
 ### Added (2026-10-08) — ISA-DSL v21 W6：`{cc_inv}` 补**端到端生成测试**
 
 + 新增 `dsl::tests::cc_inv_uses_inverse_condition_code`：用同一张 `[enum.cond]` 夹具跑真实生成，
   断言 ① 发射 `__cc_inv`；② **逆映射正确**（`eq→ne` 的码、`ne→eq`、`slt→sge`、`uge→ult`）；
   ③ **零死代码**（只用 `{cc_inv}` 时不发射 `__cc`）。
-+ 踩坑：`TokenStream::to_string()` 是**美化打印**（`::`/`=>` 两侧可能带空格 ✗）⇒ 断言前先抹掉空白 ✗。
++ 踩坑：`TokenStream::to_string()` 是**美化打印**（`::`/`=>` 两侧可能带空格）⇒ 断言前先抹掉空白。
 + 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 
 ### Added (2026-10-08) — ISA-DSL v21 W6 第一片：`{cc_inv}` 占位符（条件取反）
 
 + `lowering` 的 `insts` 现可用 **`{cc_inv}`**：IR 条件的**逆**在本 ISA 的编码。
-  逆名由宿主契约层 `model::ir_inverse_cond` 给（eq↔ne、slt↔sge、sgt↔sle、ult↔uge、ugt↔ule ✗，
-  与 ISA 无关 ✗），**编码仍从 `[enum.cond]` 反查**（数据驱动 ✗，不硬编码 `code ^ 1`——那只对 x86 成立 ✗）。
+  逆名由宿主契约层 `model::ir_inverse_cond` 给（eq↔ne、slt↔sge、sgt↔sle、ult↔uge、ugt↔ule，
+  与 ISA 无关），**编码仍从 `[enum.cond]` 反查**（数据驱动，不硬编码 `code ^ 1`——那只对 x86 成立）。
 + 生成侧**按需发射**：规则只用 `{cc}` 就只发 `__cc`，只用 `{cc_inv}` 就只发 `__cc_inv`，
-  都不用则两条都不发（延续 S8d 的"零死代码"口径 ✗）。
-+ 新增单测：逆配对**可逆且非自反**、未知名返回 `None` ✔。
+  都不用则两条都不发（延续 S8d 的"零死代码"口径）。
++ 新增单测：逆配对**可逆且非自反**、未知名返回 `None`。
 + 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 
 ### Fixed (2026-10-08) — ISA-DSL v21 W5 遗留：`explain` 的 provenance 打印族感知
@@ -470,29 +470,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed (2026-10-08) — ISA-DSL v21 W5 ⑥ 完成：`[[templates]]` **撤出 TOML 面**
 
 + `IsaModel.templates` 改为**内部载体**（`#[serde(default, skip)]`，并在
-  `schema_guard::INTERNAL_FIELDS` 登记 ✗）：`[family.<名>]` 仍在解析期降级进它、codegen 继续读它，
-  但 **TOML 里写 `[[templates]]` 会被未知键守卫拒绝** ✔。
+  `schema_guard::INTERNAL_FIELDS` 登记）：`[family.<名>]` 仍在解析期降级进它、codegen 继续读它，
+  但 **TOML 里写 `[[templates]]` 会被未知键守卫拒绝**。
 + `schema.rs` 精确删掉 root 级 `templates` 键与 `[[templates]]` / `[[templates.rows]]` 两节
-  （**不动** `[conventions.mem].templates` —— 那是内存操作数文本形态 ✗，上一轮误删过一次 ✗）。
-+ `docs/reference/isa-dsl.md` 的键速查表是**生成物**（`schema::markdown_table()` ✗）：本轮改用
-  **整段粘贴生成文本**（临时打印测试取表 ✗ → 替换标记区 ✗ → 删临时测试 ✗），手改必红 ✗；
+  （**不动** `[conventions.mem].templates` —— 那是内存操作数文本形态，上一轮误删过一次）。
++ `docs/reference/isa-dsl.md` 的键速查表是**生成物**（`schema::markdown_table()`）：本轮改用
+  **整段粘贴生成文本**（临时打印测试取表 → 替换标记区 → 删临时测试），手改必红；
   重生成 `isa-dsl.schema.json`。
-+ 证据：`schema_guard` **9 passed / 0 failed**（含"发行谱只许用 schema 键"与"键表 ≡ schema"两条 ✗）；
++ 证据：`schema_guard` **9 passed / 0 failed**（含"发行谱只许用 schema 键"与"键表 ≡ schema"两条）；
   `cargo test -p forge-isa-dsl` 276 passed；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
-+ 至此 **W5 的 ⑥ 全链路完成**：112 处模板迁移 → 夹具全部 `[family.*]`（7 文件代码归零 ✗）→
-  诊断锚点族感知（行号不再退化成 1 ✗）→ TOML 面撤出 → schema/文档/守卫三方针同步 ✔。
++ 至此 **W5 的 ⑥ 全链路完成**：112 处模板迁移 → 夹具全部 `[family.*]`（7 文件代码归零）→
+  诊断锚点族感知（行号不再退化成 1）→ TOML 面撤出 → schema/文档/守卫三方针同步。
 
 ### Fixed (2026-10-08) — ISA-DSL v21 W5 ⑥b 完成：族感知诊断锚点 + 全部夹具迁到 `[family.*]`
 
 + **产品行为修复**：`[family.<名>]` 降级出的载体原先锚回内部名 `[[templates.X]]`（源里没有这一节）
   ⇒ `push_anchored` 找不到节、**诊断行号退化成 1**。现在 `Template` 带内部标记 `from_family`
-  （`serde(skip)` + `schema_guard::INTERNAL_FIELDS` 登记 ✗），`Template::expand` 的路径前缀与
+  （`serde(skip)` + `schema_guard::INTERNAL_FIELDS` 登记），`Template::expand` 的路径前缀与
   `validate` 的锚点替换都输出 **`[family.<名>]`**；`diag.rs` 加 `"family" => "DSL-TEMPLATE"`。
 + **夹具迁移收口**：`dsl/tests.rs` · `dsl/lint.rs` · `report.rs` · `dsl/stream_decl.rs` ·
   `dsl/template_tests.rs` · `dsl/diag_matrix_tests.rs` 全部改 `[family.*]` ⇒ 7 个文件代码里
   `[[templates]]` **归零**。迁移器 `target/tmp/migrate_tpl.py` + `fix_cont.py`：三条硬教训——
   停止条件含原始字符串终结符 `"#`；内联 `rows` 与行标记**二选一**；替换模式容忍 `\r?\n`。
-+ **⑥ a+c（撤出 TOML 面）未完成、已回退保绿** ✗：它要求三方针同时改，其中文档键速查表是
++ **⑥ a+c（撤出 TOML 面）未完成、已回退保绿**：它要求三方针同时改，其中文档键速查表是
   **生成物**（`schema::markdown_table()`）⇒ 必须整段粘贴生成文本，不能手改；下轮先取该文本再动。
 + `cargo test -p forge-isa-dsl` → 276 passed；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 
@@ -501,17 +501,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + 本轮**一次做完**：`dsl/tests.rs` · `lint.rs` · `report.rs` · `dsl/stream_decl.rs` 的夹具全部迁移，
   四个文件**代码里 0 处** `[[templates]]`；`dsl/template_tests.rs` 上一轮已完成（仅剩 1 处**断言**里
   的内部锚点期望）。
-+ 迁移器 `target/tmp/migrate_tpl.py`（Python ✗）：吃"原始字符串式 / 单行转义式"，配 `fix_cont.py`
-  吃"Rust `\` 续行转义串"。**三条硬教训**（都实测踩到 ✗）：
++ 迁移器 `target/tmp/migrate_tpl.py`（Python）：吃"原始字符串式 / 单行转义式"，配 `fix_cont.py`
+  吃"Rust `\` 续行转义串"。**三条硬教训**（都实测踩到）：
   ① 停止条件必须含原始字符串终结符 `"#` 与空行，否则吞掉夹具之后的 Rust 代码；
   ② 模板**同时**有内联 `rows = [ … ]` 与 `[[templates.rows]]` 时会重复输出 `rows = [` 并吃掉行内容
-  ⇒ 必须二选一（本轮踩到 2 处，手工按已知实例名 `T1`/`V1` 修复 ✗）；
-  ③ 替换模式必须容忍 `\r?\n`（同一次提交里文件行尾可能 LF/CRLF 混合 ✗，否则静默 0 命中）。
+  ⇒ 必须二选一（本轮踩到 2 处，手工按已知实例名 `T1`/`V1` 修复）；
+  ③ 替换模式必须容忍 `\r?\n`（同一次提交里文件行尾可能 LF/CRLF 混合，否则静默 0 命中）。
 + 顺带改名：`validation_template_row_needs_encoding` → `validation_family_row_needs_encoding`
-  （函数体在转换中被吞 ✗，已按邻居测试的写法补回 ✗）。
-+ **暂缓项**：`dsl/diag_matrix_tests.rs` 的 3 处**已回退** ✗ —— 迁移后"族 `rows` 为空"的诊断
-  **退化成第 1 行**（族形态报错**缺行锚点** ✗），而该测试的 `d.line > 1` 是合理不变量 ⇒
-  **先给族报错补锚点**，再迁这 3 处 ✔（记为下一步 ✗）。
+  （函数体在转换中被吞，已按邻居测试的写法补回）。
++ **暂缓项**：`dsl/diag_matrix_tests.rs` 的 3 处**已回退** —— 迁移后"族 `rows` 为空"的诊断
+  **退化成第 1 行**（族形态报错**缺行锚点**），而该测试的 `d.line > 1` 是合理不变量 ⇒
+  **先给族报错补锚点**，再迁这 3 处（记为下一步）。
 + `cargo test -p forge-isa-dsl` → 275+ passed；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W5 ⑥：`report.rs` 夹具迁到 `[family.*]`
@@ -521,7 +521,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ⇒ 一行替换；② `diff` 用例里的两处 `.replace("[[templates]]", …)` 随动为 `[family.ALU]`。
 + **行尾坑（本轮实测）**：同一次提交里，`report.rs` 在盘上是 **LF**（git 尚未落 CRLF 转换），
   而其他文件可能是 CRLF ⇒ 替换模式必须写成 `\r?\n` 容忍两种，否则**静默 0 命中**
-  （本轮连续两次 0 命中 ✗，第三次改正则后 1 处命中 ✗）。
+  （本轮连续两次 0 命中，第三次改正则后 1 处命中）。
 + `cargo test -p forge-isa-dsl --lib report` → **13 passed / 0 failed**；整仓 `-j 2` → exit 0、
   0 编译错误、0 失败二进制。
 
@@ -530,9 +530,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + `template_tests.rs` 的 **15 个 `[[templates]]` 夹具**全部机械迁移为 `[family.<名>]`
   （`body` 保留、行折进 `rows = [ … ]`；无名模板按 `lower_families` 的同款规则派生成 `<inst>_FAM`）。
   变换脚本的停止条件必须包含**原始字符串终结符 `"#`**——否则会把夹具之后的 Rust 代码吞进行里
-  （本轮实测踩到 ✗，`git checkout` 回退后修正 ✗）。
-+ 唯一非机械期望：`from_template` 由模板名 `"ADDW"` 变为派生族名 `"ADDW_FAM"`（断言已随动 ✗）。
-+ 该文件仅剩 **1 处** `[[templates` 字样 = 一条断言**内部锚点**的期望 ✗（内部路径仍以模板名锚定诊断 ✗）。
+  （本轮实测踩到，`git checkout` 回退后修正）。
++ 唯一非机械期望：`from_template` 由模板名 `"ADDW"` 变为派生族名 `"ADDW_FAM"`（断言已随动）。
++ 该文件仅剩 **1 处** `[[templates` 字样 = 一条断言**内部锚点**的期望（内部路径仍以模板名锚定诊断）。
 + `cargo test -p forge-isa-dsl --lib template` → **30 passed / 0 failed**；整仓 `-j 2` → exit 0、
   0 编译错误、0 失败二进制。
 
@@ -572,7 +572,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   ⇒ x86 `[[lowering]]` 块数 **177 → 175**。
 + **解开分组冲突的做法**（不改设计）：`MOVSD_MEM_R` 已属 Fstore 族（`rs1_width`/位），
   不要重复归组 ⇒ `Store` 的 **8 字节那条保留显式 `when`**（`rs1_vec = 8`），向量组只管 16/32/64。
-  两组谓词**不相交** ⇒ 语义等价 ✔（JIT 58/0 验证）。
+  两组谓词**不相交** ⇒ 语义等价（JIT 58/0 验证）。
 + 第 (4) 项累计删除 **30 / 52** 条（riscv64 24 + x86 6）。棘轮随动；
   `validate` + `lint` 干净；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
 

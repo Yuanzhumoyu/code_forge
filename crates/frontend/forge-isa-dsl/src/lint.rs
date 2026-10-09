@@ -93,10 +93,10 @@ pub struct LintOpts {
     /// **默认关**：合并与否是风格与可读性取舍（有的谱故意把两行写开、便于各自演进），
     /// 只有作者能判；打开它用来找"该用 `vary` 却手抄了两遍"的族。
     pub suggest_vary: bool,
-    /// 报同助记符 + 同操作数类 ⇒ 两条写法都能匹配、只能靠声明序兜（`LINT-ASM-AMBIG`，v21 W7 ✗）。
+    /// 报同助记符 + 同操作数类 ⇒ 两条写法都能匹配、只能靠声明序兜（`LINT-ASM-AMBIG`，v21 W7）。
     ///
-    /// **默认关**：发行谱有 3 处已知文本歧义（x86 `movzx` ✗、riscv64 `jalr` ✗、arm64 `movz` ✗），
-    /// 它们是**真实**的靠声明序兜 ✗，修它们属语义取舍 ✗ ⇒ 列为评审清单 ✔。
+    /// **默认关**：发行谱有 3 处已知文本歧义（x86 `movzx`、riscv64 `jalr`、arm64 `movz`），
+    /// 它们是**真实**的靠声明序兜，修它们属语义取舍 ⇒ 列为评审清单。
     pub check_asm_ambiguity: bool,
 }
 
@@ -348,7 +348,7 @@ fn checks(m: &IsaModel, source: &str, idx: &DeclIndex, opts: &LintOpts) -> LintR
         out.extend(vary_candidates(m, idx));
     }
 
-    // ── 9. asm 歧义（v21 W7 ✗，`--ambiguity` 才开 ✗）：同助记符 + 同操作数类 ⇒ 靠声明序兜 ✗ ──
+    // ── 9. asm 歧义（v21 W7，`--ambiguity` 才开）：同助记符 + 同操作数类 ⇒ 靠声明序兜 ──
     if opts.check_asm_ambiguity {
         out.extend(asm_ambiguity(m, idx));
     }
@@ -563,11 +563,11 @@ fn complement_ranges(covered: &[(u32, u32)], bits: u32) -> Vec<(u32, u32)> {
 /// 形状 = 逐行的 `助记符 → _`、数字/寄存器/占位符 → 通配后的文本。形状相同的规则只差
 /// "哪个值填进去"，正是 `vary = { attr = [...], name = [...] }` 的适用面。
 /// **只建议、不当门槛**：`when` 有可能本就要求分开写，合并与否由作者判断。
-/// **歧义检查**（v21 W7 ✗）：同助记符 + 同操作数类 ⇒ 两条指令的写法**都能匹配** ✗，
-/// 到底选谁只能靠**声明序**兜 ✗（清单要求：报歧义，不靠声明序兜 ✗）。
+/// **歧义检查**（v21 W7）：同助记符 + 同操作数类 ⇒ 两条指令的写法**都能匹配**，
+/// 到底选谁只能靠**声明序**兜（清单要求：报歧义，不靠声明序兜）。
 ///
-/// 判据是**代理**（真 type_signature 在 codegen 私有 ✗）：`asm.render()` 的首字面段（助记符 ✗）
-/// + `ops` 里各操作数的**类**（如 `gpr`/`fpr`/`imm` ✗）按序拼接 ✗。
+/// 判据是**代理**（真 type_signature 在 codegen 私有）：`asm.render()` 的首字面段（助记符）
+/// + `ops` 里各操作数的**类**（如 `gpr`/`fpr`/`imm`）按序拼接。
 fn asm_ambiguity(m: &IsaModel, idx: &DeclIndex) -> Vec<DiagLine> {
     let mut seen: Vec<(String, String, String)> = Vec::new();
     let mut out: Vec<DiagLine> = Vec::new();
@@ -599,7 +599,7 @@ fn asm_ambiguity(m: &IsaModel, idx: &DeclIndex) -> Vec<DiagLine> {
                 "LINT-ASM-AMBIG",
                 format!(
                     "与 `[{other}]` 同为助记符 `{}` + 同操作数类，两条写法都能匹配 ⇒ \
-                     谁中只能靠声明序兜（v21 W7：请让两者的类型签名可区分 ✗）",
+                     谁中只能靠声明序兜（v21 W7：请让两者的类型签名可区分）",
                     key.0
                 ),
             ));

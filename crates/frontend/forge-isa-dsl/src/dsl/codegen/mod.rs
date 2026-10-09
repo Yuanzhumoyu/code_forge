@@ -444,7 +444,7 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
             &inst.name,
             &m.variant_param_names(),
         )?;
-            // v21 W7：**备选写法也要各自规范化** ✗（下游只认索引形态 ✗）；`uses` 只统计渲染形态 ✗。
+            // v21 W7：**备选写法也要各自规范化**（下游只认索引形态）；`uses` 只统计渲染形态。
         let mut norm_all: Vec<String> = vec![norm_asm];
         for tpl in asm.all().iter().skip(1) {
             let (_, n) = parse_asm_decl(
@@ -648,8 +648,8 @@ fn normalize_named_template(
             return Err(format!("{}: 未闭合的 '{{'", ctx()));
         };
         let inner_raw = rest[i + 1..i + end].trim();
-        // v21 W7：占位修饰 `{name?}` / `{name:affix}` 要先**剥掉**再查名 ✗，
-        // 查出索引后**原样带回**（否则修饰在规范化这一步就丢了 ✗）。
+        // v21 W7：占位修饰 `{name?}` / `{name:affix}` 要先**剥掉**再查名，
+        // 查出索引后**原样带回**（否则修饰在规范化这一步就丢了）。
         let (inner, mods): (&str, String) = match inner_raw.split_once(':') {
             Some((a, b)) => {
                 let (a2, q) = match a.trim().strip_suffix('?') {
@@ -1749,7 +1749,7 @@ fn bf_ranges(bf: &Bitfield) -> Vec<(u32, u32)> {
 }
 
 
-/// **仅供单测**：跑一次 lint，回**结论码**（避开 `DiagLine` 的可见性 ✗）。
+/// **仅供单测**：跑一次 lint，回**结论码**（避开 `DiagLine` 的可见性）。
 #[cfg(test)]
 pub(crate) fn lint_for_test(source: &str, ambiguity: bool) -> Vec<String> {
     let opts = crate::lint::LintOpts {

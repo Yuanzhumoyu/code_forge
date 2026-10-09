@@ -65,13 +65,13 @@ pub fn apply_variants(
 ) -> Result<Projection, String> {
     // 字段值的**变体分派**（出路 2 第②步）：把 `fields_variant` 按 params 解析后合并进 `fields`。
     // **必须排在下面那个"空参数直接返回"之前**：设计承诺是"不传参数 ⇒ 用 `default`" ✓
-    // ⇒ 解析要**无条件执行**；放到早退之后会变成"原生视角不解析"、`imm12` 落成 0 ✗
+    // ⇒ 解析要**无条件执行**；放到早退之后会变成"原生视角不解析"、`imm12` 落成 0
     // （实测：`rev8` 向量红、全集 `known` 反涨到 150，正确值 146）。
     // 命中规则：`params[参数]` 在 `by` 里 ⇒ 用它的值；参数没传 / 未命中 / param 为空 ⇒ `default`。
     // 解析后**下游只见常量** ⇒ 生成器 / 解码 / 渲染零改动 ✓。
     for inst in m.instructions.iter_mut() {
         // **`clone` 而不是 `take`**：投影跑在**校验之前**（`parse_and_validate_projected` 的顺序），
-        // 取走字段会让随后的 `validate_variant_gates` 看不到它 ⇒ 声明一致性检查**静默失效** ✗
+        // 取走字段会让随后的 `validate_variant_gates` 看不到它 ⇒ 声明一致性检查**静默失效**
         // （实测：参数名未声明/域外键两条负例都打不出错误）。键只在这类谱里出现，开销可忽略 ✓。
         let Some(fv) = inst.fields_variant.clone() else {
             continue;
@@ -162,7 +162,7 @@ pub fn apply_variants(
     }
     // ④ 文本替换：`{参数名}` → 取值（模板里既有的 `{inst.lower}` 等不受影响）。
     for i in &mut m.instructions {
-        // v21 W7：参数替换要作用于**所有可接受写法** ✗（不只渲染形态 ✗）。
+        // v21 W7：参数替换要作用于**所有可接受写法**（不只渲染形态）。
         i.asm = crate::dsl::model::AsmList(
             i.asm.all()
                 .iter()
@@ -635,7 +635,7 @@ fn validate_variant_gates(m: &IsaModel) -> Result<(), String> {
         check(i.only_variants.as_ref())?;
         // `fields_variant` 的声明一致性（出路 2 第③步）：参数名必须在 `[meta].variants` 里、
         // `by` 的键必须在声明域内——与 `only_variants` **同一套判据**（复用上面的 `declared`/`known`，
-        // 不写第二份 ✗）。`default` 的"必填"由**类型**保证（它不是 `Option` ⇒ 缺了就是反序列化错误 ✓）。
+        // 不写第二份）。`default` 的"必填"由**类型**保证（它不是 `Option` ⇒ 缺了就是反序列化错误 ✓）。
         if let Some(fv) = &i.fields_variant {
             for (field, spec) in fv {
                 let Some(allowed) = declared.get(&spec.param) else {
@@ -1188,7 +1188,7 @@ fn validate_imm_fns(conv: &Conventions) -> Result<(), String> {
             return Err(format!("{path}: imm_fn 名字 '{}' 重复", d.name));
         }
         let ctx = format!("[conventions.imm_fn.{}]", d.name);
-        // v21 W7：`text` / `texts` 只给一个 ✗，且**每条写法**都要自洽 ✗。
+        // v21 W7：`text` / `texts` 只给一个，且**每条写法**都要自洽。
         let texts = d.all_texts();
         if texts.is_empty() {
             return Err(format!("{ctx}: 必须给 `text` 或 `texts`（同一语义的写法）"));

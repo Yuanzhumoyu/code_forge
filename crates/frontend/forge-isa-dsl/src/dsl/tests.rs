@@ -1292,7 +1292,7 @@ fn pseudo_name_must_not_shadow_mnemonic() {
 
 /// `asm` 的形状校验：**字面开头**（分派前缀）、不能为空、占位符之间要有字面分隔。
 ///
-/// 名字（v21 W7 起 = **表头** ✗）**不在**这些规则里：它只是声明的唯一标识，与写法无关。
+/// 名字（v21 W7 起 = **表头**）**不在**这些规则里：它只是声明的唯一标识，与写法无关。
 #[test]
 fn pseudo_asm_shape_is_validated() {
     // 名字与写法可以完全不同（名字只是标识）——合法
@@ -1314,8 +1314,8 @@ fn pseudo_asm_shape_is_validated() {
         lowering_doc("[asm.pseudo.mv]\nasm = \"mv {a}{b}\"\nemit = [\"mov {a}, {b}\"]");
     assert!(validation_msg(&adjacent).contains("相邻"));
 
-    // 名字重复：v21 W7 起**由 TOML 自身**拒绝（`[asm.pseudo.mv]` 写两次 = 重复表头 ✗）——
-    // "表头即名字"的连带好处之一；跨旧面同名由 `asm_pseudo_section_lowers_to_pseudo` 覆盖 ✔。
+    // 名字重复：v21 W7 起**由 TOML 自身**拒绝（`[asm.pseudo.mv]` 写两次 = 重复表头）——
+    // "表头即名字"的连带好处之一；跨旧面同名由 `asm_pseudo_section_lowers_to_pseudo` 覆盖。
 }
 
 /// 分派键（`asm` 首段的首词）与指令模板的前导字面重名 ⇒ 报错（伪指令先于指令扫描）；
@@ -3116,7 +3116,7 @@ asm = "add {dst}"
     let bad = base.replace(r#"text = ["{disp}({base})"]"#, r#"text = []"#);
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("templates"), "err: {err}");
-    // 用了 {size} 却没说 size_words → 报错（v21 W7：关键字只在 [operand.<mem>].size_words 声明 ✗）
+    // 用了 {size} 却没说 size_words → 报错（v21 W7：关键字只在 [operand.<mem>].size_words 声明）
     let bad = base.replace(
         r#"text = ["{disp}({base})"]"#,
         r#"text = ["{size}{disp}({base})"]"#,
@@ -4532,7 +4532,7 @@ fn cc_inv_uses_inverse_condition_code() {
         .expect("生成")
         .to_string();
     assert!(s.contains("__cc_inv"), "应发射 __cc_inv：{s}");
-    // `TokenStream::to_string()` 是**美化打印**（`::` 两侧、`=>` 两侧都可能带空格 ✗）
+    // `TokenStream::to_string()` 是**美化打印**（`::` 两侧、`=>` 两侧都可能带空格）
     // ⇒ 断言前先抹掉全部空白，再去匹配。
     let flat: String = s.chars().filter(|c| !c.is_whitespace()).collect();
     for needle in [
@@ -4551,11 +4551,11 @@ fn cc_inv_uses_inverse_condition_code() {
 
 
 /// v21 W6：`[lower.Br]`/`[lower.Jmp]`/`[lower.Ret]` 能被解析并进模型（可带 `{true}`/`{false}`/
-/// `{target}` 符号值 ✗）。本片只验"谱面可用"；codegen 接线在下一片。
+/// `{target}` 符号值）。本片只验"谱面可用"；codegen 接线在下一片。
 #[test]
 fn lower_terminator_section_parses() {
-    // 只声明**已放行**的 `Jmp` ✗：`Br`/`Ret` 的谱面表达未落地，被安全闸有意拒绝
-    // （见 `unsupported_term_lowering_is_rejected` ✗）。
+    // 只声明**已放行**的 `Jmp`：`Br`/`Ret` 的谱面表达未落地，被安全闸有意拒绝
+    // （见 `unsupported_term_lowering_is_rejected`）。
     let doc = gen_cond_doc(
         CC_ALL_FULL,
         "[lower.Jmp]\ninsts = [\"SETC {out}, {cc}\"]",
@@ -4567,13 +4567,13 @@ fn lower_terminator_section_parses() {
 }
 
 
-/// v21 W6：**谱里声明了 `[lower.Jmp]` 就必须走谱面序列**（未声明才回落旧硬编码路径 ✗）。
+/// v21 W6：**谱里声明了 `[lower.Jmp]` 就必须走谱面序列**（未声明才回落旧硬编码路径）。
 ///
-/// 用轻夹具即可：终结 lowering 的**生成**不要求角色指令存在（缺角色时生成期发 `Err(Unsupported)` 体 ✗），
-/// 所以这里只验证"生成物里出现谱面写的指令 + 块号符号值 `{target}` 落到 `__target_block`" ✗。
+/// 用轻夹具即可：终结 lowering 的**生成**不要求角色指令存在（缺角色时生成期发 `Err(Unsupported)` 体），
+/// 所以这里只验证"生成物里出现谱面写的指令 + 块号符号值 `{target}` 落到 `__target_block`"。
 #[test]
 fn lower_jmp_spec_path_is_used() {
-    // 需要一条**终结角色**指令才会生成 `lower_terminator` 实体（`has_ret || has_jmp || has_jcc` ✗）
+    // 需要一条**终结角色**指令才会生成 `lower_terminator` 实体（`has_ret || has_jmp || has_jcc`）
     let doc = gen_cond_doc(
         CC_ALL_FULL,
         "[[instructions]]\nname = \"MYJMP\"\nform = \"C\"\nopcode = 0x91\n\
@@ -4583,7 +4583,7 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"myjmp {dst}, {cond}\"\nroles = [\"ju
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let s = super::codegen::generate(&m).expect("生成").to_string();
     let flat: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-    // `__target_block` 只可能来自**谱面路径**（旧硬编码体用的是 `target.index()` ✗）
+    // `__target_block` 只可能来自**谱面路径**（旧硬编码体用的是 `target.index()`）
     assert!(
         flat.contains("__target_block"),
         "声明了 [lower.Jmp] 就该走谱面路径（应出现 __target_block）：{s}"
@@ -4596,10 +4596,10 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"myjmp {dst}, {cond}\"\nroles = [\"ju
 
 
 /// v21 W6 **进行中**的安全闸：`[lower.Br]`/`[lower.Ret]` 的谱面表达还没落地（`Br` 缺条件寄存器的
-/// 操作数映射 ✗、`Ret` 缺返回搬移 ✗）⇒ 声明它们必须**解析期报错**，而不是静默生成错代码 ✗。
+/// 操作数映射、`Ret` 缺返回搬移）⇒ 声明它们必须**解析期报错**，而不是静默生成错代码。
 #[test]
 fn unsupported_term_lowering_is_rejected() {
-    // `Ret` 仍被闸门关着（返回搬移的谱面表达未落地 ✗）。
+    // `Ret` 仍被闸门关着（返回搬移的谱面表达未落地）。
     let doc = gen_cond_doc(
         CC_ALL_FULL,
         "[lower.Ret]\ninsts = [\"SETC {out}, {cc}\"]",
@@ -4607,7 +4607,7 @@ fn unsupported_term_lowering_is_rejected() {
     let err = super::parse_and_validate(&doc).unwrap_err().to_string();
     assert!(err.contains("lower.Ret"), "Ret 应被拒：{err}");
     assert!(err.contains("W6"), "报错应点明进行中：{err}");
-    // 已放行的 `Jmp`/`Br` 都要通过 ✗。
+    // 已放行的 `Jmp`/`Br` 都要通过。
     for op in ["Jmp", "Br"] {
         let ok = gen_cond_doc(
             CC_ALL_FULL,
@@ -4618,7 +4618,7 @@ fn unsupported_term_lowering_is_rejected() {
 }
 
 
-/// v21 W6：**算术表达式占位符**（`{imm0 - 4}`、`{iconst >> 12 & 0xfffff}` ✗）的认法与种类判定 ✗。
+/// v21 W6：**算术表达式占位符**（`{imm0 - 4}`、`{iconst >> 12 & 0xfffff}`）的认法与种类判定。
 #[test]
 fn arith_expr_placeholder_is_recognized() {
     use super::codegen::placeholder::{first_operand_kind_of_test as kind_of, is_arith_expr};
@@ -4626,30 +4626,30 @@ fn arith_expr_placeholder_is_recognized() {
     assert!(is_arith_expr("{iconst >> 12 & 0xfffff}"));
     assert!(!is_arith_expr("{imm0}"), "纯占位符不算表达式");
     assert!(!is_arith_expr("imm0 - 4"), "没有外层花括号不算");
-    // 种类按**首个操作数** ✗ ⇒ `{imm0 - 4}` 是 imm ✗
+    // 种类按**首个操作数** ⇒ `{imm0 - 4}` 是 imm
     assert_eq!(kind_of("{imm0 - 4}"), kind_of("{imm0}"));
 }
 
 
-/// v21 W6：`temps = [...]` 显式临时寄存器 ✗ —— 声明了就必须显式（未声明即报错并点名 ✗）。
+/// v21 W6：`temps = [...]` 显式临时寄存器 —— 声明了就必须显式（未声明即报错并点名）。
 #[test]
 fn explicit_temps_are_enforced() {
-    // 合规：声明的临时都在 ✗（校验发生在 **codegen** ✗，故用 generate 跑 ✗）
+    // 合规：声明的临时都在（校验发生在 **codegen**，故用 generate 跑）
     let ok = gen_cond_doc(
         CC_ALL_FULL,
         "[[lowering]]\nop = \"Icmp\"\ntemps = [\"g1:gpr\"]\ninsts = [\"SETC {out}, {cc}\", \"SETC {g1}, {cc}\"]",
     );
     let m_ok = super::parse_and_validate(&ok).expect("谱合法");
     assert!(super::codegen::generate(&m_ok).is_ok(), "显式合规应通过");
-    // 用到未声明 ⇒ 报错并点名 `{g2}` ✗
+    // 用到未声明 ⇒ 报错并点名 `{g2}`
     let bad = gen_cond_doc(
         CC_ALL_FULL,
         "[[lowering]]\nop = \"Icmp\"\ntemps = [\"g1:gpr\"]\ninsts = [\"SETC {out}, {cc}\", \"SETC {g2}, {cc}\"]",
     );
-    let m_bad = super::parse_and_validate(&bad).expect("谱合法（校验在 codegen ✗）");
+    let m_bad = super::parse_and_validate(&bad).expect("谱合法（校验在 codegen）");
     let err = super::codegen::generate(&m_bad).unwrap_err();
     assert!(err.contains("g2") && err.contains("temps"), "应点名 g2 与 temps：{err}");
-    // 类别写错 ⇒ 报错 ✗
+    // 类别写错 ⇒ 报错
     let badcls = gen_cond_doc(
         CC_ALL_FULL,
         "[[lowering]]\nop = \"Icmp\"\ntemps = [\"g1:vec\"]\ninsts = [\"SETC {out}, {cc}\"]",
@@ -4660,9 +4660,9 @@ fn explicit_temps_are_enforced() {
 }
 
 
-/// v21 W6 **第四形态夹具**：DSL **禁止**同一份谱两条 `branch` 角色（同角色只能一条 ✗），
-/// 所以"两个分支形态"不能按字面造 ✗；等价且更硬的验证是——让 `[lower.Br]` 点名**另一条无角色指令** ✗：
-/// 旧实现**只会**用角色表里那条 ✗，谱面却能任意选 ✗ ⇒ 断言生成物用的是**谱面点名的那条** ✔。
+/// v21 W6 **第四形态夹具**：DSL **禁止**同一份谱两条 `branch` 角色（同角色只能一条），
+/// 所以"两个分支形态"不能按字面造；等价且更硬的验证是——让 `[lower.Br]` 点名**另一条无角色指令**：
+/// 旧实现**只会**用角色表里那条，谱面却能任意选 ⇒ 断言生成物用的是**谱面点名的那条**。
 #[test]
 fn branch_form_comes_from_spec_not_role_table() {
     let doc = gen_cond_doc(
@@ -4676,7 +4676,7 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"brchosen {dst}, {cond}\"\n\
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let s = super::codegen::generate(&m).expect("生成").to_string();
     let flat: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-    // 探针：`__true_block` 只有谱面路径才会产生 ✗
+    // 探针：`__true_block` 只有谱面路径才会产生
     assert!(
         flat.contains("__true_block"),
         "应走谱面路径（__true_block 缺）：{s}"
@@ -4689,16 +4689,16 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"brchosen {dst}, {cond}\"\n\
         flat.contains("Inst::Brchosen"),
         "应使用 `[lower.Br]` 点名的 BRCHOSEN。片段：{snip}"
     );
-    // 否定断言必须**限定在 Br 分支体片段内** ✗ —— 每条声明过的指令都会在枚举/表里出现变体 ✗，
-    // 全串搜 `Inst::Brrole` 必然命中（那是指令表，不是终结体 ✗）。
+    // 否定断言必须**限定在 Br 分支体片段内** —— 每条声明过的指令都会在枚举/表里出现变体，
+    // 全串搜 `Inst::Brrole` 必然命中（那是指令表，不是终结体）。
     assert!(
         !snip.contains("Brrole"),
-        "Br 分支体不得回落到角色表里的 BRROLE（形态必须来自谱面 ✗）：{snip}"
+        "Br 分支体不得回落到角色表里的 BRROLE（形态必须来自谱面）：{snip}"
     );
 }
 
 
-/// v21 W7：`asm` 接受**可接受写法列表** ✗（第 0 条 = 渲染形态 ✗）；单字符串等价于单元素列表 ✗。
+/// v21 W7：`asm` 接受**可接受写法列表**（第 0 条 = 渲染形态）；单字符串等价于单元素列表。
 #[test]
 fn asm_accepts_a_list_of_spellings() {
     let doc = gen_cond_doc(
@@ -4708,16 +4708,16 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = [\"alt {dst}, {cond}\", \"alt {cond}, 
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let a = m.instructions.iter().find(|i| i.name == "ALT").expect("ALT");
-    assert_eq!(a.asm.render(), "alt {dst}, {cond}", "第 0 条 = 渲染形态 ✗");
-    assert_eq!(a.asm.all().len(), 2, "两条写法都在 ✗");
+    assert_eq!(a.asm.render(), "alt {dst}, {cond}", "第 0 条 = 渲染形态");
+    assert_eq!(a.asm.all().len(), 2, "两条写法都在");
     let s = m.instructions.iter().find(|i| i.name == "SETC").expect("SETC");
-    assert_eq!(s.asm.all().len(), 1, "单字符串等价于单元素列表 ✗");
+    assert_eq!(s.asm.all().len(), 1, "单字符串等价于单元素列表");
     assert_eq!(s.asm.render(), "setc {dst}, {cond}");
 }
 
 
-/// v21 W7：`asm` 的**备选写法**要真的进入解析尝试 ✗（生成物里出现备选的首字面段 ✗），
-/// 而不只是进模型 ✗。
+/// v21 W7：`asm` 的**备选写法**要真的进入解析尝试（生成物里出现备选的首字面段），
+/// 而不只是进模型。
 #[test]
 fn alternative_spellings_are_emitted() {
     let doc = gen_cond_doc(
@@ -4730,16 +4730,16 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = [\"altone {dst}, {cond}\", \"alttwo {d
     assert!(s.contains("altone"), "渲染/主写法应在：{s}");
     assert!(
         s.contains("alttwo"),
-        "备选写法的尝试也应生成（按序尝试 ✗）：{s}"
+        "备选写法的尝试也应生成（按序尝试）：{s}"
     );
 }
 
 
 /// v21 W7：**同助记符 + 同操作数类 ⇒ 两条写法都能匹配**时，可选档 `--ambiguity` 报
-/// `LINT-ASM-AMBIG` ✗（清单要求：报歧义、不靠声明序兜 ✗）；默认档**不报** ✗。
+/// `LINT-ASM-AMBIG`（清单要求：报歧义、不靠声明序兜）；默认档**不报**。
 #[test]
 fn asm_ambiguity_is_reported_when_opted_in() {
-    // 两条同助记符同操作数类的指令 ✗
+    // 两条同助记符同操作数类的指令
     let doc = gen_cond_doc(
         CC_ALL_FULL,
         "[[instructions]]\nname = \"AMB1\"\nform = \"C\"\nopcode = 0x95\n\
@@ -4747,13 +4747,13 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"amb {dst}, {cond}\"\n\
 [[instructions]]\nname = \"AMB2\"\nform = \"C\"\nopcode = 0x96\n\
 ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"amb {dst}, {cond}\"",
     );
-    // 默认档：不报歧义 ✗
+    // 默认档：不报歧义
     let off = super::codegen::lint_for_test(&doc, false);
     assert!(
         off.iter().all(|c| c != "LINT-ASM-AMBIG"),
         "默认档不该报歧义：{off:?}"
     );
-    // 可选档：报歧义 ✗
+    // 可选档：报歧义
     let on = super::codegen::lint_for_test(&doc, true);
     assert!(
         on.iter().any(|c| c == "LINT-ASM-AMBIG"),
@@ -4762,11 +4762,11 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"amb {dst}, {cond}\"",
 }
 
 
-/// v21 W7 语法层：`{N}` / `{N?}` / `{N:affix}` / `{N?:affix}` 都能解析并**承载修饰** ✗。
+/// v21 W7 语法层：`{N}` / `{N?}` / `{N:affix}` / `{N?:affix}` 都能解析并**承载修饰**。
 #[test]
 fn placeholder_modifiers_parse() {
     use super::codegen::asm::{parse_template, Seg};
-    let segs = parse_template("x {0?}, {1:plus}, {2?:both}").expect("应能解析 ✗");
+    let segs = parse_template("x {0?}, {1:plus}, {2?:both}").expect("应能解析");
     let ops: Vec<(usize, bool, Option<String>)> = segs
         .iter()
         .filter_map(|s| match s {
@@ -4784,7 +4784,7 @@ fn placeholder_modifiers_parse() {
     );
 }
 
-/// v21 W7：**规范化路径**（`{名字}` → `{索引}` ✗）必须**保留占位修饰** ✗，不能悄悄丢掉 ✗。
+/// v21 W7：**规范化路径**（`{名字}` → `{索引}`）必须**保留占位修饰**，不能悄悄丢掉。
 #[test]
 fn normalization_keeps_placeholder_modifiers() {
     let doc = gen_cond_doc(
@@ -4795,8 +4795,8 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"mods {dst?}, {cond:plus}\"",
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let i = m.instructions.iter().find(|i| i.name == "MODS").expect("MODS");
     let r = i.asm.render();
-    assert!(r.contains('?'), "规范化后应保留 `?` ✗：{r}");
-    assert!(r.contains(":plus"), "规范化后应保留 `:affix` ✗：{r}");
+    assert!(r.contains('?'), "规范化后应保留 `?`：{r}");
+    assert!(r.contains(":plus"), "规范化后应保留 `:affix`：{r}");
 }
 
 /// v21 W7：`[asm.immfn.<名>]` 的**多拼写**（`texts`）——至少一条、每条都要自洽；
@@ -4815,9 +4815,9 @@ fn imm_fn_texts_multi_spelling() {
     assert!(super::parse_and_validate(&missing).is_err());
 }
 
-/// v21 W7：`[asm.pseudo.<名>]` ✗ —— **表头即名字** ✗，解析期降级进内部 `pseudo` ✗；
-/// v21 W7：`[asm.pseudo.<名>]` ✗ —— **表头即名字** ✗，解析期降级进内部 `pseudo` ✗；
-/// 旧键 `[[pseudo]]` 已被**拒绝** ✗（v21 无兼容层 ✗）。
+/// v21 W7：`[asm.pseudo.<名>]` —— **表头即名字**，解析期降级进内部 `pseudo`；
+/// v21 W7：`[asm.pseudo.<名>]` —— **表头即名字**，解析期降级进内部 `pseudo`；
+/// 旧键 `[[pseudo]]` 已被**拒绝**（v21 无兼容层）。
 #[test]
 fn asm_pseudo_section_lowers_to_pseudo() {
     let doc = gen_cond_doc(
@@ -4825,10 +4825,10 @@ fn asm_pseudo_section_lowers_to_pseudo() {
         "[asm.pseudo.li]\nasm = \"li {rd}, {cond}\"\nemit = [\"setc {rd}, {cond}\"]",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
-    let p = m.pseudo.iter().find(|p| p.name == "li").expect("li 应在 ✗");
+    let p = m.pseudo.iter().find(|p| p.name == "li").expect("li 应在");
     assert_eq!(p.emit.len(), 1);
     assert_eq!(p.asm.render(), "li {rd}, {cond}");
-    // 旧键 `[[pseudo]]` ⇒ 解析期就被拒 ✗（`IsaModel` 上没有这个 TOML 键了 ✗）
+    // 旧键 `[[pseudo]]` ⇒ 解析期就被拒（`IsaModel` 上没有这个 TOML 键了）
     let old = gen_cond_doc(
         CC_ALL_FULL,
         "[[pseudo]]\nname = \"li\"\nasm = \"li {rd}, {cond}\"\nemit = [\"setc {rd}, {cond}\"]",

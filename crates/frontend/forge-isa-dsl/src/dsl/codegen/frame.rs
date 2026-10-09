@@ -164,8 +164,8 @@ pub(crate) fn gen_frame_lowering(
         .first()
         .map(|f| (*f).clone())
         .unwrap_or_else(|| format_ident!("target"));
-    // v21 W6：**不再按字段个数猜** ✗ —— 用**声明数据**判定形态：jump 指令若有 `Reg` 类
-    // 操作数（riscv `JAL dst, target` ✗）⇒ 需要填 dest ✗；否则是单 label 槽（x86 `JMP_REL32 target` ✗）。
+    // v21 W6：**不再按字段个数猜** —— 用**声明数据**判定形态：jump 指令若有 `Reg` 类
+    // 操作数（riscv `JAL dst, target`）⇒ 需要填 dest；否则是单 label 槽（x86 `JMP_REL32 target`）。
     let jump_kinds: Vec<crate::dsl::model::OperandKind> = infos
         .iter()
         .find(|i| i.inst.name == jump_inst)

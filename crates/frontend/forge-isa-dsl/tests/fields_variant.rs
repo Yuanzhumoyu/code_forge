@@ -11,7 +11,7 @@ use std::io::Write;
 
 /// 最小可用谱：一个 32 位定宽 ISA + 一个变体参数 `xlen` + 一条带 `fields_variant` 的指令。
 ///
-/// 注意原始字符串用 `r##"…"##` ✓：谱里有 `comment_char = "#"`，用 `r#"…"#` 会在那里**提前结束** ✗。
+/// 注意原始字符串用 `r##"…"##` ✓：谱里有 `comment_char = "#"`，用 `r#"…"#` 会在那里**提前结束**。
 fn spec_with(instruction: &str) -> String {
     format!(
         r##"[meta]

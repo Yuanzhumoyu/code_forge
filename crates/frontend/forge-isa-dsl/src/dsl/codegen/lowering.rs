@@ -90,7 +90,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             // {f}/{fN} → FPR）。新增临时占位符只改 placeholder.rs。
             let mut t_binds: Vec<TokenStream> = Vec::new();
             let mut tf_binds: Vec<TokenStream> = Vec::new();
-            // v21 W6：声明了 `temps` ⇒ 用显式集合（并校验无未声明临时 ✗）；否则沿用旧扫描 ✗。
+            // v21 W6：声明了 `temps` ⇒ 用显式集合（并校验无未声明临时）；否则沿用旧扫描。
         let rule_temps = match rule.temps.as_ref() {
             Some(decl) => super::placeholder::explicit_temps(decl, &rule.insts)?,
             None => super::placeholder::collect_temps(&rule.insts),
@@ -244,8 +244,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     let has_jmp = inst_exists(infos, &jump_inst);
     let has_jcc = inst_exists(infos, &branch_inst);
     let _has_test = inst_exists(infos, &test_inst);
-    // v21 W6：**终结序列已谱面化** ⇒ 有角色却没声明 `[lower.Jmp]`/`[lower.Br]` 就是谱的缺陷 ✗，
-    // 生成期直接报错（不再静默走"按字段个数猜 ISA"的旧路径 ✗）。
+    // v21 W6：**终结序列已谱面化** ⇒ 有角色却没声明 `[lower.Jmp]`/`[lower.Br]` 就是谱的缺陷，
+    // 生成期直接报错（不再静默走"按字段个数猜 ISA"的旧路径）。
     let declares = |op: &str| {
         model
             .lower_terms
@@ -255,13 +255,13 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     if has_jmp && !declares("Jmp") {
         return Err(format!(
             "谱声明了 `roles = [\"jump\"]` 的指令 `{jump_inst}`，但缺 `[lower.Jmp]` \
-             （v21 W6：终结序列已谱面化，见 docs/reference/isa-dsl.md ✗）"
+             （v21 W6：终结序列已谱面化，见 docs/reference/isa-dsl.md）"
         ));
     }
     if has_jcc && !declares("Br") {
         return Err(format!(
             "谱声明了 `roles = [\"branch\"]` 的指令 `{branch_inst}`，但缺 `[lower.Br]` \
-             （v21 W6：终结序列已谱面化，见 docs/reference/isa-dsl.md ✗）"
+             （v21 W6：终结序列已谱面化，见 docs/reference/isa-dsl.md）"
         ));
     }
     // 定宽跳转（JAL 语义）：jump_inst 指令存在即启用（非按 ISA 形态猜——
@@ -597,7 +597,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     //   变长（x86 JMP_REL32 语义）→ label 槽 = 尾部 imm（REL4 fixup）。
     // 变体名按键派生，避免硬编码 Inst::JmpRel32/Inst::Jal/Inst::B。
     let _jump_vn = crate::dsl::codegen::pascal_ident(&jump_inst);
-    // v21 W6：谱声明了 `[lower.Jmp]` 就用**谱面序列**（未声明则走下面的旧路径 ✗）。
+    // v21 W6：谱声明了 `[lower.Jmp]` 就用**谱面序列**（未声明则走下面的旧路径）。
     let spec_jump_body: Option<TokenStream> = match model
         .lower_terms
         .as_ref()
@@ -619,7 +619,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         quote! {
             let _ = __pack;
             Err(crate::prelude::IrError::Unsupported(
-                "ISA-DSL jump lowering: 谱缺 `[lower.Jmp]`（v21 W6：终结序列唯一来源 = 谱面 ✗）".into(),
+                "ISA-DSL jump lowering: 谱缺 `[lower.Jmp]`（v21 W6：终结序列唯一来源 = 谱面）".into(),
             ))
         }
     };
@@ -633,15 +633,15 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     let _branch_vn = crate::dsl::codegen::pascal_ident(&branch_inst);
     let _beq_vn = crate::dsl::codegen::pascal_ident(&branch_inst);
     // v21 W6：`test`+`jcc` 这一对里，"条件不成立就跳 false"原来**硬编码 `4u8`**
-    // （= x86 的 `je`）。现在从 `[enum.cond]` 取本 ISA 的 **`eq` 码**（数据驱动 ✗）；
-    // 谱没映射 `eq` 时回落 4 以保持旧行为（过渡态 ✗，等 `[lower.Br]` 下放到谱后彻底删掉）。
+    // （= x86 的 `je`）。现在从 `[enum.cond]` 取本 ISA 的 **`eq` 码**（数据驱动）；
+    // 谱没映射 `eq` 时回落 4 以保持旧行为（过渡态，等 `[lower.Br]` 下放到谱后彻底删掉）。
     let _eq_code: u8 = model
         .cond_ir_codes()
         .into_iter()
         .find(|(n, _)| *n == "eq")
         .map(|(_, c)| c as u8)
         .unwrap_or(4);
-    // v21 W6：谱声明了 `[lower.Br]` 就用谱面序列（未声明则走旧路径 ✗）。
+    // v21 W6：谱声明了 `[lower.Br]` 就用谱面序列（未声明则走旧路径）。
     let spec_branch_body: Option<TokenStream> = match model
         .lower_terms
         .as_ref()
@@ -649,8 +649,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     {
         Some(tl) => Some({
             let seq = gen_lowering_insts(&tl.insts, infos, &name_to_vn, None)?;
-            // 生成期（**在 `quote!` 之外** ✗）算好条件码字面：`Br` 里 `test` 置 ZF ⇒ 条件码
-            // 语义固定为本 ISA 的 `eq`/`ne` ✗；谱面写 `{cc}`/`{cc_inv}` 时用它们 ✗。
+            // 生成期（**在 `quote!` 之外**）算好条件码字面：`Br` 里 `test` 置 ZF ⇒ 条件码
+            // 语义固定为本 ISA 的 `eq`/`ne`；谱面写 `{cc}`/`{cc_inv}` 时用它们。
             let cc_of = |ir: &str| -> u8 {
                 model
                     .cond_ir_codes()
@@ -664,7 +664,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             quote! {
                 let __cc: u8 = #cc_eq;
                 let __cc_inv: u8 = #cc_ne;
-                // 条件寄存器（旧硬编码体的 `cond` ✗）：供 `{cond}` 用 ✗。
+                // 条件寄存器（旧硬编码体的 `cond`）：供 `{cond}` 用。
                 let __cond = value_to_xreg
                     .get(cond_val)
                     .copied()
@@ -683,7 +683,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         quote! {
             let _ = __pack;
             Err(crate::prelude::IrError::Unsupported(
-                "ISA-DSL branch lowering: 谱缺 `[lower.Br]`（v21 W6：终结序列唯一来源 = 谱面 ✗）".into(),
+                "ISA-DSL branch lowering: 谱缺 `[lower.Br]`（v21 W6：终结序列唯一来源 = 谱面）".into(),
             ))
         }
     };
@@ -2727,7 +2727,7 @@ fn gen_lowering_insts(
                 } else {
                     op
                 };
-                // v21 W6：算术表达式占位符（`{imm0 - 4}` 之类 ✗）优先——ctor 由各操作数拼接 ✗。
+                // v21 W6：算术表达式占位符（`{imm0 - 4}` 之类）优先——ctor 由各操作数拼接。
                 let (ctor_expr, xreg_expr) = if let Some(e) = super::placeholder::expr_ctor(op, slot) {
                     (e, quote! { 0u32 })
                 } else if super::placeholder::kind_matches(op, slot.kind) {
@@ -2755,7 +2755,7 @@ fn gen_lowering_insts(
                         }
                         OperandKind::Mem => {
                             // 内存操作数：`{base}+{off}` → MemRef（base 物理寄存器 + 偏移）；
-                            // v21 W7：偏移符号走**占位符注册表**（传真实 slot ✗）⇒ 语义单点 ✗。
+                            // v21 W7：偏移符号走**占位符注册表**（传真实 slot）⇒ 语义单点。
                             let m = parse_mem_template(op, "lowering 模板", slot)?;
                             (quote! { #m }, quote! { 0u32 })
                         }

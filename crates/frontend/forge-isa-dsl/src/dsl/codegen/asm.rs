@@ -169,9 +169,9 @@ fn render_expr(slot: &OperandSlot, fid: &syn::Ident) -> TokenStream {
 pub(crate) enum Seg {
     /// 字面文本（分隔符/方括号/括号/关键字等，原样匹配与输出）。
     Lit(String),
-    /// 操作数占位符（索引 = 指令操作数位置 ✗），带**占位修饰**（v21 W7 ✗）：
-    /// - `optional`：`{n?}` ⇒ 该操作数与其**紧邻字面词缀**可整体省略 ✗；
-    /// - `affix`：`{n:affix}` ⇒ 词缀随组件出现（`+` 对已带 `-` 的数值抑制 ✗）。
+    /// 操作数占位符（索引 = 指令操作数位置），带**占位修饰**（v21 W7）：
+    /// - `optional`：`{n?}` ⇒ 该操作数与其**紧邻字面词缀**可整体省略；
+    /// - `affix`：`{n:affix}` ⇒ 词缀随组件出现（`+` 对已带 `-` 的数值抑制）。
     Op {
         idx: usize,
         optional: bool,
@@ -208,7 +208,7 @@ pub(crate) fn parse_template(tpl: &str) -> Result<Vec<Seg>, String> {
             if chars.next() != Some('}') {
                 return Err(format!("unterminated '{{' in asm template '{tpl}'"));
             }
-            // v21 W7：`{N}` / `{N?}` / `{N:affix}` / `{N?:affix}` ✗
+            // v21 W7：`{N}` / `{N?}` / `{N:affix}` / `{N?:affix}`
             let inner_t = inner.trim();
             let (num_part, affix) = match inner_t.split_once(':') {
                 Some((a, b)) => (a.trim(), Some(b.trim().to_string())),
@@ -221,7 +221,7 @@ pub(crate) fn parse_template(tpl: &str) -> Result<Vec<Seg>, String> {
             let n: usize = num_part.parse().map_err(|_| {
                 format!(
                     "bad placeholder '{{{inner}}}' in asm template '{tpl}'：\
-                     模板只能引用操作数序号（命名引用需在 `ops` 里声明）+ 可选修饰 `?` / `:affix` ✗"
+                     模板只能引用操作数序号（命名引用需在 `ops` 里声明）+ 可选修饰 `?` / `:affix`"
                 )
             })?;
             if !lit.is_empty() {
@@ -1230,7 +1230,7 @@ fn gen_imm_fns(model: &IsaModel) -> Result<(TokenStream, TokenStream), String> {
     let mut tries: Vec<TokenStream> = Vec::new();
     for (i, d) in defs.iter().enumerate() {
         let ctx = || format!("[[conventions.imm_fn.{}]]", d.name);
-        // ① **值语义**：每条声明一次 ✗（多拼写共享同一个 `expr` 与同一个求值函数 ✗）。
+        // ① **值语义**：每条声明一次（多拼写共享同一个 `expr` 与同一个求值函数）。
         let (pre_expr, post_expr) = split_hole(&d.expr)
             .ok_or_else(|| format!("{}: expr 必须恰好含一个 `{{0}}`（内层值）", ctx()))?;
         let pre_expr_toks: Vec<TokenStream> = tokenize(pre_expr.trim())
@@ -1259,8 +1259,8 @@ fn gen_imm_fns(model: &IsaModel) -> Result<(TokenStream, TokenStream), String> {
                 Some(__v)
             }
         });
-        // ② **文本形态**：`text` 或 `texts` 的**每一条写法**各生成一次匹配尝试 ✗，
-        //    全部落到同一个 `#fname` 与同一个下标 `#i` 上 ✗（v21 W7 多拼写 ✗）。
+        // ② **文本形态**：`text` 或 `texts` 的**每一条写法**各生成一次匹配尝试，
+        //    全部落到同一个 `#fname` 与同一个下标 `#i` 上（v21 W7 多拼写）。
         let texts = d.all_texts();
         if texts.is_empty() {
             return Err(format!("{}: 必须给 `text` 或 `texts`", ctx()));
@@ -1424,7 +1424,7 @@ fn lit_seg_expr(l: &str, idx: usize, case_insensitive: bool) -> Result<TokenStre
 fn gen_scan_probe(infos: &[InstInfo], case_insensitive: bool) -> Result<TokenStream, String> {
     let mut probes: Vec<TokenStream> = Vec::new();
     for info in infos {
-        // v21 W7：任一写法的首字面段都算"本 ISA 可能认这条" ✗。
+        // v21 W7：任一写法的首字面段都算"本 ISA 可能认这条"。
         let mut first_lit: Option<String> = None;
         for tpl in info.inst.asm.all() {
             if let Some(Seg::Lit(l)) = parse_template(tpl)?.first() {
@@ -1613,7 +1613,7 @@ fn gen_assemble_try_tok(
     tpl: &str,
 ) -> Result<TokenStream, String> {
     let vn = &info.vn;
-    // v21 W7：尝试的是**指定的一条写法** ✗（调用方按 `asm` 列表序逐条试 ✗）。
+    // v21 W7：尝试的是**指定的一条写法**（调用方按 `asm` 列表序逐条试）。
     let segs = parse_template(tpl)?;
     validate_segs(&segs, info)?;
     let mut elems: Vec<TokenStream> = Vec::new();
@@ -1853,9 +1853,9 @@ pub(crate) fn gen_assemble(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     let mut tries: Vec<TokenStream> = Vec::new();
     for info in cands {
         let sig = type_signature(info)?;
-        // v21 W7：**每个可接受写法**都生成一次尝试 ✗ —— 解析按 `asm` 列表序尝试 ✗，
-        // 第 0 条（渲染形态 ✗）优先 ⇒ 与旧行为逐字节一致 ✔。去重键带上写法 ✗，
-        // 否则备选写法会被"同签名"误跳过 ✗。
+        // v21 W7：**每个可接受写法**都生成一次尝试 —— 解析按 `asm` 列表序尝试，
+        // 第 0 条（渲染形态）优先 ⇒ 与旧行为逐字节一致。去重键带上写法，
+        // 否则备选写法会被"同签名"误跳过。
         for tpl in info.inst.asm.all() {
             let key = format!("{sig}|{tpl}");
             if seen.contains(&key) {

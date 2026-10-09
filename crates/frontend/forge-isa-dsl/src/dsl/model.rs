@@ -396,15 +396,15 @@ pub struct IsaModel {
     #[serde(skip, default)]
     pub derived_preds: BTreeMap<String, super::pred::Pred>,
 
-    /// 汇编器伪指令（`[[pseudo]]`，v18 S3e：汇编期的文本级多指令展开 ✗）。
+    /// 汇编器伪指令（`[[pseudo]]`，v18 S3e：汇编期的文本级多指令展开）。
     ///
-    /// v21 W7 起它是**内部载体** ✗：TOML 面是 `[asm.pseudo.<名>]` ✗（表头 = 名字 ✗，
-    /// 旧键 `[[pseudo]]` 已被拒 ✗），解析期由 [`AsmSection`] 降级填进来 ✗。
+    /// v21 W7 起它是**内部载体**：TOML 面是 `[asm.pseudo.<名>]`（表头 = 名字，
+    /// 旧键 `[[pseudo]]` 已被拒），解析期由 [`AsmSection`] 降级填进来。
     #[serde(default, skip)]
     pub pseudo: Vec<PseudoDef>,
 
-    /// **汇编器侧数据**（v21 W7 ✗）：`[asm]` 下的按名字索引的表 ✗（表头 = 名字 ✗）。
-    /// 解析期降级进 `pseudo`/… ✗，不留第二份事实 ✗。
+    /// **汇编器侧数据**（v21 W7）：`[asm]` 下的按名字索引的表（表头 = 名字）。
+    /// 解析期降级进 `pseudo`/…，不留第二份事实。
     #[serde(default)]
     pub asm: Option<AsmSection>,
 
@@ -1190,7 +1190,7 @@ pub struct Conventions {
 /// 立即数**修饰函数**：汇编期表达式里的一种"包裹写法"
 /// （`[[conventions.imm_fn]]`）。
 ///
-/// 一个修饰 = 两行数据（v21 W7 起 `text` 可为**多拼写** `texts` 列表 ✗）：
+/// 一个修饰 = 两行数据（v21 W7 起 `text` 可为**多拼写** `texts` 列表）：
 ///
 /// ```toml
 /// [[conventions.imm_fn]]
@@ -1204,8 +1204,8 @@ pub struct Conventions {
 /// expr = "{0}"
 /// ```
 ///
-/// `text` 与 `texts` **只能给一个** ✗；`texts` 的非空列表 = 多条**等价**写法 ✗
-/// （共同一个 `expr` ✗、共同一个名字 ✗ ⇒ 值语义与诊断名唯一 ✗）。
+/// `text` 与 `texts` **只能给一个**；`texts` 的非空列表 = 多条**等价**写法
+/// （共同一个 `expr`、共同一个名字 ⇒ 值语义与诊断名唯一）。
 ///
 /// 刻意**不带任何 ISA 知识**：GAS/RISC-V 的 `%hi`/`%lo`、GAS/ARM 的 `:lower16:`、
 /// MIPS 的 `hi(x)` 都只是各自谱里的两行；`text` 允许前缀/后缀/两侧都有字面，
@@ -1218,7 +1218,7 @@ pub struct ImmFnDef {
     /// 源文本形态：`{0}` = 内层表达式的位置（其余是照原样匹配的字面 token）。
     #[serde(default)]
     pub text: Option<String>,
-    /// **多拼写**（v21 W7 ✗）：同一语义的若干等价写法 ✗（与 `text` 互斥 ✗）。
+    /// **多拼写**（v21 W7）：同一语义的若干等价写法（与 `text` 互斥）。
     #[serde(default)]
     pub texts: Option<Vec<String>>,
     /// 值语义：`{0}` = 内层表达式的值，按既有表达式语言求值。
@@ -1226,7 +1226,7 @@ pub struct ImmFnDef {
 }
 
 impl ImmFnDef {
-    /// 全部**等价写法** ✗（`texts` 优先；都没有 ⇒ 空表 ✗，由校验报错 ✗）。
+    /// 全部**等价写法**（`texts` 优先；都没有 ⇒ 空表，由校验报错）。
     pub fn all_texts(&self) -> Vec<&str> {
         match (&self.texts, &self.text) {
             (Some(v), _) => v.iter().map(|s| s.as_str()).collect(),
@@ -1249,8 +1249,8 @@ pub struct MemTemplate {
     /// 解析时吃掉一个（缺席不算错）；**值不进 `MemRef`**——操作数宽度由槽/`opsize`
     /// 决定，尺寸前缀只是给人读的冗余提示，渲染时输出空串。
     ///
-    /// **只由 `[operand.<mem>].size_words` 写入**（v21 W7 ✗）：TOML 里不再接受
-    /// `[conventions.mem].size_keywords` 这个旧键 ✗——`operand_decl` 降级时填进来 ✗。
+    /// **只由 `[operand.<mem>].size_words` 写入**（v21 W7）：TOML 里不再接受
+    /// `[conventions.mem].size_keywords` 这个旧键——`operand_decl` 降级时填进来。
     #[serde(default, skip)]
     pub size_keywords: Vec<String>,
 }
@@ -1675,7 +1675,7 @@ pub struct OperandSlot {
     pub classes: Option<Vec<RegClass>>,
     /// reg：**该槽把 31 号视为 ZR 而不是 SP**（A64 shifted-register 形态的专属语义）。
     ///
-    /// 两侧一起变 ✓（**只改匹配会让解码把 `xzr` 渲染回 `sp`，镜像同一个 bug** ✗）：
+    /// 两侧一起变 ✓（**只改匹配会让解码把 `xzr` 渲染回 `sp`，镜像同一个 bug**）：
     /// 匹配侧拒收 `SP`/`WSP` 两种拼写（`XZR`/`WZR` 照收），渲染侧把 31 号出成 `XZR`/`WZR`。
     /// 依据：`add w1, wsp, w3` 上游走 extended 形态（`bit21 = 1` + `option = uxtw`），
     /// 而 shifted 形态里 SP 非法 ⇒ 谱必须能把这类槽钉成 ZR 视图。
@@ -2889,7 +2889,7 @@ pub enum Effect {
 ///
 /// 未实现（如实记录）：按谓词分派同名多条（汇编期没有 IR 属性可判）、
 /// `pseudo_fold`（反汇编折叠回伪指令——那是指令级模式识别，属另一件事）。
-/// **`[asm.pseudo.<名>]` 的体**（v21 W7 ✗）：表头就是 [`PseudoDef::name`] ✗。
+/// **`[asm.pseudo.<名>]` 的体**（v21 W7）：表头就是 [`PseudoDef::name`]。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PseudoBody {
@@ -3056,12 +3056,12 @@ pub struct OperandUse {
 
 /// **终结指令的 lowering 序列**（v21 W6）：`[lower.Br]` / `[lower.Jmp]` / `[lower.Ret]`。
 ///
-/// 与 `[[lowering]]` 分家的原因（实测 ✗）：分支的 `then`/`else` 块号只有终结层拿得到
-/// （`dfg.term_branch(block)` ✗），per-op 的规则路径没有这个上下文 ⇒ 分支/跳转/返回
+/// 与 `[[lowering]]` 分家的原因（实测）：分支的 `then`/`else` 块号只有终结层拿得到
+/// （`dfg.term_branch(block)`），per-op 的规则路径没有这个上下文 ⇒ 分支/跳转/返回
 /// 的序列写在终结层谱面里，由终结 lowering 消费。
 ///
-/// `insts` 里的符号值除了既有占位符外，还可用 `{true}` / `{false}`（Br 的两个后继块号 ✗）
-/// 与 `{target}`（Jmp 的目标块号 ✗）。
+/// `insts` 里的符号值除了既有占位符外，还可用 `{true}` / `{false}`（Br 的两个后继块号）
+/// 与 `{target}`（Jmp 的目标块号）。
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct TermSeq {
     /// 指令序列（与 `[[lowering]].insts` 同一套占位符/替换语义）。
@@ -3070,23 +3070,23 @@ pub struct TermSeq {
 
 // ──────────────────────── `asm` 写法列表（v21 W7）────────────────────────
 
-/// **`asm` 可接受写法列表**（v21 W7 ✗）：第 0 条 = **渲染形态** ✗（反汇编只吐它 ✗），
-/// 其余是**解析专用备选**（按列表序尝试 ✗，第一条整条走通的赢 ✗）。
+/// **`asm` 可接受写法列表**（v21 W7）：第 0 条 = **渲染形态**（反汇编只吐它），
+/// 其余是**解析专用备选**（按列表序尝试，第一条整条走通的赢）。
 ///
-/// TOML 两种写法都接受 ✗：`asm = "add {dst}, {src}"`（等价于单元素列表 ✗）与
+/// TOML 两种写法都接受：`asm = "add {dst}, {src}"`（等价于单元素列表）与
 /// `asm = ["add {dst}, {src}", "add {src}, {dst}"]`。
 ///
-/// `Deref<Target = str>` 指向**渲染形态** ✗ ⇒ 既有"当字符串用"的读取点大多不用改 ✔。
+/// `Deref<Target = str>` 指向**渲染形态** ⇒ 既有"当字符串用"的读取点大多不用改。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AsmList(pub Vec<String>);
 
 impl AsmList {
-    /// 渲染形态（第 0 条 ✗；空列表给空串 ✗）。
+    /// 渲染形态（第 0 条；空列表给空串）。
     pub fn render(&self) -> &str {
         self.0.first().map(|s| s.as_str()).unwrap_or("")
     }
 
-    /// 全部可接受写法（解析按序尝试 ✗）。
+    /// 全部可接受写法（解析按序尝试）。
     pub fn all(&self) -> &[String] {
         &self.0
     }
@@ -3526,8 +3526,8 @@ pub struct Lowering {
     pub vary: Option<BTreeMap<String, Vec<VaryValue>>>,
     /// **显式临时寄存器**（v21 W6，可选）：`["g1:gpr", "f1:fpr"]`。
     ///
-    /// 声明了它 ⇒ 本规则**必须**用显式集合（出现未声明的 `{gN}`/`{fN}` ⇒ 编译期报错 ✗）；
-    /// 不声明 ⇒ 沿用旧行为（按 `g`/`f` 前缀 + 数字推断类别 ✗）。**不强制迁移** ✔。
+    /// 声明了它 ⇒ 本规则**必须**用显式集合（出现未声明的 `{gN}`/`{fN}` ⇒ 编译期报错）；
+    /// 不声明 ⇒ 沿用旧行为（按 `g`/`f` 前缀 + 数字推断类别）。**不强制迁移**。
     #[serde(default, rename = "temps")]
     pub temps: Option<Vec<String>>,
     /// **重载分派键**（v21 W5，可选）：本规则的宽度分派用哪个谓词属性做叶子，
@@ -4059,11 +4059,11 @@ mod ir_inverse_cond_tests {
     }
 }
 
-/// v21 W6 **进行中**的安全闸：`[lower.*]` 目前只有 `Jmp` 完成接线并验证等价 ✗。
+/// v21 W6 **进行中**的安全闸：`[lower.*]` 目前只有 `Jmp` 完成接线并验证等价。
 ///
-/// `Br` 的旧硬编码体还带一步 `map_reg_field`（把 IR 条件寄存器写进 test/branch 的操作数 ✗），
-/// 当前占位符体系表达不了；`Ret` 的体含"整数值→返回寄存器 / 浮点→浮点返回寄存器"的搬移 ✗。
-/// 让谱声明它们会**静默生成错代码** ✗ ⇒ 解析期明确拒绝 ✗，等后续 W6 落地再放行 ✔。
+/// `Br` 的旧硬编码体还带一步 `map_reg_field`（把 IR 条件寄存器写进 test/branch 的操作数），
+/// 当前占位符体系表达不了；`Ret` 的体含"整数值→返回寄存器 / 浮点→浮点返回寄存器"的搬移。
+/// 让谱声明它们会**静默生成错代码** ⇒ 解析期明确拒绝，等后续 W6 落地再放行。
 pub fn check_term_lowering_supported(m: &IsaModel) -> Result<(), String> {
     let Some(lower) = m.lower_terms.as_ref() else {
         return Ok(());
