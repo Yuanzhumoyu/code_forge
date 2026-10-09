@@ -64,6 +64,7 @@ pub const SECTIONS: &[Section] = &[
             "enum",
             "forms",
             "instructions",
+            "family",
             "templates",
             "reloc",
             "derive",

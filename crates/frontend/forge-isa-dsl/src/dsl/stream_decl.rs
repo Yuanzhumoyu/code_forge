@@ -21,8 +21,39 @@ use super::model::{
 
 /// 把 `kind = "stream"`（写了 `segments`）的 form 降级回语义键 + `fields`；
 /// 并把**指令级结构段**（选项 B）也降级。
+/// v21 W5：`[family.<名>]` → 一条 [`Template`]（族名兼作各行的 `group`）。
+///
+/// **代码生成一行不改**：`family` 只是 `[[templates]]` 的"名字来自表键 + 名字即多态引用名"
+/// 写法，降级后与模板完全同构。
+pub(crate) fn lower_families(m: &mut IsaModel) -> Result<(), String> {
+    let Some(fams) = m.families.clone() else {
+        return Ok(());
+    };
+    m.families = None;
+    for (name, decl) in fams {
+        if decl.vary.is_some() {
+            return Err(format!(
+                "[[family.{name}]].vary: **尚未实现**（W5 第④步：与 `[[lowering]].vary` \
+                 统一 zip 语义）——现在写它会明确报错，而不是被静默忽略"
+            ));
+        }
+        let mut rows = decl.rows;
+        for row in &mut rows {
+            // **族名即多态引用名**：行里没显式写 `group` 时，用族名。
+            row.fields
+                .entry("group".to_string())
+                .or_insert_with(|| toml::Value::String(name.clone()));
+        }
+        m.templates.push(super::model::Template {
+            name: Some(name),
+            body: decl.body,
+            rows,
+        });
+    }
+    Ok(())
+}
 pub fn lower_stream_forms(m: &mut IsaModel) -> Result<(), String> {
-    let fixed = m.encoding.kind != super::model::EncodingKind::PrefixScan;
+    lower_families(m)?;    let fixed = m.encoding.kind != super::model::EncodingKind::PrefixScan;
     for form in &mut m.forms {
         if form.segments.is_none() {
             continue;
@@ -794,6 +825,54 @@ asm = "n {dst}, {src}"
         assert_eq!(modrm.rm.as_deref(), Some("src"));
     }
 
+    /// **v21 W5**：`[family.<名>]` 与等价 `[[templates]]` 展开后**指令集逐条相同**，
+    /// 且族名自动成为各行的 `group`（"族名即多态引用名"）。
+    #[test]
+    fn family_lowers_to_the_same_templates() {
+        let head = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "fixed"
+bits = 32
+[reg.gpr64]
+count = 16
+[operand.g]
+kind = "reg"
+class = "gpr64"
+"#;
+        let fam = format!(
+            r#"{head}
+[family.ALU]
+body = {{ ops = ["dst:g", "src:g"] }}
+rows = [
+  {{ inst = "FADD", opcode = 0x10, asm = "fadd {{dst}}, {{src}}" }},
+  {{ inst = "FSUB", opcode = 0x11, asm = "fsub {{dst}}, {{src}}" }},
+]
+"#
+        );
+        let tpl = format!(
+            r#"{head}
+[[templates]]
+name = "ALU"
+body = {{ ops = ["dst:g", "src:g"] }}
+rows = [
+  {{ inst = "FADD", opcode = 0x10, asm = "fadd {{dst}}, {{src}}" }},
+  {{ inst = "FSUB", opcode = 0x11, asm = "fsub {{dst}}, {{src}}" }},
+]
+"#
+        );
+        let a = crate::dsl::parse_and_validate(&fam).expect("family 合法");
+        let b = crate::dsl::parse_and_validate(&tpl).expect("templates 合法");
+        let na: Vec<&str> = a.instructions.iter().map(|i| i.name.as_str()).collect();
+        let nb: Vec<&str> = b.instructions.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(na, nb, "指令集");
+        // 族名成为 group
+        assert!(
+            a.instructions.iter().all(|i| i.reference.as_deref() == Some("ALU")),
+            "族名应自动成为各行的 group"
+        );
+    }
     /// **v21 W4.4 守卫**：段里声明的**前缀字节**必须被生效扫描表覆盖，字典形态写了效果名时
     /// 效果必须一致（删 `default_prefix_scan()`、解码条件按 form 前缀段生成之前的安全网）。
     #[test]

@@ -691,6 +691,11 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
      **`#[derive(...)]` 属性块之上**——插在 derive 与 `pub struct Template {` 之间会把 derive
      挂到新结构体上，报 `duplicate serde attribute` + `cannot find attribute serde`。
      锚点用**上一条 `#[derive` 行**，不要用 `pub struct` 行。
+  ✅ **1–4 已实现（2026-10-08，一次提交）**：`FamilyDecl`（`body`/`rows`/`vary`）+ `IsaModel.families`；
+    `pub(crate) fn lower_families()` 把 `[family.<名>]` 降级成一条 `Template`，并让**族名成为各行的
+    `group`**（没显式写时），处理后清空字段（幂等）；调用点在 **`parse.rs` 的 `expand_templates()`
+    之前**（挂 `lower_stream_forms` 里太晚——那时模板已展开，实测 `family` 产出 0 条指令）。
+    `vary` 现**明确报错**（fail-closed）。三方针已同步。单测：`[family.X]` ≡ 等价 `[[templates]]`。
   5. 迁三谱 112 处（机械）+ 删 `[[templates]]`（`--suggest`/lint 复查），四条判据全绿后一次提交。
 - [ ] `family.vary` 与 `[lower.*].vary` 共用一套 zip 语义（一处实现）。
 - [ ] 重载解析：按声明类型（字段类型）选行；歧义 → 生成期报错并列候选；无候选 → 生成物 `Unsupported`。

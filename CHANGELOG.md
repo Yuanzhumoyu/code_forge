@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W5：`[family.<名>]` 族构造
+
++ 新构造 **`[family.<名>]`**（`body` + `rows`，预留 `vary`）：**族名来自表键且兼作"多态引用名"**
+  （即指令上的 `group`）。
++ 实现 = **降级**：解析期展开成一条既有 `Template`（族名作 `name`，并自动成为各行的 `group`），
+  **代码生成一行不改**；调用点在 `expand_templates()` 之前。
++ `vary` 暂未实现：写它会**明确报错**（fail-closed），留待与 `[[lowering]].vary` 统一 zip 语义。
++ 三方针同步；单测保证 `[family.X]` 与等价 `[[templates]]` 展开后指令集逐条相同。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5 第一步：`ref` → `group`（**破坏性**）
 
 + 指令的 TOML 键 **`ref` 改名 `group`**（族名即多态引用名；多条指令共用一个族名 = 多态引用）。

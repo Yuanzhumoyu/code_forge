@@ -52,6 +52,8 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
     }
     model.lowering = expanded;
     // `[[templates]]` 展开（v18 S2）：实例拼进指令表，`ref` 合成别名——下游只见普通指令。
+    // v21 W5：`[family.<名>]` 先降级成 `[[templates]]`（族名兼作 `group`），**再**展开模板。
+    crate::dsl::stream_decl::lower_families(&mut model).map_err(anchor_err)?;
     model.expand_templates().map_err(|msg| {
         let idx = diag::DeclIndex::build(source);
         let a = idx.anchor(&msg);

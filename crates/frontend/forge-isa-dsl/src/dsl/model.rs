@@ -248,6 +248,12 @@ pub struct IsaModel {
     #[serde(default)]
     pub instructions: Vec<Instruction>,
 
+    /// **指令族**（v21 W5，`[family.<名>]`）：唯一复用机制（`body` + `rows` + 将来 `vary`）。
+    /// **族名同时是"多态引用名"**（即指令上的 `group`）——解析期**降级**成一条
+    /// [`Template`]，代码生成无需知道 `family` 的存在。
+    #[serde(default, rename = "family")]
+    pub families: Option<std::collections::BTreeMap<String, FamilyDecl>>,
+
     /// 参数化指令模板（`[[templates]]`，v18 S2）：解析期展开为指令 + 别名。
     #[serde(default)]
     pub templates: Vec<Template>,
@@ -2850,6 +2856,24 @@ pub struct OperandUse {
 /// - **`ref`**：行（或 `body`）上的**引用名**——多条指令共用一个 `ref` 即"多态引用"
 ///   （lowering/pattern/emit 行首可用，按操作数签名分派）；原先的 `[[aliases]]` 就是
 ///   "几条指令共用同一个 ref"。
+/// **`[family.<名>]`**（v21 W5）：族名来自表键；`body`/`rows` 与 [`Template`] 同形。
+///
+/// 解析期降级：每个族展开成一条 `Template { name: <族名>, … }`，并让族名成为各行的
+/// `group`（行里没显式写时）——"族名即多态引用名"。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FamilyDecl {
+    /// 共享指令体（指令字段的默认值；可省略）。
+    #[serde(default)]
+    pub body: Option<toml::Table>,
+    /// 行：每行一条指令实例（`inst` 必填，其余键即指令字段）。
+    pub rows: Vec<TemplateRow>,
+    /// **尚未实现**（W5 第④步）：与 `[[lowering]].vary` 共用一套 zip 语义。
+    /// 现在写它会**明确报错**（fail-closed，不静默忽略）。
+    #[serde(default)]
+    pub vary: Option<toml::Table>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Template {
