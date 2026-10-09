@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-08) — ISA-DSL v21 W5：`family` 不再自动把族名铺成 `group`
+
++ `lower_families` 原先会把**族名自动注入为每行的 `group`**——而 `group` 是**多态引用名**，
+  铺开后 `[[lowering]]`/`[[pattern]]`/`emit` 行首解析到的指令集合会变（三谱实测量：**0 处**
+  引用模板/族名，属无用户的语义变更），JIT 矩阵因此崩（`STATUS_ILLEGAL_INSTRUCTION`）。
+  现在**不自动注入**：族名要生效由**行里显式写 `group`**（x86 `MOVZX_*`/`MOVSX_*` 那族本来就是
+  这么写的——`group = "movzx"`）。
++ 单测同步：`[family.X]` 与等价 `[[templates]]` 展开后指令集逐条相同、且**不注入** `group`。
++ 验证：`cargo test -p forge-isa-dsl` 全绿（276 + 7 + 3 + 4 + 4 + 2 …）。
+  ⚠️ 整仓门禁本轮被 **linker `exit code 1102`** 挡住（`forge-isa-dsl`/`isa-host-demo` 的测试
+  产物链接失败，疑似磁盘/句柄不足——环境性，与本次改动无关），清理 `target/` 或腾出磁盘后可复跑。
+
 ### Added (2026-10-08) — ISA-DSL v21 W5：`[family.<名>]` 族构造
 
 + 新构造 **`[family.<名>]`**（`body` + `rows`，预留 `vary`）：**族名来自表键且兼作"多态引用名"**

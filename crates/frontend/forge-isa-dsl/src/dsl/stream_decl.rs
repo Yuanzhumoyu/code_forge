@@ -37,13 +37,12 @@ pub(crate) fn lower_families(m: &mut IsaModel) -> Result<(), String> {
                  统一 zip 语义）——现在写它会明确报错，而不是被静默忽略"
             ));
         }
-        let mut rows = decl.rows;
-        for row in &mut rows {
-            // **族名即多态引用名**：行里没显式写 `group` 时，用族名。
-            row.fields
-                .entry("group".to_string())
-                .or_insert_with(|| toml::Value::String(name.clone()));
-        }
+        // ⚠️ **不自动注入 `group`**（2026-10-08 实测教训）：`group` 是**多态引用名**，
+        // 给每一行都塞上族名会改变 `[[lowering]]`/`[[pattern]]`/`emit` 行首解析到的指令集合
+        // （三谱实测量：**0 处**引用模板/族名，纯属无用户的语义变更），JIT 矩阵会因此崩
+        // （`STATUS_ILLEGAL_INSTRUCTION`）。族名要生效，由**行里显式写 `group`** 或后续
+        // 合并族时按需引用——不在这里铺开。
+        let rows = decl.rows;
         m.templates.push(super::model::Template {
             name: Some(name),
             body: decl.body,
@@ -867,10 +866,10 @@ rows = [
         let na: Vec<&str> = a.instructions.iter().map(|i| i.name.as_str()).collect();
         let nb: Vec<&str> = b.instructions.iter().map(|i| i.name.as_str()).collect();
         assert_eq!(na, nb, "指令集");
-        // 族名成为 group
+        // 行里没写 group 时不自动注入
         assert!(
-            a.instructions.iter().all(|i| i.reference.as_deref() == Some("ALU")),
-            "族名应自动成为各行的 group"
+            a.instructions.iter().all(|i| i.reference.is_none()),
+            "不应自动注入 group（会改变 lowering 解析）"
         );
     }
     /// **v21 W4.4 守卫**：段里声明的**前缀字节**必须被生效扫描表覆盖，字典形态写了效果名时
