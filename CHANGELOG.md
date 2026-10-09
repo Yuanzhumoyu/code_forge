@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5 ⑥ 完成：`[[templates]]` **撤出 TOML 面**
+
++ `IsaModel.templates` 改为**内部载体**（`#[serde(default, skip)]`，并在
+  `schema_guard::INTERNAL_FIELDS` 登记 ✗）：`[family.<名>]` 仍在解析期降级进它、codegen 继续读它，
+  但 **TOML 里写 `[[templates]]` 会被未知键守卫拒绝** ✔。
++ `schema.rs` 精确删掉 root 级 `templates` 键与 `[[templates]]` / `[[templates.rows]]` 两节
+  （**不动** `[conventions.mem].templates` —— 那是内存操作数文本形态 ✗，上一轮误删过一次 ✗）。
++ `docs/reference/isa-dsl.md` 的键速查表是**生成物**（`schema::markdown_table()` ✗）：本轮改用
+  **整段粘贴生成文本**（临时打印测试取表 ✗ → 替换标记区 ✗ → 删临时测试 ✗），手改必红 ✗；
+  重生成 `isa-dsl.schema.json`。
++ 证据：`schema_guard` **9 passed / 0 failed**（含"发行谱只许用 schema 键"与"键表 ≡ schema"两条 ✗）；
+  `cargo test -p forge-isa-dsl` 276 passed；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
++ 至此 **W5 的 ⑥ 全链路完成**：112 处模板迁移 → 夹具全部 `[family.*]`（7 文件代码归零 ✗）→
+  诊断锚点族感知（行号不再退化成 1 ✗）→ TOML 面撤出 → schema/文档/守卫三方针同步 ✔。
+
 ### Fixed (2026-10-08) — ISA-DSL v21 W5 ⑥b 完成：族感知诊断锚点 + 全部夹具迁到 `[family.*]`
 
 + **产品行为修复**：`[family.<名>]` 降级出的载体原先锚回内部名 `[[templates.X]]`（源里没有这一节）

@@ -378,7 +378,7 @@ pub struct IsaModel {
     ///
     /// `[family.<名>]` 在解析期降级进这里，再展开为指令 + 别名；TOML 里写 `[[templates]]`
     /// 会被未知键守卫拒绝（`serde(skip)`）。
-    #[serde(default)]
+    #[serde(default, skip)]
     pub templates: Vec<Template>,
 
     /// 重定位表（`[[reloc]]`，v18 S3d）：指令用 `reloc = "<name>"` 引用。

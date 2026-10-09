@@ -41,6 +41,11 @@ fn read_lf(path: &Path) -> Option<String> {
 /// 每条都要有理由：新增内部字段时必须来这里登记（否则守卫报"模型有、schema 无"）。
 const INTERNAL_FIELDS: &[(&str, &str, &str)] = &[
     (
+        "IsaModel",
+        "templates",
+        "内部载体（v21 W5）：[family.<名>] 降级进它，TOML 面已撤",
+    ),
+    (
         "Instruction",
         "from_template",
         "展开来源（v18 S2），解析期填、不参与序列化",
@@ -928,3 +933,9 @@ fn inline_table_bare_newlines(text: &str) -> Vec<usize> {
         .map(|&idx| cs[..idx].iter().filter(|c| **c == '\n').count() + 1)
         .collect()
 }
+
+
+
+
+
+
