@@ -3524,39 +3524,23 @@ insts = [
 
 [[lowering]]
 op = "Fadd"
-when = { eq = ["elem", 1] }
-insts = ["MOVSS {out}, {0}", "ADDSS {out}, {1}"]
-
-[[lowering]]
-op = "Fadd"
-insts = ["MOVSD {out}, {0}", "ADDSD {out}, {1}"]
+vary = { elem = [1, 2], sfx = ["SS", "SD"] }
+insts = ["MOV{sfx} {out}, {0}", "ADD{sfx} {out}, {1}"]
 
 [[lowering]]
 op = "Fsub"
-when = { eq = ["elem", 1] }
-insts = ["MOVSS {out}, {0}", "SUBSS {out}, {1}"]
-
-[[lowering]]
-op = "Fsub"
-insts = ["MOVSD {out}, {0}", "SUBSD {out}, {1}"]
+vary = { elem = [1, 2], sfx = ["SS", "SD"] }
+insts = ["MOV{sfx} {out}, {0}", "SUB{sfx} {out}, {1}"]
 
 [[lowering]]
 op = "Fmul"
-when = { eq = ["elem", 1] }
-insts = ["MOVSS {out}, {0}", "MULSS {out}, {1}"]
-
-[[lowering]]
-op = "Fmul"
-insts = ["MOVSD {out}, {0}", "MULSD {out}, {1}"]
+vary = { elem = [1, 2], sfx = ["SS", "SD"] }
+insts = ["MOV{sfx} {out}, {0}", "MUL{sfx} {out}, {1}"]
 
 [[lowering]]
 op = "Fdiv"
-when = { eq = ["elem", 1] }
-insts = ["MOVSS {out}, {0}", "DIVSS {out}, {1}"]
-
-[[lowering]]
-op = "Fdiv"
-insts = ["MOVSD {out}, {0}", "DIVSD {out}, {1}"]
+vary = { elem = [1, 2], sfx = ["SS", "SD"] }
+insts = ["MOV{sfx} {out}, {0}", "DIV{sfx} {out}, {1}"]
 
 # ── Fneg / Fabs（符号位掩码：XORPS/ANDPD 与 XORPD/ANDPD）──
 
@@ -3602,43 +3586,27 @@ insts = [
 
 [[lowering]]
 op = "Fsqrt"
-when = { eq = ["elem", 1] }
-insts = ["MOVSS {out}, {0}", "SQRTSS {out}, {0}"]
-
-[[lowering]]
-op = "Fsqrt"
-insts = ["MOVSD {out}, {0}", "SQRTSD {out}, {0}"]
+vary = { elem = [1, 2], sfx = ["SS", "SD"] }
+insts = ["MOV{sfx} {out}, {0}", "SQRT{sfx} {out}, {0}"]
 
 # ── Fmin / Fmax ──
 
 [[lowering]]
 op = "Fmin"
-when = { eq = ["elem", 1] }
-insts = ["MOVSS {out}, {0}", "MINSS {out}, {1}"]
-
-[[lowering]]
-op = "Fmin"
-insts = ["MOVSD {out}, {0}", "MINSD {out}, {1}"]
+vary = { elem = [1, 2], sfx = ["SS", "SD"] }
+insts = ["MOV{sfx} {out}, {0}", "MIN{sfx} {out}, {1}"]
 
 [[lowering]]
 op = "Fmax"
-when = { eq = ["elem", 1] }
-insts = ["MOVSS {out}, {0}", "MAXSS {out}, {1}"]
-
-[[lowering]]
-op = "Fmax"
-insts = ["MOVSD {out}, {0}", "MAXSD {out}, {1}"]
+vary = { elem = [1, 2], sfx = ["SS", "SD"] }
+insts = ["MOV{sfx} {out}, {0}", "MAX{sfx} {out}, {1}"]
 
 # ── Fma：a*b + c（mul + add 序列）──
 
 [[lowering]]
 op = "Fma"
-when = { eq = ["elem", 1] }
-insts = ["MOVSS {out}, {0}", "MULSS {out}, {1}", "ADDSS {out}, {2}"]
-
-[[lowering]]
-op = "Fma"
-insts = ["MOVSD {out}, {0}", "MULSD {out}, {1}", "ADDSD {out}, {2}"]
+vary = { elem = [1, 2], sfx = ["SS", "SD"] }
+insts = ["MOV{sfx} {out}, {0}", "MUL{sfx} {out}, {1}", "ADD{sfx} {out}, {2}"]
 
 # ── [[pattern]]（S6）：Fadd(Fmul(a,b), c) → mul+add 融合 ──
 # 树型多 op 匹配：内部节点 Fmul 要求单 use、同块，整棵子树 fused 成 3 条
@@ -3660,41 +3628,25 @@ insts = ["MOVSD {out}, {a}", "MULSD {out}, {b}", "ADDSD {out}, {c}"]
 
 [[lowering]]
 op = "Ffloor"
-when = { eq = ["elem", 1] }
-insts = ["MOVSS {out}, {0}", "ROUNDSS_I {out}, {0}, 1"]
-
-[[lowering]]
-op = "Ffloor"
-insts = ["MOVSD {out}, {0}", "ROUNDSD_I {out}, {0}, 1"]
+vary = { elem = [1, 2], sfx = ["SS", "SD"] }
+insts = ["MOV{sfx} {out}, {0}", "ROUND{sfx}_I {out}, {0}, 1"]
 
 [[lowering]]
 op = "Fceil"
-when = { eq = ["elem", 1] }
-insts = ["MOVSS {out}, {0}", "ROUNDSS_I {out}, {0}, 2"]
-
-[[lowering]]
-op = "Fceil"
-insts = ["MOVSD {out}, {0}", "ROUNDSD_I {out}, {0}, 2"]
+vary = { elem = [1, 2], sfx = ["SS", "SD"] }
+insts = ["MOV{sfx} {out}, {0}", "ROUND{sfx}_I {out}, {0}, 2"]
 
 [[lowering]]
 op = "Fround"
-when = { eq = ["elem", 1] }
-insts = ["MOVSS {out}, {0}", "ROUNDSS_I {out}, {0}, 0"]
-
-[[lowering]]
-op = "Fround"
-insts = ["MOVSD {out}, {0}", "ROUNDSD_I {out}, {0}, 0"]
+vary = { elem = [1, 2], sfx = ["SS", "SD"] }
+insts = ["MOV{sfx} {out}, {0}", "ROUND{sfx}_I {out}, {0}, 0"]
 
 # ── Ftrunc：截断到 0（cvtt 无条件截断 + 往返；64 位整数域）──
 
 [[lowering]]
 op = "Ftrunc"
-when = { eq = ["elem", 1] }
-insts = ["MOVSS {out}, {0}", "CVTTSS2SI {g}, {0}", "CVTSI2SS {out}, {g}"]
-
-[[lowering]]
-op = "Ftrunc"
-insts = ["MOVSD {out}, {0}", "CVTTSD2SI {g}, {0}", "CVTSI2SD {out}, {g}"]
+vary = { elem = [1, 2], sfx = ["SS", "SD"] }
+insts = ["MOV{sfx} {out}, {0}", "CVTT{sfx}2SI {g}, {0}", "CVTSI2{sfx} {out}, {g}"]
 
 # ── Fpext（f32 → f64）/ Fptrunc（f64 → f32）──
 
@@ -4517,25 +4469,14 @@ insts = ["NOP"]
 
 [[lowering]]
 op = "Frem"
-when = { eq = ["elem", 1] }
+vary = { elem = [1, 2], sfx = ["SS", "SD"] }
 insts = [
-    "MOVSS {f1}, {0}",
-    "DIVSS {f1}, {1}",
-    "ROUNDSS_I {f1}, {f1}, 3",
-    "MULSS {f1}, {1}",
-    "MOVSS {out}, {0}",
-    "SUBSS {out}, {f1}",
-]
-
-[[lowering]]
-op = "Frem"
-insts = [
-    "MOVSD {f1}, {0}",
-    "DIVSD {f1}, {1}",
-    "ROUNDSD_I {f1}, {f1}, 3",
-    "MULSD {f1}, {1}",
-    "MOVSD {out}, {0}",
-    "SUBSD {out}, {f1}",
+    "MOV{sfx} {f1}, {0}",
+    "DIV{sfx} {f1}, {1}",
+    "ROUND{sfx}_I {f1}, {f1}, 3",
+    "MUL{sfx} {f1}, {1}",
+    "MOV{sfx} {out}, {0}",
+    "SUB{sfx} {out}, {f1}",
 ]
 
 # ═══════════════════ 参数化模板（v18 S2c：movzx/movsx 的 R8/R16 对）═══════════════════

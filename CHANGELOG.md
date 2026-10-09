@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：x86 浮点 lowering 去重（13 组 → `vary` 族）
+
++ 把"同一 op 的两条规则只差 `elem` 谓词与 `SS`/`SD` 后缀"的 **13 组**折成一条 `vary` 规则：
+  `Fsub`/`Fadd`/`Fmul`/`Fdiv`/`Ftrunc`/`Frem` 等（`vary = { elem = [1, 2], sfx = ["SS", "SD"] }`
+  + 模板里 `{sfx}` 替换）。
++ `x86.toml` 的 `[[lowering]]` 块数 **191 → 184**（外形不符的 3 组**不动**，不硬凑）。
++ 逐簇验证：每组并入后跑 `validate` + `lint` + `forge-tests`（JIT 矩阵 58 passed）；本批末跑整仓门禁全绿。
+
 ### Added (2026-10-08) — ISA-DSL v21 W5：`family.vary` 落地（zip 语义与 lowering 共用一处）
 
 + **`vary` 的 zip 语义抽成唯一实现** `Lowering::zip_vary`：校验（非空、各列表等长）后按下标
