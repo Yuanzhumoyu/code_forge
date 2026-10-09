@@ -867,6 +867,54 @@ asm = "n {dst}, {src}"
         assert_eq!(modrm.rm.as_deref(), Some("src"));
     }
 
+    /// **v21 W5**：降级重载展开——一条**宽度无关**的规则，引用到两条只在 `word_size` 上
+    /// 不同的指令时，自动展开成两条带 `when = { eq = ["rs1_width", …] }` 的规则
+    /// （目标第 (4) 项：不必再手写宽度分派）。
+    #[test]
+    fn width_agnostic_rule_expands_by_word_size() {
+        let src = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "fixed"
+bits = 32
+[reg.gpr64]
+count = 16
+[operand.g]
+kind = "reg"
+class = "gpr64"
+[[instructions]]
+name = "ADD"
+group = "addw"
+word_size = 64
+opcode = 0x10
+ops = ["dst:g:out", "src:g", "src2:g"]
+asm = "add {dst}, {src}, {src2}"
+[[instructions]]
+name = "ADDW"
+group = "addw"
+word_size = 32
+opcode = 0x11
+ops = ["dst:g:out", "src:g", "src2:g"]
+asm = "addw {dst}, {src}, {src2}"
+[[lowering]]
+op = "Copy"
+insts = ["ADD {out}, {0}, {1}"]
+"#;
+        let m = crate::dsl::parse_and_validate(src).expect("谱合法");
+        let rules: Vec<_> = m.lowering.iter().filter(|r| r.op.name() == "Copy").collect();
+        assert_eq!(rules.len(), 2, "应展开成两条（每条候选一条）");
+        let mut names: Vec<String> = rules
+            .iter()
+            .map(|r| r.insts[0].split_whitespace().next().unwrap().to_string())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["ADD", "ADDW"], "行首名字应换成各候选名");
+        for r in &rules {
+            let w = format!("{:?}", r.when);
+            assert!(w.contains("rs1_width"), "应带 rs1_width 分派：{w}");
+        }
+    }
     /// **v21 W5**：`[family.<名>]` 与等价 `[[templates]]` 展开后**指令集逐条相同**，
     /// 且族名自动成为各行的 `group`（"族名即多态引用名"）。
     #[test]

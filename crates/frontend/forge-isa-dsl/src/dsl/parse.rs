@@ -63,6 +63,8 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
             msg,
         }
     })?;
+    // v21 W5：降级重载展开（`word_size` 分派）——指令表齐了之后、生成之前。
+    crate::dsl::model::expand_lowering_overloads(&mut model).map_err(anchor_err)?;
     // 命名位集合表摊平进槽（`kind = "bits"`）：生成器与反汇编直接用槽上的条目，
     // 不再回头查 `[conventions.bitsets]`。
     model.resolve_bitset_tables().map_err(anchor_err)?;

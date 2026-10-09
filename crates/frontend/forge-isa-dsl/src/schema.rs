@@ -257,6 +257,7 @@ pub const SECTIONS: &[Section] = &[
             "effect",
             "roles",
             "data_width",
+            "word_size",
             "implicit_regs",
             "reloc",
             "width",

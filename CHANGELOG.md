@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W5：降级重载（`word_size` + 自动按宽度选行）
+
++ 新指令级键 **`word_size`**（位）：本条**指令形态**操作的数据宽度。与 `data_width`（纯搬运专用、
+  供搬移族派生）是两件事——`word_size` 的消费者是**降级重载**。
++ **自动选行**：一条 `[[lowering]]` 规则**没有 `when`**、且行首 имен 解析到多条**只在 `word_size`
+  上不同**的指令（同 `group`）时，引擎展开成"每条候选一条规则"，各自加
+  `when = { eq = ["rs1_width", <该候选 word_size>] }`，并把行首名字换成该候选名。
+  有 `when` 的规则不动（作者显式意图）。
++ 意义：这是目标第 (4) 项（宽度分派清理，52 条）的**前置**——作者从此只写一条宽度无关的规则。
++ 单测：宽度无关规则 → 展开成两条带 `rs1_width` 分派的规则（行首名字各换成候选名）。
++ 三方针同步（schema / 文档速查表 / `isa-dsl.schema.json`）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W5：x86 lowering 去重 +1（任意单差异对）
 
 + 打法推广：不只认 `SS`/`SD`，而是**自动求两条 insts 的单一连续差异段**（等长、前后缀全同），

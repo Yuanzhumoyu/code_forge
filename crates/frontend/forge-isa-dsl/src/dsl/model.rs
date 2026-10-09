@@ -105,6 +105,89 @@ pub struct MachineSection {
     pub vector_by_ref_bytes: Option<u16>,
 }
 
+/// **降级重载展开**（v21 W5，目标第 (4) 项的前置）：一条 `[[lowering]]` 规则**没有 `when`**、
+/// 且它的指令名解析到多条**只在 `word_size` 上不同**的指令时，展开成"每条候选一条规则"，
+/// 各自加 `when = { eq = ["rs1_width", <该候选的 word_size>] }`，并把行首名字换成该候选名。
+///
+/// 作者因此只写一条宽度无关的规则，**不必再手写宽度分派**。有 `when` 的规则不动（作者显式意图）；
+/// 候选缺 `word_size` 或值不唯一时也不动。
+pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
+    let mut cands: std::collections::BTreeMap<String, Vec<(String, u16)>> =
+        std::collections::BTreeMap::new();
+    for inst in &m.instructions {
+        let Some(w) = inst.word_size else {
+            continue;
+        };
+        for key in [Some(inst.name.clone()), inst.reference.clone()]
+            .into_iter()
+            .flatten()
+        {
+            cands.entry(key).or_default().push((inst.name.clone(), w));
+        }
+    }
+    // 只保留"候选都带 word_size 且值互不相同"的族名（否则无从分派）
+    cands.retain(|_, v| {
+        let ws: std::collections::BTreeSet<u16> = v.iter().map(|(_, w)| *w).collect();
+        v.len() >= 2 && ws.len() == v.len()
+    });
+    if cands.is_empty() {
+        return Ok(());
+    }
+    // **名字 → 族名**：规则行首通常写的是**指令名**（如 `ADD`），族名（`group`）才是
+    // 多态引用名 ⇒ 先用名字定位指令，再取其族名下的候选。
+    let mut name_to_ref: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    for inst in &m.instructions {
+        if let Some(r) = &inst.reference {
+            name_to_ref.insert(inst.name.clone(), r.clone());
+        }
+    }
+    let old = std::mem::take(&mut m.lowering);
+    let mut out = Vec::with_capacity(old.len());
+    for rule in old {
+        if rule.when.is_some() {
+            out.push(rule);
+            continue;
+        }
+        let head = rule
+            .insts
+            .iter()
+            .find(|l| !l.trim().is_empty() && !l.trim().starts_with('#'))
+            .map(|l| l.trim().split_whitespace().next().unwrap_or("").to_string())
+            .unwrap_or_default();
+        // head 可能是**指令名**（取其族名）或**族名**本身
+        let key = name_to_ref.get(&head).cloned().unwrap_or_else(|| head.clone());
+        let Some(list) = cands.get(&key).cloned() else {
+            out.push(rule);
+            continue;
+        };
+        for (name, w) in list {
+            let mut r = rule.clone();
+            r.insts = r
+                .insts
+                .iter()
+                .map(|l| match l.trim_start().strip_prefix(&head) {
+                    Some(rest) => format!("{name}{rest}"),
+                    None => l.clone(),
+                })
+                .collect();
+            r.when = Some(toml::Value::Table(
+                [(
+                    "eq".to_string(),
+                    toml::Value::Array(vec![
+                        toml::Value::String("rs1_width".to_string()),
+                        toml::Value::Integer(i64::from(w)),
+                    ]),
+                )]
+                .into_iter()
+                .collect(),
+            ));
+            out.push(r);
+        }
+    }
+    m.lowering = out;
+    Ok(())
+}
 impl IsaModel {
     /// 溢出 scratch：`[machine].spill_scratch`（**唯一来源**，v20 A5-3 起
     /// `[abi].scratch` 已删除）。
@@ -2390,7 +2473,14 @@ pub struct Instruction {
     /// 约束：只能写在**纯搬运**指令上（一个目的槽 + 一个来源槽；形状不干净 ⇒ 生成期报错）。
     #[serde(default, rename = "data_width")]
     pub data_width: Option<u16>,
-    /// 隐式破坏的物理寄存器名（如 cqo 的 RDX、idiv 的 RAX/RDX）——regalloc
+    /// **字宽**（v21 W5，位）：本条**指令形态**所操作的数据宽度。
+    ///
+    /// 与 [`Instruction::data_width`]（纯搬运专用，供搬移族派生）是**两件事**：
+    /// `word_size` 的消费者是**降级重载**——一条 `[[lowering]]` 规则引用的名字若解析到
+    /// 多条只在 `word_size` 上不同的指令，引擎按操作数实际宽度**自动选行**，
+    /// 作者不必再手写 `when = { eq = ["rs1_width", …] }`。
+    #[serde(default, rename = "word_size")]
+    pub word_size: Option<u16>,    /// 隐式破坏的物理寄存器名（如 cqo 的 RDX、idiv 的 RAX/RDX）——regalloc
     /// 在本指令点避开（MachineInst::clobbers）。与 lowering 模板的显式物理
     /// 寄存器（collect_phys_clobbers）互补：这是指令自身的隐式写。
     #[serde(default)]
