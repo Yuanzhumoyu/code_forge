@@ -166,7 +166,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[conventions.bitsets.<table>]` | — | — | 命名位集合表（kind = "bits" 的槽用）：表名 → （名字 → 位）——源文本是名字拼接，编码取位或（允许额外键） |
 | `[conventions.imm_names.<table>]` | — | — | 命名立即数表（kind = "imm" 的槽用 `names` 指名）：表名 → （名字 → 值）——一个名字 = 一个值；解析认名字也认数字，渲染时值在表里就写名字（允许额外键） |
 | `[[conventions.imm_fn]]` | `name` `text` `expr` | — | 立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值） |
-| `[conventions.mem]` | `templates` | `size_keywords` | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
+| `[conventions.mem]` | `templates` | — | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
 | `[enum.<表名>]` | — | `kind` `entries`† | 命名取值表：kind = value（名字 = 值；带 `ir` 的那张是条件码表）\| bits（名字拼接、按位或）（允许额外键） |
 | `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` `classes` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `fields` `segments` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖） |
@@ -730,13 +730,15 @@ expr = "{0} & 0xffff"
 （`disassemble` 的输出不能随解析顺序漂移），后者恰恰常常不止一种。
 
 ```toml
-[conventions.mem]
-templates = [
+[operand.mem]
+kind = "mem"
+class = "gpr64"
+text = [
   "{size}[{base}+{index}*{scale}+{disp}]",  # 第 0 条 = 渲染形态（也是解析首选）
   "{size}{disp}[{base}]",                   # 解析专用备选：GAS Intel 的 disp[base]
   "{size}[{disp}]",                         # **无基址**写法：只写地址（绝对寻址）
 ]
-size_keywords = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"]
+size_words = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"]
 ```
 
 - **第 0 条 = 反汇编渲染形态**，其余只参与解析：按列表序逐条试，第一条整条走通的赢。
@@ -754,11 +756,12 @@ size_keywords = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"
   （`{disp}` 的 `+` 前缀额外对非正位移抑制——`-8` 不写成 `+-8`）；紧跟在**必需**组件
   前、或位于末尾的字面量恒发出。**紧邻 `{size}` 的字面量例外**——它不是 `{size}` 的
   条件前缀（否则 `qword ptr [rax]` 的 `[` 会随尺寸前缀一起消失）。
-- `{size}` 吃掉 `size_keywords` 里的任一关键字（大小写按 `[meta].mnemonic_case`），
+- `{size}` 吃掉 `[operand.<mem>].size_words` 里的任一关键字（大小写按 `[meta].mnemonic_case`；
+  v21 W7 起**唯一**的声明处——旧键 `[conventions.mem].size_keywords` 已撤，写了会被拒），
   **值不进 `MemRef`**：操作数宽度由槽 /`opsize` 决定，尺寸前缀只是给人读的冗余提示
   （`mov QWORD PTR [rsp-16], rax` 与 `mov [rsp-16], rax` 编出同样的字节）。渲染时它
   输出空串，所以 `disassemble → assemble` 仍然闭合。模板里用了 `{size}` 却没声明
-  `size_keywords` ⇒ 生成期报错。
+  `size_words` ⇒ 生成期报错。
 - **源宽度只有尺寸关键字能表达时，把关键字写成模板字面量**（v20 V10）：`movzx eax, byte ptr
   [rbx]` 与 `movzx eax, word ptr [rbx]` 的差别在**操作码**（`0F B6` / `0F B7`），没有任何
   寄存器能表达"源读几字节"——靠 `{size}` 提示的话两条写法文本完全一样（`{size}` 不进签名），

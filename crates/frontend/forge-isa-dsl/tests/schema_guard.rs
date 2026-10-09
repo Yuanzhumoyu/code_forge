@@ -41,6 +41,11 @@ fn read_lf(path: &Path) -> Option<String> {
 /// 每条都要有理由：新增内部字段时必须来这里登记（否则守卫报"模型有、schema 无"）。
 const INTERNAL_FIELDS: &[(&str, &str, &str)] = &[
     (
+        "MemTemplate",
+        "size_keywords",
+        "内部载体（v21 W7）：只由 [operand.<mem>].size_words 写入，TOML 面已撤",
+    ),
+    (
         "IsaModel",
         "templates",
         "内部载体（v21 W5）：[family.<名>] 降级进它，TOML 面已撤",

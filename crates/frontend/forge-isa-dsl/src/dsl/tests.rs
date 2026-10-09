@@ -3120,19 +3120,19 @@ asm = "add {dst}"
     let bad = base.replace(r#"text = ["{disp}({base})"]"#, r#"text = []"#);
     let err = parse_and_validate(&bad).unwrap_err().to_string();
     assert!(err.contains("templates"), "err: {err}");
-    // 用了 {size} 却没说 size_keywords → 报错
+    // 用了 {size} 却没说 size_words → 报错（v21 W7：关键字只在 [operand.<mem>].size_words 声明 ✗）
     let bad = base.replace(
         r#"text = ["{disp}({base})"]"#,
         r#"text = ["{size}{disp}({base})"]"#,
     );
     let err = parse_and_validate(&bad).unwrap_err().to_string();
-    assert!(err.contains("size_keywords"), "err: {err}");
-    // 声明了 size_keywords 但模板里没 {size} → 合法（表只是能力申报）
+    assert!(err.contains("size_words"), "err: {err}");
+    // 声明了 size_words 但模板里没 {size} → 合法（表只是能力申报）
     let ok = base.replace(
         r#"text = ["{disp}({base})"]"#,
         "text = [\"{disp}({base})\"]\nsize_words = [\"qword ptr\"]",
     );
-    parse_and_validate(&ok).expect("多余的 size_keywords 不报错");
+    parse_and_validate(&ok).expect("多余的 size_words 不报错");
 }
 
 /// 内存模板列表（v20 V10）：第 0 条渲染、其余解析专用；`{size}` 关键字表。

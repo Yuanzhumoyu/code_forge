@@ -1144,17 +1144,18 @@ fn validate_conventions(m: &IsaModel) -> Result<(), String> {
         if used_size {
             if mt.size_keywords.is_empty() {
                 return Err(
-                    "[conventions.mem]: 模板里用了 `{size}`，必须声明 `size_keywords`\
-                     （它列出这个 ISA 认的尺寸前缀写法，如 [\"qword ptr\", \"dword ptr\"]）"
+                    "[operand.<mem>]: 模板里用了 `{size}`，必须声明 `size_words`\
+                     （它列出这个 ISA 认的尺寸前缀写法，如 [\"qword ptr\", \"dword ptr\"]；\
+                     v21 W7 起唯一的声明处）"
                         .into(),
                 );
             }
             for kw in &mt.size_keywords {
                 if kw.trim().is_empty() {
-                    return Err("[conventions.mem] size_keywords: 关键字不能为空".into());
+                    return Err("[operand.<mem>].size_words: 关键字不能为空".into());
                 }
                 super::codegen::mem::check_literal(kw)
-                    .map_err(|e| format!("[conventions.mem] size_keywords({kw:?}): {e}"))?;
+                    .map_err(|e| format!("[operand.<mem>].size_words({kw:?}): {e}"))?;
             }
         }
     }

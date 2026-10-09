@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W7 第七片：尺寸关键字**只认** `[operand.<mem>].size_words`
+
++ 清单 §9 的"尺寸关键字属于 `[operand.mem].size_words`"落地 ✗：**撤掉**旧键
+  `[conventions.mem].size_keywords`（写它现在被拒 ✗）——`MemTemplate.size_keywords` 改成
+  `#[serde(skip)]` 的**内部载体** ✗，只由 `[operand.<mem>].size_words` 降级时写入 ✗
+  （与 `IsaModel.templates` / `Template.from_family` 同一手法 ✗），并在 `INTERNAL_FIELDS` 登记 ✗。
++ 实测：**三谱本来就已经用新键** ✗（x86 `[operand.mem].size_words` ✗；riscv64/arm64 不用 `{size}` ✗）
+  ⇒ 本片是"删旧家"而非迁移 ✗，生成物与谱文本零变化 ✔。
++ 三方针同步 ✗：模型（`skip` ✗）+ schema（`[conventions.mem]` 的可选键清空 ✗）+ 文档键表该行 ✗
+  + 文档 TOML 示例（改为 `[operand.mem]` + `text`/`size_words` ✗）+ `{size}` 散文说明 ✗
+  + 生成物 `isa-dsl.schema.json` ✗；报错文案与单测断言同步指向新键 ✗。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Added (2026-10-08) — ISA-DSL v21 W7 第六片：`{name:affix}` 的**解析语义**
 
 + 解析侧（`gen_assemble_try_tok` ✗）现在**先尝试吃词缀** ✗：写法里带 `{n:affix}` 时，源文本可以带该词缀 ✗。

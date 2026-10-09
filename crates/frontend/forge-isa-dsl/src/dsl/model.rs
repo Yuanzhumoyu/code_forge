@@ -1214,7 +1214,10 @@ pub struct MemTemplate {
     /// `{size}` 组件接受的关键字（如 `"qword ptr"`），大小写按 `[meta].mnemonic_case`。
     /// 解析时吃掉一个（缺席不算错）；**值不进 `MemRef`**——操作数宽度由槽/`opsize`
     /// 决定，尺寸前缀只是给人读的冗余提示，渲染时输出空串。
-    #[serde(default)]
+    ///
+    /// **只由 `[operand.<mem>].size_words` 写入**（v21 W7 ✗）：TOML 里不再接受
+    /// `[conventions.mem].size_keywords` 这个旧键 ✗——`operand_decl` 降级时填进来 ✗。
+    #[serde(default, skip)]
     pub size_keywords: Vec<String>,
 }
 

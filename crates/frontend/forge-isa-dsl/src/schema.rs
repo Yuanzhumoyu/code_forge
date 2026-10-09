@@ -202,7 +202,7 @@ pub const SECTIONS: &[Section] = &[
         path: "[conventions.mem]",
         model: "MemTemplate",
         required: &["templates"],
-        optional: &["size_keywords"],
+        optional: &[],
         flatten: &[],
         additional: false,
         doc: "内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size）",
