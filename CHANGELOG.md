@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5：x86 首条宽度分派删除（`Fstore`，累计 25 条）
+
++ `MOVSS_MEM_R`/`MOVSD_MEM_R` 补 `group = "fstore_x86"` + `word_size`（32/64 位），把 `Fstore` 的
+  两条 `when = { eq = ["rs1_width", …] }` 折成**一条宽度无关**规则 ⇒ x86 `[[lowering]]` 块数
+  **181 → 180**。
++ 第 (4) 项累计删除 **25 / 52** 条（riscv64 24 + x86 1）。棘轮随动（`lint.refs.x86` 1 → 2）。
++ `validate` + `lint` 干净；JIT 矩阵 58/0；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
++ 备注：自动折叠脚本（按整组收集成员）本轮尝试失败并已弃用（它在 x86 上改出了一条 `when` 含未知
+  属性 `r` 的规则）；x86 这类"两条规则中夹着注释块"的形态，**手工折叠更稳**（本轮即如此）。
+
 ### Added (2026-10-08) — ISA-DSL v21 W5：降级重载支持**可选分派键** `dispatch`
 
 + `[[lowering]]` 新增可选键 **`dispatch = "<谓词属性>"`**（缺省 `rs1_width`）：重载自动补的

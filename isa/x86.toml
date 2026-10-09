@@ -1482,6 +1482,8 @@ asm = "movsd {dst}, [{src}]"
 
 [[instructions]]
 name = "MOVSD_MEM_R"
+group = "fstore_x86"
+word_size = 64
 form = "MRR_MEM_0F_PFX32_SEG"
 bind = { rm = "[src2]" }
 
@@ -1669,6 +1671,8 @@ asm = "movss {dst}, [{src}]"
 
 [[instructions]]
 name = "MOVSS_MEM_R"
+group = "fstore_x86"
+word_size = 32
 form = "MRR_MEM_0F_PFX32_SEG"
 bind = { rm = "[src2]" }
 
@@ -3668,15 +3672,10 @@ insts = ["MOVSD_R_MEM {out}, [{0}]"]
 [[lowering]]
 op = "Fstore"
 # Fstore 无结果指令——`elem`（取 results）恒 None，会永远落 movsd
-# （F32 存 8 字节 → 覆盖相邻槽；float_array_construct/SIMD 反汇编实证
-# movsd 而非 movss）。改按 rs1_width（args.first() = 被存值，F32 → 32）
-# 分派，与 Fload 的 elem（结果类型）语义对称。
-when = { eq = ["rs1_width", 32] }
+# （F32 存 8 字节 → 覆盖相邻槽）。宽度改由**降级重载**按 `rs1_width` 选行：
+# `MOVSS_MEM_R`/`MOVSD_MEM_R` 同族 `fstore_x86`（word_size 32/64），
+# 不必再手写两条 `when` 分派。
 insts = ["MOVSS_MEM_R [{0}], {1}"]
-
-[[lowering]]
-op = "Fstore"
-insts = ["MOVSD_MEM_R [{0}], {1}"]
 
 # ── 转换：Sitofp（整数 → 浮点；rs1_width 源宽度、elem 结果类型）──
 
