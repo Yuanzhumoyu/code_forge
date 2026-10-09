@@ -4858,3 +4858,19 @@ fn asm_immfn_section_lowers_to_conventions_imm_fn() {
     let err = super::parse_and_validate(&old).unwrap_err().to_string();
     assert!(err.contains("imm_fn"), "旧键应被拒并点名：{err}");
 }
+
+/// v21 W7：`{n?}` 的**渲染语义**（按取值缺省省略，连同紧邻字面词缀一起不输出）——
+/// 生成物里应出现在场判定 `__p{n}` 与条件词缀 `__l{n}`。
+#[test]
+fn optional_placeholder_renders_conditionally() {
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[instructions]]\nname = \"OPT\"\nform = \"C\"\nopcode = 0x98\n\
+ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"opt {dst}, {cond?}\"",
+    );
+    let m = super::parse_and_validate(&doc).expect("谱合法");
+    let s = super::codegen::generate(&m).expect("生成").to_string();
+    let flat: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    assert!(flat.contains("__p1"), "应有在场判定 __p1：{flat}");
+    assert!(flat.contains("__l1"), "紧邻字面词缀应条件输出 __l1：{flat}");
+}

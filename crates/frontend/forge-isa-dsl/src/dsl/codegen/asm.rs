@@ -23,30 +23,72 @@ pub(crate) fn gen_disassemble(infos: &[InstInfo]) -> Result<TokenStream, String>
         // 完整格式 = 整条 asm（前导字面 + 操作数模板段序列渲染）
         let segs = parse_template(&info.inst.asm)?;
         validate_segs(&segs, info)?;
+        // v21 W7：`{n?}` 按**取值缺省**省略——渲染文本为 "0" 时，连同**紧邻的字面词缀**
+        // 一起不输出（判据在数据里，不需要新声明；未写 `?` 的占位符行为不变）。
+        let mut prev_lit: Option<usize> = None;
         for seg in segs {
             match seg {
-                Seg::Lit(l) => fmt.push_str(&l),
-                Seg::Op { idx: n, optional: _, affix } => {
+                Seg::Lit(l) => {
+                    prev_lit = Some(fmt.len());
+                    fmt.push_str(&l);
+                }
+                Seg::Op { idx: n, optional, affix } => {
                     let (_, fid, slot, _) = &info.operands[n];
                     let local = format_ident!("__o{n}");
                     let expr = render_expr(slot, fid);
-                    locals.push(quote! { let #local = #expr; });
-                    // v21 W7：`{name:affix}` ⇒ 词缀**随组件出现** ✗；`+` 对**已带 `-`** 的渲染值抑制 ✗。
+                    if optional {
+                        let present = format_ident!("__p{n}");
+                        locals.push(quote! { let #present = #expr != "0"; });
+                        locals.push(quote! {
+                            let #local = if #present { #expr } else { String::new() };
+                        });
+                        // 紧邻的字面词缀改成**条件输出**：省略时它也不出现。
+                        if let Some(start) = prev_lit {
+                            let tail = fmt.split_off(start);
+                            let cond = format_ident!("__l{n}");
+                            let tail_lit =
+                                syn::LitStr::new(&tail, proc_macro2::Span::call_site());
+                            locals.push(quote! {
+                                let #cond = if #present { #tail_lit } else { "" };
+                            });
+                            fmt.push_str(&format!("{{__l{n}}}"));
+                        }
+                    } else {
+                        locals.push(quote! { let #local = #expr; });
+                    }
+                    // v21 W7：`{name:affix}` ⇒ 词缀**随组件出现**；`+` 对**已带 `-`**
+                    // 的渲染值抑制；配 `?` 时组件缺席则词缀也不出现。
                     match affix {
                         Some(a) => {
                             let al = format_ident!("__a{n}");
-                            let a_lit = syn::LitStr::new(a.as_str(), proc_macro2::Span::call_site());
-                            locals.push(quote! {
-                                let #al = if #a_lit == "+" && #local.starts_with('-') {
-                                    ""
-                                } else {
-                                    #a_lit
-                                };
-                            });
+                            let a_lit =
+                                syn::LitStr::new(a.as_str(), proc_macro2::Span::call_site());
+                            if optional {
+                                // 与上面那个 `if optional` 块是**两个作用域**，这里要重新取名字。
+                                let present = format_ident!("__p{n}");
+                                locals.push(quote! {
+                                    let #al = if !#present {
+                                        ""
+                                    } else if #a_lit == "+" && #local.starts_with('-') {
+                                        ""
+                                    } else {
+                                        #a_lit
+                                    };
+                                });
+                            } else {
+                                locals.push(quote! {
+                                    let #al = if #a_lit == "+" && #local.starts_with('-') {
+                                        ""
+                                    } else {
+                                        #a_lit
+                                    };
+                                });
+                            }
                             fmt.push_str(&format!("{{__a{n}}}{{__o{n}}}"));
                         }
                         None => fmt.push_str(&format!("{{__o{n}}}")),
                     }
+                    prev_lit = None;
                 }
             }
         }
