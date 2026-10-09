@@ -3826,3 +3826,37 @@ pub struct VariantFieldValue {
     pub by: std::collections::BTreeMap<i64, u64>,
     pub default: u64,
 }
+/// IR 整数条件的**逆**（宿主契约层：与 ISA 无关，编码仍由谱的数据决定）。
+///
+/// v21 W6：`{cc_inv}` 占位符用它把"IR 条件"翻成"逆条件"，再去 `[enum.cond]` 反查本 ISA 编码
+/// ——替换原先按位取反的硬编码（那只对 x86 的 `code ^ 1` 成立）。
+pub fn ir_inverse_cond(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "eq" => "ne",
+        "ne" => "eq",
+        "slt" => "sge",
+        "sge" => "slt",
+        "sgt" => "sle",
+        "sle" => "sgt",
+        "ult" => "uge",
+        "uge" => "ult",
+        "ugt" => "ule",
+        "ule" => "ugt",
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod ir_inverse_cond_tests {
+    use super::ir_inverse_cond;
+
+    #[test]
+    fn pairs_are_involutive_and_total_on_host_names() {
+        for n in ["eq", "ne", "slt", "sge", "sgt", "sle", "ult", "uge", "ugt", "ule"] {
+            let inv = ir_inverse_cond(n).expect("宿主条件名都有逆");
+            assert_eq!(ir_inverse_cond(inv), Some(n), "{n} 的逆应可逆");
+            assert_ne!(inv, n, "{n} 的逆不该是自己");
+        }
+        assert_eq!(ir_inverse_cond("nope"), None);
+    }
+}

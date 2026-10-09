@@ -644,6 +644,18 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             xreg: "0u32",
             ctor: Some(|_| quote! { __cc }),
         },
+        // v21 W6：**条件取反**——IR 条件的逆（eq↔ne、slt↔sge…）在本 ISA 的编码。
+        // 编码不是硬编码，而是从 `[enum.cond]` 反查（见 `lowering.rs` 的 `__cc_inv`）。
+        Ph {
+            name: "{cc_inv}",
+            kind: PhKind::Cond,
+            loose: false,
+            token_kind: "cond",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { __cc_inv }),
+        },
     ]
 }
 

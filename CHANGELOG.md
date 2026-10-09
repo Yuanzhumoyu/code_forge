@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W6 第一片：`{cc_inv}` 占位符（条件取反）
+
++ `lowering` 的 `insts` 现可用 **`{cc_inv}`**：IR 条件的**逆**在本 ISA 的编码。
+  逆名由宿主契约层 `model::ir_inverse_cond` 给（eq↔ne、slt↔sge、sgt↔sle、ult↔uge、ugt↔ule ✗，
+  与 ISA 无关 ✗），**编码仍从 `[enum.cond]` 反查**（数据驱动 ✗，不硬编码 `code ^ 1`——那只对 x86 成立 ✗）。
++ 生成侧**按需发射**：规则只用 `{cc}` 就只发 `__cc`，只用 `{cc_inv}` 就只发 `__cc_inv`，
+  都不用则两条都不发（延续 S8d 的"零死代码"口径 ✗）。
++ 新增单测：逆配对**可逆且非自反**、未知名返回 `None` ✔。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Fixed (2026-10-08) — ISA-DSL v21 W5 遗留：`explain` 的 provenance 打印族感知
 
 + `forge-isa explain` 原先恒打印 `[[templates.<名>]]`（族降级来的实例也照旧）——这是最后

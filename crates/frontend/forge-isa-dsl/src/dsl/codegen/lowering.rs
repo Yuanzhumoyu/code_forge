@@ -127,7 +127,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             // **宿主函数**把它折成 IR 条件的规范名（`"eq"`…`"uge"`），再查 ISA 的
             // `[conventions.cond]`（按 `ir` 字段）得到**本 ISA 的编码**——生成代码里
             // 不出现 `IntCC`，映射完全是数据（v18 S3b；此前是硬编码的 x86 setcc 表）。
-            let cc_bind: TokenStream = if rule.insts.iter().any(|s| s.contains("{cc}")) {
+            let uses_cc = rule.insts.iter().any(|s| s.contains("{cc}"));
+            let uses_cc_inv = rule.insts.iter().any(|s| s.contains("{cc_inv}"));
+            let cc_bind: TokenStream = if uses_cc || uses_cc_inv {
                 let arms: Vec<TokenStream> = model
                     .cond_ir_codes()
                     .into_iter()
@@ -137,16 +139,56 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                         quote! { Some(#lit) => #c, }
                     })
                     .collect();
+                // v21 W6：`{cc_inv}` 用**逆条件**反查同一张表（`ir_inverse_cond` 给逆名，
+                // 编码仍是谱的数据）。只在规则真的用到时才发射那一条绑定。
+                let cc_ir = model.cond_ir_codes();
+                let inv_arms: Vec<TokenStream> = if uses_cc_inv {
+                    cc_ir
+                        .iter()
+                        .filter_map(|(name, _)| {
+                            let inv = crate::dsl::model::ir_inverse_cond(name)?;
+                            let code = cc_ir
+                                .iter()
+                                .find(|(n, _)| *n == inv)
+                                .map(|(_, c)| *c as u8)
+                                .unwrap_or(0);
+                            let lit = syn::LitStr::new(name, proc_macro2::Span::call_site());
+                            Some(quote! { Some(#lit) => #code, })
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                let cc_plain: TokenStream = if uses_cc {
+                    quote! {
+                        let __cc: u8 = match crate::prelude::intcc_name(
+                            ctx.current_immediates.first().copied().unwrap_or(0) as u8,
+                        ) {
+                            #(#arms)*
+                            // 未知码 = 坏 IR（Verifier 的 MissingCondImmediate 会先报）；
+                            // 本 ISA 未映射的条件已在**编译期**拒绝（validate 层），
+                            // 故这里不猜条件。
+                            _ => 0,
+                        };
+                    }
+                } else {
+                    quote! {}
+                };
+                let cc_inverted: TokenStream = if uses_cc_inv {
+                    quote! {
+                        let __cc_inv: u8 = match crate::prelude::intcc_name(
+                            ctx.current_immediates.first().copied().unwrap_or(0) as u8,
+                        ) {
+                            #(#inv_arms)*
+                            _ => 0,
+                        };
+                    }
+                } else {
+                    quote! {}
+                };
                 quote! {
-                    let __cc: u8 = match crate::prelude::intcc_name(
-                        ctx.current_immediates.first().copied().unwrap_or(0) as u8,
-                    ) {
-                        #(#arms)*
-                        // 未知码 = 坏 IR（Verifier 的 MissingCondImmediate 会先报）；
-                        // 本 ISA 未映射的条件已在**编译期**拒绝（validate 层），
-                        // 故这里不猜条件。
-                        _ => 0,
-                    };
+                    #cc_plain
+                    #cc_inverted
                 }
             } else {
                 // 不用 `{cc}` ⇒ 没有任何 token 引用 `__cc` ⇒ 不发射（此前的
