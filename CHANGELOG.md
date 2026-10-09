@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W7 第五片：`{name:affix}` 的**渲染语义**
+
++ 渲染侧（`gen_disassemble` ✗）实现词缀：`{n:affix}` ⇒ 词缀**随组件出现** ✗，且 **`+` 对已带 `-`** 的
+  渲染值**抑制** ✗（生成期算出 `__aN` 局部，格式串用 `{__aN}{__oN}` ✗）——即设计案 §6.9 的原话 ✗。
++ 未做（下一片 ✗）：**解析侧**接受词缀 ✗（现在解析只认 `{n}` 本身 ✗）、`{name?}` 的**省略**语义 ✗
+  （"连同紧邻字面词缀一起省略" ✗ 需要"该操作数是否在场"的信号 ✗ —— 设计案未定义该信号从哪来 ✗，
+  需先定：是按**取值缺省**还是按**谱面声明** ✗）。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Added (2026-10-08) — ISA-DSL v21 W7 第四片：占位修饰 `{name?}` / `{name:affix}` 的**语法层**
 
 + `Seg::Op(usize)` 扩成 **`Seg::Op { idx, optional, affix }`** ✗：`parse_template` 现在认四种写法 ✗

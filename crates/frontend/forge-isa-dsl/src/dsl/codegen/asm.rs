@@ -26,12 +26,27 @@ pub(crate) fn gen_disassemble(infos: &[InstInfo]) -> Result<TokenStream, String>
         for seg in segs {
             match seg {
                 Seg::Lit(l) => fmt.push_str(&l),
-                Seg::Op { idx: n, .. } => {
+                Seg::Op { idx: n, optional: _, affix } => {
                     let (_, fid, slot, _) = &info.operands[n];
                     let local = format_ident!("__o{n}");
                     let expr = render_expr(slot, fid);
                     locals.push(quote! { let #local = #expr; });
-                    fmt.push_str(&format!("{{__o{n}}}"));
+                    // v21 W7：`{name:affix}` ⇒ 词缀**随组件出现** ✗；`+` 对**已带 `-`** 的渲染值抑制 ✗。
+                    match affix {
+                        Some(a) => {
+                            let al = format_ident!("__a{n}");
+                            let a_lit = syn::LitStr::new(a.as_str(), proc_macro2::Span::call_site());
+                            locals.push(quote! {
+                                let #al = if #a_lit == "+" && #local.starts_with('-') {
+                                    ""
+                                } else {
+                                    #a_lit
+                                };
+                            });
+                            fmt.push_str(&format!("{{__a{n}}}{{__o{n}}}"));
+                        }
+                        None => fmt.push_str(&format!("{{__o{n}}}")),
+                    }
                 }
             }
         }
