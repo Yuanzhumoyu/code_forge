@@ -1145,4 +1145,24 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 1. 要让 **x86 真的打印 `qword ptr`**：x86 的内存访问宽度是**逐指令**的（`movzx` byte/word、`mov` qword…），
    而 `[operand.mem]` 只是槽声明、**不带宽度** ⇒ 需给相关槽/指令补宽度声明，
    或把逐指令的 `data_width`/`opsize` 穿进渲染。当前实现按“宽度未知 ⇒ 空串”处理，**不谎报尺寸**。
-2. `[asm.reloc.*]` 属 **W8**（重定位生成 + 删宿主按 ISA 名分发），尚未开始。
+2. `[asm.reloc.*]` 属 **W8**（重定位生成 + 删宿主按 ISA 名分发）——**已在 W8 完成**，见下节。
+
+### W8 收口审计（2026-10-08，三次提交）
+
+| 清单条目 | 状态 | 证据 / 说明 |
+| --- | --- | --- |
+| `[asm.reloc.*]` 谱面 | 完成 | 新居（**表头即重定位名**，键 `semantics`/`operand`/`addend`/`via`）＋ 三谱 **3 条**搬迁（x86 `abs64`；riscv `pcrel_hi`/`pcrel_lo`）＋ 撤旧键 `[[reloc]]`（`serde(skip)` 内部载体 + `INTERNAL_FIELDS`）＋ 夹具 8 处（`e7e3064`） |
+| x86 冗余补丁器 | 完成 | `X86RelocPatcher` 与 `CodeSink::finish` 通用路径**逐字节等价** ⇒ 整条删除，x86 走通用路径（`ec97499`）；x86 JIT 矩阵 197/3/0 |
+| **生成**重定位补丁器 | 完成 | `machine.rs::gen_reloc_patcher`：定宽 ISA 发 `RelocPatcherImpl`（`decode_partial` → 改 label/reloc 槽字段 → `encode` 重放）；散布位段复用编码器**同一份**字段放置；臂按**槽名**匹配（`AUIPC`/`AUIPC_GLOBAL` 共享编码，解码只还原先声明的那条）；生成物覆写 `TargetMachine::reloc_patcher()`（`66ef8752`） |
+| 删宿主按 ISA 名分发 | 完成 | `register_default_reloc_patcher` 删除；`reloc_patcher_for` 退回纯查表（未注册 ⇒ `None` ⇒ 通用路径）；`ensure_registered` 不再注册补丁器 |
+| 删两个手写补丁器 | 完成 | `RiscvRelocPatcher`/`Arm64RelocPatcher`（含单测）删除；覆盖迁到**生成物**：`crates/backend/forge-codegen/tests/reloc_patcher_generated.rs` **9 条**（J/U/B 散布位段、hi20/lo12 变换、占位值覆盖、imm26/imm19、不支持 kind、报错不动字节） |
+| `via` / `addend` 数据化 | 完成 | `[asm.reloc.<名>].via` 引用 `[asm.immfn.<名>]`（riscv 复用已声明的 `hi`/`lo`）；`addend` 经 `RelocKind::Relative` 的修正字段**参与补丁值**（riscv `pcrel_lo` = 4） |
+| 门禁 | 完成 | 每次提交前整仓 `-j 2`（exit 0 / 0 编译错误 / 0 失败二进制，含 riscv64 QEMU 矩阵与 arm64 全套）＋ x86 矩阵 197/3/0 ＋ markdownlint 0 issue |
+
+**W8 判定**：清单条目**全部落地**（含“删宿主侧”这一条——宿主现在只剩 trait + 显式注册表 + 通用路径）。
+
+**一条已知边界（如实记录，不静默）**：生成物靠 `decode_partial` 识别指令 ⇒ 若某位模式先命中一个
+**没有该槽**的变体，补丁器**明确报错**而不是静默不动。实测命中例：`imm = 0` 的 `addi` 形状会落到
+riscv 自己的 `MOV_RM8_R64`（`addi rd, rs, 0` 的搬运形态）或 `Nop`，两者都没有 imm 操作数。
+真实 GlobalAddr 序列的 imm 是负占位值 ⇒ 走 `Addi`，不受影响（riscv64 JIT 矩阵覆盖）。
+若将来要让这类位模式也能补，需要加“按常量位识别 + 直接按字段散布写位”的第二条路径（当前不做，属设计取舍）。
