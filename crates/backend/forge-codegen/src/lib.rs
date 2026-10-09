@@ -102,9 +102,7 @@ pub use forge_isa_runtime::machine::isa_info::IsaCapabilities;
 pub use forge_isa_runtime::machine::isa_info::IsaInfo;
 pub use forge_isa_runtime::machine::isa_info::RegisterClassInfo;
 pub use forge_isa_runtime::machine::lowering::InstPacket;
-pub use forge_isa_runtime::machine::reloc_patcher::{
-    RelocPatcher, RiscvRelocPatcher, X86RelocPatcher,
-};
+pub use forge_isa_runtime::machine::reloc_patcher::{RelocPatcher, RiscvRelocPatcher};
 pub use forge_isa_runtime::machine::simulator::SimulationState;
 pub use forge_isa_runtime::machine::target::{ErasedTargetMachine, TargetMachine};
 pub use pipeline::alloc_config::RegAllocConfig;

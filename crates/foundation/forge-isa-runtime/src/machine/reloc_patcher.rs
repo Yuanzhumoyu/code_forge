@@ -65,6 +65,11 @@ pub fn reloc_patcher_for(isa: &str) -> Option<Arc<dyn RelocPatcher>> {
 /// Register the default patcher for a backend ISA (called by the DSL-generated
 /// `ensure_registered`). Unknown ISAs (e.g. wasm32 stack machine) get None and
 /// fall back to the generic relative/absolute write path.
+///
+/// **x86 不再需要 patcher**（v21 W8）：它的重定位语义就是"平铺小端写入"，
+/// 与 [`CodeSink::finish`](crate::emit::CodeSink::finish) 的通用路径**逐字节等价**
+/// （同样的 `kind.encode_value` + 同样的 `Relocation` 记录），故该结构体已删除。
+/// 定宽 ISA（riscv64/arm64）的散布位段重排仍在此表里，直到 W8 改为按谱面字段生成。
 pub fn register_default_reloc_patcher(isa: &str) {
     if RELOC_PATCHERS
         .get()
@@ -75,7 +80,6 @@ pub fn register_default_reloc_patcher(isa: &str) {
         return;
     }
     let patcher: Arc<dyn RelocPatcher> = match isa {
-        "x86_64" | "x86" => Arc::new(X86RelocPatcher),
         // riscv64 是定宽 32 位模块（ISA-DSL TOML 的 name 键）。
         "riscv64" => Arc::new(RiscvRelocPatcher),
         "arm64" => Arc::new(Arm64RelocPatcher),
@@ -249,59 +253,39 @@ impl RelocPatcher for RiscvRelocPatcher {
     }
 }
 
-/// x86-64: plain little-endian writes (rel32 displacement, or absolute addr).
-pub struct X86RelocPatcher;
-
-impl RelocPatcher for X86RelocPatcher {
-    fn apply(
-        &self,
-        code: &mut [u8],
-        offset: usize,
-        kind: RelocKind,
-        target: u64,
-        site: u64,
-    ) -> Result<(), IrError> {
-        // 宽度由 `RelocKind`（= ISA 声明）决定，**无白名单**：任意 ≥ 1 字节都写
-        // 平铺 LE（x86 语义）；越界 → 明确报错（历史实现 `_ => {}` 静默不补，
-        // `Absolute(w>8)` 还会 panic 切片）。
-        let value = match kind {
-            RelocKind::Relative(_, adj) => (target as i64 - site as i64 + adj as i64) as u64,
-            RelocKind::Absolute(_) => target,
-        };
-        let le = kind.encode_value(value);
-        let end = offset + le.len();
-        if end > code.len() {
-            return Err(IrError::Internal(format!(
-                "x86 reloc: patch [{offset},{end}) 超出代码缓冲 {} 字节",
-                code.len()
-            )));
-        }
-        code[offset..end].copy_from_slice(&le);
-        Ok(())
-    }
-}
-
+/// x86-64 不再有专属 patcher（v21 W8）：其重定位语义 = 平铺小端写入 + 记录 `Relocation`，
+/// 与 `CodeSink::finish` 的**通用路径逐字节等价**，故结构体已删除（见本文件顶部说明与
+/// `register_default_reloc_patcher`）。
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::emit::CodeSink;
+    use crate::ir::Block;
 
+    /// x86 语义（v21 W8 起由**通用路径**承担，patcher 已删）：rel32 = target − site + adj。
+    /// 这里直接钉住 `CodeSink::finish` 的通用写入，防止将来"修"成别的语义。
     #[test]
-    fn x86_rel32_patch() {
-        let p = X86RelocPatcher;
-        let mut code = vec![0xE8u8, 0, 0, 0, 0];
-        p.apply(&mut code, 1, RelocKind::REL4, 0x1000, 0x1001)
-            .unwrap();
-        // target - site + adj = 0x1000 - 0x1001 - 4 = -5
-        assert_eq!(&code[1..5], &(-5i32).to_le_bytes());
+    fn generic_path_patches_rel32_like_x86() {
+        let mut s = CodeSink::new(); // 无 patcher ⇒ 通用路径
+        s.put1(0xE8);
+        s.put4(0);
+        s.put_bytes(&[0, 0, 0, 0]);
+        s.bind_label(Block::new(1)); // label 落在 offset 9
+        s.use_label_at(1, Block::new(1), RelocKind::REL4);
+        let code = s.finish().unwrap();
+        // target(9) − site(1) + adj(−4) = 4
+        assert_eq!(&code[1..5], &4i32.to_le_bytes());
     }
 
+    /// x86 绝对地址（8 字节平铺 LE）同理走通用路径。
     #[test]
-    fn x86_abs8_patch() {
-        let p = X86RelocPatcher;
-        let mut code = vec![0u8; 8];
-        p.apply(&mut code, 0, RelocKind::ABS8, 0x1234_5678_9ABC_DEF0, 0)
-            .unwrap();
-        assert_eq!(&code, &0x1234_5678_9ABC_DEF0u64.to_le_bytes());
+    fn generic_path_patches_abs8_like_x86() {
+        let mut s = CodeSink::new();
+        s.put_bytes(&[0u8; 8]);
+        s.bind_label(Block::new(2)); // label 落在 offset 8
+        s.use_label_at(0, Block::new(2), RelocKind::ABS8);
+        let code = s.finish().unwrap();
+        assert_eq!(&code, &8u64.to_le_bytes());
     }
 
     #[test]

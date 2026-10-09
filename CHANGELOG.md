@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W8 第二片：删掉 x86 的**冗余** RelocPatcher
+
++ `X86RelocPatcher` 与 `CodeSink::finish` 的通用路径**逐字节等价**（同样的 `kind.encode_value`
+  平铺小端写入、同样的 `Relocation` 记录、同样的 site 语义）⇒ 该结构体连同注册表里的
+  `"x86_64" | "x86"` 分支**整条删除**（x86 改走通用路径）。
++ 于是"按 ISA 名分发"只剩 riscv64/arm64 两支（W8 后续：改为**按谱面字段生成**散布重排后，
+  连这两支与两个手写补丁器一起删——`u12[12:1 -> 11:8,30:25,7,31]` 这类散布映射**已是谱面数据**，
+  生成侧已有依据）。
++ 两条 x86 单测改为钉住**通用路径**（`CodeSink`：rel32 = target − site + adj；ABS8 平铺 LE），
+  覆盖不降级；两处再导出（`forge-codegen`、根 facade）同步。
++ 证据：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制；**x86 JIT 矩阵 197 passed / 3 skipped /
+  0 failed**（与既有基线一致）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W8 第一片：`[asm.reloc.<名>]` 取代 `[[reloc]]`
 
 + 重定位表搬进 `[asm]` 家族：**表头即重定位名**，键改为 `semantics` / `operand`（原 `slot`）/ `addend`
