@@ -114,7 +114,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | 唯一 | 取代了什么 | 本节 |
 | --- | --- | --- |
 | `[[templates]]`（`body` + `rows`） | `[[families]]` 族变体、v14 的参数表模板 | [模板](#templates--参数化指令模板唯一复用机制) |
-| 指令属性 `ref` | `[[aliases]]` 别名清单 | 同上 |
+| 指令属性 `group` | `[[aliases]]` 别名清单 | 同上 |
 | 命名操作数 `ops` + `asm` 只引用 `{名字}` | v14 的 asm 内联声明 `{i:[槽:角色]}`、位置名 `s0`/`s1` | [`[[instructions]]`](#instructions--指令) |
 | `[encoding]` 宽度三态 | `[meta].default_inst_width`/`variable_length`/`max_inst_len` | [`[encoding]`](#encoding--指令宽度三态v18-s4) |
 | `[[reloc]]` / `[[pseudo]]` / `[[derive]]` | `global_reloc` 枚举、汇编器硬编码伪指令、Rust 侧谓词表 | 各自小节 |
@@ -170,7 +170,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[enum.<表名>]` | — | `kind` `entries`† | 命名取值表：kind = value（名字 = 值；带 `ir` 的那张是条件码表）\| bits（名字拼接、按位或）（允许额外键） |
 | `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` `classes` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[[forms]]` | `name` | `fields` `segments` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖） |
-| `[[instructions]]` | `name` `asm` | `form` `opcode` `match` `fields` `segments` `bind` `ops` `when` `effect` `roles` `data_width` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `ref` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
+| `[[instructions]]` | `name` `asm` | `form` `opcode` `match` `fields` `segments` `bind` `ops` `when` `effect` `roles` `data_width` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[[templates]]` | `rows` | `name` `body` | 唯一指令复用机制：`body` 共享字段 + `rows` 每行一条指令 |
 | `[[reloc]]` | `name` `semantics` `slot` | `addend` | 重定位表：semantics = absolute \| pc_relative（v18 S3d） |
 | `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
@@ -184,7 +184,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[vectors]]` | — | `asm` `bytes` `error` `partial` `comment` | 数据化测试向量（v19 V3）：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = "DECODE", partial}` 解码错误 / `{bytes}` 解码正向 |
 | `enc / vex / evex / modrm（内联子表）` | — | `reg` `rm` | `modrm = { reg = <名\|整数>, rm = <名\|"[base]"> }` |
 | `vex / evex（内联子表）` | — | `map` `pp` `w` `l` `b` `z` `disp_scale` | VEX/EVEX 结构键（map/pp/w/l + AVX-512 的 b/z/disp_scale） |
-| `[[templates.rows]]` | `inst` | — | 模板行：`inst` + 任意指令字段（含 `ref`）（允许额外键） |
+| `[[templates.rows]]` | `inst` | — | 模板行：`inst` + 任意指令字段（含 `group`）（允许额外键） |
 | `[[override]]` | `key` `value` | — | 多文件组合：显式覆盖被包含文件里的键（点分路径 + 新值；由 loader 消费） |
 <!-- END: schema-keys -->
 
@@ -1314,7 +1314,7 @@ riscv 的 `li` 就是本能力的实际用例：`li x10, 0x1234` 展开成 `lui 
 
 > **状态**：v18 S2c 起是**唯一**的指令定义/复用机制——`[[families]]` 与 `[[aliases]]`
 > 已删除（不是并存）。两个旧场景各自变成一条普通规则：**多条指令共用一份声明** →
-> `[[templates]]` 的 `body` + `rows`；**一个引用名指向多条指令** → 指令属性 `ref`。
+> `[[templates]]` 的 `body` + `rows`；**一个引用名指向多条指令** → 指令属性 `group`。
 
 ```toml
 [[templates]]
@@ -1347,9 +1347,9 @@ rows = [                              # 每行一条指令：inst 必填，其�
 | `body` 没有、但 body 字符串用 `{键}` 引用了它 | **纯参数**：只参与插值，不进指令字段（如 `slot`） |
 | 其余 | **指令字段**（拼错被 `Instruction` 反序列化点名拒绝，错误消息带模板名与实例名） |
 
-`ref` 就是普通指令字段：写在 `body` 里 = 全模板共用（多态引用），写在行里 = 该行特有。
-多条指令共用同一个 `ref` 时，lowering/pattern/emit 的行首可写这个引用名，codegen 按操作数
-签名（reg/imm/mem/cond）消歧。`ref` 与指令名同池，故不得与任何指令名重名。
+`group` 就是普通指令字段：写在 `body` 里 = 全模板共用（多态引用），写在行里 = 该行特有。
+多条指令共用同一个 `group` 时，lowering/pattern/emit 的行首可写这个引用名，codegen 按操作数
+签名（reg/imm/mem/cond）消歧。`group` 与指令名同池，故不得与任何指令名重名。
 
 **写法要点**：
 
@@ -1366,7 +1366,7 @@ rows = [                              # 每行一条指令：inst 必填，其�
 | 原先的写法 | 现在的写法 |
 | --- | --- |
 | `[[families]]` + `[[families.variants]]` | 一个 `[[templates]]`：族级字段进 `body`，每个变体一行 `{ inst = "…", … }`；助记符继承写 `asm = "{inst.lower} …"` |
-| `[[aliases]]`（`name` + `insts` 列表） | 在成员指令上写 `ref = "名字"`（多条指令共用一个 `ref` = 多态） |
+| `[[aliases]]`（`name` + `insts` 列表） | 在成员指令上写 `ref = "名字"`（多条指令共用一个 `group` = 多态） |
 | `[[templates]]` + `params` + `[[templates.overrides]]` | 同一张 `rows` 表：参数取值写成行键，逐行补丁直接写进那一行 |
 
 **实测收益（三 ISA 统一迁移，2026-09-19）**：
@@ -1460,8 +1460,8 @@ insts = ["movrr {out}, {0}", "add {1}, {out}"]
 ```
 
 **指令怎么引用**：`insts` 行首是**该指令的声明名（`[[instructions]].name`）或它声明的
-`ref` 别名**（`ref_to_infos` 按这两个键建表）——**不是** asm 模板的首词：模板可以操作数
-前置（`asm = "{dst} = {src}"`），DSL 也不按空白切词推助记符。发行谱里的 `ref` 只是**恰好**
+`group` 别名**（`ref_to_infos` 按这两个键建表）——**不是** asm 模板的首词：模板可以操作数
+前置（`asm = "{dst} = {src}"`），DSL 也不按空白切词推助记符。发行谱里的 `group` 只是**恰好**
 取了助记符风格的短名（x86 `ref = "mov"`）。同一引用名多条形状（如 `add reg,reg` 与
 `add reg,imm`）由生成器按**操作数 token 签名**自动消歧（reg/imm/mem/cond/label；
 `[n]` 剥括号为内存基址=reg；数字字面量兼容 imm/cond）；仍多候选时再按**字面段
@@ -1861,7 +1861,7 @@ forge-codegen 的 crate 里生成谱"这件事本身也是守卫（`tests/common
 | 命令 | 作用 |
 | --- | --- |
 | `validate <谱.toml>…` | 解析 + 校验，打印**全部**诊断（`路径:行:列: 码: 消息` + 附注），有错退出 1；`--strict-overlap` 另报 lowering 部分重叠、`--params k=v` 走变体投影 |
-| `insts <谱.toml>` | 列出**展开后**的指令与生效规格：字长（位/字节）、form、opcode、ops、编码键、`ref`、`reloc`、来源模板与行号、asm；`--params k=v` 只列该变体的指令并打印**投影账目**（丢了哪些） |
+| `insts <谱.toml>` | 列出**展开后**的指令与生效规格：字长（位/字节）、form、opcode、ops、编码键、`group`、`reloc`、来源模板与行号、asm；`--params k=v` 只列该变体的指令并打印**投影账目**（丢了哪些） |
 | `explain <谱.toml> <指令名>` | 单条指令的完整来源：来自哪个模板的哪一行、该行与模板 `body` 的键、生效规格逐字段 |
 | `diff <a> <b>` | 两份谱的**规格 diff**（增/删/改字段），逐字段列出 `字段: A → B` |
 | `schema [--out <file>]` | 打印/写出 ISA-DSL 的 **JSON Schema**（仓库根的 `isa-dsl.schema.json` 由此生成） |
@@ -2025,7 +2025,7 @@ partial = 1
    `DSL-META` 报错并列出已声明的名字（拼错参数名不会静默"什么都没发生"）；
 2. **过滤**：只对**调用方传了的**参数做排除——`only_variants` 里提到 `xlen` 而本次只传
    `ext` 时，`xlen` 不构成排除；
-3. **连带丢 lowering**：规则行首点了被投影掉的指令/`ref` ⇒ 规则整条丢掉（这类依赖
+3. **连带丢 lowering**：规则行首点了被投影掉的指令/`group` ⇒ 规则整条丢掉（这类依赖
    **可推断**：点名了 `ADDW` 的规则本身就只属于 `ADDW` 存在的变体）。**只认"投影前存在、
    投影后消失"的名字**，原本就写错的助记符照旧由校验器报错；
 4. **文本替换**：`{参数名}` 在 `asm` 与 `[[lowering]].insts` 里换成取值（宽度是数据）。
@@ -2068,13 +2068,13 @@ RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不�
 | `LINT-UNUSED-BITFIELD` | 位域名在整份谱里只出现在声明处（按标识符边界计数，`imm1` 不命中 `imm12`） | 默认 |
 | `LINT-BITFIELD-OVERLAP` | **同一条指令的字段视图**里两个位域抢同一批位（视图 = form 预设 ⊕ 指令覆盖后的编码键 + 指令 `fields`） | 默认 |
 | `LINT-OP-GAP` | 宿主 op 表里有、本谱既没有 `[[lowering]]` 也没有 `[[pattern]]` 覆盖的**真缺口** | `--ops <宿主 op 表>` |
-| `LINT-REF-UNUSED` | 指令声明了 `ref`，却没有**任何** lowering/pattern/emit/pseudo/spill 模板行首引用它 | `--refs`（opt-in） |
+| `LINT-REF-UNUSED` | 指令声明了 `group`，却没有**任何** lowering/pattern/emit/pseudo/spill 模板行首引用它 | `--refs`（opt-in） |
 | `LINT-UNASSIGNED-BITS` | 指令字里**没有任何位域覆盖**的位段（按缺省 0 发射）；只对 `kind = "fixed"` 的 ISA 判 | `--bits`（opt-in） |
 | `LINT-VARY-CANDIDATE` | 同一 op 的多条 lowering 规则**发射形状相同**（只差助记符/立即数/寄存器）⇒ 可用 `vary` 合并 | `--suggest`（opt-in，**只建议**） |
 
 后三档为什么默认关（都属"作者意图"，只有作者能判）：
 
-- `--refs`：`ref` 有"给还没写的 lowering 预留多态名"的合法用法（实测三谱 28 条）；
+- `--refs`：`group` 有"给还没写的 lowering 预留多态名"的合法用法（实测三谱 28 条）；
 
 - `--bits`：变长 ISA 的前缀/REX/ModRM 由编码器发射、不在位域表里建模（按表判必成误报，
   所以该规则跳过 `prefix_scan`）；即便定宽谱，**保留位故意不声明**也是常见写法。
@@ -2091,7 +2091,7 @@ RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不�
   `word` 这类"同一批位的多种解释"全判成错——它们不在同一条指令里共存，完全合法。
   首次落地即在 arm64 抓到 4 条真阳性（STP/LDP 的 X/W：`idx3` 的 bit24 与 `op8` 常量重复写
   同一位，取值恰好一致所以黄金字节没暴露）⇒ 修谱为 `idx2`（见计划 §5 V4c 进度）。
-- **`ref` 未引用默认不报**：`ref` 有"给还没写的 lowering 预留多态名"的合法用法（实测三谱
+- **`group` 未引用默认不报**：`group` 有"给还没写的 lowering 预留多态名"的合法用法（实测三谱
   28 条：arm64 27 条预留 / x86 1 条疑似残留）。它是作者意图，只有作者能判，所以留在
   `--refs` 档；写新谱时打开它抓"名字拼错 ⇒ 多态分派永不命中"最有用。
 

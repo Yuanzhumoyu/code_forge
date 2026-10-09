@@ -96,7 +96,7 @@ asm = "nop"
 
 [[instructions]]
 name = "ADD8"
-ref = "add"
+group = "add"
 form = "R3"
 opcode = 1
 ops = ["dst:r2:out", "src:r2", "src2:r2"]
@@ -104,7 +104,7 @@ asm = "add {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "MOV8"
-ref = "mov"
+group = "mov"
 data_width = 8
 form = "R2"
 opcode = 2

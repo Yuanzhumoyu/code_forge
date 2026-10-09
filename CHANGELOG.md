@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W5 第一步：`ref` → `group`（**破坏性**）
+
++ 指令的 TOML 键 **`ref` 改名 `group`**（族名即多态引用名；多条指令共用一个族名 = 多态引用）。
+  发行谱/夹具/`.rs` 内联夹具/schema 键表与 doc 文案/文档速查表共 **121+ 处**同步；
+  模型内部字段名 `reference` 保留（`group` 是用户面概念）。
++ 语义不变：逐字节闭环、asm 棘轮、双 JIT 矩阵、前缀守卫全绿。
+
 ### Added (2026-10-08) — ISA-DSL v21 W4.4 尾巴：守卫覆盖字段形态前缀（`match.prefix` 实际值）
 
 + 新增 `match_prefix_bytes`：把指令 `match = { prefix = … }` 的**实际前缀字节值**

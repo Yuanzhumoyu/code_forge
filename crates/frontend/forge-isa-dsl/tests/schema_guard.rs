@@ -82,7 +82,7 @@ const TABLE_END: &str = "<!-- END: schema-keys -->";
 ///
 /// **TOML 键**：`#[serde(rename = "…")]` 优先，否则是字段名（`r#match` → `match`）。
 /// 不处理 rename 就等于把"字段名"当成"用户写的键"，`reference`/`ref` 这类改名会被
-/// 误判为一致——编辑器却会对每一行 `ref = …` 报未知键（2026-09-21 实测 S7e）。
+/// 误判为一致——编辑器却会对每一行 `group = …` 报未知键（2026-09-21 实测 S7e）。
 fn model_structs() -> Vec<(String, Vec<(String, bool)>)> {
     let src =
         std::fs::read_to_string(repo_root().join("crates/frontend/forge-isa-dsl/src/dsl/model.rs"))
@@ -417,7 +417,7 @@ fn checked_in_schema_file_is_up_to_date() {
 ///
 /// 为什么单独要这条：模型 ↔ schema 的对照只看"结构体字段 ↔ 节键集"，看不见
 /// "用户实际写的键"——`#[serde(rename = "ref")]` 的字段名是 `reference`，schema 一度写成
-/// `reference`，于是编辑器对 `isa/x86.toml` 里 35 处 `ref = …` 全部标红（2026-09-21
+/// `reference`，于是编辑器对 `isa/x86.toml` 里 35 处 `group = …` 全部标红（2026-09-21
 /// 实测）。这条守卫直接拿**真实谱**当输入，把这一类"schema 与谱不符"钉死。
 #[test]
 fn shipped_specs_only_use_schema_keys() {

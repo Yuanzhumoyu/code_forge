@@ -120,7 +120,7 @@ fields = [
 
 [[instructions]]
 name = "ADD8"
-ref = "add"
+group = "add"
 form = "R"
 opcode = 0x10
 ops = ["dst:a8:out", "src:a8", "src2:a8"]
@@ -128,7 +128,7 @@ asm = "add {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "SUB8"
-ref = "sub"
+group = "sub"
 form = "R"
 opcode = 0x11
 ops = ["dst:a8:out", "src:a8", "src2:a8"]
@@ -136,7 +136,7 @@ asm = "sub {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "MOV8"
-ref = "mov"
+group = "mov"
 data_width = 8
 form = "RR"
 opcode = 0x20
@@ -145,7 +145,7 @@ asm = "mov {dst}, {src}"
 
 [[instructions]]
 name = "MOV8_R_IMM8"
-ref = "mov"
+group = "mov"
 form = "RI2"
 opcode = 0x21
 ops = ["dst:a8:out", "imm:imm8"]

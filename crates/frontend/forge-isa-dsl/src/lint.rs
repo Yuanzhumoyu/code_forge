@@ -963,7 +963,7 @@ rows = [
         let doc = |lowering: &str, reference: &str| {
             format!(
                 "{SPEC}\n[[instructions]]\nname = \"MOV\"\nform = \"RR\"\nopcode = 3\n\
-                 ops = [\"dst:g:out\"]\nasm = \"mov {{dst}}\"\nref = \"{reference}\"\n{lowering}"
+                 ops = [\"dst:g:out\"]\nasm = \"mov {{dst}}\"\ngroup = \"{reference}\"\n{lowering}"
             )
         };
         let on = LintOpts {
@@ -980,7 +980,7 @@ rows = [
             plain.iter().all(|d| d.code != "LINT-REF-UNUSED"),
             "默认档不该报未引用 ref：{plain:?}"
         );
-        // 打开 `--refs`：`ref = "mv"` 而 lowering 行首写的是 `ADD` → 报。
+        // 打开 `--refs`：`group = "mv"` 而 lowering 行首写的是 `ADD` → 报。
         let report = lint_source_opts(&bad, &on).expect("谱合法");
         let hits: Vec<&DiagLine> = report
             .findings

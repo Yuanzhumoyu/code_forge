@@ -205,7 +205,7 @@ fn rows_sharing_a_ref_form_one_polymorphic_reference() {
     let doc = plus(
         r#"
 [[templates]]
-body = { form = "R", asm = "add {rd}, {rs1}, {rs2}", ref = "add" }
+body = { form = "R", asm = "add {rd}, {rs1}, {rs2}", group = "add" }
 [[templates.rows]]
 inst = "ADDW"
 opcode = 0x33
@@ -234,7 +234,7 @@ fn ref_can_be_overridden_per_row() {
     let doc = plus(
         r#"
 [[templates]]
-body = { form = "R", ops = ["rd:r64:out", "rs1:r64"], ref = "ld" }
+body = { form = "R", ops = ["rd:r64:out", "rs1:r64"], group = "ld" }
 [[templates.rows]]
 inst = "LDW"
 opcode = 0x03
@@ -243,7 +243,7 @@ asm = "ldw {rd}, {rs1}"
 inst = "LDX"
 opcode = 0x13
 asm = "ldx {rd}, {rs1}"
-ref = "ldx64"
+group = "ldx64"
 "#,
     );
     let m = parse_and_validate(&doc).expect("行级 ref 覆盖");
@@ -257,7 +257,7 @@ fn ref_on_plain_instruction_feeds_the_same_namespace() {
         r#"
 [[instructions]]
 name = "MOVW"
-ref = "mov"
+group = "mov"
 form = "R"
 opcode = 0x33
 ops = ["rd:r32:out", "rs1:r32"]
@@ -266,7 +266,7 @@ asm = "mov {rd}, {rs1}"
 [[templates]]
 [[templates.rows]]
 inst = "MOVX"
-ref = "mov"
+group = "mov"
 form = "R"
 opcode = 0x3B
 ops = ["rd:r64:out", "rs1:r64"]
@@ -412,7 +412,7 @@ asm = "op {rd}"
 [[templates]]
 [[templates.rows]]
 inst = "OPX"
-ref = "OPW"
+group = "OPW"
 form = "R"
 opcode = 0x3B
 ops = ["rd:r64:out"]

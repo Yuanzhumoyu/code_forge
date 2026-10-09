@@ -2414,10 +2414,10 @@ pub struct Instruction {
     /// 指向 `[[instructions]]` 节头。
     #[serde(skip, default)]
     pub from_template: Option<Box<str>>,
-    /// **引用名**（`ref`，v18 S2）：lowering/pattern/emit 模板行首可用它指向本指令；
-    /// **多条指令共用一个 `ref`** 即"多态引用"（按操作数签名分派）——原先的
-    /// `[[aliases]]` 就是"几条指令共用同一个 ref"。
-    #[serde(default, rename = "ref")]
+    /// **族名**（`group`，v21 W5；v18 里叫 `ref`）：lowering/pattern/emit 模板行首可用它指向本指令；
+    /// **多条指令共用一个族名** 即"多态引用"（按操作数签名分派）——原先的
+    /// `[[aliases]]` 就是"几条指令共用同一个族名"。
+    #[serde(default, rename = "group")]
     pub reference: Option<String>,
 }
 

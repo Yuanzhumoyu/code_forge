@@ -2178,7 +2178,7 @@ fn lowering_accepts_template_instance_name() {
 
 // ─────────── 指令级 `ref`（多态引用 / 1:1 / 校验） ───────────
 //
-// 旧 `[[aliases]]` 已并入指令属性：`ref = "名字"`。多条指令共用同一个 `ref`
+// 旧 `[[aliases]]` 已并入指令属性：`group = "名字"`。多条指令共用同一个 `ref`
 // 即多态引用（原先"别名指向多成员"的场景），单条指令给 `ref` 即 1:1 引用。
 // `ref` 与指令名同池（lowering/pattern/emit 行首按它分派），故不得与指令名冲突。
 
@@ -2220,14 +2220,14 @@ asm = "mov {{dst}}, {{src}}"
     )
 }
 
-/// 注入一行 `ref = "名字"`（空名字用于"ref 不能为空"用例）。
+/// 注入一行 `group = "名字"`（空名字用于"ref 不能为空"用例）。
 fn ref_line(name: &str) -> String {
-    format!("ref = \"{name}\"\n")
+    format!("group = \"{name}\"\n")
 }
 
 #[test]
 fn ref_polymorphic_lowering_accepted() {
-    // 两条指令共用 `ref = "mov"`；lowering 引用该引用名 → 解析通过
+    // 两条指令共用 `group = "mov"`；lowering 引用该引用名 → 解析通过
     //（具体选哪条由 codegen 按操作数签名消歧）
     let doc = ref_doc(
         &ref_line("mov"),

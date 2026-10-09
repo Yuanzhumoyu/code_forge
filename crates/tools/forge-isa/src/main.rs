@@ -605,7 +605,7 @@ fn inst_line(r: &InstRow) -> String {
         ));
     }
     if let Some(rf) = &r.reference {
-        s.push_str(&format!(" ref={rf}"));
+        s.push_str(&format!(" group={rf}"));
     }
     if let Some(rl) = &r.reloc {
         s.push_str(&format!(" reloc={rl}"));

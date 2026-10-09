@@ -125,7 +125,7 @@ fields = [
 # add：同一助记符，三宽度版本 → 按操作数实际类自动分发
 [[instructions]]
 name = "ADD16"
-ref = "add"
+group = "add"
 form = "R"
 opcode = 0x10
 ops = ["dst:r16:out", "src:r16", "src2:r16"]
@@ -133,7 +133,7 @@ asm = "add {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "ADD32"
-ref = "add"
+group = "add"
 form = "R"
 opcode = 0x11
 ops = ["dst:r32:out", "src:r32", "src2:r32"]
@@ -141,7 +141,7 @@ asm = "add {dst}, {src}, {src2}"
 
 [[instructions]]
 name = "ADD64"
-ref = "add"
+group = "add"
 form = "R"
 opcode = 0x12
 ops = ["dst:r64:out", "src:r64", "src2:r64"]
@@ -150,7 +150,7 @@ asm = "add {dst}, {src}, {src2}"
 # mov：同上，二操作数
 [[instructions]]
 name = "MOV16"
-ref = "mov"
+group = "mov"
 form = "RR"
 opcode = 0x20
 ops = ["dst:r16:out", "src:r16"]
@@ -158,7 +158,7 @@ asm = "mov {dst}, {src}"
 
 [[instructions]]
 name = "MOV32"
-ref = "mov"
+group = "mov"
 form = "RR"
 opcode = 0x21
 ops = ["dst:r32:out", "src:r32"]
@@ -166,7 +166,7 @@ asm = "mov {dst}, {src}"
 
 [[instructions]]
 name = "MOV64"
-ref = "mov"
+group = "mov"
 data_width = 64
 form = "RR"
 opcode = 0x22
@@ -176,7 +176,7 @@ asm = "mov {dst}, {src}"
 # mov 立即数（16 位常量；RI form rd = imm）
 [[instructions]]
 name = "MOV16_R_IMM16"
-ref = "mov"
+group = "mov"
 form = "RI"
 opcode = 0x23
 ops = ["dst:r16:out", "imm:imm16"]

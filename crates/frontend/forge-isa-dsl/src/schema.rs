@@ -261,11 +261,11 @@ pub const SECTIONS: &[Section] = &[
             "width",
             "only_variants",
             "fields_variant",
-            // TOML 键是 `ref`（模型字段名 `reference` + `#[serde(rename = "ref")]`）。
+            // TOML 键是 `ref`（模型字段名 `reference` + `#[serde(rename = "group")]`）。
             // 守卫按 `#[serde(rename = …)]` 取键名，所以这里必须写 **用户在 TOML 里
-            // 实际写的那个键**——写字段名会让编辑器对每一行 `ref = …` 报未知键
+            // 实际写的那个键**——写字段名会让编辑器对每一行 `group = …` 报未知键
             // （2026-09-21 实测：`isa/x86.toml` 的 35 处 `ref` 全部被 Taplo 标红）。
-            "ref",
+            "group",
         ],
         // 编码键是 `#[serde(flatten)]` 的 EncKeys：直接在指令上写（不写 `enc = {...}`）。
         flatten: ENC_KEYS,
@@ -412,7 +412,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &[],
         flatten: &[],
         additional: true,
-        doc: "模板行：`inst` + 任意指令字段（含 `ref`）",
+        doc: "模板行：`inst` + 任意指令字段（含 `group`）",
     },
     Section {
         path: "[[override]]",

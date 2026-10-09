@@ -4279,98 +4279,98 @@ insts = ["EORREGX {out}, {0}, {1}"]
 
 [[templates]]
 name = "ADDIMM"
-body = { ref = "add", form = "ALUIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], asm = "add {dst}, {src}, #{imm}" }
+body = { group = "add", form = "ALUIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], asm = "add {dst}, {src}, #{imm}" }
 rows = [
   { inst = "ADDIMMX", slot = "r64", opcode = 0x91, roles = ["frame_free", "frame_set"] },
   { inst = "ADDIMMW", slot = "r32", opcode = 0x11 },
 ]
 [[templates]]
 name = "ADDSIMM"
-body = { ref = "adds", form = "ALUIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], asm = "adds {dst}, {src}, #{imm}" }
+body = { group = "adds", form = "ALUIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], asm = "adds {dst}, {src}, #{imm}" }
 rows = [
   { inst = "ADDSIMMX", slot = "r64", opcode = 0xB1 },
   { inst = "ADDSIMMW", slot = "r32", opcode = 0x31 },
 ]
 [[templates]]
 name = "SUBIMM"
-body = { ref = "sub", form = "ALUIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], asm = "sub {dst}, {src}, #{imm}" }
+body = { group = "sub", form = "ALUIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], asm = "sub {dst}, {src}, #{imm}" }
 rows = [
   { inst = "SUBIMMX", slot = "r64", opcode = 0xD1, roles = ["frame_alloc"] },
   { inst = "SUBIMMW", slot = "r32", opcode = 0x51 },
 ]
 [[templates]]
 name = "SUBSIMM"
-body = { ref = "subs", form = "ALUIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], asm = "subs {dst}, {src}, #{imm}" }
+body = { group = "subs", form = "ALUIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], asm = "subs {dst}, {src}, #{imm}" }
 rows = [
   { inst = "SUBSIMMX", slot = "r64", opcode = 0xF1 },
   { inst = "SUBSIMMW", slot = "r32", opcode = 0x71 },
 ]
 [[templates]]
 name = "ADDREG"
-body = { ref = "add", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "add {dst}, {src}, {src2}" }
+body = { group = "add", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "add {dst}, {src}, {src2}" }
 rows = [
   { inst = "ADDREGX", slot = "r64", opcode = 0x8B },
   { inst = "ADDREGW", slot = "r32", opcode = 0x0B },
 ]
 [[templates]]
 name = "SUBREG"
-body = { ref = "sub", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "sub {dst}, {src}, {src2}" }
+body = { group = "sub", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "sub {dst}, {src}, {src2}" }
 rows = [
   { inst = "SUBREGX", slot = "r64", opcode = 0xCB },
   { inst = "SUBREGW", slot = "r32", opcode = 0x4B },
 ]
 [[templates]]
 name = "ADDSREG"
-body = { ref = "adds", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "adds {dst}, {src}, {src2}" }
+body = { group = "adds", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "adds {dst}, {src}, {src2}" }
 rows = [
   { inst = "ADDSREGX", slot = "r64", opcode = 0xAB },
   { inst = "ADDSREGW", slot = "r32", opcode = 0x2B },
 ]
 [[templates]]
 name = "SUBSREG"
-body = { ref = "subs", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "subs {dst}, {src}, {src2}" }
+body = { group = "subs", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "subs {dst}, {src}, {src2}" }
 rows = [
   { inst = "SUBSREGX", slot = "r64", opcode = 0xEB },
   { inst = "SUBSREGW", slot = "r32", opcode = 0x6B },
 ]
 [[templates]]
 name = "ANDREG"
-body = { ref = "and", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "and {dst}, {src}, {src2}" }
+body = { group = "and", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "and {dst}, {src}, {src2}" }
 rows = [
   { inst = "ANDREGX", slot = "r64", opcode = 0x8A },
   { inst = "ANDREGW", slot = "r32", opcode = 0x0A },
 ]
 [[templates]]
 name = "BICREG"
-body = { ref = "bic", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "bic {dst}, {src}, {src2}", match = { nbit = 1 } }
+body = { group = "bic", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "bic {dst}, {src}, {src2}", match = { nbit = 1 } }
 rows = [
   { inst = "BICREGX", slot = "r64", opcode = 0x8A },
   { inst = "BICREGW", slot = "r32", opcode = 0x0A },
 ]
 [[templates]]
 name = "ORRREG"
-body = { ref = "orr", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "orr {dst}, {src}, {src2}" }
+body = { group = "orr", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "orr {dst}, {src}, {src2}" }
 rows = [
   { inst = "ORRREGX", slot = "r64", opcode = 0xAA },
   { inst = "ORRREGW", slot = "r32", opcode = 0x2A },
 ]
 [[templates]]
 name = "ORNREG"
-body = { ref = "orn", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "orn {dst}, {src}, {src2}", match = { nbit = 1 } }
+body = { group = "orn", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "orn {dst}, {src}, {src2}", match = { nbit = 1 } }
 rows = [
   { inst = "ORNREGX", slot = "r64", opcode = 0xAA },
   { inst = "ORNREGW", slot = "r32", opcode = 0x2A },
 ]
 [[templates]]
 name = "EORREG"
-body = { ref = "eor", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "eor {dst}, {src}, {src2}" }
+body = { group = "eor", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "eor {dst}, {src}, {src2}" }
 rows = [
   { inst = "EORREGX", slot = "r64", opcode = 0xCA },
   { inst = "EORREGW", slot = "r32", opcode = 0x4A },
 ]
 [[templates]]
 name = "EONREG"
-body = { ref = "eon", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "eon {dst}, {src}, {src2}", match = { nbit = 1 } }
+body = { group = "eon", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "eon {dst}, {src}, {src2}", match = { nbit = 1 } }
 rows = [
   { inst = "EONREGX", slot = "r64", opcode = 0xCA },
   { inst = "EONREGW", slot = "r32", opcode = 0x4A },
@@ -4501,98 +4501,98 @@ rows = [
 ]
 [[templates]]
 name = "MOV"
-body = { ref = "mov", form = "MOVR", opcode = "{opcode}", ops = ["dst:{slot}:out", "src2:{slot}"], asm = "mov {dst}, {src2}", match = { rn = 31 } }
+body = { group = "mov", form = "MOVR", opcode = "{opcode}", ops = ["dst:{slot}:out", "src2:{slot}"], asm = "mov {dst}, {src2}", match = { rn = 31 } }
 rows = [
   { inst = "MOVX", slot = "r64", opcode = 0xAA, data_width = 64 },
   { inst = "MOVW", slot = "r32", opcode = 0x2A },
 ]
 [[templates]]
 name = "CMPIMM"
-body = { ref = "cmp", form = "CMPIMM", opcode = "{opcode}", ops = ["src:{slot}", "imm:imm12u"], asm = "cmp {src}, #{imm}", match = { rd = 31 } }
+body = { group = "cmp", form = "CMPIMM", opcode = "{opcode}", ops = ["src:{slot}", "imm:imm12u"], asm = "cmp {src}, #{imm}", match = { rd = 31 } }
 rows = [
   { inst = "CMPIMMX", slot = "r64", opcode = 0xF1 },
   { inst = "CMPIMMW", slot = "r32", opcode = 0x71 },
 ]
 [[templates]]
 name = "CMNIMM"
-body = { ref = "cmn", form = "CMPIMM", opcode = "{opcode}", ops = ["src:{slot}", "imm:imm12u"], asm = "cmn {src}, #{imm}", match = { rd = 31 } }
+body = { group = "cmn", form = "CMPIMM", opcode = "{opcode}", ops = ["src:{slot}", "imm:imm12u"], asm = "cmn {src}, #{imm}", match = { rd = 31 } }
 rows = [
   { inst = "CMNIMMX", slot = "r64", opcode = 0xB1 },
   { inst = "CMNIMMW", slot = "r32", opcode = 0x31 },
 ]
 [[templates]]
 name = "CMPREG"
-body = { ref = "cmp", form = "CMPREG", opcode = "{opcode}", ops = ["src:{slot}", "src2:{slot}"], asm = "cmp {src}, {src2}", match = { rd = 31 } }
+body = { group = "cmp", form = "CMPREG", opcode = "{opcode}", ops = ["src:{slot}", "src2:{slot}"], asm = "cmp {src}, {src2}", match = { rd = 31 } }
 rows = [
   { inst = "CMPREGX", slot = "r64", opcode = 0xEB },
   { inst = "CMPREGW", slot = "r32", opcode = 0x6B },
 ]
 [[templates]]
 name = "MOVZ"
-body = { ref = "movz", form = "MOVW16", opcode = "{opcode}", ops = ["dst:{slot}:out", "imm:imm16u"], asm = "movz {dst}, #{imm}", match = { hw = 0 } }
+body = { group = "movz", form = "MOVW16", opcode = "{opcode}", ops = ["dst:{slot}:out", "imm:imm16u"], asm = "movz {dst}, #{imm}", match = { hw = 0 } }
 rows = [
   { inst = "MOVZX", slot = "r64", opcode = 0x1A5 },
   { inst = "MOVZW", slot = "r32", opcode = 0xA5 },
 ]
 [[templates]]
 name = "MOVN"
-body = { ref = "movn", form = "MOVW16", opcode = "{opcode}", ops = ["dst:{slot}:out", "imm:imm16u"], asm = "movn {dst}, #{imm}", match = { hw = 0 } }
+body = { group = "movn", form = "MOVW16", opcode = "{opcode}", ops = ["dst:{slot}:out", "imm:imm16u"], asm = "movn {dst}, #{imm}", match = { hw = 0 } }
 rows = [
   { inst = "MOVNX", slot = "r64", opcode = 0x125 },
   { inst = "MOVNW", slot = "r32", opcode = 0x25 },
 ]
 [[templates]]
 name = "MOVK"
-body = { ref = "movk", form = "MOVW16", opcode = "{opcode}", ops = ["dst:{slot}:out", "imm:imm16u"], asm = "movk {dst}, #{imm}", match = { hw = 0 } }
+body = { group = "movk", form = "MOVW16", opcode = "{opcode}", ops = ["dst:{slot}:out", "imm:imm16u"], asm = "movk {dst}, #{imm}", match = { hw = 0 } }
 rows = [
   { inst = "MOVKX", slot = "r64", opcode = 0x1E5 },
   { inst = "MOVKW", slot = "r32", opcode = 0xE5 },
 ]
 [[templates]]
 name = "MADD"
-body = { ref = "madd", form = "MULADD", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "acc:{slot}", "src2:{slot}"], asm = "madd {dst}, {src}, {src2}, {acc}" }
+body = { group = "madd", form = "MULADD", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "acc:{slot}", "src2:{slot}"], asm = "madd {dst}, {src}, {src2}, {acc}" }
 rows = [
   { inst = "MADDX", slot = "r64", opcode = 0x4D8 },
   { inst = "MADDW", slot = "r32", opcode = 0xD8 },
 ]
 [[templates]]
 name = "MSUB"
-body = { ref = "msub", form = "MULADD", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "acc:{slot}", "src2:{slot}"], asm = "msub {dst}, {src}, {src2}, {acc}", match = { o0 = 1 } }
+body = { group = "msub", form = "MULADD", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "acc:{slot}", "src2:{slot}"], asm = "msub {dst}, {src}, {src2}, {acc}", match = { o0 = 1 } }
 rows = [
   { inst = "MSUBX", slot = "r64", opcode = 0x4D8 },
   { inst = "MSUBW", slot = "r32", opcode = 0xD8 },
 ]
 [[templates]]
 name = "MUL"
-body = { ref = "mul", form = "MUL3", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "mul {dst}, {src}, {src2}", match = { ra = 31 } }
+body = { group = "mul", form = "MUL3", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "mul {dst}, {src}, {src2}", match = { ra = 31 } }
 rows = [
   { inst = "MULX", slot = "r64", opcode = 0x4D8 },
   { inst = "MULW", slot = "r32", opcode = 0xD8 },
 ]
 [[templates]]
 name = "SDIV"
-body = { ref = "sdiv", form = "DIV2A", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "sdiv {dst}, {src}, {src2}", match = { op2d = 3 } }
+body = { group = "sdiv", form = "DIV2A", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "sdiv {dst}, {src}, {src2}", match = { op2d = 3 } }
 rows = [
   { inst = "SDIVX", slot = "r64", opcode = 0x4D6 },
   { inst = "SDIVW", slot = "r32", opcode = 0xD6 },
 ]
 [[templates]]
 name = "UDIV"
-body = { ref = "udiv", form = "DIV2A", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "udiv {dst}, {src}, {src2}", match = { op2d = 2 } }
+body = { group = "udiv", form = "DIV2A", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "udiv {dst}, {src}, {src2}", match = { op2d = 2 } }
 rows = [
   { inst = "UDIVX", slot = "r64", opcode = 0x4D6 },
   { inst = "UDIVW", slot = "r32", opcode = 0xD6 },
 ]
 [[templates]]
 name = "CBZ"
-body = { ref = "cbz", form = "CBZF", opcode = "{opcode}", ops = ["src:{slot}", "target:off19"], asm = "cbz {src}, {target}" }
+body = { group = "cbz", form = "CBZF", opcode = "{opcode}", ops = ["src:{slot}", "target:off19"], asm = "cbz {src}, {target}" }
 rows = [
   { inst = "CBZX", slot = "r64", opcode = 0xB4, roles = ["branch"] },
   { inst = "CBZW", slot = "r32", opcode = 0x34 },
 ]
 [[templates]]
 name = "CBNZ"
-body = { ref = "cbnz", form = "CBZF", opcode = "{opcode}", ops = ["src:{slot}", "target:off19"], asm = "cbnz {src}, {target}" }
+body = { group = "cbnz", form = "CBZF", opcode = "{opcode}", ops = ["src:{slot}", "target:off19"], asm = "cbnz {src}, {target}" }
 rows = [
   { inst = "CBNZX", slot = "r64", opcode = 0xB5 },
   { inst = "CBNZW", slot = "r32", opcode = 0x35 },
@@ -4646,28 +4646,28 @@ rows = [
 ]
 [[templates]]
 name = "CSEL"
-body = { ref = "csel", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:cond4", "src2:{slot}"], asm = "csel {dst}, {src}, {src2}, {cc}" }
+body = { group = "csel", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:cond4", "src2:{slot}"], asm = "csel {dst}, {src}, {src2}, {cc}" }
 rows = [
   { inst = "CSELX", slot = "r64", opcode = 0x4D4 },
   { inst = "CSELW", slot = "r32", opcode = 0xD4 },
 ]
 [[templates]]
 name = "CSINC"
-body = { ref = "csinc", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:cond4", "src2:{slot}"], asm = "csinc {dst}, {src}, {src2}, {cc}", match = { csop2 = 1 } }
+body = { group = "csinc", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:cond4", "src2:{slot}"], asm = "csinc {dst}, {src}, {src2}, {cc}", match = { csop2 = 1 } }
 rows = [
   { inst = "CSINCX", slot = "r64", opcode = 0x4D4 },
   { inst = "CSINCW", slot = "r32", opcode = 0xD4 },
 ]
 [[templates]]
 name = "CSINV"
-body = { ref = "csinv", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:cond4", "src2:{slot}"], asm = "csinv {dst}, {src}, {src2}, {cc}" }
+body = { group = "csinv", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:cond4", "src2:{slot}"], asm = "csinv {dst}, {src}, {src2}, {cc}" }
 rows = [
   { inst = "CSINVX", slot = "r64", opcode = 0x6D4 },
   { inst = "CSINVW", slot = "r32", opcode = 0x2D4 },
 ]
 [[templates]]
 name = "CSNEG"
-body = { ref = "csneg", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:cond4", "src2:{slot}"], asm = "csneg {dst}, {src}, {src2}, {cc}", match = { csop2 = 1 } }
+body = { group = "csneg", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:cond4", "src2:{slot}"], asm = "csneg {dst}, {src}, {src2}, {cc}", match = { csop2 = 1 } }
 rows = [
   { inst = "CSNEGX", slot = "r64", opcode = 0x6D4 },
   { inst = "CSNEGW", slot = "r32", opcode = 0x2D4 },

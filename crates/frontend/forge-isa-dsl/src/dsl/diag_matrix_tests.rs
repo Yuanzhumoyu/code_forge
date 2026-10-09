@@ -46,7 +46,7 @@ fields = [
 [[instructions]]
 name = "ADD"
 form = "R"
-ref = "add"
+group = "add"
 opcode = 0x33
 match = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
@@ -218,7 +218,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "引用名与指令名冲突",
             plus(
-                "[[instructions]]\nname = \"SUB\"\nref = \"ADD\"\nform = \"R\"\nopcode = 0x33\n\
+                "[[instructions]]\nname = \"SUB\"\ngroup = \"ADD\"\nform = \"R\"\nopcode = 0x33\n\
                  match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"sub {dst}\"",
             ),
             "DSL-INST",
@@ -227,7 +227,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "引用名为空",
             plus(
-                "[[instructions]]\nname = \"SUB\"\nref = \"\"\nform = \"R\"\nopcode = 0x33\n\
+                "[[instructions]]\nname = \"SUB\"\ngroup = \"\"\nform = \"R\"\nopcode = 0x33\n\
                  match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"sub {dst}\"",
             ),
             "DSL-INST",
