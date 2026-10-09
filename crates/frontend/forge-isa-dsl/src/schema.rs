@@ -192,11 +192,11 @@ pub const SECTIONS: &[Section] = &[
     Section {
         path: "[[conventions.imm_fn]]",
         model: "ImmFnDef",
-        required: &["name", "text", "expr"],
-        optional: &[],
+        required: &["name", "expr"],
+        optional: &["text", "texts"],
         flatten: &[],
         additional: false,
-        doc: "立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值）",
+        doc: "立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`texts` = 多拼写等价写法（二者只给一个），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值）",
     },
     Section {
         path: "[conventions.mem]",

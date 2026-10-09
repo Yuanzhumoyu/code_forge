@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W7 第九片：`[[conventions.imm_fn]]` 支持**多拼写** `texts`
+
++ `ImmFnDef` 的 `text` 变为可选 ✗、新增 `texts = ["…", "…"]` ✗（同一语义的**多条等价写法** ✗）：
+  两者**只能给一个** ✗、至少给一个 ✗（校验期报错 ✗）；`all_texts()` 给出全部写法 ✗。
++ 生成期改为**两相** ✗：① 值语义（`expr` ✗）每条声明**一次** ✗ —— 多拼写共享同一个求值函数
+  `__imm_fn{i}` 与同一个下标 ✗；② 文本形态**每条写法各一次匹配尝试** ✗（`__imm_fn_lit` ✗）。
+  ⇒ 多拼写不会产生第二份值语义 ✗，也不会改变任何既有写法的匹配结果 ✔。
++ 单测 `dsl::tests::imm_fn_texts_multi_spelling` ✗：多拼写合法 ✔ / `text` 与 `texts` 同时给报错 ✔ /
+  两者都不给报错 ✔。
++ 三方针同步 ✗：模型 ✗ + schema（`required` 去掉 `text` ✗、`optional` 加 `text`/`texts` ✗）
+  + 文档键表该行 ✗ + 重生成 `isa-dsl.schema.json` ✗。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（三谱未用 `texts` ⇒ 生成物逐字节不变 ✗）。
++ **下一片**：用 `texts` 把 arm64 的 98 条 `imm_fn` 折叠成约 49 条 ✗（成对的 `abs_g0` 与
+  `abs_g0_n` 只差开头的 `#` ✗）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W7 第八片：emit 路径的内存偏移**统一取占位符注册表**
 
 + `integration.rs::parse_mem_template`（清单点名的"私有内存语法" ✗）原先**手抄**了偏移符号语义 ✗

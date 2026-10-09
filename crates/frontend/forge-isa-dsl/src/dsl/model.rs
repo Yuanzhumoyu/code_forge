@@ -1179,14 +1179,22 @@ pub struct Conventions {
 /// 立即数**修饰函数**：汇编期表达式里的一种"包裹写法"
 /// （`[[conventions.imm_fn]]`）。
 ///
-/// 一个修饰 = 两行数据：
+/// 一个修饰 = 两行数据（v21 W7 起 `text` 可为**多拼写** `texts` 列表 ✗）：
 ///
 /// ```toml
 /// [[conventions.imm_fn]]
 /// name = "hi"                  # 名字（诊断/文档用；不参与文本匹配）
 /// text = "%hi({0})"            # 源文本形态：`{0}` 处是内层表达式
 /// expr = "({0} + 0x800) >> 12" # 值语义：`{0}` 处是内层表达式的**值**
+///
+/// [[conventions.imm_fn]]
+/// name = "abs_g0"
+/// texts = ["#:abs_g0:{0}", ":abs_g0:{0}"]  # 同一语义的多种写法（如带/不带 `#`）
+/// expr = "{0}"
 /// ```
+///
+/// `text` 与 `texts` **只能给一个** ✗；`texts` 的非空列表 = 多条**等价**写法 ✗
+/// （共同一个 `expr` ✗、共同一个名字 ✗ ⇒ 值语义与诊断名唯一 ✗）。
 ///
 /// 刻意**不带任何 ISA 知识**：GAS/RISC-V 的 `%hi`/`%lo`、GAS/ARM 的 `:lower16:`、
 /// MIPS 的 `hi(x)` 都只是各自谱里的两行；`text` 允许前缀/后缀/两侧都有字面，
@@ -1197,9 +1205,24 @@ pub struct ImmFnDef {
     /// 名字（唯一的诊断名；不参与文本匹配）。
     pub name: String,
     /// 源文本形态：`{0}` = 内层表达式的位置（其余是照原样匹配的字面 token）。
-    pub text: String,
+    #[serde(default)]
+    pub text: Option<String>,
+    /// **多拼写**（v21 W7 ✗）：同一语义的若干等价写法 ✗（与 `text` 互斥 ✗）。
+    #[serde(default)]
+    pub texts: Option<Vec<String>>,
     /// 值语义：`{0}` = 内层表达式的值，按既有表达式语言求值。
     pub expr: String,
+}
+
+impl ImmFnDef {
+    /// 全部**等价写法** ✗（`texts` 优先；都没有 ⇒ 空表 ✗，由校验报错 ✗）。
+    pub fn all_texts(&self) -> Vec<&str> {
+        match (&self.texts, &self.text) {
+            (Some(v), _) => v.iter().map(|s| s.as_str()).collect(),
+            (None, Some(t)) => vec![t.as_str()],
+            (None, None) => Vec::new(),
+        }
+    }
 }
 
 /// 内存操作数文本模板（v16/S9；v20 V10 起为**列表**）：组件占位符序列，同时派生

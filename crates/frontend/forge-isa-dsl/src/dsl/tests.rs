@@ -4812,3 +4812,24 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"mods {dst?}, {cond:plus}\"",
     assert!(r.contains('?'), "规范化后应保留 `?` ✗：{r}");
     assert!(r.contains(":plus"), "规范化后应保留 `:affix` ✗：{r}");
 }
+
+/// v21 W7：`imm_fn` 的**多拼写**（`texts` ✗）——`texts` 与 `text` 互斥 ✗、两者都不给报错 ✗、
+/// 多拼写本身合法 ✗（同一 `expr`、同一下标 ⇒ 值语义唯一 ✗）。
+#[test]
+fn imm_fn_texts_multi_spelling() {
+    // ✅ 多拼写合法 ✗
+    let ok = lowering_doc(
+        "[[conventions.imm_fn]]\nname = \"a\"\ntexts = [\"#:a:{0}\", \":a:{0}\"]\nexpr = \"{0}\"",
+    );
+    super::parse_and_validate(&ok).expect("多拼写应合法");
+    // ❌ `text` 与 `texts` 同时给 ⇒ 报错 ✗
+    let both = lowering_doc(
+        "[[conventions.imm_fn]]\nname = \"a\"\ntext = \"#:a:{0}\"\ntexts = [\":a:{0}\"]\nexpr = \"{0}\"",
+    );
+    let err = super::parse_and_validate(&both).unwrap_err().to_string();
+    assert!(err.contains("只能给一个"), "err: {err}");
+    // ❌ 两者都不给 ⇒ 报错 ✗
+    let neither = lowering_doc("[[conventions.imm_fn]]\nname = \"a\"\nexpr = \"{0}\"");
+    let err = super::parse_and_validate(&neither).unwrap_err().to_string();
+    assert!(err.contains("text"), "err: {err}");
+}

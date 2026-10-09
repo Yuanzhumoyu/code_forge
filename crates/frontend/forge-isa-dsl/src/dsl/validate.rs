@@ -1188,18 +1188,28 @@ fn validate_imm_fns(conv: &Conventions) -> Result<(), String> {
             return Err(format!("{path}: imm_fn 名字 '{}' 重复", d.name));
         }
         let ctx = format!("[conventions.imm_fn.{}]", d.name);
-        let (pre, post) = crate::dsl::codegen::asm::split_hole(&d.text)
-            .ok_or_else(|| format!("{ctx}: text 必须恰好含一个 `{{0}}`（内层表达式的位置）"))?;
+        // v21 W7：`text` / `texts` 只给一个 ✗，且**每条写法**都要自洽 ✗。
+        let texts = d.all_texts();
+        if texts.is_empty() {
+            return Err(format!("{ctx}: 必须给 `text` 或 `texts`（同一语义的写法）"));
+        }
+        if d.text.is_some() && d.texts.is_some() {
+            return Err(format!("{ctx}: `text` 与 `texts` 只能给一个"));
+        }
         let (epre, epost) = crate::dsl::codegen::asm::split_hole(&d.expr)
             .ok_or_else(|| format!("{ctx}: expr 必须恰好含一个 `{{0}}`（内层值）"))?;
-        let pre_toks =
-            tokenize(pre.trim()).map_err(|e| format!("{ctx}: text 前段 '{pre}': {e}"))?;
-        let post_toks =
-            tokenize(post.trim()).map_err(|e| format!("{ctx}: text 后段 '{post}': {e}"))?;
-        if pre_toks.is_empty() && post_toks.is_empty() {
-            return Err(format!(
-                "{ctx}: text 里没有任何字面——只写 `{{0}}` 会吞掉任意表达式（改写作法的拼写）"
-            ));
+        for t in &texts {
+            let (pre, post) = crate::dsl::codegen::asm::split_hole(t)
+                .ok_or_else(|| format!("{ctx}: text 必须恰好含一个 `{{0}}`（内层表达式的位置）"))?;
+            let pre_toks =
+                tokenize(pre.trim()).map_err(|e| format!("{ctx}: text 前段 '{pre}': {e}"))?;
+            let post_toks =
+                tokenize(post.trim()).map_err(|e| format!("{ctx}: text 后段 '{post}': {e}"))?;
+            if pre_toks.is_empty() && post_toks.is_empty() {
+                return Err(format!(
+                    "{ctx}: text 里没有任何字面——只写 `{{0}}` 会吞掉任意表达式（改写作法的拼写）"
+                ));
+            }
         }
         tokenize(epre.trim()).map_err(|e| format!("{ctx}: expr 前段 '{epre}': {e}"))?;
         tokenize(epost.trim()).map_err(|e| format!("{ctx}: expr 后段 '{epost}': {e}"))?;

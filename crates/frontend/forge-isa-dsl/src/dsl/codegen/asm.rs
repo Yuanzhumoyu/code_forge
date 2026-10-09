@@ -1174,20 +1174,9 @@ fn gen_imm_fns(model: &IsaModel) -> Result<(TokenStream, TokenStream), String> {
     let mut tries: Vec<TokenStream> = Vec::new();
     for (i, d) in defs.iter().enumerate() {
         let ctx = || format!("[[conventions.imm_fn.{}]]", d.name);
-        let (pre_txt, post_txt) = split_hole(&d.text)
-            .ok_or_else(|| format!("{}: text 必须恰好含一个 `{{0}}`（内层表达式的位置）", ctx()))?;
+        // ① **值语义**：每条声明一次 ✗（多拼写共享同一个 `expr` 与同一个求值函数 ✗）。
         let (pre_expr, post_expr) = split_hole(&d.expr)
             .ok_or_else(|| format!("{}: expr 必须恰好含一个 `{{0}}`（内层值）", ctx()))?;
-        let pre_lit = tokenize(pre_txt.trim())
-            .map_err(|e| format!("{}: text 前段 '{pre_txt}': {e}", ctx()))?;
-        let post_lit = tokenize(post_txt.trim())
-            .map_err(|e| format!("{}: text 后段 '{post_txt}': {e}", ctx()))?;
-        if pre_lit.is_empty() && post_lit.is_empty() {
-            return Err(format!(
-                "{}: text 里没有任何字面——光一个 `{{0}}` 会吞掉任意表达式（改写作法的拼写）",
-                ctx()
-            ));
-        }
         let pre_expr_toks: Vec<TokenStream> = tokenize(pre_expr.trim())
             .map_err(|e| format!("{}: expr 前段: {e}", ctx()))?
             .iter()
@@ -1214,37 +1203,61 @@ fn gen_imm_fns(model: &IsaModel) -> Result<(TokenStream, TokenStream), String> {
                 Some(__v)
             }
         });
-        let pre_lits: Vec<TokenStream> = pre_lit.iter().map(tok_expr).collect();
-        let post_lits: Vec<TokenStream> = post_lit.iter().map(tok_expr).collect();
-        let pre_match = if pre_lits.is_empty() {
-            quote! { true }
-        } else {
-            quote! { __imm_fn_lit(it, &[#(#pre_lits),*], #ci) }
-        };
-        let post_match = if post_lits.is_empty() {
-            quote! { true }
-        } else {
-            quote! { __imm_fn_lit(it, &[#(#post_lits),*], #ci) }
-        };
-        tries.push(quote! {
-            if __imm_fn_allowed(#i) {
-                let __msave = it.pos;
-                if #pre_match {
-                    let __inner = {
-                        __SYMREF_MOD.with(|m| m.set(Some(#i)));
-                        let __r = __expr(it, float);
-                        __SYMREF_MOD.with(|m| m.set(None));
-                        __r
-                    };
-                    if let Some(__inner) = __inner {
-                        if #post_match {
-                            if let Some(__v) = #fname(__inner) { return Some(__v); }
+        // ② **文本形态**：`text` 或 `texts` 的**每一条写法**各生成一次匹配尝试 ✗，
+        //    全部落到同一个 `#fname` 与同一个下标 `#i` 上 ✗（v21 W7 多拼写 ✗）。
+        let texts = d.all_texts();
+        if texts.is_empty() {
+            return Err(format!("{}: 必须给 `text` 或 `texts`", ctx()));
+        }
+        for t in texts {
+            let (pre_txt, post_txt) = split_hole(t).ok_or_else(|| {
+                format!(
+                    "{}: text 必须恰好含一个 `{{0}}`（内层表达式的位置）",
+                    ctx()
+                )
+            })?;
+            let pre_lit = tokenize(pre_txt.trim())
+                .map_err(|e| format!("{}: text 前段 '{pre_txt}': {e}", ctx()))?;
+            let post_lit = tokenize(post_txt.trim())
+                .map_err(|e| format!("{}: text 后段 '{post_txt}': {e}", ctx()))?;
+            if pre_lit.is_empty() && post_lit.is_empty() {
+                return Err(format!(
+                    "{}: text 里没有任何字面——光一个 `{{0}}` 会吞掉任意表达式（改写作法的拼写）",
+                    ctx()
+                ));
+            }
+            let pre_lits: Vec<TokenStream> = pre_lit.iter().map(tok_expr).collect();
+            let post_lits: Vec<TokenStream> = post_lit.iter().map(tok_expr).collect();
+            let pre_match = if pre_lits.is_empty() {
+                quote! { true }
+            } else {
+                quote! { __imm_fn_lit(it, &[#(#pre_lits),*], #ci) }
+            };
+            let post_match = if post_lits.is_empty() {
+                quote! { true }
+            } else {
+                quote! { __imm_fn_lit(it, &[#(#post_lits),*], #ci) }
+            };
+            tries.push(quote! {
+                if __imm_fn_allowed(#i) {
+                    let __msave = it.pos;
+                    if #pre_match {
+                        let __inner = {
+                            __SYMREF_MOD.with(|m| m.set(Some(#i)));
+                            let __r = __expr(it, float);
+                            __SYMREF_MOD.with(|m| m.set(None));
+                            __r
+                        };
+                        if let Some(__inner) = __inner {
+                            if #post_match {
+                                if let Some(__v) = #fname(__inner) { return Some(__v); }
+                            }
                         }
                     }
+                    it.pos = __msave;
                 }
-                it.pos = __msave;
-            }
-        });
+            });
+        }
     }
     let helper = quote! {
         #allow_helper

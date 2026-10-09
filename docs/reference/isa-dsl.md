@@ -165,7 +165,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex` `rex2` |
 | `[conventions.bitsets.<table>]` | — | — | 命名位集合表（kind = "bits" 的槽用）：表名 → （名字 → 位）——源文本是名字拼接，编码取位或（允许额外键） |
 | `[conventions.imm_names.<table>]` | — | — | 命名立即数表（kind = "imm" 的槽用 `names` 指名）：表名 → （名字 → 值）——一个名字 = 一个值；解析认名字也认数字，渲染时值在表里就写名字（允许额外键） |
-| `[[conventions.imm_fn]]` | `name` `text` `expr` | — | 立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值） |
+| `[[conventions.imm_fn]]` | `name` `expr` | `text` `texts` | 立即数修饰（谱声明的数据）：`text` = 源文本形态（`{0}` 是内层表达式），`texts` = 多拼写等价写法（二者只给一个），`expr` = 值语义（`{0}` 是内层值，按既有表达式语言求值） |
 | `[conventions.mem]` | `templates` | — | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
 | `[enum.<表名>]` | — | `kind` `entries`† | 命名取值表：kind = value（名字 = 值；带 `ir` 的那张是条件码表）\| bits（名字拼接、按位或）（允许额外键） |
 | `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` `classes` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
