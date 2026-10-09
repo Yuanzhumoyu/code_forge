@@ -210,7 +210,7 @@ fn validate_segs(segs: &[Seg], info: &InstInfo) -> Result<(), String> {
                 }
                 prev_op = false;
             }
-            Seg::Op { idx: n, .. } => {
+            Seg::Op { idx: n, affix, .. } => {
                 if *n >= info.operands.len() {
                     return Err(format!("{}: placeholder {{{n}}} out of range", ctx()));
                 }
@@ -1559,8 +1559,16 @@ fn gen_assemble_try_tok(
                 elems.push(quote! { #e.then_some(()) });
                 pats.push(quote! { Some(()) });
             }
-            Seg::Op { idx: n, .. } => {
+            Seg::Op { idx: n, affix, .. } => {
                 let (_, fid, slot, _) = &info.operands[*n];
+                // v21 W7：`{n:affix}` ⇒ 解析侧**先尝试吃词缀** ✗。`__eat_lit` 失败会回退 `it.pos` ✗
+            // ⇒ "吃了也算、没吃也行"是安全的 ✗（`+` 对负值被渲染抑制 ✗ ⇒ 此时文本里本就没有词缀 ✗）。
+            if let Some(a) = affix {
+                let ae = lit_seg_expr(a, idx, false)?;
+                elems.push(quote! { { let _ = #ae; Some(()) } });
+                pats.push(quote! { Some(()) });
+            }
+
                 let (e, p, cb) = operand_parse_tok(model, slot, fid, *n, info)?;
                 elems.push(e);
                 pats.push(p);

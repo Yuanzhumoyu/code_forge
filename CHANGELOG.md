@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W7 第六片：`{name:affix}` 的**解析语义**
+
++ 解析侧（`gen_assemble_try_tok` ✗）现在**先尝试吃词缀** ✗：写法里带 `{n:affix}` 时，源文本可以带该词缀 ✗。
++ **为什么"吃了也算、没吃也行"是安全的** ✗：`__eat_lit` 只在**整段匹配成功**时才提交 `it.pos` ✗，
+  失败会回退 ✗ ⇒ 把词缀元素写成"尝试后无条件通过"既不误吞 ✗，又覆盖了 `+` 被渲染抑制（负值 ✗）
+  时文本里本就没有词缀的情形 ✗ ✔。
++ 整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（无谱使用词缀 ⇒ 生成物逐字节不变 ✗）。
+
 ### Added (2026-10-08) — ISA-DSL v21 W7 第五片：`{name:affix}` 的**渲染语义**
 
 + 渲染侧（`gen_disassemble` ✗）实现词缀：`{n:affix}` ⇒ 词缀**随组件出现** ✗，且 **`+` 对已带 `-`** 的
