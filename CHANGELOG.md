@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6 乙（四）：按引用返回（sret）下放 + `{sret}` 占位符
+
++ 新占位符 **`{sret}`**：**内存操作数**占位符（`PhKind::Mem`），产
+  `MemRef { base: Some(__sret), disp: 0, index: None, scale: 1 }`；`__sret` 来自布局的
+  `hidden_sret`（缺 ⇒ fail-closed）。模板里直接写 `{sret}`（不带方括号）。
++ 放行 **`bank = "vec", by_ref = true`**（>16B 向量按引用返回 ✗，且**必须**配 `bank = "vec"` ✗）：
+  x86 按**精确总位宽**分档 —— `width = 256` → `VMOVUPS_MR {retf_src}, {sret}`、
+  `width = 512` → `VMOVUPS_ZMM_MR {retf_src}, {sret}`。
++ 修一处**形态错误**：`width` 对向量必须用**总位宽**（`type_bits_of` = `scalar_bits` 对向量给的是
+  **元素**位宽 ✗）⇒ 生成器内部按 `size_bytes * 8` 折算 ✗。
++ **命中已证明**：临时把旧的 sret 分支改成报错，x86 矩阵仍 **197/3/0** ⇒ 宽向量 by-ref/sret
+  确实走谱面规则（不是静默回落）。
++ 仍关着：`multi = true`（多值返回 ✗，需要「每结果一份搬运模板」✗）。
++ **行为不变**：`encoding.digest` 指纹通过；x86 矩阵 **197/3/0** ✔。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6 乙（三）：按值向量返回下放（`bank = "vec"`）
 
 + `[lower.Ret]` 放行 **`bank = "vec", by_ref = false`**（≤16B 按值向量返回 ✗）：

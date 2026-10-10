@@ -4733,3 +4733,11 @@ insts = ["MOVSD {retf}, {retf_src}"]
 [[lower.Ret]]
 when = { bank = "vec", by_ref = false }
 insts = ["MOVAPS {retf}, {retf_src}"]
+# >16B 向量**按引用**返回（sret ✗）：store 到布局给的隐藏指针 `{sret}`；存储指令按**精确总位宽**分档 ✗。
+[[lower.Ret]]
+when = { bank = "vec", by_ref = true, width = 256 }
+insts = ["VMOVUPS_MR {retf_src}, {sret}"]
+
+[[lower.Ret]]
+when = { bank = "vec", by_ref = true, width = 512 }
+insts = ["VMOVUPS_ZMM_MR {retf_src}, {sret}"]

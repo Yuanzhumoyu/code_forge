@@ -399,6 +399,17 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         }
     };
     let fpr_ret_dest: TokenStream = quote! { Reg::from_index(0, __DEFAULT_FPR_CLASS) };
+    // 按引用返回（sret ✗）：隐藏指针来自**布局**（`hidden_sret` ✗），缺 ⇒ fail-closed。
+    let sret_dest: TokenStream = quote! {
+        match ctx.conv.layout().and_then(|__cl| __cl.hidden_sret) {
+            Some((__hc, __hi)) => Reg::from_index(__hi, __hc),
+            None => {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "ISA-DSL return lowering (sret): 需要布局给的 hidden_sret 槽".into(),
+                ));
+            }
+        }
+    };
     let bank_cond = |bank: &str| -> Result<TokenStream, String> {
         Ok(match bank {
             "gpr" => quote! { !(__ret_is_fpr || __ret_is_vec) },
@@ -439,7 +450,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             quote! { #(#cs)&&* }
         })
     };
-    // 规则体：**只绑该规则真正用到的银行**（否则一条 fpr 规则会被 GPR 槽的 fail-closed 误伤）
+    // 规则体：**只绑该规则真正用到的槽**（否则一条 fpr 规则会被 GPR 槽的 fail-closed 误伤）
     let ret_arm_body = |insts: &[String], seq: &[TokenStream]| -> TokenStream {
         let uses_gpr = insts
             .iter()
@@ -447,6 +458,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         let uses_fpr = insts
             .iter()
             .any(|s| s.contains("{retf}") || s.contains("{retf_src}"));
+        let uses_sret = insts.iter().any(|s| s.contains("{sret}"));
         let g = if uses_gpr {
             quote! { let __ret_dst: Reg = #gpr_ret_dest; let __ret_src = val; }
         } else {
@@ -457,7 +469,12 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         } else {
             quote! {}
         };
-        quote! { #g #f #(#seq)* }
+        let s = if uses_sret {
+            quote! { let __sret: Reg = #sret_dest; }
+        } else {
+            quote! {}
+        };
+        quote! { #g #f #s #(#seq)* }
     };
     // 规则裁决：**条件键多者优先**（同键数保持声明序 ✗）
     let mut ret_arms: Vec<(TokenStream, TokenStream)> = Vec::new();
@@ -665,8 +682,10 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             let val = values.first().copied()
                 .and_then(|x| value_to_xreg.get(x)).copied()
                 .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
-            // 返回形态的**运行期事实**（宽度是数据；银行与是否按引用也在这里判 ✗）：
-            let __ret_bits = ctx.type_bits_of(&val).unwrap_or(#addr_bits32);
+            // 返回形态的**运行期事实**：
+            //  · 银行（整数/浮点/向量 ✗）与"是否按引用"（>16B 向量 ✗）先算 ✗；
+            //  · `__ret_bits` = **形态正确的总位宽**：标量用 `type_bits_of`（= `scalar_bits` ✗），
+            //    向量必须用 `size_bytes * 8`（`scalar_bits` 对向量给的是**元素**位宽 ✗）。
             let __ret_is_fpr = ctx.xreg_types.get(&val).is_some_and(|t| t.is_float());
             let __ret_is_vec = ctx.xreg_types.get(&val).is_some_and(|t| {
                 ctx.type_store.as_ref().is_some_and(|s| {
@@ -676,6 +695,16 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             let __ret_by_ref = __ret_is_vec && ctx.xreg_types.get(&val).is_some_and(|t| {
                 ctx.type_store.as_ref().is_some_and(|s| s.size_bytes(*t) > 16)
             });
+            let __ret_bits = if __ret_is_vec {
+                ctx.xreg_types
+                    .get(&val)
+                    .and_then(|t| ctx.type_store.as_ref().map(|s| s.size_bytes(*t)))
+                    .unwrap_or(__SLOT_BYTES as u32)
+                    .max(__SLOT_BYTES as u32)
+                    * 8
+            } else {
+                ctx.type_bits_of(&val).unwrap_or(#addr_bits32)
+            };
             #ret_dispatch
             Ok(__pack)
         }

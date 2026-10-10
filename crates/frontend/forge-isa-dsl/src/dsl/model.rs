@@ -4305,11 +4305,12 @@ pub fn check_term_lowering_supported(m: &IsaModel) -> Result<(), String> {
                             .to_string(),
                     );
                 }
-                // 按引用返回（sret）还没下放：写成 `by_ref = true` 会静默拿不到 sret 指针。
-                if w.by_ref == Some(true) {
+                // 按引用返回（sret）用 `by_ref = true` 表达，**只对 `vec` 银行有意义**
+                // （`>16B` 向量的落点是隐藏指针 ✗）；写成别的银行的条件恒不成立 ⇒ 拒。
+                if w.by_ref == Some(true) && w.bank.as_deref() != Some("vec") {
                     return Err(
-                        "[lower.Ret].when.by_ref = true: 按引用返回（sret）还没下放（v21 W6 分片进行中）\
-                         ——目前下放了 gpr/fpr/按值向量（vec + by_ref = false ✗）"
+                        "[lower.Ret].when.by_ref = true: 只对 `bank = \"vec\"`（>16B 向量按引用返回）\
+                         有意义——别的银行的返回值不按引用 ✗"
                             .to_string(),
                     );
                 }

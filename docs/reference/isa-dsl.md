@@ -1464,6 +1464,7 @@ insts = ["MOVSD {retf}, {retf_src}"]
 | --- | --- | --- |
 | `{ret}` / `{retf}` | **ABI 返回槽**（整数 / 浮点）——"返回值要去的那个槽" | 宿主约定（plan 的 `ret` 槽或 `conv.ret_gpr`；缺 ⇒ fail-closed） |
 | `{ret_src}` / `{retf_src}` | 承载返回值的**虚拟**寄存器（像 `{cond}`：字段先填 0，由 `map_reg_field` 把 IR 返回值绑上去） | 终结 lowering |
+| `{sret}` | **按引用返回的隐藏指针**（>16B 向量的落点）——是**内存操作数**占位符：`MemRef { base: Some(__sret), disp: 0 }` | 宿主约定（布局的 `hidden_sret`；缺 ⇒ fail-closed） |
 
 **条件键是数据，不是枚举**（这是刻意的 ✗——`ret_kind = "f32"` 那种写法会把宽度写死，
 f8/f16/f128、i8…i128、任意宽度指针都表达不了）：
@@ -1483,7 +1484,10 @@ f8/f16/f128、i8…i128、任意宽度指针都表达不了）：
 目前下放了 `bank = "gpr"`、`bank = "fpr"`（三谱 ✗）与 **`bank = "vec", by_ref = false`**
 （≤16B 按值向量，x86 = `MOVAPS {retf}, {retf_src}` ✗ —— `bank = "vec"` **必须**写 `by_ref`，
 否则分不清按值向量与 >16B 的 sret ✗）；
-`by_ref = true`（sret）与 `multi = true`（多值 ✗）还没下放，写了会被**安全闸拒**。
+`by_ref = true`（>16B 向量的 sret ✗，**必须**配 `bank = "vec"`）也已下放——按**精确总位宽**分档（x86：`width = 256` → `VMOVUPS_MR
+{retf_src}, {sret}` ✗、`width = 512` → `VMOVUPS_ZMM_MR …` ✗）。注意 `width` 对向量是**总位宽** ✗（`type_bits_of`
+对向量给的是**元素**位宽 ✗，生成器内部按 `size_bytes * 8` 折算 ✗）。
+还没下放的只剩 `multi = true`（多值 ✗），写了会被**安全闸拒**。
 
 ### 历史写法（v18 S5，已废 ✗）
 

@@ -43,6 +43,9 @@ pub(crate) enum PhKind {
     Reg,
     Imm,
     Cond,
+    /// **内存操作数**（v21 W6 乙）：占位符自己产 `MemRef`（如 `{sret}` = 布局给的隐藏
+    /// sret 指针做基址、disp 恒 0 ✗），模板里直接写 `{sret}`（不带方括号 ✗）。
+    Mem,
 }
 
 /// 临时寄存器类别。
@@ -704,6 +707,28 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             xreg: "__retf_src",
             ctor: Some(|s| field_ctor_expr(s, quote! { 0u32 })),
         },
+        // `{sret}` = **按引用返回（sret）的隐藏指针**（>16B 向量的落点 ✗），由调用布局给 ✗。
+        // 物理寄存器 ⇒ `xreg: "0u32"`（不参与 map_reg_field ✗）；常用于内存操作数写法
+        // `[{sret}]`（只写基址、disp 恒 0 ✗）。
+        Ph {
+            name: "{sret}",
+            kind: PhKind::Mem,
+            loose: false,
+            token_kind: "mem",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! {
+                    MemRef {
+                        base: Some(__sret),
+                        disp: 0,
+                        index: None,
+                        scale: 1,
+                    }
+                }
+            }),
+        },
         Ph {
             name: "{true}",
             kind: PhKind::Cond,            loose: false,
@@ -1105,6 +1130,7 @@ pub(crate) fn kind_matches(name: &str, slot_kind: OperandKind) -> bool {
         }
         return match p.kind {
             PhKind::Reg => slot_kind == OperandKind::Reg,
+            PhKind::Mem => slot_kind == OperandKind::Mem,
             PhKind::Imm => slot_kind == OperandKind::Imm,
             PhKind::Cond => slot_kind == OperandKind::Cond,
         };

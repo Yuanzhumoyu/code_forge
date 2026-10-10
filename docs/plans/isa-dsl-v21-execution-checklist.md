@@ -803,9 +803,13 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
     x86 写 `MOVAPS {retf}, {retf_src}`（= 旧路径在 128 位档选中的同一条 ✗，
     WA-37 要求**全宽 128 位** ✗）；`bank = vec` 必写 `by_ref`（不写就分不清按值/sret ✗）。
     riscv64/arm64 没有 128 位 FPR 搬移 ⇒ 不写规则（旧路径 fail-closed ✗，行为不变 ✗）。
-  - [ ] **`bank = vec` / `by_ref = true` / `multi = true`** 仍在生成器里——机制已就位 ✗
-    （加规则 + 放开闸门即可 ✗）；`by_ref` 需要 sret 指针占位符，`multi` 需要「每结果一份
-    搬运模板」的写法（结果是签名数据 ✗）。
+  - [x] **`bank = vec, by_ref = true`（>16B 的 sret ✗）已下放**（2026-10-08 ✗）——
+    新占位符 **`{sret}`**（内存操作数：`MemRef { base: Some(__sret) }` ✗，由布局的 `hidden_sret` 给 ✗），
+    x86 按**精确总位宽**分档：`width = 256` → `VMOVUPS_MR` ✗、`width = 512` → `VMOVUPS_ZMM_MR` ✗。
+    **命中已证明** ✗：临时把旧 sret 分支改成报错 ✗，x86 矩阵仍 **197/3/0** ✔ ⇒ 走的是谱面 ✗。
+    注意 `width` 对向量 = **总位宽**（`type_bits_of` 给的是元素位宽 ✗ ⇒ 内部按 `size_bytes*8` 折算 ✗）。
+  - [ ] **`multi = true`（多值返回 ✗）**仍未下放——需要「每结果一份搬运模板」的写法 ✗
+    （结果个数是**签名数据** ✗，固定 `insts` 表达不了 ✗）。
   - [ ] **其余四种返回形态**（float / ≤16B 向量 / >16B sret / 多值 ✗）仍在生成器里——
     分片进行中 ✗；机制已就位（加 `[[lower.Ret]] when = { ret_kind = … }` + 放开闸门即可 ✗）。
 - [x] 删除编译器三处按字段个数猜 ISA（`lowering.rs:202`、`:527-625`、`frame.rs:172-208`）。

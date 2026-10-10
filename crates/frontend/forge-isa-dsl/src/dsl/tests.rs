@@ -4622,15 +4622,20 @@ fn unsupported_term_lowering_is_rejected() {
     assert!(err.contains("vec"), "应点名银行：{err}");
     assert!(err.contains("by_ref"), "应要求写 by_ref：{err}");
 
-    // ③ 还没下放的 by_ref / multi ⇒ 同样拒。
-    for bad in ["by_ref = true", "multi = true"] {
-        let doc = gen_cond_doc(
-            CC_ALL_FULL,
-            &format!("[[lower.Ret]]\nwhen = {{ {bad} }}\ninsts = [\"SETC {{out}}, {{cc}}\"]"),
-        );
-        let err = super::parse_and_validate(&doc).unwrap_err().to_string();
-        assert!(err.contains("W6"), "{bad} 应被拒并点明进行中：{err}");
-    }
+    // ③ `by_ref = true` **必须**配 `bank = "vec"`（>16B 向量才有按引用返回 ✗）；
+    //    `multi = true` 还没下放 ⇒ 拒并点明进行中。
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[lower.Ret]]\nwhen = { by_ref = true }\ninsts = [\"SETC {out}, {cc}\"]",
+    );
+    let err = super::parse_and_validate(&doc).unwrap_err().to_string();
+    assert!(err.contains("by_ref"), "应点名 by_ref：{err}");
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[lower.Ret]]\nwhen = { multi = true }\ninsts = [\"SETC {out}, {cc}\"]",
+    );
+    let err = super::parse_and_validate(&doc).unwrap_err().to_string();
+    assert!(err.contains("W6"), "multi 应被拒并点明进行中：{err}");
 
     // ④ 未知条件键 ⇒ 拒（`ret_kind` 是被否掉的枚举写法，拼错不该静默）。
     let doc = gen_cond_doc(
@@ -4662,6 +4667,7 @@ fn unsupported_term_lowering_is_rejected() {
         ("Br", ""),
         ("Ret", "when = { bank = \"gpr\" }\n"),
         ("Ret", "when = { bank = \"vec\", by_ref = false }\n"),
+        ("Ret", "when = { bank = \"vec\", by_ref = true, width = 256 }\n"),
     ] {
         let ok = gen_cond_doc(
             CC_ALL_FULL,
