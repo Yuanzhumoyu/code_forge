@@ -4729,3 +4729,7 @@ insts = ["MOVSS {retf}, {retf_src}"]
 [[lower.Ret]]
 when = { bank = "fpr", width = 64 }
 insts = ["MOVSD {retf}, {retf_src}"]
+# ≤16B **按值向量**返回：整寄存器槽搬移（128 位 ✗）——必须 `by_ref = false`，否则会连 >16B 的 sret 一起匹配 ✗。
+[[lower.Ret]]
+when = { bank = "vec", by_ref = false }
+insts = ["MOVAPS {retf}, {retf_src}"]

@@ -4289,19 +4289,27 @@ pub fn check_term_lowering_supported(m: &IsaModel) -> Result<(), String> {
         if op == "Ret" {
             for r in rules {
                 let Some(w) = &r.when else { continue };
-                // 银行：IR 侧封闭集三选一；`vec` 还没下放（生成器里仍是四形态兜底）。
+                // 银行：IR 侧封闭集三选一（`vec` = 按值向量返回，**必须**配 `by_ref = false` ✗，
+                // 否则会连 >16B 的 sret 形态一起匹配 ✗）。
                 if let Some(b) = &w.bank
-                    && !matches!(b.as_str(), "gpr" | "fpr")
+                    && !matches!(b.as_str(), "gpr" | "fpr" | "vec")
                 {
                     return Err(format!(
-                        "[lower.Ret].when.bank = \"{b}\": 该返回银行还没下放（v21 W6 分片进行中）\
-                         ——已下放 gpr/fpr；`vec`（按值向量与宽向量 sret）仍在生成器里"
+                        "[lower.Ret].when.bank = \"{b}\": 未知银行（可用 gpr/fpr/vec ✗）"
                     ));
+                }
+                if w.bank.as_deref() == Some("vec") && w.by_ref.is_none() {
+                    return Err(
+                        "[lower.Ret].when.bank = \"vec\": 必须同时写 `by_ref`（`false` = 按值向量，\
+                         `true` = >16B 的 sret 形态；后者还没下放 ✗）"
+                            .to_string(),
+                    );
                 }
                 // 按引用返回（sret）还没下放：写成 `by_ref = true` 会静默拿不到 sret 指针。
                 if w.by_ref == Some(true) {
                     return Err(
-                        "[lower.Ret].when.by_ref = true: 按引用返回（sret）还没下放（v21 W6 分片进行中）"
+                        "[lower.Ret].when.by_ref = true: 按引用返回（sret）还没下放（v21 W6 分片进行中）\
+                         ——目前下放了 gpr/fpr/按值向量（vec + by_ref = false ✗）"
                             .to_string(),
                     );
                 }

@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6 乙（三）：按值向量返回下放（`bank = "vec"`）
+
++ `[lower.Ret]` 放行 **`bank = "vec", by_ref = false`**（≤16B 按值向量返回 ✗）：
+  x86 写 `MOVAPS {retf}, {retf_src}`（**与旧路径在 128 位档选中的是同一条指令** ✗，WA-37 的全宽要求不变 ✗）。
+  `bank = "vec"` **必须**同时写 `by_ref`——否则会连 >16B 的 sret 形态一起匹配 ✗（安全闸会拒）。
++ riscv64/arm64 没有 128 位 FPR 搬移 ⇒ 不写该规则，旧路径照旧 fail-closed（行为不变 ✗）。
++ 仍关着：`by_ref = true`（sret ✗，需要 sret 指针占位符 ✗）与 `multi = true`（多值 ✗，
+  需要「每结果一份搬运模板」✗）。
++ **行为不变**：`encoding.digest` 指纹通过；x86 矩阵 **197/3/0** ✔（含 V128 按值返回用例 ✗）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6 乙（二）：`[lower.Ret]` 条件**数据化** + 浮点返回下放
 
 + `[lower.Ret].when` 不再用 `ret_kind = "int"/"f32"/…` 那种**枚举**（它把宽度写死 ⇒ f8/f16/f128、

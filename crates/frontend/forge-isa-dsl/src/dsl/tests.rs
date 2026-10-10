@@ -4613,14 +4613,14 @@ fn unsupported_term_lowering_is_rejected() {
     let err = super::parse_and_validate(&doc).unwrap_err().to_string();
     assert!(err.contains("lower.Ret"), "应点名 lower.Ret：{err}");
 
-    // ② 还没下放的银行（`vec`）⇒ 被安全闸拒（并点明分片进行中）。
+    // ② `vec` 必须同时写 `by_ref`（不写就分不清"按值向量"与">16B sret"✗）。
     let doc = gen_cond_doc(
         CC_ALL_FULL,
         "[[lower.Ret]]\nwhen = { bank = \"vec\" }\ninsts = [\"SETC {out}, {cc}\"]",
     );
     let err = super::parse_and_validate(&doc).unwrap_err().to_string();
     assert!(err.contains("vec"), "应点名银行：{err}");
-    assert!(err.contains("W6"), "报错应点明分片进行中：{err}");
+    assert!(err.contains("by_ref"), "应要求写 by_ref：{err}");
 
     // ③ 还没下放的 by_ref / multi ⇒ 同样拒。
     for bad in ["by_ref = true", "multi = true"] {
@@ -4656,11 +4656,12 @@ fn unsupported_term_lowering_is_rejected() {
     let err = super::parse_and_validate(&doc).unwrap_err().to_string();
     assert!(err.contains("lower.Switch"), "应点名 lower.Switch：{err}");
 
-    // ⑦ 已放行的三种都要通过（`Ret` 带数据化条件）。
+    // ⑦ 已放行的都要通过（`Ret` 带数据化条件：整数 / 按值向量）。
     for (op, extra) in [
         ("Jmp", ""),
         ("Br", ""),
         ("Ret", "when = { bank = \"gpr\" }\n"),
+        ("Ret", "when = { bank = \"vec\", by_ref = false }\n"),
     ] {
         let ok = gen_cond_doc(
             CC_ALL_FULL,
