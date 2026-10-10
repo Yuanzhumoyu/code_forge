@@ -446,11 +446,16 @@ let name = node.get_text("name")?;
   x86 `100/6/8/3`、riscv64 `67/6/8/36`、arm64 `8/6/8/95`——"宿主管线"8 条里含 `VaStart`
   （变参 V2，**生成器按能力角色发**，谱里同样没有 `[[lowering]]`），宿主 op 表是宿主数据、
   DSL 不留第二份清单）、
-  `--refs` 报"声明了却没被任何模板行首引用的 `ref`"（**opt-in**：实测三谱 28 条是给未来 lowering
-  预留的多态名，属作者意图，不进默认档）、`--bits` 报"指令字里没有位域覆盖的位段"（**opt-in**，
-  只对定宽 ISA；实测 x86 0 / riscv64 3 / arm64 67，逐条核对为保留位或固定位型 ⇒ 评审清单；
-  依据它修掉 riscv AMO/LR/SC 的 `aq`/`rl` 两个字面 0 位）、`--suggest` 报"同一 op 发射形状相同、
-  可合并为 `vary` 的族"（**opt-in 只建议**：x86 55 / riscv64 28 / arm64 7）。
+  `--refs` 报"声明了却没被任何模板行首引用的 `ref`"（**opt-in**：实测 x86 5 / riscv64 19 /
+  arm64 27 条，多为给未来 lowering 预留的多态名，属作者意图，不进默认档）、
+  `--bits` 报"指令字里没有位域覆盖的位段"（**opt-in**，只对定宽 ISA；实测 x86 0 /
+  riscv64 **13** / arm64 **262** —— 比 W0 的 3 / 67 长，原因是 v21 W2 之后 **form 声明但
+  "本指令未绑定"的槽不再算该指令的覆盖**（口径变化，见执行清单 W2 的如实记录），
+  逐条核对为保留位或固定位型 ⇒ 评审清单；依据它修掉 riscv AMO/LR/SC 的 `aq`/`rl` 两个字面 0 位）、
+  `--suggest` 报"同一 op 发射形状相同、可合并为 `vary` 的族"（**opt-in 只建议**：
+  x86 55 / riscv64 **31** / arm64 7 —— riscv 比 W5 前的 28 长，是族合并之后的余量）。
+  三张清单都由 `crates/frontend/forge-isa-dsl/tests/lint_shipped.rs` 的快照钉住（全绿 = 与快照一致）；
+  **数字随口径变化，改动前先看那个守卫的注释**。
   不接后端就能校验（全部诊断 + 行:列；`--strict-overlap` 另报 lowering 的**部分重叠**（`DSL-OVERLAP`）
   ——该档默认关：实测三 ISA 67 条全是合法的"特化 + 兜底"，它只是评审清单，清单快照在
   `crates/frontend/forge-isa-dsl/tests/strict_overlap.rs`）、看**展开后**的指令与生效编码键、查单条指令的
