@@ -948,8 +948,22 @@ W11 守卫（依赖 W6）尚未收口 ✗，本节只记录**已可测**的项 �
   **D3** ✗：`[family.*]` = **112** 节 ✔（唯一复用机制 ✗）、`vary` **38** 处 ✔、
   三谱 `[[vectors]]` = **505** 条（x86 154 / riscv64 152 / arm64 199 ✗）✔ —— 谱内向量已取代手抄
   黄金表 ✗；`[[lowering]]` = **281** 条（x86 174 / riscv64 94 / arm64 13 ✗）。
-  **D4/D5/D6** ✗：D2 有硬证据（W11 两份夹具零编译器改动 ✗）；D4 的"9 真 ISA 特化 + 12 x86
-  口味缺省 + 1 活兼容分支"**逐条**落点仍未清点 ✗ —— 留待专门一片 ✗。）
+  **D4 逐条清点（前半：#1–#10；2026-10-08 ✗）** ——
+  ✅ **已清除**：#4 `default_prefix_scan()`（函数已不存在 ✗，前缀表 = 谱里的
+  `[[conventions.prefix_scan]]` ✗）、#9 `[spill.FPR<bytes>]`（谱里 `[machine.spill.*]` 9 处 ✗，
+  `[spill.GPR]` 只剩 `arm64.toml:4797` 一句注释 ✗）、#10 手写 reloc 补丁器（现由
+  `machine.rs::gen_reloc_patcher` **生成**并由 `integration.rs` 发进 `TargetMachine` ✗，
+  守卫 `tests/reloc_patcher_generated.rs` ✗）。
+  🚧 **仍在**：#1 `has_jal = has_jmp && !is_prefix_scan()`（`codegen/lowering.rs` ✗）、
+  #3 尾声跳转形态（`codegen/frame.rs` 的 `if has_jump && model.is_prefix_scan()` ✗）、
+  #5 `enum PrefixEffect` + `fn extra_bytes`（x86 闭集 ✗）、
+  #6 `codegen/vlen.rs::prefix_cond_ts`（按字节枚举 ✗）、#7 REX2 **半**（`0xD5`+`rex2` 已进谱表 ✔，
+  但虚拟 `0F` 归一与 payload 位移仍在代码里 ✗）、#11 `force_disp_base` 魔数（前提已证不成立 ✗）。
+  ❓ **未定**：#2（与 #1 同属"降级下放"，未见独立证据 ✗）、#8 `{off}`/`{alloca}`（本次只证实
+  `{off}` 在三谱 **asm 模板**里是普通占位符，如 `ldur {dst}, [{base}, #{off}]` ✗；
+  lowering **发射行**里是否还有第二套内存写法未逐条看 ✗）。
+  ⬜ **#12–#20 留待下一片**（`opsize` 四态、`modrm` 位置缺省仍开 ✗；`fields` 三处往返、
+  lint `["op","ops"]` 双拼、`[[instructions]].when` 死键已随 W2/W10 清除 ✔）。）
 - [~] 度量对比：三谱行数、生成物 token 规模、`cargo check -p forge-codegen` 时间（相对 W0）。
   （三谱行数 ✗：x86 **4877** / riscv64 **3427** / arm64 **5178**；三份 `tm` 生成物字节数 ✗：
   x86 **6.07 MB** / riscv64 **2.48 MB** / arm64 **6.51 MB**；`cargo check -p forge-codegen`
