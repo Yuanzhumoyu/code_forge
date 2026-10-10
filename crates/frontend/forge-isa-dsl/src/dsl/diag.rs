@@ -217,11 +217,11 @@ pub(crate) fn section_code(kind: &str) -> &'static str {
 /// | --- | --- |
 /// | `[[instructions]]` + `name = "X"` | `("instructions", "X")` |
 /// | `[[forms]]` / `[[operand_slots]]` / `[[templates]]` / `[[templates.rows]]` + `name`/`inst` | 同名节 |
-/// | `[[lowering]]` + `op = "X"` | `("lowering", "X")` |
+/// | `[[lower.<名字>]]` | `("lower", "<名字>")`（v21 W6-a；旧面 `[[lowering]]` + `op = "X"` 过渡期仍认 ✗） |
 /// | `[reg.gpr8]` | `("reg", "gpr8")` |
 /// | `[spill.GPR]` | `("spill", "GPR")` |
 /// | `[meta]`/`[stack]`/`[abi]`/`[emit]`/`[types]` | `(kind, "")` |
-/// | `[[pattern]]`（无名字） | `("pattern", "")`（记录该节全部出现位置） |
+/// | `[[lower.<模式名>]]`（树模式 ✗） | 同 `[[lower.*]]`：`("lower", "<模式名>")` |
 #[derive(Debug, Default)]
 pub struct DeclIndex {
     /// (kind, name) → 声明列表（>1 = 重复声明）。
@@ -552,8 +552,7 @@ form = "RR"
 
 [inst.ADD]
 
-[[lowering]]
-op = "Iadd"
+[[lower.Iadd]]
 insts = ["ADD {out}, {0}, {1}"]
 "#;
 
@@ -570,8 +569,8 @@ insts = ["ADD {out}, {0}, {1}"]
         );
         let f = idx.anchor("[form.RR]: bad");
         assert_eq!((f.line, f.col), (10, 1));
-        let l = idx.anchor("[[lowering.Iadd]]: bad");
-        assert_eq!((l.line, l.col), (18, 1));
+        let l = idx.anchor("[[lower.Iadd]]: bad");
+        assert_eq!((l.line, l.col), (17, 1));
         let r = idx.anchor("[reg.gpr8]: bad");
         assert_eq!((r.line, r.col), (7, 1));
         let s = idx.anchor("[stack].align must be > 0");

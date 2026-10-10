@@ -187,8 +187,7 @@ rows = [
     { inst = "ADDX", opcode = 0x3B, ops = ["rd:r64:out", "rs1:r64", "rs2:r64"] },
 ]
 
-[[lowering]]
-op = "Iadd"
+[[lower.Iadd]]
 insts = ["add {out}, {0}, {1}"]
 "#,
     );
@@ -234,8 +233,7 @@ rows = [
     { inst = "MOVX", group = "mov", form = "R", opcode = 0x3B, ops = ["rd:r64:out", "rs1:r64"], asm = "mov {rd}, {rs1}" },
 ]
 
-[[lowering]]
-op = "Copy"
+[[lower.Copy]]
 insts = ["mov {out}, {0}"]
 "#,
     );

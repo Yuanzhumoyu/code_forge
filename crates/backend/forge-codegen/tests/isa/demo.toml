@@ -241,17 +241,14 @@ epilogue_label = false
 # 无需手写 add16/add32/add64 三条 lowering）。
 
 # ── 显式别名（S10e）：多态引用名 → 指令名列表 ──
-[[lowering]]
-op = "Iadd"
+[[lower.Iadd]]
 vary = { rs1_width = [16, 32, 64] }
 insts = ["add {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Iconst"
+[[lower.Iconst]]
 insts = ["mov {out}, {iconst}"]
 
-[[lowering]]
-op = "Copy"
+[[lower.Copy]]
 insts = ["mov {out}, {0}"]
 
 # ── 伪指令（v21 W7：`[asm.pseudo.<名>]`，**表头即名字**）：名字与写法刻意不同，

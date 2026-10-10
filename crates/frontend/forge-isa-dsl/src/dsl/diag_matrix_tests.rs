@@ -50,8 +50,7 @@ match = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
 asm = "add {dst}, {src}, {src2}"
 
-[[lowering]]
-op = "Iadd"
+[[lower.Iadd]]
 insts = ["add {out}, {0}, {1}"]
 
 
@@ -268,7 +267,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "pattern 未知属性",
             plus(
-                "[[pattern]]\nmatch = \"Fadd(Fmul(a, b), c)\"\nwhen = { eq = [\"nope\", 1] }\n\
+                "[[lower.PATY1]]\nmatch = \"Fadd(Fmul(a, b), c)\"\nwhen = { eq = [\"nope\", 1] }\n\
                  insts = [\"add {out}, {a}, {b}\"]",
             ),
             "DSL-PATTERN",
@@ -277,7 +276,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "pattern 叶变量重复",
             plus(
-                "[[pattern]]\nmatch = \"Fadd(Fmul(a, a), c)\"\n\
+                "[[lower.PATY2]]\nmatch = \"Fadd(Fmul(a, a), c)\"\n\
                  insts = [\"add {out}, {a}, {c}\"]",
             ),
             "DSL-PATTERN",
@@ -464,8 +463,7 @@ match = { funct3 = 0 }
 ops = ["dst:nope:out"]
 asm = "add {dst}"
 
-[[lowering]]
-op = "Isub"
+[[lower.Isub]]
 insts = ["add {out}, {0}, {1}"]
 when = { eq = ["rd_width", 32] }
 "#;

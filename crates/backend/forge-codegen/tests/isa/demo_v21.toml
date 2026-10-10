@@ -119,23 +119,19 @@ align = 32
 
 # ───────── 指令选择（v21 W6 的现面仍是 `[[lowering]]` 数组节；本夹具照现状写） ─────────
 
-[[lowering]]
-op = "Iadd"
+[[lower.Iadd]]
 insts = ["ADD {out}, {0}, {1}"]
 
 # 命名谓词进 `when`：优先级更高、命中时走立即数形态。
-[[lowering]]
-op = "Iadd"
+[[lower.Iadd]]
 priority = 1
 when = { eq = ["is_zero", 1] }
 insts = ["ADDI {out}, {0}, 0"]
 
-[[lowering]]
-op = "Isub"
+[[lower.Isub]]
 insts = ["SUB {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Band"
+[[lower.Band]]
 insts = ["AND {out}, {0}, {1}"]
 
 # ───────── 谱内测试向量（v21 面：`[[vectors]]` 仍是数组节） ─────────

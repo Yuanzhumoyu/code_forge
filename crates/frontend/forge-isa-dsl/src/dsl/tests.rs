@@ -980,7 +980,7 @@ uge = 3
 "#;
 
 fn cc_rule() -> &'static str {
-    "[[lowering]]\nop = \"Icmp\"\ninsts = [\"SETC {out}, {cc}\"]"
+    "[[lower.Icmp]]\ninsts = [\"SETC {out}, {cc}\"]"
 }
 
 /// `{cc}` 的生成代码按 `ir` 字段查表得到本 ISA 编码，且**不出现 `IntCC`**。
@@ -1082,7 +1082,7 @@ fn cond_pure_asm_alias_has_no_ir_mapping() {
 fn derive_attr_is_usable_in_when() {
     let doc = lowering_doc(
         "[pred.is_64]\nexpr = { eq = [\"rs1_width\", 64] }\n\
-         [[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"is_64\", 1] }\ninsts = [\"MOV {out}, {0}\"]",
+         [[lower.Copy]]\nwhen = { eq = [\"is_64\", 1] }\ninsts = [\"MOV {out}, {0}\"]",
     );
     let m = parse_and_validate(&doc).expect("派生属性 + when 引用必须通过");
     assert!(
@@ -1108,7 +1108,7 @@ fn derive_attr_is_usable_in_when() {
 #[test]
 fn core_attr_guard_uses_helper_directly() {
     let doc = lowering_doc(
-        "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rs1_width\", 64] }\ninsts = [\"MOV {out}, {0}\"]",
+        "[[lower.Copy]]\nwhen = { eq = [\"rs1_width\", 64] }\ninsts = [\"MOV {out}, {0}\"]",
     );
     let m = parse_and_validate(&doc).expect("合法");
     let raw = super::codegen::generate(&m).unwrap().to_string();
@@ -1138,7 +1138,7 @@ fn core_attr_guard_uses_helper_directly() {
 /// 不用 `{cc}` 的规则不发射 `let __cc: u8 = 0;`（死代码，v18 S8d 修）。
 #[test]
 fn cc_binding_only_emitted_when_used() {
-    let plain = lowering_doc("[[lowering]]\nop = \"Copy\"\ninsts = [\"MOV {out}, {0}\"]");
+    let plain = lowering_doc("[[lower.Copy]]\ninsts = [\"MOV {out}, {0}\"]");
     let m = parse_and_validate(&plain).expect("合法");
     let s = super::codegen::generate(&m).unwrap().to_string();
     assert!(
@@ -1157,7 +1157,7 @@ fn cc_binding_only_emitted_when_used() {
 fn derive_name_in_vary_is_a_predicate_attr() {
     let doc = lowering_doc(
         "[pred.is_64]\nexpr = { eq = [\"rs1_width\", 64] }\n\
-         [[lowering]]\nop = \"Copy\"\nvary = { is_64 = [1, 0], m = [\"MOV\", \"MOV\"] }\ninsts = [\"{m} {out}, {0}\"]",
+         [[lower.Copy]]\nvary = { is_64 = [1, 0], m = [\"MOV\", \"MOV\"] }\ninsts = [\"{m} {out}, {0}\"]",
     );
     let m = parse_and_validate(&doc).expect("vary 用派生名必须通过");
     let rs: Vec<_> = m
@@ -2073,13 +2073,13 @@ fn lowering_err(rule: &str) -> String {
 
 #[test]
 fn lowering_accepts_declared_name() {
-    let doc = lowering_doc("[[lowering]]\nop = \"Copy\"\ninsts = [\"MOV {out}, {0}\"]");
+    let doc = lowering_doc("[[lower.Copy]]\ninsts = [\"MOV {out}, {0}\"]");
     parse_and_validate(&doc).expect("已声明指令名 + 已知占位符必须通过");
 }
 
 #[test]
 fn lowering_rejects_unknown_ref() {
-    let msg = lowering_err("[[lowering]]\nop = \"Copy\"\ninsts = [\"MOVV {out}, {0}\"]");
+    let msg = lowering_err("[[lower.Copy]]\ninsts = [\"MOVV {out}, {0}\"]");
     assert!(msg.contains("未声明的指令/别名 'MOVV'"), "msg: {msg}");
     assert!(msg.contains("[[lowering.Copy]]"), "msg 需带声明路径: {msg}");
 }
@@ -2087,7 +2087,7 @@ fn lowering_rejects_unknown_ref() {
 #[test]
 fn lowering_rejects_unknown_placeholder() {
     // `{iconst_lo}` 少了 `12`：过去落 fallback 装成字面量，生成能编译但语义错的代码
-    let msg = lowering_err("[[lowering]]\nop = \"Iconst\"\ninsts = [\"MOV {out}, {iconst_lo}\"]");
+    let msg = lowering_err("[[lower.Iconst]]\ninsts = [\"MOV {out}, {iconst_lo}\"]");
     assert!(msg.contains("未知占位符 '{iconst_lo}'"), "msg: {msg}");
 }
 
@@ -2095,7 +2095,7 @@ fn lowering_rejects_unknown_placeholder() {
 fn lowering_rejects_unknown_when_attr() {
     // 未知属性 → pred::eval 恒假 → 规则永不命中（既不报错也不生效）
     let msg = lowering_err(
-        "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rs1_widht\", 32] }\ninsts = [\"MOV {out}, {0}\"]",
+        "[[lower.Copy]]\nwhen = { eq = [\"rs1_widht\", 32] }\ninsts = [\"MOV {out}, {0}\"]",
     );
     assert!(msg.contains("未知属性 'rs1_widht'"), "msg: {msg}");
     assert!(msg.contains("rs1_width"), "需列出可用属性: {msg}");
@@ -2103,8 +2103,8 @@ fn lowering_rejects_unknown_when_attr() {
 
 #[test]
 fn lowering_rejects_exact_duplicate() {
-    let rule = "[[lowering]]\nop = \"Copy\"\ninsts = [\"MOV {out}, {0}\"]\n\
-                [[lowering]]\nop = \"Copy\"\ninsts = [\"MOV {out}, {0}\"]";
+    let rule = "[[lower.Copy]]\ninsts = [\"MOV {out}, {0}\"]\n\
+                [[lower.Copy]]\ninsts = [\"MOV {out}, {0}\"]";
     let msg = lowering_err(rule);
     assert!(msg.contains("完全重复"), "msg: {msg}");
 }
@@ -2112,8 +2112,8 @@ fn lowering_rejects_exact_duplicate() {
 /// 同 op 同 insts 但 when 不同 → 合法（宽度/条件分派的正常形态）。
 #[test]
 fn lowering_allows_same_insts_with_different_when() {
-    let rule = "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rs1_width\", 32] }\ninsts = [\"MOV {out}, {0}\"]\n\
-                [[lowering]]\nop = \"Copy\"\ninsts = [\"MOV {out}, {0}\"]";
+    let rule = "[[lower.Copy]]\nwhen = { eq = [\"rs1_width\", 32] }\ninsts = [\"MOV {out}, {0}\"]\n\
+                [[lower.Copy]]\ninsts = [\"MOV {out}, {0}\"]";
     parse_and_validate(&lowering_doc(rule)).expect("when 不同不算重复");
 }
 
@@ -2124,7 +2124,7 @@ fn lowering_accepts_template_instance_name() {
                 body = { form = \"RR\", ops = [\"dst:g:out\", \"src:g\"], \
                 asm = \"{inst.lower} {dst}, {src}\" }\n\
                 rows = [ { inst = \"NEG\", opcode = 9 } ]\n\
-                [[lowering]]\nop = \"Ineg\"\ninsts = [\"NEG {out}, {0}\"]";
+                [[lower.Ineg]]\ninsts = [\"NEG {out}, {0}\"]";
     parse_and_validate(&lowering_doc(rule)).expect("模板实例指令名必须被识别");
 }
 
@@ -2181,7 +2181,7 @@ fn ref_polymorphic_lowering_accepted() {
     let doc = ref_doc(
         &ref_line("mov"),
         &ref_line("mov"),
-        "[[lowering]]\nop = \"Copy\"\ninsts = [\"mov {out}, {0}\"]",
+        "[[lower.Copy]]\ninsts = [\"mov {out}, {0}\"]",
     );
     parse_and_validate(&doc).expect("多态 ref + lowering 引用必须通过");
 }
@@ -2192,7 +2192,7 @@ fn ref_1_to_1_lowering_accepted() {
     let doc = ref_doc(
         &ref_line("copy"),
         "",
-        "[[lowering]]\nop = \"Copy\"\ninsts = [\"copy {out}, {0}\"]",
+        "[[lower.Copy]]\ninsts = [\"copy {out}, {0}\"]",
     );
     parse_and_validate(&doc).expect("1:1 ref + lowering 引用必须通过");
 }
@@ -2224,7 +2224,7 @@ fn ref_rejects_empty() {
 fn vary_expands_rows_and_adds_predicates() {
     // elem 是谓词属性 → 每行追加 eq[elem, 值]；m 不是 → 纯替换
     let doc = lowering_doc(
-        "[[lowering]]\nop = \"Vadd\"\nwhen = { eq = [\"rd\", 256] }\n\
+        "[[lower.Vadd]]\nwhen = { eq = [\"rd\", 256] }\n\
          vary = { elem = [1, 2], m = [\"MOV\", \"MOV\"] }\ninsts = [\"{m} {out}, {0}\"]",
     );
     let m = parse_and_validate(&doc).expect("vary 必须展开");
@@ -2252,7 +2252,7 @@ fn vary_expands_rows_and_adds_predicates() {
 #[test]
 fn vary_requires_equal_length_lists() {
     let doc = lowering_doc(
-        "[[lowering]]\nop = \"Copy\"\nvary = { elem = [1, 2], m = [\"mov\"] }\ninsts = [\"{m} {out}, {0}\"]",
+        "[[lower.Copy]]\nvary = { elem = [1, 2], m = [\"mov\"] }\ninsts = [\"{m} {out}, {0}\"]",
     );
     let msg = match parse_and_validate(&doc).unwrap_err() {
         DslError::Parse { msg, .. } => msg,
@@ -2264,7 +2264,7 @@ fn vary_requires_equal_length_lists() {
 #[test]
 fn vary_predicate_attr_needs_integer() {
     let doc = lowering_doc(
-        "[[lowering]]\nop = \"Copy\"\nvary = { elem = [\"f32\"] }\ninsts = [\"mov {out}, {0}\"]",
+        "[[lower.Copy]]\nvary = { elem = [\"f32\"] }\ninsts = [\"mov {out}, {0}\"]",
     );
     let msg = match parse_and_validate(&doc).unwrap_err() {
         DslError::Parse { msg, .. } => msg,
@@ -2295,7 +2295,7 @@ fn op_list_expands_to_one_rule_per_op() {
 fn op_list_keeps_declaration_order_within_each_op() {
     let doc = lowering_doc(
         "[[lowering]]\nop = [\"A\", \"B\"]\ninsts = [\"MOV {out}, {0}\"]\n\n\
-         [[lowering]]\nop = \"A\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {0}\"]",
+         [[lower.A]]\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {0}\"]",
     );
     let m = parse_and_validate(&doc).expect("名单 + 具体规则必须通过");
     let by_op = m.lowering_by_op();
@@ -2347,9 +2347,9 @@ fn op_list_rejects_empty_and_duplicate_names() {
 fn pattern_order_uses_priority_then_specificity() {
     // A：单节点树、无 when；B：两节点树、无 when；C：单节点树 + 1 个 when 叶子但 priority=1。
     let doc = pattern_doc(
-        "[[pattern]]\nmatch = \"Fadd(a, b)\"\ninsts = [\"ADD {out}, {a}, {b}\"]\n\n\
-         [[pattern]]\nmatch = \"Fadd(Fmul(a, b), c)\"\ninsts = [\"MOV {out}, {a}\", \"MUL {out}, {b}\", \"ADD {out}, {c}\"]\n\n\
-         [[pattern]]\nmatch = \"Fadd(a, b)\"\nwhen = { eq = [\"elem\", 1] }\npriority = 5\ninsts = [\"ADDSS {out}, {a}, {b}\"]",
+        "[[lower.PATY1]]\nmatch = \"Fadd(a, b)\"\ninsts = [\"ADD {out}, {a}, {b}\"]\n\n\
+         [[lower.PATY2]]\nmatch = \"Fadd(Fmul(a, b), c)\"\ninsts = [\"MOV {out}, {a}\", \"MUL {out}, {b}\", \"ADD {out}, {c}\"]\n\n\
+         [[lower.PATY3]]\nmatch = \"Fadd(a, b)\"\nwhen = { eq = [\"elem\", 1] }\npriority = 5\ninsts = [\"ADDSS {out}, {a}, {b}\"]",
     );
     let m = parse_and_validate(&doc).expect("pattern 必须通过");
     let order = m.pattern_order().expect("裁决序");
@@ -2363,8 +2363,8 @@ fn pattern_order_uses_priority_then_specificity() {
 #[test]
 fn dead_pattern_is_rejected() {
     let doc = pattern_doc(
-        "[[pattern]]\nmatch = \"Fadd(a, b)\"\nwhen = { le = [\"elem\", 2] }\ninsts = [\"ADD {out}, {a}, {b}\"]\n\n\
-         [[pattern]]\nmatch = \"Fadd(a, b)\"\nwhen = { eq = [\"elem\", 1] }\ninsts = [\"ADDSS {out}, {a}, {b}\"]",
+        "[[lower.PATY4]]\nmatch = \"Fadd(a, b)\"\nwhen = { le = [\"elem\", 2] }\ninsts = [\"ADD {out}, {a}, {b}\"]\n\n\
+         [[lower.PATY5]]\nmatch = \"Fadd(a, b)\"\nwhen = { eq = [\"elem\", 1] }\ninsts = [\"ADDSS {out}, {a}, {b}\"]",
     );
     // `DslError` 只有 Parse/Validation 两个变体（死模式属校验期，但两种都接受）。
     let msg = match parse_and_validate(&doc).unwrap_err() {
@@ -2376,7 +2376,7 @@ fn dead_pattern_is_rejected() {
 /// S5c：同一匹配树 + 同一 `when`（完全重复）也是死模式。
 #[test]
 fn duplicate_pattern_is_rejected() {
-    let one = "[[pattern]]\nmatch = \"Fadd(a, b)\"\ninsts = [\"ADD {out}, {a}, {b}\"]";
+    let one = "[[lower.PATY6]]\nmatch = \"Fadd(a, b)\"\ninsts = [\"ADD {out}, {a}, {b}\"]";
     let doc = pattern_doc(&format!("{one}\n\n{one}"));
     // `DslError` 只有 Parse/Validation 两个变体（死模式属校验期，但两种都接受）。
     let msg = match parse_and_validate(&doc).unwrap_err() {
@@ -2389,8 +2389,8 @@ fn duplicate_pattern_is_rejected() {
 #[test]
 fn different_trees_are_not_dead() {
     let doc = pattern_doc(
-        "[[pattern]]\nmatch = \"Fadd(a, b)\"\nwhen = { eq = [\"elem\", 1] }\ninsts = [\"ADDSS {out}, {a}, {b}\"]\n\n\
-         [[pattern]]\nmatch = \"Fsub(a, b)\"\nwhen = { eq = [\"elem\", 1] }\ninsts = [\"SUBSS {out}, {a}, {b}\"]",
+        "[[lower.PATY7]]\nmatch = \"Fadd(a, b)\"\nwhen = { eq = [\"elem\", 1] }\ninsts = [\"ADDSS {out}, {a}, {b}\"]\n\n\
+         [[lower.PATY8]]\nmatch = \"Fsub(a, b)\"\nwhen = { eq = [\"elem\", 1] }\ninsts = [\"SUBSS {out}, {a}, {b}\"]",
     );
     assert!(parse_and_validate(&doc).is_ok(), "不同树不应报死模式");
 }
@@ -2419,8 +2419,8 @@ fn lowering_order_is_specificity_then_priority() {
     // 声明序：先兜底、后具体。裁决序必须把具体的排前面——作者不再需要记住
     // "兜底必须写最后"，写反了也不会静默改变分派。
     let doc = lowering_doc(
-        "[[lowering]]\nop = \"Copy\"\ninsts = [\"MOV {out}, {0}\"]\n\
-         [[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {1}\"]",
+        "[[lower.Copy]]\ninsts = [\"MOV {out}, {0}\"]\n\
+         [[lower.Copy]]\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {1}\"]",
     );
     let m = parse_and_validate(&doc).expect("声明序颠倒不再是错误");
     let by_op = m.lowering_by_op();
@@ -2440,8 +2440,8 @@ fn lowering_order_is_specificity_then_priority() {
 fn priority_overrides_specificity() {
     // 更宽的规则（1 叶子）用 priority 压过更具体的（2 叶子）——Vextract lane0 形态
     let doc = lowering_doc(
-        "[[lowering]]\nop = \"Copy\"\npriority = 1\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {0}\"]\n\
-         [[lowering]]\nop = \"Copy\"\nwhen = { and = [{ eq = [\"rd\", 32] }, { eq = [\"elem\", 1] }] }\ninsts = [\"MOV {out}, {1}\"]",
+        "[[lower.Copy]]\npriority = 1\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {0}\"]\n\
+         [[lower.Copy]]\nwhen = { and = [{ eq = [\"rd\", 32] }, { eq = [\"elem\", 1] }] }\ninsts = [\"MOV {out}, {1}\"]",
     );
     // prio 1 的规则覆盖了 prio 0 那条的全部取值域 → 后者是死规则
     let msg = match parse_and_validate(&doc).unwrap_err() {
@@ -2451,8 +2451,8 @@ fn priority_overrides_specificity() {
     assert!(msg.contains("死规则"), "msg: {msg}");
     // 反过来（不加 priority）则合法：具体的自动排前
     let ok = lowering_doc(
-        "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {0}\"]\n\
-         [[lowering]]\nop = \"Copy\"\nwhen = { and = [{ eq = [\"rd\", 32] }, { eq = [\"elem\", 1] }] }\ninsts = [\"MOV {out}, {1}\"]",
+        "[[lower.Copy]]\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {0}\"]\n\
+         [[lower.Copy]]\nwhen = { and = [{ eq = [\"rd\", 32] }, { eq = [\"elem\", 1] }] }\ninsts = [\"MOV {out}, {1}\"]",
     );
     parse_and_validate(&ok).expect("特异性自动裁决：2 叶子排前，1 叶子不再吃掉它");
 }
@@ -2460,8 +2460,8 @@ fn priority_overrides_specificity() {
 #[test]
 fn disjoint_rules_are_not_dead() {
     let doc = lowering_doc(
-        "[[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {0}\"]\n\
-         [[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 64] }\ninsts = [\"MOV {out}, {1}\"]",
+        "[[lower.Copy]]\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {0}\"]\n\
+         [[lower.Copy]]\nwhen = { eq = [\"rd\", 64] }\ninsts = [\"MOV {out}, {1}\"]",
     );
     parse_and_validate(&doc).expect("互斥谓词不构成死规则");
 }
@@ -2470,8 +2470,8 @@ fn disjoint_rules_are_not_dead() {
 fn or_not_predicates_skip_dead_check() {
     // 含 or/not → RuleDomain::Opaque，放弃判定（保守，不误报）
     let doc = lowering_doc(
-        "[[lowering]]\nop = \"Copy\"\nwhen = { or = [{ eq = [\"rd\", 32] }, { eq = [\"rd\", 64] }] }\ninsts = [\"MOV {out}, {0}\"]\n\
-         [[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {1}\"]",
+        "[[lower.Copy]]\nwhen = { or = [{ eq = [\"rd\", 32] }, { eq = [\"rd\", 64] }] }\ninsts = [\"MOV {out}, {0}\"]\n\
+         [[lower.Copy]]\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"MOV {out}, {1}\"]",
     );
     parse_and_validate(&doc).expect("Opaque 谓词不参与死规则判定");
 }
@@ -2860,7 +2860,7 @@ asm = "i {dst}, {src}"
 fn pattern_parses_and_validates() {
     let doc = PATTERN_BASE.to_string()
         + r#"
-[[pattern]]
+[[lower.PAT1]]
 match = "Iadd(Imul(a, b), c)"
 insts = ["I {out}, {a}, {b}"]
 "#;
@@ -2874,7 +2874,7 @@ insts = ["I {out}, {a}, {b}"]
 fn pattern_rejects_payload_op() {
     let doc = PATTERN_BASE.to_string()
         + r#"
-[[pattern]]
+[[lower.PAT2]]
 match = "Fcmp(a, b)"
 insts = ["i {out}, {a}, {b}"]
 "#;
@@ -2886,7 +2886,7 @@ insts = ["i {out}, {a}, {b}"]
 fn pattern_rejects_duplicate_var() {
     let doc = PATTERN_BASE.to_string()
         + r#"
-[[pattern]]
+[[lower.PAT3]]
 match = "Iadd(a, a)"
 insts = ["i {out}, {a}"]
 "#;
@@ -2898,7 +2898,7 @@ insts = ["i {out}, {a}"]
 fn pattern_rejects_unknown_placeholder() {
     let doc = PATTERN_BASE.to_string()
         + r#"
-[[pattern]]
+[[lower.PAT4]]
 match = "Iadd(a, b)"
 insts = ["I {out}, {nope}"]
 "#;
@@ -2910,7 +2910,7 @@ insts = ["I {out}, {nope}"]
 fn codegen_emits_pattern_statics_and_lower_pattern() {
     let doc = PATTERN_BASE.to_string()
         + r#"
-[[pattern]]
+[[lower.PAT5]]
 match = "Iadd(Imul(a, b), c)"
 insts = ["I {out}, {a}", "I {out}, {b}", "I {out}, {c}"]
 "#;
@@ -4450,7 +4450,7 @@ fn prefix_effects_parse_from_their_spec_spellings() {
 fn cc_inv_uses_inverse_condition_code() {
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[[lowering]]\nop = \"Icmp\"\ninsts = [\"SETC {out}, {cc_inv}\"]",
+        "[[lower.Icmp]]\ninsts = [\"SETC {out}, {cc_inv}\"]",
     );
     let model = super::parse_and_validate(&doc).expect("谱合法");
     let s = super::codegen::generate(&model)
@@ -4562,14 +4562,14 @@ fn explicit_temps_are_enforced() {
     // 合规：声明的临时都在（校验发生在 **codegen**，故用 generate 跑）
     let ok = gen_cond_doc(
         CC_ALL_FULL,
-        "[[lowering]]\nop = \"Icmp\"\ntemps = [\"g1:gpr\"]\ninsts = [\"SETC {out}, {cc}\", \"SETC {g1}, {cc}\"]",
+        "[[lower.Icmp]]\ntemps = [\"g1:gpr\"]\ninsts = [\"SETC {out}, {cc}\", \"SETC {g1}, {cc}\"]",
     );
     let m_ok = super::parse_and_validate(&ok).expect("谱合法");
     assert!(super::codegen::generate(&m_ok).is_ok(), "显式合规应通过");
     // 用到未声明 ⇒ 报错并点名 `{g2}`
     let bad = gen_cond_doc(
         CC_ALL_FULL,
-        "[[lowering]]\nop = \"Icmp\"\ntemps = [\"g1:gpr\"]\ninsts = [\"SETC {out}, {cc}\", \"SETC {g2}, {cc}\"]",
+        "[[lower.Icmp]]\ntemps = [\"g1:gpr\"]\ninsts = [\"SETC {out}, {cc}\", \"SETC {g2}, {cc}\"]",
     );
     let m_bad = super::parse_and_validate(&bad).expect("谱合法（校验在 codegen）");
     let err = super::codegen::generate(&m_bad).unwrap_err();
@@ -4577,7 +4577,7 @@ fn explicit_temps_are_enforced() {
     // 类别写错 ⇒ 报错
     let badcls = gen_cond_doc(
         CC_ALL_FULL,
-        "[[lowering]]\nop = \"Icmp\"\ntemps = [\"g1:vec\"]\ninsts = [\"SETC {out}, {cc}\"]",
+        "[[lower.Icmp]]\ntemps = [\"g1:vec\"]\ninsts = [\"SETC {out}, {cc}\"]",
     );
     let m_badcls = super::parse_and_validate(&badcls).expect("谱合法");
     let err2 = super::codegen::generate(&m_badcls).unwrap_err();

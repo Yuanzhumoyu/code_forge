@@ -227,8 +227,7 @@ ops = ["dst:g:out", "src:g"]
 asm = "add{width} {dst}, {src}"
 effect = ["Pure"]
 
-[[lowering]]
-op = "Iadd"
+[[lower.Iadd]]
 insts = ["ADD {out}, {0}"]
 "#;
     // 默认档：参数占位符**不许留下**（生成的汇编会打印出字面 `{width}`）——

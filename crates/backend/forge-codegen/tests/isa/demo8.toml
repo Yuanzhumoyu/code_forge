@@ -233,18 +233,14 @@ store = "ST8 {0}, A6, {1}"
 base = "A6"
 
 # ── 显式别名（多态引用名 → 指令名列表）──
-[[lowering]]
-op = "Iadd"
+[[lower.Iadd]]
 insts = ["add {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Isub"
+[[lower.Isub]]
 insts = ["sub {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Iconst"
+[[lower.Iconst]]
 insts = ["mov {out}, {iconst}"]
 
-[[lowering]]
-op = "Copy"
+[[lower.Copy]]
 insts = ["mov {out}, {0}"]

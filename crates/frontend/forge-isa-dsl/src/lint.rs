@@ -1028,7 +1028,7 @@ rows = [
         };
         // 默认档：一条 `LINT-REF-UNUSED` 都没有（"给未来 lowering 预留"是合法写法）。
         let bad = doc(
-            "[[lowering]]\nop = \"Copy\"\ninsts = [\"ADD {out}\"]\n",
+            "[[lower.Copy]]\ninsts = [\"ADD {out}\"]\n",
             "mv",
         );
         let plain = lint_source(&bad).expect("谱合法");
@@ -1048,7 +1048,7 @@ rows = [
 
         // lowering 行首改成 `@mv`（引用名形态）→ 不报。
         let good = doc(
-            "[[lowering]]\nop = \"Copy\"\ninsts = [\"@mv {out}\"]\n",
+            "[[lower.Copy]]\ninsts = [\"@mv {out}\"]\n",
             "mv",
         );
         let report = lint_source_opts(&good, &on).expect("谱合法");
@@ -1082,7 +1082,7 @@ name = "Resume"
 
         let src = SPEC.replace(
             "[family.T]",
-            "[[lowering]]\nop = \"Copy\"\ninsts = [\"ADD {out}\"]\n\n[family.T]",
+            "[[lower.Copy]]\ninsts = [\"ADD {out}\"]\n\n[family.T]",
         );
         let report = lint_source_opts(
             &src,
@@ -1218,8 +1218,8 @@ name = "Resume"
         // 同一 op 两条规则，形状相同（只差助记符：`ADD` vs 模板实例 `T1`）⇒ 一条建议。
         let two = SPEC.replace(
             "[family.T]",
-            "[[lowering]]\nop = \"Iadd\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"ADD {out}\"]\n\n\
-             [[lowering]]\nop = \"Iadd\"\nwhen = { eq = [\"rd\", 16] }\ninsts = [\"T1 {out}\"]\n\n\
+            "[[lower.Iadd]]\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"ADD {out}\"]\n\n\
+             [[lower.Iadd]]\nwhen = { eq = [\"rd\", 16] }\ninsts = [\"T1 {out}\"]\n\n\
              [family.T]",
         );
         let on = LintOpts {
@@ -1246,8 +1246,8 @@ name = "Resume"
         // 形状不同（行数不同）不报。
         let differ = SPEC.replace(
             "[family.T]",
-            "[[lowering]]\nop = \"Iadd\"\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"ADD {out}\"]\n\n\
-             [[lowering]]\nop = \"Iadd\"\nwhen = { eq = [\"rd\", 16] }\n\
+            "[[lower.Iadd]]\nwhen = { eq = [\"rd\", 32] }\ninsts = [\"ADD {out}\"]\n\n\
+             [[lower.Iadd]]\nwhen = { eq = [\"rd\", 16] }\n\
              insts = [\"ADD {out}\", \"T1 {out}\"]\n\n[family.T]",
         );
         let report = lint_source_opts(&differ, &on).expect("谱合法");

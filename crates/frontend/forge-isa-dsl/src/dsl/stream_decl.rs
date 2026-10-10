@@ -894,8 +894,7 @@ word_size = 32
 opcode = 0x11
 ops = ["dst:g:out", "src:g", "src2:g"]
 asm = "addw {dst}, {src}, {src2}"
-[[lowering]]
-op = "Copy"
+[[lower.Copy]]
 dispatch = "rs1_width"
 insts = ["ADD {out}, {0}, {1}"]
 "#;

@@ -97,12 +97,10 @@ padding = 0
 slot = 8
 align = 16
 
-[[lowering]]
-op = "Iadd"
+[[lower.Iadd]]
 insts = ["ADD {out}, {0}"]
 
-[[lowering]]
-op = "Isub"
+[[lower.Isub]]
 insts = ["SUB {out}, {0}"]
 
 # 谱内测试向量：先用**闭环形态**（`{asm}` 只断言编解码/文本闭环稳定，不比字节）；
