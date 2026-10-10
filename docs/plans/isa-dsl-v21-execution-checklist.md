@@ -974,7 +974,12 @@ W11 守卫（依赖 W6）尚未收口 ✗，本节只记录**已可测**的项 �
 - [x] 三谱编码字节与 W0 逐字节相同（`isa_roundtrip_guard` + `asm_encoding` 双证）。
   （实测 ✗：`isa_roundtrip_guard` **1 passed** ✔、`spec_coverage_guard` **4 passed**（265/119/110 ✗）✔、
   `asm_parse` **3 passed** ✔、`asm_encoding` **1 passed**（棘轮逐项相等 ✗）✔；另本会话**每片**都核
-  三谱 `forge-isa insts` 与迁移前**逐行 0 差异** ✔。）
+  三谱 `forge-isa insts` 与迁移前**逐行 0 差异** ✔。
+  **2026-10-08 追加安全网** ✗：`isa_roundtrip_guard` 现在还把「派生枚举器 label + 该条**编码字节**」
+  折成 FNV-1a 64 指纹 ✗，钉在 `asm/ratchet/pins.txt` 的 `encoding.digest` ✗
+  （`x86,riscv64,arm64` 三项 ✗；刷新 = `FORGE_PIN_WRITE=1 cargo test -p forge-codegen --lib` ✗）。
+  为什么要它 ✗：W10 那次 `[[instructions]]` → `[inst.*]` 迁移**静默丢过 3 条指令的 `modrm.reg`
+  固定扩展码** ✗ —— 往返自洽、条数不变 ✗，只有把**字节逐条**比出来才看得见 ✗。）
 - [x] 三矩阵计数与 W0 逐数字相同。
   （`jit_matrix_x86` **197 passed / 3 skipped / 0 failed** ✔（本会话多次实测 ✗）；
   `jit_matrix_riscv64` **136 passed / 64 skipped / 0 failed** ✔（QEMU 通道 ✗）。

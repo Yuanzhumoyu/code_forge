@@ -30,9 +30,23 @@ macro_rules! roundtrip_of {
             assert!(hit, "{}: 指令 '{name}' 不在派生枚举器里", $isa);
         }
         let mut checked = 0usize;
+        // v21 W4 安全网：把「派生枚举器的 label + 该条的**编码字节**」折成 FNV-1a 64 位指纹。
+        // 为什么需要它：W10 那次 `[[instructions]]` → `[inst.*]` 迁移**静默丢过 3 条指令的
+        // `modrm.reg` 固定扩展码** —— 编解码往返是自洽的、指令条数也没变，只有把**字节逐条**
+        // 比出来才看得见（当时是靠人工 diff `forge-isa insts` 抓到的）。指纹钉在
+        // `asm/ratchet/pins.txt`（`check_or_write_pin` ✗），任何编码变化都会红。
+        let mut dig: u64 = 0xcbf2_9ce4_8422_2325;
         for (label, inst) in &all {
             let b = encode(inst)
                 .unwrap_or_else(|e| panic!("{} 编码 {label}（{inst:?}）失败：{e}", $isa));
+            for chunk in [label.as_bytes(), b.as_slice()] {
+                for &x in chunk {
+                    dig ^= x as u64;
+                    dig = dig.wrapping_mul(0x100_0000_01b3);
+                }
+                dig ^= 0xff;
+                dig = dig.wrapping_mul(0x100_0000_01b3);
+            }
             let (dec, n) =
                 decode(&b).unwrap_or_else(|| panic!("{} 解码 {label}（{b:02x?}）失败", $isa));
             assert_eq!(
@@ -46,7 +60,7 @@ macro_rules! roundtrip_of {
             assert_eq!(b2, b, "{} {label}: decode→encode 往返字节不一致", $isa);
             checked += 1;
         }
-        checked
+        (checked, dig)
     }};
 }
 
@@ -56,9 +70,9 @@ macro_rules! roundtrip_of {
 /// riscv64 139 / arm64 206），枚举器条目只会更多（视图与风味），少于总数就是派生漏了。
 #[test]
 fn derived_insts_roundtrip_byte_stable() {
-    let x86 = roundtrip_of!("x86", crate::arch::x86::x86);
-    let riscv = roundtrip_of!("riscv64", crate::arch::riscv64::riscv64);
-    let arm64 = roundtrip_of!("arm64", crate::arch::arm64::arm64);
+    let (x86, dig_x86) = roundtrip_of!("x86", crate::arch::x86::x86);
+    let (riscv, dig_riscv) = roundtrip_of!("riscv64", crate::arch::riscv64::riscv64);
+    let (arm64, dig_arm64) = roundtrip_of!("arm64", crate::arch::arm64::arm64);
     assert!(x86 >= 276, "x86 枚举器条目 {x86} < 指令总数 276");
     assert!(riscv >= 139, "riscv64 枚举器条目 {riscv} < 指令总数 139");
     assert!(arm64 >= 206, "arm64 枚举器条目 {arm64} < 指令总数 206");
@@ -126,5 +140,12 @@ fn derived_insts_roundtrip_byte_stable() {
     crate::spec_coverage_guard::check_or_write_pin(
         "roundtrip.derived",
         &format!("{x86},{riscv},{arm64}"),
+    );
+    // v21 W4 安全网：**逐指令编码字节指纹**（label + 编码字节的 FNV-1a 64）——任何编码变化
+    // 都会让这一行红，即使条数与往返都自洽（详见 `roundtrip_of!` 里的说明）。
+    // 刷新方式与其它快照一致：`FORGE_PIN_WRITE=1 cargo test -p forge-codegen --lib`。
+    crate::spec_coverage_guard::check_or_write_pin(
+        "encoding.digest",
+        &format!("{dig_x86:016x},{dig_riscv:016x},{dig_arm64:016x}"),
     );
 }
