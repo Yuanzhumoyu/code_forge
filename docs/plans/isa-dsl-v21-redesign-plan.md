@@ -1,9 +1,27 @@
 # ISA-DSL v21 重设计方案
 
-> [progress] 2026-10-08 设计提案（待评审；实施另开）。
-> 现行语法 = v18（`docs/reference/isa-dsl.md`）；v19/v20 是 v18 之上的增量，本方案是**下一次破坏性重设计**。
-> 本文所有现状断言取自本轮只读审计（`crates/frontend/forge-isa-dsl/src`、`isa/*.toml`、`docs/reference/isa-dsl.md`），
-> 引用的行号**随迭代漂移，以符号名为准**。**本文只是设计，不改任何源码**。
+> [progress] 2026-10-08 设计提案 → **执行中**。
+> 现行语法 = **v21（落地中）**，规范以 `docs/reference/isa-dsl.md` 为准；v19/v20 是 v18 之上的增量，
+> 本方案是**下一次破坏性重设计**。
+> **实施账目（2026-10-08 复核，按本方案的 §11 切片 W1–W11）**：
+>
+> | 片 | 内容 | 状态 |
+> | --- | --- | --- |
+> | W1 | 寄存器重定基（宽度只在名字里） | ✅ 已落地 |
+> | W2 | 字段语法（`fields` 就地声明；`conventions.bitfields`/`operand_fields`/`opcode_field` 降为**内部展开目标**） | ✅ 已落地 |
+> | W3 | 操作数层收敛（`[operand.<名字>]` / `[enum.<表名>]`） | ✅ 已落地 |
+> | W4 | stream 段模型 | 🚧 **段 kind 闭集 11 种已全部接线**；剩 x86 谱迁移到 `kind = "stream"` + 段（116 处 `modrm` / 84 处 `fields` / 128 条混合）、前缀表显式化（删 `default_prefix_scan()`）、REX2 段数据、`force_disp_base` 上界、`opsize` 四态退化 |
+> | W5 | 族与重载（`[family.<名>]`；`[[templates]]` TOML 面已撤） | ✅ 已落地 |
+> | W6 | 选择层（`[[lowering]]` + `[[pattern]]` → `[lower.*]`） | 🚧 未做（288 处 `[[lowering]]`）；**卡点**：`op` 允许**名单**，表头放不下，需先定口径 |
+> | W7 | 文本层（`[asm.pseudo.<名>]` / `[asm.immfn.*]` / `[asm.reloc.<名>]`） | ✅ 已落地 |
+> | W8 | 重定位生成（生成的 reloc patcher，删手写补丁器） | ✅ 已落地 |
+> | W9 | machine 合并（`[machine.stack\|text\|classes\|spill.<模板名>]`；删 callee-saved 两键） | ✅ 已落地 |
+> | W10 | 删旧与换版（表头即名字三张表 / 死链清零 / 教程 / 错误码目录 / `CLAUDE.md` / CHANGELOG / 设计文档标注） | 🚧 **文档与消息面已收口**；代码面"删 v18 分支"随 W4/W6 的收尾一并完成 |
+> | W11 | 通用性实证（第四个 ISA 零编译器改动） | ⬜ 未开始 |
+> | 最终验收 | 三谱字节 / 三矩阵 / lint / D1–D6 证据 / 度量 / 文档三方针 | ⬜ 未开始 |
+>
+> 本文其余部分是**设计时的现状断言**（以记录时点为准）；引用的行号**随迭代漂移，以符号名为准**。
+> 逐片提交与证据记在 `docs/plans/isa-dsl-v21-execution-checklist.md` 与 `CHANGELOG.md`。
 
 ## 目录
 

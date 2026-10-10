@@ -805,19 +805,26 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 **目标**：v18 代码路径、文档、守卫全部清干净。
 
-- [ ] 删除 v18 键的模型/schema/校验/生成器分支；`deny_unknown_fields` 全量生效。
-- [ ] `docs/reference/isa-dsl.md` 换为 v21 规范（键表由 schema 生成）。
-- [ ] `docs/reference/isa-dsl-errors.md` 错误码目录同步。
-- [ ] `docs/guides/isa-dsl-tutorial.md` 按新语法重写，并保持 `tests/tutorial_spec.rs` 绿。
-- [ ] `CLAUDE.md` 的 ISA-DSL 相关段落（Key Architecture Rules、Testing Notes）全量回写。
-- [ ] `CHANGELOG.md` 记一条 **Breaking** 条目（用户可见变更才进 CHANGELOG）。
-- [ ] 设计文档转 `[archive]` 或标注"已落地"，执行清单标注完成日期。
+- [~] 删除 v18 键的模型/schema/校验/生成器分支；`deny_unknown_fields` 全量生效。
+  （**部分**：文档/消息/旧面键面已清零 ✔（`[[forms]]`/`[[instructions]]`/`[[derive]]`/`[[templates]]` 全撤 ✗，
+  未知键一律拒绝 ✗）；**代码面随 W4/W6 完成** —— x86 的内联编码键（116 处 `modrm` 等 ✗）与
+  `[[lowering]]` 数组节仍在 ✗。）
+- [x] `docs/reference/isa-dsl.md` 换为 v21 规范（键表由 schema 生成）。
+- [x] `docs/reference/isa-dsl-errors.md` 错误码目录同步。
+- [x] `docs/guides/isa-dsl-tutorial.md` 按新语法重写，并保持 `tests/tutorial_spec.rs` 绿。
+- [x] `CLAUDE.md` 的 ISA-DSL 相关段落（Key Architecture Rules、Testing Notes）全量回写
+  （只写**已落地**的面 ✗ + 一张"现行面 / 未定项"速查 ✗；W4/W6 原样标注 ✗）。
+- [x] `CHANGELOG.md` 记一条 **Breaking** 条目（用户可见变更才进 CHANGELOG）。
+  （W9 四片 + W10 五片各一条 ✗，全部带实测证据 ✗。）
+- [x] 设计文档转 `[archive]` 或标注"已落地"，执行清单标注完成日期。
+  （`isa-dsl-v21-redesign-plan.md` 头部换成**实施账目表** ✗：W1–W3/W5/W7–W10 已落地 ✗、
+  W4/W6 🚧（附卡点 ✗）、W11 与最终验收 ⬜；本清单各节同步标注 ✗。）
 - [x] `git grep` 全量检查：无 `conventions.bitfields` / `operand_fields` / `opcode_field` / `gpr8`(64 语义) / `[[forms]]` 残留死链。
   （**2026-10-08 复核：非历史文档里 `[[forms]]`/`[[instructions]]`/`[[derive]]` 的**用户面**引用已清零 ✗
   —— 代码消息 42 处 + 文档 20 余处一次改完 ✗；`[[templates]]` 的 TOML 面也已撤（见 §7 附 ⑥ ✗）；
   **刻意保留**：明确标注为历史的提法（"v18 S3f 引入时叫 `[[derive]]`"✗）与历史测量表 ✗；
   `conventions.bitfields`/`operand_fields`/`opcode_field` 作为**内部展开目标**的说明保留 ✔。）
-- [ ] 门禁：§2 全绿 + `cargo test --workspace --exclude forge-rustc`。
+- [x] 门禁：§2 全绿 + `cargo test --workspace --exclude forge-rustc`。
 
 **W10 进度（2026-10-08）**：**表头即名字**的三张表已全部落地——`[[forms]]` → `[form.<名>]`、
 `[[instructions]]` → `[inst.<名>]`、`[[derive]]` → `[pred.<名>]`（合计 170 + 788 + 9 处；
