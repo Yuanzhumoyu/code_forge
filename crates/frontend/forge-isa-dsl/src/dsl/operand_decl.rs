@@ -105,7 +105,7 @@ fn decl_to_slot(name: &str, d: &OperandDecl) -> Result<OperandSlot, String> {
         (None, _) => (None, None),
         (Some(t), OperandKind::Bits) => (Some(t.clone()), None),
         (Some(t), OperandKind::Imm) => (None, Some(t.clone())),
-        // `kind = "cond"` 的表由 `[enum.cond]` 提供（W3b），槽上只写 `enum = "cond"`。
+            // v21 W6+ 丙：cond 槽的银行用新键 `cond_bank`（`enum` 键对 cond 无意义）。
         (Some(_), OperandKind::Cond) => (None, None),
         (Some(_), k) => {
             return Err(format!(
@@ -147,6 +147,7 @@ fn decl_to_slot(name: &str, d: &OperandDecl) -> Result<OperandSlot, String> {
         symbols,
         require_symbol,
         imm_fns,
+            cond_bank: d.cond_bank.unwrap_or_default(),
         arrangement: d.suffix.clone(),
         table,
         names,

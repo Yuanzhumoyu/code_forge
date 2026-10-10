@@ -344,6 +344,9 @@ pub struct IsaModel {
     /// [`crate::dsl::enum_decl::lower_enum_layer`] 降级回内部三处。
     #[serde(default, rename = "enum")]
     pub enums: BTreeMap<String, EnumDecl>,
+    /// **两类条件码表**（v21 W6+ 丙；由 `enum_decl` 在解析期填充，不是 TOML 键）。
+    #[serde(skip)]
+    pub cond_tables: CondTables,
     /// **v21 W10：编码形式声明**（`[form.<名>]`，表头 = 形式名）——解析期降级进内部
     /// [`IsaModel::forms`]（**按源码声明序**展开：`BTreeMap` 是字母序，而声明序影响
     /// 别名/lowering 的解析结果）。
@@ -1294,6 +1297,98 @@ pub const IR_INT_COND_NAMES: [&str; 10] = [
     "eq", "ne", "slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge",
 ];
 
+/// IR 的 16 个浮点比较谓词助记符（与 `FloatCC::mnemonic()` 同名；v21 W6+ 丙）。
+///
+/// 整数条件与浮点谓词是**两类固定的表**（不是任意命名）：条件槽的**银行**由它用的
+/// 表决定——整数表 ⇒ 生成物字段类型 `IntCC`，浮点表 ⇒ `FloatCC`。
+/// `ugt`/`uge`/`ult`/`ule` 两个枚举同名 ⇒ **不参与**银行判定（只按各自独有的名字判）。
+pub const IR_FLOAT_COND_NAMES: [&str; 16] = [
+    "ord", "uno", "oeq", "one", "olt", "ole", "ogt", "oge", "false", "true", "ueq", "ugt",
+    "uge", "ult", "ule", "une",
+];
+
+/// 条件码表的**银行**（v21 W6+ 丙）——固定两类，不用字符串键。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CondBank {
+    /// 整数条件（`eq`/`slt`/…）⇒ 生成物字段类型 `IntCC`。
+    #[default]
+    Int,
+    /// 浮点谓词（`oeq`/`uno`/…）⇒ 生成物字段类型 `FloatCC`。
+    Float,
+}
+
+impl CondBank {
+    /// 诊断里用的名字（= TOML 键里写的值）。
+    pub fn label(self) -> &'static str {
+        match self {
+            CondBank::Int => "int",
+            CondBank::Float => "float",
+        }
+    }
+
+    /// **按表内容判定银行**：只看两个枚举**各自独有**的 IR 助记符。
+    ///
+    /// 只有共有名（`ugt`/`uge`/`ult`/`ule`）或两类混装 ⇒ 报错（不猜）。
+    pub fn detect(table: &BTreeMap<String, CondEntry>, name: &str) -> Result<Self, String> {
+        let has = |ir: &str| {
+            table
+                .iter()
+                .any(|(k, e)| e.ir_condition(k.as_str()) == Some(ir))
+        };
+        let int_only = IR_INT_COND_NAMES
+            .iter()
+            .any(|n| !IR_FLOAT_COND_NAMES.contains(n) && has(n));
+        let fpr_only = IR_FLOAT_COND_NAMES
+            .iter()
+            .any(|n| !IR_INT_COND_NAMES.contains(n) && has(n));
+        match (int_only, fpr_only) {
+            (true, false) => Ok(CondBank::Int),
+            (false, true) => Ok(CondBank::Float),
+            // 没有**定论**（空表、只有纯别名、或只出现两个枚举共有的助记符）⇒ 按约定名当
+            // **整数**表：`[enum.cond]` 就是整数条件的约定名，而浮点谓词表必然带
+            // `oeq`/`uno`/`ord` 这类独有名。真正的错误只报"两类混装"。
+            (false, false) => Ok(CondBank::Int),
+            (true, true) => Err(format!(
+                "`[enum.{name}]` 同时含整数条件与浮点谓词——一张表只能一个银行，\
+                 请拆成两张（整数一张、浮点一张）"
+            )),
+        }
+    }
+}
+
+/// **两张条件码表**（v21 W6+ 丙）：每类最多一张，按银行取用。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CondTables {
+    /// 整数条件表（约定名 `[enum.cond]`）。
+    pub int: Option<BTreeMap<String, CondEntry>>,
+    /// 浮点谓词表（如 `[enum.fcond]`）。
+    pub float: Option<BTreeMap<String, CondEntry>>,
+}
+
+impl CondTables {
+    /// 取某银行那张表。
+    pub fn get(&self, bank: CondBank) -> Option<&BTreeMap<String, CondEntry>> {
+        match bank {
+            CondBank::Int => self.int.as_ref(),
+            CondBank::Float => self.float.as_ref(),
+        }
+    }
+
+    /// 放进某银行（返回**旧的**那张，非空 = 同类重复 ⇒ 调用方报错）。
+    pub fn set(
+        &mut self,
+        bank: CondBank,
+        t: BTreeMap<String, CondEntry>,
+    ) -> Option<BTreeMap<String, CondEntry>> {
+        match bank {
+            CondBank::Int => self.int.replace(t),
+            CondBank::Float => self.float.replace(t),
+        }
+    }
+}
+
+
 /// 条件码表的一条：本 ISA 的条件名 → 编码（+ 它实现哪个 IR 条件）。
 ///
 /// 允许两种写法（同一张表，值的长短写法）：
@@ -1361,20 +1456,31 @@ impl IsaModel {
     ///
     /// lowering 的 `{cc}` 占位符按这个顺序发 match 臂；校验器用"是否覆盖全部 10 个"
     /// 决定一个用到 `{cc}` 的 ISA 是否可以编译。
-    pub fn cond_ir_codes(&self) -> Vec<(&'static str, u64)> {
-        let Some(table) = self.conventions.cond.as_ref() else {
+    /// 某银行的「IR 条件 → 机器码」有序表（按 IR 条件名序；纯别名不出现）。
+    ///
+    /// 短形式（`eq = 4`）的 `ir` 缺省为**键名本身** ⇒ 用 [`CondEntry::ir_condition`] 判。
+    pub fn cond_ir_codes_of(&self, bank: CondBank) -> Vec<(&'static str, u64)> {
+        let Some(table) = self.cond_tables.get(bank) else {
             return Vec::new();
         };
         let mut out = Vec::new();
-        for name in IR_INT_COND_NAMES {
+        for ir in IR_INT_COND_NAMES.iter().chain(IR_FLOAT_COND_NAMES.iter()) {
             if let Some((_, e)) = table
                 .iter()
-                .find(|(k, e)| e.ir_condition(k.as_str()) == Some(name))
+                .find(|(k, e)| e.ir_condition(k.as_str()) == Some(*ir))
             {
-                out.push((name, e.code));
+                out.push((*ir, e.code));
             }
         }
         out
+    }
+
+    /// **整数**条件表的「IR 条件 → 机器码」（=`cond_ir_codes_of(CondBank::Int)`）。
+    ///
+    /// lower 的 `{cc}` 占位符按这个顺序发 match 臂；校验器用"是否覆盖全部 10 个"
+    /// 决定一个用到 `{cc}` 的 ISA 是否可以编译。
+    pub fn cond_ir_codes(&self) -> Vec<(&'static str, u64)> {
+        self.cond_ir_codes_of(CondBank::Int)
     }
 }
 
@@ -1655,6 +1761,10 @@ impl ClassField {
 #[serde(deny_unknown_fields)]
 pub struct OperandDecl {
     pub kind: OperandKind,
+    /// **cond 槽用哪张条件表**（v21 W6+ 丙；`kind = "cond"` 才有意义）：
+    /// `int`（缺省）⇒ 整数条件表，`float` ⇒ 浮点谓词表。字段类型随之定。
+    #[serde(default)]
+    pub cond_bank: Option<CondBank>,
     /// 值宽度（位）——原 `width`。
     #[serde(default)]
     pub bits: Option<u32>,
@@ -1720,6 +1830,9 @@ pub struct OperandDecl {
 pub struct OperandSlot {
     pub name: String,
     pub kind: OperandKind,
+    /// 该 cond 槽的**银行**（v21 W6+ 丙）：由 `[operand.<名>].cond_bank` 归一而来。
+    #[serde(skip)]
+    pub cond_bank: CondBank,
     /// reg：可接纳的寄存器组集合（多宽度/多类型）。声明面只有一个 `class` 键
     /// （`class = "gpr64"` 或 `class = ["gpr16","gpr32"]`），归一后都落在这里。
     /// 空 = 任意寄存器类（不推荐，会吞掉更具体的重载形式）。

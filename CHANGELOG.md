@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6+ 丙（片 1）：条件码表**固定两类**（整数 / 浮点，枚举化）
+
++ **条件码表不再是一张**：整数条件一张（约定名 `[enum.cond]`）、浮点谓词一张（如 `[enum.fcond]`，条目写 `ir = "oeq"` / `"uno"` / `"ord"` …）。**同类只能一张**，多了报错。
++ **不用字符串键**：模型里是 `CondBank { Int, Float }` + `CondTables { int, float }`（固定两类），用户面键 `cond_bank = "int" | "float"`（cond 槽；缺省 `int`，既有谱零改动）。
++ 表归哪一类由**表内容**判定：只看两个枚举**各自独有**的助记符（`ugt`/`uge`/`ult`/`ule` 两边同名 ⇒ 不参与）；没有定论（空表 / 纯别名 / 只有共有名）按约定名当**整数**表；**两类混装** ⇒ 明确报错。
++ 这是"条件槽字段类型 = `IntCC` / `FloatCC`"（丙）的**数据面**：下一步按槽的银行定字段类型，x86 的双性槽（整数条件 + 浮点奇偶位惯用法）拆成两形。
++ **行为不变**：缺省银行 = 整数，三谱条件表与编码未动；整仓门禁 exit 0、`schema_guard` 与三目标 lint 全绿。
+
 ### Changed (2026-10-08) — forge-ir：`IntCC`/`FloatCC` 变体名简化为助记符 + 补逐变体注释
 
 + **`IntCC`**（10 个）：`Equal`→`Eq`、`NotEqual`→`Ne`、`SignedLessThan`→`Slt`、

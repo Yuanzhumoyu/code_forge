@@ -53,7 +53,7 @@
 
   - [`[conventions]` — ISA 约定](#conventions--isa-约定)
 
-    - [`[conventions.cond]` — 条件码表（一张表，三处用）](#conventionscond--条件码表一张表三处用)
+    - [`[conventions.cond]` — 条件码表（两类表，三处用）](#conventionscond--条件码表两类表三处用)
 
     - [`[conventions.mem]` — 内存操作数的文本形态（v20 V10）](#conventionsmem--内存操作数的文本形态v20-v10)
 
@@ -163,7 +163,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[conventions.imm_names.<table>]` | — | — | 命名立即数表（kind = "imm" 的槽用 `names` 指名）：表名 → （名字 → 值）——一个名字 = 一个值；解析认名字也认数字，渲染时值在表里就写名字（允许额外键） |
 | `[conventions.mem]` | `templates` | — | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
 | `[enum.<表名>]` | — | `kind` `entries`† | 命名取值表：kind = value（名字 = 值；带 `ir` 的那张是条件码表）\| bits（名字拼接、按位或）（允许额外键） |
-| `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
+| `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` `cond_bank` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[form.<名字>]` | — | `fields` `segments` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖）；v21 W10：**表头即形式名**（不再写 `name`） |
 | `[inst.<名字>]` | `asm` | `form` `opcode` `match` `fields` `segments` `bind` `ops` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令（v21 W10：**表头即指令名**，不再写 `name`）：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[asm.reloc.<名>]` | `semantics` `operand` | `addend` `via` | 重定位（v21 W8：**表头即重定位名**；旧 `[[reloc]]` 已撤）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`） |
@@ -636,7 +636,7 @@ schema/诊断/生成器共用它，不另抄名单）：
 > 已移除——它们 codegen 从不读取，66 前缀与 REX.W 在 `vlen.rs` 里按 `__opsize`
 > 硬编码。写这两个表现在直接 `deny_unknown_fields` 报错。
 
-### `[conventions.cond]` — 条件码表（一张表，三处用）
+### `[conventions.cond]` — 条件码表（两类表，三处用）
 
 | 用途 | 怎么用 |
 | --- | --- |
@@ -652,6 +652,12 @@ schema/诊断/生成器共用它，不另抄名单）：
 - **用到 `{cc}` 的 ISA 必须把 10 个 IR 条件映射全**——缺哪个编译期就点名哪个
   （运行期会静默退化成 0 = 溢出条件，是最难查的一类错）。`cond` 槽则需要表存在。
 - v18 S3b 起**不再有 x86 缺省表**：不声明就没有条件码能力，用到即报错。
+- v21 W6+：**条件码表固定两类**——整数条件一张（约定名 `[enum.cond]`）、浮点谓词一张
+  （如 `[enum.fcond]`，条目写 `ir = "oeq"` / `"uno"` / `"ord"` …）；**同类只能一张**，多了报错。
+  `cond` 槽用 `cond_bank = "int" | "float"`（缺省 `int`）选表 ⇒ **生成的字段类型随之定**：
+  整数表 ⇒ `forge_ir::IntCC`，浮点表 ⇒ `forge_ir::FloatCC`。表归哪一类由表的**内容**判定
+  （只看两个枚举各自独有的助记符；`ugt`/`uge`/`ult`/`ule` 两边同名，不参与），
+  只有共有名或两类混装 ⇒ **明确报错**（不猜）。
 
 **两种"条件出现在语法里"的写法**（都用这张表，不需要第二处声明）：
 

@@ -42,6 +42,16 @@ fn read_lf(path: &Path) -> Option<String> {
 const INTERNAL_FIELDS: &[(&str, &str, &str)] = &[
     (
         "IsaModel",
+        "cond_tables",
+        "内部载体（v21 W6+ 丙）：TOML 面是 [enum.<表名>]，解析期按银行（整数/浮点）归类填这里",
+    ),
+    (
+        "OperandSlot",
+        "cond_bank",
+        "内部归一（v21 W6+ 丙）：TOML 面是 [operand.<名>].cond_bank，缺省 = int",
+    ),
+    (
+        "IsaModel",
         "lowering",
         "内部载体（v21 W6-a）：TOML 面是 [[lower.<名字>]]，解析期路由填这里",
     ),

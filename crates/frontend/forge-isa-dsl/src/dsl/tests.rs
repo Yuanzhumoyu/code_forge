@@ -3179,10 +3179,11 @@ fn mem_template_list_and_size_component() {
 /// `signed` 的读数；解码/渲染/边界仍用规范值域。
 #[test]
 fn imm_slot_wrap_reads_the_bit_pattern() {
-    use super::model::{OperandKind, OperandSlot};
+    use super::model::{CondBank, OperandKind, OperandSlot};
     let slot = |kind, signed, width, wrap| OperandSlot {
         name: "imm".into(),
         kind,
+        cond_bank: CondBank::default(),
         class: None,
         classes: None,
         zr31: None,
