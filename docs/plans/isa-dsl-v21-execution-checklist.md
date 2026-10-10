@@ -853,11 +853,31 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 **目标**：新增第四个 ISA 零编译器改动。
 
+### 受控扩展点候选（2026-10-08 实测 ✗）
+
+用 `[encoding] kind = "prefix_scan"` + **指令级 `segments`**（`opcode_reg` + `imm`，与 x86
+`RET_IMM16` 同一写法 ✗）做"变长一态"的第四方夹具时 ✗：
+
+- `forge-isa validate` **OK** ✔、`forge-isa lint` **干净** ✔ —— 面本身能表达 ✗；
+- 但**生成物不合法** ✗：`cargo build -p forge-codegen --tests` 在预生成期崩在
+  `crates/frontend/forge-isa-dsl/src/gen_file.rs:249` ✗：`unwrap()` on
+  `Error("expected an expression")` ✗ —— 即生成器为这份谱产出了**解析不过的 Rust** ✗。
+- 复现面（最小 ✗）：`prefix_scan` + `[reg.gpr8]`(prefix/count ✗) + `[form.RR]`(opcode+modrm ✗)
+  再加两条立即数指令写 `segments = [{ kind = "opcode_reg", value = 0x11 }, { kind = "imm", value = 8 }]`
+  与 `value = 16` ✗；`ops` 形如 `["dst:r:inout", "imm8:imm8"]` ✗；`[[lowering]]` 用
+  `ADD {out}, {0}` ✗。
+- **未定位**（本片时间盒到 ✗）：需要看 `FGE_DEBUG_GEN=1` 的 dump 找那条空表达式 ✗。
+- 处置 ✗：该夹具**已回退**（不留半片 ✗）；本条目即"受控扩展点"记录 ✗。
+- 另一处**已知**形状分支（W6 依赖 ✗）：`is_prefix_scan()` 仍在
+  `codegen/{frame,lowering,machine,mod}.rs` 参与分支 ✗（如 `has_jal = has_jmp && !is_prefix_scan()` ✗）
+  ⇒ W11 的"无 ISA 形状分支"守卫要等 W6 把这些下放成数据 ✗。
+
 - [~] 新夹具 ISA（非 x86/riscv/arm64；定宽 + 一态变长各一）：只用 TOML + `arch/<new>.rs` + 生成的补丁器。
   （**定宽那一份已完成** ✔：`crates/backend/forge-codegen/tests/isa/demo_v21.toml` ✗（24 位定宽 ✗、
   16 个 16 位寄存器 ✗）；**接入面 = TOML + 两行宿主 + 一个测试二进制 ✗，零编译器改动** ✔。
   宿主按本仓既有做法放在 `tests/`（`common/mod.rs` + `spec_tests.rs` ✗）——`arch/<new>.rs` 是
-  **发行后端**的位置 ✗，夹具不进库本体 ✗。**变长那一份未做** ✗。）
+  **发行后端**的位置 ✗，夹具不进库本体 ✗。**变长那一份已尝试、撞到编译器缺口 ⇒ 未落地** ✗
+  （见本节末「受控扩展点候选」✗）。）
 - [ ] 新守卫：断言"新增 ISA 的改动面只有 TOML 与 `arch/<new>.rs`"（扩展 `generality_guard` 的口径，从"无 ISA 名"升级到"无 ISA 形状分支"）。
   （**依赖 W6** ✗：`generality_guard` 的"形状分支"口径对应"分支/跳转降级下放" ✗，
   那部分没做完之前这条守卫必然红 ✗。）
@@ -867,8 +887,8 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
   **65 passed / 0 failed** ✗（该夹具 25 条生成期自测 + 8 条向量 ✗）、`--test w11_isa_tests`
   **6 passed / 0 failed** ✗。）
 - [x] 若有任何一处必须改编译器 ⇒ 记入设计文档"受控扩展点"清单并说明理由。
-  （**本次为零** ✔：第四份 ISA 的接入**没有**任何编译器改动 ✗ —— 受控扩展点清单保持为空 ✗。
-  唯一"绕法"是夹具按本仓惯例宿主在 `tests/` 而不是 `arch/` ✗，那是**测试组织**不是编译器改动 ✗。）
+  （**定宽那份：零** ✔ —— 24 位定宽 ISA 的接入没有任何编译器改动 ✗。
+  **变长那份：撞到一个候选受控扩展点** ✗ —— 详见本节末「受控扩展点候选」✗。）
 
 ---
 
