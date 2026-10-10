@@ -10,7 +10,7 @@
 > | W1 | 寄存器重定基（宽度只在名字里） | ✅ 已落地 |
 > | W2 | 字段语法（`fields` 就地声明；`conventions.bitfields`/`operand_fields`/`opcode_field` 降为**内部展开目标**） | ✅ 已落地 |
 > | W3 | 操作数层收敛（`[operand.<名字>]` / `[enum.<表名>]`） | ✅ 已落地 |
-> | W4 | stream 段模型 | 🚧 **段 kind 闭集 11 种已全部接线**；剩 x86 谱迁移到 `kind = "stream"` + 段（116 处 `modrm` / 84 处 `fields` / 128 条混合）、前缀表显式化（删 `default_prefix_scan()`）、REX2 段数据、`force_disp_base` 上界、`opsize` 四态退化 |
+> | W4 | stream 段模型 | 🚧 **谱面已完成大半**（实测 2026-10-08 ✗：x86 现存 `modrm = {…}` 键只剩 **27** 处且全带名字映射 ✗，`segments = [` 块已有 **58** ✗；riscv64/arm64 不涉及 ✗）；剩 `opsize` 的 **22** 处 `"sN"` ✗、前缀段解码条件 ✗、REX2 纯段数据 ✗、`force_disp_base` 口径重定 ✗ |
 > | W5 | 族与重载（`[family.<名>]`；`[[templates]]` TOML 面已撤） | ✅ 已落地 |
 > | W6 | 选择层（`[[lowering]]` + `[[pattern]]` → `[lower.*]`） | 🚧 未做（281 处 `[[lowering]]` + 9 处 `op` 名单 + 2 处 `[[pattern]]`）；**口径已定（2026-10-08 ✗）**：`op` 名单不保留 ⇒ **一个名字一块** ✗，复用交给 `[family.*]`/`vary` ✗；施工单见执行清单 §8 的「W6-a」✗ |
 > | W7 | 文本层（`[asm.pseudo.<名>]` / `[asm.immfn.*]` / `[asm.reloc.<名>]`） | ✅ 已落地 |

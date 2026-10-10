@@ -999,8 +999,9 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
   为什么要它 ✗：W10 那次 `[[instructions]]` → `[inst.*]` 迁移**静默丢过 3 条指令的 `modrm.reg`
   固定扩展码** ✗ —— 往返自洽、条数不变 ✗，只有把**字节逐条**比出来才看得见 ✗。）
 - [x] 三矩阵计数与 W0 逐数字相同。
-  （`jit_matrix_x86` **197 passed / 3 skipped / 0 failed** ✔（本会话多次实测 ✗）；
-  `jit_matrix_riscv64` **136 passed / 64 skipped / 0 failed** ✔（QEMU 通道 ✗）。
+  （**快照 #2 当轮复测（2026-10-08 ✗）**：`jit_matrix_x86` **197 passed / 3 skipped / 0 failed** ✔、
+  `jit_matrix_riscv64` **136 passed / 64 skipped / 0 failed** ✔（QEMU 通道 ✗，`--test-threads=1
+  --nocapture` ✗）——与 §1.3 的 W0 基线**逐数字相同** ✔。
   arm64 没有 JIT 矩阵 ✗（清单 §1.3 也只列两条 ✗）；它的 QEMU 通道 4 passed ✔。）
 - [~] `lint` 三谱零结论；`--refs`/`--bits`/`--suggest` 清单只减不增。
   （**零结论 ✔**：三谱 `forge-isa lint` 全部"干净（无 lint 结论）" ✔。
