@@ -982,10 +982,17 @@ W11 守卫（依赖 W6）尚未收口 ✗，本节只记录**已可测**的项 �
   **#19 已修（2026-10-08 ✗）** ✗：宿主 op 表现在**只认 `[[op]]`** ✗，复数 `[[ops]]` 报错并点名正确拼法 ✗；
   守卫 = `lint.rs::host_ops_rejects_plural_spelling`（负向 ✗）。
   🚧 **半**：#11 `force_disp_base` 魔数（校验被 `!= PrefixScan` 挡在门外 ✗ ⇒ 前提要重定 ✗）。
-- [~] 度量对比：三谱行数、生成物 token 规模、`cargo check -p forge-codegen` 时间（相对 W0）。
-  （三谱行数 ✗：x86 **4877** / riscv64 **3427** / arm64 **5178**；三份 `tm` 生成物字节数 ✗：
-  x86 **6.07 MB** / riscv64 **2.48 MB** / arm64 **6.51 MB**；`cargo check -p forge-codegen`
-  **108.7 s**（该轮**含 build script 重新预生成** ✗ ⇒ **不可与 W0 对照** ✗；W0 的对照值仍未采 ✗）。）
+- [x] 度量对比：三谱行数、生成物 token 规模、`cargo check -p forge-codegen` 时间。
+  （**B1 基线（2026-10-08 本机实测 ✗）**：三谱行数 x86 **4877** / riscv64 **3427** /
+  arm64 **5178**（TOML 合计 **397,381 B** ✗）；生成物（`tm` 全套 ✗，`$OUT_DIR` 的
+  `forge_gen_<isa>_<hash>.rs` ✗）x86 **6,068,024 B** / riscv64 **2,483,285 B** /
+  arm64 **6,507,583 B** ✗；`cargo check -p forge-codegen` 改源码后的增量 **30.7 s** ✗、
+  改谱（`touch` 触发重新预生成 ✗）后 **18.3 s** ✗。
+  ⚠️ **W0 对照不可回溯** ✗：§1.3 记的 W0 Phase-2 日志本身就受污染（在 W1 已改代码后才跑 ✗），
+  且忠实的 W0 对比需要**改动前那棵树**（v18 面 ✗）。可复现配方（留待需要时 ✗）✗：
+  先 `git worktree add ../cf-w0 <S0 冻结提交>`（按 §1 记录的日期在 `git log` 里定位 ✗），
+  再在该 worktree 里跑同样两条命令 ✗；
+  **单次墙钟数字噪声大** ✗（本轮两次就差了 12 s ✗）⇒ 只当量级参照 ✗，别当回归门禁 ✗。）
 - [x] 文档三方针一致：`schema.rs` ↔ `dsl/model.rs` ↔ 参考文档键表 ↔ `isa-dsl.schema.json`。
   （`schema_guard` **9/9** ✔ —— 本会话每片都跑 ✗。）
 - [x] 所有新增/改动文档 `npx markdownlint-cli2 <文件>` 到 0 error。
