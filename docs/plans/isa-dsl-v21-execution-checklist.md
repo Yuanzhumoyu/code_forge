@@ -656,7 +656,18 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
   （且**全部**带名字映射 ✗，`rm = "[mem]"` 是语义映射而非布局 ✗），而 `segments = [` 块**已有 58** ✗
   ⇒ W4 的谱面迁移其实**已完成大半** ✗。riscv64/arm64 **0/0** ✗（定宽 ISA 不涉及 ✗）。
   真要收尾 ✗，剩下的是这 **27** 处 + `opsize` 的 **22** 处 `"sN"` ✗（见下条 ✗），
-  且 27 处多挂在 **family body** 上（带 `[mem]` 风味 ✗）✗ ⇒ 不是机械替换 ✗。）
+  且 27 处多挂在 **family body** 上（带 `[mem]` 风味 ✗）✗ ⇒ 不是机械替换 ✗。
+  **2026-10-08 试做一次并回退（连安全网一起验证了 ✗）** ✗：按"已迁样本"的写法
+  （`[inst.NOT_RM]`：`form = "MRR_EXT_OP_SEG"` + `bind = { rm = "dst" }` +
+  `match = { opcode = 0xF7, reg = 2 }` ✗）把 `[family.INCDEC_RM]`/`[family.INCDEC_RM_8]`
+  从 `form = "MRR_EXT_OP"` + 行内 `modrm = { reg = N, rm = "dst" }` 改成段形态 ✗ ——
+  结果 ✗：`validate` 通过 ✗，但 **`forge-isa insts` 出现 44 行差异**（那 4 条
+  `INC/DEC_RM(_8)` 的**内容行本身变了** ✗，不只是顺序 ✗）+ **`encoding.digest` 指纹不符** ✗
+  （上一轮新加的安全网**当场逮住** ✗）+ 多出一条 `LINT-UNUSED-FORM: MRR_EXT_OP` ✗
+  ⇒ 按纪律"差异先当 bug" **已回退**（树恢复绿灯 ✗）。
+  **结论** ✗：这类转换必须**逐 form 证明"字节 + 生效编码键"双重等价** ✗
+  （`match` 钉字段与行内 `modrm` 钉扩展码在**派生枚举/enc 视图**上不等价 ✗）✗，
+  不能按"看起来同构"批量改 ✗。）
   （**仍开** ✗ —— W4 的大头 ✗；现状是"stream 形态与内联编码键**并存**" ✗。）
 - [x] 门禁：§2 全绿；x86 编码对拍（`asm_encoding`）棘轮不变；`encoder_fuzz_tests` 绿。
   （**本轮实测** ✗：`asm_parse` 3 passed ✔、`asm_encoding` 1 passed ✔（棘轮逐项相等 ✗）、
