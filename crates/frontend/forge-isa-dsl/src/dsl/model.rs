@@ -1620,6 +1620,32 @@ pub struct EnumDecl {
     pub entries: BTreeMap<String, EnumEntry>,
 }
 
+/// 槽的寄存器组：**一个组名或一组组名**共用 `class` 键（v21 W4 / D4 #16）。
+///
+/// ```toml
+/// class = "gpr64"                     # 单一形态
+/// class = ["gpr16", "gpr32", "gpr64"] # 联合形态（多宽度/多类型）
+/// ```
+///
+/// `classes` 键**已删除**（写了会被 `deny_unknown_fields` 拒）——同一个事实两个键名，
+/// 读者要先知道哪个优先；现在只有一个键、两种写法。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ClassField {
+    One(RegClass),
+    Many(Vec<RegClass>),
+}
+
+impl ClassField {
+    /// 归一成集合：单一形态 = 单元素列表。
+    pub fn to_vec(&self) -> Vec<RegClass> {
+        match self {
+            ClassField::One(c) => vec![*c],
+            ClassField::Many(v) => v.clone(),
+        }
+    }
+}
+
 /// v21 W3：**操作数声明**（`[operand.<名字>]`）。
 ///
 /// 键名即槽名；8 个一次性开关收敛成 5 个正交键 `bits`/`signed`/`range`/`unit`/`value`，
@@ -1680,10 +1706,9 @@ pub struct OperandDecl {
     pub fields: Option<Vec<String>>,
     #[serde(default)]
     pub roles: Option<OperandRole>,
+    /// reg：所属寄存器组——**一个组名或一组组名**（v21 W4/D4 #16）。
     #[serde(default)]
-    pub class: Option<RegClass>,
-    #[serde(default)]
-    pub classes: Option<Vec<RegClass>>,
+    pub class: Option<ClassField>,
 }
 
 // ──────────────────── 内部降级后的槽 ────────────────────
@@ -1695,13 +1720,18 @@ pub struct OperandDecl {
 pub struct OperandSlot {
     pub name: String,
     pub kind: OperandKind,
-    /// reg：所属 [reg.*] 组名（单类型糖，等价于 `classes = ["gpr8"]`）。
-    #[serde(default)]
-    pub class: Option<RegClass>,
-    /// reg：可接纳的寄存器组集合（多宽度/多类型）。`class` 为单元素糖；
-    /// 两者皆无 = 任意寄存器类（不推荐，会吞掉更具体的重载形式）。
+    /// reg：可接纳的寄存器组集合（多宽度/多类型）。声明面只有一个 `class` 键
+    /// （`class = "gpr64"` 或 `class = ["gpr16","gpr32"]`），归一后都落在这里。
+    /// 空 = 任意寄存器类（不推荐，会吞掉更具体的重载形式）。
     #[serde(default)]
     pub classes: Option<Vec<RegClass>>,
+    /// reg：**恰好一个**寄存器组时的快捷字段（内部规范化产物，与 `classes` 同源）。
+    ///
+    /// 老代码读 `slot.class` 的地方不少（"这个槽是不是固定 GPR 类"），保留它是为了
+    /// 不改那些语义——但**声明面没有第二个键**：`class = [...]` 与 `class = "…"` 都写
+    /// 在 `class` 上（v21 W4/D4 #16）。
+    #[serde(default)]
+    pub class: Option<RegClass>,
     /// reg：**该槽把 31 号视为 ZR 而不是 SP**（A64 shifted-register 形态的专属语义）。
     ///
     /// 两侧一起变 ✓（**只改匹配会让解码把 `xzr` 渲染回 `sp`，镜像同一个 bug**）：
@@ -1854,7 +1884,16 @@ pub struct OperandSlot {
 }
 
 impl OperandSlot {
-    /// 规范化寄存器约束集：`classes` 优先；否则 `class` → 单元素；两者皆无 → None
+    /// 唯一寄存器组：恰好一个类时给出它，0 个或多个 → None
+    /// （联合形态由 [`OperandSlot::classes`] 表达）。
+    pub fn class(&self) -> Option<RegClass> {
+        match &self.classes {
+            Some(cs) if cs.len() == 1 => Some(cs[0]),
+            _ => None,
+        }
+    }
+
+    /// 规范化寄存器约束集：`classes`；只有 `class`（单类）时折成单元素；空 → None
     /// （任意寄存器类）。
     pub fn classes(&self) -> Option<Vec<RegClass>> {
         if let Some(cs) = &self.classes {

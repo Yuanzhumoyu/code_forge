@@ -125,8 +125,13 @@ fn decl_to_slot(name: &str, d: &OperandDecl) -> Result<OperandSlot, String> {
     Ok(OperandSlot {
         name: name.to_string(),
         kind: d.kind,
-        class: d.class,
-        classes: d.classes.clone(),
+        // 声明面只有一个 `class` 键（组名或组名数组）：归一成 `classes` 全集 +
+        // "恰好一个类"时的 `class` 快捷字段（v21 W4/D4 #16）。
+        class: d.class.as_ref().and_then(|c| match c.to_vec()[..] {
+            [one] => Some(one),
+            _ => None,
+        }),
+        classes: d.class.as_ref().map(|c| c.to_vec()),
         zr31,
         byte_reg: d.byte,
         width: d.bits,

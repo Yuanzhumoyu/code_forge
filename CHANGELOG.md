@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W4/D4 #16：`class`/`classes` 双键合一
+
++ `[operand.<名字>]` 的 `class` 键现在**接受组名或组名数组**：
+  `class = "gpr64"` 与 `class = ["gpr16", "gpr32"]` 同键两种写法；`classes` 键**删除**
+  （写了会被 `deny_unknown_fields` 拒）。内部槽仍归一成集合（`classes` 字段 +
+  "恰好一个类"时的 `class` 快捷字段，两者同源）。
++ x86 两处 `classes = [...]` 已迁到 `class = [...]`；四处同改同步：`src/schema.rs`
+  的 `[operand.<名字>]` 键表、`docs/reference/isa-dsl.md` 键速查表与示例、
+  `docs/reference/isa-dsl-errors.md`、`docs/guides/isa-dsl-tutorial.md`、`CLAUDE.md`；
+  重生成 `isa-dsl.schema.json`（`schema_guard` 9/9）。
++ 新增两条守卫：`operand_slot_class_accepts_name_or_list`（同键两写法）与
+  `rejects_regular_operand_slot_classes_key`（`classes` 必须被拒）。
++ **行为不变**：`encoding.digest` 编码字节指纹通过；`forge-isa lint` 三谱零结论。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W4 第三批：SSE/VEX/EVEX 三操作数族改走段形态
 
 + 10 处族 body 从行内 `modrm = { reg = "dst", rm = "src"|"src2" }` 改成段形式 + `bind`：

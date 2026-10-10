@@ -148,12 +148,12 @@ pub use self::toy16::*;
 ```toml
 [operand.g]
 kind = "reg"        # reg | imm | mem | label | cond
-class = "gpr8"      # 引用 [reg.gpr8]；多宽度用 classes = [...]
+class = "gpr8"      # 引用 [reg.gpr8]；多宽度写 class = ["gpr32", "gpr64"]
 ```
 
 - `kind = "imm"` 的槽要写 `width`（位）与 `signed`；越界立即数在 `encode` 层**报错**而不是静默截断。
 - `kind = "label"` 的槽用于分支目标：汇编接受数字偏移或符号，生成物里字段类型是 `i64`（IR 块号）。
-- 多宽度寄存器槽（`classes = ["gpr32", "gpr64"]`）会让生成期自测逐宽度各生成一条用例。
+- 多宽度寄存器槽（`class = ["gpr32", "gpr64"]`）会让生成期自测逐宽度各生成一条用例。
 
 ## 3. 指令：`ops` 声明 + `asm` 引用
 

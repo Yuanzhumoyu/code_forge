@@ -40,7 +40,7 @@
 | `DSL-STACK` | `[machine.stack]`（v21 W9 前叫 `[stack]`，单位由字节改**位**） | `slot`/`align`/`fp_save` 为 0、不是 8 的整数倍或未指向已声明组 |
 | `DSL-TYPES` | `[machine.classes]`（v21 W9 前叫 `[types]`） | 类型名非法、目标寄存器组未声明、类宽 < 类型宽（会静默截断） |
 | `DSL-CONV` | `[conventions.*]` | 位域越界/重叠、`modrm` 字段未声明、条件码表为空/`code` 超 4 位/`ir` 名非法或重复映射、`cond` 槽却没有表、用了 `{cc}` 却没映射全 10 个 IR 条件、`prefix_scan` 条目非法 |
-| `DSL-SLOT` | `[[operand_slots]]` | 重名、`kind` 与字段不匹配、`imm` 宽为 0、`class`/`classes` 未声明、`byte_reg` 用错组 |
+| `DSL-SLOT` | `[[operand_slots]]` | 重名、`kind` 与字段不匹配、`imm` 宽为 0、`class` 未声明、`byte_reg` 用错组 |
 | `DSL-FORM` | `[form.<名字>]` | 位域未声明、既无 `opcode_field` 也无 `modrm`、`modrm` 引用不存在的操作数 |
 | `DSL-INST` | `[inst.<名字>]` | `form` 未声明、**操作数槽未声明**、角色与槽 `roles` 不符、定宽字段未声明、操作数多于 `operand_fields`、缺少编码信息、`ref` 为空/与指令名冲突、`reloc` 名字未声明/绑定的槽不在操作数里、`asm` 里的 `{参数名}`（`[meta].variants`）**本次没传值**（v19 V5）；**重名表头由 TOML 自身拒绝**（`DSL-TOML`/`duplicate key`） |
 | `DSL-RELOC` | `[[reloc]]`（v18 S3d） | 名字为空/重复、`slot` 未声明或不是 `imm` 槽、`semantics` 不是宿主已知语义（由 serde 在反序列化期拒绝） |

@@ -202,7 +202,7 @@ kind = "reg"
 # 实际宽度由操作数寄存器决定（opsize auto 推导 66/REX.W 前缀）。
 # 显式排除 8 位（gpr8）：8 位 mov 是不同 opcode（88 vs 8B），应声明为
 # 独立 form 而非经由 gprx 误编码（garbage 防护）。
-classes = ["gpr16", "gpr32", "gpr64"]
+class = ["gpr16", "gpr32", "gpr64"]
 roles = "inout"
 
 # 16/32 位（2/4 字节）——**不含 64 位**：64 位的内存 mov 是 ABI 的
@@ -210,7 +210,7 @@ roles = "inout"
 # 再收 64 位就是同一批字节的第二条候选（无冗余）。
 [operand.gpr192]
 kind = "reg"
-classes = ["gpr16", "gpr32"]
+class = ["gpr16", "gpr32"]
 roles = "inout"
 
 # 「8 位**字段**、64 位**名字**」的槽（v20 V10 加注）：SETCC 的 rm 是 8 位寄存器，

@@ -163,7 +163,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[conventions.imm_names.<table>]` | — | — | 命名立即数表（kind = "imm" 的槽用 `names` 指名）：表名 → （名字 → 值）——一个名字 = 一个值；解析认名字也认数字，渲染时值在表里就写名字（允许额外键） |
 | `[conventions.mem]` | `templates` | — | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
 | `[enum.<表名>]` | — | `kind` `entries`† | 命名取值表：kind = value（名字 = 值；带 `ir` 的那张是条件码表）\| bits（名字拼接、按位或）（允许额外键） |
-| `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` `classes` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
+| `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[form.<名字>]` | — | `fields` `segments` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖）；v21 W10：**表头即形式名**（不再写 `name`） |
 | `[inst.<名字>]` | `asm` | `form` `opcode` `match` `fields` `segments` `bind` `ops` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令（v21 W10：**表头即指令名**，不再写 `name`）：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[asm.reloc.<名>]` | `semantics` `operand` | `addend` `via` | 重定位（v21 W8：**表头即重定位名**；旧 `[[reloc]]` 已撤）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`） |
@@ -779,7 +779,7 @@ name = "gpr"
 kind = "reg"                   # reg / imm / mem / label / cond
 class = "gpr"                  # reg：所属 [reg.*] 组；省略 → 多态槽（宽度由实际寄存器推导）
 
-# classes = ["gpr64", "gpr16"]  # 多宽度/多类型集合（class 是单元素糖；两者皆无 = 任意寄存器类）
+# class = ["gpr64", "gpr16"]   # 多宽度/多类型集合（一个组名或一组组名；都不写 = 任意寄存器类）
 
 byte_reg = true                # 可选：8 位寄存器操作数（spl/bpl/sil/dil 无 REX 时编码 ah/ch/dh/bh）
 roles = "inout"                # 不写 = 不限制；一个 OperandRole 就够（inout 涵盖 in 与 out）
@@ -1110,7 +1110,7 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
 | 事实 | 来源 |
 | --- | --- |
 | 谁进谁出（方向） | 槽角色：`out`/`inout` = 目的，`in` = 来源 |
-| 哪个寄存器族 | 槽的 `class`/`classes`（`RegClass` 自身带 `GPR`/`FPR`/`VEC`/`KReg`） |
+| 哪个寄存器族 | 槽的 `class`（`RegClass` 自身带 `GPR`/`FPR`/`VEC`/`KReg`） |
 | 立即数 / 寄存器 / 内存 | 槽的 `kind` |
 | **数据宽度** | **不在结构里 ⇒ 写 [`data_width`](#inst名字--指令)** |
 

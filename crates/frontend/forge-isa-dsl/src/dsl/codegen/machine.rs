@@ -294,7 +294,7 @@ pub(crate) fn gen_machine_inst(
         // 每 Reg 字段的槽类编码：单类槽 → 索引+1；多类槽（class=None）→ 0。
         let mut class_codes: Vec<u8> = Vec::with_capacity(n_regs);
         for (_, _, slot) in &reg_fields {
-            match &slot.class {
+            match slot.class() {
                 Some(_) => {
                     let expr = super::reg_class_expr(slot);
                     let text = expr.to_string();

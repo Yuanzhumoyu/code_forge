@@ -240,6 +240,54 @@ count = 8
 }
 
 #[test]
+fn rejects_regular_operand_slot_classes_key() {
+    // v21 W4 / D4 #16：`classes` 键已删除 —— 同一个事实两个键名 ⇒ 现在只认 `class`，
+    // 组名或组名数组都写在它上面。
+    let doc = r#"
+[meta]
+name = "x"
+[reg.gpr32]
+count = 8
+[operand.g]
+kind = "reg"
+classes = ["gpr32"]
+"#;
+    let err = parse(doc).unwrap_err();
+    match err {
+        DslError::Parse { msg, .. } => {
+            assert!(msg.contains("classes"), "msg: {msg}");
+            assert!(msg.contains("unknown field"), "msg: {msg}");
+        }
+        other => panic!("expected Parse error, got {other:?}"),
+    }
+}
+
+#[test]
+fn operand_slot_class_accepts_name_or_list() {
+    // 同一键两种写法：单一名 / 组名数组（归一后 `classes` 是同源集合）。
+    let base = r#"
+[meta]
+name = "x"
+[reg.gpr32]
+count = 8
+[reg.gpr64]
+count = 16
+[operand.g]
+kind = "reg"
+{CLASS}
+"#;
+    let one = parse_and_validate(&base.replace("{CLASS}", "class = \"gpr64\"")).expect("单一名");
+    println!("DEBUG one = {:?}", one.operand_slots[0]);
+    assert_eq!(one.operand_slots[0].classes.as_ref().map(Vec::len), Some(1));
+    assert!(one.operand_slots[0].class.is_some(), "单一名有唯一类");
+    let many = parse_and_validate(&base.replace("{CLASS}", "class = [\"gpr32\", \"gpr64\"]"))
+        .expect("组名数组");
+    assert_eq!(many.operand_slots[0].classes.as_ref().map(Vec::len), Some(2));
+    // 多类槽没有"唯一类"（`class` 快捷字段留空）
+    assert_eq!(many.operand_slots[0].class, None);
+}
+
+#[test]
 fn rejects_unknown_operand_slot_key() {
     let doc = r#"
 [meta]

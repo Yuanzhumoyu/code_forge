@@ -118,7 +118,7 @@ fn jump_dest_class(
         .find(|i| i.inst.name == inst_name)
         .and_then(|i| i.operands.iter().find(|(_, f, _, _)| f == fid))
         .map(|(_, _, slot, _)| *slot);
-    match slot.and_then(|s| s.class.as_ref()) {
+    match slot.and_then(|s| s.class()) {
         Some(c) => quote! { #c },
         None => {
             let _ = model;

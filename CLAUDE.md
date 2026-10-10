@@ -565,7 +565,7 @@ let name = node.get_text("name")?;
   `RoleDecl.bits` **已整条删除**。ISA 只在指令上写 `data_width = <位>`（**数据宽度**，
   与 `width` = 指令字长是两件事），其余全部由操作数结构派生：
   ① 方向 = 槽角色（`out`/`inout` = 目的、`in` = 来源）；② 寄存器族 = 槽的
-  `class`/`classes`（`RegClass` 自带 `GPR`/`FPR`/`VEC`/`KReg`）；③ 立即数/寄存器/内存 =
+  `class`（`RegClass` 自带 `GPR`/`FPR`/`VEC`/`KReg`）；③ 立即数/寄存器/内存 =
   槽的 `kind`。选指令 = 按 **(目的形状 × 来源形状 × 位宽)** 查表（`dsl/codegen/moves.rs`
   的 `MoveTable`，**唯一实现**，生成器四处发射点与 `abi_view`/生成物 `role_bits` 同源）：
   寄存器/立即数来源取**最窄覆盖者**（整寄存器搬移对更窄的值同样正确），涉及内存取**精确**

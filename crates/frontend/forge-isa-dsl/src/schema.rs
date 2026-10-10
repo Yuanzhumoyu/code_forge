@@ -210,7 +210,6 @@ pub const SECTIONS: &[Section] = &[
         optional: &[
             "bits", "signed", "range", "unit", "value", "literal", "enum", "suffix", "symbol",
             "byte", "zero", "sp", "text", "size_words", "encode", "fields", "roles", "class",
-            "classes",
         ],
         flatten: &[],
         additional: false,
