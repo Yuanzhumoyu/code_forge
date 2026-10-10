@@ -421,8 +421,9 @@ let name = node.get_text("name")?;
   `{bytes, error = "DECODE"[, partial = N]}` 解码负向（`partial` 钉 `decode_partial` 的消费量，
   截断输入合法）、`{bytes}` 解码正向、`{asm}` **闭环**（只断言编解码/文本闭环稳定，不比字节）。
   形态在解析期校验（`validate_vectors`），用例发射成 `__spec_tests::spec_vector_<下标>`
-  （条数进 `SPEC_VECTORS`）。**别再手抄 Rust 黄金字节表/往返清单**——迁进谱里（三份发行谱共
-  **363 条**：x86 140 / riscv64 134 / arm64 89；迁移前后字节集合的规范化 sha256 相同）。
+  （条数进 `SPEC_VECTORS`）。**别再手抄 Rust 黄金字节表/往返清单**——迁进谱里
+  （三份发行谱 2026-10-08 实测共 **505 条**：x86 154 / riscv64 152 / arm64 199 ✗ ——
+  v19 V3 迁移当时是 363 条，之后随覆盖补齐增长；迁移前后字节集合的规范化 sha256 相同）。
   校验规则：同一条 `asm` 给出两种期望字节才算错，完全相同的重复允许。
   守卫 `crates/frontend/forge-isa-dsl/tests/vectors.rs` 与 `tests/determinism.rs`。
 - **ISA-DSL 工具链**：`cargo run -p forge-isa -- validate|insts|explain|diff|schema|fmt|test|lint|abi <谱.toml>`——

@@ -625,14 +625,38 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
   （**2026-10-08 复核：11 种全部已接线** ✔ —— `stream_decl.rs` 的 `lower_one` 逐一处理；
   `sib`/`disp` 是**纯布局段**（无对应语义键：这两个字节由编码器按内存操作数派生 ✗，
   段的价值是把字节布局写进谱、让段内字段进 `form.fields` 参与声明期校验与 `--bits` 清点 ✗）。）
-- [ ] 段内 `fields` 复用 W2 语法；`segments` 序 = 发射序。
-- [ ] 前缀表显式化：**删除 `default_prefix_scan()`**；效果参数化（`opsize`/`addrsize`/`lock`/`rep`/`reg_ext`/`map`/`opaque`）。
+- [x] 段内 `fields` 复用 W2 语法；`segments` 序 = 发射序。
+  （**2026-10-08 复核：已落地** ✔ —— `SegmentDecl.fields` 就是 W2 的 `Vec<FieldDecl>` ✗
+  （`field_decl.rs` ✗）；`stream_decl.rs::lower_one` 按 `segments` 书写序逐段降级 ✗，
+  三谱的 `[form.*].segments` 与指令级 `segments` 都按这个序发射 ✗。）
+- [x] 前缀表显式化：**删除 `default_prefix_scan()`**；效果参数化（`opsize`/`addrsize`/`lock`/`rep`/`reg_ext`/`map`/`opaque`）。
+  （**2026-10-08 复核：已落地** ✔ —— `IsaModel::prefix_scan_entries()` 只读**谱里声明的**
+  `[[conventions.prefix_scan]]` ✗（x86 声明了 66/F0/F2/F3/67/40-4F/D5 ✗），
+  `default_prefix_scan()` 在代码里**已不存在** ✗（只剩 `stream_decl.rs` 里一句过时注释 ✗）。）
 - [ ] 解码条件由前缀段 `bytes` 生成（删 `prefix_cond_ts` 的按字节枚举）。
-- [ ] REX2 改为段数据（`map` + `reg_ext.bits` + 位序），删字节手术。
-- [ ] `force_disp_base` 上界由 rm 字段宽 + `reg_ext.bits` 推出。
+  （**仍开** ✗：`vlen.rs` 的 `prefix_cond_ts` 还在按字节枚举 ✗。）
+- [~] REX2 改为段数据（`map` + `reg_ext.bits` + 位序），删字节手术。
+  （**半落地** ✗：`0xD5` + `effects = ["rex2"]` **已进谱表** ✔、生成器按段数据吃两个字节 ✔；
+  但 payload 的**位序与位宽仍写死在代码里**（`gen_prefix_scan_loop` 直接 `(__b2 >> 2) & 1` 之类 ✗）
+  ⇒ 不是纯段数据 ✗。）
+- [~] `force_disp_base` 上界由 rm 字段宽 + `reg_ext.bits` 推出。
+  （**前提不成立，待重新定义** ✗：该检查在 `validate.rs` 里被
+  `m.encoding.kind != EncodingKind::PrefixScan` **挡在门外** ✗ ⇒ **x86（`prefix_scan`）的
+  `force_disp_base = [5, 13]` 从不被范围校验** ✗；而能进这条路的定宽/混合 ISA 又**不声明**
+  `rm` 字段（它们用老式 `[conventions.modrm]` 键 ✗）⇒「rm 字段宽」无从取 ✗。
+  要落地得先定口径：是给**变长**谱也加范围校验（上界 = rm 位宽 + REX 扩展位 ✗），
+  还是把这条检查改成只对声明了 `modrm` 段的谱生效 ✗。）
 - [ ] `opsize` 四态退化为 `word_size` 规则 + 显式绑定；`"sN"` 移除。
+  （**仍开，且不是改名可了** ✗：实测三谱共 **16 处** `opsize = "s0"` ✗（另有 4 处是注释里的引用 ✗）；
+  其中数处挂在 **form** 上（如 `[form.MRR_MEMREF_AUTO]` ✗）——form 被多条指令共享 ✗，
+  "第 0 个操作数"的名字逐指令不同 ✗ ⇒ **改成操作数名这条路走不通** ✗，
+  必须按设计案引入 `word_size` 规则 + 显式绑定 ✗。）
 - [ ] x86 谱迁移（116 处 `modrm`、84 处 `fields`、128 条 form/覆盖混合）。
-- [ ] 门禁：§2 全绿；x86 编码对拍（`asm_encoding`）棘轮不变；`encoder_fuzz_tests` 绿。
+  （**仍开** ✗ —— W4 的大头 ✗；现状是"stream 形态与内联编码键**并存**" ✗。）
+- [x] 门禁：§2 全绿；x86 编码对拍（`asm_encoding`）棘轮不变；`encoder_fuzz_tests` 绿。
+  （**本轮实测** ✗：`asm_parse` 3 passed ✔、`asm_encoding` 1 passed ✔（棘轮逐项相等 ✗）、
+  `isa_roundtrip_guard` 1 passed ✔、`spec_coverage_guard` 4 passed ✔、x86 矩阵 197/3/0 ✔；
+  另每片都核三谱 `insts` 与迁移前**逐行 0 差异** ✔。）
 - [ ] 冻结项 1 复核：段子表键名定稿后写回设计文档。
 
 ---
@@ -912,10 +936,20 @@ W11 守卫（依赖 W6）尚未收口 ✗，本节只记录**已可测**的项 �
   但**本指令未绑定**的槽不再算该指令的覆盖 ✗）；`--suggest` riscv64 28→**31** ✗（W5 族合并之后 ✗）。
   ⚠ **`CLAUDE.md` 里记的 3/67/28 已过时** ✗，待随文档面回写 ✗。）
 - [~] 设计文档 §1.2 的 D1–D6 逐条给出实测证据（节数、机制数、位置语义数、后门清除条数）。
-  （**已可测** ✗：D1 顶层节 —— 当前 `<root>` 行 17 个键（`meta` + 16 ✗），与设计期"21 → 13"的目标
-  差距**未逐条清点** ✗；D2 通用性 —— **第四份 ISA 两份夹具零编译器改动接入** ✔（W11 ✗）；
-  D5/D6 —— 两份夹具 + 「受控扩展点」记录 ✗。**未做** ✗：D3（机制数）与 D4（后门清除条数）
-  的逐条清点 ✗。）
+  （**2026-10-08 清点** ✗ ——
+  **D1** ✗：顶层键 = `meta` + **16** 个可选（`include`/`override`/`encoding`/`reg`/`conventions`/
+  `operand`/`enum`/`form`/`inst`/`family`/`lower`/`asm`/`pred`/`lowering`/`pattern`/`machine`/
+  `vectors` ✗，设计期是 21 ✗）；并存机制 ✗：`[[templates]]` **0** ✔（W5 撤 ✗）、
+  `[conventions.*]` 只剩 **2** 个子节（`modrm`、`prefix_scan` ✗，设计期抱怨过"七子节" ✗）、
+  `ref` 多态仍在（`--refs` 51 条 ✗）、变体门 **29** 处 `only_variants` ✗；
+  **位置语义 = 0** ✔（六个魔法串 `"rr"`/`"rr_rev"`/`"rr_src2"`/`"rm_mem"`/`"rm_memref"`/`"ext"`
+  在三谱里**只出现在注释**（`x86.toml:27` 的历史说明 ✗），真残留 **0** ✔；
+  `asm` 内联声明 `{i:[槽:角色]}` **0** 处 ✔）。
+  **D3** ✗：`[family.*]` = **112** 节 ✔（唯一复用机制 ✗）、`vary` **38** 处 ✔、
+  三谱 `[[vectors]]` = **505** 条（x86 154 / riscv64 152 / arm64 199 ✗）✔ —— 谱内向量已取代手抄
+  黄金表 ✗；`[[lowering]]` = **281** 条（x86 174 / riscv64 94 / arm64 13 ✗）。
+  **D4/D5/D6** ✗：D2 有硬证据（W11 两份夹具零编译器改动 ✗）；D4 的"9 真 ISA 特化 + 12 x86
+  口味缺省 + 1 活兼容分支"**逐条**落点仍未清点 ✗ —— 留待专门一片 ✗。）
 - [~] 度量对比：三谱行数、生成物 token 规模、`cargo check -p forge-codegen` 时间（相对 W0）。
   （三谱行数 ✗：x86 **4877** / riscv64 **3427** / arm64 **5178**；三份 `tm` 生成物字节数 ✗：
   x86 **6.07 MB** / riscv64 **2.48 MB** / arm64 **6.51 MB**；`cargo check -p forge-codegen`
