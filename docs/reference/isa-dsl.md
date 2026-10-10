@@ -170,7 +170,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[pred.<名字>]` | `expr` | — | 命名谓词（v18 S3f 引入时叫 `[[derive]]`；v21 W10：**表头即属性名**，不再写 `name`） |
 | `[asm.pseudo.<名>]` | `asm` `emit` | `only_variants` | 汇编器伪指令（v21 W7：**表头即名字**；旧 `[[pseudo]]` 已撤）：文本级多指令展开，分派按 `asm` 的前导字面，`{名字}` 就是 `emit` 用的参数 |
 | `[asm.immfn.<名>]` | `texts` `expr` | — | 立即数修饰（v21 W7：**表头即修饰名**；旧 `[[conventions.imm_fn]]` 待撤）：`texts` = 同一语义的等价写法列表（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值） |
-| `[[lower.<名字>]]` | `insts` | `match` `when` `vary` `dispatch` `temps` `priority` `only_variants` | 选择层（v21 W6-a：**表头即名字、同名可多块**）——名字是终结 op（Ret/Jmp/Br/Switch/Unreachable/Invoke）⇒ 终结序列（可用 {true}/{false}/{target} 符号值，且只吃 `insts`）；写了 `match` ⇒ 树型多指令匹配（名字是作者起的模式名）；其余 ⇒ op 规则（**名字就是 op 名**；一个 op 多条规则就写多块） |
+| `[[lower.<名字>]]` | `insts` | `match` `when` `vary` `dispatch` `temps` `priority` `only_variants` `move` `movef` | 选择层（v21 W6-a：**表头即名字、同名可多块**）——名字是终结 op（Ret/Jmp/Br/Switch/Unreachable/Invoke）⇒ 终结序列（可用 {true}/{false}/{target} 符号值，且只吃 `insts`）；写了 `match` ⇒ 树型多指令匹配（名字是作者起的模式名）；其余 ⇒ op 规则（**名字就是 op 名**；一个 op 多条规则就写多块） |
 | `[machine]` | — | `fixed` `scratch` `link` `gpr` `fpr` `addr` `value_gpr` `value_fpr` `frame` `padding` `arg_place` `byref_bytes` `stack` `text` `classes` `spill` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / 帧填充 / 位置计数规则；v21 W9：`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes` 由 `fixed_regs`/`spill_scratch`/`link_reg`/`frame_padding`/`arg_slot`/`vector_by_ref_bytes` 改名，接收从 `[stack]`/`[emit]`/`[types]` 迁入的 `stack`/`text`/`classes`，并删除 `callee_saved_gpr`/`callee_save_slots`——callee-saved 完全归约定数据） |
 | `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（唯一位置；`[abi.frame]` 已删除） |
 | `[machine.text]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（v21 W9：从 `[emit]` 迁入；序/尾声由生成器按约定生成，谱里不再写） |
@@ -1465,6 +1465,7 @@ insts = ["MOVSD {retf}, {retf_src}"]
 | `{ret}` / `{retf}` | **ABI 返回槽**（整数 / 浮点）——"返回值要去的那个槽" | 宿主约定（plan 的 `ret` 槽或 `conv.ret_gpr`；缺 ⇒ fail-closed） |
 | `{ret_src}` / `{retf_src}` | 承载返回值的**虚拟**寄存器（像 `{cond}`：字段先填 0，由 `map_reg_field` 把 IR 返回值绑上去） | 终结 lowering |
 | `{sret}` | **按引用返回的隐藏指针**（>16B 向量的落点）——是**内存操作数**占位符：`MemRef { base: Some(__sret), disp: 0 }` | 宿主约定（布局的 `hidden_sret`；缺 ⇒ fail-closed） |
+| `{retN}` / `{retN_src}` | **多值返回的第 k 个分量**（循环内逐次绑定）：第 k 个返回槽 / 第 k 个结果值 | 终结 lowering（布局的 `Pair`/`Group` 第 k 项） |
 
 **条件键是数据，不是枚举**（这是刻意的 ✗——`ret_kind = "f32"` 那种写法会把宽度写死，
 f8/f16/f128、i8…i128、任意宽度指针都表达不了）：
@@ -1487,7 +1488,24 @@ f8/f16/f128、i8…i128、任意宽度指针都表达不了）：
 `by_ref = true`（>16B 向量的 sret ✗，**必须**配 `bank = "vec"`）也已下放——按**精确总位宽**分档（x86：`width = 256` → `VMOVUPS_MR
 {retf_src}, {sret}` ✗、`width = 512` → `VMOVUPS_ZMM_MR …` ✗）。注意 `width` 对向量是**总位宽** ✗（`type_bits_of`
 对向量给的是**元素**位宽 ✗，生成器内部按 `size_bytes * 8` 折算 ✗）。
-还没下放的只剩 `multi = true`（多值 ✗），写了会被**安全闸拒**。
+**多值返回**（`multi = true`）用**逐分量模板**表达 ✗——多值没有单一 `insts` 序列 ✗，`insts` 写空数组，搬运写在 `move`（整数分量）/`movef`（浮点分量）里
+✗，对每个结果重复一次 ✗，里面的 `{retN}`/`{retN_src}` 指**第 k 个分量**：
+
+```toml
+[[lower.Ret]]
+when = { multi = true }
+insts = []
+move = ["MOV_RM8_R64 {retN_src}, {retN}"]        # 整数分量（不限宽度）
+
+[[lower.Ret]]
+when = { multi = true, width = 32 }                # 浮点分量按**分量位宽**分档
+insts = []
+movef = ["MOVSS {retN}, {retN_src}"]
+```
+
+分量的银行由布局给的那一项决定（`is_int`/`is_fp` ✗），位宽取该分量的 `type_bits_of` ✗；缺对应模板 ⇒ 生成物里 fail-closed ✗。
+**至此 `[lower.Ret]` 的五类形态全部在谱面** ✗：`bank = gpr` / `fpr`（任意宽度 ✗）/ `vec + by_ref = false` / `vec + by_ref =
+true`（sret ✗）/ `multi = true`。
 
 ### 历史写法（v18 S5，已废 ✗）
 

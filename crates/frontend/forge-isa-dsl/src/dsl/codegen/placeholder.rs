@@ -710,6 +710,29 @@ pub(crate) fn placeholders() -> &'static [Ph] {
         // `{sret}` = **按引用返回（sret）的隐藏指针**（>16B 向量的落点 ✗），由调用布局给 ✗。
         // 物理寄存器 ⇒ `xreg: "0u32"`（不参与 map_reg_field ✗）；常用于内存操作数写法
         // `[{sret}]`（只写基址、disp 恒 0 ✗）。
+        // v21 W6 乙：**多值返回的第 k 个分量**（循环内逐次绑定 ✗）——
+        // `{retN}` = 第 k 个返回槽（布局的 Pair/Group 第 k 项 ✗），
+        // `{retN_src}` = 第 k 个结果值（`map_reg_field` 绑 ✗）。整数/浮点分量共用这两个名字 ✗。
+        Ph {
+            name: "{retN}",
+            kind: PhKind::Reg,
+            loose: false,
+            token_kind: "reg",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { __retN }),
+        },
+        Ph {
+            name: "{retN_src}",
+            kind: PhKind::Reg,
+            loose: false,
+            token_kind: "reg",
+            temp: None,
+            temp_class: None,
+            xreg: "__retN_src",
+            ctor: Some(|s| field_ctor_expr(s, quote! { 0u32 })),
+        },
         Ph {
             name: "{sret}",
             kind: PhKind::Mem,

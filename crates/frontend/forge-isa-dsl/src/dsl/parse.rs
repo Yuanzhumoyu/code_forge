@@ -110,6 +110,21 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
                             .to_string(),
                     ));
                 }
+                // v21 W6 乙：`move`/`movef` 是**多值返回**的逐分量模板——只对 `[lower.Ret]`
+                // 且 `when.multi = true` 有意义（写了别的形态就是静默不生效 ✗）。
+                if d.r#move.is_some() || d.movef.is_some() {
+                    let is_multi_ret = name == "Ret"
+                        && d.when
+                            .as_ref()
+                            .and_then(|w| w.get("multi"))
+                            .and_then(|v| v.as_bool())
+                            == Some(true);
+                    if !is_multi_ret {
+                        return Err(anchor_err(format!(
+                            "[lower.{name}]: `move`/`movef` 是多值返回的逐分量搬运模板，                             只有 `[lower.Ret]` + `when = {{ multi = true }}` 才有意义"
+                        )));
+                    }
+                }
                 if d.when.is_some() && name != "Ret" {
                     return Err(anchor_err(format!(
                         "[lower.{name}]: `when` 只对 `[lower.Ret]` 有意义（按返回值的 IR 语义分支 ✗）"
@@ -136,6 +151,8 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
                     .push(crate::dsl::model::TermSeq {
                         insts: d.insts.clone(),
                         when,
+                        r#move: d.r#move.clone(),
+                        movef: d.movef.clone(),
                     });
                 continue;
             }

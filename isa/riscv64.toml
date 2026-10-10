@@ -3356,3 +3356,19 @@ insts = ["FSGNJ_S {retf}, {retf_src}, {retf_src}"]
 [[lower.Ret]]
 when = { bank = "fpr", width = 64 }
 insts = ["FSGNJ_D {retf}, {retf_src}, {retf_src}"]
+
+# **多值返回**：逐分量搬运模板（整数组件 = `mv`，浮点分量按分量位宽 = `fsgnj.s/d`）。
+[[lower.Ret]]
+when = { multi = true }
+insts = []
+move = ["MOV_RM8_R64 {retN}, {retN_src}"]
+
+[[lower.Ret]]
+when = { multi = true, width = 32 }
+insts = []
+movef = ["FSGNJ_S {retN}, {retN_src}, {retN_src}"]
+
+[[lower.Ret]]
+when = { multi = true, width = 64 }
+insts = []
+movef = ["FSGNJ_D {retN}, {retN_src}, {retN_src}"]

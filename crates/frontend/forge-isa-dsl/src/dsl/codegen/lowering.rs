@@ -482,6 +482,10 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         let mut ordered: Vec<&crate::dsl::model::TermSeq> = rules.iter().collect();
         ordered.sort_by_key(|t| std::cmp::Reverse(t.when.as_ref().map_or(0, |w| w.specificity())));
         for tl in ordered {
+            // 多值规则**不进单值分派**：它在 `multi_ret_body` 里逐分量使用
+            if tl.when.as_ref().is_some_and(|w| w.multi == Some(true)) {
+                continue;
+            }
             let seq = gen_lowering_insts(&tl.insts, infos, &name_to_vn, None)?;
             let cond = match &tl.when {
                 Some(w) => ret_arm_cond(w)?,
@@ -619,6 +623,73 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                     ));
                 }
             };
+            // v21 W6 乙：多值返回的**逐分量**分派 ✗——单值分派针对整个返回值算一次事实，
+            // 多值必须对**第 k 个分量**重算（`__retN_*`）。
+            let mut multi_int: Vec<(TokenStream, TokenStream)> = Vec::new();
+            let mut multi_fpr: Vec<(TokenStream, TokenStream)> = Vec::new();
+            if let Some(rules) = model.lower_terms.as_ref().and_then(|m| m.get("Ret")) {
+                let mut ordered: Vec<&crate::dsl::model::TermSeq> = rules
+                    .iter()
+                    .filter(|r| r.when.as_ref().is_some_and(|w| w.multi == Some(true)))
+                    .collect();
+                ordered.sort_by_key(|r| std::cmp::Reverse(r.when.as_ref().map_or(0, |w| w.specificity())));
+                for tl in ordered {
+                    let cond = match tl.when.as_ref().and_then(|w| w.width) {
+                        Some(bits) => quote! { __retN_bits == #bits },
+                        None => quote! { true },
+                    };
+                    if let Some(seq) = &tl.r#move {
+                        let toks = gen_lowering_insts(seq, infos, &name_to_vn, None)?;
+                        multi_int.push((cond.clone(), quote! { #(#toks)* }));
+                    }
+                    if let Some(seq) = &tl.movef {
+                        let toks = gen_lowering_insts(seq, infos, &name_to_vn, None)?;
+                        multi_fpr.push((cond, quote! { #(#toks)* }));
+                    }
+                }
+            }
+            let multi_component_body: TokenStream = if multi_int.is_empty() && multi_fpr.is_empty() {
+                // 没有谱面规则 ⇒ 旧的逐分量路径（整数 mov + 浮点 dispatch）
+                quote! {
+                    if __class.is_int() {
+                        let __idx = __pack.push_inst(Inst::#ret_vn {
+                            #mov_src: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                            #mov_dest: __dst,
+                        });
+                        __pack.map_reg_field(__vk, __idx, #mov_src_idx_lit as u8, false);
+                    } else if __class.is_fp() {
+                        #fp_multi
+                    } else {
+                        return Err(crate::prelude::IrError::Unsupported(
+                            "ISA-DSL 多值返回：返回寄存器类既不是整数也不是浮点".into(),
+                        ));
+                    }
+                }
+            } else {
+                let mut int_chain: TokenStream = quote! {
+                    return Err(crate::prelude::IrError::Unsupported(
+                        "ISA-DSL 多值返回（整数分量）：谱面没有匹配的 `move` 模板".into(),
+                    ));
+                };
+                for (cond, body) in multi_int.iter().rev() {
+                    int_chain = quote! { if #cond { #body } else { #int_chain } };
+                }
+                let mut fpr_chain: TokenStream = quote! {
+                    return Err(crate::prelude::IrError::Unsupported(
+                        "ISA-DSL 多值返回（浮点分量）：谱面没有匹配的 `movef` 模板".into(),
+                    ));
+                };
+                for (cond, body) in multi_fpr.iter().rev() {
+                    fpr_chain = quote! { if #cond { #body } else { #fpr_chain } };
+                }
+                quote! {
+                    let __retN = __dst;
+                    let __retN_src = __vk;
+                    let __retN_bits = ctx.type_bits_of(&__vk).unwrap_or(#addr_bits32);
+                    let __retN_is_fpr = __class.is_fp();
+                    if !__retN_is_fpr { #int_chain } else { #fpr_chain }
+                }
+            };
             quote! {
                 let __ret_regs: Vec<(forge_ir::RegClass, u32)> =
                     match ctx.conv.layout().and_then(|__cl| __cl.ret.as_ref()) {
@@ -639,19 +710,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                             }
                         };
                         let __dst = Reg::from_index(*__index, *__class);
-                        if __class.is_int() {
-                            let __idx = __pack.push_inst(Inst::#ret_vn {
-                                #mov_src: Reg::from_index(0, __DEFAULT_GPR_CLASS),
-                                #mov_dest: __dst,
-                            });
-                            __pack.map_reg_field(__vk, __idx, #mov_src_idx_lit as u8, false);
-                        } else if __class.is_fp() {
-                            #fp_multi
-                        } else {
-                            return Err(crate::prelude::IrError::Unsupported(
-                                "ISA-DSL 多值返回：返回寄存器类既不是整数也不是浮点".into(),
-                            ));
-                        }
+                        #multi_component_body
                     }
                     return Ok(__pack);
                 }

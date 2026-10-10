@@ -3189,6 +3189,14 @@ pub struct TermSeq {
     /// 只有 `[lower.Ret]` 需要它（`Jmp`/`Br` 的序列与返回值无关 ✗）。
     #[serde(default)]
     pub when: Option<RetWhen>,
+    /// **多值返回的「整数分量」搬运模板**（v21 W6 乙 ✗）：对每个结果**重复一次** ✗，
+    /// 里面的 `{retN}` = 第 k 个返回槽、`{retN_src}` = 第 k 个结果值 ✗。
+    #[serde(default)]
+    pub r#move: Option<Vec<String>>,
+    /// **多值返回的「浮点分量」搬运模板**（同上 ✗）；按分量的**位宽**选规则 ✗
+    /// （x86：32 位 `MOVSS` / 64 位 `MOVSD` ✗）。
+    #[serde(default)]
+    pub movef: Option<Vec<String>>,
 }
 
 /// `[lower.Ret].when` 的**数据化**条件（v21 W6 乙）。
@@ -3780,6 +3788,10 @@ pub struct LowerDecl {
     /// **只对树模式**：只在给定参数取值下存在（v19 V5）。
     #[serde(default)]
     pub only_variants: Option<VariantGate>,
+    #[serde(default)]
+    pub r#move: Option<Vec<String>>,
+    #[serde(default)]
+    pub movef: Option<Vec<String>>,
 }
 
 /// `[lower.<名字>]` 里"名字是终结 op"的判定集合（与终结层一致 ✗）。
@@ -4314,10 +4326,18 @@ pub fn check_term_lowering_supported(m: &IsaModel) -> Result<(), String> {
                             .to_string(),
                     );
                 }
-                // 多值返回还没下放（生成器在 `multi_ret_body` 里先返回，规则命中不到）。
-                if w.multi == Some(true) {
+                // 多值返回：逐分量搬运模板（`move` = 整数分量、`movef` = 浮点分量 ✗）
+                // **必须给至少一个**，否则规则命中了却没有搬运可发 ✗。
+                if w.multi == Some(true) && r.r#move.is_none() && r.movef.is_none() {
                     return Err(
-                        "[lower.Ret].when.multi = true: 多值返回还没下放（v21 W6 分片进行中）"
+                        "[lower.Ret].when.multi = true: 需要 `move`（整数分量）或 `movef`（浮点分量）\
+                         的逐分量搬运模板——多值返回没有单一 `insts` 序列 ✗"
+                            .to_string(),
+                    );
+                }
+                if w.multi == Some(true) && w.by_ref == Some(true) {
+                    return Err(
+                        "[lower.Ret]: `multi = true` 与 `by_ref = true` 不能同时写（按引用返回是单值形态 ✗）"
                             .to_string(),
                     );
                 }

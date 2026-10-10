@@ -305,6 +305,8 @@ pub const SECTIONS: &[Section] = &[
             "temps",
             "priority",
             "only_variants",
+            "move",
+            "movef",
         ],
         flatten: &[],
         additional: false,

@@ -4741,3 +4741,20 @@ insts = ["VMOVUPS_MR {retf_src}, {sret}"]
 [[lower.Ret]]
 when = { bank = "vec", by_ref = true, width = 512 }
 insts = ["VMOVUPS_ZMM_MR {retf_src}, {sret}"]
+
+# **多值返回**：逐分量搬运模板（`{retN}` = 第 k 个返回槽、`{retN_src}` = 第 k 个结果值）。
+# 整数组件一条（`MOV_RM8_R64` 的 `gprx` 视图天然覆盖宽度）；浮点分量按**分量位宽**分档。
+[[lower.Ret]]
+when = { multi = true }
+insts = []
+move = ["MOV_RM8_R64 {retN_src}, {retN}"]
+
+[[lower.Ret]]
+when = { multi = true, width = 32 }
+insts = []
+movef = ["MOVSS {retN}, {retN_src}"]
+
+[[lower.Ret]]
+when = { multi = true, width = 64 }
+insts = []
+movef = ["MOVSD {retN}, {retN_src}"]

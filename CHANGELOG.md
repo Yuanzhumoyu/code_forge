@@ -11,6 +11,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6 乙（五）：多值返回下放（`multi = true`）——`[lower.Ret]` 形态全齐
+
++ 多值返回用**逐分量模板**表达：`when = { multi = true }` + `insts = []`（多值没有单一收尾序列）
+  \+ `move`（整数分量）/`movef`（浮点分量），对**每个结果重复一次**；新占位符
+  **`{retN}`/`{retN_src}`** 指第 k 个返回槽/结果值。
++ 分量按它自己的银行（布局的 `Pair`/`Group` 那项 ⇒ `is_int`/`is_fp`）与位宽分派：
+  浮点分量按 `width` 分档（x86：32 → `MOVSS`、64 → `MOVSD`；riscv64：`FSGNJ_S`/`FSGNJ_D`）。
+  缺对应模板 ⇒ 生成物里 fail-closed。
++ 闸门：`multi = true` **必须**给 `move`/`movef`；`move`/`movef` 只对 `multi = true` 有意义；
+  `multi = true` 与 `by_ref = true` 互斥。
++ **命中已证明**：谱面规则存在时旧的逐分量分支**根本不生成**（生成期分支），而完整管线的
+  两返回值函数（`abi_target_real::pair_return_probe`）仍 **25 passed**，两矩阵 **197/3/0**、
+  **136/64/0** 不变。
++ 至此 **`[lower.Ret]` 的五类形态全部在谱面**：`gpr` / `fpr`（任意宽度）/ `vec + by_ref = false` /
+  `vec + by_ref = true`（sret）/ `multi = true`。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6 乙（四）：按引用返回（sret）下放 + `{sret}` 占位符
 
 + 新占位符 **`{sret}`**：**内存操作数**占位符（`PhKind::Mem`），产

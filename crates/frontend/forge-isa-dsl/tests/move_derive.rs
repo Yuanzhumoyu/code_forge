@@ -148,7 +148,9 @@ fn x86_move_widths_follow_the_spec() {
                 .into_iter()
                 .rev()
                 .collect();
-            if back.contains("__ret_bits") {
+            //  · `__ret_bits`：单值返回的形态条件；
+            //  · `__retN_bits`：**多值返回逐分量**的形态条件（v21 W6 乙 ✗）。
+            if back.contains("__ret_bits") || back.contains("__retN_bits") {
                 at = k;
                 continue;
             }

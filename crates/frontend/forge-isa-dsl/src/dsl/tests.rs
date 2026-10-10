@@ -4630,12 +4630,21 @@ fn unsupported_term_lowering_is_rejected() {
     );
     let err = super::parse_and_validate(&doc).unwrap_err().to_string();
     assert!(err.contains("by_ref"), "应点名 by_ref：{err}");
+    // `multi = true` **必须**给逐分量模板（多值没有单一 `insts` 序列 ✗）。
     let doc = gen_cond_doc(
         CC_ALL_FULL,
         "[[lower.Ret]]\nwhen = { multi = true }\ninsts = [\"SETC {out}, {cc}\"]",
     );
     let err = super::parse_and_validate(&doc).unwrap_err().to_string();
-    assert!(err.contains("W6"), "multi 应被拒并点明进行中：{err}");
+    assert!(err.contains("move"), "应要求 move/movef：{err}");
+
+    // `move`/`movef` 挂到非 multi 的规则 ⇒ 拒（静默不生效 ✗）。
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[lower.Ret]]\nwhen = { bank = \"gpr\" }\ninsts = [\"SETC {out}, {cc}\"]\nmove = [\"SETC {retN}, {retN_src}\"]",
+    );
+    let err = super::parse_and_validate(&doc).unwrap_err().to_string();
+    assert!(err.contains("move"), "应点名 move：{err}");
 
     // ④ 未知条件键 ⇒ 拒（`ret_kind` 是被否掉的枚举写法，拼错不该静默）。
     let doc = gen_cond_doc(
@@ -4668,6 +4677,10 @@ fn unsupported_term_lowering_is_rejected() {
         ("Ret", "when = { bank = \"gpr\" }\n"),
         ("Ret", "when = { bank = \"vec\", by_ref = false }\n"),
         ("Ret", "when = { bank = \"vec\", by_ref = true, width = 256 }\n"),
+        (
+            "Ret",
+            "when = { multi = true }\nmove = [\"SETC {retN}, {retN_src}\"]\n",
+        ),
     ] {
         let ok = gen_cond_doc(
             CC_ALL_FULL,
