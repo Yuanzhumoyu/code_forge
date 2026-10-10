@@ -962,8 +962,20 @@ W11 守卫（依赖 W6）尚未收口 ✗，本节只记录**已可测**的项 �
   ❓ **未定**：#2（与 #1 同属"降级下放"，未见独立证据 ✗）、#8 `{off}`/`{alloca}`（本次只证实
   `{off}` 在三谱 **asm 模板**里是普通占位符，如 `ldur {dst}, [{base}, #{off}]` ✗；
   lowering **发射行**里是否还有第二套内存写法未逐条看 ✗）。
-  ⬜ **#12–#20 留待下一片**（`opsize` 四态、`modrm` 位置缺省仍开 ✗；`fields` 三处往返、
-  lint `["op","ops"]` 双拼、`[[instructions]].when` 死键已随 W2/W10 清除 ✔）。）
+  **D4 逐条清点（后半：#11–#20；2026-10-08 ✗）** ——
+  ✅ **已清除**：#13 `FPR(8)`/`["rsp","sp"]`/`["rbp","fp"]` 惯例回退（代码里只剩**文档注释**
+  回顾"历史实现回退到 `GPR(8)`…" ✗，值一律来自 `[machine]`/`[reg.*]` ✗，另有
+  `no_hardcoded_widths` 守卫 ✗）、#17 `[conventions.bitfields]`+`opcode_field`+`operand_fields`
+  三处往返（已并为 form 内就地 `fields` ✗ = W2 ✗）、#18 八个一次性开关（`zr31`/`byte_reg`/
+  `arrangement`/`symbols`/`require_symbol`/`imm_fns` 等只剩**文档注释**里的"原 X = true" ✗
+  ⇒ 已被 `reg.rex_required`/`arrangement` 表/`symbol{}` 等新键取代 ✅）、
+  #20 `[[instructions]].when` 死键（随 W10 清零 ✗）。
+  🚧 **仍在**：#12 `moves.rs` 的 `if a.width >= 128 { "vec_mov" } else { "fpr_mov" }`
+  （应按所选指令的寄存器组派生 ✗）、#14 `opsize` 四态与 `"sN"`（16 处活用法 ✗）、
+  #15 `modrm` 的位置缺省（`Modrm::resolve` 里 `rm 缺省 = 最后一个操作数` ✗）、
+  #16 `class`/`classes` 双形（x86 里 `classes = [...]` 2 处 ✗）、
+  #19 `lint.rs:166` 仍同时接受 `["op", "ops"]` 两种拼法（**一改就完的小活** ✗）。
+  🚧 **半**：#11 `force_disp_base` 魔数（校验被 `!= PrefixScan` 挡在门外 ✗ ⇒ 前提要重定 ✗）。
 - [~] 度量对比：三谱行数、生成物 token 规模、`cargo check -p forge-codegen` 时间（相对 W0）。
   （三谱行数 ✗：x86 **4877** / riscv64 **3427** / arm64 **5178**；三份 `tm` 生成物字节数 ✗：
   x86 **6.07 MB** / riscv64 **2.48 MB** / arm64 **6.51 MB**；`cargo check -p forge-codegen`
