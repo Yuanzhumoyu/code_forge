@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6-a 第一片：`[lower.*]` 成为**唯一**的选择层面
+
++ `[lower.<名字>]` 现在**一张表三样东西**，按名字与 `match` 路由：
+  ① 名字是终结 op（`Ret`/`Jmp`/`Br`/`Switch`/`Unreachable`/`Invoke`）⇒ 终结序列（只吃 `insts`，
+  可用 `{true}`/`{false}`/`{target}`，仍受"只放行 `Jmp`/`Br`"的进行中安全闸约束）；
+  ② 写了 `match` ⇒ 树型多指令匹配（名字是作者起的模式名）；
+  ③ 其余 ⇒ op 规则（**名字就是 op 名**，等价于旧面 `[[lowering]]` + `op = "<名字>"`）。
+  解析期**按源码声明序**降级（`BTreeMap` 是字母序，而声明序是裁决的最后一档），
+  内部仍走 `lowering`/`pattern`/`lower_terms` 三个载体。
++ **行为不变**：三谱 `forge-isa insts` 与改动前**逐行 0 差异**；`schema_guard` **9/9**。
++ **过渡期**：旧面 `[[lowering]]`/`[[pattern]]` **仍被接受**（三谱还有 281 + 2 处未迁）——
+  下一片把三谱迁到 `[lower.*]` 后连同旧键一起删。四处同改已同步
+  （`src/schema.rs` ↔ `dsl/model.rs` ↔ `docs/reference/isa-dsl.md` 键表 ↔ 签入 `isa-dsl.schema.json`）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 D4 #19：宿主 op 表唯一拼法（`[[ops]]` 不再接受）
 
 + `forge-isa lint --ops <宿主 op 表.toml>` 的读取：只认 `[[op]]` ✗（本仓 `forge-ir/ops.toml` 的形态 ✗）。

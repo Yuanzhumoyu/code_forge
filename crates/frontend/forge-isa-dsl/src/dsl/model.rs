@@ -374,8 +374,9 @@ pub struct IsaModel {
     /// 会被未知键守卫拒绝（`serde(skip)`）。
     #[serde(default, skip)]
     pub templates: Vec<Template>,
-    /// 终结指令 lowering（v21 W6，`[lower.Br]`/`[lower.Jmp]`/`[lower.Ret]`）。
-    #[serde(default, rename = "lower")]
+    /// 终结指令 lowering（**内部载体**，v21 W6-a 起 TOML 面是 `[lower.<名字>]`）。
+    /// 解析期由 `[lower.*]` 里"名字是终结 op"的那些块填。
+    #[serde(default, skip)]
     pub lower_terms: Option<BTreeMap<String, TermSeq>>,
 
     /// 重定位表（内部载体；TOML 面是 `[asm.reloc.<名>]`）：指令用 `reloc = "<name>"` 引用。
@@ -387,6 +388,13 @@ pub struct IsaModel {
     /// 保留不清空：它是"面"的存储 ⇒ 模型序列化写回 `[pred.<名>]`，往返无损。
     #[serde(default, rename = "pred")]
     pub pred_decls: BTreeMap<String, DeriveDef>,
+    /// **v21 W6-a：选择层声明**（`[lower.<名字>]`，表头 = 名字）——一张表两种东西，由
+    /// **`match` 的有无**区分（口径见执行清单 §8「W6-a」✗）：有 `match` = 树模式
+    /// （名字作者起 ✗）、没有 = op 规则（**名字就是 op 名** ✗）。
+    /// 解析期降级进内部 [`IsaModel::lowering`]/[`IsaModel::pattern`]（**按源码声明序**展开 ✗
+    /// ——声明序是裁决的最后一档 ✗）。保留不清空 ⇒ 序列化写回 `[lower.*]`，往返无损 ✗。
+    #[serde(default, rename = "lower")]
+    pub lower_decls: BTreeMap<String, LowerDecl>,
     /// 派生谓词属性（**内部载体**，v21 W10 起 TOML 面是 `[pred.<名>]`；
     /// v18 S3f 引入时叫 `[[derive]]`）：给 `when` 用的命名布尔属性。
     #[serde(default, skip)]
@@ -3593,11 +3601,61 @@ pub struct Lowering {
 
 /// `[[lowering]].op` 的两种写法：单个名字，或一组名字（TOML 里同键同时接受
 /// 字符串与字符串数组——`op = "Iadd"` / `op = ["Copy", "Uextend"]`）。
+///
+/// **v21 W6-a 起**：`op` 名单在 `[lower.*]` 面上**不再保留**（表头放不下名单 ✗）——
+/// 上面的 `Many` 分支只为**过渡期**的旧面 `[[lowering]]` 服务，旧面删除后一并删。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum OpsField {
     One(String),
     Many(Vec<String>),
+}
+
+/// **v21 W6-a：选择层的一节**（`[lower.<名字>]`，表头 = 名字）——**一张表三样东西**，
+/// 由**名字**与 **`match` 的有无**路由 ✗（口径见执行清单 §8「W6-a」✗）：
+///
+/// 1. **名字是终结 op**（`Ret`/`Jmp`/`Br`/`Switch`/`Unreachable`/`Invoke` ✗）⇒
+///    [`TermSeq`]（终结层序列 ✗，可用 `{true}`/`{false}`/`{target}` ✗）；
+/// 2. **有 `match`** ⇒ [`Pattern`]（树型多指令匹配 ✗，名字是作者起的模式名 ✗）；
+/// 3. **其余** ⇒ [`Lowering`]（op 规则 ✗，**名字就是 op 名** ✗）。
+///
+/// 两种非终结形态共用的键 ✗：`insts` / `when` / `priority`；只对 op 规则有意义的键 ✗：
+/// `vary` / `temps` / `dispatch`；只对树模式有意义的键 ✗：`only_variants`（写在别的形态上
+/// ⇒ 解析期报错 ✗）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LowerDecl {
+    /// 匹配树（`"Fadd(Fmul(a,b),c)"`）；**有它 = 树模式**。
+    #[serde(rename = "match", default)]
+    pub r#match: Option<String>,
+    /// 发射序列模板（三种形态共用；缺了 ⇒ 报错，因为没有东西可发）。
+    pub insts: Vec<String>,
+    /// 结构化谓词（终结序列不支持 ⇒ 报错）。
+    #[serde(default)]
+    pub when: Option<toml::Value>,
+    /// 参数化行表（只对 op 规则有意义）。
+    #[serde(default)]
+    pub vary: Option<BTreeMap<String, Vec<VaryValue>>>,
+    /// 显式临时寄存器（只对 op 规则有意义）。
+    #[serde(default, rename = "temps")]
+    pub temps: Option<Vec<String>>,
+    /// 重载分派键（只对 op 规则有意义）。
+    #[serde(default, rename = "dispatch")]
+    pub dispatch: Option<String>,
+    /// 显式优先级（op 规则与树模式共用，语义相同）。
+    #[serde(default)]
+    pub priority: Option<i32>,
+    /// **只对树模式**：只在给定参数取值下存在（v19 V5）。
+    #[serde(default)]
+    pub only_variants: Option<VariantGate>,
+}
+
+/// `[lower.<名字>]` 里"名字是终结 op"的判定集合（与终结层一致 ✗）。
+pub fn is_term_name(name: &str) -> bool {
+    matches!(
+        name,
+        "Ret" | "Jmp" | "Br" | "Switch" | "Unreachable" | "Invoke"
+    )
 }
 
 impl OpsField {

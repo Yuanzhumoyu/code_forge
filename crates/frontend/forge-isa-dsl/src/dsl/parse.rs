@@ -58,7 +58,91 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
         }
     };
     model.expand_derives().map_err(anchor_err)?;
-    // v21 W6 进行中：只放行已完成接线并验证等价的 `[lower.Jmp]`
+    // v21 W6-a：`[lower.<名字>]` 降级进内部 `lowering`/`pattern`/`lower_terms`（**表头即名字** ✗）——
+    // 有 `match` ⇒ 树模式；没有 ⇒ op 规则（**名字就是 op 名** ✗）。**按源码声明序**展开 ✗
+    // （`BTreeMap` 是字母序，而声明序是裁决的最后一档 ✗）。`lower_decls` 保留不清空：
+    // 它是"面"的存储 ⇒ 序列化写回 `[lower.*]`，往返无损 ✗。
+    if !model.lower_decls.is_empty() {
+        let mut ordered: Vec<(usize, String, crate::dsl::model::LowerDecl)> = model
+            .lower_decls
+            .iter()
+            .map(|(name, d)| {
+                let at = source
+                    .find(&format!("[lower.{name}]"))
+                    .unwrap_or(usize::MAX);
+                (at, name.clone(), d.clone())
+            })
+            .collect();
+        ordered.sort_by_key(|(at, _, _)| *at);
+        for (_, name, d) in ordered {
+            // ① 名字是终结 op ⇒ 终结层序列（只吃 `insts`）。
+            if crate::dsl::model::is_term_name(&name) {
+                for (key, present) in [
+                    ("match", d.r#match.is_some()),
+                    ("when", d.when.is_some()),
+                    ("vary", d.vary.is_some()),
+                    ("temps", d.temps.is_some()),
+                    ("dispatch", d.dispatch.is_some()),
+                    ("priority", d.priority.is_some()),
+                    ("only_variants", d.only_variants.is_some()),
+                ] {
+                    if present {
+                        return Err(anchor_err(format!(
+                            "[lower.{name}]: 终结序列只支持 `insts`（`{key}` 对它没有意义）"
+                        )));
+                    }
+                }
+                model
+                    .lower_terms
+                    .get_or_insert_with(Default::default)
+                    .insert(name, crate::dsl::model::TermSeq { insts: d.insts.clone() });
+                continue;
+            }
+            match &d.r#match {
+                // ② 有 `match` ⇒ 树模式。
+                Some(tree) => {
+                    for (key, present) in [
+                        ("vary", d.vary.is_some()),
+                        ("temps", d.temps.is_some()),
+                        ("dispatch", d.dispatch.is_some()),
+                    ] {
+                        if present {
+                            return Err(anchor_err(format!(
+                                "[lower.{name}]: `{key}` 只对 op 规则有意义（本块写了 `match` \
+                                 ⇒ 它是树模式）"
+                            )));
+                        }
+                    }
+                    model.pattern.push(crate::dsl::model::Pattern {
+                        r#match: tree.clone(),
+                        priority: d.priority,
+                        when: d.when.clone(),
+                        insts: d.insts.clone(),
+                        only_variants: d.only_variants.clone(),
+                    });
+                }
+                // ③ 其余 ⇒ op 规则（**名字就是 op 名**）。
+                None => {
+                    if d.only_variants.is_some() {
+                        return Err(anchor_err(format!(
+                            "[lower.{name}]: `only_variants` 只对树模式有意义（本块没有 `match`）"
+                        )));
+                    }
+                    model.lowering.push(crate::dsl::model::Lowering {
+                        op: crate::dsl::model::OpsField::One(name),
+                        insts: d.insts.clone(),
+                        when: d.when.clone(),
+                        vary: d.vary.clone(),
+                        temps: d.temps.clone(),
+                        dispatch: d.dispatch.clone(),
+                        priority: d.priority,
+                    });
+                }
+            }
+        }
+    }
+    // v21 W6 **进行中**的安全闸：终结序列面只放行已完成接线并验证等价的 `[lower.Jmp]`/`[lower.Br]`
+    // （`Ret` 还缺返回搬移的谱面表达 ✗）⇒ 必须在**路由之后**判，否则 `lower_terms` 还是空的 ✗。
     crate::dsl::model::check_term_lowering_supported(&model).map_err(anchor_err)?;
     let mut expanded = Vec::with_capacity(model.lowering.len());
     for rule in &model.lowering {
