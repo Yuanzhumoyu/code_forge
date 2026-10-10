@@ -70,11 +70,11 @@ pub struct MachineView {
     pub regs: Vec<RegEntry>,
     /// 名字（含别名）→ 物理号。
     pub names: BTreeMap<String, u32>,
-    /// 固定用途（`[machine].fixed_regs` + sp/fp；迁移期回退 `[abi].reserved`），已排序去重。
+    /// 固定用途（`[machine].fixed` + sp/fp；迁移期回退 `[abi].reserved`），已排序去重。
     pub pinned: Vec<u32>,
-    /// 溢出 scratch（`[machine].spill_scratch`；迁移期回退 `[abi].scratch`）。
+    /// 溢出 scratch（`[machine].scratch`）。
     pub scratch: Vec<u32>,
-    /// 链接寄存器（`[machine].link_reg`；迁移期回退 `[abi].call_ret_reg`）。
+    /// 链接寄存器（`[machine].link`）。
     pub link: Option<u32>,
     /// GPR / FP 区大小。
     pub n_gpr: u32,
@@ -214,20 +214,20 @@ pub fn build(model: &IsaModel, spec: &LoadedSpec) -> Result<MachineView, String>
     for n in model.machine_reserved() {
         match names.get(n) {
             Some(i) => pinned.push(*i),
-            None => notes.push(format!("[machine].fixed_regs 的 `{n}` 不在寄存器表里")),
+            None => notes.push(format!("[machine].fixed 的 `{n}` 不在寄存器表里")),
         }
     }
     for n in model.machine_scratch() {
         match names.get(n) {
             Some(i) => scratch.push(*i),
-            None => notes.push(format!("[machine].spill_scratch 的 `{n}` 不在寄存器表里")),
+            None => notes.push(format!("[machine].scratch 的 `{n}` 不在寄存器表里")),
         }
     }
     let link: Option<u32> = model.machine_link_reg().and_then(|n| names.get(n)).copied();
     if let Some(n) = model.machine_link_reg()
         && link.is_none()
     {
-        notes.push(format!("[machine].link_reg 的 `{n}` 不在寄存器表里"));
+        notes.push(format!("[machine].link 的 `{n}` 不在寄存器表里"));
     }
     pinned.sort_unstable();
     pinned.dedup();

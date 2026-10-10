@@ -936,7 +936,7 @@ fn validate_spill_coverage(m: &IsaModel) -> Result<(), String> {
 }
 
 /// 结构化寄存器名引用校验：`[abi]` 的 ret_regs/arg_class.regs、`[machine]` 的
-/// fixed_regs/spill_scratch/link_reg/[machine.frame] 与 `[spill.*].base` 必须在某个
+/// fixed/scratch/link/[machine.frame] 与 `[spill.*].base` 必须在某个
 /// 已声明寄存器组内。
 fn validate_reg_names(m: &IsaModel) -> Result<(), String> {
     let mut declared: BTreeSet<String> = BTreeSet::new();
@@ -958,10 +958,10 @@ fn validate_reg_names(m: &IsaModel) -> Result<(), String> {
     };
     // v20 A5-3：`[machine]` 是机器事实的**唯一**位置（`[abi]` 的同义旧键已删除）。
     if let Some(ms) = &m.machine {
-        check(&ms.fixed_regs, "[machine].fixed_regs")?;
-        check(&ms.spill_scratch, "[machine].spill_scratch")?;
-        if let Some(r) = &ms.link_reg {
-            check(std::slice::from_ref(r), "[machine].link_reg")?;
+        check(&ms.fixed, "[machine].fixed")?;
+        check(&ms.scratch, "[machine].scratch")?;
+        if let Some(r) = &ms.link {
+            check(std::slice::from_ref(r), "[machine].link")?;
         }
         if let Some(f) = &ms.frame {
             check(std::slice::from_ref(&f.sp), "[machine.frame].sp")?;

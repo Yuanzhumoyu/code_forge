@@ -752,11 +752,18 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 **目标**：重定位补丁器由谱生成，删宿主按 ISA 名分发。
 
-- [ ] `[asm.reloc.*]` 用 `operand` 指槽，重排复用该槽字段的位区间。
-- [ ] 生成通用补丁器；删除 `reloc_patcher.rs:77-84` 的 ISA 名分发表与两个手写补丁器。
-- [ ] `forge-isa-runtime` 的运行面守卫（`runtime_surface.rs`）同步。
-- [ ] 验证：三谱的 CALL/GLOBAL/分支重定位字节不变；riscv/arm64 的 UJ/B 型散布位段覆盖。
-- [ ] 门禁：§2 全绿；`asm_exec` 真跑通道（riscv64/aarch64 走 QEMU）无新增 SKIP。
+- [x] `[asm.reloc.*]` 用 `operand` 指槽，重排复用该槽字段的位区间。
+  （`e7e3064`：新居键 `semantics`/`operand`/`addend`/`via`；散布位段复用编码器同一份字段放置）
+- [x] 生成通用补丁器；删除 `reloc_patcher.rs:77-84` 的 ISA 名分发表与两个手写补丁器。
+  （`66ef8752`：`gen_reloc_patcher` + `TargetMachine::reloc_patcher()` 覆写；
+  `register_default_reloc_patcher`/`RiscvRelocPatcher`/`Arm64RelocPatcher` 删除；x86 冗余补丁器见 `ec97499a`）
+- [x] `forge-isa-runtime` 的运行面守卫（`runtime_surface.rs`）同步。
+  （守卫只钉运行面必需项，删掉的分发函数不在其中 ⇒ 未改动即绿；
+  `reloc_patcher::{RelocPatcher, register_reloc_patcher, reloc_patcher_for}` 保留）
+- [x] 验证：三谱的 CALL/GLOBAL/分支重定位字节不变；riscv/arm64 的 UJ/B 型散布位段覆盖。
+  （riscv64 QEMU 矩阵 + arm64 全套在门禁内全绿；另加 `tests/reloc_patcher_generated.rs` 9 条钉子）
+- [x] 门禁：§2 全绿；`asm_exec` 真跑通道（riscv64/aarch64 走 QEMU）无新增 SKIP。
+  （每次提交前整仓 `-j 2` exit 0 / 0 编译错误 / 0 失败二进制）
 
 ---
 
@@ -766,12 +773,15 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 - [ ] `[stack]`/`[emit]`/`[types]` → `[machine.stack]`/`[machine.text]`/`[machine.classes]`（单位统一为位）。
 - [ ] `[spill.*]` → `[machine.spill.<组名>]`，按组分派；写错键名 = 校验期错误（不再静默 no-op）。
-- [ ] 键改名（逐项勾）：
-  - [ ] `fixed_regs` → `fixed`、`spill_scratch` → `scratch`、`link_reg` → `link`
-  - [ ] `frame_padding` → `padding`、`arg_slot` → `arg_place`
-  - [ ] `vector_by_ref_bytes` → `byref_bytes`
+- [x] 键改名（逐项勾）：
+  - [x] `fixed_regs` → `fixed`、`spill_scratch` → `scratch`、`link_reg` → `link`
+  - [x] `frame_padding` → `padding`、`arg_slot` → `arg_place`
+  - [x] `vector_by_ref_bytes` → `byref_bytes`
 - [ ] 删除 `callee_saved_gpr` / `callee_save_slots`。
-- [ ] 门禁：§2 全绿；`abi check` 与三矩阵不变。
+- [ ] 门禁：§2 全绿；`abi check` 与三矩阵不变。（**改名片**已过：整仓 `-j 2` exit 0 / 0 编译错误 / 0 失败二进制、markdownlint 0、`schema_guard` 9/9）
+
+**W9 进度（2026-10-08）**：键改名一片已落地（`[machine]` 收短六键，三谱 + `demo8` 夹具 + 全套引用同步，**零行为变化**）。
+余下三块（三节搬迁 + 单位改位、`[machine.spill.<组名>]` 按组分派、删 `callee_saved_gpr`/`callee_save_slots` 走 ABI 层）按片继续。
 
 ---
 

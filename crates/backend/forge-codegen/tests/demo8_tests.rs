@@ -70,7 +70,7 @@ fn one_byte_register_metadata_is_derived() {
     assert_eq!(
         ri.scratch_regs(),
         vec![4, 5],
-        "[machine].spill_scratch = A4/A5"
+        "[machine].scratch = A4/A5"
     );
     assert_eq!(
         ri.callee_saved(),

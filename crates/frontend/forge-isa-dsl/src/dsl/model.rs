@@ -23,8 +23,8 @@ use std::{
 ///
 /// 两条纪律：① 这里**不放任何约定内容**（参数池 / 返回池 / callee-saved / sret 槽 /
 /// 栈参数布局都在 `AbiRules`（平台无关规则）与 `AbiBinding`（(ISA, 约定) 的寄存器）里）；
-/// ② 键名与旧键**不同名**（`spill_scratch` ← `scratch`、`fixed_regs` ← `reserved`、
-/// `link_reg` ← `call_ret_reg`），避免"两处都写、谁生效"的含糊。
+/// ② 键名与旧键**不同名**（v21 W9 又统一收短为 `scratch` ← `spill_scratch`、
+/// `fixed` ← `fixed_regs`、`link` ← `link_reg`），避免"两处都写、谁生效"的含糊。
 /// **迁移期已收尾（2026-09-27）**：`[abi]` 的同义旧键已删除——写旧键现在报未知键，
 /// 所以本节就是这些事实的**唯一来源**。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
@@ -32,13 +32,13 @@ use std::{
 pub struct MachineSection {
     /// 不可分配的**固定用途**寄存器（zero / ra / gp / tp / SP 之外的平台寄存器…）。
     #[serde(default)]
-    pub fixed_regs: Vec<String>,
+    pub fixed: Vec<String>,
     /// 溢出与栈参数收参用的 **scratch** 寄存器（emission 的 spill load/store 也用它）。
     #[serde(default)]
-    pub spill_scratch: Vec<String>,
+    pub scratch: Vec<String>,
     /// **链接寄存器**（call 写入的返回地址；riscv `X1` / arm64 `X30`）。
     #[serde(default)]
-    pub link_reg: Option<String>,
+    pub link: Option<String>,
     /// **主 GPR 类**（`[reg.*]` 的**组名**，如 `"gpr64"`）。宽度由组名承载
     /// （`gpr64` = 64 位），不再另写宽度键。缺省 = 已声明 GPR 组中最宽者。
     #[serde(default)]
@@ -87,7 +87,7 @@ pub struct MachineSection {
     /// **约定侧**的同名字段仍在 `AbiRules::frame_padding`（规则随约定而变，进 plan）；
     /// 管线优先读 plan，无 plan 时才回退到这里（与 `callee_save_slots` 同一套路）。
     #[serde(default)]
-    pub frame_padding: Option<i32>,
+    pub padding: Option<i32>,
     /// **寄存器位置的计数规则**（机器事实，v20 A5-3）：`by-class`（缺省；riscv SysV /
     /// AAPCS64 —— int/float 各自独立推进）/ `by-position`（Windows x64 —— int/float
     /// 共用位置游标，参数 i 用 GPR{i}/XMM{i}）。
@@ -97,12 +97,12 @@ pub struct MachineSection {
     /// `AbiRules::position`（进 plan 的 `AbiPlan::position`，管线与生成器优先读）。
     /// 键从 `[abi].arg_slot` 迁来（同名同义，旧键已删除）。
     #[serde(default)]
-    pub arg_slot: Option<ArgSlot>,
+    pub arg_place: Option<ArgSlot>,
     /// **向量 by-ref 阈值**（字节，机器事实，v20 A5-3，原 `[[abi.arg_class]] strategy =
     /// "by-ref" limit = <位>`）：**超过**此字节的向量参数/返回按引用传（调用方栈上副本 +
     /// 传指针）。`None`（缺省）= 不启用（宽向量参数/返回会被拒绝）。
     #[serde(default)]
-    pub vector_by_ref_bytes: Option<u16>,
+    pub byref_bytes: Option<u16>,
 }
 
 /// **降级重载展开**（v21 W5，目标第 (4) 项的前置）：一条 `[[lowering]]` 规则**没有 `when`**、
@@ -226,26 +226,28 @@ pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
     Ok(())
 }
 impl IsaModel {
-    /// 溢出 scratch：`[machine].spill_scratch`（**唯一来源**，v20 A5-3 起
-    /// `[abi].scratch` 已删除）。
+    /// 溢出 scratch：`[machine].scratch`（**唯一来源**，v20 A5-3 起
+    /// `[abi].scratch` 已删除；v21 W9 改名自 `spill_scratch`）。
     pub fn machine_scratch(&self) -> &[String] {
         self.machine
             .as_ref()
-            .map(|m| m.spill_scratch.as_slice())
+            .map(|m| m.scratch.as_slice())
             .unwrap_or(&[])
     }
 
-    /// 固定用途寄存器：`[machine].fixed_regs`（唯一来源；`[abi].reserved` 已删除）。
+    /// 固定用途寄存器：`[machine].fixed`（唯一来源；`[abi].reserved` 已删除；
+    /// v21 W9 改名自 `fixed_regs`）。
     pub fn machine_reserved(&self) -> &[String] {
         self.machine
             .as_ref()
-            .map(|m| m.fixed_regs.as_slice())
+            .map(|m| m.fixed.as_slice())
             .unwrap_or(&[])
     }
 
-    /// 链接寄存器：`[machine].link_reg`（唯一来源；`[abi].call_ret_reg` 已删除）。
+    /// 链接寄存器：`[machine].link`（唯一来源；`[abi].call_ret_reg` 已删除；
+    /// v21 W9 改名自 `link_reg`）。
     pub fn machine_link_reg(&self) -> Option<&str> {
-        self.machine.as_ref().and_then(|m| m.link_reg.as_deref())
+        self.machine.as_ref().and_then(|m| m.link.as_deref())
     }
 
     /// 帧形状：`[machine].frame`（唯一来源；`[abi.frame]` 已删除）。
@@ -279,18 +281,19 @@ impl IsaModel {
             .unwrap_or(0)
     }
 
-    /// 帧填充字节数（机器事实）：`[machine].frame_padding`，缺省 0。
+    /// 帧填充字节数（机器事实）：`[machine].padding`（v21 W9 改名自 `frame_padding`），缺省 0。
     ///
     /// 生成物的 `TargetABI::frame_padding()` 读它（无 plan 的回退值）；有 plan 时
     /// 管线用 plan 的 `frame_padding`（来源 = 约定侧 `AbiRules::frame_padding`）。
     pub fn machine_frame_padding(&self) -> i32 {
         self.machine
             .as_ref()
-            .and_then(|m| m.frame_padding)
+            .and_then(|m| m.padding)
             .unwrap_or(0)
     }
 
-    /// 寄存器位置的计数规则（机器事实）：`[machine].arg_slot`，缺省 `ByClass`。
+    /// 寄存器位置的计数规则（机器事实）：`[machine].arg_place`（v21 W9 改名自 `arg_slot`），
+    /// 缺省 `ByClass`。
     ///
     /// 生成物的 `TargetABI::arg_placement()` 读它；生成器据此选"按类各自计数"还是
     /// "按位置共享计数"的发射形态（无 plan 的回退路径；有 plan 时以 `AbiPlan::position`
@@ -298,13 +301,14 @@ impl IsaModel {
     pub fn machine_arg_slot(&self) -> ArgSlot {
         self.machine
             .as_ref()
-            .and_then(|m| m.arg_slot)
+            .and_then(|m| m.arg_place)
             .unwrap_or_default()
     }
 
-    /// 向量 by-ref 阈值（字节，机器事实）：`[machine].vector_by_ref_bytes`。
+    /// 向量 by-ref 阈值（字节，机器事实）：`[machine].byref_bytes`（v21 W9 改名自
+    /// `vector_by_ref_bytes`）。
     pub fn machine_vector_by_ref_bytes(&self) -> Option<u16> {
-        self.machine.as_ref().and_then(|m| m.vector_by_ref_bytes)
+        self.machine.as_ref().and_then(|m| m.byref_bytes)
     }
 }
 
@@ -777,7 +781,7 @@ impl IsaModel {
         Ok(out)
     }
 
-    /// 向量 by-value 阈值（**字节**，机器事实，v20 A5-3）：`[machine].vector_by_ref_bytes`。
+    /// 向量 by-value 阈值（**字节**，机器事实，v20 A5-3）：`[machine].byref_bytes`。
     /// **超过**此字节的向量参数/返回按引用传（调用方栈上副本 + 传指针）。`None` = 本 ISA
     /// 不启用 by-ref（宽向量参数/返回将被拒绝）。原 `[[abi.arg_class]] strategy = "by-ref"
     /// limit = <位>` 的派生已下线（`[abi]` 整节删除）。

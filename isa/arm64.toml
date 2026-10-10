@@ -5211,15 +5211,15 @@ addr = "gpr64"
 value_gpr = "gpr64"
 value_fpr = "fpr64"
 # 机器事实（v20 A5）：溢出与栈参数收参用的 scratch（emission 的 spill load/store 也用它）。
-spill_scratch = ["X16", "X17"]
+scratch = ["X16", "X17"]
 # 帧为 callee-saved 预留的推入槽数（机器事实，v20 A6；与 `[abi.callee_saved]` 的 10 条同义）。
 callee_saved_gpr = ["X19", "X20", "X21", "X22", "X23", "X24", "X25", "X26", "X27", "X28"]
 callee_save_slots = 10
 # regalloc 不可分配：X18 = 平台寄存器；X30 = lr（BL 返回地址/prologue
 # 保存）——不排除会被分配出垃圾值（覆盖返回地址 → ret 跳错）。
-fixed_regs = ["X18", "X30"]
+fixed = ["X18", "X30"]
 # 链接寄存器（BL 写 X30；P1 尚未有 Call lowering 规则）。
-link_reg = "X30"
+link = "X30"
 # 帧形状：lr/fp 保存槽在帧内顶部（fp_push_bytes = 16 = X30+X29 两槽）；
 # 帧分配 = SUB SP, SP, #frame（SUB 自带减号语义 → 无需 alloc_neg）；
 # min_frame = 16 + Σcallee_saved×8 = 96 由运行期推导（frame_layout_info）。

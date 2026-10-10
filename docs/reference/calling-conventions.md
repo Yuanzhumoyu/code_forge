@@ -575,8 +575,8 @@ pub trait AbiTarget {
 ```
 
 没有宿主后端时（CLI、测试），能力视图由**谱本身**给出：
-`forge_isa_dsl::abi_view::inspect(谱)` 读 `[reg.*]` / `[machine]`（`fixed_regs`/`spill_scratch`/
-`link_reg`/`frame`）/ `[[instructions]].roles` 建出一份 `MachineView`：
+`forge_isa_dsl::abi_view::inspect(谱)` 读 `[reg.*]` / `[machine]`（`fixed`/`scratch`/
+`link`/`frame`）/ `[[instructions]].roles` 建出一份 `MachineView`：
 
 ```text
 GPR 区 = 地址类组的成员，号 0..n_gpr-1          （x86: RAX..R15 = 0..15）
@@ -585,7 +585,7 @@ FP  区 = 主 FPR 组的成员，号 n_gpr..n_gpr+n_fp-1 （x86: XMM0..XMM15 = 1
 ```
 
 编号与 `TargetRegInfo::num_gp_regs` / `num_fp_regs` 对齐；固定用途寄存器来自
-`[machine].fixed_regs` + `[machine.frame]` 的 sp/fp；链接寄存器来自 `[machine].link_reg`
+`[machine].fixed` + `[machine.frame]` 的 sp/fp；链接寄存器来自 `[machine].link`
 （v20 A5-3 前的写法 `[abi].reserved`/`[abi.frame]`/`[abi].call_ret_reg` 是迁移期回退）；
 能力由 `[[instructions]].roles` 折算（`gpr_mov`/`fpr_mov`/`vec_mov`/`frame_alloc`
 +`frame_free`→`sp_adjust`/`stack_arg_*`/`frame_addr`/`wide_vec_*`→`wide_vec_move`/

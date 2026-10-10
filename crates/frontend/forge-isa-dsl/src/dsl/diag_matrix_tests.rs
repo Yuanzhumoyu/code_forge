@@ -58,7 +58,7 @@ insts = ["add {out}, {0}, {1}"]
 
 
 [machine]
-spill_scratch = ["X9"]
+scratch = ["X9"]
 
 [spill.GPR]
 load = "ADD {0}, {1}, X0"
@@ -285,7 +285,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         ),
         (
             "abi 未知寄存器名",
-            BASE.replace("spill_scratch = [\"X9\"]", "spill_scratch = [\"NOPE\"]"),
+            BASE.replace("scratch = [\"X9\"]", "scratch = [\"NOPE\"]"),
             "DSL-OTHER",
             "NOPE",
         ),

@@ -22,12 +22,12 @@ pub(crate) fn gen_abi(model: &IsaModel) -> Result<TokenStream, String> {
     // 栈对齐：`[stack].align` > `[stack].slot`（x86 = 16/8 不变；1 字节寄存器
     // ISA 缺省即 1，不再回退 x86 的 16）。
     let stack_align = model.stack_align()?;
-    // 帧填充 = **机器事实**（v20 A5-3）：`[machine].frame_padding`（x86 = 8、
+    // 帧填充 = **机器事实**（v20 A5-3）：`[machine].padding`（x86 = 8、
     // riscv/arm64 = 0）。约定侧的 `AbiRules::frame_padding` 进 plan，由管线优先读；
     // 这里生成的 `TargetABI::frame_padding()` 是无 plan 时的回退值。
     let frame_padding = model.machine_frame_padding();
     // 位置计数规则 = **机器事实**（v20 A5-3，原 `[abi].arg_slot`）：
-    // `[machine].arg_slot`（x86 = by-position、其余 = by-class）。约定侧的正式位置是
+    // `[machine].arg_place`（x86 = by-position、其余 = by-class）。约定侧的正式位置是
     // `AbiRules::position`（进 plan 的 `AbiPlan::position`）。
     let arg_placement_toks: TokenStream = match model.machine_arg_slot() {
         crate::dsl::model::ArgSlot::ByPosition => {
@@ -1026,14 +1026,14 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
         }
         None => None,
     };
-    // 栈参数收参的 scratch 寄存器（`[machine].spill_scratch` 首项；迁移期回退
+    // 栈参数收参的 scratch 寄存器（`[machine].scratch` 首项；迁移期回退
     // `[abi].scratch`）与 callee-saved 区字节数（sp_base 计算常量）。**只在真的要走
     // 栈参数收参时**要求声明（声明了 `stack_arg_load` 角色的 ISA）；缺声明 = 生成期
     // 明确报错——不回退到某个 ISA 的寄存器名（那等于把别家的命名约定写进通用生成器）。
     let scratch0 = match model.machine_scratch().first() {
         Some(s) => format_ident!("{s}"),
         None if has_stack_arg => {
-            return Err("move_args: 本 ISA 声明了 roles = [\"stack_arg_load\"]（支持栈参数），但 [machine].spill_scratch 未声明——栈参数收参需要一个临时寄存器（不按某个 ISA 的寄存器名兜底）"
+            return Err("move_args: 本 ISA 声明了 roles = [\"stack_arg_load\"]（支持栈参数），但 [machine].scratch 未声明——栈参数收参需要一个临时寄存器（不按某个 ISA 的寄存器名兜底）"
                         .into());
         }
         None => format_ident!("__unused_scratch"),
@@ -1402,7 +1402,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
     };
     Ok(quote! {
         #head
-        // 栈参数收参的 scratch（[machine].spill_scratch 首项）与 callee-saved
+        // 栈参数收参的 scratch（[machine].scratch 首项）与 callee-saved
         // 字节数（sp_base 计算）——仅 shadow 声明时使用
         #stack_arg_prologue
         #va_save_spill

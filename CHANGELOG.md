@@ -11,6 +11,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W9 第一片：`[machine]` 键收短（`fixed` / `scratch` / `link` / `padding` / `arg_place` / `byref_bytes`）
+
++ **破坏性键改名**（设计案 §6.10 目标形状）：`[machine].fixed_regs` → `fixed`、
+  `spill_scratch` → `scratch`、`link_reg` → `link`、`frame_padding` → `padding`、
+  `arg_slot` → `arg_place`、`vector_by_ref_bytes` → `byref_bytes`。旧键现在按
+  `deny_unknown_fields` 报未知键（无迁移期双读）。
++ 三份发行谱 + `demo8` 夹具一次迁完；`model.rs` 字段与访问器、schema 键表、校验与
+  生成期 fail-closed 消息（`[machine].scratch` / `[machine].link`）、`abi_view` 的 notes、
+  负向用例（`diag_matrix_tests` 的 `DSL-ABI` 改键串）全部同步。
++ 文档同步：`docs/reference/isa-dsl.md` 键表行与三处正文、`calling-conventions.md` 的
+  `MachineView` 输入说明、`isa-dsl-errors.md` 的 `DSL-ABI` 行、运行时 `machine/abi.rs` 与
+  两份测试辅助的注释。
++ **零行为变化**（纯改名）：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（含 riscv64 QEMU
+  矩阵与 arm64 全套）；`markdownlint` 0 issue；`schema_guard` 9/9。
++ W9 其余部分（`[stack]`/`[emit]`/`[types]` → `[machine.stack|text|classes]` 且单位改位、
+  `[spill.*]` → `[machine.spill.<组名>]` 按组分派、删 `callee_saved_gpr`/`callee_save_slots`）
+  仍未做，见执行清单 §11。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W8 第三片：重定位补丁器**由谱面生成**（宿主分发与两个手写补丁器删除）
 
 + 生成器新增 `gen_reloc_patcher`：定宽 ISA 发射 `RelocPatcherImpl` —— 读回指令字 →

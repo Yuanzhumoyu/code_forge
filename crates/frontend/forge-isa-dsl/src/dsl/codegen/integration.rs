@@ -562,10 +562,10 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
     .into_iter()
     .map(|i| quote! { #i })
     .collect();
-    // allocatable：全量 0..count（排除 SP/FP + spill scratch + [machine].fixed_regs）。
+    // allocatable：全量 0..count（排除 SP/FP + scratch + [machine].fixed）。
     // reserved：不可分配寄存器（riscv X0=zero 写入无效、X1=ra 被 prologue/
     // call 占用、X3/X4=gp/tp）——不排除会分配出垃圾（实测 subw x0 结果丢失）。
-    // spill scratch（[machine].spill_scratch = R10/R11）必须排除——emission 的 spill
+    // spill scratch（[machine].scratch = R10/R11）必须排除——emission 的 spill
     // load/store 用 scratch 寄存器，若 regalloc 把活跃 XReg 分配到 scratch，
     // spill 重写会覆盖其值（t+= 循环崩溃：i 地址在 R11 被 spill load 覆盖）。
     // 6i 曾尝试排除但触发循环 spill 暴露 spill bug；6k/6m/6n 修复后
@@ -573,8 +573,8 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
     // v20 A5-3：机器事实读 `[machine]`（唯一来源；`[abi]` 同名旧键已删除）。
     let scratch_names: &[String] = model.machine_scratch();
     let reserved_names: &[String] = model.machine_reserved();
-    let scratch_list = resolve_reg_list(&name_to_idx, scratch_names, "[machine].spill_scratch")?;
-    let reserved_list = resolve_reg_list(&name_to_idx, reserved_names, "[machine].fixed_regs")?;
+    let scratch_list = resolve_reg_list(&name_to_idx, scratch_names, "[machine].scratch")?;
+    let reserved_list = resolve_reg_list(&name_to_idx, reserved_names, "[machine].fixed")?;
     let scratch_idx: std::collections::HashSet<u32> = scratch_list.iter().copied().collect();
     let reserved_idx: std::collections::HashSet<u32> = reserved_list.iter().copied().collect();
     // 分配池的上限 = `[reg.<主 GPR 组>].alloc_count`（缺省 = 组大小）。APX 的 EGPR
@@ -589,7 +589,7 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
         .map(|i| quote! { #i })
         .collect();
     let fp_alloc: Vec<TokenStream> = (0..fpr_count).map(|i| quote! { #i }).collect();
-    // scratch：从 [machine].spill_scratch 解析物理索引（spill load/store 用）。
+    // scratch：从 [machine].scratch 解析物理索引（spill load/store 用）。
     let scratch: Vec<TokenStream> = scratch_list.into_iter().map(|i| quote! { #i }).collect();
     // ── 类表（ISA 数据，2026-09-13）──────────────────────────────────────
     // 分配器的类表 = **本函数生成的表**（编译期不再编造"未声明的类"）。

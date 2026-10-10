@@ -177,7 +177,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[lower.<终结 op>]` | `insts` | — | 终结指令的 lowering 序列（Br/Jmp/Ret）：可用 {true}/{false}/{target} 符号值 |
 | `[[lowering]]` | `op` `insts` | `when` `vary` `dispatch` `temps` `priority` | 指令选择规则 |
 | `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
-| `[machine]` | — | `fixed_regs` `spill_scratch` `link_reg` `gpr` `fpr` `addr` `value_gpr` `value_fpr` `frame` `callee_saved_gpr` `callee_save_slots` `frame_padding` `arg_slot` `vector_by_ref_bytes` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / callee-saved 推入槽数 / 帧填充 / 位置计数规则） |
+| `[machine]` | — | `fixed` `scratch` `link` `gpr` `fpr` `addr` `value_gpr` `value_fpr` `frame` `callee_saved_gpr` `callee_save_slots` `padding` `arg_place` `byref_bytes` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / callee-saved 推入槽数 / 帧填充 / 位置计数规则；v21 W9：`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes` 由 `fixed_regs`/`spill_scratch`/`link_reg`/`frame_padding`/`arg_slot`/`vector_by_ref_bytes` 改名） |
 | `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（唯一位置；`[abi.frame]` 已删除） |
 | `[emit]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（序/尾声由生成器按约定生成，谱里不再写） |
 | `[spill.<name>]` | — | `load` `store` `base` `only_variants` | 溢出/回填模板（`{N}` = 寄存器序号占位符） |
@@ -467,7 +467,7 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
 | `[meta].vector_tiers` | 字节（升序） | `[16, 32, 64]` | 向量类档位（`reg_class_for` 取最小 ≥ 请求值） |
 | `[encoding].default_opsize` | **位** | 无（decode 初始化 4 字节 = 32 位） | 生成代码里 `__opsize`（**字节**）的缺省；1 字节寄存器 ISA 写 `8` |
 | `[machine.frame].fp_push_bytes` | 字节 | 地址类的字节宽 | prologue 在帧指针上方 push 的字节数 |
-| `[machine].vector_by_ref_bytes` | 字节 | — | 向量 by-value 阈值（超过则 by-ref 传参），同时是收参侧 by-value 判定 |
+| `[machine].byref_bytes` | 字节 | — | 向量 by-value 阈值（超过则 by-ref 传参），同时是收参侧 by-value 判定 |
 
 **组名就是宽度**（v21 W1）：`[reg.gpr64]` = 64 位、`[reg.fpr128]` = 128 位、
 `[reg.kreg64]` = 64 位掩码；`RegClass` 的 payload 也统一为**位**，字节口径一律由
@@ -515,7 +515,7 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
 
 ### fail-closed 契约
 
-1. **名字解析**：`[machine].fixed_regs/spill_scratch/link_reg`、
+1. **名字解析**：`[machine].fixed/scratch/link`、
    `[machine.frame].sp/fp`、
    `[spill.*].base`、`[[instructions]].implicit_regs` 里的物理名必须能在某个
    已声明 `[reg.*]` 组内解析——否则生成期报错（历史实现 `filter_map` 静默丢弃：
@@ -1620,11 +1620,11 @@ insts = ["movsd {out}, {a}", "mulsd {out}, {b}", "addsd {out}, {c}"]
 
 ```toml
 [machine]
-fixed_regs = ["X0", "X1", "X3", "X4"]   # regalloc 不可分配（zero/ra/gp/tp 之类）
-spill_scratch = ["X5", "X6"]            # 溢出与栈参数收参的临时寄存器
-link_reg = "X1"                         # call 写返回地址的寄存器（x86 写栈 ⇒ 不声明）
-frame_padding = 8                       # 帧填充字节（x86 = 8；riscv/arm64 = 0）
-arg_slot = "by-position"                # 位置计数：by-class（缺省）/ by-position（x86）
+fixed = ["X0", "X1", "X3", "X4"]        # regalloc 不可分配（zero/ra/gp/tp 之类）
+scratch = ["X5", "X6"]                  # 溢出与栈参数收参的临时寄存器
+link = "X1"                             # call 写返回地址的寄存器（x86 写栈 ⇒ 不声明）
+padding = 8                             # 帧填充字节（x86 = 8；riscv/arm64 = 0）
+arg_place = "by-position"               # 位置计数：by-class（缺省）/ by-position（x86）
 ```
 
 `frame_padding`（A5-3 起在此）：`sub rsp` 之外还要多减的字节数，使 call 点的 `rsp` 回到
@@ -1645,8 +1645,8 @@ riscv/arm64 用显式 `sub sp`，`fp-inside` ⇒ 0。约定侧的同名字段是
 
 两条纪律：① 参数池 / 返回池 / callee-saved / sret 槽 / 栈参数布局**不在这里**——它们是
 **约定事实**，属于 `AbiRules`（平台无关规则）与 `AbiBinding`（(ISA, 约定) 的寄存器）；
-② 键名与旧键**不同名**（`spill_scratch` ← `scratch`、`fixed_regs` ← `reserved`、
-`link_reg` ← `call_ret_reg`），免得"两处都写、谁生效"含糊。
+② 键名与旧键**不同名**（v21 W9 起统一收短：`scratch` ← `spill_scratch` ← `scratch`、
+`fixed` ← `fixed_regs` ← `reserved`、`link` ← `link_reg` ← `call_ret_reg`），免得"两处都写、谁生效"含糊。
 **迁移期已收尾（2026-09-27）**：`[abi]` 的同义旧键（`scratch`/`reserved`/`call_ret_reg`/
 `frame`/`callee_saved`/`arg_slot`）**全部删除**——写旧键报未知键，本节就是这些事实的
 唯一来源（`frame_padding`、`[abi.stack_args]` 与约定级的 `call_clobbers` 也在同一批
@@ -1658,11 +1658,11 @@ v20 A5-3 把"约定数据"整节移出谱面：`[abi]` 的键**全部删除**，
 
 | 原键 | 去处 |
 | --- | --- |
-| `arg_class`（参数池 / by-ref 策略 / limit） | **plan**：调用方按 `ArgPlan` 逐实参搬值（`call_plan::plan_call`，形状从实参 IR 类型摊开）；by-ref 阈值改机器事实 `[machine].vector_by_ref_bytes` |
+| `arg_class`（参数池 / by-ref 策略 / limit） | **plan**：调用方按 `ArgPlan` 逐实参搬值（`call_plan::plan_call`，形状从实参 IR 类型摊开）；by-ref 阈值改机器事实 `[machine].byref_bytes` |
 | `ret_regs` | `Return` 读 `CallLayout.ret`；`Call` 读宿主的 `LowerCtx::conv.ret_gpr` |
 | `call_clobbers` | 宿主的 `LowerCtx::conv.clobbers`（约定级、与签名无关） |
-| `arg_slot` / `frame_padding` | [`[machine]`](#machine--机器事实) 的同名键 |
-| `scratch` / `reserved` / `call_ret_reg` / `frame` / `callee_saved` | [`[machine]`](#machine--机器事实) 的 `[machine].spill_scratch` / `[machine].fixed_regs` / `[machine].link_reg` / `[machine].frame` / `[machine].callee_saved_gpr` |
+| `arg_slot` / `frame_padding` | [`[machine]`](#machine--机器事实) 的 `arg_place` / `padding` |
+| `scratch` / `reserved` / `call_ret_reg` / `frame` / `callee_saved` | [`[machine]`](#machine--机器事实) 的 `[machine].scratch` / `[machine].fixed` / `[machine].link` / `[machine].frame` / `[machine].callee_saved_gpr` |
 
 **谱侧只剩两件事**：**能力申报**（`roles`）与**机器事实**（`[machine]`）；"参数放哪、
 返回怎么回、保存谁、栈怎么排"全部由**使用者的约定数据**（`AbiRules` + `AbiBinding` →

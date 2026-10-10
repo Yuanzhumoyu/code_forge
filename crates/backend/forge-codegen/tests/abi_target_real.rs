@@ -449,7 +449,7 @@ fn alloc_result_carries_the_call_layout_for_the_frame_lowering() {
 ///    逐项同值；x86 的 sysv64 少 `RDI/RSI`②（win64 里它们是 callee-saved，sysv64 里是
 ///    **参数寄存器**）。plan 侧可能多出 FPR（AAPCS64 的 `cs_fpr`），但发射侧还没按类分派
 ///    保存（A6）⇒ 消费者只取 GPR 类，这里也按 GPR 类比。
-/// 2. `frame_padding`：plan（规则字段）与机器事实 `[machine].frame_padding` 必须相等
+/// 2. `frame_padding`：plan（规则字段）与机器事实 `[machine].padding` 必须相等
 ///    （同一台机器的帧机制给出同一个值；规则侧那份随约定而变，是 plan 的来源）。
 /// 3. `clobbers`：plan = 可用池 − callee-saved。它与谱曾经声明的 `[abi].call_clobbers`
 ///    允许差在**固定用途寄存器**上（riscv 的 X1/X3/X4、arm64 的 X18/X30）——那些寄存器
@@ -519,12 +519,12 @@ macro_rules! convention_facts_probe {
             assert_eq!(
                 layout.frame_padding,
                 tm.abi().frame_padding(),
-                "{}：plan 的 frame_padding 与机器事实 [machine].frame_padding 必须同值",
+                "{}：plan 的 frame_padding 与机器事实 [machine].padding 必须同值",
                 $conv
             );
 
             // ②b 位置计数规则：plan（约定规则 `position`） == 机器事实
-            //     `[machine].arg_slot`（生成物 `TargetABI::arg_placement`）。
+            //     `[machine].arg_place`（生成物 `TargetABI::arg_placement`）。
             //     只对"ISA 的主约定"成立——同一台机器的另一份约定（x86 的 sysv64）
             //     可以是 by_class，那正是 `$equal_cs = false` 的第二种情形。
             //     这条守卫保证"无 plan 的回退形态"与"约定数据"不会分叉。
@@ -539,7 +539,7 @@ macro_rules! convention_facts_probe {
                 };
                 assert_eq!(
                     plan.position, want,
-                    "{}：plan 的 position 与机器事实 [machine].arg_slot 必须同值",
+                    "{}：plan 的 position 与机器事实 [machine].arg_place 必须同值",
                     $conv
                 );
             }
