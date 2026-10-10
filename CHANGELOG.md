@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W4 第三批：SSE/VEX/EVEX 三操作数族改走段形态
+
++ 10 处族 body 从行内 `modrm = { reg = "dst", rm = "src"|"src2" }` 改成段形式 + `bind`：
+  `SSE_RR` → `SSE_RR_SEG`（5 处）、`VEX_RRV` → `VEX_RRV_SEG`（2 处）、
+  `EVEX_RRV` → `EVEX_RRV_SEG`（3 处）；随之闲置的三个旧 form 一并删除。
++ x86 的 `modrm = {…}` 键 **23 → 13**（W4 累计 27 → 13）。
++ **字节逐条不变**：`encoding.digest` 指纹守卫通过；`insts` 的差异只有显示里的 form 名。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W4 第二批：x86 四个内存族改走段形态
 
 + `[family.ALU_MR]` / `[family.ALU_R_MEM]` / `[family.ALU8_MR]` / `[family.ALU8_R_MEM]` 从

@@ -387,13 +387,6 @@ segments = [
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
   { kind = "imm", fields = ["u8[7:0]:imm8"] },
 ]
-[form.SSE_RR]
-# @sse_rr：0F opcode /r，prefix=fields.prefix, w=fields.w
-escape = [0x0F]
-prefix = "field"
-rex_w = "field"
-
-
 [form.SSE_RR_SEG]
 # v21 W4：段形态（prefix 字段 + 0F escape + rex.W 字段 + opcode + modrm）
 segments = [
@@ -409,22 +402,12 @@ segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[form.EVEX_RRV]
-# EVEX 三操作数（AVX-512）：reg=op0、vvvv=~op1、rm=op2；L'L 由 evex_l（0/1/2）
-evex = { map = "field", pp = "field", w = "field", l = "field" }
-
-
 [form.EVEX_RRV_SEG]
 segments = [
   { kind = "evex", map = "field", pp = "field", w = "field", l = "field", disp_scale = "field" },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[form.VEX_RRV]
-# VEX 三操作数：reg=op0(dest)、rm=op2(src2)、vvvv=~op1(src1)
-vex = { map = "field", pp = "field", w = "field", l = "field" }
-
-
 [form.VEX_RRV_SEG]
 segments = [
   { kind = "vex", map = "field", pp = "field", w = "field", l = "field" },
@@ -1626,7 +1609,7 @@ effect = ["Pure"]
 # ── SSE 族（v11 opcodes 数组 → families → v21 `[family.*]` + rows；`[[templates]]` 已废）──
 
 [family.SD_BIN]
-body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, match = { prefix = 0xF2, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
+body = { form = "SSE_RR_SEG", bind = { reg = "dst", rm = "src" }, match = { prefix = 0xF2, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
   { inst = "MOVSD", data_width = 64, opcode = 0x10 },
   { inst = "MINSD", opcode = 0x5D },
@@ -1637,7 +1620,7 @@ rows = [
   { inst = "DIVSD", opcode = 0x5E },
 ]
 [family.SS_FMOV]
-body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, match = { prefix = 0xF3, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
+body = { form = "SSE_RR_SEG", bind = { reg = "dst", rm = "src" }, match = { prefix = 0xF3, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
   { inst = "ADDSS", opcode = 0x58 },
   { inst = "SUBSS", opcode = 0x5C },
@@ -1647,7 +1630,7 @@ rows = [
   { inst = "MAXSS", opcode = 0x5F },
 ]
 [family.PS_BIN]
-body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
+body = { form = "SSE_RR_SEG", bind = { reg = "dst", rm = "src" }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
   { inst = "MOVAPS", data_width = 128, opcode = 0x28 },
   { inst = "ADDPS", opcode = 0x58 },
@@ -1659,7 +1642,7 @@ rows = [
   { inst = "ORPS", opcode = 0x56 },
 ]
 [family.PD_BIN]
-body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, match = { prefix = 0x66, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
+body = { form = "SSE_RR_SEG", bind = { reg = "dst", rm = "src" }, match = { prefix = 0x66, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
   { inst = "ADDPD", opcode = 0x58 },
   { inst = "SUBPD", opcode = 0x5C },
@@ -1667,7 +1650,7 @@ rows = [
   { inst = "DIVPD", opcode = 0x5E },
 ]
 [family.PI_BIN]
-body = { form = "SSE_RR", modrm = { reg = "dst", rm = "src" }, match = { prefix = 0x66, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
+body = { form = "SSE_RR_SEG", bind = { reg = "dst", rm = "src" }, match = { prefix = 0x66, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
 rows = [
   { inst = "PADDD", opcode = 0xFE },
   { inst = "PSUBD", opcode = 0xFA },
@@ -1676,7 +1659,7 @@ rows = [
 ]
 # ── VEX 家族（256 位向量，三操作数）──
 [family.PS_BIN_V]
-body = { form = "VEX_RRV", modrm = { reg = "dst", rm = "src2" }, match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
+body = { form = "VEX_RRV_SEG", bind = { reg = "dst", rm = "src2" }, match = { vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "VADDPS", group = "vaddps", opcode = 0x58 },
   { inst = "VSUBPS", group = "vsubps", opcode = 0x5C },
@@ -1686,7 +1669,7 @@ rows = [
   { inst = "VANDPS", opcode = 0x54 },
 ]
 [family.PD_BIN_V]
-body = { form = "VEX_RRV", modrm = { reg = "dst", rm = "src2" }, match = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
+body = { form = "VEX_RRV_SEG", bind = { reg = "dst", rm = "src2" }, match = { vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "VADDPD", group = "vaddpd", opcode = 0x58 },
   { inst = "VSUBPD", group = "vsubpd", opcode = 0x5C },
@@ -1697,7 +1680,7 @@ rows = [
 # 助记符与 VEX 版共享（vaddps zmm0,... → EVEX；vaddps xmm0,... → VEX）——
 # 按操作数实际寄存器类（fpr256 vs fpr）自动分发。
 [family.PS_BIN_EV]
-body = { form = "EVEX_RRV", modrm = { reg = "dst", rm = "src2" }, match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256"], asm = "{inst.lower} {dst}, {src}, {src2}" }
+body = { form = "EVEX_RRV_SEG", bind = { reg = "dst", rm = "src2" }, match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "VADDPS_ZMM", group = "vaddps", opcode = 0x58, asm = "vaddps {dst}, {src}, {src2}" },
   { inst = "VSUBPS_ZMM", group = "vsubps", opcode = 0x5C, asm = "vsubps {dst}, {src}, {src2}" },
@@ -1706,7 +1689,7 @@ rows = [
 ]
 # EVEX 双精度（pd，pp=1）
 [family.PD_BIN_EV]
-body = { form = "EVEX_RRV", modrm = { reg = "dst", rm = "src2" }, match = { evex_map = 1, evex_pp = 1, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256"], asm = "{inst.lower} {dst}, {src}, {src2}" }
+body = { form = "EVEX_RRV_SEG", bind = { reg = "dst", rm = "src2" }, match = { evex_map = 1, evex_pp = 1, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "VADDPD_ZMM", group = "vaddpd", opcode = 0x58, match = { evex_w = 1 }, asm = "vaddpd {dst}, {src}, {src2}" },
   { inst = "VSUBPD_ZMM", group = "vsubpd", opcode = 0x5C, match = { evex_w = 1 }, asm = "vsubpd {dst}, {src}, {src2}" },
@@ -1715,7 +1698,7 @@ rows = [
 ]
 # EVEX 整数（vpaddd/vpsubd/vpaddq/vpsubq，pp=1）
 [family.INT_BIN_EV]
-body = { form = "EVEX_RRV", modrm = { reg = "dst", rm = "src2" }, match = { evex_map = 1, evex_pp = 1, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256"], asm = "{inst.lower} {dst}, {src}, {src2}" }
+body = { form = "EVEX_RRV_SEG", bind = { reg = "dst", rm = "src2" }, match = { evex_map = 1, evex_pp = 1, evex_w = 0, evex_l = 2 }, ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256"], asm = "{inst.lower} {dst}, {src}, {src2}" }
 rows = [
   { inst = "VPADDD_ZMM", group = "vpaddd", opcode = 0xFE, asm = "vpaddd {dst}, {src}, {src2}" },
   { inst = "VPSUBD_ZMM", group = "vpsubd", opcode = 0xFA, asm = "vpsubd {dst}, {src}, {src2}" },
