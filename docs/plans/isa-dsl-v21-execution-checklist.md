@@ -971,10 +971,16 @@ W11 守卫（依赖 W6）尚未收口 ✗，本节只记录**已可测**的项 �
   ⇒ 已被 `reg.rex_required`/`arrangement` 表/`symbol{}` 等新键取代 ✅）、
   #20 `[[instructions]].when` 死键（随 W10 清零 ✗）。
   🚧 **仍在**：#12 `moves.rs` 的 `if a.width >= 128 { "vec_mov" } else { "fpr_mov" }`
-  （应按所选指令的寄存器组派生 ✗）、#14 `opsize` 四态与 `"sN"`（16 处活用法 ✗）、
+  （**2026-10-08 复核：不是"改成分派就行"** ✗ —— 这个 128 是**按值向量的 ABI 阈值（16 字节）** ✗，
+  属于**宿主 ABI 规则**却被写进 DSL 的能力视图（`MoveTable::capabilities` 折算给
+  `abi_view`/`role_bits` ✗）。真按"所选指令的寄存器组"派生会让 64 位 VEC 搬移也报成
+  `vec_mov` ✗ ⇒ 语义变化 ✗。正解是**能力视图只报寄存器组与位宽** ✗，阈值留给宿主
+  （`AbiRules` ✗）⇒ 设计级改动 ✗，与本轮的小活无关 ✗）、#14 `opsize` 四态与 `"sN"`（16 处活用法 ✗）、
   #15 `modrm` 的位置缺省（`Modrm::resolve` 里 `rm 缺省 = 最后一个操作数` ✗）、
   #16 `class`/`classes` 双形（x86 里 `classes = [...]` 2 处 ✗）、
   #19 `lint.rs:166` 仍同时接受 `["op", "ops"]` 两种拼法（**一改就完的小活** ✗）。
+  **#19 已修（2026-10-08 ✗）** ✗：宿主 op 表现在**只认 `[[op]]`** ✗，复数 `[[ops]]` 报错并点名正确拼法 ✗；
+  守卫 = `lint.rs::host_ops_rejects_plural_spelling`（负向 ✗）。
   🚧 **半**：#11 `force_disp_base` 魔数（校验被 `!= PrefixScan` 挡在门外 ✗ ⇒ 前提要重定 ✗）。
 - [~] 度量对比：三谱行数、生成物 token 规模、`cargo check -p forge-codegen` 时间（相对 W0）。
   （三谱行数 ✗：x86 **4877** / riscv64 **3427** / arm64 **5178**；三份 `tm` 生成物字节数 ✗：
