@@ -1026,6 +1026,19 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 **收官时记得** ✗：W10 的"代码面删旧"勾选框随上述两项的完成度更新 ✗；本项目**不重写**已签入的
 `isa-dsl.schema.json`（它由 `forge-isa schema --out` 生成 ✗，改 schema 必须重生成 ✗）。
 
+**收官扫描（2026-10-08，第 30 轮 ✗）**：
+
+| 判据 | 结果 |
+| --- | --- |
+| `isa_roundtrip_guard`（含**逐指令编码字节指纹** ✗） | **1 passed / 0 failed** ✔ |
+| `spec_coverage_guard` | **4 passed** ✔（265/119/110 ✗、零跳过 ✗） |
+| `schema_guard`（四处同改 ✗） | **9 passed** ✔ |
+| `generality_guard`（含形状探测反回潮 ✗） | **4 passed** ✔ |
+| 三谱 `forge-isa insts` | riscv64 / arm64 **0 差异** ✔；x86 **166 行差异 ✗ —— 逐行都只是新旧 form 名** ✗（166/166 提到 `MRR_MEMREF_SEG`/`SSE_RR_SEG`/`VEX_RRV_SEG`/`EVEX_RRV_SEG` 等 ✗）⇒ **语义与字节未变** ✗，由指纹守卫独立证明 ✔ |
+| 整仓 `cargo test --workspace --exclude forge-rustc -j 2` | **exit 0 / 0 编译错误 / 0 失败二进制** ✔ |
+| `markdownlint` | **0** ✔ |
+| 实测残留（三谱 ✗） | x86 `modrm = {…}` **13** ✗（W4 累计 27 → 13 ✗）、`opsize = "sN"` **26** ✗、`classes =` **2** ✗ |
+
 **剩余面实测（三谱 ✗）**：
 
 | 项 | x86 | riscv64 | arm64 | 说明 |
