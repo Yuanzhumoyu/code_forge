@@ -75,10 +75,6 @@
 
     - [`[pred.<名字>]` — 给谓词起名字](#pred名字--给谓词起名字)
 
-  - [`[[lowering]]` — 指令选择](#lowering--指令选择)
-
-  - [`[[pattern]]` — 树型多指令匹配](#pattern--树型多指令匹配)
-
   - [`[machine]` — 机器事实](#machine--机器事实)
 
   - [`[abi]` — 已删除（v20 A5-3）](#abi--已删除v20-a5-3-收口)
@@ -154,7 +150,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 <!-- BEGIN: schema-keys（由 tests/schema_guard.rs 校验，改 schema 时同步这一段）-->
 | 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
 | --- | --- | --- | --- |
-| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `operand` `enum` `form` `inst` `family` `lower` `asm` `pred` `lowering` `pattern` `machine` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
+| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `operand` `enum` `form` `inst` `family` `lower` `asm` `pred` `machine` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
 | `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `vector_tiers` | 元信息 + 文本约定（宽度只在 [reg.<名>] 表头里，见 [machine] 的类指针键） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
 | `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `alloc_count` `aliases` | 寄存器组；组名的数字 = **位**宽（`gpr64` = 64 位）；aliases = { 别名 = 组内下标 } |
@@ -175,8 +171,6 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[asm.pseudo.<名>]` | `asm` `emit` | `only_variants` | 汇编器伪指令（v21 W7：**表头即名字**；旧 `[[pseudo]]` 已撤）：文本级多指令展开，分派按 `asm` 的前导字面，`{名字}` 就是 `emit` 用的参数 |
 | `[asm.immfn.<名>]` | `texts` `expr` | — | 立即数修饰（v21 W7：**表头即修饰名**；旧 `[[conventions.imm_fn]]` 待撤）：`texts` = 同一语义的等价写法列表（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值） |
 | `[[lower.<名字>]]` | `insts` | `match` `when` `vary` `dispatch` `temps` `priority` `only_variants` | 选择层（v21 W6-a：**表头即名字、同名可多块**）——名字是终结 op（Ret/Jmp/Br/Switch/Unreachable/Invoke）⇒ 终结序列（可用 {true}/{false}/{target} 符号值，且只吃 `insts`）；写了 `match` ⇒ 树型多指令匹配（名字是作者起的模式名）；其余 ⇒ op 规则（**名字就是 op 名**；一个 op 多条规则就写多块） |
-| `[[lowering]]` | `op` `insts` | `when` `vary` `dispatch` `temps` `priority` | 指令选择规则 |
-| `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
 | `[machine]` | — | `fixed` `scratch` `link` `gpr` `fpr` `addr` `value_gpr` `value_fpr` `frame` `padding` `arg_place` `byref_bytes` `stack` `text` `classes` `spill` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / 帧填充 / 位置计数规则；v21 W9：`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes` 由 `fixed_regs`/`spill_scratch`/`link_reg`/`frame_padding`/`arg_slot`/`vector_by_ref_bytes` 改名，接收从 `[stack]`/`[emit]`/`[types]` 迁入的 `stack`/`text`/`classes`，并删除 `callee_saved_gpr`/`callee_save_slots`——callee-saved 完全归约定数据） |
 | `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（唯一位置；`[abi.frame]` 已删除） |
 | `[machine.text]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（v21 W9：从 `[emit]` 迁入；序/尾声由生成器按约定生成，谱里不再写） |
@@ -1425,7 +1419,14 @@ insts = ["ADD64 {out}, {0}, {1}"]
 - 依赖属性缺失时该派生为**假**（与核心属性"未知即假"一致）；展开在解析期完成，
   生成期的谓词判定逻辑一行未改（没有 `[pred.<名字>]` 时生成的属性表与引入前逐字相同）。
 
-## `[[lowering]]` — 指令选择
+## `[[lower.*]]` — 指令选择与树模式（v21 W6-a）
+
+> 现面 ✗：`[[lower.<名字>]]`（**表头即名字、同名可多块** ✗）✗ —— 名字是终结 op ⇒ 终结序列 ✗；
+> 写了 `match` ⇒ 树模式 ✗；其余 ⇒ op 规则（名字就是 op 名 ✗）。
+> **`op` 键与名单机制已删除** ✗（口径：一个名字一块 ✗，复用交给 `[family.*]`/`vary` ✗）。
+> 下面的老例子保留作历史 ✗（旧面 `[[lowering]]` 现在会被 `deny_unknown_fields` 拒 ✗）。
+
+### 历史写法（v18 S5，已废 ✗）
 
 一条规则 = **op + 条件 + 发射序列**；同 op 的多条规则按
 (`priority` 降, 谓词叶子数降, 声明序升) 裁决，第一条命中的赢（见下「裁决序与死规则」）。
@@ -1557,7 +1558,7 @@ insts = ["cvttsd2si {out}, {0}"]
   encoder 转 `add_reloc(ABS8, "G{id}")`（JIT 编译模块时按全局变量注册数据段符号
   并即时 patch）；imm≥0 为普通 64 位立即数。
 
-## `[[pattern]]` — 树型多指令匹配
+#### `[[pattern]]` — 树型多指令匹配（v18 S6，已并入 `[[lower.*]]` ✗）
 
 **裁决序与 `[[lowering]]` 统一**（v18 S5c）：(`priority` 降, 匹配树 Op 节点数降, `when`
 谓词叶子数降, 声明序升)——祖先匹配树、更具体的 `when` 先试；`priority` 用于"故意让更宽的

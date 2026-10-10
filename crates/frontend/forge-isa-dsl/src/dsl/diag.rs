@@ -16,7 +16,7 @@
 //!
 //! 消息格式约定（沿用 既有约定，校验器只需照旧写前缀）：
 //! `[inst.NAME]: …` / `[form.NAME]: …` / `[[operand_slots]] #i ('NAME'): …` /
-//! `[[lowering.OP]]: …` / `[reg.NAME]: …` / `[stack].key …` / `[[pattern]] #i: …`。
+//! `[[lower.OP]]: …` / `[reg.NAME]: …` / `[stack].key …` / `[[pattern]] #i: …`。
 
 use std::collections::BTreeMap;
 
@@ -200,6 +200,8 @@ pub(crate) fn section_code(kind: &str) -> &'static str {
         "derive" => "DSL-DERIVE",
         "pseudo" => "DSL-PSEUDO",
         "lowering" => "DSL-LOWER",
+        // v21 W6-a：选择层的现名（`[[lower.<名字>]]`）——三种形态共用这个节名。
+        "lower" => "DSL-LOWER",
         "pattern" => "DSL-PATTERN",
         "abi" => "DSL-ABI",
         "emit" => "DSL-EMIT",
@@ -604,7 +606,7 @@ insts = ["ADD {out}, {0}, {1}"]
         let idx = DeclIndex::build(DOC);
         let mut d = Diags::new();
         d.push_anchored(&idx, "[inst.ADD]: 第一条");
-        d.push_anchored(&idx, "[[lowering.Iadd]]: 第二条");
+        d.push_anchored(&idx, "[[lower.Iadd]]: 第二条");
         let text = d.render(std::path::Path::new("/tmp/x.toml"));
         let lines: Vec<&str> = text.lines().collect();
         assert!(
@@ -620,7 +622,7 @@ insts = ["ADD {out}, {0}, {1}"]
         assert!(
             lines
                 .iter()
-                .any(|l| l.contains("DSL-LOWER: [[lowering.Iadd]]: 第二条")),
+                .any(|l| l.contains("DSL-LOWER: [[lower.Iadd]]: 第二条")),
             "{text}"
         );
         for i in 0..(MAX_DIAGS + 5) {

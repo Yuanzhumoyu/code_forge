@@ -211,7 +211,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             match &rule.when {
                 Some(v) => {
                     let pred = pred::parse(v)
-                        .map_err(|e| format!("[[lowering.{}]] when: {e}", rule.op.name()))?;
+                        .map_err(|e| format!("[[lower.{}]] when: {e}", rule.op.as_str()))?;
                     let guard = compile_pred_guard(&pred, model);
                     chain = quote! { if #guard { #body } else { #chain } };
                 }

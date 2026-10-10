@@ -42,6 +42,16 @@ fn read_lf(path: &Path) -> Option<String> {
 const INTERNAL_FIELDS: &[(&str, &str, &str)] = &[
     (
         "IsaModel",
+        "lowering",
+        "内部载体（v21 W6-a）：TOML 面是 [[lower.<名字>]]，解析期路由填这里",
+    ),
+    (
+        "IsaModel",
+        "pattern",
+        "内部载体（v21 W6-a）：TOML 面是 [[lower.<模式名>]]（写了 match 的块）",
+    ),
+    (
+        "IsaModel",
         "lower_terms",
         "内部载体（v21 W6-a）：TOML 面已交给统一的 [lower.<名字>]，解析期按名字路由填这里",
     ),

@@ -288,7 +288,7 @@ fn validate_lowering_overlap(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
                     // 用**独立诊断码**：`push_anchored` 会按消息前缀判成 `DSL-LOWER`，
                     // 那样严格档的结论就和普通 lowering 诊断混在一起了。
                     let text = format!(
-                        "[[lowering.{op}]]: 第 {} 条与第 {} 条规则的取值域相交（部分重叠）——\
+                        "[[lower.{op}]]: 第 {} 条与第 {} 条规则的取值域相交（部分重叠）——\
                          裁决序里前者先命中；若本意是「特化 + 兜底」，确认后者的 when 没写窄，\
                          否则请用 priority 明确让谁赢",
                         i + 1,
@@ -2361,13 +2361,13 @@ fn validate_lowering_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
     let mut seen: std::collections::HashMap<(String, String, Vec<String>), usize> =
         std::collections::HashMap::new();
     for (i, l) in m.lowering.iter().enumerate() {
-        if l.op.name().trim().is_empty() {
+        if l.op.as_str().trim().is_empty() {
             d.push_anchored(idx, &format!("[[lowering]] #{i}: op must not be empty"));
             continue;
         }
         // 展开后每条规则只有一个 op（`expand_ops` 在解析期完成）；名单写法在这里
         // 只会出现于"解析未展开"的直接构造（测试），故用 name() 取首个即够。
-        let path = format!("[[lowering.{}]]", l.op.name());
+        let path = format!("[[lower.{}]]", l.op.as_str());
         if l.insts.is_empty() {
             d.push_anchored(idx, &format!("{path}: insts must not be empty"));
             continue;
@@ -2405,7 +2405,7 @@ fn validate_lowering_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
                 }
             },
         };
-        let key = (l.op.name().to_string(), when_key, l.insts.clone());
+        let key = (l.op.as_str().to_string(), when_key, l.insts.clone());
         if let Some(first) = seen.insert(key, i) {
             d.push_anchored(
                 idx,
@@ -2429,7 +2429,7 @@ fn validate_lowering_order(m: &IsaModel) -> Result<(), String> {
             let pred = match &r.when {
                 None => None,
                 Some(v) => {
-                    Some(super::pred::parse(v).map_err(|e| format!("[[lowering.{op}]]: {e}"))?)
+                    Some(super::pred::parse(v).map_err(|e| format!("[[lower.{op}]]: {e}"))?)
                 }
             };
             domains.push(super::pred::domain_of(pred.as_ref()));
@@ -2438,7 +2438,7 @@ fn validate_lowering_order(m: &IsaModel) -> Result<(), String> {
             for di in domains[..j].iter() {
                 if super::pred::subsumes(di, dj) {
                     return Err(format!(
-                        "[[lowering.{op}]]: 第 {} 条规则是死规则——裁决序里排在它前面的规则\
+                        "[[lower.{op}]]: 第 {} 条规则是死规则——裁决序里排在它前面的规则\
                          已覆盖它的全部取值域（priority 降 / 谓词叶子数降 / 声明序升）。\
                          删掉它，或给它更高的 priority",
                         j + 1

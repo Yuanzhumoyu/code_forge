@@ -620,7 +620,7 @@ fn vary_candidates(m: &IsaModel, idx: &DeclIndex) -> Vec<DiagLine> {
     let mut by_op: BTreeMap<String, Vec<(usize, Vec<String>)>> = BTreeMap::new();
     for (i, rule) in m.lowering.iter().enumerate() {
         by_op
-            .entry(rule.op.name().to_string())
+            .entry(rule.op.as_str().to_string())
             .or_default()
             .push((i, rule.insts.iter().map(|l| shape_of(l, &regs)).collect()));
     }
@@ -636,7 +636,7 @@ fn vary_candidates(m: &IsaModel, idx: &DeclIndex) -> Vec<DiagLine> {
             let list: Vec<String> = idxs.iter().map(|i| format!("#{i}")).collect();
             out.push(anchor(
                 idx,
-                &format!("[[lowering.{op}]]"),
+                &format!("[[lower.{op}]]"),
                 "LINT-VARY-CANDIDATE",
                 format!(
                     "第 {} 条规则的发射形状相同（只差助记符/立即数/寄存器）——可用一条 \
@@ -766,7 +766,7 @@ fn op_gap(
     }
     // 本谱覆盖：`[[lowering]].op` ∪ `[[pattern]]` 匹配树的根 op。
     let mut covered: BTreeSet<String> =
-        m.lowering.iter().map(|l| l.op.name().to_string()).collect();
+        m.lowering.iter().map(|l| l.op.as_str().to_string()).collect();
     for p in &m.pattern {
         if let Ok(tree) = crate::dsl::match_tree::parse(&p.r#match) {
             let mut ops = Vec::new();
@@ -1239,7 +1239,7 @@ name = "Resume"
             .collect();
         assert_eq!(hits.len(), 1, "同 op 同形状只报一条：{:?}", report.findings);
         assert!(
-            hits[0].msg.contains("[[lowering.Iadd]]") && hits[0].msg.contains("vary"),
+            hits[0].msg.contains("[[lower.Iadd]]") && hits[0].msg.contains("vary"),
             "{}",
             hits[0].msg
         );

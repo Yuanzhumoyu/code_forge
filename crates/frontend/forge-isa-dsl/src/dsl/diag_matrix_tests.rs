@@ -234,14 +234,14 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         ),
         (
             "lowering 未知引用",
-            plus("[[lowering]]\nop = \"Isub\"\ninsts = [\"nope {out}, {0}, {1}\"]"),
+            plus("[[lower.Isub]]\ninsts = [\"nope {out}, {0}, {1}\"]"),
             "DSL-LOWER",
             "nope",
         ),
         (
             "lowering 未知属性",
             plus(
-                "[[lowering]]\nop = \"Isub\"\ninsts = [\"add {out}, {0}, {1}\"]\n\
+                "[[lower.Isub]]\ninsts = [\"add {out}, {0}, {1}\"]\n\
                  when = { eq = [\"rd_width\", 32] }",
             ),
             "DSL-LOWER",
@@ -249,16 +249,16 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         ),
         (
             "lowering 完全重复",
-            plus("[[lowering]]\nop = \"Iadd\"\ninsts = [\"add {out}, {0}, {1}\"]"),
+            plus("[[lower.Iadd]]\ninsts = [\"add {out}, {0}, {1}\"]"),
             "DSL-LOWER",
             "完全重复",
         ),
         (
             "lowering 死规则",
             plus(
-                "[[lowering]]\nop = \"Iand\"\ninsts = [\"add {out}, {0}, {1}\"]\n\
+                "[[lower.Iand]]\ninsts = [\"add {out}, {0}, {1}\"]\n\
                  when = { in = [\"rs1_width\", [32, 64]] }\n\
-                 [[lowering]]\nop = \"Iand\"\ninsts = [\"add {out}, {0}, {1}\"]\n\
+                 [[lower.Iand]]\ninsts = [\"add {out}, {0}, {1}\"]\n\
                  when = { eq = [\"rs1_width\", 32] }",
             ),
             "DSL-LOWER",
@@ -423,7 +423,7 @@ fn headline_positions_are_exact() {
 
     // lowering：未知属性落在该 `[[lowering]]` 节（`op = "..."` 行）。
     let lw = plus(
-        "[[lowering]]\nop = \"Isub\"\ninsts = [\"add {out}, {0}, {1}\"]\n\
+        "[[lower.Isub]]\ninsts = [\"add {out}, {0}, {1}\"]\n\
          when = { eq = [\"rd_width\", 32] }",
     );
     let d = errs(&lw)

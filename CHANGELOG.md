@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6-a 第三片（下）：**旧面删除**（`[[lowering]]`/`[[pattern]]` 消失）
+
++ **`[[lowering]]` 与 `[[pattern]]` 从谱面彻底删除**：`deny_unknown_fields` 现在直接拒它们。
+  `IsaModel::lowering`/`pattern` 转 `#[serde(skip)]` 内部载体，由 `[[lower.*]]` 按名字/`match` 路由填。
++ **`op` 名单机制删除**（口径：一个名字一块，复用交给 `[family.*]`/`vary`）：`OpsField` 枚举与
+  `Lowering::expand_ops` 删除，`Lowering::op` 收成 `String`（由表头填、不再进 TOML）。
++ 诊断：声明索引认 `[[lower.*]]`（键 `("lower","<名字>")`）；`section_code` 把 `lower` 映到
+  `DSL-LOWER`；校验/生成的消息前缀从 `[[lowering.X]]` 改为 `[[lower.X]]`。
++ 四处同改同步：`src/schema.rs` 删两节与根键、`docs/reference/isa-dsl.md` 删键表两行并把两节改写为
+  指向 `[[lower.*]]` 的短节、重生成 `isa-dsl.schema.json`、`schema_guard::INTERNAL_FIELDS` 登记
+  `lowering`/`pattern`。
++ **行为不变**：三谱 `forge-isa insts` 与迁移前**逐行 0 差异**；`lint` 三谱零结论；
+  `schema_guard` **9/9**；整仓门禁 exit 0。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6-a 第二片：**三谱已迁到 `[[lower.*]]`**
 
 + 三谱的选择层全部改成 `[[lower.<名字>]]` ✗：**272** 个单名块 + **9** 个 `op` 名单块展开成

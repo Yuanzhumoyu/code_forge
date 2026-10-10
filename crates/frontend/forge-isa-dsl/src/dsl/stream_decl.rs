@@ -899,7 +899,7 @@ dispatch = "rs1_width"
 insts = ["ADD {out}, {0}, {1}"]
 "#;
         let m = crate::dsl::parse_and_validate(src).expect("谱合法");
-        let rules: Vec<_> = m.lowering.iter().filter(|r| r.op.name() == "Copy").collect();
+        let rules: Vec<_> = m.lowering.iter().filter(|r| r.op.as_str() == "Copy").collect();
         assert_eq!(rules.len(), 2, "应展开成两条（每条候选一条）");
         let mut names: Vec<String> = rules
             .iter()
