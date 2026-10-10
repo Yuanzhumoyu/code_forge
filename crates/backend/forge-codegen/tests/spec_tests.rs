@@ -16,6 +16,9 @@ forge_dsl::isa_from_file!("tests/isa/demo_mixed16_32.toml", spec_tests = true);
 // v21 W11：第四份 ISA（24 位定宽，非 x86/riscv64/arm64）——它的谱内 `[[vectors]]`
 // 与每条指令的闭环自测都在这里真跑（"新 ISA 只要 TOML + 宿主"的证据链一环）。
 forge_dsl::isa_from_file!("tests/isa/demo_v21.toml", spec_tests = true);
+// v21 W11：变长一态（`prefix_scan` + **stream 段**）——1 字节 opcode 后跟不同宽度的立即数
+// ⇒ 指令长 2 或 3 字节。它逼出并守住一处生成器缺口（空前缀表时的孤儿 `else`）。
+forge_dsl::isa_from_file!("tests/isa/demo_vlen.toml", spec_tests = true);
 
 /// 生成的自测模块导出了覆盖率常量，且夹具谱是**零跳过**的。
 #[test]

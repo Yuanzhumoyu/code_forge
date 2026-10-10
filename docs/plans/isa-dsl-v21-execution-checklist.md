@@ -853,39 +853,39 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 **目标**：新增第四个 ISA 零编译器改动。
 
-### 受控扩展点候选（2026-10-08 实测 ✗）
+### 受控扩展点（2026-10-08 ✗）
 
-用 `[encoding] kind = "prefix_scan"` + **指令级 `segments`**（`opcode_reg` + `imm`，与 x86
-`RET_IMM16` 同一写法 ✗）做"变长一态"的第四方夹具时 ✗：
+**① 空前缀表的孤儿 `else` —— 曾是候选缺口，已修** ✔：用 `[encoding] kind = "prefix_scan"` +
+指令级 `segments` 做"变长一态"夹具时 ✗，`validate`/`lint` 都过 ✗，但生成物不合法 ✗
+（`gen_file.rs:249` ✗ 报 expected an expression, found keyword else ✗）。根因 = 前缀扫描循环在
+**空前缀表**时发出的是「循环体里先取一个字节、紧接着一个 else」的形态（条件分支随空表消失 ✗）
+⇒ 只剩孤儿 else ✗。
+**修法**：表空时改发"循环体立刻 break"的形态 ✗。**三谱逐字节不变**（`insts` 0 差异 ✔、x86 矩阵
+197/3/0 ✔）⇒ 该夹具现已在 `tests/isa/demo_vlen.toml` 落地 ✔（W11 第 1 条 ✗）。
 
-- `forge-isa validate` **OK** ✔、`forge-isa lint` **干净** ✔ —— 面本身能表达 ✗；
-- 但**生成物不合法** ✗：`cargo build -p forge-codegen --tests` 在预生成期崩在
-  `crates/frontend/forge-isa-dsl/src/gen_file.rs:249` ✗：`unwrap()` on
-  `Error("expected an expression")` ✗ —— 即生成器为这份谱产出了**解析不过的 Rust** ✗。
-- 复现面（最小 ✗）：`prefix_scan` + `[reg.gpr8]`(prefix/count ✗) + `[form.RR]`(opcode+modrm ✗)
-  再加两条立即数指令写 `segments = [{ kind = "opcode_reg", value = 0x11 }, { kind = "imm", value = 8 }]`
-  与 `value = 16` ✗；`ops` 形如 `["dst:r:inout", "imm8:imm8"]` ✗；`[[lowering]]` 用
-  `ADD {out}, {0}` ✗。
-- **未定位**（本片时间盒到 ✗）：需要看 `FGE_DEBUG_GEN=1` 的 dump 找那条空表达式 ✗。
-- 处置 ✗：该夹具**已回退**（不留半片 ✗）；本条目即"受控扩展点"记录 ✗。
-- 另一处**已知**形状分支（W6 依赖 ✗）：`is_prefix_scan()` 仍在
-  `codegen/{frame,lowering,machine,mod}.rs` 参与分支 ✗（如 `has_jal = has_jmp && !is_prefix_scan()` ✗）
-  ⇒ W11 的"无 ISA 形状分支"守卫要等 W6 把这些下放成数据 ✗。
+**② 一处自摆乌龙（记为教训 ✗）**：`opcode_reg` 段的基值低 3 位会被寄存器号覆盖 ✗ —— 第一版
+写 `0x11`/`0x12` ⇒ 两条指令模 8 撞车 ⇒ 症状像"3 字节指令解码只吃 2 字节" ✗，被误当成第二处
+生成器缺口 ✗。核对后确认是**谱写错** ✗，基值改 `0x10`/`0x18` ✗，教训写进 `w11_vlen_tests.rs` ✗。
 
-- [~] 新夹具 ISA（非 x86/riscv/arm64；定宽 + 一态变长各一）：只用 TOML + `arch/<new>.rs` + 生成的补丁器。
-  （**定宽那一份已完成** ✔：`crates/backend/forge-codegen/tests/isa/demo_v21.toml` ✗（24 位定宽 ✗、
-  16 个 16 位寄存器 ✗）；**接入面 = TOML + 两行宿主 + 一个测试二进制 ✗，零编译器改动** ✔。
-  宿主按本仓既有做法放在 `tests/`（`common/mod.rs` + `spec_tests.rs` ✗）——`arch/<new>.rs` 是
-  **发行后端**的位置 ✗，夹具不进库本体 ✗。**变长那一份已尝试、撞到编译器缺口 ⇒ 未落地** ✗
-  （见本节末「受控扩展点候选」✗）。）
+**③ 仍开着的形状分支（W6 依赖 ✗）**：`is_prefix_scan()` 仍在
+`codegen/{frame,lowering,machine,mod}.rs` 参与分支 ✗（如 `has_jal = has_jmp && !is_prefix_scan()` ✗）
+⇒ W11 的"无 ISA 形状分支"守卫要等 W6 把这些下放成数据 ✗。
+
+- [x] 新夹具 ISA（非 x86/riscv/arm64；定宽 + 一态变长各一）：只用 TOML + `arch/<new>.rs` + 生成的补丁器。
+  （**两份都已完成** ✔：`tests/isa/demo_v21.toml` ✗（24 位定宽 + 就地 `fields` ✗）；
+  `tests/isa/demo_vlen.toml` ✗（`prefix_scan` + stream 段 ✗，指令长 2/3 字节 ✗）。
+  **接入面 = TOML + 两行宿主 + 一个测试二进制 ✗，零编译器改动** ✔ —— 编译器侧只**修了一个 bug**
+  （空前缀表的孤儿 `else` ✗，见本节末「受控扩展点 ①」✗）。宿主按本仓既有做法放在 `tests/` ✗；
+  `arch/<new>.rs` 是**发行后端**的位置 ✗，夹具不进库本体 ✗。）
 - [ ] 新守卫：断言"新增 ISA 的改动面只有 TOML 与 `arch/<new>.rs`"（扩展 `generality_guard` 的口径，从"无 ISA 名"升级到"无 ISA 形状分支"）。
   （**依赖 W6** ✗：`generality_guard` 的"形状分支"口径对应"分支/跳转降级下放" ✗，
   那部分没做完之前这条守卫必然红 ✗。）
 - [x] 用 `forge-isa validate/lint/abi/test` 四档跑通该夹具。
-  （**实测** ✗：`validate` OK ✔；`lint` **干净（0 结论）** ✔；`abi check` **硬错 0 / 缺口 0** ✔；
-  `test` 报"谱内向量 8 条"✔，而**真跑**在宿主侧 ✗ —— `cargo test -p forge-codegen --test spec_tests`
-  **65 passed / 0 failed** ✗（该夹具 25 条生成期自测 + 8 条向量 ✗）、`--test w11_isa_tests`
-  **6 passed / 0 failed** ✗。）
+  （**两份夹具的实测** ✗：`validate` OK ✔；`lint` **干净（0 结论）** ✔；`abi check` **硬错 0 /
+  缺口 0** ✔；`test` 报"谱内向量 N 条"✔，而**真跑**在宿主侧 ✗ —— `cargo test -p forge-codegen
+  --test spec_tests` **78 passed / 0 failed** ✗（两份夹具的生成期自测 + 13 条向量 ✗）、
+  `--test w11_isa_tests` **6 passed / 0 failed** ✗、`--test w11_vlen_tests`
+  **5 passed / 0 failed** ✗。）
 - [x] 若有任何一处必须改编译器 ⇒ 记入设计文档"受控扩展点"清单并说明理由。
   （**定宽那份：零** ✔ —— 24 位定宽 ISA 的接入没有任何编译器改动 ✗。
   **变长那份：撞到一个候选受控扩展点** ✗ —— 详见本节末「受控扩展点候选」✗。）

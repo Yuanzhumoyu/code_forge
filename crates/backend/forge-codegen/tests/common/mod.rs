@@ -28,6 +28,10 @@ forge_dsl::isa_from_file!("tests/isa/demo_mixed16_32.toml", spec_tests = false);
 // 的实证：本夹具用上表头即名字的 `[form.*]`/`[inst.*]`/`[pred.*]`/`[asm.pseudo.*]`、
 // `[family.*]`、`[machine.*]` 与谱内 `[[vectors]]`，**零编译器改动**。
 forge_dsl::isa_from_file!("tests/isa/demo_v21.toml", spec_tests = false);
+// v21 W11：**变长一态**的第四方 ISA（`prefix_scan` + **stream 段**）——opcode 段 + modrm/imm 段
+// ⇒ 指令长 2 或 3 字节。它同时是 v21 W4 段面在"新 ISA"上的可用性证据，并逼出并修掉了一处
+// 生成器缺口（空前缀表时的孤儿 `else`，见 `codegen/vlen.rs::gen_prefix_scan_loop`）。
+forge_dsl::isa_from_file!("tests/isa/demo_vlen.toml", spec_tests = false);
 // v18 S7d：`include` 组合（根 + 片段两个文件合成一份谱）+ `[[override]]`。
 // 生成物里登记了**两个**来源文件的 `include_bytes!`（改任一片段都触发重编译）。
 forge_dsl::isa_from_file!("tests/isa/include_root.toml", spec_tests = false);

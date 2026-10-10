@@ -1,0 +1,120 @@
+# W11 通用性实证夹具之二：**变长一态**（`prefix_scan`）的第四方 ISA —— `demo_vlen`。
+#
+# 与另一份夹具（`demo_v21`，24 位**定宽** + 就地 `fields`）配对，合起来 = W11 清单的
+# "定宽 + 一态变长各一"。
+#
+# 形态：1 字节 opcode（低 3 位接受操作数寄存器）+ 可选立即数 ⇒ 指令长 2 或 3 字节。
+#   RR    ：opcode(8) + modrm(8)        ⇒ 2 字节
+#   ADDI8 ：opcode_reg(8) + imm8(8)     ⇒ 2 字节
+#   ADDI16：opcode_reg(8) + imm16(16)   ⇒ 3 字节（变长的来源）
+#
+# 这份谱是"非 x86 变长"的第一个实例：它同时逼出一条真实的生成器缺口（空前缀表时
+# `else { break; }` 成了孤儿 ⇒ 生成物不合法），修复见 `codegen/vlen.rs::gen_prefix_scan_loop`。
+
+[meta]
+name = "demo_vlen"
+endian = "little"
+mode = 16
+
+[encoding]
+kind = "prefix_scan"
+max_len = 3
+
+[reg.gpr8]
+prefix = "R"
+count = 8
+
+[operand.r]
+kind = "reg"
+class = "gpr8"
+
+[operand.imm8]
+kind = "imm"
+bits = 8
+signed = true
+
+[operand.imm16]
+kind = "imm"
+bits = 16
+signed = true
+
+# v21 W4：stream 形态 —— `segments` 的**书写序 = 发射序**。
+[form.RR]
+segments = [
+  { kind = "opcode", fields = ["u8[7:0]:opcode"] },
+  { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
+]
+
+# 变长 ISA 的寄存器落点靠 `bind` 显式给（字段名 `reg`/`rm` 与操作数名 `src`/`dst` 不同名）。
+[inst.ADD]
+form = "RR"
+opcode = 0x01
+bind = { reg = "src", rm = "dst" }
+# 寄存器形式：mod 固定 11（同时让 `mod` 位域有引用，不至于被 lint 判成"只声明不用"）。
+match = { mod = 3 }
+ops = ["dst:r:inout", "src:r"]
+asm = "add {dst}, {src}"
+effect = ["Pure"]
+
+[inst.SUB]
+form = "RR"
+opcode = 0x02
+bind = { reg = "src", rm = "dst" }
+match = { mod = 3 }
+ops = ["dst:r:inout", "src:r"]
+asm = "sub {dst}, {src}"
+effect = ["Pure"]
+
+# 立即数形态：**指令级** `segments`（与 x86 `RET_IMM16` 同一写法）：`opcode_reg` 段把目的
+# 寄存器编进 opcode 字节的低 3 位，`imm` 段给出宽度 ⇒ 2 字节 vs 3 字节。
+[inst.ADDI8]
+segments = [
+  { kind = "opcode_reg", value = 0x10 },
+  { kind = "imm", value = 8 },
+]
+ops = ["dst:r:inout", "imm8:imm8"]
+asm = "addi8 {dst}, {imm8}"
+effect = ["Pure"]
+
+[inst.ADDI16]
+segments = [
+  { kind = "opcode_reg", value = 0x18 },
+  { kind = "imm", value = 16 },
+]
+ops = ["dst:r:inout", "imm16:imm16"]
+asm = "addi16 {dst}, {imm16}"
+effect = ["Pure"]
+
+# 机器事实（变长 ISA：栈槽 8 位、对齐 16 位）。
+[machine]
+gpr = "gpr8"
+addr = "gpr8"
+value_gpr = "gpr8"
+scratch = ["R6", "R7"]
+padding = 0
+
+[machine.stack]
+slot = 8
+align = 16
+
+[[lowering]]
+op = "Iadd"
+insts = ["ADD {out}, {0}"]
+
+[[lowering]]
+op = "Isub"
+insts = ["SUB {out}, {0}"]
+
+# 谱内测试向量：先用**闭环形态**（`{asm}` 只断言编解码/文本闭环稳定，不比字节）；
+# 结构事实（长度 2 vs 3、opcode 在首字节）在 `tests/w11_vlen_tests.rs` 里断言。
+[[vectors]]
+asm = "add R1, R2"
+
+[[vectors]]
+asm = "sub R3, R4"
+
+[[vectors]]
+asm = "addi8 R1, 5"
+
+[[vectors]]
+asm = "addi16 R2, 300"

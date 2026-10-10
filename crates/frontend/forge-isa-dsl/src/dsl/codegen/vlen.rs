@@ -2429,6 +2429,19 @@ fn gen_prefix_scan_loop(model: &IsaModel) -> Result<TokenStream, String> {
         };
         stmts.push(quote! { #kw #guard { #(#eff)* __o += #width; } });
     }
+    // **空前缀表**（非 x86 的 `prefix_scan` ISA，例如 W11 的变长夹具）：没有条目可扫 ⇒
+    // 循环体只可能是"立刻停"。早先这里无条件发 `else { break; }`，表空时 `#(#stmts)*`
+    // 为空 ⇒ 只剩一个**孤儿 `else`** ⇒ 生成物不是合法 Rust（实测
+    // `gen_file.rs` 报 `expected an expression, found keyword \`else\``）。x86 有表、
+    // 走的还是下面那条原路径 ⇒ 生成物逐字节不变。
+    if stmts.is_empty() {
+        return Ok(quote! {
+            while __o < bytes.len() {
+                let __b = bytes[__o];
+                break;
+            }
+        });
+    }
     Ok(quote! {
         while __o < bytes.len() {
             let __b = bytes[__o];

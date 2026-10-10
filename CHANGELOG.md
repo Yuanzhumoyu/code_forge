@@ -11,6 +11,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-08) — ISA-DSL v21 W11 第二片：修掉"空前缀表 ⇒ 孤儿 `else`"的生成器缺口 + 变长一态夹具
+
++ **生成器 bug（已修）** ✗：`codegen/vlen.rs::gen_prefix_scan_loop` 在**空前缀表**时发出的是
+  `while … { let __b = bytes[__o]; else { break; } }` ✗ —— 条目为空 ⇒ `if` 分支随空表消失 ✗
+  ⇒ 只剩一个**孤儿 `else`** ✗ ⇒ 生成物不是合法 Rust ✗（预生成期报
+  `expected an expression, found keyword \`else\`` ✗，位置 `gen_file.rs:249` ✗）。
+  后果：**非 x86 的 `prefix_scan` ISA（前缀表为空 ✗）完全无法接入** ✗。修法：表空时发"只
+  `break` 的循环" ✗。
+  **三份发行谱逐字节不变** ✗（x86 表非空、走原路径 ✗；riscv64/arm64 是定宽、根本不走这条 ✗）
+  —— `forge-isa insts` 对照 **0 差异** ✔、x86 JIT 矩阵 **197 passed / 3 skipped / 0 failed** ✔。
++ **新增 W11 第二片夹具** ✗：`crates/backend/forge-codegen/tests/isa/demo_vlen.toml` ✗ ——
+  **变长一态**（`prefix_scan` + **stream 段** ✗）：opcode 段 + modrm/imm 段 ⇒ 指令长
+  **2 或 3 字节** ✗；与 `demo_v21`（24 位定宽 ✗）配对，凑齐 W11 的"定宽 + 一态变长各一" ✗。
+  接入面仍只有 TOML + 两行宿主 + 一个测试二进制 ✗（编译器侧只动了上面那个 bug ✗）。
++ 证据 ✗：`forge-isa validate` **OK** ✔、`lint` **干净** ✔；`--test spec_tests`
+  **78 passed / 0 failed** ✗（该夹具 13 条生成期自测 + 8 条谱内向量 ✗）；
+  `--test w11_vlen_tests` **5 passed / 0 failed** ✗（长度 2 vs 3 ✗、opcode 在首字节 ✗、
+  `opcode_reg` 的寄存器号在低位 ✗、两种长度都吃满的编解码/反汇编往返 ✗、截断不解 ✗）。
++ **一处如实记录的自摆乌龙** ✗：第一版把 `opcode_reg` 的基值写成 `0x11`/`0x12` ✗ —— 低 3 位
+  会被寄存器号覆盖 ✗ ⇒ 两条指令在模 8 上撞车 ✗，症状是"3 字节指令解码只吃 2 字节" ✗；
+  我起初把它当成第二处生成器缺口 ✗，逐条核对后确认是**谱写错** ✗ ⇒ 基值改为 `0x10`/`0x18` ✗，
+  教训写进该测试文件的注释 ✗（"基值低 3 位必须为 0" ✗）。
+
 ### Added (2026-10-08) — ISA-DSL v21 W11 第一片：第四份 ISA 夹具（24 位定宽）**零编译器改动**接入
 
 + 新增 `crates/backend/forge-codegen/tests/isa/demo_v21.toml` ✗：**非 x86/riscv64/arm64** 的
