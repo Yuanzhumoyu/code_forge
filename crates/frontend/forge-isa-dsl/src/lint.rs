@@ -139,7 +139,8 @@ pub fn lint_source_opts(source: &str, opts: &LintOpts) -> Result<LintReport, Vec
 
 /// 从宿主 op 表（`crates/foundation/forge-ir/ops.toml`）里取 op 名清单。
 ///
-/// 只认 `[[ops]]` 风格的条目里的 `name = "…"`（其余字段是宿主自己的元数据，DSL 不解释）。
+/// 只认 `[[op]]` 风格的条目里的 `name = "…"`（其余字段是宿主自己的元数据，DSL 不解释；
+/// 复数的 `[[ops]]` 是旧宽松写法，v21 起不再接受）。
 /// 这样"宿主能力"始终是**宿主的数据**，DSL 侧不留第二份会漂移的名单。
 pub fn host_ops_from_toml(text: &str) -> Result<Vec<String>, String> {
     // 走 serde 的**文档**解析器（与 `dsl::parse` 同一入口）；`Value` 自己的 `FromStr`
@@ -162,11 +163,12 @@ pub fn host_ops_from_toml(text: &str) -> Result<Vec<String>, String> {
         }
         toml::Value::Table(t) => {
             // `crates/foundation/forge-ir/ops.toml` 的形态：顶层 `[[op]]`（116 条）。
-            // 兼容 `[[ops]]` 复数写法（别的宿主可能这么起名）。
-            let arr = ["op", "ops"].iter().find_map(|k| match t.get(*k) {
+            // v21（D4 #19）：**唯一拼法** —— 复数的 `[[ops]]` 不再接受（旧的宽松兼容已删，
+            // 见 `tests::host_ops_rejects_plural_spelling`），写错直接报错并点名正确拼法。
+            let arr = match t.get("op") {
                 Some(toml::Value::Array(items)) => Some(items),
                 _ => None,
-            });
+            };
             match arr {
                 Some(items) => {
                     for it in items {
@@ -177,16 +179,17 @@ pub fn host_ops_from_toml(text: &str) -> Result<Vec<String>, String> {
                 }
                 None => {
                     return Err(
-                        "宿主 op 表里没读到 `[[op]]`/`[[ops]]` 数组——期望每个 op 一条 + `name = \"…\"`"
+                        "宿主 op 表里没读到 `[[op]]` 数组——期望每个 op 一条 + `name = \"…\"`\
+                         （v21 起复数 `[[ops]]` 不再接受）"
                             .into(),
                     );
                 }
             }
         }
-        _ => return Err("宿主 op 表顶层应是 `[[ops]]` 数组".into()),
+        _ => return Err("宿主 op 表顶层应是 `[[op]]` 数组".into()),
     }
     if out.is_empty() {
-        return Err("宿主 op 表里没读到任何 op 名（期望 `[[ops]]` + `name = \"…\"`）".into());
+        return Err("宿主 op 表里没读到任何 op 名（期望 `[[op]]` + `name = \"…\"`）".into());
     }
     out.sort();
     out.dedup();
@@ -1062,15 +1065,15 @@ rows = [
         // 宿主 op 表：一条谱里覆盖的（ADD 不是 op 名，用 Copy）、终结指令、宿主管线、两条真缺口。
         let ops = host_ops_from_toml(
             r#"
-[[ops]]
+[[op]]
 name = "Copy"
-[[ops]]
+[[op]]
 name = "Ret"
-[[ops]]
+[[op]]
 name = "Call"
-[[ops]]
+[[op]]
 name = "VaArg"
-[[ops]]
+[[op]]
 name = "Resume"
 "#,
         )
@@ -1123,6 +1126,14 @@ name = "Resume"
             "{:?}",
             plain.findings
         );
+    }
+
+    /// v21 D4 #19：宿主 op 表**唯一拼法** = `[[op]]`；复数的 `[[ops]]` 不再宽松兼容
+    /// （报错且消息里点名正确拼法）。
+    #[test]
+    fn host_ops_rejects_plural_spelling() {
+        let e = host_ops_from_toml("[[ops]]\nname = \"Copy\"\n").unwrap_err();
+        assert!(e.contains("[[op]]"), "错误消息要点名正确拼法，实得：{e}");
     }
 
     /// `host_ops_from_toml` 的错也要可操作（不是合法 TOML / 没有 op 名）。

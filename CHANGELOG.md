@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 D4 #19：宿主 op 表唯一拼法（`[[ops]]` 不再接受）
+
++ `forge-isa lint --ops <宿主 op 表.toml>` 的读取：只认 `[[op]]` ✗（本仓 `forge-ir/ops.toml` 的形态 ✗）。
+  **复数的 `[[ops]]` 不再宽松兼容** ✗ —— 报错并点名正确拼法（v21 的"唯一拼法"口径 ✗，设计案 §7 后门 #19 ✗）。
++ 守卫 ✗：`crates/frontend/forge-isa-dsl/src/lint.rs` 的
+  `host_ops_rejects_plural_spelling`（负向 ✗）+ 原有的正向用例改成 `[[op]]` ✗。
+
 ### Fixed (2026-10-08) — ISA-DSL v21 W11 第二片：修掉"空前缀表 ⇒ 孤儿 `else`"的生成器缺口 + 变长一态夹具
 
 + **生成器 bug（已修）** ✗：`codegen/vlen.rs::gen_prefix_scan_loop` 在**空前缀表**时发出的是
