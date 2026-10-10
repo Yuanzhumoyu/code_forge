@@ -177,7 +177,7 @@ asm = "add {dst}, {src}"                      # 只引用名字，不声明
 $ cargo run -p forge-isa -- explain toy16.toml ADD
 ISA toy16 （encoding = fixed 16 位；4 条指令）
 指令 ADD
-  来源：[[instructions]] 手写指令
+  来源：[inst.<名字>] 手写指令
   生效规格：
     width_bits = 16
     len_bytes = 2

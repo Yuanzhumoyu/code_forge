@@ -262,11 +262,11 @@ fn checks(m: &IsaModel, source: &str, idx: &DeclIndex, opts: &LintOpts) -> LintR
             used_forms.insert(f.to_string());
         }
     }
-    for (i, f) in m.forms.iter().enumerate() {
+    for f in m.forms.iter() {
         if !used_forms.contains(&f.name) {
             out.push(anchor(
                 idx,
-                &format!("[[forms]] #{i} ('{}')", f.name),
+                &format!("[form.{}]", f.name),
                 "LINT-UNUSED-FORM",
                 format!(
                     "form '{}' 没有被任何指令/模板引用（写了却用不上）——删掉它，或写 `form = \"{}\"`",

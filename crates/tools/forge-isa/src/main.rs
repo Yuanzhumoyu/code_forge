@@ -674,7 +674,7 @@ fn print_explain(e: &Explain) {
             println!("    {k} = {v}");
         }
     } else {
-        println!("  来源：[[instructions]] 手写指令");
+        println!("  来源：[inst.<名字>] 手写指令");
     }
     println!("  生效规格：");
     for (k, v) in e.inst.fields() {

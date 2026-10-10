@@ -310,7 +310,7 @@ pub fn segment_prefix_bytes(
     for form in &m.forms {
         if let Some(segs) = &form.segments {
             for seg in segs {
-                take(&format!("[[forms.{}]]", form.name), seg)?;
+                take(&format!("[form.{}]", form.name), seg)?;
             }
         }
     }
@@ -462,7 +462,7 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
     let segs = form.segments.clone().unwrap_or_default();
     if segs.is_empty() {
         return Err(format!(
-            "[[forms.{}]]: `segments` 不能为空（stream 形态至少要一段）",
+            "[form.{}]: `segments` 不能为空（stream 形态至少要一段）",
             form.name
         ));
     }
@@ -475,7 +475,7 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
     for seg in &segs {
         if let Some(prev) = seen.iter().find(|k| **k == seg.kind) {
             return Err(format!(
-                "[[forms.{fname}]]: 段 kind `{}` 出现两次（每段至多一次）",
+                "[form.{fname}]: 段 kind `{}` 出现两次（每段至多一次）",
                 kind_name(*prev)
             ));
         }
@@ -499,7 +499,7 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
                     // 效果名/字节校验留给后续片（那时前缀表按 form 显式化）。
                     if seg.fields.as_ref().is_some_and(|f| f.is_empty()) {
                         return Err(format!(
-                            "[[forms.{fname}]].prefix: 字段形式的前缀段不能给空的 `fields`"
+                            "[form.{fname}].prefix: 字段形式的前缀段不能给空的 `fields`"
                         ));
                     }
                     // 跳过下面的 bytes 分支
@@ -507,12 +507,12 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
                     // ③ 有序字节列表：**发射序 = 写序**（效果名沿用全局前缀表，W4.4 才收敛到 form）。
                     if list.is_empty() {
                         return Err(format!(
-                            "[[forms.{fname}]].prefix: 有序字节列表不能为空"
+                            "[form.{fname}].prefix: 有序字节列表不能为空"
                         ));
                     }
                     let mut out = Vec::new();
                     for b in list {
-                        parse_byte(&b).map_err(|e| format!("[[forms.{fname}]].prefix: {e}"))?;
+                        parse_byte(&b).map_err(|e| format!("[form.{fname}].prefix: {e}"))?;
                         out.push(b);
                     }
                     keys.prefix = Some(if out.len() == 1 {
@@ -527,7 +527,7 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
                     Some(SegmentBytes::Raw(_)) => Vec::new().into_iter().collect(),
                     None => {
                         return Err(format!(
-                            "[[forms.{fname}]].prefix: 前缀段必须给 `bytes`（字节 → 效果名字典、\
+                            "[form.{fname}].prefix: 前缀段必须给 `bytes`（字节 → 效果名字典、\
                              或有序字节列表）或 `fields`（字节由字段给）"
                         ));
                     }
@@ -545,12 +545,12 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
                 for (byte, effect) in effects {
                     if !super::model::PrefixEffect::NAMES.contains(&effect.as_str()) {
                         return Err(format!(
-                            "[[forms.{fname}]].prefix: 未知的前缀效果名 `{effect}`\
+                            "[form.{fname}].prefix: 未知的前缀效果名 `{effect}`\
                              （可用：{}）",
                             super::model::PrefixEffect::NAMES.join(" / ")
                         ));
                     }
-                    parse_byte(&byte).map_err(|e| format!("[[forms.{fname}]].prefix: {e}"))?;
+                    parse_byte(&byte).map_err(|e| format!("[form.{fname}].prefix: {e}"))?;
                     if effect == "opsize16" {
                         parts.push("opsize".to_string());
                     } else {
@@ -570,18 +570,18 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
                     Some(SegmentBytes::Raw(v)) => v,
                     Some(SegmentBytes::Effects(_)) => {
                         return Err(format!(
-                            "[[forms.{fname}]].escape: 转义段要写裸字节列表（`bytes = [\"0x0F\"]`）"
+                            "[form.{fname}].escape: 转义段要写裸字节列表（`bytes = [\"0x0F\"]`）"
                         ));
                     }
                     None => {
                         return Err(format!(
-                            "[[forms.{fname}]].escape: 转义段必须给 `bytes`（裸字节列表）"
+                            "[form.{fname}].escape: 转义段必须给 `bytes`（裸字节列表）"
                         ));
                     }
                 };
                 let mut out = Vec::new();
                 for b in raw {
-                    out.push(parse_byte(&b).map_err(|e| format!("[[forms.{fname}]].escape: {e}"))?);
+                    out.push(parse_byte(&b).map_err(|e| format!("[form.{fname}].escape: {e}"))?);
                 }
                 keys.escape = Some(out);
             }
@@ -623,7 +623,7 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
                     }
                     None => {
                         return Err(format!(
-                            "[[forms.{fname}]].opcode: 段里必须有名为 `opcode` 的字段\
+                            "[form.{fname}].opcode: 段里必须有名为 `opcode` 的字段\
                              （位宽 = 操作码字节数）；它的值由指令的 `match` 给"
                         ));
                     }
@@ -642,7 +642,7 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
                 // `+r` 形式：opcode 字节 = 基值 | (op0 & 7)，REX.B = op0>>3。
                 let base = seg.value.ok_or_else(|| {
                     format!(
-                        "[[forms.{fname}]].opcode_reg: `+r` 段必须给 `value`（操作码基值，\
+                        "[form.{fname}].opcode_reg: `+r` 段必须给 `value`（操作码基值，\
                          低 3 位留给寄存器号）"
                     )
                 })?;
@@ -656,7 +656,7 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
                     && spec.l.is_none()
                 {
                     return Err(format!(
-                        "[[forms.{fname}]].vex: VEX 段至少要给一个来源键\
+                        "[form.{fname}].vex: VEX 段至少要给一个来源键\
                          （`map`/`pp`/`w`/`l`）——空头等于没声明"
                     ));
                 }
@@ -670,7 +670,7 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
                     && spec.l.is_none()
                 {
                     return Err(format!(
-                        "[[forms.{fname}]].evex: EVEX 段至少要给一个来源键\
+                        "[form.{fname}].evex: EVEX 段至少要给一个来源键\
                          （`map`/`pp`/`w`/`l`）——空头等于没声明"
                     ));
                 }
@@ -683,7 +683,7 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
             }
             SegKind::Imm => {
                 let fs = seg.fields.as_ref().ok_or_else(|| {
-                    format!("[[forms.{fname}]].imm: 立即数段必须给 `fields`（声明宽度）")
+                    format!("[form.{fname}].imm: 立即数段必须给 `fields`（声明宽度）")
                 })?;
                 for f in fs {
                     imm_bits = imm_bits.max(f.bits());
@@ -699,7 +699,7 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
             .any(|s| matches!(s.kind, SegKind::Modrm | SegKind::Imm));
         if !has_operand_seg {
             return Err(format!(
-                "[[forms.{fname}]]: stream 形态至少要有一段操作数编码（`modrm` 或 `imm`）"
+                "[form.{fname}]: stream 形态至少要有一段操作数编码（`modrm` 或 `imm`）"
             ));
         }
     }

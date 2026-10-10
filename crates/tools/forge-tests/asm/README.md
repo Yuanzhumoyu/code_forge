@@ -899,7 +899,7 @@ GAS = `GPL-3.0-or-later`（上游各文件的许可逐条见 `PROVENANCE.md`；G
 > `vec_a = [28:24] = 0x0E`、`vec_c = [21:21] = 1`、`vec_d = [15:12] = 0x8`；
 > 变量段 `vq = [30]`、`vu = [29]`、`vsize = [23:22]`、`rn`、`rd`、`rm`（2 寄存器族的 `rm = 0`，
 > 用 `match = { rm = 0 }` 常量即可，与 `MOVR` 的 `match = { rn = 31 }` 同法）。
-> ⇒ 一个 `[[forms]]`（`opcode_field = "vec_a"`, `opcode = 0x0E`, `operand_fields = ["rd", "rn"]`）
+> ⇒ 一个 `[form.<名字>]`（`opcode_field = "vec_a"`, `opcode = 0x0E`, `operand_fields = ["rd", "rn"]`）
 > 再加 6 条指令（各带 `match = { vq = …, vu = 0, vsize = …, vec_c = 1, vec_d = 8, rm = 0 }`）
 > 与 6 条 `[[vectors]]`（上表字节）。`neg` 同形、`vu = 1`（其字节同法从语料取，别凭记忆写）。
 >
@@ -1069,8 +1069,7 @@ class = "fpr16"
 arrangement = ["8b", "16b", "4h", "8h", "2s", "4s", "2d"]   # 允许的排列（空/省略 = 不带后缀）
 arrangement_match = { q = "vq", size = "vsize" }           # 后缀 → 字段：16b/8h/4s/2d ⇒ q=1；size 按 b/h/s/d
 
-[[instructions]]
-name = "VADD"
+[inst.VADD]
 form = "VEC3R"
 opcode = 0x0E
 ops = ["dst:v:out", "src:v", "src2:v"]
@@ -1135,8 +1134,11 @@ asm = "add {dst}, {src}, {src2}"        # 助记符**不带**后缀（与语料�
 name = "varr" ; kind = "imm" ; width = 3 ; names = "arr"
 encode = "slice" ; fields = ["vq", "vsize"]      # 代码 = size*2 + q
 
-[[forms]]  name = "VEC3RA" ; operand_fields = ["rt","rn","rm","vq","vq","vq"]
-[[instructions]] name = "VADD" ; form = "VEC3RA"
+[form.VEC3RA]
+operand_fields = ["rt","rn","rm","vq","vq","vq"]
+
+[inst.VADD]
+form = "VEC3RA"
 ops = ["dst:fpr:out","src:fpr","src2:fpr","arrd:varr","arrs:varr","arrs2:varr"]
 asm = "add {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 
@@ -1253,8 +1255,8 @@ name = "lane5"          # 元素索引：普通 imm 槽（宽度按族的 imm4/i
 kind = "imm"
 width = 5
 
-[[instructions]]
-name = "VMLA_LANE_8H"   # 助记符带排列后缀（语料就是这么写的）
+[inst.VMLA_LANE_8H]
+# 助记符带排列后缀（语料就是这么写的）
 form = "VEC3RL"         # 新表单：rt/rn/rm + lane（lane 的位域按 ARM ARM 给）
 opcode = 0x0E
 match = { vu = 0, vsize = 1, vec_c = 1, vec_d = 37 }
@@ -1411,8 +1413,8 @@ op 位 `adr` bit31=0 / `adrp` bit31=1 ✓；三个数值锚点 ✓）。
 （其它 20 条无关指令/表单全被牵动 ✗）⇒ 立即 `git checkout` 回退 ✓。
 
 **规则**：谱里的**键名会被多条声明共用**（`opcode_field`、`operand_fields`、`fields`、`ops` …）⇒
-替换必须**锚定到"声明名"这一个块内**（脚本按 `[[forms]]`/`[[instructions]]` 分块，或先定位
-`name = "ADR_F"` 再在其后 N 行内替换 ✓）——**禁止** `Replace('键 = …')` 这种全局做法 ✗。
+替换必须**锚定到"声明名"这一个块内**（脚本按 `[form.<名字>]`/`[inst.<名字>]` 分块，或先定位
+表头再在其后 N 行内替换 ✓）——**禁止** `Replace('键 = …')` 这种全局做法 ✗。
 
 **本轮已实测到的正面结果（保留）**：拆位后机制成立 —— `parsed` 2053 → **2068**、`no_prefix` 14137 → **14030**、
 编码 `checked` 1021 → **1069**、**`known` 57 不变** ✓；只是编码侧还需按上面的方式正确拆位
@@ -1526,11 +1528,11 @@ fld/fsd/flw/fsw …    我们 4 字节        ≠ 上游 2 字节     （c.fld/c
 
 ```
 
-⇒ **一个指令面补不齐**：这不是"缺几条 `[[instructions]]`"✗，而是要**同文本优先选短编码** ✓ —— 同一条
+⇒ **一个指令面补不齐**：这不是"缺几条 `[inst.<名字>]`"✗，而是要**同文本优先选短编码** ✓ —— 同一条
 `addi a0, a1, 0` 既能用 I 型（4 字节）也能用 C 型（2 字节），LLVM 选压缩形态 ✓，而我们的分派是
 "**声明序首匹配** + 槽特异性" ✓ ⇒ 需要一条**明确的机制**（三选一，必须先定，别混着做 ✗）：
 
-1. **`[[instructions]]` 加 `priority` 键**（数值小者先试）✓ —— 与 lowering 已有的 `priority` 同构 ✓，
+1. **`[inst.<名字>]` 加 `priority` 键**（数值小者先试）✓ —— 与 lowering 已有的 `priority` 同构 ✓，
    最小改动、语义清楚；压缩形态给更小的值 ⇒ "能用压缩就用压缩" ✓。
 2. **借用 `[meta]` 的"压缩优先"开关**（按 ISA 全局开）✗ —— 覆盖面更大但会牵动既有 4 字节形态的顺序。
 
@@ -1557,8 +1559,7 @@ fld/fsd/flw/fsw …    我们 4 字节        ≠ 上游 2 字节     （c.fld/c
 kind = "fixed"          # ← 定宽 32 位
 bits = 32
 
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "OP"             # ← 4 字节形态（13 00 00 00）
 opcode = 0x13
 asm = "nop"

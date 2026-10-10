@@ -13,7 +13,7 @@
 一条诊断 = `路径:行:列: 错误码: 消息`，**一行一条**，可直接点击跳到 ISA TOML 的出错处：
 
 ```text
-<repo>/isa/x86.toml:1832:1: DSL-INST: [[instructions.SUB_RM_R]]: form 'MRR_TYPO' is not declared in [[forms]]
+<repo>/isa/x86.toml:1832:1: DSL-INST: [inst.SUB_RM_R]: form 'MRR_TYPO' is not declared in [form.<名字>]
 <repo>/isa/x86.toml:2101:9: DSL-LOWER: [[lowering.Isub]].when: 未知属性 'rd_width'（可用：rd/rs1_width/…）——未知属性恒为假，规则永不命中
 ```
 
@@ -41,8 +41,8 @@
 | `DSL-TYPES` | `[machine.classes]`（v21 W9 前叫 `[types]`） | 类型名非法、目标寄存器组未声明、类宽 < 类型宽（会静默截断） |
 | `DSL-CONV` | `[conventions.*]` | 位域越界/重叠、`modrm` 字段未声明、条件码表为空/`code` 超 4 位/`ir` 名非法或重复映射、`cond` 槽却没有表、用了 `{cc}` 却没映射全 10 个 IR 条件、`prefix_scan` 条目非法 |
 | `DSL-SLOT` | `[[operand_slots]]` | 重名、`kind` 与字段不匹配、`imm` 宽为 0、`class`/`classes` 未声明、`byte_reg` 用错组 |
-| `DSL-FORM` | `[[forms]]` | 位域未声明、既无 `opcode_field` 也无 `modrm`、`modrm` 引用不存在的操作数 |
-| `DSL-INST` | `[[instructions]]` | 指令重名、`form` 未声明、**操作数槽未声明**、角色与槽 `roles` 不符、定宽字段未声明、操作数多于 `operand_fields`、缺少编码信息、`ref` 为空/与指令名冲突、`reloc` 名字未声明/绑定的槽不在操作数里、`asm` 里的 `{参数名}`（`[meta].variants`）**本次没传值**（v19 V5） |
+| `DSL-FORM` | `[form.<名字>]` | 位域未声明、既无 `opcode_field` 也无 `modrm`、`modrm` 引用不存在的操作数 |
+| `DSL-INST` | `[inst.<名字>]` | `form` 未声明、**操作数槽未声明**、角色与槽 `roles` 不符、定宽字段未声明、操作数多于 `operand_fields`、缺少编码信息、`ref` 为空/与指令名冲突、`reloc` 名字未声明/绑定的槽不在操作数里、`asm` 里的 `{参数名}`（`[meta].variants`）**本次没传值**（v19 V5）；**重名表头由 TOML 自身拒绝**（`DSL-TOML`/`duplicate key`） |
 | `DSL-RELOC` | `[[reloc]]`（v18 S3d） | 名字为空/重复、`slot` 未声明或不是 `imm` 槽、`semantics` 不是宿主已知语义（由 serde 在反序列化期拒绝） |
 | `DSL-DERIVE` | `[pred.<名字>]`（v18 S3f 引入时叫 `[[derive]]`） | 名字与核心谓词属性重名（解析期）、`expr` 不是合法谓词、引用了未知属性或另一个派生（提示"派生不能引用派生"）；**重名表头由 TOML 自身拒绝**（`DSL-TOML`/`duplicate key`） |
 | `DSL-PSEUDO` | `[[pseudo]]`（v18 S3e） | 名字为空/重复/与某条指令模板的**前导字面**重名（比对前导字面 token，不按空白切词查助记符）、`params` 为空或重复、`emit` 为空或有空行、emit 行首**接不上**任何指令模板也不是别的伪指令/伪操作（`.` 开头）、`{…}` 不是声明的参数、参数没被用到 |
@@ -68,7 +68,7 @@
 ### 3.2 `[[lowering.OP]].when: 未知属性 'A'（可用：…）`
 
 谓词属性拼错（`rd_width` vs `rd`）。**为什么硬报**：未知属性在求值时恒为假 ⇒ 规则**永不命中**，
-既不报错也不生效，是历史上最难查的一类缺陷。v18 起可用 `[[derive]]` 声明派生属性，
+既不报错也不生效，是历史上最难查的一类缺陷。v18 起可用命名谓词（v21 W10 起写 `[pred.<名字>]`）声明派生属性，
 不必改 Rust（S3）。
 
 ### 3.3 `[[lowering.OP]]: 第 N 条规则是死规则`

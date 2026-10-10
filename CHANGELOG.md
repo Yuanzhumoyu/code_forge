@@ -11,6 +11,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W10 第四片：旧面文档与消息的死链清零
+
++ **代码侧消息**：`[[forms]]` / `[[forms.X]]` / `[[derive]]` / `[[derive.X]]` 一律改成新面
+  `[form.<名字>]` / `[form.X]` / `[pred.<名字>]` / `[pred.X]`（`validate.rs` / `stream_decl.rs` /
+  `field_decl.rs` / `model.rs` / `lint.rs` / `diag.rs` / CLI 输出，共 42 处）——文档里的示例诊断
+  因此与**真实输出**一致。顺带：删掉 `validate.rs` 里已成死代码的一处
+  `replacen("[[instructions]]", …)`（旧面撤掉后不会再产出"裸节名"前缀的消息）；
+  `LINT-UNUSED-FORM` 的锚点改用真实表头 `[form.<名字>]`（不再用 `[[forms]] #i`）。
++ **文档**：`docs/reference/isa-dsl.md`（键表外的散文 10 处 + 2 个围栏示例）、
+  `docs/reference/isa-dsl-errors.md`（示例诊断、`DSL-FORM`/`DSL-INST` 的节名、"重名改由 TOML
+  自身拒绝"）、`docs/guides/isa-dsl-tutorial.md`、`docs/reference/calling-conventions.md`、
+  `docs/performance/bench_baseline.md`（列头标注"当时写 `[[instructions]]`"）、
+  `crates/tools/forge-tests/asm/README.md`（5 处）全部对齐 v21 面。
++ **loader 语义段更正（实质内容，不只是改名）**：`[form.<名字>]`/`[inst.<名字>]`/`[pred.<名字>]`
+  不再是数组节 ⇒ 文档里"数组节按 include 序追加"的说法改为"数组节
+  （`[[operand_slots]]`/`[[templates]]`/`[[vectors]]`…）按 include 序追加；**表头即名字的节**
+  按合并文本里的**出现位置**决定声明序（解析期按源文本序恢复）"。
++ **刻意保留**：明确标注为历史的提法（"v18 S3f 引入时叫 `[[derive]]`"）与历史测量表。
++ 证据：`forge-isa-dsl` 整包全绿；`schema_guard` 9/9；`markdownlint` 0 issue；三谱 `insts`
+  与迁移前**逐行相同**；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W10 第三片：`[[derive]]` → `[pred.<名>]`（表头即属性名）
 
 + 命名谓词改成**表头即属性名**（设计案 §6.7）：`[[derive]]` + `name = "is_64"` 改写为

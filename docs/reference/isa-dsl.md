@@ -421,7 +421,7 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
 | `mixed` | 逐指令 `width`（缺省 `bits`） | 按该指令字长发字节 | 按 `widths` **升序**分组，每组一棵 trie，"首个完整匹配即停" | `variable_length = true`，`fixed_inst_size = 0`，min/max = 最窄/最宽字长 |
 | `prefix_scan` | 前缀链（逐指令变长） | `codegen/vlen.rs`（ModRM/REX/VEX…） | 变长切片 + 前缀扫描 | `variable_length = true`，`min_inst_len = 1`，`max_inst_len = max_len` |
 
-- **逐指令 `width`**（`[[instructions]]` 与 `[[templates]]` 的行；**位**）：
+- **逐指令 `width`**（`[inst.<名字>]` 与 `[[templates]]` 的行；**位**）：
   `mixed` 下必填（或用 `[encoding].bits` 作缺省）、`fixed` 下允许显式重复 `bits`
   （自解释）但写别的值报错、`prefix_scan` 下不得写。
 - **三态的键结构性互斥**：`fixed` 写 `widths`/`max_len`、`prefix_scan` 写 `bits`、
@@ -517,7 +517,7 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
 
 1. **名字解析**：`[machine].fixed/scratch/link`、
    `[machine.frame].sp/fp`、
-   `[machine.spill.*].base`、`[[instructions]].implicit_regs` 里的物理名必须能在某个
+   `[machine.spill.*].base`、`[inst.<名字>].implicit_regs` 里的物理名必须能在某个
    已声明 `[reg.*]` 组内解析——否则生成期报错（历史实现 `filter_map` 静默丢弃：
    scratch/callee_saved 缺失 ⇒ regalloc 会分配被占用寄存器）。
 2. **帧寄存器**：声明了 `[machine.frame]` 却没有可解析的 `sp`（或 `fp`）→ 报错；
@@ -581,7 +581,7 @@ O1 开启后（含墓碑值）仍可编译、`i64` 的编译期拒绝。
 一次声明、指令引用，避免逐指令写位域。
 
 ```toml
-# v21 W2：字段**就地声明在 form 里**（`[[forms]].fields`），不再有 [conventions.bitfields]
+# v21 W2：字段**就地声明在 form 里**（`[form.<名字>].fields`），不再有 [conventions.bitfields]
 #   "u5[11:7]:rd"                          连续位域（值低位对齐词低位）
 #   "i13[12:1 -> 31,30:25,11:8,7]:imm_b"     散射（值位段 -> 词位块，按值低位→高位）
 
@@ -665,8 +665,7 @@ schema/诊断/生成器共用它，不另抄名单）：
 
 # 1) 条件当**操作数**：槽 kind = "cond"，汇编/反汇编按名解析与渲染
 
-[[instructions]]
-name = "CSELX"
+[inst.CSELX]
 ops = ["dst:r64:out", "src:r64", "cc:cond4", "src2:r64"]   # cond4 槽 kind = "cond"
 asm = "csel {dst}, {src}, {src2}, {cc}"
 
@@ -972,10 +971,10 @@ names = "csr"
 
 形式 = 语义键组合（结构化配置，实现为生成器内部函数；开放可扩展集合）。
 
-**S3 起 form 是可选预设**：`[[forms]]` 与 `[[instructions]]` **共用同一组编码键**
+**S3 起 form 是可选预设**：`[form.<名字>]` 与 `[inst.<名字>]` **共用同一组编码键**
 `opcode_reg`/`imm`/`escape`），指令可逐键覆盖
 （v21 W2 起 `opcode_field`/`operand_fields` **不再是用户面键**：它们由
-`[[forms]].fields` + `ops`/`bind` 展开派生，见「字段声明」节）
+`[form.<名字>].fields` + `ops`/`bind` 展开派生，见「字段声明」节）
 （`EncKeys::over`，指令优先），`form` 本身可省略——组合不再需要预先命名。
 
 **`prefix` 键（固定前缀字节）**：`"field"` = 取 `fields.prefix` 的字节（SSE 的 66/F2/F3
@@ -1202,8 +1201,9 @@ value = "18.0-fd"
 
 合并规则（实现在 `forge_isa_dsl::loader`，单点、可测）：
 
-- **include 序在前、根文件在后**：数组节（`[[instructions]]`/`[[operand_slots]]`/
-  `[[forms]]`/`[[templates]]`…）因此天然"先公共后扩展"；
+- **include 序在前、根文件在后**：数组节（`[[operand_slots]]`/`[[templates]]`/`[[vectors]]`…）
+  因此天然"先公共后扩展"；**表头即名字的节**（`[form.<名字>]`/`[inst.<名字>]`/`[pred.<名字>]`）
+  的顺序按**合并文本里的出现位置**定（解析期按源文本序恢复声明序）；
 - **表节合并**：`[meta]`/`[conventions.cond]` 这类表跨文件合并，重复的
   `[表头]` 视为续写（同一节的键写在不同文件里是允许的）；
 - **同名标量冲突报错**（消息带两个来源文件与 `include` 链），要用
@@ -1455,7 +1455,7 @@ op = "Iadd"
 insts = ["movrr {out}, {0}", "add {1}, {out}"]
 ```
 
-**指令怎么引用**：`insts` 行首是**该指令的声明名（`[[instructions]].name`）或它声明的
+**指令怎么引用**：`insts` 行首是**该指令的声明名（`[inst.<名字>]` 的表头）或它声明的
 `group` 别名**（`ref_to_infos` 按这两个键建表）——**不是** asm 模板的首词：模板可以操作数
 前置（`asm = "{dst} = {src}"`），DSL 也不按空白切词推助记符。发行谱里的 `group` 只是**恰好**
 取了助记符风格的短名（x86 `ref = "mov"`）。同一引用名多条形状（如 `add reg,reg` 与
@@ -1790,7 +1790,7 @@ memory0（`({J})`）。寄存器名大小写不敏感（`xmm0` / `XMM0` 等价�
 - **Inst 字段类型化**：寄存器操作数为 `Reg` 枚举（x86 `MovRmR { src: Reg, dst: Reg }`、
   riscv `Add { dst: Reg, src: Reg, src2: Reg }`），opsize → `u8`、cond → `u8`、
   mem → `MemRef`、imm/label → `i64`；**字段名 = `ops` 里声明的操作数名**（v18 S7d，
-  见「`[[instructions]]`」节的「声明名 = 生成的 `Inst` 字段名」），不再有裸 `u32`
+  见「`[inst.<名字>]`」节的「声明名 = 生成的 `Inst` 字段名」），不再有裸 `u32`
   位置字段（op0/op1/op2）。regalloc 经 `Reg::from_index(phys, <槽位 RegClass>)` 回填。
 - **集成层**：`TargetMachine`（组合 `IsaInfo`/`RegInfo`/`ABI`/`Lowering`/`Encoder`/
   `FrameLowering`/`Disassembler`/`Assembler`/`Decoder`）、`MachineInst`（uses/defs/
@@ -2014,7 +2014,7 @@ partial = 1
 | 键 | 位置 | 含义 |
 | --- | --- | --- |
 | `variants = { xlen = [32, 64] }` | `[meta]` | 声明**参数名 → 取值域**（参数的唯一事实源；没声明的参数一律报错） |
-| `when = { xlen = [64] }` | `[[instructions]]` / `[[templates]].body` 与行 / `[machine.spill.*]` / `[[pseudo]]` / `[[pattern]]` | 该声明**只在**这些取值下存在（六处同一判定：`dsl::model::variants_keep`；旧键名 `only_variants`，v21 W9 起在 spill 上叫 `when`） |
+| `when = { xlen = [64] }` | `[inst.<名字>]` / `[[templates]].body` 与行 / `[machine.spill.*]` / `[[pseudo]]` / `[[pattern]]` | 该声明**只在**这些取值下存在（六处同一判定：`dsl::model::variants_keep`；旧键名 `only_variants`，v21 W9 起在 spill 上叫 `when`） |
 | `params = { xlen = 32 }` | `isa_from_file!` 宏参数 | 生成期投影（参数进生成物文件名哈希：同一份谱的两个变体落到不同文件） |
 | `--params xlen=32` | `forge-isa validate\|insts` | 工具期投影（`--params a=1,b=2` 可多次/逗号分隔） |
 
@@ -2063,7 +2063,7 @@ RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不�
 | 码 | 判什么 | 档 |
 | --- | --- | --- |
 | `LINT-UNUSED-SLOT` | `[[operand_slots]]` 没被任何 `ops = ["名:槽[:角色]"]` 引用 | 默认 |
-| `LINT-UNUSED-FORM` | `[[forms]]` 没被任何指令/模板 `form` 引用 | 默认 |
+| `LINT-UNUSED-FORM` | `[form.<名字>]` 没被任何指令/模板 `form` 引用 | 默认 |
 | `LINT-UNUSED-BITFIELD` | 位域名在整份谱里只出现在声明处（按标识符边界计数，`imm1` 不命中 `imm12`） | 默认 |
 | `LINT-BITFIELD-OVERLAP` | **同一条指令的字段视图**里两个位域抢同一批位（视图 = form 预设 ⊕ 指令覆盖后的编码键 + 指令 `fields`） | 默认 |
 | `LINT-OP-GAP` | 宿主 op 表里有、本谱既没有 `[[lowering]]` 也没有 `[[pattern]]` 覆盖的**真缺口** | `--ops <宿主 op 表>` |
@@ -2117,8 +2117,7 @@ RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不�
 RV32 的 `imm12 = 0x698`（只差 imm12 的 bit5 = word bit 25 = `funct7[0]`，证据是语料 `rv32zbb-only-valid.s:13`）。
 
 ```toml
-[[instructions]]
-name = "REV8"
+[inst.REV8]
 form = "I"
 opcode = 0x13
 match = { funct3 = 5 }
@@ -2143,15 +2142,15 @@ asm = "rev8 {dst}, {src}"
 
 **发行后端**（库本体，`crates/backend/forge-codegen/src/arch/`）：
 
-- **`isa/x86.toml`**：142 条 `[[instructions]]` + 11 条 `[[templates]]`（55 行 →
+- **`isa/x86.toml`**：142 条 `[inst.<名字>]` + 11 条 `[[templates]]`（55 行 →
   共 197 条指令）+ 2 条 `[[pattern]]`，19 个 form 预设，`[[lowering]]` **197 条声明**（v18 S5
   迁移后；迁移前 220 条，见「`[[lowering]]`」节的 `op` 名单）——`forge-isa insts` 报的是
   `vary`/`op` 展开后的**执行规则数**（x86 286 / riscv 110 / arm64 19）。变长语义键，
   接 TargetMachine；jit 矩阵 195 passed / 3 skipped / 0 failed。
-- **`isa/riscv64.toml`**：48 条 `[[instructions]]` + 19 条 `[[templates]]`（68 行 →
+- **`isa/riscv64.toml`**：48 条 `[inst.<名字>]` + 19 条 `[[templates]]`（68 行 →
   共 116 条指令），定宽试点（QEMU 真执行验证）；jit 矩阵 131 passed / 67 skipped /
   0 failed。`[machine.frame] layout = "fp-inside"` 全推导。
-- **`isa/arm64.toml`**：24 条 `[[instructions]]` + 33 条 `[[templates]]`（80 行 →
+- **`isa/arm64.toml`**：24 条 `[inst.<名字>]` + 33 条 `[[templates]]`（80 行 →
   共 104 条指令，含 S3c 的 `b.cond` 16 行），A64 定宽后端（golden 依据见
   `docs/reference/aarch64-encoding-ref.md`）。
 

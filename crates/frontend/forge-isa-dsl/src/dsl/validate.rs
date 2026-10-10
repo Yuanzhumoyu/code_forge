@@ -1422,7 +1422,7 @@ fn validate_derives(m: &IsaModel) -> Result<(), String> {
                     ""
                 };
                 return Err(format!(
-                    "[[derive.{}]] expr: 未知属性 '{a}'{hint}（可用：{}）",
+                    "[pred.{}] expr: 未知属性 '{a}'{hint}（可用：{}）",
                     d.name,
                     super::pred::PRED_ATTRS.join(" / ")
                 ));
@@ -1974,16 +1974,16 @@ fn validate_forms(m: &IsaModel) -> Result<(), String> {
     let mut seen = BTreeSet::new();
     for f in &m.forms {
         if !is_valid_meta_name(&f.name) {
-            return Err(format!("[[forms]]: invalid form name '{}'", f.name));
+            return Err(format!("[form.<名字>]: invalid form name '{}'", f.name));
         }
         if !seen.insert(f.name.clone()) {
-            return Err(format!("[[forms]]: duplicate form name '{}'", f.name));
+            return Err(format!("[form.<名字>]: duplicate form name '{}'", f.name));
         }
         if let Some(bf) = &f.keys.opcode_field
             && !m.conventions.bitfields.contains_key(bf)
         {
             return Err(format!(
-                "[[forms.{}]].opcode_field '{bf}' is not declared in [conventions.bitfields]",
+                "[form.{}].opcode_field '{bf}' is not declared in [conventions.bitfields]",
                 f.name
             ));
         }
@@ -1991,7 +1991,7 @@ fn validate_forms(m: &IsaModel) -> Result<(), String> {
             for (i, bf) in of.iter().enumerate() {
                 if !m.conventions.bitfields.contains_key(bf) {
                     return Err(format!(
-                        "[[forms.{}]].operand_fields[{i}] '{bf}' is not declared in [conventions.bitfields]",
+                        "[form.{}].operand_fields[{i}] '{bf}' is not declared in [conventions.bitfields]",
                         f.name
                     ));
                 }
@@ -1999,11 +1999,11 @@ fn validate_forms(m: &IsaModel) -> Result<(), String> {
         }
         if let Some(esc) = &f.keys.escape {
             if esc.is_empty() {
-                return Err(format!("[[forms.{}]].escape must not be empty", f.name));
+                return Err(format!("[form.{}].escape must not be empty", f.name));
             }
             if esc.len() > 4 {
                 return Err(format!(
-                    "[[forms.{}]].escape: at most 4 bytes, got {}",
+                    "[form.{}].escape: at most 4 bytes, got {}",
                     f.name,
                     esc.len()
                 ));
@@ -2018,14 +2018,14 @@ fn validate_forms(m: &IsaModel) -> Result<(), String> {
         if let Some(p) = &f.keys.prefix {
             let parts = p.parts();
             if parts.is_empty() {
-                return Err(format!("[[forms.{}]].prefix: 列表不能为空", f.name));
+                return Err(format!("[form.{}].prefix: 列表不能为空", f.name));
             }
             let mut n_field = 0usize;
             for part in parts {
                 if part == "opsize" {
                     if parts.len() > 1 {
                         return Err(format!(
-                            "[[forms.{}]].prefix: \"opsize\" 只能单独出现（它由操作数宽度驱动，\
+                            "[form.{}].prefix: \"opsize\" 只能单独出现（它由操作数宽度驱动，\
                              不在 prefix 处产字节）",
                             f.name
                         ));
@@ -2038,7 +2038,7 @@ fn validate_forms(m: &IsaModel) -> Result<(), String> {
                 }
                 if parse_u64(part).is_none() {
                     return Err(format!(
-                        "[[forms.{}]].prefix: 每项必须是 \"field\"、\"opsize\" 或字节字面量，\
+                        "[form.{}].prefix: 每项必须是 \"field\"、\"opsize\" 或字节字面量，\
                          而 '{part}' 都不是",
                         f.name
                     ));
@@ -2046,7 +2046,7 @@ fn validate_forms(m: &IsaModel) -> Result<(), String> {
             }
             if n_field > 1 {
                 return Err(format!(
-                    "[[forms.{}]].prefix: \"field\" 至多出现一次（它只来自 fields.prefix 一个字节）",
+                    "[form.{}].prefix: \"field\" 至多出现一次（它只来自 fields.prefix 一个字节）",
                     f.name
                 ));
             }
@@ -2059,14 +2059,14 @@ fn validate_forms(m: &IsaModel) -> Result<(), String> {
         // rex_w 值域由 `RexW` 枚举在反序列化期强制（未知值 → serde 报错 + 候选列表）
         if f.keys.vex.is_some() && f.keys.evex.is_some() {
             return Err(format!(
-                "[[forms.{}]]: `vex` and `evex` are mutually exclusive",
+                "[form.{}]: `vex` and `evex` are mutually exclusive",
                 f.name
             ));
         }
         if let Some(imm) = f.keys.imm
             && imm == 0
         {
-            return Err(format!("[[forms.{}]].imm must be > 0", f.name));
+            return Err(format!("[form.{}].imm must be > 0", f.name));
         }
     }
     Ok(())
@@ -2152,7 +2152,7 @@ fn validate_instructions_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
     for inst in &m.instructions {
         if let Err(msg) = check_instruction(m, inst) {
             // 模板展开出的实例：把错误锚回**模板声明**（`[[templates.X]]`），
-            // 而不是一个在源里根本不存在的 `[[instructions.实例名]]`。
+            // 而不是一个在源里根本不存在的 `[inst.实例名]`。
             let msg = match &inst.from_template {
                 Some(t) => {
                     // v21 W5：族降级来的实例锚到**源里真实存在的** `[family.X]` 节
@@ -2165,8 +2165,9 @@ fn validate_instructions_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
                     } else {
                         format!("[[templates.{t}]]")
                     };
+                    // 只换 `[inst.X]` 前缀：v21 W10 之后不再有"裸节名"形态的消息
+                    //（旧面 `[[instructions]]` 已撤，第二处 replacen 随之删除）。
                     msg.replacen(&format!("[inst.{}]", inst.name), &sec, 1)
-                        .replacen("[[instructions]]", &sec, 1)
                 }
                 None => msg,
             };
@@ -2181,7 +2182,7 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
         && !form_exists(m, f)
     {
         return Err(format!(
-            "[inst.{}]: form '{f}' is not declared in [[forms]]",
+            "[inst.{}]: form '{f}' is not declared in [form.<名字>]",
             inst.name
         ));
     }

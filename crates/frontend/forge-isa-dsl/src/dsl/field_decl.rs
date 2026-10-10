@@ -441,7 +441,7 @@ pub fn lower_field_syntax(m: &mut super::model::IsaModel) -> Result<(), String> 
                 };
                 if hi > bits {
                     return Err(format!(
-                        "[[forms.{form}]]: 字段 `{n}` 最高位 {} 超出指令字宽 {bits} 位（[encoding]）",
+                        "[form.{form}]: 字段 `{n}` 最高位 {} 超出指令字宽 {bits} 位（[encoding]）",
                         hi - 1
                     ));
                 }

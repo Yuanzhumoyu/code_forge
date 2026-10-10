@@ -3754,19 +3754,19 @@ impl IsaModel {
         let mut out: BTreeMap<String, super::pred::Pred> = BTreeMap::new();
         for d in &self.derive {
             if d.name.trim().is_empty() {
-                return Err("[[derive]]: name 不能为空".into());
+                return Err("[[pred.<名>]]: name 不能为空".into());
             }
             if super::pred::PRED_ATTRS.contains(&d.name.as_str()) {
                 return Err(format!(
-                    "[[derive.{}]]: 名字与核心谓词属性重名（核心属性：{}）——换个名字，别遮蔽它",
+                    "[pred.{}]: 名字与核心谓词属性重名（核心属性：{}）——换个名字，别遮蔽它",
                     d.name,
                     super::pred::PRED_ATTRS.join(" / ")
                 ));
             }
             let pred = super::pred::parse(&d.expr)
-                .map_err(|e| format!("[[derive.{}]] expr: {e}", d.name))?;
+                .map_err(|e| format!("[pred.{}] expr: {e}", d.name))?;
             if out.insert(d.name.clone(), pred).is_some() {
-                return Err(format!("[[derive.{}]]: 名字重复", d.name));
+                return Err(format!("[pred.{}]: 名字重复", d.name));
             }
         }
         self.derived_preds = out;

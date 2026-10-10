@@ -15,7 +15,7 @@
 //! ——重复声明这类错误因此能一次指出两处。
 //!
 //! 消息格式约定（沿用 既有约定，校验器只需照旧写前缀）：
-//! `[inst.NAME]: …` / `[[forms.NAME]]: …` / `[[operand_slots]] #i ('NAME'): …` /
+//! `[inst.NAME]: …` / `[form.NAME]: …` / `[[operand_slots]] #i ('NAME'): …` /
 //! `[[lowering.OP]]: …` / `[reg.NAME]: …` / `[stack].key …` / `[[pattern]] #i: …`。
 
 use std::collections::BTreeMap;
@@ -585,7 +585,7 @@ insts = ["ADD {out}, {0}, {1}"]
         assert_eq!(
             (a.line, a.col),
             (12, 1),
-            "未声明的名字落回 [[instructions]] 首处"
+            "未声明的名字落回 [inst.<名字>] 首处"
         );
         let z = idx.anchor("完全没有前缀的消息");
         assert_eq!((z.line, z.col), (1, 1));
