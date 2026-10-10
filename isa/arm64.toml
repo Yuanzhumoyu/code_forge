@@ -5165,5 +5165,5 @@ insts = ["B {target}"]
 insts = ["CBZX {cond}, {false}", "B {true}"]
 # v21 W6 乙：整数返回由谱面接管（`{ret_src}` = 承载返回值的虚拟寄存器，`{ret}` = ABI 返回槽）。
 [[lower.Ret]]
-when = { ret_kind = "int" }
+when = { bank = "gpr" }
 insts = ["MOVX {ret}, {ret_src}"]

@@ -3184,13 +3184,84 @@ pub struct OperandUse {
 pub struct TermSeq {
     /// 指令序列（与 `[[lowering]].insts` 同一套占位符/替换语义）。
     pub insts: Vec<String>,
-    /// **生成期选择条件**（v21 W6 乙）：终结规则可以按 **IR 语义** 分支 ✗。
+    /// **返回形态条件**（v21 W6 乙）：终结规则按 **IR 语义** 分支 ✗。
     ///
-    /// 现在只有 `ret_kind` 一个键，取值 `"int"` / `"float"` / `"vec16"` / `"byref"` / `"multi"` ✗。
-    /// 它是**静态**事实（返回值的 IR 类型在生成期已知 ✗）⇒ **不经运行时谓词求值** ✗，
-    /// 由终结 lowering 在生成期挑第一条匹配的规则 ✗。
+    /// 只有 `[lower.Ret]` 需要它（`Jmp`/`Br` 的序列与返回值无关 ✗）。
     #[serde(default)]
-    pub when: Option<toml::Value>,
+    pub when: Option<RetWhen>,
+}
+
+/// `[lower.Ret].when` 的**数据化**条件（v21 W6 乙）。
+///
+/// **不是** `ret_kind = "int"|"f32"|"f64"` 那种枚举——那样把宽度写死了：f8/f16/f128、
+/// i8…i128、任意宽度指针都无法表达，违背本库"**宽度是数据**"的纪律 ✗。
+/// 这里四个键各说一件事，宽度是**任意整数**：
+///
+/// ```toml
+/// [[lower.Ret]]
+/// when = { bank = "fpr", width = 32 }      # 32 位浮点返回
+/// insts = ["MOVSS {retf}, {retf_src}"]
+///
+/// [[lower.Ret]]
+/// when = { bank = "gpr" }                   # 任意整数/指针宽度（不写 width ⇒ 不限）
+/// insts = ["MOV_RM8_R64 {ret_src}, {ret}"]
+/// ```
+///
+/// 规则**具体优先**：(条件键个数降, 声明序升 ✗)——写了 `width` 的赢过没写的 ✗，
+/// 于是"一条通用 + 若干特例"是自然写法（x86 的 GPR 搬运靠 `gprx` 视图天然宽度无关 ✗，
+/// 而 `MOVSS`/`MOVSD` 是两条指令 ⇒ 各写一条 ✗）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetWhen {
+    /// 返回值所在的**寄存器银行**（IR 侧封闭集）：`"gpr"` | `"fpr"` | `"vec"`。
+    #[serde(default)]
+    pub bank: Option<String>,
+    /// 返回值的**位宽**（数据，不是枚举）：任意正整数（8/16/32/64/128/…）。
+    #[serde(default)]
+    pub width: Option<u32>,
+    /// 是否**按引用**返回（ABI 的 sret 形态）。
+    #[serde(default)]
+    pub by_ref: Option<bool>,
+    /// 是否**多值**返回。
+    #[serde(default)]
+    pub multi: Option<bool>,
+}
+
+impl RetWhen {
+    /// 条件里实际写了几个键（**具体度**，用于规则裁决 ✗）。
+    pub fn specificity(&self) -> usize {
+        [
+            self.bank.is_some(),
+            self.width.is_some(),
+            self.by_ref.is_some(),
+            self.multi.is_some(),
+        ]
+        .iter()
+        .filter(|b| **b)
+        .count()
+    }
+
+    /// 给诊断用的可读描述。
+    pub fn describe(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(b) = &self.bank {
+            parts.push(format!("bank = \"{b}\""));
+        }
+        if let Some(w) = self.width {
+            parts.push(format!("width = {w}"));
+        }
+        if let Some(b) = self.by_ref {
+            parts.push(format!("by_ref = {b}"));
+        }
+        if let Some(m) = self.multi {
+            parts.push(format!("multi = {m}"));
+        }
+        if parts.is_empty() {
+            "(空条件)".to_string()
+        } else {
+            parts.join(", ")
+        }
+    }
 }
 
 // ──────────────────────── `asm` 写法列表（v21 W7）────────────────────────
@@ -4217,17 +4288,29 @@ pub fn check_term_lowering_supported(m: &IsaModel) -> Result<(), String> {
         }
         if op == "Ret" {
             for r in rules {
-                if let Some(k) = r
-                    .when
-                    .as_ref()
-                    .and_then(|w| w.get("ret_kind"))
-                    .and_then(|v| v.as_str())
-                    && k != "int"
+                let Some(w) = &r.when else { continue };
+                // 银行：IR 侧封闭集三选一；`vec` 还没下放（生成器里仍是四形态兜底）。
+                if let Some(b) = &w.bank
+                    && !matches!(b.as_str(), "gpr" | "fpr")
                 {
                     return Err(format!(
-                        "[lower.Ret].when.ret_kind = \"{k}\": 该返回形态还没下放（v21 W6 分片进行中）\
-                         ——目前只有整数返回（\"int\" ✗）由谱面接管，其余四种仍在生成器里"
+                        "[lower.Ret].when.bank = \"{b}\": 该返回银行还没下放（v21 W6 分片进行中）\
+                         ——已下放 gpr/fpr；`vec`（按值向量与宽向量 sret）仍在生成器里"
                     ));
+                }
+                // 按引用返回（sret）还没下放：写成 `by_ref = true` 会静默拿不到 sret 指针。
+                if w.by_ref == Some(true) {
+                    return Err(
+                        "[lower.Ret].when.by_ref = true: 按引用返回（sret）还没下放（v21 W6 分片进行中）"
+                            .to_string(),
+                    );
+                }
+                // 多值返回还没下放（生成器在 `multi_ret_body` 里先返回，规则命中不到）。
+                if w.multi == Some(true) {
+                    return Err(
+                        "[lower.Ret].when.multi = true: 多值返回还没下放（v21 W6 分片进行中）"
+                            .to_string(),
+                    );
                 }
             }
         }

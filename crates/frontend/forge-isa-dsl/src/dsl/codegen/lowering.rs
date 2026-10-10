@@ -364,8 +364,118 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
              （在指令上写 `data_width = 32`/`64`）".into(),
         ));
     };
+    // ── v21 W6 乙：返回 lowering 的谱面规则 → **运行时分支** ──
+    //
+    // 条件键是**数据**（bank/width/by_ref/multi ✗），不是 `ret_kind = "f32"` 那种枚举：
+    // 宽度写任意整数 ⇒ f8/f16/f32/f64/f128、i8…i128、指针都表达得了 ✗。
+    // 银行/宽度/是否按引用都是**运行期**事实（`type_bits_of`/`xreg_types` ✗）⇒ 规则编译成
+    // 一串 `if`；**没有规则命中 ⇒ 旧的硬编码四形态**（行为不变 ✗）。
+    //
+    // 返回槽（只在被选中的分支里求值 ⇒ fail-closed 不会误触发 ✗）：
+    //  · GPR：plan 的 ret 槽 优先，退化到约定级 `conv.ret_gpr`，都没有 ⇒ Unsupported。
+    //  · FPR：**类内 0 号**（= 旧行为）。约定层目前只带 `ret_gpr`、没有浮点返回槽字段；
+    //    2026-10-08 实测"改成查 plan"会让 riscv64 `call_float_roundtrip` 错值
+    //    ⇒ 按"差异先当 bug"保持旧语义，等约定层补上浮点返回槽再切。
+    let gpr_ret_dest: TokenStream = quote! {
+        match ctx
+            .conv
+            .layout()
+            .and_then(|__cl| match __cl.ret.as_ref() {
+                Some(crate::machine::call_layout::RetPlace::Reg { class, index, .. }) => {
+                    Some((*index, *class))
+                }
+                _ => None,
+            })
+            .or(ctx.conv.ret_gpr)
+        {
+            Some((__ri, __rc)) => Reg::from_index(__ri, __rc),
+            None => {
+                return Err(crate::prelude::IrError::Unsupported(
+                    "ISA-DSL return lowering: 返回寄存器需要调用布局（plan 的 ret 或宿主的 \
+                     约定级返回槽）——[abi].ret_regs 已删除"
+                        .into(),
+                ));
+            }
+        }
+    };
+    let fpr_ret_dest: TokenStream = quote! { Reg::from_index(0, __DEFAULT_FPR_CLASS) };
+    let bank_cond = |bank: &str| -> Result<TokenStream, String> {
+        Ok(match bank {
+            "gpr" => quote! { !(__ret_is_fpr || __ret_is_vec) },
+            "fpr" => quote! { __ret_is_fpr },
+            "vec" => quote! { __ret_is_vec },
+            other => {
+                return Err(format!(
+                    "[lower.Ret].when.bank = \"{other}\": 未知银行（可用 gpr/fpr/vec ✗）"
+                ));
+            }
+        })
+    };
+    let ret_arm_cond = |w: &crate::dsl::model::RetWhen| -> Result<TokenStream, String> {
+        let mut cs: Vec<TokenStream> = Vec::new();
+        if let Some(b) = &w.bank {
+            cs.push(bank_cond(b)?);
+        }
+        if let Some(bits) = w.width {
+            cs.push(quote! { __ret_bits == #bits });
+        }
+        if let Some(f) = w.by_ref {
+            cs.push(if f {
+                quote! { __ret_by_ref }
+            } else {
+                quote! { !__ret_by_ref }
+            });
+        }
+        if let Some(m) = w.multi {
+            cs.push(if m {
+                quote! { values.len() > 1 }
+            } else {
+                quote! { values.len() <= 1 }
+            });
+        }
+        Ok(if cs.is_empty() {
+            quote! { true }
+        } else {
+            quote! { #(#cs)&&* }
+        })
+    };
+    // 规则体：**只绑该规则真正用到的银行**（否则一条 fpr 规则会被 GPR 槽的 fail-closed 误伤）
+    let ret_arm_body = |insts: &[String], seq: &[TokenStream]| -> TokenStream {
+        let uses_gpr = insts
+            .iter()
+            .any(|s| s.contains("{ret}") || s.contains("{ret_src}"));
+        let uses_fpr = insts
+            .iter()
+            .any(|s| s.contains("{retf}") || s.contains("{retf_src}"));
+        let g = if uses_gpr {
+            quote! { let __ret_dst: Reg = #gpr_ret_dest; let __ret_src = val; }
+        } else {
+            quote! {}
+        };
+        let f = if uses_fpr {
+            quote! { let __retf_dst: Reg = #fpr_ret_dest; let __retf_src = val; }
+        } else {
+            quote! {}
+        };
+        quote! { #g #f #(#seq)* }
+    };
+    // 规则裁决：**条件键多者优先**（同键数保持声明序 ✗）
+    let mut ret_arms: Vec<(TokenStream, TokenStream)> = Vec::new();
+    if let Some(rules) = model.lower_terms.as_ref().and_then(|m| m.get("Ret")) {
+        let mut ordered: Vec<&crate::dsl::model::TermSeq> = rules.iter().collect();
+        ordered.sort_by_key(|t| std::cmp::Reverse(t.when.as_ref().map_or(0, |w| w.specificity())));
+        for tl in ordered {
+            let seq = gen_lowering_insts(&tl.insts, infos, &name_to_vn, None)?;
+            let cond = match &tl.when {
+                Some(w) => ret_arm_cond(w)?,
+                None => quote! { true },
+            };
+            ret_arms.push((cond, ret_arm_body(&tl.insts, &seq)));
+        }
+    }
+    let has_ret_rules = !ret_arms.is_empty();
+    // 浮点结果：按结果位宽（`f32` → 32、`f64` → 64）——**未声明规则时**的旧路径。
     let fpr_return_body: TokenStream = if has_fpr_mov {
-        // 浮点结果：按结果位宽（`f32` → 32、`f64` → 64）。
         fpr_move_body(&quote! { ctx.type_bits_of(&val).unwrap_or(#addr_bits32) })?
     } else {
         no_fpr_move.clone()
@@ -376,74 +486,28 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     } else {
         no_fpr_move.clone()
     };
-    // v21 W6 乙：谱面的**整数返回序列**（`[[lower.Ret]].when.ret_kind = "int"` ✗）。
-    //
-    // 为什么放这里（而不是汇编层）：`return` 是 **IR 语义**，汇编侧可能没有对应指令
-    // （要靠 mov/jmp/pop 之类微指令拼 ✗），形态又随 ISA 变 ✗ ⇒ 由 lowering 层吸收 ✗。
-    // 谱面写 `{ret}`（ABI 返回槽 ✗）/`{ret_src}`（承载返回值的虚拟寄存器 ✗），
-    // 具体指令与序列由**谱**点名 ✗；宿主只负责把 `{ret}` 解析成物理寄存器 ✗。
-    let spec_ret_int: Option<Vec<TokenStream>> = match model
-        .lower_terms
-        .as_ref()
-        .and_then(|m| m.get("Ret"))
-        .and_then(|v| {
-            v.iter()
-                .find(|t| {
-                    t.when
-                        .as_ref()
-                        .and_then(|w| w.get("ret_kind"))
-                        .and_then(|k| k.as_str())
-                        == Some("int")
-                })
-                .cloned()
-        }) {
-        Some(tl) => Some(gen_lowering_insts(&tl.insts, infos, &name_to_vn, None)?),
-        None => None,
-    };
-    let return_body: TokenStream = if has_mov_rax || spec_ret_int.is_some() {
+    // 返回体（v21 W6 乙）：**谱面规则优先**（见上面的 `ret_arms` ✗）——
+    // `return` 是 **IR 语义**，汇编侧可能压根没有对应指令（要靠 mov/jmp/pop 拼 ✗），
+    // 形态又随 ISA 变 ✗ ⇒ 由 lowering 层吸收 ✗；没有规则命中 ⇒ 旧的硬编码四形态 ✓。
+    let return_body: TokenStream = if has_mov_rax || has_ret_rules {
         let mov_src_idx_lit = mov_src_idx as usize;
-        // 返回槽（v20 A5-3）：优先**本函数的 plan**（`CallLayout::ret` 的寄存器形态），
-        // 否则用宿主的**约定级整数返回槽**（`ctx.conv.ret_gpr`）——谱里的
-        // `[abi].ret_regs` 已删除。两者都拿不到 ⇒ **fail-closed**（不按某个 ISA 的
-        // 寄存器名猜）。
-        let ret_dest: TokenStream = quote! {
-            match ctx
-                .conv
-                .layout()
-                .and_then(|__cl| match __cl.ret.as_ref() {
-                    Some(crate::machine::call_layout::RetPlace::Reg { class, index, .. }) => {
-                        Some((*index, *class))
-                    }
-                    _ => None,
-                })
-                .or(ctx.conv.ret_gpr)
-            {
-                Some((__ri, __rc)) => Reg::from_index(__ri, __rc),
-                None => {
-                    return Err(crate::prelude::IrError::Unsupported(
-                        "ISA-DSL return lowering: 返回寄存器需要调用布局（plan 的 ret 或宿主的 \
-                         约定级返回槽）——[abi].ret_regs 已删除"
-                            .into(),
-                    ));
-                }
-            }
-        };
-        // 整数返回体：**谱面优先**（v21 W6 乙 ✗ —— 指令与序列由谱点名 ✗），
-        // 没有谱面规则时走旧路径（moves 表挑搬移指令 ✗）。
-        let int_return_body: TokenStream = if let Some(seq) = &spec_ret_int {
-            quote! {
-                let __ret_dst = #ret_dest;
-                let __ret_src = val;
-                #(#seq)*
-            }
-        } else {
+        // 整数返回体（**未声明规则时**的旧路径 ✗）：moves 表挑搬移指令 ✗。
+        let int_return_body: TokenStream = if has_mov_rax {
             quote! {
                 let __idx = __pack.push_inst(Inst::#ret_vn {
                     #mov_src: Reg::from_index(0, __DEFAULT_GPR_CLASS),
-                    #mov_dest: #ret_dest,
+                    #mov_dest: #gpr_ret_dest,
 
                 });
                 __pack.map_reg_field(val, __idx, #mov_src_idx_lit as u8, false);
+            }
+        } else {
+            quote! {
+                let _ = __pack;
+                return Err(crate::prelude::IrError::Unsupported(
+                    "ISA-DSL return lowering: 本 ISA 没有 GPR 搬移指令，且谱面没有 \
+                     `[[lower.Ret]]`（bank = \"gpr\"）规则".into(),
+                ));
             }
         };
         // S2：宽向量返回值（>16 字节）sret——结果 store 到 [sret_ptr]，
@@ -576,31 +640,43 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                 }
             }
         };
+        // 旧的四形态分派（**兜底**：没有谱面规则命中时逐字保持原行为 ✗）。
+        let legacy_dispatch: TokenStream = quote! {
+            if __ret_is_fpr {
+                #fpr_return_body
+            } else if __ret_is_vec && !__ret_by_ref {
+                // ≤16B 向量（V64/V128）按值返回：**整寄存器槽搬移**（16 字节 = ABI 的
+                // 按值向量槽宽）——请求 128 位于是取到全宽搬移（`MOVSD` 只移 8 字节会
+                // 截断高半，WA-37 D3）；ISA 没有 128 位档 ⇒ 生成物里 fail-closed。
+                #vec_return_body
+            } else if __ret_is_vec {
+                #sret_return_body
+            } else {
+                #int_return_body
+            }
+        };
+        // 谱面规则 → 运行时分支（**具体优先**：外面的是条件键多的那条 ✗）
+        let mut ret_dispatch: TokenStream = legacy_dispatch;
+        for (__c, __b) in ret_arms.iter().rev() {
+            ret_dispatch = quote! { if #__c { #__b } else { #ret_dispatch } };
+        }
         quote! {
             #multi_ret_body
             let val = values.first().copied()
                 .and_then(|x| value_to_xreg.get(x)).copied()
                 .unwrap_or_else(|| ctx.alloc_xreg(__DEFAULT_GPR_CLASS));
-            if ctx.xreg_types.get(&val).is_some_and(|t| t.is_float()) {
-                #fpr_return_body
-            } else if ctx.xreg_types.get(&val).is_some_and(|t| {
+            // 返回形态的**运行期事实**（宽度是数据；银行与是否按引用也在这里判 ✗）：
+            let __ret_bits = ctx.type_bits_of(&val).unwrap_or(#addr_bits32);
+            let __ret_is_fpr = ctx.xreg_types.get(&val).is_some_and(|t| t.is_float());
+            let __ret_is_vec = ctx.xreg_types.get(&val).is_some_and(|t| {
                 ctx.type_store.as_ref().is_some_and(|s| {
-                    (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) <= 16
+                    s.is_vector(*t) || s.is_scalable_vector(*t)
                 })
-            }) {
-                // ≤16B 向量（V64/V128）按值返回：**整寄存器槽搬移**（16 字节 = ABI 的
-                // 按值向量槽宽）——请求 128 位于是取到全宽搬移（`MOVSD` 只移 8 字节会
-                // 截断高半，WA-37 D3）；ISA 没有 128 位档 ⇒ 生成物里 fail-closed。
-                #vec_return_body
-            } else if ctx.xreg_types.get(&val).is_some_and(|t| {
-                ctx.type_store.as_ref().is_some_and(|s| {
-                    (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
-                })
-            }) {
-                #sret_return_body
-            } else {
-                #int_return_body
-            }
+            });
+            let __ret_by_ref = __ret_is_vec && ctx.xreg_types.get(&val).is_some_and(|t| {
+                ctx.type_store.as_ref().is_some_and(|s| s.size_bytes(*t) > 16)
+            });
+            #ret_dispatch
             Ok(__pack)
         }
     } else {

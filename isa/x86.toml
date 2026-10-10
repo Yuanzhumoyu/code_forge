@@ -4718,5 +4718,14 @@ insts = ["TEST_RM_R {cond}, {cond}", "JCC_REL32 {cc}, {false}", "JMP_REL32 {true
 # `{ret}` = ABI 返回槽（宿主约定解析成物理寄存器）。`MOV_RM8_R64`（`0x89 /r`）是
 # 生成器旧路径选中的同一条搬移（`ops` 序 = src, dst ⇒ 模板按 (值, 返回槽) 写）。
 [[lower.Ret]]
-when = { ret_kind = "int" }
+when = { bank = "gpr" }
 insts = ["MOV_RM8_R64 {ret_src}, {ret}"]
+
+# 标量浮点返回：f32/f64 是**两条不同指令**（宽度在运行期已知 ⇒ 生成器发宽度分支）。
+[[lower.Ret]]
+when = { bank = "fpr", width = 32 }
+insts = ["MOVSS {retf}, {retf_src}"]
+
+[[lower.Ret]]
+when = { bank = "fpr", width = 64 }
+insts = ["MOVSD {retf}, {retf_src}"]

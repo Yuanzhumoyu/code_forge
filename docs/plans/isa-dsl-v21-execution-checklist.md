@@ -790,12 +790,18 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
   - [x] x86：`test` + `jcc` + `jmp` ✔
   - [x] riscv：`beq …, x0, {false}` + `jal x0, {true}` ✔
   - [x] arm64：`cbz {0}, {false}` + `b {true}` ✔
-  - [x] **`[lower.Ret]`：整数返回已下放**（2026-10-08 ✗）——三谱各写
-    `[[lower.Ret]] when = { ret_kind = "int" }` ✗：x86 `MOV_RM8_R64` / riscv64 `MOV_RM8_R64` /
-    arm64 `MOVX`，**与生成器旧路径是同一条指令、同一操作数映射** ✗
-    （`terminator_return_packet` 等集成测试逐条印证 ✗）。新占位符 `{ret}`/`{retf}`（ABI 返回槽 ✗）
-    与 `{ret_src}`/`{retf_src}`（承载返回值的虚拟寄存器 ✗）；安全闸要求 `Ret` 必须写 `when` ✗，
-    写未下放的形态（float/vec16/byref/multi ✗）一律拒 ✗。
+  - [x] **`[lower.Ret]`：条件数据化 + `bank = gpr`/`fpr` 已下放**（2026-10-08 ✗）——
+    `when` 用**数据键**（`bank`/`width`/`by_ref`/`multi` ✗），**不是** `ret_kind` 枚举 ✗：
+    宽度写任意整数 ⇒ f8/f16/f32/f64/f128、i8…i128、指针都表达得了 ✗。规则编译成生成物里的
+    **运行期 `if` 链**（银行/宽度是运行期事实 ✗），**没有规则命中时逐字回落**到旧四形态 ✗。
+    裁决 = **具体优先**（条件键多者赢，同键数按声明序 ✗）。三谱：x86/riscv64/arm64 各一条
+    `bank = gpr` ✗；x86/riscv64 另加 `bank = fpr, width = 32|64` ✗
+    （`MOVSS`/`MOVSD`、`FSGNJ_S`/`FSGNJ_D` ✗）。验收：x86 矩阵 **197/3/0**、riscv64 **136/64/0** ✔、
+    指纹通过 ✔；中途「`{retf}` 改查 plan」被 riscv64 矩阵抓到错值并退回旧语义 ✗
+    （约定层没有浮点返回槽字段 ⇒ 记为待办 ✗）。
+  - [ ] **`bank = vec` / `by_ref = true` / `multi = true`** 仍在生成器里——机制已就位 ✗
+    （加规则 + 放开闸门即可 ✗）；`by_ref` 需要 sret 指针占位符，`multi` 需要「每结果一份
+    搬运模板」的写法（结果是签名数据 ✗）。
   - [ ] **其余四种返回形态**（float / ≤16B 向量 / >16B sret / 多值 ✗）仍在生成器里——
     分片进行中 ✗；机制已就位（加 `[[lower.Ret]] when = { ret_kind = … }` + 放开闸门即可 ✗）。
 - [x] 删除编译器三处按字段个数猜 ISA（`lowering.rs:202`、`:527-625`、`frame.rs:172-208`）。

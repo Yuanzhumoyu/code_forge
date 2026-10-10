@@ -134,7 +134,24 @@ fn x86_move_widths_follow_the_spec() {
     for op in ["<=", "=="] {
         let mut at = 0usize;
         while let Some(i) = t[at..].find(op) {
-            let k = at + i + op.len();
+            let abs = at + i; // ← `i` 是相对 `at` 的偏移（上面用 `t[at..]` 找的）
+            let k = abs + op.len();
+            // v21 W6 乙：`__ret_bits == N` 是**谱面规则的条件**（`[lower.Ret].when.width` ✗），
+            // 那个 N 就是谱里写的数据 ✗ —— 不是"写死的搬运宽度"，跳过。
+            // 条件可能被拼成一串（`if__ret_is_fpr&&__ret_bits==32u32`），窗口要够宽；
+            // 注意**保序**取尾（`.rev()` 之后必须再 `.rev()` 回来，否则匹配的是倒串 ✗）。
+            let back: String = t[..abs]
+                .chars()
+                .rev()
+                .take(48)
+                .collect::<Vec<char>>()
+                .into_iter()
+                .rev()
+                .collect();
+            if back.contains("__ret_bits") {
+                at = k;
+                continue;
+            }
             let digits: String = t[k..].chars().take_while(|c| c.is_ascii_digit()).collect();
             if !digits.is_empty() && t[k + digits.len()..].starts_with("u32") {
                 let end = k + digits.len() + 3;

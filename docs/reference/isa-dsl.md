@@ -1444,8 +1444,16 @@ insts = ["TEST_RM_R {cond}, {cond}", "JCC_REL32 {cc}, {false}", "JMP_REL32 {true
 # {true}/{false} = 两个后继块号
 
 [[lower.Ret]]
-when = { ret_kind = "int" }                        # ← 按 **IR 语义** 分支
+when = { bank = "gpr" }                            # ← 按 **IR 语义** 分支（键是数据）
 insts = ["MOV_RM8_R64 {ret_src}, {ret}"]
+
+[[lower.Ret]]
+when = { bank = "fpr", width = 32 }                # 32 位浮点：x86 是另一条指令
+insts = ["MOVSS {retf}, {retf_src}"]
+
+[[lower.Ret]]
+when = { bank = "fpr", width = 64 }
+insts = ["MOVSD {retf}, {retf_src}"]
 ```
 
 **为什么 `return` 归 lowering 而不归汇编层**：`return` 是 **IR 语义**——汇编侧可能根本没有
@@ -1457,10 +1465,23 @@ insts = ["MOV_RM8_R64 {ret_src}, {ret}"]
 | `{ret}` / `{retf}` | **ABI 返回槽**（整数 / 浮点）——"返回值要去的那个槽" | 宿主约定（plan 的 `ret` 槽或 `conv.ret_gpr`；缺 ⇒ fail-closed） |
 | `{ret_src}` / `{retf_src}` | 承载返回值的**虚拟**寄存器（像 `{cond}`：字段先填 0，由 `map_reg_field` 把 IR 返回值绑上去） | 终结 lowering |
 
-`when.ret_kind` 是**返回形态**（静态事实，创建期即知）：`"int"` / `"float"` / `"vec16"` /
-`"byref"` / `"multi"`。目前只有 `"int"` 完成下放（三份发行谱都写了这一条 ✗）——
-其余四种仍在生成器里；写未下放的形态会被**安全闸拒**（不会静默不生效）。
-`[lower.Ret]` **必须**写 `when`（不写就等于宣称四种形态都下放）。
+**条件键是数据，不是枚举**（这是刻意的 ✗——`ret_kind = "f32"` 那种写法会把宽度写死，
+f8/f16/f128、i8…i128、任意宽度指针都表达不了）：
+
+| 键 | 取值 | 语义 |
+| --- | --- | --- |
+| `bank` | `"gpr"` / `"fpr"` / `"vec"` | 返回值落在哪个寄存器银行（**IR 侧封闭集**） |
+| `width` | **任意位宽整数** | 值占多少位（不写 = 不限宽度） |
+| `by_ref` | `true` / `false` | 是否按引用返回（ABI 的 sret 形态） |
+| `multi` | `true` / `false` | 是否多值返回 |
+
+银行/宽度/是否按引用都是**运行期**事实 ⇒ 规则编译成生成物里的 `if` 链；
+**没有任何规则命中时**逐字回落到原来的四形态分派（行为不变 ✗）。
+裁决 = **具体优先**：条件键多者赢，同键数按声明序 ⇒「一条宽的兜底 + 若干窄的特例」是自然写法。
+`when` 是 `[lower.Ret]` **必需**的（不写就等于宣称所有形态都下放 ✗），
+且未知键/未知银行会被拒（`ret_kind` 这类拼错不会静默 ✗）。
+目前下放了 `bank = "gpr"` 与 `bank = "fpr"`（三份发行谱都写了 ✗）；`vec` / `by_ref = true` /
+`multi = true` 还没下放，写了会被**安全闸拒**。
 
 ### 历史写法（v18 S5，已废 ✗）
 

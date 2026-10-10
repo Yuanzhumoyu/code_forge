@@ -98,38 +98,36 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
                         )));
                     }
                 }
-                // v21 W6 乙：`when = { ret_kind = … }` 只对 `Ret` 有意义（`Jmp`/`Br` 的
-                // 序列与 IR 返回值类型无关 ✗），且取值必须是已知种类 ✗。
+                // v21 W6 乙：`when = { bank/width/by_ref/multi }` 只对 `Ret` 有意义
+                // （`Jmp`/`Br` 的序列与 IR 返回值类型无关 ✗）。键与取值由 `RetWhen` 的
+                // serde（`deny_unknown_fields` + 数据类型 ✗）把关 ✗。
                 // `Ret` **必须写** `when`：不写就等于"对所有返回形态生效"，
-                // 而浮点/向量/sret/多值那四种还没下放 ⇒ 会静默不生效 ✗。
+                // 而向量/多值那几种还没下放 ⇒ 会静默不生效 ✗。
                 if name == "Ret" && d.when.is_none() {
                     return Err(anchor_err(
-                        "[lower.Ret]: 必须写 `when = { ret_kind = … }`——目前只有整数返回（\"int\"）\
-                         由谱面接管，不写条件会让人以为四种形态都下放了"
+                        "[lower.Ret]: 必须写 `when = { … }`——按返回值的 IR 语义分支\
+                         （bank/width/by_ref/multi）；不写条件会让人以为所有形态都下放了"
                             .to_string(),
                     ));
                 }
-                if let Some(w) = &d.when {
-                    if name != "Ret" {
-                        return Err(anchor_err(format!(
-                            "[lower.{name}]: `when` 只对 `[lower.Ret]` 有意义（按返回值的 IR 语义分支 ✗）"
-                        )));
-                    }
-                    let kind = w
-                        .get("ret_kind")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| {
-                            anchor_err(format!(
-                                "[lower.{name}].when: 目前只认 `ret_kind`（取值 int/float/vec16/byref/multi ✗）"
-                            ))
-                        })?;
-                    if !matches!(kind, "int" | "float" | "vec16" | "byref" | "multi") {
-                        return Err(anchor_err(format!(
-                            "[lower.{name}].when.ret_kind = \"{kind}\": 未知种类（可用 int/float/vec16/byref/multi ✗）"
-                        )));
-                    }
+                if d.when.is_some() && name != "Ret" {
+                    return Err(anchor_err(format!(
+                        "[lower.{name}]: `when` 只对 `[lower.Ret]` 有意义（按返回值的 IR 语义分支 ✗）"
+                    )));
                 }
                 // **同名多块按声明序累积**（此前是 `insert` ⇒ 后一块静默覆盖前一块 ✗）。
+                let when = match &d.when {
+                    Some(v) => Some(
+                        v.clone()
+                            .try_into::<crate::dsl::model::RetWhen>()
+                            .map_err(|e| {
+                                anchor_err(format!(
+                                    "[lower.{name}].when: 条件键不合法（bank/width/by_ref/multi ✗）：{e}"
+                                ))
+                            })?,
+                    ),
+                    None => None,
+                };
                 model
                     .lower_terms
                     .get_or_insert_with(Default::default)
@@ -137,7 +135,7 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
                     .or_default()
                     .push(crate::dsl::model::TermSeq {
                         insts: d.insts.clone(),
-                        when: d.when.clone(),
+                        when,
                     });
                 continue;
             }

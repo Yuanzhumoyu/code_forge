@@ -11,6 +11,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6 乙（二）：`[lower.Ret]` 条件**数据化** + 浮点返回下放
+
++ `[lower.Ret].when` 不再用 `ret_kind = "int"/"f32"/…` 那种**枚举**（它把宽度写死 ⇒ f8/f16/f128、
+  i8…i128、任意宽度指针都表达不了，违背「宽度是数据」）✗，改成四个**数据键**：
+  `bank = "gpr"|"fpr"|"vec"`（IR 侧封闭集）、`width = <任意位宽整数>`、`by_ref`、`multi`。
+  裁决 = **具体优先**（条件键多者赢，同键数按声明序）；未知键/未知银行一律报错。
++ 规则编译成生成物里的**运行期 `if` 链**（银行/宽度是运行期事实）；**没有规则命中时逐字回落**
+  到原来的四形态分派（行为不变）。
++ 三谱的 `[[lower.Ret]]` 改成数据化写法：x86/riscv64/arm64 各一条 `bank = "gpr"`，
+  x86/riscv64 另加 `bank = "fpr", width = 32|64`（`MOVSS`/`MOVSD`、`FSGNJ_S`/`FSGNJ_D`）。
++ 新增两条测试：`ret_rules_compile_to_runtime_branches`（生成物里出现条件与两个银行的槽绑定）、
+  `unsupported_term_lowering_is_rejected` 扩成七条（缺 `when`、未下放的 `bank`/`by_ref`/`multi`、
+  未知键、`when` 挂错 op、未接线 op、三种放行）。
++ **行为不变**：`encoding.digest` 指纹通过；x86 矩阵 **197/3/0**、riscv64 矩阵 **136/64/0** ✔
+  （中途"`{retf}` 改查 plan"被 riscv64 矩阵抓到错值，按"差异先当 bug"退回旧语义 ✗，
+  并把"约定层没有浮点返回槽字段"记为待办）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6 乙：`[lower.Ret]` 上线，**整数返回下放到谱**（三谱）
 
 + 终结规则改成**数组**（`[[lower.<名字>]]` 同名多块按声明序累积；此前同名第二块会静默覆盖第一块），

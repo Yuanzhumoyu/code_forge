@@ -4571,48 +4571,84 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"myjmp {dst}, {cond}\"\nroles = [\"ju
 }
 
 
-/// v21 W6 的安全闸与 `[lower.Ret]` 的**形态条件**。
+/// v21 W6 乙：`[lower.Ret]` 的**数据化条件**编译成**运行期分支**。
 ///
-/// 已接线并验证等价：`Jmp` / `Br` / `Ret`（**只有整数返回** ✗）。
-/// `Ret` 必须写 `when = { ret_kind = … }`——不写就等于宣称"四种返回形态都下放"，
-/// 而浮点/≤16B 向量/>16B sret/多值仍在生成器里 ⇒ 必须拒绝，不能静默不生效。
+/// 条件键是数据（`bank`/`width`/`by_ref`/`multi` ✗）——宽度写任意整数，
+/// 因此 f8/f16/f32/f64/f128、i8…i128、指针都表达得了 ✗；
+/// 银行/宽度是运行期事实 ⇒ 生成物里是 `if`，**没有规则命中才走旧四形态** ✗。
+#[test]
+fn ret_rules_compile_to_runtime_branches() {
+    // 需要一条终结角色指令才会生成 lower_terminator 实体。
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[inst.MYRET]\nform = \"C\"\nopcode = 0x92\nasm = \"myret\"\nroles = [\"ret\"]\n\
+         [[lower.Ret]]\nwhen = { bank = \"gpr\" }\ninsts = [\"SETC {ret_src}, {cc}\"]\n\n\
+         [[lower.Ret]]\nwhen = { bank = \"fpr\", width = 64 }\ninsts = [\"SETC {retf_src}, {cc}\"]",
+    );
+    let m = super::parse_and_validate(&doc).expect("谱合法");
+    let s = super::codegen::generate(&m).expect("生成").to_string();
+    let flat: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+    // 运行期事实 + 两条规则的条件
+    assert!(flat.contains("__ret_is_fpr"), "应有银行判定：{s}");
+    assert!(flat.contains("__ret_bits==64"), "宽度条件应落到 __ret_bits：{s}");
+    // 两个银行各自的槽绑定（**只绑规则真正用到的那个** ✗）
+    assert!(flat.contains("__ret_dst"), "gpr 规则应绑 __ret_dst：{s}");
+    assert!(flat.contains("__retf_dst"), "fpr 规则应绑 __retf_dst：{s}");
+    // 旧四形态仍在（兜底）：`__ret_by_ref` 只可能来自兜底分派
+    assert!(flat.contains("__ret_by_ref"), "兜底分派应保留：{s}");
+}
+
+/// v21 W6 的安全闸与 `[lower.Ret]` 的**数据化形态条件**。
+///
+/// 已接线并验证等价：`Jmp` / `Br` / `Ret` 的 `bank = "gpr"` / `bank = "fpr"`（按位宽分条 ✗）。
+/// `Ret` 必须写 `when`——不写就等于宣称"所有返回形态都下放"，而 `vec`/按引用/多值仍在
+/// 生成器里 ⇒ 必须拒绝，不能静默不生效 ✗。
 #[test]
 fn unsupported_term_lowering_is_rejected() {
-    // ① `Ret` 缺 `when` ⇒ 拒（要求写明形态）。
+    // ① `Ret` 缺 `when` ⇒ 拒（要求写明条件）。
     let doc = gen_cond_doc(
         CC_ALL_FULL,
         "[[lower.Ret]]\ninsts = [\"SETC {out}, {cc}\"]",
     );
     let err = super::parse_and_validate(&doc).unwrap_err().to_string();
     assert!(err.contains("lower.Ret"), "应点名 lower.Ret：{err}");
-    assert!(err.contains("ret_kind"), "应点明要写 ret_kind：{err}");
 
-    // ② `Ret` 写了**还没下放**的形态 ⇒ 被安全闸拒（并点明分片进行中）。
+    // ② 还没下放的银行（`vec`）⇒ 被安全闸拒（并点明分片进行中）。
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[[lower.Ret]]\nwhen = { ret_kind = \"float\" }\ninsts = [\"SETC {out}, {cc}\"]",
+        "[[lower.Ret]]\nwhen = { bank = \"vec\" }\ninsts = [\"SETC {out}, {cc}\"]",
     );
     let err = super::parse_and_validate(&doc).unwrap_err().to_string();
-    assert!(err.contains("float"), "应点名形态：{err}");
+    assert!(err.contains("vec"), "应点名银行：{err}");
     assert!(err.contains("W6"), "报错应点明分片进行中：{err}");
 
-    // ③ 未知形态名 ⇒ 拒（拼错不该静默）。
+    // ③ 还没下放的 by_ref / multi ⇒ 同样拒。
+    for bad in ["by_ref = true", "multi = true"] {
+        let doc = gen_cond_doc(
+            CC_ALL_FULL,
+            &format!("[[lower.Ret]]\nwhen = {{ {bad} }}\ninsts = [\"SETC {{out}}, {{cc}}\"]"),
+        );
+        let err = super::parse_and_validate(&doc).unwrap_err().to_string();
+        assert!(err.contains("W6"), "{bad} 应被拒并点明进行中：{err}");
+    }
+
+    // ④ 未知条件键 ⇒ 拒（`ret_kind` 是被否掉的枚举写法，拼错不该静默）。
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[[lower.Ret]]\nwhen = { ret_kind = \"f32\" }\ninsts = [\"SETC {out}, {cc}\"]",
+        "[[lower.Ret]]\nwhen = { ret_kind = \"int\" }\ninsts = [\"SETC {out}, {cc}\"]",
     );
     let err = super::parse_and_validate(&doc).unwrap_err().to_string();
-    assert!(err.contains("f32"), "应点名拼错的形态：{err}");
+    assert!(err.contains("ret_kind"), "应点名未知键：{err}");
 
-    // ④ `when` 挂到 `Jmp`/`Br` ⇒ 拒（它们的序列与返回值类型无关）。
+    // ⑤ `when` 挂到 `Jmp`/`Br` ⇒ 拒（它们的序列与返回值类型无关）。
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[[lower.Jmp]]\nwhen = { ret_kind = \"int\" }\ninsts = [\"SETC {out}, {cc}\"]",
+        "[[lower.Jmp]]\nwhen = { bank = \"gpr\" }\ninsts = [\"SETC {out}, {cc}\"]",
     );
     let err = super::parse_and_validate(&doc).unwrap_err().to_string();
     assert!(err.contains("lower.Jmp"), "应点名 lower.Jmp：{err}");
 
-    // ⑤ 仍未接线的终结 op ⇒ 拒。
+    // ⑥ 仍未接线的终结 op ⇒ 拒。
     let doc = gen_cond_doc(
         CC_ALL_FULL,
         "[[lower.Switch]]\ninsts = [\"SETC {out}, {cc}\"]",
@@ -4620,11 +4656,11 @@ fn unsupported_term_lowering_is_rejected() {
     let err = super::parse_and_validate(&doc).unwrap_err().to_string();
     assert!(err.contains("lower.Switch"), "应点名 lower.Switch：{err}");
 
-    // ⑥ 已放行的三种都要通过（`Ret` 带 int 形态条件）。
+    // ⑦ 已放行的三种都要通过（`Ret` 带数据化条件）。
     for (op, extra) in [
         ("Jmp", ""),
         ("Br", ""),
-        ("Ret", "when = { ret_kind = \"int\" }\n"),
+        ("Ret", "when = { bank = \"gpr\" }\n"),
     ] {
         let ok = gen_cond_doc(
             CC_ALL_FULL,
