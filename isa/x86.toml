@@ -484,9 +484,6 @@ segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[form.MRR_MEMREF_AUTO]
-# MemRef 内存（base/index/disp）+ opsize 由首个 Reg 操作数驱动
-opsize = "s0"
 
 
 
@@ -741,7 +738,9 @@ asm = "test {src2}, {src}"
 # （`MRR_MEMREF_AUTO` 的 `opsize = "s0"`）——内存操作数自己不携带宽度语义。
 
 [family.ALU_MR]
-body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" }, ops = ["src:gprx", "mem:mem:inout"] }
+# v21 W4：段形态（`MRR_MEMREF_SEG` + `bind = { rm = "[mem]" }`）；SEG 形式写死 `opsize = 64`
+# ⇒ 这里显式恢复 `opsize = "s0"`（宽度由首个 Reg 操作数驱动）。
+body = { form = "MRR_MEMREF_SEG", opsize = "s0", bind = { rm = "[mem]" }, ops = ["src:gprx", "mem:mem:inout"] }
 rows = [
   { inst = "ADD_MR",  opcode = 0x01, asm = "add {mem}, {src}" },
   { inst = "OR_MR",   opcode = 0x09, asm = "or {mem}, {src}" },
@@ -776,7 +775,7 @@ ops = ["src:gprx", "mem:mem:inout"]
 asm = "release lock add {mem}, {src}"
 
 [family.ALU_R_MEM]
-body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" }, ops = ["dst:gprx:out", "mem:mem"] }
+body = { form = "MRR_MEMREF_SEG", opsize = "s0", bind = { rm = "[mem]" }, ops = ["dst:gprx:out", "mem:mem"] }
 rows = [
   { inst = "ADD_R_MEM", opcode = 0x03, asm = "add {dst}, {mem}" },
   { inst = "OR_R_MEM",  opcode = 0x0B, asm = "or {dst}, {mem}" },
@@ -799,7 +798,7 @@ rows = [
 # `STORE_MEM_R_8` 的既有写法。
 
 [family.ALU8_MR]
-body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" }, ops = ["src:gpr8b", "mem:mem:inout"] }
+body = { form = "MRR_MEMREF_SEG", opsize = "s0", bind = { rm = "[mem]" }, ops = ["src:gpr8b", "mem:mem:inout"] }
 rows = [
   { inst = "ADD_MR_8", opcode = 0x00, asm = "add {mem}, {src}" },
   { inst = "OR_MR_8",  opcode = 0x08, asm = "or {mem}, {src}" },
@@ -812,7 +811,7 @@ rows = [
 ]
 
 [family.ALU8_R_MEM]
-body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" }, ops = ["dst:gpr8b:out", "mem:mem"] }
+body = { form = "MRR_MEMREF_SEG", opsize = "s0", bind = { rm = "[mem]" }, ops = ["dst:gpr8b:out", "mem:mem"] }
 rows = [
   { inst = "ADD_R_MEM_8", opcode = 0x02, asm = "add {dst}, {mem}" },
   { inst = "OR_R_MEM_8",  opcode = 0x0A, asm = "or {dst}, {mem}" },

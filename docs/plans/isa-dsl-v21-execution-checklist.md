@@ -667,7 +667,17 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
   ⇒ 按纪律"差异先当 bug" **已回退**（树恢复绿灯 ✗）。
   **结论** ✗：这类转换必须**逐 form 证明"字节 + 生效编码键"双重等价** ✗
   （`match` 钉字段与行内 `modrm` 钉扩展码在**派生枚举/enc 视图**上不等价 ✗）✗，
-  不能按"看起来同构"批量改 ✗。）
+  不能按"看起来同构"批量改 ✗。
+  **2026-10-08 第二次试做：成功 ✗** ✔ —— 转 **4 个内存族**（`ALU_MR`/`ALU_R_MEM`/`ALU8_MR`/
+  `ALU8_R_MEM` ✗）：`body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" } }`
+  ⇒ `body = { form = "MRR_MEMREF_SEG", opsize = "s0", bind = { rm = "[mem]" } }` ✗
+  （**关键** ✗：SEG 形式写死 `opsize = 64` ✗ ⇒ 必须在 body 里恢复 `opsize = "s0"` ✗）。
+  判据 ✗：`validate` OK ✗、`lint` 干净 ✗（顺手删掉已闲置的 `[form.MRR_MEMREF_AUTO]` ✗）、
+  **`encoding.digest` 指纹通过**（字节逐条不变 ✗）✔；`insts` 的差异**只是显示里的 form 名** ✗。
+  ⇒ `modrm = {` 残留 **27 → 23** ✗。
+  **两条路线对照（给后续收尾者 ✗）** ✗：① 涉及 `opcode`/固定扩展码的族 ✗ ⇒ 走 `match` ✗，
+  **会改派生枚举** ✗（首试失败 ✗）；② 只涉及 `rm` 映射的族 ✗ ⇒ 换成现成的 `*_SEG` 形式 +
+  `bind` ✗（成功 ✗，注意 `opsize` 覆盖 ✗）。
   （**仍开** ✗ —— W4 的大头 ✗；现状是"stream 形态与内联编码键**并存**" ✗。）
 - [x] 门禁：§2 全绿；x86 编码对拍（`asm_encoding`）棘轮不变；`encoder_fuzz_tests` 绿。
   （**本轮实测** ✗：`asm_parse` 3 passed ✔、`asm_encoding` 1 passed ✔（棘轮逐项相等 ✗）、

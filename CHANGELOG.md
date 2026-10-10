@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W4 第二批：x86 四个内存族改走段形态
+
++ `[family.ALU_MR]` / `[family.ALU_R_MEM]` / `[family.ALU8_MR]` / `[family.ALU8_R_MEM]` 从
+  `form = "MRR_MEMREF_AUTO"` + 行内 `modrm = { rm = "[mem]" }` 改成
+  `form = "MRR_MEMREF_SEG"` + `opsize = "s0"` + `bind = { rm = "[mem]" }`；已闲置的
+  `[form.MRR_MEMREF_AUTO]` 一并删除。x86 的 `modrm = {…}` 键 **27 → 23**。
++ **字节逐条不变**：`forge-isa insts` 的差异只是显示里的 form 名；新增的 `encoding.digest`
+  指纹守卫**通过**（上一轮它刚拦下一次不等价迁移，见执行清单 §6）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6-a 第三片（下）：**旧面删除**（`[[lowering]]`/`[[pattern]]` 消失）
 
 + **`[[lowering]]` 与 `[[pattern]]` 从谱面彻底删除**：`deny_unknown_fields` 现在直接拒它们。
