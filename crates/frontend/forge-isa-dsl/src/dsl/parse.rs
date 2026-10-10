@@ -82,11 +82,10 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
         }
         ordered.sort_by_key(|(at, _, _)| *at);
         for (_, name, d) in ordered {
-            // ① 名字是终结 op ⇒ 终结层序列（只吃 `insts`）。
+            // ① 名字是终结 op ⇒ 终结层序列（吃 `insts`，`Ret` 还可带 `when = { ret_kind = … }`）。
             if crate::dsl::model::is_term_name(&name) {
                 for (key, present) in [
                     ("match", d.r#match.is_some()),
-                    ("when", d.when.is_some()),
                     ("vary", d.vary.is_some()),
                     ("temps", d.temps.is_some()),
                     ("dispatch", d.dispatch.is_some()),
@@ -99,10 +98,47 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
                         )));
                     }
                 }
+                // v21 W6 乙：`when = { ret_kind = … }` 只对 `Ret` 有意义（`Jmp`/`Br` 的
+                // 序列与 IR 返回值类型无关 ✗），且取值必须是已知种类 ✗。
+                // `Ret` **必须写** `when`：不写就等于"对所有返回形态生效"，
+                // 而浮点/向量/sret/多值那四种还没下放 ⇒ 会静默不生效 ✗。
+                if name == "Ret" && d.when.is_none() {
+                    return Err(anchor_err(
+                        "[lower.Ret]: 必须写 `when = { ret_kind = … }`——目前只有整数返回（\"int\"）\
+                         由谱面接管，不写条件会让人以为四种形态都下放了"
+                            .to_string(),
+                    ));
+                }
+                if let Some(w) = &d.when {
+                    if name != "Ret" {
+                        return Err(anchor_err(format!(
+                            "[lower.{name}]: `when` 只对 `[lower.Ret]` 有意义（按返回值的 IR 语义分支 ✗）"
+                        )));
+                    }
+                    let kind = w
+                        .get("ret_kind")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            anchor_err(format!(
+                                "[lower.{name}].when: 目前只认 `ret_kind`（取值 int/float/vec16/byref/multi ✗）"
+                            ))
+                        })?;
+                    if !matches!(kind, "int" | "float" | "vec16" | "byref" | "multi") {
+                        return Err(anchor_err(format!(
+                            "[lower.{name}].when.ret_kind = \"{kind}\": 未知种类（可用 int/float/vec16/byref/multi ✗）"
+                        )));
+                    }
+                }
+                // **同名多块按声明序累积**（此前是 `insert` ⇒ 后一块静默覆盖前一块 ✗）。
                 model
                     .lower_terms
                     .get_or_insert_with(Default::default)
-                    .insert(name, crate::dsl::model::TermSeq { insts: d.insts.clone() });
+                    .entry(name)
+                    .or_default()
+                    .push(crate::dsl::model::TermSeq {
+                        insts: d.insts.clone(),
+                        when: d.when.clone(),
+                    });
                 continue;
             }
             match &d.r#match {

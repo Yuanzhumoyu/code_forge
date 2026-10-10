@@ -377,7 +377,7 @@ pub struct IsaModel {
     /// 终结指令 lowering（**内部载体**，v21 W6-a 起 TOML 面是 `[lower.<名字>]`）。
     /// 解析期由 `[lower.*]` 里"名字是终结 op"的那些块填。
     #[serde(default, skip)]
-    pub lower_terms: Option<BTreeMap<String, TermSeq>>,
+    pub lower_terms: Option<BTreeMap<String, Vec<TermSeq>>>,
 
     /// 重定位表（内部载体；TOML 面是 `[asm.reloc.<名>]`）：指令用 `reloc = "<name>"` 引用。
     #[serde(default, skip)]
@@ -3180,10 +3180,17 @@ pub struct OperandUse {
 ///
 /// `insts` 里的符号值除了既有占位符外，还可用 `{true}` / `{false}`（Br 的两个后继块号）
 /// 与 `{target}`（Jmp 的目标块号）。
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct TermSeq {
     /// 指令序列（与 `[[lowering]].insts` 同一套占位符/替换语义）。
     pub insts: Vec<String>,
+    /// **生成期选择条件**（v21 W6 乙）：终结规则可以按 **IR 语义** 分支 ✗。
+    ///
+    /// 现在只有 `ret_kind` 一个键，取值 `"int"` / `"float"` / `"vec16"` / `"byref"` / `"multi"` ✗。
+    /// 它是**静态**事实（返回值的 IR 类型在生成期已知 ✗）⇒ **不经运行时谓词求值** ✗，
+    /// 由终结 lowering 在生成期挑第一条匹配的规则 ✗。
+    #[serde(default)]
+    pub when: Option<toml::Value>,
 }
 
 // ──────────────────────── `asm` 写法列表（v21 W7）────────────────────────
@@ -4192,21 +4199,37 @@ mod ir_inverse_cond_tests {
     }
 }
 
-/// v21 W6 **进行中**的安全闸：`[lower.*]` 目前只有 `Jmp` 完成接线并验证等价。
+/// v21 W6 的安全闸：`[lower.*]` 目前接线并验证等价的是 `Jmp` / `Br` / `Ret`（整数返回 ✗）。
 ///
-/// `Br` 的旧硬编码体还带一步 `map_reg_field`（把 IR 条件寄存器写进 test/branch 的操作数），
-/// 当前占位符体系表达不了；`Ret` 的体含"整数值→返回寄存器 / 浮点→浮点返回寄存器"的搬移。
-/// 让谱声明它们会**静默生成错代码** ⇒ 解析期明确拒绝，等后续 W6 落地再放行。
+/// `Switch`/`Unreachable`/`Invoke` 还没接 ✗；`Ret` 的**浮点 / ≤16B 向量 / >16B sret / 多值**
+/// 四种返回形态仍在生成器里（分片进行中 ✗，见执行清单 §8）——写了 `ret_kind = "float"` 之类
+/// 目前**不会**被消费 ⇒ 这里也拒绝那些种类，避免"谱写了却静默不生效" ✗。
 pub fn check_term_lowering_supported(m: &IsaModel) -> Result<(), String> {
     let Some(lower) = m.lower_terms.as_ref() else {
         return Ok(());
     };
-    for op in lower.keys() {
-        if op != "Jmp" && op != "Br" {
+    for (op, rules) in lower {
+        if !matches!(op.as_str(), "Jmp" | "Br" | "Ret") {
             return Err(format!(
-                "[lower.{op}]: 该终结 lowering 尚未支持（v21 W6 进行中）——目前只有 `[lower.Jmp]`/`[lower.Br]` \
-                 完成接线并验证等价；`Br` 还缺条件寄存器的操作数映射、`Ret` 还缺返回搬移的谱面表达"
+                "[lower.{op}]: 该终结 lowering 尚未支持（v21 W6 进行中）——已接线的有 \
+                 `[lower.Jmp]`/`[lower.Br]`/`[lower.Ret]`（后者目前只有整数返回 ✗）"
             ));
+        }
+        if op == "Ret" {
+            for r in rules {
+                if let Some(k) = r
+                    .when
+                    .as_ref()
+                    .and_then(|w| w.get("ret_kind"))
+                    .and_then(|v| v.as_str())
+                    && k != "int"
+                {
+                    return Err(format!(
+                        "[lower.Ret].when.ret_kind = \"{k}\": 该返回形态还没下放（v21 W6 分片进行中）\
+                         ——目前只有整数返回（\"int\" ✗）由谱面接管，其余四种仍在生成器里"
+                    ));
+                }
+            }
         }
     }
     Ok(())

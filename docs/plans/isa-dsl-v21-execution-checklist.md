@@ -790,7 +790,14 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
   - [x] x86：`test` + `jcc` + `jmp` ✔
   - [x] riscv：`beq …, x0, {false}` + `jal x0, {true}` ✔
   - [x] arm64：`cbz {0}, {false}` + `b {true}` ✔
-  - [ ] **`[lower.Ret]` 仍被安全闸关着** ✗（还缺"返回搬移"的谱面表达 ✗）。
+  - [x] **`[lower.Ret]`：整数返回已下放**（2026-10-08 ✗）——三谱各写
+    `[[lower.Ret]] when = { ret_kind = "int" }` ✗：x86 `MOV_RM8_R64` / riscv64 `MOV_RM8_R64` /
+    arm64 `MOVX`，**与生成器旧路径是同一条指令、同一操作数映射** ✗
+    （`terminator_return_packet` 等集成测试逐条印证 ✗）。新占位符 `{ret}`/`{retf}`（ABI 返回槽 ✗）
+    与 `{ret_src}`/`{retf_src}`（承载返回值的虚拟寄存器 ✗）；安全闸要求 `Ret` 必须写 `when` ✗，
+    写未下放的形态（float/vec16/byref/multi ✗）一律拒 ✗。
+  - [ ] **其余四种返回形态**（float / ≤16B 向量 / >16B sret / 多值 ✗）仍在生成器里——
+    分片进行中 ✗；机制已就位（加 `[[lower.Ret]] when = { ret_kind = … }` + 放开闸门即可 ✗）。
 - [x] 删除编译器三处按字段个数猜 ISA（`lowering.rs:202`、`:527-625`、`frame.rs:172-208`）。
   （**2026-10-08：死代码已删干净** ✔ —— `_has_jal`/`_jal_dest`/`_jal_target`/`_b_src`/`_b_src2`/`_b_target`
   这批无消费者的探测全部删除 ✗。**但 `frame.rs` 里仍留一处** `has_jump && model.is_prefix_scan()` ✗ ——

@@ -4527,16 +4527,19 @@ fn cc_inv_uses_inverse_condition_code() {
 /// `{target}` 符号值）。本片只验"谱面可用"；codegen 接线在下一片。
 #[test]
 fn lower_terminator_section_parses() {
-    // 只声明**已放行**的 `Jmp`：`Br`/`Ret` 的谱面表达未落地，被安全闸有意拒绝
-    // （见 `unsupported_term_lowering_is_rejected`）。
+    // 只声明 `Jmp`（`Br`/`Ret` 另见 `unsupported_term_lowering_is_rejected`：
+    // `Ret` 必须带 `when = { ret_kind = … }` ✗）。
     let doc = gen_cond_doc(
         CC_ALL_FULL,
         "[[lower.Jmp]]\ninsts = [\"SETC {out}, {cc}\"]",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let lower = m.lower_terms.as_ref().expect("lower 节应进模型");
-    assert_eq!(lower.len(), 1, "目前只放行 Jmp：{lower:?}");
-    assert!(lower["Jmp"].insts[0].contains("{cc}"));
+    assert_eq!(lower.len(), 1, "只声明了 Jmp：{lower:?}");
+    // v21 W6 乙：终结规则是**数组**（同名多块按声明序累积 ✗）。
+    assert_eq!(lower["Jmp"].len(), 1, "一条 Jmp 规则");
+    assert!(lower["Jmp"][0].insts[0].contains("{cc}"));
+    assert!(lower["Jmp"][0].when.is_none(), "Jmp 不带形态条件");
 }
 
 
@@ -4568,23 +4571,64 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"myjmp {dst}, {cond}\"\nroles = [\"ju
 }
 
 
-/// v21 W6 **进行中**的安全闸：`[[lower.Br]]`/`[[lower.Ret]]` 的谱面表达还没落地（`Br` 缺条件寄存器的
-/// 操作数映射、`Ret` 缺返回搬移）⇒ 声明它们必须**解析期报错**，而不是静默生成错代码。
+/// v21 W6 的安全闸与 `[lower.Ret]` 的**形态条件**。
+///
+/// 已接线并验证等价：`Jmp` / `Br` / `Ret`（**只有整数返回** ✗）。
+/// `Ret` 必须写 `when = { ret_kind = … }`——不写就等于宣称"四种返回形态都下放"，
+/// 而浮点/≤16B 向量/>16B sret/多值仍在生成器里 ⇒ 必须拒绝，不能静默不生效。
 #[test]
 fn unsupported_term_lowering_is_rejected() {
-    // `Ret` 仍被闸门关着（返回搬移的谱面表达未落地）。
+    // ① `Ret` 缺 `when` ⇒ 拒（要求写明形态）。
     let doc = gen_cond_doc(
         CC_ALL_FULL,
         "[[lower.Ret]]\ninsts = [\"SETC {out}, {cc}\"]",
     );
     let err = super::parse_and_validate(&doc).unwrap_err().to_string();
-    assert!(err.contains("lower.Ret"), "Ret 应被拒：{err}");
-    assert!(err.contains("W6"), "报错应点明进行中：{err}");
-    // 已放行的 `Jmp`/`Br` 都要通过。
-    for op in ["Jmp", "Br"] {
+    assert!(err.contains("lower.Ret"), "应点名 lower.Ret：{err}");
+    assert!(err.contains("ret_kind"), "应点明要写 ret_kind：{err}");
+
+    // ② `Ret` 写了**还没下放**的形态 ⇒ 被安全闸拒（并点明分片进行中）。
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[lower.Ret]]\nwhen = { ret_kind = \"float\" }\ninsts = [\"SETC {out}, {cc}\"]",
+    );
+    let err = super::parse_and_validate(&doc).unwrap_err().to_string();
+    assert!(err.contains("float"), "应点名形态：{err}");
+    assert!(err.contains("W6"), "报错应点明分片进行中：{err}");
+
+    // ③ 未知形态名 ⇒ 拒（拼错不该静默）。
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[lower.Ret]]\nwhen = { ret_kind = \"f32\" }\ninsts = [\"SETC {out}, {cc}\"]",
+    );
+    let err = super::parse_and_validate(&doc).unwrap_err().to_string();
+    assert!(err.contains("f32"), "应点名拼错的形态：{err}");
+
+    // ④ `when` 挂到 `Jmp`/`Br` ⇒ 拒（它们的序列与返回值类型无关）。
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[lower.Jmp]]\nwhen = { ret_kind = \"int\" }\ninsts = [\"SETC {out}, {cc}\"]",
+    );
+    let err = super::parse_and_validate(&doc).unwrap_err().to_string();
+    assert!(err.contains("lower.Jmp"), "应点名 lower.Jmp：{err}");
+
+    // ⑤ 仍未接线的终结 op ⇒ 拒。
+    let doc = gen_cond_doc(
+        CC_ALL_FULL,
+        "[[lower.Switch]]\ninsts = [\"SETC {out}, {cc}\"]",
+    );
+    let err = super::parse_and_validate(&doc).unwrap_err().to_string();
+    assert!(err.contains("lower.Switch"), "应点名 lower.Switch：{err}");
+
+    // ⑥ 已放行的三种都要通过（`Ret` 带 int 形态条件）。
+    for (op, extra) in [
+        ("Jmp", ""),
+        ("Br", ""),
+        ("Ret", "when = { ret_kind = \"int\" }\n"),
+    ] {
         let ok = gen_cond_doc(
             CC_ALL_FULL,
-            &format!("[[lower.{op}]]\ninsts = [\"SETC {{out}}, {{cc}}\"]"),
+            &format!("[[lower.{op}]]\n{extra}insts = [\"SETC {{out}}, {{cc}}\"]"),
         );
         assert!(super::parse_and_validate(&ok).is_ok(), "{op} 应放行");
     }

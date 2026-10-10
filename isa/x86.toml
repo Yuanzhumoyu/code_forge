@@ -4709,6 +4709,14 @@ fp_push_bytes = 8
 [[lower.Jmp]]
 insts = ["JMP_REL32 {target}"]
 
-# v21 W6：终结层谱面——条件分支（cond, then, else ✗）。`test` 置 ZF ⇒ 条件码 = 本 ISA 的 eq ✗。
+# v21 W6：终结层谱面——条件分支（cond, then, else）。`test` 置 ZF ⇒ 条件码 = 本 ISA 的 eq。
 [[lower.Br]]
 insts = ["TEST_RM_R {cond}, {cond}", "JCC_REL32 {cc}, {false}", "JMP_REL32 {true}"]
+
+# v21 W6 乙：**整数返回**由谱面接管（`return` 是 IR 语义，汇编侧形态随 ISA 变）。
+# `{ret_src}` = 承载返回值的虚拟寄存器（lowering 把 IR 返回值绑上去），
+# `{ret}` = ABI 返回槽（宿主约定解析成物理寄存器）。`MOV_RM8_R64`（`0x89 /r`）是
+# 生成器旧路径选中的同一条搬移（`ops` 序 = src, dst ⇒ 模板按 (值, 返回槽) 写）。
+[[lower.Ret]]
+when = { ret_kind = "int" }
+insts = ["MOV_RM8_R64 {ret_src}, {ret}"]

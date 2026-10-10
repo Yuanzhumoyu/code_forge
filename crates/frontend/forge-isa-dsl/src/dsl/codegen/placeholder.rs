@@ -659,10 +659,54 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             xreg: "__cond",
             ctor: Some(|s| field_ctor_expr(s, quote! { 0u32 })),
         },
+        // v21 W6 乙：**ABI 相对的返回槽**（按 IR 语义命名，不按 ISA 寄存器名 ✗）。
+        // `{ret}` / `{retf}` = "返回值要去的那个槽" ✗，由终结 lowering 从宿主约定解析成
+        // 物理寄存器（`__ret_dst`/`__retf_dst` ✗）——**物理** ⇒ `xreg: "0u32"`（不参与映射 ✗）。
+        // `{ret_src}` / `{retf_src}` = 承载返回值的**虚拟**寄存器 ✗，与 `{cond}` 同形：
+        // 字段先填 0，`map_reg_field` 用 `xreg` 把 IR 返回值绑上去 ✗。
+        Ph {
+            name: "{ret}",
+            kind: PhKind::Reg,
+            loose: false,
+            token_kind: "reg",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { __ret_dst }),
+        },
+        Ph {
+            name: "{ret_src}",
+            kind: PhKind::Reg,
+            loose: false,
+            token_kind: "reg",
+            temp: None,
+            temp_class: None,
+            xreg: "__ret_src",
+            ctor: Some(|s| field_ctor_expr(s, quote! { 0u32 })),
+        },
+        Ph {
+            name: "{retf}",
+            kind: PhKind::Reg,
+            loose: false,
+            token_kind: "reg",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { __retf_dst }),
+        },
+        Ph {
+            name: "{retf_src}",
+            kind: PhKind::Reg,
+            loose: false,
+            token_kind: "reg",
+            temp: None,
+            temp_class: None,
+            xreg: "__retf_src",
+            ctor: Some(|s| field_ctor_expr(s, quote! { 0u32 })),
+        },
         Ph {
             name: "{true}",
-            kind: PhKind::Cond,
-            loose: false,
+            kind: PhKind::Cond,            loose: false,
             token_kind: "label",
             temp: None,
             temp_class: None,

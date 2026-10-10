@@ -1429,6 +1429,39 @@ insts = ["ADD64 {out}, {0}, {1}"]
 > **`op` 键与名单机制已删除** ✗（口径：一个名字一块 ✗，复用交给 `[family.*]`/`vary` ✗）。
 > 下面的老例子保留作历史 ✗（旧面 `[[lowering]]` 现在会被 `deny_unknown_fields` 拒 ✗）。
 
+### 终结序列（`Jmp` / `Br` / `Ret`）与 **ABI 相对返回槽**
+
+终结 op（`Jmp`/`Br`/`Ret`/`Switch`/`Unreachable`/`Invoke`）的序列写在**终结层**，
+因为分支的 then/else 块号只有终结层拿得到：
+
+```toml
+[[lower.Jmp]]
+insts = ["JMP_REL32 {target}"]                     # {target} = 目标块号
+
+[[lower.Br]]
+insts = ["TEST_RM_R {cond}, {cond}", "JCC_REL32 {cc}, {false}", "JMP_REL32 {true}"]
+# {cond} = 条件寄存器（lowering 把 IR 条件值绑上去）；{cc}/{cc_inv} = [enum.cond] 反查；
+# {true}/{false} = 两个后继块号
+
+[[lower.Ret]]
+when = { ret_kind = "int" }                        # ← 按 **IR 语义** 分支
+insts = ["MOV_RM8_R64 {ret_src}, {ret}"]
+```
+
+**为什么 `return` 归 lowering 而不归汇编层**：`return` 是 **IR 语义**——汇编侧可能根本没有
+对应指令（要靠 `mov`/`jmp`/`pop` 之类微指令拼），而 IR 语义在各 ISA 之间是**稳定的那一侧**
+⇒ 形态多变的部分正应该在这里被吸收。于是谱面用**IR/ABI 相对**的名字，不用 ISA 寄存器名：
+
+| 占位符 | 含义 | 谁绑定 |
+| --- | --- | --- |
+| `{ret}` / `{retf}` | **ABI 返回槽**（整数 / 浮点）——"返回值要去的那个槽" | 宿主约定（plan 的 `ret` 槽或 `conv.ret_gpr`；缺 ⇒ fail-closed） |
+| `{ret_src}` / `{retf_src}` | 承载返回值的**虚拟**寄存器（像 `{cond}`：字段先填 0，由 `map_reg_field` 把 IR 返回值绑上去） | 终结 lowering |
+
+`when.ret_kind` 是**返回形态**（静态事实，创建期即知）：`"int"` / `"float"` / `"vec16"` /
+`"byref"` / `"multi"`。目前只有 `"int"` 完成下放（三份发行谱都写了这一条 ✗）——
+其余四种仍在生成器里；写未下放的形态会被**安全闸拒**（不会静默不生效）。
+`[lower.Ret]` **必须**写 `when`（不写就等于宣称四种形态都下放）。
+
 ### 历史写法（v18 S5，已废 ✗）
 
 一条规则 = **op + 条件 + 发射序列**；同 op 的多条规则按

@@ -376,7 +376,31 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     } else {
         no_fpr_move.clone()
     };
-    let return_body: TokenStream = if has_mov_rax {
+    // v21 W6 乙：谱面的**整数返回序列**（`[[lower.Ret]].when.ret_kind = "int"` ✗）。
+    //
+    // 为什么放这里（而不是汇编层）：`return` 是 **IR 语义**，汇编侧可能没有对应指令
+    // （要靠 mov/jmp/pop 之类微指令拼 ✗），形态又随 ISA 变 ✗ ⇒ 由 lowering 层吸收 ✗。
+    // 谱面写 `{ret}`（ABI 返回槽 ✗）/`{ret_src}`（承载返回值的虚拟寄存器 ✗），
+    // 具体指令与序列由**谱**点名 ✗；宿主只负责把 `{ret}` 解析成物理寄存器 ✗。
+    let spec_ret_int: Option<Vec<TokenStream>> = match model
+        .lower_terms
+        .as_ref()
+        .and_then(|m| m.get("Ret"))
+        .and_then(|v| {
+            v.iter()
+                .find(|t| {
+                    t.when
+                        .as_ref()
+                        .and_then(|w| w.get("ret_kind"))
+                        .and_then(|k| k.as_str())
+                        == Some("int")
+                })
+                .cloned()
+        }) {
+        Some(tl) => Some(gen_lowering_insts(&tl.insts, infos, &name_to_vn, None)?),
+        None => None,
+    };
+    let return_body: TokenStream = if has_mov_rax || spec_ret_int.is_some() {
         let mov_src_idx_lit = mov_src_idx as usize;
         // 返回槽（v20 A5-3）：优先**本函数的 plan**（`CallLayout::ret` 的寄存器形态），
         // 否则用宿主的**约定级整数返回槽**（`ctx.conv.ret_gpr`）——谱里的
@@ -404,9 +428,26 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                 }
             }
         };
+        // 整数返回体：**谱面优先**（v21 W6 乙 ✗ —— 指令与序列由谱点名 ✗），
+        // 没有谱面规则时走旧路径（moves 表挑搬移指令 ✗）。
+        let int_return_body: TokenStream = if let Some(seq) = &spec_ret_int {
+            quote! {
+                let __ret_dst = #ret_dest;
+                let __ret_src = val;
+                #(#seq)*
+            }
+        } else {
+            quote! {
+                let __idx = __pack.push_inst(Inst::#ret_vn {
+                    #mov_src: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                    #mov_dest: #ret_dest,
+
+                });
+                __pack.map_reg_field(val, __idx, #mov_src_idx_lit as u8, false);
+            }
+        };
         // S2：宽向量返回值（>16 字节）sret——结果 store 到 [sret_ptr]，
-        // sret_ptr 由**布局**的隐藏槽给（Windows x64：隐藏 sret 参数占 RCX）。
-        // 搬运指令派生自 `(Mem ← Reg(Fpr))`（**宽度精确**）；本 ISA 没有 ⇒ fail-closed。
+        // sret_ptr 由**布局**的隐藏槽给（Windows x64：隐藏 sret 参数占 RCX）。        // 搬运指令派生自 `(Mem ← Reg(Fpr))`（**宽度精确**）；本 ISA 没有 ⇒ fail-closed。
         let sret_return_body: TokenStream = if has_byref_insts {
             let store_body =
                 moves.dispatch(&store_want, &quote! { (__vbytes as u32) * 8 }, |arm| {
@@ -558,12 +599,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             }) {
                 #sret_return_body
             } else {
-                let __idx = __pack.push_inst(Inst::#ret_vn {
-                    #mov_src: Reg::from_index(0, __DEFAULT_GPR_CLASS),
-                    #mov_dest: #ret_dest,
-
-                });
-                __pack.map_reg_field(val, __idx, #mov_src_idx_lit as u8, false);
+                #int_return_body
             }
             Ok(__pack)
         }
@@ -580,10 +616,12 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     // 变体名按键派生，避免硬编码 Inst::JmpRel32/Inst::Jal/Inst::B。
     let _jump_vn = crate::dsl::codegen::pascal_ident(&jump_inst);
     // v21 W6：谱声明了 `[lower.Jmp]` 就用**谱面序列**（未声明则走下面的旧路径）。
+    // 同名多块按声明序累积（`Vec<TermSeq>`）⇒ 取第一条（`Jmp` 不带 `when` ✗）。
     let spec_jump_body: Option<TokenStream> = match model
         .lower_terms
         .as_ref()
         .and_then(|m| m.get("Jmp"))
+        .and_then(|v| v.first())
     {
         Some(tl) => Some({
             let seq = gen_lowering_insts(&tl.insts, infos, &name_to_vn, None)?;
@@ -628,6 +666,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         .lower_terms
         .as_ref()
         .and_then(|m| m.get("Br"))
+        .and_then(|v| v.first())
     {
         Some(tl) => Some({
             let seq = gen_lowering_insts(&tl.insts, infos, &name_to_vn, None)?;

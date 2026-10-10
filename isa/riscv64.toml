@@ -3343,3 +3343,7 @@ insts = ["JAL X0, {target}"]
 # v21 W6：终结层谱面——条件分支（riscv 用 beq cond,x0,false 再 jal x0,true）。
 [[lower.Br]]
 insts = ["BEQ {cond}, X0, {false}", "JAL X0, {true}"]
+# v21 W6 乙：整数返回由谱面接管（`{ret_src}` = 承载返回值的虚拟寄存器，`{ret}` = ABI 返回槽）。
+[[lower.Ret]]
+when = { ret_kind = "int" }
+insts = ["MOV_RM8_R64 {ret}, {ret_src}"]

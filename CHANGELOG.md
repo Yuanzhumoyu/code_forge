@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6 乙：`[lower.Ret]` 上线，**整数返回下放到谱**（三谱）
+
++ 终结规则改成**数组**（`[[lower.<名字>]]` 同名多块按声明序累积；此前同名第二块会静默覆盖第一块），
+  并新增 `when = { ret_kind = … }`：终结序列可以按 **IR 语义**分支。
++ 新增 **ABI 相对占位符**：`{ret}`/`{retf}` = ABI 返回槽（宿主约定解析成物理寄存器，缺 ⇒ fail-closed）、
+  `{ret_src}`/`{retf_src}` = 承载返回值的虚拟寄存器（`map_reg_field` 绑 IR 返回值）。
++ 三份发行谱都写了 `[[lower.Ret]] when = { ret_kind = "int" }`（x86 `MOV_RM8_R64`、
+  riscv64 `MOV_RM8_R64`、arm64 `MOVX`）——**与生成器旧路径选中的是同一条指令、同一操作数映射**
+  （`terminator_return_packet` 等集成测试逐条印证）。
++ 安全闸：`Ret` 必须写 `when`；写还没下放的形态（float/vec16/byref/multi）或未知形态名一律拒，
+  不静默不生效。其余四种返回形态仍在生成器里（分片进行中）。
++ **行为不变**：`encoding.digest` 编码字节指纹通过；x86 矩阵 **197/3/0**、riscv64 矩阵 **136/64/0**
+  （与基线逐数字相同）；riscv64/arm64 的 `forge-isa insts` 与基线 **0 差异**。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W4/D4 #16：`class`/`classes` 双键合一
 
 + `[operand.<名字>]` 的 `class` 键现在**接受组名或组名数组**：
