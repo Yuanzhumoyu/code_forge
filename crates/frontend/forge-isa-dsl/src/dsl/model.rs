@@ -388,13 +388,18 @@ pub struct IsaModel {
     /// 保留不清空：它是"面"的存储 ⇒ 模型序列化写回 `[pred.<名>]`，往返无损。
     #[serde(default, rename = "pred")]
     pub pred_decls: BTreeMap<String, DeriveDef>,
-    /// **v21 W6-a：选择层声明**（`[lower.<名字>]`，表头 = 名字）——一张表两种东西，由
-    /// **`match` 的有无**区分（口径见执行清单 §8「W6-a」✗）：有 `match` = 树模式
-    /// （名字作者起 ✗）、没有 = op 规则（**名字就是 op 名** ✗）。
-    /// 解析期降级进内部 [`IsaModel::lowering`]/[`IsaModel::pattern`]（**按源码声明序**展开 ✗
-    /// ——声明序是裁决的最后一档 ✗）。保留不清空 ⇒ 序列化写回 `[lower.*]`，往返无损 ✗。
+    /// **v21 W6-a：选择层声明**（`[[lower.<名字>]]`，表头 = 名字）——一张表三种东西，由
+    /// **`match` 的有无**与**名字**路由（口径见执行清单 §8「W6-a」✗）：名字是终结 op
+    /// ⇒ 终结序列 ✗；写了 `match` ⇒ 树模式 ✗；其余 ⇒ op 规则（**名字就是 op 名** ✗）。
+    ///
+    /// **同名可以有多块** ✗（`[[lower.Iadd]]` 出现多次 ✗）——一个 op 本来就可能有多条规则
+    /// （按 `when` 宽度/元素分派 ✗，x86 实测 `Vextract` 24 条、`Fcmp` 16 条 ✗）✗；
+    /// 这是**数组**而不是单表的原因 ✗。
+    /// 解析期降级进内部 [`IsaModel::lowering`]/[`IsaModel::pattern`]/[`IsaModel::lower_terms`]
+    /// （**按源码声明序**展开 ✗——声明序是裁决的最后一档 ✗）。保留不清空 ⇒ 序列化写回
+    /// `[[lower.*]]`，往返无损 ✗。
     #[serde(default, rename = "lower")]
-    pub lower_decls: BTreeMap<String, LowerDecl>,
+    pub lower_decls: BTreeMap<String, Vec<LowerDecl>>,
     /// 派生谓词属性（**内部载体**，v21 W10 起 TOML 面是 `[pred.<名>]`；
     /// v18 S3f 引入时叫 `[[derive]]`）：给 `when` 用的命名布尔属性。
     #[serde(default, skip)]

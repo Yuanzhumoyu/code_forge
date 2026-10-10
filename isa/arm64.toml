@@ -3549,18 +3549,15 @@ epilogue_label = true
 # ─────────────────────── lowering（64 位主；32 位 W 变体按 rs1_width）───────────────────────
 # 覆盖 op 集 = P1 tm 测试所需最小集（SUPPORTED_OPS 由此唯一集派生）。
 
-[[lowering]]
-op = "Iadd"
+[[lower.Iadd]]
 dispatch = "rs1_width"
 insts = ["ADDREGX {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Isub"
+[[lower.Isub]]
 dispatch = "rs1_width"
 insts = ["SUBREGX {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Imul"
+[[lower.Imul]]
 dispatch = "rs1_width"
 insts = ["MULX {out}, {0}, {1}"]
 
@@ -3572,18 +3569,15 @@ insts = ["MULX {out}, {0}, {1}"]
 #   movz(hw1)+movk(hw0)——任意 64/32 位位型均可构造（含 i64 负大值：两补码
 #   位型逐片写入，movz hw3 置高片后 movk 覆盖低片，其余位先清零后覆写，正确）。
 # 序列构造先后序 = 高片 movz 先（清零其它）→ 低片 movk 依 hw 降序覆写。
-[[lowering]]
-op = "Iconst"
+[[lower.Iconst]]
 when = { and = [ { eq = ["rd", 64] }, { lt = ["iconst", 0] }, { ge = ["iconst", -65536] } ] }
 insts = ["MOVNX {out}, {iconst_c16}"]
 
-[[lowering]]
-op = "Iconst"
+[[lower.Iconst]]
 when = { and = [ { eq = ["rd", 64] }, { ge = ["iconst", 0] }, { lt = ["iconst", 65536] } ] }
 insts = ["MOVZX {out}, {iconst}"]
 
-[[lowering]]
-op = "Iconst"
+[[lower.Iconst]]
 when = { and = [ { eq = ["rd", 64] }, { not = { and = [ { ge = ["iconst", -65536] }, { lt = ["iconst", 65536] } ] } } ] }
 insts = [
   "MOVZX3 {out}, {iconst_f3}",
@@ -3592,42 +3586,35 @@ insts = [
   "MOVKX {out}, {iconst_f0}",
 ]
 
-[[lowering]]
-op = "Iconst"
+[[lower.Iconst]]
 when = { and = [ { lt = ["iconst", 0] }, { ge = ["iconst", -65536] } ] }
 insts = ["MOVNW {out}, {iconst_c16}"]
 
-[[lowering]]
-op = "Iconst"
+[[lower.Iconst]]
 when = { and = [ { ge = ["iconst", 0] }, { lt = ["iconst", 65536] } ] }
 insts = ["MOVZW {out}, {iconst}"]
 
-[[lowering]]
-op = "Iconst"
+[[lower.Iconst]]
 when = { not = { and = [ { ge = ["iconst", -65536] }, { lt = ["iconst", 65536] } ] } }
 insts = [
   "MOVZW1 {out}, {iconst_f1}",
   "MOVKW {out}, {iconst_f0}",
 ]
 
-[[lowering]]
-op = "Copy"
+[[lower.Copy]]
 insts = ["MOVX {out}, {0}"]
 
 # ── 逻辑运算（P3：Band/Bor/Bxor → ANDREG/ORRREG/EORREG 直落）──
 
-[[lowering]]
-op = "Band"
+[[lower.Band]]
 dispatch = "rs1_width"
 insts = ["ANDREGX {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Bor"
+[[lower.Bor]]
 dispatch = "rs1_width"
 insts = ["ORRREGX {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Bxor"
+[[lower.Bxor]]
 dispatch = "rs1_width"
 insts = ["EORREGX {out}, {0}, {1}"]
 
@@ -5170,9 +5157,9 @@ asm = "adrp x0, #4096"
 bytes = [0x00, 0x00, 0x00, 0xB0]
 
 # v21 W6：终结层谱面——跳转序列。
-[lower.Jmp]
+[[lower.Jmp]]
 insts = ["B {target}"]
 
 # v21 W6：终结层谱面——条件分支（arm64 用 cbz cond,false 再 b，条件码不参与）。
-[lower.Br]
+[[lower.Br]]
 insts = ["CBZX {cond}, {false}", "B {true}"]

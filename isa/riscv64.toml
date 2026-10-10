@@ -1730,23 +1730,19 @@ epilogue_label = true
 
 # ─────────────────────── lowering（64 位主；32 位 W 变体按 rs1_width）───────────────────────
 
-[[lowering]]
+[[lower.Iadd]]
 dispatch = "rs1_width"
-op = "Iadd"
 insts = ["ADD {out}, {0}, {1}"]
 
-[[lowering]]
+[[lower.Isub]]
 dispatch = "rs1_width"
-op = "Isub"
 insts = ["SUB {out}, {0}, {1}"]
 
-[[lowering]]
+[[lower.Imul]]
 dispatch = "rs1_width"
-op = "Imul"
 insts = ["MUL {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Iconst"
+[[lower.Iconst]]
 when = { eq = ["rd", 64] }
 insts = [
     "LUI {g1}, {iconst_hi32_hi20}",
@@ -1760,128 +1756,108 @@ insts = [
     "OR {out}, {g1}, {g2}",
 ]
 
-[[lowering]]
-op = "Iconst"
+[[lower.Iconst]]
 insts = ["LUI {out}, {iconst_hi20}", "ADDI {out}, {out}, {iconst_lo12}"]
 
-[[lowering]]
-op = "Load"
+[[lower.Load]]
 when = { eq = ["rd", 32] }
 insts = ["LW {out}, {0}, 0"]
 
-[[lowering]]
-op = "Load"
+[[lower.Load]]
 insts = ["LD {out}, {0}, 0"]
 
-[[lowering]]
+[[lower.Store]]
 dispatch = "rs1_width"
-op = "Store"
 insts = ["SD {0}, {1}, 0"]
 
-[[lowering]]
-op = "Fload"
+[[lower.Fload]]
 when = { eq = ["rd", 32] }
 insts = ["FLW {out}, {0}, 0"]
 
-[[lowering]]
-op = "Fload"
+[[lower.Fload]]
 insts = ["FLD {out}, {0}, 0"]
 
-[[lowering]]
+[[lower.Fstore]]
 dispatch = "rs1_width"
-op = "Fstore"
 insts = ["FSD {0}, {1}, 0"]
 
-[[lowering]]
-op = "StackAddr"
+[[lower.StackAddr]]
 # 基准 X8（fp = 入口 sp，帧顶固定）：栈槽相对 fp（偏移 = v - 16，
 # stack_slot_shift）→ 递归各帧独立（相对 sp 的 -4 跨帧重叠——fib_slot
 # 结果错）；且避开 ra/fp 保存槽 [fp-16, fp)。
 insts = ["ADDI {out}, X8, {off}"]
 
-[[lowering]]
-op = ["Copy", "Sextend", "Freeze"]
+[[lower.Copy]]
 insts = ["MOV_RM8_R64 {out}, {0}"]
 # ── 补全 lowering（B2 遗留：位运算/移位/比较/调用）──
 
-[[lowering]]
-op = "Band"
+[[lower.Sextend]]
+insts = ["MOV_RM8_R64 {out}, {0}"]
+
+[[lower.Freeze]]
+insts = ["MOV_RM8_R64 {out}, {0}"]
+
+[[lower.Band]]
 insts = ["AND {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Bor"
+[[lower.Bor]]
 insts = ["OR {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Bxor"
+[[lower.Bxor]]
 insts = ["XOR {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Bnot"
+[[lower.Bnot]]
 insts = ["XORI {out}, {0}, -1"]
 
-[[lowering]]
-op = "Ishl"
+[[lower.Ishl]]
 insts = ["SLL {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Ushr"
+[[lower.Ushr]]
 insts = ["SRL {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Sshr"
+[[lower.Sshr]]
 insts = ["SRA {out}, {0}, {1}"]
 
 # Icmp：按 IntCC（icmp_id 1-10）分派。riscv 无 setcc——用 slt/sltu/xor/
 # sltiu/xori 序列产生 0/1（矩阵 i1 语义）。eq = (a==b) = sltiu(xor(a,b),1)
 #（xor==0 → 1）；ne = 其取反；sle/sge/ule/uge = 反向 slt/sltu 取反。
-[[lowering]]
-op = "Icmp"
+[[lower.Icmp]]
 when = { eq = ["cond", 1] } # Equal
 insts = ["XOR {g}, {0}, {1}", "SLTIU {out}, {g}, 1"]
 
-[[lowering]]
-op = "Icmp"
+[[lower.Icmp]]
 when = { eq = ["cond", 2] } # NotEqual
 insts = ["XOR {g}, {0}, {1}", "SLTIU {g}, {g}, 1", "XORI {out}, {g}, 1"]
 
-[[lowering]]
-op = "Icmp"
+[[lower.Icmp]]
 when = { eq = ["cond", 3] } # SignedLessThan
 insts = ["SLT {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Icmp"
+[[lower.Icmp]]
 when = { eq = ["cond", 4] } # SignedLessThanOrEqual = !(b < a)
 insts = ["SLT {g}, {1}, {0}", "XORI {out}, {g}, 1"]
 
-[[lowering]]
-op = "Icmp"
+[[lower.Icmp]]
 when = { eq = ["cond", 5] } # SignedGreaterThan = b < a
 insts = ["SLT {out}, {1}, {0}"]
 
-[[lowering]]
-op = "Icmp"
+[[lower.Icmp]]
 when = { eq = ["cond", 6] } # SignedGreaterThanOrEqual = !(a < b)
 insts = ["SLT {g}, {0}, {1}", "XORI {out}, {g}, 1"]
 
-[[lowering]]
-op = "Icmp"
+[[lower.Icmp]]
 when = { eq = ["cond", 7] } # UnsignedLessThan
 insts = ["SLTU {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Icmp"
+[[lower.Icmp]]
 when = { eq = ["cond", 8] } # UnsignedLessThanOrEqual = !(b <u a)
 insts = ["SLTU {g}, {1}, {0}", "XORI {out}, {g}, 1"]
 
-[[lowering]]
-op = "Icmp"
+[[lower.Icmp]]
 when = { eq = ["cond", 9] } # UnsignedGreaterThan = b <u a
 insts = ["SLTU {out}, {1}, {0}"]
 
-[[lowering]]
-op = "Icmp"
+[[lower.Icmp]]
 when = { eq = ["cond", 10] } # UnsignedGreaterThanOrEqual = !(a <u b)
 insts = ["SLTU {g}, {0}, {1}", "XORI {out}, {g}, 1"]
 
@@ -1891,28 +1867,23 @@ insts = ["SLTU {g}, {0}, {1}", "XORI {out}, {g}, 1"]
 
 # ── 除法/取模（32 位 W 变体按 rs1_width 分派）──
 
-[[lowering]]
+[[lower.Sdiv]]
 dispatch = "rs1_width"
-op = "Sdiv"
 insts = ["DIV {out}, {0}, {1}"]
 
-[[lowering]]
+[[lower.Udiv]]
 dispatch = "rs1_width"
-op = "Udiv"
 insts = ["DIVU {out}, {0}, {1}"]
 
-[[lowering]]
+[[lower.Srem]]
 dispatch = "rs1_width"
-op = "Srem"
 insts = ["REM {out}, {0}, {1}"]
 
-[[lowering]]
+[[lower.Urem]]
 dispatch = "rs1_width"
-op = "Urem"
 insts = ["REMU {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Smin"
+[[lower.Smin]]
 insts = [
     "SLT {g}, {0}, {1}",
     "SUB {g}, X0, {g}",
@@ -1921,8 +1892,7 @@ insts = [
     "XOR {out}, {1}, {g}",
 ]
 
-[[lowering]]
-op = "Smax"
+[[lower.Smax]]
 insts = [
     "SLT {g}, {0}, {1}",
     "SUB {g}, X0, {g}",
@@ -1931,8 +1901,7 @@ insts = [
     "XOR {out}, {0}, {g}",
 ]
 
-[[lowering]]
-op = "Umin"
+[[lower.Umin]]
 insts = [
     "SLTU {g}, {0}, {1}",
     "SUB {g}, X0, {g}",
@@ -1941,8 +1910,7 @@ insts = [
     "XOR {out}, {1}, {g}",
 ]
 
-[[lowering]]
-op = "Umax"
+[[lower.Umax]]
 insts = [
     "SLTU {g}, {0}, {1}",
     "SUB {g}, X0, {g}",
@@ -1954,8 +1922,7 @@ insts = [
 # ── 旋转（基础序列，不依赖 Zbb）：rol(a,n) = (a<<n)|(a>>(64-n))；
 #    `sub X0, n` 取 -n（移位量低 6 位 = 64-n；n=0 时 srl 移位 0 正确）──
 
-[[lowering]]
-op = "Rotl"
+[[lower.Rotl]]
 insts = [
     "SLL {g}, {0}, {1}",
     "SUB {g3}, X0, {1}",
@@ -1963,8 +1930,7 @@ insts = [
     "OR {out}, {g}, {g2}",
 ]
 
-[[lowering]]
-op = "Rotr"
+[[lower.Rotr]]
 insts = [
     "SRL {g}, {0}, {1}",
     "SUB {g3}, X0, {1}",
@@ -1976,36 +1942,33 @@ insts = [
 #    Sextend(i32→i64) = mv；Uextend 按源宽 andi 掩码（8/16）或
 #    slli+srli 清零高 32 位（32→64）；Ireduce 按结果宽截断──
 
-[[lowering]]
-op = "Uextend"
+[[lower.Uextend]]
 when = { eq = ["rs1_width", 8] }
 insts = ["ANDI {out}, {0}, 255"]
 
-[[lowering]]
-op = "Uextend"
+[[lower.Uextend]]
 when = { eq = ["rs1_width", 16] }
 # 0xFFFF 超出 imm12 有符号范围 ±2047（旧 andi 65535 依赖掩码截断侥幸
 # 正确）——用 slli/srli 清零高 48 位（与 32 位路径同模式）
 insts = ["SLLI {out}, {0}, 48", "SRLI {out}, {out}, 48"]
 
-[[lowering]]
-op = ["Uextend", "Ireduce"]
+[[lower.Uextend]]
 insts = ["SLLI {out}, {0}, 32", "SRLI {out}, {out}, 32"]
 
-[[lowering]]
-op = "Ireduce"
+[[lower.Ireduce]]
+insts = ["SLLI {out}, {0}, 32", "SRLI {out}, {out}, 32"]
+
+[[lower.Ireduce]]
 when = { eq = ["rd", 8] }
 insts = ["ANDI {out}, {0}, 255"]
 
-[[lowering]]
-op = "Ireduce"
+[[lower.Ireduce]]
 when = { eq = ["rd", 16] }
 # 0xFFFF 超出 imm12 有符号范围 ±2047（旧 andi 65535 依赖掩码截断侥幸
 # 正确）——用 slli/srli 清零高 48 位
 insts = ["SLLI {out}, {0}, 48", "SRLI {out}, {out}, 48"]
 
-[[lowering]]
-op = "Abs"
+[[lower.Abs]]
 insts = [
     "SRAI {g}, {0}, 63",
     "XOR {out}, {0}, {g}",
@@ -2016,8 +1979,7 @@ insts = [
 # 掩码法：c<<63>>63 得全0/全1 掩码（QEMU 11.1.0-rc2 的 TCG 对直接
 # and/xori/and/or 序列有 host 寄存器 bug——实测 s8=0；掩码法规避）。
 
-[[lowering]]
-op = "Select"
+[[lower.Select]]
 insts = [
     "SLLI {g1}, {0}, 63",
     "SRAI {g1}, {g1}, 63",
@@ -2029,33 +1991,27 @@ insts = [
 
 # ── 空指针判断 / Freeze / Trap / Fence ──
 
-[[lowering]]
-op = "IsNull"
+[[lower.IsNull]]
 insts = ["SLTIU {out}, {0}, 1"]
 
-[[lowering]]
-op = "IsNotNull"
+[[lower.IsNotNull]]
 insts = ["SLTU {out}, X0, {0}"]
 
-[[lowering]]
-op = "Trap"
+[[lower.Trap]]
 insts = ["EBREAK"]
 
-[[lowering]]
-op = "Fence"
+[[lower.Fence]]
 insts = ["FENCE"]
 
 # ── Alloca：栈槽地址（current_alloca_offset；基准 X8 = fp 与 StackAddr 一致）──
 
-[[lowering]]
-op = "Alloca"
+[[lower.Alloca]]
 insts = ["ADDI {out}, X8, {alloca}"]
 
 # ── 溢出 6 条（{out}=值、{out2}=flag；32 位用例）。riscv 无标志位 →
 #    比较序列。i32 值符号扩展后 bit63 = bit31，64 位 slti 检测 32 位符号 ✓。──
 
-[[lowering]]
-op = "UaddOverflow"
+[[lower.UaddOverflow]]
 when = { eq = ["rs1_width", 32] }
 insts = [
     "SLLI {g1}, {0}, 32",
@@ -2067,16 +2023,14 @@ insts = [
     "SLTU {out2}, X0, {g3}",
 ]
 
-[[lowering]]
-op = "UsubOverflow"
+[[lower.UsubOverflow]]
 when = { eq = ["rs1_width", 32] }
 insts = [
     "SUB {out}, {0}, {1}",
     "SLTU {out2}, {0}, {1}",
 ]
 
-[[lowering]]
-op = "SaddOverflow"
+[[lower.SaddOverflow]]
 when = { eq = ["rs1_width", 32] }
 insts = [
     "ADDW {out}, {0}, {1}",
@@ -2095,8 +2049,7 @@ insts = [
     "OR {out2}, {g4}, {g5}",
 ]
 
-[[lowering]]
-op = "SsubOverflow"
+[[lower.SsubOverflow]]
 when = { eq = ["rs1_width", 32] }
 insts = [
     "SUBW {out}, {0}, {1}",
@@ -2116,8 +2069,7 @@ insts = [
     "OR {out2}, {g4}, {g5}",
 ]
 
-[[lowering]]
-op = "SmulOverflow"
+[[lower.SmulOverflow]]
 when = { eq = ["rs1_width", 32] }
 insts = [
     "MULW {out}, {0}, {1}",
@@ -2126,8 +2078,7 @@ insts = [
     "SLTU {out2}, X0, {g2}",
 ]
 
-[[lowering]]
-op = "UmulOverflow"
+[[lower.UmulOverflow]]
 when = { eq = ["rs1_width", 32] }
 insts = [
     "SLLI {g1}, {0}, 32",
@@ -2143,8 +2094,7 @@ insts = [
 # ── 浮点（可验证部分）：Fconst 位模式加载、Fcmp 条件、Fptosi/Fptoui 转换。
 #    f64 用 D 变体、f32 用 S 变体（rs1_width 分派）；QEMU 默认 RV64GC 含 F/D。──
 
-[[lowering]]
-op = "Fconst"
+[[lower.Fconst]]
 when = { eq = ["rd", 64] }
 insts = [
     "LUI {g1}, {fconst_hi32_hi20}",
@@ -2160,8 +2110,7 @@ insts = [
     "FMV_D_X {out}, {g1}",
 ]
 
-[[lowering]]
-op = "Fconst"
+[[lower.Fconst]]
 insts = [
     "LUI {g1}, {fconst_lo32_hi20}",
     # 同上：低 32 位 LUI bit19=1 符号扩展 → 截断（fmv.w.x 只取低 32 位，
@@ -2176,106 +2125,87 @@ insts = [
 # 注意：**每条规则必须带显式宽度谓词**（64 位规则也要标 rs1_width=64）——生成器
 # 按 TOML 顺序生成 if-else 链，无宽度规则的 `cond=N` 会截胡后面的 32 位规则
 #（实测 f32 用例被 feq.d/flt.d 抢走 → QEMU NaN-box 语义下结果错）。
-[[lowering]]
+[[lower.Fcmp]]
 dispatch = "rs1_width"
-op = "Fcmp"
 when = { eq = ["cond", 3] }
 insts = ["FEQ_S {out}, {0}, {1}"]
 
-[[lowering]]
+[[lower.Fcmp]]
 dispatch = "rs1_width"
-op = "Fcmp"
 when = { eq = ["cond", 4] }
 insts = ["FEQ_S {out}, {0}, {1}", "XORI {out}, {out}, 1"]
 
-[[lowering]]
+[[lower.Fcmp]]
 dispatch = "rs1_width"
-op = "Fcmp"
 when = { eq = ["cond", 5] }
 insts = ["FLT_S {out}, {0}, {1}"]
 
-[[lowering]]
+[[lower.Fcmp]]
 dispatch = "rs1_width"
-op = "Fcmp"
 when = { eq = ["cond", 6] }
 insts = ["FLE_S {out}, {0}, {1}"]
 
-[[lowering]]
+[[lower.Fcmp]]
 dispatch = "rs1_width"
-op = "Fcmp"
 when = { eq = ["cond", 7] }
 insts = ["FLT_S {out}, {1}, {0}"]
 
-[[lowering]]
+[[lower.Fcmp]]
 dispatch = "rs1_width"
-op = "Fcmp"
 when = { eq = ["cond", 8] }
 insts = ["FLE_S {out}, {1}, {0}"]
 
-[[lowering]]
+[[lower.Fcmp]]
 dispatch = "rs1_width"
-op = "Fcmp"
 when = { eq = ["cond", 1] }
 insts = ["FEQ_S {g}, {0}, {0}", "FEQ_S {g2}, {1}, {1}", "AND {out}, {g}, {g2}"]
 
-[[lowering]]
+[[lower.Fcmp]]
 dispatch = "rs1_width"
-op = "Fcmp"
 when = { eq = ["cond", 2] }
 insts = ["FEQ_S {g}, {0}, {0}", "FEQ_S {g2}, {1}, {1}", "AND {g}, {g}, {g2}", "XORI {out}, {g}, 1"]
 
-[[lowering]]
+[[lower.Fadd]]
 dispatch = "rs1_width"
-op = "Fadd"
 insts = ["FADD_D {out}, {0}, {1}"]
 
-[[lowering]]
+[[lower.Fsub]]
 dispatch = "rs1_width"
-op = "Fsub"
 insts = ["FSUB_D {out}, {0}, {1}"]
 
-[[lowering]]
+[[lower.Fmul]]
 dispatch = "rs1_width"
-op = "Fmul"
 insts = ["FMUL_D {out}, {0}, {1}"]
 
-[[lowering]]
+[[lower.Fdiv]]
 dispatch = "rs1_width"
-op = "Fdiv"
 insts = ["FDIV_D {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Fptosi"
+[[lower.Fptosi]]
 when = { eq = ["rs1_width", 32] }
 insts = ["FCVT_W_S {out}, {0}, 1"]
 
-[[lowering]]
-op = "Fptosi"
+[[lower.Fptosi]]
 when = { eq = ["rd", 32] }
 insts = ["FCVT_W_D {out}, {0}, 1"]
 
-[[lowering]]
-op = "Fptosi"
+[[lower.Fptosi]]
 insts = ["FCVT_L_D {out}, {0}, 1"]
 
-[[lowering]]
-op = "Fptoui"
+[[lower.Fptoui]]
 when = { eq = ["rs1_width", 32] }
 insts = ["FCVT_WU_S {out}, {0}, 1"]
 
-[[lowering]]
-op = "Fptoui"
+[[lower.Fptoui]]
 when = { eq = ["rd", 32] }
 insts = ["FCVT_WU_D {out}, {0}, 1"]
 
-[[lowering]]
-op = "Fptoui"
+[[lower.Fptoui]]
 insts = ["FCVT_LU_D {out}, {0}, 1"]
 
 # ── 饱和（32 位）：UaddSat 进位时 = 0xFFFFFFFF；UsubSat 借位时 = 0 ──
 
-[[lowering]]
-op = "UaddSat"
+[[lower.UaddSat]]
 when = { eq = ["rs1_width", 32] }
 insts = [
     "SLLI {g1}, {0}, 32",
@@ -2294,8 +2224,7 @@ insts = [
     "SRLI {out}, {out}, 32",
 ]
 
-[[lowering]]
-op = "UsubSat"
+[[lower.UsubSat]]
 when = { eq = ["rs1_width", 32] }
 insts = [
     "SUB {g1}, {0}, {1}",
@@ -2347,8 +2276,7 @@ emit = [
 asm = "unimp"
 emit = ["csrrw X0, 0xc00, X0"]
 
-[[lowering]]
-op = "GlobalAddr"
+[[lower.GlobalAddr]]
 insts = [
     "AUIPC_GLOBAL {out}, {global}",
     "ADDI_GLOBAL {out}, {out}, {global}",
@@ -2360,26 +2288,22 @@ insts = [
 # 模板按 R 型 operand_fields=[rd,rs1,rs2] **位置**绑定：{out}→rd、
 # {0}=addr→rs1、{1}/src→rs2（不能用括号——括号 token 判 mem 类型）。
 
-[[lowering]]
+[[lower.AtomicRmw]]
 dispatch = "rs1_width"
-op = "AtomicRmw"
 when = { eq = ["imm0", 0] }
 insts = ["AMOSWAP_W {out}, {0}, {1}"]
 
-[[lowering]]
+[[lower.AtomicRmw]]
 dispatch = "rs1_width"
-op = "AtomicRmw"
 when = { eq = ["imm0", 1] }
 insts = ["AMOADD_W {out}, {0}, {1}"]
 
-[[lowering]]
+[[lower.AtomicRmw]]
 dispatch = "rs1_width"
-op = "AtomicRmw"
 when = { eq = ["imm0", 2] }
 insts = ["SUB {g}, X0, {1}", "AMOADD_W {out}, {0}, {g}"]
 
-[[lowering]]
-op = "Cmpxchg"
+[[lower.Cmpxchg]]
 when = { eq = ["rs1_width", 64] }
 insts = [
     "LR_D {g}, {0}",
@@ -2395,8 +2319,7 @@ insts = [
     "MOV_RM8_R64 {out}, {g}",
 ]
 
-[[lowering]]
-op = "Cmpxchg"
+[[lower.Cmpxchg]]
 when = { eq = ["rs1_width", 32] }
 insts = [
     "LR_W {g}, {0}",
@@ -2416,8 +2339,7 @@ insts = [
 #    掩码选择饱和值（正溢出 → 0x7FFFFFFF、负溢出 → 0x80000000 符号扩展）。
 #    a 的符号位决定饱和方向：a_sign=0（正）→ 正饱和、a_sign=1 → 负饱和。
 #    与 SaddOverflow/SsubOverflow 同源的位逻辑（slli32+srli63 取 bit31）。
-[[lowering]]
-op = "SaddSat"
+[[lower.SaddSat]]
 when = { eq = ["rs1_width", 32] }
 insts = [
     "ADDW {g}, {0}, {1}",
@@ -2447,8 +2369,7 @@ insts = [
     "OR {out}, {g}, {g3}",
 ]
 
-[[lowering]]
-op = "SsubSat"
+[[lower.SsubSat]]
 when = { eq = ["rs1_width", 32] }
 insts = [
     "SUBW {g}, {0}, {1}",
@@ -2482,9 +2403,8 @@ insts = [
 # Clz：先把最高位 1 向下传播（t |= t>>1..32）→ popcnt(t) = 64 - clz。
 # Ctz：ctz(x) = popcnt((x & -x) - 1)。
 
-[[lowering]]
+[[lower.Popcnt]]
 dispatch = "rs1_width"
-op = "Popcnt"
 insts = [
     "ADD {g}, {0}, X0",
     "SRLI {g1}, {g}, 1",
@@ -2518,9 +2438,8 @@ insts = [
     "ANDI {out}, {g}, 0x7F",
 ]
 
-[[lowering]]
+[[lower.Clz]]
 dispatch = "rs1_width"
-op = "Clz"
 insts = [
     "ADD {g}, {0}, X0",
     "SRLI {g1}, {g}, 1",
@@ -2568,9 +2487,8 @@ insts = [
     "SUB {out}, {g1}, {g}",
 ]
 
-[[lowering]]
+[[lower.Ctz]]
 dispatch = "rs1_width"
-op = "Ctz"
 insts = [
     "SUB {g}, X0, {0}",
     "AND {g}, {0}, {g}",
@@ -2610,16 +2528,16 @@ insts = [
 # ── Nop / Undef / Poison / Bitreverse ──
 # Undef/Poison 语义自由 → 返回 0（xor 清零，与 x86 一致）。
 
-[[lowering]]
-op = "Nop"
+[[lower.Nop]]
 insts = ["NOP"]
 
-[[lowering]]
-op = ["Undef", "Poison"]
+[[lower.Undef]]
 insts = ["XOR {out}, {out}, {out}"]
 
-[[lowering]]
-op = "Bitreverse"
+[[lower.Poison]]
+insts = ["XOR {out}, {out}, {out}"]
+
+[[lower.Bitreverse]]
 insts = [
     "SRLI {g1}, {0}, 1",
     "LUI {g2}, 0x55555",     # 绝对 0x55555000
@@ -3419,9 +3337,9 @@ asm = "jalr sp, zero, 256"
 bytes = [0x67, 0x01, 0x00, 0x10]
 
 # v21 W6：终结层谱面——跳转序列。
-[lower.Jmp]
+[[lower.Jmp]]
 insts = ["JAL X0, {target}"]
 
 # v21 W6：终结层谱面——条件分支（riscv 用 beq cond,x0,false 再 jal x0,true）。
-[lower.Br]
+[[lower.Br]]
 insts = ["BEQ {cond}, X0, {false}", "JAL X0, {true}"]

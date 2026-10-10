@@ -297,7 +297,7 @@ pub const SECTIONS: &[Section] = &[
         doc: "立即数修饰（v21 W7：**表头即修饰名**；旧 `[[conventions.imm_fn]]` 待撤）：`texts` = 同一语义的等价写法列表（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值）",
     },
     Section {
-        path: "[lower.<名字>]",
+        path: "[[lower.<名字>]]",
         model: "LowerDecl",
         required: &["insts"],
         optional: &[
@@ -311,7 +311,7 @@ pub const SECTIONS: &[Section] = &[
         ],
         flatten: &[],
         additional: false,
-        doc: "选择层（v21 W6-a：**表头即名字**，一张表三样东西）——名字是终结 op（Ret/Jmp/Br/Switch/Unreachable/Invoke）⇒ 终结序列（可用 {true}/{false}/{target} 符号值，且只吃 `insts`）；写了 `match` ⇒ 树型多指令匹配（名字是作者起的模式名）；其余 ⇒ op 规则（**名字就是 op 名**）",
+        doc: "选择层（v21 W6-a：**表头即名字、同名可多块**）——名字是终结 op（Ret/Jmp/Br/Switch/Unreachable/Invoke）⇒ 终结序列（可用 {true}/{false}/{target} 符号值，且只吃 `insts`）；写了 `match` ⇒ 树型多指令匹配（名字是作者起的模式名）；其余 ⇒ op 规则（**名字就是 op 名**；一个 op 多条规则就写多块）",
     },
     Section {
         path: "[[lowering]]",

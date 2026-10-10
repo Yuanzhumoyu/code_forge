@@ -63,16 +63,23 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
     // （`BTreeMap` 是字母序，而声明序是裁决的最后一档 ✗）。`lower_decls` 保留不清空：
     // 它是"面"的存储 ⇒ 序列化写回 `[lower.*]`，往返无损 ✗。
     if !model.lower_decls.is_empty() {
-        let mut ordered: Vec<(usize, String, crate::dsl::model::LowerDecl)> = model
-            .lower_decls
-            .iter()
-            .map(|(name, d)| {
-                let at = source
-                    .find(&format!("[lower.{name}]"))
+        // 表头即名字，但**同名可有多块**（`[[lower.<名字>]]` 是数组 ✗）⇒ 逐块按**源文位置**
+        // 排序（`BTreeMap` 是字母序；同名的多块靠出现次序还原声明序 ✗）。
+        let mut ordered: Vec<(usize, String, crate::dsl::model::LowerDecl)> = Vec::new();
+        for (name, decls) in &model.lower_decls {
+            let needle = format!("[[lower.{name}]]");
+            let mut from = 0usize;
+            for d in decls {
+                let at = source[from..]
+                    .find(&needle)
+                    .map(|i| from + i)
                     .unwrap_or(usize::MAX);
-                (at, name.clone(), d.clone())
-            })
-            .collect();
+                if at != usize::MAX {
+                    from = at + needle.len();
+                }
+                ordered.push((at, name.clone(), d.clone()));
+            }
+        }
         ordered.sort_by_key(|(at, _, _)| *at);
         for (_, name, d) in ordered {
             // ① 名字是终结 op ⇒ 终结层序列（只吃 `insts`）。

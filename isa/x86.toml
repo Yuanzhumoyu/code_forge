@@ -2779,42 +2779,33 @@ semantics = "absolute"
 operand = "imm64"
 
 # ── 引用名（多态分派）：见各指令的 `ref`（S10e 的 [[aliases]] 已并入指令属性）──
-[[lowering]]
-op = "Iconst"
+[[lower.Iconst]]
 insts = ["MOV_REG_IMM64 {out}, {iconst}"]
 
 # ADD_RM_R 语义 add {1}, {0}：dest=op1(inout)、src=op0(in)。
 # Iadd:out = a + b → mov out,a; add out,b（{1} = 第二个 IR 操作数）
-[[lowering]]
-op = "Iadd"
+[[lower.Iadd]]
 insts = ["mov {out}, {0}", "add {1}, {out}"]
 
-[[lowering]]
-op = "Isub"
+[[lower.Isub]]
 insts = ["mov {out}, {0}", "sub {1}, {out}"]
 
-[[lowering]]
-op = "Band"
+[[lower.Band]]
 insts = ["mov {out}, {0}", "and {1}, {out}"]
 
-[[lowering]]
-op = "Bor"
+[[lower.Bor]]
 insts = ["mov {out}, {0}", "or {1}, {out}"]
 
-[[lowering]]
-op = "Bxor"
+[[lower.Bxor]]
 insts = ["mov {out}, {0}", "xor {1}, {out}"]
 
-[[lowering]]
-op = "Imul"
+[[lower.Imul]]
 insts = ["mov {out}, {0}", "IMUL_R_RM {out}, {1}"]
 
-[[lowering]]
-op = "Icmp"
+[[lower.Icmp]]
 insts = ["xor {out}, {out}", "cmp {1}, {0}", "SETCC_RM8 {out}, {cc}"]
 
-[[lowering]]
-op = "Load"
+[[lower.Load]]
 dispatch = "rd"
 insts = ["MOVZX_R8_MEM {out}, [{0}]"]
 
@@ -2825,40 +2816,33 @@ insts = ["MOVZX_R8_MEM {out}, [{0}]"]
 # rd_vec = 结果向量类型字节数（非向量 None）——不误伤 64 位标量/I128 load。
 # 宽向量的**硬件前提**由编译入口按字节数守卫（compiler.rs）：>32B 需
 # AVX-512F（EVEX），无则显式拒绝（不发射本机无法执行的指令）。
-[[lowering]]
-op = "Load"
+[[lower.Load]]
 dispatch = "rd_vec"
 insts = ["MOVSD_R_MEM {out}, [{0}]"]
 
 # 默认（非向量 / 未覆盖宽度）——8 字节 MOV。宽向量**不会**落到这里：
 # 32B/64B 有上面的专用规则，其它 >16B 宽度由编译入口显式拒绝。
-[[lowering]]
-op = "Load"
+[[lower.Load]]
 insts = ["MOV_R_MEM {out}, [{0}]"]
 
-[[lowering]]
-op = "Store"
+[[lower.Store]]
 when = { eq = ["rs1_width", 8] }
 insts = ["STORE_MEM_R_8 [{0}], {1}"]
 
-[[lowering]]
-op = "Store"
+[[lower.Store]]
 dispatch = "rs1_vec"
 insts = ["MOVUPS_128_MEM_R [{0}], {1}"]
 
-[[lowering]]
-op = "Store"
+[[lower.Store]]
 when = { eq = ["rs1_vec", 8] }
 insts = ["MOVSD_MEM_R [{0}], {1}"]
 
 # 默认（非向量 / 未覆盖宽度）——8 字节 store；向量宽度同上（32B/64B 专用
 # 规则，其它 >16B 宽度由编译入口显式拒绝）。
-[[lowering]]
-op = "Store"
+[[lower.Store]]
 insts = ["STORE_MEM_R [{0}], {1}"]
 
-[[lowering]]
-op = ["Copy", "Uextend", "Ireduce", "Freeze", "Ptrtoint", "Inttoptr"]
+[[lower.Copy]]
 insts = ["mov {out}, {0}"]
 
 # ── Sextend：按源宽分派——8/16 位源 movsx（0F BE/BF，源槽 gpr8b/gpr16
@@ -2866,43 +2850,56 @@ insts = ["mov {out}, {0}"]
 #    32 符号扩展）——I8 源 0xCE(movzx 206) 被扩成 +206 而非 -50（WA-36
 #    i8 signed 值符号扩展实证）。──
 
-[[lowering]]
-op = "Sextend"
+[[lower.Uextend]]
+insts = ["mov {out}, {0}"]
+
+
+[[lower.Ireduce]]
+insts = ["mov {out}, {0}"]
+
+
+[[lower.Freeze]]
+insts = ["mov {out}, {0}"]
+
+
+[[lower.Ptrtoint]]
+insts = ["mov {out}, {0}"]
+
+
+[[lower.Inttoptr]]
+insts = ["mov {out}, {0}"]
+
+
+[[lower.Sextend]]
 vary = { rs1_width = [8, 16], sfx = ["SS", "SD"] }
 insts = ["movsx {out}, {0}"]
 
-[[lowering]]
-op = "Sextend"
+[[lower.Sextend]]
 insts = ["movsxd {out}, {0}"]
 
-[[lowering]]
-op = "Bnot"
+[[lower.Bnot]]
 insts = ["mov {out}, {0}", "NOT_RM {out}"]
 
-[[lowering]]
-op = "StackAddr"
+[[lower.StackAddr]]
 insts = ["LEA_R64_SIB {out}, [RBP+{off}]"]
 
 # ── 移位（v11 语义：计数搬 RCX（CL 隐式计数）→ D3 /digit）──
 
-[[lowering]]
-op = "Ishl"
+[[lower.Ishl]]
 insts = [
     "mov {out}, {0}",
     "mov RCX, {1}",
     "SHL_RM_CL {out}",
 ]
 
-[[lowering]]
-op = "Ushr"
+[[lower.Ushr]]
 insts = [
     "mov {out}, {0}",
     "mov RCX, {1}",
     "SHR_RM_CL {out}",
 ]
 
-[[lowering]]
-op = "Sshr"
+[[lower.Sshr]]
 insts = [
     "movsxd {out}, {0}",
     "mov RCX, {1}",
@@ -2911,8 +2908,7 @@ insts = [
 
 # ── 除法（v11 语义：movsxd RAX,rs1 + cqo + idiv %t + mov rd,RAX/RDX）──
 
-[[lowering]]
-op = "Sdiv"
+[[lower.Sdiv]]
 insts = [
     "mov {g}, {1}",
     "movsxd RAX, {0}",
@@ -2921,8 +2917,7 @@ insts = [
     "mov {out}, RAX",
 ]
 
-[[lowering]]
-op = "Srem"
+[[lower.Srem]]
 insts = [
     "mov {g}, {1}",
     "movsxd RAX, {0}",
@@ -2931,8 +2926,7 @@ insts = [
     "mov {out}, RDX",
 ]
 
-[[lowering]]
-op = "Udiv"
+[[lower.Udiv]]
 insts = [
     "xor RDX, RDX",
     "mov RAX, {0}",
@@ -2940,8 +2934,7 @@ insts = [
     "mov {out}, RAX",
 ]
 
-[[lowering]]
-op = "Urem"
+[[lower.Urem]]
 insts = [
     "xor RDX, RDX",
     "mov RAX, {0}",
@@ -2955,8 +2948,7 @@ insts = [
 
 # ── Select(cond, then, else) = cond ? then : else（v11 修复版）──
 
-[[lowering]]
-op = "Select"
+[[lower.Select]]
 insts = [
     "TEST_RM_R {0}, {0}",
     "mov {out}, {2}",
@@ -2965,47 +2957,39 @@ insts = [
 
 # ── Uextend：按源宽分派（movzx 合并助记符，源槽 gpr8b/gpr16 自动分发）──
 
-[[lowering]]
-op = "Uextend"
+[[lower.Uextend]]
 vary = { rs1_width = [8, 16], sfx = ["SS", "SD"] }
 insts = ["movzx {out}, {0}"]
 
-[[lowering]]
-op = "Rotl"
+[[lower.Rotl]]
 insts = [
     "mov {out}, {0}",
     "mov RCX, {1}",
     "ROL_RM {out}",
 ]
 
-[[lowering]]
-op = "Rotr"
+[[lower.Rotr]]
 insts = [
     "mov {out}, {0}",
     "mov RCX, {1}",
     "ROR_RM {out}",
 ]
 
-[[lowering]]
-op = "Smin"
+[[lower.Smin]]
 insts = ["mov {out}, {0}", "cmp {1}, {0}", "CMOVCC_R_RM {out}, {1}, 13"]
 
-[[lowering]]
-op = "Smax"
+[[lower.Smax]]
 insts = ["mov {out}, {0}", "cmp {1}, {0}", "CMOVCC_R_RM {out}, {1}, 14"]
 
-[[lowering]]
-op = "Umin"
+[[lower.Umin]]
 insts = ["mov {out}, {0}", "cmp {1}, {0}", "CMOVCC_R_RM {out}, {1}, 3"]
 
-[[lowering]]
-op = "Umax"
+[[lower.Umax]]
 insts = ["mov {out}, {0}", "cmp {1}, {0}", "CMOVCC_R_RM {out}, {1}, 6"]
 
 # ── Abs：rd = |rs1|（neg + cmovl=12）──
 
-[[lowering]]
-op = "Abs"
+[[lower.Abs]]
 insts = [
     "mov {g}, {0}",
     "NEG_RM {g}",
@@ -3016,52 +3000,42 @@ insts = [
 
 # ── 前导/尾随零、popcount、字节交换 ──
 
-[[lowering]]
-op = "Clz"
+[[lower.Clz]]
 # 32 位输入用 lzcntl（gpr256 类）；否则 64 位 lzcntq——否则 32 位输入
 # 被零扩展后 lzcntq 返回 63 而非 31（u32::leading_zeros 错值）。
 insts = ["mov {out}, {0}", "LZCNT_R {out}, {0}"]
 
-[[lowering]]
-op = "Ctz"
+[[lower.Ctz]]
 insts = ["mov {out}, {0}", "TZCNT_R {out}, {0}"]
 
-[[lowering]]
-op = "Popcnt"
+[[lower.Popcnt]]
 insts = ["mov {out}, {0}", "POPCNT_R {out}, {0}"]
 
-[[lowering]]
-op = "Bswap"
+[[lower.Bswap]]
 insts = ["mov {out}, {0}", "BSWAP_R {out}"]
 
 # ── 空指针判断 / Freeze / Trap / Fence ──
 
-[[lowering]]
-op = "IsNull"
+[[lower.IsNull]]
 insts = ["xor {out}, {out}", "TEST_RM_R {0}, {0}", "SETCC_RM8 {out}, 4"]
 
-[[lowering]]
-op = "IsNotNull"
+[[lower.IsNotNull]]
 insts = ["xor {out}, {out}", "TEST_RM_R {0}, {0}", "SETCC_RM8 {out}, 5"]
 
-[[lowering]]
-op = "Trap"
+[[lower.Trap]]
 insts = ["UD2"]
 
-[[lowering]]
-op = "Fence"
+[[lower.Fence]]
 insts = ["MFENCE"]
 
 # ── Alloca：栈槽地址（current_alloca_offset）──
 
-[[lowering]]
-op = "Alloca"
+[[lower.Alloca]]
 insts = ["LEA_R64_SIB {out}, [RBP+{alloca}]"]
 
 # ── 溢出 6 条：{out}=值、{out2}=flag（seto=0/setb=2）──
 
-[[lowering]]
-op = "SaddOverflow"
+[[lower.SaddOverflow]]
 insts = [
     "xor {out2}, {out2}",
     "mov {out}, {0}",
@@ -3069,8 +3043,7 @@ insts = [
     "SETCC_RM8 {out2}, 0",
 ]
 
-[[lowering]]
-op = "UaddOverflow"
+[[lower.UaddOverflow]]
 insts = [
     "xor {out2}, {out2}",
     "mov {out}, {0}",
@@ -3078,8 +3051,7 @@ insts = [
     "SETCC_RM8 {out2}, 2",
 ]
 
-[[lowering]]
-op = "SsubOverflow"
+[[lower.SsubOverflow]]
 insts = [
     "xor {out2}, {out2}",
     "mov {out}, {0}",
@@ -3087,8 +3059,7 @@ insts = [
     "SETCC_RM8 {out2}, 0",
 ]
 
-[[lowering]]
-op = "UsubOverflow"
+[[lower.UsubOverflow]]
 insts = [
     "xor {out2}, {out2}",
     "mov {out}, {0}",
@@ -3096,8 +3067,7 @@ insts = [
     "SETCC_RM8 {out2}, 2",
 ]
 
-[[lowering]]
-op = "SmulOverflow"
+[[lower.SmulOverflow]]
 insts = [
     "xor {out2}, {out2}",
     "mov {out}, {0}",
@@ -3105,8 +3075,7 @@ insts = [
     "SETCC_RM8 {out2}, 0",
 ]
 
-[[lowering]]
-op = "UmulOverflow"
+[[lower.UmulOverflow]]
 insts = [
     "mov {out}, {0}",
     "IMUL_R_RM {out}, {1}",
@@ -3119,8 +3088,7 @@ insts = [
     "and {g}, {out2}",
 ]
 
-[[lowering]]
-op = "SaddSat"
+[[lower.SaddSat]]
 when = { eq = ["rs1_width", 32] }
 insts = [
     "mov {out}, {0}",
@@ -3135,8 +3103,7 @@ insts = [
     "CMOVCC_R_RM {out}, {g4}, 5",
 ]
 
-[[lowering]]
-op = "SaddSat"
+[[lower.SaddSat]]
 when = { eq = ["rs1_width", 64] }
 insts = [
     "mov {out}, {0}",
@@ -3151,8 +3118,7 @@ insts = [
     "CMOVCC_R_RM {out}, {g4}, 5",
 ]
 
-[[lowering]]
-op = "UaddSat"
+[[lower.UaddSat]]
 insts = [
     "mov {out}, {0}",
     "add {1}, {out}",
@@ -3162,8 +3128,7 @@ insts = [
     "CMOVCC_R_RM {out}, {g2}, 5",
 ]
 
-[[lowering]]
-op = "UsubSat"
+[[lower.UsubSat]]
 insts = [
     "mov {out}, {0}",
     "sub {1}, {out}",
@@ -3177,8 +3142,7 @@ insts = [
 # ── Bitreverse：32 位输入用 32 位掩码 SWAR + bswap（64 位掩码对 u32
 #    会反转高位垃圾 → 结果错值；u32::reverse_bits 回归实证）──
 
-[[lowering]]
-op = "Bitreverse"
+[[lower.Bitreverse]]
 when = { eq = ["rs1_width", 32] }
 insts = [
     "mov {out}, {0}",
@@ -3222,8 +3186,7 @@ insts = [
     "SHR_RM_CL {out}",
 ]
 
-[[lowering]]
-op = "Bitreverse"
+[[lower.Bitreverse]]
 insts = [
     "mov {out}, {0}",
     "MOV_REG_IMM64 {g1}, 1",
@@ -3271,30 +3234,25 @@ insts = [
 
 # ── Fadd/Fsub/Fmul/Fdiv（F32 → SS 族 / F64 → SD 族）──
 
-[[lowering]]
-op = "Fadd"
+[[lower.Fadd]]
 vary = { elem = [1, 2], sfx = ["SS", "SD"] }
 insts = ["MOV{sfx} {out}, {0}", "ADD{sfx} {out}, {1}"]
 
-[[lowering]]
-op = "Fsub"
+[[lower.Fsub]]
 vary = { elem = [1, 2], sfx = ["SS", "SD"] }
 insts = ["MOV{sfx} {out}, {0}", "SUB{sfx} {out}, {1}"]
 
-[[lowering]]
-op = "Fmul"
+[[lower.Fmul]]
 vary = { elem = [1, 2], sfx = ["SS", "SD"] }
 insts = ["MOV{sfx} {out}, {0}", "MUL{sfx} {out}, {1}"]
 
-[[lowering]]
-op = "Fdiv"
+[[lower.Fdiv]]
 vary = { elem = [1, 2], sfx = ["SS", "SD"] }
 insts = ["MOV{sfx} {out}, {0}", "DIV{sfx} {out}, {1}"]
 
 # ── Fneg / Fabs（符号位掩码：XORPS/ANDPD 与 XORPD/ANDPD）──
 
-[[lowering]]
-op = "Fneg"
+[[lower.Fneg]]
 when = { eq = ["elem", 1] }
 insts = [
     "MOVSS {out}, {0}",
@@ -3303,8 +3261,7 @@ insts = [
     "XORPS {out}, {f}",
 ]
 
-[[lowering]]
-op = "Fneg"
+[[lower.Fneg]]
 insts = [
     "MOVSD {out}, {0}",
     "MOV_REG_IMM64 {g}, 0x8000000000000000",
@@ -3312,8 +3269,7 @@ insts = [
     "XORPD {out}, {f}",
 ]
 
-[[lowering]]
-op = "Fabs"
+[[lower.Fabs]]
 when = { eq = ["elem", 1] }
 insts = [
     "MOVSS {out}, {0}",
@@ -3322,8 +3278,7 @@ insts = [
     "ANDPS {out}, {f}",
 ]
 
-[[lowering]]
-op = "Fabs"
+[[lower.Fabs]]
 insts = [
     "MOVSD {out}, {0}",
     "MOV_REG_IMM64 {g}, 0x7FFFFFFFFFFFFFFF",
@@ -3333,27 +3288,23 @@ insts = [
 
 # ── Fsqrt ──
 
-[[lowering]]
-op = "Fsqrt"
+[[lower.Fsqrt]]
 vary = { elem = [1, 2], sfx = ["SS", "SD"] }
 insts = ["MOV{sfx} {out}, {0}", "SQRT{sfx} {out}, {0}"]
 
 # ── Fmin / Fmax ──
 
-[[lowering]]
-op = "Fmin"
+[[lower.Fmin]]
 vary = { elem = [1, 2], sfx = ["SS", "SD"] }
 insts = ["MOV{sfx} {out}, {0}", "MIN{sfx} {out}, {1}"]
 
-[[lowering]]
-op = "Fmax"
+[[lower.Fmax]]
 vary = { elem = [1, 2], sfx = ["SS", "SD"] }
 insts = ["MOV{sfx} {out}, {0}", "MAX{sfx} {out}, {1}"]
 
 # ── Fma：a*b + c（mul + add 序列）──
 
-[[lowering]]
-op = "Fma"
+[[lower.Fma]]
 vary = { elem = [1, 2], sfx = ["SS", "SD"] }
 insts = ["MOV{sfx} {out}, {0}", "MUL{sfx} {out}, {1}", "ADD{sfx} {out}, {2}"]
 
@@ -3363,70 +3314,60 @@ insts = ["MOV{sfx} {out}, {0}", "MUL{sfx} {out}, {1}", "ADD{sfx} {out}, {2}"]
 # + Fadd 2 条 = 4 条，且各带一条 mov 拷贝）相比省 1 条 mov。叶变量按树
 # DFS 序编号：{a}→0、{b}→1、{c}→2。
 
-[[pattern]]
+[[lower.FMA_F32]]
 match = "Fadd(Fmul(a, b), c)"
 when = { eq = ["elem", 1] }
 insts = ["MOVSS {out}, {a}", "MULSS {out}, {b}", "ADDSS {out}, {c}"]
 
-[[pattern]]
+[[lower.FMA_F64]]
 match = "Fadd(Fmul(a, b), c)"
 when = { eq = ["elem", 2] }
 insts = ["MOVSD {out}, {a}", "MULSD {out}, {b}", "ADDSD {out}, {c}"]
 
 # ── 舍入（ROUNDSD/ROUNDSS：0=near, 1=floor, 2=ceil）──
 
-[[lowering]]
-op = "Ffloor"
+[[lower.Ffloor]]
 vary = { elem = [1, 2], sfx = ["SS", "SD"] }
 insts = ["MOV{sfx} {out}, {0}", "ROUND{sfx}_I {out}, {0}, 1"]
 
-[[lowering]]
-op = "Fceil"
+[[lower.Fceil]]
 vary = { elem = [1, 2], sfx = ["SS", "SD"] }
 insts = ["MOV{sfx} {out}, {0}", "ROUND{sfx}_I {out}, {0}, 2"]
 
-[[lowering]]
-op = "Fround"
+[[lower.Fround]]
 vary = { elem = [1, 2], sfx = ["SS", "SD"] }
 insts = ["MOV{sfx} {out}, {0}", "ROUND{sfx}_I {out}, {0}, 0"]
 
 # ── Ftrunc：截断到 0（cvtt 无条件截断 + 往返；64 位整数域）──
 
-[[lowering]]
-op = "Ftrunc"
+[[lower.Ftrunc]]
 vary = { elem = [1, 2], sfx = ["SS", "SD"] }
 insts = ["MOV{sfx} {out}, {0}", "CVTT{sfx}2SI {g}, {0}", "CVTSI2{sfx} {out}, {g}"]
 
 # ── Fpext（f32 → f64）/ Fptrunc（f64 → f32）──
 
-[[lowering]]
-op = "Fpext"
+[[lower.Fpext]]
 insts = ["MOVSS {out}, {0}", "CVTSS2SD {out}, {0}"]
 
-[[lowering]]
-op = "Fptrunc"
+[[lower.Fptrunc]]
 insts = ["MOVSD {out}, {0}", "CVTSD2SS {out}, {0}"]
 
 # ── Fconst：常量池浮点位模式 → GPR → XMM ──
 
-[[lowering]]
-op = "Fconst"
+[[lower.Fconst]]
 insts = ["MOV_REG_IMM64 {g}, {fconst}", "MOVQ_XMM_R64 {out}, {g}"]
 
 # ── Fload / Fstore（按元素类型分派 MOVSS/MOVSD 内存版；base=地址寄存器）──
 
-[[lowering]]
-op = "Fload"
+[[lower.Fload]]
 when = { eq = ["elem", 1] }
 insts = ["MOVSS_R_MEM {out}, [{0}]"]
 
-[[lowering]]
-op = "Fload"
+[[lower.Fload]]
 insts = ["MOVSD_R_MEM {out}, [{0}]"]
 
-[[lowering]]
+[[lower.Fstore]]
 dispatch = "rs1_width"
-op = "Fstore"
 # Fstore 无结果指令——`elem`（取 results）恒 None，会永远落 movsd
 # （F32 存 8 字节 → 覆盖相邻槽）。宽度改由**降级重载**按 `rs1_width` 选行：
 # `MOVSS_MEM_R`/`MOVSD_MEM_R` 同族 `fstore_x86`（word_size 32/64），
@@ -3435,62 +3376,69 @@ insts = ["MOVSS_MEM_R [{0}], {1}"]
 
 # ── 转换：Sitofp（整数 → 浮点；rs1_width 源宽度、elem 结果类型）──
 
-[[lowering]]
-op = "Sitofp"
+[[lower.Sitofp]]
 when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 2] } ] }
 insts = ["CVTSI2SD {out}, {0}"]
 
-[[lowering]]
-op = ["Sitofp", "Uitofp"]
+[[lower.Sitofp]]
 when = { and = [ { eq = ["rs1_width", 64] }, { eq = ["elem", 2] } ] }
 insts = ["CVTSI2SD {out}, {0}"]
 
-[[lowering]]
-op = "Sitofp"
+[[lower.Uitofp]]
+when = { and = [ { eq = ["rs1_width", 64] }, { eq = ["elem", 2] } ] }
+insts = ["CVTSI2SD {out}, {0}"]
+
+[[lower.Sitofp]]
 when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 1] } ] }
 insts = ["CVTSI2SS {out}, {0}"]
 
-[[lowering]]
-op = ["Sitofp", "Uitofp"]
+[[lower.Sitofp]]
 when = { eq = ["rs1_width", 64] }
 insts = ["CVTSI2SS {out}, {0}"]
 
 # ── Fptosi（浮点 → 整数，截断向零；elem 结果整数类型）──
 
-[[lowering]]
-op = ["Fptosi", "Fptoui"]
+[[lower.Uitofp]]
+when = { eq = ["rs1_width", 64] }
+insts = ["CVTSI2SS {out}, {0}"]
+
+
+[[lower.Fptosi]]
 when = { and = [ { eq = ["rs1_width", 64] }, { in = ["elem", [3, 4]] } ] }
 insts = ["CVTTSD2SI {out}, {0}"]
 
-[[lowering]]
-op = "Fptosi"
+[[lower.Fptoui]]
+when = { and = [ { eq = ["rs1_width", 64] }, { in = ["elem", [3, 4]] } ] }
+insts = ["CVTTSD2SI {out}, {0}"]
+
+[[lower.Fptosi]]
 when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 4] } ] }
 insts = ["CVTTSS2SI {out}, {0}"]
 
-[[lowering]]
-op = ["Fptosi", "Fptoui"]
+[[lower.Fptosi]]
 when = { eq = ["rs1_width", 32] }
 insts = ["CVTTSS2SI {out}, {0}"]
 
 # ── Fptoui / Uitofp（无符号；32 位域精确，u64 ≥ 2^63 边界 Phase 7）──
 
-[[lowering]]
-op = "Fptoui"
+[[lower.Fptoui]]
+when = { eq = ["rs1_width", 32] }
+insts = ["CVTTSS2SI {out}, {0}"]
+
+
+[[lower.Fptoui]]
 when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 3] } ] }
 insts = ["CVTTSS2SI {out}, {0}"]
 
-[[lowering]]
-op = "Uitofp"
+[[lower.Uitofp]]
 when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 2] } ] }
 insts = ["mov {g}, {0}", "CVTSI2SD {out}, {g}"]
 
-[[lowering]]
-op = "Uitofp"
+[[lower.Uitofp]]
 when = { and = [ { eq = ["rs1_width", 32] }, { eq = ["elem", 1] } ] }
 insts = ["mov {g}, {0}", "CVTSI2SS {out}, {g}"]
 
-[[lowering]]
-op = "Fcopysign"
+[[lower.Fcopysign]]
 when = { eq = ["elem", 1] }
 insts = [
     "MOVQ_R64_XMM {g}, {0}",
@@ -3504,8 +3452,7 @@ insts = [
     "MOVQ_XMM_R64 {out}, {g}",
 ]
 
-[[lowering]]
-op = "Fcopysign"
+[[lower.Fcopysign]]
 insts = [
     "MOVQ_R64_XMM {g}, {0}",
     "MOVQ_R64_XMM {g2}, {1}",
@@ -3524,52 +3471,44 @@ insts = [
 
 # 形状 A：单 setcc（8 个条件码）
 
-[[lowering]]
-op = "Fcmp"
+[[lower.Fcmp]]
 when = { eq = ["elem", 1] }   # f32
 vary = { cond = [1, 2, 4, 7, 8, 11, 14, 15], k = [11, 10, 5, 7, 3, 4, 2, 6] }
 insts = ["xor {out}, {out}", "COMISS {0}, {1}", "SETCC_RM8 {out}, {k}"]
 
-[[lowering]]
-op = "Fcmp"
+[[lower.Fcmp]]
 vary = { cond = [1, 2, 4, 7, 8, 11, 14, 15], k = [11, 10, 5, 7, 3, 4, 2, 6] }
 insts = ["xor {out}, {out}", "COMISD {0}, {1}", "SETCC_RM8 {out}, {k}"]
 
 # 形状 B：setcc 11（非 NaN）与 setcc k 取交——有序比较
 
-[[lowering]]
-op = "Fcmp"
+[[lower.Fcmp]]
 when = { eq = ["elem", 1] }   # f32
 vary = { cond = [3, 5, 6], k = [4, 2, 6] }
 insts = ["xor {out}, {out}", "COMISS {0}, {1}", "SETCC_RM8 {out}, 11", "SETCC_RM8 {g}, {k}", "and {g}, {out}"]
 
-[[lowering]]
-op = "Fcmp"
+[[lower.Fcmp]]
 vary = { cond = [3, 5, 6], k = [4, 2, 6] }
 insts = ["xor {out}, {out}", "COMISD {0}, {1}", "SETCC_RM8 {out}, 11", "SETCC_RM8 {g}, {k}", "and {g}, {out}"]
 
 # 形状 C：setcc 10（NaN）与 setcc k 取并——无序比较
 
-[[lowering]]
-op = "Fcmp"
+[[lower.Fcmp]]
 when = { eq = ["elem", 1] }   # f32
 vary = { cond = [12, 13, 16], k = [7, 3, 5] }
 insts = ["xor {out}, {out}", "COMISS {0}, {1}", "SETCC_RM8 {out}, 10", "SETCC_RM8 {g}, {k}", "or {g}, {out}"]
 
-[[lowering]]
-op = "Fcmp"
+[[lower.Fcmp]]
 vary = { cond = [12, 13, 16], k = [7, 3, 5] }
 insts = ["xor {out}, {out}", "COMISD {0}, {1}", "SETCC_RM8 {out}, 10", "SETCC_RM8 {g}, {k}", "or {g}, {out}"]
 
 # 形状 D：常量结果（与元素类型无关——原谱的 elem==1 变体是纯重复）
 
-[[lowering]]
-op = "Fcmp"
+[[lower.Fcmp]]
 when = { eq = ["cond", 9] }
 insts = ["xor {out}, {out}"]
 
-[[lowering]]
-op = "Fcmp"
+[[lower.Fcmp]]
 when = { eq = ["cond", 10] }
 insts = ["MOV_REG_IMM64 {out}, 1"]
 
@@ -3582,103 +3521,87 @@ insts = ["MOV_REG_IMM64 {out}, 1"]
 
 # ── Vadd ──
 
-[[lowering]]
-op = "Vadd"
+[[lower.Vadd]]
 when = { eq = ["rd", 256] }
 vary = { elem = [1, 2, 3, 4], m = ["vaddps", "vaddpd", "vpaddd", "vpaddq"] }
 insts = ["{m} {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Vadd"
+[[lower.Vadd]]
 when = { le = ["rd", 128] }
 vary = { elem = [1, 2, 3], m = ["ADDPS", "ADDPD", "PADDD"] }
 insts = ["MOVAPS {out}, {0}", "{m} {out}, {1}"]
 
-[[lowering]]
-op = "Vadd"
+[[lower.Vadd]]
 when = { le = ["rd", 128] }
 insts = ["MOVAPS {out}, {0}", "PADDQ {out}, {1}"]
 
 # ── Vsub ──
 
-[[lowering]]
-op = "Vsub"
+[[lower.Vsub]]
 when = { eq = ["rd", 256] }
 vary = { elem = [1, 2, 3, 4], m = ["vsubps", "vsubpd", "vpsubd", "vpsubq"] }
 insts = ["{m} {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Vsub"
+[[lower.Vsub]]
 when = { le = ["rd", 128] }
 vary = { elem = [1, 2, 3], m = ["SUBPS", "SUBPD", "PSUBD"] }
 insts = ["MOVAPS {out}, {0}", "{m} {out}, {1}"]
 
-[[lowering]]
-op = "Vsub"
+[[lower.Vsub]]
 when = { le = ["rd", 128] }
 insts = ["MOVAPS {out}, {0}", "PSUBQ {out}, {1}"]
 
 # ── Vmul（浮点全宽度；i32 → PMULLD/VPMULLD；i64 无 SIMD 指令 → 兜底）──
 
-[[lowering]]
-op = "Vmul"
+[[lower.Vmul]]
 when = { eq = ["rd", 256] }
 vary = { elem = [1, 2, 3], m = ["vmulps", "vmulpd", "VPMULLD"] }
 insts = ["{m} {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Vmul"
+[[lower.Vmul]]
 when = { le = ["rd", 128] }
 vary = { elem = [1, 2], m = ["MULPS", "MULPD"] }
 insts = ["MOVAPS {out}, {0}", "{m} {out}, {1}"]
 
-[[lowering]]
-op = "Vmul"
+[[lower.Vmul]]
 when = { le = ["rd", 128] }
 insts = ["MOVAPS {out}, {0}", "PMULLD {out}, {1}"]
 
 # ── Vdiv（仅浮点）──
 
-[[lowering]]
-op = "Vdiv"
+[[lower.Vdiv]]
 when = { eq = ["rd", 256] }
 vary = { elem = [1, 2], m = ["vdivps", "vdivpd"] }
 insts = ["{m} {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Vdiv"
+[[lower.Vdiv]]
 when = { le = ["rd", 128] }
 vary = { elem = [1], m = ["DIVPS"] }
 insts = ["MOVAPS {out}, {0}", "{m} {out}, {1}"]
 
-[[lowering]]
-op = "Vdiv"
+[[lower.Vdiv]]
 when = { le = ["rd", 128] }
 insts = ["MOVAPS {out}, {0}", "DIVPD {out}, {1}"]
 
 # ── Vneg（0 - x）──
 
-[[lowering]]
-op = "Vneg"
+[[lower.Vneg]]
 when = { eq = ["rd", 256] }
 vary = { elem = [1, 2, 3, 4], x = ["VXORPS", "VXORPS", "VPXOR", "VPXOR"], m = ["vsubps", "vsubpd", "vpsubd", "vpsubq"] }
 insts = ["{x} {out}, {out}, {out}", "{m} {out}, {out}, {0}"]
 
-[[lowering]]
-op = "Vneg"
+[[lower.Vneg]]
 when = { le = ["rd", 128] }
 vary = { elem = [1, 2, 3], m = ["SUBPS", "SUBPD", "PSUBD"] }
 insts = ["XORPS {out}, {out}", "{m} {out}, {0}"]
 
-[[lowering]]
-op = "Vneg"
+[[lower.Vneg]]
 when = { le = ["rd", 128] }
 insts = ["XORPS {out}, {out}", "PSUBQ {out}, {0}"]
 
 # ── Vabs（清符号位掩码 0x7FFFFFFF×4/×8）──
 
-[[lowering]]
-op = "Vabs"
+[[lower.Vabs]]
 when = { eq = ["rd", 256] }
 insts = [
     "MOV_REG_IMM64 {g1}, 0x7FFFFFFF7FFFFFFF",
@@ -3691,8 +3614,7 @@ insts = [
     "VANDPS {out}, {0}, {f1}",
 ]
 
-[[lowering]]
-op = "Vabs"
+[[lower.Vabs]]
 insts = [
     "MOVAPS {out}, {0}",
     "MOV_REG_IMM64 {g1}, 0x7FFFFFFF7FFFFFFF",
@@ -3705,88 +3627,72 @@ insts = [
 
 # ── Vbitcast（同宽位重解释）──
 
-[[lowering]]
-op = "Vbitcast"
+[[lower.Vbitcast]]
 when = { eq = ["rd", 256] }
 insts = ["vmovaps {out}, {0}"]
 
-[[lowering]]
-op = "Vbitcast"
+[[lower.Vbitcast]]
 insts = ["MOVAPS {out}, {0}"]
 
 # ── Vextract（标量元素提取；imm0 = lane 索引）──
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 priority = 1   # lane 0 快路径必须压过下面 V256 的三约束规则（特异性反了）
 when = { and = [ { eq = ["imm0", 0] }, { eq = ["elem", 1] } ] }
 insts = ["MOVSS {out}, {0}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 priority = 1
 when = { and = [ { eq = ["imm0", 0] }, { eq = ["elem", 3] } ] }
 insts = ["MOVD_IREG_FREG {out}, {0}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 priority = 1
 when = { and = [ { eq = ["imm0", 0] }, { eq = ["elem", 2] } ] }
 insts = ["MOVSD {out}, {0}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 priority = 1
 when = { and = [ { eq = ["imm0", 0] }, { eq = ["elem", 4] } ] }
 insts = ["MOVQ_R64_XMM {out}, {0}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 1] }, { le = ["imm0", 3] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 0", "PSHUFD {f1}, {f1}, {imm0}", "MOVSS {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 1] }, { ge = ["imm0", 4] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 1", "PSHUFD {f1}, {f1}, {imm0_sub4}", "MOVSS {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 3] }, { le = ["imm0", 3] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 0", "PSHUFD {f1}, {f1}, {imm0}", "MOVD_IREG_FREG {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 3] }, { ge = ["imm0", 4] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 1", "PSHUFD {f1}, {f1}, {imm0_sub4}", "MOVD_IREG_FREG {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 2] }, { le = ["imm0", 1] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 0", "PSHUFD {f1}, {f1}, 78", "MOVSD {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 2] }, { eq = ["imm0", 2] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 1", "MOVSD {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 2] }, { ge = ["imm0", 3] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 1", "PSHUFD {f1}, {f1}, 78", "MOVSD {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 4] }, { le = ["imm0", 1] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 0", "PSHUFD {f1}, {f1}, 78", "MOVQ_R64_XMM {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 4] }, { eq = ["imm0", 2] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 1", "MOVQ_R64_XMM {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 256] }, { eq = ["elem", 4] }, { ge = ["imm0", 3] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 1", "PSHUFD {f1}, {f1}, 78", "MOVQ_R64_XMM {out}, {f1}"]
 
@@ -3797,123 +3703,102 @@ insts = ["VEXTRACTF128 {0}, {f1}, 1", "PSHUFD {f1}, {f1}, 78", "MOVQ_R64_XMM {ou
 # **有 AVX-512F 的 runner** 上真跑，故长期表现为"偶发红"，实为机型相关）。
 # 修法：先用 EVEX `VEXTRACTF32X4` 取第 seg = lane/4 个 128 位段，再段内 PSHUFD：
 # 段内 dword 偏移 ph = offset×0x55（0x00/0x55/0xAA/0xFF = 广播 dword 0/1/2/3）。
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 512] }, { eq = ["elem", 1] } ] }
 vary = { imm0 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], seg = [0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3], ph = [85, 170, 255, 0, 85, 170, 255, 0, 85, 170, 255, 0, 85, 170, 255] }
 insts = ["VEXTRACTF32X4 {0}, {f1}, {seg}", "PSHUFD {f1}, {f1}, {ph}", "MOVSS {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 512] }, { eq = ["elem", 3] } ] }
 vary = { imm0 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], seg = [0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3], ph = [85, 170, 255, 0, 85, 170, 255, 0, 85, 170, 255, 0, 85, 170, 255] }
 insts = ["VEXTRACTF32X4 {0}, {f1}, {seg}", "PSHUFD {f1}, {f1}, {ph}", "MOVD_IREG_FREG {out}, {f1}"]
 
 # f64（elem 2）：8 lane / 4 段 ⇒ seg = lane/2；偶 lane 段内 offset0（免 shuffle），
 # 奇 lane offset1（PSHUFD 78 = qword1→qword0）。
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 512] }, { eq = ["elem", 2] } ] }
 vary = { imm0 = [2, 4, 6], seg = [1, 2, 3] }
 insts = ["VEXTRACTF32X4 {0}, {f1}, {seg}", "MOVSD {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 512] }, { eq = ["elem", 2] } ] }
 vary = { imm0 = [1, 3, 5, 7], seg = [0, 1, 2, 3] }
 insts = ["VEXTRACTF32X4 {0}, {f1}, {seg}", "PSHUFD {f1}, {f1}, 78", "MOVSD {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 512] }, { eq = ["elem", 4] } ] }
 vary = { imm0 = [2, 4, 6], seg = [1, 2, 3] }
 insts = ["VEXTRACTF32X4 {0}, {f1}, {seg}", "MOVQ_R64_XMM {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["rs1_width", 512] }, { eq = ["elem", 4] } ] }
 vary = { imm0 = [1, 3, 5, 7], seg = [0, 1, 2, 3] }
 insts = ["VEXTRACTF32X4 {0}, {f1}, {seg}", "PSHUFD {f1}, {f1}, 78", "MOVQ_R64_XMM {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["elem", 1] }, { ne = ["imm0", 0] } ] }
 insts = ["PSHUFD {f1}, {0}, {imm0}", "MOVSS {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["elem", 3] }, { ne = ["imm0", 0] } ] }
 insts = ["PSHUFD {f1}, {0}, {imm0}", "MOVD_IREG_FREG {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { and = [ { eq = ["elem", 2] }, { ne = ["imm0", 0] } ] }
 insts = ["PSHUFD {f1}, {0}, 78", "MOVSD {out}, {f1}"]
 
-[[lowering]]
-op = "Vextract"
+[[lower.Vextract]]
 when = { eq = ["elem", 4] }
 insts = ["PSHUFD {f1}, {0}, 78", "MOVQ_R64_XMM {out}, {f1}"]
 
 # ── Vinsert（标量写入 lane0；V256 拆低半修改后拼回）──
 
-[[lowering]]
-op = "Vinsert"
+[[lower.Vinsert]]
 when = { and = [ { eq = ["rd", 256] }, { in = ["elem", [1, 3]] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 0", "MOVSS {f1}, {1}", "VINSERTF128 {out}, {0}, {f1}, 0"]
 
-[[lowering]]
-op = "Vinsert"
+[[lower.Vinsert]]
 when = { and = [ { le = ["rd", 128] }, { in = ["elem", [1, 3]] } ] }
 insts = ["MOVAPS {out}, {0}", "MOVSS {out}, {1}"]
 
-[[lowering]]
-op = "Vinsert"
+[[lower.Vinsert]]
 when = { and = [ { eq = ["rd", 256] }, { in = ["elem", [2, 4]] } ] }
 insts = ["VEXTRACTF128 {0}, {f1}, 0", "MOVSD {f1}, {1}", "VINSERTF128 {out}, {0}, {f1}, 0"]
 
-[[lowering]]
-op = "Vinsert"
+[[lower.Vinsert]]
 when = { le = ["rd", 128] }
 insts = ["MOVAPS {out}, {0}", "MOVSD {out}, {1}"]
 
 # ── Vbroadcast（标量广播）──
 
-[[lowering]]
-op = "Vbroadcast"
+[[lower.Vbroadcast]]
 when = { and = [ { eq = ["rd", 256] }, { in = ["elem", [1, 3]] } ] }
 insts = ["VBROADCASTSS {out}, {0}"]
 
-[[lowering]]
-op = "Vbroadcast"
+[[lower.Vbroadcast]]
 when = { and = [ { le = ["rd", 128] }, { in = ["elem", [1, 3]] } ] }
 insts = ["MOVSS {out}, {0}", "PUNPCKLDQ {out}, {out}", "PUNPCKLDQ {out}, {out}"]
 
-[[lowering]]
-op = "Vbroadcast"
+[[lower.Vbroadcast]]
 when = { and = [ { eq = ["rd", 256] }, { in = ["elem", [2, 4]] } ] }
 insts = ["VBROADCASTSD {out}, {0}"]
 
-[[lowering]]
-op = "Vbroadcast"
+[[lower.Vbroadcast]]
 when = { le = ["rd", 128] }
 insts = ["MOVSD {out}, {0}", "PUNPCKLQDQ {out}, {out}"]
 
 # ── Vsplit（宽向量 → 128 位片段）/ Vconcat（128×2 → 宽向量）──
 
-[[lowering]]
-op = "Vsplit"
+[[lower.Vsplit]]
 vary = { imm0 = [0, 1], sfx = ["0", "1"] }
 insts = ["VEXTRACTF128 {0}, {out}, {sfx}"]
 
-[[lowering]]
-op = "Vconcat"
+[[lower.Vconcat]]
 insts = ["VINSERTF128 {out}, {0}, {1}, 1"]
 
 # ── ShuffleVector（SHUFPS 双源重排；V256 拆半）──
 
-[[lowering]]
-op = "ShuffleVector"
+[[lower.ShuffleVector]]
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] } ] }
 insts = [
     "VEXTRACTF128 {0}, {f1}, 0",
@@ -3925,20 +3810,17 @@ insts = [
     "VINSERTF128 {out}, {f1}, {f3}, 1",
 ]
 
-[[lowering]]
-op = "ShuffleVector"
+[[lower.ShuffleVector]]
 when = { eq = ["elem", 1] }
 insts = ["MOVAPS {out}, {0}", "SHUFPS {out}, {1}, {shufps_imm8}"]
 
 # ── Vconst（常量池 lane 恢复 → XMM/YMM）──
 
-[[lowering]]
-op = "Vconst"
+[[lower.Vconst]]
 when = { eq = ["rd", 64] }
 insts = ["MOV_REG_IMM64 {g}, {vconst_lo2}", "MOVQ_XMM_R64 {out}, {g}"]
 
-[[lowering]]
-op = "Vconst"
+[[lower.Vconst]]
 when = { and = [ { eq = ["rd", 128] }, { eq = ["elem", 1] } ] }
 insts = [
     "MOV_REG_IMM64 {g1}, {vconst_lo}",
@@ -3949,8 +3831,7 @@ insts = [
     "MOVAPS {out}, {f1}",
 ]
 
-[[lowering]]
-op = "Vconst"
+[[lower.Vconst]]
 when = { and = [ { eq = ["rd", 128] }, { eq = ["elem", 3] } ] }
 insts = [
     "MOV_REG_IMM64 {g1}, {vconst_lo}",
@@ -3961,8 +3842,7 @@ insts = [
     "MOVAPS {out}, {f1}",
 ]
 
-[[lowering]]
-op = "Vconst"
+[[lower.Vconst]]
 when = { eq = ["rd", 128] }
 insts = [
     "MOV_REG_IMM64 {g1}, {vconst_lo}",
@@ -3973,8 +3853,7 @@ insts = [
     "MOVAPS {out}, {f1}",
 ]
 
-[[lowering]]
-op = "Vconst"
+[[lower.Vconst]]
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 1] } ] }
 insts = [
     "MOV_REG_IMM64 {g1}, {vconst_lo}",
@@ -3990,8 +3869,7 @@ insts = [
     "VINSERTF128 {out}, {f1}, {f3}, 1",
 ]
 
-[[lowering]]
-op = "Vconst"
+[[lower.Vconst]]
 when = { and = [ { eq = ["rd", 256] }, { eq = ["elem", 3] } ] }
 insts = [
     "MOV_REG_IMM64 {g1}, {vconst_lo}",
@@ -4007,8 +3885,7 @@ insts = [
     "VINSERTF128 {out}, {f1}, {f3}, 1",
 ]
 
-[[lowering]]
-op = "Vconst"
+[[lower.Vconst]]
 when = { eq = ["rd", 256] }
 insts = [
     "MOV_REG_IMM64 {g1}, {vconst_lo}",
@@ -4031,8 +3908,7 @@ insts = [
 # 因此 4 条执行完每个 128 位段都被显式写入。故无需先清零 ZMM（本 ISA 亦无
 # EVEX 异或/清零指令：`VPXOR` 是 VEX.256 上限）。
 # 32 位 lane（F32=1 / I32=3）：PUNPCKLDQ 交织（{vconst_*} 给 lane0|lane2<<32）。
-[[lowering]]
-op = "Vconst"
+[[lower.Vconst]]
 when = { and = [ { eq = ["rd", 512] }, { in = ["elem", [1, 3]] } ] }
 insts = [
     "MOV_REG_IMM64 {g1}, {vconst_lo}",
@@ -4062,8 +3938,7 @@ insts = [
 ]
 
 # 64 位 lane（F64=2 / I64=4）：PUNPCKLQDQ（每 128 位段 = 2 条 64 位 lane）。
-[[lowering]]
-op = "Vconst"
+[[lower.Vconst]]
 when = { eq = ["rd", 512] }
 insts = [
     "MOV_REG_IMM64 {g1}, {vconst_lo}",
@@ -4098,8 +3973,7 @@ insts = [
 
 # ── SsubSat（饱和减：SUB + 溢出方向 clamp；SaddSat 的 SUB 变体）──
 
-[[lowering]]
-op = "SsubSat"
+[[lower.SsubSat]]
 when = { eq = ["rs1_width", 32] }
 insts = [
     "mov {out}, {0}",
@@ -4114,8 +3988,7 @@ insts = [
     "CMOVCC_R_RM {out}, {g4}, 5",
 ]
 
-[[lowering]]
-op = "SsubSat"
+[[lower.SsubSat]]
 when = { eq = ["rs1_width", 64] }
 insts = [
     "mov {out}, {0}",
@@ -4132,12 +4005,13 @@ insts = [
 
 # ── Ptrtoint / Inttoptr：x86 指针 = i64，直拷 ──
 
-[[lowering]]
-op = ["Undef", "Poison"]
+[[lower.Undef]]
 insts = ["xor {out}, {out}"]
 
-[[lowering]]
-op = "GlobalAddr"
+[[lower.Poison]]
+insts = ["xor {out}, {out}"]
+
+[[lower.GlobalAddr]]
 insts = ["MOVABS_GLOBAL {out}, {global}"]
 
 # ── 原子（Phase 7）：AtomicRmw 的 op 判别值 = immediates[0]（imm0 谓词：
@@ -4150,24 +4024,21 @@ insts = ["MOVABS_GLOBAL {out}, {global}"]
 #    越界）。val 先拷到 out（val 不被覆盖），指令后 out = 旧内存值 = 返回
 #    语义（无需末次 mov）。窄域（1/2 字节）仍走 intrinsics cmpxchg 循环。
 
-[[lowering]]
-op = "AtomicRmw"
+[[lower.AtomicRmw]]
 when = { eq = ["imm0", 0] }
 insts = [
     "mov {out}, {1}",
     "XCHG_MEM_R {out}, [{0}]",
 ]
 
-[[lowering]]
-op = "AtomicRmw"
+[[lower.AtomicRmw]]
 when = { eq = ["imm0", 1] }
 insts = [
     "mov {out}, {1}",
     "xadd {out}, [{0}]",
 ]
 
-[[lowering]]
-op = "AtomicRmw"
+[[lower.AtomicRmw]]
 when = { eq = ["imm0", 2] }
 insts = [
     "mov {out}, {1}",
@@ -4181,8 +4052,7 @@ insts = [
 #    v14：16/32/64 数据宽度经 gprx 槽 auto（66/REX.W）；8 位独立 opcode
 #    0F B0（隐式 AL）按 rs2_width==8 分派。
 
-[[lowering]]
-op = "Cmpxchg"
+[[lower.Cmpxchg]]
 when = { eq = ["rs2_width", 8] }
 insts = [
     "mov RAX, {1}",
@@ -4190,8 +4060,7 @@ insts = [
     "mov {out}, RAX",
 ]
 
-[[lowering]]
-op = "Cmpxchg"
+[[lower.Cmpxchg]]
 insts = [
     "mov RAX, {1}",
     "CMPXCHG_MEM_R {2}, {0}",
@@ -4201,14 +4070,12 @@ insts = [
 # ── Nop：无操作（GetElementPtr 已在编译期 expand_geps 展开为 Copy+mul+add，
 #    无需 TOML 规则——见 compiler.rs expand_geps）──
 
-[[lowering]]
-op = "Nop"
+[[lower.Nop]]
 insts = ["NOP"]
 
 # ── Frem（fmod = a - b*trunc(a/b)；ROUNDS{S,D} imm8=3 是向零截断）──
 
-[[lowering]]
-op = "Frem"
+[[lower.Frem]]
 vary = { elem = [1, 2], sfx = ["SS", "SD"] }
 insts = [
     "MOV{sfx} {f1}, {0}",
@@ -4869,9 +4736,9 @@ fp = "RBP"
 fp_push_bytes = 8
 
 # v21 W6：终结层谱面——跳转序列（原硬编码在编译器里 ✗）。
-[lower.Jmp]
+[[lower.Jmp]]
 insts = ["JMP_REL32 {target}"]
 
 # v21 W6：终结层谱面——条件分支（cond, then, else ✗）。`test` 置 ZF ⇒ 条件码 = 本 ISA 的 eq ✗。
-[lower.Br]
+[[lower.Br]]
 insts = ["TEST_RM_R {cond}, {cond}", "JCC_REL32 {cc}, {false}", "JMP_REL32 {true}"]

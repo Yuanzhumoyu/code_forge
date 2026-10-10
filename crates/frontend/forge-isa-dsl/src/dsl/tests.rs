@@ -4475,7 +4475,7 @@ fn cc_inv_uses_inverse_condition_code() {
 }
 
 
-/// v21 W6：`[lower.Br]`/`[lower.Jmp]`/`[lower.Ret]` 能被解析并进模型（可带 `{true}`/`{false}`/
+/// v21 W6：`[[lower.Br]]`/`[[lower.Jmp]]`/`[[lower.Ret]]` 能被解析并进模型（可带 `{true}`/`{false}`/
 /// `{target}` 符号值）。本片只验"谱面可用"；codegen 接线在下一片。
 #[test]
 fn lower_terminator_section_parses() {
@@ -4483,7 +4483,7 @@ fn lower_terminator_section_parses() {
     // （见 `unsupported_term_lowering_is_rejected`）。
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[lower.Jmp]\ninsts = [\"SETC {out}, {cc}\"]",
+        "[[lower.Jmp]]\ninsts = [\"SETC {out}, {cc}\"]",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let lower = m.lower_terms.as_ref().expect("lower 节应进模型");
@@ -4492,7 +4492,7 @@ fn lower_terminator_section_parses() {
 }
 
 
-/// v21 W6：**谱里声明了 `[lower.Jmp]` 就必须走谱面序列**（未声明才回落旧硬编码路径）。
+/// v21 W6：**谱里声明了 `[[lower.Jmp]]` 就必须走谱面序列**（未声明才回落旧硬编码路径）。
 ///
 /// 用轻夹具即可：终结 lowering 的**生成**不要求角色指令存在（缺角色时生成期发 `Err(Unsupported)` 体），
 /// 所以这里只验证"生成物里出现谱面写的指令 + 块号符号值 `{target}` 落到 `__target_block`"。
@@ -4503,7 +4503,7 @@ fn lower_jmp_spec_path_is_used() {
         CC_ALL_FULL,
         "[inst.MYJMP]\nform = \"C\"\nopcode = 0x91\n\
 ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"myjmp {dst}, {cond}\"\nroles = [\"jump\"]\n\
-[lower.Jmp]\ninsts = [\"SETC {out}, {cc}\"]",
+[[lower.Jmp]]\ninsts = [\"SETC {out}, {cc}\"]",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let s = super::codegen::generate(&m).expect("生成").to_string();
@@ -4511,7 +4511,7 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"myjmp {dst}, {cond}\"\nroles = [\"ju
     // `__target_block` 只可能来自**谱面路径**（旧硬编码体用的是 `target.index()`）
     assert!(
         flat.contains("__target_block"),
-        "声明了 [lower.Jmp] 就该走谱面路径（应出现 __target_block）：{s}"
+        "声明了 [[lower.Jmp]] 就该走谱面路径（应出现 __target_block）：{s}"
     );
     assert!(
         flat.contains("fnlower_terminator"),
@@ -4520,14 +4520,14 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"myjmp {dst}, {cond}\"\nroles = [\"ju
 }
 
 
-/// v21 W6 **进行中**的安全闸：`[lower.Br]`/`[lower.Ret]` 的谱面表达还没落地（`Br` 缺条件寄存器的
+/// v21 W6 **进行中**的安全闸：`[[lower.Br]]`/`[[lower.Ret]]` 的谱面表达还没落地（`Br` 缺条件寄存器的
 /// 操作数映射、`Ret` 缺返回搬移）⇒ 声明它们必须**解析期报错**，而不是静默生成错代码。
 #[test]
 fn unsupported_term_lowering_is_rejected() {
     // `Ret` 仍被闸门关着（返回搬移的谱面表达未落地）。
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[lower.Ret]\ninsts = [\"SETC {out}, {cc}\"]",
+        "[[lower.Ret]]\ninsts = [\"SETC {out}, {cc}\"]",
     );
     let err = super::parse_and_validate(&doc).unwrap_err().to_string();
     assert!(err.contains("lower.Ret"), "Ret 应被拒：{err}");
@@ -4536,7 +4536,7 @@ fn unsupported_term_lowering_is_rejected() {
     for op in ["Jmp", "Br"] {
         let ok = gen_cond_doc(
             CC_ALL_FULL,
-            &format!("[lower.{op}]\ninsts = [\"SETC {{out}}, {{cc}}\"]"),
+            &format!("[[lower.{op}]]\ninsts = [\"SETC {{out}}, {{cc}}\"]"),
         );
         assert!(super::parse_and_validate(&ok).is_ok(), "{op} 应放行");
     }
@@ -4586,7 +4586,7 @@ fn explicit_temps_are_enforced() {
 
 
 /// v21 W6 **第四形态夹具**：DSL **禁止**同一份谱两条 `branch` 角色（同角色只能一条），
-/// 所以"两个分支形态"不能按字面造；等价且更硬的验证是——让 `[lower.Br]` 点名**另一条无角色指令**：
+/// 所以"两个分支形态"不能按字面造；等价且更硬的验证是——让 `[[lower.Br]]` 点名**另一条无角色指令**：
 /// 旧实现**只会**用角色表里那条，谱面却能任意选 ⇒ 断言生成物用的是**谱面点名的那条**。
 #[test]
 fn branch_form_comes_from_spec_not_role_table() {
@@ -4596,7 +4596,7 @@ fn branch_form_comes_from_spec_not_role_table() {
 ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"brrole {dst}, {cond}\"\nroles = [\"branch\"]\n\
 [inst.BRCHOSEN]\nform = \"C\"\nopcode = 0x93\n\
 ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"brchosen {dst}, {cond}\"\n\
-[lower.Br]\ninsts = [\"BRCHOSEN {cond}, {cc}\"]",
+[[lower.Br]]\ninsts = [\"BRCHOSEN {cond}, {cc}\"]",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let s = super::codegen::generate(&m).expect("生成").to_string();
@@ -4612,7 +4612,7 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"brchosen {dst}, {cond}\"\n\
     };
     assert!(
         flat.contains("Inst::Brchosen"),
-        "应使用 `[lower.Br]` 点名的 BRCHOSEN。片段：{snip}"
+        "应使用 `[[lower.Br]]` 点名的 BRCHOSEN。片段：{snip}"
     );
     // 否定断言必须**限定在 Br 分支体片段内** —— 每条声明过的指令都会在枚举/表里出现变体，
     // 全串搜 `Inst::Brrole` 必然命中（那是指令表，不是终结体）。
