@@ -69,7 +69,6 @@ pub const SECTIONS: &[Section] = &[
             "lowering",
             "pattern",
             "machine",
-            "spill",
             "vectors",
         ],
         flatten: &[],
@@ -346,6 +345,7 @@ pub const SECTIONS: &[Section] = &[
             "stack",
             "text",
             "classes",
+            "spill",
         ],
         flatten: &[],
         additional: false,
@@ -370,13 +370,13 @@ pub const SECTIONS: &[Section] = &[
         doc: "代码对齐填充与尾声标签（v21 W9：从 `[emit]` 迁入；序/尾声由生成器按约定生成，谱里不再写）",
     },
     Section {
-        path: "[spill.<name>]",
-        model: "SpillTemplate",
-        required: &[],
-        optional: &["load", "store", "base", "only_variants"],
+        path: "[machine.spill.<模板名>]",
+        model: "MachineSpill",
+        required: &["class", "load", "store"],
+        optional: &["base", "when"],
         flatten: &[],
         additional: false,
-        doc: "溢出/回填模板（`{N}` = 寄存器序号占位符）",
+        doc: "溢出/回填模板（v21 W9：表头 = 模板名，`class` = 它服务的寄存器类；`{N}` = 寄存器序号占位符）",
     },
     Section {
         path: "[[vectors]]",
@@ -517,7 +517,6 @@ pub fn schema_json() -> String {
         ("lowering", "[[lowering]]", true),
         ("pattern", "[[pattern]]", true),
         ("machine", "[machine]", false),
-        ("spill", "", false),
         ("vectors", "[[vectors]]", true),
     ] {
         if path.is_empty() {

@@ -773,7 +773,9 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 - [x] `[stack]`/`[emit]`/`[types]` → `[machine.stack]`/`[machine.text]`/`[machine.classes]`（单位统一为位）。
   （三谱 + `demo8`/`demo` 夹具已迁；解析期降级进内部载体 ⇒ 生成物零变化；`schema_guard` 9/9）
-- [ ] `[spill.*]` → `[machine.spill.<组名>]`，按组分派；写错键名 = 校验期错误（不再静默 no-op）。
+- [x] `[spill.*]` → `[machine.spill.<模板名>]`，按 `class` 分派；写错键名（`class` 未声明）= 校验期错误（不再静默 no-op）。
+  （表头 = 模板名 + 必填 `class` + `when`；x86 五份 / arm64 三份 / riscv、demo8 各一份一次迁完；
+  分派按 class 的族与宽度，与旧键逐字节等价；诊断支持两段节名）
 - [x] 键改名（逐项勾）：
   - [x] `fixed_regs` → `fixed`、`spill_scratch` → `scratch`、`link_reg` → `link`
   - [x] `frame_padding` → `padding`、`arg_slot` → `arg_place`
@@ -781,8 +783,10 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 - [ ] 删除 `callee_saved_gpr` / `callee_save_slots`。
 - [ ] 门禁：§2 全绿；`abi check` 与三矩阵不变。（**改名片**已过：整仓 `-j 2` exit 0 / 0 编译错误 / 0 失败二进制、markdownlint 0、`schema_guard` 9/9）
 
-**W9 进度（2026-10-08）**：键改名一片已落地（`[machine]` 收短六键，三谱 + `demo8` 夹具 + 全套引用同步，**零行为变化**）。
-余下三块（三节搬迁 + 单位改位、`[machine.spill.<组名>]` 按组分派、删 `callee_saved_gpr`/`callee_save_slots` 走 ABI 层）按片继续。
+**W9 进度（2026-10-08）**：键改名一片、三节搬迁（`[machine.stack|text|classes]`，stack 单位改位）、
+`[machine.spill.<模板名>]` 按 class 分派 三片已落地（三谱 + 夹具 + 全套引用同步，**生成物零变化**）。
+余下一块：删 `callee_saved_gpr`/`callee_save_slots` 走 ABI 层（要动帧布局的 `cs_skipped` 补偿，
+按"计数/名字同源"的口径做并跑三矩阵）。
 
 ---
 

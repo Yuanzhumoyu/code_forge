@@ -133,7 +133,7 @@ pub fn apply_variants(
     m.spill
         .retain(|_, s| variants_keep(s.only_variants.as_ref(), params));
     for key in dropped_spills {
-        dropped_decls.push((format!("[spill.{key}]"), 1));
+        dropped_decls.push((format!("[machine.spill.{key}]"), 1));
     }
     let n = retain_counted(&mut m.pseudo, |p| {
         variants_keep(p.only_variants.as_ref(), params)
@@ -901,35 +901,43 @@ fn validate_types(m: &IsaModel) -> Result<(), String> {
 }
 
 /// 溢出模板覆盖校验（R5）：**每个比宿主浮点值池更宽的浮点/向量类**都必须有
-/// 对应的 `[spill.FPR<bytes>]` 模板——生成器的 FPR 溢出按宽度档分派，缺档会在
-/// **编译期**（IR 编译时）才报 `Unsupported`，读 TOML 的人很难定位。
+/// 服务它的 `[machine.spill.<模板名>]`（`class` 宽度 ≥ 该类）——生成器的 FPR 溢出按
+/// `class` 宽度分派，缺档会在**编译期**（IR 编译时）才报 `Unsupported`，读 TOML 的人很难定位。
 ///
-/// 这里把它提前到 DSL 校验期：点名"哪个类需要哪个键"。（没有浮点组、或只有
+/// 这里把它提前到 DSL 校验期：点名"哪个类需要哪个宽度的模板"。（没有浮点组、或只有
 /// 标量宽度的 ISA 不需要任何档位。）
 fn validate_spill_coverage(m: &IsaModel) -> Result<(), String> {
-    let scalar = m.value_fpr_class()?.map(|c| c.bytes()).unwrap_or(0);
-    // 有 `[spill.FPR]` 才谈档位（否则 FPR 溢出整条路径本来就是 no-op）。
-    let Some(_base) = m.spill.get("FPR") else {
-        return Ok(());
+    let width_of = |c: &RegClass| -> u16 {
+        match c {
+            RegClass::FPR(b) | RegClass::VEC(b) => b.div_ceil(8),
+            _ => 0,
+        }
     };
+    let scalar = m.value_fpr_class()?.map(|c| c.bytes()).unwrap_or(0);
+    // 有"服务浮点/向量族"的模板才谈档位（否则整条路径是 no-op）。
+    let has_any = m
+        .spill
+        .values()
+        .any(|t| matches!(t.class, RegClass::FPR(_) | RegClass::VEC(_)));
+    if !has_any {
+        return Ok(());
+    }
     let declared_tiers: BTreeSet<u16> = m
         .spill
-        .keys()
-        .filter_map(|k| k.strip_prefix("FPR"))
-        .filter_map(|n| n.parse::<u16>().ok())
+        .values()
+        .map(|t| width_of(&t.class))
+        .filter(|w| *w > 0)
         .collect();
     for rc in m.reg.keys() {
-        // 类宽是**位**（payload 口径），溢出档键名与浮点值池都是**字节** ⇒ 这里换算。
-        let w = match rc {
-            RegClass::FPR(w) | RegClass::VEC(w) => w.div_ceil(8),
-            _ => continue,
-        };
-        if w <= scalar || declared_tiers.contains(&w) {
+        // 类宽是**位**（payload 口径），溢出档与浮点值池都是**字节** ⇒ 这里换算。
+        let w = width_of(rc);
+        if w == 0 || w <= scalar || declared_tiers.contains(&w) {
             continue;
         }
         return Err(format!(
-            "[reg.{rc}] 宽 {w} 字节 > 浮点值池 {scalar} 字节，但缺少 [spill.FPR{w}] 溢出模板\
-             ——生成器按宽度档分派，缺档会在 IR 编译期才报 Unsupported（此处提前点名）"
+            "[reg.{rc}] 宽 {w} 字节 > 浮点值池 {scalar} 字节，但没有任何 `[machine.spill.<模板名>]`\
+             的 `class` 覆盖 {w} 字节——生成器按 class 宽度分派，缺档会在 IR 编译期才报 Unsupported\
+             （此处提前点名）"
         ));
     }
     Ok(())
@@ -2596,12 +2604,29 @@ fn validate_abi(m: &IsaModel) -> Result<(), String> {
 
 // ───────────────────────── [spill.*] ─────────────────────────
 
-/// `[spill.*]` 校验（S1：引用名 + `{N}` 占位符 + 基址寄存器名）。
+/// `[machine.spill.<模板名>]` 校验（S1：引用名 + `{N}` 占位符 + 基址寄存器名）。
 fn validate_spill_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
     let refs = declared_refs(m);
+    // v21 W9：`class` 必须指向**已声明的类**——已声明的 `[reg.<名>]` 组名，或
+    // `[meta].vector_tiers` 里的向量档（如 `vec512`）。写错不再静默 no-op。
+    let mut declared_classes: BTreeSet<String> = m.reg.keys().map(|rc| rc.to_string()).collect();
+    // 向量档：`[meta].vector_tiers` 是**字节**（缺省 16/32/64），类名是 `vec<位>`。
+    for t in m.meta.vector_tiers.clone().unwrap_or_else(|| vec![16, 32, 64]) {
+        declared_classes.insert(format!("vec{}", t as u32 * 8));
+    }
     for (name, s) in &m.spill {
+        let cls = s.class.to_string();
+        if !declared_classes.contains(&cls) {
+            d.push_anchored(
+                idx,
+                &format!(
+                    "[machine.spill.{name}].class: 寄存器类 \"{cls}\" 未声明——\
+                     必须是已声明的 [reg.<名>] 组名，或 [meta].vector_tiers 里的向量档（如 vec512）"
+                ),
+            );
+        }
         for (kind, tpl) in [("load", &s.load), ("store", &s.store)] {
-            let path = format!("[spill.{name}].{kind}");
+            let path = format!("[machine.spill.{name}].{kind}");
             if tpl.trim().is_empty() {
                 d.push_anchored(idx, &format!("{path} must not be empty"));
                 continue;
@@ -2638,7 +2663,7 @@ fn validate_spill_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
                 d.push_anchored(
                     idx,
                     &format!(
-                        "[spill.{name}].base: 物理寄存器名 \"{base}\" 不在任何已声明 [reg.*] 组内"
+                        "[machine.spill.{name}].base: 物理寄存器名 \"{base}\" 不在任何已声明 [reg.*] 组内"
                     ),
                 );
             }

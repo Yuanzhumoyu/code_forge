@@ -4122,39 +4122,52 @@ asm = "cqo"
     crate::dsl::codegen::generate(&m).expect("生成成功");
 }
 
-/// R5：比浮点值池更宽的浮点/向量类必须有 `[spill.FPR<bytes>]` 档位——
+/// R5：比浮点值池更宽的浮点/向量类必须有服务它的 `[machine.spill.<模板名>]`——
 /// 缺失在校验期点名（历史实现要等 IR 编译期才报 Unsupported）。
 #[test]
 fn wide_fpr_class_requires_spill_tier() {
-    // fpr128（16 字节 > 缺省标量 8）但没有 [spill.FPR16]
+    // fpr128（16 字节 > 缺省标量 8）但没有服务它的模板
     let msg = validation_msg(&two_view_doc(
         r#"
-[spill.GPR]
+[reg.fpr64]
+names = ["D0", "D1"]
+base_index = 0
+
+[machine.spill.gpr]
+class = "gpr64"
 load = "NOP"
 store = "NOP"
-[spill.FPR]
+[machine.spill.fpr]
+class = "fpr64"
 load = "NOP"
 store = "NOP"
 "#,
     ));
-    assert!(msg.contains("FPR16"), "必须点名缺哪个键：{msg}");
+    assert!(msg.contains("覆盖 16 字节"), "必须点名缺哪个宽度：{msg}");
     assert!(msg.contains("reg.fpr128"), "必须点名哪个类：{msg}");
-    // 声明档位后合法
+    // 声明覆盖该宽度的模板后合法
     let m = parse_and_validate(&two_view_doc(
         r#"
-[spill.GPR]
+[reg.fpr64]
+names = ["D0", "D1"]
+base_index = 0
+
+[machine.spill.gpr]
+class = "gpr64"
 load = "NOP"
 store = "NOP"
-[spill.FPR]
+[machine.spill.fpr]
+class = "fpr64"
 load = "NOP"
 store = "NOP"
-[spill.FPR16]
+[machine.spill.fpr16]
+class = "fpr128"
 load = "NOP"
 store = "NOP"
 "#,
     ))
-    .expect("声明档位后合法");
-    assert!(m.spill.contains_key("FPR16"));
+    .expect("声明覆盖档位后合法");
+    assert!(m.spill.contains_key("fpr16"));
 }
 
 // ─────────── B2：`[machine.classes]` 显式类型→类映射（ISA 数据，优先于通用值池规则） ───────────

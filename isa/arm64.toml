@@ -3851,7 +3851,8 @@ fp_save = 64    # 位
 
 
 
-[spill.GPR]
+[machine.spill.gpr]
+class = "gpr64"
 # base = X29（fp = 入口 sp，帧顶固定）：emission 的 sp_base = -(frame)
 # 是相对帧指针的偏移（spill 槽在帧内底部 [fp - frame + off]，递归各帧
 # 独立）；用 STUR/LDUR 真字节偏移（imm9 符号 ±256——与 riscv LD/SD 的
@@ -5191,12 +5192,14 @@ match = { opc2 = 2, mode = 1, zero21 = 0 }
 ops = ["src:fprq", "base:r64", "off:imm9s"]
 asm = "str {src}, [{base}], #{off}"
 
-[spill.FPR]
+[machine.spill.fpr]
+class = "fpr64"
 load = "LDURD {0}, X29, {1}"
 store = "STURD {0}, X29, {1}"
 
-# Q（128 位）视图的溢出：与 FPR 同口径（base = X29、真字节 imm9），只是走 16 字节的访存。
-[spill.FPR16]
+# Q（128 位）视图的溢出：与 D 同口径（base = X29、真字节 imm9），只是走 16 字节的访存。
+[machine.spill.fpr16]
+class = "fpr128"
 load = "LDURQ_FP {0}, X29, {1}"
 store = "STURQ_FP {0}, X29, {1}"
 

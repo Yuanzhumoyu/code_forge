@@ -115,6 +115,10 @@ pub struct MachineSection {
     /// [`IsaModel::types`]。
     #[serde(default)]
     pub classes: Option<BTreeMap<String, String>>,
+    /// **溢出模板**（v21 W9：`[machine.spill.<模板名>]`）——解析期降级进内部
+    /// [`IsaModel::spill`]（表头 = 模板名，`class` 指向服务的类）。
+    #[serde(default)]
+    pub spill: BTreeMap<String, MachineSpill>,
 }
 
 /// **降级重载展开**（v21 W5，目标第 (4) 项的前置）：一条 `[[lowering]]` 规则**没有 `when`**、
@@ -437,8 +441,8 @@ pub struct IsaModel {
     /// 序言/尾声（内部载体；TOML 面是 `[machine.text]`）。
     #[serde(default, skip)]
     pub emit: Option<EmitSection>,
-    /// 溢出模板（`[spill.GPR]`/`[spill.FPR]`：load/store 指令 + 基址寄存器）。
-    #[serde(default)]
+    /// 溢出模板（内部载体；TOML 面是 `[machine.spill.<模板名>]`）。
+    #[serde(default, skip)]
     pub spill: BTreeMap<String, SpillTemplate>,
 
     /// 数据化测试向量（`[[vectors]]`，v19 V3）：作者直接写"这条文本该编成这几个字节"
@@ -4027,10 +4031,35 @@ pub struct EmitSection {
 
 // ───────────────────────── [spill.*] ─────────────────────────
 
-/// 溢出槽模板：load/store 指令 + 基址寄存器。
+/// **`[machine.spill.<模板名>]` 的体**（v21 W9）：溢出/回填模板。
+///
+/// 表头 = 模板名（任意名字，不再是 `GPR`/`FPR<bytes>` 命名合同）；`class` 指向
+/// 它**服务**的寄存器类（已声明 `[reg.<组名>]` 的组名，或向量档 `vec512` 这种
+/// 由 `[meta].vector_tiers` 定义的类）。分派按 `class` 的**族与宽度**做。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MachineSpill {
+    /// 该模板服务的寄存器类（组名或向量档名）。
+    pub class: String,
+    /// 加载指令模板（`{0}` = 目标寄存器，`{1}` = 帧偏移）。
+    pub load: String,
+    /// 存储指令模板（`{0}` = 源寄存器，`{1}` = 帧偏移）。
+    pub store: String,
+    /// 基址寄存器名（"RBP"）。
+    #[serde(default)]
+    pub base: Option<String>,
+    /// **只在给定参数取值下存在**（v19 V5）——见 [`variants_keep`]。
+    #[serde(default)]
+    pub when: Option<VariantGate>,
+}
+
+/// 溢出槽模板：load/store 指令 + 基址寄存器（内部载体；TOML 面是
+/// `[machine.spill.<模板名>]`）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpillTemplate {
+    /// 该模板服务的**寄存器类**（v21 W9 起由 `class` 声明；分派按它的族与宽度）。
+    pub class: RegClass,
     /// 加载指令模板（`{0}` = 目标寄存器，`{1}` = 帧偏移——spill 生成时替换）。
     pub load: String,
     /// 存储指令模板（`{0}` = 源寄存器，`{1}` = 帧偏移）。

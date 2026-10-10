@@ -181,6 +181,11 @@ pub(crate) fn section_code(kind: &str) -> &'static str {
         "reg" => "DSL-REG",
         "stack" => "DSL-STACK",
         "types" => "DSL-TYPES",
+        // v21 W9：三节迁入 `[machine.*]`，码不变。
+        "machine.stack" => "DSL-STACK",
+        "machine.classes" => "DSL-TYPES",
+        "machine.text" => "DSL-EMIT",
+        "machine.spill" => "DSL-SPILL",
         "conventions" => "DSL-CONV",
         "operand_slots" => "DSL-SLOT",
         "forms" => "DSL-FORM",
@@ -258,11 +263,31 @@ impl DeclIndex {
                     Some((b, n)) => (b.to_string(), Some(n.to_string())),
                     None => (header.to_string(), None),
                 };
+                // v21 W9：`[machine.<sub>...]` 额外按**两段 kind** 记一份（诊断前缀
+                // `[machine.spill.fpr].load` / `[machine.stack].slot` 走这条）；
+                // 旧的一段键（("machine", "spill.fpr")）保持不变。**额外那条后 push**——
+                // 块范围 = 「下一个块首 - 1」，两条同起始 ⇒ 后一条拿到真实块尾，
+                // 于是"块内精准定位到具体键"对新前缀照常生效。
                 raw.push(Raw {
                     kind: base.clone(),
-                    name,
+                    name: name.clone(),
                     start: line_no,
                 });
+                if base == "machine"
+                    && let Some(n) = &name
+                {
+                    let (sub, rest) = match n.split_once('.') {
+                        Some((s, r)) => (s, Some(r.to_string())),
+                        None => (n.as_str(), None),
+                    };
+                    if matches!(sub, "spill" | "stack" | "classes" | "text") {
+                        raw.push(Raw {
+                            kind: format!("machine.{sub}"),
+                            name: rest,
+                            start: line_no,
+                        });
+                    }
+                }
                 kind = Some(base);
                 continue;
             }
@@ -474,7 +499,17 @@ fn parse_prefix(msg: &str) -> (Option<String>, Option<String>) {
     let head = &body[..end];
     match head.split_once('.') {
         // `[reg.gpr8]` / `[[instructions.ADD]]` / `[[spill.GPR]]`
-        Some((k, n)) => (Some(k.to_string()), Some(n.to_string())),
+        Some((k, n)) => {
+            // v21 W9：`[machine.spill.fpr].load` 这类前缀按**两段 kind** 解析
+            // （与 DeclIndex 的额外索引一致），码仍由 `section_code` 给。
+            if k == "machine"
+                && let Some((sub, rest)) = n.split_once('.')
+                && matches!(sub, "spill" | "stack" | "classes" | "text")
+            {
+                return (Some(format!("machine.{sub}")), Some(rest.to_string()));
+            }
+            (Some(k.to_string()), Some(n.to_string()))
+        }
         // `[[instructions]] #3:` / `[meta]` / `[stack]` —— 无名节
         None => (Some(head.to_string()), None),
     }

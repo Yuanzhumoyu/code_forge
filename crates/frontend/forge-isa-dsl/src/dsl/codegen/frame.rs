@@ -236,18 +236,27 @@ pub(crate) fn gen_frame_lowering(
         Some(fp) => fp,
         None if needs_default_base => {
             return Err(
-                "[spill.*]: 存在未声明 base 的溢出模板，但 [machine.frame].fp 缺失——spill 基址缺省取帧指针，不能回退 x86 的 \"RBP\"（生成期 fail-closed：请声明 [machine.frame].fp 或在每个 [spill.*] 显式写 base）"
+                "[machine.spill.*]: 存在未声明 base 的溢出模板，但 [machine.frame].fp 缺失——spill 基址缺省取帧指针，不能回退 x86 的 \"RBP\"（生成期 fail-closed：请声明 [machine.frame].fp 或在每个 [machine.spill.*] 显式写 base）"
                     .to_string(),
             );
         }
         // 所有模板都自带 base（或无 spill 模板）：该缺省值不会被使用。
         None => String::new(),
     };
-    let spill_gpr = model.spill.get("GPR");
+    // v21 W9：**按 class 分派** —— GPR 溢出取"服务 GPR 族"的模板（多份取最宽者；
+    // 与旧的单份 `[spill.GPR]` 逐字节等价）。
+    let spill_gpr = model
+        .spill
+        .values()
+        .filter(|t| matches!(t.class, RegClass::GPR(_)))
+        .max_by_key(|t| match t.class {
+            RegClass::GPR(b) => b,
+            _ => 0,
+        });
     let gpr_load = gen_spill_stmt(infos, spill_gpr, true, &default_base)?;
     let gpr_store = gen_spill_stmt(infos, spill_gpr, false, &default_base)?;
-    // FPR（含向量）溢出**按值宽分派**（WA-46）：≤8 字节走缺省 `[spill.FPR]`，
-    // 16/32/64 走 `[spill.FPR16/32/64]`；>8 字节缺模板 → 生成期 fail-closed。
+    // FPR（含向量）溢出按 **class 宽度**分派（WA-46）：宽度 ≤ 浮点值池走标量缺省，
+    // 更宽的类各走一份模板；缺档 → 生成期 fail-closed（不退回窄搬运）。
     let fpr_load = gen_fpr_spill_dispatch(infos, model, true, &default_base)?;
     let fpr_store = gen_fpr_spill_dispatch(infos, model, false, &default_base)?;
 
@@ -1549,54 +1558,49 @@ fn gen_fpr_spill_dispatch(
     is_load: bool,
     default_base: &str,
 ) -> Result<TokenStream, String> {
-    let Some(default_tpl) = model.spill.get("FPR") else {
+    // v21 W9：按 `class` 的族与宽度分派（不再按模板键名里的字节数）。
+    let width_of = |c: &RegClass| -> u16 {
+        match c {
+            RegClass::FPR(b) | RegClass::VEC(b) => b.div_ceil(8),
+            _ => 0,
+        }
+    };
+    let scalar_max = match model.value_fpr_class()? {
+        Some(c) => c.bytes(),
+        None => model.main_fpr_class()?.map(|c| c.bytes()).unwrap_or(0),
+    };
+    // 服务浮点/向量族的模板：标量缺省 = 宽度 ≤ 浮点值池的**最宽**者。
+    let mut fpr_tpls: Vec<(&String, &SpillTemplate, u16)> = model
+        .spill
+        .iter()
+        .filter(|(_, t)| matches!(t.class, RegClass::FPR(_) | RegClass::VEC(_)))
+        .map(|(k, t)| (k, t, width_of(&t.class)))
+        .collect();
+    let default_tpl = fpr_tpls
+        .iter()
+        .filter(|(_, _, w)| *w <= scalar_max)
+        .max_by_key(|(_, _, w)| *w)
+        .map(|(_, t, _)| *t);
+    let Some(default_tpl) = default_tpl else {
         return Ok(quote! {
             let _ = (__dst, __off);
         });
     };
     let scalar = gen_spill_stmt(infos, Some(default_tpl), is_load, default_base)?;
     let what = if is_load { "load" } else { "store" };
-    // 标量缺省档上限 = 浮点值**池**类宽（x86 = 8）；池未声明时退回主浮点类宽，
-    // 仍无 → 0（表示"没有标量档"，全部宽度走 `[spill.FPR<bytes>]` 档位）。
-    let scalar_max = match model.value_fpr_class()? {
-        Some(c) => c.bytes(),
-        None => model.main_fpr_class()?.map(|c| c.bytes()).unwrap_or(0),
-    };
-    // 宽度档：从已声明模板键 `FPR<bytes>` 派生（`m.spill` 是 BTreeMap，键序稳定）。
-    let mut tiers: Vec<(String, u16)> = Vec::new();
-    for key in model.spill.keys() {
-        if key == "FPR" {
-            continue;
-        }
-        let Some(num) = key.strip_prefix("FPR") else {
-            continue;
-        };
-        if let Ok(w) = num.parse::<u16>()
-            && w > scalar_max
-        {
-            tiers.push((key.clone(), w));
-        }
-    }
-    tiers.sort_by_key(|(_, w)| *w);
+    // 宽度档：宽度 > 浮点值池的模板，按宽度升序（元数据驱动）。
+    fpr_tpls.retain(|(_, _, w)| *w > scalar_max);
+    fpr_tpls.sort_by_key(|(_, _, w)| *w);
     let mut arms: Vec<TokenStream> = Vec::new();
-    for (key, w) in &tiers {
-        let stmt = match model.spill.get(key) {
-            Some(t) => gen_spill_stmt(infos, Some(t), is_load, default_base)?,
-            // 理论到不了（档位即来自已声明键）；留作防御性 fail-closed。
-            None => quote! {
-                return Err(crate::IrError::Unsupported(format!(
-                    "FPR spill {}: 本 ISA 未声明 [spill.{}]（{} 字节）——不退回窄搬运（会静默截断向量高半区）",
-                    #what, #key, #w
-                )));
-            },
-        };
+    for (_key, t, w) in &fpr_tpls {
+        let stmt = gen_spill_stmt(infos, Some(t), is_load, default_base)?;
         arms.push(quote! { else if width == #w { #stmt } });
     }
-    let supported = if tiers.is_empty() {
+    let supported = if fpr_tpls.is_empty() {
         format!("≤{scalar_max}")
     } else {
         let mut s = format!("≤{scalar_max}");
-        for (_, w) in &tiers {
+        for (_, _, w) in &fpr_tpls {
             s.push('/');
             s.push_str(&w.to_string());
         }

@@ -52,7 +52,7 @@
 | `DSL-PATTERN` | `[[pattern]]` | 匹配树语法错、内部节点用 Fcmp/Icmp/Copy/Nop、叶变量重复、`when` 属性未知 |
 | `DSL-ABI` | `[machine]`（`[abi]` 已删除） | 寄存器名未在 `[reg.*]` 声明（`fixed`/`scratch`/`link`；v21 W9 前的 `fixed_regs`/`spill_scratch`/`link_reg` 已改名） |
 | ~~`DSL-EMIT`~~ | ~~`[machine.text]`~~ | **已随 v20 A4 删除**（序/尾声键不存在；`[machine.text]` 只剩机器事实） |
-| `DSL-SPILL` | `[spill.*]` | 指令引用未声明、占位符不是 `{N}`、`base` 未在 `[reg.*]` 声明 |
+| `DSL-SPILL` | `[machine.spill.<模板名>]`（v21 W9 前叫 `[spill.<名>]`） | 指令引用未声明、占位符不是 `{N}`、`base` 未在 `[reg.*]` 声明、`class` 未声明 |
 | `LINT-*` | `forge-isa lint`（**静态体检，不是校验错误**） | `LINT-UNUSED-SLOT`/`LINT-UNUSED-FORM`/`LINT-UNUSED-BITFIELD`（默认档）、`LINT-BITFIELD-OVERLAP`（默认档）、`LINT-OP-GAP`（`--ops`）、`LINT-REF-UNUSED`（`--refs`）、`LINT-UNASSIGNED-BITS`（`--bits`）、`LINT-VARY-CANDIDATE`（`--suggest`，只建议）——判据与档位见 `docs/reference/isa-dsl.md`「静态体检」 |
 | `DSL-INCLUDE` | `include`（v18 S7） | 文件缺失、循环 include、同名标量冲突 |
 | `DSL-OTHER` | 无节可归 | 模型级错误（如缺 `[reg.*]` 顶层派生失败）——**出现即说明该消息缺节前缀，应报 bug** |

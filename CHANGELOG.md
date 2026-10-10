@@ -11,6 +11,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W9 第三片：`[machine.spill.<模板名>]` 按 `class` 分派
+
++ `[spill.<名>]` → `[machine.spill.<模板名>]`：表头 = **模板名**（不再是 `GPR`/`FPR<bytes>`
+  命名合同），新增**必填** `class` = 它服务的寄存器类（已声明 `[reg.<名>]` 组名，或
+  `[meta].vector_tiers` 的向量档如 `vec512`）；`only_variants` → `when`。旧键报未知键。
++ 分派改按 **class 的族与宽度**：GPR 族取一份（多份取最宽者）；浮点/向量族 = 宽度 ≤ 浮点值池的
+  **最宽**者作标量缺省 + 更宽各一份档位（缺档 fail-closed，不退回窄搬运）⇒ 与旧的
+  `GPR`/`FPR`/`FPR16/32/64` 逐字节等价。x86 五份、arm64 三份、riscv/demo8 各一份模板一次迁完。
++ 新增校验：`class` 必须已声明（组名或向量档）——写错 = 校验期错误（不再静默 no-op）；
+  R5 覆盖校验改按 class 宽度判（比浮点值池更宽的类必须有服务它的模板）。
++ 诊断侧支持**两段节名**：`[machine.spill.fpr].load` → `DSL-SPILL`、`[machine.stack]` →
+  `DSL-STACK`、`[machine.classes]` → `DSL-TYPES`、`[machine.text]` → `DSL-EMIT`，
+  且"块内精准定位到具体键"照常生效（旧的一段键索引保持不变，纯加法）。
++ 证据：`forge-isa-dsl` **294 通过 / 0 失败**；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制；
+  `schema_guard` 9/9；`markdownlint` 0 issue。
++ W9 剩余：删 `callee_saved_gpr`/`callee_save_slots`（改走 ABI 层）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W9 第二片：`[machine.stack|text|classes]` 三节迁入（stack 单位改**位**）
 
 + `[stack]` → `[machine.stack]`（**单位由字节改成位**：三份发行谱写 `slot = 64 / align = 128 /

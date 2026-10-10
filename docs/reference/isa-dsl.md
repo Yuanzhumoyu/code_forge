@@ -87,7 +87,7 @@
 
 - [`[machine.text]` — 代码对齐与尾声标签](#machinetext--代码对齐与尾声标签)
 
-  - [`[spill.*]` — 溢出模板](#spill--溢出模板)
+  - [`[machine.spill.<模板名>]` — 溢出模板](#machinespill模板名--溢出模板)
 
   - [asm 模板](#asm-模板)
 
@@ -154,7 +154,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 <!-- BEGIN: schema-keys（由 tests/schema_guard.rs 校验，改 schema 时同步这一段）-->
 | 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
 | --- | --- | --- | --- |
-| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `operand` `enum` `forms` `instructions` `family` `lower` `asm` `derive` `lowering` `pattern` `machine` `spill` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
+| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `operand` `enum` `forms` `instructions` `family` `lower` `asm` `derive` `lowering` `pattern` `machine` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
 | `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `vector_tiers` | 元信息 + 文本约定（宽度只在 [reg.<名>] 表头里，见 [machine] 的类指针键） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
 | `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `alloc_count` `aliases` | 寄存器组；组名的数字 = **位**宽（`gpr64` = 64 位）；aliases = { 别名 = 组内下标 } |
@@ -177,10 +177,10 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[lower.<终结 op>]` | `insts` | — | 终结指令的 lowering 序列（Br/Jmp/Ret）：可用 {true}/{false}/{target} 符号值 |
 | `[[lowering]]` | `op` `insts` | `when` `vary` `dispatch` `temps` `priority` | 指令选择规则 |
 | `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
-| `[machine]` | — | `fixed` `scratch` `link` `gpr` `fpr` `addr` `value_gpr` `value_fpr` `frame` `callee_saved_gpr` `callee_save_slots` `padding` `arg_place` `byref_bytes` `stack` `text` `classes` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / callee-saved 推入槽数 / 帧填充 / 位置计数规则；v21 W9：`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes` 由 `fixed_regs`/`spill_scratch`/`link_reg`/`frame_padding`/`arg_slot`/`vector_by_ref_bytes` 改名，并接收从 `[stack]`/`[emit]`/`[types]` 迁入的 `stack`/`text`/`classes`） |
+| `[machine]` | — | `fixed` `scratch` `link` `gpr` `fpr` `addr` `value_gpr` `value_fpr` `frame` `callee_saved_gpr` `callee_save_slots` `padding` `arg_place` `byref_bytes` `stack` `text` `classes` `spill` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / callee-saved 推入槽数 / 帧填充 / 位置计数规则；v21 W9：`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes` 由 `fixed_regs`/`spill_scratch`/`link_reg`/`frame_padding`/`arg_slot`/`vector_by_ref_bytes` 改名，并接收从 `[stack]`/`[emit]`/`[types]` 迁入的 `stack`/`text`/`classes`） |
 | `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（唯一位置；`[abi.frame]` 已删除） |
 | `[machine.text]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（v21 W9：从 `[emit]` 迁入；序/尾声由生成器按约定生成，谱里不再写） |
-| `[spill.<name>]` | — | `load` `store` `base` `only_variants` | 溢出/回填模板（`{N}` = 寄存器序号占位符） |
+| `[machine.spill.<模板名>]` | `class` `load` `store` | `base` `when` | 溢出/回填模板（v21 W9：表头 = 模板名，`class` = 它服务的寄存器类；`{N}` = 寄存器序号占位符） |
 | `[[vectors]]` | — | `asm` `bytes` `error` `partial` `comment` | 数据化测试向量（v19 V3）：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = "DECODE", partial}` 解码错误 / `{bytes}` 解码正向 |
 | `enc / vex / evex / modrm（内联子表）` | — | `reg` `rm` | `modrm = { reg = <名\|整数>, rm = <名\|"[base]"> }` |
 | `vex / evex（内联子表）` | — | `map` `pp` `w` `l` `b` `z` `disp_scale` | VEX/EVEX 结构键（map/pp/w/l + AVX-512 的 b/z/disp_scale） |
@@ -517,13 +517,13 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
 
 1. **名字解析**：`[machine].fixed/scratch/link`、
    `[machine.frame].sp/fp`、
-   `[spill.*].base`、`[[instructions]].implicit_regs` 里的物理名必须能在某个
+   `[machine.spill.*].base`、`[[instructions]].implicit_regs` 里的物理名必须能在某个
    已声明 `[reg.*]` 组内解析——否则生成期报错（历史实现 `filter_map` 静默丢弃：
    scratch/callee_saved 缺失 ⇒ regalloc 会分配被占用寄存器）。
 2. **帧寄存器**：声明了 `[machine.frame]` 却没有可解析的 `sp`（或 `fp`）→ 报错；
    完全未声明的纯寄存器夹具保留"索引 0 占位"（类 = 主 GPR 类，
    不再是 x86 的 `GPR64`）。
-3. **spill 基址**：`[spill.*]` 模板未写 `base` 且无 `[machine.frame].fp` → 报错
+3. **spill 基址**：`[machine.spill.*]` 模板未写 `base` 且无 `[machine.frame].fp` → 报错
    （历史实现回退字面量 `"RBP"`）。
 4. **值池门**：函数里出现的每个值类型都必须被 `class_for_type` 承载，否则
    **编译期** `Unsupported`（点名类型与值池宽度）。判据 = **值池宽度 + 寄存器
@@ -1742,22 +1742,24 @@ push 机制 = `push fp` → `frame_set` → 逐 `push` → **收参** → `frame
 真需要时**加角色**（上层能看见的能力），不回到自由模板——这是"指令保持裸的、
 调用平衡交给约定层"的取舍。
 
-## `[spill.*]` — 溢出模板
+## `[machine.spill.<模板名>]` — 溢出模板
 
-callee-saved 保存/恢复与寄存器溢出用的 load/store 指令 + 基址寄存器。两种形态：
+callee-saved 保存/恢复与寄存器溢出用的 load/store 指令 + 基址寄存器。**表头 = 模板名**
+（任意名字），`class` 说清它**服务**哪个寄存器类（已声明 `[reg.<名>]` 的组名，或
+`[meta].vector_tiers` 里的向量档如 `vec512`）——生成器按 class 的**族与宽度**分派
+（GPR 族取一份；浮点/向量族按宽度分档）。两种写法形态：
 
 ```toml
-
 # x86 式（Mem 槽）：
-
-[spill.GPR]
+[machine.spill.gpr]
+class = "gpr64"
 load = "MOV64_RM {0}, {1}"     # {0}=目标寄存器、{1}=MemRef{base, __off}
 store = "MOV64_MR {0}, {1}"    # {0}=源寄存器、{1}=MemRef{base, __off}
 base = "RBP"
 
 # riscv 式三操作数（reg + reg + imm，无 Mem 槽）：
-
-[spill.GPR]
+[machine.spill.gpr]
+class = "gpr64"
 load = "LD {0}, X8, {1}"       # {0}=目标寄存器、字面 X8=基址、{1}=__off 立即数
 store = "SD {0}, X8, {1}"
 base = "X8"
@@ -2022,7 +2024,7 @@ partial = 1
 | 键 | 位置 | 含义 |
 | --- | --- | --- |
 | `variants = { xlen = [32, 64] }` | `[meta]` | 声明**参数名 → 取值域**（参数的唯一事实源；没声明的参数一律报错） |
-| `only_variants = { xlen = [64] }` | `[[instructions]]` / `[[templates]].body` 与行 / `[spill.*]` / `[[pseudo]]` / `[[pattern]]` | 该声明**只在**这些取值下存在（六处同一判定：`dsl::model::variants_keep`） |
+| `when = { xlen = [64] }` | `[[instructions]]` / `[[templates]].body` 与行 / `[machine.spill.*]` / `[[pseudo]]` / `[[pattern]]` | 该声明**只在**这些取值下存在（六处同一判定：`dsl::model::variants_keep`；旧键名 `only_variants`，v21 W9 起在 spill 上叫 `when`） |
 | `params = { xlen = 32 }` | `isa_from_file!` 宏参数 | 生成期投影（参数进生成物文件名哈希：同一份谱的两个变体落到不同文件） |
 | `--params xlen=32` | `forge-isa validate\|insts` | 工具期投影（`--params a=1,b=2` 可多次/逗号分隔） |
 
@@ -2038,7 +2040,7 @@ partial = 1
 4. **文本替换**：`{参数名}` 在 `asm` 与 `[[lowering]].insts` 里换成取值（宽度是数据）。
    模板里留着参数占位符却**没传值** ⇒ 明确报错（默认档不许留占位符，否则生成的汇编里会
    打印出字面 `{width}`）；
-5. **其余引用 fail-closed**：`[spill]`/`[[pseudo]]`/`[[pattern]]` 引用了被投影掉的
+5. **其余引用 fail-closed**：`[machine.spill]`/`[[pseudo]]`/`[[pattern]]` 引用了被投影掉的
    声明却**没标** `only_variants` ⇒ 校验期报"未知指令引用"。结构件必须由作者显式变体化
    （RV32 的帧件与 RV64 不同，自动猜是错的）。
 
@@ -2052,7 +2054,7 @@ partial = 1
 
 #   DIVW, DIVUW, REMW, REMUW）；连带/逐节丢弃：
 
-#   [spill.GPR] ×1、[[lowering]] ×14；lowering 剩 96
+#   [machine.spill.gpr] ×1、[[lowering]] ×14；lowering 剩 96
 
 ```
 

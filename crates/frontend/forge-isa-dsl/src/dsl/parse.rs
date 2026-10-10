@@ -106,9 +106,14 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
     }
     // v21 W9：`[machine.stack]`（**位** ⇒ 字节）/ `[machine.text]` / `[machine.classes]`
     // 降级进内部载体（`stack`/`emit`/`types`）——下游（生成器/校验）只见内部口径。
-    let (m_stack, m_text, m_classes) = match model.machine.as_mut() {
-        Some(ms) => (ms.stack.take(), ms.text.take(), ms.classes.take()),
-        None => (None, None, None),
+    let (m_stack, m_text, m_classes, m_spill) = match model.machine.as_mut() {
+        Some(ms) => (
+            ms.stack.take(),
+            ms.text.take(),
+            ms.classes.take(),
+            std::mem::take(&mut ms.spill),
+        ),
+        None => (None, None, None, std::collections::BTreeMap::new()),
     };
     let lower_machine_sections = || -> Result<(), String> {
         if let Some(st) = m_stack {
@@ -148,6 +153,26 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
         }
         if let Some(c) = m_classes {
             model.types = Some(c);
+        }
+        // `[machine.spill.<模板名>]`：表头 = 模板名，`class` 指向服务的寄存器类。
+        for (name, body) in m_spill {
+            let class: crate::dsl::model::RegClass = body.class.parse().map_err(|_| {
+                format!(
+                    "[machine.spill.{name}].class: 无法解析寄存器类 \"{}\"\
+                     （组名如 gpr64/fpr128，或向量档 vec512）",
+                    body.class
+                )
+            })?;
+            model.spill.insert(
+                name,
+                crate::dsl::model::SpillTemplate {
+                    class,
+                    load: body.load,
+                    store: body.store,
+                    base: body.base,
+                    only_variants: body.when,
+                },
+            );
         }
         Ok(())
     };

@@ -57,6 +57,11 @@ const INTERNAL_FIELDS: &[(&str, &str, &str)] = &[
     ),
     (
         "IsaModel",
+        "spill",
+        "内部载体（v21 W9）：只由 [machine.spill.<模板名>] 写入，TOML 面已撤",
+    ),
+    (
+        "IsaModel",
         "reloc",
         "内部载体（v21 W8）：只由 [asm.reloc.<名>] 写入，TOML 面已撤",
     ),

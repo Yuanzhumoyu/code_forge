@@ -60,7 +60,8 @@ insts = ["add {out}, {0}, {1}"]
 [machine]
 scratch = ["X9"]
 
-[spill.GPR]
+[machine.spill.gpr]
+class = "gpr64"
 load = "ADD {0}, {1}, X0"
 store = "ADD {0}, {1}, X0"
 base = "X8"
@@ -319,20 +320,24 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         ),
         (
             "spill 未知指令引用",
-            plus("[spill.FPR]\nload = \"NO_SUCH {0}, {1}\"\nstore = \"NO_SUCH {0}, {1}\""),
+            plus(
+                "[machine.spill.fpr]\nclass = \"gpr64\"\nload = \"NO_SUCH {0}, {1}\"\nstore = \"NO_SUCH {0}, {1}\"",
+            ),
             "DSL-SPILL",
             "NO_SUCH",
         ),
         (
             "spill 未知占位符",
-            plus("[spill.FPR]\nload = \"ADD {0}, {1}, {dst}\"\nstore = \"ADD {0}, {1}, X0\""),
+            plus(
+                "[machine.spill.fpr]\nclass = \"gpr64\"\nload = \"ADD {0}, {1}, {dst}\"\nstore = \"ADD {0}, {1}, X0\"",
+            ),
             "DSL-SPILL",
             "{dst}",
         ),
         (
             "spill 基址未声明",
             plus(
-                "[spill.FPR]\nload = \"ADD {0}, {1}, X0\"\nstore = \"ADD {0}, {1}, X0\"\nbase = \"NOPE\"",
+                "[machine.spill.fpr]\nclass = \"gpr64\"\nload = \"ADD {0}, {1}, X0\"\nstore = \"ADD {0}, {1}, X0\"\nbase = \"NOPE\"",
             ),
             "DSL-SPILL",
             "NOPE",
@@ -439,7 +444,9 @@ fn headline_positions_are_exact() {
     );
 
     // spill：未知指令引用落在 load/store 那一行。
-    let sp = plus("[spill.FPR]\nload = \"NO_SUCH {0}, {1}\"\nstore = \"ADD {0}, {1}, X0\"");
+    let sp = plus(
+        "[machine.spill.fpr]\nclass = \"gpr64\"\nload = \"NO_SUCH {0}, {1}\"\nstore = \"ADD {0}, {1}, X0\"",
+    );
     let d = errs(&sp)
         .into_iter()
         .find(|d| d.msg.contains("NO_SUCH"))

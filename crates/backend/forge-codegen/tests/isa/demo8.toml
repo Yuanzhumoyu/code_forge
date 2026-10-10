@@ -244,7 +244,8 @@ epilogue_label = false
 
 
 # 溢出模板（基址 = A6 帧指针；LD8/ST8 = Reg + Reg + imm8）
-[spill.GPR]
+[machine.spill.gpr]
+class = "gpr8"
 load = "LD8 {0}, A6, {1}"
 store = "ST8 {0}, A6, {1}"
 base = "A6"

@@ -2946,34 +2946,36 @@ fp_save = 64    # 位
 
 
 
-# 溢出模板（基址 = RBP 帧指针）——**按值宽分档**（WA-46）：
-# 旧实现只有一份 [spill.FPR]，模板是 8 字节 MOVSD，而生成器忽略 width 参数 ⇒
-# 任何向量值被 spill 都只搬 8 字节（V128/V256/V512 高半区静默截断；CI 上
-# `test_jit_v512_byref_param` 偶发 lane15 错即此因：高半是栈残留）。
-# 现按宽度分档：FPR（≤8 字节标量，缺省）/ FPR16 / FPR32 / FPR64；
-# 生成器按 `xreg.width()` 分派，>8 字节未声明模板 → **编译期 Unsupported**
-#（fail-closed，不再退回 8 字节标量搬运）。
-[spill.GPR]
+# 溢出模板（基址 = RBP 帧指针）——**按 class 宽度分派**（v21 W9 起按 class，WA-46）：
+# 旧实现只有一份 FPR 模板（8 字节 MOVSD）而生成器忽略 width ⇒ 向量 spill 只搬 8 字节
+# （V128/V256/V512 高半区静默截断）。现每档一份模板、`class` 写明它服务哪一类；
+# 生成器按 `xreg.width()` 选档，>8 字节缺档 → **编译期 Unsupported**（fail-closed）。
+[machine.spill.gpr]
+class = "gpr64"
 load = "MOV64_RM {0}, {1}"
 store = "MOV64_MR {0}, {1}"
 base = "RBP"
 
-[spill.FPR]
+[machine.spill.fpr]            # 标量缺省档（≤ 8 字节）
+class = "fpr64"
 load = "MOVSD_RM {0}, {1}"
 store = "MOVSD_MR {0}, {1}"
 base = "RBP"
 
-[spill.FPR16]
+[machine.spill.fpr16]
+class = "fpr128"
 load = "MOVUPS_RM {0}, {1}"
 store = "MOVUPS_MR {0}, {1}"
 base = "RBP"
 
-[spill.FPR32]
+[machine.spill.fpr32]
+class = "fpr256"
 load = "VMOVUPS_RM {0}, {1}"
 store = "VMOVUPS_MR {0}, {1}"
 base = "RBP"
 
-[spill.FPR64]
+[machine.spill.fpr64]
+class = "vec512"                # 512 位向量档（ZMM；由 [meta].vector_tiers 定义）
 load = "VMOVUPS_ZMM_MEM {0}, {1}"
 store = "VMOVUPS_ZMM_MR {0}, {1}"
 base = "RBP"

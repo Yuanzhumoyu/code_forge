@@ -1812,9 +1812,10 @@ fp_save = 64    # 位
 
 
 
-[spill.GPR]
+[machine.spill.gpr]
+class = "gpr64"
 # 64 位专用：LD/SD 只在 RV64 存在（RV32 变体必须自己给一套 LW/SW 帧件——投影会整节丢掉）。
-only_variants = { xlen = [64] }
+when = { xlen = [64] }
 # base = X8（fp = 入口 sp，等价 x86 rbp）：emission 的 sp_base =
 # -(frame) - callee_saved_bytes 是**相对帧指针**的偏移。base 用 X2（sp）会
 # 双重减 frame（spill 槽落帧外更深处），递归时与 callee 帧重叠（ra 槽被
