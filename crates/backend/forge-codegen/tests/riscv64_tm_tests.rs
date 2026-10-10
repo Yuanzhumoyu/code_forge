@@ -60,19 +60,18 @@ fn tm_compile_add() {
         "prologue addi sp,sp,-112: {:02x?}",
         cf.code
     );
-    // **按需保存**（阶段 G）：callee_saved 只保存实际分配到的 s 系——
-    // add(a,b) 参数被 regalloc 分配到 s 系（跨 epilogue j 跳转存活）→
-    // 保存 ra/fp + 3 个 s 系（s9/s10/s11，视分配而定）共 ≤5 个 SD。
-    // 全量 11 个 s 系时代的 13 个 SD（+ra/fp）断言已失效；此处校验
-    // **SD 数量显著少于全量**（按需保存生效）。
+    // **整表保存**（v21 W9 选项 A）：序言按 plan 的**整张表**推/存 callee-saved
+    //（不再"只存实际分配到的"）——帧基准（plan）与运行时保存数因此同源，
+    //`emission` 的 `cs_skipped` 补偿随之消失。lp64d 的主表 = ra/fp 之外的 11 个 s 系，
+    // 加上 ra/fp 共 **13** 个 SD/LD（与全量时代一致）。
     let sd_count = cf
         .code
         .windows(4)
         .filter(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]) & 0x7F == 0x23)
         .count();
     assert!(
-        (4..=8).contains(&sd_count),
-        "按需保存：SD 应在 4-8 之间（ra/fp + 少量 s 系，< 全量 13），实际 {sd_count}: {:02x?}",
+        sd_count >= 13,
+        "整表保存：SD 至少 13 条（2 个 8 字节的 ra/fp 保存 + 11 个 s 系；实际 {sd_count}）: {:02x?}",
         cf.code
     );
     // ADD 指令（opcode 0x33）应存在

@@ -53,14 +53,7 @@ pub(crate) fn frame_layout_info<M: TargetMachine + ?Sized>(
     // （arm64 的 AAPCS64 = X19-X28 **+ V8-V15**）。帧顶槽位公式 `frame - fp_push - (k+1)*slot`
     // 要求帧至少装得下**整张表**；plan 的表 ⊇ 实际保存集（regalloc 只保存用到的那些），
     // 所以按 plan 算必然够用。没有 plan（无绑定的夹具）时退回谱面表数。
-    let cs_count = if fl.kind == FrameLayoutKind::Inside {
-        match layout {
-            Some(cl) if !cl.callee_saved.is_empty() => cl.callee_saved.len() as i32,
-            _ => ri.callee_save_slots() as i32,
-        }
-    } else {
-        ri.callee_saved().len() as i32
-    };
+    let cs_count = layout.map(|cl| cl.callee_saved.len() as i32).unwrap_or(0);
     let cs_bytes = cs_count * (ri.reg_class_width(ri.default_gpr_class()) as i32);
     let pushed = (ri.frame_pointer_overhead() as i32) + cs_bytes;
     // **帧顶保存区**（v20 V7）：形状要求"保存区与栈实参连续"时，保存区占 `[入口 sp - save, 入口 sp)`，
@@ -167,18 +160,18 @@ mod tests {
         assert_eq!(fpr, 8, "AAPCS64 的 FPR callee-saved = V8-V15");
 
         let with_plan = frame_layout_info(&tm, Some(&cl));
-        let spec_only = frame_layout_info(&tm, None);
+        let no_plan = frame_layout_info(&tm, None);
         assert_eq!(
             with_plan.min_frame,
             16 + 18 * 8,
             "fp-inside 的最小帧 = fp/lr 保存区 + plan 整张表"
         );
-        assert!(
-            spec_only.min_frame < with_plan.min_frame,
-            "只按谱面 GPR 表算会少算 64 字节（这正是 FPR 保存要的槽）"
+        assert_eq!(
+            no_plan.min_frame, 16,
+            "无 plan（v21 W9 起谱面不再声明 callee-saved）= 只剩 fp/lr 保存区"
         );
         // fp-inside 下 spill 寻址不依赖 cs 字节数 ⇒ 这条切换不影响 sp_base。
         assert_eq!(with_plan.callee_saved_bytes, 0);
-        assert_eq!(with_plan.stack_slot_shift, spec_only.stack_slot_shift);
+        assert_eq!(with_plan.stack_slot_shift, no_plan.stack_slot_shift);
     }
 }

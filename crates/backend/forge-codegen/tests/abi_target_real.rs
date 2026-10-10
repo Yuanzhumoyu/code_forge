@@ -477,40 +477,16 @@ macro_rules! convention_facts_probe {
                     .collect()
             };
 
-            // ① callee-saved：plan 的 GPR 类项 vs 谱里声明的表。
+            // ① callee-saved：v21 W9 删除谱面 `callee_saved_gpr`/`callee_save_slots` 之后，
+            // "被调方必须保住哪些"**只有**约定数据一个来源（`AbiPlan`/绑定）——于是这里不再
+            // 做"plan vs 谱表"的交叉核对（没有第二份可对），只钉一条结构性事实：主约定的
+            // GPR callee-saved 非空（帧件确实要保存东西；FPR 那半由 `class = "fpr"` 的
+            // `callee_save` 角色承担，其数量由 plan 决定的 min_frame 保证装得下）。
             let plan_cs = idx(&layout.callee_saved);
-            let spec_cs = ri.callee_saved();
-            // **机器事实必须覆盖约定**（v20 A6 收口的护栏）：plan 的每个 GPR callee-saved
-            // 都要在 `[machine].callee_saved_gpr`（= 生成物 `callee_saved()`，帧件实际会保存的
-            // 那组）里——否则"某份约定要求保住 R15、机器帧却不存它"就是静默破坏。
-            // 只核 GPR：FPR（AAPCS64 的 V8-V15）由 `class = "fpr"` 的 callee_save 角色承担，
-            // 其数量由 plan 决定的 min_frame 保证装得下。
-            for r in &plan_cs {
-                assert!(
-                    spec_cs.contains(r),
-                    "{}：约定要求保住寄存器 {r}，但机器帧（[machine].callee_saved_gpr）不保存它",
-                    $conv
-                );
-            }
             if $equal_cs {
-                assert_eq!(
-                    plan_cs, spec_cs,
-                    "{}：plan（绑定 cs_gpr）与机器事实 [machine].callee_saved_gpr 必须同值",
-                    $conv
-                );
-            } else {
-                // 另一份约定：plan 必须是谱那份的**子集**——spec 是 ISA 主约定的口径，
-                // 多出来的是"在这份约定里由 caller 保存"的寄存器（sysv64 的 RDI/RSI）。
-                for r in &plan_cs {
-                    assert!(
-                        spec_cs.contains(r),
-                        "{}：plan 的 callee-saved {r} 不该是谱表之外的新寄存器",
-                        $conv
-                    );
-                }
                 assert!(
-                    plan_cs.len() < spec_cs.len(),
-                    "{}：这份约定的 callee-saved 必须少于 ISA 主约定的那份（否则说明绑定没生效）",
+                    !plan_cs.is_empty(),
+                    "{}：主约定的 callee-saved 不该为空（帧件要保存它们）",
                     $conv
                 );
             }

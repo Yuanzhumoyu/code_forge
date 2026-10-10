@@ -2302,7 +2302,10 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 }
                 (gpr, fpr)
             }
-            None => (ri.callee_saved(), Vec::new()),
+            // 无 plan（未注册约定/合成夹具）：v21 W9 删除谱面 callee-saved 两键之后这里
+            // 没有兜底表可读——按 A6 的口径，没有 plan 的签名在更早的入口就 fail-closed，
+            // 因此空表即可（保持"不静默用别家寄存器名"的纪律）。
+            None => (Vec::new(), Vec::new()),
         };
 
         let reg_info = NewRegAllocConfig {

@@ -337,8 +337,6 @@ pub const SECTIONS: &[Section] = &[
             "value_gpr",
             "value_fpr",
             "frame",
-            "callee_saved_gpr",
-            "callee_save_slots",
             "padding",
             "arg_place",
             "byref_bytes",
@@ -349,7 +347,7 @@ pub const SECTIONS: &[Section] = &[
         ],
         flatten: &[],
         additional: false,
-        doc: "机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / callee-saved 推入槽数 / 帧填充 / 位置计数规则；v21 W9：`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes` 由 `fixed_regs`/`spill_scratch`/`link_reg`/`frame_padding`/`arg_slot`/`vector_by_ref_bytes` 改名，并接收从 `[stack]`/`[emit]`/`[types]` 迁入的 `stack`/`text`/`classes`）",
+        doc: "机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / 帧填充 / 位置计数规则；v21 W9：`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes` 由 `fixed_regs`/`spill_scratch`/`link_reg`/`frame_padding`/`arg_slot`/`vector_by_ref_bytes` 改名，接收从 `[stack]`/`[emit]`/`[types]` 迁入的 `stack`/`text`/`classes`，并删除 `callee_saved_gpr`/`callee_save_slots`——callee-saved 完全归约定数据）",
     },
     Section {
         path: "[machine.frame]",

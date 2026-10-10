@@ -239,9 +239,7 @@ fp_save = 64    # 位
 # 参数寄存器：X0-X3（64 位视图，物理 0-3）
 
 [machine]
-# 帧件会保存的那组 GPR：本夹具不保存任何寄存器（v20 A5-3 起机器事实写在这里，
-# 旧 `[abi.callee_saved]` 已删除）。
-callee_saved_gpr = []
+# callee-saved 不再由谱面声明（v21 W9）：唯一来源 = 约定数据（本夹具的约定里也是空的）。
 
 [machine.frame]
 sp = "X7"          # demo 无专用 SP；X7 作栈指针（frame_size=0 时不发射）

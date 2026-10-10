@@ -879,20 +879,15 @@ fn gen_store_mechanism(
 /// 来源寄存器由 forge-abi 的调用布局给出（AllocResult::call_layout），未覆盖的落点
 /// 整函数退回 [abi] 路径。
 fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, String> {
-    // callee-saved 区字节数（生成期常量，与 frame_layout::callee_saved_bytes
-    // 一致：fp 保存槽 + callee-saved × 槽单位）——move_args 收 spilled 栈参数时
-    // 计算 spill 槽地址 sp_base = -(frame) - callee_saved + stack_arg_bytes。
-    // 缺省/步长全部元数据派生（x86 = 8；1 字节寄存器 ISA = 1）。
-    let slot_bytes_lit = model.slot_bytes()? as i64;
-    let callee_saved_bytes_lit: i64 = {
-        let fp_push = model
-            .machine_frame()
-            .and_then(|f| f.fp_push_bytes)
-            .unwrap_or(model.addr_class()?.bytes() as u32) as i64;
-        // **机器事实**（v20 A6）：帧按几个推入槽算——与「哪些寄存器必须保住」（约定）
-        // 分开；`[machine].callee_save_slots` 缺省回退谱面 `[abi].callee_saved` 的表长。
-        let cs = model.machine_callee_save_slots() as i64 * slot_bytes_lit;
-        fp_push + cs
+    // callee-saved 区字节数（**运行时值**，v21 W9 选项 A）：fp 保存槽 + plan 整表 × 槽单位。
+    // 谱面两键删除后与序言**同源**（`__rm.callee_saved_to_save` 就是 plan 的整张表），
+    // 不再有"静态表 vs 运行时子集"的差；`__rm` 在收参体里始终可用。
+    let fp_push_lit: i64 = model
+        .machine_frame()
+        .and_then(|f| f.fp_push_bytes)
+        .unwrap_or(model.addr_class()?.bytes() as u32) as i64;
+    let cs_bytes = quote! {
+        (#fp_push_lit as i64) + (__rm.callee_saved_to_save.len() as i64) * (__SLOT_BYTES as i64)
     };
     // 收参：v20 A5-3 起**只走布局路径**（`ArgPlace::Reg`/`Indirect`/`Stack`）。
     // 谱面的 `[abi].arg_class` 已删除——拿不到布局或落点不受支持时，下面的
@@ -1047,7 +1042,6 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
         }
         None => format_ident!("__unused_scratch"),
     };
-    let cs_bytes = callee_saved_bytes_lit;
     // 浮点参数收参（v20 V8 派生）：**一条道**——按参数**位宽**（`__a.size × 8`）在这张
     // 派生表上取"最窄覆盖者"，不写死 32/64。未申报的位宽 ⇒ 生成物运行期明确 `Unsupported`。
     let has_fpr_mov = moves.has(&fpr_want);

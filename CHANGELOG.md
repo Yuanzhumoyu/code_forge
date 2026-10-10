@@ -11,6 +11,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W9 第四片：删掉 callee-saved 两键（序言改为按 plan 整表推）
+
++ `[machine].callee_saved_gpr` / `callee_save_slots` **删除**（写它们报未知键）：callee-saved
+  完全归**约定数据**（`AbiPlan`/绑定），谱面不再有"帧按几个推入槽算"这份事实。
++ **序言/尾声按 plan 的整张表推**：regalloc 的 **GPR** 那半不再过滤"只存实际分配到的"，
+  `AllocResult.callee_saved_to_save` = plan 的整表 ⇒ 帧基准（plan）与运行时保存数**同源**，
+  `emission` 的 `cs_skipped` 补偿与生成期 `__cs_bytes` 的静态表长一并消失（后者改读
+  `__rm.callee_saved_to_save.len()`）。**FPR 那半仍按需**——发射侧"按类保存 FPR"的链条靠这个
+  过滤当闸门（无条件开启实测让 arm64 的 QEMU 用例卡死）；帧顶槽位只要求"装得下整张 plan 表"。
++ 连带：`frame_layout` 的 fp-inside/outside 都按 plan 计数；`compiler.rs` 的无 plan 回退改空表
+  （A6 fail-closed）；`abi_target_real` 的 ①（plan vs 谱表）改为"主约定非空"的结构性断言；
+  生成物 `RegInfo::callee_saved()` 返回空表、`callee_save_slots()` 走 trait 缺省（= 0）。
++ 已知代价（如实记录）：**小函数会多推几个 GPR**（riscv64 lp64d 平函数：ra/fp + 少量 s 系 → 13 条 SD/LD），
+  `riscv64_tm_tests` 的"按需保存"断言按新语义改写；换来"计数/名字同源、不可能再出现半迁移的静默破坏"。
++ 证据：整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制（含 riscv64 QEMU 矩阵与 arm64 全套）；
+  **x86 JIT 矩阵 197 passed / 3 skipped / 0 failed**；arm64 QEMU 通道 4 passed；`schema_guard` 9/9；
+  `markdownlint` 0 issue。
++ **W9 完成**：`[machine]` 合并四片（键收短 / 三节迁入 / spill 按 class 分派 / 删 callee-saved 两键）全部落地。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W9 第三片：`[machine.spill.<模板名>]` 按 `class` 分派
 
 + `[spill.<名>]` → `[machine.spill.<模板名>]`：表头 = **模板名**（不再是 `GPR`/`FPR<bytes>`

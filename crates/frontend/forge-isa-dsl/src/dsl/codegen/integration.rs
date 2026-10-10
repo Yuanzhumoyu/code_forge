@@ -549,19 +549,10 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
         "[machine.frame].fp",
         frame_declared,
     )?;
-    // callee_saved：**机器事实**（v20 A6 收口）——`[machine].callee_saved_gpr`（帧件会保存
-    // 的那组 GPR）优先，缺省回退 `[abi].callee_saved.gpr`（两者同义）。
-    // 解析成物理索引，顺序 = prologue push 序；名字不在主 GPR 组内 → 生成期 Err。
-    // 帧按几个 callee-saved 推入槽算（同批引入的机器事实）。
-    let callee_slots = model.machine_callee_save_slots();
-    let callee_saved: Vec<TokenStream> = resolve_reg_list(
-        &name_to_idx,
-        model.machine_callee_saved(),
-        "[machine].callee_saved_gpr",
-    )?
-    .into_iter()
-    .map(|i| quote! { #i })
-    .collect();
+    // callee_saved：**谱面不再声明**（v21 W9 删除 `[machine].callee_saved_gpr` /
+    // `callee_save_slots`）——"被调方必须保住哪些"来自约定数据（`AbiPlan`），
+    // 序言/尾声按 `AllocResult::callee_saved_to_save`（= plan 的整张表）循环。
+    // 生成物这两个查询因此只是空表/0（`callee_save_slots` 走 trait 缺省）。
     // allocatable：全量 0..count（排除 SP/FP + scratch + [machine].fixed）。
     // reserved：不可分配寄存器（riscv X0=zero 写入无效、X1=ra 被 prologue/
     // call 占用、X3/X4=gp/tp）——不排除会分配出垃圾（实测 subw x0 结果丢失）。
@@ -735,9 +726,8 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
             fn scratch_regs(&self) -> Vec<u32> {
                 vec![#(#scratch),*]
             }
-            fn callee_save_slots(&self) -> u32 { #callee_slots }
             fn callee_saved(&self) -> Vec<u32> {
-                vec![#(#callee_saved),*]
+                Vec::new()
             }
             fn frame_pointer_overhead(&self) -> u32 { __FP_OVERHEAD_BYTES as u32 }
         }

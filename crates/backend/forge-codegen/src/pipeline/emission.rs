@@ -40,22 +40,10 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // spill 槽起始需上移该字节数（见 emit_inst_with_spills）。
         let stack_args = self.ctx.max_stack_arg_bytes as i32;
 
-        // **push 机制下序言少推的那几个槽要由帧补回来**（v20 A6）：x86 的序言改为
-        // 运行时按 `alloc_result.callee_saved_to_save` 循环（实际用到的才推），而帧内
-        // 所有偏移（`sp_base`、栈槽平移、栈参数区）都是**编译期常量**、按**谱面表长**
-        // 算的。少推 Δ 个槽就让 rsp 抬高 Δ×槽 ⇒ 那些常量会整体对不上（实测：跨调用
-        // 用例读到垃圾值 + 访问违例）。把 Δ×槽 加进序言实际分配的字节数，rsp 的落点
-        // 就与"静态表全长"时代**逐字节相同**，所有常量继续成立，栈对齐也不用动。
-        let cs_skipped: u32 =
-            if machine.abi().frame_layout().kind == crate::machine::abi::FrameLayoutKind::Outside {
-                let spec_n = machine.reg_info().callee_save_slots();
-                let actual_n = alloc_result.callee_saved_to_save.len() as u32;
-                spec_n.saturating_sub(actual_n) * machine.reg_info().slot_bytes() as u32
-            } else {
-                // fp-inside 的保存是帧**内**槽（不动 rsp），帧大小已按 plan 的整张表算过。
-                0
-            };
-        let frame_size_emitted = frame_size.saturating_add(cs_skipped);
+        // **v21 W9（选项 A）：序言按 plan 的整张表推** ⇒ 运行时保存数 == plan ⇒
+        // 帧基准（plan）与运行时值**同源**，不再需要"少推的槽补进帧字节数"的补偿
+        //（旧的 `cs_skipped` = 静态表长 − 实际推入数，随两键删除一并消失）。
+        let frame_size_emitted = frame_size;
 
         // Stage 8: Prologue
         frame_lowering.emit_prologue(frame_size_emitted, alloc_result, &mut sink)?;

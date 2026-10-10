@@ -5059,10 +5059,8 @@ value_gpr = "gpr64"     # 整数值池
 value_fpr = "fpr64"     # 浮点值池（f64 视图 = MM 组）
 # 机器事实（v20 A5）：溢出与栈参数收参用的 scratch（emission 的 spill load/store 也用它）。
 scratch = ["R10", "R11"]
-# 帧为 callee-saved 预留的推入槽数（机器事实，v20 A6）：与"哪些寄存器必须保住"（约定，
-# 在 `[abi.callee_saved]` 里）分开——生成期 `__cs_bytes` 与 fp-outside 的推补偿用它。
-callee_saved_gpr = ["RBX", "RDI", "RSI", "R12", "R13", "R14", "R15"]
-callee_save_slots = 7
+# callee-saved 不再由谱面声明（v21 W9 删除 `callee_saved_gpr`/`callee_save_slots`）：
+# "必须保住哪些"唯一来源 = 约定数据（AbiPlan/绑定）；序言按 plan 的**整张表**推。
 # 帧填充（字节，机器事实，v20 A5-3，原 `[abi].frame_padding`）：8 = align(16)/2。
 # 归机器事实的理由：它由**这台机器的帧机制**决定——入口 rsp ≡ 8 (mod 16)（call 压了
 # 返回地址），x86 的帧件是 `push rbp` + 7 次 callee-saved `push` = 8 次推入（偶数）⇒

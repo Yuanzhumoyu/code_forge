@@ -855,11 +855,10 @@ impl<'a> BtState<'a> {
             0
         };
 
-        // 收集 callee-saved 寄存器：**只列实际分配到的**（assignments 中出现
-        // 的 callee-saved，按声明序）——否则每函数全量保存 11 个 s 系，
-        // 小函数帧也 ≥104B（阶段 G 按需保存；未用的 s 系无需 push/pop）。
-        // **class 通配**：i32 值以 GPR(4) 类分配（num 仍 27=s11），过滤只看
-        // num——否则 GPR(4) 的 s11 漏保存 → 递归覆盖（fib 实测 got -15）。
+        // 收集 callee-saved 寄存器：**按 plan 的整张表**（v21 W9 选项 A）——
+        // 序言不再"只推用到的"：帧基准（plan 的表）与运行时保存数因此**同源**，
+        // `emission` 的 `cs_skipped` 补偿随之消失（曾经是"静态表 vs 运行时子集"的差）。
+        // **class 通配**：i32 值以 GPR(4) 类分配（num 仍 27=s11），过滤只看 num。
         let mut callee_saved_pregs: Vec<PReg> = self
             .config
             .classes
@@ -868,7 +867,6 @@ impl<'a> BtState<'a> {
                 cfg.allocatable
                     .iter()
                     .filter(|r| self.config.callee_saved.contains(r))
-                    .filter(|r| self.assignments.values().any(|p| p.num == **r))
                     .map(|&r| PReg::new(r, self.config.main_gpr_class))
                     .collect()
             })
@@ -877,6 +875,12 @@ impl<'a> BtState<'a> {
         // `class = "fpr"` 的 `callee_save` 角色（arm64 的 STURD）落盘。编号空间与
         // GPR 分开（`callee_saved_fpr` 是主 FPR 类内的号）——同一个 num 在两类里
         // 是不同物理寄存器（X8 vs V8），合并成一个集合会互相误判。
+        //
+        // **仍是"只存实际分配到的"**（v21 W9 精细版）：GPR 那半改成整表推之后，
+        // FPR 这半**不能**跟着无条件打开——发射侧"按类保存 FPR"的链条历史上靠这个
+        // 过滤当闸门（无条件开启实测让 arm64 的 QEMU 用例卡死）。帧顶槽位公式只要求
+        // 帧**装得下**整张 plan 表（由 `frame_layout` 按 plan 计 min_frame 保证），
+        // 多留的槽不用不碍事。
         if let Some(cfg) = self.config.classes.get(&self.config.main_fpr_class) {
             callee_saved_pregs.extend(
                 cfg.allocatable

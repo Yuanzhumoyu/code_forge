@@ -780,13 +780,21 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
   - [x] `fixed_regs` → `fixed`、`spill_scratch` → `scratch`、`link_reg` → `link`
   - [x] `frame_padding` → `padding`、`arg_slot` → `arg_place`
   - [x] `vector_by_ref_bytes` → `byref_bytes`
-- [ ] 删除 `callee_saved_gpr` / `callee_save_slots`。
-- [ ] 门禁：§2 全绿；`abi check` 与三矩阵不变。（**改名片**已过：整仓 `-j 2` exit 0 / 0 编译错误 / 0 失败二进制、markdownlint 0、`schema_guard` 9/9）
+- [x] 删除 `callee_saved_gpr` / `callee_save_slots`。
+  （callee-saved 完全归约定数据；序言/尾声按 plan 整表推**GPR** ⇒ 帧基准与运行时保存数同源，
+  `cs_skipped` 与静态 `__cs_bytes` 一并消失；**FPR 那半仍按需**——无条件开启会让 arm64 QEMU 卡死）
+- [x] 门禁：§2 全绿；`abi check` 与三矩阵不变。
+  （整仓 `-j 2` exit 0 / 0 编译错误 / 0 失败二进制；x86 矩阵 197/3/0；arm64 QEMU 4 passed；
+  markdownlint 0；`schema_guard` 9/9）
 
-**W9 进度（2026-10-08）**：键改名一片、三节搬迁（`[machine.stack|text|classes]`，stack 单位改位）、
-`[machine.spill.<模板名>]` 按 class 分派 三片已落地（三谱 + 夹具 + 全套引用同步，**生成物零变化**）。
-余下一块：删 `callee_saved_gpr`/`callee_save_slots` 走 ABI 层（要动帧布局的 `cs_skipped` 补偿，
-按"计数/名字同源"的口径做并跑三矩阵）。
+**W9 判定（2026-10-08）**：清单条目**全部落地**——`[machine]` 合并四片：
+① 键收短（`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes`）；
+② 三节迁入（`[machine.stack|text|classes]`，stack 单位改位）；
+③ `[machine.spill.<模板名>]` 按 `class` 分派（`class`/`when` + 校验）；
+④ 删 callee-saved 两键（序言按 plan 整表推 GPR、FPR 仍按需）。
+**一条刻意保留**：FPR callee-saved 的"只存用到的"过滤**不动**——它是发射侧按类保存链条的闸门
+（无条件开启实测让 arm64 QEMU 用例卡死）；帧顶槽位只要求装得下整张 plan 表，多留槽位不影响正确性。
+若要彻底去掉这个过滤，需要先单独把"FPR 按类保存"整条链路的守卫补齐（不在 W9 范围）。
 
 ---
 

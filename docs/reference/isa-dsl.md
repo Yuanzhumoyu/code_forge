@@ -177,7 +177,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[lower.<终结 op>]` | `insts` | — | 终结指令的 lowering 序列（Br/Jmp/Ret）：可用 {true}/{false}/{target} 符号值 |
 | `[[lowering]]` | `op` `insts` | `when` `vary` `dispatch` `temps` `priority` | 指令选择规则 |
 | `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
-| `[machine]` | — | `fixed` `scratch` `link` `gpr` `fpr` `addr` `value_gpr` `value_fpr` `frame` `callee_saved_gpr` `callee_save_slots` `padding` `arg_place` `byref_bytes` `stack` `text` `classes` `spill` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / callee-saved 推入槽数 / 帧填充 / 位置计数规则；v21 W9：`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes` 由 `fixed_regs`/`spill_scratch`/`link_reg`/`frame_padding`/`arg_slot`/`vector_by_ref_bytes` 改名，并接收从 `[stack]`/`[emit]`/`[types]` 迁入的 `stack`/`text`/`classes`） |
+| `[machine]` | — | `fixed` `scratch` `link` `gpr` `fpr` `addr` `value_gpr` `value_fpr` `frame` `padding` `arg_place` `byref_bytes` `stack` `text` `classes` `spill` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / 帧填充 / 位置计数规则；v21 W9：`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes` 由 `fixed_regs`/`spill_scratch`/`link_reg`/`frame_padding`/`arg_slot`/`vector_by_ref_bytes` 改名，接收从 `[stack]`/`[emit]`/`[types]` 迁入的 `stack`/`text`/`classes`，并删除 `callee_saved_gpr`/`callee_save_slots`——callee-saved 完全归约定数据） |
 | `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（唯一位置；`[abi.frame]` 已删除） |
 | `[machine.text]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（v21 W9：从 `[emit]` 迁入；序/尾声由生成器按约定生成，谱里不再写） |
 | `[machine.spill.<模板名>]` | `class` `load` `store` | `base` `when` | 溢出/回填模板（v21 W9：表头 = 模板名，`class` = 它服务的寄存器类；`{N}` = 寄存器序号占位符） |
@@ -1661,7 +1661,8 @@ v20 A5-3 把"约定数据"整节移出谱面：`[abi]` 的键**全部删除**，
 | `ret_regs` | `Return` 读 `CallLayout.ret`；`Call` 读宿主的 `LowerCtx::conv.ret_gpr` |
 | `call_clobbers` | 宿主的 `LowerCtx::conv.clobbers`（约定级、与签名无关） |
 | `arg_slot` / `frame_padding` | [`[machine]`](#machine--机器事实) 的 `arg_place` / `padding` |
-| `scratch` / `reserved` / `call_ret_reg` / `frame` / `callee_saved` | [`[machine]`](#machine--机器事实) 的 `[machine].scratch` / `[machine].fixed` / `[machine].link` / `[machine].frame` / `[machine].callee_saved_gpr` |
+| `scratch` / `reserved` / `call_ret_reg` / `frame` | [`[machine]`](#machine--机器事实) 的 `[machine].scratch` / `[machine].fixed` / `[machine].link` / `[machine].frame` |
+| `callee_saved` | **约定数据**（`AbiPlan`/绑定）——v21 W9 起谱面**不再声明** callee-saved（原两键 `callee_saved_gpr`/`callee_save_slots` 已删除），序言/尾声按 plan 的整张表推 |
 
 **谱侧只剩两件事**：**能力申报**（`roles`）与**机器事实**（`[machine]`）；"参数放哪、
 返回怎么回、保存谁、栈怎么排"全部由**使用者的约定数据**（`AbiRules` + `AbiBinding` →
@@ -1724,8 +1725,8 @@ epilogue_label = true       # 是否生成独立尾声标签 + return block 的 
 | --- | --- | --- |
 | 帧分配 / 释放 | `frame_alloc` / `frame_free` | `sp ∓ frame_size`（符号由 `[machine.frame].alloc_neg` 定）；`frame_size == 0` 不发 |
 | 建立 / 恢复帧指针 | `frame_set` | 序言 `fp ← sp`（定宽 ISA 带 `+ frame_size`）、尾声 `sp ← fp`（push 机制） |
-| 保存 / 恢复 callee-saved（push 机制） | `push` / `pop` | 硬件压栈（x86）；保存哪些由**约定数据**（`AbiPlan.callee_saved`，无 plan 时退机器事实 `[machine].callee_saved_gpr`）在运行期决定 |
-| 保存 / 恢复 callee-saved（帧内机制） | `callee_save` / `callee_load` | `Reg[0]=值、Reg[1]=基址、Imm[0]=偏移`；保存的是 regalloc 实际用到的那些（`callee_saved_to_save`），ra/fp 在帧顶 `fp_push_bytes` 区 |
+| 保存 / 恢复 callee-saved（push 机制） | `push` / `pop` | 硬件压栈（x86）；保存哪些**只有约定数据一个来源**（`AbiPlan.callee_saved`），序言/尾声按 `AllocResult::callee_saved_to_save`（= plan 的整张表）运行期循环（v21 W9：谱面两键已删除） |
+| 保存 / 恢复 callee-saved（帧内机制） | `callee_save` / `callee_load` | `Reg[0]=值、Reg[1]=基址、Imm[0]=偏移`；保存 plan 的整张表（同上），ra/fp 在帧顶 `fp_push_bytes` 区 |
 | 返回 | `ret` | 尾声最后一条 |
 
 顺序由**机制**决定（谱里声明了 `push`+`pop` ⇒ push 机制；否则帧内机制）：

@@ -62,21 +62,6 @@ pub struct MachineSection {
     /// 这些是"这台机器怎么建帧"，不是约定内容（保存谁、栈参数怎么排才是约定）。
     #[serde(default)]
     pub frame: Option<AbiFrame>,
-    /// **帧为 callee-saved 预留的推入槽数**（机器事实，v20 A6 收口）。
-    ///
-    /// 与"哪些寄存器必须由被调方保住"（**约定**，在 plan/绑定里）是两件事：这个是
-    /// "这台机器的帧布局按几个推入槽算"——生成物里的编译期常量
-    /// `__cs_bytes = fp_push + 槽数×槽`（收溢出到栈的栈参数时的地址基点）与
-    /// fp-outside 的 `cs_skipped` 补偿都要用它。
-    /// 缺省（`None`）⇒ 0（`[abi.callee_saved]` 已删除，不再由名单长度兜底）。
-    #[serde(default)]
-    pub callee_save_slots: Option<u32>,
-    /// **帧件会保存的那组 GPR**（机器事实，v20 A6 收口）：无 plan 的回退路径（引擎暂时
-    /// 规划不了的签名）需要**寄存器名**，名字不能凭空发明，所以与"帧预留几个槽"一起放在这里。
-    /// 语义是"这台机器的帧件会保存这组寄存器"，与"某份约定**要求**保住哪些"（绑定）分开；
-    /// 缺省（`None`）⇒ 空表（`[abi.callee_saved]` 已删除）。
-    #[serde(default)]
-    pub callee_saved_gpr: Option<Vec<String>>,
     /// **帧填充**（字节，机器事实，v20 A5-3）：`sub rsp` 之外还要多减的字节数，
     /// 使 call 点的 `rsp` 回到 `[machine.stack].align` 对齐。
     ///
@@ -273,28 +258,6 @@ impl IsaModel {
     /// "一半读新表、一半读旧表"的分裂。
     pub fn machine_frame(&self) -> Option<&AbiFrame> {
         self.machine.as_ref().and_then(|m| m.frame.as_ref())
-    }
-
-    /// 帧件会保存的那组 GPR（名字）：`[machine].callee_saved_gpr`（唯一来源；
-    /// `[abi.callee_saved]` 已删除）。regalloc 的**无 plan 回退**与生成物的
-    /// `TargetRegInfo::callee_saved()` 都读它。
-    pub fn machine_callee_saved(&self) -> &[String] {
-        self.machine
-            .as_ref()
-            .and_then(|m| m.callee_saved_gpr.as_deref())
-            .unwrap_or(&[])
-    }
-
-    /// 帧为 callee-saved 预留的**推入槽数**（机器事实）：`[machine].callee_save_slots`，
-    /// 缺省 0（`[abi.callee_saved]` 已删除，不再由名单长度兜底）。
-    ///
-    /// **不是**"必须保住的寄存器集"（那是约定，来自 plan/绑定）——它只决定帧布局里
-    /// 推入区按几个槽算（生成期 `__cs_bytes`、fp-outside 的 `cs_skipped` 补偿）。
-    pub fn machine_callee_save_slots(&self) -> u32 {
-        self.machine
-            .as_ref()
-            .and_then(|m| m.callee_save_slots)
-            .unwrap_or(0)
     }
 
     /// 帧填充字节数（机器事实）：`[machine].padding`（v21 W9 改名自 `frame_padding`），缺省 0。

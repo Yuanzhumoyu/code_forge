@@ -665,7 +665,7 @@ arm64 那 6 条缺口正是矩阵里 175 条 skip 的同一件事，现在**在�
 | 单函数编译的**变参调用点**（`forge-rustc` 逐函数后端 / `forge-object`） | 拿不到模块级签名表 ⇒ 调用点按**非变参**处理（未命名实参进寄存器）。整模块编译的入口（`JitCompiler::compile_module`、`FunctionCompiler::for_module`）没这个问题 | 需要时把模块签名表透到逐函数后端（rustc 的 `-C codegen-units` 下要额外通道） |
 | riscv/arm64 的向量 by-value | 谱里没有向量寄存器组 ⇒ 走内存/byval（保守，不是错值） | A5/A6 |
 | `callee_pop`（stdcall/thiscall 的 `ret N`） | 计划里算得出来（`AbiPlan::callee_pop_bytes`），**发射侧不消费**：本实现的传出参数区在**调用方帧内**（不是"push 上去"），被调方 `ret N` 会把调用方的 sp 抬高 N ⇒ 必须同时定"调用点契约"（调用方要知道 rsp 被抬高）才谈得上正确 | 待真有此 ABI 的宿主（且需要调用点侧契约） |
-| Win64 的 XMM6-XMM15 | 谱里 `[machine].callee_saved_gpr` 不含它们（xmm 组同样不列） ⇒ `clobbers` 保守地把它们列为被破坏（安全方向） | A5（若要省寄存器再议） |
+| Win64 的 XMM6-XMM15 | v21 W9 起谱面不再声明 callee-saved（归 `AbiPlan`/绑定），XMM 组同样不列 ⇒ `clobbers` 保守地把它们列为被破坏（安全方向） | A5（若要省寄存器再议） |
 
 ## 加自己的约定
 
