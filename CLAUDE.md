@@ -10,7 +10,7 @@
 docs/
 ├── README.md              # 文档总索引 + 状态图例
 ├── reference/             # 现行规范/设计参考 [active]
-│   ├── isa-dsl.md             # ISA-DSL v18 唯一语法规范（改 isa/*.toml 先看它）
+│   ├── isa-dsl.md             # ISA-DSL 语法规范（v21 落地中；改 isa/*.toml 先看它）
 │   ├── isa-dsl-errors.md      # ISA-DSL 错误码目录（报错看不懂先看它）
 │   ├── calling-conventions.md # 调用约定层 forge-abi（v20 A1：规则/绑定/计划 + forge-isa abi）
 │   ├── aarch64-encoding-ref.md# A64 编码参考（arm64 后端/golden 依据）
@@ -21,7 +21,7 @@ docs/
 ├── plans/                 # 有未完成工作的专项方案 [progress]
 │   ├── forge-rustc-vec_push-plan.md # vec 族（5 用例 FLAKY，见 e2e.rs）
 │   ├── forge-isa-dsl-v19-plan.md    # ISA-DSL v19 现行方案（独立运行时 crate / 向量 / lint / 变体）
-│   ├── isa-dsl-v21-redesign-plan.md # ISA-DSL v21 重设计（**待评审**：宽度只在名字里 / 字段就地声明 / 后门清除）
+│   ├── isa-dsl-v21-redesign-plan.md # ISA-DSL v21 重设计（**执行中**：W1–W9 已落地，W4/W6 在办）
 │   ├── isa-dsl-v21-execution-checklist.md # 上者的执行清单（S0 冻结 + W0 基线 + W1–W11 门禁）
 │   └── calling-convention-redesign-plan.md # 调用约定重设计 v20 A1–A7（A1 已落地）
 ├── performance/           # 基准与优化
@@ -55,9 +55,13 @@ docs/
 - **forge-ir 的轮次纪元不统一**（audit 第 47 轮 ≠ roadmap 第 31 轮）——都已在
   archive/forge-ir/，继续 forge-ir 迭代请按 `docs/forge-ir/README.md` 约定新开记录；
 - **archive 内"已实现/待办"不代表代码现状**——改代码/加测试前以源码与 test 为准；
-- ISA-DSL 现行语法是 **v18**（`reference/isa-dsl.md`）；v12–v17 的语法与删除总表在
+- ISA-DSL 现行语法以 `reference/isa-dsl.md` 为准，**v21 重设计（2026-10）已在落地中**：
+  表头即名字的三张表（`[form.<名>]`/`[inst.<名>]`/`[pred.<名>]`）、`[operand.<名字>]`、
+  `[enum.<表名>]`、`[family.<名>]`、`[asm.*]`、`[machine.*]` 都已就位；**未完成**：
+  `[[lowering]]`+`[[pattern]]` → `[lower.*]`（W6，`op` 名单形态待定口径）与 x86 的
+  `kind = "stream"` 段迁移（W4）。v12–v17 的语法与删除总表在
   `archive/isa-dsl-v12-v17.md`（**归档文件名保留原名**，内容以记录时点为准）。
-  注意区分两种"版本号"：DSL 语法版本（v18，靠文档/CHANGELOG 追踪，**不写进 TOML**）
+  注意区分两种"版本号"：DSL 语法版本（**v21，落地中**；靠文档/CHANGELOG 追踪，**不写进 TOML**）
   与 `[meta].version`（ISA 自己的自由字符串）。**文件名不带语法版本**——旧的 `*_v12`
   命名（`isa/*_v12.toml`、`src/v12/`、`arch/*_v12.rs`、`tests/*_v12_tests.rs`）已于
   2026-10 清除，别再加回来。
@@ -205,7 +209,7 @@ code-forge (root umbrella)
 
 ### Key Architecture Rules
 
-1. **`isa_from_file!`（现行 ISA-DSL v18 语法）生成的代码只依赖运行时 crate** — v19 V1b 起
+1. **`isa_from_file!`（现行 ISA-DSL v21 语法，落地中）生成的代码只依赖运行时 crate** — v19 V1b 起
    路径恒为绝对路径，宿主是哪个 crate 不再影响生成物内容。
    生成模块名 = 文件 stem（可用 `name = "…"` 覆盖）。**没有 `krate` 参数**：生成物
    一律写绝对路径 `forge_isa_runtime::…`（`forge_ir::…` → `forge_isa_runtime::ir::…`），
@@ -432,7 +436,8 @@ let name = node.get_text("name")?;
   与矩阵 175 条 skip 同源）。参考文档 `docs/reference/calling-conventions.md`，
   方案与分期 `docs/plans/calling-convention-redesign-plan.md`。
   其中 `lint`（v19 V4a–V4c）是**静态体检**：报"写了却用不上 / 自相矛盾 / 宿主覆盖不到"的声明——
-  未用的 `[[operand_slots]]` / `[[forms]]` / `[conventions.bitfields]`、**逐指令视图**里的位域重叠
+  未用的 `[operand.<名字>]` / `[form.<名字>]`（v21 W3/W10 的现名）、`[conventions.bitfields]`、
+  **逐指令视图**里的位域重叠
   （`LINT-BITFIELD-OVERLAP`；按整张位域表判会把 riscv `shamt5`/`shamt6`、arm64 `op6`+`imm26`、
   全字常量 `word` 这类"同一批位的多种解释"全判成误报），退出码同 `validate`；**三份发行谱必须零结论**
   （守卫 `crates/frontend/forge-isa-dsl/tests/lint_shipped.rs`——真阳性请修谱，别改快照；V4c 就据此
@@ -452,10 +457,11 @@ let name = node.get_text("name")?;
   模板 provenance（哪个模板哪一行）、两份谱的规格 diff（迁移前后对照）、打印/写出 JSON
   Schema、把多文件谱 `fmt` 折叠成单文件（v18 S7d）。`--json` 机读；退出码 0/1/2。
   **变体投影（v19 V5）**：`validate|insts --params xlen=32` 走只读投影——`[meta].variants`
-  声明参数域、六处声明（指令/模板行/`[emit.*]`/`[spill.*]`/`[[pseudo]]`/`[[pattern]]`）可标
+  声明参数域、六处声明（`[inst.<名字>]`/族行/`[machine.text]`/`[machine.spill.<模板名>]`/
+  `[asm.pseudo.<名>]`/`[[pattern]]`）可标
   `only_variants`，投影丢声明 + **连带丢引用不到指令的 `[[lowering]]`** + `{参数名}` 替换；
   `insts` 第一行打印投影账目（`--json` 里 `projection`）。宏侧同参数进生成物文件名哈希。
-  **默认档逐字节不变**（不传参数不过滤）；`[spill]`/`[emit]` 等结构件引用被投影掉的指令
+  **默认档逐字节不变**（不传参数不过滤）；`[machine.spill.*]`/`[machine.text]` 等结构件引用被投影掉的指令
   却**没标** `only_variants` ⇒ 报错（结构件要作者显式变体化，见 `docs/reference/isa-dsl.md`
   「变体参数」；守卫 `tests/variants.rs`）。
   实现 = `forge-isa-dsl::report` + `::schema` 投影层 + CLI 薄层，复用
@@ -468,17 +474,26 @@ let name = node.get_text("name")?;
   `#[serde(rename = "…")]` 为准（`reference`/`ref` 曾因此让编辑器把 `isa/x86.toml` 的
   35 处 `ref` 全部标红）；② `schema_guard.rs::shipped_specs_only_use_schema_keys` 直接拿
   `isa/*.toml` + 夹具当输入，任何"schema 与真实谱不符"都会红；③ 自由表（`fields = {…}`、
-  `[[templates]].body`、`when = {…}`）在 schema 里没有子约束，守卫也**不**下钻它们。
+  `[family.<名>].body`、`when = {…}`）在 schema 里没有子约束，守卫也**不**下钻它们。
 - **多文件谱（v18 S7d）**：`include = ["…"]` + `[[override]]` 由 `forge-isa-dsl::loader`
   消费（按块合并；数组节按 include 序追加、重复 `[表头]` 视为续写、同名标量冲突报错）；
   它是所有公开入口（`isa_from_file!`/`expand_file`/`validate_file`/CLI）的必经之路，
   诊断按来源文件映射，生成物对**每个来源**登记 `include_bytes!`。`include`/`[[override]]`
   是组合键（合并后不存在），裸文本入口带它们会明确报错。
 - **生成字段名 = `ops` 声明的名字（v18 S7d 修正）**：`ops = ["dst:r:out", "src:r"]`
-  ⇒ `Inst::Iadd { dst, src }`；`[forms].operand_fields` 的名字（`rd`/`rs1`）与变长 ISA 的
-  语义名（`dest`/`cond`）**只是内部编码键**（查 `[conventions.bitfields]`/modrm 角色/立即数
+  ⇒ `Inst::Iadd { dst, src }`；`[form.<名字>].fields` 的字段名（`rd`/`rs1`）与变长 ISA 的
+  语义名（`dest`/`cond`）**只是内部编码键**（v21 W2 起 `opcode_field`/`operand_fields` 由
+  `fields` 展开派生，不再是用户面键；另有 modrm 角色/立即数
   表），不得再泄漏成字段名。关键字 → `r#type`、数字开头 → `_8bit`（最小归一，不做语义改名）；
   守卫 `crates/frontend/forge-isa-dsl/tests/field_names.rs`。
+- **v21 现行面速查（2026-10 落地，照此写谱）**：`[reg.<名>]`（宽度只在名字里）、
+  `[operand.<名字>]`、`[enum.<表名>]`、`[form.<名>]`（表头即形式名，字段就地 `fields`）、
+  `[inst.<名>]`（表头即指令名）、`[family.<名>]`（唯一复用机制，取代 `[[templates]]`）、
+  `[pred.<名>]`（命名谓词，原 `[[derive]]`）、`[asm.pseudo.<名>]` / `[asm.immfn.*]` /
+  `[asm.reloc.<名>]`、`[machine.stack|text|classes|spill.<模板名>]`。
+  **仍是数组节的**：`[[lowering]]`（W6 待改 `[lower.*]`）、`[[pattern]]`、`[[vectors]]`、
+  `[[override]]`。**重名由 TOML 自身拒绝**（表头即名字的三张表）；未知键一律
+  `deny_unknown_fields` 报错，没有兼容层。
 - **TOML 改动**：改 `isa/*.toml` 直接触发重编译——生成模块内嵌
   `include_bytes!(<TOML 绝对路径>)`，rustc 据此登记编译依赖（不再需要手动 touch
   `arch/<isa>.rs`）。`FGE_DEBUG_GEN=1` 可 dump 生成代码到 `%TEMP%\forge_gen_*.rs`。
@@ -565,7 +580,7 @@ let name = node.get_text("name")?;
   （**没算过才算**，因此"每次 `lower_inst` 每属性最多算一次"仍然成立，但**不需要的属性
   一次都不算**——旧实现每次都把 9 个全算一遍）。谓词名在**生成期**解析成
   `__ac . <属性> (&*ctx)`（见 `compile_pred_guard`/`attr_expr`），**不得**再引入
-  `__attr(name)` 之类的运行时字符串分派；`[[derive]]` 派生属性也在生成期展开。
+  `__attr(name)` 之类的运行时字符串分派；`[pred.<名字>]` 派生属性也在生成期展开。
   另外：不用 `{cc}` 的降低规则**不发射** `let __cc: u8 = 0;`（死代码，S8d 修）。
   守卫 = `crates/frontend/forge-isa-dsl/tests/lowering_attrs_once.rs`。剩余的大头是
   每条规则各自的发射序列（x86 C 段 334 KB），表化需通用解释器，度量后判定不做。
@@ -581,9 +596,9 @@ let name = node.get_text("name")?;
   `value_gpr_width`/`value_fpr_width`/`vector_tiers`；`[encoding]`：**宽度三态**
   `kind = "fixed"|"mixed"|"prefix_scan"` + `bits`/`widths`/`max_len`/`default_opsize`
   （v18 S4，**任意 ≥ 1 位，无白名单/上限**，逐指令 `width` 可覆盖 `bits`）；
-  `[stack]`：`slot`/`align`/`fp_save`；
-  `[abi.stack_args]`：`callee_base`/`caller_base`/`first_offset_slots`/`stride_slots`/
-  `shadow_bytes`；优先级 显式键 > 派生 > **报错**）。定宽指令字在生成代码里是
+  `[machine.stack]`：`slot`/`align`/`fp_save`（v21 W9：从 `[stack]` 迁入，**单位是位**）；
+  栈参数布局（`callee_base`/`caller_base`/`first_offset_slots`/`stride_slots`/
+  `shadow_bytes`）**已随 `[abi]` 整节删除**（v20 A5-3），归宿主的 `AbiRules`；优先级 显式键 > 派生 > **报错**）。定宽指令字在生成代码里是
   **字节数组**（`[u8; ceil(位/8)]` + `__place`/`__bits`），位域可落在机器字之外
   （100 位字夹具 = 13 字节）；唯一边界是**单个位域 ≤ 64 位**（值承载在 u64/i64）。
   生成期用 `__DEFAULT_GPR_CLASS`/`__ADDR_CLASS`/`__SLOT_BYTES` 等常量，宿主用
@@ -650,9 +665,9 @@ x86 用它把 Copy/Uextend/Freeze/Ptrtoint/Inttoptr、Sitofp/Uitofp、Fptosi/Fpt
   （判定域 = 每属性闭区间集合；含 `or`/`not` 记为 Opaque 跳过）。`priority`
   只在"故意让更宽的规则赢"时用（x86 `Vextract` 的 lane 0 快路径）。
 
-编码键（v15-S3）：`[[forms]]` 与 `[[instructions]]` **共用同一组语义键**
+编码键（v15-S3，v21 W10 现名）：`[form.<名字>]` 与 `[inst.<名字>]` **共用同一组语义键**
 （`EncKeys`：modrm/modrm_fixed/rex/vex/evex/prefix/opsize/rex_w/opcode_reg/imm/
-escape/opcode_field/operand_fields）。form 退化为**可选的预设混入**，指令可逐键
+escape；`opcode_field`/`operand_fields` 自 v21 W2 起只是**内部展开目标**）。form 退化为**可选的预设混入**，指令可逐键
 覆盖（`EncKeys::over`，指令优先），`form` 本身可省略——组合不再需要预先命名。
 x86 forms 47 → 19，37 条指令直接内联编码键（不再有 `MRR_0F_NOOS_MEM` 与
 `MRR_MEM_0F_NOOS` 这种把 4 个事实编进名字、且只差 `rex_w` 的并存命名）。

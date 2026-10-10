@@ -10,9 +10,11 @@
 //!   段的位域并进 `form.fields`，因此"位域表 / `opcode_field` / `operand_fields`"
 //!   仍由 [`crate::dsl::field_decl`] 一处展开。
 //!
-//! **本片覆盖**：`prefix` / `escape` / `rex` / `opcode` / `modrm` / `imm`。
-//! 其余段（`opcode_reg` / `sib` / `disp` / `vex` / `evex`）**明确报错**而不是静默忽略
-//! （fail-closed）：x86 谱要用它们，等下一片。
+//! **本片覆盖（v21 W4，2026-10 复核）**：段 kind 闭集**全部 11 种**都已接线——
+//! `prefix` / `escape` / `rex` / `opcode` / `opcode_reg` / `modrm` / `sib` / `disp` /
+//! `imm` / `vex` / `evex`。其中 `sib`/`disp` 是**纯布局段**（没有对应的语义键：这两个字节
+//! 由编码器按内存操作数派生，段的价值是把字节布局写进谱、让段内字段进 `form.fields`
+//! 参与声明期校验与 `--bits` 清点）。**x86 谱尚未迁到 stream 形态**（W4 剩余项）。
 
 use super::field_decl::FieldDecl;
 use super::model::{
