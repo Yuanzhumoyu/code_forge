@@ -43,8 +43,7 @@ fields = [
   "u7[31:25]:funct7",
 ]
 
-[[instructions]]
-name = "ADD"
+[inst.ADD]
 form = "R"
 opcode = 0x33
 match = { funct3 = 0, funct7 = 0 }
@@ -185,8 +184,7 @@ kind = "reg"
 class = "gpr"
 roles = "inout"
 [form.RM]
-[[instructions]]
-name = "ADD_RM_R"
+[inst.ADD_RM_R]
 form = "RM"
 modrm = { reg = "src", rm = "dst" }
 opcode = 0x01
@@ -325,8 +323,7 @@ class = "gpr32"
 fields = [
 {decls}
 ]
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "F"
 opcode = 0
 ops = ["dst:g:out"]
@@ -463,8 +460,7 @@ count = 8
 kind = "reg"
 class = "gpr"
 [form.R]
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "ZZZ"
 asm = "nop"
 "#;
@@ -488,8 +484,7 @@ count = 8
 kind = "reg"
 class = "gpr"
 [form.R]
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "R"
 ops = ["dst:nope:out"]
 asm = "nop {dst}"
@@ -519,8 +514,7 @@ fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
 ]
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "R"
 opcode = 0x13
 ops = ["dst:g:out", "src:g"]
@@ -546,24 +540,23 @@ count = 8
 kind = "reg"
 class = "gpr"
 [form.R]
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "R"
 asm = "nop"
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "R"
 asm = "nop"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
+    // v21 W10：指令表头即名字 ⇒ **重名由 TOML 自身拒绝**（重复表头），不再是校验期诊断。
     match err {
-        DslError::Validation { msg, .. } => {
+        DslError::Parse { msg, .. } => {
             assert!(
-                msg.contains("duplicate instruction name 'NOP'"),
-                "msg: {msg}"
+                msg.contains("NOP") || msg.contains("duplicate"),
+                "TOML 重名表头应点名 NOP：{msg}"
             );
         }
-        other => panic!("expected Validation error, got {other:?}"),
+        other => panic!("重名指令现在由 TOML 拒绝，期望 Parse，得到 {other:?}"),
     }
 }
 
@@ -660,8 +653,7 @@ count = 8
 [operand.g]
 kind = "reg"
 class = "gpr"
-[[instructions]]
-name = "I"
+[inst.I]
 width = 32
 opcode = 1
 asm = "i"
@@ -728,8 +720,7 @@ fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
 ]
-[[instructions]]
-name = "FOO"
+[inst.FOO]
 form = "R"
 opcode = 0x13
 ops = ["dst:g:out"]
@@ -770,8 +761,7 @@ fields = [
 ]
 [machine.text]
 align_pad = 0x90
-[[instructions]]
-name = "FOO"
+[inst.FOO]
 form = "R"
 opcode = 0x13
 ops = ["dst:g:out"]
@@ -812,8 +802,7 @@ fields = [
   "u7[6:0 -> 3:0,10:8]:opcode",
   "u3[13:11]:rd",
 ]
-[[instructions]]
-name = "FOO"
+[inst.FOO]
 form = "R"
 opcode = 0x33
 ops = ["dst:g:out"]
@@ -850,15 +839,13 @@ fields = [
   "u12[31:20]:imm12",
   "u3[14:12]:funct3",
 ]
-[[instructions]]
-name = "ADDI"
+[inst.ADDI]
 form = "I"
 opcode = 0x13
 match = { funct3 = 0 }
 ops = ["dst:g:out", "src:g", "src2:i"]
 asm = "addi {dst}, {src}, {src2}"
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "I"
 opcode = 0x13
   asm = "nop"
@@ -954,8 +941,7 @@ fields = [
   "u3[10:8]:rd",
   "u4[14:11]:cc",
 ]
-[[instructions]]
-name = "SETC"
+[inst.SETC]
 form = "C"
 opcode = 0x90
 ops = ["dst:g:out", "cond:cc"]
@@ -1483,8 +1469,7 @@ fn asm_full_template_renders_and_scans() {
     // asm = 完整模板：disassemble 直接渲染整条 asm；assemble 左→右整模板扫描
     let model = gen_min_model(
         r#"
-[[instructions]]
-name = "ADDI"
+[inst.ADDI]
 form = "I"
 opcode = 0x13
 match = { funct3 = 0 }
@@ -1533,8 +1518,7 @@ fields = [
   "u3[10:8]:rd",
   "u3[13:11]:rs1",
 ]
-[[instructions]]
-name = "SWAP"
+[inst.SWAP]
 form = "RR"
 opcode = 1
 ops = ["dst:g:out", "src:g"]
@@ -1562,8 +1546,7 @@ fn asm_scan_probe_replaces_mnemonic_table() {
     // 生成期切词得到的"助记符表"：模板可以操作数前置、首段可以多 token，切词没有意义。
     let model = gen_min_model(
         r#"
-[[instructions]]
-name = "ADDI"
+[inst.ADDI]
 form = "I"
 opcode = 0x13
 match = { funct3 = 0 }
@@ -1606,8 +1589,7 @@ fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
 ]
-[[instructions]]
-name = "ADD"
+[inst.ADD]
 form = "R"
 opcode = 0x13
 ops = ["dst:g:out"]
@@ -1638,8 +1620,7 @@ fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
 ]
-[[instructions]]
-name = "FOO"
+[inst.FOO]
 form = "R"
 opcode = 0x13
 ops = ["dst:g:out"]
@@ -1658,8 +1639,7 @@ fn generic_template_segments() {
     // 通用模板：任意字面片段（byte ptr / 括号 / 方括号）作为段组合
     let model = gen_min_model(
         r#"
-[[instructions]]
-name = "LDB"
+[inst.LDB]
 form = "I"
 opcode = 0x03
 match = { funct3 = 0 }
@@ -1684,8 +1664,7 @@ fn generic_template_adjacent_placeholder_rejected() {
     // 连续占位符无字面分隔 → 歧义，codegen 报错
     let model = gen_min_model(
         r#"
-[[instructions]]
-name = "BAD"
+[inst.BAD]
 form = "I"
 opcode = 0x13
 match = { funct3 = 0 }
@@ -1723,8 +1702,7 @@ fields = [
   "u3[17:15]:rs1",
   "u12[31:20]:imm12",
 ]
-[[instructions]]
-name = "BAD"
+[inst.BAD]
 form = "I"
 opcode = 0x13
 match = { funct3 = 0 }
@@ -1767,8 +1745,7 @@ fields = [
   "u20[31:12]:imm20",
 ]
 {reloc_tbl}
-[[instructions]]
-name = "AUIPC_GLOBAL"
+[inst.AUIPC_GLOBAL]
 form = "U"
 opcode = 0x17
 ops = ["dst:g:out", "imm:imm20"]
@@ -1925,8 +1902,7 @@ fields = [
   "u3[14:12]:funct3",
   "u7[31:25]:funct7",
 ]
-[[instructions]]
-name = "MY_MOV"
+[inst.MY_MOV]
 form = "R"
 opcode = 0x33
 match = { funct3 = 0, funct7 = 0 }
@@ -2059,8 +2035,7 @@ fields = [
   "u3[10:8]:rd",
   "u3[13:11]:rs1",
 ]
-[[instructions]]
-name = "MOV"
+[inst.MOV]
 form = "RR"
 opcode = 1
 ops = ["dst:g:out", "src:g"]
@@ -2075,10 +2050,9 @@ fn pattern_doc(patterns: &str) -> String {
     let mut doc = lowering_doc("");
     for (i, name) in ["ADD", "SUB", "MUL", "ADDSS", "SUBSS"].iter().enumerate() {
         doc.push_str(&format!(
-            "\n[[instructions]]\nname = \"{name}\"\nform = \"RR\"\nopcode = {}\n\
+            "\n[inst.{name}]\nform = \"RR\"\nopcode = {}\n\
              ops = [\"dst:g:out\", \"src:g\"]\nasm = \"{lower} {{dst}}, {{src}}\"\n",
             i + 2,
-            name = name,
             lower = name.to_lowercase(),
         ));
     }
@@ -2176,14 +2150,12 @@ fields = [
   "u3[10:8]:rd",
   "u3[13:11]:rs1",
 ]
-[[instructions]]
-name = "MOV16"
+[inst.MOV16]
 {r16}form = "RR"
 opcode = 1
 ops = ["dst:g:out", "src:g"]
 asm = "mov {{dst}}, {{src}}"
-[[instructions]]
-name = "MOV32"
+[inst.MOV32]
 {r32}form = "RR"
 opcode = 2
 ops = ["dst:g:out", "src:g"]
@@ -2517,8 +2489,7 @@ count = 16
 kind = "reg"
 class = "gpr64"
 roles = "inout"
-[[instructions]]
-name = "MOVQ_REV"
+[inst.MOVQ_REV]
 modrm = { reg = "src", rm = "dst" }
 opsize = 64
 escape = [0x0F]
@@ -2553,8 +2524,7 @@ roles = "inout"
 modrm = { reg = "dst", rm = "src" }
 opsize = "s0"
 escape = [0x0F]
-[[instructions]]
-name = "I"
+[inst.I]
 form = "MRR"
 modrm = { reg = "src", rm = "dst" }
 opcode = 1
@@ -2618,8 +2588,7 @@ count = 16
 kind = "reg"
 class = "gpr64"
 roles = "inout"
-[[instructions]]
-name = "ADD_RM_R"
+[inst.ADD_RM_R]
 modrm = { reg = "src", rm = "dst" }
 opsize = "dst"
 opcode = 0x01
@@ -2697,8 +2666,7 @@ count = 16
 kind = "reg"
 class = "gpr64"
 roles = "inout"
-[[instructions]]
-name = "I"
+[inst.I]
 modrm = {{ reg = "a", rm = "a" }}
 opcode = 1
 {body}
@@ -2767,8 +2735,7 @@ count = 16
 kind = "reg"
 class = "gpr64"
 roles = "inout"
-[[instructions]]
-name = "I"
+[inst.I]
 {modrm}
 opsize = "dst"
 opcode = 1
@@ -2811,8 +2778,7 @@ signed = false
 bits = 12
 unit = 8
 symbol = { allow = true, require = true }
-[[instructions]]
-name = "I"
+[inst.I]
 opcode = 1
 ops = ["dst:gx:inout", "imm:sym12"]
 asm = "i {dst}, {imm}"
@@ -2828,8 +2794,7 @@ kind = "imm"
 signed = false
 bits = 12
 symbol = { require = true }
-[[instructions]]
-name = "I"
+[inst.I]
 opcode = 1
 ops = ["dst:gx:inout", "imm:sym12"]
 asm = "i {dst}, {imm}"
@@ -2844,8 +2809,7 @@ asm = "i {dst}, {imm}"
 kind = "label"
 bits = 4
 symbol = { allow = true, require = true }
-[[instructions]]
-name = "I"
+[inst.I]
 opcode = 1
 ops = ["dst:gx:inout", "t:gl"]
 asm = "i {dst}, {t}"
@@ -2861,8 +2825,7 @@ kind = "imm"
 signed = false
 bits = 12
 symbol = { allow = true, require = true }
-[[instructions]]
-name = "I"
+[inst.I]
 opcode = 1
 ops = ["dst:gx:inout", "imm:sym12"]
 asm = "i {dst}, {imm}"
@@ -2881,8 +2844,7 @@ count = 16
 kind = "reg"
 class = "gpr64"
 roles = "inout"
-[[instructions]]
-name = "I"
+[inst.I]
 modrm = { reg = "dst", rm = "src" }
 opsize = "dst"
 opcode = 1
@@ -3049,8 +3011,7 @@ fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
 ]
-[[instructions]]
-name = "ADD"
+[inst.ADD]
 form = "R"
 opcode = 0x13
 ops = ["dst:g:out"]
@@ -3239,8 +3200,7 @@ fields = [
   "u3[9:7]:rd",
   "u12[21:10]:imm",
 ]
-[[instructions]]
-name = "ADDI"
+[inst.ADDI]
 form = "I"
 opcode = 0x13
 ops = ["dst:r:out", "imm:imm12"]
@@ -3291,8 +3251,7 @@ fields = [
   "u6[5:0]:opcode",
   "u26[31:6]:imm26",
 ]
-[[instructions]]
-name = "B"
+[inst.B]
 form = "BR"
 opcode = 0x05
 ops = ["target:off26"]
@@ -3375,8 +3334,7 @@ fields = [
   "u14[18:5]:imm14",
   "u1[31]:b5",
 ]
-[[instructions]]
-name = "TBZ"
+[inst.TBZ]
 form = "TBZ"
 opcode = 0x36
 ops = ["src:r", "bit:bitpos", "target:off14"]
@@ -3464,8 +3422,7 @@ fields = [
   "u6[21:16]:immr",
   "u6[15:10]:imms",
 ]
-[[instructions]]
-name = "ANDI"
+[inst.ANDI]
 form = "LOGIMM"
 opcode = 0x24
 ops = ["dst:r:out", "src:r", "imm:logicimm"]
@@ -3527,8 +3484,7 @@ fields = [
   "u4[27:24]:pred",
   "u4[23:20]:succ",
 ]
-[[instructions]]
-name = "FENCE"
+[inst.FENCE]
 form = "FENCE"
 opcode = 0x0F
 ops = ["pred:fset", "succ:fset"]
@@ -3611,8 +3567,7 @@ fields = [
   "u5[11:7]:rd",
   "u12[31:20]:csr",
 ]
-[[instructions]]
-name = "CSRRS"
+[inst.CSRRS]
 form = "I"
 opcode = 0x73
 ops = ["dst:r:out", "csr:csr12"]
@@ -3699,8 +3654,7 @@ fields = [
   "u5[11:7]:rd",
   "u20[31:12]:imm",
 ]
-[[instructions]]
-name = "LUI"
+[inst.LUI]
 form = "U"
 opcode = 0x37
 ops = ["dst:r:out", "imm:sym20"]
@@ -3804,8 +3758,7 @@ names = ["A0", "A1", "A2", "A3"]
 kind = "reg"
 class = "gpr8"
 roles = "inout"
-[[instructions]]
-name = "MOV8"
+[inst.MOV8]
 form = "RR"
 opcode = 1
 ops = ["dst:a8:out", "src:a8"]
@@ -3965,15 +3918,13 @@ names = ["F0", "F1"]
 kind = "reg"
 class = "gpr64"
 roles = "inout"
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "W"
 opcode = 0
 # 序言/尾声由生成器生成（v20 A4）：作为可编译目标，谱必须申报返回能力。
 roles = ["ret"]
 asm = "nop"
-[[instructions]]
-name = "MOV"
+[inst.MOV]
 data_width = 64
 form = "RR"
 opcode = 16
@@ -4057,8 +4008,7 @@ fp = "R2"
 fn implicit_regs_unknown_name_is_error() {
     let msg = any_stage_msg(&two_view_doc(
         r#"
-[[instructions]]
-name = "CQO"
+[inst.CQO]
 form = "W"
 opcode = 1
 implicit_regs = ["NOPE"]
@@ -4075,8 +4025,7 @@ asm = "cqo"
 fn implicit_regs_known_name_generates() {
     let m = parse_and_validate(&two_view_doc(
         r#"
-[[instructions]]
-name = "CQO"
+[inst.CQO]
 form = "W"
 opcode = 1
 implicit_regs = ["R1"]
@@ -4225,8 +4174,7 @@ class = "gpr32"
 roles = "inout"
 [form.W]
 fields = ["u{fw}[{fhi}:0]:opcode"]
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "W"
 opcode = 0
 asm = "nop"
@@ -4285,8 +4233,7 @@ fields = [
   "u8[7:0]:opcode",
   "u65[64:0]:wide",
 ]
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "W"
 opcode = 0
 asm = "nop"
@@ -4327,8 +4274,7 @@ fields = [
   "u3[6:4]:rs1",
   "u4[11:8]:lab",
 ]
-[[instructions]]
-name = "BRZ"
+[inst.BRZ]
 form = "B"
 opcode = 1
 effect = ["Branch"]
@@ -4372,8 +4318,7 @@ roles = "inout"
 fields = [
   "{field}",
 ]
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "W"
 opcode = 0
 asm = "nop"
@@ -4552,7 +4497,7 @@ fn lower_jmp_spec_path_is_used() {
     // 需要一条**终结角色**指令才会生成 `lower_terminator` 实体（`has_ret || has_jmp || has_jcc`）
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[[instructions]]\nname = \"MYJMP\"\nform = \"C\"\nopcode = 0x91\n\
+        "[inst.MYJMP]\nform = \"C\"\nopcode = 0x91\n\
 ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"myjmp {dst}, {cond}\"\nroles = [\"jump\"]\n\
 [lower.Jmp]\ninsts = [\"SETC {out}, {cc}\"]",
     );
@@ -4643,9 +4588,9 @@ fn explicit_temps_are_enforced() {
 fn branch_form_comes_from_spec_not_role_table() {
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[[instructions]]\nname = \"BRROLE\"\nform = \"C\"\nopcode = 0x92\n\
+        "[inst.BRROLE]\nform = \"C\"\nopcode = 0x92\n\
 ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"brrole {dst}, {cond}\"\nroles = [\"branch\"]\n\
-[[instructions]]\nname = \"BRCHOSEN\"\nform = \"C\"\nopcode = 0x93\n\
+[inst.BRCHOSEN]\nform = \"C\"\nopcode = 0x93\n\
 ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"brchosen {dst}, {cond}\"\n\
 [lower.Br]\ninsts = [\"BRCHOSEN {cond}, {cc}\"]",
     );
@@ -4679,7 +4624,7 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"brchosen {dst}, {cond}\"\n\
 fn asm_accepts_a_list_of_spellings() {
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[[instructions]]\nname = \"ALT\"\nform = \"C\"\nopcode = 0x94\n\
+        "[inst.ALT]\nform = \"C\"\nopcode = 0x94\n\
 ops = [\"dst:g:out\", \"cond:cc\"]\nasm = [\"alt {dst}, {cond}\", \"alt {cond}, {dst}\"]",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
@@ -4698,7 +4643,7 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = [\"alt {dst}, {cond}\", \"alt {cond}, 
 fn alternative_spellings_are_emitted() {
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[[instructions]]\nname = \"ALT\"\nform = \"C\"\nopcode = 0x94\n\
+        "[inst.ALT]\nform = \"C\"\nopcode = 0x94\n\
 ops = [\"dst:g:out\", \"cond:cc\"]\nasm = [\"altone {dst}, {cond}\", \"alttwo {dst}, {cond}\"]",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
@@ -4718,9 +4663,9 @@ fn asm_ambiguity_is_reported_when_opted_in() {
     // 两条同助记符同操作数类的指令
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[[instructions]]\nname = \"AMB1\"\nform = \"C\"\nopcode = 0x95\n\
+        "[inst.AMB1]\nform = \"C\"\nopcode = 0x95\n\
 ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"amb {dst}, {cond}\"\n\
-[[instructions]]\nname = \"AMB2\"\nform = \"C\"\nopcode = 0x96\n\
+[inst.AMB2]\nform = \"C\"\nopcode = 0x96\n\
 ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"amb {dst}, {cond}\"",
     );
     // 默认档：不报歧义
@@ -4765,7 +4710,7 @@ fn placeholder_modifiers_parse() {
 fn normalization_keeps_placeholder_modifiers() {
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[[instructions]]\nname = \"MODS\"\nform = \"C\"\nopcode = 0x97\n\
+        "[inst.MODS]\nform = \"C\"\nopcode = 0x97\n\
 ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"mods {dst?}, {cond:plus}\"",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
@@ -4859,8 +4804,7 @@ fields = [
   "u3[10:8]:rd",
   "u8[23:16]:imm8",
 ]
-[[instructions]]
-name = "ADDI"
+[inst.ADDI]
 form = "RI"
 opcode = 2
 ops = ["dst:g:out", "k:k"]

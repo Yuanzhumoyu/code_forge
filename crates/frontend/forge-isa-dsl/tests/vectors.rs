@@ -56,16 +56,14 @@ fields = [
   "u3[7:5]:rs1",
 ]
 
-[[instructions]]
-name = "ADD"
+[inst.ADD]
 form = "RR"
 opcode = 1
 ops = ["dst:g:out", "src:g"]
 asm = "add {{dst}}, {{src}}"
 effect = ["Pure"]
 
-[[instructions]]
-name = "MOVI"
+[inst.MOVI]
 form = "RI"
 opcode = 3
 ops = ["dst:g:out", "imm:imm5"]

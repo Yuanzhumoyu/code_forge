@@ -199,6 +199,27 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
         ordered.sort_by_key(|(at, _, _)| *at);
         model.forms.extend(ordered.into_iter().map(|(_, _, f)| f));
     }
+    // v21 W10：`[inst.<名>]` 降级进内部 `instructions`（**表头即指令名**），
+    // **按源码声明序**展开（声明序决定别名首匹配与解码分派）。`inst_decls` 保留不清空：
+    // 它是"面"的存储 ⇒ 模型序列化写回 `[inst.<名>]`，`serialize → parse` 往返无损。
+    if !model.inst_decls.is_empty() {
+        let mut ordered: Vec<(usize, String, crate::dsl::model::Instruction)> = model
+            .inst_decls
+            .iter()
+            .map(|(name, i)| {
+                let mut i = i.clone();
+                i.name = name.clone();
+                let at = source
+                    .find(&format!("[inst.{name}]"))
+                    .unwrap_or(usize::MAX);
+                (at, name.clone(), i)
+            })
+            .collect();
+        ordered.sort_by_key(|(at, _, _)| *at);
+        model
+            .instructions
+            .extend(ordered.into_iter().map(|(_, _, i)| i));
+    }
     model.expand_templates().map_err(|msg| {
         let idx = diag::DeclIndex::build(source);
         let a = idx.anchor(&msg);

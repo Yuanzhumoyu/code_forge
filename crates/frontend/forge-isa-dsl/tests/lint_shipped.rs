@@ -158,14 +158,12 @@ fn unreferenced_ref_inventory() {
 fn overlap_guard_can_fail() {
     let path = root().join("isa/arm64.toml");
     let spec = report::load_spec(&path).expect("加载 arm64");
-    let injected = "[[instructions]]\nname = \"OVERLAPTOY\"\nform = \"PAIR\"\nopcode = 0xA9\n\
+    let injected = "[inst.OVERLAPTOY]\nform = \"PAIR\"\nopcode = 0xA9\n\
                     match = { idx2 = 0, opc2 = 0 }\n\
                     ops = [\"t1:r64\", \"base:r64\", \"t2:r64\", \"imm:imm7x\"]\n\
                     asm = \"stp {t1}, {t2}, [{base}, #{imm}]\"\n\n";
-    let mutated = spec.text.replace(
-        "[[instructions]]\nname = \"STPX\"",
-        &format!("{injected}[[instructions]]\nname = \"STPX\""),
-    );
+    // v21 W10：指令表头即名字 ⇒ 注入点与注入块都写成 `[inst.<名>]`。
+    let mutated = spec.text.replace("[inst.STPX]", &format!("{injected}[inst.STPX]"));
     assert!(mutated.contains("OVERLAPTOY"), "注入点没找到");
     let found = lint_source(&mutated).expect("变异谱仍合法");
     assert!(

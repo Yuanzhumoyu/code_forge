@@ -1,6 +1,6 @@
 //! ISA-DSL 语义校验：引用完整 / 位域越界 / 重复声明 / 类型约束。
 //!
-//! 错误信息带 TOML 路径（如 `[[instructions.MOV_R_RM]]`），由 [`super::diag::DeclIndex`]
+//! 错误信息带 TOML 路径（如 `[inst.MOV_R_RM]`），由 [`super::diag::DeclIndex`]
 //! 换算成精确 `行:列`。**S1 起收集全部错误**：每个"按节"的校验器各报一条，
 //! 逐条校验器（指令 / lowering / 模板）对每条声明各报一条，最后由 `Diags` 一次渲染。
 
@@ -503,20 +503,20 @@ fn validate_encoding(m: &IsaModel) -> Result<(), String> {
     for inst in &m.instructions {
         let Some(w) = inst.width else { continue };
         if w == 0 {
-            return Err(format!("[[instructions.{}]]: width must be > 0", inst.name));
+            return Err(format!("[inst.{}]: width must be > 0", inst.name));
         }
         match e.kind {
             EncodingKind::Fixed => {
                 if e.bits.is_none() {
                     return Err(format!(
-                        "[[instructions.{}]]: width = {w} 不能替代 [encoding].bits\
+                        "[inst.{}]: width = {w} 不能替代 [encoding].bits\
                          （kind = \"fixed\" 全 ISA 只有一个字长，请在 [encoding].bits 声明一次）",
                         inst.name
                     ));
                 }
                 if Some(w) != e.bits {
                     return Err(format!(
-                        "[[instructions.{}]]: width {w} 与 [encoding].bits ({}) 不一致\
+                        "[inst.{}]: width {w} 与 [encoding].bits ({}) 不一致\
                          （fixed ISA 只有一个字长）",
                         inst.name,
                         e.bits.unwrap_or(0)
@@ -526,14 +526,14 @@ fn validate_encoding(m: &IsaModel) -> Result<(), String> {
             EncodingKind::Mixed => {
                 if !e.widths.contains(&w) {
                     return Err(format!(
-                        "[[instructions.{}]]: width {w} 不在 [encoding].widths ({:?}) 里",
+                        "[inst.{}]: width {w} 不在 [encoding].widths ({:?}) 里",
                         inst.name, e.widths
                     ));
                 }
             }
             EncodingKind::PrefixScan => {
                 return Err(format!(
-                    "[[instructions.{}]]: prefix_scan ISA 不得写 width（字长由前缀扫描决定）",
+                    "[inst.{}]: prefix_scan ISA 不得写 width（字长由前缀扫描决定）",
                     inst.name
                 ));
             }
@@ -987,7 +987,7 @@ fn validate_reg_names(m: &IsaModel) -> Result<(), String> {
         if let Some(ir) = &inst.implicit_regs {
             check(
                 ir,
-                &format!("[[instructions.{name}]].implicit_regs", name = inst.name),
+                &format!("[inst.{name}].implicit_regs", name = inst.name),
             )?;
         }
     }
@@ -1480,7 +1480,7 @@ fn validate_relocs(m: &IsaModel) -> Result<(), String> {
         };
         let Some(def) = m.reloc.iter().find(|r| r.name == name) else {
             return Err(format!(
-                "[[instructions.{}]]: reloc '{name}' 未在 [asm.reloc.<名>] 声明（可用：{}）",
+                "[inst.{}]: reloc '{name}' 未在 [asm.reloc.<名>] 声明（可用：{}）",
                 inst.name,
                 if m.reloc.is_empty() {
                     "<空>".to_string()
@@ -1502,7 +1502,7 @@ fn validate_relocs(m: &IsaModel) -> Result<(), String> {
         .0;
         if !ops.iter().any(|o| o.slot == def.operand) {
             return Err(format!(
-                "[[instructions.{}]]: reloc '{name}' 的 `operand` '{}' 不在该指令的操作数里（asm '{}'）",
+                "[inst.{}]: reloc '{name}' 的 `operand` '{}' 不在该指令的操作数里（asm '{}'）",
                 inst.name, def.operand, inst.asm
             ));
         }
@@ -2122,7 +2122,7 @@ fn validate_instructions_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
                     d.push_anchored(
                         idx,
                         &format!(
-                            "[[instructions.{name}]]: 角色 \"{role}\" 与 {oname} 冲突——\
+                            "[inst.{name}]: 角色 \"{role}\" 与 {oname} 冲突——\
                              同角色同类限定只能有一条声明（不同寄存器类请写 `class`；\
                              搬运族的宽度不写在角色上，见指令的 `data_width`）"
                         ),
@@ -2143,7 +2143,7 @@ fn validate_instructions_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
             d.push_duplicate(
                 idx,
                 &format!(
-                    "[[instructions.{}]]: duplicate instruction name '{}'",
+                    "[inst.{}]: duplicate instruction name '{}'",
                     inst.name, inst.name
                 ),
             );
@@ -2165,7 +2165,7 @@ fn validate_instructions_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
                     } else {
                         format!("[[templates.{t}]]")
                     };
-                    msg.replacen(&format!("[[instructions.{}]]", inst.name), &sec, 1)
+                    msg.replacen(&format!("[inst.{}]", inst.name), &sec, 1)
                         .replacen("[[instructions]]", &sec, 1)
                 }
                 None => msg,
@@ -2181,7 +2181,7 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
         && !form_exists(m, f)
     {
         return Err(format!(
-            "[[instructions.{}]]: form '{f}' is not declared in [[forms]]",
+            "[inst.{}]: form '{f}' is not declared in [[forms]]",
             inst.name
         ));
     }
@@ -2189,7 +2189,7 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
     let asm = inst.asm.clone();
     if asm.trim().is_empty() {
         return Err(format!(
-            "[[instructions.{}]]: asm must not be empty",
+            "[inst.{}]: asm must not be empty",
             inst.name
         ));
     }
@@ -2203,7 +2203,7 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
     for op in &uses {
         if !slot_exists(m, &op.slot) {
             return Err(format!(
-                "[[instructions.{}]]: operand slot '{}' is not declared in [operand.<名字>] (asm '{}')",
+                "[inst.{}]: operand slot '{}' is not declared in [operand.<名字>] (asm '{}')",
                 inst.name, op.slot, asm
             ));
         }
@@ -2219,7 +2219,7 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
             };
             if !ok {
                 return Err(format!(
-                    "[[instructions.{}]]: operand role {:?} not allowed by slot '{}' roles {allowed:?}",
+                    "[inst.{}]: operand role {:?} not allowed by slot '{}' roles {allowed:?}",
                     inst.name, r, op.slot
                 ));
             }
@@ -2239,7 +2239,7 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
         let of_len = enc.operand_fields.as_ref().map(|f| f.len()).unwrap_or(0);
         if uses.len() > of_len {
             return Err(format!(
-                "[[instructions.{}]]: {} operands exceed operand_fields count {}",
+                "[inst.{}]: {} operands exceed operand_fields count {}",
                 inst.name,
                 uses.len(),
                 of_len
@@ -2257,7 +2257,7 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
                 };
                 if ofs.get(i).map(String::as_str) != sfields.first().map(String::as_str) {
                     return Err(format!(
-                        "[[instructions.{}]]: 操作数 {i} 的槽 '{}' 是多字段落点（{:?}），\
+                        "[inst.{}]: 操作数 {i} 的槽 '{}' 是多字段落点（{:?}），\
                          operand_fields[{i}] 必须写首字段 '{:?}'（当前 {:?}）",
                         inst.name,
                         op.slot,
@@ -2275,7 +2275,7 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
         for k in fields.keys() {
             if !m.conventions.bitfields.contains_key(k) {
                 return Err(format!(
-                    "[[instructions.{}]]: fixed field '{k}' is not declared in [conventions.bitfields]",
+                    "[inst.{}]: fixed field '{k}' is not declared in [conventions.bitfields]",
                     inst.name
                 ));
             }
@@ -2297,7 +2297,7 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
         || enc.evex.is_some();
     if !has_enc {
         return Err(format!(
-            "[[instructions.{}]]: 指令缺少编码信息——至少要给 `opcode`/`fields`，\
+            "[inst.{}]: 指令缺少编码信息——至少要给 `opcode`/`fields`，\
              或 `opcode_reg`/`modrm`/`vex`/`evex`/`imm` 之一",
             inst.name
         ));
@@ -2330,11 +2330,11 @@ fn validate_references(m: &IsaModel) -> Result<(), String> {
     for i in &m.instructions {
         let Some(r) = &i.reference else { continue };
         if r.trim().is_empty() {
-            return Err(format!("[[instructions.{}]]: ref 不能为空", i.name));
+            return Err(format!("[inst.{}]: ref 不能为空", i.name));
         }
         if names.contains(r) {
             return Err(format!(
-                "[[instructions.{}]]: ref '{r}' 与指令名冲突（引用名与指令名同池）",
+                "[inst.{}]: ref '{r}' 与指令名冲突（引用名与指令名同池）",
                 i.name
             ));
         }

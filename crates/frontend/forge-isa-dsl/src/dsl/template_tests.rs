@@ -222,8 +222,7 @@ rows = [
 fn ref_on_plain_instruction_feeds_the_same_namespace() {
     let doc = plus(
         r#"
-[[instructions]]
-name = "MOVW"
+[inst.MOVW]
 group = "mov"
 form = "R"
 opcode = 0x33
@@ -359,8 +358,7 @@ rows = [
 fn ref_colliding_with_an_instruction_name_is_rejected() {
     let doc = plus(
         r#"
-[[instructions]]
-name = "OPW"
+[inst.OPW]
 form = "R"
 opcode = 0x33
 ops = ["rd:r32:out"]

@@ -118,24 +118,21 @@ fields = [
 # ─────────────────────────── 指令 ───────────────────────────
 
 # add：同一助记符，三宽度版本 → 按操作数实际类自动分发
-[[instructions]]
-name = "ADD16"
+[inst.ADD16]
 group = "add"
 form = "R"
 opcode = 0x10
 ops = ["dst:r16:out", "src:r16", "src2:r16"]
 asm = "add {dst}, {src}, {src2}"
 
-[[instructions]]
-name = "ADD32"
+[inst.ADD32]
 group = "add"
 form = "R"
 opcode = 0x11
 ops = ["dst:r32:out", "src:r32", "src2:r32"]
 asm = "add {dst}, {src}, {src2}"
 
-[[instructions]]
-name = "ADD64"
+[inst.ADD64]
 group = "add"
 form = "R"
 opcode = 0x12
@@ -143,24 +140,21 @@ ops = ["dst:r64:out", "src:r64", "src2:r64"]
 asm = "add {dst}, {src}, {src2}"
 
 # mov：同上，二操作数
-[[instructions]]
-name = "MOV16"
+[inst.MOV16]
 group = "mov"
 form = "RR"
 opcode = 0x20
 ops = ["dst:r16:out", "src:r16"]
 asm = "mov {dst}, {src}"
 
-[[instructions]]
-name = "MOV32"
+[inst.MOV32]
 group = "mov"
 form = "RR"
 opcode = 0x21
 ops = ["dst:r32:out", "src:r32"]
 asm = "mov {dst}, {src}"
 
-[[instructions]]
-name = "MOV64"
+[inst.MOV64]
 group = "mov"
 data_width = 64
 form = "RR"
@@ -169,8 +163,7 @@ ops = ["dst:r64:out", "src:r64"]
 asm = "mov {dst}, {src}"
 
 # mov 立即数（16 位常量；RI form rd = imm）
-[[instructions]]
-name = "MOV16_R_IMM16"
+[inst.MOV16_R_IMM16]
 group = "mov"
 form = "RI"
 opcode = 0x23
@@ -178,16 +171,14 @@ ops = ["dst:r16:out", "imm:imm16"]
 asm = "mov {dst}, {imm}"
 
 # 帧分配/释放（rd = rs1 ± imm8；B3 接入 TargetMachine 用）
-[[instructions]]
-name = "SUBI16"
+[inst.SUBI16]
 roles = ["frame_alloc"]
 form = "RI"
 opcode = 0x40
 ops = ["dst:r16:out", "src:r16", "imm:imm16"]
 asm = "subi {dst}, {src}, {imm}"
 
-[[instructions]]
-name = "ADDI16"
+[inst.ADDI16]
 roles = ["frame_free"]
 form = "RI"
 opcode = 0x41
@@ -195,8 +186,7 @@ ops = ["dst:r16:out", "src:r16", "imm:imm16"]
 asm = "addi {dst}, {src}, {imm}"
 
 # 返回（全字位域；word = 0x01，与 NOP 的 0 区分）
-[[instructions]]
-name = "RET"
+[inst.RET]
 roles = ["ret"]
 form = "W"
 opcode = 1
@@ -204,8 +194,7 @@ effect = ["Ret"]
 asm = "ret"
 
 # 分支（标签槽）
-[[instructions]]
-name = "BRZ"
+[inst.BRZ]
 form = "B"
 opcode = 0x30
 effect = ["Branch"]
@@ -213,8 +202,7 @@ ops = ["src:r32", "target:lab"]
 asm = "brz {src}, {target}"
 
 # 无操作数（全字位域，避免与 opcode 0x10 撞车）
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "W"
 opcode = 0
 asm = "nop"

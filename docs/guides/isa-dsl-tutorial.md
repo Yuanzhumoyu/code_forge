@@ -51,32 +51,28 @@ fields = [
   "u5[4:0]:imm",
 ]
 
-[[instructions]]
-name = "ADD"
+[inst.ADD]
 form = "RR"
 opcode = 1
 ops = ["dst:g:out", "src:g"]
 asm = "add {dst}, {src}"
 effect = ["Pure"]
 
-[[instructions]]
-name = "SUB"
+[inst.SUB]
 form = "RR"
 opcode = 2
 ops = ["dst:g:out", "src:g"]
 asm = "sub {dst}, {src}"
 effect = ["Pure"]
 
-[[instructions]]
-name = "MOVI"
+[inst.MOVI]
 form = "RI"
 opcode = 3
 ops = ["dst:g:out", "imm:imm5"]
 asm = "movi {dst}, {imm}"
 effect = ["Pure"]
 
-[[instructions]]
-name = "BRZ"
+[inst.BRZ]
 form = "RI"
 opcode = 4
 ops = ["src:g", "target:imm5"]
@@ -162,8 +158,7 @@ class = "gpr8"      # 引用 [reg.gpr8]；多宽度用 classes = [...]
 ## 3. 指令：`ops` 声明 + `asm` 引用
 
 ```toml
-[[instructions]]
-name = "ADD"
+[inst.ADD]
 form = "RR"                                   # 可选：编码键预设
 opcode = 1
 ops = ["dst:g:out", "src:g"]                  # 数组序 = 编码序；角色 in/out/inout

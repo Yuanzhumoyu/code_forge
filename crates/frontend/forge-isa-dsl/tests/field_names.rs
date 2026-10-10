@@ -39,8 +39,7 @@ fields = [
   "u4[11:8]:f0",
   "u4[7:4]:f1",
 ]
-[[instructions]]
-name = "ADD"
+[inst.ADD]
 form = "RR"
 opcode = 1
 ops = {ops}

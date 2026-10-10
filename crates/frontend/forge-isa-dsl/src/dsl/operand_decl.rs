@@ -280,8 +280,7 @@ fields = [
   "u4[7:4]:dst",
   "u4[3:0]:src",
 ]
-[[instructions]]
-name = "LD"
+[inst.LD]
 form = "M"
 opcode = 1
 ops = ["dst:r:out", "src:mem"]

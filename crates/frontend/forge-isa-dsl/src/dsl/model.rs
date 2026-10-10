@@ -352,8 +352,14 @@ pub struct IsaModel {
     /// 编码形式（**内部载体**，v21 W10 起 TOML 面是 `[form.<名>]`）。
     #[serde(default, skip)]
     pub forms: Vec<Form>,
-    /// 指令（`[[instructions]]`）。
-    #[serde(default)]
+    /// **v21 W10：指令声明**（`[inst.<名>]`，表头 = 指令名）——解析期降级进内部
+    /// [`IsaModel::instructions`]（**按源码声明序**展开：`BTreeMap` 是字母序，而指令的
+    /// 声明序决定别名首匹配与解码分派）。**保留不清空** ⇒ 模型序列化写回 `[inst.<名>]`，
+    /// `serialize → parse` 往返无损。
+    #[serde(default, rename = "inst")]
+    pub inst_decls: BTreeMap<String, Instruction>,
+    /// 指令（**内部载体**，v21 W10 起 TOML 面是 `[inst.<名>]`）。
+    #[serde(default, skip)]
     pub instructions: Vec<Instruction>,
 
     /// **指令族**（v21 W5，`[family.<名>]`）：唯一复用机制（`body` + `rows` + 将来 `vary`）。
@@ -699,13 +705,13 @@ impl IsaModel {
             Some(b) => b,
             None => {
                 return Err(format!(
-                    "[[instructions.{}]]: 缺少指令字长——`kind = \"mixed\"` 时必须给 `width`（或给 [encoding].bits 作缺省字长）",
+                    "[inst.{}]: 缺少指令字长——`kind = \"mixed\"` 时必须给 `width`（或给 [encoding].bits 作缺省字长）",
                     inst.name
                 ));
             }
         };
         if bits == 0 {
-            return Err(format!("[[instructions.{}]]: width must be > 0", inst.name));
+            return Err(format!("[inst.{}]: width must be > 0", inst.name));
         }
         Ok(bits.div_ceil(8))
     }
@@ -2483,11 +2489,13 @@ pub struct VexSpec {
 
 // ──────────────────── [[instructions]] ────────────────────
 
-/// 单条指令。
+/// 单条指令（v21 W10：TOML 面是 `[inst.<名>]`，**表头即指令名**）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Instruction {
     /// 内部 Rust 标识符（Inst 变体名；与汇编助记符解耦，可含语义后缀）。
+    /// **内部载体**（v21 W10）：由 `[inst.<名>]` 的表头填，TOML 里不再写 `name`。
+    #[serde(skip)]
     pub name: String,
     /// 编码预设名（`[[forms]]`）。**可省略**——省略时全部编码键由本指令的
     /// [`EncKeys`] 直接给出（组合不需要预先命名一个 form）。
@@ -3427,10 +3435,12 @@ impl Template {
             for (_, v) in table.iter_mut() {
                 *v = subst(v, &vars, &path)?;
             }
-            table.insert("name".to_string(), toml::Value::String(row.inst.clone()));
+            // v21 W10：实例名不再经 TOML 的 `name` 键注入（`Instruction.name` 已是内部
+            // 载体 ⇒ 写它会被 `deny_unknown_fields` 拒），反序列化后直接赋值。
             let mut inst: Instruction = toml::Value::Table(table)
                 .try_into()
                 .map_err(|e| format!("{path}: 行 '{name}' 的字段非法：{e}", name = row.inst))?;
+            inst.name = row.inst.clone();
             inst.from_template = Some(label.clone().into());
             out.push(inst);
         }

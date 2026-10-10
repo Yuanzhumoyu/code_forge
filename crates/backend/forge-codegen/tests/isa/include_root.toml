@@ -26,8 +26,7 @@ mnemonic_case = "insensitive"
 kind = "fixed"
 bits = 16
 
-[[instructions]]
-name = "ISUB"
+[inst.ISUB]
 form = "RR"
 opcode = 2
 ops = ["dst:r:out", "src:r"]

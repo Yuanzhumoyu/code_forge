@@ -543,7 +543,7 @@ pub fn lower_field_syntax(m: &mut super::model::IsaModel) -> Result<(), String> 
         // `match`（常量）决定 ⇒ 在这里硬跑位置绑定会报"操作数 src3 找不到字段"。
         if !vlen {
             let of = bind_operands(&decls, &ops, &bind, opname.as_deref())
-                .map_err(|e| format!("[[instructions.{}]]: {e}", inst.name))?
+                .map_err(|e| format!("[inst.{}]: {e}", inst.name))?
                 .into_iter()
                 .map(|n| {
                     if let Some(v) = own_map[&fname].get(&n) {

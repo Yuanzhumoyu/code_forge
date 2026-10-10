@@ -71,21 +71,18 @@ fields = [
 # ─────────────────────────── 指令 ───────────────────────────
 
 # 全字常量 0（12 位全 0）→ 与 op=1/2 的指令互不冲突
-[[instructions]]
-name = "NOP12"
+[inst.NOP12]
 form = "W"
 opcode = 0
 asm = "nop"
 
-[[instructions]]
-name = "ADD12"
+[inst.ADD12]
 form = "R3"
 opcode = 1
 ops = ["dst:r3:out", "src:r3", "src2:r3"]
 asm = "add {dst}, {src}, {src2}"
 
-[[instructions]]
-name = "MOV12"
+[inst.MOV12]
 form = "R2"
 opcode = 2
 ops = ["dst:r3:out", "src:r3"]
@@ -112,8 +109,7 @@ fields = [
   "u4[5:2]:ohi",
 ]
 
-[[instructions]]
-name = "LDW12"
+[inst.LDW12]
 form = "RI"
 opcode = 3
 ops = ["dst:r3:out", "off:off_scale4"]

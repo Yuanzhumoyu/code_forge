@@ -220,8 +220,7 @@ fields = [
   "u3[7:5]:rs1",
 ]
 
-[[instructions]]
-name = "ADD"
+[inst.ADD]
 form = "RR"
 opcode = 1
 ops = ["dst:g:out", "src:g"]
@@ -289,8 +288,7 @@ fields = [
   "u3[10:8]:rd",
 ]
 
-[[instructions]]
-name = "ADD"
+[inst.ADD]
 form = "RR"
 opcode = 1
 ops = ["dst:g:out"]

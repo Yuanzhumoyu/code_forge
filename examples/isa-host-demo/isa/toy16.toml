@@ -38,32 +38,28 @@ fields = [
   "u5[4:0]:imm",
 ]
 
-[[instructions]]
-name = "ADD"
+[inst.ADD]
 form = "RR"
 opcode = 1
 ops = ["dst:g:out", "src:g"]
 asm = "add {dst}, {src}"
 effect = ["Pure"]
 
-[[instructions]]
-name = "SUB"
+[inst.SUB]
 form = "RR"
 opcode = 2
 ops = ["dst:g:out", "src:g"]
 asm = "sub {dst}, {src}"
 effect = ["Pure"]
 
-[[instructions]]
-name = "MOVI"
+[inst.MOVI]
 form = "RI"
 opcode = 3
 ops = ["dst:g:out", "imm:imm5"]
 asm = "movi {dst}, {imm}"
 effect = ["Pure"]
 
-[[instructions]]
-name = "BRZ"
+[inst.BRZ]
 form = "RI"
 opcode = 4
 ops = ["src:g", "target:imm5"]

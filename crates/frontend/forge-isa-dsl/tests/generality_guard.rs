@@ -9,7 +9,7 @@
 //!
 //! 从仓库根 `isa/*.toml`（发行后端）里**读出**该 ISA 的：
 //!
-//! 1. **指令名**（`[[instructions]].name` 与 `[[templates]].rows[].inst`）；
+//! 1. **指令名**（`[inst.<名>]` 表头与 `[[templates]].rows[].inst`）；
 //! 2. **物理寄存器名**（`[reg.*].names` 列表，以及生成式声明的 `prefix`）；
 //!
 //! 然后在 `src/**`（除 `tests.rs` 与 `#[cfg(test)]` 之后的部分）里查找这些名字的**字符串
@@ -95,26 +95,21 @@ fn prefixes(src: &str) -> Vec<String> {
     out
 }
 
-/// 抽出某个 TOML 里声明的指令名（`[[instructions]]` 块内）。
+/// 抽出某个 TOML 里声明的指令名（v21 W10：**表头即名字** —— `[inst.<名>]`）。
+///
+/// 旧面是 `[[instructions]]` 块内的 `name = "X"`；表头化之后没有那一行，按表头取。
+/// `inst = "X"`（模板行 / `insts` 列表）仍由 [`inst_literals`] 单列收集。
 fn instruction_names(src: &str) -> Vec<String> {
     let mut out = Vec::new();
-    let mut in_block = false;
     for line in src.lines() {
         let t = line.trim();
-        if t.starts_with("[[instructions]]") {
-            in_block = true;
-            continue;
-        }
-        if t.starts_with("[[") || (t.starts_with('[') && t.ends_with(']')) {
-            in_block = false;
-            continue;
-        }
-        if in_block
-            && let Some(rest) = t.strip_prefix("name = \"")
-            && let Some(end) = rest.find('"')
+        if let Some(rest) = t.strip_prefix("[inst.")
+            && let Some(end) = rest.find(']')
         {
-            out.push(rest[..end].to_string());
-            in_block = false;
+            let name = &rest[..end];
+            if !name.is_empty() {
+                out.push(name.to_string());
+            }
         }
     }
     out

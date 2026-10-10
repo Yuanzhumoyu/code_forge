@@ -127,7 +127,7 @@ impl Modrm {
     }
     /// 解析映射：操作数名 → 索引；方括号 → 内存形式；rm 槽 kind → memref 风味。
     fn resolve(map: &ModrmMap, info: &InstInfo, names: &[String]) -> Result<Self, String> {
-        let ctx = || format!("[[instructions.{}]].modrm", info.inst.name);
+        let ctx = || format!("[inst.{}].modrm", info.inst.name);
         let idx_of = |n: &str| -> Result<usize, String> {
             names.iter().position(|x| x == n).ok_or_else(|| {
                 format!(
@@ -283,7 +283,7 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
                 let idx = *idx;
                 let (_, fid, slot, _) = info.operands.get(idx as usize).ok_or_else(|| {
                     format!(
-                        "[[instructions.{}]]: form opsize slot ={} references missing operand {:?}",
+                        "[inst.{}]: form opsize slot ={} references missing operand {:?}",
                         info.inst.name,
                         idx,
                         info.operands.len()
@@ -291,7 +291,7 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
                 })?;
                 if slot.kind != OperandKind::Reg {
                     return Err(format!(
-                        "[[instructions.{}]]: form opsize slot ={} must reference a reg operand (got {})",
+                        "[inst.{}]: form opsize slot ={} must reference a reg operand (got {})",
                         info.inst.name,
                         idx,
                         slot.kind.kind_name()
@@ -303,14 +303,14 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
             // Named 在 collect_inst_infos 已解析成 Slot（按 ops 声明序）
             Opsize::Named(n) => {
                 return Err(format!(
-                    "[[instructions.{}]].opsize = \"{n}\": 未解析的操作数名（需要 ops 声明）",
+                    "[inst.{}].opsize = \"{n}\": 未解析的操作数名（需要 ops 声明）",
                     info.inst.name
                 ));
             }
             // Out 在 collect_inst_infos 已解析成 Slot（按 out/inout 角色）
             Opsize::Out => {
                 return Err(format!(
-                    "[[instructions.{}]].opsize = \"out\": 未解析（需要 ops 声明）",
+                    "[inst.{}].opsize = \"out\": 未解析（需要 ops 声明）",
                     info.inst.name
                 ));
             }
@@ -325,7 +325,7 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
                     .collect();
                 let Some((first, rest)) = widths.split_first() else {
                     return Err(format!(
-                        "[[instructions.{}]]: opsize = \"max\" needs at least one reg operand",
+                        "[inst.{}]: opsize = \"max\" needs at least one reg operand",
                         info.inst.name
                     ));
                 };
@@ -456,7 +456,7 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
                             .get(i)
                             .map(|(_, f, _, _)| f.clone())
                             .ok_or_else(|| {
-                                format!("[[instructions.{}]]: 操作数 {i} 越界", info.inst.name)
+                                format!("[inst.{}]: 操作数 {i} 越界", info.inst.name)
                             })
                     };
                     let reg_expr: TokenStream = match modrm.reg {
@@ -585,7 +585,7 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
         };
         if l_val > 2 {
             return Err(format!(
-                "[[instructions.{}]]: evex l must be 0/1/2 (128/256/512), got {l_val}",
+                "[inst.{}]: evex l must be 0/1/2 (128/256/512), got {l_val}",
                 info.inst.name
             ));
         }
@@ -595,7 +595,7 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
         };
         if b_val > 1 {
             return Err(format!(
-                "[[instructions.{}]]: evex b must be 0/1, got {b_val}",
+                "[inst.{}]: evex b must be 0/1, got {b_val}",
                 info.inst.name
             ));
         }
@@ -605,7 +605,7 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
         };
         if z_val > 1 {
             return Err(format!(
-                "[[instructions.{}]]: evex z must be 0/1, got {z_val}",
+                "[inst.{}]: evex z must be 0/1, got {z_val}",
                 info.inst.name
             ));
         }
@@ -628,7 +628,7 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
         let disp_scale = if disp_scale == 0 { 1 } else { disp_scale };
         if disp_scale > 64 || disp_scale & (disp_scale - 1) != 0 {
             return Err(format!(
-                "[[instructions.{}]]: evex disp_scale must be a power of 2 ≤ 64, got {disp_scale}",
+                "[inst.{}]: evex disp_scale must be a power of 2 ≤ 64, got {disp_scale}",
                 info.inst.name
             ));
         }
@@ -675,14 +675,14 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
     if egpr_reg {
         if form.vex.is_some() || form.evex.is_some() {
             return Err(format!(
-                "[[instructions.{}]]: 操作数槽的寄存器组有 EGPR（r16..r31），但本指令是 VEX/EVEX \
+                "[inst.{}]: 操作数槽的寄存器组有 EGPR（r16..r31），但本指令是 VEX/EVEX \
                  编码——那套前缀表达不了 EGPR。请把该槽限到 16 项的组（或改用 legacy/0F 映射）",
                 info.inst.name
             ));
         }
         if form.escape.as_ref().is_some_and(|e| e.len() > 1) {
             return Err(format!(
-                "[[instructions.{}]]: escape = {:?}（0F38/0F3A 映射）表达不了 EGPR——REX2 的 M0 位\
+                "[inst.{}]: escape = {:?}（0F38/0F3A 映射）表达不了 EGPR——REX2 的 M0 位\
                  只能选 legacy/0F。请把该槽限到 16 项的组",
                 info.inst.name,
                 form.escape.as_deref().unwrap_or(&[])
@@ -817,7 +817,7 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                     .map(|(_, fid, _, _)| fid.clone())
                     .ok_or_else(|| {
                         format!(
-                            "[[instructions.{}]]: form imm requires an imm operand",
+                            "[inst.{}]: form imm requires an imm operand",
                             info.inst.name
                         )
                     })?;
@@ -996,7 +996,7 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                     .map(|(_, fid, _, _)| fid.clone())
                     .ok_or_else(|| {
                         format!(
-                            "[[instructions.{}]]: form imm requires an imm operand",
+                            "[inst.{}]: form imm requires an imm operand",
                             info.inst.name
                         )
                     })?;
@@ -1105,7 +1105,7 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                     .map(|(_, fid, _, _)| fid.clone())
                     .ok_or_else(|| {
                         format!(
-                            "[[instructions.{}]]: form imm requires an imm operand",
+                            "[inst.{}]: form imm requires an imm operand",
                             info.inst.name
                         )
                     })?;
@@ -1161,7 +1161,7 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                     .map(|(_, fid, _, _)| fid.clone())
                     .ok_or_else(|| {
                         format!(
-                            "[[instructions.{}]]: form imm requires an imm/label operand",
+                            "[inst.{}]: form imm requires an imm/label operand",
                             info.inst.name
                         )
                     })?;
@@ -1315,7 +1315,7 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                     .map(|(_, fid, _, _)| fid.clone())
                     .ok_or_else(|| {
                         format!(
-                            "[[instructions.{}]]: form imm requires an imm operand",
+                            "[inst.{}]: form imm requires an imm operand",
                             info.inst.name
                         )
                     })?;
@@ -1400,7 +1400,7 @@ fn gen_vlen_opcode_reg_decode_arm(
             }
             _ => {
                 return Err(format!(
-                    "[[instructions.{}]]: +r operand {i} kind {:?} unsupported",
+                    "[inst.{}]: +r operand {i} kind {:?} unsupported",
                     info.inst.name, slot.kind
                 ));
             }
@@ -1465,7 +1465,7 @@ fn gen_vlen_vex_decode_arm(
     // 这套推导同时覆盖 v14 的 rr（reg=0/rm=1/vvvv=2）与 rr_src2（rm=2/vvvv=1）。
     let mm = ctx.modrm.ok_or_else(|| {
         format!(
-            "[[instructions.{}]]: VEX form 需要 modrm 映射",
+            "[inst.{}]: VEX form 需要 modrm 映射",
             info.inst.name
         )
     })?;
@@ -1490,7 +1490,7 @@ fn gen_vlen_vex_decode_arm(
                     field_ctor_expr(slot, quote! { __vvvv as u32 })
                 } else {
                     return Err(format!(
-                        "[[instructions.{}]]: VEX reg 操作数 {i} 既非 reg/rm 也无 vvvv 可用",
+                        "[inst.{}]: VEX reg 操作数 {i} 既非 reg/rm 也无 vvvv 可用",
                         info.inst.name
                     ));
                 }
@@ -1498,7 +1498,7 @@ fn gen_vlen_vex_decode_arm(
             OperandKind::Mem => {
                 if !is_mem {
                     return Err(format!(
-                        "[[instructions.{}]]: VEX mem operand {i} requires a mem modrm form",
+                        "[inst.{}]: VEX mem operand {i} requires a mem modrm form",
                         info.inst.name
                     ));
                 }
@@ -1527,7 +1527,7 @@ fn gen_vlen_vex_decode_arm(
             }
             _ => {
                 return Err(format!(
-                    "[[instructions.{}]]: VEX operand kind {:?} unsupported",
+                    "[inst.{}]: VEX operand kind {:?} unsupported",
                     info.inst.name, slot.kind
                 ));
             }
@@ -1666,7 +1666,7 @@ fn gen_vlen_evex_decode_arm(
                 // 同编码侧的索引推导（EVEX：reg 字段额外带 R'=__r4）
                 let mm = ctx.modrm.ok_or_else(|| {
                     format!(
-                        "[[instructions.{}]]: EVEX form 需要 modrm 映射",
+                        "[inst.{}]: EVEX form 需要 modrm 映射",
                         info.inst.name
                     )
                 })?;
@@ -1690,7 +1690,7 @@ fn gen_vlen_evex_decode_arm(
                     field_ctor_expr(slot, quote! { __vvvv as u32 })
                 } else {
                     return Err(format!(
-                        "[[instructions.{}]]: EVEX reg 操作数 {i} 既非 reg/rm 也无 vvvv 可用",
+                        "[inst.{}]: EVEX reg 操作数 {i} 既非 reg/rm 也无 vvvv 可用",
                         info.inst.name
                     ));
                 }
@@ -1721,7 +1721,7 @@ fn gen_vlen_evex_decode_arm(
             }
             _ => {
                 return Err(format!(
-                    "[[instructions.{}]]: EVEX operand kind {:?} unsupported",
+                    "[inst.{}]: EVEX operand kind {:?} unsupported",
                     info.inst.name, slot.kind
                 ));
             }
@@ -2088,14 +2088,14 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             let need_modrm = || {
                 ctx.modrm.ok_or_else(|| {
                     format!(
-                        "[[instructions.{}]]: reg/mem 操作数需要 modrm 映射",
+                        "[inst.{}]: reg/mem 操作数需要 modrm 映射",
                         info.inst.name
                     )
                 })
             };
             match slot.kind {
                 OperandKind::Bits => Err(format!(
-                    "[[instructions.{}]]: kind = \"bits\" 暂不支持变长（prefix_scan）ISA",
+                    "[inst.{}]: kind = \"bits\" 暂不支持变长（prefix_scan）ISA",
                     info.inst.name
                 )),
                 OperandKind::Reg => {
@@ -2145,7 +2145,7 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                         })
                     } else {
                         Err(format!(
-                            "[[instructions.{}]]: mem 操作数 {i} 不是 modrm.rm 指向的内存操作数",
+                            "[inst.{}]: mem 操作数 {i} 不是 modrm.rm 指向的内存操作数",
                             info.inst.name
                         ))
                     }

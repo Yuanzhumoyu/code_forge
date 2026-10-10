@@ -635,19 +635,21 @@ mod tests {
     #[test]
     fn array_of_tables_appends_in_include_order() {
         let d = tmp_dir();
-        let _inc = write(&d, "a_insts.toml", "[[instructions]]\nname = \"A\"\n");
+        let _inc = write(&d, "a_insts.toml", "[inst.A]\n");
         let root = write(
             &d,
             "a_root.toml",
-            "include = [\"a_insts.toml\"]\n[[instructions]]\nname = \"B\"\n",
+            "include = [\"a_insts.toml\"]\n[inst.B]\n",
         );
         let spec = LoadedSpec::load(&root).unwrap();
-        let v: toml::Table = toml::from_str(&spec.text).unwrap();
-        let insts = v.get("instructions").and_then(|x| x.as_array()).unwrap();
-        let names: Vec<&str> = insts
-            .iter()
-            .filter_map(|i| i.get("name").and_then(|n| n.as_str()))
-            .collect();
-        assert_eq!(names, vec!["A", "B"], "include 序在前");
+        // v21 W10：指令是 `[inst.<名>]` **表**（不再是数组）⇒ 顺序由**合并文本里的出现位置**
+        // 决定（解析期按源文本序恢复声明序）。这里直接查文本位置。
+        let a = spec.text.find("[inst.A]").expect("A 应在合并文本里");
+        let b = spec.text.find("[inst.B]").expect("B 应在合并文本里");
+        assert!(
+            a < b,
+            "include 序在前：A(@{a}) 应在 B(@{b}) 之前\n{}",
+            spec.text
+        );
     }
 }

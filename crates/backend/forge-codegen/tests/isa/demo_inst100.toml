@@ -72,21 +72,18 @@ fields = [
 
 # 全字 0（op = 0 且其余位由"补集零 guard"约束为 0）
 # 注意：asm 模板里没有操作数占位符 → 这里也不能声明 ops（否则汇编器无从取值）
-[[instructions]]
-name = "NOP100"
+[inst.NOP100]
 form = "R2"
 opcode = 0
 asm = "nop"
 
-[[instructions]]
-name = "ADD100"
+[inst.ADD100]
 form = "R3"
 opcode = 1
 ops = ["dst:r4:out", "src:r4", "src2:r4"]
 asm = "add {dst}, {src}, {src2}"
 
-[[instructions]]
-name = "MOV100"
+[inst.MOV100]
 form = "R2"
 opcode = 2
 ops = ["dst:r4:out", "src:r4"]

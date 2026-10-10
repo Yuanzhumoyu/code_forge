@@ -212,7 +212,7 @@ fn stripping_the_data_width_makes_the_cross_bank_path_fail_closed() {
     // 否则连"浮点进浮点"也没了，测不到跨类那一支）。
     let mut mutated = src.clone();
     for inst in ["FMV_W_X", "FMV_D_X"] {
-        mutated = strip_data_width_after(&mutated, &format!("name = \"{inst}\""));
+        mutated = strip_data_width_after(&mutated, &format!("[inst.{inst}]"));
     }
     for inst in ["FMV_X_W", "FMV_X_D"] {
         mutated = strip_row_data_width(&mutated, inst);
@@ -251,14 +251,14 @@ fn two_candidates_of_the_same_width_are_rejected_with_the_list() {
     let (src, _) = read_isa_file("isa/x86.toml").expect("读 x86 谱");
     // 只改 MOVD_FREG_IREG 那一处（按指令名定位，避免误伤别的 32 位档）：
     // 把它的 `data_width = 32` 换成 64，与 MOVQ_XMM_R64 撞车。
-    let mutated = strip_data_width_after(&src, "name = \"MOVD_FREG_IREG\"");
+    let mutated = strip_data_width_after(&src, "[inst.MOVD_FREG_IREG]");
     let mutated = mutated.replacen(
-        "name = \"MOVD_FREG_IREG\"",
-        "name = \"MOVD_FREG_IREG\"\ndata_width = 64",
+        "[inst.MOVD_FREG_IREG]",
+        "[inst.MOVD_FREG_IREG]\ndata_width = 64",
         1,
     );
     assert!(
-        mutated.contains("MOVD_FREG_IREG\"\ndata_width = 64"),
+        mutated.contains("[inst.MOVD_FREG_IREG]\ndata_width = 64"),
         "变异没生效"
     );
     let err = flat_mut(&mutated, "x86", "isa/x86.toml").expect_err("同形状同宽度两条候选必须报错");
@@ -276,12 +276,12 @@ fn two_candidates_of_the_same_width_are_rejected_with_the_list() {
 fn data_width_on_a_non_mover_shape_is_rejected() {
     let (src, _) = read_isa_file("isa/x86.toml").expect("读 x86 谱");
     let mutated = src.replacen(
-        "name = \"CMPXCHG_MEM_R\"",
-        "name = \"CMPXCHG_MEM_R\"\ndata_width = 64",
+        "[inst.CMPXCHG_MEM_R]",
+        "[inst.CMPXCHG_MEM_R]\ndata_width = 64",
         1,
     );
     assert!(
-        mutated.contains("CMPXCHG_MEM_R\"\ndata_width = 64"),
+        mutated.contains("[inst.CMPXCHG_MEM_R]\ndata_width = 64"),
         "变异没生效"
     );
     let err =

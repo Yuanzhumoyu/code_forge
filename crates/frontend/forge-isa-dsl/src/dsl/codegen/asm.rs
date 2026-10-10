@@ -247,7 +247,7 @@ pub(crate) fn parse_template(tpl: &str) -> Result<Vec<Seg>, String> {
 
 /// 校验段序列：占位符索引越界、连续占位符无字面分隔。
 fn validate_segs(segs: &[Seg], info: &InstInfo) -> Result<(), String> {
-    let ctx = || format!("[[instructions.{}]] asm", info.inst.name);
+    let ctx = || format!("[inst.{}] asm", info.inst.name);
     let mut prev_op = false;
     for seg in segs {
         match seg {

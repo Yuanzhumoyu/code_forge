@@ -61,7 +61,7 @@ pub const SECTIONS: &[Section] = &[
             "operand",
             "enum",
             "form",
-            "instructions",
+            "inst",
             "family",
             "lower",
             "asm",
@@ -229,9 +229,9 @@ pub const SECTIONS: &[Section] = &[
         doc: "编码形式：可选的键预设（指令可逐键覆盖）；v21 W10：**表头即形式名**（不再写 `name`）",
     },
     Section {
-        path: "[[instructions]]",
+        path: "[inst.<名字>]",
         model: "Instruction",
-        required: &["name", "asm"],
+        required: &["asm"],
         optional: &[
             "form",
             "opcode",
@@ -258,7 +258,7 @@ pub const SECTIONS: &[Section] = &[
         // 编码键是 `#[serde(flatten)]` 的 EncKeys：直接在指令上写（不写 `enc = {...}`）。
         flatten: ENC_KEYS,
         additional: false,
-        doc: "指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据）",
+        doc: "指令（v21 W10：**表头即指令名**，不再写 `name`）：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据）",
     },
     Section {
         path: "[asm.reloc.<名>]",
@@ -509,7 +509,7 @@ pub fn schema_json() -> String {
         ("operands", "[operand.<名字>]", true),
         ("enums", "[enum.<表名>]", true),
         ("form", "[form.<名字>]", true),
-        ("instructions", "[[instructions]]", true),
+        ("inst", "[inst.<名字>]", true),
         ("derive", "[[derive]]", true),
         ("asm", "", false),
         ("lowering", "[[lowering]]", true),

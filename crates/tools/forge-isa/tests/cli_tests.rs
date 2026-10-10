@@ -77,8 +77,7 @@ count = 8
 [operand.g]
 kind = "reg"
 class = "gpr32"
-[[instructions]]
-name = "I"
+[inst.I]
 form = "NOPE"
 opcode = 1
 asm = "i"
@@ -220,7 +219,7 @@ fn validate_accepts_schema_comment() {
     // `#:schema` 只是 TOML 注释：不得影响解析（编辑器补全用）。
     let spec = temp_spec(
         "with_schema_comment.toml",
-        "#:schema ../../../isa-dsl.schema.json\n[meta]\nname = \"cmt\"\n[encoding]\nkind = \"fixed\"\nbits = 16\n[reg.gpr32]\ncount = 8\n[operand.g]\nkind = \"reg\"\nclass = \"gpr32\"\n[[instructions]]\nname = \"N\"\nform = \"R\"\nopcode = 1\nops = [\"d:g:out\"]\nasm = \"n {d}\"\n[form.R]\nfields = [\n  \"u8[7:0]:op\",\n  \"u3[10:8]:rd\",\n]\n",
+        "#:schema ../../../isa-dsl.schema.json\n[meta]\nname = \"cmt\"\n[encoding]\nkind = \"fixed\"\nbits = 16\n[reg.gpr32]\ncount = 8\n[operand.g]\nkind = \"reg\"\nclass = \"gpr32\"\n[inst.N]\nform = \"R\"\nopcode = 1\nops = [\"d:g:out\"]\nasm = \"n {d}\"\n[form.R]\nfields = [\n  \"u8[7:0]:op\",\n  \"u3[10:8]:rd\",\n]\n",
     );
     let out = run(&["validate", spec.to_str().unwrap()]);
     let _ = std::fs::remove_file(&spec);
@@ -322,7 +321,7 @@ fn diagnostics_point_at_the_included_file() {
     let (dir, root) = temp_multi_file(
         "diag",
         "[reg.gpr32]\ncount = 4\n\n[operand.r]\nkind = \"reg\"\nclass = \"nope\"\n",
-        "include = [\"frag.toml\"]\n\n[meta]\nname = \"multi\"\n\n[encoding]\nkind = \"fixed\"\nbits = 16\n\n[[instructions]]\nname = \"BAD\"\nopcode = 1\nops = [\"d:r:out\"]\nasm = \"bad {d}\"\n",
+        "include = [\"frag.toml\"]\n\n[meta]\nname = \"multi\"\n\n[encoding]\nkind = \"fixed\"\nbits = 16\n\n[inst.BAD]\nopcode = 1\nops = [\"d:r:out\"]\nasm = \"bad {d}\"\n",
     );
     let out = run(&["validate", root.to_str().unwrap()]);
     assert_eq!(out.code, 1, "应报错：{}", out.stdout);

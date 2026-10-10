@@ -244,7 +244,7 @@ pub(crate) fn gen_machine_inst(
             for r in implicit {
                 let idx = name_to_idx.get(r.as_str()).copied().ok_or_else(|| {
                     format!(
-                        "[[instructions.{}]].implicit_regs: 物理寄存器名 \"{r}\" 不在主 GPR 组 \
+                        "[inst.{}].implicit_regs: 物理寄存器名 \"{r}\" 不在主 GPR 组 \
                          [reg.{gpr_clobber_class}] 内（生成期 fail-closed：静默丢弃会让 regalloc \
                          分配被隐式破坏的寄存器）",
                         info.inst.name
@@ -683,7 +683,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
             .find(|r| r.name == reloc_name)
             .ok_or_else(|| {
                 format!(
-                    "[[instructions.{}]]: reloc '{reloc_name}' 未在 [[reloc]] 声明",
+                    "[inst.{}]: reloc '{reloc_name}' 未在 [[reloc]] 声明",
                     info.inst.name
                 )
             })?;
@@ -696,7 +696,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
             .map(|(_, fid, _, _)| fid.clone())
             .ok_or_else(|| {
                 format!(
-                    "[[instructions.{}]]: reloc '{reloc_name}' 绑定的槽 '{}' 不在该指令的操作数里",
+                    "[inst.{}]: reloc '{reloc_name}' 绑定的槽 '{}' 不在该指令的操作数里",
                     info.inst.name, def.operand
                 )
             })?;

@@ -612,8 +612,7 @@ fields = [
   "u4[11:8]:rd",
   "u4[7:4]:rs1",
 ]
-[[instructions]]
-name = "MOV"
+[inst.MOV]
 form = "RR"
 opcode = 1
 ops = ["dst:r:out", "src:r"]
@@ -702,7 +701,7 @@ rows = [
             .replace("{ inst = \"SUB\", opcode = 3 }", "{ inst = \"SUB\", opcode = 7 }")
             .replace(
                 "[family.ALU]",
-                "[[instructions]]\nname = \"NOP\"\nform = \"RR\"\nopcode = 0\nops = [\"dst:r:out\", \"src:r\"]\nasm = \"nop {dst}, {src}\"\n\n[family.ALU]",
+                "[inst.NOP]\nform = \"RR\"\nopcode = 0\nops = [\"dst:r:out\", \"src:r\"]\nasm = \"nop {dst}, {src}\"\n\n[family.ALU]",
             );
         let d = diff(SPEC, &other).expect("合法");
         assert_eq!(d.added, vec!["NOP"]);

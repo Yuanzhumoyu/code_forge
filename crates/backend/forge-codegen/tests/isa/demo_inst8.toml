@@ -84,22 +84,19 @@ fields = [
 # ─────────────────────────── 指令 ───────────────────────────
 
 # 全字常量 0 → 与 op=1/2/3 的指令互不冲突（补集零 guard）
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "W"
 opcode = 0
 asm = "nop"
 
-[[instructions]]
-name = "ADD8"
+[inst.ADD8]
 group = "add"
 form = "R3"
 opcode = 1
 ops = ["dst:r2:out", "src:r2", "src2:r2"]
 asm = "add {dst}, {src}, {src2}"
 
-[[instructions]]
-name = "MOV8"
+[inst.MOV8]
 group = "mov"
 data_width = 8
 form = "R2"
@@ -107,8 +104,7 @@ opcode = 2
 ops = ["dst:r2:out", "src:r2"]
 asm = "mov {dst}, {src}"
 
-[[instructions]]
-name = "BRZ8"
+[inst.BRZ8]
 form = "B"
 opcode = 3
 effect = ["Branch"]

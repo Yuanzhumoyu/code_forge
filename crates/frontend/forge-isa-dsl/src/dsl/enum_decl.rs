@@ -140,8 +140,7 @@ bits = 12
 enum = "csr"
 [form.R]
 fields = ["u4[15:12]:opcode", "u4[11:8]:rd"]
-[[instructions]]
-name = "N"
+[inst.N]
 form = "R"
 opcode = 1
 ops = ["dst:g:out"]

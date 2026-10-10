@@ -40,8 +40,7 @@ fields = [
   "u5[12:8]:imm",
 ]
 
-[[instructions]]
-name = "FV"
+[inst.FV]
 form = "F"
 opcode = 0x10
 {instruction}

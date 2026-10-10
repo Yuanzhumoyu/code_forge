@@ -42,8 +42,7 @@ fields = [
   "u3[14:12]:funct3",
 ]
 
-[[instructions]]
-name = "ADD"
+[inst.ADD]
 form = "R"
 group = "add"
 opcode = 0x33
@@ -159,7 +158,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "指令 match 引用未声明字段",
             plus(
-                "[[instructions]]\nname = \"BAD2\"\nform = \"R\"\nopcode = 0x33\n\
+                "[inst.BAD2]\nform = \"R\"\nopcode = 0x33\n\
                  match = { nope = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"bad2 {dst}\"",
             ),
             "DSL-INST",
@@ -174,7 +173,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "指令引用未声明槽",
             plus(
-                "[[instructions]]\nname = \"SUB\"\nform = \"R\"\nopcode = 0x33\n\
+                "[inst.SUB]\nform = \"R\"\nopcode = 0x33\n\
                  match = { funct3 = 0 }\nops = [\"dst:nope:out\"]\nasm = \"sub {dst}\"",
             ),
             "DSL-INST",
@@ -183,11 +182,12 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "指令重名",
             plus(
-                "[[instructions]]\nname = \"ADD\"\nform = \"R\"\nopcode = 0x33\n\
+                "[inst.ADD]\nform = \"R\"\nopcode = 0x33\n\
                  match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"add {dst}\"",
             ),
-            "DSL-INST",
-            "duplicate instruction name",
+            // v21 W10：表头即指令名 ⇒ 重名由 TOML 拒绝（不再有编译期重名诊断）。
+            "DSL-TOML",
+            "duplicate key",
         ),
         (
             "指令定宽字段未声明",
@@ -218,7 +218,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "引用名与指令名冲突",
             plus(
-                "[[instructions]]\nname = \"SUB\"\ngroup = \"ADD\"\nform = \"R\"\nopcode = 0x33\n\
+                "[inst.SUB]\ngroup = \"ADD\"\nform = \"R\"\nopcode = 0x33\n\
                  match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"sub {dst}\"",
             ),
             "DSL-INST",
@@ -227,7 +227,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "引用名为空",
             plus(
-                "[[instructions]]\nname = \"SUB\"\ngroup = \"\"\nform = \"R\"\nopcode = 0x33\n\
+                "[inst.SUB]\ngroup = \"\"\nform = \"R\"\nopcode = 0x33\n\
                  match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"sub {dst}\"",
             ),
             "DSL-INST",
@@ -304,7 +304,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "角色名拼错（v20 A4 的 frame_set 写成 frame_sett）",
             plus(
-                "[[instructions]]\nname = \"SETF\"\nform = \"R\"\nopcode = 0x7F\n\
+                "[inst.SETF]\nform = \"R\"\nopcode = 0x7F\n\
                  match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"setf {dst}\"\n\
                  roles = [\"frame_sett\"]",
             ),
@@ -397,24 +397,21 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
 /// 位置上必须精确的"头条用例"（消息 needle 与源码 needle 不同的那几条）。
 #[test]
 fn headline_positions_are_exact() {
-    // 重名：诊断必须落在**第二处**声明上，并附注第一处。
+    // 重名：v21 W10 起**表头即指令名** ⇒ 重复表头由 **TOML 自身**拒绝（不再是校验期诊断），
+    // 且错误位置落在第二处声明上。
     let dup = plus(
-        "[[instructions]]\nname = \"ADD\"\nform = \"R\"\nopcode = 0x33\n\
+        "[inst.ADD]\nform = \"R\"\nopcode = 0x33\n\
          match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"add {dst}\"",
     );
     let d = errs(&dup)
         .into_iter()
-        .find(|d| d.msg.contains("duplicate instruction name"))
-        .expect("应有重名诊断");
+        .find(|d| d.code == "DSL-TOML")
+        .expect("重复表头应由 TOML 报错");
     assert_eq!(
         d.line,
-        line_of_last(&dup, "name = \"ADD\""),
-        "重名诊断应指向第二处声明（实际消息：{}）",
+        line_of_last(&dup, "[inst.ADD]"),
+        "重名应指向第二处表头（实际消息：{}）",
         d.msg
-    );
-    assert!(
-        d.notes.iter().any(|n| n.contains("同名声明")),
-        "重名诊断应附注另一处声明位置：{d:#?}"
     );
 
     // emit：序/尾声的键已删除（v20 A4）——写了就报，且指向那一行。
@@ -460,12 +457,11 @@ fn three_independent_errors_are_reported_together() {
     // S0 基线：此处只报 1 条（fail-fast）。S1 起三条一次给全。
     let doc = BASE.replace("form = \"R\"", "form = \"NOPE\"")
         + r#"
-[[instructions]]
-name = "ADD"
+[inst.ADDNEW]
 form = "R"
 opcode = 0x33
 match = { funct3 = 0 }
-ops = ["dst:gpr:out"]
+ops = ["dst:nope:out"]
 asm = "add {dst}"
 
 [[lowering]]
@@ -499,22 +495,23 @@ when = { eq = ["rd_width", 32] }
 #[test]
 fn duplicate_declaration_points_at_both_lines() {
     let doc = plus(
-        "[[instructions]]\nname = \"ADD\"\nform = \"R\"\nopcode = 0x33\n\
+        "[inst.ADD]\nform = \"R\"\nopcode = 0x33\n\
          match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"add {dst}\"",
     );
+    // v21 W10：重复表头由 TOML 拒绝（不再是"同名声明也出现在…"的附注）。
     let dups = errs(&doc)
         .into_iter()
-        .find(|d| d.msg.contains("duplicate instruction name"))
-        .expect("应有重名诊断");
-    // 第一处声明（BASE 里的 ADD）与第二处（追加的 ADD）都要给出来。
+        .find(|d| d.code == "DSL-TOML")
+        .expect("重复表头应由 TOML 报错");
     assert!(
-        dups.notes.iter().any(|n| n.contains("同名声明")),
-        "重名诊断应附注另一处声明位置，实际：{dups:#?}"
+        dups.msg.contains("ADD") || dups.msg.contains("duplicate"),
+        "TOML 重名错误应点名 ADD：{}",
+        dups.msg
     );
     assert_eq!(
         dups.line,
-        line_of_last(&doc, "name = \"ADD\""),
-        "重名诊断应指向第二处声明"
+        line_of_last(&doc, "[inst.ADD]"),
+        "重名应指向第二处表头"
     );
 }
 
@@ -524,7 +521,7 @@ fn diagnostics_are_capped_with_a_tail_note() {
     let mut extra = String::new();
     for i in 0..40 {
         extra.push_str(&format!(
-            "\n[[instructions]]\nname = \"X{i}\"\nform = \"NOPE\"\nopcode = 0x33\n\
+            "\n[inst.X{i}]\nform = \"NOPE\"\nopcode = 0x33\n\
              match = {{ funct3 = 0 }}\nops = [\"dst:gpr:out\"]\nasm = \"x {{dst}}\"\n"
         ));
     }

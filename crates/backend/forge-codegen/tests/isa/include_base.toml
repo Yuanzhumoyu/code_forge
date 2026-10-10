@@ -18,8 +18,7 @@ fields = [
   "u4[7:4]:rs1",
 ]
 
-[[instructions]]
-name = "IADD"
+[inst.IADD]
 form = "RR"
 opcode = 1
 ops = ["dst:r:out", "src:r"]

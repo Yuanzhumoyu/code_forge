@@ -471,7 +471,7 @@ fn bitfield_overlaps(m: &IsaModel, idx: &DeclIndex) -> Vec<DiagLine> {
                 };
                 out.push(anchor(
                     idx,
-                    &format!("[[instructions.{}]]", inst.name),
+                    &format!("[inst.{}]", inst.name),
                     "LINT-BITFIELD-OVERLAP",
                     format!(
                         "位域 '{a}' [{}, {}) 与 '{b}' [{}, {}) 在同一条指令的字段视图里重叠——\
@@ -513,7 +513,7 @@ fn unassigned_bits(m: &IsaModel, idx: &DeclIndex) -> Vec<DiagLine> {
         let shown: Vec<String> = gaps.iter().map(|(a, b)| format!("[{a}, {b})")).collect();
         out.push(anchor(
             idx,
-            &format!("[[instructions.{}]]", inst.name),
+            &format!("[inst.{}]", inst.name),
             "LINT-UNASSIGNED-BITS",
             format!(
                 "指令字里有 {} 位没有任何位域覆盖：{}——按缺省 0 发射。若是保留位（必须为 0）\
@@ -595,7 +595,7 @@ fn asm_ambiguity(m: &IsaModel, idx: &DeclIndex) -> Vec<DiagLine> {
         {
             out.push(anchor(
                 idx,
-                &format!("[[instructions.{}]]", inst.name),
+                &format!("[inst.{}]", inst.name),
                 "LINT-ASM-AMBIG",
                 format!(
                     "与 `[{other}]` 同为助记符 `{}` + 同操作数类，两条写法都能匹配 ⇒ \
@@ -738,7 +738,7 @@ fn unused_refs(m: &IsaModel, idx: &DeclIndex) -> Vec<DiagLine> {
         }
         out.push(anchor(
             idx,
-            &format!("[[instructions.{}]]", inst.name),
+            &format!("[inst.{}]", inst.name),
             "LINT-REF-UNUSED",
             format!(
                 "ref '{r}' 没有被任何 lowering/pattern/emit/pseudo/spill 模板行首引用——\
@@ -881,8 +881,7 @@ fields = [
   "u3[2:0]:funct3",
 ]
 
-[[instructions]]
-name = "ADD"
+[inst.ADD]
 form = "RR"
 opcode = 1
 ops = ["dst:g:out"]
@@ -993,7 +992,7 @@ rows = [
         assert!(
             msg.contains("'funct3'")
                 && msg.contains("'over'")
-                && msg.contains("[[instructions.T1]]"),
+                && msg.contains("[inst.T1]"),
             "消息要点名两条字段与指令：{msg}"
         );
         assert!(hits[0].line > 1, "锚到了行列：{hit:?}", hit = hits[0]);
@@ -1016,7 +1015,7 @@ rows = [
     fn reports_unreferenced_ref_only_when_opted_in() {
         let doc = |lowering: &str, reference: &str| {
             format!(
-                "{SPEC}\n[[instructions]]\nname = \"MOV\"\nform = \"RR\"\nopcode = 3\n\
+                "{SPEC}\n[inst.MOV]\nform = \"RR\"\nopcode = 3\n\
                  ops = [\"dst:g:out\"]\nasm = \"mov {{dst}}\"\ngroup = \"{reference}\"\n{lowering}"
             )
         };
@@ -1164,7 +1163,7 @@ name = "Resume"
             report.findings
         );
         assert!(
-            hits.iter().any(|d| d.msg.contains("[[instructions.ADD]]")),
+            hits.iter().any(|d| d.msg.contains("[inst.ADD]")),
             "消息要点名指令：{hits:?}"
         );
         // 全覆盖的指令不报：把 `RR` form 的 opcode 字段换成整字常量 `word`（覆盖 [0,16)，

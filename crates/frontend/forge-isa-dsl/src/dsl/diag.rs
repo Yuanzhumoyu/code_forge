@@ -15,7 +15,7 @@
 //! ——重复声明这类错误因此能一次指出两处。
 //!
 //! 消息格式约定（沿用 既有约定，校验器只需照旧写前缀）：
-//! `[[instructions.NAME]]: …` / `[[forms.NAME]]: …` / `[[operand_slots]] #i ('NAME'): …` /
+//! `[inst.NAME]: …` / `[[forms.NAME]]: …` / `[[operand_slots]] #i ('NAME'): …` /
 //! `[[lowering.OP]]: …` / `[reg.NAME]: …` / `[stack].key …` / `[[pattern]] #i: …`。
 
 use std::collections::BTreeMap;
@@ -189,6 +189,9 @@ pub(crate) fn section_code(kind: &str) -> &'static str {
         "conventions" => "DSL-CONV",
         "operand_slots" => "DSL-SLOT",
         "forms" => "DSL-FORM",
+        // v21 W10：表头即名字的两张表（`[form.<名>]` / `[inst.<名>]`），码与旧节一致。
+        "form" => "DSL-FORM",
+        "inst" => "DSL-INST",
         "instructions" => "DSL-INST",
         "templates" => "DSL-TEMPLATE",
         // v21 W5：族降级来的载体锚到 `[family.<名>]`，码与模板同族。
@@ -498,7 +501,7 @@ fn parse_prefix(msg: &str) -> (Option<String>, Option<String>) {
     };
     let head = &body[..end];
     match head.split_once('.') {
-        // `[reg.gpr8]` / `[[instructions.ADD]]` / `[[spill.GPR]]`
+        // `[reg.gpr8]` / `[inst.ADD]` / `[[spill.GPR]]`
         Some((k, n)) => {
             // v21 W9：`[machine.spill.fpr].load` 这类前缀按**两段 kind** 解析
             // （与 DeclIndex 的额外索引一致），码仍由 `section_code` 给。
@@ -544,12 +547,10 @@ names = ["A0", "A1"]
 
 [form.RR]
 
-[[instructions]]
-name = "ADD"
+[inst.ADD]
 form = "RR"
 
-[[instructions]]
-name = "ADD"
+[inst.ADD]
 
 [[lowering]]
 op = "Iadd"
@@ -559,18 +560,18 @@ insts = ["ADD {out}, {0}, {1}"]
     #[test]
     fn index_finds_declarations_exactly() {
         let idx = DeclIndex::build(DOC);
-        let a = idx.anchor("[[instructions.ADD]]: bad");
-        assert_eq!((a.line, a.col), (13, 1), "ADD 首次声明在第 13 行");
+        let a = idx.anchor("[inst.ADD]: bad");
+        assert_eq!((a.line, a.col), (12, 1), "ADD 首次声明在第 12 行");
         assert_eq!(a.code, "DSL-INST");
         assert_eq!(
             a.other_decls,
-            vec![(17, 1)],
+            vec![(15, 1)],
             "重复声明应给出第二处位置：{a:?}"
         );
         let f = idx.anchor("[form.RR]: bad");
         assert_eq!((f.line, f.col), (10, 1));
         let l = idx.anchor("[[lowering.Iadd]]: bad");
-        assert_eq!((l.line, l.col), (20, 1));
+        assert_eq!((l.line, l.col), (18, 1));
         let r = idx.anchor("[reg.gpr8]: bad");
         assert_eq!((r.line, r.col), (7, 1));
         let s = idx.anchor("[stack].align must be > 0");
@@ -580,7 +581,7 @@ insts = ["ADD {out}, {0}, {1}"]
     #[test]
     fn unknown_name_falls_back_to_section() {
         let idx = DeclIndex::build(DOC);
-        let a = idx.anchor("[[instructions.NOPE]]: bad");
+        let a = idx.anchor("[inst.NOPE]: bad");
         assert_eq!(
             (a.line, a.col),
             (12, 1),
@@ -603,18 +604,18 @@ insts = ["ADD {out}, {0}, {1}"]
     fn diags_render_multi_line_and_cap() {
         let idx = DeclIndex::build(DOC);
         let mut d = Diags::new();
-        d.push_anchored(&idx, "[[instructions.ADD]]: 第一条");
+        d.push_anchored(&idx, "[inst.ADD]: 第一条");
         d.push_anchored(&idx, "[[lowering.Iadd]]: 第二条");
         let text = d.render(std::path::Path::new("/tmp/x.toml"));
         let lines: Vec<&str> = text.lines().collect();
         assert!(
-            lines[0].starts_with("/tmp/x.toml:13:1: DSL-INST: [[instructions.ADD]]: 第一条"),
+            lines[0].starts_with("/tmp/x.toml:12:1: DSL-INST: [inst.ADD]: 第一条"),
             "{text}"
         );
         assert!(
             lines
                 .iter()
-                .any(|l| l.contains("注：同名声明也出现在 17:1")),
+                .any(|l| l.contains("注：同名声明也出现在 15:1")),
             "{text}"
         );
         assert!(

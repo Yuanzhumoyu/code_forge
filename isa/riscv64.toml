@@ -896,8 +896,7 @@ rows = [
 ]
 # ─────────────────────────── 指令（顺序 = v11 声明序）───────────────────────────
 # ADDI 复制（收参用）；与 ADDI 同编码（imm=0），解码首匹配
-[[instructions]]
-name = "MOV_RM8_R64"
+[inst.MOV_RM8_R64]
 data_width = 64
 form = "I"
 opcode = 0x13
@@ -908,8 +907,7 @@ asm = "mv {dst}, {src}"
 
 # ── R 型整数（opcode 0x33）──
 
-[[instructions]]
-name = "FSGNJ_S"
+[inst.FSGNJ_S]
 form = "R"
 opcode = 0x53
 match = { funct3 = 0, funct7 = 0x10 }
@@ -922,8 +920,7 @@ data_width = 32
 # 双精度档：`fsgnj.d rd, rs, rs`（伪指令 `fmv.d`）——`data_width = 64`。2026-10-01 补：
 # 此前谱里只有单精度 `FSGNJ_S`，f64 的寄存器搬移无处申报 ⇒ riscv 的浮点参数/返回/变参的
 # 浮点支**全部编不出来**（矩阵里三条浮点用例因此 Skip）。
-[[instructions]]
-name = "FSGNJ_D"
+[inst.FSGNJ_D]
 form = "R"
 opcode = 0x53
 match = { funct3 = 0, funct7 = 0x11 }
@@ -931,16 +928,14 @@ ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "fsgnj.d {dst}, {src}, {src2}"
 data_width = 64
 
-[[instructions]]
-name = "FSGNJN_S"
+[inst.FSGNJN_S]
 form = "R"
 opcode = 0x53
 match = { funct3 = 1, funct7 = 0x10 }
 ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
 asm = "fsgnjn.s {dst}, {src}, {src2}"
 
-[[instructions]]
-name = "FSGNJX_S"
+[inst.FSGNJX_S]
 form = "R"
 opcode = 0x53
 match = { funct3 = 2, funct7 = 0x10 }
@@ -1001,40 +996,35 @@ asm = "fsgnjx.s {dst}, {src}, {src2}"
 # 的 `fcvt.*` 省略写法全是 funct3 0）。两者都是上游自己的 `CHECK-ASM: encoding`。
 # L/LU 那 8 条（`fcvt.l.s`、`fcvt.s.l`…）是 **RV64-only**，标 `only_variants`。
 
-[[instructions]]
-name = "FCVT_W_S"
+[inst.FCVT_W_S]
 form = "R_RM2"
 opcode = 0x53
 match = { funct7 = 0x60, rs2 = 0 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.w.s {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_W_S_RNE"
+[inst.FCVT_W_S_RNE]
 form = "R"
 opcode = 0x53
 match = { funct3 = 0, funct7 = 0x60, rs2 = 0 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.w.s {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_WU_S"
+[inst.FCVT_WU_S]
 form = "R_RM2"
 opcode = 0x53
 match = { funct7 = 0x60, rs2 = 1 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.wu.s {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_WU_S_RNE"
+[inst.FCVT_WU_S_RNE]
 form = "R"
 opcode = 0x53
 match = { funct3 = 0, funct7 = 0x60, rs2 = 1 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.wu.s {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_L_S"
+[inst.FCVT_L_S]
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
@@ -1042,8 +1032,7 @@ match = { funct7 = 0x60, rs2 = 2 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.l.s {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_L_S_RNE"
+[inst.FCVT_L_S_RNE]
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
@@ -1051,8 +1040,7 @@ match = { funct3 = 0, funct7 = 0x60, rs2 = 2 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.l.s {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_LU_S"
+[inst.FCVT_LU_S]
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
@@ -1060,8 +1048,7 @@ match = { funct7 = 0x60, rs2 = 3 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.lu.s {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_LU_S_RNE"
+[inst.FCVT_LU_S_RNE]
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
@@ -1069,40 +1056,35 @@ match = { funct3 = 0, funct7 = 0x60, rs2 = 3 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.lu.s {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_W_D"
+[inst.FCVT_W_D]
 form = "R_RM2"
 opcode = 0x53
 match = { funct7 = 0x61, rs2 = 0 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.w.d {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_W_D_RNE"
+[inst.FCVT_W_D_RNE]
 form = "R"
 opcode = 0x53
 match = { funct3 = 0, funct7 = 0x61, rs2 = 0 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.w.d {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_WU_D"
+[inst.FCVT_WU_D]
 form = "R_RM2"
 opcode = 0x53
 match = { funct7 = 0x61, rs2 = 1 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.wu.d {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_WU_D_RNE"
+[inst.FCVT_WU_D_RNE]
 form = "R"
 opcode = 0x53
 match = { funct3 = 0, funct7 = 0x61, rs2 = 1 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.wu.d {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_L_D"
+[inst.FCVT_L_D]
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
@@ -1110,8 +1092,7 @@ match = { funct7 = 0x61, rs2 = 2 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.l.d {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_L_D_RNE"
+[inst.FCVT_L_D_RNE]
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
@@ -1119,8 +1100,7 @@ match = { funct3 = 0, funct7 = 0x61, rs2 = 2 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.l.d {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_LU_D"
+[inst.FCVT_LU_D]
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
@@ -1128,8 +1108,7 @@ match = { funct7 = 0x61, rs2 = 3 }
 ops = ["dst:gpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.lu.d {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_LU_D_RNE"
+[inst.FCVT_LU_D_RNE]
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
@@ -1137,40 +1116,35 @@ match = { funct3 = 0, funct7 = 0x61, rs2 = 3 }
 ops = ["dst:gpr:out", "src:fpr"]
 asm = "fcvt.lu.d {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_S_W"
+[inst.FCVT_S_W]
 form = "R_RM2"
 opcode = 0x53
 match = { funct7 = 0x68, rs2 = 0 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.s.w {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_S_W_RNE"
+[inst.FCVT_S_W_RNE]
 form = "R"
 opcode = 0x53
 match = { funct3 = 0, funct7 = 0x68, rs2 = 0 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.s.w {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_S_WU"
+[inst.FCVT_S_WU]
 form = "R_RM2"
 opcode = 0x53
 match = { funct7 = 0x68, rs2 = 1 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.s.wu {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_S_WU_RNE"
+[inst.FCVT_S_WU_RNE]
 form = "R"
 opcode = 0x53
 match = { funct3 = 0, funct7 = 0x68, rs2 = 1 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.s.wu {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_S_L"
+[inst.FCVT_S_L]
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
@@ -1178,8 +1152,7 @@ match = { funct7 = 0x68, rs2 = 2 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.s.l {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_S_L_RNE"
+[inst.FCVT_S_L_RNE]
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
@@ -1187,8 +1160,7 @@ match = { funct3 = 0, funct7 = 0x68, rs2 = 2 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.s.l {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_S_LU"
+[inst.FCVT_S_LU]
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
@@ -1196,8 +1168,7 @@ match = { funct7 = 0x68, rs2 = 3 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.s.lu {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_S_LU_RNE"
+[inst.FCVT_S_LU_RNE]
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
@@ -1205,40 +1176,35 @@ match = { funct3 = 0, funct7 = 0x68, rs2 = 3 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.s.lu {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_D_W"
+[inst.FCVT_D_W]
 form = "R_RM2"
 opcode = 0x53
 match = { funct7 = 0x69, rs2 = 0 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.d.w {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_D_W_RNE"
+[inst.FCVT_D_W_RNE]
 form = "R"
 opcode = 0x53
 match = { funct3 = 0, funct7 = 0x69, rs2 = 0 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.d.w {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_D_WU"
+[inst.FCVT_D_WU]
 form = "R_RM2"
 opcode = 0x53
 match = { funct7 = 0x69, rs2 = 1 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.d.wu {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_D_WU_RNE"
+[inst.FCVT_D_WU_RNE]
 form = "R"
 opcode = 0x53
 match = { funct3 = 0, funct7 = 0x69, rs2 = 1 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.d.wu {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_D_L"
+[inst.FCVT_D_L]
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
@@ -1246,8 +1212,7 @@ match = { funct7 = 0x69, rs2 = 2 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.d.l {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_D_L_RNE"
+[inst.FCVT_D_L_RNE]
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
@@ -1255,8 +1220,7 @@ match = { funct3 = 0, funct7 = 0x69, rs2 = 2 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.d.l {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_D_LU"
+[inst.FCVT_D_LU]
 only_variants = { xlen = [64] }
 form = "R_RM2"
 opcode = 0x53
@@ -1264,8 +1228,7 @@ match = { funct7 = 0x69, rs2 = 3 }
 ops = ["dst:fpr:out", "src:gpr", "rm:rm3"]
 asm = "fcvt.d.lu {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_D_LU_RNE"
+[inst.FCVT_D_LU_RNE]
 only_variants = { xlen = [64] }
 form = "R"
 opcode = 0x53
@@ -1273,40 +1236,35 @@ match = { funct3 = 0, funct7 = 0x69, rs2 = 3 }
 ops = ["dst:fpr:out", "src:gpr"]
 asm = "fcvt.d.lu {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_S_D"
+[inst.FCVT_S_D]
 form = "R_RM2"
 opcode = 0x53
 match = { funct7 = 0x20, rs2 = 1 }
 ops = ["dst:fpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.s.d {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_S_D_RNE"
+[inst.FCVT_S_D_RNE]
 form = "R"
 opcode = 0x53
 match = { funct3 = 0, funct7 = 0x20, rs2 = 1 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "fcvt.s.d {dst}, {src}"
 
-[[instructions]]
-name = "FCVT_D_S"
+[inst.FCVT_D_S]
 form = "R_RM2"
 opcode = 0x53
 match = { funct7 = 0x21, rs2 = 0 }
 ops = ["dst:fpr:out", "src:fpr", "rm:rm3"]
 asm = "fcvt.d.s {dst}, {src}, {rm}"
 
-[[instructions]]
-name = "FCVT_D_S_RNE"
+[inst.FCVT_D_S_RNE]
 form = "R"
 opcode = 0x53
 match = { funct3 = 0, funct7 = 0x21, rs2 = 0 }
 ops = ["dst:fpr:out", "src:fpr"]
 asm = "fcvt.d.s {dst}, {src}"
 
-[[instructions]]
-name = "FMV_W_X"
+[inst.FMV_W_X]
 form = "R"
 opcode = 0x53
 match = { funct3 = 0, funct7 = 0x78 }
@@ -1318,8 +1276,7 @@ asm = "fmv.w.x {dst}, {src}"
 # fail-closed（拿同类搬移顶上会把 FPR 的号当 GPR 号用 = **静默错值**）。
 data_width = 32
 
-[[instructions]]
-name = "FMV_D_X"
+[inst.FMV_D_X]
 form = "R"
 opcode = 0x53
 match = { funct3 = 0, funct7 = 0x79 }
@@ -1327,16 +1284,14 @@ ops = ["dst:fpr:out", "src:gpr"]
 asm = "fmv.d.x {dst}, {src}"
 data_width = 64
 
-[[instructions]]
-name = "FLD"
+[inst.FLD]
 form = "I"
 opcode = 0x07
 match = { funct3 = 3 }
 ops = ["dst:fpr:out", "src:gpr", "imm:imm12"]
 asm = "fld {dst}, {imm}({src})"
 
-[[instructions]]
-name = "FSD"
+[inst.FSD]
 group = "fstore_xlen"
 word_size = 64
 form = "S"
@@ -1348,16 +1303,14 @@ asm = "fsd {src}, {imm}({src2})"
 # 与整数版同理：S 形式是"值寄存器 + 基址寄存器 + 位移立即数"，生成器按形状填 sp 与偏移。
 roles = [{ role = "stack_arg_store", class = "fpr" }]
 
-[[instructions]]
-name = "FLW"
+[inst.FLW]
 form = "I"
 opcode = 0x07
 match = { funct3 = 2 }
 ops = ["dst:fpr:out", "src:gpr", "imm:imm12"]
 asm = "flw {dst}, {imm}({src})"
 
-[[instructions]]
-name = "FSW"
+[inst.FSW]
 group = "fstore_xlen"
 word_size = 32
 form = "S"
@@ -1368,8 +1321,7 @@ asm = "fsw {src}, {imm}({src2})"
 
 # ── I 型整数（opcode 0x13）──
 
-[[instructions]]
-name = "ADDI"
+[inst.ADDI]
 roles = ["frame_alloc", "frame_free", "frame_set"]
 form = "I"
 opcode = 0x13
@@ -1378,8 +1330,7 @@ ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "addi {dst}, {src}, {imm}"
 
 # RV64I 的 `addiw`（32 位加法结果符号扩展到 64）：语料里与 `lwu` 同批缺。
-[[instructions]]
-name = "ADDIW"
+[inst.ADDIW]
 only_variants = { xlen = [64] }
 form = "I"
 opcode = 0x1B
@@ -1387,24 +1338,21 @@ match = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "addiw {dst}, {src}, {imm}"
 
-[[instructions]]
-name = "SLLI"
+[inst.SLLI]
 form = "SHIFT"
 opcode = 0x13
 match = { funct3 = 1, funct6 = 0x00 }
 ops = ["dst:gpr:out", "src:gpr", "imm:shamt"]
 asm = "slli {dst}, {src}, {imm}"
 
-[[instructions]]
-name = "SRLI"
+[inst.SRLI]
 form = "SHIFT"
 opcode = 0x13
 match = { funct3 = 5, funct6 = 0x00 }
 ops = ["dst:gpr:out", "src:gpr", "imm:shamt"]
 asm = "srli {dst}, {src}, {imm}"
 
-[[instructions]]
-name = "SRAI"
+[inst.SRAI]
 form = "SHIFT"
 opcode = 0x13
 match = { funct3 = 5, funct6 = 0x10 }
@@ -1413,8 +1361,7 @@ asm = "srai {dst}, {src}, {imm}"
 
 # ── U 型 LUI ──
 
-[[instructions]]
-name = "LUI"
+[inst.LUI]
 form = "U"
 opcode = 0x37
 ops = ["dst:gpr:out", "imm:imm20"]
@@ -1422,8 +1369,7 @@ asm = "lui {dst}, {imm}"
 
 # ── 加载/存储 ──
 
-[[instructions]]
-name = "LD"
+[inst.LD]
 only_variants = { xlen = [64] }
 form = "I"
 opcode = 0x03
@@ -1432,8 +1378,7 @@ ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "ld {dst}, {imm}({src})"
 roles = ["callee_load"]
 
-[[instructions]]
-name = "SD"
+[inst.SD]
 group = "store_xlen"
 word_size = 64
 only_variants = { xlen = [64] }
@@ -1450,8 +1395,7 @@ roles = ["callee_save", "stack_arg_store"]
 
 # ── 控制流 ──
 
-[[instructions]]
-name = "JAL"
+[inst.JAL]
 roles = ["call", "jump"]
 form = "J"
 opcode = 0x6F
@@ -1461,16 +1405,14 @@ asm = "jal {dst}, {target}"
 # `jal rd, rs` = `jalr rd, rs, 0` 的别名（LLVM 接受；语料 `rv32i-valid.s:88` 就是这么写的）。
 # 与 `jal {dst}, {target}` 同首段 ⇒ 靠**第二操作数的槽类型**分派：reg 槽比标签/偏移槽更具体 ✓。
 # form "I" 的 imm12 字段不绑定操作数 ⇒ 编码缺省发 0、解码的补集零守卫要求它为 0 ✓（正是别名语义）。
-[[instructions]]
-name = "JAL_R"
+[inst.JAL_R]
 form = "I"
 opcode = 0x67
 match = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "jal {dst}, {src}"
 
-[[instructions]]
-name = "JALR"
+[inst.JALR]
 form = "I"
 opcode = 0x67
 match = { funct3 = 0 }
@@ -1479,8 +1421,7 @@ asm = "jalr {dst}, {imm}({src})"
 
 # 三操作数写法 `jalr rd, rs1, imm`（RISC-V 手册里的规范形）——与两操作数的 `jalr rd, imm(rs1)`
 # **同编码**，只是文本不同；解码同键（叶 arm 按声明序取先者，渲染仍是两操作数形）。
-[[instructions]]
-name = "JALR3"
+[inst.JALR3]
 form = "I"
 opcode = 0x67
 match = { funct3 = 0 }
@@ -1490,14 +1431,12 @@ asm = "jalr {dst}, {src}, {imm}"
 # ── 系统 ──
 
 
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "OP"
 opcode = 0x13
 asm = "nop"
 
-[[instructions]]
-name = "ECALL"
+[inst.ECALL]
 form = "OP"
 opcode = 0x73
 asm = "ecall"
@@ -1507,48 +1446,42 @@ asm = "ecall"
 # 不必一致——`asm` 用命名引用，绑定由 form 的 `operand_fields` 决定（v15-S3c 的命名操作数）。
 # `*I` 三条的源在 rs1 位（5 位 zimm），用 `zimm5` 槽。
 
-[[instructions]]
-name = "CSRRW"
+[inst.CSRRW]
 form = "I"
 opcode = 0x73
 match = { funct3 = 1 }
 ops = ["dst:gpr:out", "src:gpr", "csr:csr12"]
 asm = "csrrw {dst}, {csr}, {src}"
 
-[[instructions]]
-name = "CSRRS"
+[inst.CSRRS]
 form = "I"
 opcode = 0x73
 match = { funct3 = 2 }
 ops = ["dst:gpr:out", "src:gpr", "csr:csr12"]
 asm = "csrrs {dst}, {csr}, {src}"
 
-[[instructions]]
-name = "CSRRC"
+[inst.CSRRC]
 form = "I"
 opcode = 0x73
 match = { funct3 = 3 }
 ops = ["dst:gpr:out", "src:gpr", "csr:csr12"]
 asm = "csrrc {dst}, {csr}, {src}"
 
-[[instructions]]
-name = "CSRRWI"
+[inst.CSRRWI]
 form = "I"
 opcode = 0x73
 match = { funct3 = 5 }
 ops = ["dst:gpr:out", "zimm:zimm5", "csr:csr12"]
 asm = "csrrwi {dst}, {csr}, {zimm}"
 
-[[instructions]]
-name = "CSRRSI"
+[inst.CSRRSI]
 form = "I"
 opcode = 0x73
 match = { funct3 = 6 }
 ops = ["dst:gpr:out", "zimm:zimm5", "csr:csr12"]
 asm = "csrrsi {dst}, {csr}, {zimm}"
 
-[[instructions]]
-name = "CSRRCI"
+[inst.CSRRCI]
 form = "I"
 opcode = 0x73
 match = { funct3 = 7 }
@@ -1558,40 +1491,35 @@ asm = "csrrci {dst}, {csr}, {zimm}"
 # ── Zbb 位操作（RV64；规范编码：R 型 0x33，funct7/funct3/rs2 按指令区分——
 #    v10 迁移的 0x13/0x14-0x17 等值为错（QEMU illegal），本表已修正）──
 
-[[instructions]]
-name = "EBREAK"
+[inst.EBREAK]
 form = "OP"
 opcode = 0x73
 match = { imm12 = 1 }
 effect = ["Trap"]
 asm = "ebreak"
 
-[[instructions]]
-name = "CLZ"
+[inst.CLZ]
 form = "I"
 opcode = 0x13
 match = { funct3 = 1, imm12 = 0x600 }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "clz {dst}, {src}"
 
-[[instructions]]
-name = "CTZ"
+[inst.CTZ]
 form = "I"
 opcode = 0x13
 match = { funct3 = 1, imm12 = 0x601 }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "ctz {dst}, {src}"
 
-[[instructions]]
-name = "CPOP"
+[inst.CPOP]
 form = "I"
 opcode = 0x13
 match = { funct3 = 1, imm12 = 0x602 }
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "cpop {dst}, {src}"
 
-[[instructions]]
-name = "REV8"
+[inst.REV8]
 form = "I"
 opcode = 0x13
 match = { funct3 = 5 }
@@ -1599,8 +1527,7 @@ fields_variant = { imm12 = { param = "xlen", by = { 32 = 0x698 }, default = 0x6b
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "rev8 {dst}, {src}"
 
-[[instructions]]
-name = "AUIPC"
+[inst.AUIPC]
 form = "U"
 opcode = 0x17
 ops = ["dst:gpr:out", "imm:imm20"]
@@ -1609,16 +1536,14 @@ asm = "auipc {dst}, {imm}"
 # GlobalAddr 专用：auipc+addi PC-relative 对（encoder 特判 imm<0 →
 # Relative(4,0) "G{id}" reloc；生成的重定位补丁器按解码结果分写 hi20/lo12
 # 分写 hi20/lo12 位段）。普通 AUIPC/ADDI 无 reloc 不受影响。
-[[instructions]]
-name = "AUIPC_GLOBAL"
+[inst.AUIPC_GLOBAL]
 form = "U"
 opcode = 0x17
 ops = ["dst:gpr:out", "imm:imm20"]
 asm = "auipc {dst}, {imm}"
 reloc = "pcrel_hi"
 
-[[instructions]]
-name = "ADDI_GLOBAL"
+[inst.ADDI_GLOBAL]
 form = "I"
 opcode = 0x13
 match = { funct3 = 0 }
@@ -1627,8 +1552,7 @@ asm = "addi {dst}, {src}, {imm}"
 reloc = "pcrel_lo"
 
 
-[[instructions]]
-name = "FENCE"
+[inst.FENCE]
 # 裸 `fence` = `fence iorw, iorw`（顶层仍是 opcode + 两个 4 位字段常量；
 # 与下面带操作数的 FENCE_PS 共用同一条 trie 边上的不同叶）
 form = "FENCEPS"
@@ -1637,8 +1561,7 @@ match = { pred = 15, succ = 15 }
 asm = "fence"
 
 # `fence pred, succ`：pred/succ 各是 i/o/r/w 的**字母集合**（新版能力 `kind = "bits"`）
-[[instructions]]
-name = "FENCE_PS"
+[inst.FENCE_PS]
 form = "FENCEPS"
 opcode = 0x0F
 ops = ["pred:fence_set", "succ:fence_set"]
@@ -1646,15 +1569,13 @@ asm = "fence {pred}, {succ}"
 
 # `fence.i`（= funct3 1）与 `fence.tso`（= `fence rw, rw` + fm=8）**不再用整字常量**：
 # 三者共用 opcode 0x0F 这条 trie 边（整字常量会与 `fence pred, succ` 在 [0,7) 上判成同一条边）。
-[[instructions]]
-name = "FENCE_I"
+[inst.FENCE_I]
 form = "FENCEPS"
 opcode = 0x0F
 match = { funct3 = 1 }
 asm = "fence.i"
 
-[[instructions]]
-name = "FENCE_TSO"
+[inst.FENCE_TSO]
 form = "FENCEPS"
 opcode = 0x0F
 match = { fm = 8, pred = 3, succ = 3 }
@@ -1666,8 +1587,7 @@ asm = "fence.tso"
 # `shamt_w`（5 位）独立于 `shamt`（6 位）：共用 6 位槽会让 `slliw rd, rs1, 32..63`
 # 静默编成别的位型。
 
-[[instructions]]
-name = "SLLIW"
+[inst.SLLIW]
 only_variants = { xlen = [64] }
 form = "SHIFT5"
 opcode = 0x1B
@@ -1675,8 +1595,7 @@ match = { funct3 = 1, funct7 = 0x00 }
 ops = ["dst:gpr:out", "src:gpr", "imm:shamt_w"]
 asm = "slliw {dst}, {src}, {imm}"
 
-[[instructions]]
-name = "SRLIW"
+[inst.SRLIW]
 only_variants = { xlen = [64] }
 form = "SHIFT5"
 opcode = 0x1B
@@ -1684,8 +1603,7 @@ match = { funct3 = 5, funct7 = 0x00 }
 ops = ["dst:gpr:out", "src:gpr", "imm:shamt_w"]
 asm = "srliw {dst}, {src}, {imm}"
 
-[[instructions]]
-name = "SRAIW"
+[inst.SRAIW]
 only_variants = { xlen = [64] }
 form = "SHIFT5"
 opcode = 0x1B
@@ -1697,64 +1615,56 @@ asm = "sraiw {dst}, {src}, {imm}"
 # 上游语料里 `lb`/`lh`/`lbu`/`lhu`/`sb`/`sh` 遍地都是，谱里之前只有 32/64 位那几条，
 # 于是整族落进 `no_prefix` 桶（"没有候选的首段能对上"）——字节 oracle 会逐条验编码。
 
-[[instructions]]
-name = "LB"
+[inst.LB]
 form = "I"
 opcode = 0x03
 match = { funct3 = 0 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "lb {dst}, {imm}({src})"
 
-[[instructions]]
-name = "LH"
+[inst.LH]
 form = "I"
 opcode = 0x03
 match = { funct3 = 1 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "lh {dst}, {imm}({src})"
 
-[[instructions]]
-name = "LBU"
+[inst.LBU]
 form = "I"
 opcode = 0x03
 match = { funct3 = 4 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "lbu {dst}, {imm}({src})"
 
-[[instructions]]
-name = "LHU"
+[inst.LHU]
 form = "I"
 opcode = 0x03
 match = { funct3 = 5 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "lhu {dst}, {imm}({src})"
 
-[[instructions]]
-name = "SB"
+[inst.SB]
 form = "S"
 opcode = 0x23
 match = { funct3 = 0 }
 ops = ["src:gpr", "src2:gpr", "imm:imm12"]
 asm = "sb {src}, {imm}({src2})"
 
-[[instructions]]
-name = "SH"
+[inst.SH]
 form = "S"
 opcode = 0x23
 match = { funct3 = 1 }
 ops = ["src:gpr", "src2:gpr", "imm:imm12"]
 asm = "sh {src}, {imm}({src2})"
 
-[[instructions]]
-name = "LW"
+[inst.LW]
 form = "I"
 opcode = 0x03
 match = { funct3 = 2 }
 ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "lw {dst}, {imm}({src})"
 
-[[instructions]]
-name = "SW"
+[inst.SW]
 group = "store_xlen"
 word_size = 32
 form = "S"
@@ -1765,8 +1675,7 @@ asm = "sw {src}, {imm}({src2})"
 
 # RV64I 的 `lwu`（零扩展的 32 位载入）：真实语料里遍地都是，之前谱里没有
 # （那会儿只按"解析不动"记账；字节 oracle 接通后按 ISA 完整性补上）。
-[[instructions]]
-name = "LWU"
+[inst.LWU]
 only_variants = { xlen = [64] }
 form = "I"
 opcode = 0x03
@@ -1775,8 +1684,7 @@ ops = ["dst:gpr:out", "src:gpr", "imm:imm12"]
 asm = "lwu {dst}, {imm}({src})"
 
 # RET = jalr x0, 0(x1)（form I 全固定位域）
-[[instructions]]
-name = "RET"
+[inst.RET]
 roles = ["ret"]
 form = "I"
 opcode = 0x67

@@ -173,7 +173,7 @@ fn operand_field_ident(name: &str, inst_name: &str, i: usize) -> Result<syn::Ide
     }
     if s.is_empty() {
         return Err(format!(
-            "[[instructions.{inst_name}]].ops[{i}]: 操作数名 '{name}' 不能作为 Rust 字段名"
+            "[inst.{inst_name}].ops[{i}]: 操作数名 '{name}' 不能作为 Rust 字段名"
         ));
     }
     // 普通标识符 → 直接用；关键字 → 原始标识符；不可原始化 → 加后缀。
@@ -431,7 +431,7 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
                 .forms
                 .iter()
                 .find(|f| &f.name == name)
-                .ok_or_else(|| format!("[[instructions.{}]]: form '{name}' missing", inst.name))?
+                .ok_or_else(|| format!("[inst.{}]: form '{name}' missing", inst.name))?
                 .keys
                 .clone(),
         };
@@ -464,7 +464,7 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
                 .position(|e| e.split(':').next().map(str::trim) == Some(n.as_str()))
                 .ok_or_else(|| {
                     format!(
-                        "[[instructions.{}]].opsize: '{n}' 不是已声明的操作数名（ops: {}）",
+                        "[inst.{}].opsize: '{n}' 不是已声明的操作数名（ops: {}）",
                         inst.name,
                         names.join(", ")
                     )
@@ -492,13 +492,13 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
                 1 => enc.opsize = Some(Opsize::Slot(out_idxs[0] as u16)),
                 0 => {
                     return Err(format!(
-                        "[[instructions.{}]].opsize = \"out\": 没有 out/inout 的 Reg 操作数（改用 \"max\" 或显式操作数名）",
+                        "[inst.{}].opsize = \"out\": 没有 out/inout 的 Reg 操作数（改用 \"max\" 或显式操作数名）",
                         inst.name
                     ));
                 }
                 n => {
                     return Err(format!(
-                        "[[instructions.{}]].opsize = \"out\": {n} 个 out/inout 操作数，无法唯一确定（显式写操作数名）",
+                        "[inst.{}].opsize = \"out\": {n} 个 out/inout 操作数，无法唯一确定（显式写操作数名）",
                         inst.name
                     ));
                 }
@@ -508,13 +508,13 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
         // 变长（无 opcode_field）不需要 operand_fields；定宽需要
         if form.opcode_field.is_none() && form.operand_fields.is_some() {
             return Err(format!(
-                "[[instructions.{}]]: operand_fields declared without opcode_field (vlen 形式用 modrm 语义键)",
+                "[inst.{}]: operand_fields declared without opcode_field (vlen 形式用 modrm 语义键)",
                 inst.name
             ));
         }
         if inst.opcode.is_none() && form.opcode_reg.is_none() {
             return Err(format!(
-                "[[instructions.{}]]: opcode required (or form opcode_reg for +r forms)",
+                "[inst.{}]: opcode required (or form opcode_reg for +r forms)",
                 inst.name
             ));
         }
@@ -528,7 +528,7 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
                 .find(|s| s.name == op.slot)
                 .ok_or_else(|| {
                     format!(
-                        "[[instructions.{}]]: operand slot '{}' missing (asm '{}')",
+                        "[inst.{}]: operand slot '{}' missing (asm '{}')",
                         inst.name, op.slot, asm
                     )
                 })?;
@@ -538,7 +538,7 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
             let fname = if fixed {
                 of.and_then(|f| f.get(i)).cloned().ok_or_else(|| {
                     format!(
-                        "[[instructions.{}]]: operand {} missing operand_fields entry",
+                        "[inst.{}]: operand {} missing operand_fields entry",
                         inst.name, i
                     )
                 })?
@@ -579,7 +579,7 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
 /// validate.rs 也调用本函数做操作数校验（槽存在/角色合法/序号连续）。
 /// 解析 `ops = ["名字:槽[:角色]", …]`：返回操作数用法表（含**声明名**），序即编码序。
 fn parse_ops_list(ops: &[String], inst_name: &str) -> Result<Vec<OperandUse>, String> {
-    let ctx = || format!("[[instructions.{inst_name}]].ops");
+    let ctx = || format!("[inst.{inst_name}].ops");
     if ops.is_empty() {
         return Err(format!("{}: 不能为空数组（省略该键即可）", ctx()));
     }
@@ -636,7 +636,7 @@ fn normalize_named_template(
     inst_name: &str,
     variant_params: &BTreeSet<String>,
 ) -> Result<String, String> {
-    let ctx = || format!("[[instructions.{inst_name}]] asm");
+    let ctx = || format!("[inst.{inst_name}] asm");
     let mut out = String::with_capacity(rest.len());
     let mut chars = rest.char_indices().peekable();
     while let Some((i, c)) = chars.next() {
@@ -701,7 +701,7 @@ pub(crate) fn parse_asm_decl(
     inst_name: &str,
     variant_params: &BTreeSet<String>,
 ) -> Result<(Vec<OperandUse>, String), String> {
-    let ctx = || format!("[[instructions.{inst_name}]] asm");
+    let ctx = || format!("[inst.{inst_name}] asm");
     if asm.trim().is_empty() {
         return Err(format!("{}: asm must not be empty", ctx()));
     }

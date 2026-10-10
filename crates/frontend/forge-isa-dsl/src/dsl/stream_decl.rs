@@ -122,7 +122,7 @@ fn lower_instr_segments(m: &mut IsaModel) -> Result<(), String> {
         };
         if segs.is_empty() {
             return Err(format!(
-                "[[instructions.{}]]: `segments` 不能为空（要么不写，要么至少一段）",
+                "[inst.{}]: `segments` 不能为空（要么不写，要么至少一段）",
                 inst.name
             ));
         }
@@ -130,7 +130,7 @@ fn lower_instr_segments(m: &mut IsaModel) -> Result<(), String> {
         for seg in &segs {
             if seg.fields.as_ref().is_some_and(|f| !f.is_empty()) {
                 return Err(format!(
-                    "[[instructions.{}]]: 指令级段不支持 `fields`（结构段只写 kind + bytes；\
+                    "[inst.{}]: 指令级段不支持 `fields`（结构段只写 kind + bytes；\
                      需要布局字段请把段放进 form）",
                     inst.name
                 ));
@@ -141,7 +141,7 @@ fn lower_instr_segments(m: &mut IsaModel) -> Result<(), String> {
                         Some(SegmentBytes::Raw(v)) => v,
                         _ => {
                             return Err(format!(
-                                "[[instructions.{}]].escape: 转义段要写裸字节列表（`bytes = [\"0x0F\"]`）",
+                                "[inst.{}].escape: 转义段要写裸字节列表（`bytes = [\"0x0F\"]`）",
                                 inst.name
                             ));
                         }
@@ -150,16 +150,16 @@ fn lower_instr_segments(m: &mut IsaModel) -> Result<(), String> {
                     for b in raw {
                         out.push(
                             parse_byte(&b)
-                                .map_err(|e| format!("[[instructions.{}]].escape: {e}", inst.name))?,
+                                .map_err(|e| format!("[inst.{}].escape: {e}", inst.name))?,
                         );
                     }
                     keys.escape = Some(out);
                 }
                 SegKind::Prefix => {
-                    let k = prefix_key(&format!("[[instructions.{}]]", inst.name), seg)?;
+                    let k = prefix_key(&format!("[inst.{}]", inst.name), seg)?;
                     if matches!(k, PrefixKey::One(ref s) if s == "field") {
                         return Err(format!(
-                            "[[instructions.{}]].prefix: 字段形态的前缀请放进 form（指令级段只做结构）",
+                            "[inst.{}].prefix: 字段形态的前缀请放进 form（指令级段只做结构）",
                             inst.name
                         ));
                     }
@@ -178,7 +178,7 @@ fn lower_instr_segments(m: &mut IsaModel) -> Result<(), String> {
                     // `+r` 形式：opcode 字节 = 基值 | (op0 & 7)。
                     keys.opcode_reg = Some(seg.value.ok_or_else(|| {
                         format!(
-                            "[[instructions.{}]].opcode_reg: 必须给 `value`（操作码基值）",
+                            "[inst.{}].opcode_reg: 必须给 `value`（操作码基值）",
                             inst.name
                         )
                     })?);
@@ -187,7 +187,7 @@ fn lower_instr_segments(m: &mut IsaModel) -> Result<(), String> {
                     // 指令级只声明**宽度**（`value` = 位数）；立即数的值来自操作数。
                     let bits = seg.value.ok_or_else(|| {
                         format!(
-                            "[[instructions.{}]].imm: 必须给 `value`（位数，如 8/16/32）",
+                            "[inst.{}].imm: 必须给 `value`（位数，如 8/16/32）",
                             inst.name
                         )
                     })?;
@@ -209,7 +209,7 @@ fn lower_instr_segments(m: &mut IsaModel) -> Result<(), String> {
                     if spec.map.is_none() && spec.pp.is_none() && spec.w.is_none() && spec.l.is_none()
                     {
                         return Err(format!(
-                            "[[instructions.{}]].{}: 头段至少要给一个来源键（map/pp/w/l）",
+                            "[inst.{}].{}: 头段至少要给一个来源键（map/pp/w/l）",
                             inst.name,
                             kind_name(seg.kind)
                         ));
@@ -222,7 +222,7 @@ fn lower_instr_segments(m: &mut IsaModel) -> Result<(), String> {
                 }
                 other => {
                     return Err(format!(
-                        "[[instructions.{}]]: 指令级段不支持 `{}`\
+                        "[inst.{}]: 指令级段不支持 `{}`\
                          （需要布局字段的段请放进 form）",
                         inst.name,
                         kind_name(other)
@@ -317,7 +317,7 @@ pub fn segment_prefix_bytes(
     for inst in &m.instructions {
         if let Some(segs) = &inst.segments {
             for seg in segs {
-                take(&format!("[[instructions.{}]]", inst.name), seg)?;
+                take(&format!("[inst.{}]", inst.name), seg)?;
             }
         }
     }
@@ -770,8 +770,7 @@ segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[instructions]]
-name = "N"
+[inst.N]
 form = "S"
 match = { opcode = 0x8B }
 ops = ["dst:g:out", "src:g"]
@@ -795,8 +794,7 @@ prefix = "0xF0"
 escape = [0x0F]
 rex = "auto"
 rex_w = "field"
-[[instructions]]
-name = "N"
+[inst.N]
 form = "S"
 modrm = { reg = "dst", rm = "src" }
 ops = ["dst:g:out", "src:g"]
@@ -882,15 +880,13 @@ count = 16
 [operand.g]
 kind = "reg"
 class = "gpr64"
-[[instructions]]
-name = "ADD"
+[inst.ADD]
 group = "addw"
 word_size = 64
 opcode = 0x10
 ops = ["dst:g:out", "src:g", "src2:g"]
 asm = "add {dst}, {src}, {src2}"
-[[instructions]]
-name = "ADDW"
+[inst.ADDW]
 group = "addw"
 word_size = 32
 opcode = 0x11
@@ -963,8 +959,7 @@ count = 16
 [operand.g]
 kind = "reg"
 class = "gpr64"
-[[instructions]]
-name = "N"
+[inst.N]
 segments = [
   { kind = "prefix", bytes = ["0xF2"] },
   { kind = "escape", bytes = ["0x0F"] },
@@ -987,8 +982,7 @@ count = 16
 [operand.g]
 kind = "reg"
 class = "gpr64"
-[[instructions]]
-name = "N"
+[inst.N]
 prefix = "0xF2"
 escape = [0x0F]
 opcode = 0x10
@@ -1019,8 +1013,7 @@ count = 16
 [operand.g]
 kind = "reg"
 class = "gpr64"
-[[instructions]]
-name = "N"
+[inst.N]
 segments = [{ kind = "sib" }]
 opcode = 0x10
 ops = ["dst:g:out"]
@@ -1101,8 +1094,7 @@ segments = [
   { kind = "sib", fields = ["u2[7:6]:scale", "u3[5:3]:index", "u3[2:0]:base"] },
   { kind = "disp", fields = ["u8[7:0]:disp8"] },
 ]
-[[instructions]]
-name = "N"
+[inst.N]
 form = "V"
 match = { opcode = 0x58 }
 ops = ["dst:f:out", "src:f"]

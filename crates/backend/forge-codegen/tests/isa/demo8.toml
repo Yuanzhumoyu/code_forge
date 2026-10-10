@@ -112,24 +112,21 @@ fields = [
 
 # ─────────────────────────── 指令 ───────────────────────────
 
-[[instructions]]
-name = "ADD8"
+[inst.ADD8]
 group = "add"
 form = "R"
 opcode = 0x10
 ops = ["dst:a8:out", "src:a8", "src2:a8"]
 asm = "add {dst}, {src}, {src2}"
 
-[[instructions]]
-name = "SUB8"
+[inst.SUB8]
 group = "sub"
 form = "R"
 opcode = 0x11
 ops = ["dst:a8:out", "src:a8", "src2:a8"]
 asm = "sub {dst}, {src}, {src2}"
 
-[[instructions]]
-name = "MOV8"
+[inst.MOV8]
 group = "mov"
 data_width = 8
 form = "RR"
@@ -137,8 +134,7 @@ opcode = 0x20
 ops = ["dst:a8:out", "src:a8"]
 asm = "mov {dst}, {src}"
 
-[[instructions]]
-name = "MOV8_R_IMM8"
+[inst.MOV8_R_IMM8]
 group = "mov"
 form = "RI2"
 opcode = 0x21
@@ -146,31 +142,27 @@ ops = ["dst:a8:out", "imm:imm8"]
 asm = "mov {dst}, {imm}"
 
 # 加载/存储（地址 = 基址寄存器 + 8 位偏移；不做独立 mem 槽，与 riscv 同形）
-[[instructions]]
-name = "LD8"
+[inst.LD8]
 form = "RI"
 opcode = 0x30
 ops = ["dst:a8:out", "base:a8", "imm:imm8"]
 asm = "ld {dst}, {base}, {imm}"
 
-[[instructions]]
-name = "ST8"
+[inst.ST8]
 form = "RI"
 opcode = 0x31
 ops = ["src:a8", "base:a8", "imm:imm8"]
 asm = "st {src}, {base}, {imm}"
 
 # 帧分配/释放（rd = rs1 ± imm8）
-[[instructions]]
-name = "SUBI8"
+[inst.SUBI8]
 roles = ["frame_alloc"]
 form = "RI"
 opcode = 0x40
 ops = ["dst:a8:out", "src:a8", "imm:imm8"]
 asm = "subi {dst}, {src}, {imm}"
 
-[[instructions]]
-name = "ADDI8"
+[inst.ADDI8]
 roles = ["frame_free"]
 form = "RI"
 opcode = 0x41
@@ -178,8 +170,7 @@ ops = ["dst:a8:out", "src:a8", "imm:imm8"]
 asm = "addi {dst}, {src}, {imm}"
 
 # 返回（全字位域；word = 1，与 NOP 的 0 区分）
-[[instructions]]
-name = "RET"
+[inst.RET]
 roles = ["ret"]
 form = "W"
 opcode = 1
@@ -187,8 +178,7 @@ effect = ["Ret"]
 asm = "ret"
 
 # 分支（标签槽）
-[[instructions]]
-name = "BRZ"
+[inst.BRZ]
 form = "B"
 opcode = 0x50
 effect = ["Branch"]
@@ -196,8 +186,7 @@ ops = ["src:a8", "target:lab"]
 asm = "brz {src}, {target}"
 
 # 无操作数（全字位域，避免与 opcode 0x10 撞车）
-[[instructions]]
-name = "NOP"
+[inst.NOP]
 form = "W"
 opcode = 0
 asm = "nop"

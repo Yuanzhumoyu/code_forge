@@ -61,7 +61,7 @@
 
   - [`[form.<名字>]` — 编码形式（可选预设）](#form名字--编码形式可选预设)
 
-  - [`[[instructions]]` — 指令](#instructions--指令)
+  - [`[inst.<名字>]` — 指令](#inst名字--指令)
 
   - [多文件组合（`include` / `[[override]]`，v18 S7d）](#多文件组合include--overridev18-s7d)
 
@@ -115,7 +115,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | --- | --- | --- |
 | `[[templates]]`（`body` + `rows`） | `[[families]]` 族变体、v14 的参数表模板 | [模板](#templates--参数化指令模板唯一复用机制) |
 | 指令属性 `group` | `[[aliases]]` 别名清单 | 同上 |
-| 命名操作数 `ops` + `asm` 只引用 `{名字}` | v14 的 asm 内联声明 `{i:[槽:角色]}`、位置名 `s0`/`s1` | [`[[instructions]]`](#instructions--指令) |
+| 命名操作数 `ops` + `asm` 只引用 `{名字}` | v14 的 asm 内联声明 `{i:[槽:角色]}`、位置名 `s0`/`s1` | [`[inst.<名字>]`](#inst名字--指令) |
 | `[encoding]` 宽度三态 | `[meta].default_inst_width`/`variable_length`/`max_inst_len` | [`[encoding]`](#encoding--指令宽度三态v18-s4) |
 | `[asm.reloc.<名>]` / `[asm.pseudo.<名>]` / `[[derive]]` | `global_reloc` 枚举、汇编器硬编码伪指令、Rust 侧谓词表 | 各自小节 |
 | `[conventions.cond]`（数据表） | 生成器里的 x86 条件码表 | [`[conventions]`](#conventions--isa-约定) |
@@ -149,12 +149,12 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 - 因此「模型改了忘了写 schema」「schema 写了模型不认的键」「文档没跟上」三类漂移都会
   让 `cargo test -p forge-isa-dsl --test schema_guard` 变红。
 
-`†` = 编码键（`[form.<名字>]` 预设与 `[[instructions]]` **共用同一组**，指令逐键覆盖）。
+`†` = 编码键（`[form.<名字>]` 预设与 `[inst.<名字>]` **共用同一组**，指令逐键覆盖）。
 
 <!-- BEGIN: schema-keys（由 tests/schema_guard.rs 校验，改 schema 时同步这一段）-->
 | 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
 | --- | --- | --- | --- |
-| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `operand` `enum` `form` `instructions` `family` `lower` `asm` `derive` `lowering` `pattern` `machine` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
+| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `operand` `enum` `form` `inst` `family` `lower` `asm` `derive` `lowering` `pattern` `machine` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
 | `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `vector_tiers` | 元信息 + 文本约定（宽度只在 [reg.<名>] 表头里，见 [machine] 的类指针键） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
 | `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `alloc_count` `aliases` | 寄存器组；组名的数字 = **位**宽（`gpr64` = 64 位）；aliases = { 别名 = 组内下标 } |
@@ -169,7 +169,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[enum.<表名>]` | — | `kind` `entries`† | 命名取值表：kind = value（名字 = 值；带 `ir` 的那张是条件码表）\| bits（名字拼接、按位或）（允许额外键） |
 | `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` `classes` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[form.<名字>]` | — | `fields` `segments` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖）；v21 W10：**表头即形式名**（不再写 `name`） |
-| `[[instructions]]` | `name` `asm` | `form` `opcode` `match` `fields` `segments` `bind` `ops` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
+| `[inst.<名字>]` | `asm` | `form` `opcode` `match` `fields` `segments` `bind` `ops` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令（v21 W10：**表头即指令名**，不再写 `name`）：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[asm.reloc.<名>]` | `semantics` `operand` | `addend` `via` | 重定位（v21 W8：**表头即重定位名**；旧 `[[reloc]]` 已撤）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`） |
 | `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
 | `[asm.pseudo.<名>]` | `asm` `emit` | `only_variants` | 汇编器伪指令（v21 W7：**表头即名字**；旧 `[[pseudo]]` 已撤）：文本级多指令展开，分派按 `asm` 的前导字面，`{名字}` 就是 `emit` 用的参数 |
@@ -1033,11 +1033,10 @@ v14 的 `"r8"` 是字节单位（= 64 位）、与 `[conventions]` 的位单位�
 现在报错并给出迁移提示；`"s<N>"`（第 N 个操作数）仍可解析但已被命名形态取代。
 `opsize` 省略 → 唯一的 `out`/`inout` 操作数；无或多个则 `ops[0]` 并要求显式。
 
-## `[[instructions]]` — 指令
+## `[inst.<名字>]` — 指令
 
 ```toml
-[[instructions]]
-name = "MOV_R_RM"              # 指令名（PascalCase；生成 Inst 枚举变体）
+[inst.MOV_R_RM]                # 指令名在**表头**（PascalCase；生成 Inst 枚举变体）
 form = "MRR"                   # 可选；省略则全部编码键内联在本指令
 opcode = 0x8B
 ops = ["dst:gprx:out", "src:gprx"]        # 命名操作数声明（数组序 = 编码序）
@@ -1045,20 +1044,17 @@ modrm = { reg = "dst", rm = "src" }       # 指令级覆盖 form（见下）
 asm = "movrr {dst}, {src}"     # 必填；只用 {名字} 引用，不声明
 effect = ["Move"]              # 语义标签（见下）
 
-[[instructions]]
-name = "ADD_RM_R"              # 源在前、目的在后的编码序
+[inst.ADD_RM_R]                # 源在前、目的在后的编码序
 ops = ["src:gprx", "dst:gprx:inout"]
 modrm = { reg = "src", rm = "dst" }
 asm = "add {dst}, {src}"
 
-[[instructions]]
-name = "ADD_R_IMM32"           # 固定扩展码 /0（无操作数占 reg 字段）
+[inst.ADD_R_IMM32]             # 固定扩展码 /0（无操作数占 reg 字段）
 ops = ["dst:gpr:inout", "imm:imm32"]
 modrm = { reg = 0, rm = "dst" }
 asm = "add {dst}, {imm}"
 
-[[instructions]]
-name = "ADD"                   # riscv R-type（定宽位域绑定）
+[inst.ADD]                     # riscv R-type（定宽位域绑定）
 form = "R"
 opcode = 0x33
 match = { funct3 = 0, funct7 = 0 }   # 固定字段值，按位域名引用
@@ -1066,19 +1062,16 @@ ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
 asm = "add {dst}, {src}, {src2}"      # 名字 = asm 占位符 = 生成的 Inst 字段名
 effect = ["Pure"]
 
-[[instructions]]
-name = "CQO"                   # 隐式寄存器破坏声明（物理寄存器名）
+[inst.CQO]                     # 隐式寄存器破坏声明（物理寄存器名）
 form = "NOOP_REXW"
 opcode = 0x99
 implicit_regs = ["RDX"]        # cqo 写 RDX：regalloc 据此避开
 
-[[instructions]]
-name = "RET"                   # 语义角色声明（见下）
+[inst.RET]                     # 语义角色声明（见下）
 roles = ["ret"]
 asm = "ret"
 
-[[instructions]]
-name = "MOVABS_GLOBAL"         # 全局地址重定位：只写引用名，语义在 [asm.reloc.<名>] 表里
+[inst.MOVABS_GLOBAL]           # 全局地址重定位：只写引用名，语义在 [asm.reloc.<名>] 表里
 reloc = "abs64"
 asm = "movabs {0}, {1}"
 ```
@@ -1123,7 +1116,7 @@ copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `P
 | 谁进谁出（方向） | 槽角色：`out`/`inout` = 目的，`in` = 来源 |
 | 哪个寄存器族 | 槽的 `class`/`classes`（`RegClass` 自身带 `GPR`/`FPR`/`VEC`/`KReg`） |
 | 立即数 / 寄存器 / 内存 | 槽的 `kind` |
-| **数据宽度** | **不在结构里 ⇒ 写 [`data_width`](#instructions--指令)** |
+| **数据宽度** | **不在结构里 ⇒ 写 [`data_width`](#inst名字--指令)** |
 
 所以只要在指令上写 `data_width = <位>`，生成器就把它当成"一条搬这么多位的搬运"，
 按调用点的 **(目的形状 × 来源形状 × 位宽)** 选指令：
@@ -1668,7 +1661,7 @@ v20 A5-3 把"约定数据"整节移出谱面：`[abi]` 的键**全部删除**，
 > **S4 删除全部 `*_inst` 名指针**（历史）：v14 的 `move_inst`/`ret_mov_inst`/`call_inst`/
 > `call_indirect_inst`/`ret_inst`/`jump_inst`/`branch_inst`/`test_inst`/`push_inst`/
 > `pop_inst`/`fpr_mov_inst`/`fpr_mov_inst32`/`vec_mov_inst` 全部移除，改为指令上的
-> [`roles`](#instructions--指令)；生成器查角色表取代按名字查找，缺角色 → 明确
+> [`roles`](#inst名字--指令)；生成器查角色表取代按名字查找，缺角色 → 明确
 > `Unsupported("<角色> 未声明")`。
 
 ## `[machine.frame]` — 帧布局

@@ -80,8 +80,7 @@ fields = [
 
 # ─────────────────────────── 指令 ───────────────────────────
 
-[[instructions]]
-name = "CADD16"
+[inst.CADD16]
 width = 16
 form = "C16"
 opcode = 1
@@ -89,8 +88,7 @@ match = { sel = 0 }
 ops = ["dst:r:out", "src:r"]
 asm = "cadd {dst}, {src}"
 
-[[instructions]]
-name = "CMOV16"
+[inst.CMOV16]
 width = 16
 form = "C16"
 opcode = 2
@@ -98,16 +96,14 @@ match = { sel = 0 }
 ops = ["dst:r:out", "src:r"]
 asm = "cmov {dst}, {src}"
 
-[[instructions]]
-name = "LNOP32"
+[inst.LNOP32]
 width = 32
 form = "L32N"
 opcode = 1
 match = { sel = 3 }
 asm = "lnop"
 
-[[instructions]]
-name = "LADD32"
+[inst.LADD32]
 width = 32
 form = "L32I"
 opcode = 2

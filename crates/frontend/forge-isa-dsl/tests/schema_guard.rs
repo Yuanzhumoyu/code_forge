@@ -41,6 +41,16 @@ fn read_lf(path: &Path) -> Option<String> {
 /// 每条都要有理由：新增内部字段时必须来这里登记（否则守卫报"模型有、schema 无"）。
 const INTERNAL_FIELDS: &[(&str, &str, &str)] = &[
     (
+        "Instruction",
+        "name",
+        "内部载体（v21 W10）：由 [inst.<名>] 的表头填，TOML 面已撤",
+    ),
+    (
+        "IsaModel",
+        "instructions",
+        "内部载体（v21 W10）：只由 [inst.<名>] 与模板展开写入，TOML 面已撤",
+    ),
+    (
         "Form",
         "name",
         "内部载体（v21 W10）：由 [form.<名>] 的表头填，TOML 面已撤",

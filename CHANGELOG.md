@@ -11,6 +11,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W10 第二片：`[[instructions]]` → `[inst.<名>]`（表头即指令名）
+
++ 指令改成**表头即指令名**（设计案 §6.6）：`[[instructions]]` + `name = "ADD"` 改写为 `[inst.ADD]`；
+  旧写法按 `deny_unknown_fields` 报未知键。`Instruction.name` 转为**内部载体**
+  （`#[serde(skip)]` + `INTERNAL_FIELDS` 登记），解析期按**源码声明序**填充（声明序决定别名
+  首匹配与解码分派）；`inst_decls` 保留 ⇒ `serialize → parse` 往返仍然无损。
++ **连带口径变化（如实记录）**：表头即名字之后，"重名指令"不再有编译期诊断——**TOML 自身**拒绝
+  重复表头（`DSL-TOML` / `duplicate key`）。相关守卫与夹具按新口径改写：矩阵用例"指令重名"的
+  期望码由 `DSL-INST` 改为 `DSL-TOML`；`validation_duplicate_instruction` 改断言 `Parse`；
+  `duplicate_declaration_points_at_both_lines` / `headline_positions_are_exact` 改断言
+  **第二处表头的行号**；`three_independent_errors…` 的第三条改成"未声明操作数槽"；
+  `loader::array_of_tables_appends_in_include_order` 改为查**合并文本里的出现位置**（表本身无序，
+  声明序由解析期按源文本恢复）。`diag::section_code` 新增 `inst` → `DSL-INST` / `form` → `DSL-FORM`
+  （否则新前缀的诊断码会退化成 `DSL-OTHER`）。
++ 迁移规模：三谱 **640 块**（arm64 348 / x86 200 / riscv64 92）+ `demo*`/`include_*` 夹具 **40 块** +
+  源码内联谱 **99 处** + 示例宿主 4 + 教程 5；报错/断言文案的点号形态（含 `{}` 占位符形态）
+  另用脚本批量改 **93 处**。
++ **迁移脚本的一个致命 bug（已修，如实记录）**：脚本按块处理时把"表头行 ⋯ `name` 行"**整体压成一行**，
+  于是**写在 `name` 之前的键被静默丢掉**。x86 恰好有 3 条这样的指令（`CALL_RM` / `SETCC_RM8` /
+  `SETCC_RM8_B`：`match = { reg = 2 }` 在 `name` 之前）⇒ `modrm` 的固定扩展码丢失 ⇒
+  **x86 JIT 矩阵跑出 `STATUS_ILLEGAL_INSTRUCTION`**。修法：只替换表头行、只删 `name` 行、其余逐行搬。
+  验收方式：**三谱 `forge-isa insts` 输出与迁移前逐行相同（差异 0 行）+ x86 矩阵回到 197/3/0**。
+  （`[[forms]]` 那片经同法复核：0 个 form 块在 `name` 前有键，未受影响。）
++ 证据：`forge-isa-dsl` 全绿（**295 通过 / 0 失败**）；`schema_guard` 9/9；`markdownlint` 0 issue；
+  整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
++ W10 其余（下一步）：`[[derive]]` → `[pred.<名>]`、**W4 stream 段模型**、文档面
+  （`isa-dsl-errors.md` 同步 / `CLAUDE.md` 回写 / 设计文档 archive 标注 / `git grep` 死链清零）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W10 第一片：`[[forms]]` → `[form.<名>]`（表头即形式名）
 
 + 编码形式改成**表头即形式名**（设计案 §6.5）：`[[forms]]` + `name = "R"` 改写为 `[form.R]`；
