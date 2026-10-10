@@ -264,28 +264,10 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
              （v21 W6：终结序列已谱面化，见 docs/reference/isa-dsl.md）"
         ));
     }
-    // 定宽跳转（JAL 语义）：jump_inst 指令存在即启用（非按 ISA 形态猜——
-    // demo 等无跳转指令的定宽 ISA 自然降级，不生成不存在的变体引用）。
-    let _has_jal = has_jmp && !model.is_prefix_scan();
-    // 定宽（riscv）跳转：JAL x0（rd=index0、label 槽 = 块号 → encoder 定宽
-    // fixup Relative(4,0)）。JAL 字段 = [dest(gpr out), target(label)]。
-    let jal_f = inst_fids(infos, &jump_inst);
-    let (_jal_dest, _jal_target) = if jal_f.len() >= 2 {
-        (jal_f[0].clone(), jal_f[1].clone())
-    } else {
-        (format_ident!("dest"), format_ident!("target"))
-    };
-    // 定宽条件分支（riscv）：BEQ 字段 = [src, src2, target(label)]。
-    let beq_f = inst_fids(infos, &branch_inst);
-    let (_b_src, _b_src2, _b_target) = if beq_f.len() >= 3 {
-        (beq_f[0].clone(), beq_f[1].clone(), beq_f[2].clone())
-    } else {
-        (
-            format_ident!("src"),
-            format_ident!("src2"),
-            format_ident!("target"),
-        )
-    };
+    // v21 W6：终结 lowering（`[lower.Br]`/`[lower.Jmp]`/`[lower.Ret]`）**已谱面化** ⇒
+    // 这里原先那批"按字段个数猜 ISA 形态"的探测（`_has_jal`、`_jal_dest/_jal_target`、
+    // `_b_src/_b_src2/_b_target`）**全部删除**：它们自 W6-a 起就没有消费者，
+    // 留着只会让人以为还在按形状猜。跳转/分支的落点由终结序列与指令自己的槽结构决定。
     // 返回移动指令 = **派生的 GPR→GPR 搬运**（v20 V8：`ret_mov`/`gpr_mov` 角色已删除）。
     // 宽度按地址类折算：整数返回值都 ≤ 寄存器宽，整寄存器搬移对更窄的值同样正确
     //（x86 的 `mov rax, rcx` 搬 i32 返回不丢低位）。缺这条搬运 ⇒ 整个 return

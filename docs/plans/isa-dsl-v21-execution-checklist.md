@@ -746,13 +746,22 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 **目标**：分支/跳转/返回下放到谱；emit 表达式与 `temps`。
 
-- [ ] 新增符号值：`{true}` / `{false}` / `{target}` / `{cc}` / `{cc_inv}`。
-- [ ] `{cc_inv}` 由 `[enum.cond]` 反查（替换硬编码 `4u8`）。
-- [ ] 三谱写出 `[lower.Br]` / `[lower.Jmp]` / `[lower.Ret]`：
-  - [ ] x86：`test` + `jcc` + `jmp`
-  - [ ] riscv：`beq …, x0, {false}` + `jal x0, {true}`
-  - [ ] arm64：`cbz {0}, {false}` + `b {true}`
-- [ ] 删除编译器三处按字段个数猜 ISA（`lowering.rs:202`、`:527-625`、`frame.rs:172-208`）。
+- [x] 新增符号值：`{true}` / `{false}` / `{target}` / `{cc}` / `{cc_inv}`。
+  （**2026-10-08 复核：已全部落地** ✔ —— 前三个在终结序列里 ✗（`[lower.Br]`/`[lower.Jmp]` 已在三谱 ✗），
+  `{cc}`/`{cc_inv}` 在 `placeholder.rs` ✗。）
+- [x] `{cc_inv}` 由 `[enum.cond]` 反查（替换硬编码 `4u8`）。
+  （**已落地** ✔ —— `lowering.rs` 的 `ir_inverse_cond` + 生成物里的 `__cc_inv` ✗；
+  硬编码 `4u8` 只作为**历史**出现在注释与测试期望串里 ✗。）
+- [~] 三谱写出 `[lower.Br]` / `[lower.Jmp]` / `[lower.Ret]`：
+  - [x] x86：`test` + `jcc` + `jmp` ✔
+  - [x] riscv：`beq …, x0, {false}` + `jal x0, {true}` ✔
+  - [x] arm64：`cbz {0}, {false}` + `b {true}` ✔
+  - [ ] **`[lower.Ret]` 仍被安全闸关着** ✗（还缺"返回搬移"的谱面表达 ✗）。
+- [x] 删除编译器三处按字段个数猜 ISA（`lowering.rs:202`、`:527-625`、`frame.rs:172-208`）。
+  （**2026-10-08：死代码已删干净** ✔ —— `_has_jal`/`_jal_dest`/`_jal_target`/`_b_src`/`_b_src2`/`_b_target`
+  这批无消费者的探测全部删除 ✗。**但 `frame.rs` 里仍留一处** `has_jump && model.is_prefix_scan()` ✗ ——
+  复核结论：那是**编码属性**（变长 ⇒ label 槽按 rel32 位移编 ✗；定宽 ⇒ 字段 + patcher ✗），
+  **不是 ISA 形状猜测** ✗ ⇒ 该改名为属性查询（如 `model.encoding().is_variable()` ✗），不该删 ✗。）
 - [ ] emit 表达式落地（`{imm0 - 4}`、`{iconst >> 12 & 0xfffff}` 等），删 20 余个派生 token。
 - [ ] `temps = [...]` 显式临时寄存器，删 `{g}`/`{gN}`/`{f}`/`{fN}` 隐式声明。
 - [ ] 新增第四形态夹具 ISA（同一份谱里两个分支形态）验证"编译器不再猜"。
