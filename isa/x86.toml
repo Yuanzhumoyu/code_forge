@@ -364,12 +364,6 @@ segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[form.MRR_EXT]
-# @modrm_imm32：reg=fields.ext, rm=op0, imm32
-opsize = "s0"
-imm = 32
-
-
 [form.MRR_EXT_IMM32_SEG]
 # v21 W4：段形态（opcode + modrm(/ext) + imm32）
 opsize = "s0"
@@ -426,12 +420,6 @@ segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[form.MRR_EXT_OP]
-# @op_rm：F7 /digit（reg=fields.ext, rm=op0，无 imm）
-opsize = "s0"
-
-
-
 [form.MRR_EXT_OP_0F_SEG]
 opsize = "s0"
 segments = [
@@ -807,16 +795,16 @@ rows = [
 ]
 
 [family.ALU8_RM_IMM8]
-body = { form = "MRR_EXT", imm = 8, ops = ["dst:gpr8b:inout", "imm:imm8"] }
+body = { form = "MRR_EXT_IMM8_SEG", imm = 8, ops = ["dst:gpr8b:inout", "imm:imm8"] }
 rows = [
-  { inst = "ADD_RM8_IMM8", opcode = 0x80, modrm = { reg = 0, rm = "dst" }, asm = "add {dst}, {imm}" },
-  { inst = "OR_RM8_IMM8",  opcode = 0x80, modrm = { reg = 1, rm = "dst" }, asm = "or {dst}, {imm}" },
-  { inst = "ADC_RM8_IMM8", opcode = 0x80, modrm = { reg = 2, rm = "dst" }, asm = "adc {dst}, {imm}" },
-  { inst = "SBB_RM8_IMM8", opcode = 0x80, modrm = { reg = 3, rm = "dst" }, asm = "sbb {dst}, {imm}" },
-  { inst = "AND_RM8_IMM8", opcode = 0x80, modrm = { reg = 4, rm = "dst" }, asm = "and {dst}, {imm}" },
-  { inst = "SUB_RM8_IMM8", opcode = 0x80, modrm = { reg = 5, rm = "dst" }, asm = "sub {dst}, {imm}" },
-  { inst = "XOR_RM8_IMM8", opcode = 0x80, modrm = { reg = 6, rm = "dst" }, asm = "xor {dst}, {imm}" },
-  { inst = "CMP_RM8_IMM8", opcode = 0x80, modrm = { reg = 7, rm = "dst" }, asm = "cmp {dst}, {imm}" },
+  { inst = "ADD_RM8_IMM8", opcode = 0x80, match = { reg = 0 }, bind = { rm = "dst" }, asm = "add {dst}, {imm}" },
+  { inst = "OR_RM8_IMM8",  opcode = 0x80, match = { reg = 1 }, bind = { rm = "dst" }, asm = "or {dst}, {imm}" },
+  { inst = "ADC_RM8_IMM8", opcode = 0x80, match = { reg = 2 }, bind = { rm = "dst" }, asm = "adc {dst}, {imm}" },
+  { inst = "SBB_RM8_IMM8", opcode = 0x80, match = { reg = 3 }, bind = { rm = "dst" }, asm = "sbb {dst}, {imm}" },
+  { inst = "AND_RM8_IMM8", opcode = 0x80, match = { reg = 4 }, bind = { rm = "dst" }, asm = "and {dst}, {imm}" },
+  { inst = "SUB_RM8_IMM8", opcode = 0x80, match = { reg = 5 }, bind = { rm = "dst" }, asm = "sub {dst}, {imm}" },
+  { inst = "XOR_RM8_IMM8", opcode = 0x80, match = { reg = 6 }, bind = { rm = "dst" }, asm = "xor {dst}, {imm}" },
+  { inst = "CMP_RM8_IMM8", opcode = 0x80, match = { reg = 7 }, bind = { rm = "dst" }, asm = "cmp {dst}, {imm}" },
 ]
 
 # ── movzx / movsx：源宽度只能由**尺寸关键字**给 ──
@@ -1963,17 +1951,17 @@ asm = "vextractf32x4 {dst}, {src}, {imm}"
 # 不写 `ref`：IR 降级不用它们（`+1`/`-1` 走 ADD/SUB 的立即数形式），只有汇编器入口需要。
 
 [family.INCDEC_RM]
-body = { form = "MRR_EXT_OP", opcode = 0xFF, ops = ["dst:gprx:inout"] }
+body = { form = "MRR_EXT_OP_SEG", opcode = 0xFF, ops = ["dst:gprx:inout"] }
 rows = [
-  { inst = "INC_RM", modrm = { reg = 0, rm = "dst" }, asm = "inc {dst}" },
-  { inst = "DEC_RM", modrm = { reg = 1, rm = "dst" }, asm = "dec {dst}" },
+  { inst = "INC_RM", match = { reg = 0 }, bind = { rm = "dst" }, asm = "inc {dst}" },
+  { inst = "DEC_RM", match = { reg = 1 }, bind = { rm = "dst" }, asm = "dec {dst}" },
 ]
 
 [family.INCDEC_RM_8]
-body = { form = "MRR_EXT_OP", opcode = 0xFE, ops = ["dst:gpr8b:inout"] }
+body = { form = "MRR_EXT_OP_SEG", opcode = 0xFE, ops = ["dst:gpr8b:inout"] }
 rows = [
-  { inst = "INC_RM_8", modrm = { reg = 0, rm = "dst" }, asm = "inc {dst}" },
-  { inst = "DEC_RM_8", modrm = { reg = 1, rm = "dst" }, asm = "dec {dst}" },
+  { inst = "INC_RM_8", match = { reg = 0 }, bind = { rm = "dst" }, asm = "inc {dst}" },
+  { inst = "DEC_RM_8", match = { reg = 1 }, bind = { rm = "dst" }, asm = "dec {dst}" },
 ]
 [inst.NOT_RM]
 form = "MRR_EXT_OP_SEG"
