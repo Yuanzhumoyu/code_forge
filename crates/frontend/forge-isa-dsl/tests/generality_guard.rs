@@ -303,3 +303,69 @@ fn guard_extractor_sees_the_shipped_isas() {
         );
     }
 }
+
+/// **v21 W6/W11："按形状猜 ISA"的探测不得回潮。**
+///
+/// 这批标识符曾在生成器里用"**字段个数**"猜终结指令（分支/跳转/返回）的形态：它们自
+/// v21 W6 起**全部没有消费者**，已在 W6 清理片里删除（见执行清单 §8 的复核记录）。
+/// 它们回来就意味着编译器又在按形状猜 ISA——而形态只能由**谱数据**决定：
+/// `[[lower.Br]]`/`[[lower.Jmp]]`/`[[lower.Ret]]` 的终结序列 + 指令自身的槽结构。
+///
+/// 注释行不扫描（`scan_sources` 跳过 `//` 开头的行），所以本条注释里点名它们是安全的。
+const FORBIDDEN_SHAPE_PROBES: &[&str] = &[
+    "_has_jal",
+    "has_jal",
+    "_jal_dest",
+    "_jal_target",
+    "_b_src",
+    "_b_src2",
+    "_b_target",
+];
+
+#[test]
+fn no_isa_shape_guessing_probes_in_generator() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut lines = Vec::new();
+    scan_sources(&root, &mut lines);
+    let mut hits: Vec<String> = Vec::new();
+    for (file, lineno, text) in &lines {
+        let is_probe = FORBIDDEN_SHAPE_PROBES.iter().any(|p| {
+            text.split(|c: char| !c.is_alphanumeric() && c != '_')
+                .any(|w| w == *p)
+        });
+        if is_probe {
+            hits.push(format!("{file}:{lineno}: {text}"));
+        }
+    }
+    assert!(
+        hits.is_empty(),
+        "{}",
+        report(
+            "生成器里又出现按形状猜 ISA 的探测",
+            &hits,
+            "终结指令的形态只能由**谱数据**决定（`[[lower.*]]` 的终结序列 + 指令槽结构）；\
+             历史上这批探测用「字段个数」猜 jal/beq 形态，v21 W6 已删除"
+        )
+    );
+}
+
+/// **v21 W6：三份发行谱都自己声明终结序列**——编译器不再猜分支/跳转形态。
+///
+/// 这是 W11「新增 ISA 不必改编译器」的直接证据面：终结序列是**谱数据**（`[[lower.Br]]`/
+/// `[[lower.Jmp]]`），三谱各写各的（x86 `test`+`jcc`+`jmp`、riscv `beq …, x0` + `jal x0, …`、
+/// arm64 `cbz` + `b`）。
+#[test]
+fn shipped_isas_declare_their_terminator_sequences() {
+    let root = repo_root();
+    for isa in ["x86.toml", "riscv64.toml", "arm64.toml"] {
+        let path = root.join("isa").join(isa);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("读 {} 失败：{e}", path.display()));
+        for key in ["[[lower.Br]]", "[[lower.Jmp]]"] {
+            assert!(
+                text.contains(key),
+                "isa/{isa} 缺 `{key}`：终结序列必须由**谱**声明（v21 W6），编译器不猜形态"
+            );
+        }
+    }
+}
