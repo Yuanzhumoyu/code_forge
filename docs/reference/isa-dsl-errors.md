@@ -37,8 +37,8 @@
 | `DSL-META` | `[meta]` | ISA 名非法、`comment_char` 不是单字符、宽度键指向未声明的组、**变体参数未声明或取值越界**（`--params`/`params` 传了 `[meta].variants` 里没有的名字，或取值不在声明域内，v19 V5） |
 | `DSL-ENCODING` | `[encoding]`（v18 S4） | `kind` 与键结构不匹配（`fixed` 写 `widths`/`max_len`、`prefix_scan` 写 `bits`、`mixed` 写 `max_len`）、`widths` 为空/重复/含 0、`bits = 0`、`default_opsize = 0`、逐指令 `width` 不在 `widths` 里或与 `bits` 不一致、`prefix_scan` 下写 `width` |
 | `DSL-REG` | `[reg.*]` | 缺 GPR 组、`names`/`count` 不一致、组名宽度非法、生成式声明参数不全 |
-| `DSL-STACK` | `[stack]` | `slot`/`align`/`fp_save` 为 0 或未指向已声明组 |
-| `DSL-TYPES` | `[types]` | 类型名非法、目标寄存器组未声明、类宽 < 类型宽（会静默截断） |
+| `DSL-STACK` | `[machine.stack]`（v21 W9 前叫 `[stack]`，单位由字节改**位**） | `slot`/`align`/`fp_save` 为 0、不是 8 的整数倍或未指向已声明组 |
+| `DSL-TYPES` | `[machine.classes]`（v21 W9 前叫 `[types]`） | 类型名非法、目标寄存器组未声明、类宽 < 类型宽（会静默截断） |
 | `DSL-CONV` | `[conventions.*]` | 位域越界/重叠、`modrm` 字段未声明、条件码表为空/`code` 超 4 位/`ir` 名非法或重复映射、`cond` 槽却没有表、用了 `{cc}` 却没映射全 10 个 IR 条件、`prefix_scan` 条目非法 |
 | `DSL-SLOT` | `[[operand_slots]]` | 重名、`kind` 与字段不匹配、`imm` 宽为 0、`class`/`classes` 未声明、`byte_reg` 用错组 |
 | `DSL-FORM` | `[[forms]]` | 位域未声明、既无 `opcode_field` 也无 `modrm`、`modrm` 引用不存在的操作数 |
@@ -51,7 +51,7 @@
 | `DSL-OVERLAP` | `[[lowering]]`（v19 V6b，**仅 `validate --strict-overlap`**） | 同 op 两条规则的取值域**相交但互不包含**（部分重叠）：裁决序里前者先命中。**默认档不报**——真谱里"特化 + 兜底"遍地都是（实测三 ISA 共 61 条，全是合法写法）；该档是**评审清单**，不是错误判据 |
 | `DSL-PATTERN` | `[[pattern]]` | 匹配树语法错、内部节点用 Fcmp/Icmp/Copy/Nop、叶变量重复、`when` 属性未知 |
 | `DSL-ABI` | `[machine]`（`[abi]` 已删除） | 寄存器名未在 `[reg.*]` 声明（`fixed`/`scratch`/`link`；v21 W9 前的 `fixed_regs`/`spill_scratch`/`link_reg` 已改名） |
-| ~~`DSL-EMIT`~~ | ~~`[emit]`~~ | **已随 v20 A4 删除**（序/尾声键不存在；`[emit]` 只剩机器事实） |
+| ~~`DSL-EMIT`~~ | ~~`[machine.text]`~~ | **已随 v20 A4 删除**（序/尾声键不存在；`[machine.text]` 只剩机器事实） |
 | `DSL-SPILL` | `[spill.*]` | 指令引用未声明、占位符不是 `{N}`、`base` 未在 `[reg.*]` 声明 |
 | `LINT-*` | `forge-isa lint`（**静态体检，不是校验错误**） | `LINT-UNUSED-SLOT`/`LINT-UNUSED-FORM`/`LINT-UNUSED-BITFIELD`（默认档）、`LINT-BITFIELD-OVERLAP`（默认档）、`LINT-OP-GAP`（`--ops`）、`LINT-REF-UNUSED`（`--refs`）、`LINT-UNASSIGNED-BITS`（`--bits`）、`LINT-VARY-CANDIDATE`（`--suggest`，只建议）——判据与档位见 `docs/reference/isa-dsl.md`「静态体检」 |
 | `DSL-INCLUDE` | `include`（v18 S7） | 文件缺失、循环 include、同名标量冲突 |
@@ -82,7 +82,7 @@
 （`@push_callee` / `@pop_callee` / `@frame_alloc` / `@frame_free`）已全部删除，
 `@move_args` 更早已删除。写了它们 ⇒ `DSL-TOML`（新键不存在），修法是**删掉整段**——
 收参与调用平衡由生成器按约定 + 角色（`push`/`pop`/`frame_alloc`/`frame_free`/`frame_set`/
-`callee_save`/`callee_load`/`ret`）生成，`[emit]` 只剩 `align_pad`/`epilogue_label`。
+`callee_save`/`callee_load`/`ret`）生成，`[machine.text]` 只剩 `align_pad`/`epilogue_label`。
 
 `[spill.*]` 的模板仍在校验（引用名 + `{N}` 占位符 + `base` 寄存器名）：**为什么硬报**
 ——S0 基线实测这些位置**完全不校验**，把 `MOV64_RR` 写成 `MOV64_R` 要等到生成代码编译

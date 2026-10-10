@@ -11,6 +11,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W9 第二片：`[machine.stack|text|classes]` 三节迁入（stack 单位改**位**）
+
++ `[stack]` → `[machine.stack]`（**单位由字节改成位**：三份发行谱写 `slot = 64 / align = 128 /
+  fp_save = 64`，`demo8` 写 `8/8/8`）、`[emit]` → `[machine.text]`、`[types]` → `[machine.classes]`。
+  三个旧键按 `deny_unknown_fields` 报未知键（无迁移期双读）。
++ 解析期降级进**内部载体**（`IsaModel.{stack,emit,types}` 改 `#[serde(skip)]` + `INTERNAL_FIELDS`
+  登记）：位的硬检查只有"必须是 8 的整数倍"（`0` 交回校验期报 `must be > 0`），换算成字节后与旧口径
+  **逐字节一致** ⇒ 生成物零变化。`[machine]` 的键表纳入三个子表，新增面结构体 `MachineStack`。
++ 同步：三份发行谱 + `demo8`/`demo` 夹具；诊断锚点用例（`[machine.stack]`/`[machine.text]` 节头定位）；
+  DSL 内联谱用例（`[emit]`/`[stack]`/`[types]` 共 5 处）；校验消息改点名 `[machine.stack].*` 与
+  `[machine.classes].*`；文档键表五行 + 正文/示例/目录锚点（锚点实测，如
+  `#machinestack--栈与对齐v21-w9`）、`isa-dsl-errors.md` 的 `DSL-STACK`/`DSL-TYPES` 行。
++ 证据：`schema_guard` 9/9；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制；`markdownlint` 0 issue。
++ W9 剩余：`[spill.*]` → `[machine.spill.<组名>]` 按组分派；删 `callee_saved_gpr`/`callee_save_slots`
+  （走 ABI 层）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W9 第一片：`[machine]` 键收短（`fixed` / `scratch` / `link` / `padding` / `arg_place` / `byref_bytes`）
 
 + **破坏性键改名**（设计案 §6.10 目标形状）：`[machine].fixed_regs` → `fixed`、

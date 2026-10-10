@@ -781,16 +781,16 @@ fn validate_widths(m: &IsaModel) -> Result<(), String> {
     // （此前只在 `gen_abi` 生成期检查，读 TOML 的人拿不到早期反馈）。
     let _ = m.vector_by_ref_limit_bytes()?;
     if m.slot_bytes()? == 0 {
-        return Err("[stack].slot must be > 0".into());
+        return Err("[machine.stack].slot must be > 0".into());
     }
     if m.fp_overhead_bytes()? == 0 && m.stack.as_ref().and_then(|s| s.fp_save).is_some() {
-        return Err("[stack].fp_save must be > 0".into());
+        return Err("[machine.stack].fp_save must be > 0".into());
     }
     if m.stack.as_ref().and_then(|s| s.slot).is_some() && m.slot_bytes()? == 0 {
-        return Err("[stack].slot must be > 0".into());
+        return Err("[machine.stack].slot must be > 0".into());
     }
     if m.stack.as_ref().and_then(|s| s.align).is_some() && m.stack_align()? == 0 {
-        return Err("[stack].align must be > 0".into());
+        return Err("[machine.stack].align must be > 0".into());
     }
     // `[abi.stack_args]` 已删除（v20 A5-3）：栈参数布局由 plan 的 `CallLayout` 给
     //（rules 的 `stack.*` + `shadow_bytes`），谱面不再有这几个键。
@@ -868,7 +868,7 @@ fn validate_widths(m: &IsaModel) -> Result<(), String> {
     Ok(())
 }
 
-/// `[types]` 显式映射校验（B2）：类型名合法、目标组已声明（在
+/// `[machine.classes]`（v21 W9 前叫 `[types]`）显式映射校验（B2）：类型名合法、目标组已声明（在
 /// `explicit_type_map` 里查）、映射的类宽 ≥ 该类型的字节宽（`ptr` 按 ISA
 /// 地址宽；`void` 只能 unsupported）——防止把 `i64` 映射到 1 字节组这类
 /// "看起来能用、实际截断"的配置。**显式条目优先于通用值池规则**。
@@ -880,7 +880,7 @@ fn validate_types(m: &IsaModel) -> Result<(), String> {
             continue;
         };
         if ty == "void" {
-            return Err("[types].void: void 不承载寄存器，只能写 \"unsupported\"".into());
+            return Err("[machine.classes].void: void 不承载寄存器，只能写 \"unsupported\"".into());
         }
         // 向量类型：类宽必须 ≥ 元素字节数（tier 语义），其余按标量字节宽。
         let need = match ty.as_str() {
@@ -891,7 +891,7 @@ fn validate_types(m: &IsaModel) -> Result<(), String> {
             && rc.bytes() < need
         {
             return Err(format!(
-                "[types].{ty} = \"{rc}\": 类宽 {} 字节 < 该类型 {} 字节（会静默截断）",
+                "[machine.classes].{ty} = \"{rc}\": 类宽 {} 字节 < 该类型 {} 字节（会静默截断）",
                 rc.bytes(),
                 need
             ));

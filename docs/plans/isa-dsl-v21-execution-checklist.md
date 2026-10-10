@@ -771,7 +771,8 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 **目标**：`[machine]` 子表；spill 按组分派。
 
-- [ ] `[stack]`/`[emit]`/`[types]` → `[machine.stack]`/`[machine.text]`/`[machine.classes]`（单位统一为位）。
+- [x] `[stack]`/`[emit]`/`[types]` → `[machine.stack]`/`[machine.text]`/`[machine.classes]`（单位统一为位）。
+  （三谱 + `demo8`/`demo` 夹具已迁；解析期降级进内部载体 ⇒ 生成物零变化；`schema_guard` 9/9）
 - [ ] `[spill.*]` → `[machine.spill.<组名>]`，按组分派；写错键名 = 校验期错误（不再静默 no-op）。
 - [x] 键改名（逐项勾）：
   - [x] `fixed_regs` → `fixed`、`spill_scratch` → `scratch`、`link_reg` → `link`

@@ -47,7 +47,7 @@
 
     - [fail-closed 契约](#fail-closed-契约)
 
-    - [`[types]` — 类型 → 类（ISA 数据，B2 接口通用化）](#types--类型--类isa-数据b2-接口通用化)
+    - [`[machine.classes]` — 类型 → 类（ISA 数据，B2 接口通用化）](#machineclasses--类型--类isa-数据b2-接口通用化)
 
     - [最小示例](#最小示例)
 
@@ -85,7 +85,7 @@
 
   - [`[machine.frame]` — 帧布局](#machineframe--帧布局)
 
-- [`[emit]` — 代码对齐与尾声标签](#emit--代码对齐与尾声标签)
+- [`[machine.text]` — 代码对齐与尾声标签](#machinetext--代码对齐与尾声标签)
 
   - [`[spill.*]` — 溢出模板](#spill--溢出模板)
 
@@ -154,12 +154,12 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 <!-- BEGIN: schema-keys（由 tests/schema_guard.rs 校验，改 schema 时同步这一段）-->
 | 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
 | --- | --- | --- | --- |
-| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `types` `stack` `operand` `enum` `forms` `instructions` `family` `lower` `asm` `derive` `lowering` `pattern` `machine` `emit` `spill` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
+| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `operand` `enum` `forms` `instructions` `family` `lower` `asm` `derive` `lowering` `pattern` `machine` `spill` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
 | `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `vector_tiers` | 元信息 + 文本约定（宽度只在 [reg.<名>] 表头里，见 [machine] 的类指针键） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
 | `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `alloc_count` `aliases` | 寄存器组；组名的数字 = **位**宽（`gpr64` = 64 位）；aliases = { 别名 = 组内下标 } |
-| `[stack]` | — | `slot` `align` `fp_save` | 栈槽单位/对齐/帧指针保存槽（缺省全部派生） |
-| `[types]` | — | — | 类型 → 寄存器组名（或 "unsupported"）的显式映射；键 = 类型名（允许额外键） |
+| `[machine.stack]` | — | `slot` `align` `fp_save` | 栈槽单位/对齐/帧指针保存槽（v21 W9：从 `[stack]` 迁入，**单位是位**，解析期 ÷8；缺省全部派生） |
+| `[machine.classes]` | — | — | 类型 → 寄存器组名（或 "unsupported"）的显式映射（v21 W9：从 `[types]` 迁入）；键 = 类型名（允许额外键） |
 | `[conventions.modrm]` | — | `reg_field` `rm_field` `force_disp_base` | ModRM 约定（表存在即启用）：reg/rm 位域名 + 强制位移的 base 寄存器号 |
 | `[conventions.cond]` | `code` | `ir` | 条件码表：键 = 汇编可见的条件名（也允许 `名 = <整数>` 简写）（允许额外键） |
 | `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex` `rex2` |
@@ -177,9 +177,9 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[lower.<终结 op>]` | `insts` | — | 终结指令的 lowering 序列（Br/Jmp/Ret）：可用 {true}/{false}/{target} 符号值 |
 | `[[lowering]]` | `op` `insts` | `when` `vary` `dispatch` `temps` `priority` | 指令选择规则 |
 | `[[pattern]]` | `insts` | `when` `match` `priority` `only_variants` | 树型多指令匹配（`match` 是 Rust 关键字，模型里写作 `r#match`） |
-| `[machine]` | — | `fixed` `scratch` `link` `gpr` `fpr` `addr` `value_gpr` `value_fpr` `frame` `callee_saved_gpr` `callee_save_slots` `padding` `arg_place` `byref_bytes` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / callee-saved 推入槽数 / 帧填充 / 位置计数规则；v21 W9：`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes` 由 `fixed_regs`/`spill_scratch`/`link_reg`/`frame_padding`/`arg_slot`/`vector_by_ref_bytes` 改名） |
+| `[machine]` | — | `fixed` `scratch` `link` `gpr` `fpr` `addr` `value_gpr` `value_fpr` `frame` `callee_saved_gpr` `callee_save_slots` `padding` `arg_place` `byref_bytes` `stack` `text` `classes` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / callee-saved 推入槽数 / 帧填充 / 位置计数规则；v21 W9：`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes` 由 `fixed_regs`/`spill_scratch`/`link_reg`/`frame_padding`/`arg_slot`/`vector_by_ref_bytes` 改名，并接收从 `[stack]`/`[emit]`/`[types]` 迁入的 `stack`/`text`/`classes`） |
 | `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（唯一位置；`[abi.frame]` 已删除） |
-| `[emit]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（序/尾声由生成器按约定生成，谱里不再写） |
+| `[machine.text]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（v21 W9：从 `[emit]` 迁入；序/尾声由生成器按约定生成，谱里不再写） |
 | `[spill.<name>]` | — | `load` `store` `base` `only_variants` | 溢出/回填模板（`{N}` = 寄存器序号占位符） |
 | `[[vectors]]` | — | `asm` `bytes` `error` `partial` `comment` | 数据化测试向量（v19 V3）：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = "DECODE", partial}` 解码错误 / `{bytes}` 解码正向 |
 | `enc / vex / evex / modrm（内联子表）` | — | `reg` `rm` | `modrm = { reg = <名\|整数>, rm = <名\|"[base]"> }` |
@@ -351,10 +351,10 @@ value_fpr = "fpr64"          # 浮点值池；缺省 = fpr64 组（f64 值池宽
 
 # ── 栈与帧（可选；缺省全部派生）──
 
-[stack]
-slot = 8                     # 栈槽单位字节（alloca/聚合/spill 槽对齐）；缺省 = 地址类**字节**宽
-align = 16                   # 栈对齐字节；缺省 = slot
-fp_save = 8                  # 帧指针保存槽字节数；缺省 = 地址类字节宽
+[machine.stack]
+slot = 64                    # 栈槽单位**位**（= 8 字节；alloca/聚合/spill 槽对齐）；缺省 = 地址类宽度
+align = 128                  # 栈对齐**位**（= 16 字节）；缺省 = slot
+fp_save = 64                 # 帧指针保存槽**位**（= 8 字节）；缺省 = 地址类宽
 
 [reg.gpr64]                   # 寄存器组（组名的数字 = **位**宽：gpr64 = 64 位；fpr128 = 128 位）
 names = ["RAX", "RCX", "..."] # 显式名单；或 count + prefix 生成式声明
@@ -461,9 +461,9 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
 | `[machine].addr` | 组名 | `gpr` | 地址类：MemRef base/index、`lea`、sp/fp、帧地址 |
 | `[machine].value_gpr` | 组名 | `gpr` | 宿主整数值池（值 XReg / 零值 / 临时 vreg） |
 | `[machine].value_fpr` | 组名 | `fpr64` 组（f64 值池；**不按最宽 FPR 组推导**） | 宿主浮点值池 |
-| `[stack].slot` | 字节 | 地址类的**字节**宽 | ABI 栈槽单位、alloca/聚合拆分、spill 槽对齐 |
-| `[stack].align` | 字节 | `slot` | 栈对齐（prologue 帧分配对齐；x86 = 16） |
-| `[stack].fp_save` | 字节 | 地址类的字节宽 | `RegInfo::frame_pointer_overhead()` |
+| `[machine.stack].slot` | **位**（解析期 ÷8） | 地址类的**位**宽 | ABI 栈槽单位、alloca/聚合拆分、spill 槽对齐 |
+| `[machine.stack].align` | **位**（解析期 ÷8） | `slot` | 栈对齐（prologue 帧分配对齐；x86 = 128 位 = 16 字节） |
+| `[machine.stack].fp_save` | **位**（解析期 ÷8） | 地址类的位宽 | `RegInfo::frame_pointer_overhead()` |
 | `[meta].vector_tiers` | 字节（升序） | `[16, 32, 64]` | 向量类档位（`reg_class_for` 取最小 ≥ 请求值） |
 | `[encoding].default_opsize` | **位** | 无（decode 初始化 4 字节 = 32 位） | 生成代码里 `__opsize`（**字节**）的缺省；1 字节寄存器 ISA 写 `8` |
 | `[machine.frame].fp_push_bytes` | 字节 | 地址类的字节宽 | prologue 在帧指针上方 push 的字节数 |
@@ -530,20 +530,19 @@ default_opsize = 32     # 可选：无显式 opsize 语义的 form 在 decode �
    文件存在性**：整数族要求类宽 ≤ `value_gpr_width`（1 字节 ISA 上写 `i64`/
    指针即被拒）；浮点/向量族额外要求 ISA **声明了浮点寄存器组**（无 `[reg.fpr*]`
    的 ISA 上 `f32`/`f64`/`v128`… 一律被拒——它们没有可编码的寄存器文件），
-   向量再按 `vector_tiers` 夹到档位。**`[types]` 显式条目优先于以上全部规则**
+   向量再按 `vector_tiers` 夹到档位。**`[machine.classes]` 显式条目优先于以上全部规则**
    （软浮点 / 非常规宽度 / 1 字节地址都靠它）。被 DCE 墓碑化的值
    （`TypeId::VOID`，不承载寄存器）跳过。**不**按 8 字节池生成不存在的类。
-5. **向量 by-value/by-ref**：超过 `[machine].vector_by_ref_bytes` 的
+5. **向量 by-value/by-ref**：超过 `[machine].byref_bytes` 的
    向量按引用传参；按值收参判定用同一阈值（不再写死 `VEC(128)`）。
 
-### `[types]` — 类型 → 类（ISA 数据，B2 接口通用化）
+### `[machine.classes]` — 类型 → 类（ISA 数据，B2 接口通用化）
 
 值池门与 lowering 的"类型 → 寄存器类"推导**可以被 ISA 覆盖**——"非常规映射"是
 数据，不是宿主代码：
 
 ```toml
-[types]
-i8  = "gpr8"        # 值 = 已声明 [reg.*] 组名（类宽必须 ≥ 类型字节宽）
+[machine.classes]
 f64 = "gpr64"        # 软浮点：没有 FPR 组的 ISA 也能声明 f64 走 GPR
 ptr = "gpr8"        # 1 字节地址的 ISA（ptr 的健全性按 [meta].addr_width 判）
 i64 = "unsupported" # 显式拒绝（等价于通用门拒绝，但写出来更清楚）
@@ -561,7 +560,7 @@ i64 = "unsupported" # 显式拒绝（等价于通用门拒绝，但写出来更�
 ### 最小示例
 
 `crates/backend/forge-codegen/tests/isa/demo8.toml`（**唯一 `[reg.gpr8]` 组**，`addr_width`/
-`value_gpr_width` = 1、`[stack] slot/align/fp_save` = 1、`[encoding] default_opsize = 8`）是这条路径的
+`value_gpr_width` = 1、`[machine.stack] slot/align/fp_save` = 8 位、`[encoding] default_opsize = 8`）是这条路径的
 回归夹具：`tests/demo8_tests.rs` 断言元数据派生（`GPR(8)`、1 字节槽、
 sp/fp/scratch 名字解析成功、`allocatable = A0..A3`）、值池门（`i8` 可承载；
 `i16/i32/i64/ptr` 与 `f32/f64/v64/v128/v256` 全部 `None`）、编码布局、
@@ -1628,7 +1627,7 @@ arg_place = "by-position"               # 位置计数：by-class（缺省）/ b
 ```
 
 `frame_padding`（A5-3 起在此）：`sub rsp` 之外还要多减的字节数，使 call 点的 `rsp` 回到
-`[stack].align` 对齐。它是**机器事实**——由这台机器的帧机制（fp-outside 的 `push fp` +
+`[machine.stack].align` 对齐。它是**机器事实**——由这台机器的帧机制（fp-outside 的 `push fp` +
 推入 callee-saved 的次数）与入口 `rsp` 的模数共同决定：x86 = `push rbp` + 7 次 `push`
 （8 次、偶数）而入口 `rsp ≡ 8 (mod 16)` ⇒ 补 8（缺省 0 会让系统 DLL 在未对齐栈上崩）；
 riscv/arm64 用显式 `sub sp`，`fp-inside` ⇒ 0。约定侧的同名字段是
@@ -1705,7 +1704,7 @@ alloc_neg = true           # 帧分配立即数取负（riscv addi sp,sp,-N；x8
 > 推导（已核对现值：fp-inside → 104 = 16 + 11×8、override 0、shift 16）。`alloc_neg`
 > 保留为布尔（帧分配/释放**指令**已随 S4 移到 `roles` 的 `frame_alloc`/`frame_free`；`frame_set`/`callee_save`/`callee_load` 是 v20 A4 补的角色）。
 
-## `[emit]` — 代码对齐与尾声标签
+## `[machine.text]` — 代码对齐与尾声标签
 
 v20 A4 起**序言/尾声不再由谱写**：`[emit.prologue]`/`[emit.epilogue]` 与四个伪指令
 （`@push_callee`/`@pop_callee`/`@frame_alloc`/`@frame_free`）**已全部删除**。
@@ -1713,7 +1712,7 @@ v20 A4 起**序言/尾声不再由谱写**：`[emit.prologue]`/`[emit.epilogue]`
 能力角色生成；谱里只剩下面两个事实：
 
 ```toml
-[emit]
+[machine.text]
 align_pad = 0x90            # `.align` 伪指令填充字节（缺省 0x00）
 epilogue_label = true       # 是否生成独立尾声标签 + return block 的 epilogue 跳转
                             # （缺省 true；定宽 ISA 无 JMP 可设 false 走 fall-through）

@@ -297,7 +297,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         ),
         (
             "旧伪指令键（@push_callee 时代）也不认",
-            plus("[emit]\nepilogue = { insts = [\"@push_callee\"] }"),
+            plus("[machine.text]\nepilogue = { insts = [\"@push_callee\"] }"),
             "DSL-TOML",
             "epilogue",
         ),
@@ -312,8 +312,8 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
             "frame_sett",
         ),
         (
-            "`[emit]` 里只剩机器事实：类型写错照样报",
-            plus("[emit]\nepilogue_label = 3"),
+            "`[machine.text]` 里只剩机器事实：类型写错照样报",
+            plus("[machine.text]\nepilogue_label = 3"),
             "DSL-TOML",
             "epilogue_label",
         ),
@@ -537,15 +537,15 @@ fn diagnostics_are_capped_with_a_tail_note() {
 
 #[test]
 fn unknown_name_falls_back_to_section_header_not_line_one() {
-    // S0 基线：`[stack].align` 的错误退化成 1:1。S1 起落到 `[stack]` 那一行。
-    let doc = BASE.replace("[meta]", "[stack]\nalign = 0\n\n[meta]");
+    // S0 基线：`[machine.stack].align` 的错误退化成 1:1。S1 起落到节头那一行。
+    let doc = BASE.replace("[meta]", "[machine.stack]\nalign = 0\n\n[meta]");
     let d = errs(&doc)
         .into_iter()
         .find(|d| d.msg.contains("align"))
         .expect("应有 align 诊断");
     assert_eq!(
         d.line,
-        line_of(&doc, "[stack]"),
+        line_of(&doc, "[machine.stack]"),
         "无名节的错误应落在节头行（不是 1:1）"
     );
     assert!(d.line > 1, "不应退化到第 1 行");

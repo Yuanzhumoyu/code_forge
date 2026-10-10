@@ -48,7 +48,7 @@ names = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7"]
 # ─────────────────── 类型 → 类（ISA 数据，可选）───────────────────
 # 软浮点演示：本 ISA 没有 FPR 组，但显式声明 f32/f64 走 64 位 GPR
 #（值池里就是 8 字节寄存器）——"非常规映射"是 ISA 数据，不是宿主代码。
-[types]
+[machine.classes]
 f32 = "gpr64"
 f64 = "gpr64"
 
@@ -228,10 +228,10 @@ asm = "nop"
 # B3：接入 TargetMachine（调用约定 + 帧 + 序言/尾声 + lowering）
 # ════════════════════════════════════════════════════════════
 
-[stack]
-slot = 8
-align = 8
-fp_save = 8
+[machine.stack]
+slot = 64       # 位（= 8 字节）
+align = 64      # 位
+fp_save = 64    # 位
 
 # 收参/返回 mov 指令（demo 的 mov 是 dest=op0、src=op1 序；
 # 生成器按角色解析 src/dest，不依赖操作数序）
@@ -248,7 +248,7 @@ sp = "X7"          # demo 无专用 SP；X7 作栈指针（frame_size=0 时不�
 fp = "X6"          # 帧指针占位（B3 最小集不 push）
 fp_push_bytes = 0
 
-[emit]
+[machine.text]
 align_pad = 0
 # 独立尾声标签关闭：demo 无 JMP 指令，return block 直接 fall-through
 # 到函数末尾的尾声（RET）——仅单 return block 函数安全（B3 测试满足）。

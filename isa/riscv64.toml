@@ -1798,10 +1798,10 @@ asm = "ret"
 # B2：接入 TargetMachine（SysV rv64 子集 + 帧 + lowering）
 # ════════════════════════════════════════════════════════════
 
-[stack]
-slot = 8
-align = 16
-fp_save = 8
+[machine.stack]
+slot = 64       # 位（= 8 字节）
+align = 128     # 位（= 16 字节）
+fp_save = 64    # 位
 
 # 返回寄存器（a0）；Return/Call lowering 的返回值移动目标
 
@@ -1824,7 +1824,7 @@ load = "LD {0}, X8, {1}"
 store = "SD {0}, X8, {1}"
 base = "X8"
 
-[emit]
+[machine.text]
 align_pad = 0
 # return block 经 emit_epilogue_jump（jal x0, epilogue_label）跳到统一尾声：
 # 多 return block 函数（fib 双 return）安全；label 槽块号 → 定宽 fixup。

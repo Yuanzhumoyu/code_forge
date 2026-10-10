@@ -48,7 +48,7 @@ names = ["A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7"]
 
 # ─────────────────────── 命名位域 ───────────────────────
 
-[types]
+[machine.classes]
 ptr = "gpr8"
 
 [operand.a8]
@@ -212,11 +212,11 @@ asm = "nop"
 # TargetMachine 接入：调用约定 + 帧 + 序言/尾声 + lowering
 # ════════════════════════════════════════════════════════════
 
-[stack]
-# 1 字节寄存器 → 槽单位 / 栈对齐 / 帧保存槽全 = 1（不写死 x86 的 8/16）
-slot = 1
-align = 1
-fp_save = 1
+[machine.stack]
+# 1 字节寄存器 → 槽单位 / 栈对齐 / 帧保存槽全 = 8 位（不写死 x86 的 64/128）
+slot = 8
+align = 8
+fp_save = 8
 
 # 返回寄存器 A0；Return/调用方返回值移动目标
 
@@ -237,7 +237,7 @@ fp = "A6"
 # fp 保存槽 = 1 字节（不是 x86 的 8）
 fp_push_bytes = 1
 
-[emit]
+[machine.text]
 align_pad = 0
 # 无 JMP 指令：return block 直接 fall-through 到函数末尾的尾声（单 return 安全）
 epilogue_label = false

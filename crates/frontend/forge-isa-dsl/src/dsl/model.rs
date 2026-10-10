@@ -78,7 +78,7 @@ pub struct MachineSection {
     #[serde(default)]
     pub callee_saved_gpr: Option<Vec<String>>,
     /// **帧填充**（字节，机器事实，v20 A5-3）：`sub rsp` 之外还要多减的字节数，
-    /// 使 call 点的 `rsp` 回到 `[stack].align` 对齐。
+    /// 使 call 点的 `rsp` 回到 `[machine.stack].align` 对齐。
     ///
     /// 为什么是**机器事实**：它由这台机器的帧机制（fp-outside 的
     /// `push fp` + 推入 callee-saved 的次数）与入口 `rsp` 的模数共同决定；
@@ -103,6 +103,18 @@ pub struct MachineSection {
     /// 传指针）。`None`（缺省）= 不启用（宽向量参数/返回会被拒绝）。
     #[serde(default)]
     pub byref_bytes: Option<u16>,
+    /// **栈与对齐**（v21 W9：`[machine.stack]`，单位**位**）——解析期降级进内部
+    /// [`StackSection`]（字节口径）。
+    #[serde(default)]
+    pub stack: Option<MachineStack>,
+    /// **代码对齐与尾声标签**（v21 W9：`[machine.text]`）——解析期降级进内部
+    /// [`IsaModel::emit`]。
+    #[serde(default)]
+    pub text: Option<EmitSection>,
+    /// **类型 → 寄存器组名**（v21 W9：`[machine.classes]`）——解析期降级进内部
+    /// [`IsaModel::types`]。
+    #[serde(default)]
+    pub classes: Option<BTreeMap<String, String>>,
 }
 
 /// **降级重载展开**（v21 W5，目标第 (4) 项的前置）：一条 `[[lowering]]` 规则**没有 `when`**、
@@ -339,7 +351,7 @@ pub struct IsaModel {
     /// ISA 约定（位域/ModRM/REX/操作数宽度前缀）。
     #[serde(default)]
     pub conventions: Conventions,
-    /// 类型 → 寄存器类的**显式映射**（`[types]`，可选；B2 接口通用化）。
+    /// 类型 → 寄存器类的**显式映射**（内部载体；TOML 面是 `[machine.classes]`）。
     ///
     /// 键 = 类型名（`bool`/`i8`/`i16`/`i32`/`i64`/`i128`/`f16`/`f32`/`f64`/
     /// `f128`/`ptr`/`v64`/`v128`/`v256`），值 = 已声明 `[reg.*]` 组名，或
@@ -347,11 +359,11 @@ pub struct IsaModel {
     /// 使"非常规映射"成为 ISA 数据而不是宿主代码：
     /// 软浮点（`f64 = "gpr8"`）、1 字节地址（`ptr = "gpr1"`）等。
     /// 未列出的类型走通用规则（族 + 宽度 ≤ 值池/寄存器文件存在性）。
-    #[serde(default)]
+    #[serde(default, skip)]
     pub types: Option<BTreeMap<String, String>>,
-    /// 栈与对齐（`[stack]`，可选）：槽单位/栈对齐/帧指针保存槽。
-    /// 取代散落在 `[meta]`/`[abi]` 的同类键（2026-09-13 归并）。
-    #[serde(default)]
+    /// 栈与对齐（内部载体；TOML 面是 `[machine.stack]`，**单位是位**）。
+    /// 取代散落在 `[meta]`/`[abi]` 的同类键（2026-09-13 归并；v21 W9 改为 `[machine.stack]`）。
+    #[serde(default, skip)]
     pub stack: Option<StackSection>,
     /// 操作数槽（v21 W3：用户面是 `[operand.<名字>]` 表，由
     /// [`crate::dsl::operand_decl::lower_operand_layer`] 降级成本数组）。
@@ -422,8 +434,8 @@ pub struct IsaModel {
     /// **机器事实**（v20 A5）：`[machine]`——固定用途寄存器 / 溢出 scratch / 链接寄存器。
     #[serde(default)]
     pub machine: Option<MachineSection>,
-    /// 序言/尾声（`[emit]`）。
-    #[serde(default)]
+    /// 序言/尾声（内部载体；TOML 面是 `[machine.text]`）。
+    #[serde(default, skip)]
     pub emit: Option<EmitSection>,
     /// 溢出模板（`[spill.GPR]`/`[spill.FPR]`：load/store 指令 + 基址寄存器）。
     #[serde(default)]
@@ -867,7 +879,23 @@ pub struct Meta {
     pub vector_tiers: Option<Vec<u16>>,
 }
 
-/// `[stack]` — 栈与对齐（2026-09-13 从 `[meta]`/`[abi]` 归并而来）。
+/// **`[machine.stack]` 的体**（v21 W9）：栈槽单位 / 栈对齐 / 帧指针保存槽，
+/// **单位一律是位**（解析期 ÷8 降级进内部 [`StackSection`] 的字节口径）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct MachineStack {
+    /// ABI 栈槽单位（**位**）。缺省 = 地址类宽度。
+    #[serde(default)]
+    pub slot: Option<u32>,
+    /// 栈对齐（**位**）。缺省 = `slot`。
+    #[serde(default)]
+    pub align: Option<u32>,
+    /// 帧指针保存槽（**位**）。缺省 = 地址类宽度。
+    #[serde(default)]
+    pub fp_save: Option<u32>,
+}
+
+/// `[stack]`（v21 W9 起 TOML 面是 `[machine.stack]`，**单位是位**）——内部为字节口径。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct StackSection {

@@ -3839,10 +3839,10 @@ asm = "ldp {t1}, {t2}, [{base}], #{imm}"
 
 # ── 别名 ──
 
-[stack]
-slot = 8
-align = 16
-fp_save = 8
+[machine.stack]
+slot = 64       # 位（= 8 字节）
+align = 128     # 位（= 16 字节）
+fp_save = 64    # 位
 
 # 返回寄存器（x0）；Return lowering 的返回值移动目标
 
@@ -3860,7 +3860,7 @@ load = "LDURX {0}, X29, {1}"
 store = "STURX {0}, X29, {1}"
 base = "X29"
 
-[emit]
+[machine.text]
 align_pad = 0
 # 独立尾声标签开启：arm64 B（imm26）与 CBZ（imm19）label 槽经定宽 fixup
 # （Relative(4,0)）+ 生成的重定位补丁器位段重排 → return block 经

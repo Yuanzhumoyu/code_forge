@@ -2929,10 +2929,10 @@ asm = "ror {dst}"
 # 调用约定：v20 A5-3 起谱侧不再声明参数池/返回槽（`[abi]` 整节已下线）；
 # ============================================================
 
-[stack]
-slot = 8
-align = 16
-fp_save = 8
+[machine.stack]
+slot = 64       # 位（= 8 字节）
+align = 128     # 位（= 16 字节）
+fp_save = 64    # 位
 
 # 位置计数规则（by-position：int/float 共享位置游标）自 v20 A5-3 起是**机器事实**，
 # 写在 [machine].arg_place（约定侧的正式位置是 AbiRules::position，进 plan 后优先）。
@@ -2980,7 +2980,7 @@ base = "RBP"
 
 # 序言/尾声（模板按指令操作数序绑定：MOV64_RR op0=src、op1=dest；
 # MOV64_RR RSP, RBP = mov64rr rbp←rsp）
-[emit]
+[machine.text]
 align_pad = 0x90   # `.align` 伪指令填充字节 = NOP
 
 

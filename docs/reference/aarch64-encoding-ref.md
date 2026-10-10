@@ -188,14 +188,14 @@ NOP=**0xD503201F**（HINT #0）；HINT 其余(ESB/PAC/BTI…)为 0xD503201F 改 
   movz(hw1)+movk(hw0)（分片占位符 `{iconst_f0..f3}`，两补码位型逐片构造，
   任意 i64/i32 常量可表示）、乘除(MADD/MSUB/MUL/SDIV/UDIV)、分支
   (B/BL/BR/BLR/RET/CBZ/CBNZ)、CSEL 族、LDR/STR/LDUR/STUR、LDP/STP、
-  SP/XZR(31) 语义；[abi]/[emit]/[spill]/[[lowering]] TargetMachine 全链（P2）；
+  SP/XZR(31) 语义；[abi]/[machine.text]/[spill]/[[lowering]] TargetMachine 全链（P2）；
   jit_matrix runner + QEMU aarch64 semihosting 真执行（P3；值域过滤放宽至
   [-128,127]，return_negative/return_minus_one 转绿，矩阵 23 passed；大常量
   e2e：return 0x12345678 / -1_000_000_007 QEMU 真执行低 8 位验证；run_qemu
   临时 ELF 文件名加进程内原子序号——修并行测试文件串扰）、**多块控制流
   （P3②）**：B 角色 jump/epilogue_jump（bare 定宽跳，仅 label 槽）、CBZX
   角色 branch（cbz cond,false → b true；终结符按指令字段形状自适应分派）、
-  [emit].epilogue_label=true（return block 经 `b epilogue_label` 跳统一尾声，
+  [machine.text].epilogue_label=true（return block 经 `b epilogue_label` 跳统一尾声，
   多 return block 安全）；定宽 fixup 的位段重排由**生成的重定位补丁器**做（v21 W8）：
   它先 `decode_partial` 还原指令再重编码，因此不再需要"按 top6/top8 猜指令"的判词
   （初编码 label 占位污染高位也不影响识别——占位只改 imm 位段，不改 opcode）；

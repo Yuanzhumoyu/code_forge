@@ -779,7 +779,7 @@ fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
 ]
-[emit]
+[machine.text]
 align_pad = 0x90
 [[instructions]]
 name = "FOO"
@@ -3951,9 +3951,10 @@ fn width_metadata_explicit_key_needs_group() {
     assert!(msg.contains("[machine].gpr"), "msg: {msg}");
     let msg = validation_msg(&format!("{}\n[machine]\naddr = \"gpr16\"\n", one_byte_doc("")));
     assert!(msg.contains("[machine].addr"), "msg: {msg}");
-    // `[stack]` 键值域（2026-09-13 从 [meta]/[abi] 归并而来）
-    let msg =
-        validation_msg(&one_byte_doc("").replace("[reg.gpr8]", "[stack]\nslot = 0\n\n[reg.gpr8]"));
+    // `[machine.stack]` 键值域（v21 W9 起从 `[stack]` 迁入，单位是**位**）
+    let msg = validation_msg(
+        &one_byte_doc("").replace("[reg.gpr8]", "[machine.stack]\nslot = 0\n\n[reg.gpr8]"),
+    );
     assert!(msg.contains("slot"), "msg: {msg}");
 }
 
@@ -4156,7 +4157,7 @@ store = "NOP"
     assert!(m.spill.contains_key("FPR16"));
 }
 
-// ─────────── B2：`[types]` 显式类型→类映射（ISA 数据，优先于通用值池规则） ───────────
+// ─────────── B2：`[machine.classes]` 显式类型→类映射（ISA 数据，优先于通用值池规则） ───────────
 
 /// 合法：显式映射到已声明组；`"unsupported"` 也合法；`ptr` 按 ISA 地址宽判定。
 #[test]
@@ -4165,7 +4166,7 @@ fn types_explicit_map_parses_and_validates() {
         "{}\n[machine]\naddr = \"gpr32\"\n",
         two_view_doc(
             r#"
-[types]
+[machine.classes]
 i8 = "gpr64"
 f64 = "fpr128"
 ptr = "gpr32"
@@ -4186,13 +4187,13 @@ i64 = "unsupported"
 /// 非法：类型名未知 / 目标组未声明 / 类宽 < 类型字节宽（会静默截断）/ void 映射。
 #[test]
 fn types_explicit_map_rejects_bad_entries() {
-    let msg = validation_msg(&two_view_doc("[types]\nfoo = \"gpr64\"\n"));
+    let msg = validation_msg(&two_view_doc("[machine.classes]\nfoo = \"gpr64\"\n"));
     assert!(msg.contains("未知类型名"), "msg: {msg}");
-    let msg = validation_msg(&two_view_doc("[types]\ni8 = \"gpr256\"\n"));
+    let msg = validation_msg(&two_view_doc("[machine.classes]\ni8 = \"gpr256\"\n"));
     assert!(msg.contains("未声明"), "msg: {msg}");
-    let msg = validation_msg(&two_view_doc("[types]\ni64 = \"gpr32\"\n"));
+    let msg = validation_msg(&two_view_doc("[machine.classes]\ni64 = \"gpr32\"\n"));
     assert!(msg.contains("静默截断"), "msg: {msg}");
-    let msg = validation_msg(&two_view_doc("[types]\nvoid = \"gpr64\"\n"));
+    let msg = validation_msg(&two_view_doc("[machine.classes]\nvoid = \"gpr64\"\n"));
     assert!(msg.contains("void"), "msg: {msg}");
 }
 
@@ -4202,12 +4203,12 @@ fn types_explicit_map_rejects_bad_entries() {
 fn types_ptr_uses_isa_address_width() {
     let doc = format!(
         "{}\n[machine]\naddr = \"gpr32\"\n",
-        two_view_doc("[types]\nptr = \"gpr32\"\n")
+        two_view_doc("[machine.classes]\nptr = \"gpr32\"\n")
     );
     parse_and_validate(&doc).expect("地址宽 4 → ptr = gpr32 合法");
     let doc2 = format!(
         "{}\n[machine]\naddr = \"gpr16\"\n",
-        two_view_doc("[types]\nptr = \"gpr8\"\n").replace(
+        two_view_doc("[machine.classes]\nptr = \"gpr8\"\n").replace(
             "[reg.gpr64]",
             "[reg.gpr16]\nbase_index = 0\nnames = [\"E0\", \"E1\"]\n\n\
              [reg.gpr8]\nbase_index = 0\nnames = [\"B0\", \"B1\"]\n\n[reg.gpr64]",

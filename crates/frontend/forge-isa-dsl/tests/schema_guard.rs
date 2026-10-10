@@ -42,6 +42,21 @@ fn read_lf(path: &Path) -> Option<String> {
 const INTERNAL_FIELDS: &[(&str, &str, &str)] = &[
     (
         "IsaModel",
+        "types",
+        "内部载体（v21 W9）：只由 [machine.classes] 写入，TOML 面已撤",
+    ),
+    (
+        "IsaModel",
+        "stack",
+        "内部载体（v21 W9）：只由 [machine.stack] 写入（位 → 字节），TOML 面已撤",
+    ),
+    (
+        "IsaModel",
+        "emit",
+        "内部载体（v21 W9）：只由 [machine.text] 写入，TOML 面已撤",
+    ),
+    (
+        "IsaModel",
         "reloc",
         "内部载体（v21 W8）：只由 [asm.reloc.<名>] 写入，TOML 面已撤",
     ),

@@ -104,6 +104,54 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
             });
         }
     }
+    // v21 W9：`[machine.stack]`（**位** ⇒ 字节）/ `[machine.text]` / `[machine.classes]`
+    // 降级进内部载体（`stack`/`emit`/`types`）——下游（生成器/校验）只见内部口径。
+    let (m_stack, m_text, m_classes) = match model.machine.as_mut() {
+        Some(ms) => (ms.stack.take(), ms.text.take(), ms.classes.take()),
+        None => (None, None, None),
+    };
+    let lower_machine_sections = || -> Result<(), String> {
+        if let Some(st) = m_stack {
+            // 单位是**位**：必须是 8 的正整数倍，否则换算不出整字节（fail-closed）。
+            let to_bytes = |bits: u32, key: &str| -> Result<u32, String> {
+                if bits % 8 != 0 {
+                    return Err(format!(
+                        "[machine.stack].{key}: 单位是**位**，必须是 8 的正整数倍（写的是 {bits}）"
+                    ));
+                }
+                Ok(bits / 8)
+            };
+            let slot = match st.slot {
+                Some(b) => Some(u16::try_from(to_bytes(b, "slot")?).map_err(|_| {
+                    "[machine.stack].slot: 换算成字节后超出 u16（位值过大）".to_string()
+                })?),
+                None => None,
+            };
+            let align = match st.align {
+                Some(b) => Some(to_bytes(b, "align")?),
+                None => None,
+            };
+            let fp_save = match st.fp_save {
+                Some(b) => Some(u16::try_from(to_bytes(b, "fp_save")?).map_err(|_| {
+                    "[machine.stack].fp_save: 换算成字节后超出 u16（位值过大）".to_string()
+                })?),
+                None => None,
+            };
+            model.stack = Some(crate::dsl::model::StackSection {
+                slot,
+                align,
+                fp_save,
+            });
+        }
+        if let Some(t) = m_text {
+            model.emit = Some(t);
+        }
+        if let Some(c) = m_classes {
+            model.types = Some(c);
+        }
+        Ok(())
+    };
+    lower_machine_sections().map_err(anchor_err)?;
     model.expand_templates().map_err(|msg| {
         let idx = diag::DeclIndex::build(source);
         let a = idx.anchor(&msg);
