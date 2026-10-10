@@ -853,10 +853,22 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 **目标**：新增第四个 ISA 零编译器改动。
 
-- [ ] 新夹具 ISA（非 x86/riscv/arm64；定宽 + 一态变长各一）：只用 TOML + `arch/<new>.rs` + 生成的补丁器。
+- [~] 新夹具 ISA（非 x86/riscv/arm64；定宽 + 一态变长各一）：只用 TOML + `arch/<new>.rs` + 生成的补丁器。
+  （**定宽那一份已完成** ✔：`crates/backend/forge-codegen/tests/isa/demo_v21.toml` ✗（24 位定宽 ✗、
+  16 个 16 位寄存器 ✗）；**接入面 = TOML + 两行宿主 + 一个测试二进制 ✗，零编译器改动** ✔。
+  宿主按本仓既有做法放在 `tests/`（`common/mod.rs` + `spec_tests.rs` ✗）——`arch/<new>.rs` 是
+  **发行后端**的位置 ✗，夹具不进库本体 ✗。**变长那一份未做** ✗。）
 - [ ] 新守卫：断言"新增 ISA 的改动面只有 TOML 与 `arch/<new>.rs`"（扩展 `generality_guard` 的口径，从"无 ISA 名"升级到"无 ISA 形状分支"）。
-- [ ] 用 `forge-isa validate/lint/abi/test` 四档跑通该夹具。
-- [ ] 若有任何一处必须改编译器 ⇒ 记入设计文档"受控扩展点"清单并说明理由。
+  （**依赖 W6** ✗：`generality_guard` 的"形状分支"口径对应"分支/跳转降级下放" ✗，
+  那部分没做完之前这条守卫必然红 ✗。）
+- [x] 用 `forge-isa validate/lint/abi/test` 四档跑通该夹具。
+  （**实测** ✗：`validate` OK ✔；`lint` **干净（0 结论）** ✔；`abi check` **硬错 0 / 缺口 0** ✔；
+  `test` 报"谱内向量 8 条"✔，而**真跑**在宿主侧 ✗ —— `cargo test -p forge-codegen --test spec_tests`
+  **65 passed / 0 failed** ✗（该夹具 25 条生成期自测 + 8 条向量 ✗）、`--test w11_isa_tests`
+  **6 passed / 0 failed** ✗。）
+- [x] 若有任何一处必须改编译器 ⇒ 记入设计文档"受控扩展点"清单并说明理由。
+  （**本次为零** ✔：第四份 ISA 的接入**没有**任何编译器改动 ✗ —— 受控扩展点清单保持为空 ✗。
+  唯一"绕法"是夹具按本仓惯例宿主在 `tests/` 而不是 `arch/` ✗，那是**测试组织**不是编译器改动 ✗。）
 
 ---
 

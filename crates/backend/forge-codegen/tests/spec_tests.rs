@@ -13,6 +13,9 @@
 forge_dsl::isa_from_file!("tests/isa/demo8.toml", spec_tests = true);
 forge_dsl::isa_from_file!("tests/isa/demo_inst12.toml", spec_tests = true);
 forge_dsl::isa_from_file!("tests/isa/demo_mixed16_32.toml", spec_tests = true);
+// v21 W11：第四份 ISA（24 位定宽，非 x86/riscv64/arm64）——它的谱内 `[[vectors]]`
+// 与每条指令的闭环自测都在这里真跑（"新 ISA 只要 TOML + 宿主"的证据链一环）。
+forge_dsl::isa_from_file!("tests/isa/demo_v21.toml", spec_tests = true);
 
 /// 生成的自测模块导出了覆盖率常量，且夹具谱是**零跳过**的。
 #[test]
@@ -39,4 +42,10 @@ fn spec_tests_export_coverage_constants() {
         "demo_mixed16_32 应全指令覆盖"
     );
     assert!(dm::SPEC_SKIPPED.is_empty(), "{:?}", dm::SPEC_SKIPPED);
+
+    // v21 W11：第四份 ISA 也是**零跳过**（全部指令都有闭环自测）。
+    use demo_v21::__spec_tests as dv;
+    const { assert!(dv::SPEC_TOTAL > 0) };
+    assert_eq!(dv::SPEC_COVERED, dv::SPEC_TOTAL, "demo_v21 应全指令覆盖");
+    assert!(dv::SPEC_SKIPPED.is_empty(), "{:?}", dv::SPEC_SKIPPED);
 }

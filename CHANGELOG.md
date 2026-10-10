@@ -11,6 +11,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21 W11 第一片：第四份 ISA 夹具（24 位定宽）**零编译器改动**接入
+
++ 新增 `crates/backend/forge-codegen/tests/isa/demo_v21.toml` ✗：**非 x86/riscv64/arm64** 的
+  第四份 ISA ✗（24 位定宽、16 个 16 位寄存器 ✗），纯 TOML ✗；接入面只有两行宿主
+  （`tests/common/mod.rs` ✗、`tests/spec_tests.rs` ✗）+ 一个测试二进制 `tests/w11_isa_tests.rs` ✗
+  ⇒ **改动面 = TOML + 宿主 + 测试，零编译器改动** ✔。
++ 该夹具刻意用上 v21 的现面 ✗：表头即名字的 `[form.*]`/`[inst.*]`/`[pred.*]`/`[asm.pseudo.*]` ✗、
+  字段就地 `fields` ✗、`[family.*]`（`body` + `rows` ✗）、`[machine]`/`[machine.stack]` 机器事实 ✗、
+  `[reg.<名>]` 的 `prefix`+`count` 派生名字 ✗、谱内 `[[vectors]]` ✗。
++ 证据 ✗：`forge-isa validate` **OK** ✔；`forge-isa lint` **干净（0 结论）** ✔；
+  `forge-isa abi check` **硬错 0 / 缺口 0** ✔；`cargo test -p forge-codegen --test spec_tests` →
+  **65 passed / 0 failed** ✗（含该夹具 **25 条**生成期自测 + **8 条**谱内向量 ✗）；
+  `cargo test -p forge-codegen --test w11_isa_tests` → **6 passed / 0 failed** ✗（字节精确 ✗、
+  `decode→encode` 回环 ✗、反汇编文本再编回同样字节 ✗、伪指令 `li` ≡ `movi` ✗、族行三实例 ✗、
+  截断输入不解码 ✗）。
++ **如实记录一处手算错误** ✗：族行两条向量的期望字节我把 `rd`/`rs1` 的高低半字节写反了 ✗，
+  被**生成期自测**当场抓出（`assertion left == right` 报了实际字节 ✗）⇒ 这类谱内向量正好是
+  "手写期望值"的自动核对网 ✗。
++ W11 其余（未完成 ✗）：守卫升级到"无 ISA 形状分支" ✗ —— 它依赖 W6（分支/跳转降级下放 ✗），
+  以及"变长一态"的第二份夹具 ✗。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W10 第四片：旧面文档与消息的死链清零
 
 + **代码侧消息**：`[[forms]]` / `[[forms.X]]` / `[[derive]]` / `[[derive.X]]` 一律改成新面

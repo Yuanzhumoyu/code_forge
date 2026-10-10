@@ -1,0 +1,176 @@
+# W11 通用性实证夹具：**第四份 ISA**（非 x86 / riscv64 / arm64）。
+#
+# 目的：把"新增一个 ISA 只需 TOML + 宿主模块"这件事**做成可跑的证据** —— 本文件用上 v21 的现面：
+# 表头即名字（`[form.*]`/`[inst.*]`/`[pred.*]`/`[asm.pseudo.*]`）、字段就地 `fields`、
+# `[family.*]` 唯一复用机制、`[machine.*]` 机器事实、谱内 `[[vectors]]`。
+# 不含任何编译器改动（本文件 + 宿主 `tests/common/mod.rs` 一行 + 一个测试二进制）。
+#
+# 形态：24 位定宽字（非 2 幂宽度，3 字节）、16 个 16 位寄存器 R0..R15。
+
+[meta]
+name = "demo_v21"
+endian = "little"
+mode = 16
+
+[encoding]
+kind = "fixed"
+bits = 24
+
+[reg.gpr16]
+prefix = "R"
+count = 16
+
+[operand.g]
+kind = "reg"
+class = "gpr16"
+
+[operand.i8]
+kind = "imm"
+bits = 8
+signed = true
+
+# 三寄存器形态：[23:16] opcode / [15:12] rd / [11:8] rs1 / [7:4] rs2（低 4 位保留、不声明位域）
+[form.RRR]
+fields = [
+  "u8[23:16]:opcode",
+  "u4[15:12]:rd",
+  "u4[11:8]:rs1",
+  "u4[7:4]:rs2",
+]
+
+# 寄存器 + 立即数形态：[23:16] opcode / [15:12] rd / [11:8] rs1 / [7:0] imm
+[form.RRI]
+fields = [
+  "u8[23:16]:opcode",
+  "u4[15:12]:rd",
+  "u4[11:8]:rs1",
+  "u8[7:0]:imm",
+]
+
+# 操作数 `dst`/`src`/`src2` 与字段 `rd`/`rs1`/`rs2` **不同名** ⇒ 按 W3 口径 A 走"声明序绑定"
+# （跳过 opcode）：dst→rd、src→rs1、src2→rs2。**零 `bind`**。
+
+[inst.ADD]
+form = "RRR"
+opcode = 0x01
+ops = ["dst:g:out", "src:g", "src2:g"]
+asm = "add {dst}, {src}, {src2}"
+effect = ["Pure"]
+
+[inst.SUB]
+form = "RRR"
+opcode = 0x02
+ops = ["dst:g:out", "src:g", "src2:g"]
+asm = "sub {dst}, {src}, {src2}"
+effect = ["Pure"]
+
+[inst.AND]
+form = "RRR"
+opcode = 0x03
+ops = ["dst:g:out", "src:g", "src2:g"]
+asm = "and {dst}, {src}, {src2}"
+effect = ["Pure"]
+
+[inst.ADDI]
+form = "RRI"
+opcode = 0x11
+ops = ["dst:g:out", "src:g", "imm:i8"]
+asm = "addi {dst}, {src}, {imm}"
+effect = ["Pure"]
+
+# RRI 的 `rs1` 无操作数绑定 ⇒ 按缺省 0 发射（本槽只吃立即数）。
+[inst.MOVI]
+form = "RRI"
+opcode = 0x12
+ops = ["dst:g:out", "imm:i8"]
+asm = "movi {dst}, {imm}"
+effect = ["Pure"]
+
+# v21 W5：族 = **唯一复用机制**（表头即族名）；`body` 给公共键，`rows` 每行一个实例。
+[family.SHIFT]
+body = { form = "RRI", ops = ["dst:g:out", "src:g", "imm:i8"], asm = "shift.{kind} {dst}, {src}, {imm}", effect = ["Pure"] }
+rows = [
+  { inst = "SHL", opcode = 0x20, kind = "l" },
+  { inst = "SHR", opcode = 0x21, kind = "r" },
+  { inst = "SAR", opcode = 0x22, kind = "a" },
+]
+
+# v21 W10：命名谓词（表头即属性名）；`imm0` 是核心属性 ⇒ 合法。
+[pred.is_zero]
+expr = { eq = ["imm0", 0] }
+
+# v21 W7：伪指令（表头即名字）；书写规范 `asm` 的 `{名字}` 就是参数，`emit` 行首必须是本谱的
+# 指令助记符（或别的伪指令名）。
+[asm.pseudo.LI]
+asm = "li {dst}, {imm}"
+emit = ["movi {dst}, {imm}"]
+
+# 机器事实（v21 W9 的现面）。
+[machine]
+gpr = "gpr16"
+addr = "gpr16"
+value_gpr = "gpr16"
+scratch = ["R14", "R15"]
+padding = 0
+
+[machine.stack]
+slot = 16
+align = 32
+
+# ───────── 指令选择（v21 W6 的现面仍是 `[[lowering]]` 数组节；本夹具照现状写） ─────────
+
+[[lowering]]
+op = "Iadd"
+insts = ["ADD {out}, {0}, {1}"]
+
+# 命名谓词进 `when`：优先级更高、命中时走立即数形态。
+[[lowering]]
+op = "Iadd"
+priority = 1
+when = { eq = ["is_zero", 1] }
+insts = ["ADDI {out}, {0}, 0"]
+
+[[lowering]]
+op = "Isub"
+insts = ["SUB {out}, {0}, {1}"]
+
+[[lowering]]
+op = "Band"
+insts = ["AND {out}, {0}, {1}"]
+
+# ───────── 谱内测试向量（v21 面：`[[vectors]]` 仍是数组节） ─────────
+#
+# 编码算术（24 位 LE 3 字节）：RRR = opcode<<16 | rd<<12 | rs1<<8 | rs2<<4；
+#                            RRI = opcode<<16 | rd<<12 | rs1<<8 | imm
+
+[[vectors]]
+asm = "add R1, R2, R3"
+bytes = [0x30, 0x12, 0x01]
+
+[[vectors]]
+asm = "sub R4, R5, R6"
+bytes = [0x60, 0x45, 0x02]
+
+[[vectors]]
+asm = "and R7, R8, R9"
+bytes = [0x90, 0x78, 0x03]
+
+[[vectors]]
+asm = "addi R1, R2, 5"
+bytes = [0x05, 0x12, 0x11]
+
+[[vectors]]
+asm = "movi R3, 7"
+bytes = [0x07, 0x30, 0x12]
+
+[[vectors]]
+asm = "shift.l R1, R2, 1"
+bytes = [0x01, 0x12, 0x20]
+
+[[vectors]]
+asm = "shift.r R2, R3, 4"
+bytes = [0x04, 0x23, 0x21]
+
+[[vectors]]
+asm = "shift.a R3, R4, 8"
+bytes = [0x08, 0x34, 0x22]

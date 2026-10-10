@@ -24,6 +24,10 @@ forge_dsl::isa_from_file!("tests/isa/demo_inst8.toml", spec_tests = false);
 forge_dsl::isa_from_file!("tests/isa/demo_inst12.toml", spec_tests = false);
 forge_dsl::isa_from_file!("tests/isa/demo_inst100.toml", spec_tests = false);
 forge_dsl::isa_from_file!("tests/isa/demo_mixed16_32.toml", spec_tests = false);
+// v21 W11：**第四份 ISA**（24 位定宽，非 x86/riscv64/arm64）——"新增 ISA 只要 TOML + 宿主"
+// 的实证：本夹具用上表头即名字的 `[form.*]`/`[inst.*]`/`[pred.*]`/`[asm.pseudo.*]`、
+// `[family.*]`、`[machine.*]` 与谱内 `[[vectors]]`，**零编译器改动**。
+forge_dsl::isa_from_file!("tests/isa/demo_v21.toml", spec_tests = false);
 // v18 S7d：`include` 组合（根 + 片段两个文件合成一份谱）+ `[[override]]`。
 // 生成物里登记了**两个**来源文件的 `include_bytes!`（改任一片段都触发重编译）。
 forge_dsl::isa_from_file!("tests/isa/include_root.toml", spec_tests = false);
