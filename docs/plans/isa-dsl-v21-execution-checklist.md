@@ -621,7 +621,10 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 **目标**：x86 的 20 个 form 名与 37 处内联编码键，改成 `kind = "stream"` + 段。
 
-- [ ] 段 kind 闭集落地：`prefix`/`escape`/`rex`/`opcode`/`opcode_reg`/`modrm`/`sib`/`disp`/`imm`/`vex`/`evex`。
+- [x] 段 kind 闭集落地：`prefix`/`escape`/`rex`/`opcode`/`opcode_reg`/`modrm`/`sib`/`disp`/`imm`/`vex`/`evex`。
+  （**2026-10-08 复核：11 种全部已接线** ✔ —— `stream_decl.rs` 的 `lower_one` 逐一处理；
+  `sib`/`disp` 是**纯布局段**（无对应语义键：这两个字节由编码器按内存操作数派生 ✗，
+  段的价值是把字节布局写进谱、让段内字段进 `form.fields` 参与声明期校验与 `--bits` 清点 ✗）。）
 - [ ] 段内 `fields` 复用 W2 语法；`segments` 序 = 发射序。
 - [ ] 前缀表显式化：**删除 `default_prefix_scan()`**；效果参数化（`opsize`/`addrsize`/`lock`/`rep`/`reg_ext`/`map`/`opaque`）。
 - [ ] 解码条件由前缀段 `bytes` 生成（删 `prefix_cond_ts` 的按字节枚举）。
@@ -809,7 +812,11 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 - [ ] `CLAUDE.md` 的 ISA-DSL 相关段落（Key Architecture Rules、Testing Notes）全量回写。
 - [ ] `CHANGELOG.md` 记一条 **Breaking** 条目（用户可见变更才进 CHANGELOG）。
 - [ ] 设计文档转 `[archive]` 或标注"已落地"，执行清单标注完成日期。
-- [ ] `git grep` 全量检查：无 `conventions.bitfields` / `operand_fields` / `opcode_field` / `gpr8`(64 语义) / `[[forms]]` 残留死链。
+- [x] `git grep` 全量检查：无 `conventions.bitfields` / `operand_fields` / `opcode_field` / `gpr8`(64 语义) / `[[forms]]` 残留死链。
+  （**2026-10-08 复核：非历史文档里 `[[forms]]`/`[[instructions]]`/`[[derive]]` 的**用户面**引用已清零 ✗
+  —— 代码消息 42 处 + 文档 20 余处一次改完 ✗；`[[templates]]` 的 TOML 面也已撤（见 §7 附 ⑥ ✗）；
+  **刻意保留**：明确标注为历史的提法（"v18 S3f 引入时叫 `[[derive]]`"✗）与历史测量表 ✗；
+  `conventions.bitfields`/`operand_fields`/`opcode_field` 作为**内部展开目标**的说明保留 ✔。）
 - [ ] 门禁：§2 全绿 + `cargo test --workspace --exclude forge-rustc`。
 
 **W10 进度（2026-10-08）**：**表头即名字**的三张表已全部落地——`[[forms]]` → `[form.<名>]`、
@@ -823,9 +830,15 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 **一条教训（写进片记录）**：迁移脚本按块处理时若把"表头行 ⋯ `name` 行"整体压成一行，会**静默丢掉
 写在 `name` 之前的键**——x86 有 3 条如此（`CALL_RM`/`SETCC_RM8`/`SETCC_RM8_B` 的 `match = { reg = 2 }`），
 曾让 x86 JIT 跑出非法指令。**验收口径**：三谱 `forge-isa insts` 与迁移前逐行相同（差异 0 行）。
-**尚未做**：**W6 收尾**（`[[lowering]]`+`[[pattern]]` → `[lower.*]`，288 处 `[[lowering]]`；
-⚠️ `op` 的**名单形态**放不进表头，需先定口径）与 **W4 stream 段模型**（x86 段化，见 §6）；
-`CLAUDE.md` 回写要等这两者定型，否则会写成"不存在的面"。
+**W10 现状（2026-10-08 复核，避免重复排查 ✗）**：W10 只剩两块 ✗，都**不是**纯改名 ✗ ——
+① **W4 剩余**：段 kind 闭集**已验证全部接线** ✔（见 §6 第 1 条 ✗），剩 x86 谱迁移到
+`kind = "stream"` + 段 ✗（116 处 `modrm` / 84 处 `fields` / 128 条 form 混合 ✗）与附属项
+（前缀表显式化、删 `default_prefix_scan()`、REX2 段数据、`force_disp_base` 上界、`opsize`
+四态退化 ✗）；② **W6 剩余**：`[[lowering]]`+`[[pattern]]` → `[lower.*]` ✗（288 处 ✗）
+**卡在口径**：`op` 允许**名单** ✗，表头放不下 ✗，需要先定"名单怎么办" ✗。
+`CLAUDE.md` 回写**已完成**（只写已落地的面 ✗ + 一张"现行面 / 未定项"速查 ✗，
+未定型的 W4/W6 原样标注 ✗）。
+**尚未做**：W11（第四个 ISA 实证 ✗）与最终验收 ✗。
 
 ---
 
@@ -862,6 +875,11 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 - [ ] 迁移人工判断量超出设计文档 §10 的 40% 估算 1.5 倍以上 ⇒ 重新评估是否拆分或缩小范围。
 
 ## 附：W5 第 ⑥ 步（删 `[[templates]]` TOML 面）的精确计划（2026-10-08 实测）
+
+> ✅ **已完成（2026-10-08 复核）**：`model.rs` 的 `templates` 已是 `#[serde(skip, default)]`
+> （TOML 里写 `[[templates]]` 被未知键守卫拒绝）；`.rs` 夹具里已无 TOML 形态的 `[[templates]]`
+> （只剩注释与 `lint_shipped` 的"发行谱不得再用它"守卫）；schema/根键/文档键表均已同步。
+> 下面保留原始计划作为记录。
 
 **目标**：谱里写 `[[templates]]` 被拒绝；`Template`/`TemplateRow` 仅作 `family` 的**内部降级目标**。
 
