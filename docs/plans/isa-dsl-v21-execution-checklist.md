@@ -759,6 +759,37 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 - [ ] 门禁：§2 全绿；三矩阵计数不变。
 - [ ] 待度量项：`[snippet]` 按 riscv 14 处复用重测，收益过阈值才单开一片。
 
+### W6-a 表面改版施工单（`[[lowering]]` + `[[pattern]]` → `[lower.*]` ✗；口径已定 ✗）
+
+**口径（2026-10-08 拍板 ✗）**：`op` 名单**不再保留** —— **一个名字一块** ✗，
+复用交给 `[family.*]`/`vary` ✗（方案 §5 的 `[lower.<Op>]` ✗）。
+
+| 现面 | 新面 | 规模（三谱实测 ✗） |
+| --- | --- | --- |
+| `[[lowering]]` + `op = "Iadd"` | `[lower.Iadd]`（表头即 op 名 ✗，`op` 键消失 ✗） | 281 块 |
+| `[[lowering]]` + `op = ["Copy","Uextend","Freeze"]` | 展开成 `[lower.Copy]`/`[lower.Uextend]`/`[lower.Freeze]` 三块 ✗ | 9 块 → 23 块（+14 ✗） |
+| `[[pattern]]`（树匹配 ✗） | `[lower.<作者给的名字>]`（`match` 仍是树 ✗） | 2 块 |
+
+**两条必须守住的不变量** ✗：
+
+1. **声明序仍是裁决的最后一档** ✗（`priority` 降 → 谓词叶子数降 → **声明序升** ✗）——
+   表头表是 `BTreeMap`（字母序 ✗）✗ ⇒ 必须像 `[form.*]`/`[inst.*]`/`[pred.*]` 那样
+   **按源文位置恢复声明序**（`source.find("[lower.<名>]")` ✗），否则同优先级规则的胜负会变 ✗
+   ⇒ 生成物字节变 ✗。
+2. **三谱编码字节不变** ✗ —— 验收口径同 W10 ✗：`forge-isa insts` 与迁移前**逐行 0 差异** ✗
+   ＋ x86 JIT 矩阵 197/3/0 ✗。
+
+**四处同改** ✗（仓库铁律 ✗）：`src/schema.rs`（新增 `[lower.<名字>]` 段 + 根键 `lower` ✗）↔
+`dsl/model.rs` ↔ `docs/reference/isa-dsl.md` 的键表 ↔ 签入的 `isa-dsl.schema.json` ✗。
+
+**施工顺序** ✗（每片一次提交、先跑整仓门禁 ✗）✗：
+
+1. **表面片** ✗：模型（`lower` 表 + 源序恢复 ✗）、解析期**拒收** `[[lowering]]`/`[[pattern]]` ✗、
+   schema/文档/schema.json 四处同改 ✗，同时把 9 处名单展开与 2 处 pattern 命名落进三谱 ✗。
+2. **夹具与守卫片** ✗：`.rs` 内联夹具 ✗、`lint.rs` 诊断文案里的 `[[lowering.X]]` 锚点 ✗、
+   `move_derive.rs`/`lint_shipped.rs`/`strict_overlap.rs`/`variants.rs` 的锚点 ✗。
+3. **判据片** ✗：`insts` 0 差异 ✗ + 三矩阵 ✗ + `lint` 零结论 ✗ + `--suggest` 快照不涨 ✗。
+
 ---
 
 ## 9. W7 文本层

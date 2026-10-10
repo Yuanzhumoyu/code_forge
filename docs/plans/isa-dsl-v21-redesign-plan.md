@@ -12,7 +12,7 @@
 > | W3 | 操作数层收敛（`[operand.<名字>]` / `[enum.<表名>]`） | ✅ 已落地 |
 > | W4 | stream 段模型 | 🚧 **段 kind 闭集 11 种已全部接线**；剩 x86 谱迁移到 `kind = "stream"` + 段（116 处 `modrm` / 84 处 `fields` / 128 条混合）、前缀表显式化（删 `default_prefix_scan()`）、REX2 段数据、`force_disp_base` 上界、`opsize` 四态退化 |
 > | W5 | 族与重载（`[family.<名>]`；`[[templates]]` TOML 面已撤） | ✅ 已落地 |
-> | W6 | 选择层（`[[lowering]]` + `[[pattern]]` → `[lower.*]`） | 🚧 未做（288 处 `[[lowering]]`）；**卡点**：`op` 允许**名单**，表头放不下，需先定口径 |
+> | W6 | 选择层（`[[lowering]]` + `[[pattern]]` → `[lower.*]`） | 🚧 未做（281 处 `[[lowering]]` + 9 处 `op` 名单 + 2 处 `[[pattern]]`）；**口径已定（2026-10-08 ✗）**：`op` 名单不保留 ⇒ **一个名字一块** ✗，复用交给 `[family.*]`/`vary` ✗；施工单见执行清单 §8 的「W6-a」✗ |
 > | W7 | 文本层（`[asm.pseudo.<名>]` / `[asm.immfn.*]` / `[asm.reloc.<名>]`） | ✅ 已落地 |
 > | W8 | 重定位生成（生成的 reloc patcher，删手写补丁器） | ✅ 已落地 |
 > | W9 | machine 合并（`[machine.stack\|text\|classes\|spill.<模板名>]`；删 callee-saved 两键） | ✅ 已落地 |
