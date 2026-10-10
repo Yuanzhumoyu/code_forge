@@ -894,13 +894,36 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 ## 14. 最终验收
 
-- [ ] 三谱编码字节与 W0 逐字节相同（`isa_roundtrip_guard` + `asm_encoding` 双证）。
-- [ ] 三矩阵计数与 W0 逐数字相同。
-- [ ] `lint` 三谱零结论；`--refs`/`--bits`/`--suggest` 清单只减不增。
-- [ ] 设计文档 §1.2 的 D1–D6 逐条给出实测证据（节数、机制数、位置语义数、后门清除条数）。
-- [ ] 度量对比：三谱行数、生成物 token 规模、`cargo check -p forge-codegen` 时间（相对 W0）。
-- [ ] 文档三方针一致：`schema.rs` ↔ `dsl/model.rs` ↔ 参考文档键表 ↔ `isa-dsl.schema.json`。
-- [ ] 所有新增/改动文档 `npx markdownlint-cli2 <文件>` 到 0 error。
+**快照 #1（2026-10-08 ✗）** —— W4（x86 段迁移与编码器项）、W6（`[lower.*]`，卡在 `op` 名单口径）、
+W11 守卫（依赖 W6）尚未收口 ✗，本节只记录**已可测**的项 ✗，并标注待补项 ✗。
+
+- [x] 三谱编码字节与 W0 逐字节相同（`isa_roundtrip_guard` + `asm_encoding` 双证）。
+  （实测 ✗：`isa_roundtrip_guard` **1 passed** ✔、`spec_coverage_guard` **4 passed**（265/119/110 ✗）✔、
+  `asm_parse` **3 passed** ✔、`asm_encoding` **1 passed**（棘轮逐项相等 ✗）✔；另本会话**每片**都核
+  三谱 `forge-isa insts` 与迁移前**逐行 0 差异** ✔。）
+- [x] 三矩阵计数与 W0 逐数字相同。
+  （`jit_matrix_x86` **197 passed / 3 skipped / 0 failed** ✔（本会话多次实测 ✗）；
+  `jit_matrix_riscv64` **136 passed / 64 skipped / 0 failed** ✔（QEMU 通道 ✗）。
+  arm64 没有 JIT 矩阵 ✗（清单 §1.3 也只列两条 ✗）；它的 QEMU 通道 4 passed ✔。）
+- [~] `lint` 三谱零结论；`--refs`/`--bits`/`--suggest` 清单只减不增。
+  （**零结论 ✔**：三谱 `forge-isa lint` 全部"干净（无 lint 结论）" ✔。
+  **清单 ✗**：三张清单由 `tests/lint_shipped.rs` 的快照钉住且全绿 ✔ ⇒ 与**当前快照**一致 ✔；
+  但**相对 W0 有增长** ✗：`--bits` riscv64 3→**13**、arm64 67→**262**（W2 的口径变化 ✗：form 声明
+  但**本指令未绑定**的槽不再算该指令的覆盖 ✗）；`--suggest` riscv64 28→**31** ✗（W5 族合并之后 ✗）。
+  ⚠ **`CLAUDE.md` 里记的 3/67/28 已过时** ✗，待随文档面回写 ✗。）
+- [~] 设计文档 §1.2 的 D1–D6 逐条给出实测证据（节数、机制数、位置语义数、后门清除条数）。
+  （**已可测** ✗：D1 顶层节 —— 当前 `<root>` 行 17 个键（`meta` + 16 ✗），与设计期"21 → 13"的目标
+  差距**未逐条清点** ✗；D2 通用性 —— **第四份 ISA 两份夹具零编译器改动接入** ✔（W11 ✗）；
+  D5/D6 —— 两份夹具 + 「受控扩展点」记录 ✗。**未做** ✗：D3（机制数）与 D4（后门清除条数）
+  的逐条清点 ✗。）
+- [~] 度量对比：三谱行数、生成物 token 规模、`cargo check -p forge-codegen` 时间（相对 W0）。
+  （三谱行数 ✗：x86 **4877** / riscv64 **3427** / arm64 **5178**；三份 `tm` 生成物字节数 ✗：
+  x86 **6.07 MB** / riscv64 **2.48 MB** / arm64 **6.51 MB**；`cargo check -p forge-codegen`
+  **108.7 s**（该轮**含 build script 重新预生成** ✗ ⇒ **不可与 W0 对照** ✗；W0 的对照值仍未采 ✗）。）
+- [x] 文档三方针一致：`schema.rs` ↔ `dsl/model.rs` ↔ 参考文档键表 ↔ `isa-dsl.schema.json`。
+  （`schema_guard` **9/9** ✔ —— 本会话每片都跑 ✗。）
+- [x] 所有新增/改动文档 `npx markdownlint-cli2 <文件>` 到 0 error。
+  （本会话每次提交前都对改动文件跑 ✗；本轮 6 份改动文档 **0 issue** ✔。）
 
 ---
 
