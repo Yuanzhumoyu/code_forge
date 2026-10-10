@@ -2346,6 +2346,13 @@ pub enum Opsize {
     /// 0 个或多个 out 操作数 → 编译期报错（改 `"max"` 或显式操作数名）。
     /// `collect_inst_infos` 里按角色解析成 [`Opsize::Slot`]，下游只见索引。
     Out,
+    /// `opsize = "auto"`：宽度 = **第一个 Reg 操作数**的宽度（v21 W4 / D4 #14）。
+    ///
+    /// 自解释形态，取代 `"s<N>"`：**共享 form** 上没法点名某个操作数（`ops` 在用的指令上
+    /// 声明），而"由寄存器操作数驱动宽度"才是这些 form 的真实语义（内存操作数不携带宽度）。
+    /// 没有 Reg 操作数 → 编译期报错（显式写名字或位宽）。
+    /// `collect_inst_infos` 里解析成 [`Opsize::Slot`]，下游只见索引。
+    Auto,
 }
 
 impl Default for Opsize {
@@ -2364,6 +2371,18 @@ impl FromStr for Opsize {
         if s == "out" {
             return Ok(Self::Out);
         }
+        if s == "auto" {
+            return Ok(Self::Auto);
+        }
+        // v21 W4 / D4 #14：`"s<N>"` 的位置写法**已删除** —— 它靠"第几个操作数"决定语义
+        // （历史事故：`s0` 在 `*_RM_R` 家族恰好是**源**，把 64 位指针截成 32 位）。
+        // 改用 `"out"`（唯一 out/inout 角色）、操作数名，或共享 form 上的 `"auto"`。
+        if s.starts_with('s') && s.len() > 1 && s[1..].chars().all(|c| c.is_ascii_digit()) {
+            return Err(format!(
+                "opsize = \"{s}\" 的位置写法已删除（v21 W4）：改写成 \"out\"（取唯一 out/inout 角色）、\
+                 该操作数的**名字**，或共享 form 上的 \"auto\"（第一个 Reg 操作数驱动宽度）"
+            ));
+        }
         // "s<N>" / "r<N>" 是位置/字节形态；其余非空字符串 = 命名操作数引用
         let digits = s.get(1..).unwrap_or("");
         let n: u16 = match digits.parse() {
@@ -2377,7 +2396,6 @@ impl FromStr for Opsize {
             }
         };
         match s.chars().next() {
-            Some('s') => Ok(Self::Slot(n)),
             // "r<字节>" 是 v14 及以前的写法（r8 = 8 字节 = 64 位），与
             // `[conventions]` 的位单位互相矛盾。v15 起固定宽度写**裸整数位宽**
             // （`opsize = 64`），这里保留读旧值的能力只为给出明确的迁移提示。
@@ -2409,6 +2427,7 @@ impl Display for Opsize {
             Opsize::Named(n) => write!(f, "{n}"),
             Opsize::Max => write!(f, "max"),
             Opsize::Out => write!(f, "out"),
+            Opsize::Auto => write!(f, "auto"),
         }
     }
 }
@@ -2434,7 +2453,7 @@ impl<'de> Visitor<'de> for OpsizeVisitor {
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         write!(
             formatter,
-            r#"an opsize: bit width integer (16/32/64), "s<N>" (operand slot), "out" or "max""#
+            r#"an opsize: bit width integer (16/32/64), "out", "auto" or "max""#
         )
     }
 
@@ -2543,9 +2562,11 @@ pub struct Instruction {
     ///
     /// 声明与打印从此分离：`asm` 只用 `{名字}` **引用**操作数，不再内联声明。
     /// v14 的写法把两件事塞在一起——`asm = "add {1:[gprx:inout]}, {0:[gprx:in]}"`
-    /// 里索引与打印序解耦，读者无法从 `opsize = "s0"` 看出 s0 是源还是目的
+    /// 里索引与打印序解耦，读者无法从**位置写法** `opsize = "s0"`（v21 W4 已删除）
+    /// 看出 s0 是源还是目的
     /// （ADD_RM_R 里恰好是**源**，这正是 v14 那个 32 位截断指针 bug 的根源）。
-    /// 命名之后写 `opsize = "dst"`，自解释。
+    /// 现在写 `opsize = "dst"`（操作数名）、`"out"`（唯一 out/inout 角色）或共享 form 上的
+    /// `"auto"`（第一个 Reg 操作数驱动），三种都自解释。
     ///
     /// 省略 `ops` 时回退 v14 的内联声明形态（迁移期并存）。
     #[serde(default)]

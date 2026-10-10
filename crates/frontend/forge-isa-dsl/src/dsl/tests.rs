@@ -2496,7 +2496,7 @@ class = "gpr64"
 roles = "inout"
 [form.MRR]
 modrm = { reg = "dst", rm = "src" }
-opsize = "s0"
+opsize = "auto"
 escape = [0x0F]
 [inst.I]
 form = "MRR"
@@ -2518,13 +2518,14 @@ asm = "i {dst}, {src}"
         Some(&[0x0Fu8][..]),
         "未覆盖的键继承预设"
     );
-    assert_eq!(enc.opsize, Some(crate::dsl::model::Opsize::Slot(0)));
+    // v21 W4：form 上写 `"auto"` 时，**解析期**保持 `Auto`（等有 `ops` 时再归一成
+    // 具体槽位——见 `collect_inst_infos`/`vlen.rs` 的入口归一）。
+    assert_eq!(enc.opsize, Some(crate::dsl::model::Opsize::Auto));
 }
 
 /// opsize 固定宽度写**位宽整数**；旧的 "rN"（字节）写法给出明确迁移提示。
 #[test]
-fn opsize_fixed_width_is_bits() {
-    use crate::dsl::model::Opsize;
+fn opsize_fixed_width_is_bits() {    use crate::dsl::model::Opsize;
     let bits: Opsize = toml::from_str::<toml::Value>("v = 64").unwrap()["v"]
         .clone()
         .try_into()
@@ -2544,6 +2545,35 @@ fn opsize_fixed_width_is_bits() {
     let old: Result<Opsize, _> = toml::Value::String("r8".into()).try_into();
     let msg = format!("{}", old.unwrap_err());
     assert!(msg.contains("opsize = 64"), "需给出位宽写法提示: {msg}");
+}
+
+/// **位置的 `"s<N>"` 已删除**（v21 W4 / D4 #14）：三种自解释写法取而代之。
+///
+/// 为什么删：`s<N>` 靠"第几个操作数"决定语义，`s0` 在 `*_RM_R` 家族恰好是**源**，
+/// 历史上把 64 位指针截成 32 位。共享 form 上没法点名 ⇒ 用 `"auto"`。
+#[test]
+fn opsize_positional_spelling_is_rejected() {
+    use crate::dsl::model::Opsize;
+    for bad in ["s0", "s1", "s12"] {
+        let e: Result<Opsize, _> = toml::Value::String(bad.into()).try_into();
+        let msg = format!("{}", e.expect_err("位置写法必须被拒"));
+        assert!(
+            msg.contains("位置写法已删除"),
+            "需给出迁移提示（看到的是: {msg}）"
+        );
+        for hint in ["\"out\"", "\"auto\""] {
+            assert!(msg.contains(hint), "提示里应给出 {hint}：{msg}");
+        }
+    }
+    // 三种自解释写法都能解析
+    for (s, want) in [
+        ("auto", Opsize::Auto),
+        ("out", Opsize::Out),
+        ("max", Opsize::Max),
+    ] {
+        let got: Opsize = toml::Value::String(s.into()).try_into().expect(s);
+        assert_eq!(got, want);
+    }
 }
 
 // ─────────── S3c：命名操作数（ops 声明 + asm 引用） ───────────

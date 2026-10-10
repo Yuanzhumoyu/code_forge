@@ -335,7 +335,7 @@ segments = [
 ]
 [form.MRR_0F_SEG]
 # v21 W4：段形态（0F escape + opcode + modrm）
-opsize = "s0"
+opsize = "auto"
 segments = [
   { kind = "escape", bytes = ["0x0F"] },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
@@ -357,7 +357,7 @@ segments = [
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
 [form.MRR_0F_PFX_SEG]
-opsize = "s0"
+opsize = "auto"
 segments = [
   { kind = "prefix", fields = ["u8[7:0]:prefix"] },
   { kind = "escape", bytes = ["0x0F"] },
@@ -366,7 +366,7 @@ segments = [
 ]
 [form.MRR_EXT_IMM32_SEG]
 # v21 W4：段形态（opcode + modrm(/ext) + imm32）
-opsize = "s0"
+opsize = "auto"
 segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
@@ -375,7 +375,7 @@ segments = [
 
 [form.MRR_EXT_IMM8_SEG]
 # v21 W4：段形态（opcode + modrm(/ext) + imm8）
-opsize = "s0"
+opsize = "auto"
 segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
@@ -421,7 +421,7 @@ segments = [
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
 [form.MRR_EXT_OP_0F_SEG]
-opsize = "s0"
+opsize = "auto"
 segments = [
   { kind = "escape", bytes = ["0x0F"] },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
@@ -429,7 +429,7 @@ segments = [
 ]
 [form.MRR_EXT_OP_SEG]
 # v21 W4：段形态（opcode + modrm(/ext)，无 imm）
-opsize = "s0"
+opsize = "auto"
 segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
@@ -441,7 +441,7 @@ segments = [
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
 [form.MRR_MEM_PRE_SEG]
-opsize = "s0"
+opsize = "auto"
 segments = [
   { kind = "prefix", fields = ["u8[7:0]:prefix"] },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
@@ -461,14 +461,14 @@ segments = [
 
 
 [form.MRR_MEM_XREL_SEG]
-opsize = "s0"
+opsize = "auto"
 segments = [
   { kind = "prefix", bytes = ["0xF3", "0xF0"] },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
 [form.MRR_MEM_XACQ_SEG]
-opsize = "s0"
+opsize = "auto"
 segments = [
   { kind = "prefix", bytes = ["0xF2", "0xF0"] },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
@@ -476,7 +476,7 @@ segments = [
 ]
 [form.MRR_MEM_0F_SEG]
 # v21 W4：段形态（0F escape + opcode + modrm，MemRef 内存）
-opsize = "s0"
+opsize = "auto"
 segments = [
   { kind = "escape", bytes = ["0x0F"] },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
@@ -484,7 +484,7 @@ segments = [
 ]
 [form.MRR_MEM_SEG]
 # v21 W4：段形态（opcode + modrm，MemRef 内存）
-opsize = "s0"
+opsize = "auto"
 segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
@@ -602,7 +602,7 @@ asm = "movsxd {dst}, {src}"
 # （`gpr32` vs `gpr`）——文本里的寄存器名不同，所以两条各自命中、互不歧义；
 # 解码按声明序（先 64 位源那条），编码字节完全相同（`MRR_FIX64`）。
 # 为什么不用一个多类槽收两边：`opsize = r64`（= 固定宽度要求）会对**多类** GPR 槽
-# 过滤宽度 ⇒ `ecx`/`r16d` 全被拒；换成 `opsize = "s0"` 又会要求两个操作数同宽 ⇒
+# 过滤宽度 ⇒ `ecx`/`r16d` 全被拒；换成 `opsize = "auto"` 又会要求两个操作数同宽 ⇒
 # `movsxd rax, ecx` 这种"64←32"的真实写法同样被拒。两条同编码指令是既有格局
 # （`MOV_R_RM`/`MOV_RM_R`、`MOV64_RR` 那几对）。
 [inst.MOVSXD_R_RM32]
@@ -706,12 +706,12 @@ asm = "test {src2}, {src}"
 #
 # 名字用 x86 手册的形态名：`*_MR` = r/m ← r/m op r（目的在内存）；
 # `*_R_MEM` = r ← r op r/m（源在内存）。宽度由旁边的寄存器驱动
-# （`MRR_MEMREF_AUTO` 的 `opsize = "s0"`）——内存操作数自己不携带宽度语义。
+# （内存族的 `opsize = "auto"`）——内存操作数自己不携带宽度语义。
 
 [family.ALU_MR]
 # v21 W4：段形态（`MRR_MEMREF_SEG` + `bind = { rm = "[mem]" }`）；SEG 形式写死 `opsize = 64`
-# ⇒ 这里显式恢复 `opsize = "s0"`（宽度由首个 Reg 操作数驱动）。
-body = { form = "MRR_MEMREF_SEG", opsize = "s0", bind = { rm = "[mem]" }, ops = ["src:gprx", "mem:mem:inout"] }
+# ⇒ 这里显式恢复 `opsize = "auto"`（宽度由首个 Reg 操作数驱动）。
+body = { form = "MRR_MEMREF_SEG", opsize = "auto", bind = { rm = "[mem]" }, ops = ["src:gprx", "mem:mem:inout"] }
 rows = [
   { inst = "ADD_MR",  opcode = 0x01, asm = "add {mem}, {src}" },
   { inst = "OR_MR",   opcode = 0x09, asm = "or {mem}, {src}" },
@@ -746,7 +746,7 @@ ops = ["src:gprx", "mem:mem:inout"]
 asm = "release lock add {mem}, {src}"
 
 [family.ALU_R_MEM]
-body = { form = "MRR_MEMREF_SEG", opsize = "s0", bind = { rm = "[mem]" }, ops = ["dst:gprx:out", "mem:mem"] }
+body = { form = "MRR_MEMREF_SEG", opsize = "auto", bind = { rm = "[mem]" }, ops = ["dst:gprx:out", "mem:mem"] }
 rows = [
   { inst = "ADD_R_MEM", opcode = 0x03, asm = "add {dst}, {mem}" },
   { inst = "OR_R_MEM",  opcode = 0x0B, asm = "or {dst}, {mem}" },
@@ -769,7 +769,7 @@ rows = [
 # `STORE_MEM_R_8` 的既有写法。
 
 [family.ALU8_MR]
-body = { form = "MRR_MEMREF_SEG", opsize = "s0", bind = { rm = "[mem]" }, ops = ["src:gpr8b", "mem:mem:inout"] }
+body = { form = "MRR_MEMREF_SEG", opsize = "auto", bind = { rm = "[mem]" }, ops = ["src:gpr8b", "mem:mem:inout"] }
 rows = [
   { inst = "ADD_MR_8", opcode = 0x00, asm = "add {mem}, {src}" },
   { inst = "OR_MR_8",  opcode = 0x08, asm = "or {mem}, {src}" },
@@ -782,7 +782,7 @@ rows = [
 ]
 
 [family.ALU8_R_MEM]
-body = { form = "MRR_MEMREF_SEG", opsize = "s0", bind = { rm = "[mem]" }, ops = ["dst:gpr8b:out", "mem:mem"] }
+body = { form = "MRR_MEMREF_SEG", opsize = "auto", bind = { rm = "[mem]" }, ops = ["dst:gpr8b:out", "mem:mem"] }
 rows = [
   { inst = "ADD_R_MEM_8", opcode = 0x02, asm = "add {dst}, {mem}" },
   { inst = "OR_R_MEM_8",  opcode = 0x0A, asm = "or {dst}, {mem}" },
@@ -820,20 +820,20 @@ rows = [
 #   这是 lowering 的零扩展加载用的形态（`{0}` 是地址 vreg ⇒ 绑到寄存器槽）；
 # - `MOVZX/MOVSX_MEM{8,16}`：**完整内存模板**（base/index*scale/disp/无基址），真实汇编
 #   的常态写法（`movzx eax, byte ptr [rdi+8]`）。
-# 目的宽度由寄存器驱动（`opsize = "s0"`）：16 位目的发 66、64 位目的发 REX.W——这正是
+# 目的宽度由寄存器驱动（`opsize = "out"`）：16 位目的发 66、64 位目的发 REX.W——这正是
 # `0F B6/B7/BE/BF` 的宽度语义。
 [inst.MOVZX_R8_MEM]
 group = "load_rd"
 word_size = 8
 # `[reg]` 简写：源宽度由**操作码**（B6 = byte）+ 模板里的尺寸关键字表达，目的宽度由
-# 寄存器驱动（`opsize = "s0"`；这里目的恒为 64 位 ⇒ 发 REX.W）。旧写法把
+# 寄存器驱动（`opsize = "out"`；这里目的恒为 64 位 ⇒ 发 REX.W）。旧写法把
 # `prefix`/`rex_w` 写成固定值：R8 那条（prefix=0、w=1）恰好对，**R16 那条写死 `66`
 # 是错的**——`66` 是"16 位目的"的编码，配 64 位目的会编出 `66 48 0F B7`（轴不对），
 # 而 `movzx rax, word ptr [m]` 应当是 `48 0F B7`（无 66）。
 segments = [  { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
 bind = { rm = "[src]" }
 opcode = 0xB6
-opsize = "s0"
+opsize = "out"
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "movzx {dst}, byte ptr [{src}]"
 
@@ -843,7 +843,7 @@ word_size = 16
 segments = [  { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
 bind = { rm = "[src]" }
 opcode = 0xB7
-opsize = "s0"
+opsize = "out"
 ops = ["dst:gpr:out", "src:gpr"]
 asm = "movzx {dst}, word ptr [{src}]"
 
@@ -1410,7 +1410,7 @@ asm = "mov {mem}, {src}"
 # - `MOV64_RM` / `MOV64_MR`：MemRef 风味但 `opsize = 64` 固定，只覆盖 64 位，
 #   而且它们是 ABI 的 `stack_arg_load`/`stack_arg_store`，不能动。
 # 于是真实汇编里最常见的 `mov eax, [rbx+8]`、`mov al, BYTE PTR [rbx]` 没有候选。
-# 这里按 ALU 内存族同款形状补上（`MRR_MEMREF_AUTO` 的 `opsize = "s0"`：宽度由数据
+# 这里按 ALU 内存族同款形状补上（内存族的 `opsize = "auto"`：宽度由数据
 # 寄存器驱动，16 → 66 前缀、32 → 无前缀；8 位是独立操作码 8A/88）。
 #
 # **不写 `ref`**（与 ALU 内存族同纪律）：IR 降级仍走 MOV_R_MEM/STORE_MEM_R（vreg
@@ -2526,7 +2526,7 @@ effect = ["Pure"]
 reloc = "abs64"
 
 [inst.CMOVCC_R_RM]
-# 宽度由目的槽驱动（`MRR_0F` 的 `opsize = "s0"`）：`cmovl rax, rcx`（64 位）与
+# 宽度由目的槽驱动（`MRR_0F` 的 `opsize = "auto"`）：`cmovl rax, rcx`（64 位）与
 # `cmovl eax, r16d`（32 位，真实语料）都要收——原来固定 64 位（`MRR_0F_FIX64`）。
 form = "MRR_0F_SEG"
 bind = { reg = "dst", rm = "src" }            # cond 编码进 opcode 低 4 位

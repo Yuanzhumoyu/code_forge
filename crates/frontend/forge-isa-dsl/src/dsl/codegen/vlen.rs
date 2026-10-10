@@ -274,7 +274,25 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
     // 操作数寄存器推导，如 opsize=0 取 op0 的 RAX→64/EAX→32）；`"max"` → 全部
     // Reg 操作数宽度取最大（无目的槽的同宽指令——CMP/TEST，见 `Opsize::Max`）；
     // 缺省 = 第一个 Reg 槽操作数。指令级覆盖（Instruction.opsize）优先于 form 级。
-    let form_opsize = form.opsize.clone();
+    let form_opsize = match form.opsize.clone() {
+        // v21 W4 / D4 #14：`"auto"` = **第一个 Reg 操作数**驱动宽度（取代 `"s<N>"` 的位置写法）。
+        // 共享 form 上没法点名操作数，而"寄存器操作数驱动宽度"正是这些 form 的真实语义。
+        // 在这里一次性归一成 `Slot(idx)`，下游两条 match 只认 Slot/Reg/…。
+        Some(Opsize::Auto) => {
+            let idx = info
+                .operands
+                .iter()
+                .position(|(_, _, s, _)| s.kind == OperandKind::Reg)
+                .ok_or_else(|| {
+                    format!(
+                        "[inst.{}].opsize = \"auto\": 没有 Reg 操作数可驱动宽度（显式写名字或位宽）",
+                        info.inst.name
+                    )
+                })?;
+            Some(Opsize::Slot(idx as u16))
+        }
+        other => other,
+    };
     let rex_w_override = form.rex_w;
     let (has_opsize, opsize_expr) = match &form_opsize {
         Some(o) => match o {
@@ -304,6 +322,13 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
             Opsize::Named(n) => {
                 return Err(format!(
                     "[inst.{}].opsize = \"{n}\": 未解析的操作数名（需要 ops 声明）",
+                    info.inst.name
+                ));
+            }
+            // Auto 已在本函数入口归一成 Slot（第一个 Reg 操作数）
+            Opsize::Auto => {
+                return Err(format!(
+                    "[inst.{}].opsize = \"auto\": 未归一（内部错误）",
                     info.inst.name
                 ));
             }
@@ -370,6 +395,8 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
             },
             // Named 已在 collect_inst_infos 解析（此分支不可达）
             Opsize::Named(_) => (None, false),
+            // Auto 已在本函数入口归一成 Slot（此分支不可达）
+            Opsize::Auto => (None, false),
             // Out 已在 collect_inst_infos 解析成 Slot（此分支不可达）
             Opsize::Out => (None, false),
             // max：编码宽度是运行期取宽的结果，非静态形态 → guard 无条件

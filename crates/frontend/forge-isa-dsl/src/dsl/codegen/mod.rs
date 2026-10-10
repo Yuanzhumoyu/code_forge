@@ -504,6 +504,27 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
                 }
             }
         }
+        // `opsize = "auto"` → **第一个 Reg 操作数**的索引（v21 W4 / D4 #14：取代 `"s<N>"`）。
+        // 共享 form 上没法点名操作数（`ops` 在用的指令上声明），而"由寄存器操作数驱动宽度"
+        // 正是这些 form 的真实语义（内存操作数不携带宽度）。
+        if let Some(Opsize::Auto) = &enc.opsize {
+            let first_reg = uses.iter().enumerate().find(|(_, u)| {
+                m.operand_slots
+                    .iter()
+                    .find(|s| s.name == u.slot)
+                    .map(|s| s.kind == OperandKind::Reg)
+                    .unwrap_or(false)
+            });
+            match first_reg {
+                Some((i, _)) => enc.opsize = Some(Opsize::Slot(i as u16)),
+                None => {
+                    return Err(format!(
+                        "[inst.{}].opsize = \"auto\": 没有 Reg 操作数可驱动宽度（显式写操作数名或位宽）",
+                        inst.name
+                    ));
+                }
+            }
+        }
         let form = &enc;
         // 变长（无 opcode_field）不需要 operand_fields；定宽需要
         if form.opcode_field.is_none() && form.operand_fields.is_some() {
