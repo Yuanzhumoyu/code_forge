@@ -163,7 +163,7 @@ mod tests {
         b.switch_to_block(entry);
         let c42 = b.iconst_i32(42);
         let c0 = b.iconst_i32(0);
-        let cond = b.icmp(IntCC::NotEqual, c42, c0);
+        let cond = b.icmp(IntCC::Ne, c42, c0);
         b.branch(cond, then_block, &[], else_block, &[]);
 
         b.switch_to_block(then_block);
@@ -203,7 +203,7 @@ mod tests {
         b.switch_to_block(entry);
         let c42 = b.iconst_i32(42);
         let c99 = b.iconst_i32(99);
-        let cond = b.icmp(IntCC::NotEqual, c42, c99);
+        let cond = b.icmp(IntCC::Ne, c42, c99);
         b.branch(cond, then_block, &[], else_block, &[]);
 
         b.switch_to_block(then_block);

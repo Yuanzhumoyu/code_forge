@@ -98,7 +98,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     // loop_blk：i < count 则进 body，否则 done
                     self.builder.switch_to_block(loop_blk);
                     let i = lp[0];
-                    let cond = self.builder.icmp(IntCC::UnsignedLessThan, i, count);
+                    let cond = self.builder.icmp(IntCC::Ult, i, count);
                     self.builder.branch(cond, body_blk, &[i], done, &[]);
                     // body_blk：写字节、i+1、跳回 loop_blk
                     self.builder.switch_to_block(body_blk);
@@ -151,7 +151,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     self.builder.jump(loop_blk, &[zero]);
                     self.builder.switch_to_block(loop_blk);
                     let i = lp[0];
-                    let cond = self.builder.icmp(IntCC::UnsignedLessThan, i, n);
+                    let cond = self.builder.icmp(IntCC::Ult, i, n);
                     self.builder.branch(cond, body_blk, &[i], ret_blk, &[zero]);
                     self.builder.switch_to_block(body_blk);
                     let bi = bp[0];
@@ -159,7 +159,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     let baddr = self.builder.iadd(b, bi);
                     let av = self.builder.load(aaddr, TypeId::I64);
                     let bv = self.builder.load(baddr, TypeId::I64);
-                    let eq = self.builder.icmp(IntCC::Equal, av, bv);
+                    let eq = self.builder.icmp(IntCC::Eq, av, bv);
                     let neq_blk = self.builder.create_block();
                     let i2 = self.builder.iadd(bi, one);
                     self.builder.branch(eq, loop_blk, &[i2], neq_blk, &[]);
@@ -224,9 +224,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     .map(|t| t.is_signed())
                     .unwrap_or(true);
                 let cc = if signed {
-                    IntCC::SignedLessThan
+                    IntCC::Slt
                 } else {
-                    IntCC::UnsignedLessThan
+                    IntCC::Ult
                 };
                 let is_lt = self.builder.icmp(cc, a, b);
                 vec![self.builder.select(is_lt, a, b)]
@@ -237,9 +237,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     .map(|t| t.is_signed())
                     .unwrap_or(true);
                 let cc = if signed {
-                    IntCC::SignedLessThan
+                    IntCC::Slt
                 } else {
-                    IntCC::UnsignedLessThan
+                    IntCC::Ult
                 };
                 let is_lt = self.builder.icmp(cc, a, b);
                 vec![self.builder.select(is_lt, b, a)]
@@ -364,7 +364,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     self.builder.jump(loop_blk, &[zero]);
                     self.builder.switch_to_block(loop_blk);
                     let i = lp[0];
-                    let cond = self.builder.icmp(IntCC::UnsignedLessThan, i, count);
+                    let cond = self.builder.icmp(IntCC::Ult, i, count);
                     self.builder.branch(cond, body_blk, &[i], done, &[]);
                     self.builder.switch_to_block(body_blk);
                     let bi = bp[0];
@@ -429,7 +429,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     self.builder.jump(loop_blk, &[zero]);
                     self.builder.switch_to_block(loop_blk);
                     let i = lp[0];
-                    let cond = self.builder.icmp(IntCC::UnsignedLessThan, i, n);
+                    let cond = self.builder.icmp(IntCC::Ult, i, n);
                     self.builder.branch(cond, body_blk, &[i], done, &[]);
                     self.builder.switch_to_block(body_blk);
                     let bi = bp[0];
@@ -674,7 +674,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     Ordering::Monotonic,
                     weak,
                 );
-                let ok = self.builder.icmp(IntCC::Equal, old, cmp);
+                let ok = self.builder.icmp(IntCC::Eq, old, cmp);
                 vec![old, ok]
             }
             // SIMD（B2）：simd_extract(vec, idx) -> elem、simd_insert(vec, idx, elem)。
@@ -817,10 +817,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 if matches!(t, TypeId::I8 | TypeId::I16) {
                     let olde = self.builder.sextend(old, TypeId::I64);
                     let vale = self.builder.sextend(val, TypeId::I64);
-                    let gt = self.builder.icmp(IntCC::SignedGreaterThan, olde, vale);
+                    let gt = self.builder.icmp(IntCC::Sgt, olde, vale);
                     self.builder.select(gt, old, val)
                 } else {
-                    let gt = self.builder.icmp(IntCC::SignedGreaterThan, old, val);
+                    let gt = self.builder.icmp(IntCC::Sgt, old, val);
                     self.builder.select(gt, old, val)
                 }
             }
@@ -828,19 +828,19 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 if matches!(t, TypeId::I8 | TypeId::I16) {
                     let olde = self.builder.sextend(old, TypeId::I64);
                     let vale = self.builder.sextend(val, TypeId::I64);
-                    let lt = self.builder.icmp(IntCC::SignedLessThan, olde, vale);
+                    let lt = self.builder.icmp(IntCC::Slt, olde, vale);
                     self.builder.select(lt, old, val)
                 } else {
-                    let lt = self.builder.icmp(IntCC::SignedLessThan, old, val);
+                    let lt = self.builder.icmp(IntCC::Slt, old, val);
                     self.builder.select(lt, old, val)
                 }
             }
             RmwLoop::Umax => {
-                let gt = self.builder.icmp(IntCC::UnsignedGreaterThan, old, val);
+                let gt = self.builder.icmp(IntCC::Ugt, old, val);
                 self.builder.select(gt, old, val)
             }
             RmwLoop::Umin => {
-                let lt = self.builder.icmp(IntCC::UnsignedLessThan, old, val);
+                let lt = self.builder.icmp(IntCC::Ult, old, val);
                 self.builder.select(lt, old, val)
             }
         };
@@ -852,7 +852,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             Ordering::Monotonic,
             false,
         );
-        let ok = self.builder.icmp(IntCC::Equal, actual, old);
+        let ok = self.builder.icmp(IntCC::Eq, actual, old);
         self.builder
             .branch(ok, exit_b, &[actual], loop_b, &[actual]);
         self.builder.switch_to_block(exit_b);

@@ -355,7 +355,7 @@ mod tests {
         let sum = b.iadd(a, b_val);
         let c = b.iconst_i32(1);
         let zero_val = b.iconst_i32(0);
-        let cond = b.icmp(IntCC::NotEqual, c, zero_val);
+        let cond = b.icmp(IntCC::Ne, c, zero_val);
         b.branch(cond, then_block, &[], else_block, &[]);
 
         b.switch_to_block(then_block);
@@ -389,7 +389,7 @@ mod tests {
         let sum = b.iadd(params[0], params[1]);
         let c = b.iconst_i32(1);
         let zero = b.iconst_i32(0);
-        let cond = b.icmp(IntCC::NotEqual, c, zero);
+        let cond = b.icmp(IntCC::Ne, c, zero);
         b.branch(cond, left, &[sum], right, &[sum]);
 
         b.switch_to_block(left);
@@ -490,7 +490,7 @@ mod tests {
 
         b.switch_to_block(header);
         let i = b.iconst_i32(0);
-        let cond = b.icmp(IntCC::SignedLessThan, i, n);
+        let cond = b.icmp(IntCC::Slt, i, n);
         b.branch(cond, body, &[], exit, &[]);
 
         b.switch_to_block(body);
@@ -524,7 +524,7 @@ mod tests {
         let l1 = b.load(p, TypeId::I32);
         let one = b.iconst_i32(1);
         let zero = b.iconst_i32(0);
-        let cond = b.icmp(IntCC::NotEqual, one, zero);
+        let cond = b.icmp(IntCC::Ne, one, zero);
         b.branch(cond, then_blk, &[], else_blk, &[]);
 
         b.switch_to_block(then_blk);

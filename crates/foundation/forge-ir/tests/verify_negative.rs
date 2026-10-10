@@ -131,7 +131,7 @@ fn verify_fcmp_operand_not_float() {
         fb.emit1(
             Opcode::Fcmp,
             vec![a, b],
-            vec![Immediate::FloatCC(FloatCC::Equal)],
+            vec![Immediate::FloatCC(FloatCC::Oeq)],
             ctx.bool_ty(),
             InstFlags::NONE,
         );
@@ -182,7 +182,7 @@ fn verify_icmp_wrong_cond_immediate() {
         fb.emit1(
             Opcode::Icmp,
             vec![a, b],
-            vec![Immediate::FloatCC(FloatCC::Equal)],
+            vec![Immediate::FloatCC(FloatCC::Oeq)],
             ctx.bool_ty(),
             InstFlags::NONE,
         );
@@ -329,7 +329,7 @@ fn build_branch_merge(fb: &mut FunctionBuilder, ctx: &TypeContext) {
     fb.switch_to_block(entry);
     let a = fb.iconst(1, ctx.i32_ty());
     let b = fb.iconst(2, ctx.i32_ty());
-    let c = fb.icmp(IntCC::Equal, a, b);
+    let c = fb.icmp(IntCC::Eq, a, b);
     let bb1 = fb.create_block();
     let bb2 = fb.create_block();
     fb.branch(c, bb1, &[], bb2, &[]);
@@ -402,7 +402,7 @@ fn verify_same_shape_but_legal_merge() {
         fb.switch_to_block(entry);
         let a = fb.iconst(1, ctx.i32_ty());
         let b = fb.iconst(2, ctx.i32_ty());
-        let c = fb.icmp(IntCC::Equal, a, b);
+        let c = fb.icmp(IntCC::Eq, a, b);
         let bb1 = fb.create_block();
         let bb2 = fb.create_block();
         fb.branch(c, bb1, &[], bb1, &[]); // 两个目标都是 bb1

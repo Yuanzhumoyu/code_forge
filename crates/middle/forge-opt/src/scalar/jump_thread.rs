@@ -208,7 +208,7 @@ mod tests {
         b.switch_to_block(b0);
         let v1 = b.iconst_i32(1);
         let v0 = b.iconst_i32(0);
-        let cond = b.icmp(IntCC::NotEqual, v1, v0);
+        let cond = b.icmp(IntCC::Ne, v1, v0);
         b.branch(cond, b1, &[], b2, &[]);
 
         b.switch_to_block(b1);

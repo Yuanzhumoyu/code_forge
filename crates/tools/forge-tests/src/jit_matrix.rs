@@ -843,7 +843,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.iconst_i32(42);
                 let c = b.iconst_i32(42);
-                b.icmp(IntCC::Equal, a, c)
+                b.icmp(IntCC::Eq, a, c)
             },
             true,
         ),
@@ -855,7 +855,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.iconst_i32(42);
                 let c = b.iconst_i32(43);
-                b.icmp(IntCC::NotEqual, a, c)
+                b.icmp(IntCC::Ne, a, c)
             },
             true,
         ),
@@ -867,7 +867,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.iconst_i32(50);
                 let c = b.iconst_i32(42);
-                b.icmp(IntCC::SignedGreaterThan, a, c)
+                b.icmp(IntCC::Sgt, a, c)
             },
             true,
         ),
@@ -879,7 +879,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.iconst_i32(42);
                 let c = b.iconst_i32(50);
-                b.icmp(IntCC::SignedLessThan, a, c)
+                b.icmp(IntCC::Slt, a, c)
             },
             true,
         ),
@@ -891,7 +891,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.iconst_i32(42);
                 let c = b.iconst_i32(42);
-                b.icmp(IntCC::SignedLessThanOrEqual, a, c)
+                b.icmp(IntCC::Sle, a, c)
             },
             true,
         ),
@@ -903,7 +903,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.iconst_i32(1);
                 let c = b.iconst_i32(2);
-                b.icmp(IntCC::UnsignedLessThan, a, c)
+                b.icmp(IntCC::Ult, a, c)
             },
             true,
         ),
@@ -915,7 +915,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.iconst_i32(2);
                 let c = b.iconst_i32(1);
-                b.icmp(IntCC::UnsignedGreaterThan, a, c)
+                b.icmp(IntCC::Ugt, a, c)
             },
             true,
         ),
@@ -927,7 +927,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.iconst_i32(42);
                 let c = b.iconst_i32(42);
-                b.icmp(IntCC::UnsignedGreaterThanOrEqual, a, c)
+                b.icmp(IntCC::Uge, a, c)
             },
             true,
         ),
@@ -939,7 +939,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.iconst_i32(42);
                 let c = b.iconst_i32(42);
-                b.icmp(IntCC::UnsignedLessThanOrEqual, a, c)
+                b.icmp(IntCC::Ule, a, c)
             },
             true,
         ),
@@ -1085,7 +1085,7 @@ pub const CASES: &[Case] = &[
                 let new_i = b.iadd(lp[0], one);
                 let new_acc = b.iadd(lp[1], new_i);
                 let ten = b.iconst_i32(10);
-                let done = b.icmp(IntCC::SignedGreaterThanOrEqual, new_i, ten);
+                let done = b.icmp(IntCC::Sge, new_i, ten);
                 b.branch(done, exit, &[], loop_h, &[new_i, new_acc]);
                 b.switch_to_block(exit);
                 b.ret(&[new_acc]);
@@ -1135,7 +1135,7 @@ pub const CASES: &[Case] = &[
                 let ten = b.iconst_i64(10);
                 let twenty = b.iconst_i64(20);
                 let zero = b.iconst_i64(0);
-                let c = b.icmp(IntCC::SignedGreaterThan, ten, twenty);
+                let c = b.icmp(IntCC::Sgt, ten, twenty);
                 b.branch(c, then, &[], els, &[]);
                 b.switch_to_block(then);
                 b.jump(end, &[ten]);
@@ -1335,7 +1335,7 @@ pub const CASES: &[Case] = &[
             args: &[0x2_0000_0000],
             build: |b, p| {
                 let z = b.iconst_i32(0);
-                let c = b.icmp(IntCC::Equal, p[0], z);
+                let c = b.icmp(IntCC::Eq, p[0], z);
                 b.sextend(c, TypeId::I64)
             },
             expected: 0,
@@ -1349,7 +1349,7 @@ pub const CASES: &[Case] = &[
             args: &[0x2_0000_0000],
             build: |b, p| {
                 let z = b.iconst_i32(0);
-                let c = b.icmp(IntCC::NotEqual, p[0], z);
+                let c = b.icmp(IntCC::Ne, p[0], z);
                 b.sextend(c, TypeId::I64)
             },
             expected: 1,
@@ -1364,7 +1364,7 @@ pub const CASES: &[Case] = &[
             build: |b, p| {
                 let one = b.iconst_i32(1);
                 // 0x2_0000_0000 < 1 为假；32 位比较只看低半（0 < 1）会误判为真
-                let c = b.icmp(IntCC::SignedLessThan, p[0], one);
+                let c = b.icmp(IntCC::Slt, p[0], one);
                 b.sextend(c, TypeId::I64)
             },
             expected: 0,
@@ -1411,7 +1411,7 @@ pub const CASES: &[Case] = &[
                 let f = b.iconst_bool(false);
                 let r = b.band(t, f);
                 let one = b.iconst_bool(true);
-                b.icmp(IntCC::NotEqual, r, one)
+                b.icmp(IntCC::Ne, r, one)
             },
             true,
         ),
@@ -1474,7 +1474,7 @@ pub const CASES: &[Case] = &[
             args: &[1, 42, 0],
             build: |b, p| {
                 let zero = b.iconst_i64(0);
-                let c = b.icmp(IntCC::NotEqual, p[0], zero);
+                let c = b.icmp(IntCC::Ne, p[0], zero);
                 b.select(c, p[1], p[2])
             },
             expected: 42,
@@ -2270,7 +2270,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.fconst(1.5f64.to_bits(), TypeId::F64);
                 let c = b.fconst(1.5f64.to_bits(), TypeId::F64);
-                b.fcmp(FloatCC::Equal, a, c)
+                b.fcmp(FloatCC::Oeq, a, c)
             },
             true,
         ),
@@ -2282,7 +2282,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.fconst(1.5f64.to_bits(), TypeId::F64);
                 let c = b.fconst(2.5f64.to_bits(), TypeId::F64);
-                b.fcmp(FloatCC::LessThan, a, c)
+                b.fcmp(FloatCC::Olt, a, c)
             },
             true,
         ),
@@ -2294,7 +2294,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.fconst(1.5f64.to_bits(), TypeId::F64);
                 let c = b.fconst(2.5f64.to_bits(), TypeId::F64);
-                b.fcmp(FloatCC::GreaterThan, a, c)
+                b.fcmp(FloatCC::Ogt, a, c)
             },
             false,
         ),
@@ -2306,7 +2306,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.fconst(1.5f64.to_bits(), TypeId::F64);
                 let c = b.fconst(2.5f64.to_bits(), TypeId::F64);
-                b.fcmp(FloatCC::NotEqual, a, c)
+                b.fcmp(FloatCC::One, a, c)
             },
             true,
         ),
@@ -2318,7 +2318,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.fconst(1.5f64.to_bits(), TypeId::F64);
                 let c = b.fconst(2.5f64.to_bits(), TypeId::F64);
-                b.fcmp(FloatCC::LessThanOrEqual, a, c)
+                b.fcmp(FloatCC::Ole, a, c)
             },
             true,
         ),
@@ -2330,7 +2330,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.fconst(2.5f64.to_bits(), TypeId::F64);
                 let c = b.fconst(2.5f64.to_bits(), TypeId::F64);
-                b.fcmp(FloatCC::GreaterThanOrEqual, a, c)
+                b.fcmp(FloatCC::Oge, a, c)
             },
             true,
         ),
@@ -2342,7 +2342,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let nan = b.fconst(f64::NAN.to_bits(), TypeId::F64);
                 let one = b.fconst(1.0f64.to_bits(), TypeId::F64);
-                b.fcmp(FloatCC::Ordered, nan, one)
+                b.fcmp(FloatCC::Ord, nan, one)
             },
             false,
         ),
@@ -2354,7 +2354,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let nan = b.fconst(f64::NAN.to_bits(), TypeId::F64);
                 let one = b.fconst(1.0f64.to_bits(), TypeId::F64);
-                b.fcmp(FloatCC::Unordered, nan, one)
+                b.fcmp(FloatCC::Uno, nan, one)
             },
             true,
         ),
@@ -2366,7 +2366,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 let a = b.fconst(1.5f32.to_bits() as u64, TypeId::F32);
                 let c = b.fconst(2.5f32.to_bits() as u64, TypeId::F32);
-                b.fcmp(FloatCC::LessThan, a, c)
+                b.fcmp(FloatCC::Olt, a, c)
             },
             true,
         ),
@@ -2636,7 +2636,7 @@ pub const CASES: &[Case] = &[
                 let (blk, p) = bf.create_block_with_params(&[(TypeId::I32, "n")]);
                 bf.switch_to_block(blk);
                 let one = bf.iconst_i32(1);
-                let le = bf.icmp(IntCC::SignedLessThanOrEqual, p[0], one);
+                let le = bf.icmp(IntCC::Sle, p[0], one);
                 let then_blk = bf.create_block();
                 let else_blk = bf.create_block();
                 bf.branch(le, then_blk, &[], else_blk, &[]);
@@ -2700,7 +2700,7 @@ pub const CASES: &[Case] = &[
                 bf.store(p[0], slot);
                 // if n <= 1
                 let one = bf.iconst_i32(1);
-                let le = bf.icmp(IntCC::SignedLessThanOrEqual, p[0], one);
+                let le = bf.icmp(IntCC::Sle, p[0], one);
                 let then_blk = bf.create_block();
                 let else_blk = bf.create_block();
                 bf.branch(le, then_blk, &[], else_blk, &[]);

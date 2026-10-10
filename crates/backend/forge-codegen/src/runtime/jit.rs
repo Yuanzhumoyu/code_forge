@@ -646,7 +646,7 @@ mod tests {
             b.switch_to_block(entry);
 
             let zero = b.iconst_i32(0);
-            let cond = b.icmp(forge_ir::IntCC::SignedGreaterThan, params[0], zero);
+            let cond = b.icmp(forge_ir::IntCC::Sgt, params[0], zero);
 
             let then_block = b.create_block();
             let else_block = b.create_block();
@@ -700,7 +700,7 @@ mod tests {
             b.switch_to_block(entry);
 
             let zero = b.iconst_i32(0);
-            let cond = b.icmp(forge_ir::IntCC::NotEqual, params[0], zero);
+            let cond = b.icmp(forge_ir::IntCC::Ne, params[0], zero);
 
             let then_block = b.create_block();
             let else_block = b.create_block();
@@ -855,7 +855,7 @@ mod tests {
 
             b.switch_to_block(loop_block);
             let zero = b.iconst_i32(0);
-            let done_cond = b.icmp(forge_ir::IntCC::SignedLessThanOrEqual, params[0], zero);
+            let done_cond = b.icmp(forge_ir::IntCC::Sle, params[0], zero);
             let body_block = b.create_block();
             let done_block = b.create_block();
             b.switch_to_block(loop_block);
@@ -1815,7 +1815,7 @@ mod tests {
             let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x")]);
             b.switch_to_block(entry);
             let zero = b.iconst_i64(0);
-            let cond = b.icmp(IntCC::NotEqual, params[0], zero);
+            let cond = b.icmp(IntCC::Ne, params[0], zero);
             let c100 = b.iconst_i64(100);
             let c7 = b.iconst_i64(7);
             let sel = b.select(cond, c100, c7);
@@ -1832,7 +1832,7 @@ mod tests {
             let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
             b.switch_to_block(entry);
             let zero = b.iconst_i32(0);
-            let cond = b.icmp(IntCC::NotEqual, params[0], zero);
+            let cond = b.icmp(IntCC::Ne, params[0], zero);
             let c42 = b.iconst_i32(42);
             let c9 = b.iconst_i32(9);
             let sel = b.select(cond, c42, c9);
@@ -1879,7 +1879,7 @@ mod tests {
         let (entry, p) = b.create_block_with_params(&[(TypeId::I64, "n")]);
         b.switch_to_block(entry);
         let two = b.iconst_i64(2);
-        let lt = b.icmp(IntCC::SignedLessThan, p[0], two);
+        let lt = b.icmp(IntCC::Slt, p[0], two);
         let rec = b.create_block();
         let (done, dp) = b.create_block_with_params(&[(TypeId::I64, "r")]);
         b.switch_to_block(entry);
@@ -1929,7 +1929,7 @@ mod tests {
             b.switch_to_block(entry);
             let sum = b.fadd(params[0], params[1]);
             let three = b.fconst_f64(3.0f64);
-            let gt = b.fcmp(FloatCC::GreaterThan, sum, three);
+            let gt = b.fcmp(FloatCC::Ogt, sum, three);
             let c1 = b.iconst_i32(1);
             let c0 = b.iconst_i32(0);
             let sel = b.select(gt, c1, c0);
@@ -1965,7 +1965,7 @@ mod tests {
             b.switch_to_block(entry);
             let sum = b.iadd(p[0], p[2]);
             let half = b.fconst_f64(0.5f64);
-            let gt = b.fcmp(FloatCC::GreaterThan, p[1], half);
+            let gt = b.fcmp(FloatCC::Ogt, p[1], half);
             let ten = b.iconst_i32(10);
             let zero = b.iconst_i32(0);
             let bonus = b.select(gt, ten, zero);
@@ -1993,7 +1993,7 @@ mod tests {
         let (blk, p) = bc.create_block_with_params(&[(TypeId::F64, "b")]);
         bc.switch_to_block(blk);
         let three = bc.fconst_f64(3.0f64);
-        let gt = bc.fcmp(FloatCC::GreaterThan, p[0], three);
+        let gt = bc.fcmp(FloatCC::Ogt, p[0], three);
         let c1 = bc.iconst_i32(1);
         let c0 = bc.iconst_i32(0);
         let sel = bc.select(gt, c1, c0);
@@ -2029,7 +2029,7 @@ mod tests {
             b.switch_to_block(entry);
             let sum = b.fadd(p[0], p[1]);
             let three = b.fconst_f64(3.0f64);
-            let gt = b.fcmp(FloatCC::GreaterThan, sum, three);
+            let gt = b.fcmp(FloatCC::Ogt, sum, three);
             let then_b = b.create_block();
             let else_b = b.create_block();
             b.switch_to_block(entry);
@@ -2064,7 +2064,7 @@ mod tests {
         bc.switch_to_block(blk);
         let sum = bc.fadd(p[0], p[1]);
         let three = bc.fconst_f64(3.0f64);
-        let gt = bc.fcmp(FloatCC::GreaterThan, sum, three);
+        let gt = bc.fcmp(FloatCC::Ogt, sum, three);
         let then_b = bc.create_block();
         let else_b = bc.create_block();
         bc.switch_to_block(blk);
@@ -2114,7 +2114,7 @@ mod tests {
             b.fstore(p[0], slot);
             let v = b.fload(slot, TypeId::F64);
             let three = b.fconst_f64(3.0f64);
-            let gt = b.fcmp(FloatCC::GreaterThan, v, three);
+            let gt = b.fcmp(FloatCC::Ogt, v, three);
             let then_b = b.create_block();
             let else_b = b.create_block();
             b.switch_to_block(entry);
@@ -2341,7 +2341,7 @@ mod tests {
             let old = la[0];
             let new = b.band(old, val);
             let actual = b.cmpxchg(p, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
-            let ok = b.icmp(IntCC::Equal, actual, old);
+            let ok = b.icmp(IntCC::Eq, actual, old);
             b.branch(ok, exit_b, &[actual], loop_b, &[actual]);
             b.switch_to_block(exit_b);
             b.ret(&[ea[0]]);
@@ -2450,7 +2450,7 @@ mod tests {
             let old = la[0];
             let new = b.band(old, val);
             let actual = b.cmpxchg(p, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
-            let ok = b.icmp(IntCC::Equal, actual, old);
+            let ok = b.icmp(IntCC::Eq, actual, old);
             b.branch(ok, exit_b, &[actual], loop_b, &[actual]);
             b.switch_to_block(exit_b);
             b.ret(&[ea[0]]);
@@ -2491,7 +2491,7 @@ mod tests {
             let old = la[0];
             let new = b.band(old, val);
             let actual = b.cmpxchg(p, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
-            let ok = b.icmp(IntCC::Equal, actual, old);
+            let ok = b.icmp(IntCC::Eq, actual, old);
             b.branch(ok, exit_b, &[actual], loop_b, &[actual]);
             b.switch_to_block(exit_b);
             b.ret(&[ea[0]]);
@@ -2532,7 +2532,7 @@ mod tests {
             let old = b.load(p, TypeId::I32);
             let new = b.band(old, val);
             let actual = b.cmpxchg(p, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
-            let ok = b.icmp(forge_ir::IntCC::Equal, actual, old);
+            let ok = b.icmp(forge_ir::IntCC::Eq, actual, old);
             let z = b.iconst(0, TypeId::I32);
             let o = b.iconst(1, TypeId::I32);
             let pick = b.select(ok, z, o);
@@ -2598,7 +2598,7 @@ mod tests {
             let mask = b.iconst(0b1010, TypeId::I32);
             let new = b.band(old, mask);
             let actual = b.cmpxchg(p, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
-            let ok = b.icmp(forge_ir::IntCC::Equal, actual, old);
+            let ok = b.icmp(forge_ir::IntCC::Eq, actual, old);
             // 用 ok 选择返回值（防止 dead code 消除把比较消掉）
             let z = b.iconst(0, TypeId::I32);
             let o = b.iconst(1, TypeId::I32);
@@ -3774,7 +3774,7 @@ ret_int = ["RAX"]
         let b = main_fn.call(callee2_ref, &[x_addr], &[TypeId::I64])[0];
         let one = main_fn.iconst(1, TypeId::I64);
         let diff = main_fn.isub(b, a);
-        let eq = main_fn.icmp(forge_ir::IntCC::Equal, diff, one);
+        let eq = main_fn.icmp(forge_ir::IntCC::Eq, diff, one);
         let cond = main_fn.uextend(eq, TypeId::I64);
         main_fn.ret(&[cond]);
         module.add_function(main_fn.finish().expect("main"));
@@ -3844,7 +3844,7 @@ ret_int = ["RAX"]
         let b = main_fn.call(callee2_ref, &[x_addr], &[TypeId::I64])[0];
         let one = main_fn.iconst(1, TypeId::I64);
         let diff = main_fn.isub(b, a);
-        let eq = main_fn.icmp(forge_ir::IntCC::Equal, diff, one);
+        let eq = main_fn.icmp(forge_ir::IntCC::Eq, diff, one);
         let cond = main_fn.uextend(eq, TypeId::I64);
         main_fn.ret(&[cond]);
         module.add_function(main_fn.finish().expect("main"));
@@ -3903,11 +3903,11 @@ ret_int = ["RAX"]
         let masked = main_fn.uextend(v, TypeId::I64);
         // 读 guard——若 flag 写 8 字节越界到 -32 则 sentinel 被覆盖
         let g = main_fn.load(guard, TypeId::I64);
-        let g_eq = main_fn.icmp(forge_ir::IntCC::Equal, g, sentinel);
+        let g_eq = main_fn.icmp(forge_ir::IntCC::Eq, g, sentinel);
         let g_i = main_fn.uextend(g_eq, TypeId::I64);
         // 结果 = (value 正确 ? 1 : 0) * 4 + (guard 未破坏 ? 1 : 0)
         let want_v = main_fn.iconst(0x1122_3344, TypeId::I64);
-        let v_eq = main_fn.icmp(forge_ir::IntCC::Equal, masked, want_v);
+        let v_eq = main_fn.icmp(forge_ir::IntCC::Eq, masked, want_v);
         let v_i = main_fn.uextend(v_eq, TypeId::I64);
         let four2 = main_fn.iconst(4, TypeId::I64);
         let v4 = main_fn.imul(v_i, four2);
@@ -3957,7 +3957,7 @@ ret_int = ["RAX"]
             ]);
             b.switch_to_block(entry);
             let zero = b.iconst_i64(0);
-            let cond = b.icmp(IntCC::NotEqual, params[2], zero);
+            let cond = b.icmp(IntCC::Ne, params[2], zero);
             let sel = b.select(cond, params[0], params[1]);
             b.ret(&[sel]);
         })
@@ -3980,7 +3980,7 @@ ret_int = ["RAX"]
             ]);
             b.switch_to_block(entry);
             let zero = b.iconst_i32(0);
-            let cond = b.icmp(IntCC::NotEqual, params[2], zero);
+            let cond = b.icmp(IntCC::Ne, params[2], zero);
             let sel = b.select(cond, params[0], params[1]);
             b.ret(&[sel]);
         })
@@ -3998,11 +3998,11 @@ ret_int = ["RAX"]
                 b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
             b.switch_to_block(entry);
             let zero = b.iconst_i64(0);
-            let cb = b.icmp(IntCC::NotEqual, params[1], zero);
+            let cb = b.icmp(IntCC::Ne, params[1], zero);
             let c3 = b.iconst_i64(3);
             let c4 = b.iconst_i64(4);
             let inner = b.select(cb, c3, c4);
-            let ca = b.icmp(IntCC::NotEqual, params[0], zero);
+            let ca = b.icmp(IntCC::Ne, params[0], zero);
             let c5 = b.iconst_i64(5);
             let outer = b.select(ca, inner, c5);
             b.ret(&[outer]);
@@ -4022,7 +4022,7 @@ ret_int = ["RAX"]
                 b.create_block_with_params(&[(TypeId::I64, "x"), (TypeId::I64, "c")]);
             b.switch_to_block(entry);
             let zero = b.iconst_i64(0);
-            let cond = b.icmp(IntCC::NotEqual, params[1], zero);
+            let cond = b.icmp(IntCC::Ne, params[1], zero);
             let c100 = b.iconst_i64(100);
             let c7 = b.iconst_i64(7);
             let sel = b.select(cond, c100, c7);
@@ -4044,12 +4044,12 @@ ret_int = ["RAX"]
             let two = b.iconst_i64(2);
             let a1 = b.band(params[0], one);
             let z1 = b.iconst_i64(0);
-            let c1 = b.icmp(IntCC::NotEqual, a1, z1);
+            let c1 = b.icmp(IntCC::Ne, a1, z1);
             let c10 = b.iconst_i64(10);
             let c20 = b.iconst_i64(20);
             let s1 = b.select(c1, c10, c20);
             let a2 = b.band(params[0], two);
-            let c2 = b.icmp(IntCC::NotEqual, a2, z1);
+            let c2 = b.icmp(IntCC::Ne, a2, z1);
             let c30 = b.iconst_i64(30);
             let c40 = b.iconst_i64(40);
             let s2 = b.select(c2, c30, c40);

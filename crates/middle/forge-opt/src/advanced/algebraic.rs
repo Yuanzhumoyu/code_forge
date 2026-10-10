@@ -429,8 +429,8 @@ fn try_rewrite(inst: &Instruction, cache: &ConstCache, ty: TypeId) -> Option<Rep
                 // 而条件在变体载荷上、immediates 恒空 ⇒ 该分支从不命中（死代码）；
                 // 归一后 `x == x → true` / `x != x → false` 才真正生效。
                 match inst.immediates.iter().find_map(|im| im.as_int_cc()) {
-                    Some(IntCC::Equal) => return Some(ReplaceAction::Const { value: 1 }),
-                    Some(IntCC::NotEqual) => return Some(ReplaceAction::Const { value: 0 }),
+                    Some(IntCC::Eq) => return Some(ReplaceAction::Const { value: 1 }),
+                    Some(IntCC::Ne) => return Some(ReplaceAction::Const { value: 0 }),
                     _ => {}
                 }
             }

@@ -405,30 +405,30 @@ fn conditional_variants_carry_cond_in_immediates() {
     assert_eq!(Opcode::Select.cond_kind(), None);
     // 条件的数字表示可逆（ISA TOML 的 cond 谓词契约）
     for cc in [
-        IntCC::Equal,
-        IntCC::NotEqual,
-        IntCC::SignedLessThan,
-        IntCC::SignedLessThanOrEqual,
-        IntCC::SignedGreaterThan,
-        IntCC::SignedGreaterThanOrEqual,
-        IntCC::UnsignedLessThan,
-        IntCC::UnsignedLessThanOrEqual,
-        IntCC::UnsignedGreaterThan,
-        IntCC::UnsignedGreaterThanOrEqual,
+        IntCC::Eq,
+        IntCC::Ne,
+        IntCC::Slt,
+        IntCC::Sle,
+        IntCC::Sgt,
+        IntCC::Sge,
+        IntCC::Ult,
+        IntCC::Ule,
+        IntCC::Ugt,
+        IntCC::Uge,
     ] {
         assert_eq!(IntCC::from_code(cc.code()), Some(cc), "{cc:?} 码不可逆");
     }
     assert_eq!(IntCC::from_code(0), None, "未知码必须返回 None（不兜底）");
     assert_eq!(IntCC::from_code(11), None);
     for cc in [
-        FloatCC::Ordered,
-        FloatCC::Unordered,
-        FloatCC::Equal,
-        FloatCC::NotEqual,
-        FloatCC::LessThan,
-        FloatCC::LessThanOrEqual,
-        FloatCC::GreaterThan,
-        FloatCC::GreaterThanOrEqual,
+        FloatCC::Ord,
+        FloatCC::Uno,
+        FloatCC::Oeq,
+        FloatCC::One,
+        FloatCC::Olt,
+        FloatCC::Ole,
+        FloatCC::Ogt,
+        FloatCC::Oge,
         FloatCC::False,
         FloatCC::True,
         FloatCC::Ueq,
@@ -444,16 +444,16 @@ fn conditional_variants_carry_cond_in_immediates() {
     assert_eq!(FloatCC::from_code(17), None);
     // 条件码在各自集合内唯一
     let int_codes: Vec<u8> = [
-        IntCC::Equal,
-        IntCC::NotEqual,
-        IntCC::SignedLessThan,
-        IntCC::SignedLessThanOrEqual,
-        IntCC::SignedGreaterThan,
-        IntCC::SignedGreaterThanOrEqual,
-        IntCC::UnsignedLessThan,
-        IntCC::UnsignedLessThanOrEqual,
-        IntCC::UnsignedGreaterThan,
-        IntCC::UnsignedGreaterThanOrEqual,
+        IntCC::Eq,
+        IntCC::Ne,
+        IntCC::Slt,
+        IntCC::Sle,
+        IntCC::Sgt,
+        IntCC::Sge,
+        IntCC::Ult,
+        IntCC::Ule,
+        IntCC::Ugt,
+        IntCC::Uge,
     ]
     .iter()
     .map(IntCC::code)

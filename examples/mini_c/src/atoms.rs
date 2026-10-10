@@ -195,10 +195,10 @@ mod tests {
         let lhs = minic_lowering::build_iconst(&mut graph, 1).unwrap();
         let rhs = minic_lowering::build_iconst(&mut graph, 2).unwrap();
         for cc in [
-            forge_hir::ir::IntCC::Equal,
-            forge_hir::ir::IntCC::NotEqual,
-            forge_hir::ir::IntCC::UnsignedLessThan,
-            forge_hir::ir::IntCC::UnsignedGreaterThanOrEqual,
+            forge_hir::ir::IntCC::Eq,
+            forge_hir::ir::IntCC::Ne,
+            forge_hir::ir::IntCC::Ult,
+            forge_hir::ir::IntCC::Uge,
         ] {
             let r = minic_lowering::build_icmp(&mut graph, cc, lhs, rhs).unwrap();
             assert_eq!(graph.value_type(r), Some(forge_hir::ir::TypeId::BOOL));

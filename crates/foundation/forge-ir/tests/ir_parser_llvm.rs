@@ -298,18 +298,18 @@ fn saturating_extrema() {
 #[test]
 fn icmp_all_conditions() {
     for (name, want) in [
-        ("eq", forge_ir::ir::opcode::IntCC::Equal),
-        ("ne", forge_ir::ir::opcode::IntCC::NotEqual),
-        ("slt", forge_ir::ir::opcode::IntCC::SignedLessThan),
-        ("sgt", forge_ir::ir::opcode::IntCC::SignedGreaterThan),
-        ("sle", forge_ir::ir::opcode::IntCC::SignedLessThanOrEqual),
-        ("sge", forge_ir::ir::opcode::IntCC::SignedGreaterThanOrEqual),
-        ("ult", forge_ir::ir::opcode::IntCC::UnsignedLessThan),
-        ("ugt", forge_ir::ir::opcode::IntCC::UnsignedGreaterThan),
-        ("ule", forge_ir::ir::opcode::IntCC::UnsignedLessThanOrEqual),
+        ("eq", forge_ir::ir::opcode::IntCC::Eq),
+        ("ne", forge_ir::ir::opcode::IntCC::Ne),
+        ("slt", forge_ir::ir::opcode::IntCC::Slt),
+        ("sgt", forge_ir::ir::opcode::IntCC::Sgt),
+        ("sle", forge_ir::ir::opcode::IntCC::Sle),
+        ("sge", forge_ir::ir::opcode::IntCC::Sge),
+        ("ult", forge_ir::ir::opcode::IntCC::Ult),
+        ("ugt", forge_ir::ir::opcode::IntCC::Ugt),
+        ("ule", forge_ir::ir::opcode::IntCC::Ule),
         (
             "uge",
-            forge_ir::ir::opcode::IntCC::UnsignedGreaterThanOrEqual,
+            forge_ir::ir::opcode::IntCC::Uge,
         ),
     ] {
         let src = format!(
@@ -336,7 +336,7 @@ fn fcmp_ordered() {
     assert_eq!(inst.opcode, Opcode::Fcmp);
     assert_eq!(
         inst.immediates.first().and_then(|im| im.as_float_cc()),
-        Some(forge_ir::ir::opcode::FloatCC::LessThan),
+        Some(forge_ir::ir::opcode::FloatCC::Olt),
         "fcmp olt：条件须在 immediate 通道"
     );
 }

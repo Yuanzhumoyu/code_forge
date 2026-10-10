@@ -2110,7 +2110,7 @@ mod tests {
         let (merge_blk, _mp) = fb.create_block_with_params(&[(ctx.i32_ty(), "r")]);
         {
             fb.switch_to_block(entry);
-            let cond = fb.icmp(IntCC::SignedGreaterThan, params[0], params[0]);
+            let cond = fb.icmp(IntCC::Sgt, params[0], params[0]);
             fb.branch(cond, then_blk, &[], else_blk, &[]);
         }
         {
@@ -2209,7 +2209,7 @@ mod tests {
             entry,
             smallvec::smallvec![f, f2],
             smallvec::smallvec![crate::ir::immediate::Immediate::IntCC(
-                crate::ir::opcode::IntCC::SignedGreaterThan
+                crate::ir::opcode::IntCC::Sgt
             )],
             &[TypeId::BOOL],
             InstFlags::NONE,

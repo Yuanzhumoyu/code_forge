@@ -487,10 +487,10 @@ fn estimate_trip_count(func: &Function, loop_info: &forge_ir::LoopInfo) -> u64 {
         // Check if comparison is "less than or equal" → +1 iteration
         if let Some(cc) = &cmp_cc {
             match cc {
-                IntCC::SignedLessThanOrEqual | IntCC::UnsignedLessThanOrEqual => {
+                IntCC::Sle | IntCC::Ule => {
                     return base_trip + 1;
                 }
-                IntCC::SignedLessThan | IntCC::UnsignedLessThan => {
+                IntCC::Slt | IntCC::Ult => {
                     return base_trip;
                 }
                 _ => return 0, // Unsupported comparison for this heuristic
@@ -569,7 +569,7 @@ mod tests {
 
         b.switch_to_block(header);
         let four = b.iconst_i32(4);
-        let cond = b.icmp(IntCC::SignedLessThan, header_params[0], four);
+        let cond = b.icmp(IntCC::Slt, header_params[0], four);
         let body_block = b.create_block();
         let exit_block = b.create_block();
         b.switch_to_block(header);
@@ -607,7 +607,7 @@ mod tests {
 
         b.switch_to_block(header);
         let neg_five = b.iconst_i32(-5);
-        let cond = b.icmp(IntCC::SignedLessThan, header_params[0], neg_five);
+        let cond = b.icmp(IntCC::Slt, header_params[0], neg_five);
         let body_block = b.create_block();
         let exit_block = b.create_block();
         b.switch_to_block(header);

@@ -314,7 +314,7 @@ fn apply_compound_op(
 /// 真值化：`v != 0` → i1（`if` / `while` / `for` / `do-while` 共用的比较惯用法）。
 fn truthy(ctx: &mut HirCtx<'_, SymTable>, v: GraphValue) -> Result<GraphValue, HirError> {
     let zero = ctx.graph.iconst_i32(0)?;
-    ctx.graph.icmp(IntCC::NotEqual, v, zero)
+    ctx.graph.icmp(IntCC::Ne, v, zero)
 }
 
 /// 条件跳转——三种循环的**公共内容**就在这里（其余是各自固定的块结构与顺序）。
@@ -732,12 +732,12 @@ fn bin_op(
 /// 比较运算符 → `IntCC`（`lower_compare` 与兜底链共用；未命中返回 None）。
 fn intcc_for(op: &str) -> Option<IntCC> {
     Some(match op {
-        "==" => IntCC::Equal,
-        "!=" => IntCC::NotEqual,
-        "<" => IntCC::SignedLessThan,
-        ">" => IntCC::SignedGreaterThan,
-        "<=" => IntCC::SignedLessThanOrEqual,
-        ">=" => IntCC::SignedGreaterThanOrEqual,
+        "==" => IntCC::Eq,
+        "!=" => IntCC::Ne,
+        "<" => IntCC::Slt,
+        ">" => IntCC::Sgt,
+        "<=" => IntCC::Sle,
+        ">=" => IntCC::Sge,
         _ => return None,
     })
 }
@@ -797,11 +797,11 @@ fn lower_logical_and(
     }
     let zero = ctx.graph.iconst_i32(0)?;
     let lhs = lower_expr(ctx, children[0])?;
-    let mut result = ctx.graph.icmp(IntCC::NotEqual, lhs, zero)?;
+    let mut result = ctx.graph.icmp(IntCC::Ne, lhs, zero)?;
     let mut i = 1;
     while i < children.len() {
         let rhs = lower_expr(ctx, children[i + 1])?;
-        let rhs_ne = ctx.graph.icmp(IntCC::NotEqual, rhs, zero)?;
+        let rhs_ne = ctx.graph.icmp(IntCC::Ne, rhs, zero)?;
         result = ctx.graph.band(result, rhs_ne)?;
         i += 2;
     }
@@ -823,11 +823,11 @@ fn lower_logical_or(
     }
     let zero = ctx.graph.iconst_i32(0)?;
     let lhs = lower_expr(ctx, children[0])?;
-    let mut result = ctx.graph.icmp(IntCC::NotEqual, lhs, zero)?;
+    let mut result = ctx.graph.icmp(IntCC::Ne, lhs, zero)?;
     let mut i = 1;
     while i < children.len() {
         let rhs = lower_expr(ctx, children[i + 1])?;
-        let rhs_ne = ctx.graph.icmp(IntCC::NotEqual, rhs, zero)?;
+        let rhs_ne = ctx.graph.icmp(IntCC::Ne, rhs, zero)?;
         result = ctx.graph.bor(result, rhs_ne)?;
         i += 2;
     }
@@ -855,7 +855,7 @@ fn lower_unary(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<Graph
         "+" => Ok(operand), // unary plus is no-op
         "!" => {
             let zero = ctx.graph.iconst_i32(0)?;
-            let cmp = ctx.graph.icmp(IntCC::Equal, operand, zero)?;
+            let cmp = ctx.graph.icmp(IntCC::Eq, operand, zero)?;
             ctx.graph.sextend(cmp, TypeId::I32)
         }
         "~" => minic_lowering::build_bnot(ctx.graph, operand),

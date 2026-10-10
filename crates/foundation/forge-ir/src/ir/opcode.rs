@@ -21,33 +21,57 @@ include!(concat!(env!("OUT_DIR"), "/opcode_gen.rs"));
 // ============================================================
 
 /// 整数比较条件（LLVM `icmp` 的 10 个谓词）。
+///
+/// **变体名 = 助记符 = DSL 里的条件名**——三处同名，于是"IR 条件 → 本 ISA 编码"
+/// 在谱里读起来是一一对应的：
+///
+/// ```text
+/// IntCC::Sge  ⇔  "sge"  ⇔  [enum.cond] 的 ir = "sge"  ⇔  JCC 的 {cc}
+/// ```
+///
+/// **语义**：`s*` = **有符号**比较，`u*` = **无符号**比较；`lt`/`gt`/`le`/`ge` 对
+/// 操作数顺序敏感（`a slt b` ⇔ `b sgt a`），`eq`/`ne` 对称。结果是布尔值，
+/// 两个操作数必须**同宽**（混宽要先 `upcast`，见 `TypeId::upcast`）。
+///
+/// | 变体 | 助记符 | 含义 |
+/// | --- | --- | --- |
+/// | `Eq` | `eq` | `a == b` |
+/// | `Ne` | `ne` | `a != b` |
+/// | `Slt` | `slt` | 有符号 `a < b` |
+/// | `Sgt` | `sgt` | 有符号 `a > b` |
+/// | `Sle` | `sle` | 有符号 `a <= b` |
+/// | `Sge` | `sge` | 有符号 `a >= b` |
+/// | `Ult` | `ult` | 无符号 `a < b` |
+/// | `Ugt` | `ugt` | 无符号 `a > b` |
+/// | `Ule` | `ule` | 无符号 `a <= b` |
+/// | `Uge` | `uge` | 无符号 `a >= b` |
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IntCC {
-    Equal,
-    NotEqual,
-    SignedLessThan,
-    SignedGreaterThan,
-    SignedLessThanOrEqual,
-    SignedGreaterThanOrEqual,
-    UnsignedLessThan,
-    UnsignedGreaterThan,
-    UnsignedLessThanOrEqual,
-    UnsignedGreaterThanOrEqual,
+    Eq,
+    Ne,
+    Slt,
+    Sgt,
+    Sle,
+    Sge,
+    Ult,
+    Ugt,
+    Ule,
+    Uge,
 }
 
 impl IntCC {
     pub fn mnemonic(&self) -> &'static str {
         match self {
-            IntCC::Equal => "eq",
-            IntCC::NotEqual => "ne",
-            IntCC::SignedLessThan => "slt",
-            IntCC::SignedGreaterThan => "sgt",
-            IntCC::SignedLessThanOrEqual => "sle",
-            IntCC::SignedGreaterThanOrEqual => "sge",
-            IntCC::UnsignedLessThan => "ult",
-            IntCC::UnsignedGreaterThan => "ugt",
-            IntCC::UnsignedLessThanOrEqual => "ule",
-            IntCC::UnsignedGreaterThanOrEqual => "uge",
+            IntCC::Eq => "eq",
+            IntCC::Ne => "ne",
+            IntCC::Slt => "slt",
+            IntCC::Sgt => "sgt",
+            IntCC::Sle => "sle",
+            IntCC::Sge => "sge",
+            IntCC::Ult => "ult",
+            IntCC::Ugt => "ugt",
+            IntCC::Ule => "ule",
+            IntCC::Uge => "uge",
         }
     }
 
@@ -61,32 +85,32 @@ impl IntCC {
     /// [`LowerCtx::current_immediates`]: 见 `forge-codegen` 的同名文档
     pub fn code(&self) -> u8 {
         match self {
-            IntCC::Equal => 1,
-            IntCC::NotEqual => 2,
-            IntCC::SignedLessThan => 3,
-            IntCC::SignedLessThanOrEqual => 4,
-            IntCC::SignedGreaterThan => 5,
-            IntCC::SignedGreaterThanOrEqual => 6,
-            IntCC::UnsignedLessThan => 7,
-            IntCC::UnsignedLessThanOrEqual => 8,
-            IntCC::UnsignedGreaterThan => 9,
-            IntCC::UnsignedGreaterThanOrEqual => 10,
+            IntCC::Eq => 1,
+            IntCC::Ne => 2,
+            IntCC::Slt => 3,
+            IntCC::Sle => 4,
+            IntCC::Sgt => 5,
+            IntCC::Sge => 6,
+            IntCC::Ult => 7,
+            IntCC::Ule => 8,
+            IntCC::Ugt => 9,
+            IntCC::Uge => 10,
         }
     }
 
     /// [`IntCC::code`] 的逆（未知码返回 `None`，不兜底）。
     pub fn from_code(code: u8) -> Option<IntCC> {
         Some(match code {
-            1 => IntCC::Equal,
-            2 => IntCC::NotEqual,
-            3 => IntCC::SignedLessThan,
-            4 => IntCC::SignedLessThanOrEqual,
-            5 => IntCC::SignedGreaterThan,
-            6 => IntCC::SignedGreaterThanOrEqual,
-            7 => IntCC::UnsignedLessThan,
-            8 => IntCC::UnsignedLessThanOrEqual,
-            9 => IntCC::UnsignedGreaterThan,
-            10 => IntCC::UnsignedGreaterThanOrEqual,
+            1 => IntCC::Eq,
+            2 => IntCC::Ne,
+            3 => IntCC::Slt,
+            4 => IntCC::Sle,
+            5 => IntCC::Sgt,
+            6 => IntCC::Sge,
+            7 => IntCC::Ult,
+            8 => IntCC::Ule,
+            9 => IntCC::Ugt,
+            10 => IntCC::Uge,
             _ => return None,
         })
     }
@@ -111,53 +135,56 @@ pub fn intcc_name(code: u8) -> Option<&'static str> {
 }
 
 /// 浮点比较条件（LLVM `fcmp` 的 16 个谓词）。
+///
+/// **变体名 = 助记符**（`oeq`/`olt`/`ueq`/…）。命名与 NaN 语义的关系：
+///
+/// - `o*`（**ordered**）：任一操作数是 NaN ⇒ 结果**假**；`Oeq`/`One`/`Olt`/`Ole`/`Ogt`/`Oge`；
+/// - `u*`（**unordered**）：任一操作数是 NaN ⇒ 结果**真**；`Ueq`/`Une`/`Ult`/`Ule`/`Ugt`/`Uge`；
+/// - `Ord`/`Uno`：只判"**有没有** NaN"，不比大小（`Uno` = "至少一个是 NaN"）；
+/// - `False`/`True`：常量结果——IR 里合法（折叠后的残余会出现），编码层照常映射。
+///
+/// ⚠️ **不是** `o`/`u` 与 `eq`/`lt` 的简单组合，别按名字猜：
+/// `One` = "ordered 且不等"（NaN ⇒ 假），而 `Une` = "unordered 或不等"（NaN ⇒ 真）；
+/// 同理 `Olt` 与 `Ult` 在 NaN 上相反。
+///
+/// | 变体 | 助记符 | NaN 时 |
+/// | --- | --- | --- |
+/// | `Ord` | `ord` | 假（两个都不是 NaN） |
+/// | `Uno` | `uno` | 真（任一 NaN） |
+/// | `Oeq`/`One`/`Olt`/`Ole`/`Ogt`/`Oge` | `oeq`… | 假 |
+/// | `Ueq`/`Une`/`Ult`/`Ule`/`Ugt`/`Uge` | `ueq`… | 真 |
+/// | `False`/`True` | `false`/`true` | 常量 |
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FloatCC {
-    /// Ordered (no NaN operands).
-    Ordered,
-    /// Unordered (at least one NaN operand).
-    Unordered,
-    /// Ordered and equal (`oeq`).
-    Equal,
-    /// Ordered and not equal (`one`).
-    NotEqual,
-    /// Ordered and less than (`olt`).
-    LessThan,
-    /// Ordered and less than or equal (`ole`).
-    LessThanOrEqual,
-    /// Ordered and greater than (`ogt`).
-    GreaterThan,
-    /// Ordered and greater than or equal (`oge`).
-    GreaterThanOrEqual,
-    /// Always false.
+    Ord,
+    Uno,
+    Oeq,
+    One,
+    Olt,
+    Ole,
+    Ogt,
+    Oge,
     False,
-    /// Always true.
     True,
-    /// Unordered or equal (`ueq`).
     Ueq,
-    /// Unordered or greater than (`ugt`).
     Ugt,
-    /// Unordered or greater than or equal (`uge`).
     Uge,
-    /// Unordered or less than (`ult`).
     Ult,
-    /// Unordered or less than or equal (`ule`).
     Ule,
-    /// Unordered or not equal (`une`).
     Une,
 }
 
 impl FloatCC {
     pub fn mnemonic(&self) -> &'static str {
         match self {
-            FloatCC::Ordered => "ord",
-            FloatCC::Unordered => "uno",
-            FloatCC::Equal => "oeq",
-            FloatCC::NotEqual => "one",
-            FloatCC::LessThan => "olt",
-            FloatCC::LessThanOrEqual => "ole",
-            FloatCC::GreaterThan => "ogt",
-            FloatCC::GreaterThanOrEqual => "oge",
+            FloatCC::Ord => "ord",
+            FloatCC::Uno => "uno",
+            FloatCC::Oeq => "oeq",
+            FloatCC::One => "one",
+            FloatCC::Olt => "olt",
+            FloatCC::Ole => "ole",
+            FloatCC::Ogt => "ogt",
+            FloatCC::Oge => "oge",
             FloatCC::False => "false",
             FloatCC::True => "true",
             FloatCC::Ueq => "ueq",
@@ -175,14 +202,14 @@ impl FloatCC {
     /// `LowerCtx.current_immediates`；历史上是 forge-dsl 生成的 `fcmp_id`。
     pub fn code(&self) -> u8 {
         match self {
-            FloatCC::Ordered => 1,
-            FloatCC::Unordered => 2,
-            FloatCC::Equal => 3,
-            FloatCC::NotEqual => 4,
-            FloatCC::LessThan => 5,
-            FloatCC::LessThanOrEqual => 6,
-            FloatCC::GreaterThan => 7,
-            FloatCC::GreaterThanOrEqual => 8,
+            FloatCC::Ord => 1,
+            FloatCC::Uno => 2,
+            FloatCC::Oeq => 3,
+            FloatCC::One => 4,
+            FloatCC::Olt => 5,
+            FloatCC::Ole => 6,
+            FloatCC::Ogt => 7,
+            FloatCC::Oge => 8,
             FloatCC::False => 9,
             FloatCC::True => 10,
             FloatCC::Ueq => 11,
@@ -197,14 +224,14 @@ impl FloatCC {
     /// [`FloatCC::code`] 的逆（未知码返回 `None`，不兜底）。
     pub fn from_code(code: u8) -> Option<FloatCC> {
         Some(match code {
-            1 => FloatCC::Ordered,
-            2 => FloatCC::Unordered,
-            3 => FloatCC::Equal,
-            4 => FloatCC::NotEqual,
-            5 => FloatCC::LessThan,
-            6 => FloatCC::LessThanOrEqual,
-            7 => FloatCC::GreaterThan,
-            8 => FloatCC::GreaterThanOrEqual,
+            1 => FloatCC::Ord,
+            2 => FloatCC::Uno,
+            3 => FloatCC::Oeq,
+            4 => FloatCC::One,
+            5 => FloatCC::Olt,
+            6 => FloatCC::Ole,
+            7 => FloatCC::Ogt,
+            8 => FloatCC::Oge,
             9 => FloatCC::False,
             10 => FloatCC::True,
             11 => FloatCC::Ueq,
@@ -337,16 +364,16 @@ mod tests {
     #[test]
     fn test_intcc_variants() {
         let conds = [
-            IntCC::Equal,
-            IntCC::NotEqual,
-            IntCC::SignedLessThan,
-            IntCC::SignedGreaterThan,
-            IntCC::SignedLessThanOrEqual,
-            IntCC::SignedGreaterThanOrEqual,
-            IntCC::UnsignedLessThan,
-            IntCC::UnsignedGreaterThan,
-            IntCC::UnsignedLessThanOrEqual,
-            IntCC::UnsignedGreaterThanOrEqual,
+            IntCC::Eq,
+            IntCC::Ne,
+            IntCC::Slt,
+            IntCC::Sgt,
+            IntCC::Sle,
+            IntCC::Sge,
+            IntCC::Ult,
+            IntCC::Ugt,
+            IntCC::Ule,
+            IntCC::Uge,
         ];
         for cc in &conds {
             let m = cc.mnemonic();
@@ -358,14 +385,14 @@ mod tests {
     #[test]
     fn test_floatcc_variants() {
         let conds = [
-            FloatCC::Ordered,
-            FloatCC::Unordered,
-            FloatCC::Equal,
-            FloatCC::NotEqual,
-            FloatCC::LessThan,
-            FloatCC::LessThanOrEqual,
-            FloatCC::GreaterThan,
-            FloatCC::GreaterThanOrEqual,
+            FloatCC::Ord,
+            FloatCC::Uno,
+            FloatCC::Oeq,
+            FloatCC::One,
+            FloatCC::Olt,
+            FloatCC::Ole,
+            FloatCC::Ogt,
+            FloatCC::Oge,
             FloatCC::False,
             FloatCC::True,
             FloatCC::Ueq,

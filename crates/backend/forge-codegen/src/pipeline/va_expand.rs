@@ -582,9 +582,9 @@ fn expand_arg(
             let (ov_off, _) = field(oi)?;
             let lim_v = mk_iconst(func, b, &mut out, rule.limit as i64);
             let cc = if rule.signed_limit {
-                IntCC::SignedLessThan
+                IntCC::Slt
             } else {
-                IntCC::UnsignedLessThan
+                IntCC::Ult
             };
             let in_reg = {
                 let i = func.make_inst(

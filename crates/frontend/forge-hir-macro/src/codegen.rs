@@ -27,16 +27,16 @@ pub fn generate_lowering_code(spec: &LoweringSpec) -> TokenStream {
         quote! {
             fn _intcc_str(cc: ::forge_hir::ir::IntCC) -> &'static str {
                 match cc {
-                    ::forge_hir::ir::IntCC::Equal => "eq",
-                    ::forge_hir::ir::IntCC::NotEqual => "ne",
-                    ::forge_hir::ir::IntCC::SignedLessThan => "slt",
-                    ::forge_hir::ir::IntCC::SignedGreaterThan => "sgt",
-                    ::forge_hir::ir::IntCC::SignedLessThanOrEqual => "sle",
-                    ::forge_hir::ir::IntCC::SignedGreaterThanOrEqual => "sge",
-                    ::forge_hir::ir::IntCC::UnsignedLessThan => "ult",
-                    ::forge_hir::ir::IntCC::UnsignedGreaterThan => "ugt",
-                    ::forge_hir::ir::IntCC::UnsignedLessThanOrEqual => "ule",
-                    ::forge_hir::ir::IntCC::UnsignedGreaterThanOrEqual => "uge",
+                    ::forge_hir::ir::IntCC::Eq => "eq",
+                    ::forge_hir::ir::IntCC::Ne => "ne",
+                    ::forge_hir::ir::IntCC::Slt => "slt",
+                    ::forge_hir::ir::IntCC::Sgt => "sgt",
+                    ::forge_hir::ir::IntCC::Sle => "sle",
+                    ::forge_hir::ir::IntCC::Sge => "sge",
+                    ::forge_hir::ir::IntCC::Ult => "ult",
+                    ::forge_hir::ir::IntCC::Ugt => "ugt",
+                    ::forge_hir::ir::IntCC::Ule => "ule",
+                    ::forge_hir::ir::IntCC::Uge => "uge",
                 }
             }
         }

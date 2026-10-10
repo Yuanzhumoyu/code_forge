@@ -516,32 +516,32 @@ pub fn extract_intcc(attrs: &HashMap<Symbol, AttrValue>) -> Result<IntCC, HirErr
 
 fn parse_intcc_str(s: &str) -> Result<IntCC, HirError> {
     match s {
-        "eq" | "Equal" => Ok(IntCC::Equal),
-        "ne" | "NotEqual" => Ok(IntCC::NotEqual),
-        "slt" | "SignedLessThan" => Ok(IntCC::SignedLessThan),
-        "sgt" | "SignedGreaterThan" => Ok(IntCC::SignedGreaterThan),
-        "sle" | "SignedLessThanOrEqual" => Ok(IntCC::SignedLessThanOrEqual),
-        "sge" | "SignedGreaterThanOrEqual" => Ok(IntCC::SignedGreaterThanOrEqual),
-        "ult" | "UnsignedLessThan" => Ok(IntCC::UnsignedLessThan),
-        "ugt" | "UnsignedGreaterThan" => Ok(IntCC::UnsignedGreaterThan),
-        "ule" | "UnsignedLessThanOrEqual" => Ok(IntCC::UnsignedLessThanOrEqual),
-        "uge" | "UnsignedGreaterThanOrEqual" => Ok(IntCC::UnsignedGreaterThanOrEqual),
+        "eq" | "Equal" => Ok(IntCC::Eq),
+        "ne" | "NotEqual" => Ok(IntCC::Ne),
+        "slt" | "SignedLessThan" => Ok(IntCC::Slt),
+        "sgt" | "SignedGreaterThan" => Ok(IntCC::Sgt),
+        "sle" | "SignedLessThanOrEqual" => Ok(IntCC::Sle),
+        "sge" | "SignedGreaterThanOrEqual" => Ok(IntCC::Sge),
+        "ult" | "UnsignedLessThan" => Ok(IntCC::Ult),
+        "ugt" | "UnsignedGreaterThan" => Ok(IntCC::Ugt),
+        "ule" | "UnsignedLessThanOrEqual" => Ok(IntCC::Ule),
+        "uge" | "UnsignedGreaterThanOrEqual" => Ok(IntCC::Uge),
         _ => Err(HirError::Internal(format!("unknown IntCC string: '{}'", s))),
     }
 }
 
 fn parse_intcc_int(i: i64) -> Result<IntCC, HirError> {
     match i {
-        0 => Ok(IntCC::Equal),
-        1 => Ok(IntCC::NotEqual),
-        2 => Ok(IntCC::SignedLessThan),
-        3 => Ok(IntCC::SignedGreaterThan),
-        4 => Ok(IntCC::SignedLessThanOrEqual),
-        5 => Ok(IntCC::SignedGreaterThanOrEqual),
-        6 => Ok(IntCC::UnsignedLessThan),
-        7 => Ok(IntCC::UnsignedGreaterThan),
-        8 => Ok(IntCC::UnsignedLessThanOrEqual),
-        9 => Ok(IntCC::UnsignedGreaterThanOrEqual),
+        0 => Ok(IntCC::Eq),
+        1 => Ok(IntCC::Ne),
+        2 => Ok(IntCC::Slt),
+        3 => Ok(IntCC::Sgt),
+        4 => Ok(IntCC::Sle),
+        5 => Ok(IntCC::Sge),
+        6 => Ok(IntCC::Ult),
+        7 => Ok(IntCC::Ugt),
+        8 => Ok(IntCC::Ule),
+        9 => Ok(IntCC::Uge),
         _ => Err(HirError::Internal(format!("unknown IntCC int: {}", i))),
     }
 }
@@ -558,17 +558,17 @@ pub fn extract_floatcc(
     if let Some(s) = val.as_str() {
         let s_str = crate::attr::sym_lookup(s);
         match s_str.as_str() {
-            "ord" | "Ordered" => return Ok(forge_ir::ir::opcode::FloatCC::Ordered),
-            "uno" | "Unordered" => return Ok(forge_ir::ir::opcode::FloatCC::Unordered),
-            "eq" | "Equal" => return Ok(forge_ir::ir::opcode::FloatCC::Equal),
-            "ne" | "NotEqual" => return Ok(forge_ir::ir::opcode::FloatCC::NotEqual),
-            "lt" | "LessThan" => return Ok(forge_ir::ir::opcode::FloatCC::LessThan),
+            "ord" | "Ordered" => return Ok(forge_ir::ir::opcode::FloatCC::Ord),
+            "uno" | "Unordered" => return Ok(forge_ir::ir::opcode::FloatCC::Uno),
+            "eq" | "Equal" => return Ok(forge_ir::ir::opcode::FloatCC::Oeq),
+            "ne" | "NotEqual" => return Ok(forge_ir::ir::opcode::FloatCC::One),
+            "lt" | "LessThan" => return Ok(forge_ir::ir::opcode::FloatCC::Olt),
             "le" | "LessThanOrEqual" => {
-                return Ok(forge_ir::ir::opcode::FloatCC::LessThanOrEqual);
+                return Ok(forge_ir::ir::opcode::FloatCC::Ole);
             }
-            "gt" | "GreaterThan" => return Ok(forge_ir::ir::opcode::FloatCC::GreaterThan),
+            "gt" | "GreaterThan" => return Ok(forge_ir::ir::opcode::FloatCC::Ogt),
             "ge" | "GreaterThanOrEqual" => {
-                return Ok(forge_ir::ir::opcode::FloatCC::GreaterThanOrEqual);
+                return Ok(forge_ir::ir::opcode::FloatCC::Oge);
             }
             _ => {}
         }
@@ -638,14 +638,14 @@ mod tests {
     fn test_extract_intcc_from_string() {
         let mut attrs = HashMap::new();
         attrs.insert(sym_intern("cond"), AttrValue::str("NotEqual"));
-        assert_eq!(extract_intcc(&attrs).unwrap(), IntCC::NotEqual);
+        assert_eq!(extract_intcc(&attrs).unwrap(), IntCC::Ne);
     }
 
     #[test]
     fn test_extract_intcc_from_int() {
         let mut attrs = HashMap::new();
         attrs.insert(sym_intern("cond"), AttrValue::Int(1)); // NotEqual
-        assert_eq!(extract_intcc(&attrs).unwrap(), IntCC::NotEqual);
+        assert_eq!(extract_intcc(&attrs).unwrap(), IntCC::Ne);
     }
 
     #[test]

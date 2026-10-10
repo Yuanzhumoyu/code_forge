@@ -838,28 +838,28 @@ fn fold_icmp(
         None => return Ok(None),
     };
     let result = match cond {
-        IntCC::Equal => a == b,
-        IntCC::NotEqual => a != b,
-        IntCC::SignedLessThan => a < b,
-        IntCC::SignedGreaterThan => a > b,
-        IntCC::SignedLessThanOrEqual => a <= b,
-        IntCC::SignedGreaterThanOrEqual => a >= b,
-        IntCC::UnsignedLessThan => {
+        IntCC::Eq => a == b,
+        IntCC::Ne => a != b,
+        IntCC::Slt => a < b,
+        IntCC::Sgt => a > b,
+        IntCC::Sle => a <= b,
+        IntCC::Sge => a >= b,
+        IntCC::Ult => {
             let ua = as_unsigned_big(a, ty);
             let ub = as_unsigned_big(b, ty);
             ua < ub
         }
-        IntCC::UnsignedGreaterThan => {
+        IntCC::Ugt => {
             let ua = as_unsigned_big(a, ty);
             let ub = as_unsigned_big(b, ty);
             ua > ub
         }
-        IntCC::UnsignedLessThanOrEqual => {
+        IntCC::Ule => {
             let ua = as_unsigned_big(a, ty);
             let ub = as_unsigned_big(b, ty);
             ua <= ub
         }
-        IntCC::UnsignedGreaterThanOrEqual => {
+        IntCC::Uge => {
             let ua = as_unsigned_big(a, ty);
             let ub = as_unsigned_big(b, ty);
             ua >= ub
@@ -888,14 +888,14 @@ fn fold_fcmp(
             let result = match cond {
                 FloatCC::False => false,
                 FloatCC::True => true,
-                FloatCC::Ordered => !a_is_nan && !b_is_nan,
-                FloatCC::Unordered => a_is_nan || b_is_nan,
-                FloatCC::Equal => a_f == b_f,
-                FloatCC::NotEqual => a_f != b_f,
-                FloatCC::LessThan => a_f < b_f,
-                FloatCC::LessThanOrEqual => a_f <= b_f,
-                FloatCC::GreaterThan => a_f > b_f,
-                FloatCC::GreaterThanOrEqual => a_f >= b_f,
+                FloatCC::Ord => !a_is_nan && !b_is_nan,
+                FloatCC::Uno => a_is_nan || b_is_nan,
+                FloatCC::Oeq => a_f == b_f,
+                FloatCC::One => a_f != b_f,
+                FloatCC::Olt => a_f < b_f,
+                FloatCC::Ole => a_f <= b_f,
+                FloatCC::Ogt => a_f > b_f,
+                FloatCC::Oge => a_f >= b_f,
                 FloatCC::Ueq => a_is_nan || b_is_nan || a_f == b_f,
                 FloatCC::Ugt => a_is_nan || b_is_nan || a_f > b_f,
                 FloatCC::Uge => a_is_nan || b_is_nan || a_f >= b_f,

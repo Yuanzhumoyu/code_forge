@@ -555,7 +555,7 @@ mod pipeline_tests {
             b.switch_to_block(header);
             let i = hparams[0];
             let sum = hparams[1];
-            let cond = b.icmp(IntCC::SignedLessThan, i, params[0]);
+            let cond = b.icmp(IntCC::Slt, i, params[0]);
             b.branch(cond, body, &[], exit, &[]);
             b.switch_to_block(body);
             let next_sum = b.iadd(sum, i);
@@ -614,7 +614,7 @@ mod pipeline_tests {
             b.switch_to_block(header);
             let i = hparams[0];
             let sum = hparams[1];
-            let cond = b.icmp(IntCC::SignedLessThan, i, params[0]);
+            let cond = b.icmp(IntCC::Slt, i, params[0]);
             b.branch(cond, body, &[], exit, &[]);
             b.switch_to_block(body);
             let next_sum = b.iadd(sum, i);

@@ -244,8 +244,8 @@ pub fn build_min(op: Opcode) -> Function {
         Opcode::Ftrunc => b.ftrunc(x),
         Opcode::Fround => b.fround(x),
         // ── compare ──
-        Opcode::Icmp => b.icmp(IntCC::SignedGreaterThan, a, bv),
-        Opcode::Fcmp => b.fcmp(FloatCC::GreaterThan, x, y),
+        Opcode::Icmp => b.icmp(IntCC::Sgt, a, bv),
+        Opcode::Fcmp => b.fcmp(FloatCC::Ogt, x, y),
         // ── conversions ──
         Opcode::Sextend => b.sextend(a, TypeId::I64),
         Opcode::Uextend => b.uextend(a, TypeId::I64),

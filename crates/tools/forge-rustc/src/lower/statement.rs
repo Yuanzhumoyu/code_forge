@@ -592,7 +592,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 self.builder.jump(loop_blk, &[zero]);
                 self.builder.switch_to_block(loop_blk);
                 let i = lp[0];
-                let cond = self.builder.icmp(IntCC::UnsignedLessThan, i, count_v);
+                let cond = self.builder.icmp(IntCC::Ult, i, count_v);
                 self.builder.branch(cond, body_blk, &[i], done, &[]);
                 self.builder.switch_to_block(body_blk);
                 let bi = bp[0];

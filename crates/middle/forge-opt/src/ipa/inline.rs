@@ -647,7 +647,7 @@ mod tests {
 
         b.switch_to_block(body_blk);
         let c10 = b.iconst_i32(10);
-        let cmp = b.icmp(IntCC::SignedLessThan, iv, c10);
+        let cmp = b.icmp(IntCC::Slt, iv, c10);
         let c5 = b.iconst_i32(5);
         let _call_res = b.call(FuncRef::new(0), &[c5], &[TypeId::I32]); // call inside loop!
         let inc = b.iconst_i32(1);

@@ -108,14 +108,14 @@ pub fn build_alloc_runtime<'tcx>(
         b.switch_to_block(entry);
         let nr = b.call(FuncRef::new(rust_alloc), &[p[3], p[2]], &[TypeId::I64]);
         let new_ptr = nr[0];
-        let lt = b.icmp(IntCC::UnsignedLessThan, p[1], p[3]);
+        let lt = b.icmp(IntCC::Ult, p[1], p[3]);
         let n = b.select(lt, p[1], p[3]);
         let zero = b.iconst(0, TypeId::I64);
         let eight = b.iconst(8, TypeId::I64);
         b.jump(loop_blk, &[zero]);
         b.switch_to_block(loop_blk);
         let i = lp[0];
-        let cond = b.icmp(IntCC::UnsignedLessThan, i, n);
+        let cond = b.icmp(IntCC::Ult, i, n);
         b.branch(cond, body_blk, &[i], done_blk, &[]);
         b.switch_to_block(body_blk);
         let ib = bp[0];
@@ -194,7 +194,7 @@ pub fn build_alloc_runtime<'tcx>(
         // loop：i < n ? body : done
         b.switch_to_block(loop_blk);
         let li = b.load(slot, TypeId::I64);
-        let lt = b.icmp(IntCC::UnsignedLessThan, li, p[2]);
+        let lt = b.icmp(IntCC::Ult, li, p[2]);
         b.branch(lt, body_blk, &[], done, &[]);
         // body：dst[i] = src[i]; i+1 存槽 → loop
         b.switch_to_block(body_blk);
@@ -231,7 +231,7 @@ pub fn build_alloc_runtime<'tcx>(
         b.jump(loop_blk, &[]);
         b.switch_to_block(loop_blk);
         let li = b.load(slot, TypeId::I64);
-        let lt = b.icmp(IntCC::UnsignedLessThan, li, p[2]);
+        let lt = b.icmp(IntCC::Ult, li, p[2]);
         b.branch(lt, body_blk, &[], done, &[]);
         b.switch_to_block(body_blk);
         let bi = b.load(slot, TypeId::I64);
@@ -259,7 +259,7 @@ pub fn build_alloc_runtime<'tcx>(
         );
         let mut b = FunctionBuilder::new("memmove", TypeContext::new(), sig);
         let (_entry, p) = b.create_entry_block();
-        let fwd_lt = b.icmp(IntCC::UnsignedLessThan, p[0], p[1]);
+        let fwd_lt = b.icmp(IntCC::Ult, p[0], p[1]);
         // 反向起点 i = n - 1；条件 i < n（无符号回绕使 n-1 >= 0 恒成立后递减）
         let one = b.iconst(1, TypeId::I64);
         let nm1 = b.isub(p[2], one);
@@ -279,7 +279,7 @@ pub fn build_alloc_runtime<'tcx>(
         // 正向 loop：i < n ? fwd_body : done
         b.switch_to_block(fwd_loop);
         let fli = b.load(fwd_slot, TypeId::I64);
-        let flt = b.icmp(IntCC::UnsignedLessThan, fli, p[2]);
+        let flt = b.icmp(IntCC::Ult, fli, p[2]);
         b.branch(flt, fwd_body, &[], done, &[]);
         // 正向 body：dst[i] = src[i]; i+1 存槽 → fwd_loop
         b.switch_to_block(fwd_body);
@@ -294,7 +294,7 @@ pub fn build_alloc_runtime<'tcx>(
         // 反向 loop：i < n ? rev_body : done（i 从 n-1 递减，下溢到最大无符号后退出）
         b.switch_to_block(rev_loop);
         let rli = b.load(rev_slot, TypeId::I64);
-        let rlt = b.icmp(IntCC::UnsignedLessThan, rli, p[2]);
+        let rlt = b.icmp(IntCC::Ult, rli, p[2]);
         b.branch(rlt, rev_body, &[], done, &[]);
         // 反向 body：dst[i] = src[i]; i-1 存槽 → rev_loop
         b.switch_to_block(rev_body);
@@ -333,7 +333,7 @@ pub fn build_alloc_runtime<'tcx>(
         // loop：i < n ? body : done
         b.switch_to_block(loop_blk);
         let li = b.load(slot, TypeId::I64);
-        let lt = b.icmp(IntCC::UnsignedLessThan, li, p[2]);
+        let lt = b.icmp(IntCC::Ult, li, p[2]);
         b.branch(lt, body_blk, &[], done, &[]);
         // body：比较 a[i] 与 b[i]；不同 → 返回差值，相同 → i+1 存槽 → loop
         b.switch_to_block(body_blk);
@@ -344,7 +344,7 @@ pub fn build_alloc_runtime<'tcx>(
         let bv8 = b.load(ba, TypeId::I8);
         let av = b.uextend(av8, TypeId::I32);
         let bv = b.uextend(bv8, TypeId::I32);
-        let ne = b.icmp(IntCC::NotEqual, av, bv);
+        let ne = b.icmp(IntCC::Ne, av, bv);
         let d = b.isub(av, bv);
         let i1 = b.iadd(bi, one);
         b.store(i1, slot);
@@ -382,7 +382,7 @@ pub fn build_alloc_runtime<'tcx>(
         let addr = b.iadd(p[0], i);
         let c = b.load(addr, TypeId::I8);
         let c64 = b.uextend(c, TypeId::I64);
-        let is_nul = b.icmp(IntCC::Equal, c64, zero);
+        let is_nul = b.icmp(IntCC::Eq, c64, zero);
         b.branch(is_nul, done, &[], body_blk, &[]);
         // body：i+1 存槽后跳回 loop
         b.switch_to_block(body_blk);

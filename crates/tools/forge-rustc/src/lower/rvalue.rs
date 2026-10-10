@@ -224,7 +224,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         let niche_count = niche_variants.clone().into_iter().count();
                         if niche_count == 1 && *niche_start == 0 {
                             let z = self.builder.iconst(0, TypeId::I64);
-                            let is_eq = self.builder.icmp(IntCC::Equal, raw, z);
+                            let is_eq = self.builder.icmp(IntCC::Eq, raw, z);
                             let ut = self
                                 .builder
                                 .iconst(untagged_variant.index() as i64, TypeId::I32);
@@ -245,7 +245,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             let max_v = self.builder.iconst(relative_max as i64, TypeId::I64);
                             let is_niche =
                                 self.builder
-                                    .icmp(IntCC::UnsignedLessThanOrEqual, relative, max_v);
+                                    .icmp(IntCC::Ule, relative, max_v);
                             let tagged = {
                                 let rel32 = self.builder.ireduce(relative, TypeId::I32);
                                 let start_idx = self
@@ -599,54 +599,54 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             mir::BinOp::Eq => {
                 // 浮点相等必须走 fcmp（ucomisd），icmp 只支持整数
                 if is_fp {
-                    Ok(self.builder.fcmp(FloatCC::Equal, lhs, rhs))
+                    Ok(self.builder.fcmp(FloatCC::Oeq, lhs, rhs))
                 } else {
-                    Ok(self.builder.icmp(IntCC::Equal, lhs, rhs))
+                    Ok(self.builder.icmp(IntCC::Eq, lhs, rhs))
                 }
             }
             mir::BinOp::Ne => {
                 if is_fp {
-                    Ok(self.builder.fcmp(FloatCC::NotEqual, lhs, rhs))
+                    Ok(self.builder.fcmp(FloatCC::One, lhs, rhs))
                 } else {
-                    Ok(self.builder.icmp(IntCC::NotEqual, lhs, rhs))
+                    Ok(self.builder.icmp(IntCC::Ne, lhs, rhs))
                 }
             }
             mir::BinOp::Lt => {
                 if is_fp {
-                    Ok(self.builder.fcmp(FloatCC::LessThan, lhs, rhs))
+                    Ok(self.builder.fcmp(FloatCC::Olt, lhs, rhs))
                 } else if signed {
-                    Ok(self.builder.icmp(IntCC::SignedLessThan, lhs, rhs))
+                    Ok(self.builder.icmp(IntCC::Slt, lhs, rhs))
                 } else {
-                    Ok(self.builder.icmp(IntCC::UnsignedLessThan, lhs, rhs))
+                    Ok(self.builder.icmp(IntCC::Ult, lhs, rhs))
                 }
             }
             mir::BinOp::Le => {
                 if is_fp {
-                    Ok(self.builder.fcmp(FloatCC::LessThanOrEqual, lhs, rhs))
+                    Ok(self.builder.fcmp(FloatCC::Ole, lhs, rhs))
                 } else if signed {
-                    Ok(self.builder.icmp(IntCC::SignedLessThanOrEqual, lhs, rhs))
+                    Ok(self.builder.icmp(IntCC::Sle, lhs, rhs))
                 } else {
-                    Ok(self.builder.icmp(IntCC::UnsignedLessThanOrEqual, lhs, rhs))
+                    Ok(self.builder.icmp(IntCC::Ule, lhs, rhs))
                 }
             }
             mir::BinOp::Gt => {
                 if is_fp {
-                    Ok(self.builder.fcmp(FloatCC::GreaterThan, lhs, rhs))
+                    Ok(self.builder.fcmp(FloatCC::Ogt, lhs, rhs))
                 } else if signed {
-                    Ok(self.builder.icmp(IntCC::SignedGreaterThan, lhs, rhs))
+                    Ok(self.builder.icmp(IntCC::Sgt, lhs, rhs))
                 } else {
-                    Ok(self.builder.icmp(IntCC::UnsignedGreaterThan, lhs, rhs))
+                    Ok(self.builder.icmp(IntCC::Ugt, lhs, rhs))
                 }
             }
             mir::BinOp::Ge => {
                 if is_fp {
-                    Ok(self.builder.fcmp(FloatCC::GreaterThanOrEqual, lhs, rhs))
+                    Ok(self.builder.fcmp(FloatCC::Oge, lhs, rhs))
                 } else if signed {
-                    Ok(self.builder.icmp(IntCC::SignedGreaterThanOrEqual, lhs, rhs))
+                    Ok(self.builder.icmp(IntCC::Sge, lhs, rhs))
                 } else {
                     Ok(self
                         .builder
-                        .icmp(IntCC::UnsignedGreaterThanOrEqual, lhs, rhs))
+                        .icmp(IntCC::Uge, lhs, rhs))
                 }
             }
             _ => Err(ForgeError::Message(format!(
@@ -694,7 +694,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 // bool 的 ! 是翻转 0/1（bnot 会产生 -1，作为真值判定会出错）
                 if is_bool {
                     let zero = self.builder.iconst(0, TypeId::BOOL);
-                    Ok(self.builder.icmp(IntCC::Equal, val, zero))
+                    Ok(self.builder.icmp(IntCC::Eq, val, zero))
                 } else {
                     Ok(self.builder.bnot(val))
                 }

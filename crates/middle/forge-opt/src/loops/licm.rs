@@ -317,7 +317,7 @@ mod tests {
 
         b.switch_to_block(header);
         let n = b.iconst_i32(10);
-        let cond = b.icmp(IntCC::SignedLessThan, zero, n);
+        let cond = b.icmp(IntCC::Slt, zero, n);
         let body_blk = b.create_block();
         let exit = b.create_block();
         b.switch_to_block(header);
@@ -362,7 +362,7 @@ mod tests {
 
         b.switch_to_block(header);
         let n = b.iconst_i32(10);
-        let cond = b.icmp(IntCC::SignedLessThan, zero, n);
+        let cond = b.icmp(IntCC::Slt, zero, n);
         let body_blk = b.create_block();
         let exit = b.create_block();
         b.switch_to_block(header);
@@ -401,7 +401,7 @@ mod tests {
         b.switch_to_block(header);
         let i = header_params[0];
         let n = b.iconst_i32(10);
-        let cond = b.icmp(IntCC::SignedLessThan, i, n);
+        let cond = b.icmp(IntCC::Slt, i, n);
         let body_blk = b.create_block();
         let exit = b.create_block();
         b.switch_to_block(header);
@@ -446,7 +446,7 @@ mod tests {
 
         b.switch_to_block(header);
         let n = b.iconst_i32(10);
-        let cond = b.icmp(IntCC::SignedLessThan, zero, n);
+        let cond = b.icmp(IntCC::Slt, zero, n);
         let body_blk = b.create_block();
         let exit = b.create_block();
         b.switch_to_block(header);
@@ -496,7 +496,7 @@ mod tests {
 
         b.switch_to_block(header);
         let n = b.iconst_i32(10);
-        let cond = b.icmp(IntCC::SignedLessThan, zero, n);
+        let cond = b.icmp(IntCC::Slt, zero, n);
         let body_blk = b.create_block();
         let exit = b.create_block();
         b.switch_to_block(header);

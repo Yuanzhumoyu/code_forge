@@ -298,7 +298,7 @@ mod tests {
         b.switch_to_block(header_blk);
         let iv = header_params[0];
         let ten2 = b.iconst_i32(10);
-        let cmp = b.icmp(IntCC::SignedLessThan, iv, ten2);
+        let cmp = b.icmp(IntCC::Slt, iv, ten2);
         b.branch(cmp, body, &[], exit, &[]);
 
         b.switch_to_block(body);
@@ -333,7 +333,7 @@ mod tests {
         b.switch_to_block(header_blk);
         let iv = header_params[0];
         let ten = b.iconst_i32(10);
-        let cmp = b.icmp(IntCC::SignedLessThan, iv, ten);
+        let cmp = b.icmp(IntCC::Slt, iv, ten);
         b.branch(cmp, body, &[], exit, &[]);
 
         b.switch_to_block(body);
@@ -369,7 +369,7 @@ mod tests {
         b.switch_to_block(header_blk);
         let iv = header_params[0];
         let ten = b.iconst_i32(10);
-        let cmp = b.icmp(IntCC::SignedLessThan, iv, ten);
+        let cmp = b.icmp(IntCC::Slt, iv, ten);
         b.branch(cmp, body, &[], exit, &[]);
 
         b.switch_to_block(body);

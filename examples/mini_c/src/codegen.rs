@@ -381,7 +381,7 @@ fn codegen_if(cg: &mut CodegenCtx, node: AstRef<'_>) {
     // (0 or 1). icmp(NE, val, 0) normalizes non-boolean values to i1.
     let cond_val = codegen_expr(cg, cond_node);
     let zero = cg.builder.iconst_i32(0);
-    let is_true = cg.builder.icmp(IntCC::NotEqual, cond_val, zero);
+    let is_true = cg.builder.icmp(IntCC::Ne, cond_val, zero);
 
     let then_blk = cg.builder.create_block();
     let merge_blk = cg.builder.create_block();
@@ -452,7 +452,7 @@ fn codegen_while(cg: &mut CodegenCtx, node: AstRef<'_>) {
     cg.builder.switch_to_block(cond_blk);
     let cond_val = codegen_expr(cg, cond_node);
     let zero = cg.builder.iconst_i32(0);
-    let is_true = cg.builder.icmp(IntCC::NotEqual, cond_val, zero);
+    let is_true = cg.builder.icmp(IntCC::Ne, cond_val, zero);
     // NOTE: branch directly on the i1 icmp result (like for/do-while).
     // The old `sextend(is_true, I32)` made the branch condition i32, which
     // the x86 backend's `lower_term.Branch` (test cond,cond; je ...) mis-
@@ -506,7 +506,7 @@ fn codegen_for(cg: &mut CodegenCtx, node: AstRef<'_>) {
     if let Some(Some(cond_node)) = node.get_optional("condition") {
         let cond_val = codegen_expr(cg, cond_node);
         let zero = cg.builder.iconst_i32(0);
-        let is_true = cg.builder.icmp(IntCC::NotEqual, cond_val, zero);
+        let is_true = cg.builder.icmp(IntCC::Ne, cond_val, zero);
         cg.builder.branch(is_true, body_blk, &[], exit_blk, &[]);
     } else {
         // No condition → always enter body
@@ -592,7 +592,7 @@ fn codegen_do_while(cg: &mut CodegenCtx, node: AstRef<'_>) {
     cg.builder.switch_to_block(cond_blk);
     let cond_val = codegen_expr(cg, cond_node);
     let zero = cg.builder.iconst_i32(0);
-    let is_true = cg.builder.icmp(IntCC::NotEqual, cond_val, zero);
+    let is_true = cg.builder.icmp(IntCC::Ne, cond_val, zero);
     cg.builder.branch(is_true, body_blk, &[], exit_blk, &[]);
 
     // Exit block
@@ -736,13 +736,13 @@ fn codegen_expr(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
                         ">>" => cg.builder.sshr(lhs, rhs),
                         "==" | "!=" | "<" | ">" | "<=" | ">=" => {
                             let cc = match op {
-                                "==" => IntCC::Equal,
-                                "!=" => IntCC::NotEqual,
-                                "<" => IntCC::SignedLessThan,
-                                ">" => IntCC::SignedGreaterThan,
-                                "<=" => IntCC::SignedLessThanOrEqual,
-                                ">=" => IntCC::SignedGreaterThanOrEqual,
-                                _ => IntCC::Equal,
+                                "==" => IntCC::Eq,
+                                "!=" => IntCC::Ne,
+                                "<" => IntCC::Slt,
+                                ">" => IntCC::Sgt,
+                                "<=" => IntCC::Sle,
+                                ">=" => IntCC::Sge,
+                                _ => IntCC::Eq,
                             };
                             let cmp = cg.builder.icmp(cc, lhs, rhs);
                             cg.builder.sextend(cmp, TypeId::I32)
@@ -1024,12 +1024,12 @@ fn codegen_binary_comparison(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
         let op = children[i].text().unwrap_or("?");
         let rhs = codegen_expr(cg, children[i + 1]);
         let cc = match op {
-            "==" => IntCC::Equal,
-            "!=" => IntCC::NotEqual,
-            "<" => IntCC::SignedLessThan,
-            ">" => IntCC::SignedGreaterThan,
-            "<=" => IntCC::SignedLessThanOrEqual,
-            ">=" => IntCC::SignedGreaterThanOrEqual,
+            "==" => IntCC::Eq,
+            "!=" => IntCC::Ne,
+            "<" => IntCC::Slt,
+            ">" => IntCC::Sgt,
+            "<=" => IntCC::Sle,
+            ">=" => IntCC::Sge,
             _ => return lhs, // unrecognized → return left as-is
         };
         let cmp = cg.builder.icmp(cc, lhs, rhs);
@@ -1052,12 +1052,12 @@ fn codegen_logical_and(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
     let zero = cg.builder.iconst_i32(0);
 
     let lhs = codegen_expr(cg, children[0]);
-    let mut result = cg.builder.icmp(IntCC::NotEqual, lhs, zero);
+    let mut result = cg.builder.icmp(IntCC::Ne, lhs, zero);
 
     let mut i = 1;
     while i < children.len() {
         let rhs = codegen_expr(cg, children[i + 1]);
-        let rhs_ne = cg.builder.icmp(IntCC::NotEqual, rhs, zero);
+        let rhs_ne = cg.builder.icmp(IntCC::Ne, rhs, zero);
         result = cg.builder.band(result, rhs_ne);
         i += 2;
     }
@@ -1077,12 +1077,12 @@ fn codegen_logical_or(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
     let zero = cg.builder.iconst_i32(0);
 
     let lhs = codegen_expr(cg, children[0]);
-    let mut result = cg.builder.icmp(IntCC::NotEqual, lhs, zero);
+    let mut result = cg.builder.icmp(IntCC::Ne, lhs, zero);
 
     let mut i = 1;
     while i < children.len() {
         let rhs = codegen_expr(cg, children[i + 1]);
-        let rhs_ne = cg.builder.icmp(IntCC::NotEqual, rhs, zero);
+        let rhs_ne = cg.builder.icmp(IntCC::Ne, rhs, zero);
         result = cg.builder.bor(result, rhs_ne);
         i += 2;
     }
@@ -1110,7 +1110,7 @@ fn codegen_unary_expr(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
         "+" => operand, // unary plus is no-op
         "!" => {
             let zero = cg.builder.iconst_i32(0);
-            let cmp = cg.builder.icmp(IntCC::Equal, operand, zero);
+            let cmp = cg.builder.icmp(IntCC::Eq, operand, zero);
             cg.builder.sextend(cmp, TypeId::I32)
         }
         "~" => cg.builder.bnot(operand),

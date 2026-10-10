@@ -1458,7 +1458,7 @@ mod tests {
         let else_blk = fb.create_block();
         let merge_blk = fb.create_block_with_params(&[(bi, "r")]).0;
         fb.switch_to_block(entry);
-        let cond = fb.icmp(IntCC::SignedGreaterThan, params[0], params[1]);
+        let cond = fb.icmp(IntCC::Sgt, params[0], params[1]);
         fb.branch(cond, then_blk, &[], else_blk, &[]);
         fb.build_block(then_blk, |fb| {
             fb.jump(merge_blk, &[params[0]]);
@@ -1646,7 +1646,7 @@ mod tests {
         fb.create_block_here();
         let a = fb.iconst_i32(1);
         let b = fb.iconst_i32(2);
-        let cond = fb.icmp(IntCC::Equal, a, b); // bool false(0)
+        let cond = fb.icmp(IntCC::Eq, a, b); // bool false(0)
         let not = fb.bnot(cond);
         assert_eq!(fb.func.dfg.value_type(not), Some(TypeId::BOOL));
         // not 的定义指令应为 Bxor（而非 Bnot），且第二个操作数为预置 true 常量
@@ -1666,8 +1666,8 @@ mod tests {
         fb.create_block_here();
         let a = fb.iconst_i32(1);
         let b = fb.iconst_i32(2);
-        let c1 = fb.icmp(IntCC::Equal, a, a); // bool true
-        let c2 = fb.icmp(IntCC::Equal, b, a); // bool false
+        let c1 = fb.icmp(IntCC::Eq, a, a); // bool true
+        let c2 = fb.icmp(IntCC::Eq, b, a); // bool false
         // bool×bool：iadd/isub 均生成 Bxor，结果保持 BOOL
         let add = fb.iadd(c1, c2);
         let sub = fb.isub(c1, c2);
@@ -1698,8 +1698,8 @@ mod tests {
         fb.create_block_here();
         let a = fb.iconst_i32(1);
         let b = fb.iconst_i32(2);
-        let c1 = fb.icmp(IntCC::Equal, a, a); // bool（true）
-        let c2 = fb.icmp(IntCC::NotEqual, b, b); // bool（false）
+        let c1 = fb.icmp(IntCC::Eq, a, a); // bool（true）
+        let c2 = fb.icmp(IntCC::Ne, b, b); // bool（false）
         // 逻辑运算：band(bool, bool) 保持 bool 结果
         let and = fb.band(c1, c2);
         assert_eq!(fb.func.dfg.value_type(and), Some(TypeId::BOOL));

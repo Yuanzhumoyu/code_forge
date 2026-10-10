@@ -105,7 +105,7 @@ fn build_complex_function() -> Function {
     let x = b.imul(a, a);
     let f_b = b.fmul(bv, bv);
     let ten = b.iconst(10, TypeId::I32);
-    let cond = b.icmp(IntCC::SignedGreaterThan, x, ten);
+    let cond = b.icmp(IntCC::Sgt, x, ten);
     b.branch(cond, then_block, &[], else_block, &[]);
 
     let one_bits = 1.0_f64.to_bits();
@@ -142,7 +142,7 @@ fn build_multi_block_function() -> Function {
     b.switch_to_block(header);
     let i = b.iconst(0, TypeId::I32);
     let sum = b.iconst(0, TypeId::I32);
-    let cond = b.icmp(IntCC::SignedLessThan, i, n);
+    let cond = b.icmp(IntCC::Slt, i, n);
     b.branch(cond, body, &[], exit, &[]);
 
     b.switch_to_block(body);
@@ -256,7 +256,7 @@ fn build_big_loop() -> Function {
     b.switch_to_block(header);
     let i = b.iconst(0, TypeId::I32);
     let sum = b.iconst(0, TypeId::I32);
-    let cond = b.icmp(IntCC::SignedLessThan, i, n);
+    let cond = b.icmp(IntCC::Slt, i, n);
     b.branch(cond, body, &[], exit, &[]);
 
     b.switch_to_block(body);

@@ -129,7 +129,7 @@ mod tests {
         b.switch_to_block(entry);
         let one = b.iconst_i32(1);
         let zero = b.iconst_i32(0);
-        let c1 = b.icmp(IntCC::NotEqual, one, zero);
+        let c1 = b.icmp(IntCC::Ne, one, zero);
         b.branch(c1, left, &[], right, &[]);
 
         b.switch_to_block(left);
@@ -139,7 +139,7 @@ mod tests {
         b.jump(header, &[]);
 
         b.switch_to_block(header);
-        let c2 = b.icmp(IntCC::NotEqual, one, zero);
+        let c2 = b.icmp(IntCC::Ne, one, zero);
         b.branch(c2, body, &[], exit, &[]);
 
         b.switch_to_block(body);
@@ -207,7 +207,7 @@ mod tests {
         let p = b.stack_addr(0); // 地址在循环外
         let one = b.iconst_i32(1);
         let zero = b.iconst_i32(0);
-        let c1 = b.icmp(IntCC::NotEqual, one, zero);
+        let c1 = b.icmp(IntCC::Ne, one, zero);
         b.branch(c1, left, &[], right, &[]);
 
         b.switch_to_block(left);
@@ -217,7 +217,7 @@ mod tests {
         b.jump(header, &[]);
 
         b.switch_to_block(header);
-        let c2 = b.icmp(IntCC::NotEqual, one, zero);
+        let c2 = b.icmp(IntCC::Ne, one, zero);
         b.branch(c2, body, &[], exit, &[]);
 
         b.switch_to_block(body);

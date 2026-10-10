@@ -278,7 +278,7 @@ fn reference_module() -> Module {
     let (merge, merge_params) = b.create_block_with_params(&[(TypeId::I32, "r")]);
     b.switch_to_block(entry);
     let zero = b.iconst_i32(0);
-    let cond = b.icmp(IntCC::SignedGreaterThan, params[0], zero);
+    let cond = b.icmp(IntCC::Sgt, params[0], zero);
     b.branch(cond, then_blk, &[], else_blk, &[]);
     b.switch_to_block(then_blk);
     let called = b.call(FuncRef::new(0), &[params[0]], &[TypeId::I32]);

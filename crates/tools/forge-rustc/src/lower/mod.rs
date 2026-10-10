@@ -575,7 +575,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 self.builder.switch_to_block(cur_blk);
                                 let d = self.lower_switch_discr(discr)?;
                                 let const_val = self.builder.iconst_i32(value as i32);
-                                let eq = self.builder.icmp(IntCC::Equal, d, const_val);
+                                let eq = self.builder.icmp(IntCC::Eq, d, const_val);
                                 let tgt_blk = self.blocks[&tgt_bb];
                                 let next_blk = self.builder.create_block();
                                 // create_block() auto-switches cur_block, switch back

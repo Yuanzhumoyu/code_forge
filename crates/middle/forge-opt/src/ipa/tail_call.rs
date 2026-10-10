@@ -149,7 +149,7 @@ mod tests {
         let done = b.create_block();
         b.switch_to_block(entry);
         let zero = b.iconst_i32(0);
-        let cond = b.icmp(IntCC::Equal, params[0], zero);
+        let cond = b.icmp(IntCC::Eq, params[0], zero);
         b.branch(cond, done, &[], recurse, &[]);
         b.switch_to_block(recurse);
         let one = b.iconst_i32(1);

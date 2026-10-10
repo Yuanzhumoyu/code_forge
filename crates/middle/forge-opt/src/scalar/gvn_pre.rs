@@ -399,7 +399,7 @@ mod tests {
         b.switch_to_block(entry);
         let one = b.iconst_i32(1);
         let zero = b.iconst_i32(0);
-        let cond = b.icmp(IntCC::NotEqual, one, zero);
+        let cond = b.icmp(IntCC::Ne, one, zero);
         b.branch(cond, then_blk, &[], else_blk, &[]);
 
         b.switch_to_block(then_blk);
@@ -437,7 +437,7 @@ mod tests {
         let sum = b.iadd(a, b_val);
         let one = b.iconst_i32(1);
         let zero = b.iconst_i32(0);
-        let cond = b.icmp(IntCC::NotEqual, one, zero);
+        let cond = b.icmp(IntCC::Ne, one, zero);
         b.branch(cond, left, &[sum], right, &[sum]);
 
         b.switch_to_block(left);

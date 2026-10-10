@@ -477,8 +477,8 @@ mod tests {
         b.switch_to_block(entry);
         let a = params[0];
         let bv = params[1];
-        let eq = b.icmp(forge_ir::IntCC::Equal, a, bv);
-        let ne = b.icmp(forge_ir::IntCC::NotEqual, a, bv);
+        let eq = b.icmp(forge_ir::IntCC::Eq, a, bv);
+        let ne = b.icmp(forge_ir::IntCC::Ne, a, bv);
         let and = b.band(eq, ne);
         b.ret(&[and]);
 

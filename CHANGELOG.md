@@ -11,7 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
-### Changed (2026-10-08) — ISA-DSL v21 W6 乙（五）：多值返回下放（`multi = true`）——`[lower.Ret]` 形态全齐
+### Changed (2026-10-08) — forge-ir：`IntCC`/`FloatCC` 变体名简化为助记符 + 补逐变体注释
+
++ **`IntCC`**（10 个）：`Equal`→`Eq`、`NotEqual`→`Ne`、`SignedLessThan`→`Slt`、
+  `SignedGreaterThan`→`Sgt`、`SignedLessThanOrEqual`→`Sle`、`SignedGreaterThanOrEqual`→`Sge`、
+  `UnsignedLessThan`→`Ult`、`UnsignedGreaterThan`→`Ugt`、`UnsignedLessThanOrEqual`→`Ule`、
+  `UnsignedGreaterThanOrEqual`→`Uge`。
++ **`FloatCC`**（16 个）：`Ordered`→`Ord`、`Unordered`→`Uno`、`Equal`→`Oeq`、`NotEqual`→`One`、
+  `LessThan`→`Olt`、`LessThanOrEqual`→`Ole`、`GreaterThan`→`Ogt`、`GreaterThanOrEqual`→`Oge`
+  （`False`/`True`/`Ueq`/`Ugt`/`Uge`/`Ult`/`Ule`/`Une` 不变）。
++ **变体名 = `mnemonic()` = DSL 里的条件名**（`eq`/`sge`/`oeq`/…）⇒ 读 IR、读谱、读生成物
+  不再需要一张翻译表。
++ 补上两个枚举的完整文档：`s*`/`u*` 的有符号/无符号语义、`o*`/`u*` 的 NaN 语义、
+  `One`（ordered 且不等）与 `Une`（unordered 或不等）**不是**简单组合的坑、
+  `Ord`/`Uno` 只判 NaN 不判大小、`False`/`True` 是折叠残余，以及逐变体对照表。
++ 全仓 **396 处**引用同步改名（38 个文件）；**行为不变**：编码指纹守卫通过、整仓门禁 exit 0。
 
 + 多值返回用**逐分量模板**表达：`when = { multi = true }` + `insts = []`（多值没有单一收尾序列）
   \+ `move`（整数分量）/`movef`（浮点分量），对**每个结果重复一次**；新占位符

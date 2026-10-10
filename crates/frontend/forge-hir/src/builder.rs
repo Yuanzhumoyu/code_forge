@@ -155,16 +155,16 @@ impl IrGraph {
         rhs: GraphValue,
     ) -> Result<GraphValue, HirError> {
         let cond_str = match cc {
-            forge_ir::IntCC::Equal => "eq",
-            forge_ir::IntCC::NotEqual => "ne",
-            forge_ir::IntCC::SignedLessThan => "slt",
-            forge_ir::IntCC::SignedGreaterThan => "sgt",
-            forge_ir::IntCC::SignedLessThanOrEqual => "sle",
-            forge_ir::IntCC::SignedGreaterThanOrEqual => "sge",
-            forge_ir::IntCC::UnsignedLessThan => "ult",
-            forge_ir::IntCC::UnsignedGreaterThan => "ugt",
-            forge_ir::IntCC::UnsignedLessThanOrEqual => "ule",
-            forge_ir::IntCC::UnsignedGreaterThanOrEqual => "uge",
+            forge_ir::IntCC::Eq => "eq",
+            forge_ir::IntCC::Ne => "ne",
+            forge_ir::IntCC::Slt => "slt",
+            forge_ir::IntCC::Sgt => "sgt",
+            forge_ir::IntCC::Sle => "sle",
+            forge_ir::IntCC::Sge => "sge",
+            forge_ir::IntCC::Ult => "ult",
+            forge_ir::IntCC::Ugt => "ugt",
+            forge_ir::IntCC::Ule => "ule",
+            forge_ir::IntCC::Uge => "uge",
         };
         let mut attrs = HashMap::new();
         attrs.insert(sym_intern("cond"), AttrValue::str(cond_str));
@@ -184,7 +184,7 @@ impl IrGraph {
             return Ok(v);
         }
         let zero = self.iconst_i32(0)?;
-        self.icmp(forge_ir::IntCC::NotEqual, v, zero)
+        self.icmp(forge_ir::IntCC::Ne, v, zero)
     }
 
     /// Create a bitwise-and node and append it.
@@ -543,7 +543,7 @@ mod tests {
         graph.create_block(&[]);
         let zero = graph.iconst_i32(0).unwrap();
         let one = graph.iconst_i32(1).unwrap();
-        let cmp = graph.icmp(forge_ir::IntCC::NotEqual, one, zero).unwrap();
+        let cmp = graph.icmp(forge_ir::IntCC::Ne, one, zero).unwrap();
         assert_eq!(graph.value_type(cmp), Some(TypeId::BOOL));
         // BOOL values pass through normalize_bool unchanged: no extra nodes.
         let before = graph.node_count();
@@ -597,7 +597,7 @@ mod tests {
         graph.create_block(&[]);
         let a = graph.iconst_i32(1).unwrap();
         let b = graph.iconst_i32(2).unwrap();
-        let cmp = graph.icmp(forge_ir::IntCC::UnsignedLessThan, a, b).unwrap();
+        let cmp = graph.icmp(forge_ir::IntCC::Ult, a, b).unwrap();
         let node_id = match graph.value_def(cmp).unwrap() {
             crate::graph::ValueDef::NodeResult(nid, 0) => *nid,
             other => panic!("expected node result, got {:?}", other),
