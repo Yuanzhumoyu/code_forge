@@ -53,8 +53,7 @@ roles = "inout"
 
 # ─────────────────────────── 编码形式 ───────────────────────────
 
-[[forms]]
-name = "R3"
+[form.R3]
 fields = [
   "u8[99:92]:opcode",
   "u4[79:76]:rd",
@@ -62,8 +61,7 @@ fields = [
   "u4[7:4]:rs2",
 ]
 
-[[forms]]
-name = "R2"
+[form.R2]
 fields = [
   "u8[99:92]:opcode",
   "u4[79:76]:rd",

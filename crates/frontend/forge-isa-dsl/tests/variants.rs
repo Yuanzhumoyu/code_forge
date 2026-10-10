@@ -213,8 +213,7 @@ names = ["R0", "R1", "R2", "R3"]
 kind = "reg"
 class = "gpr8"
 
-[[forms]]
-name = "RR"
+[form.RR]
 fields = [
   "u4[15:12]:opcode",
   "u3[10:8]:rd",
@@ -284,8 +283,7 @@ names = ["R0", "R1"]
 kind = "reg"
 class = "gpr8"
 
-[[forms]]
-name = "RR"
+[form.RR]
 fields = [
   "u4[15:12]:opcode",
   "u3[10:8]:rd",

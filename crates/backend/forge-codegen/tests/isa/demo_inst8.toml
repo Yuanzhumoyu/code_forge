@@ -54,8 +54,7 @@ bits = 2
 
 # ─────────────────────────── 编码形式 ───────────────────────────
 
-[[forms]]
-name = "R3"
+[form.R3]
 fields = [
   "u2[7:6]:opcode",
   "u2[5:4]:rd",
@@ -63,24 +62,21 @@ fields = [
   "u2[1:0]:rs2",
 ]
 
-[[forms]]
-name = "R2"
+[form.R2]
 fields = [
   "u2[7:6]:opcode",
   "u2[5:4]:rd",
   "u2[3:2]:rs1",
 ]
 
-[[forms]]
-name = "B"
+[form.B]
 fields = [
   "u2[7:6]:opcode",
   "u2[3:2]:rs1",
   "u2[1:0]:lab",
 ]
 
-[[forms]]
-name = "W"
+[form.W]
 fields = [
   "u8[7:0]:opcode",
 ]

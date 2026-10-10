@@ -547,8 +547,7 @@ unit = 4    # 源文本/Inst 字段是**字节**偏移；字段数的是 4 字�
 
 # ─────────────────────────── 编码形式 ───────────────────────────
 
-[[forms]]
-name = "ADR_F"
+[form.ADR_F]
 fields = [
   "u5[28:24]:opcode",
   "u5[4:0]:rd",
@@ -589,8 +588,8 @@ match = { adr_op = 1 }
 ops = ["dst:r64:out", "sym:adr_sym"]
 asm = "adrp {dst}, {sym}"
 
-[[forms]]
-name = "ALUIMM"   # ADD(S)/SUB(S) (imm)：rd/rn/imm12（[23:22] sh=0 → 零 guard）
+[form.ALUIMM]
+# ADD(S)/SUB(S) (imm)：rd/rn/imm12（[23:22] sh=0 → 零 guard）
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rd",
@@ -599,8 +598,8 @@ fields = [
   "u2[23:22]:shift",
 ]
 
-[[forms]]
-name = "ALUREG"   # ADD/SUB (shifted reg, LSL#0)：rd/rn/rm
+[form.ALUREG]
+# ADD/SUB (shifted reg, LSL#0)：rd/rn/rm
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rd",
@@ -610,8 +609,8 @@ fields = [
 ]
                   #（[15:10] imm6=0、[23:22] shift=0 → 零 guard）
 
-[[forms]]
-name = "MOVR"     # MOV 别名：rd/rm（rn 经 fields=31 常量）
+[form.MOVR]
+# MOV 别名：rd/rm（rn 经 fields=31 常量）
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rd",
@@ -619,8 +618,8 @@ fields = [
   "u5[9:5]:rn",
 ]
 
-[[forms]]
-name = "MOVW16"   # MOVZ/MOVN/MOVK：rd/imm16（顶层 [31:23] 常量，hw 经 fields）
+[form.MOVW16]
+# MOVZ/MOVN/MOVK：rd/imm16（顶层 [31:23] 常量，hw 经 fields）
 fields = [
   "u9[31:23]:opcode",
   "u5[4:0]:rd",
@@ -628,8 +627,8 @@ fields = [
   "u2[22:21]:hw",
 ]
 
-[[forms]]
-name = "CMPIMM"   # CMP/CMN(imm)：rn/imm12（rd 经 fields=31 常量）
+[form.CMPIMM]
+# CMP/CMN(imm)：rn/imm12（rd 经 fields=31 常量）
 fields = [
   "u8[31:24]:opcode",
   "u5[9:5]:rn",
@@ -637,8 +636,8 @@ fields = [
   "u5[4:0]:rd",
 ]
 
-[[forms]]
-name = "CMPREG"   # CMP(reg)：rn/rm（rd 经 fields=31 常量）
+[form.CMPREG]
+# CMP(reg)：rn/rm（rd 经 fields=31 常量）
 fields = [
   "u8[31:24]:opcode",
   "u5[9:5]:rn",
@@ -646,16 +645,16 @@ fields = [
   "u5[4:0]:rd",
 ]
 
-[[forms]]
-name = "BREL"     # B/BL：imm26（[31:26] 为 op6 常量）
+[form.BREL]
+# B/BL：imm26（[31:26] 为 op6 常量）
 fields = [
   "u6[31:26]:opcode",
   "u26[25:0]:imm26",
 ]
 
 
-[[forms]]
-name = "SYSEXC"   # 系统/异常：**顶层是 11 位**（[31:21]，与 mtop 同段）+ imm16（[20:5]）+ op5（[4:0]）
+[form.SYSEXC]
+# 系统/异常：**顶层是 11 位**（[31:21]，与 mtop 同段）+ imm16（[20:5]）+ op5（[4:0]）
 fields = [
   "u11[31:21]:opcode",
   "u16[20:5]:imm16",
@@ -664,8 +663,8 @@ fields = [
 # 顶层**不能**写成 `b16`（[31:16]）：那与 imm16 在 bit16-20 重叠，imm16 大值会把
 # 顶层常量写坏（编得出、解不回——派生日志守卫实测 `SVC[imm16=65535]` 抓到）。
 
-[[forms]]
-name = "ALUSH6"   # 逻辑（移位寄存器，64 位）：rd/rn/rm/imm6（`shift` 是逐指令常量）
+[form.ALUSH6]
+# 逻辑（移位寄存器，64 位）：rd/rn/rm/imm6（`shift` 是逐指令常量）
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rd",
@@ -676,8 +675,8 @@ fields = [
   "u1[21]:nbit",
 ]
 
-[[forms]]
-name = "ALUSH5"   # 同上，32 位形式：移位量 5 位（= 同一约束 imm6<32）
+[form.ALUSH5]
+# 同上，32 位形式：移位量 5 位（= 同一约束 imm6<32）
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rd",
@@ -687,8 +686,8 @@ fields = [
   "u2[23:22]:shift",
   "u1[21]:nbit",
 ]
-[[forms]]
-name = "NOPF"     # 全字常量
+[form.NOPF]
+# 全字常量
 fields = [
   "u32[31:0]:opcode",
 ]
@@ -812,8 +811,8 @@ asm = "nop"
 # ── NEON：abs（向量）——双寄存器，排列写在**助记符后缀**上（无需词法改动）──
 # 编码：0 Q U 01110 size 10000 01000 Rn Rd；字节取自语料 `arm64-advsimd.s` 的 CHECK 行。
 # 64 位排列（.8b/.4h/.2s）用 D 视图槽 `fpr`，128 位排列（.16b/.8h/.4s）用 Q 视图槽 `fprq`。
-[[forms]]
-name = "VEC2R"   # NEON 双寄存器（Rd, Rn）：常量段在 vec_a/vec_c/vec_d
+[form.VEC2R]
+# NEON 双寄存器（Rd, Rn）：常量段在 vec_a/vec_c/vec_d
 fields = [
   "u5[28:24]:opcode",
   "u5[4:0]:rt",
@@ -826,8 +825,8 @@ fields = [
   "u1[29]:vu",
 ]
 
-[[forms]]
-name = "VEC3R"   # NEON ?????Rd, Rn, Rm?
+[form.VEC3R]
+# NEON ?????Rd, Rn, Rm?
 fields = [
   "u5[28:24]:opcode",
   "u5[4:0]:rt",
@@ -840,8 +839,8 @@ fields = [
   "u1[29]:vu",
 ]
 
-[[forms]]
-name = "VEC3RA"   # NEON ???? + ???????????????? vq???????? fields ?????
+[form.VEC3RA]
+# NEON ???? + ???????????????? vq???????? fields ?????
 fields = [
   "u5[28:24]:opcode",
   "u5[4:0]:rt",
@@ -1654,8 +1653,8 @@ asm = "movk {dst}, #{imm}, lsl #32"
 
 # ─────────────────────────── 别名 ───────────────────────────
 
-[[forms]]
-name = "MULADD"   # MADD/MSUB：rd rn ra rm（位低→高）
+[form.MULADD]
+# MADD/MSUB：rd rn ra rm（位低→高）
 fields = [
   "u11[31:21]:opcode",
   "u5[4:0]:rd",
@@ -1665,8 +1664,8 @@ fields = [
   "u1[15]:o0",
 ]
 
-[[forms]]
-name = "MUL3"     # MUL 别名（ra=31 fields）
+[form.MUL3]
+# MUL 别名（ra=31 fields）
 fields = [
   "u11[31:21]:opcode",
   "u5[4:0]:rd",
@@ -1675,8 +1674,8 @@ fields = [
   "u5[14:10]:ra",
 ]
 
-[[forms]]
-name = "DIV2A"    # SDIV/UDIV：rd rn rm（[15:10] op2d 经 fields）
+[form.DIV2A]
+# SDIV/UDIV：rd rn rm（[15:10] op2d 经 fields）
 fields = [
   "u11[31:21]:opcode",
   "u5[4:0]:rd",
@@ -1685,38 +1684,38 @@ fields = [
   "u6[15:10]:op2d",
 ]
 
-[[forms]]
-name = "BRREG2"   # BR/BLR：rn（[31:16] b16 常量；[15:10]/[4:0] 零 guard）
+[form.BRREG2]
+# BR/BLR：rn（[31:16] b16 常量；[15:10]/[4:0] 零 guard）
 fields = [
   "u16[31:16]:opcode",
   "u5[9:5]:rn",
 ]
 
-[[forms]]
-name = "RETF"     # RET：无操作数（rn=30 fields）
+[form.RETF]
+# RET：无操作数（rn=30 fields）
 fields = [
   "u16[31:16]:opcode",
   "u5[9:5]:rn",
 ]
 
-[[forms]]
-name = "CBZF"     # CBZ/CBNZ：rn + imm19
+[form.CBZF]
+# CBZ/CBNZ：rn + imm19
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rt",
   "u19[23:5]:imm19",
 ]
 
-[[forms]]
-name = "BCF"      # B.cond：imm19（cond 经 fields 常量）
+[form.BCF]
+# B.cond：imm19（cond 经 fields 常量）
 fields = [
   "u8[31:24]:opcode",
   "u19[23:5]:imm19",
   "u4[3:0]:bcond",
 ]
 
-[[forms]]
-name = "LOGIMM"   # 逻辑（立即数）：rd rn N/immr/imms。顶层用 **op9**（[31:23]，含恒 0 的 bit23）
+[form.LOGIMM]
+# 逻辑（立即数）：rd rn N/immr/imms。顶层用 **op9**（[31:23]，含恒 0 的 bit23）
 fields = [
   "u9[31:23]:opcode",
   "u5[4:0]:rd",
@@ -1727,8 +1726,8 @@ fields = [
 ]
 # ——用 op8（[31:24]）会与 MOVZ/MOVN/MOVK 的 op9 在 bit23 上撞成同一条 trie 边（0x1A4 vs 0x1A5）。
 
-[[forms]]
-name = "TBZ"      # TBZ/TBNZ：rt + 位序号（b40[23:19] + b5[31]）+ imm14[18:5]
+[form.TBZ]
+# TBZ/TBNZ：rt + 位序号（b40[23:19] + b5[31]）+ imm14[18:5]
 fields = [
   "u7[30:24]:opcode",
   "u5[4:0]:rt",
@@ -1737,8 +1736,8 @@ fields = [
   "u1[31]:b5",
 ]
 
-[[forms]]
-name = "CSEL4"    # CSEL 族：rd rn cond rm（位低→高；cond 在 rm 之下）
+[form.CSEL4]
+# CSEL 族：rd rn cond rm（位低→高；cond 在 rm 之下）
 fields = [
   "u11[31:21]:opcode",
   "u5[4:0]:rd",
@@ -1843,8 +1842,8 @@ asm = "ret {src}"
 
 # ── 别名 ──
 
-[[forms]]
-name = "LSUI"     # LDR/STR(unsigned)：rt rn imm12s
+[form.LSUI]
+# LDR/STR(unsigned)：rt rn imm12s
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rt",
@@ -1853,8 +1852,8 @@ fields = [
   "u2[23:22]:opc2",
 ]
 
-[[forms]]
-name = "LSUN"     # LDUR/STUR：rt rn imm9
+[form.LSUN]
+# LDUR/STUR：rt rn imm9
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rt",
@@ -1956,8 +1955,8 @@ asm = "stur {src}, [{base}, #{off}]"
 
 # ── 别名 ──
 
-[[forms]]
-name = "PAIR"     # LDP/STP：rt rn rt2 imm7（位低→高）
+[form.PAIR]
+# LDP/STP：rt rn rt2 imm7（位低→高）
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rt",
@@ -1969,8 +1968,8 @@ fields = [
 
 # 无位移形态的形式：`[Xn]` 就是"位移 = 0"的那一格，位域由 `fields` 固定为 0，
 # 因此形式里没有位移操作数位（与 DCPS1B "裸 dcps1 = dcps1 #0" 同款）。
-[[forms]]
-name = "LSUIND"   # LDR/STR 无位移：rt rn
+[form.LSUIND]
+# LDR/STR 无位移：rt rn
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rt",
@@ -1979,8 +1978,8 @@ fields = [
   "u2[23:22]:opc2",
 ]
 
-[[forms]]
-name = "PAIRND"   # LDP/STP 无位移：rt rn rt2
+[form.PAIRND]
+# LDP/STP 无位移：rt rn rt2
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rt",
@@ -1991,8 +1990,8 @@ fields = [
 ]
 
 # 寄存器偏移寻址：`[Xn, Xm{ext}]` —— 索引寄存器进 `rm`，`option`/`sbit` 是逐指令常量。
-[[forms]]
-name = "LSUIR"   # LDR/STR 寄存器偏移：rt rn rm
+[form.LSUIR]
+# LDR/STR 寄存器偏移：rt rn rm
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rt",
@@ -2005,8 +2004,8 @@ fields = [
   "u1[12]:sbit",
 ]
 
-[[forms]]
-name = "FPLSUI"   # SIMD&FP 单寄存器无符号偏移：rt rn imm12
+[form.FPLSUI]
+# SIMD&FP 单寄存器无符号偏移：rt rn imm12
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rt",
@@ -2015,8 +2014,8 @@ fields = [
   "u2[23:22]:opc2",
 ]
 
-[[forms]]
-name = "FPPAIR"   # SIMD&FP 成对：rt rn rt2 imm7
+[form.FPPAIR]
+# SIMD&FP 成对：rt rn rt2 imm7
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rt",
@@ -2028,8 +2027,8 @@ fields = [
 
 # 扩展寄存器操作数（`add x8, x8, w5, sxtw #2`）：`option` 是**操作数**（命名立即数表），
 # `imm3` 是量；`bit21 = 1` 与移位寄存器族（bit21 = 0）区分。cmp/cmn 用无 rd 的两条形式。
-[[forms]]
-name = "EXTREG"   # 扩展寄存器：rd rn rm option imm3
+[form.EXTREG]
+# 扩展寄存器：rd rn rm option imm3
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rd",
@@ -2039,8 +2038,8 @@ fields = [
   "u3[12:10]:imm3",
   "u1[21]:one21",
 ]
-[[forms]]
-name = "EXTREG_NA"   # 同上但省略量（imm3 = 0，由 fields 固定）
+[form.EXTREG_NA]
+# 同上但省略量（imm3 = 0，由 fields 固定）
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rd",
@@ -2050,8 +2049,8 @@ fields = [
   "u3[12:10]:imm3",
   "u1[21]:one21",
 ]
-[[forms]]
-name = "EXTREG2"   # 扩展寄存器（cmp/cmn：rd 由 fields 固定 31）
+[form.EXTREG2]
+# 扩展寄存器（cmp/cmn：rd 由 fields 固定 31）
 fields = [
   "u8[31:24]:opcode",
   "u5[9:5]:rn",
@@ -2061,8 +2060,8 @@ fields = [
   "u1[21]:one21",
   "u5[4:0]:rd",
 ]
-[[forms]]
-name = "EXTREG2_NA"   # 同上但省略量
+[form.EXTREG2_NA]
+# 同上但省略量
 fields = [
   "u8[31:24]:opcode",
   "u5[9:5]:rn",
@@ -5052,8 +5051,8 @@ class = "fpr128"
 kind = "reg"
 class = "fpr64"
 
-[[forms]]
-name = "FMOVR"    # FMOV（标量寄存器）：rd/rn（[31:24] = op8 常量、[23:16]/[15:10] 保留位）
+[form.FMOVR]
+# FMOV（标量寄存器）：rd/rn（[31:24] = op8 常量、[23:16]/[15:10] 保留位）
 fields = [
   "u8[31:24]:opcode",
   "u5[4:0]:rd",

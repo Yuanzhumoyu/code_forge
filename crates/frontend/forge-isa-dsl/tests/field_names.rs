@@ -33,8 +33,7 @@ count = 4
 [operand.g]
 kind = "reg"
 class = "gpr32"
-[[forms]]
-name = "RR"
+[form.RR]
 fields = [
   "u4[15:12]:opcode",
   "u4[11:8]:f0",

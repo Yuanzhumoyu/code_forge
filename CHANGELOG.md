@@ -11,6 +11,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W10 第一片：`[[forms]]` → `[form.<名>]`（表头即形式名）
+
++ 编码形式改成**表头即形式名**（设计案 §6.5）：`[[forms]]` + `name = "R"` 改写为 `[form.R]`；
+  旧写法按 `deny_unknown_fields` 报未知键。`Form.name` 转为**内部载体**（`#[serde(skip)]` +
+  `INTERNAL_FIELDS` 登记），解析期按**源码声明序**填充（`BTreeMap` 是字母序，而声明序会影响
+  别名/lowering 的解析结果——与 `[family.<名>]` 同一教训）。
++ **模型的"面"保留**（`form_decls` 不 `take()`）⇒ `serialize → parse` 往返仍然**无损**
+  （`forms` 只是解析后的内部视图；这一步是实测发现"往返丢形式"后改的）。
++ 迁移：三谱 **86 块**（arm64 38 / x86 36 / riscv64 12）+ `demo*`/`include_base` 夹具 **25 块** +
+  内联谱 **59 处**（脚本 `target/tmp/form_rename.py`：**先 dry-run 逐文件复核计数与样例**再应用；
+  带行尾注释的 `name` 行把注释保留成独立注释行，不丢信息）。
++ 连带：schema 节 `[form.<名字>]`（必填为空、可选 `fields`/`segments` + 编码键 flatten）、
+  根键 `forms` → `form`、`schema_guard` 的 `INTERNAL_FIELDS` 两条；DSL 内部夹具与断言同步
+  （`diag` 三条行号、`lint` 三处 replace 模式、`tests` 的往返）。
++ 证据：`forge-isa-dsl` 全绿（**295 通过 / 0 失败**）；`schema_guard` 9/9；`markdownlint` 0 issue；
+  整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
++ W10 其余（下一步）：`[[instructions]]` → `[inst.<名>]`、`[[derive]]` → `[pred.<名>]`、
+  W4 stream 段模型、文档换版与 `git grep` 死链清零。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W9 第四片：删掉 callee-saved 两键（序言改为按 plan 整表推）
 
 + `[machine].callee_saved_gpr` / `callee_save_slots` **删除**（写它们报未知键）：callee-saved

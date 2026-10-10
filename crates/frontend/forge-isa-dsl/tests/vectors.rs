@@ -40,8 +40,7 @@ kind = "imm"
 bits = 5
 signed = true
 
-[[forms]]
-name = "RR"
+[form.RR]
 fields = [
   "u4[15:12]:opcode",
   "u3[10:8]:rd",
@@ -49,8 +48,7 @@ fields = [
   "u5[4:0]:imm",
 ]
 
-[[forms]]
-name = "RI"
+[form.RI]
 fields = [
   "u4[15:12]:opcode",
   "u3[10:8]:rd",

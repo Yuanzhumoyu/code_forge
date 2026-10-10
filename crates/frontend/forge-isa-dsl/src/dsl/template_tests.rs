@@ -40,8 +40,7 @@ kind = "imm"
 signed = true
 bits = 12
 
-[[forms]]
-name = "R"
+[form.R]
 fields = [
   "u7[6:0]:opcode",
   "u5[11:7]:rd",

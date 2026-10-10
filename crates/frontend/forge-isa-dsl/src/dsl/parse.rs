@@ -177,6 +177,28 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
         Ok(())
     };
     lower_machine_sections().map_err(anchor_err)?;
+    // v21 W10：`[form.<名>]` 降级进内部 `forms`（**表头即形式名**），
+    // **按源码声明序**展开——`BTreeMap` 是字母序，而形式/指令的声明序会影响别名与
+    // lowering 的解析结果（与 `[family.<名>]` 同一教训，见 `lower_families`）。
+    //
+    // **`form_decls` 保留不清空**：它是"面"的存储 ⇒ 模型序列化写回 `[form.<名>]`
+    // 表，`serialize → parse` 往返因此仍是**无损**的（`forms` 只是解析后的内部视图）。
+    if !model.form_decls.is_empty() {
+        let mut ordered: Vec<(usize, String, crate::dsl::model::Form)> = model
+            .form_decls
+            .iter()
+            .map(|(name, f)| {
+                let mut f = f.clone();
+                f.name = name.clone();
+                let at = source
+                    .find(&format!("[form.{name}]"))
+                    .unwrap_or(usize::MAX);
+                (at, name.clone(), f)
+            })
+            .collect();
+        ordered.sort_by_key(|(at, _, _)| *at);
+        model.forms.extend(ordered.into_iter().map(|(_, _, f)| f));
+    }
     model.expand_templates().map_err(|msg| {
         let idx = diag::DeclIndex::build(source);
         let a = idx.anchor(&msg);

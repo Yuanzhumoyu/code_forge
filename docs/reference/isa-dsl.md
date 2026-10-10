@@ -59,7 +59,7 @@
 
   - [`[operand.<名字>]` — 操作数声明](#operand名字--操作数声明)
 
-  - [`[[forms]]` — 编码形式（可选预设）](#forms--编码形式可选预设)
+  - [`[form.<名字>]` — 编码形式（可选预设）](#form名字--编码形式可选预设)
 
   - [`[[instructions]]` — 指令](#instructions--指令)
 
@@ -149,12 +149,12 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 - 因此「模型改了忘了写 schema」「schema 写了模型不认的键」「文档没跟上」三类漂移都会
   让 `cargo test -p forge-isa-dsl --test schema_guard` 变红。
 
-`†` = 编码键（`[[forms]]` 预设与 `[[instructions]]` **共用同一组**，指令逐键覆盖）。
+`†` = 编码键（`[form.<名字>]` 预设与 `[[instructions]]` **共用同一组**，指令逐键覆盖）。
 
 <!-- BEGIN: schema-keys（由 tests/schema_guard.rs 校验，改 schema 时同步这一段）-->
 | 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
 | --- | --- | --- | --- |
-| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `operand` `enum` `forms` `instructions` `family` `lower` `asm` `derive` `lowering` `pattern` `machine` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
+| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `operand` `enum` `form` `instructions` `family` `lower` `asm` `derive` `lowering` `pattern` `machine` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
 | `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `vector_tiers` | 元信息 + 文本约定（宽度只在 [reg.<名>] 表头里，见 [machine] 的类指针键） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
 | `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `alloc_count` `aliases` | 寄存器组；组名的数字 = **位**宽（`gpr64` = 64 位）；aliases = { 别名 = 组内下标 } |
@@ -168,7 +168,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[conventions.mem]` | `templates` | — | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
 | `[enum.<表名>]` | — | `kind` `entries`† | 命名取值表：kind = value（名字 = 值；带 `ir` 的那张是条件码表）\| bits（名字拼接、按位或）（允许额外键） |
 | `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` `classes` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
-| `[[forms]]` | `name` | `fields` `segments` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖） |
+| `[form.<名字>]` | — | `fields` `segments` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖）；v21 W10：**表头即形式名**（不再写 `name`） |
 | `[[instructions]]` | `name` `asm` | `form` `opcode` `match` `fields` `segments` `bind` `ops` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[asm.reloc.<名>]` | `semantics` `operand` | `addend` `via` | 重定位（v21 W8：**表头即重定位名**；旧 `[[reloc]]` 已撤）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`） |
 | `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
@@ -968,7 +968,7 @@ names = "csr"
 > 或 `field_width`。class 固定的槽 → 固定宽度；class 省略的槽（如 `gprx` 多态）
 > → 宽度随分配到的寄存器。
 
-## `[[forms]]` — 编码形式（可选预设）
+## `[form.<名字>]` — 编码形式（可选预设）
 
 形式 = 语义键组合（结构化配置，实现为生成器内部函数；开放可扩展集合）。
 
@@ -987,17 +987,14 @@ names = "csr"
 `"opsize"`（混进列表会让"到底发不发"含糊）与第二个 `"field"`，校验期直接拒。
 
 ```toml
-[[forms]]
-name = "MRR"                   # @modrm：reg=op0, rm=op1, opsize auto
+[form.MRR]                     # @modrm：reg=op0, rm=op1, opsize auto
 modrm = { reg = "dst", rm = "src" }
 
-[[forms]]
-name = "MRR_0F"                # @modrm + 0F escape
+[form.MRR_0F]                  # @modrm + 0F escape
 modrm = { reg = "dst", rm = "src" }
 escape = [0x0F]
 
-[[forms]]
-name = "VEX_RRV"               # AVX 三操作数：reg=dest、rm=src2、vvvv=~src1
+[form.VEX_RRV]                 # AVX 三操作数：reg=dest、rm=src2、vvvv=~src1
 vex = { map = "field", pp = "field", w = "field", l = "field" }
 modrm = { reg = "dst", rm = "src2" }
 

@@ -714,8 +714,7 @@ bits = 21
 
 # ─────────────────────────── 编码形式 ───────────────────────────
 
-[[forms]]
-name = "R"
+[form.R]
 fields = [
   "u7[6:0]:opcode",
   "u5[11:7]:rd",
@@ -730,8 +729,7 @@ fields = [
 
 # R 型的**浮点**变体：`funct3` 是 rm（舍入模式）⇒ 它是**操作数**而不是固定字段。
 # 两条形态：三操作数（`fadd`/`fsub`/`fmul`/`fdiv`）与两操作数（`fsqrt`/`fcvt`，rs2 由指令固定）。
-[[forms]]
-name = "R_RM"
+[form.R_RM]
 fields = [
   "u7[6:0]:opcode",
   "u5[11:7]:rd",
@@ -741,8 +739,7 @@ fields = [
   "u7[31:25]:funct7",
 ]
 
-[[forms]]
-name = "R_RM2"
+[form.R_RM2]
 fields = [
   "u7[6:0]:opcode",
   "u5[11:7]:rd",
@@ -752,8 +749,7 @@ fields = [
   "u5[24:20]:rs2",
 ]
 
-[[forms]]
-name = "I"
+[form.I]
 fields = [
   "u7[6:0]:opcode",
   "u5[11:7]:rd",
@@ -762,8 +758,7 @@ fields = [
   "u3[14:12]:funct3",
 ]
 
-[[forms]]
-name = "S"
+[form.S]
 fields = [
   "u7[6:0]:opcode",
   "u5[24:20]:rs2",
@@ -772,16 +767,14 @@ fields = [
   "u3[14:12]:funct3",
 ]
 
-[[forms]]
-name = "U"
+[form.U]
 fields = [
   "u7[6:0]:opcode",
   "u5[11:7]:rd",
   "u20[31:12]:imm20",
 ]
 
-[[forms]]
-name = "B"
+[form.B]
 fields = [
   "u7[6:0]:opcode",
   "u5[19:15]:rs1",
@@ -790,16 +783,14 @@ fields = [
   "u3[14:12]:funct3",
 ]
 
-[[forms]]
-name = "J"
+[form.J]
 fields = [
   "u7[6:0]:opcode",
   "u5[11:7]:rd",
   "u20[20:1 -> 30:21,20,19:12,31]:imm_j",
 ]
 
-[[forms]]
-name = "SHIFT"
+[form.SHIFT]
 fields = [
   "u7[6:0]:opcode",
   "u5[11:7]:rd",
@@ -809,8 +800,7 @@ fields = [
   "u6[31:26]:funct6",
 ]
 
-[[forms]]
-name = "SHIFT5"
+[form.SHIFT5]
 fields = [
   "u7[6:0]:opcode",
   "u5[11:7]:rd",
@@ -820,16 +810,15 @@ fields = [
   "u7[31:25]:funct7",
 ]
 
-[[forms]]
-name = "OP"
+[form.OP]
 fields = [
   "u7[6:0]:opcode",
   "u12[31:20]:imm12",
 ]
 
 
-[[forms]]
-name = "FENCEPS"   # FENCE：pred[27:24] + succ[23:20]（其余位 = 0 → 补集零 guard）
+[form.FENCEPS]
+# FENCE：pred[27:24] + succ[23:20]（其余位 = 0 → 补集零 guard）
 fields = [
   "u7[6:0]:opcode",
   "u4[27:24]:pred",

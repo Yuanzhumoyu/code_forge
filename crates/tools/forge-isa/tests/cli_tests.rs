@@ -220,7 +220,7 @@ fn validate_accepts_schema_comment() {
     // `#:schema` 只是 TOML 注释：不得影响解析（编辑器补全用）。
     let spec = temp_spec(
         "with_schema_comment.toml",
-        "#:schema ../../../isa-dsl.schema.json\n[meta]\nname = \"cmt\"\n[encoding]\nkind = \"fixed\"\nbits = 16\n[reg.gpr32]\ncount = 8\n[operand.g]\nkind = \"reg\"\nclass = \"gpr32\"\n[[instructions]]\nname = \"N\"\nform = \"R\"\nopcode = 1\nops = [\"d:g:out\"]\nasm = \"n {d}\"\n[[forms]]\nname = \"R\"\nfields = [\n  \"u8[7:0]:op\",\n  \"u3[10:8]:rd\",\n]\n",
+        "#:schema ../../../isa-dsl.schema.json\n[meta]\nname = \"cmt\"\n[encoding]\nkind = \"fixed\"\nbits = 16\n[reg.gpr32]\ncount = 8\n[operand.g]\nkind = \"reg\"\nclass = \"gpr32\"\n[[instructions]]\nname = \"N\"\nform = \"R\"\nopcode = 1\nops = [\"d:g:out\"]\nasm = \"n {d}\"\n[form.R]\nfields = [\n  \"u8[7:0]:op\",\n  \"u3[10:8]:rd\",\n]\n",
     );
     let out = run(&["validate", spec.to_str().unwrap()]);
     let _ = std::fs::remove_file(&spec);

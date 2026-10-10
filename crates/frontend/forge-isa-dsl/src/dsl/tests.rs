@@ -33,8 +33,7 @@ kind = "imm"
 signed = true
 bits = 12
 
-[[forms]]
-name = "R"
+[form.R]
 fields = [
   "u7[6:0]:opcode",
   "u5[11:7]:rd",
@@ -113,8 +112,7 @@ kind = "imm"
 signed = true
 bits = 32
 
-[[forms]]
-name = "RR"
+[form.RR]
 rex = "auto"
 "#;
 
@@ -186,8 +184,7 @@ count = 8
 kind = "reg"
 class = "gpr"
 roles = "inout"
-[[forms]]
-name = "RM"
+[form.RM]
 [[instructions]]
 name = "ADD_RM_R"
 form = "RM"
@@ -324,8 +321,7 @@ count = 8
 [operand.g]
 kind = "reg"
 class = "gpr32"
-[[forms]]
-name = "F"
+[form.F]
 fields = [
 {decls}
 ]
@@ -466,8 +462,7 @@ count = 8
 [operand.g]
 kind = "reg"
 class = "gpr"
-[[forms]]
-name = "R"
+[form.R]
 [[instructions]]
 name = "NOP"
 form = "ZZZ"
@@ -492,8 +487,7 @@ count = 8
 [operand.g]
 kind = "reg"
 class = "gpr"
-[[forms]]
-name = "R"
+[form.R]
 [[instructions]]
 name = "NOP"
 form = "R"
@@ -520,8 +514,7 @@ count = 8
 [operand.g]
 kind = "reg"
 class = "gpr"
-[[forms]]
-name = "R"
+[form.R]
 fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
@@ -552,8 +545,7 @@ count = 8
 [operand.g]
 kind = "reg"
 class = "gpr"
-[[forms]]
-name = "R"
+[form.R]
 [[instructions]]
 name = "NOP"
 form = "R"
@@ -586,8 +578,7 @@ count = 8
 [operand.g]
 kind = "reg"
 class = "gpr"
-[[forms]]
-name = "R"
+[form.R]
 [family.F]
 body = { form = "R", ops = ["dst:g:out"], asm = "f {dst}" }
 rows = [ { inst = "V1" } ]
@@ -732,8 +723,7 @@ count = 8
 [operand.g]
 kind = "reg"
 class = "gpr"
-[[forms]]
-name = "R"
+[form.R]
 fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
@@ -773,8 +763,7 @@ count = 8
 [operand.g]
 kind = "reg"
 class = "gpr"
-[[forms]]
-name = "R"
+[form.R]
 fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
@@ -818,8 +807,7 @@ count = 8
 [operand.g]
 kind = "reg"
 class = "gpr"
-[[forms]]
-name = "R"
+[form.R]
 fields = [
   "u7[6:0 -> 3:0,10:8]:opcode",
   "u3[13:11]:rd",
@@ -854,8 +842,7 @@ class = "gpr"
 kind = "imm"
 signed = true
 bits = 12
-[[forms]]
-name = "I"
+[form.I]
 fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
@@ -961,8 +948,7 @@ kind = "reg"
 class = "gpr"
 [operand.cc]
 kind = "cond"
-[[forms]]
-name = "C"
+[form.C]
 fields = [
   "u8[7:0]:opcode",
   "u3[10:8]:rd",
@@ -1478,8 +1464,7 @@ class = "gpr"
 kind = "imm"
 signed = true
 bits = 12
-[[forms]]
-name = "I"
+[form.I]
 fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
@@ -1542,8 +1527,7 @@ count = 8
 kind = "reg"
 class = "gpr32"
 roles = "inout"
-[[forms]]
-name = "RR"
+[form.RR]
 fields = [
   "u8[7:0]:opcode",
   "u3[10:8]:rd",
@@ -1617,8 +1601,7 @@ count = 8
 [operand.g]
 kind = "reg"
 class = "gpr"
-[[forms]]
-name = "R"
+[form.R]
 fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
@@ -1650,8 +1633,7 @@ count = 8
 [operand.g]
 kind = "reg"
 class = "gpr"
-[[forms]]
-name = "R"
+[form.R]
 fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
@@ -1734,8 +1716,7 @@ class = "gpr"
 kind = "imm"
 signed = true
 bits = 12
-[[forms]]
-name = "I"
+[form.I]
 fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
@@ -1779,8 +1760,7 @@ class = "gpr32"
 [operand.imm20]
 kind = "imm"
 bits = 20
-[[forms]]
-name = "U"
+[form.U]
 fields = [
   "u7[6:0]:opcode",
   "u5[11:7]:rd",
@@ -1936,8 +1916,7 @@ count = 8
 [operand.g]
 kind = "reg"
 class = "gpr32"
-[[forms]]
-name = "R"
+[form.R]
 fields = [
   "u7[6:0]:opcode",
   "u5[11:7]:rd",
@@ -2074,8 +2053,7 @@ count = 8
 kind = "reg"
 class = "gpr32"
 roles = "inout"
-[[forms]]
-name = "RR"
+[form.RR]
 fields = [
   "u8[7:0]:opcode",
   "u3[10:8]:rd",
@@ -2192,8 +2170,7 @@ count = 8
 kind = "reg"
 class = "gpr32"
 roles = "inout"
-[[forms]]
-name = "RR"
+[form.RR]
 fields = [
   "u8[7:0]:opcode",
   "u3[10:8]:rd",
@@ -2572,8 +2549,7 @@ count = 16
 kind = "reg"
 class = "gpr64"
 roles = "inout"
-[[forms]]
-name = "MRR"
+[form.MRR]
 modrm = { reg = "dst", rm = "src" }
 opsize = "s0"
 escape = [0x0F]
@@ -3068,8 +3044,7 @@ text = ["{disp}({base})"]
 [operand.g]
 kind = "reg"
 class = "gpr"
-[[forms]]
-name = "R"
+[form.R]
 fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
@@ -3258,8 +3233,7 @@ literal = "bits"
 [operand.r]
 kind = "reg"
 class = "gpr32"
-[[forms]]
-name = "I"
+[form.I]
 fields = [
   "u7[6:0]:opcode",
   "u3[9:7]:rd",
@@ -3312,8 +3286,7 @@ kind = "imm"
 signed = true
 bits = 12
 unit = 1
-[[forms]]
-name = "BR"
+[form.BR]
 fields = [
   "u6[5:0]:opcode",
   "u26[31:6]:imm26",
@@ -3394,8 +3367,7 @@ class = "gpr32"
 kind = "label"
 signed = true
 bits = 14
-[[forms]]
-name = "TBZ"
+[form.TBZ]
 fields = [
   "u7[30:24]:op7",
   "u5[4:0]:rt",
@@ -3483,8 +3455,7 @@ fields = ["nbit", "immr", "imms"]
 [operand.r]
 kind = "reg"
 class = "gpr32"
-[[forms]]
-name = "LOGIMM"
+[form.LOGIMM]
 fields = [
   "u9[31:23]:op9",
   "u5[4:0]:rd",
@@ -3550,8 +3521,7 @@ w = 1
 kind = "bits"
 enum = "fence"
 bits = 4
-[[forms]]
-name = "FENCE"
+[form.FENCE]
 fields = [
   "u7[6:0]:opcode",
   "u4[27:24]:pred",
@@ -3635,8 +3605,7 @@ kind = "imm"
 signed = false
 bits = 12
 enum = "csr"
-[[forms]]
-name = "I"
+[form.I]
 fields = [
   "u7[6:0]:opcode",
   "u5[11:7]:rd",
@@ -3724,8 +3693,7 @@ unit = 4
 [operand.r]
 kind = "reg"
 class = "gpr32"
-[[forms]]
-name = "U"
+[form.U]
 fields = [
   "u7[6:0]:opcode",
   "u5[11:7]:rd",
@@ -3842,8 +3810,7 @@ form = "RR"
 opcode = 1
 ops = ["dst:a8:out", "src:a8"]
 asm = "mov {{dst}}, {{src}}"
-[[forms]]
-name = "RR"
+[form.RR]
 fields = [
   "u8[7:0]:opcode",
   "u3[10:8]:rd",
@@ -4012,15 +3979,13 @@ form = "RR"
 opcode = 16
 ops = ["dst:g:out", "src:g"]
 asm = "mov {{dst}}, {{src}}"
-[[forms]]
-name = "RR"
+[form.RR]
 fields = [
   "u8[7:0]:opcode",
   "u3[10:8]:rd",
   "u3[13:11]:rs1",
 ]
-[[forms]]
-name = "W"
+[form.W]
 fields = [
   "u8[7:0]:opcode",
   "u3[10:8]:rd",
@@ -4258,8 +4223,7 @@ count = 8
 kind = "reg"
 class = "gpr32"
 roles = "inout"
-[[forms]]
-name = "W"
+[form.W]
 fields = ["u{fw}[{fhi}:0]:opcode"]
 [[instructions]]
 name = "NOP"
@@ -4316,8 +4280,7 @@ count = 8
 kind = "reg"
 class = "gpr32"
 roles = "inout"
-[[forms]]
-name = "W"
+[form.W]
 fields = [
   "u8[7:0]:opcode",
   "u65[64:0]:wide",
@@ -4358,8 +4321,7 @@ roles = "inout"
 kind = "label"
 signed = true
 bits = 4
-[[forms]]
-name = "B"
+[form.B]
 fields = [
   "u4[3:0]:opcode",
   "u3[6:4]:rs1",
@@ -4406,8 +4368,7 @@ count = 8
 kind = "reg"
 class = "gpr32"
 roles = "inout"
-[[forms]]
-name = "W"
+[form.W]
 fields = [
   "{field}",
 ]
@@ -4892,8 +4853,7 @@ class = "gpr32"
 kind = "imm"
 signed = false
 bits = 8
-[[forms]]
-name = "RI"
+[form.RI]
 fields = [
   "u8[7:0]:opcode",
   "u3[10:8]:rd",

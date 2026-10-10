@@ -867,16 +867,14 @@ class = "gpr1"
 kind = "imm"
 bits = 5
 
-[[forms]]
-name = "RR"
+[form.RR]
 fields = [
   "u4[15:12]:opcode",
   "u3[10:8]:rd",
   "u3[2:0]:funct3",
 ]
 
-[[forms]]
-name = "UNUSED_FORM"
+[form.UNUSED_FORM]
 fields = [
   "u4[15:12]:opcode",
   "u3[10:8]:rd",
@@ -920,7 +918,7 @@ rows = [
                 "",
             )
             .replace(
-                "[[forms]]\nname = \"UNUSED_FORM\"\nfields = [\n  \"u4[15:12]:opcode\",\n  \"u3[10:8]:rd\",\n  \"u3[2:0]:funct3\",\n]\n\n",
+                "[form.UNUSED_FORM]\nfields = [\n  \"u4[15:12]:opcode\",\n  \"u3[10:8]:rd\",\n  \"u3[2:0]:funct3\",\n]\n\n",
                 "",
             );
         assert!(!clean.contains("UNUSED_FORM"));
@@ -938,8 +936,8 @@ rows = [
     #[test]
     fn reports_only_truly_unused_bitfields() {
         let with_dead = SPEC.replace(
-            "name = \"UNUSED_FORM\"\nfields = [\n",
-            "name = \"UNUSED_FORM\"\nfields = [\n  \"u2[5:4]:dead_bits\",\n",
+            "[form.UNUSED_FORM]\nfields = [\n",
+            "[form.UNUSED_FORM]\nfields = [\n  \"u2[5:4]:dead_bits\",\n",
         );
         assert_ne!(with_dead, SPEC, "夹具失效：应能注入 dead_bits");
         let found = lint_source(&with_dead).expect("谱合法");
@@ -978,8 +976,8 @@ rows = [
         // 变体 a：`T1` 行里 `funct3`（[0,3)）与新增的 `over`（[2,4)）重叠 → 报。
         let bad = SPEC
             .replace(
-                "name = \"RR\"\nfields = [\n",
-                "name = \"RR\"\nfields = [\n  \"u2[3:2]:over\",\n",
+                "[form.RR]\nfields = [\n",
+                "[form.RR]\nfields = [\n  \"u2[3:2]:over\",\n",
             )
             .replace(
                 "  { inst = \"T1\", match = { funct3 = 0 } },",
@@ -1002,8 +1000,8 @@ rows = [
 
         // 变体 b：同一个 `over` 声明**没人用** → 只有"没用上"结论，没有重叠结论。
         let unused = SPEC.replace(
-            "name = \"RR\"\nfields = [\n",
-            "name = \"RR\"\nfields = [\n  \"u2[5:4]:over\",\n",
+            "[form.RR]\nfields = [\n",
+            "[form.RR]\nfields = [\n  \"u2[5:4]:over\",\n",
         );
         let found = lint_source(&unused).expect("谱合法");
         assert!(
@@ -1176,8 +1174,8 @@ name = "Resume"
             "name = \"RR\"\nopcode_field = \"word\"",
         );
         let whole = whole.replace(
-            "name = \"RR\"\nfields = [\n",
-            "name = \"RR\"\nfields = [\n  \"u16[15:0]:word\",\n",
+            "[form.RR]\nfields = [\n",
+            "[form.RR]\nfields = [\n  \"u16[15:0]:word\",\n",
         );
         let report = lint_source_opts(&whole, &on).expect("谱合法");
         assert!(

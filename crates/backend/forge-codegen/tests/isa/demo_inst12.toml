@@ -48,8 +48,7 @@ roles = "inout"
 
 # ─────────────────────────── 编码形式 ───────────────────────────
 
-[[forms]]
-name = "R3"
+[form.R3]
 fields = [
   "u3[11:9]:opcode",
   "u3[8:6]:rd",
@@ -57,16 +56,14 @@ fields = [
   "u3[2:0]:rs2",
 ]
 
-[[forms]]
-name = "R2"
+[form.R2]
 fields = [
   "u3[11:9]:opcode",
   "u3[8:6]:rd",
   "u3[5:3]:rs1",
 ]
 
-[[forms]]
-name = "W"
+[form.W]
 fields = [
   "u12[11:0]:opcode",
 ]
@@ -107,8 +104,7 @@ unit = 4
 encode = "slice"
 fields = ["olo", "ohi"]
 
-[[forms]]
-name = "RI"
+[form.RI]
 fields = [
   "u3[11:9]:opcode",
   "u3[8:6]:rd",

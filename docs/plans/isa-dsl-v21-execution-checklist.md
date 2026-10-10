@@ -812,6 +812,13 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 - [ ] `git grep` 全量检查：无 `conventions.bitfields` / `operand_fields` / `opcode_field` / `gpr8`(64 语义) / `[[forms]]` 残留死链。
 - [ ] 门禁：§2 全绿 + `cargo test --workspace --exclude forge-rustc`。
 
+**W10 进度（2026-10-08）**：**表头即名字**的三张表里，`[[forms]]` → `[form.<名>]` 已落地
+（三谱 86 块 + 夹具 25 块 + 内联 59 处一次迁完；`Form.name` 转内部载体、按源文本序降级、
+`form_decls` 保留 ⇒ 序列化往返无损；`schema_guard` 9/9、`forge-isa-dsl` 295 全绿）。
+**尚未做**：`[[instructions]]` → `[inst.<名>]`（数百块）、`[[derive]]` → `[pred.<名>]`、
+**W4 stream 段模型**（x86 段化，见 §6）、以及本节其余文档面（键表已由 `schema::markdown_table()`
+生成并守卫，只需跟着 schema 走）。
+
 ---
 
 ## 13. W11 通用性实证

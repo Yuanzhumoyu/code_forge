@@ -33,8 +33,7 @@ names = ["T0", "T1"]
 kind = "reg"
 class = "gpr"
 
-[[forms]]
-name = "F"
+[form.F]
 fields = [
   "u8[31:24]:opcode",
   "u5[11:7]:rd",

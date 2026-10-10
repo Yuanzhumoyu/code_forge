@@ -542,8 +542,7 @@ align = 16
 [reg.gpr8]
 names = ["A0", "A1"]
 
-[[forms]]
-name = "RR"
+[form.RR]
 
 [[instructions]]
 name = "ADD"
@@ -561,17 +560,17 @@ insts = ["ADD {out}, {0}, {1}"]
     fn index_finds_declarations_exactly() {
         let idx = DeclIndex::build(DOC);
         let a = idx.anchor("[[instructions.ADD]]: bad");
-        assert_eq!((a.line, a.col), (14, 1), "ADD 首次声明在第 14 行");
+        assert_eq!((a.line, a.col), (13, 1), "ADD 首次声明在第 13 行");
         assert_eq!(a.code, "DSL-INST");
         assert_eq!(
             a.other_decls,
-            vec![(18, 1)],
+            vec![(17, 1)],
             "重复声明应给出第二处位置：{a:?}"
         );
-        let f = idx.anchor("[[forms.RR]]: bad");
-        assert_eq!((f.line, f.col), (11, 1));
+        let f = idx.anchor("[form.RR]: bad");
+        assert_eq!((f.line, f.col), (10, 1));
         let l = idx.anchor("[[lowering.Iadd]]: bad");
-        assert_eq!((l.line, l.col), (21, 1));
+        assert_eq!((l.line, l.col), (20, 1));
         let r = idx.anchor("[reg.gpr8]: bad");
         assert_eq!((r.line, r.col), (7, 1));
         let s = idx.anchor("[stack].align must be > 0");
@@ -584,7 +583,7 @@ insts = ["ADD {out}, {0}, {1}"]
         let a = idx.anchor("[[instructions.NOPE]]: bad");
         assert_eq!(
             (a.line, a.col),
-            (13, 1),
+            (12, 1),
             "未声明的名字落回 [[instructions]] 首处"
         );
         let z = idx.anchor("完全没有前缀的消息");
@@ -609,13 +608,13 @@ insts = ["ADD {out}, {0}, {1}"]
         let text = d.render(std::path::Path::new("/tmp/x.toml"));
         let lines: Vec<&str> = text.lines().collect();
         assert!(
-            lines[0].starts_with("/tmp/x.toml:14:1: DSL-INST: [[instructions.ADD]]: 第一条"),
+            lines[0].starts_with("/tmp/x.toml:13:1: DSL-INST: [[instructions.ADD]]: 第一条"),
             "{text}"
         );
         assert!(
             lines
                 .iter()
-                .any(|l| l.contains("注：同名声明也出现在 18:1")),
+                .any(|l| l.contains("注：同名声明也出现在 17:1")),
             "{text}"
         );
         assert!(

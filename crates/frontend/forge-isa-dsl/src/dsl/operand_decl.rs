@@ -274,8 +274,7 @@ size_words = ["word ptr"]
 [operand.r]
 kind = "reg"
 class = "gpr32"
-[[forms]]
-name = "M"
+[form.M]
 fields = [
   "u8[15:8]:opcode",
   "u4[7:4]:dst",

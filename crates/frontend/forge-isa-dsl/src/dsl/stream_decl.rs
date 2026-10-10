@@ -762,8 +762,7 @@ count = 16
 [operand.g]
 kind = "reg"
 class = "gpr64"
-[[forms]]
-name = "S"
+[form.S]
 segments = [
   { kind = "prefix", bytes = { "0xF0" = "lock" } },
   { kind = "escape", bytes = ["0x0F"] },
@@ -791,8 +790,7 @@ count = 16
 [operand.g]
 kind = "reg"
 class = "gpr64"
-[[forms]]
-name = "S"
+[form.S]
 prefix = "0xF0"
 escape = [0x0F]
 rex = "auto"
@@ -1095,8 +1093,7 @@ class = "gpr64"
 [operand.f]
 kind = "reg"
 class = "fpr128"
-[[forms]]
-name = "V"
+[form.V]
 segments = [
   { kind = "vex", map = "field", pp = "0x0F", w = "0", l = "0" },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },

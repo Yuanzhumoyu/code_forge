@@ -344,8 +344,13 @@ pub struct IsaModel {
     /// [`crate::dsl::enum_decl::lower_enum_layer`] 降级回内部三处。
     #[serde(default, rename = "enum")]
     pub enums: BTreeMap<String, EnumDecl>,
-    /// 编码形式（`[[forms]]`）。
-    #[serde(default)]
+    /// **v21 W10：编码形式声明**（`[form.<名>]`，表头 = 形式名）——解析期降级进内部
+    /// [`IsaModel::forms`]（**按源码声明序**展开：`BTreeMap` 是字母序，而声明序影响
+    /// 别名/lowering 的解析结果）。
+    #[serde(default, rename = "form")]
+    pub form_decls: BTreeMap<String, Form>,
+    /// 编码形式（**内部载体**，v21 W10 起 TOML 面是 `[form.<名>]`）。
+    #[serde(default, skip)]
     pub forms: Vec<Form>,
     /// 指令（`[[instructions]]`）。
     #[serde(default)]
@@ -2114,10 +2119,13 @@ impl EncKeys {
     }
 }
 
-/// 编码形式预设（`[[forms]]`）：具名的 [`EncKeys`]，指令用 `form = "名字"` 混入。
+/// 编码形式预设（v21 W10：TOML 面是 `[form.<名>]`，**表头即形式名**）：具名的
+/// [`EncKeys`]，指令用 `form = "名字"` 混入。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Form {
+    /// 形式名（**内部载体**：由 `[form.<名>]` 的表头填；TOML 里不再写 `name`）。
+    #[serde(skip)]
     pub name: String,
     /// **v21 W2 字段声明列表**：就地声明位域（类型/位区间/接口名/默认值），
     /// 取代 `opcode_field` + `operand_fields` + `[conventions.bitfields]` 三处往返。

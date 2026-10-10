@@ -314,43 +314,41 @@ kind = "cond"
 bits = 8
 
 # ─────────────────────────── 编码形式 ───────────────────────────
-[[forms]]
-name = "MRR_SHIFT_SEG"
+[form.MRR_SHIFT_SEG]
 opsize = "out"
 segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "RR_SEG"         # v21 W4：段形态（opcode + modrm），语义同 MRR
+[form.RR_SEG]
+# v21 W4：段形态（opcode + modrm），语义同 MRR
 opsize = "out"
 segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "MRR_FIX64_SEG"
+[form.MRR_FIX64_SEG]
 opsize = 64
 segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "MRR_0F_SEG"        # v21 W4：段形态（0F escape + opcode + modrm）
+[form.MRR_0F_SEG]
+# v21 W4：段形态（0F escape + opcode + modrm）
 opsize = "s0"
 segments = [
   { kind = "escape", bytes = ["0x0F"] },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "MRR_0F_NOOS"    # @modrm + 0F escape + 无 opsize（movzx/movsx：dest/src
+[form.MRR_0F_NOOS]
+# @modrm + 0F escape + 无 opsize（movzx/movsx：dest/src
                         # 宽度不同合法——8/16 位源零/符号扩展到 64，不做一致性检查）
 prefix = "field"
 rex_w = "field"
 escape = [0x0F]
-[[forms]]
-name = "MRR_0F_F64_PFX_SEG" # v21 W4：段形态（prefix 字段 + 0F escape + opcode + modrm，opsize 64）
+[form.MRR_0F_F64_PFX_SEG]
+# v21 W4：段形态（prefix 字段 + 0F escape + opcode + modrm，opsize 64）
 opsize = 64
 segments = [
   { kind = "prefix", fields = ["u8[7:0]:prefix"] },
@@ -358,8 +356,7 @@ segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "MRR_0F_PFX_SEG"
+[form.MRR_0F_PFX_SEG]
 opsize = "s0"
 segments = [
   { kind = "prefix", fields = ["u8[7:0]:prefix"] },
@@ -367,14 +364,14 @@ segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "MRR_EXT"        # @modrm_imm32：reg=fields.ext, rm=op0, imm32
+[form.MRR_EXT]
+# @modrm_imm32：reg=fields.ext, rm=op0, imm32
 opsize = "s0"
 imm = 32
 
 
-[[forms]]
-name = "MRR_EXT_IMM32_SEG"  # v21 W4：段形态（opcode + modrm(/ext) + imm32）
+[form.MRR_EXT_IMM32_SEG]
+# v21 W4：段形态（opcode + modrm(/ext) + imm32）
 opsize = "s0"
 segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
@@ -382,23 +379,23 @@ segments = [
   { kind = "imm", fields = ["u32[31:0]:imm32"] },
 ]
 
-[[forms]]
-name = "MRR_EXT_IMM8_SEG"   # v21 W4：段形态（opcode + modrm(/ext) + imm8）
+[form.MRR_EXT_IMM8_SEG]
+# v21 W4：段形态（opcode + modrm(/ext) + imm8）
 opsize = "s0"
 segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
   { kind = "imm", fields = ["u8[7:0]:imm8"] },
 ]
-[[forms]]
-name = "SSE_RR"         # @sse_rr：0F opcode /r，prefix=fields.prefix, w=fields.w
+[form.SSE_RR]
+# @sse_rr：0F opcode /r，prefix=fields.prefix, w=fields.w
 escape = [0x0F]
 prefix = "field"
 rex_w = "field"
 
 
-[[forms]]
-name = "SSE_RR_SEG"       # v21 W4：段形态（prefix 字段 + 0F escape + rex.W 字段 + opcode + modrm）
+[form.SSE_RR_SEG]
+# v21 W4：段形态（prefix 字段 + 0F escape + rex.W 字段 + opcode + modrm）
 segments = [
   { kind = "prefix", fields = ["u8[7:0]:prefix"] },
   { kind = "escape", bytes = ["0x0F"] },
@@ -406,89 +403,80 @@ segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "EVEX_RR_MEM_SEG"
+[form.EVEX_RR_MEM_SEG]
 segments = [
   { kind = "evex", map = "field", pp = "field", w = "field", l = "field", disp_scale = "field" },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "EVEX_RRV"        # EVEX 三操作数（AVX-512）：reg=op0、vvvv=~op1、rm=op2；L'L 由 evex_l（0/1/2）
+[form.EVEX_RRV]
+# EVEX 三操作数（AVX-512）：reg=op0、vvvv=~op1、rm=op2；L'L 由 evex_l（0/1/2）
 evex = { map = "field", pp = "field", w = "field", l = "field" }
 
 
-[[forms]]
-name = "EVEX_RRV_SEG"
+[form.EVEX_RRV_SEG]
 segments = [
   { kind = "evex", map = "field", pp = "field", w = "field", l = "field", disp_scale = "field" },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "VEX_RRV"        # VEX 三操作数：reg=op0(dest)、rm=op2(src2)、vvvv=~op1(src1)
+[form.VEX_RRV]
+# VEX 三操作数：reg=op0(dest)、rm=op2(src2)、vvvv=~op1(src1)
 vex = { map = "field", pp = "field", w = "field", l = "field" }
 
 
-[[forms]]
-name = "VEX_RRV_SEG"
+[form.VEX_RRV_SEG]
 segments = [
   { kind = "vex", map = "field", pp = "field", w = "field", l = "field" },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "VEX_RR_SEG"
+[form.VEX_RR_SEG]
 segments = [
   { kind = "vex", map = "field", pp = "field", w = "field", l = "field" },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "VEX_RR_MEM_SEG"
+[form.VEX_RR_MEM_SEG]
 segments = [
   { kind = "vex", map = "field", pp = "field", w = "field", l = "field" },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "MRR_EXT_OP"       # @op_rm：F7 /digit（reg=fields.ext, rm=op0，无 imm）
+[form.MRR_EXT_OP]
+# @op_rm：F7 /digit（reg=fields.ext, rm=op0，无 imm）
 opsize = "s0"
 
 
 
-[[forms]]
-name = "MRR_EXT_OP_0F_SEG"
+[form.MRR_EXT_OP_0F_SEG]
 opsize = "s0"
 segments = [
   { kind = "escape", bytes = ["0x0F"] },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "MRR_EXT_OP_SEG"    # v21 W4：段形态（opcode + modrm(/ext)，无 imm）
+[form.MRR_EXT_OP_SEG]
+# v21 W4：段形态（opcode + modrm(/ext)，无 imm）
 opsize = "s0"
 segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "MRR_EXT_OP_F64_SEG"
+[form.MRR_EXT_OP_F64_SEG]
 opsize = 64
 segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "MRR_MEM_PRE_SEG"
+[form.MRR_MEM_PRE_SEG]
 opsize = "s0"
 segments = [
   { kind = "prefix", fields = ["u8[7:0]:prefix"] },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "MRR_MEM_0F_PFX32_SEG"
+[form.MRR_MEM_0F_PFX32_SEG]
 opsize = 32
 segments = [
   { kind = "prefix", fields = ["u8[7:0]:prefix"] },
@@ -496,55 +484,52 @@ segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "MRR_MEMREF_AUTO"  # MemRef 内存（base/index/disp）+ opsize 由首个 Reg 操作数驱动
+[form.MRR_MEMREF_AUTO]
+# MemRef 内存（base/index/disp）+ opsize 由首个 Reg 操作数驱动
 opsize = "s0"
 
 
 
 
 
-[[forms]]
-name = "MRR_MEM_XREL_SEG"
+[form.MRR_MEM_XREL_SEG]
 opsize = "s0"
 segments = [
   { kind = "prefix", bytes = ["0xF3", "0xF0"] },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "MRR_MEM_XACQ_SEG"
+[form.MRR_MEM_XACQ_SEG]
 opsize = "s0"
 segments = [
   { kind = "prefix", bytes = ["0xF2", "0xF0"] },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "MRR_MEM_0F_SEG"   # v21 W4：段形态（0F escape + opcode + modrm，MemRef 内存）
+[form.MRR_MEM_0F_SEG]
+# v21 W4：段形态（0F escape + opcode + modrm，MemRef 内存）
 opsize = "s0"
 segments = [
   { kind = "escape", bytes = ["0x0F"] },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "MRR_MEM_SEG"      # v21 W4：段形态（opcode + modrm，MemRef 内存）
+[form.MRR_MEM_SEG]
+# v21 W4：段形态（opcode + modrm，MemRef 内存）
 opsize = "s0"
 segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
-[[forms]]
-name = "MRR_MEMREF_SEG"
+[form.MRR_MEMREF_SEG]
 opsize = 64
 segments = [
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "modrm", fields = ["u2[7:6]:mod", "u3[5:3]:reg", "u3[2:0]:rm"] },
 ]
 
-[[forms]]
-name = "SSE_IMM_0F3A_SEG"   # v21 W4：段形态（由无 form 指令的骨架自动归组）
+[form.SSE_IMM_0F3A_SEG]
+# v21 W4：段形态（由无 form 指令的骨架自动归组）
 segments = [
   { kind = "prefix", fields = ["u8[7:0]:prefix"] },
   { kind = "escape", bytes = ["0x0F", "0x3A"] },
@@ -554,8 +539,8 @@ segments = [
   { kind = "imm", fields = ["u8[7:0]:imm8"] },
 ]
 
-[[forms]]
-name = "SSE_IMM_0F_SEG"   # v21 W4：段形态（由无 form 指令的骨架自动归组）
+[form.SSE_IMM_0F_SEG]
+# v21 W4：段形态（由无 form 指令的骨架自动归组）
 segments = [
   { kind = "prefix", fields = ["u8[7:0]:prefix"] },
   { kind = "escape", bytes = ["0x0F"] },
@@ -565,16 +550,16 @@ segments = [
   { kind = "imm", fields = ["u8[7:0]:imm8"] },
 ]
 
-[[forms]]
-name = "JCC_REL32_SEG"   # v21 W4：段形态（由无 form 指令的骨架自动归组）
+[form.JCC_REL32_SEG]
+# v21 W4：段形态（由无 form 指令的骨架自动归组）
 segments = [
   { kind = "escape", bytes = ["0x0F"] },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
   { kind = "imm", fields = ["u32[31:0]:imm32"] },
 ]
 
-[[forms]]
-name = "VEX_IMM_SEG"   # v21 W4：段形态（由无 form 指令的骨架自动归组）
+[form.VEX_IMM_SEG]
+# v21 W4：段形态（由无 form 指令的骨架自动归组）
 segments = [
   { kind = "vex", map = "field", pp = "field", w = "field", l = "field" },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },
@@ -582,8 +567,8 @@ segments = [
   { kind = "imm", fields = ["u8[7:0]:imm8"] },
 ]
 
-[[forms]]
-name = "EVEX_IMM_SEG"   # v21 W4：段形态（由无 form 指令的骨架自动归组）
+[form.EVEX_IMM_SEG]
+# v21 W4：段形态（由无 form 指令的骨架自动归组）
 segments = [
   { kind = "evex", map = "field", pp = "field", w = "field", l = "field" },
   { kind = "opcode", fields = ["u8[7:0]:opcode"] },

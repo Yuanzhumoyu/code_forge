@@ -138,8 +138,7 @@ enum = "fence"
 kind = "imm"
 bits = 12
 enum = "csr"
-[[forms]]
-name = "R"
+[form.R]
 fields = ["u4[15:12]:opcode", "u4[11:8]:rd"]
 [[instructions]]
 name = "N"

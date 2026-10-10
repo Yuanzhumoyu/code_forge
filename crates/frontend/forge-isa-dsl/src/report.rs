@@ -606,8 +606,7 @@ names = ["R0", "R1", "R2", "R3"]
 kind = "reg"
 class = "gpr4"
 roles = "inout"
-[[forms]]
-name = "RR"
+[form.RR]
 fields = [
   "u4[15:12]:opcode",
   "u4[11:8]:rd",

@@ -68,8 +68,7 @@ bits = 8
 
 # ─────────────────────────── 编码形式 ───────────────────────────
 
-[[forms]]
-name = "R"
+[form.R]
 fields = [
   "u8[7:0]:opcode",
   "u3[10:8]:rd",
@@ -77,16 +76,14 @@ fields = [
   "u3[16:14]:rs2",
 ]
 
-[[forms]]
-name = "RR"
+[form.RR]
 fields = [
   "u8[7:0]:opcode",
   "u3[10:8]:rd",
   "u3[13:11]:rs1",
 ]
 
-[[forms]]
-name = "RI"
+[form.RI]
 fields = [
   "u8[7:0]:opcode",
   "u3[10:8]:rd",
@@ -94,24 +91,21 @@ fields = [
   "u8[23:16]:imm8",
 ]
 
-[[forms]]
-name = "RI2"
+[form.RI2]
 fields = [
   "u8[7:0]:opcode",
   "u3[10:8]:rd",
   "u8[23:16]:imm8",
 ]
 
-[[forms]]
-name = "B"
+[form.B]
 fields = [
   "u8[7:0]:opcode",
   "u3[13:11]:rs1",
   "u8[23:16]:imm8",
 ]
 
-[[forms]]
-name = "W"
+[form.W]
 fields = [
   "u32[31:0]:opcode",
 ]
