@@ -815,7 +815,18 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
     **命中已证明** ✗：谱面规则存在时旧的多值分支**根本不生成** ✗，而完整管线的两返回值函数
     （`abi_target_real::pair_return_probe` ✗ rc x86 管线 ✗）仍 **25 passed** ✔、矩阵 197/3/0 ✔。
   - [x] **`[lower.Ret]` 五类形态全部在谱面** ✗：`gpr` / `fpr`（任意宽度 ✗）/
-    `vec + by_ref = false` / `vec + by_ref = true`（sret ✗）/ `multi = true` ✗。
+  - [ ] **W6+：条件码类型化**（把生成物里的 `u8` 条件换成 IR 的 `IntCC`/`FloatCC` ✗）——
+    用户 2026-10-08 提的口径 ✗：生成指令的条件码不该是魔术数（现在谱里写 `CMOVCC_R_RM {out}, {1}, 13` ✗），
+    应写 `IntCC::SignedLessThanOrEqual` ✗；映射**由数据生成**（`[conventions.cond]`/`[enum.cond]` 的
+    `ir = "…"` 与 `IntCC::mnemonic()` **同源** ✗ ⇒ 生成 `impl From<IntCC>/From<FloatCC> for CondCode` ✗）。
+    **已试做并回退**（不留坏树 ✗）：`CondCode(pub u8)` + 两个 `From` + `From<u8>`/`Into<u8>` ✓、
+    槽类型 ✓、`asm` 渲染/解析 ✓、模板字面量接受枚举路径 ✓、编码侧两处 ✗ —— 都已验证可行 ✗；
+    **卡在最后一跳** ✗：x86 的**宽松解码器 cc 扫描**（`spec.rs` 的 `codes` 列表与循环里重建
+    `Inst::JccRel32/SetccRm8/SetccRm8B/SetccRMem/CmovccRRm/CmovccRMem { cc, … }` ✗ 都是裸 `u8` ✗）
+    与 DSL 侧 `_ => CondCode(0)` 兜底臂 ✗。**站点清单**（下次照这个做 ✗）：`mod.rs` `field_ty` ✓
+    `#raw as u8` ✓ `*#fid as u64` ✓；`vlen.rs` 两处 `*#cond_fid as u64 & 0xF` ✓；`asm.rs` `__cond`/
+    `__render_cond`/渲染调用 ✓；`spec.rs` 宽松解码 codes + 循环重建 ✓；`lowering.rs` `arms`/`inv_arms`/
+    `__cc`/`__cc_inv` 绑定（4 处 ✓）+ 兜底臂 2 处 ✓；再补一条 forge-codegen 守卫（逐变体核对 mnemonic ✗）。
   - [ ] **其余四种返回形态**（float / ≤16B 向量 / >16B sret / 多值 ✗）仍在生成器里——
     分片进行中 ✗；机制已就位（加 `[[lower.Ret]] when = { ret_kind = … }` + 放开闸门即可 ✗）。
 - [x] 删除编译器三处按字段个数猜 ISA（`lowering.rs:202`、`:527-625`、`frame.rs:172-208`）。
