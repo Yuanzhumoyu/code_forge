@@ -812,15 +812,16 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 - [ ] `git grep` 全量检查：无 `conventions.bitfields` / `operand_fields` / `opcode_field` / `gpr8`(64 语义) / `[[forms]]` 残留死链。
 - [ ] 门禁：§2 全绿 + `cargo test --workspace --exclude forge-rustc`。
 
-**W10 进度（2026-10-08）**：**表头即名字**的三张表里，`[[forms]]` → `[form.<名>]`、
-`[[instructions]]` → `[inst.<名>]` 已落地（合计 170 + 788 处；`Form.name`/`Instruction.name`
-转内部载体、按源文本序降级、面保留 ⇒ 序列化往返无损；`schema_guard` 9/9、`forge-isa-dsl` 295 全绿）。
-**一处口径变化**：表头即名字之后"重名指令"由 **TOML 自身**拒绝（`DSL-TOML`/`duplicate key`）。
+**W10 进度（2026-10-08）**：**表头即名字**的三张表已全部落地——`[[forms]]` → `[form.<名>]`、
+`[[instructions]]` → `[inst.<名>]`、`[[derive]]` → `[pred.<名>]`（合计 170 + 788 + 9 处；
+三者的 `name` 都转内部载体、按源文本序降级、面保留 ⇒ 序列化往返无损；`schema_guard` 9/9）。
+**一处口径变化**：表头即名字之后"重名"由 **TOML 自身**拒绝（`DSL-TOML`/`duplicate key`），
+不再是编译期诊断。**`[[derive]]` 那片零风险**：发行三谱都没用它（0 处），只动了测试内联谱。
 **一条教训（写进片记录）**：迁移脚本按块处理时若把"表头行 ⋯ `name` 行"整体压成一行，会**静默丢掉
 写在 `name` 之前的键**——x86 有 3 条如此（`CALL_RM`/`SETCC_RM8`/`SETCC_RM8_B` 的 `match = { reg = 2 }`），
 曾让 x86 JIT 跑出非法指令。**验收口径**：三谱 `forge-isa insts` 与迁移前逐行相同（差异 0 行）。
-**尚未做**：`[[derive]]` → `[pred.<名>]`、**W4 stream 段模型**（x86 段化，见 §6）、
-以及本节其余文档面（键表已由 `schema::markdown_table()` 生成并守卫）。
+**尚未做**：**W4 stream 段模型**（x86 段化，见 §6）、以及本节其余文档面
+（键表已由 `schema::markdown_table()` 生成并守卫）。
 
 ---
 

@@ -11,6 +11,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W10 第三片：`[[derive]]` → `[pred.<名>]`（表头即属性名）
+
++ 命名谓词改成**表头即属性名**（设计案 §6.7）：`[[derive]]` + `name = "is_64"` 改写为
+  `[pred.is_64]`，`expr` 保留；旧写法按 `deny_unknown_fields` 报未知键。`DeriveDef.name` 转为
+  **内部载体**（`#[serde(skip)]` + `INTERNAL_FIELDS` 登记），解析期按**源码声明序**降级，且必须
+  早于 `expand_derives`（`vary` 的"键是谓词属性还是替换变量"判定要看派生名）；`pred_decls` 保留
+  ⇒ `serialize → parse` 往返无损。
++ **连带口径变化**：重名谓词由 **TOML 自身**拒绝（`DSL-TOML` / `duplicate key`），不再有编译期
+  "名字重复"诊断；`DSL-DERIVE` 仍负责"与核心属性重名 / `expr` 非法 / 引用未知属性或另一个派生"。
++ 规模：**三谱 0 处**（发行 ISA 都没用 `[[derive]]`）⇒ 只迁测试内联谱 **9 处**；schema 节
+  `[pred.<名字>]`（必填 `expr`）、根键 `derive` → `pred`、`INTERNAL_FIELDS` 两条；文档键表
+  （根行 + 本节行）、小节标题与目录锚点、错误码目录同步。
++ 证据：`forge-isa-dsl` 整包全绿；`schema_guard` 9/9；`markdownlint` 0 issue；三谱 `insts` 与
+  迁移前**逐行相同**（发行 ISA 生成物零变化）；整仓 `-j 2` → exit 0、0 编译错误、0 失败二进制。
++ W10 其余（下一步）：**W4 stream 段模型**（x86 段化）、文档面（`CLAUDE.md` 回写 / 设计文档
+  archive 标注 / `git grep` 死链清零）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W10 第二片：`[[instructions]]` → `[inst.<名>]`（表头即指令名）
 
 + 指令改成**表头即指令名**（设计案 §6.6）：`[[instructions]]` + `name = "ADD"` 改写为 `[inst.ADD]`；

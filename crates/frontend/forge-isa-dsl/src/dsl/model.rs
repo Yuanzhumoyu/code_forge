@@ -382,8 +382,14 @@ pub struct IsaModel {
     #[serde(default, skip)]
     pub reloc: Vec<RelocDef>,
 
-    /// 派生谓词属性（`[[derive]]`，v18 S3f）：给 `when` 用的命名布尔属性。
-    #[serde(default)]
+    /// **v21 W10：命名谓词声明**（`[pred.<名>]`，表头 = 属性名）——解析期降级进内部
+    /// [`IsaModel::derive`]（**按源码声明序**展开，展开在 `expand_derives` 之前完成）。
+    /// 保留不清空：它是"面"的存储 ⇒ 模型序列化写回 `[pred.<名>]`，往返无损。
+    #[serde(default, rename = "pred")]
+    pub pred_decls: BTreeMap<String, DeriveDef>,
+    /// 派生谓词属性（**内部载体**，v21 W10 起 TOML 面是 `[pred.<名>]`；
+    /// v18 S3f 引入时叫 `[[derive]]`）：给 `when` 用的命名布尔属性。
+    #[serde(default, skip)]
     pub derive: Vec<DeriveDef>,
 
     /// 展开后的派生谓词（解析期由 [`IsaModel::expand_derives`] 填；不进 TOML）。
@@ -3005,6 +3011,8 @@ pub struct PseudoDef {
 #[serde(deny_unknown_fields)]
 pub struct DeriveDef {
     /// 属性名（`when` 里按此引用）。
+    /// **内部载体**（v21 W10）：由 `[pred.<名>]` 的表头填，TOML 里不再写 `name`。
+    #[serde(skip)]
     pub name: String,
     /// 谓词表达式（与 `[[lowering]].when` 同语法）。
     pub expr: toml::Value,

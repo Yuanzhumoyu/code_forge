@@ -73,7 +73,7 @@
 
   - [结构化谓词](#结构化谓词)
 
-    - [`[[derive]]` — 给谓词起名字（v18 S3f）](#derive--给谓词起名字v18-s3f)
+    - [`[pred.<名字>]` — 给谓词起名字](#pred名字--给谓词起名字)
 
   - [`[[lowering]]` — 指令选择](#lowering--指令选择)
 
@@ -117,7 +117,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | 指令属性 `group` | `[[aliases]]` 别名清单 | 同上 |
 | 命名操作数 `ops` + `asm` 只引用 `{名字}` | v14 的 asm 内联声明 `{i:[槽:角色]}`、位置名 `s0`/`s1` | [`[inst.<名字>]`](#inst名字--指令) |
 | `[encoding]` 宽度三态 | `[meta].default_inst_width`/`variable_length`/`max_inst_len` | [`[encoding]`](#encoding--指令宽度三态v18-s4) |
-| `[asm.reloc.<名>]` / `[asm.pseudo.<名>]` / `[[derive]]` | `global_reloc` 枚举、汇编器硬编码伪指令、Rust 侧谓词表 | 各自小节 |
+| `[asm.reloc.<名>]` / `[asm.pseudo.<名>]` / `[pred.<名字>]` | `global_reloc` 枚举、汇编器硬编码伪指令、Rust 侧谓词表 | 各自小节 |
 | `[conventions.cond]`（数据表） | 生成器里的 x86 条件码表 | [`[conventions]`](#conventions--isa-约定) |
 | `include` + `[[override]]` | "后出现的赢"这种隐式覆盖 | [多文件组合](#多文件组合include--overridev18-s7d) |
 | 生成期自测 `__spec_tests` | 手抄的样板往返测试 | [生成期自测](#生成期自测__spec_testsv18-s6) |
@@ -154,7 +154,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 <!-- BEGIN: schema-keys（由 tests/schema_guard.rs 校验，改 schema 时同步这一段）-->
 | 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
 | --- | --- | --- | --- |
-| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `operand` `enum` `form` `inst` `family` `lower` `asm` `derive` `lowering` `pattern` `machine` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
+| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `operand` `enum` `form` `inst` `family` `lower` `asm` `pred` `lowering` `pattern` `machine` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
 | `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `vector_tiers` | 元信息 + 文本约定（宽度只在 [reg.<名>] 表头里，见 [machine] 的类指针键） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
 | `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `alloc_count` `aliases` | 寄存器组；组名的数字 = **位**宽（`gpr64` = 64 位）；aliases = { 别名 = 组内下标 } |
@@ -171,7 +171,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[form.<名字>]` | — | `fields` `segments` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖）；v21 W10：**表头即形式名**（不再写 `name`） |
 | `[inst.<名字>]` | `asm` | `form` `opcode` `match` `fields` `segments` `bind` `ops` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令（v21 W10：**表头即指令名**，不再写 `name`）：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[asm.reloc.<名>]` | `semantics` `operand` | `addend` `via` | 重定位（v21 W8：**表头即重定位名**；旧 `[[reloc]]` 已撤）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`） |
-| `[[derive]]` | `name` `expr` | — | 派生谓词属性（v18 S3f） |
+| `[pred.<名字>]` | `expr` | — | 命名谓词（v18 S3f 引入时叫 `[[derive]]`；v21 W10：**表头即属性名**，不再写 `name`） |
 | `[asm.pseudo.<名>]` | `asm` `emit` | `only_variants` | 汇编器伪指令（v21 W7：**表头即名字**；旧 `[[pseudo]]` 已撤）：文本级多指令展开，分派按 `asm` 的前导字面，`{名字}` 就是 `emit` 用的参数 |
 | `[asm.immfn.<名>]` | `texts` `expr` | — | 立即数修饰（v21 W7：**表头即修饰名**；旧 `[[conventions.imm_fn]]` 待撤）：`texts` = 同一语义的等价写法列表（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值） |
 | `[lower.<终结 op>]` | `insts` | — | 终结指令的 lowering 序列（Br/Jmp/Ret）：可用 {true}/{false}/{target} 符号值 |
@@ -1400,15 +1400,14 @@ x86 只降 1% 的原因：x86 剩余的同 asm/同 ops 组差在**编码键**（
 | `cond` | 比较条件 id（Fcmp→fcmp_id、Icmp→icmp_id；setcc/cmovcc 用） |
 | `imm0` | `current_immediates[0]`（Vextract/Vinsert/Vsplit 的 lane 索引；**AtomicRmw 的 op 判别值**：Xchg=0/Add=1/Sub=2/...） |
 | `iconst` | 当前指令常量池解析出的**真值**（signed i64；与 `imm0` 的"池索引"区分） |
-| `[[derive]]` 声明的名字 | 见下节（值 = 1/0） |
+| `[pred.<名字>]` 声明的名字 | 见下节（值 = 1/0） |
 
-### `[[derive]]` — 给谓词起名字（v18 S3f）
+### `[pred.<名字>]` — 给谓词起名字
 
-同一个条件在多条规则里重复时，用 `[[derive]]` 起个名字（一次声明、多处引用）：
+同一个条件在多条规则里重复时，用 `[pred.<名字>]` 起个名字（一次声明、多处引用）：
 
 ```toml
-[[derive]]
-name = "is_64"
+[pred.is_64]
 expr = { eq = ["rs1_width", 64] }
 
 [[lowering]]
@@ -1424,7 +1423,7 @@ insts = ["ADD64 {out}, {0}, {1}"]
 - 名字**不得与核心属性重名**（否则静默遮蔽）；名字可以出现在 `vary` 里——与核心属性
   一样自动追加 `eq = [名字, 行值]` 到 `when`；
 - 依赖属性缺失时该派生为**假**（与核心属性"未知即假"一致）；展开在解析期完成，
-  生成期的谓词判定逻辑一行未改（没有 `[[derive]]` 时生成的属性表与引入前逐字相同）。
+  生成期的谓词判定逻辑一行未改（没有 `[pred.<名字>]` 时生成的属性表与引入前逐字相同）。
 
 ## `[[lowering]]` — 指令选择
 

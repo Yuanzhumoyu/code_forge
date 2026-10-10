@@ -1081,7 +1081,7 @@ fn cond_pure_asm_alias_has_no_ir_mapping() {
 #[test]
 fn derive_attr_is_usable_in_when() {
     let doc = lowering_doc(
-        "[[derive]]\nname = \"is_64\"\nexpr = { eq = [\"rs1_width\", 64] }\n\
+        "[pred.is_64]\nexpr = { eq = [\"rs1_width\", 64] }\n\
          [[lowering]]\nop = \"Copy\"\nwhen = { eq = [\"is_64\", 1] }\ninsts = [\"MOV {out}, {0}\"]",
     );
     let m = parse_and_validate(&doc).expect("派生属性 + when 引用必须通过");
@@ -1156,7 +1156,7 @@ fn cc_binding_only_emitted_when_used() {
 #[test]
 fn derive_name_in_vary_is_a_predicate_attr() {
     let doc = lowering_doc(
-        "[[derive]]\nname = \"is_64\"\nexpr = { eq = [\"rs1_width\", 64] }\n\
+        "[pred.is_64]\nexpr = { eq = [\"rs1_width\", 64] }\n\
          [[lowering]]\nop = \"Copy\"\nvary = { is_64 = [1, 0], m = [\"MOV\", \"MOV\"] }\ninsts = [\"{m} {out}, {0}\"]",
     );
     let m = parse_and_validate(&doc).expect("vary 用派生名必须通过");
@@ -1176,31 +1176,35 @@ fn derive_name_in_vary_is_a_predicate_attr() {
 /// 派生名与核心属性重名 ⇒ 解析期报错（否则静默遮蔽核心属性）。
 #[test]
 fn derive_name_must_not_shadow_core_attr() {
-    let doc = lowering_doc("[[derive]]\nname = \"rs1_width\"\nexpr = { eq = [\"rd\", 64] }\n");
+    let doc = lowering_doc("[pred.rs1_width]\nexpr = { eq = [\"rd\", 64] }\n");
     let err = parse_and_validate(&doc).unwrap_err();
     let msg = format!("{err:?}");
     assert!(msg.contains("与核心谓词属性重名"), "msg: {msg}");
 }
 
-/// 派生名重复 ⇒ 解析期报错。
+/// 派生名重复 ⇒ **TOML 自身**拒绝（v21 W10：表头即属性名 ⇒ 重复表头）。
 #[test]
 fn derive_duplicate_name_rejected() {
     let doc = lowering_doc(
-        "[[derive]]\nname = \"d\"\nexpr = { eq = [\"rd\", 1] }\n\
-         [[derive]]\nname = \"d\"\nexpr = { eq = [\"rd\", 2] }\n",
+        "[pred.d]\nexpr = { eq = [\"rd\", 1] }\n\
+         [pred.d]\nexpr = { eq = [\"rd\", 2] }\n",
     );
     let err = parse_and_validate(&doc).unwrap_err();
-    assert!(format!("{err:?}").contains("名字重复"), "{err:?}");
+    let msg = format!("{err:?}");
+    assert!(
+        matches!(err, DslError::Parse { .. }) && (msg.contains('d') || msg.contains("duplicate")),
+        "重复表头应由 TOML 报错：{msg}"
+    );
 }
 
 /// `expr` 语法非法 / 类型不对 ⇒ 报错。
 #[test]
 fn derive_expr_must_be_valid_predicate() {
-    let doc = lowering_doc("[[derive]]\nname = \"d\"\nexpr = { nope = [\"rd\", 1] }\n");
+    let doc = lowering_doc("[pred.d]\nexpr = { nope = [\"rd\", 1] }\n");
     let err = parse_and_validate(&doc).unwrap_err();
     assert!(format!("{err:?}").contains("nope"), "{err:?}");
 
-    let doc = lowering_doc("[[derive]]\nname = \"d\"\nexpr = { eq = [\"rd\", \"x\"] }\n");
+    let doc = lowering_doc("[pred.d]\nexpr = { eq = [\"rd\", \"x\"] }\n");
     let err = parse_and_validate(&doc).unwrap_err();
     assert!(format!("{err:?}").contains("expr"), "{err:?}");
 }
@@ -1209,8 +1213,8 @@ fn derive_expr_must_be_valid_predicate() {
 #[test]
 fn derive_cannot_reference_another_derive() {
     let doc = lowering_doc(
-        "[[derive]]\nname = \"a\"\nexpr = { eq = [\"rd\", 1] }\n\
-         [[derive]]\nname = \"b\"\nexpr = { eq = [\"a\", 1] }\n",
+        "[pred.a]\nexpr = { eq = [\"rd\", 1] }\n\
+         [pred.b]\nexpr = { eq = [\"a\", 1] }\n",
     );
     let err = parse_and_validate(&doc).unwrap_err();
     let msg = format!("{err:?}");

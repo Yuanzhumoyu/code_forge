@@ -27,6 +27,25 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
             msg: format!("TOML: {e}"),
         }
     })?;
+    // v21 W10：`[pred.<名>]` 降级进内部 `derive`（**表头即属性名**），**按源码声明序**展开；
+    // 必须早于 `expand_derives`（下游的 `vary` 判定要看派生名）。`pred_decls` 保留不清空：
+    // 它是"面"的存储 ⇒ 模型序列化写回 `[pred.<名>]`，`serialize → parse` 往返无损。
+    if !model.pred_decls.is_empty() {
+        let mut ordered: Vec<(usize, String, crate::dsl::model::DeriveDef)> = model
+            .pred_decls
+            .iter()
+            .map(|(name, d)| {
+                let mut d = d.clone();
+                d.name = name.clone();
+                let at = source
+                    .find(&format!("[pred.{name}]"))
+                    .unwrap_or(usize::MAX);
+                (at, name.clone(), d)
+            })
+            .collect();
+        ordered.sort_by_key(|(at, _, _)| *at);
+        model.derive.extend(ordered.into_iter().map(|(_, _, d)| d));
+    }
     // `[[derive]]` 展开（v18 S3f）：先于 `vary`——`vary` 的"键是谓词属性还是纯替换
     // 变量"判定要看派生名。
     let anchor_err = |msg: String| {
