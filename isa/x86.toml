@@ -751,7 +751,7 @@ asm = "test {src2}, {src}"
 [family.ALU_MR]
 # v21 W4：段形态（`MRR_MEMREF_SEG` + `bind = { rm = "[mem]" }`）；SEG 形式写死 `opsize = 64`
 # ⇒ 这里显式恢复 `opsize = "auto"`（宽度由首个 Reg 操作数驱动）。
-body = { form = "MRR_MEMREF_SEG", opsize = "auto", bind = { rm = "[mem]" }, ops = ["src:gprx", "mem:mem:inout"] }
+body = { form = "MRR_MEMREF_SEG", opsize = "auto", bind = { rm = "[mem]" }, ops = ["src:gprx", "mem:mem:inout"], doc = "{name}（族 {family}）：ALU 的内存形式——内存操作数参与运算（{ops}）；写内存有副作用。" }
 rows = [
   { inst = "ADD_MR",  opcode = 0x01, asm = "add {mem}, {src}" },
   { inst = "OR_MR",   opcode = 0x09, asm = "or {mem}, {src}" },

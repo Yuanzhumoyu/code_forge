@@ -831,7 +831,7 @@ fields = [
 # ── R 型整数 + Zbb R（opcode 0x33；funct3/funct7 区分）──
 
 [family.RR]
-body = { form = "R", opcode = 0x33, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x33, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "{inst.lower} {dst}, {src}, {src2}", doc = "{name}（族 {family}）：R 型寄存器-寄存器运算；操作数 {ops}。" }
 rows = [
   { inst = "ADD", group = "add_xlen", word_size = 64, match = { funct3 = 0, funct7 = 0x00 } },
   { inst = "SUB", group = "sub_xlen", word_size = 64, match = { funct3 = 0, funct7 = 0x20 } },

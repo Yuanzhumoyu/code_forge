@@ -25,6 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + **IR 操作码文档**（`ops.toml` 117 条 `doc` 全部改写）：写清语义 + 操作数/结果 + UB 条件 + 副作用性质。`build.rs` 在每条变体的 rustdoc 末尾追加一行**自动属性行**（操作数/结果/可能 UB/副作用/条件通道/类型规则/LLVM 名），机械事实不再靠人抄、也不可能与行为漂移；`doc` 支持多行。构建期门槛：`>= 24` 字符 + `may_ub` 条目必须提 UB（**门槛从计划里的 40 改为 24**：`Ret`/`Nop`/`Clz` 这类简单指令写满 40 字符只能靠凑字，24 仍能挡住"按位或"式的一句话）。
 + **`FunctionBuilder` 全部指令方法补注释**（`src/ir/builder.rs`）：六个宏（`int_binop`/`int_binop_ub`/`float_binop`/`unop_int`/`unop_float`/`overflow_binop`，共 49 个生成方法）在宏体内发一条**指向该 opcode 生成文档**的 `#[doc]`（不复述语义）；87 个手写方法逐条补"构建器契约 + `Opcode::X` 指针"，其中 opcode 语义首句由 `ops.toml` 派生。
 + 守卫：`crates/frontend/forge-isa-dsl/tests/doc_comment.rs`（继承/覆盖/插值/字面括号/未知占位符 fail-closed/发行谱仍可展开）与 `crates/foundation/forge-ir/tests/opcode_docs.rs`（长度、UB、副作用三条从运行期 `Opcode::INFOS` 守）。
++ **发行谱的示范批次**：三份谱各挑一个族在 `body` 里写共享 `doc`——x86 `family.ALU_MR`、riscv64 `family.RR`、arm64 `family.ADDIMM`（后者用行键 `{slot}` 演示逐行插值：`ADDIMMX` 得 `r64`、`ADDIMMW` 得 `r32`）；`tests/isa/demo.toml` 的 `[form.R]` 也加了一条（`{ops}`/`{dst.slot}`）。生成物实测：`///ADD_MR（族 ALU_MR）：ALU 的内存形式——内存操作数参与运算（src, mem）；写内存有副作用。`。
 + 文档：`docs/reference/isa-dsl.md` 新增「声明注释（`doc`，可选）」一节（含键速查表同步与 `isa-dsl.schema.json` 重生成）；`crates/foundation/forge-ir/README.md` 增「`doc` 的写作要求」；`docs/guides/isa-dsl-tutorial.md` 加最小示例。
 
 ### Added (2026-10-08) — A2′ 调用方一侧的机制全部就位（角色/属性透传/拷贝发射），并查明坐标差一槽
