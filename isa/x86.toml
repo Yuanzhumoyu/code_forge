@@ -786,7 +786,7 @@ ops = ["src:gprx", "mem:mem:inout"]
 asm = "release lock add {mem}, {src}"
 
 [family.ALU_R_MEM]
-body = { form = "MRR_MEMREF_SEG", opsize = "auto", bind = { rm = "[mem]" }, ops = ["dst:gprx:out", "mem:mem"] }
+body = { form = "MRR_MEMREF_SEG", opsize = "auto", bind = { rm = "[mem]" }, ops = ["dst:gprx:out", "mem:mem"] , doc = "ALU 的 load 形式——读内存操作数参与运算，结果写回寄存器；操作数 {ops}。" }
 rows = [
   { inst = "ADD_R_MEM", opcode = 0x03, asm = "add {dst}, {mem}" },
   { inst = "OR_R_MEM",  opcode = 0x0B, asm = "or {dst}, {mem}" },
@@ -835,7 +835,7 @@ rows = [
 ]
 
 [family.ALU8_RM_IMM8]
-body = { form = "MRR_EXT_IMM8_SEG", imm = 8, ops = ["dst:gpr8b:inout", "imm:imm8"] }
+body = { form = "MRR_EXT_IMM8_SEG", imm = 8, ops = ["dst:gpr8b:inout", "imm:imm8"] , doc = "8 位 ALU 的立即数形式：对 {dst.slot} 做立即数运算，结果写回同一寄存器；操作数 {ops}。" }
 rows = [
   { inst = "ADD_RM8_IMM8", opcode = 0x80, match = { reg = 0 }, bind = { rm = "dst" }, asm = "add {dst}, {imm}" },
   { inst = "OR_RM8_IMM8",  opcode = 0x80, match = { reg = 1 }, bind = { rm = "dst" }, asm = "or {dst}, {imm}" },
@@ -1640,7 +1640,7 @@ effect = ["Pure"]
 # ── SSE 族（v11 opcodes 数组 → families → v21 `[family.*]` + rows；`[[templates]]` 已废）──
 
 [family.SD_BIN]
-body = { form = "SSE_RR_SEG", bind = { reg = "dst", rm = "src" }, match = { prefix = 0xF2, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
+body = { form = "SSE_RR_SEG", bind = { reg = "dst", rm = "src" }, match = { prefix = 0xF2, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" , doc = "SSE2 标量 double 二元运算（F2 前缀，fpr 槽）；操作数 {ops}。" }
 rows = [
   { inst = "MOVSD", data_width = 64, opcode = 0x10 },
   { inst = "MINSD", opcode = 0x5D },
@@ -1651,7 +1651,7 @@ rows = [
   { inst = "DIVSD", opcode = 0x5E },
 ]
 [family.SS_FMOV]
-body = { form = "SSE_RR_SEG", bind = { reg = "dst", rm = "src" }, match = { prefix = 0xF3, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" }
+body = { form = "SSE_RR_SEG", bind = { reg = "dst", rm = "src" }, match = { prefix = 0xF3, w = 0 }, ops = ["dst:fpr:out", "src:fpr"], asm = "{inst.lower} {dst}, {src}" , doc = "SSE 单精度（F3 前缀）的标量搬移形态；操作数 {ops}。" }
 rows = [
   { inst = "ADDSS", opcode = 0x58 },
   { inst = "SUBSS", opcode = 0x5C },

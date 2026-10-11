@@ -3654,7 +3654,7 @@ rows = [
   { inst = "ADDIMMW", slot = "r32", opcode = 0x11 },
 ]
 [family.ADDSIMM]
-body = { group = "adds", form = "ALUIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], asm = "adds {dst}, {src}, #{imm}" }
+body = { group = "adds", form = "ALUIMM", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"], asm = "adds {dst}, {src}, #{imm}" , doc = "把 12 位无符号立即数加到 {slot} 寄存器，硬件同时更新 NZCV（adds 形态）；操作数 {ops}。" }
 rows = [
   { inst = "ADDSIMMX", slot = "r64", opcode = 0xB1 },
   { inst = "ADDSIMMW", slot = "r32", opcode = 0x31 },
@@ -3678,7 +3678,7 @@ rows = [
   { inst = "ADDREGW", word_size = 32, slot = "r32", opcode = 0x0B },
 ]
 [family.SUBREG]
-body = { group = "sub", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "sub {dst}, {src}, {src2}" }
+body = { group = "sub", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "sub {dst}, {src}, {src2}" , doc = "寄存器减寄存器，结果写 {slot}（sub 形态，不更新标志）；操作数 {ops}。" }
 rows = [
   { inst = "SUBREGX", word_size = 64, slot = "r64", opcode = 0xCB },
   { inst = "SUBREGW", word_size = 32, slot = "r32", opcode = 0x4B },
@@ -3696,7 +3696,7 @@ rows = [
   { inst = "SUBSREGW", slot = "r32", opcode = 0x6B },
 ]
 [family.ANDREG]
-body = { group = "and", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "and {dst}, {src}, {src2}" }
+body = { group = "and", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "and {dst}, {src}, {src2}" , doc = "寄存器按位与，结果写 {slot}；操作数 {ops}。" }
 rows = [
   { inst = "ANDREGX", word_size = 64, slot = "r64", opcode = 0x8A },
   { inst = "ANDREGW", word_size = 32, slot = "r32", opcode = 0x0A },
@@ -3708,7 +3708,7 @@ rows = [
   { inst = "BICREGW", slot = "r32", opcode = 0x0A },
 ]
 [family.ORRREG]
-body = { group = "orr", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "orr {dst}, {src}, {src2}" }
+body = { group = "orr", form = "ALUREG", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "src2:{slot}"], asm = "orr {dst}, {src}, {src2}" , doc = "寄存器按位或，结果写 {slot}；操作数 {ops}。" }
 rows = [
   { inst = "ORRREGX", word_size = 64, slot = "r64", opcode = 0xAA },
   { inst = "ORRREGW", word_size = 32, slot = "r32", opcode = 0x2A },

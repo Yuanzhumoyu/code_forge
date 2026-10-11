@@ -26,7 +26,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + **`FunctionBuilder` 全部指令方法补注释**（`src/ir/builder.rs`）：六个宏（`int_binop`/`int_binop_ub`/`float_binop`/`unop_int`/`unop_float`/`overflow_binop`，共 49 个生成方法）在宏体内发一条**指向该 opcode 生成文档**的 `#[doc]`（不复述语义）；87 个手写方法逐条补"构建器契约 + `Opcode::X` 指针"，其中 opcode 语义首句由 `ops.toml` 派生。
 + 守卫：`crates/frontend/forge-isa-dsl/tests/doc_comment.rs`（继承/覆盖/插值/字面括号/未知占位符 fail-closed/发行谱仍可展开）与 `crates/foundation/forge-ir/tests/opcode_docs.rs`（长度、UB、副作用三条从运行期 `Opcode::INFOS` 守）。
 + **发行谱的示范批次**：三份谱各挑一个族在 `body` 里写共享 `doc`——x86 `family.ALU_MR`、riscv64 `family.RR`、arm64 `family.ADDIMM`（后者用行键 `{slot}` 演示逐行插值：`ADDIMMX` 得 `r64`、`ADDIMMW` 得 `r32`）；`tests/isa/demo.toml` 的 `[form.R]` 也加了一条（`{ops}`/`{dst.slot}`）。生成物实测：`///ADD_MR（族 ALU_MR）：ALU 的内存形式——内存操作数参与运算（src, mem）；写内存有副作用。`。
-+ 文档：`docs/reference/isa-dsl.md` 新增「声明注释（`doc`，可选）」一节（含键速查表同步与 `isa-dsl.schema.json` 重生成）；`crates/foundation/forge-ir/README.md` 增「`doc` 的写作要求」；`docs/guides/isa-dsl-tutorial.md` 加最小示例。
++ 文档：`docs/reference/isa-dsl.md` 新增「声明注释（`doc`，可选）」一节（含键速查表同步与 `isa-dsl.schema.json` 重生成）；`crates/foundation/forge-ir/README.md` 增「`doc` 的写作要求」；`docs/guides/isa-dsl-tutorial.md` 加最小示例；`forge-isa explain` 的文本输出打印「注释」行（与生成物 `#[doc]` 同源）。
++ **第二批族注释**（12 个族）：x86 `ALU_R_MEM`/`ALU8_RM_IMM8`/`SD_BIN`/`SS_FMOV`，riscv64 `II`/`BB`/`WW`/`FADD_RM`，arm64 `ADDSIMM`/`SUBREG`/`ANDREG`/`ORRREG`——都只用族内**每行都有**的插值键（riscv 的 `{dst.slot}` 得 `gpr`、arm64 的 `{slot}` 得 `r64`/`r32`），生成物已抽查。
 
 ### Added (2026-10-08) — A2′ 调用方一侧的机制全部就位（角色/属性透传/拷贝发射），并查明坐标差一槽
 

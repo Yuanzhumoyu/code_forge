@@ -857,7 +857,7 @@ rows = [
 ]
 # ── I 型立即数 ALU（opcode 0x13；ADDI 保留顶层：roles + 与 MOV/ADDI_GLOBAL 同键）──
 [family.II]
-body = { form = "I", opcode = 0x13, ops = ["dst:gpr:out", "src:gpr", "imm:imm12"], asm = "{inst.lower} {dst}, {src}, {imm}" }
+body = { form = "I", opcode = 0x13, ops = ["dst:gpr:out", "src:gpr", "imm:imm12"], asm = "{inst.lower} {dst}, {src}, {imm}" , doc = "I 型：寄存器与 12 位立即数运算，结果写 {dst.slot}；操作数 {ops}。" }
 rows = [
   { inst = "SLTI", match = { funct3 = 2 } },
   { inst = "SLTIU", match = { funct3 = 3 } },
@@ -867,7 +867,7 @@ rows = [
 ]
 # ── B 型分支（opcode 0x63；funct3 区分）──
 [family.BB]
-body = { form = "B", opcode = 0x63, ops = ["src:gpr", "src2:gpr", "target:off_b"], asm = "{inst.lower} {src}, {src2}, {target}" }
+body = { form = "B", opcode = 0x63, ops = ["src:gpr", "src2:gpr", "target:off_b"], asm = "{inst.lower} {src}, {src2}, {target}" , doc = "B 型条件分支：比较两个寄存器后相对目标标签跳转，属终结指令；操作数 {ops}。" }
 rows = [
   { inst = "BEQ", match = { funct3 = 0 }, roles = ["branch"] },
   { inst = "BNE", match = { funct3 = 1 } },
@@ -881,7 +881,7 @@ rows = [
 # 与 ADDW…REMUW 同形 ⇒ 同一个模板加三行。**立即数**那条是 0x1B 的
 # `slliw`/`srliw`/`sraiw`（见下方 SHIFT5 三条），两者的操作码不同、别混。
 [family.WW]
-body = { only_variants = { xlen = [64] }, form = "R", opcode = 0x3b, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "{inst.lower} {dst}, {src}, {src2}" }
+body = { only_variants = { xlen = [64] }, form = "R", opcode = 0x3b, ops = ["dst:gpr:out", "src:gpr", "src2:gpr"], asm = "{inst.lower} {dst}, {src}, {src2}" , doc = "仅 RV64 存在的 R 型运算（word 语义，xlen=64 才有）；操作数 {ops}。" }
 rows = [
   { inst = "ADDW", group = "add_xlen", word_size = 32, match = { funct3 = 0, funct7 = 0x00 } },
   { inst = "SUBW", group = "sub_xlen", word_size = 32, match = { funct3 = 0, funct7 = 0x20 } },
@@ -2605,7 +2605,7 @@ insts = [
 # 修这里同时修掉一处**字节错**：从前 ② 把 `funct3` 写成 `0`（= rne），而省略 rm 的语义是
 # `dyn`——语料铺开后由 `fp-default-rounding-mode.s` 的上游期望字节直接守住。
 [family.FADD_RM]
-body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fadd.{p.lower} {dst}, {src}, {src2}, {rm}" }
+body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "rm:rm3"], asm = "fadd.{p.lower} {dst}, {src}, {src2}, {rm}" , doc = "标量浮点加法：精度由助记符后缀区分，rm 槽指定舍入模式；操作数 {ops}。" }
 rows = [
   { inst = "FADD_S_RM", p = "S", funct7 = 0x00 },
   { inst = "FADD_D_RM", p = "D", funct7 = 0x01 },

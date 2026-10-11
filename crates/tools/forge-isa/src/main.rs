@@ -656,6 +656,12 @@ fn print_explain(e: &Explain) {
         e.isa.instructions
     );
     println!("指令 {}", e.inst.name);
+    // 声明注释（可选；`inst` > family `body` > `form`，已插值）——与生成物 `#[doc]` 同源
+    if let Some(d) = &e.inst.doc {
+        for line in d.lines() {
+            println!("  注释：{line}");
+        }
+    }
     if let Some(t) = &e.template {
         let sec = if t.from_family {
             format!("[family.{}]", t.template)
