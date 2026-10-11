@@ -10,7 +10,7 @@
 docs/
 ├── README.md              # 文档总索引 + 状态图例
 ├── reference/             # 现行规范/设计参考 [active]
-│   ├── isa-dsl.md             # ISA-DSL 语法规范（v21 落地中；改 isa/*.toml 先看它）
+│   ├── isa-dsl.md             # ISA-DSL 语法规范（v22 现行；改 isa/*.toml 先看它）
 │   ├── isa-dsl-errors.md      # ISA-DSL 错误码目录（报错看不懂先看它）
 │   ├── calling-conventions.md # 调用约定层 forge-abi（v20 A1：规则/绑定/计划 + forge-isa abi）
 │   ├── aarch64-encoding-ref.md# A64 编码参考（arm64 后端/golden 依据）
@@ -62,7 +62,7 @@ docs/
   `plans/isa-dsl-v21-execution-checklist.md`（活的账本，§14 快照 #4（2026-10-11）：CI run 38142845046
   9 ✅ / 2 ❌ —— `forge-tests (nightly)` 与 `Test (macOS)` 红灯，其余全绿），**方案本身**已归档
   （`archive/isa-dsl-v21-redesign-plan.md`）。
-  注意区分两种"版本号"：DSL 语法版本（**v21，落地中**；靠文档/CHANGELOG 追踪，**不写进 TOML**）
+  注意区分两种"版本号"：DSL 语法版本（**v22，现行**；靠文档/CHANGELOG 追踪，**不写进 TOML**）
   与 `[meta].version`（ISA 自己的自由字符串）。**文件名不带语法版本**——旧的 `*_v12`
   命名（`isa/*_v12.toml`、`src/v12/`、`arch/*_v12.rs`、`tests/*_v12_tests.rs`）已于
   2026-10 清除，别再加回来。
@@ -210,7 +210,7 @@ code-forge (root umbrella)
 
 ### Key Architecture Rules
 
-1. **`isa_from_file!`（现行 ISA-DSL v21 语法，落地中）生成的代码只依赖运行时 crate** — v19 V1b 起
+1. **`isa_from_file!`（现行 ISA-DSL v22 语法）生成的代码只依赖运行时 crate** — v19 V1b 起
    路径恒为绝对路径，宿主是哪个 crate 不再影响生成物内容。
    生成模块名 = 文件 stem（可用 `name = "…"` 覆盖）。**没有 `krate` 参数**：生成物
    一律写绝对路径 `forge_isa_runtime::…`（`forge_ir::…` → `forge_isa_runtime::ir::…`），
@@ -487,20 +487,28 @@ let name = node.get_text("name")?;
   它是所有公开入口（`isa_from_file!`/`expand_file`/`validate_file`/CLI）的必经之路，
   诊断按来源文件映射，生成物对**每个来源**登记 `include_bytes!`。`include`/`[[override]]`
   是组合键（合并后不存在），裸文本入口带它们会明确报错。
-- **生成字段名 = `ops` 声明的名字（v18 S7d 修正）**：`ops = ["dst:r:out", "src:r"]`
-  ⇒ `Inst::Iadd { dst, src }`；`[form.<名字>].fields` 的字段名（`rd`/`rs1`）与变长 ISA 的
-  语义名（`dest`/`cond`）**只是内部编码键**（v21 W2 起 `opcode_field`/`operand_fields` 由
-  `fields` 展开派生，不再是用户面键；另有 modrm 角色/立即数
+- **生成字段名 = 操作数声明的名字（v18 S7d；v22 换成 `asm` 内联声明）**：
+  `asm = "add {dst:r:out}, {src:r}"` ⇒ `Inst::Iadd { dst, src }`（旧写法 `ops = ["dst:r:out", "src:r"]`
+  效果相同，但 v22 起**已撤出对外表面**：schema/文档速查表/JSON 都不再宣传 `ops`/`bind`，
+  解析器仍收它们只为仓库内的测试谱——见下条）；`[form.<名字>].fields` 的字段名（`rd`/`rs1`）
+  与变长 ISA 的语义名（`dest`/`cond`）**只是内部编码键**（v21 W2 起
+  `opcode_field`/`operand_fields` 由 `fields` 展开派生，不再是用户面键；另有 modrm 角色/立即数
   表），不得再泄漏成字段名。关键字 → `r#type`、数字开头 → `_8bit`（最小归一，不做语义改名）；
   守卫 `crates/frontend/forge-isa-dsl/tests/field_names.rs`。
-- **v21 现行面速查（2026-10 落地，照此写谱）**：`[reg.<名>]`（宽度只在名字里）、
+- **v22 现行面速查（2026-10 落地，照此写谱）**：`[reg.<名>]`（宽度只在名字里）、
   `[operand.<名字>]`、`[enum.<表名>]`、`[form.<名>]`（表头即形式名，字段就地 `fields`）、
   `[inst.<名>]`（表头即指令名）、`[family.<名>]`（唯一复用机制，取代 `[[templates]]`）、
   `[pred.<名>]`（命名谓词，原 `[[derive]]`）、`[asm.pseudo.<名>]` / `[asm.immfn.*]` /
-  `[asm.reloc.<名>]`、`[machine.stack|text|classes|spill.<模板名>]`。
-  **仍是数组节的**：`[[lowering]]`（W6 待改 `[lower.*]`）、`[[pattern]]`、`[[vectors]]`、
-  `[[override]]`。**重名由 TOML 自身拒绝**（表头即名字的三张表）；未知键一律
-  `deny_unknown_fields` 报错，没有兼容层。
+  `[asm.reloc.<名>]`、`[machine.stack|text|classes|spill.<模板名>]`、`[lower.<名>]`。
+  **操作数声明与字段绑定就地写在 `asm` 里**（v22 核心人体工学改造）：`{名字:槽[:角色]}` 声明
+  一个操作数、`{@字段:槽[:角色]}` 额外把它绑到字段（`@[字段]` = 内存形态）；
+  打印序 ≠ 编码序时用 `{名字:槽#序号}`（一条指令里**全标或全不标**）。
+  旧键 `ops`/`bind` 与 v21 的占位修饰（`{n?}`/`{n:affix}`）**已删**：前者仍在解析器里兼容
+  （只为仓库内测试谱，`LEGACY_FIELDS` 守卫钉住"不进 schema"），后者连解析一起删了；
+  `modrm` 保留——扩展码（`/4` 这类**整数** `reg`）只能由它表达。
+  **仍是数组节的**：`[[pattern]]`、`[[vectors]]`、`[[override]]`。**重名由 TOML 自身拒绝**
+  （表头即名字的表）；未知键一律 `deny_unknown_fields` 报错（并给出"你是不是想写 X"的建议），
+  没有兼容层。
 - **TOML 改动**：改 `isa/*.toml` 直接触发重编译——生成模块内嵌
   `include_bytes!(<TOML 绝对路径>)`，rustc 据此登记编译依赖（不再需要手动 touch
   `arch/<isa>.rs`）。`FGE_DEBUG_GEN=1` 可 dump 生成代码到 `%TEMP%\forge_gen_*.rs`。
@@ -684,15 +692,16 @@ x86 forms 47 → 19，37 条指令直接内联编码键（不再有 `MRR_0F_NOOS
 操作数**名字**，或共享 form 上的 `"auto"`（第一个 Reg 操作数驱动）；`"max"`（全部 Reg
 操作数的最大宽度）不变。
 
-命名操作数（v15-S3c）：`ops = ["src:gprx", "dst:gprx:inout"]` **数组序 = 编码序**
-（modrm reg/rm、定宽位域绑定都按这个序；角色缺省 `in`），`asm` 只用 `{名字}`
-**引用**——声明与打印彻底分离。**声明名同时就是生成的 `Inst` 字段名**（v18 S7d：
-`ops = ["dst:r:out", "src:r"]` ⇒ `Inst::Iadd { dst, src }`；位域名/语义角色名只是
-内部编码键）。`opsize` 因此能写 `opsize = "dst"`（自解释），
+命名操作数（v15-S3c，**v22 已改为 `asm` 内联声明**）：新面把声明就地写在模板里——
+`asm = "add {dst:r:out}, {src:r}"`（`{@字段:槽[:角色]}` 额外绑定字段、`@[字段]` = 内存形态、
+`#序号` 钉编码序）。**数组序 = 编码序**的旧写法 `ops = ["src:gprx", "dst:gprx:inout"]`
+与 `bind` 键仍被解析器接受，但**已撤出对外表面**（schema/文档/JSON 不再宣传，见上文 v22 速查）。
+无论哪种写法，**声明名同时就是生成的 `Inst` 字段名**（v18 S7d：声明 `dst` ⇒ `Inst::Iadd { dst, src }`；
+位域名/语义角色名只是内部编码键）。`opsize` 因此能写 `opsize = "dst"`（自解释），
 取代 `"s1"` 这种"读者无法判断指哪个"的位置引用（v14 那个把 64 位指针截成 32 位的
-bug 就出在 `s0` 恰好是**源**）。v14 的 asm 内联声明 `{i:[槽:角色]}` **已删除**，
-无兼容层。`collect_inst_infos` 把 `{名字}` 规范化成 `{序号}` 后交给下游，
-生成器（asm/machine/decode）只认索引、不感知命名。
+bug 就出在 `s0` 恰好是**源**）。v14 的 asm 内联声明 `{i:[槽:角色]}`、v21 的占位修饰
+（`{n?}` / `{n:affix}`）**都已删除**，无兼容层。`collect_inst_infos` 把命名占位符规范化成
+`{序号}` 后交给下游，生成器（asm/machine/decode）只认索引、不感知命名。
 
 `modrm` 改显式映射（v15-S3d）：`modrm = { reg = "src", rm = "dst" }`——哪个命名
 操作数进 `reg` 字段、哪个进 `rm` 字段直接写出来。`reg = <整数>` = 固定扩展码

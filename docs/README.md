@@ -10,7 +10,7 @@
 
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
-| `reference/isa-dsl.md` | **ISA-DSL v18 语法规范（现行唯一语法）**：键速查表（机器校验）、逐节语法、生成代码契约、`forge-isa` CLI、生成期自测 | active |
+| `reference/isa-dsl.md` | **ISA-DSL v22 语法规范（现行唯一语法）**：操作数声明与字段绑定就地写在 `asm` 里（`{名字:槽[:角色]}` / `{@字段:槽[:角色]}`）、键速查表（机器校验）、逐节语法、生成代码契约、`forge-isa` CLI、生成期自测 | active |
 | `reference/isa-dsl-errors.md` | ISA-DSL 错误码目录（诊断格式、节级错误码、常见修法；含多文件组合与 `parts` 的加载期/编译期错误） | active |
 | `reference/aarch64-encoding-ref.md` | A64 整数核心指令编码参考（isa 表/golden 测试依据，尾节含 arm64 实现状态） | active |
 | `reference/imm_str.md` | ImmStr 不可变字符串类型设计（已实现，forge-ir 代码注释引用） | active |
