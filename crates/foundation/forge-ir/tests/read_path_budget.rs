@@ -60,8 +60,10 @@ const BUDGETS: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/compiler.rs",
-        17,
-        "16 处生产路径（各 expand_* 入口一次取锁 + 读写交错短读段）+ 1 处测试辅助；rewrite 族已迁出到 agg_expand.rs（4 处随之转移）",
+        20,
+        "16 处生产路径（各 expand_* 入口一次取锁 + 读写交错短读段）+ 1 处测试辅助 + \
+         聚合 sret 形参建立（`expand_sret_return` 与 `append_param` 各一次——**入口级**，\
+         每次编译一次，不在循环里）；rewrite 族已迁出到 agg_expand.rs",
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/agg_expand.rs",

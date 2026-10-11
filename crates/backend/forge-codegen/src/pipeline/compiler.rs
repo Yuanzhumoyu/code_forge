@@ -95,6 +95,70 @@ fn agg_arg_place(
     })
 }
 
+/// 只读地问一次"这份约定下返回 `size` 字节聚合落在哪"（单参探针）。
+///
+/// 与 [`agg_arg_place`] 同源：`plan.ret` 是 `Indirect`（sret，隐藏返回缓冲指针）
+/// 就是"按值返回要写进调用方缓冲"。win64/`sysv64` 的 `>8B`/`>16B` 聚合返回都是这条路。
+fn agg_ret_is_sret(
+    machine: &impl forge_isa_runtime::machine::target::TargetMachine,
+    conv: &str,
+    size: u32,
+    align: u32,
+) -> Result<bool, IrError> {
+    use forge_isa_runtime::machine::call_layout::{ArgShape, ShapeKind};
+    let req = forge_isa_runtime::machine::call_plan::CallRequest::new(conv.to_string()).rets([
+        ArgShape {
+            size,
+            align,
+            kind: ShapeKind::Aggregate {
+                members: Vec::new(),
+            },
+        },
+    ]);
+    let reg = crate::pipeline::conv_registry::registry()
+        .read()
+        .expect("约定注册表被投毒");
+    let plan = crate::pipeline::abi_target::plan_for_shapes(machine, &reg, &req).map_err(|e| {
+        IrError::Unsupported(format!("聚合返回落点查询：约定 `{conv}` 规划失败（{e}）"))
+    })?;
+    Ok(matches!(plan.ret, forge_abi::RetLoc::Indirect { .. }))
+}
+
+/// 给函数**追加**一个形参（签名 + entry 块同步），返回该形参的值。
+///
+/// 追加而不是前插：sret 形参的**位置**不影响落点（引擎把它收进约定的隐藏槽
+/// ——首个整数槽，正是调用方把缓冲指针放在第 0 个实参里的那个位置），
+/// 而前插要让所有已有 `ValueDef::Param(entry, i)` 的下标整体搬家。
+fn append_param(
+    func: &mut Function,
+    ty: TypeId,
+    name: &str,
+    attrs: forge_ir::ir::function::ParamAttributes,
+) -> Result<Value, IrError> {
+    let entry = func.entry();
+    let old_sig = func.types.borrow().get_signature(func.signature).clone();
+    let mut params = old_sig.params.clone();
+    params.push((ty, ImmStr::from(name)));
+    let new_sig = FunctionSignature {
+        params,
+        returns: old_sig.returns.clone(),
+        calling_convention: old_sig.calling_convention,
+        variadic: old_sig.variadic,
+    };
+    func.signature = func.types.borrow_mut().register_signature(new_sig);
+    let bd = func.dfg.block(entry);
+    let idx = bd.param_values.len() as u16;
+    let v = func.dfg.make_value(ty, ValueDef::Param(entry, idx));
+    let bd = func.dfg.block_mut(entry);
+    bd.params.push(ty);
+    bd.param_values.push(v);
+    while func.param_attrs.len() < idx as usize + 1 {
+        func.param_attrs.push(Default::default());
+    }
+    func.param_attrs[idx as usize] = attrs;
+    Ok(v)
+}
+
 /// 被调方大聚合参数展开：按**约定落点**分流——
 ///
 /// - `Registers`（≤ 阈值）：签名拆开为 ceil(size/8) 个 i64 参数（与调用方拆段一致），
@@ -231,22 +295,73 @@ fn expand_large_agg_params(
     Ok(())
 }
 
+/// 按值返回 sret 的**前置**处理（A1′-ret）：约定把 `>8B` 聚合返回落进**调用方缓冲**
+/// （`plan.ret = Indirect`，即 sret）时，给函数**追加**一个带 `sret` 属性的 `ptr` 形参，
+/// 并把签名的返回清空——值写进缓冲由 [`expand_large_agg_ret`] 完成。
+///
+/// **必须先于其它聚合展开**：那些展开（形参/实参/call 结果）会把返回值重写或登记进
+/// `agg_slots`，早一步把 sret 形参立起来，后续它们才知道"返回值往哪儿写"。
+fn expand_sret_return(
+    func: &mut Function,
+    machine: &impl forge_isa_runtime::machine::target::TargetMachine,
+    conv: &str,
+) -> Result<Option<Value>, IrError> {
+    let mut hit: Option<(TypeId, u32, u32)> = None;
+    {
+        let store = func.types.borrow();
+        for t in &func.return_types() {
+            if store.is_aggregate(*t) && store.size_bytes(*t) > 8 {
+                hit = Some((*t, store.size_bytes(*t), store.alignment(*t)));
+                break;
+            }
+        }
+    }
+    let Some((_ty, size, align)) = hit else {
+        return Ok(None);
+    };
+    if !agg_ret_is_sret(machine, conv, size, align)? {
+        return Ok(None);
+    }
+    // **不写 `sret` 属性**（与 A1′ 的 by-ref 形参同一条规律）：引擎对带 sret/byval 的落点
+    // 给 `Indirect`，而生成物 `move_args` 的 `Indirect` 收参是"从指针 **load** 出值"
+    // （值为寄存器语义）——那样形参拿到的是**缓冲里的内容**而不是缓冲地址。
+    // 按约定，sret 缓冲指针本来就落在**首个整数槽**（win64 = RCX、sysv64 = RDI），
+    // 与"一个普通的第 0 个指针实参"完全同形 ⇒ 直接用普通 `ptr` 形参，调用方把它当实参 0 传。
+    let p = append_param(func, TypeId::PTR, "<sret>", Default::default())?;
+    // 签名返回清空：缓冲由 sret 形参承载（引擎把它收进约定的隐藏返回槽）
+    let old_sig = func.types.borrow().get_signature(func.signature).clone();
+    let new_sig = FunctionSignature {
+        params: old_sig.params.clone(),
+        returns: Vec::new(),
+        calling_convention: old_sig.calling_convention,
+        variadic: old_sig.variadic,
+    };
+    func.signature = func.types.borrow_mut().register_signature(new_sig);
+    Ok(Some(p))
+}
+
 /// ret 大聚合展开：`ret {i64,i64} %v`（>8 ≤16 字节）→ `Terminator::Return
 /// { values: [seg0, seg1] }`（多值返回——lowering 按 values.len() 生成
 /// RAX/RDX 双槽 mov）。段来源：AggConst（Iconst 段）、load 结果（段 load）、
 /// 其余（参数段值已被 expand_large_agg_params 重写为 i64——不在此处理）。
-fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
+fn expand_large_agg_ret(
+    func: &mut Function,
+    agg_slots: &mut AggSlots,
+    sret_ptr: Option<Value>,
+) -> Result<(), IrError> {
     // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
     // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
     // 不与 func 的 &mut 借用冲突。
     let types_ctx = func.types.clone();
     let store = types_ctx.borrow();
+    // sret 档：签名的返回已被 `expand_sret_return` 清空 ⇒ 判据只能看**终结符里的实参**
+    let sret = sret_ptr.is_some();
     let rets = func.return_types();
     let has_large = rets.iter().any(|t| {
         let s = &store;
         s.is_aggregate(*t) && s.size_bytes(*t) > 8
     });
-    if !has_large {
+    if !has_large && !sret {
         return Ok(());
     }
     // 收集 Return 里的聚合值（按块——先收集再改）
@@ -275,16 +390,18 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
     }
     for job in jobs {
         let size = store.size_bytes(job.ty) as usize;
-        if size > 16 {
+        if !sret && size > 16 {
             return Err(IrError::Unsupported(format!(
-                "聚合返回 >16 字节暂不支持（栈传递未实现）：type {:?}",
+                "聚合返回 {size} 字节：这份约定既不是 sret 也不是寄存器档（栈返回未实现）：type {:?}",
                 job.ty
             )));
         }
+        // by-ref 档优先：值可能住在内存里（by-ref 形参 / sret call 结果）⇒ 段值 = 逐段 load
+        let mem_addr = agg_slots.get(job.val).map(|&(a, _)| a);
         let mut segs: Vec<Value> = Vec::new();
         let mut gen_insts: Vec<Inst> = Vec::new();
         match func.dfg.value_data(job.val).def {
-            ValueDef::AggConst(aid) => {
+            ValueDef::AggConst(aid) if mem_addr.is_none() => {
                 let agg = func
                     .constants
                     .get_aggregate(aid)
@@ -311,7 +428,7 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
                     off += 8;
                 }
             }
-            ValueDef::Inst(li, 0) => {
+            ValueDef::Inst(li, 0) if mem_addr.is_none() => {
                 // load 结果 → 段 load
                 let addr = func
                     .dfg
@@ -361,11 +478,93 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
                 }
             }
             _ => {
-                return Err(IrError::Unsupported(format!(
-                    "聚合返回：值来源不支持（def {:?}）",
-                    func.dfg.value_data(job.val).def
-                )));
+                // by-ref 档（值住在指针指向的内存）：从该地址逐段 load
+                let Some(addr) = mem_addr else {
+                    return Err(IrError::Unsupported(format!(
+                        "聚合返回：值来源不支持（def {:?}）",
+                        func.dfg.value_data(job.val).def
+                    )));
+                };
+                let mut prev_addr = addr;
+                let mut off = 0usize;
+                while off < size {
+                    let ld = func.make_inst(
+                        Opcode::Load,
+                        job.block,
+                        smallvec::smallvec![prev_addr],
+                        smallvec::smallvec![],
+                        &[TypeId::I64],
+                        InstFlags::NONE,
+                    );
+                    let ldv = func.dfg.inst_data(ld).results[0];
+                    gen_insts.push(ld);
+                    segs.push(ldv);
+                    off += 8;
+                    if off < size {
+                        let cid = func.constants.insert_int(8, 64);
+                        let ci = func.make_inst(
+                            Opcode::Iconst,
+                            job.block,
+                            smallvec::smallvec![],
+                            smallvec::smallvec![Immediate::Const(cid)],
+                            &[TypeId::I64],
+                            InstFlags::NONE,
+                        );
+                        let cv = func.dfg.inst_data(ci).results[0];
+                        gen_insts.push(ci);
+                        let add = func.make_inst(
+                            Opcode::Iadd,
+                            job.block,
+                            smallvec::smallvec![prev_addr, cv],
+                            smallvec::smallvec![],
+                            &[TypeId::PTR],
+                            InstFlags::NONE,
+                        );
+                        prev_addr = func.dfg.inst_data(add).results[0];
+                        gen_insts.push(add);
+                    }
+                }
             }
+        }
+        // **sret 档**：段值写进调用方缓冲，函数变 void 返回（值不再经返回寄存器）
+        if let Some(sp) = sret_ptr {
+            let mut cur = sp;
+            for (k, s) in segs.iter().enumerate() {
+                let st = func.make_inst(
+                    Opcode::Store,
+                    job.block,
+                    smallvec::smallvec![*s, cur],
+                    smallvec::smallvec![],
+                    &[],
+                    InstFlags::SIDE_EFFECT,
+                );
+                gen_insts.push(st);
+                if k + 1 < segs.len() {
+                    let c8 = func.constants.insert_int(8, 64);
+                    let ci = func.make_inst(
+                        Opcode::Iconst,
+                        job.block,
+                        smallvec::smallvec![],
+                        smallvec::smallvec![Immediate::Const(c8)],
+                        &[TypeId::I64],
+                        InstFlags::NONE,
+                    );
+                    let cv = func.dfg.inst_data(ci).results[0];
+                    gen_insts.push(ci);
+                    let add = func.make_inst(
+                        Opcode::Iadd,
+                        job.block,
+                        smallvec::smallvec![cur, cv],
+                        smallvec::smallvec![],
+                        &[TypeId::PTR],
+                        InstFlags::NONE,
+                    );
+                    cur = func.dfg.inst_data(add).results[0];
+                    gen_insts.push(add);
+                }
+            }
+            func.set_return_values(job.block, &[]);
+            continue;
         }
         // Return values 替换（段值）——按形式写入口同步 use-def
         let old_values: Vec<Value> = func
@@ -394,17 +593,21 @@ fn expand_large_agg_ret(func: &mut Function) -> Result<(), IrError> {
 fn expand_large_agg_call_results(
     func: &mut Function,
     agg_slots: &mut AggSlots,
+    machine: &impl forge_isa_runtime::machine::target::TargetMachine,
+    conv: &str,
 ) -> Result<(), IrError> {
     // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
     // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
     // 不与 func 的 &mut 借用冲突。
     let types_ctx = func.types.clone();
     let store = types_ctx.borrow();
-    // 收集（block, pos, inst, 旧结果, 聚合类型）
+    // 收集（inst, 旧结果, 聚合类型, 是否 sret）——block/pos 只在**调用方 sret 档**需要，
+    // 而那一档当前 fail-closed，故不保留（留字段会变成"永不读"）。
     struct Job {
         inst: Inst,
         old_r: Value,
         ty: TypeId,
+        sret: bool,
     }
     let mut jobs: Vec<Job> = Vec::new();
     for (_b, bd) in func.dfg.blocks() {
@@ -417,20 +620,35 @@ fn expand_large_agg_call_results(
                 && store.size_bytes(rt) > 8
             {
                 let size = store.size_bytes(rt) as usize;
-                if size > 16 {
+                let sret = agg_ret_is_sret(machine, conv, size as u32, store.alignment(rt))?;
+                if !sret && size > 16 {
                     return Err(IrError::Unsupported(format!(
-                        "聚合返回 >16 字节暂不支持：type {rt:?}"
+                        "聚合返回 {size} 字节：这份约定既不是 sret 也不是寄存器档：type {rt:?}"
                     )));
                 }
                 jobs.push(Job {
                     inst: ii,
                     old_r: inst.results[0],
                     ty: rt,
+                    sret,
                 });
             }
         }
     }
     for job in jobs {
+        // **sret 档**（A1′-ret）：被调方一侧已落地（`expand_sret_return` 立 sret 形参 +
+        // `expand_large_agg_ret` 把段值写进缓冲——直调用例 `test_jit_agg_by_value_ret_win64`
+        // 真跑通过）。**调用方一侧**（IR 内部 `call` 自己出缓冲）尚未接：实测按
+        // "Alloca + 实参 0 + 结果清空" 做会生成崩溃的机器码（0xC0000005），
+        // 说明调用点那侧还有没对齐的东西（落点/顺序待查）⇒ 这里**明确 fail-closed**，
+        // 绝不发可能崩的代码。
+        if job.sret {
+            return Err(IrError::Unsupported(format!(
+                "聚合返回 {size} 字节：这份约定走 sret，而**调用方**的 sret 缓冲尚未接\
+                 （被调方一侧已通：外部调用者按 `extern \"C\" fn(*mut _)` 传缓冲可用）",
+                size = store.size_bytes(job.ty)
+            )));
+        }
         // results 拆 2（新值——Inst(call, 0/1)）
         let r0 = func
             .dfg
@@ -1759,10 +1977,13 @@ impl<M: TargetMachine> FunctionCompiler<M> {
             // 副本 + 指针`、sysv64 `>16B ⇒ 传出参数区（未接）`。约定名解析失败 ⇒ fail-closed
             //（与 `abi_setup::setup_conv` 同口径）。
             let agg_conv = crate::pipeline::conv_registry::resolve(&f.calling_convention)?;
-            expand_large_agg_call_results(f, &mut agg_slots)?;
+            // A1′-ret：sret 形参**先立起来**——后面几个展开要把返回值重写或登记进
+            // `agg_slots`，得先知道"往哪写"。
+            let sret_ptr = expand_sret_return(f, &self.machine, &agg_conv)?;
+            expand_large_agg_call_results(f, &mut agg_slots, &self.machine, &agg_conv)?;
             expand_agg_call_args(f, &self.machine, &agg_conv)?;
             expand_large_agg_params(f, &mut agg_slots, &self.machine, &agg_conv)?;
-            expand_large_agg_ret(f)?;
+            expand_large_agg_ret(f, &mut agg_slots, sret_ptr)?;
             expand_large_aggs(f, &mut agg_slots)?;
             expand_geps(f)?;
             // 聚合展开是**就地改写 IR**（墓碑化/改 Copy/重写操作数）——debug 构建下

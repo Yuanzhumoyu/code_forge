@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — forge-codegen：按值返回 >8B 聚合的**被调方**一侧（A1′-ret 前半）
+
++ **被调方把按值返回的 `>8B` 聚合写进调用方缓冲**（win64/sret）：新增只读探针 `agg_ret_is_sret`（`plan.ret` 是否 `Indirect`）+ `expand_sret_return`——给函数**追加**一个**普通 `ptr`** 形参承载调用方缓冲（约定把 sret 指针放在首个整数槽：win64 = RCX、sysv64 = RDI，与"第 0 个普通指针实参"完全同形），并把签名的返回清空；`expand_large_agg_ret` 再把段值写进 `[buf]`（AggConst / load / 内存里的值三条来源）。
++ **为什么用普通 `ptr` 而不写 `sret` 属性**（与 A1′ 的 byval 同一条规律，实测踩到）：引擎对 `sret`/`byval` 落点给 `Indirect`，而生成物 `move_args` 的 `Indirect` 收参是"从指针 **load** 出值"——那样形参拿到的是缓冲**内容**而不是缓冲**地址**，会往垃圾地址写（实测 0xC0000005）。
++ **调用方一侧仍未接**：IR 内部 `call` 自己出缓冲（"Alloca + 实参 0 + 结果清空"）实测生成**崩溃**的机器码，落点/顺序还有没对齐处 ⇒ 现在**明确 fail-closed**并点名原因（`test_jit_agg_by_value_ret_call_is_unsupported`），不发可能崩的代码。**外部调用者（C/Rust 直调）方向可用**：`test_jit_agg_by_value_ret_win64` 用 `extern "C" fn(*mut u64)` 真跑拿回 24 字节聚合 ✓ —— 这也正是 psABI 的方向。
++ 验收：`cargo test -p forge-codegen --features jit` 全绿（3 条聚合用例：按值形参 + 按值实参 + 按值返回），`unsupported_inst_negative.rs` 的约定分流用例（win64 通 / sysv64 拒）保持绿。
+
 ### Added (2026-10-08) — forge-codegen：win64 按值聚合传参（形参 + 实参，A1′）
 
 + **>8 字节聚合按值传参在 win64 上走通了**（`docs/forge-ir/backlog.md` #6 的 A1′）：此前 `agg_expand` 用写死的 `size > 16` 一律拒绝（与约定无关）；现在改成**读约定**——新增只读落点探针 `agg_arg_place`（用 `forge_abi` 的单参 `plan_for_shapes` 问"这份约定把 `size` 字节聚合放哪"；聚合规则是纯尺寸判据，与寄存器耗尽无关，所以单参探针与真实计划一致）。据此分流：

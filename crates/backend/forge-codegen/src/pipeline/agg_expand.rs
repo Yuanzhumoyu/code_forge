@@ -655,12 +655,11 @@ pub(crate) fn rewrite_agg_value_uses(
             continue;
         };
         if values.contains(&old_v) {
-            // by-ref 档（值在内存）按值返回：**发射侧尚未接** ⇒ fail-closed，
-            // 绝不静默丢掉返回值（A1′ 只做传参；返回是 A1′-ret）。
+            // by-ref 档（值在内存）按值返回：**这里不动**——`expand_large_agg_ret` 会按约定
+            // 把段值写进 sret 缓冲（或拆成多返回值）。此刻值可能刚被换掉，终结符里的引用
+            // 由那一趟统一替换，之后再校验 use-def。
             if agg_slots.get(old_v).is_some() {
-                return Err(IrError::Unsupported(
-                    "按值返回聚合：该值在内存（by-ref 档），返回路径尚未接（A1′-ret）".into(),
-                ));
+                continue;
             }
             if segs.is_empty() {
                 return Err(IrError::Unsupported(

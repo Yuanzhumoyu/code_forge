@@ -978,6 +978,59 @@ define i64 @caller() {
         assert_eq!(g(), 22, "调用方按值聚合实参应原样传到被调方");
     }
 
+    /// A1′-ret：**按值返回 >8B 聚合**（win64 `ret_classify` 走 sret）——被调方把值
+    /// 写进调用方缓冲（`expand_sret_return` 立 sret 形参、`expand_large_agg_ret` 写段值）；
+    /// 调用方出缓冲（`expand_large_agg_call_results` 的 sret 档：Alloca + 实参 0 + 结果清空），
+    /// 结果值登记成"住在缓冲"，后续 `extractvalue` 变成 load。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_agg_by_value_ret_win64() {
+        ensure_registered();
+        // ① 被调方直调：Rust 侧提供缓冲（extern "C" fn(*mut u64)）
+        let src = r#"
+define {i64, i64, i64} @agg_make() {
+  %entry:
+    ret {i64, i64, i64} {i64 11, i64 22, i64 33}
+}
+"#;
+        let module = forge_ir::text::parse_module(src).expect("parse");
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
+        jit.compile_module(&module).expect("compile module sret ret");
+        let f: extern "C" fn(*mut u64) = jit.get_fn("agg_make").expect("get_fn");
+        let mut out = [0u64; 3];
+        f(out.as_mut_ptr());
+        assert_eq!(out, [11, 22, 33], "sret 返回应写进调用方缓冲");
+    }
+
+    /// A1′-ret 的**调用方**一侧：**尚未接**——IR 内部 `call` 返回 >8B 聚合必须
+    /// **明确 fail-closed**（不静默错、不发可能崩的代码）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_agg_by_value_ret_call_is_unsupported() {
+        ensure_registered();
+        let src_caller = r#"
+define {i64, i64, i64} @agg_make() {
+  %entry:
+    ret {i64, i64, i64} {i64 11, i64 22, i64 33}
+}
+define i64 @main() {
+  %entry:
+    %a = call {i64, i64, i64} @agg_make()
+    %v = extractvalue {i64, i64, i64} %a, 2
+    ret i64 %v
+}
+"#;
+        let module_caller = forge_ir::text::parse_module(src_caller).expect("parse");
+        let mut jit_caller = JitCompiler::new(x86::TargetMachine::new());
+        let err = jit_caller
+            .compile_module(&module_caller)
+            .expect_err("调用方 sret 缓冲尚未接 ⇒ 必须 fail-closed");
+        assert!(
+            format!("{err}").contains("调用方") && format!("{err}").contains("sret"),
+            "错误消息应点名是调用方 sret 缓冲未接，got: {err}"
+        );
+    }
+
     /// B1: IR Call 传宽向量实参（>16 字节）——调用方侧 by-ref 栈拷贝 + 传
     /// 指针（S1），callee 收参 + lane0 提取 → 结果值验证。
     #[cfg(target_arch = "x86_64")]
