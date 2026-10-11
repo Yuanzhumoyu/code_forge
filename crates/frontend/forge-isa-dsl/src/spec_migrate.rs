@@ -22,11 +22,16 @@ struct OpDecl {
 }
 
 impl OpDecl {
-    /// 声明形态：`名字:槽[:角色]`（角色 `in` 省略，与旧 `ops` 的书写习惯一致）。
-    fn decl(&self) -> String {
-        match &self.role {
+    /// 声明形态：`名字:槽[:角色]`；顺序敏感时追加 `#序号`（= 旧 `ops` 里的下标）。
+    fn decl(&self, idx: usize, with_idx: bool) -> String {
+        let body = match &self.role {
             Some(r) => format!("{}:{}:{}", self.name, self.slot, r),
             None => format!("{}:{}", self.name, self.slot),
+        };
+        if with_idx {
+            format!("{body}#{idx}")
+        } else {
+            body
         }
     }
 
@@ -123,8 +128,38 @@ fn parse_asm(line: &str) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
+/// 模板里操作数名按**打印序**出现的顺序（只认已声明的名字）。
+///
+/// 与 `ops` 序不同 ⇒ 该指令顺序敏感：内联声明必须显式写 `#序号`（否则"出现序 = 编码序"
+/// 会静默改编码）。
+fn appearance_order(tpl: &str, decls: &[OpDecl]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0usize;
+    while let Some(rel) = tpl[i..].find('{') {
+        let start = i + rel + 1;
+        let Some(end) = tpl[start..].find('}') else {
+            break;
+        };
+        let inner = tpl[start..start + end].trim();
+        if !inner.contains(':')
+            && !inner.starts_with('@')
+            && decls.iter().any(|d| d.name == inner)
+            && !out.iter().any(|n| n == inner)
+        {
+            out.push(inner.to_string());
+        }
+        i = start + end + 1;
+    }
+    out
+}
+
 /// 一条模板：把 `{名字}` 换成 `{@字段:槽}{名字:槽}`（无绑定的只换声明）。
-fn rewrite_template(tpl: &str, decls: &[OpDecl], inst: &str) -> Result<String, String> {
+fn rewrite_template(
+    tpl: &str,
+    decls: &[OpDecl],
+    inst: &str,
+    with_idx: bool,
+) -> Result<String, String> {
     let mut out = String::with_capacity(tpl.len() + 32 * decls.len());
     let mut i = 0usize;
     while i < tpl.len() {
@@ -144,14 +179,15 @@ fn rewrite_template(tpl: &str, decls: &[OpDecl], inst: &str) -> Result<String, S
                  （v21 的 `{{名字:修饰}}` 需先人工处理）"
             ));
         }
-        let d = decls
+        let pos = decls
             .iter()
-            .find(|d| d.name == inner)
+            .position(|d| d.name == inner)
             .ok_or_else(|| format!("[inst.{inst}] asm: 占位符 '{{{inner}}}' 不在 ops 里"))?;
+        let d = &decls[pos];
         if d.field.is_some() {
             out.push_str(&format!("{{{}}}", d.bind()));
         }
-        out.push_str(&format!("{{{}}}", d.decl()));
+        out.push_str(&format!("{{{}}}", d.decl(pos, with_idx)));
         i += rel + 1;
     }
     Ok(out)
@@ -228,9 +264,14 @@ pub fn migrate_spec_text(src: &str) -> Result<String, String> {
                 }
             }
             let tpls = parse_asm(&block[ai])?;
+            // 顺序标记：打印序 ≠ `ops` 序时把**编码序**说出来（`#序号` = 旧 `ops` 下标）。
+            let ops_order: Vec<String> = decls.iter().map(|d| d.name.clone()).collect();
+            let with_idx = tpls
+                .first()
+                .is_some_and(|t| appearance_order(t, &decls) != ops_order);
             let mut new_tpls = Vec::new();
             for t in &tpls {
-                new_tpls.push(rewrite_template(t, &decls, &inst)?);
+                new_tpls.push(rewrite_template(t, &decls, &inst, with_idx)?);
             }
             // 写回：保留块首、其余行按原序，跳过 ops/bind，替换 asm。
             let mut new_block: Vec<String> = Vec::new();
