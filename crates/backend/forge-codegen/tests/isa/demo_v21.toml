@@ -83,7 +83,7 @@ effect = ["Pure"]
 
 # v21 W5：族 = **唯一复用机制**（表头即族名）；`body` 给公共键，`rows` 每行一个实例。
 [family.SHIFT]
-body = { form = "RRI", ops = ["dst:g:out", "src:g", "imm:i8"], asm = "shift.{kind} {dst}, {src}, {imm}", effect = ["Pure"] }
+body = { form = "RRI", asm = "shift.{kind} {dst:g:out}, {src:g}, {imm:i8}", effect = ["Pure"] }
 rows = [
   { inst = "SHL", opcode = 0x20, kind = "l" },
   { inst = "SHR", opcode = 0x21, kind = "r" },

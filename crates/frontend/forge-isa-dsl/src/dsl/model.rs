@@ -3629,10 +3629,27 @@ fn subst(v: &toml::Value, vars: &toml::Table, path: &str) -> Result<toml::Value,
             let mut pos = 0usize;
             while let Some(rel_open) = s[pos..].find('{') {
                 let open = pos + rel_open;
-                let Some(rel_close) = s[open..].find('}') else {
+                // **按深度**找配对的 `}`：占位符可以**嵌套**（内联声明把"槽名本身是行键插值"
+                // 写进模板，形如 `{src:{slot}}`）。取第一个 `}` 会把外层截成 `src:{slot`
+                // ⇒ 内层的 `{slot}` 永远替换不到 ⇒ 校验报 `operand slot '{slot' is not declared`。
+                let mut depth = 0i32;
+                let mut close = None;
+                for (i, c) in s[open..].char_indices() {
+                    match c {
+                        '{' => depth += 1,
+                        '}' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                close = Some(open + i);
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                let Some(close) = close else {
                     break;
                 };
-                let close = open + rel_close;
                 let raw = &s[open + 1..close];
                 let (key, lower) = match raw.strip_suffix(".lower") {
                     Some(k) => (k, true),
@@ -3653,8 +3670,9 @@ fn subst(v: &toml::Value, vars: &toml::Table, path: &str) -> Result<toml::Value,
                     next.push_str(&s[close + 1..]);
                     return subst(&toml::Value::String(next), vars, path);
                 }
-                // 不是本行的键 ⇒ 内层 DSL 的占位符，跳过它继续找下一个
-                pos = close + 1;
+                // 不是本行的键 ⇒ 可能是**内层**占位符的外层（`{src:{slot}}`）⇒ 进它内部继续找
+                //（`pos = open + 1` 而不是 `close + 1`，否则内层被整块跳过）。
+                pos = open + 1;
             }
             Ok(v.clone())
         }

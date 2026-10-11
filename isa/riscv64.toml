@@ -880,11 +880,7 @@ fields = [
 # ── R 型整数 + Zbb R（opcode 0x33；funct3/funct7 区分）──
 
 [family.RR]
-body = { form = "R", opcode = 0x33, ops = [
-  "dst:gpr:out",
-  "src:gpr",
-  "src2:gpr",
-], asm = "{inst.lower} {dst}, {src}, {src2}", doc = "{name}（族 {family}）：R 型寄存器-寄存器运算；操作数 {ops}。" }
+body = { form = "R", opcode = 0x33, asm = "{inst.lower} {dst:gpr:out}, {src:gpr}, {src2:gpr}", doc = "{name}（族 {family}）：R 型寄存器-寄存器运算；操作数 {ops}。" }
 rows = [
   { inst = "ADD", group = "add_xlen", word_size = 64, match = { funct3 = 0, funct7 = 0x00 } },
   { inst = "SUB", group = "sub_xlen", word_size = 64, match = { funct3 = 0, funct7 = 0x20 } },
@@ -911,11 +907,7 @@ rows = [
 
 # ── I 型立即数 ALU（opcode 0x13；ADDI 保留顶层：roles + 与 MOV/ADDI_GLOBAL 同键）──
 [family.II]
-body = { form = "I", opcode = 0x13, ops = [
-  "dst:gpr:out",
-  "src:gpr",
-  "imm:imm12",
-], asm = "{inst.lower} {dst}, {src}, {imm}", doc = "I 型：寄存器与 12 位立即数运算，结果写 {dst.slot}；操作数 {ops}。" }
+body = { form = "I", opcode = 0x13, asm = "{inst.lower} {dst:gpr:out}, {src:gpr}, {imm:imm12}", doc = "I 型：寄存器与 12 位立即数运算，结果写 {dst.slot}；操作数 {ops}。" }
 rows = [
   { inst = "SLTI", match = { funct3 = 2 } },
   { inst = "SLTIU", match = { funct3 = 3 } },
@@ -926,11 +918,7 @@ rows = [
 
 # ── B 型分支（opcode 0x63；funct3 区分）──
 [family.BB]
-body = { form = "B", opcode = 0x63, ops = [
-  "src:gpr",
-  "src2:gpr",
-  "target:off_b",
-], asm = "{inst.lower} {src}, {src2}, {target}", doc = "B 型条件分支：比较两个寄存器后相对目标标签跳转，属终结指令；操作数 {ops}。" }
+body = { form = "B", opcode = 0x63, asm = "{inst.lower} {src:gpr}, {src2:gpr}, {target:off_b}", doc = "B 型条件分支：比较两个寄存器后相对目标标签跳转，属终结指令；操作数 {ops}。" }
 rows = [
   { inst = "BEQ", match = { funct3 = 0 }, roles = [
     "branch",
@@ -949,11 +937,7 @@ rows = [
 [family.WW]
 body = { only_variants = { xlen = [
   64,
-] }, form = "R", opcode = 0x3b, ops = [
-  "dst:gpr:out",
-  "src:gpr",
-  "src2:gpr",
-], asm = "{inst.lower} {dst}, {src}, {src2}", doc = "仅 RV64 存在的 R 型运算（word 语义，xlen=64 才有）；操作数 {ops}。" }
+] }, form = "R", opcode = 0x3b, asm = "{inst.lower} {dst:gpr:out}, {src:gpr}, {src2:gpr}", doc = "仅 RV64 存在的 R 型运算（word 语义，xlen=64 才有）；操作数 {ops}。" }
 rows = [
   { inst = "ADDW", group = "add_xlen", word_size = 32, match = { funct3 = 0, funct7 = 0x00 } },
   { inst = "SUBW", group = "sub_xlen", word_size = 32, match = { funct3 = 0, funct7 = 0x20 } },
@@ -2587,203 +2571,122 @@ insts = [
 # 修这里同时修掉一处**字节错**：从前 ② 把 `funct3` 写成 `0`（= rne），而省略 rm 的语义是
 # `dyn`——语料铺开后由 `fp-default-rounding-mode.s` 的上游期望字节直接守住。
 [family.FADD_RM]
-body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "rm:rm3",
-], asm = "fadd.{p.lower} {dst}, {src}, {src2}, {rm}", doc = "标量浮点加法：精度由助记符后缀区分，rm 槽指定舍入模式；操作数 {ops}。" }
+body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, asm = "fadd.{p.lower} {dst:fpr:out}, {src:fpr}, {src2:fpr}, {rm:rm3}", doc = "标量浮点加法：精度由助记符后缀区分，rm 槽指定舍入模式；操作数 {ops}。" }
 rows = [
   { inst = "FADD_S_RM", p = "S", funct7 = 0x00 },
   { inst = "FADD_D_RM", p = "D", funct7 = 0x01 },
 ]
 [family.FADD_DYN]
-body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-], asm = "fadd.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, asm = "fadd.{p.lower} {dst:fpr:out}, {src:fpr}, {src2:fpr}" }
 rows = [
   { inst = "FADD_S", group = "fadd_xlen", word_size = 32, p = "S", funct7 = 0x00 },
   { inst = "FADD_D", group = "fadd_xlen", word_size = 64, p = "D", funct7 = 0x01 },
 ]
 [family.FSUB_RM]
-body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "rm:rm3",
-], asm = "fsub.{p.lower} {dst}, {src}, {src2}, {rm}" }
+body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, asm = "fsub.{p.lower} {dst:fpr:out}, {src:fpr}, {src2:fpr}, {rm:rm3}" }
 rows = [
   { inst = "FSUB_S_RM", p = "S", funct7 = 0x04 },
   { inst = "FSUB_D_RM", p = "D", funct7 = 0x05 },
 ]
 [family.FSUB_DYN]
-body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-], asm = "fsub.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, asm = "fsub.{p.lower} {dst:fpr:out}, {src:fpr}, {src2:fpr}" }
 rows = [
   { inst = "FSUB_S", group = "fsub_xlen", word_size = 32, p = "S", funct7 = 0x04 },
   { inst = "FSUB_D", group = "fsub_xlen", word_size = 64, p = "D", funct7 = 0x05 },
 ]
 [family.FMUL_RM]
-body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "rm:rm3",
-], asm = "fmul.{p.lower} {dst}, {src}, {src2}, {rm}" }
+body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, asm = "fmul.{p.lower} {dst:fpr:out}, {src:fpr}, {src2:fpr}, {rm:rm3}" }
 rows = [
   { inst = "FMUL_S_RM", p = "S", funct7 = 0x08 },
   { inst = "FMUL_D_RM", p = "D", funct7 = 0x09 },
 ]
 [family.FMUL_DYN]
-body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-], asm = "fmul.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, asm = "fmul.{p.lower} {dst:fpr:out}, {src:fpr}, {src2:fpr}" }
 rows = [
   { inst = "FMUL_S", group = "fmul_xlen", word_size = 32, p = "S", funct7 = 0x08 },
   { inst = "FMUL_D", group = "fmul_xlen", word_size = 64, p = "D", funct7 = 0x09 },
 ]
 [family.FDIV_RM]
-body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "rm:rm3",
-], asm = "fdiv.{p.lower} {dst}, {src}, {src2}, {rm}" }
+body = { form = "R_RM", opcode = 0x53, match = { funct7 = "{funct7}" }, asm = "fdiv.{p.lower} {dst:fpr:out}, {src:fpr}, {src2:fpr}, {rm:rm3}" }
 rows = [
   { inst = "FDIV_S_RM", p = "S", funct7 = 0x0C },
   { inst = "FDIV_D_RM", p = "D", funct7 = 0x0D },
 ]
 [family.FDIV_DYN]
-body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-], asm = "fdiv.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 7, funct7 = "{funct7}" }, asm = "fdiv.{p.lower} {dst:fpr:out}, {src:fpr}, {src2:fpr}" }
 rows = [
   { inst = "FDIV_S", group = "fdiv_xlen", word_size = 32, p = "S", funct7 = 0x0C },
   { inst = "FDIV_D", group = "fdiv_xlen", word_size = 64, p = "D", funct7 = 0x0D },
 ]
 [family.FSQRT_RM]
-body = { form = "R_RM2", opcode = 0x53, match = { rs2 = 0, funct7 = "{funct7}" }, ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "rm:rm3",
-], asm = "fsqrt.{p.lower} {dst}, {src}, {rm}" }
+body = { form = "R_RM2", opcode = 0x53, match = { rs2 = 0, funct7 = "{funct7}" }, asm = "fsqrt.{p.lower} {dst:fpr:out}, {src:fpr}, {rm:rm3}" }
 rows = [
   { inst = "FSQRT_S_RM", p = "S", funct7 = 0x2C },
   { inst = "FSQRT_D_RM", p = "D", funct7 = 0x2D },
 ]
 [family.FSQRT_DYN]
-body = { form = "R", opcode = 0x53, match = { funct3 = 7, rs2 = 0, funct7 = "{funct7}" }, ops = [
-  "dst:fpr:out",
-  "src:fpr",
-], asm = "fsqrt.{p.lower} {dst}, {src}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 7, rs2 = 0, funct7 = "{funct7}" }, asm = "fsqrt.{p.lower} {dst:fpr:out}, {src:fpr}" }
 rows = [
   { inst = "FSQRT_S", p = "S", funct7 = 0x2C },
   { inst = "FSQRT_D", p = "D", funct7 = 0x2D },
 ]
 [family.FLT]
-body = { form = "R", opcode = 0x53, match = { funct3 = 1, funct7 = "{funct7}" }, ops = [
-  "dst:gpr:out",
-  "src:fpr",
-  "src2:fpr",
-], asm = "flt.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 1, funct7 = "{funct7}" }, asm = "flt.{p.lower} {dst:gpr:out}, {src:fpr}, {src2:fpr}" }
 rows = [
   { inst = "FLT_S", group = "FLT", word_size = 32, p = "S", funct7 = 0x50 },
   { inst = "FLT_D", group = "FLT", word_size = 64, p = "D", funct7 = 0x51 },
 ]
 [family.FEQ]
-body = { form = "R", opcode = 0x53, match = { funct3 = 2, funct7 = "{funct7}" }, ops = [
-  "dst:gpr:out",
-  "src:fpr",
-  "src2:fpr",
-], asm = "feq.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 2, funct7 = "{funct7}" }, asm = "feq.{p.lower} {dst:gpr:out}, {src:fpr}, {src2:fpr}" }
 rows = [
   { inst = "FEQ_S", group = "FEQ", word_size = 32, p = "S", funct7 = 0x50 },
   { inst = "FEQ_D", group = "FEQ", word_size = 64, p = "D", funct7 = 0x51 },
 ]
 [family.FLE]
-body = { form = "R", opcode = 0x53, match = { funct3 = 0, funct7 = "{funct7}" }, ops = [
-  "dst:gpr:out",
-  "src:fpr",
-  "src2:fpr",
-], asm = "fle.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 0, funct7 = "{funct7}" }, asm = "fle.{p.lower} {dst:gpr:out}, {src:fpr}, {src2:fpr}" }
 rows = [
   { inst = "FLE_S", group = "FLE", word_size = 32, p = "S", funct7 = 0x50 },
   { inst = "FLE_D", group = "FLE", word_size = 64, p = "D", funct7 = 0x51 },
 ]
 [family.FMIN]
-body = { form = "R", opcode = 0x53, match = { funct3 = 0, funct7 = "{funct7}" }, ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-], asm = "fmin.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 0, funct7 = "{funct7}" }, asm = "fmin.{p.lower} {dst:fpr:out}, {src:fpr}, {src2:fpr}" }
 rows = [
   { inst = "FMIN_S", p = "S", funct7 = 0x14 },
   { inst = "FMIN_D", p = "D", funct7 = 0x15 },
 ]
 [family.FMAX]
-body = { form = "R", opcode = 0x53, match = { funct3 = 1, funct7 = "{funct7}" }, ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-], asm = "fmax.{p.lower} {dst}, {src}, {src2}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 1, funct7 = "{funct7}" }, asm = "fmax.{p.lower} {dst:fpr:out}, {src:fpr}, {src2:fpr}" }
 rows = [
   { inst = "FMAX_S", p = "S", funct7 = 0x14 },
   { inst = "FMAX_D", p = "D", funct7 = 0x15 },
 ]
 [family.FMV_X]
-body = { form = "R", opcode = 0x53, match = { funct3 = 0, funct7 = "{funct7}" }, ops = [
-  "dst:gpr:out",
-  "src:fpr",
-], asm = "fmv.x.{p.lower} {dst}, {src}" }
+body = { form = "R", opcode = 0x53, match = { funct3 = 0, funct7 = "{funct7}" }, asm = "fmv.x.{p.lower} {dst:gpr:out}, {src:fpr}" }
 rows = [
   # FPR 的位模式 → GPR（类间位搬移，见 `FMV_W_X` 上的注释）——`data_width` 说宽度。
   { inst = "FMV_X_W", p = "W", funct7 = 0x70, data_width = 32 },
   { inst = "FMV_X_D", p = "D", funct7 = 0x71, data_width = 64 },
 ]
 [family.AMOADD]
-body = { form = "R", opcode = 0x2F, match = { funct5 = 0, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = [
-  "dst:gpr:out",
-  "src:gpr",
-  "src2:gpr",
-], asm = "amoadd.{p.lower} {dst}, {src2}, ({src})" }
+body = { form = "R", opcode = 0x2F, match = { funct5 = 0, aq = 0, rl = 0, funct3 = "{funct3}" }, asm = "amoadd.{p.lower} {dst:gpr:out#0}, {src2:gpr#2}, ({src:gpr#1})" }
 rows = [
   { inst = "AMOADD_W", group = "amo_add", word_size = 32, p = "W", funct3 = 2 },
   { inst = "AMOADD_D", group = "amo_add", word_size = 64, p = "D", funct3 = 3 },
 ]
 [family.AMOSWAP]
-body = { form = "R", opcode = 0x2F, match = { funct5 = 1, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = [
-  "dst:gpr:out",
-  "src:gpr",
-  "src2:gpr",
-], asm = "amoswap.{p.lower} {dst}, {src2}, ({src})" }
+body = { form = "R", opcode = 0x2F, match = { funct5 = 1, aq = 0, rl = 0, funct3 = "{funct3}" }, asm = "amoswap.{p.lower} {dst:gpr:out#0}, {src2:gpr#2}, ({src:gpr#1})" }
 rows = [
   { inst = "AMOSWAP_W", group = "amo_swap", word_size = 32, p = "W", funct3 = 2 },
   { inst = "AMOSWAP_D", group = "amo_swap", word_size = 64, p = "D", funct3 = 3 },
 ]
 [family.LR]
-body = { form = "R", opcode = 0x2F, match = { funct5 = 2, aq = 0, rl = 0, funct3 = "{funct3}", rs2 = 0 }, ops = [
-  "dst:gpr:out",
-  "src:gpr",
-], asm = "lr.{p.lower} {dst}, ({src})" }
+body = { form = "R", opcode = 0x2F, match = { funct5 = 2, aq = 0, rl = 0, funct3 = "{funct3}", rs2 = 0 }, asm = "lr.{p.lower} {dst:gpr:out}, ({src:gpr})" }
 rows = [
   { inst = "LR_W", group = "lr_xlen", word_size = 32, p = "W", funct3 = 2 },
   { inst = "LR_D", group = "lr_xlen", word_size = 64, p = "D", funct3 = 3 },
 ]
 [family.SC]
-body = { form = "R", opcode = 0x2F, match = { funct5 = 3, aq = 0, rl = 0, funct3 = "{funct3}" }, ops = [
-  "dst:gpr:out",
-  "src:gpr",
-  "src2:gpr",
-], asm = "sc.{p.lower} {dst}, {src2}, ({src})" }
+body = { form = "R", opcode = 0x2F, match = { funct5 = 3, aq = 0, rl = 0, funct3 = "{funct3}" }, asm = "sc.{p.lower} {dst:gpr:out#0}, {src2:gpr#2}, ({src:gpr#1})" }
 rows = [
   { inst = "SC_W", p = "W", funct3 = 2 },
   { inst = "SC_D", p = "D", funct3 = 3 },

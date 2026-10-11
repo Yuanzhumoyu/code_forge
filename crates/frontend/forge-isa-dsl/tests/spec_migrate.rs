@@ -97,20 +97,65 @@ fn inst_blocks_have_legacy_keys(text: &str) -> Vec<String> {
     bad
 }
 
+/// 把 `#[doc="…"]` 的**内容**换成占位符，返回（归一化文本, doc 内容列表）。
+///
+/// 迁移只改写法、不改代码与数据；唯一的例外是 `#[doc]` 里的**散文**——族的 doc 模板常写
+/// "操作数 `{ops}`"，而 `ops` 键消失后展开器对 `{ops}` 的渲染变成另一种（`src,mem` 而不是
+/// `["src:gprx","mem:mem"]`）。所以门禁按"**除 doc 内容外逐字节相同**"判，并把 doc 列表
+/// 单独取出来核对条数（防漏比）。
+fn strip_doc_bodies(flat: &str) -> (String, Vec<String>) {
+    const OPEN: &str = "#[doc=\"";
+    let mut out = String::with_capacity(flat.len());
+    let mut docs = Vec::new();
+    let mut rest = flat;
+    while let Some(i) = rest.find(OPEN) {
+        let (head, tail) = rest.split_at(i + OPEN.len());
+        out.push_str(head);
+        // doc 字符串里的引号是转义过的（`\"`），找到未转义的收尾引号。
+        let mut end = None;
+        let bytes = tail.as_bytes();
+        let mut j = 0usize;
+        while j < bytes.len() {
+            if bytes[j] == b'\\' {
+                j += 2;
+                continue;
+            }
+            if bytes[j] == b'"' {
+                end = Some(j);
+                break;
+            }
+            j += 1;
+        }
+        match end {
+            Some(j) => {
+                docs.push(tail[..j].to_string());
+                out.push_str("__DOC__");
+                rest = &tail[j..];
+            }
+            None => {
+                out.push_str(tail);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    (out, docs)
+}
+
 /// **family 行内表**迁移的等价性证明（v22 续）：`[family.<名>]` 的 `body`/`rows` 里写的
 /// `ops`/`bind` 就地写进该行的 `asm` 之后，展开结果必须**逐字节相同**。
 ///
-/// ⚠️ 尚未放开（**如实记录，不是假绿**）：`migrate_spec_text` 的 family 路径已实现（`body`
-/// 允许只有 `ops`/`bind` 而无 `asm`、行继承 body 的有效声明、族的行键插值 `{inst.lower}`/
-/// `{slot}` 原样放行、抹条目后的分隔符迭代收敛），但**当 body 的 `ops` 是跨行数组时**，
-/// 行拿到的有效声明只剩第一项 ⇒ 迁移后的行 `asm` 缺后续操作数（x86 `ALU8_RM_IMM8` 实测：
-/// 行的 `{imm}` 未被声明成 `{imm:imm8}`）⇒ 展开报
-/// `DSL-TEMPLATE: [family.ALU8_RM_IMM8] asm: 占位符 '{imm}' 不是已声明的操作数名（ops: dst）`。
-/// 下一步：查 family `body` 的多行 `ops` 在 `split_entries`/`table_decls` 上的取值丢失，
-/// 修好后再把本用例放开，并把三份谱 + 夹具过一遍 `forge-isa migrate`。
+/// 为拿到这条，修掉的三处（都是实测踩出来的）：
+/// ① `referenced_keys` 收不了**嵌套占位符**——内联声明形如 `… {src:{slot}}`，旧实现取第一个
+///    `}` ⇒ 漏掉 `slot` ⇒ 行键 `slot = "r8"` 被当成指令字段报 `unknown field`；
+/// ② 族的行键插值放行**排在声明之前**——操作数名会与**编码键同名**（x86 的 `imm = 8` 与
+///    操作数 `imm:imm8`）⇒ `{imm}` 被当参数放过、声明丢失 ⇒ 必须是**声明优先**；
+/// ③ 行自带 `ops` 时 **body 的 `bind` 仍生效**（族的表按 key 合并）——x86 `CMP_MR` 自带
+///    跨行 `ops` 而无 `bind`，丢了 body 的 `rm = "[mem]"` 就报"rm 指向 mem 槽——非内存形式"。
+///
+/// 口径：**除 `#[doc]` 内容外**逐字节相同（doc 是散文；族的 doc 模板里 `{ops}` 的渲染随
+/// `ops` 键消失而变，条数由 `strip_doc_bodies` 单独核对）。
 #[test]
-#[ignore = "family 行内表迁移尚有 1 处缺陷：body 的跨行 ops 只取到第一项（x86 ALU8_RM_IMM8 \
-            缺 {imm:imm8}）；修好前不放开，避免假绿。"]
 fn family_tables_migrate_with_byte_identical_expansion() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     for isa in ["x86.toml", "riscv64.toml", "arm64.toml"] {
@@ -118,9 +163,14 @@ fn family_tables_migrate_with_byte_identical_expansion() {
         let src = std::fs::read_to_string(&p).expect("读谱");
         let migrated = spec_migrate::migrate_spec_text(&src)
             .unwrap_or_else(|e| panic!("{isa} family 迁移失败：{e}"));
-        let before = strip_source_path(&flatten_file(&p));
+        let (before, before_docs) = strip_doc_bodies(&strip_source_path(&flatten_file(&p)));
         let tmp = write_temp(isa, &migrated);
-        let after = strip_source_path(&flatten_file(&tmp));
+        let (after, after_docs) = strip_doc_bodies(&strip_source_path(&flatten_file(&tmp)));
+        assert_eq!(
+            before_docs.len(),
+            after_docs.len(),
+            "{isa} doc 条数变了（说明差别不止在散文里）"
+        );
         if before != after {
             let at = before
                 .bytes()
@@ -150,13 +200,13 @@ fn shipped_specs_are_already_inline() {
     for isa in ["x86.toml", "riscv64.toml", "arm64.toml"] {
         let p = root.join("isa").join(isa);
         let src = std::fs::read_to_string(&p).expect("读谱");
-        // 注意：**只**断言 `[inst.*]` 块已迁净——`[family.<名>]` 的行内表还在迁移中
-        // （见 `family_tables_migrate_with_byte_identical_expansion`），所以这里不比
-        // "整份文件迁移器幂等"。
-        let migrated = spec_migrate::migrate_spec_text(&src).unwrap_or_else(|e| {
-            panic!("{isa} 迁移器应在已迁净的 [inst] 块上不报错（family 路径见下）：{e}")
-        });
-        let _ = migrated;
+        // 迁移器**幂等**：`[inst.*]` 与 `[family.*]` 都已迁净 ⇒ 再跑一次应当一字不改。
+        let migrated = spec_migrate::migrate_spec_text(&src)
+            .unwrap_or_else(|e| panic!("{isa} 应已迁完（迁移器不该再报错）：{e}"));
+        assert_eq!(
+            src, migrated,
+            "{isa} 又冒出旧写法（`ops`/`bind`）——迁移器是幂等的，相等才说明迁干净了"
+        );
         let legacy = inst_blocks_have_legacy_keys(&src);
         assert!(
             legacy.is_empty(),
@@ -248,9 +298,12 @@ asm = "ld {dst}, {mem}"
     assert!(!out.contains("ops ="), "旧 ops 键应被删掉");
 }
 
-/// 迁移器对"已经是新写法"的输入必须明确报错（不许半迁移）。
+/// 迁移器对**已经迁净**的输入是**幂等**的：内联写法（`{名字:槽}` / `{@字段:槽}`）原样放行，
+/// 因此"再跑一次"必须一字不改（`[inst.*]` 与 `[family.*]` 都算）。
+///
+/// （旧版这里断言的是"报错"，与幂等性要求矛盾——已迁净的谱跑第二遍是常态。）
 #[test]
-fn already_inline_input_is_rejected() {
+fn already_inline_input_is_untouched() {
     let src = r#"[meta]
 name = "t"
 
@@ -271,12 +324,8 @@ fields = ["u4[15:12]:opcode", "u3[11:8]:rd"]
 [inst.A]
 form = "F"
 opcode = 1
-ops = ["dst:g:out"]
-asm = "a {dst:g:out}"
+asm = "a {@reg:g:out}{dst:g:out}"
 "#;
-    let err = spec_migrate::migrate_spec_text(src).expect_err("已带新写法应报错");
-    assert!(
-        err.contains("已是新写法") || err.contains("不在 ops 里"),
-        "错误应说明占位符形态：{err}"
-    );
+    let out = spec_migrate::migrate_spec_text(src).expect("已迁净的输入不该报错");
+    assert_eq!(src, out, "迁移器必须是幂等的");
 }

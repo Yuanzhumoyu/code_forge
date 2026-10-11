@@ -175,10 +175,24 @@ fn rewrite_template(
             .ok_or_else(|| format!("[inst.{inst}] asm: 未闭合的 '{{'"))?;
         let inner = tpl[i + 1..i + rel].trim();
         if inner.contains(':') || inner.starts_with('@') {
-            return Err(format!(
-                "[inst.{inst}] asm: 占位符 '{{{inner}}}' 已是新写法或带修饰——本迁移只接受纯 `{{名字}}`\
-                 （v21 的 `{{名字:修饰}}` 需先人工处理）"
-            ));
+            // **已经是新写法**（`{名字:槽}` / `{@字段:槽}`）⇒ 原样放行：迁移必须**幂等**
+            // ——对已迁净的谱（含全部 `[family.*]`）再跑一次应当一字不改。
+            // 半迁移（同一行里既有内联、又有未声明的纯 `{名字}`）会在**解析期**被明确拒绝
+            // （"占位符不是已声明的操作数名"），不会静默产生错误编码。
+            out.push_str(&format!("{{{inner}}}"));
+            i += rel + 1;
+            continue;
+        }
+        // **声明优先**：操作数名可能与**编码键同名**（x86 族的 body 里 `imm = 8`（立即数宽度）
+        // 与操作数 `imm:imm8` 同时存在）⇒ 必须先查 decls，再放行族参数，最后才报错。
+        if let Some(pos) = decls.iter().position(|d| d.name == inner) {
+            let d = &decls[pos];
+            if d.field.is_some() {
+                out.push_str(&format!("{{{}}}", d.bind()));
+            }
+            out.push_str(&format!("{{{}}}", d.decl(pos, with_idx)));
+            i += rel + 1;
+            continue;
         }
         // 族的**行键插值**（`{inst}` / `{inst.lower}` / `{slot}` / `{opcode}` …）不是操作数，
         // 原样放行；只有"既不是操作数、也不是族参数"的名字才报错（写错的声明名）。
@@ -188,16 +202,9 @@ fn rewrite_template(
             i += rel + 1;
             continue;
         }
-        let pos = decls
-            .iter()
-            .position(|d| d.name == inner)
-            .ok_or_else(|| format!("[inst.{inst}] asm: 占位符 '{{{inner}}}' 不在 ops 里"))?;
-        let d = &decls[pos];
-        if d.field.is_some() {
-            out.push_str(&format!("{{{}}}", d.bind()));
-        }
-        out.push_str(&format!("{{{}}}", d.decl(pos, with_idx)));
-        i += rel + 1;
+        return Err(format!(
+            "[inst.{inst}] asm: 占位符 '{{{inner}}}' 不在 ops 里，也不是族参数"
+        ));
     }
     Ok(out)
 }
@@ -357,6 +364,7 @@ fn table_decls(
     ctx: &str,
 ) -> Result<Vec<OpDecl>, String> {
     let get = |k: &str| entries.iter().find(|e| e.key == k);
+    let own_ops = get("ops").is_some();
     let mut decls = match get("ops") {
         Some(e) => parse_ops(&format!("ops = {}", e.value)).map_err(|m| format!("{ctx}: {m}"))?,
         None => match inherited {
@@ -364,6 +372,18 @@ fn table_decls(
             None => Vec::new(),
         },
     };
+    if own_ops && let Some(inh) = inherited {
+        // 行自带 `ops` 时 **body 的 `bind` 仍然生效**：族的表按 **key** 合并（行的表 = body ⊕ 行）
+        // ⇒ 行没写 `bind` 就继承 body 的。实测 x86 `CMP_MR`（属于 `ALU_MR`）自带跨行 `ops`
+        // 而无 `bind`，body 的 `bind = { rm = "[mem]" }` 必须接过来，否则内存形态丢失
+        // ⇒ 展开报 `rm 指向 mem 槽——非内存形式`。
+        for d in decls.iter_mut() {
+            if let Some(src) = inh.iter().find(|x| x.name == d.name) {
+                d.field = src.field.clone();
+                d.mem_form = src.mem_form;
+            }
+        }
+    }
     if let Some(b) = get("bind") {
         let pairs =
             parse_bind(&format!("bind = {}", b.value)).map_err(|m| format!("{ctx}: {m}"))?;

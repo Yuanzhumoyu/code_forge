@@ -3403,11 +3403,7 @@ insts = ["EORREGX {out}, {0}, {1}"]
 # 同名的 X/W 两条自动构成多态引用——取代原先手写的 [[aliases]] 清单（会漂移，见方案 §2.3）。
 
 [family.ADDIMM]
-body = { group = "add", form = "ALUIMM", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "imm:imm12u",
-], asm = "add {dst}, {src}, #{imm}", doc = "{name}（族 {family}）：把 12 位无符号立即数加到 {slot} 寄存器；操作数 {ops}。" }
+body = { group = "add", form = "ALUIMM", opcode = "{opcode}", asm = "add {dst:{slot}:out}, {src:{slot}}, #{imm:imm12u}", doc = "{name}（族 {family}）：把 12 位无符号立即数加到 {slot} 寄存器；操作数 {ops}。" }
 rows = [
   { inst = "ADDIMMX", slot = "r64", opcode = 0x91, roles = [
     "frame_free",
@@ -3416,21 +3412,13 @@ rows = [
   { inst = "ADDIMMW", slot = "r32", opcode = 0x11 },
 ]
 [family.ADDSIMM]
-body = { group = "adds", form = "ALUIMM", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "imm:imm12u",
-], asm = "adds {dst}, {src}, #{imm}", doc = "把 12 位无符号立即数加到 {slot} 寄存器，硬件同时更新 NZCV（adds 形态）；操作数 {ops}。" }
+body = { group = "adds", form = "ALUIMM", opcode = "{opcode}", asm = "adds {dst:{slot}:out}, {src:{slot}}, #{imm:imm12u}", doc = "把 12 位无符号立即数加到 {slot} 寄存器，硬件同时更新 NZCV（adds 形态）；操作数 {ops}。" }
 rows = [
   { inst = "ADDSIMMX", slot = "r64", opcode = 0xB1 },
   { inst = "ADDSIMMW", slot = "r32", opcode = 0x31 },
 ]
 [family.SUBIMM]
-body = { group = "sub", form = "ALUIMM", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "imm:imm12u",
-], asm = "sub {dst}, {src}, #{imm}" }
+body = { group = "sub", form = "ALUIMM", opcode = "{opcode}", asm = "sub {dst:{slot}:out}, {src:{slot}}, #{imm:imm12u}" }
 rows = [
   { inst = "SUBIMMX", slot = "r64", opcode = 0xD1, roles = [
     "frame_alloc",
@@ -3438,111 +3426,67 @@ rows = [
   { inst = "SUBIMMW", slot = "r32", opcode = 0x51 },
 ]
 [family.SUBSIMM]
-body = { group = "subs", form = "ALUIMM", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "imm:imm12u",
-], asm = "subs {dst}, {src}, #{imm}" }
+body = { group = "subs", form = "ALUIMM", opcode = "{opcode}", asm = "subs {dst:{slot}:out}, {src:{slot}}, #{imm:imm12u}" }
 rows = [
   { inst = "SUBSIMMX", slot = "r64", opcode = 0xF1 },
   { inst = "SUBSIMMW", slot = "r32", opcode = 0x71 },
 ]
 [family.ADDREG]
-body = { group = "add", form = "ALUREG", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "add {dst}, {src}, {src2}" }
+body = { group = "add", form = "ALUREG", opcode = "{opcode}", asm = "add {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}" }
 rows = [
   { inst = "ADDREGX", word_size = 64, slot = "r64", opcode = 0x8B },
   { inst = "ADDREGW", word_size = 32, slot = "r32", opcode = 0x0B },
 ]
 [family.SUBREG]
-body = { group = "sub", form = "ALUREG", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "sub {dst}, {src}, {src2}", doc = "寄存器减寄存器，结果写 {slot}（sub 形态，不更新标志）；操作数 {ops}。" }
+body = { group = "sub", form = "ALUREG", opcode = "{opcode}", asm = "sub {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}", doc = "寄存器减寄存器，结果写 {slot}（sub 形态，不更新标志）；操作数 {ops}。" }
 rows = [
   { inst = "SUBREGX", word_size = 64, slot = "r64", opcode = 0xCB },
   { inst = "SUBREGW", word_size = 32, slot = "r32", opcode = 0x4B },
 ]
 [family.ADDSREG]
-body = { group = "adds", form = "ALUREG", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "adds {dst}, {src}, {src2}" }
+body = { group = "adds", form = "ALUREG", opcode = "{opcode}", asm = "adds {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}" }
 rows = [
   { inst = "ADDSREGX", slot = "r64", opcode = 0xAB },
   { inst = "ADDSREGW", slot = "r32", opcode = 0x2B },
 ]
 [family.SUBSREG]
-body = { group = "subs", form = "ALUREG", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "subs {dst}, {src}, {src2}" }
+body = { group = "subs", form = "ALUREG", opcode = "{opcode}", asm = "subs {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}" }
 rows = [
   { inst = "SUBSREGX", slot = "r64", opcode = 0xEB },
   { inst = "SUBSREGW", slot = "r32", opcode = 0x6B },
 ]
 [family.ANDREG]
-body = { group = "and", form = "ALUREG", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "and {dst}, {src}, {src2}", doc = "寄存器按位与，结果写 {slot}；操作数 {ops}。" }
+body = { group = "and", form = "ALUREG", opcode = "{opcode}", asm = "and {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}", doc = "寄存器按位与，结果写 {slot}；操作数 {ops}。" }
 rows = [
   { inst = "ANDREGX", word_size = 64, slot = "r64", opcode = 0x8A },
   { inst = "ANDREGW", word_size = 32, slot = "r32", opcode = 0x0A },
 ]
 [family.BICREG]
-body = { group = "bic", form = "ALUREG", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "bic {dst}, {src}, {src2}", match = { nbit = 1 } }
+body = { group = "bic", form = "ALUREG", opcode = "{opcode}", asm = "bic {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}", match = { nbit = 1 } }
 rows = [
   { inst = "BICREGX", slot = "r64", opcode = 0x8A },
   { inst = "BICREGW", slot = "r32", opcode = 0x0A },
 ]
 [family.ORRREG]
-body = { group = "orr", form = "ALUREG", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "orr {dst}, {src}, {src2}", doc = "寄存器按位或，结果写 {slot}；操作数 {ops}。" }
+body = { group = "orr", form = "ALUREG", opcode = "{opcode}", asm = "orr {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}", doc = "寄存器按位或，结果写 {slot}；操作数 {ops}。" }
 rows = [
   { inst = "ORRREGX", word_size = 64, slot = "r64", opcode = 0xAA },
   { inst = "ORRREGW", word_size = 32, slot = "r32", opcode = 0x2A },
 ]
 [family.ORNREG]
-body = { group = "orn", form = "ALUREG", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "orn {dst}, {src}, {src2}", match = { nbit = 1 } }
+body = { group = "orn", form = "ALUREG", opcode = "{opcode}", asm = "orn {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}", match = { nbit = 1 } }
 rows = [
   { inst = "ORNREGX", slot = "r64", opcode = 0xAA },
   { inst = "ORNREGW", slot = "r32", opcode = 0x2A },
 ]
 [family.EORREG]
-body = { group = "eor", form = "ALUREG", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "eor {dst}, {src}, {src2}" }
+body = { group = "eor", form = "ALUREG", opcode = "{opcode}", asm = "eor {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}" }
 rows = [
   { inst = "EORREGX", word_size = 64, slot = "r64", opcode = 0xCA },
   { inst = "EORREGW", word_size = 32, slot = "r32", opcode = 0x4A },
 ]
 [family.EONREG]
-body = { group = "eon", form = "ALUREG", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "eon {dst}, {src}, {src2}", match = { nbit = 1 } }
+body = { group = "eon", form = "ALUREG", opcode = "{opcode}", asm = "eon {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}", match = { nbit = 1 } }
 rows = [
   { inst = "EONREGX", slot = "r64", opcode = 0xCA },
   { inst = "EONREGW", slot = "r32", opcode = 0x4A },
@@ -3553,12 +3497,7 @@ rows = [
 # （其余位恒 0 = imm6 0/shift 0）——解码时它先命中，故 `, lsl #0` 与无后缀等价。
 # X/W 只差 opcode、寄存器槽与移位量槽宽（imm6/imm5），落在行上。
 [family.AND_SHIFT]
-body = { form = "{form}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-  "sh:{shslot}",
-], asm = "and {dst}, {src}, {src2}, {shname} #{sh}", match = { shift = "{shcode}" } }
+body = { form = "{form}", asm = "and {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}, {shname} #{sh:{shslot}}", match = { shift = "{shcode}" } }
 rows = [
   { inst = "AND_LSLX", form = "ALUSH6", opcode = 0x8A, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
   { inst = "AND_LSRX", form = "ALUSH6", opcode = 0x8A, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
@@ -3570,12 +3509,7 @@ rows = [
   { inst = "AND_RORW", form = "ALUSH5", opcode = 0x0A, slot = "r32", shslot = "imm5", shname = "ror", shcode = 3 },
 ]
 [family.ANDS_SHIFT]
-body = { form = "{form}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-  "sh:{shslot}",
-], asm = "ands {dst}, {src}, {src2}, {shname} #{sh}", match = { shift = "{shcode}" } }
+body = { form = "{form}", asm = "ands {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}, {shname} #{sh:{shslot}}", match = { shift = "{shcode}" } }
 rows = [
   { inst = "ANDS_LSLX", form = "ALUSH6", opcode = 0xEA, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
   { inst = "ANDS_LSRX", form = "ALUSH6", opcode = 0xEA, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
@@ -3587,12 +3521,7 @@ rows = [
   { inst = "ANDS_RORW", form = "ALUSH5", opcode = 0x6A, slot = "r32", shslot = "imm5", shname = "ror", shcode = 3 },
 ]
 [family.BIC_SHIFT]
-body = { form = "{form}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-  "sh:{shslot}",
-], asm = "bic {dst}, {src}, {src2}, {shname} #{sh}", match = { shift = "{shcode}", nbit = 1 } }
+body = { form = "{form}", asm = "bic {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}, {shname} #{sh:{shslot}}", match = { shift = "{shcode}", nbit = 1 } }
 rows = [
   { inst = "BIC_LSLX", form = "ALUSH6", opcode = 0x8A, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
   { inst = "BIC_LSRX", form = "ALUSH6", opcode = 0x8A, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
@@ -3604,12 +3533,7 @@ rows = [
   { inst = "BIC_RORW", form = "ALUSH5", opcode = 0x0A, slot = "r32", shslot = "imm5", shname = "ror", shcode = 3 },
 ]
 [family.BICS_SHIFT]
-body = { form = "{form}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-  "sh:{shslot}",
-], asm = "bics {dst}, {src}, {src2}, {shname} #{sh}", match = { shift = "{shcode}", nbit = 1 } }
+body = { form = "{form}", asm = "bics {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}, {shname} #{sh:{shslot}}", match = { shift = "{shcode}", nbit = 1 } }
 rows = [
   { inst = "BICS_LSLX", form = "ALUSH6", opcode = 0xEA, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
   { inst = "BICS_LSRX", form = "ALUSH6", opcode = 0xEA, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
@@ -3621,12 +3545,7 @@ rows = [
   { inst = "BICS_RORW", form = "ALUSH5", opcode = 0x6A, slot = "r32", shslot = "imm5", shname = "ror", shcode = 3 },
 ]
 [family.ORR_SHIFT]
-body = { form = "{form}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-  "sh:{shslot}",
-], asm = "orr {dst}, {src}, {src2}, {shname} #{sh}", match = { shift = "{shcode}" } }
+body = { form = "{form}", asm = "orr {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}, {shname} #{sh:{shslot}}", match = { shift = "{shcode}" } }
 rows = [
   { inst = "ORR_LSLX", form = "ALUSH6", opcode = 0xAA, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
   { inst = "ORR_LSRX", form = "ALUSH6", opcode = 0xAA, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
@@ -3638,12 +3557,7 @@ rows = [
   { inst = "ORR_RORW", form = "ALUSH5", opcode = 0x2A, slot = "r32", shslot = "imm5", shname = "ror", shcode = 3 },
 ]
 [family.ORN_SHIFT]
-body = { form = "{form}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-  "sh:{shslot}",
-], asm = "orn {dst}, {src}, {src2}, {shname} #{sh}", match = { shift = "{shcode}", nbit = 1 } }
+body = { form = "{form}", asm = "orn {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}, {shname} #{sh:{shslot}}", match = { shift = "{shcode}", nbit = 1 } }
 rows = [
   { inst = "ORN_LSLX", form = "ALUSH6", opcode = 0xAA, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
   { inst = "ORN_LSRX", form = "ALUSH6", opcode = 0xAA, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
@@ -3655,12 +3569,7 @@ rows = [
   { inst = "ORN_RORW", form = "ALUSH5", opcode = 0x2A, slot = "r32", shslot = "imm5", shname = "ror", shcode = 3 },
 ]
 [family.EOR_SHIFT]
-body = { form = "{form}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-  "sh:{shslot}",
-], asm = "eor {dst}, {src}, {src2}, {shname} #{sh}", match = { shift = "{shcode}" } }
+body = { form = "{form}", asm = "eor {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}, {shname} #{sh:{shslot}}", match = { shift = "{shcode}" } }
 rows = [
   { inst = "EOR_LSLX", form = "ALUSH6", opcode = 0xCA, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
   { inst = "EOR_LSRX", form = "ALUSH6", opcode = 0xCA, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
@@ -3672,12 +3581,7 @@ rows = [
   { inst = "EOR_RORW", form = "ALUSH5", opcode = 0x4A, slot = "r32", shslot = "imm5", shname = "ror", shcode = 3 },
 ]
 [family.EON_SHIFT]
-body = { form = "{form}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-  "sh:{shslot}",
-], asm = "eon {dst}, {src}, {src2}, {shname} #{sh}", match = { shift = "{shcode}", nbit = 1 } }
+body = { form = "{form}", asm = "eon {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}, {shname} #{sh:{shslot}}", match = { shift = "{shcode}", nbit = 1 } }
 rows = [
   { inst = "EON_LSLX", form = "ALUSH6", opcode = 0xCA, slot = "r64", shslot = "imm6", shname = "lsl", shcode = 0 },
   { inst = "EON_LSRX", form = "ALUSH6", opcode = 0xCA, slot = "r64", shslot = "imm6", shname = "lsr", shcode = 1 },
@@ -3690,145 +3594,91 @@ rows = [
 ]
 # `ands`/`bics` 的**无后缀**形态（此前整族都没声明）。
 [family.ANDSREG]
-body = { form = "ALUREG", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "ands {dst}, {src}, {src2}" }
+body = { form = "ALUREG", opcode = "{opcode}", asm = "ands {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}" }
 rows = [
   { inst = "ANDSREGX", slot = "r64", opcode = 0xEA },
   { inst = "ANDSREGW", slot = "r32", opcode = 0x6A },
 ]
 [family.BICSREG]
-body = { form = "ALUREG", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "bics {dst}, {src}, {src2}", match = { nbit = 1 } }
+body = { form = "ALUREG", opcode = "{opcode}", asm = "bics {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}", match = { nbit = 1 } }
 rows = [
   { inst = "BICSREGX", slot = "r64", opcode = 0xEA },
   { inst = "BICSREGW", slot = "r32", opcode = 0x6A },
 ]
 [family.MOV]
-body = { group = "mov", form = "MOVR", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src2:{slot}",
-], asm = "mov {dst}, {src2}", match = { rn = 31 } }
+body = { group = "mov", form = "MOVR", opcode = "{opcode}", asm = "mov {dst:{slot}:out}, {src2:{slot}}", match = { rn = 31 } }
 rows = [
   { inst = "MOVX", slot = "r64", opcode = 0xAA, data_width = 64 },
   { inst = "MOVW", slot = "r32", opcode = 0x2A },
 ]
 [family.CMPIMM]
-body = { group = "cmp", form = "CMPIMM", opcode = "{opcode}", ops = [
-  "src:{slot}",
-  "imm:imm12u",
-], asm = "cmp {src}, #{imm}", match = { rd = 31 } }
+body = { group = "cmp", form = "CMPIMM", opcode = "{opcode}", asm = "cmp {src:{slot}}, #{imm:imm12u}", match = { rd = 31 } }
 rows = [
   { inst = "CMPIMMX", slot = "r64", opcode = 0xF1 },
   { inst = "CMPIMMW", slot = "r32", opcode = 0x71 },
 ]
 [family.CMNIMM]
-body = { group = "cmn", form = "CMPIMM", opcode = "{opcode}", ops = [
-  "src:{slot}",
-  "imm:imm12u",
-], asm = "cmn {src}, #{imm}", match = { rd = 31 } }
+body = { group = "cmn", form = "CMPIMM", opcode = "{opcode}", asm = "cmn {src:{slot}}, #{imm:imm12u}", match = { rd = 31 } }
 rows = [
   { inst = "CMNIMMX", slot = "r64", opcode = 0xB1 },
   { inst = "CMNIMMW", slot = "r32", opcode = 0x31 },
 ]
 [family.CMPREG]
-body = { group = "cmp", form = "CMPREG", opcode = "{opcode}", ops = [
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "cmp {src}, {src2}", match = { rd = 31 } }
+body = { group = "cmp", form = "CMPREG", opcode = "{opcode}", asm = "cmp {src:{slot}}, {src2:{slot}}", match = { rd = 31 } }
 rows = [
   { inst = "CMPREGX", slot = "r64", opcode = 0xEB },
   { inst = "CMPREGW", slot = "r32", opcode = 0x6B },
 ]
 [family.MOVZ]
-body = { group = "movz", form = "MOVW16", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "imm:imm16u",
-], asm = "movz {dst}, #{imm}", match = { hw = 0 } }
+body = { group = "movz", form = "MOVW16", opcode = "{opcode}", asm = "movz {dst:{slot}:out}, #{imm:imm16u}", match = { hw = 0 } }
 rows = [
   { inst = "MOVZX", slot = "r64", opcode = 0x1A5 },
   { inst = "MOVZW", slot = "r32", opcode = 0xA5 },
 ]
 [family.MOVN]
-body = { group = "movn", form = "MOVW16", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "imm:imm16u",
-], asm = "movn {dst}, #{imm}", match = { hw = 0 } }
+body = { group = "movn", form = "MOVW16", opcode = "{opcode}", asm = "movn {dst:{slot}:out}, #{imm:imm16u}", match = { hw = 0 } }
 rows = [
   { inst = "MOVNX", slot = "r64", opcode = 0x125 },
   { inst = "MOVNW", slot = "r32", opcode = 0x25 },
 ]
 [family.MOVK]
-body = { group = "movk", form = "MOVW16", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "imm:imm16u",
-], asm = "movk {dst}, #{imm}", match = { hw = 0 } }
+body = { group = "movk", form = "MOVW16", opcode = "{opcode}", asm = "movk {dst:{slot}:out}, #{imm:imm16u}", match = { hw = 0 } }
 rows = [
   { inst = "MOVKX", slot = "r64", opcode = 0x1E5 },
   { inst = "MOVKW", slot = "r32", opcode = 0xE5 },
 ]
 [family.MADD]
-body = { group = "madd", form = "MULADD", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "acc:{slot}",
-  "src2:{slot}",
-], asm = "madd {dst}, {src}, {src2}, {acc}" }
+body = { group = "madd", form = "MULADD", opcode = "{opcode}", asm = "madd {dst:{slot}:out#0}, {src:{slot}#1}, {src2:{slot}#3}, {acc:{slot}#2}" }
 rows = [
   { inst = "MADDX", slot = "r64", opcode = 0x4D8 },
   { inst = "MADDW", slot = "r32", opcode = 0xD8 },
 ]
 [family.MSUB]
-body = { group = "msub", form = "MULADD", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "acc:{slot}",
-  "src2:{slot}",
-], asm = "msub {dst}, {src}, {src2}, {acc}", match = { o0 = 1 } }
+body = { group = "msub", form = "MULADD", opcode = "{opcode}", asm = "msub {dst:{slot}:out#0}, {src:{slot}#1}, {src2:{slot}#3}, {acc:{slot}#2}", match = { o0 = 1 } }
 rows = [
   { inst = "MSUBX", slot = "r64", opcode = 0x4D8 },
   { inst = "MSUBW", slot = "r32", opcode = 0xD8 },
 ]
 [family.MUL]
-body = { group = "mul", form = "MUL3", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "mul {dst}, {src}, {src2}", match = { ra = 31 } }
+body = { group = "mul", form = "MUL3", opcode = "{opcode}", asm = "mul {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}", match = { ra = 31 } }
 rows = [
   { inst = "MULX", word_size = 64, slot = "r64", opcode = 0x4D8 },
   { inst = "MULW", word_size = 32, slot = "r32", opcode = 0xD8 },
 ]
 [family.SDIV]
-body = { group = "sdiv", form = "DIV2A", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "sdiv {dst}, {src}, {src2}", match = { op2d = 3 } }
+body = { group = "sdiv", form = "DIV2A", opcode = "{opcode}", asm = "sdiv {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}", match = { op2d = 3 } }
 rows = [
   { inst = "SDIVX", slot = "r64", opcode = 0x4D6 },
   { inst = "SDIVW", slot = "r32", opcode = 0xD6 },
 ]
 [family.UDIV]
-body = { group = "udiv", form = "DIV2A", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "src2:{slot}",
-], asm = "udiv {dst}, {src}, {src2}", match = { op2d = 2 } }
+body = { group = "udiv", form = "DIV2A", opcode = "{opcode}", asm = "udiv {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}", match = { op2d = 2 } }
 rows = [
   { inst = "UDIVX", slot = "r64", opcode = 0x4D6 },
   { inst = "UDIVW", slot = "r32", opcode = 0xD6 },
 ]
 [family.CBZ]
-body = { group = "cbz", form = "CBZF", opcode = "{opcode}", ops = [
-  "src:{slot}",
-  "target:off19",
-], asm = "cbz {src}, {target}" }
+body = { group = "cbz", form = "CBZF", opcode = "{opcode}", asm = "cbz {src:{slot}}, {target:off19}" }
 rows = [
   { inst = "CBZX", slot = "r64", opcode = 0xB4, roles = [
     "branch",
@@ -3836,10 +3686,7 @@ rows = [
   { inst = "CBZW", slot = "r32", opcode = 0x34 },
 ]
 [family.CBNZ]
-body = { group = "cbnz", form = "CBZF", opcode = "{opcode}", ops = [
-  "src:{slot}",
-  "target:off19",
-], asm = "cbnz {src}, {target}" }
+body = { group = "cbnz", form = "CBZF", opcode = "{opcode}", asm = "cbnz {src:{slot}}, {target:off19}" }
 rows = [
   { inst = "CBNZX", slot = "r64", opcode = 0xB5 },
   { inst = "CBNZW", slot = "r32", opcode = 0x35 },
@@ -3847,108 +3694,64 @@ rows = [
 # TBZ/TBNZ：位序号是**一个操作数摊到两个位域**（`encode = "slice"` 的位切片），
 # 目标仍是 label 槽（`unit = 4`）——数字写法 `#32764` 与标签写法 `foo` 共用一条。
 [family.TBZ]
-body = { form = "TBZ", opcode = "{opcode}", ops = [
-  "src:{slot}",
-  "bit:{bitslot}",
-  "target:off14",
-], asm = "tbz {src}, #{bit}, {target}" }
+body = { form = "TBZ", opcode = "{opcode}", asm = "tbz {src:{slot}}, #{bit:{bitslot}}, {target:off14}" }
 rows = [
   { inst = "TBZX", slot = "r64", bitslot = "bitpos64", opcode = 0x36 },
   { inst = "TBZW", slot = "r32", bitslot = "bitpos32", opcode = 0x36 },
 ]
 [family.TBNZ]
-body = { form = "TBZ", opcode = "{opcode}", ops = [
-  "src:{slot}",
-  "bit:{bitslot}",
-  "target:off14",
-], asm = "tbnz {src}, #{bit}, {target}" }
+body = { form = "TBZ", opcode = "{opcode}", asm = "tbnz {src:{slot}}, #{bit:{bitslot}}, {target:off14}" }
 rows = [
   { inst = "TBNZX", slot = "r64", bitslot = "bitpos64", opcode = 0x37 },
   { inst = "TBNZW", slot = "r32", bitslot = "bitpos32", opcode = 0x37 },
 ]
 [family.ANDIMM]
-body = { form = "LOGIMM", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "imm:{islot}",
-], asm = "and {dst}, {src}, #{imm}" }
+body = { form = "LOGIMM", opcode = "{opcode}", asm = "and {dst:{slot}:out}, {src:{slot}}, #{imm:{islot}}" }
 rows = [
   { inst = "ANDIMMX", slot = "r64", islot = "logicimm64", opcode = 0x124 },
   { inst = "ANDIMMW", slot = "r32", islot = "logicimm32", opcode = 0x024 },
 ]
 
 [family.ORRIMM]
-body = { form = "LOGIMM", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "imm:{islot}",
-], asm = "orr {dst}, {src}, #{imm}" }
+body = { form = "LOGIMM", opcode = "{opcode}", asm = "orr {dst:{slot}:out}, {src:{slot}}, #{imm:{islot}}" }
 rows = [
   { inst = "ORRIMMX", slot = "r64", islot = "logicimm64", opcode = 0x164 },
   { inst = "ORRIMMW", slot = "r32", islot = "logicimm32", opcode = 0x064 },
 ]
 
 [family.EORIMM]
-body = { form = "LOGIMM", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "imm:{islot}",
-], asm = "eor {dst}, {src}, #{imm}" }
+body = { form = "LOGIMM", opcode = "{opcode}", asm = "eor {dst:{slot}:out}, {src:{slot}}, #{imm:{islot}}" }
 rows = [
   { inst = "EORIMMX", slot = "r64", islot = "logicimm64", opcode = 0x1A4 },
   { inst = "EORIMMW", slot = "r32", islot = "logicimm32", opcode = 0x0A4 },
 ]
 
 [family.ANDSIMM]
-body = { form = "LOGIMM", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "imm:{islot}",
-], asm = "ands {dst}, {src}, #{imm}" }
+body = { form = "LOGIMM", opcode = "{opcode}", asm = "ands {dst:{slot}:out}, {src:{slot}}, #{imm:{islot}}" }
 rows = [
   { inst = "ANDSIMMX", slot = "r64", islot = "logicimm64", opcode = 0x1E4 },
   { inst = "ANDSIMMW", slot = "r32", islot = "logicimm32", opcode = 0x0E4 },
 ]
 [family.CSEL]
-body = { group = "csel", form = "CSEL4", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "cc:cond4",
-  "src2:{slot}",
-], asm = "csel {dst}, {src}, {src2}, {cc}" }
+body = { group = "csel", form = "CSEL4", opcode = "{opcode}", asm = "csel {dst:{slot}:out#0}, {src:{slot}#1}, {src2:{slot}#3}, {cc:cond4#2}" }
 rows = [
   { inst = "CSELX", slot = "r64", opcode = 0x4D4 },
   { inst = "CSELW", slot = "r32", opcode = 0xD4 },
 ]
 [family.CSINC]
-body = { group = "csinc", form = "CSEL4", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "cc:cond4",
-  "src2:{slot}",
-], asm = "csinc {dst}, {src}, {src2}, {cc}", match = { csop2 = 1 } }
+body = { group = "csinc", form = "CSEL4", opcode = "{opcode}", asm = "csinc {dst:{slot}:out#0}, {src:{slot}#1}, {src2:{slot}#3}, {cc:cond4#2}", match = { csop2 = 1 } }
 rows = [
   { inst = "CSINCX", slot = "r64", opcode = 0x4D4 },
   { inst = "CSINCW", slot = "r32", opcode = 0xD4 },
 ]
 [family.CSINV]
-body = { group = "csinv", form = "CSEL4", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "cc:cond4",
-  "src2:{slot}",
-], asm = "csinv {dst}, {src}, {src2}, {cc}" }
+body = { group = "csinv", form = "CSEL4", opcode = "{opcode}", asm = "csinv {dst:{slot}:out#0}, {src:{slot}#1}, {src2:{slot}#3}, {cc:cond4#2}" }
 rows = [
   { inst = "CSINVX", slot = "r64", opcode = 0x6D4 },
   { inst = "CSINVW", slot = "r32", opcode = 0x2D4 },
 ]
 [family.CSNEG]
-body = { group = "csneg", form = "CSEL4", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "cc:cond4",
-  "src2:{slot}",
-], asm = "csneg {dst}, {src}, {src2}, {cc}", match = { csop2 = 1 } }
+body = { group = "csneg", form = "CSEL4", opcode = "{opcode}", asm = "csneg {dst:{slot}:out#0}, {src:{slot}#1}, {src2:{slot}#3}, {cc:cond4#2}", match = { csop2 = 1 } }
 rows = [
   { inst = "CSNEGX", slot = "r64", opcode = 0x6D4 },
   { inst = "CSNEGW", slot = "r32", opcode = 0x2D4 },
@@ -3962,45 +3765,25 @@ rows = [
 # 汇编面用独立助记符 `cself`/`csincf`/`csinvf`/`csnegf` ✗：与整数形态**同文本同签名**的
 # 双形态会被歧义 lint 判成真歧义（文本层分不出条件银行 ✗）⇒ 必须可分辨 ✗。
 [family.CSEL_FLAG]
-body = { group = "cself", form = "CSEL4", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "cc:flag4",
-  "src2:{slot}",
-], asm = "cself {dst}, {src}, {src2}, {cc}" }
+body = { group = "cself", form = "CSEL4", opcode = "{opcode}", asm = "cself {dst:{slot}:out#0}, {src:{slot}#1}, {src2:{slot}#3}, {cc:flag4#2}" }
 rows = [
   { inst = "CSELX_F", slot = "r64", opcode = 0x4D4 },
   { inst = "CSELW_F", slot = "r32", opcode = 0xD4 },
 ]
 [family.CSINC_FLAG]
-body = { group = "csincf", form = "CSEL4", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "cc:flag4",
-  "src2:{slot}",
-], asm = "csincf {dst}, {src}, {src2}, {cc}", match = { csop2 = 1 } }
+body = { group = "csincf", form = "CSEL4", opcode = "{opcode}", asm = "csincf {dst:{slot}:out#0}, {src:{slot}#1}, {src2:{slot}#3}, {cc:flag4#2}", match = { csop2 = 1 } }
 rows = [
   { inst = "CSINCX_F", slot = "r64", opcode = 0x4D4 },
   { inst = "CSINCW_F", slot = "r32", opcode = 0xD4 },
 ]
 [family.CSINV_FLAG]
-body = { group = "csinvf", form = "CSEL4", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "cc:flag4",
-  "src2:{slot}",
-], asm = "csinvf {dst}, {src}, {src2}, {cc}" }
+body = { group = "csinvf", form = "CSEL4", opcode = "{opcode}", asm = "csinvf {dst:{slot}:out#0}, {src:{slot}#1}, {src2:{slot}#3}, {cc:flag4#2}" }
 rows = [
   { inst = "CSINVX_F", slot = "r64", opcode = 0x6D4 },
   { inst = "CSINVW_F", slot = "r32", opcode = 0x2D4 },
 ]
 [family.CSNEG_FLAG]
-body = { group = "csnegf", form = "CSEL4", opcode = "{opcode}", ops = [
-  "dst:{slot}:out",
-  "src:{slot}",
-  "cc:flag4",
-  "src2:{slot}",
-], asm = "csnegf {dst}, {src}, {src2}, {cc}", match = { csop2 = 1 } }
+body = { group = "csnegf", form = "CSEL4", opcode = "{opcode}", asm = "csnegf {dst:{slot}:out#0}, {src:{slot}#1}, {src2:{slot}#3}, {cc:flag4#2}", match = { csop2 = 1 } }
 rows = [
   { inst = "CSNEGX_F", slot = "r64", opcode = 0x6D4 },
   { inst = "CSNEGW_F", slot = "r32", opcode = 0x2D4 },
@@ -4011,9 +3794,7 @@ rows = [
 # `cs`/`cc` 的**同码别名**（表里已声明），故各给一行让汇编器也认这两个拼写
 # （反汇编只会渲染首选名 `cs`/`cc`）。表里的 `al`/`nv` 供 CSEL 族使用。
 [family.BCOND]
-body = { form = "BCF", opcode = 0x54, ops = [
-  "target:off19",
-], asm = "b.{cname} {target}" }
+body = { form = "BCF", opcode = 0x54, asm = "b.{cname} {target:off19}" }
 rows = [
   { inst = "B_EQ", cname = "eq", match = { bcond = 0 } },
   { inst = "B_NE", cname = "ne", match = { bcond = 1 } },
@@ -4037,166 +3818,103 @@ rows = [
 ]
 
 [family.MOVIMM]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 0 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16u",
-], asm = "mov {dst}, #{imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 0 }, asm = "mov {dst:{slot}:out}, #{imm:imm16u}" }
 rows = [
   { inst = "MOVXIMM", slot = "r64", opcode = 0x1A5 },
   { inst = "MOVWIMM", slot = "r32", opcode = 0xA5 },
 ]
 [family.MOVXIMM_SYM_G0_FAM]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 0 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g0",
-], asm = "mov {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 0 }, asm = "mov {dst:{slot}:out}, {imm:imm16g0}" }
 rows = [{ inst = "MOVXIMM_SYM_G0", slot = "r64", opcode = 0x1A5 }]
 [family.MOVXIMM_SYM_G1_FAM]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 1 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g1",
-], asm = "mov {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 1 }, asm = "mov {dst:{slot}:out}, {imm:imm16g1}" }
 rows = [{ inst = "MOVXIMM_SYM_G1", slot = "r64", opcode = 0x1A5 }]
 [family.MOVXIMM_SYM_G2_FAM]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 2 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g2",
-], asm = "mov {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 2 }, asm = "mov {dst:{slot}:out}, {imm:imm16g2}" }
 rows = [{ inst = "MOVXIMM_SYM_G2", slot = "r64", opcode = 0x1A5 }]
 [family.MOVXIMM_SYM_G3_FAM]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 3 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g3",
-], asm = "mov {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 3 }, asm = "mov {dst:{slot}:out}, {imm:imm16g3}" }
 rows = [{ inst = "MOVXIMM_SYM_G3", slot = "r64", opcode = 0x1A5 }]
 [family.MOVWIMM_SYM_G0_FAM]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 0 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g0",
-], asm = "mov {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 0 }, asm = "mov {dst:{slot}:out}, {imm:imm16g0}" }
 rows = [{ inst = "MOVWIMM_SYM_G0", slot = "r32", opcode = 0xA5 }]
 [family.MOVWIMM_SYM_G1_FAM]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 1 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g1",
-], asm = "mov {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 1 }, asm = "mov {dst:{slot}:out}, {imm:imm16g1}" }
 rows = [{ inst = "MOVWIMM_SYM_G1", slot = "r32", opcode = 0xA5 }]
 [family.MOVWIMM_SYM_G2_FAM]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 2 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g2",
-], asm = "mov {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 2 }, asm = "mov {dst:{slot}:out}, {imm:imm16g2}" }
 rows = [{ inst = "MOVWIMM_SYM_G2", slot = "r32", opcode = 0xA5 }]
 [family.MOVWIMM_SYM_G3_FAM]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 3 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g3",
-], asm = "mov {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 3 }, asm = "mov {dst:{slot}:out}, {imm:imm16g3}" }
 rows = [{ inst = "MOVWIMM_SYM_G3", slot = "r32", opcode = 0xA5 }]
 [family.MOVZ_RELO_G0]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 0 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g0",
-], asm = "movz {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 0 }, asm = "movz {dst:{slot}:out}, {imm:imm16g0}" }
 rows = [
   { inst = "MOVZX_G0_RELO", slot = "r64", opcode = 0x1A5 },
   { inst = "MOVZW_G0_RELO", slot = "r32", opcode = 0xA5 },
 ]
 [family.MOVZ_RELO_G1]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 1 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g1",
-], asm = "movz {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 1 }, asm = "movz {dst:{slot}:out}, {imm:imm16g1}" }
 rows = [
   { inst = "MOVZX_G1_RELO", slot = "r64", opcode = 0x1A5 },
   { inst = "MOVZW_G1_RELO", slot = "r32", opcode = 0xA5 },
 ]
 [family.MOVZ_RELO_G2]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 2 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g2",
-], asm = "movz {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 2 }, asm = "movz {dst:{slot}:out}, {imm:imm16g2}" }
 rows = [
   { inst = "MOVZX_G2_RELO", slot = "r64", opcode = 0x1A5 },
   { inst = "MOVZW_G2_RELO", slot = "r32", opcode = 0xA5 },
 ]
 [family.MOVZ_RELO_G3]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 3 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g3",
-], asm = "movz {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 3 }, asm = "movz {dst:{slot}:out}, {imm:imm16g3}" }
 rows = [
   { inst = "MOVZX_G3_RELO", slot = "r64", opcode = 0x1A5 },
   { inst = "MOVZW_G3_RELO", slot = "r32", opcode = 0xA5 },
 ]
 [family.MOVK_RELO_G0]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 0 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g0",
-], asm = "movk {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 0 }, asm = "movk {dst:{slot}:out}, {imm:imm16g0}" }
 rows = [
   { inst = "MOVKX_G0_RELO", slot = "r64", opcode = 0x1E5 },
   { inst = "MOVKW_G0_RELO", slot = "r32", opcode = 0xE5 },
 ]
 [family.MOVK_RELO_G1]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 1 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g1",
-], asm = "movk {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 1 }, asm = "movk {dst:{slot}:out}, {imm:imm16g1}" }
 rows = [
   { inst = "MOVKX_G1_RELO", slot = "r64", opcode = 0x1E5 },
   { inst = "MOVKW_G1_RELO", slot = "r32", opcode = 0xE5 },
 ]
 [family.MOVK_RELO_G2]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 2 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g2",
-], asm = "movk {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 2 }, asm = "movk {dst:{slot}:out}, {imm:imm16g2}" }
 rows = [
   { inst = "MOVKX_G2_RELO", slot = "r64", opcode = 0x1E5 },
   { inst = "MOVKW_G2_RELO", slot = "r32", opcode = 0xE5 },
 ]
 [family.MOVK_RELO_G3]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 3 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g3",
-], asm = "movk {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 3 }, asm = "movk {dst:{slot}:out}, {imm:imm16g3}" }
 rows = [
   { inst = "MOVKX_G3_RELO", slot = "r64", opcode = 0x1E5 },
   { inst = "MOVKW_G3_RELO", slot = "r32", opcode = 0xE5 },
 ]
 [family.MOVN_RELO_G0]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 0 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g0",
-], asm = "movn {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 0 }, asm = "movn {dst:{slot}:out}, {imm:imm16g0}" }
 rows = [
   { inst = "MOVNX_G0_RELO", slot = "r64", opcode = 0x125 },
   { inst = "MOVNW_G0_RELO", slot = "r32", opcode = 0x25 },
 ]
 [family.MOVN_RELO_G1]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 1 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g1",
-], asm = "movn {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 1 }, asm = "movn {dst:{slot}:out}, {imm:imm16g1}" }
 rows = [
   { inst = "MOVNX_G1_RELO", slot = "r64", opcode = 0x125 },
   { inst = "MOVNW_G1_RELO", slot = "r32", opcode = 0x25 },
 ]
 [family.MOVN_RELO_G2]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 2 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g2",
-], asm = "movn {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 2 }, asm = "movn {dst:{slot}:out}, {imm:imm16g2}" }
 rows = [
   { inst = "MOVNX_G2_RELO", slot = "r64", opcode = 0x125 },
   { inst = "MOVNW_G2_RELO", slot = "r32", opcode = 0x25 },
 ]
 [family.MOVN_RELO_G3]
-body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 3 }, ops = [
-  "dst:{slot}:out",
-  "imm:imm16g3",
-], asm = "movn {dst}, {imm}" }
+body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 3 }, asm = "movn {dst:{slot}:out}, {imm:imm16g3}" }
 rows = [
   { inst = "MOVNX_G3_RELO", slot = "r64", opcode = 0x125 },
   { inst = "MOVNW_G3_RELO", slot = "r32", opcode = 0x25 },
