@@ -27,6 +27,7 @@ resolver = "3"
 name = "code-forge"
 version = "0.2.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 description = "Code Forge: specification-driven compiler infrastructure — write language grammars + ISA definitions, get a working compiler"
 
 [dependencies]
