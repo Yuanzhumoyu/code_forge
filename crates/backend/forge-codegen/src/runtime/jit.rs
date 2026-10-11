@@ -929,6 +929,55 @@ mod tests {
         assert_eq!(got, 1, "lane0 f32 1.5 → fptosi → 1");
     }
 
+    /// A1′：**按值聚合形参**（24 字节；win64 `aggregate size_gt 8 ⇒ indirect`）——
+    /// IR 侧形参展开成 `ptr`（`expand_large_agg_params` 的 by-ref 档）+ 使用处按地址读
+    /// （`extractvalue` → 偏移 + load）；Rust 侧按 `extern "C" fn(*const u64)` 调，
+    /// 正对应 Win64 psABI 的"指向调用方副本的指针"。
+    ///
+    /// 用 `compile_module`（而非 `add_function`）：后者的 ctx 在内部新建，
+    /// 聚合类型必须是**同一个 store** 里的条目。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_agg_by_value_param_win64() {
+        ensure_registered();
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
+        // 24 字节按值聚合：取中间那个 i64 原样返回
+        let src = r#"
+define i64 @agg_mid({i64, i64, i64} %s) {
+  %entry:
+    %v = extractvalue {i64, i64, i64} %s, 1
+    ret i64 %v
+}
+"#;
+        let module = forge_ir::text::parse_module(src).expect("parse");
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn(*const u64) -> i64 = jit.get_fn("agg_mid").expect("get_fn");
+        let data = [11u64, 22, 33];
+        assert_eq!(f(data.as_ptr()), 22, "按值聚合的第 1 个字段应原样返回");
+
+        // 调用方一侧：聚合**字面量**按值传给同一个被调方（走 `expand_agg_call_args` 的
+        // by-ref 档：帧内副本 + 逐段 store + 传指针），真跑验证。
+        let src_caller = r#"
+define i64 @agg_mid({i64, i64, i64} %s) {
+  %entry:
+    %v = extractvalue {i64, i64, i64} %s, 1
+    ret i64 %v
+}
+define i64 @caller() {
+  %entry:
+    %r = call i64 @agg_mid({i64, i64, i64} {i64 11, i64 22, i64 33})
+    ret i64 %r
+}
+"#;
+        let module_caller = forge_ir::text::parse_module(src_caller).expect("parse");
+        let mut jit_caller = JitCompiler::new(x86::TargetMachine::new());
+        jit_caller
+            .compile_module(&module_caller)
+            .expect("compile module caller");
+        let g: extern "C" fn() -> i64 = jit_caller.get_fn("caller").expect("get_fn");
+        assert_eq!(g(), 22, "调用方按值聚合实参应原样传到被调方");
+    }
+
     /// B1: IR Call 传宽向量实参（>16 字节）——调用方侧 by-ref 栈拷贝 + 传
     /// 指针（S1），callee 收参 + lane0 提取 → 结果值验证。
     #[cfg(target_arch = "x86_64")]

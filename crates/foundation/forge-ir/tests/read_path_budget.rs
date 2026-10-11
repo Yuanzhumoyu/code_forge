@@ -65,8 +65,8 @@ const BUDGETS: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/agg_expand.rs",
-        13,
-        "has_* 检测族（每条判定各取一次读锁）+ 本轮迁入的 rewrite 族（各入口一次取锁，与 has_* 同模式）",
+        14,
+        "has_* 检测族（每条判定各取一次读锁）+ rewrite 族（各入口一次取锁）+ by-ref 档的字节数快照（`rewrite_agg_value_uses` **入口**取一次，使用点循环里不再取）",
     ),
     (
         "crates/frontend/forge-isa-dsl/src/dsl/codegen/lowering.rs",

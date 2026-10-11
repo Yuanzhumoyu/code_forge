@@ -76,8 +76,13 @@ fn invoke_landingpad_compile_rejected() {
 }
 
 #[test]
-fn agg_param_over_16_bytes_rejected() {
-    // >16 字节聚合常量参数：SysV 栈传递未实现 → Unsupported。
+fn agg_param_over_16_bytes_routes_by_convention() {
+    // 32 字节聚合按值形参：**落点由约定决定**（A1′ 起不再按本地阈值一律拒绝）
+    // - win64（这台机器上 `c` 的别名）⇒ `aggregate size_gt 8 ⇒ indirect`，即
+    //   "调用方副本 + 传指针" ⇒ 现在能编译；
+    // - sysv64 ⇒ `aggregate size_gt 16 ⇒ stack`（整块进传出参数区），发射侧尚未接
+    //   ⇒ 必须 fail-closed。
+    use forge_ir::ir::types::{CallConvId, ConvName};
     use forge_ir::text::parser::parse_module;
     ensure_registered();
     let src = r#"
@@ -92,11 +97,34 @@ define i32 @main() {
 }
 "#;
     let module = parse_module(src).expect("parse");
-    let func = module.iter_functions().next().unwrap().clone();
-    let result = FunctionCompiler::new(TargetMachine::new()).compile_raw(&func);
+    // win64：被调方（形参转 `ptr` + 按地址读）能编译
+    let callee = module.iter_functions().next().unwrap().clone();
+    let ok = FunctionCompiler::new(TargetMachine::new()).compile_raw(&callee);
     assert!(
-        matches!(&result, Err(e) if format!("{e}").contains("Unsupported")),
-        ">16 字节聚合传参应 Unsupported，got: {:?}",
-        result.map(|c| c.code.len())
+        ok.is_ok(),
+        "win64 上 32B 聚合按值形参应走「副本 + 指针」，got: {:?}",
+        ok.map(|c| c.code.len())
+    );
+    // win64：调用方（副本 + 逐段 store + 传指针）也能编译
+    let caller = module.iter_functions().nth(1).unwrap().clone();
+    let ok_caller = FunctionCompiler::new(TargetMachine::new()).compile_raw(&caller);
+    assert!(
+        ok_caller.is_ok(),
+        "win64 上 32B 聚合按值实参应走「调用方副本 + 指针」，got: {:?}",
+        ok_caller.map(|c| c.code.len())
+    );
+    // sysv64：同一份 IR 必须仍然 fail-closed（栈传递未实现）。
+    // 注意口径：管线读的是 **`Function.calling_convention`** 字段（与 `abi_setup::setup_conv`
+    // 同源），签名里的约定只是它的来源——两处一起改，避免测试自己骗自己。
+    let mut sysv_callee = callee.clone();
+    sysv_callee.calling_convention = CallConvId::Builtin(ConvName::SysV64);
+    let mut sig = sysv_callee.types.borrow().get_signature(sysv_callee.signature).clone();
+    sig.calling_convention = CallConvId::Builtin(ConvName::SysV64);
+    sysv_callee.signature = sysv_callee.types.borrow_mut().register_signature(sig);
+    let bad = FunctionCompiler::new(TargetMachine::new()).compile_raw(&sysv_callee);
+    assert!(
+        matches!(&bad, Err(e) if format!("{e}").contains("传出参数区")),
+        "sysv64 上 32B 聚合仍是栈传递（未实现）⇒ 应 Unsupported，got: {:?}",
+        bad.map(|c| c.code.len())
     );
 }

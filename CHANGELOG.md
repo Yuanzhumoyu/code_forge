@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — forge-codegen：win64 按值聚合传参（形参 + 实参，A1′）
+
++ **>8 字节聚合按值传参在 win64 上走通了**（`docs/forge-ir/backlog.md` #6 的 A1′）：此前 `agg_expand` 用写死的 `size > 16` 一律拒绝（与约定无关）；现在改成**读约定**——新增只读落点探针 `agg_arg_place`（用 `forge_abi` 的单参 `plan_for_shapes` 问"这份约定把 `size` 字节聚合放哪"；聚合规则是纯尺寸判据，与寄存器耗尽无关，所以单参探针与真实计划一致）。据此分流：
+  + **win64（`aggregate size_gt 8 ⇒ indirect`）**：两端统一变换成"**调用方帧内副本 + 传 `ptr`**"——被调方形参改 `ptr` 并把"聚合住在该指针指向的内存"登记进 `agg_slots`（`extractvalue` 走 GEP+load、store 走向内存拷贝、传参传该指针）；调用方 `Alloca` 副本 + 逐段 store + 传副本指针。机器级效果与 Win64 psABI 的"指向调用方副本的指针"一致，且**顺带修掉** 9–16 字节聚合此前被拆成两个寄存器传的偏差。
+  + **sysv64（`aggregate size_gt 16 ⇒ stack`）**：仍是明确 `Unsupported`（整块进传出参数区，发射侧未接 = A2′）。
+  + **实现取舍（实测得出）**：**不给**被调方的 `ptr` 形参写 `byval` 属性——引擎对 byval 落点给 `Indirect`，而生成物 `move_args` 的 `Indirect` 收参是"从指针 load 出值"（向量语义，要求值有寄存器表示），聚合要的是指针本身进参数寄存器。
+  + **顺带修一个会静默丢数据的坑**：`rewrite_agg_value_uses` 的 `Store`/`Call` 支此前只认段值列表——by-ref 档（值在内存、段值列表为空）会**一条 store/一个实参都不生成**。现在 `Store` 走"从源地址逐段拷到目标"、`Call` 把实参换成副本指针，`Return`（按值返回在内存里的聚合）显式 fail-closed（A1′-ret 才接）。
+  + 验收：`forge-codegen` 的 `test_jit_agg_by_value_param_win64`（24 字节按值形参 + 聚合字面量实参，**两个方向真跑**）与 `unsupported_inst_negative.rs::agg_param_over_16_bytes_routes_by_convention`（win64 通过 / sysv64 拒绝）；`cargo test -p forge-codegen --features jit` 全绿。
+
 ### Changed (2026-10-08) — forge-codegen：`agg_expand` 第三批迁移（rewrite 族 4 函数）
 
 + **`memoryize_from_segs` / `memoryize_from_addr` / `rewrite_agg_value_uses` / `move_to_front` 从 `pipeline/compiler.rs` 迁入 `pipeline/agg_expand.rs`**（第四十四轮记录、第四十六轮"剩余状态"里的"第三批"，`docs/forge-ir/backlog.md` #1）。搬移用逐行切片（字节精确，非人工转写）：`compiler.rs` 2940 → 2544 行、`agg_expand.rs` 177 → 574 行（含文档注释块）；四个函数改 `pub(crate)`，调用点统一经 `use crate::pipeline::agg_expand::{…}` 引入；`agg_expand.rs` 里"expand_* 族将按批迁入"的占位注释改成实况（仍留 `compiler.rs` 的是 `expand_*` 执行族，与 `CompileState` 时序耦合更紧）。

@@ -329,6 +329,11 @@ pub(crate) fn rewrite_agg_value_uses(
             }
         }
     }
+    // by-ref 档（值在内存）的字节数：**入口取一次锁**，使用点循环里不再逐次取
+    //（v3 S3 读路径纪律；`read_path_budget` 守卫钉住处数）。
+    let mem_size: Option<usize> = agg_slots
+        .get(old_v)
+        .map(|&(_, t)| func.types.borrow().size_bytes(t) as usize);
     // 逆序处理（后面的使用先——插入不影响更前 pos）
     for use_pos in uses.into_iter().rev() {
         let inst = &func.dfg.inst_data(use_pos.inst);
@@ -474,8 +479,97 @@ pub(crate) fn rewrite_agg_value_uses(
                 move_to_front(func, use_pos.block, use_pos.pos, &local_gen);
             }
             Opcode::Store => {
-                let addr = inst.operands[1];
-                let mut prev_addr = addr;
+                let dst = inst.operands[1];
+                // **按地址源**（by-ref 档：聚合住在指针指向的内存）——逐 8 字节从源拷到目标。
+                // 必须先查 `agg_slots`：只按 `segs` 走会在"聚合在内存、段值列表为空"时
+                // **一条 store 都不生成**（静默丢数据）。
+                if let Some(&(src, _slot_ty)) = agg_slots.get(inst.operands[0]) {
+                    // 字节数在入口已算好（无需再取锁）；登记过就一定算得出来
+                    let size = mem_size.ok_or_else(|| {
+                        IrError::Unsupported("聚合 store：by-ref 值缺字节数（入口未登记）".into())
+                    })?;
+                    let mut local_gen: Vec<Inst> = Vec::new();
+                    let mut cur_src = src;
+                    let mut cur_dst = dst;
+                    let mut off = 0usize;
+                    while off < size {
+                        let ld = func.make_inst(
+                            Opcode::Load,
+                            use_pos.block,
+                            smallvec::smallvec![cur_src],
+                            smallvec::smallvec![],
+                            &[TypeId::I64],
+                            InstFlags::NONE,
+                        );
+                        let lv = func.dfg.inst_data(ld).results[0];
+                        local_gen.push(ld);
+                        let st = func.make_inst(
+                            Opcode::Store,
+                            use_pos.block,
+                            smallvec::smallvec![lv, cur_dst],
+                            smallvec::smallvec![],
+                            &[],
+                            InstFlags::SIDE_EFFECT,
+                        );
+                        local_gen.push(st);
+                        off += 8;
+                        if off < size {
+                            let cid = func.constants.insert_int(8, 64);
+                            let ci = func.make_inst(
+                                Opcode::Iconst,
+                                use_pos.block,
+                                smallvec::smallvec![],
+                                smallvec::smallvec![Immediate::Const(cid)],
+                                &[TypeId::I64],
+                                InstFlags::NONE,
+                            );
+                            let cv = func.dfg.inst_data(ci).results[0];
+                            local_gen.push(ci);
+                            let sa = func.make_inst(
+                                Opcode::Iadd,
+                                use_pos.block,
+                                smallvec::smallvec![cur_src, cv],
+                                smallvec::smallvec![],
+                                &[TypeId::PTR],
+                                InstFlags::NONE,
+                            );
+                            cur_src = func.dfg.inst_data(sa).results[0];
+                            local_gen.push(sa);
+                            let cid2 = func.constants.insert_int(8, 64);
+                            let ci2 = func.make_inst(
+                                Opcode::Iconst,
+                                use_pos.block,
+                                smallvec::smallvec![],
+                                smallvec::smallvec![Immediate::Const(cid2)],
+                                &[TypeId::I64],
+                                InstFlags::NONE,
+                            );
+                            let cv2 = func.dfg.inst_data(ci2).results[0];
+                            local_gen.push(ci2);
+                            let da = func.make_inst(
+                                Opcode::Iadd,
+                                use_pos.block,
+                                smallvec::smallvec![cur_dst, cv2],
+                                smallvec::smallvec![],
+                                &[TypeId::PTR],
+                                InstFlags::NONE,
+                            );
+                            cur_dst = func.dfg.inst_data(da).results[0];
+                            local_gen.push(da);
+                        }
+                    }
+                    let __tomb = use_pos.inst;
+                    func.tombstone_inst(__tomb);
+                    move_to_front(func, use_pos.block, use_pos.pos, &local_gen);
+                    continue;
+                }
+                // **段值源**：既没有地址也没有段值 ⇒ 明确报错（不静默丢）
+                if segs.is_empty() {
+                    return Err(IrError::Unsupported(
+                        "聚合 store：值既不在 slot 映射里、也没有段值（by-ref 档漏登记）".into(),
+                    ));
+                }
+                let mut prev_addr = dst;
                 let mut local_gen: Vec<Inst> = Vec::new();
                 for (k, s) in segs.iter().enumerate() {
                     let st = func.make_inst(
@@ -522,6 +616,21 @@ pub(crate) fn rewrite_agg_value_uses(
                     .iter()
                     .position(|&v| v == old_v)
                     .ok_or_else(|| IrError::Unsupported("call 参数重写：未找到".into()))?;
+                // **按地址源**（by-ref 档）：把该实参换成"指向聚合副本的指针"。两端形状都是
+                // `ptr` ⇒ 落点都是 `Reg`（**不**走 byval/Indirect 那条"从指针 load 出值"的
+                // 向量路径——那条要求值的寄存器表示，聚合没有）。
+                if let Some(&(addr, _ty)) = agg_slots.get(old_v) {
+                    let mut ops = func.dfg.inst_data(use_pos.inst).operands.clone();
+                    ops[op_idx] = addr;
+                    func.dfg.inst_mut(use_pos.inst).operands = ops;
+                    func.refresh_inst_uses(use_pos.inst);
+                    continue;
+                }
+                if segs.is_empty() {
+                    return Err(IrError::Unsupported(
+                        "call 聚合实参：值既不在 slot 映射里、也没有段值".into(),
+                    ));
+                }
                 let mut ops = func.dfg.inst_data(use_pos.inst).operands.clone();
                 ops.remove(op_idx);
                 for (k, s) in segs.iter().enumerate() {
@@ -546,6 +655,18 @@ pub(crate) fn rewrite_agg_value_uses(
             continue;
         };
         if values.contains(&old_v) {
+            // by-ref 档（值在内存）按值返回：**发射侧尚未接** ⇒ fail-closed，
+            // 绝不静默丢掉返回值（A1′ 只做传参；返回是 A1′-ret）。
+            if agg_slots.get(old_v).is_some() {
+                return Err(IrError::Unsupported(
+                    "按值返回聚合：该值在内存（by-ref 档），返回路径尚未接（A1′-ret）".into(),
+                ));
+            }
+            if segs.is_empty() {
+                return Err(IrError::Unsupported(
+                    "按值返回聚合：值既不在 slot 映射里、也没有段值".into(),
+                ));
+            }
             let mut new_vals: Vec<Value> = Vec::new();
             for &v in values {
                 if v == old_v {

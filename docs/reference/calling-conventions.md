@@ -118,6 +118,13 @@ TOML 数据，可继承（`parent = "c"`，整字段覆写，不是深合并）�
 3. **返回位与参数位可以不同**（`ret_classify`）：AAPCS64 的 >16B 聚合**当参数**是
    byval 指针、**当返回**是 x8 的 sret；Win64 同理（参数 byref、返回 RCX sret）。
    只写一份 `classify` 会把"返回值就是这个指针"当成事实。
+4. **>8B 聚合的 IR 表示由约定规则决定**（2026-10-08，A1′）：`compile.rs::agg_arg_place`
+   用单参 `plan_for_shapes` 探针问落点，据此把聚合**两端一致地**变换成"调用方帧内副本 +
+   传 `ptr`"（Win64 `aggregate size_gt 8 ⇒ indirect`）——机器码层就是 psABI 的"指向调用方
+   副本的指针"，因此**不给形参写 `byval` 属性**（引擎对 byval 落点给 `Indirect`，而生成物
+   `move_args` 的 `Indirect` 收参是"从指针 load 出值"，要求值有寄存器表示；聚合没有）。
+   规则落在栈上的（SysV `aggregate size_gt 16 ⇒ stack`）当前仍是明确 `Unsupported`；
+   按值**返回** >8B 聚合走 sret（`RetLoc::Indirect`）尚未接。
 
 ### 抽象名 `c` 怎么落地（`aliases`）
 

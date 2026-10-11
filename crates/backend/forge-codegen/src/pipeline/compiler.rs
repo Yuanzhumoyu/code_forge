@@ -49,38 +49,120 @@ use forge_ir::*;
 use std::collections::HashMap;
 
 
-/// 被调方大聚合参数（>8 ≤16 字节——SysV 整数寄存器路径）：签名拆开为
-/// ceil(size/8) 个 i64 参数（与调用方拆段一致），entry 块参数重建，旧参数值
-/// 使用处重写（extractvalue → 段值、store → 段 store、return/call → 段值）。
-fn expand_large_agg_params(func: &mut Function, agg_slots: &mut AggSlots) -> Result<(), IrError> {
+/// 大聚合实参/形参的**落点类别**（判据来自 `forge-abi` 的约定规则，不是本地写死的阈值）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum AggArgPlace {
+    /// 按引用（win64 `aggregate size_gt 8 ⇒ indirect via caller_stack_copy`）：
+    /// IR 侧统一表示成"**调用方自建副本 + 传指针**"——两端形状都是 `ptr` ⇒ 落点都是
+    /// `Reg`，位置自然一致；机器级效果与 Win64 psABI 相同（指针进第一个可用整数槽）。
+    ByRef,
+    /// 整块进传出参数区（sysv64 `aggregate size_gt 16 ⇒ stack`）——发射侧尚未接（A2′）。
+    Stack,
+    /// 寄存器传值（≤ 约定阈值）——现有拆段路径。
+    Registers,
+}
+
+/// 只读地问一次"这份约定下 `size` 字节的聚合实参落在哪"（单参探针）。
+///
+/// 聚合规则是**纯尺寸判据**（win64 `size_gt 8`、sysv64 `size_gt 16`），与寄存器是否
+/// 耗尽无关 ⇒ 单参探针与真实计划对同一个聚合实参给出的落点一致。探针 `members` 留空：
+/// 成员只参与 HFA（aapcs64）分类，win64/sysv64 的聚合档不看成员。
+fn agg_arg_place(
+    machine: &impl forge_isa_runtime::machine::target::TargetMachine,
+    conv: &str,
+    size: u32,
+    align: u32,
+) -> Result<AggArgPlace, IrError> {
+    use forge_isa_runtime::machine::call_layout::{ArgShape, ShapeKind};
+    let req =
+        forge_isa_runtime::machine::call_plan::CallRequest::new(conv.to_string()).args([ArgShape {
+            size,
+            align,
+            kind: ShapeKind::Aggregate {
+                members: Vec::new(),
+            },
+        }]);
+    let reg = crate::pipeline::conv_registry::registry()
+        .read()
+        .expect("约定注册表被投毒");
+    let plan = crate::pipeline::abi_target::plan_for_shapes(machine, &reg, &req).map_err(|e| {
+        IrError::Unsupported(format!("聚合落点查询：约定 `{conv}` 规划失败（{e}）"))
+    })?;
+    Ok(match plan.args.first().map(|a| &a.place) {
+        Some(forge_abi::Placement::Indirect { .. }) => AggArgPlace::ByRef,
+        Some(forge_abi::Placement::Stack { .. }) => AggArgPlace::Stack,
+        _ => AggArgPlace::Registers,
+    })
+}
+
+/// 被调方大聚合参数展开：按**约定落点**分流——
+///
+/// - `Registers`（≤ 阈值）：签名拆开为 ceil(size/8) 个 i64 参数（与调用方拆段一致），
+///   entry 块参数重建，旧参数值使用处重写（extractvalue → 段值、store → 段 store、
+///   return/call → 段值）；
+/// - `ByRef`（win64 `>8B`）：形参改为**单个 `ptr`**，并把"该聚合值住在指针指向的内存"
+///   登记进 `agg_slots` ⇒ 使用处按地址重写（`rewrite_agg_value_uses` 的 ExtractValue
+///   分支走 GEP+load、store 走向内存拷贝、传参传该指针）。**不写 `byval` 属性**：
+///   引擎对 `byval` 落点给 `Indirect`，而生成物 `move_args` 的 `Indirect` 收参是
+///   "从指针 load 出寄存器里的值"（向量语义）——聚合没有寄存器表示，要的是**指针本身**
+///   进参数寄存器（`Reg` 落点）；
+/// - `Stack`（sysv64 `>16B`）：发射侧尚未接 ⇒ 明确 Unsupported（A2′）。
+fn expand_large_agg_params(
+    func: &mut Function,
+    agg_slots: &mut AggSlots,
+    machine: &impl forge_isa_runtime::machine::target::TargetMachine,
+    conv: &str,
+) -> Result<(), IrError> {
     let old_params = func.param_types();
-    let mut seg_map: Vec<usize> = Vec::with_capacity(old_params.len()); // 每参数段数
+    // 每参数：寄存器档的段数（by-ref 档记 0 = 不拆段）
+    let mut seg_map: Vec<usize> = Vec::with_capacity(old_params.len());
+    let mut by_ref: Vec<bool> = Vec::with_capacity(old_params.len());
     let mut has_large = false;
     for t in &old_params {
-        let ts = func.types.borrow();
-        if ts.is_aggregate(*t) && ts.size_bytes(*t) > 8 {
-            let size = ts.size_bytes(*t) as usize;
-            if size > 16 {
-                return Err(IrError::Unsupported(format!(
-                    "聚合参数 >16 字节暂不支持(栈传递未实现): type {t:?}"
-                )));
+        let (is_agg, size, align) = {
+            let ts = func.types.borrow();
+            (ts.is_aggregate(*t), ts.size_bytes(*t), ts.alignment(*t))
+        };
+        if is_agg && size > 8 {
+            match agg_arg_place(machine, conv, size, align)? {
+                AggArgPlace::ByRef => {
+                    seg_map.push(0);
+                    by_ref.push(true);
+                    has_large = true;
+                }
+                AggArgPlace::Stack => {
+                    return Err(IrError::Unsupported(format!(
+                        "聚合参数 {size} 字节：这份约定把它整块放传出参数区（栈传递未实现）：type {t:?}"
+                    )));
+                }
+                AggArgPlace::Registers => {
+                    seg_map.push(size.div_ceil(8) as usize);
+                    by_ref.push(false);
+                    has_large = true;
+                }
             }
-            seg_map.push(size.div_ceil(8));
-            has_large = true;
         } else {
             seg_map.push(1);
+            by_ref.push(false);
         }
     }
     if !has_large {
         return Ok(());
     }
-    // 签名拆开
+    // 签名重建（by-ref 档一个 `ptr`；寄存器档 N 个 i64）
     let old_sig = func.types.borrow().get_signature(func.signature).clone();
     let mut new_params: Vec<(TypeId, ImmStr)> = Vec::new();
+    let mut new_attrs: Vec<forge_ir::ir::function::ParamAttributes> = Vec::new();
     for (i, (_t, n)) in old_sig.params.iter().enumerate() {
-        let segs = seg_map.get(i).copied().unwrap_or(1);
-        for _ in 0..segs {
-            new_params.push((TypeId::I64, n.clone()));
+        let attrs = func.param_attrs.get(i).cloned().unwrap_or_default();
+        if by_ref.get(i).copied().unwrap_or(false) {
+            new_params.push((TypeId::PTR, n.clone()));
+            new_attrs.push(attrs);
+        } else {
+            for _ in 0..seg_map.get(i).copied().unwrap_or(1) {
+                new_params.push((TypeId::I64, n.clone()));
+                new_attrs.push(attrs.clone());
+            }
         }
     }
     let new_sig = FunctionSignature {
@@ -90,6 +172,7 @@ fn expand_large_agg_params(func: &mut Function, agg_slots: &mut AggSlots) -> Res
         variadic: old_sig.variadic,
     };
     func.signature = func.types.borrow_mut().register_signature(new_sig);
+    func.param_attrs = new_attrs;
     // entry 块参数重建 + 重写映射（旧参数值 → 新值列表）
     let entry = func.entry(); // fail-closed：缺失入口即编程错误（不再假定 Block(0)）
     let old_bvals = func.dfg.block(entry).param_values.clone();
@@ -97,9 +180,20 @@ fn expand_large_agg_params(func: &mut Function, agg_slots: &mut AggSlots) -> Res
     let mut new_bparams: Vec<TypeId> = Vec::new();
     let mut new_bvals: Vec<Value> = Vec::new();
     let mut agg_info: Vec<(Value, Vec<Value>, TypeId)> = Vec::new(); // (旧值, 段值, 聚合类型)
+    let mut byref_info: Vec<(Value, Value, TypeId)> = Vec::new(); // (旧值, 指针值, 聚合类型)
     for (i, t) in old_params.iter().enumerate() {
-        let segs = seg_map.get(i).copied().unwrap_or(1);
         let old_v = old_bvals[i];
+        if by_ref.get(i).copied().unwrap_or(false) {
+            let v = func
+                .dfg
+                .make_value(TypeId::PTR, ValueDef::Param(entry, new_bvals.len() as u16));
+            new_bvals.push(v);
+            new_bparams.push(TypeId::PTR);
+            rewrite.insert(old_v, vec![v]);
+            byref_info.push((old_v, v, *t));
+            continue;
+        }
+        let segs = seg_map.get(i).copied().unwrap_or(1);
         let mut vals = Vec::with_capacity(segs);
         for _ in 0..segs {
             let v = func
@@ -117,6 +211,11 @@ fn expand_large_agg_params(func: &mut Function, agg_slots: &mut AggSlots) -> Res
     let bd = func.dfg.block_mut(entry);
     bd.params = smallvec::SmallVec::from_iter(new_bparams);
     bd.param_values = smallvec::SmallVec::from_iter(new_bvals);
+    // by-ref 档：登记"聚合住在指针指向的内存"，再按地址重写使用处
+    for (old_v, ptr_v, agg_ty) in byref_info {
+        agg_slots.insert(old_v, (ptr_v, agg_ty));
+        rewrite_agg_value_uses(func, old_v, &[], agg_ty, agg_slots)?;
+    }
     // 使用处重写（聚合参数——rewrite 内部即时移动辅助指令）
     for (old_v, segs, agg_ty) in agg_info {
         rewrite_agg_value_uses(func, old_v, &segs, agg_ty, agg_slots)?;
@@ -356,7 +455,11 @@ fn expand_large_agg_call_results(
 /// 未实现（Unsupported）。
 /// 必须在 expand_large_aggs **之前**：拆段后大聚合值不再被 call 使用，
 /// expand_large_aggs 的使用检测不命中 Call。
-fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
+fn expand_agg_call_args(
+    func: &mut Function,
+    machine: &impl forge_isa_runtime::machine::target::TargetMachine,
+    conv: &str,
+) -> Result<(), IrError> {
     // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
     // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
     // 不与 func 的 &mut 借用冲突。
@@ -395,11 +498,24 @@ fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
     for job in jobs.into_iter().rev() {
         let ty = func.dfg.value_type(job.val).unwrap_or(TypeId::PTR);
         let size = store.size_bytes(ty) as usize;
-        if size > 16 {
-            return Err(IrError::Unsupported(format!(
-                "聚合实参 >16 字节暂不支持（栈传递未实现）：type {ty:?}"
-            )));
-        }
+        // 落点分流（只读探针）：ByRef ⇒ 本函数末尾改成"副本 + 传指针"；
+        // Stack ⇒ 未接（A2′）；Registers ⇒ 现有拆段。
+        let by_ref = match agg_arg_place(machine, conv, size as u32, store.alignment(ty))? {
+            AggArgPlace::ByRef => true,
+            AggArgPlace::Stack => {
+                return Err(IrError::Unsupported(format!(
+                    "聚合实参 {size} 字节：这份约定把它整块放传出参数区（栈传递未实现）：type {ty:?}"
+                )));
+            }
+            AggArgPlace::Registers => {
+                if size > 16 {
+                    return Err(IrError::Unsupported(format!(
+                        "聚合实参 {size} 字节：约定落点既不是寄存器档也不是按引用档（type {ty:?}）"
+                    )));
+                }
+                false
+            }
+        };
         // 段值生成
         let mut segs: Vec<Value> = Vec::new();
         let mut new_insts: Vec<Inst> = Vec::new();
@@ -487,11 +603,64 @@ fn expand_agg_call_args(func: &mut Function) -> Result<(), IrError> {
                 )));
             }
         }
-        // operands 替换（op_idx 处插入段值）
+        // 落点落地：ByRef ⇒ 建一个调用方帧内副本、逐段 store，实参传**该副本的指针**
+        // （Win64 psABI 的"指向调用方副本的指针"就是这个形状；机器码层与 byval 等价，
+        // 但不进生成物的 `Indirect` 那条"从指针 load 出值"的路径）；
+        // 其它 ⇒ 在 op_idx 处插入段值。
         let mut ops = func.dfg.inst_data(job.inst).operands.clone();
-        ops.remove(job.op_idx);
-        for (k, s) in segs.iter().enumerate() {
-            ops.insert(job.op_idx + k, *s);
+        if by_ref {
+            let cid = func.constants.insert_int(size as i128, 64);
+            let alloca = func.make_inst(
+                Opcode::Alloca,
+                job.block,
+                smallvec::smallvec![],
+                smallvec::smallvec![Immediate::Const(cid)],
+                &[TypeId::PTR],
+                InstFlags::NONE,
+            );
+            let slot = func.dfg.inst_data(alloca).results[0];
+            new_insts.push(alloca);
+            let mut cur = slot;
+            for (k, s) in segs.iter().enumerate() {
+                let st = func.make_inst(
+                    Opcode::Store,
+                    job.block,
+                    smallvec::smallvec![*s, cur],
+                    smallvec::smallvec![],
+                    &[],
+                    InstFlags::SIDE_EFFECT,
+                );
+                new_insts.push(st);
+                if k + 1 < segs.len() {
+                    let c8 = func.constants.insert_int(8, 64);
+                    let ci = func.make_inst(
+                        Opcode::Iconst,
+                        job.block,
+                        smallvec::smallvec![],
+                        smallvec::smallvec![Immediate::Const(c8)],
+                        &[TypeId::I64],
+                        InstFlags::NONE,
+                    );
+                    let cv = func.dfg.inst_data(ci).results[0];
+                    new_insts.push(ci);
+                    let add = func.make_inst(
+                        Opcode::Iadd,
+                        job.block,
+                        smallvec::smallvec![cur, cv],
+                        smallvec::smallvec![],
+                        &[TypeId::PTR],
+                        InstFlags::NONE,
+                    );
+                    cur = func.dfg.inst_data(add).results[0];
+                    new_insts.push(add);
+                }
+            }
+            ops[job.op_idx] = slot;
+        } else {
+            ops.remove(job.op_idx);
+            for (k, s) in segs.iter().enumerate() {
+                ops.insert(job.op_idx + k, *s);
+            }
         }
         func.dfg.inst_mut(job.inst).operands = ops;
         // 就地改写操作数后必须重登记 use-lists
@@ -1586,9 +1755,13 @@ impl<M: TargetMachine> FunctionCompiler<M> {
             // call 结果拆 2 先于参数拆段：%q = call {i64,i64} 传给后续 call 时
             // 参数已是段值（i64），expand_agg_call_args 的 load 追踪不会误判
             let mut agg_slots: AggSlots = SecondaryMap::new();
+            // 聚合按值传参的落点判据来自**约定数据**（只读单参探针）：win64 `>8B ⇒ 调用方
+            // 副本 + 指针`、sysv64 `>16B ⇒ 传出参数区（未接）`。约定名解析失败 ⇒ fail-closed
+            //（与 `abi_setup::setup_conv` 同口径）。
+            let agg_conv = crate::pipeline::conv_registry::resolve(&f.calling_convention)?;
             expand_large_agg_call_results(f, &mut agg_slots)?;
-            expand_agg_call_args(f)?;
-            expand_large_agg_params(f, &mut agg_slots)?;
+            expand_agg_call_args(f, &self.machine, &agg_conv)?;
+            expand_large_agg_params(f, &mut agg_slots, &self.machine, &agg_conv)?;
             expand_large_agg_ret(f)?;
             expand_large_aggs(f, &mut agg_slots)?;
             expand_geps(f)?;
