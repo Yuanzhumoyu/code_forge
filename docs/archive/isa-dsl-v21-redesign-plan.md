@@ -544,7 +544,7 @@ match = { opcode = 0x0E, vq = 0, vsize = 1, rm = 0 }
 - `ops` 变短：`["dst:out", "src"]`（名 + 角色；类型/位域来自 form 的字段），取代 `"dst:gprx:out"`。
 - `ref` → `group`；删除"form 预设 + 指令内联编码键"两套并存：编码一律在 form，指令只写 `match`/`bind`。
 - 删除死键 `[inst].when`；`only_variants` + `fields_variant` + 六处变体门 → 统一
-  条目级 `when = { xlen = 64 }` + 值级字段分派（吸收 `docs/plans/isa-dsl-variant-field-values.md`）：
+  条目级 `when = { xlen = 64 }` + 值级字段分派（吸收 `docs/archive/isa-dsl-variant-field-values.md`）：
   `match = { imm12 = { xlen = { 32 = 0x698 }, default = 0x6b8 } }`。
 - `data_width` → `data_bits`（单位统一）。
 - 新增 `family.vary`（与 `[lower.*].vary` 同一套 zip 语义，一处机制两处用）消同签名重复；

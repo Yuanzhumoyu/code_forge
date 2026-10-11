@@ -4382,7 +4382,7 @@ pub fn variants_keep(gate: Option<&VariantGate>, params: &BTreeMap<String, i64>)
 /// 字段值的**按变体分派**形态（出路 2 第①步：纯附加键，暂时没有读取者）。
 ///
 /// `by` = 参数取值 → 字段值；`default` = 参数未命中、或压根不传参数时的取值。
-/// 解析点将来只在投影通路（见 docs/plans/isa-dsl-variant-field-values.md）。
+/// 解析点将来只在投影通路（见 docs/archive/isa-dsl-variant-field-values.md）。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct VariantFieldValue {
     /// 参数名（如 `xlen`）；空串 = 永不命中 ⇒ 一律取 `default`。
