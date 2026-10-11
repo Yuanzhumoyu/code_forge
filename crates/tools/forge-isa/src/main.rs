@@ -136,6 +136,18 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 ambiguity,
             ))
         }
+        "new" => {
+            // v22：脚手架——把教程 §0 的最小谱落成文件。单一事实源 = `assets/toy16.toml`，
+            // 与 `docs/guides/isa-dsl-tutorial.md` 的同一段由 `tests/new_spec.rs` 钉住。
+            let files = paths(&args[1..], &[])?;
+            let [name] = files.as_slice() else {
+                return Err("new 需要一个谱名（如 `forge-isa new my_isa`）".into());
+            };
+            let Some(name) = name.to_str() else {
+                return Err("谱名必须是有效 UTF-8".into());
+            };
+            cmd_new(name)
+        }
         "test" => {
             let json = has_flag(&args[1..], "--json");
             let files = paths(&args[1..], &["--json"])?;
@@ -171,6 +183,29 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         }
         other => Err(format!("未知子命令 `{other}`")),
     }
+}
+
+/// `forge-isa new <名>`：写出最小可跑谱（**不覆盖**已存在的文件）。
+///
+/// 内容 = `assets/toy16.toml`（与教程 §0 同源，由测试钉住）——一份 16 位定宽 ISA，
+/// 四条指令，能直接 `validate` 通过，是照猫画虎改谱的起点。
+fn cmd_new(name: &str) -> Result<ExitCode, String> {
+    // 最小归一：允许带 `.toml` 后缀，避免生成 `my_isa.toml.toml`。
+    let stem = name.strip_suffix(".toml").unwrap_or(name);
+    let file = PathBuf::from(format!("{stem}.toml"));
+    if file.exists() {
+        return Err(format!(
+            "{} 已存在——不覆盖（要重新生成请先删掉它）",
+            file.display()
+        ));
+    }
+    let spec = include_str!("../assets/toy16.toml");
+    std::fs::write(&file, spec).map_err(|e| format!("写 {} 失败：{e}", file.display()))?;
+    println!("已写出 {}", file.display());
+    println!("下一步：");
+    println!("  cargo run -p forge-isa -- validate {}", file.display());
+    println!("  cargo run -p forge-isa -- insts {}", file.display());
+    Ok(ExitCode::SUCCESS)
 }
 
 /// 取 `--flag <值>` 的值（缺省 `None`）。

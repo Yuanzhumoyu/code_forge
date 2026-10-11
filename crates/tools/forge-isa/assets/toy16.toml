@@ -1,0 +1,64 @@
+[meta]
+name = "toy16"
+endian = "little"
+mode = 16
+
+[encoding]
+kind = "fixed"
+bits = 16
+
+[reg.gpr8]
+names = ["R0", "R1", "R2", "R3"]
+
+# v21 W2 起：字段**就地声明在 form 里**（不再有 [conventions.bitfields] 节）
+
+[operand.g]
+kind = "reg"
+class = "gpr8"
+
+[operand.imm5]
+kind = "imm"
+bits = 5
+signed = true
+
+[form.RR]
+fields = [
+  "u4[15:12]:opcode",
+  "u3[11:8]:rd",
+  "u3[7:5]:rs1",
+]
+
+[form.RI]
+fields = [
+  "u4[15:12]:opcode",
+  "u3[11:8]:rd",
+  "u5[4:0]:imm",
+]
+
+[inst.ADD]
+form = "RR"
+opcode = 1
+ops = ["dst:g:out", "src:g"]
+asm = "add {dst}, {src}"
+effect = ["Pure"]
+
+[inst.SUB]
+form = "RR"
+opcode = 2
+ops = ["dst:g:out", "src:g"]
+asm = "sub {dst}, {src}"
+effect = ["Pure"]
+
+[inst.MOVI]
+form = "RI"
+opcode = 3
+ops = ["dst:g:out", "imm:imm5"]
+asm = "movi {dst}, {imm}"
+effect = ["Pure"]
+
+[inst.BRZ]
+form = "RI"
+opcode = 4
+ops = ["src:g", "target:imm5"]
+asm = "brz {src}, {target}"
+effect = ["Branch"]
