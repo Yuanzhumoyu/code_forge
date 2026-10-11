@@ -24,117 +24,187 @@
 
 - [ISA-DSL v22 — 语法规范（唯一 DSL 语法）](#isa-dsl-v22--语法规范唯一-dsl-语法)
 
-  - [目录](#目录)
+- [版本与现状](#版本与现状v22)
 
-  - [版本与现状（v18）](#版本与现状v18)
+- [键总览（速查表）](#键总览速查表)
 
-  - [键总览（速查表，v18 S7c）](#键总览速查表v18-s7c)
+- [快速开始](#快速开始)
 
-  - [快速开始](#快速开始)
+  - [谱的书写约束：严格 TOML 1.0 子集](#谱的书写约束严格-toml-10-子集)
 
-    - [宿主接入（**必须**：v18 S10d 起生成物由 build script 预生成）](#宿主接入必须v18-s10d-起生成物由-build-script-预生成)
+  - [宿主接入](#宿主接入必须生成物由-build-script-预生成)
 
-  - [`[meta]` — 元信息与寄存器组](#meta--元信息与寄存器组)
+- [`[meta]` — 元信息与寄存器组](#meta--元信息与寄存器组)
 
-  - [`[encoding]` — 指令宽度三态（v18 S4）](#encoding--指令宽度三态v18-s4)
+- [`[encoding]` — 指令宽度三态](#encoding--指令宽度三态)
 
-  - [宽度元数据（去「宽度写死」）](#宽度元数据去宽度写死)
+- [宽度元数据（去「宽度写死」）](#宽度元数据去宽度写死)
 
-    - [键与派生规则](#键与派生规则)
+  - [指令字宽](#指令字宽encodingbits--逐指令-width无白名单上限)
 
-    - [指令字宽（`[encoding].bits` / 逐指令 `width`，**无白名单/上限**）](#指令字宽encodingbits--逐指令-width无白名单上限)
+  - [fail-closed 契约](#fail-closed-契约)
 
-    - [生成的访问器](#生成的访问器)
+- [`[conventions]` — ISA 约定](#conventions--isa-约定)
 
-    - [fail-closed 契约](#fail-closed-契约)
+  - [`[conventions.cond]` — 条件码表](#conventionscond--条件码表三类表三处用)
 
-    - [`[machine.classes]` — 类型 → 类（ISA 数据，B2 接口通用化）](#machineclasses--类型--类isa-数据b2-接口通用化)
+  - [`[asm.immfn.<名>]` — 立即数修饰](#asmimmfn名--立即数修饰表头即修饰名)
 
-    - [最小示例](#最小示例)
+  - [`[conventions.mem]` — 内存操作数文本](#conventionsmem--内存操作数的文本形态)
+
+- [写一条指令用哪几个键（决策树）](#写一条指令用哪几个键决策树)
+
+- [操作数声明写进 `asm`](#操作数声明写进-asmv22)
+
+- [`[operand.<名字>]` — 操作数声明](#operand名字--操作数声明)
+
+- [`[form.<名字>]` — 编码形式](#form名字--编码形式可选预设)
+
+- [`[inst.<名字>]` — 指令](#inst名字--指令)
+
+- [多文件组合](#多文件组合include--override)
+
+- [重定位表 `[asm.reloc.*]`](#重定位表-asmreloc)
+
+- [`[asm.pseudo.<名>]` — 汇编器伪指令](#asmpseudo名--汇编器伪指令表头即名字)
+
+- [声明注释（`doc`）](#声明注释doc可选)
+
+- [`[family.<名>]` — 指令族](#family名--指令族唯一复用机制)
+
+- [结构化谓词](#结构化谓词)
+
+  - [`[pred.<名字>]` — 给谓词起名字](#pred名字--给谓词起名字)
+
+- [`[[lower.<op>]]` — 指令选择与树模式](#lowerop--指令选择与树模式)
+
+  - [终结序列与 ABI 相对返回槽](#终结序列jmp--br--ret与-abi-相对返回槽)
+
+- [`[machine]` — 机器事实](#machine--机器事实)
+
+- [`[machine.frame]`](#machineframe--帧布局) / [`[machine.text]`](#machinetext--代码对齐与尾声标签) / [`[machine.spill.*]`](#machinespill模板名--溢出模板)
+
+- [asm 模板](#asm-模板)
+
+- [代码生成输出](#代码生成输出)
+
+  - [生成代码依赖的运行面](#生成代码依赖的运行面generated-code-runtime-surface)
+
+  - [工具链：`forge-isa` CLI](#工具链forge-isa-cli)
+
+  - [生成期自测](#生成期自测__spec_tests)
+
+  - [谱内测试向量](#谱内测试向量vectors)
+
+  - [变体参数](#变体参数metavariants--only_variants)
+
+  - [静态体检（lint）](#静态体检forge-isa-lint)
+
+  - [字段值的按变体分派](#字段值的按变体分派fields_variant)
+
+- [已有 ISA 谱](#已有-isa-谱)
 
   - [`[conventions]` — ISA 约定](#conventions--isa-约定)
 
-    - [`[conventions.cond]` — 条件码表（三类表，三处用）](#conventionscond--条件码表三类表三处用)
+  - [`[conventions.cond]` — 条件码表](#conventionscond--条件码表三类表三处用)
 
-    - [`[conventions.mem]` — 内存操作数的文本形态（v20 V10）](#conventionsmem--内存操作数的文本形态v20-v10)
+  - [`[asm.immfn.<名>]` — 立即数修饰](#asmimmfn名--立即数修饰表头即修饰名)
 
-  - [`[operand.<名字>]` — 操作数声明](#operand名字--操作数声明)
+  - [`[conventions.mem]` — 内存操作数文本](#conventionsmem--内存操作数的文本形态)
 
-  - [`[form.<名字>]` — 编码形式（可选预设）](#form名字--编码形式可选预设)
+- [写一条指令用哪几个键（决策树）](#写一条指令用哪几个键决策树)
 
-  - [`[inst.<名字>]` — 指令](#inst名字--指令)
+- [操作数声明写进 `asm`](#操作数声明写进-asmv22)
 
-  - [多文件组合（`include` / `[[override]]`，v18 S7d）](#多文件组合include--overridev18-s7d)
+- [`[operand.<名字>]` — 操作数声明](#operand名字--操作数声明)
 
-  - [重定位表 `[asm.reloc.*]`](#重定位表-asmreloc)
+- [`[form.<名字>]` — 编码形式](#form名字--编码形式可选预设)
 
-  - [`[asm.pseudo.<名>]` — 汇编器伪指令（v21 W7：表头即名字）](#asmpseudo名--汇编器伪指令v21-w7表头即名字)
+- [`[inst.<名字>]` — 指令](#inst名字--指令)
 
-  - [`[[templates]]` — 参数化指令模板（唯一复用机制）](#templates--参数化指令模板唯一复用机制)
+- [多文件组合](#多文件组合include--override)
 
-  - [结构化谓词](#结构化谓词)
+- [重定位表 `[asm.reloc.*]`](#重定位表-asmreloc)
 
-    - [`[pred.<名字>]` — 给谓词起名字](#pred名字--给谓词起名字)
+- [`[asm.pseudo.<名>]` — 汇编器伪指令](#asmpseudo名--汇编器伪指令表头即名字)
 
-  - [`[machine]` — 机器事实](#machine--机器事实)
+- [声明注释（`doc`）](#声明注释doc可选)
 
-  - [`[abi]` — 已删除（v20 A5-3）](#abi--已删除v20-a5-3-收口)
+- [`[family.<名>]` — 指令族](#family名--指令族唯一复用机制)
 
-  - [`[machine.frame]` — 帧布局](#machineframe--帧布局)
+- [结构化谓词](#结构化谓词)
 
-- [`[machine.text]` — 代码对齐与尾声标签](#machinetext--代码对齐与尾声标签)
+  - [`[pred.<名字>]` — 给谓词起名字](#pred名字--给谓词起名字)
 
-  - [`[machine.spill.<模板名>]` — 溢出模板](#machinespill模板名--溢出模板)
+- [`[[lower.<op>]]` — 指令选择与树模式](#lowerop--指令选择与树模式)
 
-  - [asm 模板](#asm-模板)
+  - [终结序列与 ABI 相对返回槽](#终结序列jmp--br--ret与-abi-相对返回槽)
 
-  - [代码生成输出](#代码生成输出)
+- [`[machine]` — 机器事实](#machine--机器事实)
 
-    - [生成代码依赖的运行面（generated-code runtime surface）](#生成代码依赖的运行面generated-code-runtime-surface)
+- [`[machine.frame]`](#machineframe--帧布局)
 
-    - [汇编器能力（`TargetAssembler::parse_insts`）](#汇编器能力targetassemblerparse_insts)
+- [`[machine.text]`](#machinetext--代码对齐与尾声标签)
 
-    - [解码器能力](#解码器能力)
+- [`[machine.spill.<模板名>]`](#machinespill模板名--溢出模板)
 
-    - [工具链：`forge-isa` CLI（v18 S7b）](#工具链forge-isa-cliv18-s7b)
+- [asm 模板](#asm-模板)
 
-    - [生成期自测（`__spec_tests`，v18 S6）](#生成期自测__spec_testsv18-s6)
+- [代码生成输出](#代码生成输出)
 
-  - [已有 ISA 谱](#已有-isa-谱)
+  - [生成代码依赖的运行面](#生成代码依赖的运行面generated-code-runtime-surface)
+
+  - [汇编器能力](#汇编器能力targetassemblerparse_insts)
+
+  - [解码器能力](#解码器能力)
+
+  - [工具链：`forge-isa` CLI](#工具链forge-isa-cli)
+
+  - [生成期自测](#生成期自测__spec_tests)
+
+  - [谱内测试向量](#谱内测试向量vectors)
+
+  - [变体参数](#变体参数metavariants--only_variants)
+
+  - [静态体检（lint）](#静态体检forge-isa-lint)
+
+  - [字段值的按变体分派](#字段值的按变体分派fields_variant)
+
+- [已有 ISA 谱](#已有-isa-谱)
 
 ---
 
-## 版本与现状（v18）
+## 版本与现状（v22）
 
-v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住这几条"唯一"：
+v22 是 v21 收口后的**人体工学改造**（破坏性重写：不保留兼容层）。写谱时只需要记住这几条"唯一"：
 
-| 唯一 | 取代了什么 | 本节 |
-| --- | --- | --- |
-| `[[templates]]`（`body` + `rows`） | `[[families]]` 族变体、v14 的参数表模板 | [模板](#templates--参数化指令模板唯一复用机制) |
-| 指令属性 `group` | `[[aliases]]` 别名清单 | 同上 |
-| 命名操作数 `ops` + `asm` 只引用 `{名字}` | v14 的 asm 内联声明 `{i:[槽:角色]}`、位置名 `s0`/`s1` | [`[inst.<名字>]`](#inst名字--指令) |
-| `[encoding]` 宽度三态 | `[meta].default_inst_width`/`variable_length`/`max_inst_len` | [`[encoding]`](#encoding--指令宽度三态v18-s4) |
-| `[asm.reloc.<名>]` / `[asm.pseudo.<名>]` / `[pred.<名字>]` | `global_reloc` 枚举、汇编器硬编码伪指令、Rust 侧谓词表 | 各自小节 |
-| `[conventions.cond]`（数据表） | 生成器里的 x86 条件码表 | [`[conventions]`](#conventions--isa-约定) |
-| `include` + `[[override]]` | "后出现的赢"这种隐式覆盖 | [多文件组合](#多文件组合include--overridev18-s7d) |
-| 生成期自测 `__spec_tests` | 手抄的样板往返测试 | [生成期自测](#生成期自测__spec_testsv18-s6) |
+| 唯一 | 本节 |
+| --- | --- |
+| `[family.<名>]`（`body` + `rows`/`vary`）——指令族的唯一复用机制，族名即默认 `group`/引用名 | [指令族](#family名字--指令族唯一复用机制) |
+| 操作数声明**就地写在 `asm` 里**：`{名字:槽[:角色]}` 声明、`{@字段:槽}` 绑字段、`#序号` 钉编码序 | [内联声明](#操作数声明写进-asmv22) |
+| `[encoding]` 宽度三态：`fixed` / `mixed` / `prefix_scan` | [`[encoding]`](#encoding--指令宽度三态) |
+| `[asm.reloc.<名>]` / `[asm.pseudo.<名>]` / `[asm.immfn.<名>]` / `[pred.<名字>]` | 各自小节 |
+| `[conventions.cond]` / `[conventions.mem]`（数据表） | [`[conventions]`](#conventions--isa-约定) |
+| `include` + `[[override]]`（多文件组合） | [多文件组合](#多文件组合include--override) |
+| `[[lower.<op>]]`（指令选择与树模式） | [指令选择](#lowerop--指令选择与树模式) |
+| `[[vectors]]`（谱内测试向量）/ `[[override]]` | [测试向量](#谱内测试向量vectors) |
+| 生成期自测 `__spec_tests` | [生成期自测](#生成期自测__spec_tests) |
 
-**v18 相对 v14/v15 的关键承诺**：
+**v22 的关键承诺**（v18 起的那几条继续成立）：
 
-1. **通用，不服务个别指令集**——生成器里不再有某个 ISA 的缺省（条件码表、前缀扫描、
-   `[abi]` 旋钮、宽度类）：缺声明就 fail-closed 报错，而不是静默套别家形状；
+1. **通用，不服务个别指令集**——生成器里不再有某个 ISA 的缺省（条件码表、前缀扫描、宽度类）：
+   缺声明就 fail-closed 报错，而不是静默套别家形状；
 2. **数据化**——条件码、重定位语义、伪指令、派生谓词、内存操作数文本、指令字宽都写在 TOML 里；
-
-3. **作者面一致**——`ops` 里声明的名字同时是 `asm` 占位符名与生成的 `Inst` 字段名；
-   位域名 / 语义角色名只做内部编码键；
+3. **作者面一致**——`asm` 里声明的名字同时是占位符名与生成的 `Inst` 字段名；位域名 / 语义角色名
+   只做内部编码键；**声明与绑定只写一处**（模板本身）；
 4. **一次列全的诊断** + 可点击的 `路径:行:列`（多文件谱指向真正写那一行的文件）；
-
 5. **每条指令自动进回归网**（生成期自测），CLI 不接后端就能校验/查看展开结果/做规格 diff。
 
-> 历史：v15 的 S1–S6（删死键、`vary` 行表、命名操作数、`roles` 枚举、帧布局推导、`[[pattern]]`）
-> 与 v16/v17 的增量，都记在 [`docs/archive/isa-dsl-v12-v17.md`](../archive/isa-dsl-v12-v17.md)。
+> 语法史（v12–v17 的删除/改名总表、v18–v21 的设计）都在 [`docs/archive/`](../archive/)。
+> **本文只讲现行面**——看到 archive 里的旧键不要照抄。
 
-## 键总览（速查表，v18 S7c）
+
+## 键总览（速查表）
 
 下表由 `forge-isa-dsl` 的 JSON Schema 表**生成**（`schema::markdown_table()`），并由
 `crates/frontend/forge-isa-dsl/tests/schema_guard.rs` **逐字校验**：
@@ -229,7 +299,7 @@ build-dependency `forge-isa-dsl`，自带玩具谱与依赖面守卫；v19 V2 �
 不是 schema 漏更新；真漏更新时那条守卫会直接红，重新生成用
 `cargo run -p forge-isa -- schema --out isa-dsl.schema.json`。
 
-### 宿主接入（**必须**：v18 S10d 起生成物由 build script 预生成）
+### 宿主接入（**必须**：生成物由 build script 预生成）
 
 生成物不是宏展开出来的，而是 `$OUT_DIR/forge_gen_<模块名>_<参数哈希>.rs` 这个**文件**，
 `isa_from_file!` 只展开成一句 `include!(concat!(env!("OUT_DIR"), "/…"))`。原因见
@@ -389,7 +459,7 @@ aliases = { a0 = 10, fp = 8 } # 别名表：`别名 = 组内下标`（可选）
 （`gpr64`/`fpr32`/`vec64`/`kreg64` —— 数字是**位**），`RegClass` 四族
 GPR/FPR/VEC/KReg 各带**位**宽（字节口径用 `bytes()` 派生）。
 
-## `[encoding]` — 指令宽度三态（v18 S4）
+## `[encoding]` — 指令宽度三态
 
 v18 把"一个 ISA 一个字长"的假设拆成**三态**，四个宽度散键从 `[meta]` 收敛到
 独立段：模型决定**编码、解码、能力集**三条路径，而不是几个互斥布尔：
@@ -703,7 +773,7 @@ rows = [
 `word |= ((value >> shift) & mask) << offset`；解码 `value |= ((word >> offset)
 & mask) << shift`（可逆）。
 
-### `[asm.immfn.<名>]` — 立即数修饰（v21 W7：表头即修饰名）
+### `[asm.immfn.<名>]` — 立即数修饰（表头即修饰名）
 
 各家的汇编器都有一批**立即数修饰写法**：GAS/RISC-V 的 `%hi(x)` / `%lo(x)`、GAS/ARM 的
 `:lower16:x` / `:upper16:x`、MIPS 的 `hi(x)` / `lo(x)`……它们不是同一套拼写，值语义也不同
@@ -738,7 +808,7 @@ expr = "{0} & 0xffff"
 > 未实现（如实记录）：需要**重定位/符号地址**的修饰（`%pcrel_hi(foo)` 且 `foo` 未定义）
 > 仍不支持——那不是"值语义"能表达的，要有重定位记录（assembler 目前只产出具体立即数）。
 
-### `[conventions.mem]` — 内存操作数的文本形态（v20 V10）
+### `[conventions.mem]` — 内存操作数的文本形态
 
 `kind = "mem"` 的槽要回答两件事：**渲染成什么文本**、**能读哪些写法**。前者必须唯一
 （`disassemble` 的输出不能随解析顺序漂移），后者恰恰常常不止一种。
@@ -1253,7 +1323,7 @@ x86 的 `MOVSS`/`MOVSD`（共用 `fpr128` 槽）、riscv 的 `FSGNJ_S`/`FSGNJ_D`
 无独立 `mnemonic` 字段）。`implicit_regs` 是显式隐式寄存器声明（x86 shift 用 CL、
 idiv 用 RAX:RDX、cqo 写 RDX），生成的 `MachineInst::clobbers()` 供 regalloc 避开。
 
-## 多文件组合（`include` / `[[override]]`，v18 S7d）
+## 多文件组合（`include` / `[[override]]`）
 
 大 ISA（或"公共骨架 + 各扩展"）不必挤在一个文件里：
 
@@ -1330,7 +1400,7 @@ operand = "imm20"
 - 校验：表项名非空唯一、`slot` 已声明且是 imm 槽、指令引用的名字必须存在、
   该指令确实有那个槽的操作数、语义名必须是宿主已知的两个之一。
 
-## `[asm.pseudo.<名>]` — 汇编器伪指令（v21 W7：表头即名字）
+## `[asm.pseudo.<名>]` — 汇编器伪指令（表头即名字）
 
 汇编期的**文本级**多指令展开（`.equ`/`.macro` 的结构化兄弟）：不碰编码器、不碰 lowering。
 
@@ -1409,19 +1479,16 @@ body = { form = "RR", doc = "{name}：{dst.width} 位 {family} 运算（{ops}）
 rows = [ { inst = "ADD_RM_R" }, { inst = "SUB_RM_R" } ]
 ```
 
-## `[[templates]]` — 参数化指令模板（唯一复用机制）
+## `[family.<名>]` — 指令族（唯一复用机制）
 
-> **状态**：v18 S2c 起是**唯一**的指令定义/复用机制——`[[families]]` 与 `[[aliases]]`
-> 已删除（不是并存）。两个旧场景各自变成一条普通规则：**多条指令共用一份声明** →
-> `[[templates]]` 的 `body` + `rows`；**一个引用名指向多条指令** → 指令属性 `group`。
+> **状态**：v21 W5 起是**唯一**的指令复用机制——`[[templates]]`/`[[families]]`/`[[aliases]]`
+> 都已删除（不是并存）。两个旧场景各自变成一条普通规则：**多条指令共用一份声明** →
+> 族的 `body` + `rows`；**一个引用名指向多条指令** → 指令属性 `group`（族名即默认 `group`）。
 
 ```toml
-[[templates]]
-name = "ADDIMM"                       # 模板名（诊断用；缺省取首行 inst）
-body = { ref = "add",                 # body = 全模板共享的指令字段（可省略）
-         form = "ALUIMM", opcode = "{opcode}",
-         ops = ["dst:{slot}:out", "src:{slot}", "imm:imm12u"],
-         asm = "add {dst}, {src}, #{imm}" }
+[family.ADDIMM]                       # 表头即族名（诊断名，也是默认 group/ref 名）
+body = { form = "ALUIMM", opcode = "{opcode}",
+         asm = "add {dst:{slot}:out}, {src:{slot}}, #{imm:imm12u}" }
 rows = [                              # 每行一条指令：inst 必填，其余键是该行的取值/字段
   { inst = "ADDIMMX", slot = "r64", opcode = 0x91, roles = ["frame_free"] },
   { inst = "ADDIMMW", slot = "r32", opcode = 0x11 },
@@ -1431,12 +1498,11 @@ rows = [                              # 每行一条指令：inst 必填，其�
 三句话讲完语义：
 
 - **`rows` 是事实载体**：一行 = 一条指令，`inst` = 指令名（全 ISA 唯一）；
-
 - **`body` 是共享默认值**：行里的同名字段覆盖它，表（`fields`/`modrm`/…）**递归合并**；
-  不给 `body` 就是"一组各自独立的指令"（原先 `[[aliases]]` 的常见形态）；
+  不给 `body` 就是"一组各自独立的指令"；
 - **插值**：字符串里的 `{键}` 取该行的值（`{inst}` = 实例名，`{键.lower}` 取小写）；
   整串恰为一个占位符时**保留类型**（`opcode = "{opcode}"` 得到的仍是整数）；不是本行键的
-  `{…}`（如 asm 里的 `{dst}`）原样留着，交给 asm/操作数校验。
+  `{…}`（如 asm 里的 `{dst:{slot}:out}` 里那层 `{slot}`）按内层先替换，最终交给内联声明/操作数校验。
 
 行键分三类，规则**只由 `body` 决定**（不需要记额外语法）：
 
@@ -1444,37 +1510,32 @@ rows = [                              # 每行一条指令：inst 必填，其�
 | --- | --- |
 | `body` 里有同名键 | **覆盖**它（表递归合并，其余整体替换） |
 | `body` 没有、但 body 字符串用 `{键}` 引用了它 | **纯参数**：只参与插值，不进指令字段（如 `slot`） |
-| 其余 | **指令字段**（拼错被 `Instruction` 反序列化点名拒绝，错误消息带模板名与实例名） |
+| 其余 | **指令字段**（拼错被 `Instruction` 反序列化点名拒绝，错误消息带族名与实例名） |
 
-`group` 就是普通指令字段：写在 `body` 里 = 全模板共用（多态引用），写在行里 = 该行特有。
+`group` 就是普通指令字段：写在 `body` 里 = 全族共用（多态引用），写在行里 = 该行特有。
 多条指令共用同一个 `group` 时，lowering/pattern/emit 的行首可写这个引用名，codegen 按操作数
 签名（reg/imm/mem/cond）消歧。`group` 与指令名同池，故不得与任何指令名重名。
 
 **写法要点**：
 
-- `rows` 是 TOML 数组：`rows = [ { … }, … ]`（一行一条，推荐）与 `[[templates.rows]]`
-  是**同一个结构的两种写法**（TOML 数组的两种拼法），后者适合字段多、需要换行的行；
+- `rows` 是 TOML 数组：`rows = [ { … }, … ]`（一行一条，推荐；字段多时数组元素可换行）；
+  与 `rows` 互斥的紧凑写法是 `vary = { 键 = [...] }`（等长列表按下标 zip 成行）；
 - 展开在**解析期**完成：下游（校验/代码生成）只看到普通指令，生成器一行未改；
-
-- 诊断锚在**模板声明**：消息前缀改写为 `[[templates.X]]`（X = 模板名），并在块内精准
-  到出错的那一行/那个 `inst`——不会指向源里根本不存在的 `[[instructions.实例名]]`；
+- 诊断锚在**族声明**：消息前缀是 `[family.X]`（X = 族名），并在块内精准到出错的那一行/那个
+  `inst`——不会指向源里根本不存在的段；
 - `rows` 为空、`inst` 为空、行键拼错的参数名、`body` 非内联表都是编译期错误。
 
-**旧写法的对应关系**（迁移只需这三条）：
-
-| 原先的写法 | 现在的写法 |
-| --- | --- |
-| `[[families]]` + `[[families.variants]]` | 一个 `[[templates]]`：族级字段进 `body`，每个变体一行 `{ inst = "…", … }`；助记符继承写 `asm = "{inst.lower} …"` |
-| `[[aliases]]`（`name` + `insts` 列表） | 在成员指令上写 `ref = "名字"`（多条指令共用一个 `group` = 多态） |
-| `[[templates]]` + `params` + `[[templates.overrides]]` | 同一张 `rows` 表：参数取值写成行键，逐行补丁直接写进那一行 |
+**迁移**：`forge-isa migrate <谱>` 把旧写法（`ops`/`bind` + 纯 `{名字}` 引用）一键迁成内联声明，
+等价性由"迁移前后展开逐字节相同"守住（`crates/frontend/forge-isa-dsl/tests/spec_migrate.rs`）。
+更早的族/模板/别名三种机制的对应关系见 [`docs/archive/isa-dsl-v12-v17.md`](../archive/isa-dsl-v12-v17.md)。
 
 **实测收益（三 ISA 统一迁移，2026-09-19）**：
 
 | ISA | TOML 行数 | 三种机制 | 指令数 | 验证 |
 | --- | ---: | --- | ---: | --- |
-| arm64 | 871 → **891（+2.3%）** | families 0 / aliases 0 / templates 32 → **templates 32** | 89 | 生成代码**逐字节相同**、黄金 12+6、矩阵 23/175/0 |
-| riscv64 | 1,899 → **1,802（−5.1%）** | families 4 / templates 15 → **templates 19** | 116 | 每函数 token 多重集相同（只差顺序）、黄金 12+4、矩阵 131/67/0 |
-| x86 | 3,887 → **3,678（−5.4%）** | families 10 / aliases 23 / templates 1 → **templates 11** | 197 | 每函数 token 多重集相同、黄金 61 例、矩阵 195/3/0 |
+| arm64 | 871 → **891（+2.3%）** | families 0 / aliases 0 / 族 32 | 89 | 生成代码**逐字节相同**、黄金 12+6、矩阵 23/175/0 |
+| riscv64 | 1,899 → **1,802（−5.1%）** | families 4 / 模板 15 → **族 19** | 116 | 每函数 token 多重集相同（只差顺序）、黄金 12+4、矩阵 131/67/0 |
+| x86 | 3,887 → **3,678（−5.4%）** | families 10 / aliases 23 / 模板 1 → **族 11** | 197 | 每函数 token 多重集相同、黄金 61 例、矩阵 195/3/0 |
 
 arm64 略增是**换来的**：原先 2 行指令用"平行数组按列 zip"（`params`）写得极紧凑，但列间
 必须逐行对齐、加一条变体要改 3 个数组；现在一行一条指令自解释，代价是每条模板多 2 行。
@@ -1512,8 +1573,7 @@ x86 只降 1% 的原因：x86 剩余的同 asm/同 ops 组差在**编码键**（
 [pred.is_64]
 expr = { eq = ["rs1_width", 64] }
 
-[[lowering]]
-op = "Iadd"
+[[lower.Iadd]]
 when = { eq = ["is_64", 1] }
 insts = ["ADD64 {out}, {0}, {1}"]
 ```
@@ -1527,12 +1587,12 @@ insts = ["ADD64 {out}, {0}, {1}"]
 - 依赖属性缺失时该派生为**假**（与核心属性"未知即假"一致）；展开在解析期完成，
   生成期的谓词判定逻辑一行未改（没有 `[pred.<名字>]` 时生成的属性表与引入前逐字相同）。
 
-## `[[lower.*]]` — 指令选择与树模式（v21 W6-a）
+## `[[lower.<op>]]` — 指令选择与树模式
 
 > 现面：`[[lower.<名字>]]`（**表头即名字、同名可多块**） —— 名字是终结 op ⇒ 终结序列；
 > 写了 `match` ⇒ 树模式；其余 ⇒ op 规则（名字就是 op 名）。
 > **`op` 键与名单机制已删除**（口径：一个名字一块，复用交给 `[family.*]`/`vary`）。
-> 下面的老例子保留作历史（旧面 `[[lowering]]` 现在会被 `deny_unknown_fields` 拒）。
+> 下面的例子保留作**历史**（旧面 `[[lowering]]` 现在会被 `deny_unknown_fields` 拒）。
 
 ### 终结序列（`Jmp` / `Br` / `Ret`）与 **ABI 相对返回槽**
 
@@ -1612,22 +1672,24 @@ movef = ["MOVSS {retN}, {retN_src}"]
 **至此 `[lower.Ret]` 的五类形态全部在谱面**：`bank = gpr` / `fpr`（任意宽度）/ `vec + by_ref = false` / `vec + by_ref =
 true`（sret）/ `multi = true`。
 
-### 历史写法（v18 S5，已废）
+### 一条规则的形状：op + 条件 + 发射序列
 
 一条规则 = **op + 条件 + 发射序列**；同 op 的多条规则按
 (`priority` 降, 谓词叶子数降, 声明序升) 裁决，第一条命中的赢（见下「裁决序与死规则」）。
 
 ```toml
-[[lowering]]
-op = ["Copy", "Uextend", "Freeze", "Ptrtoint", "Inttoptr"]   # 或单个字符串
+[[lower.Copy]]
+insts = ["mov {out}, {0}"]
+
+# 同一序列要覆盖多条同形 op ⇒ **各写一块**（旧写法是 `op = ["Copy", "Uextend", …]` 名单，
+# 已删除）；x86 用它给 Copy/Uextend/Freeze/Ptrtoint/Inttoptr 等 6 组去重。
+[[lower.Uextend]]
 insts = ["mov {out}, {0}"]
 ```
 
-`op` 可以是**一组同类 op**（v18 S5）：这几条 op 的 lowering 完全一样时只维护一份序列
-——比抄五遍更不容易改漏（x86 用它对 Copy/Uextend/Freeze/Ptrtoint/Inttoptr、
-Sitofp/Uitofp、Fptosi/Fptoui、Undef/Poison 等 6 组去重）。名单在**解析期展开成逐 op 的
-规则**，每个 op 内部的相对顺序与逐条写开完全一致，因此裁决结果不变（名单序 = 展开序）。
-名单里不得有空名或重名。
+`op` 由**表名**给出（`[[lower.<Op>]]`）；同一 op 的多条规则就是**多个同名的块**（TOML 数组），
+按 (`priority` 降, 谓词叶子数降, 声明序升) 裁决，第一条命中的赢（见下「裁决序与死规则」）。
+多条同形 op 要共用一份序列时**各写一块**（旧写法 `op = [...]` 名单已删）。
 
 > **为什么只有这一个新键**：方案里还提过 `lowering.emit` 表形式（`inst`/`let`/`select`/
 > `switch`）与 `[[sequences]]` 共享序列。实测（2026-09-21，先按 `vary` 展开成具体规则再判定
@@ -1637,8 +1699,7 @@ Sitofp/Uitofp、Fptosi/Fptoui、Undef/Poison 等 6 组去重）。名单在**解
 > ——因此**不做**（结论与数据记在方案 §7 的 S5 进度里）。
 
 ```toml
-[[lowering]]
-op = "Iadd"
+[[lower.Iadd]]
 insts = ["movrr {out}, {0}", "add {1}, {out}"]
 ```
 
@@ -1655,12 +1716,10 @@ insts = ["movrr {out}, {0}", "add {1}, {out}"]
 `rd`/`rs1_width` 分派：
 
 ```toml
-[[lowering]]
-op = "Load"
+[[lower.Load]]
 when = { eq = ["rd", 32] }
 insts = ["mov_mem32 {out}, [{0}]"]
-[[lowering]]
-op = "Icmp"
+[[lower.Icmp]]
 when = { eq = ["rs1_width", 32] }
 insts = ["xor {out}, {out}", "cmp32 {1}, {0}", "setcc {out}, {cc}"]
 ```
@@ -1674,20 +1733,17 @@ insts = ["xor {out}, {out}", "cmp32 {1}, {0}", "setcc {out}, {cc}"]
 
 # v14：8 条 Vadd（4 elem × 2 宽度）→ v15：2 条
 
-[[lowering]]
-op = "Vadd"
+[[lower.Vadd]]
 vary = { elem = [1, 2, 3, 4], m = ["vaddps", "vaddpd", "vpaddd", "vpaddq"] }
 insts = ["{m} {out}, {0}, {1}"]
 
-[[lowering]]
-op = "Vadd"
+[[lower.Vadd]]
 vary = { elem = [1, 2, 3], m = ["addps", "addpd", "paddd"] }
 insts = ["movaps {out}, {0}", "{m} {out}, {1}"]
 
 # Fcmp 32 条（16 cond × 2 elem）→ 4 条
 
-[[lowering]]
-op = "Fcmp"
+[[lower.Fcmp]]
 vary = { cond = [1, 2, 4, 7, 8, 11, 14, 15], k = [11, 10, 5, 7, 3, 4, 2, 6] }
 insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, {k}"]
 ```
@@ -1695,8 +1751,7 @@ insts = ["xor {out}, {out}", "comiss {0}, {1}", "setcc {out}, {k}"]
 `in` 集合谓词消掉 33 组纯重复：
 
 ```toml
-[[lowering]]
-op = "Cvtf2i"
+[[lower.Cvtf2i]]
 when = { and = [ { eq = ["rs1_width", 64] }, { in = ["elem", [3, 4]] } ] }
 insts = ["cvttsd2si {out}, {0}"]
 ```
@@ -1746,7 +1801,7 @@ insts = ["cvttsd2si {out}, {0}"]
 
 #### `[[pattern]]` — 树型多指令匹配（v18 S6，已并入 `[[lower.*]]`）
 
-**裁决序与 `[[lowering]]` 统一**（v18 S5c）：(`priority` 降, 匹配树 Op 节点数降, `when`
+**裁决序与 `[[lower.<op>]]` 统一**：(`priority` 降, 匹配树 Op 节点数降, `when`
 谓词叶子数降, 声明序升)——祖先匹配树、更具体的 `when` 先试；`priority` 用于"故意让更宽的
 模式赢"（与 lowering 同语义，缺省 0）。判定序在 codegen（生成 `__PATTERNS` 表与分派臂）与
 校验器之间**共读同一份**（`IsaModel::pattern_order()`），不会两边各排一次。
@@ -1773,7 +1828,7 @@ insts = ["movsd {out}, {a}", "mulsd {out}, {b}", "addsd {out}, {c}"]
 ```
 
 - **`match`**：递归下降小解析器（`dsl/match_tree.rs`）解析 `Op(a, Op(b, c))`，
-  根必须是 Op 调用，叶子是裸标识符（变量）。`when` 与 `[[lowering]].when` 同语法，
+  根必须是 Op 调用，叶子是裸标识符（变量）。`when` 与 `[[lower.<op>]].when` 同语法，
   两个结构相同、只差守卫（如 f32 vs f64）的模式靠它区分。
 - **叶变量 DFS 序**：`insts` 里 `{a}`/`{b}`/`{c}` 按树 DFS 序编号为 `{0}`/`{1}`/
   `{2}`（codegen 改写后交给 lowering 发射器）。`{out}` = 结果。
@@ -1826,29 +1881,6 @@ riscv/arm64 用显式 `sub sp`，`fp-inside` ⇒ 0。约定侧的同名字段是
 `frame`/`callee_saved`/`arg_slot`）**全部删除**——写旧键报未知键，本节就是这些事实的
 唯一来源（`frame_padding`、`[abi.stack_args]` 与约定级的 `call_clobbers` 也在同一批
 搬走/删除；后者改由宿主的 `LowerCtx::conv.clobbers` 提供）。
-
-## `[abi]` — **已删除**（v20 A5-3 收口）
-
-v20 A5-3 把"约定数据"整节移出谱面：`[abi]` 的键**全部删除**，写它们现在报未知键。
-
-| 原键 | 去处 |
-| --- | --- |
-| `arg_class`（参数池 / by-ref 策略 / limit） | **plan**：调用方按 `ArgPlan` 逐实参搬值（`call_plan::plan_call`，形状从实参 IR 类型摊开）；by-ref 阈值改机器事实 `[machine].byref_bytes` |
-| `ret_regs` | `Return` 读 `CallLayout.ret`；`Call` 读宿主的 `LowerCtx::conv.ret_gpr` |
-| `call_clobbers` | 宿主的 `LowerCtx::conv.clobbers`（约定级、与签名无关） |
-| `arg_slot` / `frame_padding` | [`[machine]`](#machine--机器事实) 的 `arg_place` / `padding` |
-| `scratch` / `reserved` / `call_ret_reg` / `frame` | [`[machine]`](#machine--机器事实) 的 `[machine].scratch` / `[machine].fixed` / `[machine].link` / `[machine].frame` |
-| `callee_saved` | **约定数据**（`AbiPlan`/绑定）——v21 W9 起谱面**不再声明** callee-saved（原两键 `callee_saved_gpr`/`callee_save_slots` 已删除），序言/尾声按 plan 的整张表推 |
-
-**谱侧只剩两件事**：**能力申报**（`roles`）与**机器事实**（`[machine]`）；"参数放哪、
-返回怎么回、保存谁、栈怎么排"全部由**使用者的约定数据**（`AbiRules` + `AbiBinding` →
-`AbiPlan`）给，生成器按 plan 发射。
-
-> **S4 删除全部 `*_inst` 名指针**（历史）：v14 的 `move_inst`/`ret_mov_inst`/`call_inst`/
-> `call_indirect_inst`/`ret_inst`/`jump_inst`/`branch_inst`/`test_inst`/`push_inst`/
-> `pop_inst`/`fpr_mov_inst`/`fpr_mov_inst32`/`vec_mov_inst` 全部移除，改为指令上的
-> [`roles`](#inst名字--指令)；生成器查角色表取代按名字查找，缺角色 → 明确
-> `Unsupported("<角色> 未声明")`。
 
 ## `[machine.frame]` — 帧布局
 
@@ -2039,7 +2071,7 @@ forge-codegen 的 crate 里生成谱"这件事本身也是守卫（`tests/common
 - **大端变长 imm**：`imm_read_ts` 按 `[meta].endian` 装配（little → `from_le_bytes`、
   big → `from_be_bytes`）。
 
-### 工具链：`forge-isa` CLI（v18 S7b）
+### 工具链：`forge-isa` CLI
 
 `crates/tools/forge-isa`（`cargo run -p forge-isa -- <子命令>`）对**谱文件**做只读检查，
 不生成代码——写 TOML 时不必先接进后端就能看诊断与生效规格：
@@ -2085,7 +2117,7 @@ cargo run -p forge-isa -- fmt tests/isa/include_root.toml   # 多文件 → 单�
 （`crates/tools/forge-isa/tests/cli_tests.rs`），覆盖好/坏谱、JSON 合法性、模板
 provenance、未知指令、用法错误退出码。
 
-### 生成期自测（`__spec_tests`，v18 S6）
+### 生成期自测（`__spec_tests`）
 
 生成器在 ISA 模块里额外吐一个 `#[cfg(test)] pub(crate) mod __spec_tests`：**每条指令**
 （含 `[[templates]]` 展开出的实例）自动得到一条规格用例 + 一条覆盖率自检。写 TOML 的
@@ -2156,7 +2188,7 @@ riscv W 变体移位量 32..63 被静默掩码成 `n-32`、x86 EVEX 寄存器直
 ModRM.rm 的第 5 位（ZMM16-31 当 rm 时编成 ZMM0-15）——见
 `docs/archive/forge-dsl-v18-plan.md` §7「S6 进度」。
 
-### 谱内测试向量（`[[vectors]]`，v19 V3）
+### 谱内测试向量（`[[vectors]]`）
 
 作者直接在谱里写"这条文本该编成这几个字节"或"这条必须报错"，生成期把它翻成
 `__spec_tests` 里的用例（`spec_vector_<下标>`，与谱里顺序一一对应），因此**不再需要手抄
@@ -2193,7 +2225,7 @@ partial = 1
 （x86 138 / riscv64 134 / arm64 89；含从 Rust oracle 表与往返清单迁来的 golden 与闭环向量，
 迁移前后字节集合的规范化 sha256 相同）。
 
-### 变体参数（`[meta].variants` / `only_variants`，v19 V5）
+### 变体参数（`[meta].variants` / `only_variants`）
 
 **一份源谱 → 多个位宽/扩展变体**：把"哪些声明属于哪个变体"写成数据，投影出该变体的
 指令清单，而不是为每个变体抄一份谱。
@@ -2240,7 +2272,7 @@ partial = 1
 RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不是一份可运行的后端谱——
 投影的用途是**看见变体依赖面**与让生成物正确分文件。
 
-### 静态体检（`forge-isa lint`，v19 V4）
+### 静态体检（`forge-isa lint`）
 
 **不执行、不编译**，只回答"这份谱里有没有写了却用不上 / 自相矛盾 / 覆盖不到的东西"；
 与 `validate` 的分工是"**对不对**"（错就编译不过）vs"**干不干净**"（合法但可疑）。
