@@ -824,7 +824,7 @@ impl Function {
     /// use-def 空洞，而 `Verifier` 的 `UseListInconsistency` 只在 pass 之后才发现；
     /// 期间 DCE / RAUW / GVN 都会基于不完整的 use-list 做出错误判断
     /// （2026-09-14 实测：`gvn_pre`/`pgo`/`inline` 等直接建指令且不登记，见
-    /// `docs/plans/forge-ir-v3-plan.md` S6）。
+    /// `docs/archive/forge-ir-v3-plan.md` S6）。
     pub fn make_inst(
         &mut self,
         opcode: Opcode,

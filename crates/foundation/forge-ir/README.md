@@ -168,7 +168,7 @@ AST 与诊断消息按设计例外）。两条规则由 `tests/open_set_boundary
 ## 已知欠账
 
 本 crate 的表示层缺口与分期修复计划见
-[`docs/plans/forge-ir-v3-plan.md`](../../../docs/plans/forge-ir-v3-plan.md)：
+[`docs/archive/forge-ir-v3-plan.md`](../../../docs/archive/forge-ir-v3-plan.md)：
 指令元数据单一事实源（S1）、实体容器 `PrimaryMap/SecondaryMap`（S2）、类型上下文
 去锁与所有权（S3）、终结符并入指令流与完整 use-def（S4）、附件强类型化与可见性收紧
 （S5）、校验与 pass 契约（S6）、文本层诊断（S7）。

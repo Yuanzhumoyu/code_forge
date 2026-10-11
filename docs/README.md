@@ -30,7 +30,6 @@
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
 | `plans/forge-rustc-vec_push-plan.md` | forge-rustc vec 族方案（历史修复链 + **§8 2026-09-10 复核**：E1 假设未复现、失败面已 fail-closed；5 用例仍 FLAKY，见 `tests/e2e.rs`；§9 修复方案） | progress |
-| `plans/forge-ir-v3-plan.md` | forge-ir v3 改进方案（S0–S7 已落地，逐切片带实证与守卫；S8 见下条） | progress |
 | `plans/isa-dsl-v21-execution-checklist.md` | ISA-DSL v21 **执行清单**（S0 决策冻结 + W0 基线 + W1–W11 逐片步骤/门禁/回滚 + 最终验收 + 中止条件；配套设计文档已归档 ✗） | progress |
 
 ## performance/ — 基准与优化
@@ -56,6 +55,7 @@
 | 文件 | 内容（归档原因） |
 | --- | --- |
 | `archive/calling-convention-redesign-plan.md` | 调用约定重设计 v20 A1–A8（**2026-10-08 归档**：A1–A8 全部落地 ✗ —— A7 异域钩子 = `forge-abi/tests/exotic_hooks.rs`、A8 文档一致性收口 ✗；现行参考 = `reference/calling-conventions.md`） |
+| `archive/forge-ir-v3-plan.md` | forge-ir v3 改进方案（**2026-10-08 归档**：S1–S8 **全部收口** ✗ —— S3 三余项已落地 ✗、**S7 余项清零** ✗、S8 经拍板只做二进制序列化且已落地 ✗；未关闭项在 `forge-ir/backlog.md` ✗） |
 | `archive/isa-dsl-variant-field-values.md` | 按变体给字段值（**2026-10-08 归档**：工作**早已落地** ✗ —— 键名是 `fields_variant` ✗、`rev8` 正在用 ✗；本文留设计取舍与教训 ✗） |
 | `archive/varargs-plan.md` | 变参（varargs）方案（**2026-10-08 归档**：功能面**已完成** ✗ —— V0–V5 落地 ✗、SysV `%al` 写入 V7 已做 ✗、四份 `va_list` 形状齐备且由守卫钉住 ✗；前端产出变参签名是明写的**非目标** ✗） |
 | `archive/isa-dsl-v21-redesign-plan.md` | ISA-DSL v21 重设计方案（**2026-10-08 归档**：v21 已收口 ✗，W1–W11 + W6 + W6+ 全部落地；活账本 = `plans/isa-dsl-v21-execution-checklist.md`，现行规范 = `reference/isa-dsl.md`） |

@@ -9,7 +9,7 @@
 > 执行细化（格式 v1 字节级规范、B1–B5 切片、每片门禁与负向对照）见
 > `docs/archive/forge-ir-binary-serialization-plan.md`——两者冲突时**以执行方案为准**
 > （其中 §7 记录了对本文件 §2.4 的一处修订：不加 `binary` feature 门控）。
-> 上游：`docs/plans/forge-ir-v3-plan.md` §4-I 与 §5-S8（原文："**I 可选项（S8，默认不做）**：
+> 上游：`docs/archive/forge-ir-v3-plan.md` §4-I 与 §5-S8（原文："**I 可选项（S8，默认不做）**：
 > 二进制序列化、MemorySSA-lite、crate 边界拆分"、"S8 | 可选（二进制/MemorySSA/crate 边界）| 需拍板"）。
 > 文中所有现状数字均为 2026-09-17 本机实测（命令随文给出），**以代码为准**。
 

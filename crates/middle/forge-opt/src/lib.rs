@@ -36,7 +36,7 @@ pub const MAX_FIXED_POINT_ROUNDS: usize = 256;
 /// （S6 门禁形态，2026-09-14 起生效）。
 ///
 /// S6 修复记录（打开严格校验后逐条暴露并修掉，见
-/// `docs/plans/forge-ir-v3-plan.md` §6）：
+/// `docs/archive/forge-ir-v3-plan.md` §6）：
 /// - 多个 pass 直接 `dfg.make_inst` 建指令而不登记 use-lists
 ///   （`gvn_pre`/`pgo`/`inline`/`lto`/`func_specialize` 与 forge-codegen 的聚合展开）
 ///   → 统一改用 `Function::{make_inst, make_inst_with_meta_and_loc}`；

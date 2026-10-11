@@ -14,6 +14,7 @@
 | `isa-dsl-v21-redesign-plan.md` | ISA-DSL v21 重设计（**2026-10-08 归档**：v21 已收口 ✗ —— W1–W11 + W6 + W6+ 全部落地；只记设计取舍与切片史） | `../plans/isa-dsl-v21-execution-checklist.md`（活账本，§14 最终验收）+ `../reference/isa-dsl.md`（现行规范） |
 | `isa-dsl-variant-field-values.md` | 按变体给字段值（**2026-10-08 归档**：工作**早已落地** ✗ —— 键名是 `fields_variant` ✗，`rev8` 正在用 ✗；本文留设计取舍与"文档头不可信、先 grep 键名"的教训 ✗） | `../reference/isa-dsl.md`（键表 + 变体参数节 ✗） |
 | `varargs-plan.md` | 变参（varargs）方案（**2026-10-08 归档**：功能面已完成 ✗ —— 四份 `va_list` 形状齐备 ✗、SysV `%al` 写入 V7 已做 ✗；前端是明写的非目标 ✗） | `../reference/calling-conventions.md`（现行参考 ✗） |
+| `forge-ir-v3-plan.md` | forge-ir v3 改进方案（**2026-10-08 归档**：S1–S8 **全部收口** ✗ —— S3 三个余项已落地 ✗、**S7 余项清零** ✗、S8 经拍板只做二进制序列化且已落地 ✗；未关闭项移交 `../forge-ir/backlog.md` ✗） | `../forge-ir/backlog.md`（活跃待办）+ `../reference/binary-format.md`（S8 产物规范 ✗） |
 | `calling-convention-redesign-plan.md` | 调用约定重设计 v20 A1–A8（**2026-10-08 归档**：A1–A8 全部落地 ✗） | `../reference/calling-conventions.md`（现行参考） |
 | `forge-isa-dsl-v19-plan.md` | ISA-DSL v19 改进方案（**2026-10-08 归档**：独立接入 ✓ / 谱内向量 ✓ / lint ✓ / 参数化变体 ✓ 按代码事实核对落地） | `../reference/isa-dsl.md` + `CLAUDE.md`「v21 现行面速查」 |
 | `forge-ir-binary-serialization-plan.md` | forge-ir 二进制序列化执行方案 B1–B5（**2026-10-08 归档**：实现已在 ✗） | `../reference/binary-format.md`（格式 v1 规范文本） |

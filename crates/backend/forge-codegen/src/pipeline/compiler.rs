@@ -1996,7 +1996,7 @@ impl<M: TargetMachine> FunctionCompiler<M> {
             // 类型不完全自洽的 IR —— `expand_geps` 的指针算术把 PTR 基址与 i64 偏移
             // 放进同一条 `Iadd`（结果标 PTR；源码注释也写着"verify 不跑"），
             // 而 DSL 后端没有 `Ptrtoint`/`Inttoptr` 的 lowering，无法用显式转换
-            // 表达同一语义。该类型模型欠账记在 `docs/plans/forge-ir-v3-plan.md`
+            // 表达同一语义。该类型模型欠账记在 `docs/archive/forge-ir-v3-plan.md`
             // （S4/S5：指针算术的 typed 表示），不在本阶段用"放宽校验"掩盖。
             #[cfg(debug_assertions)]
             {
