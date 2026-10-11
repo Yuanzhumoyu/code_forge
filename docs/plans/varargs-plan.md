@@ -1,13 +1,14 @@
 # 变参（varargs）方案 [progress]
 
-> 状态复核（2026-10-08 晚 ✗）：**寄存器保存区（V3 ✗）在本文件里已标 ✅**（2026-10-01 ✗，`sysv64` 真跑 ✗）
-> —— 所以原来那句"仍缺寄存器保存区"只对 `lp64d`/`aapcs64` 的剩余部分成立 ✗，已改写 ✗。
-> 现状：**win64 栈式变参端到端跑通** ✓；已落地 **D6 + V0/V1 + V2/V3 + V4（win64：整数类 + `f64` + `f32` 提升 ✗）**
-> —— 调用方按被调方语义把未命名实参发到栈上（浮点按类分派 ✗），被调方用 `va_start` 物化 `va_list`
-> 对象、`va_arg` 取值并**原地推进** ✓。**仍缺**：`%al`/`va_meta` 的写入 ✗、**`lp64d`/`aapcs64` 的
-> 寄存器保存区**（这类约定点 `va_start` 明确 fail-closed ✗）、更窄浮点与向量的取值能力 ✗、
-> 以及**任何前端产出变参签名**（触发条件见 §6 ✗）。
-> 相关背景：`docs/reference/calling-conventions.md`、`docs/archive/calling-convention-redesign-plan.md` A6 ✗。
+> 状态复核（2026-10-08 晚 ✗，按**代码事实**逐条核 ✗）：**V0–V5 已落地** ✔；**"仍缺 `%al`/`va_meta`
+> 的写入"这句已过时** ✗ —— SysV 的元信息寄存器写入在 **v20 V7 就做了** ✗，证据 =
+> `crates/backend/forge-codegen/tests/variadic_meta.rs`（刚复跑 **2 passed** ✔ ✗）：调用点按**布局**
+> 算出"用了几个向量寄存器" ✗，用 `roles = ["gpr_mov_imm"]`（`mov rax, imm64` ✗）写进去 ✗；
+> 谱没申报该能力而约定要求写 ⇒ **fail-closed** ✗。
+> 四份约定的 `va_list` **形状数据都在** ✗（`forge-abi/src/builtin.rs`：`win64_stack` ✗ /
+> `sysv_reg_save` + `va_meta_pool` ✗ / `aapcs64_struct` ✗ / `riscv_save_area` ✗）。
+> **⇒ 真正的剩余只有两件** ✗：① **发射** `lp64d`/`aapcs64` 的寄存器保存区 ✗（`sysv64` 已通 ✗，
+> 这两份的 `va_start` 现在明确 fail-closed ✗ ✓）；② **前端**产出变参签名 ✗（触发条件见 §6 ✗）。
 
 ## 1. 现状：**规划与两端发射都通了（管线里唯一一套数据驱动展开，四份约定都有形状数据）；前端仍零产出**
 
