@@ -1,7 +1,7 @@
 # forge-dsl 改进方案（ISA-DSL v18）
 
 > ⚠️ **ARCHIVED（2026-09-23）**：v18 的 S0–S10 切片**全部落地，或经度量判定不做**，本方案已退役、
-> 不再维护。**现行执行方案**见 [`docs/plans/forge-isa-dsl-v19-plan.md`](../plans/forge-isa-dsl-v19-plan.md)。
+> 不再维护。**现行执行方案**见 [`docs/archive/forge-isa-dsl-v19-plan.md`](forge-isa-dsl-v19-plan.md)。
 > 本文保留为**历史证据**：S0 立项基线、S8/S8b-1/S8b-2/S8c/S8d/S9/S10a–S10d 的实测数字与"为什么
 > 不做"的判定仍被 `docs/performance/bench_baseline.md`、`docs/reference/isa-dsl.md`、`CHANGELOG.md`
 > 引用，引用时注明"以记录时点为准"。
@@ -419,7 +419,7 @@ x86 EVEX 寄存器直寻址丢失 rm bit4（ZMM16-31）。
 
 ## 7. 切片计划
 
-> 门禁沿用 `docs/plans/forge-ir-binary-serialization-plan.md` §5 的固定命令（fmt / clippy 两道 /
+> 门禁沿用 `docs/archive/forge-ir-binary-serialization-plan.md` §5 的固定命令（fmt / clippy 两道 /
 > workspace 测试 / 语料 / release check / doc / markdownlint），**外加**每片必跑：三架构 JIT 矩阵、
 > arm64 与 riscv 编码黄金值逐字节不变、以及本片新增守卫。每片结束提交，同批推送。
 

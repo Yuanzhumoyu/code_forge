@@ -2,7 +2,7 @@
 //!
 //! # 为什么自研而不是引 zstd/flate2
 //!
-//! 二进制层的既有承诺是"零新依赖"（`docs/plans/forge-ir-binary-serialization-plan.md` §7），
+//! 二进制层的既有承诺是"零新依赖"（`docs/archive/forge-ir-binary-serialization-plan.md` §7），
 //! 而压缩不是这条格式的语义要求——它只是**省字节**。因此这里的取舍是：自己写一个
 //! 小而可审计的字节级压缩器，把"确定性 + fail-closed + 零依赖"三条都保住；
 //! 若将来需要更高压缩率，可以**按段替换**为外部实现（段表已带 `raw_len`，

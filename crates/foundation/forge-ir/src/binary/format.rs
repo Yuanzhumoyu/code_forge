@@ -1,6 +1,6 @@
 //! 二进制格式的**唯一事实源**：魔数、版本、段 id 与段名。
 //!
-//! 字节级规范见 `docs/plans/forge-ir-binary-serialization-plan.md` §2（参考文档
+//! 字节级规范见 `docs/archive/forge-ir-binary-serialization-plan.md` §2（参考文档
 //! `docs/reference/binary-format.md` 在 B5 落地）。本文件只放**常量与枚举**，
 //! 读写实现分别在 [`super::writer`] / [`super::reader`]。
 

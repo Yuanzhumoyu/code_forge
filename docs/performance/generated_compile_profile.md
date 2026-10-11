@@ -40,7 +40,7 @@
 `pub fn encode` → `pub fn decode` → `pub fn disassemble` → `pub fn assemble` →
 `__SHAPES` → `fn lower_inst` → `impl TargetMachine` → `mod __spec_tests`。
 
-对照 V0 基线（2026-09-23，`docs/plans/forge-isa-dsl-v19-plan.md` §10.1）：x86 全件
+对照 V0 基线（2026-09-23，`docs/archive/forge-isa-dsl-v19-plan.md` §10.1）：x86 全件
 1,336,624 → **1,554,299**（+16%）——增长全在 `spec_tests`（V3 向量 138 条 + V3d 派生枚举器
 602 条），`no_tests` 件只从 1,009,125 → 1,015,134（+0.6%）。
 

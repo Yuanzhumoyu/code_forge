@@ -2,7 +2,7 @@
 
 > 状态：[active]（2026-09-24 起；`IR_FORMAT_VERSION = 3`——v3 换 `CallConvId`；v2 是段体压缩）。
 > 实现：`crates/foundation/forge-ir/src/binary/`；执行方案与逐切片证据见
-> `docs/plans/forge-ir-binary-serialization-plan.md`。**本文件是格式的规范文本**，
+> `docs/archive/forge-ir-binary-serialization-plan.md`。**本文件是格式的规范文本**，
 > 与代码不一致时以代码为准（`IR_FORMAT_VERSION` 常量即版本号）。
 
 ## 1. 范围与目标

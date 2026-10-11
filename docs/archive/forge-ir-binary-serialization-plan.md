@@ -1,13 +1,14 @@
 # forge-ir 二进制序列化执行方案（B1–B5）
 
-> **状态复核（2026-10-08 晚 ✗）**：按代码事实核对 —— `to_binary`/`from_binary` ✗、
-> `IR_FORMAT_VERSION`（47 处引用 ✗）、`tests/binary_module.rs` **都在** ✔
-> ⇒ **判定：可归档** ✗（连同它的设计文档 `forge-ir-s8-design.md` ✗ —— 该文档三个候选里
-> **只做二进制序列化** ✗、另两项经拍板不做 ✗ ⇒ 也属"已收口"✗）。归档步骤同 v19 计划 ✗
-> （mv + ARCHIVED 头 + 同步引用 + 无死链复查 ✗）。
+> ⚠️ **ARCHIVED（2026-10-08）** —— 按代码事实核对：`to_binary`/`from_binary` ✗、
+> `IR_FORMAT_VERSION` ✗、`tests/binary_module.rs` **都在** ✔ ⇒ 本执行方案的 B1–B5 已落地 ✗。
+> **现行格式规范** = [`../reference/binary-format.md`](../reference/binary-format.md)（格式 v1 规范文本 ✗）；
+> 同目录还有它的设计文档 `forge-ir-s8-design.md` ✗。
+>
+> 原状态行：`[progress]（2026-09-19 撰写并执行）`。
 >
 > 状态：[progress]（2026-09-19 撰写并执行）。上游设计取舍见
-> `docs/plans/forge-ir-s8-design.md` §2；本文件是它的**执行细化**（字节级格式、切片、
+> `docs/archive/forge-ir-s8-design.md` §2；本文件是它的**执行细化**（字节级格式、切片、
 > 每片门禁与负向对照）。范围由用户 2026-09-19 拍板：**只做二进制序列化**——
 > S8 的另两个候选（MemorySSA-lite、crate 边界拆分）**本轮不做**，也**不做**任何
 > 兼容旧结构的迁移层。文中一切现状数字均为本机实测，**以代码与测试为准**。

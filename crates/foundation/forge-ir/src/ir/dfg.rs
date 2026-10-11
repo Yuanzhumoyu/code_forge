@@ -1099,7 +1099,7 @@ impl DataFlowGraph {
     //   `record_inst` 重建（不落盘、不双写）；
     // - `cfg_revision`：新建 DFG 的修订号即"新鲜"，解码后无陈旧缓存可言；
     // - 结构校验：`binary::funcs::validate_dfg` 逐条回查悬空句柄与
-    //   value kind 一致性（见 `docs/plans/forge-ir-binary-serialization-plan.md` §2.4）。
+    //   value kind 一致性（见 `docs/archive/forge-ir-binary-serialization-plan.md` §2.4）。
 
     /// 按原样追加一个值（返回其句柄；编号 = 当前长度）。
     pub(crate) fn push_value_verbatim(&mut self, data: ValueData) -> Value {

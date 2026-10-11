@@ -1,9 +1,13 @@
 # forge-ir S8 可选项设计方案（已拍板：只做二进制序列化）
 
-> 状态：[progress]（2026-09-17 撰写设计；**2026-09-19 拍板**：三个候选中**只做二进制
-> 序列化**，MemorySSA-lite 与 crate 边界拆分不做）。本文件**只给设计与取舍**，不含实现；
+> ⚠️ **ARCHIVED（2026-10-08）** —— 本设计文档的三个候选里**只做二进制序列化** ✗（已落地 ✗，
+> 执行方案见同目录 [`forge-ir-binary-serialization-plan.md`](forge-ir-binary-serialization-plan.md) ✗），
+> **MemorySSA-lite 与 crate 边界拆分经 2026-09-19 拍板不做** ✗。本文只给设计与取舍 ✗
+> （内容以其记录时点为准 ✗）。
+>
+> 原状态行：`[progress]（2026-09-17 撰写设计）`。
 > 执行细化（格式 v1 字节级规范、B1–B5 切片、每片门禁与负向对照）见
-> `docs/plans/forge-ir-binary-serialization-plan.md`——两者冲突时**以执行方案为准**
+> `docs/archive/forge-ir-binary-serialization-plan.md`——两者冲突时**以执行方案为准**
 > （其中 §7 记录了对本文件 §2.4 的一处修订：不加 `binary` feature 门控）。
 > 上游：`docs/plans/forge-ir-v3-plan.md` §4-I 与 §5-S8（原文："**I 可选项（S8，默认不做）**：
 > 二进制序列化、MemorySSA-lite、crate 边界拆分"、"S8 | 可选（二进制/MemorySSA/crate 边界）| 需拍板"）。
@@ -217,7 +221,7 @@ pass 建基础设施违反"每期有可测收益"的既有纪律；②`alias.rs`
 
 **2026-09-19 拍板结果**（用户答复，替代下方原四问的待办状态）：
 
-- **A 做**：范围**仅二进制序列化**，执行按 `docs/plans/forge-ir-binary-serialization-plan.md`
+- **A 做**：范围**仅二进制序列化**，执行按 `docs/archive/forge-ir-binary-serialization-plan.md`
   的 B1–B5 推进；`binary` **不加 feature 门控**（对 §2.4 的修订，理由见执行方案 §7）；
 - **B 不做**、**C 不做**：本轮不评估、不排期（触发条件保留，未来满足时另开方案）。
 - 原四问中与 A 无关的三问（DSE 排期、编译时间痛点、rustc e2e 缓存）本轮未触发，

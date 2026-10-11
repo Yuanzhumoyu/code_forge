@@ -1,12 +1,12 @@
 # forge-isa-dsl 改进方案（ISA-DSL v19：可独立接入 + 数据化验证 + 规范体检）
 
-> **状态复核（2026-10-08 晚 ✗）**：招牌切片已按**代码事实**核对为落地 ✔ ——
-> V1 独立 runtime（`pub use forge_ir as ir` ✓）、V3 谱内向量（`SPEC_VECTORS` ✓）、
-> V4 lint（`lint_source` ✓）、V5 参数化变体（`only_variants` ✓）；现行面见
-> [`../reference/isa-dsl.md`](../reference/isa-dsl.md) 与 `CLAUDE.md` 的「v21 现行面速查」✗。
-> ⇒ **判定：可归档** ✗（下一步 = `git mv` 到 `docs/archive/` + ARCHIVED 头 + 同步四处引用 ✗：
-> `CLAUDE.md` ✗、`docs/README.md` ✗、`docs/performance/generated_compile_profile.md` ✗、
-> `docs/archive/isa-dsl-v21-redesign-plan.md` ✗；搬完必须 `git grep` 复查死链 ✗）。
+> ⚠️ **ARCHIVED（2026-10-08）** —— 本方案的**招牌切片已按代码事实核对落地** ✔：V1 独立 runtime
+> （`pub use forge_ir as ir` ✓）、V3 谱内向量（`SPEC_VECTORS` ✓）、V4 lint（`lint_source` ✓）、
+> V5 参数化变体（`only_variants` ✓）。**现行面**见
+> [`../reference/isa-dsl.md`](../reference/isa-dsl.md) 与 `CLAUDE.md` 的「v21 现行面速查」✗；
+> 本文只记**设计取舍与切片史** ✗（内容以其记录时点为准 ✗）。
+>
+> 原状态行：`[progress]（2026-09-23 撰写）`。
 >
 > 状态：[progress]（2026-09-23 撰写）。用户 2026-09-19 起的口径延续：**允许破坏性更新、无需兼容
 > 旧版本、可参考网络上的设计方案、需兼顾用户体验、需足够通用而非服务于个别指令集**。

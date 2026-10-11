@@ -20,7 +20,7 @@ fn spec_bytes(asm: &str) -> Vec<u8> {
 // 字节 oracle 与谱同处一地，断言由生成物里的 `__spec_tests::spec_vector_*` 执行
 // （`cargo test -p forge-codegen --lib`）。迁移前后字节集合的规范化 sha256 相同：
 // `fffd0549ca3cfe6c5b4705fa49d949e25c042a8ca67511b4ecad9d2b4bc53a94`
-// （证据与命令见 `docs/plans/forge-isa-dsl-v19-plan.md` §5 的 V3 进度）。
+// （证据与命令见 `docs/archive/forge-isa-dsl-v19-plan.md` §5 的 V3 进度）。
 
 // F 指令 / S 型的规范字节同样已在谱内：见 `isa/riscv64.toml` 的 `[[vectors]]`
 // （其中 F 表原先由 `r_type(...)` 算出的期望值，迁移时按同一布局落成字面量）。

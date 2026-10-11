@@ -32,7 +32,7 @@
 //! `deny_unknown_fields` 下就是硬错误，lint 再报一次只会变成噪声——这条规则写完才发现，
 //! 直接删掉（留这条注释给后来者）。
 //!
-//! [方案 §10.3]: ../../../../docs/plans/forge-isa-dsl-v19-plan.md
+//! [方案 §10.3]: ../../../../docs/archive/forge-isa-dsl-v19-plan.md
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -102,7 +102,7 @@ pub struct LintOpts {
 
 /// 能力缺口口径（[方案 §10.3] 的四类计数）。只在给了 `--ops` 时出现。
 ///
-/// [方案 §10.3]: ../../../../docs/plans/forge-isa-dsl-v19-plan.md
+/// [方案 §10.3]: ../../../../docs/archive/forge-isa-dsl-v19-plan.md
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OpsCoverage {
     /// 本谱 `[[lowering]].op` ∪ `[[pattern]]` 根 op 覆盖了几条宿主 op。

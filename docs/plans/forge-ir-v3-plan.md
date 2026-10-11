@@ -95,7 +95,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 - **H 文本层（S7）**：`features=["text"]` 门控（**不拆文件**）；span 贯穿；错误恢复；
   往返断言扩面；结构化 fuzz。LLVM 语料继续作为互操作硬门禁。
 - **I 可选项（S8，默认不做）**：二进制序列化、MemorySSA-lite、crate 边界拆分
-  ——**详细设计见 [`forge-ir-s8-design.md`](forge-ir-s8-design.md)**（含现状基线实测、逐候选
+  ——**详细设计见 [`forge-ir-s8-design.md`](../archive/forge-ir-s8-design.md)**（含现状基线实测、逐候选
   数据模型/格式设计/分期/验证方案/成本，以及需要拍板的四个问题）。
 
 ## 5. 分期与进度
@@ -110,7 +110,7 @@ display 合成 phi）服务"能把 LLVM `.ll` 读进来再打回去"；而"编�
 | S5 | 附件强类型化与可见性 | **已落地（六切片）**：`isel_strategy` 类型化 + 字段私有化；开放集合划边界；metadata 单写；`dfg` 私有化三步走——`values`/`insts`/`blocks` 三个 arena **全部私有**，各带受限读写口（见 §6 末） |
 | S6 | 校验与 pass 契约 | **落地**：S0 暴露的 pass 欠账已全部清偿，校验默认策略切到 `Error`；终结符诊断点名真实指令句柄；墓碑规范形态（`TombstoneNotCanonical`）、**severity 分级**（`VerifySeverity`）、校验器健壮性守卫、错误码 × 回归测试对账守卫，以及 **`AnalysisManager`**（惰性缓存改修订号自校验 + `Arc` 快照，`AnalysisCacheStale` 随旧语义一并删除）均已落地（见 §6 末各切片） |
 | S7 | 文本层诊断与往返 | **已开工**：解析错误诊断（`行:列` + 源码行 + 插入符 + 收敛到 8 项的期望集合；`LexError` 分 `BadChar{offset}`/`Rejected`）与**语料往返幂等守卫**（189 正向用例 reparse 全成功、**幂等 189/189**，`KNOWN_DRIFT` 已清空）已落地；顺手修掉六类保真缺陷（i5 常量字节宽度、浮点位模式/大整数打印、命名元数据往返、聚合常量子元素、**half/bfloat 位模式**——f16 转换 + `0xH`/`0xR` 打印 + C99 十六进制浮点解码、**splat 文本往返**）（见 §6 末）；**IR 侧 span 贯穿**已落地（语法 `@L` → `parse_to_ast` 换算 `行:列` → 发射前 `set_current_loc` → `Instruction::loc`；phi/终结符仍是缺口，见 §6 末本节）；**`features=["text"]` 门控**已落地（核心实体改存不透明文本载荷、可选依赖 `dep:` 门控、`lib.rs` 两个模块 cfg 化、4 例源码级边界守卫 + CI 无 feature 检查，见 §6 末）；**收官切片**（splat 逐 lane 广播 + 向量元素类型名不再靠猜）已落地，**S7 余项清零**（见 §6 末）；LLVM 语料（198/452）仍是硬门禁 |
-| S8 | 可选（二进制/MemorySSA/crate 边界） | **待拍板**：详细设计见 [`forge-ir-s8-design.md`](forge-ir-s8-design.md)（三个候选逐个给数据模型、格式/表示设计、分期、验证方案与触发条件；当前建议：A 可做、B/C 不做） |
+| S8 | 可选（二进制/MemorySSA/crate 边界） | **待拍板**：详细设计见 [`forge-ir-s8-design.md`](../archive/forge-ir-s8-design.md)（三个候选逐个给数据模型、格式/表示设计、分期、验证方案与触发条件；当前建议：A 可做、B/C 不做） |
 
 ### 每期固定门禁
 

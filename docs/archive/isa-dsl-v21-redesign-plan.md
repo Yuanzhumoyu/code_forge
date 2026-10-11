@@ -149,7 +149,7 @@ x86 专项：`modrm` 内联 116/200、`fields` 内联 84/200、写了 `form` 又
 
 ## 3. 外部参考
 
-沿用本仓 `docs/plans/forge-isa-dsl-v19-plan.md` §3 已核证的来源，并并入本轮新增调研。
+沿用本仓 `docs/archive/forge-isa-dsl-v19-plan.md` §3 已核证的来源，并并入本轮新增调研。
 
 | 设计 | 借 | 不借 |
 | --- | --- | --- |

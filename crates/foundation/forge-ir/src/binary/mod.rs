@@ -23,7 +23,7 @@
 //! - **确定性**：不遍历 `HashMap` 决定输出顺序（写侧字符串表的 `HashMap` 只作索引）；
 //! - **字符串表逐条往返**：表不预留"空串槽"，索引即池句柄顺序 ⇒ 解码后的
 //!   `StringPool` 与编码前**逐条相同**（含空串在内，不多不少）。
-//! - 完整规范与切片计划见 `docs/plans/forge-ir-binary-serialization-plan.md`。
+//! - 完整规范与切片计划见 `docs/archive/forge-ir-binary-serialization-plan.md`。
 
 mod cache;
 mod consts;
