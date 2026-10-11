@@ -37,9 +37,7 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
             .map(|(name, d)| {
                 let mut d = d.clone();
                 d.name = name.clone();
-                let at = source
-                    .find(&format!("[pred.{name}]"))
-                    .unwrap_or(usize::MAX);
+                let at = source.find(&format!("[pred.{name}]")).unwrap_or(usize::MAX);
                 (at, name.clone(), d)
             })
             .collect();
@@ -278,7 +276,7 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
         if let Some(st) = m_stack {
             // 单位是**位**：必须是 8 的正整数倍，否则换算不出整字节（fail-closed）。
             let to_bytes = |bits: u32, key: &str| -> Result<u32, String> {
-                if bits % 8 != 0 {
+                if !bits.is_multiple_of(8) {
                     return Err(format!(
                         "[machine.stack].{key}: 单位是**位**，必须是 8 的正整数倍（写的是 {bits}）"
                     ));
@@ -349,9 +347,7 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
             .map(|(name, f)| {
                 let mut f = f.clone();
                 f.name = name.clone();
-                let at = source
-                    .find(&format!("[form.{name}]"))
-                    .unwrap_or(usize::MAX);
+                let at = source.find(&format!("[form.{name}]")).unwrap_or(usize::MAX);
                 (at, name.clone(), f)
             })
             .collect();
@@ -368,9 +364,7 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
             .map(|(name, i)| {
                 let mut i = i.clone();
                 i.name = name.clone();
-                let at = source
-                    .find(&format!("[inst.{name}]"))
-                    .unwrap_or(usize::MAX);
+                let at = source.find(&format!("[inst.{name}]")).unwrap_or(usize::MAX);
                 (at, name.clone(), i)
             })
             .collect();
@@ -394,8 +388,6 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
     // 不再回头查 `[conventions.bitsets]`。
     model.resolve_bitset_tables().map_err(anchor_err)?;
     // 命名立即数表同理（`kind = "imm"` + `names`）。
-    model
-        .resolve_imm_name_tables()
-        .map_err(anchor_err)?;
+    model.resolve_imm_name_tables().map_err(anchor_err)?;
     Ok(model)
 }

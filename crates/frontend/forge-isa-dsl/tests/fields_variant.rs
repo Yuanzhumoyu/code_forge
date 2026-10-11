@@ -57,7 +57,8 @@ fn run(tag: &str, instruction: &str) -> String {
     std::fs::create_dir_all(&dir).expect("tmpdir");
     let p = dir.join("spec.toml");
     let mut f = std::fs::File::create(&p).expect("create");
-    f.write_all(spec_with(instruction).as_bytes()).expect("write");
+    f.write_all(spec_with(instruction).as_bytes())
+        .expect("write");
     drop(f);
     match forge_isa_dsl::validate_file(p.to_str().expect("utf8 path")) {
         Ok(()) => String::new(),

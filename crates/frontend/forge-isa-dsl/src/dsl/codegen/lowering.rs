@@ -91,11 +91,11 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             let mut t_binds: Vec<TokenStream> = Vec::new();
             let mut tf_binds: Vec<TokenStream> = Vec::new();
             // v21 W6：声明了 `temps` ⇒ 用显式集合（并校验无未声明临时）；否则沿用旧扫描。
-        let rule_temps = match rule.temps.as_ref() {
-            Some(decl) => super::placeholder::explicit_temps(decl, &rule.insts)?,
-            None => super::placeholder::collect_temps(&rule.insts),
-        };
-        for (var, cls) in rule_temps {
+            let rule_temps = match rule.temps.as_ref() {
+                Some(decl) => super::placeholder::explicit_temps(decl, &rule.insts)?,
+                None => super::placeholder::collect_temps(&rule.insts),
+            };
+            for (var, cls) in rule_temps {
                 let vid = format_ident!("{var}");
                 match cls {
                     super::placeholder::PhTemp::Gpr => {
@@ -290,7 +290,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         .as_ref()
         .map(|a| a.vn.clone())
         .unwrap_or_else(|_| format_ident!("NoGprMoveDeclared"));
-    let (mov_src,  mov_src_idx,  mov_dest,  _mov_dest_idx) = match &ret_arm {
+    let (mov_src, mov_src_idx, mov_dest, _mov_dest_idx) = match &ret_arm {
         Ok(a) => (a.src.clone(), a.src_idx, a.dst.clone(), a.dst_idx),
         Err(_) => (format_ident!("src"), 0u8, format_ident!("dest"), 0u8),
     };
@@ -338,7 +338,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     let fpr_move_body = |bits: &TokenStream| -> Result<TokenStream, String> {
         moves.dispatch(&fpr_want, bits, |arm| {
             let vn = &arm.vn;
-            let (dest,  src) = (&arm.dst, &arm.src);
+            let (dest, src) = (&arm.dst, &arm.src);
             let third: Vec<TokenStream> = arm
                 .extra
                 .iter()
@@ -543,7 +543,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             let store_body =
                 moves.dispatch(&store_want, &quote! { (__vbytes as u32) * 8 }, |arm| {
                     let vn = &arm.vn;
-                    let (mem,  src) = (&arm.dst, &arm.src);
+                    let (mem, src) = (&arm.dst, &arm.src);
                     let src_idx = arm.src_idx;
                     quote! {
                         {
@@ -598,7 +598,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                 let bits = quote! { ctx.type_bits_of(&__vk).unwrap_or(#addr_bits32) };
                 moves.dispatch(&fpr_want, &bits, |arm| {
                     let vn = &arm.vn;
-                    let (dest,  src) = (&arm.dst, &arm.src);
+                    let (dest, src) = (&arm.dst, &arm.src);
                     let src_idx = arm.src_idx;
                     let third: Vec<TokenStream> = arm
                         .extra
@@ -638,7 +638,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                     .iter()
                     .filter(|r| r.when.as_ref().is_some_and(|w| w.multi == Some(true)))
                     .collect();
-                ordered.sort_by_key(|r| std::cmp::Reverse(r.when.as_ref().map_or(0, |w| w.specificity())));
+                ordered.sort_by_key(|r| {
+                    std::cmp::Reverse(r.when.as_ref().map_or(0, |w| w.specificity()))
+                });
                 for tl in ordered {
                     let cond = match tl.when.as_ref().and_then(|w| w.width) {
                         Some(bits) => quote! { __retN_bits == #bits },
@@ -654,7 +656,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                     }
                 }
             }
-            let multi_component_body: TokenStream = if multi_int.is_empty() && multi_fpr.is_empty() {
+            let multi_component_body: TokenStream = if multi_int.is_empty() && multi_fpr.is_empty()
+            {
                 // 没有谱面规则 ⇒ 旧的逐分量路径（整数 mov + 浮点 dispatch）
                 quote! {
                     if __class.is_int() {
@@ -1009,7 +1012,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
 
     // [[pattern]]（S6）：静态 PatternSpec 表 + patterns()/lower_pattern() 方法。
     // 无 [[pattern]] → (空, 空)，impl 里不 splice 任何东西（trait 缺省兜底）。
-    let (pattern_statics,  pattern_methods) = gen_patterns(infos, &name_to_vn, model)?;
+    let (pattern_statics, pattern_methods) = gen_patterns(infos, &name_to_vn, model)?;
 
     Ok(quote! {
         /// 谓词属性 `elem` 的数值映射（标量类型；向量元素在 Phase 6 扩展）。
@@ -1344,7 +1347,7 @@ fn gen_patterns(
         };
         let var_count = var_seq;
         let nodes = op_seq as u16;
-        let (when,  guard_leaves) = match &p.when {
+        let (when, guard_leaves) = match &p.when {
             None => (None, 0u8),
             Some(v) => {
                 let pred = pred::parse(v).map_err(|e| format!("{path}.when: {e}"))?;
@@ -1530,7 +1533,7 @@ pub(crate) fn stack_mem_shape(
     role: Role,
 ) -> Result<Option<StackMemShape>, String> {
     let vn = crate::dsl::codegen::pascal_ident(&info.inst.name);
-    let (reg,  mem,  reg_idx) = reg_mem_fids(info);
+    let (reg, mem, reg_idx) = reg_mem_fids(info);
     if let (Some(r), Some(m)) = (reg, mem) {
         return Ok(Some(StackMemShape {
             vn,
@@ -1614,7 +1617,7 @@ fn gen_call_lowering(
     // 整数搬运指令（宽度按地址类折算——整寄存器搬移对更窄的值同样正确）。
     let mov_arm = moves.pick(&gpr_want, addr_bits)?;
     let mov_vn = mov_arm.vn.clone();
-    let (m_src,  m_src_idx,  m_dest,  m_dest_idx) = (
+    let (m_src, m_src_idx, m_dest, m_dest_idx) = (
         mov_arm.src.clone(),
         mov_arm.src_idx,
         mov_arm.dst.clone(),
@@ -1849,7 +1852,7 @@ fn gen_call_lowering(
         }
         moves.dispatch(&fpr_want, bits, |arm| {
             let vn = &arm.vn;
-            let (dest,  src) = (&arm.dst, &arm.src);
+            let (dest, src) = (&arm.dst, &arm.src);
             let dst_idx = arm.dst_idx;
             let third: Vec<TokenStream> = arm
                 .extra
@@ -1889,7 +1892,7 @@ fn gen_call_lowering(
     let va_meta_stmt: TokenStream = match moves.pick(&imm_want, 8) {
         Ok(arm) => {
             let vn = &arm.vn;
-            let (dest,  imm) = (&arm.dst, &arm.src);
+            let (dest, imm) = (&arm.dst, &arm.src);
             quote! {
                 if __variadic.is_some()
                     && let Some((__mc, __mi)) = __cl.va_meta
@@ -1934,7 +1937,7 @@ fn gen_call_lowering(
         let bits = quote! { (__vbytes as u32) * 8 };
         let body = moves.dispatch(&sret_load_want, &bits, |arm| {
             let vn = &arm.vn;
-            let (dest,  mem) = (&arm.dst, &arm.src);
+            let (dest, mem) = (&arm.dst, &arm.src);
             let dst_idx = arm.dst_idx;
             quote! {
                 {
@@ -1974,7 +1977,7 @@ fn gen_call_lowering(
         let bits = quote! { ctx.type_bits_of(&__rk).unwrap_or(#addr_bits32) };
         moves.dispatch(&fpr_want, &bits, |arm| {
             let vn = &arm.vn;
-            let (dest,  src) = (&arm.dst, &arm.src);
+            let (dest, src) = (&arm.dst, &arm.src);
             let dst_idx = arm.dst_idx;
             let third: Vec<TokenStream> = arm
                 .extra
@@ -2195,7 +2198,7 @@ fn gen_call_lowering(
     // S2：sret 槽地址 → 首 int 参数槽（RCX）。生成期门控（frame_rbp_addr
     // 标签存在）。
     let sret_setup: TokenStream = if has_byref_insts {
-        let (vn_lea,  f_lea,  m_lea,  i_lea) = byref_lea.clone().expect("frame_addr 角色");
+        let (vn_lea, f_lea, m_lea, i_lea) = byref_lea.clone().expect("frame_addr 角色");
         quote! {
             if __sret {
                 // 地址类（`__ADDR_CLASS`：x86 = GPR(8)，1 字节 ISA = GPR(1)）——
@@ -2247,13 +2250,13 @@ fn gen_call_lowering(
         src: Shape::Reg(Bank::Fpr),
     };
     let byref_stmt: TokenStream = if has_byref_insts {
-        let (vn_lea,  f_lea,  m_lea,  i_lea) = byref_lea.clone().expect("frame_addr 角色");
+        let (vn_lea, f_lea, m_lea, i_lea) = byref_lea.clone().expect("frame_addr 角色");
         let store_body = moves.dispatch(
             &byref_store_want,
             &quote! { (__vbytes as u32) * 8 },
             |arm| {
                 let vn = &arm.vn;
-                let (mem,  src) = (&arm.dst, &arm.src);
+                let (mem, src) = (&arm.dst, &arm.src);
                 let src_idx = arm.src_idx;
                 quote! {
                     {
@@ -2485,7 +2488,7 @@ fn arg_move_loop(
         }
         moves.dispatch(fpr_want, bits, |arm| {
             let vn = &arm.vn;
-            let (dest,  src) = (&arm.dst, &arm.src);
+            let (dest, src) = (&arm.dst, &arm.src);
             let src_idx = arm.src_idx;
             let third: Vec<TokenStream> = arm
                 .extra
@@ -2561,7 +2564,7 @@ fn arg_move_loop(
         };
         moves.dispatch(want, &__val_bits, |arm| {
             let vn = &arm.vn;
-            let (dest,  src) = (&arm.dst, &arm.src);
+            let (dest, src) = (&arm.dst, &arm.src);
             let src_idx = arm.src_idx;
             quote! {
                 let __idx = __pack.push_inst(Inst::#vn {
@@ -2871,7 +2874,7 @@ pub(crate) fn byref_frame_addr(
     infos: &[InstInfo],
 ) -> Option<(syn::Ident, syn::Ident, syn::Ident, u8)> {
     let info = inst_by_role(infos, Role::FrameAddr)?;
-    let (reg,  mem,  idx) = reg_mem_fids(info);
+    let (reg, mem, idx) = reg_mem_fids(info);
     Some((info.vn.clone(), reg?, mem?, idx))
 }
 
@@ -2922,11 +2925,11 @@ fn gen_lowering_insts(
         }
         // `{out} = INST op0, op1` 或 `INST op0, op1`（lhs 仅为文档性语法；
         // 结果 XReg 绑定由占位符注册表 {out}→rd 派生，无需单独消费 lhs）
-        let (_lhs,  rhs) = match trimmed.split_once('=') {
+        let (_lhs, rhs) = match trimmed.split_once('=') {
             Some((l, r)) => (Some(l.trim()), r.trim()),
             None => (None, trimmed),
         };
-        let (inst_name,  ops) = match rhs.split_once(char::is_whitespace) {
+        let (inst_name, ops) = match rhs.split_once(char::is_whitespace) {
             Some((n, rest)) => (n.trim(), rest.trim()),
             None => (rhs.trim(), ""),
         };
@@ -3067,7 +3070,9 @@ fn gen_lowering_insts(
                     op
                 };
                 // v21 W6：算术表达式占位符（`{imm0 - 4}` 之类）优先——ctor 由各操作数拼接。
-                let (ctor_expr, xreg_expr) = if let Some(e) = super::placeholder::expr_ctor(op, slot) {
+                let (ctor_expr, xreg_expr) = if let Some(e) =
+                    super::placeholder::expr_ctor(op, slot)
+                {
                     (e, quote! { 0u32 })
                 } else if super::placeholder::kind_matches(op, slot.kind) {
                     // 注册表占位符（{out}/{iconst}/{g}…）：ctor 由注册表闭包

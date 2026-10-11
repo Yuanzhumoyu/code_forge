@@ -754,7 +754,8 @@ pub(crate) fn placeholders() -> &'static [Ph] {
         },
         Ph {
             name: "{true}",
-            kind: PhKind::Cond,            loose: false,
+            kind: PhKind::Cond,
+            loose: false,
             token_kind: "label",
             temp: None,
             temp_class: None,
@@ -853,10 +854,10 @@ pub(crate) fn numbered_operand(name: &str) -> Option<usize> {
 /// 注册表查不到（字面量/物理寄存器/内存表达式）时回退旧规则。
 pub(crate) fn token_kind(op: &str) -> &'static str {
     // v21 W6：算术表达式占位符 ⇒ 种类按首个操作数（`{imm0 - 4}` 是 imm）。
-    if is_arith_expr(op) {
-        if let Some(f) = first_operand(op) {
-            return token_kind(&f);
-        }
+    if is_arith_expr(op)
+        && let Some(f) = first_operand(op)
+    {
+        return token_kind(&f);
     }
     // 剥外层方括号（内存基址写法 [{n}]）
     let inner = if let Some(op) = op.strip_circumfix('[', ']') {
@@ -912,7 +913,11 @@ pub(crate) fn explicit_temps(
         let temp_class = match cls.trim() {
             "gpr" => PhTemp::Gpr,
             "fpr" => PhTemp::Fpr,
-            other => return Err(format!("temps: `{d}` 的类别 `{other}` 不认识（只认 gpr/fpr）")),
+            other => {
+                return Err(format!(
+                    "temps: `{d}` 的类别 `{other}` 不认识（只认 gpr/fpr）"
+                ));
+            }
         };
         let tok = format!("{{{}}}", name.trim());
         let var = numbered_temp(&tok)
@@ -1017,7 +1022,6 @@ fn numbered_xreg(name: &str) -> TokenStream {
     quote! { #id }
 }
 
-
 /// **算术表达式占位符**（v21 W6）：`{a + b}` / `{iconst >> 12 & 0xfffff}` 这类写法。
 ///
 /// 认法：整串被一层 `{}` 包住、且**顶层**（不嵌套在更内层花括号里）出现运算符。
@@ -1084,7 +1088,11 @@ pub(crate) fn expr_ctor(op: &str, slot: &OperandSlot) -> Option<TokenStream> {
             toks.push(quote! { (#v as i64) });
             return Some(());
         }
-        let name = if s.starts_with('{') { s.clone() } else { format!("{{{s}}}") };
+        let name = if s.starts_with('{') {
+            s.clone()
+        } else {
+            format!("{{{s}}}")
+        };
         let ph = lookup(&name)?;
         let ctor = ph.ctor?;
         toks.push(ctor(slot));
@@ -1092,8 +1100,14 @@ pub(crate) fn expr_ctor(op: &str, slot: &OperandSlot) -> Option<TokenStream> {
     };
     for c in inner.chars() {
         match c {
-            '{' => { depth += 1; cur.push(c); }
-            '}' => { depth -= 1; cur.push(c); }
+            '{' => {
+                depth += 1;
+                cur.push(c);
+            }
+            '}' => {
+                depth -= 1;
+                cur.push(c);
+            }
             '+' | '-' | '*' | '/' | '&' | '|' | '^' | '<' | '>' if depth == 0 => {
                 flush(&mut cur, &mut toks)?;
                 let ops = if (c == '<' || c == '>') && inner.contains(&format!("{c}{c}")) {
@@ -1190,7 +1204,6 @@ pub(crate) fn assert_unique() -> Result<(), String> {
     }
     Ok(())
 }
-
 
 /// **仅供单测**：表达式占位符的种类（等于 `token_kind`，但名字更直白）。
 #[cfg(test)]

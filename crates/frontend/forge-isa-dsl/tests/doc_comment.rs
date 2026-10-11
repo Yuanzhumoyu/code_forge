@@ -82,7 +82,10 @@ fn flatten(spec: &str, tag: &str) -> String {
     std::fs::write(&tmp, spec).expect("写临时谱");
     let ts = expand_file(tmp.to_str().unwrap(), &opts()).expect("展开谱");
     let _ = std::fs::remove_file(&tmp);
-    ts.to_string().chars().filter(|c| !c.is_whitespace()).collect()
+    ts.to_string()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect()
 }
 
 /// 取一条指令的 `doc` 列（已继承 + 已插值）。
@@ -141,10 +144,7 @@ fn resolved_doc_lands_in_generated_inst_enum() {
 
 #[test]
 fn unknown_or_unavailable_placeholder_fails_closed() {
-    let bad = spec().replace(
-        r#"doc = "自己:{name}"#,
-        r#"doc = "自己:{nope}"#,
-    );
+    let bad = spec().replace(r#"doc = "自己:{name}"#, r#"doc = "自己:{nope}"#);
     let tmp = std::env::temp_dir().join(format!("forge_doc_bad_{}.toml", std::process::id()));
     std::fs::write(&tmp, &bad).expect("写临时谱");
     let err = expand_file(tmp.to_str().unwrap(), &opts()).expect_err("未知占位符应报错");
@@ -178,7 +178,11 @@ fn shipped_specs_still_expand_without_docs() {
         let p = root.join("isa").join(isa);
         let ts = expand_file(p.to_str().unwrap(), &opts())
             .unwrap_or_else(|e| panic!("展开 {isa} 失败：{e}"));
-        let flat: String = ts.to_string().chars().filter(|c| !c.is_whitespace()).collect();
+        let flat: String = ts
+            .to_string()
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
         assert!(flat.contains("pubenumInst"), "{isa} 应生成 Inst 枚举");
     }
 }

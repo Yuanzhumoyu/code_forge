@@ -18,8 +18,8 @@ pub(crate) mod doc;
 pub(crate) mod enum_decl;
 pub(crate) mod field_decl;
 pub(crate) mod match_tree;
-pub(crate) mod operand_decl;
 pub(crate) mod model;
+pub(crate) mod operand_decl;
 mod parse;
 mod pred;
 pub(crate) mod shared;
@@ -127,7 +127,7 @@ pub(crate) fn parse_and_validate_projected(
     //——**先做**：W2 的字段展开要读它。
     if let Err(msg) = stream_decl::lower_stream_forms(&mut model) {
         diags.push_anchored(&idx, &msg);
-    }    // v21 W3b：`[enum.<表名>]` 降级回内部三张表（cond / bitsets / imm_names）——**先做**，
+    } // v21 W3b：`[enum.<表名>]` 降级回内部三张表（cond / bitsets / imm_names）——**先做**，
     // 操作数降级与后续校验都读它们。
     if let Err(msg) = enum_decl::lower_enum_layer(&mut model) {
         diags.push_anchored(&idx, &msg);

@@ -17,9 +17,7 @@
 //! 参与声明期校验与 `--bits` 清点）。**x86 谱尚未迁到 stream 形态**（W4 剩余项）。
 
 use super::field_decl::FieldDecl;
-use super::model::{
-    EncKeys, Form, IsaModel, PrefixKey, RexW, SegmentBytes, SegmentDecl, SegKind,
-};
+use super::model::{EncKeys, Form, IsaModel, PrefixKey, RexW, SegKind, SegmentBytes, SegmentDecl};
 
 /// 把 `kind = "stream"`（写了 `segments`）的 form 降级回语义键 + `fields`；
 /// 并把**指令级结构段**（选项 B）也降级。
@@ -60,10 +58,7 @@ pub(crate) fn lower_families(m: &mut IsaModel, source: &str) -> Result<(), Strin
                     "[[family.{name}]]: `vary` 与 `rows` 不能同时给（`vary` 自己生成行）"
                 ));
             }
-            let zipped = super::model::Lowering::zip_vary(
-                &format!("[[family.{name}]].vary"),
-                v,
-            )?;
+            let zipped = super::model::Lowering::zip_vary(&format!("[[family.{name}]].vary"), v)?;
             let mut rs = Vec::with_capacity(zipped.len());
             for row in zipped {
                 let mut fields = toml::Table::new();
@@ -92,8 +87,9 @@ pub(crate) fn lower_families(m: &mut IsaModel, source: &str) -> Result<(), Strin
             name: Some(name),
             body: decl.body,
             rows,
-        
-            from_family: true,});
+
+            from_family: true,
+        });
     }
     Ok(())
 }
@@ -208,7 +204,10 @@ fn lower_instr_segments(m: &mut IsaModel) -> Result<(), String> {
                     // 值仍由指令的 `match = { vex_map = … }` 给（不需要字段声明——
                     // 经典路径本就是按 `"field"` 约定去读那几个名字）。
                     let spec = seg.vex_spec();
-                    if spec.map.is_none() && spec.pp.is_none() && spec.w.is_none() && spec.l.is_none()
+                    if spec.map.is_none()
+                        && spec.pp.is_none()
+                        && spec.w.is_none()
+                        && spec.l.is_none()
                     {
                         return Err(format!(
                             "[inst.{}].{}: 头段至少要给一个来源键（map/pp/w/l）",
@@ -272,10 +271,7 @@ fn effect_from_name(n: &str) -> Option<super::model::PrefixEffect> {
 /// **生效的前缀扫描表**：谱声明了就用它，**否则为空**（v21 W4.4 起没有内置兜底——
 /// 前缀知识按 form 的前缀段落在谱里，未声明就是"这个谱没有前缀链"）。
 pub fn effective_prefix_scan(m: &IsaModel) -> Vec<super::model::PrefixScanEntry> {
-    m.conventions
-        .prefix_scan
-        .clone()
-        .unwrap_or_default()
+    m.conventions.prefix_scan.clone().unwrap_or_default()
 }
 
 /// v21 W4.4 **守卫**用：把段里声明的**前缀字节**抽出来，带上（若写了的）效果集。
@@ -330,7 +326,9 @@ fn prefix_key(where_: &str, seg: &SegmentDecl) -> Result<PrefixKey, String> {
     if seg.bytes.is_none() && seg.fields.is_some() {
         // ② 字段形态：字节由指令的 `match = { prefix = … }` 给。
         if seg.fields.as_ref().is_some_and(|f| f.is_empty()) {
-            return Err(format!("{where_}.prefix: 字段形式的前缀段不能给空的 `fields`"));
+            return Err(format!(
+                "{where_}.prefix: 字段形式的前缀段不能给空的 `fields`"
+            ));
         }
         return Ok(PrefixKey::One("field".to_string()));
     }
@@ -393,10 +391,7 @@ fn lower_stream_instructions(m: &mut IsaModel) {
         .collect();
     for inst in &mut m.instructions {
         // 走段路径的两种指令：**form 是段形态**，或**自己带结构段**（选项 B）。
-        let via_form = inst
-            .form
-            .as_ref()
-            .is_some_and(|f| stream_forms.contains(f));
+        let via_form = inst.form.as_ref().is_some_and(|f| stream_forms.contains(f));
         if !via_form && inst.segments.is_none() {
             continue;
         }
@@ -426,11 +421,10 @@ fn lower_stream_instructions(m: &mut IsaModel) {
             }
             if let Some(n) = ext_reg {
                 // 与 `bind`（可能已经设了 rm）**合并**，不覆盖另一半。
-                let base = inst
-                    .enc
-                    .modrm
-                    .clone()
-                    .unwrap_or(super::model::ModrmMap { reg: None, rm: None });
+                let base = inst.enc.modrm.clone().unwrap_or(super::model::ModrmMap {
+                    reg: None,
+                    rm: None,
+                });
                 inst.enc.modrm = Some(super::model::ModrmMap {
                     reg: Some(super::model::ModrmReg::Ext(n)),
                     rm: base.rm,
@@ -446,11 +440,10 @@ fn lower_stream_instructions(m: &mut IsaModel) {
                 .map(|n| super::model::ModrmReg::Op(n.clone()));
             let rm = bind.get("rm").cloned();
             if reg.is_some() || rm.is_some() {
-                let base = inst
-                    .enc
-                    .modrm
-                    .clone()
-                    .unwrap_or(super::model::ModrmMap { reg: None, rm: None });
+                let base = inst.enc.modrm.clone().unwrap_or(super::model::ModrmMap {
+                    reg: None,
+                    rm: None,
+                });
                 inst.enc.modrm = Some(super::model::ModrmMap {
                     reg: reg.or(base.reg),
                     rm: rm.or(base.rm),
@@ -508,9 +501,7 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
                 } else if let Some(SegmentBytes::Raw(list)) = seg.bytes.clone() {
                     // ③ 有序字节列表：**发射序 = 写序**（效果名沿用全局前缀表，W4.4 才收敛到 form）。
                     if list.is_empty() {
-                        return Err(format!(
-                            "[form.{fname}].prefix: 有序字节列表不能为空"
-                        ));
+                        return Err(format!("[form.{fname}].prefix: 有序字节列表不能为空"));
                     }
                     let mut out = Vec::new();
                     for b in list {
@@ -523,48 +514,48 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
                         PrefixKey::Many(out)
                     });
                 } else {
-                let effects = match seg.bytes.clone() {
-                    Some(SegmentBytes::Effects(map)) => map,
-                    // 裸字节列表在上面的 `else if` 里已经处理；这里不可能到达。
-                    Some(SegmentBytes::Raw(_)) => Vec::new().into_iter().collect(),
-                    None => {
-                        return Err(format!(
-                            "[form.{fname}].prefix: 前缀段必须给 `bytes`（字节 → 效果名字典、\
+                    let effects = match seg.bytes.clone() {
+                        Some(SegmentBytes::Effects(map)) => map,
+                        // 裸字节列表在上面的 `else if` 里已经处理；这里不可能到达。
+                        Some(SegmentBytes::Raw(_)) => Vec::new().into_iter().collect(),
+                        None => {
+                            return Err(format!(
+                                "[form.{fname}].prefix: 前缀段必须给 `bytes`（字节 → 效果名字典、\
                              或有序字节列表）或 `fields`（字节由字段给）"
-                        ));
-                    }
-                };
-                // 效果名是**闭集**（[`PrefixEffect::NAMES`] 是唯一来源）：写错在这里报，
-                // 不留给下游按字符串比对（三处硬编码名字集一旦不同步就是静默漏派发）。
-                //
-                // 降级到经典 `prefix` 键时口径不同：经典键只在 `"opsize"` 处表达语义
-                //（`PrefixEffect::Opsize16` ⇔ 经典写法的 `"opsize"`），其余前缀按**字节**写。
-                //
-                // 已知限制（记入执行清单）：经典校验要求 `"opsize"` **单独出现**，所以
-                // "同时有 opsize 与其它前缀"的 form 现在还降不过去；W4 的"前缀表按 form
-                // 显式化"（段成为唯一事实源）会取代该限制。
-                let mut parts = Vec::new();
-                for (byte, effect) in effects {
-                    if !super::model::PrefixEffect::NAMES.contains(&effect.as_str()) {
-                        return Err(format!(
-                            "[form.{fname}].prefix: 未知的前缀效果名 `{effect}`\
+                            ));
+                        }
+                    };
+                    // 效果名是**闭集**（[`PrefixEffect::NAMES`] 是唯一来源）：写错在这里报，
+                    // 不留给下游按字符串比对（三处硬编码名字集一旦不同步就是静默漏派发）。
+                    //
+                    // 降级到经典 `prefix` 键时口径不同：经典键只在 `"opsize"` 处表达语义
+                    //（`PrefixEffect::Opsize16` ⇔ 经典写法的 `"opsize"`），其余前缀按**字节**写。
+                    //
+                    // 已知限制（记入执行清单）：经典校验要求 `"opsize"` **单独出现**，所以
+                    // "同时有 opsize 与其它前缀"的 form 现在还降不过去；W4 的"前缀表按 form
+                    // 显式化"（段成为唯一事实源）会取代该限制。
+                    let mut parts = Vec::new();
+                    for (byte, effect) in effects {
+                        if !super::model::PrefixEffect::NAMES.contains(&effect.as_str()) {
+                            return Err(format!(
+                                "[form.{fname}].prefix: 未知的前缀效果名 `{effect}`\
                              （可用：{}）",
-                            super::model::PrefixEffect::NAMES.join(" / ")
-                        ));
+                                super::model::PrefixEffect::NAMES.join(" / ")
+                            ));
+                        }
+                        parse_byte(&byte).map_err(|e| format!("[form.{fname}].prefix: {e}"))?;
+                        if effect == "opsize16" {
+                            parts.push("opsize".to_string());
+                        } else {
+                            parts.push(byte);
+                        }
                     }
-                    parse_byte(&byte).map_err(|e| format!("[form.{fname}].prefix: {e}"))?;
-                    if effect == "opsize16" {
-                        parts.push("opsize".to_string());
+                    // 单来源写 `One`（与经典写法/序列化往返一致），多来源写 `Many`。
+                    keys.prefix = Some(if parts.len() == 1 {
+                        PrefixKey::One(parts.remove(0))
                     } else {
-                        parts.push(byte);
-                    }
-                }
-                // 单来源写 `One`（与经典写法/序列化往返一致），多来源写 `Many`。
-                keys.prefix = Some(if parts.len() == 1 {
-                    PrefixKey::One(parts.remove(0))
-                } else {
-                    PrefixKey::Many(parts)
-                });
+                        PrefixKey::Many(parts)
+                    });
                 }
             }
             SegKind::Escape => {
@@ -652,11 +643,7 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
             }
             SegKind::Vex => {
                 let spec = seg.vex_spec();
-                if spec.map.is_none()
-                    && spec.pp.is_none()
-                    && spec.w.is_none()
-                    && spec.l.is_none()
-                {
+                if spec.map.is_none() && spec.pp.is_none() && spec.w.is_none() && spec.l.is_none() {
                     return Err(format!(
                         "[form.{fname}].vex: VEX 段至少要给一个来源键\
                          （`map`/`pp`/`w`/`l`）——空头等于没声明"
@@ -666,11 +653,7 @@ fn lower_one(form: &mut Form, fixed: bool) -> Result<(), String> {
             }
             SegKind::Evex => {
                 let spec = seg.vex_spec();
-                if spec.map.is_none()
-                    && spec.pp.is_none()
-                    && spec.w.is_none()
-                    && spec.l.is_none()
-                {
+                if spec.map.is_none() && spec.pp.is_none() && spec.w.is_none() && spec.l.is_none() {
                     return Err(format!(
                         "[form.{fname}].evex: EVEX 段至少要给一个来源键\
                          （`map`/`pp`/`w`/`l`）——空头等于没声明"
@@ -848,10 +831,17 @@ asm = "n {dst}, {src}"
     #[test]
     fn match_opcode_translates_to_instruction_opcode_scalar() {
         let m = crate::dsl::parse_and_validate(STREAM).expect("谱合法");
-        let inst = m.instructions.iter().find(|i| i.name == "N").expect("指令 N");
+        let inst = m
+            .instructions
+            .iter()
+            .find(|i| i.name == "N")
+            .expect("指令 N");
         assert_eq!(inst.opcode, Some(0x8B), "match.opcode 应翻译成标量");
         assert!(
-            !inst.fields.as_ref().is_some_and(|f| f.contains_key("opcode")),
+            !inst
+                .fields
+                .as_ref()
+                .is_some_and(|f| f.contains_key("opcode")),
             "翻译后 match 里不该再留 opcode"
         );
     }
@@ -860,9 +850,16 @@ asm = "n {dst}, {src}"
     #[test]
     fn vlen_bind_lands_on_modrm() {
         let m = crate::dsl::parse_and_validate(STREAM).expect("谱合法");
-        let inst = m.instructions.iter().find(|i| i.name == "N").expect("指令 N");
+        let inst = m
+            .instructions
+            .iter()
+            .find(|i| i.name == "N")
+            .expect("指令 N");
         let modrm = inst.enc.modrm.as_ref().expect("bind 应写进 modrm");
-        assert_eq!(modrm.reg, Some(crate::dsl::model::ModrmReg::Op("dst".into())));
+        assert_eq!(
+            modrm.reg,
+            Some(crate::dsl::model::ModrmReg::Op("dst".into()))
+        );
         assert_eq!(modrm.rm.as_deref(), Some("src"));
     }
 
@@ -899,7 +896,11 @@ dispatch = "rs1_width"
 insts = ["ADD {out}, {0}, {1}"]
 "#;
         let m = crate::dsl::parse_and_validate(src).expect("谱合法");
-        let rules: Vec<_> = m.lowering.iter().filter(|r| r.op.as_str() == "Copy").collect();
+        let rules: Vec<_> = m
+            .lowering
+            .iter()
+            .filter(|r| r.op.as_str() == "Copy")
+            .collect();
         assert_eq!(rules.len(), 2, "应展开成两条（每条候选一条）");
         let mut names: Vec<String> = rules
             .iter()
@@ -912,15 +913,19 @@ insts = ["ADD {out}, {0}, {1}"]
             assert!(w.contains("rs1_width"), "应带 rs1_width 分派：{w}");
         }
     }
+
     /// **v21 W5**：`[family.<名>]` 与等价 `[[templates]]` 展开后**指令集逐条相同**，
     /// 且族名自动成为各行的 `group`（"族名即多态引用名"）。
-
     /// **v21 W4.4 守卫**：段里声明的**前缀字节**必须被生效扫描表覆盖，字典形态写了效果名时
     /// 效果必须一致（删 `default_prefix_scan()`、解码条件按 form 前缀段生成之前的安全网）。
     #[test]
     fn segment_prefixes_are_covered_by_the_scan_table() {
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../isa");
-        for (name, file) in [("x86", "x86.toml"), ("arm64", "arm64.toml"), ("riscv64", "riscv64.toml")] {
+        for (name, file) in [
+            ("x86", "x86.toml"),
+            ("arm64", "arm64.toml"),
+            ("riscv64", "riscv64.toml"),
+        ] {
             let text = std::fs::read_to_string(format!("{root}/{file}")).expect("读发行谱");
             let m = crate::dsl::parse_and_validate(&text)
                 .unwrap_or_else(|e| panic!("{name} 谱应合法：{e}"));
@@ -933,7 +938,10 @@ insts = ["ADD {out}, {0}, {1}"]
                         panic!("{name}: 段里声明的前缀字节 0x{byte:02X} 不在生效扫描表里")
                     });
                 if let Some(want) = want {
-                    assert_eq!(hit.effects, want, "{name}: 0x{byte:02X} 的效果与扫描表不一致");
+                    assert_eq!(
+                        hit.effects, want,
+                        "{name}: 0x{byte:02X} 的效果与扫描表不一致"
+                    );
                 }
             }
             // **字段形态**的前缀实际值（`match = { prefix = … }`）也要在表里——
@@ -946,6 +954,7 @@ insts = ["ADD {out}, {0}, {1}"]
             }
         }
     }
+
     /// v21 W4.3b：**指令级结构段**（选项 B）与经典内联键等价。
     #[test]
     fn instruction_level_segments_match_classic_inline_keys() {
@@ -1116,7 +1125,9 @@ asm = "n {dst}, {src}"
             .iter()
             .filter_map(|x| x.name.as_deref())
             .collect();
-        for n in ["opcode", "mod", "reg", "rm", "scale", "index", "base", "disp8"] {
+        for n in [
+            "opcode", "mod", "reg", "rm", "scale", "index", "base", "disp8",
+        ] {
             assert!(names.contains(&n), "缺字段 {n}：{names:?}");
         }
     }

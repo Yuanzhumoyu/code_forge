@@ -1053,10 +1053,18 @@ define i64 @agg_second({i64, i64, i64} %s) {
             f.signature = sr;
         }
         let mut jit = JitCompiler::new(x86::TargetMachine::new());
-        jit.compile_module(&module).expect("compile module (sysv64)");
+        jit.compile_module(&module)
+            .expect("compile module (sysv64)");
         let f: extern "C" fn(Agg24) -> i64 = jit.get_fn("agg_second").expect("get_fn");
         // 平台 C ABI（sysv64）把 24 字节按值放进传出参数区 ⇒ 我们编的被调方要读到 22
-        assert_eq!(f(Agg24 { a: 11, b: 22, c: 33 }), 22);
+        assert_eq!(
+            f(Agg24 {
+                a: 11,
+                b: 22,
+                c: 33
+            }),
+            22
+        );
     }
 
     /// A1′-ret：**按值返回 >8B 聚合**（win64 `ret_classify` 走 sret）——被调方把值
@@ -1076,7 +1084,8 @@ define {i64, i64, i64} @agg_make() {
 "#;
         let module = forge_ir::text::parse_module(src).expect("parse");
         let mut jit = JitCompiler::new(x86::TargetMachine::new());
-        jit.compile_module(&module).expect("compile module sret ret");
+        jit.compile_module(&module)
+            .expect("compile module sret ret");
         let f: extern "C" fn(*mut u64) = jit.get_fn("agg_make").expect("get_fn");
         let mut out = [0u64; 3];
         f(out.as_mut_ptr());

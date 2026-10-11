@@ -47,7 +47,10 @@ fn may_ub_opcodes_say_so_in_their_docs() {
             info.name
         );
     }
-    assert!(flagged >= 10, "may_ub 条目太少（{flagged}）——检查 ops.toml 是否被改坏");
+    assert!(
+        flagged >= 10,
+        "may_ub 条目太少（{flagged}）——检查 ops.toml 是否被改坏"
+    );
 }
 
 #[test]

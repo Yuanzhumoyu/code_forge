@@ -592,10 +592,7 @@ fn asm_ambiguity(m: &IsaModel, idx: &DeclIndex) -> Vec<DiagLine> {
             })
             .collect();
         let key = (mnemonic.clone(), classes.join(","), render.to_string());
-        if let Some((_, _, other)) = seen
-            .iter()
-            .find(|(mn, cl, _)| *mn == key.0 && *cl == key.1)
-        {
+        if let Some((_, _, other)) = seen.iter().find(|(mn, cl, _)| *mn == key.0 && *cl == key.1) {
             out.push(anchor(
                 idx,
                 &format!("[inst.{}]", inst.name),
@@ -765,8 +762,11 @@ fn op_gap(
         return None;
     }
     // 本谱覆盖：`[[lowering]].op` ∪ `[[pattern]]` 匹配树的根 op。
-    let mut covered: BTreeSet<String> =
-        m.lowering.iter().map(|l| l.op.as_str().to_string()).collect();
+    let mut covered: BTreeSet<String> = m
+        .lowering
+        .iter()
+        .map(|l| l.op.as_str().to_string())
+        .collect();
     for p in &m.pattern {
         if let Ok(tree) = crate::dsl::match_tree::parse(&p.r#match) {
             let mut ops = Vec::new();
@@ -993,9 +993,7 @@ rows = [
         assert_eq!(hits.len(), 1, "只该报一条重叠：{found:?}");
         let msg = &hits[0].msg;
         assert!(
-            msg.contains("'funct3'")
-                && msg.contains("'over'")
-                && msg.contains("[inst.T1]"),
+            msg.contains("'funct3'") && msg.contains("'over'") && msg.contains("[inst.T1]"),
             "消息要点名两条字段与指令：{msg}"
         );
         assert!(hits[0].line > 1, "锚到了行列：{hit:?}", hit = hits[0]);
@@ -1027,10 +1025,7 @@ rows = [
             ..Default::default()
         };
         // 默认档：一条 `LINT-REF-UNUSED` 都没有（"给未来 lowering 预留"是合法写法）。
-        let bad = doc(
-            "[[lower.Copy]]\ninsts = [\"ADD {out}\"]\n",
-            "mv",
-        );
+        let bad = doc("[[lower.Copy]]\ninsts = [\"ADD {out}\"]\n", "mv");
         let plain = lint_source(&bad).expect("谱合法");
         assert!(
             plain.iter().all(|d| d.code != "LINT-REF-UNUSED"),
@@ -1047,10 +1042,7 @@ rows = [
         assert!(hits[0].msg.contains("'mv'"), "{}", hits[0].msg);
 
         // lowering 行首改成 `@mv`（引用名形态）→ 不报。
-        let good = doc(
-            "[[lower.Copy]]\ninsts = [\"@mv {out}\"]\n",
-            "mv",
-        );
+        let good = doc("[[lower.Copy]]\ninsts = [\"@mv {out}\"]\n", "mv");
         let report = lint_source_opts(&good, &on).expect("谱合法");
         assert!(
             report.findings.iter().all(|d| d.code != "LINT-REF-UNUSED"),

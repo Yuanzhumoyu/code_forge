@@ -307,10 +307,7 @@ fn icmp_all_conditions() {
         ("ult", forge_ir::ir::opcode::IntCC::Ult),
         ("ugt", forge_ir::ir::opcode::IntCC::Ugt),
         ("ule", forge_ir::ir::opcode::IntCC::Ule),
-        (
-            "uge",
-            forge_ir::ir::opcode::IntCC::Uge,
-        ),
+        ("uge", forge_ir::ir::opcode::IntCC::Uge),
     ] {
         let src = format!(
             "define i1 @f(i32 %a, i32 %b) {{\n  %e:\n    %r = icmp {name} i32 %a, i32 %b\n    ret i1 %r\n}}\n"

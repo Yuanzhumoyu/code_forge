@@ -48,7 +48,6 @@ use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
 use std::collections::HashMap;
 
-
 /// 大聚合实参/形参的**落点类别**（判据来自 `forge-abi` 的约定规则，不是本地写死的阈值）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum AggArgPlace {
@@ -80,14 +79,15 @@ fn agg_arg_place(
     align: u32,
 ) -> Result<(AggArgPlace, i32), IrError> {
     use forge_isa_runtime::machine::call_layout::{ArgShape, ShapeKind};
-    let req =
-        forge_isa_runtime::machine::call_plan::CallRequest::new(conv.to_string()).args([ArgShape {
+    let req = forge_isa_runtime::machine::call_plan::CallRequest::new(conv.to_string()).args([
+        ArgShape {
             size,
             align,
             kind: ShapeKind::Aggregate {
                 members: Vec::new(),
             },
-        }]);
+        },
+    ]);
     let reg = crate::pipeline::conv_registry::registry()
         .read()
         .expect("约定注册表被投毒");
@@ -97,12 +97,11 @@ fn agg_arg_place(
     // callee-saved 区平移：与 `LowerCtx::stack_slot_shift` 同源（`frame_layout_info`）。
     // `[[lower.StackAddr]]` 的 lea 位移 = **立即数 − 平移**，所以被调方要落在
     // `[fp + ABI 偏移]` 上就得把平移加回立即数（见 `expand_large_agg_params` 的补偿）。
-    let shift =
-        crate::pipeline::frame_layout::frame_layout_info(
-            machine,
-            Some(&crate::pipeline::abi_target::call_layout(&plan, machine)),
-        )
-        .stack_slot_shift;
+    let shift = crate::pipeline::frame_layout::frame_layout_info(
+        machine,
+        Some(&crate::pipeline::abi_target::call_layout(&plan, machine)),
+    )
+    .stack_slot_shift;
     Ok(match plan.args.first().map(|a| &a.place) {
         Some(forge_abi::Placement::Indirect { .. }) => (AggArgPlace::ByRef, shift),
         Some(forge_abi::Placement::StackByVal { offset, size, .. }) => (
@@ -336,7 +335,9 @@ fn expand_large_agg_params(
             Opcode::StackAddr,
             entry,
             smallvec::smallvec![],
-            smallvec::smallvec![Immediate::Int(i64::from(offset) + i64::from(agg_stack_shift))],
+            smallvec::smallvec![Immediate::Int(
+                i64::from(offset) + i64::from(agg_stack_shift)
+            )],
             &[TypeId::PTR],
             InstFlags::NONE,
         );
@@ -638,7 +639,7 @@ fn expand_large_agg_ret(
                     gen_insts.push(add);
                 }
             }
-            func.set_return_values(job.block, &[]);
+            func.set_return_values(job.block, []);
             continue;
         }
         // Return values 替换（段值）——按形式写入口同步 use-def

@@ -164,7 +164,8 @@ pub fn apply_variants(
     for i in &mut m.instructions {
         // v21 W7：参数替换要作用于**所有可接受写法**（不只渲染形态）。
         i.asm = crate::dsl::model::AsmList(
-            i.asm.all()
+            i.asm
+                .all()
                 .iter()
                 .map(|a| substitute_params(a, params))
                 .collect(),
@@ -1525,9 +1526,7 @@ fn validate_cond(m: &IsaModel) -> Result<(), String> {
     let table = m.conventions.cond.as_ref();
     if let Some(t) = table {
         if t.is_empty() {
-            return Err(
-                "[enum.cond]: 条件码表不能为空（要么整节不写，要么至少一条）".into(),
-            );
+            return Err("[enum.cond]: 条件码表不能为空（要么整节不写，要么至少一条）".into());
         }
         let mut owner: BTreeMap<&str, &str> = BTreeMap::new();
         for (name, e) in t {
@@ -1591,7 +1590,9 @@ fn validate_cond(m: &IsaModel) -> Result<(), String> {
 
 fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
     if m.operand_slots.is_empty() {
-        return Err("missing [operand.<名字>]: at least one operand declaration is required".into());
+        return Err(
+            "missing [operand.<名字>]: at least one operand declaration is required".into(),
+        );
     }
     let mut seen = BTreeSet::new();
     for s in m.operand_slots.iter() {
@@ -1646,8 +1647,7 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                     else {
                         // 表名其实是**位集合表**：v21 W3 起两种表都由槽的 `enum` 指向，
                         // 指错了要**点名**（否则只报"未声明"会让人去查错地方）。
-                        if m
-                            .conventions
+                        if m.conventions
                             .bitsets
                             .as_ref()
                             .is_some_and(|bs| bs.contains_key(tname))
@@ -1887,7 +1887,9 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                 ));
             }
             if arr.is_empty() {
-                return Err(format!("{path}: `arrangement` 不能是空表（省略即可表示本槽不带后缀）"));
+                return Err(format!(
+                    "{path}: `arrangement` 不能是空表（省略即可表示本槽不带后缀）"
+                ));
             }
             if s.encode != Some(crate::dsl::model::SlotEncode::Slice) {
                 return Err(format!(
@@ -1895,13 +1897,11 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                      `fields` 声明序切进多个位域（复用既有切片机制，不另开一套）"
                 ));
             }
-            let widths: u32 = s
-                .fields
-                .as_ref()
-                .map(|f| f.len() as u32)
-                .unwrap_or(0);
+            let widths: u32 = s.fields.as_ref().map(|f| f.len() as u32).unwrap_or(0);
             if widths == 0 {
-                return Err(format!("{path}: `arrangement` 要求该槽声明 `fields = [...]`"));
+                return Err(format!(
+                    "{path}: `arrangement` 要求该槽声明 `fields = [...]`"
+                ));
             }
             for (name, code) in arr {
                 let b = name.as_bytes();
@@ -1918,7 +1918,8 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
                 }
             }
             // 代码值必须互不相同（否则渲染时无法从字段反推回后缀 ⇒ disassemble 会漂移）。
-            let mut seen: std::collections::BTreeMap<i64, &String> = std::collections::BTreeMap::new();
+            let mut seen: std::collections::BTreeMap<i64, &String> =
+                std::collections::BTreeMap::new();
             for (name, code) in arr {
                 if let Some(prev) = seen.insert(*code, name) {
                     return Err(format!(
@@ -2157,9 +2158,10 @@ fn validate_instructions_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
                 Some(t) => {
                     // v21 W5：族降级来的实例锚到**源里真实存在的** `[family.X]` 节
                     // （`push_anchored` 按节名找行，锚到内部载体名会找不到节、行号退化成 1）。
-                    let from_family = m.templates.iter().any(|tt| {
-                        tt.from_family && tt.name.as_deref() == Some(&**t)
-                    });
+                    let from_family = m
+                        .templates
+                        .iter()
+                        .any(|tt| tt.from_family && tt.name.as_deref() == Some(&**t));
                     let sec = if from_family {
                         format!("[family.{t}]")
                     } else {
@@ -2189,10 +2191,7 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
     // `reloc` 的取值域由 `validate_relocs` 校验（名字须在 [[reloc]] 表里）
     let asm = inst.asm.clone();
     if asm.trim().is_empty() {
-        return Err(format!(
-            "[inst.{}]: asm must not be empty",
-            inst.name
-        ));
+        return Err(format!("[inst.{}]: asm must not be empty", inst.name));
     }
     // 操作数声明（asm 占位符内联）：解析 + 槽存在/角色合法/序号连续校验
     let (uses, _) = super::codegen::parse_asm_decl(
@@ -2428,9 +2427,7 @@ fn validate_lowering_order(m: &IsaModel) -> Result<(), String> {
         for r in &rules {
             let pred = match &r.when {
                 None => None,
-                Some(v) => {
-                    Some(super::pred::parse(v).map_err(|e| format!("[[lower.{op}]]: {e}"))?)
-                }
+                Some(v) => Some(super::pred::parse(v).map_err(|e| format!("[[lower.{op}]]: {e}"))?),
             };
             domains.push(super::pred::domain_of(pred.as_ref()));
         }
@@ -2612,7 +2609,12 @@ fn validate_spill_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
     // `[meta].vector_tiers` 里的向量档（如 `vec512`）。写错不再静默 no-op。
     let mut declared_classes: BTreeSet<String> = m.reg.keys().map(|rc| rc.to_string()).collect();
     // 向量档：`[meta].vector_tiers` 是**字节**（缺省 16/32/64），类名是 `vec<位>`。
-    for t in m.meta.vector_tiers.clone().unwrap_or_else(|| vec![16, 32, 64]) {
+    for t in m
+        .meta
+        .vector_tiers
+        .clone()
+        .unwrap_or_else(|| vec![16, 32, 64])
+    {
         declared_classes.insert(format!("vec{}", t as u32 * 8));
     }
     for (name, s) in &m.spill {

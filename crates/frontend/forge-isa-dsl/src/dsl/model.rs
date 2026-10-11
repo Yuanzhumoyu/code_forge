@@ -151,7 +151,13 @@ pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
         let has_width_leaf = rule
             .when
             .as_ref()
-            .map(|w| { let k = rule.dispatch.clone().unwrap_or_else(|| "rs1_width".to_string()); toml::to_string(w).unwrap_or_default().contains(&k) })
+            .map(|w| {
+                let k = rule
+                    .dispatch
+                    .clone()
+                    .unwrap_or_else(|| "rs1_width".to_string());
+                toml::to_string(w).unwrap_or_default().contains(&k)
+            })
             .unwrap_or(false);
         if has_width_leaf {
             out.push(rule);
@@ -176,7 +182,6 @@ pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
         let head = head_idx
             .map(|i| {
                 rule.insts[i]
-                    .trim()
                     .split_whitespace()
                     .next()
                     .unwrap_or("")
@@ -184,7 +189,10 @@ pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
             })
             .unwrap_or_default();
         // head 可能是**指令名**（取其族名）或**族名**本身
-        let grp_key = name_to_ref.get(&head).cloned().unwrap_or_else(|| head.clone());
+        let grp_key = name_to_ref
+            .get(&head)
+            .cloned()
+            .unwrap_or_else(|| head.clone());
         let Some(list) = cands.get(&grp_key).cloned() else {
             out.push(rule);
             continue;
@@ -212,12 +220,9 @@ pub fn expand_lowering_overloads(m: &mut IsaModel) -> Result<(), String> {
             r.when = Some(match r.when.take() {
                 None => leaf,
                 Some(prev) => toml::Value::Table(
-                    [(
-                        "and".to_string(),
-                        toml::Value::Array(vec![prev, leaf]),
-                    )]
-                    .into_iter()
-                    .collect(),
+                    [("and".to_string(), toml::Value::Array(vec![prev, leaf]))]
+                        .into_iter()
+                        .collect(),
                 ),
             });
             out.push(r);
@@ -265,10 +270,7 @@ impl IsaModel {
     /// 生成物的 `TargetABI::frame_padding()` 读它（无 plan 的回退值）；有 plan 时
     /// 管线用 plan 的 `frame_padding`（来源 = 约定侧 `AbiRules::frame_padding`）。
     pub fn machine_frame_padding(&self) -> i32 {
-        self.machine
-            .as_ref()
-            .and_then(|m| m.padding)
-            .unwrap_or(0)
+        self.machine.as_ref().and_then(|m| m.padding).unwrap_or(0)
     }
 
     /// 寄存器位置的计数规则（机器事实）：`[machine].arg_place`（v21 W9 改名自 `arg_slot`），
@@ -549,7 +551,13 @@ impl IsaModel {
             .reg
             .keys()
             .filter(|rc| matches!(rc, RegClass::FPR(_)))
-            .max_by_key(|rc| if rc.bits() == 128 { u16::MAX } else { rc.bits() })
+            .max_by_key(|rc| {
+                if rc.bits() == 128 {
+                    u16::MAX
+                } else {
+                    rc.bits()
+                }
+            })
             .copied())
     }
 
@@ -573,10 +581,7 @@ impl IsaModel {
 
     /// 前缀扫描表：`[conventions.prefix_scan]` > 缺省表（x86 风格前缀链）。
     pub(crate) fn prefix_scan_entries(&self) -> Vec<PrefixScanEntry> {
-        self.conventions
-            .prefix_scan
-            .clone()
-            .unwrap_or_default()
+        self.conventions.prefix_scan.clone().unwrap_or_default()
     }
 
     /// **地址尺寸覆盖**：`[conventions.prefix_scan]` 里声明 `addr32`（→ 4 字节地址）
@@ -1303,8 +1308,8 @@ pub const IR_INT_COND_NAMES: [&str; 10] = [
 /// 表决定——整数表 ⇒ 生成物字段类型 `IntCC`，浮点表 ⇒ `FloatCC`。
 /// `ugt`/`uge`/`ult`/`ule` 两个枚举同名 ⇒ **不参与**银行判定（只按各自独有的名字判）。
 pub const IR_FLOAT_COND_NAMES: [&str; 16] = [
-    "ord", "uno", "oeq", "one", "olt", "ole", "ogt", "oge", "false", "true", "ueq", "ugt",
-    "uge", "ult", "ule", "une",
+    "ord", "uno", "oeq", "one", "olt", "ole", "ogt", "oge", "false", "true", "ueq", "ugt", "uge",
+    "ult", "ule", "une",
 ];
 
 /// **标志位条件**的规范助记符表（v21 W6+ 甲 ✗）——**这是 DSL 自己的词汇，不在 IR 里** ✗。
@@ -1317,8 +1322,7 @@ pub const IR_FLOAT_COND_NAMES: [&str; 16] = [
 ///
 /// 变体名 = 助记符 = 谱里 `ir` 写的东西 ✗；`al`/`nv`（恒真/恒假 ✗）是条件码空间里的
 /// **退化成员** ✗ —— A64 的 16 个条件各占一个码 ✗，所以也要能表达 ✗。
-pub const FLAG_COND_NAMES: [&str; 10] =
-    ["o", "no", "c", "nc", "s", "ns", "p", "np", "al", "nv"];
+pub const FLAG_COND_NAMES: [&str; 10] = ["o", "no", "c", "nc", "s", "ns", "p", "np", "al", "nv"];
 
 /// 条件码表的**银行**（v21 W6+）——固定三类，不用字符串键。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1415,7 +1419,6 @@ impl CondTables {
     }
 }
 
-
 /// 条件码表的一条：本 ISA 的条件名 → 编码（+ 它实现哪个 IR 条件）。
 ///
 /// 允许两种写法（同一张表，值的长短写法）：
@@ -1466,15 +1469,6 @@ impl From<CondEntryOrCode> for CondEntry {
             CondEntryOrCode::Entry(e) => e,
         }
     }
-}
-
-/// `[enum.cond]` 的反序列化：整数值 = `{ code = n }` 简写。
-fn de_cond_map<'de, D>(d: D) -> Result<Option<BTreeMap<String, CondEntry>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let raw = Option::<BTreeMap<String, CondEntryOrCode>>::deserialize(d)?;
-    Ok(raw.map(|m| m.into_iter().map(|(k, v)| (k, v.into())).collect()))
 }
 
 impl IsaModel {
@@ -1633,8 +1627,6 @@ pub struct PrefixScanEntry {
 /// **不含地址尺寸覆盖**（0x67）：那个效果要落到具体的 GPR 组（`addr32`），是**谱自己
 /// 声明的数据**——由缺省表隐式强加会让别的 prefix_scan 谱去找一个它没有的寄存器组。
 /// 没声明的谱遇到 0x67 会在该字节解码失败（fail-closed，不静默当 64 位地址）。
-
-
 /// 命名位域：定宽 ISA 的编码单元。
 ///
 /// 二选一（校验强制）：
@@ -2344,7 +2336,7 @@ pub struct Form {
     ///
     /// 与设计文档的偏离（记入执行清单）：段用**内联表数组**而不是"`segments = [名字…]`
     /// + 命名子表"——`[[forms]]` 是数组元素，子表路径在 TOML 里有二义性；顺序即发射序
-    /// 也免去"名字列表 + 子表"两处重复。段是闭集，见 [`SegKind`]。
+    ///   也免去"名字列表 + 子表"两处重复。段是闭集，见 [`SegKind`]。
     ///
     /// 只降级 `kind = "stream"` 的 form；`bits`（缺省）路径不看它。
     #[serde(default)]
@@ -2810,7 +2802,8 @@ pub struct Instruction {
     /// 多条只在 `word_size` 上不同的指令，引擎按操作数实际宽度**自动选行**，
     /// 作者不必再手写 `when = { eq = ["rs1_width", …] }`。
     #[serde(default, rename = "word_size")]
-    pub word_size: Option<u16>,    /// 隐式破坏的物理寄存器名（如 cqo 的 RDX、idiv 的 RAX/RDX）——regalloc
+    pub word_size: Option<u16>,
+    /// 隐式破坏的物理寄存器名（如 cqo 的 RDX、idiv 的 RAX/RDX）——regalloc
     /// 在本指令点避开（MachineInst::clobbers）。与 lowering 模板的显式物理
     /// 寄存器（collect_phys_clobbers）互补：这是指令自身的隐式写。
     #[serde(default)]
@@ -3549,7 +3542,7 @@ impl<'de> Deserialize<'de> for AsmList {
 /// - **`ref`**：行（或 `body`）上的**引用名**——多条指令共用一个 `ref` 即"多态引用"
 ///   （lowering/pattern/emit 行首可用，按操作数签名分派）；原先的 `[[aliases]]` 就是
 ///   "几条指令共用同一个 ref"。
-/// **`[family.<名>]`**（v21 W5）：族名来自表键；`body`/`rows` 与 [`Template`] 同形。
+///   **`[family.<名>]`**（v21 W5）：族名来自表键；`body`/`rows` 与 [`Template`] 同形。
 ///
 /// 解析期降级：每个族展开成一条 `Template { name: <族名>, … }`，并让族名成为各行的
 /// `group`（行里没显式写时）——"族名即多态引用名"。
@@ -3563,7 +3556,7 @@ pub struct FamilyDecl {
     /// 与 `vary` **互斥**（写了 `vary` 就不需要 `rows`）。
     #[serde(default)]
     pub rows: Vec<TemplateRow>,
-    /// **`vary` 行表**（v21 W5）：与 `[[lowering]].vary` **同一类型、同一 zip 语义**
+    ///   **`vary` 行表**（v21 W5）：与 `[[lowering]].vary` **同一类型、同一 zip 语义**
     /// （`Lowering::zip_vary`）。约定：`name` 列表给每行的指令名 `inst`，其余键成为该行的字段。
     /// 与显式 `rows` **互斥**（同时给会报错）。
     #[serde(default)]
@@ -4115,8 +4108,8 @@ impl IsaModel {
                     super::pred::PRED_ATTRS.join(" / ")
                 ));
             }
-            let pred = super::pred::parse(&d.expr)
-                .map_err(|e| format!("[pred.{}] expr: {e}", d.name))?;
+            let pred =
+                super::pred::parse(&d.expr).map_err(|e| format!("[pred.{}] expr: {e}", d.name))?;
             if out.insert(d.name.clone(), pred).is_some() {
                 return Err(format!("[pred.{}]: 名字重复", d.name));
             }
@@ -4435,21 +4428,6 @@ pub fn ir_inverse_cond(name: &str) -> Option<&'static str> {
     })
 }
 
-#[cfg(test)]
-mod ir_inverse_cond_tests {
-    use super::ir_inverse_cond;
-
-    #[test]
-    fn pairs_are_involutive_and_total_on_host_names() {
-        for n in ["eq", "ne", "slt", "sge", "sgt", "sle", "ult", "uge", "ugt", "ule"] {
-            let inv = ir_inverse_cond(n).expect("宿主条件名都有逆");
-            assert_eq!(ir_inverse_cond(inv), Some(n), "{n} 的逆应可逆");
-            assert_ne!(inv, n, "{n} 的逆不该是自己");
-        }
-        assert_eq!(ir_inverse_cond("nope"), None);
-    }
-}
-
 /// v21 W6 的安全闸：`[lower.*]` 目前接线并验证等价的是 `Jmp` / `Br` / `Ret`（整数返回 ✗）。
 ///
 /// `Switch`/`Unreachable`/`Invoke` 还没接 ✗；`Ret` 的**浮点 / ≤16B 向量 / >16B sret / 多值**
@@ -4513,4 +4491,21 @@ pub fn check_term_lowering_supported(m: &IsaModel) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod ir_inverse_cond_tests {
+    use super::ir_inverse_cond;
+
+    #[test]
+    fn pairs_are_involutive_and_total_on_host_names() {
+        for n in [
+            "eq", "ne", "slt", "sge", "sgt", "sle", "ult", "uge", "ugt", "ule",
+        ] {
+            let inv = ir_inverse_cond(n).expect("宿主条件名都有逆");
+            assert_eq!(ir_inverse_cond(inv), Some(n), "{n} 的逆应可逆");
+            assert_ne!(inv, n, "{n} 的逆不该是自己");
+        }
+        assert_eq!(ir_inverse_cond("nope"), None);
+    }
 }

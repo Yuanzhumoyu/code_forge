@@ -65,7 +65,10 @@ fn encodings_of_parsable_corpus_lines_match_upstream() {
                 // 期望字节真对拍——否则它只会被记成 "unparsed" 混过去。
                 let corpus = asm::corpus::extract(suite, file, src);
                 let mut o = EncFileOut {
-                    row: EncodingFileRow { file: file.clone(), ..Default::default() },
+                    row: EncodingFileRow {
+                        file: file.clone(),
+                        ..Default::default()
+                    },
                     dropped: extracted.dropped,
                     variants: Vec::new(),
                     known: Vec::new(),

@@ -32,7 +32,11 @@ pub(crate) fn gen_disassemble(infos: &[InstInfo]) -> Result<TokenStream, String>
                     prev_lit = Some(fmt.len());
                     fmt.push_str(&l);
                 }
-                Seg::Op { idx: n, optional, affix } => {
+                Seg::Op {
+                    idx: n,
+                    optional,
+                    affix,
+                } => {
                     let (_, fid, slot, _) = &info.operands[n];
                     let local = format_ident!("__o{n}");
                     let expr = render_expr(slot, fid);
@@ -46,8 +50,7 @@ pub(crate) fn gen_disassemble(infos: &[InstInfo]) -> Result<TokenStream, String>
                         if let Some(start) = prev_lit {
                             let tail = fmt.split_off(start);
                             let cond = format_ident!("__l{n}");
-                            let tail_lit =
-                                syn::LitStr::new(&tail, proc_macro2::Span::call_site());
+                            let tail_lit = syn::LitStr::new(&tail, proc_macro2::Span::call_site());
                             locals.push(quote! {
                                 let #cond = if #present { #tail_lit } else { "" };
                             });
@@ -262,7 +265,9 @@ fn validate_segs(segs: &[Seg], info: &InstInfo) -> Result<(), String> {
                 }
                 prev_op = false;
             }
-            Seg::Op { idx: n, optional, .. } => {
+            Seg::Op {
+                idx: n, optional, ..
+            } => {
                 if *n >= info.operands.len() {
                     return Err(format!("{}: placeholder {{{n}}} out of range", ctx()));
                 }
@@ -1130,12 +1135,10 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
         // 条件码表：**必须由 ISA 声明**（v18 S3b 起不再回退 x86 的 16 项表——
         // 那等于把别家的条件名与编码写进通用生成器）。键 = 汇编可见的名字。
         let Some(table) = model.conventions.cond.as_ref() else {
-            return Err(
-                "[enum.cond]: 本 ISA 有 `cond` 槽操作数，必须声明条件码表\
+            return Err("[enum.cond]: 本 ISA 有 `cond` 槽操作数，必须声明条件码表\
                  （键 = 汇编可见的条件名；每条给 code，并用 ir = \"<IR 条件名>\" 指出\
                  它实现哪个 IR 整数条件）——不按某个 ISA 的表兜底"
-                    .into(),
-            );
+                .into());
         };
         let table: Vec<(String, u64)> = table.iter().map(|(k, e)| (k.clone(), e.code)).collect();
         // v21 W6+：三个银行各一套（整数 / 浮点 / 标志位）——条件槽的银行决定用哪一套。
@@ -1323,10 +1326,7 @@ fn gen_imm_fns(model: &IsaModel) -> Result<(TokenStream, TokenStream), String> {
         }
         for t in texts {
             let (pre_txt, post_txt) = split_hole(t).ok_or_else(|| {
-                format!(
-                    "{}: text 必须恰好含一个 `{{0}}`（内层表达式的位置）",
-                    ctx()
-                )
+                format!("{}: text 必须恰好含一个 `{{0}}`（内层表达式的位置）", ctx())
             })?;
             let pre_lit = tokenize(pre_txt.trim())
                 .map_err(|e| format!("{}: text 前段 '{pre_txt}': {e}", ctx()))?;
@@ -1695,7 +1695,12 @@ fn gen_assemble_try_tok(
                 elems.push(quote! { #e.then_some(()) });
                 pats.push(quote! { Some(()) });
             }
-            Seg::Op { idx: n, optional, affix, .. } => {
+            Seg::Op {
+                idx: n,
+                optional,
+                affix,
+                ..
+            } => {
                 let (_, fid, slot, _) = &info.operands[*n];
                 // v21 W7：`{n:affix}` ⇒ 解析侧**先尝试吃词缀**。`__eat_lit` 失败会回退 `it.pos`，
                 // 因此"吃了也算、没吃也行"是安全的（`+` 对负值被渲染抑制时文本里本就没有词缀）。

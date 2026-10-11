@@ -117,12 +117,12 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
             let refs = has_flag(&rest, "--refs");
             let bits = has_flag(&rest, "--bits");
             let suggest = has_flag(&rest, "--suggest");
-    let ambiguity = has_flag(&rest, "--ambiguity");
+            let ambiguity = has_flag(&rest, "--ambiguity");
             let json = has_flag(&rest, "--json");
             let files = paths(
-        &rest,
-        &["--json", "--refs", "--bits", "--suggest", "--ambiguity"],
-    )?;
+                &rest,
+                &["--json", "--refs", "--bits", "--suggest", "--ambiguity"],
+            )?;
             if files.is_empty() {
                 return Err("lint 需要一个或多个谱文件".into());
             }

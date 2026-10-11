@@ -223,11 +223,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 let signed = substs_first_ty(&substs)
                     .map(|t| t.is_signed())
                     .unwrap_or(true);
-                let cc = if signed {
-                    IntCC::Slt
-                } else {
-                    IntCC::Ult
-                };
+                let cc = if signed { IntCC::Slt } else { IntCC::Ult };
                 let is_lt = self.builder.icmp(cc, a, b);
                 vec![self.builder.select(is_lt, a, b)]
             }
@@ -236,11 +232,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 let signed = substs_first_ty(&substs)
                     .map(|t| t.is_signed())
                     .unwrap_or(true);
-                let cc = if signed {
-                    IntCC::Slt
-                } else {
-                    IntCC::Ult
-                };
+                let cc = if signed { IntCC::Slt } else { IntCC::Ult };
                 let is_lt = self.builder.icmp(cc, a, b);
                 vec![self.builder.select(is_lt, b, a)]
             }

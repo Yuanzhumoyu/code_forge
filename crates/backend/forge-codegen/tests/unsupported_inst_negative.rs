@@ -119,7 +119,11 @@ define i32 @main() {
     // 同源），签名里的约定只是它的来源——两处一起改，避免测试自己骗自己。
     let mut sysv_callee = callee.clone();
     sysv_callee.calling_convention = CallConvId::Builtin(ConvName::SysV64);
-    let mut sig = sysv_callee.types.borrow().get_signature(sysv_callee.signature).clone();
+    let mut sig = sysv_callee
+        .types
+        .borrow()
+        .get_signature(sysv_callee.signature)
+        .clone();
     sig.calling_convention = CallConvId::Builtin(ConvName::SysV64);
     sysv_callee.signature = sysv_callee.types.borrow_mut().register_signature(sig);
     let ok_sysv = FunctionCompiler::new(TargetMachine::new()).compile_raw(&sysv_callee);
@@ -130,7 +134,11 @@ define i32 @main() {
     );
     let mut sysv_caller = caller.clone();
     sysv_caller.calling_convention = CallConvId::Builtin(ConvName::SysV64);
-    let mut csig = sysv_caller.types.borrow().get_signature(sysv_caller.signature).clone();
+    let mut csig = sysv_caller
+        .types
+        .borrow()
+        .get_signature(sysv_caller.signature)
+        .clone();
     csig.calling_convention = CallConvId::Builtin(ConvName::SysV64);
     sysv_caller.signature = sysv_caller.types.borrow_mut().register_signature(csig);
     let ok_sysv_caller = FunctionCompiler::new(TargetMachine::new()).compile_raw(&sysv_caller);

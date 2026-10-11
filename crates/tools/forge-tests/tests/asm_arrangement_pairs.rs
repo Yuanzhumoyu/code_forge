@@ -14,7 +14,8 @@ use forge_tests::asm::targets::assemble_to_bytes;
 fn pairs() -> Vec<(String, String)> {
     let arrs = ["8b", "16b", "4h", "8h", "2s", "4s"];
     let fams = [
-        "add", "sub", "and", "orr", "eor", "bic", "orn", "smax", "smin", "umax", "umin", "mul", "mla",
+        "add", "sub", "and", "orr", "eor", "bic", "orn", "smax", "smin", "umax", "umin", "mul",
+        "mla",
     ];
     let mut out = Vec::new();
     for fam in fams {
@@ -40,7 +41,9 @@ fn neon_new_spelling_matches_mnemonic_suffix_siblings() {
             (Ok(a), Ok(b)) => {
                 compared += 1;
                 if a != b {
-                    bad.push(format!("{new_spelling} -> {a:02x?} ≠ {old_spelling} -> {b:02x?}"));
+                    bad.push(format!(
+                        "{new_spelling} -> {a:02x?} ≠ {old_spelling} -> {b:02x?}"
+                    ));
                 }
             }
             // 一侧未实现 ⇒ 记账跳过（本测试只判"两边都在时是否一致"）。

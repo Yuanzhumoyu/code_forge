@@ -67,11 +67,7 @@ fn one_byte_register_metadata_is_derived() {
         "[machine.frame].sp = A7"
     );
     assert_eq!(ri.fp_reg().map(|r| r.to_index()), Some(6), "fp = A6");
-    assert_eq!(
-        ri.scratch_regs(),
-        vec![4, 5],
-        "[machine].scratch = A4/A5"
-    );
+    assert_eq!(ri.scratch_regs(), vec![4, 5], "[machine].scratch = A4/A5");
     assert_eq!(
         ri.callee_saved(),
         Vec::<u32>::new(),

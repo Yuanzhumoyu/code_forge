@@ -482,9 +482,7 @@ fn vlen_ctx(info: &InstInfo, m: &IsaModel) -> Result<VlenCtx, String> {
                         info.operands
                             .get(i)
                             .map(|(_, f, _, _)| f.clone())
-                            .ok_or_else(|| {
-                                format!("[inst.{}]: 操作数 {i} 越界", info.inst.name)
-                            })
+                            .ok_or_else(|| format!("[inst.{}]: 操作数 {i} 越界", info.inst.name))
                     };
                     let reg_expr: TokenStream = match modrm.reg {
                         Some(i) => {
@@ -1490,12 +1488,9 @@ fn gen_vlen_vex_decode_arm(
     // 字段提取由**解析后的 modrm 索引**推出：i == reg → reg 字段（R 来自 vex2）、
     // i == rm → rm 字段（B 来自 vex2；内存形式则是 base/MemRef）、其余 → vvvv。
     // 这套推导同时覆盖 v14 的 rr（reg=0/rm=1/vvvv=2）与 rr_src2（rm=2/vvvv=1）。
-    let mm = ctx.modrm.ok_or_else(|| {
-        format!(
-            "[inst.{}]: VEX form 需要 modrm 映射",
-            info.inst.name
-        )
-    })?;
+    let mm = ctx
+        .modrm
+        .ok_or_else(|| format!("[inst.{}]: VEX form 需要 modrm 映射", info.inst.name))?;
     let mut binds: Vec<TokenStream> = Vec::new();
     let mut ctor_fields: Vec<TokenStream> = Vec::new();
     for (i, (_, fid, slot, _)) in info.operands.iter().enumerate() {
@@ -1692,10 +1687,7 @@ fn gen_vlen_evex_decode_arm(
             OperandKind::Reg => {
                 // 同编码侧的索引推导（EVEX：reg 字段额外带 R'=__r4）
                 let mm = ctx.modrm.ok_or_else(|| {
-                    format!(
-                        "[inst.{}]: EVEX form 需要 modrm 映射",
-                        info.inst.name
-                    )
+                    format!("[inst.{}]: EVEX form 需要 modrm 映射", info.inst.name)
                 })?;
                 if Some(i) == mm.reg {
                     field_ctor_expr(
@@ -2128,10 +2120,7 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
             // 仍会走本闭包处理 imm/label/cond，故不能在这里无条件 unwrap。
             let need_modrm = || {
                 ctx.modrm.ok_or_else(|| {
-                    format!(
-                        "[inst.{}]: reg/mem 操作数需要 modrm 映射",
-                        info.inst.name
-                    )
+                    format!("[inst.{}]: reg/mem 操作数需要 modrm 映射", info.inst.name)
                 })
             };
             match slot.kind {

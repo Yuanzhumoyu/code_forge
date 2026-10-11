@@ -93,7 +93,11 @@ fn decode_and_disassemble_round_trip() {
         let bytes = enc(asm);
         let (inst, used) = decode(&bytes).unwrap_or_else(|| panic!("decode `{asm}` 失败"));
         assert_eq!(used, 3, "24 位字应吃满 3 字节（`{asm}`）");
-        assert_eq!(encode(&inst).unwrap(), bytes, "decode→encode 字节不变（`{asm}`）");
+        assert_eq!(
+            encode(&inst).unwrap(),
+            bytes,
+            "decode→encode 字节不变（`{asm}`）"
+        );
         let text = disassemble(&inst);
         assert_eq!(enc(&text), bytes, "反汇编文本应能再编回同样字节：`{text}`");
     }

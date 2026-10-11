@@ -1028,11 +1028,3 @@ fn inline_table_bare_newlines(text: &str) -> Vec<usize> {
         .map(|&idx| cs[..idx].iter().filter(|c| **c == '\n').count() + 1)
         .collect()
 }
-
-
-
-
-
-
-
-

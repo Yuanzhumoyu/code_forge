@@ -282,7 +282,10 @@ kind = "reg"
     assert!(one.operand_slots[0].class.is_some(), "单一名有唯一类");
     let many = parse_and_validate(&base.replace("{CLASS}", "class = [\"gpr32\", \"gpr64\"]"))
         .expect("组名数组");
-    assert_eq!(many.operand_slots[0].classes.as_ref().map(Vec::len), Some(2));
+    assert_eq!(
+        many.operand_slots[0].classes.as_ref().map(Vec::len),
+        Some(2)
+    );
     // 多类槽没有"唯一类"（`class` 快捷字段留空）
     assert_eq!(many.operand_slots[0].class, None);
 }
@@ -475,7 +478,7 @@ fn validation_bitfield_overflow() {
     }
     // 字侧偏移**无上限**（字长是 ISA 数据，字由字节数组承载）：offset 63 合法
     parse_and_validate(&field_doc("\"u2[64:63]:hi\","))
-    .expect("字侧偏移不受 64 位限制（字长任意）");
+        .expect("字侧偏移不受 64 位限制（字长任意）");
 }
 
 #[test]
@@ -932,10 +935,7 @@ opcode = 0x13
 fn codegen_requires_scratch_for_stack_args() {
     let src = include_str!("../../../../../isa/x86.toml");
     let doc = src.replace("scratch = [\"R10\", \"R11\"]", "");
-    assert_ne!(
-        doc, src,
-        "x86 谱里找不到 scratch 声明行——本测试需更新"
-    );
+    assert_ne!(doc, src, "x86 谱里找不到 scratch 声明行——本测试需更新");
     let model = parse_and_validate(&doc).unwrap();
     let err = super::codegen::generate(&model).unwrap_err();
     assert!(
@@ -1069,8 +1069,14 @@ fn cond_cc_arms_come_from_the_table() {
             "条件码臂应点名 IR 枚举变体：{s}"
         );
         assert!(s.contains("intcc_name("), "应经宿主函数折成 IR 条件名：{s}");
-        assert!(s.contains("traitCondEnc:Copy"), "应生成条件码映射 trait：{s}");
-        assert!(s.contains("fnintcc_of("), "应生成「机器码 → IR 条件」入口：{s}");
+        assert!(
+            s.contains("traitCondEnc:Copy"),
+            "应生成条件码映射 trait：{s}"
+        );
+        assert!(
+            s.contains("fnintcc_of("),
+            "应生成「机器码 → IR 条件」入口：{s}"
+        );
     }
 }
 
@@ -1286,9 +1292,8 @@ fn derive_cannot_reference_another_derive() {
 /// `{…}` 都在 `asm` 里声明过、参数都用上）。
 #[test]
 fn pseudo_decl_compiles_into_expander() {
-    let doc = lowering_doc(
-        "[asm.pseudo.mv]\nasm = \"mv {dst}, {src}\"\nemit = [\"mov {dst}, {src}\"]",
-    );
+    let doc =
+        lowering_doc("[asm.pseudo.mv]\nasm = \"mv {dst}, {src}\"\nemit = [\"mov {dst}, {src}\"]");
     let m = parse_and_validate(&doc).expect("合法伪指令必须通过");
     let s: String = super::codegen::generate(&m)
         .unwrap()
@@ -1317,9 +1322,8 @@ fn pseudo_absent_keeps_assembler_unchanged() {
 /// （伪指令展开先于指令扫描，这个名字开头的写法会被伪指令吃掉）。
 #[test]
 fn pseudo_name_must_not_shadow_mnemonic() {
-    let doc = lowering_doc(
-        "[asm.pseudo.mov]\nasm = \"mov {dst}, {src}\"\nemit = [\"mov {dst}, {src}\"]",
-    );
+    let doc =
+        lowering_doc("[asm.pseudo.mov]\nasm = \"mov {dst}, {src}\"\nemit = [\"mov {dst}, {src}\"]");
     let msg = validation_msg(&doc);
     assert!(msg.contains("重名"), "msg: {msg}");
 }
@@ -1339,13 +1343,11 @@ fn pseudo_asm_shape_is_validated() {
     let empty = lowering_doc("[asm.pseudo.mv]\nasm = \"\"\nemit = [\"mov {a}, {a}\"]");
     assert!(validation_msg(&empty).contains("empty asm template"));
 
-    let op_first =
-        lowering_doc("[asm.pseudo.mv]\nasm = \"{a} mv\"\nemit = [\"mov {a}, {a}\"]");
+    let op_first = lowering_doc("[asm.pseudo.mv]\nasm = \"{a} mv\"\nemit = [\"mov {a}, {a}\"]");
     assert!(validation_msg(&op_first).contains("必须以**字面**开头"));
 
     // 两个占位符相邻（切不开）
-    let adjacent =
-        lowering_doc("[asm.pseudo.mv]\nasm = \"mv {a}{b}\"\nemit = [\"mov {a}, {b}\"]");
+    let adjacent = lowering_doc("[asm.pseudo.mv]\nasm = \"mv {a}{b}\"\nemit = [\"mov {a}, {b}\"]");
     assert!(validation_msg(&adjacent).contains("相邻"));
 
     // 名字重复：v21 W7 起**由 TOML 自身**拒绝（`[asm.pseudo.mv]` 写两次 = 重复表头）——
@@ -1357,9 +1359,8 @@ fn pseudo_asm_shape_is_validated() {
 #[test]
 fn pseudo_dispatch_key_and_duplicate_asm_are_validated() {
     // name 无害，但**写法**首词撞上指令 ⇒ 报错（遮蔽风险在写法上，不在名字上）
-    let shadow = lowering_doc(
-        "[asm.pseudo.alias_mov]\nasm = \"mov {a}, {b}\"\nemit = [\"mov {a}, {b}\"]",
-    );
+    let shadow =
+        lowering_doc("[asm.pseudo.alias_mov]\nasm = \"mov {a}, {b}\"\nemit = [\"mov {a}, {b}\"]");
     let msg = validation_msg(&shadow);
     assert!(msg.contains("重名"), "msg: {msg}");
     assert!(msg.contains("写法"), "msg: {msg}");
@@ -1383,16 +1384,14 @@ fn pseudo_dispatch_key_and_duplicate_asm_are_validated() {
 /// 声明了却没用到 ⇒ 也报错（写错名字的典型症状）。
 #[test]
 fn pseudo_params_come_from_asm() {
-    let typo = lowering_doc(
-        "[asm.pseudo.mv]\nasm = \"mv {dst}, {src}\"\nemit = [\"mov {dst}, {srcc}\"]",
-    );
+    let typo =
+        lowering_doc("[asm.pseudo.mv]\nasm = \"mv {dst}, {src}\"\nemit = [\"mov {dst}, {srcc}\"]");
     let msg = validation_msg(&typo);
     assert!(msg.contains("不是 asm"), "msg: {msg}");
     assert!(msg.contains("srcc"), "msg: {msg}");
 
-    let unused = lowering_doc(
-        "[asm.pseudo.mv]\nasm = \"mv {dst}, {src}\"\nemit = [\"mov {dst}, {dst}\"]",
-    );
+    let unused =
+        lowering_doc("[asm.pseudo.mv]\nasm = \"mv {dst}, {src}\"\nemit = [\"mov {dst}, {dst}\"]");
     let msg = validation_msg(&unused);
     assert!(msg.contains("没用到"), "msg: {msg}");
     assert!(msg.contains("src"), "msg: {msg}");
@@ -1410,8 +1409,7 @@ fn pseudo_params_come_from_asm() {
     .expect("零参数伪指令（参数表为空）合法");
 
     // 但 `asm` 里没有占位符时，emit 里出现 `{a}` 就是"用了没声明的参数" ⇒ 报错
-    let undeclared =
-        lowering_doc("[asm.pseudo.mv]\nasm = \"mv\"\nemit = [\"mov {a}, {a}\"]");
+    let undeclared = lowering_doc("[asm.pseudo.mv]\nasm = \"mv\"\nemit = [\"mov {a}, {a}\"]");
     assert!(
         validation_msg(&undeclared).contains("不是 asm"),
         "msg: {undeclared}"
@@ -1427,8 +1425,7 @@ fn pseudo_emit_is_validated() {
     let blank = lowering_doc("[asm.pseudo.mv]\nasm = \"mv {a}\"\nemit = [\"  \"]");
     assert!(validation_msg(&blank).contains("emit 里有空行"));
 
-    let typo_head =
-        lowering_doc("[asm.pseudo.mv]\nasm = \"mv {a}\"\nemit = [\"moov {a}, {a}\"]");
+    let typo_head = lowering_doc("[asm.pseudo.mv]\nasm = \"mv {a}\"\nemit = [\"moov {a}, {a}\"]");
     assert!(validation_msg(&typo_head).contains("接不到任何指令模板上"));
 }
 
@@ -1464,11 +1461,10 @@ fn pseudo_checks_do_not_assume_first_word_is_mnemonic() {
         "asm = \"mov {dst}, {src}\"",
         "asm = \"set if {dst}, {src}\"",
     );
-    let ok = two_tok.clone()
-        + "[asm.pseudo.si]\nasm = \"si {a}, {b}\"\nemit = [\"set if {a}, {b}\"]\n";
+    let ok =
+        two_tok.clone() + "[asm.pseudo.si]\nasm = \"si {a}, {b}\"\nemit = [\"set if {a}, {b}\"]\n";
     parse_and_validate(&ok).expect("多 token 前导字面的 emit 行必须通过");
-    let bad =
-        two_tok + "[asm.pseudo.si]\nasm = \"si {a}, {b}\"\nemit = [\"sett {a}, {b}\"]\n";
+    let bad = two_tok + "[asm.pseudo.si]\nasm = \"si {a}, {b}\"\nemit = [\"sett {a}, {b}\"]\n";
     assert!(
         validation_msg(&bad).contains("接不到任何指令模板上"),
         "多 token 前导字面只有首个 token 相同不算接得上"
@@ -1477,18 +1473,16 @@ fn pseudo_checks_do_not_assume_first_word_is_mnemonic() {
     // ③ 遮蔽检测跟着扫描器的**大小写口径**走：不敏感 ISA（缺省）里 `MOV` 与 `mov` 撞车，
     //    显式 `mnemonic_case = "sensitive"` 的 ISA 里不撞（`__eat_name` 只在
     //    不敏感档忽略大小写）。
-    let ci =
-        lowering_doc("[asm.pseudo.MOV]\nasm = \"MOV {a}\"\nemit = [\"mov {a}, {a}\"]");
+    let ci = lowering_doc("[asm.pseudo.MOV]\nasm = \"MOV {a}\"\nemit = [\"mov {a}, {a}\"]");
     assert!(
         validation_msg(&ci).contains("重名"),
         "大小写不敏感 ISA（缺省）里 MOV 与 mov 是同一个写法"
     );
-    let cs =
-        lowering_doc("[asm.pseudo.MOV]\nasm = \"MOV {a}\"\nemit = [\"mov {a}, {a}\"]")
-            .replace(
-                "name = \"x\"",
-                "name = \"x\"\nmnemonic_case = \"sensitive\"",
-            );
+    let cs = lowering_doc("[asm.pseudo.MOV]\nasm = \"MOV {a}\"\nemit = [\"mov {a}, {a}\"]")
+        .replace(
+            "name = \"x\"",
+            "name = \"x\"\nmnemonic_case = \"sensitive\"",
+        );
     parse_and_validate(&cs).expect("敏感 ISA 里 MOV 与 mov 是两回事");
 }
 
@@ -2321,9 +2315,8 @@ fn vary_requires_equal_length_lists() {
 
 #[test]
 fn vary_predicate_attr_needs_integer() {
-    let doc = lowering_doc(
-        "[[lower.Copy]]\nvary = { elem = [\"f32\"] }\ninsts = [\"mov {out}, {0}\"]",
-    );
+    let doc =
+        lowering_doc("[[lower.Copy]]\nvary = { elem = [\"f32\"] }\ninsts = [\"mov {out}, {0}\"]");
     let msg = match parse_and_validate(&doc).unwrap_err() {
         DslError::Parse { msg, .. } => msg,
         other => panic!("expected Parse error, got {other:?}"),
@@ -2368,7 +2361,6 @@ fn repeated_lower_blocks_keep_declaration_order() {
     assert!(a_rules[0].when.is_some(), "叶子多的排前面（与块序无关）");
     assert!(a_rules[1].when.is_none(), "无 when 的那块第二");
 }
-
 
 /// S5c：`[[pattern]]` 的裁决序 = (`priority` 降, Op 节点数降, when 叶子数降, 声明序升)。
 #[test]
@@ -2583,7 +2575,8 @@ asm = "i {dst}, {src}"
 
 /// opsize 固定宽度写**位宽整数**；旧的 "rN"（字节）写法给出明确迁移提示。
 #[test]
-fn opsize_fixed_width_is_bits() {    use crate::dsl::model::Opsize;
+fn opsize_fixed_width_is_bits() {
+    use crate::dsl::model::Opsize;
     let bits: Opsize = toml::from_str::<toml::Value>("v = 64").unwrap()["v"]
         .clone()
         .try_into()
@@ -3081,10 +3074,7 @@ asm = "add {dst}"
 "#;
     parse_and_validate(base).expect("MIPS 模板合法");
     // 不写 `{base}` = **无基址写法**（v20 V10）：只要有 {disp}/{index} 就合法。
-    let ok = base.replace(
-        r#"text = ["{disp}({base})"]"#,
-        r#"text = ["{disp}"]"#,
-    );
+    let ok = base.replace(r#"text = ["{disp}({base})"]"#, r#"text = ["{disp}"]"#);
     parse_and_validate(&ok).expect("无基址模板（只有 {disp}）合法");
     // 无基址且**没有任何地址组件** → 报错（那只能匹配空文本）
     let bad = base.replace(r#"text = ["{disp}({base})"]"#, r#"text = ["[]"]"#);
@@ -3886,8 +3876,6 @@ roles = "inout"
     assert_eq!(m.slot_bytes().unwrap(), 8);
 }
 
-
-
 /// 主 FPR 类保留历史规则：**优先 16 字节组**（XMM 基准），而非"最宽"
 /// （x86 最宽是 32 字节 ZMM——若按最宽推导，SSE/ABI 占位会变成 ZMM 视图）。
 #[test]
@@ -3930,9 +3918,15 @@ roles = "inout"
 /// 显式类指针键必须指向已声明组（不允许"声明一个不存在的类"）。
 #[test]
 fn width_metadata_explicit_key_needs_group() {
-    let msg = validation_msg(&format!("{}\n[machine]\ngpr = \"gpr128\"\n", one_byte_doc("")));
+    let msg = validation_msg(&format!(
+        "{}\n[machine]\ngpr = \"gpr128\"\n",
+        one_byte_doc("")
+    ));
     assert!(msg.contains("[machine].gpr"), "msg: {msg}");
-    let msg = validation_msg(&format!("{}\n[machine]\naddr = \"gpr16\"\n", one_byte_doc("")));
+    let msg = validation_msg(&format!(
+        "{}\n[machine]\naddr = \"gpr16\"\n",
+        one_byte_doc("")
+    ));
     assert!(msg.contains("[machine].addr"), "msg: {msg}");
     // `[machine.stack]` 键值域（v21 W9 起从 `[stack]` 迁入，单位是**位**）
     let msg = validation_msg(
@@ -4217,7 +4211,6 @@ fn types_ptr_uses_isa_address_width() {
 /// 用"低位 opcode + 补集零 guard"形式——**任何字宽**都成立（含 > 64 位：
 /// 单个位域 ≤ 64 位是值表示上限，与字长无关）。
 fn word_doc(bits: u32) -> String {
-    let op_w = bits.min(8);
     // v21：没有"全字 opcode"后门——必须显式声明字段，且单个位域 ≤ 64 位
     //（值承载在 u64/i64）。超出的高位不声明 = 未指定位（合法，按缺省 0 发射）。
     let fw = bits.clamp(1, 64);
@@ -4500,7 +4493,6 @@ fn prefix_effects_parse_from_their_spec_spellings() {
     assert!(msg.contains("rex3"), "报错要点名那个拼法：{msg}");
 }
 
-
 /// v21 W6：`{cc_inv}` 用**逆条件**反查同一张 `[enum.cond]` 表。
 ///
 /// 断言三条：① 发射了 `__cc_inv`；② 逆映射正确（`eq`→`ne` 的码、`ne`→`eq` 的码、
@@ -4512,9 +4504,7 @@ fn cc_inv_uses_inverse_condition_code() {
         "[[lower.Icmp]]\ninsts = [\"SETC {out}, {cc_inv}\"]",
     );
     let model = super::parse_and_validate(&doc).expect("谱合法");
-    let s = super::codegen::generate(&model)
-        .expect("生成")
-        .to_string();
+    let s = super::codegen::generate(&model).expect("生成").to_string();
     assert!(s.contains("__cc_inv"), "应发射 __cc_inv：{s}");
     // `TokenStream::to_string()` 是**美化打印**（`::` 两侧、`=>` 两侧都可能带空格）
     // ⇒ 断言前先抹掉全部空白，再去匹配。
@@ -4534,17 +4524,13 @@ fn cc_inv_uses_inverse_condition_code() {
     );
 }
 
-
 /// v21 W6：`[[lower.Br]]`/`[[lower.Jmp]]`/`[[lower.Ret]]` 能被解析并进模型（可带 `{true}`/`{false}`/
 /// `{target}` 符号值）。本片只验"谱面可用"；codegen 接线在下一片。
 #[test]
 fn lower_terminator_section_parses() {
     // 只声明 `Jmp`（`Br`/`Ret` 另见 `unsupported_term_lowering_is_rejected`：
     // `Ret` 必须带 `when = { ret_kind = … }` ✗）。
-    let doc = gen_cond_doc(
-        CC_ALL_FULL,
-        "[[lower.Jmp]]\ninsts = [\"SETC {out}, {cc}\"]",
-    );
+    let doc = gen_cond_doc(CC_ALL_FULL, "[[lower.Jmp]]\ninsts = [\"SETC {out}, {cc}\"]");
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let lower = m.lower_terms.as_ref().expect("lower 节应进模型");
     assert_eq!(lower.len(), 1, "只声明了 Jmp：{lower:?}");
@@ -4553,7 +4539,6 @@ fn lower_terminator_section_parses() {
     assert!(lower["Jmp"][0].insts[0].contains("{cc}"));
     assert!(lower["Jmp"][0].when.is_none(), "Jmp 不带形态条件");
 }
-
 
 /// v21 W6：**谱里声明了 `[[lower.Jmp]]` 就必须走谱面序列**（未声明才回落旧硬编码路径）。
 ///
@@ -4576,12 +4561,8 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"myjmp {dst}, {cond}\"\nroles = [\"ju
         flat.contains("__target_block"),
         "声明了 [[lower.Jmp]] 就该走谱面路径（应出现 __target_block）：{s}"
     );
-    assert!(
-        flat.contains("fnlower_terminator"),
-        "终结实体应被生成：{s}"
-    );
+    assert!(flat.contains("fnlower_terminator"), "终结实体应被生成：{s}");
 }
-
 
 /// v21 W6 乙：`[lower.Ret]` 的**数据化条件**编译成**运行期分支**。
 ///
@@ -4602,7 +4583,10 @@ fn ret_rules_compile_to_runtime_branches() {
     let flat: String = s.chars().filter(|c| !c.is_whitespace()).collect();
     // 运行期事实 + 两条规则的条件
     assert!(flat.contains("__ret_is_fpr"), "应有银行判定：{s}");
-    assert!(flat.contains("__ret_bits==64"), "宽度条件应落到 __ret_bits：{s}");
+    assert!(
+        flat.contains("__ret_bits==64"),
+        "宽度条件应落到 __ret_bits：{s}"
+    );
     // 两个银行各自的槽绑定（**只绑规则真正用到的那个** ✗）
     assert!(flat.contains("__ret_dst"), "gpr 规则应绑 __ret_dst：{s}");
     assert!(flat.contains("__retf_dst"), "fpr 规则应绑 __retf_dst：{s}");
@@ -4618,10 +4602,7 @@ fn ret_rules_compile_to_runtime_branches() {
 #[test]
 fn unsupported_term_lowering_is_rejected() {
     // ① `Ret` 缺 `when` ⇒ 拒（要求写明条件）。
-    let doc = gen_cond_doc(
-        CC_ALL_FULL,
-        "[[lower.Ret]]\ninsts = [\"SETC {out}, {cc}\"]",
-    );
+    let doc = gen_cond_doc(CC_ALL_FULL, "[[lower.Ret]]\ninsts = [\"SETC {out}, {cc}\"]");
     let err = super::parse_and_validate(&doc).unwrap_err().to_string();
     assert!(err.contains("lower.Ret"), "应点名 lower.Ret：{err}");
 
@@ -4688,7 +4669,10 @@ fn unsupported_term_lowering_is_rejected() {
         ("Br", ""),
         ("Ret", "when = { bank = \"gpr\" }\n"),
         ("Ret", "when = { bank = \"vec\", by_ref = false }\n"),
-        ("Ret", "when = { bank = \"vec\", by_ref = true, width = 256 }\n"),
+        (
+            "Ret",
+            "when = { bank = \"vec\", by_ref = true, width = 256 }\n",
+        ),
         (
             "Ret",
             "when = { multi = true }\nmove = [\"SETC {retN}, {retN_src}\"]\n",
@@ -4702,7 +4686,6 @@ fn unsupported_term_lowering_is_rejected() {
     }
 }
 
-
 /// v21 W6：**算术表达式占位符**（`{imm0 - 4}`、`{iconst >> 12 & 0xfffff}`）的认法与种类判定。
 #[test]
 fn arith_expr_placeholder_is_recognized() {
@@ -4714,7 +4697,6 @@ fn arith_expr_placeholder_is_recognized() {
     // 种类按**首个操作数** ⇒ `{imm0 - 4}` 是 imm
     assert_eq!(kind_of("{imm0 - 4}"), kind_of("{imm0}"));
 }
-
 
 /// v21 W6：`temps = [...]` 显式临时寄存器 —— 声明了就必须显式（未声明即报错并点名）。
 #[test]
@@ -4733,7 +4715,10 @@ fn explicit_temps_are_enforced() {
     );
     let m_bad = super::parse_and_validate(&bad).expect("谱合法（校验在 codegen）");
     let err = super::codegen::generate(&m_bad).unwrap_err();
-    assert!(err.contains("g2") && err.contains("temps"), "应点名 g2 与 temps：{err}");
+    assert!(
+        err.contains("g2") && err.contains("temps"),
+        "应点名 g2 与 temps：{err}"
+    );
     // 类别写错 ⇒ 报错
     let badcls = gen_cond_doc(
         CC_ALL_FULL,
@@ -4743,7 +4728,6 @@ fn explicit_temps_are_enforced() {
     let err2 = super::codegen::generate(&m_badcls).unwrap_err();
     assert!(err2.contains("vec"), "应点名不认识的类别：{err2}");
 }
-
 
 /// v21 W6 **第四形态夹具**：DSL **禁止**同一份谱两条 `branch` 角色（同角色只能一条），
 /// 所以"两个分支形态"不能按字面造；等价且更硬的验证是——让 `[[lower.Br]]` 点名**另一条无角色指令**：
@@ -4782,7 +4766,6 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"brchosen {dst}, {cond}\"\n\
     );
 }
 
-
 /// v21 W7：`asm` 接受**可接受写法列表**（第 0 条 = 渲染形态）；单字符串等价于单元素列表。
 #[test]
 fn asm_accepts_a_list_of_spellings() {
@@ -4792,14 +4775,21 @@ fn asm_accepts_a_list_of_spellings() {
 ops = [\"dst:g:out\", \"cond:cc\"]\nasm = [\"alt {dst}, {cond}\", \"alt {cond}, {dst}\"]",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
-    let a = m.instructions.iter().find(|i| i.name == "ALT").expect("ALT");
+    let a = m
+        .instructions
+        .iter()
+        .find(|i| i.name == "ALT")
+        .expect("ALT");
     assert_eq!(a.asm.render(), "alt {dst}, {cond}", "第 0 条 = 渲染形态");
     assert_eq!(a.asm.all().len(), 2, "两条写法都在");
-    let s = m.instructions.iter().find(|i| i.name == "SETC").expect("SETC");
+    let s = m
+        .instructions
+        .iter()
+        .find(|i| i.name == "SETC")
+        .expect("SETC");
     assert_eq!(s.asm.all().len(), 1, "单字符串等价于单元素列表");
     assert_eq!(s.asm.render(), "setc {dst}, {cond}");
 }
-
 
 /// v21 W7：`asm` 的**备选写法**要真的进入解析尝试（生成物里出现备选的首字面段），
 /// 而不只是进模型。
@@ -4818,7 +4808,6 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = [\"altone {dst}, {cond}\", \"alttwo {d
         "备选写法的尝试也应生成（按序尝试）：{s}"
     );
 }
-
 
 /// v21 W7：**同助记符 + 同操作数类 ⇒ 两条写法都能匹配**时，可选档 `--ambiguity` 报
 /// `LINT-ASM-AMBIG`（清单要求：报歧义、不靠声明序兜）；默认档**不报**。
@@ -4846,16 +4835,19 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"amb {dst}, {cond}\"",
     );
 }
 
-
 /// v21 W7 语法层：`{N}` / `{N?}` / `{N:affix}` / `{N?:affix}` 都能解析并**承载修饰**。
 #[test]
 fn placeholder_modifiers_parse() {
-    use super::codegen::asm::{parse_template, Seg};
+    use super::codegen::asm::{Seg, parse_template};
     let segs = parse_template("x {0?}, {1:plus}, {2?:both}").expect("应能解析");
     let ops: Vec<(usize, bool, Option<String>)> = segs
         .iter()
         .filter_map(|s| match s {
-            Seg::Op { idx, optional, affix } => Some((*idx, *optional, affix.clone())),
+            Seg::Op {
+                idx,
+                optional,
+                affix,
+            } => Some((*idx, *optional, affix.clone())),
             Seg::Lit(_) => None,
         })
         .collect();
@@ -4878,7 +4870,11 @@ fn normalization_keeps_placeholder_modifiers() {
 ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"mods {dst?}, {cond:plus}\"",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
-    let i = m.instructions.iter().find(|i| i.name == "MODS").expect("MODS");
+    let i = m
+        .instructions
+        .iter()
+        .find(|i| i.name == "MODS")
+        .expect("MODS");
     let r = i.asm.render();
     assert!(r.contains('?'), "规范化后应保留 `?`：{r}");
     assert!(r.contains(":plus"), "规范化后应保留 `:affix`：{r}");
@@ -4926,7 +4922,8 @@ fn asm_pseudo_section_lowers_to_pseudo() {
 /// 与旧面（`[[conventions.imm_fn]]`）同名报错。
 #[test]
 fn asm_immfn_section_lowers_to_conventions_imm_fn() {
-    let doc = lowering_doc("[asm.immfn.hi]\ntexts = [\"%hi({0})\"]\nexpr = \"({0} + 0x800) >> 12\"");
+    let doc =
+        lowering_doc("[asm.immfn.hi]\ntexts = [\"%hi({0})\"]\nexpr = \"({0} + 0x800) >> 12\"");
     let m = parse_and_validate(&doc).expect("谱合法");
     let d = m
         .conventions
@@ -4937,9 +4934,8 @@ fn asm_immfn_section_lowers_to_conventions_imm_fn() {
     assert_eq!(d.all_texts(), vec!["%hi({0})"]);
     assert_eq!(d.expr, "({0} + 0x800) >> 12");
     // 旧面 `[[conventions.imm_fn]]` ⇒ 解析期被拒
-    let old = lowering_doc(
-        "[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi({0})\"\nexpr = \"{0}\"",
-    );
+    let old =
+        lowering_doc("[[conventions.imm_fn]]\nname = \"hi\"\ntext = \"%hi({0})\"\nexpr = \"{0}\"");
     let err = super::parse_and_validate(&old).unwrap_err().to_string();
     assert!(err.contains("imm_fn"), "旧键应被拒并点名：{err}");
 }

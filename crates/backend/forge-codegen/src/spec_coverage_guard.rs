@@ -153,7 +153,9 @@ pub(crate) fn check_or_write_pin(key: &str, actual: &str) {
             .map(|l| format!("{l}\n"))
             .collect();
         let mut out = if head.trim().is_empty() {
-            String::from("# 门禁钉死值快照（B2）：刷新 = FORGE_PIN_WRITE=1 cargo test -p forge-codegen --lib\n")
+            String::from(
+                "# 门禁钉死值快照（B2）：刷新 = FORGE_PIN_WRITE=1 cargo test -p forge-codegen --lib\n",
+            )
         } else {
             head
         };

@@ -28,7 +28,11 @@ fn instruction_length_varies_with_the_immediate_width() {
     assert_eq!(enc("add R1, R2").len(), 2, "RR = opcode + modrm");
     assert_eq!(enc("sub R3, R4").len(), 2, "RR = opcode + modrm");
     assert_eq!(enc("addi8 R1, 5").len(), 2, "ADDI8 = opcode_reg + imm8");
-    assert_eq!(enc("addi16 R2, 300").len(), 3, "ADDI16 = opcode_reg + imm16");
+    assert_eq!(
+        enc("addi16 R2, 300").len(),
+        3,
+        "ADDI16 = opcode_reg + imm16"
+    );
 }
 
 /// 段序 = 发射序：`opcode` 段恒在首字节。
@@ -54,7 +58,11 @@ fn opcode_reg_encodes_the_destination_register() {
         ("addi16", 0x18, 7),
     ] {
         let b = enc(&format!("{mnemonic} R{r}, 1"));
-        assert_eq!(b[0], base | r, "opcode 字节 = 基值 {base:#04x} | 寄存器号 {r}");
+        assert_eq!(
+            b[0],
+            base | r,
+            "opcode 字节 = 基值 {base:#04x} | 寄存器号 {r}"
+        );
     }
 }
 
@@ -65,7 +73,11 @@ fn round_trip_for_both_lengths() {
         let bytes = enc(asm);
         let (inst, used) = decode(&bytes).unwrap_or_else(|| panic!("decode `{asm}` 失败"));
         assert_eq!(used, bytes.len(), "`{asm}` 应吃满 {} 字节", bytes.len());
-        assert_eq!(encode(&inst).unwrap(), bytes, "decode→encode 字节不变（`{asm}`）");
+        assert_eq!(
+            encode(&inst).unwrap(),
+            bytes,
+            "decode→encode 字节不变（`{asm}`）"
+        );
         let text = disassemble(&inst);
         assert_eq!(enc(&text), bytes, "反汇编文本应能再编回：`{text}`");
     }

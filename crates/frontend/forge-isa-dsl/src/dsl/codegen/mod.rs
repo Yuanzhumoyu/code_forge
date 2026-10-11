@@ -457,7 +457,7 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
             &inst.name,
             &m.variant_param_names(),
         )?;
-            // v21 W7：**备选写法也要各自规范化**（下游只认索引形态）；`uses` 只统计渲染形态。
+        // v21 W7：**备选写法也要各自规范化**（下游只认索引形态）；`uses` 只统计渲染形态。
         let mut norm_all: Vec<String> = vec![norm_asm];
         for tpl in asm.all().iter().skip(1) {
             let (_, n) = parse_asm_decl(
@@ -469,7 +469,7 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
             norm_all.push(n);
         }
         let norm_asm = crate::dsl::model::AsmList(norm_all);
-    // `opsize = "<操作数名>"` → 按声明序解析成位置索引（下游只见索引）
+        // `opsize = "<操作数名>"` → 按声明序解析成位置索引（下游只见索引）
         if let Some(Opsize::Named(n)) = &enc.opsize {
             let names = inst.ops.as_deref().unwrap_or(&[]);
             let idx = names
@@ -621,18 +621,19 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
                 let facts = crate::dsl::doc::DocFacts {
                     name: &inst.name,
                     form: inst.form.as_deref(),
-                    family: inst.from_template.as_ref().map(|s| &**s),
+                    family: inst.from_template.as_deref(),
                     width: inst.width,
                     data_width: inst.data_width,
                     ops: &doc_ops,
                 };
-                let resolved = crate::dsl::doc::resolve_doc(
-                    &raw,
-                    &facts,
-                    &format!("[inst.{}]", inst.name),
-                )?;
+                let resolved =
+                    crate::dsl::doc::resolve_doc(&raw, &facts, &format!("[inst.{}]", inst.name))?;
                 let trimmed = resolved.trim().to_string();
-                if trimmed.is_empty() { None } else { Some(trimmed) }
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                }
             }
         };
         out.push(InstInfo {
@@ -1913,7 +1914,6 @@ fn bf_ranges(bf: &Bitfield) -> Vec<(u32, u32)> {
         Some(ps) => ps.iter().map(|p| (p.offset, p.offset + p.width)).collect(),
     }
 }
-
 
 /// **仅供单测**：跑一次 lint，回**结论码**（避开 `DiagLine` 的可见性）。
 #[cfg(test)]

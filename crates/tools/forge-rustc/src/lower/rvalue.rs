@@ -243,9 +243,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             let start_v = self.builder.iconst(*niche_start as i64, TypeId::I64);
                             let relative = self.builder.isub(raw, start_v);
                             let max_v = self.builder.iconst(relative_max as i64, TypeId::I64);
-                            let is_niche =
-                                self.builder
-                                    .icmp(IntCC::Ule, relative, max_v);
+                            let is_niche = self.builder.icmp(IntCC::Ule, relative, max_v);
                             let tagged = {
                                 let rel32 = self.builder.ireduce(relative, TypeId::I32);
                                 let start_idx = self
@@ -644,9 +642,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 } else if signed {
                     Ok(self.builder.icmp(IntCC::Sge, lhs, rhs))
                 } else {
-                    Ok(self
-                        .builder
-                        .icmp(IntCC::Uge, lhs, rhs))
+                    Ok(self.builder.icmp(IntCC::Uge, lhs, rhs))
                 }
             }
             _ => Err(ForgeError::Message(format!(

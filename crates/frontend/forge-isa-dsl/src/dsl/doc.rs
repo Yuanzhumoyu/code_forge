@@ -48,11 +48,7 @@ pub(crate) struct DocFacts<'a> {
 /// 把 `raw` 里的 `{…}` 换成事实值；未知占位符 / 没配对的花括号 ⇒ 报错。
 ///
 /// `where_` 是诊断前缀（如 `[inst.ADD_RM_R]`）。
-pub(crate) fn resolve_doc(
-    raw: &str,
-    facts: &DocFacts<'_>,
-    where_: &str,
-) -> Result<String, String> {
+pub(crate) fn resolve_doc(raw: &str, facts: &DocFacts<'_>, where_: &str) -> Result<String, String> {
     let ch: Vec<char> = raw.chars().collect();
     let mut out = String::with_capacity(raw.len());
     let mut i = 0usize;
@@ -155,7 +151,9 @@ fn lookup(key: &str, facts: &DocFacts<'_>, where_: &str) -> Result<String, Strin
             (None, _) => {}
         }
     }
-    Err(format!("{where_}: doc 里的占位符 `{{{key}}}` 未知（{AVAILABLE}）"))
+    Err(format!(
+        "{where_}: doc 里的占位符 `{{{key}}}` 未知（{AVAILABLE}）"
+    ))
 }
 
 #[cfg(test)]
@@ -191,14 +189,22 @@ mod tests {
         ];
         let f = facts(&ops);
         assert_eq!(
-            resolve_doc("{name} 在 {form}/{family}：{dst.width} 位 {dst.class}（{ops}）", &f, "[inst.X]").unwrap(),
+            resolve_doc(
+                "{name} 在 {form}/{family}：{dst.width} 位 {dst.class}（{ops}）",
+                &f,
+                "[inst.X]"
+            )
+            .unwrap(),
             "ADD_RM_R 在 RR/ALU：64 位 gpr（dst, src）"
         );
         assert_eq!(
             resolve_doc("字宽 {width} / 数据宽 {data_width}", &f, "[inst.X]").unwrap(),
             "字宽 32 / 数据宽 64"
         );
-        assert_eq!(resolve_doc("宽 {{字面}} 括号", &f, "[inst.X]").unwrap(), "宽 {字面} 括号");
+        assert_eq!(
+            resolve_doc("宽 {{字面}} 括号", &f, "[inst.X]").unwrap(),
+            "宽 {字面} 括号"
+        );
     }
 
     #[test]

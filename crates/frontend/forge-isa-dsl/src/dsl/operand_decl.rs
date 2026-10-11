@@ -95,7 +95,9 @@ fn decl_to_slot(name: &str, d: &OperandDecl) -> Result<OperandSlot, String> {
     let (min, max) = match d.range {
         Some((lo, hi)) => {
             if lo > hi {
-                return Err(format!("`[operand.{name}].range = [{lo}, {hi}]` 的上下界反了"));
+                return Err(format!(
+                    "`[operand.{name}].range = [{lo}, {hi}]` 的上下界反了"
+                ));
             }
             (Some(lo), Some(hi))
         }
@@ -105,7 +107,7 @@ fn decl_to_slot(name: &str, d: &OperandDecl) -> Result<OperandSlot, String> {
         (None, _) => (None, None),
         (Some(t), OperandKind::Bits) => (Some(t.clone()), None),
         (Some(t), OperandKind::Imm) => (None, Some(t.clone())),
-            // v21 W6+ 丙：cond 槽的银行用新键 `cond_bank`（`enum` 键对 cond 无意义）。
+        // v21 W6+ 丙：cond 槽的银行用新键 `cond_bank`（`enum` 键对 cond 无意义）。
         (Some(_), OperandKind::Cond) => (None, None),
         (Some(_), k) => {
             return Err(format!(
@@ -147,7 +149,7 @@ fn decl_to_slot(name: &str, d: &OperandDecl) -> Result<OperandSlot, String> {
         symbols,
         require_symbol,
         imm_fns,
-            cond_bank: d.cond_bank.unwrap_or_default(),
+        cond_bank: d.cond_bank.unwrap_or_default(),
         arrangement: d.suffix.clone(),
         table,
         names,
@@ -222,8 +224,18 @@ symbol = { allow = true, require = true, modifiers = ["abs_g0"] }
 
     #[test]
     fn zero_and_sp_are_exclusive() {
-        assert_eq!(decl_to_slot("z", &decl("kind = \"reg\"\nzero = true")).unwrap().zr31, Some(true));
-        assert_eq!(decl_to_slot("s", &decl("kind = \"reg\"\nsp = true")).unwrap().zr31, Some(false));
+        assert_eq!(
+            decl_to_slot("z", &decl("kind = \"reg\"\nzero = true"))
+                .unwrap()
+                .zr31,
+            Some(true)
+        );
+        assert_eq!(
+            decl_to_slot("s", &decl("kind = \"reg\"\nsp = true"))
+                .unwrap()
+                .zr31,
+            Some(false)
+        );
         let bad = decl_to_slot("b", &decl("kind = \"reg\"\nzero = true\nsp = true"));
         assert!(bad.unwrap_err().contains("互斥"));
     }

@@ -117,14 +117,37 @@ fn riscv_rv32_projection_snapshot() {
     for name in [
         "LD",
         "SD", // 64 位访存（帧/ABI 结构件的引用虽被整节丢掉，指令本身仍按 xlen 过滤）
-        "LWU", "ADDIW", // v20 V9 补的 RV64 载入/算术
-        "ADDW", "SUBW", "MULW", "DIVW", "DIVUW", "REMW", "REMUW", // W 族 R 型
-        "SLLW", "SRLW", "SRAW", // W 族寄存器移位
-        "SLLIW", "SRLIW", "SRAIW", // W 族立即数移位（2026-10-04 补）
-        "FCVT_L_S", "FCVT_L_S_RNE", "FCVT_LU_S", "FCVT_LU_S_RNE", // 2026-10-07 浮点 rm 批次
-        "FCVT_L_D", "FCVT_L_D_RNE", "FCVT_LU_D", "FCVT_LU_D_RNE",
-        "FCVT_S_L", "FCVT_S_L_RNE", "FCVT_S_LU", "FCVT_S_LU_RNE",
-        "FCVT_D_L", "FCVT_D_L_RNE", "FCVT_D_LU", "FCVT_D_LU_RNE",
+        "LWU",
+        "ADDIW", // v20 V9 补的 RV64 载入/算术
+        "ADDW",
+        "SUBW",
+        "MULW",
+        "DIVW",
+        "DIVUW",
+        "REMW",
+        "REMUW", // W 族 R 型
+        "SLLW",
+        "SRLW",
+        "SRAW", // W 族寄存器移位
+        "SLLIW",
+        "SRLIW",
+        "SRAIW", // W 族立即数移位（2026-10-04 补）
+        "FCVT_L_S",
+        "FCVT_L_S_RNE",
+        "FCVT_LU_S",
+        "FCVT_LU_S_RNE", // 2026-10-07 浮点 rm 批次
+        "FCVT_L_D",
+        "FCVT_L_D_RNE",
+        "FCVT_LU_D",
+        "FCVT_LU_D_RNE",
+        "FCVT_S_L",
+        "FCVT_S_L_RNE",
+        "FCVT_S_LU",
+        "FCVT_S_LU_RNE",
+        "FCVT_D_L",
+        "FCVT_D_L_RNE",
+        "FCVT_D_LU",
+        "FCVT_D_LU_RNE",
     ] {
         assert!(
             p.dropped_insts.contains(&name.to_string()),
@@ -138,7 +161,11 @@ fn riscv_rv32_projection_snapshot() {
     }
     // 104 → 105（2026-10-01）：riscv 补了 `FSGNJ_D`（`fpr_mov` 的 64 位档）。它**不标**
     // `xlen`——RV32D 同样定义 `fsgnj.d`（D 扩展在 RV32 上存在），所以 RV32 视角该留下它。
-    assert_eq!(p.inst_count, pin_usize("projection.rv32.riscv64"), "RV32 投影剩 141 条");
+    assert_eq!(
+        p.inst_count,
+        pin_usize("projection.rv32.riscv64"),
+        "RV32 投影剩 141 条"
+    );
     assert_eq!(rows.len(), 141);
     // 96 → 100（2026-10-01）：riscv 补了 `Fload`/`Fstore` 各两条（单/双精度）lowering，
     // 它们的 `when` 只按宽度分派、引用的 `FLW`/`FSW` 与 `FLD`/`FSD` 在 RV32 视角下都还在。

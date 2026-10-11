@@ -385,7 +385,11 @@ fn render(defs: &[OpDef]) -> String {
             .as_deref()
             .map(|c| format!("、条件通道 {c}"))
             .unwrap_or_default();
-        let llvm_note = if d.llvm_parse { "" } else { "（仅 display）" };
+        let llvm_note = if d.llvm_parse {
+            ""
+        } else {
+            "（仅 display）"
+        };
         let _ = std::fmt::Write::write_fmt(
             &mut s,
             format_args!(

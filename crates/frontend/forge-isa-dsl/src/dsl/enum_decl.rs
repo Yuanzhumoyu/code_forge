@@ -162,23 +162,29 @@ asm = "n {dst}"
         // 槽侧摊平（读的是降级后的表）
         let fset = m.operand_slots.iter().find(|s| s.name == "fset").unwrap();
         assert_eq!(fset.table.as_deref(), Some("fence"));
-        assert_eq!(fset.table_entries, vec![("i".to_string(), 8), ("w".to_string(), 1)]);
+        assert_eq!(
+            fset.table_entries,
+            vec![("i".to_string(), 8), ("w".to_string(), 1)]
+        );
         let csr = m.operand_slots.iter().find(|s| s.name == "csr12").unwrap();
         assert_eq!(csr.name_entries, vec![("mstatus".to_string(), 0x300)]);
     }
 
     #[test]
     fn two_cond_tables_are_rejected() {
-        let bad = BASE.replace("[enum.csr]", "[enum.cond2]\ne = { code = 4, ir = \"eq\" }\n");
+        let bad = BASE.replace(
+            "[enum.csr]",
+            "[enum.cond2]\ne = { code = 4, ir = \"eq\" }\n",
+        );
         let err = format!("{:?}", crate::dsl::parse_and_validate(&bad).unwrap_err());
         assert!(err.contains("条件码表"), "err: {err}");
     }
 
-        /// v21 W6+ 丙：条件码表**固定两类**（整数 / 浮点，各一张），cond 槽用 `cond_bank` 选；
-        /// 银行由表内容判定（只看两个枚举**各自独有**的助记符）。
-        #[test]
-        fn cond_banks_are_fixed_and_inferred_from_content() {
-            let fcond = r#"
+    /// v21 W6+ 丙：条件码表**固定两类**（整数 / 浮点，各一张），cond 槽用 `cond_bank` 选；
+    /// 银行由表内容判定（只看两个枚举**各自独有**的助记符）。
+    #[test]
+    fn cond_banks_are_fixed_and_inferred_from_content() {
+        let fcond = r#"
 [enum.fcond]
 p  = { code = 10, ir = "uno" }
 np = { code = 11, ir = "ord" }
@@ -187,37 +193,52 @@ kind = "cond"
 bits = 4
 cond_bank = "float"
 "#;
-            let m = model(&format!("{BASE}{fcond}"));
-            assert_eq!(
-                m.operand_slots
-                    .iter()
-                    .find(|s| s.name == "fcc")
-                    .expect("operand.fcc")
-                    .cond_bank,
-                CondBank::Float
-            );
-            let ic = m.cond_ir_codes_of(CondBank::Float);
-            assert!(ic.contains(&("uno", 10)) && ic.contains(&("ord", 11)), "{ic:?}");
-            assert_eq!(m.cond_ir_codes_of(CondBank::Int).len(), 1, "整数表仍是 `e = eq`");
+        let m = model(&format!("{BASE}{fcond}"));
+        assert_eq!(
+            m.operand_slots
+                .iter()
+                .find(|s| s.name == "fcc")
+                .expect("operand.fcc")
+                .cond_bank,
+            CondBank::Float
+        );
+        let ic = m.cond_ir_codes_of(CondBank::Float);
+        assert!(
+            ic.contains(&("uno", 10)) && ic.contains(&("ord", 11)),
+            "{ic:?}"
+        );
+        assert_eq!(
+            m.cond_ir_codes_of(CondBank::Int).len(),
+            1,
+            "整数表仍是 `e = eq`"
+        );
 
-            // 同一类两张 ⇒ 报错（固定两类，各一张）。
-            let two_int = BASE.replace("[enum.csr]", "[enum.cond3]\ne2 = { code = 5, ir = \"ne\" }\n");
-            let err = format!("{:?}", crate::dsl::parse_and_validate(&two_int).unwrap_err());
-            assert!(err.contains("条件码表"), "err: {err}");
+        // 同一类两张 ⇒ 报错（固定两类，各一张）。
+        let two_int = BASE.replace(
+            "[enum.csr]",
+            "[enum.cond3]\ne2 = { code = 5, ir = \"ne\" }\n",
+        );
+        let err = format!(
+            "{:?}",
+            crate::dsl::parse_and_validate(&two_int).unwrap_err()
+        );
+        assert!(err.contains("条件码表"), "err: {err}");
 
-            // 一张表里混装两类 ⇒ 报错（固定两类，各一张；没定论时按约定名当整数表）。
-            let mixed = BASE.replace(
-                "e = { code = 4, ir = \"eq\" }",
-                "e = { code = 4, ir = \"eq\" }\nf = { code = 12, ir = \"olt\" }",
-            );
-            let err = format!("{:?}", crate::dsl::parse_and_validate(&mixed).unwrap_err());
-            assert!(err.contains("同时含"), "err: {err}");
-        }
-
+        // 一张表里混装两类 ⇒ 报错（固定两类，各一张；没定论时按约定名当整数表）。
+        let mixed = BASE.replace(
+            "e = { code = 4, ir = \"eq\" }",
+            "e = { code = 4, ir = \"eq\" }\nf = { code = 12, ir = \"olt\" }",
+        );
+        let err = format!("{:?}", crate::dsl::parse_and_validate(&mixed).unwrap_err());
+        assert!(err.contains("同时含"), "err: {err}");
+    }
 
     #[test]
     fn bits_table_rejects_negative_and_missing_values() {
         let bad = BASE.replace("i = 8", "i = -1");
-        assert!(crate::dsl::parse_and_validate(&bad).is_err(), "位集合的值不能为负");
+        assert!(
+            crate::dsl::parse_and_validate(&bad).is_err(),
+            "位集合的值不能为负"
+        );
     }
 }

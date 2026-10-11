@@ -59,10 +59,10 @@ pub use smallvec;
 // Module re-exports for DSL-generated code (ISA-DSL 唯一语法；encode/asm 由
 // ISA-DSL 生成模块内联实现，无需 forge-asm 运行时)
 pub use forge_codegen::EncodeError;
+pub use forge_codegen::RelocPatcher;
 #[cfg(feature = "jit")]
 pub use forge_codegen::jit;
 pub use forge_codegen::{AllocResult, CompiledFunction, RelocKind, Relocation};
-pub use forge_codegen::RelocPatcher;
 
 // Optional tools
 #[cfg(feature = "object-file")]

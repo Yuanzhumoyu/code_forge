@@ -558,7 +558,9 @@ pub fn lower_field_syntax(m: &mut super::model::IsaModel) -> Result<(), String> 
         if vlen && !bind.is_empty() {
             // `reg` 的值是操作数名 ⇒ `ModrmReg::Op`；`rm` 的值是操作数名（`[名]` = 内存形式）。
             // **扩展码（`/4`）不在 `bind` 的表达面内**：它是整数，仍写 `modrm = { reg = 4 }`。
-            let reg = bind.get("reg").map(|n| super::model::ModrmReg::Op(n.clone()));
+            let reg = bind
+                .get("reg")
+                .map(|n| super::model::ModrmReg::Op(n.clone()));
             let rm = bind.get("rm").cloned();
             if reg.is_some() || rm.is_some() {
                 let base = inst.enc.modrm.clone().unwrap_or(super::model::ModrmMap {
@@ -678,7 +680,8 @@ mod tests {
         match (&b.offset, &b.width, &b.pieces) {
             (Some(o), Some(w), None) => vec![(*o, *w, 0)],
             (None, None, Some(ps)) => {
-                let mut v: Vec<(u32, u32, u32)> = ps.iter().map(|p| (p.offset, p.width, p.shift)).collect();
+                let mut v: Vec<(u32, u32, u32)> =
+                    ps.iter().map(|p| (p.offset, p.width, p.shift)).collect();
                 v.sort_by_key(|x| x.2);
                 v
             }
@@ -710,7 +713,10 @@ mod tests {
         let d = FieldDecl::parse("gpr64|gpr32[11:7]:rd").unwrap();
         assert_eq!(
             d.types,
-            vec![FieldType::Named("gpr64".into()), FieldType::Named("gpr32".into())]
+            vec![
+                FieldType::Named("gpr64".into()),
+                FieldType::Named("gpr32".into())
+            ]
         );
         assert_eq!(d.name.as_deref(), Some("rd"));
         assert_eq!(d.default, None);
@@ -746,7 +752,10 @@ mod tests {
         // 按"值低位 → 高位"：shift 1 → word [11:8]（4 位）；shift 5 → [30:25]（6 位）；
         // shift 11 → [7]；shift 12 → [31]。
         let want: Vec<(u32, u32, u32)> = vec![(8, 4, 1), (25, 6, 5), (7, 1, 11), (31, 1, 12)];
-        let got3: Vec<(u32, u32, u32)> = pieces.iter().map(|p| (p.offset, p.width, p.shift)).collect();
+        let got3: Vec<(u32, u32, u32)> = pieces
+            .iter()
+            .map(|p| (p.offset, p.width, p.shift))
+            .collect();
         let mut want_sorted = want.clone();
         let mut got_sorted = got3.clone();
         want_sorted.sort();
@@ -760,8 +769,12 @@ mod tests {
         let d = FieldDecl::parse("i21[20:1 -> 30:21,20,19:12,31]:imm_j").unwrap();
         let got = d.to_bitfield();
         let pieces = got.pieces.expect("散射");
-        let mut got3: Vec<(u32, u32, u32)> = pieces.iter().map(|p| (p.offset, p.width, p.shift)).collect();
-        let mut want: Vec<(u32, u32, u32)> = vec![(31, 1, 20), (21, 10, 1), (20, 1, 11), (12, 8, 12)];
+        let mut got3: Vec<(u32, u32, u32)> = pieces
+            .iter()
+            .map(|p| (p.offset, p.width, p.shift))
+            .collect();
+        let mut want: Vec<(u32, u32, u32)> =
+            vec![(31, 1, 20), (21, 10, 1), (20, 1, 11), (12, 8, 12)];
         got3.sort();
         want.sort();
         assert_eq!(got3, want, "imm_j 散射逐段等价");
@@ -769,8 +782,16 @@ mod tests {
 
     #[test]
     fn rejects_width_mismatch_and_bad_range() {
-        assert!(FieldDecl::parse("u5[11:7 -> 3:0]").unwrap_err().contains("≠"));
-        assert!(FieldDecl::parse("u5[7:11]").unwrap_err().contains("高位小于低位"));
+        assert!(
+            FieldDecl::parse("u5[11:7 -> 3:0]")
+                .unwrap_err()
+                .contains("≠")
+        );
+        assert!(
+            FieldDecl::parse("u5[7:11]")
+                .unwrap_err()
+                .contains("高位小于低位")
+        );
         assert!(FieldDecl::parse("u5").unwrap_err().contains("缺少"));
         assert!(FieldDecl::parse("u0[3:0]").unwrap_err().contains("正整数"));
     }
@@ -813,8 +834,14 @@ mod tests {
     #[test]
     fn print_migrated_form_fields() {
         for (label, src) in [
-            ("isa/riscv64.toml", include_str!("../../../../../isa/riscv64.toml")),
-            ("isa/arm64.toml", include_str!("../../../../../isa/arm64.toml")),
+            (
+                "isa/riscv64.toml",
+                include_str!("../../../../../isa/riscv64.toml"),
+            ),
+            (
+                "isa/arm64.toml",
+                include_str!("../../../../../isa/arm64.toml"),
+            ),
             (
                 "crates/backend/forge-codegen/tests/isa/demo.toml",
                 include_str!("../../../../../crates/backend/forge-codegen/tests/isa/demo.toml"),
@@ -825,19 +852,27 @@ mod tests {
             ),
             (
                 "crates/backend/forge-codegen/tests/isa/demo_inst8.toml",
-                include_str!("../../../../../crates/backend/forge-codegen/tests/isa/demo_inst8.toml"),
+                include_str!(
+                    "../../../../../crates/backend/forge-codegen/tests/isa/demo_inst8.toml"
+                ),
             ),
             (
                 "crates/backend/forge-codegen/tests/isa/demo_inst12.toml",
-                include_str!("../../../../../crates/backend/forge-codegen/tests/isa/demo_inst12.toml"),
+                include_str!(
+                    "../../../../../crates/backend/forge-codegen/tests/isa/demo_inst12.toml"
+                ),
             ),
             (
                 "crates/backend/forge-codegen/tests/isa/demo_inst100.toml",
-                include_str!("../../../../../crates/backend/forge-codegen/tests/isa/demo_inst100.toml"),
+                include_str!(
+                    "../../../../../crates/backend/forge-codegen/tests/isa/demo_inst100.toml"
+                ),
             ),
             (
                 "crates/backend/forge-codegen/tests/isa/demo_mixed16_32.toml",
-                include_str!("../../../../../crates/backend/forge-codegen/tests/isa/demo_mixed16_32.toml"),
+                include_str!(
+                    "../../../../../crates/backend/forge-codegen/tests/isa/demo_mixed16_32.toml"
+                ),
             ),
             (
                 "examples/isa-host-demo/isa/toy16.toml",
@@ -854,7 +889,9 @@ mod tests {
             let bf = &m.conventions.bitfields;
             eprintln!("##### {label}");
             for form in &m.forms {
-                let Some(op) = form.keys.opcode_field.as_deref() else { continue };
+                let Some(op) = form.keys.opcode_field.as_deref() else {
+                    continue;
+                };
                 let opf = form.keys.operand_fields.clone().unwrap_or_default();
                 let insts: Vec<&crate::dsl::model::Instruction> = m
                     .instructions
@@ -891,7 +928,12 @@ mod tests {
                     let got = bind_operands(&decls, &ops_names, &BTreeMap::new(), Some("opcode"))
                         .unwrap_or_default();
                     if got != want {
-                        eprintln!("@@@BIND {} @@{} @@{}", i.name, ops_names.join(","), want.join(","));
+                        eprintln!(
+                            "@@@BIND {} @@{} @@{}",
+                            i.name,
+                            ops_names.join(","),
+                            want.join(",")
+                        );
                     }
                 }
             }
@@ -910,7 +952,11 @@ mod tests {
         // `opcode_field`，本机制不适用——它跟着 `match` 改名走，字段语法留给 W4 的 stream）。
         for (label, src, expect_fixed) in [
             ("x86", include_str!("../../../../../isa/x86.toml"), false),
-            ("riscv64", include_str!("../../../../../isa/riscv64.toml"), true),
+            (
+                "riscv64",
+                include_str!("../../../../../isa/riscv64.toml"),
+                true,
+            ),
             ("arm64", include_str!("../../../../../isa/arm64.toml"), true),
         ] {
             let m = crate::dsl::parse_and_validate(src)
@@ -1008,14 +1054,24 @@ mod tests {
         const RISCV_MAX: usize = 0;
         const ARM64_MAX: usize = 13;
         for (label, src, max) in [
-            ("riscv64", include_str!("../../../../../isa/riscv64.toml"), RISCV_MAX),
-            ("arm64", include_str!("../../../../../isa/arm64.toml"), ARM64_MAX),
+            (
+                "riscv64",
+                include_str!("../../../../../isa/riscv64.toml"),
+                RISCV_MAX,
+            ),
+            (
+                "arm64",
+                include_str!("../../../../../isa/arm64.toml"),
+                ARM64_MAX,
+            ),
         ] {
             let m = crate::dsl::parse_and_validate(src).unwrap();
             let bf = &m.conventions.bitfields;
             let mut n = 0usize;
             for form in &m.forms {
-                let Some(op) = form.keys.opcode_field.as_deref() else { continue };
+                let Some(op) = form.keys.opcode_field.as_deref() else {
+                    continue;
+                };
                 let opf = form.keys.operand_fields.clone().unwrap_or_default();
                 let insts: Vec<&crate::dsl::model::Instruction> = m
                     .instructions
@@ -1045,7 +1101,8 @@ mod tests {
                         continue;
                     }
                     let want = opf[..ops_names.len()].to_vec();
-                    let got = bind_operands(&decls, &ops_names, &BTreeMap::new(), Some("opcode")).unwrap();
+                    let got = bind_operands(&decls, &ops_names, &BTreeMap::new(), Some("opcode"))
+                        .unwrap();
                     if got != want {
                         eprintln!("@@@BIND {label}\t{}", i.name);
                         n += 1;
@@ -1104,7 +1161,8 @@ fields = ["u7[6:0]:opcode=0x33", "gpr64[11:7]:rd", "i13[12:1 -> 11:8,30:25,7,31]
     }
 
     #[test]
-    fn bind_by_same_name_and_by_explicit_map() {        let decls = vec![
+    fn bind_by_same_name_and_by_explicit_map() {
+        let decls = vec![
             FieldDecl::parse("gpr64[11:7]:rd").unwrap(),
             FieldDecl::parse("u3[14:12]:funct3").unwrap(),
             FieldDecl::parse("u5[19:15]:rs1").unwrap(),

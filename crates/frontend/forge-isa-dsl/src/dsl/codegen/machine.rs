@@ -100,10 +100,9 @@ pub(crate) fn gen_reg_enum(model: &IsaModel) -> Result<TokenStream, String> {
         match model.addr_size_override()? {
             // `addr_size_override` 返回的第二个值是**字节**宽（前缀语义都是字节），
             // 而组名/payload 是位 ⇒ 这里 ×8 换算。
-            Some((_, bytes)) => Some(model.require_group(
-                RegClass::GPR(bytes.saturating_mul(8)),
-                "地址尺寸覆盖前缀",
-            )?),
+            Some((_, bytes)) => Some(
+                model.require_group(RegClass::GPR(bytes.saturating_mul(8)), "地址尺寸覆盖前缀")?,
+            ),
             None => None,
         }
     } else {
@@ -713,7 +712,9 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
         // 发射**无后缀**字面量（整数按字段类型推断），于是生成文本仍是 `Relative(4,0)`；
         // 负值写成 `-N`（proc_macro2 的 Literal 不表示负数）。
         i8::try_from(addend).map_err(|_| {
-            format!("[asm.reloc.{reloc_name}]: addend {addend} 超出 i8 范围（RelocKind 的修正字段）")
+            format!(
+                "[asm.reloc.{reloc_name}]: addend {addend} 超出 i8 范围（RelocKind 的修正字段）"
+            )
         })?;
         let addend_kind_tok: TokenStream = if addend < 0 {
             let v = proc_macro2::Literal::u8_unsuffixed((-addend) as u8);

@@ -460,9 +460,14 @@ mod tests {
         };
         file.mismatch_samples
             .push("a.s:1\tmov r16d, eax\t没有这条指令（含 \"引号\"）".into());
-        report.suites.push(IsaReport::from_files("llvm-mc", vec![file]));
+        report
+            .suites
+            .push(IsaReport::from_files("llvm-mc", vec![file]));
         let json = report.to_json();
-        assert!(json.contains("\"samples\": ["), "逐文件样例要进记分板：{json}");
+        assert!(
+            json.contains("\"samples\": ["),
+            "逐文件样例要进记分板：{json}"
+        );
         assert!(json.contains("\\t"), "制表符必须转义：{json}");
         assert!(!json.contains('\t'), "记分板里不许出现裸制表符：{json}");
         assert!(json.contains("\\\"引号\\\""), "引号必须转义：{json}");

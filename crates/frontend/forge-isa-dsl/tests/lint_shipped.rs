@@ -82,11 +82,7 @@ fn op_gap_matches_section_10_3() {
                 .clone();
             let v: Vec<usize> = raw
                 .split(',')
-                .map(|x| {
-                    x.trim()
-                        .parse()
-                        .expect("lint.op_gap.* 应为 4 个整数")
-                })
+                .map(|x| x.trim().parse().expect("lint.op_gap.* 应为 4 个整数"))
                 .collect();
             assert_eq!(v.len(), 4, "lint.op_gap.{isa} 应为 4 个整数");
             (v[0], v[1], v[2], v[3])
@@ -163,7 +159,9 @@ fn overlap_guard_can_fail() {
                     ops = [\"t1:r64\", \"base:r64\", \"t2:r64\", \"imm:imm7x\"]\n\
                     asm = \"stp {t1}, {t2}, [{base}, #{imm}]\"\n\n";
     // v21 W10：指令表头即名字 ⇒ 注入点与注入块都写成 `[inst.<名>]`。
-    let mutated = spec.text.replace("[inst.STPX]", &format!("{injected}[inst.STPX]"));
+    let mutated = spec
+        .text
+        .replace("[inst.STPX]", &format!("{injected}[inst.STPX]"));
     assert!(mutated.contains("OVERLAPTOY"), "注入点没找到");
     let found = lint_source(&mutated).expect("变异谱仍合法");
     assert!(
@@ -337,6 +335,9 @@ fn shipped_specs_have_no_template_sections() {
             .lines()
             .filter(|l| l.trim_start().starts_with("[[templates"))
             .count();
-        assert_eq!(hits, 0, "{isa} 仍在用已废弃的 `[[templates]]`（应为 `[family.<名>]`）");
+        assert_eq!(
+            hits, 0,
+            "{isa} 仍在用已废弃的 `[[templates]]`（应为 `[family.<名>]`）"
+        );
     }
 }
