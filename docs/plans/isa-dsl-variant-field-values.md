@@ -1,23 +1,26 @@
 # ISA-DSL：**按变体给字段值**（`variant` 字段值）
 
-> [progress] 2026-10-07 设计定稿（尚未实现）。动机与证据见
-> `crates/tools/forge-tests/asm/README.md` 的「`rev8` 的 RV32/RV64 两编码」一节。
+> [progress] 2026-10-07 设计定稿。
 >
-> **⚠️ 2026-10-08 落地前实测校正（三处，务必先读再动手 ✗）**：
+> **⚠️ 2026-10-08 晚实测更正（重要 ✗）：本方案其实早就落地了 ✗。** 我照上面那句"尚未实现"动手 ✗，
+> 结果做出了**第二套**等价语法（给 `match` 加变体分派 ✗，门禁全绿 ✗）—— 那违反"**一处实现**"✗：
+> 实际落地的键是**独立的 `fields_variant`** ✗，而且发行谱**已经在用** ✗：
 >
-> 1. **TOML 键名变了** ✗：本文件下面写的是 `fields = { … }` ✗，但 **v21 W2.1 起**
->    固定字段值的键是 **`match`** ✗（`model.rs:2736` 的 `#[serde(rename = "match")] pub fields` ✗）；
->    `fields` 这个键现在是**字段声明列表** ✗（另一个类型 ✗）。⇒ 实现时对着 **`match`** 改 ✗，
->    照本文件原样写 `fields` 会**改错键** ✗。
-> 2. **投影通路不在 `validate.rs:32`** ✗：那里是 `fn collect` ✗。`{参数名}` 替换与 `--params`
->    投影在 **`report.rs` 的投影层** ✗（`validate|insts --params` 入口 ✗）⇒ §4.1 第 2 步的
->    "解析"要落在**那里** ✗（唯一解析点 ✗），别在 `validate.rs` 里另开一份 ✗。
-> 3. **可复用的变体门槛已存在** ✗：`model.rs` 的 `VariantGate`（六处 `only_variants` ✗ + `when` ✗）
->    ⇒ §3 第 4 行的"域内键校验"直接复用它的查表逻辑 ✗，不写第二份 ✗。
+> | 步骤 | 现状（实测 ✗） |
+> | --- | --- |
+> | ① 纯附加键 | ✅ `model.rs:2938`：`#[serde(rename = "fields_variant")] pub fields_variant` ✗ |
+> | ② 投影解析 | ✅ `validate.rs:66`：把 `fields_variant` 按 params 折进 `fields` ✗ |
+> | ③ 声明一致性校验 | ✅ `validate.rs:636`：参数须已声明 ✗、取值须在域内 ✗ |
+> | ④ schema + 文档 | ✅ `schema.rs:249` + `docs/reference/isa-dsl.md`（键表与说明 ✗） |
+> | ⑤ 落 `rev8` | ✅ `isa/riscv64.toml:1522` 的 `[inst.REV8]` **正在用** ✗ |
 >
-> ⇒ **判定：本方案的形态与顺序仍然成立 ✔，但上述三处按今天的事实改写后再施工 ✗**；
-> 施工面 = 模型新增承载键 ✓ → 投影层解析成常量 ✓ → 校验三条负例 ✓ → `match` 键两形态收编 ✓
-> → schema/文档/`isa-dsl.schema.json` 四方同步 ✓ → 落 `rev8` 并刷 asm 棘轮与钉死值 ✓。
+> 形态 = `fields_variant = { imm12 = { param = "xlen", by = { 32 = 0x698 }, default = 0x6b8 } }` ✗。
+> **⇒ 本方案的工作已完成 ✗ ⇒ 可归档** ✗（只差把这一节搬进 ARCHIVED 头 ✗）。
+>
+> **教训（写下来免得再犯 ✗）**：文档头写"尚未实现"**不等于**真的没实现 ✗ —— 动手前先
+> `git grep` 那个键名 ✗（我只 grep 了 `match` ✗，没 grep 本文件自己提的 `fields_variant` ✗）。
+> 我那份重复实现（提交 `cc43bb6a` ✗：`FieldVal`/`FieldVariant` + `resolve_match_fields` + 单测 ✗）
+> **已整条 revert** ✗，保留 `fields_variant` ✗。
 
 ## 1. 要解决的问题
 
