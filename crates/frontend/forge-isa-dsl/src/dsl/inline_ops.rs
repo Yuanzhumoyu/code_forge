@@ -30,11 +30,12 @@ use super::model::{AsmList, EncodingKind, Instruction, IsaModel, OperandKind, Op
 /// 占位符的三种形态。
 #[derive(Debug, Clone, PartialEq)]
 enum Ph {
-    /// `{名字:槽[:角色]}`：声明操作数。
+    /// `{名字:槽[:角色]}`：声明操作数。可带 `#序号`（= 旧 `ops` 里的下标，顺序 = 编码序）。
     Decl {
         name: String,
         slot: String,
         role: OperandRole,
+        idx: Option<u32>,
     },
     /// `{@字段:槽[:角色]}`：把**后续**那个操作数绑到 `字段`；
     /// 字段写成 `[字段]`（方括号）= 该操作数按**内存形态**（MemRef）走——与旧 `bind` 的
@@ -59,8 +60,15 @@ fn parse_role(s: &str) -> Option<OperandRole> {
     }
 }
 
-/// 解析 `名字:槽[:角色]`（绑定形态的 `名字` 已去掉 `@` 前缀）。
-fn split_decl(body: &str) -> Option<(String, String, OperandRole)> {
+/// 解析 `名字:槽[:角色][#序号]`（绑定形态的 `名字` 已去掉 `@` 前缀）。
+fn split_decl(body: &str) -> Option<(String, String, OperandRole, Option<u32>)> {
+    // 末尾 `#<数字>` = 显式编码序（顺序敏感指令用它把"出现序 ≠ 编码序"说出来）。
+    let (body, idx) = match body.rsplit_once('#') {
+        Some((b, n)) if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => {
+            (b.trim(), n.parse::<u32>().ok())
+        }
+        _ => (body.trim(), None),
+    };
     let mut it = body.split(':');
     let name = it.next()?.trim().to_string();
     let slot = it.next()?.trim().to_string();
@@ -71,7 +79,7 @@ fn split_decl(body: &str) -> Option<(String, String, OperandRole)> {
     if it.next().is_some() || name.is_empty() || slot.is_empty() {
         return None;
     }
-    Some((name, slot, role))
+    Some((name, slot, role, idx))
 }
 
 /// 扫描一条模板，按出现序取出占位符，并把**重写后**的文本写进 `out`。
@@ -103,7 +111,7 @@ fn scan(tpl: &str, ctx: &str, out: &mut String) -> Result<Vec<Ph>, String> {
                 None => (String::new(), rest.trim()),
             };
             let mem = !field_raw.is_empty();
-            let (field, slot, role) = split_decl(rest).ok_or_else(|| {
+            let (field, slot, role, _idx) = split_decl(rest).ok_or_else(|| {
                 format!(
                     "{ctx}: 绑定占位符 '{{{inner}}}' 形如 `{{@字段:槽[:角色]}}`（槽必写，角色取 in/out/inout）"
                 )
@@ -121,13 +129,18 @@ fn scan(tpl: &str, ctx: &str, out: &mut String) -> Result<Vec<Ph>, String> {
                 role,
             });
         } else if inner.contains(':') {
-            let (name, slot, role) = split_decl(inner).ok_or_else(|| {
+            let (name, slot, role, idx) = split_decl(inner).ok_or_else(|| {
                 format!(
-                    "{ctx}: 声明占位符 '{{{inner}}}' 形如 `{{名字:槽[:角色]}}`（角色取 in/out/inout）"
+                    "{ctx}: 声明占位符 '{{{inner}}}' 形如 `{{名字:槽[:角色][#序号]}}`（角色取 in/out/inout）"
                 )
             })?;
             out.push_str(&format!("{{{name}}}"));
-            phs.push(Ph::Decl { name, slot, role });
+            phs.push(Ph::Decl {
+                name,
+                slot,
+                role,
+                idx,
+            });
         } else {
             out.push_str(&format!("{{{inner}}}"));
             phs.push(Ph::Ref(inner.to_string()));
@@ -138,7 +151,14 @@ fn scan(tpl: &str, ctx: &str, out: &mut String) -> Result<Vec<Ph>, String> {
 }
 
 /// 一份模板的操作数声明（含绑定字段与"内存形态"位）。
-type Decl = (String, String, OperandRole, Option<String>, bool);
+type Decl = (
+    String,
+    String,
+    OperandRole,
+    Option<String>,
+    bool,
+    Option<u32>,
+);
 
 /// 一条指令的抽取结果：声明表 + 重写后的模板表。
 struct Extraction {
@@ -174,7 +194,12 @@ fn extract_one(inst: &Instruction) -> Result<Option<Extraction>, String> {
                     }
                     pending = Some((field.clone(), slot.clone(), *role, *mem));
                 }
-                Ph::Decl { name, slot, role } => {
+                Ph::Decl {
+                    name,
+                    slot,
+                    role,
+                    idx,
+                } => {
                     if cur.iter().any(|d| d.0 == *name) {
                         return Err(format!("{ctx}: 操作数名 '{name}' 重复声明"));
                     }
@@ -197,7 +222,7 @@ fn extract_one(inst: &Instruction) -> Result<Option<Extraction>, String> {
                             (Some(field.clone()), bmem)
                         }
                     };
-                    cur.push((name.clone(), slot.clone(), *role, bound, mem));
+                    cur.push((name.clone(), slot.clone(), *role, bound, mem, *idx));
                 }
                 Ph::Ref(_) => {}
             }
@@ -206,6 +231,26 @@ fn extract_one(inst: &Instruction) -> Result<Option<Extraction>, String> {
             return Err(format!(
                 "{ctx}: 绑定占位符 `{{@{field}:{slot}}}` 后面没有操作数声明——绑定必须紧挨着它的操作数"
             ));
+        }
+        // **顺序标记**（`#序号`）：内联后"出现序 = 编码序"，但实测 100 条指令的出现序 ≠ 旧 `ops` 序
+        // （75 条原本靠位置回退才编对）⇒ 顺序敏感时用 `#序号` 把编码序**说出来**。
+        // 一条指令内要么都带、要么都不带；带了就按序号排序，并要求序号正好是 0..n-1（不重不漏）。
+        if cur.iter().any(|d| d.5.is_some()) {
+            if cur.iter().any(|d| d.5.is_none()) {
+                return Err(format!(
+                    "{ctx}: 声明占位符要么都写 `#序号`、要么都不写——部分标注无法确定编码序"
+                ));
+            }
+            cur.sort_by_key(|d| d.5.expect("都带序号"));
+            for (i, d) in cur.iter().enumerate() {
+                if d.5 != Some(i as u32) {
+                    return Err(format!(
+                        "{ctx}: 操作数 `{}` 的 `#序号` 必须是 0..{} 且不重复（顺序 = 编码序）",
+                        d.0,
+                        cur.len().saturating_sub(1)
+                    ));
+                }
+            }
         }
         if cur.is_empty() {
             // 本模板没有声明：交给旧路径处理（旧 `ops` + 引用，或纯生成器占位符）。
@@ -218,13 +263,13 @@ fn extract_one(inst: &Instruction) -> Result<Option<Extraction>, String> {
                 // 同一指令的多个模板是同一声明表的**子序列**（模板可以只打印一部分操作数，
                 // 旧写法共享一份 `ops` 时就是这样）：共享名字的 槽/角色/绑定 必须一致，
                 // 新名字按它在本模板里的相邻关系插进汇总序。
-                for (i, (name, slot, role, field, mem)) in cur.iter().enumerate() {
+                for (i, (name, slot, role, field, mem, idx)) in cur.iter().enumerate() {
                     if let Some(pos) = d.iter().position(|x| x.0 == *name) {
-                        let (_, s0, r0, f0, m0) = &d[pos];
-                        if s0 != slot || r0 != role || f0 != field || m0 != mem {
+                        let (_, s0, r0, f0, m0, i0) = &d[pos];
+                        if s0 != slot || r0 != role || f0 != field || m0 != mem || i0 != idx {
                             return Err(format!(
                                 "{ctx}: 操作数 `{name}` 在不同 asm 模板里的声明不一致\
-                                 （槽/角色/绑定/内存形态必须一致）"
+                                 （槽/角色/绑定/内存形态/序号必须一致）"
                             ));
                         }
                     } else {
@@ -234,7 +279,10 @@ fn extract_one(inst: &Instruction) -> Result<Option<Extraction>, String> {
                             .find_map(|(p, ..)| d.iter().position(|x| x.0 == *p))
                             .map(|p| p + 1)
                             .unwrap_or(0);
-                        d.insert(at, (name.clone(), slot.clone(), *role, field.clone(), *mem));
+                        d.insert(
+                            at,
+                            (name.clone(), slot.clone(), *role, field.clone(), *mem, *idx),
+                        );
                     }
                 }
                 // 汇总序必须与本模板的相对序一致（顺序 = 编码序）。
@@ -326,7 +374,7 @@ pub fn extract_inline_ops(m: &mut IsaModel) -> Result<(), String> {
         let mut bind: BTreeMap<String, String> = BTreeMap::new();
         let ops: Vec<String> = decls
             .iter()
-            .map(|(name, slot, role, field, mem)| {
+            .map(|(name, slot, role, field, mem, _idx)| {
                 if let Some(f) = field {
                     if streamed {
                         // 旧拼法：内存形态的操作数写成 `[名字]`——**作者显式标注优先**

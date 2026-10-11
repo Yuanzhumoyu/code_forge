@@ -1,4 +1,4 @@
-//! **v22 迁移硬门**：把三份发行谱从旧写法（`ops` + `bind` + `{名字}` 引用）迁成
+//! **谱写法迁移硬门**：把三份发行谱从旧写法（`ops` + `bind` + `{名字}` 引用）迁成
 //! 内联声明（`{名字:槽[:角色]}` / `{@字段:槽[:角色]}`），并要求
 //!
 //! - **展开结果逐字节相同**（`expand_file` 的扁平 token 串）——"迁移只改写法"由此被证明；
@@ -10,7 +10,7 @@
 
 use std::path::{Path, PathBuf};
 
-use forge_isa_dsl::{ExpandOptions, Parts, expand_file, report, v22_migrate};
+use forge_isa_dsl::{ExpandOptions, Parts, expand_file, report, spec_migrate};
 
 fn opts() -> ExpandOptions {
     ExpandOptions {
@@ -72,7 +72,7 @@ fn shipped_specs_migrate_with_byte_identical_expansion() {
         let p = root.join("isa").join(isa);
         let src = std::fs::read_to_string(&p).expect("读谱");
         let migrated =
-            v22_migrate::migrate_spec_text(&src).unwrap_or_else(|e| panic!("{isa} 迁移失败：{e}"));
+            spec_migrate::migrate_spec_text(&src).unwrap_or_else(|e| panic!("{isa} 迁移失败：{e}"));
         assert_ne!(src, migrated, "{isa} 应当有变化（否则用例没意义）");
 
         let legacy_keys = inst_blocks_have_legacy_keys(&migrated);
@@ -112,7 +112,7 @@ fn fixture_specs_migrate_with_byte_identical_expansion() {
         }
         let name = p.file_name().unwrap().to_string_lossy().to_string();
         let src = std::fs::read_to_string(&p).expect("读夹具");
-        let Ok(migrated) = v22_migrate::migrate_spec_text(&src) else {
+        let Ok(migrated) = spec_migrate::migrate_spec_text(&src) else {
             continue; // 夹具里可能有本迁移不覆盖的写法（多文件 include 等）
         };
         if migrated == src {
@@ -149,7 +149,7 @@ ops = ["dst:g:out", "mem:mem"]
 bind = { rm = "[mem]" }
 asm = "ld {dst}, {mem}"
 "#;
-    let out = v22_migrate::migrate_spec_text(src).expect("迁移");
+    let out = spec_migrate::migrate_spec_text(src).expect("迁移");
     assert!(
         out.contains("{@[rm]:mem}{mem:mem}"),
         "内存形态应写成 `@[字段]:槽`：\n{out}"
@@ -184,7 +184,7 @@ opcode = 1
 ops = ["dst:g:out"]
 asm = "a {dst:g:out}"
 "#;
-    let err = v22_migrate::migrate_spec_text(src).expect_err("已带新写法应报错");
+    let err = spec_migrate::migrate_spec_text(src).expect_err("已带新写法应报错");
     assert!(
         err.contains("已是新写法") || err.contains("不在 ops 里"),
         "错误应说明占位符形态：{err}"

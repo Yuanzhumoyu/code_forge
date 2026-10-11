@@ -1645,8 +1645,8 @@ riscv 自己的 `MOV_RM8_R64`（`addi rd, rs, 0` 的搬运形态）或 `Nop`，�
 | 步骤 | 状态 | 证据 |
 | --- | --- | --- |
 | 抽取 pass（模板 → 内部 `ops`/`bind` 回填 ⇒ 下游**一行未改**） | ✅ | `src/dsl/inline_ops.rs` + `tests/inline_ops.rs` 7 条（含"与旧写法 `insts` 报告逐字段等价"） |
-| 内存形态标记 `{@[字段]:槽}` | ✅ | pass + 迁移器双向；`tests/v22_migration.rs::memory_form_marker_is_preserved` |
-| 迁移器 `v22_migrate`（纯文本，只动 `[inst]` 的 `ops`/`bind`/`asm` 三行） | ✅ | `src/v22_migrate.rs`；硬门测试**暂 `#[ignore]`**（见第 1 步） |
+| 内存形态标记 `{@[字段]:槽}` | ✅ | pass + 迁移器双向；`tests/spec_migrate.rs::memory_form_marker_is_preserved` |
+| 迁移器 `spec_migrate`（纯文本，只动 `[inst]` 的 `ops`/`bind`/`asm` 三行） | ✅ | `src/spec_migrate.rs`；硬门测试**暂 `#[ignore]`**（见第 1 步） |
 | `forge-isa new <名>` 脚手架 | ✅ | `forge-isa/tests/new_spec.rs` 2 条（与教程 §0 同源 + 产物可 `validate`） |
 | 参考规范 + CHANGELOG | ✅ | `docs/reference/isa-dsl.md`「操作数声明写进 `asm`（v22）」；CHANGELOG `Added (2026-10-11)` |
 | 全量门禁 | ✅（2026-10-11 实测） | `cargo test --workspace --exclude forge-rustc -j 2` **exit 0**，148 个 `test result: ok`，13.2 min |
@@ -1657,8 +1657,8 @@ riscv 自己的 `MOV_RM8_R64`（`addi rd, rs, 0` 的搬运形态）或 `Nop`，�
    而实测 **100 条**指令的出现序 ≠ 旧 `ops` 序（其中 **75 条**完全靠位置回退才编对）⇒ 不标就**静默改语义**。
    - pass（`dsl/inline_ops.rs`）：`split_decl` 返回 `Option<u32>`、`Ph::Decl` 与 `Decl` 带上它；
      一条指令内"部分带序号" ⇒ 报错；按序号排序后再走既有的**子序列合并**。
-   - 迁移器（`v22_migrate.rs`）：出现序 ≠ `ops` 序时给**每条**声明打 `#序号`（需新增 `appearance_order()` 判据）。
-2. **解除 `tests/v22_migration.rs` 那条 `#[ignore]`**：三份发行谱 + 夹具迁移前后 `expand_file`
+   - 迁移器（`spec_migrate.rs`）：出现序 ≠ `ops` 序时给**每条**声明打 `#序号`（需新增 `appearance_order()` 判据）。
+2. **解除 `tests/spec_migrate.rs` 那条 `#[ignore]`**：三份发行谱 + 夹具迁移前后 `expand_file`
    展开**逐字节相同**（当前列表只有 riscv64/arm64；x86 的内存标记已修，第 1 步完成后一并纳入）。
 3. **删旧键**：`Instruction.ops`/`bind`、`EncKeys.modrm`、v21 占位修饰（`{name:affix}`/`{name?}`，
    实测 `.toml` **0 处**、仅 1 条 Rust 单测在用）。四处同步：`schema.rs` ↔ `dsl/model.rs` ↔

@@ -15,7 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 + `asm` 模板支持 `{名字:槽[:角色]}` 声明、`{@字段:槽[:角色]}` 绑定与 `{@[字段]:槽[:角色]}`（内存形态，等价旧 `bind` 的 `"[操作数]"`）；旧的 `ops`/`bind` 键迁移期并存，**同一条指令只许写一处**（混用即报错）。
 + 抽取走"模板 → 内部 `ops`/`bind`"的回填：编码/解码/汇编/降级生成与 `validate`/`lint`/`report` **一行未改**，因此内联写法与旧写法在 `insts` 报告面**逐字段等价**（守卫 7 条）。
-+ 新增 `forge_isa_dsl::v22_migrate`：把旧写法（`ops` + `bind` + `{名字}`）纯文本迁成内联写法，硬门 = 迁移前后 `expand_file` 展开结果**逐字节相同**；`forge-isa new <名>` 脚手架（内容与教程 §0 同源）。
++ 新增 `forge_isa_dsl::spec_migrate`：把旧写法（`ops` + `bind` + `{名字}`）纯文本迁成内联写法，硬门 = 迁移前后 `expand_file` 展开结果**逐字节相同**；`forge-isa new <名>` 脚手架（内容与教程 §0 同源）。
 + 边界：顺序敏感的指令（出现序 ≠ 旧 `ops` 序）暂用 `ops`——显式标注编码序的写法（`#序号`）尚未定稿。
 
 ### Fixed (2026-10-08) — forge-codegen：Stage 0.5 建的 `Alloca` 用错 immediate 形态，帧槽不进表（会毁帧崩溃）
