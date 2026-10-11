@@ -60,6 +60,7 @@ pub enum IntCC {
 }
 
 impl IntCC {
+    /// 规范助记符（display 用；与 name 一样由 ops.toml 投影）。
     pub fn mnemonic(&self) -> &'static str {
         match self {
             IntCC::Eq => "eq",
@@ -175,6 +176,7 @@ pub enum FloatCC {
 }
 
 impl FloatCC {
+    /// 规范助记符（原子操作码枚举的那一份）。
     pub fn mnemonic(&self) -> &'static str {
         match self {
             FloatCC::Ord => "ord",
@@ -249,6 +251,7 @@ impl FloatCC {
 // 原子操作 / 内存序
 // ============================================================
 
+/// 内存序：从 `NotAtomic` 到 `SequentiallyConsistent` 的七档（数值越大越强）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Ordering {
     NotAtomic = 0,
@@ -261,6 +264,7 @@ pub enum Ordering {
 }
 
 impl Ordering {
+    /// 是否含 acquire 语义。
     pub fn is_acquire(self) -> bool {
         matches!(
             self,
@@ -268,6 +272,7 @@ impl Ordering {
         )
     }
 
+    /// 是否含 release 语义。
     pub fn is_release(self) -> bool {
         matches!(
             self,
@@ -276,6 +281,7 @@ impl Ordering {
     }
 }
 
+/// 原子读改写操作码（交换、加减、位运算等）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum AtomicRmwOp {
     Xchg,

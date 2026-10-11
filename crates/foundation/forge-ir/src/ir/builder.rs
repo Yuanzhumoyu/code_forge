@@ -125,6 +125,7 @@ macro_rules! overflow_binop {
     };
 }
 
+/// IR 构建器：按函数增量发射指令与块（方法面见各 opcode 的构建入口）。
 pub struct FunctionBuilder {
     pub(crate) func: Function,
     ctx: TypeContext,

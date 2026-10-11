@@ -79,6 +79,7 @@ impl FunctionAttributes {
         (self.0 & attr.0) != 0
     }
 
+    /// 把另一份同类型属性的位并入自身（按位或；只增不减）。
     pub fn set(&mut self, attr: Self) {
         self.0 |= attr.0;
     }
@@ -120,25 +121,30 @@ pub struct ParamAttributes {
 }
 
 impl ParamAttributes {
+    /// 空的形参属性表（全默认值）。
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// 链式设置对齐（字节）。
     pub fn with_align(mut self, align: u32) -> Self {
         self.align = align;
         self
     }
 
+    /// 链式声明该指针非空（优化提示）。
     pub fn with_nonnull(mut self) -> Self {
         self.nonnull = true;
         self
     }
 
+    /// 链式声明不与其他指针别名（优化提示）。
     pub fn with_noalias(mut self) -> Self {
         self.noalias = true;
         self
     }
 
+    /// 链式声明这是隐藏的 sret 返回缓冲指针（指向 ty）。
     pub fn with_sret(mut self, ty: TypeId) -> Self {
         self.sret = Some(ty);
         self
@@ -156,10 +162,12 @@ pub struct Layout {
 }
 
 impl Layout {
+    /// 空的块顺序表。
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// 追加一个块（顺序即 display 与遍历序）。
     pub fn push(&mut self, block: Block) {
         self.block_order.push(block);
     }
@@ -1035,14 +1043,17 @@ impl Function {
         }
     }
 
+    /// 函数里的块数。
     pub fn block_count(&self) -> usize {
         self.dfg.block_count()
     }
 
+    /// 函数里的指令数。
     pub fn inst_count(&self) -> usize {
         self.dfg.inst_count()
     }
 
+    /// 函数里的值数。
     pub fn value_count(&self) -> usize {
         self.dfg.value_count()
     }
@@ -1054,6 +1065,7 @@ impl Function {
 
 // Linkage, Visibility, ComdatKind, ComdatId, SymbolInfo, Alias are now in symbol.rs
 
+/// 全局变量：名字 + 类型 + 可变性 + 初值或链接属性。
 #[derive(Clone, Debug)]
 pub struct GlobalVariable {
     pub name: ImmStr,
@@ -1104,6 +1116,7 @@ pub struct GlobalAlias {
 }
 
 impl GlobalVariable {
+    /// 建只读全局（带初值，可挂符号）。
     pub fn constant(name: &str, ty: TypeId) -> Self {
         Self {
             name: ImmStr::from(name),
@@ -1121,6 +1134,7 @@ impl GlobalVariable {
         }
     }
 
+    /// 建可变全局（运行期可写）。
     pub fn mutable(name: &str, ty: TypeId) -> Self {
         Self {
             name: ImmStr::from(name),
@@ -1138,16 +1152,19 @@ impl GlobalVariable {
         }
     }
 
+    /// 链式设置初值字节。
     pub fn with_init(mut self, data: Vec<u8>) -> Self {
         self.init = Some(data);
         self
     }
 
+    /// 链式设置链接属性（external/internal 等）。
     pub fn with_linkage(mut self, linkage: crate::ir::symbol::Linkage) -> Self {
         self.symbol.linkage = linkage;
         self
     }
 
+    /// 链式设置符号信息（可见性、是否导出等）。
     pub fn with_symbol(mut self, symbol: SymbolInfo) -> Self {
         self.symbol = symbol;
         self
@@ -1232,6 +1249,7 @@ pub struct Module {
 }
 
 impl Module {
+    /// 空模块（无函数、无全局）。
     pub fn new() -> Self {
         Self {
             types: TypeContext::new(),
@@ -1275,6 +1293,7 @@ impl Module {
     // 函数管理
     // ============================================================
 
+    /// 加一个函数，返回句柄。
     pub fn add_function(&mut self, func: Function) -> FuncRef {
         let name = func.name.clone();
         let func_ref = FuncRef(self.functions.len() as u32);
@@ -1289,26 +1308,32 @@ impl Module {
         self.functions[fr.0 as usize] = func;
     }
 
+    /// 按句柄取函数（句柄非法则 panic）。
     pub fn get_function(&self, fr: FuncRef) -> &Function {
         &self.functions[fr.0 as usize]
     }
 
+    /// 按句柄取可变函数。
     pub fn get_function_mut(&mut self, fr: FuncRef) -> &mut Function {
         &mut self.functions[fr.0 as usize]
     }
 
+    /// 按名字找函数句柄。
     pub fn find_function(&self, name: &str) -> Option<FuncRef> {
         self.func_names.get(name).copied()
     }
 
+    /// 模块里的函数数。
     pub fn function_count(&self) -> usize {
         self.functions.len()
     }
 
+    /// 遍历全部函数（不可变）。
     pub fn iter_functions(&self) -> impl Iterator<Item = &Function> {
         self.functions.iter()
     }
 
+    /// 遍历全部函数（可变；改签名或调用约定用）。
     pub fn iter_functions_mut(&mut self) -> impl Iterator<Item = &mut Function> {
         self.functions.iter_mut()
     }
@@ -1340,6 +1365,7 @@ impl Module {
     // 全局变量
     // ============================================================
 
+    /// 加一个全局；名字重复等错误返回 IrError。
     pub fn add_global(&mut self, gv: GlobalVariable) -> Result<GlobalId, IrError> {
         let name = gv.name.clone();
         if self.global_names.contains_key(&name) {
@@ -1368,10 +1394,12 @@ impl Module {
         self.global_aliases.iter()
     }
 
+    /// 按句柄取全局。
     pub fn get_global(&self, id: GlobalId) -> Option<&GlobalVariable> {
         self.globals.get(id.0 as usize)
     }
 
+    /// 模块里的全局数。
     pub fn global_count(&self) -> usize {
         self.globals.len()
     }

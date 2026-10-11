@@ -255,6 +255,7 @@ impl CfgRevision {
         self.0.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// 取底层原始值（常量池句柄或立即数值的裸表示）。
     pub fn get(&self) -> u64 {
         self.0.load(Ordering::Relaxed)
     }
@@ -266,6 +267,7 @@ impl Clone for CfgRevision {
     }
 }
 
+/// 数据流图：值、指令、块及其定义-使用关系的核心容器。
 #[derive(Clone, Debug)]
 pub struct DataFlowGraph {
     /// 值 arena。**私有**（v3 方案 S5：`dfg` 私有化 + 受限编辑 API）。
@@ -298,6 +300,7 @@ pub struct DataFlowGraph {
 }
 
 impl DataFlowGraph {
+    /// 空图。
     pub fn new() -> Self {
         Self {
             values: Vec::new(),
@@ -314,6 +317,7 @@ impl DataFlowGraph {
 
     // === 实体分配 ===
 
+    /// 建值（给类型与定义），返回句柄。
     pub fn make_value(&mut self, ty: TypeId, def: ValueDef) -> Value {
         let v = Value(self.values.len() as u32);
         self.values.push(ValueData { def, ty });
@@ -325,6 +329,7 @@ impl DataFlowGraph {
         self.make_value(ty, ValueDef::AggConst(agg_id))
     }
 
+    /// 建指令：opcode + 操作数 + 立即数 + 结果类型 + 标志（构建器各方法最终都走这里）。
     pub fn make_inst(
         &mut self,
         opcode: Opcode,
@@ -463,6 +468,7 @@ impl DataFlowGraph {
         new_inst
     }
 
+    /// 建块，返回句柄。
     pub fn make_block(&mut self) -> Block {
         let block = Block(self.blocks.len() as u32);
         self.blocks.push(BlockData {
@@ -506,6 +512,7 @@ impl DataFlowGraph {
         slice[insert_at..].rotate_right(count);
     }
 
+    /// 建带块参数的块，返回块与参数值句柄。
     pub fn make_block_with_params(&mut self, param_tys: &[TypeId]) -> (Block, Vec<Value>) {
         let block = Block(self.blocks.len() as u32);
         let params: Vec<Value> = param_tys
@@ -605,6 +612,7 @@ impl DataFlowGraph {
         i.isel_strategy = None;
     }
 
+    /// 删指令，并断开它与使用者的关系。
     pub fn remove_inst(&mut self, inst: Inst) {
         let idx = inst.0 as usize;
         if idx < self.insts.len() {
@@ -625,6 +633,7 @@ impl DataFlowGraph {
         }
     }
 
+    /// 删块（其指令与相关使用关系一并处理）。
     pub fn remove_block(&mut self, block: Block) {
         // 结构变更（块没了）⇒ 结构修订号前进：惰性分析缓存据此自动作废，
         // 不依赖调用方记得 `Function::invalidate_analysis()`（v3 S6）。
@@ -642,9 +651,11 @@ impl DataFlowGraph {
 
     // === 查询 ===
 
+    /// 取值的定义；未定义或不存在时返回 None。
     pub fn value_def(&self, v: Value) -> Option<&ValueDef> {
         self.values.get(v.0 as usize).map(|d| &d.def)
     }
+    /// 取值的类型。
     pub fn value_type(&self, v: Value) -> Option<TypeId> {
         self.values.get(v.0 as usize).map(|d| d.ty)
     }
@@ -678,21 +689,25 @@ impl DataFlowGraph {
             None => false,
         }
     }
+    /// 指令的结果值列表。
     pub fn inst_results(&self, i: Inst) -> &[Value] {
         self.insts
             .get(i.0 as usize)
             .map(|d| d.results.as_slice())
             .unwrap_or(&[])
     }
+    /// 指令的 opcode。
     pub fn inst_opcode(&self, i: Inst) -> Option<&Opcode> {
         self.insts.get(i.0 as usize).map(|d| &d.opcode)
     }
+    /// 指令的操作数值列表。
     pub fn inst_operands(&self, i: Inst) -> &[Value] {
         self.insts
             .get(i.0 as usize)
             .map(|d| d.operands.as_slice())
             .unwrap_or(&[])
     }
+    /// 指令所在的块。
     pub fn inst_block(&self, i: Inst) -> Option<Block> {
         self.insts.get(i.0 as usize).map(|d| d.block)
     }
@@ -746,6 +761,7 @@ impl DataFlowGraph {
             .enumerate()
             .map(|(k, inst)| (Inst(k as u32), inst))
     }
+    /// 块的参数类型列表。
     pub fn block_params(&self, b: Block) -> &[TypeId] {
         self.blocks
             .get(b.0 as usize)
@@ -1080,6 +1096,7 @@ impl DataFlowGraph {
 
     // === 迭代 ===
 
+    /// 遍历全部值（句柄 + 数据）。
     pub fn values(&self) -> impl Iterator<Item = (Value, &ValueData)> {
         self.values
             .iter()
@@ -1122,6 +1139,7 @@ impl DataFlowGraph {
         id
     }
 
+    /// 遍历全部指令。
     pub fn insts(&self) -> impl Iterator<Item = (Inst, &Instruction)> {
         self.insts
             .iter()
@@ -1129,12 +1147,14 @@ impl DataFlowGraph {
             .filter(|(_, id)| !id.is_tombstone())
             .map(|(i, id)| (Inst(i as u32), id))
     }
+    /// 遍历全部块。
     pub fn blocks(&self) -> impl Iterator<Item = (Block, &BlockData)> {
         self.blocks
             .iter()
             .enumerate()
             .map(|(i, bd)| (Block(i as u32), bd))
     }
+    /// 按块遍历其中的指令（块内顺序）。
     pub fn block_inst_iter(&self, b: Block) -> impl Iterator<Item = &Instruction> {
         struct InstIter<'a> {
             dfg: &'a DataFlowGraph,
@@ -1207,6 +1227,7 @@ impl DataFlowGraph {
         self.blocks.iter()
     }
 
+    /// 块数。
     pub fn block_count(&self) -> usize {
         self.blocks.len()
     }
@@ -1214,6 +1235,7 @@ impl DataFlowGraph {
     pub fn inst_count(&self) -> usize {
         self.insts.len()
     }
+    /// 值数。
     pub fn value_count(&self) -> usize {
         self.values.len()
     }

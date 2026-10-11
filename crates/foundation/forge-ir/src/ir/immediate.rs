@@ -35,6 +35,7 @@ pub enum Immediate {
 }
 
 impl Immediate {
+    /// 取整数或常量形式的立即数值；不是则 None。
     pub fn as_u64(&self) -> Option<u64> {
         match self {
             Immediate::Uint(v) => Some(*v),
@@ -42,6 +43,7 @@ impl Immediate {
         }
     }
 
+    /// 取函数引用；不是 Func 变体则 None。
     pub fn as_func(&self) -> Option<FuncRef> {
         match self {
             Immediate::Func(f) => Some(*f),
@@ -49,6 +51,7 @@ impl Immediate {
         }
     }
 
+    /// 取类型；不是 Type 变体则 None。
     pub fn as_type(&self) -> Option<TypeId> {
         match self {
             Immediate::Type(t) => Some(*t),
@@ -56,6 +59,7 @@ impl Immediate {
         }
     }
 
+    /// 取常量池句柄。
     pub fn as_const(&self) -> Option<ConstId> {
         match self {
             Immediate::Const(c) => Some(*c),

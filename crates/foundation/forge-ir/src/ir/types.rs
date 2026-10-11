@@ -80,10 +80,12 @@ pub struct TypeField {
 }
 
 impl TypeField {
+    /// 建一条带类型的命名条目（`Named` 变体）。
     pub fn new(ty: TypeId) -> Self {
         Self { name: None, ty }
     }
 
+    /// 按名字构造：内建约定名（win64/sysv64/aapcs64/lp64d）或宿主自定义名。
     pub fn named(name: InternedStr, ty: TypeId) -> Self {
         Self {
             name: Some(name),
@@ -488,14 +490,17 @@ impl TypeStore {
     // 类型工厂
     // ============================================================
 
+    /// 取（或新建）N 位整数类型（同 `bits` 复用同一条目）。
     pub fn int_ty(&mut self, bits: u32) -> TypeId {
         self.intern(TypeEntry::Int { bits }, TypeKey::IntBits(bits))
     }
 
+    /// 取（或新建）N 位浮点类型。
     pub fn float_ty(&mut self, bits: u16) -> TypeId {
         self.intern(TypeEntry::Float { bits }, TypeKey::FloatBits(bits))
     }
 
+    /// 取（或新建）固定长度向量类型：元素类型 + lane 数。
     pub fn vector_ty(&mut self, elem: TypeId, len: u32) -> TypeId {
         self.intern(TypeEntry::Vector { elem, len }, TypeKey::Vector(elem, len))
     }
@@ -508,26 +513,32 @@ impl TypeStore {
         )
     }
 
+    /// 取（或新建）bfloat 类型（brain float 语义，16 位）。
     pub fn bfloat_ty(&mut self, bits: u16) -> TypeId {
         self.intern(TypeEntry::BFloat { bits }, TypeKey::BFloatBits(bits))
     }
 
+    /// 取（或新建）token 类型：GC/异常用的不透明值，不能参与普通运算。
     pub fn token_ty(&mut self) -> TypeId {
         self.intern(TypeEntry::Token, TypeKey::Token)
     }
 
+    /// 取（或新建）metadata 类型：随指令携带的附加信息，不是可运算的值。
     pub fn metadata_ty(&mut self) -> TypeId {
         self.intern(TypeEntry::Metadata, TypeKey::Metadata)
     }
 
+    /// 取（或新建）不透明类型（大小未知，只做类型占位）。
     pub fn opaque_ty(&mut self) -> TypeId {
         self.intern(TypeEntry::Opaque, TypeKey::Opaque)
     }
 
+    /// 取（或新建）数组类型：元素类型 + 元素个数。
     pub fn array_ty(&mut self, elem: TypeId, len: u64) -> TypeId {
         self.intern(TypeEntry::Array { elem, len }, TypeKey::Array(elem, len))
     }
 
+    /// 取（或新建）指针类型（给定地址空间）。
     pub fn pointer_ty(&mut self, addr_space: u32) -> TypeId {
         self.intern(
             TypeEntry::Pointer { addr_space },
@@ -535,6 +546,7 @@ impl TypeStore {
         )
     }
 
+    /// 取（或新建）具名结构体类型：字段列表 + 是否 packed（同名同布局复用）。
     pub fn struct_named(&mut self, name: &str, fields: Vec<TypeField>, packed: bool) -> TypeId {
         let name_id = self.strings.intern(name);
         let key = TypeKey::StructName(name_id);
@@ -581,6 +593,7 @@ impl TypeStore {
         self.strings.lookup(id)
     }
 
+    /// 取（或新建）匿名结构体类型：按字段类型列表，packed 影响对齐与大小。
     pub fn struct_anon(&mut self, field_tys: Vec<TypeId>, packed: bool) -> TypeId {
         self.intern(
             TypeEntry::Struct {
@@ -633,40 +646,49 @@ impl TypeStore {
         (id.0 as usize) < self.entries.len()
     }
 
+    /// 已建类型总数（统计/诊断用）。
     pub fn type_count(&self) -> usize {
         self.entries.len()
     }
 
     // === 类型判断 ===
 
+    /// 该类型是不是整数。
     pub fn is_int(&self, id: TypeId) -> bool {
         matches!(self.get(id), TypeEntry::Int { .. })
     }
 
+    /// 该类型是不是浮点。
     pub fn is_float(&self, id: TypeId) -> bool {
         matches!(self.get(id), TypeEntry::Float { .. })
     }
 
+    /// 该类型是不是指针。
     pub fn is_ptr(&self, id: TypeId) -> bool {
         matches!(self.get(id), TypeEntry::Pointer { .. })
     }
 
+    /// 该类型是不是固定长度向量。
     pub fn is_vector(&self, id: TypeId) -> bool {
         matches!(self.get(id), TypeEntry::Vector { .. })
     }
 
+    /// 该类型是不是可伸缩向量（长度运行期才定）。
     pub fn is_scalable_vector(&self, id: TypeId) -> bool {
         matches!(self.get(id), TypeEntry::ScalableVector { .. })
     }
 
+    /// 该类型是不是 bfloat。
     pub fn is_bfloat(&self, id: TypeId) -> bool {
         matches!(self.get(id), TypeEntry::BFloat { .. })
     }
 
+    /// 该类型是不是 token。
     pub fn is_token(&self, id: TypeId) -> bool {
         matches!(self.get(id), TypeEntry::Token)
     }
 
+    /// 该类型是不是聚合（结构体/数组），即按值传参时可能走内存的存在。
     pub fn is_aggregate(&self, id: TypeId) -> bool {
         matches!(
             self.get(id),
@@ -674,6 +696,7 @@ impl TypeStore {
         )
     }
 
+    /// 该类型是不是 void（无值）。
     pub fn is_void(&self, id: TypeId) -> bool {
         id == self.void_ty
     }
@@ -708,6 +731,7 @@ impl TypeStore {
         offset.div_ceil(align) * align
     }
 
+    /// 类型大小（字节）；聚合按目标 ABI 的布局规则计算。
     pub fn size_bytes(&self, id: TypeId) -> u32 {
         let entry = self.get(id);
         match entry {
@@ -746,6 +770,7 @@ impl TypeStore {
         }
     }
 
+    /// 类型的自然对齐（字节）。
     pub fn alignment(&self, id: TypeId) -> u32 {
         let entry = self.get(id);
         match entry {
@@ -932,14 +957,17 @@ impl Default for CallConvId {
 }
 
 impl CallConvId {
+    /// 按内建约定名构造 `CallConvId`（win64/sysv64/aapcs64/lp64d 等）。
     pub fn builtin(name: ConvName) -> Self {
         Self::Builtin(name)
     }
 
+    /// 按名字构造：内建约定名（win64/sysv64/aapcs64/lp64d）或宿主自定义名。
     pub fn named(name: &str) -> Self {
         Self::Named(ImmStr::from(name))
     }
 
+    /// 按注册表下标构造 `CallConvId`。
     pub fn index(n: u32) -> Self {
         Self::Index(n)
     }
@@ -1044,6 +1072,7 @@ impl FunctionSignature {
         }
     }
 
+    /// 无返回值、无参数的 `FunctionSignature`。
     pub fn void() -> Self {
         Self {
             params: Vec::new(),
@@ -1059,6 +1088,7 @@ impl FunctionSignature {
         self
     }
 
+    /// 链式设置调用约定（builder 风格，返回自身）。
     pub fn with_calling_convention(mut self, cc: CallConvId) -> Self {
         self.calling_convention = cc;
         self
@@ -1348,21 +1378,27 @@ impl TypeContext {
 
     // === Delegated read-only methods ===
 
+    /// 该类型是不是整数。
     pub fn is_int(&self, id: TypeId) -> bool {
         self.borrow().is_int(id)
     }
+    /// 该类型是不是浮点。
     pub fn is_float(&self, id: TypeId) -> bool {
         self.borrow().is_float(id)
     }
+    /// 该类型是不是指针。
     pub fn is_ptr(&self, id: TypeId) -> bool {
         self.borrow().is_ptr(id)
     }
+    /// 该类型是不是 void（无值）。
     pub fn is_void(&self, id: TypeId) -> bool {
         self.borrow().is_void(id)
     }
+    /// 该类型是不是固定长度向量。
     pub fn is_vector(&self, id: TypeId) -> bool {
         self.borrow().is_vector(id)
     }
+    /// 向量的元素类型；不是向量时返回 None。
     pub fn element_type(&self, id: TypeId) -> Option<TypeId> {
         self.borrow().element_type(id)
     }
@@ -1372,45 +1408,58 @@ impl TypeContext {
         self.borrow().scalar_bits(id)
     }
 
+    /// 类型大小（字节）；聚合按目标 ABI 的布局规则计算。
     pub fn size_bytes(&self, id: TypeId) -> u32 {
         self.borrow().size_bytes(id)
     }
+    /// 类型的自然对齐（字节）。
     pub fn alignment(&self, id: TypeId) -> u32 {
         self.borrow().alignment(id)
     }
+    /// 把类型渲染成可读文本（display 与错误消息用）。
     pub fn fmt_type(&self, id: TypeId) -> String {
         self.borrow().fmt_type(id)
     }
+    /// 取驻留字符串的文本（同一内容共享一份存储）。
     pub fn lookup_str(&self, id: InternedStr) -> String {
         self.borrow().strings.lookup(id).to_string()
     }
 
     // === Delegated mutable methods (require borrow_mut) ===
 
+    /// 取（或新建）N 位整数类型；非法位宽由实现校验。
     pub fn int_ty(&self, bits: u32) -> TypeId {
         self.borrow_mut().int_ty(bits)
     }
+    /// 取（或新建）N 位浮点类型（16/32/64/128 之外的位宽非法）。
     pub fn float_ty(&self, bits: u16) -> TypeId {
         self.borrow_mut().float_ty(bits)
     }
+    /// 取（或新建）bfloat 类型（brain float 语义，16 位）。
     pub fn bfloat_ty(&self, bits: u16) -> TypeId {
         self.borrow_mut().bfloat_ty(bits)
     }
+    /// 取（或新建）固定长度向量类型：元素类型 + lane 数（不要求 2 的幂）。
     pub fn vector_ty(&self, elem: TypeId, len: u32) -> TypeId {
         self.borrow_mut().vector_ty(elem, len)
     }
+    /// 取（或新建）数组类型：元素类型 + 元素个数。
     pub fn array_ty(&self, elem: TypeId, len: u64) -> TypeId {
         self.borrow_mut().array_ty(elem, len)
     }
+    /// 取（或新建）指针类型（给定地址空间）。
     pub fn pointer_ty(&self, addr_space: u32) -> TypeId {
         self.borrow_mut().pointer_ty(addr_space)
     }
+    /// 注册签名并返回句柄（同内容复用，避免重复分配）。
     pub fn register_signature(&self, sig: FunctionSignature) -> SigRef {
         self.borrow_mut().register_signature(sig)
     }
+    /// 按句柄取回签名。
     pub fn get_signature(&self, sr: SigRef) -> FunctionSignature {
         self.borrow().get_signature(sr).clone()
     }
+    /// 驻留字符串：同内容复用同一份存储，返回其句柄。
     pub fn intern_str(&self, s: &str) -> InternedStr {
         self.borrow_mut().intern_str(s)
     }

@@ -30,6 +30,7 @@ pub struct AggConst {
 // ConstantPool
 // ============================================================
 
+/// 常量池：整数、浮点与字节段的去重存储，立即数经句柄引用。
 #[derive(Clone, Debug)]
 pub struct ConstantPool {
     /// 整数常量: 值 + 位宽
