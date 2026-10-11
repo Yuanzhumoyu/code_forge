@@ -154,6 +154,12 @@ pub struct LowerCtx {
     /// 当前指令引用的函数 (Call 的 Immediate::Func；供 lowering 生成
     /// cross-function relocation 的符号名 "@N")。
     pub current_func_ref: Option<FuncRef>,
+    /// **当前指令的逐实参声明属性**（`Instruction::param_attrs` 快照；2026-10-08）。
+    ///
+    /// 生成的 lowering 只看得到 `(op, args, results, ctx)`，读不到指令本身——而调用点
+    /// 的**形状**要靠它：`byval(聚合类型)` 的实参在 IR 里是 `ptr`（指向调用方本地副本），
+    /// 但 ABI 上它是**按值聚合**（sysv64 `>16B` ⇒ `StackByVal`）。长度与实参个数对齐。
+    pub current_param_attrs: Vec<forge_ir::ir::function::ParamAttributes>,
     /// 当前 AtomicRmw 的操作数 (Immediate::Uint(op as u64) 解析)。
     pub current_atomic_op: Option<forge_ir::ir::opcode::AtomicRmwOp>,
     /// 当前指令引用的全局变量 (GlobalAddr 的 Immediate::Global)。
@@ -245,6 +251,7 @@ impl LowerCtx {
             current_const_index: 0,
             current_immediates: SmallVec::new(),
             current_func_ref: None,
+            current_param_attrs: Vec::new(),
             current_atomic_op: None,
             current_global: None,
             current_offset: 0,

@@ -659,6 +659,7 @@ asm = "movsxd {dst}, {src}"
 # `iadd(stack_addr, iconst_i32(-4))` 实证）。目的槽 = IR 结果值 XReg，其
 # 类型恒为 upcast 结果（≥ 两操作数），故 s1 == 结果宽度 == 正确编码宽度。
 [inst.ADD_RM_R]
+roles = ["arg_bytes_add"]
 group = "add"
 form = "RR_SEG"
 match = { opcode = 0x01 }
@@ -1358,7 +1359,10 @@ asm = "lock xor [{src2}], {src}"
 
 [inst.MOV_R_MEM]
 form = "MRR_MEM_SEG"
+roles = ["arg_bytes_load"]
 # 按 vreg 基址读内存的能力（v20 变参 V4）：`dst ← [src]`，宽度随目标类自动。
+# v21 A2′：还作为**按值栈实参拷贝**的寄存器地址 load（`arg_bytes_load`）——
+# 源地址是虚拟寄存器（调用方本地副本），故不能用 `stack_arg_load`（那条的地址是物理基址）。
 bind = { rm = "[src]" }
 match = { opcode = 0x8B }
 # v14：数据槽 gprx——内存 load 宽度由 IR 类型 auto（I16→66、I32→无
@@ -2351,6 +2355,7 @@ ops = ["dst:gpr:out"]
 asm = "pop {dst}"
 
 [inst.MOV_REG_IMM64]
+roles = ["arg_bytes_imm"]
 # 立即数 → 寄存器能力（v20 变参 V3）：变参 `va_start` 物化对象时要写宿主算好的初值；
 # v20 V7 起也用于**变参元信息寄存器**（SysV 的 `%al`）：调用点按布局算出"用了几个向量
 # 寄存器"再写进去——数字是运行期的，所以必须是"立即数 → 寄存器"这条能力。

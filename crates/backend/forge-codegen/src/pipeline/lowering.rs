@@ -466,6 +466,9 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             if let Some(Immediate::Func(f)) = inst.immediates.first() {
                 self.ctx.current_func_ref = Some(*f);
             }
+            // 逐实参声明属性快照（2026-10-08）：生成的 lowering 读不到指令本身，
+            // 而调用点的**形状**要靠 `byval(聚合类型)`（见 `LowerCtx::current_param_attrs`）。
+            self.ctx.current_param_attrs = inst.param_attrs.to_vec();
             // Vextract/Vinsert：idx 从操作数注入（LLVM idx 是 i32 操作数——
             // 常量折叠为立即数供 target 模板使用；变量 idx 折叠为 0）
             if matches!(inst.opcode, Opcode::Vextract | Opcode::Vinsert)

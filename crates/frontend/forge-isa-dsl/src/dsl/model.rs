@@ -2946,6 +2946,15 @@ pub enum Role {
     StackArgLoad,
     /// 栈参数传参 store（调用方把第 5+ 个参数写到 `[SP+shadow+…]`）。
     StackArgStore,
+    /// **按值栈实参拷贝**用的寄存器地址 load（A2′，x86 `MOV_R_MEM`）：Reg 槽 = 目的、
+    /// 地址寄存器（模板形如 `mov {dst}, [{src}]`）。与 `StackArgLoad` 分工：那条的地址
+    /// 建模成 MemRef（**物理**基址，只够读帧内固定位置），这条的地址是**寄存器槽**
+    /// （可以是被 regalloc 分配的虚拟指针）。
+    ArgBytesLoad,
+    /// 按值栈实参拷贝用的**立即数 → 寄存器**（地址步长；x86 `MOV_REG_IMM64`）。
+    ArgBytesImm,
+    /// 按值栈实参拷贝用的**寄存器加**（推进源地址；x86 `ADD_RM_R`，`dst` 为 inout）。
+    ArgBytesAdd,
 }
 
 impl fmt::Display for Role {
@@ -2976,6 +2985,9 @@ fn serde_json_name(r: &Role) -> &'static str {
         Role::FrameAddr => "frame_addr",
         Role::StackArgLoad => "stack_arg_load",
         Role::StackArgStore => "stack_arg_store",
+        Role::ArgBytesLoad => "arg_bytes_load",
+        Role::ArgBytesImm => "arg_bytes_imm",
+        Role::ArgBytesAdd => "arg_bytes_add",
     }
 }
 

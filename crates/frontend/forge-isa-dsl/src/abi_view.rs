@@ -327,7 +327,12 @@ pub fn role_capability(role: Role) -> Option<&'static str> {
         | Role::EpilogueJump
         | Role::FrameSet
         | Role::CalleeSave
-        | Role::CalleeLoad => {
+        | Role::CalleeLoad
+        // 按值栈实参拷贝的三个角色（A2′）是**调用点生成器内部**的指令选择，
+        // 不是"约定要求宿主申报的能力"⇒ 不进能力视图。
+        | Role::ArgBytesLoad
+        | Role::ArgBytesImm
+        | Role::ArgBytesAdd => {
             return None;
         }
     })
