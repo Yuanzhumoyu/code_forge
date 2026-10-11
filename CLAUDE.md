@@ -21,7 +21,7 @@ docs/
 ├── plans/                 # 有未完成工作的专项方案 [progress]
 │   ├── forge-rustc-vec_push-plan.md # vec 族（5 用例 FLAKY，见 e2e.rs）
 │   ├── isa-dsl-v21-execution-checklist.md # v21 执行清单（**活的账本**：S0 冻结 + W0 基线 + W1–W11 门禁 + §14 最终验收）
-│   └── varargs-plan.md            # 变参方案（win64 端到端已通；lp64d/aapcs64 保存区与前端待做）
+│   └── forge-ir-v3-plan.md          # forge-ir v3（S1/S4/S5/S6 已落地、S2/S3 大部分、**S7 未收口**）
 ├── performance/           # 基准与优化
 │   ├── BENCHMARKS.md          # 基准运行框架
 │   ├── OPTIMIZATION.md        # 优化清单
@@ -41,6 +41,7 @@ docs/
     ├── clippy-fixes.md / coverage-history.md
     ├── forge-isa-dsl-v19-plan.md / isa-dsl-v21-redesign-plan.md  # ISA-DSL v19 / v21 方案（收口后归档）
     ├── forge-ir-binary-serialization-plan.md / forge-ir-s8-design.md # forge-ir 二进制序列化（落地后归档）
+    ├── varargs-plan.md / isa-dsl-variant-field-values.md # 变参（功能面已完成）/ 按变体给字段值（早已落地）
     └── forge-ir/              # forge-ir 历轮计划/审计 7 篇（452 收敛基线，2026-08 停更）
 ```
 

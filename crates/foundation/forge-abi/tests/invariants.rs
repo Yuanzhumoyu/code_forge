@@ -1055,7 +1055,7 @@ fn multi_value_returns_fail_closed_on_gaps() {
     assert!(matches!(e, AbiError::Unsupported { .. }), "{e:?}");
 }
 
-/// **变参形状的文档 ↔ 引擎一致性**（v20 A8）：`docs/plans/varargs-plan.md` §2 那张表
+/// **变参形状的文档 ↔ 引擎一致性**（v20 A8）：`docs/archive/varargs-plan.md` §2 那张表
 /// （四份内置约定的 `va_list` 形态）必须与引擎实际算出来的 `AbiPlan` 逐格相同。
 ///
 /// 这张表的价值在于它是"变参现在做到哪一步"的索引——写歪了就会把后来的人引错，
@@ -1063,7 +1063,7 @@ fn multi_value_returns_fail_closed_on_gaps() {
 #[test]
 fn va_shapes_match_the_documented_table() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../docs/plans/varargs-plan.md");
+        .join("../../../docs/archive/varargs-plan.md");
     let doc =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读不到 {}：{e}", path.display()));
 

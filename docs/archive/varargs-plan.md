@@ -1,14 +1,21 @@
-# 变参（varargs）方案 [progress]
+# 变参（varargs）方案
 
-> 状态复核（2026-10-08 晚 ✗，按**代码事实**逐条核 ✗）：**V0–V5 已落地** ✔；**"仍缺 `%al`/`va_meta`
-> 的写入"这句已过时** ✗ —— SysV 的元信息寄存器写入在 **v20 V7 就做了** ✗，证据 =
-> `crates/backend/forge-codegen/tests/variadic_meta.rs`（刚复跑 **2 passed** ✔ ✗）：调用点按**布局**
-> 算出"用了几个向量寄存器" ✗，用 `roles = ["gpr_mov_imm"]`（`mov rax, imm64` ✗）写进去 ✗；
-> 谱没申报该能力而约定要求写 ⇒ **fail-closed** ✗。
-> 四份约定的 `va_list` **形状数据都在** ✗（`forge-abi/src/builtin.rs`：`win64_stack` ✗ /
-> `sysv_reg_save` + `va_meta_pool` ✗ / `aapcs64_struct` ✗ / `riscv_save_area` ✗）。
-> **⇒ 真正的剩余只有两件** ✗：① **发射** `lp64d`/`aapcs64` 的寄存器保存区 ✗（`sysv64` 已通 ✗，
-> 这两份的 `va_start` 现在明确 fail-closed ✗ ✓）；② **前端**产出变参签名 ✗（触发条件见 §6 ✗）。
+> ⚠️ **ARCHIVED（2026-10-08）** —— **功能面已完成** ✔（下面那句 `[progress]` 与"前端为空"的口径保留在
+> 「原状态」里 ✗）：
+>
+> | 项 | 实况（实测 ✗） |
+> | --- | --- |
+> | V0–V5（调用方/被调方物化 + `va_arg` ✗） | ✅ 已落地 ✗（win64 栈式 + sysv64 寄存器保存区**真跑** ✗） |
+> | SysV `%al`/`va_meta` 写入 | ✅ v20 V7 已落地 ✗（`forge-codegen/tests/variadic_meta.rs` ✗，复跑 **2 passed** ✔） |
+> | 四份约定的 `va_list` **形状** | ✅ 全在 ✗（`forge-abi/src/rules.rs` ✗：`win64_stack`/`sysv_reg_save`/`aapcs64_struct`/`riscv_save_area` ✗），由守卫 `invariants.rs::va_shapes_match_the_documented_table`（**运行期读本文 §2 那张表** ✗）与 `va_object_layout_matches_the_psabi_numbers` 钉住 ✗ |
+> | `lp64d` 变参按定本 ✗ | ✅ `variadic_classify`（浮点也走整数池 ✗）+ `contiguous = true` + `float_slot = 0` ✗，守卫 `invariants.rs::lp64d_variadic_arguments_follow_the_psabi` ✗ |
+> | `aapcs64` | ✅ 形状 `aapcs64_struct` 已定义 ✗；**LEN 类元信息寄存器**按明写口径**不建模** ✗（A6 核对后再启用 ✗，属**非目标** ✗） |
+> | 前端产出变参签名 | ⬜ **非目标** ✗（触发条件见本文 §6 ✗；`forge-abi` 侧规划与两端发射都已通 ✗） |
+>
+> **现行参考** = [`../reference/calling-conventions.md`](../reference/calling-conventions.md) ✗；
+> 本文只留**设计取舍、分期与那张被守卫读的 §2 形状表**（搬到这里后守卫路径已同步 ✗）✗。
+>
+> 原状态：`[progress]`（2026-10-01：win64 栈式变参端到端跑通）✗。
 
 ## 1. 现状：**规划与两端发射都通了（管线里唯一一套数据驱动展开，四份约定都有形状数据）；前端仍零产出**
 

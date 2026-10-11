@@ -277,7 +277,7 @@ fn tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering() {
         assert!(
             !ops.contains(&need),
             "arm64 现在有 `{need}` 的 lowering 了（覆盖度变了）⇒ 这条守卫要升级成\
-             \"aapcs64 变参编得出 + 真跑\" 的断言（见 docs/plans/varargs-plan.md）"
+             \"aapcs64 变参编得出 + 真跑\" 的断言（见 docs/archive/varargs-plan.md）"
         );
     }
     let sig = FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64]).with_variadic(true);

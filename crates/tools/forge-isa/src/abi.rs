@@ -302,7 +302,7 @@ fn level_of(e: &AbiError) -> Level {
 
 /// **变参自洽体检**（V5/V6）：把"这份约定的变参在这台机器上处于什么状态"报成一句话 + 硬错。
 ///
-/// 四条判据（口径见 `docs/plans/varargs-plan.md`）——全部按**形状数据**判，不按约定名分支：
+/// 四条判据（口径见 `docs/archive/varargs-plan.md`）——全部按**形状数据**判，不按约定名分支：
 ///
 /// 1. **形状名解析不动 = 硬错**：`hidden.va_list` 写了预置名就必须在内置表里（或直接写显式表）。
 /// 2. **形状缺数 = 硬错**：`size`/`align` 要 > 0、且 size 是 align 的整数倍
@@ -376,7 +376,7 @@ fn variadic_report(
     // （AAPCS64 的 `__gr_offs`/`__vr_offs`、RISC-V 的 vararg save area 都是这个模型）。
     // 这种组合是**自洽但可能不符合 psABI 定本**的写法：我们自己的调用方/被调方按同一份约定
     // 对齐时能跑，与外部编译器互调会错。实测先例：lp64d 曾如此，照定本核对后确认不符
-    // （见 `docs/plans/varargs-plan.md` §5；aapcs64 目前也是这个组合，待核）。
+    // （见 `docs/archive/varargs-plan.md` §5；aapcs64 目前也是这个组合，待核）。
     let suspect = shape.save.is_some() && rules.variadic_stack_only;
     let name = decl.preset_name().unwrap_or("<explicit>");
     let kind = if addr_only && contiguous_save {
@@ -402,7 +402,7 @@ fn variadic_report(
         shape.align,
         if suspect {
             "；⚠ 声明了保存区却让未命名实参**只走栈**——自洽但**可能不符合 psABI 定本**，\
-             与外部编译器互调会错（先例与接法见 docs/plans/varargs-plan.md §5）"
+             与外部编译器互调会错（先例与接法见 docs/archive/varargs-plan.md §5）"
         } else {
             ""
         }

@@ -178,7 +178,7 @@ fn tm_decode_roundtrip() {
 ///
 /// 为什么这条守卫重要：riscv 的**调用方一侧**还接不上（把未命名实参写进传出区要
 /// `stack_arg_store` 角色，而生成器要求它是 Reg+Mem 形状、riscv 谱的 `SD` 是 base+disp 模板形状
-/// ——见 `docs/plans/varargs-plan.md`），所以矩阵里的变参用例在 riscv 上 Skip。但**被调方不依赖
+/// ——见 `docs/archive/varargs-plan.md`），所以矩阵里的变参用例在 riscv 上 Skip。但**被调方不依赖
 /// 那条能力**：形状（`area` 单指针 + 保存区）/逐字段初值/取值 IR 全在数据里，这里证明它们能
 /// 走完真后端的全部阶段（lowering → regalloc → frame → encode）。
 #[test]

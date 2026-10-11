@@ -423,7 +423,7 @@ riscv 谱原有 `FLD` 指令却**没有 lowering**，已补 `Fload`/`Fstore`，�
 `aapcs64` 的**数据面**逐格钉住（`abi_target_real::aapcs64_variadic_shape_is_pure_data`），
 **编译面**被 arm64 谱缺的 `Icmp`/`Select`/`StackAddr`/`Sextend`/`Ireduce` lowering 挡住（缺口由
 `arm64_tm_tests::tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering` 钉住）。缺口与接法见
-[`docs/plans/varargs-plan.md`](../plans/varargs-plan.md)。
+[`docs/archive/varargs-plan.md`](../archive/varargs-plan.md)。
 
 ### 无 plan = 编译错误（v20 A6）
 
@@ -495,9 +495,9 @@ rets = [i64, agg24]      → 分量是聚合（多槽）⇒ Unsupported（聚合
 | sysv64 的栈实参落点（`first_offset_slots` = 2：本实现总是 push 帧指针） | ✅ | `test_jit_sysv64_seventh_integer_arg_comes_from_the_stack` |
 | 变参：`va_start` 物化走 IR 展开 + ABI 槽排在前端局部槽之下（拆掉 gp/fp 打包与 `gpr_imm`） | ✅ | `abi_slots_sit_below_frontend_locals`、`test_jit_va_arg_sysv64_coexists_with_frontend_locals` |
 | 前端局部槽深度扫描（lowering 与变参展开**共用同一份实现**：`pipeline/frame_slots.rs`） | ✅ | `abi_slots_sit_below_frontend_locals`（短路深度扫描即红） |
-| 变参：aapcs64/riscv 的**真跑通道**（形状/规则数据已就位，arm64 无 runner、riscv 需 QEMU 矩阵放行） | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
+| 变参：aapcs64/riscv 的**真跑通道**（形状/规则数据已就位，arm64 无 runner、riscv 需 QEMU 矩阵放行） | ⬜ | 方案见 [`docs/archive/varargs-plan.md`](../archive/varargs-plan.md) |
 | 变参 V2 前置：模块自述签名表 + 宿主接线 | ✅ | `forge_ir::test_signature_table_mirrors_function_order`、`setup_records_module_sigs` |
-| 变参：`%al`/`va_meta` 写入（SysV）与前端产出 `variadic` 签名 | ⬜ | 方案见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md) |
+| 变参：`%al`/`va_meta` 写入（SysV）与前端产出 `variadic` 签名 | ⬜ | 方案见 [`docs/archive/varargs-plan.md`](../archive/varargs-plan.md) |
 | 谱面 `[abi]` 整节删除后的文档一致性 | ✅ | `deleted_abi_keys_stay_deleted_and_their_destinations_exist` |
 | 单个聚合要 ≥3 寄存器的返回 / 按成员拆 | ⬜（无产出者） | `a6_gap_inventory` |
 | `callee_pop`（stdcall） | ⬜（缺调用点契约） | 见「已知缺口」表 |
@@ -661,7 +661,7 @@ arm64 那 6 条缺口正是矩阵里 175 条 skip 的同一件事，现在**在�
 | HFA 寄存器不足时"部分在寄存器" | 本片整块走栈（AAPCS64 允许部分在寄存器，需要按成员赋值的规则语言）；与上面那条同因，**暂不做** | 待有按值聚合的产出者 |
 | 多值返回的池不够 | **明确 `PoolExhausted`**（如 win64 只有 `RAX:RDX`，三个独立标量没有第三个返回寄存器）⇒ 编译入口 fail-closed | 由约定数据决定（不变） |
 | 变参 `LEN` 类元信息寄存器 | 模型有 `hidden.va_len_pool`，**没有内置约定启用**（psABI 现状以官方定本为准） | A6（核对后决定） |
-| **变参**：调用方（V1）、被调方（V2–V6：物化 + `va_arg` 全在管线的**唯一一套**数据驱动展开里）都已通，`win64`/`sysv64` 真跑；仍缺 `%al`/`va_meta` 写入、`aapcs64`/`lp64d` 的**真跑通道**，以及前端的 `variadic` 产出 | 规划侧完整（`AbiPlan::va_area` = 形状名 + 字段布局 + 保存区槽表 + 逐字段初值 + 取参规则，四份内置约定有黄金快照）；未声明形状的约定**明确 fail-closed**；前端仍无 `variadic` 产出 | 方案与决策点见 [`docs/plans/varargs-plan.md`](../plans/varargs-plan.md)（触发条件：出现需要变参的宿主或前端） |
+| **变参**：调用方（V1）、被调方（V2–V6：物化 + `va_arg` 全在管线的**唯一一套**数据驱动展开里）都已通，`win64`/`sysv64` 真跑；仍缺 `%al`/`va_meta` 写入、`aapcs64`/`lp64d` 的**真跑通道**，以及前端的 `variadic` 产出 | 规划侧完整（`AbiPlan::va_area` = 形状名 + 字段布局 + 保存区槽表 + 逐字段初值 + 取参规则，四份内置约定有黄金快照）；未声明形状的约定**明确 fail-closed**；前端仍无 `variadic` 产出 | 方案与决策点见 [`docs/archive/varargs-plan.md`](../archive/varargs-plan.md)（触发条件：出现需要变参的宿主或前端） |
 | 单函数编译的**变参调用点**（`forge-rustc` 逐函数后端 / `forge-object`） | 拿不到模块级签名表 ⇒ 调用点按**非变参**处理（未命名实参进寄存器）。整模块编译的入口（`JitCompiler::compile_module`、`FunctionCompiler::for_module`）没这个问题 | 需要时把模块签名表透到逐函数后端（rustc 的 `-C codegen-units` 下要额外通道） |
 | riscv/arm64 的向量 by-value | 谱里没有向量寄存器组 ⇒ 走内存/byval（保守，不是错值） | A5/A6 |
 | `callee_pop`（stdcall/thiscall 的 `ret N`） | 计划里算得出来（`AbiPlan::callee_pop_bytes`），**发射侧不消费**：本实现的传出参数区在**调用方帧内**（不是"push 上去"），被调方 `ret N` 会把调用方的 sp 抬高 N ⇒ 必须同时定"调用点契约"（调用方要知道 rsp 被抬高）才谈得上正确 | 待真有此 ABI 的宿主（且需要调用点侧契约） |

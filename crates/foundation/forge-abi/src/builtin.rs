@@ -153,7 +153,7 @@ extensions = { widen_to_bits = 32 }
 # **通用/向量寄存器**存进保存区、`va_arg` 按 `__gr_offs`/`__vr_offs`（从负值数到 0）从保存区取、
 # 数到 0 再落到 `__stack`。这套结构只在"未命名实参确实进寄存器"时才讲得通。
 # 2026-10-01 修正：此前写的是 `true`（只走栈）——那与保存区语义矛盾（同一个模式先例：lp64d
-# 也是这么写的，照 psABI 定本核对后确认不符，见 `docs/plans/varargs-plan.md` §5）。
+# 也是这么写的，照 psABI 定本核对后确认不符，见 `docs/archive/varargs-plan.md` §5）。
 # `forge-isa abi check` 的"可疑组合"告警就是抓这个矛盾的（声明了保存区却只走栈）。
 variadic_stack_only = false
 tail_calls = { allowed = true, must_match_stack = true }

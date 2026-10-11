@@ -517,7 +517,7 @@ JIT 矩阵），`[abi-plan]` **一条都没有**——即既有语料里没有�
   前提是那门"按成员赋值"的规则语言（与"HFA 寄存器不够时部分在寄存器"同一件事）；
   今天是规划期明确 `Unsupported`（守卫 `a6_gap_inventory` 钉着这一条，做完了它会红）。
 - **变参**（`va_list` 取用 + `%al`/`LEN` 元信息寄存器）：**已单独开方案**——
-  [`docs/plans/varargs-plan.md`](varargs-plan.md) 给出"规划完整、发射与前端为空"的现状索引、
+  [`docs/archive/varargs-plan.md`](varargs-plan.md) 给出"规划完整、发射与前端为空"的现状索引、
   四份内置约定的 `va_list` 形态（由 `invariants.rs::va_shapes_match_the_documented_table`
   拿引擎输出钉住）、五个决策点与五期切片；触发条件（出现需要变参的宿主/前端）写在方案 §6。
 - `stdcall`/`thiscall` 的 `callee_pop`（模型已有、发射不消费，原因见参考文档缺口表）；
