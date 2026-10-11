@@ -640,25 +640,36 @@ fn expand_large_agg_call_results(
         }
     }
     for job in jobs {
-        // **sret 档**（A1′-ret）：被调方一侧已落地（`expand_sret_return` 立 sret 形参 +
-        // `expand_large_agg_ret` 把段值写进缓冲——直调用例 `test_jit_agg_by_value_ret_win64`
-        // 真跑通过；psABI 方向即外部调用者传缓冲）。
-        //
-        // **调用方一侧（IR 内部 `call` 自己出缓冲）尚未接**：按"Alloca 缓冲 + 实参 0 +
-        // 结果清空"做**会崩**（0xC0000005）。已定位到的事实（2026-10-08，`FORGE_TRACE_LOWER=1` 实测）：
-        //   - 探针（只 call、不取结果）**也崩** ⇒ 故障在调用本身，不在取值重写；
-        //   - lowering 序列是对的：`Alloca -> Call args=[XReg(buf)]`，callee 侧
-        //     `Store [param], seg ×3`（逐段写缓冲）；
-        //   - 两侧计划一致（调用点由**指令形状**算：`[ptr] -> RCX`；被调方 `<sret> -> reg RCX`）。
-        // ⇒ 疑点收敛到**机器码层**：这个在 Stage 0.5 晚建的 `Alloca` 疑似没被帧偏移扫描
-        //   算到（往 `[rbp+0]` 写 24 字节会毁帧），或调用序列里指针搬家次序不对。
-        // 未查明前**明确 fail-closed**，不发可能崩的代码。
+        // **sret 档**（A1′-ret）：调用方出缓冲，把它作为**第 0 个实参**传进去——
+        // 约定把隐藏返回槽放在首个整数槽，正是实参 0 的落点；call 结果清空（值不回寄存器），
+        // 旧结果值登记成"住在该缓冲"，其使用处按地址重写。
         if job.sret {
-            return Err(IrError::Unsupported(format!(
-                "聚合返回 {size} 字节：这份约定走 sret，而**调用方**的 sret 缓冲尚未接\
-                 （被调方一侧已通：外部调用者按 `extern \"C\" fn(*mut _)` 传缓冲可用）",
-                size = store.size_bytes(job.ty)
-            )));
+            let size = store.size_bytes(job.ty) as usize;
+            // 规范 immediate 形态（帧槽预扫描只认 `Type + Uint`，见 `frame_slots.rs`）
+            let alloca = func.make_inst(
+                Opcode::Alloca,
+                job.block,
+                smallvec::smallvec![],
+                smallvec::smallvec![Immediate::Type(TypeId::I8), Immediate::Uint(size as u64)],
+                &[TypeId::PTR],
+                InstFlags::NONE,
+            );
+            let buf = func.dfg.inst_data(alloca).results[0];
+            // 缓冲的取址必须**先于** call 执行（SSA 支配）——把刚 push 到块尾的 Alloca
+            // 移到 call 之前（同 `expand_agg_call_args` 的做法）。
+            {
+                let order = &mut func.dfg.block_mut(job.block).inst_order;
+                let ni = order.pop().expect("刚 push 的 Alloca");
+                order.insert(job.pos, ni);
+            }
+            let mut ops = func.dfg.inst_data(job.inst).operands.clone();
+            ops.insert(0, buf);
+            func.dfg.inst_mut(job.inst).operands = ops;
+            func.dfg.inst_mut(job.inst).results = smallvec::smallvec![];
+            func.refresh_inst_uses(job.inst);
+            agg_slots.insert(job.old_r, (buf, job.ty));
+            rewrite_agg_value_uses(func, job.old_r, &[], job.ty, agg_slots)?;
+            continue;
         }
         // results 拆 2（新值——Inst(call, 0/1)）
         let r0 = func
@@ -838,12 +849,13 @@ fn expand_agg_call_args(
         // 其它 ⇒ 在 op_idx 处插入段值。
         let mut ops = func.dfg.inst_data(job.inst).operands.clone();
         if by_ref {
-            let cid = func.constants.insert_int(size as i128, 64);
+            // **规范 immediate 形态** `Type(elem) + Uint(count)`——帧槽预扫描
+            //（`frame_slots.rs`）只认这两个；写 `Const(池 id)` 会让槽不进表 ⇒ 没偏移。
             let alloca = func.make_inst(
                 Opcode::Alloca,
                 job.block,
                 smallvec::smallvec![],
-                smallvec::smallvec![Immediate::Const(cid)],
+                smallvec::smallvec![Immediate::Type(TypeId::I8), Immediate::Uint(size as u64)],
                 &[TypeId::PTR],
                 InstFlags::NONE,
             );

@@ -220,12 +220,14 @@ pub(crate) fn memoryize_from_segs(
         return Err(IrError::Unsupported("嵌套聚合字段提取：段值不足".into()));
     }
     // 1) 分配帧槽（Alloca 指令——预扫描分配帧偏移，lowering 经 lea_off 取址）
-    let cid = func.constants.insert_int(size as i128, 64);
+    // **immediate 必须是规范形态** `Type(elem) + Uint(count)`：帧槽预扫描
+    //（`frame_slots.rs`）只按这两个 immediate 算字节数，写 `Const(池 id)` 会让这个
+    // Alloca **不进槽表** ⇒ 没有帧偏移 ⇒ 地址是垃圾（实测：往那儿写 24 字节会毁帧崩溃）。
     let alloca = func.make_inst(
         Opcode::Alloca,
         use_pos.block,
         smallvec::smallvec![],
-        smallvec::smallvec![Immediate::Const(cid)],
+        smallvec::smallvec![Immediate::Type(TypeId::I8), Immediate::Uint(size as u64)],
         &[TypeId::PTR],
         InstFlags::NONE,
     );

@@ -1002,13 +1002,31 @@ define {i64, i64, i64} @agg_make() {
         assert_eq!(out, [11, 22, 33], "sret 返回应写进调用方缓冲");
     }
 
-    /// A1′-ret 的**调用方**一侧：**尚未接**——IR 内部 `call` 返回 >8B 聚合必须
-    /// **明确 fail-closed**（实测那侧会生成崩的机器码：探针"只 call 不取结果"也崩，
-    /// 且 lowering 序列本身是对的 ⇒ 疑点在帧偏移/调用序列，见 `compiler.rs` 的注释）。
+    /// A1′-ret 的**调用方**一侧：IR 内部 `call` 返回 >8B 聚合（缓冲由调用方出），
+    /// 结果值登记成"住在缓冲"⇒ 后续 `extractvalue` 变成 load。
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn test_jit_agg_by_value_ret_call_is_unsupported() {
+    fn test_jit_agg_by_value_ret_call_win64() {
         ensure_registered();
+        // 探针：只 call、不取结果（先把"调用本身"与"取值重写"分开验）
+        let src_probe = r#"
+define {i64, i64, i64} @agg_make() {
+  %entry:
+    ret {i64, i64, i64} {i64 11, i64 22, i64 33}
+}
+define i64 @main() {
+  %entry:
+    %a = call {i64, i64, i64} @agg_make()
+    ret i64 0
+}
+"#;
+        let m = forge_ir::text::parse_module(src_probe).expect("parse");
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
+        jit.compile_module(&m).expect("compile probe");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn probe");
+        assert_eq!(f(), 0, "只调不取结果应先跑通");
+
+        // 正例：调用后 extractvalue 取第 2 个字段
         let src_caller = r#"
 define {i64, i64, i64} @agg_make() {
   %entry:
@@ -1023,13 +1041,11 @@ define i64 @main() {
 "#;
         let module_caller = forge_ir::text::parse_module(src_caller).expect("parse");
         let mut jit_caller = JitCompiler::new(x86::TargetMachine::new());
-        let err = jit_caller
+        jit_caller
             .compile_module(&module_caller)
-            .expect_err("调用方 sret 缓冲尚未接 ⇒ 必须 fail-closed");
-        assert!(
-            format!("{err}").contains("调用方") && format!("{err}").contains("sret"),
-            "错误消息应点名是调用方 sret 缓冲未接，got: {err}"
-        );
+            .expect("compile module sret caller");
+        let g: extern "C" fn() -> i64 = jit_caller.get_fn("main").expect("get_fn main");
+        assert_eq!(g(), 33, "调用方应从自己的缓冲里取到第 2 个字段");
     }
 
     /// B1: IR Call 传宽向量实参（>16 字节）——调用方侧 by-ref 栈拷贝 + 传

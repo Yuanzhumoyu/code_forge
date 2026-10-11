@@ -124,7 +124,15 @@ TOML 数据，可继承（`parent = "c"`，整字段覆写，不是深合并）�
    副本的指针"，因此**不给形参写 `byval` 属性**（引擎对 byval 落点给 `Indirect`，而生成物
    `move_args` 的 `Indirect` 收参是"从指针 load 出值"，要求值有寄存器表示；聚合没有）。
    规则落在栈上的（SysV `aggregate size_gt 16 ⇒ stack`）当前仍是明确 `Unsupported`；
-   按值**返回** >8B 聚合走 sret（`RetLoc::Indirect`）尚未接。
+   按值**返回** `>8B` 聚合走 sret（`RetLoc::Indirect`）：被调方由 `expand_sret_return`
+   追加一个**普通 `ptr`** 形参承载调用方缓冲（不写 `sret` 属性——引擎对 sret/byval 落点给
+   `Indirect`，而生成物 `move_args` 的 `Indirect` 收参是"从指针 **load** 出值"，
+   要的是**指针本身**进寄存器），调用方在调用点建缓冲并作为**实参 0** 传（约定把隐藏
+   返回槽放在首个整数槽）。
+5. **Stage 0.5 新建的 `Alloca` 必须用规范 immediate 形态** `Immediate::Type(elem)` +
+   `Immediate::Uint(count)`：帧槽预扫描（`pipeline/frame_slots.rs`）只按这两个算字节数，
+   写 `Immediate::Const(池 id)` 会让该槽**不进帧表**（没有偏移 ⇒ 取址落到帧基址一带，
+   实测写 24 字节直接毁帧崩溃）。规范形态见 `FunctionBuilder::alloca`。
 
 ### 抽象名 `c` 怎么落地（`aliases`）
 
