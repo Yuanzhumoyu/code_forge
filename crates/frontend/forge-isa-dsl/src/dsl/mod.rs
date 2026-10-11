@@ -17,6 +17,7 @@ pub(crate) mod diag;
 pub(crate) mod doc;
 pub(crate) mod enum_decl;
 pub(crate) mod field_decl;
+pub(crate) mod inline_ops;
 pub(crate) mod match_tree;
 pub(crate) mod model;
 pub(crate) mod operand_decl;
@@ -142,6 +143,11 @@ pub(crate) fn parse_and_validate_projected(
         .resolve_bitset_tables()
         .and_then(|()| model.resolve_imm_name_tables())
     {
+        diags.push_anchored(&idx, &msg);
+    }
+    // v22：操作数声明与字段绑定**从 asm 模板就地抽取**（`{名字:槽[:角色]}` / `{@字段:槽}`）
+    // ——**先做**：`lower_field_syntax` 要读 `ops`/`bind`。
+    if let Err(msg) = inline_ops::extract_inline_ops(&mut model) {
         diags.push_anchored(&idx, &msg);
     }
     // v21 W2：`[[forms]].fields` 展开进内部表示（位域表 / opcode_field / operand_fields）。
