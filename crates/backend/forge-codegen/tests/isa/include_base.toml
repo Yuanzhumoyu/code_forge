@@ -21,5 +21,4 @@ fields = [
 [inst.IADD]
 form = "RR"
 opcode = 1
-ops = ["dst:r:out", "src:r"]
-asm = "iadd {dst}, {src}"
+asm = "iadd {dst:r:out}, {src:r}"

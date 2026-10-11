@@ -123,68 +123,59 @@ fields = [
 group = "add"
 form = "R"
 opcode = 0x10
-ops = ["dst:r16:out", "src:r16", "src2:r16"]
-asm = "add {dst}, {src}, {src2}"
+asm = "add {dst:r16:out}, {src:r16}, {src2:r16}"
 
 [inst.ADD32]
 group = "add"
 form = "R"
 opcode = 0x11
-ops = ["dst:r32:out", "src:r32", "src2:r32"]
-asm = "add {dst}, {src}, {src2}"
+asm = "add {dst:r32:out}, {src:r32}, {src2:r32}"
 
 [inst.ADD64]
 group = "add"
 form = "R"
 opcode = 0x12
-ops = ["dst:r64:out", "src:r64", "src2:r64"]
-asm = "add {dst}, {src}, {src2}"
+asm = "add {dst:r64:out}, {src:r64}, {src2:r64}"
 
 # mov：同上，二操作数
 [inst.MOV16]
 group = "mov"
 form = "RR"
 opcode = 0x20
-ops = ["dst:r16:out", "src:r16"]
-asm = "mov {dst}, {src}"
+asm = "mov {dst:r16:out}, {src:r16}"
 
 [inst.MOV32]
 group = "mov"
 form = "RR"
 opcode = 0x21
-ops = ["dst:r32:out", "src:r32"]
-asm = "mov {dst}, {src}"
+asm = "mov {dst:r32:out}, {src:r32}"
 
 [inst.MOV64]
 group = "mov"
 data_width = 64
 form = "RR"
 opcode = 0x22
-ops = ["dst:r64:out", "src:r64"]
-asm = "mov {dst}, {src}"
+asm = "mov {dst:r64:out}, {src:r64}"
 
 # mov 立即数（16 位常量；RI form rd = imm）
 [inst.MOV16_R_IMM16]
 group = "mov"
 form = "RI"
 opcode = 0x23
-ops = ["dst:r16:out", "imm:imm16"]
-asm = "mov {dst}, {imm}"
+asm = "mov {dst:r16:out}, {imm:imm16}"
 
 # 帧分配/释放（rd = rs1 ± imm8；B3 接入 TargetMachine 用）
 [inst.SUBI16]
 roles = ["frame_alloc"]
 form = "RI"
 opcode = 0x40
-ops = ["dst:r16:out", "src:r16", "imm:imm16"]
-asm = "subi {dst}, {src}, {imm}"
+asm = "subi {dst:r16:out}, {src:r16}, {imm:imm16}"
 
 [inst.ADDI16]
 roles = ["frame_free"]
 form = "RI"
 opcode = 0x41
-ops = ["dst:r16:out", "src:r16", "imm:imm16"]
-asm = "addi {dst}, {src}, {imm}"
+asm = "addi {dst:r16:out}, {src:r16}, {imm:imm16}"
 
 # 返回（全字位域；word = 0x01，与 NOP 的 0 区分）
 [inst.RET]
@@ -199,8 +190,7 @@ asm = "ret"
 form = "B"
 opcode = 0x30
 effect = ["Branch"]
-ops = ["src:r32", "target:lab"]
-asm = "brz {src}, {target}"
+asm = "brz {src:r32}, {target:lab}"
 
 # 无操作数（全字位域，避免与 opcode 0x10 撞车）
 [inst.NOP]

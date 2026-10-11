@@ -29,8 +29,7 @@ bits = 16
 [inst.ISUB]
 form = "RR"
 opcode = 2
-ops = ["dst:r:out", "src:r"]
-asm = "isub {dst}, {src}"
+asm = "isub {dst:r:out}, {src:r}"
 
 [machine]
 addr = "gpr32"

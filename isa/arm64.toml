@@ -669,29 +669,25 @@ fields = [
 form = "ADR_F"
 opcode = 0x10
 match = { adr_op = 0 }
-ops = ["dst:r64:out", "off:adr_off"]
-asm = "adr {dst}, {off}"
+asm = "adr {dst:r64:out}, {off:adr_off}"
 
 [inst.ADRP]
 form = "ADR_F"
 opcode = 0x10
 match = { adr_op = 1 }
-ops = ["dst:r64:out", "off:adrp_off"]
-asm = "adrp {dst}, {off}"
+asm = "adrp {dst:r64:out}, {off:adrp_off}"
 
 [inst.ADR_SYM]
 form = "ADR_F"
 opcode = 0x10
 match = { adr_op = 0 }
-ops = ["dst:r64:out", "sym:adr_sym"]
-asm = "adr {dst}, {sym}"
+asm = "adr {dst:r64:out}, {sym:adr_sym}"
 
 [inst.ADRP_SYM]
 form = "ADR_F"
 opcode = 0x10
 match = { adr_op = 1 }
-ops = ["dst:r64:out", "sym:adr_sym"]
-asm = "adrp {dst}, {sym}"
+asm = "adrp {dst:r64:out}, {sym:adr_sym}"
 
 [form.ALUIMM]
 # ADD(S)/SUB(S) (imm)：rd/rn/imm12（[23:22] sh=0 → 零 guard）
@@ -784,57 +780,49 @@ fields = ["u32[31:0]:opcode"]
 form = "SYSEXC"
 opcode = 0x6A0
 match = { op5 = 1 }
-ops = ["imm:imm16"]
-asm = "svc #{imm}"
+asm = "svc #{imm:imm16}"
 
 [inst.HVC]
 form = "SYSEXC"
 opcode = 0x6A0
 match = { op5 = 2 }
-ops = ["imm:imm16"]
-asm = "hvc #{imm}"
+asm = "hvc #{imm:imm16}"
 
 [inst.SMC]
 form = "SYSEXC"
 opcode = 0x6A0
 match = { op5 = 3 }
-ops = ["imm:imm16"]
-asm = "smc #{imm}"
+asm = "smc #{imm:imm16}"
 
 [inst.BRK]
 form = "SYSEXC"
 opcode = 0x6A1
 match = { op5 = 0 }
-ops = ["imm:imm16"]
-asm = "brk #{imm}"
+asm = "brk #{imm:imm16}"
 
 [inst.HLT]
 form = "SYSEXC"
 opcode = 0x6A2
 match = { op5 = 0 }
-ops = ["imm:imm16"]
-asm = "hlt #{imm}"
+asm = "hlt #{imm:imm16}"
 
 [inst.DCPS1]
 form = "SYSEXC"
 opcode = 0x6A5
 match = { op5 = 1 }
-ops = ["imm:imm16"]
-asm = "dcps1 #{imm}"
+asm = "dcps1 #{imm:imm16}"
 
 [inst.DCPS2]
 form = "SYSEXC"
 opcode = 0x6A5
 match = { op5 = 2 }
-ops = ["imm:imm16"]
-asm = "dcps2 #{imm}"
+asm = "dcps2 #{imm:imm16}"
 
 [inst.DCPS3]
 form = "SYSEXC"
 opcode = 0x6A5
 match = { op5 = 3 }
-ops = ["imm:imm16"]
-asm = "dcps3 #{imm}"
+asm = "dcps3 #{imm:imm16}"
 
 # 整字常量（无操作数）：ERET=0xD69F03E0、DRPS=0xD6BF03E0
 [inst.DCPS1B]
@@ -922,43 +910,37 @@ fields = [
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 46, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "abs.8b {dst}, {src}"
+asm = "abs.8b {dst:fpr:out}, {src:fpr}"
 
 [inst.ABS16B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 0, vec_c = 1, vec_d = 46, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "abs.16b {dst}, {src}"
+asm = "abs.16b {dst:fpr:out}, {src:fpr}"
 
 [inst.ABS4H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 1, vec_c = 1, vec_d = 46, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "abs.4h {dst}, {src}"
+asm = "abs.4h {dst:fpr:out}, {src:fpr}"
 
 [inst.ABS8H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 1, vec_c = 1, vec_d = 46, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "abs.8h {dst}, {src}"
+asm = "abs.8h {dst:fpr:out}, {src:fpr}"
 
 [inst.ABS2S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 2, vec_c = 1, vec_d = 46, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "abs.2s {dst}, {src}"
+asm = "abs.2s {dst:fpr:out}, {src:fpr}"
 
 [inst.ABS4S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 46, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "abs.4s {dst}, {src}"
+asm = "abs.4s {dst:fpr:out}, {src:fpr}"
 
 # ── NEON：neg（向量）——与 abs 同形，只差 U=1 ──
 # 语料 `neg.8b v0, v0` = 0x2E20B800 = `abs.8b` | (1 << 29) ⇒ 规则被上游证实；
@@ -967,239 +949,116 @@ asm = "abs.4s {dst}, {src}"
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 46, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "neg.8b {dst}, {src}"
+asm = "neg.8b {dst:fpr:out}, {src:fpr}"
 
 [inst.NEG16B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 1, vsize = 0, vec_c = 1, vec_d = 46, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "neg.16b {dst}, {src}"
+asm = "neg.16b {dst:fpr:out}, {src:fpr}"
 
 [inst.NEG4H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 1, vec_c = 1, vec_d = 46, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "neg.4h {dst}, {src}"
+asm = "neg.4h {dst:fpr:out}, {src:fpr}"
 
 [inst.NEG8H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 1, vsize = 1, vec_c = 1, vec_d = 46, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "neg.8h {dst}, {src}"
+asm = "neg.8h {dst:fpr:out}, {src:fpr}"
 
 [inst.NEG2S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 2, vec_c = 1, vec_d = 46, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "neg.2s {dst}, {src}"
+asm = "neg.2s {dst:fpr:out}, {src:fpr}"
 
 [inst.NEG4S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 1, vsize = 2, vec_c = 1, vec_d = 46, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "neg.4s {dst}, {src}"
+asm = "neg.4s {dst:fpr:out}, {src:fpr}"
 
 # NEON?**?????????**????????????2026-10-07 ???????
 [inst.VADD]
 form = "VEC3RA"
 opcode = 0x0E
 match = { vec_c = 1, vec_d = 33 }
-ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "arrd:varr",
-  "arrs:varr",
-  "arrs2:varr",
-]
-bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
-asm = "add {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+asm = "add {dst:fpr:out#0}.{@vq:varr}{arrd:varr#3}, {src:fpr#1}.{@vq:varr}{arrs:varr#4}, {src2:fpr#2}.{@vq:varr}{arrs2:varr#5}"
 
 [inst.VSUB_ARR]
 form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 1, vec_c = 1, vec_d = 33 }
-ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "arrd:varr",
-  "arrs:varr",
-  "arrs2:varr",
-]
-bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
-asm = "sub {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+asm = "sub {dst:fpr:out#0}.{@vq:varr}{arrd:varr#3}, {src:fpr#1}.{@vq:varr}{arrs:varr#4}, {src2:fpr#2}.{@vq:varr}{arrs2:varr#5}"
 
 [inst.VORR_ARR]
 form = "VEC3RA"
 opcode = 0x0E
 match = { vsize = 2, vec_c = 1, vec_d = 7 }
-ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "arrd:varr_q",
-  "arrs:varr_q",
-  "arrs2:varr_q",
-]
-bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
-asm = "orr {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+asm = "orr {dst:fpr:out#0}.{@vq:varr_q}{arrd:varr_q#3}, {src:fpr#1}.{@vq:varr_q}{arrs:varr_q#4}, {src2:fpr#2}.{@vq:varr_q}{arrs2:varr_q#5}"
 
 [inst.VAND_ARR]
 form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 0, vsize = 0, vec_c = 1, vec_d = 7 }
-ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "arrd:varr_q",
-  "arrs:varr_q",
-  "arrs2:varr_q",
-]
-bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
-asm = "and {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+asm = "and {dst:fpr:out#0}.{@vq:varr_q}{arrd:varr_q#3}, {src:fpr#1}.{@vq:varr_q}{arrs:varr_q#4}, {src2:fpr#2}.{@vq:varr_q}{arrs2:varr_q#5}"
 
 [inst.VEOR_ARR]
 form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 1, vsize = 0, vec_c = 1, vec_d = 7 }
-ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "arrd:varr_q",
-  "arrs:varr_q",
-  "arrs2:varr_q",
-]
-bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
-asm = "eor {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+asm = "eor {dst:fpr:out#0}.{@vq:varr_q}{arrd:varr_q#3}, {src:fpr#1}.{@vq:varr_q}{arrs:varr_q#4}, {src2:fpr#2}.{@vq:varr_q}{arrs2:varr_q#5}"
 
 [inst.VBIC_ARR]
 form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 0, vsize = 1, vec_c = 1, vec_d = 7 }
-ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "arrd:varr_q",
-  "arrs:varr_q",
-  "arrs2:varr_q",
-]
-bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
-asm = "bic {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+asm = "bic {dst:fpr:out#0}.{@vq:varr_q}{arrd:varr_q#3}, {src:fpr#1}.{@vq:varr_q}{arrs:varr_q#4}, {src2:fpr#2}.{@vq:varr_q}{arrs2:varr_q#5}"
 
 [inst.VORN_ARR]
 form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 0, vsize = 3, vec_c = 1, vec_d = 7 }
-ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "arrd:varr_q",
-  "arrs:varr_q",
-  "arrs2:varr_q",
-]
-bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
-asm = "orn {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+asm = "orn {dst:fpr:out#0}.{@vq:varr_q}{arrd:varr_q#3}, {src:fpr#1}.{@vq:varr_q}{arrs:varr_q#4}, {src2:fpr#2}.{@vq:varr_q}{arrs2:varr_q#5}"
 
 [inst.VSMAX_ARR]
 form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 0, vec_c = 1, vec_d = 25 }
-ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "arrd:varr",
-  "arrs:varr",
-  "arrs2:varr",
-]
-bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
-asm = "smax {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+asm = "smax {dst:fpr:out#0}.{@vq:varr}{arrd:varr#3}, {src:fpr#1}.{@vq:varr}{arrs:varr#4}, {src2:fpr#2}.{@vq:varr}{arrs2:varr#5}"
 
 [inst.VSMIN_ARR]
 form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 0, vec_c = 1, vec_d = 27 }
-ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "arrd:varr",
-  "arrs:varr",
-  "arrs2:varr",
-]
-bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
-asm = "smin {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+asm = "smin {dst:fpr:out#0}.{@vq:varr}{arrd:varr#3}, {src:fpr#1}.{@vq:varr}{arrs:varr#4}, {src2:fpr#2}.{@vq:varr}{arrs2:varr#5}"
 
 [inst.VUMAX_ARR]
 form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 1, vec_c = 1, vec_d = 25 }
-ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "arrd:varr",
-  "arrs:varr",
-  "arrs2:varr",
-]
-bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
-asm = "umax {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+asm = "umax {dst:fpr:out#0}.{@vq:varr}{arrd:varr#3}, {src:fpr#1}.{@vq:varr}{arrs:varr#4}, {src2:fpr#2}.{@vq:varr}{arrs2:varr#5}"
 
 [inst.VUMIN_ARR]
 form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 1, vec_c = 1, vec_d = 27 }
-ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "arrd:varr",
-  "arrs:varr",
-  "arrs2:varr",
-]
-bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
-asm = "umin {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+asm = "umin {dst:fpr:out#0}.{@vq:varr}{arrd:varr#3}, {src:fpr#1}.{@vq:varr}{arrs:varr#4}, {src2:fpr#2}.{@vq:varr}{arrs2:varr#5}"
 
 [inst.VMUL_ARR]
 form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 0, vec_c = 1, vec_d = 39 }
-ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "arrd:varr",
-  "arrs:varr",
-  "arrs2:varr",
-]
-bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
-asm = "mul {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+asm = "mul {dst:fpr:out#0}.{@vq:varr}{arrd:varr#3}, {src:fpr#1}.{@vq:varr}{arrs:varr#4}, {src2:fpr#2}.{@vq:varr}{arrs2:varr#5}"
 
 [inst.VMLA_ARR]
 form = "VEC3RA"
 opcode = 0x0E
 match = { vu = 0, vec_c = 1, vec_d = 37 }
-ops = [
-  "dst:fpr:out",
-  "src:fpr",
-  "src2:fpr",
-  "arrd:varr",
-  "arrs:varr",
-  "arrs2:varr",
-]
-bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }
-asm = "mla {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
+asm = "mla {dst:fpr:out#0}.{@vq:varr}{arrd:varr#3}, {src:fpr#1}.{@vq:varr}{arrs:varr#4}, {src2:fpr#2}.{@vq:varr}{arrs2:varr#5}"
 
 # 助记符带后缀的**另一种拼法**（与 `VADD` 并存：语料两种都写 —— 这是两种语法，不是冗余）
 
@@ -1207,43 +1066,37 @@ asm = "mla {dst}.{arrd}, {src}.{arrs}, {src2}.{arrs2}"
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 33 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "add.8b {dst}, {src}, {src2}"
+asm = "add.8b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 [inst.VADD16B]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 0, vec_c = 1, vec_d = 33 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "add.16b {dst}, {src}, {src2}"
+asm = "add.16b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 [inst.VADD4H]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 1, vec_c = 1, vec_d = 33 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "add.4h {dst}, {src}, {src2}"
+asm = "add.4h {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 [inst.VADD8H]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 1, vec_c = 1, vec_d = 33 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "add.8h {dst}, {src}, {src2}"
+asm = "add.8h {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 [inst.VADD2S]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 2, vec_c = 1, vec_d = 33 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "add.2s {dst}, {src}, {src2}"
+asm = "add.2s {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 [inst.VADD4S]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 33 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "add.4s {dst}, {src}, {src2}"
+asm = "add.4s {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 # add????????????????
 # and????????????????
@@ -1251,404 +1104,349 @@ asm = "add.4s {dst}, {src}, {src2}"
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 7 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "and.8b {dst}, {src}, {src2}"
+asm = "and.8b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 [inst.VAND16B]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 0, vec_c = 1, vec_d = 7 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "and.16b {dst}, {src}, {src2}"
+asm = "and.16b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 # bic????????????????
 [inst.VBIC8B]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 1, vec_c = 1, vec_d = 7 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "bic.8b {dst}, {src}, {src2}"
+asm = "bic.8b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 # mla????????????????
 [inst.VMLA8B]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 37 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "mla.8b {dst}, {src}, {src2}"
+asm = "mla.8b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 # mul????????????????
 [inst.VMUL8B]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 39 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "mul.8b {dst}, {src}, {src2}"
+asm = "mul.8b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 # smax????????????????
 [inst.VSMAX8B]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 25 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "smax.8b {dst}, {src}, {src2}"
+asm = "smax.8b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 # smin????????????????
 [inst.VSMIN8B]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 27 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "smin.8b {dst}, {src}, {src2}"
+asm = "smin.8b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 # sub????????????????
 [inst.VSUB8B]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 33 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "sub.8b {dst}, {src}, {src2}"
+asm = "sub.8b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 # umax????????????????
 [inst.VUMAX8B]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 25 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "umax.8b {dst}, {src}, {src2}"
+asm = "umax.8b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 # umin????????????????
 [inst.VUMIN8B]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 27 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "umin.8b {dst}, {src}, {src2}"
+asm = "umin.8b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 # eor????????????????
 [inst.VEOR8B]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 7 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "eor.8b {dst}, {src}, {src2}"
+asm = "eor.8b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 # orn????????????????
 [inst.VORN8B]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 3, vec_c = 1, vec_d = 7 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "orn.8b {dst}, {src}, {src2}"
+asm = "orn.8b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 # orr????????????????
 [inst.VORR8B]
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 2, vec_c = 1, vec_d = 7 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "orr.8b {dst}, {src}, {src2}"
+asm = "orr.8b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 # cnt: (U=0, c=1, [15:10]=22) ?? ??? .8b ?????????? Q/size
 [inst.CNT8B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 22, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "cnt.8b {dst}, {src}"
+asm = "cnt.8b {dst:fpr:out}, {src:fpr}"
 
 [inst.CNT16B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 0, vec_c = 1, vec_d = 22, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "cnt.16b {dst}, {src}"
+asm = "cnt.16b {dst:fpr:out}, {src:fpr}"
 
 [inst.CNT4H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 1, vec_c = 1, vec_d = 22, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "cnt.4h {dst}, {src}"
+asm = "cnt.4h {dst:fpr:out}, {src:fpr}"
 
 [inst.CNT8H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 1, vec_c = 1, vec_d = 22, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "cnt.8h {dst}, {src}"
+asm = "cnt.8h {dst:fpr:out}, {src:fpr}"
 
 [inst.CNT2S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 2, vec_c = 1, vec_d = 22, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "cnt.2s {dst}, {src}"
+asm = "cnt.2s {dst:fpr:out}, {src:fpr}"
 
 [inst.CNT4S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 22, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "cnt.4s {dst}, {src}"
+asm = "cnt.4s {dst:fpr:out}, {src:fpr}"
 
 # mvn: (U=1, c=1, [15:10]=22) ?? ??? .8b ?????????? Q/size
 [inst.MVN8B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 22, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "mvn.8b {dst}, {src}"
+asm = "mvn.8b {dst:fpr:out}, {src:fpr}"
 
 [inst.MVN16B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 1, vsize = 0, vec_c = 1, vec_d = 22, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "mvn.16b {dst}, {src}"
+asm = "mvn.16b {dst:fpr:out}, {src:fpr}"
 
 [inst.MVN4H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 1, vec_c = 1, vec_d = 22, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "mvn.4h {dst}, {src}"
+asm = "mvn.4h {dst:fpr:out}, {src:fpr}"
 
 [inst.MVN8H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 1, vsize = 1, vec_c = 1, vec_d = 22, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "mvn.8h {dst}, {src}"
+asm = "mvn.8h {dst:fpr:out}, {src:fpr}"
 
 [inst.MVN2S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 2, vec_c = 1, vec_d = 22, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "mvn.2s {dst}, {src}"
+asm = "mvn.2s {dst:fpr:out}, {src:fpr}"
 
 [inst.MVN4S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 1, vsize = 2, vec_c = 1, vec_d = 22, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "mvn.4s {dst}, {src}"
+asm = "mvn.4s {dst:fpr:out}, {src:fpr}"
 
 # cls: (U=0, c=1, [15:10]=18) ?? ??? .8b ?????????? Q/size
 [inst.CLS8B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 18, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "cls.8b {dst}, {src}"
+asm = "cls.8b {dst:fpr:out}, {src:fpr}"
 
 [inst.CLS16B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 0, vec_c = 1, vec_d = 18, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "cls.16b {dst}, {src}"
+asm = "cls.16b {dst:fpr:out}, {src:fpr}"
 
 [inst.CLS4H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 1, vec_c = 1, vec_d = 18, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "cls.4h {dst}, {src}"
+asm = "cls.4h {dst:fpr:out}, {src:fpr}"
 
 [inst.CLS8H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 1, vec_c = 1, vec_d = 18, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "cls.8h {dst}, {src}"
+asm = "cls.8h {dst:fpr:out}, {src:fpr}"
 
 [inst.CLS2S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 2, vec_c = 1, vec_d = 18, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "cls.2s {dst}, {src}"
+asm = "cls.2s {dst:fpr:out}, {src:fpr}"
 
 [inst.CLS4S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 18, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "cls.4s {dst}, {src}"
+asm = "cls.4s {dst:fpr:out}, {src:fpr}"
 
 # clz: (U=1, c=1, [15:10]=18) ?? ??? .8b ?????????? Q/size
 [inst.CLZ8B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 18, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "clz.8b {dst}, {src}"
+asm = "clz.8b {dst:fpr:out}, {src:fpr}"
 
 [inst.CLZ16B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 1, vsize = 0, vec_c = 1, vec_d = 18, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "clz.16b {dst}, {src}"
+asm = "clz.16b {dst:fpr:out}, {src:fpr}"
 
 [inst.CLZ4H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 1, vec_c = 1, vec_d = 18, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "clz.4h {dst}, {src}"
+asm = "clz.4h {dst:fpr:out}, {src:fpr}"
 
 [inst.CLZ8H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 1, vsize = 1, vec_c = 1, vec_d = 18, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "clz.8h {dst}, {src}"
+asm = "clz.8h {dst:fpr:out}, {src:fpr}"
 
 [inst.CLZ2S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 2, vec_c = 1, vec_d = 18, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "clz.2s {dst}, {src}"
+asm = "clz.2s {dst:fpr:out}, {src:fpr}"
 
 [inst.CLZ4S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 1, vsize = 2, vec_c = 1, vec_d = 18, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "clz.4s {dst}, {src}"
+asm = "clz.4s {dst:fpr:out}, {src:fpr}"
 
 # rev16: (U=0, c=1, [15:10]=6) ?? ??? .8b ?????????? Q/size
 [inst.REV168B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 6, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev16.8b {dst}, {src}"
+asm = "rev16.8b {dst:fpr:out}, {src:fpr}"
 
 [inst.REV1616B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 0, vec_c = 1, vec_d = 6, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev16.16b {dst}, {src}"
+asm = "rev16.16b {dst:fpr:out}, {src:fpr}"
 
 [inst.REV164H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 1, vec_c = 1, vec_d = 6, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev16.4h {dst}, {src}"
+asm = "rev16.4h {dst:fpr:out}, {src:fpr}"
 
 [inst.REV168H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 1, vec_c = 1, vec_d = 6, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev16.8h {dst}, {src}"
+asm = "rev16.8h {dst:fpr:out}, {src:fpr}"
 
 [inst.REV162S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 2, vec_c = 1, vec_d = 6, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev16.2s {dst}, {src}"
+asm = "rev16.2s {dst:fpr:out}, {src:fpr}"
 
 [inst.REV164S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 6, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev16.4s {dst}, {src}"
+asm = "rev16.4s {dst:fpr:out}, {src:fpr}"
 
 # rev32: (U=1, c=1, [15:10]=2) ?? ??? .8b ?????????? Q/size
 [inst.REV328B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 0, vec_c = 1, vec_d = 2, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev32.8b {dst}, {src}"
+asm = "rev32.8b {dst:fpr:out}, {src:fpr}"
 
 [inst.REV3216B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 1, vsize = 0, vec_c = 1, vec_d = 2, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev32.16b {dst}, {src}"
+asm = "rev32.16b {dst:fpr:out}, {src:fpr}"
 
 [inst.REV324H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 1, vec_c = 1, vec_d = 2, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev32.4h {dst}, {src}"
+asm = "rev32.4h {dst:fpr:out}, {src:fpr}"
 
 [inst.REV328H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 1, vsize = 1, vec_c = 1, vec_d = 2, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev32.8h {dst}, {src}"
+asm = "rev32.8h {dst:fpr:out}, {src:fpr}"
 
 [inst.REV322S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 1, vsize = 2, vec_c = 1, vec_d = 2, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev32.2s {dst}, {src}"
+asm = "rev32.2s {dst:fpr:out}, {src:fpr}"
 
 [inst.REV324S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 1, vsize = 2, vec_c = 1, vec_d = 2, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev32.4s {dst}, {src}"
+asm = "rev32.4s {dst:fpr:out}, {src:fpr}"
 
 # rev64: (U=0, c=1, [15:10]=2) ?? ??? .8b ?????????? Q/size
 [inst.REV648B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 0, vec_c = 1, vec_d = 2, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev64.8b {dst}, {src}"
+asm = "rev64.8b {dst:fpr:out}, {src:fpr}"
 
 [inst.REV6416B]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 0, vec_c = 1, vec_d = 2, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev64.16b {dst}, {src}"
+asm = "rev64.16b {dst:fpr:out}, {src:fpr}"
 
 [inst.REV644H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 1, vec_c = 1, vec_d = 2, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev64.4h {dst}, {src}"
+asm = "rev64.4h {dst:fpr:out}, {src:fpr}"
 
 [inst.REV648H]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 1, vec_c = 1, vec_d = 2, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev64.8h {dst}, {src}"
+asm = "rev64.8h {dst:fpr:out}, {src:fpr}"
 
 [inst.REV642S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 2, vec_c = 1, vec_d = 2, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev64.2s {dst}, {src}"
+asm = "rev64.2s {dst:fpr:out}, {src:fpr}"
 
 [inst.REV644S]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 2, rm = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "rev64.4s {dst}, {src}"
+asm = "rev64.4s {dst:fpr:out}, {src:fpr}"
 
 # ── ADD/ADDS/SUB/SUBS (immediate) ──
 # oracle 校验样本：add x5,x6,#42 = 9100A8C5；adds w5,w6,#42=3100A8C5；
@@ -1658,14 +1456,12 @@ asm = "rev64.4s {dst}, {src}"
 roles = ["jump", "epilogue_jump"]
 form = "BREL"
 opcode = 0x05
-ops = ["target:off26"]
-asm = "b {target}"
+asm = "b {target:off26}"
 
 [inst.BL]
 form = "BREL"
 opcode = 0x25
-ops = ["target:off26"]
-asm = "bl {target}"
+asm = "bl {target:off26}"
 
 # ── 逻辑寄存器 AND/BIC/ORR/ORN/EOR/EON（寄存器三操作数）──
 # oracle：and x0,x1,x2=8A020020（W=0A…）、bic x6,x7,x8=8A2800E6（N 位=1）、
@@ -1676,48 +1472,42 @@ asm = "bl {target}"
 form = "MOVW16"
 opcode = 0x1A5
 match = { hw = 1 }
-ops = ["dst:r64:out", "imm:imm16u"]
-asm = "movz {dst}, #{imm}, lsl #16"
+asm = "movz {dst:r64:out}, #{imm:imm16u}, lsl #16"
 
 [inst.MOVZX2]
 # movz x, #imm16, lsl #32
 form = "MOVW16"
 opcode = 0x1A5
 match = { hw = 2 }
-ops = ["dst:r64:out", "imm:imm16u"]
-asm = "movz {dst}, #{imm}, lsl #32"
+asm = "movz {dst:r64:out}, #{imm:imm16u}, lsl #32"
 
 [inst.MOVZX3]
 # movz x, #imm16, lsl #48
 form = "MOVW16"
 opcode = 0x1A5
 match = { hw = 3 }
-ops = ["dst:r64:out", "imm:imm16u"]
-asm = "movz {dst}, #{imm}, lsl #48"
+asm = "movz {dst:r64:out}, #{imm:imm16u}, lsl #48"
 
 [inst.MOVZW1]
 # movz w, #imm16, lsl #16
 form = "MOVW16"
 opcode = 0xA5
 match = { hw = 1 }
-ops = ["dst:r32:out", "imm:imm16u"]
-asm = "movz {dst}, #{imm}, lsl #16"
+asm = "movz {dst:r32:out}, #{imm:imm16u}, lsl #16"
 
 [inst.MOVKX1]
 # movk x, #imm16, lsl #16
 form = "MOVW16"
 opcode = 0x1E5
 match = { hw = 1 }
-ops = ["dst:r64:out", "imm:imm16u"]
-asm = "movk {dst}, #{imm}, lsl #16"
+asm = "movk {dst:r64:out}, #{imm:imm16u}, lsl #16"
 
 [inst.MOVKX2]
 # movk x, #imm16, lsl #32
 form = "MOVW16"
 opcode = 0x1E5
 match = { hw = 2 }
-ops = ["dst:r64:out", "imm:imm16u"]
-asm = "movk {dst}, #{imm}, lsl #32"
+asm = "movk {dst:r64:out}, #{imm:imm16u}, lsl #32"
 
 # ─────────────────────────── 别名 ───────────────────────────
 
@@ -1874,14 +1664,12 @@ fields = ["nbit_l", "immr", "imms"]
 [inst.BR]
 form = "BRREG2"
 opcode = 0xD61F
-ops = ["src:r64"]
-asm = "br {src}"
+asm = "br {src:r64}"
 
 [inst.BLR]
 form = "BRREG2"
 opcode = 0xD63F
-ops = ["src:r64"]
-asm = "blr {src}"
+asm = "blr {src:r64}"
 
 [inst.RET]
 roles = ["ret"]
@@ -1896,8 +1684,7 @@ asm = "ret"
 # 解码靠"叶 arm 先试 + 平铺 if"回退（RET 的 guard 钉死 rn==30）。
 form = "BRREG2"
 opcode = 0xD65F
-ops = ["src:r64"]
-asm = "ret {src}"
+asm = "ret {src:r64}"
 
 # ── 别名 ──
 
@@ -1950,59 +1737,51 @@ unit = 4
 form = "LSUI"
 opcode = 0xF9
 match = { opc2 = 1 }
-ops = ["dst:r64:out", "base:r64", "imm:imm12x"]
-asm = "ldr {dst}, [{base}, #{imm}]"
+asm = "ldr {dst:r64:out}, [{base:r64}, #{imm:imm12x}]"
 
 [inst.LDRW]
 form = "LSUI"
 opcode = 0xB9
 match = { opc2 = 1 }
-ops = ["dst:r32:out", "base:r64", "imm:imm12w"]
-asm = "ldr {dst}, [{base}, #{imm}]"
+asm = "ldr {dst:r32:out}, [{base:r64}, #{imm:imm12w}]"
 
 [inst.STRX]
 form = "LSUI"
 opcode = 0xF9
 match = { opc2 = 0 }
-ops = ["src:r64", "base:r64", "imm:imm12x"]
-asm = "str {src}, [{base}, #{imm}]"
+asm = "str {src:r64}, [{base:r64}, #{imm:imm12x}]"
 
 [inst.STRW]
 form = "LSUI"
 opcode = 0xB9
 match = { opc2 = 0 }
-ops = ["src:r32", "base:r64", "imm:imm12w"]
-asm = "str {src}, [{base}, #{imm}]"
+asm = "str {src:r32}, [{base:r64}, #{imm:imm12w}]"
 
 [inst.LDURX]
 form = "LSUN"
 opcode = 0xF8
 match = { opc2 = 1, mode = 0, zero21 = 0 }
-ops = ["dst:r64:out", "base:r64", "off:imm9s"]
-asm = "ldur {dst}, [{base}, #{off}]"
+asm = "ldur {dst:r64:out}, [{base:r64}, #{off:imm9s}]"
 roles = ["callee_load"]
 
 [inst.LDURW]
 form = "LSUN"
 opcode = 0xB8
 match = { opc2 = 1, mode = 0, zero21 = 0 }
-ops = ["dst:r32:out", "base:r64", "off:imm9s"]
-asm = "ldur {dst}, [{base}, #{off}]"
+asm = "ldur {dst:r32:out}, [{base:r64}, #{off:imm9s}]"
 
 [inst.STURX]
 form = "LSUN"
 opcode = 0xF8
 match = { opc2 = 0, mode = 0, zero21 = 0 }
-ops = ["src:r64", "base:r64", "off:imm9s"]
-asm = "stur {src}, [{base}, #{off}]"
+asm = "stur {src:r64}, [{base:r64}, #{off:imm9s}]"
 roles = ["callee_save"]
 
 [inst.STURW]
 form = "LSUN"
 opcode = 0xB8
 match = { opc2 = 0, mode = 0, zero21 = 0 }
-ops = ["src:r32", "base:r64", "off:imm9s"]
-asm = "stur {src}, [{base}, #{off}]"
+asm = "stur {src:r32}, [{base:r64}, #{off:imm9s}]"
 
 # ── 别名 ──
 
@@ -2129,29 +1908,25 @@ fields = [
 form = "PAIR"
 opcode = 0xA9
 match = { idx2 = 0 }
-ops = ["t1:r64", "base:r64", "t2:r64", "imm:imm7x"]
-asm = "stp {t1}, {t2}, [{base}, #{imm}]"
+asm = "stp {t1:r64#0}, {t2:r64#2}, [{base:r64#1}, #{imm:imm7x#3}]"
 
 [inst.LDPX]
 form = "PAIR"
 opcode = 0xA9
 match = { idx2 = 1 }
-ops = ["t1:r64:out", "base:r64", "t2:r64:out", "imm:imm7x"]
-asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
+asm = "ldp {t1:r64:out#0}, {t2:r64:out#2}, [{base:r64#1}, #{imm:imm7x#3}]"
 
 [inst.STPW]
 form = "PAIR"
 opcode = 0x29
 match = { idx2 = 0 }
-ops = ["t1:r32", "base:r64", "t2:r32", "imm:imm7w"]
-asm = "stp {t1}, {t2}, [{base}, #{imm}]"
+asm = "stp {t1:r32#0}, {t2:r32#2}, [{base:r64#1}, #{imm:imm7w#3}]"
 
 [inst.LDPW]
 form = "PAIR"
 opcode = 0x29
 match = { idx2 = 1 }
-ops = ["t1:r32:out", "base:r64", "t2:r32:out", "imm:imm7w"]
-asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
+asm = "ldp {t1:r32:out#0}, {t2:r32:out#2}, [{base:r64#1}, #{imm:imm7w#3}]"
 
 # ── 无位移形态（`[Xn]`）──
 #
@@ -2163,57 +1938,49 @@ asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
 form = "LSUIND"
 opcode = 0xF9
 match = { opc2 = 1, imm12s = 0 }
-ops = ["dst:r64:out", "base:r64"]
-asm = "ldr {dst}, [{base}]"
+asm = "ldr {dst:r64:out}, [{base:r64}]"
 
 [inst.LDRW_ND]
 form = "LSUIND"
 opcode = 0xB9
 match = { opc2 = 1, imm12s = 0 }
-ops = ["dst:r32:out", "base:r64"]
-asm = "ldr {dst}, [{base}]"
+asm = "ldr {dst:r32:out}, [{base:r64}]"
 
 [inst.STRX_ND]
 form = "LSUIND"
 opcode = 0xF9
 match = { opc2 = 0, imm12s = 0 }
-ops = ["src:r64", "base:r64"]
-asm = "str {src}, [{base}]"
+asm = "str {src:r64}, [{base:r64}]"
 
 [inst.STRW_ND]
 form = "LSUIND"
 opcode = 0xB9
 match = { opc2 = 0, imm12s = 0 }
-ops = ["src:r32", "base:r64"]
-asm = "str {src}, [{base}]"
+asm = "str {src:r32}, [{base:r64}]"
 
 [inst.STPX_ND]
 form = "PAIRND"
 opcode = 0xA9
 match = { idx2 = 0, imm7 = 0 }
-ops = ["t1:r64", "base:r64", "t2:r64"]
-asm = "stp {t1}, {t2}, [{base}]"
+asm = "stp {t1:r64#0}, {t2:r64#2}, [{base:r64#1}]"
 
 [inst.LDPX_ND]
 form = "PAIRND"
 opcode = 0xA9
 match = { idx2 = 1, imm7 = 0 }
-ops = ["t1:r64:out", "base:r64", "t2:r64:out"]
-asm = "ldp {t1}, {t2}, [{base}]"
+asm = "ldp {t1:r64:out#0}, {t2:r64:out#2}, [{base:r64#1}]"
 
 [inst.STPW_ND]
 form = "PAIRND"
 opcode = 0x29
 match = { idx2 = 0, imm7 = 0 }
-ops = ["t1:r32", "base:r64", "t2:r32"]
-asm = "stp {t1}, {t2}, [{base}]"
+asm = "stp {t1:r32#0}, {t2:r32#2}, [{base:r64#1}]"
 
 [inst.LDPW_ND]
 form = "PAIRND"
 opcode = 0x29
 match = { idx2 = 1, imm7 = 0 }
-ops = ["t1:r32:out", "base:r64", "t2:r32:out"]
-asm = "ldp {t1}, {t2}, [{base}]"
+asm = "ldp {t1:r32:out#0}, {t2:r32:out#2}, [{base:r64#1}]"
 
 # ── 前后索引（writeback）──
 #
@@ -2230,85 +1997,73 @@ asm = "ldp {t1}, {t2}, [{base}]"
 form = "LSUN"
 opcode = 0xF8
 match = { opc2 = 1, mode = 3, zero21 = 0 }
-ops = ["dst:r64:out", "base:r64", "off:imm9s"]
-asm = "ldr {dst}, [{base}, #{off}]!"
+asm = "ldr {dst:r64:out}, [{base:r64}, #{off:imm9s}]!"
 
 [inst.LDRX_POST]
 form = "LSUN"
 opcode = 0xF8
 match = { opc2 = 1, mode = 1, zero21 = 0 }
-ops = ["dst:r64:out", "base:r64", "off:imm9s"]
-asm = "ldr {dst}, [{base}], #{off}"
+asm = "ldr {dst:r64:out}, [{base:r64}], #{off:imm9s}"
 
 [inst.STRX_PRE]
 form = "LSUN"
 opcode = 0xF8
 match = { opc2 = 0, mode = 3, zero21 = 0 }
-ops = ["src:r64", "base:r64", "off:imm9s"]
-asm = "str {src}, [{base}, #{off}]!"
+asm = "str {src:r64}, [{base:r64}, #{off:imm9s}]!"
 
 [inst.STRX_POST]
 form = "LSUN"
 opcode = 0xF8
 match = { opc2 = 0, mode = 1, zero21 = 0 }
-ops = ["src:r64", "base:r64", "off:imm9s"]
-asm = "str {src}, [{base}], #{off}"
+asm = "str {src:r64}, [{base:r64}], #{off:imm9s}"
 
 [inst.LDRW_PRE]
 form = "LSUN"
 opcode = 0xB8
 match = { opc2 = 1, mode = 3, zero21 = 0 }
-ops = ["dst:r32:out", "base:r64", "off:imm9s"]
-asm = "ldr {dst}, [{base}, #{off}]!"
+asm = "ldr {dst:r32:out}, [{base:r64}, #{off:imm9s}]!"
 
 [inst.LDRW_POST]
 form = "LSUN"
 opcode = 0xB8
 match = { opc2 = 1, mode = 1, zero21 = 0 }
-ops = ["dst:r32:out", "base:r64", "off:imm9s"]
-asm = "ldr {dst}, [{base}], #{off}"
+asm = "ldr {dst:r32:out}, [{base:r64}], #{off:imm9s}"
 
 [inst.STRW_PRE]
 form = "LSUN"
 opcode = 0xB8
 match = { opc2 = 0, mode = 3, zero21 = 0 }
-ops = ["src:r32", "base:r64", "off:imm9s"]
-asm = "str {src}, [{base}, #{off}]!"
+asm = "str {src:r32}, [{base:r64}, #{off:imm9s}]!"
 
 [inst.STRW_POST]
 form = "LSUN"
 opcode = 0xB8
 match = { opc2 = 0, mode = 1, zero21 = 0 }
-ops = ["src:r32", "base:r64", "off:imm9s"]
-asm = "str {src}, [{base}], #{off}"
+asm = "str {src:r32}, [{base:r64}], #{off:imm9s}"
 
 [inst.STPX_PRE]
 form = "PAIR"
 opcode = 0xA9
 match = { idx2 = 2 }
-ops = ["t1:r64", "base:r64", "t2:r64", "imm:imm7x"]
-asm = "stp {t1}, {t2}, [{base}, #{imm}]!"
+asm = "stp {t1:r64#0}, {t2:r64#2}, [{base:r64#1}, #{imm:imm7x#3}]!"
 
 [inst.STPX_POST]
 form = "PAIR"
 opcode = 0xA8
 match = { idx2 = 2 }
-ops = ["t1:r64", "base:r64", "t2:r64", "imm:imm7x"]
-asm = "stp {t1}, {t2}, [{base}], #{imm}"
+asm = "stp {t1:r64#0}, {t2:r64#2}, [{base:r64#1}], #{imm:imm7x#3}"
 
 [inst.LDPX_PRE]
 form = "PAIR"
 opcode = 0xA9
 match = { idx2 = 3 }
-ops = ["t1:r64:out", "base:r64", "t2:r64:out", "imm:imm7x"]
-asm = "ldp {t1}, {t2}, [{base}, #{imm}]!"
+asm = "ldp {t1:r64:out#0}, {t2:r64:out#2}, [{base:r64#1}, #{imm:imm7x#3}]!"
 
 [inst.LDPX_POST]
 form = "PAIR"
 opcode = 0xA8
 match = { idx2 = 3 }
-ops = ["t1:r64:out", "base:r64", "t2:r64:out", "imm:imm7x"]
-asm = "ldp {t1}, {t2}, [{base}], #{imm}"
+asm = "ldp {t1:r64:out#0}, {t2:r64:out#2}, [{base:r64#1}], #{imm:imm7x#3}"
 
 # ── 寄存器偏移寻址（`[Xn, Xm{, ext}]`）──
 #
@@ -2323,225 +2078,193 @@ asm = "ldp {t1}, {t2}, [{base}], #{imm}"
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 3, sbit = 0 }
-ops = ["dst:r64:out", "base:r64", "idx:r64"]
-asm = "ldr {dst}, [{base}, {idx}]"
+asm = "ldr {dst:r64:out}, [{base:r64}, {idx:r64}]"
 
 [inst.LDRX_RO_LSL]
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 3, sbit = 1 }
-ops = ["dst:r64:out", "base:r64", "idx:r64"]
-asm = "ldr {dst}, [{base}, {idx}, lsl #3]"
+asm = "ldr {dst:r64:out}, [{base:r64}, {idx:r64}, lsl #3]"
 
 [inst.LDRX_RO_UXTW]
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 2, sbit = 0 }
-ops = ["dst:r64:out", "base:r64", "idx:r32"]
-asm = "ldr {dst}, [{base}, {idx}, uxtw]"
+asm = "ldr {dst:r64:out}, [{base:r64}, {idx:r32}, uxtw]"
 
 [inst.LDRX_RO_UXTW_S]
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 2, sbit = 1 }
-ops = ["dst:r64:out", "base:r64", "idx:r32"]
-asm = "ldr {dst}, [{base}, {idx}, uxtw #3]"
+asm = "ldr {dst:r64:out}, [{base:r64}, {idx:r32}, uxtw #3]"
 
 [inst.LDRX_RO_SXTW]
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 6, sbit = 0 }
-ops = ["dst:r64:out", "base:r64", "idx:r32"]
-asm = "ldr {dst}, [{base}, {idx}, sxtw]"
+asm = "ldr {dst:r64:out}, [{base:r64}, {idx:r32}, sxtw]"
 
 [inst.LDRX_RO_SXTW_S]
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 6, sbit = 1 }
-ops = ["dst:r64:out", "base:r64", "idx:r32"]
-asm = "ldr {dst}, [{base}, {idx}, sxtw #3]"
+asm = "ldr {dst:r64:out}, [{base:r64}, {idx:r32}, sxtw #3]"
 
 [inst.LDRX_RO_SXTX]
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 7, sbit = 0 }
-ops = ["dst:r64:out", "base:r64", "idx:r64"]
-asm = "ldr {dst}, [{base}, {idx}, sxtx]"
+asm = "ldr {dst:r64:out}, [{base:r64}, {idx:r64}, sxtx]"
 
 [inst.LDRX_RO_SXTX_S]
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 7, sbit = 1 }
-ops = ["dst:r64:out", "base:r64", "idx:r64"]
-asm = "ldr {dst}, [{base}, {idx}, sxtx #3]"
+asm = "ldr {dst:r64:out}, [{base:r64}, {idx:r64}, sxtx #3]"
 
 [inst.STRX_RO]
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 3, sbit = 0 }
-ops = ["src:r64", "base:r64", "idx:r64"]
-asm = "str {src}, [{base}, {idx}]"
+asm = "str {src:r64}, [{base:r64}, {idx:r64}]"
 
 [inst.STRX_RO_LSL]
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 3, sbit = 1 }
-ops = ["src:r64", "base:r64", "idx:r64"]
-asm = "str {src}, [{base}, {idx}, lsl #3]"
+asm = "str {src:r64}, [{base:r64}, {idx:r64}, lsl #3]"
 
 [inst.STRX_RO_UXTW]
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 2, sbit = 0 }
-ops = ["src:r64", "base:r64", "idx:r32"]
-asm = "str {src}, [{base}, {idx}, uxtw]"
+asm = "str {src:r64}, [{base:r64}, {idx:r32}, uxtw]"
 
 [inst.STRX_RO_UXTW_S]
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 2, sbit = 1 }
-ops = ["src:r64", "base:r64", "idx:r32"]
-asm = "str {src}, [{base}, {idx}, uxtw #3]"
+asm = "str {src:r64}, [{base:r64}, {idx:r32}, uxtw #3]"
 
 [inst.STRX_RO_SXTW]
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 6, sbit = 0 }
-ops = ["src:r64", "base:r64", "idx:r32"]
-asm = "str {src}, [{base}, {idx}, sxtw]"
+asm = "str {src:r64}, [{base:r64}, {idx:r32}, sxtw]"
 
 [inst.STRX_RO_SXTW_S]
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 6, sbit = 1 }
-ops = ["src:r64", "base:r64", "idx:r32"]
-asm = "str {src}, [{base}, {idx}, sxtw #3]"
+asm = "str {src:r64}, [{base:r64}, {idx:r32}, sxtw #3]"
 
 [inst.STRX_RO_SXTX]
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 7, sbit = 0 }
-ops = ["src:r64", "base:r64", "idx:r64"]
-asm = "str {src}, [{base}, {idx}, sxtx]"
+asm = "str {src:r64}, [{base:r64}, {idx:r64}, sxtx]"
 
 [inst.STRX_RO_SXTX_S]
 form = "LSUIR"
 opcode = 0xF8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 7, sbit = 1 }
-ops = ["src:r64", "base:r64", "idx:r64"]
-asm = "str {src}, [{base}, {idx}, sxtx #3]"
+asm = "str {src:r64}, [{base:r64}, {idx:r64}, sxtx #3]"
 
 [inst.LDRW_RO]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 3, sbit = 0 }
-ops = ["dst:r32:out", "base:r64", "idx:r64"]
-asm = "ldr {dst}, [{base}, {idx}]"
+asm = "ldr {dst:r32:out}, [{base:r64}, {idx:r64}]"
 
 [inst.LDRW_RO_LSL]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 3, sbit = 1 }
-ops = ["dst:r32:out", "base:r64", "idx:r64"]
-asm = "ldr {dst}, [{base}, {idx}, lsl #2]"
+asm = "ldr {dst:r32:out}, [{base:r64}, {idx:r64}, lsl #2]"
 
 [inst.LDRW_RO_UXTW]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 2, sbit = 0 }
-ops = ["dst:r32:out", "base:r64", "idx:r32"]
-asm = "ldr {dst}, [{base}, {idx}, uxtw]"
+asm = "ldr {dst:r32:out}, [{base:r64}, {idx:r32}, uxtw]"
 
 [inst.LDRW_RO_UXTW_S]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 2, sbit = 1 }
-ops = ["dst:r32:out", "base:r64", "idx:r32"]
-asm = "ldr {dst}, [{base}, {idx}, uxtw #2]"
+asm = "ldr {dst:r32:out}, [{base:r64}, {idx:r32}, uxtw #2]"
 
 [inst.LDRW_RO_SXTW]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 6, sbit = 0 }
-ops = ["dst:r32:out", "base:r64", "idx:r32"]
-asm = "ldr {dst}, [{base}, {idx}, sxtw]"
+asm = "ldr {dst:r32:out}, [{base:r64}, {idx:r32}, sxtw]"
 
 [inst.LDRW_RO_SXTW_S]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 6, sbit = 1 }
-ops = ["dst:r32:out", "base:r64", "idx:r32"]
-asm = "ldr {dst}, [{base}, {idx}, sxtw #2]"
+asm = "ldr {dst:r32:out}, [{base:r64}, {idx:r32}, sxtw #2]"
 
 [inst.LDRW_RO_SXTX]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 7, sbit = 0 }
-ops = ["dst:r32:out", "base:r64", "idx:r64"]
-asm = "ldr {dst}, [{base}, {idx}, sxtx]"
+asm = "ldr {dst:r32:out}, [{base:r64}, {idx:r64}, sxtx]"
 
 [inst.LDRW_RO_SXTX_S]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 1, one21 = 1, mode = 2, option = 7, sbit = 1 }
-ops = ["dst:r32:out", "base:r64", "idx:r64"]
-asm = "ldr {dst}, [{base}, {idx}, sxtx #2]"
+asm = "ldr {dst:r32:out}, [{base:r64}, {idx:r64}, sxtx #2]"
 
 [inst.STRW_RO]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 3, sbit = 0 }
-ops = ["src:r32", "base:r64", "idx:r64"]
-asm = "str {src}, [{base}, {idx}]"
+asm = "str {src:r32}, [{base:r64}, {idx:r64}]"
 
 [inst.STRW_RO_LSL]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 3, sbit = 1 }
-ops = ["src:r32", "base:r64", "idx:r64"]
-asm = "str {src}, [{base}, {idx}, lsl #2]"
+asm = "str {src:r32}, [{base:r64}, {idx:r64}, lsl #2]"
 
 [inst.STRW_RO_UXTW]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 2, sbit = 0 }
-ops = ["src:r32", "base:r64", "idx:r32"]
-asm = "str {src}, [{base}, {idx}, uxtw]"
+asm = "str {src:r32}, [{base:r64}, {idx:r32}, uxtw]"
 
 [inst.STRW_RO_UXTW_S]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 2, sbit = 1 }
-ops = ["src:r32", "base:r64", "idx:r32"]
-asm = "str {src}, [{base}, {idx}, uxtw #2]"
+asm = "str {src:r32}, [{base:r64}, {idx:r32}, uxtw #2]"
 
 [inst.STRW_RO_SXTW]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 6, sbit = 0 }
-ops = ["src:r32", "base:r64", "idx:r32"]
-asm = "str {src}, [{base}, {idx}, sxtw]"
+asm = "str {src:r32}, [{base:r64}, {idx:r32}, sxtw]"
 
 [inst.STRW_RO_SXTW_S]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 6, sbit = 1 }
-ops = ["src:r32", "base:r64", "idx:r32"]
-asm = "str {src}, [{base}, {idx}, sxtw #2]"
+asm = "str {src:r32}, [{base:r64}, {idx:r32}, sxtw #2]"
 
 [inst.STRW_RO_SXTX]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 7, sbit = 0 }
-ops = ["src:r32", "base:r64", "idx:r64"]
-asm = "str {src}, [{base}, {idx}, sxtx]"
+asm = "str {src:r32}, [{base:r64}, {idx:r64}, sxtx]"
 
 [inst.STRW_RO_SXTX_S]
 form = "LSUIR"
 opcode = 0xB8
 match = { opc2 = 0, one21 = 1, mode = 2, option = 7, sbit = 1 }
-ops = ["src:r32", "base:r64", "idx:r64"]
-asm = "str {src}, [{base}, {idx}, sxtx #2]"
+asm = "str {src:r32}, [{base:r64}, {idx:r64}, sxtx #2]"
 
 # ADD/SUB（移位寄存器）**带移位量**的形态：`shift` 是逐指令常量（LSL = 0），移位量是
 # 操作数（X 形式 imm6、W 形式 imm5）。与既有的 `ADDREG`/`SUBREG`（LSL #0）同编码空间——
@@ -2551,49 +2274,42 @@ asm = "str {src}, [{base}, {idx}, sxtx #2]"
 form = "ALUSH6"
 opcode = 0x8B
 match = { shift = 0 }
-ops = ["dst:rz64:out", "src:rz64", "src2:rz64", "sh:imm6"]
-asm = "add {dst}, {src}, {src2}, lsl #{sh}"
+asm = "add {dst:rz64:out}, {src:rz64}, {src2:rz64}, lsl #{sh:imm6}"
 
 [inst.ADD_LSLW]
 form = "ALUSH5"
 opcode = 0xB
 match = { shift = 0 }
-ops = ["dst:rz32:out", "src:rz32", "src2:rz32", "sh:imm5"]
-asm = "add {dst}, {src}, {src2}, lsl #{sh}"
+asm = "add {dst:rz32:out}, {src:rz32}, {src2:rz32}, lsl #{sh:imm5}"
 
 [inst.SUB_LSLX]
 form = "ALUSH6"
 opcode = 0xCB
 match = { shift = 0 }
-ops = ["dst:rz64:out", "src:rz64", "src2:rz64", "sh:imm6"]
-asm = "sub {dst}, {src}, {src2}, lsl #{sh}"
+asm = "sub {dst:rz64:out}, {src:rz64}, {src2:rz64}, lsl #{sh:imm6}"
 
 [inst.SUB_LSLW]
 form = "ALUSH5"
 opcode = 0x4B
 match = { shift = 0 }
-ops = ["dst:rz32:out", "src:rz32", "src2:rz32", "sh:imm5"]
-asm = "sub {dst}, {src}, {src2}, lsl #{sh}"
+asm = "sub {dst:rz32:out}, {src:rz32}, {src2:rz32}, lsl #{sh:imm5}"
 [inst.ADDS_LSLX]
 form = "ALUSH6"
 opcode = 0xAB
 match = { shift = 0 }
-ops = ["dst:rz64:out", "src:rz64", "src2:rz64", "sh:imm6"]
-asm = "adds {dst}, {src}, {src2}, lsl #{sh}"
+asm = "adds {dst:rz64:out}, {src:rz64}, {src2:rz64}, lsl #{sh:imm6}"
 
 [inst.ADDS_LSLW]
 form = "ALUSH5"
 opcode = 0x2B
 match = { shift = 0 }
-ops = ["dst:rz32:out", "src:rz32", "src2:rz32", "sh:imm5"]
-asm = "adds {dst}, {src}, {src2}, lsl #{sh}"
+asm = "adds {dst:rz32:out}, {src:rz32}, {src2:rz32}, lsl #{sh:imm5}"
 
 [inst.SUBS_LSLX]
 form = "ALUSH6"
 opcode = 0xEB
 match = { shift = 0 }
-ops = ["dst:rz64:out", "src:rz64", "src2:rz64", "sh:imm6"]
-asm = "subs {dst}, {src}, {src2}, lsl #{sh}"
+asm = "subs {dst:rz64:out}, {src:rz64}, {src2:rz64}, lsl #{sh:imm6}"
 
 # ── `mov <Rd>, #:abs_g0_s:sym` / `mov x0, 1b - 0b`（符号/表达式立即数）──
 #
@@ -2619,211 +2335,181 @@ asm = "subs {dst}, {src}, {src2}, lsl #{sh}"
 form = "FPLSUI"
 opcode = 0x3D
 match = { opc2 = 1 }
-ops = ["dst:fprb:out", "base:r64", "imm:imm12fp1"]
-asm = "ldr {dst}, [{base}, #{imm}]"
+asm = "ldr {dst:fprb:out}, [{base:r64}, #{imm:imm12fp1}]"
 
 [inst.LDURB_FP]
 form = "LSUN"
 opcode = 0x3C
 match = { opc2 = 1, mode = 0, zero21 = 0 }
-ops = ["dst:fprb:out", "base:r64", "off:imm9s"]
-asm = "ldur {dst}, [{base}, #{off}]"
+asm = "ldur {dst:fprb:out}, [{base:r64}, #{off:imm9s}]"
 
 [inst.LDRB_FP_PRE]
 form = "LSUN"
 opcode = 0x3C
 match = { opc2 = 1, mode = 3, zero21 = 0 }
-ops = ["dst:fprb:out", "base:r64", "off:imm9s"]
-asm = "ldr {dst}, [{base}, #{off}]!"
+asm = "ldr {dst:fprb:out}, [{base:r64}, #{off:imm9s}]!"
 
 [inst.LDRB_FP_POST]
 form = "LSUN"
 opcode = 0x3C
 match = { opc2 = 1, mode = 1, zero21 = 0 }
-ops = ["dst:fprb:out", "base:r64", "off:imm9s"]
-asm = "ldr {dst}, [{base}], #{off}"
+asm = "ldr {dst:fprb:out}, [{base:r64}], #{off:imm9s}"
 
 [inst.STRB_FP]
 form = "FPLSUI"
 opcode = 0x3D
 match = { opc2 = 0 }
-ops = ["src:fprb", "base:r64", "imm:imm12fp1"]
-asm = "str {src}, [{base}, #{imm}]"
+asm = "str {src:fprb}, [{base:r64}, #{imm:imm12fp1}]"
 
 [inst.STURB_FP]
 form = "LSUN"
 opcode = 0x3C
 match = { opc2 = 0, mode = 0, zero21 = 0 }
-ops = ["src:fprb", "base:r64", "off:imm9s"]
-asm = "stur {src}, [{base}, #{off}]"
+asm = "stur {src:fprb}, [{base:r64}, #{off:imm9s}]"
 
 [inst.STRB_FP_PRE]
 form = "LSUN"
 opcode = 0x3C
 match = { opc2 = 0, mode = 3, zero21 = 0 }
-ops = ["src:fprb", "base:r64", "off:imm9s"]
-asm = "str {src}, [{base}, #{off}]!"
+asm = "str {src:fprb}, [{base:r64}, #{off:imm9s}]!"
 
 [inst.STRB_FP_POST]
 form = "LSUN"
 opcode = 0x3C
 match = { opc2 = 0, mode = 1, zero21 = 0 }
-ops = ["src:fprb", "base:r64", "off:imm9s"]
-asm = "str {src}, [{base}], #{off}"
+asm = "str {src:fprb}, [{base:r64}], #{off:imm9s}"
 
 [inst.LDRH_FP]
 form = "FPLSUI"
 opcode = 0x7D
 match = { opc2 = 1 }
-ops = ["dst:fprh:out", "base:r64", "imm:imm12fp2"]
-asm = "ldr {dst}, [{base}, #{imm}]"
+asm = "ldr {dst:fprh:out}, [{base:r64}, #{imm:imm12fp2}]"
 
 [inst.LDURH_FP]
 form = "LSUN"
 opcode = 0x7C
 match = { opc2 = 1, mode = 0, zero21 = 0 }
-ops = ["dst:fprh:out", "base:r64", "off:imm9s"]
-asm = "ldur {dst}, [{base}, #{off}]"
+asm = "ldur {dst:fprh:out}, [{base:r64}, #{off:imm9s}]"
 
 [inst.LDRH_FP_PRE]
 form = "LSUN"
 opcode = 0x7C
 match = { opc2 = 1, mode = 3, zero21 = 0 }
-ops = ["dst:fprh:out", "base:r64", "off:imm9s"]
-asm = "ldr {dst}, [{base}, #{off}]!"
+asm = "ldr {dst:fprh:out}, [{base:r64}, #{off:imm9s}]!"
 
 [inst.LDRH_FP_POST]
 form = "LSUN"
 opcode = 0x7C
 match = { opc2 = 1, mode = 1, zero21 = 0 }
-ops = ["dst:fprh:out", "base:r64", "off:imm9s"]
-asm = "ldr {dst}, [{base}], #{off}"
+asm = "ldr {dst:fprh:out}, [{base:r64}], #{off:imm9s}"
 
 [inst.STRH_FP]
 form = "FPLSUI"
 opcode = 0x7D
 match = { opc2 = 0 }
-ops = ["src:fprh", "base:r64", "imm:imm12fp2"]
-asm = "str {src}, [{base}, #{imm}]"
+asm = "str {src:fprh}, [{base:r64}, #{imm:imm12fp2}]"
 
 [inst.STURH_FP]
 form = "LSUN"
 opcode = 0x7C
 match = { opc2 = 0, mode = 0, zero21 = 0 }
-ops = ["src:fprh", "base:r64", "off:imm9s"]
-asm = "stur {src}, [{base}, #{off}]"
+asm = "stur {src:fprh}, [{base:r64}, #{off:imm9s}]"
 
 [inst.STRH_FP_PRE]
 form = "LSUN"
 opcode = 0x7C
 match = { opc2 = 0, mode = 3, zero21 = 0 }
-ops = ["src:fprh", "base:r64", "off:imm9s"]
-asm = "str {src}, [{base}, #{off}]!"
+asm = "str {src:fprh}, [{base:r64}, #{off:imm9s}]!"
 
 [inst.STRH_FP_POST]
 form = "LSUN"
 opcode = 0x7C
 match = { opc2 = 0, mode = 1, zero21 = 0 }
-ops = ["src:fprh", "base:r64", "off:imm9s"]
-asm = "str {src}, [{base}], #{off}"
+asm = "str {src:fprh}, [{base:r64}], #{off:imm9s}"
 
 [inst.LDRS_FP]
 form = "FPLSUI"
 opcode = 0xBD
 match = { opc2 = 1 }
-ops = ["dst:fprs:out", "base:r64", "imm:imm12fp4"]
-asm = "ldr {dst}, [{base}, #{imm}]"
+asm = "ldr {dst:fprs:out}, [{base:r64}, #{imm:imm12fp4}]"
 
 [inst.LDURS_FP]
 form = "LSUN"
 opcode = 0xBC
 match = { opc2 = 1, mode = 0, zero21 = 0 }
-ops = ["dst:fprs:out", "base:r64", "off:imm9s"]
-asm = "ldur {dst}, [{base}, #{off}]"
+asm = "ldur {dst:fprs:out}, [{base:r64}, #{off:imm9s}]"
 
 [inst.LDRS_FP_PRE]
 form = "LSUN"
 opcode = 0xBC
 match = { opc2 = 1, mode = 3, zero21 = 0 }
-ops = ["dst:fprs:out", "base:r64", "off:imm9s"]
-asm = "ldr {dst}, [{base}, #{off}]!"
+asm = "ldr {dst:fprs:out}, [{base:r64}, #{off:imm9s}]!"
 
 [inst.LDRS_FP_POST]
 form = "LSUN"
 opcode = 0xBC
 match = { opc2 = 1, mode = 1, zero21 = 0 }
-ops = ["dst:fprs:out", "base:r64", "off:imm9s"]
-asm = "ldr {dst}, [{base}], #{off}"
+asm = "ldr {dst:fprs:out}, [{base:r64}], #{off:imm9s}"
 
 [inst.STRS_FP]
 form = "FPLSUI"
 opcode = 0xBD
 match = { opc2 = 0 }
-ops = ["src:fprs", "base:r64", "imm:imm12fp4"]
-asm = "str {src}, [{base}, #{imm}]"
+asm = "str {src:fprs}, [{base:r64}, #{imm:imm12fp4}]"
 
 [inst.STURS_FP]
 form = "LSUN"
 opcode = 0xBC
 match = { opc2 = 0, mode = 0, zero21 = 0 }
-ops = ["src:fprs", "base:r64", "off:imm9s"]
-asm = "stur {src}, [{base}, #{off}]"
+asm = "stur {src:fprs}, [{base:r64}, #{off:imm9s}]"
 
 [inst.STRS_FP_PRE]
 form = "LSUN"
 opcode = 0xBC
 match = { opc2 = 0, mode = 3, zero21 = 0 }
-ops = ["src:fprs", "base:r64", "off:imm9s"]
-asm = "str {src}, [{base}, #{off}]!"
+asm = "str {src:fprs}, [{base:r64}, #{off:imm9s}]!"
 
 [inst.STRS_FP_POST]
 form = "LSUN"
 opcode = 0xBC
 match = { opc2 = 0, mode = 1, zero21 = 0 }
-ops = ["src:fprs", "base:r64", "off:imm9s"]
-asm = "str {src}, [{base}], #{off}"
+asm = "str {src:fprs}, [{base:r64}], #{off:imm9s}"
 
 [inst.LDRD_FP]
 form = "FPLSUI"
 opcode = 0xFD
 match = { opc2 = 1 }
-ops = ["dst:fpr:out", "base:r64", "imm:imm12fp8"]
-asm = "ldr {dst}, [{base}, #{imm}]"
+asm = "ldr {dst:fpr:out}, [{base:r64}, #{imm:imm12fp8}]"
 
 [inst.LDRD_FP_PRE]
 form = "LSUN"
 opcode = 0xFC
 match = { opc2 = 1, mode = 3, zero21 = 0 }
-ops = ["dst:fpr:out", "base:r64", "off:imm9s"]
-asm = "ldr {dst}, [{base}, #{off}]!"
+asm = "ldr {dst:fpr:out}, [{base:r64}, #{off:imm9s}]!"
 
 [inst.LDRD_FP_POST]
 form = "LSUN"
 opcode = 0xFC
 match = { opc2 = 1, mode = 1, zero21 = 0 }
-ops = ["dst:fpr:out", "base:r64", "off:imm9s"]
-asm = "ldr {dst}, [{base}], #{off}"
+asm = "ldr {dst:fpr:out}, [{base:r64}], #{off:imm9s}"
 
 [inst.STRD_FP]
 form = "FPLSUI"
 opcode = 0xFD
 match = { opc2 = 0 }
-ops = ["src:fpr", "base:r64", "imm:imm12fp8"]
-asm = "str {src}, [{base}, #{imm}]"
+asm = "str {src:fpr}, [{base:r64}, #{imm:imm12fp8}]"
 
 [inst.STRD_FP_PRE]
 form = "LSUN"
 opcode = 0xFC
 match = { opc2 = 0, mode = 3, zero21 = 0 }
-ops = ["src:fpr", "base:r64", "off:imm9s"]
-asm = "str {src}, [{base}, #{off}]!"
+asm = "str {src:fpr}, [{base:r64}, #{off:imm9s}]!"
 
 [inst.STRD_FP_POST]
 form = "LSUN"
 opcode = 0xFC
 match = { opc2 = 0, mode = 1, zero21 = 0 }
-ops = ["src:fpr", "base:r64", "off:imm9s"]
-asm = "str {src}, [{base}], #{off}"
+asm = "str {src:fpr}, [{base:r64}], #{off:imm9s}"
 
 # 成对 LDP/STP（SIMD&FP）：`opc 101 V idx imm7 …`；opc 00=S、01=D、10=Q；idx 010/011/001。
 
@@ -2831,127 +2517,109 @@ asm = "str {src}, [{base}], #{off}"
 form = "FPPAIR"
 opcode = 0x2D
 match = { idx2 = 0 }
-ops = ["t1:fprs", "base:r64", "t2:fprs", "imm:imm7fp4"]
-asm = "stp {t1}, {t2}, [{base}, #{imm}]"
+asm = "stp {t1:fprs#0}, {t2:fprs#2}, [{base:r64#1}, #{imm:imm7fp4#3}]"
 
 [inst.STPS_FP_PRE]
 form = "FPPAIR"
 opcode = 0x2D
 match = { idx2 = 2 }
-ops = ["t1:fprs", "base:r64", "t2:fprs", "imm:imm7fp4"]
-asm = "stp {t1}, {t2}, [{base}, #{imm}]!"
+asm = "stp {t1:fprs#0}, {t2:fprs#2}, [{base:r64#1}, #{imm:imm7fp4#3}]!"
 
 [inst.STPS_FP_POST]
 form = "FPPAIR"
 opcode = 0x2C
 match = { idx2 = 2 }
-ops = ["t1:fprs", "base:r64", "t2:fprs", "imm:imm7fp4"]
-asm = "stp {t1}, {t2}, [{base}], #{imm}"
+asm = "stp {t1:fprs#0}, {t2:fprs#2}, [{base:r64#1}], #{imm:imm7fp4#3}"
 
 [inst.LDPS_FP]
 form = "FPPAIR"
 opcode = 0x2D
 match = { idx2 = 1 }
-ops = ["t1:fprs:out", "base:r64", "t2:fprs:out", "imm:imm7fp4"]
-asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
+asm = "ldp {t1:fprs:out#0}, {t2:fprs:out#2}, [{base:r64#1}, #{imm:imm7fp4#3}]"
 
 [inst.LDPS_FP_PRE]
 form = "FPPAIR"
 opcode = 0x2D
 match = { idx2 = 3 }
-ops = ["t1:fprs:out", "base:r64", "t2:fprs:out", "imm:imm7fp4"]
-asm = "ldp {t1}, {t2}, [{base}, #{imm}]!"
+asm = "ldp {t1:fprs:out#0}, {t2:fprs:out#2}, [{base:r64#1}, #{imm:imm7fp4#3}]!"
 
 [inst.LDPS_FP_POST]
 form = "FPPAIR"
 opcode = 0x2C
 match = { idx2 = 3 }
-ops = ["t1:fprs:out", "base:r64", "t2:fprs:out", "imm:imm7fp4"]
-asm = "ldp {t1}, {t2}, [{base}], #{imm}"
+asm = "ldp {t1:fprs:out#0}, {t2:fprs:out#2}, [{base:r64#1}], #{imm:imm7fp4#3}"
 
 [inst.STPD_FP]
 form = "FPPAIR"
 opcode = 0x6D
 match = { idx2 = 0 }
-ops = ["t1:fpr", "base:r64", "t2:fpr", "imm:imm7fp8"]
-asm = "stp {t1}, {t2}, [{base}, #{imm}]"
+asm = "stp {t1:fpr#0}, {t2:fpr#2}, [{base:r64#1}, #{imm:imm7fp8#3}]"
 
 [inst.STPD_FP_PRE]
 form = "FPPAIR"
 opcode = 0x6D
 match = { idx2 = 2 }
-ops = ["t1:fpr", "base:r64", "t2:fpr", "imm:imm7fp8"]
-asm = "stp {t1}, {t2}, [{base}, #{imm}]!"
+asm = "stp {t1:fpr#0}, {t2:fpr#2}, [{base:r64#1}, #{imm:imm7fp8#3}]!"
 
 [inst.STPD_FP_POST]
 form = "FPPAIR"
 opcode = 0x6C
 match = { idx2 = 2 }
-ops = ["t1:fpr", "base:r64", "t2:fpr", "imm:imm7fp8"]
-asm = "stp {t1}, {t2}, [{base}], #{imm}"
+asm = "stp {t1:fpr#0}, {t2:fpr#2}, [{base:r64#1}], #{imm:imm7fp8#3}"
 
 [inst.LDPD_FP]
 form = "FPPAIR"
 opcode = 0x6D
 match = { idx2 = 1 }
-ops = ["t1:fpr:out", "base:r64", "t2:fpr:out", "imm:imm7fp8"]
-asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
+asm = "ldp {t1:fpr:out#0}, {t2:fpr:out#2}, [{base:r64#1}, #{imm:imm7fp8#3}]"
 
 [inst.LDPD_FP_PRE]
 form = "FPPAIR"
 opcode = 0x6D
 match = { idx2 = 3 }
-ops = ["t1:fpr:out", "base:r64", "t2:fpr:out", "imm:imm7fp8"]
-asm = "ldp {t1}, {t2}, [{base}, #{imm}]!"
+asm = "ldp {t1:fpr:out#0}, {t2:fpr:out#2}, [{base:r64#1}, #{imm:imm7fp8#3}]!"
 
 [inst.LDPD_FP_POST]
 form = "FPPAIR"
 opcode = 0x6C
 match = { idx2 = 3 }
-ops = ["t1:fpr:out", "base:r64", "t2:fpr:out", "imm:imm7fp8"]
-asm = "ldp {t1}, {t2}, [{base}], #{imm}"
+asm = "ldp {t1:fpr:out#0}, {t2:fpr:out#2}, [{base:r64#1}], #{imm:imm7fp8#3}"
 
 [inst.STPQ_FP]
 form = "FPPAIR"
 opcode = 0xAD
 match = { idx2 = 0 }
-ops = ["t1:fprq", "base:r64", "t2:fprq", "imm:imm7fp16"]
-asm = "stp {t1}, {t2}, [{base}, #{imm}]"
+asm = "stp {t1:fprq#0}, {t2:fprq#2}, [{base:r64#1}, #{imm:imm7fp16#3}]"
 
 [inst.STPQ_FP_PRE]
 form = "FPPAIR"
 opcode = 0xAD
 match = { idx2 = 2 }
-ops = ["t1:fprq", "base:r64", "t2:fprq", "imm:imm7fp16"]
-asm = "stp {t1}, {t2}, [{base}, #{imm}]!"
+asm = "stp {t1:fprq#0}, {t2:fprq#2}, [{base:r64#1}, #{imm:imm7fp16#3}]!"
 
 [inst.STPQ_FP_POST]
 form = "FPPAIR"
 opcode = 0xAC
 match = { idx2 = 2 }
-ops = ["t1:fprq", "base:r64", "t2:fprq", "imm:imm7fp16"]
-asm = "stp {t1}, {t2}, [{base}], #{imm}"
+asm = "stp {t1:fprq#0}, {t2:fprq#2}, [{base:r64#1}], #{imm:imm7fp16#3}"
 
 [inst.LDPQ_FP]
 form = "FPPAIR"
 opcode = 0xAD
 match = { idx2 = 1 }
-ops = ["t1:fprq:out", "base:r64", "t2:fprq:out", "imm:imm7fp16"]
-asm = "ldp {t1}, {t2}, [{base}, #{imm}]"
+asm = "ldp {t1:fprq:out#0}, {t2:fprq:out#2}, [{base:r64#1}, #{imm:imm7fp16#3}]"
 
 [inst.LDPQ_FP_PRE]
 form = "FPPAIR"
 opcode = 0xAD
 match = { idx2 = 3 }
-ops = ["t1:fprq:out", "base:r64", "t2:fprq:out", "imm:imm7fp16"]
-asm = "ldp {t1}, {t2}, [{base}, #{imm}]!"
+asm = "ldp {t1:fprq:out#0}, {t2:fprq:out#2}, [{base:r64#1}, #{imm:imm7fp16#3}]!"
 
 [inst.LDPQ_FP_POST]
 form = "FPPAIR"
 opcode = 0xAC
 match = { idx2 = 3 }
-ops = ["t1:fprq:out", "base:r64", "t2:fprq:out", "imm:imm7fp16"]
-asm = "ldp {t1}, {t2}, [{base}], #{imm}"
+asm = "ldp {t1:fprq:out#0}, {t2:fprq:out#2}, [{base:r64#1}], #{imm:imm7fp16#3}"
 
 # ── 移位立即数（`add w3, w4, #1024, lsl #12`）──
 #
@@ -2963,57 +2631,49 @@ asm = "ldp {t1}, {t2}, [{base}], #{imm}"
 form = "ALUIMM"
 opcode = 0x91
 match = { shift = 1 }
-ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
-asm = "add {dst}, {src}, #{imm}, lsl #12"
+asm = "add {dst:r64:out}, {src:r64}, #{imm:imm12u}, lsl #12"
 
 [inst.ADD_W_LSL12]
 form = "ALUIMM"
 opcode = 0x11
 match = { shift = 1 }
-ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
-asm = "add {dst}, {src}, #{imm}, lsl #12"
+asm = "add {dst:r32:out}, {src:r32}, #{imm:imm12u}, lsl #12"
 
 [inst.ADDS_X_LSL12]
 form = "ALUIMM"
 opcode = 0xB1
 match = { shift = 1 }
-ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
-asm = "adds {dst}, {src}, #{imm}, lsl #12"
+asm = "adds {dst:r64:out}, {src:r64}, #{imm:imm12u}, lsl #12"
 
 [inst.ADDS_W_LSL12]
 form = "ALUIMM"
 opcode = 0x31
 match = { shift = 1 }
-ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
-asm = "adds {dst}, {src}, #{imm}, lsl #12"
+asm = "adds {dst:r32:out}, {src:r32}, #{imm:imm12u}, lsl #12"
 
 [inst.SUB_X_LSL12]
 form = "ALUIMM"
 opcode = 0xD1
 match = { shift = 1 }
-ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
-asm = "sub {dst}, {src}, #{imm}, lsl #12"
+asm = "sub {dst:r64:out}, {src:r64}, #{imm:imm12u}, lsl #12"
 
 [inst.SUB_W_LSL12]
 form = "ALUIMM"
 opcode = 0x51
 match = { shift = 1 }
-ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
-asm = "sub {dst}, {src}, #{imm}, lsl #12"
+asm = "sub {dst:r32:out}, {src:r32}, #{imm:imm12u}, lsl #12"
 
 [inst.SUBS_X_LSL12]
 form = "ALUIMM"
 opcode = 0xF1
 match = { shift = 1 }
-ops = ["dst:r64:out", "src:r64", "imm:imm12u"]
-asm = "subs {dst}, {src}, #{imm}, lsl #12"
+asm = "subs {dst:r64:out}, {src:r64}, #{imm:imm12u}, lsl #12"
 
 [inst.SUBS_W_LSL12]
 form = "ALUIMM"
 opcode = 0x71
 match = { shift = 1 }
-ops = ["dst:r32:out", "src:r32", "imm:imm12u"]
-asm = "subs {dst}, {src}, #{imm}, lsl #12"
+asm = "subs {dst:r32:out}, {src:r32}, #{imm:imm12u}, lsl #12"
 
 # 重定位 + 移位：`add x2, x3, #:lo12:sym, lsl #12`（`elf-reloc-addsubimm.s` 就这一条）。
 
@@ -3021,57 +2681,49 @@ asm = "subs {dst}, {src}, #{imm}, lsl #12"
 form = "ALUIMM"
 opcode = 0x91
 match = { shift = 1 }
-ops = ["dst:r64:out", "src:r64", "imm:imm12sym"]
-asm = "add {dst}, {src}, {imm}, lsl #12"
+asm = "add {dst:r64:out}, {src:r64}, {imm:imm12sym}, lsl #12"
 
 [inst.ADD_W_RELO_LSL12]
 form = "ALUIMM"
 opcode = 0x11
 match = { shift = 1 }
-ops = ["dst:r32:out", "src:r32", "imm:imm12sym"]
-asm = "add {dst}, {src}, {imm}, lsl #12"
+asm = "add {dst:r32:out}, {src:r32}, {imm:imm12sym}, lsl #12"
 
 [inst.ADDS_X_RELO_LSL12]
 form = "ALUIMM"
 opcode = 0xB1
 match = { shift = 1 }
-ops = ["dst:r64:out", "src:r64", "imm:imm12sym"]
-asm = "adds {dst}, {src}, {imm}, lsl #12"
+asm = "adds {dst:r64:out}, {src:r64}, {imm:imm12sym}, lsl #12"
 
 [inst.ADDS_W_RELO_LSL12]
 form = "ALUIMM"
 opcode = 0x31
 match = { shift = 1 }
-ops = ["dst:r32:out", "src:r32", "imm:imm12sym"]
-asm = "adds {dst}, {src}, {imm}, lsl #12"
+asm = "adds {dst:r32:out}, {src:r32}, {imm:imm12sym}, lsl #12"
 
 [inst.SUB_X_RELO_LSL12]
 form = "ALUIMM"
 opcode = 0xD1
 match = { shift = 1 }
-ops = ["dst:r64:out", "src:r64", "imm:imm12sym"]
-asm = "sub {dst}, {src}, {imm}, lsl #12"
+asm = "sub {dst:r64:out}, {src:r64}, {imm:imm12sym}, lsl #12"
 
 [inst.SUB_W_RELO_LSL12]
 form = "ALUIMM"
 opcode = 0x51
 match = { shift = 1 }
-ops = ["dst:r32:out", "src:r32", "imm:imm12sym"]
-asm = "sub {dst}, {src}, {imm}, lsl #12"
+asm = "sub {dst:r32:out}, {src:r32}, {imm:imm12sym}, lsl #12"
 
 [inst.SUBS_X_RELO_LSL12]
 form = "ALUIMM"
 opcode = 0xF1
 match = { shift = 1 }
-ops = ["dst:r64:out", "src:r64", "imm:imm12sym"]
-asm = "subs {dst}, {src}, {imm}, lsl #12"
+asm = "subs {dst:r64:out}, {src:r64}, {imm:imm12sym}, lsl #12"
 
 [inst.SUBS_W_RELO_LSL12]
 form = "ALUIMM"
 opcode = 0x71
 match = { shift = 1 }
-ops = ["dst:r32:out", "src:r32", "imm:imm12sym"]
-asm = "subs {dst}, {src}, {imm}, lsl #12"
+asm = "subs {dst:r32:out}, {src:r32}, {imm:imm12sym}, lsl #12"
 
 # ── 重定位修饰形态（`add x0, x0, #:lo12:sym` / `ldr w0, [sp, #:lo12:...]`）──
 #
@@ -3084,85 +2736,73 @@ asm = "subs {dst}, {src}, {imm}, lsl #12"
 form = "ALUIMM"
 opcode = 0x91
 match = { shift = 0 }
-ops = ["dst:r64:out", "src:r64", "imm:imm12sym"]
-asm = "add {dst}, {src}, {imm}"
+asm = "add {dst:r64:out}, {src:r64}, {imm:imm12sym}"
 
 [inst.ADD_W_RELO]
 form = "ALUIMM"
 opcode = 0x11
 match = { shift = 0 }
-ops = ["dst:r32:out", "src:r32", "imm:imm12sym"]
-asm = "add {dst}, {src}, {imm}"
+asm = "add {dst:r32:out}, {src:r32}, {imm:imm12sym}"
 
 [inst.ADDS_X_RELO]
 form = "ALUIMM"
 opcode = 0xB1
 match = { shift = 0 }
-ops = ["dst:r64:out", "src:r64", "imm:imm12sym"]
-asm = "adds {dst}, {src}, {imm}"
+asm = "adds {dst:r64:out}, {src:r64}, {imm:imm12sym}"
 
 [inst.ADDS_W_RELO]
 form = "ALUIMM"
 opcode = 0x31
 match = { shift = 0 }
-ops = ["dst:r32:out", "src:r32", "imm:imm12sym"]
-asm = "adds {dst}, {src}, {imm}"
+asm = "adds {dst:r32:out}, {src:r32}, {imm:imm12sym}"
 
 [inst.SUB_X_RELO]
 form = "ALUIMM"
 opcode = 0xD1
 match = { shift = 0 }
-ops = ["dst:r64:out", "src:r64", "imm:imm12sym"]
-asm = "sub {dst}, {src}, {imm}"
+asm = "sub {dst:r64:out}, {src:r64}, {imm:imm12sym}"
 
 [inst.SUB_W_RELO]
 form = "ALUIMM"
 opcode = 0x51
 match = { shift = 0 }
-ops = ["dst:r32:out", "src:r32", "imm:imm12sym"]
-asm = "sub {dst}, {src}, {imm}"
+asm = "sub {dst:r32:out}, {src:r32}, {imm:imm12sym}"
 
 [inst.SUBS_X_RELO]
 form = "ALUIMM"
 opcode = 0xF1
 match = { shift = 0 }
-ops = ["dst:r64:out", "src:r64", "imm:imm12sym"]
-asm = "subs {dst}, {src}, {imm}"
+asm = "subs {dst:r64:out}, {src:r64}, {imm:imm12sym}"
 
 [inst.SUBS_W_RELO]
 form = "ALUIMM"
 opcode = 0x71
 match = { shift = 0 }
-ops = ["dst:r32:out", "src:r32", "imm:imm12sym"]
-asm = "subs {dst}, {src}, {imm}"
+asm = "subs {dst:r32:out}, {src:r32}, {imm:imm12sym}"
 
 [inst.LDRX_RELO]
 form = "LSUI"
 opcode = 0xF9
 match = { opc2 = 1 }
-ops = ["dst:r64:out", "base:r64", "imm:imm12sym"]
-asm = "ldr {dst}, [{base}, {imm}]"
+asm = "ldr {dst:r64:out}, [{base:r64}, {imm:imm12sym}]"
 
 [inst.LDRW_RELO]
 form = "LSUI"
 opcode = 0xB9
 match = { opc2 = 1 }
-ops = ["dst:r32:out", "base:r64", "imm:imm12sym"]
-asm = "ldr {dst}, [{base}, {imm}]"
+asm = "ldr {dst:r32:out}, [{base:r64}, {imm:imm12sym}]"
 
 [inst.STRX_RELO]
 form = "LSUI"
 opcode = 0xF9
 match = { opc2 = 0 }
-ops = ["src:r64", "base:r64", "imm:imm12sym"]
-asm = "str {src}, [{base}, {imm}]"
+asm = "str {src:r64}, [{base:r64}, {imm:imm12sym}]"
 
 [inst.STRW_RELO]
 form = "LSUI"
 opcode = 0xB9
 match = { opc2 = 0 }
-ops = ["src:r32", "base:r64", "imm:imm12sym"]
-asm = "str {src}, [{base}, {imm}]"
+asm = "str {src:r32}, [{base:r64}, {imm:imm12sym}]"
 
 # ── 字节/半字 GPR 访存（`ldrb w4, [x3]`、`ldrsh x5, [x9, #24]`、`strb w5, [x4, #20]`）──
 #
@@ -3176,127 +2816,109 @@ asm = "str {src}, [{base}, {imm}]"
 form = "LSUI"
 opcode = 0x39
 match = { opc2 = 1 }
-ops = ["dst:r32:out", "base:r64", "imm:imm12b"]
-asm = "ldrb {dst}, [{base}, #{imm}]"
+asm = "ldrb {dst:r32:out}, [{base:r64}, #{imm:imm12b}]"
 
 [inst.LDRBW_ND]
 form = "LSUIND"
 opcode = 0x39
 match = { opc2 = 1, imm12s = 0 }
-ops = ["dst:r32:out", "base:r64"]
-asm = "ldrb {dst}, [{base}]"
+asm = "ldrb {dst:r32:out}, [{base:r64}]"
 
 [inst.STRBW]
 form = "LSUI"
 opcode = 0x39
 match = { opc2 = 0 }
-ops = ["src:r32", "base:r64", "imm:imm12b"]
-asm = "strb {src}, [{base}, #{imm}]"
+asm = "strb {src:r32}, [{base:r64}, #{imm:imm12b}]"
 
 [inst.STRBW_ND]
 form = "LSUIND"
 opcode = 0x39
 match = { opc2 = 0, imm12s = 0 }
-ops = ["src:r32", "base:r64"]
-asm = "strb {src}, [{base}]"
+asm = "strb {src:r32}, [{base:r64}]"
 
 [inst.LDRHW]
 form = "LSUI"
 opcode = 0x79
 match = { opc2 = 1 }
-ops = ["dst:r32:out", "base:r64", "imm:imm12h"]
-asm = "ldrh {dst}, [{base}, #{imm}]"
+asm = "ldrh {dst:r32:out}, [{base:r64}, #{imm:imm12h}]"
 
 [inst.LDRHW_ND]
 form = "LSUIND"
 opcode = 0x79
 match = { opc2 = 1, imm12s = 0 }
-ops = ["dst:r32:out", "base:r64"]
-asm = "ldrh {dst}, [{base}]"
+asm = "ldrh {dst:r32:out}, [{base:r64}]"
 
 [inst.STRHW]
 form = "LSUI"
 opcode = 0x79
 match = { opc2 = 0 }
-ops = ["src:r32", "base:r64", "imm:imm12h"]
-asm = "strh {src}, [{base}, #{imm}]"
+asm = "strh {src:r32}, [{base:r64}, #{imm:imm12h}]"
 
 [inst.STRHW_ND]
 form = "LSUIND"
 opcode = 0x79
 match = { opc2 = 0, imm12s = 0 }
-ops = ["src:r32", "base:r64"]
-asm = "strh {src}, [{base}]"
+asm = "strh {src:r32}, [{base:r64}]"
 
 [inst.LDRSBX]
 form = "LSUI"
 opcode = 0x39
 match = { opc2 = 2 }
-ops = ["dst:r64:out", "base:r64", "imm:imm12b"]
-asm = "ldrsb {dst}, [{base}, #{imm}]"
+asm = "ldrsb {dst:r64:out}, [{base:r64}, #{imm:imm12b}]"
 
 [inst.LDRSBX_ND]
 form = "LSUIND"
 opcode = 0x39
 match = { opc2 = 2, imm12s = 0 }
-ops = ["dst:r64:out", "base:r64"]
-asm = "ldrsb {dst}, [{base}]"
+asm = "ldrsb {dst:r64:out}, [{base:r64}]"
 
 [inst.LDRSBW]
 form = "LSUI"
 opcode = 0x39
 match = { opc2 = 3 }
-ops = ["dst:r32:out", "base:r64", "imm:imm12b"]
-asm = "ldrsb {dst}, [{base}, #{imm}]"
+asm = "ldrsb {dst:r32:out}, [{base:r64}, #{imm:imm12b}]"
 
 [inst.LDRSBW_ND]
 form = "LSUIND"
 opcode = 0x39
 match = { opc2 = 3, imm12s = 0 }
-ops = ["dst:r32:out", "base:r64"]
-asm = "ldrsb {dst}, [{base}]"
+asm = "ldrsb {dst:r32:out}, [{base:r64}]"
 
 [inst.LDRSHX]
 form = "LSUI"
 opcode = 0x79
 match = { opc2 = 2 }
-ops = ["dst:r64:out", "base:r64", "imm:imm12h"]
-asm = "ldrsh {dst}, [{base}, #{imm}]"
+asm = "ldrsh {dst:r64:out}, [{base:r64}, #{imm:imm12h}]"
 
 [inst.LDRSHX_ND]
 form = "LSUIND"
 opcode = 0x79
 match = { opc2 = 2, imm12s = 0 }
-ops = ["dst:r64:out", "base:r64"]
-asm = "ldrsh {dst}, [{base}]"
+asm = "ldrsh {dst:r64:out}, [{base:r64}]"
 
 [inst.LDRSHW]
 form = "LSUI"
 opcode = 0x79
 match = { opc2 = 3 }
-ops = ["dst:r32:out", "base:r64", "imm:imm12h"]
-asm = "ldrsh {dst}, [{base}, #{imm}]"
+asm = "ldrsh {dst:r32:out}, [{base:r64}, #{imm:imm12h}]"
 
 [inst.LDRSHW_ND]
 form = "LSUIND"
 opcode = 0x79
 match = { opc2 = 3, imm12s = 0 }
-ops = ["dst:r32:out", "base:r64"]
-asm = "ldrsh {dst}, [{base}]"
+asm = "ldrsh {dst:r32:out}, [{base:r64}]"
 
 [inst.LDRSWX]
 form = "LSUI"
 opcode = 0xB9
 match = { opc2 = 2 }
-ops = ["dst:r64:out", "base:r64", "imm:imm12w"]
-asm = "ldrsw {dst}, [{base}, #{imm}]"
+asm = "ldrsw {dst:r64:out}, [{base:r64}, #{imm:imm12w}]"
 
 [inst.LDRSWX_ND]
 form = "LSUIND"
 opcode = 0xB9
 match = { opc2 = 2, imm12s = 0 }
-ops = ["dst:r64:out", "base:r64"]
-asm = "ldrsw {dst}, [{base}]"
+asm = "ldrsw {dst:r64:out}, [{base:r64}]"
 
 # ── 扩展寄存器操作数（`add x8, x8, w5, sxtw #2` / `cmp w0, w1, uxtb`）──
 #
@@ -3310,372 +2932,319 @@ asm = "ldrsw {dst}, [{base}]"
 form = "EXTREG"
 opcode = 0x8B
 match = { one21 = 1 }
-ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3", "amt:amt3"]
-asm = "add {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "add {dst:r64:out}, {src:r64}, {src2:r32}, {ext:extw3} #{amt:amt3}"
 
 [inst.ADD_X_EXTW_NA]
 form = "EXTREG_NA"
 opcode = 0x8B
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3"]
-asm = "add {dst}, {src}, {src2}, {ext}"
+asm = "add {dst:r64:out}, {src:r64}, {src2:r32}, {ext:extw3}"
 
 [inst.ADD_X_EXTX]
 form = "EXTREG"
 opcode = 0x8B
 match = { one21 = 1 }
-ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3", "amt:amt3"]
-asm = "add {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "add {dst:r64:out}, {src:r64}, {src2:r64}, {ext:extx3} #{amt:amt3}"
 
 [inst.ADD_X_EXTX_NA]
 form = "EXTREG_NA"
 opcode = 0x8B
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3"]
-asm = "add {dst}, {src}, {src2}, {ext}"
+asm = "add {dst:r64:out}, {src:r64}, {src2:r64}, {ext:extx3}"
 
 [inst.ADD_W_EXTW]
 form = "EXTREG"
 opcode = 0xB
 match = { one21 = 1 }
-ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3", "amt:amt3"]
-asm = "add {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "add {dst:r32:out}, {src:r32}, {src2:r32}, {ext:extw3} #{amt:amt3}"
 
 [inst.ADD_W_EXTW_NA]
 form = "EXTREG_NA"
 opcode = 0xB
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3"]
-asm = "add {dst}, {src}, {src2}, {ext}"
+asm = "add {dst:r32:out}, {src:r32}, {src2:r32}, {ext:extw3}"
 
 [inst.ADD_W_EXTX]
 form = "EXTREG"
 opcode = 0xB
 match = { one21 = 1 }
-ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3", "amt:amt3"]
-asm = "add {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "add {dst:r32:out}, {src:r32}, {src2:r64}, {ext:extx3} #{amt:amt3}"
 
 [inst.ADD_W_EXTX_NA]
 form = "EXTREG_NA"
 opcode = 0xB
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3"]
-asm = "add {dst}, {src}, {src2}, {ext}"
+asm = "add {dst:r32:out}, {src:r32}, {src2:r64}, {ext:extx3}"
 
 [inst.ADDS_X_EXTW]
 form = "EXTREG"
 opcode = 0xAB
 match = { one21 = 1 }
-ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3", "amt:amt3"]
-asm = "adds {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "adds {dst:r64:out}, {src:r64}, {src2:r32}, {ext:extw3} #{amt:amt3}"
 
 [inst.ADDS_X_EXTW_NA]
 form = "EXTREG_NA"
 opcode = 0xAB
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3"]
-asm = "adds {dst}, {src}, {src2}, {ext}"
+asm = "adds {dst:r64:out}, {src:r64}, {src2:r32}, {ext:extw3}"
 
 [inst.ADDS_X_EXTX]
 form = "EXTREG"
 opcode = 0xAB
 match = { one21 = 1 }
-ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3", "amt:amt3"]
-asm = "adds {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "adds {dst:r64:out}, {src:r64}, {src2:r64}, {ext:extx3} #{amt:amt3}"
 
 [inst.ADDS_X_EXTX_NA]
 form = "EXTREG_NA"
 opcode = 0xAB
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3"]
-asm = "adds {dst}, {src}, {src2}, {ext}"
+asm = "adds {dst:r64:out}, {src:r64}, {src2:r64}, {ext:extx3}"
 
 [inst.ADDS_W_EXTW]
 form = "EXTREG"
 opcode = 0x2B
 match = { one21 = 1 }
-ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3", "amt:amt3"]
-asm = "adds {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "adds {dst:r32:out}, {src:r32}, {src2:r32}, {ext:extw3} #{amt:amt3}"
 
 [inst.ADDS_W_EXTW_NA]
 form = "EXTREG_NA"
 opcode = 0x2B
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3"]
-asm = "adds {dst}, {src}, {src2}, {ext}"
+asm = "adds {dst:r32:out}, {src:r32}, {src2:r32}, {ext:extw3}"
 
 [inst.ADDS_W_EXTX]
 form = "EXTREG"
 opcode = 0x2B
 match = { one21 = 1 }
-ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3", "amt:amt3"]
-asm = "adds {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "adds {dst:r32:out}, {src:r32}, {src2:r64}, {ext:extx3} #{amt:amt3}"
 
 [inst.ADDS_W_EXTX_NA]
 form = "EXTREG_NA"
 opcode = 0x2B
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3"]
-asm = "adds {dst}, {src}, {src2}, {ext}"
+asm = "adds {dst:r32:out}, {src:r32}, {src2:r64}, {ext:extx3}"
 
 [inst.SUB_X_EXTW]
 form = "EXTREG"
 opcode = 0xCB
 match = { one21 = 1 }
-ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3", "amt:amt3"]
-asm = "sub {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "sub {dst:r64:out}, {src:r64}, {src2:r32}, {ext:extw3} #{amt:amt3}"
 
 [inst.SUB_X_EXTW_NA]
 form = "EXTREG_NA"
 opcode = 0xCB
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3"]
-asm = "sub {dst}, {src}, {src2}, {ext}"
+asm = "sub {dst:r64:out}, {src:r64}, {src2:r32}, {ext:extw3}"
 
 [inst.SUB_X_EXTX]
 form = "EXTREG"
 opcode = 0xCB
 match = { one21 = 1 }
-ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3", "amt:amt3"]
-asm = "sub {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "sub {dst:r64:out}, {src:r64}, {src2:r64}, {ext:extx3} #{amt:amt3}"
 
 [inst.SUB_X_EXTX_NA]
 form = "EXTREG_NA"
 opcode = 0xCB
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3"]
-asm = "sub {dst}, {src}, {src2}, {ext}"
+asm = "sub {dst:r64:out}, {src:r64}, {src2:r64}, {ext:extx3}"
 
 [inst.SUB_W_EXTW]
 form = "EXTREG"
 opcode = 0x4B
 match = { one21 = 1 }
-ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3", "amt:amt3"]
-asm = "sub {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "sub {dst:r32:out}, {src:r32}, {src2:r32}, {ext:extw3} #{amt:amt3}"
 
 [inst.SUB_W_EXTW_NA]
 form = "EXTREG_NA"
 opcode = 0x4B
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3"]
-asm = "sub {dst}, {src}, {src2}, {ext}"
+asm = "sub {dst:r32:out}, {src:r32}, {src2:r32}, {ext:extw3}"
 
 [inst.SUB_W_EXTX]
 form = "EXTREG"
 opcode = 0x4B
 match = { one21 = 1 }
-ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3", "amt:amt3"]
-asm = "sub {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "sub {dst:r32:out}, {src:r32}, {src2:r64}, {ext:extx3} #{amt:amt3}"
 
 [inst.SUB_W_EXTX_NA]
 form = "EXTREG_NA"
 opcode = 0x4B
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3"]
-asm = "sub {dst}, {src}, {src2}, {ext}"
+asm = "sub {dst:r32:out}, {src:r32}, {src2:r64}, {ext:extx3}"
 
 [inst.SUBS_X_EXTW]
 form = "EXTREG"
 opcode = 0xEB
 match = { one21 = 1 }
-ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3", "amt:amt3"]
-asm = "subs {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "subs {dst:r64:out}, {src:r64}, {src2:r32}, {ext:extw3} #{amt:amt3}"
 
 [inst.SUBS_X_EXTW_NA]
 form = "EXTREG_NA"
 opcode = 0xEB
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r64:out", "src:r64", "src2:r32", "ext:extw3"]
-asm = "subs {dst}, {src}, {src2}, {ext}"
+asm = "subs {dst:r64:out}, {src:r64}, {src2:r32}, {ext:extw3}"
 
 [inst.SUBS_X_EXTX]
 form = "EXTREG"
 opcode = 0xEB
 match = { one21 = 1 }
-ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3", "amt:amt3"]
-asm = "subs {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "subs {dst:r64:out}, {src:r64}, {src2:r64}, {ext:extx3} #{amt:amt3}"
 
 [inst.SUBS_X_EXTX_NA]
 form = "EXTREG_NA"
 opcode = 0xEB
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r64:out", "src:r64", "src2:r64", "ext:extx3"]
-asm = "subs {dst}, {src}, {src2}, {ext}"
+asm = "subs {dst:r64:out}, {src:r64}, {src2:r64}, {ext:extx3}"
 
 [inst.SUBS_W_EXTW]
 form = "EXTREG"
 opcode = 0x6B
 match = { one21 = 1 }
-ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3", "amt:amt3"]
-asm = "subs {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "subs {dst:r32:out}, {src:r32}, {src2:r32}, {ext:extw3} #{amt:amt3}"
 
 [inst.SUBS_W_EXTW_NA]
 form = "EXTREG_NA"
 opcode = 0x6B
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r32:out", "src:r32", "src2:r32", "ext:extw3"]
-asm = "subs {dst}, {src}, {src2}, {ext}"
+asm = "subs {dst:r32:out}, {src:r32}, {src2:r32}, {ext:extw3}"
 
 [inst.SUBS_W_EXTX]
 form = "EXTREG"
 opcode = 0x6B
 match = { one21 = 1 }
-ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3", "amt:amt3"]
-asm = "subs {dst}, {src}, {src2}, {ext} #{amt}"
+asm = "subs {dst:r32:out}, {src:r32}, {src2:r64}, {ext:extx3} #{amt:amt3}"
 
 [inst.SUBS_W_EXTX_NA]
 form = "EXTREG_NA"
 opcode = 0x6B
 match = { one21 = 1, imm3 = 0 }
-ops = ["dst:r32:out", "src:r32", "src2:r64", "ext:extx3"]
-asm = "subs {dst}, {src}, {src2}, {ext}"
+asm = "subs {dst:r32:out}, {src:r32}, {src2:r64}, {ext:extx3}"
 
 [inst.CMP_X_EXTW]
 form = "EXTREG2"
 opcode = 0xEB
 match = { one21 = 1, rd = 31 }
-ops = ["src:r64", "src2:r32", "ext:extw3", "amt:amt3"]
-asm = "cmp {src}, {src2}, {ext} #{amt}"
+asm = "cmp {src:r64}, {src2:r32}, {ext:extw3} #{amt:amt3}"
 
 [inst.CMP_X_EXTW_NA]
 form = "EXTREG2_NA"
 opcode = 0xEB
 match = { one21 = 1, imm3 = 0, rd = 31 }
-ops = ["src:r64", "src2:r32", "ext:extw3"]
-asm = "cmp {src}, {src2}, {ext}"
+asm = "cmp {src:r64}, {src2:r32}, {ext:extw3}"
 
 [inst.CMP_X_EXTX]
 form = "EXTREG2"
 opcode = 0xEB
 match = { one21 = 1, rd = 31 }
-ops = ["src:r64", "src2:r64", "ext:extx3", "amt:amt3"]
-asm = "cmp {src}, {src2}, {ext} #{amt}"
+asm = "cmp {src:r64}, {src2:r64}, {ext:extx3} #{amt:amt3}"
 
 [inst.CMP_X_EXTX_NA]
 form = "EXTREG2_NA"
 opcode = 0xEB
 match = { one21 = 1, imm3 = 0, rd = 31 }
-ops = ["src:r64", "src2:r64", "ext:extx3"]
-asm = "cmp {src}, {src2}, {ext}"
+asm = "cmp {src:r64}, {src2:r64}, {ext:extx3}"
 
 [inst.CMP_W_EXTW]
 form = "EXTREG2"
 opcode = 0x6B
 match = { one21 = 1, rd = 31 }
-ops = ["src:r32", "src2:r32", "ext:extw3", "amt:amt3"]
-asm = "cmp {src}, {src2}, {ext} #{amt}"
+asm = "cmp {src:r32}, {src2:r32}, {ext:extw3} #{amt:amt3}"
 
 [inst.CMP_W_EXTW_NA]
 form = "EXTREG2_NA"
 opcode = 0x6B
 match = { one21 = 1, imm3 = 0, rd = 31 }
-ops = ["src:r32", "src2:r32", "ext:extw3"]
-asm = "cmp {src}, {src2}, {ext}"
+asm = "cmp {src:r32}, {src2:r32}, {ext:extw3}"
 
 [inst.CMP_W_EXTX]
 form = "EXTREG2"
 opcode = 0x6B
 match = { one21 = 1, rd = 31 }
-ops = ["src:r32", "src2:r64", "ext:extx3", "amt:amt3"]
-asm = "cmp {src}, {src2}, {ext} #{amt}"
+asm = "cmp {src:r32}, {src2:r64}, {ext:extx3} #{amt:amt3}"
 
 [inst.CMP_W_EXTX_NA]
 form = "EXTREG2_NA"
 opcode = 0x6B
 match = { one21 = 1, imm3 = 0, rd = 31 }
-ops = ["src:r32", "src2:r64", "ext:extx3"]
-asm = "cmp {src}, {src2}, {ext}"
+asm = "cmp {src:r32}, {src2:r64}, {ext:extx3}"
 
 [inst.CMN_X_EXTW]
 form = "EXTREG2"
 opcode = 0xAB
 match = { one21 = 1, rd = 31 }
-ops = ["src:r64", "src2:r32", "ext:extw3", "amt:amt3"]
-asm = "cmn {src}, {src2}, {ext} #{amt}"
+asm = "cmn {src:r64}, {src2:r32}, {ext:extw3} #{amt:amt3}"
 
 [inst.CMN_X_EXTW_NA]
 form = "EXTREG2_NA"
 opcode = 0xAB
 match = { one21 = 1, imm3 = 0, rd = 31 }
-ops = ["src:r64", "src2:r32", "ext:extw3"]
-asm = "cmn {src}, {src2}, {ext}"
+asm = "cmn {src:r64}, {src2:r32}, {ext:extw3}"
 
 [inst.CMN_X_EXTX]
 form = "EXTREG2"
 opcode = 0xAB
 match = { one21 = 1, rd = 31 }
-ops = ["src:r64", "src2:r64", "ext:extx3", "amt:amt3"]
-asm = "cmn {src}, {src2}, {ext} #{amt}"
+asm = "cmn {src:r64}, {src2:r64}, {ext:extx3} #{amt:amt3}"
 
 [inst.CMN_X_EXTX_NA]
 form = "EXTREG2_NA"
 opcode = 0xAB
 match = { one21 = 1, imm3 = 0, rd = 31 }
-ops = ["src:r64", "src2:r64", "ext:extx3"]
-asm = "cmn {src}, {src2}, {ext}"
+asm = "cmn {src:r64}, {src2:r64}, {ext:extx3}"
 
 [inst.CMN_W_EXTW]
 form = "EXTREG2"
 opcode = 0x2B
 match = { one21 = 1, rd = 31 }
-ops = ["src:r32", "src2:r32", "ext:extw3", "amt:amt3"]
-asm = "cmn {src}, {src2}, {ext} #{amt}"
+asm = "cmn {src:r32}, {src2:r32}, {ext:extw3} #{amt:amt3}"
 
 [inst.CMN_W_EXTW_NA]
 form = "EXTREG2_NA"
 opcode = 0x2B
 match = { one21 = 1, imm3 = 0, rd = 31 }
-ops = ["src:r32", "src2:r32", "ext:extw3"]
-asm = "cmn {src}, {src2}, {ext}"
+asm = "cmn {src:r32}, {src2:r32}, {ext:extw3}"
 
 [inst.CMN_W_EXTX]
 form = "EXTREG2"
 opcode = 0x2B
 match = { one21 = 1, rd = 31 }
-ops = ["src:r32", "src2:r64", "ext:extx3", "amt:amt3"]
-asm = "cmn {src}, {src2}, {ext} #{amt}"
+asm = "cmn {src:r32}, {src2:r64}, {ext:extx3} #{amt:amt3}"
 
 [inst.CMN_W_EXTX_NA]
 form = "EXTREG2_NA"
 opcode = 0x2B
 match = { one21 = 1, imm3 = 0, rd = 31 }
-ops = ["src:r32", "src2:r64", "ext:extx3"]
-asm = "cmn {src}, {src2}, {ext}"
+asm = "cmn {src:r32}, {src2:r64}, {ext:extx3}"
 
 [inst.SUBS_LSLW]
 form = "ALUSH5"
 opcode = 0x6B
 match = { shift = 0 }
-ops = ["dst:rz32:out", "src:rz32", "src2:rz32", "sh:imm5"]
-asm = "subs {dst}, {src}, {src2}, lsl #{sh}"
+asm = "subs {dst:rz32:out}, {src:rz32}, {src2:rz32}, lsl #{sh:imm5}"
 
 [inst.STPW_PRE]
 form = "PAIR"
 opcode = 0x29
 match = { idx2 = 2 }
-ops = ["t1:r32", "base:r64", "t2:r32", "imm:imm7w"]
-asm = "stp {t1}, {t2}, [{base}, #{imm}]!"
+asm = "stp {t1:r32#0}, {t2:r32#2}, [{base:r64#1}, #{imm:imm7w#3}]!"
 
 [inst.STPW_POST]
 form = "PAIR"
 opcode = 0x28
 match = { idx2 = 2 }
-ops = ["t1:r32", "base:r64", "t2:r32", "imm:imm7w"]
-asm = "stp {t1}, {t2}, [{base}], #{imm}"
+asm = "stp {t1:r32#0}, {t2:r32#2}, [{base:r64#1}], #{imm:imm7w#3}"
 
 [inst.LDPW_PRE]
 form = "PAIR"
 opcode = 0x29
 match = { idx2 = 3 }
-ops = ["t1:r32:out", "base:r64", "t2:r32:out", "imm:imm7w"]
-asm = "ldp {t1}, {t2}, [{base}, #{imm}]!"
+asm = "ldp {t1:r32:out#0}, {t2:r32:out#2}, [{base:r64#1}, #{imm:imm7w#3}]!"
 
 [inst.LDPW_POST]
 form = "PAIR"
 opcode = 0x28
 match = { idx2 = 3 }
-ops = ["t1:r32:out", "base:r64", "t2:r32:out", "imm:imm7w"]
-asm = "ldp {t1}, {t2}, [{base}], #{imm}"
+asm = "ldp {t1:r32:out#0}, {t2:r32:out#2}, [{base:r64#1}], #{imm:imm7w#3}"
 
 # ── 别名 ──
 
@@ -5277,16 +4846,14 @@ data_width = 32
 form = "FMOVR"
 opcode = 0x1E
 match = { op8b = 0x20, zero6 = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "fmov {dst}, {src}"
+asm = "fmov {dst:fpr:out}, {src:fpr}"
 
 [inst.FMOV_D]
 data_width = 64
 form = "FMOVR"
 opcode = 0x1E
 match = { op8b = 0x60, zero6 = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "fmov {dst}, {src}"
+asm = "fmov {dst:fpr:out}, {src:fpr}"
 
 # LDUR/STUR (SIMD&FP, unscaled imm9)：与 LDURX/STURX 同形，只是寄存器文件不同——
 #   D：**0xFC**… (size=11, V=1, [25:24]=00 unscaled)、S：**0xBC**… (size=10)；opc2 = 01 载 / 00 存。
@@ -5299,8 +4866,7 @@ asm = "fmov {dst}, {src}"
 form = "LSUN"
 opcode = 0xFC
 match = { opc2 = 1, mode = 0, zero21 = 0 }
-ops = ["dst:fpr:out", "base:r64", "off:imm9s"]
-asm = "ldur {dst}, [{base}, #{off}]"
+asm = "ldur {dst:fpr:out}, [{base:r64}, #{off:imm9s}]"
 # 帧内保存/恢复的 **FPR 类**那条：AAPCS64 要求 v8-v15 的低 64 位由被调方保存，
 # 而 `LDURX`/`STURX` 只认 GPR。同一个"存到帧"能力按寄存器类分派（v20 A6）。
 roles = [{ role = "callee_load", class = "fpr" }]
@@ -5309,23 +4875,20 @@ roles = [{ role = "callee_load", class = "fpr" }]
 form = "LSUN"
 opcode = 0xFC
 match = { opc2 = 0, mode = 0, zero21 = 0 }
-ops = ["src:fpr", "base:r64", "off:imm9s"]
-asm = "stur {src}, [{base}, #{off}]"
+asm = "stur {src:fpr}, [{base:r64}, #{off:imm9s}]"
 roles = [{ role = "callee_save", class = "fpr" }]
 
 [inst.LDURS]
 form = "LSUN"
 opcode = 0xBC
 match = { opc2 = 1, mode = 0, zero21 = 0 }
-ops = ["dst:fpr:out", "base:r64", "off:imm9s"]
-asm = "ldur {dst}, [{base}, #{off}]"
+asm = "ldur {dst:fpr:out}, [{base:r64}, #{off:imm9s}]"
 
 [inst.STURS]
 form = "LSUN"
 opcode = 0xBC
 match = { opc2 = 0, mode = 0, zero21 = 0 }
-ops = ["src:fpr", "base:r64", "off:imm9s"]
-asm = "stur {src}, [{base}, #{off}]"
+asm = "stur {src:fpr}, [{base:r64}, #{off:imm9s}]"
 
 # FP 溢出（与 [spill.GPR] 同口径：base = X29、真字节 imm9 偏移）。
 # ── Q（128 位）单寄存器访存：size=00、opc 位型与 Q 的成对一致（[31:24] = 0x3C/0x3D）──
@@ -5334,57 +4897,49 @@ asm = "stur {src}, [{base}, #{off}]"
 form = "FPLSUI"
 opcode = 0x3D
 match = { opc2 = 3 }
-ops = ["dst:fprq:out", "base:r64", "imm:imm12fp16"]
-asm = "ldr {dst}, [{base}, #{imm}]"
+asm = "ldr {dst:fprq:out}, [{base:r64}, #{imm:imm12fp16}]"
 
 [inst.LDURQ_FP]
 form = "LSUN"
 opcode = 0x3C
 match = { opc2 = 3, mode = 0, zero21 = 0 }
-ops = ["dst:fprq:out", "base:r64", "off:imm9s"]
-asm = "ldur {dst}, [{base}, #{off}]"
+asm = "ldur {dst:fprq:out}, [{base:r64}, #{off:imm9s}]"
 
 [inst.LDRQ_FP_PRE]
 form = "LSUN"
 opcode = 0x3C
 match = { opc2 = 3, mode = 3, zero21 = 0 }
-ops = ["dst:fprq:out", "base:r64", "off:imm9s"]
-asm = "ldr {dst}, [{base}, #{off}]!"
+asm = "ldr {dst:fprq:out}, [{base:r64}, #{off:imm9s}]!"
 
 [inst.LDRQ_FP_POST]
 form = "LSUN"
 opcode = 0x3C
 match = { opc2 = 3, mode = 1, zero21 = 0 }
-ops = ["dst:fprq:out", "base:r64", "off:imm9s"]
-asm = "ldr {dst}, [{base}], #{off}"
+asm = "ldr {dst:fprq:out}, [{base:r64}], #{off:imm9s}"
 
 [inst.STRQ_FP]
 form = "FPLSUI"
 opcode = 0x3D
 match = { opc2 = 2 }
-ops = ["src:fprq", "base:r64", "imm:imm12fp16"]
-asm = "str {src}, [{base}, #{imm}]"
+asm = "str {src:fprq}, [{base:r64}, #{imm:imm12fp16}]"
 
 [inst.STURQ_FP]
 form = "LSUN"
 opcode = 0x3C
 match = { opc2 = 2, mode = 0, zero21 = 0 }
-ops = ["src:fprq", "base:r64", "off:imm9s"]
-asm = "stur {src}, [{base}, #{off}]"
+asm = "stur {src:fprq}, [{base:r64}, #{off:imm9s}]"
 
 [inst.STRQ_FP_PRE]
 form = "LSUN"
 opcode = 0x3C
 match = { opc2 = 2, mode = 3, zero21 = 0 }
-ops = ["src:fprq", "base:r64", "off:imm9s"]
-asm = "str {src}, [{base}, #{off}]!"
+asm = "str {src:fprq}, [{base:r64}, #{off:imm9s}]!"
 
 [inst.STRQ_FP_POST]
 form = "LSUN"
 opcode = 0x3C
 match = { opc2 = 2, mode = 1, zero21 = 0 }
-ops = ["src:fprq", "base:r64", "off:imm9s"]
-asm = "str {src}, [{base}], #{off}"
+asm = "str {src:fprq}, [{base:r64}], #{off:imm9s}"
 
 [machine.spill.fpr]
 class = "fpr64"

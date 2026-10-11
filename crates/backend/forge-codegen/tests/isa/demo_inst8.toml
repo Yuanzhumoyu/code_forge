@@ -93,23 +93,20 @@ asm = "nop"
 group = "add"
 form = "R3"
 opcode = 1
-ops = ["dst:r2:out", "src:r2", "src2:r2"]
-asm = "add {dst}, {src}, {src2}"
+asm = "add {dst:r2:out}, {src:r2}, {src2:r2}"
 
 [inst.MOV8]
 group = "mov"
 data_width = 8
 form = "R2"
 opcode = 2
-ops = ["dst:r2:out", "src:r2"]
-asm = "mov {dst}, {src}"
+asm = "mov {dst:r2:out}, {src:r2}"
 
 [inst.BRZ8]
 form = "B"
 opcode = 3
 effect = ["Branch"]
-ops = ["src:r2", "target:lab"]
-asm = "brz {src}, {target}"
+asm = "brz {src:r2}, {target:lab}"
 
 # ── 显式别名（多态引用名 → 指令名列表）──
 

@@ -97,57 +97,38 @@ fn inst_blocks_have_legacy_keys(text: &str) -> Vec<String> {
     bad
 }
 
-/// 发行谱：迁移前后展开结果**逐字节相同** + 旧键清零 + 迁移后仍能解析。
+/// 发行谱**已经迁完**：迁移器不再改动它们，`[inst]` 块内也没有旧键。
 ///
-/// 三份发行谱（x86 / riscv64 / arm64）都在内。为拿到这条，三处实现缺陷被依次修掉：
-/// ① 内存形态标记 `{@[字段]:槽}` 的作者面解析（`@` 后直接是槽，不是 `名字:槽`）；
-/// ② 抽取 pass 必须**最先跑**（`segments` 降级就要读 `inst.bind`/`inst.ops`，x86 的内存形态
-///    指令正是段形态）；③ 允许多个操作数绑到同一字段（arm64 三个 `varr` 操作数都写 `vq` 位）。
+/// **迁移当轮**的等价性证明是这条用例的前身——当时它断言"迁移前后 `expand_file` 展开逐字节
+/// 相同"（三份 + 夹具全绿后才落盘）。迁完之后它守的是"不回头"：谱面不再出现 `ops`/`bind`，
+/// 迁移器对已迁完的谱**幂等**，且展开照旧。
 #[test]
-fn shipped_specs_migrate_with_byte_identical_expansion() {
+fn shipped_specs_are_already_inline() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     for isa in ["x86.toml", "riscv64.toml", "arm64.toml"] {
         let p = root.join("isa").join(isa);
         let src = std::fs::read_to_string(&p).expect("读谱");
-        let migrated =
-            spec_migrate::migrate_spec_text(&src).unwrap_or_else(|e| panic!("{isa} 迁移失败：{e}"));
-        assert_ne!(src, migrated, "{isa} 应当有变化（否则用例没意义）");
-
-        let legacy_keys = inst_blocks_have_legacy_keys(&migrated);
-        assert!(
-            legacy_keys.is_empty(),
-            "{isa} 迁移后 [inst] 块里还有旧键：{legacy_keys:?}"
+        let migrated = spec_migrate::migrate_spec_text(&src)
+            .unwrap_or_else(|e| panic!("{isa} 应已迁完（迁移器不该再报错）：{e}"));
+        assert_eq!(
+            src, migrated,
+            "{isa} 又冒出旧写法（`ops`/`bind`）——迁移器是幂等的，相等才说明迁干净了"
         );
-
-        let before = strip_source_path(&flatten_file(&p));
-        let tmp = write_temp(isa, &migrated);
-        let after = strip_source_path(&flatten_file(&tmp));
-        if before != after {
-            let at = before
-                .bytes()
-                .zip(after.bytes())
-                .position(|(a, b)| a != b)
-                .unwrap_or_else(|| before.len().min(after.len()));
-            panic!(
-                "{isa} 展开结果不同（{} vs {}，首处差异 @{at}）\n--- 迁移前 ---\n{}\n--- 迁移后 ---\n{}",
-                before.len(),
-                after.len(),
-                window(&before, at, 240, 300),
-                window(&after, at, 240, 300)
-            );
-        }
-
-        // 迁移后仍能过完整解析 + 校验。
-        report::insts(&migrated).unwrap_or_else(|e| panic!("{isa} 迁移后应仍能解析：{e:?}"));
+        let legacy = inst_blocks_have_legacy_keys(&src);
+        assert!(legacy.is_empty(), "{isa} 的 [inst] 块里还有旧键：{legacy:?}");
+        report::insts(&src).unwrap_or_else(|e| panic!("{isa} 应仍能解析：{e:?}"));
     }
 }
 
-/// 夹具谱也要能迁移（它们含变长/向量等写法）。
+/// 夹具谱同样**已经迁完**（迁移器幂等 + 旧键清零）。
+///
+/// 这条也守护"迁移器的等价性结论仍然成立"：夹具被大量守卫消费（往返/覆盖/黄金值），
+/// 它们跟着发行谱一起迁，一旦语义漂移就会在那些守卫上先炸。
 #[test]
-fn fixture_specs_migrate_with_byte_identical_expansion() {
+fn fixture_specs_are_already_inline() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../forge-codegen/tests/isa");
     if !dir.is_dir() {
-        return; // 夹具不在预期位置时跳过（不假绿：目标谱已在上面断言）
+        return; // 夹具不在预期位置时跳过（目标谱已在上面断言）
     }
     let mut checked = 0usize;
     for entry in std::fs::read_dir(&dir).expect("读夹具目录") {
@@ -160,16 +141,12 @@ fn fixture_specs_migrate_with_byte_identical_expansion() {
         let Ok(migrated) = spec_migrate::migrate_spec_text(&src) else {
             continue; // 夹具里可能有本迁移不覆盖的写法（多文件 include 等）
         };
-        if migrated == src {
-            continue;
-        }
-        let before = strip_source_path(&flatten_file(&p));
-        let tmp = write_temp(&name, &migrated);
-        let after = strip_source_path(&flatten_file(&tmp));
-        assert!(before == after, "{name} 夹具迁移后展开结果不同");
+        assert_eq!(src, migrated, "{name} 又冒出旧写法（`ops`/`bind`）");
+        let legacy = inst_blocks_have_legacy_keys(&src);
+        assert!(legacy.is_empty(), "{name} 的 [inst] 块里还有旧键：{legacy:?}");
         checked += 1;
     }
-    assert!(checked > 0, "至少应迁移到一份夹具（否则用例没覆盖到东西）");
+    assert!(checked > 0, "至少应检查到一份夹具（否则用例没覆盖到东西）");
 }
 
 /// 旧 `bind` 值里的 `[名字]` 是**内存形态**标记（不能由槽 kind 推出：reg 槽也会这么用）

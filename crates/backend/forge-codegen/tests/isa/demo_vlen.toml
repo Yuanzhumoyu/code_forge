@@ -49,20 +49,16 @@ segments = [
 [inst.ADD]
 form = "RR"
 opcode = 0x01
-bind = { reg = "src", rm = "dst" }
 # 寄存器形式：mod 固定 11（同时让 `mod` 位域有引用，不至于被 lint 判成"只声明不用"）。
 match = { mod = 3 }
-ops = ["dst:r:inout", "src:r"]
-asm = "add {dst}, {src}"
+asm = "add {@rm:r:inout}{dst:r:inout}, {@reg:r}{src:r}"
 effect = ["Pure"]
 
 [inst.SUB]
 form = "RR"
 opcode = 0x02
-bind = { reg = "src", rm = "dst" }
 match = { mod = 3 }
-ops = ["dst:r:inout", "src:r"]
-asm = "sub {dst}, {src}"
+asm = "sub {@rm:r:inout}{dst:r:inout}, {@reg:r}{src:r}"
 effect = ["Pure"]
 
 # 立即数形态：**指令级** `segments`（与 x86 `RET_IMM16` 同一写法）：`opcode_reg` 段把目的
@@ -72,8 +68,7 @@ segments = [
   { kind = "opcode_reg", value = 0x10 },
   { kind = "imm", value = 8 },
 ]
-ops = ["dst:r:inout", "imm8:imm8"]
-asm = "addi8 {dst}, {imm8}"
+asm = "addi8 {dst:r:inout}, {imm8:imm8}"
 effect = ["Pure"]
 
 [inst.ADDI16]
@@ -81,8 +76,7 @@ segments = [
   { kind = "opcode_reg", value = 0x18 },
   { kind = "imm", value = 16 },
 ]
-ops = ["dst:r:inout", "imm16:imm16"]
-asm = "addi16 {dst}, {imm16}"
+asm = "addi16 {dst:r:inout}, {imm16:imm16}"
 effect = ["Pure"]
 
 # 机器事实（变长 ISA：栈槽 8 位、对齐 16 位）。

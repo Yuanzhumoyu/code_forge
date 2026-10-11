@@ -1007,8 +1007,7 @@ match = { opcode = 0x8B }
 # 89 D8、mov AX,BX → 66 8B）。gprx 显式排除 8 位（见槽声明）。
 # v14：DSL 回填修复后 32 位值（I32）回填 GPR(4) 视图 → auto 32 位；固定
 # 32 位变体 MOV_R_RM_32（mov32，FIX32 form）已删——32 位 lowering 统一走本指令。
-ops = ["dst:gprx:out", "src:gprx"]
-asm = "mov {dst}, {src}"
+asm = "mov {dst:gprx:out}, {src:gprx}"
 effect = ["Move"]
 
 [inst.MOV_R8_RM8]
@@ -1016,16 +1015,14 @@ group = "mov"
 opcode = 0x8A
 # v13：8 位 mov——gpr8b 槽（byte_reg 强制 REX：spl/bpl/sil/dil）。与 16/32/64 位
 # 共享助记符 `mov`（`mov al, bl` → 8A C3）。gprx 显式排除 gpr8（防 8B 误编码）。
-ops = ["dst:gpr8b:out", "src:gpr8b"]
-asm = "mov {dst}, {src}"
+asm = "mov {dst:gpr8b:out}, {src:gpr8b}"
 effect = ["Move"]
 
 [inst.MOV_RM_R]
 group = "mov"
 form = "RR_SEG"
 match = { opcode = 0x89 }
-ops = ["src:gpr", "dst:gpr:inout"]
-asm = "mov {dst}, {src}"
+asm = "mov {dst:gpr:inout#1}, {src:gpr#0}"
 effect = ["Move"]
 
 # 16/32 位的 **MR 形态**（`89 /r`）：`mov r/m16(r/m32), r16(r32)`。
@@ -1039,8 +1036,7 @@ effect = ["Move"]
 group = "mov"
 form = "RR_SEG"
 match = { opcode = 0x89 }
-ops = ["src:gpr192", "dst:gpr192:inout"]
-asm = "mov {dst}, {src}"
+asm = "mov {dst:gpr192:inout#1}, {src:gpr192#0}"
 effect = ["Move"]
 
 [inst.MOVSXD_R_RM]
@@ -1049,8 +1045,7 @@ form = "MRR_FIX64_SEG"
 match = { opcode = 0x63 }
 # 源槽用 `gpr`（64 位）：lowering 的 `movsxd {out}, {0}` 送来的是 I32 **值**，而它住在
 # 64 位值池寄存器里（`movsxd RAX, RBX` 是既有向量）。
-ops = ["dst:gpr:out", "src:gpr"]
-asm = "movsxd {dst}, {src}"
+asm = "movsxd {dst:gpr:out}, {src:gpr}"
 
 # 同一编码的第二个真实形态：`movsxd r64, r/m32` 在**真实汇编**里写 32 位名
 # （`movsxd rax, r16d`、`movsxd r16, eax`）。与上面那条的差别只有源槽的类
@@ -1064,8 +1059,7 @@ asm = "movsxd {dst}, {src}"
 group = "movsxd"
 form = "MRR_FIX64_SEG"
 match = { opcode = 0x63 }
-ops = ["dst:gpr:out", "src:gpr32"]
-asm = "movsxd {dst}, {src}"
+asm = "movsxd {dst:gpr:out}, {src:gpr32}"
 
 # RM_R 两地址算术/逻辑（ADD/SUB/XOR/AND/OR）：opsize 必须取 **inout 目的槽
 # （s1）**，不能用 form MRR 缺省的 s0。s0 是 modrm.reg = 源操作数——lowering
@@ -1081,22 +1075,19 @@ form = "RR_SEG"
 match = { opcode = 0x01 }
 # v14：数据槽 gprx——宽度由 IR 类型 auto（I32→无 REX.W 32 位、I64→REX.W）。
 # 固定 _32 变体已删（DSL 回填修复后同 opcode 由 66/REX.W 前缀分发——WA-35）。
-ops = ["src:gprx", "dst:gprx:inout"]
-asm = "add {dst}, {src}"
+asm = "add {dst:gprx:inout#1}, {src:gprx#0}"
 
 [inst.SUB_RM_R]
 group = "sub"
 form = "RR_SEG"
 match = { opcode = 0x29 }
-ops = ["src:gprx", "dst:gprx:inout"]
-asm = "sub {dst}, {src}"
+asm = "sub {dst:gprx:inout#1}, {src:gprx#0}"
 
 # IMUL 是 reg-form（目的 = op0 = modrm.reg）——form 缺省 s0 已是目的槽。
 [inst.IMUL_R_RM]
 form = "MRR_0F_SEG"
 match = { opcode = 0xAF }
-ops = ["dst:gprx:out", "src:gprx"]
-asm = "imul {dst}, {src}"
+asm = "imul {dst:gprx:out}, {src:gprx}"
 
 # 两操作数 `imul` 的**内存源**形态（`0F AF /r`，rm = 内存）。
 # 与 `IMUL_R_RM` 同编码、同模板，只是 rm 是 MemRef——宽度由目的寄存器（`s0`）驱动，
@@ -1104,31 +1095,26 @@ asm = "imul {dst}, {src}"
 [inst.IMUL_R_MEM]
 form = "MRR_MEM_0F_SEG"
 
-bind = { reg = "dst", rm = "[mem]" }
 match = { opcode = 0xAF }
-ops = ["dst:gprx:out", "mem:mem"]
-asm = "imul {dst}, {mem}"
+asm = "imul {@reg:gprx:out}{dst:gprx:out}, {@[rm]:mem}{mem:mem}"
 
 [inst.XOR_RM_R]
 group = "xor"
 form = "RR_SEG"
 match = { opcode = 0x31 }
-ops = ["src:gprx", "dst:gprx:inout"]
-asm = "xor {dst}, {src}"
+asm = "xor {dst:gprx:inout#1}, {src:gprx#0}"
 
 [inst.AND_RM_R]
 group = "and"
 form = "RR_SEG"
 match = { opcode = 0x21 }
-ops = ["src:gprx", "dst:gprx:inout"]
-asm = "and {dst}, {src}"
+asm = "and {dst:gprx:inout#1}, {src:gprx#0}"
 
 [inst.OR_RM_R]
 group = "or"
 form = "RR_SEG"
 match = { opcode = 0x09 }
-ops = ["src:gprx", "dst:gprx:inout"]
-asm = "or {dst}, {src}"
+asm = "or {dst:gprx:inout#1}, {src:gprx#0}"
 
 # CMP/TEST 只有两个源槽（没有 inout 目的槽可取宽度，IR 结果是 BOOL 不带操作数
 # 宽度）→ `opsize = "max"`：取两操作数宽度的宽者 = `TypeId::upcast` 结果宽度。
@@ -1140,16 +1126,14 @@ group = "cmp"
 form = "RR_SEG"
 match = { opcode = 0x39 }
 opsize = "max"
-ops = ["src:gprx", "src2:gprx"]
-asm = "cmp {src2}, {src}"
+asm = "cmp {src2:gprx#1}, {src:gprx#0}"
 
 [inst.TEST_RM_R]
 roles = ["test"]
 form = "RR_SEG"
 match = { opcode = 0x85 }
 opsize = "max"
-ops = ["src:gprx", "src2:gprx"]
-asm = "test {src2}, {src}"
+asm = "test {src2:gprx#1}, {src:gprx#0}"
 
 # ── 内存形式的 ALU 族（v20 V10）─────────────────────────────────────────────
 #
@@ -1193,17 +1177,13 @@ rows = [
 # （本批只建语料出现的 `add`）。
 [inst.ACQUIRE_LOCK_ADD_MR]
 form = "MRR_MEM_XACQ_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x01 }
-ops = ["src:gprx", "mem:mem:inout"]
-asm = "acquire lock add {mem}, {src}"
+asm = "acquire lock add {@[rm]:mem:inout}{mem:mem:inout#1}, {src:gprx#0}"
 
 [inst.RELEASE_LOCK_ADD_MR]
 form = "MRR_MEM_XREL_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x01 }
-ops = ["src:gprx", "mem:mem:inout"]
-asm = "release lock add {mem}, {src}"
+asm = "release lock add {@[rm]:mem:inout}{mem:mem:inout#1}, {src:gprx#0}"
 
 [family.ALU_R_MEM]
 body = { form = "MRR_MEMREF_SEG", opsize = "auto", bind = { rm = "[mem]" }, ops = [
@@ -1312,105 +1292,85 @@ word_size = 8
 # 是错的**——`66` 是"16 位目的"的编码，配 64 位目的会编出 `66 48 0F B7`（轴不对），
 # 而 `movzx rax, word ptr [m]` 应当是 `48 0F B7`（无 66）。
 segments = [{ kind = "modrm" }, { kind = "escape", bytes = ["0x0F"] }]
-bind = { rm = "[src]" }
 opcode = 0xB6
 opsize = "out"
-ops = ["dst:gpr:out", "src:gpr"]
-asm = "movzx {dst}, byte ptr [{src}]"
+asm = "movzx {dst:gpr:out}, byte ptr [{@[rm]:gpr}{src:gpr}]"
 
 [inst.MOVZX_R16_MEM]
 group = "load_rd"
 word_size = 16
 segments = [{ kind = "modrm" }, { kind = "escape", bytes = ["0x0F"] }]
-bind = { rm = "[src]" }
 opcode = 0xB7
 opsize = "out"
-ops = ["dst:gpr:out", "src:gpr"]
-asm = "movzx {dst}, word ptr [{src}]"
+asm = "movzx {dst:gpr:out}, word ptr [{@[rm]:gpr}{src:gpr}]"
 
 [inst.MOVZX_MEM8]
 form = "MRR_MEM_0F_SEG"
-bind = { reg = "dst", rm = "[mem]" }
 match = { opcode = 0xB6 }
-ops = ["dst:gprx:out", "mem:mem"]
-asm = "movzx {dst}, byte ptr {mem}"
+asm = "movzx {@reg:gprx:out}{dst:gprx:out}, byte ptr {@[rm]:mem}{mem:mem}"
 effect = ["Pure"]
 
 [inst.MOVZX_MEM16]
 form = "MRR_MEM_0F_SEG"
-bind = { reg = "dst", rm = "[mem]" }
 match = { opcode = 0xB7 }
-ops = ["dst:gprx:out", "mem:mem"]
-asm = "movzx {dst}, word ptr {mem}"
+asm = "movzx {@reg:gprx:out}{dst:gprx:out}, word ptr {@[rm]:mem}{mem:mem}"
 effect = ["Pure"]
 
 [inst.MOVSX_MEM8]
 form = "MRR_MEM_0F_SEG"
-bind = { reg = "dst", rm = "[mem]" }
 match = { opcode = 0xBE }
-ops = ["dst:gprx:out", "mem:mem"]
-asm = "movsx {dst}, byte ptr {mem}"
+asm = "movsx {@reg:gprx:out}{dst:gprx:out}, byte ptr {@[rm]:mem}{mem:mem}"
 effect = ["Pure"]
 
 [inst.MOVSX_MEM16]
 form = "MRR_MEM_0F_SEG"
-bind = { reg = "dst", rm = "[mem]" }
 match = { opcode = 0xBF }
-ops = ["dst:gprx:out", "mem:mem"]
-asm = "movsx {dst}, word ptr {mem}"
+asm = "movsx {@reg:gprx:out}{dst:gprx:out}, word ptr {@[rm]:mem}{mem:mem}"
 effect = ["Pure"]
 
 [inst.CMPXCHG_RM_R]
 form = "MRR_0F_SEG"
 match = { opcode = 0xB1 }
-ops = ["src:gpr", "dst:gpr:inout"]
-asm = "cmpxchg {dst}, {src}"
+asm = "cmpxchg {dst:gpr:inout#1}, {src:gpr#0}"
 
 [inst.XADD_RM_R]
 group = "xadd"
 form = "MRR_0F_SEG"
 match = { opcode = 0xC1 }
-ops = ["src:gpr", "dst:gpr:inout"]
-asm = "xadd {dst}, {src}"
+asm = "xadd {dst:gpr:inout#1}, {src:gpr#0}"
 
 [inst.BT_RM_R]
 form = "MRR_0F_SEG"
 match = { opcode = 0xA3 }
-ops = ["src:gpr", "src2:gpr"]
-asm = "bt {src2}, {src}"
+asm = "bt {src2:gpr#1}, {src:gpr#0}"
 
 [inst.BTS_RM_R]
 form = "MRR_0F_SEG"
 match = { opcode = 0xAB }
-ops = ["src:gpr", "src2:gpr"]
-asm = "bts {src2}, {src}"
+asm = "bts {src2:gpr#1}, {src:gpr#0}"
 
 [inst.BTR_RM_R]
 form = "MRR_0F_SEG"
 match = { opcode = 0xB3 }
-ops = ["src:gpr", "src2:gpr"]
-asm = "btr {src2}, {src}"
+asm = "btr {src2:gpr#1}, {src:gpr#0}"
 
 [inst.BTC_RM_R]
 form = "MRR_0F_SEG"
 match = { opcode = 0xBB }
-ops = ["src:gpr", "src2:gpr"]
-asm = "btc {src2}, {src}"
+asm = "btc {src2:gpr#1}, {src:gpr#0}"
 
 [inst.MOV_RM8_R64]
 group = "mov"
 data_width = 64
 form = "RR_SEG"
 match = { opcode = 0x89 }
-ops = ["src:gpr", "dst:gpr:inout"]
-asm = "mov {dst}, {src}"           # v13：与 MOV_RM_R 合并（真重复，生成期去重保留首个）
+asm = "mov {dst:gpr:inout#1}, {src:gpr#0}"           # v13：与 MOV_RM_R 合并（真重复，生成期去重保留首个）"
 effect = ["Move"]
 
 [inst.MOV_R8_RM64]
 form = "RR_SEG"
 match = { opcode = 0x8B }
-ops = ["dst:gpr:out", "src:gpr"]
-asm = "mov {dst}, {src}"
+asm = "mov {dst:gpr:out}, {src:gpr}"
 effect = ["Move"]
 
 # ── ALU 立即数：`83 /n ib`（符号扩展 imm8）与 `81 /n id`（imm32）──
@@ -1429,72 +1389,54 @@ effect = ["Move"]
 
 [inst.ADD_R_IMM8S]
 form = "MRR_EXT_IMM8_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0x83, reg = 0 }
-ops = ["dst:gprx:inout", "imm:imm8s"]
-asm = "add {dst}, {imm}"
+asm = "add {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm8s}"
 
 [inst.OR_R_IMM8S]
 form = "MRR_EXT_IMM8_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0x83, reg = 1 }
-ops = ["dst:gprx:inout", "imm:imm8s"]
-asm = "or {dst}, {imm}"
+asm = "or {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm8s}"
 
 [inst.ADC_R_IMM8S]
 form = "MRR_EXT_IMM8_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0x83, reg = 2 }
-ops = ["dst:gprx:inout", "imm:imm8s"]
-asm = "adc {dst}, {imm}"
+asm = "adc {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm8s}"
 
 [inst.SBB_R_IMM8S]
 form = "MRR_EXT_IMM8_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0x83, reg = 3 }
-ops = ["dst:gprx:inout", "imm:imm8s"]
-asm = "sbb {dst}, {imm}"
+asm = "sbb {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm8s}"
 
 [inst.AND_R_IMM8S]
 form = "MRR_EXT_IMM8_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0x83, reg = 4 }
-ops = ["dst:gprx:inout", "imm:imm8s"]
-asm = "and {dst}, {imm}"
+asm = "and {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm8s}"
 
 [inst.SUB_R_IMM8S]
 form = "MRR_EXT_IMM8_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0x83, reg = 5 }
-ops = ["dst:gprx:inout", "imm:imm8s"]
-asm = "sub {dst}, {imm}"
+asm = "sub {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm8s}"
 
 [inst.XOR_R_IMM8S]
 form = "MRR_EXT_IMM8_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0x83, reg = 6 }
-ops = ["dst:gprx:inout", "imm:imm8s"]
-asm = "xor {dst}, {imm}"
+asm = "xor {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm8s}"
 
 [inst.CMP_R_IMM8S]
 form = "MRR_EXT_IMM8_SEG"
-bind = { rm = "src" }
 match = { opcode = 0x83, reg = 7 }
-ops = ["src:gprx", "imm:imm8s"]
-asm = "cmp {src}, {imm}"
+asm = "cmp {@rm:gprx}{src:gprx}, {imm:imm8s}"
 
 # ADC/SBB 的寄存器-寄存器形式（`11 /r`、`19 /r`）——与立即数形式配套。
 [inst.ADC_RM_R]
 form = "RR_SEG"
 match = { opcode = 0x11 }
-ops = ["src:gprx", "dst:gprx:inout"]
-asm = "adc {dst}, {src}"
+asm = "adc {dst:gprx:inout#1}, {src:gprx#0}"
 
 [inst.SBB_RM_R]
 form = "RR_SEG"
 match = { opcode = 0x19 }
-ops = ["src:gprx", "dst:gprx:inout"]
-asm = "sbb {dst}, {src}"
+asm = "sbb {dst:gprx:inout#1}, {src:gprx#0}"
 
 [inst.ADD_R_IMM32]
 group = "add"
@@ -1505,80 +1447,62 @@ group = "add"
 # 现在只留这一条多宽度的：帧调整传进来的恒是 64 位栈指针 vreg，编码与原来逐字节一致。
 roles = ["frame_free"]
 form = "MRR_EXT_IMM32_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0x81, reg = 0 }
-ops = ["dst:gprx:inout", "imm:imm32"]
-asm = "add {dst}, {imm}"
+asm = "add {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm32}"
 
 [inst.OR_R_IMM32]
 group = "or"
 form = "MRR_EXT_IMM32_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0x81, reg = 1 }
-ops = ["dst:gprx:inout", "imm:imm32"]
-asm = "or {dst}, {imm}"
+asm = "or {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm32}"
 
 [inst.ADC_R_IMM32]
 form = "MRR_EXT_IMM32_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0x81, reg = 2 }
-ops = ["dst:gprx:inout", "imm:imm32"]
-asm = "adc {dst}, {imm}"
+asm = "adc {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm32}"
 
 [inst.SBB_R_IMM32]
 form = "MRR_EXT_IMM32_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0x81, reg = 3 }
-ops = ["dst:gprx:inout", "imm:imm32"]
-asm = "sbb {dst}, {imm}"
+asm = "sbb {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm32}"
 
 [inst.AND_R_IMM32]
 group = "and"
 form = "MRR_EXT_IMM32_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0x81, reg = 4 }
-ops = ["dst:gprx:inout", "imm:imm32"]
-asm = "and {dst}, {imm}"
+asm = "and {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm32}"
 
 [inst.SUB_R_IMM32]
 group = "sub"
 # 同上：`frame_alloc` 角色挂在多宽度这条上（原来由只差 `dst:gpr` 的 `SUB64_R_IMM32` 承载）。
 roles = ["frame_alloc"]
 form = "MRR_EXT_IMM32_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0x81, reg = 5 }
-ops = ["dst:gprx:inout", "imm:imm32"]
-asm = "sub {dst}, {imm}"
+asm = "sub {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm32}"
 
 [inst.XOR_R_IMM32]
 group = "xor"
 form = "MRR_EXT_IMM32_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0x81, reg = 6 }
-ops = ["dst:gprx:inout", "imm:imm32"]
-asm = "xor {dst}, {imm}"
+asm = "xor {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm32}"
 
 [inst.CMP_R_IMM32]
 group = "cmp"
 form = "MRR_EXT_IMM32_SEG"
-bind = { rm = "src" }
 match = { opcode = 0x81, reg = 7 }
-ops = ["src:gprx", "imm:imm32"]
-asm = "cmp {src}, {imm}"
+asm = "cmp {@rm:gprx}{src:gprx}, {imm:imm32}"
 
 # ── @sse_rr 简单指令（prefix=field, w=0）──
 
 [inst.SQRTSD]
 form = "SSE_RR_SEG"
 match = { opcode = 0x51, prefix = 0xF2, w = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "sqrtsd {dst}, {src}"
+asm = "sqrtsd {dst:fpr:out}, {src:fpr}"
 
 [inst.SQRTSS]
 form = "SSE_RR_SEG"
 match = { opcode = 0x51, prefix = 0, w = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "sqrtss {dst}, {src}"
+asm = "sqrtss {dst:fpr:out}, {src:fpr}"
 
 # cvtsi2sd：32 位源（w=0）与 64 位源（w=1）合并——源槽多类 gprx + opsize=s1
 # 驱动 REX.W（eax → 0、rax → 1），汇编器按操作数实际宽度自动分发。
@@ -1587,52 +1511,44 @@ form = "SSE_RR_SEG"
 match = { opcode = 0x2A, prefix = 0xF2 }
 opsize = "src"
 rex_w = "auto"
-ops = ["dst:fpr:out", "src:gprx"]
-asm = "cvtsi2sd {dst}, {src}"
+asm = "cvtsi2sd {dst:fpr:out}, {src:gprx}"
 
 [inst.CVTSD2SS]
 form = "SSE_RR_SEG"
 match = { opcode = 0x5A, prefix = 0xF2, w = 0 }
 # 变参取值时的"窄回"能力（v20 V4 + D5）：C/LLVM 的默认实参提升把 float 传成 double，
 # `va_arg(ap, f32)` 得取 double 再窄回来——这条就是那一步（bits = 目的位宽）。
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "cvtsd2ss {dst}, {src}"
+asm = "cvtsd2ss {dst:fpr:out}, {src:fpr}"
 
 [inst.CVTSS2SD]
 form = "SSE_RR_SEG"
 match = { opcode = 0x5A, prefix = 0xF3, w = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "cvtss2sd {dst}, {src}"
+asm = "cvtss2sd {dst:fpr:out}, {src:fpr}"
 
 [inst.ANDPD]
 form = "SSE_RR_SEG"
 match = { opcode = 0x54, prefix = 0x66, w = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "andpd {dst}, {src}"
+asm = "andpd {dst:fpr:out}, {src:fpr}"
 
 [inst.XORPD]
 form = "SSE_RR_SEG"
 match = { opcode = 0x57, prefix = 0x66, w = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "xorpd {dst}, {src}"
+asm = "xorpd {dst:fpr:out}, {src:fpr}"
 
 [inst.COMISD]
 form = "SSE_RR_SEG"
 match = { opcode = 0x2F, prefix = 0x66, w = 0 }
-ops = ["src:fpr", "src2:fpr"]
-asm = "comisd {src}, {src2}"
+asm = "comisd {src:fpr}, {src2:fpr}"
 
 [inst.COMISS]
 form = "SSE_RR_SEG"
 match = { opcode = 0x2F, prefix = 0, w = 0 }
-ops = ["src:fpr", "src2:fpr"]
-asm = "comiss {src}, {src2}"
+asm = "comiss {src:fpr}, {src2:fpr}"
 
 [inst.MOVSD_XMM_FREG]
 form = "SSE_RR_SEG"
 match = { opcode = 0x10, prefix = 0xF2, w = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "movsd {dst}, {src}"
+asm = "movsd {dst:fpr:out}, {src:fpr}"
 effect = ["Move"]
 
 # cvtsi2ss：32 位源（w=0）与 64 位源（w=1）合并——源槽多类 gprx + opsize=s1
@@ -1643,51 +1559,43 @@ form = "SSE_RR_SEG"
 match = { opcode = 0x2A, prefix = 0xF3 }
 opsize = "src"
 rex_w = "auto"
-ops = ["dst:fpr:out", "src:gprx"]
-asm = "cvtsi2ss {dst}, {src}"
+asm = "cvtsi2ss {dst:fpr:out}, {src:gprx}"
 
 [inst.MOVD_FREG_IREG]
 form = "SSE_RR_SEG"
 match = { opcode = 0x6E, prefix = 0x66, w = 0 }
-ops = ["dst:fpr:out", "src:gpr"]
-asm = "movd {dst}, {src}"
+asm = "movd {dst:fpr:out}, {src:gpr}"
 # **类间位搬移**（v20 V7）：GPR 的位模式 → FPR。x86 的 SysV64 正常情况下浮点走 XMM，
 # 这条只在"约定的落点是整数寄存器"时需要（`classify` 把浮点判给 int 池：软浮点/Zfinx 式
 # 约定、或调用约定自定义）。缺这条角色 ⇒ 那条落点 fail-closed（不拿同类搬移顶上）。
 data_width = 32
 
 [inst.MOVD_IREG_FREG]
-bind = { reg = "src", rm = "dst" }
 form = "SSE_RR_SEG"
 match = { opcode = 0x7E, prefix = 0x66, w = 0 }
-ops = ["dst:gpr:out", "src:fpr"]
-asm = "movd {dst}, {src}"
+asm = "movd {@rm:gpr:out}{dst:gpr:out}, {@reg:fpr}{src:fpr}"
 data_width = 32
 
 [inst.PUNPCKLDQ]
 form = "SSE_RR_SEG"
 match = { opcode = 0x62, prefix = 0x66, w = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "punpckldq {dst}, {src}"
+asm = "punpckldq {dst:fpr:out}, {src:fpr}"
 
 [inst.PUNPCKLQDQ]
 form = "SSE_RR_SEG"
 match = { opcode = 0x6C, prefix = 0x66, w = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "punpcklqdq {dst}, {src}"
+asm = "punpcklqdq {dst:fpr:out}, {src:fpr}"
 
 [inst.PUNPCKHDQ]
 form = "SSE_RR_SEG"
 match = { opcode = 0x6A, prefix = 0x66, w = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "punpckhdq {dst}, {src}"
+asm = "punpckhdq {dst:fpr:out}, {src:fpr}"
 
 [inst.MOVSS]
 data_width = 32
 form = "SSE_RR_SEG"
 match = { opcode = 0x10, prefix = 0xF3, w = 0 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "movss {dst}, {src}"
+asm = "movss {dst:fpr:out}, {src:fpr}"
 effect = ["Move"]
 
 [inst.CMPXCHG_MEM_R]
@@ -1700,15 +1608,13 @@ segments = [
     "0x0F",
   ] },
 ]
-bind = { rm = "[src2]" }
 opsize = "src"
 opcode = 0xB1
 # v14：数据槽 gprx 多类——DSL 回填携带 IR 值宽度（I16→66 前缀、I32→无
 # REX.W、I64→RAX 视图 REX.W），rm_mem 宽度自动分发（16/32/64 同 opcode
 # 0F B1 + 66/REX.W；8 位是独立 opcode 0F B0——见 CMPXCHG_MEM_R_8）。
 # 取代固定 _32 变体（CMPXCHG_MEM_R_32 已删——见 WA-35/DSL 回填缺口修复）。
-ops = ["src:gprx", "src2:gprx"]
-asm = "lock cmpxchg [{src2}], {src}"
+asm = "lock cmpxchg [{@[rm]:gprx}{src2:gprx#1}], {src:gprx#0}"
 effect = ["Write"]
 # cmpxchg 隐式读 RAX（期望值）并写 RAX（旧值）——regalloc 需知 RAX 在本
 # 指令点被破坏，否则会把期望值的 SSA 值留在 RAX 跨过本指令（后续 icmp
@@ -1726,12 +1632,10 @@ segments = [
     "0x0F",
   ] },
 ]
-bind = { rm = "[src2]" }
 opcode = 0xB0
 # 8 位 LOCK CMPXCHG：0F B0（r/m8，隐式 AL——mov RAX 后 AL 即期望值低
 # 字节）。数据槽 gpr8b（byte_reg 强制 REX：spl/bpl/sil/dil）。
-ops = ["src:gpr8b", "src2:gprx"]
-asm = "lock cmpxchg [{src2}], {src}"
+asm = "lock cmpxchg [{@[rm]:gprx}{src2:gprx#1}], {src:gpr8b#0}"
 effect = ["Write"]
 implicit_regs = ["RAX"]
 
@@ -1746,48 +1650,36 @@ segments = [
     "0x0F",
   ] },
 ]
-bind = { rm = "[src]" }
 opsize = "dst"
 opcode = 0xC1
 # v14：数据槽 gprx（16/32/64 auto）——AtomicRmw Add/Sub lowering 的 {g1}
 # 临时恒 64 位池（窄域 Add/Sub 走 intrinsics cmpxchg 循环，i64 域用本指令）。
-ops = ["dst:gprx:inout", "src:gprx"]
-asm = "xadd [{src}], {dst}"
+asm = "xadd [{@[rm]:gprx}{src:gprx#1}], {dst:gprx:inout#0}"
 
 [inst.XCHG_MEM_R]
 form = "MRR_MEM_SEG"
-bind = { rm = "[src]" }
 match = { opcode = 0x87 }
-ops = ["dst:gprx:inout", "src:gprx"]
-asm = "xchg [{src}], {dst}"
+asm = "xchg [{@[rm]:gprx}{src:gprx#1}], {dst:gprx:inout#0}"
 
 [inst.SUB_MEM_R]
 form = "MRR_MEM_PRE_SEG"
-bind = { rm = "[src2]" }
 match = { opcode = 0x29, prefix = 0xF0 }
-ops = ["src:gpr", "src2:gpr"]
-asm = "lock sub [{src2}], {src}"
+asm = "lock sub [{@[rm]:gpr}{src2:gpr#1}], {src:gpr#0}"
 
 [inst.AND_MEM_R]
 form = "MRR_MEM_PRE_SEG"
-bind = { rm = "[src2]" }
 match = { opcode = 0x21, prefix = 0xF0 }
-ops = ["src:gpr", "src2:gpr"]
-asm = "lock and [{src2}], {src}"
+asm = "lock and [{@[rm]:gpr}{src2:gpr#1}], {src:gpr#0}"
 
 [inst.OR_MEM_R]
 form = "MRR_MEM_PRE_SEG"
-bind = { rm = "[src2]" }
 match = { opcode = 0x09, prefix = 0xF0 }
-ops = ["src:gpr", "src2:gpr"]
-asm = "lock or [{src2}], {src}"
+asm = "lock or [{@[rm]:gpr}{src2:gpr#1}], {src:gpr#0}"
 
 [inst.XOR_MEM_R]
 form = "MRR_MEM_PRE_SEG"
-bind = { rm = "[src2]" }
 match = { opcode = 0x31, prefix = 0xF0 }
-ops = ["src:gpr", "src2:gpr"]
-asm = "lock xor [{src2}], {src}"
+asm = "lock xor [{@[rm]:gpr}{src2:gpr#1}], {src:gpr#0}"
 
 [inst.MOV_R_MEM]
 form = "MRR_MEM_SEG"
@@ -1795,55 +1687,43 @@ roles = ["arg_bytes_load"]
 # 按 vreg 基址读内存的能力（v20 变参 V4）：`dst ← [src]`，宽度随目标类自动。
 # v21 A2′：还作为**按值栈实参拷贝**的寄存器地址 load（`arg_bytes_load`）——
 # 源地址是虚拟寄存器（调用方本地副本），故不能用 `stack_arg_load`（那条的地址是物理基址）。
-bind = { rm = "[src]" }
 match = { opcode = 0x8B }
 # v14：数据槽 gprx——内存 load 宽度由 IR 类型 auto（I16→66、I32→无
 # REX.W、I64→REX.W）。固定 _32 变体已删（WA-35 DSL 修复）。
 # 基址槽 gprx（assemble 兼容 EAX/RAX 视图；编码取同编号寻址）。
-ops = ["dst:gprx:out", "src:gprx"]
-asm = "mov {dst}, [{src}]"
+asm = "mov {dst:gprx:out}, [{@[rm]:gprx}{src:gprx}]"
 
 [inst.MOV_R_MEM_8]
 segments = [{ kind = "modrm" }]
-bind = { rm = "[src]" }
 opcode = 0x8A
 # 8 位内存 load：独立 opcode 8A（gprx 显式排除 gpr8——8 位 mov 是 8A 非
 # 8B）。数据槽 gpr8b（byte_reg：spl/bpl/sil/dil 强制 REX）。
-ops = ["dst:gpr8b:out", "src:gprx"]
-asm = "mov {dst}, [{src}]"
+asm = "mov {dst:gpr8b:out}, [{@[rm]:gprx}{src:gprx}]"
 
 [inst.STORE_MEM_R]
 form = "MRR_MEM_SEG"
-bind = { rm = "[src2]" }
 match = { opcode = 0x89 }
-ops = ["src:gprx", "src2:gprx"]
-asm = "mov [{src2}], {src}"
+asm = "mov [{@[rm]:gprx}{src2:gprx#1}], {src:gprx#0}"
 
 [inst.STORE_MEM_R_8]
 segments = [{ kind = "modrm" }]
-bind = { rm = "[src2]" }
 opcode = 0x88
-ops = ["src:gpr8b", "src2:gprx"]
-asm = "mov [{src2}], {src}"
+asm = "mov [{@[rm]:gprx}{src2:gprx#1}], {src:gpr8b#0}"
 
 [inst.MOVSD_R_MEM]
 group = "load_vec"
 word_size = 8
 form = "MRR_MEM_0F_PFX32_SEG"
-bind = { rm = "[src]" }
 match = { opcode = 0x10, prefix = 0xF2 }
 # 按 vreg 基址读**浮点**的能力（v20 变参 V4）：`va_arg(ap, f64)` 取值用它
-ops = ["dst:fpr:out", "src:gpr"]
-asm = "movsd {dst}, [{src}]"
+asm = "movsd {dst:fpr:out}, [{@[rm]:gpr}{src:gpr}]"
 
 [inst.MOVSD_MEM_R]
 group = "fstore_x86"
 word_size = 64
 form = "MRR_MEM_0F_PFX32_SEG"
-bind = { rm = "[src2]" }
 match = { opcode = 0x11, prefix = 0xF2 }
-ops = ["src:fpr", "src2:gpr"]
-asm = "movsd [{src2}], {src}"
+asm = "movsd [{@[rm]:gpr}{src2:gpr#1}], {src:fpr#0}"
 
 [inst.MOV64_RR]
 group = "mov"
@@ -1852,26 +1732,21 @@ roles = ["frame_set"]
 form = "MRR_FIX64_SEG"
 match = { opcode = 0x89 }
 # 与 MOV_RM_R（mov {1}, {0}）同模板同槽类型 → 生成期去重跳过（64 位经 MOV_RM_R 分发）。
-ops = ["src:gpr", "dst:gpr:inout"]
-asm = "mov {dst}, {src}"
+asm = "mov {dst:gpr:inout#1}, {src:gpr#0}"
 effect = ["Move"]
 
 [inst.MOV64_RM]
 roles = ["stack_arg_load"]
 form = "MRR_MEMREF_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x8B }
-ops = ["dst:gpr:out", "mem:mem"]
-asm = "mov {dst}, {mem}"
+asm = "mov {dst:gpr:out}, {@[rm]:mem}{mem:mem}"
 # 被调方栈参数 load（v20 A5-3 起偏移来自 plan 的 ArgPlace::Stack{offset}，从 [fp+offset] 收第 5+ 参数）
 
 [inst.MOV64_MR]
 roles = ["stack_arg_store"]
 form = "MRR_MEMREF_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x89 }
-ops = ["src:gpr", "mem:mem"]
-asm = "mov {mem}, {src}"
+asm = "mov {@[rm]:mem}{mem:mem#1}, {src:gpr#0}"
 # 调用方栈参数 store（v20 A5-3 起偏移来自 plan 的 caller_offset(k)，第 5+ 参数写 [sp+shadow+k*槽]）
 
 # ── 内存形式的 mov（8/16/32 位，v20 V10 第七批）──────────────────────────────
@@ -1891,51 +1766,39 @@ asm = "mov {mem}, {src}"
 
 [inst.MOV_R_MEM_AUTO]
 form = "MRR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x8B }
-ops = ["dst:gpr192:out", "mem:mem"]
-asm = "mov {dst}, {mem}"
+asm = "mov {dst:gpr192:out}, {@[rm]:mem}{mem:mem}"
 
 [inst.STORE_MEM_R_AUTO]
 form = "MRR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x89 }
-ops = ["src:gpr192", "mem:mem"]
-asm = "mov {mem}, {src}"
+asm = "mov {@[rm]:mem}{mem:mem#1}, {src:gpr192#0}"
 
 [inst.MOV_R_MEM_8_AUTO]
 form = "MRR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x8A }
-ops = ["dst:gpr8b:out", "mem:mem"]
-asm = "mov {dst}, {mem}"
+asm = "mov {dst:gpr8b:out}, {@[rm]:mem}{mem:mem}"
 
 [inst.STORE_MEM_R_8_AUTO]
 form = "MRR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x88 }
-ops = ["src:gpr8b", "mem:mem"]
-asm = "mov {mem}, {src}"
+asm = "mov {@[rm]:mem}{mem:mem#1}, {src:gpr8b#0}"
 
 # `movsxd r64, dword ptr [mem]`：已有的是**寄存器**源（`MOVSXD_R_RM`，`MRR_FIX64`），
 # 内存源没有候选。源宽度由操作码 63 决定（dword），目标由 REX.W 决定（64 位），
 # 所以这里用 `MRR_MEMREF`（opsize 64 固定），与寄存器版的 mod=3 分支互斥。
 [inst.MOVSXD_R_MEM]
 form = "MRR_MEMREF_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x63 }
-ops = ["dst:gpr:out", "mem:mem"]
-asm = "movsxd {dst}, {mem}"
+asm = "movsxd {dst:gpr:out}, {@[rm]:mem}{mem:mem}"
 
 # `xchg [mem], r16/32/64`：已有的 `XCHG_MEM_R`（`MRR_MEM`）是 `[{reg}]` 简写风味
 # ——**没有位移**。带位移的 `xchg [rbx+8], rax` 是真实代码里的常见写法（自旋锁/交换），
 # 这里补 MemRef 风味；无位移的写法仍由声明在前的 `XCHG_MEM_R` 命中（同字节、同类型）。
 [inst.XCHG_MEM_R_AUTO]
 form = "MRR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x87 }
-ops = ["dst:gprx:inout", "mem:mem"]
-asm = "xchg {mem}, {dst}"
+asm = "xchg {@[rm]:mem}{mem:mem#1}, {dst:gprx:inout#0}"
 
 [inst.MOVSD_RM]
 segments = [
@@ -1947,11 +1810,9 @@ segments = [
     "0x0F",
   ] },
 ]
-bind = { rm = "[mem]" }
 opsize = 32
 opcode = 0x10
-ops = ["dst:fpr:out", "mem:mem"]
-asm = "movsd {dst}, {mem}"
+asm = "movsd {dst:fpr:out}, {@[rm]:mem}{mem:mem}"
 
 [inst.MOVSD_MR]
 segments = [
@@ -1963,14 +1824,12 @@ segments = [
     "0x0F",
   ] },
 ]
-bind = { rm = "[mem]" }
 opsize = 32
 opcode = 0x11
 # 浮点写内存的能力（v20 变参 V4）：调用方把**浮点栈实参**写进传出区用它
 # （`{ role = "stack_arg_store", class = "fpr" }`——与 MOV64_MR 的整数版分工）。
 roles = [{ role = "stack_arg_store", class = "fpr" }]
-ops = ["src:fpr", "mem:mem"]
-asm = "movsd {mem}, {src}"
+asm = "movsd {@[rm]:mem}{mem:mem#1}, {src:fpr#0}"
 
 # ── 128 位 SSE 向量内存 load/store（≤16B Direct 向量（V128）值经栈槽
 #    往返用——WA-37 D3：V128 值在 XMM 全宽，8B movsd/movss 会截断）。
@@ -1981,56 +1840,44 @@ asm = "movsd {mem}, {src}"
 group = "load_vec"
 word_size = 16
 form = "MRR_MEM_0F_PFX32_SEG"
-bind = { rm = "[src]" }
 match = { opcode = 0x10, prefix = 0 }
-ops = ["dst:fpr:out", "src:gpr"]
-asm = "movups {dst}, [{src}]"
+asm = "movups {dst:fpr:out}, [{@[rm]:gpr}{src:gpr}]"
 
 [inst.MOVUPS_128_MEM_R]
 group = "store_vec"
 word_size = 16
 form = "MRR_MEM_0F_PFX32_SEG"
-bind = { rm = "[src2]" }
 
 match = { opcode = 0x11, prefix = 0 }
-ops = ["src:fpr", "src2:gpr"]
-asm = "movups [{src2}], {src}"
+asm = "movups [{@[rm]:gpr}{src2:gpr#1}], {src:fpr#0}"
 
 # 128 位**MemRef 形式**（base+disp；spill 槽用——上面的 reg 基址形式 disp 恒 0，
 # 表达不了 `[RBP - off]`）。与 MOVSD_RM/MR 同形，只是无 F2 前缀 = 16 字节。
 [inst.MOVUPS_RM]
 form = "MRR_MEM_0F_PFX32_SEG"
-bind = { rm = "[mem]" }
 opsize = 32
 match = { opcode = 0x10, prefix = 0 }
-ops = ["dst:fpr:out", "mem:mem"]
-asm = "movups {dst}, {mem}"
+asm = "movups {dst:fpr:out}, {@[rm]:mem}{mem:mem}"
 
 [inst.MOVUPS_MR]
 form = "MRR_MEM_0F_PFX32_SEG"
-bind = { rm = "[mem]" }
 opsize = 32
 match = { opcode = 0x11, prefix = 0 }
-ops = ["src:fpr", "mem:mem:out"]
-asm = "movups {mem}, {src}"
+asm = "movups {@[rm]:mem:out}{mem:mem:out#1}, {src:fpr#0}"
 
 # ── 标量浮点补齐（Phase 4：F32 内存标量、F32→整数、64 位转换、极值、舍入）──
 
 [inst.MOVSS_R_MEM]
 form = "MRR_MEM_0F_PFX32_SEG"
-bind = { rm = "[src]" }
 match = { opcode = 0x10, prefix = 0xF3 }
-ops = ["dst:fpr:out", "src:gpr"]
-asm = "movss {dst}, [{src}]"
+asm = "movss {dst:fpr:out}, [{@[rm]:gpr}{src:gpr}]"
 
 [inst.MOVSS_MEM_R]
 group = "fstore_x86"
 word_size = 32
 form = "MRR_MEM_0F_PFX32_SEG"
-bind = { rm = "[src2]" }
 match = { opcode = 0x11, prefix = 0xF3 }
-ops = ["src:fpr", "src2:gpr"]
-asm = "movss [{src2}], {src}"
+asm = "movss [{@[rm]:gpr}{src2:gpr#1}], {src:fpr#0}"
 
 # cvtss2si：32 位目的（w=0）与 64 位目的（w=1）合并——目的槽多类 gprx +
 # opsize=s0 驱动 REX.W（eax → 0、rax → 1），按操作数实际宽度自动分发。
@@ -2039,14 +1886,12 @@ form = "SSE_RR_SEG"
 match = { opcode = 0x2D, prefix = 0xF3 }
 opsize = "dst"
 rex_w = "auto"
-ops = ["dst:gprx:out", "src:fpr"]
-asm = "cvtss2si {dst}, {src}"
+asm = "cvtss2si {dst:gprx:out}, {src:fpr}"
 
 [inst.CVTTSS2SI]
 form = "SSE_RR_SEG"
 match = { opcode = 0x2C, prefix = 0xF3, w = 0 }
-ops = ["dst:gpr:out", "src:fpr"]
-asm = "cvttss2si {dst}, {src}"
+asm = "cvttss2si {dst:gpr:out}, {src:fpr}"
 
 # cvtsd2si：32 位目的（w=0）与 64 位目的（w=1）合并——目的槽多类 gprx +
 # opsize=s0 驱动 REX.W，按操作数实际宽度自动分发。
@@ -2055,23 +1900,19 @@ form = "SSE_RR_SEG"
 match = { opcode = 0x2D, prefix = 0xF2 }
 opsize = "dst"
 rex_w = "auto"
-ops = ["dst:gprx:out", "src:fpr"]
-asm = "cvtsd2si {dst}, {src}"
+asm = "cvtsd2si {dst:gprx:out}, {src:fpr}"
 
 [inst.CVTTSD2SI]
 form = "SSE_RR_SEG"
 match = { opcode = 0x2C, prefix = 0xF2 }
 opsize = "dst"
 rex_w = "auto"
-ops = ["dst:gprx:out", "src:fpr"]
-asm = "cvttsd2si {dst}, {src}"
+asm = "cvttsd2si {dst:gprx:out}, {src:fpr}"
 
 [inst.ROUNDSS_I]
 form = "SSE_IMM_0F3A_SEG"
 match = { opcode = 0x0A, prefix = 0x66, w = 0 }
-bind = { reg = "dst", rm = "src" }
-ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
-asm = "roundss {dst}, {src}, {imm}"
+asm = "roundss {@reg:fpr:out}{dst:fpr:out}, {@rm:fpr}{src:fpr}, {imm:imm8}"
 effect = ["Pure"]
 
 # ── SSE 族（v11 opcodes 数组 → families → v21 `[family.*]` + rows；`[[templates]]` 已废）──
@@ -2226,56 +2067,45 @@ segments = [
 ]
 opcode = 0x28
 match = { evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
-ops = ["dst:fpr256:out", "src:fpr256"]
-asm = "vmovaps {dst}, {src}"
+asm = "vmovaps {dst:fpr256:out}, {src:fpr256}"
 
 [inst.VMOVAPS_ZMM_MEM]
 group = "vmovaps"
 form = "EVEX_RR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x28, evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
 # v13：EVEX 内存形式（512 位，压缩位移 scale=64）——vmovaps zmm, [rax±disp]
-ops = ["dst:fpr256:out", "mem:mem"]
-asm = "vmovaps {dst}, {mem}"
+asm = "vmovaps {dst:fpr256:out}, {@[rm]:mem}{mem:mem}"
 
 # 非对齐 512 位 load（by-ref 传参用；EVEX 0x10 + disp_scale=64）
 [inst.VMOVUPS_ZMM_MEM]
 group = "vmovups"
 data_width = 512
 form = "EVEX_RR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x10, evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
-ops = ["dst:fpr256:out", "mem:mem"]
-asm = "vmovups {dst}, {mem}"
+asm = "vmovups {dst:fpr256:out}, {@[rm]:mem}{mem:mem}"
 
 # 非对齐 512 位 store（by-ref 调用方侧副本）
 [inst.VMOVUPS_ZMM_MR]
 group = "vmovups"
 data_width = 512
 form = "EVEX_RR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x11, evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
-ops = ["src:fpr256", "mem:mem:out"]
-asm = "vmovups {src}, {mem}"
+asm = "vmovups {src:fpr256}, {@[rm]:mem:out}{mem:mem:out}"
 
 # 宽向量 IR Load/Store 的 gpr 基址形式（EVEX 512 位；见 VMOVUPS_256_R_MEM 的说明）
 [inst.VMOVUPS_512_R_MEM]
 group = "load_vec"
 word_size = 64
 form = "EVEX_RR_MEM_SEG"
-bind = { rm = "[src]" }
 match = { opcode = 0x10, evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
-ops = ["dst:fpr256:out", "src:gpr"]
-asm = "vmovups {dst}, [{src}]"
+asm = "vmovups {dst:fpr256:out}, [{@[rm]:gpr}{src:gpr}]"
 
 [inst.VMOVUPS_512_MEM_R]
 group = "store_vec"
 word_size = 64
 form = "EVEX_RR_MEM_SEG"
-bind = { rm = "[src2]" }
 match = { opcode = 0x11, evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_disp_scale = 64 }
-ops = ["src:fpr256", "src2:gpr"]
-asm = "vmovups [{src2}], {src}"
+asm = "vmovups [{@[rm]:gpr}{src2:gpr#1}], {src:fpr256#0}"
 
 # ── EVEX opmask（掩码写合并，z=0）：vaddps zmm, zmm, zmm, k1 ──
 # 与 3 操作数 VADDPS_ZMM 同助记符自动分发（类型签名 O3 不同）；第 4 操作数
@@ -2283,18 +2113,14 @@ asm = "vmovups [{src2}], {src}"
 [inst.VADDPS_ZMM_MASK]
 group = "vaddps"
 form = "EVEX_RRV_SEG"
-bind = { reg = "dst", rm = "src2" }
 match = { opcode = 0x58, evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2 }
-ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256", "src3:kreg"]
-asm = "vaddps {dst}, {src}, {src2}, {src3}"
+asm = "vaddps {@reg:fpr256:out}{dst:fpr256:out}, {src:fpr256}, {@rm:fpr256}{src2:fpr256}, {src3:kreg}"
 
 # EVEX 零掩码（z=1）：vaddps zmm, zmm, zmm, k1（P2 z 位 = 1；与 z=0 同助记符去重）
 [inst.VADDPS_ZMM_MASKZ]
 form = "EVEX_RRV_SEG"
-bind = { reg = "dst", rm = "src2" }
 match = { opcode = 0x58, evex_map = 1, evex_pp = 0, evex_w = 0, evex_l = 2, evex_z = 1 }
-ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr256", "src3:kreg"]
-asm = "vaddps {dst}, {src}, {src2}, {src3}"
+asm = "vaddps {@reg:fpr256:out}{dst:fpr256:out}, {src:fpr256}, {@rm:fpr256}{src2:fpr256}, {src3:kreg}"
 
 # ── VEX 单指令（无源/立即数）──
 
@@ -2302,36 +2128,29 @@ asm = "vaddps {dst}, {src}, {src2}, {src3}"
 group = "vmovaps"
 form = "VEX_RR_SEG"
 match = { opcode = 0x28, vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "vmovaps {dst}, {src}"
+asm = "vmovaps {dst:fpr:out}, {src:fpr}"
 
 [inst.VMOVAPS_RM]
 group = "vmovaps"
 form = "VEX_RR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x28, vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
-ops = ["dst:fpr:out", "mem:mem"]
-asm = "vmovaps {dst}, {mem}"
+asm = "vmovaps {dst:fpr:out}, {@[rm]:mem}{mem:mem}"
 
 # 非对齐向量 load（by-ref 传参用——指针未必 32 字节对齐，vmovups 无对齐要求）
 [inst.VMOVUPS_RM]
 group = "vmovups"
 data_width = 256
 form = "VEX_RR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x10, vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
-ops = ["dst:fpr:out", "mem:mem"]
-asm = "vmovups {dst}, {mem}"
+asm = "vmovups {dst:fpr:out}, {@[rm]:mem}{mem:mem}"
 
 # 非对齐向量 store（by-ref 调用方侧：实参 → 栈上副本）
 [inst.VMOVUPS_MR]
 group = "vmovups"
 data_width = 256
 form = "VEX_RR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x11, vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
-ops = ["src:fpr", "mem:mem:out"]
-asm = "vmovups {src}, {mem}"
+asm = "vmovups {src:fpr}, {@[rm]:mem:out}{mem:mem:out}"
 
 # ── 宽向量 IR Load/Store 的 **gpr 基址**形式（W3，2026-09-12）──
 # 与 MOVUPS_128_R_MEM 同形：`modrm = { rm = "[reg]" }` = 仅基址 [base]、disp 恒 0
@@ -2344,85 +2163,69 @@ asm = "vmovups {src}, {mem}"
 group = "load_vec"
 word_size = 32
 form = "VEX_RR_MEM_SEG"
-bind = { rm = "[src]" }
 match = { opcode = 0x10, vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
-ops = ["dst:fpr:out", "src:gpr"]
-asm = "vmovups {dst}, [{src}]"
+asm = "vmovups {dst:fpr:out}, [{@[rm]:gpr}{src:gpr}]"
 
 [inst.VMOVUPS_256_MEM_R]
 group = "store_vec"
 word_size = 32
 form = "VEX_RR_MEM_SEG"
-bind = { rm = "[src2]" }
 match = { opcode = 0x11, vex_map = 1, vex_pp = 0, vex_w = 0, vex_l = 1 }
-ops = ["src:fpr", "src2:gpr"]
-asm = "vmovups [{src2}], {src}"
+asm = "vmovups [{@[rm]:gpr}{src2:gpr#1}], {src:fpr#0}"
 
 [inst.VBROADCASTSS]
 form = "VEX_RR_SEG"
 match = { opcode = 0x18, vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "vbroadcastss {dst}, {src}"
+asm = "vbroadcastss {dst:fpr:out}, {src:fpr}"
 
 [inst.VBROADCASTSD]
 form = "VEX_RR_SEG"
 match = { opcode = 0x19, vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "vbroadcastsd {dst}, {src}"
+asm = "vbroadcastsd {dst:fpr:out}, {src:fpr}"
 
 [inst.VPXOR]
 form = "VEX_RRV_SEG"
 match = { opcode = 0xEF, vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "vpxor {dst}, {src}, {src2}"
+asm = "vpxor {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 [inst.VPADDD]
 group = "vpaddd"
 form = "VEX_RRV_SEG"
 match = { opcode = 0xFE, vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "vpaddd {dst}, {src}, {src2}"
+asm = "vpaddd {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 [inst.VPSUBD]
 group = "vpsubd"
 form = "VEX_RRV_SEG"
 match = { opcode = 0xFA, vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "vpsubd {dst}, {src}, {src2}"
+asm = "vpsubd {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 [inst.VPADDQ]
 group = "vpaddq"
 form = "VEX_RRV_SEG"
 match = { opcode = 0xD4, vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "vpaddq {dst}, {src}, {src2}"
+asm = "vpaddq {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 [inst.VPSUBQ]
 group = "vpsubq"
 form = "VEX_RRV_SEG"
 match = { opcode = 0xFB, vex_map = 1, vex_pp = 1, vex_w = 0, vex_l = 1 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "vpsubq {dst}, {src}, {src2}"
+asm = "vpsubq {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 [inst.VPMULLD]
 form = "VEX_RRV_SEG"
 match = { opcode = 0x40, vex_map = 2, vex_pp = 1, vex_w = 0, vex_l = 1 }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr"]
-asm = "vpmulld {dst}, {src}, {src2}"
+asm = "vpmulld {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
 [inst.VEXTRACTF128]
 form = "VEX_IMM_SEG"
 match = { opcode = 0x19, vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
-bind = { reg = "src", rm = "dst" }
-ops = ["src:fpr", "dst:fpr:out", "imm:imm8"]
-asm = "vextractf128 {dst}, {src}, {imm}"
+asm = "vextractf128 {@rm:fpr:out}{dst:fpr:out#1}, {@reg:fpr}{src:fpr#0}, {imm:imm8#2}"
 
 [inst.VINSERTF128]
 form = "VEX_IMM_SEG"
 match = { opcode = 0x18, vex_map = 3, vex_pp = 1, vex_w = 0, vex_l = 1 }
-bind = { reg = "dst", rm = "src2" }
-ops = ["dst:fpr:out", "src:fpr", "src2:fpr", "imm:imm8"]
-asm = "vinsertf128 {dst}, {src}, {src2}, {imm}"
+asm = "vinsertf128 {@reg:fpr:out}{dst:fpr:out}, {src:fpr}, {@rm:fpr}{src2:fpr}, {imm:imm8}"
 
 # EVEX 版（AVX-512F）：VINSERTF32X4 zmm1, zmm2, xmm3/m128, imm8
 # （EVEX.512.66.0F3A.W0 18 /r ib：map=3=0F3A、pp=1=66、L'L=2 → 512 位）。
@@ -2431,9 +2234,7 @@ asm = "vinsertf128 {dst}, {src}, {src2}, {imm}"
 [inst.VINSERTF32X4]
 form = "EVEX_IMM_SEG"
 match = { opcode = 0x18, evex_map = 3, evex_pp = 1, evex_w = 0, evex_l = 2 }
-bind = { reg = "dst", rm = "src2" }
-ops = ["dst:fpr256:out", "src:fpr256", "src2:fpr", "imm:imm8"]
-asm = "vinsertf32x4 {dst}, {src}, {src2}, {imm}"
+asm = "vinsertf32x4 {@reg:fpr256:out}{dst:fpr256:out}, {src:fpr256}, {@rm:fpr}{src2:fpr}, {imm:imm8}"
 
 # EVEX 版（AVX-512F）：VEXTRACTF32X4 xmm1, zmm2, imm8
 # （EVEX.512.66.0F3A.W0 19 /r ib：map=3=0F3A、pp=1=66、L'L=2 → 512 位；
@@ -2443,9 +2244,7 @@ asm = "vinsertf32x4 {dst}, {src}, {src2}, {imm}"
 [inst.VEXTRACTF32X4]
 form = "EVEX_IMM_SEG"
 match = { opcode = 0x19, evex_map = 3, evex_pp = 1, evex_w = 0, evex_l = 2 }
-bind = { reg = "src", rm = "dst" }
-ops = ["src:fpr256", "dst:fpr:out", "imm:imm8"]
-asm = "vextractf32x4 {dst}, {src}, {imm}"
+asm = "vextractf32x4 {@rm:fpr:out}{dst:fpr:out#1}, {@reg:fpr256}{src:fpr256#0}, {imm:imm8#2}"
 # ── 收官：@op_rm / @op_rm_imm32 / @sse_rr_imm8 / +r 形式 ──
 
 # ── 一元读改写：`FE /digit`（r/m8）与 `FF /digit`（r/m16/32/64）───────────────
@@ -2471,11 +2270,9 @@ rows = [
 ]
 [inst.NOT_RM]
 form = "MRR_EXT_OP_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0xF7, reg = 2 }
 # 目的槽用 `gprx`（16/32/64）：`not eax`/`not r16d` 是真实语料里的常态；原来固定 64 位。
-ops = ["dst:gprx:inout"]
-asm = "not {dst}"
+asm = "not {@rm:gprx:inout}{dst:gprx:inout}"
 
 # ── 一元族的**内存形态**（FF /0,/1 与 F7 /2../7）──
 #
@@ -2486,76 +2283,60 @@ asm = "not {dst}"
 # 一元内存形态给尺寸提示），不会静默按 32 位编出来。其他宽度照这个形状加一行即可。
 [inst.NOT_MEM32]
 form = "MRR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0xF7, reg = 2 }
 opsize = 32
-ops = ["mem:mem:inout"]
-asm = "not dword ptr {mem}"
+asm = "not dword ptr {@[rm]:mem:inout}{mem:mem:inout}"
 
 [inst.NEG_MEM32]
 form = "MRR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0xF7, reg = 3 }
 opsize = 32
-ops = ["mem:mem:inout"]
-asm = "neg dword ptr {mem}"
+asm = "neg dword ptr {@[rm]:mem:inout}{mem:mem:inout}"
 
 [inst.INC_MEM32]
 form = "MRR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0xFF, reg = 0 }
 opsize = 32
-ops = ["mem:mem:inout"]
-asm = "inc dword ptr {mem}"
+asm = "inc dword ptr {@[rm]:mem:inout}{mem:mem:inout}"
 
 [inst.DEC_MEM32]
 form = "MRR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0xFF, reg = 1 }
 opsize = 32
-ops = ["mem:mem:inout"]
-asm = "dec dword ptr {mem}"
+asm = "dec dword ptr {@[rm]:mem:inout}{mem:mem:inout}"
 
 [inst.MUL_MEM32]
 form = "MRR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0xF7, reg = 4 }
 opsize = 32
 effect = ["Write"]
 # mul 隐式读 RAX 并写 RAX:RDX（128 位积）
 implicit_regs = ["RAX", "RDX"]
-ops = ["mem:mem"]
-asm = "mul dword ptr {mem}"
+asm = "mul dword ptr {@[rm]:mem}{mem:mem}"
 
 [inst.IMUL_MEM32]
 form = "MRR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0xF7, reg = 5 }
 opsize = 32
 effect = ["Write"]
 implicit_regs = ["RAX", "RDX"]
-ops = ["mem:mem"]
-asm = "imul dword ptr {mem}"
+asm = "imul dword ptr {@[rm]:mem}{mem:mem}"
 
 [inst.DIV_MEM32]
 form = "MRR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0xF7, reg = 6 }
 opsize = 32
 effect = ["Write"]
 implicit_regs = ["RAX", "RDX"]
-ops = ["mem:mem"]
-asm = "div dword ptr {mem}"
+asm = "div dword ptr {@[rm]:mem}{mem:mem}"
 
 [inst.IDIV_MEM32]
 form = "MRR_MEM_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0xF7, reg = 7 }
 opsize = 32
 effect = ["Write"]
 implicit_regs = ["RAX", "RDX"]
-ops = ["mem:mem"]
-asm = "idiv dword ptr {mem}"
+asm = "idiv dword ptr {@[rm]:mem}{mem:mem}"
 
 # ── 移位：按立即数（`D1 /n` 的 1、`C1 /n ib` 的一般计数）──
 #
@@ -2566,131 +2347,99 @@ asm = "idiv dword ptr {mem}"
 
 [inst.SHL_RM_ONE]
 form = "MRR_SHIFT_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0xD1, reg = 4 }
-ops = ["dst:gprx:inout"]
-asm = "shl {dst}, 1"
+asm = "shl {@rm:gprx:inout}{dst:gprx:inout}, 1"
 
 [inst.SHR_RM_ONE]
 form = "MRR_SHIFT_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0xD1, reg = 5 }
-ops = ["dst:gprx:inout"]
-asm = "shr {dst}, 1"
+asm = "shr {@rm:gprx:inout}{dst:gprx:inout}, 1"
 
 [inst.SAR_RM_ONE]
 form = "MRR_SHIFT_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0xD1, reg = 7 }
-ops = ["dst:gprx:inout"]
-asm = "sar {dst}, 1"
+asm = "sar {@rm:gprx:inout}{dst:gprx:inout}, 1"
 
 [inst.SHL_RM_IMM8]
 form = "MRR_EXT_IMM8_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0xC1, reg = 4 }
-ops = ["dst:gprx:inout", "imm:imm8"]
-asm = "shl {dst}, {imm}"
+asm = "shl {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm8}"
 
 [inst.SHR_RM_IMM8]
 form = "MRR_EXT_IMM8_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0xC1, reg = 5 }
 
-ops = ["dst:gprx:inout", "imm:imm8"]
-asm = "shr {dst}, {imm}"
+asm = "shr {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm8}"
 
 [inst.SAR_RM_IMM8]
 form = "MRR_EXT_IMM8_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0xC1, reg = 7 }
-ops = ["dst:gprx:inout", "imm:imm8"]
-asm = "sar {dst}, {imm}"
+asm = "sar {@rm:gprx:inout}{dst:gprx:inout}, {imm:imm8}"
 
 # ── 移位（D3 /digit，CL 隐式计数；opsize 固定 64 → REX.W）──
 
 [inst.SHL_RM_CL]
 form = "MRR_EXT_OP_F64_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0xD3, reg = 4 }
-ops = ["dst:gpr:inout"]
-asm = "shl {dst}, cl"
+asm = "shl {@rm:gpr:inout}{dst:gpr:inout}, cl"
 
 [inst.SHR_RM_CL]
 form = "MRR_EXT_OP_F64_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0xD3, reg = 5 }
-ops = ["dst:gpr:inout"]
-asm = "shr {dst}, cl"
+asm = "shr {@rm:gpr:inout}{dst:gpr:inout}, cl"
 
 [inst.SAR_RM_CL]
 form = "MRR_EXT_OP_F64_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0xD3, reg = 7 }
-ops = ["dst:gpr:inout"]
-asm = "sar {dst}, cl"
+asm = "sar {@rm:gpr:inout}{dst:gpr:inout}, cl"
 
 [inst.NEG_RM]
 form = "MRR_EXT_OP_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0xF7, reg = 3 }
-ops = ["dst:gprx:inout"]
-asm = "neg {dst}"
+asm = "neg {@rm:gprx:inout}{dst:gprx:inout}"
 
 [inst.DIV_RM]
 form = "MRR_EXT_OP_SEG"
-bind = { rm = "src" }
 match = { opcode = 0xF7, reg = 6 }
 effect = ["Write"]
 # div 隐式读 RAX:RDX（128 位被除数）并写 RAX(商)/RDX(余数)
 implicit_regs = ["RAX", "RDX"]
 # `gprx`（16/32/64）：`div ecx`/`div r16d` 同样常见；原来固定 64 位。
-ops = ["src:gprx"]
-asm = "div {src}"
+asm = "div {@rm:gprx}{src:gprx}"
 
 [inst.IDIV_RM]
 form = "MRR_EXT_OP_SEG"
-bind = { rm = "src" }
 match = { opcode = 0xF7, reg = 7 }
 effect = ["Write"]
 # idiv 隐式读 RAX:RDX（128 位被除数）并写 RAX(商)/RDX(余数)
 implicit_regs = ["RAX", "RDX"]
-ops = ["src:gprx"]
-asm = "idiv {src}"
+asm = "idiv {@rm:gprx}{src:gprx}"
 
 # 一元 `mul`/`imul`（`F7 /4`、`F7 /5`）：隐式读 RAX、写 RAX:RDX。
 # 与两条目 `imul {dst}, {src}`（`0F AF`）不撞：操作数个数与槽类型都不同。
 [inst.MUL_RM]
 form = "MRR_EXT_OP_SEG"
-bind = { rm = "src" }
 match = { opcode = 0xF7, reg = 4 }
 effect = ["Write"]
 implicit_regs = ["RAX", "RDX"]
-ops = ["src:gprx"]
-asm = "mul {src}"
+asm = "mul {@rm:gprx}{src:gprx}"
 
 [inst.IMUL_RM]
 form = "MRR_EXT_OP_SEG"
-bind = { rm = "src" }
 match = { opcode = 0xF7, reg = 5 }
 effect = ["Write"]
 implicit_regs = ["RAX", "RDX"]
-ops = ["src:gprx"]
-asm = "imul {src}"
+asm = "imul {@rm:gprx}{src:gprx}"
 
 [inst.PSHUFD]
 form = "SSE_IMM_0F_SEG"
 match = { opcode = 0x70, prefix = 0x66, w = 0 }
-bind = { reg = "dst", rm = "src" }
-ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
-asm = "pshufd {dst}, {src}, {imm}"
+asm = "pshufd {@reg:fpr:out}{dst:fpr:out}, {@rm:fpr}{src:fpr}, {imm:imm8}"
 
 [inst.SHUFPS]
 form = "SSE_IMM_0F_SEG"
 match = { opcode = 0xC6, prefix = 0, w = 0 }
-bind = { reg = "dst", rm = "src" }
-ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
-asm = "shufps {dst}, {src}, {imm}"
+asm = "shufps {@reg:fpr:out}{dst:fpr:out}, {@rm:fpr}{src:fpr}, {imm:imm8}"
 
 # ── SSE 比较谓词：`CMPPS/CMPPD/CMPSS/CMPSD`（0F C2 /r ib）（v20 V10 第八批）─────
 #
@@ -2705,30 +2454,22 @@ asm = "shufps {dst}, {src}, {imm}"
 [inst.CMPPS]
 form = "SSE_IMM_0F_SEG"
 match = { opcode = 0xC2, prefix = 0, w = 0 }
-bind = { reg = "dst", rm = "src" }
-ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
-asm = "cmpps {dst}, {src}, {imm}"
+asm = "cmpps {@reg:fpr:out}{dst:fpr:out}, {@rm:fpr}{src:fpr}, {imm:imm8}"
 
 [inst.CMPPD]
 form = "SSE_IMM_0F_SEG"
 match = { opcode = 0xC2, prefix = 0x66, w = 0 }
-bind = { reg = "dst", rm = "src" }
-ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
-asm = "cmppd {dst}, {src}, {imm}"
+asm = "cmppd {@reg:fpr:out}{dst:fpr:out}, {@rm:fpr}{src:fpr}, {imm:imm8}"
 
 [inst.CMPSS]
 form = "SSE_IMM_0F_SEG"
 match = { opcode = 0xC2, prefix = 0xF3, w = 0 }
-bind = { reg = "dst", rm = "src" }
-ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
-asm = "cmpss {dst}, {src}, {imm}"
+asm = "cmpss {@reg:fpr:out}{dst:fpr:out}, {@rm:fpr}{src:fpr}, {imm:imm8}"
 
 [inst.CMPSD_SCALAR]
 form = "SSE_IMM_0F_SEG"
 match = { opcode = 0xC2, prefix = 0xF2, w = 0 }
-bind = { reg = "dst", rm = "src" }
-ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
-asm = "cmpsd {dst}, {src}, {imm}"
+asm = "cmpsd {@reg:fpr:out}{dst:fpr:out}, {@rm:fpr}{src:fpr}, {imm:imm8}"
 
 # 经典八谓词的 packed 别名（`cmp<谓词>ps` / `cmp<谓词>pd`）。`[[pseudo]]` = **文本级展开**：
 # 一行别名 → 一行 `cmpps/cmppd {a}, {b}, <谓词>`，编码与手写立即数逐字节相同。
@@ -2804,15 +2545,13 @@ emit = ["cmppd {a}, {b}, 7"]
 roles = ["push"]
 segments = [{ kind = "opcode_reg", value = 0x50 }]
 effect = ["Write"]
-ops = ["src:gpr"]
-asm = "push {src}"
+asm = "push {src:gpr}"
 
 [inst.POP]
 roles = ["pop"]
 segments = [{ kind = "opcode_reg", value = 0x58 }]
 effect = ["Read"]
-ops = ["dst:gpr:out"]
-asm = "pop {dst}"
+asm = "pop {dst:gpr:out}"
 
 [inst.MOV_REG_IMM64]
 roles = ["arg_bytes_imm"]
@@ -2825,8 +2564,7 @@ segments = [
   { kind = "rex", value = 1 },
   { kind = "imm", value = 64 },
 ]
-ops = ["dst:gpr:out", "imm:imm64"]
-asm = "mov {dst}, {imm}"
+asm = "mov {dst:gpr:out}, {imm:imm64}"
 
 # `mov r32, imm32`（`B8+r id`）：32 位**不**带 `rex_w`，立即数只需 4 字节
 # （`mov eax, 0x1234` → `b8 34 12 00 00`）。**不给 `data_width`**：搬运表（v20 V8）
@@ -2835,8 +2573,7 @@ asm = "mov {dst}, {imm}"
 [inst.MOV_R_IMM32]
 segments = [{ kind = "opcode_reg", value = 0xB8 }, { kind = "imm", value = 32 }]
 opsize = 32
-ops = ["dst:gpr32:out", "imm:imm32"]
-asm = "mov {dst}, {imm}"
+asm = "mov {dst:gpr32:out}, {imm:imm32}"
 
 [inst.BSWAP_R]
 segments = [
@@ -2846,8 +2583,7 @@ segments = [
     "0x0F",
   ] },
 ]
-ops = ["dst:gpr:inout"]
-asm = "bswap {dst}"
+asm = "bswap {dst:gpr:inout}"
 
 # ── 控制流（迭代 6：JMP/CALL/RET + rel32）──
 
@@ -2862,8 +2598,7 @@ asm = "ret"
 [inst.RET_IMM16]
 opcode = 0xC2
 segments = [{ kind = "imm", value = 16 }]
-ops = ["imm:imm16"]
-asm = "ret {imm}"
+asm = "ret {imm:imm16}"
 
 [inst.RETF]
 opcode = 0xCB
@@ -2872,8 +2607,7 @@ asm = "retf"
 [inst.RETF_IMM16]
 opcode = 0xCA
 segments = [{ kind = "imm", value = 16 }]
-ops = ["imm:imm16"]
-asm = "retf {imm}"
+asm = "retf {imm:imm16}"
 
 [inst.PUSHFW]
 opcode = 0x9C
@@ -2900,16 +2634,14 @@ asm = "popf"
 roles = ["jump"]
 segments = [{ kind = "imm", value = 32 }]
 opcode = 0xE9
-ops = ["target:rel"]
-asm = "jmp {target}"
+asm = "jmp {target:rel}"
 effect = ["Jump"]
 
 [inst.CALL_RIP_REL]
 roles = ["call"]
 segments = [{ kind = "imm", value = 32 }]
 opcode = 0xE8
-ops = ["target:rel"]
-asm = "call {target}"
+asm = "call {target:rel}"
 effect = ["Call"]
 
 # ── 缺失指令补齐（迭代 6 收官，对齐 v11 124 条）──
@@ -2923,19 +2655,15 @@ asm = "nop"
 # `dword ptr`（同 `NOT_MEM32` 一族：一元形态没有寄存器可驱动宽度）。
 [inst.NOP_RM]
 form = "MRR_EXT_OP_0F_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0x1F, reg = 0 }
-ops = ["dst:gprx"]
-asm = "nop {dst}"
+asm = "nop {@rm:gprx}{dst:gprx}"
 effect = ["Pure"]
 
 [inst.NOP_MEM32]
 form = "MRR_MEM_0F_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x1F, reg = 0 }
 opsize = 32
-ops = ["mem:mem"]
-asm = "nop dword ptr {mem}"
+asm = "nop dword ptr {@[rm]:mem}{mem:mem}"
 effect = ["Pure"]
 
 [inst.UD2]
@@ -2968,29 +2696,24 @@ asm = "cqo"
 match = { reg = 2 }
 roles = ["call_indirect"]
 segments = [{ kind = "modrm" }]
-bind = { rm = "src" }
 opcode = 0xFF
-ops = ["src:gpr"]
-asm = "call {src}"
+asm = "call {@rm:gpr}{src:gpr}"
 effect = ["Call"]
 
 [inst.JCC_REL32]
 form = "JCC_REL32_SEG"
 match = { opcode = 0x80 }
 roles = ["branch"]
-ops = ["cc:cond", "target:rel"]
-asm = "jcc {cc}, {target}"
+asm = "jcc {cc:cond}, {target:rel}"
 effect = ["Branch"]
 
 [inst.SETCC_RM8]
 match = { reg = 0 }
 segments = [{ kind = "modrm" }, { kind = "escape", bytes = ["0x0F"] }]
-bind = { rm = "dst" }
 opcode = 0x90                                                          # 条件码 = opcode 低 4 位（0x90..0x9F）；reg=0 固定、rm=op0
 # 目的写**64 位名**（`setcc RAX, 4`）——lowering 用 64 位 vreg 承接布尔结果
 # （先 `xor` 清零，故低字节即结果），见槽 `gpr64` 的注释。
-ops = ["dst:gpr64:out", "cc:cond"]
-asm = "setcc {dst}, {cc}"
+asm = "setcc {@rm:gpr64:out}{dst:gpr64:out}, {cc:cond}"
 effect = ["Pure"]
 
 # 同编码的**8 位名**形态（`setcc AL, 4`）：真实汇编写 `sete al`（走下面的伪指令），
@@ -2999,10 +2722,8 @@ effect = ["Pure"]
 [inst.SETCC_RM8_B]
 match = { reg = 0 }
 segments = [{ kind = "modrm" }, { kind = "escape", bytes = ["0x0F"] }]
-bind = { rm = "dst" }
 opcode = 0x90
-ops = ["dst:gpr8b:out", "cc:cond"]
-asm = "setcc {dst}, {cc}"
+asm = "setcc {@rm:gpr8b:out}{dst:gpr8b:out}, {cc:cond}"
 effect = ["Pure"]
 
 # **浮点谓词**形态（v21 W6+）：与上面两条**同一编码**（0F 9x），但条件码槽是
@@ -3011,10 +2732,8 @@ effect = ["Pure"]
 [inst.SETCC_F]
 match = { reg = 0 }
 segments = [{ kind = "modrm" }, { kind = "escape", bytes = ["0x0F"] }]
-bind = { rm = "dst" }
 opcode = 0x90
-ops = ["dst:gpr64:out", "cc:fcc"]
-asm = "setccf {dst}, {cc}"
+asm = "setccf {@rm:gpr64:out}{dst:gpr64:out}, {cc:fcc}"
 effect = ["Pure"]
 
 # **标志位**形态（v21 W6+ 甲）：同一编码，条件码槽是**标志位银行**
@@ -3022,38 +2741,30 @@ effect = ["Pure"]
 [inst.SETCC_FLAG]
 match = { reg = 0 }
 segments = [{ kind = "modrm" }, { kind = "escape", bytes = ["0x0F"] }]
-bind = { rm = "dst" }
 opcode = 0x90
-ops = ["dst:gpr64:out", "cc:flag"]
-asm = "setccfl {dst}, {cc}"
+asm = "setccfl {@rm:gpr64:out}{dst:gpr64:out}, {cc:flag}"
 effect = ["Pure"]
 
 # `setcc m8`（`0F 9x /0`，rm = 内存）：宽度靠模板里的字面 `byte ptr`（一元形态无寄存器
 # 驱动宽度，同 `NOT_MEM32` 一族）。
 [inst.SETCC_R_MEM]
 form = "MRR_MEM_0F_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x90, reg = 0 }
 opsize = 8                         # 写 1 字节：`opsize` 取不了 `s0`（op0 是内存）
-ops = ["mem:mem:out", "cc:cond"]
-asm = "setcc byte ptr {mem}, {cc}"
+asm = "setcc byte ptr {@[rm]:mem:out}{mem:mem:out}, {cc:cond}"
 effect = ["Pure"]
 
 [inst.LEA_R64_SIB]
 form = "MRR_MEMREF_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x8D }
-ops = ["dst:gpr:out", "mem:mem"]
-asm = "lea {dst}, {mem}"
+asm = "lea {dst:gpr:out}, {@[rm]:mem}{mem:mem}"
 effect = ["Pure"]
 
 [inst.LEA_RBP_OFF]
 roles = ["frame_addr"]
 form = "MRR_MEMREF_SEG"
-bind = { rm = "[mem]" }
 match = { opcode = 0x8D }
-ops = ["dst:gpr:out", "mem:mem"]
-asm = "lea {dst}, {mem}"
+asm = "lea {dst:gpr:out}, {@[rm]:mem}{mem:mem}"
 effect = ["Pure"]
 
 [inst.MOVABS_GLOBAL]
@@ -3062,8 +2773,7 @@ segments = [
   { kind = "rex", value = 1 },
   { kind = "imm", value = 64 },
 ]
-ops = ["dst:gpr:out", "imm:imm64"]
-asm = "mov {dst}, {imm}"
+asm = "mov {dst:gpr:out}, {imm:imm64}"
 effect = ["Pure"]
 reloc = "abs64"
 
@@ -3071,30 +2781,24 @@ reloc = "abs64"
 # 宽度由目的槽驱动（`MRR_0F` 的 `opsize = "auto"`）：`cmovl rax, rcx`（64 位）与
 # `cmovl eax, r16d`（32 位，真实语料）都要收——原来固定 64 位（`MRR_0F_FIX64`）。
 form = "MRR_0F_SEG"
-bind = { reg = "dst", rm = "src" }              # cond 编码进 opcode 低 4 位
 match = { opcode = 0x40 }                       # 条件码 = opcode 低 4 位（0x40..0x4F）
-ops = ["dst:gprx:inout", "src:gprx", "cc:cond"]
-asm = "cmovcc {dst}, {src}, {cc}"
+asm = "cmovcc {@reg:gprx:inout}{dst:gprx:inout}, {@rm:gprx}{src:gprx}, {cc:cond}"
 effect = ["Pure"]
 
 # **标志位**形态（v21 W6+ 甲）：同一编码（0F 4x），条件码槽是标志位银行
 # （`flag` ⇒ `FlagCC`）。饱和 lowering 用 `cmovccfl` 取溢出方向（`FlagCC::S`/`Ns`）。
 [inst.CMOVCC_FLAG]
 form = "MRR_0F_SEG"
-bind = { reg = "dst", rm = "src" }
 match = { opcode = 0x40 }
-ops = ["dst:gprx:inout", "src:gprx", "cc:flag"]
-asm = "cmovccfl {dst}, {src}, {cc}"
+asm = "cmovccfl {@reg:gprx:inout}{dst:gprx:inout}, {@rm:gprx}{src:gprx}, {cc:flag}"
 effect = ["Pure"]
 
 # `cmovcc r, m`（`0F 4x /r`，rm = 内存）：与寄存器形式同编码、同掩码边（0F 4x）。
 [inst.CMOVCC_R_MEM]
 form = "MRR_MEM_0F_SEG"
 
-bind = { reg = "dst", rm = "[mem]" }
 match = { opcode = 0x40 }
-ops = ["dst:gprx:inout", "mem:mem", "cc:cond"]
-asm = "cmovcc {dst}, {mem}, {cc}"
+asm = "cmovcc {@reg:gprx:inout}{dst:gprx:inout}, {@[rm]:mem}{mem:mem}, {cc:cond}"
 effect = ["Pure"]
 
 # ── 真实汇编写法：**助记符自带条件后缀**（`sete`/`cmovl`）——走 `[[pseudo]]` 文本展开 ──
@@ -3131,9 +2835,7 @@ emit = ["cmovcc {dst}, {mem}, l"]
 [inst.ROUNDSD_I]
 form = "SSE_IMM_0F3A_SEG"
 match = { opcode = 0x0B, prefix = 0x66, w = 1 }
-bind = { reg = "dst", rm = "src" }
-ops = ["dst:fpr:out", "src:fpr", "imm:imm8"]
-asm = "roundsd {dst}, {src}, {imm}"
+asm = "roundsd {@reg:fpr:out}{dst:fpr:out}, {@rm:fpr}{src:fpr}, {imm:imm8}"
 effect = ["Pure"]
 
 [inst.PMULLD]
@@ -3141,46 +2843,39 @@ opsize = 64
 segments = [{ kind = "escape", bytes = ["0x0F", "0x38"] }]
 opcode = 0x40
 match = { w = 0 }
-ops = ["dst:fpr:inout", "src:fpr"]
-asm = "pmulld {dst}, {src}"
+asm = "pmulld {dst:fpr:inout}, {src:fpr}"
 effect = ["Pure"]
 
 [inst.MOVQ_XMM_R64]
 form = "MRR_0F_F64_PFX_SEG"
 match = { opcode = 0x6E, prefix = 0x66, w = 1 }
-ops = ["dst:fpr:out", "src:gpr"]
-asm = "movq {dst}, {src}"
+asm = "movq {dst:fpr:out}, {src:gpr}"
 effect = ["Pure"]
 data_width = 64
 
 [inst.MOVQ_R64_XMM]
-bind = { reg = "src", rm = "dst" }
 form = "MRR_0F_F64_PFX_SEG"
 match = { opcode = 0x7E, prefix = 0x66, w = 1 }
-ops = ["dst:gpr:out", "src:fpr"]
-asm = "movq {dst}, {src}"
+asm = "movq {@rm:gpr:out}{dst:gpr:out}, {@reg:fpr}{src:fpr}"
 effect = ["Pure"]
 data_width = 64
 
 [inst.MOVQ_XMM_FREG]
 form = "MRR_0F_F64_PFX_SEG"
 match = { opcode = 0x6E, prefix = 0x66, w = 1 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "movq {dst}, {src}"
+asm = "movq {dst:fpr:out}, {src:fpr}"
 effect = ["Pure"]
 
 [inst.MOVQ_FREG_XMM]
 form = "MRR_0F_F64_PFX_SEG"
 match = { opcode = 0x7E, prefix = 0x66, w = 1 }
-ops = ["dst:fpr:out", "src:fpr"]
-asm = "movq {dst}, {src}"
+asm = "movq {dst:fpr:out}, {src:fpr}"
 effect = ["Pure"]
 
 [inst.MOVAPS_MR]
 form = "MRR_0F_F64_PFX_SEG"
 match = { opcode = 0x29, prefix = 0, w = 0 }
-ops = ["src:gpr", "src2:fpr"]
-asm = "movaps {src}, {src2}"
+asm = "movaps {src:gpr}, {src2:fpr}"
 effect = ["Write"]
 
 [inst.LZCNT_R]
@@ -3188,41 +2883,34 @@ form = "MRR_0F_PFX_SEG"
 match = { opcode = 0xBD, prefix = 0xF3, w = 0 }
 # v14：槽 gprx——宽度由 IR 类型 auto（I32 输入 → 无 REX.W lzcntl 返回 31
 # 位语义；I64 → REX.W lzcntq）。固定 _32 变体（LZCNT_R32）已删。
-ops = ["dst:gprx:out", "src:gprx"]
-asm = "lzcnt {dst}, {src}"
+asm = "lzcnt {dst:gprx:out}, {src:gprx}"
 effect = ["Pure"]
 
 [inst.TZCNT_R]
 form = "MRR_0F_PFX_SEG"
 match = { opcode = 0xBC, prefix = 0xF3, w = 0 }
-ops = ["dst:gprx:out", "src:gprx"]
-asm = "tzcnt {dst}, {src}"
+asm = "tzcnt {dst:gprx:out}, {src:gprx}"
 effect = ["Pure"]
 
 [inst.POPCNT_R]
 form = "MRR_0F_PFX_SEG"
 match = { opcode = 0xB8, prefix = 0xF3, w = 0 }
-ops = ["dst:gprx:out", "src:gprx"]
-asm = "popcnt {dst}, {src}"
+asm = "popcnt {dst:gprx:out}, {src:gprx}"
 effect = ["Pure"]
 
 # ── 旋转（迭代 6 续：D3 /0 /1，CL 隐式计数；宽度按结果类型 32/64）──
 
 [inst.ROL_RM]
 form = "MRR_EXT_OP_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0xD3, reg = 0 }
 effect = ["Pure"]
-ops = ["dst:gprx:inout"]
-asm = "rol {dst}"
+asm = "rol {@rm:gprx:inout}{dst:gprx:inout}"
 
 [inst.ROR_RM]
 form = "MRR_EXT_OP_SEG"
-bind = { rm = "dst" }
 match = { opcode = 0xD3, reg = 1 }
 effect = ["Pure"]
-ops = ["dst:gprx:inout"]
-asm = "ror {dst}"
+asm = "ror {@rm:gprx:inout}{dst:gprx:inout}"
 
 # ============================================================
 # 调用约定：v20 A5-3 起谱侧不再声明参数池/返回槽（`[abi]` 整节已下线）；

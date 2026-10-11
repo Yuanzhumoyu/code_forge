@@ -53,37 +53,32 @@ fields = [
 [inst.ADD]
 form = "RRR"
 opcode = 0x01
-ops = ["dst:g:out", "src:g", "src2:g"]
-asm = "add {dst}, {src}, {src2}"
+asm = "add {dst:g:out}, {src:g}, {src2:g}"
 effect = ["Pure"]
 
 [inst.SUB]
 form = "RRR"
 opcode = 0x02
-ops = ["dst:g:out", "src:g", "src2:g"]
-asm = "sub {dst}, {src}, {src2}"
+asm = "sub {dst:g:out}, {src:g}, {src2:g}"
 effect = ["Pure"]
 
 [inst.AND]
 form = "RRR"
 opcode = 0x03
-ops = ["dst:g:out", "src:g", "src2:g"]
-asm = "and {dst}, {src}, {src2}"
+asm = "and {dst:g:out}, {src:g}, {src2:g}"
 effect = ["Pure"]
 
 [inst.ADDI]
 form = "RRI"
 opcode = 0x11
-ops = ["dst:g:out", "src:g", "imm:i8"]
-asm = "addi {dst}, {src}, {imm}"
+asm = "addi {dst:g:out}, {src:g}, {imm:i8}"
 effect = ["Pure"]
 
 # RRI 的 `rs1` 无操作数绑定 ⇒ 按缺省 0 发射（本槽只吃立即数）。
 [inst.MOVI]
 form = "RRI"
 opcode = 0x12
-ops = ["dst:g:out", "imm:i8"]
-asm = "movi {dst}, {imm}"
+asm = "movi {dst:g:out}, {imm:i8}"
 effect = ["Pure"]
 
 # v21 W5：族 = **唯一复用机制**（表头即族名）；`body` 给公共键，`rows` 每行一个实例。

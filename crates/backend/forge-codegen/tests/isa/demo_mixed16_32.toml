@@ -85,16 +85,14 @@ width = 16
 form = "C16"
 opcode = 1
 match = { sel = 0 }
-ops = ["dst:r:out", "src:r"]
-asm = "cadd {dst}, {src}"
+asm = "cadd {dst:r:out}, {src:r}"
 
 [inst.CMOV16]
 width = 16
 form = "C16"
 opcode = 2
 match = { sel = 0 }
-ops = ["dst:r:out", "src:r"]
-asm = "cmov {dst}, {src}"
+asm = "cmov {dst:r:out}, {src:r}"
 
 [inst.LNOP32]
 width = 32
@@ -108,8 +106,7 @@ width = 32
 form = "L32I"
 opcode = 2
 match = { sel = 3 }
-ops = ["dst:r:out", "src:r", "imm:i12"]
-asm = "ladd {dst}, {src}, {imm}"
+asm = "ladd {dst:r:out}, {src:r}, {imm:i12}"
 
 [machine]
 addr = "gpr32"
