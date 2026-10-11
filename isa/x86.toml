@@ -184,6 +184,8 @@ c  = { code = 2, ir = "c" }    # CF：无符号溢出/借位
 nc = { code = 3, ir = "nc" }
 s  = { code = 8, ir = "s" }    # SF：结果为负
 ns = { code = 9, ir = "ns" }
+p  = { code = 10, ir = "p" }   # PF：奇偶（浮点比较后即"有 NaN"，但作为**标志位**读也合法）
+np = { code = 11, ir = "np" }  # PF 清零
 
 # v13：变长解码前缀扫描表（缺省即此表；66/F0/F2/F3/67/REX 扫描集）
 [[conventions.prefix_scan]]

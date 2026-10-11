@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6+：标志条件码**移出 IR**（改由 DSL 生成）+ 条件码补全
+
++ **标志位条件码不再属于 IR** ✗：`forge_ir::FlagCC` **删除** ✗ —— `IntCC`/`FloatCC` 是**值的比较谓词** ✗，标志位（溢出/进位/符号/奇偶/恒真恒假 ✗）是**机器语义** ✗，两者差别很大 ✗，而且 **IR 层根本用不到标志条件** ✗（IR 不产生"读 OF"这类操作 ✗）。现在 `FlagCC` **由 DSL 按谱里的标志位表生成** ✗（生成物里的本地枚举 ✗，`forge_ir::FlagCC` 不存在 ✗），只活在 lowering 与生成物里。
++ **条件码补全** ✗（"不能因为指令集用不上就不写"✗）：
+  + 规范标志助记符 **8 → 10** ✗：补 `al`/`nv`（恒真/恒假 ✗）—— 条件码空间里的**退化成员** ✗，A64 的 16 个条件各占一个码 ✗ ⇒ 必须能表达 ✗。
+  + x86 `[enum.flagcond]` 补齐 `p`/`np`（8 个 ✗）。
+  + **arm64 补出整块标志位能力** ✗：新增 `[enum.flagcond]`（`mi→s`、`pl→ns`、`vs→o`、`vc→no`、`al→al`、`nv→nv` ✗）+ `[operand.flag4]`（`cond_bank = "flag"` ✗）+ **4 个标志位形态** `cself`/`csincf`/`csinvf`/`csnegf`（各 64/32 两位宽 ✗，共 8 条指令 ✗）—— 于是 A64 的 16 个条件**全部**都有类型化的归宿 ✗。（汇编面用独立助记符 ✗：与整数形态同文本同签名会被歧义 lint 判成真歧义 ✗。）
++ **修一个真 bug** ✗：定宽 ISA 的解码是按掩码分组的 if 链 ✗ ⇒ 条件码"没有 IR 对应"必须在**候选自己的条件**里判 ✗（写进 `guard` ✗），否则会连坐同组的兄弟候选 ✗（arm64 的 `csel …, nv` 正是这样炸出 `unreachable!` ✗）。
++ 验收 ✗：整仓门禁 **exit 0** ✗；三矩阵 x86 197/3/0 ✗、riscv64 136/64/0 ✗、arm64 ✔；谱内向量 505 ✗；指纹 x86 `derived` 1550 ✗、arm64 `2581`（+16 ✗）、`spec_totals` arm64 **552**（+8 ✗）；lint 快照 arm64 `refs 27→31` ✗、`unassigned_bits 262→266` ✗（**+4 / +4 = 四个新家族** ✗，与其整数兄弟同形 ✗，已复核 ✗）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6+ 甲：条件槽字段 = IR 条件枚举（`IntCC`/`FloatCC`/`FlagCC`）
 
 + **生成物里条件码字段的类型就是 IR 条件枚举**（不再是裸 `u8`）：`[operand.<名>].cond_bank` 选银行 ⇒ 整数表 ⇒ `IntCC`、浮点谓词表 ⇒ `FloatCC`、标志位表 ⇒ `FlagCC`。机器码只在**编码 / 解码 / 汇编文本**三个边界出现，走生成的 `CondEnc` trait（`IntCC`/`FloatCC`/`FlagCC` 各一条 `enc`）与 `intcc_of`/`floatcc_of`/`flagcc_of`（表里没有 `ir` 对应的码返回 `None` ⇒ fail-closed）。

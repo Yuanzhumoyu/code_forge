@@ -757,7 +757,7 @@ fn cond_fold(bank: crate::dsl::model::CondBank) -> (TokenStream, TokenStream) {
     match bank {
         crate::dsl::model::CondBank::Int => (quote! { intcc_of }, quote! { forge_ir::IntCC }),
         crate::dsl::model::CondBank::Float => (quote! { floatcc_of }, quote! { forge_ir::FloatCC }),
-        crate::dsl::model::CondBank::Flag => (quote! { flagcc_of }, quote! { forge_ir::FlagCC }),
+        crate::dsl::model::CondBank::Flag => (quote! { flagcc_of }, quote! { FlagCC }),
     }
 }
 

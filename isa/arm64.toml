@@ -329,6 +329,17 @@ le = { code = 13, ir = "sle" }
 al = 14
 nv = 15
 
+# 标志位条件表（v21 W6+ 甲）：A64 条件码里**不是值比较谓词**的那 6 个 ✗ —— 符号
+# （`mi`/`pl` ⇒ `FlagCC::S`/`Ns`）、溢出（`vs`/`vc` ⇒ `O`/`No`）、恒真恒假（`al`/`nv`）。
+# 它们由 `cself`/`csincf`/`csinvf`/`csnegf` 这组**标志位形态**承接（见 CSEL 家族下方 ✗）。
+[enum.flagcond]
+mi = { code = 4,  ir = "s" }
+pl = { code = 5,  ir = "ns" }
+vs = { code = 6,  ir = "o" }
+vc = { code = 7,  ir = "no" }
+al = { code = 14, ir = "al" }
+nv = { code = 15, ir = "nv" }
+
 # ─────────────────────────── 操作数槽 ───────────────────────────
 
 [operand.adr_off]
@@ -1656,6 +1667,14 @@ fields = [
 kind = "cond"
 signed = false
 bits = 4
+
+# 标志位条件槽（v21 W6+ 甲）：同一个 4 位条件字段，但银行是**标志位** ⇒ 生成物字段
+# 类型是 `forge_ir::FlagCC`（承接 `mi`/`pl`/`vs`/`vc`/`al`/`nv` ✗）。
+[operand.flag4]
+kind = "cond"
+signed = false
+bits = 4
+cond_bank = "flag"
 
 [operand.imm16]
 kind = "imm"
@@ -3974,6 +3993,38 @@ body = { group = "csneg", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot
 rows = [
   { inst = "CSNEGX", slot = "r64", opcode = 0x6D4 },
   { inst = "CSNEGW", slot = "r32", opcode = 0x2D4 },
+]
+
+# ── csel 家族的**标志位条件**形态（v21 W6+ 甲）─────────────────────────────
+# A64 的条件码 16 个里有 6 个（`mi`/`pl`/`vs`/`vc`/`al`/`nv`）**不是**值的比较谓词 ✗
+# ——它们是符号/溢出/恒真恒假 ✗，`IntCC` 里没有对应 ✗。**条件码要写全** ✗：不能因为
+# "整数比较形态用不到它们"就让这 6 个条件在谱里无处安放 ✗ ⇒ 走 `flag` 银行 ✗
+# （生成物字段类型是 `forge_ir::FlagCC` ✗）。
+# 汇编面用独立助记符 `cself`/`csincf`/`csinvf`/`csnegf` ✗：与整数形态**同文本同签名**的
+# 双形态会被歧义 lint 判成真歧义（文本层分不出条件银行 ✗）⇒ 必须可分辨 ✗。
+[family.CSEL_FLAG]
+body = { group = "cself", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:flag4", "src2:{slot}"], asm = "cself {dst}, {src}, {src2}, {cc}" }
+rows = [
+  { inst = "CSELX_F", slot = "r64", opcode = 0x4D4 },
+  { inst = "CSELW_F", slot = "r32", opcode = 0xD4 },
+]
+[family.CSINC_FLAG]
+body = { group = "csincf", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:flag4", "src2:{slot}"], asm = "csincf {dst}, {src}, {src2}, {cc}", match = { csop2 = 1 } }
+rows = [
+  { inst = "CSINCX_F", slot = "r64", opcode = 0x4D4 },
+  { inst = "CSINCW_F", slot = "r32", opcode = 0xD4 },
+]
+[family.CSINV_FLAG]
+body = { group = "csinvf", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:flag4", "src2:{slot}"], asm = "csinvf {dst}, {src}, {src2}, {cc}" }
+rows = [
+  { inst = "CSINVX_F", slot = "r64", opcode = 0x6D4 },
+  { inst = "CSINVW_F", slot = "r32", opcode = 0x2D4 },
+]
+[family.CSNEG_FLAG]
+body = { group = "csnegf", form = "CSEL4", opcode = "{opcode}", ops = ["dst:{slot}:out", "src:{slot}", "cc:flag4", "src2:{slot}"], asm = "csnegf {dst}, {src}, {src2}, {cc}", match = { csop2 = 1 } }
+rows = [
+  { inst = "CSNEGX_F", slot = "r64", opcode = 0x6D4 },
+  { inst = "CSNEGW_F", slot = "r32", opcode = 0x2D4 },
 ]
 
 # ── B.cond（v18 S3c）：条件码在 [3:0]（固定字段 `bcond`），助记符由 `{cname}` 插值 ──

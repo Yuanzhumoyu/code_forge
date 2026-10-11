@@ -1307,11 +1307,18 @@ pub const IR_FLOAT_COND_NAMES: [&str; 16] = [
     "uge", "ult", "ule", "une",
 ];
 
-/// IR 的 8 个**标志位条件**助记符（与 `FlagCC::mnemonic()` 同名；v21 W6+ 甲）。
+/// **标志位条件**的规范助记符表（v21 W6+ 甲 ✗）——**这是 DSL 自己的词汇，不在 IR 里** ✗。
 ///
-/// 溢出/进位/符号/奇偶是**机器标志位**语义（`IntCC`/`FloatCC` 里没有），
-/// x86 的 `seto`/`setc`/`sets`、arm64 的 `b.vs`/`b.mi` 这类 lowering 需要它们。
-pub const IR_FLAG_COND_NAMES: [&str; 8] = ["o", "no", "c", "nc", "s", "ns", "p", "np"];
+/// 为什么不属于 IR ✗：`IntCC`/`FloatCC` 是**值的比较谓词**（`a < b` 这类 ✗），而
+/// 溢出/进位/符号/奇偶是**算术把标志位写成了什么** ✗ —— 两者语义差得远 ✗，而且 **IR 层
+/// 根本用不到标志条件** ✗（它不产生"读 OF"这类操作 ✗）。所以标志条件由 **DSL 生成** ✗：
+/// 谱里的标志位表用 `ir = "…"` 指到这里的名字 ✗，生成物里得到一个**本 ISA 自己的**
+/// `FlagCC` 枚举（`forge_ir::FlagCC` **不存在** ✗）。
+///
+/// 变体名 = 助记符 = 谱里 `ir` 写的东西 ✗；`al`/`nv`（恒真/恒假 ✗）是条件码空间里的
+/// **退化成员** ✗ —— A64 的 16 个条件各占一个码 ✗，所以也要能表达 ✗。
+pub const FLAG_COND_NAMES: [&str; 10] =
+    ["o", "no", "c", "nc", "s", "ns", "p", "np", "al", "nv"];
 
 /// 条件码表的**银行**（v21 W6+）——固定三类，不用字符串键。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1347,11 +1354,11 @@ impl CondBank {
         };
         let int_only = IR_INT_COND_NAMES
             .iter()
-            .any(|n| !IR_FLOAT_COND_NAMES.contains(n) && !IR_FLAG_COND_NAMES.contains(n) && has(n));
+            .any(|n| !IR_FLOAT_COND_NAMES.contains(n) && !FLAG_COND_NAMES.contains(n) && has(n));
         let fpr_only = IR_FLOAT_COND_NAMES
             .iter()
-            .any(|n| !IR_INT_COND_NAMES.contains(n) && !IR_FLAG_COND_NAMES.contains(n) && has(n));
-        let flag_only = IR_FLAG_COND_NAMES.iter().any(|n| has(n));
+            .any(|n| !IR_INT_COND_NAMES.contains(n) && !FLAG_COND_NAMES.contains(n) && has(n));
+        let flag_only = FLAG_COND_NAMES.iter().any(|n| has(n));
         let kinds = [int_only, fpr_only, flag_only]
             .iter()
             .filter(|x| **x)
@@ -1487,7 +1494,7 @@ impl IsaModel {
         for ir in IR_INT_COND_NAMES
             .iter()
             .chain(IR_FLOAT_COND_NAMES.iter())
-            .chain(IR_FLAG_COND_NAMES.iter())
+            .chain(FLAG_COND_NAMES.iter())
         {
             if let Some((_, e)) = table
                 .iter()

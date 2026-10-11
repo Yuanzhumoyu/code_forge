@@ -2984,7 +2984,7 @@ fn gen_lowering_insts(
                                         (quote! { floatcc_of }, quote! { forge_ir::FloatCC })
                                     }
                                     crate::dsl::model::CondBank::Flag => {
-                                        (quote! { flagcc_of }, quote! { forge_ir::FlagCC })
+                                        (quote! { flagcc_of }, quote! { FlagCC })
                                     }
                                 };
                                 (

@@ -1205,7 +1205,7 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
             let gp: Vec<(String, u64)> = gt.iter().map(|(k, e)| (k.clone(), e.code)).collect();
             let (gp_arms, gr_arms) = arms_of(&gp);
             out.extend(quote! {
-                fn __cond_g(it: &mut __Iter) -> Option<forge_ir::FlagCC> {
+                fn __cond_g(it: &mut __Iter) -> Option<FlagCC> {
                     let __Tok::Ident(name) = it.toks.get(it.pos)?.clone() else { return None; };
                     let n = name.to_ascii_lowercase();
                     let code = match n.as_str() {
@@ -1215,7 +1215,7 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                     it.pos += 1;
                     flagcc_of(code)
                 }
-                fn __render_cond_g(c: forge_ir::FlagCC) -> String {
+                fn __render_cond_g(c: FlagCC) -> String {
                     match CondEnc::enc(c) & 0xF {
                         #(#gr_arms,)*
                         _ => "?".into(),
