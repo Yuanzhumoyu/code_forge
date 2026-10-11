@@ -20,11 +20,14 @@
 //! - `types.rs`：13 处是 `TypeContext` 的**一次性查询封装**（`ctx.size_bytes(ty)`
 //!   这类），每次调用恰好 1 次读锁；多查询调用方应改用 `&TypeStore`（见
 //!   `type_store_read_path.rs` 的 `one_shot_type_context_accessors_take_one_lock`）。
-//! - `pipeline/compiler.rs`：20 处在生产路径——各 `expand_*`/`memoryize_*` 入口一次取锁，
-//!   其余在 `rewrite_agg_value_uses`/`expand_large_aggs`/`expand_large_agg_params`/
-//!   `compile_with_alloc` 里（**显式 `drop` 守卫**的读写交错段，或会调到唯一
-//!   `borrow_mut` 的编排点）；另有 1 处在 `#[cfg(test)]` 测试里（给 `LowerCtx` 取快照）。
-//!   v3 S3 余项①顺带收掉了宽向量门的"每指令取锁"（3 处 → 1 次入口快照）。
+//! - `pipeline/compiler.rs`：16 处在生产路径——各 `expand_*` 入口一次取锁，其余在
+//!   `expand_large_aggs`/`expand_large_agg_params`/`compile_with_alloc` 里（**显式 `drop`
+//!   守卫**的读写交错段，或会调到唯一 `borrow_mut` 的编排点）；另有 1 处在 `#[cfg(test)]`
+//!   测试里（给 `LowerCtx` 取快照）。v3 S3 余项①顺带收掉了宽向量门的"每指令取锁"（3 处
+//!   → 1 次入口快照）。本轮把 rewrite 族（`memoryize_from_segs`/`memoryize_from_addr`/
+//!   `rewrite_agg_value_uses`/`move_to_front`）迁到 `pipeline/agg_expand.rs`，4 处预算随之转移。
+//! - `pipeline/agg_expand.rs`：`has_*` 检测族每条判定各取一次读锁；本轮迁入的 rewrite 族
+//!   同样是"每入口一次"（与 `has_*` 同模式），不引入逐指令/循环内取锁。
 //! - `forge-dsl/.../lowering.rs`：**0**（v3 S3 余项①已迁移）。这 11 处原本是
 //!   `quote! { ... }` 模板文本里的 `tc.borrow()`（生成的 lowering 在 codegen 期逐指令
 //!   取锁）；现在 `LowerCtx` 带**快照**（`type_store: Option<TypeStoreRef>`，lowering
@@ -57,8 +60,13 @@ const BUDGETS: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/compiler.rs",
-        21,
-        "20 处生产路径（各 expand_*/memoryize_* 入口 + 读写交错短读段）+ 1 处测试辅助",
+        17,
+        "16 处生产路径（各 expand_* 入口一次取锁 + 读写交错短读段）+ 1 处测试辅助；rewrite 族已迁出到 agg_expand.rs（4 处随之转移）",
+    ),
+    (
+        "crates/backend/forge-codegen/src/pipeline/agg_expand.rs",
+        13,
+        "has_* 检测族（每条判定各取一次读锁）+ 本轮迁入的 rewrite 族（各入口一次取锁，与 has_* 同模式）",
     ),
     (
         "crates/frontend/forge-isa-dsl/src/dsl/codegen/lowering.rs",

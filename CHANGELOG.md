@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — forge-codegen：`agg_expand` 第三批迁移（rewrite 族 4 函数）
+
++ **`memoryize_from_segs` / `memoryize_from_addr` / `rewrite_agg_value_uses` / `move_to_front` 从 `pipeline/compiler.rs` 迁入 `pipeline/agg_expand.rs`**（第四十四轮记录、第四十六轮"剩余状态"里的"第三批"，`docs/forge-ir/backlog.md` #1）。搬移用逐行切片（字节精确，非人工转写）：`compiler.rs` 2940 → 2544 行、`agg_expand.rs` 177 → 574 行（含文档注释块）；四个函数改 `pub(crate)`，调用点统一经 `use crate::pipeline::agg_expand::{…}` 引入；`agg_expand.rs` 里"expand_* 族将按批迁入"的占位注释改成实况（仍留 `compiler.rs` 的是 `expand_*` 执行族，与 `CompileState` 时序耦合更紧）。
++ **读路径预算随之更新**（`crates/foundation/forge-ir/tests/read_path_budget.rs`，v3 S3 静态预算守卫按"迁移完就下调"的纪律）：`pipeline/compiler.rs` 21 → 17，并新增 `pipeline/agg_expand.rs` 的 13 条目（本次搬移转移了 4 处 `.borrow()`；`has_*` 与本轮迁入的 rewrite 族都是"每入口一次"，不引入逐指令取锁）。
++ 验收：`cargo check -p forge-codegen` 0 error、整仓门禁 **exit 0**。
+
+### Fixed (2026-10-08) — forge-opt：嵌套聚合常量上的 `extractvalue` 链现在能折到底
+
++ **`extractvalue` 常量折叠支持"深层索引"**（`docs/forge-ir/backlog.md` #3）：此前 `fold_extract_value` 只折**单层** —— 第一层提取若结果是**子聚合**就返回 `None`，「提取子聚合的字段」的第二条指令因此看不到常量，**整条链都不折叠**（实测复现：`changed=false, removed=0`）。现在沿 `extractvalue` 链**上溯出（根部常量聚合 × 索引路径）**，直接在 `ConstantPool` 的 `AggConst` 树里**深层下钻**（新增 `agg_child_at` / `resolve_agg_chain`）⇒ 嵌套链**一次折到标量**；折叠应用点的"操作数必须全是常量"闸门对这类指令放开（链上的聚合源是**值**而非 immediate）。回归用例 `fold_nested_extractvalue_chain`（`{i32, {i32, i32}}` 常量上两层提取），`cargo test -p forge-opt` **100 passed**。
++ **不做**：`builder.extract_value`/`insert_value` 的"路径版" —— 这套 IR 里聚合常量只作为 `extractvalue` 的 **immediate** 出现（**没有"独立聚合常量值"**），路径助手没有根可起步，加了是投机 API；`insertvalue` 的常量折叠（要新造聚合常量）也无实测用例，需要时再评估。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6+：标志条件码**移出 IR**（改由 DSL 生成）+ 条件码补全
 
 + **标志位条件码不再属于 IR**：`forge_ir::FlagCC` **删除** —— `IntCC`/`FloatCC` 是**值的比较谓词**，标志位（溢出/进位/符号/奇偶/恒真恒假）是**机器语义**，两者差别很大，而且 **IR 层根本用不到标志条件**（IR 不产生"读 OF"这类操作）。现在 `FlagCC` **由 DSL 按谱里的标志位表生成**（生成物里的本地枚举，`forge_ir::FlagCC` 不存在），只活在 lowering 与生成物里。
