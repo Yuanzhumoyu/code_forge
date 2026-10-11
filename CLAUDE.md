@@ -56,7 +56,7 @@ docs/
 - **forge-ir 的轮次纪元不统一**（audit 第 47 轮 ≠ roadmap 第 31 轮）——都已在
   archive/forge-ir/，继续 forge-ir 迭代请按 `docs/forge-ir/README.md` 约定新开记录；
 - **archive 内"已实现/待办"不代表代码现状**——改代码/加测试前以源码与 test 为准；
-- ISA-DSL 现行语法以 `reference/isa-dsl.md` 为准，**v21 重设计（2026-10）已收口** ✔：
+- ISA-DSL 现行语法以 `reference/isa-dsl.md` 为准，**v21 重设计（2026-10）已收口**：
   表头即名字的三张表（`[form.<名>]`/`[inst.<名>]`/`[pred.<名>]`）、`[operand.<名字>]`、
   `[enum.<表名>]`、`[family.<名>]`、`[asm.*]`、`[machine.*]` 都已就位；**进度与验收**看
   `plans/isa-dsl-v21-execution-checklist.md`（活的账本，§14 快照 #3：门禁 exit 0、
@@ -423,7 +423,7 @@ let name = node.get_text("name")?;
   截断输入合法）、`{bytes}` 解码正向、`{asm}` **闭环**（只断言编解码/文本闭环稳定，不比字节）。
   形态在解析期校验（`validate_vectors`），用例发射成 `__spec_tests::spec_vector_<下标>`
   （条数进 `SPEC_VECTORS`）。**别再手抄 Rust 黄金字节表/往返清单**——迁进谱里
-  （三份发行谱 2026-10-08 实测共 **505 条**：x86 154 / riscv64 152 / arm64 199 ✗ ——
+  （三份发行谱 2026-10-08 实测共 **505 条**：x86 154 / riscv64 152 / arm64 199 ——
   v19 V3 迁移当时是 363 条，之后随覆盖补齐增长；迁移前后字节集合的规范化 sha256 相同）。
   校验规则：同一条 `asm` 给出两种期望字节才算错，完全相同的重复允许。
   守卫 `crates/frontend/forge-isa-dsl/tests/vectors.rs` 与 `tests/determinism.rs`。

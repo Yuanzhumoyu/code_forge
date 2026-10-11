@@ -1,9 +1,9 @@
 # forge-ir 二进制序列化执行方案（B1–B5）
 
-> ⚠️ **ARCHIVED（2026-10-08）** —— 按代码事实核对：`to_binary`/`from_binary` ✗、
-> `IR_FORMAT_VERSION` ✗、`tests/binary_module.rs` **都在** ✔ ⇒ 本执行方案的 B1–B5 已落地 ✗。
-> **现行格式规范** = [`../reference/binary-format.md`](../reference/binary-format.md)（格式 v1 规范文本 ✗）；
-> 同目录还有它的设计文档 `forge-ir-s8-design.md` ✗。
+> ⚠️ **ARCHIVED（2026-10-08）** —— 按代码事实核对：`to_binary`/`from_binary`、
+> `IR_FORMAT_VERSION`、`tests/binary_module.rs` **都在** ⇒ 本执行方案的 B1–B5 已落地。
+> **现行格式规范** = [`../reference/binary-format.md`](../reference/binary-format.md)（格式 v1 规范文本）；
+> 同目录还有它的设计文档 `forge-ir-s8-design.md`。
 >
 > 原状态行：`[progress]（2026-09-19 撰写并执行）`。
 >

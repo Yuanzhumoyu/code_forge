@@ -13,13 +13,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-10-08) — ISA-DSL v21 W6+：标志条件码**移出 IR**（改由 DSL 生成）+ 条件码补全
 
-+ **标志位条件码不再属于 IR** ✗：`forge_ir::FlagCC` **删除** ✗ —— `IntCC`/`FloatCC` 是**值的比较谓词** ✗，标志位（溢出/进位/符号/奇偶/恒真恒假 ✗）是**机器语义** ✗，两者差别很大 ✗，而且 **IR 层根本用不到标志条件** ✗（IR 不产生"读 OF"这类操作 ✗）。现在 `FlagCC` **由 DSL 按谱里的标志位表生成** ✗（生成物里的本地枚举 ✗，`forge_ir::FlagCC` 不存在 ✗），只活在 lowering 与生成物里。
-+ **条件码补全** ✗（"不能因为指令集用不上就不写"✗）：
-  + 规范标志助记符 **8 → 10** ✗：补 `al`/`nv`（恒真/恒假 ✗）—— 条件码空间里的**退化成员** ✗，A64 的 16 个条件各占一个码 ✗ ⇒ 必须能表达 ✗。
-  + x86 `[enum.flagcond]` 补齐 `p`/`np`（8 个 ✗）。
-  + **arm64 补出整块标志位能力** ✗：新增 `[enum.flagcond]`（`mi→s`、`pl→ns`、`vs→o`、`vc→no`、`al→al`、`nv→nv` ✗）+ `[operand.flag4]`（`cond_bank = "flag"` ✗）+ **4 个标志位形态** `cself`/`csincf`/`csinvf`/`csnegf`（各 64/32 两位宽 ✗，共 8 条指令 ✗）—— 于是 A64 的 16 个条件**全部**都有类型化的归宿 ✗。（汇编面用独立助记符 ✗：与整数形态同文本同签名会被歧义 lint 判成真歧义 ✗。）
-+ **修一个真 bug** ✗：定宽 ISA 的解码是按掩码分组的 if 链 ✗ ⇒ 条件码"没有 IR 对应"必须在**候选自己的条件**里判 ✗（写进 `guard` ✗），否则会连坐同组的兄弟候选 ✗（arm64 的 `csel …, nv` 正是这样炸出 `unreachable!` ✗）。
-+ 验收 ✗：整仓门禁 **exit 0** ✗；三矩阵 x86 197/3/0 ✗、riscv64 136/64/0 ✗、arm64 ✔；谱内向量 505 ✗；指纹 x86 `derived` 1550 ✗、arm64 `2581`（+16 ✗）、`spec_totals` arm64 **552**（+8 ✗）；lint 快照 arm64 `refs 27→31` ✗、`unassigned_bits 262→266` ✗（**+4 / +4 = 四个新家族** ✗，与其整数兄弟同形 ✗，已复核 ✗）。
++ **标志位条件码不再属于 IR**：`forge_ir::FlagCC` **删除** —— `IntCC`/`FloatCC` 是**值的比较谓词**，标志位（溢出/进位/符号/奇偶/恒真恒假）是**机器语义**，两者差别很大，而且 **IR 层根本用不到标志条件**（IR 不产生"读 OF"这类操作）。现在 `FlagCC` **由 DSL 按谱里的标志位表生成**（生成物里的本地枚举，`forge_ir::FlagCC` 不存在），只活在 lowering 与生成物里。
++ **条件码补全**（"不能因为指令集用不上就不写"）：
+  + 规范标志助记符 **8 → 10**：补 `al`/`nv`（恒真/恒假）—— 条件码空间里的**退化成员**，A64 的 16 个条件各占一个码 ⇒ 必须能表达。
+  + x86 `[enum.flagcond]` 补齐 `p`/`np`（8 个）。
+  + **arm64 补出整块标志位能力**：新增 `[enum.flagcond]`（`mi→s`、`pl→ns`、`vs→o`、`vc→no`、`al→al`、`nv→nv`）+ `[operand.flag4]`（`cond_bank = "flag"`）+ **4 个标志位形态** `cself`/`csincf`/`csinvf`/`csnegf`（各 64/32 两位宽，共 8 条指令）—— 于是 A64 的 16 个条件**全部**都有类型化的归宿。（汇编面用独立助记符：与整数形态同文本同签名会被歧义 lint 判成真歧义。）
++ **修一个真 bug**：定宽 ISA 的解码是按掩码分组的 if 链 ⇒ 条件码"没有 IR 对应"必须在**候选自己的条件**里判（写进 `guard`），否则会连坐同组的兄弟候选（arm64 的 `csel …, nv` 正是这样炸出 `unreachable!`）。
++ 验收：整仓门禁 **exit 0**；三矩阵 x86 197/3/0、riscv64 136/64/0、arm64；谱内向量 505；指纹 x86 `derived` 1550、arm64 `2581`（+16）、`spec_totals` arm64 **552**（+8）；lint 快照 arm64 `refs 27→31`、`unassigned_bits 262→266`（**+4 / +4 = 四个新家族**，与其整数兄弟同形，已复核）。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W6+ 甲：条件槽字段 = IR 条件枚举（`IntCC`/`FloatCC`/`FlagCC`）
 
@@ -29,7 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + **修一个真 bug**：解码候选里写 `return None` 会**中断整条解码**（`0f 9a c0` 因此解不出来）⇒ 改成"候选**守卫**里判 `…is_some()`"，字段构造侧不可达。
 + 通用性守卫口径随之更新：`IntCC`/`FloatCC`/`FlagCC` 出现在生成期是**设计要求**，被禁的是**写死"变体 → 机器码"配对**（映射必须来自条件表的 `ir`）。
 + **已知代价**（棘轮已按约定刷新并记明原因）：arm64 的 `al`/`nv`（恒真/恒假）等无 IR 对应的条件**表达不了** ⇒ `csel …, nv` 一行解析不出（`parsed 576→575`、`tail_mismatch 0→1`）。
-+ 验收：整仓门禁 **exit 0**；x86 矩阵 **197/3/0**、riscv64 **136/64/0**、arm64 ✔；谱内向量 **505 全绿**；指纹 x86 `derived 1542→1550`（4 个新形态）、`spec_totals 299→302`，riscv64/arm64 **逐位不变**。
++ 验收：整仓门禁 **exit 0**；x86 矩阵 **197/3/0**、riscv64 **136/64/0**、arm64；谱内向量 **505 全绿**；指纹 x86 `derived 1542→1550`（4 个新形态）、`spec_totals 299→302`，riscv64/arm64 **逐位不变**。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W6+ 丙（片 1）：条件码表**固定两类**（整数 / 浮点，枚举化）
 
@@ -74,30 +74,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + 新占位符 **`{sret}`**：**内存操作数**占位符（`PhKind::Mem`），产
   `MemRef { base: Some(__sret), disp: 0, index: None, scale: 1 }`；`__sret` 来自布局的
   `hidden_sret`（缺 ⇒ fail-closed）。模板里直接写 `{sret}`（不带方括号）。
-+ 放行 **`bank = "vec", by_ref = true`**（>16B 向量按引用返回 ✗，且**必须**配 `bank = "vec"` ✗）：
++ 放行 **`bank = "vec", by_ref = true`**（>16B 向量按引用返回，且**必须**配 `bank = "vec"`）：
   x86 按**精确总位宽**分档 —— `width = 256` → `VMOVUPS_MR {retf_src}, {sret}`、
   `width = 512` → `VMOVUPS_ZMM_MR {retf_src}, {sret}`。
 + 修一处**形态错误**：`width` 对向量必须用**总位宽**（`type_bits_of` = `scalar_bits` 对向量给的是
-  **元素**位宽 ✗）⇒ 生成器内部按 `size_bytes * 8` 折算 ✗。
+  **元素**位宽）⇒ 生成器内部按 `size_bytes * 8` 折算。
 + **命中已证明**：临时把旧的 sret 分支改成报错，x86 矩阵仍 **197/3/0** ⇒ 宽向量 by-ref/sret
   确实走谱面规则（不是静默回落）。
-+ 仍关着：`multi = true`（多值返回 ✗，需要「每结果一份搬运模板」✗）。
-+ **行为不变**：`encoding.digest` 指纹通过；x86 矩阵 **197/3/0** ✔。
++ 仍关着：`multi = true`（多值返回，需要「每结果一份搬运模板」）。
++ **行为不变**：`encoding.digest` 指纹通过；x86 矩阵 **197/3/0**。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W6 乙（三）：按值向量返回下放（`bank = "vec"`）
 
-+ `[lower.Ret]` 放行 **`bank = "vec", by_ref = false`**（≤16B 按值向量返回 ✗）：
-  x86 写 `MOVAPS {retf}, {retf_src}`（**与旧路径在 128 位档选中的是同一条指令** ✗，WA-37 的全宽要求不变 ✗）。
-  `bank = "vec"` **必须**同时写 `by_ref`——否则会连 >16B 的 sret 形态一起匹配 ✗（安全闸会拒）。
-+ riscv64/arm64 没有 128 位 FPR 搬移 ⇒ 不写该规则，旧路径照旧 fail-closed（行为不变 ✗）。
-+ 仍关着：`by_ref = true`（sret ✗，需要 sret 指针占位符 ✗）与 `multi = true`（多值 ✗，
-  需要「每结果一份搬运模板」✗）。
-+ **行为不变**：`encoding.digest` 指纹通过；x86 矩阵 **197/3/0** ✔（含 V128 按值返回用例 ✗）。
++ `[lower.Ret]` 放行 **`bank = "vec", by_ref = false`**（≤16B 按值向量返回）：
+  x86 写 `MOVAPS {retf}, {retf_src}`（**与旧路径在 128 位档选中的是同一条指令**，WA-37 的全宽要求不变）。
+  `bank = "vec"` **必须**同时写 `by_ref`——否则会连 >16B 的 sret 形态一起匹配（安全闸会拒）。
++ riscv64/arm64 没有 128 位 FPR 搬移 ⇒ 不写该规则，旧路径照旧 fail-closed（行为不变）。
++ 仍关着：`by_ref = true`（sret，需要 sret 指针占位符）与 `multi = true`（多值，
+  需要「每结果一份搬运模板」）。
++ **行为不变**：`encoding.digest` 指纹通过；x86 矩阵 **197/3/0**（含 V128 按值返回用例）。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W6 乙（二）：`[lower.Ret]` 条件**数据化** + 浮点返回下放
 
 + `[lower.Ret].when` 不再用 `ret_kind = "int"/"f32"/…` 那种**枚举**（它把宽度写死 ⇒ f8/f16/f128、
-  i8…i128、任意宽度指针都表达不了，违背「宽度是数据」）✗，改成四个**数据键**：
+  i8…i128、任意宽度指针都表达不了，违背「宽度是数据」），改成四个**数据键**：
   `bank = "gpr"|"fpr"|"vec"`（IR 侧封闭集）、`width = <任意位宽整数>`、`by_ref`、`multi`。
   裁决 = **具体优先**（条件键多者赢，同键数按声明序）；未知键/未知银行一律报错。
 + 规则编译成生成物里的**运行期 `if` 链**（银行/宽度是运行期事实）；**没有规则命中时逐字回落**
@@ -107,8 +107,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + 新增两条测试：`ret_rules_compile_to_runtime_branches`（生成物里出现条件与两个银行的槽绑定）、
   `unsupported_term_lowering_is_rejected` 扩成七条（缺 `when`、未下放的 `bank`/`by_ref`/`multi`、
   未知键、`when` 挂错 op、未接线 op、三种放行）。
-+ **行为不变**：`encoding.digest` 指纹通过；x86 矩阵 **197/3/0**、riscv64 矩阵 **136/64/0** ✔
-  （中途"`{retf}` 改查 plan"被 riscv64 矩阵抓到错值，按"差异先当 bug"退回旧语义 ✗，
++ **行为不变**：`encoding.digest` 指纹通过；x86 矩阵 **197/3/0**、riscv64 矩阵 **136/64/0**
+  （中途"`{retf}` 改查 plan"被 riscv64 矩阵抓到错值，按"差异先当 bug"退回旧语义，
   并把"约定层没有浮点返回槽字段"记为待办）。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W6 乙：`[lower.Ret]` 上线，**整数返回下放到谱**（三谱）
@@ -172,18 +172,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-10-08) — ISA-DSL v21 W6-a 第二片：**三谱已迁到 `[[lower.*]]`**
 
-+ 三谱的选择层全部改成 `[[lower.<名字>]]` ✗：**272** 个单名块 + **9** 个 `op` 名单块展开成
-  **23** 块（名单序 ✗）+ **2** 个树模式块命名为 `FMA_F32`/`FMA_F64` ✗ +
-  原有 **6** 个终结块（`Jmp`/`Br` ✗）统一成同一形式 ✗ ⇒ 共 **303** 块 ✗；
-  `[[lowering]]` 与 `[[pattern]]` 在三谱里**归零** ✗。
-+ **口径修正（实测逼出来的 ✗）**：表头即名字**不能是"一个 op 一块"** ✗ —— 一个 op 本来
-  就有多条规则（x86 实测 `Vextract` **24** 条、`Fcmp` **16** 条、`Icmp` **11** 条 ✗）
-  ✗ ⇒ `lower` 是 **名字 → 规则数组** 的映射 ✗，`[[lower.Iadd]]` **可以出现多次** ✗
-  （与设计案 §6.8 草稿里的双括号写法一致 ✗）。声明序按**每块**的源文位置还原 ✗。
-+ **行为不变** ✗：三谱 `forge-isa insts` 与迁移前**逐行 0 差异** ✔；`lint` 三谱零结论 ✔；
-  `schema_guard` **9/9** ✔；整仓门禁 **exit 0** ✔。
-+ **过渡期**：旧面 `[[lowering]]`/`[[pattern]]` 仍被接受 ✗（其余 crate/示例里还有
-  **20 + 5** 处夹具未迁 ✗）——第三片迁完夹具后连同旧键一起删 ✗。
++ 三谱的选择层全部改成 `[[lower.<名字>]]`：**272** 个单名块 + **9** 个 `op` 名单块展开成
+  **23** 块（名单序）+ **2** 个树模式块命名为 `FMA_F32`/`FMA_F64` +
+  原有 **6** 个终结块（`Jmp`/`Br`）统一成同一形式 ⇒ 共 **303** 块；
+  `[[lowering]]` 与 `[[pattern]]` 在三谱里**归零**。
++ **口径修正（实测逼出来的）**：表头即名字**不能是"一个 op 一块"** —— 一个 op 本来
+  就有多条规则（x86 实测 `Vextract` **24** 条、`Fcmp` **16** 条、`Icmp` **11** 条）
+  ⇒ `lower` 是 **名字 → 规则数组** 的映射，`[[lower.Iadd]]` **可以出现多次**
+  （与设计案 §6.8 草稿里的双括号写法一致）。声明序按**每块**的源文位置还原。
++ **行为不变**：三谱 `forge-isa insts` 与迁移前**逐行 0 差异**；`lint` 三谱零结论；
+  `schema_guard` **9/9**；整仓门禁 **exit 0**。
++ **过渡期**：旧面 `[[lowering]]`/`[[pattern]]` 仍被接受（其余 crate/示例里还有
+  **20 + 5** 处夹具未迁）——第三片迁完夹具后连同旧键一起删。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W6-a 第一片：`[lower.*]` 成为**唯一**的选择层面
 
@@ -201,54 +201,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed (2026-10-08) — ISA-DSL v21 D4 #19：宿主 op 表唯一拼法（`[[ops]]` 不再接受）
 
-+ `forge-isa lint --ops <宿主 op 表.toml>` 的读取：只认 `[[op]]` ✗（本仓 `forge-ir/ops.toml` 的形态 ✗）。
-  **复数的 `[[ops]]` 不再宽松兼容** ✗ —— 报错并点名正确拼法（v21 的"唯一拼法"口径 ✗，设计案 §7 后门 #19 ✗）。
-+ 守卫 ✗：`crates/frontend/forge-isa-dsl/src/lint.rs` 的
-  `host_ops_rejects_plural_spelling`（负向 ✗）+ 原有的正向用例改成 `[[op]]` ✗。
++ `forge-isa lint --ops <宿主 op 表.toml>` 的读取：只认 `[[op]]`（本仓 `forge-ir/ops.toml` 的形态）。
+  **复数的 `[[ops]]` 不再宽松兼容** —— 报错并点名正确拼法（v21 的"唯一拼法"口径，设计案 §7 后门 #19）。
++ 守卫：`crates/frontend/forge-isa-dsl/src/lint.rs` 的
+  `host_ops_rejects_plural_spelling`（负向）+ 原有的正向用例改成 `[[op]]`。
 
 ### Fixed (2026-10-08) — ISA-DSL v21 W11 第二片：修掉"空前缀表 ⇒ 孤儿 `else`"的生成器缺口 + 变长一态夹具
 
-+ **生成器 bug（已修）** ✗：`codegen/vlen.rs::gen_prefix_scan_loop` 在**空前缀表**时发出的是
-  `while … { let __b = bytes[__o]; else { break; } }` ✗ —— 条目为空 ⇒ `if` 分支随空表消失 ✗
-  ⇒ 只剩一个**孤儿 `else`** ✗ ⇒ 生成物不是合法 Rust ✗（预生成期报
-  `expected an expression, found keyword \`else\`` ✗，位置 `gen_file.rs:249` ✗）。
-  后果：**非 x86 的 `prefix_scan` ISA（前缀表为空 ✗）完全无法接入** ✗。修法：表空时发"只
-  `break` 的循环" ✗。
-  **三份发行谱逐字节不变** ✗（x86 表非空、走原路径 ✗；riscv64/arm64 是定宽、根本不走这条 ✗）
-  —— `forge-isa insts` 对照 **0 差异** ✔、x86 JIT 矩阵 **197 passed / 3 skipped / 0 failed** ✔。
-+ **新增 W11 第二片夹具** ✗：`crates/backend/forge-codegen/tests/isa/demo_vlen.toml` ✗ ——
-  **变长一态**（`prefix_scan` + **stream 段** ✗）：opcode 段 + modrm/imm 段 ⇒ 指令长
-  **2 或 3 字节** ✗；与 `demo_v21`（24 位定宽 ✗）配对，凑齐 W11 的"定宽 + 一态变长各一" ✗。
-  接入面仍只有 TOML + 两行宿主 + 一个测试二进制 ✗（编译器侧只动了上面那个 bug ✗）。
-+ 证据 ✗：`forge-isa validate` **OK** ✔、`lint` **干净** ✔；`--test spec_tests`
-  **78 passed / 0 failed** ✗（该夹具 13 条生成期自测 + 8 条谱内向量 ✗）；
-  `--test w11_vlen_tests` **5 passed / 0 failed** ✗（长度 2 vs 3 ✗、opcode 在首字节 ✗、
-  `opcode_reg` 的寄存器号在低位 ✗、两种长度都吃满的编解码/反汇编往返 ✗、截断不解 ✗）。
-+ **一处如实记录的自摆乌龙** ✗：第一版把 `opcode_reg` 的基值写成 `0x11`/`0x12` ✗ —— 低 3 位
-  会被寄存器号覆盖 ✗ ⇒ 两条指令在模 8 上撞车 ✗，症状是"3 字节指令解码只吃 2 字节" ✗；
-  我起初把它当成第二处生成器缺口 ✗，逐条核对后确认是**谱写错** ✗ ⇒ 基值改为 `0x10`/`0x18` ✗，
-  教训写进该测试文件的注释 ✗（"基值低 3 位必须为 0" ✗）。
++ **生成器 bug（已修）**：`codegen/vlen.rs::gen_prefix_scan_loop` 在**空前缀表**时发出的是
+  `while … { let __b = bytes[__o]; else { break; } }` —— 条目为空 ⇒ `if` 分支随空表消失
+  ⇒ 只剩一个**孤儿 `else`** ⇒ 生成物不是合法 Rust（预生成期报
+  `expected an expression, found keyword else`，位置 `gen_file.rs:249`）。
+  后果：**非 x86 的`prefix_scan` ISA（前缀表为空）完全无法接入**。修法：表空时发"只
+  `break` 的循环"。
+  **三份发行谱逐字节不变**（x86 表非空、走原路径；riscv64/arm64 是定宽、根本不走这条）
+  —— `forge-isa insts` 对照 **0 差异**、x86 JIT 矩阵 **197 passed / 3 skipped / 0 failed**。
++ **新增 W11 第二片夹具**：`crates/backend/forge-codegen/tests/isa/demo_vlen.toml` ——
+  **变长一态**（`prefix_scan` + **stream 段**）：opcode 段 + modrm/imm 段 ⇒ 指令长
+  **2 或 3 字节**；与 `demo_v21`（24 位定宽）配对，凑齐 W11 的"定宽 + 一态变长各一"。
+  接入面仍只有 TOML + 两行宿主 + 一个测试二进制（编译器侧只动了上面那个 bug）。
++ 证据：`forge-isa validate` **OK**、`lint` **干净**；`--test spec_tests`
+  **78 passed / 0 failed**（该夹具 13 条生成期自测 + 8 条谱内向量）；
+  `--test w11_vlen_tests` **5 passed / 0 failed**（长度 2 vs 3、opcode 在首字节、
+  `opcode_reg` 的寄存器号在低位、两种长度都吃满的编解码/反汇编往返、截断不解）。
++ **一处如实记录的自摆乌龙**：第一版把 `opcode_reg` 的基值写成 `0x11`/`0x12` —— 低 3 位
+  会被寄存器号覆盖 ⇒ 两条指令在模 8 上撞车，症状是"3 字节指令解码只吃 2 字节"；
+  我起初把它当成第二处生成器缺口，逐条核对后确认是**谱写错** ⇒ 基值改为 `0x10`/`0x18`，
+  教训写进该测试文件的注释（"基值低 3 位必须为 0"）。
 
 ### Added (2026-10-08) — ISA-DSL v21 W11 第一片：第四份 ISA 夹具（24 位定宽）**零编译器改动**接入
 
-+ 新增 `crates/backend/forge-codegen/tests/isa/demo_v21.toml` ✗：**非 x86/riscv64/arm64** 的
-  第四份 ISA ✗（24 位定宽、16 个 16 位寄存器 ✗），纯 TOML ✗；接入面只有两行宿主
-  （`tests/common/mod.rs` ✗、`tests/spec_tests.rs` ✗）+ 一个测试二进制 `tests/w11_isa_tests.rs` ✗
-  ⇒ **改动面 = TOML + 宿主 + 测试，零编译器改动** ✔。
-+ 该夹具刻意用上 v21 的现面 ✗：表头即名字的 `[form.*]`/`[inst.*]`/`[pred.*]`/`[asm.pseudo.*]` ✗、
-  字段就地 `fields` ✗、`[family.*]`（`body` + `rows` ✗）、`[machine]`/`[machine.stack]` 机器事实 ✗、
-  `[reg.<名>]` 的 `prefix`+`count` 派生名字 ✗、谱内 `[[vectors]]` ✗。
-+ 证据 ✗：`forge-isa validate` **OK** ✔；`forge-isa lint` **干净（0 结论）** ✔；
-  `forge-isa abi check` **硬错 0 / 缺口 0** ✔；`cargo test -p forge-codegen --test spec_tests` →
-  **65 passed / 0 failed** ✗（含该夹具 **25 条**生成期自测 + **8 条**谱内向量 ✗）；
-  `cargo test -p forge-codegen --test w11_isa_tests` → **6 passed / 0 failed** ✗（字节精确 ✗、
-  `decode→encode` 回环 ✗、反汇编文本再编回同样字节 ✗、伪指令 `li` ≡ `movi` ✗、族行三实例 ✗、
-  截断输入不解码 ✗）。
-+ **如实记录一处手算错误** ✗：族行两条向量的期望字节我把 `rd`/`rs1` 的高低半字节写反了 ✗，
-  被**生成期自测**当场抓出（`assertion left == right` 报了实际字节 ✗）⇒ 这类谱内向量正好是
-  "手写期望值"的自动核对网 ✗。
-+ W11 其余（未完成 ✗）：守卫升级到"无 ISA 形状分支" ✗ —— 它依赖 W6（分支/跳转降级下放 ✗），
-  以及"变长一态"的第二份夹具 ✗。
++ 新增 `crates/backend/forge-codegen/tests/isa/demo_v21.toml`：**非 x86/riscv64/arm64** 的
+  第四份 ISA（24 位定宽、16 个 16 位寄存器），纯 TOML；接入面只有两行宿主
+  （`tests/common/mod.rs`、`tests/spec_tests.rs`）+ 一个测试二进制 `tests/w11_isa_tests.rs`
+  ⇒ **改动面 = TOML + 宿主 + 测试，零编译器改动**。
++ 该夹具刻意用上 v21 的现面：表头即名字的 `[form.*]`/`[inst.*]`/`[pred.*]`/`[asm.pseudo.*]`、
+  字段就地 `fields`、`[family.*]`（`body` + `rows`）、`[machine]`/`[machine.stack]` 机器事实、
+  `[reg.<名>]` 的 `prefix`+`count` 派生名字、谱内 `[[vectors]]`。
++ 证据：`forge-isa validate` **OK**；`forge-isa lint` **干净（0 结论）**；
+  `forge-isa abi check` **硬错 0 / 缺口 0**；`cargo test -p forge-codegen --test spec_tests` →
+  **65 passed / 0 failed**（含该夹具 **25 条**生成期自测 + **8 条**谱内向量）；
+  `cargo test -p forge-codegen --test w11_isa_tests` → **6 passed / 0 failed**（字节精确、
+  `decode→encode` 回环、反汇编文本再编回同样字节、伪指令 `li` ≡ `movi`、族行三实例、
+  截断输入不解码）。
++ **如实记录一处手算错误**：族行两条向量的期望字节我把 `rd`/`rs1` 的高低半字节写反了，
+  被**生成期自测**当场抓出（`assertion left == right` 报了实际字节）⇒ 这类谱内向量正好是
+  "手写期望值"的自动核对网。
++ W11 其余（未完成）：守卫升级到"无 ISA 形状分支" —— 它依赖 W6（分支/跳转降级下放），
+  以及"变长一态"的第二份夹具。
 
 ### Changed (2026-10-08) — ISA-DSL v21 W10 第四片：旧面文档与消息的死链清零
 
@@ -1457,13 +1457,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 `rv32i-valid.s:88` 的 `jal a0, a0` 是 `jalr rd, rs, 0` 的**别名**（LLVM 接受该写法）。新增 `JAL_R`
 （`form = "I"`、`opcode = 0x67`、`funct3 = 0`、`ops = ["dst:gpr:out", "src:gpr"]`）：与
-`jal {dst}, {target}` 首段相同 ⇒ 靠**第二操作数的槽类型**分派（reg 槽比标签/偏移槽更具体 ✓）；
-`I` 形式的 `imm12` 不绑操作数 ⇒ 编码缺省发 0、解码的补集零守卫要求它 0 ✓（正是别名语义）。
+`jal {dst}, {target}` 首段相同 ⇒ 靠**第二操作数的槽类型**分派（reg 槽比标签/偏移槽更具体）；
+`I` 形式的 `imm12` 不绑操作数 ⇒ 编码缺省发 0、解码的补集零守卫要求它 0（正是别名语义）。
 
-实测：riscv64 `parsed` 1776 → **1777**、**`tail_mismatch 1 → 0`**（棘轮里最后一条已登记红桶清零 ✓）。
-**加一条 riscv 指令牵动多处钉死值**（都已同步 ✓）：`pins.txt` 的 `spec_totals`（173 → 174）与
-`roundtrip.derived`（622 → 624）；`forge-isa` CLI 测试的 `"173 条指令"`（**已改为读快照** ✓，不再手写
-数字 ✗）；`variants.rs` 里该测试的原生视角计数（173 → 174）与 RV32 投影计数（140 → 141，多处）。
+实测：riscv64 `parsed` 1776 → **1777**、**`tail_mismatch 1 → 0`**（棘轮里最后一条已登记红桶清零）。
+**加一条 riscv 指令牵动多处钉死值**（都已同步）：`pins.txt` 的 `spec_totals`（173 → 174）与
+`roundtrip.derived`（622 → 624）；`forge-isa` CLI 测试的 `"173 条指令"`（**已改为读快照**，不再手写
+数字）；`variants.rs` 里该测试的原生视角计数（173 → 174）与 RV32 投影计数（140 → 141，多处）。
 
 ### Fixed (2026-10-07) — x86 EVEX 双精度（PD）族的 **W 位**：`vaddpd zmm…` 一直编错
 
@@ -1478,7 +1478,7 @@ vaddpd zmm1, zmm1, zmm2 : 我们 62 F1 75 48 58 CA ≠ 上游 62 F1 f5 48 58 CA
 修法：给这 4 行各自补 `fields = { evex_w = 1 }`（其余 P0/P2/opcode/ModRM 本来就对）。
 
 **实测**：全集编码 `known` **157 → 148（−9）**（`avx512-intel.s` 里的 PD 条目全部消失）；
-`validate`/`lint` 干净 ✓，四档 `verify=0` ✓，`ws=0` ✓。
+`validate`/`lint` 干净，四档 `verify=0`，`ws=0`。
 （`known` 只在全集运行里非空——vendored 集恒 0，所以这条修复不会让门禁数字变化，只会让**真错编码**消失。）
 
 ### Changed (2026-10-07) — asm 语料**不入 git**（本地缓存 + 缺语料显式跳过）
@@ -1488,7 +1488,7 @@ vaddpd zmm1, zmm1, zmm2 : 我们 62 F1 75 48 58 CA ≠ 上游 62 F1 f5 48 58 CA
 以及"裁回没跑成 ⇒ 棘轮拿错值"这类错。**怎么用**：`node crates/tools/forge-tests/asm/fetch.mjs`
 （默认裁剪）/ `--keep-all`（量全集）；`asm/PROVENANCE.md` 仍跟踪，作语料身份的单一事实源。
 **干净克隆**：`asm/parse` 缺失时三档套件打 `ASM-CORPUS-MISSING` **显式跳过**（退 0），不假绿——
-判据 `asm::corpus::corpus_present()`。实测：语料在盘 ⇒ 四档 `verify=0`；移开后 ⇒ 两条跳过且退 0 ✓。
+判据 `asm::corpus::corpus_present()`。实测：语料在盘 ⇒ 四档 `verify=0`；移开后 ⇒ 两条跳过且退 0。
 
 ### Added (2026-10-07) — aarch64 `adr`/`adrp`（数值 + 符号两形态，117 行）
 
@@ -1503,7 +1503,7 @@ vaddpd zmm1, zmm1, zmm2 : 我们 62 F1 75 48 58 CA ≠ 上游 62 F1 f5 48 58 CA
 ⇒ 抢走数值写法、把 `#4096` 送进页重定位通路（实测编成 `0x90008000` 而非 `0xB0000000`，
 根因就是这里）。`require_symbol` 让"没记到符号 ⇒ 直接不匹配"，数值写法自然落回数值槽。
 
-实测：`parsed` 2068 → **2093**、编码 **`known` 57 不变** ✓；守卫 540 → **544**、枚举器 2541 → **2565**。
+实测：`parsed` 2068 → **2093**、编码 **`known` 57 不变**；守卫 540 → **544**、枚举器 2541 → **2565**。
 （`tail_mismatch` 同步 +36：新语法让相邻方言写法 `foo@PAGE` / `:lo12:` 之类由 `no_prefix` 变红桶，
 属已归因的"可见化"，在**已淘汰**文件内、棘轮不受影响。）
 
@@ -1542,13 +1542,13 @@ markdownlint 114 条全在 `docs/archive/`（现行树零警告）。
 `umin vu=1 d=27`、`mul d=39`、`mla d=37`（`vu` 即 U 位，`d=[15:10]`）。**一次提交**（六族）。
 
 实测：`parsed` 2010 → **2053（+43）**、`no_prefix` 14219 → **14137（−82）**、编码 `checked` 1021 →
-**1057**、**`known` 57 不变** ✓；守卫 534 → **540**、枚举器 2457 → **2541**。
+**1057**、**`known` 57 不变**；守卫 534 → **540**、枚举器 2457 → **2541**。
 **红行 1386 → 1425（+39）已归因**：这些族的**lane 形态**（如 `smin v0.8b, v1.8b, v2.b[3]`）尚未实现，
-新拼法使它们由 `no_prefix` 变为 `tail_mismatch`；**lane 族因此成为红行指标的关键待办** ✓
+新拼法使它们由 `no_prefix` 变为 `tail_mismatch`；**lane 族因此成为红行指标的关键待办**
 （实现它即可回收这批可见化）。
 
 **流程**：批量做、最后提交一次；`known` 不变 = 提交前提（脚本里判，不靠人记）。
-注意：门禁正则必须**锚定 `aarch64` 行**（我第一版抓到 x86 的 `known=9` 导致误判不提交 ✗）。
+注意：门禁正则必须**锚定 `aarch64` 行**（我第一版抓到 x86 的 `known=9` 导致误判不提交）。
 
 ### Added (2026-10-07) — aarch64：`orr` 族接入（**逻辑族的第二种形态**：自带表 + 自带槽）
 
@@ -1557,9 +1557,9 @@ markdownlint 114 条全在 `docs/archive/`（现行树零警告）。
 `8b/4h/2s=0`、`16b/8h/4s/2d=1`）+ 槽 `varr_q`（`width=1`、`fields=["vq"]`）。
 
 实测：`parsed` 1976 → **1981**、红行 1420 → **1415（−5）**、`checked` 1011 → **1013**、
-**`known` 57 不变** ✓；守卫 529 → **530**、枚举器 2387 → **2401**。
-⇒ 两种形态都已验证：**元素宽在 `vsize` 的族**用共享 `varr` ✓（`add`/`sub`），**元素宽不在那儿**的族
-用自带表+槽 ✓（`orr`）。其余族按此归类推进即可。
+**`known` 57 不变**；守卫 529 → **530**、枚举器 2387 → **2401**。
+⇒ 两种形态都已验证：**元素宽在 `vsize` 的族**用共享 `varr`（`add`/`sub`），**元素宽不在那儿**的族
+用自带表+槽（`orr`）。其余族按此归类推进即可。
 
 ### Added (2026-10-07) — aarch64：`sub` 族接入排列后缀新拼法（零 `known` 增长、红行下降）
 
@@ -1569,7 +1569,7 @@ markdownlint 114 条全在 `docs/archive/`（现行树零警告）。
 将来需自带表+槽）。
 
 实测：`parsed` 1968 → **1976**、红行 1428 → **1420（−8，下降）**、编码 `checked` 1004 → **1011**、
-**`known` 57 不变** ✓（这就是判据）；守卫 528 → **529**、枚举器 2373 → **2387**。
+**`known` 57 不变**（这就是判据）；守卫 528 → **529**、枚举器 2373 → **2387**。
 **方法固化**：一族一次、每次以 `known` 不变为前提；语料字节稀疏（`sub` 仅 `.8b` 一条）时用
 "同族布局 + 上游 `.8b` 的 U/size 位"作旁证，并用 `known` 当最终裁判。
 
@@ -1829,7 +1829,7 @@ names = "csr"
 
 **修法用既有机制**：把尺寸关键字写成**模板字面量**（`asm = "movzx {dst}, byte ptr {mem}"`，与 `NOT_MEM32` 一族同款）——两条写法文本天然区分、候选各自命中，**渲染也带关键字** ⇒ `disassemble → assemble` 闭合。补 4 条完整内存模板形态（`MOVZX/MOVSX_MEM{8,16}`；目的宽度仍由寄存器驱动：16 位目的发 66、64 位目的发 REX.W）。
 
-顺带修掉简写那对的两处问题：① `MOVZX_R16_MEM` 把 `66` **写死**（那是"16 位目的"的编码），配 64 位目的会编出 `66 48 0F B7`——现在宽度一律由目的寄存器驱动（`48 0F B7` ✓）；② 基址槽收窄成单一 64 位地址类（多类槽会被**生成期采样器**强推 2/4 字节**地址**，是无意义的组合——地址宽度不是数据宽度）。
+顺带修掉简写那对的两处问题：① `MOVZX_R16_MEM` 把 `66` **写死**（那是"16 位目的"的编码），配 64 位目的会编出 `66 48 0F B7`——现在宽度一律由目的寄存器驱动（`48 0F B7`）；② 基址槽收窄成单一 64 位地址类（多类槽会被**生成期采样器**强推 2/4 字节**地址**，是无意义的组合——地址宽度不是数据宽度）。
 
 效果：`spec_coverage_guard` 的文本歧义名单**少了 `MOVZX_R8_MEM`/`MOVZX_R16_MEM` 两条**（文本不再撞车 ⇒ 恢复强断言）；落地 4 条谱内向量；文档补「源宽度只有尺寸关键字能表达时，把关键字写成模板字面量」。
 
@@ -2885,7 +2885,7 @@ store），② 为写常量而新增的角色 `gpr_imm`。这一片把物化也�
   ABI 槽从它之后排，并把结果喂给 `CompileState`（帧尺寸/序言偏移）。
 + **守卫（确定性、已验证会咬）**：`va_expand::tests::abi_slots_sit_below_frontend_locals`——直接断言
   "保存区/对象排在前端局部槽之下"；把深度扫描短路后它报
-  `保存区必须在前端局部槽之下（front=32, save_depth=176）` ✗，复原后通过 ✓。
+  `保存区必须在前端局部槽之下（front=32, save_depth=176）`，复原后通过。
   另加一条 JIT 用例 `test_jit_va_arg_sysv64_coexists_with_frontend_locals`（变参 + 前端局部槽一起用）。
   **诚实说明**：这条 JIT 用例**不能**替代上面的单测——实测把深度短路后它仍然绿（局部槽落在保存区
   的 XMM 段，而用例读的是 GPR 参数），所以放置正确性由那条单测钉住。

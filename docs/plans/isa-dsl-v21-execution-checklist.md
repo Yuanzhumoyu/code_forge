@@ -37,27 +37,27 @@
 
 ### 0.1 陈账与账目口径（2026-10-08 晚核对）
 
-本文档的勾选框是**计划步骤**（设计期写法 ✗），落地状态以**每节的收口记录** + `CHANGELOG.md` +
-§14 快照为准 ✗。截至**快照 #3** ✗，W1–W11 + W6 + W6+ **全部收口** ✔。
-**2026-10-08 晚已把全部 42 个框逐条对账 ✗**：37 个"已落地的计划步骤"**打勾** ✓、
-1 条过程注记与 4 条中止判据**去掉复选框** ✓（它们本就不是任务 ✗）——现在文档里**不该再留
-无主的未打勾框** ✗（有就是真待办 ✗）。
+本文档的勾选框是**计划步骤**（设计期写法），落地状态以**每节的收口记录** + `CHANGELOG.md` +
+§14 快照为准。截至**快照 #3**，W1–W11 + W6 + W6+ **全部收口**。
+**2026-10-08 晚已把全部 42 个框逐条对账**：37 个"已落地的计划步骤"**打勾**、
+1 条过程注记与 4 条中止判据**去掉复选框**（它们本就不是任务）——现在文档里**不该再留
+无主的未打勾框**（有就是真待办）。
 
-- **§4 W2 / §5 W3 / §6 W4 / §7 W5 / §8 W6 / §9 W7 的未打勾项** ✗：**2026-10-08 晚已逐条打勾** ✔
-  ——它们都是计划步骤 ✗、**已落地** ✔，证据在各节自己的收口记录 ✗（如 §7「W5 收口」✗、
-  §9「W7 收口核对」✗）、`CLAUDE.md` 的「v21 现行面速查」✗、以及 §14 快照 #3 的实测表 ✗。
-  逐项的落地形态 ✗：
-  表头即名字三张表 + `fields` 就地声明 ✓；`range`/`value`/`enum`/`suffix`/`symbol`/`[enum.*]`/
-  `[operand.mem].text`/`zero`+`sp`/`rex_required` ✓；`modrm`/`opsize = "sN"`/`classes` 键归零 ✓；
-  族合并与重载 ✓；`{size}` 例外删除 ✓、`[asm.immfn]` 多拼写 ✓、`[asm.pseudo.*]` 迁移 ✓。
-- **§1 的两条** ✗：是**过程注记** ✗——「Phase 2 受污染」是当时测法的**如实记录**（W1 已改代码之后
-  才跑 ✗），不是待办 ✗；「记录生成物规模与耗时」**已补** ✔ ⇒ `docs/performance/generated_compile_profile.md`
-  （采集 2026-09-24 ✗，分段体积 + 编译时间归属 ✗）。
-- **§15 的四条** ✗：是**中止判据** ✗（"出现 X 就停 ✗"），不是任务 ✗ ⇒ **永远不打勾** ✗；
-  目前四条都没触发 ✔。
-- **真正未做的只剩 §14 末尾那四项** ✗（表化 emit = 已决定不做 ✗；**删隐式 `{gN}`/`{fN}`** =
-  建议不做 ✗（661 处 breaking ✗；注意 `temps` 的**强制档早已实现** ✗，此前记反了 ✗）；
-  arm64 `al`/`nv` = 待 IR 补恒真/恒假条件的**设计决策** ✗；42 个框的对账**已完成** ✔）。
+- **§4 W2 / §5 W3 / §6 W4 / §7 W5 / §8 W6 / §9 W7 的未打勾项**：**2026-10-08 晚已逐条打勾**
+  ——它们都是计划步骤、**已落地**，证据在各节自己的收口记录（如 §7「W5 收口」、
+  §9「W7 收口核对」）、`CLAUDE.md` 的「v21 现行面速查」、以及 §14 快照 #3 的实测表。
+  逐项的落地形态：
+  表头即名字三张表 + `fields` 就地声明；`range`/`value`/`enum`/`suffix`/`symbol`/`[enum.*]`/
+  `[operand.mem].text`/`zero`+`sp`/`rex_required`；`modrm`/`opsize = "sN"`/`classes` 键归零；
+  族合并与重载；`{size}` 例外删除、`[asm.immfn]` 多拼写、`[asm.pseudo.*]` 迁移。
+- **§1 的两条**：是**过程注记**——「Phase 2 受污染」是当时测法的**如实记录**（W1 已改代码之后
+  才跑），不是待办；「记录生成物规模与耗时」**已补** ⇒ `docs/performance/generated_compile_profile.md`
+  （采集 2026-09-24，分段体积 + 编译时间归属）。
+- **§15 的四条**：是**中止判据**（"出现 X 就停"），不是任务 ⇒ **永远不打勾**；
+  目前四条都没触发。
+- **真正未做的只剩 §14 末尾那四项**（表化 emit = 已决定不做；**删隐式 `{gN}`/`{fN}`** =
+  建议不做（661 处 breaking；注意 `temps` 的**强制档早已实现**，此前记反了）；
+  arm64 `al`/`nv` = 待 IR 补恒真/恒假条件的**设计决策**；42 个框的对账**已完成**）。
 
 ---
 
@@ -99,7 +99,7 @@ cargo test -p forge-tests --lib jit_matrix_riscv64 -- --test-threads=1 --nocaptu
 
 - [x] **Phase 1（干净，改动前）**：`validate`/`lint` 三谱**全部 exit 0**；`forge-isa-dsl` 19 个二进制全绿；
   `isa_roundtrip_guard` ok。日志：`target/v21-baseline/W0.txt`。
-- ⚠ **Phase 2 受污染（历史注记 ✗，非待办 ✗）**：`spec_coverage_guard` 之后的命令是在 W1 已开始改代码之后才跑的，
+- ⚠ **Phase 2 受污染（历史注记，非待办）**：`spec_coverage_guard` 之后的命令是在 W1 已开始改代码之后才跑的，
       日志里是改动期的编译错误 ⇒ **不可作为基线**。改用签入的棘轮文件
       （`crates/tools/forge-tests/asm/ratchet/*.txt`、`pins.txt`）与下表（W1 后实测，须与基线**相同**）。
 - [x] 记录四项权威计数（W1 后实测；棘轮由测试逐项相等守）：
@@ -232,7 +232,7 @@ cargo test -p forge-tests --lib jit_matrix_riscv64 -- --test-threads=1 --nocaptu
       `bind_operands`），8 条单测全绿。**关键证据**：新语法对 riscv 散射**逐段等价**于既有 `pieces`
       （`imm_b` = `i13[12:1 -> 11:8,30:25,7,31]` ↔ `[{31,1,12},{25,6,5},{8,4,1},{7,1,11}]`；
       `imm_j` = `i21[20:1 -> 30:21,20,19:12,31]` ↔ `[{31,1,20},{21,10,1},{20,1,11},{12,8,12}]`）。
-- [x] **语法扩展决策（需评审）** ✗ 已拍板（连续位域 + `fields` 就地声明；落地见 §14 ✗）：你的语法里 `[begin:end]` 是**连续**位域；riscv 的 S/B/J
+- [x] **语法扩展决策（需评审）** 已拍板（连续位域 + `fields` 就地声明；落地见 §14）：你的语法里 `[begin:end]` 是**连续**位域；riscv 的 S/B/J
       是**散射**且值自身 bit 0 不参与（`off_b` 无 `unit`，见下 §4.2 风险 3），连续形式表达不了。
       W2 补了最小扩展：`type[值位段 -> 词位块, …]`（值位段低位在前，词位块按值低位→高位放置）。
       **若你要别的写法（例如保持单括号只写词位、值偏移另开一个键），现在改代价最小。**
@@ -646,75 +646,75 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 **目标**：x86 的 20 个 form 名与 37 处内联编码键，改成 `kind = "stream"` + 段。
 
 - [x] 段 kind 闭集落地：`prefix`/`escape`/`rex`/`opcode`/`opcode_reg`/`modrm`/`sib`/`disp`/`imm`/`vex`/`evex`。
-  （**2026-10-08 复核：11 种全部已接线** ✔ —— `stream_decl.rs` 的 `lower_one` 逐一处理；
-  `sib`/`disp` 是**纯布局段**（无对应语义键：这两个字节由编码器按内存操作数派生 ✗，
-  段的价值是把字节布局写进谱、让段内字段进 `form.fields` 参与声明期校验与 `--bits` 清点 ✗）。）
+  （**2026-10-08 复核：11 种全部已接线** —— `stream_decl.rs` 的 `lower_one` 逐一处理；
+  `sib`/`disp` 是**纯布局段**（无对应语义键：这两个字节由编码器按内存操作数派生，
+  段的价值是把字节布局写进谱、让段内字段进 `form.fields` 参与声明期校验与 `--bits` 清点）。）
 - [x] 段内 `fields` 复用 W2 语法；`segments` 序 = 发射序。
-  （**2026-10-08 复核：已落地** ✔ —— `SegmentDecl.fields` 就是 W2 的 `Vec<FieldDecl>` ✗
-  （`field_decl.rs` ✗）；`stream_decl.rs::lower_one` 按 `segments` 书写序逐段降级 ✗，
-  三谱的 `[form.*].segments` 与指令级 `segments` 都按这个序发射 ✗。）
+  （**2026-10-08 复核：已落地** —— `SegmentDecl.fields` 就是 W2 的 `Vec<FieldDecl>`
+  （`field_decl.rs`）；`stream_decl.rs::lower_one` 按 `segments` 书写序逐段降级，
+  三谱的 `[form.*].segments` 与指令级 `segments` 都按这个序发射。）
 - [x] 前缀表显式化：**删除 `default_prefix_scan()`**；效果参数化（`opsize`/`addrsize`/`lock`/`rep`/`reg_ext`/`map`/`opaque`）。
-  （**2026-10-08 复核：已落地** ✔ —— `IsaModel::prefix_scan_entries()` 只读**谱里声明的**
-  `[[conventions.prefix_scan]]` ✗（x86 声明了 66/F0/F2/F3/67/40-4F/D5 ✗），
-  `default_prefix_scan()` 在代码里**已不存在** ✗（只剩 `stream_decl.rs` 里一句过时注释 ✗）。）
+  （**2026-10-08 复核：已落地** —— `IsaModel::prefix_scan_entries()` 只读**谱里声明的**
+  `[[conventions.prefix_scan]]`（x86 声明了 66/F0/F2/F3/67/40-4F/D5），
+  `default_prefix_scan()` 在代码里**已不存在**（只剩 `stream_decl.rs` 里一句过时注释）。）
 - [x] 解码条件由前缀段 `bytes` 生成（删 `prefix_cond_ts` 的按字节枚举）。
-  （**仍开** ✗：`vlen.rs` 的 `prefix_cond_ts` 还在按字节枚举 ✗。）
+  （**仍开**：`vlen.rs` 的 `prefix_cond_ts` 还在按字节枚举。）
 - [~] REX2 改为段数据（`map` + `reg_ext.bits` + 位序），删字节手术。
-  （**半落地** ✗：`0xD5` + `effects = ["rex2"]` **已进谱表** ✔、生成器按段数据吃两个字节 ✔；
-  但 payload 的**位序与位宽仍写死在代码里**（`gen_prefix_scan_loop` 直接 `(__b2 >> 2) & 1` 之类 ✗）
-  ⇒ 不是纯段数据 ✗。）
+  （**半落地**：`0xD5` + `effects = ["rex2"]` **已进谱表**、生成器按段数据吃两个字节；
+  但 payload 的**位序与位宽仍写死在代码里**（`gen_prefix_scan_loop` 直接 `(__b2 >> 2) & 1` 之类）
+  ⇒ 不是纯段数据。）
 - [~] `force_disp_base` 上界由 rm 字段宽 + `reg_ext.bits` 推出。
-  （**前提不成立，待重新定义** ✗：该检查在 `validate.rs` 里被
-  `m.encoding.kind != EncodingKind::PrefixScan` **挡在门外** ✗ ⇒ **x86（`prefix_scan`）的
-  `force_disp_base = [5, 13]` 从不被范围校验** ✗；而能进这条路的定宽/混合 ISA 又**不声明**
-  `rm` 字段（它们用老式 `[conventions.modrm]` 键 ✗）⇒「rm 字段宽」无从取 ✗。
-  要落地得先定口径：是给**变长**谱也加范围校验（上界 = rm 位宽 + REX 扩展位 ✗），
-  还是把这条检查改成只对声明了 `modrm` 段的谱生效 ✗。）
+  （**前提不成立，待重新定义**：该检查在 `validate.rs` 里被
+  `m.encoding.kind != EncodingKind::PrefixScan` **挡在门外** ⇒ **x86（`prefix_scan`）的
+  `force_disp_base = [5, 13]` 从不被范围校验**；而能进这条路的定宽/混合 ISA 又**不声明**
+  `rm` 字段（它们用老式 `[conventions.modrm]` 键）⇒「rm 字段宽」无从取。
+  要落地得先定口径：是给**变长**谱也加范围校验（上界 = rm 位宽 + REX 扩展位），
+  还是把这条检查改成只对声明了 `modrm` 段的谱生效。）
 - [x] `opsize` 四态退化为 `word_size` 规则 + 显式绑定；`"sN"` 移除。
-  （**仍开，且不是改名可了** ✗：实测三谱共 **16 处** `opsize = "s0"` ✗（另有 4 处是注释里的引用 ✗）；
-  其中数处挂在 **form** 上（如 `[form.MRR_MEMREF_AUTO]` ✗）——form 被多条指令共享 ✗，
-  "第 0 个操作数"的名字逐指令不同 ✗ ⇒ **改成操作数名这条路走不通** ✗，
-  必须按设计案引入 `word_size` 规则 + 显式绑定 ✗。）
+  （**仍开，且不是改名可了**：实测三谱共 **16 处** `opsize = "s0"`（另有 4 处是注释里的引用）；
+  其中数处挂在 **form** 上（如 `[form.MRR_MEMREF_AUTO]`）——form 被多条指令共享，
+  "第 0 个操作数"的名字逐指令不同 ⇒ **改成操作数名这条路走不通**，
+  必须按设计案引入 `word_size` 规则 + 显式绑定。）
 - [x] x86 谱迁移（116 处 `modrm`、84 处 `fields`、128 条 form/覆盖混合）。
-  **W4 收口（2026-10-08）** ✔：三谱实测 `modrm = {…}` 键 **0**、`opsize = "sN"` **0**、
-  `classes` 键 **0**；x86 `segments` 块 **58** ✗。四批迁移都与 `encoding.digest` 指纹
-  （1542/624/2565 条枚举的**编码字节** ✗）同时验收 ✗，`forge-isa lint` 三谱零结论 ✗；
-  唯一一次不等价（`INCDEC` 族走 `match` 改派生枚举 ✗）被指纹当场拦下并回退 ✗。
-  （**2026-10-08 实测修正** ✗：那个估计**过时** ✗ —— x86 现存 `modrm = {…}` 键只有 **27** 处 ✗
-  （且**全部**带名字映射 ✗，`rm = "[mem]"` 是语义映射而非布局 ✗），而 `segments = [` 块**已有 58** ✗
-  ⇒ W4 的谱面迁移其实**已完成大半** ✗。riscv64/arm64 **0/0** ✗（定宽 ISA 不涉及 ✗）。
-  真要收尾 ✗，剩下的是这 **27** 处 + `opsize` 的 **22** 处 `"sN"` ✗（见下条 ✗），
-  且 27 处多挂在 **family body** 上（带 `[mem]` 风味 ✗）✗ ⇒ 不是机械替换 ✗。
-  **2026-10-08 试做一次并回退（连安全网一起验证了 ✗）** ✗：按"已迁样本"的写法
+  **W4 收口（2026-10-08）**：三谱实测 `modrm = {…}` 键 **0**、`opsize = "sN"` **0**、
+  `classes` 键 **0**；x86 `segments` 块 **58**。四批迁移都与 `encoding.digest` 指纹
+  （1542/624/2565 条枚举的**编码字节**）同时验收，`forge-isa lint` 三谱零结论；
+  唯一一次不等价（`INCDEC` 族走 `match` 改派生枚举）被指纹当场拦下并回退。
+  （**2026-10-08 实测修正**：那个估计**过时** —— x86 现存 `modrm = {…}` 键只有 **27** 处
+  （且**全部**带名字映射，`rm = "[mem]"` 是语义映射而非布局），而 `segments = [` 块**已有 58**
+  ⇒ W4 的谱面迁移其实**已完成大半**。riscv64/arm64 **0/0**（定宽 ISA 不涉及）。
+  真要收尾，剩下的是这 **27** 处 + `opsize` 的 **22** 处 `"sN"`（见下条），
+  且 27 处多挂在 **family body** 上（带 `[mem]` 风味） ⇒ 不是机械替换。
+  **2026-10-08 试做一次并回退（连安全网一起验证了）**：按"已迁样本"的写法
   （`[inst.NOT_RM]`：`form = "MRR_EXT_OP_SEG"` + `bind = { rm = "dst" }` +
-  `match = { opcode = 0xF7, reg = 2 }` ✗）把 `[family.INCDEC_RM]`/`[family.INCDEC_RM_8]`
-  从 `form = "MRR_EXT_OP"` + 行内 `modrm = { reg = N, rm = "dst" }` 改成段形态 ✗ ——
-  结果 ✗：`validate` 通过 ✗，但 **`forge-isa insts` 出现 44 行差异**（那 4 条
-  `INC/DEC_RM(_8)` 的**内容行本身变了** ✗，不只是顺序 ✗）+ **`encoding.digest` 指纹不符** ✗
-  （上一轮新加的安全网**当场逮住** ✗）+ 多出一条 `LINT-UNUSED-FORM: MRR_EXT_OP` ✗
-  ⇒ 按纪律"差异先当 bug" **已回退**（树恢复绿灯 ✗）。
-  **结论** ✗：这类转换必须**逐 form 证明"字节 + 生效编码键"双重等价** ✗
-  （`match` 钉字段与行内 `modrm` 钉扩展码在**派生枚举/enc 视图**上不等价 ✗）✗，
-  不能按"看起来同构"批量改 ✗。
-  **2026-10-08 第二次试做：成功 ✗** ✔ —— 转 **4 个内存族**（`ALU_MR`/`ALU_R_MEM`/`ALU8_MR`/
-  `ALU8_R_MEM` ✗）：`body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" } }`
-  ⇒ `body = { form = "MRR_MEMREF_SEG", opsize = "s0", bind = { rm = "[mem]" } }` ✗
-  （**关键** ✗：SEG 形式写死 `opsize = 64` ✗ ⇒ 必须在 body 里恢复 `opsize = "s0"` ✗）。
-  判据 ✗：`validate` OK ✗、`lint` 干净 ✗（顺手删掉已闲置的 `[form.MRR_MEMREF_AUTO]` ✗）、
-  **`encoding.digest` 指纹通过**（字节逐条不变 ✗）✔；`insts` 的差异**只是显示里的 form 名** ✗。
-  ⇒ `modrm = {` 残留 **27 → 23** ✗。
-  **两条路线对照（给后续收尾者 ✗）** ✗：① 涉及 `opcode`/固定扩展码的族 ✗ ⇒ 走 `match` ✗，
-  **会改派生枚举** ✗（首试失败 ✗）；② 只涉及 **`reg`/`rm` 名字映射**的族 ✗ ⇒ 换成现成的 `*_SEG` 形式 +
-  `bind` ✗（成功 ✗，注意 `opsize` 覆盖 ✗）。
-  **2026-10-08 第三批（成功 ✗）** ✔：SSE/VEX/EVEX 三操作数族 **10 处** ✗
-  （`SSE_RR`→`SSE_RR_SEG` 5 ✗、`VEX_RRV`→`VEX_RRV_SEG` 2 ✗、`EVEX_RRV`→`EVEX_RRV_SEG` 3 ✗）✗，
-  并删掉随之闲置的三个旧 form ✗。**累计 `modrm = {…}` 27 → 13** ✗
-  （剩 11 处固定扩展码 = 路线① ✗、2 处 `[reg]` 风味 ✗）。
-  （**仍开** ✗ —— W4 的大头 ✗；现状是"stream 形态与内联编码键**并存**" ✗。）
+  `match = { opcode = 0xF7, reg = 2 }`）把 `[family.INCDEC_RM]`/`[family.INCDEC_RM_8]`
+  从 `form = "MRR_EXT_OP"` + 行内 `modrm = { reg = N, rm = "dst" }` 改成段形态 ——
+  结果：`validate` 通过，但 **`forge-isa insts` 出现 44 行差异**（那 4 条
+  `INC/DEC_RM(_8)` 的**内容行本身变了**，不只是顺序）+ **`encoding.digest` 指纹不符**
+  （上一轮新加的安全网**当场逮住**）+ 多出一条 `LINT-UNUSED-FORM: MRR_EXT_OP`
+  ⇒ 按纪律"差异先当 bug" **已回退**（树恢复绿灯）。
+  **结论**：这类转换必须**逐 form 证明"字节 + 生效编码键"双重等价**
+  （`match` 钉字段与行内 `modrm` 钉扩展码在**派生枚举/enc 视图**上不等价），
+  不能按"看起来同构"批量改。
+  **2026-10-08 第二次试做：成功** —— 转 **4 个内存族**（`ALU_MR`/`ALU_R_MEM`/`ALU8_MR`/
+  `ALU8_R_MEM`）：`body = { form = "MRR_MEMREF_AUTO", modrm = { rm = "[mem]" } }`
+  ⇒ `body = { form = "MRR_MEMREF_SEG", opsize = "s0", bind = { rm = "[mem]" } }`
+  （**关键**：SEG 形式写死 `opsize = 64` ⇒ 必须在 body 里恢复 `opsize = "s0"`）。
+  判据：`validate` OK、`lint` 干净（顺手删掉已闲置的 `[form.MRR_MEMREF_AUTO]`）、
+  **`encoding.digest` 指纹通过**（字节逐条不变）；`insts` 的差异**只是显示里的 form 名**。
+  ⇒ `modrm = {` 残留 **27 → 23**。
+  **两条路线对照（给后续收尾者）**：① 涉及 `opcode`/固定扩展码的族 ⇒ 走 `match`，
+  **会改派生枚举**（首试失败）；② 只涉及 **`reg`/`rm` 名字映射**的族 ⇒ 换成现成的 `*_SEG` 形式 +
+  `bind`（成功，注意 `opsize` 覆盖）。
+  **2026-10-08 第三批（成功）**：SSE/VEX/EVEX 三操作数族 **10 处**
+  （`SSE_RR`→`SSE_RR_SEG` 5、`VEX_RRV`→`VEX_RRV_SEG` 2、`EVEX_RRV`→`EVEX_RRV_SEG` 3），
+  并删掉随之闲置的三个旧 form。**累计 `modrm = {…}` 27 → 13**
+  （剩 11 处固定扩展码 = 路线①、2 处 `[reg]` 风味）。
+  （**仍开** —— W4 的大头；现状是"stream 形态与内联编码键**并存**"。）
 - [x] 门禁：§2 全绿；x86 编码对拍（`asm_encoding`）棘轮不变；`encoder_fuzz_tests` 绿。
-  （**本轮实测** ✗：`asm_parse` 3 passed ✔、`asm_encoding` 1 passed ✔（棘轮逐项相等 ✗）、
-  `isa_roundtrip_guard` 1 passed ✔、`spec_coverage_guard` 4 passed ✔、x86 矩阵 197/3/0 ✔；
-  另每片都核三谱 `insts` 与迁移前**逐行 0 差异** ✔。）
+  （**本轮实测**：`asm_parse` 3 passed、`asm_encoding` 1 passed（棘轮逐项相等）、
+  `isa_roundtrip_guard` 1 passed、`spec_coverage_guard` 4 passed、x86 矩阵 197/3/0；
+  另每片都核三谱 `insts` 与迁移前**逐行 0 差异**。）
 - [x] 冻结项 1 复核：段子表键名定稿后写回设计文档。
 
 ---
@@ -742,7 +742,7 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 - [x] **前置侦察（2026-10-08）**：`family` 在代码里**根本不存在**（全仓 0 处）；`vary` 目前只挂在
   `[[lowering]]` 上（`model.rs::expand_vary`）。⇒ 第 ② 步的前置是**先把 `family` 造出来**，
   否则"两处共用 zip 语义"无对象可共用。
-  **设计既定形态**（`docs/archive/isa-dsl-v21-redesign-plan.md` §6.6 / 迁移总表 L190；该文档已归档 ✗）：
+  **设计既定形态**（`docs/archive/isa-dsl-v21-redesign-plan.md` §6.6 / 迁移总表 L190；该文档已归档）：
   `family` = `[[templates]]` + 族名（= 多态引用名）的**唯一复用机制**，形状 = body + rows + vary：
 
   ```toml
@@ -805,111 +805,111 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 **目标**：分支/跳转/返回下放到谱；emit 表达式与 `temps`。
 
 - [x] 新增符号值：`{true}` / `{false}` / `{target}` / `{cc}` / `{cc_inv}`。
-  （**2026-10-08 复核：已全部落地** ✔ —— 前三个在终结序列里 ✗（`[lower.Br]`/`[lower.Jmp]` 已在三谱 ✗），
-  `{cc}`/`{cc_inv}` 在 `placeholder.rs` ✗。）
+  （**2026-10-08 复核：已全部落地** —— 前三个在终结序列里（`[lower.Br]`/`[lower.Jmp]` 已在三谱），
+  `{cc}`/`{cc_inv}` 在 `placeholder.rs`。）
 - [x] `{cc_inv}` 由 `[enum.cond]` 反查（替换硬编码 `4u8`）。
-  （**已落地** ✔ —— `lowering.rs` 的 `ir_inverse_cond` + 生成物里的 `__cc_inv` ✗；
-  硬编码 `4u8` 只作为**历史**出现在注释与测试期望串里 ✗。）
+  （**已落地** —— `lowering.rs` 的 `ir_inverse_cond` + 生成物里的 `__cc_inv`；
+  硬编码 `4u8` 只作为**历史**出现在注释与测试期望串里。）
 - [~] 三谱写出 `[lower.Br]` / `[lower.Jmp]` / `[lower.Ret]`：
-  - [x] x86：`test` + `jcc` + `jmp` ✔
-  - [x] riscv：`beq …, x0, {false}` + `jal x0, {true}` ✔
-  - [x] arm64：`cbz {0}, {false}` + `b {true}` ✔
-  - [x] **`[lower.Ret]`：条件数据化 + `gpr`/`fpr`/按值向量已下放**（2026-10-08 ✗）——
-    `when` 用**数据键**（`bank`/`width`/`by_ref`/`multi` ✗），**不是** `ret_kind` 枚举 ✗：
-    宽度写任意整数 ⇒ f8/f16/f32/f64/f128、i8…i128、指针都表达得了 ✗。规则编译成生成物里的
-    **运行期 `if` 链**（银行/宽度是运行期事实 ✗），**没有规则命中时逐字回落**到旧四形态 ✗。
-    裁决 = **具体优先**（条件键多者赢，同键数按声明序 ✗）。三谱：x86/riscv64/arm64 各一条
-    `bank = gpr` ✗；x86/riscv64 另加 `bank = fpr, width = 32|64` ✗
-    （`MOVSS`/`MOVSD`、`FSGNJ_S`/`FSGNJ_D` ✗）。验收：x86 矩阵 **197/3/0**、riscv64 **136/64/0** ✔、
-    指纹通过 ✔；中途「`{retf}` 改查 plan」被 riscv64 矩阵抓到错值并退回旧语义 ✗
-    （约定层没有浮点返回槽字段 ⇒ 记为待办 ✗）。
-  - [x] **`bank = vec, by_ref = false`（≤16B 按值向量 ✗）已下放**（2026-10-08 ✗）——
-    x86 写 `MOVAPS {retf}, {retf_src}`（= 旧路径在 128 位档选中的同一条 ✗，
-    WA-37 要求**全宽 128 位** ✗）；`bank = vec` 必写 `by_ref`（不写就分不清按值/sret ✗）。
-    riscv64/arm64 没有 128 位 FPR 搬移 ⇒ 不写规则（旧路径 fail-closed ✗，行为不变 ✗）。
-  - [x] **`bank = vec, by_ref = true`（>16B 的 sret ✗）已下放**（2026-10-08 ✗）——
-    新占位符 **`{sret}`**（内存操作数：`MemRef { base: Some(__sret) }` ✗，由布局的 `hidden_sret` 给 ✗），
-    x86 按**精确总位宽**分档：`width = 256` → `VMOVUPS_MR` ✗、`width = 512` → `VMOVUPS_ZMM_MR` ✗。
-    **命中已证明** ✗：临时把旧 sret 分支改成报错 ✗，x86 矩阵仍 **197/3/0** ✔ ⇒ 走的是谱面 ✗。
-    注意 `width` 对向量 = **总位宽**（`type_bits_of` 给的是元素位宽 ✗ ⇒ 内部按 `size_bytes*8` 折算 ✗）。
-  - [x] **`multi = true`（多值返回 ✗）已下放**（2026-10-08 ✗）——用**逐分量模板** ✗：
-    `insts = []` + `move`（整数分量 ✗）/`movef`（浮点分量 ✗），对每个结果重复一次 ✗，
-    里面的 `{retN}`/`{retN_src}` = 第 k 个返回槽/结果值 ✗（新占位符 ✗）。分量的银行由布局那项给 ✗
-    （`is_int`/`is_fp` ✗），位宽取该分量的 `type_bits_of` ✗；缺模板 ⇒ fail-closed ✗。
-    **命中已证明** ✗：谱面规则存在时旧的多值分支**根本不生成** ✗，而完整管线的两返回值函数
-    （`abi_target_real::pair_return_probe` ✗ rc x86 管线 ✗）仍 **25 passed** ✔、矩阵 197/3/0 ✔。
-  - [x] **`[lower.Ret]` 五类形态全部在谱面** ✗：`gpr` / `fpr`（任意宽度 ✗）/
-  - [x] **W6+：条件码类型化**（生成物的条件码字段 = **IR 条件枚举** ✗；2026-10-08 落地 ✗）——
-    用户口径 ✗：条件码不该是魔术数 ✗、映射**由数据生成** ✗。最终形态比最初设想更进一步 ✗：
-    - `[operand.<名>].cond_bank = "int" | "float" | "flag"`（缺省 `int` ✗）选**三类固定条件表**之一：
-      `[enum.cond]`（整数 ✗）/ `[enum.fcond]`（浮点谓词 ✗）/ `[enum.flagcond]`（标志位 ✗）；
-      生成的字段类型随之定 ✗：`forge_ir::IntCC` / `FloatCC` / **`FlagCC`**（甲 ✗：`forge-ir` 新增 ✗，
-      承接溢出/进位/符号/奇偶——`IntCC`/`FloatCC` 都没有的**机器标志位**语义 ✗）。
-    - 机器码只在**编码 / 解码 / 汇编文本**三个边界出现 ✗：生成的 `CondEnc` trait（三条 `enc` ✗）
-      \+ `intcc_of` / `floatcc_of` / `flagcc_of`（无 `ir` 对应的码 ⇒ `None` ⇒ fail-closed ✗）。
+  - [x] x86：`test` + `jcc` + `jmp`
+  - [x] riscv：`beq …, x0, {false}` + `jal x0, {true}`
+  - [x] arm64：`cbz {0}, {false}` + `b {true}`
+  - [x] **`[lower.Ret]`：条件数据化 + `gpr`/`fpr`/按值向量已下放**（2026-10-08）——
+    `when` 用**数据键**（`bank`/`width`/`by_ref`/`multi`），**不是** `ret_kind` 枚举：
+    宽度写任意整数 ⇒ f8/f16/f32/f64/f128、i8…i128、指针都表达得了。规则编译成生成物里的
+    **运行期 `if` 链**（银行/宽度是运行期事实），**没有规则命中时逐字回落**到旧四形态。
+    裁决 = **具体优先**（条件键多者赢，同键数按声明序）。三谱：x86/riscv64/arm64 各一条
+    `bank = gpr`；x86/riscv64 另加 `bank = fpr, width = 32|64`
+    （`MOVSS`/`MOVSD`、`FSGNJ_S`/`FSGNJ_D`）。验收：x86 矩阵 **197/3/0**、riscv64 **136/64/0**、
+    指纹通过；中途「`{retf}` 改查 plan」被 riscv64 矩阵抓到错值并退回旧语义
+    （约定层没有浮点返回槽字段 ⇒ 记为待办）。
+  - [x] **`bank = vec, by_ref = false`（≤16B 按值向量）已下放**（2026-10-08）——
+    x86 写 `MOVAPS {retf}, {retf_src}`（= 旧路径在 128 位档选中的同一条，
+    WA-37 要求**全宽 128 位**）；`bank = vec` 必写 `by_ref`（不写就分不清按值/sret）。
+    riscv64/arm64 没有 128 位 FPR 搬移 ⇒ 不写规则（旧路径 fail-closed，行为不变）。
+  - [x] **`bank = vec, by_ref = true`（>16B 的 sret）已下放**（2026-10-08）——
+    新占位符 **`{sret}`**（内存操作数：`MemRef { base: Some(__sret) }`，由布局的 `hidden_sret` 给），
+    x86 按**精确总位宽**分档：`width = 256` → `VMOVUPS_MR`、`width = 512` → `VMOVUPS_ZMM_MR`。
+    **命中已证明**：临时把旧 sret 分支改成报错，x86 矩阵仍 **197/3/0** ⇒ 走的是谱面。
+    注意 `width` 对向量 = **总位宽**（`type_bits_of` 给的是元素位宽 ⇒ 内部按 `size_bytes*8` 折算）。
+  - [x] **`multi = true`（多值返回）已下放**（2026-10-08）——用**逐分量模板**：
+    `insts = []` + `move`（整数分量）/`movef`（浮点分量），对每个结果重复一次，
+    里面的 `{retN}`/`{retN_src}` = 第 k 个返回槽/结果值（新占位符）。分量的银行由布局那项给
+    （`is_int`/`is_fp`），位宽取该分量的 `type_bits_of`；缺模板 ⇒ fail-closed。
+    **命中已证明**：谱面规则存在时旧的多值分支**根本不生成**，而完整管线的两返回值函数
+    （`abi_target_real::pair_return_probe` rc x86 管线）仍 **25 passed**、矩阵 197/3/0。
+  - [x] **`[lower.Ret]` 五类形态全部在谱面**：`gpr` / `fpr`（任意宽度）/
+  - [x] **W6+：条件码类型化**（生成物的条件码字段 = **IR 条件枚举**；2026-10-08 落地）——
+    用户口径：条件码不该是魔术数、映射**由数据生成**。最终形态比最初设想更进一步：
+    - `[operand.<名>].cond_bank = "int" | "float" | "flag"`（缺省 `int`）选**三类固定条件表**之一：
+      `[enum.cond]`（整数）/ `[enum.fcond]`（浮点谓词）/ `[enum.flagcond]`（标志位）；
+      生成的字段类型随之定：`forge_ir::IntCC` / `FloatCC` / **`FlagCC`**（甲：`forge-ir` 新增，
+      承接溢出/进位/符号/奇偶——`IntCC`/`FloatCC` 都没有的**机器标志位**语义）。
+    - 机器码只在**编码 / 解码 / 汇编文本**三个边界出现：生成的 `CondEnc` trait（三条 `enc`）
+      \+ `intcc_of` / `floatcc_of` / `flagcc_of`（无 `ir` 对应的码 ⇒ `None` ⇒ fail-closed）。
     - x86 补三张表 + 三个**同编码**新形态 `SETCC_F` / `SETCC_FLAG` / `CMOVCC_FLAG`（汇编面
-      `setccf` / `setccfl` / `cmovccfl` ✗ —— 文本层分不出条件银行 ✗ ⇒ 必须可分辨 ✗）；FP 比较与
-      溢出/饱和 lowering 各自改走对应形态 ✗。arm64 补 8 个缺失的 `ir`（`gt`/`le`/`ge`/`lt`/`hi`/`ls`/`cs`/`cc` ✗）。
-    - **验收** ✗：整仓门禁 **exit 0** ✗；x86 矩阵 **197/3/0** ✗、riscv64 **136/64/0** ✗、arm64 ✔；
-      谱内向量 **505 全绿** ✗；`schema_guard` 9/9 ✗、`lint_shipped` 8/8 ✗；指纹 x86
-      `derived 1542→1550` ✗、`spec_totals 299→302` ✗，**riscv64/arm64 逐位不变** ✔
-      （提交 `648a83b1` ✗ `87e6e3cc` ✗ `f77d9c4e` ✗）。
-    - **已知代价**（棘轮已按约定刷新并在文件里记明那一行 ✗）：arm64 的 `al`/`nv`（恒真/恒假 ✗）
-      没有**任何** IR 枚举能表达（不是缺 `ir`，是语义上不存在 ✗）⇒ `csel x0,x0,x0,nv` 一行
-      解析/编码不出（`parsed 576→575` ✗、`checked 185→184` ✗）。
-    - 顺带修掉两个真 bug ✗：解码候选里的 `return None` 会**中断整条解码** ✗（`0f 9a c0` 因此解不出
-      ⇒ 改成候选**守卫**里判 ✗）；终结层的 `__cc` **无条件发射** ✗（riscv64 没有条件表却被要求
-      `eq` 有 IR 对应 ⇒ 改成"谱里真用到 `{cc}` 才发射" ✗）。
+      `setccf` / `setccfl` / `cmovccfl` —— 文本层分不出条件银行 ⇒ 必须可分辨）；FP 比较与
+      溢出/饱和 lowering 各自改走对应形态。arm64 补 8 个缺失的 `ir`（`gt`/`le`/`ge`/`lt`/`hi`/`ls`/`cs`/`cc`）。
+    - **验收**：整仓门禁 **exit 0**；x86 矩阵 **197/3/0**、riscv64 **136/64/0**、arm64；
+      谱内向量 **505 全绿**；`schema_guard` 9/9、`lint_shipped` 8/8；指纹 x86
+      `derived 1542→1550`、`spec_totals 299→302`，**riscv64/arm64 逐位不变**
+      （提交 `648a83b1` `87e6e3cc` `f77d9c4e`）。
+    - **已知代价**（棘轮已按约定刷新并在文件里记明那一行）：arm64 的 `al`/`nv`（恒真/恒假）
+      没有**任何** IR 枚举能表达（不是缺 `ir`，是语义上不存在）⇒ `csel x0,x0,x0,nv` 一行
+      解析/编码不出（`parsed 576→575`、`checked 185→184`）。
+    - 顺带修掉两个真 bug：解码候选里的 `return None` 会**中断整条解码**（`0f 9a c0` 因此解不出
+      ⇒ 改成候选**守卫**里判）；终结层的 `__cc` **无条件发射**（riscv64 没有条件表却被要求
+      `eq` 有 IR 对应 ⇒ 改成"谱里真用到 `{cc}` 才发射"）。
 - [x] 删除编译器三处按字段个数猜 ISA（`lowering.rs:202`、`:527-625`、`frame.rs:172-208`）。
-  （**2026-10-08：死代码已删干净** ✔ —— `_has_jal`/`_jal_dest`/`_jal_target`/`_b_src`/`_b_src2`/`_b_target`
-  这批无消费者的探测全部删除 ✗。**但 `frame.rs` 里仍留一处** `has_jump && model.is_prefix_scan()` ✗ ——
-  复核结论：那是**编码属性**（变长 ⇒ label 槽按 rel32 位移编 ✗；定宽 ⇒ 字段 + patcher ✗），
-  **不是 ISA 形状猜测** ✗ ⇒ 该改名为属性查询（如 `model.encoding().is_variable()` ✗），不该删 ✗。）
+  （**2026-10-08：死代码已删干净** —— `_has_jal`/`_jal_dest`/`_jal_target`/`_b_src`/`_b_src2`/`_b_target`
+  这批无消费者的探测全部删除。**但 `frame.rs` 里仍留一处** `has_jump && model.is_prefix_scan()` ——
+  复核结论：那是**编码属性**（变长 ⇒ label 槽按 rel32 位移编；定宽 ⇒ 字段 + patcher），
+  **不是 ISA 形状猜测** ⇒ 该改名为属性查询（如 `model.encoding().is_variable()`），不该删。）
 - [~] emit 表达式落地（`{imm0 - 4}`、`{iconst >> 12 & 0xfffff}` 等），删 20 余个派生 token。
-  （**2026-10-08 按实测决定不做** ✗：方案 §7 S5 已量过——表格化的规则数收益 ≤5%、
-  长序列跨 op 复用为 0 ✗，而 `vary` 已覆盖同一模板按行代入的形态 ✗。
-  谱面**不引入** `lowering.emit`/`[[sequences]]` ✗。）
+  （**2026-10-08 按实测决定不做**：方案 §7 S5 已量过——表格化的规则数收益 ≤5%、
+  长序列跨 op 复用为 0，而 `vary` 已覆盖同一模板按行代入的形态。
+  谱面**不引入** `lowering.emit`/`[[sequences]]`。）
 - [~] `temps = [...]` 显式临时寄存器，删 `{g}`/`{gN}`/`{f}`/`{fN}` 隐式声明。
-  （**半落地** ✗：`[[lowering]].temps` **已实现**（可选，声明即强制 ✗）；
-  **删隐式 `{g}`/`{gN}`/`{f}`/`{fN}`** 没做 ✗ —— 三谱现有 **661** 处用它 ✗，
-  属 breaking 迁移，收益只是「少一种声明方式」✗。）
+  （**半落地**：`[[lowering]].temps` **已实现**（可选，声明即强制）；
+  **删隐式 `{g}`/`{gN}`/`{f}`/`{fN}`** 没做 —— 三谱现有 **661** 处用它，
+  属 breaking 迁移，收益只是「少一种声明方式」。）
 - [~] 新增第四形态夹具 ISA（同一份谱里两个分支形态）验证"编译器不再猜"。
-  （**未单开夹具** ✗：它要验证的「编译器不再猜分支形态」已由两条独立守卫覆盖 ✗ ——
-  `generality_guard` ③（三谱自己声明 `[[lower.Br]]`/`[[lower.Jmp]]` ✗）
-  与 W11 的两份第四方夹具 ✗。）
+  （**未单开夹具**：它要验证的「编译器不再猜分支形态」已由两条独立守卫覆盖 ——
+  `generality_guard` ③（三谱自己声明 `[[lower.Br]]`/`[[lower.Jmp]]`）
+  与 W11 的两份第四方夹具。）
 - [x] 门禁：§2 全绿；三矩阵计数不变。
-- [x] 待度量项：`[snippet]` 按 riscv 14 处复用重测 ✗ —— 结论：**不做**（§14 快照 #3 ✗），收益过阈值才单开一片。
+- [x] 待度量项：`[snippet]` 按 riscv 14 处复用重测 —— 结论：**不做**（§14 快照 #3），收益过阈值才单开一片。
 
-### W6-a 表面改版施工单（`[[lowering]]` + `[[pattern]]` → `[lower.*]` ✗；口径已定 ✗）
+### W6-a 表面改版施工单（`[[lowering]]` + `[[pattern]]` → `[lower.*]`；口径已定）
 
-**口径（2026-10-08 拍板 ✗）**：`op` 名单**不再保留** —— **一个名字一块** ✗，
-复用交给 `[family.*]`/`vary` ✗（方案 §5 的 `[lower.<Op>]` ✗）。
+**口径（2026-10-08 拍板）**：`op` 名单**不再保留** —— **一个名字一块**，
+复用交给 `[family.*]`/`vary`（方案 §5 的 `[lower.<Op>]`）。
 
-| 现面 | 新面 | 规模（三谱实测 ✗） |
+| 现面 | 新面 | 规模（三谱实测） |
 | --- | --- | --- |
-| `[[lowering]]` + `op = "Iadd"` | `[lower.Iadd]`（表头即 op 名 ✗，`op` 键消失 ✗） | 281 块 |
-| `[[lowering]]` + `op = ["Copy","Uextend","Freeze"]` | 展开成 `[lower.Copy]`/`[lower.Uextend]`/`[lower.Freeze]` 三块 ✗ | 9 块 → 23 块（+14 ✗） |
-| `[[pattern]]`（树匹配 ✗） | `[lower.<作者给的名字>]`（`match` 仍是树 ✗） | 2 块 |
+| `[[lowering]]` + `op = "Iadd"` | `[lower.Iadd]`（表头即 op 名，`op` 键消失） | 281 块 |
+| `[[lowering]]` + `op = ["Copy","Uextend","Freeze"]` | 展开成 `[lower.Copy]`/`[lower.Uextend]`/`[lower.Freeze]` 三块 | 9 块 → 23 块（+14） |
+| `[[pattern]]`（树匹配） | `[lower.<作者给的名字>]`（`match` 仍是树） | 2 块 |
 
-**两条必须守住的不变量** ✗：
+**两条必须守住的不变量**：
 
-1. **声明序仍是裁决的最后一档** ✗（`priority` 降 → 谓词叶子数降 → **声明序升** ✗）——
-   表头表是 `BTreeMap`（字母序 ✗）✗ ⇒ 必须像 `[form.*]`/`[inst.*]`/`[pred.*]` 那样
-   **按源文位置恢复声明序**（`source.find("[lower.<名>]")` ✗），否则同优先级规则的胜负会变 ✗
-   ⇒ 生成物字节变 ✗。
-2. **三谱编码字节不变** ✗ —— 验收口径同 W10 ✗：`forge-isa insts` 与迁移前**逐行 0 差异** ✗
-   ＋ x86 JIT 矩阵 197/3/0 ✗。
+1. **声明序仍是裁决的最后一档**（`priority` 降 → 谓词叶子数降 → **声明序升**）——
+   表头表是 `BTreeMap`（字母序） ⇒ 必须像 `[form.*]`/`[inst.*]`/`[pred.*]` 那样
+   **按源文位置恢复声明序**（`source.find("[lower.<名>]")`），否则同优先级规则的胜负会变
+   ⇒ 生成物字节变。
+2. **三谱编码字节不变** —— 验收口径同 W10：`forge-isa insts` 与迁移前**逐行 0 差异**
+   ＋ x86 JIT 矩阵 197/3/0。
 
-**四处同改** ✗（仓库铁律 ✗）：`src/schema.rs`（新增 `[lower.<名字>]` 段 + 根键 `lower` ✗）↔
-`dsl/model.rs` ↔ `docs/reference/isa-dsl.md` 的键表 ↔ 签入的 `isa-dsl.schema.json` ✗。
+**四处同改**（仓库铁律）：`src/schema.rs`（新增 `[lower.<名字>]` 段 + 根键 `lower`）↔
+`dsl/model.rs` ↔ `docs/reference/isa-dsl.md` 的键表 ↔ 签入的 `isa-dsl.schema.json`。
 
-**施工顺序** ✗（每片一次提交、先跑整仓门禁 ✗）✗：
+**施工顺序**（每片一次提交、先跑整仓门禁）：
 
-1. **表面片** ✗：模型（`lower` 表 + 源序恢复 ✗）、解析期**拒收** `[[lowering]]`/`[[pattern]]` ✗、
-   schema/文档/schema.json 四处同改 ✗，同时把 9 处名单展开与 2 处 pattern 命名落进三谱 ✗。
-2. **夹具与守卫片** ✗：`.rs` 内联夹具 ✗、`lint.rs` 诊断文案里的 `[[lowering.X]]` 锚点 ✗、
-   `move_derive.rs`/`lint_shipped.rs`/`strict_overlap.rs`/`variants.rs` 的锚点 ✗。
-3. **判据片** ✗：`insts` 0 差异 ✗ + 三矩阵 ✗ + `lint` 零结论 ✗ + `--suggest` 快照不涨 ✗。
+1. **表面片**：模型（`lower` 表 + 源序恢复）、解析期**拒收** `[[lowering]]`/`[[pattern]]`、
+   schema/文档/schema.json 四处同改，同时把 9 处名单展开与 2 处 pattern 命名落进三谱。
+2. **夹具与守卫片**：`.rs` 内联夹具、`lint.rs` 诊断文案里的 `[[lowering.X]]` 锚点、
+   `move_derive.rs`/`lint_shipped.rs`/`strict_overlap.rs`/`variants.rs` 的锚点。
+3. **判据片**：`insts` 0 差异 + 三矩阵 + `lint` 零结论 + `--suggest` 快照不涨。
 
 ---
 
@@ -982,25 +982,25 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 **目标**：v18 代码路径、文档、守卫全部清干净。
 
 - [~] 删除 v18 键的模型/schema/校验/生成器分支；`deny_unknown_fields` 全量生效。
-  （**部分**：文档/消息/旧面键面已清零 ✔（`[[forms]]`/`[[instructions]]`/`[[derive]]`/`[[templates]]` 全撤 ✗，
-  未知键一律拒绝 ✗）；**代码面随 W4/W6 完成** —— x86 的内联编码键（116 处 `modrm` 等 ✗）与
-  `[[lowering]]` 数组节仍在 ✗。）
+  （**部分**：文档/消息/旧面键面已清零（`[[forms]]`/`[[instructions]]`/`[[derive]]`/`[[templates]]` 全撤，
+  未知键一律拒绝）；**代码面随 W4/W6 完成** —— x86 的内联编码键（116 处 `modrm` 等）与
+  `[[lowering]]` 数组节仍在。）
 - [x] `docs/reference/isa-dsl.md` 换为 v21 规范（键表由 schema 生成）。
 - [x] `docs/reference/isa-dsl-errors.md` 错误码目录同步。
 - [x] `docs/guides/isa-dsl-tutorial.md` 按新语法重写，并保持 `tests/tutorial_spec.rs` 绿。
 - [x] `CLAUDE.md` 的 ISA-DSL 相关段落（Key Architecture Rules、Testing Notes）全量回写
-  （只写**已落地**的面 ✗ + 一张"现行面 / 未定项"速查 ✗；W4/W6 原样标注 ✗）。
+  （只写**已落地**的面 + 一张"现行面 / 未定项"速查；W4/W6 原样标注）。
 - [x] `CHANGELOG.md` 记一条 **Breaking** 条目（用户可见变更才进 CHANGELOG）。
-  （W9 四片 + W10 五片各一条 ✗，全部带实测证据 ✗。）
+  （W9 四片 + W10 五片各一条，全部带实测证据。）
 - [x] 设计文档转 `[archive]` 或标注"已落地"，执行清单标注完成日期。
-  （`isa-dsl-v21-redesign-plan.md` 头部换账目表这件事**已由归档解决** ✗：该文档已于 2026-10-08 移入
-`docs/archive/` ✗，头部换成 ARCHIVED 块 + 指向本清单 ✗。此处原记的"W4/W6 在办"已是陈账 ✗。）
-  W4/W6 🚧（附卡点 ✗）、W11 与最终验收 ⬜；本清单各节同步标注 ✗。）
+  （`isa-dsl-v21-redesign-plan.md` 头部换账目表这件事**已由归档解决**：该文档已于 2026-10-08 移入
+`docs/archive/`，头部换成 ARCHIVED 块 + 指向本清单。此处原记的"W4/W6 在办"已是陈账。）
+  W4/W6 🚧（附卡点）、W11 与最终验收 ⬜；本清单各节同步标注。）
 - [x] `git grep` 全量检查：无 `conventions.bitfields` / `operand_fields` / `opcode_field` / `gpr8`(64 语义) / `[[forms]]` 残留死链。
-  （**2026-10-08 复核：非历史文档里 `[[forms]]`/`[[instructions]]`/`[[derive]]` 的**用户面**引用已清零 ✗
-  —— 代码消息 42 处 + 文档 20 余处一次改完 ✗；`[[templates]]` 的 TOML 面也已撤（见 §7 附 ⑥ ✗）；
-  **刻意保留**：明确标注为历史的提法（"v18 S3f 引入时叫 `[[derive]]`"✗）与历史测量表 ✗；
-  `conventions.bitfields`/`operand_fields`/`opcode_field` 作为**内部展开目标**的说明保留 ✔。）
+  （**2026-10-08 复核：非历史文档里 `[[forms]]`/`[[instructions]]`/`[[derive]]` 的**用户面**引用已清零
+  —— 代码消息 42 处 + 文档 20 余处一次改完；`[[templates]]` 的 TOML 面也已撤（见 §7 附 ⑥）；
+  **刻意保留**：明确标注为历史的提法（"v18 S3f 引入时叫 `[[derive]]`"）与历史测量表；
+  `conventions.bitfields`/`operand_fields`/`opcode_field` 作为**内部展开目标**的说明保留。）
 - [x] 门禁：§2 全绿 + `cargo test --workspace --exclude forge-rustc`。
 
 **W10 进度（2026-10-08）**：**表头即名字**的三张表已全部落地——`[[forms]]` → `[form.<名>]`、
@@ -1014,15 +1014,15 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 **一条教训（写进片记录）**：迁移脚本按块处理时若把"表头行 ⋯ `name` 行"整体压成一行，会**静默丢掉
 写在 `name` 之前的键**——x86 有 3 条如此（`CALL_RM`/`SETCC_RM8`/`SETCC_RM8_B` 的 `match = { reg = 2 }`），
 曾让 x86 JIT 跑出非法指令。**验收口径**：三谱 `forge-isa insts` 与迁移前逐行相同（差异 0 行）。
-**W10 现状（2026-10-08 复核，避免重复排查 ✗）**：W10 只剩两块 ✗，都**不是**纯改名 ✗ ——
-① **W4 剩余**：段 kind 闭集**已验证全部接线** ✔（见 §6 第 1 条 ✗），剩 x86 谱迁移到
-`kind = "stream"` + 段 ✗（116 处 `modrm` / 84 处 `fields` / 128 条 form 混合 ✗）与附属项
+**W10 现状（2026-10-08 复核，避免重复排查）**：W10 只剩两块，都**不是**纯改名 ——
+① **W4 剩余**：段 kind 闭集**已验证全部接线**（见 §6 第 1 条），剩 x86 谱迁移到
+`kind = "stream"` + 段（116 处 `modrm` / 84 处 `fields` / 128 条 form 混合）与附属项
 （前缀表显式化、删 `default_prefix_scan()`、REX2 段数据、`force_disp_base` 上界、`opsize`
-四态退化 ✗）；② **W6 剩余**：`[[lowering]]`+`[[pattern]]` → `[lower.*]` ✗（288 处 ✗）
-**卡在口径**：`op` 允许**名单** ✗，表头放不下 ✗，需要先定"名单怎么办" ✗。
-`CLAUDE.md` 回写**已完成**（只写已落地的面 ✗ + 一张"现行面 / 未定项"速查 ✗，
-未定型的 W4/W6 原样标注 ✗）。
-**尚未做**：W11（第四个 ISA 实证 ✗）与最终验收 ✗。
+四态退化）；② **W6 剩余**：`[[lowering]]`+`[[pattern]]` → `[lower.*]`（288 处）
+**卡在口径**：`op` 允许**名单**，表头放不下，需要先定"名单怎么办"。
+`CLAUDE.md` 回写**已完成**（只写已落地的面 + 一张"现行面 / 未定项"速查，
+未定型的 W4/W6 原样标注）。
+**尚未做**：W11（第四个 ISA 实证）与最终验收。
 
 ---
 
@@ -1030,221 +1030,221 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 **目标**：新增第四个 ISA 零编译器改动。
 
-### 受控扩展点（2026-10-08 ✗）
+### 受控扩展点（2026-10-08）
 
-**① 空前缀表的孤儿 `else` —— 曾是候选缺口，已修** ✔：用 `[encoding] kind = "prefix_scan"` +
-指令级 `segments` 做"变长一态"夹具时 ✗，`validate`/`lint` 都过 ✗，但生成物不合法 ✗
-（`gen_file.rs:249` ✗ 报 expected an expression, found keyword else ✗）。根因 = 前缀扫描循环在
-**空前缀表**时发出的是「循环体里先取一个字节、紧接着一个 else」的形态（条件分支随空表消失 ✗）
-⇒ 只剩孤儿 else ✗。
-**修法**：表空时改发"循环体立刻 break"的形态 ✗。**三谱逐字节不变**（`insts` 0 差异 ✔、x86 矩阵
-197/3/0 ✔）⇒ 该夹具现已在 `tests/isa/demo_vlen.toml` 落地 ✔（W11 第 1 条 ✗）。
+**① 空前缀表的孤儿 `else` —— 曾是候选缺口，已修**：用 `[encoding] kind = "prefix_scan"` +
+指令级 `segments` 做"变长一态"夹具时，`validate`/`lint` 都过，但生成物不合法
+（`gen_file.rs:249` 报 expected an expression, found keyword else）。根因 = 前缀扫描循环在
+**空前缀表**时发出的是「循环体里先取一个字节、紧接着一个 else」的形态（条件分支随空表消失）
+⇒ 只剩孤儿 else。
+**修法**：表空时改发"循环体立刻 break"的形态。**三谱逐字节不变**（`insts` 0 差异、x86 矩阵
+197/3/0）⇒ 该夹具现已在 `tests/isa/demo_vlen.toml` 落地（W11 第 1 条）。
 
-**② 一处自摆乌龙（记为教训 ✗）**：`opcode_reg` 段的基值低 3 位会被寄存器号覆盖 ✗ —— 第一版
-写 `0x11`/`0x12` ⇒ 两条指令模 8 撞车 ⇒ 症状像"3 字节指令解码只吃 2 字节" ✗，被误当成第二处
-生成器缺口 ✗。核对后确认是**谱写错** ✗，基值改 `0x10`/`0x18` ✗，教训写进 `w11_vlen_tests.rs` ✗。
+**② 一处自摆乌龙（记为教训）**：`opcode_reg` 段的基值低 3 位会被寄存器号覆盖 —— 第一版
+写 `0x11`/`0x12` ⇒ 两条指令模 8 撞车 ⇒ 症状像"3 字节指令解码只吃 2 字节"，被误当成第二处
+生成器缺口。核对后确认是**谱写错**，基值改 `0x10`/`0x18`，教训写进 `w11_vlen_tests.rs`。
 
-**③ 仍开着的形状分支（W6 依赖 ✗）**：`is_prefix_scan()` 仍在
-`codegen/{frame,lowering,machine,mod}.rs` 参与分支 ✗（如 `has_jal = has_jmp && !is_prefix_scan()` ✗）
-⇒ W11 的"无 ISA 形状分支"守卫要等 W6 把这些下放成数据 ✗。
+**③ 仍开着的形状分支（W6 依赖）**：`is_prefix_scan()` 仍在
+`codegen/{frame,lowering,machine,mod}.rs` 参与分支（如 `has_jal = has_jmp && !is_prefix_scan()`）
+⇒ W11 的"无 ISA 形状分支"守卫要等 W6 把这些下放成数据。
 
 - [x] 新夹具 ISA（非 x86/riscv/arm64；定宽 + 一态变长各一）：只用 TOML + `arch/<new>.rs` + 生成的补丁器。
-  （**两份都已完成** ✔：`tests/isa/demo_v21.toml` ✗（24 位定宽 + 就地 `fields` ✗）；
-  `tests/isa/demo_vlen.toml` ✗（`prefix_scan` + stream 段 ✗，指令长 2/3 字节 ✗）。
-  **接入面 = TOML + 两行宿主 + 一个测试二进制 ✗，零编译器改动** ✔ —— 编译器侧只**修了一个 bug**
-  （空前缀表的孤儿 `else` ✗，见本节末「受控扩展点 ①」✗）。宿主按本仓既有做法放在 `tests/` ✗；
-  `arch/<new>.rs` 是**发行后端**的位置 ✗，夹具不进库本体 ✗。）
+  （**两份都已完成**：`tests/isa/demo_v21.toml`（24 位定宽 + 就地 `fields`）；
+  `tests/isa/demo_vlen.toml`（`prefix_scan` + stream 段，指令长 2/3 字节）。
+  **接入面 = TOML + 两行宿主 + 一个测试二进制，零编译器改动** —— 编译器侧只**修了一个 bug**
+  （空前缀表的孤儿 `else`，见本节末「受控扩展点 ①」）。宿主按本仓既有做法放在 `tests/`；
+  `arch/<new>.rs` 是**发行后端**的位置，夹具不进库本体。）
 - [x] 新守卫：断言"新增 ISA 的改动面只有 TOML 与 `arch/<new>.rs`"（扩展 `generality_guard` 的口径，从"无 ISA 名"升级到"无 ISA 形状分支"）。
-  （**2026-10-08 落地，按能核查的实质划口径** ✗ —— `tests/generality_guard.rs` 现有四条 ✗：
-  ① **生成期零 ISA 常量** ✗（指令名/寄存器名/`IntCC`/`FloatCC` ✗，白名单 `ALLOWED` 为空 + 防腐烂 ✗）；
+  （**2026-10-08 落地，按能核查的实质划口径** —— `tests/generality_guard.rs` 现有四条：
+  ① **生成期零 ISA 常量**（指令名/寄存器名/`IntCC`/`FloatCC`，白名单 `ALLOWED` 为空 + 防腐烂）；
   ② **反回潮**：按"字段个数"猜 jal/beq 形态的那批探测（`_has_jal`/`_jal_dest`/`_jal_target`/
-  `_b_src`/`_b_src2`/`_b_target` ✗）**不得回来** ✗ —— 它们已在 W6 清理片删除 ✗；
-  ③ 三份发行谱**自己声明** `[[lower.Br]]`/`[[lower.Jmp]]` ✗（终结序列是**谱数据** ✗，编译器不猜 ✗）；
-  ④ 抽取器健全性 ✗。
-  ⚠️ **口径说明（如实 ✗）** ✗：字面的"生成期零 ISA 形状分支"**做不到也不该做** ✗ ——
-  编码器必须知道"指令字长是否可变"（`is_prefix_scan()` ✗，全仓 **24** 处 ✗，多在
-  `validate`/`report`/`model` 里做**编码属性查询** ✗）。W11 要的是"**新增 ISA 不必改编译器**" ✗
-  ⇒ 由 ①②③ 三条共同钉住 ✗（两份第四方夹具 + 这三条守卫 ✗）。要更强 ✗，下一步是把
-  `is_prefix_scan()` 这类查询**收敛成语义属性**（如"label 槽按位移编 ✗" ✗）并把
-  `EncodingKind` 挡出 codegen ✗ —— 已记入 §8 的 `frame.rs` 复核 ✗。）
+  `_b_src`/`_b_src2`/`_b_target`）**不得回来** —— 它们已在 W6 清理片删除；
+  ③ 三份发行谱**自己声明** `[[lower.Br]]`/`[[lower.Jmp]]`（终结序列是**谱数据**，编译器不猜）；
+  ④ 抽取器健全性。
+  ⚠️ **口径说明（如实）**：字面的"生成期零 ISA 形状分支"**做不到也不该做** ——
+  编码器必须知道"指令字长是否可变"（`is_prefix_scan()`，全仓 **24** 处，多在
+  `validate`/`report`/`model` 里做**编码属性查询**）。W11 要的是"**新增 ISA 不必改编译器**"
+  ⇒ 由 ①②③ 三条共同钉住（两份第四方夹具 + 这三条守卫）。要更强，下一步是把
+  `is_prefix_scan()` 这类查询**收敛成语义属性**（如"label 槽按位移编"）并把
+  `EncodingKind` 挡出 codegen —— 已记入 §8 的 `frame.rs` 复核。）
 - [x] 用 `forge-isa validate/lint/abi/test` 四档跑通该夹具。
-  （**两份夹具的实测** ✗：`validate` OK ✔；`lint` **干净（0 结论）** ✔；`abi check` **硬错 0 /
-  缺口 0** ✔；`test` 报"谱内向量 N 条"✔，而**真跑**在宿主侧 ✗ —— `cargo test -p forge-codegen
-  --test spec_tests` **78 passed / 0 failed** ✗（两份夹具的生成期自测 + 13 条向量 ✗）、
-  `--test w11_isa_tests` **6 passed / 0 failed** ✗、`--test w11_vlen_tests`
-  **5 passed / 0 failed** ✗。）
+  （**两份夹具的实测**：`validate` OK；`lint` **干净（0 结论）**；`abi check` **硬错 0 /
+  缺口 0**；`test` 报"谱内向量 N 条"，而**真跑**在宿主侧 —— `cargo test -p forge-codegen
+  --test spec_tests` **78 passed / 0 failed**（两份夹具的生成期自测 + 13 条向量）、
+  `--test w11_isa_tests` **6 passed / 0 failed**、`--test w11_vlen_tests`
+  **5 passed / 0 failed**。）
 - [x] 若有任何一处必须改编译器 ⇒ 记入设计文档"受控扩展点"清单并说明理由。
-  （**定宽那份：零** ✔ —— 24 位定宽 ISA 的接入没有任何编译器改动 ✗。
-  **变长那份：撞到一个候选受控扩展点** ✗ —— 详见本节末「受控扩展点候选」✗。）
+  （**定宽那份：零** —— 24 位定宽 ISA 的接入没有任何编译器改动。
+  **变长那份：撞到一个候选受控扩展点** —— 详见本节末「受控扩展点候选」。）
 
 ---
 
 ## 14. 最终验收
 
-**快照 #2（2026-10-08 ✗）** —— W6-a 已收口（旧面**零残留** ✗）、W11 已收口（两份第四方夹具 + 守卫四条 ✗）。
-本节把快照 #1 的每项重新实测一遍 ✗，并给出**实测**（而非设计期估计 ✗）的剩余清单 ✗。
+**快照 #2（2026-10-08）** —— W6-a 已收口（旧面**零残留**）、W11 已收口（两份第四方夹具 + 守卫四条）。
+本节把快照 #1 的每项重新实测一遍，并给出**实测**（而非设计期估计）的剩余清单。
 
-**收尾账目（2026-10-08 ✗，按目标自己的措辞 W9 → W10 → W11 → 最终验收 逐项 ✗）**：
+**收尾账目（2026-10-08，按目标自己的措辞 W9 → W10 → W11 → 最终验收 逐项）**：
 
 | 阶段 | 状态 | 证据 |
 | --- | --- | --- |
-| **W9** machine 合并 | ✅ 收口 | `[machine.stack\|text\|classes\|spill.<模板名>]` 在谱里 ✗；CHANGELOG 四条 ✗ |
-| **W10** 删旧与换版（文档/消息面 ✗） | ✅ 收口 | 表头即名字三张表 ✗、死链清零 ✗、教程/错误码目录/`CLAUDE.md`/CHANGELOG ✗、`git grep` 无用户面残留 ✗ |
-| **W10** 删旧（**代码面** ✗） | 🚧 见下"剩余两项" ✗ | 未知键一律拒 ✗；旧面 `[[lowering]]`/`[[pattern]]` **已在三谱归零** ✔ |
-| **W11** 通用性实证 | ✅ 收口 | 两份第四方夹具（定宽 ✗ + 变长 ✗）零编译器改动 ✗；四档 CLI ✗；受控扩展点记录 ✗；`generality_guard` **四条** ✗ |
-| **最终验收** | 🚧 6/7 `[x]` + 1 `[~]` | 字节（四证 ✗：往返守卫 ✗、覆盖守卫 ✗、asm 棘轮 ✗、**编码指纹** ✗）、矩阵（当轮复测 197/3/0 与 136/64/0 ✗）、lint 零结论 ✗、三方针 `schema_guard` 9/9 ✗、markdownlint 0 ✗、度量 B1 ✗；`[~]` = D1/D4 的设计目标差距（已如实列 ✗） |
+| **W9** machine 合并 | ✅ 收口 | `[machine.stack\|text\|classes\|spill.<模板名>]` 在谱里；CHANGELOG 四条 |
+| **W10** 删旧与换版（文档/消息面） | ✅ 收口 | 表头即名字三张表、死链清零、教程/错误码目录/`CLAUDE.md`/CHANGELOG、`git grep` 无用户面残留 |
+| **W10** 删旧（**代码面**） | 🚧 见下"剩余两项" | 未知键一律拒；旧面 `[[lowering]]`/`[[pattern]]` **已在三谱归零** |
+| **W11** 通用性实证 | ✅ 收口 | 两份第四方夹具（定宽 + 变长）零编译器改动；四档 CLI；受控扩展点记录；`generality_guard` **四条** |
+| **最终验收** | 🚧 6/7 `[x]` + 1 `[~]` | 字节（四证：往返守卫、覆盖守卫、asm 棘轮、**编码指纹**）、矩阵（当轮复测 197/3/0 与 136/64/0）、lint 零结论、三方针 `schema_guard` 9/9、markdownlint 0、度量 B1；`[~]` = D1/D4 的设计目标差距（已如实列） |
 
-**快照 #3（2026-10-08 晚 ✗）** —— 快照 #2 之后又落地两批 ✗：**W4 收尾**（x86 `modrm = {…}` 归零 ✗，
-只剩 1 处注释 ✗；`opsize = "sN"` 归零 ✗；`classes` 键归零 ✗）与 **W6 本体 + W6+ 条件码类型化**
-（`[lower.Ret]` 五形态全齐 ✗；条件码字段 = IR 条件枚举 ✗）。本节按目标自己的措辞重测一遍 ✗。
+**快照 #3（2026-10-08 晚）** —— 快照 #2 之后又落地两批：**W4 收尾**（x86 `modrm = {…}` 归零，
+只剩 1 处注释；`opsize = "sN"` 归零；`classes` 键归零）与 **W6 本体 + W6+ 条件码类型化**
+（`[lower.Ret]` 五形态全齐；条件码字段 = IR 条件枚举）。本节按目标自己的措辞重测一遍。
 
-**收尾账目 #3（2026-10-08 晚 ✗）**：
+**收尾账目 #3（2026-10-08 晚）**：
 
-| 阶段 | 状态 | 证据（实测 ✗） |
+| 阶段 | 状态 | 证据（实测） |
 | --- | --- | --- |
-| **W4** stream 段模型 | ✅ 收口 | x86 `modrm = {…}` **0**（注释 1 处不计 ✗）、`opsize = "sN"` **0**、`classes` 键 **0** |
-| **W6** 选择层 | ✅ 收口 | `[lower.Ret]` **9** 条规则（`gpr`/`fpr` 任意宽度/`vec` 按值/`vec` sret/`multi` ✗）；三谱 `[[lowering]]` 残留 **0** |
-| **W6+** 条件码类型化 | ✅ 收口 | 字段 = `forge_ir::IntCC`/`FloatCC`/`FlagCC` ✗ + `CondEnc` trait ✗；见 §8 的账 ✗ |
-| **最终验收** | ✅ 7/7 | 见下表 ✗ |
+| **W4** stream 段模型 | ✅ 收口 | x86 `modrm = {…}` **0**（注释 1 处不计）、`opsize = "sN"` **0**、`classes` 键 **0** |
+| **W6** 选择层 | ✅ 收口 | `[lower.Ret]` **9** 条规则（`gpr`/`fpr` 任意宽度/`vec` 按值/`vec` sret/`multi`）；三谱 `[[lowering]]` 残留 **0** |
+| **W6+** 条件码类型化 | ✅ 收口 | 字段 = `forge_ir::IntCC`/`FloatCC`/`FlagCC` + `CondEnc` trait；见 §8 的账 |
+| **最终验收** | ✅ 7/7 | 见下表 |
 
-**最终验收实测（2026-10-08 晚 ✗，逐条跑过 ✗）**：
+**最终验收实测（2026-10-08 晚，逐条跑过）**：
 
 | 判据 | 实测 |
 | --- | --- |
-| 整仓门禁 | `cargo test --workspace --exclude forge-rustc` **exit 0**（0 编译错误 ✗、0 失败二进制 ✗） |
-| 矩阵 | x86 **197/3/0** ✗、riscv64 **136/64/0** ✗、arm64 ✔（三条**都跑** ✗） |
-| 字节四证 | 往返守卫 ✔（`derived` x86 **1550** ✗、riscv64 **624** ✗、arm64 **2565** ✗）、覆盖守卫 ✔、asm 棘轮 ✔（含**如实记下**的 arm64 一行损失 ✗）、**编码指纹** ✔（x86 `6f580cf3…` ✗，riscv64/arm64 逐位不变 ✔） |
-| 谱内向量 | **505 全绿** ✔（x86 154 ✗ / riscv64 152 ✗ / arm64 199 ✗） |
-| lint 零结论 | 三谱 `lint` 干净 ✗；`lint_shipped` **8/8** ✗ |
-| 三方针 | `schema_guard` **9/9** ✗；markdownlint **0** ✗ |
+| 整仓门禁 | `cargo test --workspace --exclude forge-rustc` **exit 0**（0 编译错误、0 失败二进制） |
+| 矩阵 | x86 **197/3/0**、riscv64 **136/64/0**、arm64（三条**都跑**） |
+| 字节四证 | 往返守卫（`derived` x86 **1550**、riscv64 **624**、arm64 **2565**）、覆盖守卫、asm 棘轮（含**如实记下**的 arm64 一行损失）、**编码指纹**（x86 `6f580cf3…`，riscv64/arm64 逐位不变） |
+| 谱内向量 | **505 全绿**（x86 154 / riscv64 152 / arm64 199） |
+| lint 零结论 | 三谱 `lint` 干净；`lint_shipped` **8/8** |
+| 三方针 | `schema_guard` **9/9**；markdownlint **0** |
 
-**真正剩下的（都已定性 ✗，不是"未开工"✗）**：
+**真正剩下的（都已定性，不是"未开工"）**：
 
-1. **emit 表达式表格化** ✗ —— W6 评审结论是**不做** ✗（需通用解释器 ✗，度量后收益不足 ✗）。
-2. **删隐式 `{g}`/`{gN}`/`{f}`/`{fN}`** ✗ —— 建议**不做** ✗（与 emit 同类 ✗）。注意这里**不是**
-   "`temps` 强制档没上" ✗：`[[lowering]].temps = [...]` **早就实现了** ✗（可选 ✗，**声明即强制** ✗，
-   见 §8 ✗）；没做的是**删掉那套隐式声明** ✗ —— 三谱现有 **661** 处用它 ✗，属 breaking 迁移 ✗，
-   而收益只是"少一种声明方式" ✗。（2026-10-08 晚更正 ✗：本节此前把这条记成"半分片：隐式声明已删 ✗、
-   强制档没上 ✗"，**记反了** ✗。）
-3. **arm64 的 `al`/`nv`**（恒真/恒假 ✗）—— IR 里**没有**能表达它的枚举 ✗ ⇒ 汇编解析/编码对它
-   fail-closed ✗（棘轮已记明那一行 ✗）；要收就得给 IR 补"恒真/恒假"条件 ✗（设计决策 ✗）。
-4. 清单里 **42** 个历史未打勾项 ✗ —— 已在 **§0.1** 按性质分成三类并给出**落地证据指针** ✗
-   （计划步骤但已落地 ✗ / 过程注记 ✗ / 中止判据 ✗）；如需把框也机械打勾 ✗，是独立的小文档片 ✗。
+1. **emit 表达式表格化** —— W6 评审结论是**不做**（需通用解释器，度量后收益不足）。
+2. **删隐式 `{g}`/`{gN}`/`{f}`/`{fN}`** —— 建议**不做**（与 emit 同类）。注意这里**不是**
+   "`temps` 强制档没上"：`[[lowering]].temps = [...]` **早就实现了**（可选，**声明即强制**，
+   见 §8）；没做的是**删掉那套隐式声明** —— 三谱现有 **661** 处用它，属 breaking 迁移，
+   而收益只是"少一种声明方式"。（2026-10-08 晚更正：本节此前把这条记成"半分片：隐式声明已删、
+   强制档没上"，**记反了**。）
+3. **arm64 的 `al`/`nv`**（恒真/恒假）—— IR 里**没有**能表达它的枚举 ⇒ 汇编解析/编码对它
+   fail-closed（棘轮已记明那一行）；要收就得给 IR 补"恒真/恒假"条件（设计决策）。
+4. 清单里 **42** 个历史未打勾项 —— 已在 **§0.1** 按性质分成三类并给出**落地证据指针**
+   （计划步骤但已落地 / 过程注记 / 中止判据）；如需把框也机械打勾，是独立的小文档片。
 
-**收官时记得** ✗：W10 的"代码面删旧"勾选框随上述两项的完成度更新 ✗；本项目**不重写**已签入的
-`isa-dsl.schema.json`（它由 `forge-isa schema --out` 生成 ✗，改 schema 必须重生成 ✗）。
+**收官时记得**：W10 的"代码面删旧"勾选框随上述两项的完成度更新；本项目**不重写**已签入的
+`isa-dsl.schema.json`（它由 `forge-isa schema --out` 生成，改 schema 必须重生成）。
 
-**收官扫描（2026-10-08，第 30 轮 ✗）**：
+**收官扫描（2026-10-08，第 30 轮）**：
 
 | 判据 | 结果 |
 | --- | --- |
-| `isa_roundtrip_guard`（含**逐指令编码字节指纹** ✗） | **1 passed / 0 failed** ✔ |
-| `spec_coverage_guard` | **4 passed** ✔（265/119/110 ✗、零跳过 ✗） |
-| `schema_guard`（四处同改 ✗） | **9 passed** ✔ |
-| `generality_guard`（含形状探测反回潮 ✗） | **4 passed** ✔ |
-| 三谱 `forge-isa insts` | riscv64 / arm64 **0 差异** ✔；x86 **166 行差异 ✗ —— 逐行都只是新旧 form 名** ✗（166/166 提到 `MRR_MEMREF_SEG`/`SSE_RR_SEG`/`VEX_RRV_SEG`/`EVEX_RRV_SEG` 等 ✗）⇒ **语义与字节未变** ✗，由指纹守卫独立证明 ✔ |
-| 整仓 `cargo test --workspace --exclude forge-rustc -j 2` | **exit 0 / 0 编译错误 / 0 失败二进制** ✔ |
-| `markdownlint` | **0** ✔ |
-| 实测残留（三谱 ✗） | x86 `modrm = {…}` **13** ✗（W4 累计 27 → 13 ✗）、`opsize = "sN"` **26** ✗、`classes =` **2** ✗ |
+| `isa_roundtrip_guard`（含**逐指令编码字节指纹**） | **1 passed / 0 failed** |
+| `spec_coverage_guard` | **4 passed**（265/119/110、零跳过） |
+| `schema_guard`（四处同改） | **9 passed** |
+| `generality_guard`（含形状探测反回潮） | **4 passed** |
+| 三谱 `forge-isa insts` | riscv64 / arm64 **0 差异**；x86 **166 行差异 —— 逐行都只是新旧 form 名**（166/166 提到 `MRR_MEMREF_SEG`/`SSE_RR_SEG`/`VEX_RRV_SEG`/`EVEX_RRV_SEG` 等）⇒ **语义与字节未变**，由指纹守卫独立证明 |
+| 整仓 `cargo test --workspace --exclude forge-rustc -j 2` | **exit 0 / 0 编译错误 / 0 失败二进制** |
+| `markdownlint` | **0** |
+| 实测残留（三谱） | x86 `modrm = {…}` **13**（W4 累计 27 → 13）、`opsize = "sN"` **26**、`classes =` **2** |
 
-**剩余面实测（三谱 ✗）**：
+**剩余面实测（三谱）**：
 
 | 项 | x86 | riscv64 | arm64 | 说明 |
 | --- | --- | --- | --- | --- |
-| `[[lower.*]]` 块 | **188** | **100** | **15** | 合计 **303** ✔（W6-a 迁移结果 ✗） |
-| `[[lowering]]` / `[[pattern]]` | **0** | **0** | **0** | ✅ 旧面零残留（`deny_unknown_fields` 直接拒 ✗） |
-| `modrm = {…}` 键（W4 残留 ✗） | **27** | 0 | 0 | 全部带名字映射 ✗；`rm = "[mem]"` 是语义 ✗ |
-| `segments = [` 块（已迁 ✗） | **58** | 0 | 0 | ⇒ W4 谱面已**完成大半** ✗ |
-| `opsize = "sN"`（D4 #14 ✗） | **22** | 0 | 0 | 需 `word_size` 规则面 ✗ |
-| `class` / `classes`（D4 #16 ✗） | **14 / 2** | 3 / 0 | 12 / 0 | 双形仍在 ✗ |
-| `[[vectors]]` | **154** | **152** | **199** | 合计 **505** ✔ |
-| `[family.*]` | **18** | **24** | **70** | 合计 **112** ✔（唯一复用机制 ✗） |
+| `[[lower.*]]` 块 | **188** | **100** | **15** | 合计 **303**（W6-a 迁移结果） |
+| `[[lowering]]` / `[[pattern]]` | **0** | **0** | **0** | ✅ 旧面零残留（`deny_unknown_fields` 直接拒） |
+| `modrm = {…}` 键（W4 残留） | **27** | 0 | 0 | 全部带名字映射；`rm = "[mem]"` 是语义 |
+| `segments = [` 块（已迁） | **58** | 0 | 0 | ⇒ W4 谱面已**完成大半** |
+| `opsize = "sN"`（D4 #14） | **22** | 0 | 0 | 需 `word_size` 规则面 |
+| `class` / `classes`（D4 #16） | **14 / 2** | 3 / 0 | 12 / 0 | 双形仍在 |
+| `[[vectors]]` | **154** | **152** | **199** | 合计 **505** |
+| `[family.*]` | **18** | **24** | **70** | 合计 **112**（唯一复用机制） |
 
 - [x] 三谱编码字节与 W0 逐字节相同（`isa_roundtrip_guard` + `asm_encoding` 双证）。
-  （实测 ✗：`isa_roundtrip_guard` **1 passed** ✔、`spec_coverage_guard` **4 passed**（265/119/110 ✗）✔、
-  `asm_parse` **3 passed** ✔、`asm_encoding` **1 passed**（棘轮逐项相等 ✗）✔；另本会话**每片**都核
-  三谱 `forge-isa insts` 与迁移前**逐行 0 差异** ✔。
-  **2026-10-08 追加安全网** ✗：`isa_roundtrip_guard` 现在还把「派生枚举器 label + 该条**编码字节**」
-  折成 FNV-1a 64 指纹 ✗，钉在 `asm/ratchet/pins.txt` 的 `encoding.digest` ✗
-  （`x86,riscv64,arm64` 三项 ✗；刷新 = `FORGE_PIN_WRITE=1 cargo test -p forge-codegen --lib` ✗）。
-  为什么要它 ✗：W10 那次 `[[instructions]]` → `[inst.*]` 迁移**静默丢过 3 条指令的 `modrm.reg`
-  固定扩展码** ✗ —— 往返自洽、条数不变 ✗，只有把**字节逐条**比出来才看得见 ✗。）
+  （实测：`isa_roundtrip_guard` **1 passed**、`spec_coverage_guard` **4 passed**（265/119/110）、
+  `asm_parse` **3 passed**、`asm_encoding` **1 passed**（棘轮逐项相等）；另本会话**每片**都核
+  三谱 `forge-isa insts` 与迁移前**逐行 0 差异**。
+  **2026-10-08 追加安全网**：`isa_roundtrip_guard` 现在还把「派生枚举器 label + 该条**编码字节**」
+  折成 FNV-1a 64 指纹，钉在 `asm/ratchet/pins.txt` 的 `encoding.digest`
+  （`x86,riscv64,arm64` 三项；刷新 = `FORGE_PIN_WRITE=1 cargo test -p forge-codegen --lib`）。
+  为什么要它：W10 那次 `[[instructions]]` → `[inst.*]` 迁移**静默丢过 3 条指令的 `modrm.reg`
+  固定扩展码** —— 往返自洽、条数不变，只有把**字节逐条**比出来才看得见。）
 - [x] 三矩阵计数与 W0 逐数字相同。
-  （**快照 #2 当轮复测（2026-10-08 ✗）**：`jit_matrix_x86` **197 passed / 3 skipped / 0 failed** ✔、
-  `jit_matrix_riscv64` **136 passed / 64 skipped / 0 failed** ✔（QEMU 通道 ✗，`--test-threads=1
-  --nocapture` ✗）——与 §1.3 的 W0 基线**逐数字相同** ✔。
-  arm64 没有 JIT 矩阵 ✗（清单 §1.3 也只列两条 ✗）；它的 QEMU 通道 4 passed ✔。）
+  （**快照 #2 当轮复测（2026-10-08）**：`jit_matrix_x86` **197 passed / 3 skipped / 0 failed**、
+  `jit_matrix_riscv64` **136 passed / 64 skipped / 0 failed**（QEMU 通道，`--test-threads=1
+  --nocapture`）——与 §1.3 的 W0 基线**逐数字相同**。
+  arm64 没有 JIT 矩阵（清单 §1.3 也只列两条）；它的 QEMU 通道 4 passed。）
 - [~] `lint` 三谱零结论；`--refs`/`--bits`/`--suggest` 清单只减不增。
-  （**零结论 ✔**：三谱 `forge-isa lint` 全部"干净（无 lint 结论）" ✔。
-  **清单 ✗**：三张清单由 `tests/lint_shipped.rs` 的快照钉住且全绿 ✔ ⇒ 与**当前快照**一致 ✔；
-  但**相对 W0 有增长** ✗：`--bits` riscv64 3→**13**、arm64 67→**262**（W2 的口径变化 ✗：form 声明
-  但**本指令未绑定**的槽不再算该指令的覆盖 ✗）；`--suggest` riscv64 28→**31** ✗（W5 族合并之后 ✗）。
-  ⚠ **`CLAUDE.md` 里记的 3/67/28 已过时** ✗，待随文档面回写 ✗。）
+  （**零结论**：三谱 `forge-isa lint` 全部"干净（无 lint 结论）"。
+  **清单**：三张清单由 `tests/lint_shipped.rs` 的快照钉住且全绿 ⇒ 与**当前快照**一致；
+  但**相对 W0 有增长**：`--bits` riscv64 3→**13**、arm64 67→**262**（W2 的口径变化：form 声明
+  但**本指令未绑定**的槽不再算该指令的覆盖）；`--suggest` riscv64 28→**31**（W5 族合并之后）。
+  ⚠ **`CLAUDE.md` 里记的 3/67/28 已过时**，待随文档面回写。）
 - [~] 设计文档 §1.2 的 D1–D6 逐条给出实测证据（节数、机制数、位置语义数、后门清除条数）。
-  （**2026-10-08 清点** ✗ ——
-  **D1** ✗：顶层键 = `meta` + **16** 个可选（`include`/`override`/`encoding`/`reg`/`conventions`/
+  （**2026-10-08 清点** ——
+  **D1**：顶层键 = `meta` + **16** 个可选（`include`/`override`/`encoding`/`reg`/`conventions`/
   `operand`/`enum`/`form`/`inst`/`family`/`lower`/`asm`/`pred`/`lowering`/`pattern`/`machine`/
-  `vectors` ✗，设计期是 21 ✗）；并存机制 ✗：`[[templates]]` **0** ✔（W5 撤 ✗）、
-  `[conventions.*]` 只剩 **2** 个子节（`modrm`、`prefix_scan` ✗，设计期抱怨过"七子节" ✗）、
-  `ref` 多态仍在（`--refs` 51 条 ✗）、变体门 **29** 处 `only_variants` ✗；
-  **位置语义 = 0** ✔（六个魔法串 `"rr"`/`"rr_rev"`/`"rr_src2"`/`"rm_mem"`/`"rm_memref"`/`"ext"`
-  在三谱里**只出现在注释**（`x86.toml:27` 的历史说明 ✗），真残留 **0** ✔；
-  `asm` 内联声明 `{i:[槽:角色]}` **0** 处 ✔）。
-  **D3** ✗：`[family.*]` = **112** 节 ✔（唯一复用机制 ✗）、`vary` **38** 处 ✔、
-  三谱 `[[vectors]]` = **505** 条（x86 154 / riscv64 152 / arm64 199 ✗）✔ —— 谱内向量已取代手抄
-  黄金表 ✗；`[[lowering]]` = **281** 条（x86 174 / riscv64 94 / arm64 13 ✗）。
-  **D4 逐条清点（前半：#1–#10；2026-10-08 ✗）** ——
-  ✅ **已清除**：#4 `default_prefix_scan()`（函数已不存在 ✗，前缀表 = 谱里的
-  `[[conventions.prefix_scan]]` ✗）、#9 `[spill.FPR<bytes>]`（谱里 `[machine.spill.*]` 9 处 ✗，
-  `[spill.GPR]` 只剩 `arm64.toml:4797` 一句注释 ✗）、#10 手写 reloc 补丁器（现由
-  `machine.rs::gen_reloc_patcher` **生成**并由 `integration.rs` 发进 `TargetMachine` ✗，
-  守卫 `tests/reloc_patcher_generated.rs` ✗）。
-  🚧 **仍在**：#1 `has_jal = has_jmp && !is_prefix_scan()`（`codegen/lowering.rs` ✗）、
-  #3 尾声跳转形态（`codegen/frame.rs` 的 `if has_jump && model.is_prefix_scan()` ✗）、
-  #5 `enum PrefixEffect` + `fn extra_bytes`（x86 闭集 ✗）、
-  #6 `codegen/vlen.rs::prefix_cond_ts`（按字节枚举 ✗）、#7 REX2 **半**（`0xD5`+`rex2` 已进谱表 ✔，
-  但虚拟 `0F` 归一与 payload 位移仍在代码里 ✗）、#11 `force_disp_base` 魔数（前提已证不成立 ✗）。
-  ❓ **未定**：#2（与 #1 同属"降级下放"，未见独立证据 ✗）、#8 `{off}`/`{alloca}`（本次只证实
-  `{off}` 在三谱 **asm 模板**里是普通占位符，如 `ldur {dst}, [{base}, #{off}]` ✗；
-  lowering **发射行**里是否还有第二套内存写法未逐条看 ✗）。
-  **D4 逐条清点（后半：#11–#20；2026-10-08 ✗）** ——
+  `vectors`，设计期是 21）；并存机制：`[[templates]]` **0**（W5 撤）、
+  `[conventions.*]` 只剩 **2** 个子节（`modrm`、`prefix_scan`，设计期抱怨过"七子节"）、
+  `ref` 多态仍在（`--refs` 51 条）、变体门 **29** 处 `only_variants`；
+  **位置语义 = 0**（六个魔法串 `"rr"`/`"rr_rev"`/`"rr_src2"`/`"rm_mem"`/`"rm_memref"`/`"ext"`
+  在三谱里**只出现在注释**（`x86.toml:27` 的历史说明），真残留 **0**；
+  `asm` 内联声明 `{i:[槽:角色]}` **0** 处）。
+  **D3**：`[family.*]` = **112** 节（唯一复用机制）、`vary` **38** 处、
+  三谱 `[[vectors]]` = **505** 条（x86 154 / riscv64 152 / arm64 199） —— 谱内向量已取代手抄
+  黄金表；`[[lowering]]` = **281** 条（x86 174 / riscv64 94 / arm64 13）。
+  **D4 逐条清点（前半：#1–#10；2026-10-08）** ——
+  ✅ **已清除**：#4 `default_prefix_scan()`（函数已不存在，前缀表 = 谱里的
+  `[[conventions.prefix_scan]]`）、#9 `[spill.FPR<bytes>]`（谱里 `[machine.spill.*]` 9 处，
+  `[spill.GPR]` 只剩 `arm64.toml:4797` 一句注释）、#10 手写 reloc 补丁器（现由
+  `machine.rs::gen_reloc_patcher` **生成**并由 `integration.rs` 发进 `TargetMachine`，
+  守卫 `tests/reloc_patcher_generated.rs`）。
+  🚧 **仍在**：#1 `has_jal = has_jmp && !is_prefix_scan()`（`codegen/lowering.rs`）、
+  #3 尾声跳转形态（`codegen/frame.rs` 的 `if has_jump && model.is_prefix_scan()`）、
+  #5 `enum PrefixEffect` + `fn extra_bytes`（x86 闭集）、
+  #6 `codegen/vlen.rs::prefix_cond_ts`（按字节枚举）、#7 REX2 **半**（`0xD5`+`rex2` 已进谱表，
+  但虚拟 `0F` 归一与 payload 位移仍在代码里）、#11 `force_disp_base` 魔数（前提已证不成立）。
+  ❓ **未定**：#2（与 #1 同属"降级下放"，未见独立证据）、#8 `{off}`/`{alloca}`（本次只证实
+  `{off}` 在三谱 **asm 模板**里是普通占位符，如 `ldur {dst}, [{base}, #{off}]`；
+  lowering **发射行**里是否还有第二套内存写法未逐条看）。
+  **D4 逐条清点（后半：#11–#20；2026-10-08）** ——
   ✅ **已清除**：#13 `FPR(8)`/`["rsp","sp"]`/`["rbp","fp"]` 惯例回退（代码里只剩**文档注释**
-  回顾"历史实现回退到 `GPR(8)`…" ✗，值一律来自 `[machine]`/`[reg.*]` ✗，另有
-  `no_hardcoded_widths` 守卫 ✗）、#17 `[conventions.bitfields]`+`opcode_field`+`operand_fields`
-  三处往返（已并为 form 内就地 `fields` ✗ = W2 ✗）、#18 八个一次性开关（`zr31`/`byte_reg`/
-  `arrangement`/`symbols`/`require_symbol`/`imm_fns` 等只剩**文档注释**里的"原 X = true" ✗
+  回顾"历史实现回退到 `GPR(8)`…"，值一律来自 `[machine]`/`[reg.*]`，另有
+  `no_hardcoded_widths` 守卫）、#17 `[conventions.bitfields]`+`opcode_field`+`operand_fields`
+  三处往返（已并为 form 内就地 `fields` = W2）、#18 八个一次性开关（`zr31`/`byte_reg`/
+  `arrangement`/`symbols`/`require_symbol`/`imm_fns` 等只剩**文档注释**里的"原 X = true"
   ⇒ 已被 `reg.rex_required`/`arrangement` 表/`symbol{}` 等新键取代 ✅）、
-  #20 `[[instructions]].when` 死键（随 W10 清零 ✗）。
+  #20 `[[instructions]].when` 死键（随 W10 清零）。
   🚧 **仍在**：#12 `moves.rs` 的 `if a.width >= 128 { "vec_mov" } else { "fpr_mov" }`
-  （**2026-10-08 复核：不是"改成分派就行"** ✗ —— 这个 128 是**按值向量的 ABI 阈值（16 字节）** ✗，
+  （**2026-10-08 复核：不是"改成分派就行"** —— 这个 128 是**按值向量的 ABI 阈值（16 字节）**，
   属于**宿主 ABI 规则**却被写进 DSL 的能力视图（`MoveTable::capabilities` 折算给
-  `abi_view`/`role_bits` ✗）。真按"所选指令的寄存器组"派生会让 64 位 VEC 搬移也报成
-  `vec_mov` ✗ ⇒ 语义变化 ✗。正解是**能力视图只报寄存器组与位宽** ✗，阈值留给宿主
-  （`AbiRules` ✗）⇒ 设计级改动 ✗，与本轮的小活无关 ✗）、#14 `opsize` 四态与 `"sN"`（16 处活用法 ✗）、
-  #15 `modrm` 的位置缺省（`Modrm::resolve` 里 `rm 缺省 = 最后一个操作数` ✗）、
-  #16 `class`/`classes` 双形（x86 里 `classes = [...]` 2 处 ✗；**2026-10-08 复核：也是设计级** ✗ ——
-  设计案把它与"`kind` 隐式推导"绑在一起 ✗，落点是"**删除 `[[operand_slots]].class`/`classes`** ✗，
-  字段类型直接写组名或联合 ✗" ⇒ 是新面 ✗，涉及三谱 29 处 `class` + 2 处 `classes` ✗，
-  不是把两个键合并一下 ✗）、
-  #19 `lint.rs:166` 仍同时接受 `["op", "ops"]` 两种拼法（**一改就完的小活** ✗）。
-  **#19 已修（2026-10-08 ✗）** ✗：宿主 op 表现在**只认 `[[op]]`** ✗，复数 `[[ops]]` 报错并点名正确拼法 ✗；
-  守卫 = `lint.rs::host_ops_rejects_plural_spelling`（负向 ✗）。
-  🚧 **半**：#11 `force_disp_base` 魔数（校验被 `!= PrefixScan` 挡在门外 ✗ ⇒ 前提要重定 ✗）。
+  `abi_view`/`role_bits`）。真按"所选指令的寄存器组"派生会让 64 位 VEC 搬移也报成
+  `vec_mov` ⇒ 语义变化。正解是**能力视图只报寄存器组与位宽**，阈值留给宿主
+  （`AbiRules`）⇒ 设计级改动，与本轮的小活无关）、#14 `opsize` 四态与 `"sN"`（16 处活用法）、
+  #15 `modrm` 的位置缺省（`Modrm::resolve` 里 `rm 缺省 = 最后一个操作数`）、
+  #16 `class`/`classes` 双形（x86 里 `classes = [...]` 2 处；**2026-10-08 复核：也是设计级** ——
+  设计案把它与"`kind` 隐式推导"绑在一起，落点是"**删除 `[[operand_slots]].class`/`classes`**，
+  字段类型直接写组名或联合" ⇒ 是新面，涉及三谱 29 处 `class` + 2 处 `classes`，
+  不是把两个键合并一下）、
+  #19 `lint.rs:166` 仍同时接受 `["op", "ops"]` 两种拼法（**一改就完的小活**）。
+  **#19 已修（2026-10-08）**：宿主 op 表现在**只认 `[[op]]`**，复数 `[[ops]]` 报错并点名正确拼法；
+  守卫 = `lint.rs::host_ops_rejects_plural_spelling`（负向）。
+  🚧 **半**：#11 `force_disp_base` 魔数（校验被 `!= PrefixScan` 挡在门外 ⇒ 前提要重定）。
 - [x] 度量对比：三谱行数、生成物 token 规模、`cargo check -p forge-codegen` 时间。
-  （**B1 基线（2026-10-08 本机实测 ✗）**：三谱行数 x86 **4877** / riscv64 **3427** /
-  arm64 **5178**（TOML 合计 **397,381 B** ✗）；生成物（`tm` 全套 ✗，`$OUT_DIR` 的
-  `forge_gen_<isa>_<hash>.rs` ✗）x86 **6,068,024 B** / riscv64 **2,483,285 B** /
-  arm64 **6,507,583 B** ✗；`cargo check -p forge-codegen` 改源码后的增量 **30.7 s** ✗、
-  改谱（`touch` 触发重新预生成 ✗）后 **18.3 s** ✗。
-  ⚠️ **W0 对照不可回溯** ✗：§1.3 记的 W0 Phase-2 日志本身就受污染（在 W1 已改代码后才跑 ✗），
-  且忠实的 W0 对比需要**改动前那棵树**（v18 面 ✗）。可复现配方（留待需要时 ✗）✗：
-  先 `git worktree add ../cf-w0 <S0 冻结提交>`（按 §1 记录的日期在 `git log` 里定位 ✗），
-  再在该 worktree 里跑同样两条命令 ✗；
-  **单次墙钟数字噪声大** ✗（本轮两次就差了 12 s ✗）⇒ 只当量级参照 ✗，别当回归门禁 ✗。）
+  （**B1 基线（2026-10-08 本机实测）**：三谱行数 x86 **4877** / riscv64 **3427** /
+  arm64 **5178**（TOML 合计 **397,381 B**）；生成物（`tm` 全套，`$OUT_DIR` 的
+  `forge_gen_<isa>_<hash>.rs`）x86 **6,068,024 B** / riscv64 **2,483,285 B** /
+  arm64 **6,507,583 B**；`cargo check -p forge-codegen` 改源码后的增量 **30.7 s**、
+  改谱（`touch` 触发重新预生成）后 **18.3 s**。
+  ⚠️ **W0 对照不可回溯**：§1.3 记的 W0 Phase-2 日志本身就受污染（在 W1 已改代码后才跑），
+  且忠实的 W0 对比需要**改动前那棵树**（v18 面）。可复现配方（留待需要时）：
+  先 `git worktree add ../cf-w0 <S0 冻结提交>`（按 §1 记录的日期在 `git log` 里定位），
+  再在该 worktree 里跑同样两条命令；
+  **单次墙钟数字噪声大**（本轮两次就差了 12 s）⇒ 只当量级参照，别当回归门禁。）
 - [x] 文档三方针一致：`schema.rs` ↔ `dsl/model.rs` ↔ 参考文档键表 ↔ `isa-dsl.schema.json`。
-  （`schema_guard` **9/9** ✔ —— 本会话每片都跑 ✗。）
+  （`schema_guard` **9/9** —— 本会话每片都跑。）
 - [x] 所有新增/改动文档 `npx markdownlint-cli2 <文件>` 到 0 error。
-  （本会话每次提交前都对改动文件跑 ✗；本轮 6 份改动文档 **0 issue** ✔。）
+  （本会话每次提交前都对改动文件跑；本轮 6 份改动文档 **0 issue**。）
 
 ---
 
@@ -1252,10 +1252,10 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 出现下列任一情况，**停下来回到设计文档**，不要硬推：
 
-- **中止判据（不是任务 ✗，永不打勾 ✗）** 字节等价无法保持，且原因不是迁移脚本笔误（例如新语法表达不了某个现有编码）。
-- **中止判据（不是任务 ✗）** 某片门禁连续两轮不过，且根因是设计（不是实现）。
-- **中止判据（不是任务 ✗）** 出现必须"为某个 ISA 加编译器分支"才能表达的写法 ⇒ 说明"slots × patterns"层没设计够，回到设计文档补。
-- **中止判据（不是任务 ✗）** 迁移人工判断量超出设计文档 §10 的 40% 估算 1.5 倍以上 ⇒ 重新评估是否拆分或缩小范围。
+- **中止判据（不是任务，永不打勾）** 字节等价无法保持，且原因不是迁移脚本笔误（例如新语法表达不了某个现有编码）。
+- **中止判据（不是任务）** 某片门禁连续两轮不过，且根因是设计（不是实现）。
+- **中止判据（不是任务）** 出现必须"为某个 ISA 加编译器分支"才能表达的写法 ⇒ 说明"slots × patterns"层没设计够，回到设计文档补。
+- **中止判据（不是任务）** 迁移人工判断量超出设计文档 §10 的 40% 估算 1.5 倍以上 ⇒ 重新评估是否拆分或缩小范围。
 
 ## 附：W5 第 ⑥ 步（删 `[[templates]]` TOML 面）的精确计划（2026-10-08 实测）
 

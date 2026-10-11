@@ -1,19 +1,19 @@
 # forge-ir v3 改进方案
 
-> ⚠️ **ARCHIVED（2026-10-08）** —— **S1–S8 全部收口** ✔（本文件 §5 状态表逐片读 ✗）：
-> S1 ✅ 已落地 ✗；S2 ✅「forge-ir 大部分收口」（余项 `ListPool` **§4 已判定不做** ✗）；
-> S3 ✅「大部分落地」—— 三个余项 ①②③ **都已标"已落地"** ✗；S4 ✅ 已落地（主体完成 ✗）；
-> S5 ✅ 已落地（六切片 ✗）；S6 ✅ 落地（pass 欠账已清偿 ✗ + `AnalysisManager` ✗）；
-> **S7 ✅ 余项清零** ✗（文本层诊断 ✗ + 语料往返幂等 189/189 ✗ + IR 侧 span 贯穿 ✗ +
-> `features=["text"]` 门控 ✗，见其 §6 末 ✗）；S8 ✅ 经 2026-09-19 拍板**只做二进制序列化** ✗
-> 且已落地 ✗（其[设计](../archive/forge-ir-s8-design.md)与[执行方案](../archive/forge-ir-binary-serialization-plan.md)均已归档 ✗）。
+> ⚠️ **ARCHIVED（2026-10-08）** —— **S1–S8 全部收口**（本文件 §5 状态表逐片读）：
+> S1 ✅ 已落地；S2 ✅「forge-ir 大部分收口」（余项 `ListPool` **§4 已判定不做**）；
+> S3 ✅「大部分落地」—— 三个余项 ①②③ **都已标"已落地"**；S4 ✅ 已落地（主体完成）；
+> S5 ✅ 已落地（六切片）；S6 ✅ 落地（pass 欠账已清偿 + `AnalysisManager`）；
+> **S7 ✅ 余项清零**（文本层诊断 + 语料往返幂等 189/189 + IR 侧 span 贯穿 +
+> `features=["text"]` 门控，见其 §6 末）；S8 ✅ 经 2026-09-19 拍板**只做二进制序列化**
+> 且已落地（其[设计](../archive/forge-ir-s8-design.md)与[执行方案](../archive/forge-ir-binary-serialization-plan.md)均已归档）。
 >
-> **未关闭的待办仍在 `docs/forge-ir/backlog.md`** ✗（agg_expand 第三批 ✗、extract/insert
-> 深层折叠 ✗、SjLj/SEH ✗、grammar semantic 层 ✗ … ✗）——那些是**新一轮的入口** ✗，
-> 不在本方案的切片里 ✗。**现行规范** = `docs/reference/binary-format.md`（S8 产物 ✗）
-> 与 `docs/forge-ir/backlog.md`（活跃待办 ✗）。
+> **未关闭的待办仍在 `docs/forge-ir/backlog.md`**（agg_expand 第三批、extract/insert
+> 深层折叠、SjLj/SEH、grammar semantic 层 …）——那些是**新一轮的入口**，
+> 不在本方案的切片里。**现行规范** = `docs/reference/binary-format.md`（S8 产物）
+> 与 `docs/forge-ir/backlog.md`（活跃待办）。
 >
-> 原状态：`方案已批准（2026-09-14），S0 已落地，S1–S8 待开工` ✗（该句当时就已落后 ✗）。
+> 原状态：`方案已批准（2026-09-14），S0 已落地，S1–S8 待开工`（该句当时就已落后）。
 >
 > 状态：方案已批准（2026-09-14），**S0 已落地**，S1–S8 待开工。
 > 本文是实施记录 + 决策依据；IR 语义规范见（待建）`docs/reference/ir.md`。

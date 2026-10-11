@@ -1,10 +1,10 @@
 # forge-isa-dsl 改进方案（ISA-DSL v19：可独立接入 + 数据化验证 + 规范体检）
 
-> ⚠️ **ARCHIVED（2026-10-08）** —— 本方案的**招牌切片已按代码事实核对落地** ✔：V1 独立 runtime
-> （`pub use forge_ir as ir` ✓）、V3 谱内向量（`SPEC_VECTORS` ✓）、V4 lint（`lint_source` ✓）、
-> V5 参数化变体（`only_variants` ✓）。**现行面**见
-> [`../reference/isa-dsl.md`](../reference/isa-dsl.md) 与 `CLAUDE.md` 的「v21 现行面速查」✗；
-> 本文只记**设计取舍与切片史** ✗（内容以其记录时点为准 ✗）。
+> ⚠️ **ARCHIVED（2026-10-08）** —— 本方案的**招牌切片已按代码事实核对落地**：V1 独立 runtime
+> （`pub use forge_ir as ir`）、V3 谱内向量（`SPEC_VECTORS`）、V4 lint（`lint_source`）、
+> V5 参数化变体（`only_variants`）。**现行面**见
+> [`../reference/isa-dsl.md`](../reference/isa-dsl.md) 与 `CLAUDE.md` 的「v21 现行面速查」；
+> 本文只记**设计取舍与切片史**（内容以其记录时点为准）。
 >
 > 原状态行：`[progress]（2026-09-23 撰写）`。
 >

@@ -1,21 +1,21 @@
 # 变参（varargs）方案
 
-> ⚠️ **ARCHIVED（2026-10-08）** —— **功能面已完成** ✔（下面那句 `[progress]` 与"前端为空"的口径保留在
-> 「原状态」里 ✗）：
+> ⚠️ **ARCHIVED（2026-10-08）** —— **功能面已完成**（下面那句 `[progress]` 与"前端为空"的口径保留在
+> 「原状态」里）：
 >
-> | 项 | 实况（实测 ✗） |
+> | 项 | 实况（实测） |
 > | --- | --- |
-> | V0–V5（调用方/被调方物化 + `va_arg` ✗） | ✅ 已落地 ✗（win64 栈式 + sysv64 寄存器保存区**真跑** ✗） |
-> | SysV `%al`/`va_meta` 写入 | ✅ v20 V7 已落地 ✗（`forge-codegen/tests/variadic_meta.rs` ✗，复跑 **2 passed** ✔） |
-> | 四份约定的 `va_list` **形状** | ✅ 全在 ✗（`forge-abi/src/rules.rs` ✗：`win64_stack`/`sysv_reg_save`/`aapcs64_struct`/`riscv_save_area` ✗），由守卫 `invariants.rs::va_shapes_match_the_documented_table`（**运行期读本文 §2 那张表** ✗）与 `va_object_layout_matches_the_psabi_numbers` 钉住 ✗ |
-> | `lp64d` 变参按定本 ✗ | ✅ `variadic_classify`（浮点也走整数池 ✗）+ `contiguous = true` + `float_slot = 0` ✗，守卫 `invariants.rs::lp64d_variadic_arguments_follow_the_psabi` ✗ |
-> | `aapcs64` | ✅ 形状 `aapcs64_struct` 已定义 ✗；**LEN 类元信息寄存器**按明写口径**不建模** ✗（A6 核对后再启用 ✗，属**非目标** ✗） |
-> | 前端产出变参签名 | ⬜ **非目标** ✗（触发条件见本文 §6 ✗；`forge-abi` 侧规划与两端发射都已通 ✗） |
+> | V0–V5（调用方/被调方物化 + `va_arg`） | ✅ 已落地（win64 栈式 + sysv64 寄存器保存区**真跑**） |
+> | SysV `%al`/`va_meta` 写入 | ✅ v20 V7 已落地（`forge-codegen/tests/variadic_meta.rs`，复跑 **2 passed**） |
+> | 四份约定的 `va_list` **形状** | ✅ 全在（`forge-abi/src/rules.rs`：`win64_stack`/`sysv_reg_save`/`aapcs64_struct`/`riscv_save_area`），由守卫 `invariants.rs::va_shapes_match_the_documented_table`（**运行期读本文 §2 那张表**）与 `va_object_layout_matches_the_psabi_numbers` 钉住 |
+> | `lp64d` 变参按定本 | ✅ `variadic_classify`（浮点也走整数池）+ `contiguous = true` + `float_slot = 0`，守卫 `invariants.rs::lp64d_variadic_arguments_follow_the_psabi` |
+> | `aapcs64` | ✅ 形状 `aapcs64_struct` 已定义；**LEN 类元信息寄存器**按明写口径**不建模**（A6 核对后再启用，属**非目标**） |
+> | 前端产出变参签名 | ⬜ **非目标**（触发条件见本文 §6；`forge-abi` 侧规划与两端发射都已通） |
 >
-> **现行参考** = [`../reference/calling-conventions.md`](../reference/calling-conventions.md) ✗；
-> 本文只留**设计取舍、分期与那张被守卫读的 §2 形状表**（搬到这里后守卫路径已同步 ✗）✗。
+> **现行参考** = [`../reference/calling-conventions.md`](../reference/calling-conventions.md)；
+> 本文只留**设计取舍、分期与那张被守卫读的 §2 形状表**（搬到这里后守卫路径已同步）。
 >
-> 原状态：`[progress]`（2026-10-01：win64 栈式变参端到端跑通）✗。
+> 原状态：`[progress]`（2026-10-01：win64 栈式变参端到端跑通）。
 
 ## 1. 现状：**规划与两端发射都通了（管线里唯一一套数据驱动展开，四份约定都有形状数据）；前端仍零产出**
 
@@ -64,12 +64,12 @@
 ```text
 前端（写 variadic 签名 / va_start / va_arg）      ← 仍缺（触发条件见 §6）
    │
-IR（✔ 签名能表达 variadic；✔ `VaStart`/`VaArg` 两个 op 已落地）
+IR（ 签名能表达 variadic； `VaStart`/`VaArg` 两个 op 已落地）
    │
-引擎（✔ 已能算：va_area / va_meta / 未命名实参落点 / 字段布局 / 保存区槽表 / 逐字段初值）
+引擎（ 已能算：va_area / va_meta / 未命名实参落点 / 字段布局 / 保存区槽表 / 逐字段初值）
    │
-发射：调用方（✔ 未命名实参按 plan 发；缺 %al 写入）        ← 部分
-发射：被调方（✔ win64 栈式；✔ 保存区一族 = sysv64 真跑；aapcs64/riscv 待各自那族） ← 部分
+发射：调用方（ 未命名实参按 plan 发；缺 %al 写入）        ← 部分
+发射：被调方（ win64 栈式； 保存区一族 = sysv64 真跑；aapcs64/riscv 待各自那族） ← 部分
 ```
 
 下面三条是方案写就时的记录，**第 1、2 条的发射部分已关闭**（V1–V5，见 §5），仍开放的是

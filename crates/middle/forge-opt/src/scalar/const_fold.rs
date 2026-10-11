@@ -85,39 +85,88 @@ fn bit_mask(bits: u32) -> Big {
 // 折叠 — 核心求值函数
 // ============================================================
 
+/// 沿 `path` 在常量聚合树里**深层下钻**（backlog #3 ✗）：`path` 是逐级字段索引 ✗。
+///
+/// 返回最终落点的子节点 ✗（标量或更深的聚合 ✗）；路径越界 / 中途落到标量 ⇒ `None` ✗。
+fn agg_child_at(
+    pool: &forge_ir::ir::constant::ConstantPool,
+    agg: forge_ir::AggId,
+    path: &[usize],
+) -> Option<forge_ir::ir::constant::AggChild> {
+    use forge_ir::ir::constant::AggChild;
+    let (first, rest) = path.split_first()?;
+    let mut node: AggChild = pool.get_aggregate(agg)?.children.get(*first)?.clone();
+    for idx in rest {
+        let sub = match &node {
+            AggChild::Agg(id) => *id,
+            AggChild::Scalar(_) => return None,
+        };
+        node = pool.get_aggregate(sub)?.children.get(*idx)?.clone();
+    }
+    Some(node)
+}
+
+/// 解析"在聚合值 `value` 上**再**取下标 `extra`"⇒ `(根部常量聚合, 完整索引路径 ✗)` ✗。
+///
+/// `extractvalue` 的聚合源有两种形状 ✗：**immediate**（`[idx, Agg(id), Type]` ✗）或
+/// **值**（`extractvalue {t} %a, i` ✗）。后者在 SSA 里必由前一条 `extractvalue`
+/// 定义 ✗ ⇒ 顺着定义链把各层下标拼起来 ✗，就能直接从常量池的聚合树里一次折到底 ✗
+/// （这是 backlog #3「`AggConst` 递归 child 缺深层索引」的正解 ✗）。
+///
+/// 返回 `None` ⇒ 链的根部不是常量聚合 ✗（按"折不了"处理 ✗，不是错误 ✗）。
+fn resolve_agg_chain(
+    func: &forge_ir::Function,
+    value: Value,
+    extra: usize,
+) -> Option<(forge_ir::AggId, Vec<usize>)> {
+    use forge_ir::ir::dfg::ValueDef;
+    let inst_id = match func.dfg.value_def(value)? {
+        ValueDef::Inst(i, _) => *i,
+        _ => return None,
+    };
+    let inst = func.dfg.inst_data(inst_id);
+    if !matches!(inst.opcode, Opcode::ExtractValue) {
+        return None;
+    }
+    let own = match inst.immediates.first() {
+        Some(Immediate::Uint(i)) => *i as usize,
+        _ => return None,
+    };
+    match inst.immediates.get(1) {
+        // 链的根部：常量聚合 ✗ ⇒ 路径 = [本层 idx, 追加的 extra] ✗
+        Some(Immediate::Agg(root)) => Some((*root, vec![own, extra])),
+        _ => {
+            let src = *inst.operands.first()?;
+            let (root, mut path) = resolve_agg_chain(func, src, own)?;
+            path.push(extra);
+            Some((root, path))
+        }
+    }
+}
+
 /// 对给定的操作码和常量操作数进行编译时求值。
 ///
 /// 返回 `Some(ConstValue)` 如果所有操作数已知且可求值。
 /// 折叠 `extractvalue` 聚合字面量（3.1：immediates = [idx, Agg(id), Type]）。
-/// 标量提取 → 标量 ConstValue；嵌套聚合结果不折叠（值语义）。
+/// 标量提取 → 标量 ConstValue；嵌套聚合结果本身不折叠（值语义 ✗），
+/// 但**链上的下一层**会带着完整路径再折一次（见 [`resolve_agg_chain`] ✗）。
 fn fold_extract_value(
     pool: &forge_ir::ir::constant::ConstantPool,
-    immediates: &[Immediate],
+    agg: forge_ir::AggId,
+    path: &[usize],
     result_ty: TypeId,
 ) -> Result<Option<ConstValue>, IrError> {
     use forge_ir::ir::constant::AggChild;
-    let idx = match immediates.first() {
-        Some(Immediate::Uint(i)) => *i as usize,
-        _ => return Ok(None),
-    };
-    let agg = match immediates.get(1) {
-        Some(Immediate::Agg(id)) => *id,
-        _ => return Ok(None),
-    };
-    let agg_c = match pool.get_aggregate(agg) {
-        Some(a) => a,
-        None => return Ok(None),
-    };
-    let child = match agg_c.children.get(idx) {
+    let child = match agg_child_at(pool, agg, path) {
         Some(c) => c,
         None => return Ok(None),
     };
     Ok(match child {
         AggChild::Scalar(cid) => {
-            if let Some((v, _bits)) = pool.get_int(*cid) {
+            if let Some((v, _bits)) = pool.get_int(cid) {
                 Some(ConstValue::Int(Big::from_i128(v), result_ty))
             } else {
-                pool.get_float128(*cid).map(|bits| {
+                pool.get_float128(cid).map(|bits| {
                     ConstValue::Float(
                         Big::from_f64(f64::from_bits(bits as u64)).unwrap_or(Big::F_ZERO),
                         result_ty,
@@ -1122,7 +1171,29 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
         // 该值可能在后续折叠中变成可折叠（operand 传播后），
         // 需要保留再次处理的机会。仅在所有 operands 已知时才标记，
         // 保证 worklist 单遍收敛（否则 UntilFixedPoint 要跑数十轮）。
-        if const_operands.len() != inst_info.operands.len() {
+        // backlog #3：`extractvalue` 的聚合源可以是**值**（嵌套聚合链 ✗）——这种指令的操作数
+        // 不是常量 ✗，但只要能沿定义链上溯到**常量聚合** ✗，仍可一次折到底 ✗。
+        let extract_path: Option<(forge_ir::AggId, Vec<usize>)> =
+            if matches!(inst_info.opcode, Opcode::ExtractValue) {
+                match inst_info.immediates.first() {
+                    Some(Immediate::Uint(i)) => {
+                        let idx = *i as usize;
+                        match inst_info.immediates.get(1) {
+                            Some(Immediate::Agg(id)) => Some((*id, vec![idx])),
+                            _ => inst_info
+                                .operands
+                                .first()
+                                .copied()
+                                .and_then(|src| resolve_agg_chain(func, src, idx)),
+                        }
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+
+        if extract_path.is_none() && const_operands.len() != inst_info.operands.len() {
             continue;
         }
         processed.insert(value);
@@ -1132,7 +1203,10 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
 
         // 尝试折叠（ExtractValue 聚合字面量走专用路径——需要常量池）
         if let Some(folded) = if matches!(inst_info.opcode, Opcode::ExtractValue) {
-            fold_extract_value(&func.constants, &inst_info.immediates, result_ty)?
+            match &extract_path {
+                Some((agg, path)) => fold_extract_value(&func.constants, *agg, path, result_ty)?,
+                None => None,
+            }
         } else {
             fold_opcode(
                 &inst_info.opcode,
@@ -1301,6 +1375,29 @@ mod tests {
                 inst.opcode
             );
         }
+    }
+
+    #[test]
+    fn fold_nested_extractvalue_chain() {
+        // backlog #3 复现：**嵌套**聚合常量上的 extractvalue 链 ✗。
+        // 实测（2026-10-08 ✗）：第一层提取的结果是"聚合值"✗，fold 直接 `None` ✗
+        // ⇒ 第二层看不到常量 ⇒ **整条链不折叠** ✗，`%c` 仍是 ExtractValue 指令 ✗。
+        let src = "define i32 @f() {
+  %e:
+    %a = extractvalue {i32, {i32, i32}} {i32 1, {i32 2, i32 3}}, 1
+    %c = extractvalue {i32, i32} %a, 1
+    ret i32 %c
+}";
+        let module = forge_ir::text::parse_module(src).expect("parse");
+        let mut func = module.iter_functions().next().unwrap().clone();
+        let pass = ConstFoldPass::new();
+        let result = pass.run_on_function(&mut func).unwrap();
+        assert!(
+            result.changed && result.instructions_removed >= 1,
+            "嵌套 extractvalue 链应折叠（backlog #3 ✗）：changed={}, removed={}",
+            result.changed,
+            result.instructions_removed
+        );
     }
 
     #[test]

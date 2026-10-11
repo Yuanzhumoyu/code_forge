@@ -1,9 +1,9 @@
 # forge-ir S8 可选项设计方案（已拍板：只做二进制序列化）
 
-> ⚠️ **ARCHIVED（2026-10-08）** —— 本设计文档的三个候选里**只做二进制序列化** ✗（已落地 ✗，
-> 执行方案见同目录 [`forge-ir-binary-serialization-plan.md`](forge-ir-binary-serialization-plan.md) ✗），
-> **MemorySSA-lite 与 crate 边界拆分经 2026-09-19 拍板不做** ✗。本文只给设计与取舍 ✗
-> （内容以其记录时点为准 ✗）。
+> ⚠️ **ARCHIVED（2026-10-08）** —— 本设计文档的三个候选里**只做二进制序列化**（已落地，
+> 执行方案见同目录 [`forge-ir-binary-serialization-plan.md`](forge-ir-binary-serialization-plan.md)），
+> **MemorySSA-lite 与 crate 边界拆分经 2026-09-19 拍板不做**。本文只给设计与取舍
+> （内容以其记录时点为准）。
 >
 > 原状态行：`[progress]（2026-09-17 撰写设计）`。
 > 执行细化（格式 v1 字节级规范、B1–B5 切片、每片门禁与负向对照）见

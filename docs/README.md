@@ -30,7 +30,7 @@
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
 | `plans/forge-rustc-vec_push-plan.md` | forge-rustc vec 族方案（历史修复链 + **§8 2026-09-10 复核**：E1 假设未复现、失败面已 fail-closed；5 用例仍 FLAKY，见 `tests/e2e.rs`；§9 修复方案） | progress |
-| `plans/isa-dsl-v21-execution-checklist.md` | ISA-DSL v21 **执行清单**（S0 决策冻结 + W0 基线 + W1–W11 逐片步骤/门禁/回滚 + 最终验收 + 中止条件；配套设计文档已归档 ✗） | progress |
+| `plans/isa-dsl-v21-execution-checklist.md` | ISA-DSL v21 **执行清单**（S0 决策冻结 + W0 基线 + W1–W11 逐片步骤/门禁/回滚 + 最终验收 + 中止条件；配套设计文档已归档） | progress |
 
 ## performance/ — 基准与优化
 
@@ -54,20 +54,20 @@
 
 | 文件 | 内容（归档原因） |
 | --- | --- |
-| `archive/calling-convention-redesign-plan.md` | 调用约定重设计 v20 A1–A8（**2026-10-08 归档**：A1–A8 全部落地 ✗ —— A7 异域钩子 = `forge-abi/tests/exotic_hooks.rs`、A8 文档一致性收口 ✗；现行参考 = `reference/calling-conventions.md`） |
-| `archive/forge-ir-v3-plan.md` | forge-ir v3 改进方案（**2026-10-08 归档**：S1–S8 **全部收口** ✗ —— S3 三余项已落地 ✗、**S7 余项清零** ✗、S8 经拍板只做二进制序列化且已落地 ✗；未关闭项在 `forge-ir/backlog.md` ✗） |
-| `archive/isa-dsl-variant-field-values.md` | 按变体给字段值（**2026-10-08 归档**：工作**早已落地** ✗ —— 键名是 `fields_variant` ✗、`rev8` 正在用 ✗；本文留设计取舍与教训 ✗） |
-| `archive/varargs-plan.md` | 变参（varargs）方案（**2026-10-08 归档**：功能面**已完成** ✗ —— V0–V5 落地 ✗、SysV `%al` 写入 V7 已做 ✗、四份 `va_list` 形状齐备且由守卫钉住 ✗；前端产出变参签名是明写的**非目标** ✗） |
-| `archive/isa-dsl-v21-redesign-plan.md` | ISA-DSL v21 重设计方案（**2026-10-08 归档**：v21 已收口 ✗，W1–W11 + W6 + W6+ 全部落地；活账本 = `plans/isa-dsl-v21-execution-checklist.md`，现行规范 = `reference/isa-dsl.md`） |
-| `archive/forge-isa-dsl-v19-plan.md` | forge-isa-dsl v19 改进方案（**2026-10-08 归档**：可独立接入 ✓、谱内向量 ✓、lint ✓、参数化变体 ✓ 四块招牌切片按代码事实核对落地 ✗；现行面 = `reference/isa-dsl.md` + `CLAUDE.md` 速查） |
-| `archive/forge-ir-binary-serialization-plan.md` | forge-ir 二进制序列化执行方案 B1–B5（**2026-10-08 归档**：`to_binary`/`from_binary`/`IR_FORMAT_VERSION`/`tests/binary_module.rs` 均在 ✗；现行规范 = `reference/binary-format.md`） |
-| `archive/forge-ir-s8-design.md` | forge-ir S8 可选项设计（**2026-10-08 归档**：三个候选里**只做二进制序列化** ✗，MemorySSA-lite 与 crate 拆分经拍板不做 ✗） |
+| `archive/calling-convention-redesign-plan.md` | 调用约定重设计 v20 A1–A8（**2026-10-08 归档**：A1–A8 全部落地 —— A7 异域钩子 = `forge-abi/tests/exotic_hooks.rs`、A8 文档一致性收口；现行参考 = `reference/calling-conventions.md`） |
+| `archive/forge-ir-v3-plan.md` | forge-ir v3 改进方案（**2026-10-08 归档**：S1–S8 **全部收口** —— S3 三余项已落地、**S7 余项清零**、S8 经拍板只做二进制序列化且已落地；未关闭项在 `forge-ir/backlog.md`） |
+| `archive/isa-dsl-variant-field-values.md` | 按变体给字段值（**2026-10-08 归档**：工作**早已落地** —— 键名是 `fields_variant`、`rev8` 正在用；本文留设计取舍与教训） |
+| `archive/varargs-plan.md` | 变参（varargs）方案（**2026-10-08 归档**：功能面**已完成** —— V0–V5 落地、SysV `%al` 写入 V7 已做、四份 `va_list` 形状齐备且由守卫钉住；前端产出变参签名是明写的**非目标**） |
+| `archive/isa-dsl-v21-redesign-plan.md` | ISA-DSL v21 重设计方案（**2026-10-08 归档**：v21 已收口，W1–W11 + W6 + W6+ 全部落地；活账本 = `plans/isa-dsl-v21-execution-checklist.md`，现行规范 = `reference/isa-dsl.md`） |
+| `archive/forge-isa-dsl-v19-plan.md` | forge-isa-dsl v19 改进方案（**2026-10-08 归档**：可独立接入、谱内向量、lint、参数化变体 四块招牌切片按代码事实核对落地；现行面 = `reference/isa-dsl.md` + `CLAUDE.md` 速查） |
+| `archive/forge-ir-binary-serialization-plan.md` | forge-ir 二进制序列化执行方案 B1–B5（**2026-10-08 归档**：`to_binary`/`from_binary`/`IR_FORMAT_VERSION`/`tests/binary_module.rs` 均在；现行规范 = `reference/binary-format.md`） |
+| `archive/forge-ir-s8-design.md` | forge-ir S8 可选项设计（**2026-10-08 归档**：三个候选里**只做二进制序列化**，MemorySSA-lite 与 crate 拆分经拍板不做） |
 | `archive/roadmap-status.md` | v14-forge-ir-redesign 路线图交接（2026-08；自述 2026-09 大幅过期，开放项移交 forge-rustc WORKAROUNDS/README） |
 | `archive/ymm-abi-plan.md` | YMM ABI（>128 位向量传参）方案（**2026-09-10 核查后归档**：S1-S5/D2-D6 全部落地；残余移交 WORKAROUNDS WA-37 与 CLAUDE.md SIMD 矩阵） |
 | `archive/hir-shrink-plan.md` | HIR/mini_c 收缩方案（**2026-09-10 归档**：点 1/2/3 落地、点 5 前提不成立而删除、点 4 决定不做；收益结论下调） |
 | `archive/isa-dsl-v12-v17.md` | ISA-DSL v12–v17 语法史 + v18 删除/改名总表（**2026-09-21 归档**：现行规范 = `reference/isa-dsl.md` v18） |
 | `archive/isa-dsl-v12-roadmap.md` | ISA-DSL v12 历史（现行规范 = `reference/isa-dsl.md` v18） |
-| `archive/forge-dsl-v18-plan.md` | forge-dsl v18 执行方案（**2026-09-23 归档**：S0–S10 全部落地或经度量判定不做；S0 立项基线、S8/S9/S10 的实测数字仍是 `performance/bench_baseline.md` 与 CHANGELOG 的证据出处；现行方案 = `archive/forge-isa-dsl-v19-plan.md`（该方案亦已归档 ✗，现行面 = `reference/isa-dsl.md`）） |
+| `archive/forge-dsl-v18-plan.md` | forge-dsl v18 执行方案（**2026-09-23 归档**：S0–S10 全部落地或经度量判定不做；S0 立项基线、S8/S9/S10 的实测数字仍是 `performance/bench_baseline.md` 与 CHANGELOG 的证据出处；现行方案 = `archive/forge-isa-dsl-v19-plan.md`（该方案亦已归档，现行面 = `reference/isa-dsl.md`）） |
 | `archive/asm-dec-generic-design-v2.md` | 汇编器/解码器 v2 设计提案（v13 已落地，v15 演进） |
 | `archive/clippy-fixes.md` | 2026-07 clippy 清零单次记录 |
 | `archive/coverage-history.md` | Windows 本地覆盖率接入诊断 + 审查驱动补测交付（2026-07/08） |

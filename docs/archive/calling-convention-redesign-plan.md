@@ -1,12 +1,12 @@
 # 调用约定重设计（v20，A1–A7）
 
-> ⚠️ **ARCHIVED（2026-10-08）** —— 本方案的 **A1–A8 全部落地** ✔：A1/A2/A3/A3b/A4/A5-3/A6 见
-> `CLAUDE.md` 架构规则 6 ✗；**A7**（异域钩子示例 ✗）= `forge-abi/tests/exotic_hooks.rs`
-> （Swift `self`=X20 / Go `g`=R14 ✗）、**A8**（文档一致性收口 ✗）—— 两片在本文件里都已标 ✅（2026-09-29 ✗）。
-> **现行参考** = [`../reference/calling-conventions.md`](../reference/calling-conventions.md) ✗；
-> 本文只记**设计取舍、分期与进度** ✗（内容以其记录时点为准 ✗）。
+> ⚠️ **ARCHIVED（2026-10-08）** —— 本方案的 **A1–A8 全部落地**：A1/A2/A3/A3b/A4/A5-3/A6 见
+> `CLAUDE.md` 架构规则 6；**A7**（异域钩子示例）= `forge-abi/tests/exotic_hooks.rs`
+> （Swift `self`=X20 / Go `g`=R14）、**A8**（文档一致性收口）—— 两片在本文件里都已标 ✅（2026-09-29）。
+> **现行参考** = [`../reference/calling-conventions.md`](../reference/calling-conventions.md)；
+> 本文只记**设计取舍、分期与进度**（内容以其记录时点为准）。
 >
-> 原状态行：`**状态：[progress]**（A1 已落地，2026-09-24）` —— 该括注当时就已落后 ✗。
+> 原状态行：`**状态：[progress]**（A1 已落地，2026-09-24）` —— 该括注当时就已落后。
 
 ## 1. 问题（四条代码级证据）
 

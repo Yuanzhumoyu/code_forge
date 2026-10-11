@@ -1,11 +1,11 @@
 # ISA-DSL v21 重设计方案
 
-> ⚠️ **ARCHIVED（2026-10-08）** —— 本方案描述的 **v21 重设计已收口** ✔（W1–W11 + W6 + W6+
-> 全部落地 ✗）。执行进度、逐片验收与剩余项见**活的账本**
+> ⚠️ **ARCHIVED（2026-10-08）** —— 本方案描述的 **v21 重设计已收口**（W1–W11 + W6 + W6+
+> 全部落地）。执行进度、逐片验收与剩余项见**活的账本**
 > [`../plans/isa-dsl-v21-execution-checklist.md`](../plans/isa-dsl-v21-execution-checklist.md)
-> （§14 最终验收快照 #3：整仓门禁 exit 0 ✗、x86 197/3/0 与 riscv64 136/64/0 ✗、谱内向量 505 ✗、
-> 编码指纹与 asm 棘轮 ✗）。**现行规范**见 [`../reference/isa-dsl.md`](../reference/isa-dsl.md)；
-> 本文只记**设计取舍与切片史** ✗（内容以其记录时点为准 ✗）。
+> （§14 最终验收快照 #3：整仓门禁 exit 0、x86 197/3/0 与 riscv64 136/64/0、谱内向量 505、
+> 编码指纹与 asm 棘轮）。**现行规范**见 [`../reference/isa-dsl.md`](../reference/isa-dsl.md)；
+> 本文只记**设计取舍与切片史**（内容以其记录时点为准）。
 >
 > 原状态行：`[progress] 2026-10-08 设计提案 → 执行中`。
 > **实施账目（2026-10-08 复核，按本方案的 §11 切片 W1–W11）**：
@@ -17,7 +17,7 @@
 > | W3 | 操作数层收敛（`[operand.<名字>]` / `[enum.<表名>]`） | ✅ 已落地 |
 > | W4 | stream 段模型 | ✅ **已完成**（2026-10-08 实测：三谱 `modrm = {…}` 键 **0**、`opsize = "sN"` **0**、`classes` 键 **0**；x86 `segments` 块 **58**）——12 处行内 modrm 改 `match`/`bind`、4 个内存族 + 10 处 SSE/VEX/EVEX 族改 `*_SEG`、`opsize` 改为 `out`/操作数名/`auto`、`class` 键收编 `classes`；每批都以 `encoding.digest` 编码字节指纹 + `lint` 零结论验收 |
 > | W5 | 族与重载（`[family.<名>]`；`[[templates]]` TOML 面已撤） | ✅ 已落地 |
-> | W6 | 选择层（`[[lowering]]` + `[[pattern]]` → `[lower.*]`） | 🚧 未做（281 处 `[[lowering]]` + 9 处 `op` 名单 + 2 处 `[[pattern]]`）；**口径已定（2026-10-08 ✗）**：`op` 名单不保留 ⇒ **一个名字一块** ✗，复用交给 `[family.*]`/`vary` ✗；施工单见执行清单 §8 的「W6-a」✗ |
+> | W6 | 选择层（`[[lowering]]` + `[[pattern]]` → `[lower.*]`） | 🚧 未做（281 处 `[[lowering]]` + 9 处 `op` 名单 + 2 处 `[[pattern]]`）；**口径已定（2026-10-08）**：`op` 名单不保留 ⇒ **一个名字一块**，复用交给 `[family.*]`/`vary`；施工单见执行清单 §8 的「W6-a」 |
 > | W7 | 文本层（`[asm.pseudo.<名>]` / `[asm.immfn.*]` / `[asm.reloc.<名>]`） | ✅ 已落地 |
 > | W8 | 重定位生成（生成的 reloc patcher，删手写补丁器） | ✅ 已落地 |
 > | W9 | machine 合并（`[machine.stack\|text\|classes\|spill.<模板名>]`；删 callee-saved 两键） | ✅ 已落地 |
