@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-08) — ISA-DSL v21：`match` 的值可按变体参数分派（`variant` 字段值）
+
++ **`match` 的值现在有两种形态** ✗：常量（`match = { funct3 = 0 }` ✗），或**变体分派表** ✗
+  （`match = { imm12 = { xlen = { 32 = 0x698 }, default = 0x6b8 } }` ✗）。规则：分派表只认**一个**参数名 ✗（多个 ⇒ 报错 ✗）；参数名必须在 `[meta].variants` 里声明过 ✗；表里的键必须在**该参数的声明域**内 ✗；`default` **必填** ✗（不传参数的原生视角用它 ✗）。三条违规都在**加载期**点名报错（哪条指令的哪个字段 ✗）。
++ **为什么** ✗：同一条指令在不同变体下可能是**不同编码** ✗ —— 真实用例是 riscv `rev8` 的 `imm12`（RV64 `0x6b8` ✗ / RV32 `0x698` ✗）。靠"再加一条 RV32-only 指令"不行 ✗：那会被「`xlen=64` 原生视角不丢声明」的不变量拦下 ✗。
++ **实现选型（关键判据 ✗）**：分派**只在唯一解析点**折成常量 ✗（`parse_and_validate_projected` 里的 `resolve_match_fields` ✗）⇒ 编码/解码/汇编/渲染与生成期自测**零改动** ✗，也不会出现"同一模块两套语义"✗。承载类型 `FieldVal`/`FieldVariant` 只在模型侧 ✗，其 `fields` 仍以**折完的常量表**呈现 ✗（下游读点一处未动 ✗）。
++ 验收 ✗：`cargo test -p forge-isa-dsl` 全绿（含新用例 `match_variant_fields_fold_by_params`：原生 = `default` ✗、`--params xlen=32` = 分派值 ✗、三条负例全红 ✗）。
++ **仍剩** ✗：把 `rev8` 落到 `isa/riscv64.toml` 并连刷 asm 棘轮/钉死值 ✗（见 `docs/plans/isa-dsl-variant-field-values.md` ✗）。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6+：标志条件码**移出 IR**（改由 DSL 生成）+ 条件码补全
 
 + **标志位条件码不再属于 IR** ✗：`forge_ir::FlagCC` **删除** ✗ —— `IntCC`/`FloatCC` 是**值的比较谓词** ✗，标志位（溢出/进位/符号/奇偶/恒真恒假 ✗）是**机器语义** ✗，两者差别很大 ✗，而且 **IR 层根本用不到标志条件** ✗（IR 不产生"读 OF"这类操作 ✗）。现在 `FlagCC` **由 DSL 按谱里的标志位表生成** ✗（生成物里的本地枚举 ✗，`forge_ir::FlagCC` 不存在 ✗），只活在 lowering 与生成物里。

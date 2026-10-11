@@ -41,6 +41,11 @@ fn read_lf(path: &Path) -> Option<String> {
 /// 每条都要有理由：新增内部字段时必须来这里登记（否则守卫报"模型有、schema 无"）。
 const INTERNAL_FIELDS: &[(&str, &str, &str)] = &[
     (
+        "Instruction",
+        "fields",
+        "内部载体（v21 W6+）：TOML 面是 `match`（值可为常量或变体分派表），解析期折成常量后填这里",
+    ),
+    (
         "IsaModel",
         "cond_tables",
         "内部载体（v21 W6+ 丙）：TOML 面是 [enum.<表名>]，解析期按银行（整数/浮点）归类填这里",

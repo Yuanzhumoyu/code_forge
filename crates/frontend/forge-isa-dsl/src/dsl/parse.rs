@@ -397,5 +397,16 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
     model
         .resolve_imm_name_tables()
         .map_err(anchor_err)?;
+    // v21 W6+：`match` 的**变体分派**在解析期先按"原生视角"（不传参数 ✗）折成常量 ✗
+    // ——生成器/CLI 的多条通路都从 `parse()` 进来 ✗（只挂投影通路会漏掉它们 ✗：实测
+    // `[inst.MOV_R_RM]` 的 `match = { opcode = 0x8B }` 就因此丢过 ✗）；投影通路稍后用
+    // **真实 params 再折一次** ✗ —— `resolve_match_fields` 幂等 ✗（只读 `match_variants` ✗）。
+    {
+        let variants = model.meta.variants.clone().unwrap_or_default();
+        let mut insts = std::mem::take(&mut model.instructions);
+        crate::dsl::model::resolve_match_fields(&mut insts, &Default::default(), &variants)
+            .map_err(anchor_err)?;
+        model.instructions = insts;
+    }
     Ok(model)
 }
