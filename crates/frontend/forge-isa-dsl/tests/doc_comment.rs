@@ -39,26 +39,23 @@ fields = ["u8[31:24]:opcode", "u5[11:7]:rd", "u5[12:8]:imm"]
 [inst.INHERIT]
 form = "F"
 opcode = 0x10
-ops = ["dst:r:out"]
-asm = "inherit {dst}"
+asm = "inherit {dst:r:out}"
 width = 32
 
 [inst.OWN]
 form = "F"
 opcode = 0x11
 doc = "自己:{name}|form={form}|w={width}|ops={ops}|cls={dst.class}"
-ops = ["dst:r:out"]
-asm = "own {dst}"
+asm = "own {dst:r:out}"
 width = 32
 
 [inst.NODOC]
 form = "G"
 opcode = 0x12
-ops = ["dst:r:out"]
-asm = "nodoc {dst}"
+asm = "nodoc {dst:r:out}"
 
 [family.ALU]
-body = { form = "F", doc = "族:{family}/{name}/{cc}", ops = ["dst:r:out"], asm = "alu {cc} {dst}" }
+body = { form = "F", doc = "族:{family}/{name}/{cc}", asm = "alu {cc} {dst:r:out}" }
 rows = [
   { inst = "ADDX", opcode = 0x20, cc = "add" },
   { inst = "SUBX", opcode = 0x21, cc = "sub" },

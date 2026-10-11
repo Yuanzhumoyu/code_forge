@@ -2734,10 +2734,10 @@ pub struct Instruction {
     /// **v21 W2 字段声明列表**（本指令自己的，补充/覆盖 form 的）。
     #[serde(rename = "fields", default)]
     pub field_decls: Option<Vec<FieldDecl>>,
-    /// **操作数 → 字段名**的显式绑定（v22：**已从对外表面撤下**——作者面写 `asm` 里的
-    /// `{@字段:槽[:角色]}`；本字段由 `inline_ops` 抽取 pass 回填。解析器仍收 `bind` 键，
-    /// 但只有仓库内的测试谱在用）。
-    #[serde(default)]
+    /// **操作数 → 字段名**的绑定（**内部载体**：`#[serde(skip)]`——TOML 里没有 `bind` 键了）。
+    /// 由 `inline_ops` 抽取 pass 从 `asm` 里的 `{@字段:槽[:角色]}` 回填；变长 ISA 的方向是
+    /// "字段 → 操作数"、定宽是"操作数 → 字段"（两向都由下游按 `[encoding].kind` 解读）。
+    #[serde(skip)]
     pub bind: Option<BTreeMap<String, String>>,
     /// **命名操作数声明**（v15）：每项 `"名字:槽[:角色]"`，**数组序 = 编码序**
     /// （modrm reg/rm、定宽位域绑定都按这个序）。角色缺省 `in`。
@@ -2750,10 +2750,10 @@ pub struct Instruction {
     /// 现在写 `opsize = "dst"`（操作数名）、`"out"`（唯一 out/inout 角色）或共享 form 上的
     /// `"auto"`（第一个 Reg 操作数驱动），三种都自解释。
     ///
-    /// **v22：`ops` 已从对外表面撤下**——作者面写 `asm` 内联声明 `{名字:槽[:角色]}`；本字段由
-    /// `inline_ops` 抽取 pass 回填。解析器仍收 `ops` 键，但**只有仓库内的测试谱**在用
-    /// （三份发行谱与夹具已迁净，见 `tests/spec_migrate.rs`）。
-    #[serde(default)]
+    /// **v22：`ops` 是内部载体**——`#[serde(skip)]`：TOML 里**没有**这个键了（写了报未知键）。
+    /// 作者面写 `asm` 内联声明 `{名字:槽[:角色]}`，本字段由 `inline_ops` 抽取 pass 回填，
+    /// 下游（字段绑定/报告/生成器）继续按老样子读它。
+    #[serde(skip)]
     pub ops: Option<Vec<String>>,
     /// 汇编模板（完整格式）。**必填**（v17：回退自动派生，asm 就地显性编写）。
     /// 有 `ops` 时用 `{名字}` 引用；无 `ops` 时用 `{i:[槽:角色]}` 内联声明。

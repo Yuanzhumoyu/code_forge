@@ -375,8 +375,7 @@ fields = [
 [inst.NOP]
 form = "F"
 opcode = 0
-ops = ["dst:g:out"]
-asm = "nop {{dst}}"
+asm = "nop {{dst:g:out}}"
 "#
     )
 }
@@ -984,8 +983,7 @@ fields = [
 [inst.SETC]
 form = "C"
 opcode = 0x90
-ops = ["dst:g:out", "cond:cc"]
-asm = "setc {{dst}}, {{cond}}"
+asm = "setc {{dst:g:out}}, {{cond:cc}}"
 {extra}
 "#
     )
@@ -1437,22 +1435,22 @@ fn pseudo_may_emit_another_pseudo() {
 fn pseudo_checks_do_not_assume_first_word_is_mnemonic() {
     // ① 操作数前置的指令（`{dst} = {src}`）+ 行首是参数的 emit：
     //    旧实现按空白切词（首词 `{dst}`）判定，会把合法的 emit 行判成拼错。
+    //    v22：追加一条**自足**指令（普通字符串里用单花括号，无需依赖 helper 的文本）。
     let operand_first = lowering_doc("")
-        .replace("asm = \"mov {dst}, {src}\"", "asm = \"{dst} = {src}\"")
-        + "[asm.pseudo.assign]\nasm = \"assign {a}, {b}\"\nemit = [\"{a} = {b}\"]\n";
+        + "\n[inst.ASSIGN_OPF]\nform = \"RR\"\nopcode = 9\n\
+           asm = \"{dst:g:out} = {src:g}\"\n\
+           [asm.pseudo.assign]\nasm = \"assign {a}, {b}\"\nemit = [\"{a} = {b}\"]\n";
     parse_and_validate(&operand_first).expect("操作数前置的模板不该被当成助记符表");
     //    同理，伪指令名不以任何模板的**前导字面**开头 ⇒ 不算重名（首段是操作数，比不了）。
     let op_first_name = lowering_doc("")
-        .replace("asm = \"mov {dst}, {src}\"", "asm = \"{dst} = {src}\"")
-        + "[asm.pseudo.dst]\nasm = \"dst {a}\"\nemit = [\"{a} = {a}\"]\n";
+        + "\n[inst.OPF2]\nform = \"RR\"\nopcode = 10\nasm = \"{dst:g:out} = {src:g}\"\n\
+           [asm.pseudo.dst]\nasm = \"dst {a}\"\nemit = [\"{a} = {a}\"]\n";
     parse_and_validate(&op_first_name).expect("首段是操作数时，名字不构成遮蔽");
 
     // ② 多 token 前导字面：`set if …` 的 emit 行以 `set if` 开头 ⇒ 接得上；
     //    改一个 token（`sett`）⇒ 拼错。旧实现只看首词 `set`，两种情况都放过。
-    let two_tok = lowering_doc("").replace(
-        "asm = \"mov {dst}, {src}\"",
-        "asm = \"set if {dst}, {src}\"",
-    );
+    let two_tok = lowering_doc("")
+        + "\n[inst.SETIF]\nform = \"RR\"\nopcode = 11\nasm = \"set if {dst:g:out}, {src:g}\"\n";
     let ok =
         two_tok.clone() + "[asm.pseudo.si]\nasm = \"si {a}, {b}\"\nemit = [\"set if {a}, {b}\"]\n";
     parse_and_validate(&ok).expect("多 token 前导字面的 emit 行必须通过");
@@ -1637,7 +1635,6 @@ fields = [
 [inst.ADD]
 form = "R"
 opcode = 0x13
-ops = ["dst:g:out"]
 "#;
     let err = parse_and_validate(doc).expect_err("缺 asm 必须报错");
     assert!(
@@ -1668,7 +1665,6 @@ fields = [
 [inst.FOO]
 form = "R"
 opcode = 0x13
-ops = ["dst:g:out"]
 asm = "{bad {dst}"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
@@ -1749,14 +1745,13 @@ fields = [
 form = "I"
 opcode = 0x13
 match = { funct3 = 0 }
-ops = ["dst:g:out", "src:g"]
-asm = "bad {dst}, {srcc}"
+asm = "bad {dst:g:out}, {srcc}"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
         DslError::Validation { msg, .. } => {
             assert!(msg.contains("'{srcc}'"), "msg: {msg}");
-            assert!(msg.contains("dst, src"), "需列出已声明的名字: {msg}");
+            assert!(msg.contains("dst"), "需列出已声明的名字: {msg}");
         }
         other => panic!("expected Validation error, got {other:?}"),
     }
@@ -1791,8 +1786,7 @@ fields = [
 [inst.AUIPC_GLOBAL]
 form = "U"
 opcode = 0x17
-ops = ["dst:g:out", "imm:imm20"]
-asm = "auipc.g {{dst}}, {{imm}}"
+asm = "auipc.g {{dst:g:out}}, {{imm:imm20}}"
 {inst_reloc}
 "#
     )
@@ -1879,10 +1873,11 @@ fn reloc_slot_not_in_operands_rejected() {
         "reloc = \"x\"\nmatch = { rd = 0 }",
     )
     .replace(
-        "ops = [\"dst:g:out\", \"imm:imm20\"]",
-        "ops = [\"dst:g:out\"]",
-    )
-    .replace("asm = \"auipc.g {dst}, {imm}\"", "asm = \"auipc.g {dst}\"");
+        // ⚠️ `reloc_doc` 返回的是**渲染后**的谱文本 ⇒ 这里用**单**花括号（helper 里的 `{{` 是
+        // `format!` 的转义，渲染后就是单的）。
+        "asm = \"auipc.g {dst:g:out}, {imm:imm20}\"",
+        "asm = \"auipc.g {dst:g:out}\"",
+    );
     let msg = validation_msg(&doc);
     assert!(msg.contains("不在该指令的操作数里"), "msg: {msg}");
 }
@@ -2080,8 +2075,7 @@ fields = [
 [inst.MOV]
 form = "RR"
 opcode = 1
-ops = ["dst:g:out", "src:g"]
-asm = "mov {{dst}}, {{src}}"
+asm = "mov {{dst:g:out}}, {{src:g}}"
 {rule}
 "#
     )
@@ -2093,7 +2087,7 @@ fn pattern_doc(patterns: &str) -> String {
     for (i, name) in ["ADD", "SUB", "MUL", "ADDSS", "SUBSS"].iter().enumerate() {
         doc.push_str(&format!(
             "\n[inst.{name}]\nform = \"RR\"\nopcode = {}\n\
-             ops = [\"dst:g:out\", \"src:g\"]\nasm = \"{lower} {{dst}}, {{src}}\"\n",
+             asm = \"{lower} {{dst:g:out}}, {{src:g}}\"\n",
             i + 2,
             lower = name.to_lowercase(),
         ));
@@ -2191,13 +2185,11 @@ fields = [
 [inst.MOV16]
 {r16}form = "RR"
 opcode = 1
-ops = ["dst:g:out", "src:g"]
-asm = "mov {{dst}}, {{src}}"
+asm = "mov {{dst:g:out}}, {{src:g}}"
 [inst.MOV32]
 {r32}form = "RR"
 opcode = 2
-ops = ["dst:g:out", "src:g"]
-asm = "mov {{dst}}, {{src}}"
+asm = "mov {{dst:g:out}}, {{src:g}}"
 {extra}
 "#
     )
@@ -2644,42 +2636,41 @@ asm = "add {dst:gx:inout#1}, {src:gx#0}"
     assert_eq!(inst.asm.render(), "add {dst}, {src}");
 }
 
+/// v22：声明与打印合流后，"重复" 的判定落在**同名声明**上。
 #[test]
-fn named_ops_reject_duplicate_name() {
-    let doc = ops_doc(
-        r#"ops = ["a:gx", "a:gx"]
-asm = "i {a}, {a}""#,
-    );
+fn inline_decl_reject_duplicate_name() {
+    let doc = ops_doc(r#"asm = "i {a:gx}, {a:gx}""#);
     let msg = validation_msg(&doc);
     assert!(msg.contains("重复"), "msg: {msg}");
 }
 
 #[test]
-fn named_ops_reject_bad_role() {
-    let doc = ops_doc(
-        r#"ops = ["a:gx:sideways"]
-asm = "i {a}""#,
-    );
+fn inline_decl_reject_bad_role() {
+    let doc = ops_doc(r#"asm = "i {a:gx:sideways}""#);
     let msg = validation_msg(&doc);
     assert!(msg.contains("sideways"), "msg: {msg}");
 }
 
+/// v22："引用了但没声明"的旧判定（`ops` 里有、模板里没打印）已随两键合流消失——
+/// 现在只可能"声明了却没打印"（合法：只声明不打印的占位符渲染空串）。
 #[test]
-fn named_ops_reject_double_reference() {
-    let doc = ops_doc(
-        r#"ops = ["a:gx", "b:gx"]
-asm = "i {a}, {a}""#,
+fn inline_decl_allows_declared_but_unprinted() {
+    let doc = ops_doc(r#"asm = "i {a:gx}, {a:gx}""#);
+    // 同名两次仍是"重复"（见上一条），这里用不同名验证"第二个只声明不打印"是合法的。
+    let ok = ops_doc(r#"asm = "i {a:gx}{b:gx}""#);
+    assert!(
+        parse_and_validate(&ok).is_ok(),
+        "只声明不打印应合法：{:?}",
+        parse_and_validate(&ok).err()
     );
-    let msg = validation_msg(&doc);
-    assert!(msg.contains("引用 2 次"), "msg: {msg}");
+    let _ = doc;
 }
 
 #[test]
 fn opsize_named_must_reference_declared_op() {
     let doc = ops_doc(
         r#"opsize = "nope"
-ops = ["a:gx"]
-asm = "i {a}""#,
+asm = "i {a:gx}""#,
     );
     // opsize 名字解析在 codegen（collect_inst_infos）——校验期先过，生成期报错
     let m = parse_and_validate(&doc).expect("模型层合法");
@@ -2773,8 +2764,7 @@ roles = "inout"
 {modrm}
 opsize = "dst"
 opcode = 1
-ops = ["dst:gx:inout", "src:gx"]
-asm = "i {{dst}}, {{src}}"
+asm = "i {{dst:gx:inout}}, {{src:gx}}"
 "#
     )
 }
@@ -3780,8 +3770,7 @@ roles = "inout"
 [inst.MOV8]
 form = "RR"
 opcode = 1
-ops = ["dst:a8:out", "src:a8"]
-asm = "mov {{dst}}, {{src}}"
+asm = "mov {{dst:a8:out}}, {{src:a8}}"
 [form.RR]
 fields = [
   "u8[7:0]:opcode",
@@ -3951,8 +3940,7 @@ asm = "nop"
 data_width = 64
 form = "RR"
 opcode = 16
-ops = ["dst:g:out", "src:g"]
-asm = "mov {{dst}}, {{src}}"
+asm = "mov {{dst:g:out}}, {{src:g}}"
 [form.RR]
 fields = [
   "u8[7:0]:opcode",
@@ -4300,8 +4288,7 @@ fields = [
 form = "B"
 opcode = 1
 effect = ["Branch"]
-ops = ["src:g", "target:l"]
-asm = "brz {{src}}, {{target}}"
+asm = "brz {{src:g}}, {{target:l}}"
 "#,
             bits = bits,
             b = bits
@@ -4917,7 +4904,6 @@ fields = [
 [inst.ADDI]
 form = "RI"
 opcode = 2
-ops = ["dst:g:out", "k:k"]
 asm = "{asm}"
 "#
     )
@@ -4927,7 +4913,7 @@ asm = "{asm}"
 /// 已声明操作数名；`:` 专属内联声明 `{名字:槽}`）。`{n?}` 的三条语义随特性一起消失。
 #[test]
 fn optional_placeholder_spec_is_rejected() {
-    let doc = imm_slot_doc("addi {dst}, {k?}");
+    let doc = imm_slot_doc("addi {dst:g:out}, {k?}");
     let err = super::parse_and_validate(&doc).unwrap_err().to_string();
     assert!(
         err.contains("k?") || err.contains("不是已声明的操作数名"),

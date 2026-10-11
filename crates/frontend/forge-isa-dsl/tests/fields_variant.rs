@@ -44,8 +44,7 @@ fields = [
 form = "F"
 opcode = 0x10
 {instruction}
-ops = ["dst:r:out"]
-asm = "fv {{dst}}"
+asm = "fv {{dst:r:out}}"
 "##
     )
 }

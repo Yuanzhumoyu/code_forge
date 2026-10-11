@@ -54,29 +54,25 @@ fields = [
 [inst.ADD]
 form = "RR"
 opcode = 1
-ops = ["dst:g:out", "src:g"]
-asm = "add {dst}, {src}"
+asm = "add {dst:g:out}, {src:g}"
 effect = ["Pure"]
 
 [inst.SUB]
 form = "RR"
 opcode = 2
-ops = ["dst:g:out", "src:g"]
-asm = "sub {dst}, {src}"
+asm = "sub {dst:g:out}, {src:g}"
 effect = ["Pure"]
 
 [inst.MOVI]
 form = "RI"
 opcode = 3
-ops = ["dst:g:out", "imm:imm5"]
-asm = "movi {dst}, {imm}"
+asm = "movi {dst:g:out}, {imm:imm5}"
 effect = ["Pure"]
 
 [inst.BRZ]
 form = "RI"
 opcode = 4
-ops = ["src:g", "target:imm5"]
-asm = "brz {src}, {target}"
+asm = "brz {src:g}, {target:imm5}"
 effect = ["Branch"]
 ```
 
@@ -155,20 +151,23 @@ class = "gpr8"      # 引用 [reg.gpr8]；多宽度写 class = ["gpr32", "gpr64"
 - `kind = "label"` 的槽用于分支目标：汇编接受数字偏移或符号，生成物里字段类型是 `i64`（IR 块号）。
 - 多宽度寄存器槽（`class = ["gpr32", "gpr64"]`）会让生成期自测逐宽度各生成一条用例。
 
-## 3. 指令：`ops` 声明 + `asm` 引用
+## 3. 指令：操作数声明**就地写在 `asm` 里**
 
 ```toml
 [inst.ADD]
 form = "RR"                                   # 可选：编码键预设
 opcode = 1
-ops = ["dst:g:out", "src:g"]                  # 数组序 = 编码序；角色 in/out/inout
-asm = "add {dst}, {src}"                      # 只引用名字，不声明
+asm = "add {dst:g:out}, {src:g}"              # {名字:槽[:角色]}：声明 + 打印位置在一起
 ```
 
-- **`ops` 的名字就是生成的 `Inst` 字段名**：上面生成 `Inst::Add { dst: Reg, src: Reg }`。
+- **名字就是生成的 `Inst` 字段名**：上面生成 `Inst::Add { dst: Reg, src: Reg }`。
   字段名不能直接当 Rust 标识符时按最小规则归一（`type` → `r#type`、`8bit` → `_8bit`）。
-- **操作数 → 位域的绑定（口径 A）**：`bind` 显式优先 → 否则**同名** → 否则按 `fields` 的**声明序**取第 i 个（跳过 `opcode`）。
-  所以第 0 个 `dst` → `rd`、第 1 个 `src` → `rs1`；位域名与字段名可以不同，互不影响。
+- **打印序 = 编码序**（默认）：上面就是 `dst` 在前。要反过来写就加序号 `{src:g#0} … {dst:g:out#1}`
+  （一条指令里**全标或全不标**）。
+- **只声明、不打印**的操作数写成"只声明"的占位符（渲染空串），例如 `asm = "op {dst:g:out}{k:imm5}"`。
+- **操作数 → 位域的绑定（口径 A）**：`{@字段:槽}` 显式优先 → 否则**同名** → 否则按 `fields` 的
+  **声明序**取第 i 个（跳过主 opcode 字段）。所以第 0 个 `dst` → `rd`、第 1 个 `src` → `rs1`；
+  `forge-isa insts/explain` 会把这些绑定的**来源**标出来。
 - **`asm` 是必填的**，助记符就是模板首段字面量；`disassemble` 由同一个模板反向渲染。
 - `effect = ["Branch"]`/`["Move"]` 等语义标签驱动 `MachineInst::is_branch/effects()`——生成器
   **不按指令名判断**。
@@ -183,38 +182,30 @@ ISA toy16 （encoding = fixed 16 位；4 条指令）
     len_bytes = 2
     form = RR
     opcode = 0x1
-    ops = dst:g:out,src:g
+    ops = dst:g:out → 字段 rd（位置回退）,src:g → 字段 rs1（位置回退）
     asm = add {0}, {1}
     enc = opcode_field="op", operand_fields=["rd", "rs1"]   # 由 fields 展开（派生）
 ```
 
-`explain` 给出这条指令的完整来源（来自哪个模板哪一行、生效的编码键逐字段），是排查"我写的键到底
-生效了没"的第一工具。
+`explain` 给出这条指令的完整来源（来自哪个模板哪一行、生效的编码键逐字段、每个操作数的
+**字段绑定与来源**），是排查"我写的键到底生效了没"的第一工具。
 
-## 4. 复用：`[[templates]]` 是唯一的指令分组机制
+## 4. 复用：`[family.<名>]` 是唯一的指令分组机制
 
 同一族指令（只差 opcode/宽度/寄存器类）写成**一张表**，而不是抄 N 遍：
 
 ```toml
-[[templates]]
-name = "ARITH"                       # 模板名（只用于诊断/explain 溯源）
-[templates.body]                     # 族级共享字段
-form = "RR"
-effect = ["Pure"]
+[family.ARITH]                        # 族名：诊断/explain 溯源用，也是默认 ref 名
+body = { form = "RR", effect = ["Pure"] }   # 族级共享字段
 
-[[templates.rows]]                   # 每行一条指令
-inst = "ADD"
-opcode = 1
-asm = "add {dst}, {src}"
-
-[[templates.rows]]
-inst = "SUB"
-opcode = 2
-asm = "sub {dst}, {src}"
+rows = [                              # 每行一条指令
+  { inst = "ADD", opcode = 1, asm = "add {dst:g:out}, {src:g}" },
+  { inst = "SUB", opcode = 2, asm = "sub {dst:g:out}, {src:g}" },
+]
 ```
 
-- 行里的键 = 指令字段空间：可以覆盖 `form`/`ops`/编码键/`roles`，`body` 提供共享值。
-- 需要按行插值（如助记符带后缀）时用行键写模板，例如 `asm = "{inst.lower}.s {dst}, {src}"`。
+- 行里的键 = 指令字段空间：可以覆盖 `form`/编码键/`roles`/`asm`，`body` 提供共享值。
+- 需要按行插值（如助记符带后缀）时用行键写模板，例如 `asm = "{inst.lower}.s {dst:g:out}, {src:g}"`。
 - 别名（同一件事多个名字）用**成员指令上的 `ref`**：多条共用同一个 `ref` = 多态分发。
 - 用 `cargo run -p forge-isa -- explain toy16.toml ADD` 可以确认某条指令来自哪个模板的哪一行。
 

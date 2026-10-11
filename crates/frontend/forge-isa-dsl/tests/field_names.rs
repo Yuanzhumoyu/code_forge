@@ -20,7 +20,7 @@ fn flat(ts: &proc_macro2::TokenStream) -> String {
 }
 
 /// 最小定宽 ISA：位域名（`f0`/`f1`）与操作数声明名（`dst`/`src`）**故意不同**。
-fn fixed_spec(ops: &str, asm: &str) -> String {
+fn fixed_spec(asm: &str) -> String {
     format!(
         r#"
 [meta]
@@ -42,7 +42,6 @@ fields = [
 [inst.ADD]
 form = "RR"
 opcode = 1
-ops = {ops}
 asm = "{asm}"
 "#
     )
@@ -55,10 +54,10 @@ fn expand_inline(src: &str) -> String {
 /// 定宽 ISA：字段名取自 `ops`（`dst`/`src`），**不是**位域名（`f0`/`f1`）。
 #[test]
 fn fixed_isa_fields_use_declared_names_not_bitfields() {
-    let t = expand_inline(&fixed_spec(r#"["dst:g:out", "src:g"]"#, "add {dst}, {src}"));
+    let t = expand_inline(&fixed_spec("add {dst:g:out}, {src:g}"));
     assert!(
         t.contains("Add{dst:Reg,src:Reg}"),
-        "字段名应来自 ops 声明：{}",
+        "字段名应来自 asm 的内联声明：{}",
         &t[t.find("pubenumInst").unwrap_or(0)..][..200.min(t.len())]
     );
     assert!(!t.contains("f0:Reg"), "位域名不得当字段名");
@@ -68,20 +67,14 @@ fn fixed_isa_fields_use_declared_names_not_bitfields() {
 /// 声明名是 Rust 关键字 → 原始标识符（`r#type`），不静默改名。
 #[test]
 fn keyword_operand_names_become_raw_idents() {
-    let t = expand_inline(&fixed_spec(
-        r#"["type:g:out", "match:g"]"#,
-        "add {type}, {match}",
-    ));
+    let t = expand_inline(&fixed_spec("add {type:g:out}, {match:g}"));
     assert!(t.contains("Add{r#type:Reg,r#match:Reg}"), "关键字应原始化");
 }
 
 /// 声明名以数字开头 → 前缀 `_`（仍是作者的名字，不是 op0/op1）。
 #[test]
 fn digit_leading_operand_name_is_prefixed() {
-    let t = expand_inline(&fixed_spec(
-        r#"["8bit:g:out", "src:g"]"#,
-        "add {8bit}, {src}",
-    ));
+    let t = expand_inline(&fixed_spec("add {8bit:g:out}, {src:g}"));
     assert!(t.contains("Add{_8bit:Reg,src:Reg}"), "数字开头应加前缀");
 }
 

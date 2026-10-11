@@ -59,15 +59,13 @@ fields = [
 [inst.ADD]
 form = "RR"
 opcode = 1
-ops = ["dst:g:out", "src:g"]
-asm = "add {{dst}}, {{src}}"
+asm = "add {{dst:g:out}}, {{src:g}}"
 effect = ["Pure"]
 
 [inst.MOVI]
 form = "RI"
 opcode = 3
-ops = ["dst:g:out", "imm:imm5"]
-asm = "movi {{dst}}, {{imm}}"
+asm = "movi {{dst:g:out}}, {{imm:imm5}}"
 effect = ["Pure"]
 {vectors}
 "#

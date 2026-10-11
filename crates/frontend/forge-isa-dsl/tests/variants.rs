@@ -250,8 +250,7 @@ fields = [
 [inst.ADD]
 form = "RR"
 opcode = 1
-ops = ["dst:g:out", "src:g"]
-asm = "add{width} {dst}, {src}"
+asm = "add{width} {dst:g:out}, {src:g}"
 effect = ["Pure"]
 
 [[lower.Iadd]]
@@ -317,8 +316,7 @@ fields = [
 [inst.ADD]
 form = "RR"
 opcode = 1
-ops = ["dst:g:out"]
-asm = "add {{dst}}"
+asm = "add {{dst:g:out}}"
 effect = ["Pure"]
 {gate}
 "#

@@ -771,10 +771,17 @@ pub(crate) fn parse_asm_decl(
         return Err(format!("{}: asm must not be empty", ctx()));
     }
     let Some(list) = ops else {
-        // 无操作数指令（ret/nop/…）不需要 ops；有占位符却没 ops = 缺声明
-        if asm.contains('{') {
+        // 无操作数指令（ret/nop/…）不需要声明；有占位符却没声明 ⇒ 报错并**点名**那个占位符。
+        // v22：声明就地写在 `asm` 里（`{名字:槽[:角色]}` / `{@字段:槽}`），不再有 `ops` 键。
+        if let Some(open) = asm.find('{') {
+            let name = asm[open + 1..]
+                .split(['}', ':'])
+                .next()
+                .unwrap_or("")
+                .trim();
             return Err(format!(
-                "{}: asm 引用了操作数但没有 `ops` 声明（v15：声明写在 ops，模板只引用名字）",
+                "{}: asm 里的占位符 '{name}' 没有声明——v22 把声明就地写在 asm 里\
+                 （`{{名字:槽[:角色]}}` / `{{@字段:槽}}`）；无操作数指令（ret/nop…）不该有占位符",
                 ctx()
             ));
         }

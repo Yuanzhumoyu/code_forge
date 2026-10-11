@@ -7,11 +7,10 @@
 //! - 抽取结果必须与旧写法**逐字段等价**（本文件第一条用例把它钉成"生成物面等价"）。
 //!
 //! 迁移期两种写法并存；同一条指令同时用 `ops` 与内联声明 ⇒ 报错。
-
 use forge_isa_dsl::report;
 
-/// 旧写法基线（`ops` 键 + 纯引用模板）。
-fn spec_legacy() -> String {
+/// 内联写法的**位置回退**基线（模板只写 `{名字:槽}`，不写 `@字段`——字段靠同名/位置绑定）。
+fn spec_positional() -> String {
     r##"[meta]
 name = "inline"
 endian = "little"
@@ -49,22 +48,19 @@ fields = [
 [inst.ADD]
 form = "RR"
 opcode = 1
-ops = ["dst:g:out", "src:g"]
-asm = "add {dst}, {src}"
+asm = "add {dst:g:out}, {src:g}"
 effect = ["Pure"]
 
 [inst.MOVI]
 form = "RI"
 opcode = 3
-ops = ["dst:g:out", "imm:imm5"]
-asm = "movi {dst}, {imm}"
+asm = "movi {dst:g:out}, {imm:imm5}"
 effect = ["Pure"]
 
 [inst.BRZ]
 form = "RI"
 opcode = 4
-ops = ["src:g", "target:imm5"]
-asm = "brz {src}, {target}"
+asm = "brz {src:g}, {target:imm5}"
 effect = ["Branch"]
 
 [inst.NOP]
@@ -146,10 +142,12 @@ fn errs(spec: &str) -> String {
     }
 }
 
-/// 内联写法与旧写法在 `insts` 报告面**逐字段相同**（操作数表、渲染文本、生效编码键）。
+/// 两种内联写法——**位置回退**（`{dst:g:out}`）与**显式 `@` 绑定**（`{@rd:g:out}`）——在
+/// `insts` 报告面**逐字段相同**（操作数表、渲染文本、生效编码键）；唯一允许不同的是
+/// "绑定来源"那一列的标注（v22 ③ 特意显示的）。
 #[test]
 fn inline_form_matches_legacy_report() {
-    let (_l, legacy) = report::insts(&spec_legacy()).expect("旧写法谱");
+    let (_l, legacy) = report::insts(&spec_positional()).expect("位置回退谱");
     let (_i, inline) = report::insts(&spec_inline()).expect("内联写法谱");
     assert_eq!(legacy.len(), inline.len(), "指令条数应一致");
     for (a, b) in legacy.iter().zip(inline.iter()) {
@@ -216,15 +214,18 @@ fn binding_to_undeclared_field_fails_closed() {
     assert!(msg.contains("nope"), "错误应点名该字段：{msg}");
 }
 
-/// `ops` 键与内联声明不许同现。
+/// **v22：`ops` 键已删**（`#[serde(skip)]`）——照着旧写法写谱现在报"未知键"，由未知键建议点名。
 #[test]
-fn mixing_ops_key_and_inline_decl_fails_closed() {
+fn ops_key_is_gone_and_reports_unknown_field() {
     let bad = spec_inline().replace(
         r#"asm = "add {@rd:g:out}{dst:g:out}, {@rs1:g}{src:g}""#,
         "ops = [\"dst:g:out\", \"src:g\"]\nasm = \"add {@rd:g:out}{dst:g:out}, {@rs1:g}{src:g}\"",
     );
     let msg = errs(&bad);
-    assert!(msg.contains("只写一处"), "错误应说明两者选一处：{msg}");
+    assert!(
+        msg.contains("unknown field") && msg.contains("ops"),
+        "旧 `ops` 键应报未知键并点名：{msg}"
+    );
 }
 
 /// 多模板（`asm = [...]` 的别名写法）必须声明同一组操作数。
