@@ -229,3 +229,79 @@ fn shipped_specs_still_parse() {
         report::insts(&src).unwrap_or_else(|e| panic!("{isa} 应仍能解析：{e:?}"));
     }
 }
+
+/// `#序号`：把"**出现序 ≠ 编码序**"说出来——声明按序号排序后成为编码序，模板照旧按出现序打印。
+///
+/// 这条是顺序敏感指令的唯一出口（实测 100 条指令的出现序 ≠ 旧 `ops` 序，其中 75 条原本靠
+/// 位置回退才编对）⇒ 不标就静默改语义，所以这里把它钉死。
+#[test]
+fn explicit_order_marker_decides_encoding_order() {
+    let src = r##"[meta]
+name = "ord"
+endian = "little"
+
+[encoding]
+kind = "fixed"
+bits = 16
+
+[reg.gpr]
+names = ["R0", "R1"]
+
+[operand.g]
+kind = "reg"
+class = "gpr"
+
+[form.F]
+fields = ["u4[15:12]:opcode", "u3[11:8]:rd", "u3[7:5]:rs1"]
+
+[inst.REV]
+form = "F"
+opcode = 1
+asm = "rev {@rs1:g}{src:g#1}, {@rd:g:out}{dst:g:out#0}"
+effect = ["Pure"]
+"##;
+    let (_m, rows) = report::insts(src).expect("带 #序号 的谱应能解析");
+    let row = rows.iter().find(|r| r.name == "REV").expect("应有 REV");
+    assert_eq!(
+        row.ops,
+        vec!["dst:g:out", "src:g"],
+        "编码序应由 #序号 决定（dst#0 在前）：{row:?}"
+    );
+    assert!(
+        row.asm.contains("{0}") && row.asm.contains("{1}"),
+        "模板按出现序打印（src 在前），规范化后应是 {{1}}, {{0}}：{}",
+        row.asm
+    );
+}
+
+/// 部分标注（有的声明带 `#序号`、有的不带）⇒ 报错，不许猜。
+#[test]
+fn partial_order_marker_fails_closed() {
+    let bad = r##"[meta]
+name = "ord2"
+
+[encoding]
+kind = "fixed"
+bits = 16
+
+[reg.gpr]
+names = ["R0", "R1"]
+
+[operand.g]
+kind = "reg"
+class = "gpr"
+
+[form.F]
+fields = ["u4[15:12]:opcode", "u3[11:8]:rd", "u3[7:5]:rs1"]
+
+[inst.HALF]
+form = "F"
+opcode = 1
+asm = "half {a:g#0}, {b:g}"
+"##;
+    let msg = errs(bad);
+    assert!(
+        msg.contains("要么都写") || msg.contains("#序号"),
+        "部分标注应报错：{msg}"
+    );
+}
