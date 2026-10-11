@@ -7,6 +7,9 @@
 //! 缺执行通道时 **Skip 并说明原因**（x86 只在 windows-x86_64 宿主、riscv64/aarch64 需要
 //! `qemu-system-*`；见 `asm::exec::unavailable_reason`），不假绿。
 //!
+//! **全通道都缺失 = 环境不具备**（如 macOS：x86 代码按 Windows x64 ABI 生成、又没装 QEMU）
+//! ⇒ 只打印 SKIP 汇总并返回（不红）；**只要有一条可用通道**，就必须真跑出结果——那才是门禁。
+//!
 //! [`CompiledFunction`]: code_forge::backend::CompiledFunction
 
 use forge_tests::asm::{self, exec};
@@ -16,6 +19,8 @@ use forge_tests::asm::{self, exec};
 fn assembled_programs_execute_and_return_expected_values() {
     let mut ran = 0usize;
     let mut skipped = Vec::new();
+    // 既有通道**又**有小程序的架构数：它 > 0 才构成执行门禁（否则只是环境缺通道）
+    let mut runnable = 0usize;
     for isa in ["x86", "riscv64", "aarch64"] {
         let reason = exec::unavailable_reason(isa);
         let programs =
@@ -40,6 +45,7 @@ fn assembled_programs_execute_and_return_expected_values() {
             continue;
         }
         let arch = exec::run_arch_for(isa).expect("三架构都有执行通道");
+        runnable += 1;
         for (p, cf) in programs.iter().zip(compiled.iter()) {
             let got = forge_tests::exec::executor::run(arch, cf, &p.args);
             assert_eq!(
@@ -59,5 +65,15 @@ fn assembled_programs_execute_and_return_expected_values() {
         "ASM-EXEC-SUMMARY",
         &format!("ran={ran} skipped={}", skipped.len()),
     );
-    assert!(ran > 0, "一条小程序都没真跑成（跳过原因见上）");
+    if runnable == 0 {
+        // 环境不具备（宿主不支持 + 缺 QEMU）⇒ 不构成执行门禁，但要把原因留在日志里
+        let msg = "三条通道全不可用（宿主不支持且缺 QEMU）⇒ 本环境不构成执行门禁";
+        println!("ASM-EXEC-SKIP {msg}");
+        asm::report::emit_event("ASM-EXEC-SKIP", msg);
+        return;
+    }
+    assert!(
+        ran > 0,
+        "有 {runnable} 条可用通道却一条都没真跑成（跳过原因见上）"
+    );
 }

@@ -366,7 +366,15 @@ jobs:
           toolchain: nightly-2026-09-05
           components: rustc-dev
       - run: rustup override set nightly-2026-09-05
-      - run: cargo test -p forge-tests --features nightly
+      # 只跑 **lib**：`nightly` 开了 crate 级 `feature(rustc_private)`（`src/lib.rs:7`），
+      # 于是本 crate 的**每个 test 目标**都被带上 rustc_private ⇒ 纯汇编的 test 目标
+      # （`asm_parse`/`asm_arrangement_pairs`/`asm_provenance`）会撞 sysroot 与
+      # crates.io 的同名包：`error: cannot satisfy dependencies so `hashbrown` only
+      # shows up once`（同族还有 cfg_if/std_detect/panic_unwind/rustc_demangle/
+      # windows_link）。实测（run 38142845046 的 job 日志）**lib 编得过**、错的只有
+      # test 目标 ⇒ 收窄到 `--lib` 保留本 job 的目的（forge-rustc 后端集成的 nightly 面
+      # 都在 lib 里），端到端覆盖由 `forge-rustc (e2e, Windows)` 与 workspace 两个 job 负责。
+      - run: cargo test -p forge-tests --features nightly --lib
 
   # Docs check
   docs:

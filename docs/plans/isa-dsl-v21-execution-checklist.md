@@ -1256,12 +1256,13 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 | Test (Linux) | ✅ | 含 arm64 / riscv64 QEMU 矩阵**真跑** |
 | forge-rustc (e2e, Windows) | ✅ | stage A + M4 并行 + `cargo-forge cli_tests` |
 | forge-rustc (check) / Format / Clippy / Docs / Coverage / Benchmarks (check) | ✅ | Clippy 两条门槛（`--all-features -D warnings` 与 `forge-ir --no-default-features`）零告警 |
-| **forge-tests (nightly / forge-rustc)** | ❌ | 失败步 = `cargo test -p forge-tests --features nightly` |
-| **Test (macOS)** | ❌ | 失败步 = `cargo test --workspace --exclude forge-rustc` |
+| **forge-tests (nightly / forge-rustc)** | ❌ → 已修 | 失败步 = `cargo test -p forge-tests --features nightly`。**根因**：`nightly` 开的是 **crate 级** `feature(rustc_private)`（`forge-tests/src/lib.rs:7`）⇒ 该 crate 的**每个 test 目标**都被带上 rustc_private ⇒ 纯汇编目标（`asm_parse`/`asm_arrangement_pairs`/`asm_provenance`）撞 sysroot 与 crates.io 同名包：13 条 `error: cannot satisfy dependencies so X only shows up once`（`hashbrown`/`cfg_if`/`std_detect`/`panic_unwind`/`rustc_demangle`/`windows_link`…）。**证据**：日志里 **lib 编得过**、报错的只有 test 目标。**处置**：CI 步收窄为 `cargo test -p forge-tests --features nightly --lib`（nightly 面都在 lib 里；端到端由 `forge-rustc (e2e, Windows)` 与 workspace 两个 job 覆盖）。 |
+| **Test (macOS)** | ❌ → 已修 | 失败步 = `cargo test --workspace --exclude forge-rustc`，**唯一失败用例** `crates/tools/forge-tests/tests/asm_exec.rs:62`：macOS 上 x86 原生执行不支持（代码按 Windows x64 ABI 生成）、QEMU 未安装 ⇒ 三通道全缺（`ASM-EXEC-SUMMARY ran=0 skipped=3`）⇒ 旧断言"一条都没跑成 ⇒ 失败"**必然红**。**处置**：改为"**有可用通道却一条没跑成才失败**"（与 JIT 矩阵"缺通道不假绿"同口径）；本机实测 Windows 通道仍真跑 `ran=10 skipped=0` ✓ 门禁未削弱。 |
 
-- ⚠️ **两条红灯的失败日志本机读不到**：GitHub 的 job 日志接口对非管理员返回
-  `403 Must have admin rights to Repository`（run 页面可见、日志需仓库权限）⇒ 失败**用例名**未知，
-  只能记到 job 与步骤粒度。二者都需在 macOS / nightly-`rustc-dev` 环境复现，本机（Windows + stable 面）不具备。
+- 失败**日志**本轮由用户提供（`target/tmp/logs_103341893252/`，113 个文件）⇒ 上面两条都定位到**具体断言/具体错误**；
+  GitHub 的 job 日志接口对非管理员仍返回 `403 Must have admin rights to Repository`，所以此前只能记到 job 粒度。
+- 两处修改都是本机可验证的那一类：macOS 那条由本机跑通 `asm_exec`（`ran=10 skipped=0`）背书；CI 那条依据
+  日志里"lib 编得过、只有 test 目标报错"的事实收窄（本机无 nightly + `rustc-dev`，无法整段复现 —— 这是环境限制）。
 - 本机对同一提交的等价验证：`cargo test --workspace --exclude forge-rustc -j 2` exit 0、
   `cargo test -p forge-codegen --features jit` exit 0、`cargo fmt --all -- --check` 0 文件、
   两条 clippy CI 门槛 exit 0。
