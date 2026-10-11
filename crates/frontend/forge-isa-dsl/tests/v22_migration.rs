@@ -128,6 +128,36 @@ fn fixture_specs_migrate_with_byte_identical_expansion() {
     assert!(checked > 0, "至少应迁移到一份夹具（否则用例没覆盖到东西）");
 }
 
+/// 旧 `bind` 值里的 `[名字]` 是**内存形态**标记（不能由槽 kind 推出：reg 槽也会这么用）
+/// ⇒ 迁移必须保形为 `{@[字段]:槽}`，不能只剩 `{@字段:槽}`。
+#[test]
+fn memory_form_marker_is_preserved() {
+    let src = r#"[meta]
+name = "t"
+
+[encoding]
+kind = "prefix_scan"
+max_len = 8
+
+[form.M]
+fields = ["u8[7:0]:opcode"]
+
+[inst.LD]
+form = "M"
+opcode = 0x10
+ops = ["dst:g:out", "mem:mem"]
+bind = { rm = "[mem]" }
+asm = "ld {dst}, {mem}"
+"#;
+    let out = v22_migrate::migrate_spec_text(src).expect("迁移");
+    assert!(
+        out.contains("{@[rm]:mem}{mem:mem}"),
+        "内存形态应写成 `@[字段]:槽`：\n{out}"
+    );
+    assert!(!out.contains("bind ="), "旧 bind 键应被删掉");
+    assert!(!out.contains("ops ="), "旧 ops 键应被删掉");
+}
+
 /// 迁移器对"已经是新写法"的输入必须明确报错（不许半迁移）。
 #[test]
 fn already_inline_input_is_rejected() {

@@ -17,6 +17,8 @@ struct OpDecl {
     role: Option<String>,
     /// 显式绑定到的字段名（旧 `bind`；方向在解析期已归一成"操作数 → 字段"）。
     field: Option<String>,
+    /// 旧 `bind` 的值写成 `[名字]` ⇒ 该操作数按**内存形态**走（新语法里写 `@[字段]`）。
+    mem_form: bool,
 }
 
 impl OpDecl {
@@ -28,16 +30,16 @@ impl OpDecl {
         }
     }
 
-    /// 绑定形态：`@字段:槽[:角色]`。
+    /// 绑定形态：`@字段:槽[:角色]`；内存形态 `@[字段]:槽[:角色]`（与旧 `[名字]` 同形）。
     fn bind(&self) -> String {
+        let field = if self.mem_form {
+            format!("[{}]", self.field.as_deref().unwrap_or(""))
+        } else {
+            self.field.as_deref().unwrap_or("").to_string()
+        };
         match &self.role {
-            Some(r) => format!(
-                "@{}:{}:{}",
-                self.field.as_deref().unwrap_or(""),
-                self.slot,
-                r
-            ),
-            None => format!("@{}:{}", self.field.as_deref().unwrap_or(""), self.slot),
+            Some(r) => format!("@{field}:{}:{r}", self.slot),
+            None => format!("@{field}:{}", self.slot),
         }
     }
 }
@@ -67,6 +69,7 @@ fn parse_ops(line: &str) -> Result<Vec<OpDecl>, String> {
             slot,
             role,
             field: None,
+            mem_form: false,
         });
     }
     if out.is_empty() {
@@ -199,14 +202,19 @@ pub fn migrate_spec_text(src: &str) -> Result<String, String> {
             let mut decls = parse_ops(&block[oi])?;
             if let Some(bi) = bind_line {
                 for (k, v) in parse_bind(&block[bi])? {
-                    // x86：值是操作数名（`[mem]` 表示内存形态的 `mem`）；定宽：键是操作数名。
-                    let (op, field) = if prefix_scan {
-                        (v.trim_matches(['[', ']']).to_string(), k)
+                    // x86：值是操作数名（`[mem]` 表示该操作数走**内存形态**）；定宽：键是操作数名。
+                    let (op, field, mem_form) = if prefix_scan {
+                        (
+                            v.trim_matches(['[', ']']).to_string(),
+                            k,
+                            v.starts_with('['),
+                        )
                     } else {
-                        (k, v)
+                        (k, v, false)
                     };
                     if let Some(d) = decls.iter_mut().find(|d| d.name == op) {
                         d.field = Some(field);
+                        d.mem_form = mem_form;
                     } else {
                         return Err(format!(
                             "[inst.{inst}] bind 指向的操作数 `{op}` 不在 ops 里（ops: {}）",

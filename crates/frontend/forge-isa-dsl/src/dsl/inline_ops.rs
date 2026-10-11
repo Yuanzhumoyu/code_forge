@@ -36,9 +36,12 @@ enum Ph {
         slot: String,
         role: OperandRole,
     },
-    /// `{@字段:槽[:角色]}`：把**后续**那个操作数绑到 `字段`。
+    /// `{@字段:槽[:角色]}`：把**后续**那个操作数绑到 `字段`；
+    /// 字段写成 `[字段]`（方括号）= 该操作数按**内存形态**（MemRef）走——与旧 `bind` 的
+    /// `rm = "[mem]"` 同形（这条信息**不能**由槽 kind 推出：reg 槽也会这么用）。
     Bind {
         field: String,
+        mem: bool,
         slot: String,
         role: OperandRole,
     },
@@ -87,13 +90,36 @@ fn scan(tpl: &str, ctx: &str, out: &mut String) -> Result<Vec<Ph>, String> {
         };
         let inner = tpl[i + 1..i + rel].trim();
         if let Some(rest) = inner.strip_prefix('@') {
-            // 绑定占位符：自身不打印（从模板里删掉）。
+            // 绑定占位符：自身不打印（从模板里删掉）。`[字段]` = 内存形态。
+            let (field_raw, rest) = match rest.trim().strip_prefix('[') {
+                Some(r) => match r.split_once(']') {
+                    Some((f, tail)) => (f.trim().to_string(), tail.trim_start_matches(':')),
+                    None => {
+                        return Err(format!(
+                            "{ctx}: 绑定占位符 '{{{inner}}}' 的方括号未闭合（`{{@[字段]:槽}}`）"
+                        ));
+                    }
+                },
+                None => (String::new(), rest.trim()),
+            };
+            let mem = !field_raw.is_empty();
             let (field, slot, role) = split_decl(rest).ok_or_else(|| {
                 format!(
                     "{ctx}: 绑定占位符 '{{{inner}}}' 形如 `{{@字段:槽[:角色]}}`（槽必写，角色取 in/out/inout）"
                 )
             })?;
-            phs.push(Ph::Bind { field, slot, role });
+            // 无方括号时，`split_decl` 的第一个分量就是字段名。
+            let (field, _) = if mem {
+                (field_raw, field)
+            } else {
+                (field, String::new())
+            };
+            phs.push(Ph::Bind {
+                field,
+                mem,
+                slot,
+                role,
+            });
         } else if inner.contains(':') {
             let (name, slot, role) = split_decl(inner).ok_or_else(|| {
                 format!(
@@ -111,8 +137,8 @@ fn scan(tpl: &str, ctx: &str, out: &mut String) -> Result<Vec<Ph>, String> {
     Ok(phs)
 }
 
-/// 一份模板的操作数声明（含绑定字段）。
-type Decl = (String, String, OperandRole, Option<String>);
+/// 一份模板的操作数声明（含绑定字段与"内存形态"位）。
+type Decl = (String, String, OperandRole, Option<String>, bool);
 
 /// 一条指令的抽取结果：声明表 + 重写后的模板表。
 struct Extraction {
@@ -132,24 +158,29 @@ fn extract_one(inst: &Instruction) -> Result<Option<Extraction>, String> {
         let mut out = String::with_capacity(tpl.len());
         let phs = scan(tpl, &ctx, &mut out)?;
         let mut cur: Vec<Decl> = Vec::new();
-        let mut pending: Option<(String, String, OperandRole)> = None;
+        let mut pending: Option<(String, String, OperandRole, bool)> = None;
         for ph in &phs {
             match ph {
-                Ph::Bind { field, slot, role } => {
+                Ph::Bind {
+                    field,
+                    mem,
+                    slot,
+                    role,
+                } => {
                     if pending.is_some() {
                         return Err(format!(
                             "{ctx}: 连续两个绑定占位符（`{{@{field}:{slot}}}` 前面那个还没找到操作数）"
                         ));
                     }
-                    pending = Some((field.clone(), slot.clone(), *role));
+                    pending = Some((field.clone(), slot.clone(), *role, *mem));
                 }
                 Ph::Decl { name, slot, role } => {
                     if cur.iter().any(|d| d.0 == *name) {
                         return Err(format!("{ctx}: 操作数名 '{name}' 重复声明"));
                     }
-                    let bound = match pending.take() {
-                        None => None,
-                        Some((field, bslot, brole)) => {
+                    let (bound, mem) = match pending.take() {
+                        None => (None, false),
+                        Some((field, bslot, brole, bmem)) => {
                             if bslot != *slot {
                                 return Err(format!(
                                     "{ctx}: `{{@{field}:{bslot}}}` 指向的操作数 `{name}` 的槽是 `{slot}`——槽必须一致"
@@ -163,15 +194,15 @@ fn extract_one(inst: &Instruction) -> Result<Option<Extraction>, String> {
                             if cur.iter().any(|d| d.3.as_deref() == Some(field.as_str())) {
                                 return Err(format!("{ctx}: 字段 `{field}` 被绑定两次"));
                             }
-                            Some(field.clone())
+                            (Some(field.clone()), bmem)
                         }
                     };
-                    cur.push((name.clone(), slot.clone(), *role, bound));
+                    cur.push((name.clone(), slot.clone(), *role, bound, mem));
                 }
                 Ph::Ref(_) => {}
             }
         }
-        if let Some((field, slot, _)) = pending {
+        if let Some((field, slot, _, _)) = pending {
             return Err(format!(
                 "{ctx}: 绑定占位符 `{{@{field}:{slot}}}` 后面没有操作数声明——绑定必须紧挨着它的操作数"
             ));
@@ -187,13 +218,13 @@ fn extract_one(inst: &Instruction) -> Result<Option<Extraction>, String> {
                 // 同一指令的多个模板是同一声明表的**子序列**（模板可以只打印一部分操作数，
                 // 旧写法共享一份 `ops` 时就是这样）：共享名字的 槽/角色/绑定 必须一致，
                 // 新名字按它在本模板里的相邻关系插进汇总序。
-                for (i, (name, slot, role, field)) in cur.iter().enumerate() {
+                for (i, (name, slot, role, field, mem)) in cur.iter().enumerate() {
                     if let Some(pos) = d.iter().position(|x| x.0 == *name) {
-                        let (_, s0, r0, f0) = &d[pos];
-                        if s0 != slot || r0 != role || f0 != field {
+                        let (_, s0, r0, f0, m0) = &d[pos];
+                        if s0 != slot || r0 != role || f0 != field || m0 != mem {
                             return Err(format!(
                                 "{ctx}: 操作数 `{name}` 在不同 asm 模板里的声明不一致\
-                                 （槽/角色/绑定必须一致）"
+                                 （槽/角色/绑定/内存形态必须一致）"
                             ));
                         }
                     } else {
@@ -203,7 +234,7 @@ fn extract_one(inst: &Instruction) -> Result<Option<Extraction>, String> {
                             .find_map(|(p, ..)| d.iter().position(|x| x.0 == *p))
                             .map(|p| p + 1)
                             .unwrap_or(0);
-                        d.insert(at, (name.clone(), slot.clone(), *role, field.clone()));
+                        d.insert(at, (name.clone(), slot.clone(), *role, field.clone(), *mem));
                     }
                 }
                 // 汇总序必须与本模板的相对序一致（顺序 = 编码序）。
@@ -295,12 +326,12 @@ pub fn extract_inline_ops(m: &mut IsaModel) -> Result<(), String> {
         let mut bind: BTreeMap<String, String> = BTreeMap::new();
         let ops: Vec<String> = decls
             .iter()
-            .map(|(name, slot, role, field)| {
+            .map(|(name, slot, role, field, mem)| {
                 if let Some(f) = field {
                     if streamed {
-                        // 旧拼法：内存形态的操作数写成 `[名字]`（新语法里由槽 `kind = "mem"` 决定，
-                        // 这里在桥接期原样还原，保证下游判定与迁移前一致）。
-                        let val = if mem_slots.contains(slot) {
+                        // 旧拼法：内存形态的操作数写成 `[名字]`——**作者显式标注优先**
+                        // （`{@[rm]:mem}`），否则由槽 `kind = "mem"` 推断。
+                        let val = if *mem || mem_slots.contains(slot) {
                             format!("[{name}]")
                         } else {
                             name.clone()
