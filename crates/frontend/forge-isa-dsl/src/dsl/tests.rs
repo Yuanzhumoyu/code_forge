@@ -2158,11 +2158,7 @@ fn lowering_allows_same_insts_with_different_when() {
 /// 模板展开出的实例指令名也算已声明（实例名 = `rows[].inst`）。
 #[test]
 fn lowering_accepts_template_instance_name() {
-    let rule = "[family.F]\n\
-                body = { form = \"RR\", ops = [\"dst:g:out\", \"src:g\"], \
-                asm = \"{inst.lower} {dst}, {src}\" }\n\
-                rows = [ { inst = \"NEG\", opcode = 9 } ]\n\
-                [[lower.Ineg]]\ninsts = [\"NEG {out}, {0}\"]";
+    let rule = "[family.F]\nbody = { form = \"RR\", asm = \"{inst.lower} {dst:g:out}, {src:g}\" }\nrows = [ { inst = \"NEG\", opcode = 9 } ]\n[[lower.Ineg]]\ninsts = [\"NEG {out}, {0}\"]";
     parse_and_validate(&lowering_doc(rule)).expect("模板实例指令名必须被识别");
 }
 
@@ -4519,9 +4515,7 @@ fn lower_jmp_spec_path_is_used() {
     // 需要一条**终结角色**指令才会生成 `lower_terminator` 实体（`has_ret || has_jmp || has_jcc`）
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[inst.MYJMP]\nform = \"C\"\nopcode = 0x91\n\
-ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"myjmp {dst}, {cond}\"\nroles = [\"jump\"]\n\
-[[lower.Jmp]]\ninsts = [\"SETC {out}, {cc}\"]",
+        "[inst.MYJMP]\nform = \"C\"\nopcode = 0x91\nasm = \"myjmp {dst:g:out}, {cond:cc}\"\nroles = [\"jump\"]\n[[lower.Jmp]]\ninsts = [\"SETC {out}, {cc}\"]",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let s = super::codegen::generate(&m).expect("生成").to_string();
@@ -4706,11 +4700,7 @@ fn explicit_temps_are_enforced() {
 fn branch_form_comes_from_spec_not_role_table() {
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[inst.BRROLE]\nform = \"C\"\nopcode = 0x92\n\
-ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"brrole {dst}, {cond}\"\nroles = [\"branch\"]\n\
-[inst.BRCHOSEN]\nform = \"C\"\nopcode = 0x93\n\
-ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"brchosen {dst}, {cond}\"\n\
-[[lower.Br]]\ninsts = [\"BRCHOSEN {cond}, {cc}\"]",
+        "[inst.BRROLE]\nform = \"C\"\nopcode = 0x92\nasm = \"brrole {dst:g:out}, {cond:cc}\"\nroles = [\"branch\"]\n[inst.BRCHOSEN]\nform = \"C\"\nopcode = 0x93\nasm = \"brchosen {dst:g:out}, {cond:cc}\"\n[[lower.Br]]\ninsts = [\"BRCHOSEN {cond}, {cc}\"]",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let s = super::codegen::generate(&m).expect("生成").to_string();
@@ -4741,8 +4731,7 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"brchosen {dst}, {cond}\"\n\
 fn asm_accepts_a_list_of_spellings() {
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[inst.ALT]\nform = \"C\"\nopcode = 0x94\n\
-ops = [\"dst:g:out\", \"cond:cc\"]\nasm = [\"alt {dst}, {cond}\", \"alt {cond}, {dst}\"]",
+        "[inst.ALT]\nform = \"C\"\nopcode = 0x94\nasm = [\"alt {dst:g:out#0}, {cond:cc#1}\", \"alt {cond:cc#1}, {dst:g:out#0}\"]",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let a = m
@@ -4767,8 +4756,7 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = [\"alt {dst}, {cond}\", \"alt {cond}, 
 fn alternative_spellings_are_emitted() {
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[inst.ALT]\nform = \"C\"\nopcode = 0x94\n\
-ops = [\"dst:g:out\", \"cond:cc\"]\nasm = [\"altone {dst}, {cond}\", \"alttwo {dst}, {cond}\"]",
+        "[inst.ALT]\nform = \"C\"\nopcode = 0x94\nasm = [\"altone {dst:g:out}, {cond:cc}\", \"alttwo {dst:g:out}, {cond:cc}\"]",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let s = super::codegen::generate(&m).expect("生成").to_string();
@@ -4786,10 +4774,7 @@ fn asm_ambiguity_is_reported_when_opted_in() {
     // 两条同助记符同操作数类的指令
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[inst.AMB1]\nform = \"C\"\nopcode = 0x95\n\
-ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"amb {dst}, {cond}\"\n\
-[inst.AMB2]\nform = \"C\"\nopcode = 0x96\n\
-ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"amb {dst}, {cond}\"",
+        "[inst.AMB1]\nform = \"C\"\nopcode = 0x95\nasm = \"amb {dst:g:out}, {cond:cc}\"\n[inst.AMB2]\nform = \"C\"\nopcode = 0x96\nasm = \"amb {dst:g:out}, {cond:cc}\"",
     );
     // 默认档：不报歧义
     let off = super::codegen::lint_for_test(&doc, false);
@@ -4831,8 +4816,7 @@ fn placeholder_modifiers_are_rejected() {
 fn normalization_rejects_placeholder_modifiers() {
     let doc = gen_cond_doc(
         CC_ALL_FULL,
-        "[inst.MODS]\nform = \"C\"\nopcode = 0x97\n\
-ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"mods {dst}, {cond}\"",
+        "[inst.MODS]\nform = \"C\"\nopcode = 0x97\nasm = \"mods {dst:g:out}, {cond:cc}\"",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let i = m

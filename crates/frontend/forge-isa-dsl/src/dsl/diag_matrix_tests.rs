@@ -156,8 +156,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "指令 match 引用未声明字段",
             plus(
-                "[inst.BAD2]\nform = \"R\"\nopcode = 0x33\n\
-                 match = { nope = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"bad2 {dst}\"",
+                "[inst.BAD2]\nform = \"R\"\nopcode = 0x33\nmatch = { nope = 0 }\nasm = \"bad2 {dst:gpr:out}\"",
             ),
             "DSL-INST",
             "nope",
@@ -171,8 +170,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "指令引用未声明槽",
             plus(
-                "[inst.SUB]\nform = \"R\"\nopcode = 0x33\n\
-                 match = { funct3 = 0 }\nops = [\"dst:nope:out\"]\nasm = \"sub {dst}\"",
+                "[inst.SUB]\nform = \"R\"\nopcode = 0x33\nmatch = { funct3 = 0 }\nasm = \"sub {dst:nope:out}\"",
             ),
             "DSL-INST",
             "nope",
@@ -180,8 +178,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "指令重名",
             plus(
-                "[inst.ADD]\nform = \"R\"\nopcode = 0x33\n\
-                 match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"add {dst}\"",
+                "[inst.ADD]\nform = \"R\"\nopcode = 0x33\nmatch = { funct3 = 0 }\nasm = \"add {dst:gpr:out}\"",
             ),
             // v21 W10：表头即指令名 ⇒ 重名由 TOML 拒绝（不再有编译期重名诊断）。
             "DSL-TOML",
@@ -196,9 +193,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "模板行缺编码信息",
             plus(
-                "[family.F]\n\
-                 body = { form = \"R\", ops = [\"dst:gpr:out\"], asm = \"f {dst}\" }\n\
-                 rows = [ { inst = \"V1\" } ]",
+                "[family.F]\nbody = { form = \"R\", asm = \"f {dst:gpr:out}\" }\nrows = [ { inst = \"V1\" } ]",
             ),
             "DSL-TEMPLATE",
             "编码信息",
@@ -206,9 +201,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "模板实例重名",
             plus(
-                "[family.F]\n\
-                 body = { form = \"R\", opcode = 0x33, ops = [\"dst:gpr:out\"], asm = \"f {dst}\" }\n\
-                 rows = [ { inst = \"V1\" }, { inst = \"V1\" } ]",
+                "[family.F]\nbody = { form = \"R\", opcode = 0x33, asm = \"f {dst:gpr:out}\" }\nrows = [ { inst = \"V1\" }, { inst = \"V1\" } ]",
             ),
             "DSL-INST",
             "duplicate instruction name",
@@ -216,8 +209,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "引用名与指令名冲突",
             plus(
-                "[inst.SUB]\ngroup = \"ADD\"\nform = \"R\"\nopcode = 0x33\n\
-                 match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"sub {dst}\"",
+                "[inst.SUB]\ngroup = \"ADD\"\nform = \"R\"\nopcode = 0x33\nmatch = { funct3 = 0 }\nasm = \"sub {dst:gpr:out}\"",
             ),
             "DSL-INST",
             "与指令名冲突",
@@ -225,8 +217,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "引用名为空",
             plus(
-                "[inst.SUB]\ngroup = \"\"\nform = \"R\"\nopcode = 0x33\n\
-                 match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"sub {dst}\"",
+                "[inst.SUB]\ngroup = \"\"\nform = \"R\"\nopcode = 0x33\nmatch = { funct3 = 0 }\nasm = \"sub {dst:gpr:out}\"",
             ),
             "DSL-INST",
             "ref 不能为空",
@@ -302,9 +293,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "角色名拼错（v20 A4 的 frame_set 写成 frame_sett）",
             plus(
-                "[inst.SETF]\nform = \"R\"\nopcode = 0x7F\n\
-                 match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"setf {dst}\"\n\
-                 roles = [\"frame_sett\"]",
+                "[inst.SETF]\nform = \"R\"\nopcode = 0x7F\nmatch = { funct3 = 0 }\nasm = \"setf {dst:gpr:out}\"\nroles = [\"frame_sett\"]",
             ),
             "DSL-TOML",
             "frame_sett",
@@ -342,9 +331,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "模板 rows 为空",
             plus(
-                "[family.F]\n\
-                 body = { form = \"R\", opcode = 0x33, ops = [\"dst:gpr:out\"], asm = \"f {dst}\" }\n\
-                 rows = []",
+                "[family.F]\nbody = { form = \"R\", opcode = 0x33, asm = \"f {dst:gpr:out}\" }\nrows = []",
             ),
             "DSL-TOML",
             "rows 不能为空",
@@ -398,8 +385,7 @@ fn headline_positions_are_exact() {
     // 重名：v21 W10 起**表头即指令名** ⇒ 重复表头由 **TOML 自身**拒绝（不再是校验期诊断），
     // 且错误位置落在第二处声明上。
     let dup = plus(
-        "[inst.ADD]\nform = \"R\"\nopcode = 0x33\n\
-         match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"add {dst}\"",
+        "[inst.ADD]\nform = \"R\"\nopcode = 0x33\nmatch = { funct3 = 0 }\nasm = \"add {dst:gpr:out}\"",
     );
     let d = errs(&dup)
         .into_iter()
@@ -491,8 +477,7 @@ when = { eq = ["rd_width", 32] }
 #[test]
 fn duplicate_declaration_points_at_both_lines() {
     let doc = plus(
-        "[inst.ADD]\nform = \"R\"\nopcode = 0x33\n\
-         match = { funct3 = 0 }\nops = [\"dst:gpr:out\"]\nasm = \"add {dst}\"",
+        "[inst.ADD]\nform = \"R\"\nopcode = 0x33\nmatch = { funct3 = 0 }\nasm = \"add {dst:gpr:out}\"",
     );
     // v21 W10：重复表头由 TOML 拒绝（不再是"同名声明也出现在…"的附注）。
     let dups = errs(&doc)

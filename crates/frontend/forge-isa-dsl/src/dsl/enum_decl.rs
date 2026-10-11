@@ -145,8 +145,7 @@ fields = ["u4[15:12]:opcode", "u4[11:8]:rd"]
 [inst.N]
 form = "R"
 opcode = 1
-ops = ["dst:g:out"]
-asm = "n {dst}"
+asm = "n {dst:g:out}"
 "#;
 
     #[test]

@@ -754,7 +754,7 @@ rows = [
             .replace("{ inst = \"SUB\", opcode = 3 }", "{ inst = \"SUB\", opcode = 7 }")
             .replace(
                 "[family.ALU]",
-                "[inst.NOP]\nform = \"RR\"\nopcode = 0\nops = [\"dst:r:out\", \"src:r\"]\nasm = \"nop {dst}, {src}\"\n\n[family.ALU]",
+                "[inst.NOP]\nform = \"RR\"\nopcode = 0\nasm = \"nop {dst:r:out}, {src:r}\"\n\n[family.ALU]",
             );
         let d = diff(SPEC, &other).expect("合法");
         assert_eq!(d.added, vec!["NOP"]);

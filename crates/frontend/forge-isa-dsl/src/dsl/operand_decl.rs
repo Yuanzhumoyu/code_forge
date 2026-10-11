@@ -301,8 +301,7 @@ fields = [
 [inst.LD]
 form = "M"
 opcode = 1
-ops = ["dst:r:out", "src:mem"]
-asm = "ld {dst}, {src}"
+asm = "ld {dst:r:out}, {src:mem}"
 "#;
         let m = crate::dsl::parse_and_validate(src).expect("谱合法");
         assert_eq!(m.operand_slots.len(), 2);
