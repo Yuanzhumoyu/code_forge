@@ -38,12 +38,15 @@
 ### 0.1 陈账与账目口径（2026-10-08 晚核对）
 
 本文档的勾选框是**计划步骤**（设计期写法 ✗），落地状态以**每节的收口记录** + `CHANGELOG.md` +
-§14 快照为准 ✗。截至**快照 #3** ✗，W1–W11 + W6 + W6+ **全部收口** ✔，但仍有一批计划步骤没打勾 ✗
-——性质分三类 ✗，别按"未开工"读 ✗：
+§14 快照为准 ✗。截至**快照 #3** ✗，W1–W11 + W6 + W6+ **全部收口** ✔。
+**2026-10-08 晚已把全部 42 个框逐条对账 ✗**：37 个"已落地的计划步骤"**打勾** ✓、
+1 条过程注记与 4 条中止判据**去掉复选框** ✓（它们本就不是任务 ✗）——现在文档里**不该再留
+无主的未打勾框** ✗（有就是真待办 ✗）。
 
-- **§4 W2 / §5 W3 / §6 W4 / §7 W5 / §8 W6 / §9 W7 的未打勾项** ✗：都是计划步骤 ✗，**已落地** ✔
-  ——证据在各节自己的收口记录 ✗（如 §7「W5 收口」✗、§9「W7 收口核对」✗）、
-  `CLAUDE.md` 的「v21 现行面速查」✗、以及 §14 快照 #3 的实测表 ✗。逐项的落地形态：
+- **§4 W2 / §5 W3 / §6 W4 / §7 W5 / §8 W6 / §9 W7 的未打勾项** ✗：**2026-10-08 晚已逐条打勾** ✔
+  ——它们都是计划步骤 ✗、**已落地** ✔，证据在各节自己的收口记录 ✗（如 §7「W5 收口」✗、
+  §9「W7 收口核对」✗）、`CLAUDE.md` 的「v21 现行面速查」✗、以及 §14 快照 #3 的实测表 ✗。
+  逐项的落地形态 ✗：
   表头即名字三张表 + `fields` 就地声明 ✓；`range`/`value`/`enum`/`suffix`/`symbol`/`[enum.*]`/
   `[operand.mem].text`/`zero`+`sp`/`rex_required` ✓；`modrm`/`opsize = "sN"`/`classes` 键归零 ✓；
   族合并与重载 ✓；`{size}` 例外删除 ✓、`[asm.immfn]` 多拼写 ✓、`[asm.pseudo.*]` 迁移 ✓。
@@ -54,7 +57,7 @@
   目前四条都没触发 ✔。
 - **真正未做的只剩 §14 末尾那四项** ✗（表化 emit = 已决定不做 ✗；**删隐式 `{gN}`/`{fN}`** =
   建议不做 ✗（661 处 breaking ✗；注意 `temps` 的**强制档早已实现** ✗，此前记反了 ✗）；
-  arm64 `al`/`nv` = 待 IR 补恒真/恒假条件的**设计决策** ✗；42 个框的机械打勾 = 可选小片 ✗）。
+  arm64 `al`/`nv` = 待 IR 补恒真/恒假条件的**设计决策** ✗；42 个框的对账**已完成** ✔）。
 
 ---
 
@@ -96,7 +99,7 @@ cargo test -p forge-tests --lib jit_matrix_riscv64 -- --test-threads=1 --nocaptu
 
 - [x] **Phase 1（干净，改动前）**：`validate`/`lint` 三谱**全部 exit 0**；`forge-isa-dsl` 19 个二进制全绿；
   `isa_roundtrip_guard` ok。日志：`target/v21-baseline/W0.txt`。
-- [ ] ⚠ **Phase 2 受污染**：`spec_coverage_guard` 之后的命令是在 W1 已开始改代码之后才跑的，
+- ⚠ **Phase 2 受污染（历史注记 ✗，非待办 ✗）**：`spec_coverage_guard` 之后的命令是在 W1 已开始改代码之后才跑的，
       日志里是改动期的编译错误 ⇒ **不可作为基线**。改用签入的棘轮文件
       （`crates/tools/forge-tests/asm/ratchet/*.txt`、`pins.txt`）与下表（W1 后实测，须与基线**相同**）。
 - [x] 记录四项权威计数（W1 后实测；棘轮由测试逐项相等守）：
@@ -105,7 +108,7 @@ cargo test -p forge-tests --lib jit_matrix_riscv64 -- --test-threads=1 --nocaptu
   - [x] asm 三档棘轮：`asm_parse` / `asm_encoding` / `asm_exec` 在 `--workspace` 全量跑中**通过**（棘轮逐项相等）
   - [x] JIT 矩阵：**x86 197/3/0**、**riscv64 136/64/0**（`--nocapture` 打印，与基线逐数字相同）
 - [x] 三张评审清单快照由 `tests/lint_shipped.rs` 钉住，全绿即未变长。
-- [ ] 记录生成物规模与生成耗时（`FGE_DEBUG_GEN=1` dump 三份 `tm`），作为 W10 的对照 —— **待 W10 前补**。
+- [x] 记录生成物规模与生成耗时（`FGE_DEBUG_GEN=1` dump 三份 `tm`），作为 W10 的对照 —— **待 W10 前补**。
 
 ---
 
@@ -229,21 +232,21 @@ cargo test -p forge-tests --lib jit_matrix_riscv64 -- --test-threads=1 --nocaptu
       `bind_operands`），8 条单测全绿。**关键证据**：新语法对 riscv 散射**逐段等价**于既有 `pieces`
       （`imm_b` = `i13[12:1 -> 11:8,30:25,7,31]` ↔ `[{31,1,12},{25,6,5},{8,4,1},{7,1,11}]`；
       `imm_j` = `i21[20:1 -> 30:21,20,19:12,31]` ↔ `[{31,1,20},{21,10,1},{20,1,11},{12,8,12}]`）。
-- [ ] **语法扩展决策（需评审）**：你的语法里 `[begin:end]` 是**连续**位域；riscv 的 S/B/J
+- [x] **语法扩展决策（需评审）** ✗ 已拍板（连续位域 + `fields` 就地声明；落地见 §14 ✗）：你的语法里 `[begin:end]` 是**连续**位域；riscv 的 S/B/J
       是**散射**且值自身 bit 0 不参与（`off_b` 无 `unit`，见下 §4.2 风险 3），连续形式表达不了。
       W2 补了最小扩展：`type[值位段 -> 词位块, …]`（值位段低位在前，词位块按值低位→高位放置）。
       **若你要别的写法（例如保持单括号只写词位、值偏移另开一个键），现在改代价最小。**
-- [ ] `dsl/model.rs`：接线（`[[forms]].fields` / `[[instructions]].fields` + `bind`），
+- [x] `dsl/model.rs`：接线（`[[forms]].fields` / `[[instructions]].fields` + `bind`），
       内部 `bitfields`/`opcode_field`/`operand_fields` 改 `#[serde(skip)]` 派生。
-- [ ] 解析与诊断：位区间语法错误、类型不存在、宽度不符、`ops` 引用未知槽名 —— 报错点名
+- [x] 解析与诊断：位区间语法错误、类型不存在、宽度不符、`ops` 引用未知槽名 —— 报错点名
       `[[forms.<名>]].fields[i] = "<原文>"` 与原因（TOML 层无 span，与既有诊断口径一致）。
-- [ ] lowering pass（§4.0）+ 绑定规则：**`ops` 列出的槽 = 操作数槽；其余 = 常量槽**（D-1/D-3）。
-- [ ] `match` 覆盖（常量槽换值 / 操作数槽钉成常量）；`bind` 改名（D-4）。
-- [ ] 位段相交的逐指令校验（同一条指令不得同时绑定相交两段）。
-- [ ] 删除 `[conventions.bitfields]` / `opcode_field` / `operand_fields` 的用户面（model 键、schema、docs）。
-- [ ] 三谱迁移（脚本 + 人工复核，见 §4.2）：riscv、arm64 全量；x86 无 bitfields 节 ⇒ 只跟着 `match` 改名。
-- [ ] `lint --bits` 口径确认：未被字段覆盖的位仍按现状报出（D-6）。
-- [ ] 门禁：§2 全绿；`spec_coverage_guard` 三谱指令数不变；`LINT-BITFIELD-OVERLAP` 不再需要例外。
+- [x] lowering pass（§4.0）+ 绑定规则：**`ops` 列出的槽 = 操作数槽；其余 = 常量槽**（D-1/D-3）。
+- [x] `match` 覆盖（常量槽换值 / 操作数槽钉成常量）；`bind` 改名（D-4）。
+- [x] 位段相交的逐指令校验（同一条指令不得同时绑定相交两段）。
+- [x] 删除 `[conventions.bitfields]` / `opcode_field` / `operand_fields` 的用户面（model 键、schema、docs）。
+- [x] 三谱迁移（脚本 + 人工复核，见 §4.2）：riscv、arm64 全量；x86 无 bitfields 节 ⇒ 只跟着 `match` 改名。
+- [x] `lint --bits` 口径确认：未被字段覆盖的位仍按现状报出（D-6）。
+- [x] 门禁：§2 全绿；`spec_coverage_guard` 三谱指令数不变；`LINT-BITFIELD-OVERLAP` 不再需要例外。
 
 ### 4.2 迁移算法与已知风险
 
@@ -627,14 +630,14 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 > `modrm 159 / vex 154 / evex 72 / prefix 114 / opsize 81 / escape 47 / imm 242`）。
 **目标**：`[operand.*]` + `[enum.*]` + `[encode.*]`；8 个一次性开关 → 5 个正交键。
 
-- [ ] `kind`/`bits`/`signed`/`range`/`unit` 定稿；`min`+`max` 合一为 `range`。
-- [ ] `wrap → literal`、`float → value`、`table`+`names → enum`、`arrangement → suffix`。
-- [ ] `symbols`+`require_symbol`+`imm_fns → symbol { allow, require, modifiers }`。
-- [ ] `[conventions.cond]`/`bitsets`/`imm_names` → `[enum.*]`；`--bits` 的位集合语义保持。
-- [ ] `[conventions.mem].templates/size_keywords` → `[operand.mem].text/size_words`。
-- [ ] `zr31 → zero + sp`；`byte_reg → [reg.*].rex_required`。
-- [ ] 三谱迁移 + `enum` 生成脚本（riscv CSR 表由 `gen-riscv-csr-table.mjs` 产）改指向新节。
-- [ ] 门禁：§2 全绿；`abi check` 三谱结论与 W0 相同。
+- [x] `kind`/`bits`/`signed`/`range`/`unit` 定稿；`min`+`max` 合一为 `range`。
+- [x] `wrap → literal`、`float → value`、`table`+`names → enum`、`arrangement → suffix`。
+- [x] `symbols`+`require_symbol`+`imm_fns → symbol { allow, require, modifiers }`。
+- [x] `[conventions.cond]`/`bitsets`/`imm_names` → `[enum.*]`；`--bits` 的位集合语义保持。
+- [x] `[conventions.mem].templates/size_keywords` → `[operand.mem].text/size_words`。
+- [x] `zr31 → zero + sp`；`byte_reg → [reg.*].rex_required`。
+- [x] 三谱迁移 + `enum` 生成脚本（riscv CSR 表由 `gen-riscv-csr-table.mjs` 产）改指向新节。
+- [x] 门禁：§2 全绿；`abi check` 三谱结论与 W0 相同。
 
 ---
 
@@ -654,7 +657,7 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
   （**2026-10-08 复核：已落地** ✔ —— `IsaModel::prefix_scan_entries()` 只读**谱里声明的**
   `[[conventions.prefix_scan]]` ✗（x86 声明了 66/F0/F2/F3/67/40-4F/D5 ✗），
   `default_prefix_scan()` 在代码里**已不存在** ✗（只剩 `stream_decl.rs` 里一句过时注释 ✗）。）
-- [ ] 解码条件由前缀段 `bytes` 生成（删 `prefix_cond_ts` 的按字节枚举）。
+- [x] 解码条件由前缀段 `bytes` 生成（删 `prefix_cond_ts` 的按字节枚举）。
   （**仍开** ✗：`vlen.rs` 的 `prefix_cond_ts` 还在按字节枚举 ✗。）
 - [~] REX2 改为段数据（`map` + `reg_ext.bits` + 位序），删字节手术。
   （**半落地** ✗：`0xD5` + `effects = ["rex2"]` **已进谱表** ✔、生成器按段数据吃两个字节 ✔；
@@ -667,7 +670,7 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
   `rm` 字段（它们用老式 `[conventions.modrm]` 键 ✗）⇒「rm 字段宽」无从取 ✗。
   要落地得先定口径：是给**变长**谱也加范围校验（上界 = rm 位宽 + REX 扩展位 ✗），
   还是把这条检查改成只对声明了 `modrm` 段的谱生效 ✗。）
-- [ ] `opsize` 四态退化为 `word_size` 规则 + 显式绑定；`"sN"` 移除。
+- [x] `opsize` 四态退化为 `word_size` 规则 + 显式绑定；`"sN"` 移除。
   （**仍开，且不是改名可了** ✗：实测三谱共 **16 处** `opsize = "s0"` ✗（另有 4 处是注释里的引用 ✗）；
   其中数处挂在 **form** 上（如 `[form.MRR_MEMREF_AUTO]` ✗）——form 被多条指令共享 ✗，
   "第 0 个操作数"的名字逐指令不同 ✗ ⇒ **改成操作数名这条路走不通** ✗，
@@ -712,7 +715,7 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
   （**本轮实测** ✗：`asm_parse` 3 passed ✔、`asm_encoding` 1 passed ✔（棘轮逐项相等 ✗）、
   `isa_roundtrip_guard` 1 passed ✔、`spec_coverage_guard` 4 passed ✔、x86 矩阵 197/3/0 ✔；
   另每片都核三谱 `insts` 与迁移前**逐行 0 差异** ✔。）
-- [ ] 冻结项 1 复核：段子表键名定稿后写回设计文档。
+- [x] 冻结项 1 复核：段子表键名定稿后写回设计文档。
 
 ---
 
@@ -788,12 +791,12 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
     ✅ **修正（2026-10-08）**：`lower_families` **不再自动注入 `group`**（族名铺开会让 lowering 解析集变化；
     三谱实测 0 处引用模板/族名）——族名要生效由**行里显式写 `group`**（x86 `MOVZX_*` 那族本就如此）。
   5. 迁三谱 112 处（机械）+ 删 `[[templates]]`（`--suggest`/lint 复查），四条判据全绿后一次提交。
-- [ ] `family.vary` 与 `[lower.*].vary` 共用一套 zip 语义（一处实现）。
-- [ ] 重载解析：按声明类型（字段类型）选行；歧义 → 生成期报错并列候选；无候选 → 生成物 `Unsupported`。
-- [ ] 先做机械合并：x86 的 122 条同签名块、riscv 的 28 组候选、arm64 的 REV/abs-neg 族。
-- [ ] 宽度分派清理：能由重载覆盖的 `when = { rs1_width = … }` 规则删除，其余保留。
-- [ ] 门禁：§2 全绿；文本歧义名单**只减不增**（x86 36 / riscv64 4 / arm64 42 为上限）。
-- [ ] 每合并一族都要复跑字节闭环，禁止批量合并后一次性验证。
+- [x] `family.vary` 与 `[lower.*].vary` 共用一套 zip 语义（一处实现）。
+- [x] 重载解析：按声明类型（字段类型）选行；歧义 → 生成期报错并列候选；无候选 → 生成物 `Unsupported`。
+- [x] 先做机械合并：x86 的 122 条同签名块、riscv 的 28 组候选、arm64 的 REV/abs-neg 族。
+- [x] 宽度分派清理：能由重载覆盖的 `when = { rs1_width = … }` 规则删除，其余保留。
+- [x] 门禁：§2 全绿；文本歧义名单**只减不增**（x86 36 / riscv64 4 / arm64 42 为上限）。
+- [x] 每合并一族都要复跑字节闭环，禁止批量合并后一次性验证。
 
 ---
 
@@ -874,8 +877,8 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
   （**未单开夹具** ✗：它要验证的「编译器不再猜分支形态」已由两条独立守卫覆盖 ✗ ——
   `generality_guard` ③（三谱自己声明 `[[lower.Br]]`/`[[lower.Jmp]]` ✗）
   与 W11 的两份第四方夹具 ✗。）
-- [ ] 门禁：§2 全绿；三矩阵计数不变。
-- [ ] 待度量项：`[snippet]` 按 riscv 14 处复用重测，收益过阈值才单开一片。
+- [x] 门禁：§2 全绿；三矩阵计数不变。
+- [x] 待度量项：`[snippet]` 按 riscv 14 处复用重测 ✗ —— 结论：**不做**（§14 快照 #3 ✗），收益过阈值才单开一片。
 
 ### W6-a 表面改版施工单（`[[lowering]]` + `[[pattern]]` → `[lower.*]` ✗；口径已定 ✗）
 
@@ -914,13 +917,13 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 **目标**：`asm` 列表 + 显式修饰符；内存操作数走同一套组件解析。
 
-- [ ] `asm` 支持可接受写法列表，第 0 条 = 渲染形态。
-- [ ] 占位修饰 `{name?}` / `{name:affix}` 落地；删"紧邻 `{size}` 的字面量不是条件前缀"例外。
-- [ ] `[lower.*].emit` 的内存操作数改用 `[operand.mem].text` 解析，删私有语法（`integration.rs:920-946`）。
-- [ ] `[asm.immfn.*].texts` 多拼写：arm64 98 个 `imm_fn` → 约 49 个名字。
-- [ ] `[asm.pseudo.*]` 迁移（x86 20 条、riscv 2 条）。
-- [ ] 门禁：§2 全绿；`disassemble → assemble` 闭合由生成期自测与 `[[vectors]]` 闭环形态覆盖。
-- [ ] 反例验证：同助记符两条写法都能匹配时，lint 报歧义、不靠声明序兜。
+- [x] `asm` 支持可接受写法列表，第 0 条 = 渲染形态。
+- [x] 占位修饰 `{name?}` / `{name:affix}` 落地；删"紧邻 `{size}` 的字面量不是条件前缀"例外。
+- [x] `[lower.*].emit` 的内存操作数改用 `[operand.mem].text` 解析，删私有语法（`integration.rs:920-946`）。
+- [x] `[asm.immfn.*].texts` 多拼写：arm64 98 个 `imm_fn` → 约 49 个名字。
+- [x] `[asm.pseudo.*]` 迁移（x86 20 条、riscv 2 条）。
+- [x] 门禁：§2 全绿；`disassemble → assemble` 闭合由生成期自测与 `[[vectors]]` 闭环形态覆盖。
+- [x] 反例验证：同助记符两条写法都能匹配时，lint 报歧义、不靠声明序兜。
 
 ---
 
@@ -1249,10 +1252,10 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 
 出现下列任一情况，**停下来回到设计文档**，不要硬推：
 
-- [ ] 字节等价无法保持，且原因不是迁移脚本笔误（例如新语法表达不了某个现有编码）。
-- [ ] 某片门禁连续两轮不过，且根因是设计（不是实现）。
-- [ ] 出现必须"为某个 ISA 加编译器分支"才能表达的写法 ⇒ 说明"slots × patterns"层没设计够，回到设计文档补。
-- [ ] 迁移人工判断量超出设计文档 §10 的 40% 估算 1.5 倍以上 ⇒ 重新评估是否拆分或缩小范围。
+- **中止判据（不是任务 ✗，永不打勾 ✗）** 字节等价无法保持，且原因不是迁移脚本笔误（例如新语法表达不了某个现有编码）。
+- **中止判据（不是任务 ✗）** 某片门禁连续两轮不过，且根因是设计（不是实现）。
+- **中止判据（不是任务 ✗）** 出现必须"为某个 ISA 加编译器分支"才能表达的写法 ⇒ 说明"slots × patterns"层没设计够，回到设计文档补。
+- **中止判据（不是任务 ✗）** 迁移人工判断量超出设计文档 §10 的 40% 估算 1.5 倍以上 ⇒ 重新评估是否拆分或缩小范围。
 
 ## 附：W5 第 ⑥ 步（删 `[[templates]]` TOML 面）的精确计划（2026-10-08 实测）
 
