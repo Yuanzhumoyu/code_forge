@@ -1,6 +1,6 @@
 # ISA-DSL v21 执行清单
 
-> [progress] 2026-10-08 执行方案（配套设计文档 [isa-dsl-v21-redesign-plan.md](isa-dsl-v21-redesign-plan.md)）。
+> [progress] 2026-10-08 执行方案（配套设计文档已归档：[isa-dsl-v21-redesign-plan.md](../archive/isa-dsl-v21-redesign-plan.md)）。
 > 用法：**一片一提交**，上一片的门禁全绿才勾下一片；每片先勾"步骤"再勾"门禁"。
 > 数字基线以 §1.3 的 W0 快照为准（本文写的数字是 2026-10-08 的设计期快照，会随迭代漂移）。
 
@@ -739,7 +739,7 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 - [x] **前置侦察（2026-10-08）**：`family` 在代码里**根本不存在**（全仓 0 处）；`vary` 目前只挂在
   `[[lowering]]` 上（`model.rs::expand_vary`）。⇒ 第 ② 步的前置是**先把 `family` 造出来**，
   否则"两处共用 zip 语义"无对象可共用。
-  **设计既定形态**（`docs/plans/isa-dsl-v21-redesign-plan.md` §6.6 / 迁移总表 L190）：
+  **设计既定形态**（`docs/archive/isa-dsl-v21-redesign-plan.md` §6.6 / 迁移总表 L190；该文档已归档 ✗）：
   `family` = `[[templates]]` + 族名（= 多态引用名）的**唯一复用机制**，形状 = body + rows + vary：
 
   ```toml
@@ -990,7 +990,8 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 - [x] `CHANGELOG.md` 记一条 **Breaking** 条目（用户可见变更才进 CHANGELOG）。
   （W9 四片 + W10 五片各一条 ✗，全部带实测证据 ✗。）
 - [x] 设计文档转 `[archive]` 或标注"已落地"，执行清单标注完成日期。
-  （`isa-dsl-v21-redesign-plan.md` 头部换成**实施账目表** ✗：W1–W3/W5/W7–W10 已落地 ✗、
+  （`isa-dsl-v21-redesign-plan.md` 头部换账目表这件事**已由归档解决** ✗：该文档已于 2026-10-08 移入
+`docs/archive/` ✗，头部换成 ARCHIVED 块 + 指向本清单 ✗。此处原记的"W4/W6 在办"已是陈账 ✗。）
   W4/W6 🚧（附卡点 ✗）、W11 与最终验收 ⬜；本清单各节同步标注 ✗。）
 - [x] `git grep` 全量检查：无 `conventions.bitfields` / `operand_fields` / `opcode_field` / `gpr8`(64 语义) / `[[forms]]` 残留死链。
   （**2026-10-08 复核：非历史文档里 `[[forms]]`/`[[instructions]]`/`[[derive]]` 的**用户面**引用已清零 ✗

@@ -21,8 +21,7 @@ docs/
 ├── plans/                 # 有未完成工作的专项方案 [progress]
 │   ├── forge-rustc-vec_push-plan.md # vec 族（5 用例 FLAKY，见 e2e.rs）
 │   ├── forge-isa-dsl-v19-plan.md    # ISA-DSL v19 现行方案（独立运行时 crate / 向量 / lint / 变体）
-│   ├── isa-dsl-v21-redesign-plan.md # ISA-DSL v21 重设计（**执行中**：W1–W9 已落地，W4/W6 在办）
-│   ├── isa-dsl-v21-execution-checklist.md # 上者的执行清单（S0 冻结 + W0 基线 + W1–W11 门禁）
+│   ├── isa-dsl-v21-execution-checklist.md # v21 执行清单（**活的账本**：S0 冻结 + W0 基线 + W1–W11 门禁 + §14 最终验收）
 │   └── calling-convention-redesign-plan.md # 调用约定重设计 v20 A1–A7（A1 已落地）
 ├── performance/           # 基准与优化
 │   ├── BENCHMARKS.md          # 基准运行框架

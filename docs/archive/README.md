@@ -11,6 +11,7 @@
 | 文件 | 内容 | 现行替代 |
 | --- | --- | --- |
 | `roadmap-status.md` | v14-forge-ir-redesign 路线图交接（P0-P5 执行史） | `crates/tools/forge-rustc/WORKAROUNDS.md`（WA-37/38/39）+ README |
+| `isa-dsl-v21-redesign-plan.md` | ISA-DSL v21 重设计（**2026-10-08 归档**：v21 已收口 ✗ —— W1–W11 + W6 + W6+ 全部落地；只记设计取舍与切片史） | `../plans/isa-dsl-v21-execution-checklist.md`（活账本，§14 最终验收）+ `../reference/isa-dsl.md`（现行规范） |
 | `isa-dsl-v12-roadmap.md` | ISA-DSL v12 方案与迭代史 | `../reference/isa-dsl.md`（v15 规范） |
 | `asm-dec-generic-design-v2.md` | 汇编器/解码器 v2 设计蓝本（v13 落地） | `../reference/isa-dsl.md` + forge-dsl 代码 |
 | `clippy-fixes.md` | 2026-07 clippy 全量清零记录 | —（已完成） |
