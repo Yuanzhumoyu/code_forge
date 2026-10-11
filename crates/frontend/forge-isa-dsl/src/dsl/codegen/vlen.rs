@@ -1171,7 +1171,7 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                 .iter()
                 .find(|(_, _, s, _)| s.kind == OperandKind::Cond)
             {
-                stmts.push(quote! { __bytes.push((#opcode | (*#cond_fid as u64 & 0xF)) as u8); });
+                stmts.push(quote! { __bytes.push((#opcode | (CondEnc::enc(*#cond_fid) as u64 & 0xF)) as u8); });
             } else {
                 stmts.push(quote! { __bytes.push(#opcode as u8); });
             }
@@ -1317,7 +1317,7 @@ pub(crate) fn gen_vlen_encode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                 .iter()
                 .find(|(_, _, s, _)| s.kind == OperandKind::Cond)
             {
-                stmts.push(quote! { __bytes.push((#opcode | (*#cond_fid as u64 & 0xF)) as u8); });
+                stmts.push(quote! { __bytes.push((#opcode | (CondEnc::enc(*#cond_fid) as u64 & 0xF)) as u8); });
             } else {
                 stmts.push(quote! { __bytes.push(#opcode as u8); });
             }
@@ -2081,6 +2081,20 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
         {
             // 条件码在 opcode 低 4 位：guard 匹配高 4 位（JCC/SETCC/CMOVCC）
             conds.push(quote! { (bytes[__o + #off] & 0xF0) == (#opcode & 0xF0) as u8 });
+            // v21 W6+：字段是 IR 条件枚举 ⇒ **这一位的码必须有 IR 对应**，否则这个
+            // 候选不成立（放进守卫里判——写成 `return None` 会中断整条解码）。
+            let bank = info
+                .operands
+                .iter()
+                .find(|(_, _, s, _)| s.kind == OperandKind::Cond)
+                .map(|(_, _, s, _)| s.cond_bank)
+                .unwrap_or(crate::dsl::model::CondBank::Int);
+            let fold = match bank {
+                crate::dsl::model::CondBank::Int => quote! { intcc_of },
+                crate::dsl::model::CondBank::Float => quote! { floatcc_of },
+                crate::dsl::model::CondBank::Flag => quote! { flagcc_of },
+            };
+            conds.push(quote! { #fold(bytes[__o + #off] & 0x0F).is_some() });
         } else {
             conds.push(quote! { bytes[__o + #off] == #opcode as u8 });
         }
@@ -2181,7 +2195,28 @@ pub(crate) fn gen_vlen_decode(infos: &[InstInfo], model: &IsaModel) -> Result<To
                     // 条件码 = opcode 字节低 4 位（JCC/SETCC/CMOVCC）；
                     // opcode 在 modrm_idx - 1（modrm_idx = opcode 后位置）
                     let cond_off = modrm_idx.saturating_sub(1);
-                    Ok(quote! { (bytes[__o + #cond_off] & 0x0F) as u8 })
+                    // v21 W6+：按槽的银行折成 IR 条件；没有 `ir` 对应的码表达不了
+                    // （候选守卫已判掉 ⇒ 这里不可达）。
+                    let (fold, ty) = match slot.cond_bank {
+                        crate::dsl::model::CondBank::Int => {
+                            (quote! { intcc_of }, quote! { forge_ir::IntCC })
+                        }
+                        crate::dsl::model::CondBank::Float => {
+                            (quote! { floatcc_of }, quote! { forge_ir::FloatCC })
+                        }
+                        crate::dsl::model::CondBank::Flag => {
+                            (quote! { flagcc_of }, quote! { forge_ir::FlagCC })
+                        }
+                    };
+                    Ok(quote! {
+                        match #fold(bytes[__o + #cond_off] & 0x0F) {
+                            Some(c) => c,
+                            None => unreachable!(
+                                "候选守卫已判掉没有 IR 对应的条件码（槽类型 = {}）",
+                                stringify!(#ty)
+                            ),
+                        }
+                    })
                 }
                 OperandKind::Imm | OperandKind::Label => {
                     let raw = imm_read_ts(imm_start, ctx.imm_bytes, endian);

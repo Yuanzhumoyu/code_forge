@@ -17,8 +17,8 @@ variants = 0
 known = 0
 [isa aarch64]
 cases = 617
-checked = 185
-unparsed = 432
+checked = 184
+unparsed = 433
 dropped = 0
 variants = 0
 known = 0

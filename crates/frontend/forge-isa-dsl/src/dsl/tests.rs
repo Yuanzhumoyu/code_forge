@@ -1044,7 +1044,7 @@ fn cond_cc_arms_come_from_the_table() {
             .chars()
             .filter(|c| !c.is_whitespace())
             .collect();
-        for (name, code) in [
+        for (name, _code) in [
             ("eq", 4),
             ("ne", 5),
             ("slt", 12),
@@ -1056,11 +1056,21 @@ fn cond_cc_arms_come_from_the_table() {
             ("ugt", 7),
             ("uge", 3),
         ] {
-            let needle = format!("Some(\"{name}\")=>{code}u8");
+            // v21 W6+：臂体是 **IR 条件枚举变体**（字段类型就是 `forge_ir::IntCC`），
+            // 机器码只在编码边界折——条件名与枚举变体名同名（`sle` ⇒ `Sle`）。
+            let variant = super::codegen::pascal_ident(name);
+            let needle = format!("Some(\"{name}\")=>forge_ir::IntCC::{variant}");
             assert!(s.contains(&needle), "生成的 {{cc}} 表缺 `{needle}`：{s}");
         }
-        assert!(!s.contains("IntCC"), "生成代码不得点名 IntCC：{s}");
+        // v21 W6+：`IntCC` 现在**应当**出现在条件码臂里（字段类型就是它）——
+        // 但臂体必须是**枚举变体**，不是裸机器码；映射与折回入口另有类型化 API。
+        assert!(
+            s.contains("Some(\"eq\")=>forge_ir::IntCC::Eq"),
+            "条件码臂应点名 IR 枚举变体：{s}"
+        );
         assert!(s.contains("intcc_name("), "应经宿主函数折成 IR 条件名：{s}");
+        assert!(s.contains("traitCondEnc:Copy"), "应生成条件码映射 trait：{s}");
+        assert!(s.contains("fnintcc_of("), "应生成「机器码 → IR 条件」入口：{s}");
     }
 }
 
@@ -4510,10 +4520,11 @@ fn cc_inv_uses_inverse_condition_code() {
     // ⇒ 断言前先抹掉全部空白，再去匹配。
     let flat: String = s.chars().filter(|c| !c.is_whitespace()).collect();
     for needle in [
-        "Some(\"eq\")=>5u8",
-        "Some(\"ne\")=>4u8",
-        "Some(\"slt\")=>13u8",
-        "Some(\"uge\")=>2u8",
+        // v21 W6+：`{cc_inv}` 的臂体也是 **IR 枚举变体**（取的是**逆条件**的变体名）。
+        "Some(\"eq\")=>forge_ir::IntCC::Ne",
+        "Some(\"ne\")=>forge_ir::IntCC::Eq",
+        "Some(\"slt\")=>forge_ir::IntCC::Sge",
+        "Some(\"uge\")=>forge_ir::IntCC::Ult",
     ] {
         assert!(flat.contains(needle), "逆条件表缺 `{needle}`：{s}");
     }

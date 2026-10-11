@@ -143,7 +143,12 @@ fn render_expr(slot: &OperandSlot, fid: &syn::Ident) -> TokenStream {
                 .collect();
             quote! { __render_bitset(*#fid, &[#(#pairs),*]) }
         }
-        OperandKind::Cond => quote! { __render_cond(*#fid as u8) },
+        OperandKind::Cond => match slot.cond_bank {
+            // v21 W6+：按槽的银行选那一套渲染（整数 / 浮点 / 标志位）。
+            crate::dsl::model::CondBank::Int => quote! { __render_cond_i(*#fid) },
+            crate::dsl::model::CondBank::Float => quote! { __render_cond_f(*#fid) },
+            crate::dsl::model::CondBank::Flag => quote! { __render_cond_g(*#fid) },
+        },
         // 命名立即数（`kind = "imm"` + `names`）：值在表里 ⇒ 写名字。
         OperandKind::Imm if !slot.name_entries.is_empty() => {
             let pairs: Vec<TokenStream> = slot
@@ -1133,24 +1138,30 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
             );
         };
         let table: Vec<(String, u64)> = table.iter().map(|(k, e)| (k.clone(), e.code)).collect();
-        // 按编码值分组别名（b|c|nae => 2）；渲染取该编码**字母序最小**的名字
-        //（BTreeMap 迭代序 = 字母序，故与 S3b 之前的行为逐字节一致）。
-        let mut by_code: BTreeMap<u64, Vec<String>> = BTreeMap::new();
-        for (k, v) in &table {
-            by_code.entry(*v).or_default().push(k.clone());
-        }
-        let mut parse_arms: Vec<TokenStream> = Vec::new();
-        let mut render_arms: Vec<TokenStream> = Vec::new();
-        for (code, names) in &by_code {
-            let alts: Vec<_> = names.iter().map(|n| n.as_str()).collect();
-            let c = *code as u8;
-            parse_arms.push(quote! { #(#alts)|* => #c });
-            // 渲染用首选名（声明表首项）
-            let first = syn::LitStr::new(alts[0], proc_macro2::Span::call_site());
-            render_arms.push(quote! { #c => #first.into() });
-        }
+        // v21 W6+：三个银行各一套（整数 / 浮点 / 标志位）——条件槽的银行决定用哪一套。
+        // 每套 = 解析（名字 → 机器码 → IR 条件）+ 渲染（机器码 → 首选名）。
+        let arms_of = |table: &[(String, u64)]| -> (Vec<TokenStream>, Vec<TokenStream>) {
+            // 按编码值分组别名（b|c|nae => 2）；渲染取该编码**字母序最小**的名字
+            //（BTreeMap 迭代序 = 字母序，故与 S3b 之前的行为逐字节一致）。
+            let mut by_code: BTreeMap<u64, Vec<String>> = BTreeMap::new();
+            for (k, code) in table {
+                by_code.entry(*code).or_default().push(k.clone());
+            }
+            let mut parse_arms: Vec<TokenStream> = Vec::new();
+            let mut render_arms: Vec<TokenStream> = Vec::new();
+            for (code, names) in &by_code {
+                let alts: Vec<_> = names.iter().map(|n| n.as_str()).collect();
+                let c = *code as u8;
+                parse_arms.push(quote! { #(#alts)|* => #c });
+                // 渲染用首选名（声明表首项）
+                let first = syn::LitStr::new(alts[0], proc_macro2::Span::call_site());
+                render_arms.push(quote! { #c => #first.into() });
+            }
+            (parse_arms, render_arms)
+        };
+        let (parse_arms, render_arms) = arms_of(&table);
         out.extend(quote! {
-            fn __cond(it: &mut __Iter) -> Option<u8> {
+            fn __cond_i(it: &mut __Iter) -> Option<forge_ir::IntCC> {
                 let __Tok::Ident(name) = it.toks.get(it.pos)?.clone() else { return None; };
                 let n = name.to_ascii_lowercase();
                 let code = match n.as_str() {
@@ -1158,15 +1169,60 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                     _ => return None,
                 };
                 it.pos += 1;
-                Some(code)
+                // v21 W6+：字段是 IR 条件枚举——没有 `ir` 对应的码表达不了 ⇒ 解析失败。
+                intcc_of(code)
             }
-            fn __render_cond(c: u8) -> String {
-                match c & 0xF {
+            fn __render_cond_i(c: forge_ir::IntCC) -> String {
+                match CondEnc::enc(c) & 0xF {
                     #(#render_arms,)*
                     _ => "?".into(),
                 }
             }
         });
+        if let Some(ft) = model.cond_tables.float.as_ref() {
+            let fp: Vec<(String, u64)> = ft.iter().map(|(k, e)| (k.clone(), e.code)).collect();
+            let (fp_arms, fr_arms) = arms_of(&fp);
+            out.extend(quote! {
+                fn __cond_f(it: &mut __Iter) -> Option<forge_ir::FloatCC> {
+                    let __Tok::Ident(name) = it.toks.get(it.pos)?.clone() else { return None; };
+                    let n = name.to_ascii_lowercase();
+                    let code = match n.as_str() {
+                        #(#fp_arms,)*
+                        _ => return None,
+                    };
+                    it.pos += 1;
+                    floatcc_of(code)
+                }
+                fn __render_cond_f(c: forge_ir::FloatCC) -> String {
+                    match CondEnc::enc(c) & 0xF {
+                        #(#fr_arms,)*
+                        _ => "?".into(),
+                    }
+                }
+            });
+        }
+        if let Some(gt) = model.cond_tables.flag.as_ref() {
+            let gp: Vec<(String, u64)> = gt.iter().map(|(k, e)| (k.clone(), e.code)).collect();
+            let (gp_arms, gr_arms) = arms_of(&gp);
+            out.extend(quote! {
+                fn __cond_g(it: &mut __Iter) -> Option<forge_ir::FlagCC> {
+                    let __Tok::Ident(name) = it.toks.get(it.pos)?.clone() else { return None; };
+                    let n = name.to_ascii_lowercase();
+                    let code = match n.as_str() {
+                        #(#gp_arms,)*
+                        _ => return None,
+                    };
+                    it.pos += 1;
+                    flagcc_of(code)
+                }
+                fn __render_cond_g(c: forge_ir::FlagCC) -> String {
+                    match CondEnc::enc(c) & 0xF {
+                        #(#gr_arms,)*
+                        _ => "?".into(),
+                    }
+                }
+            });
+        }
     }
     Ok(out)
 }
@@ -1598,7 +1654,18 @@ fn operand_parse_tok(
             ))
         }
         OperandKind::Mem => Ok((quote! { __mem(&mut it) }, quote! { Some(#fid) }, None)),
-        OperandKind::Cond => Ok((quote! { __cond(&mut it) }, quote! { Some(#fid) }, None)),
+        OperandKind::Cond => match slot.cond_bank {
+            // v21 W6+：按槽的银行选那一套解析（整数 / 浮点 / 标志位）。
+            crate::dsl::model::CondBank::Int => {
+                Ok((quote! { __cond_i(&mut it) }, quote! { Some(#fid) }, None))
+            }
+            crate::dsl::model::CondBank::Float => {
+                Ok((quote! { __cond_f(&mut it) }, quote! { Some(#fid) }, None))
+            }
+            crate::dsl::model::CondBank::Flag => {
+                Ok((quote! { __cond_g(&mut it) }, quote! { Some(#fid) }, None))
+            }
+        },
     }
 }
 

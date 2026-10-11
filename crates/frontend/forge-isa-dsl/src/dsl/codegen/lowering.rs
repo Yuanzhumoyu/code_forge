@@ -138,10 +138,12 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                 let arms: Vec<TokenStream> = model
                     .cond_ir_codes()
                     .into_iter()
-                    .map(|(name, code)| {
+                    .map(|(name, _code)| {
                         let lit = syn::LitStr::new(name, proc_macro2::Span::call_site());
-                        let c = code as u8;
-                        quote! { Some(#lit) => #c, }
+                        // v21 W6+：字段是 **IR 条件枚举**（`IntCC`）——条件名就是助记符，
+                        // 变体名 = PascalCase（`sle` → `Sle`）；机器码只在编码边界折。
+                        let vi = crate::dsl::codegen::pascal_ident(name);
+                        quote! { Some(#lit) => forge_ir::IntCC::#vi, }
                     })
                     .collect();
                 // v21 W6：`{cc_inv}` 用**逆条件**反查同一张表（`ir_inverse_cond` 给逆名，
@@ -152,13 +154,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                         .iter()
                         .filter_map(|(name, _)| {
                             let inv = crate::dsl::model::ir_inverse_cond(name)?;
-                            let code = cc_ir
-                                .iter()
-                                .find(|(n, _)| *n == inv)
-                                .map(|(_, c)| *c as u8)
-                                .unwrap_or(0);
                             let lit = syn::LitStr::new(name, proc_macro2::Span::call_site());
-                            Some(quote! { Some(#lit) => #code, })
+                            let vi = crate::dsl::codegen::pascal_ident(inv);
+                            Some(quote! { Some(#lit) => forge_ir::IntCC::#vi, })
                         })
                         .collect()
                 } else {
@@ -166,14 +164,18 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                 };
                 let cc_plain: TokenStream = if uses_cc {
                     quote! {
-                        let __cc: u8 = match crate::prelude::intcc_name(
+                        let __cc: forge_ir::IntCC = match crate::prelude::intcc_name(
                             ctx.current_immediates.first().copied().unwrap_or(0) as u8,
                         ) {
                             #(#arms)*
                             // 未知码 = 坏 IR（Verifier 的 MissingCondImmediate 会先报）；
                             // 本 ISA 未映射的条件已在**编译期**拒绝（validate 层），
-                            // 故这里不猜条件。
-                            _ => 0,
+                            // 故这里不猜条件，直接 fail-closed。
+                            _ => {
+                                return Err(crate::prelude::IrError::Unsupported(
+                                    "未知的 IR 整数条件码".into(),
+                                ));
+                            }
                         };
                     }
                 } else {
@@ -181,11 +183,15 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                 };
                 let cc_inverted: TokenStream = if uses_cc_inv {
                     quote! {
-                        let __cc_inv: u8 = match crate::prelude::intcc_name(
+                        let __cc_inv: forge_ir::IntCC = match crate::prelude::intcc_name(
                             ctx.current_immediates.first().copied().unwrap_or(0) as u8,
                         ) {
                             #(#inv_arms)*
-                            _ => 0,
+                            _ => {
+                                return Err(crate::prelude::IrError::Unsupported(
+                                    "未知的 IR 整数条件码".into(),
+                                ));
+                            }
                         };
                     }
                 } else {
@@ -846,9 +852,39 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             };
             let cc_eq = cc_of("eq");
             let cc_ne = cc_of("ne");
+            // v21 W6+：`__cc`/`__cc_inv` **只在谱面真的用到 `{cc}`/`{cc_inv}` 时才发射**
+            // ——riscv64 这类"分支条件在助记符/寄存器里、谱里根本没写 `{cc}`"的 ISA
+            // 连条件码表都没有，无条件发射会白白要求 `eq` 有 IR 对应（实际不会用到）。
+            let seq_uses_cc = tl
+                .insts
+                .iter()
+                .any(|i| i.contains("{cc}") || i.contains("{cc_inv}"));
+            let cc_bind = if seq_uses_cc {
+                quote! {
+                    // v21 W6+：终结层的条件码字段也是 **IR 条件枚举**——机器码经
+                    // `intcc_of` 折回（`eq`/`ne` 在表里必有 `ir` 对应）。
+                    let __cc: forge_ir::IntCC = match intcc_of(#cc_eq) {
+                        Some(c) => c,
+                        None => {
+                            return Err(crate::prelude::IrError::Unsupported(
+                                "条件表里的 `eq` 没有对应的 IR 条件".into(),
+                            ));
+                        }
+                    };
+                    let __cc_inv: forge_ir::IntCC = match intcc_of(#cc_ne) {
+                        Some(c) => c,
+                        None => {
+                            return Err(crate::prelude::IrError::Unsupported(
+                                "条件表里的 `ne` 没有对应的 IR 条件".into(),
+                            ));
+                        }
+                    };
+                }
+            } else {
+                quote! {}
+            };
             quote! {
-                let __cc: u8 = #cc_eq;
-                let __cc_inv: u8 = #cc_ne;
+                #cc_bind
                 // 条件寄存器（旧硬编码体的 `cond`）：供 `{cond}` 用。
                 let __cond = value_to_xreg
                     .get(cond_val)
@@ -2927,11 +2963,48 @@ fn gen_lowering_insts(
                     // 条件码/物理寄存器/MemRef/立即数——按槽类型解析。
                     match slot.kind {
                         OperandKind::Cond => {
-                            // 字面条件码（seto=0/setb=2/…，模板直接写死）
-                            let v: u8 = op
-                                .parse()
-                                .map_err(|_| format!("lowering 模板条件码 '{op}' 无法解析"))?;
-                            (quote! { #v }, quote! { 0u32 })
+                            // v21 W6+：条件码字面量。**推荐写 IR 条件枚举**
+                            //（`IntCC::Sle` / `FloatCC::Oeq` / `FlagCC::O`——读谱不用查表）；
+                            // 也接受**裸机器码**（老谱沿用），按槽的银行折成 IR 条件。
+                            if let Some((en, var)) = op.split_once("::") {
+                                let (en_id, var_id) =
+                                    (format_ident!("{en}"), format_ident!("{var}"));
+                                (quote! { forge_ir::#en_id::#var_id }, quote! { 0u32 })
+                            } else {
+                                let v: u8 = op.parse().map_err(|_| {
+                                    format!(
+                                        "lowering 模板条件码 '{op}' 无法解析（写 IR 条件枚举或裸机器码）"
+                                    )
+                                })?;
+                                let (fold, ty) = match slot.cond_bank {
+                                    crate::dsl::model::CondBank::Int => {
+                                        (quote! { intcc_of }, quote! { forge_ir::IntCC })
+                                    }
+                                    crate::dsl::model::CondBank::Float => {
+                                        (quote! { floatcc_of }, quote! { forge_ir::FloatCC })
+                                    }
+                                    crate::dsl::model::CondBank::Flag => {
+                                        (quote! { flagcc_of }, quote! { forge_ir::FlagCC })
+                                    }
+                                };
+                                (
+                                    quote! {
+                                        match #fold(#v) {
+                                            Some(c) => c,
+                                            None => {
+                                                return Err(crate::prelude::IrError::Unsupported(
+                                                    format!(
+                                                        "模板里的条件码 {} 没有对应的 IR 条件（槽类型 = {}）",
+                                                        #v,
+                                                        stringify!(#ty)
+                                                    ),
+                                                ));
+                                            }
+                                        }
+                                    },
+                                    quote! { 0u32 },
+                                )
+                            }
                         }
                         OperandKind::Reg => {
                             // 物理寄存器名（RAX 等）→ Reg 枚举（类型化字段直接写入）

@@ -33,8 +33,23 @@
 #[allow(clippy::type_complexity)]
 const ALLOWED: &[(&str, &str, &str)] = &[];
 
-/// 与"名字"无关的禁止标识符（IR 条件 → ISA 编码的映射必须走数据）。
-const FORBIDDEN_IDENTS: &[&str] = &["IntCC", "FloatCC"];
+/// **写死的「IR 条件 → 机器码」配对**才是缺陷（v21 W6+ 起的口径）。
+///
+/// 生成物的条件码字段类型**就是** IR 的条件枚举（`IntCC`/`FloatCC`/`FlagCC`——
+/// IR 解释汇编层、赋予新语义）⇒ 生成期点名这些类型是**设计要求**；被禁的是把
+/// **变体与机器码写死**（如 `IntCC::Eq => 4`）——映射必须来自条件表的 `ir = "…"`。
+const COND_ENUM_TYPES: &[&str] = &["IntCC::", "FloatCC::", "FlagCC::"];
+
+/// 行里有没有"枚举变体 → 字面机器码"这种写死的配对。
+fn is_hardcoded_cond_pair(text: &str) -> bool {
+    COND_ENUM_TYPES.iter().any(|p| text.contains(p))
+        && text.split("=>").nth(1).is_some_and(|rhs| {
+            rhs.trim_start()
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_digit() || c == '-')
+        })
+}
 
 /// IR 类型常量的标识符（`TypeId::F16` 等）——与物理寄存器名**同名但不同命名空间**
 /// （riscv 的 `F16` 是浮点寄存器 16，`model.rs` 的 `"F16"` 是 IR 类型常量名）。
@@ -249,10 +264,7 @@ fn no_isa_constants_in_generator() {
             .iter()
             .chain(regs.iter())
             .any(|n| text.contains(&format!("\"{n}\"")));
-        let is_forbidden_ident = FORBIDDEN_IDENTS.iter().any(|id| {
-            text.split(|c: char| !c.is_alphanumeric() && c != '_')
-                .any(|w| w == *id)
-        });
+        let is_forbidden_ident = is_hardcoded_cond_pair(text);
         if is_isa_literal || is_forbidden_ident {
             match allowed {
                 Some(i) => used_allow.push(i),

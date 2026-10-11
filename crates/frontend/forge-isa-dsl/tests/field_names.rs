@@ -101,9 +101,10 @@ fn vlen_isa_fields_use_declared_names() {
         "x86 字段应按 ops 声明命名"
     );
     assert!(!t.contains("MovRmR{dest:"), "旧的语义名 dest 不得再出现");
-    // 条件码操作数：`ops = [..., "cc:cc"]` ⇒ 字段 `cc`（历史名 `cond`）。
+    // 条件码操作数：`ops = [..., "cc:cond"]` ⇒ 字段 `cc`（历史名 `cond`）。
+    // v21 W6+：类型是**IR 条件枚举**（`cond_bank = "int"` ⇒ `IntCC`），不是裸 `u8`。
     assert!(
-        t.contains("JccRel32{cc:u8,target:i64}"),
-        "条件码字段名 = 声明名"
+        t.contains("JccRel32{cc:forge_isa_runtime::ir::IntCC,target:i64}"),
+        "条件码字段名 = 声明名（类型 = IR 条件枚举）"
     );
 }

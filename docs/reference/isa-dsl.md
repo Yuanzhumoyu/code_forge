@@ -53,7 +53,7 @@
 
   - [`[conventions]` — ISA 约定](#conventions--isa-约定)
 
-    - [`[conventions.cond]` — 条件码表（两类表，三处用）](#conventionscond--条件码表两类表三处用)
+    - [`[conventions.cond]` — 条件码表（三类表，三处用）](#conventionscond--条件码表三类表三处用)
 
     - [`[conventions.mem]` — 内存操作数的文本形态（v20 V10）](#conventionsmem--内存操作数的文本形态v20-v10)
 
@@ -636,7 +636,7 @@ schema/诊断/生成器共用它，不另抄名单）：
 > 已移除——它们 codegen 从不读取，66 前缀与 REX.W 在 `vlen.rs` 里按 `__opsize`
 > 硬编码。写这两个表现在直接 `deny_unknown_fields` 报错。
 
-### `[conventions.cond]` — 条件码表（两类表，三处用）
+### `[conventions.cond]` — 条件码表（三类表，三处用）
 
 | 用途 | 怎么用 |
 | --- | --- |
@@ -652,12 +652,20 @@ schema/诊断/生成器共用它，不另抄名单）：
 - **用到 `{cc}` 的 ISA 必须把 10 个 IR 条件映射全**——缺哪个编译期就点名哪个
   （运行期会静默退化成 0 = 溢出条件，是最难查的一类错）。`cond` 槽则需要表存在。
 - v18 S3b 起**不再有 x86 缺省表**：不声明就没有条件码能力，用到即报错。
-- v21 W6+：**条件码表固定两类**——整数条件一张（约定名 `[enum.cond]`）、浮点谓词一张
-  （如 `[enum.fcond]`，条目写 `ir = "oeq"` / `"uno"` / `"ord"` …）；**同类只能一张**，多了报错。
-  `cond` 槽用 `cond_bank = "int" | "float"`（缺省 `int`）选表 ⇒ **生成的字段类型随之定**：
-  整数表 ⇒ `forge_ir::IntCC`，浮点表 ⇒ `forge_ir::FloatCC`。表归哪一类由表的**内容**判定
-  （只看两个枚举各自独有的助记符；`ugt`/`uge`/`ult`/`ule` 两边同名，不参与），
-  只有共有名或两类混装 ⇒ **明确报错**（不猜）。
+- v21 W6+：**条件码表固定三类**——整数条件一张（约定名 `[enum.cond]`）、浮点谓词一张
+  （如 `[enum.fcond]`，条目写 `ir = "oeq"` / `"uno"` / `"ord"` …）、**标志位条件**一张
+  （如 `[enum.flagcond]`，条目写 `ir = "o"` / `"c"` / `"s"` …）；**同类只能一张**，多了报错。
+  `cond` 槽用 `cond_bank = "int" | "float" | "flag"`（缺省 `int`）选表 ⇒ **生成的字段类型随之定**：
+  整数表 ⇒ `forge_ir::IntCC`，浮点表 ⇒ `forge_ir::FloatCC`，标志位表 ⇒ `forge_ir::FlagCC`。
+  表归哪一类由表的**内容**判定（只看各枚举**独有**的助记符；`ugt`/`uge`/`ult`/`ule` 在整数与
+  浮点两边同名，不参与），多类混装 ⇒ **明确报错**（不猜）。
+  为什么需要标志位这一银行 ✗：溢出/进位/符号/奇偶是**机器标志位**语义，`IntCC`/`FloatCC`
+  里都没有（LLVM 的 `IntCC` 同样没有，溢出在 IR 里由 `sadd.with.overflow` 这类内建表达）；
+  但 x86 的 `seto`/`setc`/`sets` 与 arm64 的 `b.vs`/`b.mi` 这类 lowering **必须**用到它们
+  ⇒ 由 `FlagCC` 承接（`o`/`no`/`c`/`nc`/`s`/`ns`/`p`/`np`），这就是"IR 解释汇编层、赋予新语义"。
+  机器码只在**编码 / 解码 / 汇编文本**三个边界出现（生成的 `CondEnc` trait + `intcc_of` /
+  `floatcc_of` / `flagcc_of`）；表里没有 `ir` 对应的码（`al`/`nv` 这类恒真/恒假）
+  **表达不了** ⇒ 汇编解析与解码对它 fail-closed。
 
 **两种"条件出现在语法里"的写法**（都用这张表，不需要第二处声明）：
 

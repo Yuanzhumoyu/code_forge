@@ -304,22 +304,28 @@ texts = ["#:lo12:{0}", ":lo12:{0}"]
 expr = "{0}"
 
 [enum.cond]
+# v21 W6+：条件码字段的类型是 IR 的 `IntCC` ⇒ **IR 能表达的条件必须写 `ir`**
+# （短形式只在键名恰好等于 IR 助记符时才隐含 `ir`；`gt`/`le`/`ge`/`lt` 这些 A64 名
+# 与 IR 名不同名，必须显式写）。`mi`/`pl`/`vs`/`vc`（符号/溢出）与 `al`/`nv`
+# （恒真/恒假）在 `IntCC` 里没有对应谓词 ⇒ 留空：这些条件的汇编文本与字节**表达不了**
+# （要表达得另开 `flag` 银行的表并给专用形态，见 x86 的 `[enum.flagcond]`），
+# 解析/解码对这些条件 fail-closed。
 eq = 0
 ne = 1
-cs = 2
+cs = { code = 2, ir = "uge" }
 hs = 2
-cc = 3
+cc = { code = 3, ir = "ult" }
 lo = 3
 mi = 4
 pl = 5
 vs = 6
 vc = 7
-hi = 8
-ls = 9
-ge = 10
-lt = 11
-gt = 12
-le = 13
+hi = { code = 8, ir = "ugt" }
+ls = { code = 9, ir = "ule" }
+ge = { code = 10, ir = "sge" }
+lt = { code = 11, ir = "slt" }
+gt = { code = 12, ir = "sgt" }
+le = { code = 13, ir = "sle" }
 al = 14
 nv = 15
 

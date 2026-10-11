@@ -162,6 +162,29 @@ ng  = { code = 14 }
 g   = { code = 15, ir = "sgt" }
 nle = { code = 15 }
 
+# 浮点谓词表（v21 W6+）：FP 比较（`COMISS`/`COMISD` + `setcc`）用的那 8 个编码。
+# `ir` = 对应的 IR `FloatCC` 助记符（枚举变体名与它同名）；`p`/`np` 是**奇偶位**——
+# PF=1 表示有 NaN（unordered）、PF=0 表示有序。
+[enum.fcond]
+p  = { code = 10, ir = "uno" }
+np = { code = 11, ir = "ord" }
+b  = { code = 2,  ir = "ult" }
+ae = { code = 3,  ir = "uge" }
+e  = { code = 4,  ir = "oeq" }
+ne = { code = 5,  ir = "une" }
+be = { code = 6,  ir = "ule" }
+a  = { code = 7,  ir = "ugt" }
+
+# 标志位表（v21 W6+ 甲）：溢出/进位/符号——`IntCC`/`FloatCC` 表达不了的机器条件。
+# `ir` = 对应的 IR `FlagCC` 助记符（变体名同名）。
+[enum.flagcond]
+o  = { code = 0, ir = "o" }    # OF：有符号溢出
+no = { code = 1, ir = "no" }
+c  = { code = 2, ir = "c" }    # CF：无符号溢出/借位
+nc = { code = 3, ir = "nc" }
+s  = { code = 8, ir = "s" }    # SF：结果为负
+ns = { code = 9, ir = "ns" }
+
 # v13：变长解码前缀扫描表（缺省即此表；66/F0/F2/F3/67/REX 扫描集）
 [[conventions.prefix_scan]]
 byte = 0x66
@@ -312,6 +335,20 @@ bits = 32
 [operand.cond]
 kind = "cond"
 bits = 8
+
+# 浮点谓词槽（v21 W6+）：**同一编码字段**，但银行是**浮点** ⇒ 生成物字段类型是
+# `forge_ir::FloatCC`。FP 比较（`COMISS`/`COMISD` 之后的 `setcc`）走 `SETCC_F` 这条。
+[operand.fcc]
+kind = "cond"
+bits = 8
+cond_bank = "float"
+
+# 标志位槽（v21 W6+ 甲）：溢出/进位/符号——IR 的 `IntCC`/`FloatCC` 都没有它们，
+# 由 `forge_ir::FlagCC` 承接。溢出/饱和 lowering 走 `SETCC_FLAG`/`CMOVCC_FLAG`。
+[operand.flag]
+kind = "cond"
+bits = 8
+cond_bank = "flag"
 
 # ─────────────────────────── 编码形式 ───────────────────────────
 [form.MRR_SHIFT_SEG]
@@ -2489,6 +2526,29 @@ ops = ["dst:gpr8b:out", "cc:cond"]
 asm = "setcc {dst}, {cc}"
 effect = ["Pure"]
 
+# **浮点谓词**形态（v21 W6+）：与上面两条**同一编码**（0F 9x），但条件码槽是
+# **浮点银行**（`fcc` ⇒ `FloatCC`）。FP 比较的 lowering 走这条。
+# 汇编面用独立助记符 `setccf`：与 `setcc` 同形同宽，文本层分不出来（银行不在文本里）。
+[inst.SETCC_F]
+match = { reg = 0 }
+segments = [  { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
+bind = { rm = "dst" }
+opcode = 0x90
+ops = ["dst:gpr64:out", "cc:fcc"]
+asm = "setccf {dst}, {cc}"
+effect = ["Pure"]
+
+# **标志位**形态（v21 W6+ 甲）：同一编码，条件码槽是**标志位银行**
+# （`flag` ⇒ `FlagCC`）。溢出/饱和 lowering 走这条。汇编面 `setccfl`（同上理由）。
+[inst.SETCC_FLAG]
+match = { reg = 0 }
+segments = [  { kind = "modrm" },   { kind = "escape", bytes = ["0x0F"] }, ]
+bind = { rm = "dst" }
+opcode = 0x90
+ops = ["dst:gpr64:out", "cc:flag"]
+asm = "setccfl {dst}, {cc}"
+effect = ["Pure"]
+
 # `setcc m8`（`0F 9x /0`，rm = 内存）：宽度靠模板里的字面 `byte ptr`（一元形态无寄存器
 # 驱动宽度，同 `NOT_MEM32` 一族）。
 [inst.SETCC_R_MEM]
@@ -2533,6 +2593,16 @@ bind = { reg = "dst", rm = "src" }            # cond 编码进 opcode 低 4 位
 match = { opcode = 0x40 }                    # 条件码 = opcode 低 4 位（0x40..0x4F）
 ops = ["dst:gprx:inout", "src:gprx", "cc:cond"]
 asm = "cmovcc {dst}, {src}, {cc}"
+effect = ["Pure"]
+
+# **标志位**形态（v21 W6+ 甲）：同一编码（0F 4x），条件码槽是标志位银行
+# （`flag` ⇒ `FlagCC`）。饱和 lowering 用 `cmovccfl` 取溢出方向（`FlagCC::S`/`Ns`）。
+[inst.CMOVCC_FLAG]
+form = "MRR_0F_SEG"
+bind = { reg = "dst", rm = "src" }
+match = { opcode = 0x40 }
+ops = ["dst:gprx:inout", "src:gprx", "cc:flag"]
+asm = "cmovccfl {dst}, {src}, {cc}"
 effect = ["Pure"]
 
 # `cmovcc r, m`（`0F 4x /r`，rm = 内存）：与寄存器形式同编码、同掩码边（0F 4x）。
@@ -3010,7 +3080,7 @@ insts = [
     "xor {out2}, {out2}",
     "mov {out}, {0}",
     "add {1}, {out}",
-    "SETCC_RM8 {out2}, 0",
+    "SETCC_FLAG {out2}, 0",
 ]
 
 [[lower.UaddOverflow]]
@@ -3018,7 +3088,7 @@ insts = [
     "xor {out2}, {out2}",
     "mov {out}, {0}",
     "add {1}, {out}",
-    "SETCC_RM8 {out2}, 2",
+    "SETCC_FLAG {out2}, 2",
 ]
 
 [[lower.SsubOverflow]]
@@ -3026,7 +3096,7 @@ insts = [
     "xor {out2}, {out2}",
     "mov {out}, {0}",
     "sub {1}, {out}",
-    "SETCC_RM8 {out2}, 0",
+    "SETCC_FLAG {out2}, 0",
 ]
 
 [[lower.UsubOverflow]]
@@ -3034,7 +3104,7 @@ insts = [
     "xor {out2}, {out2}",
     "mov {out}, {0}",
     "sub {1}, {out}",
-    "SETCC_RM8 {out2}, 2",
+    "SETCC_FLAG {out2}, 2",
 ]
 
 [[lower.SmulOverflow]]
@@ -3042,7 +3112,7 @@ insts = [
     "xor {out2}, {out2}",
     "mov {out}, {0}",
     "IMUL_R_RM {out}, {1}",
-    "SETCC_RM8 {out2}, 0",
+    "SETCC_FLAG {out2}, 0",
 ]
 
 [[lower.UmulOverflow]]
@@ -3051,7 +3121,7 @@ insts = [
     "IMUL_R_RM {out}, {1}",
     "xor {out2}, {out2}",
     "cmp {0}, {out}",
-    "SETCC_RM8 {out2}, 2",
+    "SETCC_FLAG {out2}, 2",
     "xor {g}, {g}",
     "TEST_RM_R {1}, {1}",
     "SETCC_RM8 {g}, 5",
@@ -3063,12 +3133,12 @@ when = { eq = ["rs1_width", 32] }
 insts = [
     "mov {out}, {0}",
     "add {1}, {out}",
-    "SETCC_RM8 {g1}, 0",
+    "SETCC_FLAG {g1}, 0",
     "MOV_REG_IMM64 {g2}, 0x7FFFFFFF",
     "MOV_REG_IMM64 {g3}, 0x80000000",
     "TEST_RM_R {0}, {0}",
-    "CMOVCC_R_RM {g4}, {g2}, 9",
-    "CMOVCC_R_RM {g4}, {g3}, 8",
+    "CMOVCC_FLAG {g4}, {g2}, 9",
+    "CMOVCC_FLAG {g4}, {g3}, 8",
     "TEST_RM_R {g1}, {g1}",
     "CMOVCC_R_RM {out}, {g4}, 5",
 ]
@@ -3078,12 +3148,12 @@ when = { eq = ["rs1_width", 64] }
 insts = [
     "mov {out}, {0}",
     "add {1}, {out}",
-    "SETCC_RM8 {g1}, 0",
+    "SETCC_FLAG {g1}, 0",
     "MOV_REG_IMM64 {g2}, 0x7FFFFFFFFFFFFFFF",
     "MOV_REG_IMM64 {g3}, 0x8000000000000000",
     "TEST_RM_R {0}, {0}",
-    "CMOVCC_R_RM {g4}, {g2}, 9",
-    "CMOVCC_R_RM {g4}, {g3}, 8",
+    "CMOVCC_FLAG {g4}, {g2}, 9",
+    "CMOVCC_FLAG {g4}, {g3}, 8",
     "TEST_RM_R {g1}, {g1}",
     "CMOVCC_R_RM {out}, {g4}, 5",
 ]
@@ -3444,33 +3514,33 @@ insts = [
 [[lower.Fcmp]]
 when = { eq = ["elem", 1] }   # f32
 vary = { cond = [1, 2, 4, 7, 8, 11, 14, 15], k = [11, 10, 5, 7, 3, 4, 2, 6] }
-insts = ["xor {out}, {out}", "COMISS {0}, {1}", "SETCC_RM8 {out}, {k}"]
+insts = ["xor {out}, {out}", "COMISS {0}, {1}", "SETCC_F {out}, {k}"]
 
 [[lower.Fcmp]]
 vary = { cond = [1, 2, 4, 7, 8, 11, 14, 15], k = [11, 10, 5, 7, 3, 4, 2, 6] }
-insts = ["xor {out}, {out}", "COMISD {0}, {1}", "SETCC_RM8 {out}, {k}"]
+insts = ["xor {out}, {out}", "COMISD {0}, {1}", "SETCC_F {out}, {k}"]
 
 # 形状 B：setcc 11（非 NaN）与 setcc k 取交——有序比较
 
 [[lower.Fcmp]]
 when = { eq = ["elem", 1] }   # f32
 vary = { cond = [3, 5, 6], k = [4, 2, 6] }
-insts = ["xor {out}, {out}", "COMISS {0}, {1}", "SETCC_RM8 {out}, 11", "SETCC_RM8 {g}, {k}", "and {g}, {out}"]
+insts = ["xor {out}, {out}", "COMISS {0}, {1}", "SETCC_F {out}, 11", "SETCC_F {g}, {k}", "and {g}, {out}"]
 
 [[lower.Fcmp]]
 vary = { cond = [3, 5, 6], k = [4, 2, 6] }
-insts = ["xor {out}, {out}", "COMISD {0}, {1}", "SETCC_RM8 {out}, 11", "SETCC_RM8 {g}, {k}", "and {g}, {out}"]
+insts = ["xor {out}, {out}", "COMISD {0}, {1}", "SETCC_F {out}, 11", "SETCC_F {g}, {k}", "and {g}, {out}"]
 
 # 形状 C：setcc 10（NaN）与 setcc k 取并——无序比较
 
 [[lower.Fcmp]]
 when = { eq = ["elem", 1] }   # f32
 vary = { cond = [12, 13, 16], k = [7, 3, 5] }
-insts = ["xor {out}, {out}", "COMISS {0}, {1}", "SETCC_RM8 {out}, 10", "SETCC_RM8 {g}, {k}", "or {g}, {out}"]
+insts = ["xor {out}, {out}", "COMISS {0}, {1}", "SETCC_F {out}, 10", "SETCC_F {g}, {k}", "or {g}, {out}"]
 
 [[lower.Fcmp]]
 vary = { cond = [12, 13, 16], k = [7, 3, 5] }
-insts = ["xor {out}, {out}", "COMISD {0}, {1}", "SETCC_RM8 {out}, 10", "SETCC_RM8 {g}, {k}", "or {g}, {out}"]
+insts = ["xor {out}, {out}", "COMISD {0}, {1}", "SETCC_F {out}, 10", "SETCC_F {g}, {k}", "or {g}, {out}"]
 
 # 形状 D：常量结果（与元素类型无关——原谱的 elem==1 变体是纯重复）
 
@@ -3948,12 +4018,12 @@ when = { eq = ["rs1_width", 32] }
 insts = [
     "mov {out}, {0}",
     "sub {1}, {out}",
-    "SETCC_RM8 {g1}, 0",
+    "SETCC_FLAG {g1}, 0",
     "MOV_REG_IMM64 {g2}, 0x7FFFFFFF",
     "MOV_REG_IMM64 {g3}, 0x80000000",
     "TEST_RM_R {0}, {0}",
-    "CMOVCC_R_RM {g4}, {g2}, 9",
-    "CMOVCC_R_RM {g4}, {g3}, 8",
+    "CMOVCC_FLAG {g4}, {g2}, 9",
+    "CMOVCC_FLAG {g4}, {g3}, 8",
     "TEST_RM_R {g1}, {g1}",
     "CMOVCC_R_RM {out}, {g4}, 5",
 ]
@@ -3963,12 +4033,12 @@ when = { eq = ["rs1_width", 64] }
 insts = [
     "mov {out}, {0}",
     "sub {1}, {out}",
-    "SETCC_RM8 {g1}, 0",
+    "SETCC_FLAG {g1}, 0",
     "MOV_REG_IMM64 {g2}, 0x7FFFFFFFFFFFFFFF",
     "MOV_REG_IMM64 {g3}, 0x8000000000000000",
     "TEST_RM_R {0}, {0}",
-    "CMOVCC_R_RM {g4}, {g2}, 9",
-    "CMOVCC_R_RM {g4}, {g3}, 8",
+    "CMOVCC_FLAG {g4}, {g2}, 9",
+    "CMOVCC_FLAG {g4}, {g3}, 8",
     "TEST_RM_R {g1}, {g1}",
     "CMOVCC_R_RM {out}, {g4}, 5",
 ]

@@ -1307,7 +1307,13 @@ pub const IR_FLOAT_COND_NAMES: [&str; 16] = [
     "uge", "ult", "ule", "une",
 ];
 
-/// 条件码表的**银行**（v21 W6+ 丙）——固定两类，不用字符串键。
+/// IR 的 8 个**标志位条件**助记符（与 `FlagCC::mnemonic()` 同名；v21 W6+ 甲）。
+///
+/// 溢出/进位/符号/奇偶是**机器标志位**语义（`IntCC`/`FloatCC` 里没有），
+/// x86 的 `seto`/`setc`/`sets`、arm64 的 `b.vs`/`b.mi` 这类 lowering 需要它们。
+pub const IR_FLAG_COND_NAMES: [&str; 8] = ["o", "no", "c", "nc", "s", "ns", "p", "np"];
+
+/// 条件码表的**银行**（v21 W6+）——固定三类，不用字符串键。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CondBank {
@@ -1316,6 +1322,8 @@ pub enum CondBank {
     Int,
     /// 浮点谓词（`oeq`/`uno`/…）⇒ 生成物字段类型 `FloatCC`。
     Float,
+    /// **标志位条件**（`o`/`no`/`c`/`nc`/`s`/`ns`/`p`/`np`；v21 W6+ 甲）⇒ 字段类型 `FlagCC`。
+    Flag,
 }
 
 impl CondBank {
@@ -1324,12 +1332,13 @@ impl CondBank {
         match self {
             CondBank::Int => "int",
             CondBank::Float => "float",
+            CondBank::Flag => "flag",
         }
     }
 
-    /// **按表内容判定银行**：只看两个枚举**各自独有**的 IR 助记符。
-    ///
-    /// 只有共有名（`ugt`/`uge`/`ult`/`ule`）或两类混装 ⇒ 报错（不猜）。
+    /// **按表内容判定银行**：只看三个枚举**各自独有**的 IR 助记符
+    ///（`ugt`/`uge`/`ult`/`ule` 在整数与浮点两边同名 ⇒ 不参与判定；标志位的 8 个名字
+    /// 与另外两个枚举**都不重名** ⇒ 单独出现即定案）。
     pub fn detect(table: &BTreeMap<String, CondEntry>, name: &str) -> Result<Self, String> {
         let has = |ir: &str| {
             table
@@ -1338,32 +1347,41 @@ impl CondBank {
         };
         let int_only = IR_INT_COND_NAMES
             .iter()
-            .any(|n| !IR_FLOAT_COND_NAMES.contains(n) && has(n));
+            .any(|n| !IR_FLOAT_COND_NAMES.contains(n) && !IR_FLAG_COND_NAMES.contains(n) && has(n));
         let fpr_only = IR_FLOAT_COND_NAMES
             .iter()
-            .any(|n| !IR_INT_COND_NAMES.contains(n) && has(n));
-        match (int_only, fpr_only) {
-            (true, false) => Ok(CondBank::Int),
-            (false, true) => Ok(CondBank::Float),
-            // 没有**定论**（空表、只有纯别名、或只出现两个枚举共有的助记符）⇒ 按约定名当
-            // **整数**表：`[enum.cond]` 就是整数条件的约定名，而浮点谓词表必然带
-            // `oeq`/`uno`/`ord` 这类独有名。真正的错误只报"两类混装"。
-            (false, false) => Ok(CondBank::Int),
-            (true, true) => Err(format!(
-                "`[enum.{name}]` 同时含整数条件与浮点谓词——一张表只能一个银行，\
-                 请拆成两张（整数一张、浮点一张）"
+            .any(|n| !IR_INT_COND_NAMES.contains(n) && !IR_FLAG_COND_NAMES.contains(n) && has(n));
+        let flag_only = IR_FLAG_COND_NAMES.iter().any(|n| has(n));
+        let kinds = [int_only, fpr_only, flag_only]
+            .iter()
+            .filter(|x| **x)
+            .count();
+        match kinds {
+            0 => {
+                // 没有**定论**（空表、只有纯别名、或只出现两个枚举共有的助记符）⇒ 按约定名当
+                // **整数**表：`[enum.cond]` 就是整数条件的约定名，而浮点/标志位表必然带独有名。
+                Ok(CondBank::Int)
+            }
+            1 if int_only => Ok(CondBank::Int),
+            1 if fpr_only => Ok(CondBank::Float),
+            1 => Ok(CondBank::Flag),
+            _ => Err(format!(
+                "`[enum.{name}]` 同时含多类条件（整数 / 浮点谓词 / 标志位）——一张表只能一个银行，\
+                 请拆开（如 `[enum.cond]` + `[enum.fcond]` + `[enum.flagcond]`）"
             )),
         }
     }
 }
 
-/// **两张条件码表**（v21 W6+ 丙）：每类最多一张，按银行取用。
+/// **三张条件码表**（v21 W6+）：每类最多一张，按银行取用。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct CondTables {
     /// 整数条件表（约定名 `[enum.cond]`）。
     pub int: Option<BTreeMap<String, CondEntry>>,
     /// 浮点谓词表（如 `[enum.fcond]`）。
     pub float: Option<BTreeMap<String, CondEntry>>,
+    /// **标志位条件表**（如 `[enum.flagcond]`；v21 W6+ 甲）。
+    pub flag: Option<BTreeMap<String, CondEntry>>,
 }
 
 impl CondTables {
@@ -1372,6 +1390,7 @@ impl CondTables {
         match bank {
             CondBank::Int => self.int.as_ref(),
             CondBank::Float => self.float.as_ref(),
+            CondBank::Flag => self.flag.as_ref(),
         }
     }
 
@@ -1384,6 +1403,7 @@ impl CondTables {
         match bank {
             CondBank::Int => self.int.replace(t),
             CondBank::Float => self.float.replace(t),
+            CondBank::Flag => self.flag.replace(t),
         }
     }
 }
@@ -1464,7 +1484,11 @@ impl IsaModel {
             return Vec::new();
         };
         let mut out = Vec::new();
-        for ir in IR_INT_COND_NAMES.iter().chain(IR_FLOAT_COND_NAMES.iter()) {
+        for ir in IR_INT_COND_NAMES
+            .iter()
+            .chain(IR_FLOAT_COND_NAMES.iter())
+            .chain(IR_FLAG_COND_NAMES.iter())
+        {
             if let Some((_, e)) = table
                 .iter()
                 .find(|(k, e)| e.ir_condition(k.as_str()) == Some(*ir))

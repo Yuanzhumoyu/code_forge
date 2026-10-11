@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-08) — ISA-DSL v21 W6+ 甲：条件槽字段 = IR 条件枚举（`IntCC`/`FloatCC`/`FlagCC`）
+
++ **生成物里条件码字段的类型就是 IR 条件枚举**（不再是裸 `u8`）：`[operand.<名>].cond_bank` 选银行 ⇒ 整数表 ⇒ `IntCC`、浮点谓词表 ⇒ `FloatCC`、标志位表 ⇒ `FlagCC`。机器码只在**编码 / 解码 / 汇编文本**三个边界出现，走生成的 `CondEnc` trait（`IntCC`/`FloatCC`/`FlagCC` 各一条 `enc`）与 `intcc_of`/`floatcc_of`/`flagcc_of`（表里没有 `ir` 对应的码返回 `None` ⇒ fail-closed）。
++ **`forge-ir` 新增 `FlagCC`**（`O`/`No`/`C`/`Nc`/`S`/`Ns`/`P`/`Np`，变体名 = 助记符 + 逐变体注释）：溢出/进位/符号/奇偶是**机器标志位**语义，`IntCC`/`FloatCC` 都没有（LLVM 的 `IntCC` 同样没有），而 x86 `seto`/`setc`/`sets`、arm64 `b.vs`/`b.mi` 的 lowering 必须用到——这就是"IR 解释汇编层、赋予新语义"。
++ x86 谱补三张表与三个形态：`[enum.fcond]`（`p→uno`/`np→ord`/`b,a,be,ae,e,ne`）+ `[enum.flagcond]`（`o`/`no`/`c`/`nc`/`s`/`ns`）+ `[operand.fcc]`/`[operand.flag]` + `SETCC_F`/`SETCC_FLAG`/`CMOVCC_FLAG`（同编码、汇编面 `setccf`/`setccfl`/`cmovccfl`，因为文本层分不出条件银行）；FP 比较与溢出/饱和 lowering 各自改走对应形态。arm64 条件表补 8 个缺失的 `ir`（`gt→sgt`/`le→sle`/`ge→sge`/`lt→slt`/`hi→ugt`/`ls→ule`/`cs→uge`/`cc→ult`）。
++ **修一个真 bug**：解码候选里写 `return None` 会**中断整条解码**（`0f 9a c0` 因此解不出来）⇒ 改成"候选**守卫**里判 `…is_some()`"，字段构造侧不可达。
++ 通用性守卫口径随之更新：`IntCC`/`FloatCC`/`FlagCC` 出现在生成期是**设计要求**，被禁的是**写死"变体 → 机器码"配对**（映射必须来自条件表的 `ir`）。
++ **已知代价**（棘轮已按约定刷新并记明原因）：arm64 的 `al`/`nv`（恒真/恒假）等无 IR 对应的条件**表达不了** ⇒ `csel …, nv` 一行解析不出（`parsed 576→575`、`tail_mismatch 0→1`）。
++ 验收：整仓门禁 **exit 0**；x86 矩阵 **197/3/0**、riscv64 **136/64/0**、arm64 ✔；谱内向量 **505 全绿**；指纹 x86 `derived 1542→1550`（4 个新形态）、`spec_totals 299→302`，riscv64/arm64 **逐位不变**。
+
 ### Changed (2026-10-08) — ISA-DSL v21 W6+ 丙（片 1）：条件码表**固定两类**（整数 / 浮点，枚举化）
 
 + **条件码表不再是一张**：整数条件一张（约定名 `[enum.cond]`）、浮点谓词一张（如 `[enum.fcond]`，条目写 `ir = "oeq"` / `"uno"` / `"ord"` …）。**同类只能一张**，多了报错。

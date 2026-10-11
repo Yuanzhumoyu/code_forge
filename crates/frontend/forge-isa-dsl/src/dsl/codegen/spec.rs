@@ -751,6 +751,16 @@ fn gpr_index_cap(info: &InstInfo) -> u32 {
 }
 
 /// 生成一个视图下的样本操作数（见 [`SampleOperands`]）。
+/// v21 W6+：按银行给出「机器码 → IR 条件」的**入口**与**目标类型**
+/// （生成物里的函数名 / 枚举路径）——采样与条件循环共用。
+fn cond_fold(bank: crate::dsl::model::CondBank) -> (TokenStream, TokenStream) {
+    match bank {
+        crate::dsl::model::CondBank::Int => (quote! { intcc_of }, quote! { forge_ir::IntCC }),
+        crate::dsl::model::CondBank::Float => (quote! { floatcc_of }, quote! { forge_ir::FloatCC }),
+        crate::dsl::model::CondBank::Flag => (quote! { flagcc_of }, quote! { forge_ir::FlagCC }),
+    }
+}
+
 fn sample_operands(
     info: &InstInfo,
     m: &IsaModel,
@@ -876,11 +886,29 @@ fn sample_operands(
             }
             OperandKind::Cond => {
                 has_cond = true;
-                let Some(first) = cond_codes.first() else {
-                    return Err(format!("{name}: 有 cond 操作数但无 [conventions.cond] 表"));
+                // v21 W6+：字段是 IR 条件枚举 ⇒ 采样值必须挑一个**有 `ir` 对应**的码，
+                // 再按槽的银行折成 `IntCC` / `FloatCC` / `FlagCC`。
+                let (fold, ty) = cond_fold(slot.cond_bank);
+                let ir_codes: Vec<u8> = m
+                    .cond_ir_codes_of(slot.cond_bank)
+                    .iter()
+                    .map(|(_, c)| *c as u8)
+                    .collect();
+                let Some(first) = cond_codes.iter().copied().find(|c| ir_codes.contains(c)) else {
+                    return Err(format!(
+                        "{name}: cond 操作数没有任何带 `ir` 对应的条件码（构造不出 IR 条件）"
+                    ));
                 };
-                let lit = Literal::u8_suffixed(*first);
-                exprs.push(quote! { #lit });
+                let lit = Literal::u8_suffixed(first);
+                exprs.push(quote! {
+                    match #fold(#lit) {
+                        Some(c) => c,
+                        None => unreachable!(
+                            "采样码应有 IR 条件（槽类型 = {}）",
+                            stringify!(#ty)
+                        ),
+                    }
+                });
                 // 条件码断言在 cond 循环里逐值做（见 `gen_one`），基线这里跳过。
             }
             OperandKind::Mem => {
@@ -1138,11 +1166,34 @@ fn gen_one(
 
     // cond 循环（该指令有 cond 槽时逐编码测一遍）。
     let cond_loop = if has_cond {
+        // v21 W6+：只遍历该槽银行下**有 `ir` 对应**的码（其余码构造不出 IR 条件），
+        // 并把码折成 IR 条件枚举。
+        let cond_bank = info
+            .operands
+            .iter()
+            .find(|(_, _, s, _)| s.kind == OperandKind::Cond)
+            .map(|(_, _, s, _)| s.cond_bank)
+            .unwrap_or(crate::dsl::model::CondBank::Int);
+        let (fold, ty) = cond_fold(cond_bank);
+        let ir_codes: Vec<u8> = m
+            .cond_ir_codes_of(cond_bank)
+            .iter()
+            .map(|(_, c)| *c as u8)
+            .collect();
         let codes: Vec<TokenStream> = cond_codes
             .iter()
+            .filter(|c| ir_codes.contains(c))
             .map(|c| {
                 let lit = Literal::u8_suffixed(*c);
-                quote! { #lit }
+                quote! {
+                    match #fold(#lit) {
+                        Some(c) => c,
+                        None => unreachable!(
+                            "循环只遍历有 IR 条件的码（槽类型 = {}）",
+                            stringify!(#ty)
+                        ),
+                    }
+                }
             })
             .collect();
         // 循环内重建指令：cond 槽换成循环变量。

@@ -77,11 +77,16 @@ pub(crate) fn pascal_ident(s: &str) -> proc_macro2::Ident {
 // ─────────────────────────── 类型化字段辅助 ───────────────────────────
 
 /// Inst 字段的 Rust 类型：Reg 槽 → `Reg` 枚举（类型安全，非裸 u32）；
-/// cond → u8；mem → MemRef；imm/label → i64。
+/// cond → **IR 条件枚举**（按槽的银行：`IntCC` / `FloatCC` / `FlagCC`，
+/// 见 `[operand.<名>].cond_bank`）；mem → MemRef；imm/label → i64。
 fn field_ty(slot: &OperandSlot) -> TokenStream {
     match slot.kind {
         OperandKind::Reg => quote! { Reg },
-        OperandKind::Cond => quote! { u8 },
+        OperandKind::Cond => match slot.cond_bank {
+            crate::dsl::model::CondBank::Int => quote! { forge_ir::IntCC },
+            crate::dsl::model::CondBank::Float => quote! { forge_ir::FloatCC },
+            crate::dsl::model::CondBank::Flag => quote! { forge_ir::FlagCC },
+        },
         OperandKind::Mem => quote! { MemRef },
         _ => quote! { i64 },
     }
@@ -242,6 +247,8 @@ pub fn generate_with_parts(
     let reg_tables = gen_reg_tables(model)?;
     let mem_support = gen_mem_support(model, &infos)?;
     let inst_enum = gen_inst_enum(&infos);
+    // v21 W6+：条件码映射（按银行：整数 ⇒ `IntCC`、浮点 ⇒ `FloatCC`、标志位 ⇒ `FlagCC`）
+    let cond_ty = gen_cond_conv(model);
     let (encode_fn, decode_fn) = if prefix_scan {
         (
             vlen::gen_vlen_encode(&infos, model)?,
@@ -349,6 +356,8 @@ pub fn generate_with_parts(
         // ── ISA-DSL 生成模块（迭代 2/3/3b：自包含 encode/decode/asm）──
         #reg_tables
         #mem_support
+        // v21 W6+：条件码映射（IR 条件枚举 ↔ 机器码）
+        #cond_ty
         #inst_enum
         #bit_helpers
         #logic_imm_helpers
@@ -1040,6 +1049,10 @@ fn gen_encode(infos: &[InstInfo], m: &IsaModel) -> Result<TokenStream, String> {
                     } else {
                         quote! { ((*#fid as i64) >> #sh) as u64 }
                     }
+                } else if slot.kind == OperandKind::Cond {
+                    // v21 W6+：条件码字段是 IR 条件枚举（`IntCC`/`FloatCC`/`FlagCC`）⇒
+                    // 机器码只在编码边界出现，走生成的 `CondEnc`（按字段类型分派）。
+                    quote! { CondEnc::enc(*#fid) as u64 }
                 } else {
                     quote! { *#fid as u64 }
                 },
@@ -1495,9 +1508,31 @@ fn gen_decode_group(
             }
             let expr: TokenStream = match slot.kind {
                 OperandKind::Reg => field_ctor_expr(slot, quote! { #raw as u32 }),
-                // 条件码槽在 `Inst` 里是 `u8`（与编码侧 `*fid as u64` 对称）——
-                // 定宽 ISA 的第一个 cond 槽用例（arm64 `cond4`，v18 S3c）。
-                OperandKind::Cond => quote! { #raw as u8 },
+                // v21 W6+：条件码槽是 **IR 条件枚举**（`IntCC`/`FloatCC`/`FlagCC`）⇒
+                // 由机器码折回去（按槽的银行）。**没有 `ir` 对应的码**（x86 的 `al`/`nv`
+                // 之类）表达不了——解码器已在候选**守卫**里判掉它们，这里不可达。
+                OperandKind::Cond => {
+                    let (fold, ty) = match slot.cond_bank {
+                        crate::dsl::model::CondBank::Int => {
+                            (quote! { intcc_of }, quote! { forge_ir::IntCC })
+                        }
+                        crate::dsl::model::CondBank::Float => {
+                            (quote! { floatcc_of }, quote! { forge_ir::FloatCC })
+                        }
+                        crate::dsl::model::CondBank::Flag => {
+                            (quote! { flagcc_of }, quote! { forge_ir::FlagCC })
+                        }
+                    };
+                    quote! {
+                        match #fold(#raw as u8) {
+                            Some(c) => c,
+                            None => unreachable!(
+                                "候选守卫已判掉没有 IR 对应的条件码（槽类型 = {}）",
+                                stringify!(#ty)
+                            ),
+                        }
+                    }
+                }
                 _ => {
                     let signed = slot.signed.unwrap_or(false) || slot.kind == OperandKind::Label;
                     let base = if signed {
@@ -1780,4 +1815,112 @@ pub(crate) fn lint_for_test(source: &str, ambiguity: bool) -> Vec<String> {
     crate::lint::lint_source_opts(source, &opts)
         .map(|r| r.findings.into_iter().map(|d| d.code).collect())
         .unwrap_or_default()
+}
+
+/// v21 W6+：**IR 条件 ↔ 本 ISA 机器码**的映射（三个银行各一套）。
+///
+/// 生成物里条件码字段的类型**就是** IR 条件枚举（`IntCC` / `FloatCC` / `FlagCC`，
+/// 由 `[operand.<名>].cond_bank` 决定），机器码只在**编码、解码、汇编文本**三个边界出现：
+///
+/// - `CondEnc::enc`：IR 条件 → 机器码（编码侧）；
+/// - `intcc_of` / `floatcc_of` / `flagcc_of`：机器码 → IR 条件（解码侧；**没有 `ir`
+///   对应的码返回 `None`** ⇒ 调用方 fail-closed，不会静默造一个条件）。
+///
+/// 映射**完全由数据驱动**：表里的 `ir = "slt"` 就是 IR 侧助记符，而枚举的**变体名就是
+/// 助记符**（`Slt` ⇔ `"slt"`、`No` ⇔ `"no"`）⇒ 生成期按 `ir` 名拼变体名，没有第二张表。
+/// `ugt`/`uge`/`ult`/`ule` 在整数与浮点两边同名 ⇒ 各自都发一条臂（编码相同、语义相同）。
+///
+/// `impl CondEnc for u8` 之类的写法不可能（`u8` 是外部类型，孤儿规则）；这个 trait 是
+/// 生成物私有的转换入口。
+fn gen_cond_conv(m: &IsaModel) -> TokenStream {
+    use crate::dsl::model::CondBank;
+
+    /// 一套（编码臂、解码臂）——同码多名的**别名**在解码侧取首个（与渲染同口径）。
+    fn bank_arms(
+        pairs: &[(&'static str, u64)],
+        ty: &TokenStream,
+    ) -> (Vec<TokenStream>, Vec<TokenStream>) {
+        let mut enc = Vec::new();
+        let mut dec = Vec::new();
+        let mut seen: Vec<u8> = Vec::new();
+        for (ir, code) in pairs {
+            let v = pascal_ident(ir);
+            let c = *code as u8;
+            enc.push(quote! { forge_ir::#ty::#v => #c, });
+            if !seen.contains(&c) {
+                seen.push(c);
+                dec.push(quote! { #c => Some(forge_ir::#ty::#v), });
+            }
+        }
+        (enc, dec)
+    }
+
+    let int_ty = quote! { IntCC };
+    let fpr_ty = quote! { FloatCC };
+    let flg_ty = quote! { FlagCC };
+    let (int_enc, int_dec) = bank_arms(&m.cond_ir_codes_of(CondBank::Int), &int_ty);
+    let (fpr_enc, fpr_dec) = bank_arms(&m.cond_ir_codes_of(CondBank::Float), &fpr_ty);
+    let (flg_enc, flg_dec) = bank_arms(&m.cond_ir_codes_of(CondBank::Flag), &flg_ty);
+
+    quote! {
+        /// 本 ISA 的**条件码映射**（v21 W6+）：IR 条件 → 机器码。
+        ///
+        /// `Inst` 里条件码字段的类型就是 `forge_ir::IntCC` / `FloatCC` / `FlagCC`；
+        /// 机器码只在编码、解码、汇编文本三个边界出现。
+        pub trait CondEnc: Copy {
+            /// 折成本 ISA 的机器码。
+            fn enc(self) -> u8;
+        }
+
+        impl CondEnc for forge_ir::IntCC {
+            fn enc(self) -> u8 {
+                match self {
+                    #(#int_enc)*
+                    _ => panic!("本 ISA 的整数条件表没有这个 IntCC（见 [enum.cond]）"),
+                }
+            }
+        }
+
+        impl CondEnc for forge_ir::FloatCC {
+            fn enc(self) -> u8 {
+                match self {
+                    #(#fpr_enc)*
+                    _ => panic!("本 ISA 的浮点条件表没有这个 FloatCC（见浮点表）"),
+                }
+            }
+        }
+
+        impl CondEnc for forge_ir::FlagCC {
+            fn enc(self) -> u8 {
+                match self {
+                    #(#flg_enc)*
+                    _ => panic!("本 ISA 的标志位条件表没有这个 FlagCC（见标志位表）"),
+                }
+            }
+        }
+
+        /// 机器码 → IR **整数**条件（没有 `ir` 对应的码返回 `None` ⇒ 汇编/解码 fail-closed）。
+        pub fn intcc_of(code: u8) -> Option<forge_ir::IntCC> {
+            match code {
+                #(#int_dec)*
+                _ => None,
+            }
+        }
+
+        /// 机器码 → IR **浮点**条件（同上）。
+        pub fn floatcc_of(code: u8) -> Option<forge_ir::FloatCC> {
+            match code {
+                #(#fpr_dec)*
+                _ => None,
+            }
+        }
+
+        /// 机器码 → IR **标志位**条件（同上）。
+        pub fn flagcc_of(code: u8) -> Option<forge_ir::FlagCC> {
+            match code {
+                #(#flg_dec)*
+                _ => None,
+            }
+        }
+    }
 }
