@@ -19,8 +19,7 @@ docs/
 │   ├── README.md              # 组说明（历轮计划已归档、如何继续）
 │   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）
 ├── plans/                 # 有未完成工作的专项方案 [progress]
-│   ├── forge-rustc-vec_push-plan.md # vec 族（5 用例 FLAKY，见 e2e.rs）
-│   └── isa-dsl-v21-execution-checklist.md # v21 执行清单（**活的账本**：S0 冻结 + W0 基线 + W1–W11 门禁 + §14 最终验收）
+│   └── isa-dsl-v21-execution-checklist.md # v21 执行清单（**活的账本**：S0 冻结 + W0 基线 + W1–W11 门禁 + §14 最终验收 + CI 快照）
 ├── performance/           # 基准与优化
 │   ├── BENCHMARKS.md          # 基准运行框架
 │   ├── OPTIMIZATION.md        # 优化清单
@@ -42,6 +41,7 @@ docs/
     ├── forge-ir-binary-serialization-plan.md / forge-ir-s8-design.md # forge-ir 二进制序列化（落地后归档）
     ├── varargs-plan.md / isa-dsl-variant-field-values.md # 变参（功能面已完成）/ 按变体给字段值（早已落地）
     ├── forge-ir-v3-plan.md      # forge-ir v3（S1–S8 全部收口；未关闭项移交 ../forge-ir/backlog.md）
+    ├── forge-rustc-vec_push-plan.md # forge-rustc vec 族（2026-10-11 归档：验收 4/4 达成，e2e 103 条用例全绿）
     └── forge-ir/              # forge-ir 历轮计划/审计 7 篇（452 收敛基线，2026-08 停更）
 ```
 
@@ -59,8 +59,8 @@ docs/
 - ISA-DSL 现行语法以 `reference/isa-dsl.md` 为准，**v21 重设计（2026-10）已收口**：
   表头即名字的三张表（`[form.<名>]`/`[inst.<名>]`/`[pred.<名>]`）、`[operand.<名字>]`、
   `[enum.<表名>]`、`[family.<名>]`、`[asm.*]`、`[machine.*]` 都已就位；**进度与验收**看
-  `plans/isa-dsl-v21-execution-checklist.md`（活的账本，§14 快照 #3：门禁 exit 0、
-  x86 197/3/0、riscv64 136/64/0、谱内向量 505、指纹与 asm 棘轮），**方案本身**已归档
+  `plans/isa-dsl-v21-execution-checklist.md`（活的账本，§14 快照 #4（2026-10-11）：CI run 38142845046
+  9 ✅ / 2 ❌ —— `forge-tests (nightly)` 与 `Test (macOS)` 红灯，其余全绿），**方案本身**已归档
   （`archive/isa-dsl-v21-redesign-plan.md`）。
   注意区分两种"版本号"：DSL 语法版本（**v21，落地中**；靠文档/CHANGELOG 追踪，**不写进 TOML**）
   与 `[meta].version`（ISA 自己的自由字符串）。**文件名不带语法版本**——旧的 `*_v12`
@@ -635,7 +635,7 @@ let name = node.get_text("name")?;
   FLAKY 用例取证脚本：`crates/tools/forge-rustc/tests/e2e_flake_repro.ps1`
   （`-Mode hammer` 5 轮全量 stage_a + 并行变体 + 5 用例各单跑 ×10；`-Mode load`
   N 并发 worker 直接跑 e2e 二进制制造负载直到复现）。判定标准见
-  `docs/plans/forge-rustc-vec_push-plan.md` §9.1/§9.2（失败轮产物须与本机产物做
+  `docs/archive/forge-rustc-vec_push-plan.md` §9.1/§9.2（失败轮产物须与本机产物做
   行为/字节对照：一致 ⇒ 宿主环境性；错码 ⇒ 转 regalloc 关联法）。
 
 ## SIMD 支持矩阵（x86_64，isa/x86.toml）

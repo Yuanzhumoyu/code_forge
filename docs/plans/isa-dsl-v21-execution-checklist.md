@@ -1246,6 +1246,28 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 - [x] 所有新增/改动文档 `npx markdownlint-cli2 <文件>` 到 0 error。
   （本会话每次提交前都对改动文件跑；本轮 6 份改动文档 **0 issue**。）
 
+**快照 #4（2026-10-11）** —— 提交 `a63f7493`（全仓格式化重排 + schema 回发射器格式 + 生成物每条指令都有
+自动属性行 + IR 公开 API/操作码/`FunctionBuilder` 注释补齐）触发 CI run
+[38142845046](https://github.com/Yuanzhumoyu/code_forge/actions/runs/38142845046)：**11 个 job，9 ✅ / 2 ❌**。
+
+| job | 结论 | 备注 |
+| --- | --- | --- |
+| Test (Windows) | ✅ | 本轮工作区测试；`jit feature` 全套由本机 `cargo test -p forge-codegen --features jit`（exit 0）复现 |
+| Test (Linux) | ✅ | 含 arm64 / riscv64 QEMU 矩阵**真跑** |
+| forge-rustc (e2e, Windows) | ✅ | stage A + M4 并行 + `cargo-forge cli_tests` |
+| forge-rustc (check) / Format / Clippy / Docs / Coverage / Benchmarks (check) | ✅ | Clippy 两条门槛（`--all-features -D warnings` 与 `forge-ir --no-default-features`）零告警 |
+| **forge-tests (nightly / forge-rustc)** | ❌ | 失败步 = `cargo test -p forge-tests --features nightly` |
+| **Test (macOS)** | ❌ | 失败步 = `cargo test --workspace --exclude forge-rustc` |
+
+- ⚠️ **两条红灯的失败日志本机读不到**：GitHub 的 job 日志接口对非管理员返回
+  `403 Must have admin rights to Repository`（run 页面可见、日志需仓库权限）⇒ 失败**用例名**未知，
+  只能记到 job 与步骤粒度。二者都需在 macOS / nightly-`rustc-dev` 环境复现，本机（Windows + stable 面）不具备。
+- 本机对同一提交的等价验证：`cargo test --workspace --exclude forge-rustc -j 2` exit 0、
+  `cargo test -p forge-codegen --features jit` exit 0、`cargo fmt --all -- --check` 0 文件、
+  两条 clippy CI 门槛 exit 0。
+- `forge-rustc-vec_push-plan.md` 的 §4 验收 4/4 达成 ⇒ 该方案**已归档**到
+  `docs/archive/`（本轮同一批清理的一部分）。
+
 ---
 
 ## 15. 中止条件

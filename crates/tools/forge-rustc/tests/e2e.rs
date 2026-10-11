@@ -630,7 +630,7 @@ const CASES: &[Case] = &[
     //    即全部进 CI 门禁）。根因 = WORKAROUNDS **WA-42**（niche 枚举 tag 写入宽度：
     //    `Option<(NonNull<u8>, Layout)>` 的 None 只写 4 字节 → 高 4 字节残留 → 判别误判
     //    `Some(野指针)` → grow 链 copy 解引用 AV）。修复链与全部取证见
-    //    docs/plans/forge-rustc-vec_push-plan.md §9.7（`passed=103/103 known=[]` 的 CI run
+    //    docs/archive/forge-rustc-vec_push-plan.md §9.7（`passed=103/103 known=[]` 的 CI run
     //    93927221004 + 本机 hammer 5 轮 + 各 case reason 里的历史记录）。──
     Case {
         name: "vec_push",
@@ -1643,7 +1643,7 @@ fn run_case_with(
 
     // 运行并取退出码（带超时：panic handler 是 loop{}，assert 失败会挂起）
     let mut result = run_exe_with_timeout(&exe);
-    // 超时重试（2026-09-10 取证，见 docs/plans/forge-rustc-vec_push-plan.md §9.2）：
+    // 超时重试（2026-09-10 取证，见 docs/archive/forge-rustc-vec_push-plan.md §9.2）：
     // 本机 8 并发负载下复现过该假败——首次运行 15 s 未退出，而**同一产物**事后独立
     // 复跑 20/20 正确退出（≈100 ms/次）⇒ 超时多为宿主侧起进程/映像就绪延迟
     // （新写出的 .exe + 负载），不是产物错码。同一产物复跑一次即可区分：
@@ -1904,7 +1904,7 @@ fn e2e_stage_a_scalar_cases() {
 ///
 /// 背景：CI 上 `vec_push` / `vec_iter_enumerate` 在**某些 runner 实例**上
 /// 20/20 稳定 AV（`0xC0000005`），而 `.text` 与本机逐字节相同、本机 0 AV
-/// （见 docs/plans/forge-rustc-vec_push-plan.md §9.5）。WER 在该 runner 上不留记录，
+/// （见 docs/archive/forge-rustc-vec_push-plan.md §9.5）。WER 在该 runner 上不留记录，
 /// 所以改用"逐步裁剪 + 对照变体"定位崩溃点：
 ///
 /// - `probe_new_only`：只 `Vec::new()`（不分配）；

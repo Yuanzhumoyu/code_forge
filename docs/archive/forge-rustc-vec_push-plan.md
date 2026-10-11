@@ -1,5 +1,10 @@
 # forge-rustc vec_push/vec_string 完整改进方案
 
+> ⚠️ ARCHIVED（2026-10-11）：**§4 验收标准 4/4 达成**，工作已收口。现行入口 =
+> `crates/tools/forge-rustc/tests/e2e.rs` 的 `CASES` 表（103 条，全部
+> `known_failure: false`）+ CI job **forge-rustc (e2e, Windows)**；本节保留完整
+> 修复链与取证，供回归对照，**不再作为待办来源**。
+>
 > 对应 `docs/archive/roadmap-status.md` 剩余事项 2 与 `crates/tools/forge-rustc/WORKAROUNDS.md`
 > [WA-11]。e2e 58 用例中 2 个预期失败（`vec_push` SEGV、`vec_string` len 错）
 > 与派生现象（`vecwc2` 挂起 124）。十二轮深挖已收敛根因范围，本文给出
@@ -91,11 +96,27 @@ README 限制区⑧ `probe_n n=5`（~40 行）最小复现。gdb 断点 + `FORGE
 
 ## 4. 验收标准
 
-- [ ] `cargo test -p forge-rustc --test e2e`：vec_push=2、vec_string=2、
+- [x] `cargo test -p forge-rustc --test e2e`：vec_push=2、vec_string=2、
       vecwc2 不挂起，3 用例转正（known_failure=false）
-- [ ] `nested_enum_break` 保持绿（同源回归保护）
-- [ ] 主库门禁全绿（forge-codegen jit / forge-tests 34+ / mini_c）
-- [ ] 诊断环境变量说明更新（FORGE_TRACE_* 保留）
+      —— **2026-10-11 复核**：`e2e.rs` 全表 103 条均 `known_failure: false`
+      （`vec_push`/`vec_string`/`vec_from_slice` 等在内，`reason` 记 2026-09-12 转正链）；
+      CI run **38142845046** 的 job `forge-rustc (e2e, Windows)` ✅ success
+      （stage A + M4 parallel 步通过）。
+- [x] `nested_enum_break` 保持绿（同源回归保护）
+      —— 该用例在 `e2e.rs:895`，属同一 103 条全绿集合；上述 CI job 通过。
+- [x] 主库门禁全绿（forge-codegen jit / forge-tests 34+ / mini_c）
+      —— 本机：`cargo test --workspace --exclude forge-rustc -j 2` exit 0、
+      `cargo test -p forge-codegen --features jit` exit 0；
+      CI run 38142845046：`Test (Windows)` / `Test (Linux)`（含 riscv64+arm64 QEMU 真跑）
+      / `Clippy` / `Format` / `Benchmarks (check)` 全 ✅。
+- [x] 诊断环境变量说明更新（FORGE_TRACE_* 保留）
+      —— `crates/tools/forge-rustc/README.md`（1 处）与 `WORKAROUNDS.md`（4 处）均已说明。
+
+**验收结论（2026-10-11）**：4/4 达成 ⇒ 本方案归档（见文件头 ARCHIVED）。
+**同期 CI 另有两处红灯**（不属本方案范围，记在
+`../plans/isa-dsl-v21-execution-checklist.md` §14 快照 #4）：
+job `forge-tests (nightly / forge-rustc)` 的 `cargo test -p forge-tests --features nightly`
+与 job `Test (macOS)` 的 `cargo test --workspace --exclude forge-rustc`。
 
 ## 5. 风险与对策
 

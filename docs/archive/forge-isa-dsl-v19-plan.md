@@ -243,7 +243,7 @@ V6（低风险、抓真问题）→ V5（参数化）→ V7（按度量）→ **
 - **CI 实测（2026-09-23）**：`d16421d` 的 GitHub Actions run **179** = **11 项检查 10 绿**。
   唯一红的是 `forge-rustc (e2e, Windows)`——它与上一提交 `a1113c5` 的 run 178 是**同一个
   job、同一个失败步骤**（`Run e2e (stage A + M4 parallel)`），属本仓已记录的环境性 flaky 面
-  （`docs/plans/forge-rustc-vec_push-plan.md` §9.5 的 vec 族 CI AV），与本轮改动无关。
+  （`docs/archive/forge-rustc-vec_push-plan.md` §9.5 的 vec 族 CI AV），与本轮改动无关。
   **上面那条守卫假阳性由此得到反向印证**：run 178 里 `Test (Linux)`（"Test remaining
   workspace"）、`Test (macOS)`、`Test (Windows)`、`Coverage` **四项红的都是
   `forge-isa-runtime` 的这条测试**（V1b 把宏搬进 runtime 时引入），V2 修掉后 run 179 四项全绿。
