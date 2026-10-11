@@ -82,7 +82,11 @@
 
 - [`[machine]` — 机器事实](#machine--机器事实)
 
-- [`[machine.frame]`](#machineframe--帧布局) / [`[machine.text]`](#machinetext--代码对齐与尾声标签) / [`[machine.spill.*]`](#machinespill模板名--溢出模板)
+- [`[machine.frame]`](#machineframe--帧布局)
+
+- [`[machine.text]`](#machinetext--代码对齐与尾声标签)
+
+- [`[machine.spill.<模板名>]`](#machinespill模板名--溢出模板)
 
 - [asm 模板](#asm-模板)
 
@@ -180,7 +184,7 @@ v22 是 v21 收口后的**人体工学改造**（破坏性重写：不保留兼�
 
 | 唯一 | 本节 |
 | --- | --- |
-| `[family.<名>]`（`body` + `rows`/`vary`）——指令族的唯一复用机制，族名即默认 `group`/引用名 | [指令族](#family名字--指令族唯一复用机制) |
+| `[family.<名>]`（`body` + `rows`/`vary`）——指令族的唯一复用机制，族名即默认 `group`/引用名 | [指令族](#family名--指令族唯一复用机制) |
 | 操作数声明**就地写在 `asm` 里**：`{名字:槽[:角色]}` 声明、`{@字段:槽}` 绑字段、`#序号` 钉编码序 | [内联声明](#操作数声明写进-asmv22) |
 | `[encoding]` 宽度三态：`fixed` / `mixed` / `prefix_scan` | [`[encoding]`](#encoding--指令宽度三态) |
 | `[asm.reloc.<名>]` / `[asm.pseudo.<名>]` / `[asm.immfn.<名>]` / `[pred.<名字>]` | 各自小节 |
