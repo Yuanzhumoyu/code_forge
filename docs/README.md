@@ -32,7 +32,6 @@
 | `plans/forge-rustc-vec_push-plan.md` | forge-rustc vec 族方案（历史修复链 + **§8 2026-09-10 复核**：E1 假设未复现、失败面已 fail-closed；5 用例仍 FLAKY，见 `tests/e2e.rs`；§9 修复方案） | progress |
 | `plans/forge-ir-v3-plan.md` | forge-ir v3 改进方案（S0–S7 已落地，逐切片带实证与守卫；S8 见下条） | progress |
 | `plans/isa-dsl-v21-execution-checklist.md` | ISA-DSL v21 **执行清单**（S0 决策冻结 + W0 基线 + W1–W11 逐片步骤/门禁/回滚 + 最终验收 + 中止条件；配套设计文档已归档 ✗） | progress |
-| `plans/calling-convention-redesign-plan.md` | 调用约定重设计（v20 A1–A8：约定是**使用者的数据**、ISA 只申报能力；A1 `forge-abi` + `forge-isa abi` / A2 IR `CallConvId` / A3–A4 管线按 `AbiPlan` 发射 / A5 删谱里 `[abi]` 换 `[machine]` / A6 fail-closed + 多值返回 + 调用点形状摊成员 / A7 异域钩子示例 / A8 文档一致性 + 自定义约定的端到端证据） | progress |
 | `plans/varargs-plan.md` | 变参（varargs）方案：**规划已完成、发射与前端为空**的现状索引 + 四份内置约定的 `va_list` 形态（由引擎输出钉住）+ 五个决策点 + 五期切片 + "为什么现在不做"的触发条件 | progress |
 
 ## performance/ — 基准与优化
@@ -57,6 +56,7 @@
 
 | 文件 | 内容（归档原因） |
 | --- | --- |
+| `archive/calling-convention-redesign-plan.md` | 调用约定重设计 v20 A1–A8（**2026-10-08 归档**：A1–A8 全部落地 ✗ —— A7 异域钩子 = `forge-abi/tests/exotic_hooks.rs`、A8 文档一致性收口 ✗；现行参考 = `reference/calling-conventions.md`） |
 | `archive/isa-dsl-v21-redesign-plan.md` | ISA-DSL v21 重设计方案（**2026-10-08 归档**：v21 已收口 ✗，W1–W11 + W6 + W6+ 全部落地；活账本 = `plans/isa-dsl-v21-execution-checklist.md`，现行规范 = `reference/isa-dsl.md`） |
 | `archive/forge-isa-dsl-v19-plan.md` | forge-isa-dsl v19 改进方案（**2026-10-08 归档**：可独立接入 ✓、谱内向量 ✓、lint ✓、参数化变体 ✓ 四块招牌切片按代码事实核对落地 ✗；现行面 = `reference/isa-dsl.md` + `CLAUDE.md` 速查） |
 | `archive/forge-ir-binary-serialization-plan.md` | forge-ir 二进制序列化执行方案 B1–B5（**2026-10-08 归档**：`to_binary`/`from_binary`/`IR_FORMAT_VERSION`/`tests/binary_module.rs` 均在 ✗；现行规范 = `reference/binary-format.md`） |

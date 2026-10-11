@@ -1,11 +1,13 @@
 # 变参（varargs）方案 [progress]
 
-> 状态：**win64 栈式变参已端到端跑通**（2026-10-01）。已落地：**D6 + V0/V1 + V2/V3 + V4（win64：
-> 整数类 + `f64` + `f32` 提升）**——调用方按被调方语义把未命名实参发到栈上（浮点按类分派），
-> 被调方用 `va_start` 物化 `va_list` 对象、`va_arg` 取值并**原地推进**。仍缺：`%al`/`va_meta`
-> 的写入、**寄存器保存区**（sysv64/lp64d/aapcs64 的 V3 剩余部分，这类约定点 `va_start` 会明确
-> fail-closed）、更窄浮点与向量的取值能力，以及**任何前端产出变参签名**。
-> 相关背景：`docs/reference/calling-conventions.md`、`docs/plans/calling-convention-redesign-plan.md` A6。
+> 状态复核（2026-10-08 晚 ✗）：**寄存器保存区（V3 ✗）在本文件里已标 ✅**（2026-10-01 ✗，`sysv64` 真跑 ✗）
+> —— 所以原来那句"仍缺寄存器保存区"只对 `lp64d`/`aapcs64` 的剩余部分成立 ✗，已改写 ✗。
+> 现状：**win64 栈式变参端到端跑通** ✓；已落地 **D6 + V0/V1 + V2/V3 + V4（win64：整数类 + `f64` + `f32` 提升 ✗）**
+> —— 调用方按被调方语义把未命名实参发到栈上（浮点按类分派 ✗），被调方用 `va_start` 物化 `va_list`
+> 对象、`va_arg` 取值并**原地推进** ✓。**仍缺**：`%al`/`va_meta` 的写入 ✗、**`lp64d`/`aapcs64` 的
+> 寄存器保存区**（这类约定点 `va_start` 明确 fail-closed ✗）、更窄浮点与向量的取值能力 ✗、
+> 以及**任何前端产出变参签名**（触发条件见 §6 ✗）。
+> 相关背景：`docs/reference/calling-conventions.md`、`docs/archive/calling-convention-redesign-plan.md` A6 ✗。
 
 ## 1. 现状：**规划与两端发射都通了（管线里唯一一套数据驱动展开，四份约定都有形状数据）；前端仍零产出**
 

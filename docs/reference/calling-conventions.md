@@ -2,8 +2,8 @@
 
 > **状态：active**（v20 A1/A2，2026-09-24）。代码为准：`crates/foundation/forge-abi`、
 > `forge-ir` 的 `CallConvId`、`forge-codegen` 的 `pipeline::conv_registry`。
-> 本文只讲**已经落地**的东西；A3–A7（管线按 plan 发射、删谱里 `[abi]`——**已完成**）的设计与进度见
-> [`docs/plans/calling-convention-redesign-plan.md`](../plans/calling-convention-redesign-plan.md)。
+> A3–A7（管线按 plan 发射、删谱里 `[abi]`、异域钩子、文档一致性——**均已落地**）的设计与进度见
+> [`docs/archive/calling-convention-redesign-plan.md`](../archive/calling-convention-redesign-plan.md)（已归档 ✗）。
 
 调用约定在这套编译器里是**三层数据 + 一个通用引擎**，不是散在各处的 if-else：
 

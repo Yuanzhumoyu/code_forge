@@ -2136,7 +2136,7 @@ pub(crate) struct CompileState<I: MachineInst> {
     ///
     /// v20 A6 起**算不出来 = 编译错误**（不再留个 note 继续走旧路径）：每条发射路径都必须
     /// 有 plan，否则调用点/收参处会各自 fail-closed，错误消息离现场远，且"算不出来"容易被
-    /// 误当成"这条签名能编"。缺口清单见 `docs/plans/calling-convention-redesign-plan.md` 的 A6。
+    /// 误当成"这条签名能编"。缺口清单见 `docs/archive/calling-convention-redesign-plan.md` 的 A6。
     pub(crate) abi_plan: forge_abi::AbiPlan,
 }
 

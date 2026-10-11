@@ -21,7 +21,7 @@ docs/
 ├── plans/                 # 有未完成工作的专项方案 [progress]
 │   ├── forge-rustc-vec_push-plan.md # vec 族（5 用例 FLAKY，见 e2e.rs）
 │   ├── isa-dsl-v21-execution-checklist.md # v21 执行清单（**活的账本**：S0 冻结 + W0 基线 + W1–W11 门禁 + §14 最终验收）
-│   └── calling-convention-redesign-plan.md # 调用约定重设计 v20 A1–A7（A2/A3/A3b/A4/A5-3/A6 亦已落地；A7/A8 待核）
+│   └── varargs-plan.md            # 变参方案（win64 端到端已通；lp64d/aapcs64 保存区与前端待做）
 ├── performance/           # 基准与优化
 │   ├── BENCHMARKS.md          # 基准运行框架
 │   ├── OPTIMIZATION.md        # 优化清单
@@ -275,7 +275,7 @@ code-forge (root umbrella)
    `Indirect`）⇒ **明确 `Unsupported`**（A5-3 起没有旧路径可退）；**没有 plan 是编译错误**
    （A6 的 fail-closed）。调用点 API 的形状面是 `CallRequest`（`conv`/`args`/`rets`/
    `variadic` 一行 builder），失败返回带引擎原文的 `CallPlanError`。
-   参考 `docs/reference/calling-conventions.md`，分期 `docs/plans/calling-convention-redesign-plan.md`。
+   参考 `docs/reference/calling-conventions.md`，分期 `docs/archive/calling-convention-redesign-plan.md`。
 
 ### ISA Backend Pattern
 
@@ -435,7 +435,7 @@ let name = node.get_text("name")?;
   实测（2026-09-24）：x86 `win64`/`sysv64` 与 riscv64 `lp64d` 各 15 条代表签名**全绿**；
   arm64 `aapcs64` **6 条缺口**（谱里没有 FPR 寄存器组 ⇒ `float`/`ret_float` 池缺，
   与矩阵 175 条 skip 同源）。参考文档 `docs/reference/calling-conventions.md`，
-  方案与分期 `docs/plans/calling-convention-redesign-plan.md`。
+  方案与分期 `docs/archive/calling-convention-redesign-plan.md`。
   其中 `lint`（v19 V4a–V4c）是**静态体检**：报"写了却用不上 / 自相矛盾 / 宿主覆盖不到"的声明——
   未用的 `[operand.<名字>]` / `[form.<名字>]`（v21 W3/W10 的现名）、`[conventions.bitfields]`、
   **逐指令视图**里的位域重叠

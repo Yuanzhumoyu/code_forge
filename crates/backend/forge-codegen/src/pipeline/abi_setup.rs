@@ -72,7 +72,7 @@ pub(crate) fn setup_conv<M: TargetMachine>(
                  ② 静态自查缺口 ⇒ `forge-isa abi check <谱>`（`--strict` 让缺口影响\
                  退出码）、`forge-isa abi plan <谱> --conv <名> --sig \"…\"`；\
                  ③ 口径与缺口清单 ⇒ docs/reference/calling-conventions.md、\
-                 docs/plans/calling-convention-redesign-plan.md 的 A6。\n\
+                 docs/archive/calling-convention-redesign-plan.md 的 A6。\n\
                  \x20 提示：设 FORGE_TRACE_ABI=1 可看到该函数的 plan 或失败原因。",
                     ctx.conv.name
                 )));
