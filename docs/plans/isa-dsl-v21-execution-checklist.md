@@ -1628,3 +1628,46 @@ W2.2b 主体已跑通一遍（接线 + 迁移 + 打印器），**但未提交并
 riscv 自己的 `MOV_RM8_R64`（`addi rd, rs, 0` 的搬运形态）或 `Nop`，两者都没有 imm 操作数。
 真实 GlobalAddr 序列的 imm 是负占位值 ⇒ 走 `Addi`，不受影响（riscv64 JIT 矩阵覆盖）。
 若将来要让这类位模式也能补，需要加“按常量位识别 + 直接按字段散布写位”的第二条路径（当前不做，属设计取舍）。
+
+---
+
+## 16. v22 人体工学改造：进度与下一步（2026-10-11）
+
+**动机（实测，13 份谱）**：`[inst]` 共 **692** 块、每块**中位 5 个键**，其中 **52%（363 块）**是同形状
+`asm+form+match+opcode+ops`；`ops` 行 **660**、`bind` 行 **132**、`modrm` 在发行谱 **0 处**；
+同一把 `bind` 键在两条路径上**方向相反**（x86 = 位置→操作数、arm64 = 字段→操作数 ⇒ 后者 13 处被**静默忽略**）。
+
+**目标语法（已批准）**：操作数声明与字段绑定**就地写进 `asm`**——`{名字:槽[:角色]}` 声明、
+`{@字段:槽[:角色]}` 绑定、`{@[字段]:槽[:角色]}` 绑定且按**内存形态（MemRef）**走。
+
+### 已落地（有守卫测试）
+
+| 步骤 | 状态 | 证据 |
+| --- | --- | --- |
+| 抽取 pass（模板 → 内部 `ops`/`bind` 回填 ⇒ 下游**一行未改**） | ✅ | `src/dsl/inline_ops.rs` + `tests/inline_ops.rs` 7 条（含"与旧写法 `insts` 报告逐字段等价"） |
+| 内存形态标记 `{@[字段]:槽}` | ✅ | pass + 迁移器双向；`tests/v22_migration.rs::memory_form_marker_is_preserved` |
+| 迁移器 `v22_migrate`（纯文本，只动 `[inst]` 的 `ops`/`bind`/`asm` 三行） | ✅ | `src/v22_migrate.rs`；硬门测试**暂 `#[ignore]`**（见第 1 步） |
+| `forge-isa new <名>` 脚手架 | ✅ | `forge-isa/tests/new_spec.rs` 2 条（与教程 §0 同源 + 产物可 `validate`） |
+| 参考规范 + CHANGELOG | ✅ | `docs/reference/isa-dsl.md`「操作数声明写进 `asm`（v22）」；CHANGELOG `Added (2026-10-11)` |
+| 全量门禁 | ✅（2026-10-11 实测） | `cargo test --workspace --exclude forge-rustc -j 2` **exit 0**，148 个 `test result: ok`，13.2 min |
+
+### 下一步（按序，每步都有可判定验收）
+
+1. **顺序标记 `{名字:槽[:角色]#序号}`**（序号 = 旧 `ops` 里的下标）。内联后"出现序 = 编码序"，
+   而实测 **100 条**指令的出现序 ≠ 旧 `ops` 序（其中 **75 条**完全靠位置回退才编对）⇒ 不标就**静默改语义**。
+   - pass（`dsl/inline_ops.rs`）：`split_decl` 返回 `Option<u32>`、`Ph::Decl` 与 `Decl` 带上它；
+     一条指令内"部分带序号" ⇒ 报错；按序号排序后再走既有的**子序列合并**。
+   - 迁移器（`v22_migrate.rs`）：出现序 ≠ `ops` 序时给**每条**声明打 `#序号`（需新增 `appearance_order()` 判据）。
+2. **解除 `tests/v22_migration.rs` 那条 `#[ignore]`**：三份发行谱 + 夹具迁移前后 `expand_file`
+   展开**逐字节相同**（当前列表只有 riscv64/arm64；x86 的内存标记已修，第 1 步完成后一并纳入）。
+3. **删旧键**：`Instruction.ops`/`bind`、`EncKeys.modrm`、v21 占位修饰（`{name:affix}`/`{name?}`，
+   实测 `.toml` **0 处**、仅 1 条 Rust 单测在用）。四处同步：`schema.rs` ↔ `dsl/model.rs` ↔
+   `docs/reference/isa-dsl.md` 键表 ↔ `isa-dsl.schema.json`（`cargo run -p forge-isa -- schema --out …`）。
+4. **工具面**：`LINT-FORM-FIELD-UNUSED`（form 字段无人绑定）、`insts`/`explain` 打印绑定来源
+   （显式 `@` / 同名 / 位置回退）、未知键建议（节路径 + 编辑距离 ≤2）。
+5. **文档**：`docs/reference/isa-dsl.md` 开篇"写一条指令用哪几个键"决策树；`docs/README.md` 与
+   `CLAUDE.md` 的 v21 速查段同步 v22。
+
+**边界（不许假绿）**：`modrm` 虽在发行谱 0 处，但 `stream_decl.rs`/`field_decl.rs` 的变长路径仍读 `bind`
+（`reg`/`rm`）；**删键前**必须先把这两条路径切到 `asm` 内联绑定，并让 `isa_roundtrip_guard` 与
+`spec_coverage_guard` 的指令数、文本歧义键保持**逐字不变**。
