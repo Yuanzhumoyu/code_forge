@@ -780,7 +780,8 @@ rex_w = "field"
 [inst.N]
 form = "S"
 modrm = { reg = "dst", rm = "src" }
-asm = "n {dst:g:out}, {src:g}"
+ops = ["dst:g:out", "src:g"]
+asm = "n {dst}, {src}"
 "#;
 
     fn form_of(src: &str) -> Form {
@@ -880,12 +881,14 @@ class = "gpr64"
 group = "addw"
 word_size = 64
 opcode = 0x10
-asm = "add {dst:g:out}, {src:g}, {src2:g}"
+ops = ["dst:g:out", "src:g", "src2:g"]
+asm = "add {dst}, {src}, {src2}"
 [inst.ADDW]
 group = "addw"
 word_size = 32
 opcode = 0x11
-asm = "addw {dst:g:out}, {src:g}, {src2:g}"
+ops = ["dst:g:out", "src:g", "src2:g"]
+asm = "addw {dst}, {src}, {src2}"
 [[lower.Copy]]
 dispatch = "rs1_width"
 insts = ["ADD {out}, {0}, {1}"]
@@ -990,7 +993,8 @@ prefix = "0xF2"
 escape = [0x0F]
 opcode = 0x10
 modrm = { reg = 2, rm = "dst" }
-asm = "n {dst:g:out}, {src:g}"
+ops = ["dst:g:out", "src:g"]
+asm = "n {dst}, {src}"
 "#;
         let a = crate::dsl::parse_and_validate(stream).expect("段形态合法");
         let b = crate::dsl::parse_and_validate(classic).expect("经典形态合法");
@@ -1018,7 +1022,8 @@ class = "gpr64"
 [inst.N]
 segments = [{ kind = "sib" }]
 opcode = 0x10
-asm = "n {dst:g:out}"
+ops = ["dst:g:out"]
+asm = "n {dst}"
 "#;
         let err = format!("{:?}", crate::dsl::parse_and_validate(bad).unwrap_err());
         assert!(err.contains("不支持"), "err: {err}");
