@@ -75,40 +75,6 @@ fn parse_minimal_riscv_style() {
     assert_eq!(add.asm.render(), "add {dst}, {src}, {src2}");
 }
 
-/// v21 W6+：`match` 的**变体分派**（真实用例 = riscv `rev8` 的 RV32/RV64 两编码 ✗）
-/// 在**唯一解析点**折成常量 ✗ ⇒ 原生视角取 `default` ✗、`--params xlen=32` 取分派值 ✗，
-/// 三条负例都在加载期点名报错 ✗。
-#[test]
-fn match_variant_fields_fold_by_params() {
-    let doc = RISCV_DOC
-        .replace("mode = 64", "mode = 64\n\n[meta.variants]\nxlen = [32, 64]")
-        .replace(
-            "match = { funct3 = 0, funct7 = 0 }",
-            "match = { funct3 = 0, funct7 = { xlen = { 32 = 1 }, default = 0 } }",
-        );
-    // 原生视角（不传参数 ✗）⇒ 走 `default` ✗。
-    let m = parse_and_validate(&doc).expect("分派写法必须能解析");
-    assert_eq!(m.instructions[0].fields.as_ref().unwrap()["funct7"], 0);
-    // 传 `xlen=32` ⇒ 取分派值 ✗（机器码只在折完之后才被下游看见 ✗）。
-    let opts = crate::dsl::validate::ValidateOpts {
-        params: [("xlen".to_string(), 32i64)].into_iter().collect(),
-        ..Default::default()
-    };
-    let (m32, _) = super::parse_and_validate_projected(&doc, &opts).expect("投影必须能解析");
-    assert_eq!(m32.instructions[0].fields.as_ref().unwrap()["funct7"], 1);
-    assert_ne!(m32.instructions[0].fields, m.instructions[0].fields);
-    // 负例 ①：参数没在 `[meta].variants` 里声明 ✗（语法仍合法 ⇒ 是**语义**错 ✗）。
-    let undeclared = doc.replace("xlen = [32, 64]", "");
-    let e = format!("{:?}", parse_and_validate(&undeclared).unwrap_err());
-    assert!(e.contains("没声明") && e.contains("xlen"), "{e}");
-    // 负例 ②：分派表的键不在声明域内 ✗。
-    let out_of_domain = parse_and_validate(&doc.replace("32 = 1", "999 = 1")).unwrap_err();
-    let e = format!("{out_of_domain:?}");
-    assert!(e.contains("不在参数") && e.contains("声明域"), "{e}");
-    // 负例 ③：`default` 必填 ✗（缺它连 TOML 形态都不成立 ⇒ 解析期就红 ✗）。
-    assert!(parse(&doc.replace(", default = 0", "")).is_err());
-}
-
 const X86_DOC: &str = r#"
 [meta]
 name = "x86_64"

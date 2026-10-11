@@ -135,20 +135,6 @@ pub(crate) fn parse_and_validate_projected(
     if let Err(msg) = operand_decl::lower_operand_layer(&mut model) {
         diags.push_anchored(&idx, &msg);
     }
-    // v21 W6+：`match` 里的**变体分派**在这里按**真实 params** 再折一次 ✗（原生视角已在
-    // `parse()` 里折过 ✗）。**只在传了参数时折** ✗：否则会把前面的降级（如 W4 段模型把
-    // `match.opcode` 搬进 `Instruction.opcode` ✗）重新写回 `fields` ✗ —— 实测流式谱的
-    // 「翻译后 `match` 里不该再留 opcode」用例就是这么红的 ✗。
-    if !opts.params.is_empty() {
-        let variants = model.meta.variants.clone().unwrap_or_default();
-        let mut insts = std::mem::take(&mut model.instructions);
-        if let Err(msg) =
-            crate::dsl::model::resolve_match_fields(&mut insts, &opts.params, &variants)
-        {
-            diags.push_anchored(&idx, &msg);
-        }
-        model.instructions = insts;
-    }
     // 命名位集合 / 命名立即数的**摊平**读的是 `operand_slots` ⇒ 必须在降级之后再跑一遍
     //（`parse()` 里那次现在读不到槽——它是 `[operand.<名字>]` 降级出来的）。
     if let Err(msg) = model

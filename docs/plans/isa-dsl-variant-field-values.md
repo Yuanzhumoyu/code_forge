@@ -1,11 +1,7 @@
 # ISA-DSL：**按变体给字段值**（`variant` 字段值）
 
-> [progress] 2026-10-07 设计定稿。**2026-10-08 晚：语言特性已落地** ✔（模型 `FieldVal`/`FieldVariant` ✗ +
-> 唯一解析点 `resolve_match_fields` ✗ + 三条加载期负例 ✗ + 单测 `match_variant_fields_fold_by_params` ✗）；
-> **仍剩**：把 `rev8` 落到 `isa/riscv64.toml` ✗（会改谱字节 ✗ ⇒ 必须连刷 asm 棘轮与钉死值 ✗，
-> 验收数 `known 148→146` ✗ / 留集 `135→137` ✗）+ `crates/tools/forge-tests/asm/README.md` 的用例说明 ✗。
-> 参考文的**键表**不需要改 ✗（键名 `match` 早已在 ✗；本次只扩了它的**值形状** ✗）——
-> 语法说明放在 `CHANGELOG.md` 与本文 + `dsl/model.rs` 的文档注释里 ✗。
+> [progress] 2026-10-07 设计定稿（尚未实现）。动机与证据见
+> `crates/tools/forge-tests/asm/README.md` 的「`rev8` 的 RV32/RV64 两编码」一节。
 >
 > **⚠️ 2026-10-08 落地前实测校正（三处，务必先读再动手 ✗）**：
 >

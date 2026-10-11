@@ -2327,113 +2327,6 @@ impl EncKeys {
     }
 }
 
-/// **`match` 里的一个固定字段值**（v21 W6+ ✗）：常量，或按变体参数分派 ✗。
-///
-/// 形态 ✗（同一个键位两种写法都能解析 ✗，见设计 `docs/plans/isa-dsl-variant-field-values.md` ✗）：
-///
-/// ```toml
-/// match = { funct3 = 5, imm12 = 0x6b8 }                       # 常量（今天的样子）
-/// match = { imm12 = { xlen = { 32 = 0x698 }, default = 0x6b8 } }  # 分派（v21 W6+）
-/// ```
-///
-/// **为什么需要它** ✗：同一条指令在不同**变体参数**下可能是**不同编码** ✗（真实用例：
-/// riscv `rev8` 的 `imm12` 在 RV64 是 `0x6b8` ✗、RV32 是 `0x698` ✗ ✗）。靠"再加一条
-/// RV32-only 指令"不行 ✗——那会让 `xlen=64` 的原生视角丢声明 ✗（`variants.rs` 断言不丢 ✗）。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum FieldVal {
-    /// 常量 ✗：`imm12 = 0x6b8`。
-    Const(u64),
-    /// 变体分派 ✗：`imm12 = { xlen = { 32 = 0x698 }, default = 0x6b8 }`。
-    Variant(FieldVariant),
-}
-
-/// 变体分派表的**载体** ✗：`default` 是保留键 ✗，其余键都是**参数名** ✗
-/// （值 = 该参数的取值 → 字段值 ✗）⇒ 必须用 `flatten` 收参数名 ✗
-/// （写在 `FieldVal` 的 struct 变体里会去匹配字面键 `param`/`by` ✗，与语法不符 ✗）。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FieldVariant {
-    /// **必填** ✗：原生视角（不传参数 ✗）与该参数未命中时都取它 ✗。
-    pub default: u64,
-    /// 参数名 → （取值 → 字段值 ✗）。
-    #[serde(flatten)]
-    pub by: BTreeMap<String, BTreeMap<String, u64>>,
-}
-
-/// v21 W6+：把 `match` 里的**变体分派**折成常量 ✗ —— **唯一的解析点** ✗。
-///
-/// - 不传参数（原生视角 ✗）⇒ 取 `default` ✓；传了参数 ⇒ 该参数在 `by` 里有对应值就取它 ✗，
-///   否则回 `default` ✓；
-/// - **加载期错误** ✗（都点名是哪条指令的哪个字段 ✗）：参数名未在 `[meta].variants` 声明 ✗、
-///   `by` 的键不在该参数的声明域内 ✗、分派表为空 ✗。（`default` 缺失由 `Deserialize` 直接报错 ✗。）
-///
-/// 解析后 `inst.fields` 就是常量表 ✗ ⇒ **下游零改动** ✗（这是本方案的选型理由 ✗）。
-pub fn resolve_match_fields(
-    insts: &mut [Instruction],
-    params: &BTreeMap<String, i64>,
-    variants: &BTreeMap<String, Vec<i64>>,
-) -> Result<(), String> {
-    for inst in insts {
-        let Some(raw) = inst.match_variants.clone() else {
-            continue;
-        };
-        let mut out: BTreeMap<String, u64> = BTreeMap::new();
-        for (key, val) in &raw {
-            match val {
-                FieldVal::Const(v) => {
-                    out.insert(key.clone(), *v);
-                }
-                FieldVal::Variant(fv) => {
-                    // 分派表只认**一个**参数名 ✗（多个参数名 ⇒ 语义含糊 ✗ ⇒ 点名报错 ✗）。
-                    let (param, by) = match fv.by.iter().next() {
-                        Some(kv) if fv.by.len() == 1 => kv,
-                        Some(_) => {
-                            return Err(format!(
-                                "[inst.{}] 的 `match` 里 `{key}` 的分派表写了多个参数名（{:?}）——只允许一个",
-                                inst.name,
-                                fv.by.keys().collect::<Vec<_>>()
-                            ));
-                        }
-                        None => {
-                            return Err(format!(
-                                "[inst.{}] 的 `match` 里 `{key}` 的分派表是空的（要么写常量，要么给一条 `<参数名> = {{ <取值> = <字段值> }}`）",
-                                inst.name
-                            ));
-                        }
-                    };
-                    let domain = variants.get(param).ok_or_else(|| {
-                        format!(
-                            "[inst.{}] 的 `match` 里 `{key}` 用了变体参数 `{param}`，但 `[meta].variants` 没声明它",
-                            inst.name
-                        )
-                    })?;
-                    for k in by.keys() {
-                        let in_domain = k
-                            .trim()
-                            .parse::<i64>()
-                            .map(|n| domain.contains(&n))
-                            .unwrap_or(false);
-                        if !in_domain {
-                            return Err(format!(
-                                "[inst.{}] 的 `match` 里 `{key}` 的 `{k}` 不在参数 `{param}` 的声明域内（域 = {domain:?}）",
-                                inst.name
-                            ));
-                        }
-                    }
-                    let pick = params
-                        .get(param)
-                        .and_then(|p| by.get(&p.to_string()))
-                        .copied()
-                        .unwrap_or(fv.default);
-                    out.insert(key.clone(), pick);
-                }
-            }
-        }
-        inst.fields = Some(out);
-    }
-    Ok(())
-}
-
 /// 编码形式预设（v21 W10：TOML 面是 `[form.<名>]`，**表头即形式名**）：具名的
 /// [`EncKeys`]，指令用 `form = "名字"` 混入。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -2839,16 +2732,7 @@ pub struct Instruction {
     pub segments: Option<Vec<SegmentDecl>>,
     /// **固定字段值**（funct3/funct7/前缀字节/vex 键…），按位域名或编码键名引用。
     /// TOML 键是 `match`（v21 W2.1 改名；旧的 `fields` 键让位给"字段声明列表"）。
-    ///
-    /// v21 W6+：值有**两种形态** ✗ —— 常量（`imm12 = 0x6b8` ✗），或**变体分派表** ✗
-    /// （`imm12 = { xlen = { 32 = 0x698 }, default = 0x6b8 }` ✗，见 [`FieldVal`] ✗）。
-    /// 分派只在**唯一解析点**折成常量 ✗（[`resolve_match_fields`] ✗，在
-    /// `parse_and_validate_projected` 里跑 ✗）⇒ 编码/解码/汇编/渲染与生成物只见
-    /// 下面的 `fields` ✗，不会出现"同一模块里两套语义"✗。
     #[serde(rename = "match", default)]
-    pub match_variants: Option<BTreeMap<String, FieldVal>>,
-    /// `match` **折成常量后**的形态 ✗（`#[serde(skip)]` ✗，由 [`resolve_match_fields`] 填 ✗）。
-    #[serde(skip)]
     pub fields: Option<BTreeMap<String, u64>>,
     /// **v21 W2 字段声明列表**（本指令自己的，补充/覆盖 form 的）。
     #[serde(rename = "fields", default)]
