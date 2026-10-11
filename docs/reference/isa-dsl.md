@@ -683,8 +683,7 @@ schema/诊断/生成器共用它，不另抄名单）：
 # 1) 条件当**操作数**：槽 kind = "cond"，汇编/反汇编按名解析与渲染
 
 [inst.CSELX]
-ops = ["dst:r64:out", "src:r64", "cc:cond4", "src2:r64"]   # cond4 槽 kind = "cond"
-asm = "csel {dst}, {src}, {src2}, {cc}"
+asm = "csel {dst:r64:out}, {src:r64}, {src2:r64}, {cc:cond4}"   # cond4 槽 kind = "cond"
 
 # 2) 条件在**助记符里**（A64 `b.eq`）：条件码做成固定字段，助记符用行键插值
 
@@ -813,9 +812,10 @@ size_words = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"]
 （字段就地声明在 form 里）、v14 的位置引用 `"s0"`（已删，改用操作数名 / `"out"` / `"auto"`）、
 `[abi]` 段（已整节删除）。
 
-## 操作数声明写进 `asm`（v22，与旧 `ops` 并存）
+## 操作数声明写进 `asm`（v22）
 
-v22 起，操作数**就地声明在 `asm` 模板里**，`ops` 键可以省掉（迁移期两种写法并存，同一条指令只许写一处）：
+v22 起，操作数**就地声明在 `asm` 模板里**；`ops`/`bind` 两个旧键**已删除**（写了报未知键，
+诊断里附"你是不是想写 X"的建议）：
 
 ```toml
 [inst.MOV64_RR]
@@ -835,15 +835,14 @@ asm = "{@[rm]:gprx}{dst:gprx:out}, {@reg:gprx}{src:gprx}"
 规则：
 
 - 操作数声明的**出现序 = 编码序**（与旧 `ops` 数组序同义）；一条指令的多个 `asm` 模板是同一声明表的**子序列**。
+- 打印序 ≠ 编码序时用 `{名字:槽#序号}` **显式钉编码序**（一条指令里**全标或全不标**；发行谱里
+  x86 的内存形态族就是这么写的）。
 - 绑定占位符的 `槽`/角色必须与它绑定的操作数**一致**——不一致即编译期报错：这条把"哪个参数进哪个字段"
   从"同名 → 位置回退"的隐式链，变成可查的显式事实。
 - 字段名取值域 = 该指令生效的字段（`form.fields` 的名字 + modrm/VEX 位置名 `reg`/`rm`/`vvvv` 等）；
   未声明的字段名报错，不静默回退。
-- 旧写法（`ops` + `bind` + `{名字}` 引用）仍可用；同一条指令两种写法混用报错。
-
-> ⚠️ **尚未实现**：**顺序敏感**的指令（操作数出现序 ≠ 旧 `ops` 数组序）暂不支持内联写法——显式标注编码序
-> 的写法（`#序号`）仍在定稿；在那之前这类指令继续用 `ops` 键声明。`forge-isa lint` 与迁移器
-> （`spec_migrate`）都按这个边界工作。
+- 旧写法（`ops` + `bind` + `{名字}` 引用）**已删除**；迁移器 `spec_migrate`（`forge-isa migrate`）
+  能把旧谱一键迁成内联写法，等价性由"迁移前后展开逐字节相同"守住（`tests/spec_migrate.rs`）。
 
 ## `[operand.<名字>]` — 操作数声明
 
@@ -1111,27 +1110,23 @@ v14 的 `"r8"` 是字节单位（= 64 位）、与 `[conventions]` 的位单位�
 [inst.MOV_R_RM]                # 指令名在**表头**（PascalCase；生成 Inst 枚举变体）
 form = "MRR"                   # 可选；省略则全部编码键内联在本指令
 opcode = 0x8B
-ops = ["dst:gprx:out", "src:gprx"]        # 命名操作数声明（数组序 = 编码序）
 modrm = { reg = "dst", rm = "src" }       # 指令级覆盖 form（见下）
-asm = "movrr {dst}, {src}"     # 必填；只用 {名字} 引用，不声明
+asm = "movrr {dst:gprx:out}, {src:gprx}"  # 必填；声明就地写在这里
 effect = ["Move"]              # 语义标签（见下）
 
-[inst.ADD_RM_R]                # 源在前、目的在后的编码序
-ops = ["src:gprx", "dst:gprx:inout"]
+[inst.ADD_RM_R]                # 源在前、目的在后的编码序 ⇒ 用 #序号 钉住
 modrm = { reg = "src", rm = "dst" }
-asm = "add {dst}, {src}"
+asm = "add {dst:gprx:inout#1}, {src:gprx#0}"
 
 [inst.ADD_R_IMM32]             # 固定扩展码 /0（无操作数占 reg 字段）
-ops = ["dst:gpr:inout", "imm:imm32"]
 modrm = { reg = 0, rm = "dst" }
-asm = "add {dst}, {imm}"
+asm = "add {dst:gpr:inout}, {imm:imm32}"
 
 [inst.ADD]                     # riscv R-type（定宽位域绑定）
 form = "R"
 opcode = 0x33
 match = { funct3 = 0, funct7 = 0 }   # 固定字段值，按位域名引用
-ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
-asm = "add {dst}, {src}, {src2}"      # 名字 = asm 占位符 = 生成的 Inst 字段名
+asm = "add {dst:gpr:out}, {src:gpr}, {src2:gpr}"      # 名字 = asm 占位符 = 生成的 Inst 字段名
 effect = ["Pure"]
 
 [inst.CQO]                     # 隐式寄存器破坏声明（物理寄存器名）
@@ -2314,8 +2309,7 @@ form = "I"
 opcode = 0x13
 match = { funct3 = 5 }
 fields_variant = { imm12 = { param = "xlen", by = { 32 = 0x698 }, default = 0x6b8 } }
-ops = ["dst:gpr:out", "src:gpr"]
-asm = "rev8 {dst}, {src}"
+asm = "rev8 {dst:gpr:out}, {src:gpr}"
 ```
 
 语义与约束：
