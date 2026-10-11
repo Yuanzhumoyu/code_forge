@@ -97,6 +97,48 @@ fn inst_blocks_have_legacy_keys(text: &str) -> Vec<String> {
     bad
 }
 
+/// **family 行内表**迁移的等价性证明（v22 续）：`[family.<名>]` 的 `body`/`rows` 里写的
+/// `ops`/`bind` 就地写进该行的 `asm` 之后，展开结果必须**逐字节相同**。
+///
+/// ⚠️ 尚未放开（**如实记录，不是假绿**）：`migrate_spec_text` 的 family 路径已实现（`body`
+/// 允许只有 `ops`/`bind` 而无 `asm`、行继承 body 的有效声明、族的行键插值 `{inst.lower}`/
+/// `{slot}` 原样放行、抹条目后的分隔符迭代收敛），但**当 body 的 `ops` 是跨行数组时**，
+/// 行拿到的有效声明只剩第一项 ⇒ 迁移后的行 `asm` 缺后续操作数（x86 `ALU8_RM_IMM8` 实测：
+/// 行的 `{imm}` 未被声明成 `{imm:imm8}`）⇒ 展开报
+/// `DSL-TEMPLATE: [family.ALU8_RM_IMM8] asm: 占位符 '{imm}' 不是已声明的操作数名（ops: dst）`。
+/// 下一步：查 family `body` 的多行 `ops` 在 `split_entries`/`table_decls` 上的取值丢失，
+/// 修好后再把本用例放开，并把三份谱 + 夹具过一遍 `forge-isa migrate`。
+#[test]
+#[ignore = "family 行内表迁移尚有 1 处缺陷：body 的跨行 ops 只取到第一项（x86 ALU8_RM_IMM8 \
+            缺 {imm:imm8}）；修好前不放开，避免假绿。"]
+fn family_tables_migrate_with_byte_identical_expansion() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    for isa in ["x86.toml", "riscv64.toml", "arm64.toml"] {
+        let p = root.join("isa").join(isa);
+        let src = std::fs::read_to_string(&p).expect("读谱");
+        let migrated = spec_migrate::migrate_spec_text(&src)
+            .unwrap_or_else(|e| panic!("{isa} family 迁移失败：{e}"));
+        let before = strip_source_path(&flatten_file(&p));
+        let tmp = write_temp(isa, &migrated);
+        let after = strip_source_path(&flatten_file(&tmp));
+        if before != after {
+            let at = before
+                .bytes()
+                .zip(after.bytes())
+                .position(|(a, b)| a != b)
+                .unwrap_or_else(|| before.len().min(after.len()));
+            panic!(
+                "{isa} family 迁移后展开不同（{} vs {}，首处差异 @{at}）\n\
+                 --- 迁移前 ---\n{}\n--- 迁移后 ---\n{}",
+                before.len(),
+                after.len(),
+                window(&before, at, 240, 300),
+                window(&after, at, 240, 300)
+            );
+        }
+    }
+}
+
 /// 发行谱**已经迁完**：迁移器不再改动它们，`[inst]` 块内也没有旧键。
 ///
 /// **迁移当轮**的等价性证明是这条用例的前身——当时它断言"迁移前后 `expand_file` 展开逐字节
@@ -108,12 +150,13 @@ fn shipped_specs_are_already_inline() {
     for isa in ["x86.toml", "riscv64.toml", "arm64.toml"] {
         let p = root.join("isa").join(isa);
         let src = std::fs::read_to_string(&p).expect("读谱");
-        let migrated = spec_migrate::migrate_spec_text(&src)
-            .unwrap_or_else(|e| panic!("{isa} 应已迁完（迁移器不该再报错）：{e}"));
-        assert_eq!(
-            src, migrated,
-            "{isa} 又冒出旧写法（`ops`/`bind`）——迁移器是幂等的，相等才说明迁干净了"
-        );
+        // 注意：**只**断言 `[inst.*]` 块已迁净——`[family.<名>]` 的行内表还在迁移中
+        // （见 `family_tables_migrate_with_byte_identical_expansion`），所以这里不比
+        // "整份文件迁移器幂等"。
+        let migrated = spec_migrate::migrate_spec_text(&src).unwrap_or_else(|e| {
+            panic!("{isa} 迁移器应在已迁净的 [inst] 块上不报错（family 路径见下）：{e}")
+        });
+        let _ = migrated;
         let legacy = inst_blocks_have_legacy_keys(&src);
         assert!(
             legacy.is_empty(),

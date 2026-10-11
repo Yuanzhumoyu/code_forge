@@ -3677,20 +3677,29 @@ fn subst(v: &toml::Value, vars: &toml::Table, path: &str) -> Result<toml::Value,
 }
 
 /// 收集值里引用的插值键（`{key}` / `{key.lower}`），递归进数组与表。
+///
+/// v22：占位符可以**嵌套**——`asm = "{mn} {dst:gprx:out}, {src:{slot}}"` 里的 `{slot}` 在
+/// 外层占位符**内部**（这是内联声明把"槽名本身是行键插值"写进模板后的常态）。按**深度**
+/// 逐层收集，否则 `slot` 会被漏掉，行键 `slot = "r8"` 就被当成指令字段而报
+/// `unknown field`。
 fn referenced_keys(v: &toml::Value, out: &mut std::collections::BTreeSet<String>) {
     match v {
         toml::Value::String(s) => {
-            let mut pos = 0usize;
-            while let Some(rel) = s[pos..].find('{') {
-                let open = pos + rel;
-                let Some(end) = s[open..].find('}') else {
-                    break;
-                };
-                let close = open + end;
-                let raw = &s[open + 1..close];
-                let key = raw.strip_suffix(".lower").unwrap_or(raw);
-                out.insert(key.to_string());
-                pos = close + 1;
+            let mut stack: Vec<usize> = Vec::new();
+            for (i, c) in s.char_indices() {
+                match c {
+                    '{' => stack.push(i),
+                    '}' => {
+                        if let Some(open) = stack.pop() {
+                            let raw = s[open + 1..i].trim();
+                            let key = raw.strip_suffix(".lower").unwrap_or(raw).trim();
+                            if !key.is_empty() {
+                                out.insert(key.to_string());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
         toml::Value::Array(items) => {

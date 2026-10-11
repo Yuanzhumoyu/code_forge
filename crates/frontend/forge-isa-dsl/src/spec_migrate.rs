@@ -159,6 +159,7 @@ fn rewrite_template(
     decls: &[OpDecl],
     inst: &str,
     with_idx: bool,
+    params: &std::collections::BTreeSet<String>,
 ) -> Result<String, String> {
     let mut out = String::with_capacity(tpl.len() + 32 * decls.len());
     let mut i = 0usize;
@@ -178,6 +179,14 @@ fn rewrite_template(
                 "[inst.{inst}] asm: 占位符 '{{{inner}}}' 已是新写法或带修饰——本迁移只接受纯 `{{名字}}`\
                  （v21 的 `{{名字:修饰}}` 需先人工处理）"
             ));
+        }
+        // 族的**行键插值**（`{inst}` / `{inst.lower}` / `{slot}` / `{opcode}` …）不是操作数，
+        // 原样放行；只有"既不是操作数、也不是族参数"的名字才报错（写错的声明名）。
+        let head = inner.split('.').next().unwrap_or(inner);
+        if params.contains(inner) || params.contains(head) {
+            out.push_str(&format!("{{{inner}}}"));
+            i += rel + 1;
+            continue;
         }
         let pos = decls
             .iter()
@@ -241,6 +250,391 @@ fn logical_lines(block: &[String]) -> Vec<(usize, String, usize)> {
     out
 }
 
+// ───────────────────── family 的行内表（v22 续） ─────────────────────
+//
+// `[family.<名>]` 的唯一复用机制是"`body` = 共享默认值，`rows` = 每行一条实例"，两处都能写
+// `ops`/`bind`/`asm`（行覆盖 body）⇒ 迁移必须**下钻行内表**：把声明就地写进这一行的 `asm`，
+// 然后删掉 `ops`/`bind` 两个键。行内表是**一行里的表**，所以这里的处理是文本跨度手术，
+// 不是行级的（`[inst.*]` 那条路径走 `logical_lines`）。
+//
+// 与 DSL 一致的继承语义（实测三种都在谱里）：
+// ① 行没写 `ops` ⇒ 用 `body` 的有效声明；
+// ② 行写了 `bind` 但没写 `ops` ⇒ 把它盖在 body 的声明上（x86 `INCDEC_RM` 就是）；
+// ③ 行**没写 `asm`** ⇒ 这条行是"只设默认键"的，原样保留（body 的 asm 负责打印）。
+// 反过来"行写了 `ops` 却没写 `asm`"是**说不通**的（自己的声明+别人的模板）⇒ 直接报错，
+// 不猜。
+
+/// 行内表里的一个 `键 = 值` 条目（含它在表文本里的跨度）。
+struct Entry {
+    key: String,
+    value: String,
+    /// 值的起止（表文本坐标）——`asm` 就地替换用。
+    vlo: usize,
+    vhi: usize,
+    /// 整个条目的起止（不含分隔逗号）——`ops`/`bind` 抹除用。
+    lo: usize,
+    hi: usize,
+}
+
+/// 表文本 → 顶层条目（`{}`/`[]`/字符串内部的逗号不算分隔）。
+fn split_entries(body: &str) -> Vec<Entry> {
+    let mut out: Vec<Entry> = Vec::new();
+    let mut depth = 0i32;
+    let mut in_str = false;
+    let mut esc = false;
+    let mut start = 0usize;
+    for (i, c) in body.char_indices() {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if c == '\\' {
+                esc = true;
+            } else if c == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_str = true,
+            '{' | '[' => depth += 1,
+            '}' | ']' => depth -= 1,
+            ',' if depth == 0 => {
+                push_entry(&mut out, body, start, i);
+                start = i + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    push_entry(&mut out, body, start, body.len());
+    out
+}
+
+fn push_entry(out: &mut Vec<Entry>, body: &str, start: usize, end: usize) {
+    let chunk = &body[start..end];
+    let Some(eq) = chunk.find('=') else {
+        return; // 空块/尾随逗号
+    };
+    let key = chunk[..eq].trim();
+    if key.is_empty() {
+        return;
+    }
+    let tail = chunk[eq + 1..].len() - chunk[eq + 1..].trim_start().len();
+    let vlo = start + eq + 1 + tail;
+    let vhi = end - (chunk.len() - chunk.trim_end().len());
+    out.push(Entry {
+        key: key.to_string(),
+        value: chunk[eq + 1..].trim().to_string(),
+        vlo,
+        vhi,
+        lo: start + (chunk.len() - chunk.trim_start().len()),
+        hi: end - (chunk.len() - chunk.trim_end().len()),
+    });
+}
+
+/// 抹掉条目/替换值后收拾分隔符：`, ,` → `,`、`{ ,` → `{ `、`, }` → ` }`。
+///
+/// 条目之间原本是 `, ` 分隔的，抹掉中间那个条目会留下"逗号 + 空白 + 逗号"⇒ 必须**迭代收敛**，
+/// 一遍 `replace` 收不干净（实测 x86 `ALU_MR` 的 body 会留下 `, , ,`）。
+fn tidy_separators(s: &str) -> String {
+    let mut out = s.to_string();
+    loop {
+        let before = out.clone();
+        out = out.replace(", ,", ",");
+        out = out.replace(",,", ",");
+        out = out.replace("{ ,", "{").replace("[ ,", "[");
+        out = out.replace(", }", "}").replace(", ]", "]");
+        if out == before {
+            return out;
+        }
+    }
+}
+
+/// 行内表的有效声明：自己的 `ops`（+ 自己的 `bind`）或继承来的（行 `bind` 盖上去）。
+fn table_decls(
+    entries: &[Entry],
+    inherited: Option<&[OpDecl]>,
+    prefix_scan: bool,
+    ctx: &str,
+) -> Result<Vec<OpDecl>, String> {
+    let get = |k: &str| entries.iter().find(|e| e.key == k);
+    let mut decls = match get("ops") {
+        Some(e) => parse_ops(&format!("ops = {}", e.value)).map_err(|m| format!("{ctx}: {m}"))?,
+        None => match inherited {
+            Some(d) => d.to_vec(),
+            None => Vec::new(),
+        },
+    };
+    if let Some(b) = get("bind") {
+        let pairs =
+            parse_bind(&format!("bind = {}", b.value)).map_err(|m| format!("{ctx}: {m}"))?;
+        for (k, v) in pairs {
+            // x86（`prefix_scan`）：值是操作数名、`[mem]` 是内存形态；定宽：键是操作数名。
+            let (op, field, mem_form) = if prefix_scan {
+                (
+                    v.trim_matches(['[', ']']).to_string(),
+                    k,
+                    v.starts_with('['),
+                )
+            } else {
+                (k, v, false)
+            };
+            match decls.iter_mut().find(|d| d.name == op) {
+                Some(d) => {
+                    d.field = Some(field);
+                    d.mem_form = mem_form;
+                }
+                None => {
+                    return Err(format!(
+                        "{ctx}: bind 指向的操作数 `{op}` 不在 ops 里（ops: {}）",
+                        decls
+                            .iter()
+                            .map(|d| d.name.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ));
+                }
+            }
+        }
+    }
+    Ok(decls)
+}
+
+/// 迁移一张行内表：返回（重写后的表文本, 有效声明, 是否改动）。
+///
+/// `is_body`：`body` **允许**只有 `ops`/`bind` 而没有 `asm`（打印模板在 rows 里，声明由各行
+/// 继承——实测 x86 `ALU_MR` 就是），此时只删两个键；**行**这么写则说不通（自己的声明 + 别人的
+/// 模板）⇒ 报错，不猜。
+fn migrate_table(
+    body: &str,
+    ctx: &str,
+    prefix_scan: bool,
+    inherited: Option<&[OpDecl]>,
+    is_body: bool,
+    params: &std::collections::BTreeSet<String>,
+) -> Result<(String, Vec<OpDecl>, bool), String> {
+    let entries = split_entries(body);
+    let has = |k: &str| entries.iter().any(|e| e.key == k);
+    let decls = table_decls(&entries, inherited, prefix_scan, ctx)?;
+    let new_asm = if has("asm") {
+        let asm_e = entries.iter().find(|e| e.key == "asm").expect("已判有");
+        let tpls =
+            parse_asm(&format!("asm = {}", asm_e.value)).map_err(|m| format!("{ctx}: {m}"))?;
+        let ops_order: Vec<String> = decls.iter().map(|d| d.name.clone()).collect();
+        let with_idx = tpls
+            .iter()
+            .any(|t| appearance_order(t, &decls) != ops_order);
+        let mut new_tpls = Vec::new();
+        for t in &tpls {
+            new_tpls.push(rewrite_template(t, &decls, ctx, with_idx, params)?);
+        }
+        Some(if new_tpls.len() == 1 {
+            format!("\"{}\"", new_tpls[0])
+        } else {
+            format!(
+                "[{}]",
+                new_tpls
+                    .iter()
+                    .map(|t| format!("\"{t}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        })
+    } else if (has("ops") || has("bind")) && !is_body {
+        return Err(format!(
+            "{ctx}: 这一行写了 ops/bind 却没写 asm——自己的声明配别人的模板说不通（行覆盖 asm 才需要自己的声明）"
+        ));
+    } else {
+        None
+    };
+    // 跨度手术（右到左应用，早先的跨度不失效）。
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for e in &entries {
+        if e.key == "ops" || e.key == "bind" {
+            edits.push((e.lo, e.hi, String::new()));
+        } else if e.key == "asm"
+            && let Some(a) = &new_asm
+        {
+            edits.push((e.vlo, e.vhi, a.clone()));
+        }
+    }
+    let changed = !edits.is_empty();
+    edits.sort_by_key(|(lo, _, _)| std::cmp::Reverse(*lo));
+    let mut text = body.to_string();
+    for (lo, hi, rep) in edits {
+        text.replace_range(lo..hi, &rep);
+    }
+    Ok((tidy_separators(&text), decls, changed))
+}
+
+/// 在 `text` 里找 `key = {`/`key = [` 的值跨度（含括号；字符串内的括号不算）。
+fn value_span(text: &str, key: &str) -> Option<(usize, usize)> {
+    let mut from = 0usize;
+    while let Some(rel) = text[from..].find(key) {
+        let at = from + rel;
+        let after = &text[at + key.len()..];
+        let trimmed = after.trim_start();
+        if !trimmed.starts_with('=') {
+            from = at + key.len();
+            continue;
+        }
+        let eq_off = at + key.len() + (after.len() - trimmed.len());
+        let val = &text[eq_off + 1..];
+        let lead = val.len() - val.trim_start().len();
+        let vstart = eq_off + 1 + lead;
+        let open = text[vstart..].chars().next()?;
+        let close = match open {
+            '{' => '}',
+            '[' => ']',
+            _ => return None,
+        };
+        let (mut depth, mut in_str, mut esc) = (0i32, false, false);
+        for (i, c) in text[vstart..].char_indices() {
+            if in_str {
+                if esc {
+                    esc = false;
+                } else if c == '\\' {
+                    esc = true;
+                } else if c == '"' {
+                    in_str = false;
+                }
+                continue;
+            }
+            match c {
+                '"' => in_str = true,
+                c if c == open => depth += 1,
+                c if c == close => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((vstart, vstart + i + c.len_utf8()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        return None;
+    }
+    None
+}
+
+/// 族块里**出现过**的键名（`{inst}`/`{inst.lower}`/`{slot}`/`{opcode}` 这类行键插值，
+/// 由族展开期替换）+ 内置的 `inst`。迁移时这些占位符原样放行。
+fn family_params(text: &str) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    out.insert("inst".to_string());
+    let mut push = |inner: &str| {
+        for e in split_entries(inner) {
+            out.insert(e.key.clone());
+        }
+    };
+    if let Some((lo, hi)) = value_span(text, "body") {
+        push(&text[lo + 1..hi - 1]);
+    }
+    if let Some((lo, hi)) = value_span(text, "rows") {
+        let inner = text[lo + 1..hi - 1].to_string();
+        for (s, e) in row_spans(&inner) {
+            push(&inner[s + 1..e - 1]);
+        }
+    }
+    out
+}
+
+/// 迁移一个 `[family.<名>]` 块：先 `body`（既是行默认值、也给 `rows` 提供继承声明），
+/// 再逐条 `rows` 条目。
+fn migrate_family_block(block: &[String], prefix_scan: bool) -> Result<Vec<String>, String> {
+    let fam = block[0]
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim()
+        .to_string();
+    let mut text = block.join("\n");
+    let params = family_params(&text);
+
+    // ① `body`：迁移它自己，并把它当 rows 的继承来源。
+    let mut body_decls: Option<Vec<OpDecl>> = None;
+    if let Some((lo, hi)) = value_span(&text, "body") {
+        let inner = text[lo + 1..hi - 1].to_string();
+        let (new_inner, decls, changed) = migrate_table(
+            &inner,
+            &format!("{fam}(body)"),
+            prefix_scan,
+            None,
+            true,
+            &params,
+        )?;
+        if changed {
+            text.replace_range(lo + 1..hi - 1, &new_inner);
+        }
+        body_decls = Some(decls);
+    }
+
+    // ② `rows`：逐条目迁移（条目是 `[ … ]` 里深度 1 的 `{ … }`）。
+    if let Some((lo, hi)) = value_span(&text, "rows") {
+        let inner = text[lo + 1..hi - 1].to_string();
+        let mut edits: Vec<(usize, usize, String)> = Vec::new();
+        for (i, (s, e)) in row_spans(&inner).into_iter().enumerate() {
+            let one = inner[s + 1..e - 1].to_string();
+            let (new_one, _decls, changed) = migrate_table(
+                &one,
+                &format!("{fam}(rows[{i}])"),
+                prefix_scan,
+                body_decls.as_deref(),
+                false,
+                &params,
+            )?;
+            if changed {
+                edits.push((s + 1, e - 1, new_one));
+            }
+        }
+        edits.sort_by_key(|(s, _, _)| std::cmp::Reverse(*s));
+        let mut new_inner = inner;
+        for (s, e, rep) in edits {
+            new_inner.replace_range(s..e, &rep);
+        }
+        text.replace_range(lo + 1..hi - 1, &new_inner);
+    }
+
+    Ok(text.split('\n').map(|l| l.to_string()).collect())
+}
+
+/// `rows = [ … ]` 的**内层**文本里，深度 1 的 `{ … }` 条目跨度（字符串内的括号不算）。
+fn row_spans(inner: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let (mut depth, mut in_str, mut esc) = (0i32, false, false);
+    let mut start: Option<usize> = None;
+    for (i, c) in inner.char_indices() {
+        if in_str {
+            if esc {
+                esc = false;
+            } else if c == '\\' {
+                esc = true;
+            } else if c == '"' {
+                in_str = false;
+            }
+            continue;
+        }
+        match c {
+            '"' => in_str = true,
+            '{' => {
+                if depth == 0 {
+                    start = Some(i);
+                }
+                depth += 1;
+            }
+            '}' => {
+                depth -= 1;
+                if depth == 0
+                    && let Some(s) = start.take()
+                {
+                    out.push((s, i + 1));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// 迁移一份谱的文本。返回新文本（行尾/缩进/注释原样保留）。
 pub fn migrate_spec_text(src: &str) -> Result<String, String> {
     // 变长 ISA（`prefix_scan`）的 `bind` 是"字段 → 操作数"，定宽 ISA 是"操作数 → 字段"。
@@ -255,6 +649,9 @@ pub fn migrate_spec_text(src: &str) -> Result<String, String> {
     let mut out: Vec<String> = Vec::new();
     let mut block: Vec<String> = Vec::new();
     let mut in_inst = false;
+    let mut in_family = false;
+    // `[inst.*]` 路径没有族参数。
+    let no_params: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let flush =
         |block: &mut Vec<String>, out: &mut Vec<String>, prefix_scan: bool| -> Result<(), String> {
             if block.is_empty() {
@@ -313,7 +710,7 @@ pub fn migrate_spec_text(src: &str) -> Result<String, String> {
                 .any(|t| appearance_order(t, &decls) != ops_order);
             let mut new_tpls = Vec::new();
             for t in &tpls {
-                new_tpls.push(rewrite_template(t, &decls, &inst, with_idx)?);
+                new_tpls.push(rewrite_template(t, &decls, &inst, with_idx, &no_params)?);
             }
             // 写回：跳过 ops/bind 的**整个逻辑行**（含跨行续行）；asm 的那个逻辑行换成单行新写法。
             let span = |l: Option<usize>| -> (usize, usize) {
@@ -363,15 +760,25 @@ pub fn migrate_spec_text(src: &str) -> Result<String, String> {
                 block.clear();
                 in_inst = false;
             }
+            if in_family {
+                out.extend(migrate_family_block(&block, prefix_scan)?);
+                block.clear();
+                in_family = false;
+            }
             if trimmed.starts_with("[inst.") {
                 in_inst = true;
+                block.push(line.trim_end_matches(['\r', '\n']).to_string());
+                continue;
+            }
+            if trimmed.starts_with("[family.") {
+                in_family = true;
                 block.push(line.trim_end_matches(['\r', '\n']).to_string());
                 continue;
             }
             out.push(line.trim_end_matches(['\r', '\n']).to_string());
             continue;
         }
-        if in_inst {
+        if in_inst || in_family {
             block.push(line.trim_end_matches(['\r', '\n']).to_string());
         } else {
             out.push(line.trim_end_matches(['\r', '\n']).to_string());
@@ -379,6 +786,9 @@ pub fn migrate_spec_text(src: &str) -> Result<String, String> {
     }
     if in_inst {
         flush(&mut block, &mut out, prefix_scan)?;
+    }
+    if in_family {
+        out.extend(migrate_family_block(&block, prefix_scan)?);
     }
     let mut text = out.join("\n");
     if src.ends_with('\n') {
