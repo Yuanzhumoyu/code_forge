@@ -349,7 +349,7 @@ pub(crate) fn gen_frame_lowering(
 
 /// 按**形状**拼一条栈参数访存指令（load/store 共用）：`Reg+Mem` 填 MemRef；
 /// `值Reg+基址Reg+位移Imm` 把基址填成给定的基址寄存器、位移填给定的偏移表达式。
-fn mem_inst_toks(
+pub(crate) fn mem_inst_toks(
     shape: &super::lowering::StackMemShape,
     base: &TokenStream,
     disp: &TokenStream,

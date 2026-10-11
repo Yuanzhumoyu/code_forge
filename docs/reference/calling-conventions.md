@@ -136,11 +136,12 @@ TOML 数据，可继承（`parent = "c"`，整字段覆写，不是深合并）�
 6. **`stack` 与 `stack_byval` 分工**（2026-10-08）：标量走栈仍是 `stack`（调用方存一个
    寄存器值、被调方 load 出来）；**聚合**整块走栈是 `stack_byval`——被调方一侧已接
    （形参保留、值按 `StackAddr(+offset)` 当 `[fp + offset]` 的内存读；DSL `move_args`
-   对该形参跳过收参）。**调用方一侧尚未接**，两个卡点：① 调用点形状要按聚合算，而生成的
-   `lower_inst` 读不到指令的 `param_attrs`（需经 `LowerCtx` 透出）；② "内存→内存"拷贝的
-   **load 那半**缺地址建模——`stack_arg_load` 的地址是 `MemRef{base: Reg}`（**物理**寄存器），
-   而源地址是虚拟指针 ⇒ 需要给谱加一个"地址来自寄存器槽"的角色（或让生成物按
-   `[[lower.Load]]` 取指令）。此前调用方明确 fail-closed。
+   对该形参跳过收参），调用方一侧的机制也已就位（x86 的 `arg_bytes_load`/`arg_bytes_imm`/
+   `arg_bytes_add` 三角色 + `LowerCtx::current_param_attrs` 透传 + 生成物按 `byval` 取聚合
+   形状并逐 8 字节拷进传出区）。**唯一未决 = 坐标口径**：自洽真跑显示被调方
+   `[fp + plan.offset]` 比调用方 `caller_offset(k)` **少算一槽（返回地址）**，故调用方仍
+   **明确 fail-closed**（消息点名 `StackByVal` + "坐标口径待定"）；口径定论见
+   `docs/forge-ir/backlog.md` #6。
 
 ### 抽象名 `c` 怎么落地（`aliases`）
 

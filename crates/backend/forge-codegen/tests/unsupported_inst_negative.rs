@@ -135,8 +135,8 @@ define i32 @main() {
     sysv_caller.signature = sysv_caller.types.borrow_mut().register_signature(csig);
     let bad = FunctionCompiler::new(TargetMachine::new()).compile_raw(&sysv_caller);
     assert!(
-        matches!(&bad, Err(e) if format!("{e}").contains("调用方") && format!("{e}").contains("StackByVal")),
-        "sysv64 的**调用方**一侧尚未接 ⇒ 应明确 Unsupported 并点名，got: {:?}",
+        matches!(&bad, Err(e) if format!("{e}").contains("StackByVal") && format!("{e}").contains("坐标口径待定")),
+        "sysv64 的**调用方**一侧因两端坐标差一槽而暂不发 ⇒ 应明确 Unsupported 并点名，got: {:?}",
         bad.map(|c| c.code.len())
     );
 }

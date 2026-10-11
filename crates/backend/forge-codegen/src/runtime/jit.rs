@@ -978,6 +978,47 @@ define i64 @caller() {
         assert_eq!(g(), 22, "调用方按值聚合实参应原样传到被调方");
     }
 
+    /// A2′：sysv64 的 `>16B` 聚合**按值整块进传出参数区**（`ArgPlace::StackByVal`）——
+    /// 被调方按 `[fp + offset]` 读（`StackAddr(+offset)` + `agg_slots`），调用方在本地建
+    /// 副本、写 `byval(聚合类型)` 让调用点形状按**聚合**算，发射侧再从副本逐 8 字节拷进
+    /// 传出区。两端都由我们编译 ⇒ **自洽真跑**（psABI 的独立裁判要看 CI 的 Linux runner，
+    /// 见 `docs/forge-ir/backlog.md` #6）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    #[ignore = "sysv64 StackByVal 两端坐标系差一个槽（实测 33 vs 22）——定论后再启用；见 compiler.rs 的拒绝消息"]
+    fn test_jit_agg_by_value_stack_sysv64() {
+        use forge_ir::ir::types::{CallConvId, ConvName};
+
+        ensure_registered();
+        let src = r#"
+define i64 @agg_second({i64, i64, i64} %s) {
+  %entry:
+    %v = extractvalue {i64, i64, i64} %s, 1
+    ret i64 %v
+}
+define i64 @main() {
+  %entry:
+    %r = call i64 @agg_second({i64, i64, i64} {i64 11, i64 22, i64 33})
+    ret i64 %r
+}
+"#;
+        let mut module = forge_ir::text::parse_module(src).expect("parse");
+        // 两个函数都显式设成 sysv64（本机默认 `c` 别名 = win64）
+        let cc = CallConvId::Builtin(ConvName::SysV64);
+        for f in module.iter_functions_mut() {
+            f.calling_convention = cc.clone();
+            let mut sig = f.types.borrow().get_signature(f.signature).clone();
+            sig.calling_convention = cc.clone();
+            let sr = f.types.borrow_mut().register_signature(sig);
+            f.signature = sr;
+        }
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
+        jit.compile_module(&module)
+            .expect("compile module (sysv64, StackByVal)");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn main");
+        assert_eq!(f(), 22, "sysv64 按值聚合应整块进传出区并被被调方读到");
+    }
+
     /// A1′-ret：**按值返回 >8B 聚合**（win64 `ret_classify` 走 sret）——被调方把值
     /// 写进调用方缓冲（`expand_sret_return` 立 sret 形参、`expand_large_agg_ret` 写段值）；
     /// 调用方出缓冲（`expand_large_agg_call_results` 的 sret 档：Alloca + 实参 0 + 结果清空），

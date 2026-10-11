@@ -799,16 +799,14 @@ fn expand_agg_call_args(
         //  - `Registers`：现有拆段路径。
         let place = agg_arg_place(machine, conv, size as u32, store.alignment(ty))?;
         let by_ref = matches!(place, AggArgPlace::ByRef);
+        // **按值整块进传出区**（sysv64）：机制已就位（三角色 `arg_bytes_*` + DSL 拷贝支 +
+        // 被调方 `[fp + offset]` 读），但**两端坐标系差一个槽**（实测：期望 22 得 33，
+        // 即被调方比调用方少算 8 字节 = 返回地址那一槽；sysv64 的 `first_offset_slots = 0`
+        // 与引擎文档"已含 first_offset_slots"不一致）。定论前**明确拒绝**，不发会静默错值的代码。
         if let AggArgPlace::StackByVal { offset, size: sz } = place {
-            // **调用方一侧尚未接**：要让它成立，调用点形状必须按**聚合**算（否则引擎给
-            // `Reg`，指针进寄存器、被调方按传出区读 ⇒ **静默错值**）。而生成的
-            // `lower_inst` 只拿到 `(op, args, results, ctx)`，看不到指令的 `param_attrs`
-            // ⇒ 需要把 `param_attrs` 经 `LowerCtx` 透出来（或改 trait）之后才能读 `byval`。
-            // 在那之前**明确拒绝**（被调方一侧已按 `[fp + offset]` 读，见
-            // `expand_large_agg_params` 的 StackByVal 档）。
             return Err(IrError::Unsupported(format!(
                 "聚合实参 {size} 字节：sysv64 按值进传出参数区（`StackByVal` off={offset} size={sz}）\
-                 的**调用方**一侧尚未接（发射侧形状透传待做）；被调方一侧已按 [fp+offset] 读"
+                 的坐标口径待定（被调方少算一槽返回地址）⇒ 暂不发；被调方一侧已按 [fp+offset] 读"
             )));
         }
         if !by_ref && size > 16 {

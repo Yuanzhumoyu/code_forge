@@ -1176,6 +1176,7 @@ x86 的 `MOVSS`/`MOVSD`（共用 `fpr128` 槽）、riscv 的 `FSGNJ_S`/`FSGNJ_D`
 | `epilogue_jump` | 尾声跳转（缺省用 `jump`） |
 | `frame_addr` | 帧内 `[FP+disp]` 地址计算（sret/by-ref 临时槽） |
 | `stack_arg_load` / `stack_arg_store` | 栈参数收参 load / 传参 store；**可按寄存器类限定**（`{ role = "stack_arg_store", class = "fpr" }`：整数 store 与浮点 store 是两条指令）。**两种形状都行**（v20 V6+）：`Reg+Mem`（x86 `MOV64_MR`/`MOV64_RM`，Mem 槽填 `MemRef{base, disp}`）或 `值Reg+基址Reg+位移Imm`（RISC-V S 形式 `SD {src}, {imm}({src2})`——没有 Mem 槽的定宽 ISA 用这种；基址填机器的帧/栈基址、位移填偏移） |
+| `arg_bytes_load` / `arg_bytes_imm` / `arg_bytes_add` | **按值栈实参拷贝**（v21 A2′，SysV `>16B` 聚合的调用方一侧）用的三条能力：寄存器地址 load（形如 x86 `MOV_R_MEM`：`out`=目的、`in`=**寄存器**地址——注意与 `stack_arg_load` 分工：那条的地址是 `MemRef`（**物理**基址），读不了由 regalloc 分配的虚拟指针）、立即数→寄存器（地址步长）、寄存器加（推进地址）。三条齐 ⇔ 生成物发"从指向本地副本的指针逐 8 字节拷进传出区"；缺一条 ⇒ 生成期 fail-closed。x86 三者分别声明在 `MOV_R_MEM`/`MOV_REG_IMM64`/`ADD_RM_R` 上 |
 
 > **为什么"存到栈"仍要角色、而"搬一个值"不要**：`stack_arg_store` 与 `callee_save`
 > 的形状**一模一样**（都是"把寄存器写进内存"），只有**用途**不同——用途不在操作数结构里，

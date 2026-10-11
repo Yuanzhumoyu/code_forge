@@ -18,6 +18,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + **同时接上了 A1′-ret 的调用方一侧**：IR 内部 `call` 按值取 `>8B` 聚合时，调用方 `Alloca` 缓冲 + 作为实参 0 传 + 结果清空 + 结果值登记成"住在缓冲"（后续 `extractvalue` 变 load）。`test_jit_agg_by_value_ret_call_win64` 真跑通过（含"只 call 不取结果"的探针 + 取第 2 个字段两条）。
 + 这条崩溃曾被误判为"调用方 sret 落点不对"——**实测纠正**：lowering 序列与两侧计划本来就是对的（`Alloca -> Call args=[XReg(buf)]`；callee `Store [param], seg ×3`；`[ptr] -> RCX` 对 `<sret> -> reg RCX`），问题在**帧偏移**这一层。
 
+### Added (2026-10-08) — A2′ 调用方一侧的机制全部就位（角色/属性透传/拷贝发射），并查明坐标差一槽
+
++ **三条能力角色**（`arg_bytes_load`/`arg_bytes_imm`/`arg_bytes_add`）：x86 分别声明在**现成指令** `MOV_R_MEM`（寄存器地址 load）/`MOV_REG_IMM64`/`ADD_RM_R` 上，谱校验与 DSL 守卫全绿。它们是"按值栈实参拷贝"的指令选择，不进 ABI 能力视图（`role_capability` 归 `None`）；文档见 `docs/reference/isa-dsl.md` 的角色表。
++ **`LowerCtx::current_param_attrs`**：逐实参声明属性快照（管线每条指令填一次）。生成的 `lower_inst` 只看得到 `(op, args, results, ctx)`，读不到指令本身——调用点的**形状**正需要它：`byval(聚合类型)` 的实参在 IR 里是 `ptr`（指向调用方本地副本），但 ABI 上按**聚合**算。
++ **调用点形状覆盖 + 拷贝发射**（DSL）：`byval` 存在时按聚合取形状（⇒ `ArgPlace::StackByVal`），并按"游标 ← 指针 / 步长 ← 8 / 逐 8 字节 load → `stack_arg_store` 到 `[sp + caller_offset(k) + 8j]` / 推进游标"生成拷贝；缺角色 ⇒ 生成期 fail-closed。
++ **查明一个坐标差一槽（这是本轮的关键发现）**：把它接上后**自洽真跑**给出 `33`（期望 `22`），即被调方的 `[fp + plan.offset]` 比调用方的 `caller_offset(k)` **少算 8 字节 = 返回地址那一槽**（sysv64 的 `first_offset_slots = 0` 与引擎文档"offset 已含 first_offset_slots"不一致）。定论前**调用方恢复明确 fail-closed**（消息点名 `StackByVal` + "坐标口径待定"），不发会静默错值的代码；两端自洽用例 `test_jit_agg_by_value_stack_sysv64` 保留并 `#[ignore]`（附原因），一旦坐标口径定下即可转绿。
+
 ### Added (2026-10-08) — 调用约定：新落点 `StackByVal` + sysv64 按值聚合的**被调方**一侧（A2′ 前半）
 
 + **新落点变体 `StackByVal`**（`forge-abi` 的 `Placement` / `forge-isa-runtime` 的 `ArgPlace`）：与标量的 `Stack`（一格一个寄存器值）分开，表示"**聚合按值整块进传出参数区**"——调用方从指向本地副本的指针逐段拷进传出区、被调方按 `offset` 当内存读。引擎的 `stack_place` 对**聚合**返回它（标量不变）；`sysv64.plan.txt` 黄金随之改一行（`arg s size=24 -> stack` ⇒ `stack_byval`，win64/aapcs64/lp64d 未变）。

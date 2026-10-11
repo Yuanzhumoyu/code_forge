@@ -1641,6 +1641,101 @@ fn gen_call_lowering(
             Some(info) => store_shape(info)?,
             None => None,
         };
+    // **按值整块进传出区**（聚合，`ArgPlace::StackByVal`，A2′）：调用方要做的"内存 → 传出区"
+    // 拷贝用三条**按角色取**的现成指令拼（不按指令名猜）：寄存器地址 load（源 = 调用方本地
+    // 副本指针，虚拟寄存器；`stack_arg_load` 的地址是**物理**基址，用不了）→ 立即数→寄存器
+    // （步长 8）→ 寄存器加（推进源地址）。四者齐才生成；缺 ⇒ 生成期 fail-closed。
+    let byval_stack_stmt: TokenStream = match (
+        inst_by_plain_role(infos, Role::ArgBytesLoad),
+        inst_by_plain_role(infos, Role::ArgBytesImm),
+        inst_by_plain_role(infos, Role::ArgBytesAdd),
+        stack_store.as_ref(),
+    ) {
+        (Some(l), Some(mi_inst), Some(a), Some(st)) => {
+            let l_vn = crate::dsl::codegen::pascal_ident(&l.inst.name);
+            let m_vn = crate::dsl::codegen::pascal_ident(&mi_inst.inst.name);
+            let a_vn = crate::dsl::codegen::pascal_ident(&a.inst.name);
+            match (
+                super::integration::inst_reg_imm_fids(infos, &l.inst.name),
+                super::integration::inst_reg_imm_fids(infos, &mi_inst.inst.name),
+                super::integration::inst_reg_imm_fids(infos, &a.inst.name),
+            ) {
+                (Some((lr, _)), Some((mr, mimm)), Some((ar, _)))
+                    if lr.len() >= 2 && !mr.is_empty() && !mimm.is_empty() && ar.len() >= 2 =>
+                {
+                    let (l_dst, l_src) = (lr[0], lr[1]);
+                    let (m_dst, m_imm) = (mr[0], mimm[0]);
+                    let (a_src, a_dst) = (ar[0], ar[1]);
+                    let st_toks = super::frame::mem_inst_toks(
+                        st,
+                        &quote! { #__sp_base },
+                        &quote! { __off },
+                        // 值槽填**占位 Reg**，虚拟寄存器由下面的 `map_reg_field` 绑
+                        //（与 `store_inst` 同一写法；直接塞 XReg 会类型不符）。
+                        &quote! { Reg::from_index(0, __DEFAULT_GPR_CLASS) },
+                    );
+                    let st_idx = st.reg_idx;
+                    quote! {
+                        let __k = __stack_seen;
+                        let __bytes = size as usize;
+                        let __slot = __cl.slot_bytes as usize;
+                        __stack_seen += __bytes.div_ceil(__slot) as u32;
+                        let __off0 = __cl.caller_offset(__k) as i64;
+                        let __cur = ctx.alloc_xreg(__DEFAULT_GPR_CLASS);
+                        let __tmp = ctx.alloc_xreg(__DEFAULT_GPR_CLASS);
+                        let __step = ctx.alloc_xreg(__DEFAULT_GPR_CLASS);
+                        // 游标 ← 调用方副本指针（实参值）
+                        let __ci = __pack.push_inst(Inst::#mov_vn {
+                            #m_dest: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                            #m_src: Reg::from_index(0, __ADDR_CLASS),
+                        });
+                        __pack.map_reg_field(__cur, __ci, #m_dest_idx, true);
+                        __pack.map_reg_field(__a, __ci, #m_src_idx, false);
+                        // 步长 ← 8
+                        let __si = __pack.push_inst(Inst::#m_vn {
+                            #m_dst: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                            #m_imm: 8,
+                        });
+                        __pack.map_reg_field(__step, __si, 0, true);
+                        let mut __j = 0usize;
+                        while __j * 8 < __bytes {
+                            let __li = __pack.push_inst(Inst::#l_vn {
+                                #l_dst: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                                #l_src: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                            });
+                            __pack.map_reg_field(__tmp, __li, 0, true);
+                            __pack.map_reg_field(__cur, __li, 1, false);
+                            let __off = __off0 + (__j as i64) * 8;
+                            let __sti = __pack.push_inst(#st_toks);
+                            __pack.map_reg_field(__tmp, __sti, #st_idx, false);
+                            if (__j + 1) * 8 < __bytes {
+                                let __ai = __pack.push_inst(Inst::#a_vn {
+                                    #a_src: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                                    #a_dst: Reg::from_index(0, __DEFAULT_GPR_CLASS),
+                                });
+                                __pack.map_reg_field(__step, __ai, 0, false);
+                                __pack.map_reg_field(__cur, __ai, 1, true);
+                            }
+                            __j += 1;
+                        }
+                        ctx.max_stack_arg_bytes = ctx
+                            .max_stack_arg_bytes
+                            .max(__cl.shadow_bytes + __stack_seen * (__slot as u32));
+                    }
+                }
+                _ => quote! {
+                    return Err(crate::prelude::IrError::Unsupported(
+                        "ISA-DSL call: arg_bytes_load/imm/add 角色的指令形状不符（A2′ 按值栈实参拷贝）".into(),
+                    ));
+                },
+            }
+        }
+        _ => quote! {
+            return Err(crate::prelude::IrError::Unsupported(
+                "ISA-DSL call: 按值栈实参需要 roles = [\"arg_bytes_load\", \"arg_bytes_imm\", \"arg_bytes_add\", \"stack_arg_store\"]".into(),
+            ));
+        },
+    };
     // 浮点搬运（v20 V8）：**一条道**——标量浮点与按值向量都按运行期位宽在这张派生表上
     // 取"最窄覆盖者"（按值向量按整寄存器槽请求 128 位）。没有 FPR ← FPR 搬运 ⇒
     // 浮点实参/返回在生成物里 fail-closed。
@@ -1699,8 +1794,24 @@ fn gen_call_lowering(
                 _ => __fallback_shape.clone(),
             }
         };
-        let __shapes: Vec<crate::machine::call_layout::ArgShape> =
-            __shape_args.iter().map(|&__a| __shape_of(__a)).collect();
+        let __shapes: Vec<crate::machine::call_layout::ArgShape> = __shape_args
+            .iter()
+            .enumerate()
+            .map(|(__i, &__a)| {
+                // **`byval(聚合类型)` 覆盖**（2026-10-08，A2′）：这类实参在 IR 里是
+                // `ptr`（指向调用方本地副本），但 ABI 上按**聚合**算——否则引擎按 `ptr`
+                // 给出 `Reg` 落点（指针进寄存器），而被调方按传出区读 ⇒ 静默错值。
+                match ctx.current_param_attrs.get(__i).and_then(|__p| __p.byval) {
+                    Some(__t) => match ctx.type_store.as_ref() {
+                        Some(__store) => {
+                            crate::machine::call_layout::ArgShape::from_ir_type(__store, __t)
+                        }
+                        None => __shape_of(__a),
+                    },
+                    None => __shape_of(__a),
+                }
+            })
+            .collect();
         let __ret_shapes: Vec<crate::machine::call_layout::ArgShape> =
             results.iter().map(|&__r| __shape_of(__r)).collect();
         // **被调方的变参信息**（变参 D6）：调用点只看得见实参形状，判不出"未命名实参在
@@ -2226,6 +2337,8 @@ fn gen_call_lowering(
         // 浮点栈参数 store（`{ role = "stack_arg_store", class = "fpr" }`；缺 → None，
         // 由 helper 对浮点栈实参给明确 Unsupported）
         &stack_store_fpr,
+        // 按值栈实参的拷贝语句（A2′）
+        &byval_stack_stmt,
         // 栈相对内存的基址寄存器（[machine.frame].sp 派生）
         &__sp_base,
         has_byref_insts,
@@ -2339,6 +2452,8 @@ fn arg_move_loop(
     mov_vn: &syn::Ident,
     stack_store: &Option<StackMemShape>,
     stack_store_fpr: &Option<StackMemShape>,
+    // 按值栈实参（聚合，`ArgPlace::StackByVal`）的拷贝语句（A2′；生成期已拼好或 fail-closed）
+    byval_stack_stmt: &TokenStream,
     sp_base: &TokenStream,
     has_byref_insts: bool,
 ) -> Result<TokenStream, String> {
@@ -2608,6 +2723,9 @@ fn arg_move_loop(
                 }
                 crate::machine::call_layout::ArgPlace::Stack { .. } => {
                     #stack_stmt
+                }
+                crate::machine::call_layout::ArgPlace::StackByVal { size, .. } => {
+                    #byval_stack_stmt
                 }
                 crate::machine::call_layout::ArgPlace::Ignore => {}
                 other => {
