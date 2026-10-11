@@ -47,8 +47,7 @@ fields = [
 form = "R"
 opcode = 0x33
 match = { funct3 = 0, funct7 = 0 }
-ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
-asm = "add {dst}, {src}, {src2}"
+asm = "add {dst:gpr:out}, {src:gpr}, {src2:gpr}"
 "#;
 
 #[test]
@@ -188,8 +187,7 @@ roles = "inout"
 form = "RM"
 modrm = { reg = "src", rm = "dst" }
 opcode = 0x01
-ops = ["dst:rm:inout", "src:rm"]
-asm = "add {dst}, {src}"
+asm = "add {dst:rm:inout}, {src:rm}"
 "#;
     let m = parse_and_validate(doc).expect("valid");
     // 槽能力声明：inout = 读改写（一个 `OperandRole` 就够，不是集合）
@@ -537,8 +535,7 @@ class = "gpr"
 [form.R]
 [inst.NOP]
 form = "R"
-ops = ["dst:nope:out"]
-asm = "nop {dst}"
+asm = "nop {dst:nope:out}"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
@@ -568,8 +565,7 @@ fields = [
 [inst.NOP]
 form = "R"
 opcode = 0x13
-ops = ["dst:g:out", "src:g"]
-asm = "foo {dst}, {src}"
+asm = "foo {dst:g:out}, {src:g}"
 "#;
     let err = parse_and_validate(doc).unwrap_err();
     match err {
@@ -624,7 +620,7 @@ kind = "reg"
 class = "gpr"
 [form.R]
 [family.F]
-body = { form = "R", ops = ["dst:g:out"], asm = "f {dst}" }
+body = { form = "R", asm = "f {dst:g:out}" }
 rows = [ { inst = "V1" } ]
 "#;
     let err = parse_and_validate(doc).unwrap_err();
@@ -774,8 +770,7 @@ fields = [
 [inst.FOO]
 form = "R"
 opcode = 0x13
-ops = ["dst:g:out"]
-asm = "foo {dst}"
+asm = "foo {dst:g:out}"
 "#;
     let model = parse_and_validate(doc).unwrap();
     let ts = super::codegen::generate(&model).unwrap();
@@ -815,8 +810,7 @@ align_pad = 0x90
 [inst.FOO]
 form = "R"
 opcode = 0x13
-ops = ["dst:g:out"]
-asm = "foo {dst}"
+asm = "foo {dst:g:out}"
 "#;
     let model = parse_and_validate(doc).unwrap();
     assert_eq!(model.emit.as_ref().unwrap().align_pad, Some(0x90));
@@ -856,8 +850,7 @@ fields = [
 [inst.FOO]
 form = "R"
 opcode = 0x33
-ops = ["dst:g:out"]
-asm = "foo {dst}"
+asm = "foo {dst:g:out}"
 "#;
     let model = parse_and_validate(doc).unwrap();
     let err = super::codegen::generate(&model).unwrap_err();
@@ -894,8 +887,7 @@ fields = [
 form = "I"
 opcode = 0x13
 match = { funct3 = 0 }
-ops = ["dst:g:out", "src:g", "src2:i"]
-asm = "addi {dst}, {src}, {src2}"
+asm = "addi {dst:g:out}, {src:g}, {src2:i}"
 [inst.NOP]
 form = "I"
 opcode = 0x13
@@ -1529,8 +1521,7 @@ fn asm_full_template_renders_and_scans() {
 form = "I"
 opcode = 0x13
 match = { funct3 = 0 }
-ops = ["dst:g:out", "src:g", "src2:i"]
-asm = "addi {dst}, {src}, {src2}"
+asm = "addi {dst:g:out}, {src:g}, {src2:i}"
 "#,
     );
     let ts = super::codegen::generate(&model).unwrap();
@@ -1577,8 +1568,7 @@ fields = [
 [inst.SWAP]
 form = "RR"
 opcode = 1
-ops = ["dst:g:out", "src:g"]
-asm = "{dst} = {src}"
+asm = "{dst:g:out} = {src:g}"
 "#;
     let model = parse_and_validate(doc).unwrap();
     let ts = super::codegen::generate(&model).unwrap();
@@ -1606,8 +1596,7 @@ fn asm_scan_probe_replaces_mnemonic_table() {
 form = "I"
 opcode = 0x13
 match = { funct3 = 0 }
-ops = ["dst:g:out", "src:g", "src2:i"]
-asm = "addi {dst}, {src}, {src2}"
+asm = "addi {dst:g:out}, {src:g}, {src2:i}"
 "#,
     );
     let s = super::codegen::generate(&model).unwrap().to_string();
@@ -1699,8 +1688,7 @@ fn generic_template_segments() {
 form = "I"
 opcode = 0x03
 match = { funct3 = 0 }
-ops = ["dst:g:out", "src:g", "src2:i"]
-asm = "ldb {dst}, byte ptr [{src}+{src2}]"
+asm = "ldb {dst:g:out}, byte ptr [{src:g}+{src2:i}]"
 "#,
     );
     let ts = super::codegen::generate(&model).unwrap();
@@ -1724,8 +1712,7 @@ fn generic_template_adjacent_placeholder_rejected() {
 form = "I"
 opcode = 0x13
 match = { funct3 = 0 }
-ops = ["dst:g:out", "src:g", "src2:i"]
-asm = "bad {dst}{src} {src2}"
+asm = "bad {dst:g:out}{src:g} {src2:i}"
 "#,
     );
     let err = super::codegen::generate(&model).unwrap_err();
@@ -1962,8 +1949,7 @@ fields = [
 form = "R"
 opcode = 0x33
 match = { funct3 = 0, funct7 = 0 }
-ops = ["dst:g:out", "src:g", "src2:g"]
-asm = "mymov {dst}, {src}, {src2}"
+asm = "mymov {dst:g:out}, {src:g}, {src2:g}"
 effect = ["Move"]
 "#;
     let m = parse_and_validate(doc).expect("doc with Move effect must parse");
@@ -2520,8 +2506,7 @@ escape = [0x0F]
 prefix = "field"
 opcode = 0x7E
 match = { prefix = 0x66, w = 1 }
-ops = ["dst:g:out", "src:g"]
-asm = "movq {dst}, {src}"
+asm = "movq {dst:g:out}, {src:g}"
 "#;
     let m = parse_and_validate(doc).expect("无 form 的指令必须合法");
     let inst = &m.instructions[0];
@@ -2552,8 +2537,7 @@ escape = [0x0F]
 form = "MRR"
 modrm = { reg = "src", rm = "dst" }
 opcode = 1
-ops = ["dst:g:out", "src:g"]
-asm = "i {dst}, {src}"
+asm = "i {dst:g:out}, {src:g}"
 "#;
     let m = parse_and_validate(doc).expect("valid");
     let preset = &m.forms[0].keys;
@@ -2647,8 +2631,7 @@ roles = "inout"
 modrm = { reg = "src", rm = "dst" }
 opsize = "dst"
 opcode = 0x01
-ops = ["src:gx", "dst:gx:inout"]
-asm = "add {dst}, {src}"
+asm = "add {dst:gx:inout#1}, {src:gx#0}"
 "#;
     let m = parse_and_validate(doc).expect("命名形态必须合法");
     let inst = &m.instructions[0];
@@ -2835,8 +2818,7 @@ unit = 8
 symbol = { allow = true, require = true }
 [inst.I]
 opcode = 1
-ops = ["dst:gx:inout", "imm:sym12"]
-asm = "i {dst}, {imm}"
+asm = "i {dst:gx:inout}, {imm:sym12}"
 "#;
     let err = parse_and_validate(&doc).expect_err("unit != 1 必须报错");
     assert!(format!("{err:?}").contains("unit == 1"), "{err:?}");
@@ -2851,8 +2833,7 @@ bits = 12
 symbol = { require = true }
 [inst.I]
 opcode = 1
-ops = ["dst:gx:inout", "imm:sym12"]
-asm = "i {dst}, {imm}"
+asm = "i {dst:gx:inout}, {imm:sym12}"
 "#;
     let err = parse_and_validate(&doc).expect_err("缺 symbols 必须报错");
     assert!(format!("{err:?}").contains("symbol.require"), "{err:?}");
@@ -2866,8 +2847,7 @@ bits = 4
 symbol = { allow = true, require = true }
 [inst.I]
 opcode = 1
-ops = ["dst:gx:inout", "t:gl"]
-asm = "i {dst}, {t}"
+asm = "i {dst:gx:inout}, {t:gl}"
 "#;
     let err = parse_and_validate(&doc).expect_err("非 imm 槽必须报错");
     assert!(format!("{err:?}").contains("symbol.require"), "{err:?}");
@@ -2882,8 +2862,7 @@ bits = 12
 symbol = { allow = true, require = true }
 [inst.I]
 opcode = 1
-ops = ["dst:gx:inout", "imm:sym12"]
-asm = "i {dst}, {imm}"
+asm = "i {dst:gx:inout}, {imm:sym12}"
 "#;
     parse_and_validate(&doc).expect("symbols + require_symbol + unit 1 必须通过");
 }
@@ -2903,8 +2882,7 @@ roles = "inout"
 modrm = { reg = "dst", rm = "src" }
 opsize = "dst"
 opcode = 1
-ops = ["dst:gx:inout", "src:gx"]
-asm = "i {dst}, {src}"
+asm = "i {dst:gx:inout}, {src:gx}"
 "#;
 
 #[test]
@@ -3069,8 +3047,7 @@ fields = [
 [inst.ADD]
 form = "R"
 opcode = 0x13
-ops = ["dst:g:out"]
-asm = "add {dst}"
+asm = "add {dst:g:out}"
 "#;
     parse_and_validate(base).expect("MIPS 模板合法");
     // 不写 `{base}` = **无基址写法**（v20 V10）：只要有 {disp}/{index} 就合法。
@@ -3256,8 +3233,7 @@ fields = [
 [inst.ADDI]
 form = "I"
 opcode = 0x13
-ops = ["dst:r:out", "imm:imm12"]
-asm = "addi {dst}, {imm}"
+asm = "addi {dst:r:out}, {imm:imm12}"
 "#;
     parse_and_validate(base).expect("12 位有符号 + wrap 合法");
     // wrap 用在 reg 槽 → 报错
@@ -3307,8 +3283,7 @@ fields = [
 [inst.B]
 form = "BR"
 opcode = 0x05
-ops = ["target:off26"]
-asm = "b {target}"
+asm = "b {target:off26}"
 "#;
     let m = parse_and_validate(doc).expect("unit 合法");
     let off = m
@@ -3390,8 +3365,7 @@ fields = [
 [inst.TBZ]
 form = "TBZ"
 opcode = 0x36
-ops = ["src:r", "bit:bitpos", "target:off14"]
-asm = "tbz {src}, #{bit}, {target}"
+asm = "tbz {src:r}, #{bit:bitpos}, {target:off14}"
 "#;
     let m = parse_and_validate(doc).expect("slice 合法");
     let bit = m
@@ -3478,8 +3452,7 @@ fields = [
 [inst.ANDI]
 form = "LOGIMM"
 opcode = 0x24
-ops = ["dst:r:out", "src:r", "imm:logicimm"]
-asm = "and {dst}, {src}, #{imm}"
+asm = "and {dst:r:out}, {src:r}, #{imm:logicimm}"
 "#;
     let m = parse_and_validate(doc).expect("logical_imm 合法");
     let imm = m
@@ -3540,8 +3513,7 @@ fields = [
 [inst.FENCE]
 form = "FENCE"
 opcode = 0x0F
-ops = ["pred:fset", "succ:fset"]
-asm = "fence {pred}, {succ}"
+asm = "fence {pred:fset}, {succ:fset}"
 "#;
     let m = parse_and_validate(doc).expect("bits 槽合法");
     let s = m
@@ -3623,8 +3595,7 @@ fields = [
 [inst.CSRRS]
 form = "I"
 opcode = 0x73
-ops = ["dst:r:out", "csr:csr12"]
-asm = "csrrs {dst}, {csr}"
+asm = "csrrs {dst:r:out}, {csr:csr12}"
 "#;
     let m = parse_and_validate(doc).expect("names 槽合法");
     let s = m
@@ -3710,8 +3681,7 @@ fields = [
 [inst.LUI]
 form = "U"
 opcode = 0x37
-ops = ["dst:r:out", "imm:sym20"]
-asm = "lui {dst}, {imm}"
+asm = "lui {dst:r:out}, {imm:sym20}"
 "#;
     let m = parse_and_validate(doc).expect("symbols 合法");
     let s = m

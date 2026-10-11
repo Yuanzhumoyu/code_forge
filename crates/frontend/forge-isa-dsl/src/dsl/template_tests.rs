@@ -79,8 +79,8 @@ fn one_row_one_instruction() {
         r#"
 [family.ADDW_FAM]
 rows = [
-    { inst = "ADDW", form = "R", opcode = 0x33, ops = ["rd:r32:out", "rs1:r32", "rs2:r32"], asm = "add {rd}, {rs1}, {rs2}" },
-    { inst = "ADDX", form = "R", opcode = 0x3B, ops = ["rd:r64:out", "rs1:r64", "rs2:r64"], asm = "add {rd}, {rs1}, {rs2}" },
+    { inst = "ADDW", form = "R", opcode = 0x33, asm = "add {rd:r32:out}, {rs1:r32}, {rs2:r32}" },
+    { inst = "ADDX", form = "R", opcode = 0x3B, asm = "add {rd:r64:out}, {rs1:r64}, {rs2:r64}" },
 ]
 "#,
     );
@@ -97,7 +97,7 @@ fn body_is_shared_defaults_and_rows_deep_merge() {
     let doc = plus(
         r#"
 [family.ADD]
-body = { form = "R", opcode = 0x33, ops = ["rd:{slot}:out", "rs1:{slot}", "rs2:{slot}"], asm = "add {rd}, {rs1}, {rs2}", match = { funct3 = 0, funct7 = 0 } }
+body = { form = "R", opcode = 0x33, asm = "add {rd:{slot}:out}, {rs1:{slot}}, {rs2:{slot}}", match = { funct3 = 0, funct7 = 0 } }
 rows = [
     { inst = "ADDW", slot = "r32" },
     { inst = "ADDX", slot = "r64", match = { funct7 = 1 } },
@@ -122,7 +122,7 @@ fn inst_lower_derives_the_mnemonic() {
     let doc = plus(
         r#"
 [family.RR]
-body = { form = "R", opcode = 0x33, ops = ["rd:r64:out", "rs1:r64", "rs2:r64"], asm = "{inst.lower} {rd}, {rs1}, {rs2}" }
+body = { form = "R", opcode = 0x33, asm = "{inst.lower} {rd:r64:out}, {rs1:r64}, {rs2:r64}" }
 rows = [
     { inst = "ADD", match = { funct3 = 0, funct7 = 0 } },
     { inst = "SUB", match = { funct3 = 0, funct7 = 0x20 } },
@@ -140,7 +140,7 @@ fn whole_string_placeholder_keeps_the_type() {
     let doc = plus(
         r#"
 [family.OPW_FAM]
-body = { form = "R", opcode = "{op}", ops = ["rd:{slot}:out"], asm = "op {rd}", match = { funct3 = "{f3}" } }
+body = { form = "R", opcode = "{op}", asm = "op {rd:{slot}:out}", match = { funct3 = "{f3}" } }
 rows = [
     { inst = "OPW", op = 0x33, f3 = 0, slot = "r32" },
     { inst = "OPX", op = 0x3B, f3 = 1, slot = "r64" },
@@ -205,10 +205,10 @@ fn ref_can_be_overridden_per_row() {
     let doc = plus(
         r#"
 [family.LDW_FAM]
-body = { form = "R", ops = ["rd:r64:out", "rs1:r64"], group = "ld" }
+body = { form = "R", group = "ld" }
 rows = [
-    { inst = "LDW", opcode = 0x03, asm = "ldw {rd}, {rs1}" },
-    { inst = "LDX", opcode = 0x13, asm = "ldx {rd}, {rs1}", group = "ldx64" },
+    { inst = "LDW", opcode = 0x03, asm = "ldw {rd:r64:out}, {rs1:r64}" },
+    { inst = "LDX", opcode = 0x13, asm = "ldx {rd:r64:out}, {rs1:r64}", group = "ldx64" },
 ]
 "#,
     );
@@ -225,12 +225,11 @@ fn ref_on_plain_instruction_feeds_the_same_namespace() {
 group = "mov"
 form = "R"
 opcode = 0x33
-ops = ["rd:r32:out", "rs1:r32"]
-asm = "mov {rd}, {rs1}"
+asm = "mov {rd:r32:out}, {rs1:r32}"
 
 [family.MOVX_FAM]
 rows = [
-    { inst = "MOVX", group = "mov", form = "R", opcode = 0x3B, ops = ["rd:r64:out", "rs1:r64"], asm = "mov {rd}, {rs1}" },
+    { inst = "MOVX", group = "mov", form = "R", opcode = 0x3B, asm = "mov {rd:r64:out}, {rs1:r64}" },
 ]
 
 [[lower.Copy]]
@@ -261,7 +260,7 @@ fn rejects_empty_rows_and_empty_inst() {
         r#"
 [family.  _FAM]
 rows = [
-    { inst = "  ", form = "R", opcode = 0x33, ops = ["rd:r32:out"], asm = "op {rd}" },
+    { inst = "  ", form = "R", opcode = 0x33, asm = "op {rd:r32:out}" },
 ]
 "#,
     );
@@ -279,7 +278,7 @@ fn param_typo_is_caught_by_operand_validation() {
     let doc = plus(
         r#"
 [family.OPW_FAM]
-body = { form = "R", opcode = 0x33, ops = ["rd:{slot}:out"], asm = "op {rd}" }
+body = { form = "R", opcode = 0x33, asm = "op {rd:{slot}:out}" }
 rows = [
     { inst = "OPW", slott = "r32" },
 ]
@@ -298,7 +297,7 @@ fn inner_dsl_placeholders_survive_untouched() {
     let doc = plus(
         r#"
 [family.OPW_FAM]
-body = { form = "R", opcode = 0x33, ops = ["rd:{slot}:out", "rs1:{slot}", "imm:imm12"], asm = "op {rd}, {rs1}, #{imm}" }
+body = { form = "R", opcode = 0x33, asm = "op {rd:{slot}:out}, {rs1:{slot}}, #{imm:imm12}" }
 rows = [
     { inst = "OPW", slot = "r32" },
 ]
@@ -340,7 +339,7 @@ fn duplicate_instance_names_are_rejected() {
     let doc = plus(
         r#"
 [family.OPW_FAM]
-body = { form = "R", opcode = 0x33, ops = ["rd:r32:out"], asm = "op {rd}" }
+body = { form = "R", opcode = 0x33, asm = "op {rd:r32:out}" }
 rows = [
     { inst = "OPW" },
     { inst = "OPW" },
@@ -359,12 +358,11 @@ fn ref_colliding_with_an_instruction_name_is_rejected() {
 [inst.OPW]
 form = "R"
 opcode = 0x33
-ops = ["rd:r32:out"]
-asm = "op {rd}"
+asm = "op {rd:r32:out}"
 
 [family.OPX_FAM]
 rows = [
-    { inst = "OPX", group = "OPW", form = "R", opcode = 0x3B, ops = ["rd:r64:out"], asm = "op {rd}" },
+    { inst = "OPX", group = "OPW", form = "R", opcode = 0x3B, asm = "op {rd:r64:out}" },
 ]
 "#,
     );
