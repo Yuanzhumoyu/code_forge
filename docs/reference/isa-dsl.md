@@ -166,6 +166,7 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` `cond_bank` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[form.<名字>]` | — | `fields` `segments` `doc` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖）；v21 W10：**表头即形式名**（不再写 `name`） |
 | `[inst.<名字>]` | `asm` | `form` `opcode` `match` `fields` `segments` `bind` `ops` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `doc` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令（v21 W10：**表头即指令名**，不再写 `name`）：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
+| `[family.<名>]` | — | `body` `rows` `vary` | 指令族（v21 W5）：`body` 是各行共享的指令字段默认值，`rows` 每行一条指令实例（`inst` 必填，其余键即指令字段、可就地插值 `{键}`/`{inst}`），`vary` 是等长列表 zip 成行的便捷写法（与 `rows` 互斥）；族名即 `ref` 多态名 |
 | `[asm.reloc.<名>]` | `semantics` `operand` | `addend` `via` | 重定位（v21 W8：**表头即重定位名**；旧 `[[reloc]]` 已撤）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`） |
 | `[pred.<名字>]` | `expr` | — | 命名谓词（v18 S3f 引入时叫 `[[derive]]`；v21 W10：**表头即属性名**，不再写 `name`） |
 | `[asm.pseudo.<名>]` | `asm` `emit` | `only_variants` | 汇编器伪指令（v21 W7：**表头即名字**；旧 `[[pseudo]]` 已撤）：文本级多指令展开，分派按 `asm` 的前导字面，`{名字}` 就是 `emit` 用的参数 |
@@ -175,8 +176,10 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（唯一位置；`[abi.frame]` 已删除） |
 | `[machine.text]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（v21 W9：从 `[emit]` 迁入；序/尾声由生成器按约定生成，谱里不再写） |
 | `[machine.spill.<模板名>]` | `class` `load` `store` | `base` `when` | 溢出/回填模板（v21 W9：表头 = 模板名，`class` = 它服务的寄存器类；`{N}` = 寄存器序号占位符） |
+| `roles 的条目（内联表）` | `role` | `class` | `roles = [ {{ role = …, class = … }}, … ]`：语义角色声明（生成器按角色查指令，取代旧的 `*_inst` 名指针）；无宽度语义的角色全 ISA 唯一，有宽度语义的按 (角色, 位宽) 唯一 |
 | `[[vectors]]` | — | `asm` `bytes` `error` `partial` `comment` | 数据化测试向量（v19 V3）：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = "DECODE", partial}` 解码错误 / `{bytes}` 解码正向 |
 | `enc / vex / evex / modrm（内联子表）` | — | `reg` `rm` | `modrm = { reg = <名\|整数>, rm = <名\|"[base]"> }` |
+| `segments 的条目（内联表）` | `kind` | `fields` `bytes` `value` `map` `pp` `w` `l` `b` `z` `disp_scale` | `segments = [ {{ kind = …, … }}, … ]`：指令流里的一段（段序即发射序）；`kind` 是闭集（prefix/escape/rex/opcode/opcode_reg/modrm/vex/evex/…），VEX/EVEX 段的头字段（map/pp/w/l/b/z/disp_scale）就写在这里 |
 | `vex / evex（内联子表）` | — | `map` `pp` `w` `l` `b` `z` `disp_scale` | VEX/EVEX 结构键（map/pp/w/l + AVX-512 的 b/z/disp_scale） |
 | `[[override]]` | `key` `value` | — | 多文件组合：显式覆盖被包含文件里的键（点分路径 + 新值；由 loader 消费） |
 <!-- END: schema-keys -->

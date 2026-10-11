@@ -115,8 +115,31 @@ fn shipped_specs_are_already_inline() {
             "{isa} 又冒出旧写法（`ops`/`bind`）——迁移器是幂等的，相等才说明迁干净了"
         );
         let legacy = inst_blocks_have_legacy_keys(&src);
-        assert!(legacy.is_empty(), "{isa} 的 [inst] 块里还有旧键：{legacy:?}");
+        assert!(
+            legacy.is_empty(),
+            "{isa} 的 [inst] 块里还有旧键：{legacy:?}"
+        );
         report::insts(&src).unwrap_or_else(|e| panic!("{isa} 应仍能解析：{e:?}"));
+
+        // 展开**不依赖源文件位置**：把同一份谱放到另一个目录（文件名不变）再展开，结果必须相同。
+        // 生成物头部会写"模块名 = stem"与"内嵌源文件绝对路径"，这两处都归一化掉再比
+        //（归一化掉的是路径，不是语义）。
+        let before = strip_source_path(&flatten_file(&p));
+        let tmp = write_temp(isa, &src);
+        let after = strip_source_path(&flatten_file(&tmp));
+        if before != after {
+            let at = before
+                .bytes()
+                .zip(after.bytes())
+                .position(|(a, b)| a != b)
+                .unwrap_or_else(|| before.len().min(after.len()));
+            panic!(
+                "{isa} 的展开依赖了源文件位置（同名异目录结果不同，首处差异 @{at}）\n\
+                 --- {p:?} ---\n{}\n--- {tmp:?} ---\n{}",
+                window(&before, at, 200, 260),
+                window(&after, at, 200, 260)
+            );
+        }
     }
 }
 
@@ -143,7 +166,10 @@ fn fixture_specs_are_already_inline() {
         };
         assert_eq!(src, migrated, "{name} 又冒出旧写法（`ops`/`bind`）");
         let legacy = inst_blocks_have_legacy_keys(&src);
-        assert!(legacy.is_empty(), "{name} 的 [inst] 块里还有旧键：{legacy:?}");
+        assert!(
+            legacy.is_empty(),
+            "{name} 的 [inst] 块里还有旧键：{legacy:?}"
+        );
         checked += 1;
     }
     assert!(checked > 0, "至少应检查到一份夹具（否则用例没覆盖到东西）");
