@@ -98,30 +98,46 @@ fn scan(tpl: &str, ctx: &str, out: &mut String) -> Result<Vec<Ph>, String> {
         };
         let inner = tpl[i + 1..i + rel].trim();
         if let Some(rest) = inner.strip_prefix('@') {
-            // 绑定占位符：自身不打印（从模板里删掉）。`[字段]` = 内存形态。
-            let (field_raw, rest) = match rest.trim().strip_prefix('[') {
-                Some(r) => match r.split_once(']') {
-                    Some((f, tail)) => (f.trim().to_string(), tail.trim_start_matches(':')),
-                    None => {
+            // 绑定占位符：自身不打印（从模板里删掉）。两种写法：
+            //   `@字段:槽[:角色]`      —— 普通绑定
+            //   `@[字段]:槽[:角色]`    —— 同上，且该操作数按**内存形态**（MemRef）走
+            let rest = rest.trim();
+            let (field, mem, tail) = match rest.strip_prefix('[') {
+                Some(r) => {
+                    let Some((f, tail)) = r.split_once(']') else {
                         return Err(format!(
                             "{ctx}: 绑定占位符 '{{{inner}}}' 的方括号未闭合（`{{@[字段]:槽}}`）"
                         ));
-                    }
-                },
-                None => (String::new(), rest.trim()),
+                    };
+                    (
+                        f.trim().to_string(),
+                        true,
+                        tail.trim_start_matches(':').trim(),
+                    )
+                }
+                None => {
+                    let Some((f, tail)) = rest.split_once(':') else {
+                        return Err(format!(
+                            "{ctx}: 绑定占位符 '{{{inner}}}' 形如 `{{@字段:槽[:角色]}}`（槽必写）"
+                        ));
+                    };
+                    (f.trim().to_string(), false, tail.trim())
+                }
             };
-            let mem = !field_raw.is_empty();
-            let (field, slot, role, _idx) = split_decl(rest).ok_or_else(|| {
-                format!(
+            // 两种写法殊途同归：`tail` 就是 `槽[:角色]`。
+            let mut it = tail.split(':');
+            let slot = it.next().unwrap_or("").trim().to_string();
+            let role = match it.next() {
+                None => OperandRole::In,
+                Some(r) => parse_role(r).ok_or_else(|| {
+                    format!("{ctx}: 绑定占位符 '{{{inner}}}' 的角色 '{r}' 非法（in/out/inout）")
+                })?,
+            };
+            if it.next().is_some() || slot.is_empty() || field.is_empty() {
+                return Err(format!(
                     "{ctx}: 绑定占位符 '{{{inner}}}' 形如 `{{@字段:槽[:角色]}}`（槽必写，角色取 in/out/inout）"
-                )
-            })?;
-            // 无方括号时，`split_decl` 的第一个分量就是字段名。
-            let (field, _) = if mem {
-                (field_raw, field)
-            } else {
-                (field, String::new())
-            };
+                ));
+            }
             phs.push(Ph::Bind {
                 field,
                 mem,
@@ -216,9 +232,10 @@ fn extract_one(inst: &Instruction) -> Result<Option<Extraction>, String> {
                                     "{ctx}: `{{@{field}:{bslot}}}` 的角色与操作数 `{name}` 不一致——角色必须一致"
                                 ));
                             }
-                            if cur.iter().any(|d| d.3.as_deref() == Some(field.as_str())) {
-                                return Err(format!("{ctx}: 字段 `{field}` 被绑定两次"));
-                            }
+                            // **允许多个操作数绑到同一个字段**：arm64 的
+                            // `bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }` 就是这种
+                            // （三个 `varr` 操作数各自写进同一个 `vq` 位）；旧路径
+                            // `bind_operands` 同样产出 `["vq","vq","vq"]`，所以这里不能判重。
                             (Some(field.clone()), bmem)
                         }
                     };

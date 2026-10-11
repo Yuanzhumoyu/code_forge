@@ -29,11 +29,51 @@ fn flatten_file(p: &Path) -> String {
         .collect()
 }
 
-/// 写临时谱（迁移后的文本），返回路径。
+/// 取 `s` 里 `at` 附近的窗口（按 char 边界收拢，避免切坏中文注释）。
+fn window(s: &str, at: usize, back: usize, fwd: usize) -> String {
+    let mut lo = at.saturating_sub(back);
+    while lo > 0 && !s.is_char_boundary(lo) {
+        lo -= 1;
+    }
+    let mut hi = (at + fwd).min(s.len());
+    while hi < s.len() && !s.is_char_boundary(hi) {
+        hi += 1;
+    }
+    s[lo..hi].to_string()
+}
+
+/// 写临时谱：**保留原文件名**（生成模块名 = 文件 stem，改名会让生成物头部漂移），
+/// 放在按 pid 隔离的临时目录里。
 fn write_temp(name: &str, text: &str) -> PathBuf {
-    let p = std::env::temp_dir().join(format!("forge_v22_{}_{name}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("forge_spec_migrate_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("建临时目录");
+    let p = dir.join(name);
     std::fs::write(&p, text).expect("写临时谱");
     p
+}
+
+/// 把生成物里 `include_bytes!("…")` 的实参换成占位符：它按定义与**源文件位置**绑定，
+/// 不归一化就会把"临时目录/相对路径不同"误判成语义差异（这是路径，不是语义）。
+fn strip_source_path(flat: &str) -> String {
+    const OPEN: &str = "include_bytes!(\"";
+    let mut out = String::with_capacity(flat.len());
+    let mut rest = flat;
+    while let Some(i) = rest.find(OPEN) {
+        let (head, tail) = rest.split_at(i + OPEN.len());
+        out.push_str(head);
+        match tail.find("\")") {
+            Some(j) => {
+                out.push_str("__SPEC__");
+                rest = &tail[j..];
+            }
+            None => {
+                out.push_str(tail);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `[inst.*]` 块内是否还有旧键。
@@ -57,19 +97,16 @@ fn inst_blocks_have_legacy_keys(text: &str) -> Vec<String> {
     bad
 }
 
-/// 发行谱：迁移前后展开结果逐字节相同 + 旧键清零 + 迁移后仍能解析。
+/// 发行谱：迁移前后展开结果**逐字节相同** + 旧键清零 + 迁移后仍能解析。
 ///
-/// **x86 仍未纳入**（如实记录，不是假绿）：迁移后展开报
-/// `[inst.IMUL_R_MEM] … rm 指向 mem 槽——非内存形式 rm 必须是 reg 槽`，说明内存形态标记
-/// 在这条指令上还没被完整接上（`{@[字段]:槽}` 的 pass/迁移器两侧已实现，但该处仍缺一环）。
-/// 修好后把它加进上面的列表——那时"三份发行谱全部逐字节相同"才算拿到。
+/// 三份发行谱（x86 / riscv64 / arm64）都在内。为拿到这条，三处实现缺陷被依次修掉：
+/// ① 内存形态标记 `{@[字段]:槽}` 的作者面解析（`@` 后直接是槽，不是 `名字:槽`）；
+/// ② 抽取 pass 必须**最先跑**（`segments` 降级就要读 `inst.bind`/`inst.ops`，x86 的内存形态
+///    指令正是段形态）；③ 允许多个操作数绑到同一字段（arm64 三个 `varr` 操作数都写 `vq` 位）。
 #[test]
-#[ignore = "迁移器仍有 1 处语义漂移：riscv64 迁移后展开 724691 → 724732 字节（+41B），\
-            疑为 #序号 发射与多模板子序列的判据不一致（appearance_order 只看第一条模板）。\
-            x86 另有一处：IMUL_R_MEM 的 rm 内存形态未完整接上。修好前不放开，避免假绿。"]
 fn shipped_specs_migrate_with_byte_identical_expansion() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-    for isa in ["riscv64.toml", "arm64.toml"] {
+    for isa in ["x86.toml", "riscv64.toml", "arm64.toml"] {
         let p = root.join("isa").join(isa);
         let src = std::fs::read_to_string(&p).expect("读谱");
         let migrated =
@@ -82,16 +119,23 @@ fn shipped_specs_migrate_with_byte_identical_expansion() {
             "{isa} 迁移后 [inst] 块里还有旧键：{legacy_keys:?}"
         );
 
-        let before = flatten_file(&p);
+        let before = strip_source_path(&flatten_file(&p));
         let tmp = write_temp(isa, &migrated);
-        let after = flatten_file(&tmp);
-        let _ = std::fs::remove_file(&tmp);
-        assert!(
-            before == after,
-            "{isa} 展开结果不同（{} vs {}）——迁移改变了语义",
-            before.len(),
-            after.len()
-        );
+        let after = strip_source_path(&flatten_file(&tmp));
+        if before != after {
+            let at = before
+                .bytes()
+                .zip(after.bytes())
+                .position(|(a, b)| a != b)
+                .unwrap_or_else(|| before.len().min(after.len()));
+            panic!(
+                "{isa} 展开结果不同（{} vs {}，首处差异 @{at}）\n--- 迁移前 ---\n{}\n--- 迁移后 ---\n{}",
+                before.len(),
+                after.len(),
+                window(&before, at, 240, 300),
+                window(&after, at, 240, 300)
+            );
+        }
 
         // 迁移后仍能过完整解析 + 校验。
         report::insts(&migrated).unwrap_or_else(|e| panic!("{isa} 迁移后应仍能解析：{e:?}"));
@@ -119,10 +163,9 @@ fn fixture_specs_migrate_with_byte_identical_expansion() {
         if migrated == src {
             continue;
         }
-        let before = flatten_file(&p);
+        let before = strip_source_path(&flatten_file(&p));
         let tmp = write_temp(&name, &migrated);
-        let after = flatten_file(&tmp);
-        let _ = std::fs::remove_file(&tmp);
+        let after = strip_source_path(&flatten_file(&tmp));
         assert!(before == after, "{name} 夹具迁移后展开结果不同");
         checked += 1;
     }

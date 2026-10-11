@@ -202,6 +202,45 @@ fn is_key(line: &str, key: &str) -> bool {
     }
 }
 
+/// 值部分是否闭合（`[...]`/`{...}`/引号成对）——TOML 允许数组与内联表跨行。
+fn balanced(line: &str) -> bool {
+    let Some((_, rhs)) = line.split_once('=') else {
+        return true;
+    };
+    let (mut sq, mut cu, mut in_str, mut prev) = (0i32, 0i32, false, '\0');
+    for c in rhs.chars() {
+        match c {
+            '"' if prev != '\\' => in_str = !in_str,
+            '[' if !in_str => sq += 1,
+            ']' if !in_str => sq -= 1,
+            '{' if !in_str => cu += 1,
+            '}' if !in_str => cu -= 1,
+            _ => {}
+        }
+        prev = c;
+    }
+    sq <= 0 && cu <= 0 && !in_str
+}
+
+/// 物理行 → **逻辑行**：值未闭合就与后续行合并（`ops`/`bind`/`asm` 都可能跨行）。
+/// 返回 `(起始物理行号, 合并后文本, 消费的物理行数)`。
+fn logical_lines(block: &[String]) -> Vec<(usize, String, usize)> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < block.len() {
+        let start = i;
+        let mut text = block[i].clone();
+        while !balanced(&text) && i + 1 < block.len() {
+            i += 1;
+            text.push(' ');
+            text.push_str(&block[i]);
+        }
+        out.push((start, text, i - start + 1));
+        i += 1;
+    }
+    out
+}
+
 /// 迁移一份谱的文本。返回新文本（行尾/缩进/注释原样保留）。
 pub fn migrate_spec_text(src: &str) -> Result<String, String> {
     // 变长 ISA（`prefix_scan`）的 `bind` 是"字段 → 操作数"，定宽 ISA 是"操作数 → 字段"。
@@ -227,17 +266,19 @@ pub fn migrate_spec_text(src: &str) -> Result<String, String> {
                 .trim_end_matches(']')
                 .trim()
                 .to_string();
-            let ops_line = block.iter().position(|l| is_key(l, "ops"));
-            let bind_line = block.iter().position(|l| is_key(l, "bind"));
-            let asm_line = block.iter().position(|l| is_key(l, "asm"));
+            let logical = logical_lines(block);
+            let find = |key: &str| logical.iter().position(|(_, text, _)| is_key(text, key));
+            let ops_line = find("ops");
+            let bind_line = find("bind");
+            let asm_line = find("asm");
             let (Some(oi), Some(ai)) = (ops_line, asm_line) else {
                 // 无操作数指令（ret/nop）：原样保留。
                 out.append(block);
                 return Ok(());
             };
-            let mut decls = parse_ops(&block[oi])?;
+            let mut decls = parse_ops(&logical[oi].1)?;
             if let Some(bi) = bind_line {
-                for (k, v) in parse_bind(&block[bi])? {
+                for (k, v) in parse_bind(&logical[bi].1)? {
                     // x86：值是操作数名（`[mem]` 表示该操作数走**内存形态**）；定宽：键是操作数名。
                     let (op, field, mem_form) = if prefix_scan {
                         (
@@ -263,7 +304,7 @@ pub fn migrate_spec_text(src: &str) -> Result<String, String> {
                     }
                 }
             }
-            let tpls = parse_asm(&block[ai])?;
+            let tpls = parse_asm(&logical[ai].1)?;
             // 顺序标记：**任一**模板的打印序 ≠ `ops` 序就必须全标（一条指令的多个模板打印序
             // 可能不同，只看第一条会漏标 ⇒ 那条模板的"出现序 = 编码序"就不再成立）。
             let ops_order: Vec<String> = decls.iter().map(|d| d.name.clone()).collect();
@@ -274,13 +315,27 @@ pub fn migrate_spec_text(src: &str) -> Result<String, String> {
             for t in &tpls {
                 new_tpls.push(rewrite_template(t, &decls, &inst, with_idx)?);
             }
-            // 写回：保留块首、其余行按原序，跳过 ops/bind，替换 asm。
+            // 写回：跳过 ops/bind 的**整个逻辑行**（含跨行续行）；asm 的那个逻辑行换成单行新写法。
+            let span = |l: Option<usize>| -> (usize, usize) {
+                match l {
+                    Some(i) => {
+                        let (start, _, consumed) = &logical[i];
+                        (*start, start + consumed)
+                    }
+                    None => (usize::MAX, usize::MAX),
+                }
+            };
+            let (ops_lo, ops_hi) = span(ops_line);
+            let (bind_lo, bind_hi) = span(bind_line);
+            let (asm_lo, asm_hi) = span(asm_line);
             let mut new_block: Vec<String> = Vec::new();
-            for (idx, line) in block.iter().enumerate() {
-                if Some(idx) == ops_line || Some(idx) == bind_line {
+            let mut idx = 0usize;
+            while idx < block.len() {
+                if (idx >= ops_lo && idx < ops_hi) || (idx >= bind_lo && idx < bind_hi) {
+                    idx += 1;
                     continue;
                 }
-                if Some(idx) == asm_line {
+                if idx >= asm_lo && idx < asm_hi {
                     if tpls.len() == 1 {
                         new_block.push(format!("asm = \"{}\"", new_tpls[0]));
                     } else {
@@ -288,9 +343,11 @@ pub fn migrate_spec_text(src: &str) -> Result<String, String> {
                             new_tpls.iter().map(|t| format!("\"{t}\"")).collect();
                         new_block.push(format!("asm = [{}]", items.join(", ")));
                     }
+                    idx = asm_hi;
                     continue;
                 }
-                new_block.push(line.clone());
+                new_block.push(block[idx].clone());
+                idx += 1;
             }
             out.append(&mut new_block);
             Ok(())

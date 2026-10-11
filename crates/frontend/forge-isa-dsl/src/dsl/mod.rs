@@ -124,6 +124,12 @@ pub(crate) fn parse_and_validate_projected(
     let mut model = parse(source)?;
     let idx = diag::DeclIndex::build(source);
     let mut diags = diag::Diags::new();
+    // v22：操作数声明与字段绑定**从 asm 模板就地抽取**（`{名字:槽[:角色]}` / `{@字段:槽}`）。
+    // ——**必须最先做**：`segments` 降级（下一行）就要读 `inst.bind`/`inst.ops`（x86 的内存形态
+    // 指令是段形态，读不到绑定就会退回"rm = 最后操作数"并按 reg 槽校验 ⇒ 误报）。
+    if let Err(msg) = inline_ops::extract_inline_ops(&mut model) {
+        diags.push_anchored(&idx, &msg);
+    }
     // v21 W4：`segments`（stream 形态）降级回语义键 + 段内位域并入 `fields`
     //——**先做**：W2 的字段展开要读它。
     if let Err(msg) = stream_decl::lower_stream_forms(&mut model) {
@@ -143,11 +149,6 @@ pub(crate) fn parse_and_validate_projected(
         .resolve_bitset_tables()
         .and_then(|()| model.resolve_imm_name_tables())
     {
-        diags.push_anchored(&idx, &msg);
-    }
-    // v22：操作数声明与字段绑定**从 asm 模板就地抽取**（`{名字:槽[:角色]}` / `{@字段:槽}`）
-    // ——**先做**：`lower_field_syntax` 要读 `ops`/`bind`。
-    if let Err(msg) = inline_ops::extract_inline_ops(&mut model) {
         diags.push_anchored(&idx, &msg);
     }
     // v21 W2：`[[forms]].fields` 展开进内部表示（位域表 / opcode_field / operand_fields）。

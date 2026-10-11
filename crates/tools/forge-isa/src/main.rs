@@ -136,6 +136,15 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
                 ambiguity,
             ))
         }
+        "migrate" => {
+            // 谱写法迁移：`ops`/`bind` → `asm` 内联声明（纯文本，语义零变化；见 spec_migrate 模块头）。
+            let out = flag_value(&args[1..], "--out")?;
+            let files = paths(&args[1..], &["--out"])?;
+            let Some(file) = files.first() else {
+                return Err("migrate 需要一个谱文件".into());
+            };
+            cmd_migrate(file, out.as_deref())
+        }
         "new" => {
             // v22：脚手架——把教程 §0 的最小谱落成文件。单一事实源 = `assets/toy16.toml`，
             // 与 `docs/guides/isa-dsl-tutorial.md` 的同一段由 `tests/new_spec.rs` 钉住。
@@ -183,6 +192,24 @@ fn run(args: &[String]) -> Result<ExitCode, String> {
         }
         other => Err(format!("未知子命令 `{other}`")),
     }
+}
+
+/// `forge-isa migrate <谱> [--out <文件>]`：把旧写法（`ops`/`bind`）迁成 `asm` 内联声明。
+///
+/// 缺省打印到 stdout（便于 `diff` 审阅）；带 `--out` 才落盘。迁移是**纯文本**变换，
+/// 判据是"迁移前后 `expand_file` 展开逐字节相同"（`spec_migrate` 的用例）。
+fn cmd_migrate(file: &Path, out: Option<&Path>) -> Result<ExitCode, String> {
+    let src =
+        std::fs::read_to_string(file).map_err(|e| format!("读 {} 失败：{e}", file.display()))?;
+    let migrated = forge_isa_dsl::spec_migrate::migrate_spec_text(&src)?;
+    match out {
+        Some(p) => {
+            std::fs::write(p, &migrated).map_err(|e| format!("写 {} 失败：{e}", p.display()))?;
+            eprintln!("写出 {}", p.display());
+        }
+        None => print!("{migrated}"),
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `forge-isa new <名>`：写出最小可跑谱（**不覆盖**已存在的文件）。
