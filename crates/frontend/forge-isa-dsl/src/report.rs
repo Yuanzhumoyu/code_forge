@@ -242,13 +242,63 @@ fn row_of(m: &IsaModel, info: &crate::dsl::codegen::InstInfo<'_>) -> InstRow {
         len_bytes: m.inst_width_bytes(inst).ok(),
         form: inst.form.clone(),
         opcode: inst.opcode,
-        ops: inst.ops.clone().unwrap_or_default(),
+        ops: op_bind_lines(inst, &info.form),
         asm: inst.asm.render().to_string(),
         reference: inst.reference.clone(),
         reloc: inst.reloc.clone(),
         doc: info.doc.clone(),
         enc: enc_pairs(&info.form),
     }
+}
+
+/// 操作数行（v22 ③）：`名:槽[:角色] → 字段 <字段>（来源）`。
+///
+/// 字段名直接取**编译器的绑定结果**（`EncKeys.operand_fields`，按 `ops` 序，由
+/// `field_decl::bind_operands` 算出）；**来源**按口径 A 的判定**反推**（与正推等价，
+/// 见 `bind_operands` 的文档）：
+/// `inst.bind` 里有它 ⇒ **显式 `@`**（`bind = {…}` 或 asm 里的 `{@字段:槽}`）；
+/// 否则字段名 == 操作数名 ⇒ **同名**（正推时同名分支必然先命中，所以这条反推可靠）；
+/// 否则 ⇒ **位置回退**。
+fn op_bind_lines(
+    inst: &crate::dsl::model::Instruction,
+    keys: &crate::dsl::model::EncKeys,
+) -> Vec<String> {
+    let ops = inst.ops.clone().unwrap_or_default();
+    // 逐指令的绑定结果（口径 A）落在 `inst.enc.operand_fields`；报告的合并体
+    // （`info.form`）里可能没有 ⇒ 两处都取。
+    let fields = inst
+        .enc
+        .operand_fields
+        .clone()
+        .or_else(|| keys.operand_fields.clone())
+        .unwrap_or_default();
+    ops.iter()
+        .enumerate()
+        .map(|(i, op)| {
+            let name = op.split(':').next().unwrap_or(op).trim();
+            // 变长 ISA（`prefix_scan`）的绑定是**字段 → 操作数**（`bind[rm] = "mem"`，
+            // 迁移前写 `bind`、迁移后写 `{@rm:mem}`）⇒ 反查操作数对应的字段。
+            let from_bind = inst.bind.as_ref().and_then(|b| {
+                b.iter()
+                    .find(|(_, v)| v.trim_matches(['[', ']']).trim() == name)
+                    .map(|(k, _)| k.clone())
+            });
+            let explicit =
+                from_bind.is_some() || inst.bind.as_ref().is_some_and(|b| b.contains_key(name));
+            let field = fields.get(i).cloned().or(from_bind);
+            let Some(field) = field else {
+                return op.clone();
+            };
+            let src = if explicit {
+                "显式 @"
+            } else if field == name {
+                "同名"
+            } else {
+                "位置回退"
+            };
+            format!("{op} → 字段 {field}（{src}）")
+        })
+        .collect()
 }
 
 /// 展开后的全部指令（按 `[[instructions]]` 声明序 + 模板展开序）。

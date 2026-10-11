@@ -355,6 +355,10 @@ pub fn lower_bitfields(decls: &[FieldDecl]) -> Result<BTreeMap<String, Bitfield>
 ///    （`rd`/`rs1`）本来就不同，迁移时无需给每条指令补 `bind`。
 ///
 /// 返回按 `ops` 序排列的字段名列表（= 内部 `operand_fields`）。
+///
+/// **口径 A 可反推**（报告层 `report.rs` 就用这条反推显示"绑定来源"，无需第二套规则）：
+/// 结果里 `bind` 有 ⇒ 显式；否则字段名 == 操作数名 ⇒ 同名（正推时同名分支必然先命中）；
+/// 否则 ⇒ 位置回退。
 pub fn bind_operands(
     decls: &[FieldDecl],
     ops_names: &[String],

@@ -501,6 +501,82 @@ fn section_doc(s: &Section) -> String {
 }
 
 /// 生成 JSON Schema（draft 2020-12）文本。
+/// **未知键建议**（v22）：serde 只说 ``unknown field `xx` ``，不说它在哪一节、更像哪个键。
+/// 这里从错误文本取出键名，按出错行找到所属表头，再用本节的键集合给出候选。
+///
+/// 判据：**编辑距离 ≤ 2** 的最近键 ⇒ 明确给出"你是不是想写 `yy`"；没有近的就列出本节合法键
+/// （截断，至少让作者知道这一节认哪些键）。返回 `None` = 该错误不是未知键（原样保留 serde 文本）。
+pub fn unknown_key_hint(source: &str, line: usize, err_text: &str) -> Option<String> {
+    let key = err_text
+        .split("unknown field `")
+        .nth(1)?
+        .split('`')
+        .next()?;
+    let bare = |p: &str| p.trim_matches(['[', ']']).trim().to_string();
+    // 出错行所属的表头：往上找最近一个 `[` 开头的行。
+    let header = source
+        .lines()
+        .take(line.max(1))
+        .filter(|l| l.trim_start().starts_with('['))
+        .last()
+        .map(|l| bare(l.trim()))?;
+    let head_seg = header.split('.').next().unwrap_or("").to_string();
+    // 先精确匹配节路径，再按"第一段相同 + 表名可变（`<…>`）"匹配。
+    let section = SECTIONS
+        .iter()
+        .find(|s| bare(s.path) == header)
+        .or_else(|| {
+            SECTIONS
+                .iter()
+                .find(|s| s.path.contains('<') && bare(s.path).split('.').next() == Some(&head_seg))
+        })?;
+    let mut keys: Vec<&str> = section
+        .required
+        .iter()
+        .chain(section.optional.iter())
+        .chain(section.flatten.iter())
+        .copied()
+        .collect();
+    keys.sort_unstable();
+    keys.dedup();
+    let mut best: Option<(usize, &str)> = None;
+    for k in &keys {
+        let d = edit_distance(key, k);
+        if best.is_none_or(|(bd, _)| d < bd) {
+            best = Some((d, *k));
+        }
+    }
+    let mut out = match best {
+        Some((d, k)) if d <= 2 => {
+            format!("提示：`{header}` 里没有 `{key}`；你是不是想写 `{k}`？（编辑距离 {d}）")
+        }
+        _ => format!("提示：`{header}` 里没有 `{key}`。"),
+    };
+    let list: Vec<String> = keys.iter().take(12).map(|k| format!("`{k}`")).collect();
+    out.push_str(&format!(
+        "\n本节合法键（{} 个）：{}",
+        keys.len(),
+        list.join(" ")
+    ));
+    Some(out)
+}
+
+/// 经典 Levenshtein（只用于给作者提示，不参与判据）。
+fn edit_distance(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for (i, ca) in a.iter().enumerate() {
+        cur[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(cur[j] + 1);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
+}
+
 pub fn schema_json() -> String {
     // 每个节一个 `$defs` 条目：properties/required/additionalProperties。
     let mut defs: Vec<String> = Vec::new();

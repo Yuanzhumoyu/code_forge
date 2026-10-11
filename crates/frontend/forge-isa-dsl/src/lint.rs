@@ -330,6 +330,35 @@ fn checks(m: &IsaModel, source: &str, idx: &DeclIndex, opts: &LintOpts) -> LintR
         }
     }
 
+    // ── 3b. `[form.<名>]` 的字段没有任何指令绑定（v22 ③）──
+    //
+    // 与位域同口径：**文本标识符计数** + 逐指令的 `referenced` 集合（`opcode_field`、
+    // `operand_fields`、操作数槽的 `fields`）。名字在多张 form 里复用时计数 ≥2 ⇒ 不报
+    //（lint 的硬要求是零误报，宁可漏报）。
+    let mut seen_fields: BTreeSet<String> = BTreeSet::new();
+    for form in &m.forms {
+        let Some(fields) = &form.fields else { continue };
+        for f in fields {
+            let Some(name) = f.name.as_deref() else {
+                continue;
+            };
+            if !seen_fields.insert(name.to_string()) {
+                continue;
+            }
+            if !referenced.contains(name) && count_ident(source, name) <= 1 {
+                out.push(anchor(
+                    idx,
+                    &format!("[form.{}]", form.name),
+                    "LINT-FORM-FIELD-UNUSED",
+                    format!(
+                        "form 字段 '{name}' 只出现在声明处——没有任何指令绑定它\
+                         （`modrm`/编码键/asm 内联声明都没引用）。删掉它，或补上绑定"
+                    ),
+                ));
+            }
+        }
+    }
+
     // ── 4. 同一条指令的字段视图里位域重叠（V4c）──
     out.extend(bitfield_overlaps(m, idx));
 
@@ -851,6 +880,43 @@ fn anchor(idx: &DeclIndex, path: &str, code: &str, msg: String) -> DiagLine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// v22 ③：`[form.<名>]` 的字段没有任何指令绑定 ⇒ 报 `LINT-FORM-FIELD-UNUSED`
+    /// （发行谱上必须是 0 条，见 `tests/lint_shipped.rs` 的快照）。
+    #[test]
+    fn form_field_unused_is_reported() {
+        let src = r#"
+[meta]
+name = "t"
+[encoding]
+kind = "fixed"
+bits = 16
+[reg.gpr1]
+count = 4
+[operand.g]
+kind = "reg"
+class = "gpr1"
+[form.F]
+fields = ["u4[15:12]:opcode", "u3[11:9]:rd", "u2[8:7]:nobody"]
+[inst.A]
+form = "F"
+opcode = 1
+asm = "a {dst:g#0}"
+"#;
+        let findings = lint_source(src).expect("谱合法（lint 结论不是错误）");
+        let hit = findings
+            .iter()
+            .find(|d| d.code == "LINT-FORM-FIELD-UNUSED")
+            .unwrap_or_else(|| panic!("应报未绑定的 form 字段：{findings:?}"));
+        assert!(hit.msg.contains("nobody"), "要点名字段：{}", hit.msg);
+        // `opcode`/`rd` 被用了 ⇒ 不该报。
+        assert!(
+            !findings
+                .iter()
+                .any(|d| d.msg.contains("'opcode'") || d.msg.contains("'rd'")),
+            "用到的字段不该报：{findings:?}"
+        );
+    }
 
     const SPEC: &str = r#"
 [meta]

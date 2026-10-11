@@ -154,7 +154,28 @@ fn inline_form_matches_legacy_report() {
     assert_eq!(legacy.len(), inline.len(), "指令条数应一致");
     for (a, b) in legacy.iter().zip(inline.iter()) {
         assert_eq!(a.name, b.name);
-        assert_eq!(a.ops, b.ops, "[{0}] 操作数表（名字:槽:角色）应一致", a.name);
+        // 「操作数表」比到 `→ 字段` **之前**：v22 ③ 起这一列还带**绑定来源**，而来源允许不同
+        //（旧写法显式写 `bind`、新写法写 `{@字段:槽}`，结果相同、来源标注不同——正是要显示的东西）。
+        let strip = |v: &Vec<String>| -> Vec<String> {
+            v.iter()
+                .map(|s| s.split(" → ").next().unwrap_or(s).to_string())
+                .collect()
+        };
+        assert_eq!(
+            strip(&a.ops),
+            strip(&b.ops),
+            "[{0}] 操作数表（名字:槽:角色）应一致",
+            a.name
+        );
+        // v22 ③：每一项都带"字段 + 来源"，来源只会是这三种（内联与旧写法的**结果**一致，
+        // 标注可以不同）。
+        for s in &b.ops {
+            assert!(s.contains("→ 字段 "), "操作数项应带字段：{s}");
+            assert!(
+                ["显式 @", "同名", "位置回退"].iter().any(|k| s.contains(k)),
+                "操作数项应带来源标注：{s}"
+            );
+        }
         assert_eq!(
             a.asm, b.asm,
             "[{0}] 渲染文本应一致（绑定占位符不打印）",
@@ -264,8 +285,11 @@ effect = ["Pure"]
     let row = rows.iter().find(|r| r.name == "REV").expect("应有 REV");
     assert_eq!(
         row.ops,
-        vec!["dst:g:out", "src:g"],
-        "编码序应由 #序号 决定（dst#0 在前）：{row:?}"
+        vec![
+            "dst:g:out → 字段 rd（显式 @）",
+            "src:g → 字段 rs1（显式 @）"
+        ],
+        "编码序应由 #序号 决定（dst#0 在前），并标出绑定来源：{row:?}"
     );
     assert!(
         row.asm.contains("{0}") && row.asm.contains("{1}"),

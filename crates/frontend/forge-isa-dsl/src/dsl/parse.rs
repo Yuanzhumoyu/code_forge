@@ -19,12 +19,18 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
             .span()
             .map(|s| diag::line_col(source, s.start))
             .unwrap_or((1, 1));
+        // v22：**未知键建议**——serde 只说 "unknown field `xx`"，这里补上"它在哪一节、
+        // 更像哪个键"（见 `schema::unknown_key_hint`）。
+        let hint = crate::schema::unknown_key_hint(source, line, &e.to_string());
         // toml 的 Display 自带多行 caret 片段，这里保留（信息量大），
         // 位置由前缀给出，两者不冲突。
         DslError::Parse {
             line,
             col,
-            msg: format!("TOML: {e}"),
+            msg: match hint {
+                Some(h) => format!("TOML: {e}\n{h}"),
+                None => format!("TOML: {e}"),
+            },
         }
     })?;
     // v21 W10：`[pred.<名>]` 降级进内部 `derive`（**表头即属性名**），**按源码声明序**展开；
