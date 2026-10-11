@@ -134,14 +134,13 @@ TOML 数据，可继承（`parent = "c"`，整字段覆写，不是深合并）�
    写 `Immediate::Const(池 id)` 会让该槽**不进帧表**（没有偏移 ⇒ 取址落到帧基址一带，
    实测写 24 字节直接毁帧崩溃）。规范形态见 `FunctionBuilder::alloca`。
 6. **`stack` 与 `stack_byval` 分工**（2026-10-08）：标量走栈仍是 `stack`（调用方存一个
-   寄存器值、被调方 load 出来）；**聚合**整块走栈是 `stack_byval`——被调方一侧已接
-   （形参保留、值按 `StackAddr(+offset)` 当 `[fp + offset]` 的内存读；DSL `move_args`
-   对该形参跳过收参），调用方一侧的机制也已就位（x86 的 `arg_bytes_load`/`arg_bytes_imm`/
-   `arg_bytes_add` 三角色 + `LowerCtx::current_param_attrs` 透传 + 生成物按 `byval` 取聚合
-   形状并逐 8 字节拷进传出区）。**唯一未决 = 坐标口径**：自洽真跑显示被调方
-   `[fp + plan.offset]` 比调用方 `caller_offset(k)` **少算一槽（返回地址）**，故调用方仍
-   **明确 fail-closed**（消息点名 `StackByVal` + "坐标口径待定"）；口径定论见
-   `docs/forge-ir/backlog.md` #6。
+   寄存器值、被调方 load 出来）；**聚合**整块走栈是 `stack_byval`——**两端都已接通**：
+   被调方保留形参、值按 `StackAddr(+offset+shift)` 当 `[fp + offset]` 的内存读（DSL
+   `move_args` 对该形参跳过收参）；调用方在本地建副本、写 `byval(聚合类型)` 让调用点形状
+   按聚合算（⇒ `StackByVal`），再由 `arg_bytes_load`/`arg_bytes_imm`/`arg_bytes_add`
+   三角色逐 8 字节拷进传出区。**注意 `StackAddr` 的位移换算**：lea 位移 = 立即数 −
+   callee-saved 区平移，所以宿主发的是 `offset + shift`（`shift` 取自同源的
+   `frame_layout_info`）——正立即数**同样**参与平移，别指望"正数免平移"。
 
 ### 抽象名 `c` 怎么落地（`aliases`）
 

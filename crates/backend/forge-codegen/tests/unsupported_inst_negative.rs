@@ -133,10 +133,11 @@ define i32 @main() {
     let mut csig = sysv_caller.types.borrow().get_signature(sysv_caller.signature).clone();
     csig.calling_convention = CallConvId::Builtin(ConvName::SysV64);
     sysv_caller.signature = sysv_caller.types.borrow_mut().register_signature(csig);
-    let bad = FunctionCompiler::new(TargetMachine::new()).compile_raw(&sysv_caller);
+    let ok_sysv_caller = FunctionCompiler::new(TargetMachine::new()).compile_raw(&sysv_caller);
     assert!(
-        matches!(&bad, Err(e) if format!("{e}").contains("StackByVal") && format!("{e}").contains("坐标口径待定")),
-        "sysv64 的**调用方**一侧因两端坐标差一槽而暂不发 ⇒ 应明确 Unsupported 并点名，got: {:?}",
-        bad.map(|c| c.code.len())
+        ok_sysv_caller.is_ok(),
+        "sysv64 的**调用方**一侧已接（本地副本 + `byval(聚合类型)` 属性 + 逐段拷进传出区），\
+         应能编译，got: {:?}",
+        ok_sysv_caller.map(|c| c.code.len())
     );
 }

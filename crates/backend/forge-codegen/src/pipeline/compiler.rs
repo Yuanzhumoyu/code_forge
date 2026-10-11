@@ -66,6 +66,10 @@ enum AggArgPlace {
 
 /// 只读地问一次"这份约定下 `size` 字节的聚合实参落在哪"（单参探针）。
 ///
+/// 返回 `(落点, callee-saved 区平移)`：平移量取自**同源**的
+/// [`crate::pipeline::frame_layout::frame_layout_info`]（`LowerCtx::stack_slot_shift`
+/// 也是它），用于把 ABI 偏移换成 `[[lower.StackAddr]]` 要的立即数（见 `StackAddr` 的补偿）。
+///
 /// 聚合规则是**纯尺寸判据**（win64 `size_gt 8`、sysv64 `size_gt 16`），与寄存器是否
 /// 耗尽无关 ⇒ 单参探针与真实计划对同一个聚合实参给出的落点一致。探针 `members` 留空：
 /// 成员只参与 HFA（aapcs64）分类，win64/sysv64 的聚合档不看成员。
@@ -74,7 +78,7 @@ fn agg_arg_place(
     conv: &str,
     size: u32,
     align: u32,
-) -> Result<AggArgPlace, IrError> {
+) -> Result<(AggArgPlace, i32), IrError> {
     use forge_isa_runtime::machine::call_layout::{ArgShape, ShapeKind};
     let req =
         forge_isa_runtime::machine::call_plan::CallRequest::new(conv.to_string()).args([ArgShape {
@@ -90,19 +94,31 @@ fn agg_arg_place(
     let plan = crate::pipeline::abi_target::plan_for_shapes(machine, &reg, &req).map_err(|e| {
         IrError::Unsupported(format!("聚合落点查询：约定 `{conv}` 规划失败（{e}）"))
     })?;
+    // callee-saved 区平移：与 `LowerCtx::stack_slot_shift` 同源（`frame_layout_info`）。
+    // `[[lower.StackAddr]]` 的 lea 位移 = **立即数 − 平移**，所以被调方要落在
+    // `[fp + ABI 偏移]` 上就得把平移加回立即数（见 `expand_large_agg_params` 的补偿）。
+    let shift =
+        crate::pipeline::frame_layout::frame_layout_info(
+            machine,
+            Some(&crate::pipeline::abi_target::call_layout(&plan, machine)),
+        )
+        .stack_slot_shift;
     Ok(match plan.args.first().map(|a| &a.place) {
-        Some(forge_abi::Placement::Indirect { .. }) => AggArgPlace::ByRef,
-        Some(forge_abi::Placement::StackByVal { offset, size, .. }) => AggArgPlace::StackByVal {
-            offset: *offset,
-            size: *size,
-        },
+        Some(forge_abi::Placement::Indirect { .. }) => (AggArgPlace::ByRef, shift),
+        Some(forge_abi::Placement::StackByVal { offset, size, .. }) => (
+            AggArgPlace::StackByVal {
+                offset: *offset,
+                size: *size,
+            },
+            shift,
+        ),
         // 标量语义的 `Stack`（一格一个值）对聚合不该出现；出现了就是约定数据有问题。
         Some(forge_abi::Placement::Stack { .. }) => {
             return Err(IrError::Unsupported(format!(
                 "聚合落点查询：约定 `{conv}` 把 {size} 字节聚合判成标量栈落点（约定数据有问题）"
             )));
         }
-        _ => AggArgPlace::Registers,
+        _ => (AggArgPlace::Registers, shift),
     })
 }
 
@@ -196,6 +212,8 @@ fn expand_large_agg_params(
     // 只是把"值住在 [fp + offset]"登记进 agg_slots。
     let mut keep_param: Vec<bool> = Vec::with_capacity(old_params.len());
     let mut stack_agg: Vec<(usize, i32, TypeId)> = Vec::new();
+    // 按值栈档的 callee-saved 区平移（每个形参探针给出的都是同一个函数级事实）
+    let mut agg_stack_shift = 0i32;
     let mut has_large = false;
     for (i, t) in old_params.iter().enumerate() {
         let (is_agg, size, align) = {
@@ -203,7 +221,8 @@ fn expand_large_agg_params(
             (ts.is_aggregate(*t), ts.size_bytes(*t), ts.alignment(*t))
         };
         if is_agg && size > 8 {
-            match agg_arg_place(machine, conv, size, align)? {
+            let (place, shift) = agg_arg_place(machine, conv, size, align)?;
+            match place {
                 AggArgPlace::ByRef => {
                     seg_map.push(0);
                     by_ref.push(true);
@@ -214,6 +233,7 @@ fn expand_large_agg_params(
                     seg_map.push(0);
                     by_ref.push(false);
                     keep_param.push(true);
+                    agg_stack_shift = shift;
                     stack_agg.push((i, offset, *t));
                     has_large = true;
                 }
@@ -307,15 +327,16 @@ fn expand_large_agg_params(
     bd.param_values = smallvec::SmallVec::from_iter(new_bvals);
     // 按值进传出区档（sysv64）：形参保留（布局/偏移由它决定），但值**不占寄存器**——
     // 把"该聚合住在 `[fp + offset]`"登记进 `agg_slots`，使用处按地址读。
-    // `StackAddr` 的正立即数 = ABI 相对（`frame_slots` 只对负立即数记账局部槽；
-    // `[[lower.StackAddr]]` 就是 `LEA [RBP+off]`）。
+    // `StackAddr` 的 lea 位移 = 立即数 − callee-saved 区平移（`lowering.rs` 的
+    // `current_offset`）⇒ 立即数写 `offset + shift` 才正好落在 `[fp + offset]`
+    //（`shift` 与 `LowerCtx::stack_slot_shift` 同源，见 `agg_arg_place`）。
     for (i, offset, ty) in stack_agg {
         let old_v = old_bvals[i];
         let sa = func.make_inst(
             Opcode::StackAddr,
             entry,
             smallvec::smallvec![],
-            smallvec::smallvec![Immediate::Int(i64::from(offset))],
+            smallvec::smallvec![Immediate::Int(i64::from(offset) + i64::from(agg_stack_shift))],
             &[TypeId::PTR],
             InstFlags::NONE,
         );
@@ -797,19 +818,14 @@ fn expand_agg_call_args(
         //  - `StackByVal`（sysv64）：同样建副本 + 传指针，但**写 `byval(聚合类型)` 属性**
         //    ⇒ 调用点形状按**聚合**算 ⇒ 落点 `StackByVal`，发射侧从指针逐段拷进传出区；
         //  - `Registers`：现有拆段路径。
-        let place = agg_arg_place(machine, conv, size as u32, store.alignment(ty))?;
+        let (place, _) = agg_arg_place(machine, conv, size as u32, store.alignment(ty))?;
         let by_ref = matches!(place, AggArgPlace::ByRef);
-        // **按值整块进传出区**（sysv64）：机制已就位（三角色 `arg_bytes_*` + DSL 拷贝支 +
-        // 被调方 `[fp + offset]` 读），但**两端坐标系差一个槽**（实测：期望 22 得 33，
-        // 即被调方比调用方少算 8 字节 = 返回地址那一槽；sysv64 的 `first_offset_slots = 0`
-        // 与引擎文档"已含 first_offset_slots"不一致）。定论前**明确拒绝**，不发会静默错值的代码。
-        if let AggArgPlace::StackByVal { offset, size: sz } = place {
-            return Err(IrError::Unsupported(format!(
-                "聚合实参 {size} 字节：sysv64 按值进传出参数区（`StackByVal` off={offset} size={sz}）\
-                 的坐标口径待定（被调方少算一槽返回地址）⇒ 暂不发；被调方一侧已按 [fp+offset] 读"
-            )));
-        }
-        if !by_ref && size > 16 {
+        // **按值整块进传出区**（sysv64）：与 by-ref 一样先在调用方本地建副本、传指针；
+        // 区别是**写 `byval(聚合类型)` 属性**——调用点形状据此按**聚合**算（⇒ 落点
+        // `StackByVal`），发射侧再从该指针逐 8 字节拷进传出区（`arg_bytes_*` 三角色）。
+        // 被调方一侧的地址口径已由 lowering 的"正立即数 = ABI 相对"钉住。
+        let stack_by_val = matches!(place, AggArgPlace::StackByVal { .. });
+        if !by_ref && !stack_by_val && size > 16 {
             return Err(IrError::Unsupported(format!(
                 "聚合实参 {size} 字节：约定落点既不是寄存器档也不是按引用档（type {ty:?}）"
             )));
@@ -906,7 +922,7 @@ fn expand_agg_call_args(
         // 但不进生成物的 `Indirect` 那条"从指针 load 出值"的路径）；
         // 其它 ⇒ 在 op_idx 处插入段值。
         let mut ops = func.dfg.inst_data(job.inst).operands.clone();
-        if by_ref {
+        if by_ref || stack_by_val {
             // **规范 immediate 形态** `Type(elem) + Uint(count)`——帧槽预扫描
             //（`frame_slots.rs`）只认这两个；写 `Const(池 id)` 会让槽不进表 ⇒ 没偏移。
             let alloca = func.make_inst(
@@ -955,6 +971,22 @@ fn expand_agg_call_args(
                 }
             }
             ops[job.op_idx] = slot;
+            if stack_by_val {
+                // 指令级 `byval(聚合类型)`：调用点形状据此按**聚合**算（⇒ `StackByVal` 落点），
+                // 发射侧再从该指针逐段拷进传出区。参数下标 = 操作数下标 − CallIndirect 的被调方位。
+                let arg_index = job.op_idx
+                    - usize::from(func.dfg.inst_data(job.inst).opcode == Opcode::CallIndirect);
+                let n = func.dfg.inst_data(job.inst).param_attrs.len();
+                if n <= arg_index {
+                    func.dfg
+                        .inst_mut(job.inst)
+                        .param_attrs
+                        .resize(arg_index + 1, Default::default());
+                }
+                let mut a = func.dfg.inst_data(job.inst).param_attrs[arg_index].clone();
+                a.byval = Some(ty);
+                func.dfg.inst_mut(job.inst).param_attrs[arg_index] = a;
+            }
         } else {
             ops.remove(job.op_idx);
             for (k, s) in segs.iter().enumerate() {

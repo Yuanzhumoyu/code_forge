@@ -23,7 +23,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + **三条能力角色**（`arg_bytes_load`/`arg_bytes_imm`/`arg_bytes_add`）：x86 分别声明在**现成指令** `MOV_R_MEM`（寄存器地址 load）/`MOV_REG_IMM64`/`ADD_RM_R` 上，谱校验与 DSL 守卫全绿。它们是"按值栈实参拷贝"的指令选择，不进 ABI 能力视图（`role_capability` 归 `None`）；文档见 `docs/reference/isa-dsl.md` 的角色表。
 + **`LowerCtx::current_param_attrs`**：逐实参声明属性快照（管线每条指令填一次）。生成的 `lower_inst` 只看得到 `(op, args, results, ctx)`，读不到指令本身——调用点的**形状**正需要它：`byval(聚合类型)` 的实参在 IR 里是 `ptr`（指向调用方本地副本），但 ABI 上按**聚合**算。
 + **调用点形状覆盖 + 拷贝发射**（DSL）：`byval` 存在时按聚合取形状（⇒ `ArgPlace::StackByVal`），并按"游标 ← 指针 / 步长 ← 8 / 逐 8 字节 load → `stack_arg_store` 到 `[sp + caller_offset(k) + 8j]` / 推进游标"生成拷贝；缺角色 ⇒ 生成期 fail-closed。
-+ **查明一个坐标差一槽（这是本轮的关键发现）**：把它接上后**自洽真跑**给出 `33`（期望 `22`），即被调方的 `[fp + plan.offset]` 比调用方的 `caller_offset(k)` **少算 8 字节 = 返回地址那一槽**（sysv64 的 `first_offset_slots = 0` 与引擎文档"offset 已含 first_offset_slots"不一致）。定论前**调用方恢复明确 fail-closed**（消息点名 `StackByVal` + "坐标口径待定"），不发会静默错值的代码；两端自洽用例 `test_jit_agg_by_value_stack_sysv64` 保留并 `#[ignore]`（附原因），一旦坐标口径定下即可转绿。
++ **坐标口径定论并修好**：接上后自洽真跑曾返回 `33`（期望 `22`）——根因不在 ABI 数据，而在 `[[lower.StackAddr]]` 的 lea 位移是 `立即数 − callee-saved 区平移`（`lowering.rs` 的 `current_offset`）：我发的正立即数被平移了 8 字节 ⇒ 地址偏低一槽（读到下一个字段）。**没有**去动管线那条换算（`va_arg` 一族正是靠"正立即数也参与平移"工作的，改它会红 3 条 varargs 用例），而是让**宿主**在 Stage 0.5 用**同源**的 `frame_layout::frame_layout_info(machine, Some(&call_layout(&plan, machine)))` 取到平移量，发 `offset + shift`，管线减回去正好落在 `[fp + offset]`。
++ **调用方已启用**：sysv64 的 `>16B` 聚合按值传参**两端打通**——自洽真跑 `test_jit_agg_by_value_stack_sysv64` 返回 22（模块内 `call` + 被调方按传出区读）；负向用例改为"win64 走 by-ref / sysv64 走按值栈，两端都能编译"。
++ **独立裁判已就位（待 Linux CI 跑）**：`test_jit_agg_by_value_stack_sysv64_extern_c_referee`（`#[cfg(all(target_arch = "x86_64", target_os = "linux"))]`）——Linux 上 Rust 的 `extern "C"` 就是 sysv64，由平台 C ABI 按值传 24 字节结构体，我们编的被调方必须读到 22；本机是 win64 故不跑（CI 排除的是 win64 约定那批，见 `ci.yml`）。
 
 ### Added (2026-10-08) — 调用约定：新落点 `StackByVal` + sysv64 按值聚合的**被调方**一侧（A2′ 前半）
 

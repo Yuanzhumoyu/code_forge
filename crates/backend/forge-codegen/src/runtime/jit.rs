@@ -985,7 +985,6 @@ define i64 @caller() {
     /// 见 `docs/forge-ir/backlog.md` #6）。
     #[cfg(target_arch = "x86_64")]
     #[test]
-    #[ignore = "sysv64 StackByVal 两端坐标系差一个槽（实测 33 vs 22）——定论后再启用；见 compiler.rs 的拒绝消息"]
     fn test_jit_agg_by_value_stack_sysv64() {
         use forge_ir::ir::types::{CallConvId, ConvName};
 
@@ -1017,6 +1016,47 @@ define i64 @main() {
             .expect("compile module (sysv64, StackByVal)");
         let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn main");
         assert_eq!(f(), 22, "sysv64 按值聚合应整块进传出区并被被调方读到");
+    }
+
+    /// **A2′ 的独立裁判**（CI 的 ubuntu runner 上才跑）：Linux 上 Rust 的 `extern "C"`
+    /// 就是 **sysv64**，所以由平台 C ABI 按值传 24 字节结构体给我们编译的函数——
+    /// 被调方必须从传出参数区读到字段（`s.b == 22`）。本机（`x86_64-pc-windows-msvc`）
+    /// 的 `extern "C"` 是 win64，跑不了这条；被 CI 排除的是 **win64 约定**那批 JIT 测试
+    /// （见 `ci.yml` 的说明），显式 sysv64 的用例在 Linux 上合法且正是我们要的裁判。
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    #[test]
+    fn test_jit_agg_by_value_stack_sysv64_extern_c_referee() {
+        use forge_ir::ir::types::{CallConvId, ConvName};
+
+        #[repr(C)]
+        struct Agg24 {
+            a: u64,
+            b: u64,
+            c: u64,
+        }
+
+        ensure_registered();
+        let src = r#"
+define i64 @agg_second({i64, i64, i64} %s) {
+  %entry:
+    %v = extractvalue {i64, i64, i64} %s, 1
+    ret i64 %v
+}
+"#;
+        let mut module = forge_ir::text::parse_module(src).expect("parse");
+        let cc = CallConvId::Builtin(ConvName::SysV64);
+        for f in module.iter_functions_mut() {
+            f.calling_convention = cc.clone();
+            let mut sig = f.types.borrow().get_signature(f.signature).clone();
+            sig.calling_convention = cc.clone();
+            let sr = f.types.borrow_mut().register_signature(sig);
+            f.signature = sr;
+        }
+        let mut jit = JitCompiler::new(x86::TargetMachine::new());
+        jit.compile_module(&module).expect("compile module (sysv64)");
+        let f: extern "C" fn(Agg24) -> i64 = jit.get_fn("agg_second").expect("get_fn");
+        // 平台 C ABI（sysv64）把 24 字节按值放进传出参数区 ⇒ 我们编的被调方要读到 22
+        assert_eq!(f(Agg24 { a: 11, b: 22, c: 33 }), 22);
     }
 
     /// A1′-ret：**按值返回 >8B 聚合**（win64 `ret_classify` 走 sret）——被调方把值
