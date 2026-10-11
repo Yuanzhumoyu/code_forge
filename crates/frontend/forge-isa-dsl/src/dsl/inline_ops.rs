@@ -25,7 +25,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::model::{AsmList, EncodingKind, Instruction, IsaModel, OperandRole};
+use super::model::{AsmList, EncodingKind, Instruction, IsaModel, OperandKind, OperandRole};
 
 /// 占位符的三种形态。
 #[derive(Debug, Clone, PartialEq)]
@@ -181,21 +181,42 @@ fn extract_one(inst: &Instruction) -> Result<Option<Extraction>, String> {
             rewritten.push(tpl.clone());
             continue;
         }
-        match &decls {
+        match &mut decls {
             None => decls = Some(cur),
-            Some(d) if d == &cur => {}
             Some(d) => {
-                return Err(format!(
-                    "{ctx}: 多个 asm 模板的操作数声明不一致（{0} / {1}）——所有模板必须声明同一组操作数",
-                    d.iter()
-                        .map(|x| x.0.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    cur.iter()
-                        .map(|x| x.0.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                ));
+                // 同一指令的多个模板是同一声明表的**子序列**（模板可以只打印一部分操作数，
+                // 旧写法共享一份 `ops` 时就是这样）：共享名字的 槽/角色/绑定 必须一致，
+                // 新名字按它在本模板里的相邻关系插进汇总序。
+                for (i, (name, slot, role, field)) in cur.iter().enumerate() {
+                    if let Some(pos) = d.iter().position(|x| x.0 == *name) {
+                        let (_, s0, r0, f0) = &d[pos];
+                        if s0 != slot || r0 != role || f0 != field {
+                            return Err(format!(
+                                "{ctx}: 操作数 `{name}` 在不同 asm 模板里的声明不一致\
+                                 （槽/角色/绑定必须一致）"
+                            ));
+                        }
+                    } else {
+                        let at = cur[..i]
+                            .iter()
+                            .rev()
+                            .find_map(|(p, ..)| d.iter().position(|x| x.0 == *p))
+                            .map(|p| p + 1)
+                            .unwrap_or(0);
+                        d.insert(at, (name.clone(), slot.clone(), *role, field.clone()));
+                    }
+                }
+                // 汇总序必须与本模板的相对序一致（顺序 = 编码序）。
+                let mut last: Option<usize> = None;
+                for (name, ..) in &cur {
+                    let pos = d.iter().position(|x| x.0 == *name).expect("刚补齐");
+                    if last.is_some_and(|l| pos < l) {
+                        return Err(format!(
+                            "{ctx}: 操作数 `{name}` 在各 asm 模板里的相对顺序不一致（顺序 = 编码序）"
+                        ));
+                    }
+                    last = Some(pos);
+                }
             }
         }
         rewritten.push(out);
@@ -226,6 +247,13 @@ pub fn extract_inline_ops(m: &mut IsaModel) -> Result<(), String> {
     // （affix 是任意词缀，不会恰好是已声明的槽名）。于是旧的 `ops` 写法与 `{name:affix}`
     // 修饰都不受影响；迁移完成后 `ops`/affix 一并退场，这条判据也随之消失。
     let slot_names: BTreeSet<String> = m.operand_slots.iter().map(|s| s.name.clone()).collect();
+    // 内存槽名（用于把"这条操作数是内存形态"补回旧拼法 `[mem]`，见下面的桥）。
+    let mem_slots: BTreeSet<String> = m
+        .operand_slots
+        .iter()
+        .filter(|s| s.kind == OperandKind::Mem)
+        .map(|s| s.name.clone())
+        .collect();
     let streamed_form: Vec<String> = m
         .forms
         .iter()
@@ -270,7 +298,14 @@ pub fn extract_inline_ops(m: &mut IsaModel) -> Result<(), String> {
             .map(|(name, slot, role, field)| {
                 if let Some(f) = field {
                     if streamed {
-                        bind.insert(f.clone(), name.clone());
+                        // 旧拼法：内存形态的操作数写成 `[名字]`（新语法里由槽 `kind = "mem"` 决定，
+                        // 这里在桥接期原样还原，保证下游判定与迁移前一致）。
+                        let val = if mem_slots.contains(slot) {
+                            format!("[{name}]")
+                        } else {
+                            name.clone()
+                        };
+                        bind.insert(f.clone(), val);
                     } else {
                         bind.insert(name.clone(), f.clone());
                     }

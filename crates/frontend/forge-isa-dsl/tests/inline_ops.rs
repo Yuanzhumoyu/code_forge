@@ -215,8 +215,8 @@ fn templates_must_declare_the_same_operands_fails_closed() {
     );
     let msg = errs(&bad);
     assert!(
-        msg.contains("声明不一致"),
-        "错误应说明所有模板必须声明同一组操作数：{msg}"
+        msg.contains("相对顺序不一致") || msg.contains("声明不一致"),
+        "错误应说明各模板的声明序必须一致（顺序 = 编码序）：{msg}"
     );
 }
 
