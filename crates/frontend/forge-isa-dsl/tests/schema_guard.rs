@@ -37,6 +37,28 @@ fn read_lf(path: &Path) -> Option<String> {
         .map(|s| s.replace("\r\n", "\n"))
 }
 
+/// **遗留键**（v22）：解析器**仍接受**、但**已从对外表面撤下**（不进 schema / 文档表 / JSON）。
+///
+/// 为什么不是 `#[serde(skip)]`：`skip` 会让"写它就报未知键"，与"仍被接受"矛盾——仓库内的
+/// 测试谱（`dsl/tests.rs` 等内嵌谱）还在写 `ops = [...]`，而**三份发行谱与全部夹具已迁净**
+/// （`tests/spec_migrate.rs` 的幂等守卫钉住）。作者面改用 `asm` 内联声明
+/// `{名字:槽[:角色]}` / `{@字段:槽[:角色]}`，所以编辑器的 schema 不该再宣传这两个键。
+///
+/// 守卫对每条断言两件事：① schema 里**没有**它（本测试）；② 模型里真实存在且**不是** skip
+/// （`legacy_fields_are_real_and_accepted`）。
+const LEGACY_FIELDS: &[(&str, &str, &str)] = &[
+    (
+        "Instruction",
+        "ops",
+        "v22：作者面改为 asm 内联声明；仅仓库内测试谱仍在写，发行谱/夹具已迁净",
+    ),
+    (
+        "Instruction",
+        "bind",
+        "v22：同上；由 inline_ops 抽取 pass 从 asm 回填内部绑定",
+    ),
+];
+
 /// 模型的内部字段（`#[serde(skip)]`，**故意**不入 schema）。
 /// 每条都要有理由：新增内部字段时必须来这里登记（否则守卫报"模型有、schema 无"）。
 const INTERNAL_FIELDS: &[(&str, &str, &str)] = &[
@@ -278,6 +300,19 @@ fn schema_matches_model_structs() {
                 );
                 continue;
             }
+            // **遗留键**（v22）：仍被解析器接受、但**不进 schema**（作者面已改用 asm 内联声明）
+            // ⇒ 从模型键集里去掉，并在下面断言 schema 里没有它。
+            if LEGACY_FIELDS
+                .iter()
+                .any(|(st, f, _)| *st == s.model && f == name)
+            {
+                assert!(
+                    !schema_keys.contains(name.as_str()),
+                    "遗留键 `{}::{name}` 不该出现在 schema 里（它已撤出对外表面）",
+                    s.model
+                );
+                continue;
+            }
             if FLATTEN_FIELDS
                 .iter()
                 .any(|(st, f, _)| *st == s.model && f == name)
@@ -315,6 +350,26 @@ fn schema_matches_model_structs() {
         checked >= 20,
         "只对照了 {checked} 节，schema 表疑似漏了大半"
     );
+}
+
+/// 遗留键表不得过时：登记的字段必须真的存在于该结构体、且**没有**被 `#[serde(skip)]`
+/// （skip 了就变成"写它报未知键"，与"仍被接受"矛盾）。
+#[test]
+fn legacy_fields_are_real_and_accepted() {
+    let model = model_structs();
+    for (st, f, why) in LEGACY_FIELDS {
+        assert!(!why.is_empty(), "{st}::{f} 缺理由");
+        let Some((_, fields)) = model.iter().find(|(n, _)| n == st) else {
+            panic!("LEGACY_FIELDS 指向不存在的结构体 {st}");
+        };
+        let Some((_, skip)) = fields.iter().find(|(n, _)| n == f) else {
+            panic!("LEGACY_FIELDS 登记的 `{st}::{f}` 在模型里不存在");
+        };
+        assert!(
+            !*skip,
+            "`{st}::{f}` 是遗留键（仍被接受）⇒ 不能标 #[serde(skip)]"
+        );
+    }
 }
 
 /// 内部字段表不得过时：登记的字段必须真的存在于该结构体且标着 skip。

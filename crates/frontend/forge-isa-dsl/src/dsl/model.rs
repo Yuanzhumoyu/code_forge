@@ -2734,10 +2734,9 @@ pub struct Instruction {
     /// **v21 W2 字段声明列表**（本指令自己的，补充/覆盖 form 的）。
     #[serde(rename = "fields", default)]
     pub field_decls: Option<Vec<FieldDecl>>,
-    /// **操作数 → 字段名**的显式绑定（v21 W2；v22 起推荐就地写 `asm` 里的 `{@字段:槽}`）。
-    ///
-    /// ⚠️ 仍是 TOML 键：`[family.*]` 的行内表（`body`/`rows`）还用着它——迁移器目前只处理
-    /// `[inst.*]` 块，family 的行内表待扩；扩完并迁净后才降为内部载体。
+    /// **操作数 → 字段名**的显式绑定（v22：**已从对外表面撤下**——作者面写 `asm` 里的
+    /// `{@字段:槽[:角色]}`；本字段由 `inline_ops` 抽取 pass 回填。解析器仍收 `bind` 键，
+    /// 但只有仓库内的测试谱在用）。
     #[serde(default)]
     pub bind: Option<BTreeMap<String, String>>,
     /// **命名操作数声明**（v15）：每项 `"名字:槽[:角色]"`，**数组序 = 编码序**
@@ -2751,7 +2750,9 @@ pub struct Instruction {
     /// 现在写 `opsize = "dst"`（操作数名）、`"out"`（唯一 out/inout 角色）或共享 form 上的
     /// `"auto"`（第一个 Reg 操作数驱动），三种都自解释。
     ///
-    /// 省略 `ops` 时回退 v14 的内联声明形态（迁移期并存）。
+    /// **v22：`ops` 已从对外表面撤下**——作者面写 `asm` 内联声明 `{名字:槽[:角色]}`；本字段由
+    /// `inline_ops` 抽取 pass 回填。解析器仍收 `ops` 键，但**只有仓库内的测试谱**在用
+    /// （三份发行谱与夹具已迁净，见 `tests/spec_migrate.rs`）。
     #[serde(default)]
     pub ops: Option<Vec<String>>,
     /// 汇编模板（完整格式）。**必填**（v17：回退自动派生，asm 就地显性编写）。

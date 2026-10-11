@@ -252,8 +252,10 @@ pub const SECTIONS: &[Section] = &[
             "match",
             "fields",
             "segments",
-            "bind",
-            "ops",
+            // v22：`ops`/`bind` **撤出对外表面**（作者面写 `asm` 内联声明
+            // `{名字:槽[:角色]}` / `{@字段:槽[:角色]}`）。解析器仍收这两个键——**只有仓库内的
+            // 测试谱**在用（三份发行谱与夹具已迁净，见 `tests/spec_migrate.rs`）；
+            // 它们由 `schema_guard` 的 `LEGACY_FIELDS` 钉住（断言"不在本表里"）。
             "when",
             "effect",
             "roles",
