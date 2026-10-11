@@ -788,6 +788,27 @@ size_words = ["byte ptr", "word ptr", "dword ptr", "qword ptr", "xmmword ptr"]
   只写 `[base]` 的**简写**（`rm = "[槽名]"`，`reg` 槽当基址）表示不了无基址，解码时
   显式拒绝——不拒就会把绝对地址当成 `[RBP]` 解出来、还少读 4 字节 disp32。
 
+## 写一条指令用哪几个键（决策树）
+
+```text
+一条新指令
+├─ 编码形状与已有 form 相同？── 是 ─→ 只写 form + opcode + match（位域定值）+ asm
+│                                    （同一形状还有别的指令 ⇒ 用 [family.<名>] 一次写掉，别手抄）
+├─ 形状不同 ─→ 就地写那两三个编码键（modrm/rex/vex/evex/prefix/opsize…），或新开 [form.<名>]
+├─ 操作数：写进 asm 内联声明 —— {名字:槽[:角色]} 声明、{@字段:槽} 绑定、{@[字段]:槽} 内存形态
+│   └─ 出现序 ≠ 编码序（顺序敏感）⇒ 暂用 ops 键声明（显式 #序号 仍在定稿）
+├─ 搬运指令 ⇒ 另写 data_width（位）：方向 / 寄存器族 / 立即数 / 内存全由操作数结构派生
+├─ 想在反汇编注释里说明 ⇒ doc（form/family 的 doc 会被继承）
+└─ 语义标签 ⇒ effect（Pure/Branch…）、roles（调用约定查表用）
+```
+
+**最常见的形状（发行谱实测占 52%）**：`form + opcode + match + ops + asm`；v22 起 `ops` 并进 `asm`，
+只剩 **`form` + `opcode` + `match` + `asm`** 四个键。
+
+**不要写的**：`opcode_field` / `operand_fields`（由 `fields` 展开派生）、`[conventions.bitfields]`
+（字段就地声明在 form 里）、v14 的位置引用 `"s0"`（已删，改用操作数名 / `"out"` / `"auto"`）、
+`[abi]` 段（已整节删除）。
+
 ## 操作数声明写进 `asm`（v22，与旧 `ops` 并存）
 
 v22 起，操作数**就地声明在 `asm` 模板里**，`ops` 键可以省掉（迁移期两种写法并存，同一条指令只许写一处）：
