@@ -23,75 +23,17 @@ pub(crate) fn gen_disassemble(infos: &[InstInfo]) -> Result<TokenStream, String>
         // 完整格式 = 整条 asm（前导字面 + 操作数模板段序列渲染）
         let segs = parse_template(&info.inst.asm)?;
         validate_segs(&segs, info)?;
-        // v21 W7：`{n?}` 按**取值缺省**省略——渲染文本为 "0" 时，连同**紧邻的字面词缀**
-        // 一起不输出（判据在数据里，不需要新声明；未写 `?` 的占位符行为不变）。
-        let mut prev_lit: Option<usize> = None;
         for seg in segs {
             match seg {
                 Seg::Lit(l) => {
-                    prev_lit = Some(fmt.len());
                     fmt.push_str(&l);
                 }
-                Seg::Op {
-                    idx: n,
-                    optional,
-                    affix,
-                } => {
+                Seg::Op { idx: n } => {
                     let (_, fid, slot, _) = &info.operands[n];
                     let local = format_ident!("__o{n}");
                     let expr = render_expr(slot, fid);
-                    if optional {
-                        let present = format_ident!("__p{n}");
-                        locals.push(quote! { let #present = #expr != "0"; });
-                        locals.push(quote! {
-                            let #local = if #present { #expr } else { String::new() };
-                        });
-                        // 紧邻的字面词缀改成**条件输出**：省略时它也不出现。
-                        if let Some(start) = prev_lit {
-                            let tail = fmt.split_off(start);
-                            let cond = format_ident!("__l{n}");
-                            let tail_lit = syn::LitStr::new(&tail, proc_macro2::Span::call_site());
-                            locals.push(quote! {
-                                let #cond = if #present { #tail_lit } else { "" };
-                            });
-                            fmt.push_str(&format!("{{__l{n}}}"));
-                        }
-                    } else {
-                        locals.push(quote! { let #local = #expr; });
-                    }
-                    // v21 W7：`{name:affix}` ⇒ 词缀**随组件出现**；`+` 对**已带 `-`**
-                    // 的渲染值抑制；配 `?` 时组件缺席则词缀也不出现。
-                    match affix {
-                        Some(a) => {
-                            let al = format_ident!("__a{n}");
-                            let a_lit =
-                                syn::LitStr::new(a.as_str(), proc_macro2::Span::call_site());
-                            if optional {
-                                // 与上面那个 `if optional` 块是**两个作用域**，这里要重新取名字。
-                                let present = format_ident!("__p{n}");
-                                locals.push(quote! {
-                                    let #al = if !#present {
-                                        ""
-                                    } else if #a_lit == "+" && #local.starts_with('-') {
-                                        ""
-                                    } else {
-                                        #a_lit
-                                    };
-                                });
-                            } else {
-                                locals.push(quote! {
-                                    let #al = if #a_lit == "+" && #local.starts_with('-') {
-                                        ""
-                                    } else {
-                                        #a_lit
-                                    };
-                                });
-                            }
-                            fmt.push_str(&format!("{{__a{n}}}{{__o{n}}}"));
-                        }
-                        None => fmt.push_str(&format!("{{__o{n}}}")),
-                    }
-                    prev_lit = None;
+                    locals.push(quote! { let #local = #expr; });
+                    fmt.push_str(&format!("{{__o{n}}}"));
                 }
             }
         }
@@ -177,14 +119,12 @@ fn render_expr(slot: &OperandSlot, fid: &syn::Ident) -> TokenStream {
 pub(crate) enum Seg {
     /// 字面文本（分隔符/方括号/括号/关键字等，原样匹配与输出）。
     Lit(String),
-    /// 操作数占位符（索引 = 指令操作数位置），带**占位修饰**（v21 W7）：
-    /// - `optional`：`{n?}` ⇒ 该操作数与其**紧邻字面词缀**可整体省略；
-    /// - `affix`：`{n:affix}` ⇒ 词缀随组件出现（`+` 对已带 `-` 的数值抑制）。
-    Op {
-        idx: usize,
-        optional: bool,
-        affix: Option<String>,
-    },
+    /// 操作数占位符（索引 = 指令操作数位置）。
+    ///
+    /// v22 起**没有占位修饰**：v21 W7 的 `{n?}`（整块可省略）与 `{n:affix}`（词缀随组件出现）
+    /// 已删除——`:` 现在只属于 `asm` 内联声明（`{名字:槽[:角色]}`，由 `inline_ops` 抽取），
+    /// 到这一层的模板只认 `{n}`。
+    Op { idx: usize },
 }
 
 /// 解析操作数模板为段序列（字面与占位符交替，任意字面格式）。
@@ -216,30 +156,18 @@ pub(crate) fn parse_template(tpl: &str) -> Result<Vec<Seg>, String> {
             if chars.next() != Some('}') {
                 return Err(format!("unterminated '{{' in asm template '{tpl}'"));
             }
-            // v21 W7：`{N}` / `{N?}` / `{N:affix}` / `{N?:affix}`
-            let inner_t = inner.trim();
-            let (num_part, affix) = match inner_t.split_once(':') {
-                Some((a, b)) => (a.trim(), Some(b.trim().to_string())),
-                None => (inner_t, None),
-            };
-            let (num_part, optional) = match num_part.strip_suffix('?') {
-                Some(rest) => (rest.trim(), true),
-                None => (num_part, false),
-            };
-            let n: usize = num_part.parse().map_err(|_| {
+            // v22：模板只认 `{N}`（v21 W7 的 `?` / `:affix` 修饰已删除）。
+            let n: usize = inner.trim().parse().map_err(|_| {
                 format!(
                     "bad placeholder '{{{inner}}}' in asm template '{tpl}'：\
-                     模板只能引用操作数序号（命名引用需在 `ops` 里声明）+ 可选修饰 `?` / `:affix`"
+                     到这一层的模板只引用操作数**序号**（命名声明写 `asm` 里的 `{{名字:槽}}`，\
+                     由 `inline_ops` 抽取；占位修饰 `?` / `:affix` 已删）"
                 )
             })?;
             if !lit.is_empty() {
                 segs.push(Seg::Lit(std::mem::take(&mut lit)));
             }
-            segs.push(Seg::Op {
-                idx: n,
-                optional,
-                affix,
-            });
+            segs.push(Seg::Op { idx: n });
         } else {
             lit.push(c);
         }
@@ -265,20 +193,9 @@ fn validate_segs(segs: &[Seg], info: &InstInfo) -> Result<(), String> {
                 }
                 prev_op = false;
             }
-            Seg::Op {
-                idx: n, optional, ..
-            } => {
+            Seg::Op { idx: n, .. } => {
                 if *n >= info.operands.len() {
                     return Err(format!("{}: placeholder {{{n}}} out of range", ctx()));
-                }
-                // v21 W7：`{n?}` 的"缺席 ⇒ 字段 0"只对**立即数槽**成立（值语义有缺省 0）；
-                // 寄存器/内存槽没有缺省值 ⇒ 声明期就报错，不留运行期的静默行为。
-                if *optional && !matches!(info.operands[*n].2.kind, OperandKind::Imm) {
-                    return Err(format!(
-                        "{}: `{{{}?}}` 只允许用在 kind = \"imm\" 的槽上",
-                        ctx(),
-                        info.operands[*n].0
-                    ));
                 }
                 if prev_op {
                     return Err(format!(
@@ -1695,33 +1612,14 @@ fn gen_assemble_try_tok(
                 elems.push(quote! { #e.then_some(()) });
                 pats.push(quote! { Some(()) });
             }
-            Seg::Op {
-                idx: n,
-                optional,
-                affix,
-                ..
-            } => {
+            Seg::Op { idx: n, .. } => {
                 let (_, fid, slot, _) = &info.operands[*n];
-                // v21 W7：`{n:affix}` ⇒ 解析侧**先尝试吃词缀**。`__eat_lit` 失败会回退 `it.pos`，
-                // 因此"吃了也算、没吃也行"是安全的（`+` 对负值被渲染抑制时文本里本就没有词缀）。
-                if let Some(a) = affix {
-                    let ae = lit_seg_expr(a, idx, false)?;
-                    elems.push(quote! { { let _ = #ae; Some(()) } });
-                    pats.push(quote! { Some(()) });
-                }
-                if *optional {
-                    // v21 W7：`{n?}` 的**解析半边**——整块缺席 ⇒ 该字段填 0。
-                    // 元素**永不失败**（`unwrap_or(0)`），所以同一条写法也能匹配更短的文本；
-                    // 只允许 `kind = "imm"` 的槽（声明期由 `validate_segs` 拦）。
-                    elems.push(quote! { __imm(&mut it, float).unwrap_or(0) });
-                    pats.push(quote! { #fid });
-                } else {
-                    let (e, p, cb) = operand_parse_tok(model, slot, fid, *n, info)?;
-                    elems.push(e);
-                    pats.push(p);
-                    if let Some(c) = cb {
-                        cls_binds.push(c);
-                    }
+                // v22：没有占位修饰（`{n?}` / `{n:affix}` 已删）——直接按槽解析。
+                let (e, p, cb) = operand_parse_tok(model, slot, fid, *n, info)?;
+                elems.push(e);
+                pats.push(p);
+                if let Some(c) = cb {
+                    cls_binds.push(c);
                 }
             }
         }

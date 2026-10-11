@@ -322,7 +322,7 @@ pub const SECTIONS: &[Section] = &[
         doc: "立即数修饰（v21 W7：**表头即修饰名**；旧 `[[conventions.imm_fn]]` 待撤）：`texts` = 同一语义的等价写法列表（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值）",
     },
     Section {
-        path: "[[lower.<名字>]]",
+        path: "[lower.<名字>]",
         model: "LowerDecl",
         required: &["insts"],
         optional: &[
@@ -550,36 +550,64 @@ pub fn schema_json() -> String {
         json_str("reg"),
         ref_of(find("[reg.<name>]"))
     ));
-    for (key, path, array) in [
-        ("conventions", "", false),
-        ("operands", "[operand.<名字>]", true),
-        ("enums", "[enum.<表名>]", true),
-        ("form", "[form.<名字>]", true),
-        ("inst", "[inst.<名字>]", true),
-        ("pred", "[pred.<名字>]", true),
-        ("asm", "", false),
-        ("machine", "[machine]", false),
-        ("vectors", "[[vectors]]", true),
+    // 顶层键 → 节。四种形态：
+    //   ① `named`：**"表头即名字"的表**（`[form.<名>]`/`[inst.<名>]`/`[family.<名>]`…）
+    //      ⇒ `{"type":"object","additionalProperties":{"$ref":节}}`
+    //      （v21 W10 起这些都不是数组了；旧版误标 array 会让编辑器对 `[form.X]` 报
+    //       "is not of type array"）；
+    //   ② `ref`：单表节（`[machine]`）；
+    //   ③ `array`：真正的数组节（`[[vectors]]`/`[[override]]`）；
+    //   ④ `free`：只声明是表、键自由（`asm`/`conventions`/`include`）。
+    for (key, path, kind) in [
+        ("include", "", "free"),
+        ("override", "[[override]]", "array"),
+        ("conventions", "", "free"),
+        ("operand", "[operand.<名字>]", "named"),
+        ("enum", "[enum.<表名>]", "named"),
+        ("form", "[form.<名字>]", "named"),
+        ("inst", "[inst.<名字>]", "named"),
+        ("family", "[family.<名>]", "named"),
+        ("lower", "[lower.<名字>]", "named"),
+        ("pred", "[pred.<名字>]", "named"),
+        ("asm", "", "free"),
+        ("machine", "[machine]", "ref"),
+        ("vectors", "[[vectors]]", "array"),
     ] {
-        if path.is_empty() {
-            // 自由表（types/conventions/spill）：只声明是表。
-            root_props.push(format!(
-                "{}:{{\"type\":\"object\",\"description\":{}}}",
+        match kind {
+            "free" => root_props.push(format!(
+                "{}:{}",
                 json_str(key),
-                json_str(match key {
-                    "types" => "类型 → 寄存器组名 / \"unsupported\"",
-                    "conventions" => "bitfields / modrm / cond / prefix_scan / bitsets / imm_names / imm_fn / mem",
-                    _ => "溢出模板表（键 = 名字）",
-                })
-            ));
-            continue;
+                match key {
+                    "include" => "{\"type\":\"array\",\"items\":{\"type\":\"string\"},\
+                                   \"description\":\"多文件组合：被包含的谱文件（由 loader 合并）\"}"
+                        .to_string(),
+                    "conventions" => format!(
+                        "{{\"type\":\"object\",\"description\":{}}}",
+                        json_str("bitfields / modrm / cond / prefix_scan / bitsets / imm_names / imm_fn / mem")
+                    ),
+                    _ => format!(
+                        "{{\"type\":\"object\",\"description\":{}}}",
+                        json_str("溢出模板表（键 = 名字）")
+                    ),
+                }
+            )),
+            "array" => {
+                let i = find(path);
+                root_props.push(format!("{}:{}", json_str(key), arr_of(i)));
+            }
+            "ref" => {
+                let i = find(path);
+                root_props.push(format!("{}:{}", json_str(key), ref_of(i)));
+            }
+            _ => {
+                let i = find(path);
+                root_props.push(format!(
+                    "{}:{{\"type\":\"object\",\"additionalProperties\":{}}}",
+                    json_str(key),
+                    ref_of(i)
+                ));
+            }
         }
-        let i = find(path);
-        root_props.push(format!(
-            "{}:{}",
-            json_str(key),
-            if array { arr_of(i) } else { ref_of(i) }
-        ));
     }
     format!(
         "{{\n  \"$schema\": \"https://json-schema.org/draft/2020-12/schema\",\n  \

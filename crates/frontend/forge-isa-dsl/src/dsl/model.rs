@@ -2734,7 +2734,10 @@ pub struct Instruction {
     /// **v21 W2 字段声明列表**（本指令自己的，补充/覆盖 form 的）。
     #[serde(rename = "fields", default)]
     pub field_decls: Option<Vec<FieldDecl>>,
-    /// **操作数 → 字段名**的显式改名（v21 W2；缺省 = 同名 → 位置回退，见口径 A）。
+    /// **操作数 → 字段名**的显式绑定（v21 W2；v22 起推荐就地写 `asm` 里的 `{@字段:槽}`）。
+    ///
+    /// ⚠️ 仍是 TOML 键：`[family.*]` 的行内表（`body`/`rows`）还用着它——迁移器目前只处理
+    /// `[inst.*]` 块，family 的行内表待扩；扩完并迁净后才降为内部载体。
     #[serde(default)]
     pub bind: Option<BTreeMap<String, String>>,
     /// **命名操作数声明**（v15）：每项 `"名字:槽[:角色]"`，**数组序 = 编码序**

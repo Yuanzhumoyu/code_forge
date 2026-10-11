@@ -4835,39 +4835,34 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"amb {dst}, {cond}\"",
     );
 }
 
-/// v21 W7 语法层：`{N}` / `{N?}` / `{N:affix}` / `{N?:affix}` 都能解析并**承载修饰**。
+/// **v22：占位修饰已删除**——`{n?}`（整块可省略）与 `{n:affix}`（词缀随组件出现）现在
+/// 解析期就报错：`:` 专属 `asm` 内联声明（`{名字:槽[:角色]}`，由 `inline_ops` 抽取），
+/// 到 codegen 这一层的模板只认序号。
+///
+/// （v21 W7 引入它们时实测发行谱/夹具**一处未用**，只有单测在用；v22 不留双机制。）
 #[test]
-fn placeholder_modifiers_parse() {
-    use super::codegen::asm::{Seg, parse_template};
-    let segs = parse_template("x {0?}, {1:plus}, {2?:both}").expect("应能解析");
-    let ops: Vec<(usize, bool, Option<String>)> = segs
-        .iter()
-        .filter_map(|s| match s {
-            Seg::Op {
-                idx,
-                optional,
-                affix,
-            } => Some((*idx, *optional, affix.clone())),
-            Seg::Lit(_) => None,
-        })
-        .collect();
-    assert_eq!(
-        ops,
-        vec![
-            (0, true, None),
-            (1, false, Some("plus".to_string())),
-            (2, true, Some("both".to_string())),
-        ]
-    );
+fn placeholder_modifiers_are_rejected() {
+    use super::codegen::asm::parse_template;
+    for tpl in ["x {0?}", "x {1:plus}", "x {2?:both}"] {
+        let err = parse_template(tpl).unwrap_err();
+        assert!(
+            err.contains("bad placeholder") && err.contains("序号"),
+            "{tpl} 应被拒并说明只认序号：{err}"
+        );
+    }
+    // 规范写法仍可用（命名占位符在 `inline_ops` 里已规范化成序号）。
+    let segs = parse_template("x {0}, {1}").expect("纯序号应能解析");
+    assert_eq!(segs.len(), 4, "字面/占位交替：{segs:?}");
 }
 
-/// v21 W7：**规范化路径**（`{名字}` → `{索引}`）必须**保留占位修饰**，不能悄悄丢掉。
+/// **v22：占位修饰已删除**（同前）——**规范化路径**不再需要"剥修饰再带回"；
+/// 含 `?` / `:affix` 的模板在 codegen 解析期直接报错。
 #[test]
-fn normalization_keeps_placeholder_modifiers() {
+fn normalization_rejects_placeholder_modifiers() {
     let doc = gen_cond_doc(
         CC_ALL_FULL,
         "[inst.MODS]\nform = \"C\"\nopcode = 0x97\n\
-ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"mods {dst?}, {cond:plus}\"",
+ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"mods {dst}, {cond}\"",
     );
     let m = super::parse_and_validate(&doc).expect("谱合法");
     let i = m
@@ -4875,9 +4870,10 @@ ops = [\"dst:g:out\", \"cond:cc\"]\nasm = \"mods {dst?}, {cond:plus}\"",
         .iter()
         .find(|i| i.name == "MODS")
         .expect("MODS");
+    // 模型保留**作者面原文**（规范化成序号是 `collect_inst_infos` 交给下游时做的）；
+    // 关键是没有修饰被"剥掉后带回"这回事了。
     let r = i.asm.render();
-    assert!(r.contains('?'), "规范化后应保留 `?`：{r}");
-    assert!(r.contains(":plus"), "规范化后应保留 `:affix`：{r}");
+    assert_eq!(r, "mods {dst}, {cond}", "作者面原文应原样保留：{r}");
 }
 
 /// v21 W7：`[asm.immfn.<名>]` 的**多拼写**（`texts`）——至少一条、每条都要自洽；
@@ -4940,8 +4936,8 @@ fn asm_immfn_section_lowers_to_conventions_imm_fn() {
     assert!(err.contains("imm_fn"), "旧键应被拒并点名：{err}");
 }
 
-/// 含 **imm 槽**的最小谱：`{k?}` 的渲染/解析/校验三条都用它。
-fn optional_placeholder_doc(asm: &str) -> String {
+/// 含 **imm 槽**的最小谱（v21 W7 曾给 `{k?}` 用；v22 起用于断言"修饰被拒"）。
+fn imm_slot_doc(asm: &str) -> String {
     format!(
         r#"
 [meta]
@@ -4973,40 +4969,14 @@ asm = "{asm}"
     )
 }
 
-/// v21 W7：`{n?}` 的**渲染语义**（按取值缺省省略，连同紧邻字面词缀一起不输出）——
-/// 生成物里应出现在场判定 `__p{n}` 与条件词缀 `__l{n}`。
+/// **v22：占位修饰已删除**——含 `?` 的模板在**解析期**就被拒（`{k?}` 既不是声明也不是
+/// 已声明操作数名；`:` 专属内联声明 `{名字:槽}`）。`{n?}` 的三条语义随特性一起消失。
 #[test]
-fn optional_placeholder_renders_conditionally() {
-    let doc = optional_placeholder_doc("addi {dst}, {k?}");
-    let m = parse_and_validate(&doc).expect("谱合法");
-    let s = super::codegen::generate(&m).expect("生成").to_string();
-    let flat: String = s.chars().filter(|c| !c.is_whitespace()).collect();
-    assert!(flat.contains("__p1"), "应有在场判定 __p1：{flat}");
-    assert!(flat.contains("__l1"), "紧邻字面词缀应条件输出 __l1：{flat}");
-}
-
-/// v21 W7：`{n?}` 的**解析半边**——整块缺席 ⇒ 该字段填 0（元素永不失败）。
-#[test]
-fn optional_placeholder_parse_binds_zero() {
-    let doc = optional_placeholder_doc("addi {dst}, {k?}");
-    let m = parse_and_validate(&doc).expect("谱合法");
-    let s = super::codegen::generate(&m).expect("生成").to_string();
-    let flat: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+fn optional_placeholder_spec_is_rejected() {
+    let doc = imm_slot_doc("addi {dst}, {k?}");
+    let err = super::parse_and_validate(&doc).unwrap_err().to_string();
     assert!(
-        flat.contains("__imm(&mutit,float).unwrap_or(0)"),
-        "缺席应绑 0：{flat}"
-    );
-}
-
-/// v21 W7：`{n?}` 只允许用在 `kind = "imm"` 的槽上（寄存器槽没有缺省值）⇒ 报错。
-/// 注意 `validate_segs` 属 **codegen**（`parse_and_validate` 不跑它），故断言生成期报错。
-#[test]
-fn optional_placeholder_rejects_non_imm_slot() {
-    let doc = optional_placeholder_doc("addi {dst?}, {k}");
-    let m = parse_and_validate(&doc).expect("谱合法（校验在 codegen）");
-    let err = super::codegen::generate(&m).unwrap_err();
-    assert!(
-        err.contains("只允许用在") && err.contains("imm"),
-        "err: {err}"
+        err.contains("k?") || err.contains("不是已声明的操作数名"),
+        "含 `?` 的模板应被拒：{err}"
     );
 }

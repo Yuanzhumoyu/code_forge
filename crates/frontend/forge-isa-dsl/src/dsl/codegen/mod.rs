@@ -725,22 +725,9 @@ fn normalize_named_template(
         let Some(end) = rest[i..].find('}') else {
             return Err(format!("{}: 未闭合的 '{{'", ctx()));
         };
-        let inner_raw = rest[i + 1..i + end].trim();
-        // v21 W7：占位修饰 `{name?}` / `{name:affix}` 要先**剥掉**再查名，
-        // 查出索引后**原样带回**（否则修饰在规范化这一步就丢了）。
-        let (inner, mods): (&str, String) = match inner_raw.split_once(':') {
-            Some((a, b)) => {
-                let (a2, q) = match a.trim().strip_suffix('?') {
-                    Some(r) => (r.trim(), "?"),
-                    None => (a.trim(), ""),
-                };
-                (a2, format!("{q}:{}", b.trim()))
-            }
-            None => match inner_raw.strip_suffix('?') {
-                Some(r) => (r.trim(), "?".to_string()),
-                None => (inner_raw, String::new()),
-            },
-        };
+        let inner = rest[i + 1..i + end].trim();
+        // v22：模板到这一层只认 `{名字}`（v21 W7 的占位修饰 `{name?}` / `{name:affix}` 已删，
+        // `:` 专属 `asm` 内联声明——那一步在 `inline_ops` 里已完成）。
         let idx = names.iter().position(|n| n == inner).ok_or_else(|| {
             if variant_params.contains(inner) {
                 format!(
@@ -757,7 +744,7 @@ fn normalize_named_template(
                 )
             }
         })?;
-        out.push_str(&format!("{{{idx}{mods}}}"));
+        out.push_str(&format!("{{{idx}}}"));
         for _ in 0..end - 1 {
             chars.next();
         }

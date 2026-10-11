@@ -758,9 +758,7 @@ segments = [
 [inst.N]
 form = "S"
 match = { opcode = 0x8B }
-ops = ["dst:g:out", "src:g"]
-bind = { reg = "dst", rm = "src" }
-asm = "n {dst}, {src}"
+asm = "n {@reg:g:out}{dst:g:out}, {@rm:g}{src:g}"
 "#;
 
     const CLASSIC: &str = r#"
@@ -977,9 +975,7 @@ segments = [
 ]
 opcode = 0x10
 match = { reg = 2 }
-bind = { rm = "dst" }
-ops = ["dst:g:out", "src:g"]
-asm = "n {dst}, {src}"
+asm = "n {@rm:g:out}{dst:g:out}, {src:g}"
 "#;
         let classic = r#"
 [meta]
@@ -1107,9 +1103,7 @@ segments = [
 [inst.N]
 form = "V"
 match = { opcode = 0x58 }
-ops = ["dst:f:out", "src:f"]
-bind = { reg = "dst", rm = "src" }
-asm = "n {dst}, {src}"
+asm = "n {@reg:f:out}{dst:f:out}, {@rm:f}{src:f}"
 "#;
         let m = crate::dsl::parse_and_validate(src).expect("谱合法");
         let f = m.forms.iter().find(|f| f.name == "V").unwrap();
