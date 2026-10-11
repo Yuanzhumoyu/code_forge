@@ -1082,7 +1082,7 @@ rows = [
         let doc = |lowering: &str, reference: &str| {
             format!(
                 "{SPEC}\n[inst.MOV]\nform = \"RR\"\nopcode = 3\n\
-                 ops = [\"dst:g:out\"]\nasm = \"mov {{dst}}\"\ngroup = \"{reference}\"\n{lowering}"
+                 asm = \"mov {{dst:g:out}}\"\ngroup = \"{reference}\"\n{lowering}"
             )
         };
         let on = LintOpts {

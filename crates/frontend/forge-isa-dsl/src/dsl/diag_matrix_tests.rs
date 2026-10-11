@@ -503,7 +503,7 @@ fn diagnostics_are_capped_with_a_tail_note() {
     for i in 0..40 {
         extra.push_str(&format!(
             "\n[inst.X{i}]\nform = \"NOPE\"\nopcode = 0x33\n\
-             match = {{ funct3 = 0 }}\nops = [\"dst:gpr:out\"]\nasm = \"x {{dst}}\"\n"
+             match = {{ funct3 = 0 }}\nasm = \"x {{dst:gpr:out}}\"\n"
         ));
     }
     let doc = format!("{BASE}{extra}");

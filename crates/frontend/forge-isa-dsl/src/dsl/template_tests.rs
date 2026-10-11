@@ -158,14 +158,16 @@ rows = [
 
 #[test]
 fn rows_can_carry_nested_values() {
-    // 行键空间就是 TOML：可以让**整条 `ops` 数组**逐行不同（旧平行参数表做不到）。
+    // 行键空间就是 TOML：**每一行可以有自己的操作数声明**（v22 起就地写在 `asm` 里；
+    // 只声明不打印的占位符渲染空串，所以 `op {rd}…` 的打印结果不变）。
+    // 打印序（只有 `rd`）≠ 编码序（rd,rs1,rs2）⇒ 按 v22 规则**全标 `#序号`**。
     let doc = plus(
         r#"
 [family.OPA_FAM]
 body = { form = "R", opcode = 0x33, asm = "op {rd}" }
 rows = [
-    { inst = "OPA", ops = ["rd:r64:out", "rs1:r64", "rs2:r64"] },
-    { inst = "OPB", ops = ["rd:r64:out", "rs1:r64"] },
+    { inst = "OPA", asm = "op {rd:r64:out#0}{rs1:r64#1}{rs2:r64#2}" },
+    { inst = "OPB", asm = "op {rd:r64:out#0}{rs1:r64#1}" },
 ]
 "#,
     );
@@ -183,8 +185,8 @@ fn rows_sharing_a_ref_form_one_polymorphic_reference() {
 [family.ADDW_FAM]
 body = { form = "R", asm = "add {rd}, {rs1}, {rs2}", group = "add" }
 rows = [
-    { inst = "ADDW", opcode = 0x33, ops = ["rd:r32:out", "rs1:r32", "rs2:r32"] },
-    { inst = "ADDX", opcode = 0x3B, ops = ["rd:r64:out", "rs1:r64", "rs2:r64"] },
+    { inst = "ADDW", opcode = 0x33, asm = "add {rd:r32:out}, {rs1:r32}, {rs2:r32}" },
+    { inst = "ADDX", opcode = 0x3B, asm = "add {rd:r64:out}, {rs1:r64}, {rs2:r64}" },
 ]
 
 [[lower.Iadd]]
