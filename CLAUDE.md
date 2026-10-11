@@ -20,9 +20,8 @@ docs/
 │   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）
 ├── plans/                 # 有未完成工作的专项方案 [progress]
 │   ├── forge-rustc-vec_push-plan.md # vec 族（5 用例 FLAKY，见 e2e.rs）
-│   ├── forge-isa-dsl-v19-plan.md    # ISA-DSL v19 现行方案（独立运行时 crate / 向量 / lint / 变体）
 │   ├── isa-dsl-v21-execution-checklist.md # v21 执行清单（**活的账本**：S0 冻结 + W0 基线 + W1–W11 门禁 + §14 最终验收）
-│   └── calling-convention-redesign-plan.md # 调用约定重设计 v20 A1–A7（A1 已落地）
+│   └── calling-convention-redesign-plan.md # 调用约定重设计 v20 A1–A7（A2/A3/A3b/A4/A5-3/A6 亦已落地；A7/A8 待核）
 ├── performance/           # 基准与优化
 │   ├── BENCHMARKS.md          # 基准运行框架
 │   ├── OPTIMIZATION.md        # 优化清单
@@ -40,6 +39,8 @@ docs/
     ├── ymm-abi-plan.md        # YMM ABI 方案（2026-09-10 核查完成 → 归档）
     ├── hir-shrink-plan.md     # HIR/mini_c 收缩（同日均告终结 → 归档）
     ├── clippy-fixes.md / coverage-history.md
+    ├── forge-isa-dsl-v19-plan.md / isa-dsl-v21-redesign-plan.md  # ISA-DSL v19 / v21 方案（收口后归档）
+    ├── forge-ir-binary-serialization-plan.md / forge-ir-s8-design.md # forge-ir 二进制序列化（落地后归档）
     └── forge-ir/              # forge-ir 历轮计划/审计 7 篇（452 收敛基线，2026-08 停更）
 ```
 
@@ -54,12 +55,12 @@ docs/
 - **forge-ir 的轮次纪元不统一**（audit 第 47 轮 ≠ roadmap 第 31 轮）——都已在
   archive/forge-ir/，继续 forge-ir 迭代请按 `docs/forge-ir/README.md` 约定新开记录；
 - **archive 内"已实现/待办"不代表代码现状**——改代码/加测试前以源码与 test 为准；
-- ISA-DSL 现行语法以 `reference/isa-dsl.md` 为准，**v21 重设计（2026-10）已在落地中**：
+- ISA-DSL 现行语法以 `reference/isa-dsl.md` 为准，**v21 重设计（2026-10）已收口** ✔：
   表头即名字的三张表（`[form.<名>]`/`[inst.<名>]`/`[pred.<名>]`）、`[operand.<名字>]`、
-  `[enum.<表名>]`、`[family.<名>]`、`[asm.*]`、`[machine.*]` 都已就位；**未完成**：
-  `[[lowering]]`+`[[pattern]]` → `[lower.*]`（W6，`op` 名单形态待定口径）与 x86 的
-  `kind = "stream"` 段迁移（W4）。v12–v17 的语法与删除总表在
-  `archive/isa-dsl-v12-v17.md`（**归档文件名保留原名**，内容以记录时点为准）。
+  `[enum.<表名>]`、`[family.<名>]`、`[asm.*]`、`[machine.*]` 都已就位；**进度与验收**看
+  `plans/isa-dsl-v21-execution-checklist.md`（活的账本，§14 快照 #3：门禁 exit 0、
+  x86 197/3/0、riscv64 136/64/0、谱内向量 505、指纹与 asm 棘轮），**方案本身**已归档
+  （`archive/isa-dsl-v21-redesign-plan.md`）。
   注意区分两种"版本号"：DSL 语法版本（**v21，落地中**；靠文档/CHANGELOG 追踪，**不写进 TOML**）
   与 `[meta].version`（ISA 自己的自由字符串）。**文件名不带语法版本**——旧的 `*_v12`
   命名（`isa/*_v12.toml`、`src/v12/`、`arch/*_v12.rs`、`tests/*_v12_tests.rs`）已于
