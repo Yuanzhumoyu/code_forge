@@ -1003,7 +1003,8 @@ define {i64, i64, i64} @agg_make() {
     }
 
     /// A1′-ret 的**调用方**一侧：**尚未接**——IR 内部 `call` 返回 >8B 聚合必须
-    /// **明确 fail-closed**（不静默错、不发可能崩的代码）。
+    /// **明确 fail-closed**（实测那侧会生成崩的机器码：探针"只 call 不取结果"也崩，
+    /// 且 lowering 序列本身是对的 ⇒ 疑点在帧偏移/调用序列，见 `compiler.rs` 的注释）。
     #[cfg(target_arch = "x86_64")]
     #[test]
     fn test_jit_agg_by_value_ret_call_is_unsupported() {

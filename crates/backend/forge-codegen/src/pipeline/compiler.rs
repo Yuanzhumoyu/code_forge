@@ -601,17 +601,19 @@ fn expand_large_agg_call_results(
     // 不与 func 的 &mut 借用冲突。
     let types_ctx = func.types.clone();
     let store = types_ctx.borrow();
-    // 收集（inst, 旧结果, 聚合类型, 是否 sret）——block/pos 只在**调用方 sret 档**需要，
-    // 而那一档当前 fail-closed，故不保留（留字段会变成"永不读"）。
+    // 收集（block, pos, inst, 旧结果, 聚合类型, 是否 sret）——`block/pos` 供 sret 档
+    // 把缓冲的 Alloca 插到 call 之前。
     struct Job {
+        block: Block,
+        pos: usize,
         inst: Inst,
         old_r: Value,
         ty: TypeId,
         sret: bool,
     }
     let mut jobs: Vec<Job> = Vec::new();
-    for (_b, bd) in func.dfg.blocks() {
-        for &ii in &bd.inst_order {
+    for (b, bd) in func.dfg.blocks() {
+        for (pos, &ii) in bd.inst_order.iter().enumerate() {
             let inst = &func.dfg.inst_data(ii);
             if matches!(inst.opcode, Opcode::Call | Opcode::CallIndirect)
                 && inst.results.len() == 1
@@ -627,6 +629,8 @@ fn expand_large_agg_call_results(
                     )));
                 }
                 jobs.push(Job {
+                    block: b,
+                    pos,
                     inst: ii,
                     old_r: inst.results[0],
                     ty: rt,
@@ -638,10 +642,17 @@ fn expand_large_agg_call_results(
     for job in jobs {
         // **sret 档**（A1′-ret）：被调方一侧已落地（`expand_sret_return` 立 sret 形参 +
         // `expand_large_agg_ret` 把段值写进缓冲——直调用例 `test_jit_agg_by_value_ret_win64`
-        // 真跑通过）。**调用方一侧**（IR 内部 `call` 自己出缓冲）尚未接：实测按
-        // "Alloca + 实参 0 + 结果清空" 做会生成崩溃的机器码（0xC0000005），
-        // 说明调用点那侧还有没对齐的东西（落点/顺序待查）⇒ 这里**明确 fail-closed**，
-        // 绝不发可能崩的代码。
+        // 真跑通过；psABI 方向即外部调用者传缓冲）。
+        //
+        // **调用方一侧（IR 内部 `call` 自己出缓冲）尚未接**：按"Alloca 缓冲 + 实参 0 +
+        // 结果清空"做**会崩**（0xC0000005）。已定位到的事实（2026-10-08，`FORGE_TRACE_LOWER=1` 实测）：
+        //   - 探针（只 call、不取结果）**也崩** ⇒ 故障在调用本身，不在取值重写；
+        //   - lowering 序列是对的：`Alloca -> Call args=[XReg(buf)]`，callee 侧
+        //     `Store [param], seg ×3`（逐段写缓冲）；
+        //   - 两侧计划一致（调用点由**指令形状**算：`[ptr] -> RCX`；被调方 `<sret> -> reg RCX`）。
+        // ⇒ 疑点收敛到**机器码层**：这个在 Stage 0.5 晚建的 `Alloca` 疑似没被帧偏移扫描
+        //   算到（往 `[rbp+0]` 写 24 字节会毁帧），或调用序列里指针搬家次序不对。
+        // 未查明前**明确 fail-closed**，不发可能崩的代码。
         if job.sret {
             return Err(IrError::Unsupported(format!(
                 "聚合返回 {size} 字节：这份约定走 sret，而**调用方**的 sret 缓冲尚未接\

@@ -15,7 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 + **被调方把按值返回的 `>8B` 聚合写进调用方缓冲**（win64/sret）：新增只读探针 `agg_ret_is_sret`（`plan.ret` 是否 `Indirect`）+ `expand_sret_return`——给函数**追加**一个**普通 `ptr`** 形参承载调用方缓冲（约定把 sret 指针放在首个整数槽：win64 = RCX、sysv64 = RDI，与"第 0 个普通指针实参"完全同形），并把签名的返回清空；`expand_large_agg_ret` 再把段值写进 `[buf]`（AggConst / load / 内存里的值三条来源）。
 + **为什么用普通 `ptr` 而不写 `sret` 属性**（与 A1′ 的 byval 同一条规律，实测踩到）：引擎对 `sret`/`byval` 落点给 `Indirect`，而生成物 `move_args` 的 `Indirect` 收参是"从指针 **load** 出值"——那样形参拿到的是缓冲**内容**而不是缓冲**地址**，会往垃圾地址写（实测 0xC0000005）。
-+ **调用方一侧仍未接**：IR 内部 `call` 自己出缓冲（"Alloca + 实参 0 + 结果清空"）实测生成**崩溃**的机器码，落点/顺序还有没对齐处 ⇒ 现在**明确 fail-closed**并点名原因（`test_jit_agg_by_value_ret_call_is_unsupported`），不发可能崩的代码。**外部调用者（C/Rust 直调）方向可用**：`test_jit_agg_by_value_ret_win64` 用 `extern "C" fn(*mut u64)` 真跑拿回 24 字节聚合 ✓ —— 这也正是 psABI 的方向。
++ **调用方一侧仍未接**：IR 内部 `call` 自己出缓冲（"Alloca + 实参 0 + 结果清空"）实测生成**崩溃**的机器码 ⇒ 现在**明确 fail-closed**并点名原因（`test_jit_agg_by_value_ret_call_is_unsupported`），不发可能崩的代码。**外部调用者（C/Rust 直调）方向可用**：`test_jit_agg_by_value_ret_win64` 用 `extern "C" fn(*mut u64)` 真跑拿回 24 字节聚合 —— 这也正是 psABI 的方向。
+  + **疑点已收敛**（`FORGE_TRACE_LOWER=1` 实测）：① 探针"只 `call` 不取结果"**也崩** ⇒ 故障在调用本身，不在取值重写；② lowering 序列正确（`Alloca -> Call args=[XReg(buf)]`，callee 侧 `Store [param], seg ×3`）；③ 两侧计划一致（调用点按**指令形状**算 `[ptr] -> RCX`，被调方 `<sret> -> reg RCX`）⇒ 疑点在机器码层：这个 Stage 0.5 晚建的 `Alloca` 疑似没被帧偏移扫描算到（往 `[rbp+0]` 写 24 字节会毁帧），或调用序列里指针搬家次序不对。
 + 验收：`cargo test -p forge-codegen --features jit` 全绿（3 条聚合用例：按值形参 + 按值实参 + 按值返回），`unsupported_inst_negative.rs` 的约定分流用例（win64 通 / sysv64 拒）保持绿。
 
 ### Added (2026-10-08) — forge-codegen：win64 按值聚合传参（形参 + 实参，A1′）
