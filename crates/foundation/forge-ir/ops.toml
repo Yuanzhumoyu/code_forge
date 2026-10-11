@@ -56,7 +56,7 @@ mnemonic = "iadd"
 type_rule = "binop_same"
 llvm = "add"
 category = "int-arith"
-doc = "整数加法（结果类型 = 操作数类型 upcast）"
+doc = "整数加法：a + b，结果类型 = 两操作数 upcast 后的公共类型；溢出按位环绕，不 trap。"
 operands = 2
 
 [[op]]
@@ -65,7 +65,7 @@ mnemonic = "isub"
 type_rule = "binop_same"
 llvm = "sub"
 category = "int-arith"
-doc = "整数减法"
+doc = "整数减法：a 减 b，结果类型 = upcast 后的公共类型；借位直接丢弃（环绕）。"
 operands = 2
 
 [[op]]
@@ -74,7 +74,7 @@ mnemonic = "imul"
 type_rule = "binop_same"
 llvm = "mul"
 category = "int-arith"
-doc = "整数乘法"
+doc = "整数乘法：a 乘 b，结果类型 = upcast 后的公共类型；高位截断、环绕。"
 operands = 2
 
 [[op]]
@@ -83,7 +83,7 @@ mnemonic = "udiv"
 type_rule = "binop_same"
 llvm = "udiv"
 category = "int-arith"
-doc = "无符号除法（除零为 UB）"
+doc = "无符号除法：a 除以 b 向下取整，结果同宽，除数为 0 是 UB。"
 operands = 2
 may_ub = true
 
@@ -93,7 +93,7 @@ mnemonic = "sdiv"
 type_rule = "binop_same"
 llvm = "sdiv"
 category = "int-arith"
-doc = "有符号除法（除零/溢出为 UB）"
+doc = "有符号除法：a 除以 b 向零取整，除数为 0 或 INT_MIN 除以 -1 是 UB。"
 operands = 2
 may_ub = true
 
@@ -103,7 +103,7 @@ mnemonic = "urem"
 type_rule = "binop_same"
 llvm = "urem"
 category = "int-arith"
-doc = "无符号取余（除零为 UB）"
+doc = "无符号取余：a 对 b 取余，结果同宽，除数为 0 是 UB。"
 operands = 2
 may_ub = true
 
@@ -113,7 +113,7 @@ mnemonic = "srem"
 type_rule = "binop_same"
 llvm = "srem"
 category = "int-arith"
-doc = "有符号取余（除零/溢出为 UB）"
+doc = "有符号取余：结果符号跟随被除数（LLVM srem 语义），除数为 0 是 UB。"
 operands = 2
 may_ub = true
 
@@ -123,7 +123,7 @@ mnemonic = "fadd"
 type_rule = "binop_same"
 llvm = "fadd"
 category = "float-arith"
-doc = "浮点加法"
+doc = "浮点加法：按 IEEE-754 舍入，NaN 与 Inf 依 IEEE 传播，不 trap。"
 operands = 2
 
 [[op]]
@@ -132,7 +132,7 @@ mnemonic = "fsub"
 type_rule = "binop_same"
 llvm = "fsub"
 category = "float-arith"
-doc = "浮点减法"
+doc = "浮点减法：a 减 b，按 IEEE-754 舍入，NaN 与 Inf 依 IEEE 传播，不 trap。"
 operands = 2
 
 [[op]]
@@ -141,7 +141,7 @@ mnemonic = "fmul"
 type_rule = "binop_same"
 llvm = "fmul"
 category = "float-arith"
-doc = "浮点乘法"
+doc = "浮点乘法：按 IEEE-754 舍入，NaN 与 Inf 依 IEEE 传播，不 trap。"
 operands = 2
 
 [[op]]
@@ -150,7 +150,7 @@ mnemonic = "fdiv"
 type_rule = "binop_same"
 llvm = "fdiv"
 category = "float-arith"
-doc = "浮点除法"
+doc = "浮点除法：a 除以 b，除零得 Inf 或 NaN（IEEE 语义），不 trap。"
 operands = 2
 
 [[op]]
@@ -159,7 +159,7 @@ mnemonic = "frem"
 type_rule = "binop_same"
 llvm = "frem"
 category = "float-arith"
-doc = "浮点取模（LLVM `frem`；x87 FPREM 语义，按 IEEE 754 remainder）"
+doc = "浮点取余：fmod 语义，结果符号跟随被除数，除数为零时得到 NaN，不 trap。"
 operands = 2
 
 [[op]]
@@ -168,7 +168,7 @@ mnemonic = "fneg"
 type_rule = "none"
 llvm = "fneg"
 category = "float-arith"
-doc = "浮点取负"
+doc = "浮点取负：只翻转符号位，对 NaN 与正负零同样成立，不改动其他位。"
 operands = 1
 
 [[op]]
@@ -177,7 +177,7 @@ mnemonic = "fabs"
 type_rule = "none"
 llvm = "fabs"
 category = "float-arith"
-doc = "浮点绝对值"
+doc = "浮点绝对值：清掉符号位，负零得到正零，其余位不动，不 trap。"
 operands = 1
 
 [[op]]
@@ -186,7 +186,7 @@ mnemonic = "fsqrt"
 type_rule = "none"
 llvm = "fsqrt"
 category = "float-arith"
-doc = "浮点平方根"
+doc = "浮点平方根：按 IEEE-754 计算，负数得到 NaN，不 trap 也不报错。"
 operands = 1
 
 [[op]]
@@ -195,7 +195,7 @@ mnemonic = "and"
 type_rule = "binop_same"
 llvm = "and"
 category = "bitwise"
-doc = "按位与"
+doc = "按位与：两个同宽整数逐位相与，结果同宽；两端混宽要先 upcast，纯运算无副作用。"
 operands = 2
 
 [[op]]
@@ -204,7 +204,7 @@ mnemonic = "or"
 type_rule = "binop_same"
 llvm = "or"
 category = "bitwise"
-doc = "按位或"
+doc = "按位或：两个同宽整数逐位相或，结果同宽；两端混宽要先 upcast，纯运算无副作用。"
 operands = 2
 
 [[op]]
@@ -213,7 +213,7 @@ mnemonic = "xor"
 type_rule = "binop_same"
 llvm = "xor"
 category = "bitwise"
-doc = "按位异或"
+doc = "按位异或：两个同宽整数逐位相异或，结果同宽；混宽先 upcast，纯运算无副作用。"
 operands = 2
 
 [[op]]
@@ -222,7 +222,7 @@ mnemonic = "not"
 type_rule = "none"
 llvm = "not"
 category = "bitwise"
-doc = "按位取反"
+doc = "按位取反：逐位取反，结果与操作数同宽；纯运算，无副作用也不 trap。"
 operands = 1
 
 [[op]]
@@ -231,7 +231,7 @@ mnemonic = "shl"
 type_rule = "binop_same"
 llvm = "shl"
 category = "bitwise"
-doc = "逻辑左移"
+doc = "逻辑左移：低位补 0，结果同宽；移位数大于等于位宽时结果未定义，纯运算无副作用。"
 operands = 2
 
 [[op]]
@@ -240,7 +240,7 @@ mnemonic = "ushr"
 type_rule = "binop_same"
 llvm = "lshr"
 category = "bitwise"
-doc = "逻辑右移"
+doc = "逻辑右移：高位补 0 的无符号移位，结果同宽；移位数越界时结果未定义。"
 operands = 2
 
 [[op]]
@@ -249,7 +249,7 @@ mnemonic = "sshr"
 type_rule = "binop_same"
 llvm = "ashr"
 category = "bitwise"
-doc = "算术右移"
+doc = "算术右移：高位补符号位，结果同宽；移位数越界时结果未定义。"
 operands = 2
 
 [[op]]
@@ -258,7 +258,7 @@ mnemonic = "clz"
 type_rule = "none"
 llvm = "clz"
 category = "bit-ops"
-doc = "前导零计数"
+doc = "前导零计数：返回最高有效位之前 0 的个数，输入 0 得到位宽，结果同宽。"
 operands = 1
 
 [[op]]
@@ -267,7 +267,7 @@ mnemonic = "ctz"
 type_rule = "none"
 llvm = "ctz"
 category = "bit-ops"
-doc = "尾随零计数"
+doc = "尾随零计数：返回最低有效位之后 0 的个数，输入 0 得到位宽，结果同宽。"
 operands = 1
 
 [[op]]
@@ -276,7 +276,7 @@ mnemonic = "popcnt"
 type_rule = "none"
 llvm = "ctpop"
 category = "bit-ops"
-doc = "置位数（Hamming 重量）"
+doc = "置位计数：返回位模式里 1 的个数，结果与操作数同宽，纯运算无副作用。"
 operands = 1
 
 [[op]]
@@ -285,7 +285,7 @@ mnemonic = "bitreverse"
 type_rule = "none"
 llvm = "bitreverse"
 category = "bit-ops"
-doc = "位序反转"
+doc = "位反转：整个位模式按位序颠倒，结果与操作数同宽，纯运算无副作用。"
 operands = 1
 
 [[op]]
@@ -294,7 +294,7 @@ mnemonic = "rotl"
 type_rule = "binop_same"
 llvm = "rotl"
 category = "bit-ops"
-doc = "循环左移"
+doc = "循环左移：移出的高位绕回低位，位数按位宽取模，纯运算无副作用。"
 operands = 2
 
 [[op]]
@@ -303,7 +303,7 @@ mnemonic = "rotr"
 type_rule = "binop_same"
 llvm = "rotr"
 category = "bit-ops"
-doc = "循环右移"
+doc = "循环右移：移出的低位绕回高位，位数按位宽取模，纯运算无副作用。"
 operands = 2
 
 [[op]]
@@ -312,7 +312,7 @@ mnemonic = "abs"
 type_rule = "none"
 llvm = "abs"
 category = "int-ext"
-doc = "整数绝对值"
+doc = "整数绝对值：结果与操作数同宽；INT_MIN 的绝对值仍是 INT_MIN（环绕），不 trap。"
 operands = 1
 
 [[op]]
@@ -321,7 +321,7 @@ mnemonic = "smin"
 type_rule = "binop_same"
 llvm = "smin"
 category = "int-ext"
-doc = "有符号最小值"
+doc = "有符号最小值：按有符号序比较取小，结果同宽；两值相等时实现可任取。"
 operands = 2
 
 [[op]]
@@ -330,7 +330,7 @@ mnemonic = "smax"
 type_rule = "binop_same"
 llvm = "smax"
 category = "int-ext"
-doc = "有符号最大值"
+doc = "有符号最大值：按有符号序比较取大，结果同宽；两值相等时实现可任取。"
 operands = 2
 
 [[op]]
@@ -339,7 +339,7 @@ mnemonic = "umin"
 type_rule = "binop_same"
 llvm = "umin"
 category = "int-ext"
-doc = "无符号最小值"
+doc = "无符号最小值：按无符号序比较取小，结果与操作数同宽，纯运算无副作用。"
 operands = 2
 
 [[op]]
@@ -348,7 +348,7 @@ mnemonic = "umax"
 type_rule = "binop_same"
 llvm = "umax"
 category = "int-ext"
-doc = "无符号最大值"
+doc = "无符号最大值：按无符号序比较取大，结果与操作数同宽，纯运算无副作用。"
 operands = 2
 
 [[op]]
@@ -357,7 +357,7 @@ mnemonic = "sadd_sat"
 type_rule = "binop_same"
 llvm = "sadd.sat"
 category = "int-ext"
-doc = "有符号饱和加法"
+doc = "有符号饱和加法：溢出时钳到该宽度的最大或最小值（饱和语义本身不产生 UB；宽度或操作数不匹配才是 UB）。"
 operands = 2
 may_ub = true
 
@@ -367,7 +367,7 @@ mnemonic = "ssub_sat"
 type_rule = "binop_same"
 llvm = "ssub.sat"
 category = "int-ext"
-doc = "有符号饱和减法"
+doc = "有符号饱和减法：上下溢时钳到该宽度的边界值；宽度或操作数不匹配才是 UB。"
 operands = 2
 may_ub = true
 
@@ -377,7 +377,7 @@ mnemonic = "uadd_sat"
 type_rule = "binop_same"
 llvm = "uadd.sat"
 category = "int-ext"
-doc = "无符号饱和加法"
+doc = "无符号饱和加法：越过最大值时钳到全 1；宽度或操作数不匹配才是 UB。"
 operands = 2
 may_ub = true
 
@@ -387,7 +387,7 @@ mnemonic = "usub_sat"
 type_rule = "binop_same"
 llvm = "usub.sat"
 category = "int-ext"
-doc = "无符号饱和减法"
+doc = "无符号饱和减法：下溢时钳到 0；宽度或操作数不匹配才是 UB。"
 operands = 2
 may_ub = true
 
@@ -397,7 +397,7 @@ mnemonic = "bswap"
 type_rule = "none"
 llvm = "bswap"
 category = "int-ext"
-doc = "字节序交换"
+doc = "字节序反转：按操作数位宽逐字节颠倒，例如 0xAABBCCDD 变成 0xDDCCBBAA。"
 operands = 1
 
 [[op]]
@@ -406,7 +406,7 @@ mnemonic = "fma"
 type_rule = "same3"
 llvm = "fma"
 category = "float-ext"
-doc = "融合乘加：a * b + c"
+doc = "融合乘加：a 乘 b 再加 c，只在最后舍入一次，中间乘积不舍入，也不 trap。"
 operands = 3
 
 [[op]]
@@ -415,7 +415,7 @@ mnemonic = "fmin"
 type_rule = "binop_same"
 llvm = "fmin"
 category = "float-ext"
-doc = "浮点最小值（IEEE 754-2019 minimumNumber）"
+doc = "浮点最小：一方是 NaN 时返回另一个数，两者都是 NaN 时得到 NaN。"
 operands = 2
 
 [[op]]
@@ -424,7 +424,7 @@ mnemonic = "fmax"
 type_rule = "binop_same"
 llvm = "fmax"
 category = "float-ext"
-doc = "浮点最大值"
+doc = "浮点最大：一方是 NaN 时返回另一个数，语义与 Fmin 完全对称。"
 operands = 2
 
 [[op]]
@@ -433,7 +433,7 @@ mnemonic = "fcopysign"
 type_rule = "binop_same"
 llvm = "fcopysign"
 category = "float-ext"
-doc = "拷贝符号位"
+doc = "复制符号：取第一个操作数的幅值与第二个操作数的符号位，含 NaN 与正负零。"
 operands = 2
 
 [[op]]
@@ -442,7 +442,7 @@ mnemonic = "ffloor"
 type_rule = "none"
 llvm = "floor"
 category = "float-ext"
-doc = "向负无穷取整"
+doc = "向下取整：得到不大于输入的最大整数值，保持浮点类型不变。"
 operands = 1
 
 [[op]]
@@ -451,7 +451,7 @@ mnemonic = "fceil"
 type_rule = "none"
 llvm = "ceil"
 category = "float-ext"
-doc = "向正无穷取整"
+doc = "向上取整：得到不小于输入的最小整数值，保持浮点类型不变。"
 operands = 1
 
 [[op]]
@@ -461,7 +461,7 @@ type_rule = "none"
 llvm = "ftrunc"
 llvm_parse = false
 category = "float-ext"
-doc = "向零取整"
+doc = "向零取整：丢弃小数部分并保持浮点类型不变，不改变数值类型。"
 operands = 1
 
 [[op]]
@@ -470,7 +470,7 @@ mnemonic = "fround"
 type_rule = "none"
 llvm = "round"
 category = "float-ext"
-doc = "就近取整（平局取偶）"
+doc = "就近取整：平局按当前舍入模式处理，缺省为 round-to-nearest-even。"
 operands = 1
 
 [[op]]
@@ -480,7 +480,7 @@ type_rule = "cmp_int"
 llvm = "icmp"
 llvm_parse = false
 category = "compare"
-doc = "整数比较（条件经 Immediate::IntCC 传递，`IntCC::code()` = 1..=10）"
+doc = "整数比较：结果 i1；10 个谓词走 Immediate::IntCC，两操作数必须同宽（混宽先 upcast）。"
 operands = 2
 cond = "IntCC"
 
@@ -491,7 +491,7 @@ type_rule = "cmp_float"
 llvm = "fcmp"
 llvm_parse = false
 category = "compare"
-doc = "浮点比较（条件经 Immediate::FloatCC 传递，`FloatCC::code()` = 1..=16）"
+doc = "浮点比较：结果 i1；谓词走 Immediate::FloatCC（ord、uno 等 LLVM 谓词齐备）。"
 operands = 2
 cond = "FloatCC"
 
@@ -501,7 +501,7 @@ mnemonic = "sadd_overflow"
 type_rule = "binop_same"
 llvm = "sadd.with.overflow"
 category = "overflow"
-doc = "有符号加法 + 溢出标志（结果 {value, overflow:i1}）"
+doc = "有符号加法加溢出位：返回结果与 i1 溢出标志两个值；本指令不 trap，标志被用于分支或除法等之后才可能构成 UB。"
 operands = 2
 results = 2
 may_ub = true
@@ -512,7 +512,7 @@ mnemonic = "uadd_overflow"
 type_rule = "binop_same"
 llvm = "uadd.with.overflow"
 category = "overflow"
-doc = "无符号加法 + 溢出标志"
+doc = "无符号加法加进位标志：返回结果与 i1 进位标志两个值；本指令不 trap，标志的后续使用决定是否 UB。"
 operands = 2
 results = 2
 may_ub = true
@@ -523,7 +523,7 @@ mnemonic = "ssub_overflow"
 type_rule = "binop_same"
 llvm = "ssub.with.overflow"
 category = "overflow"
-doc = "有符号减法 + 溢出标志"
+doc = "有符号减法加溢出标志：返回结果与 i1 标志两个值；本指令不 trap，标志的后续使用决定是否 UB。"
 operands = 2
 results = 2
 may_ub = true
@@ -534,7 +534,7 @@ mnemonic = "usub_overflow"
 type_rule = "binop_same"
 llvm = "usub.with.overflow"
 category = "overflow"
-doc = "无符号减法 + 溢出标志"
+doc = "无符号减法加借位标志：返回结果与 i1 借位标志两个值；本指令不 trap，标志后续使用决定是否 UB。"
 operands = 2
 results = 2
 may_ub = true
@@ -545,7 +545,7 @@ mnemonic = "smul_overflow"
 type_rule = "binop_same"
 llvm = "smul.with.overflow"
 category = "overflow"
-doc = "有符号乘法 + 溢出标志"
+doc = "有符号乘法加溢出标志：返回结果与 i1 标志两个值；本指令不 trap，标志的后续使用决定是否 UB。"
 operands = 2
 results = 2
 may_ub = true
@@ -556,7 +556,7 @@ mnemonic = "umul_overflow"
 type_rule = "binop_same"
 llvm = "umul.with.overflow"
 category = "overflow"
-doc = "无符号乘法 + 溢出标志"
+doc = "无符号乘法加溢出标志：返回结果与 i1 标志两个值；本指令不 trap，标志的后续使用决定是否 UB。"
 operands = 2
 results = 2
 may_ub = true
@@ -567,7 +567,7 @@ mnemonic = "load"
 type_rule = "load"
 llvm = "load"
 category = "memory"
-doc = "整数/通用加载"
+doc = "内存读取：唯一操作数是地址，结果类型由结果槽声明；对齐要求走 MemFlags，不满足时的行为由目标定义（可能 UB）。"
 operands = 1
 
 [[op]]
@@ -576,7 +576,7 @@ mnemonic = "store"
 type_rule = "store"
 llvm = "store"
 category = "memory"
-doc = "整数/通用存储"
+doc = "内存写入：操作数是值与地址，没有结果；有副作用、不可被 DCE 删除；对齐要求走 MemFlags。"
 operands = 2
 results = 0
 side_effect = true
@@ -588,7 +588,7 @@ type_rule = "load"
 llvm = "load"
 llvm_parse = false
 category = "memory"
-doc = "浮点加载（按类型分派到 MOVSD_RM 等——普通 Load 走 GPR，F64 值会错乱）"
+doc = "浮点或向量读取：形状同 Load，结果类型是浮点或向量，生成物按宽度挑搬移指令。"
 operands = 1
 
 [[op]]
@@ -598,7 +598,7 @@ type_rule = "store"
 llvm = "store"
 llvm_parse = false
 category = "memory"
-doc = "浮点存储（按类型分派到 MOVSD_MR 等）"
+doc = "浮点或向量写入：形状同 Store，操作数是值与地址，没有结果，有副作用。"
 operands = 2
 results = 0
 side_effect = true
@@ -610,7 +610,7 @@ type_rule = "none"
 llvm = "iconst"
 llvm_parse = false
 category = "const"
-doc = "整数常量（值在常量池，经 Immediate::Const 引用）"
+doc = "整数常量：立即数通道指向常量池里的 i64，无操作数，也无副作用。"
 operands = 0
 
 [[op]]
@@ -620,7 +620,7 @@ type_rule = "none"
 llvm = "iconst"
 llvm_parse = false
 category = "const"
-doc = "浮点常量（位模式 + 位宽存常量池）"
+doc = "浮点常量：立即数通道指向常量池，按结果类型的位宽解释那串位模式。"
 operands = 0
 
 [[op]]
@@ -630,7 +630,7 @@ type_rule = "none"
 llvm = "vconst"
 llvm_parse = false
 category = "const"
-doc = "向量常量（字节池）"
+doc = "向量常量：立即数通道指向常量池字节段，端序由池决定，结果是向量值。"
 operands = 0
 
 [[op]]
@@ -639,7 +639,7 @@ mnemonic = "poison"
 type_rule = "none"
 llvm = "poison"
 category = "value"
-doc = "产生指定类型的 poison 值（延迟 UB）"
+doc = "毒值：任何使用它算出的结果也是 poison；写进内存、作分支条件等会变成未定义行为（UB）。"
 operands = 0
 
 [[op]]
@@ -648,7 +648,7 @@ mnemonic = "undef"
 type_rule = "none"
 llvm = "undef"
 category = "value"
-doc = "产生 undef 值（任意位模式，每次使用独立）"
+doc = "未定义值：每次读取可任取一个合法值；与 Poison 不同，它本身不传播 UB。"
 operands = 0
 
 [[op]]
@@ -658,7 +658,7 @@ type_rule = "convert"
 convert = { src = "int", dst = "int", width = "widen" }
 llvm = "sext"
 category = "convert"
-doc = "有符号扩展"
+doc = "有符号扩展：把源整数按符号位扩展到更宽的目标整数，位模式变长。"
 operands = 1
 
 [[op]]
@@ -668,7 +668,7 @@ type_rule = "convert"
 convert = { src = "int", dst = "int", width = "widen" }
 llvm = "zext"
 category = "convert"
-doc = "无符号扩展"
+doc = "零扩展：高位补 0，把源整数扩展到更宽的目标整数，值不变。"
 operands = 1
 
 [[op]]
@@ -678,7 +678,7 @@ type_rule = "convert"
 convert = { src = "int", dst = "int", width = "narrow" }
 llvm = "trunc"
 category = "convert"
-doc = "整数截断（LLVM `trunc`）"
+doc = "整数截断：取源整数的低 N 位，源宽必须严格大于目标宽，值按位模式截断。"
 operands = 1
 
 [[op]]
@@ -688,7 +688,7 @@ type_rule = "convert"
 convert = { src = "float", dst = "float", width = "narrow" }
 llvm = "fptrunc"
 category = "convert"
-doc = "浮点窄化"
+doc = "浮点降精度：例如 f64 到 f32，按 IEEE 舍入，可能溢出成 Inf，不 trap。"
 operands = 1
 
 [[op]]
@@ -698,7 +698,7 @@ type_rule = "convert"
 convert = { src = "float", dst = "float", width = "widen" }
 llvm = "fpext"
 category = "convert"
-doc = "浮点加宽"
+doc = "浮点升精度：目标类型更宽，数值无损，只改类型不改变位模式含义。"
 operands = 1
 
 [[op]]
@@ -708,7 +708,7 @@ type_rule = "convert"
 convert = { src = "float", dst = "int", width = "any" }
 llvm = "fptosi"
 category = "convert"
-doc = "浮点 → 有符号整数"
+doc = "浮点到有符号整数：向零截断；超出目标整数范围或是 NaN 时结果是 poison（后续可能 UB）。"
 operands = 1
 
 [[op]]
@@ -718,7 +718,7 @@ type_rule = "convert"
 convert = { src = "int", dst = "float", width = "any" }
 llvm = "sitofp"
 category = "convert"
-doc = "有符号整数 → 浮点"
+doc = "有符号整数到浮点：按 IEEE 舍入，不 trap，也无溢出标志。"
 operands = 1
 
 [[op]]
@@ -728,7 +728,7 @@ type_rule = "convert"
 convert = { src = "float", dst = "int", width = "any" }
 llvm = "fptoui"
 category = "convert"
-doc = "浮点 → 无符号整数"
+doc = "浮点到无符号整数：向零截断；越界或 NaN 时结果是 poison，后续可能 UB。"
 operands = 1
 
 [[op]]
@@ -738,7 +738,7 @@ type_rule = "convert"
 convert = { src = "int", dst = "float", width = "any" }
 llvm = "uitofp"
 category = "convert"
-doc = "无符号整数 → 浮点"
+doc = "无符号整数到浮点：按 IEEE 舍入，不 trap，也无溢出标志。"
 operands = 1
 
 [[op]]
@@ -749,7 +749,7 @@ convert = { src = "ptr", dst = "int", width = "any" }
 llvm = "ptrtoint"
 llvm_alias = ["ptrtoaddr"]
 category = "convert"
-doc = "指针 → 整数"
+doc = "指针到整数：取地址的位模式，数值不变，结果宽度由目标整数类型决定。"
 operands = 1
 
 [[op]]
@@ -759,7 +759,7 @@ type_rule = "convert"
 convert = { src = "int", dst = "ptr", width = "any" }
 llvm = "inttoptr"
 category = "convert"
-doc = "整数 → 指针"
+doc = "整数到指针：与 Ptrtoint 互为逆，位模式不变，指针宽度由目标决定。"
 operands = 1
 
 [[op]]
@@ -769,7 +769,7 @@ type_rule = "convert"
 convert = { src = "any", dst = "any", width = "equal_bytes" }
 llvm = "bitcast"
 category = "convert"
-doc = "同位宽重解释（int↔float↔向量）"
+doc = "位重解释：源与目标位宽必须相同，只换类型、不换任何位模式。"
 operands = 1
 
 [[op]]
@@ -779,7 +779,7 @@ type_rule = "call"
 llvm = "call"
 llvm_alias = ["callbr"]
 category = "call"
-doc = "直接调用（被调在 Immediate::Func；实参个数不定）"
+doc = "直接调用：立即数通道给被调函数，操作数是实参；有副作用、不可被 DCE 删除；约定与返回落在被调签名上。"
 operands = "variadic"
 side_effect = true
 
@@ -790,7 +790,7 @@ type_rule = "call_indirect"
 llvm = "call"
 llvm_parse = false
 category = "call"
-doc = "间接调用（函数指针为首操作数；实参个数不定）"
+doc = "间接调用：操作数 0 是被调函数指针，其余是实参，有副作用且不可被 DCE 删除。"
 operands = "variadic"
 side_effect = true
 
@@ -800,7 +800,7 @@ mnemonic = "stack_addr"
 type_rule = "none"
 llvm = "stack_addr"
 category = "address"
-doc = "栈槽地址（帧偏移在 Immediate::Int）"
+doc = "取帧内地址：立即数给相对帧基址的字节偏移；正偏移是 ABI 相对的传入区地址。"
 operands = 0
 
 [[op]]
@@ -809,7 +809,7 @@ mnemonic = "global_addr"
 type_rule = "none"
 llvm = "global_addr"
 category = "address"
-doc = "全局变量地址"
+doc = "取全局符号地址：立即数给全局项，结果是该符号的地址，可被 Load 或 Store 使用。"
 operands = 0
 
 [[op]]
@@ -818,7 +818,7 @@ mnemonic = "alloca"
 type_rule = "none"
 llvm = "alloca"
 category = "alloca"
-doc = "栈分配（类型/元素数在对齐与类型 immediate 里）"
+doc = "栈上分配：立即数给元素类型与个数，结果是对象地址（帧槽），函数入口生效。"
 operands = 0
 
 [[op]]
@@ -827,7 +827,7 @@ mnemonic = "gep"
 type_rule = "none"
 llvm = "getelementptr"
 category = "gep"
-doc = "地址计算（基类型 immediate + 变长索引操作数）"
+doc = "聚合或数组取址：立即数给访问路径，操作数 0 是基址指针；是否 inbounds 影响 UB 判定。"
 operands = "variadic"
 
 [[op]]
@@ -837,7 +837,7 @@ type_rule = "none"
 llvm = "add"
 llvm_parse = false
 category = "vector"
-doc = "向量加法"
+doc = "向量逐元素加：两操作数同长度同元素类型，结果与操作数同型，按元素宽度派生。"
 operands = 2
 
 [[op]]
@@ -847,7 +847,7 @@ type_rule = "none"
 llvm = "sub"
 llvm_parse = false
 category = "vector"
-doc = "向量减法"
+doc = "向量逐元素减：两操作数同长度同元素类型，结果与操作数同型，按元素宽度派生。"
 operands = 2
 
 [[op]]
@@ -857,7 +857,7 @@ type_rule = "none"
 llvm = "mul"
 llvm_parse = false
 category = "vector"
-doc = "向量乘法"
+doc = "向量逐元素乘：两操作数同长度同元素类型，结果与操作数同型，按元素宽度派生。"
 operands = 2
 
 [[op]]
@@ -866,7 +866,7 @@ mnemonic = "vdiv"
 type_rule = "none"
 llvm = "div"
 category = "vector"
-doc = "向量除法"
+doc = "向量逐元素除：目标不支持该元素类型的向量除法时编译期明确拒绝，不静默降级。"
 operands = 2
 
 [[op]]
@@ -876,7 +876,7 @@ type_rule = "none"
 llvm = "fneg"
 llvm_parse = false
 category = "vector"
-doc = "向量取负"
+doc = "向量逐元素取负：逐个 lane 翻符号位，结果与操作数同型，无副作用。"
 operands = 1
 
 [[op]]
@@ -886,7 +886,7 @@ type_rule = "none"
 llvm = "fabs"
 llvm_parse = false
 category = "vector"
-doc = "向量绝对值"
+doc = "向量逐元素取绝对值：逐个 lane 清符号位，结果与操作数同型，无副作用。"
 operands = 1
 
 [[op]]
@@ -896,7 +896,7 @@ type_rule = "none"
 llvm = "extractelement"
 llvm_alias = ["vextractelement"]
 category = "vector"
-doc = "提取向量元素（lane 索引见 immediate/操作数）"
+doc = "抽取单个 lane：立即数给 lane 下标，结果是元素类型的标量，无副作用。"
 operands = 1
 
 [[op]]
@@ -905,7 +905,7 @@ mnemonic = "vinsert"
 type_rule = "none"
 llvm = "insertelement"
 category = "vector"
-doc = "插入向量元素"
+doc = "插入单个 lane：立即数给 lane 下标，结果由原向量与该标量合成，无副作用。"
 operands = 2
 
 [[op]]
@@ -916,7 +916,7 @@ convert = { src = "any", dst = "any", width = "equal_total_bits" }
 llvm = "bitcast"
 llvm_parse = false
 category = "vector"
-doc = "向量位重解释（总位宽相同）"
+doc = "向量位重解释：源与目标等位宽，例如 4 个 i32 与 16 个 i8 互相转换。"
 operands = 1
 
 [[op]]
@@ -925,7 +925,7 @@ mnemonic = "vbroadcast"
 type_rule = "none"
 llvm = "vbroadcast"
 category = "vector"
-doc = "标量广播成向量（元素个数不定）"
+doc = "广播：把标量复制到所有 lane，结果类型是等位宽向量，无副作用。"
 operands = "variadic"
 
 [[op]]
@@ -934,7 +934,7 @@ mnemonic = "shufflevector"
 type_rule = "none"
 llvm = "shufflevector"
 category = "vector"
-doc = "向量重排（掩码在 immediate 列表）"
+doc = "lane 重排：立即数给 lane 下标掩码，结果长度等于掩码长度，无副作用。"
 operands = "variadic"
 
 [[op]]
@@ -944,7 +944,7 @@ type_rule = "none"
 llvm = "vsplit"
 llvm_parse = false
 category = "vector"
-doc = "宽向量 → 128 位片段提取（fragment 立即数选片段）"
+doc = "向量折半：把向量拆成两个等长子向量并返回两个结果，无副作用。"
 operands = 1
 
 [[op]]
@@ -954,7 +954,7 @@ type_rule = "none"
 llvm = "vconcat"
 llvm_parse = false
 category = "vector"
-doc = "128 位片段拼接成宽向量（V128×2 → V256）"
+doc = "向量拼接：两个等长向量首尾相接，结果长度是两者的两倍，无副作用。"
 operands = "variadic"
 
 [[op]]
@@ -963,7 +963,7 @@ mnemonic = "trap"
 type_rule = "none"
 llvm = "trap"
 category = "trap"
-doc = "触发陷阱（按定义不可达，如失败的边界检查）"
+doc = "显式陷阱：执行到即产生运行时陷阱；有副作用、属于终结指令、不可 DCE；目标若无陷阱机制则落到 UB。"
 operands = 0
 results = 0
 may_ub = true
@@ -975,7 +975,7 @@ mnemonic = "is_null"
 type_rule = "none"
 llvm = "isnull"
 category = "pointer"
-doc = "判空指针"
+doc = "指针判空：与 null 比较得到 i1，只比较地址值、不做任何解引用。"
 operands = 1
 
 [[op]]
@@ -984,7 +984,7 @@ mnemonic = "is_not_null"
 type_rule = "none"
 llvm = "isnotnull"
 category = "pointer"
-doc = "判非空指针"
+doc = "指针非空判定：与 null 比较后取反得到 i1，只比较地址值。"
 operands = 1
 
 [[op]]
@@ -993,7 +993,7 @@ mnemonic = "addrspacecast"
 type_rule = "none"
 llvm = "addrspacecast"
 category = "pointer"
-doc = "指针地址空间转换（结果类型 = 目标 addrspace 指针）"
+doc = "地址空间转换：源与目标位宽可以不同（例如 64 位用户地址到 32 位设备地址），具体由目标定义。"
 operands = 1
 
 [[op]]
@@ -1002,7 +1002,7 @@ mnemonic = "va_arg"
 type_rule = "none"
 llvm = "va_arg"
 category = "pointer"
-doc = "可变参数读取（LLVM `va_arg`；文本层存 (Type, ptr) 操作数）"
+doc = "变参取值：从 va_list 取下一个参数，立即数给类型；有副作用（推进游标）。"
 operands = 1
 side_effect = true
 
@@ -1012,7 +1012,7 @@ mnemonic = "landingpad"
 type_rule = "none"
 llvm = "landingpad"
 category = "pointer"
-doc = "异常着陆垫（LLVM `landingpad`；codegen Unsupported）"
+doc = "异常着陆垫：异常路径的入口块，立即数给 personality 相关数据（SjLj 与 SEH 尚未实现，故 fail-closed）。"
 operands = 0
 
 [[op]]
@@ -1021,7 +1021,7 @@ mnemonic = "atomicrmw"
 type_rule = "none"
 llvm = "atomicrmw"
 category = "atomic"
-doc = "原子读改写（操作判别值与内存序在 immediate 列表）"
+doc = "原子读改写：立即数给操作码（交换、加减、位运算等），内存序走 MemFlags；有副作用。"
 operands = 2
 side_effect = true
 
@@ -1031,7 +1031,7 @@ mnemonic = "cmpxchg"
 type_rule = "cmpxchg_pair"
 llvm = "cmpxchg"
 category = "atomic"
-doc = "原子比较交换（成功/失败内存序在 immediate 列表）"
+doc = "原子比较交换：返回旧值与 i1 成功标志两个结果，有副作用，内存序走 MemFlags。"
 operands = 3
 side_effect = true
 
@@ -1041,7 +1041,7 @@ mnemonic = "fence"
 type_rule = "none"
 llvm = "fence"
 category = "atomic"
-doc = "内存屏障"
+doc = "内存屏障：立即数给内存序，有副作用，编译期访存不可跨过它重排。"
 operands = 0
 results = 0
 side_effect = true
@@ -1052,7 +1052,7 @@ mnemonic = "extractvalue"
 type_rule = "none"
 llvm = "extractvalue"
 category = "aggregate"
-doc = "聚合字段提取（索引在 immediate 列表）"
+doc = "抽取聚合字段：立即数给字段路径（自首层下标起），结果是该字段的值。"
 operands = 1
 
 [[op]]
@@ -1061,7 +1061,7 @@ mnemonic = "insertvalue"
 type_rule = "none"
 llvm = "insertvalue"
 category = "aggregate"
-doc = "聚合字段插入（索引在 immediate 列表）"
+doc = "插入聚合字段：立即数给字段路径，结果由原聚合与新值合成，无副作用。"
 operands = 2
 
 [[op]]
@@ -1070,7 +1070,7 @@ mnemonic = "copy"
 type_rule = "none"
 llvm = "copy"
 category = "other"
-doc = "显式拷贝（PHI 消除/合并用）"
+doc = "值复制：等宽同类型搬移，生成物按操作数宽度派生具体的搬移指令。"
 operands = 1
 
 [[op]]
@@ -1079,7 +1079,7 @@ mnemonic = "select"
 type_rule = "select"
 llvm = "select"
 category = "other"
-doc = "三元选择（cond 须为 i1）"
+doc = "三元选择：条件为真取第一个值，否则取第二个；条件可以是向量（按 lane 选择）。"
 operands = 3
 
 [[op]]
@@ -1088,7 +1088,7 @@ mnemonic = "freeze"
 type_rule = "none"
 llvm = "freeze"
 category = "other"
-doc = "冻结 poison/undef（阻止常量折叠跨此推断）"
+doc = "冻结：把可能是 poison 或 undef 的值固定成某个确定值，之后不再传播 poison。"
 operands = 1
 
 [[op]]
@@ -1097,7 +1097,7 @@ mnemonic = "nop"
 type_rule = "none"
 llvm = "nop"
 category = "other"
-doc = "空操作（删除后的墓碑）"
+doc = "空操作：无操作数、无结果、无副作用，可用于占位、对齐或调试打点。"
 operands = 0
 results = 0
 
@@ -1129,7 +1129,7 @@ mnemonic = "ret"
 type_rule = "none"
 llvm = "ret"
 category = "terminator"
-doc = "返回（operands 即返回值；0 个 = void）"
+doc = "函数返回：操作数是返回值，void 函数没有操作数，属于终结指令。"
 operands = "variadic"
 results = 0
 
@@ -1139,7 +1139,7 @@ mnemonic = "jmp"
 type_rule = "none"
 llvm = "jmp"
 category = "terminator"
-doc = "无条件跳转（operands = 目标块实参；Immediate::Block = 目标）"
+doc = "无条件跳转：立即数给目标块，属于终结指令，不带任何条件。"
 operands = "variadic"
 results = 0
 
@@ -1149,7 +1149,7 @@ mnemonic = "br"
 type_rule = "none"
 llvm = "br"
 category = "terminator"
-doc = "条件分支（operands = cond + then_args… + else_args…；两个 Block immediate = 目标）"
+doc = "条件分支：操作数 0 是 i1 条件，立即数给 then 与 else 两个块；终结指令。"
 operands = "variadic"
 results = 0
 
@@ -1159,7 +1159,7 @@ mnemonic = "switch"
 type_rule = "none"
 llvm = "switch"
 category = "terminator"
-doc = "多路分支（operands = disc + default_args… + case_args…；case 表内联在 immediates）"
+doc = "多路分支：操作数 0 是判别值，立即数给 case 值与块的对照表以及默认块；终结指令。"
 operands = "variadic"
 results = 0
 
@@ -1169,7 +1169,7 @@ mnemonic = "unreachable"
 type_rule = "none"
 llvm = "unreachable"
 category = "terminator"
-doc = "显式不可达（无操作数）"
+doc = "不可达：执行到即为 UB，属于终结指令，也用于标记不可能到达的路径。"
 operands = 0
 results = 0
 
@@ -1179,7 +1179,7 @@ mnemonic = "invoke"
 type_rule = "none"
 llvm = "invoke"
 category = "terminator"
-doc = "invoke 调用终结符（文本层 P1.1；codegen 报 Unsupported）"
+doc = "可展开调用：正常返回走 then 块，异常走 landingpad（当前后端明确 fail-closed）。"
 operands = "variadic"
 results = 0
 
@@ -1189,7 +1189,7 @@ mnemonic = "resume"
 type_rule = "none"
 llvm = "resume"
 category = "terminator"
-doc = "重新抛出（文本层 P1.1；codegen 报 Unsupported）"
+doc = "继续传播异常：与 Invoke 或 LandingPad 配套（当前后端 fail-closed）。"
 operands = 1
 results = 0
 
@@ -1205,6 +1205,6 @@ mnemonic = "va_start"
 type_rule = "none"
 llvm = "va_start"
 category = "other"
-doc = "取未命名实参区的地址（变参被调方；落点由调用约定的 va_list 形态给）"
+doc = "初始化 va_list：把可变参数区地址与偏移写进给定槽，并建立变参元信息。"
 operands = 0
 results = 1

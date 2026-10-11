@@ -14,6 +14,7 @@
 
 pub(crate) mod codegen;
 pub(crate) mod diag;
+pub(crate) mod doc;
 pub(crate) mod enum_decl;
 pub(crate) mod field_decl;
 pub(crate) mod match_tree;

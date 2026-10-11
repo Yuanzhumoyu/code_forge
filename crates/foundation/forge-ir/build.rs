@@ -132,9 +132,13 @@ fn generate_opcode_table() {
         let mnemonic = req("mnemonic");
         let category = req("category");
         let doc_text = req("doc");
+        // **文档门槛**（2026-10-08）："按位或"这种一句话等于没写——要求写清语义 +
+        // 操作数/结果 + UB/副作用条件。长度下限只是底线（24 字符：够写一句有内容的定义，
+        // 又不至于逼 `Ret`/`Nop` 这类简单指令靠凑字达标），写作要求见 crate README。
         assert!(
-            !doc_text.trim().is_empty(),
-            "ops.toml `{name}` 的 doc 为空——每个 opcode 都要有可读文档"
+            doc_text.trim().chars().count() >= 24,
+            "ops.toml `{name}` 的 doc 太短（{} 字符 < 24）：要写清语义 + 操作数/结果 + UB/副作用",
+            doc_text.trim().chars().count()
         );
         let arity = match table.get("operands") {
             Some(toml::Value::Integer(n)) => {
@@ -258,6 +262,13 @@ fn generate_opcode_table() {
             ),
             (_, None) => {}
         }
+        // `may_ub = true` 的条目必须在 doc 里点明 UB（否则读者只能靠猜）
+        if may_ub {
+            assert!(
+                doc_text.contains("UB") || doc_text.contains("未定义行为"),
+                "ops.toml `{name}` 声明了 may_ub = true，但 doc 没提 UB/未定义行为"
+            );
+        }
         defs.push(OpDef {
             name,
             mnemonic,
@@ -360,8 +371,33 @@ fn render(defs: &[OpDef]) -> String {
                 format_args!("    // === {} ({n}) ===\n", cur_cat),
             );
         }
-        let _ =
-            std::fmt::Write::write_fmt(&mut s, format_args!("    /// {}\n    {}", d.doc, d.name));
+        // 作者写的语义（可能多行；按行发 `///`，`doc` 里的换行不会破坏生成物）
+        for line in d.doc.lines() {
+            let _ = std::fmt::Write::write_fmt(&mut s, format_args!("    /// {line}\n"));
+        }
+        // **自动属性行**：由本表元数据投影，读者不必回查 ops.toml；也不可能与行为漂移
+        let arity_text = match d.arity {
+            Arity::Fixed(n) => format!("{n}"),
+            Arity::Variadic => "variadic".into(),
+        };
+        let cond_text = d
+            .cond
+            .as_deref()
+            .map(|c| format!("、条件通道 {c}"))
+            .unwrap_or_default();
+        let llvm_note = if d.llvm_parse { "" } else { "（仅 display）" };
+        let _ = std::fmt::Write::write_fmt(
+            &mut s,
+            format_args!(
+                "    ///\n    /// **属性**：操作数 {arity_text} / 结果 {} / 可能 UB {} / 副作用 {}{cond_text} / 类型规则 `{}` / LLVM `{}`{llvm_note}\n    {}\n",
+                d.results,
+                if d.may_ub { "是" } else { "否" },
+                if d.side_effect { "是" } else { "否" },
+                d.type_rule,
+                d.llvm,
+                d.name
+            ),
+        );
         s.push_str(",\n");
     }
     s.push_str("}\n\n");

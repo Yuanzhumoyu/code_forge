@@ -2349,6 +2349,11 @@ pub struct Form {
     /// 只降级 `kind = "stream"` 的 form；`bits`（缺省）路径不看它。
     #[serde(default)]
     pub segments: Option<Vec<SegmentDecl>>,
+    /// **声明注释**（v21，2026-10-08；可选）：这条 form 预设的共享注释，`form = "…"`
+    /// 的指令**继承**它（指令自己写了 `doc` 则覆盖）。插值与报错规则同
+    /// [`Instruction::doc`]（见 [`crate::dsl::doc`]）。
+    #[serde(default)]
+    pub doc: Option<String>,
     #[serde(flatten)]
     pub keys: EncKeys,
 }
@@ -2791,6 +2796,13 @@ pub struct Instruction {
     /// 约束：只能写在**纯搬运**指令上（一个目的槽 + 一个来源槽；形状不干净 ⇒ 生成期报错）。
     #[serde(default, rename = "data_width")]
     pub data_width: Option<u16>,
+    /// **声明注释**（v21，2026-10-08；可选）：进生成物 `Inst` 变体的 `#[doc = …]`，
+    /// 也进 `forge-isa insts`/`explain` 报告。
+    ///
+    /// 支持 `{}` 插值（固定小集 + 操作数派生，见 `crate::dsl::doc`）；写错占位符
+    /// **报错**。继承顺序：本字段 > family `body.doc`（展开时已写进这里）> `[form].doc`。
+    #[serde(default)]
+    pub doc: Option<String>,
     /// **字宽**（v21 W5，位）：本条**指令形态**所操作的数据宽度。
     ///
     /// 与 [`Instruction::data_width`]（纯搬运专用，供搬移族派生）是**两件事**：

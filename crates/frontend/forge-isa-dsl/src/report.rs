@@ -109,6 +109,8 @@ pub struct InstRow {
     pub reloc: Option<String>,
     /// 生效编码键（form 预设 ⊕ 指令覆盖），`key = value` 字典序。
     pub enc: Vec<(String, String)>,
+    /// 声明注释（可选；`[inst].doc` > family `body.doc` > `[form].doc`，已插值）。
+    pub doc: Option<String>,
 }
 
 impl InstRow {
@@ -146,6 +148,7 @@ impl InstRow {
             ("asm", self.asm.clone()),
             ("ref", self.reference.clone().unwrap_or_default()),
             ("reloc", self.reloc.clone().unwrap_or_default()),
+            ("doc", self.doc.clone().unwrap_or_default()),
             ("enc", enc),
         ]
     }
@@ -243,6 +246,7 @@ fn row_of(m: &IsaModel, info: &crate::dsl::codegen::InstInfo<'_>) -> InstRow {
         asm: inst.asm.render().to_string(),
         reference: inst.reference.clone(),
         reloc: inst.reloc.clone(),
+        doc: info.doc.clone(),
         enc: enc_pairs(&info.form),
     }
 }

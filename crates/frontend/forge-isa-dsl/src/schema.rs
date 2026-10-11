@@ -220,7 +220,7 @@ pub const SECTIONS: &[Section] = &[
         path: "[form.<名字>]",
         model: "Form",
         required: &[],
-        optional: &["fields", "segments"],
+        optional: &["fields", "segments", "doc"],
         // Form 的编码键是 `#[serde(flatten)]` 的 EncKeys：TOML 里与本节的键同级。
         flatten: ENC_KEYS,
         additional: false,
@@ -247,6 +247,7 @@ pub const SECTIONS: &[Section] = &[
             "width",
             "only_variants",
             "fields_variant",
+            "doc",
             // TOML 键是 `ref`（模型字段名 `reference` + `#[serde(rename = "group")]`）。
             // 守卫按 `#[serde(rename = …)]` 取键名，所以这里必须写 **用户在 TOML 里
             // 实际写的那个键**——写字段名会让编辑器对每一行 `group = …` 报未知键

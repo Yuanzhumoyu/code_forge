@@ -36,6 +36,7 @@ use smallvec::SmallVec;
 // - `overflow_binop!`  溢出二元（返回 (value, overflow_i1)）
 macro_rules! int_binop {
     ($name:ident, $op:ident) => {
+        #[doc = concat!("整数二元运算（`Opcode::", stringify!($op), "`）：结果类型 = 两操作数 upcast 后的公共类型；语义/UB/副作用见该 opcode 的生成文档。")]
         pub fn $name(&mut self, a: Value, b: Value) -> Value {
             let at = self.type_of(a);
             let bt = self.type_of(b);
@@ -50,6 +51,7 @@ macro_rules! int_binop {
 }
 macro_rules! int_binop_ub {
     ($name:ident, $op:ident) => {
+        #[doc = concat!("整数二元运算（`Opcode::", stringify!($op), "`）：可能有 UB 的档（除零/溢出）——语义见该 opcode 的生成文档。")]
         pub fn $name(&mut self, a: Value, b: Value) -> Value {
             let at = self.type_of(a);
             let bt = self.type_of(b);
@@ -64,6 +66,7 @@ macro_rules! int_binop_ub {
 }
 macro_rules! float_binop {
     ($name:ident, $op:ident) => {
+        #[doc = concat!("浮点二元运算（`Opcode::", stringify!($op), "`）：按 IEEE-754 舍入，不 trap；语义见该 opcode 的生成文档。")]
         pub fn $name(&mut self, a: Value, b: Value) -> Value {
             let at = self.type_of(a);
             let bt = self.type_of(b);
@@ -78,6 +81,7 @@ macro_rules! float_binop {
 }
 macro_rules! unop_int {
     ($name:ident, $op:ident) => {
+        #[doc = concat!("整数一元运算（`Opcode::", stringify!($op), "`）：结果与操作数同宽；语义/UB 见该 opcode 的生成文档。")]
         pub fn $name(&mut self, a: Value) -> Value {
             let t = self.type_of(a);
             assert!(t.is_int(), concat!(stringify!($name), " only support int"));
@@ -87,6 +91,7 @@ macro_rules! unop_int {
 }
 macro_rules! unop_float {
     ($name:ident, $op:ident) => {
+        #[doc = concat!("浮点一元运算（`Opcode::", stringify!($op), "`）：保持浮点类型；语义见该 opcode 的生成文档。")]
         pub fn $name(&mut self, a: Value) -> Value {
             let t = self.type_of(a);
             assert!(
@@ -99,6 +104,7 @@ macro_rules! unop_float {
 }
 macro_rules! overflow_binop {
     ($name:ident, $op:ident) => {
+        #[doc = concat!("带标志的二元运算（`Opcode::", stringify!($op), "`）：返回（结果, 标志）两个值；语义见该 opcode 的生成文档。")]
         pub fn $name(&mut self, a: Value, b: Value) -> (Value, Value) {
             let at = self.type_of(a);
             let bt = self.type_of(b);
@@ -129,6 +135,7 @@ pub struct FunctionBuilder {
 }
 
 impl FunctionBuilder {
+    /// 建函数构建器：给函数名、类型上下文与签名；参数值由 create_entry_block 产生。
     pub fn new(name: impl Into<ImmStr>, ctx: TypeContext, signature: FunctionSignature) -> Self {
         let cc = signature.calling_convention.clone();
         let sig_ref = ctx.register_signature(signature);
@@ -142,6 +149,7 @@ impl FunctionBuilder {
         }
     }
 
+    /// 取只读类型上下文（查或建类型用），不改变构建器状态。
     pub fn type_ctx(&self) -> &TypeContext {
         &self.ctx
     }
@@ -163,6 +171,7 @@ impl FunctionBuilder {
     }
 
     // --- 块管理 ---
+    /// 建入口块并返回它的参数值；每个函数只应调用一次。
     pub fn create_entry_block(&mut self) -> (Block, Vec<Value>) {
         let param_tys = self.func.param_types();
         let (block, params) = self.func.dfg.make_block_with_params(&param_tys);
@@ -188,6 +197,7 @@ impl FunctionBuilder {
         self
     }
 
+    /// 建带 N 个参数的新块并切换为当前块，返回块与参数值（个数由泛型 N 静态保证）。
     pub fn create_block_here_with<const N: usize>(
         &mut self,
         params: [(TypeId, &str); N],
@@ -201,6 +211,7 @@ impl FunctionBuilder {
         (block, arr)
     }
 
+    /// 在指定块里执行闭包 f，结束后把当前块切回原来那个（构建嵌套块用）。
     pub fn build_block<R, F>(&mut self, block: Block, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
@@ -215,6 +226,7 @@ impl FunctionBuilder {
         result
     }
 
+    /// 收尾：关闭当前块、校验并返回构建好的 Function；调用后本构建器不应再用。
     pub fn finish(mut self) -> Result<Function, IrError> {
         // 防御：每个基本块必须已终止（ret/jump/branch/unreachable/switch）。
         // 漏写时块终结符为 `None`，会被编译期无条件 lower 成 UD2，运行到该块即
@@ -304,6 +316,7 @@ impl FunctionBuilder {
         self.block_open = true;
         (block, param_values)
     }
+    /// 建一个游离块，不切换当前块。
     pub fn create_block(&mut self) -> Block {
         let block = self.func.dfg.make_block();
         self.func.layout.push(block);
@@ -313,11 +326,13 @@ impl FunctionBuilder {
         block
     }
 
+    /// 建块并立即切换为当前块。
     pub fn create_block_here(&mut self) -> Block {
         let id = self.create_block();
         self.switch_to_block(id);
         id
     }
+    /// 建带参数值的块，不切换当前块。
     pub fn create_block_with_params(&mut self, params: &[(TypeId, &str)]) -> (Block, Vec<Value>) {
         let param_tys: Vec<TypeId> = params.iter().map(|(t, _)| *t).collect();
         let (block, values) = self.create_block_with_tys(&param_tys);
@@ -328,13 +343,16 @@ impl FunctionBuilder {
         }
         (block, values)
     }
+    /// 切换当前块（目标块必须尚未填充）。
     pub fn switch_to_block(&mut self, block: Block) {
         self.cur_block = block;
         self.block_open = true;
     }
+    /// 取当前块；没有打开块时返回 None。
     pub fn current_block(&self) -> Block {
         self.cur_block
     }
+    /// 取某块的参数值列表（按声明序）。
     pub fn block_params(&self, block: Block) -> Vec<Value> {
         self.func.dfg.block_param_values(block).to_vec()
     }
@@ -392,6 +410,7 @@ impl FunctionBuilder {
         self.func.use_lists.record_inst(inst, &operands);
         SmallVec::from_iter(self.func.dfg.inst_results(inst).iter().copied())
     }
+    /// 发射一条指令的唯一底层入口（其余方法都走它）：校验类型后建值并返回。
     pub fn emit1(
         &mut self,
         opcode: Opcode,
@@ -438,6 +457,7 @@ impl FunctionBuilder {
             .unwrap_or_else(|| panic!("v{} no type", v.0))
     }
 
+    /// Opcode::Iadd 的构建入口：整数加法：a + b，结果类型 = 两操作数 upcast 后的公共类型。
     pub fn iadd(&mut self, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
@@ -450,6 +470,7 @@ impl FunctionBuilder {
         let t = at.upcast(bt).unwrap();
         self.emit1(Opcode::Iadd, vec![a, b], vec![], t, InstFlags::NONE)
     }
+    /// Opcode::Isub 的构建入口：整数减法：a 减 b，结果类型 = upcast 后的公共类型。
     pub fn isub(&mut self, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
@@ -471,6 +492,7 @@ impl FunctionBuilder {
     int_binop!(band, Band);
     int_binop!(bor, Bor);
     int_binop!(bxor, Bxor);
+    /// Opcode::Bnot 的构建入口：按位取反：逐位取反，结果与操作数同宽。
     pub fn bnot(&mut self, a: Value) -> Value {
         let t = self.type_of(a);
         assert!(t.is_int(), "bnot only support int");
@@ -484,24 +506,28 @@ impl FunctionBuilder {
             self.emit1(Opcode::Bnot, vec![a], vec![], t, InstFlags::NONE)
         }
     }
+    /// Opcode::Ishl 的构建入口：逻辑左移：低位补 0，结果同宽。
     pub fn ishl(&mut self, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
         assert!(at.is_int() && bt.is_int(), "ishl only support int");
         self.emit1(Opcode::Ishl, vec![a, b], vec![], at, InstFlags::NONE)
     }
+    /// Opcode::Ushr 的构建入口：逻辑右移：高位补 0 的无符号移位，结果同宽。
     pub fn ushr(&mut self, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
         assert!(at.is_int() && bt.is_int(), "ushr only support int");
         self.emit1(Opcode::Ushr, vec![a, b], vec![], at, InstFlags::NONE)
     }
+    /// Opcode::Sshr 的构建入口：算术右移：高位补符号位，结果同宽。
     pub fn sshr(&mut self, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
         assert!(at.is_int() && bt.is_int(), "sshr only support int");
         self.emit1(Opcode::Sshr, vec![a, b], vec![], at, InstFlags::NONE)
     }
+    /// Opcode::Icmp 的构建入口：整数比较：结果 i1。
     pub fn icmp(&mut self, cond: IntCC, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
@@ -514,6 +540,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Fcmp 的构建入口：浮点比较：结果 i1。
     pub fn fcmp(&mut self, cond: FloatCC, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
@@ -534,6 +561,7 @@ impl FunctionBuilder {
     unop_float!(fneg, Fneg);
     unop_float!(fabs, Fabs);
     unop_float!(fsqrt, Fsqrt);
+    /// Opcode::Fadd 的构建入口：浮点加法：按 IEEE-754 舍入，NaN 与 Inf 依 IEEE 传播，不 trap。
     pub fn fadd_fast(&mut self, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
@@ -544,6 +572,7 @@ impl FunctionBuilder {
         let t = at.upcast(bt).unwrap();
         self.emit1(Opcode::Fadd, vec![a, b], vec![], t, InstFlags::FMF_FAST)
     }
+    /// Opcode::Fadd 的构建入口：浮点加法：按 IEEE-754 舍入，NaN 与 Inf 依 IEEE 传播，不 trap。
     pub fn fadd_with_flags(&mut self, a: Value, b: Value, flags: InstFlags) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
@@ -554,6 +583,7 @@ impl FunctionBuilder {
         let t = at.upcast(bt).unwrap();
         self.emit1(Opcode::Fadd, vec![a, b], vec![], t, flags)
     }
+    /// Opcode::StackAddr 的构建入口：取帧内地址：立即数给相对帧基址的字节偏移。
     pub fn stack_addr(&mut self, offset: i32) -> Value {
         self.emit1(
             Opcode::StackAddr,
@@ -563,6 +593,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::GlobalAddr 的构建入口：取全局符号地址：立即数给全局项，结果是该符号的地址，可被 Load 或 Store 使用。
     pub fn global_addr(&mut self, global: GlobalId) -> Value {
         self.emit1(
             Opcode::GlobalAddr,
@@ -572,6 +603,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Alloca 的构建入口：栈上分配：立即数给元素类型与个数，结果是对象地址（帧槽），函数入口生效。
     pub fn alloca(&mut self, ty: TypeId, count: u32) -> Value {
         self.emit1(
             Opcode::Alloca,
@@ -581,6 +613,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::GetElementPtr 的构建入口：聚合或数组取址：立即数给访问路径，操作数 0 是基址指针。
     pub fn gep(&mut self, ptr: Value, indices: &[Value], indexed_ty: TypeId) -> Value {
         let mut operands = vec![ptr];
         operands.extend_from_slice(indices);
@@ -592,6 +625,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Load 的构建入口：内存读取：唯一操作数是地址，结果类型由结果槽声明。
     pub fn load(&mut self, addr: Value, ty: TypeId) -> Value {
         self.emit1(Opcode::Load, vec![addr], vec![], ty, InstFlags::NONE)
     }
@@ -601,6 +635,7 @@ impl FunctionBuilder {
     pub fn fload(&mut self, addr: Value, ty: TypeId) -> Value {
         self.emit1(Opcode::Fload, vec![addr], vec![], ty, InstFlags::NONE)
     }
+    /// Opcode::Load 的构建入口：内存读取：唯一操作数是地址，结果类型由结果槽声明。
     pub fn load_with_flags(&mut self, addr: Value, ty: TypeId, mem_flags: MemFlags) -> Value {
         self.emit_with_mem(
             Opcode::Load,
@@ -611,6 +646,7 @@ impl FunctionBuilder {
             mem_flags,
         )[0]
     }
+    /// Opcode::Store 的构建入口：内存写入：操作数是值与地址，没有结果。
     pub fn store(&mut self, value: Value, addr: Value) {
         self.emit(
             Opcode::Store,
@@ -645,6 +681,7 @@ impl FunctionBuilder {
 
     // --- 向量/SIMD 操作 ---
 
+    /// Opcode::Vadd 的构建入口：向量逐元素加：两操作数同长度同元素类型，结果与操作数同型，按元素宽度派生。
     pub fn vadd(&mut self, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
@@ -654,6 +691,7 @@ impl FunctionBuilder {
         );
         self.emit1(Opcode::Vadd, vec![a, b], vec![], at, InstFlags::NONE)
     }
+    /// Opcode::Vsub 的构建入口：向量逐元素减：两操作数同长度同元素类型，结果与操作数同型，按元素宽度派生。
     pub fn vsub(&mut self, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
@@ -663,6 +701,7 @@ impl FunctionBuilder {
         );
         self.emit1(Opcode::Vsub, vec![a, b], vec![], at, InstFlags::NONE)
     }
+    /// Opcode::Vmul 的构建入口：向量逐元素乘：两操作数同长度同元素类型，结果与操作数同型，按元素宽度派生。
     pub fn vmul(&mut self, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
@@ -672,6 +711,7 @@ impl FunctionBuilder {
         );
         self.emit1(Opcode::Vmul, vec![a, b], vec![], at, InstFlags::NONE)
     }
+    /// Opcode::Vextract 的构建入口：抽取单个 lane：立即数给 lane 下标，结果是元素类型的标量，无副作用。
     pub fn vextract(&mut self, vec: Value, index: Value) -> Value {
         let t = self.type_of(vec);
         assert!(self.ctx.is_vector(t), "vextract only support vector");
@@ -689,6 +729,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Vinsert 的构建入口：插入单个 lane：立即数给 lane 下标，结果由原向量与该标量合成，无副作用。
     pub fn vinsert(&mut self, vec: Value, elem: Value, index: Value) -> Value {
         let t = self.type_of(vec);
         assert!(self.ctx.is_vector(t), "vinsert only support vector");
@@ -701,6 +742,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::ShuffleVector 的构建入口：lane 重排：立即数给 lane 下标掩码，结果长度等于掩码长度，无副作用。
     pub fn shuffle_vector(&mut self, a: Value, b: Value, mask: &[u32]) -> Value {
         let t = self.type_of(a);
         assert!(self.ctx.is_vector(t), "shuffle_vector only support vector");
@@ -716,6 +758,7 @@ impl FunctionBuilder {
 
     // --- 原子操作 ---
 
+    /// Opcode::AtomicRmw 的构建入口：原子读改写：立即数给操作码（交换、加减、位运算等），内存序走 MemFlags。
     pub fn atomic_rmw(
         &mut self,
         op: crate::ir::opcode::AtomicRmwOp,
@@ -732,6 +775,7 @@ impl FunctionBuilder {
             InstFlags::ATOMIC | InstFlags::SIDE_EFFECT,
         )
     }
+    /// Opcode::Cmpxchg 的构建入口：原子比较交换：返回旧值与 i1 成功标志两个结果，有副作用，内存序走 MemFlags。
     pub fn cmpxchg(
         &mut self,
         ptr: Value,
@@ -755,6 +799,7 @@ impl FunctionBuilder {
             InstFlags::ATOMIC | InstFlags::SIDE_EFFECT,
         )
     }
+    /// Opcode::Fence 的构建入口：内存屏障：立即数给内存序，有副作用，编译期访存不可跨过它重排。
     pub fn fence(&mut self, ordering: crate::ir::opcode::Ordering) {
         self.emit(
             Opcode::Fence,
@@ -767,6 +812,7 @@ impl FunctionBuilder {
 
     // --- 复合类型操作 ---
 
+    /// Opcode::ExtractValue 的构建入口：抽取聚合字段：立即数给字段路径（自首层下标起），结果是该字段的值。
     pub fn extract_value(&mut self, agg: Value, field_idx: u32) -> Value {
         let t = self.type_of(agg);
         // 结果类型 = 聚合类型（struct/array）第 field_idx 个元素/字段的类型
@@ -783,6 +829,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::InsertValue 的构建入口：插入聚合字段：立即数给字段路径，结果由原聚合与新值合成，无副作用。
     pub fn insert_value(&mut self, agg: Value, elem: Value, field_idx: u32) -> Value {
         let t = self.type_of(agg);
         self.emit1(
@@ -793,6 +840,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Iconst 的构建入口：整数常量：立即数通道指向常量池里的 i64，无操作数，也无副作用。
     pub fn iconst_bool(&mut self, value: bool) -> Value {
         let cid = self.func.constants.bool_const(value);
         self.emit1(
@@ -803,6 +851,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Iconst 的构建入口：整数常量：立即数通道指向常量池里的 i64，无操作数，也无副作用。
     pub fn iconst(&mut self, value: i64, ty: TypeId) -> Value {
         // 常量池条目要记位宽：问 store（按 DataLayout 处理指针、支持动态整数
         // 位宽）；非标量类型（不该出现在这里）退到内建标量表，最后兜底 1 位。
@@ -823,15 +872,19 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Iconst 的构建入口：整数常量：立即数通道指向常量池里的 i64，无操作数，也无副作用。
     pub fn iconst_i8(&mut self, v: i8) -> Value {
         self.iconst(v as i64, self.ctx.i8_ty())
     }
+    /// Opcode::Iconst 的构建入口：整数常量：立即数通道指向常量池里的 i64，无操作数，也无副作用。
     pub fn iconst_i16(&mut self, v: i16) -> Value {
         self.iconst(v as i64, self.ctx.i16_ty())
     }
+    /// Opcode::Iconst 的构建入口：整数常量：立即数通道指向常量池里的 i64，无操作数，也无副作用。
     pub fn iconst_i32(&mut self, v: i32) -> Value {
         self.iconst(v as i64, self.ctx.i32_ty())
     }
+    /// Opcode::Iconst 的构建入口：整数常量：立即数通道指向常量池里的 i64，无操作数，也无副作用。
     pub fn iconst_i64(&mut self, v: i64) -> Value {
         self.iconst(v, self.ctx.i64_ty())
     }
@@ -845,6 +898,7 @@ impl FunctionBuilder {
         }
     }
 
+    /// Opcode::Fconst 的构建入口：浮点常量：立即数通道指向常量池，按结果类型的位宽解释那串位模式。
     pub fn fconst(&mut self, bits: u64, ty: TypeId) -> Value {
         let width = self.float_const_width(ty);
         let cid = self.func.constants.insert_float_typed(bits as u128, width);
@@ -869,10 +923,12 @@ impl FunctionBuilder {
         )
     }
 
+    /// Opcode::Fconst 的构建入口：浮点常量：立即数通道指向常量池，按结果类型的位宽解释那串位模式。
     pub fn fconst_f32(&mut self, v: f32) -> Value {
         self.fconst(v.to_bits() as u64, self.ctx.f32_ty())
     }
 
+    /// Opcode::Fconst 的构建入口：浮点常量：立即数通道指向常量池，按结果类型的位宽解释那串位模式。
     pub fn fconst_f64(&mut self, v: f64) -> Value {
         self.fconst(v.to_bits(), self.ctx.f64_ty())
     }
@@ -913,6 +969,7 @@ impl FunctionBuilder {
         )
     }
 
+    /// Opcode::Sextend 的构建入口：有符号扩展：把源整数按符号位扩展到更宽的目标整数，位模式变长。
     pub fn sextend(&mut self, v: Value, to: TypeId) -> Value {
         self.emit1(
             Opcode::Sextend,
@@ -922,6 +979,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Uextend 的构建入口：零扩展：高位补 0，把源整数扩展到更宽的目标整数，值不变。
     pub fn uextend(&mut self, v: Value, to: TypeId) -> Value {
         self.emit1(
             Opcode::Uextend,
@@ -931,6 +989,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Ireduce 的构建入口：整数截断：取源整数的低 N 位，源宽必须严格大于目标宽，值按位模式截断。
     pub fn ireduce(&mut self, v: Value, to: TypeId) -> Value {
         self.emit1(
             Opcode::Ireduce,
@@ -940,6 +999,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Bitcast 的构建入口：位重解释：源与目标位宽必须相同，只换类型、不换任何位模式。
     pub fn bitcast(&mut self, v: Value, to: TypeId) -> Value {
         self.emit1(
             Opcode::Bitcast,
@@ -949,6 +1009,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Fptrunc 的构建入口：浮点降精度：例如 f64 到 f32，按 IEEE 舍入，可能溢出成 Inf，不 trap。
     pub fn fptrunc(&mut self, v: Value, to: TypeId) -> Value {
         self.emit1(
             Opcode::Fptrunc,
@@ -958,6 +1019,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Fpext 的构建入口：浮点升精度：目标类型更宽，数值无损，只改类型不改变位模式含义。
     pub fn fpext(&mut self, v: Value, to: TypeId) -> Value {
         self.emit1(
             Opcode::Fpext,
@@ -967,6 +1029,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Fptosi 的构建入口：浮点到有符号整数：向零截断。
     pub fn fptosi(&mut self, v: Value, to: TypeId) -> Value {
         self.emit1(
             Opcode::Fptosi,
@@ -976,6 +1039,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Sitofp 的构建入口：有符号整数到浮点：按 IEEE 舍入，不 trap，也无溢出标志。
     pub fn sitofp(&mut self, v: Value, to: TypeId) -> Value {
         self.emit1(
             Opcode::Sitofp,
@@ -985,6 +1049,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Fptoui 的构建入口：浮点到无符号整数：向零截断。
     pub fn fptoui(&mut self, v: Value, to: TypeId) -> Value {
         self.emit1(
             Opcode::Fptoui,
@@ -994,6 +1059,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Uitofp 的构建入口：无符号整数到浮点：按 IEEE 舍入，不 trap，也无溢出标志。
     pub fn uitofp(&mut self, v: Value, to: TypeId) -> Value {
         self.emit1(
             Opcode::Uitofp,
@@ -1003,6 +1069,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Ptrtoint 的构建入口：指针到整数：取地址的位模式，数值不变，结果宽度由目标整数类型决定。
     pub fn ptrtoint(&mut self, v: Value, to: TypeId) -> Value {
         self.emit1(
             Opcode::Ptrtoint,
@@ -1012,6 +1079,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Inttoptr 的构建入口：整数到指针：与 Ptrtoint 互为逆，位模式不变，指针宽度由目标决定。
     pub fn inttoptr(&mut self, v: Value, to: TypeId) -> Value {
         self.emit1(
             Opcode::Inttoptr,
@@ -1021,14 +1089,17 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Copy 的构建入口：值复制：等宽同类型搬移，生成物按操作数宽度派生具体的搬移指令。
     pub fn copy(&mut self, v: Value) -> Value {
         let t = self.type_of(v);
         self.emit1(Opcode::Copy, vec![v], vec![], t, InstFlags::NONE)
     }
+    /// Opcode::Select 的构建入口：三元选择：条件为真取第一个值，否则取第二个。
     pub fn select(&mut self, cond: Value, a: Value, b: Value) -> Value {
         let t = self.type_of(a);
         self.emit1(Opcode::Select, vec![cond, a, b], vec![], t, InstFlags::NONE)
     }
+    /// Opcode::Freeze 的构建入口：冻结：把可能是 poison 或 undef 的值固定成某个确定值，之后不再传播 poison。
     pub fn freeze(&mut self, v: Value) -> Value {
         let t = self.type_of(v);
         self.emit1(Opcode::Freeze, vec![v], vec![], t, InstFlags::NONE)
@@ -1040,12 +1111,14 @@ impl FunctionBuilder {
     unop_int!(ctz, Ctz);
     unop_int!(popcnt, Popcnt);
     unop_int!(bitreverse, Bitreverse);
+    /// Opcode::Rotl 的构建入口：循环左移：移出的高位绕回低位，位数按位宽取模，纯运算无副作用。
     pub fn rotl(&mut self, a: Value, amount: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(amount);
         assert!(at.is_int() && bt.is_int(), "rotl only support int");
         self.emit1(Opcode::Rotl, vec![a, amount], vec![], at, InstFlags::NONE)
     }
+    /// Opcode::Rotr 的构建入口：循环右移：移出的低位绕回高位，位数按位宽取模，纯运算无副作用。
     pub fn rotr(&mut self, a: Value, amount: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(amount);
@@ -1068,6 +1141,7 @@ impl FunctionBuilder {
 
     // --- Float extended (8) ---
 
+    /// Opcode::Fma 的构建入口：融合乘加：a 乘 b 再加 c，只在最后舍入一次，中间乘积不舍入，也不 trap。
     pub fn fma(&mut self, a: Value, b: Value, c: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
@@ -1098,6 +1172,7 @@ impl FunctionBuilder {
 
     // --- Value semantics (2) ---
 
+    /// Opcode::Poison 的构建入口：毒值：任何使用它算出的结果也是 poison。
     pub fn poison(&mut self, ty: TypeId) -> Value {
         self.emit1(
             Opcode::Poison,
@@ -1107,6 +1182,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Undef 的构建入口：未定义值：每次读取可任取一个合法值。
     pub fn undef(&mut self, ty: TypeId) -> Value {
         self.emit1(
             Opcode::Undef,
@@ -1119,6 +1195,7 @@ impl FunctionBuilder {
 
     // --- SIMD extended (5) ---
 
+    /// Opcode::Vdiv 的构建入口：向量逐元素除：目标不支持该元素类型的向量除法时编译期明确拒绝，不静默降级。
     pub fn vdiv(&mut self, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
@@ -1128,16 +1205,19 @@ impl FunctionBuilder {
         );
         self.emit1(Opcode::Vdiv, vec![a, b], vec![], at, InstFlags::MAY_UB)
     }
+    /// Opcode::Vneg 的构建入口：向量逐元素取负：逐个 lane 翻符号位，结果与操作数同型，无副作用。
     pub fn vneg(&mut self, a: Value) -> Value {
         let t = self.type_of(a);
         assert!(self.ctx.is_vector(t), "vneg only support vector");
         self.emit1(Opcode::Vneg, vec![a], vec![], t, InstFlags::NONE)
     }
+    /// Opcode::Vabs 的构建入口：向量逐元素取绝对值：逐个 lane 清符号位，结果与操作数同型，无副作用。
     pub fn vabs(&mut self, a: Value) -> Value {
         let t = self.type_of(a);
         assert!(self.ctx.is_vector(t), "vabs only support vector");
         self.emit1(Opcode::Vabs, vec![a], vec![], t, InstFlags::NONE)
     }
+    /// Opcode::Vbitcast 的构建入口：向量位重解释：源与目标等位宽，例如 4 个 i32 与 16 个 i8 互相转换。
     pub fn vbitcast(&mut self, v: Value, to_ty: TypeId) -> Value {
         self.emit1(
             Opcode::Vbitcast,
@@ -1147,6 +1227,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::Vbroadcast 的构建入口：广播：把标量复制到所有 lane，结果类型是等位宽向量，无副作用。
     pub fn vbroadcast(&mut self, elem: Value, vec_ty: TypeId) -> Value {
         self.emit1(
             Opcode::Vbroadcast,
@@ -1201,9 +1282,11 @@ impl FunctionBuilder {
 
     // --- Trap / pointer predicates (3) ---
 
+    /// Opcode::Trap 的构建入口：显式陷阱：执行到即产生运行时陷阱。
     pub fn trap(&mut self) {
         self.emit(Opcode::Trap, vec![], vec![], &[], InstFlags::SIDE_EFFECT);
     }
+    /// Opcode::IsNull 的构建入口：指针判空：与 null 比较得到 i1，只比较地址值、不做任何解引用。
     pub fn is_null(&mut self, ptr: Value) -> Value {
         self.emit1(
             Opcode::IsNull,
@@ -1213,6 +1296,7 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
+    /// Opcode::IsNotNull 的构建入口：指针非空判定：与 null 比较后取反得到 i1，只比较地址值。
     pub fn is_not_null(&mut self, ptr: Value) -> Value {
         self.emit1(
             Opcode::IsNotNull,
@@ -1247,18 +1331,22 @@ impl FunctionBuilder {
     pub fn va_arg(&mut self, ap: Value, ty: TypeId) -> Value {
         self.emit1(Opcode::VaArg, vec![ap], vec![], ty, InstFlags::SIDE_EFFECT)
     }
+    /// Opcode::Nop 的构建入口：空操作：无操作数、无结果、无副作用，可用于占位、对齐或调试打点。
     pub fn nop(&mut self) {
         self.emit(Opcode::Nop, vec![], vec![], &[], InstFlags::NONE);
     }
+    /// Opcode::Ret 的构建入口：函数返回：操作数是返回值，void 函数没有操作数，属于终结指令。
     pub fn ret(&mut self, values: &[Value]) {
         self.func.ret(self.cur_block, values);
         self.block_open = false;
     }
 
+    /// Opcode::Jmp 的构建入口：无条件跳转：立即数给目标块，属于终结指令，不带任何条件。
     pub fn jump(&mut self, target: Block, args: &[Value]) {
         self.func.jump(self.cur_block, target, args);
         self.block_open = false;
     }
+    /// Opcode::Br 的构建入口：条件分支：操作数 0 是 i1 条件，立即数给 then 与 else 两个块。
     pub fn branch(
         &mut self,
         cond: Value,
@@ -1277,10 +1365,12 @@ impl FunctionBuilder {
         );
         self.block_open = false;
     }
+    /// Opcode::Unreachable 的构建入口：不可达：执行到即为 UB，属于终结指令，也用于标记不可能到达的路径。
     pub fn unreachable(&mut self) {
         self.func.unreachable(self.cur_block);
         self.block_open = false;
     }
+    /// Opcode::Switch 的构建入口：多路分支：操作数 0 是判别值，立即数给 case 值与块的对照表以及默认块。
     pub fn switch(
         &mut self,
         discriminant: Value,
@@ -1291,6 +1381,7 @@ impl FunctionBuilder {
             .switch(self.cur_block, discriminant, default, [], cases);
         self.block_open = false;
     }
+    /// Opcode::Call 的构建入口：直接调用：立即数通道给被调函数，操作数是实参。
     pub fn call(&mut self, func: FuncRef, args: &[Value], ret_tys: &[TypeId]) -> Vec<Value> {
         self.emit(
             Opcode::Call,
@@ -1346,6 +1437,7 @@ impl FunctionBuilder {
         )
     }
 
+    /// Opcode::CallIndirect 的构建入口：间接调用：操作数 0 是被调函数指针，其余是实参，有副作用且不可被 DCE 删除。
     pub fn call_indirect(&mut self, ptr: Value, args: &[Value], ret_tys: &[TypeId]) -> Vec<Value> {
         let mut operands = vec![ptr];
         operands.extend_from_slice(args);

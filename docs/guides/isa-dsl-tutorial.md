@@ -218,6 +218,20 @@ asm = "sub {dst}, {src}"
 - 别名（同一件事多个名字）用**成员指令上的 `ref`**：多条共用同一个 `ref` = 多态分发。
 - 用 `cargo run -p forge-isa -- explain toy16.toml ADD` 可以确认某条指令来自哪个模板的哪一行。
 
+### 顺手给指令写注释（`doc`，可选）
+
+`doc` 会进生成物的 `#[doc]`（rustdoc 可见）与 `isa insts`/`explain` 的 `doc` 列。写在
+`[inst.<名>]`、`[form.<名>]`，或（最省事的）写在族模板的 `body` 里让整族共享：
+
+```toml
+[templates.body]
+doc = "{name}：把 {src.width} 位的 {src.slot} 相加写回 {dst.slot}（族 {family}）"
+```
+
+`{}` 里能用 `name`/`form`/`family`/`width`/`data_width`/`ops` 和每个操作数的
+`slot`/`width`/`class`；写别的键会**报错**（避免注释里出现没被替换的占位符）。
+字面花括号写 `{{`/`}}`。完整规则见 `docs/reference/isa-dsl.md` 的「声明注释」一节。
+
 ## 5. 立刻拿到回归网：生成期自测
 
 `isa_from_file!` 默认在生成模块里带 `#[cfg(test)] mod __spec_tests`——**每条指令**自动得到

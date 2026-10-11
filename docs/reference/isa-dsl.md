@@ -164,8 +164,8 @@ v18 是**破坏性重设计**（不保留兼容层）。写谱时只需要记住
 | `[conventions.mem]` | `templates` | — | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
 | `[enum.<表名>]` | — | `kind` `entries`† | 命名取值表：kind = value（名字 = 值；带 `ir` 的那张是条件码表）\| bits（名字拼接、按位或）（允许额外键） |
 | `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` `cond_bank` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
-| `[form.<名字>]` | — | `fields` `segments` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖）；v21 W10：**表头即形式名**（不再写 `name`） |
-| `[inst.<名字>]` | `asm` | `form` `opcode` `match` `fields` `segments` `bind` `ops` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令（v21 W10：**表头即指令名**，不再写 `name`）：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
+| `[form.<名字>]` | — | `fields` `segments` `doc` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖）；v21 W10：**表头即形式名**（不再写 `name`） |
+| `[inst.<名字>]` | `asm` | `form` `opcode` `match` `fields` `segments` `bind` `ops` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `doc` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令（v21 W10：**表头即指令名**，不再写 `name`）：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[asm.reloc.<名>]` | `semantics` `operand` | `addend` `via` | 重定位（v21 W8：**表头即重定位名**；旧 `[[reloc]]` 已撤）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`） |
 | `[pred.<名字>]` | `expr` | — | 命名谓词（v18 S3f 引入时叫 `[[derive]]`；v21 W10：**表头即属性名**，不再写 `name`） |
 | `[asm.pseudo.<名>]` | `asm` `emit` | `only_variants` | 汇编器伪指令（v21 W7：**表头即名字**；旧 `[[pseudo]]` 已撤）：文本级多指令展开，分派按 `asm` 的前导字面，`{名字}` 就是 `emit` 用的参数 |
@@ -1323,6 +1323,39 @@ riscv 的 `li` 就是本能力的实际用例：`li x10, 0x1234` 展开成 `lui 
 `{iconst_hi20}`/`{iconst_lo12}` 完全同一套算术。x86 用同一机制表达 SSE 的八个经典比较
 谓词别名（`cmpltps XMM2, XMM1` → `cmpps XMM2, XMM1, 1`）——**一行别名换一行指令**，
 不新增 32 条指令、也不引入第二套分派逻辑。
+
+## 声明注释（`doc`，可选）
+
+`[inst.<名>]`、`[form.<名>]` 以及 family 的 `body` 上都能写 `doc`。它进**生成物**
+（`Inst` 变体上的 `#[doc = …]`，rustdoc 可见），也进 `forge-isa insts`/`explain` 的 `doc` 列。
+三处都可以不写；都不写时生成物一字不加。
+
+**继承顺序**（从高到低）：
+
+1. `[inst.<名>].doc`——指令自己的；
+2. family 的 `body.doc`——展开时写进**每一行**的 `doc`，所以行键（`{cc}` 之类）在这里就能用；
+3. `[form.<名>].doc`——`form = "…"` 的指令**共享**那一份（少写重复注释就靠它）。
+
+**插值**：下面这组是全部可用的键，写别的**报错**（注释没有第二个消费者，拼错必须当场暴露）。
+
+| 占位符 | 含义 |
+| --- | --- |
+| `{name}` | 指令名（`[inst.<名>]` 的表头） |
+| `{form}` / `{family}` | 编码形式名 / 族名；这条指令没有 ⇒ 报错 |
+| `{width}` / `{data_width}` | 指令字长（位）/ 数据宽度（位）；没写 ⇒ 报错 |
+| `{ops}` | 操作数名列表（逗号分隔） |
+| `{<操作数名>.slot}` / `.width` / `.class` | 该操作数用的槽名 / 槽声明的宽度（位）/ 寄存器类 |
+
+字面花括号写 `{{` / `}}`。多行注释在 TOML 字符串里写 `\n`（生成期按行拆成多条 `#[doc]`）。
+
+```toml
+[form.RR]
+doc = "寄存器-寄存器形态：{ops}"
+
+[family.ALU]
+body = { form = "RR", doc = "{name}：{dst.width} 位 {family} 运算（{ops}）", asm = "alu {dst}, {src}" }
+rows = [ { inst = "ADD_RM_R" }, { inst = "SUB_RM_R" } ]
+```
 
 ## `[[templates]]` — 参数化指令模板（唯一复用机制）
 

@@ -18,6 +18,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + **同时接上了 A1′-ret 的调用方一侧**：IR 内部 `call` 按值取 `>8B` 聚合时，调用方 `Alloca` 缓冲 + 作为实参 0 传 + 结果清空 + 结果值登记成"住在缓冲"（后续 `extractvalue` 变 load）。`test_jit_agg_by_value_ret_call_win64` 真跑通过（含"只 call 不取结果"的探针 + 取第 2 个字段两条）。
 + 这条崩溃曾被误判为"调用方 sret 落点不对"——**实测纠正**：lowering 序列与两侧计划本来就是对的（`Alloca -> Call args=[XReg(buf)]`；callee `Store [param], seg ×3`；`[ptr] -> RCX` 对 `<sret> -> reg RCX`），问题在**帧偏移**这一层。
 
+### Added (2026-10-08) — 声明注释：ISA-DSL 的 `doc`（继承 + 插值）与 IR 操作码/构建器文档
+
++ **ISA-DSL：`[inst.<名>].doc` / `[form.<名>].doc` / family 的 `body.doc`**（都可选）：解析后按 `inst` > family `body` > `form` 继承，做**固定小集 + 操作数派生**的 `{}` 插值（`{name}` `{form}` `{family}` `{width}` `{data_width}` `{ops}` 与 `{<操作数名>.slot|.width|.class}`），**未知占位符报错**（注释没有第二个消费者，拼错必须当场暴露），`{{`/`}}` 是字面花括号；多行按 `\n` 拆成多条 `#[doc]`。落在**生成物 `Inst` 变体的 `#[doc = …]`**（rustdoc 可见）与 `forge-isa insts`/`explain` 的 `doc` 列。三处都不写 ⇒ 生成物一字不加（发行谱现状不变，`determinism` 仍逐字节稳定）。
++ **family 复用**：`[family.<名>]` 的 `body.doc` 由族展开写入**每一行**，行键（`{cc}` 之类）在展开期就已替换 ⇒ 一份注释覆盖一族指令，正是"少写重复注释"的地方。
++ **IR 操作码文档**（`ops.toml` 117 条 `doc` 全部改写）：写清语义 + 操作数/结果 + UB 条件 + 副作用性质。`build.rs` 在每条变体的 rustdoc 末尾追加一行**自动属性行**（操作数/结果/可能 UB/副作用/条件通道/类型规则/LLVM 名），机械事实不再靠人抄、也不可能与行为漂移；`doc` 支持多行。构建期门槛：`>= 24` 字符 + `may_ub` 条目必须提 UB（**门槛从计划里的 40 改为 24**：`Ret`/`Nop`/`Clz` 这类简单指令写满 40 字符只能靠凑字，24 仍能挡住"按位或"式的一句话）。
++ **`FunctionBuilder` 全部指令方法补注释**（`src/ir/builder.rs`）：六个宏（`int_binop`/`int_binop_ub`/`float_binop`/`unop_int`/`unop_float`/`overflow_binop`，共 49 个生成方法）在宏体内发一条**指向该 opcode 生成文档**的 `#[doc]`（不复述语义）；87 个手写方法逐条补"构建器契约 + `Opcode::X` 指针"，其中 opcode 语义首句由 `ops.toml` 派生。
++ 守卫：`crates/frontend/forge-isa-dsl/tests/doc_comment.rs`（继承/覆盖/插值/字面括号/未知占位符 fail-closed/发行谱仍可展开）与 `crates/foundation/forge-ir/tests/opcode_docs.rs`（长度、UB、副作用三条从运行期 `Opcode::INFOS` 守）。
++ 文档：`docs/reference/isa-dsl.md` 新增「声明注释（`doc`，可选）」一节（含键速查表同步与 `isa-dsl.schema.json` 重生成）；`crates/foundation/forge-ir/README.md` 增「`doc` 的写作要求」；`docs/guides/isa-dsl-tutorial.md` 加最小示例。
+
 ### Added (2026-10-08) — A2′ 调用方一侧的机制全部就位（角色/属性透传/拷贝发射），并查明坐标差一槽
 
 + **三条能力角色**（`arg_bytes_load`/`arg_bytes_imm`/`arg_bytes_add`）：x86 分别声明在**现成指令** `MOV_R_MEM`（寄存器地址 load）/`MOV_REG_IMM64`/`ADD_RM_R` 上，谱校验与 DSL 守卫全绿。它们是"按值栈实参拷贝"的指令选择，不进 ABI 能力视图（`role_capability` 归 `None`）；文档见 `docs/reference/isa-dsl.md` 的角色表。

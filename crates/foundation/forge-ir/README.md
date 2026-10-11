@@ -40,6 +40,15 @@ crate 根的 **`ops.toml`** 是指令清单与派生属性的**单一事实源**
 `type_rule`）。**新增一个 opcode = 加一行 `[[op]]`**；生成物与枚举同源，不可能漂移
 （`Opcode::info()` 是无兜底臂的穷举 match，查表都是生成的 `match` ⇒ O(1)）。
 
+**`doc` 的写作要求**（2026-10-08 起由构建期强制）：每条 `[[op]]` 的 `doc` 是操作码语义的
+**单一事实源**，会被投影成三处——`Opcode` 变体的 `#[doc]`（rustdoc）、`OpcodeInfo.doc`
+（运行期可读）、以及**自动属性行**（由 `operands`/`results`/`may_ub`/`side_effect`/`cond`/
+`type_rule`/`llvm` 投影，附在变体文档末尾）。所以 `doc` 只写"作者才知道的事"：
+**语义 + 操作数/结果含义 + UB 条件 + 副作用性质**；机械事实交给自动属性行，别抄。
+构建期门槛：`trim().len() >= 24` 字符，且 `may_ub = true` 的条目必须出现 `UB`/
+`未定义行为`；运行期由 `tests/opcode_docs.rs` 从 `Opcode::INFOS` 再守一遍
+（长度、UB、副作用三条）。
+
 比较条件（`Icmp`/`Fcmp`）走 immediate 通道（`Immediate::IntCC`/`FloatCC`，
 `ops.toml` 的 `cond` 声明该契约、`Opcode::cond_kind()` 暴露它）；条件的数字表示是
 `IntCC::code()`（1..=10）/`FloatCC::code()`（1..=16），ISA TOML 的 `cond` 谓词与宿主

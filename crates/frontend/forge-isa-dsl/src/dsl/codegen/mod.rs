@@ -427,6 +427,9 @@ pub(crate) struct InstInfo<'a> {
     pub(crate) vn: syn::Ident,
     /// 操作数绑定：(位域名, 字段标识, 槽, 角色)。
     pub(crate) operands: Vec<(String, syn::Ident, &'a OperandSlot, OperandRole)>,
+    /// **已解析的声明注释**（可选，`doc`；v21 2026-10-08）：`[inst].doc` > family
+    /// `body.doc` > `[form].doc`，占位符已插值（未知即报错）⇒ 生成物直接发 `#[doc]`。
+    pub(crate) doc: Option<String>,
 }
 
 pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>>, String> {
@@ -552,6 +555,8 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
         let of = form.operand_fields.as_deref();
         let fixed = form.opcode_field.is_some();
         let mut operands = Vec::new();
+        // 注释插值用的操作数派生事实（与 `operands` 同源、同序）
+        let mut doc_ops: Vec<crate::dsl::doc::DocOp> = Vec::new();
         for (i, op) in uses.iter().enumerate() {
             let slot = m
                 .operand_slots
@@ -588,8 +593,48 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
             // dest/src 之类语义名覆盖作者写下的 dst/src。
             let fid = operand_field_ident(&op.name, &inst.name, i)?;
             let role = op.role.unwrap_or(OperandRole::In);
+            doc_ops.push(crate::dsl::doc::DocOp {
+                name: op.name.clone(),
+                slot: op.slot.clone(),
+                width: slot.width,
+                class: slot.class.map(|c| c.to_string()),
+            });
             operands.push((fname, fid, slot, role));
         }
+        // 声明注释（可选）：`[inst].doc` > family `body.doc`（展开时已是本行的 doc）
+        // > `[form].doc`；随后按固定小集 + 操作数派生插值（未知占位符 ⇒ 报错）。
+        let inherited_form_doc = inst
+            .form
+            .as_ref()
+            .and_then(|n| m.forms.iter().find(|f| &f.name == n))
+            .and_then(|f| f.doc.clone());
+        let doc = match inst
+            .doc
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or(inherited_form_doc)
+        {
+            None => None,
+            Some(raw) => {
+                let facts = crate::dsl::doc::DocFacts {
+                    name: &inst.name,
+                    form: inst.form.as_deref(),
+                    family: inst.from_template.as_ref().map(|s| &**s),
+                    width: inst.width,
+                    data_width: inst.data_width,
+                    ops: &doc_ops,
+                };
+                let resolved = crate::dsl::doc::resolve_doc(
+                    &raw,
+                    &facts,
+                    &format!("[inst.{}]", inst.name),
+                )?;
+                let trimmed = resolved.trim().to_string();
+                if trimmed.is_empty() { None } else { Some(trimmed) }
+            }
+        };
         out.push(InstInfo {
             // asm 规范化：命名形态的 `{dst}` 已换成 `{1}`，下游（asm/machine/
             // decode 生成）只认索引形态，无需感知命名。
@@ -600,6 +645,7 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
             form: enc.clone(),
             vn: pascal_ident(&inst.name),
             operands,
+            doc,
         });
     }
     Ok(out)
@@ -876,8 +922,21 @@ fn gen_inst_enum(infos: &[InstInfo]) -> TokenStream {
         .iter()
         .map(|info| {
             let vn = &info.vn;
+            // 声明注释（可选）：按行拆成多条 `#[doc = …]`（`\n` 由作者在 TOML 里写）
+            let docs: Vec<TokenStream> = info
+                .doc
+                .as_deref()
+                .map(|d| {
+                    d.lines()
+                        .map(|line| {
+                            let lit = syn::LitStr::new(line, proc_macro2::Span::call_site());
+                            quote! { #[doc = #lit] }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
             if info.operands.is_empty() {
-                quote! { #vn }
+                quote! { #(#docs)* #vn }
             } else {
                 let fs: Vec<_> = info
                     .operands
@@ -887,7 +946,7 @@ fn gen_inst_enum(infos: &[InstInfo]) -> TokenStream {
                         quote! { #fid: #ty }
                     })
                     .collect();
-                quote! { #vn { #(#fs),* } }
+                quote! { #(#docs)* #vn { #(#fs),* } }
             }
         })
         .collect();
