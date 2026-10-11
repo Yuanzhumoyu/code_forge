@@ -264,11 +264,12 @@ pub fn migrate_spec_text(src: &str) -> Result<String, String> {
                 }
             }
             let tpls = parse_asm(&block[ai])?;
-            // 顺序标记：打印序 ≠ `ops` 序时把**编码序**说出来（`#序号` = 旧 `ops` 下标）。
+            // 顺序标记：**任一**模板的打印序 ≠ `ops` 序就必须全标（一条指令的多个模板打印序
+            // 可能不同，只看第一条会漏标 ⇒ 那条模板的"出现序 = 编码序"就不再成立）。
             let ops_order: Vec<String> = decls.iter().map(|d| d.name.clone()).collect();
             let with_idx = tpls
-                .first()
-                .is_some_and(|t| appearance_order(t, &decls) != ops_order);
+                .iter()
+                .any(|t| appearance_order(t, &decls) != ops_order);
             let mut new_tpls = Vec::new();
             for t in &tpls {
                 new_tpls.push(rewrite_template(t, &decls, &inst, with_idx)?);
