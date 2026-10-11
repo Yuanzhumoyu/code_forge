@@ -1063,10 +1063,19 @@ fn stack_place(
     // `sp` 低一个返回地址、再低一个保存的帧指针——所以被调方读同一个实参时的偏移
     // 正好是"调用方偏移 + first_offset_slots×slot"。不加 shadow 会读到 shadow 区里的垃圾
     // （实测 win64 第 5 个参数：布局给 16，现有发射算式给 48 —— 差的就是这 32 字节）。
-    Placement::Stack {
-        offset: (off + rules.shadow_bytes) as i32,
-        size: ty.size.max(1) as u16,
-        align: align as u16,
+    // 聚合 ⇒ 按值整块（发射形态与标量不同，见 `Placement::StackByVal`）
+    if matches!(ty.kind, crate::ty::TyKind::Aggregate { .. }) {
+        Placement::StackByVal {
+            offset: (off + rules.shadow_bytes) as i32,
+            size: ty.size.max(1) as u16,
+            align: align as u16,
+        }
+    } else {
+        Placement::Stack {
+            offset: (off + rules.shadow_bytes) as i32,
+            size: ty.size.max(1) as u16,
+            align: align as u16,
+        }
     }
 }
 

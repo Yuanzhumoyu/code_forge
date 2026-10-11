@@ -113,7 +113,8 @@ define i32 @main() {
         "win64 上 32B 聚合按值实参应走「调用方副本 + 指针」，got: {:?}",
         ok_caller.map(|c| c.code.len())
     );
-    // sysv64：同一份 IR 必须仍然 fail-closed（栈传递未实现）。
+    // sysv64：**被调方**已接（按值整块进传出区 ⇒ 形参保留、值从 `[fp + offset]` 读），
+    // 所以被调方现在**能**编译；**调用方**仍 fail-closed（发射侧形状透传待做）。
     // 注意口径：管线读的是 **`Function.calling_convention`** 字段（与 `abi_setup::setup_conv`
     // 同源），签名里的约定只是它的来源——两处一起改，避免测试自己骗自己。
     let mut sysv_callee = callee.clone();
@@ -121,10 +122,21 @@ define i32 @main() {
     let mut sig = sysv_callee.types.borrow().get_signature(sysv_callee.signature).clone();
     sig.calling_convention = CallConvId::Builtin(ConvName::SysV64);
     sysv_callee.signature = sysv_callee.types.borrow_mut().register_signature(sig);
-    let bad = FunctionCompiler::new(TargetMachine::new()).compile_raw(&sysv_callee);
+    let ok_sysv = FunctionCompiler::new(TargetMachine::new()).compile_raw(&sysv_callee);
     assert!(
-        matches!(&bad, Err(e) if format!("{e}").contains("传出参数区")),
-        "sysv64 上 32B 聚合仍是栈传递（未实现）⇒ 应 Unsupported，got: {:?}",
+        ok_sysv.is_ok(),
+        "sysv64 上 32B 聚合的**被调方**应能按 [fp+offset] 读，got: {:?}",
+        ok_sysv.map(|c| c.code.len())
+    );
+    let mut sysv_caller = caller.clone();
+    sysv_caller.calling_convention = CallConvId::Builtin(ConvName::SysV64);
+    let mut csig = sysv_caller.types.borrow().get_signature(sysv_caller.signature).clone();
+    csig.calling_convention = CallConvId::Builtin(ConvName::SysV64);
+    sysv_caller.signature = sysv_caller.types.borrow_mut().register_signature(csig);
+    let bad = FunctionCompiler::new(TargetMachine::new()).compile_raw(&sysv_caller);
+    assert!(
+        matches!(&bad, Err(e) if format!("{e}").contains("调用方") && format!("{e}").contains("StackByVal")),
+        "sysv64 的**调用方**一侧尚未接 ⇒ 应明确 Unsupported 并点名，got: {:?}",
         bad.map(|c| c.code.len())
     );
 }

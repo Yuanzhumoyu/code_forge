@@ -133,6 +133,12 @@ TOML 数据，可继承（`parent = "c"`，整字段覆写，不是深合并）�
    `Immediate::Uint(count)`：帧槽预扫描（`pipeline/frame_slots.rs`）只按这两个算字节数，
    写 `Immediate::Const(池 id)` 会让该槽**不进帧表**（没有偏移 ⇒ 取址落到帧基址一带，
    实测写 24 字节直接毁帧崩溃）。规范形态见 `FunctionBuilder::alloca`。
+6. **`stack` 与 `stack_byval` 分工**（2026-10-08）：标量走栈仍是 `stack`（调用方存一个
+   寄存器值、被调方 load 出来）；**聚合**整块走栈是 `stack_byval`——被调方一侧已接
+   （形参保留、值按 `StackAddr(+offset)` 当 `[fp + offset]` 的内存读；DSL `move_args`
+   对该形参跳过收参）。**调用方一侧尚未接**（调用点形状要按聚合算，而生成的 `lower_inst`
+   读不到指令的 `param_attrs` ⇒ 需先把 `param_attrs` 经 `LowerCtx` 透出来），此前调用方
+   明确 fail-closed。
 
 ### 抽象名 `c` 怎么落地（`aliases`）
 
@@ -222,7 +228,7 @@ pub enum CallConvId {
 
 | 字段 | 用途 |
 | --- | --- |
-| `args[i].place` | 每个实参/形参的落点：`reg` / `pair` / `group`（≥3 连续槽）/ `stack` / `indirect` |
+| `args[i].place` | 每个实参/形参的落点：`reg` / `pair` / `group`（≥3 连续槽）/ `stack`（标量：一格一个值）/ `stack_byval`（**聚合按值整块**：调用方从指向本地副本的指针逐段拷进传出区、被调方按偏移当内存读）/ `indirect` |
 | `ret` | `reg` / `pair` / `indirect`（sret）/ `void` |
 | `stack` | 对齐、槽单位、shadow、`first_arg_offset`（被调方视角）、`arg_area_bytes`、`byval_area_bytes`、红区、帧填充；`caller_offset(k)` 给调用方视角 |
 | `hidden` | `sret` / `context` / `va_meta`（SysV `%al`）/ `va_len` |

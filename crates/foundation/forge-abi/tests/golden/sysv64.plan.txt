@@ -127,7 +127,7 @@ clobbers [RAX RCX RDX RSI RDI R8 R9 R10 R11 XMM0 XMM1 XMM2 XMM3 XMM4 XMM5 XMM6 X
 conv sysv64
 stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=24 byval_area=0 red_zone=Some(128) frame_pad=8
 variadic false position by_class
-arg s size=24 -> stack off=16 size=24 align=1
+arg s size=24 -> stack_byval off=16 size=24 align=1
 ret indirect size=24 align=1
 hidden sret=RDI context=- va_meta=- va_len=-
 callee_saved Push [RBX R12 R13 R14 R15] fp=true link=false

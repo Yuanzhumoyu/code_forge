@@ -72,6 +72,7 @@ fn place_reg(p: &Placement) -> String {
             .collect::<Vec<_>>()
             .join(":"),
         Placement::Stack { offset, .. } => format!("stack@{offset}"),
+        Placement::StackByVal { offset, .. } => format!("stack_byval@{offset}"),
         Placement::Indirect { ptr, .. } => {
             format!(
                 "indirect({})",
@@ -156,7 +157,11 @@ fn insufficient_hfa_registers_fall_back_to_stack_as_a_whole() {
         "前 5 个 f64 应占满 V0-V4"
     );
     match &p.args[5].place {
-        Placement::Stack { size, .. } => assert_eq!(*size, 16),
+        // 聚合整块走栈 = **按值**（`StackByVal`，2026-10-08 起与标量的 `Stack` 分开）；
+        // 这里兼容两种写法，尺寸都必须 = 16。
+        Placement::Stack { size, .. } | Placement::StackByVal { size, .. } => {
+            assert_eq!(*size, 16)
+        }
         other => panic!("期望整块走栈，实际 {other:?}"),
     }
 }
@@ -357,7 +362,7 @@ fn collect_regs(p: &Placement, out: &mut Vec<u32>) {
                 out.push(p.index);
             }
         }
-        Placement::Stack { .. } | Placement::Ignore => {}
+        Placement::Stack { .. } | Placement::StackByVal { .. } | Placement::Ignore => {}
     }
 }
 

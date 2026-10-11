@@ -1257,6 +1257,15 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
             // 来源寄存器由**被调方布局**给（v20 A5-3）：不再按谱面 `[abi.arg_class]` 的
             // "第 __pos 个寄存器"取——按位置/按类计数、sret 占不占首槽都是引擎算好的；
             // 拿不到布局 ⇒ **fail-closed**（不按谱面顺序猜）。
+            // **按值整块进传出区**的形参（聚合，SysV `>16B`）：没有入场寄存器、也不进
+            // spill 槽——值就是 `[fp + offset]` 那段内存，**宿主展开阶段**已经把使用处
+            // 改写成从该地址读（`expand_large_agg_params` 的 StackByVal 档）⇒ 这里跳过。
+            if matches!(
+                __rm.call_layout.as_ref().and_then(|__cl| __cl.arg(__i as u32)).map(|__ca| &__ca.place),
+                Some(crate::machine::call_layout::ArgPlace::StackByVal { .. })
+            ) {
+                continue;
+            }
             if !__rm.param_is_float.get(__i).copied().unwrap_or(false)
                 && __rm.spill_slots.contains_key(&__pv)
             {

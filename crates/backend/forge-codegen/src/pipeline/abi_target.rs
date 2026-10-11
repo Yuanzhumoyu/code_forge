@@ -435,6 +435,15 @@ pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout 
                 size: *size,
                 align: *align,
             },
+            forge_abi::Placement::StackByVal {
+                offset,
+                size,
+                align,
+            } => ArgPlace::StackByVal {
+                offset: *offset,
+                size: *size,
+                align: *align,
+            },
             forge_abi::Placement::Indirect { ptr, at, on_stack } => ArgPlace::Indirect {
                 reg: ptr.as_ref().map(reg),
                 at: *at,

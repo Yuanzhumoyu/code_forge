@@ -18,6 +18,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + **同时接上了 A1′-ret 的调用方一侧**：IR 内部 `call` 按值取 `>8B` 聚合时，调用方 `Alloca` 缓冲 + 作为实参 0 传 + 结果清空 + 结果值登记成"住在缓冲"（后续 `extractvalue` 变 load）。`test_jit_agg_by_value_ret_call_win64` 真跑通过（含"只 call 不取结果"的探针 + 取第 2 个字段两条）。
 + 这条崩溃曾被误判为"调用方 sret 落点不对"——**实测纠正**：lowering 序列与两侧计划本来就是对的（`Alloca -> Call args=[XReg(buf)]`；callee `Store [param], seg ×3`；`[ptr] -> RCX` 对 `<sret> -> reg RCX`），问题在**帧偏移**这一层。
 
+### Added (2026-10-08) — 调用约定：新落点 `StackByVal` + sysv64 按值聚合的**被调方**一侧（A2′ 前半）
+
++ **新落点变体 `StackByVal`**（`forge-abi` 的 `Placement` / `forge-isa-runtime` 的 `ArgPlace`）：与标量的 `Stack`（一格一个寄存器值）分开，表示"**聚合按值整块进传出参数区**"——调用方从指向本地副本的指针逐段拷进传出区、被调方按 `offset` 当内存读。引擎的 `stack_place` 对**聚合**返回它（标量不变）；`sysv64.plan.txt` 黄金随之改一行（`arg s size=24 -> stack` ⇒ `stack_byval`，win64/aapcs64/lp64d 未变）。
++ **被调方一侧已接**：`expand_large_agg_params` 对 `StackByVal` 档的聚合形参**保留形参**（布局/偏移由它决定，必须与调用方一致），改用 `StackAddr(+offset)` 得到"传入区地址"（**正立即数 = ABI 相对**：`frame_slots` 只对负立即数记账局部槽、`[[lower.StackAddr]]` 本就是 `LEA [RBP+off]`），再按 A1′ 已打通的 `agg_slots` 地址语义重写使用处；DSL 生成的 `move_args` 对这类形参**跳过**收参（它没有入场寄存器、也不进 spill 槽——此前会报 `spilled 寄存器参数需要布局给的寄存器落点`）。
++ **顺带的行为改进**：形参展开此前把**所有**形参重写成 `i64`（包括 ptr/f64 等单段参数）✗；现在只对真正要拆段的聚合段做，**其余形参保留原类型**（`keep_param`）。
++ **调用方一侧仍未接**（sysv64 调用 IR 内部 `call` ⇒ 明确 fail-closed、消息点名 `StackByVal`）：要让它成立，调用点形状必须按**聚合**算（否则引擎给 `Reg`、指针进寄存器、被调方按传出区读 ⇒ 静默错值），而生成的 `lower_inst` 只拿到 `(op, args, results, ctx)`，**看不到指令的 `param_attrs`** ⇒ 需要把 `param_attrs` 经 `LowerCtx` 透出来（或改 trait）之后才能读 `byval`。在那之前不发可能错值的代码。
++ 验收：`forge-abi` 全绿、`forge-codegen --features jit` 全绿、整仓门禁全绿；`unsupported_inst_negative.rs::agg_param_over_16_bytes_routes_by_convention` 更新为"win64 两端通 / sysv64 **被调方通**、调用方 fail-closed"。
+
 ### Added (2026-10-08) — forge-codegen：按值返回 >8B 聚合的**被调方**一侧（A1′-ret 前半）
 
 + **被调方把按值返回的 `>8B` 聚合写进调用方缓冲**（win64/sret）：新增只读探针 `agg_ret_is_sret`（`plan.ret` 是否 `Indirect`）+ `expand_sret_return`——给函数**追加**一个**普通 `ptr`** 形参承载调用方缓冲（约定把 sret 指针放在首个整数槽：win64 = RCX、sysv64 = RDI，与"第 0 个普通指针实参"完全同形），并把签名的返回清空；`expand_large_agg_ret` 再把段值写进 `[buf]`（AggConst / load / 内存里的值三条来源）。

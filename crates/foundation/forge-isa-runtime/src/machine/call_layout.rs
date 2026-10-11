@@ -58,6 +58,9 @@ pub enum ArgPlace {
     Group { regs: Vec<(RegClass, u32)> },
     /// 栈上（**被调方**视角，相对帧基址的字节偏移）。
     Stack { offset: i32, size: u16, align: u16 },
+    /// 栈上、**按值整块**（聚合）：调用方从"指向本地副本的指针"逐段拷 `size` 字节进传出区，
+    /// 被调方按 `offset` 当内存读（无入场寄存器、不走 spill 槽）。
+    StackByVal { offset: i32, size: u16, align: u16 },
     /// 间接：指针在 `reg`（`None` = 指针本身在栈上，`at` 给按引用临时区偏移）。
     Indirect {
         reg: Option<(RegClass, u32)>,

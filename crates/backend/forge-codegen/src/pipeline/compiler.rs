@@ -56,8 +56,10 @@ enum AggArgPlace {
     /// IR 侧统一表示成"**调用方自建副本 + 传指针**"——两端形状都是 `ptr` ⇒ 落点都是
     /// `Reg`，位置自然一致；机器级效果与 Win64 psABI 相同（指针进第一个可用整数槽）。
     ByRef,
-    /// 整块进传出参数区（sysv64 `aggregate size_gt 16 ⇒ stack`）——发射侧尚未接（A2′）。
-    Stack,
+    /// **按值整块**进传出参数区（sysv64 `aggregate size_gt 16 ⇒ stack`）：调用方从
+    /// "指向本地副本的指针"逐段拷 `size` 字节进传出区（发射侧 `ArgPlace::StackByVal`），
+    /// 被调方按 `offset`（被调方视角、已含 shadow）当内存读。
+    StackByVal { offset: i32, size: u16 },
     /// 寄存器传值（≤ 约定阈值）——现有拆段路径。
     Registers,
 }
@@ -90,7 +92,16 @@ fn agg_arg_place(
     })?;
     Ok(match plan.args.first().map(|a| &a.place) {
         Some(forge_abi::Placement::Indirect { .. }) => AggArgPlace::ByRef,
-        Some(forge_abi::Placement::Stack { .. }) => AggArgPlace::Stack,
+        Some(forge_abi::Placement::StackByVal { offset, size, .. }) => AggArgPlace::StackByVal {
+            offset: *offset,
+            size: *size,
+        },
+        // 标量语义的 `Stack`（一格一个值）对聚合不该出现；出现了就是约定数据有问题。
+        Some(forge_abi::Placement::Stack { .. }) => {
+            return Err(IrError::Unsupported(format!(
+                "聚合落点查询：约定 `{conv}` 把 {size} 字节聚合判成标量栈落点（约定数据有问题）"
+            )));
+        }
         _ => AggArgPlace::Registers,
     })
 }
@@ -178,11 +189,15 @@ fn expand_large_agg_params(
     conv: &str,
 ) -> Result<(), IrError> {
     let old_params = func.param_types();
-    // 每参数：寄存器档的段数（by-ref 档记 0 = 不拆段）
+    // 每参数：寄存器档的段数（by-ref / 按值进传出区档记 0 = 不拆段）
     let mut seg_map: Vec<usize> = Vec::with_capacity(old_params.len());
     let mut by_ref: Vec<bool> = Vec::with_capacity(old_params.len());
+    // 按值整块进传出参数区（sysv64）：**形参原样保留**（布局/偏移由它决定），
+    // 只是把"值住在 [fp + offset]"登记进 agg_slots。
+    let mut keep_param: Vec<bool> = Vec::with_capacity(old_params.len());
+    let mut stack_agg: Vec<(usize, i32, TypeId)> = Vec::new();
     let mut has_large = false;
-    for t in &old_params {
+    for (i, t) in old_params.iter().enumerate() {
         let (is_agg, size, align) = {
             let ts = func.types.borrow();
             (ts.is_aggregate(*t), ts.size_bytes(*t), ts.alignment(*t))
@@ -192,22 +207,27 @@ fn expand_large_agg_params(
                 AggArgPlace::ByRef => {
                     seg_map.push(0);
                     by_ref.push(true);
+                    keep_param.push(false);
                     has_large = true;
                 }
-                AggArgPlace::Stack => {
-                    return Err(IrError::Unsupported(format!(
-                        "聚合参数 {size} 字节：这份约定把它整块放传出参数区（栈传递未实现）：type {t:?}"
-                    )));
+                AggArgPlace::StackByVal { offset, .. } => {
+                    seg_map.push(0);
+                    by_ref.push(false);
+                    keep_param.push(true);
+                    stack_agg.push((i, offset, *t));
+                    has_large = true;
                 }
                 AggArgPlace::Registers => {
                     seg_map.push(size.div_ceil(8) as usize);
                     by_ref.push(false);
+                    keep_param.push(false);
                     has_large = true;
                 }
             }
         } else {
             seg_map.push(1);
             by_ref.push(false);
+            keep_param.push(true);
         }
     }
     if !has_large {
@@ -217,9 +237,13 @@ fn expand_large_agg_params(
     let old_sig = func.types.borrow().get_signature(func.signature).clone();
     let mut new_params: Vec<(TypeId, ImmStr)> = Vec::new();
     let mut new_attrs: Vec<forge_ir::ir::function::ParamAttributes> = Vec::new();
-    for (i, (_t, n)) in old_sig.params.iter().enumerate() {
+    for (i, (t, n)) in old_sig.params.iter().enumerate() {
         let attrs = func.param_attrs.get(i).cloned().unwrap_or_default();
-        if by_ref.get(i).copied().unwrap_or(false) {
+        if keep_param.get(i).copied().unwrap_or(true) {
+            // 保留原形参（非聚合参数；以及 sysv64 按值进传出区的聚合——布局由它决定）
+            new_params.push((*t, n.clone()));
+            new_attrs.push(attrs);
+        } else if by_ref.get(i).copied().unwrap_or(false) {
             new_params.push((TypeId::PTR, n.clone()));
             new_attrs.push(attrs);
         } else {
@@ -247,6 +271,12 @@ fn expand_large_agg_params(
     let mut byref_info: Vec<(Value, Value, TypeId)> = Vec::new(); // (旧值, 指针值, 聚合类型)
     for (i, t) in old_params.iter().enumerate() {
         let old_v = old_bvals[i];
+        if keep_param.get(i).copied().unwrap_or(true) {
+            // 原样保留（值不变、使用不重写）
+            new_bvals.push(old_v);
+            new_bparams.push(*t);
+            continue;
+        }
         if by_ref.get(i).copied().unwrap_or(false) {
             let v = func
                 .dfg
@@ -275,6 +305,30 @@ fn expand_large_agg_params(
     let bd = func.dfg.block_mut(entry);
     bd.params = smallvec::SmallVec::from_iter(new_bparams);
     bd.param_values = smallvec::SmallVec::from_iter(new_bvals);
+    // 按值进传出区档（sysv64）：形参保留（布局/偏移由它决定），但值**不占寄存器**——
+    // 把"该聚合住在 `[fp + offset]`"登记进 `agg_slots`，使用处按地址读。
+    // `StackAddr` 的正立即数 = ABI 相对（`frame_slots` 只对负立即数记账局部槽；
+    // `[[lower.StackAddr]]` 就是 `LEA [RBP+off]`）。
+    for (i, offset, ty) in stack_agg {
+        let old_v = old_bvals[i];
+        let sa = func.make_inst(
+            Opcode::StackAddr,
+            entry,
+            smallvec::smallvec![],
+            smallvec::smallvec![Immediate::Int(i64::from(offset))],
+            &[TypeId::PTR],
+            InstFlags::NONE,
+        );
+        let addr = func.dfg.inst_data(sa).results[0];
+        // 取址要**支配**所有使用 ⇒ 放到 entry 开头（先 pop 再插，保持 inst_order 一致）
+        {
+            let order = &mut func.dfg.block_mut(entry).inst_order;
+            let ni = order.pop().expect("刚 push 的 StackAddr");
+            order.insert(0, ni);
+        }
+        agg_slots.insert(old_v, (addr, ty));
+        rewrite_agg_value_uses(func, old_v, &[], ty, agg_slots)?;
+    }
     // by-ref 档：登记"聚合住在指针指向的内存"，再按地址重写使用处
     for (old_v, ptr_v, agg_ty) in byref_info {
         agg_slots.insert(old_v, (ptr_v, agg_ty));
@@ -738,24 +792,30 @@ fn expand_agg_call_args(
     for job in jobs.into_iter().rev() {
         let ty = func.dfg.value_type(job.val).unwrap_or(TypeId::PTR);
         let size = store.size_bytes(ty) as usize;
-        // 落点分流（只读探针）：ByRef ⇒ 本函数末尾改成"副本 + 传指针"；
-        // Stack ⇒ 未接（A2′）；Registers ⇒ 现有拆段。
-        let by_ref = match agg_arg_place(machine, conv, size as u32, store.alignment(ty))? {
-            AggArgPlace::ByRef => true,
-            AggArgPlace::Stack => {
-                return Err(IrError::Unsupported(format!(
-                    "聚合实参 {size} 字节：这份约定把它整块放传出参数区（栈传递未实现）：type {ty:?}"
-                )));
-            }
-            AggArgPlace::Registers => {
-                if size > 16 {
-                    return Err(IrError::Unsupported(format!(
-                        "聚合实参 {size} 字节：约定落点既不是寄存器档也不是按引用档（type {ty:?}）"
-                    )));
-                }
-                false
-            }
-        };
+        // 落点分流（只读探针）：
+        //  - `ByRef`（win64）：本地建副本 + 传**指针**，不写属性 ⇒ 形状 = ptr ⇒ 落点 `Reg`；
+        //  - `StackByVal`（sysv64）：同样建副本 + 传指针，但**写 `byval(聚合类型)` 属性**
+        //    ⇒ 调用点形状按**聚合**算 ⇒ 落点 `StackByVal`，发射侧从指针逐段拷进传出区；
+        //  - `Registers`：现有拆段路径。
+        let place = agg_arg_place(machine, conv, size as u32, store.alignment(ty))?;
+        let by_ref = matches!(place, AggArgPlace::ByRef);
+        if let AggArgPlace::StackByVal { offset, size: sz } = place {
+            // **调用方一侧尚未接**：要让它成立，调用点形状必须按**聚合**算（否则引擎给
+            // `Reg`，指针进寄存器、被调方按传出区读 ⇒ **静默错值**）。而生成的
+            // `lower_inst` 只拿到 `(op, args, results, ctx)`，看不到指令的 `param_attrs`
+            // ⇒ 需要把 `param_attrs` 经 `LowerCtx` 透出来（或改 trait）之后才能读 `byval`。
+            // 在那之前**明确拒绝**（被调方一侧已按 `[fp + offset]` 读，见
+            // `expand_large_agg_params` 的 StackByVal 档）。
+            return Err(IrError::Unsupported(format!(
+                "聚合实参 {size} 字节：sysv64 按值进传出参数区（`StackByVal` off={offset} size={sz}）\
+                 的**调用方**一侧尚未接（发射侧形状透传待做）；被调方一侧已按 [fp+offset] 读"
+            )));
+        }
+        if !by_ref && size > 16 {
+            return Err(IrError::Unsupported(format!(
+                "聚合实参 {size} 字节：约定落点既不是寄存器档也不是按引用档（type {ty:?}）"
+            )));
+        }
         // 段值生成
         let mut segs: Vec<Value> = Vec::new();
         let mut new_insts: Vec<Inst> = Vec::new();

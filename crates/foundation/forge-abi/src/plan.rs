@@ -74,9 +74,17 @@ pub enum Placement {
     /// 不并进 `RegPair` 是因为"两个"是拆分语义（`(int,float)` 各取一池），而这里是
     /// "同一个池里的 N 个连续槽"。管线按成员逐个搬运；顺序即成员顺序。
     RegGroup { regs: Vec<RegRef> },
-    /// 栈上（**被调方**视角：相对 `[abi.stack].frame_base` 的字节偏移，已含
+    /// 栈上（**被调方**视角：相对 `[abi.stack.frame_base` 的字节偏移，已含
     /// `first_offset_slots`；调用方视角见 `StackLayout::caller_offset`）。
+    ///
+    /// **标量**语义：一格一个值（调用方把一个寄存器值存进去、被调方 load 出来）。
     Stack { offset: i32, size: u16, align: u16 },
+    /// 栈上、**按值整块**（聚合；SysV `aggregate size_gt 16 ⇒ stack`）。
+    ///
+    /// 与 [`Placement::Stack`] 分开是因为**发射形态不同**：聚合没有寄存器值 ⇒ 调用方要
+    /// 从"指向本地副本的指针"逐段拷 `size` 字节进传出区，被调方按 `offset` 当内存读
+    /// （没有入场寄存器、也不走 spill 槽）。`offset` 坐标系与 `Stack` 一致（被调方视角）。
+    StackByVal { offset: i32, size: u16, align: u16 },
     /// 间接：`ptr` = 指针所在寄存器（`None` = 指针本身在栈上，`at` 给偏移）；
     /// `on_stack` 为真表示调用方在**自己的栈上**放了副本（byval）。
     ///
@@ -539,6 +547,11 @@ fn place_text(p: &Placement) -> String {
             size,
             align,
         } => format!("stack off={offset} size={size} align={align}"),
+        Placement::StackByVal {
+            offset,
+            size,
+            align,
+        } => format!("stack_byval off={offset} size={size} align={align}"),
         Placement::Indirect { ptr, at, on_stack } => format!(
             "indirect ptr={} at={at:?} on_stack={on_stack}",
             opt_reg(ptr)
