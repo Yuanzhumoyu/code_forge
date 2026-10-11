@@ -669,10 +669,9 @@ fields = [
 [inst.MOV]
 form = "RR"
 opcode = 1
-ops = ["dst:r:out", "src:r"]
-asm = "mov {dst}, {src}"
+asm = "mov {dst:r:out}, {src:r}"
 [family.ALU]
-body = { form = "RR", ops = ["dst:r:out", "src:r"], asm = "alu {dst}, {src}" }
+body = { form = "RR", asm = "alu {dst:r:out}, {src:r}" }
 rows = [
   { inst = "ADD", opcode = 2 },
   { inst = "SUB", opcode = 3 },

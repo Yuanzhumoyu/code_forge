@@ -47,8 +47,7 @@ form = "R"
 group = "add"
 opcode = 0x33
 match = { funct3 = 0 }
-ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]
-asm = "add {dst}, {src}, {src2}"
+asm = "add {dst:gpr:out}, {src:gpr}, {src2:gpr}"
 
 [[lower.Iadd]]
 insts = ["add {out}, {0}, {1}"]
@@ -460,8 +459,7 @@ fn three_independent_errors_are_reported_together() {
 form = "R"
 opcode = 0x33
 match = { funct3 = 0 }
-ops = ["dst:nope:out"]
-asm = "add {dst}"
+asm = "add {dst:nope:out}"
 
 [[lower.Isub]]
 insts = ["add {out}, {0}, {1}"]

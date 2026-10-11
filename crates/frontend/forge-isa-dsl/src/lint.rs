@@ -953,11 +953,10 @@ fields = [
 [inst.ADD]
 form = "RR"
 opcode = 1
-ops = ["dst:g:out"]
-asm = "add {dst}"
+asm = "add {dst:g:out}"
 
 [family.T]
-body = { form = "RR", opcode = 2, ops = ["dst:g:out"], asm = "t {dst}" }
+body = { form = "RR", opcode = 2, asm = "t {dst:g:out}" }
 rows = [
   { inst = "T1", match = { funct3 = 0 } },
 ]
