@@ -1116,7 +1116,7 @@ pub struct GlobalAlias {
 }
 
 impl GlobalVariable {
-    /// 建只读全局（带初值，可挂符号）。
+    /// 建只读全局（`is_constant = true`；初值用 `with_init` 另设）。
     pub fn constant(name: &str, ty: TypeId) -> Self {
         Self {
             name: ImmStr::from(name),

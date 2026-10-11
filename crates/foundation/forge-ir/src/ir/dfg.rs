@@ -612,7 +612,8 @@ impl DataFlowGraph {
         i.isel_strategy = None;
     }
 
-    /// 删指令，并断开它与使用者的关系。
+    /// 删指令：从所在块摘掉、标成墓碑，并把它的结果值类型置为 VOID
+    /// （防下游把已删结果当活跃值读类型）。
     pub fn remove_inst(&mut self, inst: Inst) {
         let idx = inst.0 as usize;
         if idx < self.insts.len() {
@@ -633,7 +634,7 @@ impl DataFlowGraph {
         }
     }
 
-    /// 删块（其指令与相关使用关系一并处理）。
+    /// 删块：终结符与块内指令一并墓碑化（并让 CFG 修订号前进，使惰性分析缓存作废）。
     pub fn remove_block(&mut self, block: Block) {
         // 结构变更（块没了）⇒ 结构修订号前进：惰性分析缓存据此自动作废，
         // 不依赖调用方记得 `Function::invalidate_analysis()`（v3 S6）。

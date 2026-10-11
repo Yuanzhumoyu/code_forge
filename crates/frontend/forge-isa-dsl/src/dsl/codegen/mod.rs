@@ -247,7 +247,7 @@ pub fn generate_with_parts(
     let infos = collect_inst_infos(model)?;
     let reg_tables = gen_reg_tables(model)?;
     let mem_support = gen_mem_support(model, &infos)?;
-    let inst_enum = gen_inst_enum(&infos);
+    let inst_enum = gen_inst_enum(&infos, model);
     // v21 W6+：条件码映射（按银行：整数 ⇒ `IntCC`、浮点 ⇒ `FloatCC`、标志位 ⇒ `FlagCC`）
     let cond_ty = gen_cond_conv(model);
     let (encode_fn, decode_fn) = if prefix_scan {
@@ -917,13 +917,13 @@ use super::shared::group_names;
 
 // ─────────────────────────────── Inst 枚举 ───────────────────────────────
 
-fn gen_inst_enum(infos: &[InstInfo]) -> TokenStream {
+fn gen_inst_enum(infos: &[InstInfo], m: &IsaModel) -> TokenStream {
     let variants: Vec<_> = infos
         .iter()
         .map(|info| {
             let vn = &info.vn;
             // 声明注释（可选）：按行拆成多条 `#[doc = …]`（`\n` 由作者在 TOML 里写）
-            let docs: Vec<TokenStream> = info
+            let mut docs: Vec<TokenStream> = info
                 .doc
                 .as_deref()
                 .map(|d| {
@@ -935,6 +935,39 @@ fn gen_inst_enum(infos: &[InstInfo]) -> TokenStream {
                         .collect()
                 })
                 .unwrap_or_default();
+            // **自动属性行**（每条指令都有，与作者写没写 `doc` 无关）：只列**确实存在**的
+            // 事实（形式/族/字长/数据宽/操作数），全部由本指令自己的声明投影 ⇒ 生成物里
+            // 不存在"完全没注释"的指令，也不会与谱漂移（与 `ops.toml` 的自动属性行同一套做法）。
+            let mut attr_parts: Vec<String> = Vec::new();
+            if let Some(f) = info.inst.form.as_deref() {
+                attr_parts.push(format!("形式 `{f}`"));
+            }
+            if let Some(fam) = info.inst.from_template.as_ref() {
+                attr_parts.push(format!("族 `{fam}`"));
+            }
+            if let Ok(bytes) = m.inst_width_bytes(&info.inst) {
+                attr_parts.push(format!("字长 {bytes} 字节"));
+            }
+            if let Some(w) = info.inst.data_width {
+                attr_parts.push(format!("数据宽 {w} 位"));
+            }
+            attr_parts.push(if info.operands.is_empty() {
+                "操作数 无".to_string()
+            } else {
+                format!(
+                    "操作数 {}",
+                    info.operands
+                        .iter()
+                        .map(|(_, fid, _, _)| fid.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            });
+            let attr_text = format!("**属性**：{}", attr_parts.join("／"));
+            docs.push({
+                let lit = syn::LitStr::new(&attr_text, proc_macro2::Span::call_site());
+                quote! { #[doc = #lit] }
+            });
             if info.operands.is_empty() {
                 quote! { #(#docs)* #vn }
             } else {
