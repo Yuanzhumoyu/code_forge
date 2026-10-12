@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M4（批次 B）：生成物不再发射那 4 个查询方法（改由操作数表派生）
+
++ **`uses`/`defs`/`use_constraints`/`def_constraints` 从生成物里整条删除**：它们现在由 `MachineInst::operands()` 的**缺省实现**派生（批次 A 已用三谱全部指令变体逐条对拍证明两边等价）。每少发射一份就是少一处"同一事实两处表示"。
++ **回潮守卫**（`forge-isa-dsl/tests/machine_shape_table.rs`）：`TABLE_DRIVEN` 缩到 5 个（`effects`/`operands`/`reg_field`/`set_reg_field`/`is_reg_field_settable`），并新增 `derived_methods_are_not_emitted_any_more` —— 生成物里再出现 `fn uses` 等 4 个方法体即红。
++ **操作数模型守卫升级**（`forge-codegen/src/operand_model_guard.rs`）：批次 A 它是双边对拍；批次 B 之后改为守**派生在全部变体上成立** + 两条**不依赖派生结果**的独立判据——① 顺序契约（`Use` 必须在 `Def` 之前，regalloc 的 use@start/def@end 靠它）；② `is_move()` 交叉判据（`is_move` 由另一张表 `move_arms` 驱动，说搬移就必须恰好 1 个 `Def` 且 ≥1 个 `Use`）。实测覆盖 **x86 1550 / riscv64 624 / arm64 2581 = 4755 个指令变体**。
+
 ### Changed (2026-10-11) — 后端 v23 M4（批次 A）：**操作数表先立起来**（七个方法族收敛到一张表，旧接口等价性已对拍）
 
 + `MachineInst` 新增 **`operands() -> SmallVec<[InstOperand; 4]>`**（v23 M4 的单一操作数模型）：每个操作数 = `{ field, slot, class, constraint, role, settable }`，顺序契约是 **`Use` 在前、`Def` 在后**（regalloc 的"use 在 inst_start、def 在 inst_end"由此保证）。

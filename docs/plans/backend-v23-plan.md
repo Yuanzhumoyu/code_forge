@@ -716,7 +716,24 @@ spilled def fail-closed）；手写实现（`DummyInst`/`FixedFieldInst`）改�
 2. 消费端逐个切到 `operands()`（`regalloc_bt.rs`/`emission.rs`/`use_list.rs`），生成器**暂不动**。
 3. 验收：门禁全绿（这一步不该有任何行为变化）。
 
-### 批次 B（生成器改发 operands 表）
+### 批次 B（生成器改发 operands 表）——✅ 已落地（2026-10-11）
+
+**落地内容**：生成物**删掉** `uses`/`defs`/`use_constraints`/`def_constraints` 四个方法体
+（批次 A 已证明它们与 `operands()` 在全部变体上等价），改由缺省实现派生。
+`machine_shape_table.rs` 的 `TABLE_DRIVEN` 缩到 5 个，并新增回潮守卫
+`derived_methods_are_not_emitted_any_more`（生成物里再出现那 4 个方法体即红）。
+
+**守卫升级**：`operand_model_guard` 从"双边对拍"改为"派生 + 两条独立判据"——
+① **顺序契约**（`Use` 必须在 `Def` 之前：regalloc 的 use@start / def@end 靠它）；
+② **`is_move()` 交叉判据**（`is_move` 由另一张表 `move_arms` 驱动，与操作数表无关，
+说搬移就必须恰好 1 个 `Def` 且 ≥1 个 `Use`）。实测覆盖
+**x86 1550 / riscv64 624 / arm64 2581 = 4755 个指令变体**。
+
+**仍未动的两处**（归批次 C，原因见下）：`reg_field`/`set_reg_field`/`is_reg_field_settable`
+三个方法的发射保留——它们是**回写路径**（`compiler.rs`/`emission.rs`/`regalloc_bt.rs` 按
+**字段号**调用），改成按**操作数号**调用要与 `xreg_map` 的删除同步做。
+
+### 批次 B（原始设计，留档）
 
 1. `dsl/codegen/machine.rs`：`__Shape` 的 `uses`/`defs`/`def_reuse` 合并成**按字段序**的
    `__OPERANDS` 表；发 `operands()`/`set_operand_reg()`，删 10 个方法（含 `reg_field`/

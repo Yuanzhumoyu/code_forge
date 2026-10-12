@@ -479,43 +479,6 @@ pub(crate) fn gen_machine_inst(
             }
         }
         impl crate::prelude::MachineInst for Inst {
-            fn uses(&self) -> smallvec::SmallVec<[u32; 4]> {
-                let mut out = smallvec::SmallVec::new();
-                for &f in self.__shape().uses {
-                    if let Some(r) = self.__reg_slot(usize::from(f)) {
-                        out.push(r.to_index());
-                    }
-                }
-                out
-            }
-            fn defs(&self) -> smallvec::SmallVec<[u32; 2]> {
-                let mut out = smallvec::SmallVec::new();
-                for &f in self.__shape().defs {
-                    if let Some(r) = self.__reg_slot(usize::from(f)) {
-                        out.push(r.to_index());
-                    }
-                }
-                out
-            }
-            fn use_constraints(&self) -> smallvec::SmallVec<[crate::machine::inst::OperandConstraint; 4]> {
-                let n = usize::from(self.__shape().uses.len() as u8);
-                let mut out = smallvec::SmallVec::new();
-                for _ in 0..n {
-                    out.push(crate::machine::inst::OperandConstraint::Any);
-                }
-                out
-            }
-            fn def_constraints(&self) -> smallvec::SmallVec<[crate::machine::inst::OperandConstraint; 2]> {
-                let mut out = smallvec::SmallVec::new();
-                for &r in self.__shape().def_reuse {
-                    out.push(if r == 0xFF {
-                        crate::machine::inst::OperandConstraint::Any
-                    } else {
-                        crate::machine::inst::OperandConstraint::ReuseInput(usize::from(r))
-                    });
-                }
-                out
-            }
             fn effects(&self) -> smallvec::SmallVec<[crate::prelude::EffectKind; 2]> {
                 let mut out = smallvec::SmallVec::new();
                 if let Some(set) = __EFFECT_SETS.get(usize::from(self.__shape().effects)) {

@@ -16,15 +16,25 @@ use std::collections::BTreeSet;
 use forge_isa_dsl::{ExpandOptions, Parts, expand_file};
 
 /// `MachineInst` 里必须是通用实现（循环）而非 `match` 分派的方法。
-const TABLE_DRIVEN: [&str; 8] = [
+///
+/// v23 M4 批次 B 起，`uses`/`defs`/`use_constraints`/`def_constraints` **不再由生成物发射**
+/// ——它们由 `operands()` 派生（缺省实现），清单随之缩到 5 个；同时新增
+/// [`DERIVED_FROM_OPERANDS`] 检查"这 4 个不许再出现在生成物里"（回潮守卫）。
+const TABLE_DRIVEN: [&str; 5] = [
+    "fn effects",
+    "fn operands",
+    "fn reg_field",
+    "fn set_reg_field",
+    "fn is_reg_field_settable",
+];
+
+/// v23 M4：这些方法由 `MachineInst::operands` 的**缺省实现**派生，生成物里**不得**再出现
+/// ——每多发射一份就是"同一事实两处表示"（改一处忘一处 = 静默错值）。
+const DERIVED_FROM_OPERANDS: [&str; 4] = [
     "fn uses",
     "fn defs",
     "fn use_constraints",
     "fn def_constraints",
-    "fn effects",
-    "fn reg_field",
-    "fn set_reg_field",
-    "fn is_reg_field_settable",
 ];
 
 const SPECS: [(&str, &str); 3] = [
@@ -93,6 +103,28 @@ fn machine_inst_methods_are_table_driven() {
                  形状信息只放 `__SHAPES`（回退会重新长出近百 KB 生成代码）"
             );
         }
+    }
+}
+
+/// **v23 M4 回潮守卫**：由 `operands()` 派生的那 4 个方法**不许**再出现在生成物里。
+///
+/// 判据是"生成物里没有这个方法体"，而不是"值对不对"——值对不对由
+/// `operand_model_guard`（三谱全部指令变体逐条对拍）守。
+#[test]
+fn derived_methods_are_not_emitted_any_more() {
+    for (name, path) in SPECS {
+        let text = tm_text(path);
+        for sig in DERIVED_FROM_OPERANDS {
+            assert!(
+                !text.contains(sig),
+                "{name}: 生成物里又出现了 `{sig}`——它应由 `MachineInst::operands` 的缺省实现\
+                 派生（v23 M4）；再发射一份就是「同一事实两处表示」（改一处忘一处 = 静默错值）"
+            );
+        }
+        assert!(
+            text.contains("fn operands"),
+            "{name}: 生成物里没有 `operands()`——单一操作数模型没发射"
+        );
     }
 }
 
