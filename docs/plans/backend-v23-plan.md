@@ -321,7 +321,7 @@ spill 压力与「固定字段 spill」用例按新语义改写；新增「必�
 | M1 编译入口收敛 | ✅ 完成（含一条记录在案的偏差） | 见 §10 M1 落地记录 | 2026-10-11 |
 | M2 单一 ABI 数据模型 | ✅ 已落地（C1 修复 + leaf crate + 形状/变参/寄存器三面去镜像 + **删运行时镜像**） | 见 §11 M2 进度 | 2026-10-11 |
 | M3 能力数据化（去 x86 硬编码 + 单一合法性判据 + A6 收口） | ✅ 已落地（死钩子/死 API 删除；端序修正；宽向量能力数据化 + ISA 中立守卫；A6 收口；触发判据合一 + `ChangeSet`） | 见 §12 M3 进度 | 2026-10-11 |
-| M4 单一操作数模型 | ⏳ 待开工 | — | — |
+| M4 单一操作数模型 | 🚧 进行中（爆炸半径已量清 ≈350 处；批次 A/B/C 已定） | 见 §13 M4 进度 | 2026-10-11 |
 | M5 分配器与发射 | ⏳ 待开工 | — | — |
 | M6 合法化与缺口 | ⏳ 待开工 | — | — |
 
@@ -661,3 +661,53 @@ asm 解析档 3 passed（棘轮计数未变）；两条 `no_hardcoded_widths` �
    `compiler.rs` 的显式结构字面量 + plan。方案的"`from_target(machine)` 唯一构造"需要
    M5 把 `callee_saved` 表并进 config，届时一并收口；现在删会把 5 处测试改写成需要机器实例，
    收益与风险不成比例。
+
+## 13. M4 进度（进行中）
+
+### 爆炸半径（2026-10-11 实测，`rg` 计数）
+
+| 符号 | 命中 | 主要落点 |
+| --- | --- | --- |
+| `reg_field` | 121 | 生成器 `dsl/codegen/lowering.rs` 48、`machine.rs` 17、`regalloc_bt.rs` 9、`integration_tests.rs` 8 |
+| `xreg_map` | 63 | 生成器 19、`regalloc_bt.rs` 17、`compiler.rs` 7、`emission.rs` 7 |
+| `map_reg_field` | 54 | 生成器 42（每 arm 一处）、`placeholder.rs` 6、`move_derive.rs` 3 |
+| `xreg_types` | 49 | 生成器 26、`emission.rs` 6、`integration.rs` 6、`ctx.rs` 3 |
+| `set_reg_field` | 25 | `regalloc_bt.rs` 5、生成器 4、`integration_tests.rs` 4、`inst.rs` 3 |
+| `uses`/`defs` | 9 | `inst.rs` 4、`machine.rs` 2、`regalloc_bt.rs` 2、`use_list.rs` 1 |
+| `use_constraints`/`def_constraints` | 8 | `machine_shape_table.rs` 4、`inst.rs` 2、`machine.rs` 2 |
+| `remap_internal` | 4 | 生成器 `lowering.rs` 4 |
+| `inst_clobbers` | 6 | `compiler.rs` 3、生成器 2、`ctx.rs` 1 |
+
+合计 ≈ 350 处、跨生成器与管线两侧——**一次改完必然中途破树**，因此按"契约 → 消费端 → 删旧"三批走，
+每批都要求门禁全绿：
+
+### 批次 A（契约先行，管线不动）
+
+1. `forge-isa-runtime/src/machine/inst.rs`：新增
+   `pub struct InstOperand { reg: XReg, field: u8, class: RegClass, constraint: OperandConstraint,
+   role: OperandRole, settable: bool }`、`enum OperandRole { Use, Def }`，
+   以及 `MachineInst::{operands(), set_operand_reg(i, preg, class) -> bool}`。
+   两者**带缺省实现**，由既有的 `uses()`/`defs()`/`reg_field()`/`*_constraints()` 拼出
+   （顺序 = `uses` 在前 `defs` 在后；regalloc 的"use 在 inst_start、def 在 inst_end"语义必须由
+   顺序保证）。
+2. 消费端逐个切到 `operands()`（`regalloc_bt.rs`/`emission.rs`/`use_list.rs`），生成器**暂不动**。
+3. 验收：门禁全绿（这一步不该有任何行为变化）。
+
+### 批次 B（生成器改发 operands 表）
+
+1. `dsl/codegen/machine.rs`：`__Shape` 的 `uses`/`defs`/`def_reuse` 合并成**按字段序**的
+   `__OPERANDS` 表；发 `operands()`/`set_operand_reg()`，删 10 个方法（含 `reg_field`/
+   `set_reg_field`/`is_reg_field_settable`）。
+2. `gen_lowering` 每 arm 的 `map_reg_field` 调用全部删除（54 处里生成器的 42 处）。
+3. `machine_shape_table.rs` 改钉 operands 表；`determinism` 必须仍"同 TOML 同产物"。
+4. 风险：`__SLOT_CLASSES` 去重表与 `def_reuse` 的语义合并要**逐条对齐**（漏一条即 regalloc 拿到
+   错的 use/def 顺序 ⇒ 活区间错 ⇒ 静默错值）。
+
+### 批次 C（删旧：平行旁表清零）
+
+1. `MachineInst` 删 `uses`/`defs`/`use_constraints`/`def_constraints`/`reg_field`/`set_reg_field`/
+   `is_reg_field_settable`；`InstPacket` 只剩 `insts`/`inputs`/`outputs`/`xregs`（删 `xreg_map`/
+   `map_reg_field`/`remap_internal`）。
+2. `CompileState` 只留 `inst_ops: Vec<SmallVec<[InstOperand; 4]>>`（删 `xreg_map`/`inst_clobbers`/
+   `ctx.xreg_types`）；liverange/regalloc/emission 统一读它，class 回写只留一份（修 R3）。
+3. 约束表必须让 `ReuseInput` 真正可达（C5：要么接通、要么在 M5 明确删除——**不留半接通**）。
