@@ -774,7 +774,23 @@ spilled def fail-closed）；手写实现（`DummyInst`/`FixedFieldInst`）改�
 `pipeline/lowering.rs` 两处 `extend`、两个测试模块的夹具与九处注释。
 验收：门禁 exit 0、clippy/fmt 干净、两矩阵与基线逐数相同、codegen 单测 2722 绿。
 
-**下一步（批次 C 第二、三步）**：
+### 批次 C 第二步——✅ 已落地（2026-10-11）：值宽类折进绑定表，两种推导口径合一
+
+**发现的真问题**：字段回填时两个调用点各推一次类，**口径还不一样**——
+`compiler.rs` 主回填走 `ctx.reg_class_for(ty)`（ISA 类型映射），`emission.rs` 的 spill 回填走
+`forge_ir::RegClass::from_type_id(ty)`。同一个 vreg、同一个 IR 类型，两处可能推**不同的类**。
+
+**修法**：`OperandBind` 增 `class: Option<RegClass>`；管线在 lowering 之后、进 regalloc 之前
+**折一次**（`inst_ops` 逐项 → `ctx.reg_class_for`），两个回填点此后读同一份数据
+（`bind.class` / `inst_classes[i]`），缺省退 vreg 自身类。
+连带：`emit_inst_with_spills` 的 `xreg_types: &HashMap<XReg, TypeId>` 参数换成
+`inst_classes: &[Option<RegClass>]`（顺手少一个跨字段借用）。
+
+**余项**：`ctx.xreg_types` 字段本身还在（lowering 期草稿，~26 个 vreg 分配点写入），
+但**读取面已收口到一处**（那次折入）。彻底删除的路径：让这 26 个分配点把类直接记进绑定
+（或以包为单位记录 vreg→类，随 `append`/`extend` 带上来）。
+
+**下一步（批次 C 第三步）**：
 ① 把 `ctx.xreg_types`（vreg → IR 类型）的**读点**（`emission.rs:307` 前后的回填宽度类、
 `compiler.rs:2570` 附近）改成读 `inst_ops[..].class`（`OperandBind` 增 `class` 字段，
 写点仍从 IR 类型推），从而删掉这张表；

@@ -24,11 +24,24 @@ pub struct OperandBind {
     pub field: u8,
     /// 这条绑定是读还是写（见上文：**不可**从形状表派生）。
     pub role: crate::machine::inst::OperandRole,
+    /// 该 vreg 的**值宽类**（回填多类槽 `gprx` 用；`None` = 回填时退到 vreg 自身类）。
+    ///
+    /// v23 M4 批次 C 第二步：这类信息以前存在管线级的 `LowerCtx::xreg_types`
+    /// （vreg → IR 类型）里，**两个回填点各自把它推成类、而口径还不一样**
+    /// （`compiler.rs` 走 `ctx.reg_class_for(ty)`、`emission.rs` 走
+    /// `RegClass::from_type_id`）。现在由管线在 lowering 之后**折一次**进这里，
+    /// 两个回填点读同一个值。
+    pub class: Option<forge_ir::RegClass>,
 }
 
 impl OperandBind {
     pub fn new(vreg: XReg, field: u8, role: crate::machine::inst::OperandRole) -> Self {
-        Self { vreg, field, role }
+        Self {
+            vreg,
+            field,
+            role,
+            class: None,
+        }
     }
 
     /// 写绑定（`is_def = true` 的等价写法）。
@@ -39,6 +52,12 @@ impl OperandBind {
     /// 读绑定。
     pub fn use_(vreg: XReg, field: u8) -> Self {
         Self::new(vreg, field, crate::machine::inst::OperandRole::Use)
+    }
+
+    /// 带上值宽类（管线折 `xreg_types` 时用）。
+    pub fn with_class(mut self, class: forge_ir::RegClass) -> Self {
+        self.class = Some(class);
+        self
     }
 }
 

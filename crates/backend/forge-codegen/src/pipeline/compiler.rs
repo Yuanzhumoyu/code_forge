@@ -2457,6 +2457,22 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 .unwrap_or(0),
         };
 
+        // **v23 M4 批次 C 第二步：把 `xreg_types`（vreg → IR 类型）折进绑定表一次。**
+        //
+        // 以前两个回填点各自把这张表推成"值宽类"，**且口径不同**：
+        // `compiler.rs` 主回填走 `ctx.reg_class_for(ty)`（ISA 类型映射），
+        // `emission.rs` 的 spill 回填走 `forge_ir::RegClass::from_type_id(ty)`。
+        // 现场只有一处是对的、另一处是兜底——同一件事两种写法。现在在这里折成
+        // `OperandBind::class`，两个回填点读同一个值。折完 `xreg_types` 在本函数后续
+        // 不再被读（写入面仍留在 lowering 期作草稿，见方案 §13 的余项）。
+        for slot in self.inst_ops.iter_mut() {
+            for bind in slot.iter_mut() {
+                if let Some(ty) = self.ctx.xreg_types.get(&bind.vreg).copied() {
+                    bind.class = Some(self.ctx.reg_class_for(&ty));
+                }
+            }
+        }
+
         // **v23 M4 收敛守卫**：旁表（`inst_ops`）与指令的**操作数表**必须逐条对齐。
         //
         // 批次 C 要删掉旁表，这条断言就是"删了以后行为不变"的判据——现在先当守卫跑起来。
@@ -2561,16 +2577,10 @@ impl<I: MachineInst + 'static> CompileState<I> {
                     for bind in slot.iter() {
                         let (xreg, field_idx) = (bind.vreg, bind.field);
                         if let Some(preg) = alloc_result.preg(xreg) {
-                            // class：值 XReg 恒池宽（GPR64）——多类槽（gprx）
-                            // 回填需要 IR 值宽度，从 xreg_types（XReg→TypeId）
-                            // 查类型推导（I32→GPR(4) 视图 → encode 无 REX.W 32 位；
-                            // I64→GPR(8) → REX.W）。单类槽 DSL 内部按槽 class。
-                            let cls = self
-                                .ctx
-                                .xreg_types
-                                .get(&xreg)
-                                .map(|ty| self.ctx.reg_class_for(ty))
-                                .unwrap_or_else(|| xreg.class());
+                            // class：值宽类已由上面的折入步骤写进绑定（原实现现场从
+                            // `xreg_types` 推，与 emission 的 spill 回填口径不同）；
+                            // `None`（该 vreg 没有类型记录）退到 vreg 自身类。
+                            let cls = bind.class.unwrap_or_else(|| xreg.class());
                             inst.set_reg_field(field_idx as usize, preg.num, cls);
                         }
                     }

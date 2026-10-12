@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-11) — 后端 v23 M4（批次 C 第二步）：**同一件事的两种类推导口径合一**（并把类折进绑定表）
+
++ **发现并消除一处口径分叉**：回填微指令字段时，`compiler.rs` 的主回填用 `ctx.reg_class_for(ty)`（ISA 类型映射），而 `emission.rs` 的 spill 回填用 `forge_ir::RegClass::from_type_id(ty)` —— 同一个 vreg 的同一个 IR 类型，两个回填点可能推出**不同的值宽类**。
++ `OperandBind` 增 `class: Option<RegClass>`（`with_class` 构造器）；管线在 lowering 之后**折一次**（`CompileState`：`inst_ops` 逐项从 `ctx.xreg_types` 取类型、用 `ctx.reg_class_for` 推出类写入绑定），两个回填点此后读同一个值（`bind.class` / `inst_classes[i]`），缺省仍退到 vreg 自身类。
++ 连带收口：`emission::emit_inst_with_spills` 的签名里 `xreg_types: &HashMap<XReg, TypeId>` 换成 `inst_classes: &[Option<RegClass>]`（少一个跨字段借用），`ctx.xreg_types` 的**读取面**从两处降到一处（只剩那次折入）。
++ 余项（记在账本 §13）：`xreg_types` 字段本身仍是 lowering 期草稿（~26 个 vreg 分配点写入）；彻底删除需要让这些分配点把类直接记进绑定（或让分配点拿到所属包）。
+
 ### Changed (2026-10-11) — 后端 v23 M4（批次 C 第一步）：旁表改名 `inst_ops` 并把角色**类型化**
 
 + `InstPacket::xreg_map: Vec<SmallVec<[(XReg, u8, bool); 2]>>` → **`inst_ops: Vec<SmallVec<[OperandBind; 2]>>`**，`OperandBind { vreg, field, role: OperandRole }`（新类型带 `new`/`def`/`use_` 构造器）。那个裸 `bool` 与指令形状表里的 `OperandRole` 本是同一件事的两种写法，现在只剩一种；**语义完全不变**（`is_def=true` ⇔ `role == Def`）。

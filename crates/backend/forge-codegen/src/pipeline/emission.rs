@@ -57,10 +57,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 可变借用 vcode 收集块引用（替代整 VCode clone），inst_ops 单独
         // 借用字段——拆分借用避免闭包捕获 &mut self。
         let inst_ops = &self.inst_ops;
-        // 回填 class 推导用：值 XReg 恒池宽（GPR64），多类槽（gprx）回填
-        // 需 IR 值宽度——从 xreg_types（XReg→TypeId）查（闭包借用 self.ctx
-        // 会与 vcode 拆分借用冲突，此处先取引用捕获）。
-        let xreg_types = &self.ctx.xreg_types;
+        // 回填宽度类**不再**在这里现推：值宽类已由管线折进 `OperandBind::class`
+        // （v23 M4 批次 C 第二步，见 compiler.rs 的折入步骤）——此处只借绑定表。
         let vblocks: Vec<&mut VCodeBlock<I>> = self.vcode.blocks_mut().collect();
         let mut vblocks = vblocks;
 
@@ -97,6 +95,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     slot.iter().map(|b| b.vreg).collect();
                 let inst_field_idx: smallvec::SmallVec<[u8; 8]> =
                     slot.iter().map(|b| b.field).collect();
+                let inst_classes: smallvec::SmallVec<[Option<RegClass>; 8]> =
+                    slot.iter().map(|b| b.class).collect();
                 let inst_local_idx = gi - block_starts[vcode_idx];
                 let line = vb.inst_lines.get(inst_local_idx).copied().flatten();
                 let start_off = sink.offset() as u32;
@@ -113,8 +113,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     stack_args,
                     &inst_xregs,
                     &inst_field_idx,
+                    &inst_classes,
                     _func.name.as_str(),
-                    xreg_types,
                 )?;
                 if let Some(ln) = line {
                     // 相邻同源指令行合并（同一条语句的多条微指令 / 相邻
@@ -221,8 +221,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         stack_args: i32,
         inst_xregs: &[XReg],
         inst_field_idx: &[u8],
+        inst_classes: &[Option<RegClass>],
         fname: &str,
-        xreg_types: &std::collections::HashMap<XReg, TypeId>,
     ) -> Result<(), IrError> {
         // 去重收集 spilled XReg（同一 XReg 的 use/def 共用一个 scratch 寄存器）
         let mut spilled: smallvec::SmallVec<[XReg; 8]> = smallvec::SmallVec::new();
@@ -301,13 +301,10 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 与字段序号错位——用位置会把物理字段覆盖成 scratch（shift 崩溃）。
         for (i, &xreg) in inst_xregs.iter().enumerate() {
             if let Some(preg) = xreg_preg(xreg) {
-                // class：值 XReg 恒池宽（GPR64）——多类槽（gprx）回填需 IR
-                // 值宽度，从 xreg_types 查类型推导（同 compiler.rs 主回填；
-                // gprx 只服务 GPR 整型 → RegClass::from_type_id 足够）。
-                let cls = xreg_types
-                    .get(&xreg)
-                    .map(|ty| forge_ir::RegClass::from_type_id(*ty))
-                    .unwrap_or_else(|| xreg.class());
+                // class：值宽类由管线折进绑定（`OperandBind::class`，v23 M4 批次 C
+                // 第二步）——以前这里现场走 `RegClass::from_type_id`、而 compiler.rs 的
+                // 主回填走 `ctx.reg_class_for`：同一件事两种口径，现在读同一份数据。
+                let cls = inst_classes[i].unwrap_or_else(|| xreg.class());
                 inst.set_reg_field(inst_field_idx[i] as usize, preg.num, cls);
             }
         }
