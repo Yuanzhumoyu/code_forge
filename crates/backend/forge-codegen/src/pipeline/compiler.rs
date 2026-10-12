@@ -2490,6 +2490,34 @@ impl<I: MachineInst + 'static> CompileState<I> {
                                 xr.index()
                             );
                         }
+                        // **旁表条数不是从形状表推导出来的（2026-10-11 实测，两次修正）**：
+                        //
+                        // - InOut 字段（如 x86 `add dst, src` 的 dst）在操作数表里**同时**进
+                        //   `uses` 与 `defs`，但旁表里它可能 **0 条**（该槽是物理寄存器占位、
+                        //   不参与 vreg 映射）或 **1 条 Def**（vreg 绑定）——实测两种都有。
+                        // - 因此"删掉 `is_def`、一律按表派生角色"会把这些情况变成 use+def 各一条，
+                        //   **改变 regalloc 的活区间口径**（属行为变更，不是纯重构）。
+                        //
+                        // 这里只钉一条**可证伪的**事实：旁表条数不得为形状表里该字段出现次数的
+                        // 函数以外的值——即 InOut 字段最多 1 条（0 或 1），普通字段最多 1 条。
+                        // 真正的判据仍是上面那条子集关系；本块是"改动会被看见"的哨兵。
+                        for op in ops.iter() {
+                            let in_uses = ops
+                                .iter()
+                                .any(|o| o.field == op.field && o.role == OperandRole::Use);
+                            let in_defs = ops
+                                .iter()
+                                .any(|o| o.field == op.field && o.role == OperandRole::Def);
+                            if in_uses && in_defs {
+                                let n = slot.iter().filter(|(_, f, _)| *f == op.field).count();
+                                assert!(
+                                    n <= 1,
+                                    "v23 M4：InOut 字段 {} 的旁表条数 {n} > 1（实测契约是 0 或 1）\
+                                     ——旁表语义变了，请当行为变更处理：{slot:?}",
+                                    op.field
+                                );
+                            }
+                        }
                     }
                     gi += 1;
                 }

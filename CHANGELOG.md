@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M4（批次 C 的判据修正）：**旁表角色不可派生**（实测纠正上一轮推断）
+
++ 上一轮记录"`is_def` 可由操作数表派生"——本轮加了**哨兵断言**（InOut 字段的旁表条数）后，全量单测立刻把它打红：`e2e_compile_add` 里那条指令的旁表是 `[(XReg(514), 0, false)]`，**InOut 的 dst 字段一条都没有**。原因：`map_reg_field` 只登记**绑定到 vreg** 的槽，物理寄存器占位不参与映射。
++ 结论**更硬一格**：同一 InOut 字段在旁表里可能是 **0 条**（物理槽）或 **1 条 `Def`**（vreg 槽），而形状表里它同时是 `Use` 与 `Def` ⇒ **"删掉 `is_def`、一律按表派生角色"这条路关闭**（会凭空加出 use 项 ⇒ 改 regalloc 活区间口径 = 行为变更）。
++ 守卫改为两条且都保留：① **子集关系**（旁表登记项必须在形状表里有同字段同角色的对应项）；② **哨兵**（InOut 字段旁表条数 ≤ 1，实测契约 0 或 1）——将来谁改旁表语义，这里会响。
++ 账本 §13 记下**修订后的批次 C 路径**：把三张表并成一张 `inst_ops` —— 旁表（vreg → 字段 + **角色**，角色来自 lowering、保留）、`ctx.xreg_types`（vreg → IR 类型 ⇒ 回填宽度类；写点 ~26 处、读点 ~6 处）、指令形状（字段/约束/`settable`/声明类，来自 `operands()`）；`is_def: bool` 顺手升格为 `role: OperandRole`。
+
 ### Changed (2026-10-11) — 后端 v23 M4（批次 C 的前置验证）：旁表与操作数表**逐条对齐**已成守卫
 
 + **`InstPacket::map_reg_field` 的发射点断言**：登记的 `(field, is_def)` 必须能在该指令的 `operands()` 里找到同字段同角色的项——找不到即 panic（并把两条 lowering 的具体位置点出来）。这条断言证明 **`is_def` 可由操作数表派生**，因而旁表能从 `(vreg, field, is_def)` 缩到 `(vreg, field)`。
