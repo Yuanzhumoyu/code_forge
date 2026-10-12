@@ -763,6 +763,23 @@ spilled def fail-closed）；手写实现（`DummyInst`/`FixedFieldInst`）改�
 ③ 删 `xreg_map`/`inst_clobbers`/`ctx.xreg_types` → `CompileState.inst_ops`，`set_reg_field`
 调用点改按操作数号走 `set_operand_reg`。
 
+### 批次 C 的关键发现（2026-10-11，动手前必须量清）
+
+**`is_def` 不是纯冗余**：生成期对每个 Reg 槽**只发一条** `map_reg_field`，角色取
+`is_def = role ∈ {Out, InOut}`（`lowering.rs` 的 generic rule 发射路径）。也就是说
+**InOut 槽在旁表里只登记成 `Def`（一条）**，但在形状表里该字段同时进 `uses` 与 `defs`
+（InOut = 既读又写）。于是：
+
+- 若"删掉 `is_def`、一律由 `operands()` 派生"，InOut 槽会从"仅 def"变成"use + def 各一条"
+  —— 这是**行为变化**（对 x86 的 `add dst, src` 这类两操作数指令，regalloc 的活区间口径会变；
+  方向上更像"修好"，但必须**先测量再改**，不能当纯重构顺手做）。
+- 本轮的守卫只断言"旁表登记项在操作数表里有同字段同角色的对应项"（子集关系），因此
+  它对上述差异**是盲的**——这正是它作为"能删"判据的**边界**，已写在这里以免误读。
+
+**下一批的正确顺序**：① 先加用例钉住 InOut 指令的旁表条数与 regalloc 行为
+（编译期 dump 或针对性 JIT 用例）；② 再决定 InOut 是否补一条 `Use`（若补，先跑两矩阵对照
+字节/行为）；③ 之后才是删 `is_def` 形参与 `xreg_map`。
+
 ### 批次 C（原始设计，留档）
 
 1. `MachineInst` 删 `uses`/`defs`/`use_constraints`/`def_constraints`/`reg_field`/`set_reg_field`/
