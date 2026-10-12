@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M4（收口）：**操作数模型收敛完成**，`xreg_types` 按实测保留（记为偏差）
+
++ **收口过程中被自己的守卫拦下两次**（都按实测处理，没有"放宽断言了事"）：
+  ① 先写的"多类槽必须带值宽类"断言在 `test_jit_agg_by_value_stack_sysv64` 与 riscv64 通道**打红**——实测确实存在多类槽绑定没有值宽类记录（`xreg_types` 里没有那个 vreg）。核对改动前的两个回填点：它们同样先查 `xreg_types`、查不到退池宽类 ⇒ **这是既有行为，M4 没有改变它**，因此断言过强（等于要求代码具备它从来没有的性质）；降级为**可观测**（`FORGE_TRACE_M4=1` 报出来），并把"存量条目"记进账本。
+  ② 上一批的"旁表角色可派生"推断同样是被实测推翻（InOut 字段旁表可为 0 条）——两次都写进了账本而不是悄悄改口。
++ **M4 收口判据**（逐条对照方案）：`uses`/`defs`/`use_constraints`/`def_constraints` 由 `operands()` 派生且生成物不再发射 ✔；旁表改名 `inst_ops` 并类型化（`OperandBind{vreg,field,role,class}`）✔；值宽类的两种推导口径合一 ✔；写回路径只有一个入口（`is_reg_field_settable` + `set_reg_field`）✔；发射侧平行数组清零 ✔。
++ **偏差（实测记录）**：方案写的"`CompileState` 无 `xreg_types`"**未达成**，且判定为**不该达成**——vreg 的**值宽**（I32→`GPR(4)`）是既不在指令形状里、也不在 vreg 的池宽类里的独立事实；它只能由"vreg → IR 类型"这张表承载。现在的状态是：读取面**只有一处**（lowering 之后折进绑定表），消费面（两个回填点）读绑定；要彻底删表必须先让 `XReg` 自己带值宽类（或让每个绑定创建点都拿得到类型），那属于模型改动，不在 M4 范围内。
+
 ### Changed (2026-10-11) — 后端 v23 M4（批次 C 第三步）：发射侧**三个平行数组收敛成一个绑定切片**；`set_operand_reg` 按实测删除
 
 + `emit_inst_with_spills` 的 `inst_xregs`/`inst_field_idx`/`inst_classes` 三个平行切片换成**一个 `binds: &[OperandBind]`** —— 它们本来就是同一张绑定表的三个投影（调用点少铺三次 `collect`，签名少两个参数）。

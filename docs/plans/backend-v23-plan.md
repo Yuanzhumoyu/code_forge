@@ -321,7 +321,7 @@ spill 压力与「固定字段 spill」用例按新语义改写；新增「必�
 | M1 编译入口收敛 | ✅ 完成（含一条记录在案的偏差） | 见 §10 M1 落地记录 | 2026-10-11 |
 | M2 单一 ABI 数据模型 | ✅ 已落地（C1 修复 + leaf crate + 形状/变参/寄存器三面去镜像 + **删运行时镜像**） | 见 §11 M2 进度 | 2026-10-11 |
 | M3 能力数据化（去 x86 硬编码 + 单一合法性判据 + A6 收口） | ✅ 已落地（死钩子/死 API 删除；端序修正；宽向量能力数据化 + ISA 中立守卫；A6 收口；触发判据合一 + `ChangeSet`） | 见 §12 M3 进度 | 2026-10-11 |
-| M4 单一操作数模型 | 🚧 进行中（爆炸半径已量清 ≈350 处；批次 A/B/C 已定） | 见 §13 M4 进度 | 2026-10-11 |
+| M4 单一操作数模型 | ✅ 已落地（批次 A/B/C；两处偏差如实记录：`xreg_types` 保留、`inst_clobbers` 与 `clobbers()` 非同源） | 见 §13 M4 收口 | 2026-10-11 |
 | M5 分配器与发射 | ⏳ 待开工 | — | — |
 | M6 合法化与缺口 | ⏳ 待开工 | — | — |
 
@@ -803,7 +803,36 @@ spill 回写补 fail-closed：字段不可改写时 `Err(IrError::RegAlloc)`（�
 `set_operand_reg(bind_idx)` 会写到**另一个字段**。回写统一为
 `is_reg_field_settable(field)` + `set_reg_field(field, …)`：字段号来自绑定表、可改写性来自形状表。
 
-**批次 C 剩余**（M4 收口前的最后一项）：`ctx.xreg_types` 字段（~26 个 vreg 分配点写入，
+### M4 收口（2026-10-11）
+
+**逐条对照方案验收**：
+
+| 方案要求 | 状态 |
+| --- | --- |
+| `uses`/`defs`/`use_constraints`/`def_constraints` 由 `operands()` 派生、生成物不再发射 | ✅（批次 A/B；回潮守卫在 `machine_shape_table.rs`） |
+| 旁表归一：`inst_ops: Vec<SmallVec<[OperandBind; 2]>>`（`vreg`/`field`/`role`/`class`） | ✅（批次 C 第一、二步） |
+| 值宽类的两种推导口径合一（`compiler.rs` 与 `emission.rs`） | ✅（批次 C 第二步：折一次，两处读同一份） |
+| 回写只有一个入口、按**字段号**、可改写性 fail-closed | ✅（批次 C 第三步；`set_operand_reg` 按实测删除） |
+| 发射侧平行数组清零 | ✅（批次 C 第三步：三个数组 → 一个 `binds` 切片） |
+| `CompileState` 无 `xreg_map`/`inst_clobbers`/`xreg_types` | ⚠️ **部分**：`xreg_map` 已改名归一 ✅；`xreg_types` **保留（记为偏差，见下）**；`inst_clobbers` 保留（见下） |
+
+**偏差一（`xreg_types` 保留）**：vreg 的**值宽**（I32→`GPR(4)`）既不在指令形状里、也不在 vreg 的池宽类里，
+只能由"vreg → IR 类型"承载。现在读取面**只剩一处**（lowering 之后折进绑定），消费面读绑定。
+彻底删表需先让 `XReg` 自己带值宽类（模型改动，不在 M4 范围）。
+
+**偏差二（`inst_clobbers` 保留）**：它与 `MachineInst::clobbers()` **不是同一件事**——前者是
+**规则级**"模板里写死的物理寄存器"（生成器 `collect_phys_clobbers` 按规则求并、展开到包内每条指令），
+后者是**指令级****implicit 声明**（如 `cqo` 的 RDX）；regalloc 在 `regalloc_bt.rs:230-241` 把两者**合并**。
+要删前者，得让生成物为**每个变体**发表"模板字面物理寄存器"（像 `__SHAPES` 那样），
+顺带把"按包求并"变精确（多指令规则不必让每条指令都背全并集）——已列为 M5 的候选（与 C3/C4 同域）。
+
+**新发现（存量，非本轮引入）**：实测存在"多类槽绑定没有值宽类记录"的编译路径
+（`test_jit_agg_by_value_stack_sysv64` 第 15 条指令、riscv64 通道同样命中）——回填退到池宽类。
+改动前的两个回填点同样先查 `xreg_types`、查不到即退池宽类 ⇒ 行为未变。
+可见性：`FORGE_TRACE_M4=1` 打出条目。**若要收口**（多类槽一律带类），需要先量清这些 vreg
+为什么没有类型记录（候选：lowering 内部临时 vreg 不登记类型）。
+
+**下一步（历史记录）**：：`ctx.xreg_types` 字段（~26 个 vreg 分配点写入，
 读取面已收口到那次折入）——让分配点把类直接记进绑定（或以包为单位记 vreg→类、随
 `append`/`extend` 带上来），之后 `CompileState` 只剩 `inst_ops`，M4 即可收口。
 

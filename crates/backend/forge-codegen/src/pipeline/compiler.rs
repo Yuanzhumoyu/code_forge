@@ -2502,6 +2502,31 @@ impl<I: MachineInst + 'static> CompileState<I> {
                                  被登记为 {want:?}（vreg {}），但操作数表里没有这一项：{ops:?}",
                                 xr.index()
                             );
+                            // **多类槽的值宽类来源：可见但不强制**（v23 M4，2026-10-11 实测）。
+                            //
+                            // 形状表说该字段是**多类槽**（`class == None` = 宽度由运行期决定）
+                            // 时，回填用的是绑定带的类；绑定没带（`xreg_types` 里没有这个 vreg
+                            // 的记录）就退到 vreg 的**池宽类**。
+                            //
+                            // 实测：确实存在这种绑定（如 `test_jit_agg_by_value_stack_sysv64`
+                            // 第 15 条指令、riscv 侧也有）——但这是**既有**行为：改动前的两个
+                            // 回填点同样先查 `xreg_types`、查不到就退池宽类，所以 M4 没有改变
+                            // 它。这里**断言**会过强（等于要求代码具备它从来没有的性质），
+                            // 因此改成**可观测**：`FORGE_TRACE_M4=1` 时报出来，留存量级。
+                            if let Some(op) = ops
+                                .iter()
+                                .find(|o| o.field == bind.field && o.role == bind.role)
+                                && op.class.is_none()
+                                && bind.class.is_none()
+                                && crate::pipeline::trace_enabled("FORGE_TRACE_M4")
+                            {
+                                eprintln!(
+                                    "[m4] 多类槽字段 {} 的 vreg {} 没有值宽类记录 ⇒ 回填退池宽类\
+                                     （第 {gi} 条指令，指令形状：{ops:?}）",
+                                    bind.field,
+                                    xr.index()
+                                );
+                            }
                         }
                         // **旁表条数不是从形状表推导出来的（2026-10-11 实测，两次修正）**：
                         //
