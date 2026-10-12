@@ -26,8 +26,10 @@
 //!   测试里（给 `LowerCtx` 取快照）。v3 S3 余项①顺带收掉了宽向量门的"每指令取锁"（3 处
 //!   → 1 次入口快照）。本轮把 rewrite 族（`memoryize_from_segs`/`memoryize_from_addr`/
 //!   `rewrite_agg_value_uses`/`move_to_front`）迁到 `pipeline/agg_expand.rs`，4 处预算随之转移。
-//! - `pipeline/agg_expand.rs`：`has_*` 检测族每条判定各取一次读锁；本轮迁入的 rewrite 族
-//!   同样是"每入口一次"（与 `has_*` 同模式），不引入逐指令/循环内取锁。
+//! - `pipeline/agg_expand.rs`：**6** 处——触发判据只剩 `needs_agg_expand` 一处（v23 M3：
+//!   原来是 7 个各扫一种模式的 `has_*`，每个各取一次读锁；合并成"含 GEP 或提到过聚合"
+//!   的单一**过近似**判据后，读锁随之从 14 降到 6），其余是 rewrite 族的"每入口一次"。
+//!   预算按实测下调——**不得**为了放过新取锁而上调。
 //! - `forge-dsl/.../lowering.rs`：**0**（v3 S3 余项①已迁移）。这 11 处原本是
 //!   `quote! { ... }` 模板文本里的 `tc.borrow()`（生成的 lowering 在 codegen 期逐指令
 //!   取锁）；现在 `LowerCtx` 带**快照**（`type_store: Option<TypeStoreRef>`，lowering
@@ -67,8 +69,8 @@ const BUDGETS: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/agg_expand.rs",
-        14,
-        "has_* 检测族（每条判定各取一次读锁）+ rewrite 族（各入口一次取锁）+ by-ref 档的字节数快照（`rewrite_agg_value_uses` **入口**取一次，使用点循环里不再取）",
+        6,
+        "单一触发判据 `needs_agg_expand`（入口一次）+ rewrite 族（各入口一次）+ by-ref 档的字节数快照（`rewrite_agg_value_uses` **入口**取一次，使用点循环里不再取）——v23 M3 删掉 7 个 `has_*` 后由 14 降到 6",
     ),
     (
         "crates/frontend/forge-isa-dsl/src/dsl/codegen/lowering.rs",

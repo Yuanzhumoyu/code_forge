@@ -4,7 +4,7 @@
 //! 不执行（执行经 QEMU，见 forge-tests 的 riscv64 runner）。
 //! 验证：整数运算/常量/加载存储/帧序言的机器码生成 + decode 回环契约。
 
-use forge_codegen::FunctionCompiler;
+use forge_codegen::CompileSession;
 use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
 /// 编译 `fn name(a, b) -> ret`（i64 参数）为机器码。
@@ -19,8 +19,8 @@ fn compile_binop(
     let v = build(&mut b, &params);
     b.ret(&[v]);
     let func = b.finish().expect("build");
-    let compiler = FunctionCompiler::new(forge_codegen::riscv64::TargetMachine::new());
-    compiler.compile_raw(&func).expect("compile")
+    let compiler = CompileSession::new(forge_codegen::riscv64::TargetMachine::new());
+    compiler.compile(&func).expect("compile")
 }
 
 /// 编译无参常量函数 `fn name() -> i64`。
@@ -31,8 +31,8 @@ fn compile_const(name: &str, v: i64) -> forge_codegen::CompiledFunction {
     let c = b.iconst_i64(v);
     b.ret(&[c]);
     let func = b.finish().expect("build");
-    let compiler = FunctionCompiler::new(forge_codegen::riscv64::TargetMachine::new());
-    compiler.compile_raw(&func).expect("compile")
+    let compiler = CompileSession::new(forge_codegen::riscv64::TargetMachine::new());
+    compiler.compile(&func).expect("compile")
 }
 
 /// 32 位指令字查找：全字节中某 4 字节 == 给定小端字。
@@ -98,8 +98,8 @@ fn tm_compile_addw_width_dispatch() {
     let v = b.iadd(params[0], params[1]);
     b.ret(&[v]);
     let func = b.finish().expect("build");
-    let compiler = FunctionCompiler::new(forge_codegen::riscv64::TargetMachine::new());
-    let cf = compiler.compile_raw(&func).expect("compile addw");
+    let compiler = CompileSession::new(forge_codegen::riscv64::TargetMachine::new());
+    let cf = compiler.compile(&func).expect("compile addw");
     assert!(
         find_opcode(&cf.code, 0x3B),
         "i32 Iadd 应选 ADDW (opcode 0x3B): {:02x?}",
@@ -193,9 +193,9 @@ fn tm_compiles_riscv_varargs_callee_side() {
     let s = b.iadd(a, c);
     b.ret(&[s]);
     let func = b.finish().expect("build");
-    let compiler = FunctionCompiler::new(forge_codegen::riscv64::TargetMachine::new());
+    let compiler = CompileSession::new(forge_codegen::riscv64::TargetMachine::new());
     let cf = compiler
-        .compile_raw(&func)
+        .compile(&func)
         .expect("lp64d 的被调方变参必须编得出（形状/初值/取值 IR 全在数据里）");
     assert!(!cf.code.is_empty(), "应产出机器码");
     // 序言 `addi sp, sp, -N`（opcode 0x13、rd = rn = sp = X2）：帧里要装下 `va_list` 对象与

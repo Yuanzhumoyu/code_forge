@@ -4,6 +4,9 @@
 .DS_Store
 /.reasonix
 
+# markdownlint 的本地 npx 缓存（沙箱下用户级 npm cache 不可写时的替代位置）
+/.npm-cache
+
 **/target/
 
 # rustc ICE 崩溃转储（codegen backend panic 时自动生成，调试垃圾）

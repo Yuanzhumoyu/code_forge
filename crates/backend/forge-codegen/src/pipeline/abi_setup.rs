@@ -20,25 +20,25 @@
 use forge_abi::{AbiPlan, Signature};
 use forge_ir::ir::function::Function;
 use forge_isa_runtime::ctx::LowerCtx;
-use forge_isa_runtime::machine::call_layout::{ArgShape, RetPlace};
+use forge_isa_runtime::machine::abi_model::TyView;
 use forge_isa_runtime::machine::target::TargetMachine;
 
 /// 装配 [`LowerCtx::conv`](forge_isa_runtime::ctx::CallConvCtx)，并返回该函数的 [`AbiPlan`]
 /// （调用方存进 `CompileState`，供 `FORGE_TRACE_ABI=1` 打印）。
 ///
-/// `module_sigs` = 模块级签名表（`FuncRef::index()` → `(是否变参, 命名个数)`）；单函数编译传
+/// `module_sigs` = 模块级签名表（[`forge_ir::ModuleSigs`]）；单函数编译传
 /// `None`（调用点按非变参处理）。**要求**：调用前 `ctx.value_gpr_class` 已就位（返回槽探针
 /// 用它取宽度）。
 pub(crate) fn setup_conv<M: TargetMachine>(
     ctx: &mut LowerCtx,
     machine: &M,
     func: &Function,
-    module_sigs: Option<&[(bool, u32)]>,
+    module_sigs: Option<std::sync::Arc<forge_ir::ModuleSigs>>,
 ) -> Result<AbiPlan, forge_ir::IrError> {
     // ① IR 声明的那份标识 + 解析成注册表键（未注册 ⇒ fail-closed，消息里列出已注册的名字）。
     ctx.conv.id = func.calling_convention.clone();
     ctx.conv.name = crate::pipeline::conv_registry::resolve(&func.calling_convention)?;
-    ctx.conv.module_sigs = module_sigs.map(|s| s.to_vec());
+    ctx.conv.module_sigs = module_sigs;
 
     let reg = crate::pipeline::conv_registry::registry()
         .read()
@@ -47,12 +47,11 @@ pub(crate) fn setup_conv<M: TargetMachine>(
     // ② 约定级整数返回槽：空参 + 整数返回的合成请求。
     let w = ctx.value_gpr_class.bytes() as u32;
     let ret_probe = forge_isa_runtime::machine::call_plan::CallRequest::new(ctx.conv.name.clone())
-        .rets([ArgShape::int(w.max(1), w.max(1))]);
+        .rets([TyView::int(w.max(1), w.max(1))]);
     if let Ok(p) = crate::pipeline::abi_target::plan_for_shapes(machine, &reg, &ret_probe)
-        && let Some(RetPlace::Reg { class, index, .. }) =
-            crate::pipeline::abi_target::call_layout(&p, machine).ret
+        && let Some(r) = p.ret.as_reg()
     {
-        ctx.conv.ret_gpr = Some((index, class));
+        ctx.conv.ret_gpr = Some((r.slot, r.class));
     }
 
     // ③ 函数级 plan：**fail-closed**——算不出来就是编译错误（错误消息带修法与自查命令）。
@@ -78,7 +77,8 @@ pub(crate) fn setup_conv<M: TargetMachine>(
                 )));
             }
         };
-    ctx.conv.layout = Some(crate::pipeline::abi_target::call_layout(&plan, machine));
+    ctx.conv.va = crate::pipeline::abi_target::va_info(&plan, machine);
+    ctx.conv.layout = Some(plan.clone());
 
     // ④ 约定级破坏集（签名无关）：空签名问一次；拿不到就保持空 ⇒ 生成物在调用点 fail-closed。
     if let Ok(p) = crate::pipeline::abi_target::plan_for_signature(
@@ -87,12 +87,9 @@ pub(crate) fn setup_conv<M: TargetMachine>(
         &ctx.conv.name,
         &Signature::new(Vec::new(), None),
     ) {
-        // `CallLayout::clobbers` 是 (类, 类内号)，`LowerCtx` 的 `current_clobbers` 用 (号, 类)。
-        ctx.conv.clobbers = crate::pipeline::abi_target::call_layout(&p, machine)
-            .clobbers
-            .into_iter()
-            .map(|(c, i)| (i, c))
-            .collect();
+        // plan 的 `clobbers` 是 `RegRef`（ABI 空间号 + 类 + 类内号），`LowerCtx` 的
+        // `current_clobbers` 要 (ABI 空间号, 类)。
+        ctx.conv.clobbers = p.clobbers.iter().map(|r| (r.index, r.class)).collect();
     }
     Ok(plan)
 }
@@ -142,7 +139,10 @@ mod tests {
         let layout = ctx.conv.layout().expect("函数级布局");
         assert_eq!(layout.conv, "win64");
         assert!(
-            matches!(layout.ret, Some(RetPlace::Reg { .. })),
+            matches!(
+                layout.ret,
+                forge_isa_runtime::machine::abi_model::RetLoc::Reg { .. }
+            ),
             "布局的返回位是寄存器：{:?}",
             layout.ret
         );
@@ -195,12 +195,15 @@ mod tests {
         let mut ctx = LowerCtx::new();
         ctx.value_gpr_class =
             crate::machine::target::TargetMachine::reg_info(&tm).value_gpr_class();
-        let sigs = vec![(true, 1u32), (false, 0u32)];
+        let sigs = std::sync::Arc::new(forge_ir::ModuleSigs::from_pairs(vec![
+            (true, 1u32),
+            (false, 0u32),
+        ]));
         setup_conv(
             &mut ctx,
             &tm,
             &probe(CallConvId::builtin(ConvName::Win64)),
-            Some(&sigs),
+            Some(sigs),
         )
         .expect("装配成功");
         assert_eq!(

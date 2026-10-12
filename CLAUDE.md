@@ -14,7 +14,10 @@ docs/
 │   ├── isa-dsl-errors.md      # ISA-DSL 错误码目录（报错看不懂先看它）
 │   ├── calling-conventions.md # 调用约定层 forge-abi（v20 A1：规则/绑定/计划 + forge-isa abi）
 │   ├── aarch64-encoding-ref.md# A64 编码参考（arm64 后端/golden 依据）
+│   ├── backend-pipeline.md    # 后端编译管线契约（v23 M1：CompileSession/JitLoader/ModuleSigs）
 │   └── imm_str.md             # ImmStr 类型设计（forge-ir 代码注释引用）
+├── plans/                 # 进行中专项方案（活账本）[progress]
+│   └── backend-v23-plan.md    # 后端 v23 里程碑 M1–M6（数据驱动的通用后端；含证据/判据/进度账本）
 ├── forge-ir/              # forge-ir 工作流 [active]
 │   ├── README.md              # 组说明（历轮计划已归档、如何继续）
 │   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）
@@ -191,7 +194,8 @@ complete ISA module (instructions, encoder, disassembler, assembler, lowering).
 code-forge (root umbrella)
 ├── forge-ir          (no internal deps)
 ├── forge-mem         (no internal deps)
-├── forge-abi         (no internal deps：调用约定数据 + 通用引擎，约定由使用者提供)
+├── forge-abi-model   (leaf：AbiPlan/Placement/RetLoc/TyView + 两个规则枚举 + 唯一的 IR→TyView 投影；依赖 serde+forge-ir)
+├── forge-abi         → forge-abi-model, forge-ir（规则/绑定/引擎；约定由使用者提供）
 ├── forge-opt         → forge-ir
 ├── forge-codegen     → forge-ir, forge-opt, forge-mem, forge-dsl
 ├── forge-dsl         (proc-macro 薄层：解析 isa_from_file! 参数 → forge-isa-dsl)
@@ -361,6 +365,12 @@ let name = node.get_text("name")?;
   正确做法：比之前把两边都折成 `\n`（见 `forge-abi/tests/common/mod.rs::check_golden`，
   它现在按这个口径比，并有 CRLF 变异实测）。
 - `forge-rustc` tests require nightly Rust with `rustc-dev` component
+- **构建报 `os error 112`（磁盘满）**（2026-10-11 实测）：`target/debug/incremental`
+  会涨到几十 GB（本机实测 **44.7 GB**，`target/` 共 73 GB），D: 被写满后
+  `cargo build/test` 报 `failed to write query cache … 磁盘空间不足`。
+  处置：删 `target/debug/incremental`（安全——只是缓存，代价是下次全量重建），
+  并给后续构建设 `$env:CARGO_INCREMENTAL='0'`（不再生成这类增量缓存）。
+  这也是"门禁中途红、报错却指着 query-cache"的根因，别误判成代码问题。
 - **JIT 集成矩阵**（`forge-tests/src/jit_matrix.rs`）：架构无关、一次编写——
   用例**零 ISA 引用**，ISA 只存在于薄 runner（`isa/<name>/` 绑定机器 +
   能力集 `Capabilities`，riscv64 未来接入复用）。当前 **x86 197 passed /

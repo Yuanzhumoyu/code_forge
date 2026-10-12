@@ -12,7 +12,7 @@
 //! ① 两侧都发**类间位搬移**（riscv：`fmv.d.x`/`fmv.x.d`；x86：`MOVQ`）；
 //! ② 与"正常分类"（浮点进 FPR 池）走的仍是同类搬移（`fsgnj.d`）——两路互不串味。
 
-use forge_codegen::FunctionCompiler;
+use forge_codegen::CompileSession;
 use forge_codegen::arch::riscv64::TargetMachine;
 use forge_codegen::pipeline::conv_registry;
 use forge_ir::ir::builder::FunctionBuilder;
@@ -90,8 +90,8 @@ fn float_value_into_an_int_place_uses_the_cross_bank_move() {
     conv_registry::register_rules_toml(ZFINX_LIKE).expect("注册规则");
     conv_registry::register_binding_toml(ZFINX_BINDING).expect("注册绑定");
 
-    let cf = FunctionCompiler::new(TargetMachine::new())
-        .compile_raw(&f64_param_ret_i64(CallConvId::named("zfinx_like")))
+    let cf = CompileSession::new(TargetMachine::new())
+        .compile(&f64_param_ret_i64(CallConvId::named("zfinx_like")))
         .expect("整数约定收浮点应当能编");
     assert!(
         has_fmv_d_x(&cf.code),
@@ -104,8 +104,8 @@ fn float_value_into_an_int_place_uses_the_cross_bank_move() {
 /// 说明四路分派没有把两条路串起来。
 #[test]
 fn float_value_into_an_fpr_place_stays_a_same_bank_move() {
-    let cf = FunctionCompiler::new(TargetMachine::new())
-        .compile_raw(&f64_param_ret_i64(CallConvId::builtin(ConvName::Lp64d)))
+    let cf = CompileSession::new(TargetMachine::new())
+        .compile(&f64_param_ret_i64(CallConvId::builtin(ConvName::Lp64d)))
         .expect("lp64d 下浮点参数照常收参");
     assert!(
         has_fsgnj_d(&cf.code),
@@ -151,8 +151,8 @@ fn call_site_float_arg_into_an_int_place_uses_the_cross_bank_move() {
     bm.ret(&[r[0]]);
     let caller = m.add_function(bm.finish().expect("caller"));
 
-    let cf = FunctionCompiler::for_module(TargetMachine::new(), &m)
-        .compile_raw(m.get_function(caller))
+    let cf = CompileSession::for_module(TargetMachine::new(), &m)
+        .compile(m.get_function(caller))
         .expect("整数约定下的调用点应当能编");
     assert!(
         has_fmv_x_d(&cf.code),

@@ -6,7 +6,7 @@
 //! **布局**算出这个数（运行期才知道），用"立即数 → 整数寄存器"（`roles = ["gpr_mov_imm"]`）
 //! 写进去；本 ISA 没申报这条能力而约定又要写 ⇒ **fail-closed**。
 
-use forge_codegen::FunctionCompiler;
+use forge_codegen::CompileSession;
 use forge_codegen::arch::x86::TargetMachine;
 use forge_ir::ir::builder::FunctionBuilder;
 use forge_ir::ir::function::Module;
@@ -43,8 +43,8 @@ fn caller_calling(callee_variadic: bool) -> Vec<u8> {
     bm.ret(&[r[0]]);
     let caller = m.add_function(bm.finish().expect("caller"));
 
-    FunctionCompiler::for_module(TargetMachine::new(), &m)
-        .compile_raw(m.get_function(caller))
+    CompileSession::for_module(TargetMachine::new(), &m)
+        .compile(m.get_function(caller))
         .expect("调用点应当能编")
         .code
 }

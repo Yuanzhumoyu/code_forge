@@ -1,11 +1,11 @@
 //! ISA lowering coverage matrix — 迁移自根 `tests/isa_lowering_coverage.rs`。
 //!
-//! 对每个代表性 IR opcode × 每个后端，构建最小函数并 `compile_raw`，
+//! 对每个代表性 IR opcode × 每个后端，构建最小函数并 `compile`，
 //! 记录 lowering 是否成功。v11 后端已删除，本文件只覆盖 唯一的发行后端
 //! （x86）；零缺口断言以 ISA-DSL TOML 实际声明的 lowering op 集为准。
 //! 运行：cargo test -p forge-tests -- --nocapture
 
-use code_forge::backend::FunctionCompiler;
+use code_forge::backend::CompileSession;
 use code_forge::backend::TargetMachine;
 use code_forge::ir::*;
 
@@ -302,14 +302,14 @@ pub fn build_min(op: Opcode) -> Function {
     b.finish().expect("build")
 }
 
-/// 对单个 ISA 跑 75 ops 的 compile_raw 检查，返回 (op 名, 结果)。
+/// 对单个 ISA 跑 75 ops 的 compile 检查，返回 (op 名, 结果)。
 pub fn check_isa<M: TargetMachine>(machine: impl Fn() -> M) -> Vec<(String, String)> {
     let mut results = Vec::new();
     for op_name in COVERAGE_OPS {
         let op = parse_opcode_name(op_name);
         let func = build_min(op);
-        let outcome = FunctionCompiler::new(machine())
-            .compile_raw(&func)
+        let outcome = CompileSession::new(machine())
+            .compile(&func)
             .map(|_| "ok".to_string())
             .unwrap_or_else(|e| format!("{e:?}"));
         results.push((op_name.to_string(), outcome));

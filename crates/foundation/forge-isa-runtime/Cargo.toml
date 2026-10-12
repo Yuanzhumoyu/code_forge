@@ -6,5 +6,9 @@ description = "ISA-DSL generated-code runtime surface: machine traits, lowering 
 
 [dependencies]
 forge-ir = { path = "../../foundation/forge-ir" }
+# v23 M2：调用约定的**产物与类型视图**（`AbiPlan`/`TyView`）统一由 leaf crate 提供——
+# 运行时不再手抄一份镜像；形状**只有** `TyView` 一种（`TyView::from_ir_type` 是唯一的
+# IR → 视图投影，调用方与被调方共用）。它只依赖 serde + forge-ir，不带 toml/引擎。
+forge-abi-model = { path = "../forge-abi-model" }
 smallvec = "1.16.0"
 thiserror = "2.0.20"

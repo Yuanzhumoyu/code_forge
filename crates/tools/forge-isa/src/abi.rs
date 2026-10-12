@@ -628,8 +628,15 @@ struct ViewTarget {
     names: Vec<Option<String>>,
     /// 名字（含别名 `EAX`/`W0`/`ZMM0`…）→ 物理号。
     alias: BTreeMap<String, u32>,
-    classes: Vec<String>,
     widths: Vec<u8>,
+    /// 每个物理号的**寄存器类**（v23 M2：`AbiTarget::reg_class` 的返回面）。
+    ///
+    /// 由 `abi_view` 的类名串（`"GPR(8)"`/`"FPR(16)"`，其口径是**位**）还原；
+    /// 认不出的名字退回地址类（谱校验前不该发生）。
+    classes: Vec<forge_ir::RegClass>,
+    /// 整数区宽度（`reg_slot` 折类内号要它）——`MachineView` 的编号规则是
+    /// "GPR 区在前、FP 区紧随"。
+    n_gpr: u32,
     pinned: Vec<bool>,
     allocatable: Vec<u32>,
     scratch: Vec<u32>,
@@ -645,20 +652,23 @@ impl ViewTarget {
         let names: Vec<Option<String>> = (0..count)
             .map(|i| view.reg_name(i).map(|s| s.to_string()))
             .collect();
-        let mut classes = Vec::with_capacity(count as usize);
         let mut widths = Vec::with_capacity(count as usize);
+        let mut classes = Vec::with_capacity(count as usize);
         for i in 0..count {
             let e = &view.regs[i as usize];
-            classes.push(e.class.clone());
             widths.push(e.width);
+            classes.push(
+                forge_ir::RegClass::from_name(&e.class).unwrap_or(forge_ir::RegClass::GPR(64)),
+            );
         }
         Self {
             isa: view.isa.clone(),
             count,
             names,
             alias: view.names.clone(),
-            classes,
             widths,
+            classes,
+            n_gpr: view.n_gpr,
             pinned: (0..count).map(|i| pinned_set.contains(&i)).collect(),
             allocatable: (0..count).filter(|i| !pinned_set.contains(i)).collect(),
             scratch: view.scratch.clone(),
@@ -683,11 +693,18 @@ impl AbiTarget for ViewTarget {
     fn reg_name(&self, index: u32) -> Option<String> {
         self.names.get(index as usize).cloned().flatten()
     }
-    fn reg_class_name(&self, index: u32) -> String {
+    fn reg_class(&self, index: u32) -> forge_ir::RegClass {
         self.classes
             .get(index as usize)
-            .cloned()
-            .unwrap_or_else(|| "?".into())
+            .copied()
+            .unwrap_or(forge_ir::RegClass::GPR(64))
+    }
+    fn reg_slot(&self, index: u32) -> u32 {
+        if self.reg_class(index).is_fp() {
+            index.saturating_sub(self.n_gpr)
+        } else {
+            index
+        }
     }
     fn reg_index(&self, name: &str) -> Option<u32> {
         self.alias.get(name).copied()
@@ -787,8 +804,11 @@ mod tests {
         fn reg_name(&self, _i: u32) -> Option<String> {
             None
         }
-        fn reg_class_name(&self, _i: u32) -> String {
-            "GPR(8)".into()
+        fn reg_class(&self, _i: u32) -> forge_ir::RegClass {
+            forge_ir::RegClass::GPR(8)
+        }
+        fn reg_slot(&self, i: u32) -> u32 {
+            i
         }
         fn reg_index(&self, _n: &str) -> Option<u32> {
             None

@@ -11,6 +11,89 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M3（第四批）：**触发判据只剩一处**（7 个 `has_*` → 单一保守判据 + `ChangeSet`）
+
++ **7 个各扫一种模式的 `has_*`（`has_large_agg_ret`/`has_large_agg_call_result`/`has_large_agg_call_arg`/`has_large_agg_param`/`has_large_agg_load`/`has_agg_mem_access`/`has_any_agg`）整条删除**，换成**一处**判据 `needs_agg_expand` = 含 GEP **或** 提到过任何聚合类型/聚合字面量。新判据是**过近似**的：宁可多克隆一份 `Function`，不可漏跑一个 pass——`has_*` 的失效模式恰恰是"漏一类模式 ⇒ 那个 pass 静默不跑"（历史事故：`has_large_agg_ret` 缺失 ⇒ 大聚合返回的纯 `call`+`extractvalue` 函数展开不到 ⇒ 5 vs 6 错值）。
++ **`ChangeSet`（展开自报改动了什么）**：新增 `agg_expand::{ChangeSet, IrSize}`——`IrSize` 取 IR 规模快照（指令/值/常量），差分量 + sret 标记构成 `ChangeSet`，由管线在展开后算出并写入 `FORGE_TRACE_AGG`。用"IR 变化量"而不是让 8 个 pass 各自返回计数：变化量是**完整**的（将来新增 pass 自动被覆盖，不会再出现"新加一类模式却忘了加判据"）。
++ 守卫：`agg_expand::tests::{needs_agg_expand_is_conservative, change_set_counts_only_growth}`——前者钉"聚合形参必须触发、纯标量函数不得触发"，后者钉差分口径（只算增长，墓碑化不计）。
+
+### Fixed (2026-10-11) — 后端 v23 M3（第三批）：帧账目只认 plan（删「无 plan 按零算」的缺省）
+
++ `frame_layout_info()` 的 callee-saved 计数**只从 plan 来**：删掉 `unwrap_or(0)`——那是"没有 plan 就按零算"的缺省，少算的 16 字节会让局部/spill 槽与 push 槽重叠，**覆盖调用者保存值**（x86 显式选 sysv64 的 5 vs 7 就是这个量级）。无 plan ⇒ 明确报错（编译入口本就 fail-closed，走到这里说明有路径漏接）。
++ 同时纠正该函数里**已经过期的注释**：它说"fp-outside 仍按谱里声明的表数（x86 的 push 是静态发射）"，但 v20 A4/v21 W9 之后谱面的静态 push 表与 `[emit.prologue]` 模板都已删除，`gen_push_mechanism` 的序言按 `alloc_result.callee_saved_to_save` **运行时循环** push、`cs_imm`/`sp_base` 取运行时长度。现在两条路（fp-inside / fp-outside）都是"运行时按 plan 的整张表"。这是 M3 的 A6 收口项。
++ 单测改钉新契约：`catch_unwind(frame_layout_info(&tm, None)).is_err()`。
+
+### Changed (2026-10-11) — 后端 v23 M3（第二批）：**宽向量能力数据化**，通用管线不再认识 `avx*`
+
++ **新增能力查询** `TargetRegInfo::wide_vector_bytes(&self) -> &'static [u16]`：ISA 后端回答"本谱申报、且本机能执行的 >16B 定宽向量档位"（= `[meta].vector_tiers` 里 >16 的档位 ∩ 宿主上界）。缺省 `&[]` ⇒ 通用管线对 >16B 定宽向量 **fail-closed**，不静默降级。
++ **宿主探测留在宿主层**：`forge_isa_runtime::cpu::host_wide_vector_limit()`（16 = SSE2 基线 / 32 = AVX / 64 = AVX-512F；与旧 `avx512_available()` 同口径，`FORGE_ASSUME_AVX512=1` 仍能放开**生成期**可行性门）+ `machine::reg_info::wide_vectors_upto(tiers, limit)`（取最长前缀，`&'static` ⇒ 生成物直接返回）。
++ **管线两处 `crate::avx512_available()` 直接调用删除**（`compiler.rs` 的 ABI 宽向量门与 IR 层宽向量门），改为问 `wide_vector_bytes()`；错误消息也从"需 AVX-512F"改成 ISA 中立表述（顺带更新断言该文案的 W3 用例）。
++ **新守卫** `crates/backend/forge-codegen/tests/generic_pipeline_is_isa_neutral.rs`：`src/pipeline/**`（通用管线）的**代码行**里不得出现 `avx*`/`sse*`/`neon`/`sve`（标识符级匹配——`classes` 里的 `sse` 不算；注释与 `#[cfg(test)]` 之后豁免）。守卫做过**负例实测**：临时加回 `crate::avx512_available()` 立刻红，撤掉即绿。
+
+### Changed (2026-10-11) — 后端 v23 M3（第一批）：删死钩子与死 API + 聚合常量端序修正
+
++ **删掉四个"没人实现/没人调用"的钩子与 API**（审计 G4/R7）：
+  `TargetPeephole`（trait + `CompileState::run_peephole` + 编译器 Stage 5 + `TargetMachine::peephole()`；三份发行谱一个都没实现过，调用点恒为 `None`）、`TargetSimulator`/`SimulationState`/`SimError`（trait + `TargetMachine::simulator()` + 再导出）、`TargetEncoder::{encoded_size, encode_into}`（`encoded_size` 还得伪造 `AllocResult::dummy_for_sizing` 才能跑）、`AllocContext`（空结构 + `allocate()` 的第 3 个参数 + 9 处测试调用点）。
++ **`AllocResult::dummy_for_sizing` 删除**：它是"为估尺寸伪造一份分配记录"的辅助（写死 `RegClass::GPR64` 与 `% 16` 编号）——随 `encoded_size` 一起去掉。
++ **`agg_const.rs` 的端序修正**：聚合常量的标量字段此前**写死小端**（`out[off + k] = (raw >> (k*8)) as u8`），大端目标上会整字节反序。现在从 `TypeStore::data_layout.endianness` 取目标端序（`Endianness::Big` ⇒ 低位在后）。三份发行谱都是小端 ⇒ 字节不变，由既有 `isa_roundtrip_guard`/spec 向量守住。
++ 两条"宽度写死"守卫的白名单同步瘦身（`machine/encoder.rs` 2 条、`alloc_result.rs` 2 条随被删 API 消失；守卫要求白名单条目必须被命中，因此这是强制同步项）。
+
+### Changed (2026-10-11) — 后端 v23 M2 收口：**删掉运行时的手抄调用布局镜像**，生成物直接读 `AbiPlan`
+
++ **`CallLayout`/`CallArg`/`ArgPlace`/`RetPlace`/`Ext` 整条删除**（运行时 `machine/call_layout.rs` 从 255 行缩到 78 行，只留 `va_list` 的宿主侧外壳）。`AllocResult.call_layout` 与 `CallConvCtx.layout` 现在的类型**就是** `forge_abi_model::AbiPlan`——"调用方与被调方共用的那份数据"从模型一路通到生成物，中间不再有第二份表示。
++ **`abi_target::call_layout` 的 ~260 行翻译整个消失**：`plan_for_shapes`/`plan_for_function` 直接返回 `AbiPlan`，调用点钩子 `plan_call` 也返回它；只剩下宿主算得出的变参字段初值（`va_info`/`va_init`，写进新的 `CallConvCtx.va`）。
++ **落点分类改走访问器**（`Placement::{as_reg, indirect_ptr, stack_offset, is_stack_byval, reg_refs}`、`RetLoc::{as_reg, reg_refs}`、`AbiPlan::{arg, caller_offset, slot_bytes, shadow_bytes, hidden_sret_slot, va_meta_slot}`）：生成物不再穷举枚举变体，因此"引擎加一个变体、某条发射路径静默走错分支"这类缺陷在结构上不可能发生。生成物侧 12 处模式匹配与调用点 1 处五臂匹配都换成访问器形式（更短、更直白）。
++ 连带修正：`RetLoc` 不再是 `Option`（`Void` 表达"无返回"）；`__cl.va` → `__cl.va_area`；`cl.slot_bytes`/`cl.shadow_bytes`/`cl.hidden_sret`/`cl.va_meta` 等字段名收敛成方法（栈区事实统一从 `stack` 读——与 M5 的"单一记账"同向）。
++ 守卫同步：`crates/frontend/forge-isa-dsl/tests/call_layout_emission.rs` 的判据从"生成物里有 `ArgPlace::Reg/Stack`"改为"有落点访问器（`as_reg`/`stack_offset`）"——它守的语义（布局路径生效、且排在旧路径之前）不变。
++ 生成物解析失败时的诊断补强（`gen_file::generated_body`）：`syn::parse2` 失败时打印**谱名**并把 token 原文写到 `%TEMP%\forge_gen_parse_fail.rs`（此前只有一句 `expected …`，1.4 MB 的生成物无从定位）。
+
+### Changed (2026-10-11) — 后端 v23 M2：变参类型只剩一份（删镜像的 5 个手抄类型）
+
++ 运行时镜像里的 `VaArgRule`/`VaArgRules`/`VaField`/`VaSaveArea`/`VaSaveSlot` **五个手抄类型整条删除**，改为 `pub use forge_abi_model::plan::{…}`（`VaSaveArea as VaSave` 保持旧名）——`VaArgRule` 那 9 个字段此前是"计划面写一遍、镜像写一遍"。
++ 连带删掉翻译层里两个"逐字段搬家"函数（`va_arg_rules`/`va_arg_rule_one`，20 行）与字段/槽表的逐项重建（~15 行）：现在 `VaInfo { fields, save, arg_rules, … }` 与 `AbiPlan.va_area` **是同一份类型**，只剩"宿主算出来的 `VaInit`"要填。
++ **被丢掉的信息回来了**：`VaField.name`（psABI 里的字段叫法）此前在翻译时静默丢弃，现在随类型一起保留（诊断用）。
++ 生成物的保存区 store 序列跟着改读 `__slot.reg.slot`/`__slot.reg.class`（`dsl/codegen/frame.rs`，4 处 emitted 站点）。
++ `VaArgRule`/`VaArgRules` 在模型里补 `Copy`（纯小记录，本来就能复制，consumer 因此不必 `.clone()`）。
+
+### Changed (2026-10-11) — 后端 v23 M2：`RegRef` 带**有类型的寄存器类 + 类内号**（翻译层收敛）
+
++ **`AbiTarget` 新增两个方法**：`reg_class(index) -> forge_ir::RegClass` 与 `reg_slot(index) -> u32`（类内号）。引擎在造 plan 时一并填进 `RegRef{ index, slot, class, name }`——`class` 从"无人读的字符串"变成**有类型**的 `RegClass`（`slot` 是发射侧要的那个号，`index` 仍是引擎的 ABI 空间号，两个坐标各有其主，文档写明不是重复表示）。
++ **连带删除**上一轮留的 `RegRef` 死字段整改方案的反面：`abi_target::call_layout` 里那个"按名字回查目标、再自己折类内号、名字解析不到还要退化"的 20 行闭包，收敛成一行 `(r.class, r.slot)`——这正是"同一事实两处表示"的缩影。
++ 5 处 `AbiTarget` 实现补齐：`MachineAbiTarget`（codegen，读自己的 `n_gp`/类）、`forge-isa` 的 `ViewTarget`（谱侧类名串 → `RegClass`，新增 `forge_ir::RegClass::from_name` 作为 `Debug` 形态的逆）、`StubTarget` 与 forge-abi 的三处测试替身。
++ `forge-abi` 与 `forge-isa` 因此新增 `forge-ir` 依赖（公开面出现 `RegClass`）；`AbiPlan` 一族的 **serde 派生整体去掉**（实测无消费者，只有 TOML 面的 `CalleeSaveMechanism` 保留）。
+
+### Changed (2026-10-11) — 后端 v23 M2：形状只剩 `TyView`（删 `ArgShape`/`ShapeKind` + 两份 IR 投影合一）
+
++ **运行时侧的中性形状类型 `ArgShape`/`ShapeKind` 整条删除**，调用点 plan 的请求面改用它一直该用的那份视图：`CallRequest { args: Vec<TyView>, rets: Vec<TyView>, … }`（`forge_abi_model::TyView`，运行时经 `machine::abi_model` 再导出）。`abi_target::shape_to_ty` 那座"运行时形状 → 引擎视图"的桥（30 行 match）随之消失——**同一份类型，不再有桥**。
++ **IR → 类型视图的投影只剩一份**：`TyView::from_ir_type(store, ty)`（`forge-abi-model/src/ir_view.rs`，带深度上限 4 与成员上限 16）。此前有两份且**退化策略不一致**——运行时的 `ArgShape::from_ir_type` 与代码生成的 `sig_view::ty_view`（后者**没有深度上限**，递归类型会栈溢出，且长数组折成"一个整块 int"）。`sig_view::ty_view`/`element_kind`/`expand_members` 全删，`signature_view` 直接用唯一投影。
++ 生成物侧路径从 `crate::machine::call_layout::ArgShape` 改为 `crate::machine::abi_model::TyView`（读口子 = 运行时对 leaf crate 的再导出）；`forge-isa-runtime` 的依赖面守卫（`runtime_surface.rs`）把该 leaf crate 加入**带理由**的白名单。
+
+### Changed (2026-10-11) — 后端 v23 M2：ABI 产物抽成 leaf crate `forge-abi-model`（+ 删 `RegRef.class` 死字段）
+
++ 新 crate `crates/foundation/forge-abi-model`（**只依赖 serde**）：`AbiPlan`/`Placement`/`RetLoc`/`ArgLoc`/`StackLayout`/`HiddenSlots`/`VaArea`/`VaArgRule(s)`/`VaField`/`VaSave*`/`DeclAttrs` + `TyView`/`TyKind`/`Elem` + 两个规则侧枚举（`PositionRule`/`CalleePop`，它们同时是 `AbiRules` 与 `AbiPlan` 的字段类型）。`forge-abi` 收缩为"规则/绑定/引擎/注册表"并 re-export 模型——`forge_abi::plan::RegRef`、`forge_abi::AbiPlan`、`forge_abi::TyView` 等**路径全部照旧**，全仓 0 处调用改动。
++ 动机：`AbiPlan` 是调用方与被调方共用的唯一数据形状，而运行时/生成物只依赖 `forge-isa-runtime`——抽成 leaf crate 后，运行时可以直接读它，运行时侧那份**手抄镜像**（`machine::call_layout::CallLayout` + `ArgPlace`/`RetPlace`/`VaInfo`…）与 300 行翻译才有条件删除（下一批做）；把 toml/引擎拖进运行时的路被排除。
++ **删掉 `RegRef.class: String` 死字段**：实测全仓**没有一个读者**（发射侧要的"类 + 类内号"由 ISA 的目标视图给出，不由这份数据携带）。连带删掉只喂养它的 `AbiTarget::reg_class_name`（trait 方法 + 6 处实现：`MachineAbiTarget`、`forge-isa` 的 `ViewTarget`/`StubTarget`、forge-abi 的三处测试替身）与 `ViewTarget.classes` 字段。`RegRef` 现在是 `{ index: ABI 空间号, name: 谱里的寄存器名 }`。
+
+### Fixed (2026-10-11) — 后端 v23 M2：聚合落点探针丢了成员形状（AAPCS64/LP64D 的 HFA 会静默错值）
+
++ `pipeline/compiler.rs` 的两个只读探针 `agg_arg_place` / `agg_ret_is_sret` 原先伪造 `Aggregate { members: [] }`（只报 size/align）。后果：AAPCS64/LP64D 的 HFA（`{f64,f64,f64}` 这类走浮点寄存器池）在**调用方一侧**被判成"普通聚合"⇒ `ByRef`，调用方按"本地副本 + 传指针"改写两端，而被调方按浮点寄存器收参 ⇒ 静默错值。
++ 现在探针取 `(&TypeStore, TypeId)`，形状一律走 `ArgShape::from_ir_type`（与**调用点 plan**、**被调方 plan** 同一份投影，递归摊开成员/lane）；三个调用点（`expand_large_agg_params` / `expand_sret_return` / `expand_agg_call_args`）改传类型。**读锁处数不变**（判定与探针对合并进同一段读锁，`forge-ir` 的 `read_path_budget` 仍为 20——它是精确相等守卫）。
++ 守卫：`compiler.rs::alloc_integration_tests::aggregate_place_probe_carries_member_shapes`——用**同尺寸、不同成员**的一对类型证明"成员真的进了探针"：`{f64,f64,f64}`（24 B，HFA）⇒ `Registers`；`{i64,i64,i64}`（24 B，非 HFA）⇒ `ByRef`。
+
+### Changed (2026-10-11) — 后端 v23 M1：唯一编译入口 `CompileSession`（破坏性）
+
++ **`FunctionCompiler` 并入 `CompileSession`**（`forge_codegen::CompileSession`）：单函数与整模块两条入口都走同一份实现（`pipeline/session.rs` 只做编排，`pipeline/compiler.rs` 是单函数管线）。删 `compile()`/`compile_raw()` 的重复面——后者的"显式绕过优化"承诺从来就不成立（实现与 `compile` 是同一句调用）。
++ **新增 `CompileSession::compile_module(&Module) -> CompiledModule`**：整模块编译的唯一实现（全局数据段与 `名字`/`G{id}` 双符号 → 逐函数编译，函数数 ≥ 8 走 `std::thread::scope` 并行）。`JitLoader::compile_module` 与 `JitLoader::install` 只是它的委托 + 装载，JIT 里"并行/串行两份编排 + 符号注册"的复制代码删除。
++ **新增 `CompileSession::add_function(name, &FunctionSignature, build_fn) -> CompiledFunction`**：单函数便捷入口（与整模块同一条编译实现）。
++ **`JitCompiler` 更名 `JitLoader`**（它只负责可执行内存/符号/重定位/`get_fn`；编译委托给 `CompileSession`）。
++ **模块签名表类型化**：`Module::signature_table()` 返回 `forge_ir::ModuleSigs`（逐项 `FuncSigEntry { variadic, fixed_args }`），`LowerCtx::conv.module_sigs` 改为 `Option<Arc<ModuleSigs>>`——替代满仓传递的 `Vec<(bool, u32)>` 元组。
++ `ErasedTargetMachine` / `FunctionPipeline` 的 `compile_raw` 方法名改为 `compile`（`compile_raw` 这个名字在全仓消除）。
+
+### Fixed (2026-10-11) — 后端 v23 M1：`JitLoader::add_function` 不再丢模块签名表
+
++ 单函数入口此前**不装**模块签名表 ⇒ 跨函数变参调用按"被调方非变参"规划落点（SysV 下漏写调用的元信息寄存器 `%al`、浮点实参落位错）。现在 `JitLoader` 按调用序累积签名表并交给 `CompileSession`（整模块入口仍以模块自己的表为准）。
++ 守卫：`crates/backend/forge-codegen/tests/session_api.rs`（4 条：整模块按 `FuncRef` 序返回每个函数、整模块与单函数两条路径字节相同、"≥8 函数并行路径同源"、`add_function` 认签名表——装表与不装表的字节必须不同）。
+
 ### Added (2026-10-11) — ISA-DSL v22：操作数声明与字段绑定就地写进 `asm`
 
 + `asm` 模板支持 `{名字:槽[:角色]}` 声明、`{@字段:槽[:角色]}` 绑定与 `{@[字段]:槽[:角色]}`（内存形态，等价旧 `bind` 的 `"[操作数]"`）；旧的 `ops`/`bind` 键迁移期并存，**同一条指令只许写一处**（混用即报错）。

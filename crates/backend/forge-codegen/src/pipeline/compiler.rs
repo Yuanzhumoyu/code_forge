@@ -1,4 +1,4 @@
-//! FunctionCompiler v20 — staged compilation pipeline.
+//! CompileSession v20 — staged compilation pipeline.
 //!
 //! Drives IR → machine code compilation through the TargetMachine component traits.
 //! Each stage is a self-contained method; the pipeline is explicit and debuggable.
@@ -9,7 +9,6 @@
 //! 2. VReg Pre-allocation    — params, phi, block params → VReg
 //! 3. Pattern Matching       — detect IR patterns for optimized lowering
 //! 4. Instruction Selection  — TargetLowering::lower_inst / lower_terminator
-//! 5. Peephole Optimization  — TargetPeephole::optimize (optional)
 //! 6. Register Allocation    — pluggable allocator
 //! 7. Frame Layout           — compute spill slots, alignment, frame size
 //! 8. Prologue               — TargetFrameLowering::emit_prologue
@@ -50,7 +49,7 @@ use std::collections::HashMap;
 
 /// 大聚合实参/形参的**落点类别**（判据来自 `forge-abi` 的约定规则，不是本地写死的阈值）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum AggArgPlace {
+enum AggArgLoc {
     /// 按引用（win64 `aggregate size_gt 8 ⇒ indirect via caller_stack_copy`）：
     /// IR 侧统一表示成"**调用方自建副本 + 传指针**"——两端形状都是 `ptr` ⇒ 落点都是
     /// `Reg`，位置自然一致；机器级效果与 Win64 psABI 相同（指针进第一个可用整数槽）。
@@ -63,31 +62,26 @@ enum AggArgPlace {
     Registers,
 }
 
-/// 只读地问一次"这份约定下 `size` 字节的聚合实参落在哪"（单参探针）。
+/// 只读地问一次"这份约定下**这个类型**的聚合实参落在哪"（单参探针）。
 ///
 /// 返回 `(落点, callee-saved 区平移)`：平移量取自**同源**的
 /// [`crate::pipeline::frame_layout::frame_layout_info`]（`LowerCtx::stack_slot_shift`
 /// 也是它），用于把 ABI 偏移换成 `[[lower.StackAddr]]` 要的立即数（见 `StackAddr` 的补偿）。
 ///
-/// 聚合规则是**纯尺寸判据**（win64 `size_gt 8`、sysv64 `size_gt 16`），与寄存器是否
-/// 耗尽无关 ⇒ 单参探针与真实计划对同一个聚合实参给出的落点一致。探针 `members` 留空：
-/// 成员只参与 HFA（aapcs64）分类，win64/sysv64 的聚合档不看成员。
+/// **形状必须摊开成员**（C1 修复）：早期版本伪造 `Aggregate { members: [] }`，于是
+/// AAPCS64/LP64D 的 HFA（`{f32,f32,f32}` 走浮点池）在这里被当成"普通聚合"⇒ 返回
+/// `ByRef`，调用方按"本地副本 + 传指针"改写，而被调方按浮点寄存器收参 ⇒ **静默错值**。
+/// 现在形状与**调用点/被调方**同一份投影（`TyView::from_ir_type`，递归摊开成员/lane）。
 fn agg_arg_place(
     machine: &impl forge_isa_runtime::machine::target::TargetMachine,
     conv: &str,
-    size: u32,
-    align: u32,
-) -> Result<(AggArgPlace, i32), IrError> {
-    use forge_isa_runtime::machine::call_layout::{ArgShape, ShapeKind};
-    let req = forge_isa_runtime::machine::call_plan::CallRequest::new(conv.to_string()).args([
-        ArgShape {
-            size,
-            align,
-            kind: ShapeKind::Aggregate {
-                members: Vec::new(),
-            },
-        },
-    ]);
+    store: &forge_isa_runtime::ir::ir::types::TypeStore,
+    ty: TypeId,
+) -> Result<(AggArgLoc, i32), IrError> {
+    use forge_isa_runtime::machine::abi_model::TyView;
+    let size = store.size_bytes(ty).max(1);
+    let req = forge_isa_runtime::machine::call_plan::CallRequest::new(conv.to_string())
+        .args([TyView::from_ir_type(store, ty)]);
     let reg = crate::pipeline::conv_registry::registry()
         .read()
         .expect("约定注册表被投毒");
@@ -97,15 +91,12 @@ fn agg_arg_place(
     // callee-saved 区平移：与 `LowerCtx::stack_slot_shift` 同源（`frame_layout_info`）。
     // `[[lower.StackAddr]]` 的 lea 位移 = **立即数 − 平移**，所以被调方要落在
     // `[fp + ABI 偏移]` 上就得把平移加回立即数（见 `expand_large_agg_params` 的补偿）。
-    let shift = crate::pipeline::frame_layout::frame_layout_info(
-        machine,
-        Some(&crate::pipeline::abi_target::call_layout(&plan, machine)),
-    )
-    .stack_slot_shift;
+    let shift =
+        crate::pipeline::frame_layout::frame_layout_info(machine, Some(&plan)).stack_slot_shift;
     Ok(match plan.args.first().map(|a| &a.place) {
-        Some(forge_abi::Placement::Indirect { .. }) => (AggArgPlace::ByRef, shift),
+        Some(forge_abi::Placement::Indirect { .. }) => (AggArgLoc::ByRef, shift),
         Some(forge_abi::Placement::StackByVal { offset, size, .. }) => (
-            AggArgPlace::StackByVal {
+            AggArgLoc::StackByVal {
                 offset: *offset,
                 size: *size,
             },
@@ -117,30 +108,24 @@ fn agg_arg_place(
                 "聚合落点查询：约定 `{conv}` 把 {size} 字节聚合判成标量栈落点（约定数据有问题）"
             )));
         }
-        _ => (AggArgPlace::Registers, shift),
+        _ => (AggArgLoc::Registers, shift),
     })
 }
 
-/// 只读地问一次"这份约定下返回 `size` 字节聚合落在哪"（单参探针）。
+/// 只读地问一次"这份约定下**这个类型**的聚合返回落在哪"（单参探针）。
 ///
 /// 与 [`agg_arg_place`] 同源：`plan.ret` 是 `Indirect`（sret，隐藏返回缓冲指针）
 /// 就是"按值返回要写进调用方缓冲"。win64/`sysv64` 的 `>8B`/`>16B` 聚合返回都是这条路。
+/// 形状同样摊开成员（C1 修复，理由见 [`agg_arg_place`]）。
 fn agg_ret_is_sret(
     machine: &impl forge_isa_runtime::machine::target::TargetMachine,
     conv: &str,
-    size: u32,
-    align: u32,
+    store: &forge_isa_runtime::ir::ir::types::TypeStore,
+    ty: TypeId,
 ) -> Result<bool, IrError> {
-    use forge_isa_runtime::machine::call_layout::{ArgShape, ShapeKind};
-    let req = forge_isa_runtime::machine::call_plan::CallRequest::new(conv.to_string()).rets([
-        ArgShape {
-            size,
-            align,
-            kind: ShapeKind::Aggregate {
-                members: Vec::new(),
-            },
-        },
-    ]);
+    use forge_isa_runtime::machine::abi_model::TyView;
+    let req = forge_isa_runtime::machine::call_plan::CallRequest::new(conv.to_string())
+        .rets([TyView::from_ir_type(store, ty)]);
     let reg = crate::pipeline::conv_registry::registry()
         .read()
         .expect("约定注册表被投毒");
@@ -215,20 +200,28 @@ fn expand_large_agg_params(
     let mut agg_stack_shift = 0i32;
     let mut has_large = false;
     for (i, t) in old_params.iter().enumerate() {
-        let (is_agg, size, align) = {
+        // **一次取锁**（读路径纪律）：判定与落点探针在同一段读锁里做——探针只要
+        // `&TypeStore`，不碰 `&mut func`，所以不必为它再取一次读锁。
+        let (size, probed) = {
             let ts = func.types.borrow();
-            (ts.is_aggregate(*t), ts.size_bytes(*t), ts.alignment(*t))
+            let is_agg = ts.is_aggregate(*t);
+            let size = ts.size_bytes(*t);
+            let probed = if is_agg && size > 8 {
+                Some(agg_arg_place(machine, conv, &ts, *t)?)
+            } else {
+                None
+            };
+            (size, probed)
         };
-        if is_agg && size > 8 {
-            let (place, shift) = agg_arg_place(machine, conv, size, align)?;
+        if let Some((place, shift)) = probed {
             match place {
-                AggArgPlace::ByRef => {
+                AggArgLoc::ByRef => {
                     seg_map.push(0);
                     by_ref.push(true);
                     keep_param.push(false);
                     has_large = true;
                 }
-                AggArgPlace::StackByVal { offset, .. } => {
+                AggArgLoc::StackByVal { offset, .. } => {
                     seg_map.push(0);
                     by_ref.push(false);
                     keep_param.push(true);
@@ -236,7 +229,7 @@ fn expand_large_agg_params(
                     stack_agg.push((i, offset, *t));
                     has_large = true;
                 }
-                AggArgPlace::Registers => {
+                AggArgLoc::Registers => {
                     seg_map.push(size.div_ceil(8) as usize);
                     by_ref.push(false);
                     keep_param.push(false);
@@ -382,22 +375,21 @@ fn expand_sret_return(
     machine: &impl forge_isa_runtime::machine::target::TargetMachine,
     conv: &str,
 ) -> Result<Option<Value>, IrError> {
-    let mut hit: Option<(TypeId, u32, u32)> = None;
-    {
+    // **一次取锁**：找宽聚合返回 + 问它的落点，在同一段读锁里做（探针只要 `&TypeStore`）。
+    let sret_ty: Option<TypeId> = {
         let store = func.types.borrow();
-        for t in &func.return_types() {
-            if store.is_aggregate(*t) && store.size_bytes(*t) > 8 {
-                hit = Some((*t, store.size_bytes(*t), store.alignment(*t)));
-                break;
-            }
+        let hit = func
+            .return_types()
+            .into_iter()
+            .find(|t| store.is_aggregate(*t) && store.size_bytes(*t) > 8);
+        match hit {
+            Some(ty) if agg_ret_is_sret(machine, conv, &store, ty)? => Some(ty),
+            _ => None,
         }
-    }
-    let Some((_ty, size, align)) = hit else {
+    };
+    let Some(_ty) = sret_ty else {
         return Ok(None);
     };
-    if !agg_ret_is_sret(machine, conv, size, align)? {
-        return Ok(None);
-    }
     // **不写 `sret` 属性**（与 A1′ 的 by-ref 形参同一条规律）：引擎对带 sret/byval 的落点
     // 给 `Indirect`，而生成物 `move_args` 的 `Indirect` 收参是"从指针 **load** 出值"
     // （值为寄存器语义）——那样形参拿到的是**缓冲里的内容**而不是缓冲地址。
@@ -698,7 +690,7 @@ fn expand_large_agg_call_results(
                 && store.size_bytes(rt) > 8
             {
                 let size = store.size_bytes(rt) as usize;
-                let sret = agg_ret_is_sret(machine, conv, size as u32, store.alignment(rt))?;
+                let sret = agg_ret_is_sret(machine, conv, &store, rt)?;
                 if !sret && size > 16 {
                     return Err(IrError::Unsupported(format!(
                         "聚合返回 {size} 字节：这份约定既不是 sret 也不是寄存器档：type {rt:?}"
@@ -819,13 +811,13 @@ fn expand_agg_call_args(
         //  - `StackByVal`（sysv64）：同样建副本 + 传指针，但**写 `byval(聚合类型)` 属性**
         //    ⇒ 调用点形状按**聚合**算 ⇒ 落点 `StackByVal`，发射侧从指针逐段拷进传出区；
         //  - `Registers`：现有拆段路径。
-        let (place, _) = agg_arg_place(machine, conv, size as u32, store.alignment(ty))?;
-        let by_ref = matches!(place, AggArgPlace::ByRef);
+        let (place, _) = agg_arg_place(machine, conv, &store, ty)?;
+        let by_ref = matches!(place, AggArgLoc::ByRef);
         // **按值整块进传出区**（sysv64）：与 by-ref 一样先在调用方本地建副本、传指针；
         // 区别是**写 `byval(聚合类型)` 属性**——调用点形状据此按**聚合**算（⇒ 落点
         // `StackByVal`），发射侧再从该指针逐 8 字节拷进传出区（`arg_bytes_*` 三角色）。
         // 被调方一侧的地址口径已由 lowering 的"正立即数 = ABI 相对"钉住。
-        let stack_by_val = matches!(place, AggArgPlace::StackByVal { .. });
+        let stack_by_val = matches!(place, AggArgLoc::StackByVal { .. });
         if !by_ref && !stack_by_val && size > 16 {
             return Err(IrError::Unsupported(format!(
                 "聚合实参 {size} 字节：约定落点既不是寄存器档也不是按引用档（type {ty:?}）"
@@ -1779,23 +1771,25 @@ fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
     Ok(())
 }
 
-/// Function compiler — drives the full IR → machine code pipeline.
-pub struct FunctionCompiler<M: TargetMachine> {
+/// **编译会话**——IR → 机器码的唯一编译实现（单函数与整模块两条入口都走它）。
+///
+/// 单函数：`new`/`for_module` → `compile`（或 `compile_with_alloc`）。
+/// 整模块：`for_module` → `compile_module`（见 `pipeline/session.rs` 的 `CompiledModule`）。
+pub struct CompileSession<M: TargetMachine> {
     machine: M,
     reg_alloc: BacktrackingAllocator,
-    /// IR 级优化级别（None = 不优化，直接编译——与历史 compile_raw 行为
-    /// 一致）。Some(level) 时 `compile()`/`compile_with_alloc()` 先对函数
-    /// 克隆体跑对应 PassManager 管线再 lower。P0-1：把 forge-opt 优化
-    /// 管线接入生产编译（此前 PassManager 是死代码，全部 pass 缺陷潜伏）。
+    /// IR 级优化级别（None = 不优化，直接编译）。Some(level) 时
+    /// `compile()`/`compile_with_alloc()` 先对函数克隆体跑对应 PassManager 管线再 lower。
+    /// P0-1：把 forge-opt 优化管线接入生产编译（此前 PassManager 是死代码）。
     opt_level: Option<forge_opt::OptimizationLevel>,
-    /// **模块级签名表**（变参 D6）：`FuncRef::index()` → `(是否变参, 命名实参个数)`。
+    /// **模块级签名表**（变参 D6）：`FuncRef::index()` → 签名事实。
     ///
-    /// 编译**整个模块**的入口（JIT）填它（[`Self::with_module_sigs`]）；单函数编译为
-    /// `None` ⇒ 调用点按非变参处理（旧行为）。
-    module_sigs: Option<Vec<(bool, u32)>>,
+    /// 编译**整个模块**的入口（或装过表的单函数入口）填它（[`Self::with_module_sigs`]）；
+    /// 没装 ⇒ 调用点按非变参处理。
+    module_sigs: Option<std::sync::Arc<forge_ir::ModuleSigs>>,
 }
 
-impl<M: TargetMachine> FunctionCompiler<M> {
+impl<M: TargetMachine> CompileSession<M> {
     /// Create a new compiler with the default register allocator (backtracking).
     pub fn new(machine: M) -> Self {
         // 宿主级**一次**注册（幂等）：管线工厂 + **调用点布局钩子**（v20 A5-3）。
@@ -1810,28 +1804,28 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         }
     }
 
-    /// 装上**模块级签名表**（变参 D6）：`FuncRef::index()` → `(是否变参, 命名实参个数)`。
+    /// 宿主机器（整模块编排要用它的克隆；会话自己持有它，不再外借）。
+    pub(crate) fn machine(&self) -> &M {
+        &self.machine
+    }
+
+    /// 装上**模块级签名表**（变参 D6）。
     ///
-    /// 只有编译**整个模块**的入口（JIT）有这份表；单函数入口不装 ⇒ 调用点按非变参处理。
-    /// 表由 IR 模块自己给出（[`forge_ir::Module::signature_table`]）——`JitCompiler::compile_module`
-    /// 就取它，别在宿主侧另抄一份。
-    pub fn with_module_sigs(mut self, sigs: Vec<(bool, u32)>) -> Self {
-        self.module_sigs = Some(sigs);
+    /// 表由 IR 模块自己给出（[`forge_ir::Module::signature_table`]）——别在宿主侧另抄一份。
+    pub fn with_module_sigs(mut self, sigs: forge_ir::ModuleSigs) -> Self {
+        self.module_sigs = Some(std::sync::Arc::new(sigs));
         self
     }
 
     /// **编译"住在某个模块里的函数"**——从模块自己取签名表装上（变参 D6）。
     ///
-    /// 这是宿主侧的**默认写法**：只要函数住在某个模块里，就把模块一起传进来，
-    /// 别让调用点去猜被调方是不是变参。逐函数编译整个模块的宿主按本函数构造即可
-    /// （[`JitCompiler::compile_module`](crate::jit::JitCompiler::compile_module) 就是这么做的）；
-    /// 表按次重建（O(函数数)），模块极大又自己循环编译时可改用
-    /// [`Self::with_module_sigs`] 传一份共享表。
+    /// 宿主侧的默认写法：只要函数住在某个模块里，就把模块一起传进来，
+    /// 别让调用点去猜被调方是不是变参（[`Self::compile_module`] 就是这么做的）。
     pub fn for_module(machine: M, module: &forge_ir::Module) -> Self {
         Self::new(machine).with_module_sigs(module.signature_table())
     }
 
-    /// 启用 IR 级优化（compile/compile_with_alloc 前跑对应 O 级别管线）。
+    /// 启用 IR 级优化（`compile`/`compile_with_alloc` 前跑对应 O 级别管线）。
     pub fn with_opt_level(mut self, level: forge_opt::OptimizationLevel) -> Self {
         self.opt_level = Some(level);
         self
@@ -1842,8 +1836,7 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         self.opt_level
     }
 
-    /// Compile an IR function (full pipeline，含 IR 级优化若已启用
-    /// `with_opt_level`)。无优化时与 compile_raw 等价。
+    /// Compile an IR function (full pipeline，含 IR 级优化若已启用 `with_opt_level`)。
     pub fn compile(&self, func: &Function) -> Result<CompiledFunction, IrError> {
         self.compile_with_alloc(func).map(|(cf, _)| cf)
     }
@@ -1883,13 +1876,6 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         Ok(())
     }
 
-    /// Compile an IR function (raw, no IR-level optimization passes)。
-    /// 显式绕过优化管线（即使设置了 opt_level）。
-    /// 公共 API 面：只返回编译产物；分配明细经 [`Self::compile_with_alloc`]。
-    pub fn compile_raw(&self, func: &Function) -> Result<CompiledFunction, IrError> {
-        self.compile_with_alloc(func).map(|(cf, _)| cf)
-    }
-
     /// Compile an IR function，额外返回寄存器分配明细（AllocResult：
     /// XReg → PReg assignments、spill_slots 等），供集成测试/工具断言
     /// 分配器行为（ABI 参数分配、clobber 写死保护等）。
@@ -1899,8 +1885,8 @@ impl<M: TargetMachine> FunctionCompiler<M> {
     ) -> Result<(CompiledFunction, crate::AllocResult), IrError> {
         // P0-1：IR 级优化管线接入——若启用，克隆函数跑对应 O 级别管线，
         // 用优化后的克隆体继续编译（原 func 不被修改；PassManager 需要
-        // &mut Function）。此前 compile()→compile_raw() 直接编译，forge-opt
-        // 的全部 pass 在生产路径是死代码。未启用时不克隆（零开销）。
+        // &mut Function）。未启用时不克隆（零开销）。
+        // 注：**没有**"绕过优化"的旁路入口——要优化就 `with_opt_level`，不要就默认。
         let mut owned: Function;
         let func: &Function = if let Some(level) = self.opt_level {
             owned = func.clone();
@@ -1937,11 +1923,14 @@ impl<M: TargetMachine> FunctionCompiler<M> {
             .copied();
         if let Some(ty) = wide {
             let bytes = types.size_bytes(ty);
-            // S4：V512（64 字节）需 AVX-512F（EVEX 编码前提）——无则拒绝，
-            // 防 EVEX 指令在非 AVX-512 机器非法指令崩溃。
-            if bytes > 32 && !crate::avx512_available() {
+            // S4：超过 16 字节的定宽向量要**本机能编能跑**才放行（V512 = EVEX 前提）——
+            // 判据来自 ISA 后端（`TargetRegInfo::wide_vector_bytes` = 谱申报档位 ∩ 宿主上界），
+            // 通用管线**不认识** `avx512` 这类能力名（v23 M3）。
+            let wide_caps = self.machine.reg_info().wide_vector_bytes();
+            if bytes > 16 && !wide_caps.contains(&(bytes as u16)) {
                 return Err(IrError::Unsupported(format!(
-                    "SIMD 参数/返回 {bytes} 字节需 AVX-512F（当前机器不支持；type {ty:?}）"
+                    "SIMD 参数/返回 {bytes} 字节宽向量：本 ISA/宿主的宽向量档位是 {wide_caps:?}\
+                     （type {ty:?}）"
                 )));
             }
             match by_ref_limit {
@@ -1972,6 +1961,7 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         // 旧行为：>16B 向量 Load/Store 一律拒绝（ISA 缺宽槽类 → 曾落到默认
         // 8 字节 MOV 静默截断）；现由 isa/x86.toml 的 rd_vec/rs1_vec
         // = 32/64 规则 + 本条硬件门共同把住。
+        let wide_caps = self.machine.reg_info().wide_vector_bytes();
         for (_, inst) in func.dfg.insts() {
             let tys: Vec<TypeId> = inst
                 .results
@@ -1987,10 +1977,10 @@ impl<M: TargetMachine> FunctionCompiler<M> {
                 if bytes <= 16 {
                     continue;
                 }
-                if bytes > 32 && !crate::avx512_available() {
+                if bytes > 16 && !wide_caps.contains(&(bytes as u16)) {
                     return Err(IrError::Unsupported(format!(
-                        "IR 层 {bytes} 字节向量（V512/EVEX）需 AVX-512F（当前机器不支持；\
-                         type {ty:?}）"
+                        "IR 层 {bytes} 字节宽向量：本 ISA/宿主的宽向量档位是 {wide_caps:?}\
+                         （type {ty:?}）"
                     )));
                 }
                 if bytes != 32 && bytes != 64 {
@@ -2024,7 +2014,7 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         // 可变的 IR 副本：聚合 store/参数展开（agg_expand）需要 &mut Function。
         // 展开后读取 func_ref（Stage 4+ 全部只读原函数；S6 的树型 树型匹配
         // 匹配发生在 lowering 驱动内逐块预扫，不需要在编译期克隆整个 Function）。
-        let needs_agg_expand = crate::pipeline::agg_expand::has_any_agg(func);
+        let needs_agg_expand = crate::pipeline::agg_expand::needs_agg_expand(func);
         let mut func_owned: Option<Function> = needs_agg_expand.then(|| func.clone());
 
         // **变参 IR 展开**（v20 变参 V3/V6）：`VaStart`/`VaArg` 在这里展开成显式 IR——按 plan 的
@@ -2041,7 +2031,7 @@ impl<M: TargetMachine> FunctionCompiler<M> {
             match crate::pipeline::va_expand::va_info_for_expansion(
                 &self.machine,
                 func,
-                self.module_sigs.as_deref(),
+                self.module_sigs.clone(),
             )? {
                 Some((va, layout)) => {
                     let fl = crate::pipeline::frame_layout::frame_layout_info(
@@ -2083,6 +2073,7 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         // 执行：CompileState 克隆 func 的常量池，若先建 state 再展开，新常量
         // 只进 func_owned 副本的池，lowering 读 state 里旧池（idx 错位 → 0）。
         if let Some(f) = func_owned.as_mut() {
+            let before = crate::pipeline::agg_expand::IrSize::of(f);
             expand_agg_stores(f)?;
             // call 结果拆 2 先于参数拆段：%q = call {i64,i64} 传给后续 call 时
             // 参数已是段值（i64），expand_agg_call_args 的 load 追踪不会误判
@@ -2100,6 +2091,23 @@ impl<M: TargetMachine> FunctionCompiler<M> {
             expand_large_agg_ret(f, &mut agg_slots, sret_ptr)?;
             expand_large_aggs(f, &mut agg_slots)?;
             expand_geps(f)?;
+            // **展开自报改动了什么**（v23 M3）：`ChangeSet` 取代了原来"先按 7 个
+            // `has_*` 预判、再决定跑不跑"的做法——预判漏一类模式就是**静默少跑一个 pass**
+            // （历史事故：大聚合返回展开不到 ⇒ 5 vs 6 错值）。现在 pass 无条件跑，
+            // 改动量由 IR 规模差给出，`FORGE_TRACE_AGG` 可见、下方断言可查。
+            let changes =
+                crate::pipeline::agg_expand::IrSize::of(f).delta_to(before, sret_ptr.is_some());
+            if crate::pipeline::trace_enabled("FORGE_TRACE_AGG") {
+                eprintln!(
+                    "[forge] 聚合展开 {}：共 {} 项（+{} 指令 / +{} 值 / +{} 常量 / sret={}）",
+                    f.name,
+                    changes.total(),
+                    changes.new_insts,
+                    changes.new_values,
+                    changes.new_consts,
+                    changes.sret
+                );
+            }
             // 聚合展开是**就地改写 IR**（墓碑化/改 Copy/重写操作数）——debug 构建下
             // 立刻校验 **use-def 一致性**（2026-09-14 S6：这些站点此前只改字段、
             // 不更新 use-lists，留下陈旧 use 项）。
@@ -2123,12 +2131,8 @@ impl<M: TargetMachine> FunctionCompiler<M> {
         // Stage 4+ 读取的 Function：有改写（pattern/聚合展开）时用副本。
         let func_ref: &Function = func_owned.as_ref().unwrap_or(func);
 
-        let mut state = CompileState::new(
-            &self.machine,
-            func_ref,
-            self.module_sigs.as_deref(),
-            abi_slots,
-        )?;
+        let mut state =
+            CompileState::new(&self.machine, func_ref, self.module_sigs.clone(), abi_slots)?;
         let _t = std::time::Instant::now();
 
         // Stage 1: Block mapping
@@ -2169,10 +2173,6 @@ impl<M: TargetMachine> FunctionCompiler<M> {
             }
         }
 
-        // Stage 5: Peephole optimization
-        if let Some(peep) = self.machine.peephole() {
-            state.run_peephole(peep.as_ref());
-        }
         let _t4 = _t.elapsed();
         let _t = std::time::Instant::now();
 
@@ -2256,7 +2256,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
     fn new<M: TargetMachine>(
         machine: &M,
         func: &Function,
-        module_sigs: Option<&[(bool, u32)]>,
+        module_sigs: Option<std::sync::Arc<forge_ir::ModuleSigs>>,
         abi_slots: Option<crate::pipeline::va_expand::AbiSlots>,
     ) -> Result<Self, IrError> {
         // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
@@ -2405,11 +2405,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
             Some(cl) => {
                 let mut gpr = Vec::new();
                 let mut fpr = Vec::new();
-                for &(c, i) in &cl.callee_saved {
-                    if c == ri.default_fpr_class() {
-                        fpr.push(i);
+                for r in &cl.callee_saved.regs {
+                    if r.class == ri.default_fpr_class() {
+                        fpr.push(r.slot);
                     } else {
-                        gpr.push(i);
+                        gpr.push(r.slot);
                     }
                 }
                 (gpr, fpr)
@@ -2448,29 +2448,17 @@ impl<I: MachineInst + 'static> CompileState<I> {
                     cl.args
                         .iter()
                         .filter(|a| {
-                            matches!(
-                                a.place,
-                                forge_isa_runtime::machine::call_layout::ArgPlace::Reg { .. }
-                                    | forge_isa_runtime::machine::call_layout::ArgPlace::Indirect {
-                                        reg: Some(_),
-                                        ..
-                                    }
-                            )
+                            // 受支持的落点 = 单寄存器 / 带指针的间接（v23 M2：走访问器，
+                            // 不再穷举运行时镜像的枚举）。
+                            a.place.as_reg().is_some() || a.place.indirect_ptr().is_some()
                         })
                         .count()
                 })
                 .unwrap_or(0),
         };
 
-        let ctx = crate::pipeline::alloc_config::AllocContext {};
-
-        let alloc_result = allocator.allocate(
-            &self.vcode,
-            &reg_info,
-            &ctx,
-            &self.xreg_map,
-            &self.inst_clobbers,
-        )?;
+        let alloc_result =
+            allocator.allocate(&self.vcode, &reg_info, &self.xreg_map, &self.inst_clobbers)?;
 
         // S2：sret 隐藏参数标记（move_args 收参跳过首 int 槽）——
         // 由 CompileState::new 的 LowerCtx.is_sret_return 预计算。
@@ -2559,6 +2547,41 @@ mod alloc_integration_tests {
         FunctionSignature::new(&params.iter().map(|t| (*t, "")).collect::<Vec<_>>(), &[ret])
     }
 
+    /// **C1 守卫**：聚合落点探针必须带**成员形状**（`TyView::from_ir_type`），否则
+    /// AAPCS64/LP64D 的 HFA 会被当成"普通聚合"分流成 by-ref，而被调方按浮点寄存器收参
+    /// ⇒ 静默错值（v23 M2 修复）。
+    ///
+    /// 判据用**同尺寸、不同成员**的一对类型对照——这是唯一能证明"成员真的进了探针"的
+    /// 方式（只比 size 的实现对两者给同一答案）：
+    ///
+    /// - `{f64,f64,f64}`（24 B）是 HFA（aapcs64 `hfa_max = 4`）⇒ 浮点寄存器档；
+    /// - `{i64,i64,i64}`（24 B）不是 HFA、且 > 16 B ⇒ 按引用（内存）档。
+    #[test]
+    fn aggregate_place_probe_carries_member_shapes() {
+        crate::pipeline_hooks::ensure_registered();
+        let tm = crate::arch::arm64::TargetMachine::new();
+        let mut store = TypeStore::new();
+        let f64ty = store.float_ty(64);
+        let i64ty = store.int_ty(64);
+        let hfa = store.struct_anon(vec![f64ty, f64ty, f64ty], false);
+        let plain = store.struct_anon(vec![i64ty, i64ty, i64ty], false);
+        assert_eq!(store.size_bytes(hfa), 24);
+        assert_eq!(store.size_bytes(plain), 24);
+
+        let (hfa_place, _) = agg_arg_place(&tm, "aapcs64", &store, hfa).expect("HFA 探针");
+        assert_eq!(
+            hfa_place,
+            AggArgLoc::Registers,
+            "aapcs64 的 24 字节 HFA 必须走寄存器档（探针丢了成员就会错判成 by-ref）"
+        );
+        let (plain_place, _) = agg_arg_place(&tm, "aapcs64", &store, plain).expect("普通聚合探针");
+        assert_eq!(
+            plain_place,
+            AggArgLoc::ByRef,
+            "同尺寸但非 HFA 的聚合按引用（内存）——两者答案必须不同，才说明形状带了成员"
+        );
+    }
+
     /// Phase 4.2：builder 构造 IR 走完整管线，断言 AllocResult.assignments 非空且合法。
     #[test]
     fn test_alloc_result_assignments() {
@@ -2575,7 +2598,7 @@ mod alloc_integration_tests {
         b.ret(&[s]);
         let func = b.finish().expect("build");
         let machine = x86::TargetMachine::new();
-        let (cf, alloc) = FunctionCompiler::new(machine)
+        let (cf, alloc) = CompileSession::new(machine)
             .compile_with_alloc(&func)
             .expect("compile_with_alloc");
         assert!(!cf.code.is_empty(), "编译产物非空");
@@ -2615,7 +2638,7 @@ mod alloc_integration_tests {
         b.ret(&[s2]);
         let func = b.finish().expect("build");
         let machine = x86::TargetMachine::new();
-        let (_cf, alloc) = FunctionCompiler::new(machine)
+        let (_cf, alloc) = CompileSession::new(machine)
             .compile_with_alloc(&func)
             .expect("compile_with_alloc");
         // 参数 XReg（入口收参）由分配器自由分配（非 precolor arg_regs）：
@@ -2668,7 +2691,7 @@ mod alloc_integration_tests {
         b.ret(&[acc]);
         let func = b.finish().expect("build");
         let machine = x86::TargetMachine::new();
-        let (cf, alloc) = FunctionCompiler::new(machine)
+        let (cf, alloc) = CompileSession::new(machine)
             .compile_with_alloc(&func)
             .expect("div + clobber 压力下编译必须成功（无 RegAlloc 错误）");
         assert!(!cf.code.is_empty(), "编译产物非空");
@@ -2704,11 +2727,11 @@ mod alloc_integration_tests {
 
         let machine = x86::TargetMachine::new();
         // 无优化编译（对照）
-        let (cf0, _) = FunctionCompiler::new(machine.clone())
+        let (cf0, _) = CompileSession::new(machine.clone())
             .compile_with_alloc(&func)
             .expect("compile 无优化");
         // O1 优化编译（常量折叠 21*2 → 42）
-        let (cf1, _) = FunctionCompiler::new(machine.clone())
+        let (cf1, _) = CompileSession::new(machine.clone())
             .with_opt_level(forge_opt::OptimizationLevel::O1)
             .compile_with_alloc(&func)
             .expect("compile 带 O1");
@@ -2752,7 +2775,7 @@ mod alloc_integration_tests {
         let int = b.fptosi(wide, TypeId::I32);
         b.ret(&[int]);
         let func = b.finish().expect("build v512 callee");
-        let cf = FunctionCompiler::new(x86::TargetMachine::new())
+        let cf = CompileSession::new(x86::TargetMachine::new())
             .compile(&func)
             .expect("compile v512 callee（FORGE_ASSUME_AVX512 下应通过守卫）");
         // EVEX 前缀（62）+ EVEX 编码的 0F 10 家族；32B 变体是 3 字节 VEX
@@ -2819,7 +2842,7 @@ mod alloc_integration_tests {
         let int = b.fptosi(wide, TypeId::I32);
         b.ret(&[int]);
         let func = b.finish().expect("build v512 vconst");
-        let cf = FunctionCompiler::new(x86::TargetMachine::new())
+        let cf = CompileSession::new(x86::TargetMachine::new())
             .compile(&func)
             .expect("V512 常量应可降级（修复前：Vconst no matching rule）");
         // EVEX = 62 + P0 P1 P2 + opcode：窗口 [62, P0, P1, P2, opcode, modrm, imm]。
@@ -2858,7 +2881,7 @@ mod alloc_integration_tests {
         let int = b.fptosi(wide, TypeId::I32);
         b.ret(&[int]);
         let func = b.finish().expect("build wide vector slot roundtrip");
-        FunctionCompiler::new(x86::TargetMachine::new()).compile(&func)
+        CompileSession::new(x86::TargetMachine::new()).compile(&func)
     }
 
     /// W3（2026-09-12）：V256（32B）向量的 **IR 层 Load/Store 已可降级**——
@@ -2923,8 +2946,8 @@ mod alloc_integration_tests {
             };
             let msg = format!("{err}");
             assert!(
-                msg.contains("64 字节向量") && msg.contains("AVX-512F"),
-                "64B：错误信息应说明字节数与 AVX-512F 前提：{msg}"
+                msg.contains("64 字节宽向量") && msg.contains("宽向量档位"),
+                "64B：错误信息应说明字节数与「本机宽向量档位」这一判据：{msg}"
             );
         }
         let _assume = AssumeAvx512::set();

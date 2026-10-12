@@ -16,7 +16,7 @@
 mod common;
 
 use common::demo8::TargetMachine;
-use forge_codegen::FunctionCompiler;
+use forge_codegen::CompileSession;
 use forge_ir::TypeId;
 use forge_ir::ir::builder::FunctionBuilder;
 use forge_ir::ir::function::Function;
@@ -45,10 +45,10 @@ fn compile_counts(extra: usize) -> (usize, usize) {
     let func = build(&ctx, extra);
     // v20 A5-3：夹具谱没有约定数据，先注册**测试本地约定**（否则走无 plan 回退）。
     common::ensure_demo_conventions();
-    let compiler = FunctionCompiler::new(TargetMachine::new());
+    let compiler = CompileSession::new(TargetMachine::new());
     ctx.debug_reset_read_count();
     ctx.debug_reset_cow_clone_count();
-    let cf = compiler.compile_raw(&func).expect("编译应成功");
+    let cf = compiler.compile(&func).expect("编译应成功");
     assert!(!cf.code.is_empty(), "生成代码非空");
     (ctx.debug_read_count(), ctx.debug_cow_clone_count())
 }

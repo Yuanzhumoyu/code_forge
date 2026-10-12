@@ -3756,12 +3756,10 @@ impl Template {
     pub fn expand(&self, index: usize) -> Result<Vec<Instruction>, String> {
         let label = self.label(index);
         // v21 W5：族降级来的载体锚到源里真实存在的 `[family.<名>]` 节（否则
-        // `push_anchored` 找不到节、诊断行号退化成 1）。
-        let path = if self.from_family {
-            format!("[family.{label}]")
-        } else {
-            format!("[family.{label}]")
-        };
+        // `push_anchored` 找不到节、诊断行号退化成 1）。两种来源（族降级 / 直接
+        // 声明）锚的是**同一个** `[family.<名>]` 节——v21 把族节名统一之后这里不再
+        // 有分支（曾是 `[templates.<名>]` 对 `[family.<名>]`）。
+        let path = format!("[family.{label}]");
         if self.rows.is_empty() {
             return Err(format!("{path}: rows 不能为空（至少要一行）"));
         }

@@ -66,16 +66,6 @@ const ALLOWED: &[(&str, &str, &str)] = &[
     ),
     ("ctx.rs", "addr_class: RegClass::GPR64,", "同上"),
     (
-        "machine/encoder.rs",
-        "let xreg = forge_ir::XReg::new(vreg, forge_ir::RegClass::GPR64);",
-        "`encoded_size` 的 trait 默认实现只造 dummy 映射用于**估尺寸**，类不参与字节数",
-    ),
-    (
-        "machine/encoder.rs",
-        "forge_ir::PReg::new(vreg % 16, forge_ir::RegClass::GPR64),",
-        "同上",
-    ),
-    (
         "machine/lowering.rs",
         "self.xregs.alloc_default(forge_ir::RegClass::GPR64);",
         "InstPacket::append 的占位分配：仅推进 XReg 编号计数器，类被立即丢弃",
@@ -96,16 +86,6 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "RegClass::FPR(64)",
         "TargetRegInfo::value_fpr_class 的 trait 缺省 = 历史 FPR64（f64 值池宽），\
          **不等于** default_fpr_class（后者是 ABI/SSE 占位基准，x86 = FPR(16)）",
-    ),
-    (
-        "alloc_result.rs",
-        "XReg::new(i, RegClass::GPR64),",
-        "dummy_for_sizing：假分配记录（尺寸估算），不是真实分配",
-    ),
-    (
-        "alloc_result.rs",
-        "PReg::new(i % 16, RegClass::GPR64),",
-        "同上",
     ),
     (
         "alloc_result.rs",

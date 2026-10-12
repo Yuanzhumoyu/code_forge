@@ -11,7 +11,7 @@
 
 mod common;
 
-use forge_codegen::FunctionCompiler;
+use forge_codegen::CompileSession;
 use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
 /// 构建 `fn name(a, b) -> ret` 并编译出机器码。参数类型 = 返回类型
@@ -30,8 +30,8 @@ fn compile_binop(
     let func = b.finish().expect("build");
     // v20 A5-3：夹具谱没有约定数据，先注册**测试本地约定**（否则走无 plan 回退）。
     common::ensure_demo_conventions();
-    let compiler = FunctionCompiler::new(common::demo::TargetMachine::new());
-    compiler.compile_raw(&func).expect("compile")
+    let compiler = CompileSession::new(common::demo::TargetMachine::new());
+    compiler.compile(&func).expect("compile")
 }
 
 /// 全字节中查找给定 32 位小端指令字（opcode + 3×3 位寄存器 + 16 位 imm）。
@@ -148,7 +148,7 @@ fn demo_fixture_now_plans_via_the_local_convention() {
     b.ret(&[v]);
     let func = b.finish().expect("build");
 
-    let compiler = FunctionCompiler::new(common::demo::TargetMachine::new());
+    let compiler = CompileSession::new(common::demo::TargetMachine::new());
     let (_cf, alloc) = compiler.compile_with_alloc(&func).expect("compile");
     let cl = alloc.call_layout.expect("注册了测试本地约定 ⇒ 必须有 plan");
     assert_eq!(cl.conv, "demo");

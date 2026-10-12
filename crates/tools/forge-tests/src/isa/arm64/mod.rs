@@ -6,7 +6,7 @@
 //! 且按有符号字节符号扩展 → 期望值超出 [-128,127] 的用例 Skip
 //! （"value-range"）。QEMU 缺失时矩阵全 Skip（arm64 产物不可本机执行）。
 //!
-//! ⚠️ 矩阵执行强约束（P2/P3 边界）：FunctionCompiler 帧/尾声/值传递支持
+//! ⚠️ 矩阵执行强约束（P2/P3 边界）：CompileSession 帧/尾声/值传递支持
 //! 单/多 return block（P3② epilogue_label）+ 跨块分支；无 call、帧 ≤256B
 //! （LDUR/STUR imm9）、无 Icmp（Block 用例依赖比较 → 相关用例 Skip 待
 //! Icmp lowering 转正）——任何用例触发缺口会得显式 Fail/报错（不被静默

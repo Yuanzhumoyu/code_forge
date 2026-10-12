@@ -637,8 +637,12 @@ impl forge_abi::AbiTarget for PocTarget {
     fn reg_name(&self, index: u32) -> Option<String> {
         Some(format!("R{index}"))
     }
-    fn reg_class_name(&self, _index: u32) -> String {
-        "GPR(8)".into()
+    /// 测试替身：单一整数类（8 字节），类内号 = 物理号。
+    fn reg_class(&self, _index: u32) -> forge_ir::RegClass {
+        forge_ir::RegClass::GPR(8)
+    }
+    fn reg_slot(&self, index: u32) -> u32 {
+        index
     }
     fn reg_index(&self, name: &str) -> Option<u32> {
         name.strip_prefix('R')?.parse().ok()

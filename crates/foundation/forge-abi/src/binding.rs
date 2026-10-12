@@ -99,7 +99,8 @@ impl AbiBinding {
             }
             out.push(RegRef::new(
                 index,
-                target.reg_class_name(index),
+                target.reg_slot(index),
+                target.reg_class(index),
                 target
                     .reg_name(index)
                     .unwrap_or_else(|| format!("p{index}")),

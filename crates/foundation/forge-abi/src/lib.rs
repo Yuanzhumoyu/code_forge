@@ -49,20 +49,22 @@ pub mod binding;
 pub mod builtin;
 pub mod engine;
 pub mod error;
-pub mod plan;
 pub mod registry;
 pub mod rules;
-pub mod ty;
+
+// v23 M2：**产物与视图**统一收在 leaf crate `forge-abi-model`（运行时/生成物也依赖它，
+// 因此不再有手抄镜像）。这里把模块路径与扁平名一并再导出——`forge_abi::plan::RegRef`、
+// `forge_abi::AbiPlan`、`forge_abi::TyView` 全部照旧可用。
+pub use forge_abi_model::{plan, rules_pod, ty};
 
 pub use binding::{AbiBinding, RegSelector};
 pub use engine::{AbiTarget, Capability, ClassDir, Signature, plan_fn};
 pub use error::AbiError;
-pub use plan::{
-    AbiPlan, ArgLoc, CalleeSaveMechanism, CalleeSavedPlan, DeclAttrs, Extension, HiddenSlots,
-    Placement, Purpose, RetLoc, StackLayout, VaArea,
+pub use forge_abi_model::{
+    AbiPlan, ArgLoc, CalleePop, CalleeSaveMechanism, CalleeSavedPlan, DeclAttrs, Extension,
+    HiddenSlots, Placement, PositionRule, Purpose, RegRef, RetLoc, StackLayout, VaArea, VaArgRule,
+    VaArgRules, VaField, VaSaveArea, VaSaveSlot,
 };
+pub use forge_abi_model::{Elem, TyKind, TyView};
 pub use registry::{AbiHooks, AbiRegistry};
-pub use rules::{
-    AbiRules, CalleePop, ClassAction, ClassRule, IndirectVia, PositionRule, SlotsSpec,
-};
-pub use ty::{Elem, TyKind, TyView};
+pub use rules::{AbiRules, ClassAction, ClassRule, IndirectVia, SlotsSpec};

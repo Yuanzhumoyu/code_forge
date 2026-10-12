@@ -12,3 +12,5 @@ path = "src/main.rs"
 forge-isa-dsl = { path = "../../frontend/forge-isa-dsl" }
 # `abi` 子命令（v20 A1）：约定/绑定的引擎 + 谱的能力视图 → AbiPlan。
 forge-abi = { path = "../../foundation/forge-abi" }
+# v23 M2：`AbiTarget::reg_class` 的返回面是 `forge_ir::RegClass`（谱里的类名串还原成它）。
+forge-ir = { path = "../../foundation/forge-ir" }

@@ -10,7 +10,7 @@
 //! 断言语义保持，作为回归网）。
 
 use code_forge::backend::TargetMachine;
-use code_forge::backend::{CompiledFunction, FunctionCompiler};
+use code_forge::backend::{CompileSession, CompiledFunction};
 use code_forge::mem::ExecutableMemory;
 use code_forge::prelude::*;
 
@@ -21,7 +21,7 @@ pub type BuildBlockFn = fn(&mut FunctionBuilder);
 /// 带参构建：`fn(&mut FunctionBuilder, &[Value]) -> Value`。
 pub type BuildArgsFn = fn(&mut FunctionBuilder, &[Value]) -> Value;
 /// 模块构建：`fn(&mut Module) -> FuncRef`（返回 main 函数引用；约定 main
-/// 名为 "main"，runner 经 JitCompiler::compile_module 编译后取之执行）。
+/// 名为 "main"，runner 经 JitLoader::compile_module 编译后取之执行）。
 pub type BuildModuleFn = fn(&mut Module) -> FuncRef;
 
 /// 用例种类（决定如何执行与断言）。
@@ -257,13 +257,13 @@ pub fn run_all_filtered<M: TargetMachine + Clone>(
 
 // ───────────────────────── 执行原语（机器注入）─────────────────────────
 
-fn compile_raw<M: TargetMachine>(
+fn compile_ir<M: TargetMachine>(
     r: &Runner<M>,
     name: &str,
     func: &Function,
 ) -> Result<CompiledFunction, String> {
-    FunctionCompiler::new((r.machine)())
-        .compile_raw(func)
+    CompileSession::new((r.machine)())
+        .compile(func)
         .map_err(|e| format!("{name}: compile: {e:?}"))
 }
 
@@ -292,7 +292,7 @@ fn run_i32<M: TargetMachine>(r: &Runner<M>, name: &str, build: BuildFn) -> Resul
     let v = build(&mut b);
     b.ret(&[v]);
     let func = b.finish().expect("build");
-    let compiled = compile_raw(r, name, &func)?;
+    let compiled = compile_ir(r, name, &func)?;
     if r.exec.is_some() {
         // 注入执行器（riscv QEMU）：返回值低 32 位
         return Ok(exec_code(r, name, &compiled, &[])? as u32 as i32);
@@ -309,7 +309,7 @@ fn run_i64<M: TargetMachine>(r: &Runner<M>, name: &str, build: BuildFn) -> Resul
     let v = build(&mut b);
     b.ret(&[v]);
     let func = b.finish().expect("build");
-    let compiled = compile_raw(r, name, &func)?;
+    let compiled = compile_ir(r, name, &func)?;
     if r.exec.is_some() {
         return Ok(exec_code(r, name, &compiled, &[])? as i64);
     }
@@ -325,7 +325,7 @@ fn run_f64<M: TargetMachine>(r: &Runner<M>, name: &str, build: BuildFn) -> Resul
     let v = build(&mut b);
     b.ret(&[v]);
     let func = b.finish().expect("build");
-    let compiled = compile_raw(r, name, &func)?;
+    let compiled = compile_ir(r, name, &func)?;
     if r.exec.is_some() {
         // QEMU 整数退出码无法表达 f64 —— 该路径不应在 riscv 使用（能力集门控）
         return Err(format!(
@@ -344,7 +344,7 @@ fn run_bool<M: TargetMachine>(r: &Runner<M>, name: &str, build: BuildFn) -> Resu
     let v = build(&mut b);
     b.ret(&[v]);
     let func = b.finish().expect("build");
-    let compiled = compile_raw(r, name, &func)?;
+    let compiled = compile_ir(r, name, &func)?;
     if r.exec.is_some() {
         return Ok(exec_code(r, name, &compiled, &[])? != 0);
     }
@@ -362,7 +362,7 @@ fn run_block<M: TargetMachine>(
     let mut b = FunctionBuilder::new(name, TypeContext::new(), sig);
     build(&mut b);
     let func = b.finish().expect("build");
-    let compiled = compile_raw(r, name, &func)?;
+    let compiled = compile_ir(r, name, &func)?;
     if r.exec.is_some() {
         return Ok(exec_code(r, name, &compiled, &[])? as u32 as i32);
     }
@@ -386,7 +386,7 @@ fn run_args_i64<M: TargetMachine>(
     let v = build(&mut b, &p);
     b.ret(&[v]);
     let func = b.finish().expect("build");
-    let compiled = compile_raw(r, name, &func)?;
+    let compiled = compile_ir(r, name, &func)?;
     if r.exec.is_some() {
         let a: Vec<u64> = args.to_vec();
         return Ok(exec_code(r, name, &compiled, &a)? as i64);
@@ -432,7 +432,7 @@ fn run_args_f64<M: TargetMachine>(
     let v = build(&mut b, &p);
     b.ret(&[v]);
     let func = b.finish().expect("build");
-    let compiled = compile_raw(r, name, &func)?;
+    let compiled = compile_ir(r, name, &func)?;
     if let Some(ex) = &r.exec {
         // 注入执行器（QEMU）：浮点参数按 ABI 进浮点参数寄存器，由执行器负责装载
         // （riscv LP64D = fa0..fa3，见 `Executor::exec_f64_args`）。执行器没实现
@@ -474,7 +474,7 @@ fn compile_only<M: TargetMachine>(r: &Runner<M>, name: &str, build: BuildFn) -> 
     let v = build(&mut b);
     b.ret(&[v]);
     let func = b.finish().expect("build");
-    compile_raw(r, name, &func)?;
+    compile_ir(r, name, &func)?;
     Ok(())
 }
 
@@ -493,8 +493,8 @@ fn run_module<M: TargetMachine + Clone>(
             .map(|i| {
                 let fr = FuncRef::new(i as u32);
                 let func = module.get_function(fr);
-                let compiled = FunctionCompiler::for_module((r.machine)(), &module)
-                    .compile_raw(func)
+                let compiled = CompileSession::for_module((r.machine)(), &module)
+                    .compile(func)
                     .map_err(|e| format!("{name}: compile fn{}: {e:?}", i))?;
                 Ok((func.name.as_str().to_string(), compiled))
             })
@@ -513,7 +513,7 @@ fn run_module<M: TargetMachine + Clone>(
         let main_name = module.get_function(main_ref).name.as_str().to_string();
         return Ok(ex.exec_module(&funcs, &globals, &main_name, &[]) as i64);
     }
-    let mut jit = code_forge::jit::JitCompiler::new((r.machine)());
+    let mut jit = code_forge::jit::JitLoader::new((r.machine)());
     jit.compile_module(&module)
         .map_err(|e| format!("{name}: module compile: {e:?}"))?;
     let main_name = module.get_function(main_ref).name.clone();
@@ -3364,7 +3364,7 @@ pub const CASES: &[Case] = &[
     // ① 只有整数：**x86 真跑**；riscv 因"调用方写栈实参"的能力缺口而 Skip（见下）。
     //    被调方：`va_start` 物化 `va_list` 对象 → 两次 `va_arg(i64)`。
     //    调用方（非变参 `main`）多传两个实参 ⇒ 未命名实参按被调方语义进传出区
-    //    （靠**模块级签名表**：这正是 `JitCompiler::compile_module` 必须装表的那条路径）。
+    //    （靠**模块级签名表**：这正是 `JitLoader::compile_module` 必须装表的那条路径）。
     //
     //    （调用方写传出区要 `stack_arg_store`：x86 是 Reg+Mem 形状、riscv 是 S 形式——生成器
     //     两种形状都支持，见 `pipeline`/`move_args` 的 `StackMemShape`。）

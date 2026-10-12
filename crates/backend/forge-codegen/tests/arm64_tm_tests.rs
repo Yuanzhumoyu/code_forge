@@ -14,7 +14,7 @@
 //! 完整控制流（跨块分支/多 return）真执行验证见 forge-tests
 //! qemu_aarch64_exec_multi_block_if_else。
 
-use forge_codegen::FunctionCompiler;
+use forge_codegen::CompileSession;
 use forge_ir::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
 /// 编译 `fn name(a, b) -> i64` 为 A64 机器码。
@@ -29,8 +29,8 @@ fn compile_binop(
     let v = build(&mut b, &params);
     b.ret(&[v]);
     let func = b.finish().expect("build");
-    let compiler = FunctionCompiler::new(forge_codegen::arm64::TargetMachine::new());
-    compiler.compile_raw(&func).expect("compile")
+    let compiler = CompileSession::new(forge_codegen::arm64::TargetMachine::new());
+    compiler.compile(&func).expect("compile")
 }
 
 /// 编译无参常量函数 `fn name() -> i64`。
@@ -41,8 +41,8 @@ fn compile_const(name: &str, v: i64) -> forge_codegen::CompiledFunction {
     let c = b.iconst_i64(v);
     b.ret(&[c]);
     let func = b.finish().expect("build");
-    let compiler = FunctionCompiler::new(forge_codegen::arm64::TargetMachine::new());
-    compiler.compile_raw(&func).expect("compile")
+    let compiler = CompileSession::new(forge_codegen::arm64::TargetMachine::new());
+    compiler.compile(&func).expect("compile")
 }
 
 /// 找最后一个 4 字节字 == 给定小端字（尾声 RET 应在函数末尾）。
@@ -120,8 +120,8 @@ fn tm_compile_addw_width_dispatch() {
     let v = b.iadd(params[0], params[1]);
     b.ret(&[v]);
     let func = b.finish().expect("build");
-    let compiler = FunctionCompiler::new(forge_codegen::arm64::TargetMachine::new());
-    let cf = compiler.compile_raw(&func).expect("compile addw");
+    let compiler = CompileSession::new(forge_codegen::arm64::TargetMachine::new());
+    let cf = compiler.compile(&func).expect("compile addw");
     eprintln!("addw code ({} bytes): {:02x?}", cf.code.len(), cf.code);
     assert!(
         has_top8(&cf.code, 0x0B),
@@ -290,8 +290,8 @@ fn tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering() {
     let s = b.iadd(a, c);
     b.ret(&[s]);
     let func = b.finish().expect("build");
-    let compiler = FunctionCompiler::new(forge_codegen::arm64::TargetMachine::new());
-    let err = match compiler.compile_raw(&func) {
+    let compiler = CompileSession::new(forge_codegen::arm64::TargetMachine::new());
+    let err = match compiler.compile(&func) {
         Ok(_) => panic!(
             "arm64 谱还没有变参展开要用的 lowering（StackAddr/Store/Load/Icmp/Select/Sextend）——补齐前必须明确 Unsupported，不许编出错码"
         ),

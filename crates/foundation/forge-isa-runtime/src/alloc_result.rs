@@ -19,7 +19,7 @@ pub struct AllocResult {
     /// 序言/尾声（`TargetFrameLowering::emit_prologue/epilogue`）只拿到本结构体、
     /// 拿不到 `LowerCtx`，所以"保存谁 / 栈区多大 / 参数落在哪"必须挂在这里才能读到。
     /// `None` = 管线没接上（或该 ISA/约定算不出计划）⇒ 走既有 `[abi]` 路径。
-    pub call_layout: Option<crate::machine::call_layout::CallLayout>,
+    pub call_layout: Option<forge_abi_model::AbiPlan>,
     /// XReg → 溢出槽（含偏移和宽度）
     pub spill_slots: HashMap<XReg, SpillSlot>,
     /// 函数参数 XReg 列表（用于 prologue 中从 ABI 寄存器复制参数）
@@ -122,37 +122,6 @@ impl AllocResult {
         self.spill_slots[&vreg]
     }
     // ── 构造方法 ──
-
-    /// 为尺寸估算创建假 AllocResult。
-    /// VReg(0..n) 循环映射到 PReg(0..15, GPR)。
-    pub fn dummy_for_sizing(n: u32) -> Self {
-        let mut assignments = HashMap::new();
-        for i in 0..n {
-            assignments.insert(
-                XReg::new(i, RegClass::GPR64),
-                PReg::new(i % 16, RegClass::GPR64),
-            );
-        }
-        AllocResult {
-            call_layout: None,
-            assignments,
-            spill_slots: HashMap::new(),
-            param_vregs: Vec::new(),
-            param_is_float: Vec::new(),
-            param_by_ref: Vec::new(),
-            sret: false,
-            stack_arg_bytes: 0,
-            va_save_off: None,
-            va_top: 0,
-            param_is_32: Vec::new(),
-            param_bytes: Vec::new(),
-            callee_saved_to_save: Vec::new(),
-            frame_info: FrameInfo {
-                spill_area_size: 0,
-                max_concurrent_spills: 0,
-            },
-        }
-    }
 
     /// 获取 XReg 的寄存器类（从分配信息推断）。
     pub fn vreg_class(&self, vreg: XReg) -> RegClass {
@@ -272,14 +241,6 @@ mod tests {
         assert_eq!(result.vreg_class(xgpr(1)), RegClass::GPR64);
         assert_eq!(result.vreg_class(xfpr(2)), RegClass::FPR64);
         assert_eq!(result.vreg_class(xgpr(99)), RegClass::GPR64); // default
-    }
-
-    #[test]
-    fn test_dummy_for_sizing() {
-        let r = AllocResult::dummy_for_sizing(32);
-        assert_eq!(r.assignments.len(), 32);
-        assert_eq!(r.preg(xgpr(0)), Some(make_preg(0, RegClass::GPR64)));
-        assert_eq!(r.preg(xgpr(16)), Some(make_preg(0, RegClass::GPR64)));
     }
 
     #[test]

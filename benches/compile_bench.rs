@@ -32,7 +32,7 @@
 //! scaled-up input.
 
 use code_forge::backend::x86::{TargetMachine, ensure_registered};
-use code_forge::backend::{CompiledFunction, FunctionCompiler};
+use code_forge::backend::{CompileSession, CompiledFunction};
 use code_forge::ir::*;
 use code_forge::optimize::*;
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
@@ -877,8 +877,8 @@ fn bench_pipeline_breakdown(c: &mut Criterion) {
 // ============================================================
 
 fn compile_fn(func: &Function) -> CompiledFunction {
-    FunctionCompiler::new(TargetMachine::new())
-        .compile_raw(func)
+    CompileSession::new(TargetMachine::new())
+        .compile(func)
         .unwrap()
 }
 
@@ -1008,7 +1008,7 @@ fn build_test_module() -> forge_ir::Module {
 
 /// JIT module compile：两个函数的模块（多函数并行编译路径）。
 fn bench_module_compile(c: &mut Criterion) {
-    // JIT 运行时在 `jit` feature 下才编译（JitCompiler）——关闭时该基准跳过
+    // JIT 运行时在 `jit` feature 下才编译（JitLoader）——关闭时该基准跳过
     #[cfg(feature = "jit")]
     {
         ensure_registered();
@@ -1016,7 +1016,7 @@ fn bench_module_compile(c: &mut Criterion) {
             b.iter_batched(
                 build_test_module,
                 |m| {
-                    let mut jit = code_forge::jit::JitCompiler::new(TargetMachine::new());
+                    let mut jit = code_forge::jit::JitLoader::new(TargetMachine::new());
                     jit.compile_module(&m).unwrap();
                     black_box(jit);
                 },

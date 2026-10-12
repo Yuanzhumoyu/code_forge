@@ -487,6 +487,23 @@ impl RegClass {
         matches!(self, Self::GPR(_))
     }
 
+    /// 从 `Debug` 形态的名字解析（`"GPR(8)"` = 8 **字节** → `GPR(64)` = 64 **位**）。
+    ///
+    /// 用途（v23 M2）：谱侧的能力视图（`forge_isa_dsl::abi_view`）按 `Debug` 形态渲染类名，
+    /// 而 ABI 目标视图要把它还原成有类型的 `RegClass`（`AbiTarget::reg_class`）。**位数是
+    /// 这里的口径**（与 `bits()` 一致；DSL 谱里那个 payload 是字节宽，别混）。
+    pub fn from_name(name: &str) -> Option<Self> {
+        let (family, rest) = name.split_once('(')?;
+        let bits: u16 = rest.strip_suffix(')')?.trim().parse().ok()?;
+        Some(match family {
+            "GPR" => Self::GPR(bits),
+            "FPR" => Self::FPR(bits),
+            "VEC" => Self::VEC(bits),
+            "KReg" => Self::KReg(bits),
+            _ => return None,
+        })
+    }
+
     /// 是否为浮点/向量类（FPR/VEC 族）。
     pub fn is_fp(self) -> bool {
         matches!(self, Self::FPR(_) | Self::VEC(_))

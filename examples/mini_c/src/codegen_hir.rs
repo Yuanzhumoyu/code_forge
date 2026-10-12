@@ -1115,7 +1115,7 @@ mod tests {
         use crate::grammar::build_grammar;
         use crate::schema::build_schema;
         use code_forge::backend::arch::x86::{self, ensure_registered};
-        use code_forge::backend::jit::JitCompiler;
+        use code_forge::backend::jit::JitLoader;
         use code_forge::forge_grammar::Parser;
 
         let grammar = build_grammar();
@@ -1141,7 +1141,7 @@ mod tests {
 
         ensure_registered();
         let tm = x86::TargetMachine::new();
-        let mut jit = JitCompiler::new(tm);
+        let mut jit = JitLoader::new(tm);
         jit.compile_module(&module).unwrap();
         let main_fn: extern "C" fn() -> i32 = jit.get_fn("main").unwrap();
         main_fn()
@@ -1174,7 +1174,7 @@ mod tests {
     #[test]
     fn test_hir_jit_iconst_ret() {
         use code_forge::backend::arch::x86::{self, ensure_registered};
-        use code_forge::backend::jit::JitCompiler;
+        use code_forge::backend::jit::JitLoader;
         use forge_hir::{BrickRegistry, IrGraph, lower_into_module};
 
         let mut graph = IrGraph::new();
@@ -1192,7 +1192,7 @@ mod tests {
 
         ensure_registered();
         let tm = x86::TargetMachine::new();
-        let mut jit = JitCompiler::new(tm);
+        let mut jit = JitLoader::new(tm);
         jit.compile_module(&module).unwrap();
 
         let f: extern "C" fn() -> i32 = jit.get_fn("test_hir_jit").unwrap();
@@ -1203,7 +1203,7 @@ mod tests {
     #[test]
     fn test_direct_jit_iconst_ret() {
         use code_forge::backend::arch::x86::{self, ensure_registered};
-        use code_forge::backend::jit::JitCompiler;
+        use code_forge::backend::jit::JitLoader;
         use code_forge::ir::FunctionBuilder;
 
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
@@ -1220,7 +1220,7 @@ mod tests {
 
         ensure_registered();
         let tm = x86::TargetMachine::new();
-        let mut jit = JitCompiler::new(tm);
+        let mut jit = JitLoader::new(tm);
         jit.compile_module(&module).unwrap();
 
         let f: extern "C" fn() -> i32 = jit.get_fn("test_direct").unwrap();

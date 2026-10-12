@@ -329,11 +329,26 @@ impl AbiTarget for TestTarget {
         self.regs.get(index as usize).map(|r| r.name.to_string())
     }
 
-    fn reg_class_name(&self, index: u32) -> String {
+    /// 寄存器类：测试替身的条目里是**类名串**（`GPR(8)`/`FPR(16)`），按 `Debug` 形态还原。
+    fn reg_class(&self, index: u32) -> forge_ir::RegClass {
         self.regs
             .get(index as usize)
-            .map(|r| r.class.to_string())
-            .unwrap_or_else(|| "?".into())
+            .and_then(|r| forge_ir::RegClass::from_name(r.class))
+            .unwrap_or(forge_ir::RegClass::GPR(8))
+    }
+
+    /// 类内号：测试替身把整数区放前面（`regs` 的序即物理号）。
+    fn reg_slot(&self, index: u32) -> u32 {
+        if self.reg_class(index).is_fp() {
+            let gpr = self
+                .regs
+                .iter()
+                .take_while(|r| forge_ir::RegClass::from_name(r.class).is_some_and(|c| !c.is_fp()))
+                .count() as u32;
+            index.saturating_sub(gpr)
+        } else {
+            index
+        }
     }
 
     fn reg_index(&self, name: &str) -> Option<u32> {

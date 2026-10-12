@@ -3,7 +3,8 @@
 //! 这条不变量是 G1（"任意普通 crate 只依赖 runtime 就能承载一份 ISA 谱"）的地基：
 //! 一旦 runtime 反向引用 `forge_codegen`/`pipeline`，拆出去就白拆了。守卫做两件事：
 //!
-//! 1. **依赖面**：`Cargo.toml` 的 `[dependencies]` 只允许 `forge-ir` 与两个纯工具库
+//! 1. **依赖面**：`Cargo.toml` 的 `[dependencies]` 只允许 `forge-ir`、
+//!    `forge-abi-model`（调用约定**产物/视图**的 leaf 数据 crate）与两个纯工具库
 //!    （`smallvec`/`thiserror`）；出现 `forge-codegen` 直接失败。
 //! 2. **源码面**：`src/**` 里不得出现 `forge_codegen` / `crate::pipeline` 之类指向**宿主**
 //!    管线的路径（文档注释里提到"管线"这个词是允许的——只查路径形态）。**例外**：
@@ -29,7 +30,11 @@ fn runtime_dependencies_are_pipeline_free() {
         .split("\n[")
         .next()
         .expect("段落存在");
-    let allowed = ["forge-ir", "smallvec", "thiserror"];
+    // v23 M2：`forge-abi-model` 在列——它是**产物/视图的 leaf 数据 crate**
+    // （`AbiPlan`/`TyView` + 两个规则枚举，依赖只有 serde+forge-ir），
+    // 不带引擎、不带规则加载层（toml），更不含编译管线。它的加入正是为了**删掉**
+    // 运行面那份手抄镜像（此前"同一事实两处表示"）。
+    let allowed = ["forge-ir", "forge-abi-model", "smallvec", "thiserror"];
     let mut seen = 0;
     for line in deps.lines() {
         let line = line.trim();

@@ -321,7 +321,7 @@ mod tests {
             eprintln!("SKIP: qemu-system-aarch64 未安装");
             return;
         }
-        use code_forge::backend::FunctionCompiler;
+        use code_forge::backend::CompileSession;
         use code_forge::backend::arm64::TargetMachine;
         use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
@@ -330,8 +330,8 @@ mod tests {
         let c = b.iconst_i32(0x1234_5678);
         b.ret(&[c]);
         let func = b.finish().expect("build");
-        let compiled = FunctionCompiler::new(TargetMachine::new())
-            .compile_raw(&func)
+        let compiled = CompileSession::new(TargetMachine::new())
+            .compile(&func)
             .expect("compile");
         let r = exec_aarch64(&compiled, &[]).unwrap_or_else(|e| panic!("exec_aarch64: {e}"));
         // QEMU semihost SYS_EXIT 的 host 退出码 = status word（低 8 位在
@@ -347,7 +347,7 @@ mod tests {
             eprintln!("SKIP: qemu-system-aarch64 未安装");
             return;
         }
-        use code_forge::backend::FunctionCompiler;
+        use code_forge::backend::CompileSession;
         use code_forge::backend::arm64::TargetMachine;
         use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
         let sig = FunctionSignature::new(&[], &[TypeId::I64]);
@@ -356,8 +356,8 @@ mod tests {
         let c = b.iconst_i64(-1_000_000_007);
         b.ret(&[c]);
         let func = b.finish().expect("build");
-        let compiled = FunctionCompiler::new(TargetMachine::new())
-            .compile_raw(&func)
+        let compiled = CompileSession::new(TargetMachine::new())
+            .compile(&func)
             .expect("compile");
         let r = exec_aarch64(&compiled, &[]).unwrap_or_else(|e| panic!("exec_aarch64: {e}"));
         // -1_000_000_007 低 8 位 = 0xF9（有符号字节 = -7）
@@ -372,7 +372,7 @@ mod tests {
     /// block + 统一尾声经 epilogue_label）。cond=true → then 翼 40、
     /// cond=false → else 翼 2；end 块 phi 参数承载两翼值。
     fn compile_if_else(cond: bool) -> code_forge::backend::CompiledFunction {
-        use code_forge::backend::FunctionCompiler;
+        use code_forge::backend::CompileSession;
         use code_forge::backend::arm64::TargetMachine;
         use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
@@ -395,8 +395,8 @@ mod tests {
         let r = b.iadd(phi[0], z);
         b.ret(&[r]);
         let func = b.finish().expect("build");
-        FunctionCompiler::new(TargetMachine::new())
-            .compile_raw(&func)
+        CompileSession::new(TargetMachine::new())
+            .compile(&func)
             .expect("compile")
     }
 

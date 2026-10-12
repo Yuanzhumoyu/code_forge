@@ -1,5 +1,5 @@
 //! Stage 1-5 of the compilation pipeline: block mapping, VReg pre-allocation,
-//! instruction selection and peephole optimization.
+//! instruction selection.
 //!
 //! These methods operate on [`super::compiler::CompileState`] and are split out
 //! of `compiler.rs` to keep each pipeline stage's responsibilities in one file.
@@ -8,7 +8,6 @@ use crate::machine::lowering::TargetLowering;
 use crate::machine::pattern::{
     PatTerm, PatternSpec, eval_pat_pred, type_elem_id, type_vec_bytes, type_width_bits,
 };
-use crate::machine::peephole::TargetPeephole;
 use crate::pipeline::compiler::{CompileState, atomic_op_from_u64};
 use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
@@ -548,7 +547,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             // 为什么不让前端 `alloca`：`va_list` 的大小/对齐是**约定的数据**（win64 = 8、
             // sysv64 = 24），前端不该知道；而 `max_stack_bytes` 本来就是管线在算的。
             if inst.opcode == Opcode::VaStart
-                && let Some(va) = self.ctx.conv.layout().and_then(|cl| cl.va.as_ref())
+                && let Some(va) = self.ctx.conv.va.as_ref()
             {
                 let align = i64::from(va.align.max(1));
                 let size = i64::from(va.size.max(1));
@@ -785,14 +784,6 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             "rs1_vec" => o0.and_then(|t| type_vec_bytes(t, tc)),
             "elem" => r0.map(|t| type_elem_id(t, tc)),
             _ => None,
-        }
-    }
-
-    // ── Stage 5: Peephole ──
-
-    pub(crate) fn run_peephole(&mut self, peephole: &dyn TargetPeephole<Inst = I>) {
-        for block in self.vcode.blocks_mut() {
-            peephole.optimize(&mut block.instructions);
         }
     }
 }

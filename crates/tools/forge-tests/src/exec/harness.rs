@@ -3,11 +3,11 @@
 //! 取代各 ISA 模块中重复的 `run()` / `run_f64()` / `run_test_i32()` helper，
 //! 供 `exec!` / `exec_f64!` / `exec_args!` 宏与各 ISA 测试模块复用。
 //!
-//! 本机（x86_64）执行路径：`FunctionCompiler` → `ExecutableMemory` →
+//! 本机（x86_64）执行路径：`CompileSession` → `ExecutableMemory` →
 //! extern "C" 调用；带参数路径经 `executor::NativeExecutor`（≤4 整型参数）。
 
 use crate::exec::executor::Executor;
-use code_forge::backend::{CompiledFunction, FunctionCompiler};
+use code_forge::backend::{CompileSession, CompiledFunction};
 use code_forge::mem::ExecutableMemory;
 use code_forge::prelude::*;
 
@@ -40,8 +40,8 @@ pub fn build_func_args(
 /// 用 x86 后端编译。
 pub fn compile_x86_64(name: &str, func: &Function) -> CompiledFunction {
     code_forge::backend::x86::ensure_registered();
-    FunctionCompiler::new(code_forge::backend::x86::TargetMachine::new())
-        .compile_raw(func)
+    CompileSession::new(code_forge::backend::x86::TargetMachine::new())
+        .compile(func)
         .unwrap_or_else(|e| panic!("{name}: compile: {e:?}"))
 }
 
@@ -51,8 +51,8 @@ pub fn compile<M: code_forge::backend::TargetMachine>(
     machine: impl Fn() -> M,
     func: &Function,
 ) -> CompiledFunction {
-    FunctionCompiler::new(machine())
-        .compile_raw(func)
+    CompileSession::new(machine())
+        .compile(func)
         .unwrap_or_else(|e| panic!("{name}: compile: {e:?}"))
 }
 

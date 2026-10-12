@@ -2158,15 +2158,8 @@ fn validate_instructions_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
                 Some(t) => {
                     // v21 W5：族降级来的实例锚到**源里真实存在的** `[family.X]` 节
                     // （`push_anchored` 按节名找行，锚到内部载体名会找不到节、行号退化成 1）。
-                    let from_family = m
-                        .templates
-                        .iter()
-                        .any(|tt| tt.from_family && tt.name.as_deref() == Some(&**t));
-                    let sec = if from_family {
-                        format!("[family.{t}]")
-                    } else {
-                        format!("[family.{t}]")
-                    };
+                    // v21 统一族节名之后，族降级与直接声明锚的是同一个 `[family.<名>]` 节。
+                    let sec = format!("[family.{t}]");
                     // 只换 `[inst.X]` 前缀：v21 W10 之后不再有"裸节名"形态的消息
                     //（旧面 `[inst.<名>]` 已撤，第二处 replacen 随之删除）。
                     msg.replacen(&format!("[inst.{}]", inst.name), &sec, 1)

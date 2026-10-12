@@ -20,7 +20,7 @@
 
 use crate::IrError;
 use crate::machine::inst::{MachineInst, OperandConstraint};
-use crate::pipeline::alloc_config::{AllocContext, RegAllocConfig};
+use crate::pipeline::alloc_config::RegAllocConfig;
 use crate::pipeline::alloc_result::{AllocResult, FrameInfo, SpillSlot};
 use crate::pipeline::liverange::{self, ProgPoint};
 use forge_ir::*;
@@ -43,7 +43,6 @@ impl BacktrackingAllocator {
         &self,
         vcode: &crate::VCode<I>,
         config: &RegAllocConfig,
-        ctx: &AllocContext,
         xreg_map: &[smallvec::SmallVec<[(XReg, u8, bool); 2]>],
         clobber_map: &[Vec<(u32, crate::prelude::RegClass)>],
     ) -> Result<AllocResult, IrError> {
@@ -51,7 +50,6 @@ impl BacktrackingAllocator {
         let intervals = liverange::compute_live_intervals(vcode, xreg_map, &config.param_xregs);
 
         // 2. 构建状态
-        let _ = ctx; // AllocContext 预留（将来约束上下文）
         let mut state = BtState::new(config, intervals);
 
         // 3. 预分配前 param_reg_count 个参数 XReg，确保它们在函数入口处有
@@ -966,20 +964,18 @@ mod tests {
     #[test]
     fn test_empty_function() {
         let config = make_config(8, 8);
-        let ctx = AllocContext::default();
         let alloc = BacktrackingAllocator::new();
         let vcode = crate::VCode::<DummyInst>::new();
-        let result = alloc.allocate(&vcode, &config, &ctx, &[], &[]);
+        let result = alloc.allocate(&vcode, &config, &[], &[]);
         let _ = result;
     }
 
     #[test]
     fn test_basic_allocation() {
         let config = make_config(8, 8);
-        let ctx = AllocContext::default();
         let alloc = BacktrackingAllocator::new();
         let vcode = crate::VCode::<DummyInst>::new();
-        let result = alloc.allocate(&vcode, &config, &ctx, &[], &[]);
+        let result = alloc.allocate(&vcode, &config, &[], &[]);
         assert!(result.is_ok());
     }
 
@@ -1046,10 +1042,9 @@ mod tests {
         let mut config = make_config(16, 16);
         config.param_xregs = vec![xgpr(0), xgpr(1), xgpr(2), xgpr(3)];
         assert_eq!(config.param_xregs.len(), 4);
-        let ctx = AllocContext::default();
         let alloc = BacktrackingAllocator::new();
         let vcode = crate::VCode::<DummyInst>::new();
-        let result = alloc.allocate(&vcode, &config, &ctx, &[], &[]);
+        let result = alloc.allocate(&vcode, &config, &[], &[]);
         assert!(result.is_ok());
     }
 
@@ -1062,10 +1057,9 @@ mod tests {
             .get_mut(&RegClass::GPR64)
             .unwrap()
             .allocatable = vec![3]; // RBX only
-        let ctx = AllocContext::default();
         let alloc = BacktrackingAllocator::new();
         let vcode = crate::VCode::<DummyInst>::new();
-        let result = alloc.allocate(&vcode, &config, &ctx, &[], &[]);
+        let result = alloc.allocate(&vcode, &config, &[], &[]);
         assert!(
             result.is_ok(),
             "Allocator should handle high register pressure"
@@ -1118,10 +1112,9 @@ mod clobber_map_tests {
             smallvec::smallvec![(x0, 0u8, false)], // inst2: use 结束
         ];
         let clobber_map = vec![vec![], vec![(0u32, RegClass::GPR64)], vec![]]; // inst1 写死 RAX
-        let ctx = AllocContext::default();
         let alloc = BacktrackingAllocator::new();
         let result = alloc
-            .allocate(&vcode, &config, &ctx, &xreg_map, &clobber_map)
+            .allocate(&vcode, &config, &xreg_map, &clobber_map)
             .expect("alloc should succeed");
         // x0 在 clobber 点被使用（值需在寄存器）→ 不应被 spill
         assert!(
@@ -1143,9 +1136,8 @@ mod clobber_map_tests {
         let vcode = clobber_vcode();
         let xreg_map = vec![smallvec::smallvec![(x0, 0u8, true)]]; // inst0: def
         let clobber_map = vec![vec![(0u32, RegClass::GPR64)]]; // inst0 写死 RAX → def 无法分配
-        let ctx = AllocContext::default();
         let alloc = BacktrackingAllocator::new();
-        let result = alloc.allocate(&vcode, &config, &ctx, &xreg_map, &clobber_map);
+        let result = alloc.allocate(&vcode, &config, &xreg_map, &clobber_map);
         // 2026-09 语义变更：def（写新值）在唯一寄存器被 clobber 时**spill 到栈**
         // 而非报错——emission 的 emit_inst_with_spills 用 scratch 写入 def、
         // 随后 store 回槽，后续 use 经 reload_from_stack 从槽 load，值正确。
@@ -1177,10 +1169,9 @@ mod clobber_map_tests {
             smallvec::smallvec![(x0, 0u8, false)],
         ];
         let clobber_map = vec![vec![], vec![], vec![]];
-        let ctx = AllocContext::default();
         let alloc = BacktrackingAllocator::new();
         let result = alloc
-            .allocate(&vcode, &config, &ctx, &xreg_map, &clobber_map)
+            .allocate(&vcode, &config, &xreg_map, &clobber_map)
             .expect("no clobber: RAX 可用，分配成功");
         assert!(
             !result.spill_slots.contains_key(&x0),
@@ -1203,10 +1194,9 @@ mod clobber_map_tests {
         let vcode = clobber_vcode();
         let xreg_map = vec![smallvec::smallvec![(x0, 0u8, true)]];
         let clobber_map = vec![vec![(0u32, RegClass::GPR64)]];
-        let ctx = AllocContext::default();
         let alloc = BacktrackingAllocator::new();
         let result = alloc
-            .allocate(&vcode, &config, &ctx, &xreg_map, &clobber_map)
+            .allocate(&vcode, &config, &xreg_map, &clobber_map)
             .expect("def-spill 在可改写字段上必须成功（emission 用 scratch 写入 + store 回槽）");
         assert!(
             result.spill_slots.contains_key(&x0),
@@ -1268,10 +1258,9 @@ mod clobber_map_tests {
         vcode.push_inst(FixedFieldInst { id: 0 });
         let xreg_map = vec![smallvec::smallvec![(x0, 0u8, true)]];
         let clobber_map = vec![vec![(0u32, RegClass::GPR64)]];
-        let ctx = AllocContext::default();
         let alloc = BacktrackingAllocator::new();
         let err = alloc
-            .allocate(&vcode, &config, &ctx, &xreg_map, &clobber_map)
+            .allocate(&vcode, &config, &xreg_map, &clobber_map)
             .expect_err("固定物理字段上的 def-spill 必须 fail-closed 报错");
         let msg = format!("{err}");
         assert!(

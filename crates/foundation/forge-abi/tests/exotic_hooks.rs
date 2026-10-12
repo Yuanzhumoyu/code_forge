@@ -35,7 +35,7 @@ fn reg(t: &impl AbiTarget, name: &str) -> RegRef {
     let index = t
         .reg_index(name)
         .unwrap_or_else(|| panic!("{name} 不在目标里"));
-    RegRef::new(index, t.reg_class_name(index), name)
+    RegRef::new(index, t.reg_slot(index), t.reg_class(index), name)
 }
 
 fn has(regs: &[RegRef], index: u32) -> bool {

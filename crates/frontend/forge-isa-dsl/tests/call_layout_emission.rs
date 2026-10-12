@@ -2,11 +2,11 @@
 //!
 //! 收参的来源寄存器以前是**生成器自己数**出来的（"第几个 int 槽"、`sret` 偏移、
 //! 按位置还是按类）——三处硬编码对不上就出错（旧实现里 sret 永远取首 int 槽）。
-//! v20 改成读 `AllocResult::call_layout`（管线由 `AbiPlan` 折出来的**中性数据**），
-//! 本文件钉住四件事：
+//! v20 改成读 `AllocResult::call_layout`（**就是 `AbiPlan` 本身**，v23 M2 起不再有运行时
+//! 镜像），本文件钉住四件事：
 //!
-//! 1. **布局路径确实发射**（三份发行谱都有），且 `__layout_ok` / `call_layout` /
-//!    `ArgPlace :: Reg` 三样俱全；
+//! 1. **布局路径确实发射**（三份发行谱都有），且 `__layout_ok` / `call_layout` 与
+//!    **落点访问器**（`as_reg`/`stack_offset`）俱全；
 //! 2. **排在旧路径之前**：布局块必须在旧的 `param_by_ref` 判定前，否则旧路径先
 //!    `continue`，布局永远轮不到（"接了但没生效"只有文字级守卫抓得到）；
 //! 3. **`@move_args` 已从谱面撤出**：写了它必须明确报错（不是静默忽略），
@@ -44,16 +44,18 @@ fn text_of(path: &str) -> String {
 fn move_args_emits_the_layout_driven_receive_path() {
     for (name, path) in SPECS {
         let text = text_of(path);
-        for needle in ["__layout_ok", "call_layout", "ArgPlace :: Reg"] {
+        for needle in ["__layout_ok", "call_layout", "as_reg"] {
             assert!(
                 text.contains(needle),
                 "{name}: 生成物里没有 `{needle}`——布局驱动的收参没发射"
             );
         }
         // 栈落点也在布局路径里（A3b-2b-2c-2）：偏移由 forge-abi 给，不再自己数位置。
+        // v23 M2：落点分类走**访问器**（`Placement` 的变体划分是引擎细节），因此这里钉
+        // `stack_offset` 而不是枚举变体名——生成物不该再穷举那套枚举。
         assert!(
-            text.contains("ArgPlace :: Stack"),
-            "{name}: 布局路径没有接受 `ArgPlace::Stack`——带栈参数的函数会整函数退回位置算式"
+            text.contains("stack_offset"),
+            "{name}: 布局路径没有接受栈落点（`stack_offset`）——带栈参数的函数会整函数退回位置算式"
         );
         let layout_at = text.find("__layout_ok").expect("布局判定");
         let old_at = text.find("param_by_ref").unwrap_or_else(|| {

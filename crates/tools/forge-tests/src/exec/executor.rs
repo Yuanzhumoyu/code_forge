@@ -45,7 +45,7 @@ pub trait Executor {
         _args: &[u64],
     ) -> u64 {
         panic!(
-            "exec_module not supported by {} (use JitCompiler for native)",
+            "exec_module not supported by {} (use JitLoader for native)",
             self.arch().name()
         )
     }
@@ -232,7 +232,7 @@ mod tests {
     // forge-codegen jit 测试同因），且 compile_add 在非 windows 无调用方
     // → `-D dead-code`（CI Clippy）报 unused。mod 级 cfg 保证三平台一致。
     use super::*;
-    use code_forge::backend::FunctionCompiler;
+    use code_forge::backend::CompileSession;
     use code_forge::prelude::*;
 
     fn compile_add() -> CompiledFunction {
@@ -242,8 +242,8 @@ mod tests {
         let s = b.iadd(params[0], params[1]);
         b.ret(&[s]);
         let func = b.finish().expect("build");
-        FunctionCompiler::new(code_forge::backend::x86::TargetMachine::new())
-            .compile_raw(&func)
+        CompileSession::new(code_forge::backend::x86::TargetMachine::new())
+            .compile(&func)
             .expect("compile add")
     }
 

@@ -103,11 +103,11 @@ pub use forge_isa_runtime::machine::isa_info::IsaInfo;
 pub use forge_isa_runtime::machine::isa_info::RegisterClassInfo;
 pub use forge_isa_runtime::machine::lowering::InstPacket;
 pub use forge_isa_runtime::machine::reloc_patcher::RelocPatcher;
-pub use forge_isa_runtime::machine::simulator::SimulationState;
 pub use forge_isa_runtime::machine::target::{ErasedTargetMachine, TargetMachine};
 pub use pipeline::alloc_config::RegAllocConfig;
-pub use pipeline::compiler::FunctionCompiler;
+pub use pipeline::compiler::CompileSession;
 pub use pipeline::regalloc_bt::BacktrackingAllocator;
+pub use pipeline::session::CompiledModule;
 
 // ============================================================
 // Runtime re-exports

@@ -1,8 +1,13 @@
 //! 聚合 ABI 展开(Stage 0.5)——从 compiler.rs 分批迁出(第四十一轮)。
 //!
 //! 聚合参数/返回/存储/call 结果 >8 字节的 IR 层展开:
+//!
 //! - 段值拆分(≤16 字节:寄存器路径;>16 字节 Unsupported)
-//! - 展开触发检测(has_* 族)与展开执行(expand_* 族)分居此处
+//! - **触发判据只有一处**（[`needs_agg_expand`]）：保守的"提没提到聚合"，只用于决定
+//!   要不要克隆 IR——`v23 M3` 之前这里是 7 个各扫一种模式的 `has_*`，
+//!   漏一个就**静默少跑一个 pass**（历史事故：`has_large_agg_ret` 曾缺失 ⇒ 大聚合返回
+//!   的纯 call+extractvalue 函数展开不到 ⇒ 5 vs 6 错值）。
+//! - 每个 pass **自报改动了什么**（[`ChangeSet`]），不再靠预判"可能要有改动"。
 //!
 //! 依赖约定:仅依赖 forge_ir 与 crate::pipeline::agg_const;
 //! 不依赖 CompileState(展开在 CompileState::new 之前执行——常量池克隆时序)。
@@ -10,8 +15,74 @@
 use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
 
-/// 函数是否含 GEP(决定是否需要可变副本做 GEP 展开)。
-pub(crate) fn has_gep(func: &Function) -> bool {
+/// 一次聚合展开**改动了什么**（v23 M3：由展开驱动自报，取代 7 个 `has_*` 预判）。
+///
+/// 口径 = **IR 的变化量**（新指令/新值/新常量）加"sret 形参是否立起来"。
+/// 为什么用变化量而不是让 8 个 pass 各自返回计数：变化量是**完整**的（新增的 pass
+/// 自动被覆盖，不会像 `has_*` 那样"新加一类模式却忘了加判据"），而且它就是我们要
+/// 断言的那件事——"含聚合的函数必须真的改了东西"。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ChangeSet {
+    /// 新增指令数（墓碑化/改写不计，只有真的插入了新指令才算）。
+    pub new_insts: usize,
+    /// 新增值数。
+    pub new_values: usize,
+    /// 新增常量数（常量池是展开的产物之一：打包出的 i64 段值）。
+    pub new_consts: usize,
+    /// 是否立起了 sret 形参（`expand_sret_return` 的产物）。
+    pub sret: bool,
+}
+
+impl ChangeSet {
+    /// 改动总数（含 sret 的那 1 次）。
+    pub fn total(&self) -> usize {
+        self.new_insts + self.new_values + self.new_consts + usize::from(self.sret)
+    }
+}
+
+/// IR 的规模快照（`ChangeSet` 的差分量）。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct IrSize {
+    pub insts: usize,
+    pub values: usize,
+    pub consts: usize,
+}
+
+impl IrSize {
+    /// 取当前规模。
+    pub fn of(func: &Function) -> Self {
+        Self {
+            insts: func.dfg.insts().count(),
+            values: func.dfg.values().count(),
+            consts: func.constants.len(),
+        }
+    }
+
+    /// 与 `before` 的差 + sret 标记 → [`ChangeSet`]。
+    pub fn delta_to(self, before: Self, sret: bool) -> ChangeSet {
+        ChangeSet {
+            new_insts: self.insts.saturating_sub(before.insts),
+            new_values: self.values.saturating_sub(before.values),
+            new_consts: self.consts.saturating_sub(before.consts),
+            sret,
+        }
+    }
+}
+
+/// **是否需要可变副本**（Stage 0.5 展开的克隆判据）——**唯一**的预判。
+///
+/// 判据 = 含 GEP **或** 提到过任何聚合类型/聚合字面量。**保守**（宁可多克隆一次，
+/// 不可漏判）：漏判的后果不是慢，而是**该展开的没展开**（静默错值）；多判的后果
+/// 只是克隆一份 `Function`。
+///
+/// `v23 M3` 之前这里是 7 个各扫一种模式的 `has_*`（`has_large_agg_ret` 等），
+/// 每个都可能漏——历史事故就是这么来的。现在只有这一处，且它是**过近似**的。
+pub(crate) fn needs_agg_expand(func: &Function) -> bool {
+    has_gep(func) || mentions_aggregate(func)
+}
+
+/// 函数是否含 GEP（GEP 的源元素类型不在 IR 值类型里，必须单独扫）。
+fn has_gep(func: &Function) -> bool {
     for (_, bd) in func.dfg.blocks() {
         for &ii in &bd.inst_order {
             if func.dfg.inst_data(ii).opcode == Opcode::GetElementPtr {
@@ -22,127 +93,39 @@ pub(crate) fn has_gep(func: &Function) -> bool {
     false
 }
 
-/// 函数是否含 >8 字节聚合返回(ret 拆段触发——第三十五轮:needs_agg_expand
-/// 原缺此检测,大聚合返回的纯 call+extractvalue 函数依赖 pattern_isel 开关
-/// 蹭 func_owned 克隆才展开——开关关闭即 5 vs 6 错误;第三十七轮修复生效)。
-pub(crate) fn has_large_agg_ret(func: &Function) -> bool {
-    func.return_types().iter().any(|t| {
-        let s = func.types.borrow();
-        s.is_aggregate(*t) && s.size_bytes(*t) > 8
-    })
-}
-
-/// 函数是否含 >8 字节聚合 call 结果(call 结果拆段触发;判定与
-/// expand_large_agg_call_results 一致)。
-pub(crate) fn has_large_agg_call_result(func: &Function) -> bool {
+/// 函数**提到过**聚合吗（形参/返回/指令操作数与结果类型，或聚合字面量）。
+///
+/// 过近似：任何一处聚合类型出现即真——包括"其实不需要展开"的情形（如纯 `insertvalue`
+/// 链）。代价只是一次克隆。
+fn mentions_aggregate(func: &Function) -> bool {
+    let ts = func.types.borrow();
+    if func
+        .param_types()
+        .iter()
+        .chain(func.return_types().iter())
+        .any(|t| ts.is_aggregate(*t))
+    {
+        return true;
+    }
     for (_, bd) in func.dfg.blocks() {
         for &ii in &bd.inst_order {
-            let inst = &func.dfg.inst_data(ii);
-            if matches!(inst.opcode, Opcode::Call | Opcode::CallIndirect)
-                && inst.results.len() == 1
-                && let Some(rt) = inst.results.first().and_then(|v| func.dfg.value_type(*v))
-                && func.types.borrow().is_aggregate(rt)
-                && func.types.borrow().size_bytes(rt) > 8
+            let inst = func.dfg.inst_data(ii);
+            let tys = inst
+                .results
+                .iter()
+                .chain(inst.operands.iter())
+                .filter_map(|v| func.dfg.value_type(*v));
+            for ty in tys {
+                if ts.is_aggregate(ty) {
+                    return true;
+                }
+            }
+            if inst
+                .operands
+                .iter()
+                .any(|v| matches!(func.dfg.value_data(*v).def, ValueDef::AggConst(_)))
             {
                 return true;
-            }
-        }
-    }
-    false
-}
-
-/// 函数是否含 >8 字节聚合实参(决定是否需要可变副本做 call 拆段)。
-pub(crate) fn has_large_agg_call_arg(func: &Function) -> bool {
-    for (_, bd) in func.dfg.blocks() {
-        for &ii in &bd.inst_order {
-            let inst = &func.dfg.inst_data(ii);
-            if matches!(inst.opcode, Opcode::Call | Opcode::CallIndirect) {
-                let skip = usize::from(inst.opcode == Opcode::CallIndirect);
-                for v in inst.operands.iter().skip(skip) {
-                    if let Some(ty) = func.dfg.value_type(*v)
-                        && func.types.borrow().is_aggregate(ty)
-                        && func.types.borrow().size_bytes(ty) > 8
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
-}
-
-/// 函数是否含 >8 字节聚合形参(大聚合参数拆段触发)。
-pub(crate) fn has_large_agg_param(func: &Function) -> bool {
-    func.param_types().iter().any(|t| {
-        let s = func.types.borrow();
-        s.is_aggregate(*t) && s.size_bytes(*t) > 8
-    })
-}
-
-/// 函数是否含 >8 字节聚合 load(决定是否需要可变副本做大聚合值传播)。
-pub(crate) fn has_large_agg_load(func: &Function) -> bool {
-    for (_, bd) in func.dfg.blocks() {
-        for &ii in &bd.inst_order {
-            let inst = &func.dfg.inst_data(ii);
-            if matches!(inst.opcode, Opcode::Load)
-                && let Some(ty) = inst.results.first().and_then(|v| func.dfg.value_type(*v))
-                && func.types.borrow().is_aggregate(ty)
-                && func.types.borrow().size_bytes(ty) > 8
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// 函数是否含任何聚合内存访问(store/gep/大聚合 load/call 实参/形参/返回/
-/// call 结果)——决定是否需要可变副本做 Stage 0.5 展开(第三十七轮:含
-/// has_large_agg_ret/has_large_agg_call_result,展开触发独立于 pattern 开关)。
-pub(crate) fn has_any_agg(func: &Function) -> bool {
-    has_agg_mem_access(func)
-        || has_gep(func)
-        || has_large_agg_load(func)
-        || has_large_agg_call_arg(func)
-        || has_large_agg_param(func)
-        || has_large_agg_ret(func)
-        || has_large_agg_call_result(func)
-}
-
-/// 函数是否含聚合 store/call 实参/load(AggConst 字面量或聚合类型触发——
-/// 决定是否需要可变副本做聚合 store 展开)。
-fn has_agg_mem_access(func: &Function) -> bool {
-    for (_, bd) in func.dfg.blocks() {
-        for &ii in &bd.inst_order {
-            let inst = &func.dfg.inst_data(ii);
-            match inst.opcode {
-                Opcode::Store => {
-                    if let Some(v) = inst.operands.first()
-                        && matches!(func.dfg.value_data(*v).def, ValueDef::AggConst(_))
-                    {
-                        return true;
-                    }
-                }
-                Opcode::Call | Opcode::CallIndirect => {
-                    let skip = usize::from(inst.opcode == Opcode::CallIndirect);
-                    if inst
-                        .operands
-                        .iter()
-                        .skip(skip)
-                        .any(|v| matches!(func.dfg.value_data(*v).def, ValueDef::AggConst(_)))
-                    {
-                        return true;
-                    }
-                }
-                Opcode::Load => {
-                    if let Some(ty) = inst.results.first().and_then(|v| func.dfg.value_type(*v))
-                        && func.types.borrow().is_aggregate(ty)
-                    {
-                        return true;
-                    }
-                }
-                _ => {}
             }
         }
     }
@@ -696,5 +679,75 @@ pub(crate) fn move_to_front(func: &mut Function, block: Block, pos: usize, insts
     moved.reverse();
     for (k, &ni) in moved.iter().enumerate() {
         func.dfg.block_mut(block).inst_order.insert(pos + k, ni);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use forge_ir::ir::builder::FunctionBuilder;
+    use forge_ir::ir::types::{FunctionSignature, TypeField};
+    use forge_ir::{TypeContext, TypeId};
+
+    /// **C2 回归判据**（v23 M3）：克隆判据必须**保守**——只要函数里出现过聚合，
+    /// 就必须说"要展开"（宁可多克隆一次，不可漏跑一个 pass）。
+    ///
+    /// 背景：这里是 7 个各扫一种模式的 `has_*`（`has_large_agg_ret` 等），
+    /// 漏一个模式 ⇒ 那个 pass 静默不跑（历史事故：大聚合返回的纯 call+extractvalue
+    /// 函数展开不到 ⇒ 5 vs 6 错值）。
+    #[test]
+    fn needs_agg_expand_is_conservative() {
+        // ① 聚合形参（>8B）⇒ 真。
+        let ctx = TypeContext::new();
+        let agg = ctx.borrow_mut().struct_named(
+            "Agg2",
+            vec![TypeField::new(TypeId::I64), TypeField::new(TypeId::I64)],
+            false,
+        );
+        let sig = FunctionSignature::new(&[(agg, "a")], &[TypeId::I64]);
+        let mut b = FunctionBuilder::new("agg_param", ctx, sig);
+        let (e, params) = b.create_block_with_params(&[(agg, "a")]);
+        b.switch_to_block(e);
+        let one = b.iconst(1, TypeId::I64);
+        let _ = params;
+        b.ret(&[one]);
+        let f = b.finish().expect("agg_param");
+        assert!(
+            super::needs_agg_expand(&f),
+            "聚合形参必须触发展开（宁多克隆，不可漏跑）"
+        );
+
+        // ② 只有标量的函数 ⇒ 假（不白克隆）。
+        let ctx = TypeContext::new();
+        let sig = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
+        let mut b = FunctionBuilder::new("scalar", ctx, sig);
+        let (e, params) = b.create_block_with_params(&[(TypeId::I64, "x")]);
+        b.switch_to_block(e);
+        let one = b.iconst(1, TypeId::I64);
+        let sum = b.iadd(params[0], one);
+        b.ret(&[sum]);
+        let f = b.finish().expect("scalar");
+        assert!(
+            !super::needs_agg_expand(&f),
+            "纯标量函数不该触发聚合展开（否则每个函数都白克隆一份 IR）"
+        );
+    }
+
+    /// `ChangeSet` 的差分量：只算**新增**，减少（墓碑化/删除）不计为改动。
+    #[test]
+    fn change_set_counts_only_growth() {
+        let before = super::IrSize {
+            insts: 10,
+            values: 20,
+            consts: 3,
+        };
+        let after = super::IrSize {
+            insts: 14,
+            values: 20,
+            consts: 5,
+        };
+        let cs = after.delta_to(before, true);
+        assert_eq!((cs.new_insts, cs.new_values, cs.new_consts), (4, 0, 2));
+        assert!(cs.sret);
+        assert_eq!(cs.total(), 7, "总数 = 3 项增量 + sret 的 1");
     }
 }

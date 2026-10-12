@@ -13,7 +13,7 @@
 mod common;
 
 use common::demo8::{Inst, TargetMachine, assemble, decode, disassemble, encode};
-use forge_codegen::FunctionCompiler;
+use forge_codegen::CompileSession;
 use forge_codegen::TargetMachine as TargetMachineTrait;
 use forge_ir::{FunctionBuilder, FunctionSignature, PhysReg, RegClass, TypeContext, TypeId};
 
@@ -220,8 +220,8 @@ fn compile_i8_function_on_one_byte_pool() {
 
     // v20 A5-3：夹具谱没有约定数据，先注册**测试本地约定**（否则走无 plan 回退）。
     common::ensure_demo_conventions();
-    let compiler = FunctionCompiler::new(TargetMachine::new());
-    let cf = compiler.compile_raw(&func).expect("i8 函数必须可编译");
+    let compiler = CompileSession::new(TargetMachine::new());
+    let cf = compiler.compile(&func).expect("i8 函数必须可编译");
     eprintln!(
         "demo8 add8 code ({} bytes): {:02x?}",
         cf.code.len(),
@@ -282,10 +282,10 @@ fn compile_i8_function_with_opt_level_skips_tombstoned_values() {
     let func = b.finish().expect("build");
 
     common::ensure_demo_conventions();
-    let compiler = FunctionCompiler::new(TargetMachine::new())
-        .with_opt_level(forge_opt::OptimizationLevel::O1);
+    let compiler =
+        CompileSession::new(TargetMachine::new()).with_opt_level(forge_opt::OptimizationLevel::O1);
     let cf = compiler
-        .compile_raw(&func)
+        .compile(&func)
         .expect("开启 O1 后 i8 函数必须仍可编译（墓碑值不得触发值池门）");
     eprintln!("demo8 O1 code ({} bytes): {:02x?}", cf.code.len(), cf.code);
     assert!(!cf.code.is_empty(), "生成代码非空");
@@ -304,9 +304,9 @@ fn compile_i64_function_is_rejected_with_clear_error() {
     b.ret(&[v]);
     let func = b.finish().expect("build");
 
-    let compiler = FunctionCompiler::new(TargetMachine::new());
+    let compiler = CompileSession::new(TargetMachine::new());
     let err = compiler
-        .compile_raw(&func)
+        .compile(&func)
         .expect_err("1 字节值池不得静默承载 i64");
     let msg = format!("{err}");
     eprintln!("i64 拒绝信息：{msg}");
@@ -325,7 +325,7 @@ fn compile_i64_function_is_rejected_with_clear_error() {
 /// `ret_regs`）时会连带炸掉它们。
 #[test]
 fn demo8_fixture_now_plans_via_the_local_convention() {
-    use forge_isa_runtime::machine::call_layout::ArgPlace;
+    use forge_isa_runtime::machine::abi_model::Placement;
 
     common::ensure_demo_conventions();
 
@@ -338,7 +338,7 @@ fn demo8_fixture_now_plans_via_the_local_convention() {
     b.ret(&[v]);
     let func = b.finish().expect("build");
 
-    let compiler = FunctionCompiler::new(TargetMachine::new());
+    let compiler = CompileSession::new(TargetMachine::new());
     let (_cf, alloc) = compiler.compile_with_alloc(&func).expect("compile");
     let cl = alloc
         .call_layout
@@ -346,11 +346,11 @@ fn demo8_fixture_now_plans_via_the_local_convention() {
     assert_eq!(cl.conv, "demo8");
     assert_eq!(cl.args.len(), 2);
     match &cl.args[0].place {
-        ArgPlace::Reg { index, .. } => assert_eq!(*index, 0, "首参应进 A0（夹具约定 int 池首项）"),
+        Placement::Reg { reg, .. } => assert_eq!(reg.slot, 0, "首参应进 A0（夹具约定 int 池首项）"),
         other => panic!("首参落点应是寄存器：{other:?}"),
     }
     match &cl.args[1].place {
-        ArgPlace::Reg { index, .. } => assert_eq!(*index, 1, "次参应进 A1"),
+        Placement::Reg { reg, .. } => assert_eq!(reg.slot, 1, "次参应进 A1"),
         other => panic!("次参落点应是寄存器：{other:?}"),
     }
 }

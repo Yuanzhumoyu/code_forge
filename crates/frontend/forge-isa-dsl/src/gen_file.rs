@@ -246,7 +246,20 @@ fn generated_body(path: &str, ts: &proc_macro2::TokenStream) -> String {
     let header = format!(
         "// 由 forge-dsl 的 `isa_from_file!` 生成（v18 S10d）——请勿手工编辑。\n// 源谱：{path}；改谱后重新构建即会重新生成（TOML 由 include_bytes! 登记为编译依赖）。\n"
     );
-    let syntax_tree = syn::parse2(lint_guard(ts)).unwrap();
+    // **失败要能定位**（2026-10-13）：`syn::parse2` 的 `Error` 只给一句"expected …"，
+    // 而生成物是 1.4 MB 的 token 流——没有谱名与原文根本找不到是哪个模板写坏了。
+    // 这里在失败时把**谱名 + 紧凑 token 文本**落盘并打印路径（成功路径零开销）。
+    let syntax_tree = match syn::parse2(lint_guard(ts)) {
+        Ok(t) => t,
+        Err(e) => {
+            let dump = std::env::temp_dir().join("forge_gen_parse_fail.rs");
+            let _ = std::fs::write(&dump, ts.to_string());
+            panic!(
+                "生成物语法错误：谱 `{path}`：{e}\n（原文已写到 {}，可直接 rustc 它定位）",
+                dump.display()
+            );
+        }
+    };
     format!("{header}{}", prettyplease::unparse(&syntax_tree))
 }
 

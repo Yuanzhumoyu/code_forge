@@ -68,8 +68,14 @@ pub trait AbiTarget {
     fn reg_count(&self) -> u32;
     /// 寄存器名（诊断/快照用）。
     fn reg_name(&self, index: u32) -> Option<String>;
-    /// 寄存器类名（诊断/快照用，如 `"GPR(8)"`）。
-    fn reg_class_name(&self, index: u32) -> String;
+    /// **寄存器类**（v23 M2）：产物里存有类型的 `RegClass`（不是无人读的类名串）——
+    /// 消费端（生成物/发射）拿到就能直接构造物理寄存器、判 FP/VEC 族。
+    fn reg_class(&self, index: u32) -> forge_ir::RegClass;
+    /// **类内号**（v23 M2）：发射侧要的那个（`Reg::from_index(slot, class)`）。
+    ///
+    /// 为什么由宿主答：只有它知道"整数类有几个、浮点类从哪开始"——`0..n_gp` 是一条
+    /// **机器事实**，不是约定事实。引擎把它记进 `RegRef.slot`，下游因此不必回查。
+    fn reg_slot(&self, index: u32) -> u32;
     /// 按名字查号。
     fn reg_index(&self, name: &str) -> Option<u32>;
     /// 该类寄存器的字节宽度。
@@ -668,7 +674,8 @@ pub fn plan_fn(
         .map(|i| {
             RegRef::new(
                 i,
-                target.reg_class_name(i),
+                target.reg_slot(i),
+                target.reg_class(i),
                 target.reg_name(i).unwrap_or_else(|| format!("p{i}")),
             )
         })
@@ -724,8 +731,10 @@ pub fn plan_fn(
         }
     }
 
-    let callee_pop_bytes =
-        AbiPlan::resolve_callee_pop(rules.callee_pop, stack_args_bytes + rules.shadow_bytes);
+    let callee_pop_bytes = forge_abi_model::resolve_callee_pop(
+        rules.callee_pop,
+        stack_args_bytes + rules.shadow_bytes,
+    );
 
     Ok(AbiPlan {
         conv: rules.name.clone(),

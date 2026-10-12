@@ -178,7 +178,7 @@ impl Layout {
 // ============================================================
 
 /// IR 函数 — SSA 函数的主要容器。
-/// Clone: compile_raw 需要可变的 IR 副本（Stage 3 pattern isel 就地重写）。
+/// Clone: compile 需要可变的 IR 副本（Stage 3 pattern isel 就地重写）。
 /// `analysis`（惰性分析缓存）不克隆——副本的缓存按需重建。
 ///
 /// # Thread safety
@@ -1207,6 +1207,78 @@ impl GlobalAlias {
 }
 
 // ============================================================
+// ModuleSigs — 模块级签名表（类型化）
+// ============================================================
+
+/// 单个函数的「调用点规划需要的那部分签名事实」。
+///
+/// 调用点只带一个 `FuncRef`，判不出被调方是不是变参——这份事实来自被调方的签名。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct FuncSigEntry {
+    /// 是否变参（`declare i32 @printf(ptr, ...)` 的 `...`）。
+    pub variadic: bool,
+    /// 命名（固定）形参个数。
+    pub fixed_args: u32,
+}
+
+/// **模块级签名表**：按 `FuncRef::index()` 对齐（第 i 项 = `funcs[i]`）。
+///
+/// 由 [`Module::signature_table`] 产出，交编译入口装到
+/// `LowerCtx::conv.module_sigs`；生成物在调用点只写一行
+/// `ctx.conv.variadic_of(__f)`（查表与越界兜底收在那个访问器里）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ModuleSigs {
+    entries: Vec<FuncSigEntry>,
+}
+
+impl ModuleSigs {
+    /// 从逐项事实构造。
+    pub fn new(entries: Vec<FuncSigEntry>) -> Self {
+        Self { entries }
+    }
+
+    /// 从 `(是否变参, 命名形参个数)` 对构造（测试与外部表迁移用）。
+    pub fn from_pairs(pairs: Vec<(bool, u32)>) -> Self {
+        Self {
+            entries: pairs
+                .into_iter()
+                .map(|(variadic, fixed_args)| FuncSigEntry {
+                    variadic,
+                    fixed_args,
+                })
+                .collect(),
+        }
+    }
+
+    /// 追加一项（宿主逐个定义函数时用，如 JIT 的单函数入口）。
+    pub fn push(&mut self, entry: FuncSigEntry) {
+        self.entries.push(entry);
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// 逐项事实（越界 = `None`）。
+    pub fn get(&self, index: usize) -> Option<FuncSigEntry> {
+        self.entries.get(index).copied()
+    }
+
+    /// 旧口径访问器：`(是否变参, 命名形参个数)`；越界 = `None`。
+    pub fn variadic_at(&self, index: usize) -> Option<(bool, u32)> {
+        self.get(index).map(|e| (e.variadic, e.fixed_args))
+    }
+
+    pub fn entries(&self) -> &[FuncSigEntry] {
+        &self.entries
+    }
+}
+
+// ============================================================
 // Module
 // ============================================================
 
@@ -1338,12 +1410,12 @@ impl Module {
         self.functions.iter_mut()
     }
 
-    /// **模块自述的调用形参表**：`FuncRef::index()` → `(是否变参, 命名形参个数)`。
+    /// **模块自述的调用形参表**（[`ModuleSigs`]）：`FuncRef::index()` → 签名事实。
     ///
     /// 调用点的落点规划必须知道"被调方是不是变参"——这一事实只存在于被调方的
     /// **签名**里（LLVM：`declare i32 @printf(ptr, ...)` 的 `...`），而调用指令只带一个
     /// `FuncRef`。所以**编译整个模块的宿主**（JIT / 单测）从模块本身取这张表交给编译器
-    /// （`FunctionCompiler::with_module_sigs`），而不是让调用点去猜或让发射侧写死。
+    /// （`CompileSession::with_module_sigs`），而不是让调用点去猜或让发射侧写死。
     ///
     /// 表**按 `FuncRef::index()` 对齐**（第 i 项 = `funcs[i]` 的签名事实）；签名句柄
     /// 越界（坏 IR）时退化为 `(false, 0)`（= 按非变参处理，与不装表同行为）。
@@ -1351,14 +1423,19 @@ impl Module {
     /// 注意**读的是每个函数自己的类型上下文**（[`Function::types`]）：`signature` 是
     /// `SigRef`，它的下标属于持有它的那份 `TypeStore`——`Module::add_function` 只做入表，
     /// 不把签名并进模块 store，所以拿 `self.types` 去查 builder 建出来的函数会全部落空。
-    pub fn signature_table(&self) -> Vec<(bool, u32)> {
-        self.functions
-            .iter()
-            .map(|f| match f.types.borrow().signature_opt(f.signature) {
-                Some(s) => (s.variadic, s.params.len() as u32),
-                None => (false, 0),
-            })
-            .collect()
+    pub fn signature_table(&self) -> ModuleSigs {
+        ModuleSigs::new(
+            self.functions
+                .iter()
+                .map(|f| match f.types.borrow().signature_opt(f.signature) {
+                    Some(s) => FuncSigEntry {
+                        variadic: s.variadic,
+                        fixed_args: s.params.len() as u32,
+                    },
+                    None => FuncSigEntry::default(),
+                })
+                .collect(),
+        )
     }
 
     // ============================================================
@@ -1555,7 +1632,7 @@ mod tests {
 
         assert_eq!(
             module.signature_table(),
-            vec![(false, 1), (true, 1), (false, 0)],
+            ModuleSigs::from_pairs(vec![(false, 1), (true, 1), (false, 0)]),
             "表按 FuncRef 序对齐：(是否变参, 命名形参个数)"
         );
     }

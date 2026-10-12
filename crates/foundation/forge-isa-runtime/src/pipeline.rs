@@ -18,8 +18,8 @@ use forge_ir::IrError;
 
 /// 一条"IR 函数 → 编译产物"的管线（宿主实现）。
 pub trait FunctionPipeline: Send + Sync {
-    /// 编译一个 IR 函数；语义与旧的 `FunctionCompiler::compile_raw` 相同。
-    fn compile_raw(&self, func: &forge_ir::Function) -> Result<CompiledFunction, IrError>;
+    /// 编译一个 IR 函数。
+    fn compile(&self, func: &forge_ir::Function) -> Result<CompiledFunction, IrError>;
 }
 
 /// 工厂：把类型擦除的机器引用变成管线对象；`None` = 这个工厂不认这台机器。
@@ -68,5 +68,5 @@ pub fn compile_via_pipeline(
             "ISA `{isa}` 的管线工厂不认这台机器类型（注册的工厂与 TargetMachine 不匹配）"
         )));
     };
-    pipeline.compile_raw(func)
+    pipeline.compile(func)
 }

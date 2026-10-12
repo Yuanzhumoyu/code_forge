@@ -10,17 +10,10 @@ use serde::{Deserialize, Serialize};
 use crate::error::AbiError;
 use crate::plan::CalleeSaveMechanism;
 
-/// 寄存器位置的计数规则。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum PositionRule {
-    /// 按类各自计数（riscv SysV：整数与浮点序列独立推进）。
-    #[default]
-    ByClass,
-    /// 按**位置**计数：第 i 个参数用第 i 个槽（Windows x64：第 2 个参数即使第 1 个是整数，
-    /// 浮点也走 XMM1）——int/float 共用同一个位置游标。
-    ByPosition,
-}
+// v23 M2：这两个枚举既是 `AbiRules` 的字段类型、也是 `AbiPlan` 的字段类型，因此定义在
+// leaf crate `forge-abi-model` 里（产物 crate 不能反过来依赖规则加载层——那会把 toml
+// 拖进运行时）。这里只做再导出，`forge_abi::PositionRule` / `forge_abi::CalleePop` 照旧。
+pub use forge_abi_model::rules_pod::{CalleePop, PositionRule};
 
 /// 类型形状谓词（分类规则的 `when`）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -187,19 +180,6 @@ impl Default for CalleeSavedRules {
             includes_link: false,
         }
     }
-}
-
-/// 被叫方弹栈规则（stdcall/fastcall/pascal）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum CalleePop {
-    /// 调用方弹栈（cdecl/SysV/AAPCS64/RISC-V…）。
-    #[default]
-    None,
-    /// 被叫方按实际栈参数字节数弹栈（stdcall/pascal）。
-    SumStackArgs,
-    /// 固定字节数（thiscall 的 `ret 4` 等）。
-    Fixed(u32),
 }
 
 /// 隐藏槽规则（sret 指针 / context / 变参元信息）。

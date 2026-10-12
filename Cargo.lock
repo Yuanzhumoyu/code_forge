@@ -531,9 +531,19 @@ checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 name = "forge-abi"
 version = "0.1.0"
 dependencies = [
+ "forge-abi-model",
+ "forge-ir",
  "serde",
  "thiserror",
  "toml",
+]
+
+[[package]]
+name = "forge-abi-model"
+version = "0.1.0"
+dependencies = [
+ "forge-ir",
+ "serde",
 ]
 
 [[package]]
@@ -610,6 +620,7 @@ name = "forge-isa"
 version = "0.1.0"
 dependencies = [
  "forge-abi",
+ "forge-ir",
  "forge-isa-dsl",
 ]
 
@@ -633,6 +644,7 @@ dependencies = [
 name = "forge-isa-runtime"
 version = "0.1.0"
 dependencies = [
+ "forge-abi-model",
  "forge-ir",
  "smallvec",
  "thiserror",

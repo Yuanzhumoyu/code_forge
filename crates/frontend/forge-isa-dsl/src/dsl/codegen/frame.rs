@@ -1213,11 +1213,10 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
             );
             quote! {
                 if let Some(__cl) = __rm.call_layout.as_ref()
-                    && let Some(crate::machine::call_layout::ArgPlace::Stack { offset: __soff, .. }) =
-                        __cl.arg(__i as u32).map(|__a| &__a.place)
+                    && let Some(__soff) = __cl.arg(__i as u32).and_then(|__a| __a.place.stack_offset())
                     && __rm.spill_slots.contains_key(&__pv)
                 {
-                    let __off = *__soff as i64;
+                    let __off = __soff as i64;
                     let __sp_base =
                         -(__frame_size as i64) - __cs_bytes + __rm.stack_arg_bytes as i64;
                     let __slot_off = __rm.spill_slot(__pv).offset as i64;
@@ -1260,29 +1259,29 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
             // **按值整块进传出区**的形参（聚合，SysV `>16B`）：没有入场寄存器、也不进
             // spill 槽——值就是 `[fp + offset]` 那段内存，**宿主展开阶段**已经把使用处
             // 改写成从该地址读（`expand_large_agg_params` 的 StackByVal 档）⇒ 这里跳过。
-            if matches!(
-                __rm.call_layout.as_ref().and_then(|__cl| __cl.arg(__i as u32)).map(|__ca| &__ca.place),
-                Some(crate::machine::call_layout::ArgPlace::StackByVal { .. })
-            ) {
+            if __rm
+                .call_layout
+                .as_ref()
+                .and_then(|__cl| __cl.arg(__i as u32))
+                .is_some_and(|__ca| __ca.place.is_stack_byval())
+            {
                 continue;
             }
             if !__rm.param_is_float.get(__i).copied().unwrap_or(false)
                 && __rm.spill_slots.contains_key(&__pv)
             {
-                let __src = match __rm.call_layout.as_ref().and_then(|__cl| __cl.arg(__i as u32)) {
-                    Some(__ca) => match &__ca.place {
-                        crate::machine::call_layout::ArgPlace::Reg { class, index, .. } => {
-                            Reg::from_index(*index, *class)
-                        }
-                        _ => {
-                            return Err(crate::IrError::Unsupported(
-                                "ISA-DSL move_args: spilled 寄存器参数需要布局给的寄存器落点".into(),
-                            ));
-                        }
-                    },
+                let __src = match __rm
+                    .call_layout
+                    .as_ref()
+                    .and_then(|__cl| __cl.arg(__i as u32))
+                    .and_then(|__ca| __ca.place.as_reg())
+                {
+                    Some(__r) => Reg::from_index(__r.slot, __r.class),
                     None => {
                         return Err(crate::IrError::Unsupported(
-                            "ISA-DSL move_args: spilled 寄存器参数需要调用布局（plan）".into(),
+                            "ISA-DSL move_args: spilled 寄存器参数需要布局给的寄存器落点\
+                             （调用布局缺失或落点不是寄存器）"
+                                .into(),
                         ));
                     }
                 };
@@ -1367,7 +1366,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
                 s,
                 &callee_base,
                 &quote! { __disp },
-                &quote! { Reg::from_index(__slot.index, __slot.class) },
+                &quote! { Reg::from_index(__slot.reg.slot, __slot.reg.class) },
             );
             let fpr_store: TokenStream = match store_fpr_shape.as_ref() {
                 Some(f) => {
@@ -1375,7 +1374,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
                         f,
                         &callee_base,
                         &quote! { __disp },
-                        &quote! { Reg::from_index(__slot.index, __slot.class) },
+                        &quote! { Reg::from_index(__slot.reg.slot, __slot.reg.class) },
                     );
                     quote! {
                         let __bytes = encode(&#f_inst).map_err(|e| crate::IrError::Emit(e))?;
@@ -1392,11 +1391,11 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
             quote! {
                 if let Some(__off) = __rm.va_save_off
                     && let Some(__cl) = __rm.call_layout.as_ref()
-                    && let Some(__save) = __cl.va.as_ref().and_then(|__v| __v.save.as_ref())
+                    && let Some(__save) = __cl.va_area.as_ref().and_then(|__v| __v.save.as_ref())
                 {
                     for __slot in __save.slots.iter() {
                         let __disp = __off + __slot.offset as i64;
-                        let __bytes = if __slot.class.is_fp() {
+                        let __bytes = if __slot.reg.class.is_fp() {
                             #fpr_store
                             __bytes
                         } else {
@@ -1423,15 +1422,10 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
         // `first_offset_slots + shadow + k×slot` 算好，生成器不再自己数位置）。
         let __layout_ok = match __rm.call_layout.as_ref() {
             Some(__cl) => __rm.param_vregs.iter().enumerate().all(|(__li, _)| {
-                matches!(
-                    __cl.arg(__li as u32).map(|__a| &__a.place),
-                    Some(crate::machine::call_layout::ArgPlace::Reg { .. })
-                        | Some(crate::machine::call_layout::ArgPlace::Indirect {
-                            reg: Some(_),
-                            ..
-                        })
-                        | Some(crate::machine::call_layout::ArgPlace::Stack { .. })
-                )
+                __cl.arg(__li as u32).is_some_and(|__a| {
+                    let __p = &__a.place;
+                    __p.as_reg().is_some() || __p.indirect_ptr().is_some() || __p.stack_offset().is_some()
+                })
             }),
             None => false,
         };
@@ -1459,10 +1453,13 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
                 && let Some(__a) = __cl.arg(__i as u32)
             {
                 match &__a.place {
-                    crate::machine::call_layout::ArgPlace::Reg { class, index, .. } => {
+                    __p if __p.as_reg().is_some() => {
                         // 四路（v20 V7）：**落点的类**（约定给）× **值所在的池**（IR 类型给，
                         // `param_is_float`）——不一致时走**类间位搬移**。旧实现只看落点的类：
                         // 浮点值落在整数寄存器时把 FPR 的号当 GPR 号用（**静默错值**）。
+                        let __r = __p.as_reg().expect("上面刚判过");
+                        // 引用绑定：下面几条**已存在的模板**（`*index`/`*class` 形态）按引用写。
+                        let (class, index) = (&__r.class, &__r.slot);
                         let __val_fp = __rm.param_is_float.get(__i).copied().unwrap_or(false);
                         if class.is_int() {
                             let __src = Reg::from_index(*index, *class);
@@ -1490,14 +1487,14 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
                             ));
                         }
                     }
-                    crate::machine::call_layout::ArgPlace::Indirect {
-                        reg: Some((class, index)),
-                        ..
-                    } => {
-                        let __src = Reg::from_index(*index, *class);
+                    __p if __p.indirect_ptr().is_some() => {
+                        let __r = __p.indirect_ptr().expect("上面刚判过");
+                        let __src = Reg::from_index(__r.slot, __r.class);
                         #byref_stmt
                     }
-                    crate::machine::call_layout::ArgPlace::Stack { offset, .. } => {
+                    __p if __p.stack_offset().is_some() => {
+                        // `offset` 按**引用**绑定：栈参数模板（`#layout_stack_stmt`）按 `*offset` 写。
+                        let offset = &__p.stack_offset().expect("上面刚判过");
                         // 栈参数：**偏移由 forge-abi 给**（被调方视角，已含 shadow 与
                         // `first_offset_slots`），生成器不再自己数位置。
                         //

@@ -386,12 +386,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         match ctx
             .conv
             .layout()
-            .and_then(|__cl| match __cl.ret.as_ref() {
-                Some(crate::machine::call_layout::RetPlace::Reg { class, index, .. }) => {
-                    Some((*index, *class))
-                }
-                _ => None,
-            })
+            .and_then(|__cl| __cl.ret.as_reg().map(|__r| (__r.slot, __r.class)))
             .or(ctx.conv.ret_gpr)
         {
             Some((__ri, __rc)) => Reg::from_index(__ri, __rc),
@@ -407,7 +402,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     let fpr_ret_dest: TokenStream = quote! { Reg::from_index(0, __DEFAULT_FPR_CLASS) };
     // 按引用返回（sret ✗）：隐藏指针来自**布局**（`hidden_sret` ✗），缺 ⇒ fail-closed。
     let sret_dest: TokenStream = quote! {
-        match ctx.conv.layout().and_then(|__cl| __cl.hidden_sret) {
+        match ctx.conv.layout().and_then(|__cl| __cl.hidden_sret_slot()) {
             Some((__hc, __hi)) => Reg::from_index(__hi, __hc),
             None => {
                 return Err(crate::prelude::IrError::Unsupported(
@@ -563,7 +558,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             quote! {
                 // sret 指针来自**布局**的隐藏槽（v20 A5-3：不再假设"首 int 参数槽"——
                 // 那正是按位置/按类计数与 sret 槽差异会出错的写法）。
-                let __sret = match ctx.conv.layout().and_then(|__cl| __cl.hidden_sret) {
+                let __sret = match ctx.conv.layout().and_then(|__cl| __cl.hidden_sret_slot()) {
                     Some((__hc, __hi)) => Reg::from_index(__hi, __hc),
                     None => {
                         return Err(crate::prelude::IrError::Unsupported(
@@ -701,9 +696,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             };
             quote! {
                 let __ret_regs: Vec<(forge_ir::RegClass, u32)> =
-                    match ctx.conv.layout().and_then(|__cl| __cl.ret.as_ref()) {
-                        Some(crate::machine::call_layout::RetPlace::Pair { lo, hi }) => vec![*lo, *hi],
-                        Some(crate::machine::call_layout::RetPlace::Group { regs }) => regs.clone(),
+                    match ctx.conv.layout().map(|__cl| &__cl.ret) {
+                        Some(crate::machine::abi_model::RetLoc::RegPair { lo, hi }) => vec![(lo.class, lo.slot), (hi.class, hi.slot)],
+                        Some(crate::machine::abi_model::RetLoc::RegGroup { regs }) => regs.iter().map(|r| (r.class, r.slot)).collect(),
                         _ => Vec::new(),
                     };
                 if __ret_regs.len() >= 2 {
@@ -1681,7 +1676,7 @@ fn gen_call_lowering(
                     quote! {
                         let __k = __stack_seen;
                         let __bytes = size as usize;
-                        let __slot = __cl.slot_bytes as usize;
+                        let __slot = __cl.slot_bytes() as usize;
                         __stack_seen += __bytes.div_ceil(__slot) as u32;
                         let __off0 = __cl.caller_offset(__k) as i64;
                         let __cur = ctx.alloc_xreg(__DEFAULT_GPR_CLASS);
@@ -1723,7 +1718,7 @@ fn gen_call_lowering(
                         }
                         ctx.max_stack_arg_bytes = ctx
                             .max_stack_arg_bytes
-                            .max(__cl.shadow_bytes + __stack_seen * (__slot as u32));
+                            .max(__cl.shadow_bytes() + __stack_seen * (__slot as u32));
                     }
                 }
                 _ => quote! {
@@ -1769,7 +1764,7 @@ fn gen_call_lowering(
     // ISA 名（生成期字面量）：`call_plan::plan_call` 的查表键。
     let isa_lit = syn::LitStr::new(model.meta.name.as_str(), proc_macro2::Span::call_site());
     // **调用点 plan**（v20 A5-3 / A6）：调用方按**被调方**的落点搬实参。实参形状从 IR 类型
-    // **递归摊开**（`ArgShape::from_ir_type`：size/align/族 + **成员**/lane）——运行时不依赖
+    // **递归摊开**（`TyView::from_ir_type`：size/align/族 + **成员**/lane）——运行时不依赖
     // forge-abi，形状交给宿主注册的 planner，拿回被调方的 `CallLayout`。拿不到 ⇒
     // **fail-closed**（不按谱面顺序猜落点）。
     //
@@ -1784,20 +1779,20 @@ fn gen_call_lowering(
     };
     let plan_setup: TokenStream = quote! {
         let __shape_args: &[crate::prelude::XReg] = #shape_args;
-        let __fallback_shape = crate::machine::call_layout::ArgShape::int(
+        let __fallback_shape = crate::machine::abi_model::TyView::int(
             __SLOT_BYTES as u32,
             __SLOT_BYTES as u32,
         );
-        let __shape_of = |__v: crate::prelude::XReg| -> crate::machine::call_layout::ArgShape {
+        let __shape_of = |__v: crate::prelude::XReg| -> crate::machine::abi_model::TyView {
             let __t = ctx.xreg_types.get(&__v).copied();
             match (__t, ctx.type_store.as_ref()) {
                 (Some(__t), Some(__store)) => {
-                    crate::machine::call_layout::ArgShape::from_ir_type(__store, __t)
+                    crate::machine::abi_model::TyView::from_ir_type(__store, __t)
                 }
                 _ => __fallback_shape.clone(),
             }
         };
-        let __shapes: Vec<crate::machine::call_layout::ArgShape> = __shape_args
+        let __shapes: Vec<crate::machine::abi_model::TyView> = __shape_args
             .iter()
             .enumerate()
             .map(|(__i, &__a)| {
@@ -1807,7 +1802,7 @@ fn gen_call_lowering(
                 match ctx.current_param_attrs.get(__i).and_then(|__p| __p.byval) {
                     Some(__t) => match ctx.type_store.as_ref() {
                         Some(__store) => {
-                            crate::machine::call_layout::ArgShape::from_ir_type(__store, __t)
+                            crate::machine::abi_model::TyView::from_ir_type(__store, __t)
                         }
                         None => __shape_of(__a),
                     },
@@ -1815,7 +1810,7 @@ fn gen_call_lowering(
                 }
             })
             .collect();
-        let __ret_shapes: Vec<crate::machine::call_layout::ArgShape> =
+        let __ret_shapes: Vec<crate::machine::abi_model::TyView> =
             results.iter().map(|&__r| __shape_of(__r)).collect();
         // **被调方的变参信息**（变参 D6）：调用点只看得见实参形状，判不出"未命名实参在
         // 只走栈的约定里要改判到栈"——宿主把**模块级签名表**放在 `ctx.conv.module_sigs`，
@@ -1895,16 +1890,12 @@ fn gen_call_lowering(
             let (dest, imm) = (&arm.dst, &arm.src);
             quote! {
                 if __variadic.is_some()
-                    && let Some((__mc, __mi)) = __cl.va_meta
+                    && let Some((__mc, __mi)) = __cl.va_meta_slot()
                 {
                     // `%al` 的语义：**用到的向量寄存器个数**（取类内号最大值 + 1；一个都没用 = 0）。
                     let __n: u32 = __cl.args.iter().fold(0u32, |__acc, __arg| {
-                        match &__arg.place {
-                            crate::machine::call_layout::ArgPlace::Reg { class, index, .. }
-                                if class.is_fp() =>
-                            {
-                                __acc.max(*index + 1)
-                            }
+                        match __arg.place.as_reg() {
+                            Some(__r) if __r.class.is_fp() => __acc.max(__r.slot + 1),
                             _ => __acc,
                         }
                     });
@@ -1916,7 +1907,7 @@ fn gen_call_lowering(
             }
         }
         Err(_) => quote! {
-            if __variadic.is_some() && __cl.va_meta.is_some() {
+            if __variadic.is_some() && __cl.va_meta_slot().is_some() {
                 return Err(crate::prelude::IrError::Unsupported(
                     "ISA-DSL call: 该约定的变参要求写元信息寄存器（SysV 的 `%al`），但本 ISA \
                      没有「整数寄存器 ← 立即数」的搬运指令（在指令上写 `data_width`）"
@@ -2006,9 +1997,9 @@ fn gen_call_lowering(
         // **多值返回**（v20 A6）：布局的 ret 是 `RegPair`/`RegGroup` ⇒ 第 k 个结果从
         // `regs[k]` 读回，按每个结果自己的寄存器类分派。旧实现只处理"第一个 + 写死类内号 1"。
         let __ret_regs: Vec<(forge_ir::RegClass, u32)> =
-            match __cl.ret.as_ref() {
-                Some(crate::machine::call_layout::RetPlace::Pair { lo, hi }) => vec![*lo, *hi],
-                Some(crate::machine::call_layout::RetPlace::Group { regs }) => regs.clone(),
+            match &__cl.ret {
+                crate::machine::abi_model::RetLoc::RegPair { lo, hi } => vec![(lo.class, lo.slot), (hi.class, hi.slot)],
+                crate::machine::abi_model::RetLoc::RegGroup { regs } => regs.iter().map(|r| (r.class, r.slot)).collect(),
                 _ => Vec::new(),
             };
         if __ret_regs.len() >= 2 {
@@ -2216,7 +2207,7 @@ fn gen_call_lowering(
                 __pack.map_reg_field(__sp, __lidx, #i_lea, true);
                 // sret 指针的落点由**布局**给（v20 A5-3：不再假设"首 int 参数槽"，
                 // 那正是按位置/按类计数与 sret 槽差异会出错的写法）。
-                let (__sret_class,  __sret_index) = match __cl.hidden_sret {
+                let (__sret_class,  __sret_index) = match __cl.hidden_sret_slot() {
                     Some(__h) => __h,
                     None => {
                         return Err(crate::prelude::IrError::Unsupported(
@@ -2377,7 +2368,7 @@ fn gen_call_lowering(
                     Some(__cl) => __cl
                         .clobbers
                         .iter()
-                        .map(|(__c, __i)| (Reg::from_index(*__i, *__c).to_index(), *__c))
+                        .map(|__r| (Reg::from_index(__r.slot, __r.class).to_index(), __r.class))
                         .collect(),
                     // 无 plan（未注册约定 / 本函数规划失败）：破坏集是**约定级事实**，
                     // 由宿主按 `(ISA, 约定)` 一次算好（v20 A5-3；谱里的
@@ -2654,7 +2645,7 @@ fn arg_move_loop(
                 let __k = __stack_seen;
                 __stack_seen += 1;
                 let __off = __cl.caller_offset(__k) as i64;
-                let __slot = __cl.slot_bytes;
+                let __slot = __cl.slot_bytes();
                 let __is_fp = ctx.xreg_types.get(&__a).is_some_and(|__t| {
                     ctx.type_store
                         .as_ref()
@@ -2668,7 +2659,7 @@ fn arg_move_loop(
                 // 帧需求：栈参数区 = shadow + 已用栈槽
                 ctx.max_stack_arg_bytes = ctx
                     .max_stack_arg_bytes
-                    .max(__cl.shadow_bytes + __stack_seen * __slot);
+                    .max(__cl.shadow_bytes() + __stack_seen * __slot);
             }
         }
         None => quote! {
@@ -2712,28 +2703,42 @@ fn arg_move_loop(
                 }
             };
             match __place {
-                crate::machine::call_layout::ArgPlace::Reg { class, index, .. } => {
+                // 落点分类走**访问器**（v23 M2：`Placement` 的变体划分是引擎的分类细节，
+                // 发射端只问"哪个寄存器 / 指针在哪 / 栈上什么偏移"）——生成物因此不必穷举
+                // 枚举，也不会因为引擎将来加一个变体而静默走错分支。
+                __p if __p.as_reg().is_some() => {
+                    let (class, index) = {
+                        let __r = __p.as_reg().expect("上面刚判过");
+                        (__r.class, __r.slot)
+                    };
                     let __dst = Reg::from_index(index, class);
                     // 四路（v20 V7）：**落点的类** × **值所在的池**——两者不一致时走类间位搬移，
                     // 不再把值的号写进另一类的槽（那是静默错值）。判据在运行期（落点来自 plan）。
                     #reg_dispatch
                 }
-                crate::machine::call_layout::ArgPlace::Indirect {
-                    reg: Some((class, index)),
-                    ..
-                } => {
+                __p if __p.indirect_ptr().is_some() => {
+                    let (class, index) = {
+                        let __r = __p.indirect_ptr().expect("上面刚判过");
+                        (__r.class, __r.slot)
+                    };
                     #indirect_arm
                 }
-                crate::machine::call_layout::ArgPlace::Stack { .. } => {
-                    #stack_stmt
-                }
-                crate::machine::call_layout::ArgPlace::StackByVal { size, .. } => {
+                // **先判按值整块**：`StackByVal` 也有栈偏移，顺序反了会走标量 `Stack` 那条
+                // （拷一个格而不是 `size` 字节 ⇒ 静默错值）。
+                __p if __p.is_stack_byval() => {
+                    let size = match &__p {
+                        crate::machine::abi_model::Placement::StackByVal { size, .. } => *size,
+                        _ => 0,
+                    };
                     #byval_stack_stmt
                 }
-                crate::machine::call_layout::ArgPlace::Ignore => {}
+                __p if __p.stack_offset().is_some() => {
+                    #stack_stmt
+                }
+                crate::machine::abi_model::Placement::Ignore => {}
                 other => {
                     return Err(crate::prelude::IrError::Unsupported(format!(
-                        "ISA-DSL call: 调用点布局落点尚未接进发射（Pair/Group/无指针 Indirect 等，A6）：{other:?}"
+                        "ISA-DSL call: 调用点布局落点尚未接进发射（RegPair/RegGroup/无指针 Indirect 等，A6）：{other:?}"
                     )));
                 }
             }

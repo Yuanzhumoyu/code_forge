@@ -35,7 +35,7 @@
 //! 2. 逐指令改写要**先收集再改**两遍（遍历 `blocks()` 时不能再可变借用 `func`）。
 
 use forge_ir::*;
-use forge_isa_runtime::machine::call_layout::VaInfo;
+use forge_isa_runtime::machine::call_layout::{VaInfo, VaInit, VaInitVal};
 
 /// **ABI 槽的帧内分配**（v20 变参 V3）：保存区与 `va_list` 对象各一段。
 ///
@@ -152,18 +152,20 @@ pub(crate) fn has_va_op(func: &Function) -> bool {
 pub(crate) fn va_info_for_expansion<M: crate::machine::target::TargetMachine>(
     machine: &M,
     func: &Function,
-    module_sigs: Option<&[(bool, u32)]>,
-) -> Result<Option<(VaInfo, forge_isa_runtime::machine::call_layout::CallLayout)>, IrError> {
+    module_sigs: Option<std::sync::Arc<forge_ir::ModuleSigs>>,
+) -> Result<Option<(VaInfo, forge_isa_runtime::machine::abi_model::AbiPlan)>, IrError> {
     use crate::machine::target::TargetMachine;
     crate::pipeline_hooks::ensure_registered();
     let mut ctx = forge_isa_runtime::ctx::LowerCtx::new();
     ctx.value_gpr_class = TargetMachine::reg_info(machine).value_gpr_class();
     crate::pipeline::abi_setup::setup_conv(&mut ctx, machine, func, module_sigs)?;
     // 只要求"有 `va_list` 信息 + 有 plan"：形状/初值齐不齐由 `expand_va` 报错（消息更近现场）。
+    // 变参外壳现在挂在 `CallConvCtx::va`（v23 M2：plan 本身直接给发射端读，外壳只剩
+    // "宿主算出来的初值"这一件事）。
     Ok(ctx
         .conv
         .layout()
-        .and_then(|cl| cl.va.clone().map(|va| (va, cl.clone()))))
+        .and_then(|cl| ctx.conv.va.clone().map(|va| (va, cl.clone()))))
 }
 
 /// 字节宽 → IR 整数类型（游标字段的宽度由 plan 给：sysv64 是 u32，别的形态可能更宽）。
@@ -188,7 +190,7 @@ pub(crate) fn expand_va(
 ) -> Result<(usize, usize), IrError> {
     let Some(init) = va.init.clone() else {
         return Err(IrError::Unsupported(format!(
-            "变参：宿主没给 `CallLayout.va.init`（对象字段初值），无法物化 `va_list`——\
+            "变参：宿主没给 `LowerCtx::conv.va.init`（对象字段初值），无法物化 `va_list`——\
              形状 = {}（保存区 {} / 字段 {} 个）",
             va.shape.as_deref().unwrap_or("<explicit>"),
             if va.save.is_some() { "有" } else { "无" },
@@ -349,7 +351,7 @@ fn expand_start(
     func: &mut Function,
     b: Block,
     ii: Inst,
-    init: &forge_isa_runtime::machine::call_layout::VaInit,
+    init: &VaInit,
     va: &VaInfo,
     slots: &AbiSlots,
 ) -> Result<(), IrError> {
@@ -392,7 +394,7 @@ fn expand_start(
     for (f, val) in va.fields.iter().zip(init.fields.iter()) {
         let field_ty = int_ty(f.size.max(1));
         let value = match val {
-            forge_isa_runtime::machine::call_layout::VaInitVal::Imm(v) => {
+            VaInitVal::Imm(v) => {
                 let c = mk_iconst(func, b, &mut out, *v as i64);
                 // 常量按字段宽度截断（宽度不足时）
                 if f.size.max(1) >= 8 {
@@ -401,7 +403,7 @@ fn expand_start(
                     mk_unop(func, b, &mut out, Opcode::Ireduce, c, field_ty)
                 }
             }
-            forge_isa_runtime::machine::call_layout::VaInitVal::FrameOff(off) => {
+            VaInitVal::FrameOff(off) => {
                 // 帧基址相对偏移 X ⇒ `StackAddr(X + shift)`（`StackAddr(v)` 的地址 =
                 // `fp + v - shift`）；正偏移（调用方的栈实参区）也走这一条。
                 let i = func.make_inst(
@@ -416,7 +418,7 @@ fn expand_start(
                 out.push(i);
                 v
             }
-            forge_isa_runtime::machine::call_layout::VaInitVal::SaveOff(off) => {
+            VaInitVal::SaveOff(off) => {
                 // 保存区基址（管线分配的那段；"要求连续"时在**帧顶**，否则在前端局部槽之下）
                 // + 形状给的静态偏移：AAPCS64 的 `__gr_top`/`__vr_top` 就是"本类区域的顶端"。
                 // 基址的 `StackAddr` 立即数由 `plan_abi_slots` 统一给出（`save_base_v`）——
@@ -519,7 +521,7 @@ fn expand_arg(
     func: &mut Function,
     b: Block,
     ii: Inst,
-    init: &forge_isa_runtime::machine::call_layout::VaInit,
+    init: &VaInit,
     va: &VaInfo,
 ) -> Result<(), IrError> {
     let _ = init; // 初值在 `va_start` 里写；取值只读对象

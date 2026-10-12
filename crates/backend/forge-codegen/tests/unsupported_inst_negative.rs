@@ -1,7 +1,7 @@
 //! codegen 负向测试：无机器指令映射的 IR 指令必须被编译期拒绝（报错而非 panic/静默错码）。
 
 use forge_codegen::arch::x86::{TargetMachine, ensure_registered};
-use forge_codegen::pipeline::compiler::FunctionCompiler;
+use forge_codegen::pipeline::compiler::CompileSession;
 use forge_ir::ir::builder::FunctionBuilder;
 use forge_ir::ir::types::{FunctionSignature, TypeContext};
 use forge_ir::{InstFlags, Opcode};
@@ -27,8 +27,8 @@ fn addrspacecast_compile_rejected() {
     b.ret(&[v]);
     let func = b.finish().expect("build");
 
-    let compiler = FunctionCompiler::new(TargetMachine::new());
-    let result = compiler.compile_raw(&func);
+    let compiler = CompileSession::new(TargetMachine::new());
+    let result = compiler.compile(&func);
     assert!(
         result.is_err(),
         "addrspacecast 无机器指令，compile 应报错，got: {:?}",
@@ -66,8 +66,8 @@ fn invoke_landingpad_compile_rejected() {
     );
     let func = b.finish().expect("build");
 
-    let compiler = FunctionCompiler::new(TargetMachine::new());
-    let result = compiler.compile_raw(&func);
+    let compiler = CompileSession::new(TargetMachine::new());
+    let result = compiler.compile(&func);
     assert!(
         result.is_err(),
         "含 invoke/landingpad/resume 的异常函数应编译期拒绝，got: {:?}",
@@ -99,7 +99,7 @@ define i32 @main() {
     let module = parse_module(src).expect("parse");
     // win64：被调方（形参转 `ptr` + 按地址读）能编译
     let callee = module.iter_functions().next().unwrap().clone();
-    let ok = FunctionCompiler::new(TargetMachine::new()).compile_raw(&callee);
+    let ok = CompileSession::new(TargetMachine::new()).compile(&callee);
     assert!(
         ok.is_ok(),
         "win64 上 32B 聚合按值形参应走「副本 + 指针」，got: {:?}",
@@ -107,7 +107,7 @@ define i32 @main() {
     );
     // win64：调用方（副本 + 逐段 store + 传指针）也能编译
     let caller = module.iter_functions().nth(1).unwrap().clone();
-    let ok_caller = FunctionCompiler::new(TargetMachine::new()).compile_raw(&caller);
+    let ok_caller = CompileSession::new(TargetMachine::new()).compile(&caller);
     assert!(
         ok_caller.is_ok(),
         "win64 上 32B 聚合按值实参应走「调用方副本 + 指针」，got: {:?}",
@@ -126,7 +126,7 @@ define i32 @main() {
         .clone();
     sig.calling_convention = CallConvId::Builtin(ConvName::SysV64);
     sysv_callee.signature = sysv_callee.types.borrow_mut().register_signature(sig);
-    let ok_sysv = FunctionCompiler::new(TargetMachine::new()).compile_raw(&sysv_callee);
+    let ok_sysv = CompileSession::new(TargetMachine::new()).compile(&sysv_callee);
     assert!(
         ok_sysv.is_ok(),
         "sysv64 上 32B 聚合的**被调方**应能按 [fp+offset] 读，got: {:?}",
@@ -141,7 +141,7 @@ define i32 @main() {
         .clone();
     csig.calling_convention = CallConvId::Builtin(ConvName::SysV64);
     sysv_caller.signature = sysv_caller.types.borrow_mut().register_signature(csig);
-    let ok_sysv_caller = FunctionCompiler::new(TargetMachine::new()).compile_raw(&sysv_caller);
+    let ok_sysv_caller = CompileSession::new(TargetMachine::new()).compile(&sysv_caller);
     assert!(
         ok_sysv_caller.is_ok(),
         "sysv64 的**调用方**一侧已接（本地副本 + `byval(聚合类型)` 属性 + 逐段拷进传出区），\

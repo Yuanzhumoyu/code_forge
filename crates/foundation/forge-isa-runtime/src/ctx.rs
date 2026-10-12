@@ -76,7 +76,9 @@ pub struct CallConvCtx {
     /// 传参/序尾声读它——运行时因此不依赖 forge-abi，只认这份数据。
     ///
     /// `None` = 管线还没接上（v20 A6 起"算不出 plan"是**编译错误**，所以正常路径恒为 `Some`）。
-    pub layout: Option<crate::machine::call_layout::CallLayout>,
+    pub layout: Option<forge_abi_model::AbiPlan>,
+    /// **变参外壳**（v23 M2）：a_list 的字段初值等只有编译入口算得出的东西。
+    pub va: Option<crate::machine::call_layout::VaInfo>,
     /// **约定级破坏集**：调用点被破坏的寄存器 `(类内号, 类)`，由宿主按 `(ISA, 约定)` 算好。
     ///
     /// 与 [`layout`](Self::layout) 的分工：后者是**本函数**的完整布局（含落点），这份是
@@ -90,16 +92,18 @@ pub struct CallConvCtx {
     /// 聚合各种形态），这份是**约定级**标量返回槽——`Return` 优先用前者，`Call` 读**被调方**
     /// 返回值时用这份（调用点看不到被调方签名）。空 = 宿主没给 ⇒ 生成物 fail-closed。
     pub ret_gpr: Option<(u32, forge_ir::RegClass)>,
-    /// **模块级签名表**：`FuncRef::index()` → `(是否变参, 命名实参个数)`。
+    /// **模块级签名表**（[`forge_ir::ModuleSigs`]）：`FuncRef::index()` → 签名事实。
     ///
     /// 调用点只看得见实参形状，判不出"未命名实参在只走栈的约定里要改判到栈"——宿主编译
     /// 模块时手上有每个函数的签名，填在这里。`None` = 没有这份表（单函数编译）。
-    pub module_sigs: Option<Vec<(bool, u32)>>,
+    ///
+    /// 存 `Arc` 是因为它按函数传递（每个函数的 `LowerCtx` 都要一份，克隆 O(1)）。
+    pub module_sigs: Option<std::sync::Arc<forge_ir::ModuleSigs>>,
 }
 
 impl CallConvCtx {
     /// 本函数的布局（`None` = 管线没接上；v20 A6 起"算不出"是编译错误）。
-    pub fn layout(&self) -> Option<&crate::machine::call_layout::CallLayout> {
+    pub fn layout(&self) -> Option<&forge_abi_model::AbiPlan> {
         self.layout.as_ref()
     }
 
@@ -110,7 +114,7 @@ impl CallConvCtx {
     pub fn variadic_of(&self, f: forge_ir::FuncRef) -> Option<(bool, u32)> {
         self.module_sigs
             .as_ref()
-            .and_then(|sigs| sigs.get(f.index() as usize).copied())
+            .and_then(|sigs| sigs.variadic_at(f.index() as usize))
     }
 }
 

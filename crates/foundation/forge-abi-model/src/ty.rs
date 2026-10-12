@@ -41,6 +41,13 @@ pub struct TyView {
     pub kind: TyKind,
 }
 
+/// 借用 → 拥有（`CallRequest::args/rets` 因此既能收 `Vec`/数组，也能收 `&Vec`/`iter()`）。
+impl From<&TyView> for TyView {
+    fn from(t: &TyView) -> Self {
+        t.clone()
+    }
+}
+
 impl TyView {
     pub fn new(size: u32, align: u32, kind: TyKind) -> Self {
         Self { size, align, kind }

@@ -13,6 +13,8 @@ pub mod frame_slots;
 pub mod liverange;
 pub mod lowering;
 pub mod regalloc_bt;
+/// 模块级编译编排：`CompiledModule` + 整模块/单函数入口（M1：唯一编译入口）。
+pub mod session;
 /// IR 视图 → 引擎视图（签名 + 参数属性；v20 A2b）。
 pub mod sig_view;
 pub mod va_expand;

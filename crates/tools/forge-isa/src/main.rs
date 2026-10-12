@@ -725,11 +725,8 @@ fn print_explain(e: &Explain) {
         }
     }
     if let Some(t) = &e.template {
-        let sec = if t.from_family {
-            format!("[family.{}]", t.template)
-        } else {
-            format!("[family.{}]", t.template)
-        };
+        // 来源节恒为 `[family.<名>]`（v21 统一族节名之后，族降级与直接声明同节）。
+        let sec = format!("[family.{}]", t.template);
         println!("  来源：{sec} 第 {} 行", t.index);
         if !t.body.is_empty() {
             println!("  模板 body：");

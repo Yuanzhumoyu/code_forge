@@ -11,15 +11,15 @@
 
 #![cfg(all(test, target_arch = "x86_64", windows))]
 
-use code_forge::backend::FunctionCompiler;
+use code_forge::backend::CompileSession;
 use code_forge::backend::arch::x86::{self, TargetMachine};
 use code_forge::mem::ExecutableMemory;
 use code_forge::prelude::*;
 /// 编译并通过 JIT 执行一个返回 I64 的函数。
 fn jit_execute(func: &Function) -> Result<i64, String> {
     x86::ensure_registered();
-    let compiled = FunctionCompiler::new(TargetMachine::new())
-        .compile_raw(func)
+    let compiled = CompileSession::new(TargetMachine::new())
+        .compile(func)
         .map_err(|e| format!("compile: {e}"))?;
     let mem = ExecutableMemory::new(&compiled.code).map_err(|e| format!("alloc: {e}"))?;
     let f: extern "C" fn() -> i64 = unsafe { mem.get_fn(0).unwrap() };

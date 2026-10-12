@@ -1,0 +1,15 @@
+[package]
+name = "forge-abi-model"
+version = "0.1.0"
+edition = "2024"
+description = "调用约定模型（纯数据）：AbiPlan / Placement / RetLoc / TyView + 规则侧小枚举——引擎产物与运行时/生成物共用的唯一数据形状"
+
+[dependencies]
+# 只有 serde（两个 TOML 面枚举要 derive）+ forge-ir。
+#
+# 为什么要 forge-ir（v23 M2 记录）：`TyView::from_ir_type` 是**唯一的** IR → 类型视图投影
+# （调用方与被调方共用同一份，此前运行时的 `ArgShape::from_ir_type` 与代码生成的
+# `sig_view::ty_view` 是两份、退化策略还不一致）。`TyView` 本身仍然只是数据——
+# 引擎不需要认识 IR，rustc/C 前端照样可以把 `Layout` 投影成它。
+forge-ir = { path = "../forge-ir" }
+serde = { version = "1.0.229", features = ["derive"] }

@@ -72,3 +72,22 @@ pub fn avx512_available() -> bool {
     }
     avx512_hardware_available()
 }
+
+/// 宿主能执行的**最大定宽向量字节档**（16 = SSE2 基线，32 = AVX，64 = AVX-512F）。
+///
+/// 这是**宿主事实**（不是 ISA 事实），也是"通用管线为什么不需要认识 `avx*`"的答案：
+/// 管线只问"这台机器能跑多宽的定宽向量"，由 ISA 后端的 `TargetRegInfo::wide_vector_bytes`
+/// 把它与**谱申报的档位**相交（v23 M3）。
+///
+/// 与 [`avx512_available`] 同口径：`FORGE_ASSUME_AVX512=1` 会把它抬到 64
+/// （那是**生成期可行性**开关——测试要在无 AVX-512 的宿主上验证 EVEX 的编码/收参分派；
+/// 真正**执行** EVEX 的测试仍须用 [`avx512_hardware_available`] 判 skip）。
+pub fn host_wide_vector_limit() -> u16 {
+    if avx512_available() {
+        64
+    } else if avx_available() {
+        32
+    } else {
+        16
+    }
+}

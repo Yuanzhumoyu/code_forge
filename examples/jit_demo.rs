@@ -3,7 +3,7 @@
 //! 每个测试编译一个 IR 函数 → 生成 x86 机器码 → JIT 执行 → 验证结果。
 
 use code_forge::backend::arch::x86::{self, ensure_registered};
-use code_forge::backend::{FunctionCompiler, Registry};
+use code_forge::backend::{CompileSession, Registry};
 use code_forge::mem::ExecutableMemory;
 use code_forge::prelude::*;
 
@@ -136,8 +136,8 @@ fn run_test(build: fn(&mut FunctionBuilder)) -> Result<i64, String> {
     b.create_block_here();
     build(&mut b);
     let func = b.finish().expect("build");
-    let compiled = FunctionCompiler::new(x86::TargetMachine::new())
-        .compile_raw(&func)
+    let compiled = CompileSession::new(x86::TargetMachine::new())
+        .compile(&func)
         .map_err(|e| format!("{}", e))?;
     let mem = ExecutableMemory::new(&compiled.code).map_err(|e| format!("alloc: {}", e))?;
     let f: extern "C" fn() -> i64 = unsafe { mem.get_fn(0).unwrap() };

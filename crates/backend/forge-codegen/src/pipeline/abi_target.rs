@@ -18,10 +18,7 @@
 use forge_abi::{AbiError, AbiPlan, AbiRegistry, AbiTarget, Capability, Signature};
 use forge_ir::ir::function::Function;
 use forge_ir::{PhysReg, RegClass};
-use forge_isa_runtime::machine::call_layout::{
-    ArgPlace, ArgShape, CallArg, CallLayout, Ext, RetPlace, ShapeKind, VaArgRule, VaArgRules,
-    VaField, VaInfo, VaInit, VaInitVal, VaSave, VaSaveSlot,
-};
+use forge_isa_runtime::machine::call_layout::{VaInfo, VaInit, VaInitVal};
 use forge_isa_runtime::machine::call_plan::{CallPlanError, CallRequest};
 use forge_isa_runtime::machine::target::TargetMachine;
 
@@ -87,11 +84,21 @@ impl<M: TargetMachine> AbiTarget for MachineAbiTarget<'_, M> {
         self.name_of(index)
     }
 
-    fn reg_class_name(&self, index: u32) -> String {
+    /// 寄存器类：整数区用地址类、浮点区用主 FPR 类（`n_gp` 是两者的分界）。
+    fn reg_class(&self, index: u32) -> RegClass {
         if self.is_fp(index) {
-            format!("{:?}", self.fpr_class)
+            self.fpr_class
         } else {
-            format!("{:?}", self.gpr_class)
+            self.gpr_class
+        }
+    }
+
+    /// 类内号：整数类 = ABI 空间号；浮点类 = 减去整数区宽度。
+    fn reg_slot(&self, index: u32) -> u32 {
+        if self.is_fp(index) {
+            index.saturating_sub(self.n_gp)
+        } else {
+            index
         }
     }
 
@@ -172,52 +179,15 @@ pub fn plan_for_signature<M: TargetMachine>(
     registry.plan(&target, conv, sig)
 }
 
-/// **形状 → `TyView`**（v20 A5-3「调用点 plan」的桥）：运行时侧的中性形状摊成引擎认识的
-/// 类型视图。聚合的成员逐个递归——HFA/HVA 判定需要成员（`homogeneous_float_agg`）。
-pub fn shape_to_ty(s: &ArgShape) -> forge_abi::TyView {
-    use forge_abi::{Elem, TyKind, TyView};
-    match &s.kind {
-        ShapeKind::Int => TyView::int(s.size, s.align),
-        ShapeKind::Ptr => TyView::new(s.size, s.align, TyKind::Ptr),
-        ShapeKind::Float => TyView::float(s.size),
-        // **用形状里的真实 size/align**：`TyView::vector` 会把 size 算成 `lanes × elem_bytes`，
-        // 而调用点未必知道元素宽度/lane 数（生成物只从 IR 类型摊出 size/align/族）——
-        // 退化成 size=0 会让引擎把 v256 判成"≤16B 按值向量"，从而漏掉 sret/by-ref。
-        ShapeKind::Vector {
-            elem_is_float,
-            lanes,
-            elem_bytes: _,
-        } => TyView::new(
-            s.size,
-            s.align,
-            TyKind::Vector {
-                elem: if *elem_is_float {
-                    Elem::Float
-                } else {
-                    Elem::Int
-                },
-                lanes: *lanes,
-            },
-        ),
-        // 用**真实** size/align（`TyView::agg` 会把 size 算成成员之和——packed/尾部填充
-        // 的对不上）。
-        ShapeKind::Aggregate { members } => TyView::new(
-            s.size,
-            s.align,
-            TyKind::Aggregate {
-                members: members.iter().map(shape_to_ty).collect(),
-            },
-        ),
-        ShapeKind::Other => TyView::new(s.size, s.align, TyKind::Other),
-    }
-}
-
 /// **按 [`CallRequest`]（形状面）算被调方的 plan**（v20 A5-3）：调用点只有形状，没有被调方的
 /// `Function`，而落点必须由引擎给——这条入口就是那一步。名字只用于诊断（`a0`/`a1`…）。
 ///
 /// 请求里带三件东西：`args`（实参形状）、`rets`（**全部**返回形状，多个 = 多值返回）、
 /// `variadic`（被调方是不是变参、命名几个——调用点自己判不出"未命名实参在只走栈的约定里
 /// 要改判到栈"，由宿主查模块签名表给出）。
+///
+/// 形状就是引擎的 [`TyView`](forge_abi::TyView)：**不再有"运行时形状 → 引擎视图"的桥**
+/// （v23 M2——那份桥曾是第二份投影，退化策略与被调方一侧不一致会让 HFA 两边分叉）。
 pub fn plan_for_shapes<M: TargetMachine>(
     machine: &M,
     registry: &AbiRegistry,
@@ -227,9 +197,9 @@ pub fn plan_for_shapes<M: TargetMachine>(
         .args
         .iter()
         .enumerate()
-        .map(|(i, s)| (format!("a{i}"), shape_to_ty(s)))
+        .map(|(i, s)| (format!("a{i}"), s.clone()))
         .collect();
-    let mut sig = Signature::with_rets(params, req.rets.iter().map(shape_to_ty).collect());
+    let mut sig = Signature::with_rets(params, req.rets.clone());
     // 被调方是变参 ⇒ 告诉引擎"前 `fixed` 个是命名的"，其余走 `variadic_stack_only` 的规则。
     if let Some((true, fixed)) = req.variadic {
         sig = sig.variadic(fixed as usize);
@@ -247,338 +217,166 @@ pub fn register_isa_call_planner<M: TargetMachine + 'static>(isa: &str, machine:
     let tm: &'static M = Box::leak(Box::new(machine));
     forge_isa_runtime::machine::call_plan::register_call_planner(
         isa,
-        std::sync::Arc::new(
-            move |req: &CallRequest| -> Result<CallLayout, CallPlanError> {
-                let reg = crate::pipeline::conv_registry::registry()
-                    .read()
-                    .map_err(|_| CallPlanError::Failed {
-                        conv: req.conv.clone(),
-                        why: "约定注册表被投毒（持锁线程 panic）".into(),
-                    })?;
-                match plan_for_shapes(tm, &reg, req) {
-                    Ok(plan) => Ok(call_layout(&plan, tm)),
-                    Err(e) => Err(CallPlanError::Failed {
-                        conv: req.conv.clone(),
-                        why: e.to_string(),
-                    }),
-                }
-            },
-        ),
+        std::sync::Arc::new(move |req: &CallRequest| -> Result<AbiPlan, CallPlanError> {
+            let reg = crate::pipeline::conv_registry::registry()
+                .read()
+                .map_err(|_| CallPlanError::Failed {
+                    conv: req.conv.clone(),
+                    why: "约定注册表被投毒（持锁线程 panic）".into(),
+                })?;
+            match plan_for_shapes(tm, &reg, req) {
+                Ok(plan) => Ok(plan),
+                Err(e) => Err(CallPlanError::Failed {
+                    conv: req.conv.clone(),
+                    why: e.to_string(),
+                }),
+            }
+        }),
     );
 }
 
-/// `AbiPlan` → **运行时侧的中性调用布局**（v20 A3b-2 的桥）。
+/// `AbiPlan` → **宿主侧的变参外壳**（v23 M2）。
 ///
-/// 寄存器从"ABI 空间号"折回 **(类, 类内号)**：`0..n_gp` 是 GPR 类、`n_gp..` 是 FPR 类，
-/// 生成物用 `Reg::from_index(i, class)` 就能还原成自己的物理寄存器——运行时因此
-/// **不需要依赖 forge-abi**，只认这份数据。
-pub fn call_layout<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> CallLayout {
+/// 发射端现在**直接读 `AbiPlan`**（plan 就是运行时与生成物共用的那份数据），这里只补
+/// 生成物算不出来的东西：`va_list` 对象的**字段初值**（"已用掉几个参数寄存器 / 溢出区
+/// 从哪开始"只有编译入口知道）。此前这里是整个 `AbiPlan → CallLayout` 的翻译（~260 行），
+/// 现在只剩这一件事。
+pub fn va_info<M: TargetMachine>(plan: &AbiPlan, machine: &M) -> Option<VaInfo> {
+    let area = plan.va_area.as_ref()?;
+    Some(VaInfo {
+        shape: area.shape.clone(),
+        size: area.size,
+        align: area.align,
+        stack_only: area.stack_only,
+        save_contiguous: area.save_contiguous,
+        fields: area.fields.clone(),
+        save: area.save.clone(),
+        init: va_init(plan, machine, area),
+        arg_rules: area.arg_rules,
+    })
+}
+
+/// **`va_list` 对象的初值**（v20 变参 V3/V6）：宿主按本函数的 plan + **取参规则**
+/// （`arg_rules`）逐字段算好——生成物是各约定通用的，算不出"已用掉几个参数寄存器 /
+/// 溢出区从哪开始"。
+///
+/// **不给任何约定开分支**：每个字段的值由它在规则里的**角色**决定——
+///
+/// - **游标**（`int.cursor`/`float.cursor`）：规则有基址（计数式）⇒ 初值 = 零点 ± 步长 ×
+///   已用槽数（"从区域顶端往下数"的形态用负值）；没有基址（地址式）⇒ 初值 = 未命名实参区地址；
+/// - **基址**（`base`）：保存区基址 + （往下数式 ⇒ 本类区域字节数；否则 0）；
+/// - **溢出区**（`overflow`）：未命名实参区地址；
+/// - 其余字段（该约定没用到）：写 0。
+///
+/// 未命名实参区起点（被调方视角、相对帧基址）：**有命名栈实参 ⇒ 最后一个栈槽之后**
+/// （该 `offset` 已含 shadow，见 `forge_abi::engine::stack_place`）；**没有 ⇒
+/// `first_arg_offset + shadow_bytes`——两个都要加**（少加 shadow 会读到 shadow 区里的垃圾）。
+pub fn va_init<M: TargetMachine>(
+    plan: &AbiPlan,
+    machine: &M,
+    area: &forge_abi::plan::VaArea,
+) -> Option<VaInit> {
     let t = MachineAbiTarget::new(machine);
-    let reg = |r: &forge_abi::plan::RegRef| -> (RegClass, u32) {
-        // 名字是权威（`RegRef.index` 是 ABI 空间号）。名字解析不到时退回按空间号折算，
-        // 但**不猜类**：GPR 区用地址类、FP 区用主 FPR 类。
-        if let Some(i) = t.reg_index(&r.name) {
-            (
-                if t.is_fp(i) { t.fpr_class } else { t.gpr_class },
-                if t.is_fp(i) { i - t.n_gp } else { i },
-            )
-        } else if r.index < t.n_gp {
-            (t.gpr_class, r.index)
-        } else {
-            (t.fpr_class, r.index - t.n_gp)
-        }
-    };
-    let ext = |e: forge_abi::Extension| match e {
-        forge_abi::Extension::None => Ext::None,
-        forge_abi::Extension::ZeroExt => Ext::Zero,
-        forge_abi::Extension::SignExt => Ext::Sign,
-    };
-    // **`va_list` 对象初值**（v20 变参 V3/V6）：宿主按本函数的 plan + **取参规则**（`arg_rules`）
-    // 逐字段算好——生成物是各约定通用的，算不出"已用掉几个参数寄存器 / 溢出区从哪开始"。
-    //
-    // **不给任何约定开分支**：每个字段的值由它在规则里的**角色**决定——
-    //
-    // - **游标**（`int.cursor`/`float.cursor`）：规则有基址（计数式）⇒ 初值 = 零点 ± 步长 ×
-    //   已用槽数（"从区域顶端往下数"的形态用负值）；没有基址（地址式）⇒ 初值 = 未命名实参区地址；
-    // - **基址**（`base`）：保存区基址 + （往下数式 ⇒ 本类区域字节数；否则 0）；
-    // - **溢出区**（`overflow`）：未命名实参区地址；
-    // - 其余字段（该约定没用到）：写 0。
-    //
-    // 未命名实参区起点（被调方视角、相对帧基址）：**有命名栈实参 ⇒ 最后一个栈槽之后**
-    // （该 `offset` 已含 shadow，见 `forge_abi::engine::stack_place`）；**没有 ⇒
-    // `first_arg_offset + shadow_bytes`——两个都要加**（少加 shadow 会读到 shadow 区里的垃圾）。
-    let va_init = |area: &forge_abi::plan::VaArea| -> Option<VaInit> {
-        let unnamed_off = plan
-            .args
-            .iter()
-            .filter_map(|a| match &a.place {
-                forge_abi::Placement::Stack { offset, size, .. } => {
-                    Some(i64::from(*offset) + i64::from(*size))
-                }
-                _ => None,
-            })
-            .max()
-            .unwrap_or_else(|| {
-                i64::from(plan.stack.first_arg_offset) + i64::from(plan.stack.shadow_bytes)
-            });
-        // 命名实参里**走寄存器**的个数（按类分）——计数式游标的初值要用。
-        let (mut used_int, mut used_fp) = (0u64, 0u64);
-        for a in &plan.args {
-            if let forge_abi::Placement::Reg { reg: r, .. } = &a.place {
-                let is_fp = t
-                    .reg_index(&r.name)
-                    .map(|i| t.is_fp(i))
-                    .unwrap_or(r.index >= t.n_gp);
-                if is_fp {
-                    used_fp += 1;
-                } else {
-                    used_int += 1;
-                }
-            }
-        }
-        // 保存区里**整数类的字节数**（= 浮点区起点）：槽表由引擎按"整数池在前"排，
-        // 所以前导同类槽的长度就是它（不写死槽数/槽宽）。
-        let int_region_end: u32 = area
-            .save
-            .as_ref()
-            .map(|s| {
-                s.slots
-                    .iter()
-                    .take_while(|sl| {
-                        !t.reg_index(&sl.reg.name)
-                            .map(|i| t.is_fp(i))
-                            .unwrap_or(false)
-                    })
-                    .map(|sl| sl.size)
-                    .sum()
-            })
-            .unwrap_or(0);
-        let save_end = area.save.as_ref().map(|s| s.size).unwrap_or(0);
-        let r = &area.arg_rules;
-        // 计数式游标的初值：`零点 ± 步长 × 已用槽数`（往下数式 = 负值，补码写进字段宽度）。
-        let cursor_init = |rule: &forge_abi::plan::VaArgRule, used: u64| -> i64 {
-            let span = i64::from(rule.step) * used as i64;
-            if rule.cursor_counts_down {
-                -span
-            } else {
-                i64::from(rule.cursor_origin) + span
-            }
-        };
-        let mut fields = Vec::with_capacity(area.fields.len());
-        for i in 0..area.fields.len() {
-            let is_int_cursor = i == r.int.cursor;
-            let is_fp_cursor = i == r.float.cursor;
-            let val = if is_int_cursor {
-                if r.int.base.is_some() {
-                    VaInitVal::Imm(cursor_init(&r.int, used_int) as u64)
-                } else if area.save_contiguous {
-                    // **地址式游标 + 要求连续**（v20 V7，RISC-V）：`va_list` 指向"第一个还没被
-                    // 命名形参用掉的整数参数寄存器"在保存区里的位置——保存区是"全 8 个寄存器"
-                    // 的连续一份（`[入口 sp - save_size, 入口 sp)`），于是游标从保存区起点偏移
-                    // `已用整数寄存器数 × 槽宽`，走到末尾正好接上调用方写在栈上的实参。
-                    VaInitVal::SaveOff(used_int.saturating_mul(u64::from(r.int.step)) as u32)
-                } else {
-                    VaInitVal::FrameOff(unnamed_off)
-                }
-            } else if is_fp_cursor {
-                if r.float.base.is_some() {
-                    VaInitVal::Imm(cursor_init(&r.float, used_fp) as u64)
-                } else if area.save_contiguous {
-                    // 连续的形态里浮点游标与整数游标是**同一条**（变参按整数约定传）：偏移按
-                    // 整数侧算（`step` 与整数侧相同，这里仍用 `used_int`）。
-                    VaInitVal::SaveOff(used_int.saturating_mul(u64::from(r.int.step)) as u32)
-                } else {
-                    VaInitVal::FrameOff(unnamed_off)
-                }
-            } else if Some(i) == r.int.base {
-                VaInitVal::SaveOff(if r.int.cursor_counts_down {
-                    int_region_end
-                } else {
-                    0
-                })
-            } else if Some(i) == r.float.base {
-                VaInitVal::SaveOff(if r.float.cursor_counts_down {
-                    save_end
-                } else {
-                    0
-                })
-            } else if Some(i) == r.int.overflow || Some(i) == r.float.overflow {
-                VaInitVal::FrameOff(unnamed_off)
-            } else {
-                VaInitVal::Imm(0)
-            };
-            fields.push(val);
-        }
-        Some(VaInit { fields })
-    };
-    let place = |p: &forge_abi::Placement| -> ArgPlace {
-        match p {
-            forge_abi::Placement::Reg { reg: r, ext: e, .. } => ArgPlace::Reg {
-                class: reg(r).0,
-                index: reg(r).1,
-                ext: ext(*e),
-                sret: false,
-            },
-            forge_abi::Placement::RegPair { lo, hi } => ArgPlace::Pair {
-                lo: reg(lo),
-                hi: reg(hi),
-            },
-            forge_abi::Placement::RegGroup { regs } => ArgPlace::Group {
-                regs: regs.iter().map(reg).collect(),
-            },
-            forge_abi::Placement::Stack {
-                offset,
-                size,
-                align,
-            } => ArgPlace::Stack {
-                offset: *offset,
-                size: *size,
-                align: *align,
-            },
-            forge_abi::Placement::StackByVal {
-                offset,
-                size,
-                align,
-            } => ArgPlace::StackByVal {
-                offset: *offset,
-                size: *size,
-                align: *align,
-            },
-            forge_abi::Placement::Indirect { ptr, at, on_stack } => ArgPlace::Indirect {
-                reg: ptr.as_ref().map(reg),
-                at: *at,
-                on_stack: *on_stack,
-            },
-            forge_abi::Placement::Ignore => ArgPlace::Ignore,
-        }
-    };
-    let hidden_sret = plan.hidden.sret.as_ref().map(reg);
-    // **变参元信息寄存器**（v20 V7）：SysV 的 `%al`——调用变参函数时要报"用了几个向量寄存器"，
-    // glibc 的 `printf` 一族靠它决定保存/读取几个 XMM。约定没声明池 ⇒ `None`（不需要）。
-    let va_meta = plan.hidden.va_meta.as_ref().map(reg);
-    let args: Vec<CallArg> = plan
+    let unnamed_off = plan
         .args
         .iter()
-        .map(|a| {
-            let mut place = place(&a.place);
-            // `sret` 语义标在落点上（收参侧据此知道"这个寄存器里是返回缓冲指针"）。
-            if let (
-                Some(h),
-                ArgPlace::Reg {
-                    class, index, sret, ..
-                },
-            ) = (hidden_sret, &mut place)
-                && (*class, *index) == h
-            {
-                *sret = true;
+        .filter_map(|a| match &a.place {
+            forge_abi::Placement::Stack { offset, size, .. } => {
+                Some(i64::from(*offset) + i64::from(*size))
             }
-            CallArg {
-                index: a.index.map(|i| i as u32),
-                size: a.size,
-                place,
-            }
+            _ => None,
         })
-        .collect();
-    let ret = match &plan.ret {
-        forge_abi::RetLoc::Void => Some(RetPlace::Void),
-        forge_abi::RetLoc::Reg { reg: r } => {
-            let (class, index) = reg(r);
-            Some(RetPlace::Reg {
-                class,
-                index,
-                ext: Ext::None,
-            })
+        .max()
+        .unwrap_or_else(|| {
+            i64::from(plan.stack.first_arg_offset) + i64::from(plan.stack.shadow_bytes)
+        });
+    // 命名实参里**走寄存器**的个数（按类分）——计数式游标的初值要用。
+    let (mut used_int, mut used_fp) = (0u64, 0u64);
+    for a in &plan.args {
+        if let forge_abi::Placement::Reg { reg: r, .. } = &a.place {
+            let is_fp = t
+                .reg_index(&r.name)
+                .map(|i| t.is_fp(i))
+                .unwrap_or(r.index >= t.n_gp);
+            if is_fp {
+                used_fp += 1;
+            } else {
+                used_int += 1;
+            }
         }
-        forge_abi::RetLoc::RegPair { lo, hi } => Some(RetPlace::Pair {
-            lo: reg(lo),
-            hi: reg(hi),
-        }),
-        forge_abi::RetLoc::RegGroup { regs } => Some(RetPlace::Group {
-            regs: regs.iter().map(reg).collect(),
-        }),
-        forge_abi::RetLoc::Indirect { size, align } => Some(RetPlace::Indirect {
-            size: *size,
-            align: *align,
-        }),
-    };
-    CallLayout {
-        conv: plan.conv.clone(),
-        variadic: plan.variadic,
-        args,
-        ret,
-        hidden_sret,
-        va_meta,
-        stack_align: plan.stack.align,
-        slot_bytes: plan.stack.slot_bytes,
-        shadow_bytes: plan.stack.shadow_bytes,
-        first_arg_offset: plan.stack.first_arg_offset,
-        arg_area_bytes: plan.stack.arg_area_bytes,
-        byval_area_bytes: plan.stack.byval_area_bytes,
-        red_zone: plan.stack.red_zone,
-        callee_saved: plan.callee_saved.regs.iter().map(reg).collect(),
-        clobbers: plan.clobbers.iter().map(reg).collect(),
-        frame_padding: plan.stack.frame_padding,
-        callee_pop_bytes: plan.callee_pop_bytes,
-        widen_to_bits: plan.widen_to_bits,
-        // **变参信息**（v20 变参 V2/V6）：把引擎的 `VaArea` 折成运行时中立镜像。形状是**数据**
-        // （字段布局 + 保存区 + 取参规则），这里只做逐字段搬家，没有任何"按约定名分支"。
-        va: plan.va_area.as_ref().map(|a| VaInfo {
-            shape: a.shape.clone(),
-            size: a.size,
-            align: a.align,
-            stack_only: a.stack_only,
-            // "保存区必须与栈实参连续"（v20 V7）：形状数据，帧布局按它决定要不要把保存区放帧顶。
-            save_contiguous: a.save_contiguous,
-            // 字段布局与保存区槽表（v20 V3）：折成运行时中立镜像（只有偏移/大小/类+号）。
-            fields: a
-                .fields
+    }
+    // 保存区里**整数类的字节数**（= 浮点区起点）：槽表由引擎按"整数池在前"排，
+    // 所以前导同类槽的长度就是它（不写死槽数/槽宽）。
+    let int_region_end: u32 = area
+        .save
+        .as_ref()
+        .map(|s| {
+            s.slots
                 .iter()
-                .map(|f| VaField {
-                    offset: f.offset,
-                    size: f.size,
+                .take_while(|sl| {
+                    !t.reg_index(&sl.reg.name)
+                        .map(|i| t.is_fp(i))
+                        .unwrap_or(false)
                 })
-                .collect(),
-            save: a.save.as_ref().map(|s| VaSave {
-                size: s.size,
-                align: s.align,
-                slots: s
-                    .slots
-                    .iter()
-                    .map(|sl| {
-                        let (class, index) = reg(&sl.reg);
-                        VaSaveSlot {
-                            class,
-                            index,
-                            offset: sl.offset,
-                            size: sl.size,
-                        }
-                    })
-                    .collect(),
-            }),
-            init: va_init(a),
-            arg_rules: va_arg_rules(&a.arg_rules),
-        }),
+                .map(|sl| sl.size)
+                .sum()
+        })
+        .unwrap_or(0);
+    let save_end = area.save.as_ref().map(|s| s.size).unwrap_or(0);
+    let r = &area.arg_rules;
+    // 计数式游标的初值：`零点 ± 步长 × 已用槽数`（往下数式 = 负值，补码写进字段宽度）。
+    let cursor_init = |rule: &forge_abi::plan::VaArgRule, used: u64| -> i64 {
+        let span = i64::from(rule.step) * used as i64;
+        if rule.cursor_counts_down {
+            -span
+        } else {
+            i64::from(rule.cursor_origin) + span
+        }
+    };
+    let mut fields = Vec::with_capacity(area.fields.len());
+    for i in 0..area.fields.len() {
+        let is_int_cursor = i == r.int.cursor;
+        let is_fp_cursor = i == r.float.cursor;
+        let val = if is_int_cursor {
+            if r.int.base.is_some() {
+                VaInitVal::Imm(cursor_init(&r.int, used_int) as u64)
+            } else if area.save_contiguous {
+                // **地址式游标 + 要求连续**（v20 V7，RISC-V）：`va_list` 指向"第一个还没被
+                // 命名形参用掉的整数参数寄存器"在保存区里的位置——保存区是"全 8 个寄存器"
+                // 的连续一份（`[入口 sp - save_size, 入口 sp)`），于是游标从保存区起点偏移
+                // `已用整数寄存器数 × 槽宽`，走到末尾正好接上调用方写在栈上的实参。
+                VaInitVal::SaveOff(used_int.saturating_mul(u64::from(r.int.step)) as u32)
+            } else {
+                VaInitVal::FrameOff(unnamed_off)
+            }
+        } else if is_fp_cursor {
+            if r.float.base.is_some() {
+                VaInitVal::Imm(cursor_init(&r.float, used_fp) as u64)
+            } else if area.save_contiguous {
+                // 连续的形态里浮点游标与整数游标是**同一条**（变参按整数约定传）：偏移按
+                // 整数侧算（`step` 与整数侧相同，这里仍用 `used_int`）。
+                VaInitVal::SaveOff(used_int.saturating_mul(u64::from(r.int.step)) as u32)
+            } else {
+                VaInitVal::FrameOff(unnamed_off)
+            }
+        } else if Some(i) == r.int.base {
+            VaInitVal::SaveOff(if r.int.cursor_counts_down {
+                int_region_end
+            } else {
+                0
+            })
+        } else if Some(i) == r.float.base {
+            VaInitVal::SaveOff(if r.float.cursor_counts_down {
+                save_end
+            } else {
+                0
+            })
+        } else if Some(i) == r.int.overflow || Some(i) == r.float.overflow {
+            VaInitVal::FrameOff(unnamed_off)
+        } else {
+            VaInitVal::Imm(0)
+        };
+        fields.push(val);
     }
-}
-
-/// **取参规则**（v20 V6）：计划面 → 运行时中立镜像（逐字段搬家；两边结构一一对应）。
-fn va_arg_rules(r: &forge_abi::plan::VaArgRules) -> VaArgRules {
-    VaArgRules {
-        int: va_arg_rule_one(&r.int),
-        float: va_arg_rule_one(&r.float),
-    }
-}
-
-fn va_arg_rule_one(r: &forge_abi::plan::VaArgRule) -> VaArgRule {
-    VaArgRule {
-        cursor: r.cursor,
-        base: r.base,
-        overflow: r.overflow,
-        limit: r.limit,
-        signed_limit: r.signed_limit,
-        step: r.step,
-        overflow_step: r.overflow_step,
-        cursor_origin: r.cursor_origin,
-        cursor_counts_down: r.cursor_counts_down,
-    }
+    Some(VaInit { fields })
 }

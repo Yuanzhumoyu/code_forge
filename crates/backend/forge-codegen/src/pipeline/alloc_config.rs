@@ -87,13 +87,6 @@ impl RegAllocConfig {
     }
 }
 
-/// 从 LowerCtx 提取的、分配器需要的上下文子集。
-///
-/// 避免寄存器分配器依赖整个 LowerCtx。
-/// 类型（RegClass）与位宽（width）均由 XReg 值内嵌，无需额外表。
-#[derive(Clone, Debug, Default)]
-pub struct AllocContext {}
-
 // Tests
 // ============================================================
 
@@ -126,12 +119,5 @@ mod tests {
         let fpr = cfg.classes.get(&RegClass::FPR64).unwrap();
         assert_eq!(fpr.allocatable.len(), 16);
         assert_eq!(fpr.reg_width, 8);
-    }
-
-    #[test]
-    fn test_alloc_context_default() {
-        // 类型与位宽由 XReg 值内嵌，AllocContext 为空结构。
-        let ctx = AllocContext::default();
-        let _ = ctx;
     }
 }

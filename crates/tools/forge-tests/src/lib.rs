@@ -42,9 +42,9 @@ macro_rules! backend_tests {
                     fb.ret(&[v]);
                     fb.finish().expect("build")
                 };
-                let compiler = code_forge::backend::FunctionCompiler::new(<$tm>::new());
+                let compiler = code_forge::backend::CompileSession::new(<$tm>::new());
                 let compiled = compiler
-                    .compile_raw(&func)
+                    .compile(&func)
                     .expect("full pipeline compile should succeed");
                 assert!(!compiled.code.is_empty());
             }
@@ -76,7 +76,7 @@ pub mod exec;
 /// 三档入口是 `tests/asm_parse.rs`、`tests/asm_encoding.rs`、`tests/asm_exec.rs`。
 pub mod asm;
 
-/// compile-only 覆盖矩阵宏：对 ops 列表逐个构建最小函数并 compile_raw，
+/// compile-only 覆盖矩阵宏：对 ops 列表逐个构建最小函数并 compile，
 /// 断言全部编译成功（记录 Unsupported 缺口）。
 ///
 /// # 参数
@@ -98,8 +98,8 @@ macro_rules! coverage {
                 for op_name in $ops {
                     let op = $crate::parse_opcode_name(op_name);
                     let func = $build_min(op);
-                    let compiler = code_forge::backend::FunctionCompiler::new(<$tm>::new());
-                    match compiler.compile_raw(&func) {
+                    let compiler = code_forge::backend::CompileSession::new(<$tm>::new());
+                    match compiler.compile(&func) {
                         Ok(_) => ok_count += 1,
                         Err(e) => failed.push((op_name.to_string(), format!("{e:?}"))),
                     }
@@ -315,7 +315,7 @@ pub fn parse_opcode_name(name: &str) -> code_forge::ir::Opcode {
 }
 
 pub mod prelude {
-    pub use code_forge::backend::{AllocResult, CodeSink, FunctionCompiler, Registry};
+    pub use code_forge::backend::{AllocResult, CodeSink, CompileSession, Registry};
     pub use code_forge::prelude::{
         Block, FunctionBuilder, FunctionSignature, TypeId, TypeStore, VReg,
     };
@@ -326,7 +326,7 @@ pub mod prelude {
 /// 为 x86 后端运行全链路测试
 pub fn run_x86_64_pipeline_tests() {
     use code_forge::backend::arch::x86::{self, ensure_registered};
-    use code_forge::backend::{FunctionCompiler, Registry};
+    use code_forge::backend::{CompileSession, Registry};
     use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
     ensure_registered();
@@ -345,9 +345,9 @@ pub fn run_x86_64_pipeline_tests() {
         fb.ret(&[v]);
         fb.finish().expect("build")
     };
-    let compiler = FunctionCompiler::new(x86::TargetMachine::new());
+    let compiler = CompileSession::new(x86::TargetMachine::new());
     let compiled = compiler
-        .compile_raw(&func)
+        .compile(&func)
         .expect("full pipeline compile should succeed");
     assert!(
         !compiled.code.is_empty(),

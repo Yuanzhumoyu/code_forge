@@ -137,11 +137,9 @@ mod smoke {
         let v = build(&mut b, &params);
         b.ret(&[v]);
         let func = b.finish().expect("build");
-        code_forge::backend::FunctionCompiler::new(
-            code_forge::backend::riscv64::TargetMachine::new(),
-        )
-        .compile_raw(&func)
-        .expect("compile")
+        code_forge::backend::CompileSession::new(code_forge::backend::riscv64::TargetMachine::new())
+            .compile(&func)
+            .expect("compile")
     }
 
     fn compile_const(name: &str, v: i64) -> code_forge::CompiledFunction {
@@ -152,11 +150,9 @@ mod smoke {
         let c = b.iconst_i64(v);
         b.ret(&[c]);
         let func = b.finish().expect("build");
-        code_forge::backend::FunctionCompiler::new(
-            code_forge::backend::riscv64::TargetMachine::new(),
-        )
-        .compile_raw(&func)
-        .expect("compile const")
+        code_forge::backend::CompileSession::new(code_forge::backend::riscv64::TargetMachine::new())
+            .compile(&func)
+            .expect("compile const")
     }
 
     /// QEMU 执行；无 QEMU → None（仅编译验证，不失败）。
@@ -196,10 +192,10 @@ mod smoke {
         let v = b.fptosi(params[0], TypeId::I64);
         b.ret(&[v]);
         let func = b.finish().expect("build");
-        let cf = code_forge::backend::FunctionCompiler::new(
+        let cf = code_forge::backend::CompileSession::new(
             code_forge::backend::riscv64::TargetMachine::new(),
         )
-        .compile_raw(&func)
+        .compile(&func)
         .expect("compile f64 arg");
         let got = crate::exec::qemu::exec_riscv64_f64(&cf, &[42.0f64.to_bits()])
             .unwrap_or_else(|e| panic!("qemu exec f64 arg: {e}"));
@@ -213,10 +209,10 @@ mod smoke {
         let v32 = b32.fptosi(p32[0], TypeId::I32);
         b32.ret(&[v32]);
         let f32f = b32.finish().expect("build32");
-        let cf32 = code_forge::backend::FunctionCompiler::new(
+        let cf32 = code_forge::backend::CompileSession::new(
             code_forge::backend::riscv64::TargetMachine::new(),
         )
-        .compile_raw(&f32f)
+        .compile(&f32f)
         .expect("compile f32 arg");
         let got32 = crate::exec::qemu::exec_riscv64_f32(&cf32, &[7.0f32.to_bits()])
             .unwrap_or_else(|e| panic!("qemu exec f32 arg: {e}"));

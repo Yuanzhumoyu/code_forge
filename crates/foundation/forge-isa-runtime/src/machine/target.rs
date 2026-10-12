@@ -14,16 +14,14 @@ use super::frame::TargetFrameLowering;
 use super::inst::MachineInst;
 use super::isa_info::IsaInfo;
 use super::lowering::TargetLowering;
-use super::peephole::TargetPeephole;
 use super::reg_info::TargetRegInfo;
 use super::reloc_patcher::RelocPatcher;
-use super::simulator::TargetSimulator;
 use forge_ir::PhysReg;
 
 /// ISA 后端的完整描述。
 ///
 /// 不包含逻辑，仅持有各组件的 `Arc` 引用。
-/// 管线（FunctionCompiler）通过此 trait 访问所需组件。
+/// 管线（CompileSession）通过此 trait 访问所需组件。
 ///
 /// # 实现方式
 ///
@@ -56,11 +54,6 @@ pub trait TargetMachine: Send + Sync + 'static {
     fn frame_lowering(&self) -> &Arc<dyn TargetFrameLowering<Inst = Self::Inst>>;
 
     // ── 可选组件 ──
-
-    /// 窥孔优化（可选）。
-    fn peephole(&self) -> Option<&Arc<dyn TargetPeephole<Inst = Self::Inst>>> {
-        None
-    }
 
     /// 指令解码器（可选）。
     fn decoder(&self) -> Option<&Arc<dyn TargetDecoder<Inst = Self::Inst>>> {
@@ -102,11 +95,6 @@ pub trait TargetMachine: Send + Sync + 'static {
 
     /// 汇编器（可选）。
     fn assembler(&self) -> Option<&Arc<dyn TargetAssembler<Inst = Self::Inst>>> {
-        None
-    }
-
-    /// 模拟器（可选）。
-    fn simulator(&self) -> Option<&Arc<dyn TargetSimulator<Inst = Self::Inst>>> {
         None
     }
 }

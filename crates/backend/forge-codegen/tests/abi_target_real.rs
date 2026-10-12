@@ -115,9 +115,9 @@ fn unregistered_convention_is_rejected_on_a_real_machine() {
 /// 比的是两边都有的可观测量：有没有 sret、逐参数是否按引用、栈参数区字节数。
 #[test]
 fn plan_agrees_with_the_existing_lowering_result() {
-    use forge_codegen::FunctionCompiler;
+    use forge_codegen::CompileSession;
 
-    let compiler = FunctionCompiler::new(TargetMachine::new());
+    let compiler = CompileSession::new(TargetMachine::new());
     let func = win64_probe();
     let (_cf, alloc) = compiler.compile_with_alloc(&func).expect("compile");
 
@@ -168,18 +168,18 @@ fn win64_stack_args_probe() -> Function {
 /// （不是崩，而是静默错值），矩阵未必抓得到，必须先钉住。
 #[test]
 fn stack_arg_offsets_match_the_x86_convention_numbers() {
-    use forge_isa_runtime::machine::call_layout::ArgPlace;
+    use forge_isa_runtime::machine::abi_model::Placement;
 
     let tm = TargetMachine::new();
     let reg = builtin::registry().expect("内置注册表");
     let func = win64_stack_args_probe();
     let plan = plan_for_function(&tm, &reg, "win64", &func).expect("plan");
-    let layout = forge_codegen::pipeline::abi_target::call_layout(&plan, &tm);
+    let layout = plan.clone();
 
     // x86 约定的口径（AbiRules）：first_offset_slots = 2、shadow = 32、slot = 8。
-    let slot = layout.slot_bytes as i64;
+    let slot = layout.slot_bytes() as i64;
     let first = 2 * slot; // first_offset_slots × slot
-    let shadow = layout.shadow_bytes as i64;
+    let shadow = layout.shadow_bytes() as i64;
     let n_int = 4; // win64 整数参数槽
 
     // 前 4 个进寄存器，第 5/6 个（索引 4/5）在栈上。
@@ -189,8 +189,8 @@ fn stack_arg_offsets_match_the_x86_convention_numbers() {
             _ => -1,
         };
         match &arg.place {
-            ArgPlace::Reg { .. } if expect < 0 => {}
-            ArgPlace::Stack { offset, .. } if expect >= 0 => {
+            Placement::Reg { .. } if expect < 0 => {}
+            Placement::Stack { offset, .. } if expect >= 0 => {
                 assert_eq!(
                     *offset as i64, expect,
                     "第 {i} 个参数的栈偏移：布局 {offset} ≠ 约定算式 {expect}"
@@ -203,7 +203,7 @@ fn stack_arg_offsets_match_the_x86_convention_numbers() {
         }
     }
     // 首个栈参数的**调用方**视角偏移 = shadow（`caller_offset(0)`）。
-    assert_eq!(layout.caller_offset(0), layout.shadow_bytes as i32);
+    assert_eq!(layout.caller_offset(0), layout.shadow_bytes() as i32);
 }
 
 /// `fn f(i64, i64, i64) -> i64`，用 `lp64d` 约定（riscv64 后端）。
@@ -232,10 +232,10 @@ fn lp64d_probe() -> Function {
 /// 必须先解掉的差异——本测试就是提前把它暴露出来。
 #[test]
 fn plan_agrees_with_the_existing_lowering_result_on_riscv64() {
-    use forge_codegen::FunctionCompiler;
+    use forge_codegen::CompileSession;
     use forge_codegen::arch::riscv64::TargetMachine as RvTm;
 
-    let compiler = FunctionCompiler::new(RvTm::new());
+    let compiler = CompileSession::new(RvTm::new());
     let func = lp64d_probe();
     let (_cf, alloc) = compiler.compile_with_alloc(&func).expect("compile");
 
@@ -273,7 +273,7 @@ fn plan_agrees_with_the_existing_lowering_result_on_riscv64() {
 /// 另一头仍钉住：arm64 连 FPR 寄存器组都没有 ⇒ 引擎侧直接报缺池（A1 静态体检的 6 条缺口）。
 #[test]
 fn riscv64_float_arg_is_open_on_both_engine_and_emission() {
-    use forge_codegen::FunctionCompiler;
+    use forge_codegen::CompileSession;
     use forge_codegen::arch::riscv64::TargetMachine as RvTm;
 
     let ctx = TypeContext::new();
@@ -292,7 +292,7 @@ fn riscv64_float_arg_is_open_on_both_engine_and_emission() {
     assert_eq!(place_name(&plan, 1), "F10");
 
     // 发射侧：`roles = [{ role = "fpr_mov", bits = 64 }]` 已申报 ⇒ 收参不再 fail-closed。
-    FunctionCompiler::new(RvTm::new())
+    CompileSession::new(RvTm::new())
         .compile(&func)
         .expect("riscv64 已申报 64 位 fpr_mov，浮点参数收参不该再被挡");
 }
@@ -310,46 +310,48 @@ fn place_name(plan: &forge_abi::AbiPlan, i: usize) -> String {
 /// 无损：寄存器折回 **(类, 类内号)**、隐藏 sret 指针、栈区尺寸、callee-saved 全都要对。
 #[test]
 fn plan_converts_into_the_runtime_call_layout() {
-    use forge_codegen::pipeline::abi_target::call_layout;
-    use forge_isa_runtime::machine::call_layout::{ArgPlace, RetPlace};
+    use forge_isa_runtime::machine::abi_model::{Placement, RetLoc};
 
     let tm = TargetMachine::new();
     let reg = builtin::registry().expect("内置注册表");
     let func = win64_probe();
     let plan = plan_for_function(&tm, &reg, "win64", &func).expect("plan");
-    let layout = call_layout(&plan, &tm);
+    let layout = plan.clone();
 
     assert_eq!(layout.conv, "win64");
-    assert_eq!(layout.shadow_bytes, 32);
-    assert_eq!(layout.stack_align, 16);
-    assert_eq!(layout.slot_bytes, 8);
+    assert_eq!(layout.stack.shadow_bytes, 32);
+    assert_eq!(layout.stack.align, 16);
+    assert_eq!(layout.stack.slot_bytes, 8);
 
     // 实参：RCX（GPR 类 1 号）、XMM1（FPR 类 1 号）。
     let rcx = layout.arg(0).expect("arg0");
     match &rcx.place {
-        ArgPlace::Reg {
-            class,
-            index,
+        Placement::Reg {
+            reg: __r,
             ext,
-            sret,
+            purpose,
         } => {
-            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(64), 1));
-            assert_eq!(*ext, forge_isa_runtime::machine::call_layout::Ext::None);
-            assert!(!*sret, "普通参数不是 sret");
+            assert_eq!((__r.class, __r.slot), (forge_ir::RegClass::GPR(64), 1));
+            assert_eq!(*ext, forge_abi::Extension::None);
+            assert_ne!(
+                *purpose,
+                forge_abi::Purpose::StructReturn,
+                "普通参数不是 sret"
+            );
         }
         other => panic!("{other:?}"),
     }
     let xmm1 = layout.arg(1).expect("arg1");
     match &xmm1.place {
-        ArgPlace::Reg { class, index, .. } => {
-            assert_eq!((*class, *index), (forge_ir::RegClass::FPR(128), 1));
+        Placement::Reg { reg: __r, .. } => {
+            assert_eq!((__r.class, __r.slot), (forge_ir::RegClass::FPR(128), 1));
         }
         other => panic!("{other:?}"),
     }
     // 返回：RAX（GPR 类 0 号）。
-    match layout.ret.as_ref().expect("ret") {
-        RetPlace::Reg { class, index, .. } => {
-            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(64), 0))
+    match &layout.ret {
+        RetLoc::Reg { reg: __r } => {
+            assert_eq!((__r.class, __r.slot), (forge_ir::RegClass::GPR(64), 0))
         }
         other => panic!("{other:?}"),
     }
@@ -357,8 +359,9 @@ fn plan_converts_into_the_runtime_call_layout() {
     assert!(
         layout
             .callee_saved
+            .regs
             .iter()
-            .any(|(c, i)| *c == forge_ir::RegClass::GPR(64) && *i == 3),
+            .any(|r| r.class == forge_ir::RegClass::GPR(64) && r.slot == 3),
         "{:?}",
         layout.callee_saved
     );
@@ -373,8 +376,8 @@ fn plan_converts_into_the_runtime_call_layout() {
 /// `call_layout` 就永远是 `None`，生成物只走旧路径（典型症状：改了生成器却没有一处生效）。
 #[test]
 fn the_default_convention_plans_and_reaches_the_frame_lowering() {
-    use forge_codegen::FunctionCompiler;
-    use forge_isa_runtime::machine::call_layout::ArgPlace;
+    use forge_codegen::CompileSession;
+    use forge_isa_runtime::machine::abi_model::Placement;
 
     let ctx = TypeContext::new();
     let sig = FunctionSignature::new(&[(TypeId::I64, "n"), (TypeId::F64, "x")], &[TypeId::I64])
@@ -385,7 +388,7 @@ fn the_default_convention_plans_and_reaches_the_frame_lowering() {
     b.ret(&[params[0]]);
     let func = b.finish().expect("build");
 
-    let (_cf, alloc) = FunctionCompiler::new(TargetMachine::new())
+    let (_cf, alloc) = CompileSession::new(TargetMachine::new())
         .compile_with_alloc(&func)
         .expect("compile");
     let layout = alloc
@@ -396,14 +399,18 @@ fn the_default_convention_plans_and_reaches_the_frame_lowering() {
     // by_class 规则（那会给出 XMM0，实测参数读错）。
     assert_eq!(layout.conv, "win64");
     match &layout.args[0].place {
-        ArgPlace::Reg { class, index, .. } => {
-            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(64), 1))
+        Placement::Reg { reg: __r, .. } => {
+            assert_eq!((__r.class, __r.slot), (forge_ir::RegClass::GPR(64), 1))
         }
         other => panic!("{other:?}"),
     }
     match &layout.args[1].place {
-        ArgPlace::Reg { class, index, .. } => {
-            assert_eq!((*class, *index), (forge_ir::RegClass::FPR(128), 1), "XMM1")
+        Placement::Reg { reg: __r, .. } => {
+            assert_eq!(
+                (__r.class, __r.slot),
+                (forge_ir::RegClass::FPR(128), 1),
+                "XMM1"
+            )
         }
         other => panic!("{other:?}"),
     }
@@ -414,27 +421,28 @@ fn the_default_convention_plans_and_reaches_the_frame_lowering() {
 /// "管线确实把它带到了那里"，否则"生成物改读 plan"在序/尾声这一半无从下手。
 #[test]
 fn alloc_result_carries_the_call_layout_for_the_frame_lowering() {
-    use forge_codegen::FunctionCompiler;
+    use forge_codegen::CompileSession;
 
-    let compiler = FunctionCompiler::new(TargetMachine::new());
+    let compiler = CompileSession::new(TargetMachine::new());
     let func = win64_probe();
     let (_cf, alloc) = compiler.compile_with_alloc(&func).expect("compile");
 
+    use forge_isa_runtime::machine::abi_model::Placement;
     let layout = alloc
         .call_layout
         .as_ref()
         .expect("管线必须把调用布局交给帧件");
     assert_eq!(layout.conv, "win64");
-    assert_eq!(layout.shadow_bytes, 32);
+    assert_eq!(layout.stack.shadow_bytes, 32);
     // 首个实参落在 RCX = (GPR(8), 1)——与 plan/既有路径一致。
     match &layout.args[0].place {
-        forge_isa_runtime::machine::call_layout::ArgPlace::Reg { class, index, .. } => {
-            assert_eq!((*class, *index), (forge_ir::RegClass::GPR(64), 1))
+        Placement::Reg { reg: __r, .. } => {
+            assert_eq!((__r.class, __r.slot), (forge_ir::RegClass::GPR(64), 1))
         }
         other => panic!("{other:?}"),
     }
     // callee-saved 也在里面（序言据此保存、尾声据此恢复）。
-    assert!(!layout.callee_saved.is_empty());
+    assert!(!layout.callee_saved.regs.is_empty());
 }
 
 /// **约定事实读 plan 的交叉核对**（v20 A5-3 ④ 的入场券）：把 regalloc / 帧布局 /
@@ -460,14 +468,13 @@ macro_rules! convention_facts_probe {
     ($name:ident, $tm:ty, $conv:literal, $probe:expr, $equal_cs:expr) => {
         #[test]
         fn $name() {
-            use forge_codegen::pipeline::abi_target::call_layout;
-            use forge_isa_runtime::machine::call_layout::ArgPlace;
+            use forge_isa_runtime::machine::abi_model::Placement;
 
             let tm = <$tm>::new();
             let reg = builtin::registry().expect("内置注册表");
             let func = $probe();
             let plan = plan_for_function(&tm, &reg, $conv, &func).expect("plan");
-            let layout = call_layout(&plan, &tm);
+            let layout = plan.clone();
             let ri = tm.reg_info();
             let gpr = ri.default_gpr_class();
             let idx = |v: &[(forge_ir::RegClass, u32)]| -> Vec<u32> {
@@ -482,7 +489,13 @@ macro_rules! convention_facts_probe {
             // 做"plan vs 谱表"的交叉核对（没有第二份可对），只钉一条结构性事实：主约定的
             // GPR callee-saved 非空（帧件确实要保存东西；FPR 那半由 `class = "fpr"` 的
             // `callee_save` 角色承担，其数量由 plan 决定的 min_frame 保证装得下）。
-            let plan_cs = idx(&layout.callee_saved);
+            let cs_pairs: Vec<(forge_ir::RegClass, u32)> = layout
+                .callee_saved
+                .regs
+                .iter()
+                .map(|r| (r.class, r.slot))
+                .collect();
+            let plan_cs = idx(&cs_pairs);
             if $equal_cs {
                 assert!(
                     !plan_cs.is_empty(),
@@ -493,7 +506,7 @@ macro_rules! convention_facts_probe {
 
             // ② 帧填充：plan（规则） == 谱。
             assert_eq!(
-                layout.frame_padding,
+                layout.stack.frame_padding,
                 tm.abi().frame_padding(),
                 "{}：plan 的 frame_padding 与机器事实 [machine].padding 必须同值",
                 $conv
@@ -521,7 +534,9 @@ macro_rules! convention_facts_probe {
             }
 
             // ③ clobbers 的两条硬不变量。
-            let clobber_idx = idx(&layout.clobbers);
+            let clobber_pairs: Vec<(forge_ir::RegClass, u32)> =
+                layout.clobbers.iter().map(|r| (r.class, r.slot)).collect();
+            let clobber_idx = idx(&clobber_pairs);
             assert!(!clobber_idx.is_empty(), "{}：破坏集不该为空", $conv);
             for cs in &plan_cs {
                 assert!(
@@ -535,7 +550,7 @@ macro_rules! convention_facts_probe {
                 .args
                 .iter()
                 .find_map(|a| match &a.place {
-                    ArgPlace::Reg { class, index, .. } => Some((*class, *index)),
+                    Placement::Reg { reg: __r, .. } => Some((__r.class, __r.slot)),
                     _ => None,
                 })
                 .expect("至少有首参落在寄存器");
@@ -556,7 +571,7 @@ macro_rules! convention_facts_probe {
                     .clobbers
                     .iter()
                     .zip(plan.clobbers.iter())
-                    .any(|((c, i), r)| *c == gpr && r.name == ret_name && *i == r.index),
+                    .any(|(r1, r2)| r1.class == gpr && r1.name == ret_name && r2.index == r1.index),
                 "{}：返回寄存器 {ret_name} 必须在破坏集里",
                 $conv
             );
@@ -633,8 +648,6 @@ convention_facts_probe!(
 /// 要同步 A6 记录与 `lowering.rs` 的注释）；② GPR 侧随约定变（win64 5 个 vs sysv64 7 个）。
 #[test]
 fn x86_plan_clobbers_cover_the_whole_fp_file() {
-    use forge_codegen::pipeline::abi_target::call_layout;
-
     let cases: [(&str, fn() -> Function); 2] = [
         ("win64", win64_stack_args_probe as fn() -> Function),
         ("sysv64", sysv64_probe as fn() -> Function),
@@ -643,10 +656,10 @@ fn x86_plan_clobbers_cover_the_whole_fp_file() {
         let tm = TargetMachine::new();
         let reg = builtin::registry().expect("内置注册表");
         let plan = plan_for_function(&tm, &reg, conv, &probe()).expect("plan");
-        let layout = call_layout(&plan, &tm);
+        let layout = plan.clone();
         let gpr = tm.reg_info().addr_class();
 
-        let plan_fp = layout.clobbers.iter().filter(|(c, _)| *c != gpr).count();
+        let plan_fp = layout.clobbers.iter().filter(|r| r.class != gpr).count();
         assert!(
             plan_fp > 4,
             "{conv}：plan 的 FP 破坏集应覆盖全部 XMM（比谱里声明的 4 个宽），实测 {plan_fp}"
@@ -654,8 +667,8 @@ fn x86_plan_clobbers_cover_the_whole_fp_file() {
         let plan_gpr: Vec<u32> = layout
             .clobbers
             .iter()
-            .filter(|(c, _)| *c == gpr)
-            .map(|&(_, i)| i)
+            .filter(|r| r.class == gpr)
+            .map(|r| r.slot)
             .collect();
         let expected = if conv == "win64" { 5 } else { 7 };
         assert_eq!(plan_gpr.len(), expected, "{conv}：GPR 破坏集个数");
@@ -697,7 +710,7 @@ fn mixed_probe(cc: CallConvId) -> Function {
 /// **形状 → plan 必须等于 函数 → plan**（v20 A5-3「调用点 plan」的入场券）。
 ///
 /// 调用点在 lowering 时只有实参的**形状**（大小/对齐/族/成员，见
-/// `machine::call_layout::ArgShape`），没有被调方的 `Function`；而"往哪个寄存器/栈槽搬"
+/// `machine::abi_model::TyView`），没有被调方的 `Function`；而"往哪个寄存器/栈槽搬"
 /// 只有引擎算得出来。两条入口必须在**每一份约定**上给出逐项相同的落点——差一项就是调用方
 /// 往错的地方搬值（不崩，静默错值），矩阵未必抓得到。
 ///
@@ -706,7 +719,7 @@ fn mixed_probe(cc: CallConvId) -> Function {
 #[test]
 fn shape_plan_matches_the_function_plan() {
     use forge_codegen::pipeline::abi_target::plan_for_shapes;
-    use forge_isa_runtime::machine::call_layout::ArgShape;
+    use forge_isa_runtime::machine::abi_model::TyView;
     use forge_isa_runtime::machine::call_plan::CallRequest;
 
     /// 取出"必须逐项相同"的那几块（名字无关）。
@@ -735,23 +748,23 @@ fn shape_plan_matches_the_function_plan() {
     // ① x86 win64：6 个 i64（前 4 进寄存器、后 2 走栈）与混合签名。
     {
         let tm = forge_codegen::arch::x86::TargetMachine::new();
-        let cases: Vec<(&str, Function, Vec<ArgShape>, Option<ArgShape>)> = vec![
+        let cases: Vec<(&str, Function, Vec<TyView>, Option<TyView>)> = vec![
             (
                 "win64 六整数（含栈参数）",
                 win64_stack_args_probe(),
-                vec![ArgShape::int(8, 8); 6],
-                Some(ArgShape::int(8, 8)),
+                vec![TyView::int(8, 8); 6],
+                Some(TyView::int(8, 8)),
             ),
             (
                 "win64 混合（位置计数）",
                 mixed_probe(CallConvId::builtin(ConvName::Win64)),
                 vec![
-                    ArgShape::int(8, 8),
-                    ArgShape::float(8),
-                    ArgShape::int(8, 8),
-                    ArgShape::float(8),
+                    TyView::int(8, 8),
+                    TyView::float(8),
+                    TyView::int(8, 8),
+                    TyView::float(8),
                 ],
-                Some(ArgShape::float(8)),
+                Some(TyView::float(8)),
             ),
         ];
         for (what, func, args, ret) in cases {
@@ -775,10 +788,10 @@ fn shape_plan_matches_the_function_plan() {
         let tm = forge_codegen::arch::riscv64::TargetMachine::new();
         let func = mixed_probe(CallConvId::builtin(ConvName::Lp64d));
         let args = vec![
-            ArgShape::int(8, 8),
-            ArgShape::float(8),
-            ArgShape::int(8, 8),
-            ArgShape::float(8),
+            TyView::int(8, 8),
+            TyView::float(8),
+            TyView::int(8, 8),
+            TyView::float(8),
         ];
         let by_func = plan_for_function(&tm, &reg, "lp64d", &func).expect("函数 plan");
         let by_shape = plan_for_shapes(
@@ -786,7 +799,7 @@ fn shape_plan_matches_the_function_plan() {
             &reg,
             &CallRequest::new("lp64d")
                 .args(args)
-                .rets([ArgShape::float(8)]),
+                .rets([TyView::float(8)]),
         )
         .expect("形状 plan");
         assert_eq!(
@@ -800,14 +813,14 @@ fn shape_plan_matches_the_function_plan() {
     {
         let tm = forge_codegen::arch::arm64::TargetMachine::new();
         let func = aapcs64_probe();
-        let args = vec![ArgShape::int(8, 8), ArgShape::int(8, 8)];
+        let args = vec![TyView::int(8, 8), TyView::int(8, 8)];
         let by_func = plan_for_function(&tm, &reg, "aapcs64", &func).expect("函数 plan");
         let by_shape = plan_for_shapes(
             &tm,
             &reg,
             &CallRequest::new("aapcs64")
                 .args(args)
-                .rets([ArgShape::int(8, 8)]),
+                .rets([TyView::int(8, 8)]),
         )
         .expect("形状 plan");
         assert_eq!(
@@ -824,8 +837,8 @@ fn shape_plan_matches_the_function_plan() {
 /// 这条是"调用方改按被调方落点搬实参"的唯一查表入口的守卫。
 #[test]
 fn call_planner_registry_serves_the_shape_plan() {
-    use forge_codegen::pipeline::abi_target::{call_layout, plan_for_shapes};
-    use forge_isa_runtime::machine::call_layout::ArgShape;
+    use forge_codegen::pipeline::abi_target::plan_for_shapes;
+    use forge_isa_runtime::machine::abi_model::TyView;
     use forge_isa_runtime::machine::call_plan::CallRequest;
     use forge_isa_runtime::machine::call_plan::{has_call_planner, plan_call};
 
@@ -838,12 +851,12 @@ fn call_planner_registry_serves_the_shape_plan() {
     let reg = builtin::registry().expect("内置注册表");
     let tm = TargetMachine::new();
     let args = vec![
-        ArgShape::int(8, 8),
-        ArgShape::float(8),
-        ArgShape::int(8, 8),
-        ArgShape::float(8),
+        TyView::int(8, 8),
+        TyView::float(8),
+        TyView::int(8, 8),
+        TyView::float(8),
     ];
-    let ret = Some(ArgShape::float(8));
+    let ret = Some(TyView::float(8));
 
     let by_hook = plan_call(
         "x86_64",
@@ -862,8 +875,8 @@ fn call_planner_registry_serves_the_shape_plan() {
     .expect("直接算");
     assert_eq!(
         by_hook,
-        call_layout(&plan, &tm),
-        "钩子给出的布局必须与「形状 → plan → CallLayout」逐项相同"
+        plan.clone(),
+        "钩子给出的布局必须与「形状 → plan」逐项相同"
     );
 
     // 未注册的 ISA ⇒ **点名原因**（`NoPlanner`），不再是笼统的 `None`：调用点据此能直接
@@ -887,11 +900,11 @@ fn call_planner_registry_serves_the_shape_plan() {
 #[test]
 fn convention_level_int_return_slot() {
     use forge_codegen::pipeline::abi_target::plan_for_shapes;
-    use forge_isa_runtime::machine::call_layout::ArgShape;
+    use forge_isa_runtime::machine::abi_model::TyView;
     use forge_isa_runtime::machine::call_plan::CallRequest;
 
     let reg = builtin::registry().expect("内置注册表");
-    let ret_shape = [ArgShape::int(8, 8)];
+    let ret_shape = [TyView::int(8, 8)];
 
     // x86 win64：RAX。
     {
@@ -958,33 +971,30 @@ fn a6_gap_inventory() {
     use forge_codegen::arch::arm64::TargetMachine as Arm64;
     use forge_codegen::arch::riscv64::TargetMachine as Riscv64;
     use forge_codegen::pipeline::abi_target::plan_for_shapes;
-    use forge_isa_runtime::machine::call_layout::{ArgShape, ShapeKind};
+    use forge_isa_runtime::machine::abi_model::{TyKind, TyView};
     use forge_isa_runtime::machine::call_plan::CallRequest;
 
-    fn agg(size: u32, align: u32, members: Vec<ArgShape>) -> ArgShape {
-        ArgShape {
-            size,
-            align,
-            kind: ShapeKind::Aggregate { members },
-        }
+    fn agg(size: u32, align: u32, members: Vec<TyView>) -> TyView {
+        TyView::new(size, align, TyKind::Aggregate { members })
     }
-    fn vec(size: u32, align: u32, lanes: u32, elem_is_float: bool) -> ArgShape {
-        ArgShape {
+    fn vec(size: u32, align: u32, lanes: u32, elem_is_float: bool) -> TyView {
+        TyView::new(
             size,
             align,
-            kind: ShapeKind::Vector {
-                elem_is_float,
+            TyKind::Vector {
+                elem: if elem_is_float {
+                    forge_isa_runtime::machine::abi_model::Elem::Float
+                } else {
+                    forge_isa_runtime::machine::abi_model::Elem::Int
+                },
                 lanes,
-                // 元素宽度在这里不参与判定（`shape_to_ty` 用真实 size/align + 元素族），
-                // 探针一律按 4 字节元素给。
-                elem_bytes: 4,
             },
-        }
+        )
     }
 
-    let i64s = ArgShape::int(8, 8);
-    let f64s = ArgShape::float(8);
-    let f32s = ArgShape::float(4);
+    let i64s = TyView::int(8, 8);
+    let f64s = TyView::float(8);
+    let f32s = TyView::float(4);
     let v128 = vec(16, 16, 4, true);
     let v256 = vec(32, 32, 8, true);
     let hfa2 = agg(16, 8, vec![f64s.clone(), f64s.clone()]);
@@ -992,7 +1002,7 @@ fn a6_gap_inventory() {
     let pair = agg(16, 8, vec![i64s.clone(), i64s.clone()]);
     let agg24 = agg(24, 8, vec![i64s.clone(); 3]);
 
-    let cases: Vec<(&str, Vec<ArgShape>, Option<ArgShape>)> = vec![
+    let cases: Vec<(&str, Vec<TyView>, Option<TyView>)> = vec![
         (
             "scalars_mix",
             vec![i64s.clone(), f64s.clone(), f32s.clone()],
@@ -1073,10 +1083,10 @@ fn a6_gap_inventory() {
     );
 }
 
-/// `Option<ArgShape>` → 返回形状切片（兼容旧写法的测试辅助）。
+/// `Option<TyView>` → 返回形状切片（兼容旧写法的测试辅助）。
 fn ret_list(
-    ret: &Option<forge_isa_runtime::machine::call_layout::ArgShape>,
-) -> Vec<forge_isa_runtime::machine::call_layout::ArgShape> {
+    ret: &Option<forge_isa_runtime::machine::abi_model::TyView>,
+) -> Vec<forge_isa_runtime::machine::abi_model::TyView> {
     ret.iter().cloned().collect()
 }
 /// `fn f(i64) -> (i64, i64)`：**多值返回**（v20 A6）的 IR 形态，用 `win64` 约定。
@@ -1100,10 +1110,10 @@ fn pair_return_probe() -> Function {
 /// 价值不在 x86 本身，而在于它把"第二个返回值在哪"从**发射侧常量**变成**引擎产物**。
 #[test]
 fn two_value_return_is_plan_driven() {
-    use forge_codegen::FunctionCompiler;
-    use forge_isa_runtime::machine::call_layout::RetPlace;
+    use forge_codegen::CompileSession;
+    use forge_isa_runtime::machine::abi_model::RetLoc;
 
-    let compiler = FunctionCompiler::new(TargetMachine::new());
+    let compiler = CompileSession::new(TargetMachine::new());
     let func = pair_return_probe();
     let (_cf, alloc) = compiler
         .compile_with_alloc(&func)
@@ -1111,10 +1121,10 @@ fn two_value_return_is_plan_driven() {
     let layout = alloc.call_layout.as_ref().expect("编译入口必须给布局");
     assert_eq!(
         layout.ret,
-        Some(RetPlace::Pair {
-            lo: (forge_ir::RegClass::GPR(64), 0),
-            hi: (forge_ir::RegClass::GPR(64), 2),
-        }),
+        RetLoc::RegPair {
+            lo: forge_abi::plan::RegRef::new(0, 0, forge_ir::RegClass::GPR(64), "RAX"),
+            hi: forge_abi::plan::RegRef::new(2, 2, forge_ir::RegClass::GPR(64), "RDX"),
+        },
         "两个 i64 返回值 → RAX:RDX（由绑定的 ret_int 池给，不写死类内号）"
     );
 }
@@ -1139,13 +1149,13 @@ fn hfa2_arg_probe() -> Function {
 
 /// **HFA 聚合实参：调用点形状 == 被调方 plan**（v20 A6）。
 ///
-/// 这条守的是"形状里必须有成员"：`ArgShape::from_ir_type` 递归摊开成员后，
+/// 这条守的是"形状里必须有成员"：`TyView::from_ir_type` 递归摊开成员后，
 /// `{f64,f64}` 才被判成 HFA 并落到**浮点池**；只报 size/align 的旧投影会落整数槽。
 #[test]
 fn hfa_aggregate_shape_matches_the_callee_plan() {
     use forge_abi::Placement;
     use forge_codegen::pipeline::abi_target::plan_for_shapes;
-    use forge_isa_runtime::machine::call_layout::ArgShape;
+    use forge_isa_runtime::machine::abi_model::TyView;
     use forge_isa_runtime::machine::call_plan::CallRequest;
 
     let reg = builtin::registry().expect("内置注册表");
@@ -1157,12 +1167,12 @@ fn hfa_aggregate_shape_matches_the_callee_plan() {
     let store = func.types.borrow();
     let sig = store.signature_opt(func.signature).expect("签名在类型表里");
     let st = sig.params[0].0;
-    let shape = ArgShape::from_ir_type(&store, st);
+    let shape = TyView::from_ir_type(&store, st);
     let (size, align) = (shape.size, shape.align);
     assert!(
         matches!(
             shape.kind,
-            forge_isa_runtime::machine::call_layout::ShapeKind::Aggregate { ref members }
+            forge_isa_runtime::machine::abi_model::TyKind::Aggregate { ref members }
                 if members.len() == 2
         ),
         "聚合形状必须带 2 个成员（HFA 判定靠它）：{shape:?}"
@@ -1185,10 +1195,10 @@ fn hfa_aggregate_shape_matches_the_callee_plan() {
     // **反证（这条守卫得有用）**：成员留空的形状——修复前的调用点投影——会落到整数槽，
     // 与被调方分叉。一旦有人把"摊成员"改回去，上面的断言会红，而这一条说明红的是真问题
     // （实参搬错寄存器），不是快照漂移。
-    let blind = forge_isa_runtime::machine::call_layout::ArgShape {
+    let blind = forge_isa_runtime::machine::abi_model::TyView {
         size,
         align,
-        kind: forge_isa_runtime::machine::call_layout::ShapeKind::Aggregate {
+        kind: forge_isa_runtime::machine::abi_model::TyKind::Aggregate {
             members: Vec::new(),
         },
     };
@@ -1212,16 +1222,13 @@ fn hfa_aggregate_shape_matches_the_callee_plan() {
 #[test]
 fn call_site_variadic_hint_decides_unnamed_argument_placement() {
     use forge_codegen::pipeline::abi_target::{plan_for_shapes, plan_for_signature};
-    use forge_isa_runtime::machine::call_layout::{ArgPlace, ArgShape};
+    use forge_isa_runtime::machine::abi_model::Placement;
+    use forge_isa_runtime::machine::abi_model::TyView;
     use forge_isa_runtime::machine::call_plan::CallRequest;
 
     let reg = builtin::registry().expect("内置注册表");
     let tm = TargetMachine::new();
-    let shapes = [
-        ArgShape::int(8, 8),
-        ArgShape::int(8, 8),
-        ArgShape::int(8, 8),
-    ];
+    let shapes = [TyView::int(8, 8), TyView::int(8, 8), TyView::int(8, 8)];
 
     // ① 没有变参提示（单函数编译 / 被调方不是变参）：三个实参都进寄存器。
     let by_shape = plan_for_shapes(&tm, &reg, &CallRequest::new("win64").args(shapes.iter()))
@@ -1233,10 +1240,10 @@ fn call_site_variadic_hint_decides_unnamed_argument_placement() {
         "非变参语义下第 2/3 个实参在寄存器：{:?}",
         by_shape.args
     );
-    let layout = forge_codegen::pipeline::abi_target::call_layout(&by_shape, &tm);
+    let layout = by_shape.clone();
     assert!(matches!(
         layout.arg(1).map(|a| &a.place),
-        Some(ArgPlace::Reg { .. })
+        Some(Placement::Reg { .. })
     ));
 
     // ② 给了变参提示（被调方是变参、命名 1 个）：第 2/3 个实参改判到**栈**。
@@ -1253,10 +1260,10 @@ fn call_site_variadic_hint_decides_unnamed_argument_placement() {
         "win64 的未命名实参必须走栈：{:?}",
         hinted.args
     );
-    let hinted_layout = forge_codegen::pipeline::abi_target::call_layout(&hinted, &tm);
+    let hinted_layout = hinted.clone();
     assert!(matches!(
         hinted_layout.arg(1).map(|a| &a.place),
-        Some(ArgPlace::Stack { .. })
+        Some(Placement::Stack { .. })
     ));
 
     // ③ 被调方视角：同一个三实参调用，签名路径（`.variadic(1)`）与 ② 一致 —— 说明**提示
@@ -1285,7 +1292,7 @@ fn call_site_variadic_hint_decides_unnamed_argument_placement() {
 #[test]
 fn call_plan_errors_carry_the_reason() {
     use forge_codegen::pipeline::abi_target::register_isa_call_planner;
-    use forge_isa_runtime::machine::call_layout::ArgShape;
+    use forge_isa_runtime::machine::abi_model::TyView;
     use forge_isa_runtime::machine::call_plan::{CallPlanError, CallRequest, plan_call};
 
     // ① 没注册 planner 的 ISA：点名"宿主没接"，不是"签名算不出来"。
@@ -1324,7 +1331,7 @@ fn call_plan_errors_carry_the_reason() {
     // ③ 同一份请求走通了：确认上面的失败来自"约定未注册"，不是 ISA 本身不可用。
     let ok = plan_call(
         "doc_probe_isa",
-        &CallRequest::new("win64").rets([ArgShape::int(8, 8)]),
+        &CallRequest::new("win64").rets([TyView::int(8, 8)]),
     );
     assert!(ok.is_ok(), "win64 在 x86 机器上应能规划：{ok:?}");
 }
@@ -1336,7 +1343,7 @@ fn call_plan_errors_carry_the_reason() {
 /// 只有数据）；② sysv64 是**计数式游标 + 溢出区 + 保存区**；③ 非变参签名不带 `va`（不猜）。
 #[test]
 fn call_layout_mirrors_the_variadic_shape() {
-    use forge_codegen::pipeline::abi_target::{call_layout, plan_for_signature};
+    use forge_codegen::pipeline::abi_target::plan_for_signature;
 
     let reg = builtin::registry().expect("内置注册表");
     let tm = TargetMachine::new();
@@ -1349,7 +1356,7 @@ fn call_layout_mirrors_the_variadic_shape() {
     )
     .variadic(2); // 两个形参都是**命名**的（未命名实参由调用方多传 ⇒ 不在签名里）
     let plan = plan_for_signature(&tm, &reg, "win64", &sig).expect("win64 变参 plan");
-    let va = call_layout(&plan, &tm).va.expect("变参必有 va 信息");
+    let va = forge_codegen::pipeline::abi_target::va_info(&plan, &tm).expect("变参必有 va 信息");
     assert_eq!(va.shape.as_deref(), Some("win64_stack"));
     assert_eq!((va.size, va.align), (8, 8));
     assert!(va.stack_only, "win64 的未命名实参只走栈");
@@ -1379,7 +1386,7 @@ fn call_layout_mirrors_the_variadic_shape() {
 
     // ② sysv64：计数式游标（上界 = 本类保存区字节数）+ 溢出区 + 保存区。
     let plan = plan_for_signature(&tm, &reg, "sysv64", &sig).expect("sysv64 变参 plan");
-    let va = call_layout(&plan, &tm).va.expect("变参必有 va 信息");
+    let va = forge_codegen::pipeline::abi_target::va_info(&plan, &tm).expect("变参必有 va 信息");
     assert_eq!(va.shape.as_deref(), Some("sysv_reg_save"));
     assert_eq!((va.size, va.align), (24, 8));
     assert!(!va.stack_only, "SysV 的未命名实参继续用寄存器");
@@ -1445,7 +1452,10 @@ fn call_layout_mirrors_the_variadic_shape() {
     // ③ 非变参签名：没有 va 信息。
     let plain = forge_abi::Signature::new(vec![("a".into(), forge_abi::TyView::int(8, 8))], None);
     let plan = plan_for_signature(&tm, &reg, "win64", &plain).expect("非变参 plan");
-    assert!(call_layout(&plan, &tm).va.is_none(), "非变参不该带 va 信息");
+    assert!(
+        forge_codegen::pipeline::abi_target::va_info(&plan, &tm).is_none(),
+        "非变参不该带 va 信息"
+    );
 }
 
 /// **aapcs64 的变参数据面**（v20 V6）：形状/规则/逐字段初值在真 arm64 后端的适配器上必须
@@ -1456,7 +1466,7 @@ fn call_layout_mirrors_the_variadic_shape() {
 /// `__gr_top`/`__vr_top`（区域**顶端**），溢出区是 `__stack`。
 #[test]
 fn aapcs64_variadic_shape_is_pure_data() {
-    use forge_codegen::pipeline::abi_target::{call_layout, plan_for_signature};
+    use forge_codegen::pipeline::abi_target::plan_for_signature;
     use forge_isa_runtime::machine::call_layout::VaInitVal;
 
     let reg = builtin::registry().expect("内置注册表");
@@ -1465,7 +1475,7 @@ fn aapcs64_variadic_shape_is_pure_data() {
     let sig = forge_abi::Signature::new(vec![("fmt".into(), forge_abi::TyView::int(8, 8))], None)
         .variadic(1);
     let plan = plan_for_signature(&tm, &reg, "aapcs64", &sig).expect("aapcs64 变参 plan");
-    let va = call_layout(&plan, &tm).va.expect("变参必有 va 信息");
+    let va = forge_codegen::pipeline::abi_target::va_info(&plan, &tm).expect("变参必有 va 信息");
 
     assert_eq!(va.shape.as_deref(), Some("aapcs64_struct"));
     assert_eq!((va.size, va.align), (32, 8));

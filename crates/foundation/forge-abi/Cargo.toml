@@ -7,6 +7,13 @@ description = "Calling-convention model + generic ABI engine (conventions are us
 [dependencies]
 # 刻意**不依赖 forge-ir**（也不依赖任何内部 crate）：引擎吃的是"任意前端给的布局视图"
 # （`TyView`），IR 的类型句柄在 A2 由宿主适配（`forge-ir` 只声明"用哪份约定"）。
+# v23 M2：**产物**（AbiPlan/Placement/RetLoc/TyView + 两个规则小枚举）抽到 leaf crate
+# `forge-abi-model`——它是引擎、运行时与生成物共用的唯一数据形状（此前运行时侧有一份
+# 手抄镜像 + 300 行翻译）。本 crate 只留：规则/绑定（TOML 数据）+ 引擎 + 注册表。
+forge-abi-model = { path = "../forge-abi-model" }
+# v23 M2：`AbiTarget::reg_class` 的返回类型是 `forge_ir::RegClass`（ISA 的中性寄存器类），
+# 因此本 crate 公开面出现 forge-ir。引擎本身仍然只吃 `TyView`（视图），不读 IR 类型。
+forge-ir = { path = "../forge-ir" }
 serde = { version = "1.0.229", features = ["derive"] }
 toml = "1.1.5"
 thiserror = "2.0.20"

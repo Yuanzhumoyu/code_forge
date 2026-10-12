@@ -632,11 +632,11 @@ mod tests {
     #[test]
     fn module_cross_function_call() {
         // 两函数模块：callee(a,b)=a+b；main()=callee(20,22)=42
-        // 用 riscv64::TargetMachine 编译（FunctionCompiler::compile_raw）。
+        // 用 riscv64::TargetMachine 编译（CompileSession::compile）。
         // 注意：当前 riscv 的 Call lowering 尚未接线（阶段 3）——此测试验证
         // exec_riscv64_module 的**打包 + reloc patch** 机制：手工构造两个
         // 无跨函数 reloc 的函数（顺序执行），main 返回常量 42。
-        use code_forge::backend::FunctionCompiler;
+        use code_forge::backend::CompileSession;
         use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
 
         fn compile(name: &str, v: i64) -> (String, CompiledFunction) {
@@ -646,8 +646,8 @@ mod tests {
             let c = b.iconst_i64(v);
             b.ret(&[c]);
             let func = b.finish().expect("build");
-            let cf = FunctionCompiler::new(code_forge::backend::riscv64::TargetMachine::new())
-                .compile_raw(&func)
+            let cf = CompileSession::new(code_forge::backend::riscv64::TargetMachine::new())
+                .compile(&func)
                 .expect("compile");
             (name.to_string(), cf)
         }
@@ -666,7 +666,7 @@ mod tests {
 
     #[test]
     fn module_main_not_found_error() {
-        use code_forge::backend::FunctionCompiler;
+        use code_forge::backend::CompileSession;
         use code_forge::prelude::{FunctionBuilder, FunctionSignature, TypeContext, TypeId};
         let sig = FunctionSignature::new(&[], &[TypeId::I64]);
         let mut b = FunctionBuilder::new("only", TypeContext::new(), sig);
@@ -674,8 +674,8 @@ mod tests {
         let c = b.iconst_i64(1);
         b.ret(&[c]);
         let func = b.finish().expect("build");
-        let cf = FunctionCompiler::new(code_forge::backend::riscv64::TargetMachine::new())
-            .compile_raw(&func)
+        let cf = CompileSession::new(code_forge::backend::riscv64::TargetMachine::new())
+            .compile(&func)
             .expect("compile");
         let funcs = vec![("only".to_string(), cf)];
         let err = exec_riscv64_module(&funcs, &[], "missing", &[]).unwrap_err();
@@ -687,7 +687,7 @@ mod tests {
         // 真实跨函数 Call：callee(a,b)=a+b；main()=callee(20,22)=42。
         // 覆盖：Call lowering（jal ra, @N）→ reloc patch（生成的补丁器）
         // → QEMU 模块执行。
-        use code_forge::backend::FunctionCompiler;
+        use code_forge::backend::CompileSession;
         use code_forge::prelude::{
             FuncRef, FunctionBuilder, FunctionSignature, Module, TypeContext, TypeId,
         };
@@ -715,11 +715,11 @@ mod tests {
             .map(|i| {
                 let fr = FuncRef::new(i as u32);
                 let func = module.get_function(fr);
-                let cf = FunctionCompiler::for_module(
+                let cf = CompileSession::for_module(
                     code_forge::backend::riscv64::TargetMachine::new(),
                     &module,
                 )
-                .compile_raw(func)
+                .compile(func)
                 .expect("compile fn");
                 (func.name.as_str().to_string(), cf)
             })

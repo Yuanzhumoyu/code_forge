@@ -25,11 +25,11 @@
 //! ## Quick Start
 //!
 //! ```ignore
-//! use code_forge::backend::jit::JitCompiler;
+//! use code_forge::backend::jit::JitLoader;
 //! use code_forge::ir::*;
 //!
 //! code_forge::backend::x86::ensure_registered();
-//! let mut jit = JitCompiler::new(code_forge::backend::x86::TargetMachine::new());
+//! let mut jit = JitLoader::new(code_forge::backend::x86::TargetMachine::new());
 //! jit.add_function("add", &FunctionSignature::new(
 //!     &[(TypeId::I32, "a"), (TypeId::I32, "b")], &[TypeId::I32]
 //! ), |b| {

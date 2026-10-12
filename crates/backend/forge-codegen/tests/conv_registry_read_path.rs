@@ -19,7 +19,7 @@
 mod common;
 
 use common::demo8::TargetMachine;
-use forge_codegen::FunctionCompiler;
+use forge_codegen::CompileSession;
 use forge_codegen::pipeline::conv_registry;
 use forge_ir::CallConvId;
 use forge_ir::ConvName;
@@ -71,7 +71,7 @@ fn unregistered_convention_fails_closed_and_names_what_is_known() {
 #[test]
 fn compile_reads_the_convention_and_registration_unblocks_it() {
     let tm = TargetMachine::new();
-    let compiler = FunctionCompiler::new(tm);
+    let compiler = CompileSession::new(tm);
 
     let cc = CallConvId::named("probe_conv");
     let func = build(cc.clone());
@@ -119,7 +119,7 @@ ret_int = ["A0"]
 #[test]
 fn rules_without_binding_fail_closed_at_the_compile_entry() {
     let tm = TargetMachine::new();
-    let compiler = FunctionCompiler::new(tm);
+    let compiler = CompileSession::new(tm);
     let cc = CallConvId::named("rules_only_conv");
     let func = build(cc);
     conv_registry::register_rules_toml(
@@ -159,7 +159,7 @@ parent = "c"
 /// **TypeStore 的权威大小**（带填充的结构体不能按成员求和）。
 #[test]
 fn ir_attributes_project_into_the_engine_view() {
-    use forge_codegen::pipeline::sig_view::{decl_attrs, signature_view, ty_view};
+    use forge_codegen::pipeline::sig_view::{decl_attrs, signature_view};
     use forge_ir::ir::function::ParamAttributes;
     use forge_ir::ir::types::TypeField;
 
@@ -174,7 +174,7 @@ fn ir_attributes_project_into_the_engine_view() {
     {
         let store = ctx.borrow();
         assert_eq!(store.size_bytes(st), 16, "带填充结构体的权威大小");
-        let v = ty_view(&store, st);
+        let v = forge_isa_runtime::machine::abi_model::TyView::from_ir_type(&store, st);
         assert_eq!((v.size, v.align), (16, 8));
         assert!(v.is_aggregate());
 

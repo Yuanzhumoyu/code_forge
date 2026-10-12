@@ -306,8 +306,12 @@ impl forge_abi::AbiTarget for NoCaps {
     fn reg_name(&self, i: u32) -> Option<String> {
         Some(format!("R{i}"))
     }
-    fn reg_class_name(&self, _i: u32) -> String {
-        "GPR(8)".into()
+    /// 测试替身：单一整数类（8 字节），类内号 = 物理号。
+    fn reg_class(&self, _i: u32) -> forge_ir::RegClass {
+        forge_ir::RegClass::GPR(8)
+    }
+    fn reg_slot(&self, i: u32) -> u32 {
+        i
     }
     fn reg_index(&self, n: &str) -> Option<u32> {
         n.strip_prefix('R')?.parse().ok()

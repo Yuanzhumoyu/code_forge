@@ -1,7 +1,7 @@
 //! 把发行后端的 `TargetMachine` 接到编译管线（v19 V1b 的 runtime 注册表）。
 //!
 //! 生成物只依赖 `forge_isa_runtime`，因此"谁来做 IR → 机器码"必须由**宿主**登记：
-//! 本模块为三个发行后端各注册一个工厂闭包（downcast 到具体类型后造 `FunctionCompiler`）。
+//! 本模块为三个发行后端各注册一个工厂闭包（downcast 到具体类型后造 `CompileSession`）。
 //! 入口是 [`ensure_registered`]，在 JIT 编译入口处调用（幂等）。
 //!
 //! v20 A5-3 起这里还登记**调用点布局钩子**（`pipeline::abi_target::register_isa_call_planner`）：
@@ -13,13 +13,13 @@ use std::sync::OnceLock;
 use forge_ir::IrError;
 use forge_isa_runtime::{CompiledFunction, FunctionPipeline};
 
-use crate::pipeline::compiler::FunctionCompiler;
+use crate::pipeline::compiler::CompileSession;
 
-struct Hook<M: forge_isa_runtime::machine::target::TargetMachine + Clone>(FunctionCompiler<M>);
+struct Hook<M: forge_isa_runtime::machine::target::TargetMachine + Clone>(CompileSession<M>);
 
 impl<M: forge_isa_runtime::machine::target::TargetMachine + Clone> FunctionPipeline for Hook<M> {
-    fn compile_raw(&self, func: &forge_ir::Function) -> Result<CompiledFunction, IrError> {
-        self.0.compile_raw(func)
+    fn compile(&self, func: &forge_ir::Function) -> Result<CompiledFunction, IrError> {
+        self.0.compile(func)
     }
 }
 
@@ -27,7 +27,7 @@ macro_rules! register_backend {
     ($factory:ident, $tm:ty, $isa:expr) => {
         fn $factory(tm: &dyn Any) -> Option<Box<dyn FunctionPipeline>> {
             let tm = tm.downcast_ref::<$tm>()?.clone();
-            Some(Box::new(Hook(FunctionCompiler::new(tm))))
+            Some(Box::new(Hook(CompileSession::new(tm))))
         }
         // 工厂必须以 `'static` 引用登记：用一个常量提升生命周期。
         const _: () = {

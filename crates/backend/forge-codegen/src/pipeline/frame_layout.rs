@@ -7,7 +7,7 @@ use crate::AllocResult;
 use crate::machine::abi::FrameLayoutKind;
 use crate::machine::target::TargetMachine;
 use crate::pipeline::compiler::CompileState;
-use forge_isa_runtime::machine::call_layout::CallLayout;
+use forge_isa_runtime::machine::abi_model::AbiPlan;
 
 /// 帧布局三数值——从声明式 `[machine.frame]`（layout + fp_push_bytes）+ reg_info
 /// 推导，是 min_frame / callee_saved_bytes / stack_slot_shift 的唯一来源。
@@ -33,33 +33,44 @@ pub(crate) struct FrameLayoutInfo {
 
 pub(crate) fn frame_layout_info<M: TargetMachine + ?Sized>(
     machine: &M,
-    layout: Option<&CallLayout>,
+    layout: Option<&AbiPlan>,
 ) -> FrameLayoutInfo {
     let fl = machine.abi().frame_layout();
     let ri = machine.reg_info();
     // 帧指针上方推入区 = fp 保存槽（frame_pointer_overhead）+ callee-saved ×
-    // 主 GPR 类宽度（主类宽度取 default_gpr_class()，元数据驱动不再假设
-    // GPR64）。
+    // 主 GPR 类宽度（主类宽度取 default_gpr_class()，元数据驱动不再假设 GPR64）。
     //
-    // **fp-outside 仍按谱里声明的表数**（v20 A5-3 ④ 的刻意保留）：x86 的 push 机制是
-    // **静态**发射（谱面列表逐个 `push`，见 `gen_push_mechanism`），帧上方实际占用的
-    // 字节数由那份列表决定。若改按 plan 计数，遇到"plan 比谱表短"的约定（x86 显式选
-    // sysv64：5 vs 7）就会少算 16 字节 ⇒ 局部/spill 槽与 push 槽重叠（覆盖调用者保存
-    // 值）。要一起换，必须先把 push 机制改成**运行时按 `alloc_result.callee_saved_to_save`
-    // 循环**（帧字节数也得变运行时值）——归 A6。
+    // **两条路都按 plan 的整张表数**（v20 A6 / v23 M3 收口）：
     //
-    // **fp-inside 按 plan 计数**（v20 A6）：这条路的保存/恢复本来就是运行时按
-    // `alloc_result.callee_saved_to_save` 循环（`callee_saved_loop`），保存集随约定而变
-    // （arm64 的 AAPCS64 = X19-X28 **+ V8-V15**）。帧顶槽位公式 `frame - fp_push - (k+1)*slot`
-    // 要求帧至少装得下**整张表**；plan 的表 ⊇ 实际保存集（regalloc 只保存用到的那些），
-    // 所以按 plan 算必然够用。没有 plan（无绑定的夹具）时退回谱面表数。
-    let cs_count = layout.map(|cl| cl.callee_saved.len() as i32).unwrap_or(0);
+    // - fp-inside（riscv/arm64）：保存/恢复本来就是运行时按
+    //   `alloc_result.callee_saved_to_save` 循环（`callee_saved_loop`），保存集随约定而变
+    //   （arm64 的 AAPCS64 = X19-X28 **+ V8-V15**）。帧顶槽位公式
+    //   `frame - fp_push - (k+1)*slot` 要求帧至少装得下**整张表**；plan 的表 ⊇ 实际保存集
+    //   （regalloc 只保存用到的那些），所以按 plan 算必然够用。
+    // - fp-outside（x86 的 push/pop）**也已经是运行时的**：序言按
+    //   `alloc_result.callee_saved_to_save` 循环 push、`cs_imm`/`sp_base` 都取
+    //   `callee_saved_to_save.len()`（见 `dsl/codegen/frame.rs` 的 `gen_push_mechanism`），
+    //   而这张表由管线从 plan 填。谱面的静态 push 表（`[machine].callee_saved_gpr`）与
+    //   `[emit.prologue]` 模板在 v20 A4/v21 W9 就已删除。
+    //
+    // 无 plan ⇒ **明确报错**（A6 的 fail-closed）：调用计划在编译入口就是必需的，
+    // 走到这里还缺 plan 说明有路径漏接——**不**退回"按谱表数/零"这种会少算帧字节的缺省
+    // （x86 显式选 sysv64：5 vs 7，少算 16 字节会让局部/spill 槽与 push 槽重叠，
+    // 覆盖调用者保存值 ⇒ 静默错值）。
+    let Some(plan) = layout else {
+        panic!(
+            "帧布局需要调用计划（plan）：没有 plan 时 callee-saved/栈区账目无从计算\
+             （编译入口 fail-closed，见 docs/reference/backend-pipeline.md 与 v23 M3 的 A6 收口）"
+        );
+    };
+    let cs_count = plan.callee_saved.regs.len() as i32;
     let cs_bytes = cs_count * (ri.reg_class_width(ri.default_gpr_class()) as i32);
     let pushed = (ri.frame_pointer_overhead() as i32) + cs_bytes;
     // **帧顶保存区**（v20 V7）：形状要求"保存区与栈实参连续"时，保存区占 `[入口 sp - save, 入口 sp)`，
     // 帧顶那一串（fp/lr 保存槽 + callee-saved）整体下移 ⇒ 帧至少要装得下 保存区 + 那串。
-    let va_top = layout
-        .and_then(|cl| cl.va.as_ref())
+    let va_top = plan
+        .va_area
+        .as_ref()
         .filter(|v| v.save_contiguous)
         .and_then(|v| v.save.as_ref())
         .map(|s| s.size)
@@ -82,7 +93,7 @@ pub(crate) fn frame_layout_info<M: TargetMachine + ?Sized>(
 /// compiler.rs 的 LowerCtx 与 emission.rs 共用。
 pub(crate) fn callee_saved_bytes<M: TargetMachine + ?Sized>(
     machine: &M,
-    layout: Option<&CallLayout>,
+    layout: Option<&AbiPlan>,
 ) -> i32 {
     frame_layout_info(machine, layout).callee_saved_bytes
 }
@@ -129,7 +140,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             .ctx
             .conv
             .layout()
-            .map(|cl| cl.frame_padding)
+            .map(|cl| cl.stack.frame_padding)
             .unwrap_or_else(|| machine.abi().frame_padding());
         size.div_ceil(align) * align + padding as u32
     }
@@ -152,26 +163,38 @@ mod tests {
         let sig = forge_abi::Signature::new(vec![], Some(forge_abi::TyView::float(8)));
         let plan = crate::pipeline::abi_target::plan_for_signature(&tm, &reg, "aapcs64", &sig)
             .expect("aapcs64 plan");
-        let cl = crate::pipeline::abi_target::call_layout(&plan, &tm);
+        let cl = plan.clone();
 
-        let gpr = cl.callee_saved.iter().filter(|(c, _)| !c.is_fp()).count();
-        let fpr = cl.callee_saved.iter().filter(|(c, _)| c.is_fp()).count();
+        let gpr = cl
+            .callee_saved
+            .regs
+            .iter()
+            .filter(|r| !r.class.is_fp())
+            .count();
+        let fpr = cl
+            .callee_saved
+            .regs
+            .iter()
+            .filter(|r| r.class.is_fp())
+            .count();
         assert_eq!(gpr, 10, "AAPCS64 的 GPR callee-saved = X19-X28");
         assert_eq!(fpr, 8, "AAPCS64 的 FPR callee-saved = V8-V15");
 
         let with_plan = frame_layout_info(&tm, Some(&cl));
-        let no_plan = frame_layout_info(&tm, None);
         assert_eq!(
             with_plan.min_frame,
             16 + 18 * 8,
             "fp-inside 的最小帧 = fp/lr 保存区 + plan 整张表"
         );
-        assert_eq!(
-            no_plan.min_frame, 16,
-            "无 plan（v21 W9 起谱面不再声明 callee-saved）= 只剩 fp/lr 保存区"
-        );
         // fp-inside 下 spill 寻址不依赖 cs 字节数 ⇒ 这条切换不影响 sp_base。
         assert_eq!(with_plan.callee_saved_bytes, 0);
-        assert_eq!(with_plan.stack_slot_shift, no_plan.stack_slot_shift);
+        // **无 plan ⇒ 明确报错**（A6 收口）：不再退回"零/谱表数"这种会少算帧字节的缺省。
+        assert!(
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                frame_layout_info(&tm, None)
+            }))
+            .is_err(),
+            "无 plan 时帧布局必须 fail-closed，而不是按零算"
+        );
     }
 }

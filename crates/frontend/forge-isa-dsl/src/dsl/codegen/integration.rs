@@ -591,6 +591,13 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
     // 未声明的族不产生任何类（1 字节寄存器 ISA 只有 GPR(1)；i16/i32/i64 由值池门
     // 在编译期拒绝）。x86/riscv64/arm64/demo 的**被请求类**集合与本表完全一致
     // （已用 FGE_DEBUG_GEN dump + jit 矩阵验证行为不变）。
+    // **>16B 的宽向量档位**（v23 M3）：谱申报的档位里超过 16 字节的那些——
+    // 与宿主上界相交后由 `TargetRegInfo::wide_vector_bytes` 对外声明。
+    let wide_tiers: Vec<u16> = model
+        .vector_tiers()
+        .into_iter()
+        .filter(|t| *t > 16)
+        .collect();
     let mut class_entries: Vec<TokenStream> = Vec::new();
     {
         let mut gpr_widths: Vec<u16> = model
@@ -694,6 +701,16 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
             fn value_fpr_class(&self) -> forge_ir::RegClass { __VALUE_FPR_CLASS }
             fn slot_bytes(&self) -> u16 { __SLOT_BYTES }
             fn vector_tiers(&self) -> &[u16] { &__VECTOR_TIERS }
+            /// **>16B 的宽向量档位**（v23 M3）：谱申报的档位 ∩ 本机能执行的上界。
+            /// 通用管线据此判"这台机器能不能编/跑这么宽的定宽向量"——它不认识
+            /// `avx*` 这类具体能力名（那些留在宿主层 `forge_isa_runtime::cpu`）。
+            fn wide_vector_bytes(&self) -> &'static [u16] {
+                const __WIDE: &[u16] = &[#(#wide_tiers),*];
+                crate::machine::reg_info::wide_vectors_upto(
+                    __WIDE,
+                    crate::cpu::host_wide_vector_limit(),
+                )
+            }
             fn class_for_type(&self, ty: forge_ir::TypeId) -> Option<forge_ir::RegClass> {
                 // ① `[types]` 显式映射（ISA 数据，优先）；② 通用值池规则。
                 for (t, rc) in __TYPE_MAP {

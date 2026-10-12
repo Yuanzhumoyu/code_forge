@@ -2,7 +2,7 @@
 //!
 //! ## 为什么需要这一层
 //!
-//! 调用点在 lowering 时只有实参的**形状**（[`ArgShape`]：大小/对齐/族/成员），没有被调方的
+//! 调用点在 lowering 时只有实参的**形状**（[`TyView`]：大小/对齐/族/成员），没有被调方的
 //! `Function`；而"第 i 个实参该进哪个寄存器、哪个栈槽"只有 `forge-abi` 的引擎算得出来
 //! （规则 + 绑定 = 使用者的数据）。谱面里那份 `[abi.arg_class]`/`ret_regs` 只是这份数据的
 //! **生成期近似**——按位置/按类计数、by-ref 阈值、sret 槽，引擎比生成器知道得多。
@@ -27,7 +27,7 @@
 //!    现在失败要么是"这台 ISA 没装 planner"（[`CallPlanError::NoPlanner`]），要么是
 //!    "算了但不行"（[`CallPlanError::Failed`]，正文来自宿主/引擎）。
 //!
-//! 分层纪律：本 crate **不依赖 forge-abi**（[`ArgShape`] 是中性 POD，见
+//! 分层纪律：本 crate **不依赖 forge-abi**（[`TyView`] 是纯数据，见
 //! [`call_layout`](crate::machine::call_layout)），把形状摊成 `forge_abi::TyView` 与跑引擎
 //! 都是**宿主**的事（`forge-codegen` 在 `pipeline_hooks::ensure_registered` 里注册）。
 
@@ -35,7 +35,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, OnceLock, RwLock};
 
-use crate::machine::call_layout::{ArgShape, CallLayout};
+use forge_abi_model::AbiPlan;
+use forge_abi_model::TyView;
 
 /// **一次调用的形状描述**（调用点能提供的全部信息）。
 ///
@@ -47,9 +48,9 @@ pub struct CallRequest {
     /// 宿主注册表里的约定名（`AbiRules::name`）。
     pub conv: String,
     /// 实参形状（顺序 = 位置）。
-    pub args: Vec<ArgShape>,
+    pub args: Vec<TyView>,
     /// **全部**返回值的形状（空 = void；多个 = 多值返回，每个值各自占一个返回寄存器）。
-    pub rets: Vec<ArgShape>,
+    pub rets: Vec<TyView>,
     /// **被调方是不是变参、命名了几个**（`None` = 非变参 / 调用点不知道）。
     ///
     /// 调用点只看得见实参形状，而"未命名实参在**只走栈**的约定里要改判到栈"只有知道被调方
@@ -66,11 +67,11 @@ impl CallRequest {
         }
     }
 
-    /// 实参形状（`IntoIterator<Item: Into<ArgShape>>` ⇒ 数组、`Vec`、`&Vec`、`iter()` 都能直接传）。
+    /// 实参形状（`IntoIterator<Item: Into<TyView>>` ⇒ 数组、`Vec`、`&Vec`、`iter()` 都能直接传）。
     pub fn args<I, S>(mut self, args: I) -> Self
     where
         I: IntoIterator<Item = S>,
-        S: Into<ArgShape>,
+        S: Into<TyView>,
     {
         self.args = args.into_iter().map(Into::into).collect();
         self
@@ -80,7 +81,7 @@ impl CallRequest {
     pub fn rets<I, S>(mut self, rets: I) -> Self
     where
         I: IntoIterator<Item = S>,
-        S: Into<ArgShape>,
+        S: Into<TyView>,
     {
         self.rets = rets.into_iter().map(Into::into).collect();
         self
@@ -132,14 +133,14 @@ impl std::error::Error for CallPlanError {}
 /// 实现者通常是宿主里捕获了自己 `TargetMachine` 的闭包（本模块为闭包提供 blanket impl）。
 pub trait CallPlanner: Send + Sync {
     /// 按 [`CallRequest`] 算布局；失败时返回**带诊断**的 [`CallPlanError`]（不猜落点）。
-    fn plan_call(&self, req: &CallRequest) -> Result<CallLayout, CallPlanError>;
+    fn plan_call(&self, req: &CallRequest) -> Result<AbiPlan, CallPlanError>;
 }
 
 impl<F> CallPlanner for F
 where
-    F: Fn(&CallRequest) -> Result<CallLayout, CallPlanError> + Send + Sync,
+    F: Fn(&CallRequest) -> Result<AbiPlan, CallPlanError> + Send + Sync,
 {
-    fn plan_call(&self, req: &CallRequest) -> Result<CallLayout, CallPlanError> {
+    fn plan_call(&self, req: &CallRequest) -> Result<AbiPlan, CallPlanError> {
         self(req)
     }
 }
@@ -166,7 +167,7 @@ pub fn has_call_planner(isa: &str) -> bool {
 }
 
 /// 查一份调用点布局（生成物 lowering 的入口）。
-pub fn plan_call(isa: &str, req: &CallRequest) -> Result<CallLayout, CallPlanError> {
+pub fn plan_call(isa: &str, req: &CallRequest) -> Result<AbiPlan, CallPlanError> {
     let planner = planners()
         .read()
         .ok()

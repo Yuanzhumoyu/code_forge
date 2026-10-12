@@ -16,6 +16,13 @@
 | `reference/imm_str.md` | ImmStr 不可变字符串类型设计（已实现，forge-ir 代码注释引用） | active |
 | `reference/calling-conventions.md` | **调用约定层（`forge-abi`，v20 A1/A2）**：三层数据（规则/绑定/计划）+ 通用引擎、IR 侧 `CallConvId`（`Builtin`/`Named`/`Index`，未注册即 fail-closed）、内置四份约定与参考绑定、`AbiTarget` 能力视图、`AbiHooks`、`forge-isa abi list\|check\|plan`、已知缺口与"加自己的约定" | active |
 | `reference/binary-format.md` | forge-ir 二进制格式（IR bitcode **v2**：段体压缩 + 段表 `raw_len`）规范：容器/段/原语/各段细节/压缩/确定性/版本策略/验证基线/消费者/已知限制 | active |
+| `reference/backend-pipeline.md` | **后端编译管线契约**（v23 M1 起）：唯一编译入口 `CompileSession`/`CompiledModule`、JIT 装载器 `JitLoader`、模块签名表 `ModuleSigs`、擦除入口注册；随 `plans/backend-v23-plan.md` 的里程碑回写 | active |
+
+## plans/ — 进行中的专项方案（活账本）
+
+| 文件 | 内容 | 状态 |
+| --- | --- | --- |
+| `plans/backend-v23-plan.md` | **后端 v23：数据驱动的通用后端**（M1 编译入口收敛 / M2 单一 ABI 数据模型 / M3 能力数据化 / M4 单一操作数模型 / M5 分配器与发射 / M6 合法化单一驱动）；含问题证据（G/R/C 三类）、成功判据 S1–S9、进度账本 | progress |
 
 ## forge-ir/ — forge-ir 工作流（活跃）
 

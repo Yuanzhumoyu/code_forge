@@ -71,6 +71,20 @@ pub trait TargetRegInfo: Send + Sync + 'static {
         &[16, 32, 64]
     }
 
+    /// **>16 字节的宽向量档位**（升序；空 = 只用 ≤16B 的向量）。
+    ///
+    /// 本 ISA 谱申报能编的档位（`[meta].vector_tiers`）∩ **本机能执行**的上界
+    /// （[`host_wide_vector_limit`](crate::host_wide_vector_limit)）——由 ISA 后端答。
+    ///
+    /// 为什么要有这一条（v23 M3）：通用管线里曾经**直接**写 `avx512_available()`
+    /// （"64 字节向量需 AVX-512F"），等于让与 ISA 无关的管线认识 x86 的能力名。
+    /// 现在通用管线只问"这台机器能编/能跑多宽的定宽向量"，能力名留在宿主层。
+    ///
+    /// 缺省 `&[]`（不声明 ⇒ 通用管线对 >16B 定宽向量 fail-closed，不静默降级）。
+    fn wide_vector_bytes(&self) -> &'static [u16] {
+        &[]
+    }
+
     /// 类型 → 寄存器类；`None` = 本 ISA 无法承载该类型（调用方必须报
     /// `Unsupported`，**不得**静默降级到某个宽度缺省）。
     /// 缺省实现 = `RegClass::from_type_id`（i8→GPR(8)/i64→GPR(64)/f64→FPR(64)/…）。
@@ -203,4 +217,14 @@ pub fn type_label(ty: TypeId) -> String {
         TypeId::V256 => "v256".into(),
         other => format!("{other:?}"),
     }
+}
+
+/// 取升序档位表 `tiers` 中 **≤ `limit`** 的最长前缀（`&'static` ⇒ 生成物可直接返回）。
+///
+/// 用途（v23 M3）：ISA 后端把**谱申报的宽向量档位**与本机能力上界相交，得到
+/// [`TargetRegInfo::wide_vector_bytes`]——通用管线因此只认"能跑多宽"，不认识任何
+/// 具体能力名（`avx*`/`sve`/…）。
+pub fn wide_vectors_upto(tiers: &'static [u16], limit: u16) -> &'static [u16] {
+    let n = tiers.iter().take_while(|t| **t <= limit).count();
+    &tiers[..n]
 }

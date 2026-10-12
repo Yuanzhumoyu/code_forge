@@ -11,7 +11,7 @@ pub use self::x86::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::compiler::FunctionCompiler;
+    use crate::pipeline::compiler::CompileSession;
     use forge_ir::{FunctionSignature, TypeContext, TypeId};
 
     /// 端到端：IR → DSL lowering → regalloc → frame → encode 全链路。
@@ -25,8 +25,8 @@ mod tests {
         let sum = builder.iadd(params[0], params[1]);
         builder.ret(&[sum]);
         let func = builder.finish().expect("build");
-        let compiler = FunctionCompiler::new(TargetMachine::new());
-        let compiled = compiler.compile_raw(&func).expect("compile add");
+        let compiler = CompileSession::new(TargetMachine::new());
+        let compiled = compiler.compile(&func).expect("compile add");
         eprintln!("ISA-DSL e2e add ({} bytes):", compiled.code.len());
         for (i, &byte) in compiled.code.iter().enumerate() {
             eprint!("{byte:02x} ");
@@ -54,9 +54,9 @@ mod tests {
             b.ret(&[v]);
             m.add_function(b.finish().expect("build"));
         }
-        let compiler = FunctionCompiler::new(TargetMachine::new());
+        let compiler = CompileSession::new(TargetMachine::new());
         let func = m.get_function(forge_ir::FuncRef::new(0));
-        let cf = compiler.compile_raw(func).expect("compile const42");
+        let cf = compiler.compile(func).expect("compile const42");
         eprintln!("const42 code ({} bytes):", cf.code.len());
         for (i, &byte) in cf.code.iter().enumerate() {
             eprint!("{byte:02x} ");
@@ -82,7 +82,7 @@ mod tests {
             b.ret(&[v]);
             m.add_function(b.finish().expect("build"));
         }
-        let mut jit = crate::jit::JitCompiler::new(TargetMachine::new());
+        let mut jit = crate::jit::JitLoader::new(TargetMachine::new());
         jit.compile_module(&m).expect("module compile");
         let f: extern "C" fn() -> i64 = jit.get_fn("const42").expect("const42");
         assert_eq!(f(), 42, "ISA-DSL JIT 执行 const42 应返回 42");
@@ -106,7 +106,7 @@ mod tests {
             b.ret(&[sum]);
             m.add_function(b.finish().expect("build"));
         }
-        let mut jit = crate::jit::JitCompiler::new(TargetMachine::new());
+        let mut jit = crate::jit::JitLoader::new(TargetMachine::new());
         jit.compile_module(&m).expect("module compile");
         let f: extern "C" fn(i64, i64) -> i64 = jit.get_fn("add").expect("add");
         assert_eq!(f(2, 3), 5, "ISA-DSL JIT add(2,3) 应返回 5");
