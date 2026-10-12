@@ -743,7 +743,27 @@ spilled def fail-closed）；手写实现（`DummyInst`/`FixedFieldInst`）改�
 4. 风险：`__SLOT_CLASSES` 去重表与 `def_reuse` 的语义合并要**逐条对齐**（漏一条即 regalloc 拿到
    错的 use/def 顺序 ⇒ 活区间错 ⇒ 静默错值）。
 
-### 批次 C（删旧：平行旁表清零）
+### 批次 C 的前置验证——✅ 已落地（2026-10-11）
+
+**加了两条对拍守卫（只加守卫、不删代码）**：
+
+1. **发射点断言**（`InstPacket::map_reg_field`，`cfg(debug_assertions)`）：登记的
+   `(field, is_def)` 必须能在该指令的 `operands()` 里找到同字段同角色的项——找不到即 panic
+   并点出是第几条指令、哪个字段。**它证明 `is_def` 可由操作数表派生**。
+2. **编译尾部全量对拍**（`CompileState::compile` 调 regalloc 之前）：按 vcode 块序逐条指令
+   核对 `xreg_map` 与 `operands()` 的 `(field, role)`。注意只对拍形状面——旁表里是**虚拟
+   寄存器**、字段里是**占位物理寄存器**（这正是前置条件要改的东西）。
+
+**判据**：门禁 + 两矩阵 + 全部 codegen 单测（2722）全绿 ⇒ `is_def` 可删、旁表可从
+`(vreg, field, is_def)` 缩到 `(vreg, field)`。
+
+**剩下的机械活**（下一批，纯删除）：① 删 `map_reg_field` 的 `is_def` 形参（54 处调用点里的
+42 处在生成器模板，改法是生成期就按形状表定角色）；② 让生成物的字段占位携带 vreg 号
+（42 个 `Reg::from_index(0, cls)` → `Reg::from_index(<vreg>, cls)`），此后 `xreg_map` 才真正冗余；
+③ 删 `xreg_map`/`inst_clobbers`/`ctx.xreg_types` → `CompileState.inst_ops`，`set_reg_field`
+调用点改按操作数号走 `set_operand_reg`。
+
+### 批次 C（原始设计，留档）
 
 1. `MachineInst` 删 `uses`/`defs`/`use_constraints`/`def_constraints`/`reg_field`/`set_reg_field`/
    `is_reg_field_settable`；`InstPacket` 只剩 `insts`/`inputs`/`outputs`/`xregs`（删 `xreg_map`/

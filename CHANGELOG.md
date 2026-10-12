@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M4（批次 C 的前置验证）：旁表与操作数表**逐条对齐**已成守卫
+
++ **`InstPacket::map_reg_field` 的发射点断言**：登记的 `(field, is_def)` 必须能在该指令的 `operands()` 里找到同字段同角色的项——找不到即 panic（并把两条 lowering 的具体位置点出来）。这条断言证明 **`is_def` 可由操作数表派生**，因而旁表能从 `(vreg, field, is_def)` 缩到 `(vreg, field)`。
++ **`CompileState` 编译尾部的全量对拍**（`#[cfg(debug_assertions)]`）：按 vcode 块序逐条指令核对 `xreg_map` 与 `operands()` 的 `(field, role)`（旁表里存的是**虚拟寄存器**、字段里是**占位物理寄存器**，两者本就不等，所以只对拍形状面）。它是"删旁表后行为不变"的判据——现在先当守卫跑起来。
++ 说明：这一批**只加守卫不加删除**，因为删除的前置条件（字段占位携带 vreg 号）还没做：`reg::from_index(0, cls)` 这类占位在生成物的 42 个发射点上，改它才能让 `xreg_map` 真正冗余。两条守卫已把"能删"这件事变成可验证的判据（门禁与两矩阵全绿即成立）。
+
 ### Changed (2026-10-11) — 后端 v23 M4（批次 B）：生成物不再发射那 4 个查询方法（改由操作数表派生）
 
 + **`uses`/`defs`/`use_constraints`/`def_constraints` 从生成物里整条删除**：它们现在由 `MachineInst::operands()` 的**缺省实现**派生（批次 A 已用三谱全部指令变体逐条对拍证明两边等价）。每少发射一份就是少一处"同一事实两处表示"。

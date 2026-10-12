@@ -57,7 +57,31 @@ impl<I> InstPacket<I> {
     /// 记录 XReg → 微指令寄存器字段（追加到 `xreg_map[inst_idx]`，字段顺序即记录顺序）。
     /// `is_def = true` 表示该 XReg 是这条指令的输出（def），false 为输入（use）。
     /// 区分 use/def 是 regalloc 活区间正确性的前提（use 在 inst_start、def 在 inst_end）。
-    pub fn map_reg_field(&mut self, xreg: XReg, inst_idx: usize, field_idx: u8, is_def: bool) {
+    ///
+    /// **v23 M4 收敛守卫**：登记的 `(field, is_def)` 必须与指令的**操作数表**一致——
+    /// 一旦全部发射点都成立，`is_def` 就可由 `operands()` 派生（指令就在手边），
+    /// 旁表随之只剩 `(vreg, field)`、"两处必须逐条对齐"这件事也一并消失。
+    /// 在**发射点**断言（而不是编译尾部逐条扫）能把错误定位到具体哪条 lowering 写错。
+    pub fn map_reg_field(&mut self, xreg: XReg, inst_idx: usize, field_idx: u8, is_def: bool)
+    where
+        I: crate::machine::inst::MachineInst,
+    {
+        #[cfg(debug_assertions)]
+        if let Some(inst) = self.insts.get(inst_idx) {
+            use crate::machine::inst::OperandRole;
+            let want = if is_def {
+                OperandRole::Def
+            } else {
+                OperandRole::Use
+            };
+            let ops = inst.operands();
+            let hit = ops.iter().any(|o| o.field == field_idx && o.role == want);
+            assert!(
+                hit,
+                "v23 M4：`map_reg_field` 与操作数表分叉——第 {inst_idx} 条指令的字段 \
+                 {field_idx} 登记为 {want:?}，但操作数表里没有这一项：{ops:?}"
+            );
+        }
         if let Some(slot) = self.xreg_map.get_mut(inst_idx) {
             slot.push((xreg, field_idx, is_def));
         }

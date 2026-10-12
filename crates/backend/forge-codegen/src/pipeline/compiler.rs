@@ -2457,6 +2457,45 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 .unwrap_or(0),
         };
 
+        // **v23 M4 收敛守卫**：旁表（`xreg_map`）与指令的**操作数表**必须逐条对齐。
+        //
+        // 批次 C 要删掉旁表，这条断言就是"删了以后行为不变"的判据——现在先当守卫跑起来。
+        // 只对拍 `(field, role)`：旁表里存的是**虚拟寄存器**，而字段里放的是**占位物理
+        // 寄存器**，两者本就不相等（让字段占位携带 vreg 号是批次 C 的前置条件，见方案 §13）。
+        //
+        // 判据的意义：`map_reg_field(xreg, inst, field, is_def)` 的 `(field, is_def)` 必须
+        // 能在该指令的操作数表里找到同字段同角色的项；找不到就说明"旁表说的落点"与
+        // "指令形状表说的落点"已经分叉——regalloc 会按旁表分配、发射按形状表回填。
+        #[cfg(debug_assertions)]
+        {
+            use crate::machine::inst::OperandRole;
+            let mut gi = 0usize;
+            for block in self.vcode.blocks() {
+                for inst in &block.instructions {
+                    if let Some(slot) = self.xreg_map.get(gi) {
+                        let ops = inst.operands();
+                        for (xr, field, is_def) in slot.iter() {
+                            let want = if *is_def {
+                                OperandRole::Def
+                            } else {
+                                OperandRole::Use
+                            };
+                            let hit = ops.iter().any(|o| {
+                                usize::from(o.field) == usize::from(*field) && o.role == want
+                            });
+                            assert!(
+                                hit,
+                                "v23 M4：旁表与操作数表分叉——第 {gi} 条指令的字段 {field} \
+                                 被登记为 {want:?}（vreg {}），但操作数表里没有这一项：{ops:?}",
+                                xr.index()
+                            );
+                        }
+                    }
+                    gi += 1;
+                }
+            }
+        }
+
         let alloc_result =
             allocator.allocate(&self.vcode, &reg_info, &self.xreg_map, &self.inst_clobbers)?;
 
