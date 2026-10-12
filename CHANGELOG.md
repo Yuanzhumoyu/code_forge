@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M5（第一批，C6）：**帧记账单点**（三数值只算一次，两处重算与一个助手函数删除）
+
++ `LowerCtx` 增 `min_frame: u32` —— 与既有的 `callee_saved_bytes`/`stack_slot_shift` **同一时刻、同一输入**由 `frame_layout_info` 算出（`compile` 里 lowering 之前那一处），此后全流程只读这三个字段。
++ **删两处重算**：`emission.rs` 的 `callee_saved_bytes(machine, self.ctx.conv.layout())`（spill 基点用它，与序言实际推入量必须同源）改为读 `self.ctx.callee_saved_bytes`；`frame_layout::calculate_frame_size` 的 `frame_layout_info(...).min_frame` 改为读 `self.ctx.min_frame`。
++ **删助手**：`frame_layout::callee_saved_bytes(machine, layout)` 随最后一个调用点消失（它只是 `frame_layout_info(..).callee_saved_bytes` 的转发）。
++ 为什么这也算修 bug 面：同一份输入在两个地方重算，口径一漂移就是"spill 基点 ≠ 序言推入量"，症状是局部/spill 槽覆盖 push 槽 → 静默错值（历史上正是补 `frame_pointer_overhead` 那次修的同类问题）。
++ 未动两处**同形但输入不同**的调用（已如实标注）：`compiler.rs` 的聚合落点探针与 `va_info_for_expansion` 用的是**各自签名的 probe plan**（不是 `conv.layout()`），它们的 `stack_slot_shift` 必须按那份 plan 算。
+
 ### Changed (2026-10-11) — 后端 v23 M4（收口）：**操作数模型收敛完成**，`xreg_types` 按实测保留（记为偏差）
 
 + **收口过程中被自己的守卫拦下两次**（都按实测处理，没有"放宽断言了事"）：

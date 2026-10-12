@@ -322,7 +322,7 @@ spill 压力与「固定字段 spill」用例按新语义改写；新增「必�
 | M2 单一 ABI 数据模型 | ✅ 已落地（C1 修复 + leaf crate + 形状/变参/寄存器三面去镜像 + **删运行时镜像**） | 见 §11 M2 进度 | 2026-10-11 |
 | M3 能力数据化（去 x86 硬编码 + 单一合法性判据 + A6 收口） | ✅ 已落地（死钩子/死 API 删除；端序修正；宽向量能力数据化 + ISA 中立守卫；A6 收口；触发判据合一 + `ChangeSet`） | 见 §12 M3 进度 | 2026-10-11 |
 | M4 单一操作数模型 | ✅ 已落地（批次 A/B/C；两处偏差如实记录：`xreg_types` 保留、`inst_clobbers` 与 `clobbers()` 非同源） | 见 §13 M4 收口 | 2026-10-11 |
-| M5 分配器与发射 | ⏳ 待开工 | — | — |
+| M5 分配器与发射 | 🚧 进行中（第一批 C6 帧记账单点已落；爆炸半径与批次序见 §14） | 见 §14 M5 进度 | 2026-10-11 |
 | M6 合法化与缺口 | ⏳ 待开工 | — | — |
 
 ## 8. 顺序、风险与假设
@@ -662,7 +662,43 @@ asm 解析档 3 passed（棘轮计数未变）；两条 `no_hardcoded_widths` �
    M5 把 `callee_saved` 表并进 config，届时一并收口；现在删会把 5 处测试改写成需要机器实例，
    收益与风险不成比例。
 
-## 13. M4 进度（进行中）
+## 14. M5 进度（进行中）
+
+### 爆炸半径（2026-10-11 实测）
+
+| 目标 | 命中 | 说明 |
+| --- | --- | --- |
+| C4 `callee_saved` / `callee_saved_fpr` | 166 / 6 | 两份平行列表（GPR 整表 vs FPR 只存用到的），`pop_free` 与保存集各读一份；**class 盲**：`callee_saved.contains(&p.num)` 让 GPR 号与 FPR 号互相误判 |
+| C3 池过滤 | `regalloc_bt.rs:146-163` | 用**同一个** `fp_reg`/`sp_reg` 号过滤**每个类**的池 ⇒ 三个发行 ISA 各误伤 2 个寄存器 |
+| `RegAllocConfig` | 19 | 含测试构造器 `new`（M4 记为待 M5 的 `from_target` 收口） |
+| frame 重算（C6） | 4 处 | `compiler.rs:95/2037/2299`、`emission.rs:38`、`frame_layout.rs:129` |
+| `AllocResult` 平行数组 | 5 条 | `param_vregs`/`param_is_float`/`param_by_ref`/`param_is_32`/`param_bytes` |
+
+### 第一批（C6 帧记账单点）——✅ 已落地（2026-10-11）
+
+`LowerCtx` 增 `min_frame`，与 `callee_saved_bytes`/`stack_slot_shift` 同源同时刻填（lowering 之前
+那一处 `frame_layout_info`）；`emission.rs` 的 spill 基点改为读 `ctx.callee_saved_bytes`，
+`calculate_frame_size` 改为读 `ctx.min_frame`；助手 `frame_layout::callee_saved_bytes` 删除。
+**两处未动**（输入不同，已标注）：`compiler.rs:95`（聚合落点探针 plan）与 `:2037`
+（`va_info_for_expansion` 的 plan）——它们按**各自签名**的 plan 算平移。
+
+### 后续批次（按"先输出等价、再改策略"的边界）
+
+1. **C4**：`RegAllocConfig.callee_saved: Vec<(RegClass, u32)>` 一张表（`pop_free` 按类查、保存集按类扫），
+   删 `callee_saved`/`callee_saved_fpr`；新增「FPR callee-saved 真的被保住」用例。
+   **注意这是行为变更**（class 盲过滤修掉后分配序会变），矩阵判定。
+2. **C3**：池过滤按类自己的 sp/fp，或上游（生成侧）直接从 `allocatable` 剔净 —— 二者都要在
+   三 ISA 上核对"多出 2 个寄存器"。同样是行为变更。
+3. **活区间单趟 + `weight` 归属**；**Belady 取真最远下一次使用**。
+4. **`RegAllocOutput` 密集化**（`assign: Vec<Option<PReg>>`/`spills: Vec<Option<SpillSlot>>`）+
+   `AllocResult` 拆分（消 5 条 `param_*` 平行数组）。
+5. **`SpillEdit`**：分配器产出编辑序列，emission 退化为按序发射（删 13 参函数与 scratch 池）。
+6. **`MachBuffer`**（新 `machine/machbuf.rs`）：替掉发射次序 hack、`ExternalLabel::EPILOGUE` 哨兵、
+   `needs_epilogue_label` 特判；JIT 与 `ObjectWriter` 共用重定位语义。
+7. M4 登记的候选：生成物按**变体**发表"模板字面物理寄存器" ⇒ 删 `CompileState.inst_clobbers`，
+   并把"按包求并"变精确。
+
+## 13. M4 进度（收口）
 
 ### 爆炸半径（2026-10-11 实测，`rg` 计数）
 

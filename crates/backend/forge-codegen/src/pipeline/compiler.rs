@@ -2296,9 +2296,13 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // 回退 csb）。compiler.rs 的 LowerCtx 与 emission.rs 共用同一来源；
         // **有 plan 时用 plan 的 callee-saved 表**（v20 A5-3 ④：同一台机器换约定，
         // 保存集与破坏集必须一起换）。
+        // v23 M5（C6 帧记账单点）：三数值**只在这里算一次**，此后 emission / spill /
+        // 序言账目全读 ctx 上这三个字段（min_frame 一并填，calculate_frame_size
+        // 不再自己重算——同一份输入重算两次，口径一漂移就是帧字节数不一致）。
         let fl = crate::pipeline::frame_layout::frame_layout_info(machine, ctx.conv.layout());
         ctx.callee_saved_bytes = fl.callee_saved_bytes;
         ctx.stack_slot_shift = fl.stack_slot_shift;
+        ctx.min_frame = fl.min_frame;
         ctx.is_float_return = func
             .return_types()
             .iter()

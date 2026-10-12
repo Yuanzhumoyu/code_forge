@@ -34,8 +34,9 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // spill area starts at rbp - callee_saved_bytes - frame_size.
         // (Old code counted only callee-saved bytes, shifting locals/spills
         // 8 bytes into the pushed registers.)
-        let callee_saved_bytes =
-            crate::pipeline::frame_layout::callee_saved_bytes(machine, self.ctx.conv.layout());
+        // v23 M5（C6 帧记账单点）：不再重算——`LowerCtx` 上那份就是同一输入的唯一结果
+        // （重算口径一漂移，spill 基点就与序言实际推入量不一致 → 静默错值）。
+        let callee_saved_bytes = self.ctx.callee_saved_bytes;
         // 栈参数区（shadow space + 第 5+ 参数槽）：调用方 store 到帧底之上，
         // spill 槽起始需上移该字节数（见 emit_inst_with_spills）。
         let stack_args = self.ctx.max_stack_arg_bytes as i32;

@@ -89,15 +89,6 @@ pub(crate) fn frame_layout_info<M: TargetMachine + ?Sized>(
     }
 }
 
-/// callee-saved 区字节数（帧指针上方的 push 区；fp-inside 布局 = 0）。
-/// compiler.rs 的 LowerCtx 与 emission.rs 共用。
-pub(crate) fn callee_saved_bytes<M: TargetMachine + ?Sized>(
-    machine: &M,
-    layout: Option<&AbiPlan>,
-) -> i32 {
-    frame_layout_info(machine, layout).callee_saved_bytes
-}
-
 impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
     // ── Stage 7: Frame Layout ──
 
@@ -126,7 +117,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 最小帧（fp-inside 推导 = fp_push + callee_saved 区）：riscv 的
         // ra/fp 保存槽需帧 ≥ 固定值，否则 emit 模板的 {frame_size_mN} 偏移
         // 为负（写坏 sp 下方）。
-        let min_frame = frame_layout_info(machine, self.ctx.conv.layout()).min_frame;
+        // v23 M5（C6）：读 lowering 前算好的那一份（不再重算）。
+        let min_frame = self.ctx.min_frame;
         let size = size.max(min_frame);
         // 栈填充（x86 = 8 = align/2）：prologue push rbp + callee-saved 后
         // rsp%16==8（入口 rsp%16==8 由 call 压入的返回地址造成），sub rsp 必须

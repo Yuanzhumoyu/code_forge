@@ -173,7 +173,16 @@ pub struct LowerCtx {
     /// 当前 Alloca 的帧槽偏移（预扫描分配；`lea_off rd, alloca_offset` 规则取用）。
     pub current_alloca_offset: i64,
     /// prologue 压入的 callee-saved 寄存器总字节数（局部变量 lea 的基准平移）。
+    ///
+    /// **v23 M5（C6 帧记账单点）**：它与 `stack_slot_shift`/`min_frame` 一起由编译器在
+    /// lowering 之前算**一次**（`frame_layout_info`，唯一来源），此后序言/发射/spill 账目
+    /// 全部读这三个字段——不再各自重算（重算口径一漂移就是帧字节数不一致，表现为局部槽
+    /// 覆盖 push 槽 → 静默错值）。
     pub callee_saved_bytes: i32,
+    /// 帧的**最小字节数**（fp-inside 布局 = `fp_push_bytes + Σcallee_saved×宽`：riscv 的
+    /// ra/fp 保存槽要求帧 ≥ 该值，否则 emit 模板的 `{frame_size_mN}` 偏移为负、写坏 sp 下方）。
+    /// 与 `callee_saved_bytes`/`stack_slot_shift` 同源、同时刻填。
+    pub min_frame: u32,
     /// 栈槽（StackAddr/Alloca）的帧顶平移字节数。x86 = callee_saved_bytes
     ///（槽在 rbp - callee_saved 之下）；riscv = fp_push_bytes（16，槽在
     /// fp - 16 之下，避开 ra/fp 保存槽）。独立于 callee_saved_bytes——
@@ -261,6 +270,8 @@ impl LowerCtx {
             current_offset: 0,
             current_alloca_offset: 0,
             callee_saved_bytes: 0,
+            // v23 M5（C6）：编译器在 lowering 之前按 plan 填这三个字段（见 compiler.rs）。
+            min_frame: 0,
             stack_slot_shift: 0,
             max_stack_bytes: 0,
             max_stack_arg_bytes: 0,
