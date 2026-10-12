@@ -208,3 +208,10 @@ mod spec_coverage_guard;
 /// （`tests/no_hardcoded_widths.rs`）按**第一个** `#[cfg(test)]` 截断扫描。
 #[cfg(test)]
 mod isa_roundtrip_guard;
+
+/// v23 M4：操作数表与旧方法族的**逐指令对拍**（删旧之前的接口等价证明）。
+///
+/// 与上面两个守卫一样**必须放在文件末尾**：本仓的"宿主写死寄存器类"守卫
+/// （`tests/no_hardcoded_widths.rs`）按**第一个** `#[cfg(test)]` 截断扫描。
+#[cfg(test)]
+mod operand_model_guard;

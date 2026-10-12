@@ -77,12 +77,80 @@ pub enum MemAccessKind {
 /// Machine instruction trait.
 ///
 /// Implemented by ISA-DSL generated `Inst` enums or hand-written ISA types.
+/// 操作数的**角色**（v23 M4）：读还是写。
+///
+/// regalloc 的活区间口径依赖它：`Use` 在指令**起点**、`Def` 在指令**终点**——
+/// 顺序错了活区间就错（静默错值）。因此 [`MachineInst::operands`] 的顺序有契约：
+/// **uses 在前、defs 在后**，且各自保持字段序。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OperandRole {
+    /// 读（输入）。
+    Use,
+    /// 写（输出）。
+    Def,
+}
+
+/// **一个操作数**（v23 M4）：字段序号 + 值寄存器 + 类 + 约束 + 角色 + 可改写性。
+///
+/// 为什么要有它：这些事实原本分居**两处**——`MachineInst` 的七个方法
+/// （`uses`/`defs`/`use_constraints`/`def_constraints`/`reg_field`/`set_reg_field`/
+/// `is_reg_field_settable`）与指令包里的平行旁表 `InstPacket::xreg_map`
+/// （`Vec<SmallVec<[(XReg, field, is_def); 2]>>`，由生成物逐 arm `map_reg_field` 填）。
+/// 两处必须逐条对齐，错一处就是活区间/回填错。合并成一张表后，"对齐"这件事
+/// 在结构上不存在。
+///
+/// 字段口径：
+/// - `field` = `reg_field`/`set_reg_field` 的 `i`（寄存器**字段**序号，不是操作数序号）；
+/// - `reg` = 该字段当前的**值 XReg**（虚拟寄存器；分配后由 `set_reg_field` 回填物理号）；
+/// - `class` = 该值的**类型宽度类**（如 I32 → `GPR(4)`）；`None` = "按槽声明类"，
+///   调用方按指令声明的槽类重建（多类槽 `gprx` 必须用 `Some`，否则回退 64 位视图
+///   ⇒ encode opsize 恒 64、auto 宽度分发失效，见 WA-35）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InstOperand {
+    /// 寄存器**字段**序号（`reg_field`/`set_reg_field` 的 `i`）。
+    pub field: u8,
+    /// 该字段**当前**的占位寄存器物理号——`None` = 该字段没有寄存器槽
+    /// （旧 `uses()` 会跳过这类字段，语义照旧由这里表达）。
+    ///
+    /// **注意**：微指令字段里放的是**占位物理寄存器**，不是虚拟寄存器（vreg）。
+    /// "第几个 vreg 落到这个字段"目前由 lowering 在 `InstPacket::map_reg_field`
+    /// 时给出（管线侧的平行旁表）。把它并进本表的前提是**让字段占位直接携带 vreg 号**
+    /// ——那是 M4 批次 C 的前置条件，已记在方案 §13。
+    pub slot: Option<u32>,
+    /// 该字段的**声明类**（多类槽才有值）；`None` = 单类槽/由指令声明的槽类决定。
+    pub class: Option<RegClass>,
+    pub constraint: OperandConstraint,
+    pub role: OperandRole,
+    /// `set_reg_field(field, …)` 会不会真的改写它（模板里写死的物理字段 = `false`）。
+    pub settable: bool,
+}
+
 pub trait MachineInst: Clone + std::fmt::Debug + Send + Sync + Hash + Eq {
+    /// **本指令的操作数表**（v23 M4 的单一模型）。
+    ///
+    /// 顺序契约：`Use` 在前、`Def` 在后，各组内保持字段序（regalloc 的
+    /// "use 在 inst_start、def 在 inst_end"由此保证）。
+    fn operands(&self) -> SmallVec<[InstOperand; 4]>;
+
     /// Temporary registers (XReg) read by this instruction.
-    fn uses(&self) -> SmallVec<[u32; 4]>;
+    ///
+    /// 缺省由 [`Self::operands`] 派生（生成物与手写实现都不必再各写一遍）。
+    fn uses(&self) -> SmallVec<[u32; 4]> {
+        self.operands()
+            .iter()
+            .filter(|o| o.role == OperandRole::Use)
+            .filter_map(|o| o.slot)
+            .collect()
+    }
 
     /// Temporary registers (XReg) written by this instruction.
-    fn defs(&self) -> SmallVec<[u32; 2]>;
+    fn defs(&self) -> SmallVec<[u32; 2]> {
+        self.operands()
+            .iter()
+            .filter(|o| o.role == OperandRole::Def)
+            .filter_map(|o| o.slot)
+            .collect()
+    }
 
     /// Effect tags for this instruction (derived from DSL `effect` system).
     ///
@@ -140,10 +208,16 @@ pub trait MachineInst: Clone + std::fmt::Debug + Send + Sync + Hash + Eq {
         None
     }
 
-    /// 读取第 `i` 个 Ireg/Freg 寄存器字段的物理索引（与 uses()/defs() 顺序一致）。
+    /// 读取第 `i` 个 Ireg/Freg 寄存器字段的物理索引。
     /// 微指令构造时以默认寄存器占位，分配器分配后经 [`Self::set_reg_field`] 回填。
-    fn reg_field(&self, _i: usize) -> u32 {
-        0
+    ///
+    /// 缺省由 [`Self::operands`] 派生（`field == i` 的那一项）；没有该字段 ⇒ 0。
+    fn reg_field(&self, i: usize) -> u32 {
+        self.operands()
+            .iter()
+            .find(|o| usize::from(o.field) == i)
+            .and_then(|o| o.slot)
+            .unwrap_or(0)
     }
 
     /// 回写第 `i` 个 Ireg/Freg 寄存器字段的物理索引（寄存器分配后调用）。
@@ -181,14 +255,42 @@ pub trait MachineInst: Clone + std::fmt::Debug + Send + Sync + Hash + Eq {
 
     // ── Operand constraints (for register allocator) ──
 
-    /// 每个 def 操作数的寄存器约束（与 defs() 并行）。
+    /// 每个 def 操作数的寄存器约束（与 defs() 并行）。缺省由 [`Self::operands`] 派生。
     fn def_constraints(&self) -> SmallVec<[OperandConstraint; 2]> {
-        std::iter::repeat_n(OperandConstraint::Any, self.defs().len()).collect()
+        self.operands()
+            .iter()
+            .filter(|o| o.role == OperandRole::Def)
+            .map(|o| o.constraint)
+            .collect()
     }
 
-    /// 每个 use 操作数的寄存器约束（与 uses() 并行）。
+    /// 每个 use 操作数的寄存器约束（与 uses() 并行）。缺省由 [`Self::operands`] 派生。
     fn use_constraints(&self) -> SmallVec<[OperandConstraint; 4]> {
-        std::iter::repeat_n(OperandConstraint::Any, self.uses().len()).collect()
+        self.operands()
+            .iter()
+            .filter(|o| o.role == OperandRole::Use)
+            .map(|o| o.constraint)
+            .collect()
+    }
+
+    /// **回写第 `i` 个操作数**（按 [`Self::operands`] 的序）的物理寄存器。
+    ///
+    /// 返回"是否真的改写了"：`false` = 该字段不可改写（固定物理字段）或序号越界——
+    /// regalloc 对 spilled def 必须据此 fail-closed（WA-40：静默 no-op 会让
+    /// store-back 从 scratch 读、spill 槽留下陈旧值）。
+    ///
+    /// v23 M4 起这是**唯一**的回写入口；`set_reg_field` 保留为"按字段号回写"的
+    /// 底层方法，由生成物实现。
+    fn set_operand_reg(&mut self, i: usize, preg_idx: u32, class: RegClass) -> bool {
+        let ops = self.operands();
+        let Some(op) = ops.get(i) else {
+            return false;
+        };
+        if !op.settable {
+            return false;
+        }
+        self.set_reg_field(usize::from(op.field), preg_idx, class);
+        true
     }
 }
 
@@ -223,11 +325,8 @@ pub struct DummyInst {
 }
 
 impl MachineInst for DummyInst {
-    fn uses(&self) -> SmallVec<[u32; 4]> {
-        SmallVec::new()
-    }
-
-    fn defs(&self) -> SmallVec<[u32; 2]> {
+    /// 占位指令没有操作数（v23 M4 起这是唯一必答的方法）。
+    fn operands(&self) -> SmallVec<[InstOperand; 4]> {
         SmallVec::new()
     }
 

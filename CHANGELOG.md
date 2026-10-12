@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M4（批次 A）：**操作数表先立起来**（七个方法族收敛到一张表，旧接口等价性已对拍）
+
++ `MachineInst` 新增 **`operands() -> SmallVec<[InstOperand; 4]>`**（v23 M4 的单一操作数模型）：每个操作数 = `{ field, slot, class, constraint, role, settable }`，顺序契约是 **`Use` 在前、`Def` 在后**（regalloc 的"use 在 inst_start、def 在 inst_end"由此保证）。
++ **旧方法族改为由它派生**（`uses`/`defs`/`use_constraints`/`def_constraints`/`reg_field` 全部走缺省实现；生成物暂仍显式发射，作为对拍的另一边）。`set_operand_reg(i, preg, class) -> bool` 成为新的回写入口（`settable` 为假时返回 `false` —— regalloc 对 spilled def 据此 fail-closed，WA-40）。手写实现（`DummyInst`、`FixedFieldInst`）改为只实现 `operands()`。
++ **等价性守卫**（`src/operand_model_guard.rs`，`#[cfg(test)]` 模块，放在文件末尾以免截断"写死类"守卫的扫描）：三份发行谱**全部指令变体**（谱派生枚举器 `all_insts()`）逐条对拍 `uses`/`defs`/`use_constraints`/`def_constraints`/`reg_field`/`is_reg_field_settable` 与操作数表一致——**包括 `def_reuse` → `ReuseInput` 的映射**（x86 双操作数指令的复用约束）。这条守卫是"删旧方法"（批次 B/C）的前提证明。
++ 顺带被"写死寄存器类"守卫拦下一次真错：`set_operand_reg` 最初用 `RegClass::GPR(64)` 兜底缺省类——**改对了实现**（要求调用方给类，与旧 `set_reg_field` 同签名），而不是加白名单。
+
 ### Changed (2026-10-11) — 后端 v23 M3（第四批）：**触发判据只剩一处**（7 个 `has_*` → 单一保守判据 + `ChangeSet`）
 
 + **7 个各扫一种模式的 `has_*`（`has_large_agg_ret`/`has_large_agg_call_result`/`has_large_agg_call_arg`/`has_large_agg_param`/`has_large_agg_load`/`has_agg_mem_access`/`has_any_agg`）整条删除**，换成**一处**判据 `needs_agg_expand` = 含 GEP **或** 提到过任何聚合类型/聚合字面量。新判据是**过近似**的：宁可多克隆一份 `Function`，不可漏跑一个 pass——`has_*` 的失效模式恰恰是"漏一类模式 ⇒ 那个 pass 静默不跑"（历史事故：`has_large_agg_ret` 缺失 ⇒ 大聚合返回的纯 `call`+`extractvalue` 函数展开不到 ⇒ 5 vs 6 错值）。

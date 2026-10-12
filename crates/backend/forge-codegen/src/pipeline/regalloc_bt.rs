@@ -1221,10 +1221,8 @@ mod clobber_map_tests {
             id: u32,
         }
         impl MachineInst for FixedFieldInst {
-            fn uses(&self) -> smallvec::SmallVec<[u32; 4]> {
-                smallvec::SmallVec::new()
-            }
-            fn defs(&self) -> smallvec::SmallVec<[u32; 2]> {
+            /// 手写替身：没有操作数表（v23 M4 起这是唯一必答的方法）。
+            fn operands(&self) -> smallvec::SmallVec<[crate::machine::inst::InstOperand; 4]> {
                 smallvec::SmallVec::new()
             }
             fn is_branch(&self) -> bool {

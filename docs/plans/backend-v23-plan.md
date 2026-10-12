@@ -681,7 +681,30 @@ asm 解析档 3 passed（棘轮计数未变）；两条 `no_hardcoded_widths` �
 合计 ≈ 350 处、跨生成器与管线两侧——**一次改完必然中途破树**，因此按"契约 → 消费端 → 删旧"三批走，
 每批都要求门禁全绿：
 
-### 批次 A（契约先行，管线不动）
+### 批次 A（契约先行，管线不动）——✅ 已落地（2026-10-11）
+
+**落地内容**：`MachineInst::operands() -> SmallVec<[InstOperand; 4]>`，每项
+`{ field, slot, class, constraint, role, settable }`；顺序契约 = `Use` 在前、`Def` 在后。
+`uses`/`defs`/`use_constraints`/`def_constraints`/`reg_field` 全部改成**由它派生的缺省实现**
+（生成物暂仍显式发射，正好当对拍的另一边）；新增回写入口
+`set_operand_reg(i, preg, class) -> bool`（`settable == false` ⇒ `false`，供 regalloc 对
+spilled def fail-closed）；手写实现（`DummyInst`/`FixedFieldInst`）改为只实现 `operands()`。
+
+**守卫**：`src/operand_model_guard.rs`（`#[cfg(test)]` 模块，**必须放文件末尾**——本仓
+"写死寄存器类"守卫按第一个 `#[cfg(test)]` 截断扫描）逐条对拍三份发行谱**全部指令变体**的
+七个方法与操作数表，**含 `def_reuse → ReuseInput` 映射**。它是批次 B/C"删旧"的前提证明。
+
+**过程中被守卫拦下的真错**：`set_operand_reg` 最初用 `RegClass::GPR(64)` 兜底缺省类——
+按本仓纪律**改实现**（要求调用方给类，与旧 `set_reg_field` 同签名），而不是加白名单。
+
+**关于 `reg: XReg`（方案原写法）的更正**：微指令字段里放的是**占位物理寄存器**（`Reg`），
+不是虚拟寄存器——vreg → 字段的对应目前只存在于 `InstPacket::xreg_map`（由 lowering 的
+`map_reg_field` 逐 arm 填）。因此 `InstOperand` 这一批先只描述**形状**
+（`slot: Option<u32>` = 占位槽物理号）。**批次 C 的前置条件**随之明确：
+**让字段占位直接携带 vreg 号**（`Reg::from_index(vreg, slot_class)`），`xreg_map` 才可能删除；
+否则只能保留旁表（那正是 M4 要消灭的东西）。
+
+### 批次 A（原始设计，留档）
 
 1. `forge-isa-runtime/src/machine/inst.rs`：新增
    `pub struct InstOperand { reg: XReg, field: u8, class: RegClass, constraint: OperandConstraint,

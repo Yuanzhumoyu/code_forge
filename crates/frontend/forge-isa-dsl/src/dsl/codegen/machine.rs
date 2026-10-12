@@ -541,6 +541,57 @@ pub(crate) fn gen_machine_inst(
             fn is_move(&self) -> Option<(u32, u32)> {
                 match self { #(#move_arms,)* _ => None }
             }
+            /// **操作数表**（v23 M4 的单一模型）：uses/defs 的**字段序** + 各自的
+            /// 占位槽/声明类/约束/角色/可改写性。`uses`/`defs`/`*_constraints`/`reg_field`
+            /// 现在都由它派生，因此"两处必须逐条对齐"这件事在结构上不存在。
+            fn operands(&self) -> smallvec::SmallVec<[crate::machine::inst::InstOperand; 4]> {
+                fn __op(
+                    sh: &__Shape,
+                    f: u8,
+                    slot: Option<u32>,
+                    constraint: crate::machine::inst::OperandConstraint,
+                    role: crate::machine::inst::OperandRole,
+                ) -> crate::machine::inst::InstOperand {
+                    crate::machine::inst::InstOperand {
+                        field: f,
+                        slot,
+                        class: match sh.classes.get(usize::from(f)).copied().unwrap_or(0) {
+                            0 => None,
+                            code => Some(__SLOT_CLASSES[usize::from(code) - 1]),
+                        },
+                        constraint,
+                        role,
+                        settable: usize::from(f) < usize::from(sh.n_regs),
+                    }
+                }
+                let sh = self.__shape();
+                let mut out = smallvec::SmallVec::new();
+                for &f in sh.uses {
+                    out.push(__op(
+                        sh,
+                        f,
+                        self.__reg_slot(usize::from(f)).map(|r| r.to_index()),
+                        crate::machine::inst::OperandConstraint::Any,
+                        crate::machine::inst::OperandRole::Use,
+                    ));
+                }
+                for (k, &f) in sh.defs.iter().enumerate() {
+                    let code = sh.def_reuse.get(k).copied().unwrap_or(0xFF);
+                    let constraint = if code == 0xFF {
+                        crate::machine::inst::OperandConstraint::Any
+                    } else {
+                        crate::machine::inst::OperandConstraint::ReuseInput(usize::from(code))
+                    };
+                    out.push(__op(
+                        sh,
+                        f,
+                        self.__reg_slot(usize::from(f)).map(|r| r.to_index()),
+                        constraint,
+                        crate::machine::inst::OperandRole::Def,
+                    ));
+                }
+                out
+            }
             fn reg_field(&self, i: usize) -> u32 {
                 self.__reg_slot(i).map_or(0, |r| r.to_index())
             }
