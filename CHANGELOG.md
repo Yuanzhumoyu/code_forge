@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M4（批次 C 第一步）：旁表改名 `inst_ops` 并把角色**类型化**
+
++ `InstPacket::xreg_map: Vec<SmallVec<[(XReg, u8, bool); 2]>>` → **`inst_ops: Vec<SmallVec<[OperandBind; 2]>>`**，`OperandBind { vreg, field, role: OperandRole }`（新类型带 `new`/`def`/`use_` 构造器）。那个裸 `bool` 与指令形状表里的 `OperandRole` 本是同一件事的两种写法，现在只剩一种；**语义完全不变**（`is_def=true` ⇔ `role == Def`）。
++ 全仓同步：`CompileState.inst_ops`、`liverange`/`regalloc_bt`/`emission` 的三处签名与八处解构、`pipeline/lowering.rs` 的两处 `extend`、测试夹具（`integration_tests.rs`/`regalloc_bt` 两个测试模块）与九处注释里的旧名。`liverange`/`regalloc` 里"这条登记是 def 吗"的判断随之从 `d`/`is_def` 变成 `b.role == OperandRole::Def`。
++ 类型注释里写明**实测依据**（为什么角色不能从形状表派生）：同一 InOut 字段在旁表里可能 0 条（物理寄存器占位不参与映射）或 1 条 `Def`，而形状表里它同时是 `Use` 与 `Def`。
+
 ### Changed (2026-10-11) — 后端 v23 M4（批次 C 的判据修正）：**旁表角色不可派生**（实测纠正上一轮推断）
 
 + 上一轮记录"`is_def` 可由操作数表派生"——本轮加了**哨兵断言**（InOut 字段的旁表条数）后，全量单测立刻把它打红：`e2e_compile_add` 里那条指令的旁表是 `[(XReg(514), 0, false)]`，**InOut 的 dst 字段一条都没有**。原因：`map_reg_field` 只登记**绑定到 vreg** 的槽，物理寄存器占位不参与映射。

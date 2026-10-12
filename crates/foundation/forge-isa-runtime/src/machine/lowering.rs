@@ -8,6 +8,40 @@ use crate::{LowerCtx, VBlockId};
 use forge_ir::entity::map::SecondaryMap;
 use forge_ir::{Block, IrError, Opcode, Value, XReg, XRegAllocator};
 
+/// **一次 vreg → 字段的绑定**（管线的操作数表项，v23 M4）。
+///
+/// 为什么单独一个类型（而不是 `(XReg, u8, bool)` 元组）：元组里那个 `bool` 是
+/// "这条登记是 def 吗"，与指令**形状表**里的 `OperandRole` 是同一件事的两种写法；
+/// 本仓实测（2026-10-11）证明**不能**把它删掉一律按形状表派生——同一个 InOut 字段
+/// 在旁表里可能 0 条（物理寄存器占位，不参与 vreg 映射）或 1 条 `Def`（vreg 绑定），
+/// 而形状表里该字段同时是 `Use` 与 `Def`。因此角色**由 lowering 给出**，这里只是
+/// 把它类型化（`bool` → `OperandRole`），语义不变。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OperandBind {
+    /// 虚拟寄存器。
+    pub vreg: XReg,
+    /// 指令的寄存器字段序号（`reg_field`/`set_reg_field` 的 `i`）。
+    pub field: u8,
+    /// 这条绑定是读还是写（见上文：**不可**从形状表派生）。
+    pub role: crate::machine::inst::OperandRole,
+}
+
+impl OperandBind {
+    pub fn new(vreg: XReg, field: u8, role: crate::machine::inst::OperandRole) -> Self {
+        Self { vreg, field, role }
+    }
+
+    /// 写绑定（`is_def = true` 的等价写法）。
+    pub fn def(vreg: XReg, field: u8) -> Self {
+        Self::new(vreg, field, crate::machine::inst::OperandRole::Def)
+    }
+
+    /// 读绑定。
+    pub fn use_(vreg: XReg, field: u8) -> Self {
+        Self::new(vreg, field, crate::machine::inst::OperandRole::Use)
+    }
+}
+
 /// 指令包 — DSL 中间指令（IR op）映射到微指令的返回结构，取代旧的 `Vec<Inst>`。
 ///
 /// 各字段语义：
@@ -15,9 +49,10 @@ use forge_ir::{Block, IrError, Opcode, Value, XReg, XRegAllocator};
 ///   组合/展开多个指令包时，子包分配器可并入父包。
 /// - `insts`：微指令数组。寄存器字段（Ireg/Freg）在构造时以**默认寄存器**占位
 ///   （对应类型的 0 号物理寄存器），由寄存器分配器分配后回填真正寄存器。
-/// - `xreg_map`：临时寄存器 → 微指令寄存器（物理 Reg）字段的映射，与 `insts` **平行**：
-///   每项是该微指令的 Ireg/Freg 字段对应的 XReg 列表（按字段声明顺序）。
-///   分配器按此回填字段：`insts[i]` 的第 `j` 个寄存器字段 = `xreg_map[i][j]` 的分配结果。
+/// - `inst_ops`：vreg → 微指令寄存器字段的**绑定表**（v23 M4 由 `xreg_map` 改名并
+///   类型化：`(XReg, u8, bool)` → `OperandBind { vreg, field, role }`），与 `insts`
+///   **平行**：每项是该微指令的 Ireg/Freg 字段对应的绑定列表（按字段声明顺序）。
+///   分配器按此回填字段：`insts[i]` 的第 `j` 个字段 = `inst_ops[i][j]` 的分配结果。
 /// - `inputs` / `outputs`：指令包的输入/输出，类型为临时寄存器（XReg）。
 ///   供指令包组合/展开时连接（A 的 output 连 B 的 input 为同一 XReg）。
 #[derive(Clone, Debug, Default)]
@@ -26,9 +61,8 @@ pub struct InstPacket<I> {
     pub xregs: XRegAllocator,
     /// 微指令数组（寄存器字段以默认物理寄存器占位）。
     pub insts: Vec<I>,
-    /// XReg → 微指令寄存器字段映射（与 insts 平行；每条指令一个
-    /// SmallVec<[XReg, field_idx, is_def; 2]>，is_def 区分该 XReg 是输出还是输入）。
-    pub xreg_map: Vec<smallvec::SmallVec<[(XReg, u8, bool); 2]>>,
+    /// vreg → 寄存器字段的绑定表（与 `insts` 平行，见类型级文档）。
+    pub inst_ops: Vec<smallvec::SmallVec<[OperandBind; 2]>>,
     /// 指令包输入（XReg）。
     pub inputs: Vec<XReg>,
     /// 指令包输出（XReg）。
@@ -41,20 +75,20 @@ impl<I> InstPacket<I> {
         Self {
             xregs: XRegAllocator::new(),
             insts: Vec::new(),
-            xreg_map: Vec::new(),
+            inst_ops: Vec::new(),
             inputs: Vec::new(),
             outputs: Vec::new(),
         }
     }
 
-    /// 添加一条微指令并返回其索引（xreg_map 同步推入空映射槽）。
+    /// 添加一条微指令并返回其索引（`inst_ops` 同步推入空绑定槽）。
     pub fn push_inst(&mut self, inst: I) -> usize {
         self.insts.push(inst);
-        self.xreg_map.push(smallvec::SmallVec::new());
+        self.inst_ops.push(smallvec::SmallVec::new());
         self.insts.len() - 1
     }
 
-    /// 记录 XReg → 微指令寄存器字段（追加到 `xreg_map[inst_idx]`，字段顺序即记录顺序）。
+    /// 记录 vreg → 微指令寄存器字段（追加到 `inst_ops[inst_idx]`，字段顺序即记录顺序）。
     /// `is_def = true` 表示该 XReg 是这条指令的输出（def），false 为输入（use）。
     /// 区分 use/def 是 regalloc 活区间正确性的前提（use 在 inst_start、def 在 inst_end）。
     ///
@@ -82,8 +116,16 @@ impl<I> InstPacket<I> {
                  {field_idx} 登记为 {want:?}，但操作数表里没有这一项：{ops:?}"
             );
         }
-        if let Some(slot) = self.xreg_map.get_mut(inst_idx) {
-            slot.push((xreg, field_idx, is_def));
+        if let Some(slot) = self.inst_ops.get_mut(inst_idx) {
+            slot.push(OperandBind::new(
+                xreg,
+                field_idx,
+                if is_def {
+                    crate::machine::inst::OperandRole::Def
+                } else {
+                    crate::machine::inst::OperandRole::Use
+                },
+            ));
         }
     }
 
@@ -91,8 +133,8 @@ impl<I> InstPacket<I> {
     ///
     /// 子包若通过自己的 `xregs`（XRegAllocator）分配过临时寄存器（编号从 0 起），
     /// 合并时必须以本包分配器的续接编号对子包 XReg **偏移重映射**，并重写子包
-    /// xreg_map / inputs / outputs 中的编号——否则多个包的同编号 XReg 在合并后的
-    /// xreg_map 里互相重叠，regalloc 会把不同包的同编号 XReg 当作同一个 XReg
+    /// `inst_ops` / inputs / outputs 中的编号——否则多个包的同编号 XReg 在合并后的
+    /// `inst_ops` 里互相重叠，regalloc 会把不同包的同编号 XReg 当作同一个 XReg
     /// 处理（活区间/寄存器位置错乱）。
     pub fn append(&mut self, other: InstPacket<I>) {
         let other_count = other.xregs.next_index();
@@ -105,16 +147,16 @@ impl<I> InstPacket<I> {
                 self.xregs.alloc_default(forge_ir::RegClass::GPR64);
             }
             self.insts.extend(other.insts);
-            self.xreg_map.extend(other.xreg_map);
+            self.inst_ops.extend(other.inst_ops);
         } else {
             self.insts.extend(other.insts);
-            self.xreg_map.extend(other.xreg_map);
+            self.inst_ops.extend(other.inst_ops);
         }
     }
 
     /// 把本包内部分配的 XReg（编号 < self.xregs.next_index()）偏移到 `base` 续接，
-    /// 并重写 xreg_map / inputs / outputs 中的编号。供 append 与 pipeline 展开处
-    /// （compiler.rs 的 `self.xreg_map.extend(...)`）共用——展开路径若直接 extend
+    /// 并重写 `inst_ops` / inputs / outputs 中的编号。供 append 与 pipeline 展开处
+    /// （compiler.rs 的 `self.inst_ops.extend(...)`）共用——展开路径若直接 extend
     /// 而不重映射，包内 XReg 会与函数级 XReg 编号重叠。
     pub fn remap_internal(&mut self, base: u32) {
         let count = self.xregs.next_index();
@@ -126,9 +168,9 @@ impl<I> InstPacket<I> {
                 *x = XReg::new(x.index() + base, x.class());
             }
         };
-        for slot in self.xreg_map.iter_mut() {
-            for (x, _fi, _d) in slot.iter_mut() {
-                remap(x);
+        for slot in self.inst_ops.iter_mut() {
+            for b in slot.iter_mut() {
+                remap(&mut b.vreg);
             }
         }
         for x in self.inputs.iter_mut() {

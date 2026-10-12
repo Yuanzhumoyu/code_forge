@@ -6,11 +6,11 @@
 //!
 //! 关键语义（与 v11 一致）：
 //! - Inst 寄存器字段为类型化 `Reg` 枚举（类型化重构：不再裸 u32）：
-//!   lowering 构造时占位 `Reg::from_index(0, class)`，regalloc 经 `xreg_map`
+//!   lowering 构造时占位 `Reg::from_index(0, class)`，regalloc 经 `inst_ops`
 //!   分配后 `set_reg_field` 回填物理索引（`Reg::from_index` 重建枚举），
 //!   encode 读 `to_index()`。
 //! - `uses()/defs()` 返回寄存器字段的物理索引（回填后即分配结果）；regalloc
-//!   的活区间由 pipeline 聚合的 `xreg_map` 驱动（见 pipeline/liverange.rs），
+//!   的活区间由 pipeline 聚合的 `inst_ops` 驱动（见 pipeline/liverange.rs），
 //!   MachineInst::uses/defs 仅作辅助查询。
 //! - effect 标签（指令 `effect` 键）驱动 is_branch/is_call/is_ret/effects。
 //!

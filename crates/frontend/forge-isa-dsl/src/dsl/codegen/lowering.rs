@@ -3047,7 +3047,7 @@ fn gen_lowering_insts(
             })?;
         let vn = &info.vn;
         // 操作数符号 → (ctor 表达式, map_reg_field 的 XReg 表达式)
-        // ctor 用占位 0（regalloc 经 xreg_map 分配后 set_reg_field 回填），
+        // ctor 用占位 0（regalloc 经 inst_ops 分配后 set_reg_field 回填），
         // 与 v11 的 from_index(0) 占位语义一致；XReg 表达式供 map_reg_field。
         let mut bindings: Vec<(String, TokenStream, TokenStream)> = Vec::new();
         if !ops.is_empty() {

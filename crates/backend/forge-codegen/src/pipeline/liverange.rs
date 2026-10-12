@@ -175,7 +175,7 @@ impl LiveInterval {
 /// Spill weight 使用循环深度加权（循环内 ×10）。
 pub fn compute_live_intervals<I: crate::MachineInst>(
     vcode: &crate::VCode<I>,
-    xreg_map: &[smallvec::SmallVec<[(XReg, u8, bool); 2]>],
+    inst_ops: &[smallvec::SmallVec<[crate::machine::lowering::OperandBind; 2]>],
     param_xregs: &[XReg],
 ) -> HashMap<XReg, LiveInterval> {
     // ── 阶段 0: 循环检测 ──
@@ -210,10 +210,10 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
     }
 
     // ── 阶段 1: 计算 LiveInterval（带循环权重）──
-    // 预分配容量：vreg 数 ≤ 参数数 + xreg_map 总字段数（上界，免去重
+    // 预分配容量：vreg 数 ≤ 参数数 + inst_ops 总字段数（上界，免去重
     // 开销；HashMap 容量稍大无害）。避免阶段 1 反复 resize。
     let est_vregs: usize =
-        param_xregs.len() + xreg_map.iter().map(|slot| slot.len()).sum::<usize>();
+        param_xregs.len() + inst_ops.iter().map(|slot| slot.len()).sum::<usize>();
     let mut intervals: HashMap<XReg, LiveInterval> = HashMap::with_capacity(est_vregs);
 
     const LOOP_WEIGHT: f32 = 10.0;
@@ -233,14 +233,16 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
             let use_point = ProgPoint::inst_start(block_u32, inst_u32);
             let def_point = ProgPoint::inst_end(block_u32, inst_u32);
 
-            // 该指令的寄存器字段对应的 XReg（由指令包 xreg_map 聚合提供）。
+            // 该指令的寄存器字段对应的 XReg（由指令包 inst_ops 聚合提供）。
             // use 字段的 XReg 在 inst_start 活跃（读旧值），def 字段的 XReg 在
             // inst_end 活跃（写新值）——区分两者是活区间正确性的关键：
             // 若 def 的 XReg 也记 inst_start，其区间起点提前，regalloc 会把
             // 该 XReg 当作"指令执行前已活跃"，与同指令 use 的 XReg 冲突
             // （lea/load 链中 load 的 dest 与 base 被分配同一寄存器）。
-            if let Some(slot) = xreg_map.get(global_inst) {
-                for &(xreg, _fi, is_def) in slot.iter() {
+            if let Some(slot) = inst_ops.get(global_inst) {
+                for bind in slot.iter() {
+                    let xreg = bind.vreg;
+                    let is_def = bind.role == crate::machine::inst::OperandRole::Def;
                     let interval = intervals
                         .entry(xreg)
                         .or_insert_with(|| LiveInterval::new(xreg, xreg.class()));
@@ -311,11 +313,11 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
     let mut block_defs: Vec<HashSet<XReg>> = vec![HashSet::new(); num_blocks];
     for (block_idx, block) in blocks.iter().enumerate() {
         for _inst in block.instructions.iter() {
-            if let Some(slot) = xreg_map.get(global_inst_map) {
-                for &(xreg, _fi, is_def) in slot.iter() {
-                    block_uses[block_idx].insert(xreg);
-                    if is_def {
-                        block_defs[block_idx].insert(xreg);
+            if let Some(slot) = inst_ops.get(global_inst_map) {
+                for bind in slot.iter() {
+                    block_uses[block_idx].insert(bind.vreg);
+                    if bind.role == crate::machine::inst::OperandRole::Def {
+                        block_defs[block_idx].insert(bind.vreg);
                     }
                 }
             }

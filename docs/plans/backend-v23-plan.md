@@ -763,6 +763,24 @@ spilled def fail-closed）；手写实现（`DummyInst`/`FixedFieldInst`）改�
 ③ 删 `xreg_map`/`inst_clobbers`/`ctx.xreg_types` → `CompileState.inst_ops`，`set_reg_field`
 调用点改按操作数号走 `set_operand_reg`。
 
+### 批次 C 第一步——✅ 已落地（2026-10-11）：旁表改名 + 角色类型化
+
+`InstPacket::xreg_map: Vec<SmallVec<[(XReg, u8, bool); 2]>>` →
+**`inst_ops: Vec<SmallVec<[OperandBind; 2]>>`**，`OperandBind { vreg, field, role: OperandRole }`
+（带 `new`/`def`/`use_` 构造器）。裸 `bool` 与形状表里的 `OperandRole` 本是同一件事的两种写法，
+现在只剩一种；**语义完全不变**（`is_def = true` ⇔ `role == Def`）。
+
+同步面：`CompileState.inst_ops`、`liverange`/`regalloc_bt`/`emission` 三处签名 + 八处解构、
+`pipeline/lowering.rs` 两处 `extend`、两个测试模块的夹具与九处注释。
+验收：门禁 exit 0、clippy/fmt 干净、两矩阵与基线逐数相同、codegen 单测 2722 绿。
+
+**下一步（批次 C 第二、三步）**：
+① 把 `ctx.xreg_types`（vreg → IR 类型）的**读点**（`emission.rs:307` 前后的回填宽度类、
+`compiler.rs:2570` 附近）改成读 `inst_ops[..].class`（`OperandBind` 增 `class` 字段，
+写点仍从 IR 类型推），从而删掉这张表；
+② `set_reg_field` 的两个生产调用点（`compiler.rs:2563`、`emission.rs:311`）改走
+`set_operand_reg`（按**操作数号**而非字段号），`CompileState` 只留 `inst_ops`。
+
 ### 批次 C 的关键发现（2026-10-11，动手前必须量清）
 
 **`is_def` 不是纯冗余**：生成期对每个 Reg 槽**只发一条** `map_reg_field`，角色取

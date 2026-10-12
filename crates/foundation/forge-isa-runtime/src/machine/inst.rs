@@ -94,7 +94,7 @@ pub enum OperandRole {
 ///
 /// 为什么要有它：这些事实原本分居**两处**——`MachineInst` 的七个方法
 /// （`uses`/`defs`/`use_constraints`/`def_constraints`/`reg_field`/`set_reg_field`/
-/// `is_reg_field_settable`）与指令包里的平行旁表 `InstPacket::xreg_map`
+/// `is_reg_field_settable`）与指令包里的绑定表 `InstPacket::inst_ops`
 /// （`Vec<SmallVec<[(XReg, field, is_def); 2]>>`，由生成物逐 arm `map_reg_field` 填）。
 /// 两处必须逐条对齐，错一处就是活区间/回填错。合并成一张表后，"对齐"这件事
 /// 在结构上不存在。

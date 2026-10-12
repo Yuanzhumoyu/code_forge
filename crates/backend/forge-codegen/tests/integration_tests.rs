@@ -2,6 +2,7 @@
 //! 验证集成层:TargetMachine 可组装、MachineInst 查询(uses/defs/reg_field/
 //! set_reg_field/effects)、Encoder/Decoder/Disassembler/Assembler 组件可用。
 use forge_codegen::machine::inst::MachineInst;
+use forge_codegen::machine::lowering::OperandBind;
 use forge_codegen::machine::target::TargetMachine as _;
 use forge_codegen::x86::Reg;
 use forge_ir::PhysReg;
@@ -155,16 +156,16 @@ fn lowering_iadd_packet() {
     assert_eq!(pack.insts.len(), 2, "Iadd → 2 条微指令");
     assert!(matches!(pack.insts[0], Inst::MovRRm { .. }));
     assert!(matches!(pack.insts[1], Inst::AddRmR { .. }));
-    // xreg_map：MovRRm(def=rd idx0, use=a idx1)；AddRmR(use=b idx0, def=rd idx1)
+    // inst_ops：MovRRm(def=rd idx0, use=a idx1)；AddRmR(use=b idx0, def=rd idx1)
     // —— ADD_RM_R {1}, {out}：src: op0←{1}=b、dest: op1←{out}=rd
-    assert_eq!(pack.xreg_map.len(), 2);
-    let m0 = &pack.xreg_map[0];
+    assert_eq!(pack.inst_ops.len(), 2);
+    let m0 = &pack.inst_ops[0];
     assert_eq!(m0.len(), 2);
-    assert_eq!(m0[0], (out, 0u8, true), "MovRRm field0 = out(def)");
-    assert_eq!(m0[1], (a, 1u8, false), "MovRRm field1 = a(use)");
-    let m1 = &pack.xreg_map[1];
-    assert_eq!(m1[0], (b, 0u8, false), "AddRmR field0 = b(use)");
-    assert_eq!(m1[1], (out, 1u8, true), "AddRmR field1 = out(def)");
+    assert_eq!(m0[0], OperandBind::def(out, 0), "MovRRm field0 = out(def)");
+    assert_eq!(m0[1], OperandBind::use_(a, 1), "MovRRm field1 = a(use)");
+    let m1 = &pack.inst_ops[1];
+    assert_eq!(m1[0], OperandBind::use_(b, 0), "AddRmR field0 = b(use)");
+    assert_eq!(m1[1], OperandBind::def(out, 1), "AddRmR field1 = out(def)");
     // 占位字段 = from_index(0)（regalloc 前）
     match &pack.insts[0] {
         Inst::MovRRm { dst, src, .. } => {
@@ -325,11 +326,11 @@ fn terminator_return_packet() {
     );
     assert!(matches!(pack.insts[0], Inst::MovRm8R64 { .. }));
     // val → 字段 0(use)
-    let m0 = &pack.xreg_map[0];
+    let m0 = &pack.inst_ops[0];
     assert_eq!(m0.len(), 1);
     assert_eq!(
         m0[0],
-        (ret_val, 0u8, false),
+        OperandBind::use_(ret_val, 0),
         "MOV_RM8_R64 field0 = val(use)"
     );
 }

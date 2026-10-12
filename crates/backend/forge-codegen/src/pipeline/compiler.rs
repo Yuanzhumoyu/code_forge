@@ -2229,9 +2229,9 @@ impl<M: TargetMachine> CompileSession<M> {
 pub(crate) struct CompileState<I: MachineInst> {
     pub(crate) vcode: VCode<I>,
     /// XReg → 微指令寄存器字段映射（与 vcode 的指令序列平行）。
-    /// 由各指令包的 xreg_map 聚合；分配器按此构建活区间并回写字段。
-    pub(crate) xreg_map: Vec<smallvec::SmallVec<[(XReg, u8, bool); 2]>>,
-    /// 每条 vcode 指令的写死物理寄存器集（与 xreg_map/instructions 平行；
+    /// 由各指令包的 inst_ops 聚合；分配器按此构建活区间并回写字段。
+    pub(crate) inst_ops: Vec<smallvec::SmallVec<[crate::machine::lowering::OperandBind; 2]>>,
+    /// 每条 vcode 指令的写死物理寄存器集（与 inst_ops/instructions 平行；
     /// 来自 lower 规则的 clobbers 声明，包级展开到包内每条指令）。
     pub(crate) inst_clobbers: Vec<Vec<(u32, crate::prelude::RegClass)>>,
     /// IR 值 → XReg 映射（v3 S2：`Value` 是密集句柄 ⇒ `SecondaryMap`，不哈希）。
@@ -2330,7 +2330,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
         }
         Ok(Self {
             vcode: VCode::new(),
-            xreg_map: Vec::new(),
+            inst_ops: Vec::new(),
             inst_clobbers: Vec::new(),
             value_to_xreg: SecondaryMap::new(),
             block_map: SecondaryMap::new(),
@@ -2457,7 +2457,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 .unwrap_or(0),
         };
 
-        // **v23 M4 收敛守卫**：旁表（`xreg_map`）与指令的**操作数表**必须逐条对齐。
+        // **v23 M4 收敛守卫**：旁表（`inst_ops`）与指令的**操作数表**必须逐条对齐。
         //
         // 批次 C 要删掉旁表，这条断言就是"删了以后行为不变"的判据——现在先当守卫跑起来。
         // 只对拍 `(field, role)`：旁表里存的是**虚拟寄存器**，而字段里放的是**占位物理
@@ -2472,16 +2472,13 @@ impl<I: MachineInst + 'static> CompileState<I> {
             let mut gi = 0usize;
             for block in self.vcode.blocks() {
                 for inst in &block.instructions {
-                    if let Some(slot) = self.xreg_map.get(gi) {
+                    if let Some(slot) = self.inst_ops.get(gi) {
                         let ops = inst.operands();
-                        for (xr, field, is_def) in slot.iter() {
-                            let want = if *is_def {
-                                OperandRole::Def
-                            } else {
-                                OperandRole::Use
-                            };
+                        for bind in slot.iter() {
+                            let (xr, field) = (&bind.vreg, bind.field);
+                            let want = bind.role;
                             let hit = ops.iter().any(|o| {
-                                usize::from(o.field) == usize::from(*field) && o.role == want
+                                usize::from(o.field) == usize::from(field) && o.role == want
                             });
                             assert!(
                                 hit,
@@ -2509,7 +2506,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                                 .iter()
                                 .any(|o| o.field == op.field && o.role == OperandRole::Def);
                             if in_uses && in_defs {
-                                let n = slot.iter().filter(|(_, f, _)| *f == op.field).count();
+                                let n = slot.iter().filter(|b| b.field == op.field).count();
                                 assert!(
                                     n <= 1,
                                     "v23 M4：InOut 字段 {} 的旁表条数 {n} > 1（实测契约是 0 或 1）\
@@ -2525,7 +2522,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
         }
 
         let alloc_result =
-            allocator.allocate(&self.vcode, &reg_info, &self.xreg_map, &self.inst_clobbers)?;
+            allocator.allocate(&self.vcode, &reg_info, &self.inst_ops, &self.inst_clobbers)?;
 
         // S2：sret 隐藏参数标记（move_args 收参跳过首 int 槽）——
         // 由 CompileState::new 的 LowerCtx.is_sret_return 预计算。
@@ -2556,12 +2553,13 @@ impl<I: MachineInst + 'static> CompileState<I> {
             })
             .collect();
 
-        // 分配后回写：按 xreg_map 把 XReg 的分配结果填入微指令寄存器字段（物理 Reg）
+        // 分配后回写：按 inst_ops 把 XReg 的分配结果填入微指令寄存器字段（物理 Reg）
         let mut global_inst = 0usize;
         for block in self.vcode.blocks_mut() {
             for inst in block.instructions.iter_mut() {
-                if let Some(slot) = self.xreg_map.get(global_inst) {
-                    for &(xreg, field_idx, _is_def) in slot.iter() {
+                if let Some(slot) = self.inst_ops.get(global_inst) {
+                    for bind in slot.iter() {
+                        let (xreg, field_idx) = (bind.vreg, bind.field);
                         if let Some(preg) = alloc_result.preg(xreg) {
                             // class：值 XReg 恒池宽（GPR64）——多类槽（gprx）
                             // 回填需要 IR 值宽度，从 xreg_types（XReg→TypeId）

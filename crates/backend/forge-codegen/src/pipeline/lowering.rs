@@ -617,7 +617,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             };
             // 展开路径必须与 InstPacket::append 一致：若包内 XRegAllocator 分配过
             // 临时寄存器（编号从 0 起，与函数级 XReg 编号域重叠），先偏移重映射到
-            // 函数级编号域的续接，再并入 xreg_map——否则包内 XReg 与函数级 XReg
+            // 函数级编号域的续接，再并入 inst_ops——否则包内 XReg 与函数级 XReg
             // 编号重叠，regalloc 把不同 XReg 当作同一个处理。
             let base = self.ctx.xregs.next_index();
             if machine_insts.xregs.next_index() > 0 {
@@ -628,7 +628,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     self.ctx.alloc_xreg(self.ctx.value_gpr_class);
                 }
             }
-            self.xreg_map.extend(machine_insts.xreg_map);
+            self.inst_ops.extend(machine_insts.inst_ops);
             // 规则级写死寄存器（insts 自动推导，生成代码写入 ctx.current_clobbers）
             // 展开到包内每条指令（与 vcode.instructions 平行）。每次 lowering 前
             // 已 clear，此处取走。
@@ -670,7 +670,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 self.ctx.alloc_xreg(self.ctx.value_gpr_class);
             }
         }
-        self.xreg_map.extend(term_insts.xreg_map);
+        self.inst_ops.extend(term_insts.inst_ops);
         let term_clobbers = std::mem::take(&mut self.ctx.current_clobbers);
         self.inst_clobbers
             .extend(std::iter::repeat_n(term_clobbers, term_insts.insts.len()));

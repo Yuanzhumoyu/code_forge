@@ -54,9 +54,9 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // since return blocks' emit_epilogue_jump can interfere with
         // PC-relative offset calculations for forward branches.
         let scratch_regs = machine.reg_info().scratch_regs();
-        // 可变借用 vcode 收集块引用（替代整 VCode clone），xreg_map 单独
+        // 可变借用 vcode 收集块引用（替代整 VCode clone），inst_ops 单独
         // 借用字段——拆分借用避免闭包捕获 &mut self。
-        let xreg_map = &self.xreg_map;
+        let inst_ops = &self.inst_ops;
         // 回填 class 推导用：值 XReg 恒池宽（GPR64），多类槽（gprx）回填
         // 需 IR 值宽度——从 xreg_types（XReg→TypeId）查（闭包借用 self.ctx
         // 会与 vcode 拆分借用冲突，此处先取引用捕获）。
@@ -66,7 +66,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
 
         // 预计算每个 vcode 块在全局指令序列中的起始索引（与 regalloc 的遍历序
         // 一致）。emit 的 Pass1/Pass2 重排了发射顺序（非 return 块先发，避免
-        // return 块的 epilogue_jump 干扰前向 PC-relative 分支），但 xreg_map 的
+        // return 块的 epilogue_jump 干扰前向 PC-relative 分支），但 inst_ops 的
         // 全局索引必须按 vcode 块序——否则 return 块不在末尾时，emit 的 global_inst
         // 与 regalloc 回写的字段索引错位，所有指令的寄存器回写错乱。
         let block_starts: Vec<usize> = {
@@ -80,7 +80,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         };
 
         // Helper: emit one block (bind label, instructions, optional epilogue JMP)
-        // 闭包不捕获 self：只捕获 xreg_map 的借用 + 其余局部引用。
+        // 闭包不捕获 self：只捕获 inst_ops 的借用 + 其余局部引用。
         // line_tables：debuginfo 开启（func 有行号或 line_entries 非空要求）
         // 时逐指令收集 (机器码偏移, 行)（同一条 IR 指令展开的微指令共享行，
         // 相邻同行合并）。
@@ -91,12 +91,12 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
          -> Result<(), IrError> {
             sink.bind_label(vb.ir_block);
             for (gi, inst) in (block_starts[vcode_idx]..).zip(vb.instructions.iter_mut()) {
-                let slot: &[(XReg, u8, bool)] =
-                    xreg_map.get(gi).map(|s| s.as_slice()).unwrap_or(&[]);
+                let slot: &[crate::machine::lowering::OperandBind] =
+                    inst_ops.get(gi).map(|s| s.as_slice()).unwrap_or(&[]);
                 let inst_xregs: smallvec::SmallVec<[XReg; 8]> =
-                    slot.iter().map(|(x, ..)| *x).collect();
+                    slot.iter().map(|b| b.vreg).collect();
                 let inst_field_idx: smallvec::SmallVec<[u8; 8]> =
-                    slot.iter().map(|(_, f, _)| *f).collect();
+                    slot.iter().map(|b| b.field).collect();
                 let inst_local_idx = gi - block_starts[vcode_idx];
                 let line = vb.inst_lines.get(inst_local_idx).copied().flatten();
                 let start_off = sink.offset() as u32;
@@ -296,8 +296,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // Emit 前把 spilled 字段重设为 scratch 寄存器：
         // 分配阶段回写的旧寄存器（如 reload 后的 R9）与 scratch 不一致，
         // 会导致 store 存回错误寄存器。重设后 emit 与 store 使用同一寄存器。
-        // 用 xreg_map 的 field_idx（而非 enumerate 位置）：指令含物理寄存器
-        // 字段（如 `MOV_R_RM RCX` 的 op0）时 xreg_map 跳过该字段，记录位置
+        // 用 inst_ops 的 field_idx（而非 enumerate 位置）：指令含物理寄存器
+        // 字段（如 `MOV_R_RM RCX` 的 op0）时 inst_ops 跳过该字段，记录位置
         // 与字段序号错位——用位置会把物理字段覆盖成 scratch（shift 崩溃）。
         for (i, &xreg) in inst_xregs.iter().enumerate() {
             if let Some(preg) = xreg_preg(xreg) {

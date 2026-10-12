@@ -43,11 +43,11 @@ impl BacktrackingAllocator {
         &self,
         vcode: &crate::VCode<I>,
         config: &RegAllocConfig,
-        xreg_map: &[smallvec::SmallVec<[(XReg, u8, bool); 2]>],
+        inst_ops: &[smallvec::SmallVec<[crate::machine::lowering::OperandBind; 2]>],
         clobber_map: &[Vec<(u32, crate::prelude::RegClass)>],
     ) -> Result<AllocResult, IrError> {
         // 1. 计算 LiveInterval（XReg → 微指令字段映射驱动）
-        let intervals = liverange::compute_live_intervals(vcode, xreg_map, &config.param_xregs);
+        let intervals = liverange::compute_live_intervals(vcode, inst_ops, &config.param_xregs);
 
         // 2. 构建状态
         let mut state = BtState::new(config, intervals);
@@ -93,11 +93,11 @@ impl BacktrackingAllocator {
             }
         }
 
-        // 4. 逐块处理（按 xreg_map 分配 XReg）
+        // 4. 逐块处理（按 inst_ops 分配 XReg）
         let mut global_inst = 0usize;
         for (block_idx, block) in vcode.blocks().enumerate() {
             let block_u32 = block_idx as u32;
-            state.process_block(block_u32, block, xreg_map, clobber_map, &mut global_inst)?;
+            state.process_block(block_u32, block, inst_ops, clobber_map, &mut global_inst)?;
         }
 
         // 5. 构建 AllocResult
@@ -183,7 +183,7 @@ impl<'a> BtState<'a> {
         &mut self,
         block_idx: u32,
         block: &crate::VCodeBlock<I>,
-        xreg_map: &[smallvec::SmallVec<[(XReg, u8, bool); 2]>],
+        inst_ops: &[smallvec::SmallVec<[crate::machine::lowering::OperandBind; 2]>],
         clobber_map: &[Vec<(u32, crate::prelude::RegClass)>],
         global_inst_start: &mut usize,
     ) -> Result<(), IrError> {
@@ -192,19 +192,18 @@ impl<'a> BtState<'a> {
             let use_point = ProgPoint::inst_start(block_idx, inst_u32);
             let _def_point = ProgPoint::inst_end(block_idx, inst_u32);
 
-            // 当前指令的寄存器字段对应的 XReg（由指令包 xreg_map 聚合提供）
+            // 当前指令的寄存器字段对应的 XReg（由指令包 inst_ops 聚合提供）
             // 借用 slice，避免每指令克隆 SmallVec
-            let slot: &[(XReg, u8, bool)] = xreg_map
+            let slot: &[crate::machine::lowering::OperandBind] = inst_ops
                 .get(*global_inst_start)
                 .map(|s| s.as_slice())
                 .unwrap_or(&[]);
             *global_inst_start += 1;
-            let inst_xregs: smallvec::SmallVec<[XReg; 8]> =
-                slot.iter().map(|&(x, _fi, _d)| x).collect();
+            let inst_xregs: smallvec::SmallVec<[XReg; 8]> = slot.iter().map(|b| b.vreg).collect();
             let inst_defs: smallvec::SmallVec<[XReg; 8]> = slot
                 .iter()
-                .filter(|&&(_, _fi, d)| d)
-                .map(|&(x, _fi, _d)| x)
+                .filter(|b| b.role == crate::machine::inst::OperandRole::Def)
+                .map(|b| b.vreg)
                 .collect();
 
             // 更新当前指令点（用于 Belady's MIN 溢出决策）
@@ -326,8 +325,8 @@ impl<'a> BtState<'a> {
                 }
                 let field = slot
                     .iter()
-                    .find(|&&(x, _fi, d)| x == vreg && d)
-                    .map(|&(_, fi, _d)| fi);
+                    .find(|b| b.vreg == vreg && b.role == crate::machine::inst::OperandRole::Def)
+                    .map(|b| b.field);
                 if let Some(fi) = field
                     && !inst.is_reg_field_settable(fi as usize)
                 {
@@ -1071,6 +1070,7 @@ mod tests {
 mod clobber_map_tests {
     use super::*;
     use crate::machine::inst::DummyInst;
+    use crate::machine::lowering::OperandBind;
 
     fn xgpr(n: u32) -> XReg {
         let mut xa = XRegAllocator::new();
@@ -1106,15 +1106,15 @@ mod clobber_map_tests {
             .allocatable = vec![0, 1]; // RAX + RCX
         let x0 = xgpr(0);
         let vcode = clobber_vcode();
-        let xreg_map = vec![
-            smallvec::smallvec![(x0, 0u8, true)],  // inst0: def
-            smallvec::smallvec![(x0, 0u8, false)], // inst1: use（clobber 点）
-            smallvec::smallvec![(x0, 0u8, false)], // inst2: use 结束
+        let inst_ops = vec![
+            smallvec::smallvec![OperandBind::def(x0, 0)], // inst0: def
+            smallvec::smallvec![OperandBind::use_(x0, 0)], // inst1: use（clobber 点）
+            smallvec::smallvec![OperandBind::use_(x0, 0)], // inst2: use 结束
         ];
         let clobber_map = vec![vec![], vec![(0u32, RegClass::GPR64)], vec![]]; // inst1 写死 RAX
         let alloc = BacktrackingAllocator::new();
         let result = alloc
-            .allocate(&vcode, &config, &xreg_map, &clobber_map)
+            .allocate(&vcode, &config, &inst_ops, &clobber_map)
             .expect("alloc should succeed");
         // x0 在 clobber 点被使用（值需在寄存器）→ 不应被 spill
         assert!(
@@ -1134,10 +1134,10 @@ mod clobber_map_tests {
             .allocatable = vec![0];
         let x0 = xgpr(0);
         let vcode = clobber_vcode();
-        let xreg_map = vec![smallvec::smallvec![(x0, 0u8, true)]]; // inst0: def
+        let inst_ops = vec![smallvec::smallvec![OperandBind::def(x0, 0)]]; // inst0: def
         let clobber_map = vec![vec![(0u32, RegClass::GPR64)]]; // inst0 写死 RAX → def 无法分配
         let alloc = BacktrackingAllocator::new();
-        let result = alloc.allocate(&vcode, &config, &xreg_map, &clobber_map);
+        let result = alloc.allocate(&vcode, &config, &inst_ops, &clobber_map);
         // 2026-09 语义变更：def（写新值）在唯一寄存器被 clobber 时**spill 到栈**
         // 而非报错——emission 的 emit_inst_with_spills 用 scratch 写入 def、
         // 随后 store 回槽，后续 use 经 reload_from_stack 从槽 load，值正确。
@@ -1163,15 +1163,15 @@ mod clobber_map_tests {
             .allocatable = vec![0];
         let x0 = xgpr(0);
         let vcode = clobber_vcode();
-        let xreg_map = vec![
-            smallvec::smallvec![(x0, 0u8, true)],
-            smallvec::smallvec![(x0, 0u8, false)],
-            smallvec::smallvec![(x0, 0u8, false)],
+        let inst_ops = vec![
+            smallvec::smallvec![OperandBind::def(x0, 0)],
+            smallvec::smallvec![OperandBind::use_(x0, 0)],
+            smallvec::smallvec![OperandBind::use_(x0, 0)],
         ];
         let clobber_map = vec![vec![], vec![], vec![]];
         let alloc = BacktrackingAllocator::new();
         let result = alloc
-            .allocate(&vcode, &config, &xreg_map, &clobber_map)
+            .allocate(&vcode, &config, &inst_ops, &clobber_map)
             .expect("no clobber: RAX 可用，分配成功");
         assert!(
             !result.spill_slots.contains_key(&x0),
@@ -1192,11 +1192,11 @@ mod clobber_map_tests {
             .allocatable = vec![0]; // 仅 RAX，且被 clobber → def 只能 spill
         let x0 = xgpr(0);
         let vcode = clobber_vcode();
-        let xreg_map = vec![smallvec::smallvec![(x0, 0u8, true)]];
+        let inst_ops = vec![smallvec::smallvec![OperandBind::def(x0, 0)]];
         let clobber_map = vec![vec![(0u32, RegClass::GPR64)]];
         let alloc = BacktrackingAllocator::new();
         let result = alloc
-            .allocate(&vcode, &config, &xreg_map, &clobber_map)
+            .allocate(&vcode, &config, &inst_ops, &clobber_map)
             .expect("def-spill 在可改写字段上必须成功（emission 用 scratch 写入 + store 回槽）");
         assert!(
             result.spill_slots.contains_key(&x0),
@@ -1254,11 +1254,11 @@ mod clobber_map_tests {
         let bid = vcode.create_block(Block::new(0));
         vcode.switch_to_block(bid);
         vcode.push_inst(FixedFieldInst { id: 0 });
-        let xreg_map = vec![smallvec::smallvec![(x0, 0u8, true)]];
+        let inst_ops = vec![smallvec::smallvec![OperandBind::def(x0, 0)]];
         let clobber_map = vec![vec![(0u32, RegClass::GPR64)]];
         let alloc = BacktrackingAllocator::new();
         let err = alloc
-            .allocate(&vcode, &config, &xreg_map, &clobber_map)
+            .allocate(&vcode, &config, &inst_ops, &clobber_map)
             .expect_err("固定物理字段上的 def-spill 必须 fail-closed 报错");
         let msg = format!("{err}");
         assert!(
