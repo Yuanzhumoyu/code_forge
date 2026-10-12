@@ -137,7 +137,7 @@ pub use self::toy16::*;
 3. `[encoding].kind` 三态：`fixed`（全部同一字长）、`mixed`（`widths = [16, 32]` 逐指令选）、
    `prefix_scan`（x86 式前缀链）。定宽 ISA 写 `fixed` 即可。
 
-## 2. 操作数槽：`[[operand_slots]]`
+## 2. 操作数槽：`[operand.<名字>]`
 
 一次声明"这类操作数长什么样"，指令里按名字引用：
 
@@ -147,7 +147,7 @@ kind = "reg"        # reg | imm | mem | label | cond
 class = "gpr8"      # 引用 [reg.gpr8]；多宽度写 class = ["gpr32", "gpr64"]
 ```
 
-- `kind = "imm"` 的槽要写 `width`（位）与 `signed`；越界立即数在 `encode` 层**报错**而不是静默截断。
+- `kind = "imm"` 的槽要写 `bits`（位）与 `signed`；越界立即数在 `encode` 层**报错**而不是静默截断。
 - `kind = "label"` 的槽用于分支目标：汇编接受数字偏移或符号，生成物里字段类型是 `i64`（IR 块号）。
 - 多宽度寄存器槽（`class = ["gpr32", "gpr64"]`）会让生成期自测逐宽度各生成一条用例。
 

@@ -1,8 +1,9 @@
 # ISA-DSL v21 执行清单
 
-> [progress] 2026-10-08 执行方案（配套设计文档已归档：[isa-dsl-v21-redesign-plan.md](../archive/isa-dsl-v21-redesign-plan.md)）。
-> 用法：**一片一提交**，上一片的门禁全绿才勾下一片；每片先勾"步骤"再勾"门禁"。
-> 数字基线以 §1.3 的 W0 快照为准（本文写的数字是 2026-10-08 的设计期快照，会随迭代漂移）。
+> ⚠️ ARCHIVED（2026-10-11）——v21 重设计**已收口**：W1–W11 + W6+ 与 §14 最终验收全部完成。
+> **现行语法以 [`docs/reference/isa-dsl.md`](../reference/isa-dsl.md) 为准**（v22）；本文件只作
+> 历史证据，步骤/门禁/快照数字按记录时点理解，**不代表代码现状**。
+> 配套设计文档：[isa-dsl-v21-redesign-plan.md](isa-dsl-v21-redesign-plan.md)。
 
 ## 目录
 

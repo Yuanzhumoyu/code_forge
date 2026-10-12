@@ -25,12 +25,6 @@
 | `forge-ir/backlog.md` | 仍未关闭待办速览（逐项标出处归档档） | active |
 | `archive/forge-ir/` | 历轮计划/执行/审计记录全集（roadmap/checklist/audit 等 7 篇，均 ARCHIVED） | archive |
 
-## plans/ — 专项改进方案（有未完成工作）
-
-| 文件 | 内容 | 状态 |
-| --- | --- | --- |
-| `plans/isa-dsl-v21-execution-checklist.md` | ISA-DSL v21 **执行清单**（S0 决策冻结 + W0 基线 + W1–W11 逐片步骤/门禁/回滚 + 最终验收 + 中止条件；配套设计文档已归档） | progress |
-
 ## performance/ — 基准与优化
 
 | 文件 | 内容 |
@@ -58,7 +52,8 @@
 | `archive/forge-ir-v3-plan.md` | forge-ir v3 改进方案（**2026-10-08 归档**：S1–S8 **全部收口** —— S3 三余项已落地、**S7 余项清零**、S8 经拍板只做二进制序列化且已落地；未关闭项在 `forge-ir/backlog.md`） |
 | `archive/isa-dsl-variant-field-values.md` | 按变体给字段值（**2026-10-08 归档**：工作**早已落地** —— 键名是 `fields_variant`、`rev8` 正在用；本文留设计取舍与教训） |
 | `archive/varargs-plan.md` | 变参（varargs）方案（**2026-10-08 归档**：功能面**已完成** —— V0–V5 落地、SysV `%al` 写入 V7 已做、四份 `va_list` 形状齐备且由守卫钉住；前端产出变参签名是明写的**非目标**） |
-| `archive/isa-dsl-v21-redesign-plan.md` | ISA-DSL v21 重设计方案（**2026-10-08 归档**：v21 已收口，W1–W11 + W6 + W6+ 全部落地；活账本 = `plans/isa-dsl-v21-execution-checklist.md`，现行规范 = `reference/isa-dsl.md`） |
+| `archive/isa-dsl-v21-redesign-plan.md` | ISA-DSL v21 重设计方案（**2026-10-08 归档**：v21 已收口，W1–W11 + W6 + W6+ 全部落地；现行规范 = `reference/isa-dsl.md`） |
+| `archive/isa-dsl-v21-execution-checklist.md` | ISA-DSL v21 执行清单（**2026-10-11 归档**：W1–W11 + W6+ 与 §14 最终验收全部完成；只作历史证据，现行语法 = `reference/isa-dsl.md`） |
 | `archive/forge-isa-dsl-v19-plan.md` | forge-isa-dsl v19 改进方案（**2026-10-08 归档**：可独立接入、谱内向量、lint、参数化变体 四块招牌切片按代码事实核对落地；现行面 = `reference/isa-dsl.md` + `CLAUDE.md` 速查） |
 | `archive/forge-ir-binary-serialization-plan.md` | forge-ir 二进制序列化执行方案 B1–B5（**2026-10-08 归档**：`to_binary`/`from_binary`/`IR_FORMAT_VERSION`/`tests/binary_module.rs` 均在；现行规范 = `reference/binary-format.md`） |
 | `archive/forge-ir-s8-design.md` | forge-ir S8 可选项设计（**2026-10-08 归档**：三个候选里**只做二进制序列化**，MemorySSA-lite 与 crate 拆分经拍板不做） |

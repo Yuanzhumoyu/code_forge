@@ -18,8 +18,6 @@ docs/
 ├── forge-ir/              # forge-ir 工作流 [active]
 │   ├── README.md              # 组说明（历轮计划已归档、如何继续）
 │   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）
-├── plans/                 # 有未完成工作的专项方案 [progress]
-│   └── isa-dsl-v21-execution-checklist.md # v21 执行清单（**活的账本**：S0 冻结 + W0 基线 + W1–W11 门禁 + §14 最终验收 + CI 快照）
 ├── performance/           # 基准与优化
 │   ├── BENCHMARKS.md          # 基准运行框架
 │   ├── OPTIMIZATION.md        # 优化清单
@@ -37,7 +35,7 @@ docs/
     ├── ymm-abi-plan.md        # YMM ABI 方案（2026-09-10 核查完成 → 归档）
     ├── hir-shrink-plan.md     # HIR/mini_c 收缩（同日均告终结 → 归档）
     ├── clippy-fixes.md / coverage-history.md
-    ├── forge-isa-dsl-v19-plan.md / isa-dsl-v21-redesign-plan.md  # ISA-DSL v19 / v21 方案（收口后归档）
+    ├── isa-dsl-v21-redesign-plan.md / isa-dsl-v21-execution-checklist.md  # ISA-DSL v21 方案与执行清单（均已收口归档）
     ├── forge-ir-binary-serialization-plan.md / forge-ir-s8-design.md # forge-ir 二进制序列化（落地后归档）
     ├── varargs-plan.md / isa-dsl-variant-field-values.md # 变参（功能面已完成）/ 按变体给字段值（早已落地）
     ├── forge-ir-v3-plan.md      # forge-ir v3（S1–S8 全部收口；未关闭项移交 ../forge-ir/backlog.md）
@@ -58,10 +56,9 @@ docs/
 - **archive 内"已实现/待办"不代表代码现状**——改代码/加测试前以源码与 test 为准；
 - ISA-DSL 现行语法以 `reference/isa-dsl.md` 为准，**v21 重设计（2026-10）已收口**：
   表头即名字的三张表（`[form.<名>]`/`[inst.<名>]`/`[pred.<名>]`）、`[operand.<名字>]`、
-  `[enum.<表名>]`、`[family.<名>]`、`[asm.*]`、`[machine.*]` 都已就位；**进度与验收**看
-  `plans/isa-dsl-v21-execution-checklist.md`（活的账本，§14 快照 #4（2026-10-11）：CI run 38142845046
-  9 ✅ / 2 ❌ —— `forge-tests (nightly)` 与 `Test (macOS)` 红灯，其余全绿），**方案本身**已归档
-  （`archive/isa-dsl-v21-redesign-plan.md`）。
+  `[enum.<表名>]`、`[family.<名>]`、`[asm.*]`、`[machine.*]` 都已就位；**v21 的进度与验收记录**
+  已归档（`archive/isa-dsl-v21-execution-checklist.md`，只作历史证据），
+  **方案本身**也已归档（`archive/isa-dsl-v21-redesign-plan.md`）。
   注意区分两种"版本号"：DSL 语法版本（**v22，现行**；靠文档/CHANGELOG 追踪，**不写进 TOML**）
   与 `[meta].version`（ISA 自己的自由字符串）。**文件名不带语法版本**——旧的 `*_v12`
   命名（`isa/*_v12.toml`、`src/v12/`、`arch/*_v12.rs`、`tests/*_v12_tests.rs`）已于
@@ -446,7 +443,7 @@ let name = node.get_text("name")?;
   修掉 arm64 `idx3`×`op8` 的 bit24 重复声明）。两个可选档：`--ops <宿主 op 表.toml>` 报**能力缺口**
   （三类分开：终结指令/宿主管线直查不算缺口，只有真缺口报；口径 = 计划 §10.3，实测
   x86 `100/6/8/3`、riscv64 `67/6/8/36`、arm64 `8/6/8/95`——"宿主管线"8 条里含 `VaStart`
-  （变参 V2，**生成器按能力角色发**，谱里同样没有 `[[lowering]]`），宿主 op 表是宿主数据、
+  （变参 V2，**生成器按能力角色发**，谱里同样没有 `[[lower.<op>]]`），宿主 op 表是宿主数据、
   DSL 不留第二份清单）、
   `--refs` 报"声明了却没被任何模板行首引用的 `ref`"（**opt-in**：实测 x86 5 / riscv64 19 /
   arm64 27 条，多为给未来 lowering 预留的多态名，属作者意图，不进默认档）、
@@ -465,8 +462,8 @@ let name = node.get_text("name")?;
   Schema、把多文件谱 `fmt` 折叠成单文件（v18 S7d）。`--json` 机读；退出码 0/1/2。
   **变体投影（v19 V5）**：`validate|insts --params xlen=32` 走只读投影——`[meta].variants`
   声明参数域、六处声明（`[inst.<名字>]`/族行/`[machine.text]`/`[machine.spill.<模板名>]`/
-  `[asm.pseudo.<名>]`/`[[pattern]]`）可标
-  `only_variants`，投影丢声明 + **连带丢引用不到指令的 `[[lowering]]`** + `{参数名}` 替换；
+  `[asm.pseudo.<名>]`/树型匹配）可标
+  `only_variants`，投影丢声明 + **连带丢引用不到指令的 `[[lower.<op>]]`** + `{参数名}` 替换；
   `insts` 第一行打印投影账目（`--json` 里 `projection`）。宏侧同参数进生成物文件名哈希。
   **默认档逐字节不变**（不传参数不过滤）；`[machine.spill.*]`/`[machine.text]` 等结构件引用被投影掉的指令
   却**没标** `only_variants` ⇒ 报错（结构件要作者显式变体化，见 `docs/reference/isa-dsl.md`
@@ -487,26 +484,26 @@ let name = node.get_text("name")?;
   它是所有公开入口（`isa_from_file!`/`expand_file`/`validate_file`/CLI）的必经之路，
   诊断按来源文件映射，生成物对**每个来源**登记 `include_bytes!`。`include`/`[[override]]`
   是组合键（合并后不存在），裸文本入口带它们会明确报错。
-- **生成字段名 = 操作数声明的名字（v18 S7d；v22 换成 `asm` 内联声明）**：
-  `asm = "add {dst:r:out}, {src:r}"` ⇒ `Inst::Iadd { dst, src }`（旧写法 `ops = ["dst:r:out", "src:r"]`
-  效果相同，但 v22 起**已撤出对外表面**：schema/文档速查表/JSON 都不再宣传 `ops`/`bind`，
-  解析器仍收它们只为仓库内的测试谱——见下条）；`[form.<名字>].fields` 的字段名（`rd`/`rs1`）
-  与变长 ISA 的语义名（`dest`/`cond`）**只是内部编码键**（v21 W2 起
-  `opcode_field`/`operand_fields` 由 `fields` 展开派生，不再是用户面键；另有 modrm 角色/立即数
+- **生成字段名 = 操作数声明的名字（v22：声明就写在 `asm` 里）**：
+  `asm = "add {dst:r:out}, {src:r}"` ⇒ `Inst::Iadd { dst, src }`（更早的 `ops`/`bind` 两个键
+  效果相同，v22 起**已删除**：写了报未知键并给出"你是不是想写 X"的建议）；
+  `[form.<名字>].fields` 的字段名（`rd`/`rs1`）
+  与变长 ISA 的语义名（`dest`/`cond`）**只是内部编码键**（字段的编码落点由 `fields` 展开派生，
+  不是用户面键；另有 modrm 角色/立即数
   表），不得再泄漏成字段名。关键字 → `r#type`、数字开头 → `_8bit`（最小归一，不做语义改名）；
   守卫 `crates/frontend/forge-isa-dsl/tests/field_names.rs`。
 - **v22 现行面速查（2026-10 落地，照此写谱）**：`[reg.<名>]`（宽度只在名字里）、
   `[operand.<名字>]`、`[enum.<表名>]`、`[form.<名>]`（表头即形式名，字段就地 `fields`）、
-  `[inst.<名>]`（表头即指令名）、`[family.<名>]`（唯一复用机制，取代 `[[templates]]`）、
-  `[pred.<名>]`（命名谓词，原 `[[derive]]`）、`[asm.pseudo.<名>]` / `[asm.immfn.*]` /
+  `[inst.<名>]`（表头即指令名）、`[family.<名>]`（唯一复用机制）、
+  `[pred.<名>]`（命名谓词）、`[asm.pseudo.<名>]` / `[asm.immfn.*]` /
   `[asm.reloc.<名>]`、`[machine.stack|text|classes|spill.<模板名>]`、`[lower.<名>]`。
   **操作数声明与字段绑定就地写在 `asm` 里**（v22 核心人体工学改造）：`{名字:槽[:角色]}` 声明
   一个操作数、`{@字段:槽[:角色]}` 额外把它绑到字段（`@[字段]` = 内存形态）；
   打印序 ≠ 编码序时用 `{名字:槽#序号}`（一条指令里**全标或全不标**）。
   旧键 `ops`/`bind` 与 v21 的占位修饰（`{n?}`/`{n:affix}`）**已删**：前者仍在解析器里兼容
-  （只为仓库内测试谱，`LEGACY_FIELDS` 守卫钉住"不进 schema"），后者连解析一起删了；
+  （`#[serde(skip)]` 内部载体，`INTERNAL_FIELDS` 守卫钉住"不进 schema"），后者连解析一起删了；
   `modrm` 保留——扩展码（`/4` 这类**整数** `reg`）只能由它表达。
-  **仍是数组节的**：`[[pattern]]`、`[[vectors]]`、`[[override]]`。**重名由 TOML 自身拒绝**
+  **仍是数组节的**：`[[lower.<op>]]`（同名可多块）、`[[vectors]]`、`[[override]]`。**重名由 TOML 自身拒绝**
   （表头即名字的表）；未知键一律 `deny_unknown_fields` 报错（并给出"你是不是想写 X"的建议），
   没有兼容层。
 - **TOML 改动**：改 `isa/*.toml` 直接触发重编译——生成模块内嵌
@@ -664,13 +661,12 @@ let name = node.get_text("name")?;
 `imm0` = `current_immediates[0]`（Vextract/Vinsert lane 索引、AtomicRmw op
 判别值 Xchg=0/Add=1/Sub=2）。
 
-`[[lowering]].op` **可以是名单**（v18 S5）：`op = ["Copy", "Uextend", "Freeze"]` = 这几条 op
-的 lowering 完全一样，只维护一份序列（解析期展开成逐 op 规则，名单序 = 展开序，裁决结果不变）。
-x86 用它把 Copy/Uextend/Freeze/Ptrtoint/Inttoptr、Sitofp/Uitofp、Fptosi/Fptoui、Undef/Poison
-等 6 组去重（220 → 197 条声明）。**不加** `lowering.emit`/`[[sequences]]`：实测表格化的规则数
-收益 ≤5%、长序列跨 op 复用为 0，而 `vary` 已覆盖同一模板按行代入的形态（详见方案 §7 S5 进度）。
+`op` 由**表头名**给出（`[[lower.Iadd]]` ⇒ op = `Iadd`）。同一序列要覆盖多条同形 op ⇒
+**各写一块**：x86 就这样给 Copy/Uextend/Freeze/Ptrtoint/Inttoptr、Sitofp/Uitofp、Fptosi/Fptoui、
+Undef/Poison 等 6 组去重（共 197 条 `[[lower.<op>]]` 声明）。**不加**规则的表形式与共享序列机制：
+实测表格化的规则数收益 ≤5%、长序列跨 op 复用为 0，而 `vary` 已覆盖同一模板按行代入的形态。
 
-`[[lowering]]` 的两个消重/去序键（v15-S2）：
+`[[lower.<op>]]` 的两个消重/去序键：
 
 - `vary = { attr = [...], name = [...] }`：各列表**等长**，按下标 zip 成行展开。
   键在 `PRED_ATTRS` 里 → 该行自动追加 `eq = [键, 值]` 到 `when`；否则是模板里
@@ -682,7 +678,7 @@ x86 用它把 Copy/Uextend/Freeze/Ptrtoint/Inttoptr、Sitofp/Uitofp、Fptosi/Fpt
 
 编码键（v15-S3，v21 W10 现名）：`[form.<名字>]` 与 `[inst.<名字>]` **共用同一组语义键**
 （`EncKeys`：modrm/modrm_fixed/rex/vex/evex/prefix/opsize/rex_w/opcode_reg/imm/
-escape；`opcode_field`/`operand_fields` 自 v21 W2 起只是**内部展开目标**）。form 退化为**可选的预设混入**，指令可逐键
+escape）。form 退化为**可选的预设混入**，指令可逐键
 覆盖（`EncKeys::over`，指令优先），`form` 本身可省略——组合不再需要预先命名。
 x86 forms 47 → 19，37 条指令直接内联编码键（不再有 `MRR_0F_NOOS_MEM` 与
 `MRR_MEM_0F_NOOS` 这种把 4 个事实编进名字、且只差 `rex_w` 的并存命名）。
@@ -692,11 +688,10 @@ x86 forms 47 → 19，37 条指令直接内联编码键（不再有 `MRR_0F_NOOS
 操作数**名字**，或共享 form 上的 `"auto"`（第一个 Reg 操作数驱动）；`"max"`（全部 Reg
 操作数的最大宽度）不变。
 
-命名操作数（v15-S3c，**v22 已改为 `asm` 内联声明**）：新面把声明就地写在模板里——
-`asm = "add {dst:r:out}, {src:r}"`（`{@字段:槽[:角色]}` 额外绑定字段、`@[字段]` = 内存形态、
-`#序号` 钉编码序）。**数组序 = 编码序**的旧写法 `ops = ["src:gprx", "dst:gprx:inout"]`
-与 `bind` 键仍被解析器接受，但**已撤出对外表面**（schema/文档/JSON 不再宣传，见上文 v22 速查）。
-无论哪种写法，**声明名同时就是生成的 `Inst` 字段名**（v18 S7d：声明 `dst` ⇒ `Inst::Iadd { dst, src }`；
+命名操作数（v22：**声明就地写在 `asm` 里**）：`asm = "add {dst:r:out}, {src:r}"`
+（`{@字段:槽[:角色]}` 额外绑定字段、`@[字段]` = 内存形态、`#序号` 钉编码序）。
+更早的 `ops` 数组 + `bind` 键**已删除**（写了报未知键）。在现行写法里，
+**声明名同时就是生成的 `Inst` 字段名**（声明 `dst` ⇒ `Inst::Iadd { dst, src }`；
 位域名/语义角色名只是内部编码键）。`opsize` 因此能写 `opsize = "dst"`（自解释），
 取代 `"s1"` 这种"读者无法判断指哪个"的位置引用（v14 那个把 64 位指针截成 32 位的
 bug 就出在 `s0` 恰好是**源**）。v14 的 asm 内联声明 `{i:[槽:角色]}`、v21 的占位修饰

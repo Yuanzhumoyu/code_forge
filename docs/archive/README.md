@@ -11,7 +11,8 @@
 | 文件 | 内容 | 现行替代 |
 | --- | --- | --- |
 | `roadmap-status.md` | v14-forge-ir-redesign 路线图交接（P0-P5 执行史） | `crates/tools/forge-rustc/WORKAROUNDS.md`（WA-37/38/39）+ README |
-| `isa-dsl-v21-redesign-plan.md` | ISA-DSL v21 重设计（**2026-10-08 归档**：v21 已收口 —— W1–W11 + W6 + W6+ 全部落地；只记设计取舍与切片史） | `../plans/isa-dsl-v21-execution-checklist.md`（活账本，§14 最终验收）+ `../reference/isa-dsl.md`（现行规范） |
+| `isa-dsl-v21-redesign-plan.md` | ISA-DSL v21 重设计（**2026-10-08 归档**：v21 已收口 —— W1–W11 + W6 + W6+ 全部落地；只记设计取舍与切片史） | `isa-dsl-v21-execution-checklist.md`（同期归档的执行清单）+ `../reference/isa-dsl.md`（现行规范） |
+| `isa-dsl-v21-execution-checklist.md` | ISA-DSL v21 执行清单（**2026-10-11 归档**：W1–W11 + W6+ 与 §14 最终验收全部完成；只作历史证据） | `../reference/isa-dsl.md`（现行语法 v22） |
 | `isa-dsl-variant-field-values.md` | 按变体给字段值（**2026-10-08 归档**：工作**早已落地** —— 键名是 `fields_variant`，`rev8` 正在用；本文留设计取舍与"文档头不可信、先 grep 键名"的教训） | `../reference/isa-dsl.md`（键表 + 变体参数节） |
 | `varargs-plan.md` | 变参（varargs）方案（**2026-10-08 归档**：功能面已完成 —— 四份 `va_list` 形状齐备、SysV `%al` 写入 V7 已做；前端是明写的非目标） | `../reference/calling-conventions.md`（现行参考） |
 | `forge-ir-v3-plan.md` | forge-ir v3 改进方案（**2026-10-08 归档**：S1–S8 **全部收口** —— S3 三个余项已落地、**S7 余项清零**、S8 经拍板只做二进制序列化且已落地；未关闭项移交 `../forge-ir/backlog.md`） | `../forge-ir/backlog.md`（活跃待办）+ `../reference/binary-format.md`（S8 产物规范） |

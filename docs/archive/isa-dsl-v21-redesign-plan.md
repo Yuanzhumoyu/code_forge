@@ -2,7 +2,7 @@
 
 > ⚠️ **ARCHIVED（2026-10-08）** —— 本方案描述的 **v21 重设计已收口**（W1–W11 + W6 + W6+
 > 全部落地）。执行进度、逐片验收与剩余项见**活的账本**
-> [`../plans/isa-dsl-v21-execution-checklist.md`](../plans/isa-dsl-v21-execution-checklist.md)
+> [`isa-dsl-v21-execution-checklist.md`](isa-dsl-v21-execution-checklist.md)
 > （§14 最终验收快照 #3：整仓门禁 exit 0、x86 197/3/0 与 riscv64 136/64/0、谱内向量 505、
 > 编码指纹与 asm 棘轮）。**现行规范**见 [`../reference/isa-dsl.md`](../reference/isa-dsl.md)；
 > 本文只记**设计取舍与切片史**（内容以其记录时点为准）。
@@ -26,7 +26,7 @@
 > | 最终验收 | 三谱字节 / 三矩阵 / lint / D1–D6 证据 / 度量 / 文档三方针 | ⬜ 未开始 |
 >
 > 本文其余部分是**设计时的现状断言**（以记录时点为准）；引用的行号**随迭代漂移，以符号名为准**。
-> 逐片提交与证据记在 `docs/plans/isa-dsl-v21-execution-checklist.md` 与 `CHANGELOG.md`。
+> 逐片提交与证据记在 `docs/archive/isa-dsl-v21-execution-checklist.md` 与 `CHANGELOG.md`。
 
 ## 目录
 

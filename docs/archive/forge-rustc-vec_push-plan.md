@@ -114,7 +114,7 @@ README 限制区⑧ `probe_n n=5`（~40 行）最小复现。gdb 断点 + `FORGE
 
 **验收结论（2026-10-11）**：4/4 达成 ⇒ 本方案归档（见文件头 ARCHIVED）。
 **同期 CI 另有两处红灯**（不属本方案范围，记在
-`../plans/isa-dsl-v21-execution-checklist.md` §14 快照 #4）：
+`isa-dsl-v21-execution-checklist.md` §14 快照 #4）：
 job `forge-tests (nightly / forge-rustc)` 的 `cargo test -p forge-tests --features nightly`
 与 job `Test (macOS)` 的 `cargo test --workspace --exclude forge-rustc`。
 
