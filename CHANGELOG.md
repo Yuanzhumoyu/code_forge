@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M4（批次 C 第三步）：发射侧**三个平行数组收敛成一个绑定切片**；`set_operand_reg` 按实测删除
+
++ `emit_inst_with_spills` 的 `inst_xregs`/`inst_field_idx`/`inst_classes` 三个平行切片换成**一个 `binds: &[OperandBind]`** —— 它们本来就是同一张绑定表的三个投影（调用点少铺三次 `collect`，签名少两个参数）。
++ spill 回写补上 **fail-closed**：字段不可改写（固定物理字段）时返回 `IrError::RegAlloc` 而不是静默 no-op（与 regalloc 的 WA-40 守卫同口径；生成物里 `settable` 恒真，故发行 ISA 行为不变）。
++ **删除 `MachineInst::set_operand_reg`**（方案原设想）并写明原因：实测发现两个**序号空间不同源** —— 绑定表只登记绑定到 vreg 的字段，形状表 `operands()` 登记该变体全部 use/def 字段（物理寄存器占位的操作数只在后者）。于是 `set_operand_reg(bind_idx)` 会写到**另一个字段**（`add` 这类 InOut 指令：旁表 1 条、形状表 2 条）。回写统一为 `is_reg_field_settable(field)` + `set_reg_field(field, …)`：字段号来自绑定表、可改写性来自形状表，各自只回答自己知道的事。
+
 ### Fixed (2026-10-11) — 后端 v23 M4（批次 C 第二步）：**同一件事的两种类推导口径合一**（并把类折进绑定表）
 
 + **发现并消除一处口径分叉**：回填微指令字段时，`compiler.rs` 的主回填用 `ctx.reg_class_for(ty)`（ISA 类型映射），而 `emission.rs` 的 spill 回填用 `forge_ir::RegClass::from_type_id(ty)` —— 同一个 vreg 的同一个 IR 类型，两个回填点可能推出**不同的值宽类**。

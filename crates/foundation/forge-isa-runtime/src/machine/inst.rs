@@ -272,27 +272,19 @@ pub trait MachineInst: Clone + std::fmt::Debug + Send + Sync + Hash + Eq {
             .map(|o| o.constraint)
             .collect()
     }
-
-    /// **回写第 `i` 个操作数**（按 [`Self::operands`] 的序）的物理寄存器。
-    ///
-    /// 返回"是否真的改写了"：`false` = 该字段不可改写（固定物理字段）或序号越界——
-    /// regalloc 对 spilled def 必须据此 fail-closed（WA-40：静默 no-op 会让
-    /// store-back 从 scratch 读、spill 槽留下陈旧值）。
-    ///
-    /// v23 M4 起这是**唯一**的回写入口；`set_reg_field` 保留为"按字段号回写"的
-    /// 底层方法，由生成物实现。
-    fn set_operand_reg(&mut self, i: usize, preg_idx: u32, class: RegClass) -> bool {
-        let ops = self.operands();
-        let Some(op) = ops.get(i) else {
-            return false;
-        };
-        if !op.settable {
-            return false;
-        }
-        self.set_reg_field(usize::from(op.field), preg_idx, class);
-        true
-    }
 }
+
+// v23 M4 批次 C：**回写入口只留 `set_reg_field`（按字段号）**。
+//
+// 方案原本设想 `set_operand_reg(i, preg, class)`（按 `operands()` 的序号回写），实现后
+// 实测发现两个序号空间**不同源**：绑定表（`InstPacket::inst_ops`）只登记**绑定到 vreg**
+// 的字段，而形状表（`operands()`）登记该变体**全部** use/def 字段——物理寄存器占位的
+// 操作数只出现在后者。于是 `set_operand_reg(bind_idx)` 会写到**另一个字段**上
+// （实测：`add` 这类 InOut 指令的旁表只有 1 条、形状表有 2 条）。
+//
+// 因此该 API 已删除（不留"看着对、用起来错"的半接通接口），回写统一为
+// `is_reg_field_settable(field)` + `set_reg_field(field, preg, class)`：
+// 字段号来自绑定表，可改写性来自形状表——两处各自只回答自己知道的事。
 
 // ============================================================
 // OperandConstraint — per-operand register allocation constraint

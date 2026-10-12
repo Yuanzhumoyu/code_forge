@@ -790,7 +790,24 @@ spilled def fail-closed）；手写实现（`DummyInst`/`FixedFieldInst`）改�
 但**读取面已收口到一处**（那次折入）。彻底删除的路径：让这 26 个分配点把类直接记进绑定
 （或以包为单位记录 vreg→类，随 `append`/`extend` 带上来）。
 
-**下一步（批次 C 第三步）**：
+### 批次 C 第三步——✅ 已落地（2026-10-11）：三个平行数组收敛成一个绑定切片 + `set_operand_reg` 删除
+
+**发射侧**：`emit_inst_with_spills` 的 `inst_xregs`/`inst_field_idx`/`inst_classes` 三个平行切片
+换成**一个 `binds: &[OperandBind]`**（调用点少铺三次 `collect`、签名少两个参数）。
+spill 回写补 fail-closed：字段不可改写时 `Err(IrError::RegAlloc)`（与 regalloc 的 WA-40 同口径；
+生成物 `settable` 恒真 ⇒ 发行 ISA 行为不变）。
+
+**方案 API 的实测否决**：原设想的 `set_operand_reg(i, preg, class)` **已删除**——两个序号空间
+不同源：绑定表只登记**绑定到 vreg** 的字段，形状表 `operands()` 登记该变体**全部** use/def 字段
+（物理寄存器占位的操作数只在后者）。`add` 这类 InOut 指令实测：旁表 1 条、形状表 2 条，
+`set_operand_reg(bind_idx)` 会写到**另一个字段**。回写统一为
+`is_reg_field_settable(field)` + `set_reg_field(field, …)`：字段号来自绑定表、可改写性来自形状表。
+
+**批次 C 剩余**（M4 收口前的最后一项）：`ctx.xreg_types` 字段（~26 个 vreg 分配点写入，
+读取面已收口到那次折入）——让分配点把类直接记进绑定（或以包为单位记 vreg→类、随
+`append`/`extend` 带上来），之后 `CompileState` 只剩 `inst_ops`，M4 即可收口。
+
+**下一步（历史记录）**：
 ① 把 `ctx.xreg_types`（vreg → IR 类型）的**读点**（`emission.rs:307` 前后的回填宽度类、
 `compiler.rs:2570` 附近）改成读 `inst_ops[..].class`（`OperandBind` 增 `class` 字段，
 写点仍从 IR 类型推），从而删掉这张表；

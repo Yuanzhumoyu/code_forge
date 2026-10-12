@@ -91,12 +91,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             for (gi, inst) in (block_starts[vcode_idx]..).zip(vb.instructions.iter_mut()) {
                 let slot: &[crate::machine::lowering::OperandBind] =
                     inst_ops.get(gi).map(|s| s.as_slice()).unwrap_or(&[]);
-                let inst_xregs: smallvec::SmallVec<[XReg; 8]> =
-                    slot.iter().map(|b| b.vreg).collect();
-                let inst_field_idx: smallvec::SmallVec<[u8; 8]> =
-                    slot.iter().map(|b| b.field).collect();
-                let inst_classes: smallvec::SmallVec<[Option<RegClass>; 8]> =
-                    slot.iter().map(|b| b.class).collect();
+                // v23 M4 批次 C 第三步：不再铺三个平行数组（vreg / 字段 / 值宽类）——
+                // 它们本来就是同一张绑定表的三个投影，直接把切片交给发射件。
                 let inst_local_idx = gi - block_starts[vcode_idx];
                 let line = vb.inst_lines.get(inst_local_idx).copied().flatten();
                 let start_off = sink.offset() as u32;
@@ -111,9 +107,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     sink,
                     callee_saved_bytes,
                     stack_args,
-                    &inst_xregs,
-                    &inst_field_idx,
-                    &inst_classes,
+                    slot,
                     _func.name.as_str(),
                 )?;
                 if let Some(ln) = line {
@@ -219,14 +213,13 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         sink: &mut CodeSink,
         callee_saved_bytes: i32,
         stack_args: i32,
-        inst_xregs: &[XReg],
-        inst_field_idx: &[u8],
-        inst_classes: &[Option<RegClass>],
+        binds: &[crate::machine::lowering::OperandBind],
         fname: &str,
     ) -> Result<(), IrError> {
         // 去重收集 spilled XReg（同一 XReg 的 use/def 共用一个 scratch 寄存器）
         let mut spilled: smallvec::SmallVec<[XReg; 8]> = smallvec::SmallVec::new();
-        for &xreg in inst_xregs {
+        for bind in binds.iter() {
+            let xreg = bind.vreg;
             if alloc_result.is_spilled(xreg) && !spilled.contains(&xreg) {
                 spilled.push(xreg);
             }
@@ -296,16 +289,27 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // Emit 前把 spilled 字段重设为 scratch 寄存器：
         // 分配阶段回写的旧寄存器（如 reload 后的 R9）与 scratch 不一致，
         // 会导致 store 存回错误寄存器。重设后 emit 与 store 使用同一寄存器。
-        // 用 inst_ops 的 field_idx（而非 enumerate 位置）：指令含物理寄存器
-        // 字段（如 `MOV_R_RM RCX` 的 op0）时 inst_ops 跳过该字段，记录位置
+        // 用绑定表里的**字段号**（而非 enumerate 位置）：指令含物理寄存器
+        // 字段（如 `MOV_R_RM RCX` 的 op0）时绑定表跳过该字段，记录位置
         // 与字段序号错位——用位置会把物理字段覆盖成 scratch（shift 崩溃）。
-        for (i, &xreg) in inst_xregs.iter().enumerate() {
+        //
+        // v23 M4 批次 C 第三步：三个**平行数组**（vreg / field_idx / class）收敛成
+        // 一个绑定切片（`binds`）——它们本来就是同一张表的三个投影。
+        for bind in binds.iter() {
+            let xreg = bind.vreg;
             if let Some(preg) = xreg_preg(xreg) {
-                // class：值宽类由管线折进绑定（`OperandBind::class`，v23 M4 批次 C
-                // 第二步）——以前这里现场走 `RegClass::from_type_id`、而 compiler.rs 的
-                // 主回填走 `ctx.reg_class_for`：同一件事两种口径，现在读同一份数据。
-                let cls = inst_classes[i].unwrap_or_else(|| xreg.class());
-                inst.set_reg_field(inst_field_idx[i] as usize, preg.num, cls);
+                // class：值宽类已由管线折进绑定（见 compiler.rs 的折入步骤），
+                // 两个回填点读同一份数据；缺省退 vreg 自身类。
+                let cls = bind.class.unwrap_or_else(|| xreg.class());
+                // fail-closed（与 regalloc 的 WA-40 守卫同口径）：字段不可改写时
+                // 改写是静默 no-op ⇒ store-back 从 scratch 读、spill 槽留下陈旧值。
+                if !inst.is_reg_field_settable(usize::from(bind.field)) {
+                    return Err(IrError::RegAlloc(format!(
+                        "{fname}: 第 {} 号字段不可改写（固定物理字段）却被 spill 改写",
+                        bind.field
+                    )));
+                }
+                inst.set_reg_field(usize::from(bind.field), preg.num, cls);
             }
         }
 
