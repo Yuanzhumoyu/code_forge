@@ -1,6 +1,6 @@
 //! 生成字段名 = **DSL 声明的操作数名**（v18 S7D-fix）。
 //!
-//! 背景：历史实现里 `ops = ["dst:r:out", "src:r"]` 的 `dst`/`src` **只**用于 asm 模板，
+//! 背景：历史实现里"`ops` 数组里的 `dst`/`src` **只**用于 asm 模板"——字段名取自位域名。
 //! `Inst` 变体的字段名却另取一套——定宽 ISA 取位域名（`[forms].operand_fields` 的
 //! `rd`/`rs1`）、变长 ISA 取语义角色名（`dest`/`src`）。作者写的名字在用户面
 //! 完全没有意义（`Inst::Iadd { rd, rs1 }`），且位域名泄漏成 API。
@@ -78,7 +78,7 @@ fn digit_leading_operand_name_is_prefixed() {
     assert!(t.contains("Add{_8bit:Reg,src:Reg}"), "数字开头应加前缀");
 }
 
-/// 变长 ISA（x86）同样按 `ops` 声明名：`MOV_RM_R` 的 `ops = ["src:gpr", "dst:gpr:inout"]`
+/// 变长 ISA（x86）同样按 `asm` 里声明的名字：`MOV_RM_R` 声明 `src`/`dst`
 /// ⇒ 字段 `src`/`dst`（历史实现是语义名 `dest`，与声明不符）。
 #[test]
 fn vlen_isa_fields_use_declared_names() {
@@ -94,7 +94,7 @@ fn vlen_isa_fields_use_declared_names() {
         "x86 字段应按 ops 声明命名"
     );
     assert!(!t.contains("MovRmR{dest:"), "旧的语义名 dest 不得再出现");
-    // 条件码操作数：`ops = [..., "cc:cond"]` ⇒ 字段 `cc`（历史名 `cond`）。
+    // 条件码操作数：声明 `cc`（槽 `cond`）⇒ 字段 `cc`（历史名 `cond`）。
     // v21 W6+：类型是**IR 条件枚举**（`cond_bank = "int"` ⇒ `IntCC`），不是裸 `u8`。
     assert!(
         t.contains("JccRel32{cc:forge_isa_runtime::ir::IntCC,target:i64}"),

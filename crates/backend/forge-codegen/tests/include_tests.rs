@@ -86,7 +86,7 @@ fn roundtrip_and_text_are_stable() {
 }
 
 /// 具名字段（不是裸 u32）：字段名**就是 `ops` 里声明的名字**（v18 S7d）——
-/// 这里 `ops = ["dst:r:out", "src:r"]` ⇒ `Inst::Iadd { dst, src }`；
+/// 这里 `asm = "add {dst:r:out}, {src:r}"` ⇒ `Inst::Iadd { dst, src }`；
 /// 位域名（`rd`/`rs1`，来自 `[conventions.bitfields]`）只用于编码位置，不再冒充字段名。
 #[test]
 fn inst_variants_stay_typed() {

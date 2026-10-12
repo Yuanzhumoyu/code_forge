@@ -131,7 +131,7 @@ fn disassemble_known_texts() {
 
 #[test]
 fn inst_enum_shapes() {
-    // Inst 字段名 = `ops` 里声明的名字（`ops = ["dst:gpr:out", "src:gpr", "src2:gpr"]`
+    // Inst 字段名 = `asm` 里声明的名字（声明 `dst`/`src`/`src2`
     // 等），字段类型：reg → Reg 枚举，imm/label → i64（枚举形状抽查）。
     let add = assemble("add X1, X2, X3").unwrap();
     assert_eq!(

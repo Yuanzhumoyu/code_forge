@@ -70,7 +70,7 @@ fn tutorial_spec_validates_and_expands() {
     for v in ["Add", "Sub", "Movi", "Brz"] {
         assert!(flat.contains(v), "教程里的指令 {v} 应出现在生成物里");
     }
-    // 教程正文承诺：`ops = ["dst:g:out", "src:g"]` ⇒ `Inst::Add { dst, src }`。
+    // 教程正文承诺：`asm = "add {dst:g:out}, {src:g}"` ⇒ `Inst::Add { dst, src }`。
     assert!(
         flat.contains("Add{dst:Reg,src:Reg}"),
         "字段名应来自 ops（教程中的说明与实现必须一致）"

@@ -49,7 +49,7 @@
 | `DSL-TEMPLATE` | `[family.<名>]` 展开出的实例 | 实例的 `form` 未声明、操作数槽未声明、缺少编码信息等——消息前缀是 `[family.X]`（X = 族名），族行本身的错误同样归这里 |
 | `DSL-LOWER` | `[[lower.<op>]]` | 引用名未声明、占位符未知、**`when` 属性未知**（恒假 ⇒ 规则永不命中）、完全重复、死规则、树型匹配的死模式 |
 | `DSL-OVERLAP` | `[[lower.<op>]]`（**仅 `validate --strict-overlap`**） | 同 op 两条规则的取值域**相交但互不包含**（部分重叠）：裁决序里前者先命中。**默认档不报**——真谱里"特化 + 兜底"遍地都是（实测三 ISA 共 61 条，全是合法写法）；该档是**评审清单**，不是错误判据 |
-| `DSL-PATTERN` | `[[pattern]]` | 匹配树语法错、内部节点用 Fcmp/Icmp/Copy/Nop、叶变量重复、`when` 属性未知 |
+| `DSL-LOWER` | `[[lower.<op>]]` 的树模式（`match`） | 匹配树语法错、内部节点用 Fcmp/Icmp/Copy/Nop、叶变量重复、`when` 属性未知、死模式 |
 | `DSL-ABI` | `[machine]`（`[abi]` 已删除） | 寄存器名未在 `[reg.*]` 声明（`fixed`/`scratch`/`link`；v21 W9 前的 `fixed_regs`/`spill_scratch`/`link_reg` 已改名） |
 | ~~`DSL-EMIT`~~ | ~~`[machine.text]`~~ | **已随 v20 A4 删除**（序/尾声键不存在；`[machine.text]` 只剩机器事实） |
 | `DSL-SPILL` | `[machine.spill.<模板名>]`（v21 W9 前叫 `[spill.<名>]`） | 指令引用未声明、占位符不是 `{N}`、`base` 未在 `[reg.*]` 声明、`class` 未声明 |

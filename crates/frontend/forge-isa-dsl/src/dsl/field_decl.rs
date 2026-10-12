@@ -507,7 +507,7 @@ pub fn lower_field_syntax(m: &mut super::model::IsaModel) -> Result<(), String> 
         .iter()
         .filter_map(|f| f.fields.clone().map(|d| (f.name.clone(), d)))
         .collect();
-    // v21 W4.3：**变长 ISA 的 `bind`** 也要落地——`bind = { reg = "dst", rm = "src" }`
+    // v21 W4.3：**变长 ISA 的显式字段绑定**也要落地——`{@reg:gpr}{dst:gpr:out}, {@rm:gpr}{src:gpr}`
     // 说的是"哪个操作数进 ModRM 的 reg/rm 字段"（定宽 ISA 走 `operand_fields`）。
     for inst in &mut m.instructions {
         let Some(fname) = inst.form.clone() else {

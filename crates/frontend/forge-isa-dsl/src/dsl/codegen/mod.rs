@@ -159,7 +159,7 @@ pub(crate) fn field_ctor_expr_view(
 
 /// DSL 操作数名 → Rust 字段标识符（v18 S7d）。
 ///
-/// 名字全部来自 `ops = ["dst:r:out", …]` 的 `dst`——作者写什么，用户面就看到什么。
+/// 名字全部来自 `asm` 内联声明里的名字——作者写什么，用户面就看到什么。
 /// 归一化只处理"不能直接当标识符"的情况（数字开头/含 `-` → `_`；Rust 关键字 →
 /// 原始标识符 `r#…`；`self`/`Self`/`super`/`crate` 不能原始化 → 末尾加 `_`），
 /// 不做任何语义改名。
@@ -655,7 +655,7 @@ pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>
 /// 从 asm 模板解析：首词 = 助记符；操作数占位符 `{i:[槽:角色]}` 内联声明。
 /// 返回 (助记符, 操作数声明表，按序号排序且连续)。
 /// validate.rs 也调用本函数做操作数校验（槽存在/角色合法/序号连续）。
-/// 解析 `ops = ["名字:槽[:角色]", …]`：返回操作数用法表（含**声明名**），序即编码序。
+/// 解析 `asm` 里的 `{名字:槽[:角色]}`（内联声明）：返回操作数用法表（含**声明名**），序即编码序。
 fn parse_ops_list(ops: &[String], inst_name: &str) -> Result<Vec<OperandUse>, String> {
     let ctx = || format!("[inst.{inst_name}].ops");
     if ops.is_empty() {

@@ -3316,12 +3316,12 @@ pub struct OverrideDef {
     pub value: toml::Value,
 }
 
-/// 操作数使用：**DSL 声明的名字** + 槽 + 角色（`ops = ["dst:r:out", …]`）。
+/// 操作数使用：**DSL 声明的名字** + 槽 + 角色（`asm = "add {dst:r:out}, {src:r}"`）。
 ///
 /// 名字是作者面唯一的事实源：它既是 `asm` 模板里的占位符名（`{dst}`），
 /// 也是**生成的 `Inst` 变体字段名**（v18 S7d）。编码位置（位域名 / modrm 角色）
 /// 另行派生，不再借用名字——历史实现把"位域名"直接当字段名，于是
-/// `ops = ["dst:r:out", "src:r"]` 生成出 `Inst::Iadd { rd, rs1 }`：
+/// `asm = "add {dst:r:out}, {src:r}"` 生成出 `Inst::Iadd { dst, src }`：
 /// 作者写的名字在用户面**完全没有意义**。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

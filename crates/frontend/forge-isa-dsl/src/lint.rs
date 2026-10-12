@@ -7,7 +7,7 @@
 //!
 //! 规则清单（V4a/V4b/V4c；全部只看模型 / 合并后的文本，锚到 TOML 行列）：
 //!
-//! 1. `LINT-UNUSED-SLOT`：`[operand.<名字>]` 没有被任何 `ops = ["名:槽[:角色]", …]` 引用；
+//! 1. `LINT-UNUSED-SLOT`：`[operand.<名字>]` 没有被任何 `asm` 内联声明引用；
 //! 2. `LINT-UNUSED-FORM`：`[form.<名>]` 没有被任何指令 / 模板 `body.form` 引用；
 //! 3. `LINT-UNUSED-BITFIELD`（V4b）：`[conventions.bitfields]` 的位域名在整份谱里**只出现在
 //!    声明处**。判据故意用**文本标识符计数**而不是"遍历模型找引用点"——引用形态太多

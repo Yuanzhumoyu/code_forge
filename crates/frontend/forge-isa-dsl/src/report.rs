@@ -256,7 +256,7 @@ fn row_of(m: &IsaModel, info: &crate::dsl::codegen::InstInfo<'_>) -> InstRow {
 /// 字段名直接取**编译器的绑定结果**（`EncKeys.operand_fields`，按 `ops` 序，由
 /// `field_decl::bind_operands` 算出）；**来源**按口径 A 的判定**反推**（与正推等价，
 /// 见 `bind_operands` 的文档）：
-/// `inst.bind` 里有它 ⇒ **显式 `@`**（`bind = {…}` 或 asm 里的 `{@字段:槽}`）；
+/// `inst.bind` 里有它 ⇒ **显式 `@`**（asm 里的 `{@字段:槽}`）；
 /// 否则字段名 == 操作数名 ⇒ **同名**（正推时同名分支必然先命中，所以这条反推可靠）；
 /// 否则 ⇒ **位置回退**。
 fn op_bind_lines(

@@ -233,9 +233,9 @@ fn extract_one(inst: &Instruction) -> Result<Option<Extraction>, String> {
                                 ));
                             }
                             // **允许多个操作数绑到同一个字段**：arm64 的
-                            // `bind = { arrd = "vq", arrs = "vq", arrs2 = "vq" }` 就是这种
-                            // （三个 `varr` 操作数各自写进同一个 `vq` 位）；旧路径
-                            // `bind_operands` 同样产出 `["vq","vq","vq"]`，所以这里不能判重。
+                            // `{@vq:varr}{arrd:varr}, {@vq:varr}{arrs:varr}, {@vq:varr}{arrs2:varr}` 就是这种
+                            // （三个 `varr` 操作数各自写进同一个 `vq` 位）；位置回退路径
+                            // 同样产出 `["vq","vq","vq"]`，所以这里不能判重。
                             (Some(field.clone()), bmem)
                         }
                     };
