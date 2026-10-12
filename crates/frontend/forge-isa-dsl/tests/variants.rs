@@ -180,7 +180,7 @@ fn riscv_rv32_projection_snapshot() {
         "逐节丢弃合计 21 项（v20 A4 起序/尾声不再由谱写）：{:#?}",
         p.dropped_decls
     );
-    for what in ["[machine.spill.gpr]", "[[lowering]]"] {
+    for what in ["[machine.spill.gpr]", "[[lower.<op>]]"] {
         assert!(
             p.dropped_decls.iter().any(|(w, _)| w == what),
             "必须报到 {what}：{:#?}",

@@ -187,23 +187,17 @@ pub(crate) fn section_code(kind: &str) -> &'static str {
         "machine.text" => "DSL-EMIT",
         "machine.spill" => "DSL-SPILL",
         "conventions" => "DSL-CONV",
-        "operand_slots" => "DSL-SLOT",
-        "forms" => "DSL-FORM",
-        // v21 W10：表头即名字的两张表（`[form.<名>]` / `[inst.<名>]`），码与旧节一致。
+        // v21 W10：表头即名字的两张表（`[form.<名>]` / `[inst.<名>]`）。
         "form" => "DSL-FORM",
         "inst" => "DSL-INST",
-        "instructions" => "DSL-INST",
-        "templates" => "DSL-TEMPLATE",
         // v21 W5：族降级来的载体锚到 `[family.<名>]`，码与模板同族。
         "family" => "DSL-TEMPLATE",
         "reloc" => "DSL-RELOC",
-        "derive" => "DSL-DERIVE",
-        "pseudo" => "DSL-PSEUDO",
-        "lowering" => "DSL-LOWER",
-        // v21 W6-a：选择层的现名（`[[lower.<名字>]]`）——三种形态共用这个节名。
+        "pred" => "DSL-DERIVE",
+        "asm.pseudo" => "DSL-PSEUDO",
+        // v22：选择层（`[[lower.<名字>]]`）三种形态共用 `lower`；树模式的诊断标签是
+        // 「树型匹配 #i」（它写在 `[[lower.<名>]]` 块里，但判定与裁决序是独立一档）。
         "lower" => "DSL-LOWER",
-        "pattern" => "DSL-PATTERN",
-        "abi" => "DSL-ABI",
         "emit" => "DSL-EMIT",
         "spill" => "DSL-SPILL",
         "include" => "DSL-INCLUDE",

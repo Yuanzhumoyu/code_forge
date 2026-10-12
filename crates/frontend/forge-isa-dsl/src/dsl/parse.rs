@@ -176,6 +176,7 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
                         }
                     }
                     model.pattern.push(crate::dsl::model::Pattern {
+                        name: Some(name.clone()),
                         r#match: tree.clone(),
                         priority: d.priority,
                         when: d.when.clone(),
@@ -225,7 +226,7 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
         for (name, body) in asm.pseudo {
             if model.pseudo.iter().any(|p| p.name == name) {
                 return Err(anchor_err(format!(
-                    "[asm.pseudo.{name}]: 与已有的 `[[pseudo]]` 声明同名（v21 W7：名字必须唯一）"
+                    "[asm.pseudo.{name}]: 与已有的 [asm.pseudo.<名>] 声明同名（名字必须唯一）"
                 )));
             }
             model.pseudo.push(crate::dsl::model::PseudoDef {

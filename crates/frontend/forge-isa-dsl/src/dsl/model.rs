@@ -3760,7 +3760,7 @@ impl Template {
         let path = if self.from_family {
             format!("[family.{label}]")
         } else {
-            format!("[[templates.{label}]]")
+            format!("[family.{label}]")
         };
         if self.rows.is_empty() {
             return Err(format!("{path}: rows 不能为空（至少要一行）"));
@@ -4066,9 +4066,13 @@ impl IsaModel {
     /// 消除"两边各排一次、排法不一致"的风险。
     pub fn pattern_order(&self) -> Result<Vec<usize>, String> {
         let mut keys: Vec<(i32, i32, i32)> = Vec::with_capacity(self.pattern.len());
-        for (i, p) in self.pattern.iter().enumerate() {
-            let tree = crate::dsl::match_tree::parse(&p.r#match)
-                .map_err(|e| format!("[[pattern]] #{i}.match: {e}"))?;
+        for p in self.pattern.iter() {
+            let tree = crate::dsl::match_tree::parse(&p.r#match).map_err(|e| {
+                format!(
+                    "[[lower.{}]].match: {e}",
+                    p.name.as_deref().unwrap_or("<op>")
+                )
+            })?;
             let mut nodes = 0usize;
             fn count(n: &crate::dsl::match_tree::MatchNode, acc: &mut usize) {
                 if let crate::dsl::match_tree::MatchNode::Op { args, .. } = n {
@@ -4082,8 +4086,12 @@ impl IsaModel {
             let leaves = match &p.when {
                 None => 0,
                 Some(v) => {
-                    let pred = crate::dsl::pred::parse(v)
-                        .map_err(|e| format!("[[pattern]] #{i}.when: {e}"))?;
+                    let pred = crate::dsl::pred::parse(v).map_err(|e| {
+                        format!(
+                            "[[lower.{}]].when: {e}",
+                            p.name.as_deref().unwrap_or("<op>")
+                        )
+                    })?;
                     crate::dsl::pred::leaf_count(&pred)
                 }
             };
@@ -4263,6 +4271,10 @@ impl Lowering {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Pattern {
+    /// 声明它的 `[[lower.<块名>]]` 块名（**内部**：只用于诊断前缀 `[[lower.X]]`，
+    /// 让"树模式的错误"能锚到写它的那一块；不是用户写的键）。
+    #[serde(skip)]
+    pub name: Option<String>,
     /// 匹配树字符串（根必须是 Op 调用，变量是裸标识符）。见
     /// [`crate::dsl::match_tree::parse`]。
     #[serde(rename = "match")]

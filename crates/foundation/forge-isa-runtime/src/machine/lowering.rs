@@ -164,7 +164,7 @@ pub trait TargetLowering: Send + Sync + 'static {
         _ctx: &mut LowerCtx,
     ) -> Result<InstPacket<Self::Inst>, IrError> {
         Err(IrError::Unsupported(format!(
-            "DSL lowering: 未声明的 [[pattern]] '{_pattern_name}'（无此模式的发射实现）"
+            "DSL lowering: 未声明的树型匹配 '{_pattern_name}'（无此模式的发射实现）"
         )))
     }
 

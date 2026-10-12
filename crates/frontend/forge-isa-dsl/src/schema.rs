@@ -303,7 +303,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &[],
         flatten: &[],
         additional: false,
-        doc: "命名谓词（v18 S3f 引入时叫 `[[derive]]`；v21 W10：**表头即属性名**，不再写 `name`）",
+        doc: "命名谓词（**表头即属性名**，不写 `name`）",
     },
     Section {
         path: "[asm.pseudo.<名>]",
@@ -312,7 +312,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &["only_variants"],
         flatten: &[],
         additional: false,
-        doc: "汇编器伪指令（v21 W7：**表头即名字**；旧 `[[pseudo]]` 已撤）：文本级多指令展开，分派按 `asm` 的前导字面，`{名字}` 就是 `emit` 用的参数",
+        doc: "汇编器伪指令（**表头即名字**）：文本级多指令展开，分派按 `asm` 的前导字面，`{名字}` 就是 `emit` 用的参数",
     },
     Section {
         path: "[asm.immfn.<名>]",

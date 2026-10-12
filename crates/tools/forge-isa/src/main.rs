@@ -375,7 +375,7 @@ fn cmd_lint(
                 ));
             } else {
                 println!(
-                    "# {}: 宿主 op 覆盖 = [[lowering]]+[[pattern]] {} / 终结指令 {}（谱里不该有）\
+                    "# {}: 宿主 op 覆盖 = lowering+树型匹配 {} / 终结指令 {}（谱里不该有）\
                      / 宿主管线 {}（宿主直查）/ 真缺口 {}",
                     f.display(),
                     cov.covered,
@@ -728,7 +728,7 @@ fn print_explain(e: &Explain) {
         let sec = if t.from_family {
             format!("[family.{}]", t.template)
         } else {
-            format!("[[templates.{}]]", t.template)
+            format!("[family.{}]", t.template)
         };
         println!("  来源：{sec} 第 {} 行", t.index);
         if !t.body.is_empty() {

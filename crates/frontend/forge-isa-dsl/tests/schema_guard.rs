@@ -461,85 +461,31 @@ fn deleted_abi_keys_stay_deleted_and_their_destinations_exist() {
         );
     }
 
-    // ② 取「已删除」章的对照表。
-    let Some(head) = docs.find("## `[abi]` — **已删除**") else {
-        panic!("docs/reference/isa-dsl.md 缺少「`[abi]` — 已删除」章");
-    };
-    let after = &docs[head..];
-    let end = after[3..]
-        .find("\n## ")
-        .map(|i| i + 3)
-        .unwrap_or(after.len());
-    let chapter = &after[..end];
-
-    // schema 键表 → 每节的可选键集合。
-    let mut section_keys: Vec<(String, Vec<String>)> = Vec::new();
-    for line in table.lines().filter(|l| l.starts_with('|')) {
-        let cells: Vec<&str> = line.split('|').collect();
-        if cells.len() < 4 {
-            continue;
-        }
-        let section = cells[1].trim().trim_matches('`').to_string();
-        let keys: Vec<String> = cells[3]
-            .split('`')
-            .skip(1)
-            .step_by(2)
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty() && !s.starts_with('†'))
-            .collect();
-        section_keys.push((section, keys));
-    }
-    let has_key = |section: &str, key: &str| -> bool {
-        section_keys
-            .iter()
-            .any(|(s, ks)| s == section && ks.iter().any(|k| k == key))
-    };
-
-    // 逐行扫对照表第二列，抓**显式**的 `[machine].x` / `[machine.frame].x` 令牌。
-    // （文档里要求这么写：去处的键要写成完整路径，否则"同名键"这种措辞无法机器核对。）
-    let mut checked = 0usize;
-    for line in chapter.lines().filter(|l| l.starts_with('|')) {
-        let cells: Vec<&str> = line.split('|').collect();
-        if cells.len() < 4 {
-            continue;
-        }
-        let dest = cells[2];
-        for key in dest_keys(dest) {
-            let (section, name) = key
-                .split_once('.')
-                .map(|(s, k)| (format!("[{s}]"), k.to_string()))
-                .expect("dest_keys 只产出 `[节].键` 形态");
-            assert!(
-                has_key(&section, &name),
-                "对照表把 `{section}.{name}` 当去处，但 schema 键表里没有这个键（改文档或改 schema）"
-            );
-            checked += 1;
-        }
-    }
+    // ② 文档里**不再**宣传 `[abi]`：v22 起参考规范只讲现行面（`[abi]` 整节不进文档）。
     assert!(
-        checked > 0,
-        "对照表里一个可核对的去处都没解析到（解析到 {checked} 条）——守卫失效了；\
-         检查 docs/reference/isa-dsl.md 的去处列是否写成 `[machine].<键>` 形态"
+        !docs.contains("## `[abi]`"),
+        "参考规范里又出现了 `[abi]` 章节——该节已整节删除，文档只讲现行面"
     );
-}
 
-/// 从「去处」列里取**显式**的 `` `[machine].key` `` / `` `[machine.frame].key` `` 令牌，
-/// 返回 `"machine.key"` / `"machine.frame.key"` 形态。
-fn dest_keys(dest: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for part in dest.split('`').skip(1).step_by(2) {
-        let t = part.trim();
-        let Some(rest) = t.strip_prefix('[') else {
-            continue;
-        };
-        let Some((section, key)) = rest.split_once("].") else {
-            continue;
-        };
-        if !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-            out.push(format!("{section}.{key}"));
-        }
+    // ③ 那些旧键的**去处**必须在 schema 里真实存在（否则等于"删了却没地方放"）。
+    let machine_row = table
+        .lines()
+        .find(|l| l.starts_with("| `[machine]`"))
+        .expect("schema 键表缺少 `[machine]` 行");
+    for key in [
+        "scratch",
+        "fixed",
+        "link",
+        "frame",
+        "padding",
+        "arg_place",
+        "byref_bytes",
+    ] {
+        assert!(
+            machine_row.contains(key),
+            "`[machine]` 行里缺少 `{key}`——它是某个已删 `[abi]` 键的去处"
+        );
     }
-    out
 }
 
 /// 仓库根那份 `isa-dsl.schema.json` 必须与发射器**逐字相同**（编辑器补全的事实源）。

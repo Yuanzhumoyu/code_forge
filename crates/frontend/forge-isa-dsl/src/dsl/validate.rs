@@ -139,13 +139,13 @@ pub fn apply_variants(
         variants_keep(p.only_variants.as_ref(), params)
     });
     if n > 0 {
-        dropped_decls.push(("[[pseudo]]".into(), n));
+        dropped_decls.push(("[asm.pseudo.<名>]".into(), n));
     }
     let n = retain_counted(&mut m.pattern, |p| {
         variants_keep(p.only_variants.as_ref(), params)
     });
     if n > 0 {
-        dropped_decls.push(("[[pattern]]".into(), n));
+        dropped_decls.push(("树型匹配".into(), n));
     }
     // ③ 连带丢 lowering：规则行首（含 `@引用名`）点了被投影掉的**引用名**。
     //    只认"投影前存在、投影后消失"的名字 ⇒ 本来就写错的助记符仍由校验器照常报错。
@@ -157,7 +157,7 @@ pub fn apply_variants(
                 .any(|line| inst_head_ref(line).is_some_and(|h| dangling.contains(&h)))
         });
         if n > 0 {
-            dropped_decls.push(("[[lowering]]".into(), n));
+            dropped_decls.push(("[[lower.<op>]]".into(), n));
         }
     }
     // ④ 文本替换：`{参数名}` → 取值（模板里既有的 `{inst.lower}` 等不受影响）。
@@ -1267,27 +1267,27 @@ fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
     let mut seen_asm: BTreeMap<&str, &str> = BTreeMap::new();
     for p in &m.pseudo {
         if p.name.trim().is_empty() {
-            return Err("[[pseudo]]: name 不能为空".into());
+            return Err("[asm.pseudo.<名>]: name 不能为空".into());
         }
         if !seen.insert(p.name.as_str()) {
             return Err(format!(
-                "[[pseudo.{}]]: 伪指令 name 重复（name 只要求唯一）",
+                "[asm.pseudo.{}]: 伪指令 name 重复（name 只要求唯一）",
                 p.name
             ));
         }
         let segs = crate::dsl::codegen::asm::parse_named_template(&p.asm)
-            .map_err(|e| format!("[[pseudo.{}]]: {e}", p.name))?;
+            .map_err(|e| format!("[asm.pseudo.{}]: {e}", p.name))?;
         crate::dsl::codegen::asm::validate_named_template(&segs)
-            .map_err(|e| format!("[[pseudo.{}]]: {e}", p.name))?;
+            .map_err(|e| format!("[asm.pseudo.{}]: {e}", p.name))?;
         let key = crate::dsl::codegen::asm::named_dispatch_key(&segs).ok_or_else(|| {
             format!(
-                "[[pseudo.{}]]: asm '{}' 解析不出分派键（首段必须是字面）",
+                "[asm.pseudo.{}]: asm '{}' 解析不出分派键（首段必须是字面）",
                 p.name, p.asm
             )
         })?;
         if leads.iter().any(|l| lead_starts_with_ident(l, &key, ci)) {
             return Err(format!(
-                "[[pseudo.{}]]: 写法 '{}' 的前导字面 '{key}' 与某条指令模板重名——\
+                "[asm.pseudo.{}]: 写法 '{}' 的前导字面 '{key}' 与某条指令模板重名——\
                  伪指令展开先于指令扫描，这个写法开头的行会被伪指令吃掉，\
                  那条指令从此装配不到；换个写法",
                 p.name, p.asm
@@ -1296,7 +1296,7 @@ fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
         let norm = p.asm.trim();
         if let Some(prev) = seen_asm.insert(norm, &p.name) {
             return Err(format!(
-                "[[pseudo.{prev}]] 与 [[pseudo.{}]] 的 asm 完全相同（'{norm}'）——\
+                "[asm.pseudo.{}] 与 [asm.pseudo.{prev}] 的 asm 完全相同（'{norm}'）——\
                  后者永远命中不到，删一条或改写法",
                 p.name
             ));
@@ -1310,7 +1310,7 @@ fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
         let pseen: BTreeSet<&str> = params.iter().map(|s| s.as_str()).collect();
         if p.emit.is_empty() {
             return Err(format!(
-                "[[pseudo.{}]]: emit 不能为空（至少要展开出一行）",
+                "[asm.pseudo.{}]: emit 不能为空（至少要展开出一行）",
                 p.name
             ));
         }
@@ -1318,7 +1318,7 @@ fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
         for line in &p.emit {
             let l = line.trim();
             if l.is_empty() {
-                return Err(format!("[[pseudo.{}]]: emit 里有空行", p.name));
+                return Err(format!("[asm.pseudo.{}]: emit 里有空行", p.name));
             }
             // 行首判定：伪操作（`directive_prefix` 开头）/ 另一条伪指令的写法（按分派键
             // 整词命中）/ 能接到某条指令模板上。
@@ -1334,7 +1334,7 @@ fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
             });
             if !head.starts_with(dir_prefix) && !reaches_pseudo && !reaches_inst {
                 return Err(format!(
-                    "[[pseudo.{}]]: emit 行 '{l}' 的开头接不到任何指令模板上，\
+                    "[asm.pseudo.{}]: emit 行 '{l}' 的开头接不到任何指令模板上，\
                      也不是别的伪指令的写法、也不是 '{dir_prefix}' 开头的伪操作（拼错了？）",
                     p.name
                 ));
@@ -1343,7 +1343,7 @@ fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
                 let name = tok.trim_start_matches('{').trim_end_matches('}');
                 if !pseen.contains(name) {
                     return Err(format!(
-                        "[[pseudo.{}]]: emit 里的 '{{{name}}}' 不是 asm '{}' 里声明过的参数（可用：{}）",
+                        "[asm.pseudo.{}]: emit 里的 '{{{name}}}' 不是 asm '{}' 里声明过的参数（可用：{}）",
                         p.name,
                         p.asm,
                         params.join(" / ")
@@ -1355,7 +1355,7 @@ fn validate_pseudos(m: &IsaModel) -> Result<(), String> {
         for a in params {
             if !used.contains(a.as_str()) {
                 return Err(format!(
-                    "[[pseudo.{}]]: asm 声明的参数 '{a}' 在 emit 里没用到（写错了名字？）",
+                    "[asm.pseudo.{}]: asm 声明的参数 '{a}' 在 emit 里没用到（写错了名字？）",
                     p.name
                 ));
             }
@@ -1577,7 +1577,7 @@ fn validate_cond(m: &IsaModel) -> Result<(), String> {
             .collect();
         if !missing.is_empty() {
             return Err(format!(
-                "[[lowering]]: 用了 `{{cc}}`（当前 IR 条件 → 本 ISA 编码）但 [enum.cond] \
+                "[[lower.<op>]]: 用了 `{{cc}}`（当前 IR 条件 → 本 ISA 编码）但 [enum.cond] \
                  没把所有 IR 整数条件映射全——缺 {}（每条用 ir = \"<条件名>\" 指出它实现哪个条件）",
                 missing.join(" / ")
             ));
@@ -2165,7 +2165,7 @@ fn validate_instructions_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
                     let sec = if from_family {
                         format!("[family.{t}]")
                     } else {
-                        format!("[[templates.{t}]]")
+                        format!("[family.{t}]")
                     };
                     // 只换 `[inst.X]` 前缀：v21 W10 之后不再有"裸节名"形态的消息
                     //（旧面 `[[instructions]]` 已撤，第二处 replacen 随之删除）。
@@ -2361,7 +2361,7 @@ fn validate_lowering_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
         std::collections::HashMap::new();
     for (i, l) in m.lowering.iter().enumerate() {
         if l.op.as_str().trim().is_empty() {
-            d.push_anchored(idx, &format!("[[lowering]] #{i}: op must not be empty"));
+            d.push_anchored(idx, &format!("[[lower.{}]]: op 名不能为空", l.op));
             continue;
         }
         // 展开后每条规则只有一个 op（`expand_ops` 在解析期完成）；名单写法在这里
@@ -2485,8 +2485,8 @@ fn validate_inst_lines(
 /// 叶变量唯一 / insts 模板 / when 属性名。
 fn validate_patterns(m: &IsaModel) -> Result<(), String> {
     let refs = declared_refs(m);
-    for (i, p) in m.pattern.iter().enumerate() {
-        let path = format!("[[pattern]] #{i}");
+    for p in m.pattern.iter() {
+        let path = format!("[[lower.{}]]", p.name.as_deref().unwrap_or("<op>"));
         let tree =
             super::match_tree::parse(&p.r#match).map_err(|e| format!("{path}.match: {e}"))?;
 
@@ -2560,7 +2560,9 @@ fn validate_patterns(m: &IsaModel) -> Result<(), String> {
         for (di, &pi) in order[..j].iter().enumerate() {
             if trees[di] == trees[j] && super::pred::subsumes(&domains[di], &domains[j]) {
                 return Err(format!(
-                    "[[pattern]] #{pj} 是死模式——裁决序里靠前的 [[pattern]] #{pi}                      （同一匹配树，priority 降 / Op 节点数降 / when 叶子数降 / 声明序升）                     已覆盖它的全部取值域。删掉它，或给它更高的 priority"
+                    "[[lower.{}]] 是死模式——裁决序里靠前的 [[lower.{}]]                      （同一匹配树，priority 降 / Op 节点数降 / when 叶子数降 / 声明序升）                     已覆盖它的全部取值域。删掉它，或给它更高的 priority",
+                    m.pattern[pj].name.as_deref().unwrap_or("<op>"),
+                    m.pattern[pi].name.as_deref().unwrap_or("<op>")
                 ));
             }
         }

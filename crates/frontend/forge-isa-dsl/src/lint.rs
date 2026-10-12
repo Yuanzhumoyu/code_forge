@@ -827,7 +827,7 @@ fn op_gap(
             "",
             "LINT-OP-GAP",
             format!(
-                "宿主 op '{op}' 在本谱里既没有 `[[lowering]]` 也没有 `[[pattern]]` 覆盖\
+                "宿主 op '{op}' 在本谱里既没有 `[[lower.<op>]]` 也没有树型匹配覆盖\
                  （真缺口：宿主会把这条 op 交给本 ISA）——补 lowering，或在宿主侧明确拒绝"
             ),
         ));

@@ -260,7 +260,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
                 "[[lower.PATY1]]\nmatch = \"Fadd(Fmul(a, b), c)\"\nwhen = { eq = [\"nope\", 1] }\n\
                  insts = [\"add {out}, {a}, {b}\"]",
             ),
-            "DSL-PATTERN",
+            "DSL-LOWER",
             "nope",
         ),
         (
@@ -269,7 +269,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
                 "[[lower.PATY2]]\nmatch = \"Fadd(Fmul(a, a), c)\"\n\
                  insts = [\"add {out}, {a}, {c}\"]",
             ),
-            "DSL-PATTERN",
+            "DSL-LOWER",
             "重复出现",
         ),
         (

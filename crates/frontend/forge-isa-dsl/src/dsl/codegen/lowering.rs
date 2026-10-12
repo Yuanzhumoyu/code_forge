@@ -1312,7 +1312,7 @@ fn gen_patterns(
     let mut max_op_idx: usize = 0;
 
     for (i, p) in model.pattern.iter().enumerate() {
-        let path = format!("[[pattern]] #{i}");
+        let path = format!("[[lower.{}]]", p.name.as_deref().unwrap_or("<op>"));
         let tree = match_tree::parse(&p.r#match).map_err(|e| format!("{path}.match: {e}"))?;
         let mut vars = Vec::new();
         match_tree::leaf_vars(&tree, &mut vars);
