@@ -1128,7 +1128,7 @@ fn cond_pure_asm_alias_has_no_ir_mapping() {
     assert!(model.cond_ir_codes().is_empty(), "纯别名不该产生 IR 映射");
 }
 
-// ───────────────── S3f：[[derive]] 派生谓词属性 ─────────────────
+// ───────────────── S3f：[pred.<名>] 派生谓词属性 ─────────────────
 
 /// 派生属性可用于 `when`：**生成期展开**成它自己的谓词表达式（求值走核心属性助手），
 /// 不再经过运行时 `__attr(name)` 名字查找（v18 S8d）。
@@ -1276,7 +1276,7 @@ fn derive_cannot_reference_another_derive() {
     assert!(msg.contains("派生不能引用派生"), "应给出提示：{msg}");
 }
 
-// ───────────────── S3e：[[pseudo]] 汇编器伪指令 ─────────────────
+// ───────────────── S3e：[asm.pseudo.<名>] 汇编器伪指令 ─────────────────
 
 /// 合法伪指令：声明侧自洽即可（`asm` 首字面 = name、`emit` 行首是指令助记符、
 /// `{…}` 都在 `asm` 里声明过、参数都用上）。
@@ -2049,7 +2049,7 @@ fn placeholder_registry_lookup() {
     );
 }
 
-// ─────────────── [[lowering]] 校验（S1 补齐：三类静默失效） ───────────────
+// ─────────────── [[lower.<op>]] 校验（S1 补齐：三类静默失效） ───────────────
 
 /// 带一条完整 lowering 的最小 ISA，`{extra}` 处插入待测规则片段。
 fn lowering_doc(rule: &str) -> String {
@@ -2081,7 +2081,7 @@ asm = "mov {{dst:g:out}}, {{src:g}}"
     )
 }
 
-/// `[[pattern]]` 宿主谱：在最小谱基础上补几条指令，供 pattern 的 `insts` 引用。
+/// 树型匹配的宿主谱：在最小谱基础上补几条指令，供 `insts` 引用。
 fn pattern_doc(patterns: &str) -> String {
     let mut doc = lowering_doc("");
     for (i, name) in ["ADD", "SUB", "MUL", "ADDSS", "SUBSS"].iter().enumerate() {
@@ -2158,7 +2158,7 @@ fn lowering_accepts_template_instance_name() {
 
 // ─────────── 指令级 `ref`（多态引用 / 1:1 / 校验） ───────────
 //
-// 旧 `[[aliases]]` 已并入指令属性：`group = "名字"`。多条指令共用同一个 `ref`
+// 更早的别名清单机制已并入指令属性：`group = "名字"`。多条指令共用同一个 `ref`
 // 即多态引用（原先"别名指向多成员"的场景），单条指令给 `ref` 即 1:1 引用。
 // `ref` 与指令名同池（lowering/pattern/emit 行首按它分派），故不得与指令名冲突。
 
@@ -2336,7 +2336,7 @@ fn repeated_lower_blocks_keep_declaration_order() {
     assert!(a_rules[1].when.is_none(), "无 when 的那块第二");
 }
 
-/// S5c：`[[pattern]]` 的裁决序 = (`priority` 降, Op 节点数降, when 叶子数降, 声明序升)。
+/// S5c：树型匹配的裁决序 = (`priority` 降, Op 节点数降, when 叶子数降, 声明序升)。
 #[test]
 fn pattern_order_uses_priority_then_specificity() {
     // A：单节点树、无 when；B：两节点树、无 when；C：单节点树 + 1 个 when 叶子但 priority=1。
@@ -2770,7 +2770,7 @@ asm = "i {{dst:gx:inout}}, {{src:gx}}"
 }
 
 /// 含一条助记符为 `i` 的指令（`asm = "i {dst}, {src}"`）的最小合法模型——
-/// `[[pattern]].insts` 用 `i …` 引用它（助记符已声明），叶变量 `{a}`/`{b}` 走
+/// 树型匹配的 `insts` 用 `i …` 引用它（助记符已声明），叶变量 `{a}`/`{b}` 走
 /// extra_known 通道。
 /// `require_symbol`（重定位修饰形态专用）：只接受符号/带修饰的引用。
 ///
@@ -3628,7 +3628,7 @@ asm = "csrrs {dst:r:out}, {csr:csr12}"
 
 // ─────────────── `symbols`：立即数位置上的符号引用 ───────────────
 
-/// `[[operand_slots]].symbols`：声明后 imm/label 槽的值可以是**符号引用**（`%hi(foo)`、
+/// `[operand.<名字>].symbol`：声明后 imm/label 槽的值可以是**符号引用**（`%hi(foo)`、
 /// 裸 `foo`）——解析期当 0 参与算术、两遍回填时解析成"标签的块下标"并**过一遍立即数修饰**；
 /// 未声明的槽照旧"未知 ident 即不匹配"（**能力是声明的**）。
 ///
@@ -3909,7 +3909,7 @@ fn width_metadata_default_opsize_needs_matching_group() {
 // ─────────── 残余收敛（2026-09-13）：冲突/静默丢弃类缺口逐条 fail-closed ───────────
 
 /// 两宽度视图的最小 ISA（主 GPR = gpr64；`gpr32` 用来制造"声明在别组"的名字），
-/// 可注入 `[abi]`/`[[instructions]]`/`[spill.*]` 片段。
+/// 可注入别的节片段（例如 `[machine.spill.*]`）。
 fn two_view_doc(extra: &str) -> String {
     format!(
         r#"
@@ -4013,7 +4013,7 @@ fp = "R2"
     crate::dsl::codegen::generate(&m).expect("生成成功");
 }
 
-/// R2：`[[instructions]].implicit_regs` 里的名字解析不到 → 校验期/生成期报错
+/// R2：`[inst.<名>].implicit_regs` 里的名字解析不到 → 校验期/生成期报错
 /// （历史实现 `filter_map` 静默丢弃 ⇒ clobber 集缺失）。
 #[test]
 fn implicit_regs_unknown_name_is_error() {
@@ -4344,7 +4344,7 @@ asm = "nop"
 
 // ─────────── v20 V10：立即数修饰（谱声明的数据） ───────────
 
-/// `[asm.immfn.<名>]`（v21 W7；旧 `[[conventions.imm_fn]]` 已撤）：
+/// `[asm.immfn.<名>]`（表头即修饰名；更早的立即数修饰键已撤）：
 /// **怎么写（texts）+ 算成什么值（expr）**两行数据，形状非法要在声明期报出来。
 #[test]
 fn imm_fn_decl_shape_is_validated() {
@@ -4388,7 +4388,7 @@ fn imm_fn_decl_shape_is_validated() {
 }
 
 /// 没声明 `imm_fn` 的 ISA：生成物里**没有**修饰机制（与引入前逐字相同）——
-/// 这条纪律与 `[[pseudo]]`/`[[conventions.mem]]` 一致：能力按谱数据出现。
+/// 这条纪律与 `[asm.pseudo.<名>]`/`[conventions.mem]` 一致：能力按谱数据出现。
 #[test]
 fn imm_fn_absent_keeps_generated_code_unchanged() {
     let m = parse_and_validate(&lowering_doc("")).expect("合法");

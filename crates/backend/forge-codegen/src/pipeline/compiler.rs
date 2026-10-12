@@ -2022,7 +2022,7 @@ impl<M: TargetMachine> FunctionCompiler<M> {
             }
         }
         // 可变的 IR 副本：聚合 store/参数展开（agg_expand）需要 &mut Function。
-        // 展开后读取 func_ref（Stage 4+ 全部只读原函数；S6 的树型 [[pattern]]
+        // 展开后读取 func_ref（Stage 4+ 全部只读原函数；S6 的树型 树型匹配
         // 匹配发生在 lowering 驱动内逐块预扫，不需要在编译期克隆整个 Function）。
         let needs_agg_expand = crate::pipeline::agg_expand::has_any_agg(func);
         let mut func_owned: Option<Function> = needs_agg_expand.then(|| func.clone());

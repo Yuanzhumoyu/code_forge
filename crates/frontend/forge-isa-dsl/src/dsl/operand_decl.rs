@@ -14,7 +14,7 @@
 //!
 //! 新键都是**用户面**键；旧键（`width`/`min`/`max`/`float`/`wrap`/`table`/`names`/
 //! `arrangement`/`symbols`/`require_symbol`/`imm_fns`/`zr31`/`byte_reg`）与
-//! `[[operand_slots]]` 一律不再接受。
+//! `[operand.<名字>]` 一律不再接受。
 
 use super::model::{
     IsaModel, LiteralKind, MemTemplate, OperandDecl, OperandKind, OperandSlot, ValueKind,

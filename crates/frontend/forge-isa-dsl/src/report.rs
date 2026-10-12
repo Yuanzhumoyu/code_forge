@@ -206,7 +206,7 @@ fn summary(m: &IsaModel) -> IsaSummary {
 /// **不维护第二份键名清单**（新增编码键自动出现在 `insts`/`explain`/`diff` 里）。
 fn enc_pairs(keys: &crate::dsl::model::EncKeys) -> Vec<(String, String)> {
     // v21 W2：`opcode_field`/`operand_fields` 是 `#[serde(skip)]` 的**派生**键（由
-    // `[[forms]].fields` 展开），序列化拿不到——但它们是排查"这条指令编到哪"的关键，
+    // `[form.<名>].fields` 展开），序列化拿不到——但它们是排查"这条指令编到哪"的关键，
     // 所以在这里显式补回。
     let mut extra: Vec<(String, String)> = Vec::new();
     if let Some(f) = &keys.opcode_field {
@@ -301,7 +301,7 @@ fn op_bind_lines(
         .collect()
 }
 
-/// 展开后的全部指令（按 `[[instructions]]` 声明序 + 模板展开序）。
+/// 展开后的全部指令（按 `[inst.<名>]` 声明序 + 模板展开序）。
 pub fn insts(source: &str) -> Result<(IsaSummary, Vec<InstRow>), Vec<DiagLine>> {
     insts_opts(source, &RunOpts::default())
 }
@@ -324,7 +324,7 @@ pub struct Projection {
     pub params: BTreeMap<String, i64>,
     /// 被投影掉的指令名（原声明序）。
     pub dropped_insts: Vec<String>,
-    /// 逐节丢掉的条数：`(节名, 条数)`（含连带丢的 `[[lowering]]`）。
+    /// 逐节丢掉的条数：`(节名, 条数)`（含连带丢的 `[[lower.<op>]]`）。
     pub dropped_decls: Vec<(String, usize)>,
     /// 投影后的指令数 / lowering 规则数。
     pub inst_count: usize,

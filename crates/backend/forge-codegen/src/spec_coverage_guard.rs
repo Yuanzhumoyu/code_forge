@@ -73,11 +73,11 @@ fn generated_spec_tests_cover_every_instruction() {
 /// （`MOV_R_MEM{,_8}_AUTO` / `STORE_MEM_R{,_8}_AUTO` / `MOVSXD_R_MEM` / `XCHG_MEM_R_AUTO`
 /// 6 条 → **271**：8/16/32 位 mov 全部走完整内存模板 + movsxd/xchg 的内存源形式）
 /// 与 **SSE 比较谓词族**（`CMPPS`/`CMPPD`/`CMPSS`/`CMPSD_SCALAR` 4 条 → **275**；经典八谓词
-/// 的 packed 别名是 `[[pseudo]]` 文本展开，不占指令数）后 = 275。
+/// 的 packed 别名是 `[asm.pseudo.<名>]` 文本展开，不占指令数）后 = 275。
 /// riscv64 补**字节/半字访存**（`LB`/`LH`/`LBU`/`LHU`/`SB`/`SH` 6 条）与 **W 立即数移位**
 /// （`SLLIW`/`SRLIW`/`SRAIW` 3 条；`SLLW`/`SRLW`/`SRAW` 改成 R 型并进 `WW` 模板行，总数不变）
 /// 后 = 128；再补 `BGEU`（`BB` 模板一行）、`FENCE_I`/`FENCE_TSO` 与 **Zicsr 六条**
-/// （`CSRRW`/`CSRRS`/`CSRRC`/`CSRRWI`/`CSRRSI`/`CSRRCI`）→ **137**。`unimp` 是 `[[pseudo]]`
+/// （`CSRRW`/`CSRRS`/`CSRRC`/`CSRRWI`/`CSRRSI`/`CSRRCI`）→ **137**。`unimp` 是 `[asm.pseudo.<名>]`
 /// （别名 = `csrrw x0, cycle, x0`），不占指令数）。arm64 补**系统/异常生成族**
 /// （`SVC`/`HVC`/`SMC`/`BRK`/`HLT`/`DCPS1..3` 8 条 + `ERET`/`DRPS` 两个整字常量）→ **120**。
 /// arm64 再补**逻辑（移位寄存器）族**：带移位后缀的 8 助记符（`and`/`ands`/`bic`/`bics`/
@@ -100,7 +100,7 @@ fn generated_spec_tests_cover_every_instruction() {
 /// 最后补**助记符条件后缀**（`sete`/`cmovl`）需要的三条通用形态的兄弟指令：
 /// `SETCC_RM8_B`（8 位名 `setcc al, e`）、`SETCC_R_MEM`（`setcc byte ptr [m], e`）与
 /// `CMOVCC_R_MEM`（`cmovcc r, m, cc`；`CMOVCC_R_RM` 同时从固定 64 位放宽到 16/32/64）
-/// → **293**。真实写法本身是 `[[pseudo]]` 文本展开（不占指令数）。
+/// → **293**。真实写法本身是 `[asm.pseudo.<名>]` 文本展开（不占指令数）。
 /// 再补 `movzx`/`movsx` 的**完整内存源形态** 4 条（`MOVZX/MOVSX_MEM{8,16}`：源宽度只能由
 /// 尺寸关键字给 ⇒ 关键字写成模板字面量，歧义随之消失）→ **299**。
 /// 最后补**锁 + 内存序提示**（`acquire/release lock add [mem], r` = `F2`/`F3` + `F0`：

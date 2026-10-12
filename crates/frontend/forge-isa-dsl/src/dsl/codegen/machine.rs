@@ -663,7 +663,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
         }
     }
     let label_arms = label_arms;
-    // GlobalAddr 专用指令（TOML 声明 `reloc = "<名>"`，v18 S3d 起查 `[[reloc]]` 表）：
+    // GlobalAddr 专用指令（TOML 声明 `reloc = "<名>"`，v18 S3d 起查 `[asm.reloc.<名>]` 表）：
     // imm 槽 < 0 时编码 GlobalId（-(id+1)）→ 重定位 "G{id}"（JIT/QEMU 打包按全局
     // 变量注册）；>= 0 时是普通立即数。语义来自表项：
     // - `absolute`（x86 MOVABS_GLOBAL，槽 imm64）：fixup = 指令末尾该槽的字节区间
@@ -682,7 +682,7 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
             .find(|r| r.name == reloc_name)
             .ok_or_else(|| {
                 format!(
-                    "[inst.{}]: reloc '{reloc_name}' 未在 [[reloc]] 声明",
+                    "[inst.{}]: reloc '{reloc_name}' 未在 [asm.reloc.<名>] 声明",
                     info.inst.name
                 )
             })?;
@@ -993,7 +993,7 @@ pub(crate) fn gen_disasm(_infos: &[InstInfo]) -> Result<TokenStream, String> {
 
 // ─────────────────────── TargetAssembler ───────────────────────
 
-/// `[[pseudo]]` 的展开助手（v18 S3e；v20 V10 按 `asm` 模板切实参与分派）。
+/// `[asm.pseudo.<名>]` 的展开助手（v18 S3e；v20 V10 按 `asm` 模板切实参与分派）。
 ///
 /// 生成两类东西：
 ///
@@ -1005,8 +1005,8 @@ pub(crate) fn gen_disasm(_infos: &[InstInfo]) -> Result<TokenStream, String> {
 ///   命中就把展开行**递归**再展开一次（emit 行可以是别的伪指令），深度上限 16。
 ///
 /// 切参不是"按逗号位置猜"：字面段（`, `、`(`、`)`…）是模板写死的，缺一个/多一段/
-/// 尾部多东西都当场报错（或整条不像这条写法），与 `[[instructions]]` 的 asm 扫描同一套
-/// "照模板匹配"的直觉。没有 `[[pseudo]]` 的 ISA 返回空 token（生成物逐字不变）。
+/// 尾部多东西都当场报错（或整条不像这条写法），与 `[inst.<名>]` 的 asm 扫描同一套
+/// "照模板匹配"的直觉。没有 `[asm.pseudo.<名>]` 的 ISA 返回空 token（生成物逐字不变）。
 pub(crate) fn gen_pseudo_helpers(model: &IsaModel) -> TokenStream {
     if model.pseudo.is_empty() {
         return quote! {};
@@ -1373,7 +1373,7 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
     let dir_pre = model.meta.directive_prefix.clone();
     let dir_pre_lit = syn::LitStr::new(&dir_pre, proc_macro2::Span::call_site());
     let align_pad = model.emit.as_ref().and_then(|e| e.align_pad).unwrap_or(0);
-    // `[[pseudo]]` 展开（v18 S3e）：按名生成匹配臂 + 逐行文本替换。没有伪指令的 ISA
+    // `[asm.pseudo.<名>]` 展开（v18 S3e）：按名生成匹配臂 + 逐行文本替换。没有伪指令的 ISA
     // 不生成任何东西（生成的代码逐字不变）。
     let pseudo_helpers = gen_pseudo_helpers(model);
     // 调用点也只在有伪指令时生成（否则会引用不存在的助手函数）。
@@ -1438,7 +1438,7 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                 __EQU.with(|m| m.borrow_mut().clear());
                 // (指令序号, 操作数序号, 符号名, 行号)
                 // (指令下标, 操作数下标, 修饰下标, 符号名, 行号)——修饰下标 = 该值上面的
-                // `[[conventions.imm_fn]]`（`%hi(foo)` 要在回填值上再过一遍修饰）。
+                // `[asm.immfn.<名>]`（`%hi(foo)` 要在回填值上再过一遍修饰）。
                 let mut pending: Vec<(usize, usize, Option<usize>, String, usize)> = Vec::new();
                 let mut __offset: u64 = 0;
                 for (__line_no, line) in expanded.lines().enumerate() {
@@ -1623,7 +1623,7 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                         }
                         continue;
                     }
-                    // 伪指令展开（v18 S3e）：行首词命中 `[[pseudo]]` 名 → 按 params
+                    // 伪指令展开（v18 S3e）：行首词命中 `[asm.pseudo.<名>]` 名 → 按 params
                     // 位置切分实参、代入 emit 模板，展开出的每一行再走同一套展开
                     //（emit 行可以是别的伪指令；深度上限 16 防环）。
                     #pseudo_call

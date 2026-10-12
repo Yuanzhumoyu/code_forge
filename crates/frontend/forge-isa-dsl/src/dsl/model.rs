@@ -106,7 +106,7 @@ pub struct MachineSection {
     pub spill: BTreeMap<String, MachineSpill>,
 }
 
-/// **降级重载展开**（v21 W5，目标第 (4) 项的前置）：一条 `[[lowering]]` 规则**没有 `when`**、
+/// **降级重载展开**（v21 W5，目标第 (4) 项的前置）：一条 `[[lower.<op>]]` 规则**没有 `when`**、
 /// 且它的指令名解析到多条**只在 `word_size` 上不同**的指令时，展开成"每条候选一条规则"，
 /// 各自加 `when = { eq = ["rs1_width", <该候选的 word_size>] }`，并把行首名字换成该候选名。
 ///
@@ -375,7 +375,7 @@ pub struct IsaModel {
 
     /// 参数化指令模板（**内部载体**，v21 W5 起不再是 TOML 面）。
     ///
-    /// `[family.<名>]` 在解析期降级进这里，再展开为指令 + 别名；TOML 里写 `[[templates]]`
+    /// `[family.<名>]` 在解析期降级进这里，再展开为指令 + 别名；TOML 里写 `[family.<名>]`
     /// 会被未知键守卫拒绝（`serde(skip)`）。
     #[serde(default, skip)]
     pub templates: Vec<Template>,
@@ -406,7 +406,7 @@ pub struct IsaModel {
     #[serde(default, rename = "lower")]
     pub lower_decls: BTreeMap<String, Vec<LowerDecl>>,
     /// 派生谓词属性（**内部载体**，v21 W10 起 TOML 面是 `[pred.<名>]`；
-    /// v18 S3f 引入时叫 `[[derive]]`）：给 `when` 用的命名布尔属性。
+    /// v18 S3f 引入时叫 `[pred.<名>]`）：给 `when` 用的命名布尔属性。
     #[serde(default, skip)]
     pub derive: Vec<DeriveDef>,
 
@@ -414,10 +414,10 @@ pub struct IsaModel {
     #[serde(skip, default)]
     pub derived_preds: BTreeMap<String, super::pred::Pred>,
 
-    /// 汇编器伪指令（`[[pseudo]]`，v18 S3e：汇编期的文本级多指令展开）。
+    /// 汇编器伪指令（`[asm.pseudo.<名>]`，v18 S3e：汇编期的文本级多指令展开）。
     ///
     /// v21 W7 起它是**内部载体**：TOML 面是 `[asm.pseudo.<名>]`（表头 = 名字，
-    /// 旧键 `[[pseudo]]` 已被拒），解析期由 [`AsmSection`] 降级填进来。
+    /// 旧键 `[asm.pseudo.<名>]` 已被拒），解析期由 [`AsmSection`] 降级填进来。
     #[serde(default, skip)]
     pub pseudo: Vec<PseudoDef>,
 
@@ -1219,23 +1219,23 @@ pub struct Conventions {
     /// 值语义全在这张表里（见 [`ImmFnDef`]）。缺省 = 没有任何修饰。
     ///
     /// **内部载体**：只由 [`AsmSection`] 降级时写入（表头 → `name`），旧键
-    /// `[[conventions.imm_fn]]` 已被拒。
+    /// `[asm.immfn.<名>]` 已被拒。
     #[serde(default, skip)]
     pub imm_fn: Option<Vec<ImmFnDef>>,
 }
 
 /// 立即数**修饰函数**：汇编期表达式里的一种"包裹写法"
-/// （`[[conventions.imm_fn]]`）。
+/// （`[asm.immfn.<名>]`）。
 ///
 /// 一个修饰 = 两行数据（v21 W7 起 `text` 可为**多拼写** `texts` 列表）：
 ///
 /// ```toml
-/// [[conventions.imm_fn]]
+/// [asm.immfn.<名>]
 /// name = "hi"                  # 名字（诊断/文档用；不参与文本匹配）
 /// text = "%hi({0})"            # 源文本形态：`{0}` 处是内层表达式
 /// expr = "({0} + 0x800) >> 12" # 值语义：`{0}` 处是内层表达式的**值**
 ///
-/// [[conventions.imm_fn]]
+/// [asm.immfn.<名>]
 /// name = "abs_g0"
 /// texts = ["#:abs_g0:{0}", ":abs_g0:{0}"]  # 同一语义的多种写法（如带/不带 `#`）
 /// expr = "{0}"
@@ -1847,7 +1847,7 @@ pub struct OperandDecl {
 // ──────────────────── 内部降级后的槽 ────────────────────
 
 /// 操作数槽：指令操作数的抽象类别（v21 W3 起由 `[operand.<名字>]` 降级而来，
-/// 用户面不再有 `[[operand_slots]]`）。
+/// 用户面不再有 `[operand.<名字>]`）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OperandSlot {
@@ -1968,9 +1968,9 @@ pub struct OperandSlot {
     /// 数值写法自然落回数值槽。要求 `symbols = true`（校验期）。
     #[serde(default, rename = "require_symbol")]
     pub require_symbol: Option<bool>,
-    /// **只接受这些立即数修饰**（`imm_fns` = `[[conventions.imm_fn]].name` 的子集；空/省略 = 全部）。
+    /// **只接受这些立即数修饰**（`imm_fns` = `[asm.immfn.<名>].name` 的子集；空/省略 = 全部）。
     ///
-    /// 为什么需要：修饰是**全局**的表（`[[conventions.imm_fn]]`），但有些 ISA 里**修饰名决定字段值**——
+    /// 为什么需要：修饰是**全局**的表（`[asm.immfn.<名>]`），但有些 ISA 里**修饰名决定字段值**——
     /// A64 的 `movz/movk/movn` 就是例子：`#:abs_g0:foo` 的 `hw = 0`、`#:abs_g1:foo` 的 `hw = 1`……
     /// 若不按槽过滤，`movz … #:abs_g2:foo` 会被 `hw = 0` 的变体接走、**静默写错 hw**。
     /// 要求 `symbols = true`（本键只是把该槽收窄到一部分修饰）。
@@ -1981,7 +1981,7 @@ pub struct OperandSlot {
     /// 形状：`排列名 = 代码值`（**与既有的 `encode = "slice"` 机制对齐**，不引入第二张映射表）：
     ///
     /// ```toml
-    /// [[operand_slots]]
+    /// [operand.<名字>]
     /// name = "v"
     /// kind = "reg"
     /// class = "fpr16"
@@ -2124,7 +2124,7 @@ pub enum OperandKind {
     Bits,
 }
 
-/// 值的**多字段编码方案**（`[[operand_slots]].encode`）。
+/// 值的**多字段编码方案**（`[operand.<名字>].encode`）。
 ///
 /// 一个操作数的值 → 多个位域（反向亦然）。方案由**谱按名字选择**，实现由 DSL 提供——
 /// 与 `kind = "cond"`/`wrap`/`unit` 同类：能力是声明的，不是隐含的；没声明的谱生成物
@@ -2201,7 +2201,7 @@ pub enum OperandRole {
     InOut,
 }
 
-// ──────────────────── [[forms]] / 编码语义键 ────────────────────
+// ──────────────────── [form.<名>] / 编码语义键 ────────────────────
 
 /// 变长 ISA 的**固定前缀来源**（`prefix` 键）。
 ///
@@ -2230,7 +2230,7 @@ impl PrefixKey {
     }
 }
 
-/// 编码语义键集合——`[[forms]]`（预设）与 `[[instructions]]`（逐键覆盖）
+/// 编码语义键集合——`[form.<名>]`（预设）与 `[inst.<名>]`（逐键覆盖）
 /// **共用同一组字段**。
 ///
 /// v14 之前 form 是"必须预先命名的组合点"，指令只能覆盖 opsize/rex_w/vex 三个
@@ -2335,7 +2335,7 @@ pub struct Form {
     /// **v21 W4 段（stream）形态**：有序段 = 发射序，每段自带 `kind` 与自己的字节布局。
     ///
     /// 与设计文档的偏离（记入执行清单）：段用**内联表数组**而不是"`segments = [名字…]`
-    /// + 命名子表"——`[[forms]]` 是数组元素，子表路径在 TOML 里有二义性；顺序即发射序
+    /// + 命名子表"——`[form.<名>]` 是数组元素，子表路径在 TOML 里有二义性；顺序即发射序
     ///   也免去"名字列表 + 子表"两处重复。段是闭集，见 [`SegKind`]。
     ///
     /// 只降级 `kind = "stream"` 的 form；`bits`（缺省）路径不看它。
@@ -2705,7 +2705,7 @@ pub struct VexSpec {
     pub disp_scale: Option<String>,
 }
 
-// ──────────────────── [[instructions]] ────────────────────
+// ──────────────────── [inst.<名>] ────────────────────
 
 /// 单条指令（v21 W10：TOML 面是 `[inst.<名>]`，**表头即指令名**）。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -2715,7 +2715,7 @@ pub struct Instruction {
     /// **内部载体**（v21 W10）：由 `[inst.<名>]` 的表头填，TOML 里不再写 `name`。
     #[serde(skip)]
     pub name: String,
-    /// 编码预设名（`[[forms]]`）。**可省略**——省略时全部编码键由本指令的
+    /// 编码预设名（`[form.<名>]`）。**可省略**——省略时全部编码键由本指令的
     /// [`EncKeys`] 直接给出（组合不需要预先命名一个 form）。
     #[serde(default)]
     pub form: Option<String>,
@@ -2802,7 +2802,7 @@ pub struct Instruction {
     /// **字宽**（v21 W5，位）：本条**指令形态**所操作的数据宽度。
     ///
     /// 与 [`Instruction::data_width`]（纯搬运专用，供搬移族派生）是**两件事**：
-    /// `word_size` 的消费者是**降级重载**——一条 `[[lowering]]` 规则引用的名字若解析到
+    /// `word_size` 的消费者是**降级重载**——一条 `[[lower.<op>]]` 规则引用的名字若解析到
     /// 多条只在 `word_size` 上不同的指令，引擎按操作数实际宽度**自动选行**，
     /// 作者不必再手写 `when = { eq = ["rs1_width", …] }`。
     #[serde(default, rename = "word_size")]
@@ -2813,7 +2813,7 @@ pub struct Instruction {
     #[serde(default)]
     pub implicit_regs: Option<Vec<String>>,
     /// **重定位引用名**（`reloc`，v18 S3d）：GlobalAddr lowering 专用指令声明它用哪个
-    /// `[[reloc]]` 表项——生成器据此发 encoder reloc arm，不按指令名特判。
+    /// `[asm.reloc.<名>]` 表项——生成器据此发 encoder reloc arm，不按指令名特判。
     /// 重定位的"语义"（absolute/pc_relative）与绑定的槽都在表里，指令只写名字。
     #[serde(default, rename = "reloc")]
     pub reloc: Option<String>,
@@ -2831,15 +2831,15 @@ pub struct Instruction {
     /// 按变体分派的字段值（`fields_variant`，出路 2 第①步：纯附加、暂无读取者）。
     #[serde(default, rename = "fields_variant")]
     pub fields_variant: Option<std::collections::BTreeMap<String, VariantFieldValue>>,
-    /// 展开来源（v18 S2）：由 `[[templates.NAME]]` 展开而来时记下模板名。
+    /// 展开来源（v18 S2）：由 `[family.<名>]` 展开而来时记下模板名。
     ///
     /// 不参与序列化（`serde(skip)`）；诊断据此把错误锚回**模板声明行**而不是
-    /// 指向 `[[instructions]]` 节头。
+    /// 指向 `[inst.<名>]` 节头。
     #[serde(skip, default)]
     pub from_template: Option<Box<str>>,
     /// **族名**（`group`，v21 W5；v18 里叫 `ref`）：lowering/pattern/emit 模板行首可用它指向本指令；
     /// **多条指令共用一个族名** 即"多态引用"（按操作数签名分派）——原先的
-    /// `[[aliases]]` 就是"几条指令共用同一个族名"。
+    /// `别名清单（更早的机制）` 就是"几条指令共用同一个族名"。
     #[serde(default, rename = "group")]
     pub reference: Option<String>,
 }
@@ -3000,7 +3000,7 @@ fn serde_json_name(r: &Role) -> &'static str {
     }
 }
 
-/// 角色**声明**（`[[instructions]].roles` 的条目，v18 S9；v20 A6 加类限定）。
+/// 角色**声明**（`[inst.<名>].roles` 的条目，v18 S9；v20 A6 加类限定）。
 ///
 /// 两种写法，同一个机制：
 ///
@@ -3113,16 +3113,16 @@ pub enum Effect {
     Move,
 }
 
-/// `[[pseudo]]` — 汇编器伪指令（v18 S3e；v20 V10 改 `asm` 声明形态）。
+/// `[asm.pseudo.<名>]` — 汇编器伪指令（v18 S3e；v20 V10 改 `asm` 声明形态）。
 ///
 /// 汇编期的**文本级**多指令展开（`.equ`/`.macro` 的结构化兄弟）：不碰编码器、
 /// 不碰 lowering——`parse_insts` 遇到与某条伪指令的 `asm` **前导字面**对得上的行，
 /// 就按该模板切实参、逐行代入 `emit` 模板，再让**同一套汇编器**装配展开出的每一行。
 ///
 /// ```toml
-/// [[pseudo]]
+/// [asm.pseudo.<名>]
 /// name = "li"                     # 声明标识（唯一即可；与写法无关，诊断/变体门用它）
-/// asm  = "li {rd}, {imm}"         # **书写规范**（与 [[instructions]].asm 同义）：`{名字}` 就是参数
+/// asm  = "li {rd}, {imm}"         # **书写规范**（与 [inst.<名>].asm 同义）：`{名字}` 就是参数
 /// emit = [                        # 展开行；`{名字}` 只能引用 asm 里声明过的参数
 ///   "lui {rd}, (({imm} + 0x800) >> 12)",
 ///   "addi {rd}, {rd}, ((({imm} + 0x800) & 0xfff) - 0x800)",
@@ -3197,18 +3197,18 @@ pub struct RelocBody {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AsmSection {
-    /// 伪指令（`[[pseudo]]` 的 v21 新居）：表头 = 名字。
+    /// 伪指令（`[asm.pseudo.<名>]` 的 v21 新居）：表头 = 名字。
     #[serde(default)]
     pub pseudo: BTreeMap<String, PseudoBody>,
-    /// 立即数修饰（`[[conventions.imm_fn]]` 的 v21 新居）：表头 = 修饰名。
+    /// 立即数修饰（`[asm.immfn.<名>]` 的 v21 新居）：表头 = 修饰名。
     #[serde(default)]
     pub immfn: BTreeMap<String, ImmFnBody>,
-    /// 重定位（`[[reloc]]` 的 v21 新居）：表头 = 重定位名。
+    /// 重定位（`[asm.reloc.<名>]` 的 v21 新居）：表头 = 重定位名。
     #[serde(default)]
     pub reloc: BTreeMap<String, RelocBody>,
 }
 
-/// 汇编器伪指令（`[[pseudo]]`，v18 S3e）：汇编期的文本级多指令展开。
+/// 汇编器伪指令（`[asm.pseudo.<名>]`，v18 S3e）：汇编期的文本级多指令展开。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PseudoDef {
@@ -3223,16 +3223,16 @@ pub struct PseudoDef {
     pub only_variants: Option<VariantGate>,
 }
 
-/// `[[derive]]` — 派生谓词属性（v18 S3f）。
+/// `[pred.<名>]` — 派生谓词属性（v18 S3f）。
 ///
-/// 给 `[[lowering]]`/`[[pattern]]` 的 `when` 用一个**有名字的布尔属性**，值 = 1/0：
+/// 给 `[[lower.<op>]]`/`树型匹配` 的 `when` 用一个**有名字的布尔属性**，值 = 1/0：
 ///
 /// ```toml
-/// [[derive]]
+/// [pred.<名>]
 /// name = "is_64"
 /// expr = { eq = ["rs1_width", 64] }
 ///
-/// [[lowering]]
+/// [[lower.<op>]]
 /// op = "Iadd"
 /// when = { eq = ["is_64", 1] }
 /// ```
@@ -3252,17 +3252,17 @@ pub struct DeriveDef {
     /// **内部载体**（v21 W10）：由 `[pred.<名>]` 的表头填，TOML 里不再写 `name`。
     #[serde(skip)]
     pub name: String,
-    /// 谓词表达式（与 `[[lowering]].when` 同语法）。
+    /// 谓词表达式（与 `[[lower.<op>]].when` 同语法）。
     pub expr: toml::Value,
 }
 
-/// `[[reloc]]` — 重定位表项（v18 S3d，取代 `GlobalReloc` 枚举）。
+/// `[asm.reloc.<名>]` — 重定位表项（v18 S3d，取代 `GlobalReloc` 枚举）。
 ///
 /// 指令只写 `reloc = "<name>"` 引用本表；**语义是宿主契约**（有限、ISA 无关：
 /// [`RelocSemantics`]），"这条指令把重定位值编进哪个槽"是本表的数据。
 ///
 /// ```toml
-/// [[reloc]]
+/// [asm.reloc.<名>]
 /// name = "abs64"                 # 指令引用：reloc = "abs64"
 /// semantics = "absolute"         # 宿主语义（absolute / pc_relative）
 /// slot = "imm64"                 # 绑定到哪个操作数槽（fixup 落点由它派生）
@@ -3328,7 +3328,7 @@ pub struct OverrideDef {
 pub struct OperandUse {
     /// `ops` 里声明的操作数名（= `asm` 占位符名 = 生成字段名）。
     pub name: String,
-    /// [[operand_slots]] 槽名。
+    /// [operand.<名字>] 槽名。
     pub slot: String,
     /// 角色覆盖（缺省 "in"）。
     #[serde(default)]
@@ -3339,7 +3339,7 @@ pub struct OperandUse {
 
 /// **终结指令的 lowering 序列**（v21 W6）：`[lower.Br]` / `[lower.Jmp]` / `[lower.Ret]`。
 ///
-/// 与 `[[lowering]]` 分家的原因（实测）：分支的 `then`/`else` 块号只有终结层拿得到
+/// 与 `[[lower.<op>]]` 分家的原因（实测）：分支的 `then`/`else` 块号只有终结层拿得到
 /// （`dfg.term_branch(block)`），per-op 的规则路径没有这个上下文 ⇒ 分支/跳转/返回
 /// 的序列写在终结层谱面里，由终结 lowering 消费。
 ///
@@ -3347,7 +3347,7 @@ pub struct OperandUse {
 /// 与 `{target}`（Jmp 的目标块号）。
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct TermSeq {
-    /// 指令序列（与 `[[lowering]].insts` 同一套占位符/替换语义）。
+    /// 指令序列（与 `[[lower.<op>]].insts` 同一套占位符/替换语义）。
     pub insts: Vec<String>,
     /// **返回形态条件**（v21 W6 乙）：终结规则按 **IR 语义** 分支 ✗。
     ///
@@ -3529,22 +3529,22 @@ impl<'de> Deserialize<'de> for AsmList {
     }
 }
 
-// ──────────────────────── [[templates]] ────────────────────────
+// ──────────────────────── [family.<名>] ────────────────────────
 
 /// 参数化指令模板（v18 S2）：**一处声明 → N 条具体指令**，本 DSL 唯一的"指令分组"机制。
 ///
-/// 取代 v17 的三套并行机制（`[[families]]` / `[[aliases]]` / 早期 `[[templates]]` 的平行
+/// 取代 v17 的三套并行机制（`族变体（更早的机制）` / `别名清单（更早的机制）` / 早期 `[family.<名>]` 的平行
 /// 参数表）——用户明确要求"只能保留一个，不然容易导致使用负担"。
 ///
-/// - **行（`[[templates.rows]]`）是唯一的事实载体**：每行一条指令，键值都是 TOML 值
+/// - **行（`[family.<名>].rows`）是唯一的事实载体**：每行一条指令，键值都是 TOML 值
 ///   （可嵌套数组/表），不需要人工对齐多列平行列表；
 /// - **`body` 是共享默认值**：行的同名字段覆盖它，表（如 `fields`/`modrm`）**递归合并**；
-///   不给 `body` 就是"一组各自独立的指令"（原先 `[[aliases]]` 的场景）；
+///   不给 `body` 就是"一组各自独立的指令"（原先 `别名清单（更早的机制）` 的场景）；
 /// - **插值**：字符串可写 `{键}`（该行的键）与 `{inst}`（实例名），`{键.lower}` 取小写
-///   （原先 `[[families]]` 的"变体名小写即助记符"由此显式表达）；
+///   （原先 `族变体（更早的机制）` 的"变体名小写即助记符"由此显式表达）；
 ///   **整串恰为一个占位符**时保留值的类型（`opcode = "{opcode}"` 仍是整数）；
 /// - **`ref`**：行（或 `body`）上的**引用名**——多条指令共用一个 `ref` 即"多态引用"
-///   （lowering/pattern/emit 行首可用，按操作数签名分派）；原先的 `[[aliases]]` 就是
+///   （lowering/pattern/emit 行首可用，按操作数签名分派）；原先的 `别名清单（更早的机制）` 就是
 ///   "几条指令共用同一个 ref"。
 ///   **`[family.<名>]`**（v21 W5）：族名来自表键；`body`/`rows` 与 [`Template`] 同形。
 ///
@@ -3560,7 +3560,7 @@ pub struct FamilyDecl {
     /// 与 `vary` **互斥**（写了 `vary` 就不需要 `rows`）。
     #[serde(default)]
     pub rows: Vec<TemplateRow>,
-    ///   **`vary` 行表**（v21 W5）：与 `[[lowering]].vary` **同一类型、同一 zip 语义**
+    ///   **`vary` 行表**（v21 W5）：与 `[[lower.<op>]].vary` **同一类型、同一 zip 语义**
     /// （`Lowering::zip_vary`）。约定：`name` 列表给每行的指令名 `inst`，其余键成为该行的字段。
     /// 与显式 `rows` **互斥**（同时给会报错）。
     #[serde(default)]
@@ -3579,7 +3579,7 @@ pub struct Template {
     /// 行：每行一条指令实例（`inst` 必填，其余键即指令字段）。
     pub rows: Vec<TemplateRow>,
     /// 是否由 `[family.<名>]` 降级而来（v21 W5，内部字段）：诊断锚点据此打印
-    /// `[family.X]`（源里真实存在的节），而不是内部载体名 `[[templates.X]]`。
+    /// `[family.X]`（源里真实存在的节），而不是内部载体名 `[family.<名>]`。
     #[serde(default, skip)]
     pub from_family: bool,
 }
@@ -3808,7 +3808,7 @@ impl Template {
 }
 
 impl IsaModel {
-    /// 展开全部 `[[templates]]`：实例拼进 `instructions`。
+    /// 展开全部 `[family.<名>]`：实例拼进 `instructions`。
     ///
     /// 在**解析期**调用（`parse` 在展开 `lowering.vary` 之后），因此下游（校验/生成）
     /// 只看到普通指令与它们的 `ref`——生成器无需感知模板。
@@ -3894,7 +3894,7 @@ impl IsaModel {
     }
 }
 
-// ──────────────────────── [[lowering]] ────────────────────────
+// ──────────────────────── [[lower.<op>]] ────────────────────────
 
 /// 指令选择规则。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -4055,11 +4055,11 @@ impl IsaModel {
 }
 
 impl IsaModel {
-    /// 谓词属性全集：核心属性（[`super::pred::PRED_ATTRS`]）+ `[[derive]]` 名。
+    /// 谓词属性全集：核心属性（[`super::pred::PRED_ATTRS`]）+ `[pred.<名>]` 名。
     ///
     /// 校验器与 `vary` 的"键是谓词属性还是纯替换变量"判定同读这一份。
-    /// `[[pattern]]` 的裁决序（返回**声明下标**的排序结果）：v18 S5c 起与
-    /// `[[lowering]]` 用同一套键——(`priority` 降, 匹配树 Op 节点数降, `when` 谓词
+    /// `树型匹配` 的裁决序（返回**声明下标**的排序结果）：v18 S5c 起与
+    /// `[[lower.<op>]]` 用同一套键——(`priority` 降, 匹配树 Op 节点数降, `when` 谓词
     /// 叶子数降, 声明序升)；后两者合起来就是"特异性降序"。
     ///
     /// codegen（生成 `__PATTERNS` 表与分派臂）与校验器（死模式检测）**共读这一份**，
@@ -4113,7 +4113,7 @@ impl IsaModel {
 
     /// `[meta].variants` 声明的参数名（v19 V5）：模板里 `{参数名}` 的合法名字集。
     ///
-    /// 只读投影用：`asm`/`[[lowering]].insts` 里的参数占位符由投影期替换，走到校验期
+    /// 只读投影用：`asm`/`[[lower.<op>]].insts` 里的参数占位符由投影期替换，走到校验期
     /// 还剩占位符 = 本次没传该参数（[`super::codegen::parse_asm_decl`] 据此报可操作的错）。
     pub fn variant_param_names(&self) -> std::collections::BTreeSet<String> {
         self.meta
@@ -4123,7 +4123,7 @@ impl IsaModel {
             .unwrap_or_default()
     }
 
-    /// 展开 `[[derive]]`（解析期）：把 `expr` 解析成谓词 AST，存进
+    /// 展开 `[pred.<名>]`（解析期）：把 `expr` 解析成谓词 AST，存进
     /// `derived_preds`（下游只认展开后的谓词）。
     ///
     /// 错误（Parse 阶段，消息可直接锚到声明）：名称为空/重复/与核心属性重名、
@@ -4159,7 +4159,7 @@ impl IsaModel {
 }
 
 impl Lowering {
-    /// **`vary` 的 zip 语义**（v21 W5）：`[[lowering]].vary` 与 `[family.<名>].vary`
+    /// **`vary` 的 zip 语义**（v21 W5）：`[[lower.<op>]].vary` 与 `[family.<名>].vary`
     /// **共用这唯一一处实现**——校验（非空、各列表等长）后按下标 zip 成行，
     /// 返回"每行一列键 → 取值"。
     pub fn zip_vary(
@@ -4262,12 +4262,12 @@ impl Lowering {
     }
 }
 
-// ───────────────────────── [[pattern]] ─────────────────────────
+// ───────────────────────── 树型匹配 ─────────────────────────
 
 /// 树型多指令匹配（S6）：声明一棵 IR **匹配树**（`match = "Fadd(Fmul(a,b),c)"`）
 /// 与一段发射序列（`insts`）。运行期 lowering 驱动在块内逆序预扫时，把命中
 /// 整棵子树的 IR 值合并成一次 `lower_pattern` 发射（叶变量按 DFS 序绑定为
-/// `{N}` 输入），跳过被 consumed 的内部节点。无 `[[pattern]]` 的 ISA 零开销。
+/// `{N}` 输入），跳过被 consumed 的内部节点。无 `树型匹配` 的 ISA 零开销。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Pattern {
@@ -4279,13 +4279,13 @@ pub struct Pattern {
     /// [`crate::dsl::match_tree::parse`]。
     #[serde(rename = "match")]
     pub r#match: String,
-    /// 显式优先级（缺省 0，大者先试）——与 `[[lowering]].priority` **同语义**（v18 S5c）。
+    /// 显式优先级（缺省 0，大者先试）——与 `[[lower.<op>]].priority` **同语义**（v18 S5c）。
     ///
     /// 裁决序 = (`priority` 降, 匹配树 Op 节点数降, `when` 谓词叶子数降, 声明序升)；
     /// 只在"故意让更宽的模式赢过更具体的模式"时才需要。
     #[serde(default)]
     pub priority: Option<i32>,
-    /// 根指令派生属性上的结构化谓词（与 `[[lowering]].when` 同语法）——
+    /// 根指令派生属性上的结构化谓词（与 `[[lower.<op>]].when` 同语法）——
     /// 两个结构相同、只差守卫（如 f32 vs f64）的模式靠它区分。
     #[serde(default)]
     pub when: Option<toml::Value>,
@@ -4420,9 +4420,9 @@ pub struct SpillTemplate {
 
 /// **变体条件**：参数名 → 允许取值集合（`[meta].variants` 声明域的子集）。
 ///
-/// 六处声明共用同一类型与同一判定（[`variants_keep`]）：`[[instructions]]` /
-/// `[[templates]].body` 与 `rows` / `[emit.prologue|epilogue]` / `[spill.*]` /
-/// `[[pseudo]]` / `[[pattern]]`——凡"承载指令引用的声明"都能标。
+/// 六处声明共用同一类型与同一判定（[`variants_keep`]）：`[inst.<名>]` /
+/// `[family.<名>].body` 与 `rows` / `[emit.prologue|epilogue]` / `[spill.*]` /
+/// `[asm.pseudo.<名>]` / `树型匹配`——凡"承载指令引用的声明"都能标。
 pub type VariantGate = BTreeMap<String, Vec<i64>>;
 
 /// `only_variants` 的统一判定：给定投影参数，本声明是否仍然存在。

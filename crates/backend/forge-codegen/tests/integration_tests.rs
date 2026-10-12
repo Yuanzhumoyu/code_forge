@@ -133,7 +133,7 @@ fn riscv_target_machine_assembles() {
     assert_eq!(ri.num_fp_regs(), 32, "riscv FPR 数");
 }
 
-// ─────────────────── lowering（[[lowering]] 符号化操作数）───────────────────
+// ─────────────────── lowering（[[lower.<op>]] 符号化操作数）───────────────────
 
 #[test]
 fn lowering_iadd_packet() {

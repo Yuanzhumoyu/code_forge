@@ -445,7 +445,7 @@ fn memory_mov_family_round_trips() {
 // ─────────────────── SSE 比较谓词（`0F C2 /r ib`）与经典别名 ───────────────────
 
 /// 谓词立即数本体（`ps`/`pd`/`ss`/`sd` 靠**强制前缀**区分）与经典八谓词的 packed 别名
-/// （`[[pseudo]]` 文本展开成一条 `cmpps/cmppd`，不新增指令、不加第二套分派）。
+/// （`[asm.pseudo.<名>]` 文本展开成一条 `cmpps/cmppd`，不新增指令、不加第二套分派）。
 #[test]
 fn sse_compare_predicates() {
     // 本体：0F C2 /r ib
@@ -520,7 +520,7 @@ fn sse_compare_round_trips() {
     }
 }
 
-// ─────────────────── [[pseudo]] 伪指令展开（S3e）───────────────────
+// ─────────────────── [asm.pseudo.<名>] 伪指令展开（S3e）───────────────────
 
 fn rv_words(src: &str) -> Vec<u32> {
     rv_parse(src)
@@ -553,7 +553,7 @@ fn pseudo_li_expands_to_lui_addi() {
     assert_eq!(rv_words("li x10, 0x1234\nnop\n").len(), 3);
 }
 
-/// 新版 `[[pseudo]]`（`asm` 声明形态）：切参按**模板字面**走，写法不符/参数不对
+/// 新版 `[asm.pseudo.<名>]`（`asm` 声明形态）：切参按**模板字面**走，写法不符/参数不对
 /// ⇒ 报错**回显写法**；展开行自己装配失败时点名是哪一行展开出来的。
 #[test]
 fn pseudo_asm_template_is_matched_and_reported() {

@@ -71,7 +71,7 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
-    /// **宿主管线自己处理的 op**（不靠 ISA 的 `[[lowering]]` 规则）：`VaStart`/`VaArg` 由管线按
+    /// **宿主管线自己处理的 op**（不靠 ISA 的 `[[lower.<op>]]` 规则）：`VaStart`/`VaArg` 由管线按
     /// 约定数据展开成显式 IR（v20 V6），所以**每台机器都有**——不再由各 runner 的 `CAPS_EXTRA`
     /// 逐台声明（那样等于把"变参能不能跑"重新绑回 ISA）。
     pub const HOST_PIPELINE_OPS: &'static [&'static str] = &["VaStart", "VaArg"];
@@ -2493,7 +2493,7 @@ pub const CASES: &[Case] = &[
         ),
     },
     // S6 树型模式锚：Fadd(Fmul(a,b), c) → mul+add 融合（Fmul 单 use、同块）。
-    // 验证 [[pattern]] 预扫命中 + consumed 跳过 + lower_pattern 分发。
+    // 验证 树型匹配 预扫命中 + consumed 跳过 + lower_pattern 分发。
     Case {
         name: "fma_fadd_fmul_pattern_f64",
         ops: &["Fadd", "Fmul", "Fconst"],

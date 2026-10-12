@@ -15,8 +15,8 @@
 //! ——重复声明这类错误因此能一次指出两处。
 //!
 //! 消息格式约定（沿用 既有约定，校验器只需照旧写前缀）：
-//! `[inst.NAME]: …` / `[form.NAME]: …` / `[[operand_slots]] #i ('NAME'): …` /
-//! `[[lower.OP]]: …` / `[reg.NAME]: …` / `[stack].key …` / `[[pattern]] #i: …`。
+//! `[inst.NAME]: …` / `[form.NAME]: …` / `[operand.<名字>] #i ('NAME'): …` /
+//! `[[lower.OP]]: …` / `[reg.NAME]: …` / `[stack].key …` / `树型匹配 #i: …`。
 
 use std::collections::BTreeMap;
 
@@ -211,9 +211,9 @@ pub(crate) fn section_code(kind: &str) -> &'static str {
 ///
 /// | 源写法 | 键 |
 /// | --- | --- |
-/// | `[[instructions]]` + `name = "X"` | `("instructions", "X")` |
-/// | `[[forms]]` / `[[operand_slots]]` / `[[templates]]` / `[[templates.rows]]` + `name`/`inst` | 同名节 |
-/// | `[[lower.<名字>]]` | `("lower", "<名字>")`（v21 W6-a；旧面 `[[lowering]]` + `op = "X"` 过渡期仍认 ✗） |
+/// | `[inst.<名>]` + `name = "X"` | `("instructions", "X")` |
+/// | `[form.<名>]` / `[operand.<名字>]` / `[family.<名>]` / `[family.<名>].rows` + `name`/`inst` | 同名节 |
+/// | `[[lower.<名字>]]` | `("lower", "<名字>")`（v21 W6-a；旧面 `[[lower.<op>]]` + `op = "X"` 过渡期仍认 ✗） |
 /// | `[reg.gpr8]` | `("reg", "gpr8")` |
 /// | `[spill.GPR]` | `("spill", "GPR")` |
 /// | `[meta]`/`[stack]`/`[abi]`/`[emit]`/`[types]` | `(kind, "")` |
@@ -474,7 +474,7 @@ fn quoted_values(msg: &str) -> Vec<String> {
 
 /// 解析消息前缀 → (节, 可选名字)。
 fn parse_prefix(msg: &str) -> (Option<String>, Option<String>) {
-    // `[[operand_slots]] #3 ('gprx'): …`
+    // `[operand.<名字>] #3 ('gprx'): …`
     if let Some(rest) = msg.strip_prefix("[operand.")
         && let Some(open) = rest.find("('")
         && let Some(close) = rest[open + 2..].find("')")
@@ -497,7 +497,7 @@ fn parse_prefix(msg: &str) -> (Option<String>, Option<String>) {
     };
     let head = &body[..end];
     match head.split_once('.') {
-        // `[reg.gpr8]` / `[inst.ADD]` / `[[spill.GPR]]`
+        // `[reg.gpr8]` / `[inst.ADD]` / `[machine.spill.GPR]`
         Some((k, n)) => {
             // v21 W9：`[machine.spill.fpr].load` 这类前缀按**两段 kind** 解析
             // （与 DeclIndex 的额外索引一致），码仍由 `section_code` 给。
@@ -509,7 +509,7 @@ fn parse_prefix(msg: &str) -> (Option<String>, Option<String>) {
             }
             (Some(k.to_string()), Some(n.to_string()))
         }
-        // `[[instructions]] #3:` / `[meta]` / `[stack]` —— 无名节
+        // `[inst.<名>] #3:` / `[meta]` / `[stack]` —— 无名节
         None => (Some(head.to_string()), None),
     }
 }

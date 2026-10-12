@@ -323,7 +323,7 @@ pub fn generate_with_parts(
     } else {
         quote! {}
     };
-    // `asm` 部件的 `assemble` 会调 `__pseudo_expand`（`[[pseudo]]` 展开），而这个助手平时
+    // `asm` 部件的 `assemble` 会调 `__pseudo_expand`（`[asm.pseudo.<名>]` 展开），而这个助手平时
     // 由 `tm` 部件里的 `gen_assembler` 发射。**只开 asm、不开 tm** 时必须在这里补发，
     // 否则生成物引用未定义函数（v19 V3a 由 `forge-isa test` 在 riscv64 上抓到：谱里的
     // `li` 伪指令 + `parts = ["encode","decode","asm"]` → `E0425: cannot find function
@@ -415,7 +415,7 @@ fn gen_mem_support(model: &IsaModel, _infos: &[InstInfo]) -> Result<TokenStream,
 }
 
 /// 单条指令的生成信息：form 解析 + 操作数→位域绑定 + mnemonic/asm 模板。
-/// `inst` 为 owned（`[[templates]]` 展开在解析期完成，这里就是完整指令表）。
+/// `inst` 为 owned（`[family.<名>]` 展开在解析期完成，这里就是完整指令表）。
 ///
 /// 字段 `pub(crate)`：`report`（CLI 的 `insts`/`explain`/`diff`，v18 S7b）直接读它，
 /// 不重复实现"form 预设 ⊕ 指令级逐键覆盖"的判定（单一事实源）。
@@ -433,7 +433,7 @@ pub(crate) struct InstInfo<'a> {
 }
 
 pub(crate) fn collect_inst_infos<'a>(m: &'a IsaModel) -> Result<Vec<InstInfo<'a>>, String> {
-    // `[[templates]]` 已在解析期展开进 `m.instructions`（`v18 S2`），此处直接用。
+    // `[family.<名>]` 已在解析期展开进 `m.instructions`（`v18 S2`），此处直接用。
     let insts: Vec<Instruction> = m.instructions.clone();
     let mut out = Vec::new();
     for inst in &insts {

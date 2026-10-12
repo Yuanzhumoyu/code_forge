@@ -66,7 +66,7 @@ fn the_guard_can_fail() {
 fn op_gap_matches_section_10_3() {
     let host_ops = host_ops();
     // (ISA, 覆盖, 终结, 宿主管线, 真缺口数)
-    // 宿主管线 7 → 8（2026-10-01）：`VaStart` 由**管线**展开成显式 IR（谱里没有 `[[lowering]]`），
+    // 宿主管线 7 → 8（2026-10-01）：`VaStart` 由**管线**展开成显式 IR（谱里没有 `[[lower.<op>]]`），
     // 归入 `HOST_PIPELINE_OPS`；覆盖数与三谱的真缺口数因此不变。
     // riscv 覆盖 61 → 63（2026-10-01）：补了 `Fload`/`Fstore` 的 lowering——变参的**浮点支**要在
     // riscv 上真跑，`va_arg(f64)` 展开出的 `Fload` 必须能降级（真缺口 42 → 40）。

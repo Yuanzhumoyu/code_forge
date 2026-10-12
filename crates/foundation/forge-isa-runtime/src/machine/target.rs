@@ -72,7 +72,7 @@ pub trait TargetMachine: Send + Sync + 'static {
     /// `call_indirect`/`ret`）→ 可编码的**最宽位宽**；`None` = 本 ISA 没有这个能力
     /// （或非 DSL 后端 / 测试替身：不申报，约定侧的能力核对会如实报缺口）。
     ///
-    /// DSL 生成的实现从 `[[instructions]].roles` 折算（与 `forge-isa abi check`
+    /// DSL 生成的实现从 `[inst.<名>].roles` 折算（与 `forge-isa abi check`
     /// 的静态视图**同源**：都走 `forge_isa_dsl::abi_view::role_capability`），
     /// 因此"谱里声明了什么"和"宿主申报了什么"不会漂移。
     fn role_bits(&self, _role: &str) -> Option<u16> {

@@ -15,7 +15,7 @@
 #[cfg(test)]
 use code_forge::backend::arm64::SUPPORTED_OPS;
 
-/// 无 `[[lowering]]` 条目的 op 补充声明（与 SUPPORTED_OPS 并集）。
+/// 无 `[[lower.<op>]]` 条目的 op 补充声明（与 SUPPORTED_OPS 并集）。
 /// P2 阶段保持为空（GetElementPtr/Call/Module 等路径未接入 → 相关用例 Skip）。
 pub const CAPS_EXTRA: &[&str] = &[];
 

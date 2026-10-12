@@ -173,7 +173,7 @@ pub(crate) fn gen_spec_tests(infos: &[InstInfo], m: &IsaModel) -> Result<TokenSt
         pub(crate) mod __spec_tests {
             use super::*;
 
-            /// `[[templates]]` 展开后的指令总数。
+            /// `[family.<名>]` 展开后的指令总数。
             pub(crate) const SPEC_TOTAL: usize = #total;
             /// 自动覆盖的指令数（= `SPEC_TOTAL` 才叫全指令覆盖）。
             pub(crate) const SPEC_COVERED: usize = #covered;
@@ -1063,7 +1063,7 @@ pub(crate) fn gen_all_insts(infos: &[InstInfo], m: &IsaModel) -> Result<TokenStr
         })
         .collect();
     Ok(quote! {
-        /// 全部指令名（`[[templates]]` 展开后）——枚举器覆盖清点用。
+        /// 全部指令名（`[family.<名>]` 展开后）——枚举器覆盖清点用。
         pub(crate) const SPEC_INSTS: &[&str] = &[#(#names),*];
 
         /// **谱内派生的代表实例**（v19 V3d）：`(名字, Inst)`。

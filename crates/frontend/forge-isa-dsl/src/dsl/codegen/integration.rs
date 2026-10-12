@@ -103,7 +103,7 @@ pub(crate) fn compile_pred_guard(pred: &Pred, model: &IsaModel) -> TokenStream {
 /// - 核心属性（[`crate::dsl::pred::PRED_ATTRS`]）→
 ///   `__ac_get(&mut __ac, 槽, || __a_<名>(op, args, results, &*ctx))`：
 ///   只有该谓词真的被求值时才算，且同一次 `lower_inst` 调用里复用（`__AC::done` 位图）；
-/// - `[[derive]]` 派生属性 → **生成期展开**成它自己的谓词表达式（解析期已保证
+/// - `[pred.<名>]` 派生属性 → **生成期展开**成它自己的谓词表达式（解析期已保证
 ///   `expr` 只引用核心属性），得到 `Some(1/0)`——同样没有运行时名字查找；
 /// - 未知属性 → `None`（恒假，与 `pred::eval` 一致；名字写错由校验器报错）。
 fn attr_expr(name: &str, model: &IsaModel) -> TokenStream {
@@ -398,18 +398,18 @@ pub fn gen_integration(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStre
 
 // ─────────────────────── 能力集（P1-16）───────────────────────
 
-/// P1-16：能力集单一事实源——`[[lowering]].op` 唯一集（排序去重）。
+/// P1-16：能力集单一事实源——`[[lower.<op>]].op` 唯一集（排序去重）。
 ///
 /// forge-tests 的 `Capabilities` 由此派生（不再手写同步）；TOML 新增
 /// lowering op 后矩阵用例自动转绿。Call/CallIndirect（ABI 专用生成路径）
-/// 与 GEP 等无 `[[lowering]]` 条目的 op 由消费方补充声明。
+/// 与 GEP 等无 `[[lower.<op>]]` 条目的 op 由消费方补充声明。
 fn gen_supported_ops(model: &IsaModel) -> TokenStream {
     let mut ops: Vec<&str> = model.lowering.iter().map(|l| l.op.as_str()).collect();
     ops.sort_unstable();
     ops.dedup();
     let items: Vec<TokenStream> = ops.iter().map(|op| quote! { #op }).collect();
     quote! {
-        /// 本 ISA TOML 声明的 lowering op 集（`[[lowering]].op` 唯一集；
+        /// 本 ISA TOML 声明的 lowering op 集（`[[lower.<op>]].op` 唯一集；
         /// 排序去重）。能力集单一事实源——矩阵 `Capabilities` 由此派生。
         pub const SUPPORTED_OPS: &[&str] = &[#(#items),*];
     }
@@ -811,7 +811,7 @@ fn gen_target_machine(
     reloc_patcher_method: TokenStream,
 ) -> Result<TokenStream, String> {
     let isa_name_str = &model.meta.name;
-    // 能力表（v20 A3/V8）：**两个来源**——① `[[instructions]].roles` 里那些
+    // 能力表（v20 A3/V8）：**两个来源**——① `[inst.<名>].roles` 里那些
     // 操作数结构说不出来的语义（调用/返回/跳转/帧/栈参数/保存恢复）；
     // ② **搬运族派生**（`data_width` + 操作数结构 → 方向/寄存器族/宽度，
     // 与 `forge-isa abi check` 的静态视图同源，都走 `moves::MoveTable`）。

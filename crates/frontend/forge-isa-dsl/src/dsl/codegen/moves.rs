@@ -331,7 +331,7 @@ impl MoveTable {
 fn arm_of(info: &InstInfo, width: u16) -> Result<MoveArm, String> {
     let bad = |why: &str| {
         Err(format!(
-            "[[instructions]] \"{}\": `data_width = {width}` 只能写在**纯搬运**指令上（{}）——\
+            "[inst.<名>] \"{}\": `data_width = {width}` 只能写在**纯搬运**指令上（{}）——\
              方向/寄存器族/立即数由操作数结构派生，所以结构必须干净：一个目的槽 + 一个来源槽\
              （Reg 输入槽可以多一个，riscv `fsgnj` 那种自动填同一个源）",
             info.inst.name, why
@@ -396,7 +396,7 @@ fn arm_of(info: &InstInfo, width: u16) -> Result<MoveArm, String> {
     }
     let (dst_fid, dst_idx, dst_shape) = dst.ok_or_else(|| {
         format!(
-            "[[instructions]] \"{}\": `data_width` 需要恰好一个目的槽（`out`/`inout`），一条都没有",
+            "[inst.<名>] \"{}\": `data_width` 需要恰好一个目的槽（`out`/`inout`），一条都没有",
             info.inst.name
         )
     })?;

@@ -1,15 +1,15 @@
 //! x86 runner：绑定 `x86::TargetMachine` + 能力集，运行架构无关
 //! JIT 集成矩阵。能力集 = `x86::SUPPORTED_OPS`（P1-16：由 TOML
-//! `[[lowering]].op` 唯一集生成，不再手写同步）∪ 本文件补充的
+//! `[[lower.<op>]].op` 唯一集生成，不再手写同步）∪ 本文件补充的
 //! 非 lowering 路径 op；未实现 op 的用例自动 Skip（后续阶段补齐后转绿，
 //! Skip 数收敛到 0）。
 
-/// 无 `[[lowering]]` 条目的 op（P1-16 补充声明；与生成的 SUPPORTED_OPS 并集
+/// 无 `[[lower.<op>]]` 条目的 op（P1-16 补充声明；与生成的 SUPPORTED_OPS 并集
 /// 构成完整能力集）：
-/// - Call/CallIndirect：ABI 专用生成路径（gen_call_lowering，非 [[lowering]]）；
+/// - Call/CallIndirect：ABI 专用生成路径（gen_call_lowering，非 [[lower.<op>]]）；
 /// - GetElementPtr：地址计算在 lowering 内联（gep 展开为 add），无独立规则。
 /// - VaStart/VaArg（v20 变参 V2–V4）：同样是**生成器专用臂**（`va_list` 的形态/落点是约定
-///   数据，静态模板表达不了），谱里没有也不该有 `[[lowering]]`。声明了它们，变参用例才会
+///   数据，静态模板表达不了），谱里没有也不该有 `[[lower.<op>]]`。声明了它们，变参用例才会
 ///   真跑而不是被能力门控 Skip。
 pub const CAPS_EXTRA: &[&str] = &["Call", "CallIndirect", "GetElementPtr"];
 

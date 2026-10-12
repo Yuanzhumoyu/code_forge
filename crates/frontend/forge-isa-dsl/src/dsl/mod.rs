@@ -5,8 +5,8 @@
 //! （v11 文件解析必然失败——`deny_unknown_fields`）。v11 语法层已物理删除。
 //!
 //! 模型范围：`[meta]` / `[reg.*]` / `[conventions.bitfields]`（+modrm）/
-//! `[[operand_slots]]` / `[[forms]]`（语义键）/ `[[instructions]]` /
-//! `[[templates]]`（`body` + `rows`，唯一复用机制）/ `[[lowering]]`（符号化操作数）/
+//! `[operand.<名字>]` / `[form.<名>]`（语义键）/ `[inst.<名>]` /
+//! `[family.<名>]`（`body` + `rows`，唯一复用机制）/ `[[lower.<op>]]`（符号化操作数）/
 //! `[abi]` / `[emit]`；
 //! 代码生成见 `codegen`（自包含 encode/decode/asm + TargetMachine 集成层）。
 
@@ -151,7 +151,7 @@ pub(crate) fn parse_and_validate_projected(
     {
         diags.push_anchored(&idx, &msg);
     }
-    // v21 W2：`[[forms]].fields` 展开进内部表示（位域表 / opcode_field / operand_fields）。
+    // v21 W2：`[form.<名>].fields` 展开进内部表示（位域表 / opcode_field / operand_fields）。
     if let Err(msg) = field_decl::lower_field_syntax(&mut model) {
         diags.push_anchored(&idx, &msg);
     }

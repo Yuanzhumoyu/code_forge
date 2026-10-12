@@ -101,7 +101,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &["bits", "widths", "max_len", "default_opsize"],
         flatten: &[],
         additional: false,
-        doc: "指令宽度三态：fixed | mixed | prefix_scan（v18 S4）",
+        doc: "指令宽度三态：fixed | mixed | prefix_scan",
     },
     Section {
         path: "[reg.<name>]",
@@ -126,7 +126,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &["slot", "align", "fp_save"],
         flatten: &[],
         additional: false,
-        doc: "栈槽单位/对齐/帧指针保存槽（v21 W9：从 `[stack]` 迁入，**单位是位**，解析期 ÷8；缺省全部派生）",
+        doc: "栈槽单位/对齐/帧指针保存槽（从 `[stack]` 迁入，**单位是位**，解析期 ÷8；缺省全部派生）",
     },
     Section {
         path: "[machine.classes]",
@@ -135,7 +135,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &[],
         flatten: &[],
         additional: true,
-        doc: "类型 → 寄存器组名（或 \"unsupported\"）的显式映射（v21 W9：从 `[types]` 迁入）；键 = 类型名",
+        doc: "类型 → 寄存器组名（或 \"unsupported\"）的显式映射（从 `[types]` 迁入）；键 = 类型名",
     },
     Section {
         path: "[conventions.modrm]",
@@ -240,7 +240,7 @@ pub const SECTIONS: &[Section] = &[
         // Form 的编码键是 `#[serde(flatten)]` 的 EncKeys：TOML 里与本节的键同级。
         flatten: ENC_KEYS,
         additional: false,
-        doc: "编码形式：可选的键预设（指令可逐键覆盖）；v21 W10：**表头即形式名**（不再写 `name`）",
+        doc: "编码形式：可选的键预设（指令可逐键覆盖）；**表头即形式名**（不写 `name`）",
     },
     Section {
         path: "[inst.<名字>]",
@@ -276,7 +276,7 @@ pub const SECTIONS: &[Section] = &[
         // 编码键是 `#[serde(flatten)]` 的 EncKeys：直接在指令上写（不写 `enc = {...}`）。
         flatten: ENC_KEYS,
         additional: false,
-        doc: "指令（v21 W10：**表头即指令名**，不再写 `name`）：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据）",
+        doc: "指令（**表头即指令名**，不写 `name`）：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据）",
     },
     Section {
         path: "[family.<名>]",
@@ -285,7 +285,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &["body", "rows", "vary"],
         flatten: &[],
         additional: false,
-        doc: "指令族（v21 W5）：`body` 是各行共享的指令字段默认值，`rows` 每行一条指令实例（`inst` 必填，其余键即指令字段、可就地插值 `{键}`/`{inst}`），`vary` 是等长列表 zip 成行的便捷写法（与 `rows` 互斥）；族名即 `ref` 多态名",
+        doc: "指令族：`body` 是各行共享的指令字段默认值，`rows` 每行一条指令实例（`inst` 必填，其余键即指令字段、可就地插值 `{键}`/`{inst}`），`vary` 是等长列表 zip 成行的便捷写法（与 `rows` 互斥）；族名即 `ref` 多态名",
     },
     Section {
         path: "[asm.reloc.<名>]",
@@ -294,7 +294,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &["addend", "via"],
         flatten: &[],
         additional: false,
-        doc: "重定位（v21 W8：**表头即重定位名**；旧 `[[reloc]]` 已撤）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`）",
+        doc: "重定位（**表头即重定位名**）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`）",
     },
     Section {
         path: "[pred.<名字>]",
@@ -321,7 +321,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &[],
         flatten: &[],
         additional: false,
-        doc: "立即数修饰（v21 W7：**表头即修饰名**；旧 `[[conventions.imm_fn]]` 待撤）：`texts` = 同一语义的等价写法列表（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值）",
+        doc: "立即数修饰（**表头即修饰名**）：`texts` = 同一语义的等价写法列表（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值）",
     },
     Section {
         path: "[lower.<名字>]",
@@ -340,7 +340,7 @@ pub const SECTIONS: &[Section] = &[
         ],
         flatten: &[],
         additional: false,
-        doc: "选择层（v21 W6-a：**表头即名字、同名可多块**）——名字是终结 op（Ret/Jmp/Br/Switch/Unreachable/Invoke）⇒ 终结序列（可用 {true}/{false}/{target} 符号值，且只吃 `insts`）；写了 `match` ⇒ 树型多指令匹配（名字是作者起的模式名）；其余 ⇒ op 规则（**名字就是 op 名**；一个 op 多条规则就写多块）",
+        doc: "选择层（**表头即名字、同名可多块**）——名字是终结 op（Ret/Jmp/Br/Switch/Unreachable/Invoke）⇒ 终结序列（可用 {true}/{false}/{target} 符号值，且只吃 `insts`）；写了 `match` ⇒ 树型多指令匹配（名字是作者起的模式名）；其余 ⇒ op 规则（**名字就是 op 名**；一个 op 多条规则就写多块）",
     },
     Section {
         path: "[machine]",
@@ -366,7 +366,7 @@ pub const SECTIONS: &[Section] = &[
         ],
         flatten: &[],
         additional: false,
-        doc: "机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / 帧填充 / 位置计数规则；v21 W9：`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes` 由 `fixed_regs`/`spill_scratch`/`link_reg`/`frame_padding`/`arg_slot`/`vector_by_ref_bytes` 改名，接收从 `[stack]`/`[emit]`/`[types]` 迁入的 `stack`/`text`/`classes`，并删除 `callee_saved_gpr`/`callee_save_slots`——callee-saved 完全归约定数据）",
+        doc: "机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / 帧填充 / 位置计数规则；`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes` 由 `fixed_regs`/`spill_scratch`/`link_reg`/`frame_padding`/`arg_slot`/`vector_by_ref_bytes` 改名，接收从 `[stack]`/`[emit]`/`[types]` 迁入的 `stack`/`text`/`classes`，并删除 `callee_saved_gpr`/`callee_save_slots`——callee-saved 完全归约定数据）",
     },
     Section {
         path: "[machine.frame]",
@@ -384,7 +384,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &["align_pad", "epilogue_label"],
         flatten: &[],
         additional: false,
-        doc: "代码对齐填充与尾声标签（v21 W9：从 `[emit]` 迁入；序/尾声由生成器按约定生成，谱里不再写）",
+        doc: "代码对齐填充与尾声标签（从 `[emit]` 迁入；序/尾声由生成器按约定生成，谱里不再写）",
     },
     Section {
         path: "[machine.spill.<模板名>]",
@@ -393,7 +393,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &["base", "when"],
         flatten: &[],
         additional: false,
-        doc: "溢出/回填模板（v21 W9：表头 = 模板名，`class` = 它服务的寄存器类；`{N}` = 寄存器序号占位符）",
+        doc: "溢出/回填模板（表头 = 模板名，`class` = 它服务的寄存器类；`{N}` = 寄存器序号占位符）",
     },
     Section {
         path: "roles 的条目（内联表）",
@@ -411,7 +411,7 @@ pub const SECTIONS: &[Section] = &[
         optional: &["asm", "bytes", "error", "partial", "comment"],
         flatten: &[],
         additional: false,
-        doc: "数据化测试向量（v19 V3）：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = \"DECODE\", partial}` 解码错误 / `{bytes}` 解码正向",
+        doc: "数据化测试向量：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = \"DECODE\", partial}` 解码错误 / `{bytes}` 解码正向",
     },
     // ── 嵌套子表（TOML 内联或子节）──
     Section {

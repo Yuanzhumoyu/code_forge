@@ -210,7 +210,7 @@ fn validate_segs(segs: &[Seg], info: &InstInfo) -> Result<(), String> {
     Ok(())
 }
 
-/// 命名占位模板（`[[pseudo]].asm`）的段：`{名字}` 是**参数名**，不是操作数序号。
+/// 命名占位模板（`[asm.pseudo.<名>].asm`）的段：`{名字}` 是**参数名**，不是操作数序号。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum NamedSeg {
     Lit(String),
@@ -266,7 +266,7 @@ pub(crate) fn parse_named_template(tpl: &str) -> Result<Vec<NamedSeg>, String> {
     Ok(segs)
 }
 
-/// 模板里的参数名（**按首次出现序**、去重）——`[[pseudo]]` 的参数表就长在这里。
+/// 模板里的参数名（**按首次出现序**、去重）——`[asm.pseudo.<名>]` 的参数表就长在这里。
 pub(crate) fn named_params(segs: &[NamedSeg]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for s in segs {
@@ -293,7 +293,7 @@ pub(crate) fn named_dispatch_key(segs: &[NamedSeg]) -> Option<String> {
 
 /// 命名模板的形状校验：**字面开头**（分派前缀）、字面段非空、占位符之间要有字面分隔。
 ///
-/// 与 `[[instructions]].name` 无关：`name` 只是这条声明的唯一标识，写法由 `asm` 自己
+/// 与 `[inst.<名>].name` 无关：`name` 只是这条声明的唯一标识，写法由 `asm` 自己
 /// 说清楚——两者不必相同、也不同步（`name = "load_imm"` + `asm = "li {rd}, {imm}"` 合法）。
 pub(crate) fn validate_named_template(segs: &[NamedSeg]) -> Result<(), String> {
     match segs.first() {
@@ -415,7 +415,7 @@ fn gen_lexer_ts(_model: &IsaModel) -> Result<TokenStream, String> {
                 std::cell::RefCell::new(std::collections::HashMap::new());
         }
 
-        /// **符号引用收集**（`[[operand_slots]].symbols`）：`__primary` 遇到未知 ident 且
+        /// **符号引用收集**（`[operand.<名字>].symbols`）：`__primary` 遇到未知 ident 且
         /// 被**武装**时写这里（`(修饰下标, 名字)`），当 0 参与算术；命中后随 `__lsyms` 一起
         /// 提交、由两遍回填解析成"标签的块下标（或 `.` 的自引用）"。只有声明了 `symbols` 的槽
         /// 在解析自己的值时武装——`.equ`/`.set` 的表达式与其它槽照旧"未知 ident 即不匹配"。
@@ -700,7 +700,7 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
     // imm/label 操作数"无关。历史实现按 has_imm/has_label 门控定义 → 只有寄存器操作数的
     // ISA（夹具 `demo_inst12`）生成出**引用未定义 helper** 的模块（编译不过）。
     // 未被本 ISA 用到的入口函数加 `#[allow(dead_code)]`。
-    // 立即数修饰（`[[conventions.imm_fn]]`）：**谱声明的数据**——本文件不认识任何具体
+    // 立即数修饰（`[asm.immfn.<名>]`）：**谱声明的数据**——本文件不认识任何具体
     // 修饰名（`%hi`/`:lower16:` 都只是谱里的两行文本），只按 `text` 的模板匹配、
     // 按 `expr` 的值语义求值（复用既有表达式求值器）。
     let (imm_fn_defs, imm_fn_tries) = gen_imm_fns(model)?;
@@ -851,7 +851,7 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                 Some(lhs)
             }
 
-            /// 一元：正负号 / 按位非 / 谱声明的立即数修饰（`[[conventions.imm_fn]]`）/
+            /// 一元：正负号 / 按位非 / 谱声明的立即数修饰（`[asm.immfn.<名>]`）/
             /// 主元（数字、括号、符号常量）。
             fn __unary(it: &mut __Iter, float: bool) -> Option<i64> {
                 let save = it.pos;
@@ -882,7 +882,7 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
                         Some(if v == 0 { 1 } else { 0 })
                     }
                     // 谱声明的立即数修饰（`%hi(x)`、`:lower16:x`…）：**本文件不认识任何
-                    // 具体修饰名**——文本形态与值语义都来自 `[[conventions.imm_fn]]`。
+                    // 具体修饰名**——文本形态与值语义都来自 `[asm.immfn.<名>]`。
                     _ => {
                         #imm_fn_tries
                         __primary(it, save, float)
@@ -1158,7 +1158,7 @@ pub(crate) fn split_hole(s: &str) -> Option<(&str, &str)> {
     Some((pre, rest))
 }
 
-/// 立即数修饰（`[[conventions.imm_fn]]`）的生成：**谱声明的数据**，本文件不认识任何
+/// 立即数修饰（`[asm.immfn.<名>]`）的生成：**谱声明的数据**，本文件不认识任何
 /// 具体修饰名（`%hi(x)`、`:lower16:x`、`hi(x)` 都只是谱里的两行文本）。
 ///
 /// 每条声明两件事：
@@ -1175,7 +1175,7 @@ fn gen_imm_fns(model: &IsaModel) -> Result<(TokenStream, TokenStream), String> {
     // `imm_fns` 的运行时守卫：**无条件的**（`__imm` 总在用它，哪怕本谱一个修饰都没有）——
     // 只随修饰一起发会让没有 imm_fn 的谱（demo 宿主）生成物缺类型、编译不过。
     let allow_helper = quote! {
-        /// 本槽允许的修饰下标（`[[operand_slots]].imm_fns`；空表 = **全部允许**）。
+        /// 本槽允许的修饰下标（`[operand.<名字>].imm_fns`；空表 = **全部允许**）。
         thread_local! {
             static __IMM_FN_ALLOW: std::cell::RefCell<Vec<usize>> =
                 const { std::cell::RefCell::new(Vec::new()) };
@@ -1492,7 +1492,7 @@ fn operand_parse_tok(
             // `require_symbol`（重定位修饰形态）：本槽只接受"记到了符号/带修饰"的写法——
             // 判据在 `__imm` 内部判（`__imm` 成功时会提交并清空 `__SYMREF`，外层测长度增量恒为 0）。
             let require_sym = slot.require_symbol.unwrap_or(false);
-            // `imm_fns`（按槽过滤修饰表）：名字 → `[[conventions.imm_fn]]` 的下标
+            // `imm_fns`（按槽过滤修饰表）：名字 → `[asm.immfn.<名>]` 的下标
             // （校验期已保证名字都存在；空 = 不过滤 ⇒ 传空切片）。
             let allow_ts = match &slot.imm_fns {
                 Some(names) => {
@@ -1737,10 +1737,10 @@ fn type_signature(info: &InstInfo) -> Result<String, String> {
 /// 操作数）从左到右逐 token 匹配，首个完整命中即停。候选全局按 `form_specificity`
 /// 排序（窄约束先，声明序稳定）并做真重复去重（`type_signature`）——同助记符多
 /// 形状的自动分发语义保留，只是不再经过 `match 助记符` 这道前置分派。
-/// **符号引用回填**的生成（`[[operand_slots]].symbols` + 标签槽）。
+/// **符号引用回填**的生成（`[operand.<名字>].symbols` + 标签槽）。
 ///
 /// 两遍布局的产出：`(指令下标, 操作数下标, 修饰下标, 符号名)`——符号名 = 标签名（或 `.` 的
-/// 自引用 = 空名）、修饰下标 = `[[conventions.imm_fn]]` 的下标（`%hi(foo)` 的 `foo` 要连
+/// 自引用 = 空名）、修饰下标 = `[asm.immfn.<名>]` 的下标（`%hi(foo)` 的 `foo` 要连
 /// 修饰一起回填：值 = `hi(标签的块下标)`）。
 ///
 /// 生成两件事：
@@ -1788,7 +1788,7 @@ fn gen_symbol_setter(infos: &[InstInfo], model: &IsaModel) -> TokenStream {
             })
             .collect();
         quote! {
-            /// 按 `[[conventions.imm_fn]]` 的下标把回填值过一遍修饰
+            /// 按 `[asm.immfn.<名>]` 的下标把回填值过一遍修饰
             /// （`%hi(foo)` 这类：修饰作用于**标签的块下标**，与源文本里的写法同义）。
             fn __apply_imm_fn(idx: usize, val: i64) -> i64 {
                 match idx {
@@ -1835,7 +1835,7 @@ pub(crate) fn gen_assemble(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             tries.push(gen_assemble_try_tok(model, info, case_insensitive, tpl)?);
         }
     }
-    // `[[pseudo]]`（v18 S3e）：单条 API 只接受展开成 1 条的伪指令；多条明确报错，
+    // `[asm.pseudo.<名>]`（v18 S3e）：单条 API 只接受展开成 1 条的伪指令；多条明确报错，
     // 让调用方改用 `parse_insts`（整段汇编）。
     let pseudo_single: TokenStream = if model.pseudo.is_empty() {
         quote! {}
@@ -1903,7 +1903,7 @@ pub(crate) fn gen_assemble(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         }
         /// 汇编单条文本 → 指令（token 驱动；左→右整模板扫描，多 form 按类型签名自动分发）。
         ///
-        /// `[[pseudo]]`（v18 S3e）：只有**展开成 1 条指令**的伪指令能走这个 API
+        /// `[asm.pseudo.<名>]`（v18 S3e）：只有**展开成 1 条指令**的伪指令能走这个 API
         /// （多条展开要用 `TargetAssembler::parse_insts`——单条 API 装不下多条）。
         pub fn assemble(text: &str) -> Result<Inst, String> {
             #pseudo_single

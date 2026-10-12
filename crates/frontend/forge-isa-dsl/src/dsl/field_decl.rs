@@ -1,4 +1,4 @@
-//! v21 字段声明（`[[forms]].fields` / `[[instructions]].fields`）——**就地**声明位域的
+//! v21 字段声明（`[form.<名>].fields` / `[inst.<名>].fields`）——**就地**声明位域的
 //! 类型、位区间、接口名与默认值，取代 `[conventions.bitfields]` + `opcode_field` +
 //! `operand_fields` 三处往返（设计文档 §6.2）。
 //!
@@ -45,7 +45,7 @@ pub enum FieldType {
     U(u32),
     /// `i<N>`：N 位有符号数据。
     I(u32),
-    /// 寄存器组名（`[reg.*]` 表头）或操作数槽名（`[[operand_slots]]`）——
+    /// 寄存器组名（`[reg.*]` 表头）或操作数槽名（`[operand.<名字>]`）——
     /// 具体是哪一个在接线后由 model 校验。
     Named(String),
 }
@@ -583,7 +583,7 @@ pub fn lower_field_syntax(m: &mut super::model::IsaModel) -> Result<(), String> 
 
 /// W2 迁移算法（执行清单 §4.2）：把一个 form 的既有声明折叠成 v21 的 `fields` 列表。
 ///
-/// - `opcode_field`：既有 `[[forms]].opcode_field`（`Some` ⇒ 定宽 ISA，本机制适用）
+/// - `opcode_field`：既有 `[form.<名>].opcode_field`（`Some` ⇒ 定宽 ISA，本机制适用）
 /// - `operand_fields`：既有位置绑定（第 i 个操作数 → 第 i 个位域名）
 /// - `const_names`：用该 form 的指令在 `match` 里出现的**位域名**（首次出现序）
 /// - `bitfields`：既有 `[conventions.bitfields]`

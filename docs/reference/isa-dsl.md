@@ -227,10 +227,10 @@ v22 是 v21 收口后的**人体工学改造**（破坏性重写：不保留兼�
 | --- | --- | --- | --- |
 | `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `operand` `enum` `form` `inst` `family` `lower` `asm` `pred` `machine` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
 | `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `vector_tiers` | 元信息 + 文本约定（宽度只在 [reg.<名>] 表头里，见 [machine] 的类指针键） |
-| `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan（v18 S4） |
+| `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan |
 | `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `alloc_count` `aliases` | 寄存器组；组名的数字 = **位**宽（`gpr64` = 64 位）；aliases = { 别名 = 组内下标 } |
-| `[machine.stack]` | — | `slot` `align` `fp_save` | 栈槽单位/对齐/帧指针保存槽（v21 W9：从 `[stack]` 迁入，**单位是位**，解析期 ÷8；缺省全部派生） |
-| `[machine.classes]` | — | — | 类型 → 寄存器组名（或 "unsupported"）的显式映射（v21 W9：从 `[types]` 迁入）；键 = 类型名（允许额外键） |
+| `[machine.stack]` | — | `slot` `align` `fp_save` | 栈槽单位/对齐/帧指针保存槽（从 `[stack]` 迁入，**单位是位**，解析期 ÷8；缺省全部派生） |
+| `[machine.classes]` | — | — | 类型 → 寄存器组名（或 "unsupported"）的显式映射（从 `[types]` 迁入）；键 = 类型名（允许额外键） |
 | `[conventions.modrm]` | — | `reg_field` `rm_field` `force_disp_base` | ModRM 约定（表存在即启用）：reg/rm 位域名 + 强制位移的 base 寄存器号 |
 | `[conventions.cond]` | `code` | `ir` | 条件码表：键 = 汇编可见的条件名（也允许 `名 = <整数>` 简写）（允许额外键） |
 | `[[conventions.prefix_scan]]` | — | `byte` `range` `effects` | 变长前缀扫描表（缺省 = x86 集）；效果清单 = `opsize16` `lock` `repe` `repne` `addr32` `addr16` `rex` `rex2` |
@@ -239,20 +239,20 @@ v22 是 v21 收口后的**人体工学改造**（破坏性重写：不保留兼�
 | `[conventions.mem]` | `templates` | — | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
 | `[enum.<表名>]` | — | `kind` `entries`† | 命名取值表：kind = value（名字 = 值；带 `ir` 的那张是条件码表）\| bits（名字拼接、按位或）（允许额外键） |
 | `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` `cond_bank` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
-| `[form.<名字>]` | — | `fields` `segments` `doc` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖）；v21 W10：**表头即形式名**（不再写 `name`） |
-| `[inst.<名字>]` | `asm` | `form` `opcode` `match` `fields` `segments` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `doc` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令（v21 W10：**表头即指令名**，不再写 `name`）：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
-| `[family.<名>]` | — | `body` `rows` `vary` | 指令族（v21 W5）：`body` 是各行共享的指令字段默认值，`rows` 每行一条指令实例（`inst` 必填，其余键即指令字段、可就地插值 `{键}`/`{inst}`），`vary` 是等长列表 zip 成行的便捷写法（与 `rows` 互斥）；族名即 `ref` 多态名 |
-| `[asm.reloc.<名>]` | `semantics` `operand` | `addend` `via` | 重定位（v21 W8：**表头即重定位名**；旧 `[[reloc]]` 已撤）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`） |
+| `[form.<名字>]` | — | `fields` `segments` `doc` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖）；**表头即形式名**（不写 `name`） |
+| `[inst.<名字>]` | `asm` | `form` `opcode` `match` `fields` `segments` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `doc` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令（**表头即指令名**，不写 `name`）：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
+| `[family.<名>]` | — | `body` `rows` `vary` | 指令族：`body` 是各行共享的指令字段默认值，`rows` 每行一条指令实例（`inst` 必填，其余键即指令字段、可就地插值 `{键}`/`{inst}`），`vary` 是等长列表 zip 成行的便捷写法（与 `rows` 互斥）；族名即 `ref` 多态名 |
+| `[asm.reloc.<名>]` | `semantics` `operand` | `addend` `via` | 重定位（**表头即重定位名**）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`） |
 | `[pred.<名字>]` | `expr` | — | 命名谓词（**表头即属性名**，不写 `name`） |
 | `[asm.pseudo.<名>]` | `asm` `emit` | `only_variants` | 汇编器伪指令（**表头即名字**）：文本级多指令展开，分派按 `asm` 的前导字面，`{名字}` 就是 `emit` 用的参数 |
-| `[asm.immfn.<名>]` | `texts` `expr` | — | 立即数修饰（v21 W7：**表头即修饰名**；旧 `[[conventions.imm_fn]]` 待撤）：`texts` = 同一语义的等价写法列表（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值） |
-| `[lower.<名字>]` | `insts` | `match` `when` `vary` `dispatch` `temps` `priority` `only_variants` `move` `movef` | 选择层（v21 W6-a：**表头即名字、同名可多块**）——名字是终结 op（Ret/Jmp/Br/Switch/Unreachable/Invoke）⇒ 终结序列（可用 {true}/{false}/{target} 符号值，且只吃 `insts`）；写了 `match` ⇒ 树型多指令匹配（名字是作者起的模式名）；其余 ⇒ op 规则（**名字就是 op 名**；一个 op 多条规则就写多块） |
-| `[machine]` | — | `fixed` `scratch` `link` `gpr` `fpr` `addr` `value_gpr` `value_fpr` `frame` `padding` `arg_place` `byref_bytes` `stack` `text` `classes` `spill` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / 帧填充 / 位置计数规则；v21 W9：`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes` 由 `fixed_regs`/`spill_scratch`/`link_reg`/`frame_padding`/`arg_slot`/`vector_by_ref_bytes` 改名，接收从 `[stack]`/`[emit]`/`[types]` 迁入的 `stack`/`text`/`classes`，并删除 `callee_saved_gpr`/`callee_save_slots`——callee-saved 完全归约定数据） |
+| `[asm.immfn.<名>]` | `texts` `expr` | — | 立即数修饰（**表头即修饰名**）：`texts` = 同一语义的等价写法列表（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值） |
+| `[lower.<名字>]` | `insts` | `match` `when` `vary` `dispatch` `temps` `priority` `only_variants` `move` `movef` | 选择层（**表头即名字、同名可多块**）——名字是终结 op（Ret/Jmp/Br/Switch/Unreachable/Invoke）⇒ 终结序列（可用 {true}/{false}/{target} 符号值，且只吃 `insts`）；写了 `match` ⇒ 树型多指令匹配（名字是作者起的模式名）；其余 ⇒ op 规则（**名字就是 op 名**；一个 op 多条规则就写多块） |
+| `[machine]` | — | `fixed` `scratch` `link` `gpr` `fpr` `addr` `value_gpr` `value_fpr` `frame` `padding` `arg_place` `byref_bytes` `stack` `text` `classes` `spill` | 机器事实（固定用途寄存器 / 溢出 scratch / 链接寄存器 / 五个**寄存器类指针**（组名，宽度在组名里） / 帧形状 / 帧填充 / 位置计数规则；`fixed`/`scratch`/`link`/`padding`/`arg_place`/`byref_bytes` 由 `fixed_regs`/`spill_scratch`/`link_reg`/`frame_padding`/`arg_slot`/`vector_by_ref_bytes` 改名，接收从 `[stack]`/`[emit]`/`[types]` 迁入的 `stack`/`text`/`classes`，并删除 `callee_saved_gpr`/`callee_save_slots`——callee-saved 完全归约定数据） |
 | `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽（唯一位置；`[abi.frame]` 已删除） |
-| `[machine.text]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（v21 W9：从 `[emit]` 迁入；序/尾声由生成器按约定生成，谱里不再写） |
-| `[machine.spill.<模板名>]` | `class` `load` `store` | `base` `when` | 溢出/回填模板（v21 W9：表头 = 模板名，`class` = 它服务的寄存器类；`{N}` = 寄存器序号占位符） |
+| `[machine.text]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（从 `[emit]` 迁入；序/尾声由生成器按约定生成，谱里不再写） |
+| `[machine.spill.<模板名>]` | `class` `load` `store` | `base` `when` | 溢出/回填模板（表头 = 模板名，`class` = 它服务的寄存器类；`{N}` = 寄存器序号占位符） |
 | `roles 的条目（内联表）` | `role` | `class` | `roles = [ {{ role = …, class = … }}, … ]`：语义角色声明（生成器按角色查指令，取代旧的 `*_inst` 名指针）；无宽度语义的角色全 ISA 唯一，有宽度语义的按 (角色, 位宽) 唯一 |
-| `[[vectors]]` | — | `asm` `bytes` `error` `partial` `comment` | 数据化测试向量（v19 V3）：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = "DECODE", partial}` 解码错误 / `{bytes}` 解码正向 |
+| `[[vectors]]` | — | `asm` `bytes` `error` `partial` `comment` | 数据化测试向量：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = "DECODE", partial}` 解码错误 / `{bytes}` 解码正向 |
 | `enc / vex / evex / modrm（内联子表）` | — | `reg` `rm` | `modrm = { reg = <名\|整数>, rm = <名\|"[base]"> }` |
 | `segments 的条目（内联表）` | `kind` | `fields` `bytes` `value` `map` `pp` `w` `l` `b` `z` `disp_scale` | `segments = [ {{ kind = …, … }}, … ]`：指令流里的一段（段序即发射序）；`kind` 是闭集（prefix/escape/rex/opcode/opcode_reg/modrm/vex/evex/…），VEX/EVEX 段的头字段（map/pp/w/l/b/z/disp_scale）就写在这里 |
 | `vex / evex（内联子表）` | — | `map` `pp` `w` `l` `b` `z` `disp_scale` | VEX/EVEX 结构键（map/pp/w/l + AVX-512 的 b/z/disp_scale） |

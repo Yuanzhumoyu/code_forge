@@ -7,8 +7,8 @@
 //!
 //! 规则清单（V4a/V4b/V4c；全部只看模型 / 合并后的文本，锚到 TOML 行列）：
 //!
-//! 1. `LINT-UNUSED-SLOT`：`[[operand_slots]]` 没有被任何 `ops = ["名:槽[:角色]", …]` 引用；
-//! 2. `LINT-UNUSED-FORM`：`[[forms]]` 没有被任何指令 / 模板 `body.form` 引用；
+//! 1. `LINT-UNUSED-SLOT`：`[operand.<名字>]` 没有被任何 `ops = ["名:槽[:角色]", …]` 引用；
+//! 2. `LINT-UNUSED-FORM`：`[form.<名>]` 没有被任何指令 / 模板 `body.form` 引用；
 //! 3. `LINT-UNUSED-BITFIELD`（V4b）：`[conventions.bitfields]` 的位域名在整份谱里**只出现在
 //!    声明处**。判据故意用**文本标识符计数**而不是"遍历模型找引用点"——引用形态太多
 //!    （form 的 `operand_fields`、指令/模板 `fields`、编码键、asm 占位符…），枚举必然漏、
@@ -20,7 +20,7 @@
 //! 5. `LINT-REF-UNUSED`（V4c）：指令声明了 `ref`，但**没有任何** lowering / pattern / emit /
 //!    pseudo / spill 模板行首引用它——多态分派用不上它（拼错名字时尤其隐蔽）。
 //! 6. `LINT-OP-GAP`（V4c，**需要 `--ops <宿主 op 表>`**）：宿主 op 表里有、本谱既没有
-//!    `[[lowering]]` 也没有 `[[pattern]]` 覆盖的 op。按[方案 §10.3]的口径**三类分开**：
+//!    `[[lower.<op>]]` 也没有 `树型匹配` 覆盖的 op。按[方案 §10.3]的口径**三类分开**：
 //!    终结指令（生成的 `lower_terminator` 按 `TermKind` 分派，谱里根本不该有）与宿主管线
 //!    直查的 op 都**不算**缺口，只有"真缺口"才报（另有 `LintReport::ops_coverage` 给口径）。
 //!
@@ -42,7 +42,7 @@ use crate::report::DiagLine;
 
 /// 宿主 op 表里**由生成的 `lower_terminator` 处理**的 op（按 `TermKind` 分派）。
 ///
-/// 这些 op 在谱里**不该**有 `[[lowering]]`（V0 实测：三份发行谱一个都没有），因此
+/// 这些 op 在谱里**不该**有 `[[lower.<op>]]`（V0 实测：三份发行谱一个都没有），因此
 /// "宿主有而谱里没有"不算缺口。名单与 `forge-codegen` 的 `GenLowerTerminator` 实现集
 /// 一一对应；漏一个就会变成误报，多一个会漏报——守卫
 /// `tests/lint_shipped.rs::op_gap_matches_section_10_3` 把三谱的缺口数钉成 3/42/95
@@ -50,12 +50,12 @@ use crate::report::DiagLine;
 /// 因此"宿主管线"一列由 7 变 8，三谱的缺口数与覆盖数不变）。
 pub const TERMINATOR_OPS: [&str; 6] = ["Ret", "Jmp", "Br", "Switch", "Unreachable", "Invoke"];
 
-/// 宿主**直查**（不走 `[[lowering]]`）的 op：宿主里有 `Opcode::X` 的专门路径。
+/// 宿主**直查**（不走 `[[lower.<op>]]`）的 op：宿主里有 `Opcode::X` 的专门路径。
 ///
 /// 前 7 条是**宿主管线**（forge-codegen 自己处理，谱里也不该有规则）；`VaStart` 是
 /// **生成物直查**——生成器按能力角色发（`roles = ["frame_addr"]` → `lea`，见
 /// `dsl/codegen/lowering.rs::gen_va_start_lowering`），所以谱里同样**没有**它的
-/// `[[lowering]]`（写法与 `frame_set`/`frame_alloc` 一族相同：谱只申报能力）。
+/// `[[lower.<op>]]`（写法与 `frame_set`/`frame_alloc` 一族相同：谱只申报能力）。
 /// 两类都"不是缺口"，但成因不同，改这一列前先看清是哪种。
 pub const HOST_PIPELINE_OPS: [&str; 8] = [
     "Bitcast",
@@ -105,7 +105,7 @@ pub struct LintOpts {
 /// [方案 §10.3]: ../../../../docs/archive/forge-isa-dsl-v19-plan.md
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OpsCoverage {
-    /// 本谱 `[[lowering]].op` ∪ `[[pattern]]` 根 op 覆盖了几条宿主 op。
+    /// 本谱 `[[lower.<op>]].op` ∪ `树型匹配` 根 op 覆盖了几条宿主 op。
     pub covered: usize,
     /// 宿主 op 里的终结指令（不进 lowering，不算缺口）。
     pub terminators: usize,
@@ -430,7 +430,7 @@ fn used_bit_ranges(m: &IsaModel, inst: &Instruction) -> BTreeMap<String, Vec<(u3
     // 代价：form 声明但本指令**未绑定**的槽（如 `I` 形的 `imm12` 对 `mv`）不再算覆盖，
     // 于是 `--bits` 清单会如实变长——那是"这些位按缺省 0 发射"的真实描述，
     // 基线在 `tests/lint_shipped.rs` 里随之上调并注明原因。
-    // 多字段落点（`[[operand_slots]].encode` + `fields`）：一个操作数摊到多个位域，
+    // 多字段落点（`[operand.<名字>].encode` + `fields`）：一个操作数摊到多个位域，
     // `operand_fields` 只写了首字段——其余字段也是这条指令**真的用到**的位，必须进视图，
     // 否则规则 7 会把它们报成"没有任何位域覆盖"（实测 `TBZX` 的 `b5`[31] 被误报）。
     if let Ok((uses, _)) = crate::dsl::codegen::parse_asm_decl(
@@ -790,7 +790,7 @@ fn op_gap(
     if opts.host_ops.is_empty() {
         return None;
     }
-    // 本谱覆盖：`[[lowering]].op` ∪ `[[pattern]]` 匹配树的根 op。
+    // 本谱覆盖：`[[lower.<op>]].op` ∪ `树型匹配` 匹配树的根 op。
     let mut covered: BTreeSet<String> = m
         .lowering
         .iter()

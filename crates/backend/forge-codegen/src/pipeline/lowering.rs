@@ -255,9 +255,9 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         let vblock_id = self.block_map[block];
         self.vcode.switch_to_block(vblock_id);
 
-        // S6：块内逆序预扫——匹配 [[pattern]]（内部节点单 use、同块），命中后
+        // S6：块内逆序预扫——匹配 树型匹配（内部节点单 use、同块），命中后
         // 内部节点并入 consumed（前向循环跳过）、根指令记录 (模式名, 叶值)。
-        // 无 [[pattern]] 的 ISA 生成空表 → 此处零开销空转。
+        // 无 树型匹配 的 ISA 生成空表 → 此处零开销空转。
         let patterns = lowering.patterns();
         let mut consumed: HashSet<Inst> = HashSet::new();
         let mut roots: SecondaryMap<Inst, (String, Vec<Value>)> = SecondaryMap::new();
@@ -698,7 +698,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         }
     }
 
-    // ── S6: [[pattern]] 树匹配（逆序预扫）──
+    // ── S6: 树型匹配 树匹配（逆序预扫）──
 
     /// 块内逆序预扫：对每条尚未 consumed 的指令，按 `patterns()` 的裁决序
     /// （Op 节点数降 / when 叶子数降 / 声明序升）试匹配，首个结构 + `when`

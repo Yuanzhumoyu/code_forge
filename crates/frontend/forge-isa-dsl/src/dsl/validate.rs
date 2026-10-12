@@ -30,7 +30,7 @@ pub struct ValidateOpts {
     ///
     /// 空 = 不过滤、不替换（**默认行为逐字节不变**）。非空时：参数必须在
     /// `[meta].variants` 里声明且取值合法，逐指令 `only_variants` 不匹配的整条丢掉，
-    /// `{参数名}` 在 `asm` 与 `[[lowering]].insts` 里替换成取值。
+    /// `{参数名}` 在 `asm` 与 `[[lower.<op>]].insts` 里替换成取值。
     pub params: BTreeMap<String, i64>,
 }
 
@@ -41,8 +41,8 @@ pub struct Projection {
     pub params: BTreeMap<String, i64>,
     /// 被投影掉的**指令名**（原声明序）。
     pub dropped_insts: Vec<String>,
-    /// 逐节丢掉的条数：`(节名, 条数)`——`[[lowering]]` / `[emit.prologue]` /
-    /// `[spill.GPR]` / `[[pseudo]]` / `[[pattern]]`。
+    /// 逐节丢掉的条数：`(节名, 条数)`——`[[lower.<op>]]` / `[emit.prologue]` /
+    /// `[spill.GPR]` / `[asm.pseudo.<名>]` / `树型匹配`。
     pub dropped_decls: Vec<(String, usize)>,
     /// 投影后的指令数 / lowering 规则数（默认档 = 全量）。
     pub inst_count: usize,
@@ -55,8 +55,8 @@ pub struct Projection {
 /// **只做投影**：不注册后端、不生成变体专属的运行期表——"能跑"仍由 `tm` 部件与宿主负责。
 ///
 /// 过滤对象 = **所有承载指令引用的声明**（六处，判定统一走 [`variants_keep`]）：
-/// 指令/模板行、`[emit.prologue|epilogue]`、`[spill.*]`、`[[pseudo]]`、`[[pattern]]`；
-/// 另外**连带**丢掉引用了被投影掉指令的 `[[lowering]]` 规则（这类依赖可推断，
+/// 指令/模板行、`[emit.prologue|epilogue]`、`[spill.*]`、`[asm.pseudo.<名>]`、`树型匹配`；
+/// 另外**连带**丢掉引用了被投影掉指令的 `[[lower.<op>]]` 规则（这类依赖可推断，
 /// 见 [`Projection::dropped_decls`]）。**其余引用**（例如 `[abi]` 里的寄存器名）
 /// 若指向被投影掉的声明，校验器照旧 fail-closed 报错——不给静默通道。
 pub fn apply_variants(
@@ -1172,7 +1172,7 @@ fn validate_conventions(m: &IsaModel) -> Result<(), String> {
     Ok(())
 }
 
-/// `[[conventions.imm_fn]]` 校验：立即数修饰是**谱声明的数据**，声明侧必须自洽
+/// `[asm.immfn.<名>]` 校验：立即数修饰是**谱声明的数据**，声明侧必须自洽
 /// （它决定汇编期怎么认这个写法、算成什么值）。
 ///
 /// 规则（都要求"能说清楚"，否则生成期行为不可预测）：
@@ -1226,7 +1226,7 @@ fn validate_imm_fns(conv: &Conventions) -> Result<(), String> {
     Ok(())
 }
 
-/// `[[pseudo]]` 校验（v18 S3e 汇编器伪指令；v20 V10 改 `asm` 声明形态）。
+/// `[asm.pseudo.<名>]` 校验（v18 S3e 汇编器伪指令；v20 V10 改 `asm` 声明形态）。
 ///
 /// 伪指令是**汇编期**行为，编译器看不到它的调用点，因此声明侧必须自洽：
 ///
@@ -1403,7 +1403,7 @@ fn tok_eq(a: &Tok, b: &Tok, ci: bool) -> bool {
     }
 }
 
-/// `[[derive]]` 校验（v18 S3f 派生谓词属性）。
+/// `[pred.<名>]` 校验（v18 S3f 派生谓词属性）。
 ///
 /// 解析期已查过：名称非空/唯一/不与核心属性重名、`expr` 语法合法。这里查语义：
 /// **派生只能引用核心属性**（不支持派生引用派生——见 `expand_derives` 的理由），
@@ -1586,7 +1586,7 @@ fn validate_cond(m: &IsaModel) -> Result<(), String> {
     Ok(())
 }
 
-// ──────────────────── [[operand_slots]] ────────────────────
+// ──────────────────── [operand.<名字>] ────────────────────
 
 fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
     if m.operand_slots.is_empty() {
@@ -1953,7 +1953,7 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
             for f in fns {
                 if !known.contains(&f.as_str()) {
                     return Err(format!(
-                        "{path}: `imm_fns` 里的 `{f}` 不是已声明的 `[[conventions.imm_fn]]` 名\
+                        "{path}: `imm_fns` 里的 `{f}` 不是已声明的 `[asm.immfn.<名>]` 名\
                          （已声明：{}）",
                         known.join(", ")
                     ));
@@ -1969,7 +1969,7 @@ fn validate_operand_slots(m: &IsaModel) -> Result<(), String> {
     Ok(())
 }
 
-// ──────────────────────── [[forms]] ────────────────────────
+// ──────────────────────── [form.<名>] ────────────────────────
 
 fn validate_forms(m: &IsaModel) -> Result<(), String> {
     let mut seen = BTreeSet::new();
@@ -2081,7 +2081,7 @@ fn form_exists(m: &IsaModel, name: &str) -> bool {
     m.forms.iter().any(|f| f.name == name)
 }
 
-// ──────────────────── [[instructions]] ────────────────────
+// ──────────────────── [inst.<名>] ────────────────────
 
 /// 一条角色声明在"唯一性"检查里的身份：**(寄存器类限定, 指令名)**。
 type RoleOwner<'a> = (Option<crate::dsl::model::RoleClass>, &'a str);
@@ -2152,7 +2152,7 @@ fn validate_instructions_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
     }
     for inst in &m.instructions {
         if let Err(msg) = check_instruction(m, inst) {
-            // 模板展开出的实例：把错误锚回**模板声明**（`[[templates.X]]`），
+            // 模板展开出的实例：把错误锚回**模板声明**（`[family.<名>]`），
             // 而不是一个在源里根本不存在的 `[inst.实例名]`。
             let msg = match &inst.from_template {
                 Some(t) => {
@@ -2168,7 +2168,7 @@ fn validate_instructions_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
                         format!("[family.{t}]")
                     };
                     // 只换 `[inst.X]` 前缀：v21 W10 之后不再有"裸节名"形态的消息
-                    //（旧面 `[[instructions]]` 已撤，第二处 replacen 随之删除）。
+                    //（旧面 `[inst.<名>]` 已撤，第二处 replacen 随之删除）。
                     msg.replacen(&format!("[inst.{}]", inst.name), &sec, 1)
                 }
                 None => msg,
@@ -2188,7 +2188,7 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
             inst.name
         ));
     }
-    // `reloc` 的取值域由 `validate_relocs` 校验（名字须在 [[reloc]] 表里）
+    // `reloc` 的取值域由 `validate_relocs` 校验（名字须在 [asm.reloc.<名>] 表里）
     let asm = inst.asm.clone();
     if asm.trim().is_empty() {
         return Err(format!("[inst.{}]: asm must not be empty", inst.name));
@@ -2282,7 +2282,7 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
         }
     }
     // 编码信息下限：至少要有一个**编码来源**（`opcode`/`fields`，或任一变长编码键）。
-    // 原先只对 `[[families]]` 变体检查；S2c 统一机制后族/模板/指令同一套，故对所有
+    // 原先只对 `族变体（更早的机制）` 变体检查；S2c 统一机制后族/模板/指令同一套，故对所有
     // 指令生效——什么都不编码的指令会生成"空编码臂"，是静默错。
     // 注意 `opcode_field`/`operand_fields`/`prefix`/`opsize`/`rex_w` 只是**修饰**：
     // 只有它们（form 预设给的）而没有主编码，仍属缺编码信息。
@@ -2305,9 +2305,9 @@ fn check_instruction(m: &IsaModel, inst: &Instruction) -> Result<(), String> {
     Ok(())
 }
 
-// ──────────────────────── [[lowering]] ────────────────────────
+// ──────────────────────── [[lower.<op>]] ────────────────────────
 
-/// 全部指令名（含 `[[templates]]` 展开出的实例——展开发生在解析期，此处看到的
+/// 全部指令名（含 `[family.<名>]` 展开出的实例——展开发生在解析期，此处看到的
 /// 就是完整指令表）。lowering/pattern/emit 模板行首可引用其任一。
 fn declared_names(m: &IsaModel) -> BTreeSet<String> {
     m.instructions.iter().map(|i| i.name.clone()).collect()
@@ -2342,7 +2342,7 @@ fn validate_references(m: &IsaModel) -> Result<(), String> {
     Ok(())
 }
 
-/// `[[lowering]]` 校验（逐条收集 + 死规则检测）。
+/// `[[lower.<op>]]` 校验（逐条收集 + 死规则检测）。
 ///
 /// 历史状态：本函数只查 `op`/`insts` 非空（14 行），于是三类写错**静默通过**：
 /// 1. 助记符打错 → 直到 codegen 才报，且消息无位置；
@@ -2354,7 +2354,7 @@ fn validate_references(m: &IsaModel) -> Result<(), String> {
 /// 现在三类都在编译期拒绝，另加同 op 完全重复规则检测；S1 起**逐条收集**。
 fn validate_lowering_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
     let refs = declared_refs(m);
-    // `when` 可用属性 = 核心属性 + `[[derive]]` 名（v18 S3f）
+    // `when` 可用属性 = 核心属性 + `[pred.<名>]` 名（v18 S3f）
     let pred_attrs = m.pred_attr_names();
     // (op, 规范化 when, insts) → 首次出现的下标；用于重复检测
     let mut seen: std::collections::HashMap<(String, String, Vec<String>), usize> =
@@ -2479,9 +2479,9 @@ fn validate_inst_lines(
     Ok(())
 }
 
-// ──────────────────────── [[pattern]] ────────────────────────
+// ──────────────────────── 树型匹配 ────────────────────────
 
-/// `[[pattern]]` 校验：匹配树解析 / Opcode 合法性（禁 payload 与特判 op）/
+/// `树型匹配` 校验：匹配树解析 / Opcode 合法性（禁 payload 与特判 op）/
 /// 叶变量唯一 / insts 模板 / when 属性名。
 fn validate_patterns(m: &IsaModel) -> Result<(), String> {
     let refs = declared_refs(m);
@@ -2524,7 +2524,7 @@ fn validate_patterns(m: &IsaModel) -> Result<(), String> {
         let extra: Vec<String> = vars.iter().map(|v| format!("{{{v}}}")).collect();
         validate_inst_lines(&path, &p.insts, &refs, &extra)?;
 
-        // when 属性名 ∈ 核心属性 ∪ [[derive]]（与 lowering 一致——未知属性恒假，模式永不命中）。
+        // when 属性名 ∈ 核心属性 ∪ [pred.<名>]（与 lowering 一致——未知属性恒假，模式永不命中）。
         if let Some(w) = &p.when {
             let pred = super::pred::parse(w).map_err(|e| format!("{path}.when: {e}"))?;
             let mut attrs = Vec::new();

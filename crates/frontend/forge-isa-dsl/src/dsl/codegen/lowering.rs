@@ -36,7 +36,7 @@ use quote::{format_ident, quote};
 /// 入口：`pub(crate)` 由 `integration::gen_integration()` 调用。
 pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, String> {
     // 引用名 → 候选指令：每条指令登记自己的 `name`，并（若有）登记它的 `ref`。
-    // **多条指令共用一个 `ref`** 就是多态引用（原先 `[[aliases]]` 的语义）。
+    // **多条指令共用一个 `ref`** 就是多态引用（原先 `别名清单（更早的机制）` 的语义）。
     // 同引用名多形状（如 add reg,reg 与 add reg,imm）→ 由 gen_lowering_insts
     // 按模板操作数 token 类型消歧（reg/imm/mem/cond）。
     let mut ref_to_infos: std::collections::HashMap<&str, Vec<&InstInfo>> =
@@ -1010,8 +1010,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         })
         .collect();
 
-    // [[pattern]]（S6）：静态 PatternSpec 表 + patterns()/lower_pattern() 方法。
-    // 无 [[pattern]] → (空, 空)，impl 里不 splice 任何东西（trait 缺省兜底）。
+    // 树型匹配（S6）：静态 PatternSpec 表 + patterns()/lower_pattern() 方法。
+    // 无 树型匹配 → (空, 空)，impl 里不 splice 任何东西（trait 缺省兜底）。
     let (pattern_statics, pattern_methods) = gen_patterns(infos, &name_to_vn, model)?;
 
     Ok(quote! {
@@ -1134,7 +1134,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     })
 }
 
-// ─────────────────────── [[pattern]]（S6）───────────────────────
+// ─────────────────────── 树型匹配（S6）───────────────────────
 
 /// 单个 pattern 的静态数据引用（emit 完成后记录，供裁决序引用）。
 struct PatternEmit {
@@ -1181,7 +1181,7 @@ fn sp_base_toks(model: &IsaModel) -> TokenStream {
     }
 }
 
-/// `[[pattern]].when` 的宽度提示（与 lowering 规则同构：`eq = ["rs1_width", N]`）。
+/// `树型匹配.when` 的宽度提示（与 lowering 规则同构：`eq = ["rs1_width", N]`）。
 fn pattern_width_hint(p: &Pattern) -> Option<u32> {
     let pred = pred::parse(p.when.as_ref()?).ok()?;
     pred_width_hint(&pred)
@@ -1294,9 +1294,9 @@ fn emit_pat_terms(
     name
 }
 
-/// `[[pattern]]` → 静态 PatternSpec 表 + `patterns()` / `lower_pattern()` 方法。
+/// `树型匹配` → 静态 PatternSpec 表 + `patterns()` / `lower_pattern()` 方法。
 ///
-/// 无 `[[pattern]]` → 返回 (空, 空)：`patterns()`/`lower_pattern()` 走 trait 缺省
+/// 无 `树型匹配` → 返回 (空, 空)：`patterns()`/`lower_pattern()` 走 trait 缺省
 /// （`&[]` / Unsupported），生成代码零开销。
 fn gen_patterns(
     infos: &[InstInfo],
@@ -1373,7 +1373,7 @@ fn gen_patterns(
 
     // 裁决序：与校验器共读 `IsaModel::pattern_order()`（v18 S5c 起统一）——
     // (`priority` 降, 匹配树 Op 节点数降, `when` 叶子数降, 声明序升)。
-    // `emitted` 按声明序构建，故其下标 == `[[pattern]]` 声明下标。
+    // `emitted` 按声明序构建，故其下标 == `树型匹配` 声明下标。
     let order: Vec<usize> = model.pattern_order()?;
 
     // PatternSpec 表（按裁决序）。

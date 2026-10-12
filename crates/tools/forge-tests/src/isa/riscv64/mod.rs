@@ -10,7 +10,7 @@
 //! 函数用例经本机 ExecutableMemory 会崩溃（riscv 产物不可本机执行）→
 //! 此时矩阵全 Skip（qemu_exec 冒烟测试独立降级）。
 
-/// 无 `[[lowering]]` 条目的 op（P1-16 补充声明；与生成的 SUPPORTED_OPS 并集
+/// 无 `[[lower.<op>]]` 条目的 op（P1-16 补充声明；与生成的 SUPPORTED_OPS 并集
 /// 构成完整能力集）：
 /// - GetElementPtr：地址计算在 lowering 内联展开，无独立规则；
 /// - Call：ABI 专用生成路径（gen_call_lowering）；

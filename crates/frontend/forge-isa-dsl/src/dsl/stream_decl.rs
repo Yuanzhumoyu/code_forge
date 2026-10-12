@@ -4,7 +4,7 @@
 //! 与 W2/W3 同一套路（**降级到既有内部表示**，编码器/生成物一行不改）：
 //!
 //! - **有序段 = 发射序**（内联表数组；比"名字列表 + 命名子表"少一处重复，
-//!   且 `[[forms]]` 的子表路径在 TOML 里有二义性——见执行清单的偏离记录）；
+//!   且 `[form.<名>]` 的子表路径在 TOML 里有二义性——见执行清单的偏离记录）；
 //! - 段 kind 是**闭集**（[`SegKind`]）：写错由 serde 报 unknown variant 并列出闭集；
 //! - 每段用 W2 的**同一套字段语法**声明自己的字节布局（`"u1[7]:w"`），
 //!   段的位域并进 `form.fields`，因此"位域表 / `opcode_field` / `operand_fields`"
@@ -23,7 +23,7 @@ use super::model::{EncKeys, Form, IsaModel, PrefixKey, RexW, SegKind, SegmentByt
 /// 并把**指令级结构段**（选项 B）也降级。
 /// v21 W5：`[family.<名>]` → 一条 [`Template`]（族名兼作各行的 `group`）。
 ///
-/// **代码生成一行不改**：`family` 只是 `[[templates]]` 的"名字来自表键 + 名字即多态引用名"
+/// **代码生成一行不改**：`family` 只是 `[family.<名>]` 的"名字来自表键 + 名字即多态引用名"
 /// 写法，降级后与模板完全同构。
 pub(crate) fn lower_families(m: &mut IsaModel, source: &str) -> Result<(), String> {
     let Some(fams) = m.families.clone() else {
@@ -46,11 +46,11 @@ pub(crate) fn lower_families(m: &mut IsaModel, source: &str) -> Result<(), Strin
     ordered.sort_by_key(|(at, _, _)| *at);
     for (_, name, decl) in ordered {
         // ⚠️ **不自动注入 `group`**（2026-10-08 实测教训）：`group` 是**多态引用名**，
-        // 给每一行都塞上族名会改变 `[[lowering]]`/`[[pattern]]`/`emit` 行首解析到的指令集合
+        // 给每一行都塞上族名会改变 `[[lower.<op>]]`/`树型匹配`/`emit` 行首解析到的指令集合
         // （三谱实测量：**0 处**引用模板/族名，纯属无用户的语义变更），JIT 矩阵会因此崩
         // （`STATUS_ILLEGAL_INSTRUCTION`）。族名要生效，由**行里显式写 `group`** 或后续
         // 合并族时按需引用——不在这里铺开。
-        // **`vary` 生成行**（v21 W5，与 `[[lowering]].vary` 共用 `Lowering::zip_vary`）：
+        // **`vary` 生成行**（v21 W5，与 `[[lower.<op>]].vary` 共用 `Lowering::zip_vary`）：
         // `name` 列表给每行的 `inst`，其余键成为该行的字段；与显式 `rows` 互斥。
         let rows = if let Some(v) = &decl.vary {
             if !decl.rows.is_empty() {
@@ -909,7 +909,7 @@ insts = ["ADD {out}, {0}, {1}"]
         }
     }
 
-    /// **v21 W5**：`[family.<名>]` 与等价 `[[templates]]` 展开后**指令集逐条相同**，
+    /// **v21 W5**：`[family.<名>]` 与等价 `[family.<名>]` 展开后**指令集逐条相同**，
     /// 且族名自动成为各行的 `group`（"族名即多态引用名"）。
     /// **v21 W4.4 守卫**：段里声明的**前缀字节**必须被生效扫描表覆盖，字典形态写了效果名时
     /// 效果必须一致（删 `default_prefix_scan()`、解码条件按 form 前缀段生成之前的安全网）。

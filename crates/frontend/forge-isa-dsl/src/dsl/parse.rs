@@ -11,7 +11,7 @@ use super::model::IsaModel;
 
 /// 解析 TOML 文本为 ISA-DSL 模型（不做语义校验）。
 ///
-/// 解析后立刻展开 `[[lowering]].vary` 行表：下游（validate/codegen）只看到
+/// 解析后立刻展开 `[[lower.<op>]].vary` 行表：下游（validate/codegen）只看到
 /// 具体规则，两者不会因为"谁展开、怎么展开"而分叉。
 pub fn parse(source: &str) -> Result<IsaModel, DslError> {
     let mut model: IsaModel = toml::from_str(source).map_err(|e| {
@@ -50,7 +50,7 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
         ordered.sort_by_key(|(at, _, _)| *at);
         model.derive.extend(ordered.into_iter().map(|(_, _, d)| d));
     }
-    // `[[derive]]` 展开（v18 S3f）：先于 `vary`——`vary` 的"键是谓词属性还是纯替换
+    // `[pred.<名>]` 展开（v18 S3f）：先于 `vary`——`vary` 的"键是谓词属性还是纯替换
     // 变量"判定要看派生名。
     let anchor_err = |msg: String| {
         let idx = diag::DeclIndex::build(source);
@@ -217,10 +217,10 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
         expanded.extend(rows);
     }
     model.lowering = expanded;
-    // `[[templates]]` 展开（v18 S2）：实例拼进指令表，`ref` 合成别名——下游只见普通指令。
-    // v21 W5：`[family.<名>]` 先降级成 `[[templates]]`（族名兼作 `group`），**再**展开模板。
+    // `[family.<名>]` 展开（v18 S2）：实例拼进指令表，`ref` 合成别名——下游只见普通指令。
+    // v21 W5：`[family.<名>]` 先降级成 `[family.<名>]`（族名兼作 `group`），**再**展开模板。
     crate::dsl::stream_decl::lower_families(&mut model, source).map_err(anchor_err)?;
-    // v21 W7：`[asm.pseudo.<名>]` 降级进内部 `pseudo`（**表头 = 名字**；与 `[[pseudo]]`
+    // v21 W7：`[asm.pseudo.<名>]` 降级进内部 `pseudo`（**表头 = 名字**；与 `[asm.pseudo.<名>]`
     // 撞名报错）——与 `[family.<名>]` → `templates` 同一手法：下游只见内部表示。
     if let Some(asm) = model.asm.take() {
         for (name, body) in asm.pseudo {
@@ -241,7 +241,7 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
             let defs = model.conventions.imm_fn.get_or_insert_with(Vec::new);
             if defs.iter().any(|d| d.name == name) {
                 return Err(anchor_err(format!(
-                    "[asm.immfn.{name}]: 修饰名与已有的 `[[conventions.imm_fn]]` 重复\
+                    "[asm.immfn.{name}]: 修饰名与已有的 `[asm.immfn.<名>]` 重复\
                      （v21 W7：名字必须唯一）"
                 )));
             }

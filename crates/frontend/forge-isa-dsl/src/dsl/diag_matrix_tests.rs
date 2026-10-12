@@ -406,7 +406,7 @@ fn headline_positions_are_exact() {
         .unwrap_or_else(|| panic!("应有关于 `prologue` 的诊断"));
     assert_eq!(d.line, line_of(&doc, "[emit.prologue]"), "消息：{}", d.msg);
 
-    // lowering：未知属性落在该 `[[lowering]]` 节（`op = "..."` 行）。
+    // lowering：未知属性落在该 `[[lower.<op>]]` 节（`op = "..."` 行）。
     let lw = plus(
         "[[lower.Isub]]\ninsts = [\"add {out}, {0}, {1}\"]\n\
          when = { eq = [\"rd_width\", 32] }",

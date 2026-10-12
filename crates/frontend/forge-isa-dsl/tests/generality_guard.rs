@@ -9,7 +9,7 @@
 //!
 //! 从仓库根 `isa/*.toml`（发行后端）里**读出**该 ISA 的：
 //!
-//! 1. **指令名**（`[inst.<名>]` 表头与 `[[templates]].rows[].inst`）；
+//! 1. **指令名**（`[inst.<名>]` 表头与 `[family.<名>].rows[].inst`）；
 //! 2. **物理寄存器名**（`[reg.*].names` 列表，以及生成式声明的 `prefix`）；
 //!
 //! 然后在 `src/**`（除 `tests.rs` 与 `#[cfg(test)]` 之后的部分）里查找这些名字的**字符串
@@ -89,7 +89,7 @@ fn quoted_in_arrays(src: &str) -> Vec<String> {
 
 /// 从 `[reg.*]` 块里的 `prefix = "..."` 抽出生成式寄存器组的前缀。
 ///
-/// 只认 `[reg.*]` 块内的 `prefix`：`[[forms]]`/enc 键也有 `prefix`（如 `prefix = "field"`），
+/// 只认 `[reg.*]` 块内的 `prefix`：`[form.<名>]`/enc 键也有 `prefix`（如 `prefix = "field"`），
 /// 那是编码键取值，不是寄存器名——S0 的首版抽取器把它当寄存器名，产生了 4 处误报。
 fn prefixes(src: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -112,7 +112,7 @@ fn prefixes(src: &str) -> Vec<String> {
 
 /// 抽出某个 TOML 里声明的指令名（v21 W10：**表头即名字** —— `[inst.<名>]`）。
 ///
-/// 旧面是 `[[instructions]]` 块内的 `name = "X"`；表头化之后没有那一行，按表头取。
+/// 旧面是 `[inst.<名>]` 块内的 `name = "X"`；表头化之后没有那一行，按表头取。
 /// `inst = "X"`（模板行 / `insts` 列表）仍由 [`inst_literals`] 单列收集。
 fn instruction_names(src: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -153,10 +153,10 @@ fn inst_literals(line: &str) -> Vec<String> {
     out
 }
 
-/// 抽出 `[[templates]]` 展开出的**实例名**（v18 S2c：`rows` 里的 `inst`）。
+/// 抽出 `[family.<名>]` 展开出的**实例名**（v18 S2c：`rows` 里的 `inst`）。
 ///
 /// 两种等价书写都认：`rows = [ { inst = "X", … }, … ]`（可跨行）与
-/// `[[templates.rows]]` + `inst = "X"`。守卫只需要"知道这些名字存在"。
+/// `[family.<名>].rows` + `inst = "X"`。守卫只需要"知道这些名字存在"。
 fn template_instance_names(src: &str) -> Vec<String> {
     let mut out = Vec::new();
     for line in src.lines() {
