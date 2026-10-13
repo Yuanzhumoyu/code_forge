@@ -135,7 +135,16 @@ fn plan_agrees_with_the_existing_lowering_result() {
         .iter()
         .map(|a| matches!(a.place, forge_abi::Placement::Indirect { .. }))
         .collect();
-    assert_eq!(by_ref, alloc.param_by_ref, "逐参数 by-ref 判定");
+    assert_eq!(
+        by_ref,
+        // v23 M5：`param_by_ref` 平行数组已删（从 vreg 自身可推），测试按同一口径现算。
+        alloc
+            .param_vregs
+            .iter()
+            .map(|v| v.class().is_fp() && v.bytes() > 16)
+            .collect::<Vec<_>>(),
+        "逐参数 by-ref 判定"
+    );
     // 栈参数区：plan 的 arg_area 扣掉 shadow 后应与现有路径的栈参数字节数一致。
     assert_eq!(
         plan.stack
@@ -253,7 +262,15 @@ fn plan_agrees_with_the_existing_lowering_result_on_riscv64() {
         .iter()
         .map(|a| matches!(a.place, forge_abi::Placement::Indirect { .. }))
         .collect();
-    assert_eq!(by_ref, alloc.param_by_ref, "lp64d：逐参数 by-ref 判定");
+    assert_eq!(
+        by_ref,
+        alloc
+            .param_vregs
+            .iter()
+            .map(|v| v.class().is_fp() && v.bytes() > 16)
+            .collect::<Vec<_>>(),
+        "lp64d：逐参数 by-ref 判定"
+    );
     assert_eq!(
         plan.stack
             .arg_area_bytes

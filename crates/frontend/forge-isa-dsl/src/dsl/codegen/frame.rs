@@ -1285,7 +1285,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
             {
                 continue;
             }
-            if !__rm.param_is_float.get(__i).copied().unwrap_or(false)
+            if !__pv.class().is_fp()
                 && __rm.is_spilled(__pv)
             {
                 let __src = match __rm
@@ -1501,7 +1501,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
                         let __r = __p.as_reg().expect("上面刚判过");
                         // 引用绑定：下面几条**已存在的模板**（`*index`/`*class` 形态）按引用写。
                         let (class, index) = (&__r.class, &__r.slot);
-                        let __val_fp = __rm.param_is_float.get(__i).copied().unwrap_or(false);
+                        let __val_fp = __pv.class().is_fp();
                         if class.is_int() {
                             let __src = Reg::from_index(*index, *class);
                             if __val_fp {
@@ -1548,12 +1548,11 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
                         // 现在两支都在：拿到寄存器 ⇒ 类限定的直接收参（浮点走
                         // `{ role = "stack_arg_load", class = "fpr" }`，v23 M5 随本批加入 x86 谱）；
                         // 没拿到 ⇒ 上面的按位搬运进溢出槽。
-                        if __rm.param_is_float.get(__i).copied().unwrap_or(false) {
+                        if __pv.class().is_fp() {
                             #layout_stack_fpr_stmt
                         } else {
                             #layout_stack_stmt
                         }
-                        #layout_stack_stmt
                     }
                     _ => {
                         return Err(crate::IrError::Internal(
@@ -1563,11 +1562,11 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
                 }
                 continue;
             }
-            if __rm.param_by_ref.get(__i) == Some(&true) {
+            if __pv.class().is_fp() && __pv.bytes() > 16 {
                 // by-ref：宽向量参数按引用传——GPR 槽位是数据指针，
                 // 从 [ptr] load 到向量寄存器（派生：向量寄存器 ← 内存，精确宽度）。
                 #byref_stmt_use
-            } else if __rm.param_is_float.get(__i) == Some(&true) {
+            } else if __pv.class().is_fp() {
                 #fpr_stmt_use
             } else {
                 #int_stmt_use

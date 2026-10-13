@@ -955,29 +955,11 @@ impl<'a> BtState<'a> {
             assignments,
             spill_slots,
             param_vregs: self.config.param_xregs.clone(),
-            param_is_float: self
-                .config
-                .param_xregs
-                .iter()
-                .map(|v| v.class().is_fp())
-                .collect(),
-            param_by_ref: self
-                .config
-                .param_xregs
-                .iter()
-                .map(|v| v.class().is_fp() && v.bytes() > 16)
-                .collect(),
             // S2：sret 由 CompileState 在分配后填充（LowerCtx.is_sret_return）
             sret: false,
             stack_arg_bytes: 0,
             va_save_off: None,
             va_top: 0,
-            param_is_32: self
-                .config
-                .param_xregs
-                .iter()
-                .map(|v| v.bytes() == 4)
-                .collect(),
             // 参数字节宽由 CompileState 分配后按 xreg_types 填充（regalloc
             // 不持有 IR 类型；见 AllocResult::param_bytes 文档）。
             param_bytes: Vec::new(),

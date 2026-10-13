@@ -26,13 +26,13 @@ pub struct AllocResult {
     /// **密集**的 XReg → 溢出槽映射（下标 = `XReg::index()`；`None` = 没溢出）。
     /// 同 `assignments`：热路径查询，走 [`AllocResult::spill_slot`]/[`AllocResult::is_spilled`]。
     pub spill_slots: Vec<Option<SpillSlot>>,
-    /// 函数参数 XReg 列表（用于 prologue 中从 ABI 寄存器复制参数）
+    /// 函数参数 XReg 列表（用于 prologue 中从 ABI 寄存器复制参数）。
+    ///
+    /// v23 M5（消平行数组）：原先与它**平行**的四个数组（`param_is_float`/`param_by_ref`/
+    /// `param_is_32`）已删除——那三个都是**从 vreg 自身可推**的事实
+    /// （`v.class().is_fp()`、`is_fp() && v.bytes() > 16`、`v.bytes() == 4`），
+    /// 生成物现在直接算；其中 `param_is_32` 连读点都没有（纯死数组）。
     pub param_vregs: Vec<XReg>,
-    /// 每个参数的浮点标记（与 param_vregs 对齐）——@move_args 类型分类收参用
-    pub param_is_float: Vec<bool>,
-    /// 每个参数是否按引用传参（by-ref：宽向量 >16 字节，ABI 传指针；
-    /// 被调方入口从 [ptr] 加载到向量寄存器）——@move_args 收参用。
-    pub param_by_ref: Vec<bool>,
     /// 是否 sret 返回（宽向量 >16 字节）——首 int 槽被 sret 指针占用，
     /// @move_args 收参 __gi 从 1 起（Windows x64 隐藏 sret 参数约定）。
     pub sret: bool,
@@ -47,14 +47,13 @@ pub struct AllocResult {
     /// 保存区放在 `[入口 sp - va_top, 入口 sp)`，帧里其余东西（ra/fp、callee-saved）整体下移
     /// 这一个量——生成物按它给自己的存取偏移减掉；0 = 历史布局（逐字节不变）。
     pub va_top: u32,
-    /// 参数是否为 32 位整数（i32/u32——收参需符号扩展 movsxd）。
-    pub param_is_32: Vec<bool>,
     /// 每个参数的 **IR 类型字节数**（与 param_vregs 对齐）——由 `CompileState`
     /// 在分配后按 `xreg_types` 填充。用途：`@move_args` 的 by-ref 宽向量收参
     /// 必须按**真实字节宽**分派 32B/64B load 变体——寄存器类宽对 >128 位向量
     /// 恒为 `VEC(32)`（`reg_class_for`），无法区分 V256(32B)/V512(64B)，旧实现
     /// 因此让 64B 分支永不可达 → V512 只 load 32B（lane8..15 丢失，WA-37 D5）。
-    /// 0 = 未知（保守按 32B 处理）。
+    /// 0 = 未知（保守按 32B 处理）。**这一条不可从 vreg 推**（IR 类型不在 vreg 里），
+    /// 因此保留。
     pub param_bytes: Vec<u16>,
     /// 需要在序言中保存的 callee-saved 物理寄存器（按 push 顺序）
     pub callee_saved_to_save: Vec<PReg>,
@@ -88,13 +87,10 @@ impl Default for AllocResult {
             assignments: Vec::new(),
             spill_slots: Vec::new(),
             param_vregs: Vec::new(),
-            param_is_float: Vec::new(),
-            param_by_ref: Vec::new(),
             sret: false,
             stack_arg_bytes: 0,
             va_save_off: None,
             va_top: 0,
-            param_is_32: Vec::new(),
             param_bytes: Vec::new(),
             callee_saved_to_save: Vec::new(),
             frame_info: FrameInfo {

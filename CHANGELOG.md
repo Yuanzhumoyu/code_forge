@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-11) — 后端 v23 M5：修掉上一批发浮点栈形参收参时的**重复发射**，并删掉三个与 `param_vregs` 平行的可推导数组
+
++ **重复发射（我上一批引入的缺陷）**：栈上浮点形参"直接收进寄存器"那条分支后面**残留了一句**无条件的 `#layout_stack_stmt`——于是浮点形参除了收到 FPR 之外，**还**会多发一条把 `__dest` 当 GPR 用的收参（写坏一个与 FPR 同号的通用寄存器；寄存器分配之后那个 GPR 可能正持有活值）。测试没抓到（被写坏的寄存器在序言那一点通常已死），属于必须靠读代码发现的形态。修法：删掉那句残留，收参严格二选一。
++ **删三个平行数组**：`AllocResult::param_is_float` / `param_by_ref` / `param_is_32` —— 三个都**从 vreg 自身可推**（`v.class().is_fp()`、`is_fp() && v.bytes() > 16`、`v.bytes() == 4`），其中 `param_is_32` 连读点都没有（纯死数组）。生成的序言改为直接算（5 处读点），`abi_target_real.rs` 的两个断言按同一口径现算，`regalloc` 的三段填充随之删除。保留 `param_vregs` 与 `param_bytes`（后者是**真数据**：IR 类型字节数不在 vreg 里，by-ref 宽向量收参靠它分派 32B/64B）。
++ **守卫锚点同步**：`call_layout_emission.rs` 原来用 `param_by_ref` 当"回退段"的锚点做顺序断言；该数组删除后换成**回退段自己的 fail-closed 文案**（`收参需要调用布局`）——实测三份发行谱里都在布局路径之后，比原来的锚点更贴近它要钉的东西。
+
 ### Changed (2026-10-11) — 后端 v23 M5：**分配结果密集化**（`HashMap` → 按下标直取的 `Vec`，热路径省掉哈希）
 
 + `AllocResult::assignments: HashMap<XReg, PReg>` → **`Vec<Option<PReg>>`**（下标 = `XReg::index()`），`spill_slots: HashMap<XReg, SpillSlot>` → **`Vec<Option<SpillSlot>>`**。发射与序言**每条指令每个操作数**都要查一次（`resolve`/`preg`/`is_spilled`/`spill_slot`），密集表把查询降成一次边界检查。

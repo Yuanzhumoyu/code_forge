@@ -58,12 +58,15 @@ fn move_args_emits_the_layout_driven_receive_path() {
             "{name}: 布局路径没有接受栈落点（`stack_offset`）——带栈参数的函数会整函数退回位置算式"
         );
         let layout_at = text.find("__layout_ok").expect("布局判定");
-        let old_at = text.find("param_by_ref").unwrap_or_else(|| {
-            panic!("{name}: 旧路径（[abi] 收参）不见了——它仍是未覆盖落点的回退")
-        });
+        // v23 M5：锚点从 `param_by_ref` 换成**回退段自己的 fail-closed 文案**
+        // （`收参需要调用布局`）——前者（与 `param_vregs` 平行的 by-ref 数组）已删除；
+        // 后者在三份发行谱里都存在，且都在布局路径**之后**（实测 x86/riscv64/arm64 皆然）。
+        let old_at = text
+            .find("收参需要调用布局")
+            .unwrap_or_else(|| panic!("{name}: 旧路径（未覆盖落点的回退）不见了——它仍在那里"));
         assert!(
             layout_at < old_at,
-            "{name}: 布局块排在旧路径之后（`__layout_ok` @ {layout_at} > `param_by_ref` @ {old_at}）\
+            "{name}: 布局块排在回退段之后（`__layout_ok` @ {layout_at} > 回退文案 @ {old_at}）\
              ——旧路径先 continue，布局永远轮不到"
         );
     }
@@ -76,10 +79,11 @@ fn move_args_emits_the_layout_driven_receive_path() {
 fn the_layout_path_stays_machine_neutral() {
     let text = text_of("isa/x86.toml");
     let start = text.find("__layout_ok").expect("布局判定");
-    // 扫描**整段布局路径**（到旧路径的 `param_by_ref` 为止），不按固定长度截——生成物
-    // 会随能力增长（v20 V7 的类间位搬移就在这段里），定长窗口会把断言的边界变成"代码有多长"。
+    // 扫描**整段布局路径**（到回退段的 fail-closed 文案为止，锚点理由见上一条测试），
+    // 不按固定长度截——生成物会随能力增长（v20 V7 的类间位搬移就在这段里），
+    // 定长窗口会把断言的边界变成"代码有多长"。
     let end = text[start..]
-        .find("param_by_ref")
+        .find("收参需要调用布局")
         .map(|o| start + o)
         .unwrap_or(text.len());
     let block = &text[start..end];
