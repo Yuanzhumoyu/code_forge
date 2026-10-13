@@ -52,6 +52,24 @@ impl RelocKind {
     pub const CALL: Self = RelocKind::Relative(4, -4);
     pub const CALL_IND: Self = RelocKind::Absolute(8);
 
+    /// **重定位补丁值的唯一口径**（v23 M5）：把"目标符号地址 + patch 站点地址"折成写进
+    /// 机器码的值。
+    ///
+    /// - `Relative(_, adj)`：PC 相对 ⇒ `target - site + adj`（x86 `Rel(4, -4)` 即
+    ///   `target - site - 4`；`adj` 由 ISA 声明，不在这里写死）。
+    /// - `Absolute(_)`：绝对地址 ⇒ `target`。
+    ///
+    /// 以前这段语义在 JIT 里有一份私有副本（`compute_patch_value`），ObjectWriter 侧则
+    /// 以对象文件 `RelocationKind` + addend 的形式再表达一次——同一件事三处口径，改一处
+    /// 就容易漂移。现在放在 `RelocKind` 自己的方法上：**谁能拿到 `target`/`site` 谁就调它**。
+    pub fn patch_value(self, target_addr: u64, patch_site: u64) -> u64 {
+        match self {
+            RelocKind::Relative(_w, adj) => {
+                (target_addr as i64 - patch_site as i64 + adj as i64) as u64
+            }
+            RelocKind::Absolute(_) => target_addr,
+        }
+    }
     /// 补丁宽度（字节）——由 ISA/后端声明，**不设白名单/上限**。
     pub fn width_bytes(self) -> u32 {
         match self {

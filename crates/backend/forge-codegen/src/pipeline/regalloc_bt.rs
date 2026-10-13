@@ -145,6 +145,13 @@ fn build_spill_edits<I: crate::machine::inst::MachineInst>(
     config: &RegAllocConfig,
 ) -> Result<Vec<Vec<SpillEdit>>, IrError> {
     use crate::machine::inst::OperandRole;
+    // **逐点判据**（取证 ②）：此刻真的在栈上 = 有槽 **且** 没有寄存器。只看"有槽"会把
+    // "曾被驱逐、之后 reload 回寄存器"的值也当成栈上的——那会把字段重定向到 scratch 并
+    // 从槽里读**陈旧值**。
+    // **判据回到"有槽"**（取证 ② 被推翻）：发射前的统一回写用的是**最终**分配表，所以
+    // 只要某 vreg 有槽，就一律"从槽经 scratch 读"——这样才与回写无关地自洽。反过来按
+    // "此刻没有寄存器"判，会让**早期**指令的字段停在**最终**（可能更晚的）寄存器号上，
+    // 读到那个时刻的垃圾（实测：单跑 atomic 用例直接 0xc0000005 访问违规）。
     let slot_of =
         |v: XReg| -> Option<SpillSlot> { spill_slots.get(v.index() as usize).copied().flatten() };
     let mut edits: Vec<Vec<SpillEdit>> = Vec::new();
@@ -247,6 +254,12 @@ struct BtState<'a> {
     /// 当前活跃的 XReg 及其 PReg（插入/移除 O(1)）
     active: HashMap<XReg, PReg>,
 
+    /// **本指令的 use 集合**：驱逐候选人要排除它们（那条 use 马上要读自己的寄存器）。
+    current_uses: smallvec::SmallVec<[XReg; 8]>,
+    /// **本指令的 def 集合**（同上）：被它定义的 vreg 不能当驱逐候选——旧值已死，
+    /// 而 `next_use` 报的是**新值**的未来使用。
+    current_defs: smallvec::SmallVec<[XReg; 8]>,
+
     /// Spill 槽分配器
     next_spill_offset: i32,
     /// 当前正在处理的指令点（用于 Belady's MIN 溢出决策）。
@@ -307,6 +320,8 @@ impl<'a> BtState<'a> {
             active: HashMap::new(),
             next_spill_offset: 0,
             current_point: ProgPoint::new(0, 0),
+            current_uses: smallvec::SmallVec::new(),
+            current_defs: smallvec::SmallVec::new(),
             current_clobbers: smallvec::SmallVec::new(),
         }
     }
@@ -325,6 +340,29 @@ impl<'a> BtState<'a> {
             let inst_u32 = inst_idx as u32;
             let use_point = ProgPoint::inst_start(block_idx, inst_u32);
             let _def_point = ProgPoint::inst_end(block_idx, inst_u32);
+            // 驱逐点（在 `assign_reg` 里）要知道**本指令的 use/def 集合**：
+            // 占走自己马上要读/写的寄存器会弄丢输入或让旧值仍被引用。
+            self.current_uses.clear();
+            self.current_defs.clear();
+            for b in inst_ops
+                .get(*global_inst_start)
+                .map(|s| s.as_slice())
+                .unwrap_or(&[])
+            {
+                if b.role == crate::machine::inst::OperandRole::Use
+                    && !self.current_uses.contains(&b.vreg)
+                {
+                    self.current_uses.push(b.vreg);
+                }
+                // **本指令的 def 也要排除**：它马上会被重写，旧值已死，而 `next_use_after`
+                // 报的是**新值**的未来使用——按"活跃"驱逐它，会在指令中途再次触发该 vreg
+                // 的分配，编辑序列与最终表打架。
+                if b.role == crate::machine::inst::OperandRole::Def
+                    && !self.current_defs.contains(&b.vreg)
+                {
+                    self.current_defs.push(b.vreg);
+                }
+            }
 
             // 当前指令的寄存器字段对应的 XReg（由指令包 inst_ops 聚合提供）
             // 借用 slice，避免每指令克隆 SmallVec
@@ -620,7 +658,11 @@ impl<'a> BtState<'a> {
             .active
             .iter()
             .filter(|(_, p)| p.class == class || p.class.overlaps(class))
-            .filter(|(victim, _)| **victim != vreg)
+            .filter(|(victim, _)| {
+                **victim != vreg
+                    && !self.current_uses.contains(victim)
+                    && !self.current_defs.contains(victim)
+            })
             .map(|(&v, &p)| {
                 let next_use = self
                     .intervals
@@ -630,12 +672,20 @@ impl<'a> BtState<'a> {
                 (next_use, v, p)
             })
             .collect();
-        // 只保留死值（无未来使用）；按 (next_use, vreg index) 确定性取最大。
-        dead_victims.retain(|&(next_use, _, _)| next_use == ProgPoint::MAX);
+        // **真正的 Belady**（v23 M5 第五步）：死值（`next_use == MAX`）优先，其次是"下次使用
+        // 最远"的**活跃值**——后者的当前寄存器值由 `SpillEdit::SpillLive` 在指令**前**落盘，
+        // 因此驱逐活跃值是安全的（旧实现只驱逐死值，无死值就 spill 当前 def 或报错）。
         dead_victims.sort_by_key(|&(nu, v, _)| (nu, v.index()));
-        let victim = dead_victims.pop().map(|(_, v, p)| (ProgPoint::MAX, v, p));
-
+        let victim = dead_victims.pop();
         if let Some((_, victim_vreg, victim_preg)) = victim {
+            // **活跃值驱逐不需要落盘**（2026-10-11 取证定性，见账本）：发射侧按**最终表**
+            // 决定，凡"最终有槽"的 vreg，其每次 def 都被重定向到 scratch 并 `Store` 回槽、
+            // 每次 use 都**从槽 load** ⇒ **槽始终是权威副本**，寄存器的内容可能早已陈旧
+            // （def 走过 scratch 路径时寄存器根本没被写）。早先版本在这里"把受害者的寄存器
+            // 内容写回槽"（`SpillEdit::SpillLive`），实测正是用陈旧值**覆盖**了槽里的正确值
+            // ——atomic/向量高压力用例因此读到垃圾（`-163`、`-1774193535`）。所以这里只要
+            // 释放寄存器即可：`spill_vreg` 分配槽（若还没有）并归还寄存器。
+            self.spill_vreg(victim_vreg)?;
             if crate::pipeline::trace_enabled("FORGE_TRACE_ALLOC")
                 || crate::pipeline::trace_enabled("FORGE_TRACE_SPILL")
             {
@@ -651,8 +701,6 @@ impl<'a> BtState<'a> {
                     self.current_point,
                 );
             }
-            // 驱逐 victim 到栈
-            self.spill_vreg(victim_vreg)?;
             // victim 的寄存器现在空闲：spill_vreg 会把它 push 回 free_regs，
             // 这里必须从空闲池移除，否则后续 reload/分配会重复拿到已占寄存器
             self.remove_from_free(victim_preg);
@@ -732,6 +780,17 @@ impl<'a> BtState<'a> {
             );
         }
         if self.spill_slots.contains_key(&vreg) {
+            // **已经有槽也必须把寄存器还回来**（v23 M5 第五步取证 ①）：活跃值被驱逐 →
+            // 之后 reload 拿到寄存器 → **再次**被驱逐时走到这里。早退而不释放 ⇒ 调用方
+            // （`evict_and_assign`）仍把该寄存器交给当前 vreg ⇒ **两个活值共用一个寄存器**
+            // （症状：某个值读到别人的值）。死值驱逐永远走不到这条（死值不会再被 reload），
+            // 所以旧策略一直掩盖着它——这也解释了为什么把探针插在这里跑全量门禁一次都没触发。
+            if let Some(&preg) = self.assignments.get(&vreg) {
+                self.assignments.remove(&vreg);
+                self.clear_reg_owner(preg);
+                self.free_regs.entry(preg.class).or_default().push(preg);
+            }
+            self.active.remove(&vreg);
             return Ok(());
         }
 

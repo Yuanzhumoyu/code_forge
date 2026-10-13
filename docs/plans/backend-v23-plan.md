@@ -322,7 +322,7 @@ spill 压力与「固定字段 spill」用例按新语义改写；新增「必�
 | M2 单一 ABI 数据模型 | ✅ 已落地（C1 修复 + leaf crate + 形状/变参/寄存器三面去镜像 + **删运行时镜像**） | 见 §11 M2 进度 | 2026-10-11 |
 | M3 能力数据化（去 x86 硬编码 + 单一合法性判据 + A6 收口） | ✅ 已落地（死钩子/死 API 删除；端序修正；宽向量能力数据化 + ISA 中立守卫；A6 收口；触发判据合一 + `ChangeSet`） | 见 §12 M3 进度 | 2026-10-11 |
 | M4 单一操作数模型 | ✅ 已落地（批次 A/B/C；两处偏差如实记录：`xreg_types` 保留、`inst_clobbers` 与 `clobbers()` 非同源） | 见 §13 M4 收口 | 2026-10-11 |
-| M5 分配器与发射 | 🚧 进行中（C6 帧记账单点 + C4 表归一 + **条件式收参缺陷修复** + C3 释放 2 寄存器已落；C4 类感知偏好仍挡、密集输出/SpillEdit/MachBuffer 待做） | 见 §14 M5 进度 | 2026-10-11 |
+| M5 分配器与发射 | ✅ 已落地（C6 帧记账单点 + C4 表归一 + 条件式收参缺陷修复 + C3 释放 2 寄存器 + C4 双根因收口 + 密集输出 + SpillEdit + **真 Belady** + MachBuffer 三项） | 见 §14 M5 进度 | 2026-10-11 |
 | M6 合法化与缺口 | ⏳ 待开工 | — | — |
 
 ## 8. 顺序、风险与假设
@@ -764,6 +764,81 @@ NativeCommandError 噪声行）⇒ 判为**一次性偶发（环境/时序）**�
 6. 判定：两矩阵 + `asm_exec` + **mini_c e2e**（本仓教训：宽度类/时机类分歧只有跨 crate e2e 抓得到）。
 
 **风险**：动分配序 ⇒ 输出变化；若矩阵或 e2e 红且一次修复不成就回退并另记（C3/C4 的先例）。
+### MachBuffer（M5 第 6 项）—— ✅ 三项全部落地（2026-10-11）
+
+1. **次序 hack 删除**（依据：标签走 pending fixup，前向引用天然成立）；
+2. **重定位补丁语义单点化**（`RelocKind::patch_value`，删 JIT 私有副本）；
+3. **`EPILOGUE` 哨兵替换为分配标签**：`LabelRef::Machine(u32)` + `CodeSink::new_label()`
+   （id 独立区间），`ExternalLabel`/`EPILOGUE`/空间断言删除；`needs_epilogue_label()` 保留
+   （它问的是"是否用共享尾声"，是能力判据）。
+   新守卫两条：`machine_labels_are_allocated_uniquely_and_round_trip`、
+   `forward_machine_label_reference_is_resolved`。
+
+**M5 六条至此全部落地**（C3 释放两寄存器 + C4 双根因 + 密集输出 + SpillEdit + 真 Belady +
+MachBuffer），判据：workspace 门禁 exit 0、`forge-codegen --lib --all-features` 2810、
+runtime 18、jit x86 197/3/0、riscv64 136/64/0、asm 三档全绿、clippy/fmt 干净。
+
+
+**已落且有回归证据**：
+
+1. **次序 hack 删除**：`emission.rs` 的 Pass1/Pass2（"非返回块先发、返回块最后"）删除，块按 vcode 自然
+   次序发射。依据：重排是**编码器急切算偏移**时代的遗留——现在 `emit_epilogue_jump` 写**标签号**、
+   由 `CodeSink` 记 pending fixup 并在 `bind_label`/`finish` 统一打补丁，前向引用天然成立。
+   三条硬回归全绿：x86 197/3/0（前向跳转）、riscv64 136/64/0（分支范围）、`asm_exec` 1 passed。
+2. **重定位补丁语义单点化**：`RelocKind::patch_value`（运行时）成为唯一口径，删 JIT 的
+   `compute_patch_value` 私有副本。ObjectWriter 侧写的是**对象文件重定位**（真打补丁交给链接器），
+   因此"共用"的落点就是这条语义函数 + 既有 `RelocKind`/`RelocPatcher`。
+
+**待做（下一批）**：`ExternalLabel::EPILOGUE` 哨兵 + `needs_epilogue_label` 特判。**为什么不能顺手删**：
+`LabelRef` 的**数字 id 就是标签查找键**（`emit.rs` 的 `from_id` 是纯区间判断：`id >= BASE` ⇒
+`External(Epilogue)`，否则 `Block(id)`），而编码器只能往指令字段里写**数字**。要真正"用分配出来的
+标签"，得让数字 id 空间支持分配（`Machine(id)` 走独立区间 + `from_id` 查表）——那是标签类型/编码面
+的改动，需要单独一批 + 前向跳转回归。当前哨兵已被**类型化**（骗不出同值句柄）并有 `debug_assert`
+挡空间冲突，属"已知且受控"的临时形态。
+**第四次尝试：✅ 成功（2026-10-11）** —— 根因是"活跃值落盘"这条路**本身就是错的**。
+
+`FORGE_TRACE_SPILL` 一眼看穿（同一槽 -88 的三条记录）：
+
+```text
+[spill] atomic_spill load 10 off=-88        ← def：被重定向到 scratch r10 并 Store 回槽
+[spill] atomic_spill store 10 off=-88
+[spill] atomic_spill spill-live r1 off=-88  ← 驱逐活跃值时把 **r1 的陈旧内容**倒进同一个槽
+[spill] atomic_spill load 10 off=-88
+```
+
+发射侧按**最终表**决定搬运 ⇒ 凡"最终有槽"的 vreg，其每次 def 都走 scratch 并写回槽、每次 use 都
+从槽读 ⇒ **槽才是权威副本**，寄存器内容可能早已陈旧。于是"把受害者寄存器写回槽"是**用陈旧值覆盖
+正确值**——这就是 `-163` / `-1774193535` 的来源。
+
+**修法（做减法）**：驱逐活跃值只需释放寄存器（`spill_vreg` 会分配槽并归还寄存器）；
+`SpillEdit::SpillLive` 与 `live_stores` 全套**删除**（不留死代码）。另补
+`spill_vreg` 早退分支的寄存器释放（探针实测：该路径**只在驱逐活跃值时可达**，故旧策略掩盖至今）。
+
+**验收**：原"已知限制"用例改写为正例（17 个 V256 值 > 16 寄存器 ⇒ 必驱逐活跃值，断言编得过且
+值 = -153）；`cargo test --workspace --exclude forge-rustc` exit 0、`forge-codegen --lib
+--all-features` **2810 passed**、jit x86 197/3/0、riscv64 136/64/0、asm_exec 1 passed、
+clippy/fmt 干净。
+**第三次尝试（2026-10-11，工作区进行中，**未提交**——用户要求 M5 完成前不提交）**
+
+本轮把 ①（`spill_vreg` 早退也释放寄存器）+ ②（逐点判据）**分开验证**，结论明确：
+
+1. **① 成立且是必需的**：只做 ① 时 atomic 用例**不再崩溃**，只是值错（`-1774193535` vs `50`）。
+2. **② 被推翻（已回退）**：加上"此刻没有寄存器才算在栈上"的判据后，单跑 atomic 用例直接
+   **0xc0000005 访问违规**。原因想清楚了：发射前的字段统一回写用的是**最终**分配表，所以
+   按"此刻有没有寄存器"判，会让**早期**指令的字段停在一个**更晚**的寄存器号上（那个时刻它是垃圾）
+   —— 判据必须与回写同源。**正确口径仍是"有槽就一律经 scratch 从槽读"**（自洽性来自
+   `SpillLive` 保证槽是最新的）。
+3. **探针测量**：把诊断探针插进 `spill_vreg` 的早退分支后跑**全量门禁一次都没触发**
+   ⇒ 那条早退只有在"驱逐活跃值"时才会走到，属于本批次内的路径（不是既存缺陷）。
+
+**当前工作区状态（WIP）**：Belady 实现 + `SpillEdit::SpillLive` + emission 指令前落盘 + 修复 ①；
+`test_jit_atomic_rmw_spill_pressure` **值错**（唯一硬失败），已知限制用例
+（`test_jit_v256_high_pressure_spill_is_known_limited`）待改写为正例。
+
+**下一轮入口（已收窄到一条）**：对 atomic 用例开 `FORGE_TRACE_SPILL`，逐条比对
+"`SpillLive` 落盘 → 后续 reload 读槽"的配对，重点看**同一 vreg 被驱逐两次**、
+以及**驱逐点之后同一指令内的其它操作数**是否也被重定向；定位后补齐第 ③ 条修复。
+
 ### Belady（SpillEdit 第五步）第二次尝试：又前进了两步，仍回退（2026-10-11）
 
 第二次按清单实现（`SpillLive` 变体、`live_stores`/`current_global_inst`/`current_uses`、驱逐取

@@ -11,6 +11,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M5：**替掉 `EPILOGUE` 哨兵**（机器标签改为分配）；M5 六条全部落地
+
++ **机器标签由 `CodeSink::new_label()` 分配**：新增 `LabelRef::Machine(u32)`，id 落在
+  [`LabelRef::MACHINE_LABEL_BASE`] 之上的独立区间，与 IR 块 id 天然分离 ⇒ "要几个有几个"，
+  不再有哨兵常量、也不再需要"块数不撞保留区间"的空间 `debug_assert`。
+  跳点/绑定方（`emission.rs`）改为 `let epilogue_label = sink.new_label()` → 各 return 块跳它 →
+  所有块之后 `sink.bind_label(epilogue_label)`。
++ `ExternalLabel` 类型与 `LabelRef::EPILOGUE` 常量删除（`lib.rs` 的再导出同步）。
+  `needs_epilogue_label()` **保留**——它问的是"本 ISA 是否用共享尾声（而非每 return 内联）"，
+  是正当的能力判据，与"哨兵"无关。
++ **新守卫**（运行时单测）：`machine_labels_are_allocated_uniquely_and_round_trip`
+  （两次分配必不同、id 落独立区间且与 0..4096 块 id 全不相撞、id↔标签闭环）与
+  `forward_machine_label_reference_is_resolved`（先引用后绑定必须打上补丁——正是删掉发射
+  次序 hack 后依赖的性质）。
+
+### Changed (2026-10-11) — 后端 v23 M5：删掉"发射次序 hack"；重定位补丁语义单点化
+### Changed (2026-10-11) — 后端 v23 M5：删掉"发射次序 hack"；重定位补丁语义单点化
+
++ **删掉"非返回块先发、返回块最后"的重排**（`emission.rs` 的 Pass1/Pass2）：当年重排的理由是"返回块的
+  `emit_epilogue_jump` 会干扰前向 PC-relative 分支偏移计算"——那是**编码器急切算偏移**时代的遗留。
+  现在 `emit_epilogue_jump` 把目标写成**标签号**，由 `CodeSink` 记 pending fixup、`bind_label`/`finish`
+  时统一打补丁，前向引用天然成立。块现在按 vcode 自然次序发射。
+  **回归判据（方案指定的三条硬回归）**：`jit_matrix_x86` **197/3/0**（前向跳转）、
+  `jit_matrix_riscv64` **136/64/0**（分支范围）、`asm_exec` **1 passed**；`forge-codegen --lib
+  --all-features` 2810、workspace 门禁 exit 0。
++ **重定位补丁语义单点化**：新增 `RelocKind::patch_value(target, site)`（`Relative` ⇒
+  `target - site + adj`、`Absolute` ⇒ `target`），JIT 里那份私有副本 `compute_patch_value` 删除并改调它。
+  同一件事以前在 JIT / ObjectWriter 两处各表达一次，改一处容易漂移。
+
+### Changed (2026-10-11) — 后端 v23 M5：**真正的 Belady 驱逐**（不再只驱逐死值）+ 消除"活跃值落盘"这条错误路径
+### Changed (2026-10-11) — 后端 v23 M5：**真正的 Belady 驱逐**（不再只驱逐死值）+ 消除"活跃值落盘"这条错误路径
+
+**背景**：旧实现只驱逐**死值**（`next_use == MAX`），无死值就 spill 当前 def 或直接报错（WA-46 的
+"3 scratch"已知限制就是这么来的）。
+
++ **驱逐策略改为真 Belady**：候选人按 `next_use_after` 取"下次使用最远"者，死值优先；候选人**排除
+  当前 vreg 自身、本指令的 use 与本指令的 def**（占走自己马上要读/写的寄存器 = 弄丢输入）。
++ **关键取证：活跃值驱逐根本不需要"落盘"**。发射侧按**最终表**决定溢出搬运——凡"最终有槽"的 vreg，
+  其每次 def 都被重定向到 scratch 并 `Store` 回槽、每次 use 都**从槽 load** ⇒ **槽始终是权威副本**，
+  寄存器的内容可能早已陈旧（def 走 scratch 路径时寄存器根本没被写）。早先版本在驱逐点"把受害者的
+  寄存器内容写回槽"（`SpillEdit::SpillLive`），实测是**用陈旧值覆盖槽里的正确值**：atomic 用例读到
+  `-1774193535`（期望 50）、V256 用例读到 `-163`（期望 -153）。所以驱逐活跃值只需**释放寄存器**
+  （`spill_vreg` 分配槽并归还寄存器）——`SpillEdit::SpillLive` 与配套的 `live_stores` 全套随之删除
+  （不留死代码）。
++ **`spill_vreg` 的"已有槽就早退"补齐释放寄存器**：活跃值被驱逐 → 之后 reload 拿到寄存器 →
+  **再次**被驱逐时命中早退分支，寄存器既不归还也不清 `assignments`/`reg_owner`，而调用方仍把那个
+  寄存器交给当前 vreg ⇒ 两个活值共用一个寄存器。死值驱逐永远走不到这条（死值不会再被 reload），
+  所以旧策略一直掩盖着它——把诊断探针插在这里跑**全量门禁一次都没触发**，正是这个原因。
++ **用例**：原"已知限制"用例改写为**正例** `test_jit_v256_high_pressure_spill_evicts_live_values`
+  （17 个 V256 值 > 16 个架构寄存器 ⇒ 必须驱逐活跃值；断言**编得过且算得对** = -153），它同时是
+  "槽是权威副本"的守卫。
+
+### Changed (2026-10-11) — 后端 v23 M5：**C4 收口** —— 根因是「scratch 的号被 FPR 池复用」，reload 踩掉活值
 ### Changed (2026-10-11) — 后端 v23 M5：**C4 收口** —— 根因是「scratch 的号被 FPR 池复用」，reload 踩掉活值
 
 + **根因（先排除猜测，再定位）**：编码级先排掉"高编号 FPR 缺 REX"的假设（`movsd [rbx], xmm10`

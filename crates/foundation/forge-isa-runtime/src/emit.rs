@@ -10,12 +10,14 @@ use forge_ir::Block;
 use forge_ir::ImmStr;
 use std::sync::Arc;
 
-/// 机器层 label —— IR 块，或**机器层自造的外部标签**。
+/// 机器层 label —— IR 块，或**机器层自造（分配出来）的标签**。
 ///
 /// 存在理由：机器 IR 的 label 复用 IR 的 `Block` 句柄，但统一尾声**不是 IR 块**
 /// （它由 `TargetFrameLowering::emit_epilogue` 发射、`return` 块通过
-/// `emit_epilogue_jump` 跳到它）。历史实现用魔数 `Block(0xFFFFFFFD)` 表示，
-/// 既可能与真实块索引碰撞，也挡不住别处乱造同值句柄；现在把两种来源写进类型。
+/// `emit_epilogue_jump` 跳到它）。历史实现用过魔数 `Block(0xFFFFFFFD)`、
+/// 后来又用"唯一的哨兵常量"——两者都要么可能与真实块索引碰撞、要么把"只能有一个
+/// 机器标签"写死。v23 M5：机器标签改为**在 [`CodeSink::new_label`] 里分配**
+/// （id 落在高位区间，与 IR 块 id 天然分离），于是"要几个有几个"，也没有哨兵常量。
 ///
 /// 编码侧仍需要一个数字 id（定宽 ISA 把它塞进 label 位域、变长走 reloc，
 /// 由 encoder → `use_label_at` → patcher 消费），用 [`LabelRef::id`] 取 /
@@ -24,48 +26,34 @@ use std::sync::Arc;
 pub enum LabelRef {
     /// 真实 IR 块（id = `block.0`）。
     Block(Block),
-    /// 机器层外部标签（id 落在保留区间，见 [`ExternalLabel`]）。
-    External(ExternalLabel),
-}
-
-/// 机器层的外部（非 IR 块）标签。
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum ExternalLabel {
-    /// 统一尾声：多 return 块共用的收尾代码入口。
-    Epilogue,
-}
-
-impl ExternalLabel {
-    /// 保留区间的基址（u32 索引空间最高 3 个值留给外部标签）。
-    pub const BASE: u32 = 0xFFFF_FFFD;
-
-    /// 编码 id。
-    pub fn id(self) -> u32 {
-        match self {
-            ExternalLabel::Epilogue => Self::BASE,
-        }
-    }
+    /// 机器层分配的标签（id = `MACHINE_LABEL_BASE + n`，见 [`LabelRef::MACHINE_LABEL_BASE`]）。
+    Machine(u32),
 }
 
 impl LabelRef {
-    /// 统一尾声标签（`Block` 之外唯一的机器层标签）。
-    pub const EPILOGUE: LabelRef = LabelRef::External(ExternalLabel::Epilogue);
+    /// 机器标签 id 区间的基址。IR 块 id 由 `Block::new` 从 0 起给，实际函数的块数
+    /// 远小于此（发射侧有 `debug_assert` 兜住"块数 < 基址"）⇒ 两个区间不可能撞上。
+    ///
+    /// 定宽 ISA 会把 id 写进 label 位域（位宽可能远小于 32），但那个数字**只是查找键**，
+    /// 真正的偏移由 fixup 打补丁——所以基址取高位不影响可编码性（既有实现用
+    /// `0xFFFF_FFFD` 也是同理）。
+    pub const MACHINE_LABEL_BASE: u32 = 0x8000_0000;
 
     /// 编码 id（塞进指令 label 槽 / 供 fixup 查表）。
     pub fn id(self) -> u32 {
         match self {
             LabelRef::Block(b) => b.index(),
-            LabelRef::External(e) => e.id(),
+            LabelRef::Machine(n) => Self::MACHINE_LABEL_BASE + n,
         }
     }
 
-    /// 由编码 id 还原：保留区间 → 外部标签；其余 → IR 块。
+    /// 由编码 id 还原：高位区间 → 机器标签；其余 → IR 块。
     ///
     /// 编码器把 label 槽写成数字、`use_label_at` 再从数字还原——**这是唯一
     /// 允许"数字 ↔ 标签"互转的边界**（生成的 machine.rs 调它）。
     pub fn from_id(id: u32) -> LabelRef {
-        if id >= ExternalLabel::BASE {
-            LabelRef::External(ExternalLabel::Epilogue)
+        if id >= Self::MACHINE_LABEL_BASE {
+            LabelRef::Machine(id - Self::MACHINE_LABEL_BASE)
         } else {
             LabelRef::Block(Block::new(id))
         }
@@ -87,6 +75,8 @@ pub struct CodeSink {
     pending: Vec<(usize, LabelRef, RelocKind)>,
     /// Relocations to be recorded (emitted to output).
     relocs: Vec<Relocation>,
+    /// 下一个可分配的**机器标签**序号（v23 M5：机器标签由 sink 分配，不再用哨兵常量）。
+    next_machine_label: u32,
     /// Backend-specific relocation encoder (used by `finish` to patch
     /// in-function label fixups; None keeps the legacy plain-relative path).
     patcher: Option<Arc<dyn RelocPatcher>>,
@@ -99,11 +89,23 @@ impl CodeSink {
             labels: std::collections::HashMap::new(),
             pending: Vec::new(),
             relocs: Vec::new(),
+            next_machine_label: 0,
             patcher: None,
         }
     }
 
     /// Attach a backend relocation patcher for ISA-specific fixup encoding.
+    /// **分配一个机器标签**（v23 M5：替掉 `ExternalLabel::EPILOGUE` 哨兵）。
+    ///
+    /// id 落在 [`LabelRef::MACHINE_LABEL_BASE`] 之上的独立区间，与 IR 块 id 天然分离，
+    /// 因此"要几个有几个"；调用方在自己的位置 `bind_label` 它即可（前向引用由 pending
+    /// fixup 兜住）。
+    pub fn new_label(&mut self) -> LabelRef {
+        let n = self.next_machine_label;
+        self.next_machine_label += 1;
+        LabelRef::Machine(n)
+    }
+
     pub fn set_patcher(&mut self, patcher: Arc<dyn RelocPatcher>) {
         self.patcher = Some(patcher);
     }
@@ -267,5 +269,75 @@ impl CodeSink {
 impl Default for CodeSink {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **机器标签由 `new_label` 分配**（v23 M5：替掉 `ExternalLabel::EPILOGUE` 哨兵）。
+    ///
+    /// 钉三件事：① 每次分配都不同（"要几个有几个"）；② id 落在独立区间，与 IR 块 id
+    /// 不可能相撞（这是哨兵时代要 `debug_assert` 才能守的事）；③ id ↔ 标签**互转闭环**
+    /// ——编码器把 id 写进指令字段、`use_label_at` 再从数字还原，这条边界错了会静默把
+    /// 分支指向别的块。
+    #[test]
+    fn machine_labels_are_allocated_uniquely_and_round_trip() {
+        let mut sink = CodeSink::new();
+        let a = sink.new_label();
+        let b = sink.new_label();
+        assert_ne!(a, b, "两次分配必须是不同的标签");
+        assert_ne!(a.id(), b.id(), "id 也必须不同（它是 fixup 的查找键）");
+
+        assert!(
+            a.id() >= LabelRef::MACHINE_LABEL_BASE,
+            "机器标签 id 必须落在独立区间（{:#X}）",
+            LabelRef::MACHINE_LABEL_BASE
+        );
+        // 真实函数的块数远小于基址——取一个远超实际的上界做代表性检查。
+        for block in 0..4096u32 {
+            assert_ne!(
+                LabelRef::Block(Block::new(block)).id(),
+                a.id(),
+                "块 {block} 的 id 与机器标签撞了"
+            );
+        }
+        assert_eq!(LabelRef::from_id(a.id()), a, "id → 标签必须闭环");
+        assert_eq!(LabelRef::from_id(b.id()), b);
+        let blk = LabelRef::Block(Block::new(7));
+        assert_eq!(LabelRef::from_id(blk.id()), blk, "IR 块同样闭环");
+    }
+
+    /// **前向引用**：先发一条指向机器标签的引用、之后再绑定 ⇒ `finish` 必须打上补丁。
+    ///
+    /// 这正是删掉"发射次序 hack"后依赖的性质（统一尾声在所有 return 块之后发射）。
+    #[test]
+    fn forward_machine_label_reference_is_resolved() {
+        let mut sink = CodeSink::new();
+        let epilogue = sink.new_label();
+        // 在偏移 4 处写一条 4 字节的相对引用（补丁站点在偏移 4；目标稍后绑定）。
+        sink.put1(0x90);
+        sink.put1(0x90);
+        sink.put1(0x90);
+        sink.put1(0x90);
+        let site = sink.offset();
+        sink.put1(0);
+        sink.put1(0);
+        sink.put1(0);
+        sink.put1(0);
+        sink.use_label_at(site, epilogue, RelocKind::Relative(4, -4));
+        // 中间再塞 8 字节，然后绑定尾声标签。
+        for _ in 0..8 {
+            sink.put1(0x90);
+        }
+        sink.bind_label(epilogue);
+        let code = sink.finish().expect("前向机器标签必须能解析");
+        // 目标偏移 16，站点 4 ⇒ 相对 4 字节 = 16 - 4 - 4 = 8。
+        assert_eq!(
+            &code[site..site + 4],
+            &8i32.to_le_bytes(),
+            "前向引用应打成 target - site - 4"
+        );
     }
 }

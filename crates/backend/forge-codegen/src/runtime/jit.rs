@@ -279,19 +279,6 @@ impl<M: TargetMachine + Clone> JitLoader<M> {
 
     // --- 内部方法 ---
 
-    /// 计算重定位的 patch 值。
-    /// `target_addr` 是目标符号的绝对地址，`patch_site` 是 patch 位置的绝对地址。
-    fn compute_patch_value(kind: RelocKind, target_addr: u64, patch_site: u64) -> u64 {
-        match kind {
-            RelocKind::Relative(_w, adj) => {
-                // PC-relative: target - patch_site + adj
-                // x86 Rel(4, -4): target - patch_site - 4
-                (target_addr as i64 - patch_site as i64 + adj as i64) as u64
-            }
-            RelocKind::Absolute(_) => target_addr,
-        }
-    }
-
     /// 在代码装入可执行内存之前 patch 已解析的重定位。
     /// 修改 `compiled.code` 字节，使其在装入 ExecutableMemory 后直接可用。
     ///
@@ -363,7 +350,8 @@ impl<M: TargetMachine + Clone> JitLoader<M> {
                                 }
                             } else {
                                 let patch_value =
-                                    Self::compute_patch_value(kind, target_addr, site_addr);
+                                    // v23 M5：口径在 RelocKind::patch_value（运行时单点），JIT 不再自己算。
+            kind.patch_value(target_addr, site_addr);
                                 let bytes_v = kind.encode_value(patch_value);
                                 let end = (reloc_offset + bytes_v.len()).min(bytes.len());
                                 bytes[reloc_offset..end]
@@ -1309,23 +1297,26 @@ define i64 @main() {
         );
     }
 
-    /// **已知限制记录（WA-46 附带发现）**：向量**高压力 spill** 场景在本后端
-    /// 跑不起来——分配器报 `instruction needs 3 scratch regs for spilled
-    /// operands, but only 2 available`（`[abi].scratch` = R10/R11，见
-    /// `isa/x86.toml`）。构造：N=17 个 V256 值逐个消费
-    /// （`vneg → vextract → fptosi → iadd`，单条指令 ≤2 个向量寄存器），
-    /// 只要有一个 `vconst` 的 `{out}` 与内部临时同时被 spill 就需要 3 个 scratch。
-    /// 本用例**断言该错误仍存在**（不得静默通过）：一旦放宽 scratch 约束，
-    /// 就应改为断言 VEX.256 spill 搬运 + lane7 语义（溢出宽度另有生成级用例
-    /// `compiler.rs::test_fpr_spill_width_dispatch` 直接驱动 FrameLowering 守门）。
+    /// **必须驱逐活跃值**的正例（v23 M5 第五步：Belady + 槽权威语义）。
+    ///
+    /// 构造：N=17 个 V256 值逐个消费（`vneg → vextract → fptosi → iadd`），
+    /// 17 > 16 个架构寄存器 ⇒ **必然**要驱逐一个**活跃**值（死值不够用）。
+    ///
+    /// 改动前这里是**已知限制记录**：分配器只驱逐死值，无死值就报
+    /// `instruction needs 3 scratch regs …`（WA-46 附带发现）。现在必须编得过且算得对：
+    /// 返回值 = Σ -(1+i)（i = 0..17）= **-153**。
+    ///
+    /// 这条用例同时是"**槽是权威副本**"的守卫：被驱逐的活跃值不靠"把寄存器内容写回槽"
+    /// 来保命（那条路会用**陈旧寄存器内容覆盖槽**，实测把本用例算成 -163），而是靠
+    /// 发射侧"最终有槽 ⇒ 每次 def 走 scratch 并写回槽、每次 use 从槽读"。
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn test_jit_v256_high_pressure_spill_is_known_limited() {
+    fn test_jit_v256_high_pressure_spill_evicts_live_values() {
         use forge_ir::{FunctionSignature, TypeId};
 
         ensure_registered();
         if !crate::avx_available() {
-            eprintln!("[jit] 无 AVX——跳过 V256 高压力 spill 限制记录用例");
+            eprintln!("[jit] 无 AVX——跳过 V256 高压力 spill 用例");
             return;
         }
         const N: usize = 17;
@@ -1347,17 +1338,17 @@ define i64 @main() {
         }
         b.ret(&[acc]);
         let func = b.finish().expect("build v256 spill");
-        let err = match CompileSession::new(x86::TargetMachine::new()).compile(&func) {
-            Ok(_) => panic!(
-                "N={N} 个 32B 值 > 16 个架构寄存器：当前应报 3-scratch 限制；\
-                 若已放宽 scratch 约束 → 本用例应改为断言 VEX.256 spill 搬运与 lane7 语义"
-            ),
-            Err(e) => e,
-        };
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("scratch"),
-            "期望 scratch 不足的 RegAlloc 错误（已知限制），实际：{msg}"
+
+        let mut module = Module::new();
+        module.add_function(func);
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+        jit.compile_module(&module)
+            .unwrap_or_else(|e| panic!("N={N} 个 32B 值应当靠驱逐活跃值编过（Belady）：{e}"));
+        let f: extern "C" fn() -> i32 = jit.get_fn("v256_spill").expect("get_fn");
+        assert_eq!(
+            f(),
+            -153,
+            "被驱逐的活跃 V256 值必须走槽权威路径，否则 lane7 语义读回垃圾"
         );
     }
 

@@ -32,7 +32,7 @@ pub use cpu::{
     AVX512_ENV_LOCK, avx_available, avx2_available, avx512_available, avx512_hardware_available,
 };
 pub use ctx::{LowerCtx, MemRef};
-pub use emit::{CodeSink, ExternalLabel, LabelRef};
+pub use emit::{CodeSink, LabelRef};
 pub use machine::encoder::EncodeError;
 pub use machine::inst::{EffectKind, MachineInst};
 pub use machine::isa_info::{IsaCapabilities, IsaInfo, RegisterClassInfo};

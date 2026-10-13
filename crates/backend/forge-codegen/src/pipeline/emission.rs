@@ -49,11 +49,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // Stage 8: Prologue
         frame_lowering.emit_prologue(frame_size_emitted, alloc_result, &mut sink)?;
 
-        // Stage 9: Instruction Emission
-        // Emit non-return blocks first, then return blocks last.
-        // This prevents forward JMP/JCC over return blocks from breaking
-        // since return blocks' emit_epilogue_jump can interfere with
-        // PC-relative offset calculations for forward branches.
+        // Stage 9: Instruction Emission（自然次序；重排 hack 已随 v23 M5 删除，见下）
         // 可变借用 vcode 收集块引用（替代整 VCode clone），inst_ops 单独
         // 借用字段——拆分借用避免闭包捕获 &mut self。
         // v23 M5：绑定表/溢出决策都不再在这里读了——编辑序列由分配器产出（AllocResult::edits）。
@@ -75,6 +71,22 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 acc += vb.instructions.len();
             }
             starts
+        };
+
+        // **统一尾声标签由 sink 分配**（v23 M5：替掉 `ExternalLabel::EPILOGUE` 哨兵）。
+        // 只有"不内联尾声"的 ISA 才需要它（`needs_epilogue_label`）——那种形态下所有
+        // return 块跳到同一段收尾代码，而那段代码在所有块之后发射，因此是**前向引用**，
+        // 由 `CodeSink` 的 pending fixup 兜住。
+        let epilogue_label = if frame_lowering.needs_epilogue_label() {
+            debug_assert!(
+                (vblocks.len() as u64) < crate::pipeline::emit::LabelRef::MACHINE_LABEL_BASE as u64,
+                "块索引空间 0x{:X} 已逼近机器标签基址（块数 {}）",
+                crate::pipeline::emit::LabelRef::MACHINE_LABEL_BASE,
+                vblocks.len()
+            );
+            Some(sink.new_label())
+        } else {
+            None
         };
 
         // Helper: emit one block (bind label, instructions, optional epilogue JMP)
@@ -122,41 +134,26 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     }
                 }
             }
-            if vb.is_return_block && frame_lowering.needs_epilogue_label() {
-                frame_lowering.emit_epilogue_jump(
-                    encoder,
-                    alloc_result,
-                    crate::pipeline::emit::LabelRef::EPILOGUE,
-                    sink,
-                )?;
+            if let (true, Some(epilogue)) = (vb.is_return_block, epilogue_label) {
+                frame_lowering.emit_epilogue_jump(encoder, alloc_result, epilogue, sink)?;
             }
             Ok(())
         };
 
-        // Pass 1: non-return blocks
+        // **按 vcode 的自然次序发射**（v23 M5：删掉"非返回块先发、返回块最后"的重排 hack）。
+        // 重排当年是为了"返回块的 epilogue_jump 干扰前向 PC-relative 分支偏移计算"——那是
+        // 编码器**急切算偏移**时代的遗留：现在 `emit_epilogue_jump` 把目标写成**标签号**，
+        // 由 `CodeSink` 记 pending fixup，`bind_label`/`finish` 时统一打补丁（见 `emit.rs`），
+        // 前向引用天然成立。回归判据 = 两矩阵（x86 前向跳转 / riscv 分支范围）+ `asm_exec`。
         for (vcode_idx, vb) in vblocks.iter_mut().enumerate() {
-            if !vb.is_return_block {
-                emit_one(&mut sink, vb, vcode_idx)?;
-            }
-        }
-        // Pass 2: return blocks
-        for (vcode_idx, vb) in vblocks.iter_mut().enumerate() {
-            if vb.is_return_block {
-                emit_one(&mut sink, vb, vcode_idx)?;
-            }
+            emit_one(&mut sink, vb, vcode_idx)?;
         }
 
         // Stage 10: Epilogue
-        if frame_lowering.needs_epilogue_label() {
-            // 统一尾声标签：机器层 label 空间里的保留哨兵（见 EPILOGUE_LABEL 文档）。
-            // 这里断言哨兵与真实块索引空间不冲突（块数是 u32 索引空间里的实数）。
-            debug_assert!(
-                (vblocks.len() as u64) < crate::pipeline::emit::ExternalLabel::BASE as u64,
-                "尾声哨兵 0x{:X} 与真实块索引空间冲突（块数 {}）",
-                crate::pipeline::emit::ExternalLabel::BASE,
-                vblocks.len()
-            );
-            sink.bind_label(crate::pipeline::emit::LabelRef::EPILOGUE);
+        if let Some(epilogue) = epilogue_label {
+            // 把所有 return 块的前向跳转落到这里。标签由 `sink.new_label()` 分配（独立 id
+            // 区间），不再有哨兵常量、也不需要"块数不撞保留区间"的空间断言。
+            sink.bind_label(epilogue);
         }
         frame_lowering.emit_epilogue(frame_size, alloc_result, &mut sink)?;
 
