@@ -30,9 +30,6 @@ pub struct RegAllocConfig {
     /// `regalloc_bt.rs` 的注释）。
     pub callee_saved: Vec<(RegClass, u32)>,
 
-    /// 预着色 XReg → PReg（ABI 强制映射：返回值、参数寄存器等）
-    pub precolored: HashMap<XReg, PReg>,
-
     /// scratch 寄存器池（spill reload 时借用）
     pub scratch_regs: Vec<PReg>,
 
@@ -82,7 +79,6 @@ impl RegAllocConfig {
             sp_reg,
             fp_reg,
             callee_saved: Vec::new(),
-            precolored: HashMap::new(),
             scratch_regs: Vec::new(),
             param_xregs: Vec::new(),
             param_reg_count: 0,
@@ -106,7 +102,6 @@ mod tests {
         assert_eq!(cfg.fp_reg, Some(14));
         assert_eq!(cfg.classes.len(), 2);
         assert!(cfg.callee_saved.is_empty());
-        assert!(cfg.precolored.is_empty());
         assert!(cfg.param_xregs.is_empty());
     }
 

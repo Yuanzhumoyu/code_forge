@@ -2395,8 +2395,6 @@ impl<I: MachineInst + 'static> CompileState<I> {
             );
         }
 
-        let precolored: HashMap<XReg, PReg> = ri.precolored_xregs().into_iter().collect();
-
         // v20 A5-3 ④：callee-saved 是**约定事实**——有 plan 就用 plan 的（同一台机器
         // 换约定必须跟着换：sysv64 的 RDI/RSI 不是 callee-saved，win64 是）。谱里那份
         // 是无 plan（未注册约定 / 合成夹具）时的兜底。
@@ -2427,7 +2425,6 @@ impl<I: MachineInst + 'static> CompileState<I> {
             sp_reg: ri.sp_reg().register_index().unwrap_or(0),
             fp_reg: ri.fp_reg().map(|r| r.to_index()),
             callee_saved,
-            precolored,
             scratch_regs: ri
                 .scratch_regs()
                 .iter()

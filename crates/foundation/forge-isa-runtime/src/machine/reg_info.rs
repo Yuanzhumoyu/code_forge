@@ -2,7 +2,7 @@
 //!
 //! 与 ABI 分离，因为寄存器文件结构（名称、数量、宽度）独立于调用约定。
 
-use forge_ir::{FrameAccess, PReg, PhysReg, RegClass, TypeId, XReg};
+use forge_ir::{FrameAccess, PhysReg, RegClass, TypeId};
 
 /// 物理寄存器文件描述。
 ///
@@ -141,11 +141,6 @@ pub trait TargetRegInfo: Send + Sync + 'static {
     /// `RegInfo` 一律用 `[meta].fp_overhead_bytes` 覆写）。
     fn frame_pointer_overhead(&self) -> u32 {
         self.addr_class().bytes() as u32
-    }
-
-    /// 预着色的 VReg → PReg 映射（如 RAX = VReg(0) 用于返回值）。
-    fn precolored_xregs(&self) -> Vec<(XReg, PReg)> {
-        Vec::new()
     }
 }
 

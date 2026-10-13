@@ -11,6 +11,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M5：删掉「预着色」整条死线（C5 的「接通或删 ⇒ 选删」）
+
++ `TargetRegInfo::precolored_xregs()` 只有默认空实现、**全仓无实现者**；`RegAllocConfig.precolored` 由它填出来却**没有任何读取点**，唯一"存在感"是 `alloc_config` 的一条 `assert!(cfg.precolored.is_empty())`。三个站点（trait 方法 / 配置字段 / `compiler.rs` 的构造与传递）整条删除，连带两个不再使用的 import。
++ `WORKAROUNDS.md` 的 WA-40 ④ 同步更正：该条原本把它记为"防线是死的"——现在写明**已删除**，并把真正的防线指到 `is_reg_field_settable` + regalloc 的 fail-closed。
+
 ### Fixed (2026-10-11) — 后端 v23 M5：修掉上一批发浮点栈形参收参时的**重复发射**，并删掉三个与 `param_vregs` 平行的可推导数组
 
 + **重复发射（我上一批引入的缺陷）**：栈上浮点形参"直接收进寄存器"那条分支后面**残留了一句**无条件的 `#layout_stack_stmt`——于是浮点形参除了收到 FPR 之外，**还**会多发一条把 `__dest` 当 GPR 用的收参（写坏一个与 FPR 同号的通用寄存器；寄存器分配之后那个 GPR 可能正持有活值）。测试没抓到（被写坏的寄存器在序言那一点通常已死），属于必须靠读代码发现的形态。修法：删掉那句残留，收参严格二选一。
