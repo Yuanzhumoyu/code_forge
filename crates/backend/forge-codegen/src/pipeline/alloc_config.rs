@@ -18,11 +18,17 @@ pub struct RegAllocConfig {
     /// 帧指针物理寄存器索引（可选）
     pub fp_reg: Option<u32>,
 
-    /// callee-saved 物理寄存器索引列表（**主 GPR 类的编号空间**）
-    pub callee_saved: Vec<u32>,
-    /// callee-saved 里的 **FPR 类**（v20 A6；主 FPR 类的编号空间，独立一项，
-    /// 免得 X8 与 V8 同号相撞）。空 = 该 ISA 的约定不用保存 FPR。
-    pub callee_saved_fpr: Vec<u32>,
+    /// callee-saved 寄存器：**(类, 该类内的号)** 一张表（v23 M5 的 C4 收口）。
+    ///
+    /// 以前是两份平行列表（主 GPR 类一份、主 FPR 类一份），消费端两处都**只比号不比类**：
+    /// `pop_free` 的"优先用 callee-saved"因此会让 GPR 号与 FPR 号互相误判（arm64 的 V8 与
+    /// X8 同号）；保存集那一侧又各写一遍扫描逻辑。合成一张表之后，① 偏好过滤是 `(类, 号)`
+    /// 精确匹配；② 保存集按类一次扫完。
+    ///
+    /// 这张表只表达"哪些是 callee-saved"，**不**表达"存不存"——两类在保存阶段的语义仍不同
+    ///（GPR 整表推、FPR 只存实际用到的：后者是 arm64 QEMU 通道的历史闸门，见
+    /// `regalloc_bt.rs` 的注释）。
+    pub callee_saved: Vec<(RegClass, u32)>,
 
     /// 预着色 XReg → PReg（ABI 强制映射：返回值、参数寄存器等）
     pub precolored: HashMap<XReg, PReg>,
@@ -76,7 +82,6 @@ impl RegAllocConfig {
             sp_reg,
             fp_reg,
             callee_saved: Vec::new(),
-            callee_saved_fpr: Vec::new(),
             precolored: HashMap::new(),
             scratch_regs: Vec::new(),
             param_xregs: Vec::new(),

@@ -682,6 +682,20 @@ asm 解析档 3 passed（棘轮计数未变）；两条 `no_hardcoded_widths` �
 **两处未动**（输入不同，已标注）：`compiler.rs:95`（聚合落点探针 plan）与 `:2037`
 （`va_info_for_expansion` 的 plan）——它们按**各自签名**的 plan 算平移。
 
+### 第二批（C4 表归一 + C6 收尾）——✅ 已落地（2026-10-11）；C3 与"类感知偏好"**按实测回退**
+
+- **C4 表归一**：`callee_saved: Vec<u32>` + `callee_saved_fpr: Vec<u32>` → `Vec<(RegClass, u32)>`（plan 投影），
+  保存集扫描按类查同一张表；`callee_saved_fpr` 字段删除。
+- **回退一（C4 的类感知偏好）**：`pop_free` 的偏好仍**按号跨类**匹配（与旧实现逐位等价）。
+  改成"类族 + 号"会打红 `test_jit_float_params_beyond_xmm_registers_come_from_the_stack`，
+  而**该用例只在 `--all-features`/workspace 的 feature 统一下编译进来**（单 crate 默认特性少 84 个用例）
+  —— 门禁必须显式包含 `cargo test -p forge-codegen --lib --all-features`，本轮已加入。
+- **回退二（C3 池过滤）**：让 sp/fp 排除只对整数类生效（放出 FPR 池同号的 2 个寄存器）同样打红那条用例
+  ⇒ **那两个号的排除是承重的**（与浮点栈参数的搬运路径共用寄存器）。
+
+**结论**：C3 与类感知偏好都属"改策略"（动分配序），必须先量清**浮点栈参数搬运路径**在哪些寄存器上
+做中转，才能安全释放这 2+2 个寄存器。已记为 M5 的下一项前置调查。
+
 ### 后续批次（按"先输出等价、再改策略"的边界）
 
 1. **C4**：`RegAllocConfig.callee_saved: Vec<(RegClass, u32)>` 一张表（`pop_free` 按类查、保存集按类扫），

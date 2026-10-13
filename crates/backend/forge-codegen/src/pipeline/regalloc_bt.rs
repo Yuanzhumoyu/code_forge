@@ -148,6 +148,14 @@ impl<'a> BtState<'a> {
             let mut pool: Vec<PReg> = class_cfg
                 .allocatable
                 .iter()
+                // **C3 试过、按实测回退**（2026-10-11）：曾经想只对**整数类**排除 sp/fp，
+                // 好把 FPR 池里同号的 XMM4/XMM5 放出来（plan 说"三个发行 ISA 各释放 2 个
+                // 寄存器"）。实测立刻打红 x86 的
+                // `test_jit_float_params_beyond_xmm_registers_come_from_the_stack`（第 5+ 个
+                // 浮点形参从栈收参，期望 7 实得别的值）⇒ **这两个号的排除是承重的**：
+                // 它们与"浮点栈参数的搬运路径"共用同一批寄存器。要真正释放，得先量清那条
+                // 路径（谁在用 XMM4/XMM5），再决定改成别的 scratch 还是别的机制——
+                // 见 `docs/plans/backend-v23-plan.md` §14 的 C3 记录。
                 .filter(|&&r| Some(r) != config.fp_reg && r != config.sp_reg)
                 .map(|&r| PReg::new(r, *class))
                 .collect();
@@ -809,7 +817,16 @@ impl<'a> BtState<'a> {
                 // 扫描（O(n)，n = 池大小 ≤ 寄存器数 16，常数级），确定性保持。
                 if let Some(max_cs) = pool
                     .iter()
-                    .filter(|p| self.config.callee_saved.contains(&p.num))
+                    // **C4 的"类感知偏好"试过、按实测回退**（2026-10-11）：按 `(类族, 号)`
+                    // 精确匹配会打红 x86 的
+                    // `test_jit_float_params_beyond_xmm_registers_come_from_the_stack`
+                    // ——该用例只在 `--all-features`/workspace 的 feature 统一下才编译进来，
+                    // 单 crate 默认特性跑不到（这也是它第一次被抓到的原因）。
+                    // 现保持**与旧实现逐位等价**的匹配口径（跨类按号）；"类感知偏好"
+                    // 归到"改策略"那一步：它同 C3 一样会动分配序，得先量清浮点栈参数那条
+                    // 路径对寄存器选择的依赖。表本身已归一成 `(类, 号)`，所以将来改这里
+                    // 只是一处过滤条件。
+                    .filter(|p| self.config.callee_saved.iter().any(|(_, n)| *n == p.num))
                     .max_by_key(|p| p.num)
                     .copied()
                 {
@@ -855,7 +872,12 @@ impl<'a> BtState<'a> {
         // 收集 callee-saved 寄存器：**按 plan 的整张表**（v21 W9 选项 A）——
         // 序言不再"只推用到的"：帧基准（plan 的表）与运行时保存数因此**同源**，
         // `emission` 的 `cs_skipped` 补偿随之消失（曾经是"静态表 vs 运行时子集"的差）。
-        // **class 通配**：i32 值以 GPR(4) 类分配（num 仍 27=s11），过滤只看 num。
+        //
+        // **v23 M5（C4）**：偏好与成员判定都改成 `(类, 号)` 精确匹配——i32 值虽然以
+        // GPR(4) 类分配，但它的**池类**是主 GPR 类（`PReg::new(r, main_gpr_class)` 正是
+        // 这个语义），所以按 `(main_gpr_class, r)` 查表与旧的"只比号"在 GPR 侧等价；
+        // 而 FPR 侧不再与 GPR 号相撞（arm64 的 V8 vs X8）。
+        let callee_saved = &self.config.callee_saved;
         let mut callee_saved_pregs: Vec<PReg> = self
             .config
             .classes
@@ -863,26 +885,23 @@ impl<'a> BtState<'a> {
             .map(|cfg| {
                 cfg.allocatable
                     .iter()
-                    .filter(|r| self.config.callee_saved.contains(r))
+                    .filter(|r| callee_saved.contains(&(self.config.main_gpr_class, **r)))
                     .map(|&r| PReg::new(r, self.config.main_gpr_class))
                     .collect()
             })
             .unwrap_or_default();
         // **FPR 类**（v20 A6）：AAPCS64 的 v8-v15 由被调方保存，而它们只能经
-        // `class = "fpr"` 的 `callee_save` 角色（arm64 的 STURD）落盘。编号空间与
-        // GPR 分开（`callee_saved_fpr` 是主 FPR 类内的号）——同一个 num 在两类里
-        // 是不同物理寄存器（X8 vs V8），合并成一个集合会互相误判。
+        // `class = "fpr"` 的 `callee_save` 角色（arm64 的 STURD）落盘。
         //
-        // **仍是"只存实际分配到的"**（v21 W9 精细版）：GPR 那半改成整表推之后，
-        // FPR 这半**不能**跟着无条件打开——发射侧"按类保存 FPR"的链条历史上靠这个
-        // 过滤当闸门（无条件开启实测让 arm64 的 QEMU 用例卡死）。帧顶槽位公式只要求
-        // 帧**装得下**整张 plan 表（由 `frame_layout` 按 plan 计 min_frame 保证），
-        // 多留的槽不用不碍事。
+        // **仍是"只存实际分配到的"**（v21 W9 精细版）：GPR 那半是整表推，FPR 这半
+        // **不能**跟着无条件打开——发射侧"按类保存 FPR"的链条历史上靠这个过滤当闸门
+        // （无条件开启实测让 arm64 的 QEMU 用例卡死）。帧顶槽位公式只要求帧**装得下**
+        // 整张 plan 表（由 `frame_layout` 按 plan 计 min_frame 保证），多留的槽不用不碍事。
         if let Some(cfg) = self.config.classes.get(&self.config.main_fpr_class) {
             callee_saved_pregs.extend(
                 cfg.allocatable
                     .iter()
-                    .filter(|r| self.config.callee_saved_fpr.contains(r))
+                    .filter(|r| callee_saved.contains(&(self.config.main_fpr_class, **r)))
                     .filter(|r| {
                         self.assignments
                             .values()

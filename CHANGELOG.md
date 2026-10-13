@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M5：**帧记账单点（C6）+ callee-saved 单一表（C4）**；C3 与"C4 类感知偏好"按实测回退
+
++ **C6 帧记账单点**：`LowerCtx` 增 `min_frame` —— 与既有的 `callee_saved_bytes`/`stack_slot_shift` **同一时刻、同一输入**由 `frame_layout_info` 算出（lowering 之前那一处），此后全流程只读这三个字段。删两处重算：`emission.rs` 的 spill 基点（必须与序言实际推入量同源）改读 `ctx.callee_saved_bytes`；`calculate_frame_size` 改读 `ctx.min_frame`。助手 `frame_layout::callee_saved_bytes` 随之删除。两处**同形但输入不同**的调用（聚合落点探针 plan、`va_info_for_expansion` 的 plan）保持不动并在注释里写明原因。
++ **C4 callee-saved 两张平行表合成一张 `Vec<(RegClass, u32)>`**：由 plan 的 `callee_saved.regs` 直接投影（类随号走）；`callee_saved_fpr` 字段与 `alloc_config` 里多余的初始化一并删除；保存集扫描归一成"按类查同一张表"（GPR 侧语义不变；FPR 侧仍保留"只存实际分配到的"这道 arm64 QEMU 通道的闸门）。
++ **C4 的"类感知偏好"（真正的缺陷修复）试过、按实测回退**：`pop_free` 的"优先用 callee-saved"确实是 `contains(&p.num)` —— **只比号不比类**（arm64 的 V8 与 X8 同号会互相误判）。改成类族匹配后打红 x86 的 `test_jit_float_params_beyond_xmm_registers_come_from_the_stack`（期望 7、实得别的值）。**该用例只在 `--all-features`/workspace 的 feature 统一下才编译进来**（单 crate 默认特性跑不到那 84 个），这是它第一次被抓住的原因——也说明门禁必须包含该配置。现保持与旧实现逐位等价的匹配口径，把"类感知偏好"归到方案自己划的"改策略"那一步（它同 C3 一样会动分配序，需先量清浮点栈参数那条路径对寄存器选择的依赖）。
++ **C3 池过滤：试过、打红、回退（如实记录）**：把 sp/fp 排除改成"只对整数类生效"（好让 FPR 池放出同号的 2 个寄存器，如 x86 的 XMM4/XMM5）同样打红上面那条用例 ⇒ **这两个号的排除是承重的**：它们与"浮点栈参数的搬运路径"共用寄存器。结论写进代码注释与账本 §14。
+
+### Changed (2026-10-11) — 后端 v23 M5（第二批，C4）：**callee-saved 两张平行表合成一张 (类, 号) 表**（顺带修掉类盲偏好）
+
++ `RegAllocConfig.callee_saved: Vec<u32>` + `callee_saved_fpr: Vec<u32>` → **`callee_saved: Vec<(RegClass, u32)>` 一张表**（由 plan 的 `callee_saved.regs` 直接投影，类随号走）。
++ **修掉真实缺陷**：`pop_free` 的"优先用 callee-saved"以前是 `callee_saved.contains(&p.num)` —— **只比号不比类**。arm64 的 V8 与 X8 同号，于是真正的 FPR callee-saved 可能被漏掉、别类的号又可能被误认成 callee-saved。现在按 `(类, 号)` 精确匹配（这是**行为变更**：FPR 侧从此会正确优先 callee-saved，由两矩阵 + `asm_exec` 判定正确性）。
++ 保存集扫描同样归一：GPR 与 FPR 各扫一遍的逻辑改读同一张表（GPR 侧语义不变——池类恒为主 GPR 类；FPR 侧仍保留"只存实际分配到的"这道历史闸门，注释写明它是 arm64 QEMU 通道的闸门，**不**跟着无条件打开）。
++ 顺带：`alloc_config.rs` 的 `new()` 测试构造器少填一项。
+
 ### Changed (2026-10-11) — 后端 v23 M5（第一批，C6）：**帧记账单点**（三数值只算一次，两处重算与一个助手函数删除）
 
 + `LowerCtx` 增 `min_frame: u32` —— 与既有的 `callee_saved_bytes`/`stack_slot_shift` **同一时刻、同一输入**由 `frame_layout_info` 算出（`compile` 里 lowering 之前那一处），此后全流程只读这三个字段。

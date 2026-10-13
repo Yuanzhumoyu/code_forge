@@ -2405,23 +2405,19 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // 相撞）。FPR 那半只有在"发射侧能按类保存"之后才敢开——`callee_save` 角色已带类
         // 限定（arm64 的 STURD），`callee_saved_to_save` 也扫主 FPR 类表，`frame_layout_info`
         // 的帧字节数按 plan 的表算（见那里的注释）。缺任何一环，FPR 值就会跨调用被静默破坏。
-        let (callee_saved, callee_saved_fpr): (Vec<u32>, Vec<u32>) = match self.ctx.conv.layout() {
-            Some(cl) => {
-                let mut gpr = Vec::new();
-                let mut fpr = Vec::new();
-                for r in &cl.callee_saved.regs {
-                    if r.class == ri.default_fpr_class() {
-                        fpr.push(r.slot);
-                    } else {
-                        gpr.push(r.slot);
-                    }
-                }
-                (gpr, fpr)
-            }
+        // v23 M5（C4）：**(类, 号) 一张表** —— 以前这里按类分成两条平行 `Vec<u32>`，
+        // 消费端"只比号不比类"（GPR 号与 FPR 号互相误判）。现在类随号一起走。
+        let callee_saved: Vec<(forge_ir::RegClass, u32)> = match self.ctx.conv.layout() {
+            Some(cl) => cl
+                .callee_saved
+                .regs
+                .iter()
+                .map(|r| (r.class, r.slot))
+                .collect(),
             // 无 plan（未注册约定/合成夹具）：v21 W9 删除谱面 callee-saved 两键之后这里
             // 没有兜底表可读——按 A6 的口径，没有 plan 的签名在更早的入口就 fail-closed，
             // 因此空表即可（保持"不静默用别家寄存器名"的纪律）。
-            None => (Vec::new(), Vec::new()),
+            None => Vec::new(),
         };
 
         let reg_info = NewRegAllocConfig {
@@ -2431,7 +2427,6 @@ impl<I: MachineInst + 'static> CompileState<I> {
             sp_reg: ri.sp_reg().register_index().unwrap_or(0),
             fp_reg: ri.fp_reg().map(|r| r.to_index()),
             callee_saved,
-            callee_saved_fpr,
             precolored,
             scratch_regs: ri
                 .scratch_regs()
