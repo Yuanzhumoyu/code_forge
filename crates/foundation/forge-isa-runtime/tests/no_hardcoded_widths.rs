@@ -87,11 +87,6 @@ const ALLOWED: &[(&str, &str, &str)] = &[
         "TargetRegInfo::value_fpr_class 的 trait 缺省 = 历史 FPR64（f64 值池宽），\
          **不等于** default_fpr_class（后者是 ABI/SSE 占位基准，x86 = FPR(16)）",
     ),
-    (
-        "alloc_result.rs",
-        ".unwrap_or(RegClass::GPR64)",
-        "vreg_class 对**未分配** vreg 的历史缺省（调用方只在已分配时读）",
-    ),
 ];
 fn scan_dir(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<(String, usize, String)>) {
     let Ok(entries) = std::fs::read_dir(dir) else {

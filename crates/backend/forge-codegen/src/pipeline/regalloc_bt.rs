@@ -931,10 +931,29 @@ impl<'a> BtState<'a> {
             );
         }
 
+        // **密集化输出**（v23 M5）：分配器内部仍用两张 HashMap 做工作集（插入/删除频繁），
+        // 出口**一次性**折成按下标直取的 `Vec<Option<..>>`——下游（发射/序言）每条指令
+        // 每个操作数都要查，热路径上省掉哈希。
+        let n_vregs = self
+            .assignments
+            .keys()
+            .chain(self.spill_slots.keys())
+            .map(|x| x.index() as usize + 1)
+            .max()
+            .unwrap_or(0);
+        let mut assignments: Vec<Option<PReg>> = vec![None; n_vregs];
+        for (&v, &p) in &self.assignments {
+            assignments[v.index() as usize] = Some(p);
+        }
+        let mut spill_slots: Vec<Option<SpillSlot>> = vec![None; n_vregs];
+        for (&v, &s) in &self.spill_slots {
+            spill_slots[v.index() as usize] = Some(s);
+        }
+
         Ok(AllocResult {
             call_layout: None,
-            assignments: self.assignments,
-            spill_slots: self.spill_slots,
+            assignments,
+            spill_slots,
             param_vregs: self.config.param_xregs.clone(),
             param_is_float: self
                 .config
@@ -1157,7 +1176,7 @@ mod clobber_map_tests {
             .expect("alloc should succeed");
         // x0 在 clobber 点被使用（值需在寄存器）→ 不应被 spill
         assert!(
-            !result.spill_slots.contains_key(&x0),
+            !result.is_spilled(x0),
             "clobber 点 use 的占用者不应 spill（值保留在寄存器）"
         );
     }
@@ -1186,7 +1205,7 @@ mod clobber_map_tests {
             "def 在 clobber 时 spill 到栈（emission scratch 写入）"
         );
         assert!(
-            result.unwrap().spill_slots.contains_key(&x0),
+            result.as_ref().unwrap().is_spilled(x0),
             "def 应被 spill 到栈槽"
         );
     }
@@ -1213,7 +1232,7 @@ mod clobber_map_tests {
             .allocate(&vcode, &config, &inst_ops, &clobber_map)
             .expect("no clobber: RAX 可用，分配成功");
         assert!(
-            !result.spill_slots.contains_key(&x0),
+            !result.is_spilled(x0),
             "无 clobber 时 x0 应留在 RAX 不 spill"
         );
     }
@@ -1238,7 +1257,7 @@ mod clobber_map_tests {
             .allocate(&vcode, &config, &inst_ops, &clobber_map)
             .expect("def-spill 在可改写字段上必须成功（emission 用 scratch 写入 + store 回槽）");
         assert!(
-            result.spill_slots.contains_key(&x0),
+            result.is_spilled(x0),
             "该构造下 def 应被 spill（守卫不得误报）"
         );
         // DummyInst 未覆写 → 默认字段可改写（旧契约）。

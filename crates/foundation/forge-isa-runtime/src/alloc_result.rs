@@ -4,7 +4,6 @@
 //! VCode 在分配后不变，所有分配信息在此 struct 中。
 
 use forge_ir::*;
-use std::collections::HashMap;
 
 /// 寄存器分配的完整输出。
 ///
@@ -12,16 +11,21 @@ use std::collections::HashMap;
 /// 不修改 VCode。这是唯一的分配结果类型；旧的 `AllocResult` 已在 v20 删除。
 #[derive(Clone, Debug)]
 pub struct AllocResult {
-    /// XReg → PReg 分配映射
-    pub assignments: HashMap<XReg, PReg>,
+    /// **密集**的 XReg → PReg 分配映射（下标 = `XReg::index()`；`None` = 未分配到寄存器）。
+    ///
+    /// v23 M5（输出密集化）：原来是 `HashMap<XReg, PReg>`，而发射/序言**每条指令每个
+    /// 操作数**都要查一次（热路径）；改成按下标直取的 `Vec` 后查询退化为一次边界检查。
+    /// 语义不变——读侧一律走 [`AllocResult::preg`]/[`AllocResult::has_preg`]。
+    pub assignments: Vec<Option<PReg>>,
     /// **本次调用的中性布局**（v20 A3b-2b）：由管线从 `AbiPlan` 转好塞进来。
     ///
     /// 序言/尾声（`TargetFrameLowering::emit_prologue/epilogue`）只拿到本结构体、
     /// 拿不到 `LowerCtx`，所以"保存谁 / 栈区多大 / 参数落在哪"必须挂在这里才能读到。
     /// `None` = 管线没接上（或该 ISA/约定算不出计划）⇒ 走既有 `[abi]` 路径。
     pub call_layout: Option<forge_abi_model::AbiPlan>,
-    /// XReg → 溢出槽（含偏移和宽度）
-    pub spill_slots: HashMap<XReg, SpillSlot>,
+    /// **密集**的 XReg → 溢出槽映射（下标 = `XReg::index()`；`None` = 没溢出）。
+    /// 同 `assignments`：热路径查询，走 [`AllocResult::spill_slot`]/[`AllocResult::is_spilled`]。
+    pub spill_slots: Vec<Option<SpillSlot>>,
     /// 函数参数 XReg 列表（用于 prologue 中从 ABI 寄存器复制参数）
     pub param_vregs: Vec<XReg>,
     /// 每个参数的浮点标记（与 param_vregs 对齐）——@move_args 类型分类收参用
@@ -81,8 +85,8 @@ impl Default for AllocResult {
     fn default() -> Self {
         Self {
             call_layout: None,
-            assignments: HashMap::new(),
-            spill_slots: HashMap::new(),
+            assignments: Vec::new(),
+            spill_slots: Vec::new(),
             param_vregs: Vec::new(),
             param_is_float: Vec::new(),
             param_by_ref: Vec::new(),
@@ -107,29 +111,43 @@ impl AllocResult {
     /// 查询 XReg 分配的物理寄存器。
     #[inline]
     pub fn preg(&self, vreg: XReg) -> Option<PReg> {
-        self.assignments.get(&vreg).copied()
+        self.assignments
+            .get(vreg.index() as usize)
+            .copied()
+            .flatten()
+    }
+
+    /// XReg 是否**分配到了**寄存器（`preg` 的布尔形式；生成的序言用它替代
+    /// `assignments.contains_key(&pv)`）。
+    #[inline]
+    pub fn has_preg(&self, vreg: XReg) -> bool {
+        self.preg(vreg).is_some()
     }
 
     /// XReg 是否被溢出到栈上。
     #[inline]
     pub fn is_spilled(&self, vreg: XReg) -> bool {
-        self.spill_slots.contains_key(&vreg)
+        self.spill_slots
+            .get(vreg.index() as usize)
+            .is_some_and(|s| s.is_some())
     }
 
     /// 获取 XReg 的溢出槽信息。
     #[inline]
     pub fn spill_slot(&self, vreg: XReg) -> SpillSlot {
-        self.spill_slots[&vreg]
+        self.spill_slots
+            .get(vreg.index() as usize)
+            .copied()
+            .flatten()
+            .unwrap_or_else(|| {
+                panic!(
+                    "vreg {} 没有溢出槽——调用方必须先判 is_spilled（v23 M5 密集表：\
+                     越界与空槽都是编程错误）",
+                    vreg.index()
+                )
+            })
     }
     // ── 构造方法 ──
-
-    /// 获取 XReg 的寄存器类（从分配信息推断）。
-    pub fn vreg_class(&self, vreg: XReg) -> RegClass {
-        self.assignments
-            .get(&vreg)
-            .map(|p| p.class)
-            .unwrap_or(RegClass::GPR64)
-    }
 
     // ── 核心 API ──
 
@@ -154,9 +172,28 @@ impl AllocResult {
         })
     }
 
-    /// 插入 VReg → PReg 映射。
+    /// 插入 VReg → PReg 映射（密集表按需长大）。
     pub fn insert(&mut self, vreg: XReg, preg: PReg) {
-        self.assignments.insert(vreg, preg);
+        let i = vreg.index() as usize;
+        grow_to(&mut self.assignments, i);
+        grow_to(&mut self.spill_slots, i);
+        self.assignments[i] = Some(preg);
+    }
+
+    /// 插入 VReg → 溢出槽（同样把**两张**表一起长大到同长：长度不一致会让越界查询
+    /// 把"没有该状态"误读成另一种状态）。
+    pub fn insert_spill(&mut self, vreg: XReg, slot: SpillSlot) {
+        let i = vreg.index() as usize;
+        grow_to(&mut self.assignments, i);
+        grow_to(&mut self.spill_slots, i);
+        self.spill_slots[i] = Some(slot);
+    }
+}
+
+/// 把密集表长大到至少能放下下标 `i`（`None` = 该 vreg 没有对应状态）。
+fn grow_to<T: Clone>(v: &mut Vec<Option<T>>, i: usize) {
+    if v.len() <= i {
+        v.resize(i + 1, None);
     }
 }
 
@@ -192,7 +229,7 @@ mod tests {
         let v = xgpr(5);
         assert!(!result.is_spilled(v));
 
-        result.spill_slots.insert(
+        result.insert_spill(
             v,
             SpillSlot {
                 offset: -16,
@@ -215,7 +252,7 @@ mod tests {
     #[test]
     fn test_resolve_spilled_error() {
         let mut result = AllocResult::new();
-        result.spill_slots.insert(
+        result.insert_spill(
             xgpr(4),
             SpillSlot {
                 offset: -8,
@@ -231,16 +268,6 @@ mod tests {
         let result = AllocResult::new();
         let err = result.resolve(xgpr(99)).unwrap_err();
         assert!(format!("{}", err).contains("unallocated"));
-    }
-
-    #[test]
-    fn test_vreg_class() {
-        let mut result = AllocResult::new();
-        result.insert(xgpr(1), make_preg(0, RegClass::GPR64));
-        result.insert(xfpr(2), make_preg(0, RegClass::FPR64));
-        assert_eq!(result.vreg_class(xgpr(1)), RegClass::GPR64);
-        assert_eq!(result.vreg_class(xfpr(2)), RegClass::FPR64);
-        assert_eq!(result.vreg_class(xgpr(99)), RegClass::GPR64); // default
     }
 
     #[test]

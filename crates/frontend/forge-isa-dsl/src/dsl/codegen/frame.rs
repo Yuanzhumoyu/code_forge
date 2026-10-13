@@ -1232,7 +1232,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
             quote! {
                 if let Some(__cl) = __rm.call_layout.as_ref()
                     && let Some(__soff) = __cl.arg(__i as u32).and_then(|__a| __a.place.stack_offset())
-                    && __rm.spill_slots.contains_key(&__pv)
+                    && __rm.is_spilled(__pv)
                 {
                     let __off = __soff as i64;
                     let __sp_base =
@@ -1286,7 +1286,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
                 continue;
             }
             if !__rm.param_is_float.get(__i).copied().unwrap_or(false)
-                && __rm.spill_slots.contains_key(&__pv)
+                && __rm.is_spilled(__pv)
             {
                 let __src = match __rm
                     .call_layout
@@ -1474,7 +1474,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
             // 位置（sret 时首槽被隐藏指针占用）
             let __pos = __i + if __rm.sret { 1usize } else { 0usize };
             #stack_arg_receive
-            if !__rm.assignments.contains_key(&__pv) {
+            if !__rm.has_preg(__pv) {
                 // spilled 的寄存器参数（位置 < n，int 类）：move_args
                 // 必须把 ABI 寄存器值写入 spill 槽（否则 mod.rs 210 写
                 // 槽读垃圾 → l1/l2.size() 值错）。与栈参数中转同构：

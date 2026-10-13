@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M5：**分配结果密集化**（`HashMap` → 按下标直取的 `Vec`，热路径省掉哈希）
+
++ `AllocResult::assignments: HashMap<XReg, PReg>` → **`Vec<Option<PReg>>`**（下标 = `XReg::index()`），`spill_slots: HashMap<XReg, SpillSlot>` → **`Vec<Option<SpillSlot>>`**。发射与序言**每条指令每个操作数**都要查一次（`resolve`/`preg`/`is_spilled`/`spill_slot`），密集表把查询降成一次边界检查。
++ **语义不变、读侧统一走访问器**：`preg`/`is_spilled`/`spill_slot` 实现改密集查；新增 `has_preg`（生成的序言原先直接 `assignments.contains_key(&pv)`，现在读访问器，**生成物与 `AllocResult` 的字段布局解耦**）；越界/空槽在 `spill_slot` 里显式 panic（编程错误，不再静默取到别的槽）。
++ 分配器**内部**仍用两张 `HashMap` 做工作集（插入/删除频繁），只在出口**一次性**折成密集表（`n = max(vreg index)+1`）；两张表由 `insert`/`insert_spill` 保证**同长**（长度不一致会让越界查询把"没有该状态"误读成另一种状态）。
++ 连带改动：生成的序言 3 处（`__rm.is_spilled(__pv)` ×2、`__rm.has_preg(__pv)`）、`alloc_result.rs` 的测试与 `vreg_class`、`compiler.rs`/`regalloc_bt.rs` 里直接读字段的测试。
+
 ### Changed (2026-10-11) — 后端 v23 M5：**删掉算了没人用的 spill weight**，活区间与每块 uses/defs **合成一趟**，并把 spill 启发式的文档改成与实现一致
 
 + **删 `LiveInterval::weight` 及其整条计算链**（字段 + 初始化 + 每操作数一次 `weight += w` + 循环权重常量 + 活区间 dump 的那一列），连带删掉只为它服务的**循环检测预扫**（每指令扫分支目标、标记回边区间）。按方案"`weight` 要么参与驱逐、要么删 ⇒ **选实现**"：全仓没有任何决策读它（只在 `FORGE_TRACE_LIVE` 里打印）。这是 regalloc 热路径（占 codegen 58–76%）上的纯浪费。

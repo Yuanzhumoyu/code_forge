@@ -2705,7 +2705,9 @@ mod alloc_integration_tests {
             !alloc.assignments.is_empty(),
             "assignments 非空（有 XReg 被分配）"
         );
-        for (xreg, preg) in &alloc.assignments {
+        for (i, preg) in alloc.assignments.iter().enumerate() {
+            let Some(preg) = preg else { continue };
+            let xreg = XReg::new(i as u32, preg.class);
             assert!(
                 preg.class == RegClass::GPR64 || preg.class.is_fp(),
                 "XReg {xreg:?} 分配类非法: {:?}",
@@ -2748,7 +2750,7 @@ mod alloc_integration_tests {
         let param_pregs: Vec<u32> = alloc
             .param_vregs
             .iter()
-            .map(|x| alloc.assignments.get(x).map(|p| p.num).unwrap_or(u32::MAX))
+            .map(|x| alloc.preg(*x).map(|p| p.num).unwrap_or(u32::MAX))
             .collect();
         assert_eq!(
             alloc.param_vregs.len(),
@@ -2798,7 +2800,9 @@ mod alloc_integration_tests {
         // 写死保护：clobber 寄存器（RAX=0/RDX=2）上的分配不可能是"跨 div 序列
         // 活跃的中间值"——clobber 机制在序列点把它们溢出（spill_slots 记录）
         // 或分配器避开。断言：每个 spill 槽的 XReg 大小合法（spill 数据完整）。
-        for (xreg, slot) in &alloc.spill_slots {
+        for (i, slot) in alloc.spill_slots.iter().enumerate() {
+            let Some(slot) = slot else { continue };
+            let xreg = XReg::new(i as u32, forge_ir::RegClass::GPR64);
             assert!(
                 slot.size >= 4 && slot.size <= 16,
                 "spill 槽大小非法: {xreg:?} -> {slot:?}"
