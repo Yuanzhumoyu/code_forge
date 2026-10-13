@@ -738,6 +738,15 @@ C4 的类感知偏好。这条调查已写进 `regalloc_bt.rs` 的注释。
 NativeCommandError 噪声行）⇒ 判为**一次性偶发（环境/时序）**，与密集化改动无关；结论记此，
 不再挂着当未决项。
 
+**⑨ 第五批（2026-10-11）**：删三个与 `param_vregs` 平行的**可推导**数组
+（`param_is_float`/`param_by_ref`/`param_is_32`，最后一个是纯死数组——没有任何读点）——
+生成物按 `v.class().is_fp()` / `is_fp() && bytes() > 16` / `bytes() == 4` 现算；
+保留 `param_vregs` 与 `param_bytes`（后者是 IR 侧**真数据**：类型字节数不在 vreg 里，
+by-ref 宽向量收参靠它分派 32B/64B）。同时**修掉上一批引入的重复发射**：浮点栈形参
+"直接收参"分支后残留一句无条件 `#layout_stack_stmt`，会多发一条把 `__dest` 当 GPR 的收参
+（写坏同号通用寄存器，可能正是活值）——测试抓不到，靠读代码发现，已删。
+守卫锚点由 `param_by_ref` 换成回退段的 fail-closed 文案（三谱实测都在布局路径之后）。
+
 **⑦ 第四批（2026-10-11）**：删 `LiveInterval::weight` 及其整条计算链（含只为它服务的循环检测
 预扫）；活区间与"每块局部 uses/defs"合成一趟（删第二趟与平行的 `global_inst_map`）；
 `regalloc_bt.rs` 的 spill 启发式文档改成与实现一致（只驱逐死值；def 无死值 ⇒ spill 自己；
