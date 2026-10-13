@@ -732,6 +732,12 @@ C4 的类感知偏好。这条调查已写进 `regalloc_bt.rs` 的注释。
 六个 f64 形参**全参与运算**（配 16 个 XMM 的池 ⇒ 栈上的第 5/6 个也拿到寄存器），断言和值 63。
 它是本轮新增的**浮点直接收参**那条分支的**唯一直接覆盖**（原有用例在池紧张时走溢出槽那条）。
 
+**⑧ 全量 `forge-tests --lib` 扫描的偶发已闭环（2026-10-11）**：密集化那轮的一次全量扫描报
+`1 failed`（耗时 2755 s），按组分跑全绿；**重跑同一全量扫描 = 58 passed / 0 failed / 33.38 s**
+（日志 `target/tmp/v23-m5dense-forge-tests.log`，仅有的 FAILED 字样来自 PowerShell 的
+NativeCommandError 噪声行）⇒ 判为**一次性偶发（环境/时序）**，与密集化改动无关；结论记此，
+不再挂着当未决项。
+
 **⑦ 第四批（2026-10-11）**：删 `LiveInterval::weight` 及其整条计算链（含只为它服务的循环检测
 预扫）；活区间与"每块局部 uses/defs"合成一趟（删第二趟与平行的 `global_inst_map`）；
 `regalloc_bt.rs` 的 spill 启发式文档改成与实现一致（只驱逐死值；def 无死值 ⇒ spill 自己；
