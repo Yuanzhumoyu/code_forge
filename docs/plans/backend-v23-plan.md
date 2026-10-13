@@ -738,6 +738,49 @@ C4 的类感知偏好。这条调查已写进 `regalloc_bt.rs` 的注释。
 NativeCommandError 噪声行）⇒ 判为**一次性偶发（环境/时序）**，与密集化改动无关；结论记此，
 不再挂着当未决项。
 
+### SpillEdit 第五步（完整 Belady + spill cost）——**设计已定，待实现**（2026-10-11）
+
+**为什么它需要新的编辑种类**：现状 `evict_and_assign` 只驱逐**死值**（`next_use == MAX`），
+无死值时要么 spill 当前 def、要么报错。真正的 Belady 要驱逐"最远的下次使用"的**活跃值**，
+而被驱逐者的当前寄存器值**必须先写回它的槽**（否则它下次 use 从空槽读到垃圾——这正是 P0-8
+当年把 Belady 降级成"只驱逐死值"的原因）。因此需要在 `SpillEdit` 里加**时机在指令之前**的
+一种：`SpillLive { slot, preg, class, width }`（与 `Store` 的区别是时机与语义：`Store` 是
+"本指令算出来的 def 写回自己的槽"、在指令**后**；`SpillLive` 是"本指令要占用某寄存器，
+那个寄存器里的活跃值先落盘"、在指令**前**）。
+
+**实施清单（一批做完再提交）**：
+
+1. `alloc_result.rs`：加 `SpillEdit::SpillLive`；文档写清与 `Store` 的时机差异。
+2. `regalloc_bt.rs`：`BtState` 加 `live_stores: Vec<Vec<SpillEdit>>` 与 `current_global_inst: usize`
+   （`process_block` 每条指令前更新——驱逐点在 `assign_reg` 里，拿不到全局号）；
+   `evict_and_assign` 改策略：候选人按 `next_use_after` 降序取"最远"的**活跃**值（确定性 tie-break
+   用 vreg index），驱逐它时把 `SpillLive` 记进 `live_stores[current_global_inst]`；死值仍走旧路
+   （死值不需要落盘）。**注意**：本指令自身的 use 要排除在外（它马上要读那个寄存器）。
+3. `build_spill_edits`：把 `live_stores[gi]` 作为该指令编辑序列的**前缀**（即使 binds 没有溢出，
+   也要因此产出非空编辑）——emission 的 `edits.is_empty()` 判据不变。
+4. `emission.rs`：`SpillLive` 在"装值"那一段之前执行（`emit_spill_store(preg.num, sp_base + slot.offset, width, class, sink)`）。
+5. 用例（方案的验收要求）：**"必须驱逐活跃值"的正例**——现状 fail-closed，改后应"可编且结果正确"；
+   再加一条"被驱逐的活跃值下次 use 读到的仍是正确值"（这是 `SpillLive` 存在的意义）。
+6. 判定：两矩阵 + `asm_exec` + **mini_c e2e**（本仓教训：宽度类/时机类分歧只有跨 crate e2e 抓得到）。
+
+**风险**：动分配序 ⇒ 输出变化；若矩阵或 e2e 红且一次修复不成就回退并另记（C3/C4 的先例）。
+**第一次尝试与实测结果（2026-10-11，已按纪律回退）**：按上面的清单实现了 1–4 步
+（`SpillLive` 变体、`BtState::live_stores`/`current_global_inst`/`current_uses`、驱逐改"取最远活跃值"、
+`build_spill_edits` 前缀合并、emission 在指令前执行落盘），**全部编译通过**，并把原先"已知限制"
+用例（`test_jit_v256_high_pressure_spill_is_known_limited`）改写成"必须编过且算对"的
+`test_jit_v256_high_pressure_spill_evicts_live_values`（17 个 V256 值逐个消费，期望 `Σ -(1+i) = -153`）。
+
+**结果**：该用例**确实编过了**（限制解除 ✔），但**返回值错**：实得 **-163**（差 **-10**，正好等于
+`-(1+9)`——第 10 个值那一项），指向"某个被驱逐的值读到了**另一个**值/槽"的配对错误。
+其余 2808 个 codegen 用例全绿（说明分歧只在活跃值驱逐这条新路径上）。
+
+**回退理由与下一步取证**：动分配序的改动在"编过但错值"上必须停下（本仓既有纪律：未验证不假绿；
+C3/C4 的先例也是回退 + 另记）。下一步取证方向（按性价比排序）：① 对该用例开 `FORGE_TRACE_ALLOC`
++ 新的"编辑序列 dump"看被驱逐者与其槽的配对（哪一次驱逐把 A 的槽给了 B 的落盘）；
+② 检查**同一 vreg 被驱逐两次**与"驱逐后又 reload 再驱逐"时 `live_stores` 是否重复/错序
+（`current_global_inst` 的归属是否正确）；③ 确认 `current_uses` 的排除是否漏掉 `Bind` 阶段
+（同一指令里既 use 又 def 的字段）。
+
 ### SpillEdit ——✅ 已落地（2026-10-11，第一～四步；**输出等价**）
 
 `SpillEdit { Reload/Bind/Store }` + `AllocResult::edits`；分配器出口第二趟产出编辑
