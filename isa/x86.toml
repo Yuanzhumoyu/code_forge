@@ -1785,6 +1785,11 @@ segments = [
 ]
 opsize = 32
 opcode = 0x10
+# 与 `MOVSD_MR` 对称的**浮点收参**能力（`class = "fpr"`，v23 M5）：被调方把**栈上的
+# 浮点形参**直接收进分配到的 XMM 寄存器时用它。缺它时那条路径只能退回"按位搬运进溢出槽"，
+# 而溢出槽只在 regalloc 恰巧没给该形参分配寄存器时才存在（**条件式收参**：池一有余量就
+# 整条收参被跳过 ⇒ 静默错值，2026-10-11 实测定位）。
+roles = [{ role = "stack_arg_load", class = "fpr" }]
 asm = "movsd {dst:fpr:out}, {@[rm]:mem}{mem:mem}"
 
 [inst.MOVSD_MR]

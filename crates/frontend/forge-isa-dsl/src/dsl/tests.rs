@@ -3712,7 +3712,7 @@ fn stack_args_capability_is_declared_by_roles() {
     crate::dsl::codegen::generate(&m).expect("x86 有 stack_arg_* 角色 → 生成必须成功");
 
     // ① 有 load、缺 store → 生成期报错并点名角色。
-    let no_store = src.replace("roles = [\"stack_arg_store\"]", "");
+    let no_store = strip_role(src, "stack_arg_store");
     assert_ne!(
         no_store, src,
         "夹具失效：x86 TOML 应含 stack_arg_store 角色"
@@ -3731,11 +3731,27 @@ fn stack_args_capability_is_declared_by_roles() {
     );
 
     // ② 连 load 都没有 → 能力降级（不支持栈参数），生成照旧成功。
-    let no_load = src.replace("roles = [\"stack_arg_load\"]", "");
+    let no_load = strip_role(src, "stack_arg_load");
     assert_ne!(no_load, src, "夹具失效：x86 TOML 应含 stack_arg_load 角色");
     let m3 = parse_and_validate(&no_load).expect("删掉 load 角色后仍应可解析");
     crate::dsl::codegen::generate(&m3)
         .expect("没有 stack_arg_load 角色 = 本 ISA 不支持栈参数，生成不该失败");
+}
+
+/// 删掉某角色的**全部声明形态**（v23 M5 起一个角色可有类限定形态）。
+///
+/// 夹具的语义是"这个 ISA 完全没有该能力"，所以两种形态都要删：平铺 `roles = ["x"]`
+/// 与类限定 `roles = [{ role = "x", class = "fpr" }]`（x86 的 `stack_arg_load` /
+/// `stack_arg_store` 现在各有整数版与浮点版）。
+fn strip_role(src: &str, role: &str) -> String {
+    let mut out = src.replace(&format!("roles = [\"{role}\"]"), "");
+    for class in ["fpr", "gpr", "vec"] {
+        out = out.replace(
+            &format!("roles = [{{ role = \"{role}\", class = \"{class}\" }}]"),
+            "",
+        );
+    }
+    out
 }
 
 // ─────────── P0：宽度/类元数据派生（去「宽度写死」，2026-09-12） ───────────

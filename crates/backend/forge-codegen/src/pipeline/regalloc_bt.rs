@@ -148,21 +148,16 @@ impl<'a> BtState<'a> {
             let mut pool: Vec<PReg> = class_cfg
                 .allocatable
                 .iter()
-                // **C3 试过、按实测回退**（2026-10-11，三组对照实验）：
+                // v23 M5（C3）：sp/fp 只在**整数类**（地址寄存器的编号空间）里排除。
+                // 以前对**每个类**都用同一对号过滤，于是 FPR 池里同号的寄存器被误伤
+                // ——三个发行 ISA 各少 2 个可用寄存器（x86 的 XMM4/XMM5、riscv 的 f2/f8、
+                // arm64 的 V29/V31）。
                 //
-                // 想只对**整数类**排除 sp/fp，好把 FPR 池里同号的寄存器放出来（plan 说
-                // "三个发行 ISA 各释放 2 个寄存器"）。实测打红 x86 的
-                // `test_jit_float_params_beyond_xmm_registers_come_from_the_stack`（期望 7、
-                // 实得别的值）。逐号对照：**只放 XMM4 → 过；只放 XMM5 → 过；两个都放 → 红**
-                // ⇒ 不是"某个号特殊"，而是**池一变大分配结果就变**，那条用例对分配变化敏感。
-                //
-                // 机制（据生成器源码 `dsl/codegen/frame.rs`）：栈上形参的收参是**条件**的
-                // ——只有该形参 vreg **没有**拿到寄存器（`rm.spill_slots.contains_key(&pv)`）
-                // 时才走"load 布局槽 → GPR scratch → store spill 槽"；池变大后这些形参拿到了
-                // 寄存器，收参分支整条被跳过 ⇒ 值没落地 ⇒ **静默错值**。
-                // 要释放这 2 个寄存器，**先修这条条件式收参**（收参应无条件写到该 vreg 的
-                // 最终落点），见 `docs/plans/backend-v23-plan.md` §14。
-                .filter(|&&r| Some(r) != config.fp_reg && r != config.sp_reg)
+                // 这条修复**依赖**收参的无条件化（见 frame.rs 的 `layout_stack_fpr_stmt`）：
+                // 池变大后栈形参会拿到寄存器，而旧的条件式收参（只在"有溢出槽"时收参）
+                // 会整条被跳过 ⇒ 静默错值（2026-10-11 实测：只放 XMM4 过、只放 XMM5 过、
+                // 两个都放红，而根因就是那条收参）。先修收参、再放开池。
+                .filter(|&&r| !class.is_int() || (Some(r) != config.fp_reg && r != config.sp_reg))
                 .map(|&r| PReg::new(r, *class))
                 .collect();
             // FPR 池反向（从低编号 XMM0 起分配），与 GPR 池（高编号 r15 起）错开。
@@ -823,15 +818,12 @@ impl<'a> BtState<'a> {
                 // 扫描（O(n)，n = 池大小 ≤ 寄存器数 16，常数级），确定性保持。
                 if let Some(max_cs) = pool
                     .iter()
-                    // **C4 的"类感知偏好"试过、按实测回退**（2026-10-11）：按 `(类族, 号)`
-                    // 精确匹配会打红 x86 的
-                    // `test_jit_float_params_beyond_xmm_registers_come_from_the_stack`
-                    // ——该用例只在 `--all-features`/workspace 的 feature 统一下才编译进来，
-                    // 单 crate 默认特性跑不到（这也是它第一次被抓到的原因）。
-                    // 现保持**与旧实现逐位等价**的匹配口径（跨类按号）；"类感知偏好"
-                    // 归到"改策略"那一步：它同 C3 一样会动分配序，得先量清浮点栈参数那条
-                    // 路径对寄存器选择的依赖。表本身已归一成 `(类, 号)`，所以将来改这里
-                    // 只是一处过滤条件。
+                    // **C4 的"类感知偏好"仍未落地**（2026-10-11 复测）：即使收参已经无条件化
+                    // （C3 因此得以落地），改成 `(类族, 号)` 匹配**仍**打红 x86 的
+                    // `test_jit_float_params_beyond_xmm_registers_come_from_the_stack`。
+                    // ⇒ 这条偏好还牵着别的东西（与 C3 不同：C3 的根因是条件式收参，已修）。
+                    // 现保持与旧实现逐位等价的"跨类按号"匹配；下一步先 dump 该用例在两种
+                    // 偏好下的分配差异再动。表本身已归一成 `(类, 号)`，将来改这里只是一处过滤。
                     .filter(|p| self.config.callee_saved.iter().any(|(_, n)| *n == p.num))
                     .max_by_key(|p| p.num)
                     .copied()

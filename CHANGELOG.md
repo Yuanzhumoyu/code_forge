@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-11) — 后端 v23 M5：**修掉"条件式收参"这个静默错值缺陷**，并据此落地 C3（FPR 池释放 2 个寄存器）
+
++ **缺陷本体**：被调方的**栈上形参**收参是**条件式**的——只有该形参 vreg **没有**拿到寄存器（`spill_slots` 里有它）时才走"load 布局槽 → GPR scratch → store 溢出槽"。于是**池一有余量**（分配器给栈形参也分了寄存器），这条收参**整条被跳过** ⇒ 值没落地 ⇒ **静默错值**（无编译错误、无异常）。三组对照实验（FPR 池只放 XMM4 过 / 只放 XMM5 过 / 两个都放红）证明问题不在"某个寄存器号"，而在那条收参。
++ **修法**：收参改为**由分配结果驱动**——拿到寄存器 ⇒ 直接收进那个寄存器（整数走 `stack_arg_load`，**浮点走新增的类限定角色** `{ role = "stack_arg_load", class = "fpr" }`，x86 落在 `MOVSD_RM`，与既有的浮点 `stack_arg_store`（`MOVSD_MR`）对称）；没拿到 ⇒ 仍走原来的按位搬运进溢出槽。两条路都不再依赖"池里有没有余量"。
++ **C3 随之落地**：池过滤只对**整数类**排除 sp/fp —— FPR 池里同号的寄存器不再被误伤（x86 的 XMM4/XMM5、riscv 的 f2/f8、arm64 的 V29/V31），三个发行 ISA 各释放 2 个可用寄存器。
++ **C4 的"类感知偏好"仍挡住**（复测）：即使收参已无条件化，把 `pop_free` 的 callee-saved 偏好改成按 `(类族, 号)` 匹配**仍**打红同一条用例 ⇒ 它牵着别的东西，与 C3 不同源。回退到与旧实现逐位等价的口径并记录（表已是 `(类, 号)`，将来只改这一处过滤）。
++ **夹具同步**：`stack_args_capability_is_declared_by_roles` 的字符串手术改为 `strip_role`（删某角色的**全部声明形态**——类限定形态出现后，只删平铺形态的夹具会留下"声明了角色却找不到指令"的假缺口）。
+
 ### Changed (2026-10-11) — 后端 v23 M5：**帧记账单点（C6）+ callee-saved 单一表（C4）**；C3 与"C4 类感知偏好"按实测回退
 
 + **C6 帧记账单点**：`LowerCtx` 增 `min_frame` —— 与既有的 `callee_saved_bytes`/`stack_slot_shift` **同一时刻、同一输入**由 `frame_layout_info` 算出（lowering 之前那一处），此后全流程只读这三个字段。删两处重算：`emission.rs` 的 spill 基点（必须与序言实际推入量同源）改读 `ctx.callee_saved_bytes`；`calculate_frame_size` 改读 `ctx.min_frame`。助手 `frame_layout::callee_saved_bytes` 随之删除。两处**同形但输入不同**的调用（聚合落点探针 plan、`va_info_for_expansion` 的 plan）保持不动并在注释里写明原因。

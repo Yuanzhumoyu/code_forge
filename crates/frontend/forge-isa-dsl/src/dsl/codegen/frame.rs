@@ -1030,6 +1030,24 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
         }
         None => None,
     };
+    // **浮点版的收参指令**（`{ role = "stack_arg_load", class = "fpr" }`，v23 M5）：
+    // 栈上的浮点形参**拿到了寄存器**时用它直接收进那个 XMM；没有它就只能走"按位搬运进
+    // 溢出槽"，而溢出槽只在形参恰好没拿到寄存器时才存在 ⇒ **条件式收参**（池一有余量
+    // 就整条跳过 ⇒ 静默错值）。声明了角色的 ISA（x86）走这条；没声明的 ISA 保持原有
+    // fail-closed 行为。
+    let load_fpr_shape = match crate::dsl::codegen::lowering::role_name_for_class(
+        infos,
+        Role::StackArgLoad,
+        crate::dsl::model::RoleClass::Fpr,
+    )
+    .and_then(|name| infos.iter().find(|i| i.inst.name == name))
+    {
+        Some(info) => {
+            crate::dsl::codegen::lowering::stack_mem_shape(infos, info, Role::StackArgLoad)
+                .map_err(|e| format!("move_args: 浮点收参指令：{e}"))?
+        }
+        None => None,
+    };
     // 栈参数收参的 scratch 寄存器（`[machine].scratch` 首项；迁移期回退
     // `[abi].scratch`）与 callee-saved 区字节数（sp_base 计算常量）。**只在真的要走
     // 栈参数收参时**要求声明（声明了 `stack_arg_load` 角色的 ISA）；缺声明 = 生成期
@@ -1354,6 +1372,29 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
             ));
         },
     };
+    // **浮点版的同一件事**（v23 M5）：`[frame_base + offset]` → 分配到的 XMM。
+    // 没有类限定的收参指令时保持原有的 fail-closed（`Err(Unsupported)`），
+    // 绝不把 FPR 当整数搬（那是静默错值）。
+    let layout_stack_fpr_stmt: TokenStream = match load_fpr_shape.as_ref() {
+        Some(l) => {
+            let l_inst = mem_inst_toks(
+                l,
+                &callee_base,
+                &quote! { *offset as i64 },
+                &quote! { Reg::from_index(__dest, __DEFAULT_FPR_CLASS) },
+            );
+            quote! {
+                let __bytes = encode(&#l_inst).map_err(|e| crate::IrError::Emit(e))?;
+                __sink.put_bytes(&__bytes);
+            }
+        }
+        None => quote! {
+            return Err(crate::IrError::Unsupported(
+                "ISA-DSL move_args: 栈上的浮点形参收到了寄存器，但本 ISA 没有 \
+                 { role = \"stack_arg_load\", class = \"fpr\" } 的收参指令".into(),
+            ));
+        },
+    };
     // 寄存器保存区 spill（v20 变参 V3）：需要保存区的约定（sysv64/aapcs64/riscv）在序言里
     // 把**参数寄存器**存进帧内，`va_list` 的 `reg_save_area` 字段指向它。槽表来自 plan
     // （`CallLayout.va.save`），偏移由管线分配（`__rm.va_save_off`）——这里只按槽表发 store，
@@ -1498,24 +1539,19 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
                         // 栈参数：**偏移由 forge-abi 给**（被调方视角，已含 shadow 与
                         // `first_offset_slots`），生成器不再自己数位置。
                         //
-                        // **实际到不了这一支**（2026-10-01 核实）：ABI 落在栈上的形参没有
-                        // 入场寄存器 ⇒ 不在 `assignments` 里 ⇒ 上面的 `#stack_arg_receive`
-                        // 已经把它收进 spill 槽并 `continue` 了。那条路是
-                        // `load 布局槽 → scratch(GPR) → store spill 槽` 的**按位搬运**，
-                        // 因此**浮点参数也正确**（位型不变），FPR 溢出槽的 load 再按类还原。
-                        // 两条真跑用例：`test_jit_float_params_beyond_xmm_registers_come_from_the_stack`
-                        // （6 个 f64 形参取后两个）与
-                        // `test_jit_stack_float_param_is_received_into_a_register`（只用第 5 个）。
-                        //
-                        // 留下的这一支是**防御性**的：万一将来某条路径让"栈落点 + 已分配寄存器"
-                        // 同时成立，浮点必须走类限定收参（`{ role = "stack_arg_load",
-                        // class = "fpr" }`）而不是把 FPR 当整数搬——所以这里**明确拒绝**。
+                        // **v23 M5：这一支不再"到不了"**。原文（2026-10-01）假设"ABI 落在栈上的
+                        // 形参一定不在 `assignments` 里"——实测**不成立**：池有余量时 regalloc
+                        // 会给栈形参分配寄存器，于是 `#stack_arg_receive` 的
+                        // `spill_slots.contains_key(&__pv)` 判据落空、**整条收参被跳过**
+                        // ⇒ 值没落地 ⇒ 静默错值（`test_jit_float_params_beyond_xmm_registers_
+                        // come_from_the_stack` 就是这么红的）。
+                        // 现在两支都在：拿到寄存器 ⇒ 类限定的直接收参（浮点走
+                        // `{ role = "stack_arg_load", class = "fpr" }`，v23 M5 随本批加入 x86 谱）；
+                        // 没拿到 ⇒ 上面的按位搬运进溢出槽。
                         if __rm.param_is_float.get(__i).copied().unwrap_or(false) {
-                            return Err(crate::IrError::Unsupported(
-                                "ISA-DSL move_args: 栈上的浮点参数还有'直接收进寄存器'的路径\
-                                 （本片未接：需要 { role = \"stack_arg_load\", class = \"fpr\" }）"
-                                    .into(),
-                            ));
+                            #layout_stack_fpr_stmt
+                        } else {
+                            #layout_stack_stmt
                         }
                         #layout_stack_stmt
                     }
