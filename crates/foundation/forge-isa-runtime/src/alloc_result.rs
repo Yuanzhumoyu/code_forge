@@ -5,6 +5,41 @@
 
 use forge_ir::*;
 
+/// **一次溢出编辑**（v23 M5 的 `SpillEdit`）：分配器对"这条指令前后要把值搬进/搬出栈"
+/// 给出的**显式决定**，发射侧退化为"按序执行编辑"。
+///
+/// 为什么要有它：编辑以前是**发射期临时算出来的**（`emit_inst_with_spills` 里现查
+/// `spill_slots`/`assignments`、现挑 scratch、现判 `settable`）——决策与执行混在一处，
+/// 分配器真正的逐点状态（哪个值此刻在栈上）反而用不上（发射侧只能看**最终**表）。
+/// 决策回到分配器之后：① 发射侧只剩"装值 / 改写字段 / 写回槽"三种动作；
+/// ② 驱逐策略想升级为"驱逐活跃值"时，只要多产出一条 `Store` 即可（现状只驱逐死值）。
+///
+/// 顺序约定：同一条指令的编辑里，`Reload` 在前、`Bind` 居中、`Store` 在后——
+/// 发射侧据此分三段执行（装值 → 改写字段 → 发指令 → 写回）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpillEdit {
+    /// 指令**前**把槽里的值装进 scratch（宽度档由 `width` 选，指令族由 `class` 选）。
+    Reload {
+        slot: SpillSlot,
+        scratch: PReg,
+        class: RegClass,
+        width: u16,
+    },
+    /// 把指令的某个寄存器字段改写成 scratch（该字段此前指向被溢出的 vreg）。
+    Bind {
+        field: u8,
+        scratch: PReg,
+        class: RegClass,
+    },
+    /// 指令**后**把 scratch 的值写回槽（spilled def）。
+    Store {
+        slot: SpillSlot,
+        scratch: PReg,
+        class: RegClass,
+        width: u16,
+    },
+}
+
 /// 寄存器分配的完整输出。
 ///
 /// 管线后续阶段（encoder, frame lowering, spill emit）只读取此结构，
@@ -26,6 +61,9 @@ pub struct AllocResult {
     /// **密集**的 XReg → 溢出槽映射（下标 = `XReg::index()`；`None` = 没溢出）。
     /// 同 `assignments`：热路径查询，走 [`AllocResult::spill_slot`]/[`AllocResult::is_spilled`]。
     pub spill_slots: Vec<Option<SpillSlot>>,
+    /// **逐指令的溢出编辑序列**（下标 = 指令在 vcode 里的全局序号；空 = 该指令不需要
+    /// 任何溢出搬运）。由分配器产出、发射侧按序执行——见 [`SpillEdit`]。
+    pub edits: Vec<Vec<SpillEdit>>,
     /// 函数参数 XReg 列表（用于 prologue 中从 ABI 寄存器复制参数）。
     ///
     /// v23 M5（消平行数组）：原先与它**平行**的四个数组（`param_is_float`/`param_by_ref`/
@@ -62,7 +100,7 @@ pub struct AllocResult {
 }
 
 /// 栈帧上的溢出槽。
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SpillSlot {
     /// 相对帧基准（FP 或 SP）的字节偏移（负数表示低于帧指针）
     pub offset: i32,
@@ -86,6 +124,7 @@ impl Default for AllocResult {
             call_layout: None,
             assignments: Vec::new(),
             spill_slots: Vec::new(),
+            edits: Vec::new(),
             param_vregs: Vec::new(),
             sret: false,
             stack_arg_bytes: 0,

@@ -738,6 +738,49 @@ C4 的类感知偏好。这条调查已写进 `regalloc_bt.rs` 的注释。
 NativeCommandError 噪声行）⇒ 判为**一次性偶发（环境/时序）**，与密集化改动无关；结论记此，
 不再挂着当未决项。
 
+### SpillEdit ——✅ 已落地（2026-10-11，第一～四步；**输出等价**）
+
+`SpillEdit { Reload/Bind/Store }` + `AllocResult::edits`；分配器出口第二趟产出编辑
+（`build_spill_edits`），scratch 池不足与 `settable` 预检**前移到分配期**；
+`emit_inst_with_spills` 只剩"按序执行三类编辑"，删掉 scratch 选择与覆盖表。
+**第五步（完整 Belady + spill cost 驱逐）仍未做**——它才是行为变更，需要新增
+"必须驱逐活跃值"的用例（现状 fail-closed）。
+
+**取证教训（值得留档）**：第一版把 `Bind` 的类写成 `vreg.class()`（池宽），而旧实现用的是
+`bind.class`（M4 折入的**值宽类**）——多类槽的 opsize 靠它。**两矩阵与 codegen 单测全绿，
+mini_c 的 e2e 才把它抓出来**（`test_hir_e2e_loop_bound_from_param` 返回 2750685 而非 45）⇒
+"输出等价"必须由**跨 crate 的 e2e** 才能确认，codegen 自己的用例覆盖不到这种宽度类分歧。
+
+### SpillEdit 设计与实施清单（历史留档，2026-10-11 侦察）
+
+**现状（实测形状）**：`emission::emit_inst_with_spills` 现在是 **11 参**（M4/M5 已把三个平行数组并成
+`binds`），体内做四件事：① 从 `binds` 去重收集 spilled vreg；② 从 `target.reg_info().scratch_regs()`
+选 scratch（数量不够即报错）；③ 逐条 `emit_spill_load` 装值 + `set_reg_field` 改写 spilled 字段
+（含 `settable` fail-closed）；④ 发指令；⑤ 对 spilled **def** 逐条 `emit_spill_store`。
+分配器侧：`allocate()` → `process_block()` 逐块逐指令拿着 `vcode` 与 `inst_ops`，出口持有
+`assignments`/`spill_slots`，且 `config.scratch_regs: Vec<PReg>` 就在手上——**决策所需的一切它都有**。
+
+**目标**：决策搬进分配器，发射退化为"按序执行编辑"。
+
+1. 运行时新类型（与 `AllocResult` 同文件）：
+   `enum SpillEdit { Reload { slot, scratch }, Bind { field: u8, scratch }, Store { slot, scratch, class, width } }`
+   + `AllocResult.edits: Vec<SmallVec<[SpillEdit; 4]>>`（与指令流平行）。
+2. 分配器出口**第二趟**填 `edits`：对每条指令的每个 bind——vreg 被溢出 ⇒ `Bind{field, scratch}`；
+   每个不同的 spilled vreg ⇒ 指令前 `Reload`、若该 bind 是 **Def** 再在指令后 `Store`。
+   scratch 绑定按类取 `config.scratch_regs`，**池不够就在这里 fail-closed**（现在这步在 emission）。
+3. `settable` 预检**前移**：分配器在产出 `Bind` 时校验 `inst.is_reg_field_settable(field)`
+   （它手里就有指令），emission 不再预检。
+4. emission 侧：`emit_inst_with_spills` 收敛成"按 `edits` 顺序：`Reload` ⇒ `frame_lowering.emit_spill_load`
+   （`class` = 该 vreg 的类、`width` = 其字节数）、`Bind` ⇒ `set_reg_field`、`Store` ⇒ `emit_spill_store`"，
+   删掉 scratch 选择与 `settable` 预检；`sp_base`/`frame_size`/`callee_saved_bytes`/`stack_args`
+   仍由 emission 提供（那是**发射期**事实）。
+5. **解锁项**：`edits` 一旦由分配器产出，驱逐就能给出"把活跃值 store 回槽"的编辑 ⇒ 可做
+   **完整 Belady（取最远下一次使用）+ spill cost 驱逐**，并把 `regalloc_bt` 的文档从"只驱逐死值"
+   更新为真实策略（该项与 `docs/plans/backend-v23-plan.md` M5 的 C5/SpillEdit 两条同时收口）。
+
+**风险与顺序**：先做 1–4（**输出等价**：edits 序列与现有 emission 的临时决策应当逐条对应，两矩阵
+先行判定），再做 5（**行为变更**：驱逐策略变了，需要新增"必须驱逐活跃值"的用例——现状是 fail-closed）。
+
 **⑩ 第六批（2026-10-11，对应方案"spill 分派"条目）**：`emit_spill_load/store` 的 `is_fp: bool`
 → `class: RegClass`（FPR/VEC ⇒ 宽度档浮点模板、GPR ⇒ 通用模板、**KReg ⇒ 显式 fail-closed**）；
 `class` 与 `width` **不重叠**（宽度是运行期选档、类是选指令族；池宽 ≠ 值宽），trait 文档写明理由与

@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M5：**溢出编辑显式化**（分配器产出 `SpillEdit`，发射退化为按序执行）
+
++ **新类型** `SpillEdit { Reload{slot,scratch,class,width}, Bind{field,scratch,class}, Store{slot,scratch,class,width} }` + `AllocResult::edits: Vec<Vec<SpillEdit>>`（下标 = 指令全局序号）。顺序契约：同一条指令里 `Reload` 在前、`Bind` 居中、`Store` 在后 ⇒ 发射侧只做"装值 → 改写字段 → 发指令 → 写回槽"四段。
++ **分配器侧新增 `build_spill_edits`**：逐指令去重收集被溢出的 vreg（同一 vreg 的 use/def 共用一个 scratch），产出编辑。两项判据**从发射期前移到分配期**：① scratch 池不够 ⇒ 分配期 fail-closed（点名第几条指令与池大小）；② 被溢出值落在**不可改写字段** ⇒ 分配期 fail-closed（指令在手，正是 WA-40 那道守卫的上游入口）。没被溢出的绑定不产生编辑——它的字段已由管线按 `inst_ops` 统一回写过。
++ **发射侧删繁**：`emit_inst_with_spills` 去掉 scratch 池索引与绑定表两个参数（改收该指令的编辑切片），删掉 scratch 选择、`overrides`/`xreg_preg` 覆盖表、spilled 去重收集与 `settable` 预检；`sp_base` 仍在发射侧算（它依赖 `frame_size`/callee-saved/栈参数这些**发射期**事实）。
++ **过程中被 mini_c 的 e2e 抓住一处真分歧**：第一版把 `Bind` 的类写成 `vreg.class()`（池宽类），而旧实现用的是 `bind.class.unwrap_or_else(|| vreg.class())`——M4 折进来的**值宽类**。多类槽靠它定 opsize，写成池宽类正是 WA-35 的老病，`test_hir_e2e_loop_bound_from_param` 当场返回垃圾值（2750685 vs 45）。改为与旧实现同源后 mini_c 22 passed。
++ `RegAllocConfig::new` 保持**空** scratch 池（有值即写死类，会撞"宿主生产代码不得出现写死寄存器类"守卫）；需要走溢出编辑的测试在**测试模块内**自行塞一个（`regalloc_bt.rs` 的 `make_config`）。
+
 ### Changed (2026-10-11) — 后端 v23 M5：溢出搬运改按**寄存器类**分派（`is_fp: bool` → `RegClass`），掩码类显式 fail-closed
 
 + `TargetFrameLowering::emit_spill_load/store` 的 `is_fp: bool` → **`class: RegClass`**。布尔只分得出"是不是浮点文件"：FPR/VEC 与 **KReg** 在同一个 `false` 上撞车，掩码值会**静默**按通用寄存器搬运（发一条 mov，读回来的东西与掩码寄存器无关）。现在：FPR/VEC ⇒ 原有按宽度档的浮点模板（WA-46 分派不变）、GPR ⇒ 通用模板（逐字节同前）、**KReg ⇒ 明确 `Unsupported`**（本 ISA 没有掩码溢出模板时不假装能搬）。

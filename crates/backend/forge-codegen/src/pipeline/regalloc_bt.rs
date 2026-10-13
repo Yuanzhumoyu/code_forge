@@ -34,7 +34,7 @@
 use crate::IrError;
 use crate::machine::inst::{MachineInst, OperandConstraint};
 use crate::pipeline::alloc_config::RegAllocConfig;
-use crate::pipeline::alloc_result::{AllocResult, FrameInfo, SpillSlot};
+use crate::pipeline::alloc_result::{AllocResult, FrameInfo, SpillEdit, SpillSlot};
 use crate::pipeline::liverange::{self, ProgPoint};
 use forge_ir::*;
 use std::collections::HashMap;
@@ -113,9 +113,112 @@ impl BacktrackingAllocator {
             state.process_block(block_u32, block, inst_ops, clobber_map, &mut global_inst)?;
         }
 
-        // 5. 构建 AllocResult
-        state.build_result()
+        // 5. 构建 AllocResult，并补上**逐指令溢出编辑**（决策在分配器里做）
+        let mut result = state.build_result()?;
+        result.edits = build_spill_edits(
+            vcode,
+            inst_ops,
+            &result.assignments,
+            &result.spill_slots,
+            config,
+        )?;
+        Ok(result)
     }
+}
+
+/// **逐指令溢出编辑**（v23 M5 的 `SpillEdit`）：决策在分配器里做出、发射侧只按序执行。
+///
+/// 原来决策与执行混在发射侧（`emit_inst_with_spills` 现查最终表、现挑 scratch、现判
+/// `settable`）——分配器真正的逐点状态反而用不上。搬到这里之后：① scratch 池不够 =
+/// **分配期** fail-closed；② `settable` 预检也在这里（指令在手）；③ 将来要驱逐**活跃值**，
+/// 只需多产出一条 `Store`。
+///
+/// 口径与旧发射实现逐条对齐（**输出等价**）：scratch 的**号**取自 `config.scratch_regs`、
+/// **类**取值的类；每条指令的编辑顺序是 `Reload`（全部被溢出的值）→ `Bind`（每个被溢出的
+/// 绑定）→ `Store`（被溢出的 def）。没被溢出的绑定**不**产生编辑：它的字段已由管线在发射
+/// 前按 `inst_ops` 统一回写过（旧发射实现里那次重写是冗余的）。
+fn build_spill_edits<I: crate::machine::inst::MachineInst>(
+    vcode: &crate::VCode<I>,
+    inst_ops: &[smallvec::SmallVec<[crate::machine::lowering::OperandBind; 2]>],
+    assignments: &[Option<PReg>],
+    spill_slots: &[Option<SpillSlot>],
+    config: &RegAllocConfig,
+) -> Result<Vec<Vec<SpillEdit>>, IrError> {
+    use crate::machine::inst::OperandRole;
+    let slot_of =
+        |v: XReg| -> Option<SpillSlot> { spill_slots.get(v.index() as usize).copied().flatten() };
+    let mut edits: Vec<Vec<SpillEdit>> = Vec::new();
+    let mut gi = 0usize;
+    for block in vcode.blocks() {
+        for inst in block.instructions.iter() {
+            let mut e: Vec<SpillEdit> = Vec::new();
+            if let Some(binds) = inst_ops.get(gi) {
+                // 去重收集被溢出的 vreg（同一 vreg 的 use/def 共用同一个 scratch）。
+                let mut spilled: smallvec::SmallVec<[XReg; 8]> = smallvec::SmallVec::new();
+                for b in binds.iter() {
+                    if slot_of(b.vreg).is_some() && !spilled.contains(&b.vreg) {
+                        spilled.push(b.vreg);
+                    }
+                }
+                if !spilled.is_empty() {
+                    if spilled.len() > config.scratch_regs.len() {
+                        return Err(IrError::RegAlloc(format!(
+                            "第 {gi} 条指令需要 {} 个 scratch 寄存器搬溢出值，\
+                             但本 ISA 只声明了 {} 个",
+                            spilled.len(),
+                            config.scratch_regs.len()
+                        )));
+                    }
+                    // scratch 绑定：号来自 scratch 池，**类取值的类**（与旧发射口径一致）。
+                    let scratch_of =
+                        |v: XReg, i: usize| PReg::new(config.scratch_regs[i].num, v.class());
+                    for (i, &v) in spilled.iter().enumerate() {
+                        let slot = slot_of(v).expect("上面刚判过该 vreg 有溢出槽");
+                        e.push(SpillEdit::Reload {
+                            slot,
+                            scratch: scratch_of(v, i),
+                            class: v.class(),
+                            width: v.bytes(),
+                        });
+                    }
+                    let mut stored: smallvec::SmallVec<[XReg; 8]> = smallvec::SmallVec::new();
+                    for b in binds.iter() {
+                        let Some(i) = spilled.iter().position(|&v| v == b.vreg) else {
+                            continue;
+                        };
+                        if !inst.is_reg_field_settable(usize::from(b.field)) {
+                            return Err(IrError::RegAlloc(format!(
+                                "第 {gi} 条指令的字段 {} 不可改写（固定物理字段）\
+                                 却是被溢出值的落点",
+                                b.field
+                            )));
+                        }
+                        e.push(SpillEdit::Bind {
+                            field: b.field,
+                            scratch: scratch_of(b.vreg, i),
+                            // **与该绑定的折入类一致**（`bind.class` = 值宽类，多类槽靠它定
+                            // opsize；退到 vreg 的池宽类是 WA-35 的老病）。
+                            class: b.class.unwrap_or_else(|| b.vreg.class()),
+                        });
+                        if b.role == OperandRole::Def && !stored.contains(&b.vreg) {
+                            stored.push(b.vreg);
+                            let slot = slot_of(b.vreg).expect("上面刚判过该 vreg 有溢出槽");
+                            e.push(SpillEdit::Store {
+                                slot,
+                                scratch: scratch_of(b.vreg, i),
+                                class: b.vreg.class(),
+                                width: b.vreg.bytes(),
+                            });
+                        }
+                    }
+                }
+            }
+            edits.push(e);
+            gi += 1;
+        }
+    }
+    let _ = assignments;
+    Ok(edits)
 }
 
 // ============================================================
@@ -950,10 +1053,22 @@ impl<'a> BtState<'a> {
             spill_slots[v.index() as usize] = Some(s);
         }
 
+        // **逐指令溢出编辑**（v23 M5 的 `SpillEdit`）：决策在这里做出、发射侧只按序执行。
+        //
+        // 决策与执行原来混在发射侧（`emit_inst_with_spills` 现查最终表、现挑 scratch、现判
+        // `settable`）——分配器真正的逐点状态反而用不上。搬到这里之后：
+        // ① scratch 池不够 = **分配期** fail-closed；② `settable` 预检也在这里（指令在手）；
+        // ③ 将来要驱逐活跃值，只需多产出一条 `Store`。
+        //
+        // 口径与旧发射实现逐条对齐（输出等价）：scratch 的**号**取自 `config.scratch_regs`、
+        // **类**取值的类；`Reload`（全部）→ `Bind`（每个被溢出的绑定）→ `Store`（被溢出的 def）。
+
         Ok(AllocResult {
             call_layout: None,
             assignments,
             spill_slots,
+            // 逐指令溢出编辑由 llocate 在 uild_result 之后补上（见 uild_spill_edits）。
+            edits: Vec::new(),
             param_vregs: self.config.param_xregs.clone(),
             // S2：sret 由 CompileState 在分配后填充（LowerCtx.is_sret_return）
             sret: false,
@@ -997,7 +1112,11 @@ mod tests {
     }
 
     fn make_config(num_gp: u32, num_fp: u32) -> RegAllocConfig {
-        RegAllocConfig::new(num_gp, num_fp, 4, Some(5))
+        let mut cfg = RegAllocConfig::new(num_gp, num_fp, 4, Some(5));
+        // 溢出编辑由分配器产出后，"scratch 池够不够"在**分配期**就判——测试给一个，
+        // 好让"可改写字段上的 def spill"这类用例走到它本意的那条路（借用 scratch 写回）。
+        cfg.scratch_regs = vec![PReg::new(0, RegClass::GPR64)];
+        cfg
     }
 
     #[test]
@@ -1121,7 +1240,11 @@ mod clobber_map_tests {
     }
 
     fn make_config(num_gp: u32, num_fp: u32) -> RegAllocConfig {
-        RegAllocConfig::new(num_gp, num_fp, 4, Some(5))
+        let mut cfg = RegAllocConfig::new(num_gp, num_fp, 4, Some(5));
+        // 溢出编辑由分配器产出后，"scratch 池够不够"在**分配期**就判——测试给一个，
+        // 好让"可改写字段上的 def spill"这类用例走到它本意的那条路（借用 scratch 写回）。
+        cfg.scratch_regs = vec![PReg::new(0, RegClass::GPR64)];
+        cfg
     }
 
     fn clobber_vcode() -> crate::VCode<DummyInst> {

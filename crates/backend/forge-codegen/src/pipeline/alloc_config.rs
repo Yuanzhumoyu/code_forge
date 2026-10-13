@@ -79,6 +79,9 @@ impl RegAllocConfig {
             sp_reg,
             fp_reg,
             callee_saved: Vec::new(),
+            // 空池：真正的后端由 TargetRegInfo::scratch_regs() 填（这里有值就是写死类，
+            // 会撞「宿主生产代码不得出现写死寄存器类」守卫）。测试若要走溢出编辑，在测试
+            // 模块里自己塞一个（见 egalloc_bt.rs 的 make_config）。
             scratch_regs: Vec::new(),
             param_xregs: Vec::new(),
             param_reg_count: 0,

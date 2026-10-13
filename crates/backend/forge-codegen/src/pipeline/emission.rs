@@ -6,11 +6,11 @@
 
 use crate::machine::encoder::TargetEncoder;
 use crate::machine::target::TargetMachine;
+use crate::pipeline::alloc_result::SpillEdit;
 use crate::pipeline::compiler::CompileState;
 use crate::pipeline::vcode::VCodeBlock;
 use crate::{AllocResult, CodeSink, CompiledFunction};
 use forge_ir::*;
-use smallvec::SmallVec;
 
 impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
     // ── Stage 8-11: Emission ──
@@ -54,10 +54,9 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // This prevents forward JMP/JCC over return blocks from breaking
         // since return blocks' emit_epilogue_jump can interfere with
         // PC-relative offset calculations for forward branches.
-        let scratch_regs = machine.reg_info().scratch_regs();
         // 可变借用 vcode 收集块引用（替代整 VCode clone），inst_ops 单独
         // 借用字段——拆分借用避免闭包捕获 &mut self。
-        let inst_ops = &self.inst_ops;
+        // v23 M5：绑定表/溢出决策都不再在这里读了——编辑序列由分配器产出（AllocResult::edits）。
         // 回填宽度类**不再**在这里现推：值宽类已由管线折进 `OperandBind::class`
         // （v23 M4 批次 C 第二步，见 compiler.rs 的折入步骤）——此处只借绑定表。
         let vblocks: Vec<&mut VCodeBlock<I>> = self.vcode.blocks_mut().collect();
@@ -90,10 +89,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
          -> Result<(), IrError> {
             sink.bind_label(vb.ir_block);
             for (gi, inst) in (block_starts[vcode_idx]..).zip(vb.instructions.iter_mut()) {
-                let slot: &[crate::machine::lowering::OperandBind] =
-                    inst_ops.get(gi).map(|s| s.as_slice()).unwrap_or(&[]);
-                // v23 M4 批次 C 第三步：不再铺三个平行数组（vreg / 字段 / 值宽类）——
-                // 它们本来就是同一张绑定表的三个投影，直接把切片交给发射件。
+                // v23 M5：绑定表已不再在这里消费（溢出的决策/编辑序列来自分配器），
+                // 但 `inst_ops` 的取值仍需推进 `gi`——真正的读取在下面的 edits 里。
                 let inst_local_idx = gi - block_starts[vcode_idx];
                 let line = vb.inst_lines.get(inst_local_idx).copied().flatten();
                 let start_off = sink.offset() as u32;
@@ -103,12 +100,17 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     alloc_result,
                     // 与序言实际分配的一致（含 push 少推的补偿），否则 spill 基点错位。
                     frame_size_emitted,
-                    &scratch_regs,
                     frame_lowering.as_ref(),
                     sink,
                     callee_saved_bytes,
                     stack_args,
-                    slot,
+                    // v23 M5：溢出编辑由**分配器**产出（谁溢出、用哪个 scratch、改写哪个
+                    // 字段、要不要写回），发射侧只按序执行。
+                    alloc_result
+                        .edits
+                        .get(gi)
+                        .map(|e| e.as_slice())
+                        .unwrap_or(&[]),
                     _func.name.as_str(),
                 )?;
                 if let Some(ln) = line {
@@ -198,69 +200,31 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             .map_err(|e| IrError::Emit(format!("encode error: {e}")))
     }
 
-    /// Emit an instruction, handling spilled operands with load/store around the instruction.
-    /// Uses scratch registers from TargetRegInfo and spill load/store from TargetFrameLowering.
+    /// Emit an instruction, **按分配器给的溢出编辑序列**执行（v23 M5 的 `SpillEdit`）。
     ///
-    /// Each spilled VReg gets a scratch register of its correct class (Int or Float).
-    /// If spilled operands exceed available scratch registers, returns an error.
+    /// 决策（谁溢出、用哪个 scratch、哪个字段改写、要不要写回）全部在分配器里做完
+    /// （`build_spill_edits`）；这里只剩三类动作，按序执行：
+    /// `Reload`（装值）→ `Bind`（改写字段）→ 发指令 → `Store`（写回槽）。
+    /// 因此**不再**在这里挑 scratch、也不再在这里做 `settable` 预检（都前移了）。
+    ///
+    /// `sp_base` 仍由发射侧算：它依赖帧的**发射期**事实（`frame_size`/callee-saved 区/
+    /// 栈参数区），分配器看不到。
     #[allow(clippy::too_many_arguments)]
     fn emit_inst_with_spills(
         inst: &mut I,
         encoder: &dyn TargetEncoder<Inst = I>,
         alloc_result: &AllocResult,
         frame_size: u32,
-        scratch_reg_indices: &[u32],
         frame_lowering: &dyn crate::machine::frame::TargetFrameLowering<Inst = I>,
         sink: &mut CodeSink,
         callee_saved_bytes: i32,
         stack_args: i32,
-        binds: &[crate::machine::lowering::OperandBind],
+        edits: &[crate::pipeline::alloc_result::SpillEdit],
         fname: &str,
     ) -> Result<(), IrError> {
-        // 去重收集 spilled XReg（同一 XReg 的 use/def 共用一个 scratch 寄存器）
-        let mut spilled: smallvec::SmallVec<[XReg; 8]> = smallvec::SmallVec::new();
-        for bind in binds.iter() {
-            let xreg = bind.vreg;
-            if alloc_result.is_spilled(xreg) && !spilled.contains(&xreg) {
-                spilled.push(xreg);
-            }
-        }
-        if spilled.is_empty() {
+        if edits.is_empty() {
             return Self::emit_inst(inst, encoder, alloc_result, sink);
         }
-
-        // Verify we have enough scratch registers
-        if spilled.len() > scratch_reg_indices.len() {
-            return Err(IrError::RegAlloc(format!(
-                "instruction needs {} scratch regs for spilled operands, but only {} available",
-                spilled.len(),
-                scratch_reg_indices.len()
-            )));
-        }
-
-        // Build scratch register pool — each spilled XReg gets its own scratch
-        // of the correct class.
-        let spill_scratch: smallvec::SmallVec<[PReg; 8]> = spilled
-            .iter()
-            .enumerate()
-            .map(|(i, &xreg)| PReg::new(scratch_reg_indices[i], xreg.class()))
-            .collect();
-
-        // 稀疏覆盖：spilled XReg → scratch PReg（≤2 项），取代原整 AllocResult
-        // 深克隆（assignments+spill_slots 两个 HashMap 每 spill 指令克隆一次）。
-        // encode 从指令字段读物理寄存器（set_reg_field 已写入），reg_map 查询
-        // 只发生在本地 set_reg_field/store 回写，overrides 足够。
-        let mut overrides: SmallVec<[(XReg, PReg); 2]> = smallvec::SmallVec::new();
-        for (i, &xreg) in spilled.iter().enumerate() {
-            overrides.push((xreg, spill_scratch[i]));
-        }
-        let xreg_preg = |v: XReg| -> Option<PReg> {
-            overrides
-                .iter()
-                .find(|(x, _)| *x == v)
-                .map(|&(_, p)| p)
-                .or_else(|| alloc_result.preg(v))
-        };
         // The spill area lives BELOW the pushed callee-saved registers, whose
         // saved slots occupy [rbp - callee_saved_bytes, rbp):
         //   spill area = [rbp - callee_saved_bytes - frame_size, rbp - callee_saved_bytes)
@@ -273,77 +237,75 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         //（five_args_stack 场景 spill 覆盖已写入的参数槽 → 值错）。
         let sp_base: i32 = -(frame_size as i32) - callee_saved_bytes + stack_args;
 
-        // Load spilled operands into scratch registers (width-aware).
-        // 纯 def 的 XReg 也 load（其值会被指令覆盖，无害但保证 use/def 语义统一）。
-        for (i, &xreg) in spilled.iter().enumerate() {
-            let spill_off = alloc_result.spill_slot(xreg).offset;
-            let width = xreg.bytes();
-            frame_lowering.emit_spill_load(
-                spill_scratch[i].num,
-                sp_base + spill_off,
+        // 1) 装值：把槽里的值装进各自的 scratch（宽度档由 width 选、指令族由 class 选）。
+        //    纯 def 的值也装（其值会被指令覆盖，无害，但保持 use/def 语义统一）。
+        for e in edits {
+            if let SpillEdit::Reload {
+                slot,
+                scratch,
+                class,
                 width,
-                // v23 M5：传**类**（原来是 is_fp 布尔——掩码类会静默走 GPR 搬运）。
-                xreg.class(),
-                sink,
-            )?;
-        }
-
-        // Emit 前把 spilled 字段重设为 scratch 寄存器：
-        // 分配阶段回写的旧寄存器（如 reload 后的 R9）与 scratch 不一致，
-        // 会导致 store 存回错误寄存器。重设后 emit 与 store 使用同一寄存器。
-        // 用绑定表里的**字段号**（而非 enumerate 位置）：指令含物理寄存器
-        // 字段（如 `MOV_R_RM RCX` 的 op0）时绑定表跳过该字段，记录位置
-        // 与字段序号错位——用位置会把物理字段覆盖成 scratch（shift 崩溃）。
-        //
-        // v23 M4 批次 C 第三步：三个**平行数组**（vreg / field_idx / class）收敛成
-        // 一个绑定切片（`binds`）——它们本来就是同一张表的三个投影。
-        for bind in binds.iter() {
-            let xreg = bind.vreg;
-            if let Some(preg) = xreg_preg(xreg) {
-                // class：值宽类已由管线折进绑定（见 compiler.rs 的折入步骤），
-                // 两个回填点读同一份数据；缺省退 vreg 自身类。
-                let cls = bind.class.unwrap_or_else(|| xreg.class());
-                // fail-closed（与 regalloc 的 WA-40 守卫同口径）：字段不可改写时
-                // 改写是静默 no-op ⇒ store-back 从 scratch 读、spill 槽留下陈旧值。
-                if !inst.is_reg_field_settable(usize::from(bind.field)) {
-                    return Err(IrError::RegAlloc(format!(
-                        "{fname}: 第 {} 号字段不可改写（固定物理字段）却被 spill 改写",
-                        bind.field
-                    )));
+            } = e
+            {
+                if crate::pipeline::trace_enabled("FORGE_TRACE_SPILL") {
+                    eprintln!(
+                        "[spill] {fname} load {} width={} off={} class={class:?}",
+                        scratch.num,
+                        width,
+                        sp_base + slot.offset
+                    );
                 }
-                inst.set_reg_field(usize::from(bind.field), preg.num, cls);
-            }
-        }
-
-        // Emit the instruction（reg_map 传 base——encode 从指令字段读寄存器，
-        // 不依赖覆盖表；若某 ISA arm 回退 resolve 需覆盖，spill 测试会捕获）
-        let result = Self::emit_inst(inst, encoder, alloc_result, sink);
-
-        // Store spilled defs back to stack
-        for (i, &xreg) in spilled.iter().enumerate() {
-            let spill_off = alloc_result.spill_slot(xreg).offset;
-            let width = xreg.bytes();
-            if crate::pipeline::trace_enabled("FORGE_TRACE_SPILL") {
-                eprintln!(
-                    "[spill] {fname} store x{} width={} off={} fp={}",
-                    xreg.index(),
-                    width,
-                    sp_base + spill_off,
-                    xreg.class().is_fp()
-                );
-            }
-            if let Some(preg) = xreg_preg(xreg) {
-                frame_lowering.emit_spill_store(
-                    preg.num,
-                    sp_base + spill_off,
-                    width,
-                    // **值的类**（不是 preg.class——那是分配到的**池**类，可能比值宽更宽；
-                    // 而 width 也是值的字节数，两者必须同源，否则宽度档与类会各说各话）。
-                    xreg.class(),
+                frame_lowering.emit_spill_load(
+                    scratch.num,
+                    sp_base + slot.offset,
+                    *width,
+                    *class,
                     sink,
                 )?;
             }
-            let _ = i;
+        }
+
+        // 2) 改写字段：被溢出的字段改指 scratch（字段号来自编辑序列——用它而不是
+        //    enumerate 位置：指令含物理寄存器字段时绑定表会跳过该字段，用位置会错位）。
+        for e in edits {
+            if let SpillEdit::Bind {
+                field,
+                scratch,
+                class,
+            } = e
+            {
+                inst.set_reg_field(usize::from(*field), scratch.num, *class);
+            }
+        }
+
+        // 3) 发指令（encode 从指令字段读寄存器，已由上面的 Bind 改写）。
+        let result = Self::emit_inst(inst, encoder, alloc_result, sink);
+
+        // 4) 写回槽：spilled def 的结果 store 回它自己的槽。
+        for e in edits {
+            if let SpillEdit::Store {
+                slot,
+                scratch,
+                class,
+                width,
+            } = e
+            {
+                if crate::pipeline::trace_enabled("FORGE_TRACE_SPILL") {
+                    eprintln!(
+                        "[spill] {fname} store {} width={} off={} class={class:?}",
+                        scratch.num,
+                        width,
+                        sp_base + slot.offset
+                    );
+                }
+                frame_lowering.emit_spill_store(
+                    scratch.num,
+                    sp_base + slot.offset,
+                    *width,
+                    *class,
+                    sink,
+                )?;
+            }
         }
 
         result
