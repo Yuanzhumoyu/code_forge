@@ -764,6 +764,29 @@ NativeCommandError 噪声行）⇒ 判为**一次性偶发（环境/时序）**�
 6. 判定：两矩阵 + `asm_exec` + **mini_c e2e**（本仓教训：宽度类/时机类分歧只有跨 crate e2e 抓得到）。
 
 **风险**：动分配序 ⇒ 输出变化；若矩阵或 e2e 红且一次修复不成就回退并另记（C3/C4 的先例）。
+### Belady（SpillEdit 第五步）第二次尝试：又前进了两步，仍回退（2026-10-11）
+
+第二次按清单实现（`SpillLive` 变体、`live_stores`/`current_global_inst`/`current_uses`、驱逐取
+"最远活跃值"、`build_spill_edits` 前缀合并、emission 在指令前落盘），编译通过，并拿到两条**新证据**：
+
+1. **`spill_vreg` 的"已有槽就早退"会漏掉释放寄存器**（真 bug，独立于 Belady）：活跃值被驱逐 →
+   之后 `reload_from_stack` 拿到寄存器 → **再次**被驱逐时命中早退分支，寄存器既不归还也不清
+   `assignments`/`reg_owner`；而调用方 `evict_and_assign` 仍把那个寄存器交给当前 vreg ⇒
+   **两个活值共用一个寄存器**（症状 = 某个值读到别人的值，与第一轮 `-163 vs -153` 同型）。
+   死值驱逐永远走不到这条（死值不会再被 reload），所以旧策略一直掩盖它。
+   修法（下一批带上）：早退分支里同样 `assignments.remove` + `clear_reg_owner` + 归还 free。
+2. **"在栈上"的判据要用逐点状态，不能只看"有槽"**：`build_spill_edits` 现在按
+   `spill_slots` 有无判"要搬运"，于是"曾被驱逐、之后 reload 回寄存器"的值也被当成栈上的
+   ——把字段重定向到 scratch 并从槽里读**陈旧值**。候选口径 = **有槽且此刻没有寄存器**
+   （`assignments[v].is_none()`）。
+
+**本轮实测**：只做 ① 时 `test_jit_atomic_rmw_spill_pressure` 仍错（`169866129` vs `50`）；
+再做 ②（逐点判据）时该用例不再报错值，但**整个测试二进制 `0xc0000005`（访问违规）** ⇒ 说明
+②动到了发射路径的形状，需要更细的取证（先单跑一条用例 + `FORGE_TRACE_SPILL` 看编辑序列）。
+
+**纪律**：两处都属"动分配序/发射序"的改动，红着不留 ⇒ 已 `git checkout` 回退，工作区干净、
+门禁维持上一提交状态。下一批从 ① 开始（它是独立真 bug，可单独验证），再带 ② 重试 Belady。
+
 **第一次尝试与实测结果（2026-10-11，已按纪律回退）**：按上面的清单实现了 1–4 步
 （`SpillLive` 变体、`BtState::live_stores`/`current_global_inst`/`current_uses`、驱逐改"取最远活跃值"、
 `build_spill_edits` 前缀合并、emission 在指令前执行落盘），**全部编译通过**，并把原先"已知限制"
