@@ -11,6 +11,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M5：**删掉算了没人用的 spill weight**，活区间与每块 uses/defs **合成一趟**，并把 spill 启发式的文档改成与实现一致
+
++ **删 `LiveInterval::weight` 及其整条计算链**（字段 + 初始化 + 每操作数一次 `weight += w` + 循环权重常量 + 活区间 dump 的那一列），连带删掉只为它服务的**循环检测预扫**（每指令扫分支目标、标记回边区间）。按方案"`weight` 要么参与驱逐、要么删 ⇒ **选实现**"：全仓没有任何决策读它（只在 `FORGE_TRACE_LIVE` 里打印）。这是 regalloc 热路径（占 codegen 58–76%）上的纯浪费。
++ **活区间与"每块局部 uses/defs"合成一趟**：原先两趟各扫一遍全部块 × 指令 × 操作数（第二趟还多一个与第一趟平行的 `global_inst_map` 计数器）；现在同一趟里一起填，删掉第二趟与其计数器。
++ **把 spill 启发式的文档改成与实现一致**（方案的硬要求）：实际策略是**只驱逐死值**（`next_use == MAX`，按 `(next_use, vreg index)` 确定性取最大），无死值时若当前 vreg 是 **def** 就 spill 自己，是 **use** 就明确报错。**完整 Belady（取最远的活跃下一次使用）与 spill cost 驱逐做不到**，因为 `spill_vreg` 只分配槽、不把寄存器当前值写进槽——驱逐活跃值会让它下次 use 从空槽读垃圾。要实现它必须先有 **`SpillEdit`**（分配器产出"把活跃值 store 回槽"的显式编辑序列）。这段校正写进了 `regalloc_bt.rs` 的模块文档。
+
 ### Added (2026-10-11) — 后端 v23 M5：**浮点直接收参分支的唯一直接覆盖**（新守卫用例）
 
 + `test_jit_stack_float_params_are_received_into_registers`：六个 f64 形参**全参与运算**（配 16 个 XMM 的池 ⇒ 栈上的第 5/6 个形参**拿到寄存器**），断言和值 63。它是上一批新增的**浮点直接收参**分支（`{ role = "stack_arg_load", class = "fpr" }` + `layout_stack_fpr_stmt`）的**唯一直接覆盖**——原有用例在池紧张时走的是溢出槽那条，覆盖不到新分支。

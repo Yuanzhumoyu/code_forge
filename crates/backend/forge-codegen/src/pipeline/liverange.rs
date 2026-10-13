@@ -1,7 +1,7 @@
 //! LiveInterval — 活跃区间系统。
 //!
 //! 替代旧的 `HashMap<VReg, (usize, usize)>` 单区间表示，
-//! 支持 lifetime holes、use positions 和 spill weight 计算。
+//! 支持 lifetime holes 与 use positions。
 
 use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
@@ -91,8 +91,6 @@ pub struct LiveInterval {
     pub uses: Vec<ProgPoint>,
     /// 定义点列表
     pub defs: Vec<ProgPoint>,
-    /// spill 权重（循环深度加权）
-    pub weight: f32,
 }
 
 impl LiveInterval {
@@ -104,7 +102,6 @@ impl LiveInterval {
             segments: Vec::new(),
             uses: Vec::new(),
             defs: Vec::new(),
-            weight: 0.0,
         }
     }
 
@@ -172,13 +169,19 @@ impl LiveInterval {
 /// 为 VCode 中所有 XReg 计算 LiveInterval。
 ///
 /// 使用迭代数据流分析（非 SSA 依赖）计算带 holes 的活跃区间。
-/// Spill weight 使用循环深度加权（循环内 ×10）。
+/// 计算活区间（**不含**循环权重）。
+///
+/// v23 M5：原先这里还算"循环深度加权"（循环内 ×10）存进 `LiveInterval::weight`，
+/// 但**全仓没有任何决策读它**（只在 `FORGE_TRACE_LIVE` 里打印）——每指令一次浮点加、
+/// 外加一趟全指令的循环检测，是纯热路径浪费（regalloc 占 codegen 58–76%）。
+/// 按方案"`weight` 要么参与驱逐、要么删"的口径**删掉**：真正的 spill-cost 驱逐要等
+/// `SpillEdit`（分配器能给出"把活跃值 store 回槽"的显式编辑）之后才谈得上——
+/// 现在驱逐只挑**死值**，见 `regalloc_bt.rs` 的 `evict_and_assign`。
 pub fn compute_live_intervals<I: crate::MachineInst>(
     vcode: &crate::VCode<I>,
     inst_ops: &[smallvec::SmallVec<[crate::machine::lowering::OperandBind; 2]>],
     param_xregs: &[XReg],
 ) -> HashMap<XReg, LiveInterval> {
-    // ── 阶段 0: 循环检测 ──
     // 收集所有块（迭代器不暴露 len）
     let blocks: Vec<_> = vcode.blocks().collect();
     let num_blocks = blocks.len();
@@ -189,44 +192,19 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
         ir_block_to_vblock.insert(block.ir_block, idx);
     }
 
-    // 检测每个 VCode 块是否在循环体内（有回边指向 ≤ 当前索引的块）
-    let mut in_loop: Vec<bool> = vec![false; num_blocks];
-    for (block_idx, block) in blocks.iter().enumerate() {
-        for inst in &block.instructions {
-            if inst.is_branch() {
-                for target_ir in inst.branch_targets().iter() {
-                    if let Some(&target_idx) = ir_block_to_vblock.get(*target_ir) {
-                        // 回边：跳转到 ≤ 当前索引的块
-                        if target_idx <= block_idx {
-                            // 标记循环体内所有块（从 target 到 branch）
-                            for v in in_loop[target_idx..=block_idx].iter_mut() {
-                                *v = true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // ── 阶段 1: 计算 LiveInterval（带循环权重）──
+    // ── 阶段 1: 计算 LiveInterval ──
     // 预分配容量：vreg 数 ≤ 参数数 + inst_ops 总字段数（上界，免去重
     // 开销；HashMap 容量稍大无害）。避免阶段 1 反复 resize。
     let est_vregs: usize =
         param_xregs.len() + inst_ops.iter().map(|slot| slot.len()).sum::<usize>();
     let mut intervals: HashMap<XReg, LiveInterval> = HashMap::with_capacity(est_vregs);
-
-    const LOOP_WEIGHT: f32 = 10.0;
-    const NORMAL_WEIGHT: f32 = 1.0;
+    // 每块的局部 uses/defs（v23 M5：与活区间**同一趟**填——两趟扫同一批指令纯属重复）。
+    let mut block_uses: Vec<HashSet<XReg>> = vec![HashSet::new(); num_blocks];
+    let mut block_defs: Vec<HashSet<XReg>> = vec![HashSet::new(); num_blocks];
 
     let mut global_inst = 0usize;
     for (block_idx, block) in blocks.iter().enumerate() {
         let block_u32 = block_idx as u32;
-        let w = if in_loop[block_idx] {
-            LOOP_WEIGHT
-        } else {
-            NORMAL_WEIGHT
-        };
 
         for (inst_idx, _inst) in block.instructions.iter().enumerate() {
             let inst_u32 = inst_idx as u32;
@@ -243,10 +221,14 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
                 for bind in slot.iter() {
                     let xreg = bind.vreg;
                     let is_def = bind.role == crate::machine::inst::OperandRole::Def;
+                    // 同一趟里把"每块的局部 uses/defs"也填了（原来另起一趟扫同一批指令）。
+                    block_uses[block_idx].insert(xreg);
+                    if is_def {
+                        block_defs[block_idx].insert(xreg);
+                    }
                     let interval = intervals
                         .entry(xreg)
                         .or_insert_with(|| LiveInterval::new(xreg, xreg.class()));
-                    interval.weight += w;
                     if is_def {
                         interval.add_def(def_point);
                         interval.cover(def_point);
@@ -276,14 +258,10 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
         let mut v: Vec<_> = intervals.iter().collect();
         v.sort_by_key(|(x, _)| x.index());
         for (x, i) in &v {
-            eprintln!(
-                "[live] {x:?} weight={} defs={:?} uses={:?}",
-                i.weight, i.defs, i.uses
-            );
+            eprintln!("[live] {x:?} defs={:?} uses={:?}", i.defs, i.uses);
         }
     }
 
-    let mut global_inst_map = 0usize;
     // ── 阶段 2: 跨块数据流分析 ──    // 构建 per-block 后继列表（branch targets + fallthrough）
     let mut block_succs: Vec<Vec<usize>> = vec![Vec::new(); num_blocks];
     for (block_idx, block) in blocks.iter().enumerate() {
@@ -306,23 +284,6 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
         // 去重
         block_succs[block_idx].sort();
         block_succs[block_idx].dedup();
-    }
-
-    // 构建 per-block local uses/defs
-    let mut block_uses: Vec<HashSet<XReg>> = vec![HashSet::new(); num_blocks];
-    let mut block_defs: Vec<HashSet<XReg>> = vec![HashSet::new(); num_blocks];
-    for (block_idx, block) in blocks.iter().enumerate() {
-        for _inst in block.instructions.iter() {
-            if let Some(slot) = inst_ops.get(global_inst_map) {
-                for bind in slot.iter() {
-                    block_uses[block_idx].insert(bind.vreg);
-                    if bind.role == crate::machine::inst::OperandRole::Def {
-                        block_defs[block_idx].insert(bind.vreg);
-                    }
-                }
-            }
-            global_inst_map += 1;
-        }
     }
 
     // 迭代数据流: live_out[B] = ∪ live_in[succ], live_in[B] = uses[B] ∪ (live_out[B] - defs[B])

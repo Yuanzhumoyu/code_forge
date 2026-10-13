@@ -13,10 +13,23 @@
 //!    - 处理固定寄存器约束和 reuse 约束
 //! 3. 生成 AllocResult
 //!
-//! ## Spill 启发式
+//! ## Spill 启发式（**与实现一致**，v23 M5 校正）
 //!
-//! Belady's MIN：当无空闲寄存器时，驱逐"下一个使用点最远"的活跃 XReg。
-//! 结合循环深度加权计算 spill cost。
+//! 无空闲寄存器时按 `next_use_after` 做 Belady 选择，但**只驱逐"死值"**
+//! （`next_use == ProgPoint::MAX`，即没有未来使用）：
+//!
+//! - 有死值 ⇒ 取 `(next_use, vreg index)` 最大的那个驱逐（确定性 tie-breaker）；
+//! - 无死值且当前 vreg 是本指令的 **def** ⇒ spill 当前 vreg（emission 会把 def 结果
+//!   store 回槽，安全）；
+//! - 无死值且当前 vreg 是 **use** ⇒ **明确报错**（`IrError::RegAlloc`），不猜。
+//!
+//! **为什么不驱逐活跃值**：`spill_vreg` 只分配槽并释放寄存器，**不把寄存器当前值写进槽**
+//! （emission 的 load/store 只围绕当前指令的操作数）。驱逐带活值的 victim 会让它下次
+//! use 时从空槽读垃圾。要真正做到"取最远的下一次使用"（完整 Belady）并让 spill cost
+//! （`LiveInterval::weight`——v23 M5 已删，见 `liverange.rs` 的说明）参与决策，
+//! 必须先有 **`SpillEdit`**：分配器产出"把活跃值 store 回槽"的显式编辑序列，
+//! 由 emission 按序发射（M5 的下一批）。在那之前，"Belady + 循环加权 spill cost"
+//! 只是文档里的说法——本段即为校正后的实情。
 
 use crate::IrError;
 use crate::machine::inst::{MachineInst, OperandConstraint};
