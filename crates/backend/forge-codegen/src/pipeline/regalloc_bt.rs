@@ -274,6 +274,15 @@ impl<'a> BtState<'a> {
                 // 会整条被跳过 ⇒ 静默错值（2026-10-11 实测：只放 XMM4 过、只放 XMM5 过、
                 // 两个都放红，而根因就是那条收参）。先修收参、再放开池。
                 .filter(|&&r| !class.is_int() || (Some(r) != config.fp_reg && r != config.sp_reg))
+                // v23 M5（C4 根因，2026-10-11）：**scratch 的号在任何类里都保留**。
+                //
+                // 溢出搬运把值装进"号取自 scratch 池、类取值的类"的寄存器（`emit_spill_load`
+                // 用 `scratch.num` + 值的 `RegClass`）——x86 的 scratch 是 **R10/R11**，于是
+                // 浮点值的 reload 实际写的是 **XMM10/XMM11**。若 FPR 池也能把活值分到
+                // XMM10/XMM11，那条 reload 会**踩掉活值**（症状：被踩的值读到别人的值）。
+                // 实测：类感知偏好把栈上浮点形参分到 f10/f11 后 `e+f` 由 7 变 8；旧"只比号"
+                // 偏好恰好从不把 FPR 分到 10/11，所以这个 bug 一直被掩盖（详见账本 C4 取证）。
+                .filter(|&&r| !config.scratch_regs.iter().any(|s| s.num == r))
                 .map(|&r| PReg::new(r, *class))
                 .collect();
             // FPR 池反向（从低编号 XMM0 起分配），与 GPR 池（高编号 r15 起）错开。
@@ -949,7 +958,16 @@ impl<'a> BtState<'a> {
                     // **强制走直接收参**的用例（M5 计划里的第 ② 步）。
                     //
                     // 表本身已归一成 `(类, 号)`，唯一改动点就是这一处过滤条件。
-                    .filter(|p| self.config.callee_saved.iter().any(|(_, n)| *n == p.num))
+                    // v23 M5（C4 收口）：callee-saved 优先**按 (类, 号)** 匹配。
+                    // 只比号时，win64 的 RSI=6/RDI=7 会让 FPR 也"优先"落到 XMM6/XMM7
+                    // ——那是巧合（不是它们被保存了），并且恰好掩盖了"scratch 号被 FPR
+                    // 池复用"的踩值 bug（见池构造处的注释）。现在两边都正了。
+                    .filter(|p| {
+                        self.config
+                            .callee_saved
+                            .iter()
+                            .any(|(c, n)| *n == p.num && c.is_fp() == p.class.is_fp())
+                    })
                     .max_by_key(|p| p.num)
                     .copied()
                 {
@@ -1115,7 +1133,7 @@ mod tests {
         let mut cfg = RegAllocConfig::new(num_gp, num_fp, 4, Some(5));
         // 溢出编辑由分配器产出后，"scratch 池够不够"在**分配期**就判——测试给一个，
         // 好让"可改写字段上的 def spill"这类用例走到它本意的那条路（借用 scratch 写回）。
-        cfg.scratch_regs = vec![PReg::new(0, RegClass::GPR64)];
+        cfg.scratch_regs = vec![PReg::new(15, RegClass::GPR64)];
         cfg
     }
 
@@ -1243,7 +1261,7 @@ mod clobber_map_tests {
         let mut cfg = RegAllocConfig::new(num_gp, num_fp, 4, Some(5));
         // 溢出编辑由分配器产出后，"scratch 池够不够"在**分配期**就判——测试给一个，
         // 好让"可改写字段上的 def spill"这类用例走到它本意的那条路（借用 scratch 写回）。
-        cfg.scratch_regs = vec![PReg::new(0, RegClass::GPR64)];
+        cfg.scratch_regs = vec![PReg::new(15, RegClass::GPR64)];
         cfg
     }
 
@@ -1316,6 +1334,41 @@ mod clobber_map_tests {
     }
 
     /// 对照：无 clobber 时 1 个 XReg 配唯一寄存器 RAX 成功且不 spill。
+    /// **scratch 的号在任何类里都保留**（C4 根因的守卫，v23 M5）。
+    ///
+    /// 溢出搬运用"号取自 scratch 池、类取值的类"的寄存器（x86: R10/R11 ⇒ 浮点 reload 实际
+    /// 写 XMM10/XMM11）。若某个类的池能把**活值**分到这些号上，reload 就会踩掉活值。
+    /// 这条用例把 scratch 号放进 GPR 池内，断言分配器**绝不**把它分给任何 vreg。
+    #[test]
+    fn scratch_reg_numbers_are_never_allocated() {
+        const SCRATCH: u32 = 3;
+        let mut config = RegAllocConfig::new(8, 8, 7, Some(6));
+        config.scratch_regs = vec![PReg::new(SCRATCH, RegClass::GPR64)];
+        let x0 = xgpr(0);
+        let x1 = xgpr(1);
+        let vcode = clobber_vcode();
+        let inst_ops = vec![
+            smallvec::smallvec![OperandBind::def(x0, 0), OperandBind::def(x1, 1)],
+            smallvec::smallvec![OperandBind::use_(x0, 0), OperandBind::use_(x1, 1)],
+            smallvec::smallvec![OperandBind::use_(x0, 0), OperandBind::use_(x1, 1)],
+        ];
+        let clobber_map = vec![vec![], vec![], vec![]];
+        let alloc = BacktrackingAllocator::new();
+        let result = alloc
+            .allocate(&vcode, &config, &inst_ops, &clobber_map)
+            .expect("两个 vreg 在 8 个寄存器的池里应当都有位置");
+        for v in [x0, x1] {
+            if let Some(p) = result.preg(v) {
+                assert_ne!(
+                    p.num,
+                    SCRATCH,
+                    "scratch 号 {SCRATCH} 被分给了 v{}——浮点 reload 会踩掉这里的活值",
+                    v.index()
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_no_clobber_allocates_rax() {
         let mut config = make_config(16, 16);

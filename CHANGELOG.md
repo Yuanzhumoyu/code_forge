@@ -11,6 +11,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M5：**C4 收口** —— 根因是「scratch 的号被 FPR 池复用」，reload 踩掉活值
+
++ **根因（先排除猜测，再定位）**：编码级先排掉"高编号 FPR 缺 REX"的假设（`movsd [rbx], xmm10`
+  = `f2 44 0f 11 13`、`xmm15` = `f2 44 0f 11 3b`，REX.R 都在）。真因在**溢出搬运的 scratch**：
+  值装进"号取自 scratch 池、类取值的类"的寄存器，而 x86 的 scratch 是 **R10/R11** ⇒ 浮点值的
+  reload 实际写的是 **XMM10/XMM11**；若 FPR 池能把**活值**分到这两个号上，reload 就**踩掉活值**。
+  这正好解释上轮 trace：类感知偏好把栈上浮点形参分到 f10/f11 后 `e+f` 由 7 变 8；旧"只比号"偏好
+  恰好从不把 FPR 分到 10/11（win64 的 RSI=6/RDI=7 让 XMM6/XMM7 总被优先选中），bug 一直被掩盖。
++ **修法**：① 池构造改为**scratch 的号在任何类里都保留**（号是跨类共享资源）；② callee-saved
+  优先改为**按 (类, 号)** 匹配（原来只比号，是巧合而非语义）。两处都正之后
+  `test_jit_float_params_beyond_xmm_registers_come_from_the_stack` 通过 —— C4 的类感知偏好
+  正式启用。
++ **新守卫** `scratch_reg_numbers_are_never_allocated`：把 scratch 号放进池内，断言分配器绝不把它
+  分给任何 vreg（这条不变量以前没有用例钉住）。测试 `make_config` 的 scratch 号由 0 改为 15
+  （测试池是 0..8），否则新不变量会挡住 `test_no_clobber_allocates_rax` 要检查的 RAX=0。
+
+### Changed (2026-10-11) — 后端 v23 M5：**溢出编辑显式化**（分配器产出 `SpillEdit`，发射退化为按序执行）
 ### Changed (2026-10-11) — 后端 v23 M5：**溢出编辑显式化**（分配器产出 `SpillEdit`，发射退化为按序执行）
 
 + **新类型** `SpillEdit { Reload{slot,scratch,class,width}, Bind{field,scratch,class}, Store{slot,scratch,class,width} }` + `AllocResult::edits: Vec<Vec<SpillEdit>>`（下标 = 指令全局序号）。顺序契约：同一条指令里 `Reload` 在前、`Bind` 居中、`Store` 在后 ⇒ 发射侧只做"装值 → 改写字段 → 发指令 → 写回槽"四段。
