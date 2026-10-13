@@ -309,13 +309,21 @@ pub(crate) fn gen_frame_lowering(
                 dst_reg: u32,
                 offset: i32,
                 width: u16,
-                is_fp: bool,
+                class: forge_ir::RegClass,
                 sink: &mut crate::CodeSink,
             ) -> Result<(), crate::IrError> {
                 let __dst = dst_reg;
                 let __off = offset as i64;
                 let __sink = sink;
-                if is_fp {
+                // v23 M5：按**寄存器类**分派（原来是 `is_fp: bool`）——布尔只分得出
+                // "是不是浮点文件"，FPR/VEC 与 KReg 在同一个 `false` 上撞车；现在
+                // 掩码类显式 fail-closed，不静默走通用寄存器搬运。
+                if class.is_mask() {
+                    return Err(crate::IrError::Unsupported(
+                        "spill: 掩码寄存器类（KReg）没有溢出模板（本 ISA 未声明）——不退回通用寄存器搬运".into(),
+                    ));
+                }
+                if class.is_fp() {
                     #fpr_load
                 } else {
                     #gpr_load
@@ -329,13 +337,18 @@ pub(crate) fn gen_frame_lowering(
                 src_reg: u32,
                 offset: i32,
                 width: u16,
-                is_fp: bool,
+                class: forge_ir::RegClass,
                 sink: &mut crate::CodeSink,
             ) -> Result<(), crate::IrError> {
                 let __dst = src_reg;
                 let __off = offset as i64;
                 let __sink = sink;
-                if is_fp {
+                if class.is_mask() {
+                    return Err(crate::IrError::Unsupported(
+                        "spill: 掩码寄存器类（KReg）没有溢出模板（本 ISA 未声明）——不退回通用寄存器搬运".into(),
+                    ));
+                }
+                if class.is_fp() {
                     #fpr_store
                 } else {
                     #gpr_store

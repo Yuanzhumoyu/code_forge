@@ -3,7 +3,8 @@
 //! 负责 prologue/epilogue 生成和栈帧布局。
 //! 与 TargetABI 分离：ABI 描述调用约定，FrameLowering 实现栈帧操作。
 
-use crate::{AllocResult, CodeSink, IrError}; // AllocResult = AllocResult (type alias)
+use crate::{AllocResult, CodeSink, IrError};
+use forge_ir::RegClass; // AllocResult = AllocResult (type alias)
 
 /// 函数级栈帧管理。
 pub trait TargetFrameLowering: Send + Sync + 'static {
@@ -50,14 +51,27 @@ pub trait TargetFrameLowering: Send + Sync + 'static {
     }
 
     /// Emit a spill load: load a spilled value from stack into `dst_reg`.
-    /// `width` is the size in bytes of the spilled value; `is_fp` 区分 FPR/XMM
-    /// 与 GPR（8 字节 FPR 与 GPR 宽度相同，必须按类选加载指令）。
+    ///
+    /// ## `class` 与 `width` 回答的是**两个不同的问题**（v23 M5 明确，别合并）
+    ///
+    /// - `class` = 该值所在的**寄存器类**：决定用哪一族搬运指令 —— FPR/VEC ⇒ 浮点/向量
+    ///   模板、GPR ⇒ 通用模板、KReg ⇒ 本仓没有掩码溢出模板，**显式 fail-closed**
+    ///   （不静默退回 GPR）。原来这里是 `is_fp: bool`，FPR/VEC 与 KReg 在同一个 `false`
+    ///   上撞车，掩码值会静默走通用寄存器搬运。
+    /// - `width` = 该值在栈槽里占的**字节数**：决定同一族内取哪一档模板
+    ///   （生成物按 `width <= 浮点值池` / `width == 16/32/64` 分派，见 WA-46）。
+    ///
+    /// 二者**不能互相替代**：`class.bytes()` 是**寄存器类**的宽度（池宽），`width` 是
+    /// **值**的宽度——同一个 `FPR(8)` 池的寄存器可装 f32(4B) 或 f64(8B)，同一个
+    /// `GPR(8)` 池的寄存器可装 i32(4B) 或 i64(8B)。所以调用点两样都要给，且必须同源：
+    /// **类取值的类**（`xreg.class()`，不是分配到的池类 `preg.class`）、
+    /// **宽度取值的字节数**（`xreg.bytes()`）。
     fn emit_spill_load(
         &self,
         _dst_reg: u32,
         _offset: i32,
         _width: u16,
-        _is_fp: bool,
+        _class: RegClass,
         _sink: &mut CodeSink,
     ) -> Result<(), IrError> {
         Err(IrError::Unimplemented(
@@ -66,13 +80,13 @@ pub trait TargetFrameLowering: Send + Sync + 'static {
     }
 
     /// Emit a spill store: store `src_reg` to spilled stack slot.
-    /// `width` is the size in bytes of the spilled value; `is_fp` 同上。
+    /// `width` / `class` 语义同 [`Self::emit_spill_load`]。
     fn emit_spill_store(
         &self,
         _src_reg: u32,
         _offset: i32,
         _width: u16,
-        _is_fp: bool,
+        _class: RegClass,
         _sink: &mut CodeSink,
     ) -> Result<(), IrError> {
         Err(IrError::Unimplemented(

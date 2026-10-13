@@ -282,7 +282,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 spill_scratch[i].num,
                 sp_base + spill_off,
                 width,
-                xreg.class().is_fp(),
+                // v23 M5：传**类**（原来是 is_fp 布尔——掩码类会静默走 GPR 搬运）。
+                xreg.class(),
                 sink,
             )?;
         }
@@ -336,7 +337,9 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     preg.num,
                     sp_base + spill_off,
                     width,
-                    preg.class.is_fp(),
+                    // **值的类**（不是 preg.class——那是分配到的**池**类，可能比值宽更宽；
+                    // 而 width 也是值的字节数，两者必须同源，否则宽度档与类会各说各话）。
+                    xreg.class(),
                     sink,
                 )?;
             }

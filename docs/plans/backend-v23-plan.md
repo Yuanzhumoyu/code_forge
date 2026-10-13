@@ -738,6 +738,12 @@ C4 的类感知偏好。这条调查已写进 `regalloc_bt.rs` 的注释。
 NativeCommandError 噪声行）⇒ 判为**一次性偶发（环境/时序）**，与密集化改动无关；结论记此，
 不再挂着当未决项。
 
+**⑩ 第六批（2026-10-11，对应方案"spill 分派"条目）**：`emit_spill_load/store` 的 `is_fp: bool`
+→ `class: RegClass`（FPR/VEC ⇒ 宽度档浮点模板、GPR ⇒ 通用模板、**KReg ⇒ 显式 fail-closed**）；
+`class` 与 `width` **不重叠**（宽度是运行期选档、类是选指令族；池宽 ≠ 值宽），trait 文档写明理由与
+反例；调用点统一成"值的类 + 值的宽"（原来 store 侧传的是分配到的**池类**）；两条新守卫
+（KReg fail-closed、宽度×类独立）。
+
 **⑨ 第五批（2026-10-11）**：删三个与 `param_vregs` 平行的**可推导**数组
 （`param_is_float`/`param_by_ref`/`param_is_32`，最后一个是纯死数组——没有任何读点）——
 生成物按 `v.class().is_fp()` / `is_fp() && bytes() > 16` / `bytes() == 4` 现算；

@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M5：溢出搬运改按**寄存器类**分派（`is_fp: bool` → `RegClass`），掩码类显式 fail-closed
+
++ `TargetFrameLowering::emit_spill_load/store` 的 `is_fp: bool` → **`class: RegClass`**。布尔只分得出"是不是浮点文件"：FPR/VEC 与 **KReg** 在同一个 `false` 上撞车，掩码值会**静默**按通用寄存器搬运（发一条 mov，读回来的东西与掩码寄存器无关）。现在：FPR/VEC ⇒ 原有按宽度档的浮点模板（WA-46 分派不变）、GPR ⇒ 通用模板（逐字节同前）、**KReg ⇒ 明确 `Unsupported`**（本 ISA 没有掩码溢出模板时不假装能搬）。
++ **`class` 与 `width` 不重叠，两者都保留**（核到代码层）：生成物里 `width` 是**运行期分派**（`width <= 值池` / `== 16/32/64` 各取一档模板），而 `class` 决定**指令族**。`class.bytes()` 是寄存器**池**宽、`width` 是**值**宽 —— 同一个 `FPR(8)` 池的寄存器可装 f32(4B) 或 f64(8B)、同一个 `GPR(8)` 池的可装 i32(4B) 或 i64(8B)，因此不能互相替代。该理由（含反例）写进了 trait 文档。
++ **顺手修掉一处调用点不一致**：`emit_spill_store` 原来传 `preg.class`（分配到的**池类**）却用 vreg 的 `bytes()` 当宽度——两者不同源，宽度档与类会各说各话。现在两个调用点统一为 **`xreg.class()` + `xreg.bytes()`**（值的类 + 值的宽），行为不变但语义自洽。
++ **新守卫两条**：`test_mask_class_spill_is_fail_closed`（KReg 的 load/store 都必须报错、错误信息点名掩码类与 spill）、`spill_width_and_class_are_independent`（同族换宽度要换档，且不因"值只有 4 字节"退成通用寄存器搬运）。
+
 ### Changed (2026-10-11) — 后端 v23 M5：删掉「预着色」整条死线（C5 的「接通或删 ⇒ 选删」）
 
 + `TargetRegInfo::precolored_xregs()` 只有默认空实现、**全仓无实现者**；`RegAllocConfig.precolored` 由它填出来却**没有任何读取点**，唯一"存在感"是 `alloc_config` 的一条 `assert!(cfg.precolored.is_empty())`。三个站点（trait 方法 / 配置字段 / `compiler.rs` 的构造与传递）整条删除，连带两个不再使用的 import。

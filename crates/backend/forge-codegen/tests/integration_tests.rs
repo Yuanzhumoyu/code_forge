@@ -260,12 +260,12 @@ fn frame_spill_bytes() {
     let fl = tm.frame_lowering();
     let mut sink = forge_codegen::CodeSink::default();
     // spill store: mov [rbp-8], rax → 48 89 45 F8
-    fl.emit_spill_store(0, -8, 8, false, &mut sink)
+    fl.emit_spill_store(0, -8, 8, forge_ir::RegClass::GPR64, &mut sink)
         .expect("spill store");
     assert_eq!(sink.bytes(), &[0x48, 0x89, 0x45, 0xF8], "mov [rbp-8], rax");
     let mut sink2 = forge_codegen::CodeSink::default();
     // spill load: mov rax, [rbp-8] → 48 8B 45 F8
-    fl.emit_spill_load(0, -8, 8, false, &mut sink2)
+    fl.emit_spill_load(0, -8, 8, forge_ir::RegClass::GPR64, &mut sink2)
         .expect("spill load");
     assert_eq!(sink2.bytes(), &[0x48, 0x8B, 0x45, 0xF8], "mov rax, [rbp-8]");
 }

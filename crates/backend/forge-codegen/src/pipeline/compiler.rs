@@ -3115,9 +3115,9 @@ mod alloc_integration_tests {
         let emit = |width: u16, is_load: bool| -> Result<Vec<u8>, IrError> {
             let mut sink = crate::pipeline::emit::CodeSink::new();
             if is_load {
-                fl.emit_spill_load(0, -32, width, true, &mut sink)?;
+                fl.emit_spill_load(0, -32, width, RegClass::FPR64, &mut sink)?;
             } else {
-                fl.emit_spill_store(0, -32, width, true, &mut sink)?;
+                fl.emit_spill_store(0, -32, width, RegClass::FPR64, &mut sink)?;
             }
             Ok(sink.bytes().to_vec())
         };
@@ -3171,5 +3171,59 @@ mod alloc_integration_tests {
             );
             assert!(emit(w, true).is_err(), "{w}B：load 同样必须 fail-closed");
         }
+    }
+
+    /// **掩码类（KReg）溢出必须 fail-closed**（v23 M5：spill 搬运由 `is_fp: bool`
+    /// 改成按**寄存器类**分派之后新增的那条守卫）。
+    ///
+    /// 布尔时代：KReg 与 GPR 同为 `is_fp == false` ⇒ 掩码值会**静默**按通用寄存器
+    /// 搬运（发一条 mov，读回来的东西与掩码寄存器无关）。现在必须在编译期明确报错，
+    /// 而不是发一条错的指令。
+    #[test]
+    fn test_mask_class_spill_is_fail_closed() {
+        use crate::machine::frame::TargetFrameLowering;
+        x86::ensure_registered();
+        let fl = x86::FrameLowering;
+        for class in [RegClass::KReg(8), RegClass::KReg(16)] {
+            let mut sink = crate::pipeline::emit::CodeSink::new();
+            let err = fl
+                .emit_spill_load(0, -32, 8, class, &mut sink)
+                .expect_err("掩码类 spill load 必须报错（本仓没有掩码溢出模板）");
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("掩码") && msg.contains("spill"),
+                "{class:?}：错误信息应点名掩码类与 spill，实际：{msg}"
+            );
+            assert!(
+                fl.emit_spill_store(0, -32, 8, class, &mut sink).is_err(),
+                "{class:?}：store 同样必须 fail-closed"
+            );
+        }
+    }
+
+    /// `class` 与 `width` **不可互相替代**：同一个 `FPR(8)` 池的寄存器既能装 4 字节
+    /// （f32）也能装 8 字节（f64）——宽度档由 `width` 决定，指令族由 `class` 决定。
+    /// 这条用例把两种宽度都过一遍同一个类，钉住"宽度确实参与了分派"。
+    #[test]
+    fn spill_width_and_class_are_independent() {
+        use crate::machine::frame::TargetFrameLowering;
+        x86::ensure_registered();
+        let fl = x86::FrameLowering;
+        let emit = |width: u16| -> Vec<u8> {
+            let mut sink = crate::pipeline::emit::CodeSink::new();
+            fl.emit_spill_store(0, -32, width, RegClass::FPR64, &mut sink)
+                .expect("FPR 溢出");
+            sink.bytes().to_vec()
+        };
+        // 4 字节（f32 值）与 8 字节（f64 值）走**同一个类**、不同宽度 ⇒ 允许走同一档
+        // 标量模板（≤ 浮点值池），但都必须是"浮点族"的编码（F2 前缀的 movsd），
+        // 绝不能因为"宽度只有 4"就退成通用寄存器搬运。
+        let s4 = emit(4);
+        let s8 = emit(8);
+        assert_eq!(&s4[..3], &[0xF2, 0x0F, 0x11], "4B FPR 溢出仍走浮点族");
+        assert_eq!(&s8[..3], &[0xF2, 0x0F, 0x11], "8B FPR 溢出走浮点族");
+        // 而 16 字节同族值走另一档（movups）——宽度变了，模板就变。
+        let s16 = emit(16);
+        assert_eq!(&s16[..2], &[0x0F, 0x11], "16B 同族值换宽度档");
     }
 }
