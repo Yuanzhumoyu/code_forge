@@ -3305,6 +3305,66 @@ ret_int = ["RAX"]
         );
     }
 
+    /// **栈上的浮点形参「直接收进寄存器」那条路**（v23 M5 新增的收参分支）。
+    ///
+    /// 背景：收参以前是**条件式**的——只有形参 vreg 没拿到寄存器时才走"按位搬运进溢出槽"，
+    /// 池一有余量整条收参就被跳过（静默错值）。现在改成由分配结果驱动：拿到寄存器 ⇒
+    /// 用类限定的 `{ role = "stack_arg_load", class = "fpr" }`（x86 = MOVSD）**直接收进寄存器**。
+    ///
+    /// 本用例让**六个形参全参与运算**，配 16 个 XMM 的池 ⇒ 栈上的第 5/6 个形参也应拿到
+    /// 寄存器（即走直接收参那条），断言和值正确 —— 这是那条新分支的**唯一直接覆盖**。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_stack_float_params_are_received_into_registers() {
+        use forge_ir::{FunctionSignature, TypeId};
+
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+
+        let params = [
+            (TypeId::F64, "a"),
+            (TypeId::F64, "b"),
+            (TypeId::F64, "c"),
+            (TypeId::F64, "d"),
+            (TypeId::F64, "e"),
+            (TypeId::F64, "f"),
+        ];
+        let sig_c = FunctionSignature::new(&params, &[TypeId::I64]);
+        let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
+        let (ce, cp) = callee.create_block_with_params(&params);
+        callee.switch_to_block(ce);
+        // 六个全用：任何"收错槽/漏收"都会改和值。
+        let s1 = callee.fadd(cp[0], cp[1]);
+        let s2 = callee.fadd(s1, cp[2]);
+        let s3 = callee.fadd(s2, cp[3]);
+        let s4 = callee.fadd(s3, cp[4]);
+        let s5 = callee.fadd(s4, cp[5]);
+        let r = callee.fptosi(s5, TypeId::I64);
+        callee.ret(&[r]);
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let args: Vec<_> = [1.0f64, 2.0, 4.0, 8.0, 16.0, 32.0]
+            .into_iter()
+            .map(|v| main_fn.fconst_f64(v))
+            .collect();
+        let got = main_fn.call(cref, &args, &[TypeId::I64])[0];
+        main_fn.ret(&[got]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(
+            f(),
+            63,
+            "栈上浮点形参直接收进寄存器那条路（1+2+4+8+16+32 = 63；错值即收参槽/收参寄存器错）"
+        );
+    }
+
     /// **栈上的浮点形参，且只用一个**：`ret (i64)e`（第 5 个形参在栈上）——与上一条互补：
     /// 这里形参被用一次、不被复算，收参仍然经 spill 中转（同一条按位搬运路径）。
     ///
