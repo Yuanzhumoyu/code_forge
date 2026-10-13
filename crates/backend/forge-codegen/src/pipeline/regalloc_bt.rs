@@ -148,14 +148,20 @@ impl<'a> BtState<'a> {
             let mut pool: Vec<PReg> = class_cfg
                 .allocatable
                 .iter()
-                // **C3 试过、按实测回退**（2026-10-11）：曾经想只对**整数类**排除 sp/fp，
-                // 好把 FPR 池里同号的 XMM4/XMM5 放出来（plan 说"三个发行 ISA 各释放 2 个
-                // 寄存器"）。实测立刻打红 x86 的
-                // `test_jit_float_params_beyond_xmm_registers_come_from_the_stack`（第 5+ 个
-                // 浮点形参从栈收参，期望 7 实得别的值）⇒ **这两个号的排除是承重的**：
-                // 它们与"浮点栈参数的搬运路径"共用同一批寄存器。要真正释放，得先量清那条
-                // 路径（谁在用 XMM4/XMM5），再决定改成别的 scratch 还是别的机制——
-                // 见 `docs/plans/backend-v23-plan.md` §14 的 C3 记录。
+                // **C3 试过、按实测回退**（2026-10-11，三组对照实验）：
+                //
+                // 想只对**整数类**排除 sp/fp，好把 FPR 池里同号的寄存器放出来（plan 说
+                // "三个发行 ISA 各释放 2 个寄存器"）。实测打红 x86 的
+                // `test_jit_float_params_beyond_xmm_registers_come_from_the_stack`（期望 7、
+                // 实得别的值）。逐号对照：**只放 XMM4 → 过；只放 XMM5 → 过；两个都放 → 红**
+                // ⇒ 不是"某个号特殊"，而是**池一变大分配结果就变**，那条用例对分配变化敏感。
+                //
+                // 机制（据生成器源码 `dsl/codegen/frame.rs`）：栈上形参的收参是**条件**的
+                // ——只有该形参 vreg **没有**拿到寄存器（`rm.spill_slots.contains_key(&pv)`）
+                // 时才走"load 布局槽 → GPR scratch → store spill 槽"；池变大后这些形参拿到了
+                // 寄存器，收参分支整条被跳过 ⇒ 值没落地 ⇒ **静默错值**。
+                // 要释放这 2 个寄存器，**先修这条条件式收参**（收参应无条件写到该 vreg 的
+                // 最终落点），见 `docs/plans/backend-v23-plan.md` §14。
                 .filter(|&&r| Some(r) != config.fp_reg && r != config.sp_reg)
                 .map(|&r| PReg::new(r, *class))
                 .collect();
