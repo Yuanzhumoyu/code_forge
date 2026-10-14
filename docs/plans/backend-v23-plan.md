@@ -323,7 +323,7 @@ spill 压力与「固定字段 spill」用例按新语义改写；新增「必�
 | M3 能力数据化（去 x86 硬编码 + 单一合法性判据 + A6 收口） | ✅ 已落地（死钩子/死 API 删除；端序修正；宽向量能力数据化 + ISA 中立守卫；A6 收口；触发判据合一 + `ChangeSet`） | 见 §12 M3 进度 | 2026-10-11 |
 | M4 单一操作数模型 | ✅ 已落地（批次 A/B/C；两处偏差如实记录：`xreg_types` 保留、`inst_clobbers` 与 `clobbers()` 非同源） | 见 §13 M4 收口 | 2026-10-11 |
 | M5 分配器与发射 | ✅ 已落地（C6 帧记账单点 + C4 表归一 + 条件式收参缺陷修复 + C3 释放 2 寄存器 + C4 双根因收口 + 密集输出 + SpillEdit + **真 Belady** + MachBuffer 三项） | 见 §14 M5 进度 | 2026-10-11 |
-| M6 合法化与缺口 | ⏳ 待开工 | — | — |
+| M6 合法化与缺口 | ✅ 已落地（**单一驱动 + 五个 pass**（va/agg-store/agg-call/agg-param/gep）、`expand_*` 计数 0、去重三项、幂等守卫、缺口泛化三项 + 两项 fail-closed；**两处未达成如实记录**：`va_arg` 聚合真做、`>16B` 非 sret 栈返回走 `StackByVal` —— 都需约定层数据扩展） | 见 §14 后的 M6 批次记录 | 2026-10-11 |
 
 ## 8. 顺序、风险与假设
 
@@ -1003,6 +1003,250 @@ dump 机器码逐条对照。
    `needs_epilogue_label` 特判；JIT 与 `ObjectWriter` 共用重定位语义。
 7. M4 登记的候选：生成物按**变体**发表"模板字面物理寄存器" ⇒ 删 `CompileState.inst_clobbers`，
    并把"按包求并"变精确。
+
+### M6 合法化单一驱动 —— 批次 1：驱动落地（2026-10-11，工作区进行中，未提交）
+
+**已落**：新 `pipeline/legalize/mod.rs`：
+
+- `trait LegalizePass<M: TargetMachine>`（`name()` + `run(func, ctx) -> ChangeSet`）与
+  `LegalizeCtx`（机器视图 / 约定名 / `agg_slots` / `sret_ptr` —— 以前靠调用次序隐式传递的四个量
+  现在显式在 ctx 里）；
+- `LegalizeDriver`：**with_aggregates() 是次序的唯一出处**（`agg-store → agg-call → agg-param → gep`，
+  依赖注释写在构造函数上：store 先展开、sret 先立、call 结果拆段先于实参拆段）；
+- 每个 pass 自报 `ChangeSet`（IR 规模差 + sret 标记），驱动累加 + `FORGE_TRACE_AGG` 逐 pass 打印；
+- 调用点（`compiler.rs` Stage 0.5）从"8 行硬编码调用"变成 `LegalizeDriver::with_aggregates().run(...)`；
+- 守卫：`driver_has_the_documented_pass_order`（定序是契约，钉住 4 个 pass 的顺序）。
+
+**偏差（如实记录）**：`TargetMachine` 带关联类型（`Reg`/`Inst`），`&dyn TargetMachine` 需要指定它们；
+驱动因此**泛型化**（`LegalizeDriver<M: TargetMachine>`）而不是 trait 对象——pass 本来就收
+`&impl TargetMachine`，泛型更省事且不引入 dyn 的间接层。另：`Va`（`va_expand::expand_va`）**暂不在
+驱动里**——它需要 `VaSlots` 与 va 描述（形状与其余四个不同），留在调用点；下一批把它按同一模式接入。
+
+**下一批（把 `fn expand_` 降到 ≤3，即 M6 验收）**：把 8 个 `expand_*` 的函数体搬进 `legalize/` 的
+对应 pass 文件（`agg_store.rs`/`agg_call.rs`/`agg_param.rs`/`gep.rs`），`compiler.rs` 只留调用；
+同时落 M6 的去重项（`pack_segment`、`place_addr_of_slot`、统一 `move_to_front`）。
+
+### M6 批次 10：**合法化幂等**（M6 验收项）+ M6 收口评估（2026-10-11，未提交）
+
+**新守卫** `legalization_is_idempotent`（`legalize/mod.rs`）：造一个 16 字节聚合形参的函数
+（win64 下 `>8B ⇒ by-ref` ⇒ `AggParam` 必定动手），跑驱动**两遍**：
+
+- 第一遍 `ChangeSet::total() > 0`（否则这条判据是空转——断言里写明了这一条）；
+- 第二遍 `total() == 0` **且指令序列逐项相同**。
+
+这条值钱的原因是：每个 pass 都是"就地改写 IR"，改写若不收敛，症状是**指令数/bootstrap 膨胀**
+而不是报错——只有跑第二遍才看得见。
+
+**M6 验收对照**（方案 §M6）：
+
+| 验收项 | 状态 |
+| --- | --- |
+| `pipeline/legalize/` 驱动（定序/定点/变化报告/幂等） | ✅ 四职责齐（`VaPass` 起五个 pass） |
+| 8 个 `expand_*` 收成 5 个 pass | ✅ `va → agg-store → agg-call → agg-param → gep` |
+| `rg 'fn expand_' pipeline/compiler.rs` ≤ 3 | ✅ **0** |
+| 去重：`pack_segment` / `place_addr_of_slot` / 统一 `move_to_front` | ✅ 前者 4→1、中者 3→1、后者已是 1 定义 3 调用 |
+| 合法化幂等（第二次 `ChangeSet::empty`） | ✅ `legalization_is_idempotent` |
+| `test_jit_agg_*` 全族 | ✅ 两矩阵全绿 |
+| 未对齐字段用例 | ✅ `unaligned_nested_field_is_repacked_with_shifts` |
+| **`va_arg` 聚合真跑** | ⏳ **未做**（见下） |
+| e2e 全绿（forge-rustc） | 需 nightly 通道，不在本机门禁内 |
+
+**剩余两项（如实记为"未达成"，并说明为什么不是一次小改）**：
+
+1. **`va_arg` 聚合**：现在 `is_fp ? Fload : Load` —— 聚合类型会按**标量** load。做对需要
+   ① 临时槽 + 从参数地址逐段拷贝；② 把 `(slot, ty)` 登记进 `agg_slots` 并递归重写使用处；
+   ③ 且**先要按落点分类**判断参数地址处"是聚合字节本身还是指向聚合的指针"——这要看
+   `VaArgRules` × `agg_arg_place` 的交叉，属 ABI 功能新增（含真执行用例）。
+2. **`>16B` 非 sret 栈返回走 `StackByVal`**：发射侧 `ArgPlace::StackByVal` 已有，缺"返回侧也走它"；
+   同样需要新约定 + 真执行用例。
+
+**判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` **2815 passed**（+1 幂等守卫）；
+jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
+### M6 批次 9：**`insertvalue` 值内存化**（2026-10-11，未提交）
+
+`rewrite_agg_value_uses` 的兜底分支以前对 `insertvalue` 直接 `Unsupported`（"仅支持
+extractvalue/store/return/call 传参"）⇒ **任何"先建后改"的聚合构造都编译不了**。现在：
+
+1. 为聚合值分配一个**自己的**帧槽（**不就地改来源**——来源可能住在调用方内存里，改它就是改
+   调用方的数据）：段值表示时逐段 store；by-ref 表示时逐段 load→store；段值不足补常量 0
+   （保守且确定，不读未初始化内存）；
+2. 把插入的字段写进槽内 `field_offset` 处（浮点字段先 `Bitcast` 成 i64 位模式再存）；
+3. `insertvalue` 墓碑化，**结果值登记成"住在该槽"**，再递归处理结果值的后续使用（后续
+   `extractvalue` 因此走地址语义）。
+
+**守卫** `insertvalue_is_memoryized`：钉"不再报错 + 结果登记进 `agg_slots` + 槽里确实有 `Store`"
+——只登记不写就是"读到未初始化内存"，两件事缺一不可。
+
+**顺带满足读路径纪律**：`insertvalue` 需要的静态事实（字段偏移/类型/是否浮点/聚合字节数）
+**并进函数入口那唯一一次锁**（守卫先报了 8 > 6，把事实提到入口后回到 **6**，定额不用改）。
+类型库没有"字段数"接口 ⇒ 用 `aggregate_elem_type(i).is_some()` 探到 `None`（256 上限兜底）。
+
+**判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` **2814 passed**（+1 守卫）；
+jit x86 197/3/0、riscv64 136/64/0；asm_parse 3 / asm_exec 1；clippy/fmt 干净。
+
+**M6 仍欠**：① `va_arg` 聚合结果（要临时槽 + 逐段拷贝 + 走落点分类）；② `>16B` 非 sret 栈返回
+改 `StackByVal`。这两项都是**行为变更 + 需要真执行用例**，按批再落。
+### M6 批次 8：**非对齐嵌套字段**从"报错"改为"能展开"（2026-10-11，未提交）
+
+`memoryize_from_segs` 原来对 `off % 8 != 0` 直接 `Unsupported`（"非对齐字段暂不支持"）⇒
+`{i8, {i32,i32}}` 这类字段偏移不是 8 倍数的聚合**整类编译不了**。现在段值先按 `off % 8` 字节
+**移位拼接**再写槽：
+
+- 拼接用 `(lo >> 8r) + (hi << (64-8r))`——两半位域不相交，加法与按位或等价，而 **`Ior` 在三份谱里
+  都没有 lowering**（`Ishl`/`Ushr` 是 x86 与 riscv64 有、arm64 没有 ⇒ arm64 上这类函数仍会
+  fail-closed，报的是标准的"无 lowering 规则"，已在账本记明）。
+- 取 `hi` 时**严格按"这一段是否落在字段内"判**，越界或超出字段就补常量 0 —— 不读相邻聚合成员的字节。
+
+**新守卫** `unaligned_nested_field_is_repacked_with_shifts`：造一个 `off = 4` 的嵌套字段提取，
+断言 ① 不再 `Unsupported`；② IR 里**确实出现 `Ushr` 与 `Ishl`**（否则就是"悄悄按对齐直存"，
+数据整体错位比报错更糟）。
+
+**判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` **2813 passed**（+1 守卫）；
+jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
+
+**观察（未改，留证据）**：这条路径与对齐路径都按 `n_segs` 整段存（`size = 12` 时写 16 字节），
+而 `frame_slots` 按 `Type(I8) × count` **精确**算槽字节数——是否越界取决于槽是否被填充到 8 的倍数。
+本轮只做"能展开"，越界问题**没有实测证据**，不顺手改（改法会是给末段加掩码，属行为变更）。
+
+**M6 仍欠**：① `va_arg` 聚合结果（要临时槽 + 逐段拷贝）；② `>16B` 非 sret 栈返回 `StackByVal`；
+③ 聚合其余算子（InsertValue 等）值内存化。
+### M6 批次 7：缺口泛化（部分）+ `int_ty` fail-closed（2026-10-11，未提交）
+
+- **`va_expand::int_ty` 改 fail-closed**：1/2/4/8 四档照旧，其余**明确报错**（以前 `_ => I64`
+  把 3/5/6 字节静默当 8 字节读写 ⇒ 游标字段与相邻对象字段互相踩，症状是"取参取到别的字段的值"；
+  形状数据是使用者给的，写错必须报出来）。连带 `store_cursor` 改 `Result` 并在两处调用点传播。
+  新守卫 `cursor_field_width_is_fail_closed`（四档通过 + `[0,3,5,6,7,16]` 全部报错且信息点名宽度）。
+- **第三个 `Alloca` 站点去重**：`agg_expand.rs` 的嵌套字段抽取值也改用
+  `legalize::common::place_addr_of_slot`（规范 immediate 形态的唯一出口现在是 3 处调用、0 处内联）。
+
+**判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` **2812 passed**（+1 守卫）；
+jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
+
+**仍欠（M6 收口前）**：① `va_arg` **聚合**结果（现在 `is_fp ? Fload : Load`，聚合类型会按标量 load
+——要按值返回就得配临时槽 + 逐段拷贝，属功能新增）；② `>16B` 非 sret 栈返回改 `StackByVal`
+（`ArgPlace::StackByVal` 发射侧已有，缺的是"返回侧也走它"）；③ 未对齐嵌套字段（`off % 8 != 0`）
+改逐字节/移位拷贝（现在按段整存 ⇒ 未对齐时数据整体错位）；④ 聚合其余算子（InsertValue 等）改值内存化。
+这四项都是**行为变更**，各自需要正例 + 真执行用例，按批再落。
+
+**环境事故（第二次，同日）**：workspace 门禁再次报 `link.exe` 1102 + `invalid metadata files for
+crate test`——当时 D: 只剩少量可用空间；删 `target/debug/incremental` 后重跑 exit 0。**结论**：
+本机跑全量门禁前先看 D: 可用空间（`target/` 已 51.7 GB），否则会看到"链接失败/元数据无效"这类
+**与代码无关**的红。
+
+### M6 批次 6：`Va` 进驱动 —— 五个 pass 齐了（2026-10-11，未提交）
+
+- `LegalizeCtx` 增 `va: Option<(VaInfo, AbiSlots)>`：**槽排布留在编译入口**（深度依赖前端局部槽，
+  只有 lowering 前那次预扫算得出），**展开交给 `VaPass`**；两边是同一份数据。
+- 驱动次序成为方案说的五个 pass：**`va → agg-store → agg-call → agg-param → gep`**（守卫
+  `driver_has_the_documented_pass_order` 已按新次序钉住）。`VaPass` 自报 `ChangeSet`，
+  物化份数/取值条数的报告并进 `FORGE_TRACE_AGG`（原来只在 `FORGE_TRACE_LOWER` 里）。
+- `func_owned`（可变 IR 副本）的创建条件补齐：以前只在 `needs_agg_expand` 时建、变参块自己
+  `get_or_insert`，现在两处显式各建各的，语义不变但不再依赖隐式时序。
+
+**判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` 2811 passed；
+jit x86 197/3/0、riscv64 136/64/0；asm_parse 3 / asm_exec 1；clippy/fmt 干净。
+
+**环境事故（记录）**：本轮门禁首次运行时 `link.exe` 报 **exit 1102**（同时两矩阵与 asm 全绿）
+——是 **D: 盘再次被 `target/debug/incremental`（10.9 GB，`target/` 共 51.7 GB）写满**，
+删掉该目录后同一条命令 exit 0。CLAUDE.md 的「os error 112 / 磁盘满」条目同样适用本现象。
+
+**M6 仍欠**：缺口泛化（`va_arg` 聚合分支、`>16B` 非 sret 栈返回 `StackByVal`、未对齐嵌套字段
+逐字节拷贝、聚合其余算子值内存化）与 `int_ty()` 非 1/2/4/8 宽度改 fail-closed。
+
+### M6 批次 5：去重项（R6）—— 打包与栈缓冲取址各收成**一个出口**（2026-10-11，未提交）
+
+1. **`agg_const::pack_segment(bytes, off, len) -> u64`**：把"段值 / ≤8 字节聚合常量参数"的
+   字节打包收成唯一实现。原来 4 处各写一遍（`agg_call.rs` 两份、`agg_store.rs` 两份），
+   而口径并不一致——一半用 `get(..).unwrap_or(0)` 越界补零、一半直接下标。统一为前者
+   （下标那种是"不越界"的特例，结果相同）。
+2. **`legalize::common::place_addr_of_slot(func, block, size) -> (Inst, Value)`**：
+   `Alloca(Type(I8), Uint(n))` 这个**帧槽预扫描唯一认得的规范形态**原来在两个 pass 里各写
+   一遍（写 `Const(池 id)` 会让槽根本不进表 ⇒ 没有偏移，后续 store/load 全错位）。现在只有
+   这里能造，并附"调用方负责移到正确块位置（SSA 支配）"的契约说明。
+3. 顺手清掉 `agg_expand.rs` 里那段**过时注释**（它还写着"expand_* 执行族仍留在 compiler.rs
+   按批再迁"——批次 2+3+4 已全部迁完）。
+
+**判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` 2811 passed；
+jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
+
+**M6 仍欠**：① `Va` pass 接入驱动；② 缺口泛化（`va_arg` 聚合、`>16B` 非 sret 栈返回、
+未对齐嵌套字段、聚合其余算子）与 `int_ty` fail-closed；③ `move_to_front` 的内联副本复核
+（现状：定义 1 处 + `agg_expand` 内 3 处调用，未见内联复制）。
+
+### M6 批次 4：`legalize/common.rs` —— **反向依赖清零**（2026-10-11，未提交）
+
+把只服务合法化的 6 个共享件从 `compiler.rs` 搬进新 `legalize/common.rs`：
+`AggArgLoc`（含 derive，搬运时一度把 derive 落在 `CompileSession` 上，clippy/rustc 当场报出来）、
+`agg_arg_place`、`agg_ret_is_sret`、`append_param`、`collect_extract_jobs`、`make_placeholder_ptr`。
+
+**结果**：`grep 'pipeline::compiler' pipeline/legalize/*.rs` = **0** —— 合法化不再反向 `use`
+编译管线（方向恢复为 `compiler → legalize`）。`compiler.rs` 里只剩一处**测试模块内**的
+`use legalize::common::{AggArgLoc, agg_arg_place}`（那是落点探针的集成用例在读它；放在顶层会被
+lib 构建判为 unused import——clippy 抓到了，已按"谁用谁引"放回测试模块）。
+
+`read_path_budget` 随之下调：`compiler.rs` 4 → **3**，并新增 `legalize/common.rs` 条目（1 处）。
+
+**判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` 2811 passed；jit x86 197/3/0、
+riscv64 136/64/0；clippy/fmt 干净。
+
+**M6 仍欠**：① `Va` pass 接入驱动；② 去重项（`pack_segment`/`place_addr_of_slot`/统一
+`move_to_front`）；③ 缺口泛化（`va_arg` 聚合、`>16B` 非 sret 栈返回、未对齐嵌套字段、聚合其余
+算子）与 `int_ty` fail-closed。
+
+### M6 批次 3：**剩下的 3 个 `expand_*` 也迁出** ⇒ `compiler.rs` 里的合法化函数体归零（2026-10-11，未提交）
+
+- `expand_large_agg_ret`（246 行）与 `expand_agg_call_args`（251 行）→ `legalize/agg_call.rs`；
+  `expand_large_aggs`（379 行）→ `legalize/agg_param.rs`。
+- **`rg 'fn expand_' pipeline/compiler.rs` = 0**（M6 验收要求 ≤3，已达成为 0）。
+- `read_path_budget` 再次随迁移下调：`compiler.rs` **13 → 4**；legalize 侧定额按实测更新为
+  `agg_call.rs` 5、`agg_param.rs` 9、`agg_store.rs` 1、`gep.rs` 1（`agg_expand.rs` 仍 6）。
+- 迁移中新增 `pub(crate)` 暴露：`collect_extract_jobs`（`agg_call.rs`/`agg_param.rs` 用）。
+
+**判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` **2811 passed**；
+jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
+
+**仍欠**：① `compiler.rs` 仍被 legalize 反向依赖（`agg_ret_is_sret`/`append_param`/
+`make_placeholder_ptr`/`agg_arg_place`/`AggArgLoc`/`collect_extract_jobs` 都是 `pub(crate)`），
+下一批搬进 `legalize/common.rs`；② M6 的缺口泛化项与 `int_ty` fail-closed 未做。
+
+### M6 批次 2：pass 体迁出 `compiler.rs`（2026-10-11，未提交）
+
+把 5 个 pass 的**函数体**从 `compiler.rs` 搬进 `legalize/`：
+
+| 新文件 | 迁入 |
+| --- | --- |
+| `legalize/agg_call.rs` | `expand_sret_return`（43 行含文档）+ `expand_large_agg_call_results`（98 行） |
+| `legalize/agg_store.rs` | `expand_agg_stores`（178 行） |
+| `legalize/gep.rs` | `expand_geps`（175 行） |
+| `legalize/agg_param.rs` | `expand_large_agg_params`（193 行） |
+
+**验收指标达成**：`rg 'fn expand_' pipeline/compiler.rs` = **3**（要求 ≤3）。剩下的 3 个
+（`expand_large_agg_ret` / `expand_agg_call_args` / `expand_large_aggs`）按同一模式迁入
+`agg_call.rs` / `agg_param.rs` 即可归零——留作下一批（它们之间互相引用较多，一批做完再动）。
+
+**批次 2 的两处连带调整（都已落）**：
+
+1. **`read_path_budget` 预算随迁移下调**：`compiler.rs` 的 `borrow()` 处数 20 → **13**
+   （守卫的原话就是"迁移完成了一批？请把预算下调到 13"），并为 4 个新文件登记定额：
+   `legalize/agg_call.rs` 3、`agg_param.rs` 2、`agg_store.rs` 1、`gep.rs` 1（各 = 实测值）。
+2. **`compiler.rs` 里的合法化专用件标 `pub(crate)`** 供迁出的 pass 使用：
+   `agg_ret_is_sret` / `append_param` / `make_placeholder_ptr` / `agg_arg_place` / `AggArgLoc`；
+   `rewrite_agg_value_uses` 直接从 `agg_expand` 引（实现本来就在那里）。
+
+**过程记录（如实）**：批量删未用 import 的脚本用了 `;\n` 模式，在 **CRLF** 文件上没生效，
+反复"trim 成功但没删掉"；随后一处按名字替换误伤 `gep.rs` 的函数体（把体内一行当成 import 行）
+⇒ **改为从 `git show HEAD:compiler.rs` 重新抽取该函数体整文件重写**，并顺手给它标 `pub(crate)`。
+教训与仓库既有的记录一致：**多行/带换行的文本改写一律别用 PowerShell 或简单脚本，优先单个
+`edit` 工具调用**（本次连脚本里的 `\n` 都踩了 CRLF）。
+**共享件现状（下一批收口）**：`agg_ret_is_sret` / `append_param` / `make_placeholder_ptr` /
+`agg_arg_place` / `AggArgLoc` 目前仍留在 `compiler.rs` 并标了 `pub(crate)`，由迁出的 pass
+`use` 回来；`rewrite_agg_value_uses` 直接从 `agg_expand` 引（它本来就是那里的实现）。
+下一批把这些**合法化专用件**一并搬进 `legalize/common.rs`，让 `compiler.rs` 不再被 legalize 反向依赖。
+
+**判据**：`forge-codegen --lib --all-features` **2811 passed**；workspace 门禁 exit 0；
+jit x86 197/3/0、riscv64 136/64/0。
+**判据（本批）**：workspace 门禁 exit 0、`forge-codegen --lib --all-features` **2811 passed**
+（+1 驱动守卫）、jit x86 197/3/0、riscv64 136/64/0。
 
 ## 13. M4 进度（收口）
 

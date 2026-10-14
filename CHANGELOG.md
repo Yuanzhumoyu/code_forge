@@ -11,6 +11,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 M6：**合法化单一驱动 + 去重 + 缺口泛化**（里程碑收口）
+
+**单一驱动**：新 `pipeline/legalize/` —— `trait LegalizePass`（`name()` + `run() -> ChangeSet`）、
+`LegalizeCtx`（机器视图/约定名/`agg_slots`/`sret_ptr`/变参输入）、`LegalizeDriver`（定序、变化报告、
+幂等）。8 个 `expand_*` 收成**五个 pass**：`va → agg-store → agg-call → agg-param → gep`
+（`rg 'fn expand_' pipeline/compiler.rs` = **0**，验收要求 ≤3）；调用点只剩一行 `driver.run(...)`。
+
+**函数体与共享件迁出**：`expand_*` 搬进 `legalize/{agg_call,agg_store,agg_param,gep}.rs`；
+`AggArgLoc`/`agg_arg_place`/`agg_ret_is_sret`/`append_param`/`collect_extract_jobs`/
+`make_placeholder_ptr` 收进 `legalize/common.rs` ⇒ **`legalize` 不再反向依赖 `compiler`**。
+`read_path_budget` 随迁移下调：`compiler.rs` 20 → 13 → 4 → **3**，并登记 legalize 侧实测值。
+
+**去重（R6）**：`agg_const::pack_segment`（4 处内联打包 → 1，且统一了"越界补零"口径）；
+`legalize::common::place_addr_of_slot`（`Alloca(Type(I8), Uint(n))` 规范形态的**唯一出口**，
+3 处内联 → 1）；`move_to_front` 复核为"1 定义 + 3 调用"，无内联副本。
+
+**缺口泛化**：① `va_expand::int_ty` 非 1/2/4/8 宽度改 **fail-closed**（以前静默折 I64 ⇒ 游标与
+相邻字段互相踩）；② **非对齐嵌套字段**（`off % 8 != 0`）从 `Unsupported` 改为**能展开**
+（段值按 `off % 8` 移位拼接，`hi` 严格按"是否落在字段内"取，不读相邻成员字节）；③ **`insertvalue`
+值内存化**（分配自己的帧槽、写字段、结果登记进 `agg_slots` 并递归重写使用处）；④ `va_arg`
+**聚合结果改 fail-closed**（以前按标量 load ⇒ 静默错值；真做对需要约定层新增"聚合取参规则"）。
+
+**新守卫**：`driver_has_the_documented_pass_order`、`legalization_is_idempotent`（第二遍
+`ChangeSet::total() == 0` 且指令序列不变）、`unaligned_nested_field_is_repacked_with_shifts`、
+`insertvalue_is_memoryized`、`cursor_field_width_is_fail_closed`、`aggregate_va_arg_is_fail_closed`。
+
+**未达成（如实记录，留给约定数据的后续里程碑）**：① `va_arg` 聚合**真做**（要 `va.arg_rules`
+的聚合条目 + 真执行用例；当前已 fail-closed，不再静默错值）；② `>16B` 非 sret 栈返回走
+`StackByVal`（发射侧 `ArgPlace::StackByVal` 已有，缺"返回侧也走它"）。
+
 ### Changed (2026-10-11) — 后端 v23 M5：**替掉 `EPILOGUE` 哨兵**（机器标签改为分配）；M5 六条全部落地
 
 + **机器标签由 `CodeSink::new_label()` 分配**：新增 `LabelRef::Machine(u32)`，id 落在

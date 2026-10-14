@@ -4,6 +4,20 @@
 use forge_ir::Endianness;
 use forge_ir::{AggChild, AggConst, ConstantPool, Function, IrError, TypeStore};
 
+/// 把 `bytes[off .. off+len]` 按**小端**打包成一个整数（`len ≤ 8`）。
+///
+/// v23 M6 去重：段值/`≤8` 字节聚合常量参数的打包原来在 4 处各写一遍（`agg_call.rs` 两份、
+/// `agg_store.rs` 两份），其中一半用 `get(..).unwrap_or(0)` 越界补零、一半直接下标——
+/// **口径只有这一份**：越界按 0 补（下标那种在 `len` 不越界时结果相同，是它的特例）。
+pub fn pack_segment(bytes: &[u8], off: usize, len: usize) -> u64 {
+    debug_assert!(len <= 8, "段值最多 8 字节（{len}）");
+    let mut v: u64 = 0;
+    for k in 0..len {
+        v |= (bytes.get(off + k).copied().unwrap_or(0) as u64) << (k * 8);
+    }
+    v
+}
+
 /// 把聚合常量打包为**目标端序**的字节序列(按类型布局含 padding)。
 ///
 /// 端序取自 `TypeStore` 的 `DataLayout`（v23 M3 修：此前这里**写死小端**，

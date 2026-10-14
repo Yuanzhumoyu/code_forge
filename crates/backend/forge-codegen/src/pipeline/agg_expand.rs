@@ -157,11 +157,11 @@ pub(crate) struct UseJob {
     pub load: usize, // loads 索引
 }
 
-// rewrite 族（第四十四轮记录的"第三批"）已于本轮迁入：memoryize_from_segs /
-// memoryize_from_addr / rewrite_agg_value_uses / move_to_front。仍留在 compiler.rs 的
-// 是 expand_* 执行族（expand_large_agg_params / _ret / _call_results / expand_agg_call_args /
-// collect_extract_jobs / expand_large_aggs / expand_geps / expand_agg_stores）——
-// 它们与 CompileState 的时序耦合更紧，按批再迁。
+// rewrite 族（第四十四轮记录的"第三批"）已于那轮迁入：memoryize_from_segs /
+// memoryize_from_addr / rewrite_agg_value_uses / move_to_front。
+// **v23 M6 批次 2+3+4 之后，`expand_*` 执行族与共享件也全部迁出 `compiler.rs`**——现在住在
+// `pipeline/legalize/`（`agg_call.rs`/`agg_store.rs`/`agg_param.rs`/`gep.rs` + `common.rs`），
+// 由 `LegalizeDriver` 定序调用；`compiler.rs` 只留调用点。
 
 /// 聚合值使用处重写（helper）：`old_v`（聚合值，段值在 `segs`——每段 i64）
 /// 的所有使用按指令语义替换（生成的辅助指令即时移动到使用指令前）：
@@ -191,11 +191,10 @@ pub(crate) fn memoryize_from_segs(
     // 不与 func 的 &mut 借用冲突。
     let types_ctx = func.types.clone();
     let store = types_ctx.borrow();
-    if !off.is_multiple_of(8) {
-        return Err(IrError::Unsupported(format!(
-            "嵌套聚合字段提取：非对齐字段（off={off}）暂不支持"
-        )));
-    }
+    // **非对齐字段**（`off % 8 != 0`）现在也支持（v23 M6 缺口泛化）：段值先按 `off % 8`
+    // 字节**移位拼接**再写槽——以前直接 `Unsupported`（"off={off} 暂不支持"），于是
+    // `{i8, {i32}}` 这类字段偏移不是 8 倍数的聚合根本展开不了。
+    let shift_bytes = (off % 8) as u32;
     let size = store.size_bytes(seg_ty) as usize;
     let n_segs = size.div_ceil(8);
     let start = off / 8;
@@ -206,22 +205,77 @@ pub(crate) fn memoryize_from_segs(
     // **immediate 必须是规范形态** `Type(elem) + Uint(count)`：帧槽预扫描
     //（`frame_slots.rs`）只按这两个 immediate 算字节数，写 `Const(池 id)` 会让这个
     // Alloca **不进槽表** ⇒ 没有帧偏移 ⇒ 地址是垃圾（实测：往那儿写 24 字节会毁帧崩溃）。
-    let alloca = func.make_inst(
-        Opcode::Alloca,
-        use_pos.block,
-        smallvec::smallvec![],
-        smallvec::smallvec![Immediate::Type(TypeId::I8), Immediate::Uint(size as u64)],
-        &[TypeId::PTR],
-        InstFlags::NONE,
-    );
-    let slot = func.dfg.inst_data(alloca).results[0];
-    // 2) 字段覆盖的段逐段 store（仿 Store 分支的 store + add ptr, 8 模式）
+    // v23 M6：规范 immediate 形态的唯一出口（`legalize::common::place_addr_of_slot`）。
+    let (_alloca, slot) =
+        crate::pipeline::legalize::common::place_addr_of_slot(func, use_pos.block, size);
+    // 2) 段值 → 槽：对齐时逐段直存；非对齐时每段先拼好再存。
+    //
+    // 拼接用**移位 + 加法**（`(lo >> 8r) + (hi << (64-8r))`）：两半位域不相交 ⇒ 加法与
+    // 按位或等价，而 `Ior` 在三份谱里都没有 lowering（`Ishl`/`Ushr` x86 与 riscv64 都有）。
+    // 取 `hi` 时严格按"这一段的字节是否落在字段内"判，越界/超出字段就补 0（不读别人的字节）。
     let mut cur = slot;
-    for (i, s) in segs.iter().skip(start).take(n_segs).enumerate() {
+    let const_i64 = |func: &mut Function, v: i64| -> Value {
+        let cid = func.constants.insert_int(i128::from(v), 64);
+        let ci = func.make_inst(
+            Opcode::Iconst,
+            use_pos.block,
+            smallvec::smallvec![],
+            smallvec::smallvec![Immediate::Const(cid)],
+            &[TypeId::I64],
+            InstFlags::NONE,
+        );
+        func.dfg.inst_data(ci).results[0]
+    };
+    for i in 0..n_segs {
+        let lo_src = segs[start + i];
+        let stored = if shift_bytes == 0 {
+            lo_src
+        } else {
+            let sh = u64::from(shift_bytes * 8);
+            let lo_k = const_i64(func, sh as i64);
+            let lo = func.make_inst(
+                Opcode::Ushr,
+                use_pos.block,
+                smallvec::smallvec![lo_src, lo_k],
+                smallvec::smallvec![],
+                &[TypeId::I64],
+                InstFlags::NONE,
+            );
+            let lo_v = func.dfg.inst_data(lo).results[0];
+            // 这一段还要别人的高位吗？字段覆盖到第 i+1 段才要。
+            let hi_v = if (i + 1) * 8 < shift_bytes as usize + size {
+                let hi_src = match segs.get(start + i + 1) {
+                    Some(v) => *v,
+                    // 字段末端就在这一段内 ⇒ 高位补 0（不读相邻聚合成员的字节）。
+                    None => const_i64(func, 0),
+                };
+                let inv_k = const_i64(func, (64 - sh) as i64);
+                let hi = func.make_inst(
+                    Opcode::Ishl,
+                    use_pos.block,
+                    smallvec::smallvec![hi_src, inv_k],
+                    smallvec::smallvec![],
+                    &[TypeId::I64],
+                    InstFlags::NONE,
+                );
+                func.dfg.inst_data(hi).results[0]
+            } else {
+                const_i64(func, 0)
+            };
+            let add = func.make_inst(
+                Opcode::Iadd,
+                use_pos.block,
+                smallvec::smallvec![lo_v, hi_v],
+                smallvec::smallvec![],
+                &[TypeId::I64],
+                InstFlags::NONE,
+            );
+            func.dfg.inst_data(add).results[0]
+        };
         func.make_inst(
             Opcode::Store,
             use_pos.block,
-            smallvec::smallvec![*s, cur],
+            smallvec::smallvec![stored, cur],
             smallvec::smallvec![],
             &[],
             InstFlags::SIDE_EFFECT,
@@ -316,9 +370,29 @@ pub(crate) fn rewrite_agg_value_uses(
     }
     // by-ref 档（值在内存）的字节数：**入口取一次锁**，使用点循环里不再逐次取
     //（v3 S3 读路径纪律；`read_path_budget` 守卫钉住处数）。
-    let mem_size: Option<usize> = agg_slots
-        .get(old_v)
-        .map(|&(_, t)| func.types.borrow().size_bytes(t) as usize);
+    // **这一处就是本函数的唯一入口锁**（守卫 `read_path_budget` 钉住处数）：by-ref 档的字节数
+    // 与 `insertvalue` 要的静态事实（字段偏移/类型/是否浮点/聚合总字节）**一起**算好——
+    // 逐使用点再取锁既违反纪律、也会把定额顶上去。
+    let (mem_size, agg_bytes, field_facts): (Option<usize>, usize, Vec<(usize, TypeId, bool)>) = {
+        let ts = func.types.borrow();
+        let mem_size = agg_slots
+            .get(old_v)
+            .map(|&(_, t)| ts.size_bytes(t) as usize);
+        let bytes = ts.size_bytes(agg_ty) as usize;
+        // 类型库没有"字段数"查询接口 ⇒ 探到 `None` 为止（上限兜底，避免畸形类型死循环）。
+        let mut n = 0u32;
+        while n < 256 && ts.aggregate_elem_type(agg_ty, n).is_some() {
+            n += 1;
+        }
+        let mut facts = Vec::with_capacity(n as usize);
+        for i in 0..n {
+            let off = ts.field_offset(agg_ty, i).unwrap_or(0) as usize;
+            let fty = ts.aggregate_elem_type(agg_ty, i).unwrap_or(TypeId::I64);
+            let is_fp = ts.is_float(fty);
+            facts.push((off, fty, is_fp));
+        }
+        (mem_size, bytes, facts)
+    };
     // 逆序处理（后面的使用先——插入不影响更前 pos）
     for use_pos in uses.into_iter().rev() {
         let inst = &func.dfg.inst_data(use_pos.inst);
@@ -625,9 +699,184 @@ pub(crate) fn rewrite_agg_value_uses(
                 // 就地改写操作数后必须重登记 use-lists（否则留下指向旧操作数的陈旧 use）
                 func.refresh_inst_uses(use_pos.inst);
             }
+            Opcode::InsertValue => {
+                // **值内存化**（v23 M6 缺口泛化）：`%r = insertvalue {..} %agg, %x, i` 以前直接
+                // `Unsupported` ⇒ 任何"先建后改"的聚合构造都编译不了。现在把聚合搬进一个**自己的
+                // 帧槽**（不能就地改来源：来源可能住在调用方内存里，改它就是改调用方的数据），
+                // 再把插入的字段写进槽内对应偏移；结果值登记成"住在该槽"。
+                let elem = inst.operands[1];
+                let idx = match inst.immediates.first() {
+                    Some(Immediate::Uint(i)) => *i as u32,
+                    _ => {
+                        return Err(IrError::Unsupported(
+                            "insertvalue 缺字段索引 immediate".into(),
+                        ));
+                    }
+                };
+                let (field_off, _field_ty, field_is_fp) = *field_facts
+                    .get(idx as usize)
+                    .ok_or_else(|| IrError::Unsupported(format!("insertvalue 字段越界：{idx}")))?;
+                let size = agg_bytes;
+                let mut local_gen: Vec<Inst> = Vec::new();
+                // 1) 新槽 + 把 `old_v` 的现有字节拷进去（段值表示：逐段 store；by-ref：逐段 load/store）
+                let (slot, _) = crate::pipeline::legalize::common::place_addr_of_slot(
+                    func,
+                    use_pos.block,
+                    size,
+                );
+                let slot_addr = func.dfg.inst_data(slot).results[0];
+                let mut cur = slot_addr;
+                let mut off_copied = 0usize;
+                let src_addr = agg_slots.get(old_v).map(|&(a, _)| a);
+                let n_segs = size.div_ceil(8);
+                for k in 0..n_segs {
+                    let seg = if let Some(src) = src_addr {
+                        // 从来源内存读 8 字节（末段可能不足 8——按 8 读，槽有余量）
+                        let mut p = src;
+                        if off_copied > 0 {
+                            let cid = func.constants.insert_int(off_copied as i128, 64);
+                            let ci = func.make_inst(
+                                Opcode::Iconst,
+                                use_pos.block,
+                                smallvec::smallvec![],
+                                smallvec::smallvec![Immediate::Const(cid)],
+                                &[TypeId::I64],
+                                InstFlags::NONE,
+                            );
+                            let cv = func.dfg.inst_data(ci).results[0];
+                            local_gen.push(ci);
+                            let add = func.make_inst(
+                                Opcode::Iadd,
+                                use_pos.block,
+                                smallvec::smallvec![src, cv],
+                                smallvec::smallvec![],
+                                &[TypeId::PTR],
+                                InstFlags::NONE,
+                            );
+                            p = func.dfg.inst_data(add).results[0];
+                            local_gen.push(add);
+                        }
+                        let ld = func.make_inst(
+                            Opcode::Load,
+                            use_pos.block,
+                            smallvec::smallvec![p],
+                            smallvec::smallvec![],
+                            &[TypeId::I64],
+                            InstFlags::NONE,
+                        );
+                        local_gen.push(ld);
+                        func.dfg.inst_data(ld).results[0]
+                    } else {
+                        match segs.get(k).copied() {
+                            Some(v) => v,
+                            // 段值不足：补 0（保守且确定——不读未初始化内存）
+                            None => {
+                                let cid = func.constants.insert_int(0, 64);
+                                let ci = func.make_inst(
+                                    Opcode::Iconst,
+                                    use_pos.block,
+                                    smallvec::smallvec![],
+                                    smallvec::smallvec![Immediate::Const(cid)],
+                                    &[TypeId::I64],
+                                    InstFlags::NONE,
+                                );
+                                local_gen.push(ci);
+                                func.dfg.inst_data(ci).results[0]
+                            }
+                        }
+                    };
+                    let st = func.make_inst(
+                        Opcode::Store,
+                        use_pos.block,
+                        smallvec::smallvec![seg, cur],
+                        smallvec::smallvec![],
+                        &[],
+                        InstFlags::SIDE_EFFECT,
+                    );
+                    local_gen.push(st);
+                    if k + 1 < n_segs {
+                        let c8 = func.constants.insert_int(8, 64);
+                        let ci = func.make_inst(
+                            Opcode::Iconst,
+                            use_pos.block,
+                            smallvec::smallvec![],
+                            smallvec::smallvec![Immediate::Const(c8)],
+                            &[TypeId::I64],
+                            InstFlags::NONE,
+                        );
+                        let cv = func.dfg.inst_data(ci).results[0];
+                        local_gen.push(ci);
+                        let add = func.make_inst(
+                            Opcode::Iadd,
+                            use_pos.block,
+                            smallvec::smallvec![cur, cv],
+                            smallvec::smallvec![],
+                            &[TypeId::PTR],
+                            InstFlags::NONE,
+                        );
+                        cur = func.dfg.inst_data(add).results[0];
+                        local_gen.push(add);
+                    }
+                    off_copied += 8;
+                }
+                // 2) 把插入的字段写进槽内对应偏移（浮点字段先位转换为 i64 再存）
+                let store_ty = if field_is_fp {
+                    let bc = func.make_inst(
+                        Opcode::Bitcast,
+                        use_pos.block,
+                        smallvec::smallvec![elem],
+                        smallvec::smallvec![],
+                        &[TypeId::I64],
+                        InstFlags::NONE,
+                    );
+                    local_gen.push(bc);
+                    func.dfg.inst_data(bc).results[0]
+                } else {
+                    elem
+                };
+                let mut field_addr = slot_addr;
+                if field_off > 0 {
+                    let coff = func.constants.insert_int(field_off as i128, 64);
+                    let ci = func.make_inst(
+                        Opcode::Iconst,
+                        use_pos.block,
+                        smallvec::smallvec![],
+                        smallvec::smallvec![Immediate::Const(coff)],
+                        &[TypeId::I64],
+                        InstFlags::NONE,
+                    );
+                    let cv = func.dfg.inst_data(ci).results[0];
+                    local_gen.push(ci);
+                    let add = func.make_inst(
+                        Opcode::Iadd,
+                        use_pos.block,
+                        smallvec::smallvec![slot_addr, cv],
+                        smallvec::smallvec![],
+                        &[TypeId::PTR],
+                        InstFlags::NONE,
+                    );
+                    field_addr = func.dfg.inst_data(add).results[0];
+                    local_gen.push(add);
+                }
+                let st = func.make_inst(
+                    Opcode::Store,
+                    use_pos.block,
+                    smallvec::smallvec![store_ty, field_addr],
+                    smallvec::smallvec![],
+                    &[],
+                    InstFlags::SIDE_EFFECT,
+                );
+                local_gen.push(st);
+                // 3) 结果值登记成"住在该槽"，原指令墓碑化；再递归处理结果值的后续使用
+                let res = func.dfg.inst_data(use_pos.inst).results[0];
+                func.tombstone_inst(use_pos.inst);
+                agg_slots.insert(res, (slot_addr, agg_ty));
+                move_to_front(func, use_pos.block, use_pos.pos, &local_gen);
+                rewrite_agg_value_uses(func, res, &[], agg_ty, agg_slots)?;
+            }
             _ => {
                 return Err(IrError::Unsupported(format!(
-                    "大聚合值用于 {:?}（仅支持 extractvalue/store/return/call 传参）",
+                    "大聚合值用于 {:?}（仅支持 extractvalue/insertvalue/store/return/call 传参）",
                     inst.opcode
                 )));
             }
@@ -749,5 +998,105 @@ mod tests {
         assert_eq!((cs.new_insts, cs.new_values, cs.new_consts), (4, 0, 2));
         assert!(cs.sret);
         assert_eq!(cs.total(), 7, "总数 = 3 项增量 + sret 的 1");
+    }
+
+    /// **非对齐嵌套字段**（`off % 8 != 0`）现在能展开（v23 M6 缺口泛化）。
+    ///
+    /// 以前这里直接 `Unsupported`（"非对齐字段暂不支持"）⇒ `{i8, {i32,i32}}` 这类字段偏移
+    /// 不是 8 倍数的聚合整类编译不了。现在段值先按 `off % 8` 字节移位拼接再写槽。
+    /// 这条用例钉两件事：① 不再报错；② **确实生成了移位拼接**——否则就是"悄悄按对齐处理"，
+    /// 数据会整体错位，那比报错更糟。
+    #[test]
+    fn unaligned_nested_field_is_repacked_with_shifts() {
+        use super::{AggSlots, UsePos};
+        use forge_ir::{Opcode, TypeId};
+
+        let ctx = TypeContext::new();
+        // 内层聚合：{i32, i32}（8 字节），外层把它放在偏移 4（非 8 倍数）。
+        let inner = ctx
+            .borrow_mut()
+            .struct_anon(vec![TypeId::I32, TypeId::I32], false);
+        let sig = FunctionSignature::new(&[(TypeId::I64, "a")], &[inner]);
+        let mut b = FunctionBuilder::new("unaligned_nested", ctx, sig);
+        let (e, params) = b.create_block_with_params(&[(TypeId::I64, "a")]);
+        b.switch_to_block(e);
+        // 两个段值（i64）与一个"提取点"指令（有结果——函数会把它墓碑化并登记结果值）。
+        let s0 = params[0];
+        let one = b.iconst_i64(1);
+        let s1 = b.iadd(s0, one);
+        let _extract = b.iadd(s0, s1);
+        b.ret(&[s0]); // 每个块必须有终结符（builder 的契约）
+        let mut f = b.finish().expect("build");
+        // "提取点"必须是**有结果**的指令（函数会把它的 results[0] 登记进 agg_slots）；
+        // `ret` 没有结果，所以按结果非空挑最后一条。
+        let inst = f
+            .dfg
+            .insts()
+            .filter(|(_, d)| !d.results.is_empty())
+            .map(|(i, _)| i)
+            .last()
+            .expect("至少有一条带结果的指令");
+
+        let use_pos = UsePos {
+            block: e,
+            pos: 0,
+            inst,
+        };
+        let mut agg_slots = AggSlots::new();
+        super::memoryize_from_segs(&mut f, &use_pos, inner, 4, &[s0, s1], &mut agg_slots)
+            .expect("非对齐嵌套字段必须能展开（以前是 Unsupported）");
+
+        let ops: Vec<Opcode> = f.dfg.insts().map(|(_, d)| d.opcode).collect();
+        assert!(
+            ops.contains(&Opcode::Ushr),
+            "非对齐路径必须生成右移拼接（否则是按对齐直存 ⇒ 数据错位）：{ops:?}"
+        );
+        assert!(
+            ops.contains(&Opcode::Ishl),
+            "非对齐路径必须生成左移拼接：{ops:?}"
+        );
+    }
+
+    /// **`insertvalue` 值内存化**（v23 M6 缺口泛化）：以前落到兜底分支直接 `Unsupported`
+    /// ⇒ 任何"先建后改"的聚合构造都编译不了。现在聚合搬进自己的帧槽、插入的字段写进槽内
+    /// 偏移、结果值登记成"住在该槽"。
+    ///
+    /// 钉三件事：① 不再报错；② 结果值**登记进 `agg_slots`**（后续 extractvalue 才找得到它）；
+    /// ③ 槽里**确实写了东西**（有 Store——只登记不写就是"读到未初始化内存"）。
+    #[test]
+    fn insertvalue_is_memoryized() {
+        use super::{AggSlots, rewrite_agg_value_uses};
+        use forge_ir::{Opcode, TypeId};
+
+        let ctx = TypeContext::new();
+        let agg = ctx
+            .borrow_mut()
+            .struct_anon(vec![TypeId::I64, TypeId::I64], false);
+        let sig = FunctionSignature::new(&[(agg, "a")], &[agg]);
+        let mut b = FunctionBuilder::new("insert_value", ctx, sig);
+        let (e, params) = b.create_block_with_params(&[(agg, "a")]);
+        b.switch_to_block(e);
+        let elem = b.iconst_i64(7);
+        let res = b.insert_value(params[0], elem, 1);
+        b.ret(&[res]);
+        let mut f = b.finish().expect("build");
+
+        // 段值表示：两个 i64（就是槽里要有的字节）。
+        let s0 = params[0]; // 仅作占位 Value（类型无关紧要——本路径只把它们 store 进槽）
+        let s1 = elem;
+        let mut agg_slots = AggSlots::new();
+        rewrite_agg_value_uses(&mut f, params[0], &[s0, s1], agg, &mut agg_slots)
+            .expect("insertvalue 必须能展开（以前是 Unsupported）");
+
+        assert!(
+            agg_slots.get(res).is_some(),
+            "insertvalue 的结果值必须登记成\"住在槽\"——否则后续 extractvalue 找不到它"
+        );
+        let ops: Vec<Opcode> = f.dfg.insts().map(|(_, d)| d.opcode).collect();
+        assert!(
+            ops.contains(&Opcode::Store),
+            "槽里必须真的写入（登记+Store 缺一不可）：{ops:?}"
+        );
+        let _ = e;
     }
 }

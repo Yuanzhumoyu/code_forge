@@ -62,10 +62,35 @@ const BUDGETS: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/compiler.rs",
-        20,
-        "16 处生产路径（各 expand_* 入口一次取锁 + 读写交错短读段）+ 1 处测试辅助 + \
-         聚合 sret 形参建立（`expand_sret_return` 与 `append_param` 各一次——**入口级**，\
-         每次编译一次，不在循环里）；rewrite 族已迁出到 agg_expand.rs",
+        3,
+        "3 处：读写交错短读段 + 1 处测试辅助——**合法化 8 个 `expand_*` 的函数体与共享件都已\n\
+         迁出**到 pipeline/legalize/*（v23 M6 批次 2+3+4：20 → 13 → 4 → 3）",
+    ),
+    (
+        "crates/backend/forge-codegen/src/pipeline/legalize/common.rs",
+        1,
+        "落点探针（`agg_arg_place`/`agg_ret_is_sret`）：入口取一次锁（v23 M6 批次 4 从 \
+         compiler.rs 迁出）",
+    ),
+    (
+        "crates/backend/forge-codegen/src/pipeline/legalize/agg_call.rs",
+        5,
+        "调用侧聚合展开（sret 形参 / call 结果拆段）：每个展开入口取一次锁，内部不再逐次取",
+    ),
+    (
+        "crates/backend/forge-codegen/src/pipeline/legalize/agg_param.rs",
+        9,
+        "被调方聚合形参展开：入口取一次锁",
+    ),
+    (
+        "crates/backend/forge-codegen/src/pipeline/legalize/agg_store.rs",
+        1,
+        "聚合字面量 store 展开：入口取一次锁",
+    ),
+    (
+        "crates/backend/forge-codegen/src/pipeline/legalize/gep.rs",
+        1,
+        "GEP 展开：入口取一次锁",
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/agg_expand.rs",

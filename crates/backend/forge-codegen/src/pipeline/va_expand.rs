@@ -169,12 +169,19 @@ pub(crate) fn va_info_for_expansion<M: crate::machine::target::TargetMachine>(
 }
 
 /// 字节宽 → IR 整数类型（游标字段的宽度由 plan 给：sysv64 是 u32，别的形态可能更宽）。
-fn int_ty(bytes: u32) -> TypeId {
+///
+/// **fail-closed**（v23 M6）：以前把"非 1/2/4/8"静默折成 `I64`——形状数据给一个 3/5/6 字节
+/// 的游标字段时，读写会按 8 字节进行，游标与相邻对象字段互相踩。宽度只有四档是有理由的
+/// （IR 整数类型就到 64 位），所以不是"折中"而是**明确报错**。
+fn int_ty(bytes: u32) -> Result<TypeId, IrError> {
     match bytes {
-        1 => TypeId::I8,
-        2 => TypeId::I16,
-        4 => TypeId::I32,
-        _ => TypeId::I64,
+        1 => Ok(TypeId::I8),
+        2 => Ok(TypeId::I16),
+        4 => Ok(TypeId::I32),
+        8 => Ok(TypeId::I64),
+        other => Err(IrError::Unsupported(format!(
+            "变参游标字段宽度 {other} 字节：只支持 1/2/4/8（形状数据给的宽度必须落在这四档）——             以前会静默按 8 字节读写，与相邻字段互相踩"
+        ))),
     }
 }
 
@@ -392,7 +399,7 @@ fn expand_start(
     };
     // 逐字段写（宽度 = 字段自己的宽度；地址类字段写指针）
     for (f, val) in va.fields.iter().zip(init.fields.iter()) {
-        let field_ty = int_ty(f.size.max(1));
+        let field_ty = int_ty(f.size.max(1))?;
         let value = match val {
             VaInitVal::Imm(v) => {
                 let c = mk_iconst(func, b, &mut out, *v as i64);
@@ -556,7 +563,7 @@ fn expand_arg(
     // ① 游标（宽度 = 字段自己的宽度；往下数式是负值 ⇒ 按**有符号**扩展）
     let cur_off_v = mk_iconst(func, b, &mut out, i64::from(cur_off));
     let cur_addr = mk_binop(func, b, &mut out, Opcode::Iadd, ap, cur_off_v, TypeId::PTR);
-    let cur_raw = mk_load(func, b, &mut out, cur_addr, int_ty(cur_size));
+    let cur_raw = mk_load(func, b, &mut out, cur_addr, int_ty(cur_size)?);
     let cur = if cur_size >= 8 {
         cur_raw
     } else {
@@ -612,14 +619,14 @@ fn expand_arg(
             let ov_step_v = mk_iconst(func, b, &mut out, i64::from(rule.overflow_step));
             let ov_next = mk_binop(func, b, &mut out, Opcode::Iadd, ov, ov_step_v, TypeId::PTR);
             let ov_out = mk_select(func, b, &mut out, in_reg, ov, ov_next, TypeId::PTR);
-            store_cursor(func, b, &mut out, cur_out, cur_size, cur_off, ap);
+            store_cursor(func, b, &mut out, cur_out, cur_size, cur_off, ap)?;
             store_at(func, b, &mut out, ov_out, ov_off, ap);
             p
         }
         None => {
             let step_v = mk_iconst(func, b, &mut out, i64::from(rule.step));
             let cur_next = mk_binop(func, b, &mut out, Opcode::Iadd, cur, step_v, TypeId::I64);
-            store_cursor(func, b, &mut out, cur_next, cur_size, cur_off, ap);
+            store_cursor(func, b, &mut out, cur_next, cur_size, cur_off, ap)?;
             addr
         }
     };
@@ -653,13 +660,14 @@ fn store_cursor(
     cur_size: u32,
     off: u32,
     ap: Value,
-) {
+) -> Result<(), IrError> {
     let stored = if cur_size >= 8 {
         cur
     } else {
-        mk_unop(func, b, out, Opcode::Ireduce, cur, int_ty(cur_size))
+        mk_unop(func, b, out, Opcode::Ireduce, cur, int_ty(cur_size)?)
     };
     store_at(func, b, out, stored, off, ap);
+    Ok(())
 }
 
 /// `[ap + off] = val`（偏移 0 时直接用 `ap`，省一条 add）。
@@ -695,15 +703,28 @@ fn va_arg_site(func: &Function, ii: Inst) -> Result<VaArgSite, IrError> {
         .dfg
         .value_type(res)
         .ok_or_else(|| IrError::Internal("va_arg：结果值没有类型".into()))?;
-    let (is_fp, is_f32, bits, is_vec) = {
+    let (is_fp, is_f32, bits, is_vec, is_agg) = {
         let ts = func.types.borrow();
         (
             ts.is_float(ty),
             ts.is_float(ty) && ts.size_bytes(ty) == 4,
             ts.size_bytes(ty) * 8,
             ts.is_vector(ty) || ts.is_scalable_vector(ty),
+            ts.is_aggregate(ty),
         )
     };
+    if is_agg {
+        // **fail-closed**（v23 M6）：以前聚合结果落到下面的 `mk_load(p, ty)`——按**标量**
+        // 从变参区读一个聚合类型，静默错值。要真做对，先得有"聚合在变参区里怎么放"的规则，
+        // 而约定数据（`va.arg_rules`）只分 int/fp 两类、**没有聚合条目** ⇒ 那属约定层的数据
+        // 扩展（要连同内置规则与真执行用例一起做）。在那之前，明确报错好过静默读错。
+        return Err(IrError::Unsupported(
+            "va_arg：聚合结果需要「聚合在变参区里怎么放」的规则，而约定数据（`va.arg_rules`）\
+             只有 int/fp 两类、没有聚合条目——此前会按标量 load（静默错值）。\
+             调用方可改为按标量逐个 va_arg，或先在约定层补聚合取参规则"
+                .into(),
+        ));
+    }
     if is_vec {
         return Err(IrError::Unsupported(
             "va_arg: 向量结果需要「mem → 向量寄存器」的取值能力（尚未申报）".into(),
@@ -728,6 +749,26 @@ mod tests {
     use forge_ir::ir::builder::FunctionBuilder;
     use forge_ir::ir::types::{FunctionSignature, TypeContext};
     use forge_isa_runtime::machine::call_layout::{VaArgRule, VaArgRules, VaInfo, VaSave};
+
+    /// **游标字段宽度 fail-closed**（v23 M6）：1/2/4/8 四档照旧，其余**明确报错**。
+    ///
+    /// 以前 `_ => TypeId::I64` 把 3/5/6 字节静默当 8 字节读写——游标字段会与相邻对象字段
+    /// 互相踩（症状是"取参取到别的字段的值"），而形状数据是**使用者给的**，写错至少要报出来。
+    #[test]
+    fn cursor_field_width_is_fail_closed() {
+        assert_eq!(int_ty(1).expect("1 字节"), TypeId::I8);
+        assert_eq!(int_ty(2).expect("2 字节"), TypeId::I16);
+        assert_eq!(int_ty(4).expect("4 字节"), TypeId::I32);
+        assert_eq!(int_ty(8).expect("8 字节"), TypeId::I64);
+        for bad in [0u32, 3, 5, 6, 7, 16] {
+            let err = int_ty(bad).expect_err("非 1/2/4/8 必须报错");
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("游标字段宽度"),
+                "{bad} 字节：错误信息应点名游标字段宽度，实际：{msg}"
+            );
+        }
+    }
 
     fn probe_with_local() -> Function {
         let ctx = TypeContext::new();
@@ -813,5 +854,51 @@ mod tests {
         // 没有保存区（win64 栈式）：对象直接排在前端局部槽之下
         let s2 = plan_abi_slots(&f, &va(false), 8, 64);
         assert!(s2.obj_depth >= front + 24, "对象槽在局部槽之下");
+    }
+
+    /// **`va_arg` 聚合结果 fail-closed**（v23 M6）：以前落到 `mk_load(p, ty)`——按**标量**从
+    /// 变参区读一个聚合类型，静默错值。约定数据（`va.arg_rules`）只有 int/fp 两类、没有聚合
+    /// 条目，所以"做对"需要约定层的数据扩展；在那之前必须**报错**而不是读错。
+    ///
+    /// 这条守卫钉的是**行为**：把"静默错值"变成"明确拒绝"。
+    #[test]
+    fn aggregate_va_arg_is_fail_closed() {
+        use forge_ir::{Opcode, TypeId};
+
+        let ctx = TypeContext::new();
+        let agg = ctx
+            .borrow_mut()
+            .struct_anon(vec![TypeId::I64, TypeId::I64], false);
+        let sig = FunctionSignature::new(&[(TypeId::PTR, "ap")], &[TypeId::I64]);
+        let mut b = FunctionBuilder::new("va_agg", ctx, sig);
+        let (e, params) = b.create_block_with_params(&[(TypeId::PTR, "ap")]);
+        b.switch_to_block(e);
+        // 直接造一条 `va_arg` 且结果类型是聚合。
+        let v = b.emit1(
+            Opcode::VaArg,
+            vec![params[0]],
+            vec![],
+            agg,
+            forge_ir::InstFlags::SIDE_EFFECT,
+        );
+        let _ = v;
+        b.ret(&[params[0]] as &[forge_ir::Value]);
+        let f = b.finish().expect("build va_agg");
+        let ii = f
+            .dfg
+            .insts()
+            .find(|(_, d)| d.opcode == Opcode::VaArg)
+            .map(|(i, _)| i)
+            .expect("va_arg 指令");
+        // `VaArgSite` 没有 `Debug` ⇒ 用 match 取错误（也顺带断言"确实失败"）。
+        let err = match super::va_arg_site(&f, ii) {
+            Ok(_) => panic!("聚合 va_arg 必须报错（不再静默按标量 load）"),
+            Err(e) => e,
+        };
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("聚合") && msg.contains("arg_rules"),
+            "错误信息应点名聚合与约定数据缺口，实际：{msg}"
+        );
     }
 }
