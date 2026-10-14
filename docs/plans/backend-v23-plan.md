@@ -1,8 +1,14 @@
 # 后端 v23 里程碑方案：数据驱动的通用后端
 
-> **状态：[progress] → 六个里程碑均已落地**（2026-10-11 立项、同日逐批落地并提交；M1–M6 见 §5，逐项回写进度、实测数字与命令）。
-> **收口判据（2026-10-11 实测）**：`cargo test --workspace --exclude forge-rustc` exit 0；`forge-codegen --lib --all-features` **2816 passed**；`jit_matrix_x86` **197/3/0**、`jit_matrix_riscv64` **136/64/0**；asm 三档 `asm_parse` 3 / `asm_encoding` 1 / `asm_exec` 1；`clippy -D warnings` 与 `fmt --check` 干净。
-> **两处记录在案的未达成**（都属约定层数据扩展，见 §14 后的 M6 批次记录）：① `va_arg` 聚合**真做**（当前已 fail-closed，不再静默错值）；② `>16B` 非 sret 栈返回走 `StackByVal`。
+> **状态：[progress] → 六个里程碑均已落地**（2026-10-11 立项、同日逐批落地并提交；
+> M1–M6 见 §5，逐项回写进度、实测数字与命令）。
+> **收口判据（2026-10-11 实测）**：`cargo test --workspace --exclude forge-rustc` exit 0；
+> `forge-codegen --lib --all-features` **2816 passed**；`jit_matrix_x86` **197/3/0**、
+> `jit_matrix_riscv64` **136/64/0**；asm 三档 `asm_parse` 3 / `asm_encoding` 1 /
+> `asm_exec` 1；`clippy -D warnings` 与 `fmt --check` 干净。
+> **两处记录在案的未达成**（都属约定层数据扩展，见 §14 后的 M6 批次记录）：
+> ① `va_arg` 聚合**真做**（当前已 fail-closed，不再静默错值）；
+> ② `>16B` 非 sret 栈返回走 `StackByVal`。
 > 命名说明：本方案的 "v23" 是本里程碑自己的编号，与 ISA-DSL **语法版本 v22**
 > （不写进 TOML、只靠文档/CHANGELOG 追踪）不是同一套编号——**不要把 v23 写进任何
 > `isa/*.toml`**。证据行号取自立项时 HEAD `d5d66cdb`，随迭代漂移，**以符号名为准**。
@@ -56,26 +62,39 @@
 ## 2. 成功判据（客观可验）
 
 - **S1** `rg -n 'avx(2|512)?_available' crates/backend/forge-codegen/src/pipeline` → 0；
+
   `rg -n '> 8|> 16' crates/backend/forge-codegen/src/pipeline` → 0（注释与守卫白名单除外）。
+
 - **S2** 聚合间接判据唯一：全部经 `AbiPlan` 查询；`rg 'size_bytes\(.*\) >' pipeline` → 0。
 - **S3** `BacktrackingAllocator::allocate` 只接受 `&VCode<I>` + `&RegAllocConfig`；
+
   `CompileState` 无 `xreg_map`/`inst_clobbers`/`xreg_types`。
+
 - **S4** 编译实现唯一：`CompileSession` 是唯一做编译的类型（`FunctionCompiler`/`compile_raw`
+
   全仓 0 命中）；`JitLoader::add_function`/`compile_module` 只是**薄委托**（每处 ≤ 5 行，
   自身不含管线调用）；`target.rs` 的擦除入口只查注册表。
+
 - **S5** `rg 'TargetPeephole|TargetSimulator|AllocContext|CallLayout|ArgPlace'` → 仅注释/守卫白名单。
 - **S6** 门禁全绿：`cargo test --workspace --exclude forge-rustc`；
+
   `cargo test -p forge-tests --lib jit_matrix_x86 -- --nocapture`；
   `cargo test -p forge-tests --lib jit_matrix_riscv64 -- --test-threads=1 --nocapture`
   （QEMU 缺通道如实记 skip，不假绿）；`asm_parse`/`asm_encoding`/`asm_exec` +
   `asm/ratchet/<isa>.txt` 逐项相等；`cargo clippy --workspace --all-targets -- -D warnings`；
   `cargo fmt --all -- --check`；改动文档 `npx markdownlint-cli2 <文件>` 0 error。
+
 - **S7** 通用性裁判（新用例）：`tests/isa/demo8.toml`（1 字节寄存器）与
+
   `tests/isa/demo_inst100.toml`（100 位指令字）各编一条带聚合传参的函数；
   一条合成约定（阈值 ≠ 8、保存集含第三族）能出 plan 并编过。
+
 - **S8** 净减：`crates/backend/forge-codegen/src/pipeline/` 生产代码 −1800 行量级
+
   （立项时约 6800 行），无新增 `#[allow]`。
+
 - **S9** 不劣化：`cargo bench --bench compile_bench -- --save-baseline before` /
+
   `--baseline before` 的 `comparison|codegen` 组劣化 ≤ 5%；`CF_CODEGEN_TIMING` 的
   regalloc 占比写进 `docs/performance/bench_baseline.md`；C3/C4 修好后「需要驱逐活跃值」
   的合成用例从 fail-closed 变为可编且结果正确。
@@ -128,17 +147,27 @@ ABI 侧只有一层数据：`forge-abi-model`（POD：`AbiPlan`/`Placement`/`Ret
 #### 改动
 
 - 新增 `pipeline/session.rs`：`CompileSession<M: TargetMachine>`，`for_module(machine, &Module)`
+
   或 `new(machine)`；链式 `with_opt_level` / `with_parallel` / `with_alloc_config`；
   `compile_module(&Module) -> Result<CompiledModule, IrError>`；`add_function(name, sig, build_fn)`
   走**同一条内部路径** `compile_one(func, sigs)`（因此 `add_function` 也带模块签名表，修变参洞）。
+
 - `CompiledModule { machine, functions: Vec<CompiledFunction>, symbols, data_segments }`：
+
   `function(&self, name)`、`iter_functions()`、`jit()/into_jit()`。
+
 - 模块签名表类型化：`ModuleSigs(Vec<FuncSigEntry>)`（`variadic`/`fixed_args`/`param_count`），
+
   替代满仓的 `Vec<(bool, u32)>`（`compiler.rs:1818`、`abi_setup.rs:36-41`、`jit.rs:212`）。
+
 - 删 `FunctionCompiler` 公开面（并入 session，保留内部实现）；`compile`/`compile_raw` 二者取一
+
   （优化级别用一个 `OptLevel` 表达）。
+
 - `JitCompiler` → `JitLoader`（只负责可执行内存、符号解析、重定位应用、`get_fn`）；
+
   `jit.rs:213-269` 的并行/串行两条复制路径合成一条循环 + `parallel` 选项。
+
 - `ErasedTargetMachine::compile(func)` → `compile_module(&Module)`（`target.rs:121-129`）。
 
 #### 公开面变化（破坏性）
@@ -165,15 +194,23 @@ ABI 侧只有一层数据：`forge-abi-model`（POD：`AbiPlan`/`Placement`/`Ret
 #### 改动
 
 - 新增 leaf crate `crates/foundation/forge-abi-model`（零内部依赖）：`AbiPlan`、`Placement`、
+
   `RetLoc`、`ArgShape`、`TyView`、`Signature`、`DeclAttrs`、`VaArgRule`（**带** `VaField.name`）、
   `VaField`。`forge-abi` 依赖它并 `pub use`（保持 `forge_abi::AbiPlan` 路径）；
   `forge-isa-runtime` 依赖它。
+
 - 删 `forge-isa-runtime/src/machine/call_layout.rs` 的整套镜像与 `abi_target.rs:275-583` 的翻译；
+
   `AllocResult.call_layout: Option<AbiPlan>`；生成物 `move_args` 读 POD。
+
 - 单一 IR→形状投影：`fn type_to_shape(store, ty) -> TyView`（唯一实现，含深度/长数组策略），
+
   删 `sig_view.rs:45-96` 与 `call_layout.rs:384-439` 两份；删 `ShapeKind::Vector.elem_bytes`。
+
 - 单次分类：`AbiPlan` 增 `arg_kind(&self, i) -> ArgKind` / `ret_kind(&self) -> RetKind`；
+
   删 `agg_arg_place`/`agg_ret_is_sret`（`compiler.rs:75-151`）。
+
 - 别名口径统一：`LowerCtx.conv.name`（原始注册键）与 `CallLayout.conv`（别名解析后）合成一个字段。
 
 #### 边界
@@ -192,17 +229,27 @@ win64/sysv64/aapcs64/lp64d 下「调用方计划 == 被调方计划」）+ aapcs
 #### 改动
 
 - `TargetMachine::features(&self) -> FeatureSet`（ISA 申报 ∪ 宿主探测，名字是数据）；
+
   `TargetRegInfo` 增 `wide_vector_bytes(&self) -> &[u16]`、`vector_by_value_max(&self) -> u16`（缺省 16）。
   管线四处（`compiler.rs:1935/1942/1990/2310`）改问能力，删对 `avx512_available()` 的直接调用。
+
 - 聚合阈值只从引擎来：`AbiPlan::agg_is_indirect(size, align)`（由 `rules.rs` 的
+
   `size_gt`/`size_le`/`IndirectVia` 派生）；G2 的 7+2 处 `> 8`/`> 16` 与两处 `div_ceil(8)` 全走它。
+
 - 合法化判据合一：删 `agg_expand.rs:14-150` 的 7 个 `has_*`，改成「无条件进 pass，pass 自报
+
   `ChangeSet`」；仅保留一处 dry-scan 决定「是否需要 clone」（消除 C2 的静默漏判）。
+
 - A6 收口：fp-outside 的 callee-saved 改为**运行时按 `plan.callee_saved` 循环**发射（fp-inside 已是），
+
   删谱面静态 push 表与 `frame_layout.rs:44-58` 的「按谱表数兜底」分支；无 plan ⇒ 明确报错。
+
 - 删死钩子与死 API（G4/R7）：`TargetPeephole`、`TargetSimulator`、`AllocContext`、
+
   `TargetEncoder::encoded_size`/`encode_into`、`AllocResult::dummy_for_sizing`、
   `RegAllocConfig::new`（改 `from_target(machine)` 唯一构造）。
+
 - 修 `agg_const.rs:38-41` 的小端写死（随常量池段端序）。
 
 #### 边界
@@ -225,12 +272,18 @@ S1/S2/S5/S7；`frame_layout.rs` 单测改按 plan；三 ISA 真执行矩阵不�
   以及 `effects`/`is_branch`/`branch_targets`/`is_call`/`is_ret`/`memory_access`/`is_move`/`clobbers`；
   删 `uses`/`defs`/`use_constraints`/`def_constraints`/`reg_field`/`set_reg_field`/
   `is_reg_field_settable`。
+
 - 生成器（**机械同步**，`crates/frontend/forge-isa-dsl/src/dsl/codegen/machine.rs`）：`__Shape` 的
+
   `uses`/`defs`/`def_reuse` 合并成「按字段序」的约束表，加发 `operands()`/`set_operand_reg()`，
   删 10 个方法；`gen_lowering` 每 arm 的 `map_reg_field` 调用全部删除。
+
 - `InstPacket` 只剩 `insts`/`inputs`/`outputs`/`xregs`：删 `xreg_map`、`map_reg_field`、
+
   `remap_internal`（XReg 重编号这一整类 bug 面消失）。
+
 - 管线：`CompileState` 只留 `inst_ops: Vec<SmallVec<[InstOperand; 4]>>`，删 `xreg_map`/
+
   `inst_clobbers`/`ctx.xreg_types`；liverange/regalloc/emission 统一读它；class 回写只留一份（修 R3）。
 
 #### 边界
@@ -249,22 +302,35 @@ S1/S2/S5/S7；`frame_layout.rs` 单测改按 plan；三 ISA 真执行矩阵不�
 
 - 修 C3：池过滤按**该类自己的** sp/fp（或生成侧直接剔净）。三个发行 ISA 各释放 2 个寄存器。
 - 修 C4：`RegAllocConfig.callee_saved: Vec<(RegClass, u32)>` 一张表（plan 给），`pop_free` 按类查；
+
   删 `callee_saved`/`callee_saved_fpr` 两份平行列表；新增「FPR callee-saved 真的被保住」用例。
+
 - 清 C5：约束四臂由 `operands()` 的 constraint 驱动（否则删）；`precolored` 接通或删；
+
   驱逐按 `next_use_after` 真正取「最远的下一次使用」（Belady），并允许无死值时按 spill cost
   选活跃值——**文档与实现必须一致**，选「实现」。
+
 - 活区间单次遍历（`liverange.rs` + `regalloc_bt.rs:193-378`）：三趟合成一趟；`weight` 要么参与
+
   驱逐、要么删。
+
 - 输出密集化：`RegAllocOutput { assign: Vec<Option<PReg>>, spills: Vec<Option<SpillSlot>> }`；
+
   `AllocResult` 拆成 `RegAllocOutput` + `FrameLayoutResult` + `ParamPlaces(Vec<ParamPlace>)`
   （消 `param_vregs`/`param_is_float`/`param_by_ref`/`param_is_32`/`param_bytes` 五条平行数组）；
   分配器不再构造它不知道的字段（`sret`/`stack_arg_bytes`/`va_*` 由管线填）。
+
 - spill 显式编辑：分配器产出 `SpillEdit` 序列（store / reload / scratch 绑定），emission 退化为
+
   「按序发射」；删 13 参 `emit_inst_with_spills`、scratch 池分配与 `settable` 预检；
   `emit_spill_load/store` 的 `is_fp: bool` 改 `RegClass`（解开 VEC/KReg 分派）。
+
 - 帧记账单点：`FramePlan` 一次算好放进 `LowerCtx`/`AllocResult`，删 `compiler.rs:100/2047/2299`、
+
   `frame_layout.rs:118`、`emission.rs:38` 的重算（C6）。
+
 - `MachBuffer`（新 `forge-isa-runtime/src/machine/machbuf.rs`）：标签引用/绑定、分支松弛固定点、
+
   常量池岛、重定位记录——替掉 `emission.rs:51-150` 的「非返回块先发、返回块最后」次序 hack、
   `ExternalLabel::EPILOGUE` 哨兵（`:156-161`）与 `needs_epilogue_label` 特判；JIT（`jit.rs:325-369`）
   与 `ObjectWriter` 共用同一份重定位语义，删 JIT 自己的 `compute_patch_value` 复制。
@@ -287,13 +353,19 @@ spill 压力与「固定字段 spill」用例按新语义改写；新增「必�
   ctx: &mut LegalizeCtx) -> Result<ChangeSet, IrError>; }` 与 `LegalizeDriver`（定序、定点、变化报告、
   幂等守卫四个职责）。8 个 `expand_*` 收成 5 个 pass：`AggStore`、`AggCall`（结果/参数/返回/sret
   合一）、`AggParam`、`Gep`、`Va`。
+
 - 去重（R6）：`fn pack_segment(bytes, off) -> u64`、`fn place_addr_of_slot(...)`（`Alloca(Type(I8),
+
   Uint(n))` 形态的唯一出口）、统一调用 `agg_expand::move_to_front`（删 4 处内联）。
+
 - 缺口泛化（按依赖序）：`va_arg` 聚合分支（现在静默按标量 load，`va_expand.rs:628-632`）走同一份
+
   分类；`>16B` 非 sret 栈返回（`compiler.rs:199/469-474/702-706`）用 `StackByVal` 返回；
   未对齐嵌套字段（`agg_expand.rs:211-215`）改逐字节拷贝；聚合值其余算子（`agg_expand.rs:645-650`）
   改值内存化。
+
 - `va_expand.rs:625-627` 的 C 默认提升（f32→f64→Fptrunc）移进 `AbiRules` 数据；
+
   `int_ty()` 的「非 1/2/4/8 宽度静默折 I64」改 fail-closed。
 
 #### 验收
@@ -330,13 +402,18 @@ spill 压力与「固定字段 spill」用例按新语义改写；新增「必�
 ## 8. 顺序、风险与假设
 
 - **顺序**：M1 → M2 → M3 → M4 → M5 → M6。依赖：M2 是 M3/M6 的前置（阈值/形状只有一份才谈得上
+
   「能力数据化」）；M4 是 M5 的前置（spill 编辑按 operands 生成）；M3 的「删死钩子」（G4/R7）
   体量小、无依赖，可提前到 M1 顺手做。
+
 - **风险**：M4/M5 动生成物契约 → 由 `determinism`、`machine_shape_table`、`no_hardcoded_widths`、
+
   `isa_roundtrip_guard`、`spec_coverage_guard` 五条守卫托底；M5 的 spill 编辑动真执行路径 →
   分两步（先等价改写，再改策略）；C3/C4 修好后**寄存器分配结果变化**（可能改变生成字节），
   矩阵按「值正确」判定，字节级黄金若有需同步重刷并在本文件写明原因。
+
 - **假设**：三份发行谱与 10 份夹具可随生成器契约同步改；QEMU 通道可判定（否则 skip 如实记录）；
+
   M2 后 `forge-abi` 四份 `.plan.txt` 黄金除 HFA 修正外不变；`forge-abi-model` 引入后
   `forge-isa-runtime` 不再受「不能依赖 ABI 数据」约束（这是本方案刻意打破的旧约束）；
   取 leaf crate 以免把 serde/toml 拖进运行时。
@@ -344,16 +421,23 @@ spill 压力与「固定字段 spill」用例按新语义改写；新增「必�
 ## 9. 参考设计（外部，作为取舍依据）
 
 - Cranelift 的机器指令/VCode 模型——操作数（`Reg`/`VReg`/`InsnInput`/`InsnOutput`）挂在指令上、
+
   不另立平行旁表：[cranelift_codegen::machinst](https://docs.wasmtime.dev/api/src/cranelift_codegen/machinst/mod.rs.html)、
   [machinst/vcode.rs](https://raw.githubusercontent.com/bytecodealliance/wasmtime/0f4c0d4a358187f99f23897d306c8b2a3c94287e/cranelift/codegen/src/machinst/vcode.rs#1)
   ——对应 M4/M5。
+
 - ISLE：把「匹配 + 发射」变成数据/规则而不是手写分支链
+
   （[cranelift-isle README](https://android.googlesource.com/toolchain/rustc/+/87880447cc5437c45a3562596a9766d9797e7318/vendor/cranelift-isle/)）
   ——对应 M3 的「单一判据来源」结论（不引入脚本引擎）。
+
 - LLVM GlobalISel 的 TableGen 发射器：ISA 描述一次、多消费者同源
+
   （[GlobalISelEmitter.cpp](https://android.git.googlesource.com/toolchain/llvm/+/e0714cfc0fecd4a47349ffc676f1d91c03eb4e1c/utils/TableGen/GlobalISelEmitter.cpp)）
   ——对应 M2/M4 的「单一事实源」。
+
 - 本仓内部可照抄的先例：`frame_slots::scan_frontend_slots`（单一实现）、
+
   `dsl/codegen/moves.rs` 的 `MoveTable`（唯一查表实现）、`fold_short_forms`（生成器后处理唯一入口）。
 
 ## 10. M1 落地记录（2026-10-11）
@@ -361,19 +445,27 @@ spill 压力与「固定字段 spill」用例按新语义改写；新增「必�
 ### 改动
 
 - `pipeline/session.rs`（新）：`CompiledModule`（**纯数据且类型无关**：函数按 `FuncRef` 序、
+
   全局双符号、数据段、`isa` 标签；`into_parts` 供装载）、`CompileSession::compile_module`
   （整模块唯一实现：≥8 函数走 `std::thread::scope` 并行，串行/并行共用同一个 `compile_one`）、
   `CompileSession::add_function`（单函数便捷入口）。
+
 - `pipeline/compiler.rs`：`FunctionCompiler` → `CompileSession`（`machine()` 降为 `pub(crate)`），
+
   删 `compile_raw`（`compile` 与它本来就是同一句调用），字段 `module_sigs` 改
   `Option<Arc<ModuleSigs>>`。
+
 - `foundation/forge-ir`：新增 `ModuleSigs`/`FuncSigEntry`，`Module::signature_table()` 改返回它。
 - `foundation/forge-isa-runtime`：`CallConvCtx::module_sigs: Option<Arc<ModuleSigs>>`；
+
   `variadic_of` 改走 `variadic_at`；`FunctionPipeline`/`ErasedTargetMachine` 的方法名
   `compile_raw` → `compile`。
+
 - `runtime/jit.rs`：`JitCompiler` → `JitLoader`；`add_function`/`compile_module` 改**委托**
+
   `CompileSession`，装载收敛成 `install(CompiledModule)` + `load_function`（含 ISA 核对）；
   新增 `sigs: ModuleSigs` 按序累积（修单函数入口丢签名表）。
+
 - 全仓机械收尾：`FunctionCompiler`/`JitCompiler`/`compile_raw` 在 `*.rs` 里 0 命中。
 
 ### 验收证据
@@ -422,10 +514,15 @@ nightly 上被点出——CI 钉版 nightly-2026-09-05 未报）：`dsl/model.rs
 `ByRef`，调用方按"本地副本 + 传指针"改写两端，而被调方按浮点寄存器收参 ⇒ **静默错值**。
 
 - 现在两个探针取 `(&TypeStore, TypeId)`，形状一律走 `ArgShape::from_ir_type`
+
   （与调用点 plan、被调方 plan **同一份投影**，递归摊开成员/lane）。
+
 - 三个调用点（`expand_large_agg_params` / `expand_sret_return` / `expand_agg_call_args`）
+
   改为传类型；**读锁处数不变**（判定与探针合并进同一段读锁，`read_path_budget` 仍为 20）。
+
 - 守卫：`compiler.rs::alloc_integration_tests::aggregate_place_probe_carries_member_shapes`
+
   —— 用**同尺寸、不同成员**的一对类型证明"成员真的进了探针"：
   `{f64,f64,f64}`（24 B，HFA）⇒ `Registers`；`{i64,i64,i64}`（24 B，非 HFA）⇒ `ByRef`。
   只比 size 的旧实现必然给两者同一答案 ⇒ 这条守卫就是 C1 的判据。
@@ -433,58 +530,87 @@ nightly 上被点出——CI 钉版 nightly-2026-09-05 未报）：`dsl/model.rs
 ### 已落地（2026-10-11，第六批）：**删掉运行时镜像——M2 收口**
 
 - **`CallLayout`/`CallArg`/`ArgPlace`/`RetPlace`/`Ext` 整条删除**：`AllocResult::call_layout` 与
+
   `CallConvCtx::layout` 的类型**就是** `AbiPlan`；`abi_target::call_layout`（~260 行翻译）消失，
   调用点钩子 `plan_call` 直接返回 `AbiPlan`。
+
 - **落点访问器**（`Placement::{as_reg, indirect_ptr, stack_offset, is_stack_byval, reg_refs}`、
+
   `RetLoc::{as_reg, reg_refs}`、`AbiPlan::{arg, caller_offset, slot_bytes, shadow_bytes,
   hidden_sret_slot, va_meta_slot}`）：生成物 12 处 + 调用点 5 臂改走访问器，
   **不再穷举枚举**（"引擎加变体、发射静默走错分支"结构上不可能）。
+
 - `RetLoc` 不再 `Option`（`Void` 表"无返回"）；栈区字段统一从 `plan.stack` 读。
 - 运行时 `machine/call_layout.rs`：255 行 → 78 行（只剩 `va_list` 的宿主侧外壳 `VaInfo`/
+
   `VaInit`/`VaInitVal` + 模型变参类型的再导出）。
+
 - 守卫同步（`call_layout_emission.rs` 判据 = 落点访问器）；生成物解析失败时打印**谱名** +
+
   落盘 token 原文（本轮排查用上，留在生成器里）。
 
 ### 已落地（2026-10-11，第五批）：变参类型只剩一份（删 5 个手抄镜像类型）
 
 - 运行时的 `VaArgRule`/`VaArgRules`/`VaField`/`VaSaveArea`(=`VaSave`)/`VaSaveSlot`
+
   **五个手抄类型整条删除** → `pub use forge_abi_model::plan::{…}`。此前 `VaArgRule` 的
   9 个字段在计划面与镜像各写一遍，`VaField.name` 还在翻译时被**静默丢弃**（现在回来了）。
+
 - 翻译层删掉 `va_arg_rules`/`va_arg_rule_one`（20 行逐字段搬家）与字段/槽表重建（~15 行）：
+
   `VaInfo` 现在只剩"宿主算出来的 `VaInit`"要填（那个**不是**镜像——它依赖"已用掉几个
   参数寄存器"，只有编译入口知道）。
+
 - 模型侧 `VaArgRule`/`VaArgRules` 补 `Copy`（纯小记录）。
 - 生成物的寄存器保存区 store 序列改读 `__slot.reg.slot`/`__slot.reg.class`
+
   （`dsl/codegen/frame.rs` 的 4 个 emitted 站点）——生成物里也只剩一种寄存器表示。
 
 ### 已落地（2026-10-11，第四批）：`RegRef` 带类型化类与类内号（翻译层收敛）
 
 - `RegRef { index /*ABI 空间号*/, slot /*类内号*/, class: forge_ir::RegClass, name }`：
+
   两个坐标各有其主（引擎按 `index` 记账、发射按 `(class, slot)` 构造寄存器），
   文档写明**不是重复表示**。
+
 - `AbiTarget` 增 `reg_class(index) -> RegClass` 与 `reg_slot(index) -> u32`——
+
   "整数区有几个"是**机器事实**，由宿主答一次，下游不再回查。
+
 - **翻译层的寄存器映射**从 20 行"按名字回查 + 判断 + 退化"收敛成
+
   `let reg = |r| (r.class, r.slot);`（`abi_target::call_layout`）。
+
 - 5 处 `AbiTarget` 实现补齐（真实后端 / `forge-isa` 的 `ViewTarget` / `StubTarget` /
+
   三处测试替身）；新增 `forge_ir::RegClass::from_name`（`Debug` 形态的逆，供谱侧类名串还原）。
+
 - `AbiPlan` 一族的 serde 派生全部去掉（实测无消费者；只有 TOML 面的 `CalleeSaveMechanism` 留）。
 
 ### 已落地（2026-10-11，第三批）：形状只剩 `TyView`（删 `ArgShape`/`ShapeKind` + 两份投影合一）
 
 - **删掉运行时侧的中性形状类型**：`ArgShape`/`ShapeKind`（`machine/call_layout.rs` 里 19 处定义、
+
   `call_plan.rs` 8 处）整条删除；`CallRequest { args: Vec<TyView>, rets: Vec<TyView> }`。
   `abi_target::shape_to_ty` 那座"运行时形状 → 引擎视图"的桥（match 30 行）随之消失。
+
 - **IR → 视图的投影只剩一份**：`TyView::from_ir_type`（`forge-abi-model/src/ir_view.rs`，
+
   深度上限 4、成员上限 16）。此前两份且**退化策略不一致**：运行时的 `ArgShape::from_ir_type`
   与代码生成的 `sig_view::ty_view`——后者**没有深度上限**（递归类型会栈溢出）且长数组折成
   "一个整块 int"，正是"调用点与被调方对同一类型分类分叉"的温床（C1 的同类问题）。
   `sig_view::{ty_view, element_kind, expand_members}` 全删（`signature_view` 直接用唯一投影）。
+
 - 生成物路径：`crate::machine::call_layout::ArgShape` → `crate::machine::abi_model::TyView`
+
   （运行时 `machine/mod.rs` 对 leaf crate 做**再导出**，路径因此稳定、M2 收口时不必再改）。
+
 - 依赖面守卫（`runtime_surface.rs`）的白名单加入 `forge-abi-model` 并**写明理由**
+
   （leaf 数据 crate：只有 serde+forge-ir，不含引擎/规则加载层/管线）。
+
 - 影响 `ty.rs` 的 `TyKind::Vector` 只剩 `{elem, lanes}`——旧 `elem_bytes` 字段（审计标注
+
   "要求传入后被丢弃"）不再存在；向量的 size/align 一律取 `TypeStore` 的权威值。
 
 ### 已落地（2026-10-11，第二批）：leaf crate `forge-abi-model` + 删掉 `RegRef` 的死字段
@@ -492,24 +618,33 @@ nightly 上被点出——CI 钉版 nightly-2026-09-05 未报）：`dsl/model.rs
 **① 产物抽成 leaf crate**（M2 的"删镜像"前置）：
 
 - 新 crate `crates/foundation/forge-abi-model`：`plan.rs`（`AbiPlan`/`Placement`/`RetLoc`/
+
   `ArgLoc`/`StackLayout`/`HiddenSlots`/`VaArea`/`VaArgRule(s)`/`VaField`/`VaSave*`/`DeclAttrs`
   与 `to_text`）、`ty.rs`（`TyView`/`TyKind`/`Elem`）、两个**规则侧小枚举**
   （`PositionRule`/`CalleePop` + `resolve_callee_pop`，它们同时是 `AbiRules` 与 `AbiPlan`
   的字段类型）。依赖只有 `serde`（`AbiPlan` 的 serde 派生实测**无消费者**，本可去掉，
   但两个规则枚举是 TOML 面类型，先留着——`toml` 不进运行时）。
+
 - `forge-abi` 变成"规则/绑定/引擎/注册表"并 `pub use forge_abi_model::{plan, ty, rules_pod}`
+
   ——`forge_abi::plan::RegRef`、`forge_abi::AbiPlan`、`forge_abi::TyView` 等路径**全部照旧**，
   因此全仓 0 处调用改动（只有 `engine.rs` 一处 `AbiPlan::resolve_callee_pop` 改指模型）。
+
 - 依赖图与 `CLAUDE.md` 同步（`forge-abi → forge-abi-model`）。
 
 **② 删掉 `RegRef` 的**死**字段** `class: String`：
 
 - 实测**全仓没有一个读者**（发射侧要的"类 + 类内号"由 ISA 的目标视图给出，不由这份数据携带；
+
   代码里 `.class` 的命中全是 `XReg::class()`/`PReg.class`/`LiveInterval.reg_class`）。
+
 - 连带删掉只喂养它的 `AbiTarget::reg_class_name`（trait 方法 + 6 处实现：真实后端的
+
   `MachineAbiTarget`、`forge-isa` 的 `ViewTarget`/`StubTarget`、forge-abi 的三处测试替身）
   与 `ViewTarget.classes` 字段；`exotic_hooks.rs` 的 `reg()` 助手同步。
+
 - `RegRef` 当时收敛成 `{ index: ABI 空间号, name: 谱里的寄存器名 }`——**先删死字段，
+
   不留两种表示**；有类型的 `RegClass` 与类内号已在**第四批**以有类型形态回来
   （`{index, slot, class, name}`）。
 
@@ -606,10 +741,15 @@ asm 解析档 3 passed（棘轮计数未变）；两条 `no_hardcoded_widths` �
 ### 已落地（2026-10-11，第二批）：宽向量能力数据化（通用管线不再认识 `avx*`）
 
 - `TargetRegInfo::wide_vector_bytes`（ISA 后端答：谱申报档位 ∩ 宿主上界；缺省 `&[]` ⇒ fail-closed）、
+
   `cpu::host_wide_vector_limit()`（宿主事实）、`reg_info::wide_vectors_upto()`（取前缀，`&'static`）三件套。
+
 - 管线两处 `crate::avx512_available()` 调用删除 → 问 `wide_vector_bytes()`；错误文案改 ISA 中立
+
   （断言该文案的 W3 用例同步）。
+
 - 新守卫 `tests/generic_pipeline_is_isa_neutral.rs`（口径：`src/pipeline/**` 代码行、**标识符级**匹配
+
   ——`classes` 里的 `sse` 不算、注释与 `#[cfg(test)]` 豁免、白名单须命中）；**负例实测**过
   （加回 `avx512_available()` 调用立刻红，撤掉即绿）。
 
@@ -618,13 +758,17 @@ asm 解析档 3 passed（棘轮计数未变）；两条 `no_hardcoded_widths` �
 ### 已落地（2026-10-11，第三批）：A6 收口（帧账目只认 plan，无 plan 明确报错）
 
 - `frame_layout_info()` 的 callee-saved 计数**只从 plan 来**，删掉 `unwrap_or(0)` 这条
+
   "无 plan 就按零算"的缺省（少算帧字节 ⇒ 局部/spill 槽与 push 槽重叠 ⇒ 覆盖调用者保存值，
   归入静默错值那一类）。无 plan ⇒ **panic**（编译入口本就 fail-closed，走到这里说明有路径漏接）。
+
 - 纠正该函数里**过期的注释**：它写着"fp-outside 仍按谱里声明的表数（x86 的 push 是静态发射）"，
+
   但 v20 A4/v21 W9 之后谱面的静态 push 表与 `[emit.prologue]` 模板都已删除，
   `gen_push_mechanism` 序言按 `alloc_result.callee_saved_to_save` **运行时循环** push、
   `cs_imm`/`sp_base` 也取运行时长度——两条路（fp-inside/fp-outside）现在都是
   "运行时按 plan 的整张表"。
+
 - 单测改钉新契约：`catch_unwind(frame_layout_info(&tm, None)).is_err()`（无 plan 必须 fail-closed）。
 
 **验收**：`forge-codegen` 单测 2719 passed；门禁/clippy/fmt 全绿；矩阵 **197/3/0** 与 **136/64/0**。
@@ -632,12 +776,16 @@ asm 解析档 3 passed（棘轮计数未变）；两条 `no_hardcoded_widths` �
 ### 已落地（2026-10-11，第四批）：触发判据只剩一处（7 个 `has_*` → 单一保守判据 + `ChangeSet`）
 
 - **删掉 7 个各扫一种模式的 `has_*`**（`has_large_agg_ret`/`has_large_agg_call_result`/
+
   `has_large_agg_call_arg`/`has_large_agg_param`/`has_large_agg_load`/`has_agg_mem_access`/
   `has_any_agg`）→ 一处 `needs_agg_expand` = 含 GEP **或** 提到过聚合类型/聚合字面量。
   新判据**过近似**：多克隆一份 `Function` 只是慢；漏判则是"那个 pass 静默不跑"（C2 的失效模式）。
+
 - 新增 `agg_expand::{ChangeSet, IrSize}`：展开后按 **IR 规模差**（指令/值/常量）+ sret 标记
+
   自报"改动了什么"，写进 `FORGE_TRACE_AGG`。选变化量而非 8 个 pass 各自计数，是因为它**完整**：
   将来新增 pass 自动被覆盖，不会再出现"新加一类模式却忘了加判据"。
+
 - 守卫 `agg_expand::tests::{needs_agg_expand_is_conservative, change_set_counts_only_growth}`。
 
 **验收**：`forge-codegen` 单测 2721 passed；clippy/fmt 全绿；门禁与两矩阵见下（S6）。
@@ -687,12 +835,17 @@ asm 解析档 3 passed（棘轮计数未变）；两条 `no_hardcoded_widths` �
 ### 第二批（C4 表归一 + C6 收尾）——✅ 已落地（2026-10-11）；C3 与"类感知偏好"**按实测回退**
 
 - **C4 表归一**：`callee_saved: Vec<u32>` + `callee_saved_fpr: Vec<u32>` → `Vec<(RegClass, u32)>`（plan 投影），
+
   保存集扫描按类查同一张表；`callee_saved_fpr` 字段删除。
+
 - **回退一（C4 的类感知偏好）**：`pop_free` 的偏好仍**按号跨类**匹配（与旧实现逐位等价）。
+
   改成"类族 + 号"会打红 `test_jit_float_params_beyond_xmm_registers_come_from_the_stack`，
   而**该用例只在 `--all-features`/workspace 的 feature 统一下编译进来**（单 crate 默认特性少 84 个用例）
   —— 门禁必须显式包含 `cargo test -p forge-codegen --lib --all-features`，本轮已加入。
+
 - **回退二（C3 池过滤）**：让 sp/fp 排除只对整数类生效（放出 FPR 池同号的 2 个寄存器）同样打红那条用例
+
   ⇒ **那两个号的排除是承重的**（与浮点栈参数的搬运路径共用寄存器）。
 
 **前置调查结论（2026-10-11，三组对照实验 + 生成器源码）**：
@@ -766,6 +919,7 @@ NativeCommandError 噪声行）⇒ 判为**一次性偶发（环境/时序）**�
 6. 判定：两矩阵 + `asm_exec` + **mini_c e2e**（本仓教训：宽度类/时机类分歧只有跨 crate e2e 抓得到）。
 
 **风险**：动分配序 ⇒ 输出变化；若矩阵或 e2e 红且一次修复不成就回退并另记（C3/C4 的先例）。
+
 ### MachBuffer（M5 第 6 项）—— ✅ 三项全部落地（2026-10-11）
 
 1. **次序 hack 删除**（依据：标签走 pending fixup，前向引用天然成立）；
@@ -779,7 +933,6 @@ NativeCommandError 噪声行）⇒ 判为**一次性偶发（环境/时序）**�
 **M5 六条至此全部落地**（C3 释放两寄存器 + C4 双根因 + 密集输出 + SpillEdit + 真 Belady +
 MachBuffer），判据：workspace 门禁 exit 0、`forge-codegen --lib --all-features` 2810、
 runtime 18、jit x86 197/3/0、riscv64 136/64/0、asm 三档全绿、clippy/fmt 干净。
-
 
 **已落且有回归证据**：
 
@@ -876,7 +1029,9 @@ clippy/fmt 干净。
 
 **回退理由与下一步取证**：动分配序的改动在"编过但错值"上必须停下（本仓既有纪律：未验证不假绿；
 C3/C4 的先例也是回退 + 另记）。下一步取证方向（按性价比排序）：① 对该用例开 `FORGE_TRACE_ALLOC`
-+ 新的"编辑序列 dump"看被驱逐者与其槽的配对（哪一次驱逐把 A 的槽给了 B 的落盘）；
+
+- 新的"编辑序列 dump"看被驱逐者与其槽的配对（哪一次驱逐把 A 的槽给了 B 的落盘）；
+
 ② 检查**同一 vreg 被驱逐两次**与"驱逐后又 reload 再驱逐"时 `live_stores` 是否重复/错序
 （`current_global_inst` 的归属是否正确）；③ 确认 `current_uses` 的排除是否漏掉 `Bind` 阶段
 （同一指令里既 use 又 def 的字段）。
@@ -907,7 +1062,7 @@ mini_c 的 e2e 才把它抓出来**（`test_hir_e2e_loop_bound_from_param` 返�
 
 1. 运行时新类型（与 `AllocResult` 同文件）：
    `enum SpillEdit { Reload { slot, scratch }, Bind { field: u8, scratch }, Store { slot, scratch, class, width } }`
-   + `AllocResult.edits: Vec<SmallVec<[SpillEdit; 4]>>`（与指令流平行）。
+   - `AllocResult.edits: Vec<SmallVec<[SpillEdit; 4]>>`（与指令流平行）。
 2. 分配器出口**第二趟**填 `edits`：对每条指令的每个 bind——vreg 被溢出 ⇒ `Bind{field, scratch}`；
    每个不同的 spilled vreg ⇒ 指令前 `Reload`、若该 bind 是 **Def** 再在指令后 `Store`。
    scratch 绑定按类取 `config.scratch_regs`，**池不够就在这里 fail-closed**（现在这步在 emission）。
@@ -954,6 +1109,7 @@ by-ref 宽向量收参靠它分派 32B/64B）。同时**修掉上一批引入的
 
 **教训（与 mini_c 那次同源）**：跨类共享的**编号空间**（scratch 号、寄存器号）是这类"静默串味"
 的温床；"某个偏好恰好总能绕开它"最容易让 bug 长期潜伏——所以守卫要钉**不变量**，不是钉现象。
+
 ### C4 类感知偏好的**根因取证**（2026-10-11，`FORGE_TRACE_ALLOC` 对照）
 
 用分配器自己的 trace 把两种偏好下的分配**逐条对照**（基线与类感知各 26 行，`Compare-Object`
@@ -1011,10 +1167,14 @@ dump 机器码逐条对照。
 **已落**：新 `pipeline/legalize/mod.rs`：
 
 - `trait LegalizePass<M: TargetMachine>`（`name()` + `run(func, ctx) -> ChangeSet`）与
+
   `LegalizeCtx`（机器视图 / 约定名 / `agg_slots` / `sret_ptr` —— 以前靠调用次序隐式传递的四个量
   现在显式在 ctx 里）；
+
 - `LegalizeDriver`：**with_aggregates() 是次序的唯一出处**（`agg-store → agg-call → agg-param → gep`，
+
   依赖注释写在构造函数上：store 先展开、sret 先立、call 结果拆段先于实参拆段）；
+
 - 每个 pass 自报 `ChangeSet`（IR 规模差 + sret 标记），驱动累加 + `FORGE_TRACE_AGG` 逐 pass 打印；
 - 调用点（`compiler.rs` Stage 0.5）从"8 行硬编码调用"变成 `LegalizeDriver::with_aggregates().run(...)`；
 - 守卫：`driver_has_the_documented_pass_order`（定序是契约，钉住 4 个 pass 的顺序）。
@@ -1064,6 +1224,7 @@ dump 机器码逐条对照。
 
 **判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` **2815 passed**（+1 幂等守卫）；
 jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
+
 ### M6 批次 9：**`insertvalue` 值内存化**（2026-10-11，未提交）
 
 `rewrite_agg_value_uses` 的兜底分支以前对 `insertvalue` 直接 `Unsupported`（"仅支持
@@ -1088,6 +1249,7 @@ jit x86 197/3/0、riscv64 136/64/0；asm_parse 3 / asm_exec 1；clippy/fmt 干�
 
 **M6 仍欠**：① `va_arg` 聚合结果（要临时槽 + 逐段拷贝 + 走落点分类）；② `>16B` 非 sret 栈返回
 改 `StackByVal`。这两项都是**行为变更 + 需要真执行用例**，按批再落。
+
 ### M6 批次 8：**非对齐嵌套字段**从"报错"改为"能展开"（2026-10-11，未提交）
 
 `memoryize_from_segs` 原来对 `off % 8 != 0` 直接 `Unsupported`（"非对齐字段暂不支持"）⇒
@@ -1095,8 +1257,10 @@ jit x86 197/3/0、riscv64 136/64/0；asm_parse 3 / asm_exec 1；clippy/fmt 干�
 **移位拼接**再写槽：
 
 - 拼接用 `(lo >> 8r) + (hi << (64-8r))`——两半位域不相交，加法与按位或等价，而 **`Ior` 在三份谱里
+
   都没有 lowering**（`Ishl`/`Ushr` 是 x86 与 riscv64 有、arm64 没有 ⇒ arm64 上这类函数仍会
   fail-closed，报的是标准的"无 lowering 规则"，已在账本记明）。
+
 - 取 `hi` 时**严格按"这一段是否落在字段内"判**，越界或超出字段就补常量 0 —— 不读相邻聚合成员的字节。
 
 **新守卫** `unaligned_nested_field_is_repacked_with_shifts`：造一个 `off = 4` 的嵌套字段提取，
@@ -1112,13 +1276,17 @@ jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
 
 **M6 仍欠**：① `va_arg` 聚合结果（要临时槽 + 逐段拷贝）；② `>16B` 非 sret 栈返回 `StackByVal`；
 ③ 聚合其余算子（InsertValue 等）值内存化。
+
 ### M6 批次 7：缺口泛化（部分）+ `int_ty` fail-closed（2026-10-11，未提交）
 
 - **`va_expand::int_ty` 改 fail-closed**：1/2/4/8 四档照旧，其余**明确报错**（以前 `_ => I64`
+
   把 3/5/6 字节静默当 8 字节读写 ⇒ 游标字段与相邻对象字段互相踩，症状是"取参取到别的字段的值"；
   形状数据是使用者给的，写错必须报出来）。连带 `store_cursor` 改 `Result` 并在两处调用点传播。
   新守卫 `cursor_field_width_is_fail_closed`（四档通过 + `[0,3,5,6,7,16]` 全部报错且信息点名宽度）。
+
 - **第三个 `Alloca` 站点去重**：`agg_expand.rs` 的嵌套字段抽取值也改用
+
   `legalize::common::place_addr_of_slot`（规范 immediate 形态的唯一出口现在是 3 处调用、0 处内联）。
 
 **判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` **2812 passed**（+1 守卫）；
@@ -1138,11 +1306,16 @@ crate test`——当时 D: 只剩少量可用空间；删 `target/debug/incremen
 ### M6 批次 6：`Va` 进驱动 —— 五个 pass 齐了（2026-10-11，未提交）
 
 - `LegalizeCtx` 增 `va: Option<(VaInfo, AbiSlots)>`：**槽排布留在编译入口**（深度依赖前端局部槽，
+
   只有 lowering 前那次预扫算得出），**展开交给 `VaPass`**；两边是同一份数据。
+
 - 驱动次序成为方案说的五个 pass：**`va → agg-store → agg-call → agg-param → gep`**（守卫
+
   `driver_has_the_documented_pass_order` 已按新次序钉住）。`VaPass` 自报 `ChangeSet`，
   物化份数/取值条数的报告并进 `FORGE_TRACE_AGG`（原来只在 `FORGE_TRACE_LOWER` 里）。
+
 - `func_owned`（可变 IR 副本）的创建条件补齐：以前只在 `needs_agg_expand` 时建、变参块自己
+
   `get_or_insert`，现在两处显式各建各的，语义不变但不再依赖隐式时序。
 
 **判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` 2811 passed；
@@ -1198,10 +1371,14 @@ riscv64 136/64/0；clippy/fmt 干净。
 ### M6 批次 3：**剩下的 3 个 `expand_*` 也迁出** ⇒ `compiler.rs` 里的合法化函数体归零（2026-10-11，未提交）
 
 - `expand_large_agg_ret`（246 行）与 `expand_agg_call_args`（251 行）→ `legalize/agg_call.rs`；
+
   `expand_large_aggs`（379 行）→ `legalize/agg_param.rs`。
+
 - **`rg 'fn expand_' pipeline/compiler.rs` = 0**（M6 验收要求 ≤3，已达成为 0）。
 - `read_path_budget` 再次随迁移下调：`compiler.rs` **13 → 4**；legalize 侧定额按实测更新为
+
   `agg_call.rs` 5、`agg_param.rs` 9、`agg_store.rs` 1、`gep.rs` 1（`agg_expand.rs` 仍 6）。
+
 - 迁移中新增 `pub(crate)` 暴露：`collect_extract_jobs`（`agg_call.rs`/`agg_param.rs` 用）。
 
 **判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` **2811 passed**；
@@ -1439,9 +1616,12 @@ spill 回写补 fail-closed：字段不可改写时 `Err(IrError::RegAlloc)`（�
 （InOut = 既读又写）。于是：
 
 - 若"删掉 `is_def`、一律由 `operands()` 派生"，InOut 槽会从"仅 def"变成"use + def 各一条"
+
   —— 这是**行为变化**（对 x86 的 `add dst, src` 这类两操作数指令，regalloc 的活区间口径会变；
   方向上更像"修好"，但必须**先测量再改**，不能当纯重构顺手做）。
+
 - 本轮的守卫只断言"旁表登记项在操作数表里有同字段同角色的对应项"（子集关系），因此
+
   它对上述差异**是盲的**——这正是它作为"能删"判据的**边界**，已写在这里以免误读。
 
 **2026-10-11 实测修正（把上一段的推断纠正到位）**：加了"InOut 字段旁表条数"的哨兵断言后，
@@ -1453,8 +1633,11 @@ spill 回写补 fail-closed：字段不可改写时 `Err(IrError::RegAlloc)`（�
 （物理槽）或 1 条 `Def`（vreg 槽），而形状表里它同时是 use 与 def。于是：
 
 - **"删掉 `is_def`、一律按表派生角色"这条路关闭**（它会凭空给这些槽加出 use 项 ⇒ 改
+
   regalloc 活区间口径 = 行为变更）；
+
 - 守卫保留两条：**子集关系**（旁表登记项必须在形状表里有同字段同角色的对应项）+ **哨兵**
+
   （InOut 字段旁表条数 ≤ 1，实测契约是 0 或 1）。哨兵的作用是"将来谁改旁表语义，这里会响"。
 
 **修订后的批次 C 目标**（仍是方案要的"`CompileState` 只留 `inst_ops`"，但换一条可达路径）：
