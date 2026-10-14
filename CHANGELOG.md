@@ -57,7 +57,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   次序 hack 后依赖的性质）。
 
 ### Changed (2026-10-11) — 后端 v23 M5：删掉"发射次序 hack"；重定位补丁语义单点化
-### Changed (2026-10-11) — 后端 v23 M5：删掉"发射次序 hack"；重定位补丁语义单点化
 
 + **删掉"非返回块先发、返回块最后"的重排**（`emission.rs` 的 Pass1/Pass2）：当年重排的理由是"返回块的
   `emit_epilogue_jump` 会干扰前向 PC-relative 分支偏移计算"——那是**编码器急切算偏移**时代的遗留。
@@ -70,7 +69,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `target - site + adj`、`Absolute` ⇒ `target`），JIT 里那份私有副本 `compute_patch_value` 删除并改调它。
   同一件事以前在 JIT / ObjectWriter 两处各表达一次，改一处容易漂移。
 
-### Changed (2026-10-11) — 后端 v23 M5：**真正的 Belady 驱逐**（不再只驱逐死值）+ 消除"活跃值落盘"这条错误路径
 ### Changed (2026-10-11) — 后端 v23 M5：**真正的 Belady 驱逐**（不再只驱逐死值）+ 消除"活跃值落盘"这条错误路径
 
 **背景**：旧实现只驱逐**死值**（`next_use == MAX`），无死值就 spill 当前 def 或直接报错（WA-46 的
@@ -94,7 +92,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   "槽是权威副本"的守卫。
 
 ### Changed (2026-10-11) — 后端 v23 M5：**C4 收口** —— 根因是「scratch 的号被 FPR 池复用」，reload 踩掉活值
-### Changed (2026-10-11) — 后端 v23 M5：**C4 收口** —— 根因是「scratch 的号被 FPR 池复用」，reload 踩掉活值
 
 + **根因（先排除猜测，再定位）**：编码级先排掉"高编号 FPR 缺 REX"的假设（`movsd [rbx], xmm10`
   = `f2 44 0f 11 13`、`xmm15` = `f2 44 0f 11 3b`，REX.R 都在）。真因在**溢出搬运的 scratch**：
@@ -110,7 +107,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   分给任何 vreg（这条不变量以前没有用例钉住）。测试 `make_config` 的 scratch 号由 0 改为 15
   （测试池是 0..8），否则新不变量会挡住 `test_no_clobber_allocates_rax` 要检查的 RAX=0。
 
-### Changed (2026-10-11) — 后端 v23 M5：**溢出编辑显式化**（分配器产出 `SpillEdit`，发射退化为按序执行）
 ### Changed (2026-10-11) — 后端 v23 M5：**溢出编辑显式化**（分配器产出 `SpillEdit`，发射退化为按序执行）
 
 + **新类型** `SpillEdit { Reload{slot,scratch,class,width}, Bind{field,scratch,class}, Store{slot,scratch,class,width} }` + `AllocResult::edits: Vec<Vec<SpillEdit>>`（下标 = 指令全局序号）。顺序契约：同一条指令里 `Reload` 在前、`Bind` 居中、`Store` 在后 ⇒ 发射侧只做"装值 → 改写字段 → 发指令 → 写回槽"四段。
