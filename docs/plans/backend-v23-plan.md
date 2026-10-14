@@ -1,6 +1,8 @@
 # 后端 v23 里程碑方案：数据驱动的通用后端
 
-> **状态：[progress]**（2026-10-11 立项；M1–M6 见 §5，逐项回写进度、实测数字与命令）。
+> **状态：[progress] → 六个里程碑均已落地**（2026-10-11 立项、同日逐批落地并提交；M1–M6 见 §5，逐项回写进度、实测数字与命令）。
+> **收口判据（2026-10-11 实测）**：`cargo test --workspace --exclude forge-rustc` exit 0；`forge-codegen --lib --all-features` **2816 passed**；`jit_matrix_x86` **197/3/0**、`jit_matrix_riscv64` **136/64/0**；asm 三档 `asm_parse` 3 / `asm_encoding` 1 / `asm_exec` 1；`clippy -D warnings` 与 `fmt --check` 干净。
+> **两处记录在案的未达成**（都属约定层数据扩展，见 §14 后的 M6 批次记录）：① `va_arg` 聚合**真做**（当前已 fail-closed，不再静默错值）；② `>16B` 非 sret 栈返回走 `StackByVal`。
 > 命名说明：本方案的 "v23" 是本里程碑自己的编号，与 ISA-DSL **语法版本 v22**
 > （不写进 TOML、只靠文档/CHANGELOG 追踪）不是同一套编号——**不要把 v23 写进任何
 > `isa/*.toml`**。证据行号取自立项时 HEAD `d5d66cdb`，随迭代漂移，**以符号名为准**。
