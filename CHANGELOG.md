@@ -11,6 +11,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-11) — 后端 v23 收尾 M7 批次 6：**`va_arg` 聚合真执行打通**（根因：改写 `extractvalue` 时 use-before-def）
+
+**真凶**：`rewrite_agg_value_uses` 的 **by-ref（值在内存）`ExtractValue` 分支**用 `make_inst`
+生成 `Iconst`/`Iadd`/`Load`——`make_inst` 是**追加到块尾**的——而把 `extractvalue` 就地改成
+`Copy(load结果)` 后**留在原位置** ⇒ `Copy` 排在自己操作数的定义**之前**，即 **use before def**。
+机器码层表现为分配器读到**陈旧寄存器**：
+
+```text
+StoreMemR { R14 → RDI }        ← 段1 store（R14 = 段数据 7、RDI = 槽+8 地址）
+MovRRm { dst: R12, src: R14 }  ← iadd 取到"段数据"而不是字段0
+AddRmR { src: RDI, dst: R12 }  ← 再加一个**地址** ⇒ 垃圾（随栈地址变 ⇒ 每次运行都不同）
+MovRMem { dst: RDI, src: RBX } ← 字段1 load（排在 add 之后）
+MovRMem { dst: R14, src: RSI } ← 字段0 load（排在 add 之后）
+```
+
+**为什么难查**：**单独回读任一字段都是对的**（那条路径上 `Copy` 恰好在最后），只有"两个字段
+一起用"才暴露；值每次运行都不同（像读未初始化内存），一度被误判为指针/内联口径、ABI 槽重叠、
+溢出、字段 load 早于段 store（四项都被逐条实测否掉，见批次 4/5 条目）。
+
+**修法**：生成的三条指令搬到使用点之前 —— `move_to_front(func, block, pos, &[ci, add, ld])`
+（同族的分支早就这么做，只有这条 by-ref 分支漏了）。
+
+**结果**：真执行用例 `test_jit_va_arg_reads_unnamed_aggregate_arg` 通过（`f(Agg16{4,7}) == 11`），
+**删掉 `#[ignore]`**，临时诊断用例删除；`forge-codegen --lib --all-features` **2821 passed / 0 ignored**。
+
+**这一条用例（连同本片）抓出并修掉四个缺陷**：① 上述 use-before-def（真凶）；② by-ref 分支
+`return Ok(())` 跳出整个循环 ⇒ 第 2+ 个使用点没被重写；③ `trace_enabled` 白名单漏
+`FORGE_TRACE_AGG` ⇒ 诊断开关静默失效；④ 驱动次序（形参 pass 必须早于实参，"大聚合 load 值
+传播"必须晚于它 ⇒ 拆成 `agg-param` + `agg-leftover`）。
+
 ### Changed (2026-10-11) — 后端 v23 收尾 M7 批次 5：**ABI 槽改为在聚合族之后排布**（修一处帧槽重叠隐患）
 
 + **隐患**：`plan_abi_slots`（变参保存区 + `va_list` 对象的槽排布）原来在 Stage 0.5 **之前**

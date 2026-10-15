@@ -1546,6 +1546,30 @@ jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
 段 store（单测序列实测不是）。下一步：对照"单字段版（对）/两字段相加版（错）"的
 `FORGE_TRACE_EMIT` 序列差异 + `iadd` 两侧的寄存器分配。
 
+### M7 批次 6：**`va_arg` 聚合真执行打通**（2026-10-11，根因 = use-before-def）
+
+**真凶**：`rewrite_agg_value_uses` 的 by-ref `ExtractValue` 分支用 `make_inst` 生成
+`Iconst`/`Iadd`/`Load`（**追加到块尾**），而把 `extractvalue` 就地改成 `Copy(load)` 后留在
+**原位置** ⇒ `Copy` 排在自己操作数的定义之前（**use before def**）⇒ 分配器读到陈旧寄存器。
+机器码层：`iadd(字段0, 字段1)` 被编成"段数据 + 一个地址"（地址随栈布局变 ⇒ 值每次运行都不同）。
+
+**为什么难查**：单独回读任一字段都对（那条路径上 `Copy` 恰好在最后），只有两者一起用才暴露。
+批次 4/5 里逐条实测**否掉**了四个怀疑：指针/内联口径、ABI 槽重叠、溢出、字段 load 早于段 store。
+
+**修法**：`move_to_front(func, use_pos.block, use_pos.pos, &[ci, add, ld])`——那三条生成指令
+搬到使用点之前（同族分支早就这么做，只有这条漏了）。
+
+**判据**：真执行用例通过（`f(Agg16{4,7}) == 11`），`#[ignore]` 已删、临时诊断用例已删；
+`forge-codegen --lib --all-features` **2821 passed / 0 ignored**；workspace 门禁 exit 0；
+jit x86 197/3/0、riscv64 136/64/0；asm_parse 3 passed；clippy/fmt 干净。
+
+**这一片（M7）共修掉四个缺陷**：① use-before-def（真凶）；② by-ref 分支 `return Ok(())`
+跳出整个循环 ⇒ 第 2+ 个使用点漏重写；③ `FORGE_TRACE_AGG` 不在 `trace_enabled` 白名单
+⇒ 诊断开关静默失效；④ 驱动次序（形参早于实参、`agg-leftover` 晚于实参 ⇒ 拆 pass）。
+
+**M7 仍未做**：`>16B` 非 sret 栈返回走 `StackByVal`（sysv64/aapcs64/lp64d 的聚合变参依赖它，
+目前那三份谱**不声明**聚合取参规则、读取侧 fail-closed）。
+
 ## 13. M4 进度（收口）
 
 ### 爆炸半径（2026-10-11 实测，`rg` 计数）

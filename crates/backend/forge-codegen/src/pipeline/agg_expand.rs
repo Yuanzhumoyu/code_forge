@@ -471,6 +471,15 @@ pub(crate) fn rewrite_agg_value_uses(
                         inst.immediates = smallvec::smallvec![];
                     }
                     func.refresh_inst_uses(__cp);
+                    // **生成的指令必须搬到使用点之前**（v23 收尾 M7 真凶）：`make_inst` 是
+                    // **追加到块尾**的，而这里的 `Copy` 留在 `extractvalue` 的**原位置**——
+                    // 若无条件跳走，`Copy` 就排在自己操作数（`Load`）的定义**之前**，即
+                    // **use before def**。机器码层表现为分配器读到**陈旧寄存器**：真执行用例里
+                    // `iadd(字段0, 字段1)` 被编成"段数据 + 一个**地址**"，结果随栈地址变化
+                    // （每次运行都不同的垃圾值），而**单独回读任一字段却是对的**（那条路径上
+                    // Copy 恰好在最后）。同族的分支早就这么做了（见下方 `move_to_front`），
+                    // 只有这条 by-ref 分支漏了。
+                    move_to_front(func, use_pos.block, use_pos.pos, &[ci, add, ld]);
                     // **只跳过本使用点**：这里以前是 `return Ok(())` —— 那会**跳出整个循环**，
                     // 于是"同一个 by-ref 聚合值的第 2 个及以后的使用点"全被漏掉。真执行用例
                     // `test_jit_va_arg_reads_unnamed_aggregate_arg`（`va_arg(聚合)` 取两个字段）
