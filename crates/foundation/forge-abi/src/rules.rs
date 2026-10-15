@@ -271,6 +271,11 @@ pub struct VaListShape {
     /// 聚合在区域里是**指向它的指针**（win64 的 ">8B ⇒ 调用方副本 + 指针"）还是内联字节。
     #[serde(default)]
     pub aggregate_indirect: bool,
+    /// `aggregate_indirect` 的尺寸阈值（字节）：只对**大于**它的聚合成立（win64 = 8）。
+    /// 小于等于它的聚合是**另一种形态**（内联整数槽）——本仓只实现了间接档，
+    /// 读取侧对小聚合 fail-closed（不猜）。
+    #[serde(default)]
+    pub aggregate_indirect_size_gt: u32,
 }
 
 /// `va_list` 对象里的一个字段声明。
@@ -367,6 +372,9 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                     // 由调用方的聚合分类决定（`agg_arg_place`），读取侧只管"间接"这一种。
                     aggregate_arg: Some(a("cursor", None, None, false)),
                     aggregate_indirect: true,
+                    // win64 的分类是 `aggregate size_gt 8 ⇒ indirect`、`size_le 8 ⇒ 整数池直传`：
+                    // 阈值把这件事写进数据（≤8B 那档本仓未实现 ⇒ 读取侧 fail-closed）。
+                    aggregate_indirect_size_gt: 8,
                 },
             ),
             // SysV AMD64：gp/fp 偏移游标 + 溢出指针 + 保存区（6×8B GP + 8×16B XMM）。
@@ -402,6 +410,7 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                     // 还没接，因此这里**不声明**聚合规则：读取侧对聚合 fail-closed，不猜。
                     aggregate_arg: None,
                     aggregate_indirect: false,
+                    aggregate_indirect_size_gt: 0,
                 },
             ),
             // AAPCS64：`{ __stack, __gr_top, __vr_top, __gr_offs, __vr_offs }`，两个游标都是
@@ -427,6 +436,7 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                     float_arg: a("__vr_offs", Some("__vr_top"), Some("__stack"), true),
                     aggregate_arg: None,
                     aggregate_indirect: false,
+                    aggregate_indirect_size_gt: 0,
                 },
             ),
             // RISC-V LP64D：`area` 单指针 + 保存区（8×8B GP，**不含浮点槽**）。
@@ -466,6 +476,7 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                     },
                     aggregate_arg: None,
                     aggregate_indirect: false,
+                    aggregate_indirect_size_gt: 0,
                 },
             ),
         ]

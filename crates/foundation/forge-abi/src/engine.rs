@@ -899,6 +899,7 @@ fn va_area_from_shape(
             rule(d, false).map(|rule| VaAggregateArgRule {
                 rule,
                 indirect: shape.aggregate_indirect,
+                indirect_size_gt: shape.aggregate_indirect_size_gt,
             })
         })
         .transpose()?;

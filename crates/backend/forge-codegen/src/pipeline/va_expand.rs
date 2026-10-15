@@ -653,6 +653,15 @@ fn expand_arg(
             let ts = func.types.borrow();
             ts.size_bytes(ty) as usize
         };
+        // 形态**按尺寸分档**时（win64：`>8B ⇒ 指针`、`≤8B ⇒ 内联整数槽`），本仓只实现了间接档
+        // ⇒ 小聚合明确拒绝，绝不把内联字节当指针读（那是静默错值）。
+        if a.indirect && a.indirect_size_gt > 0 && (size as u64) <= u64::from(a.indirect_size_gt) {
+            return Err(IrError::Unsupported(format!(
+                "va_arg：{size} 字节的聚合在本约定里**不是**按指针传（阈值 {} 字节）——\
+                 内联档尚未实现，明确拒绝而不是把内联字节当指针读",
+                a.indirect_size_gt
+            )));
+        }
         // 区域里放的是**指针**时先取指针（win64 的 ">8B ⇒ 调用方副本 + 指针"）。
         let src = if a.indirect {
             mk_load(func, b, &mut out, p, TypeId::PTR)
@@ -970,6 +979,8 @@ mod tests {
             va.arg_rules.aggregate = Some(VaAggregateArgRule {
                 rule: va.arg_rules.int,
                 indirect: true,
+                // 夹具的聚合是 16 字节 ⇒ 阈值 8 表示"大于 8 才间接" ✔（与 win64 同形）。
+                indirect_size_gt: 8,
             });
             let mut agg_slots = AggSlots::new();
             super::expand_arg(&mut f, e, ii, &va, &mut agg_slots)

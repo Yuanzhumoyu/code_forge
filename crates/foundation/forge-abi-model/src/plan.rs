@@ -418,6 +418,10 @@ pub struct VaAggregateArgRule {
     pub rule: VaArgRule,
     /// 区域里放的是"指向聚合的指针"（true）还是"聚合的内联字节"（false）。
     pub indirect: bool,
+    /// `indirect` 只对**大于**这个字节数的聚合成立（win64 = 8：`>8B` 才走"调用方副本 + 指针"）。
+    /// 小于等于它时形态**相反**（内联进整数槽）——那种档这次没有实现，读取侧对它 fail-closed，
+    /// 免得把内联字节当指针用（静默错值）。`0` = 所有尺寸同一形态。
+    pub indirect_size_gt: u32,
 }
 
 /// 取参规则：整数类、浮点类各一条，**聚合一条（可选）**（按实参类型选）。
