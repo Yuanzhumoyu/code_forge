@@ -249,7 +249,7 @@ impl<M: TargetMachine> LegalizePass<M> for AggCallPass {
             ctx.sret_ptr = sret;
         }
         agg_call::expand_large_agg_call_results(func, &mut ctx.agg_slots, ctx.machine, &ctx.conv)?;
-        agg_call::expand_agg_call_args(func, ctx.machine, &ctx.conv, &mut ctx.agg_slots)?;
+        agg_call::expand_agg_call_args(func, ctx.machine, &ctx.conv)?;
         agg_call::expand_large_agg_ret(func, &mut ctx.agg_slots, ctx.sret_ptr)?;
         Ok(IrSize::of(func).delta_to(before, !had_sret && ctx.sret_ptr.is_some()))
     }

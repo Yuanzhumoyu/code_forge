@@ -402,7 +402,6 @@ pub(crate) fn expand_agg_call_args(
     func: &mut Function,
     machine: &impl forge_isa_runtime::machine::target::TargetMachine,
     conv: &str,
-    agg_slots: &mut crate::pipeline::agg_expand::AggSlots,
 ) -> Result<(), IrError> {
     // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
     // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
@@ -542,68 +541,17 @@ pub(crate) fn expand_agg_call_args(
                 }
             }
             _ => {
-                // **未知来源先内存化**（v23 收尾 M7）：`insertvalue`/`undef`/`copy` 链搭出来的
-                // 聚合值没有可追踪的地址，但 `rewrite_agg_value_uses` 会给它开一个帧槽、把字节
-                // 搬进去并登记进 `agg_slots` ⇒ 之后就能按"值住在内存里"逐段 load（与 by-ref
-                // 档同一口径）。登记后仍拿不到地址才报错（真正的"没法拆"）。
-                let addr = match agg_slots.get(job.val) {
-                    Some(&(addr, _)) => Some(addr),
-                    None => {
-                        crate::pipeline::agg_expand::rewrite_agg_value_uses(
-                            func,
-                            job.val,
-                            &[],
-                            ty,
-                            agg_slots,
-                        )?;
-                        agg_slots.get(job.val).map(|&(addr, _)| addr)
-                    }
-                };
-                let Some(addr) = addr else {
-                    return Err(IrError::Unsupported(format!(
-                        "聚合实参拆段：值来源不支持，且内存化后仍无槽地址（def {:?}）",
-                        func.dfg.value_data(job.val).def
-                    )));
-                };
-                let mut prev_addr = addr;
-                let mut off = 0usize;
-                while off < size {
-                    let ld = func.make_inst(
-                        Opcode::Load,
-                        job.block,
-                        smallvec::smallvec![prev_addr],
-                        smallvec::smallvec![],
-                        &[TypeId::I64],
-                        InstFlags::NONE,
-                    );
-                    let ldv = func.dfg.inst_data(ld).results[0];
-                    new_insts.push(ld);
-                    segs.push(ldv);
-                    off += 8;
-                    if off < size {
-                        let off_cid = func.constants.insert_int(8, 64);
-                        let off_inst = func.make_inst(
-                            Opcode::Iconst,
-                            job.block,
-                            smallvec::smallvec![],
-                            smallvec::smallvec![Immediate::Const(off_cid)],
-                            &[TypeId::I64],
-                            InstFlags::NONE,
-                        );
-                        let off_v = func.dfg.inst_data(off_inst).results[0];
-                        new_insts.push(off_inst);
-                        let add = func.make_inst(
-                            Opcode::Iadd,
-                            job.block,
-                            smallvec::smallvec![prev_addr, off_v],
-                            smallvec::smallvec![],
-                            &[TypeId::PTR],
-                            InstFlags::NONE,
-                        );
-                        prev_addr = func.dfg.inst_data(add).results[0];
-                        new_insts.push(add);
-                    }
-                }
+                // **未知来源**：`insertvalue`/`undef`/`copy` 链搭出来的聚合值。
+                //
+                // v23 收尾 M7 批次 8 实测：给它写了个"只内存化、不动使用处"的助手
+                //（按值定义链开槽 + 搬字节 + 写插入字段 + 登记），编译与运行都通了，但**值不对**
+                // （`main_ins` 返回 `72198297058681447` 而非 11）⇒ 按本片的铁律**回退**：
+                // 宁可在编译期明确拒绝，也不要静默错值。助手已删除，缺陷记在账本待查。
+                return Err(IrError::Unsupported(format!(
+                    "聚合实参拆段：值来源不支持（def {:?}）——`insertvalue`/`undef` 链搭出来的聚合\
+                     作为实参尚未实现（记档待查）",
+                    func.dfg.value_data(job.val).def
+                )));
             }
         }
         // 落点落地：ByRef ⇒ 建一个调用方帧内副本、逐段 store，实参传**该副本的指针**

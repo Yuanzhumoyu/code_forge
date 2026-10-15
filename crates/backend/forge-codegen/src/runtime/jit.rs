@@ -3262,6 +3262,140 @@ ret_int = ["RAX"]
             "按引用形参转发：被调方必须能用 va_arg(聚合) 读回未命名聚合实参\\
              （win64：调用方副本 + 指针）"
         );
+
+        // 第二个调用方来源：`undef` + `insertvalue` 链搭出来的聚合 —— **当前明确拒绝**。
+        // 批次 8 试做过（"只内存化、不动使用处"的助手：按值定义链开槽 + 搬字节 + 写插入字段
+        // + 登记），**能编、能跑，但值不对**（返回 `72198297058681447` 而非 11）⇒ 按本片的铁律
+        // **回退**：宁可在编译期明确拒绝，也不要静默错值。这条断言把契约钉住——**一旦支持，
+        // 它会红**，那时必须改成 `f2() == 11` 的真执行断言。
+        let ctx_i = TypeContext::new();
+        let agg_ty_i = ctx_i
+            .borrow_mut()
+            .struct_anon(vec![TypeId::I64, TypeId::I64], false);
+        let sig_c2 =
+            FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64]).with_variadic(true);
+        let mut callee2 = FunctionBuilder::new("callee", ctx_i, sig_c2);
+        let (ce2, _p2) = callee2.create_block_with_params(&[(TypeId::I64, "fmt")]);
+        callee2.switch_to_block(ce2);
+        let va2 = callee2.va_start();
+        let agg2 = callee2.va_arg(va2, agg_ty_i);
+        let q0 = callee2.extract_value(agg2, 0);
+        let q1 = callee2.extract_value(agg2, 1);
+        let r2 = callee2.iadd(q0, q1);
+        callee2.ret(&[r2]);
+        let mut module2 = Module::new();
+        let cref2 = module2.add_function(callee2.finish().expect("callee2"));
+        let ctx_i2 = TypeContext::new();
+        let agg_ty_i2 = ctx_i2
+            .borrow_mut()
+            .struct_anon(vec![TypeId::I64, TypeId::I64], false);
+        let sig_i = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut main_ins = FunctionBuilder::new("main_ins", ctx_i2, sig_i);
+        let (ie, _) = main_ins.create_block_with_params(&[]);
+        main_ins.switch_to_block(ie);
+        let fmt_i = main_ins.iconst(0, TypeId::I64);
+        let base = main_ins.undef(agg_ty_i2);
+        let four = main_ins.iconst(4, TypeId::I64);
+        let seven = main_ins.iconst(7, TypeId::I64);
+        let t1 = main_ins.insert_value(base, four, 0);
+        let t2 = main_ins.insert_value(t1, seven, 1);
+        let got_i = main_ins.call(cref2, &[fmt_i, t2], &[TypeId::I64])[0];
+        main_ins.ret(&[got_i]);
+        module2.add_function(main_ins.finish().expect("main_ins"));
+        let mut jit2 = JitLoader::new(x86::TargetMachine::new());
+        match jit2.compile_module(&module2) {
+            Ok(()) => {
+                panic!("`insertvalue` 链作为聚合实参已被支持 ⇒ 本断言要改成真执行断言：f2() == 11")
+            }
+            Err(e) => {
+                let msg = format!("{e}");
+                assert!(
+                    msg.contains("insertvalue"),
+                    "期望错误信息点名 insertvalue（链搭出来的聚合作为实参尚未实现），实际：{msg}"
+                );
+            }
+        }
+    }
+
+    /// **sysv64 的聚合变参**（v23 收尾 M7 批次 8）：调用方把 24 字节聚合作为**未命名实参**
+    /// 传下去，被调方用 `va_arg(聚合)` 取回并读字段——**真跑**（第 1 个字段 = 22）。
+    ///
+    /// 两半：调用方按 sysv64 的 `>16B ⇒ StackByVal` 把**调用方副本**整块写进传出参数区
+    /// （`byval(聚合类型)` 属性）；被调方按 `aggregate_arg`（**内联**档、阈值 0）从
+    /// `overflow_arg_area` 指向的地址逐 8 字节段拷贝出来。
+    ///
+    /// 调用方的聚合值来自"本地槽写完再按聚合类型 `load`"（`Load` 是已支持的实参来源）；
+    /// `insertvalue` 链那条路仍未支持（见 win64 用例的契约断言）。
+    ///
+    /// 注：≤16B 的聚合在 sysv64 走**寄存器/保存区**（INTEGER/SSE 分类），那档未覆盖。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_va_arg_reads_unnamed_aggregate_arg_sysv64() {
+        use forge_ir::ir::types::{CallConvId, ConvName};
+        use forge_ir::{FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+
+        // 被调方：callee(fmt: i64, ...) -> i64 ── ret extractvalue(va_arg(聚合), 1)
+        let ctx_c = TypeContext::new();
+        let agg_ty = ctx_c
+            .borrow_mut()
+            .struct_anon(vec![TypeId::I64, TypeId::I64, TypeId::I64], false);
+        let sig_c =
+            FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64]).with_variadic(true);
+        let mut callee = FunctionBuilder::new("callee", ctx_c, sig_c);
+        let (ce, _cp) = callee.create_block_with_params(&[(TypeId::I64, "fmt")]);
+        callee.switch_to_block(ce);
+        let va = callee.va_start();
+        let agg = callee.va_arg(va, agg_ty);
+        let e1 = callee.extract_value(agg, 1);
+        callee.ret(&[e1]);
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        // 调用方：main() -> i64 ── 24 字节聚合（`undef` + `insertvalue`）作为未命名实参
+        let ctx_m = TypeContext::new();
+        let agg_ty_m = ctx_m
+            .borrow_mut()
+            .struct_anon(vec![TypeId::I64, TypeId::I64, TypeId::I64], false);
+        let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", ctx_m, sig_m);
+        let (me, _) = main_fn.create_block_with_params(&[]);
+        main_fn.switch_to_block(me);
+        let fmt = main_fn.iconst(0, TypeId::I64);
+        // 三个字段写进一个本地槽，再**按聚合类型 load 回来**当实参——
+        // `Load` 是实参拆段已支持的来源（`insertvalue` 链那条仍未支持）。
+        let slot = main_fn.stack_addr(-32);
+        for (k, v) in [(0i32, 11i64), (8, 22), (16, 33)] {
+            let val = main_fn.iconst(v, TypeId::I64);
+            let off = main_fn.iconst(i64::from(k), TypeId::I64);
+            let addr = main_fn.iadd(slot, off);
+            main_fn.store(val, addr);
+        }
+        let t3 = main_fn.load(slot, agg_ty_m);
+        let got = main_fn.call(cref, &[fmt, t3], &[TypeId::I64])[0];
+        main_fn.ret(&[got]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        // 两个函数都显式设成 sysv64（本机默认 `c` 别名 = win64）。
+        let cc = CallConvId::Builtin(ConvName::SysV64);
+        for f in module.iter_functions_mut() {
+            f.calling_convention = cc.clone();
+            let mut sig = f.types.borrow().get_signature(f.signature).clone();
+            sig.calling_convention = cc.clone();
+            let sr = f.types.borrow_mut().register_signature(sig);
+            f.signature = sr;
+        }
+
+        jit.compile_module(&module)
+            .expect("compile module (sysv64 变参聚合)");
+        let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(
+            f(),
+            22,
+            "sysv64：未命名聚合实参按值整块进传出区，va_arg(聚合) 必须能读回它的第二个字段"
+        );
     }
 
     /// **变参 V4：浮点未命名实参**（win64）——调用方把 **f64** 栈实参写进传出区（

@@ -406,9 +406,20 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                         Some("overflow_arg_area"),
                         false,
                     ),
-                    // sysv64 的聚合变参走"内联字节进栈区"（>16B）——调用方那条路（`StackByVal`）
-                    // 还没接，因此这里**不声明**聚合规则：读取侧对聚合 fail-closed，不猜。
-                    aggregate_arg: None,
+                    // sysv64 的聚合变参走"内联字节进栈区"（>16B 是 memory class ⇒ 按值在栈上）。
+                    // **`limit = 0` 是必须的**：memory class 的聚合**从不进寄存器保存区**，
+                    // 必须强制走 `overflow_arg_area`（`gp_offset < 0` 恒假 ⇒ 恒取溢出支）。
+                    // 若照整数类那条规则（limit = 保存区字节数），被调方会去保存区读 ⇒ 读到垃圾
+                    // （实测：第二个字段读出 `794868838600`）。
+                    aggregate_arg: Some(VaArgDecl {
+                        cursor: "gp_offset".to_string(),
+                        base: Some("reg_save_area".to_string()),
+                        overflow: Some("overflow_arg_area".to_string()),
+                        limit: Some(0),
+                        signed_limit: false,
+                        step: None,
+                        overflow_step: None,
+                    }),
                     aggregate_indirect: false,
                     aggregate_indirect_size_gt: 0,
                 },
