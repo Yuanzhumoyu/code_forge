@@ -262,6 +262,15 @@ pub struct VaListShape {
     pub int_arg: VaArgDecl,
     /// 浮点类实参的取参规则。
     pub float_arg: VaArgDecl,
+    /// **聚合**实参的取参规则（`None` = 本约定不支持聚合变参 ⇒ 读取侧 fail-closed）。
+    ///
+    /// 与 `int_arg`/`float_arg` 同形（同一套游标/基址/溢出/步长语义）：聚合在变参区里
+    /// 占几个槽、怎么推进游标，由这份数据说。
+    #[serde(default)]
+    pub aggregate_arg: Option<VaArgDecl>,
+    /// 聚合在区域里是**指向它的指针**（win64 的 ">8B ⇒ 调用方副本 + 指针"）还是内联字节。
+    #[serde(default)]
+    pub aggregate_indirect: bool,
 }
 
 /// `va_list` 对象里的一个字段声明。
@@ -353,6 +362,11 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                     save: None,
                     int_arg: a("cursor", None, None, false),
                     float_arg: a("cursor", None, None, false),
+                    // win64：聚合实参（>8B）按 psABI 走"调用方副本 + 指针" ⇒ 变参区里是**指针**，
+                    // 游标与整数类同一条（每个实参槽 8 字节）。≤8B 的聚合按整数值传，
+                    // 由调用方的聚合分类决定（`agg_arg_place`），读取侧只管"间接"这一种。
+                    aggregate_arg: Some(a("cursor", None, None, false)),
+                    aggregate_indirect: true,
                 },
             ),
             // SysV AMD64：gp/fp 偏移游标 + 溢出指针 + 保存区（6×8B GP + 8×16B XMM）。
@@ -384,6 +398,10 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                         Some("overflow_arg_area"),
                         false,
                     ),
+                    // sysv64 的聚合变参走"内联字节进栈区"（>16B）——调用方那条路（`StackByVal`）
+                    // 还没接，因此这里**不声明**聚合规则：读取侧对聚合 fail-closed，不猜。
+                    aggregate_arg: None,
+                    aggregate_indirect: false,
                 },
             ),
             // AAPCS64：`{ __stack, __gr_top, __vr_top, __gr_offs, __vr_offs }`，两个游标都是
@@ -407,6 +425,8 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                     }),
                     int_arg: a("__gr_offs", Some("__gr_top"), Some("__stack"), true),
                     float_arg: a("__vr_offs", Some("__vr_top"), Some("__stack"), true),
+                    aggregate_arg: None,
+                    aggregate_indirect: false,
                 },
             ),
             // RISC-V LP64D：`area` 单指针 + 保存区（8×8B GP，**不含浮点槽**）。
@@ -444,6 +464,8 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                         step: Some(8),
                         overflow_step: None,
                     },
+                    aggregate_arg: None,
+                    aggregate_indirect: false,
                 },
             ),
         ]

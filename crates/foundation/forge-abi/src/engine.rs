@@ -9,7 +9,8 @@ use crate::binding::AbiBinding;
 use crate::error::AbiError;
 use crate::plan::{
     AbiPlan, ArgLoc, CalleeSavedPlan, DeclAttrs, Extension, HiddenSlots, Placement, Purpose,
-    RegRef, RetLoc, StackLayout, VaArea, VaArgRule, VaArgRules, VaField, VaSaveArea, VaSaveSlot,
+    RegRef, RetLoc, StackLayout, VaAggregateArgRule, VaArea, VaArgRule, VaArgRules, VaField,
+    VaSaveArea, VaSaveSlot,
 };
 use crate::registry::AbiHooks;
 use crate::rules::{AbiRules, ClassAction, IndirectVia, PositionRule};
@@ -889,6 +890,18 @@ fn va_area_from_shape(
     };
     let int_rule = rule(&shape.int_arg, false)?;
     let float_rule = rule(&shape.float_arg, true)?;
+    // 聚合规则也**先算好**再进字面量：`fields` 会被移进 `VaArea`，之后再借 `shape` 的字段会撞上
+    // "cannot move out of `fields` because it is borrowed"。
+    let aggregate_rule = shape
+        .aggregate_arg
+        .as_ref()
+        .map(|d| {
+            rule(d, false).map(|rule| VaAggregateArgRule {
+                rule,
+                indirect: shape.aggregate_indirect,
+            })
+        })
+        .transpose()?;
     Ok(VaArea {
         shape: preset.map(str::to_string),
         size: shape.size,
@@ -902,6 +915,7 @@ fn va_area_from_shape(
         arg_rules: VaArgRules {
             int: int_rule,
             float: float_rule,
+            aggregate: aggregate_rule,
         },
     })
 }

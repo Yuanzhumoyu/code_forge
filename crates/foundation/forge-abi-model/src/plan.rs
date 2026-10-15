@@ -408,11 +408,26 @@ pub struct VaArgRule {
     pub cursor_counts_down: bool,
 }
 
-/// 取参规则：整数类与浮点类各一条（按实参类型选）。
+/// **变参里的聚合实参**取参规则：一条游标规则 + "这个位置放的是指针还是内联字节"。
+///
+/// 为什么要单独一条：聚合在变参区里的形态**不由类型类别决定**（win64 是"调用方副本 + 指针"，
+/// 即区域里放指针；sysv64 的 >16B 是内联字节进栈区），而 `int`/`float` 两条规则表达不了这件事。
+/// `indirect = true` ⇒ 取到的地址处**是指向聚合的指针**（要先 load 再按 size 拷贝）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VaAggregateArgRule {
+    pub rule: VaArgRule,
+    /// 区域里放的是"指向聚合的指针"（true）还是"聚合的内联字节"（false）。
+    pub indirect: bool,
+}
+
+/// 取参规则：整数类、浮点类各一条，**聚合一条（可选）**（按实参类型选）。
+///
+/// `aggregate = None` ⇒ 本约定不支持聚合变参，读取侧**fail-closed**（不猜、也不按标量 load）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VaArgRules {
     pub int: VaArgRule,
     pub float: VaArgRule,
+    pub aggregate: Option<VaAggregateArgRule>,
 }
 
 /// `va_list` 对象里的一个字段。

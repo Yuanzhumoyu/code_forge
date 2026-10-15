@@ -157,7 +157,8 @@ impl<M: TargetMachine> LegalizePass<M> for VaPass {
             return Ok(ChangeSet::default());
         };
         let before = IrSize::of(func);
-        let (n_objs, n_args) = crate::pipeline::va_expand::expand_va(func, &va, &slots)?;
+        let (n_objs, n_args) =
+            crate::pipeline::va_expand::expand_va(func, &va, &slots, &mut ctx.agg_slots)?;
         if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER")
             || crate::pipeline::trace_enabled("FORGE_TRACE_AGG")
         {

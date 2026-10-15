@@ -20,7 +20,9 @@
 //! 变参的**类型面**（`VaArgRule`/`VaArgRules`/`VaField`/`VaSaveArea`/`VaSaveSlot`）仍是
 //! 模型里的那一份，这里只做再导出，宿主侧路径不变。
 
-pub use forge_abi_model::plan::{VaArgRule, VaArgRules, VaField, VaSaveArea as VaSave, VaSaveSlot};
+pub use forge_abi_model::plan::{
+    VaAggregateArgRule, VaArgRule, VaArgRules, VaField, VaSaveArea as VaSave, VaSaveSlot,
+};
 
 /// **变参信息**（v20 变参 V2/V3）：被调方怎么找到未命名实参。
 ///

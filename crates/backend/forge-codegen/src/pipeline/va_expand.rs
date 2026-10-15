@@ -34,6 +34,7 @@
 //!    （否则"原指令改 `Copy`"会读到尚未计算的值）；
 //! 2. 逐指令改写要**先收集再改**两遍（遍历 `blocks()` 时不能再可变借用 `func`）。
 
+use crate::pipeline::agg_expand::{AggSlots, rewrite_agg_value_uses};
 use forge_ir::*;
 use forge_isa_runtime::machine::call_layout::{VaInfo, VaInit, VaInitVal};
 
@@ -194,6 +195,7 @@ pub(crate) fn expand_va(
     func: &mut Function,
     va: &VaInfo,
     slots: &AbiSlots,
+    agg_slots: &mut AggSlots,
 ) -> Result<(usize, usize), IrError> {
     let Some(init) = va.init.clone() else {
         return Err(IrError::Unsupported(format!(
@@ -222,7 +224,7 @@ pub(crate) fn expand_va(
         expand_start(func, b, ii, &init, va, slots)?;
     }
     for (b, ii) in args.into_iter().rev() {
-        expand_arg(func, b, ii, &init, va)?;
+        expand_arg(func, b, ii, va, agg_slots)?;
     }
     Ok((n_start, n_arg))
 }
@@ -501,6 +503,8 @@ struct VaArgSite {
     ty: TypeId,
     is_fp: bool,
     is_f32: bool,
+    /// 结果类型是否为**聚合**（走 `arg_rules.aggregate` 那条路；没声明那条规则 ⇒ fail-closed）。
+    is_agg: bool,
 }
 
 /// **`va_arg` 的展开**（v20 V6，**唯一实现**）：按 plan 的取参规则跑同一套算法，
@@ -528,16 +532,28 @@ fn expand_arg(
     func: &mut Function,
     b: Block,
     ii: Inst,
-    init: &VaInit,
     va: &VaInfo,
+    agg_slots: &mut AggSlots,
 ) -> Result<(), IrError> {
-    let _ = init; // 初值在 `va_start` 里写；取值只读对象
     let site = va_arg_site(func, ii)?;
-    let (ap, ty, is_fp, is_f32) = (site.ap, site.ty, site.is_fp, site.is_f32);
-    let rule = if is_fp {
-        va.arg_rules.float
+    let (ap, ty, is_fp, is_f32, is_agg) = (site.ap, site.ty, site.is_fp, site.is_f32, site.is_agg);
+    // 聚合走**自己的那条规则**（v23 收尾）：它在区域里是"指向聚合的指针"还是内联字节，
+    // 不是 int/fp 两类能表达的。没声明 ⇒ fail-closed（不猜、也不按标量 load）。
+    let agg_rule = if is_agg {
+        Some(va.arg_rules.aggregate.ok_or_else(|| {
+            IrError::Unsupported(
+                "va_arg：本约定没有声明聚合取参规则（`va_list` 形状的 `aggregate_arg`）——\
+                 调用方可按标量逐个 va_arg，或先在约定层补这条规则"
+                    .into(),
+            )
+        })?)
     } else {
-        va.arg_rules.int
+        None
+    };
+    let rule = match agg_rule {
+        Some(a) => a.rule,
+        None if is_fp => va.arg_rules.float,
+        None => va.arg_rules.int,
     };
     let field = |i: usize| -> Result<(u32, u32), IrError> {
         va.fields
@@ -630,7 +646,43 @@ fn expand_arg(
             addr
         }
     };
-    // ④ 取值：f32 先取 f64 再窄回（C/LLVM 的默认实参提升）；f64 走 Fload；整数/指针走 Load
+    // ④ 取值：聚合 → 拷贝进自己的帧槽并登记（`agg_slots`）；f32 先取 f64 再窄回；
+    //    f64 走 Fload；整数/指针走 Load。
+    if let Some(a) = agg_rule {
+        let size = {
+            let ts = func.types.borrow();
+            ts.size_bytes(ty) as usize
+        };
+        // 区域里放的是**指针**时先取指针（win64 的 ">8B ⇒ 调用方副本 + 指针"）。
+        let src = if a.indirect {
+            mk_load(func, b, &mut out, p, TypeId::PTR)
+        } else {
+            p
+        };
+        // 逐 8 字节段从来源拷进槽（`size` 已按契约：调用方给的是完整聚合字节）。
+        let (alloca, slot) = crate::pipeline::legalize::common::place_addr_of_slot(func, b, size);
+        out.push(alloca);
+        let mut cur_dst = slot;
+        let mut cur_src = src;
+        let mut off = 0usize;
+        while off < size {
+            let seg = mk_load(func, b, &mut out, cur_src, TypeId::I64);
+            mk_store(func, b, &mut out, seg, cur_dst);
+            off += 8;
+            if off < size {
+                let c8 = mk_iconst(func, b, &mut out, 8);
+                cur_dst = mk_binop(func, b, &mut out, Opcode::Iadd, cur_dst, c8, TypeId::PTR);
+                cur_src = mk_binop(func, b, &mut out, Opcode::Iadd, cur_src, c8, TypeId::PTR);
+            }
+        }
+        // 结果值登记成"住在该槽"，原指令墓碑化，再递归重写它的后续使用
+        // （后续 `extractvalue` 因此走地址语义——与聚合展开族同一套机制）。
+        let res = func.dfg.inst_data(ii).results[0];
+        func.tombstone_inst(ii);
+        agg_slots.insert(res, (slot, ty));
+        move_new_before(func, b, pos, &out)?;
+        return rewrite_agg_value_uses(func, res, &[], ty, agg_slots);
+    }
     let val = if is_f32 {
         let d = mk_fload(func, b, &mut out, p, TypeId::F64);
         mk_unop(func, b, &mut out, Opcode::Fptrunc, d, ty)
@@ -713,18 +765,8 @@ fn va_arg_site(func: &Function, ii: Inst) -> Result<VaArgSite, IrError> {
             ts.is_aggregate(ty),
         )
     };
-    if is_agg {
-        // **fail-closed**（v23 M6）：以前聚合结果落到下面的 `mk_load(p, ty)`——按**标量**
-        // 从变参区读一个聚合类型，静默错值。要真做对，先得有"聚合在变参区里怎么放"的规则，
-        // 而约定数据（`va.arg_rules`）只分 int/fp 两类、**没有聚合条目** ⇒ 那属约定层的数据
-        // 扩展（要连同内置规则与真执行用例一起做）。在那之前，明确报错好过静默读错。
-        return Err(IrError::Unsupported(
-            "va_arg：聚合结果需要「聚合在变参区里怎么放」的规则，而约定数据（`va.arg_rules`）\
-             只有 int/fp 两类、没有聚合条目——此前会按标量 load（静默错值）。\
-             调用方可改为按标量逐个 va_arg，或先在约定层补聚合取参规则"
-                .into(),
-        ));
-    }
+    // 聚合不再无条件拒绝：`expand_arg` 会去查 `arg_rules.aggregate`，**没声明**那条规则才
+    // fail-closed（v23 收尾：数据面已支持，win64 已声明"间接"形态）。
     if is_vec {
         return Err(IrError::Unsupported(
             "va_arg: 向量结果需要「mem → 向量寄存器」的取值能力（尚未申报）".into(),
@@ -740,6 +782,7 @@ fn va_arg_site(func: &Function, ii: Inst) -> Result<VaArgSite, IrError> {
         ty,
         is_fp,
         is_f32,
+        is_agg,
     })
 }
 
@@ -822,6 +865,8 @@ mod tests {
                     cursor_origin: 48,
                     cursor_counts_down: false,
                 },
+                // 夹具不声明聚合规则（`None` ⇒ 聚合 fail-closed）。
+                aggregate: None,
             },
         }
     }
@@ -856,49 +901,84 @@ mod tests {
         assert!(s2.obj_depth >= front + 24, "对象槽在局部槽之下");
     }
 
-    /// **`va_arg` 聚合结果 fail-closed**（v23 M6）：以前落到 `mk_load(p, ty)`——按**标量**从
-    /// 变参区读一个聚合类型，静默错值。约定数据（`va.arg_rules`）只有 int/fp 两类、没有聚合
-    /// 条目，所以"做对"需要约定层的数据扩展；在那之前必须**报错**而不是读错。
+    /// **`va_arg` 聚合**（v23 收尾）：两条路都要钉。
     ///
-    /// 这条守卫钉的是**行为**：把"静默错值"变成"明确拒绝"。
+    /// ① 约定**没声明**聚合规则（`aggregate: None`）⇒ 必须 fail-closed，且错误信息点名
+    ///    缺的是哪条规则（以前是**无条件拒绝**；现在是"数据没给就拒绝"）。
+    /// ② 声明了 `aggregate`（win64 的"间接"形态）⇒ 必须**成功**展开：取指针 → 逐段拷进
+    ///    自己的帧槽 → 结果登记进 `agg_slots`（后续 `extractvalue` 因此走地址语义）。
     #[test]
-    fn aggregate_va_arg_is_fail_closed() {
+    fn aggregate_va_arg_needs_a_declared_rule() {
         use forge_ir::{Opcode, TypeId};
+        use forge_isa_runtime::machine::call_layout::VaAggregateArgRule;
 
-        let ctx = TypeContext::new();
-        let agg = ctx
-            .borrow_mut()
-            .struct_anon(vec![TypeId::I64, TypeId::I64], false);
-        let sig = FunctionSignature::new(&[(TypeId::PTR, "ap")], &[TypeId::I64]);
-        let mut b = FunctionBuilder::new("va_agg", ctx, sig);
-        let (e, params) = b.create_block_with_params(&[(TypeId::PTR, "ap")]);
-        b.switch_to_block(e);
-        // 直接造一条 `va_arg` 且结果类型是聚合。
-        let v = b.emit1(
-            Opcode::VaArg,
-            vec![params[0]],
-            vec![],
-            agg,
-            forge_ir::InstFlags::SIDE_EFFECT,
-        );
-        let _ = v;
-        b.ret(&[params[0]] as &[forge_ir::Value]);
-        let f = b.finish().expect("build va_agg");
-        let ii = f
-            .dfg
-            .insts()
-            .find(|(_, d)| d.opcode == Opcode::VaArg)
-            .map(|(i, _)| i)
-            .expect("va_arg 指令");
-        // `VaArgSite` 没有 `Debug` ⇒ 用 match 取错误（也顺带断言"确实失败"）。
-        let err = match super::va_arg_site(&f, ii) {
-            Ok(_) => panic!("聚合 va_arg 必须报错（不再静默按标量 load）"),
-            Err(e) => e,
+        // 造"带一条聚合 va_arg 的函数"，返回 (函数, va_arg 指令, 块)。
+        let build = || {
+            let ctx = TypeContext::new();
+            let agg = ctx
+                .borrow_mut()
+                .struct_anon(vec![TypeId::I64, TypeId::I64], false);
+            let sig = FunctionSignature::new(&[(TypeId::PTR, "ap")], &[TypeId::I64]);
+            let mut b = FunctionBuilder::new("va_agg", ctx, sig);
+            let (e, params) = b.create_block_with_params(&[(TypeId::PTR, "ap")]);
+            b.switch_to_block(e);
+            let v = b.emit1(
+                Opcode::VaArg,
+                vec![params[0]],
+                vec![],
+                agg,
+                forge_ir::InstFlags::SIDE_EFFECT,
+            );
+            let _ = v;
+            b.ret(&[params[0]] as &[forge_ir::Value]);
+            let f = b.finish().expect("build va_agg");
+            let ii = f
+                .dfg
+                .insts()
+                .find(|(_, d)| d.opcode == Opcode::VaArg)
+                .map(|(i, _)| i)
+                .expect("va_arg 指令");
+            (f, ii, e)
         };
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("聚合") && msg.contains("arg_rules"),
-            "错误信息应点名聚合与约定数据缺口，实际：{msg}"
-        );
+
+        // ① 没声明规则 ⇒ fail-closed，且点名 `aggregate_arg`
+        {
+            let (mut f, ii, e) = build();
+            let va = va(true); // 夹具（`aggregate: None`）
+            let mut agg_slots = AggSlots::new();
+            let err = match super::expand_arg(&mut f, e, ii, &va, &mut agg_slots) {
+                Ok(()) => panic!("约定没声明聚合规则时必须 fail-closed（不能按标量 load）"),
+                Err(e) => format!("{e}"),
+            };
+            assert!(
+                err.contains("聚合") && err.contains("aggregate_arg"),
+                "错误信息应点名缺失的规则，实际：{err}"
+            );
+        }
+
+        // ② 声明了规则 ⇒ 成功，并且**真的写了槽**（有 Store）
+        {
+            let (mut f, ii, e) = build();
+            let mut va = va(true);
+            // 夹具的 `fields` 是空的（别的用例不需要它）——取参规则要按名字引字段，
+            // 所以这里补一个"游标"字段（与 `int` 规则的 `cursor: 0` 对齐）。
+            va.fields = vec![forge_isa_runtime::machine::call_layout::VaField {
+                name: "cursor".to_string(),
+                offset: 0,
+                size: 8,
+            }];
+            va.arg_rules.aggregate = Some(VaAggregateArgRule {
+                rule: va.arg_rules.int,
+                indirect: true,
+            });
+            let mut agg_slots = AggSlots::new();
+            super::expand_arg(&mut f, e, ii, &va, &mut agg_slots)
+                .expect("声明了 aggregate 规则就必须能展开");
+            let ops: Vec<Opcode> = f.dfg.insts().map(|(_, d)| d.opcode).collect();
+            assert!(
+                ops.contains(&Opcode::Store),
+                "聚合取参必须把字节拷进自己的帧槽（要有 Store）：{ops:?}"
+            );
+        }
     }
 }

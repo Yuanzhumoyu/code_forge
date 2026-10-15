@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 收尾：**变参聚合取参**（`va_arg` 聚合）打通一条路
+
++ **数据面**：`VaArgRules` 增 `aggregate: Option<VaAggregateArgRule>`（规则 + `indirect`）；`va_list` 形状声明增两个可选键 `aggregate_arg` / `aggregate_indirect`（`#[serde(default)]`，老形状与快照零改动）；`engine` 用同一个 `rule(...)` 构造器造它。
++ **内置声明**：win64 的 `win64_stack` 声明 `aggregate_arg`（游标同整数类）+ `indirect = true`——psABI 的"聚合 >8B ⇒ 调用方副本 + 指针"，所以变参区里放的是**指针**。sysv64/aapcs64/lp64d **不声明**（它们的聚合变参依赖尚未接通的调用方 `StackByVal`）。
++ **消费侧**（`va_expand::expand_arg`）：聚合走自己的那条规则；`indirect` ⇒ 先 `Load(ptr)`；然后逐 8 字节段拷进 `place_addr_of_slot(size)` 开的**自己的**帧槽，结果值登记进 `agg_slots`、原指令墓碑化、递归 `rewrite_agg_value_uses`（后续 `extractvalue` 走地址语义）。
++ **fail-closed 的判据变了但没有消失**：以前对聚合**无条件**拒绝；现在数据没声明才拒绝，且错误信息点名 `aggregate_arg`。守卫 `aggregate_va_arg_needs_a_declared_rule` 钉两条路（没声明 ⇒ 报错且点名；声明了 ⇒ 成功且**生成 Store**，只登记不写就是读未初始化内存）。
++ 顺带删掉 `expand_arg` 那个从没用过的 `init` 形参（`let _ = init;` 一直写在函数体第一行）。
+
 ### Reviewed (2026-10-11) — 后端 v23 收尾：聚合槽"按段整写"查证为非缺陷（+ 两条守卫）
 
 + **查证**：合法化按 `ceil(size/8)*8` 字节把聚合往 `Alloca` 槽里整段搬，而 `frame_slots` 按

@@ -1462,6 +1462,29 @@ jit x86 197/3/0、riscv64 136/64/0。
 **（b）`>16B` 非 sret 栈返回走 `StackByVal`**：发射侧 `ArgPlace::StackByVal` 已有，缺"返回侧也走它"
 —— **待侦察**：`RetLoc` 的形状、调用方读返回区的落点、被调方写回区的位置（下一步先读数据模型再定清单）。
 
+### M7 批次 1：**`va_arg` 聚合打通一条路**（2026-10-11，工作区进行中）
+
+数据面 + 消费侧 + 守卫都已落地（细节见 CHANGELOG 同名条目）：
+
+- `VaArgRules.aggregate: Option<VaAggregateArgRule>`（规则 + `indirect`）；
+  `va_list` 形状声明加 `aggregate_arg` / `aggregate_indirect`（都是 `#[serde(default)]` ⇒
+  老形状与既有快照零改动）。
+- win64 的 `win64_stack` 声明 `aggregate_arg`（游标同整数类）+ `indirect = true`
+  （psABI：聚合 >8B 走"调用方副本 + 指针" ⇒ 变参区里放**指针**）；sysv64/aapcs64/lp64d
+  不声明（它们的聚合变参依赖尚未接通的调用方 `StackByVal`）。
+- `va_expand::expand_arg`：聚合走自己的规则；`indirect` ⇒ 先 `Load(ptr)`；逐 8 字节段拷进
+  `place_addr_of_slot(size)` 开的**自己的**帧槽；结果值登记进 `agg_slots`、原指令墓碑化、
+  递归 `rewrite_agg_value_uses`（后续 `extractvalue` 走地址语义）。
+- fail-closed 没消失、判据变了：以前对聚合**无条件**拒绝，现在"数据没声明才拒绝"且点名
+  `aggregate_arg`。守卫 `aggregate_va_arg_needs_a_declared_rule` 钉两条路。
+- 顺带删掉 `expand_arg` 从未使用的 `init` 形参。
+
+**判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` 2818 passed；
+jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
+
+**仍欠**：① **真执行**用例（变参函数用 `va_arg(聚合)` 取回实参并与期望值比较，win64 通道）；
+② `>16B` 非 sret 栈返回走 `StackByVal`（sysv64 的聚合变参正依赖它）。
+
 ## 13. M4 进度（收口）
 
 ### 爆炸半径（2026-10-11 实测，`rg` 计数）
