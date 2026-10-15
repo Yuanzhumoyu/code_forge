@@ -40,6 +40,11 @@ pub(crate) fn trace_enabled(key: &'static str) -> bool {
         "FORGE_TRACE_EXPIRE",
         "FORGE_TRACE_SPILL",
         "FORGE_TRACE_ABI",
+        // v23 收尾实测补：`FORGE_TRACE_AGG` 是**被文档与代码多处引用**的合法化/聚合展开诊断
+        // 开关（`pipeline/legalize/*`、`agg_expand`、M3 的 `ChangeSet` 报告都说"可见"），
+        // 但它**不在白名单里** ⇒ `trace_enabled("FORGE_TRACE_AGG")` 恒为假、相关 eprintln 全是
+        // 死代码。加进来（顺带修掉"文档承诺可见、实际看不见"这类静默失效）。
+        "FORGE_TRACE_AGG",
     ];
     static CACHE: OnceLock<std::collections::HashMap<&'static str, bool>> = OnceLock::new();
     CACHE

@@ -1485,6 +1485,23 @@ jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
 **仍欠**：① **真执行**用例（变参函数用 `va_arg(聚合)` 取回实参并与期望值比较，win64 通道）；
 ② `>16B` 非 sret 栈返回走 `StackByVal`（sysv64 的聚合变参正依赖它）。
 
+### M7 批次 2/3：内联档 + 两个真缺陷（2026-10-11）
+
+- **内联档**：`use_pointer = indirect && (indirect_size_gt == 0 || size > 阈值)`；win64 的
+  `≤8B` 走内联（不读指针）、`>8B` 走指针。守卫扩成三档（无规则 ⇒ 报错点名 / 16B 间接 /
+  8B 内联），并断言"后续 `extractvalue` 必须全部被重写"。
+- **真缺陷 ①**：`rewrite_agg_value_uses` 的 by-ref ExtractValue 分支 `return Ok(())`
+  ⇒**漏掉同一聚合值的第 2+ 个使用点**（改为 `continue`）。真执行用例取两个字段时现形。
+- **真缺陷 ②**：`trace_enabled` 白名单漏 `FORGE_TRACE_AGG` ⇒ 方案与实践都承诺可见的聚合/合法化
+  诊断开关**静默失效**（排查时一度被误导）。已补齐白名单。
+- **调用方一半仍未实现**（两条现成来源都 fail-closed，见 CHANGELOG）：`insertvalue` 链、
+  按引用形参转发 ⇒ 真执行用例暂改为"限制记录 + 断言 fail-closed"
+  （`test_jit_va_arg_unnamed_aggregate_arg_is_known_limited`）。
+- 临时诊断用例与探针已全部删除。
+
+**判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` 2820 passed；
+jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
+
 ## 13. M4 进度（收口）
 
 ### 爆炸半径（2026-10-11 实测，`rg` 计数）

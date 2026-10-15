@@ -653,17 +653,15 @@ fn expand_arg(
             let ts = func.types.borrow();
             ts.size_bytes(ty) as usize
         };
-        // 形态**按尺寸分档**时（win64：`>8B ⇒ 指针`、`≤8B ⇒ 内联整数槽`），本仓只实现了间接档
-        // ⇒ 小聚合明确拒绝，绝不把内联字节当指针读（那是静默错值）。
-        if a.indirect && a.indirect_size_gt > 0 && (size as u64) <= u64::from(a.indirect_size_gt) {
-            return Err(IrError::Unsupported(format!(
-                "va_arg：{size} 字节的聚合在本约定里**不是**按指针传（阈值 {} 字节）——\
-                 内联档尚未实现，明确拒绝而不是把内联字节当指针读",
-                a.indirect_size_gt
-            )));
-        }
+        // 形态**按尺寸分档**（win64：`>8B ⇒ 指针`、`≤8B ⇒ 内联整数槽`）：
+        //   `use_pointer = indirect && (阈值 == 0 || size > 阈值)`
+        // 阈值 0 = 所有尺寸同一形态；阈值 > 0 = 只有更大的那档才是指针。
+        // 内联档就是"区域里直接放聚合的字节"（≤8B 一个槽、>8B 连续多槽），
+        // 逐 8 字节段拷进来即可——**不要**在这里多读一次指针（那是把内联字节当指针）。
+        let use_pointer = a.indirect
+            && (a.indirect_size_gt == 0 || (size as u64) > u64::from(a.indirect_size_gt));
         // 区域里放的是**指针**时先取指针（win64 的 ">8B ⇒ 调用方副本 + 指针"）。
-        let src = if a.indirect {
+        let src = if use_pointer {
             mk_load(func, b, &mut out, p, TypeId::PTR)
         } else {
             p
@@ -922,11 +920,15 @@ mod tests {
         use forge_isa_runtime::machine::call_layout::VaAggregateArgRule;
 
         // 造"带一条聚合 va_arg 的函数"，返回 (函数, va_arg 指令, 块)。
-        let build = || {
+        // 按尺寸造聚合：16B = 两个 i64（>阈值，间接档）、8B = 一个 i64（≤阈值，内联档）。
+        let build_sized = |bytes: usize| {
             let ctx = TypeContext::new();
-            let agg = ctx
-                .borrow_mut()
-                .struct_anon(vec![TypeId::I64, TypeId::I64], false);
+            let members: Vec<TypeId> = if bytes > 8 {
+                vec![TypeId::I64, TypeId::I64]
+            } else {
+                vec![TypeId::I64]
+            };
+            let agg = ctx.borrow_mut().struct_anon(members, false);
             let sig = FunctionSignature::new(&[(TypeId::PTR, "ap")], &[TypeId::I64]);
             let mut b = FunctionBuilder::new("va_agg", ctx, sig);
             let (e, params) = b.create_block_with_params(&[(TypeId::PTR, "ap")]);
@@ -938,8 +940,10 @@ mod tests {
                 agg,
                 forge_ir::InstFlags::SIDE_EFFECT,
             );
-            let _ = v;
-            b.ret(&[params[0]] as &[forge_ir::Value]);
+            // 后续对聚合结果取字段：合法化之后**不该再有 ExtractValue**（应被重写成
+            // "从槽里 load"——只登记不重写就是漏了这一步，真跑时会掉到 lowering）。
+            let field = b.extract_value(v, 0);
+            b.ret(&[field]);
             let f = b.finish().expect("build va_agg");
             let ii = f
                 .dfg
@@ -952,7 +956,7 @@ mod tests {
 
         // ① 没声明规则 ⇒ fail-closed，且点名 `aggregate_arg`
         {
-            let (mut f, ii, e) = build();
+            let (mut f, ii, e) = build_sized(16);
             let va = va(true); // 夹具（`aggregate: None`）
             let mut agg_slots = AggSlots::new();
             let err = match super::expand_arg(&mut f, e, ii, &va, &mut agg_slots) {
@@ -965,9 +969,9 @@ mod tests {
             );
         }
 
-        // ② 声明了规则 ⇒ 成功，并且**真的写了槽**（有 Store）
+        // ② 声明了规则且**大于阈值**（16B > 8）⇒ 走**间接**档：先取指针，再多读 2 段
         {
-            let (mut f, ii, e) = build();
+            let (mut f, ii, e) = build_sized(16);
             let mut va = va(true);
             // 夹具的 `fields` 是空的（别的用例不需要它）——取参规则要按名字引字段，
             // 所以这里补一个"游标"字段（与 `int` 规则的 `cursor: 0` 对齐）。
@@ -990,6 +994,48 @@ mod tests {
                 ops.contains(&Opcode::Store),
                 "聚合取参必须把字节拷进自己的帧槽（要有 Store）：{ops:?}"
             );
+            // Load 组成：游标 1 + **取指针 1** + 段拷贝 2 + 字段读 1 = 5（16B 聚合、间接档）。
+            let loads = ops.iter().filter(|o| **o == Opcode::Load).count();
+            assert_eq!(
+                loads, 5,
+                "16B（>阈值 8）应走间接档：游标 1 + 指针 1 + 段 2 + 字段 1 = 5：{ops:?}"
+            );
+            assert!(
+                !ops.contains(&Opcode::ExtractValue),
+                "聚合结果的后续 extractvalue 必须被重写成\"从槽 load\"（否则落到 lowering 会 Unsupported）：{ops:?}"
+            );
+        }
+
+        // ③ **不大于阈值**（8B ≤ 8）⇒ 走**内联**档：区域里直接是聚合字节，
+        //    一次段读就够（**不**多读指针——多读就是把内联字节当指针用）。
+        {
+            let (mut f, ii, e) = build_sized(8);
+            let mut va = va(true);
+            va.fields = vec![forge_isa_runtime::machine::call_layout::VaField {
+                name: "cursor".to_string(),
+                offset: 0,
+                size: 8,
+            }];
+            va.arg_rules.aggregate = Some(VaAggregateArgRule {
+                rule: va.arg_rules.int,
+                indirect: true,
+                indirect_size_gt: 8,
+            });
+            let mut agg_slots = AggSlots::new();
+            super::expand_arg(&mut f, e, ii, &va, &mut agg_slots)
+                .expect("阈值内的聚合必须走内联档（不再拒绝）");
+            let ops: Vec<Opcode> = f.dfg.insts().map(|(_, d)| d.opcode).collect();
+            // Load 组成：游标 1 + 段拷贝 1 + 字段读 1 = 3（**没有**取指针那一次）。
+            let loads = ops.iter().filter(|o| **o == Opcode::Load).count();
+            assert_eq!(
+                loads, 3,
+                "8B（≤阈值 8）应走内联档：游标 1 + 段 1 + 字段 1 = 3、**不读指针**：{ops:?}"
+            );
+            assert!(
+                !ops.contains(&Opcode::ExtractValue),
+                "内联档同样要重写后续 extractvalue：{ops:?}"
+            );
+            assert!(ops.contains(&Opcode::Store), "内联档同样要写槽：{ops:?}");
         }
     }
 }

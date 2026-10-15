@@ -11,6 +11,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 收尾 M7 批次 2/3：聚合变参**按尺寸分档**（含内联档）、修两个真缺陷
+
++ **内联档（≤阈值）**：`va_arg` 的聚合形态由 `use_pointer = indirect && (阈值 == 0 || size > 阈值)`
+  决定——win64 的 `≤8B` 是"内联整数槽"、`>8B` 才是"指针"。内联档就是"区域里直接放聚合字节"，
+  逐 8 字节段拷进来即可（**不**多读一次指针）。守卫按三档钉住：无规则 ⇒ 报错点名；16B ⇒
+  4 次 Load（游标 1 + 指针 1 + 段 2 + 字段 1 = 5，见下）；8B ⇒ 3 次（**不读指针**）。
++ **修 `rewrite_agg_value_uses` 的"跳出整个循环"**（真缺陷）：by-ref（值在内存）分支的
+  ExtractValue 处理里写的是 `return Ok(())` ⇒ **同一聚合值的第 2 个及以后的使用点全被漏掉**，
+  漏掉的那些 `ExtractValue` 掉到 lowering ⇒ `Unsupported("DSL lowering")`。单个使用点时代
+  这条路径看着是对的，所以一直没暴露；`va_arg(聚合)` 一次取两个字段才现形。改成 `continue`。
++ **修 `trace_enabled` 白名单漏 `FORGE_TRACE_AGG`**（真缺陷）：`FORGE_TRACE_AGG` 被方案、
+  `legalize/*` 与 M3 的 `ChangeSet` 报告多处承诺"可见"，但它**不在 `TRACE_KEYS` 白名单里**
+  ⇒ 所有相关 `eprintln` 是死代码、开关静默失效（本轮排查一度被它误导）。已加进白名单。
++ **调用方一半未实现（如实记录 + 断言限制）**：被调方 `va_arg(聚合)` 已完成（单测覆盖两档与
+  多使用点）；但调用方把聚合值作为**未命名实参**传下去，两条现成来源都被 `expand_agg_call_args`
+  明确拒绝（fail-closed，不是静默错值）：`insertvalue` 链 ⇒ `聚合实参拆段：值来源不支持`；
+  按引用**形参**转发 ⇒ `聚合实参拆段：值来源不支持（def Param(Block(0), 0)）`。
+  用例 `test_jit_va_arg_unnamed_aggregate_arg_is_known_limited` 断言该限制仍存在，
+  一旦调用方落地必须改成真执行断言（期望值 11 已写在注释里）。
+
 ### Changed (2026-10-11) — 后端 v23 收尾：**变参聚合取参**（`va_arg` 聚合）打通一条路
 
 + **数据面**：`VaArgRules` 增 `aggregate: Option<VaAggregateArgRule>`（规则 + `indirect`）；`va_list` 形状声明增两个可选键 `aggregate_arg` / `aggregate_indirect`（`#[serde(default)]`，老形状与快照零改动）；`engine` 用同一个 `rule(...)` 构造器造它。

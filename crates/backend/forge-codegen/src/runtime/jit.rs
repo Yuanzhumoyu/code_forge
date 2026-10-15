@@ -3137,6 +3137,72 @@ ret_int = ["RAX"]
         );
     }
 
+    /// **变参聚合实参：当前限制记录（v23 收尾 M7）**——被调方一半已实现，调用方一半未实现。
+    ///
+    /// 已实现（有单测钉住）：被调方 `va_arg(聚合)` → 读指针 → 逐段拷进自己的帧槽 → 登记
+    /// `agg_slots` → 后续 `extractvalue` 走地址语义（`aggregate_va_arg_needs_a_declared_rule`
+    /// 覆盖两种尺寸档与"多使用点全部重写"）。
+    ///
+    /// **未实现**：调用方把聚合值作为**未命名实参**传下去。实测两条现成来源都被
+    /// `expand_agg_call_args` 明确拒绝（fail-closed，不是静默错值）：
+    /// - `insertvalue` 链搭出来的聚合：`聚合实参拆段：值来源不支持`（下游 `InsertValue` 掉到 lowering）；
+    /// - 按引用**形参**转发：`聚合实参拆段：值来源不支持（def Param(Block(0), 0)）`。
+    ///
+    /// 所以这条用例**断言该限制仍存在**：一旦调用方一半落地（或既有来源被支持），它必须改成
+    /// "编得过且值 = 11"的真执行断言（期望值已写在下面）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_va_arg_unnamed_aggregate_arg_is_known_limited() {
+        use forge_ir::{FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+
+        let ctx_c = TypeContext::new();
+        let agg_ty = ctx_c
+            .borrow_mut()
+            .struct_anon(vec![TypeId::I64, TypeId::I64], false);
+        let sig_c =
+            FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64]).with_variadic(true);
+        let mut callee = FunctionBuilder::new("callee", ctx_c, sig_c);
+        let (ce, _cp) = callee.create_block_with_params(&[(TypeId::I64, "fmt")]);
+        callee.switch_to_block(ce);
+        let va = callee.va_start();
+        let agg = callee.va_arg(va, agg_ty);
+        let e0 = callee.extract_value(agg, 0);
+        let e1 = callee.extract_value(agg, 1);
+        let r = callee.iadd(e0, e1);
+        callee.ret(&[r]);
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        let ctx_m = TypeContext::new();
+        let agg_ty_m = ctx_m
+            .borrow_mut()
+            .struct_anon(vec![TypeId::I64, TypeId::I64], false);
+        let sig_m = FunctionSignature::new(&[(agg_ty_m, "agg")], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", ctx_m, sig_m);
+        let (me, mp) = main_fn.create_block_with_params(&[(agg_ty_m, "agg")]);
+        main_fn.switch_to_block(me);
+        let fmt = main_fn.iconst(0, TypeId::I64);
+        let got = main_fn.call(cref, &[fmt, mp[0]], &[TypeId::I64])[0];
+        main_fn.ret(&[got]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        match jit.compile_module(&module) {
+            Ok(()) => panic!(
+                "调用方一半已落地 ⇒ 本用例应改成真执行断言：f(Agg16{{a:4,b:7}}) == 11（期望值见注释）"
+            ),
+            Err(e) => {
+                let msg = format!("{e}");
+                assert!(
+                    msg.contains("聚合实参拆段"),
+                    "期望\"聚合实参拆段：值来源不支持\"这一已知限制，实际：{msg}"
+                );
+            }
+        }
+    }
+
     /// **变参 V4：浮点未命名实参**（win64）——调用方把 **f64** 栈实参写进传出区（
     /// `{ role = "stack_arg_store", class = "fpr" }`）、被调方用 `va_arg(ap, f64)` 读回
     /// （`{ role = "ptr_load", class = "fpr" }`）。

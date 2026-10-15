@@ -462,7 +462,12 @@ pub(crate) fn rewrite_agg_value_uses(
                         inst.immediates = smallvec::smallvec![];
                     }
                     func.refresh_inst_uses(__cp);
-                    return Ok(());
+                    // **只跳过本使用点**：这里以前是 `return Ok(())` —— 那会**跳出整个循环**，
+                    // 于是"同一个 by-ref 聚合值的第 2 个及以后的使用点"全被漏掉。真执行用例
+                    // `test_jit_va_arg_reads_unnamed_aggregate_arg`（`va_arg(聚合)` 取两个字段）
+                    // 让它现形：漏掉的那个 `ExtractValue` 掉到 lowering ⇒ `Unsupported("DSL lowering")`。
+                    // 单使用点时代这条路径看着是对的，所以一直没暴露。
+                    continue;
                 }
                 let ts = func.types.borrow();
                 let off = ts.field_offset(agg_ty, idx).ok_or_else(|| {
@@ -1098,5 +1103,39 @@ mod tests {
             "槽里必须真的写入（登记+Store 缺一不可）：{ops:?}"
         );
         let _ = e;
+    }
+
+    /// **`va_arg` 产生的聚合必须让"要不要合法化"为真**（v23 收尾 M7 实测抓到）：
+    /// 真执行用例（`test_jit_va_arg_reads_unnamed_aggregate_arg`）里，`va_arg(聚合)` +
+    /// 后续 `extractvalue` 的函数**没被合法化** ⇒ `ExtractValue` 掉到 lowering ⇒
+    /// `Unsupported("DSL lowering")`。根因就在这个判据上。
+    #[test]
+    fn va_arg_of_aggregate_needs_agg_expand() {
+        use forge_ir::ir::builder::FunctionBuilder;
+        use forge_ir::ir::types::{FunctionSignature, TypeContext};
+        use forge_ir::{Opcode, TypeId};
+
+        let ctx = TypeContext::new();
+        let agg = ctx
+            .borrow_mut()
+            .struct_anon(vec![TypeId::I64, TypeId::I64], false);
+        let sig =
+            FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64]).with_variadic(true);
+        let mut b = FunctionBuilder::new("callee", ctx, sig);
+        let (e, _p) = b.create_block_with_params(&[(TypeId::I64, "fmt")]);
+        b.switch_to_block(e);
+        let va = b.va_start();
+        let a = b.va_arg(va, agg);
+        let f0 = b.extract_value(a, 0);
+        b.ret(&[f0]);
+        let f = b.finish().expect("build");
+        assert!(
+            super::needs_agg_expand(&f),
+            "`va_arg` 的结果是聚合 ⇒ 必须判为\"要合法化\"（否则 ExtractValue 落到 lowering）"
+        );
+        assert!(
+            f.dfg.insts().any(|(_, d)| d.opcode == Opcode::VaArg),
+            "夹具里应有 VaArg"
+        );
     }
 }
