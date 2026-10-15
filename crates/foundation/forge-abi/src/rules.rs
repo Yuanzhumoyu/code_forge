@@ -373,7 +373,7 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                     aggregate_arg: Some(a("cursor", None, None, false)),
                     aggregate_indirect: true,
                     // win64 的分类是 `aggregate size_gt 8 ⇒ indirect`、`size_le 8 ⇒ 整数池直传`：
-                    // 阈值把这件事写进数据（≤8B 那档本仓未实现 ⇒ 读取侧 fail-closed）。
+                    // 阈值把这件事写进数据（≤8B 那档走内联档：`use_pointer` 只对 >8B 成立）。
                     aggregate_indirect_size_gt: 8,
                 },
             ),

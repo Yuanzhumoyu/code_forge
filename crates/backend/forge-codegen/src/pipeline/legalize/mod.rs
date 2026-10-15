@@ -74,19 +74,32 @@ pub(crate) struct LegalizeDriver<M: TargetMachine> {
 impl<M: TargetMachine> LegalizeDriver<M> {
     /// 聚合展开族（Stage 0.5）的**唯一**顺序定义。
     ///
-    /// 次序不是随便的：① 聚合 store 先展开（它引入打包常量，且必须在 `CompileState`
-    /// 克隆常量池**之前**）；② sret 形参先立起来（后面几个要写进那块缓冲）；
-    /// ③ call 结果拆段**先于**实参拆段（否则 `%q = call {i64,i64}` 传给后续 call 时，
-    /// 实参已是段值、加载追踪会误判）。
+    /// 次序不是随便的，两条方向相反的约束把它钉死：
+    ///
+    /// ① 变参先展开（它往常量池插初值常量、物化 `va_list` 对象，后面几个 pass 以及
+    ///    `CompileState::new` 的常量池克隆都必须在它之后）；
+    /// ② **形参先于实参/存储**：聚合形参的槽由 `agg-param` 建立并登记，"把聚合形参转发给
+    ///    另一次调用""把聚合形参存进内存"都要读那个槽。此前次序是 `store → call → param`，
+    ///    于是 by-ref 聚合形参转发时实参拆段看不到地址，直接 fail-closed
+    ///    （`聚合实参拆段：值来源不支持（def Param(…))`）；
+    /// ③ **大聚合 load 值传播（`agg-leftover`）排在实参之后**：它的使用处分派要靠"前面 pass
+    ///    已经收拾干净"来判断没剩下东西，早了会对着未物化的聚合实参报错 ⇒ 因此把原来的
+    ///    `agg-param` 拆成"形参（早）"与"load 传播（晚）"两个 pass（本批实测撞到才拆的）；
+    /// ④ 聚合 store 展开先于 call（它引入打包常量，且必须在常量池克隆之前）；
+    /// ⑤ call 结果拆段**先于**实参拆段（否则 `%q = call {i64,i64}` 传给后续 call 时，
+    ///    实参已是段值、加载追踪会误判）——这一条在 `agg-call` **pass 内部**，与 pass 间次序无关。
     pub fn with_aggregates() -> Self {
         Self {
             passes: vec![
                 // 变参先展开：它往常量池插初值常量、物化 `va_list` 对象，后面几个 pass
                 //（以及 `CompileState::new` 的常量池克隆）都必须在它之后。
                 Box::new(VaPass),
+                // 形参先于存储/实参：它们的地址来自这里（见上方 ②）。
+                Box::new(AggParamPass),
                 Box::new(AggStorePass),
                 Box::new(AggCallPass),
-                Box::new(AggParamPass),
+                // load 值传播最后（见上方 ③）。
+                Box::new(AggLeftoverPass),
                 Box::new(GepPass),
             ],
         }
@@ -205,13 +218,13 @@ impl<M: TargetMachine> LegalizePass<M> for AggCallPass {
             ctx.sret_ptr = sret;
         }
         agg_call::expand_large_agg_call_results(func, &mut ctx.agg_slots, ctx.machine, &ctx.conv)?;
-        agg_call::expand_agg_call_args(func, ctx.machine, &ctx.conv)?;
+        agg_call::expand_agg_call_args(func, ctx.machine, &ctx.conv, &mut ctx.agg_slots)?;
         agg_call::expand_large_agg_ret(func, &mut ctx.agg_slots, ctx.sret_ptr)?;
         Ok(IrSize::of(func).delta_to(before, !had_sret && ctx.sret_ptr.is_some()))
     }
 }
 
-/// 形参侧：宽聚合形参接收 + 大聚合值展开。
+/// 形参侧：宽聚合形参接收（**只管形参**——槽先立起来，后面 store/call 才有地址可用）。
 struct AggParamPass;
 impl<M: TargetMachine> LegalizePass<M> for AggParamPass {
     fn name(&self) -> &'static str {
@@ -220,6 +233,23 @@ impl<M: TargetMachine> LegalizePass<M> for AggParamPass {
     fn run(&self, func: &mut Function, ctx: &mut LegalizeCtx<'_, M>) -> Result<ChangeSet, IrError> {
         let before = IrSize::of(func);
         agg_param::expand_large_agg_params(func, &mut ctx.agg_slots, ctx.machine, &ctx.conv)?;
+        Ok(IrSize::of(func).delta_to(before, false))
+    }
+}
+
+/// 大聚合 **load 值传播**（`%v = load T(>8B)` 按使用处就地展开）。
+///
+/// 必须排在 `agg-call` **之后**：它的使用处分派里，`Call`/`Return` 这些"已经由前面
+/// pass 收拾干净"的使用要能被识别成"没剩下"，否则它会对着尚未物化的聚合实参报
+/// `call 聚合实参：值既不在 slot 映射里、也没有段值`（本批把形参提到实参之前时实测撞到，
+/// 因此**一个 pass 拆成两个**：形参早、load 传播晚）。
+struct AggLeftoverPass;
+impl<M: TargetMachine> LegalizePass<M> for AggLeftoverPass {
+    fn name(&self) -> &'static str {
+        "agg-leftover"
+    }
+    fn run(&self, func: &mut Function, ctx: &mut LegalizeCtx<'_, M>) -> Result<ChangeSet, IrError> {
+        let before = IrSize::of(func);
         agg_param::expand_large_aggs(func, &mut ctx.agg_slots)?;
         Ok(IrSize::of(func).delta_to(before, false))
     }
@@ -250,8 +280,15 @@ mod tests {
         let d = LegalizeDriver::<crate::arch::x86::TargetMachine>::with_aggregates();
         assert_eq!(
             d.pass_names(),
-            vec!["va", "agg-store", "agg-call", "agg-param", "gep"],
-            "定序是契约：va → store → call（sret/结果/实参/返回）→ param → gep"
+            vec![
+                "va",
+                "agg-param",
+                "agg-store",
+                "agg-call",
+                "agg-leftover",
+                "gep"
+            ],
+            "定序是契约：va → param（槽先立起来）→ store → call → leftover（load 值传播，最后）→ gep"
         );
     }
 

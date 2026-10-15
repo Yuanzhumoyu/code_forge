@@ -11,6 +11,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 收尾 M7 批次 4：调用方聚合实参**不再 fail-closed**（两处修复）；投递仍未对（记档）
+
++ **驱动定序改成两条方向相反的约束都能满足**：`agg-param` 提到实参之前（形参槽必须先立起来，
+  否则 by-ref 聚合形参转发时实参拆段看不到地址），同时把原来的 `agg-param` 拆出新 pass
+  `agg-leftover`（大聚合 load 值传播）挪到最后——它靠"前面 pass 已收拾干净"判断没剩下东西，
+  排在实参之前会报 `call 聚合实参：值既不在 slot 映射里、也没有段值`（本批实测撞到才拆的）。
+  新次序：`va → agg-param → agg-store → agg-call → agg-leftover → gep`。
++ **实参拆段支持"没有可追踪地址"的来源**：`insertvalue`/`undef`/`copy` 链搭出来的聚合值
+  先**内存化**（`rewrite_agg_value_uses` 开槽 + 搬字节 + 登记）再逐段 load；模式守卫让
+  `ValueDef::Inst(..)` 只对 `Load` 走原来的地址追踪路径（不复制逐段 load 的代码）。
++ **效果**：`main(agg: {i64,i64})` 把**按引用形参**转发成未命名实参——以前 fail-closed
+  （`聚合实参拆段：值来源不支持（def Param(Block(0), 0)）`），现在模块能编、能跑。
++ **仍不对（如实记档）**：它跑出来的不是 11。两个反证把范围钉死在"调用方对变参聚合实参的
+  **投递**"上：读指针档（psABI 口径，`aggregate_indirect = true`）得 `45478821343`；
+  内联档（把它当字节读的反证实验）得 `1755035184008`。两个都不对 ⇒ 不是"指针还是内联"的
+  二选一，而是**写进去的槽与游标指的槽没对上**（或传出区根本没写）。
+  真执行用例 `test_jit_va_arg_reads_unnamed_aggregate_arg`（断言 = 11）标 `#[ignore]` 并写明
+  两条反证与下一步（对照该调用的 `AbiPlan` 未命名实参落点与 `main` 的传出区布局逐步核对偏移）；
+  修好后删掉标记即成为验收。
+
 ### Changed (2026-10-11) — 后端 v23 收尾 M7 批次 2/3：聚合变参**按尺寸分档**（含内联档）、修两个真缺陷
 
 + **内联档（≤阈值）**：`va_arg` 的聚合形态由 `use_pointer = indirect && (阈值 == 0 || size > 阈值)`

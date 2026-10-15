@@ -402,6 +402,7 @@ pub(crate) fn expand_agg_call_args(
     func: &mut Function,
     machine: &impl forge_isa_runtime::machine::target::TargetMachine,
     conv: &str,
+    agg_slots: &mut crate::pipeline::agg_expand::AggSlots,
 ) -> Result<(), IrError> {
     // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
     // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
@@ -487,7 +488,11 @@ pub(crate) fn expand_agg_call_args(
                     off += 8;
                 }
             }
-            ValueDef::Inst(li, 0) => {
+            // **只认"load 结果"这一种指令来源**（有可追踪的地址）。其它指令来源
+            //（`insertvalue`/`undef`/`copy` 链搭出来的聚合值）落到下面的 `_` 臂：先内存化、
+            // 拿到槽地址再逐段 load。写成模式守卫而不是在臂里判 opcode，是为了**不复制**
+            // 逐段 load 的那段代码。
+            ValueDef::Inst(li, 0) if func.dfg.inst_data(li).opcode == Opcode::Load => {
                 // load 结果：追踪 addr，逐段 load
                 let addr = func
                     .dfg
@@ -537,10 +542,68 @@ pub(crate) fn expand_agg_call_args(
                 }
             }
             _ => {
-                return Err(IrError::Unsupported(format!(
-                    "聚合实参拆段：值来源不支持（def {:?}）",
-                    func.dfg.value_data(job.val).def
-                )));
+                // **未知来源先内存化**（v23 收尾 M7）：`insertvalue`/`undef`/`copy` 链搭出来的
+                // 聚合值没有可追踪的地址，但 `rewrite_agg_value_uses` 会给它开一个帧槽、把字节
+                // 搬进去并登记进 `agg_slots` ⇒ 之后就能按"值住在内存里"逐段 load（与 by-ref
+                // 档同一口径）。登记后仍拿不到地址才报错（真正的"没法拆"）。
+                let addr = match agg_slots.get(job.val) {
+                    Some(&(addr, _)) => Some(addr),
+                    None => {
+                        crate::pipeline::agg_expand::rewrite_agg_value_uses(
+                            func,
+                            job.val,
+                            &[],
+                            ty,
+                            agg_slots,
+                        )?;
+                        agg_slots.get(job.val).map(|&(addr, _)| addr)
+                    }
+                };
+                let Some(addr) = addr else {
+                    return Err(IrError::Unsupported(format!(
+                        "聚合实参拆段：值来源不支持，且内存化后仍无槽地址（def {:?}）",
+                        func.dfg.value_data(job.val).def
+                    )));
+                };
+                let mut prev_addr = addr;
+                let mut off = 0usize;
+                while off < size {
+                    let ld = func.make_inst(
+                        Opcode::Load,
+                        job.block,
+                        smallvec::smallvec![prev_addr],
+                        smallvec::smallvec![],
+                        &[TypeId::I64],
+                        InstFlags::NONE,
+                    );
+                    let ldv = func.dfg.inst_data(ld).results[0];
+                    new_insts.push(ld);
+                    segs.push(ldv);
+                    off += 8;
+                    if off < size {
+                        let off_cid = func.constants.insert_int(8, 64);
+                        let off_inst = func.make_inst(
+                            Opcode::Iconst,
+                            job.block,
+                            smallvec::smallvec![],
+                            smallvec::smallvec![Immediate::Const(off_cid)],
+                            &[TypeId::I64],
+                            InstFlags::NONE,
+                        );
+                        let off_v = func.dfg.inst_data(off_inst).results[0];
+                        new_insts.push(off_inst);
+                        let add = func.make_inst(
+                            Opcode::Iadd,
+                            job.block,
+                            smallvec::smallvec![prev_addr, off_v],
+                            smallvec::smallvec![],
+                            &[TypeId::PTR],
+                            InstFlags::NONE,
+                        );
+                        prev_addr = func.dfg.inst_data(add).results[0];
+                        new_insts.push(add);
+                    }
+                }
             }
         }
         // 落点落地：ByRef ⇒ 建一个调用方帧内副本、逐段 store，实参传**该副本的指针**

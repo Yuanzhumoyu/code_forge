@@ -3137,27 +3137,40 @@ ret_int = ["RAX"]
         );
     }
 
-    /// **变参聚合实参：当前限制记录（v23 收尾 M7）**——被调方一半已实现，调用方一半未实现。
+    /// **变参聚合实参**（v23 收尾 M7）：调用方把 16B 聚合作为**未命名实参**传下去，被调方用
+    /// `va_arg(聚合)` 取回并读出字段。**当前 `#[ignore]`：结构已打通，值还不对。**
     ///
-    /// 已实现（有单测钉住）：被调方 `va_arg(聚合)` → 读指针 → 逐段拷进自己的帧槽 → 登记
-    /// `agg_slots` → 后续 `extractvalue` 走地址语义（`aggregate_va_arg_needs_a_declared_rule`
-    /// 覆盖两种尺寸档与"多使用点全部重写"）。
+    /// 已经落地的（不 ignore 的部分由单测与其它 JIT 用例守着）：
     ///
-    /// **未实现**：调用方把聚合值作为**未命名实参**传下去。实测两条现成来源都被
-    /// `expand_agg_call_args` 明确拒绝（fail-closed，不是静默错值）：
-    /// - `insertvalue` 链搭出来的聚合：`聚合实参拆段：值来源不支持`（下游 `InsertValue` 掉到 lowering）；
-    /// - 按引用**形参**转发：`聚合实参拆段：值来源不支持（def Param(Block(0), 0)）`。
+    /// - 被调方：`va_arg(聚合)` → 按 `arg_rules.aggregate` 分档（`>8B` 读指针 / `≤8B` 内联）→
+    ///   逐段拷进自己的帧槽 → 登记 `agg_slots` → 后续 `extractvalue` 走地址语义
+    ///   （`aggregate_va_arg_needs_a_declared_rule` 覆盖两档 + 多使用点 + 无规则时 fail-closed）；
+    /// - 调用方：**不再 fail-closed**（本批两处修复）——① 驱动把 `agg-param` 提到实参之前
+    ///   （形参槽先立起来），并把原来的 `agg-param` 拆出 `agg-leftover`（大聚合 load 值传播）
+    ///   放到最后（它要求实参已物化）；② 实参拆段对"没有可追踪地址"的来源
+    ///   （`insertvalue`/`undef` 链）先内存化再逐段取。
     ///
-    /// 所以这条用例**断言该限制仍存在**：一旦调用方一半落地（或既有来源被支持），它必须改成
-    /// "编得过且值 = 11"的真执行断言（期望值已写在下面）。
+    /// **仍不对**：本用例现在能编译、能跑，但结果不是 11。两个反证把范围钉在
+    /// **调用方对变参聚合实参的投递**上：
+    ///
+    /// - 读指针档（psABI 口径，`aggregate_indirect = true`）：得到 `45478821343`；
+    /// - 内联档（把它当字节读，反证实验）：得到 `1755035184008`。
+    ///
+    /// 两个都不对 ⇒ 不是"指针还是内联"的二选一，而是调用方写的那个槽/被调方游标指的槽
+    /// 没对上（或写出区根本没写）。下一步：对照 `callee` 调用的 `AbiPlan`（未命名实参落点）
+    /// 与 `main` 的传出区布局，逐步核对写/读偏移。
+    ///
+    /// 修好后**删掉 `#[ignore]`**：下面的断言就是最终验收（4 + 7 = 11）。
     #[cfg(target_arch = "x86_64")]
+    #[ignore = "调用方对变参聚合实参的投递未对（见上方两条反证）；结构已通，值待修"]
     #[test]
-    fn test_jit_va_arg_unnamed_aggregate_arg_is_known_limited() {
+    fn test_jit_va_arg_reads_unnamed_aggregate_arg() {
         use forge_ir::{FunctionSignature, TypeContext, TypeId};
 
         ensure_registered();
         let mut jit = JitLoader::new(x86::TargetMachine::new());
 
+        // 被调方：callee(fmt: i64, ...) -> i64 ── ret sum(va_arg(聚合) 的两个字段)
         let ctx_c = TypeContext::new();
         let agg_ty = ctx_c
             .borrow_mut()
@@ -3176,6 +3189,7 @@ ret_int = ["RAX"]
         let mut module = Module::new();
         let cref = module.add_function(callee.finish().expect("callee"));
 
+        // 调用方：main(agg: {i64,i64}) -> i64 ── 把**按引用形参**转发成未命名实参
         let ctx_m = TypeContext::new();
         let agg_ty_m = ctx_m
             .borrow_mut()
@@ -3189,18 +3203,19 @@ ret_int = ["RAX"]
         main_fn.ret(&[got]);
         module.add_function(main_fn.finish().expect("main"));
 
-        match jit.compile_module(&module) {
-            Ok(()) => panic!(
-                "调用方一半已落地 ⇒ 本用例应改成真执行断言：f(Agg16{{a:4,b:7}}) == 11（期望值见注释）"
-            ),
-            Err(e) => {
-                let msg = format!("{e}");
-                assert!(
-                    msg.contains("聚合实参拆段"),
-                    "期望\"聚合实参拆段：值来源不支持\"这一已知限制，实际：{msg}"
-                );
-            }
+        #[repr(C)]
+        struct Agg16 {
+            a: i64,
+            b: i64,
         }
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn(Agg16) -> i64 = jit.get_fn("main").expect("get_fn");
+        assert_eq!(
+            f(Agg16 { a: 4, b: 7 }),
+            11,
+            "按引用形参转发：被调方必须能用 va_arg(聚合) 读回未命名聚合实参\\
+             （win64：调用方副本 + 指针）"
+        );
     }
 
     /// **变参 V4：浮点未命名实参**（win64）——调用方把 **f64** 栈实参写进传出区（

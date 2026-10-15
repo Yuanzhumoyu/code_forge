@@ -1502,6 +1502,28 @@ jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
 **判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` 2820 passed；
 jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
 
+### M7 批次 4：调用方聚合实参**不再 fail-closed**（2026-10-11）
+
+两处修复（细节见 CHANGELOG 同名条目）：
+
+- **定序**：`agg-param` 提前到实参之前（形参槽先立起来），原 `agg-param` 拆出新 pass
+  `agg-leftover`（大聚合 load 值传播）放到最后——它要求实参已物化（早了报
+  `call 聚合实参：值既不在 slot 映射里、也没有段值`，本批实测撞到）。新次序：
+  `va → agg-param → agg-store → agg-call → agg-leftover → gep`
+  （守卫 `driver_has_the_documented_pass_order` 已同步）。
+- **实参拆段**：`insertvalue`/`undef`/`copy` 链搭出来的聚合值**先内存化**再逐段取；
+  `ValueDef::Inst(..)` 只对 `Load` 走原地址追踪路径（模式守卫，不复制代码）。
+
+**判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` **2819 passed / 1 ignored**；
+jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
+
+**仍未对（两条反证 + 下一步）**：by-ref 形参转发成未命名实参现在**能编能跑**，但结果不是 11 ——
+读指针档（psABI 口径）得 `45478821343`、内联档（反证实验）得 `1755035184008`。两个都不对
+⇒ 范围钉在"调用方对变参聚合实参的**投递**"（写/读的槽没对上），不是"指针还是内联"的二选一。
+下一步：对照 `callee` 调用的 `AbiPlan`（未命名实参落点）与 `main` 的传出区布局，逐步核对
+写偏移/读偏移。用例 `test_jit_va_arg_reads_unnamed_aggregate_arg` 标 `#[ignore]`
+（断言就是 11，修好后删标记即成验收）。
+
 ## 13. M4 进度（收口）
 
 ### 爆炸半径（2026-10-11 实测，`rg` 计数）
