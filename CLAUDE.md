@@ -17,7 +17,7 @@ docs/
 │   ├── backend-pipeline.md    # 后端编译管线契约（v23 M1：CompileSession/JitLoader/ModuleSigs）
 │   └── imm_str.md             # ImmStr 类型设计（forge-ir 代码注释引用）
 ├── plans/                 # 进行中专项方案（活账本）[progress]
-│   └── backend-v23-plan.md    # 后端 v23 里程碑 M1–M6（数据驱动的通用后端；含证据/判据/进度账本）
+│   └── （暂无进行中的方案；后端 v23 已收口 → archive/backend-v23-plan.md）
 ├── forge-ir/              # forge-ir 工作流 [active]
 │   ├── README.md              # 组说明（历轮计划已归档、如何继续）
 │   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）
@@ -43,6 +43,7 @@ docs/
     ├── varargs-plan.md / isa-dsl-variant-field-values.md # 变参（功能面已完成）/ 按变体给字段值（早已落地）
     ├── forge-ir-v3-plan.md      # forge-ir v3（S1–S8 全部收口；未关闭项移交 ../forge-ir/backlog.md）
     ├── forge-rustc-vec_push-plan.md # forge-rustc vec 族（2026-10-11 归档：验收 4/4 达成，e2e 103 条用例全绿）
+    ├── backend-v23-plan.md     # 后端 v23 里程碑 M1–M6 + M7（2026-10-11 归档：全部收口；现行入口 = reference/backend-pipeline.md + CHANGELOG）
     └── forge-ir/              # forge-ir 历轮计划/审计 7 篇（452 收敛基线，2026-08 停更）
 ```
 

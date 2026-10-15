@@ -1,14 +1,21 @@
 # 后端 v23 里程碑方案：数据驱动的通用后端
 
-> **状态：[progress] → 六个里程碑均已落地**（2026-10-11 立项、同日逐批落地并提交；
-> M1–M6 见 §5，逐项回写进度、实测数字与命令）。
+> ⚠️ **ARCHIVED（2026-10-11）**：本方案 **M1–M6 与追加的 M7 全部收口**（同日逐批落地并提交），
+> 归档保存为历史证据。
+> **现行入口**：管线契约见 [`docs/reference/backend-pipeline.md`](../reference/backend-pipeline.md)；
+> 逐批变更见根 `CHANGELOG.md`（搜 `v23`）。
+> **下文数字取自立项与收口时点，随迭代漂移，以代码与测试为准。**
+>
+> **状态：[archive] —— 六个里程碑 + M7 全部落地**（2026-10-11 立项、同日逐批落地并提交；
+> M1–M6 见 §5，逐项回写进度、实测数字与命令；M7 见 §14 后的 M7 批次记录）。
 > **收口判据（2026-10-11 实测）**：`cargo test --workspace --exclude forge-rustc` exit 0；
-> `forge-codegen --lib --all-features` **2816 passed**；`jit_matrix_x86` **197/3/0**、
+> `forge-codegen --lib --all-features` **2822 passed**；`jit_matrix_x86` **197/3/0**、
 > `jit_matrix_riscv64` **136/64/0**；asm 三档 `asm_parse` 3 / `asm_encoding` 1 /
 > `asm_exec` 1；`clippy -D warnings` 与 `fmt --check` 干净。
-> **两处记录在案的未达成**（都属约定层数据扩展，见 §14 后的 M6 批次记录）：
-> ① `va_arg` 聚合**真做**（当前已 fail-closed，不再静默错值）；
-> ② `>16B` 非 sret 栈返回走 `StackByVal`。
+> **记录在案的边界**（都属约定层数据扩展，见 §14 后的 M6/M7 批次记录）：
+> ① `va_arg` 聚合 **win64（指针档）与 sysv64（>16B 内联档）已打通并真跑**；
+> ② `insertvalue` 链搭出来的聚合作为实参**仍 fail-closed**（试做后值不对 ⇒ 按纪律回退）；
+> ③ `>16B` 非 sret 栈返回**前提有误、无消费者**（四份约定的大聚合返回全走 sret）。
 > 命名说明：本方案的 "v23" 是本里程碑自己的编号，与 ISA-DSL **语法版本 v22**
 > （不写进 TOML、只靠文档/CHANGELOG 追踪）不是同一套编号——**不要把 v23 写进任何
 > `isa/*.toml`**。证据行号取自立项时 HEAD `d5d66cdb`，随迭代漂移，**以符号名为准**。
@@ -391,7 +398,7 @@ spill 压力与「固定字段 spill」用例按新语义改写；新增「必�
 
 | 里程碑 | 状态 | 证据（命令 / 数字 / 守卫） | 日期 |
 | --- | --- | --- | --- |
-| 立项（本文） | ✅ 落盘 | `docs/plans/backend-v23-plan.md` + `docs/README.md`/`CLAUDE.md` 指针 | 2026-10-11 |
+| 立项（本文） | ✅ 落盘 | `docs/archive/backend-v23-plan.md`（**2026-10-11 归档**）+ `docs/README.md`/`CLAUDE.md` 指针 | 2026-10-11 |
 | M1 编译入口收敛 | ✅ 完成（含一条记录在案的偏差） | 见 §10 M1 落地记录 | 2026-10-11 |
 | M2 单一 ABI 数据模型 | ✅ 已落地（C1 修复 + leaf crate + 形状/变参/寄存器三面去镜像 + **删运行时镜像**） | 见 §11 M2 进度 | 2026-10-11 |
 | M3 能力数据化（去 x86 硬编码 + 单一合法性判据 + A6 收口） | ✅ 已落地（死钩子/死 API 删除；端序修正；宽向量能力数据化 + ISA 中立守卫；A6 收口；触发判据合一 + `ChangeSet`） | 见 §12 M3 进度 | 2026-10-11 |
@@ -1074,7 +1081,7 @@ mini_c 的 e2e 才把它抓出来**（`test_hir_e2e_loop_bound_from_param` 返�
    仍由 emission 提供（那是**发射期**事实）。
 5. **解锁项**：`edits` 一旦由分配器产出，驱逐就能给出"把活跃值 store 回槽"的编辑 ⇒ 可做
    **完整 Belady（取最远下一次使用）+ spill cost 驱逐**，并把 `regalloc_bt` 的文档从"只驱逐死值"
-   更新为真实策略（该项与 `docs/plans/backend-v23-plan.md` M5 的 C5/SpillEdit 两条同时收口）。
+   更新为真实策略（该项与本文档 M5 的 C5/SpillEdit 两条同时收口）。
 
 **风险与顺序**：先做 1–4（**输出等价**：edits 序列与现有 emission 的临时决策应当逐条对应，两矩阵
 先行判定），再做 5（**行为变更**：驱逐策略变了，需要新增"必须驱逐活跃值"的用例——现状是 fail-closed）。

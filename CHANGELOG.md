@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Docs (2026-10-11) — v23 方案收口归档
+
++ `docs/plans/backend-v23-plan.md` → **`docs/archive/backend-v23-plan.md`**（头部加
+  `⚠️ ARCHIVED（2026-10-11）` + 现行替代入口；状态由 `[progress]` 改 `[archive]`。
+  归档理由：M1–M6 与追加的 M7 **全部收口**）。
++ 全量更新引用与索引：`CLAUDE.md`（plans 段 → archive 段）、`docs/README.md`（plans 表 +
+  reference 行）、`docs/archive/README.md`（归档清单加一行）、
+  `docs/reference/backend-pipeline.md`（两处路径）；`git grep 'plans/backend-v23-plan'` 已清零。
++ **现行入口**：管线契约 = `docs/reference/backend-pipeline.md`；逐批变更 = 本文件（搜 `v23`）。
+
 ### Reviewed (2026-10-11) — 后端 v23 收尾 M7 批次 7：末项「`>16B` 非 sret 栈返回」**前提有误，无消费者**
 
 三条独立证据（都不需要改代码）：
