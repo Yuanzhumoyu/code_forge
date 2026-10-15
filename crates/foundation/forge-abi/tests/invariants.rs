@@ -169,6 +169,14 @@ fn insufficient_hfa_registers_fall_back_to_stack_as_a_whole() {
 // ───────────────── 返回位：独立的返回寄存器 ─────────────────
 
 /// 四份约定的 sret 落点**各不相同**——这正是旧实现"永远取首 int 参数槽"错的地方。
+///
+/// 顺带钉住一条**否定性**事实（v23 收尾 M7 实测）：**本仓不存在"非 sret 的栈返回"**——
+/// 四份内置约定的 `ret_classify` 都把大聚合返回判成 `indirect = { via = "hidden_sret" }`
+/// （win64 阈值 `>8B`、其余三份 `>16B`），`RetLoc` 也**没有**栈变体（只有
+/// `Reg`/`RegPair`/`RegGroup`/`Indirect`/`Void`）；即便某份约定给返回位写
+/// `do = { stack = {} }`，引擎那条臂也会把它**走 sret 指针**（"栈上返回需要约定声明
+/// `hidden.sret_pool`"）。所以"`>16B` 非 sret 栈返回"这个待办**没有消费者**——
+/// 发射侧的 `ArgPlace::StackByVal` 说的是**实参**（sysv64 `>16B` 实参按值进传出区，已接）。
 #[test]
 fn wide_return_uses_each_conventions_own_sret_slot() {
     let reg = registry();
@@ -180,7 +188,10 @@ fn wide_return_uses_each_conventions_own_sret_slot() {
     ];
     for (isa, conv, want) in cases {
         let p = plan(&reg, isa, conv, &one(agg24()));
-        assert!(matches!(p.ret, RetLoc::Indirect { .. }), "{conv}: {p:?}");
+        assert!(
+            matches!(p.ret, RetLoc::Indirect { .. }),
+            "{conv}: 大聚合返回必须是 sret（没有栈返回这条路）：{p:?}"
+        );
         let sret = p
             .hidden
             .sret

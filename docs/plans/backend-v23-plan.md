@@ -1570,6 +1570,27 @@ jit x86 197/3/0、riscv64 136/64/0；asm_parse 3 passed；clippy/fmt 干净。
 **M7 仍未做**：`>16B` 非 sret 栈返回走 `StackByVal`（sysv64/aapcs64/lp64d 的聚合变参依赖它，
 目前那三份谱**不声明**聚合取参规则、读取侧 fail-closed）。
 
+### M7 批次 7（收口）：末项「`>16B` 非 sret 栈返回」**前提有误，无消费者**（2026-10-11）
+
+**测量**（三条独立证据）：
+
+1. 四份内置约定的 `ret_classify` 都把大聚合返回判成 `indirect = { via = "hidden_sret" }`
+   （win64 阈值 `>8B`、sysv64/aapcs64/lp64d `>16B`）——**没有任何一份**写 `do = { stack = {} }`；
+2. `RetLoc` **没有栈变体**（只有 `Reg`/`RegPair`/`RegGroup`/`Indirect { size, align }`/`Void`）
+   ⇒ 就算写了 `stack` 也无处落地；
+3. `engine.rs` 的返回位 `ClassAction::Stack` 臂**也走 sret 指针**
+   （"栈上返回需要约定声明 `hidden.sret_pool`"）⇒ 模型里**不存在"非 sret 的栈返回"**。
+
+**结论**：M7 这一项**不实现**（没有消费它的约定数据）。发射侧的 `ArgPlace::StackByVal`
+说的是**实参**（sysv64 `>16B` 实参按值进传出区，**已接**并在 M6 的实参拆段里用着）。
+
+**已加守卫**：`wide_return_uses_each_conventions_own_sret_slot`（forge-abi）——四份约定、
+24 字节聚合返回必须是 `RetLoc::Indirect`，并把上面三条理由写进注释；将来若有约定真要
+"栈返回"，这条会红并指出该补哪里。
+
+**M7 至此全部收口**：批次 1–6 已落地（数据面 + 消费侧 + 调用方 + 四个缺陷修复 + 真执行用例），
+批次 7 以"前提有误"结案。
+
 ## 13. M4 进度（收口）
 
 ### 爆炸半径（2026-10-11 实测，`rg` 计数）

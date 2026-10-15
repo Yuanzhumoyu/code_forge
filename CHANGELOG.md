@@ -11,6 +11,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Reviewed (2026-10-11) — 后端 v23 收尾 M7 批次 7：末项「`>16B` 非 sret 栈返回」**前提有误，无消费者**
+
+三条独立证据（都不需要改代码）：
+
++ 四份内置约定的 `ret_classify` 把大聚合返回**全部**判成 `indirect = { via = "hidden_sret" }`
+  （win64 `>8B`、sysv64/aapcs64/lp64d `>16B`）——没有一份写 `do = { stack = {} }`；
++ `RetLoc` **没有栈变体**（`Reg`/`RegPair`/`RegGroup`/`Indirect`/`Void`）⇒ 写了 `stack` 也无处落地；
++ `engine.rs` 返回位的 `ClassAction::Stack` 臂**也走 sret 指针**（"栈上返回需要约定声明
+  `hidden.sret_pool`"）⇒ 模型里不存在"非 sret 的栈返回"。
+
+⇒ 这一项**不实现**。发射侧的 `ArgPlace::StackByVal` 说的是**实参**（sysv64 `>16B` 实参按值进
+传出区，**已接**）。守卫 `wide_return_uses_each_conventions_own_sret_slot`（forge-abi）已把
+"四份约定的大聚合返回都是 `RetLoc::Indirect`"与这三条理由一起钉住。
+
+**M7 收口**：批次 1–6 落地（数据面 + 消费侧 + 调用方 + 四个缺陷修复 + 真执行用例通过），
+批次 7 以"前提有误"结案。
+
 ### Fixed (2026-10-11) — 后端 v23 收尾 M7 批次 6：**`va_arg` 聚合真执行打通**（根因：改写 `extractvalue` 时 use-before-def）
 
 **真凶**：`rewrite_agg_value_uses` 的 **by-ref（值在内存）`ExtractValue` 分支**用 `make_inst`
