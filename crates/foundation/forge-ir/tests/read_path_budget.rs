@@ -24,8 +24,10 @@
 //!   `expand_large_aggs`/`expand_large_agg_params`/`compile_with_alloc` 里（**显式 `drop`
 //!   守卫**的读写交错段，或会调到唯一 `borrow_mut` 的编排点）；另有 1 处在 `#[cfg(test)]`
 //!   测试里（给 `LowerCtx` 取快照）。v3 S3 余项①顺带收掉了宽向量门的"每指令取锁"（3 处
-//!   → 1 次入口快照）。本轮把 rewrite 族（`memoryize_from_segs`/`memoryize_from_addr`/
-//!   `rewrite_agg_value_uses`/`move_to_front`）迁到 `pipeline/agg_expand.rs`，4 处预算随之转移。
+//!   → 1 次入口快照）。v23 把 rewrite 族迁到 `pipeline/agg_expand.rs`，4 处预算随之转移；
+//!   **v24 M1 把那一族（按值驱动的就地改写 + "生成后搬到使用点前"）整体删除**，改写改为
+//!   `legalize::materialize` 按指令序单遍完成 ⇒ `agg_expand.rs` 的预算从 6 降到 2，
+//!   新增两个各"只取一次锁"的相（`materialize.rs` / `plan.rs`）。
 //! - `pipeline/agg_expand.rs`：**6** 处——触发判据只剩 `needs_agg_expand` 一处（v23 M3：
 //!   原来是 7 个各扫一种模式的 `has_*`，每个各取一次读锁；合并成"含 GEP 或提到过聚合"
 //!   的单一**过近似**判据后，读锁随之从 14 降到 6），其余是 rewrite 族的"每入口一次"。
@@ -94,8 +96,21 @@ const BUDGETS: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/agg_expand.rs",
-        6,
-        "单一触发判据 `needs_agg_expand`（入口一次）+ rewrite 族（各入口一次）+ by-ref 档的字节数快照（`rewrite_agg_value_uses` **入口**取一次，使用点循环里不再取）——v23 M3 删掉 7 个 `has_*` 后由 14 降到 6",
+        2,
+        "单一触发判据 `needs_agg_expand`（入口一次）+ 段值→槽的内存化（入口一次）。\n\
+         v23 M3 删掉 7 个 `has_*` 后由 14 降到 6；**v24 M1 把按值驱动的就地改写整族删掉**\n\
+         （使用处改写搬进 `legalize::materialize`，按指令序单遍）⇒ 6 降到 2",
+    ),
+    (
+        "crates/backend/forge-codegen/src/pipeline/legalize/materialize.rs",
+        1,
+        "物化相：整个 pass **只取一次读锁**（`types` 是 Arc 克隆，与 `func` 的可变借用不冲突），\n\
+         逐块按指令序改写不再取锁（v24 M1 新增）",
+    ),
+    (
+        "crates/backend/forge-codegen/src/pipeline/legalize/plan.rs",
+        1,
+        "计划相：只读地把 ABI 边界计划算出来，**整个 pass 只取一次读锁**（v24 M1 新增）",
     ),
     (
         "crates/frontend/forge-isa-dsl/src/dsl/codegen/lowering.rs",

@@ -5,8 +5,8 @@
 
 use super::common::{AggArgLoc, agg_arg_place, agg_ret_is_sret, append_param};
 use crate::IrError;
-use crate::pipeline::agg_expand::AggSlots;
-use crate::pipeline::agg_expand::rewrite_agg_value_uses;
+
+use crate::pipeline::agg_expand::{Place, Places};
 use forge_ir::*;
 
 /// 按值返回 sret 的**前置**处理（A1′-ret）：约定把 `>8B` 聚合返回落进**调用方缓冲**
@@ -58,7 +58,7 @@ pub(crate) fn expand_sret_return(
 /// RAX/RDX 双 mov），旧结果值使用处重写（extractvalue/store/转传）。
 pub(crate) fn expand_large_agg_call_results(
     func: &mut Function,
-    agg_slots: &mut AggSlots,
+    agg_slots: &mut Places,
     machine: &impl forge_isa_runtime::machine::target::TargetMachine,
     conv: &str,
 ) -> Result<(), IrError> {
@@ -125,8 +125,8 @@ pub(crate) fn expand_large_agg_call_results(
             func.dfg.inst_mut(job.inst).operands = ops;
             func.dfg.inst_mut(job.inst).results = smallvec::smallvec![];
             func.refresh_inst_uses(job.inst);
-            agg_slots.insert(job.old_r, (buf, job.ty));
-            rewrite_agg_value_uses(func, job.old_r, &[], job.ty, agg_slots)?;
+            agg_slots.set(job.old_r, Place::Mem(buf));
+            let _ = job.ty;
             continue;
         }
         // results 拆 2（新值——Inst(call, 0/1)）
@@ -139,7 +139,6 @@ pub(crate) fn expand_large_agg_call_results(
         let inst = func.dfg.inst_mut(job.inst);
         inst.results = smallvec::smallvec![r0, r1];
         // 旧结果使用处重写
-        rewrite_agg_value_uses(func, job.old_r, &[r0, r1], job.ty, agg_slots)?;
     }
     Ok(())
 }
@@ -150,7 +149,7 @@ pub(crate) fn expand_large_agg_call_results(
 /// 其余（参数段值已被 expand_large_agg_params 重写为 i64——不在此处理）。
 pub(crate) fn expand_large_agg_ret(
     func: &mut Function,
-    agg_slots: &mut AggSlots,
+    agg_slots: &mut Places,
     sret_ptr: Option<Value>,
 ) -> Result<(), IrError> {
     // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
@@ -201,7 +200,7 @@ pub(crate) fn expand_large_agg_ret(
             )));
         }
         // by-ref 档优先：值可能住在内存里（by-ref 形参 / sret call 结果）⇒ 段值 = 逐段 load
-        let mem_addr = agg_slots.get(job.val).map(|&(a, _)| a);
+        let mem_addr = agg_slots.addr(job.val);
         let mut segs: Vec<Value> = Vec::new();
         let mut gen_insts: Vec<Inst> = Vec::new();
         match func.dfg.value_data(job.val).def {

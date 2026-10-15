@@ -374,6 +374,9 @@ impl<M: TargetMachine> CompileSession<M> {
                 changes
                     .merge(crate::pipeline::legalize::LegalizeDriver::va_only().run(f, &mut lctx)?);
             }
+            // **④ 收尾**（物化相 + GEP）：物化必须等 va 也登记完位置（va 会把聚合实参拷进
+            // 自己的帧槽）；GEP 与聚合无关，一起收尾。
+            changes.merge(crate::pipeline::legalize::LegalizeDriver::finalize().run(f, &mut lctx)?);
             if crate::pipeline::trace_enabled("FORGE_TRACE_AGG") {
                 eprintln!(
                     "[forge] 聚合展开 {}：共 {} 项（+{} 指令 / +{} 值 / +{} 常量 / sret={}）",

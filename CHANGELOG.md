@@ -11,6 +11,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v24 M1：合法化**两相化**（计划只读 + 一次性物化）
+
+聚合合法化从"每个 pass 就地改写 IR 并各自重写使用处"改成**两相**：只读的**计划相**算出
+ABI 边界计划，**物化相**按指令序**单遍**改写。用户可见行为不变（值/ABI 与既有约定一致），
+但这一族的结构性缺陷被消除。
+
++ **新增计划相**（`pipeline/legalize/plan.rs`）：只读地产出整函数的 ABI 边界计划
+  （形参/返回/调用实参/调用结果/`va_arg` 五类落点 + 完整描述），落点一律问 `forge-abi`
+  探针，管线里**没有约定名分支**。守卫 `plan_is_read_only`（跑完计划相后指令/值/常量数
+  **逐项相等**）钉住"决策不改写"。
++ **新增物化相**（`pipeline/legalize/materialize.rs`）：按指令序单遍处理，逐块读出快照、
+  为每条指令算出要插入的生成指令、拼成新的 `inst_order` **一次写回** ⇒ 生成指令**天生排在
+  消费者之前**。"生成到块尾再搬"那套写法（6 个调用点，v23 收尾 use-before-def 真凶的温床）
+  **整族删除**。嵌套聚合字段提取改为**登记子地址**（旧实现在此处会新开槽再搬一遍字节）。
++ **位置表换掉**：`Value → (地址, 槽类型)` 的旧表换成 `Places`（`Mem`/`Segs`，**写一次**——
+  同值二次登记 debug 下 panic）。旧表的"槽类型"是**冗余**（登记时传的都是该值自己的 IR 类型）。
++ **事实交接 `shadow_agg`**：by-ref 聚合形参重建签名时旧值被全局替换成 `ptr`，
+  "这个 ptr 代表 T 型聚合"此后不在 IR 类型里——生产者显式交给物化相。
++ **驱动分三批**（定序守卫同步）：聚合族 → va（要排完 ABI 槽）→ **收尾**（物化 + GEP）；
+  理由：`Va` 也会把聚合实参拷进自己的帧槽，物化必须等它。
++ 新守卫：`materialize_is_idempotent`、`materialized_load_precedes_its_consumer`
+  （逐块核对"每条 `Copy` 的操作数定义排在它之前"）、`segment_resident_extract_is_materialized`。
++ **删除清单清零**：`AggSlots`、按值驱动的旧改写函数、按地址内存化助手与"生成后搬运"助手
+  在代码里**零引用**；`markdownlint`/`clippy`/`fmt` 与全量门禁（workspace + JIT 两矩阵 +
+  asm 三档棘轮）全绿；读路径预算按**实测**下调（`agg_expand.rs` 6 → 2，新增两相各 1）。
++ 逐批证据与后续批次见 `docs/plans/backend-v24-plan.md` §6。
+
 ### Docs (2026-10-11) — v23 方案收口归档
 
 + `docs/plans/backend-v23-plan.md` → **`docs/archive/backend-v23-plan.md`**（头部加

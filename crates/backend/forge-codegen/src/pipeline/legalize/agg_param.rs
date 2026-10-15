@@ -4,10 +4,10 @@
 
 use super::common::{AggArgLoc, agg_arg_place, collect_extract_jobs};
 use crate::IrError;
-use crate::pipeline::agg_expand::AggSlots;
 use crate::pipeline::agg_expand::UseJob;
 use crate::pipeline::agg_expand::UseKind;
-use crate::pipeline::agg_expand::rewrite_agg_value_uses;
+
+use crate::pipeline::agg_expand::{Place, Places};
 use forge_ir::*;
 
 /// 被调方大聚合参数展开：按**约定落点**分流——
@@ -16,7 +16,7 @@ use forge_ir::*;
 ///   entry 块参数重建，旧参数值使用处重写（extractvalue → 段值、store → 段 store、
 ///   return/call → 段值）；
 /// - `ByRef`（win64 `>8B`）：形参改为**单个 `ptr`**，并把"该聚合值住在指针指向的内存"
-///   登记进 `agg_slots` ⇒ 使用处按地址重写（`rewrite_agg_value_uses` 的 ExtractValue
+///   登记进 `agg_slots` ⇒ 使用处按地址重写（由物化相接指令序单遍展开
 ///   分支走 GEP+load、store 走向内存拷贝、传参传该指针）。**不写 `byval` 属性**：
 ///   引擎对 `byval` 落点给 `Indirect`，而生成物 `move_args` 的 `Indirect` 收参是
 ///   "从指针 load 出寄存器里的值"（向量语义）——聚合没有寄存器表示，要的是**指针本身**
@@ -24,7 +24,8 @@ use forge_ir::*;
 /// - `Stack`（sysv64 `>16B`）：发射侧尚未接 ⇒ 明确 Unsupported（A2′）。
 pub(crate) fn expand_large_agg_params(
     func: &mut Function,
-    agg_slots: &mut AggSlots,
+    agg_slots: &mut Places,
+    shadow_agg: &mut forge_ir::entity::map::SecondaryMap<Value, TypeId>,
     machine: &impl forge_isa_runtime::machine::target::TargetMachine,
     conv: &str,
 ) -> Result<(), IrError> {
@@ -162,7 +163,7 @@ pub(crate) fn expand_large_agg_params(
     // `StackAddr` 的 lea 位移 = 立即数 − callee-saved 区平移（`lowering.rs` 的
     // `current_offset`）⇒ 立即数写 `offset + shift` 才正好落在 `[fp + offset]`
     //（`shift` 与 `LowerCtx::stack_slot_shift` 同源，见 `agg_arg_place`）。
-    for (i, offset, ty) in stack_agg {
+    for (i, offset, _ty) in stack_agg {
         let old_v = old_bvals[i];
         let sa = func.make_inst(
             Opcode::StackAddr,
@@ -181,17 +182,27 @@ pub(crate) fn expand_large_agg_params(
             let ni = order.pop().expect("刚 push 的 StackAddr");
             order.insert(0, ni);
         }
-        agg_slots.insert(old_v, (addr, ty));
-        rewrite_agg_value_uses(func, old_v, &[], ty, agg_slots)?;
+        agg_slots.set(old_v, Place::Mem(addr));
     }
     // by-ref 档：登记"聚合住在指针指向的内存"，再按地址重写使用处
     for (old_v, ptr_v, agg_ty) in byref_info {
-        agg_slots.insert(old_v, (ptr_v, agg_ty));
-        rewrite_agg_value_uses(func, old_v, &[], agg_ty, agg_slots)?;
+        agg_slots.set(old_v, Place::Mem(ptr_v));
+        // **事实交接**：签名重建会把 `old_v` 全局替换成 `ptr_v`（`replace_all_uses`），
+        // 之后"`ptr_v` 代表 `agg_ty` 型聚合"就不在 IR 类型里了 ⇒ 记进桥表给物化相用。
+        shadow_agg.insert(ptr_v, agg_ty);
+        // `ptr_v` **本身就是地址**（指向调用方副本）：重映射之后的使用处要按内存档处理，
+        // 所以对"新值"也登记一条位置——物化相查的是**使用点上那个值**。实测只登记旧值不够：
+        // 重映射后残留的 extractvalue 查不到位置 ⇒ 一路掉到 lowering 报
+        // `Unsupported("DSL lowering")`。
+        agg_slots.set(ptr_v, Place::Mem(ptr_v));
     }
     // 使用处重写（聚合参数——rewrite 内部即时移动辅助指令）
-    for (old_v, segs, agg_ty) in agg_info {
-        rewrite_agg_value_uses(func, old_v, &segs, agg_ty, agg_slots)?;
+    for (old_v, segs, _agg_ty) in agg_info {
+        // v24 M1：把"值住在这些段里"登记进位置表 ⇒ 物化相据此接管它的 `extractvalue`/`store`
+        //（`call`/`ret`/`insertvalue` 也已由物化相统一接管）。
+        if !agg_slots.contains(old_v) {
+            agg_slots.set(old_v, Place::Segs(segs.clone().into()));
+        }
     }
     // 非聚合参数：直接替换（单值——参数索引变化后引用保持）。
     // 用 `Function::replace_all_uses` 一次覆盖**指令操作数与终结符用值**并同步
@@ -214,7 +225,7 @@ pub(crate) fn expand_large_agg_params(
 /// 局限：load 后内存被改写时重新 load 不保留快照语义（常见模式安全）。
 pub(crate) fn expand_large_aggs(
     func: &mut Function,
-    agg_slots: &mut AggSlots,
+    agg_slots: &mut Places,
 ) -> Result<(), IrError> {
     // 第一遍：收集大聚合 load
     struct LoadInfo {
@@ -357,7 +368,11 @@ pub(crate) fn expand_large_aggs(
         } else if let Some(idx) = extract_idx {
             // S1：命中嵌套聚合槽映射（内层提取）——地址语义优先
             let hit_inst = &func.dfg.inst_data(job.inst);
-            if let Some(&(slot_addr, slot_ty)) = agg_slots.get(hit_inst.operands[0]) {
+            if let Some(slot_addr) = agg_slots.addr(hit_inst.operands[0]) {
+                let slot_ty = func
+                    .dfg
+                    .value_type(hit_inst.operands[0])
+                    .ok_or_else(|| crate::IrError::Internal("嵌套字段源值没有类型".into()))?;
                 let ts = func.types.borrow();
                 let foff = ts.field_offset(slot_ty, idx).ok_or_else(|| {
                     IrError::Unsupported(format!("extractvalue 字段偏移缺失：{idx}"))
@@ -395,7 +410,7 @@ pub(crate) fn expand_large_aggs(
                     }
                     let __tomb = job.inst;
                     func.tombstone_inst(__tomb);
-                    agg_slots.insert(res, (addr2, fty));
+                    agg_slots.set(res, Place::Mem(addr2));
                     // 追加内层提取任务（递归）
                     collect_extract_jobs(func, &mut jobs, res, job.load);
                 } else {
@@ -497,7 +512,7 @@ pub(crate) fn expand_large_aggs(
                 let __tomb = job.inst;
                 func.tombstone_inst(__tomb);
                 let res_new = func.dfg.inst_data(__tomb).results[0];
-                agg_slots.insert(res_new, (addr2, field_ty));
+                agg_slots.set(res_new, Place::Mem(addr2));
                 collect_extract_jobs(func, &mut jobs, res_new, job.load);
             } else {
                 let off = ts.field_offset(li.ty, idx).ok_or_else(|| {

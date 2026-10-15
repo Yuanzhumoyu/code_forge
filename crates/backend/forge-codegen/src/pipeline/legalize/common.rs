@@ -174,7 +174,7 @@ pub(crate) fn make_placeholder_ptr(func: &mut Function) -> Value {
 /// 原来在两个 pass 里各写一遍，口径散在两处；现在只有这里能造。
 ///
 /// 返回 `(alloca_inst, addr_value)`。**调用方负责把它移到正确的块位置**（SSA 支配：
-/// 缓冲的取址必须先于用它的那条指令——`move_to_front` 或手工 `inst_order` 调整）。
+/// 缓冲的取址必须先于用它的那条指令——由物化相在构造块内指令序时保证）。
 pub(crate) fn place_addr_of_slot(func: &mut Function, block: Block, size: usize) -> (Inst, Value) {
     let alloca = func.make_inst(
         Opcode::Alloca,

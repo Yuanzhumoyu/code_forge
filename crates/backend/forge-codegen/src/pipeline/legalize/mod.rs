@@ -19,10 +19,13 @@ pub(crate) mod agg_param;
 pub(crate) mod agg_store;
 pub(crate) mod common;
 pub(crate) mod gep;
+pub(crate) mod materialize;
+pub(crate) mod plan;
 
 use crate::IrError;
 use crate::machine::target::TargetMachine;
-use crate::pipeline::agg_expand::{AggSlots, ChangeSet, IrSize};
+use crate::pipeline::agg_expand::{ChangeSet, IrSize, Places};
+use crate::pipeline::legalize::plan::AbiEdges;
 use forge_ir::{Function, Value};
 
 /// pass 之间的**共享可变上下文**：机器视图、约定名、聚合槽表、sret 指针。
@@ -34,9 +37,19 @@ pub(crate) struct LegalizeCtx<'a, M: TargetMachine> {
     /// 已解析的调用约定名（`conv_registry::resolve` 的产物）。
     pub conv: String,
     /// 聚合槽表（值 → (缓冲, 类型)）。
-    pub agg_slots: AggSlots,
+    pub agg_slots: Places,
     /// sret 形参（宽聚合返回时由 `AggCall` 立起）。
     pub sret_ptr: Option<Value>,
+    /// **ABI 边界计划**（v24 M1 Phase A 的产物）：由 `PlanPass` 只读地算出，
+    /// 供 `MaterializePass` 消费。`None` = 还没跑计划相。
+    pub edges: Option<AbiEdges>,
+    /// **重映射后仍代表聚合的值 → 那个聚合的类型**（v24 M1 的事实交接）。
+    ///
+    /// 为什么需要：by-ref 聚合形参会**重建签名**——旧形参值被全局替换成一个 `ptr`
+    /// （`replace_all_uses`），此后"这个 `ptr` 代表 T 型聚合"这条事实**不在 IR 类型里**了
+    /// （`value_type` 只剩 `PTR`），而物化相要按 T 算字段偏移。生产者（`agg-param`）知道这件事，
+    /// 在这里显式交给消费者——**不是**第二份类型表，而是重映射**销毁**的那一点信息。
+    pub shadow_agg: forge_ir::entity::map::SecondaryMap<Value, forge_ir::TypeId>,
     /// **变参展开的输入**：`(va 形状信息, 预先排布的 ABI 槽)`。
     ///
     /// 由编译入口排好（槽深度依赖前端局部槽，只有 lowering 前那次预扫算得出），
@@ -54,6 +67,8 @@ impl<'a, M: TargetMachine> LegalizeCtx<'a, M> {
             conv,
             agg_slots: Default::default(),
             sret_ptr: None,
+            edges: None,
+            shadow_agg: Default::default(),
             va: None,
         }
     }
@@ -82,12 +97,21 @@ impl<M: TargetMachine> LegalizeDriver<M> {
     pub fn with_aggregates_except_va() -> Self {
         Self {
             passes: vec![
+                // **计划相先行**（v24 M1）：只读地把 ABI 边界计划算出来，后面所有 pass 只消费它。
+                Box::new(PlanPass),
                 Box::new(AggParamPass),
                 Box::new(AggStorePass),
                 Box::new(AggCallPass),
                 Box::new(AggLeftoverPass),
-                Box::new(GepPass),
             ],
+        }
+    }
+
+    /// **收尾批**：物化相 + GEP。放在**最后**跑的理由：`Va` 也会登记位置（它把聚合实参拷进
+    /// 自己的帧槽），所以物化必须等 va 跑完；GEP 与聚合无关，顺手一起收尾。
+    pub fn finalize() -> Self {
+        Self {
+            passes: vec![Box::new(MaterializePass), Box::new(GepPass)],
         }
     }
 
@@ -122,6 +146,8 @@ impl<M: TargetMachine> LegalizeDriver<M> {
     pub fn with_aggregates() -> Self {
         Self {
             passes: vec![
+                // 计划相（只读）：算出 ABI 边界计划。
+                Box::new(PlanPass),
                 // 变参先展开：它往常量池插初值常量、物化 `va_list` 对象，后面几个 pass
                 //（以及 `CompileState::new` 的常量池克隆）都必须在它之后。
                 Box::new(VaPass),
@@ -129,8 +155,10 @@ impl<M: TargetMachine> LegalizeDriver<M> {
                 Box::new(AggParamPass),
                 Box::new(AggStorePass),
                 Box::new(AggCallPass),
-                // load 值传播最后（见上方 ③）。
+                // load 值传播（见上方 ③）。
                 Box::new(AggLeftoverPass),
+                // 最后一步改写：物化相（v24 M1）+ GEP。
+                Box::new(MaterializePass),
                 Box::new(GepPass),
             ],
         }
@@ -218,6 +246,51 @@ impl<M: TargetMachine> LegalizePass<M> for VaPass {
     }
 }
 
+/// **计划相**（v24 M1）：只读地算出 ABI 边界计划（`ctx.edges`），**不改 IR**。
+///
+/// 为什么单独一个 pass：v23 的合法化把"决策"和"就地改写"缠在同一遍里，于是 pass 次序
+/// 变成了语义（四个缺陷的共同形状）。计划相只读 ⇒ 它排第几都不影响结果；
+/// 物化相（后续批次）拿到计划后单遍改写。
+///
+/// 判据（`plan.rs` 的单测）：IR 规模在计划相前后**逐项相等**；位置表写一次。
+struct PlanPass;
+impl<M: TargetMachine> LegalizePass<M> for PlanPass {
+    fn name(&self) -> &'static str {
+        "plan"
+    }
+    fn run(&self, func: &mut Function, ctx: &mut LegalizeCtx<'_, M>) -> Result<ChangeSet, IrError> {
+        let before = IrSize::of(func);
+        let va = ctx.va.as_ref().map(|(v, _)| v);
+        let edges = plan::plan_abi_edges(func, ctx.machine, &ctx.conv, va)?;
+        if crate::pipeline::trace_enabled("FORGE_TRACE_AGG") {
+            eprintln!(
+                "[forge] ABI 计划 {}：{} 条可动边界（{}）",
+                func.name,
+                edges.actionable(),
+                edges.summary()
+            );
+        }
+        ctx.edges = Some(edges);
+        // 计划相**声明零改动**：`delta_to` 会算出 0（只读是契约，不是巧合）。
+        Ok(IrSize::of(func).delta_to(before, false))
+    }
+}
+
+/// **物化相**（v24 M1 Phase B）：按指令序单遍把 `Places` 里的内存档值展开成显式 IR。
+///
+/// 排在所有"会登记位置"的 pass **之后**（形参/存储/调用/load 传播），`gep` 之前。
+/// 它自己构造块内指令序并**一次写回** ⇒ 生成指令天生排在消费者之前（不需要事后搬运）。
+struct MaterializePass;
+impl<M: TargetMachine> LegalizePass<M> for MaterializePass {
+    fn name(&self) -> &'static str {
+        "materialize"
+    }
+    fn run(&self, func: &mut Function, ctx: &mut LegalizeCtx<'_, M>) -> Result<ChangeSet, IrError> {
+        let cs = materialize::materialize_memory_uses(func, &mut ctx.agg_slots, &ctx.shadow_agg)?;
+        Ok(cs)
+    }
+}
+
 /// 聚合字面量 store → 打包 i64 常量 store。
 struct AggStorePass;
 impl<M: TargetMachine> LegalizePass<M> for AggStorePass {
@@ -263,7 +336,13 @@ impl<M: TargetMachine> LegalizePass<M> for AggParamPass {
     }
     fn run(&self, func: &mut Function, ctx: &mut LegalizeCtx<'_, M>) -> Result<ChangeSet, IrError> {
         let before = IrSize::of(func);
-        agg_param::expand_large_agg_params(func, &mut ctx.agg_slots, ctx.machine, &ctx.conv)?;
+        agg_param::expand_large_agg_params(
+            func,
+            &mut ctx.agg_slots,
+            &mut ctx.shadow_agg,
+            ctx.machine,
+            &ctx.conv,
+        )?;
         Ok(IrSize::of(func).delta_to(before, false))
     }
 }
@@ -305,21 +384,24 @@ impl<M: TargetMachine> LegalizePass<M> for GepPass {
 mod tests {
     use super::*;
 
-    /// pass 清单就是执行序，且**五个族一个不少**（Va 由调用点按 va 上下文跑，不在这里）。
+    /// pass 清单就是执行序，且**各族一个不少**（Va 由调用点按 va 上下文跑，不在这里）。
     #[test]
     fn driver_has_the_documented_pass_order() {
         let d = LegalizeDriver::<crate::arch::x86::TargetMachine>::with_aggregates();
         assert_eq!(
             d.pass_names(),
             vec![
+                "plan",
                 "va",
                 "agg-param",
                 "agg-store",
                 "agg-call",
                 "agg-leftover",
+                "materialize",
                 "gep"
             ],
-            "定序是契约：va → param（槽先立起来）→ store → call → leftover（load 值传播，最后）→ gep"
+            "定序是契约：plan（只读计划）→ va → param（槽先立起来）→ store → call → \
+             leftover（load 值传播）→ materialize（单遍物化）→ gep"
         );
         // 分批形态：聚合族（不含 va）与 va 单独一份——入口按"聚合族 → 排 ABI 槽 → va"用，
         // 两边的名字必须与合并清单一致（不然分批就会漏 pass 或次序漂移）。
@@ -327,14 +409,21 @@ mod tests {
             LegalizeDriver::<crate::arch::x86::TargetMachine>::with_aggregates_except_va();
         assert_eq!(
             agg_only.pass_names(),
-            vec!["agg-param", "agg-store", "agg-call", "agg-leftover", "gep"],
-            "聚合族（不含 va）的次序是契约"
+            vec!["plan", "agg-param", "agg-store", "agg-call", "agg-leftover"],
+            "聚合族（不含 va）的次序是契约：计划相亲居其首"
         );
         let va_only = LegalizeDriver::<crate::arch::x86::TargetMachine>::va_only();
         assert_eq!(va_only.pass_names(), vec!["va"], "va 单独一批");
-        // 拼起来（入口的真实分批次序：聚合族 → va）必须与合并清单同名同量。
+        let fin = LegalizeDriver::<crate::arch::x86::TargetMachine>::finalize();
+        assert_eq!(
+            fin.pass_names(),
+            vec!["materialize", "gep"],
+            "收尾批：物化相（等 va 也登记完位置）+ GEP"
+        );
+        // 拼起来（入口的真实分批次序：聚合族 → va → 收尾）必须与合并清单同名同量。
         let mut merged = agg_only.pass_names();
         merged.extend_from_slice(&va_only.pass_names());
+        merged.extend_from_slice(&fin.pass_names());
         let mut expect = d.pass_names();
         expect.sort_unstable();
         merged.sort_unstable();
