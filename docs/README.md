@@ -22,7 +22,8 @@
 
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
-| —（暂无） | 后端 v23 的账本已收口并归档：见 [`archive/backend-v23-plan.md`](archive/backend-v23-plan.md) | archive |
+| [`plans/backend-v24-plan.md`](plans/backend-v24-plan.md) | **后端 v24：合法化两相化 + 值描述单一来源 + 缺口/观测台账化**（M1 计划只读 + 一次性物化，删 `AggSlots`/`rewrite_agg_value_uses`/`move_to_front`；M2 四张值描述表并一张、删 `LowerCtx::xreg_types`；M3 能力缺口台账 + 双向守卫；M4 trace 注册表；M5 契约回写）；含代码证据、删除清单、守卫与验收判据 | progress |
+| —（已归档） | 后端 v23 的账本已收口：见 [`archive/backend-v23-plan.md`](archive/backend-v23-plan.md) | archive |
 
 ## forge-ir/ — forge-ir 工作流（活跃）
 
