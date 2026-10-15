@@ -1524,6 +1524,28 @@ jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
 写偏移/读偏移。用例 `test_jit_va_arg_reads_unnamed_aggregate_arg` 标 `#[ignore]`
 （断言就是 11，修好后删标记即成验收）。
 
+### M7 批次 5：**ABI 槽改在聚合族之后排布**（2026-10-11）
+
+**隐患（本批修）**：`plan_abi_slots` 原来在 Stage 0.5 **之前**用**合法化前**的 IR 扫深度，
+而 lowering 扫的是**合法化后**的 IR；聚合族会新增 `Alloca` ⇒ 局部区变大 ⇒ 新槽可能落进
+ABI 槽区。影响面不止 `va_arg` 聚合，而是所有合法化新建的槽。
+
+**修法**：驱动拆成 `with_aggregates_except_va()` + `va_only()`；入口次序改为
+**聚合族 → `plan_abi_slots`（含新建 Alloca）→ va**；`ChangeSet::merge` 合并两批账目；
+定序守卫同时钉"合并清单"与"分批拼起来 = 合并清单"。
+
+**新增守卫**：`va_arg` 聚合单测断言"字段 load 晚于段 store"（单测路径实测通过 ⇒ 否掉了
+"读到未初始化槽"这个怀疑）。
+
+**判据**：workspace 门禁 exit 0；`forge-codegen --lib --all-features` **2820 passed / 1 ignored**；
+jit x86 197/3/0、riscv64 136/64/0；clippy/fmt 干净。
+
+**仍未解决（已排除四项）**：真执行的和是垃圾且每次运行不同（`344364925599`、`1028139237199`），
+但**两个字段各自单独回读分别正确**（`e0 = 4`、`e1 = 7`）。已排除：① 指针/内联二选一（都错）；
+② ABI 槽重叠（本批修了，症状不变）；③ 溢出（`FORGE_TRACE_SPILL` 无输出）；④ 字段 load 早于
+段 store（单测序列实测不是）。下一步：对照"单字段版（对）/两字段相加版（错）"的
+`FORGE_TRACE_EMIT` 序列差异 + `iadd` 两侧的寄存器分配。
+
 ## 13. M4 进度（收口）
 
 ### 爆炸半径（2026-10-11 实测，`rg` 计数）

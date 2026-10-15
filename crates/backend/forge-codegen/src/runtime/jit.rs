@@ -3137,6 +3137,59 @@ ret_int = ["RAX"]
         );
     }
 
+    /// **临时诊断（用完删）**：被调方把 `va_arg(聚合)` 的**第一个字段**原样返回 ——
+    /// 用来判断它读到的到底是"指向聚合的指针"、"聚合自己的字节"，还是"根本没写过的槽"。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn tmp_diag_va_agg_field0() {
+        use forge_ir::{FunctionSignature, TypeContext, TypeId};
+
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+
+        let ctx_c = TypeContext::new();
+        let agg_ty = ctx_c
+            .borrow_mut()
+            .struct_anon(vec![TypeId::I64, TypeId::I64], false);
+        let sig_c =
+            FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64]).with_variadic(true);
+        let mut callee = FunctionBuilder::new("callee", ctx_c, sig_c);
+        let (ce, _cp) = callee.create_block_with_params(&[(TypeId::I64, "fmt")]);
+        callee.switch_to_block(ce);
+        let va = callee.va_start();
+        let agg = callee.va_arg(va, agg_ty);
+        let e0 = callee.extract_value(agg, 0);
+        let e1 = callee.extract_value(agg, 1);
+        // 只返回 e0（第一个字段）与 e1 分开两次调用不好做 ⇒ 这次只回 e1，看第二段。
+        callee.ret(&[e1]);
+        let _ = e0;
+        let mut module = Module::new();
+        let cref = module.add_function(callee.finish().expect("callee"));
+
+        let ctx_m = TypeContext::new();
+        let agg_ty_m = ctx_m
+            .borrow_mut()
+            .struct_anon(vec![TypeId::I64, TypeId::I64], false);
+        let sig_m = FunctionSignature::new(&[(agg_ty_m, "agg")], &[TypeId::I64]);
+        let mut main_fn = FunctionBuilder::new("main", ctx_m, sig_m);
+        let (me, mp) = main_fn.create_block_with_params(&[(agg_ty_m, "agg")]);
+        main_fn.switch_to_block(me);
+        let fmt = main_fn.iconst(0, TypeId::I64);
+        let got = main_fn.call(cref, &[fmt, mp[0]], &[TypeId::I64])[0];
+        main_fn.ret(&[got]);
+        module.add_function(main_fn.finish().expect("main"));
+
+        #[repr(C)]
+        struct Agg16 {
+            a: i64,
+            b: i64,
+        }
+        jit.compile_module(&module).expect("compile module");
+        let f: extern "C" fn(Agg16) -> i64 = jit.get_fn("main").expect("get_fn");
+        let r = f(Agg16 { a: 4, b: 7 });
+        println!("[diag] e0 = {r} (0x{r:x})");
+    }
+
     /// **变参聚合实参**（v23 收尾 M7）：调用方把 16B 聚合作为**未命名实参**传下去，被调方用
     /// `va_arg(聚合)` 取回并读出字段。**当前 `#[ignore]`：结构已打通，值还不对。**
     ///

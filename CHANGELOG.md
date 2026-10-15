@@ -11,6 +11,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v23 收尾 M7 批次 5：**ABI 槽改为在聚合族之后排布**（修一处帧槽重叠隐患）
+
++ **隐患**：`plan_abi_slots`（变参保存区 + `va_list` 对象的槽排布）原来在 Stage 0.5 **之前**
+  跑，用**合法化之前**的 IR 扫深度；而 lowering 扫的是**合法化之后**的 IR。聚合族 pass 会
+  **新增 `Alloca`**（聚合槽）⇒ 局部区变大 ⇒ 新槽可能落进 ABI 槽区（被游标推进/序言保存覆盖）。
+  这不只影响 `va_arg` 聚合，而是**所有**合法化新建的槽（agg-store/agg-call/agg-param/
+  insertvalue 链）的共性隐患。
++ **修法**：驱动拆成可分批的形态 —— `with_aggregates_except_va()`（聚合族）与 `va_only()`；
+  入口次序改为 **① 聚合族 → ② `plan_abi_slots`（此时含新建的 `Alloca`）→ ③ va**；
+  `ChangeSet::merge` 把两批的变化量合起来报。守卫
+  `driver_has_the_documented_pass_order` 同时钉住"合并清单"与"分批两份拼起来 = 合并清单"。
++ **新增守卫**：`va_arg` 聚合单测里断言"字段 load 必须晚于段 store"（"先拷贝后读"）。
+  它**否掉**了一个怀疑：单测路径下次序是对的（字段 load 确实在段 store 之后）。
++ **未解决（范围进一步收窄）**：真执行用例的和仍是垃圾且**每次运行不同**
+  （实测 `344364925599`、`1028139237199`）——但**两个字段各自单独回读分别正确**（`e0 = 4`、
+  `e1 = 7`，两次独立运行）。已排除：① 指针/内联二选一（两种读法都错，且值不同）；
+  ② ABI 槽重叠（本批已修，症状不变）；③ 溢出（`FORGE_TRACE_SPILL` 无输出）；
+  ④ 字段 load 早于段 store（单测序列实测不是）。下一步方向：对照"单字段版（对）"与"两字段
+  相加版（错）"的 `FORGE_TRACE_EMIT` 序列差异，以及调用方副本槽与 `iadd` 两侧操作数的寄存器分配。
+
 ### Changed (2026-10-11) — 后端 v23 收尾 M7 批次 4：调用方聚合实参**不再 fail-closed**（两处修复）；投递仍未对（记档）
 
 + **驱动定序改成两条方向相反的约束都能满足**：`agg-param` 提到实参之前（形参槽必须先立起来，

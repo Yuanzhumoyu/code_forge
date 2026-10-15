@@ -1004,6 +1004,32 @@ mod tests {
                 !ops.contains(&Opcode::ExtractValue),
                 "聚合结果的后续 extractvalue 必须被重写成\"从槽 load\"（否则落到 lowering 会 Unsupported）：{ops:?}"
             );
+            // **次序**：段拷贝的 store 必须排在"字段 load"之前 —— 反了就是读未初始化的槽
+            //（真执行用例里的表现：每次运行都不同的垃圾值，因为读到栈上残留）。
+            let last_store = ops.iter().rposition(|o| *o == Opcode::Store);
+            let field_load = ops
+                .iter()
+                .enumerate()
+                .skip(last_store.map_or(0, |i| i + 1))
+                .find(|(_, o)| **o == Opcode::Load)
+                .map(|(i, _)| i);
+            if let (Some(ls), Some(fl)) = (last_store, field_load) {
+                assert!(
+                    fl > ls,
+                    "字段 load（下标 {fl}）必须晚于最后一次段 store（下标 {ls}）：{ops:?}"
+                );
+            }
+            // **每个字段各一次 load**，而且都必须在段 store 之后（上面只查了"有一个在后面"）。
+            // 夹具只取**一个**字段 ⇒ 段 store 之后应恰好 1 次字段 Load。
+            // （这条守卫的来历：JIT 用例取两个字段时值错，我怀疑过"load 排在 store 之前读到
+            //  未初始化槽"——单测实测**不是**：字段 load 确实在段 store 之后；值错另有原因。）
+            if let Some(ls) = last_store {
+                let loads_after = ops[ls + 1..].iter().filter(|o| **o == Opcode::Load).count();
+                assert_eq!(
+                    loads_after, 1,
+                    "夹具只取一个字段 ⇒ 段 store 之后应恰好 1 次字段 Load：{ops:?}"
+                );
+            }
         }
 
         // ③ **不大于阈值**（8B ≤ 8）⇒ 走**内联**档：区域里直接是聚合字节，

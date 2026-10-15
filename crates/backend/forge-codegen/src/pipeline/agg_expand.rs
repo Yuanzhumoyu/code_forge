@@ -38,6 +38,15 @@ impl ChangeSet {
     pub fn total(&self) -> usize {
         self.new_insts + self.new_values + self.new_consts + usize::from(self.sret)
     }
+
+    /// 并入另一批的变化量（v23 收尾 M7）：入口把合法化拆成"聚合族 + va"两批跑
+    /// （ABI 槽必须在聚合族**之后**排布），所以账要合起来报。
+    pub fn merge(&mut self, other: Self) {
+        self.new_insts += other.new_insts;
+        self.new_values += other.new_values;
+        self.new_consts += other.new_consts;
+        self.sret |= other.sret;
+    }
 }
 
 /// IR 的规模快照（`ChangeSet` 的差分量）。

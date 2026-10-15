@@ -298,16 +298,22 @@ impl<M: TargetMachine> CompileSession<M> {
         // 时机：与聚合展开同一处（**必须**在 `CompileState::new` 之前——它克隆常量池；展开会
         // 往池里插常量），也在 lowering 之前。
         //
-        // **ABI 槽（保存区 + `va_list` 对象）由这里排布**：必须排在前端局部槽（`stack_addr(-N)`）
-        // **之下**，而前端的槽要 lowering 才统计——所以 `plan_abi_slots` 先扫一遍 IR 算深度，
-        // 再把结果喂给 `CompileState`（帧尺寸与序言 spill 偏移都读它）。
-        // 槽排布留在入口（深度依赖前端局部槽，只有 lowering 前这次预扫算得出），
-        // 展开本身交给 `LegalizeDriver` 的 `Va` pass（v23 M6）。
-        let mut va_inputs: Option<(
-            forge_isa_runtime::machine::call_layout::VaInfo,
-            crate::pipeline::va_expand::AbiSlots,
-        )> = None;
+        // **ABI 槽（保存区 + `va_list` 对象）的排布时机（v23 收尾 M7 修正）**：它必须排在
+        // 前端局部槽之下，深度靠扫 IR 得到。**扫的必须是合法化之后的 IR**——聚合族 pass 会
+        // 新增 `Alloca`（聚合槽），若在它们之前排定，lowering 看到的局部区更大 ⇒ 新槽可能
+        // 落进 ABI 槽区（症状：字段各自读对、一起用就错、每次运行还不同）。所以：
+        //
+        // ```text
+        //   ① 聚合族 pass（不含 va）  →  ② plan_abi_slots（此时含新建的 Alloca）
+        //                             →  ③ Va pass（用排好的槽）
+        // ```
+        //
+        // 这里先把 `va` 信息（**不含槽**）算出来，槽在 ② 之后补上。
         let mut abi_slots: Option<crate::pipeline::va_expand::AbiSlots> = None;
+        let mut va_pending: Option<(
+            forge_isa_runtime::machine::call_layout::VaInfo,
+            i64, // stack_slot_shift
+        )> = None;
         if crate::pipeline::va_expand::has_va_op(func) {
             match crate::pipeline::va_expand::va_info_for_expansion(
                 &self.machine,
@@ -319,15 +325,7 @@ impl<M: TargetMachine> CompileSession<M> {
                         &self.machine,
                         Some(&layout),
                     );
-                    let slots = crate::pipeline::va_expand::plan_abi_slots(
-                        func,
-                        &va,
-                        crate::machine::target::TargetMachine::reg_info(&self.machine).slot_bytes()
-                            as u32,
-                        i64::from(fl.stack_slot_shift),
-                    );
-                    abi_slots = Some(slots);
-                    va_inputs = Some((va, slots));
+                    va_pending = Some((va, i64::from(fl.stack_slot_shift)));
                     // 变参也要就地改写 IR ⇒ 需要有可变的副本（与聚合展开同一份）。
                     func_owned.get_or_insert_with(|| func.clone());
                 }
@@ -353,14 +351,29 @@ impl<M: TargetMachine> CompileSession<M> {
             //（与 `abi_setup::setup_conv` 同口径）。
             let agg_conv = crate::pipeline::conv_registry::resolve(&f.calling_convention)?;
             let mut lctx = crate::pipeline::legalize::LegalizeCtx::new(&self.machine, agg_conv);
-            // 变参输入（若有）交给 `Va` pass；它在驱动里排第一。
-            lctx.va = va_inputs.take();
+            // **① 聚合族先跑**（不含 va）：它会新增 `Alloca` ⇒ 必须在 ABI 槽排布之前落定。
             // **展开自报改动了什么**（v23 M3）：`ChangeSet` 取代了原来"先按 7 个
             // `has_*` 预判、再决定跑不跑"的做法——预判漏一类模式就是**静默少跑一个 pass**
             // （历史事故：大聚合返回展开不到 ⇒ 5 vs 6 错值）。现在 pass 无条件跑，
             // 改动量由每个 pass 自报、驱动累加，`FORGE_TRACE_AGG` 可见、下方断言可查。
-            let changes =
-                crate::pipeline::legalize::LegalizeDriver::with_aggregates().run(f, &mut lctx)?;
+            let mut changes =
+                crate::pipeline::legalize::LegalizeDriver::with_aggregates_except_va()
+                    .run(f, &mut lctx)?;
+            // **② 排 ABI 槽**：此时才扫 IR——深度里已含聚合族新建的槽（见上方时机注释）。
+            if let Some((va, shift)) = va_pending.take() {
+                let slots = crate::pipeline::va_expand::plan_abi_slots(
+                    f,
+                    &va,
+                    crate::machine::target::TargetMachine::reg_info(&self.machine).slot_bytes()
+                        as u32,
+                    shift,
+                );
+                abi_slots = Some(slots);
+                lctx.va = Some((va, slots));
+                // **③ 再跑 va**（用排好的槽）。
+                changes
+                    .merge(crate::pipeline::legalize::LegalizeDriver::va_only().run(f, &mut lctx)?);
+            }
             if crate::pipeline::trace_enabled("FORGE_TRACE_AGG") {
                 eprintln!(
                     "[forge] 聚合展开 {}：共 {} 项（+{} 指令 / +{} 值 / +{} 常量 / sret={}）",

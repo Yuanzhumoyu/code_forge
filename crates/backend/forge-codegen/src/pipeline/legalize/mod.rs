@@ -72,8 +72,39 @@ pub(crate) struct LegalizeDriver<M: TargetMachine> {
 }
 
 impl<M: TargetMachine> LegalizeDriver<M> {
+    /// **分批**：聚合族（**不含 Va**）——供"先跑聚合、再排 ABI 槽、最后跑 Va"的入口用。
+    ///
+    /// 为什么必须能分批（v23 收尾 M7 实测的**帧槽重叠**）：`plan_abi_slots` 要把变参 ABI 槽
+    /// （保存区 + `va_list` 对象）排在前端局部槽**之下**，它靠扫一遍 IR 算深度；而聚合族 pass
+    /// **会新增 `Alloca`**（聚合槽）。若 ABI 槽在聚合族之前排定，lowering 看到的局部区就比排布时
+    /// 假设的更大 ⇒ **新槽可能落进 ABI 槽区**（被游标推进/序言保存覆盖）⇒ 症状是"字段各自读对、
+    /// 一起用就错、每次运行还不同"。分批后 ABI 槽看到的是**合法化之后**的 IR，两处深度一致。
+    pub fn with_aggregates_except_va() -> Self {
+        Self {
+            passes: vec![
+                Box::new(AggParamPass),
+                Box::new(AggStorePass),
+                Box::new(AggCallPass),
+                Box::new(AggLeftoverPass),
+                Box::new(GepPass),
+            ],
+        }
+    }
+
+    /// **分批**：只有 `Va`（要在 ABI 槽排定之后跑）。
+    pub fn va_only() -> Self {
+        Self {
+            passes: vec![Box::new(VaPass)],
+        }
+    }
+
     /// 聚合展开族（Stage 0.5）的**唯一**顺序定义。
     ///
+    /// **入口现在按分批形态跑**（聚合族 → 排 ABI 槽 → va，见
+    /// [`Self::with_aggregates_except_va`] / [`Self::va_only`]，原因是 ABI 槽必须看到聚合族
+    /// 新建的 `Alloca`）；这一份"合并次序"是**契约与守卫**用的（`driver_has_the_documented_pass_order`
+    /// 断言分批两份拼起来与它一致）。
+    #[cfg_attr(not(test), allow(dead_code))]
     /// 次序不是随便的，两条方向相反的约束把它钉死：
     ///
     /// ① 变参先展开（它往常量池插初值常量、物化 `va_list` 对象，后面几个 pass 以及
@@ -290,6 +321,24 @@ mod tests {
             ],
             "定序是契约：va → param（槽先立起来）→ store → call → leftover（load 值传播，最后）→ gep"
         );
+        // 分批形态：聚合族（不含 va）与 va 单独一份——入口按"聚合族 → 排 ABI 槽 → va"用，
+        // 两边的名字必须与合并清单一致（不然分批就会漏 pass 或次序漂移）。
+        let agg_only =
+            LegalizeDriver::<crate::arch::x86::TargetMachine>::with_aggregates_except_va();
+        assert_eq!(
+            agg_only.pass_names(),
+            vec!["agg-param", "agg-store", "agg-call", "agg-leftover", "gep"],
+            "聚合族（不含 va）的次序是契约"
+        );
+        let va_only = LegalizeDriver::<crate::arch::x86::TargetMachine>::va_only();
+        assert_eq!(va_only.pass_names(), vec!["va"], "va 单独一批");
+        // 拼起来（入口的真实分批次序：聚合族 → va）必须与合并清单同名同量。
+        let mut merged = agg_only.pass_names();
+        merged.extend_from_slice(&va_only.pass_names());
+        let mut expect = d.pass_names();
+        expect.sort_unstable();
+        merged.sort_unstable();
+        assert_eq!(merged, expect, "分批两份拼起来 = 合并清单");
     }
 
     /// **合法化幂等**（M6 验收项）：把驱动在同一个函数上跑**第二遍**，合法化过的 IR 不应再
