@@ -1427,6 +1427,41 @@ jit x86 197/3/0、riscv64 136/64/0。
 **判据（本批）**：workspace 门禁 exit 0、`forge-codegen --lib --all-features` **2811 passed**
 （+1 驱动守卫）、jit x86 197/3/0、riscv64 136/64/0。
 
+### Reviewed (2026-10-11) — 后端 v23 收尾：聚合槽"按段整写"**查证为非缺陷**，并钉住不变量
+
+早前留下一处"看到但没改"的观察：合法化把聚合字段/值往 `Alloca` 槽里搬时按 **8 字节段整写**
+（`ceil(size/8)*8` 字节），而 `frame_slots` 按 `Type(I8) × count` **精确**算槽字节数 —— 看着像
+"往 12 字节的槽写 16 字节"。本轮查证结论：**不是缺陷**。
+
+- **证据（两处算式一致）**：`frame_slots::FrontendSlots::depth_bytes` 与 `lowering.rs` 分配槽偏移
+  处用的是**同一算式** `((bytes + unit - 1) / unit) * unit`（`unit = slot_bytes`）⇒ 槽的**帧占用**
+  按槽单位向上取整（12 字节的槽占 16）⇒ 写宽 `ceil(size/8)*8` 恰好**等于**占宽（槽单位 = 8 时），
+  既不越界也不侵入邻居槽。
+- **新守卫两条**（把这条不变量钉住，免得将来有人改成"字节精确打包"）：
+  `alloca_slot_footprint_rounds_up_to_slot_unit`（12 → 16 的取整 + 逐尺寸断言"写宽 == 占宽"）与
+  `shipped_isas_slot_unit_is_at_least_eight`（三份发行谱的 `slot_bytes` 都 ≥ 8 —— 这是"写宽 == 占宽"
+  的第二个前提；槽单位 < 8 时合法化必须给末段加掩码，那时这条会红）。
+
+### 计划（下一批，M7）：变参聚合取参 + `>16B` 非 sret 栈返回（侦察已完成，2026-10-11）
+
+**（a）`va_arg` 聚合** —— 数据模型与消费侧的落点已定位：
+
+1. `forge-abi-model/src/plan.rs`：`VaArgRules { int, float }` 增 **`aggregate: Option<VaArgRule>`**；
+   相应地在「形状声明」侧（`VaShapeDecl` 的 `int_arg`/`float_arg` 同形兄弟）增 `aggregate_arg`，
+   并需要一个"聚合在变参区里**是内联字节还是指向聚合的指针**"的声明位。
+2. `forge-abi/src/engine.rs`：`build_va_area` 里用**同一个** `rule(...)` 构造器造聚合规则
+   （第 902 行的 `VaArgRules { int, float }` 处补一项）；四份内置约定按 psABI 各写一条。
+3. `va_expand::expand_arg` 的聚合分支（当前 fail-closed）改为：① 按规则算地址 `p`；
+   ② 规则标"间接"则先 `Load(ptr)` 取指针；③ `place_addr_of_slot(size)` + 逐段拷贝
+   （复用 `agg_const::pack_segment` 的口径）；④ `agg_slots.insert(结果值, (slot, ty))`；
+   ⑤ 墓碑化 + 递归 `rewrite_agg_value_uses`（后续 `extractvalue` 走地址语义）。
+4. 判据：① forge-abi 不变量测试补"聚合规则存在 + step 合理"；② `va_expand` 单测：聚合 `va_arg`
+   **成功**且生成 `Store`（把现有 `aggregate_va_arg_is_fail_closed` 改写）；③ **真执行**：
+   JIT 用例——变参函数 `f(i32 n, ...)` 用 `va_arg(聚合)` 取回实参并与期望值比较（win64 通道）。
+
+**（b）`>16B` 非 sret 栈返回走 `StackByVal`**：发射侧 `ArgPlace::StackByVal` 已有，缺"返回侧也走它"
+—— **待侦察**：`RetLoc` 的形状、调用方读返回区的落点、被调方写回区的位置（下一步先读数据模型再定清单）。
+
 ## 13. M4 进度（收口）
 
 ### 爆炸半径（2026-10-11 实测，`rg` 计数）

@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Reviewed (2026-10-11) — 后端 v23 收尾：聚合槽"按段整写"查证为非缺陷（+ 两条守卫）
+
++ **查证**：合法化按 `ceil(size/8)*8` 字节把聚合往 `Alloca` 槽里整段搬，而 `frame_slots` 按
+  `Type(I8) × count` 精确算槽字节数——看着像越界写。实测**不是**：槽的帧占用按槽单位向上取整
+  （`frame_slots::depth_bytes` 与 `lowering.rs` 分配偏移处是同一算式 `((b + u - 1)/u)*u`），
+  槽单位 = 8 时"写宽 == 占宽"。
++ **新守卫**：`alloca_slot_footprint_rounds_up_to_slot_unit`（取整 + 逐尺寸断言相等）、
+  `shipped_isas_slot_unit_is_at_least_eight`（三份发行谱槽单位 ≥ 8；槽单位 < 8 时合法化需给末段加掩码）。
+
 ### Changed (2026-10-11) — 后端 v23 M6：**合法化单一驱动 + 去重 + 缺口泛化**（里程碑收口）
 
 **单一驱动**：新 `pipeline/legalize/` —— `trait LegalizePass`（`name()` + `run() -> ChangeSet`）、

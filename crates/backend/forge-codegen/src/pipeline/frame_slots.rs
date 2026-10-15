@@ -119,3 +119,91 @@ pub(crate) fn scan_frontend_slots(
         allocas,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **聚合槽的"按段整写"不越界**（2026-10-11 查证）——把这条不变量钉住。
+    ///
+    /// 背景：合法化把聚合字段/值往 `Alloca` 槽里搬时是**按 8 字节段整写**的
+    ///（`ceil(size/8)*8` 字节），而本文件按 `Type(I8) × count` **精确**算出槽字节数。
+    /// 看着像"往 12 字节的槽写 16 字节"，实测不然：槽的**帧占用**按槽单位向上取整
+    ///（本文件 `depth_bytes` 与 `lowering.rs` 分配偏移处是**同一算式**）
+    /// ⇒ 写宽 == 占宽，既不越界也不侵入邻居槽。
+    ///
+    /// 前提有两个：① 两处算式一致（这里断言）；② 槽单位 ≥ 8（三份发行谱都满足：由
+    /// `forge-codegen` 的 `shipped_isas_slot_unit_is_at_least_eight` 断言）。槽单位 < 8 时
+    /// `ceil(size/8)*8 > ceil(size/unit)*unit` ⇒ 那时才需要给末段加掩码。
+    #[test]
+    fn alloca_slot_footprint_rounds_up_to_slot_unit() {
+        // 造一个函数只为拿一个 `Inst` 句柄（`depth_bytes` 只看槽的**字节数**，键无所谓）。
+        use forge_ir::TypeId;
+        use forge_ir::ir::builder::FunctionBuilder;
+        use forge_ir::ir::types::{FunctionSignature, TypeContext};
+        let ctx = TypeContext::new();
+        let sig = FunctionSignature::new(&[], &[TypeId::I64]);
+        let mut b = FunctionBuilder::new("f", ctx, sig);
+        let (e, _) = b.create_block_with_params(&[]);
+        b.switch_to_block(e);
+        let one = b.iconst_i64(1);
+        b.ret(&[one]);
+        let f = b.finish().expect("build");
+        let inst = f.dfg.insts().map(|(i, _)| i).next().expect("至少一条指令");
+
+        let unit = 8u32;
+        let slots = FrontendSlots {
+            stackaddr_depth: 0,
+            allocas: vec![(inst, 12)],
+        };
+        assert_eq!(
+            slots.depth_bytes(unit),
+            unit + 16,
+            "12 字节槽应按槽单位向上取整成 16（另加起始一个槽单位）"
+        );
+        // 逐尺寸核对"写宽 == 占宽"。
+        for bytes in [1u32, 7, 8, 12, 16, 17, 24, 32, 64] {
+            let occupied =
+                (i64::from(bytes) + i64::from(unit) - 1) / i64::from(unit) * i64::from(unit);
+            let written = (u64::from(bytes).div_ceil(8) * 8) as i64;
+            assert_eq!(
+                written, occupied,
+                "{bytes} 字节：按段整写 {written} 字节，槽占用 {occupied} —— 两者必须相等"
+            );
+        }
+    }
+    /// 前提②：**三份发行谱的槽单位都 ≥ 8**（x86/riscv64/arm64 的 `[machine.stack].slot` = 64 位）。
+    ///
+    /// 这条与上一条合起来才完整：槽单位 ≥ 8 ⇒ `ceil(size/8)*8` 不会超过槽的取整占用。
+    /// 哪天引入"槽单位 < 8"的发行后端，这条会红——那时合法化的"按段整写"必须改成给末段加掩码。
+    #[test]
+    fn shipped_isas_slot_unit_is_at_least_eight() {
+        use crate::machine::target::TargetMachine as _;
+        for (name, sb) in [
+            (
+                "x86",
+                crate::arch::x86::TargetMachine::new()
+                    .reg_info()
+                    .slot_bytes(),
+            ),
+            (
+                "riscv64",
+                crate::arch::riscv64::TargetMachine::new()
+                    .reg_info()
+                    .slot_bytes(),
+            ),
+            (
+                "arm64",
+                crate::arch::arm64::TargetMachine::new()
+                    .reg_info()
+                    .slot_bytes(),
+            ),
+        ] {
+            assert!(
+                sb >= 8,
+                "{name} 的槽单位是 {sb} 字节（< 8）——合法化按 8 字节段整写会越过槽的取整占用，\
+                 需要给末段加掩码（见 `aggregate` 相关的 memoryize 路径）"
+            );
+        }
+    }
+}
