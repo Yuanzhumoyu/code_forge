@@ -158,6 +158,73 @@ M2 若中途发现"某个面其实还有消费者"（守卫/`rg` 反证），**�
 
 ## 8. 批次记录（逐里程碑回写）
 
+### M3 单命令门禁 + CI 补齐 —— **一次落地**（2026-10-11，工作区）
+
+① `cargo forge gate`（复用既有 clap CLI，没有新开 xtask 层）
+
+- `crates/tools/cargo-forge/src/cmd/gate.rs`：**一条命令跑全套门禁**，把只写在 `CLAUDE.md`
+  里的那份清单变成可执行注册表——fmt → clippy（workspace `--all-features -D warnings`）→
+  文本层门（`forge-ir --no-default-features`）→ `check -p forge-rustc` → workspace tests →
+  `forge-codegen --lib --all-features` → **守卫注册表** → JIT 两矩阵 → asm 三档 → 文档 lint。
+- **守卫注册表**（`GUARDS`，新增守卫 = 加一行）：**28 条**，覆盖 v23–v26 各轮加的台账/边界守卫
+  （`file_size_ratchet`/`error_taxonomy`/`events_guard`/`classification_single_entry`/`capability_gaps`/
+  `trace_knobs`/`entity_tables`/`error_codes_match_doc`/`schema_guard`/…）；`--guards` 只跑它
+  （**实测 28/28 全绿，55.7s**），改一条守卫时的快循环。
+- 逐项报告：每步打印 `[i/n] 名称 —— 在验什么`、用时与退出码；末尾汇总表；`--json` 机读；
+  `--list` 只列步骤；`--subset quick|linux|windows` 供 CI 复用。
+- 子进程**继承 stdio**（长测试看得到进度），统一 `CARGO_INCREMENTAL=0`（本仓纪律：增量缓存会涨到几十 GB），
+  测试目标另加 `CARGO_PROFILE_TEST_DEBUG=0`。
+- 落地踩到的两个真坑：① 闭包做条件 push 会借住 `out`（E0499）⇒ 改 `macro_rules!`，调用点形状不变；
+  ② `Scope::NotWindows` 无人构造 ⇒ 删（`-D warnings` 下即错）。
+
+② 文档步（同一口径进 CI）
+
+- `git ls-files '*.md'` **去掉 `docs/archive/**`**（归档冻结、明示豁免）⇒ 实跑 **0 issues**；
+  `npx` 缺失时打印 SKIP 而不是失败（本地无 node 也能跑其余门禁）。
+- 顺带**修掉两颗现行文档的钉子**：`docs/reference/isa-dsl.md` 的连续空行（MD012）、
+  `docs/reference/aarch64-encoding-ref.md` 的行内 `<op>`（MD033）；`docs/guides/lint.md`
+  的基线节按今天的实测重写（整树 114 条**全在 archive**）。
+
+③ CI 补齐（`.github/workflows/ci.yml`）
+
+- **新增 `docs` 作业**：与 gate 文档步**同一口径**（`git ls-files '*.md'` 去 archive + markdownlint-cli2）。
+- **`--all-features` 的执行覆盖**：Windows 作业加 `cargo test -p forge-codegen --lib --all-features`
+  （`parallel` 此前只被 clippy 覆盖、从未被执行）；Linux 作业加 `cargo check -p forge-codegen --all-features`
+  （Linux 不执行那套测试——按 Windows x64 ABI 生成的机器码在 sysv64 宿主上确定性 SIGSEGV，见作业注释）。
+- **codegen 事件落盘**：Windows 作业设 `FORGE_CODEGEN_EVENTS` + `if: always()` 步骤打印（同 `FORGE_JIT_EVENTS` 模式）。
+- **覆盖率下限棘轮**：`coverage` 作业此前只上传（`fail_ci_if_error: false`）⇒ 现加判定步。
+  判定程序住仓库（`docs/performance/coverage_floor.awk`，纯 awk、无 shell 引号依赖），
+  读 `docs/performance/coverage_floor.txt` 的下限与 `lcov.info` 的 `LF:`/`LH:` 求和。
+  **实测基线 81.16%**（LF 59678 / LH 48436；`cargo llvm-cov --no-clean --workspace --exclude
+  forge-rustc --exclude forge-codegen --exclude forge-tests --lcov`），当轮下限钉 **80**
+  （留 ~1.2pp 跨平台余量）；**三个方向都验过**：达标 exit 0 / 下限抬到 95 时 exit 1 / 空 lcov exit 1。
+  落地时改过一次实现：最初用 `cargo llvm-cov report --fail-under-lines`，实测 profdata 不在时
+  会读成 0/0（判定失去意义）⇒ 改为直接对 lcov 求和；又修掉一处 awk 缺陷：按**文件名**匹配下限文件
+  ⇒ 换个文件名（临时验证用的 `floor95.txt`）会静默读成 0，改成按 `NR == 1`。
+- CI YAML 用 `yaml.safe_load` 校验通过（加 `docs` 后共 **11** 个作业）。
+
+④ 文档
+
+- `CLAUDE.md` 的 Build Commands 改**门禁优先**（单命令 + 常用变体 + 单点命令，并写明
+  "不要对 workspace 开 `--all-features`：forge-tests 的 nightly feature 会拉 rustc_private"）；
+- `docs/guides/lint.md` 补门禁/CI 命令与今天重写的基线；`docs/guides/coverage.md` 加「覆盖率下限棘轮」节。
+
+**验收（自举自验：用新命令跑全套）**：`cargo forge gate` **40 步、失败 0、192.1s、全部通过**——
+含 fmt / clippy（workspace `--all-features -D warnings`）/ 文本层门 / `check -p forge-rustc` /
+workspace tests / `forge-codegen --lib --all-features` / **28 条守卫逐条 ok** / JIT 两矩阵
+（197/3/0 · 136/64/0）/ asm 三档（3/1/1）/ **文档步 0 issues**。`--subset quick`（fmt + 守卫 + 文档）
+**32 步全绿 50.6s**；`--guards` **28/28 全绿 55.7s`。
+
+**落地踩到并修掉的真坑（三处，都记在这儿）**：
+
+1. 闭包做条件 push 会借住 `out`（E0499）⇒ 改 `macro_rules!`（调用点形状不变）；`Scope::NotWindows`
+   无人构造 ⇒ 删。
+2. **Windows 上 `Command::new("npx")` 解析不到 `npx.cmd`** ⇒ 文档步被**静默 SKIP**（第一次全套只有
+   39 步、汇总里少一步）⇒ 改经 `cmd /c npx` 调用。
+3. **`npm_config_cache` 没继承** ⇒ npx 在沙箱里默认缓存放不开、秒退非零（单独在 shell 里跑却全绿，
+   于是"时红时绿"）⇒ gate 在调用方未设时**兜底**到 `<repo>/target/tmp/npm-cache`（实测把该变量
+   清掉后文档步仍 ok）。
+
 ### M2 无消费者面清理 —— **一次落地**（2026-10-11，工作区）
 
 **破坏性变更（有意）**：`forge-mem` crate 删除；`Instruction::isel_strategy` 删除且

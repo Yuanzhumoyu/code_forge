@@ -162,25 +162,32 @@ docs/
 
 ## Build Commands
 
+**v26 M3 起，全套门禁只有一条命令**（`cargo forge gate`，逐项报告 + 非零退出；
+CI 的 Linux/Windows 作业也复用它的子集）：
+
 ```bash
-# Check all crates (requires nightly)
-cargo check --workspace
+# 全套（本机默认口径；约 6–10 分钟）
+cargo run -p cargo-forge -- gate          # 或把 target/debug 加进 PATH 后：cargo forge gate
 
-# Run all tests (exclude forge-rustc which needs special rustc sysroot)
+# 常用变体
+cargo forge gate --guards                 # 只跑守卫注册表（28 条，约 1 分钟）
+cargo forge gate --subset quick           # fmt + 守卫 + 文档
+cargo forge gate --subset linux|windows   # CI 的两套口径（Linux 不含 forge-codegen 的 JIT 测试）
+cargo forge gate --list                   # 只列出将要跑的步骤
+cargo forge gate --json                   # 机器可读汇总
+
+# 单个命令（gate 跑的就是这些；需要单点排查时用）
+cargo fmt --all -- --check
+cargo clippy --workspace --exclude forge-rustc --all-targets --all-features -- -D warnings
+cargo clippy -p forge-ir --no-default-features --lib -- -D warnings   # 文本层门
 cargo test --workspace --exclude forge-rustc
-
-# Run tests with all features
-cargo test --workspace --exclude forge-rustc --all-features
-
-# Run specific crate tests
-cargo test -p forge-ir
-cargo test -p forge-opt
-cargo test -p forge-codegen
-cargo test -p forge-grammar
-
-# Check forge-rustc (requires nightly + rustc dev components)
-cargo check -p forge-rustc
+cargo test -p forge-codegen --lib --all-features   # `jit` + `parallel`（**不要**对 workspace 开 --all-features：
+                                                   # forge-tests 的 nightly feature 会拉 rustc_private）
+cargo check -p forge-rustc                          # 需要 nightly + rustc-dev
 ```
+
+门禁纪律（沿用）：**一个任务一次提交**、里程碑未完成不提交、每个里程碑以全量门禁 + 新增守卫验收、
+删除清单清零、守卫白名单条目必须被命中、预算/棘轮只许按实测下调。
 
 ## Project Architecture
 

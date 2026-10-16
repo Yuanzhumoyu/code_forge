@@ -188,7 +188,7 @@ NOP=**0xD503201F**（HINT #0）；HINT 其余(ESB/PAC/BTI…)为 0xD503201F 改 
   movz(hw1)+movk(hw0)（分片占位符 `{iconst_f0..f3}`，两补码位型逐片构造，
   任意 i64/i32 常量可表示）、乘除(MADD/MSUB/MUL/SDIV/UDIV)、分支
   (B/BL/BR/BLR/RET/CBZ/CBNZ)、CSEL 族、LDR/STR/LDUR/STUR、LDP/STP、
-  SP/XZR(31) 语义；[machine]/[machine.text]/[machine.spill]/[[lower.<op>]] TargetMachine 全链（P2）；
+  SP/XZR(31) 语义；[machine]/[machine.text]/[machine.spill]/[[lower.`<op>`]] TargetMachine 全链（P2）；
   jit_matrix runner + QEMU aarch64 semihosting 真执行（P3；值域过滤放宽至
   [-128,127]，return_negative/return_minus_one 转绿，矩阵 23 passed；大常量
   e2e：return 0x12345678 / -1_000_000_007 QEMU 真执行低 8 位验证；run_qemu

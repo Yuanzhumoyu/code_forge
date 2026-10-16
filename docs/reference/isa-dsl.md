@@ -207,7 +207,6 @@ v22 是 v21 收口后的**人体工学改造**（破坏性重写：不保留兼�
 > 语法史（v12–v17 的删除/改名总表、v18–v21 的设计）都在 [`docs/archive/`](../archive/)。
 > **本文只讲现行面**——看到 archive 里的旧键不要照抄。
 
-
 ## 键总览（速查表）
 
 下表由 `forge-isa-dsl` 的 JSON Schema 表**生成**（`schema::markdown_table()`），并由

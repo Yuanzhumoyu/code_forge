@@ -11,6 +11,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — 项目 v26 M3：单命令门禁（`cargo forge gate`）+ CI 补齐
+
++ **`cargo forge gate`**：把只写在 `CLAUDE.md` 里的门禁清单变成**可执行注册表**——一条命令跑
+  fmt → clippy（workspace `--all-features -D warnings`）→ 文本层门（`forge-ir --no-default-features`）
+  → `check -p forge-rustc` → workspace tests → `forge-codegen --lib --all-features` → **28 条守卫**
+  → JIT 两矩阵 → asm 三档 → 文档 lint；逐项打印 `名称/在验什么/用时/退出码` + 汇总表 + 非零退出。
+  开关：`--guards`（只跑守卫，实测 28/28 全绿 55.7s）、`--subset quick|linux|windows`（CI 复用）、
+  `--no-docs`、`--list`、`--json`。复用既有 clap CLI（未新开 xtask 层）；子进程统一
+  `CARGO_INCREMENTAL=0`。
++ **新增 CI `docs` 作业**：与 gate 文档步同一口径（`git ls-files '*.md'` 去掉 `docs/archive/**`
+  ——归档冻结、明示豁免）⇒ 当前 0 issues。顺带修掉两颗现行文档的钉子（`isa-dsl.md` 连续空行、
+  `aarch64-encoding-ref.md` 行内 `<op>`），并按实测重写 `docs/guides/lint.md` 的基线节。
++ **`--all-features` 执行覆盖**：Windows 作业加 `cargo test -p forge-codegen --lib --all-features`
+  （`parallel` 此前只被 clippy 覆盖、从未被执行）；Linux 作业加 `cargo check -p forge-codegen --all-features`。
++ **codegen 事件落盘**：Windows 作业设 `FORGE_CODEGEN_EVENTS` + `if: always()` 打印步。
++ **覆盖率下限棘轮**：`coverage` 作业此前只上传（`fail_ci_if_error: false`）⇒ 现按仓库内的判定程序
+  `docs/performance/coverage_floor.awk` 比对 `docs/performance/coverage_floor.txt` 的下限。
+  **实测基线 81.16%**（LF 59678 / LH 48436），当轮下限钉 **80**（跨平台余量）；达标/低于下限/缺数据
+  三个方向都验过。落地时改过一次实现（`--fail-under-lines` 在 profdata 缺失时读成 0/0）并修掉一处
+  awk 缺陷（按文件名匹配下限文件 ⇒ 换名会静默读成 0，改为 `NR == 1`）。
++ **文档**：`CLAUDE.md` 的 Build Commands 改门禁优先；`docs/guides/coverage.md` 加下限棘轮节。
++ 验收：**以新命令本身**跑全套（自举自验）——39 步 + 文档步全绿。
+
 ### Changed (2026-10-11) — 项目 v26 M2：无消费者面清理（三项破坏性变更）
 
 **破坏性**：① `Instruction::isel_strategy` 整条删除，`IR_FORMAT_VERSION` **3 → 4**（旧流在头部

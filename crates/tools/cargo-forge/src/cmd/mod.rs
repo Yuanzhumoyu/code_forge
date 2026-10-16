@@ -3,5 +3,6 @@
 pub mod backend;
 pub mod build;
 pub mod doctor;
+pub mod gate;
 pub mod init;
 pub mod run;

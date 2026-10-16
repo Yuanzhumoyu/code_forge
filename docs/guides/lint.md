@@ -14,7 +14,13 @@ npx markdownlint-cli2 docs/reference/isa-dsl.md CLAUDE.md
 
 # 全仓（*.md + docs/** + crates/**/README.md；读取根目录 .markdownlint.json）
 npx markdownlint-cli2 "**/*.md" "!target"
+
+# 门禁/CI 用的**同一口径**（全部纳入版本管理的 *.md，**归档除外**）
+npx --yes markdownlint-cli2 $(git ls-files '*.md' | grep -v '^docs/archive/')
 ```
+
+**v26 M3 起这条口径进了门禁**：`cargo forge gate` 的最后一步与 CI 的 `docs` 作业都跑它
+（归档文档冻结、明示豁免，见下节基线；`npx` 缺失时 gate 打印 `SKIP` 而不是失败）。
 
 通过 = `Linting: N files` 且 `Summary: N issues in 0 files`、退出码 0。**读摘要要小心**：
 `Summary: N issues in M files` 里的 **M = 有问题的文件数**（不是被 lint 的文件数，后者由
@@ -53,25 +59,26 @@ npx markdownlint-cli2 "**/*.md" "!target"
   aarch64-encoding-ref.md`）：
   `<!-- markdownlint-configure-file { "MD013": { "line_length": 300, ... } } -->`
 
-## 存量基线（2026-10-07 实测，`Summary: 115 issues in 7 files`）
+## 存量基线（2026-10-11 实测，`Summary: 114 issues in 6 files`，**全部在 `docs/archive/`**）
 
-命令：`npx markdownlint-cli2 "**/*.md" "!target"`（仓库根、markdownlint v0.41.1）。
-**archive 之外全树零警告**（含根 README/CLAUDE/CHANGELOG、docs/ 现行文档、crates README）；
-115 条**全部**落在历史归档正文（归档纪律：内容以记录时点为准，未做格式重构）：
+命令：`npx --yes markdownlint-cli2 $(git ls-files '*.md' | grep -v '^docs/archive/')`
+（仓库根、markdownlint v0.41.1）⇒ **0 issues**；整树 `"**/*.md" "!target"` 的 114 条**全部**
+落在历史归档正文（归档纪律：内容以记录时点为准，未做格式重构）：
 
 | 文件 | 处数 | 主要规则 |
 | --- | --- | --- |
-| `archive/forge-ir/code-quality-audit.md` | 33 | MD013/032/031 |
-| `archive/forge-ir/iteration-roadmap.md` | 13 + 若干单条 | MD060/032/013 |
-| `archive/forge-ir/next-iterations.md` | 12 | MD031/032/013 |
-| `archive/forge-ir/iteration-checklist.md` | 6 | MD013/031 |
-| `archive/forge-ir/display-gaps.md` | 2 | MD013 |
-| `archive/isa-dsl-v12-roadmap.md` | 1 | MD033 |
+| `docs/archive/forge-ir/code-quality-audit.md` | 41 | MD013/032/031/060 |
+| `docs/archive/forge-ir/iteration-roadmap.md` | 42 | MD060/032/013/031 |
+| `docs/archive/forge-ir/next-iterations.md` | 22 | MD031/032/013/060 |
+| `docs/archive/forge-ir/iteration-checklist.md` | 6 | MD013/031/060 |
+| `docs/archive/forge-ir/display-gaps.md` | 2 | MD013 |
+| `docs/archive/isa-dsl-v12-roadmap.md` | 1 | MD033 |
 
-（按文件聚合的行会与逐条列出的行重复计数，逐条总数以摘要为准。）
-与 2026-09-05 的 85 条/5 篇相比，差额来自**规则集变化**（新增 MD060 表格风格、MD033）与
-多出的那篇 archive 文档——不是新写的正文。**本轮另修**：`CHANGELOG.md` 的 **766 条 MD004**
-（列表符号风格漂移：文档首个列表是 `+`，多年正文用 `-`）已统一为 `+`，该文件回到零警告。
+（逐条总数以摘要为准。）
+与 2026-10-07 的 115 条/7 篇相比：**v26 M3 修掉两颗现行文档的钉子**
+（`docs/reference/isa-dsl.md` 的连续空行 MD012、`docs/reference/aarch64-encoding-ref.md` 的
+行内 `<op>` MD033，后者原本靠文件级豁免掩盖）；归档侧数字变化来自 MD060 表格风格规则的
+逐条展开计数（同一批正文，未改内容）。现在**归档之外全树零警告**，且这条口径进了门禁与 CI。
 
 处理纪律：**不得以"懒豁免"掩盖新违规**——新写/新改文档必须零警告；
 上述冻结正文如需改写（如从 archive 恢复为 active），在改写同时顺手清理。

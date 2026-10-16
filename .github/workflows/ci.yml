@@ -53,7 +53,21 @@ jobs:
           path: /tmp/clippy.log
           if-no-files-found: ignore
 
-  # Tests on Linux (exclude forge-rustc)
+    # Markdown lint（v26 M3）：与 `cargo forge gate` 的文档步**同一口径**——
+  # 全部纳入版本管理的 *.md，**归档除外**（`docs/archive/**` 冻结、明示豁免；
+  # 实测全仓存量问题全在那里，见 docs/guides/lint.md 的基线节）。
+  docs:
+    name: Docs (markdownlint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Markdown lint
+        run: npx --yes markdownlint-cli2 $(git ls-files '*.md' | grep -v '^docs/archive/')
+
+# Tests on Linux (exclude forge-rustc)
   test-linux:
     name: Test (Linux)
     runs-on: ubuntu-latest
@@ -93,6 +107,10 @@ jobs:
         run: cargo test --workspace --exclude forge-rustc --exclude forge-codegen --exclude forge-tests
       - name: Test forge-tests lib (host-exec tests)
         run: cargo test -p forge-tests --lib
+      # v26 M3：`--all-features` 的编译覆盖（`parallel` + `jit`）。**只 check**：
+      # forge-codegen 的 lib 测试在 Linux 上确定性 SIGSEGV（见本作业顶部注释）。
+      - name: Check forge-codegen with all features
+        run: cargo check -p forge-codegen --all-features
 
   # Tests on Windows
   test-windows:
@@ -111,12 +129,30 @@ jobs:
           # 通过测试的输出，skip 与真跑过在日志里都是 `... ok`——落盘事件 + 下方
           # if: always() 打印步骤是唯一判据（同 e2e 的 FORGE_E2E_EVENTS 模式）。
           FORGE_JIT_EVENTS: "${{ github.workspace }}/target/tmp/jit_events.txt"
+          # v26 M3：编译管线的机读事件（JSON 行）——`cargo test --workspace` 里
+          # forge-codegen 的用例会经 `pipeline::events` 落盘；下方 always() 步骤打印。
+          FORGE_CODEGEN_EVENTS: "${{ github.workspace }}/target/tmp/codegen_events.jsonl"
         run: |
           New-Item -ItemType Directory -Force -Path target/tmp | Out-Null
           cargo test --workspace --exclude forge-rustc 2>&1 | Tee-Object -FilePath target/tmp/windows-test.log
           $code = $LASTEXITCODE
           # Tee-Object 成功会让步骤误判为成功——必须显式回传 cargo 的退出码。
           if ($code -ne 0) { exit $code }
+      # v26 M3：`--all-features` 的**执行**覆盖。默认 feature 集只开 `jit`；
+      # `parallel`（scoped 并行模块编译）此前只被 clippy 覆盖、从未被执行过。
+      - name: Test forge-codegen lib with all features (Windows)
+        shell: pwsh
+        run: cargo test -p forge-codegen --lib --all-features
+      - name: Show codegen events (always)
+        if: always()
+        shell: pwsh
+        run: |
+          $p = Join-Path $env:GITHUB_WORKSPACE "target/tmp/codegen_events.jsonl"
+          $lines = @()
+          if (Test-Path $p) { $lines = @(Get-Content $p) }
+          if ($lines.Count -eq 0) { $lines = @("FORGE_CODEGEN_EVENTS: 无事件文件（未落盘或为空）") }
+          Write-Output "--- FORGE_CODEGEN_EVENTS ($p) ---"
+          $lines | Sort-Object -Unique | Select-Object -First 40 | Write-Output
       - name: Show AVX-512 gated test events (always)
         if: always()
         shell: pwsh
@@ -423,6 +459,14 @@ jobs:
         # 默认 features（不开 --all-features：forge-tests nightly → rustc_private
         # dylib，Linux 缺 libLLVM 无法链接）。
         run: cargo llvm-cov --no-clean --workspace --exclude forge-rustc --exclude forge-codegen --exclude forge-tests --lcov --output-path lcov.info
+      # v26 M3：**覆盖率下限棘轮**。下限写在 `docs/performance/coverage_floor.txt`
+      # （只许上调）：2026-10-11 本机实测 81.16%（LF 59678 / LH 48436，命令同上一
+      # 步），下限钉 80 留 ~1.2pp 跨平台余量。此前 coverage 只上传、`fail_ci_if_error:
+      # false` ⇒ 覆盖掉了没人知道。
+      - name: Coverage floor (ratchet)
+        # 判定程序住在仓库里（`docs/performance/coverage_floor.awk`）：纯 awk、无 shell
+        # 引号依赖、读上一步的 `lcov.info`（不要求 profdata 留存），本地同一条命令可复跑。
+        run: awk -f docs/performance/coverage_floor.awk docs/performance/coverage_floor.txt lcov.info
       - name: Upload to Codecov
         uses: codecov/codecov-action@v4
         with:

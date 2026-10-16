@@ -12,6 +12,8 @@
 //! - `run`：build 成功后运行产物（`--` 后参数透传 exe）
 //! - `init`：为当前 cargo 工程写 `.cargo/config.toml` + `rust-toolchain.toml`，
 //!   之后可裸 `cargo build`（不经本工具）
+//! - `gate`：**一条命令跑全套门禁**（fmt / clippy×2 / 测试 / 守卫注册表 / JIT 两矩阵 /
+//!   asm 三档 / 文档 lint），逐项报告 + 非零退出（v26 M3）
 use clap::{Parser, Subcommand};
 
 mod cmd;
@@ -63,6 +65,8 @@ enum Cmd {
     Run(cmd::build::BuildArgs),
     /// 为当前 cargo 工程写 .cargo/config.toml + rust-toolchain.toml（幂等覆盖）
     Init(cmd::init::Args),
+    /// 跑全套门禁（逐项报告；`--subset quick|linux|windows`、`--guards`、`--list`、`--json`）
+    Gate(cmd::gate::Args),
 }
 
 fn main() {
@@ -91,5 +95,6 @@ fn dispatch(cli: &Cli) -> anyhow::Result<i32> {
             cmd::init::run(a, &env, cli.verbose)?;
             Ok(0)
         }
+        Cmd::Gate(a) => cmd::gate::run(a, cli.verbose),
     }
 }
