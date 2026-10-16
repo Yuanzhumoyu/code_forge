@@ -262,6 +262,21 @@ impl<M: TargetMachine> LegalizePass<M> for PlanPass {
     fn run(&self, func: &mut Function, ctx: &mut LegalizeCtx<'_, M>) -> Result<ChangeSet, IrError> {
         let before = IrSize::of(func);
         let edges = plan::plan_abi_edges(func, ctx.machine, &ctx.conv)?;
+        // **机读出口**（v25 M3）：计划规模与"问了几次引擎"落成事件（CI 可统计）。
+        crate::pipeline::events::emit(
+            "LEGALIZE-PLAN",
+            &[
+                (
+                    "fn",
+                    crate::pipeline::events::Field::Str(func.name.as_ref()),
+                ),
+                (
+                    "actionable",
+                    crate::pipeline::events::Field::Usize(edges.actionable()),
+                ),
+                ("plans", crate::pipeline::events::Field::Usize(edges.plans)),
+            ],
+        );
         if crate::pipeline::trace::knob("FORGE_TRACE_AGG") {
             eprintln!(
                 "[forge] ABI 计划 {}：{} 条可动边界（{}）",

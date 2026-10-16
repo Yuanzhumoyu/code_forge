@@ -11,6 +11,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — 后端 v25 M3：codegen 的机读事件出口（`FORGE_CODEGEN_EVENTS`）
+
+**问题**：JIT / asm / E2E 三个面早就有落盘事件，**codegen 是唯一没有机读出口的阶段**——
+11 个诊断开关全是 `eprintln!` 人读文本，CI 只能靠正则去啃散文。
+
++ 新增 `pipeline::events`：出口 = **`FORGE_CODEGEN_EVENTS=<文件>`**（追加写；未设置零开销；
+  **写失败静默**——观测不得影响编译结论，与 `FORGE_JIT_EVENTS` 同约定）。字段序固定 ⇒ 输出
+  确定、测试可整行比对；自带最小 JSON 转义，不引入依赖；`EVENTS` 台账是唯一登记处，
+  未登记的名字 debug 下当场 panic。
++ **六个事件**：`COMPILE-START`、`COMPILE-DONE`（总耗时 + 八段微秒 + `code_bytes`，
+  **无条件发**，不再藏在 `CF_CODEGEN_TIMING` 后面）、`CAPABILITY-GAP`（失败路径的缺口 ID）、
+  `LEGALIZE-PLAN`（可动边界条数 + 问引擎次数）、`ALLOC-SUMMARY`、`EMIT-SUMMARY`。
+  `compile_with_alloc` 拆成外层包装（失败路径）+ 内层实现（持有阶段耗时）⇒ 两边字段都真实。
++ **契约文档新增「事件表」**；新增守卫 `events_guard`（2 条）：`event_names_are_bijective`
+  把源码调用点 ↔ `EVENTS` ↔ 文档事件表**三方双向**钉住（比 v24 M4 多钉一层文档）；
+  `events_land_on_disk` 端到端验证事件真的落盘（不可用时明确 SKIP，不假绿）。
++ 验收：`forge-codegen --lib` 2836 passed；workspace 全量 exit 0；JIT 两矩阵（197/3/0 ·
+  136/64/0）；asm 三档（3/1/1）；六条管线守卫 + `error_taxonomy`/`capability_gaps` 全绿；
+  clippy `-D warnings` 与 fmt 干净。
+
 ### Changed (2026-10-11) — 后端 v25 M2：错误分类学（失败语义分层 + 变体去冗余）
 
 **问题**：`IrError::Unsupported` 一名三用——**能力缺口**（换约定/补规则/换 ISA 就能解）、

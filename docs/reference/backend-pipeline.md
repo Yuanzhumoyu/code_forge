@@ -172,8 +172,29 @@ pass 清单与**合并次序**（下表与 `LegalizeDriver::with_aggregates().pa
 性能：每个开关一个 `OnceLock` 缓存（首次查询后零开销）——regalloc/lowering/emission 的
 **每指令热路径**上都有查询，实测裸 `std::env::var_os` 会占 codegen 的 7–18%。
 
-## 8. 相关账本与下一步
+## 8. 事件表（codegen 的机读出口）
 
-* 能力缺口：[`backend-gaps.md`](backend-gaps.md)（21 条，含逐条决策证据）。
-* v24 逐批证据与删除清单：[`archive/backend-v24-plan.md`](../archive/backend-v24-plan.md)（已归档）。
-* v23 收口记录（历史）：[`archive/backend-v23-plan.md`](../archive/backend-v23-plan.md)。
+诊断开关给的是**人读**的散文；CI 要的是**机读**的一行 JSON。出口 = 环境变量
+**`FORGE_CODEGEN_EVENTS=<文件>`**（追加写；未设置 ⇒ 零开销返回；**写失败静默**——观测不得
+影响编译结论，与 `FORGE_JIT_EVENTS`/`FORGE_ASM_EVENTS`/`FORGE_E2E_EVENTS` 同约定）。
+字段序固定（调用点给的顺序即输出顺序）⇒ 输出确定，测试可整行比对。
+
+为什么值得一节：JIT / asm / E2E 三个面早就有落盘事件，**codegen 曾经是唯一没有机读出口的
+阶段**——CI 只能靠正则去啃散文。下表与 [`events::EVENTS`] 台账、源码调用点由守卫
+`event_names_are_bijective` 钉成**三方双向相等**（比 v24 M4 的两方多钉一层文档）。
+
+| 事件 | 什么时候发 / 带什么字段 |
+| --- | --- |
+| `COMPILE-START` | 开始编译一个函数（`fn`） |
+| `COMPILE-DONE` | 函数编译成功：`total_us` + 各阶段微秒（`blocks_us`/`vreg_us`/`lower_us`/`peep_us`/`regalloc_us`/`frame_us`/`emit_us`）+ `code_bytes` |
+| `CAPABILITY-GAP` | 编译失败：`gap` = 缺口 ID（非缺口错误时为空串）+ `fn` |
+| `LEGALIZE-PLAN` | 合法化计划相完成：`actionable`（可动边界条数）、`plans`（问引擎次数） |
+| `ALLOC-SUMMARY` | 寄存器分配完成：`assigned`、`spills`、`edits` |
+| `EMIT-SUMMARY` | 发射完成：`code_bytes`、`relocs` |
+
+## 9. 相关账本与下一步
+
+* 能力缺口：[`backend-gaps.md`](backend-gaps.md)（含逐条决策证据）。
+* v25 逐批证据与删除清单：[`plans/backend-v25-plan.md`](../plans/backend-v25-plan.md)（进行中）。
+* v24 逐批证据：[`archive/backend-v24-plan.md`](../archive/backend-v24-plan.md)（已归档）；
+  v23 收口记录：[`archive/backend-v23-plan.md`](../archive/backend-v23-plan.md)（已归档）。

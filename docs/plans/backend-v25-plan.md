@@ -171,6 +171,38 @@ M1 成功判据不达标（含"删除清单未清零"）即**停止推进**：�
 
 ## 6. 批次记录（逐里程碑回写）
 
+### M3 观测事件化 —— **一次落地**（M3 收口，2026-10-11，工作区）
+
+**做了什么**：
+
+- 新增 [`pipeline/events.rs`](../../crates/backend/forge-codegen/src/pipeline/events.rs)：codegen 的
+  **机读出口**。出口 = `FORGE_CODEGEN_EVENTS=<文件>`（追加写；未设置零开销；**写失败静默**——
+  观测不得影响编译结论，与 `FORGE_JIT_EVENTS`/`FORGE_ASM_EVENTS`/`FORGE_E2E_EVENTS` 同约定）。
+  字段序固定 ⇒ 输出确定、测试可整行比对；自带最小 JSON 转义（`"`/`\`/换行），**不引入依赖**。
+  `EVENTS` 台账是**唯一登记处**；未登记的名字 debug 下 `debug_assert` 当场 panic。
+- **六个事件接线**（都在"本来只有人读打印"的位置）：
+  `COMPILE-START`（函数入口）、`COMPILE-DONE`（总耗时 + 八段微秒 + `code_bytes`，
+  **无条件发**，不再藏在 `CF_CODEGEN_TIMING` 后面）、`CAPABILITY-GAP`（失败路径：
+  `gap` = 缺口 ID + `fn`；成功路径的事件在内层、失败路径在外层包装，各有各的字段）、
+  `LEGALIZE-PLAN`（计划相：可动边界条数 + 问引擎次数）、`ALLOC-SUMMARY`（分配到的值数 /
+  溢出槽 / 溢出编辑数）、`EMIT-SUMMARY`（字节数 + 重定位数）。
+- `CompileSession::compile_with_alloc` 拆成**外层包装 + 内层实现**：外层只负责失败路径的
+  `CAPABILITY-GAP`（缺口 ID 是 CI 最想按类分的字段），内层持有阶段耗时 ⇒ 两边的字段都真实。
+- **契约文档新增「事件表」一节**（§8，六行，写明出口、字段、与守卫的关系）。
+- **新增守卫** [`events_guard`](../../crates/backend/forge-codegen/tests/events_guard.rs)（2 条）：
+  `event_names_are_bijective`：**三方双向相等**——源码 `events::emit("NAME", …)` 调用点 ↔
+  `EVENTS` 台账 ↔ 文档事件表（比 v24 M4 的两方多钉一层文档）；跨行解析（rustfmt 会把参数折行）。
+  `events_land_on_disk`：**端到端**——设 env、编译一个带聚合边界的夹具、断言事件名与关键字段
+  真的落盘（落盘不可用时明确 `EVENTS-SKIP`，不假绿）。
+- **实测踩到的坑（写进测试注释）**：合法化驱动只在"函数被克隆"（有聚合要处理 / 开了优化）时
+  才跑 ⇒ **纯标量函数不会发 `LEGALIZE-PLAN`**；事件测试的夹具必须带聚合边界，否则会误判成
+  "事件没发"。
+
+**实测**：`forge-codegen --lib` **2836 passed**（新增 2 条 `events` 单测：台账自洽 + 字段转义）；
+`events_guard` 2 passed；全量门禁见下（同批实测）。
+
+**下一步**：M4 模块收敛（管线大文件切分 + 规模棘轮 + 分层守卫）。
+
 ### M2 错误分类学 —— **一次落地**（M2 收口，2026-10-11，工作区）
 
 **前提核对**：`IrError` **不进二进制格式**（`docs/reference/binary-format.md` 只在 API 签名里

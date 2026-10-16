@@ -8,6 +8,7 @@ pub mod compiler;
 /// 宿主调用约定注册表（IR 的 `CallConvId` → 注册名；未注册即 fail-closed）。
 pub mod conv_registry;
 pub mod emission;
+pub mod events;
 pub mod frame_layout;
 pub mod frame_slots;
 /// **能力缺口台账的代码侧锚点**（v24 M3）：`capability(ID, msg)` ⇒ 消息带 `[cap:ID]`，

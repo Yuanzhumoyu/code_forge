@@ -40,6 +40,7 @@ pub(crate) fn atomic_op_from_u64(v: u64) -> AtomicRmwOp {
     }
 }
 use crate::pipeline::alloc_result::AllocResult;
+use crate::pipeline::events;
 use crate::pipeline::regalloc_bt::BacktrackingAllocator;
 use crate::{CompiledFunction, IrError, LowerCtx, MachineInst, VBlockId, VCode};
 use forge_ir::entity::map::SecondaryMap;
@@ -161,6 +162,26 @@ impl<M: TargetMachine> CompileSession<M> {
         &self,
         func: &Function,
     ) -> Result<(CompiledFunction, crate::AllocResult), IrError> {
+        // **机读出口**（v25 M3）：成功路径的事件在 `compile_with_alloc_inner` 里发
+        //（那里才有阶段耗时），这里只负责**失败路径**——缺口 ID 是 CI 最想按类分的字段。
+        let r = self.compile_with_alloc_inner(func);
+        if let Err(e) = &r {
+            let gap = e.gap_id();
+            events::emit(
+                "CAPABILITY-GAP",
+                &[
+                    ("fn", events::Field::Str(func.name.as_ref())),
+                    ("gap", events::Field::Str(gap.as_deref().unwrap_or(""))),
+                ],
+            );
+        }
+        r
+    }
+
+    fn compile_with_alloc_inner(
+        &self,
+        func: &Function,
+    ) -> Result<(CompiledFunction, crate::AllocResult), IrError> {
         // P0-1：IR 级优化管线接入——若启用，克隆函数跑对应 O 级别管线，
         // 用优化后的克隆体继续编译（原 func 不被修改；PassManager 需要
         // &mut Function）。未启用时不克隆（零开销）。
@@ -176,6 +197,8 @@ impl<M: TargetMachine> CompileSession<M> {
         };
 
         let _cf_t0 = std::time::Instant::now();
+        let fname = func.name.to_string();
+        events::emit("COMPILE-START", &[("fn", events::Field::Str(&fname))]);
         // 值池门（fail-closed，2026-09-12 去「宽度写死」）：函数里出现的每个值
         // 类型都必须落在 ISA 值池内（`TargetRegInfo::class_for_type`）。1 字节
         // 寄存器 ISA 上出现 i16/i32/i64/指针 等宽类型时**编译期拒绝**，而不是
@@ -479,6 +502,36 @@ impl<M: TargetMachine> CompileSession<M> {
         // Stage 6: Register allocation
         let alloc_result = state.run_regalloc(&self.reg_alloc, &self.machine)?;
         let _t5 = _t.elapsed();
+        events::emit(
+            "ALLOC-SUMMARY",
+            &[
+                ("fn", events::Field::Str(&fname)),
+                (
+                    "assigned",
+                    events::Field::Usize(
+                        alloc_result
+                            .assignments
+                            .iter()
+                            .filter(|a| a.is_some())
+                            .count(),
+                    ),
+                ),
+                (
+                    "spills",
+                    events::Field::Usize(
+                        alloc_result
+                            .spill_slots
+                            .iter()
+                            .filter(|s| s.is_some())
+                            .count(),
+                    ),
+                ),
+                (
+                    "edits",
+                    events::Field::Usize(alloc_result.edits.iter().map(|e| e.len()).sum()),
+                ),
+            ],
+        );
         let _t = std::time::Instant::now();
 
         // Stage 7: Frame layout
@@ -489,6 +542,36 @@ impl<M: TargetMachine> CompileSession<M> {
         // Stage 8-11: Emission
         let result = state.emit_code(func_ref, &alloc_result, frame_size, &self.machine);
         let _t7 = _t.elapsed();
+        // **无条件**发（不受诊断开关影响）：CI 靠它判断"这一轮编了什么、快慢如何"。
+        // 时间单位统一微秒（`as_micros()`），避免不同平台的 Debug 格式混进 JSON。
+        let code_bytes = result.as_ref().map(|r| r.code.len()).unwrap_or(0);
+        let relocs = result.as_ref().map(|r| r.relocations.len()).unwrap_or(0);
+        events::emit(
+            "COMPILE-DONE",
+            &[
+                ("fn", events::Field::Str(&fname)),
+                (
+                    "total_us",
+                    events::Field::U64(_cf_t0.elapsed().as_micros() as u64),
+                ),
+                ("blocks_us", events::Field::U64(_t1.as_micros() as u64)),
+                ("vreg_us", events::Field::U64(_t2.as_micros() as u64)),
+                ("lower_us", events::Field::U64(_t3.as_micros() as u64)),
+                ("peep_us", events::Field::U64(_t4.as_micros() as u64)),
+                ("regalloc_us", events::Field::U64(_t5.as_micros() as u64)),
+                ("frame_us", events::Field::U64(_t6.as_micros() as u64)),
+                ("emit_us", events::Field::U64(_t7.as_micros() as u64)),
+                ("code_bytes", events::Field::Usize(code_bytes)),
+            ],
+        );
+        events::emit(
+            "EMIT-SUMMARY",
+            &[
+                ("fn", events::Field::Str(&fname)),
+                ("code_bytes", events::Field::Usize(code_bytes)),
+                ("relocs", events::Field::Usize(relocs)),
+            ],
+        );
         if std::env::var("CF_CODEGEN_TIMING").is_ok() {
             eprintln!(
                 "[codegen {}] total={:?} blocks={:?} vreg={:?} lower={:?} peep={:?} regalloc={:?} frame={:?} emit={:?}",
