@@ -80,7 +80,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         let op_ident = format_ident!("{op_name}");
         // 从最后一条规则向前构建 if-else 链（无 when 的规则 = 无条件兜底）
         let mut chain: TokenStream = quote! {
-            Err(crate::prelude::IrError::Unsupported(concat!("DSL lowering: ", #op_name, " no matching rule").into()))
+            Err(crate::prelude::IrError::capability("SPEC_LOWERING_RULE_MISSING", concat!("DSL lowering: ", #op_name, " no matching rule")))
         };
         for rule in rules.iter().rev() {
             // 展开 insts 模板 → 指令构造序列（符号化操作数 {out}/{0}/{1}）
@@ -172,7 +172,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                             // 本 ISA 未映射的条件已在**编译期**拒绝（validate 层），
                             // 故这里不猜条件，直接 fail-closed。
                             _ => {
-                                return Err(crate::prelude::IrError::Unsupported(
+                                return Err(crate::prelude::IrError::Internal(
                                     "未知的 IR 整数条件码".into(),
                                 ));
                             }
@@ -188,7 +188,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                         ) {
                             #(#inv_arms)*
                             _ => {
-                                return Err(crate::prelude::IrError::Unsupported(
+                                return Err(crate::prelude::IrError::Internal(
                                     "未知的 IR 整数条件码".into(),
                                 ));
                             }
@@ -365,9 +365,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     };
     let no_fpr_move = quote! {
         let _ = __pack;
-        return Err(crate::prelude::IrError::Unsupported(
+        return Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP",
             "ISA-DSL float return: 本 ISA 没有「浮点寄存器 ← 浮点寄存器」的搬运指令\
-             （在指令上写 `data_width = 32`/`64`）".into(),
+             （在指令上写 `data_width = 32`/`64`）",
         ));
     };
     // ── v21 W6 乙：返回 lowering 的谱面规则 → **运行时分支** ──
@@ -391,10 +391,10 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         {
             Some((__ri, __rc)) => Reg::from_index(__ri, __rc),
             None => {
-                return Err(crate::prelude::IrError::Unsupported(
+                return Err(crate::prelude::IrError::capability("ABI_RET_SLOT_MISSING",
                     "ISA-DSL return lowering: 返回寄存器需要调用布局（plan 的 ret 或宿主的 \
                      约定级返回槽）——[abi].ret_regs 已删除"
-                        .into(),
+                        ,
                 ));
             }
         }
@@ -405,8 +405,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         match ctx.conv.layout().and_then(|__cl| __cl.hidden_sret_slot()) {
             Some((__hc, __hi)) => Reg::from_index(__hi, __hc),
             None => {
-                return Err(crate::prelude::IrError::Unsupported(
-                    "ISA-DSL return lowering (sret): 需要布局给的 hidden_sret 槽".into(),
+                return Err(crate::prelude::IrError::capability("ABI_RET_SLOT_MISSING",
+                    "ISA-DSL return lowering (sret): 需要布局给的 hidden_sret 槽",
                 ));
             }
         }
@@ -526,9 +526,9 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         } else {
             quote! {
                 let _ = __pack;
-                return Err(crate::prelude::IrError::Unsupported(
+                return Err(crate::prelude::IrError::capability("SPEC_TERMINATOR_MISSING",
                     "ISA-DSL return lowering: 本 ISA 没有 GPR 搬移指令，且谱面没有 \
-                     `[[lower.Ret]]`（bank = \"gpr\"）规则".into(),
+                     `[[lower.Ret]]`（bank = \"gpr\"）规则",
                 ));
             }
         };
@@ -561,8 +561,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                 let __sret = match ctx.conv.layout().and_then(|__cl| __cl.hidden_sret_slot()) {
                     Some((__hc, __hi)) => Reg::from_index(__hi, __hc),
                     None => {
-                        return Err(crate::prelude::IrError::Unsupported(
-                            "ISA-DSL wide vector return (sret): 需要布局给的 hidden_sret 槽".into(),
+                        return Err(crate::prelude::IrError::capability("ABI_RET_SLOT_MISSING",
+                            "ISA-DSL wide vector return (sret): 需要布局给的 hidden_sret 槽",
                         ));
                     }
                 };
@@ -575,8 +575,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         } else {
             quote! {
                 let _ = __pack;
-                return Err(crate::prelude::IrError::Unsupported(
-                    "ISA-DSL wide vector return (sret): 本 ISA 没有「内存 ← 向量寄存器」的搬运指令".into(),
+                return Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP",
+                    "ISA-DSL wide vector return (sret): 本 ISA 没有「内存 ← 向量寄存器」的搬运指令",
                 ));
             }
         };
@@ -617,8 +617,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                 })?
             } else {
                 quote! {
-                    return Err(crate::prelude::IrError::Unsupported(
-                        "ISA-DSL 多值返回的浮点分量：本 ISA 没有 FPR ← FPR 的搬运指令".into(),
+                    return Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP",
+                        "ISA-DSL 多值返回的浮点分量：本 ISA 没有 FPR ← FPR 的搬运指令",
                     ));
                 }
             };
@@ -662,23 +662,23 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                     } else if __class.is_fp() {
                         #fp_multi
                     } else {
-                        return Err(crate::prelude::IrError::Unsupported(
+                        return Err(crate::prelude::IrError::Internal(
                             "ISA-DSL 多值返回：返回寄存器类既不是整数也不是浮点".into(),
                         ));
                     }
                 }
             } else {
                 let mut int_chain: TokenStream = quote! {
-                    return Err(crate::prelude::IrError::Unsupported(
-                        "ISA-DSL 多值返回（整数分量）：谱面没有匹配的 `move` 模板".into(),
+                    return Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP",
+                        "ISA-DSL 多值返回（整数分量）：谱面没有匹配的 `move` 模板",
                     ));
                 };
                 for (cond, body) in multi_int.iter().rev() {
                     int_chain = quote! { if #cond { #body } else { #int_chain } };
                 }
                 let mut fpr_chain: TokenStream = quote! {
-                    return Err(crate::prelude::IrError::Unsupported(
-                        "ISA-DSL 多值返回（浮点分量）：谱面没有匹配的 `movef` 模板".into(),
+                    return Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP",
+                        "ISA-DSL 多值返回（浮点分量）：谱面没有匹配的 `movef` 模板",
                     ));
                 };
                 for (cond, body) in multi_fpr.iter().rev() {
@@ -704,7 +704,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                         let __vk = match values.get(__k).copied().and_then(|x| value_to_xreg.get(x)).copied() {
                             Some(v) => v,
                             None => {
-                                return Err(crate::prelude::IrError::Unsupported(format!(
+                                return Err(crate::prelude::IrError::capability("ABI_PLAN_UNAVAILABLE", format!(
                                     "ISA-DSL 多值返回：布局要求 {} 个返回寄存器，但 Return 只有 {} 个值",
                                     __ret_regs.len(),
                                     values.len()
@@ -765,7 +765,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     } else {
         quote! {
             let _ = __pack;
-            Err(crate::prelude::IrError::Unsupported("ISA-DSL return lowering (ret mov inst missing)".into()))
+            Err(crate::prelude::IrError::capability("SPEC_TERMINATOR_MISSING", "ISA-DSL return lowering (ret mov inst missing)"))
         }
     };
     // Jump：跳转指令（roles = ["jump"]）。定宽 jump 按字段形状分派：
@@ -797,8 +797,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     } else {
         quote! {
             let _ = __pack;
-            Err(crate::prelude::IrError::Unsupported(
-                "ISA-DSL jump lowering: 谱缺 `[lower.Jmp]`（v21 W6：终结序列唯一来源 = 谱面）".into(),
+            Err(crate::prelude::IrError::capability("SPEC_TERMINATOR_MISSING",
+                "ISA-DSL jump lowering: 谱缺 `[lower.Jmp]`（v21 W6：终结序列唯一来源 = 谱面）",
             ))
         }
     };
@@ -855,7 +855,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                     let __cc: forge_ir::IntCC = match intcc_of(#cc_eq) {
                         Some(c) => c,
                         None => {
-                            return Err(crate::prelude::IrError::Unsupported(
+                            return Err(crate::prelude::IrError::Internal(
                                 "条件表里的 `eq` 没有对应的 IR 条件".into(),
                             ));
                         }
@@ -863,7 +863,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                     let __cc_inv: forge_ir::IntCC = match intcc_of(#cc_ne) {
                         Some(c) => c,
                         None => {
-                            return Err(crate::prelude::IrError::Unsupported(
+                            return Err(crate::prelude::IrError::Internal(
                                 "条件表里的 `ne` 没有对应的 IR 条件".into(),
                             ));
                         }
@@ -892,8 +892,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     } else {
         quote! {
             let _ = __pack;
-            Err(crate::prelude::IrError::Unsupported(
-                "ISA-DSL branch lowering: 谱缺 `[lower.Br]`（v21 W6：终结序列唯一来源 = 谱面）".into(),
+            Err(crate::prelude::IrError::capability("SPEC_TERMINATOR_MISSING",
+                "ISA-DSL branch lowering: 谱缺 `[lower.Br]`（v21 W6：终结序列唯一来源 = 谱面）",
             ))
         }
     };
@@ -914,8 +914,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         }
         None => quote! {
             let _ = __pack;
-            Err(crate::prelude::IrError::Unsupported(
-                "ISA-DSL unreachable lowering (no trap inst with effect=Trap)".into(),
+            Err(crate::prelude::IrError::capability("SPEC_TERMINATOR_MISSING",
+                "ISA-DSL unreachable lowering (no trap inst with effect=Trap)",
             ))
         },
     };
@@ -954,7 +954,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                     Some(crate::prelude::TermKind::Unreachable) => {
                         #unreachable_body
                     }
-                    _ => Err(crate::prelude::IrError::Unsupported("ISA-DSL terminator lowering".into())),
+                    _ => Err(crate::prelude::IrError::capability("SPEC_TERMINATOR_MISSING", "ISA-DSL terminator lowering")),
                 }
             }
         }
@@ -968,7 +968,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                 _block_to_vblock: &crate::prelude::SecondaryMap<crate::prelude::Block, crate::prelude::VBlockId>,
                 _ctx: &mut crate::prelude::LowerCtx,
             ) -> Result<crate::prelude::InstPacket<Self::Inst>, crate::prelude::IrError> {
-                Err(crate::prelude::IrError::Unsupported("ISA-DSL terminator lowering".into()))
+                Err(crate::prelude::IrError::capability("SPEC_TERMINATOR_MISSING", "ISA-DSL terminator lowering"))
             }
         }
     };
@@ -1110,7 +1110,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                 // 谓词属性源（S8d）：整个 `lower_inst` 调用共用一份；
                 // 被谓词引用到的属性才会被算（每次调用每属性最多算一次）。
                 let mut __ac = __AC::new(op, args, results);
-                match op { #(#arms,)* _ => Err(crate::prelude::IrError::Unsupported("DSL lowering".into())) }
+                match op { #(#arms,)* _ => Err(crate::prelude::IrError::capability("SPEC_LOWERING_RULE_MISSING", "DSL lowering")) }
             }
 
             #term_impl
@@ -1476,7 +1476,7 @@ fn gen_patterns(
             let mut __pack = crate::prelude::InstPacket::new();
             match pattern_name {
                 #(#arms,)*
-                _ => Err(crate::prelude::IrError::Unsupported("ISA-DSL lower_pattern: unknown pattern name".into())),
+                _ => Err(crate::prelude::IrError::Internal("ISA-DSL lower_pattern: unknown pattern name".into())),
             }
         }
     };
@@ -1594,8 +1594,8 @@ fn gen_call_lowering(
         let op_ident = format_ident!("{op_name}");
         return Ok(quote! {
             crate::prelude::Opcode::#op_ident { .. } => {
-                Err(crate::prelude::IrError::Unsupported(
-                    "ISA-DSL call lowering（本 ISA 没有 GPR ← GPR 的搬运指令：在指令上写 `data_width`）".into(),
+                Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP",
+                    "ISA-DSL call lowering（本 ISA 没有 GPR ← GPR 的搬运指令：在指令上写 `data_width`）",
                 ))
             }
         });
@@ -1713,15 +1713,15 @@ fn gen_call_lowering(
                     }
                 }
                 _ => quote! {
-                    return Err(crate::prelude::IrError::Unsupported(
-                        "ISA-DSL call: arg_bytes_load/imm/add 角色的指令形状不符（A2′ 按值栈实参拷贝）".into(),
+                    return Err(crate::prelude::IrError::capability("SPEC_ROLE_MISSING",
+                        "ISA-DSL call: arg_bytes_load/imm/add 角色的指令形状不符（A2′ 按值栈实参拷贝）",
                     ));
                 },
             }
         }
         _ => quote! {
-            return Err(crate::prelude::IrError::Unsupported(
-                "ISA-DSL call: 按值栈实参需要 roles = [\"arg_bytes_load\", \"arg_bytes_imm\", \"arg_bytes_add\", \"stack_arg_store\"]".into(),
+            return Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP",
+                "ISA-DSL call: 按值栈实参需要 roles = [\"arg_bytes_load\", \"arg_bytes_imm\", \"arg_bytes_add\", \"stack_arg_store\"]",
             ));
         },
     };
@@ -1746,8 +1746,8 @@ fn gen_call_lowering(
         match ctx.conv.ret_gpr {
             Some((__ri, __rc)) => Reg::from_index(__ri, __rc),
             None => {
-                return Err(crate::prelude::IrError::Unsupported(
-                    "ISA-DSL call: 返回值落点需要宿主的约定级返回槽（[abi].ret_regs 已删除）".into(),
+                return Err(crate::prelude::IrError::capability("ABI_PLAN_UNAVAILABLE",
+                    "ISA-DSL call: 返回值落点需要宿主的约定级返回槽（[abi].ret_regs 已删除）",
                 ));
             }
         }
@@ -1820,7 +1820,7 @@ fn gen_call_lowering(
             // 失败原因**原样带出去**（未装 planner / 引擎的池不够或缺绑定）——不再退化成
             // 一句"布局不可得"。
             Err(__e) => {
-                return Err(crate::prelude::IrError::Unsupported(format!(
+                return Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP", format!(
                     "ISA-DSL call: {__e}"
                 )));
             }
@@ -1833,7 +1833,7 @@ fn gen_call_lowering(
             let msg =
                 format!("ISA-DSL call: {what}（本 ISA 没有「浮点寄存器 ← 浮点寄存器」的搬运指令）");
             return Ok(quote! {
-                return Err(crate::prelude::IrError::Unsupported(#msg.into()));
+                return Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP", #msg));
             });
         }
         moves.dispatch(&fpr_want, bits, |arm| {
@@ -1899,10 +1899,10 @@ fn gen_call_lowering(
         }
         Err(_) => quote! {
             if __variadic.is_some() && __cl.va_meta_slot().is_some() {
-                return Err(crate::prelude::IrError::Unsupported(
+                return Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP",
                     "ISA-DSL call: 该约定的变参要求写元信息寄存器（SysV 的 `%al`），但本 ISA \
                      没有「整数寄存器 ← 立即数」的搬运指令（在指令上写 `data_width`）"
-                        .into(),
+                        ,
                 ));
             }
         },
@@ -1945,8 +1945,8 @@ fn gen_call_lowering(
         }
     } else {
         quote! {
-            return Err(crate::prelude::IrError::Unsupported(
-                "ISA-DSL wide vector return load: 本 ISA 没有「向量寄存器 ← 内存」的搬运指令".into(),
+            return Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP",
+                "ISA-DSL wide vector return load: 本 ISA 没有「向量寄存器 ← 内存」的搬运指令",
             ));
         }
     };
@@ -1977,8 +1977,8 @@ fn gen_call_lowering(
         })?
     } else {
         quote! {
-            return Err(crate::prelude::IrError::Unsupported(
-                "ISA-DSL call: 多值返回的浮点分量：本 ISA 没有 FPR ← FPR 的搬运指令".into(),
+            return Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP",
+                "ISA-DSL call: 多值返回的浮点分量：本 ISA 没有 FPR ← FPR 的搬运指令",
             ));
         }
     };
@@ -1994,7 +1994,7 @@ fn gen_call_lowering(
         if __ret_regs.len() >= 2 {
             for (__k, (__class, __index)) in __ret_regs.iter().enumerate() {
                 let Some(&__rk) = results.get(__k) else {
-                    return Err(crate::prelude::IrError::Unsupported(format!(
+                    return Err(crate::prelude::IrError::capability("ABI_PLAN_UNAVAILABLE", format!(
                         "ISA-DSL call: 被调方布局给了 {} 个返回寄存器，但本次调用只有 {} 个结果",
                         __ret_regs.len(),
                         results.len()
@@ -2010,7 +2010,7 @@ fn gen_call_lowering(
                 } else if __class.is_fp() {
                     #fp_ret_multi
                 } else {
-                    return Err(crate::prelude::IrError::Unsupported(
+                    return Err(crate::prelude::IrError::Internal(
                         "ISA-DSL call: 多值返回的寄存器类既不是整数也不是浮点".into(),
                     ));
                 }
@@ -2092,15 +2092,15 @@ fn gen_call_lowering(
                 let vn = crate::dsl::codegen::pascal_ident(&call_inst);
                 quote! {
                     let __f = ctx.current_func_ref
-                        .ok_or_else(|| crate::prelude::IrError::Unsupported("ISA-DSL call: missing func ref".into()))?;
+                        .ok_or_else(|| crate::prelude::IrError::Internal("ISA-DSL call: missing func ref".into()))?;
                     __pack.push_inst(Inst::#vn { #(#fields),* });
                 }
             }
             None => {
                 call_is_err = true;
                 quote! {
-                    return Err(crate::prelude::IrError::Unsupported(
-                        "ISA-DSL call lowering (call inst missing)".into(),
+                    return Err(crate::prelude::IrError::capability("SPEC_TERMINATOR_MISSING",
+                        "ISA-DSL call lowering (call inst missing)",
                     ));
                 }
             }
@@ -2166,8 +2166,8 @@ fn gen_call_lowering(
             None => {
                 call_is_err = true;
                 quote! {
-                    return Err(crate::prelude::IrError::Unsupported(
-                        "ISA-DSL call_indirect lowering (call_indirect_inst missing)".into(),
+                    return Err(crate::prelude::IrError::capability("SPEC_TERMINATOR_MISSING",
+                        "ISA-DSL call_indirect lowering (call_indirect_inst missing)",
                     ));
                 }
             }
@@ -2197,8 +2197,8 @@ fn gen_call_lowering(
                 let (__sret_class,  __sret_index) = match __cl.hidden_sret_slot() {
                     Some(__h) => __h,
                     None => {
-                        return Err(crate::prelude::IrError::Unsupported(
-                            "ISA-DSL call: sret 需要布局给的 hidden_sret 槽".into(),
+                        return Err(crate::prelude::IrError::capability("ABI_RET_SLOT_MISSING",
+                            "ISA-DSL call: sret 需要布局给的 hidden_sret 槽",
                         ));
                     }
                 };
@@ -2289,9 +2289,9 @@ fn gen_call_lowering(
         }
     } else {
         quote! {
-            return Err(crate::prelude::IrError::Unsupported(
+            return Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP",
                 "ISA-DSL call: wide vector arg (>16B) by-ref 需要「内存 ← 向量寄存器」的搬运指令与 \
-                 frame_addr 角色".into(),
+                 frame_addr 角色",
             ));
         }
     };
@@ -2331,7 +2331,7 @@ fn gen_call_lowering(
         let msg_lit = syn::LitStr::new(&msg, proc_macro2::Span::call_site());
         quote! {
             crate::prelude::Opcode::#op_ident { .. } => {
-                return Err(crate::prelude::IrError::Unsupported(#msg_lit.into()));
+                return Err(crate::prelude::IrError::capability("SPEC_TERMINATOR_MISSING", #msg_lit));
             }
         }
     } else {
@@ -2362,10 +2362,10 @@ fn gen_call_lowering(
                     // （实测递归 fib 死循环）。
                     None => {
                         if ctx.conv.clobbers.is_empty() {
-                            return Err(crate::prelude::IrError::Unsupported(
+                            return Err(crate::prelude::IrError::capability("ABI_CLOBBERS_MISSING",
                                 "ISA-DSL call: 调用点的破坏集需要宿主的约定数据（该函数没有 plan，\
                                  且约定级破坏集为空）——请在宿主注册该约定\
-                                 （forge_codegen::pipeline::conv_registry）".into(),
+                                 （forge_codegen::pipeline::conv_registry）",
                             ));
                         }
                         ctx.conv.clobbers.clone()
@@ -2456,7 +2456,7 @@ fn arg_move_loop(
                  （在指令上写 `data_width`）"
             );
             return Ok(quote! {
-                return Err(crate::prelude::IrError::Unsupported(#msg.into()));
+                return Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP", #msg));
             });
         }
         moves.dispatch(fpr_want, bits, |arm| {
@@ -2517,11 +2517,11 @@ fn arg_move_loop(
     let bank_mov = |want: &Want, have: bool| -> Result<TokenStream, String> {
         if !have {
             return Ok(quote! {
-                return Err(crate::prelude::IrError::Unsupported(
+                return Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP",
                     "ISA-DSL call: ABI 落点的寄存器类与值的类不同（整数约定收浮点），需要跨类的\
                      位搬移指令（在指令上写 `data_width`，方向由操作数结构定）\
                      ——本 ISA 没有（拿同类搬移顶上是静默错值）"
-                        .into(),
+                        ,
                 ));
             });
         }
@@ -2553,8 +2553,8 @@ fn arg_move_loop(
         } else if class.is_fp() {
             if #__val_in_fpr { #fp_mov } else { #gpr_to_fpr_body }
         } else {
-            return Err(crate::prelude::IrError::Unsupported(
-                "ISA-DSL call: 调用点布局给了未知寄存器类".into(),
+            return Err(crate::prelude::IrError::capability("ABI_PLAN_UNAVAILABLE",
+                "ISA-DSL call: 调用点布局给了未知寄存器类",
             ));
         }
     };
@@ -2610,11 +2610,11 @@ fn arg_move_loop(
             let fpr_store: TokenStream = match stack_store_fpr {
                 Some(f) => store_inst(f, true),
                 None => quote! {
-                    return Err(crate::prelude::IrError::Unsupported(
+                    return Err(crate::prelude::IrError::capability("SPEC_ROLE_MISSING",
                         "ISA-DSL call: 浮点栈实参需要 roles = \
                          [{ role = \"stack_arg_store\", class = \"fpr\" }] 的指令\
                          （拿整数 store 搬浮点寄存器会静默错值）"
-                            .into(),
+                            ,
                     ));
                 },
             };
@@ -2640,8 +2640,8 @@ fn arg_move_loop(
             }
         }
         None => quote! {
-            return Err(crate::prelude::IrError::Unsupported(
-                "ISA-DSL call: 本 ISA 缺 roles = [\"stack_arg_store\"] 的指令（栈参数写不出去）".into(),
+            return Err(crate::prelude::IrError::capability("SPEC_ROLE_MISSING",
+                "ISA-DSL call: 本 ISA 缺 roles = [\"stack_arg_store\"] 的指令（栈参数写不出去）",
             ));
         },
     };
@@ -2660,9 +2660,9 @@ fn arg_move_loop(
         }
     } else {
         quote! {
-            return Err(crate::prelude::IrError::Unsupported(
+            return Err(crate::prelude::IrError::capability("SPEC_ROLE_MISSING",
                 "ISA-DSL call: by-ref 实参需要 wide_vec_store/frame_rbp_addr 标签（本 ISA 未申报）"
-                    .into(),
+                    ,
             ));
         }
     };
@@ -2674,8 +2674,8 @@ fn arg_move_loop(
             let __place = match __cl.arg(__i as u32) {
                 Some(__ca) => __ca.place.clone(),
                 None => {
-                    return Err(crate::prelude::IrError::Unsupported(
-                        "ISA-DSL call: 调用点布局缺这个实参的落点".into(),
+                    return Err(crate::prelude::IrError::capability("ABI_PLAN_UNAVAILABLE",
+                        "ISA-DSL call: 调用点布局缺这个实参的落点",
                     ));
                 }
             };
@@ -2714,7 +2714,7 @@ fn arg_move_loop(
                 }
                 crate::machine::abi_model::Placement::Ignore => {}
                 other => {
-                    return Err(crate::prelude::IrError::Unsupported(format!(
+                    return Err(crate::prelude::IrError::capability("ABI_PLACEMENT_UNEMITTED", format!(
                         "ISA-DSL call: 调用点布局落点尚未接进发射（RegPair/RegGroup/无指针 Indirect 等，A6）：{other:?}"
                     )));
                 }
@@ -3097,7 +3097,7 @@ fn gen_lowering_insts(
                                         match #fold(#v) {
                                             Some(c) => c,
                                             None => {
-                                                return Err(crate::prelude::IrError::Unsupported(
+                                                return Err(crate::prelude::IrError::Internal(
                                                     format!(
                                                         "模板里的条件码 {} 没有对应的 IR 条件（槽类型 = {}）",
                                                         #v,

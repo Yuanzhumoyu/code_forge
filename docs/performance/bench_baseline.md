@@ -946,7 +946,7 @@ throughput codegen（criterion 显著项）：
 最明显；throughput_10/50 小函数 +4~5% 波动，与大函数同步改善矛盾，判定
 负载噪声。）
 
-`CF_CODEGEN_TIMING`（many_ops，warmup 后首次稳定值）：
+`CF_CODEGEN_TIMING`（many_ops，warmup 后首次稳定值；**v26 M4 起改名为 `FORGE_TRACE_TIMING`**）：
 **total 188µs → 100µs（-47%）、lower 62.9µs → 25.8µs（-59%）**——lowering
 从 33% 占比降到约 26%，regalloc 重新占主导（56%→60%）。
 

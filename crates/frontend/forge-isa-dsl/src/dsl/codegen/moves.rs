@@ -272,7 +272,7 @@ impl MoveTable {
             }
         );
         let unsupported = quote! {
-            return Err(crate::prelude::IrError::Unsupported(#msg.into()));
+            return Err(crate::prelude::IrError::capability("SPEC_MOVE_TABLE_GAP", #msg));
         };
         // 升序链：先命中最窄的覆盖者（内存参与时是精确相等）。
         let mut chain: Option<TokenStream2> = None;

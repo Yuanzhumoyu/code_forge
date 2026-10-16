@@ -11,6 +11,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 项目 v26 M4：能力补齐（谱侧缺口台账 · 三条待做收口 · 两项 P1 分析）
+
++ **谱侧能力台账（`[cap:SPEC_*]`）**：生成器 `forge-isa-dsl/src/dsl/codegen/**` 里有 **66 个发射型
+  `Unsupported`**（写在 `quote!` 里 ⇒ 使用者看得见的报错），**零个**带 `[cap:]` 标记。按 v25 M2 的
+  四分类逐站点判定后**归并成 5 个 `SPEC_*` 类**（`SPEC_MOVE_TABLE_GAP` 19 / `SPEC_TERMINATOR_MISSING` 10 /
+  `SPEC_ROLE_MISSING` 6 / `SPEC_FRAME_OP_MISSING` 5 / 复用 `SPEC_LOWERING_RULE_MISSING`）+ 复用
+  `ABI_PLAN_UNAVAILABLE` + **3 个新 `ABI_*`**（`ABI_RET_SLOT_MISSING`/`ABI_CLOBBERS_MISSING`/
+  `ABI_PLACEMENT_UNEMITTED`）；畸形 IR 的 9 处改 `IrError::Internal`。判据：`dsl/` 下裸 `Unsupported(`
+  **== 0**。落地踩到 `capability(id, msg: impl Display)` 下 `.into()` 的类型推断歧义（E0283，42 处、
+  含尾随逗号形态）⇒ 全部去掉。
++ **守卫扩面**：`capability_gaps_guard` 扫描面加生成器目录，并引入**类别型 ID**（`SPEC_*`/`ABI_*`
+  允许多触发点 = "一个能力类"；其余 ID 仍守"一个决定点"）；台账加 7 行 + §3.4 证据。
++ **三条 `待做` 清零**（计划口径：落地或明确降级）：`VA_ARG_AGG_RULE`/`VA_ARG_VECTOR_MEM`/`AGG_LOAD_USE`
+  全部改为**有条件的 `不做`**（台账 `待做` 行数 = **0**，见 `backend-gaps.md` §3.5）。其中
+  `VA_ARG_AGG_RULE` 的结论最值得记：照 win64 形状声明能让**我方自洽**通过，但与**外部 C 调用方**
+  互操作会静默错值（引擎给 aapcs64/lp64d 的聚合落点是 `ByRef`，而这两份 psABI 的聚合变参按值展平）
+  ⇒ 按"宁可明确拒绝"保持 fail-closed。
++ **两项 P1 只做分析**（计划口径）：补测 `codegen_mem`（criterion 中位 **291.5 µs**，regalloc 55–70%）
+  与 `codegen_big_loop`（**453.2 µs**，regalloc 60–70%），证实原先"以多数函数比例推断"的结论
+  ⇒ **无新的低风险高收益落地项**（唯一大头是 regalloc 的数据流规模本身）。写回 `OPTIMIZATION.md`
+  §3 与新增 §3.1（含计时口径 vs criterion 口径的说明）、`codegen_stage_profile.md` 文末两例实测表。
++ **顺手修掉一个真缺陷**：`CF_CODEGEN_TIMING` 是**第三个开关命名族**（`CF_*`），绕过了 M1 立起来的
+  观测开关台账（M1 守卫只认 `FORGE_TRACE_*`，所以一直没被发现）⇒ 改名 **`FORGE_TRACE_TIMING`**、
+  登记进 `KNOBS`（41 → **42**）与契约文档 §7 表，三方守卫钉住。
++ 验收：`cargo forge gate` 全套见下；`forge-isa-dsl` 301 lib + 12 测试二进制（**真的编译三份发行谱与
+  全部夹具的生成物**）与 `forge-codegen --lib` 2746 全绿。
+
 ### Added (2026-10-11) — 项目 v26 M3：单命令门禁（`cargo forge gate`）+ CI 补齐
 
 + **`cargo forge gate`**：把只写在 `CLAUDE.md` 里的门禁清单变成**可执行注册表**——一条命令跑

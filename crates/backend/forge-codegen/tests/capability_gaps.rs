@@ -21,6 +21,13 @@ use std::collections::{BTreeMap, BTreeSet};
 /// 决策列的封闭词表（与台账 §2 的口径说明一致）。
 const DECISIONS: [&str; 4] = ["已实现", "数据层", "不做", "待做"];
 
+/// **类别型**缺口 ID 的前缀：允许多个触发点（见 [`capability_gaps_guard`] 的说明）。
+const CLASS_PREFIXES: [&str; 2] = ["SPEC_", "ABI_"];
+
+fn is_class_id(id: &str) -> bool {
+    CLASS_PREFIXES.iter().any(|p| id.starts_with(p))
+}
+
 fn repo_root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -31,11 +38,13 @@ fn repo_root() -> std::path::PathBuf {
 /// 源码里所有 `capability("ID", …)` 的 (ID → 出现处)。
 fn source_gaps(root: &std::path::Path) -> BTreeMap<String, Vec<String>> {
     let mut found: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    // 扫描面 = 后端 + 运行时（v25 M2：构造器 `IrError::capability` 下沉到 forge-ir，
-    // 运行时的 trait 默认实现也在构造缺口错误）。
+    // 扫描面 = 后端 + 运行时 + **生成器**（v25 M2：构造器 `IrError::capability` 下沉到 forge-ir，
+    // 运行时的 trait 默认实现在构造缺口错误；v26 M4：生成器发射进生成物的 fail-closed 站点
+    // 也带缺口 ID —— 那是"这份谱做不了"的那一类）。
     let mut stack = vec![
         root.join("crates/backend/forge-codegen/src"),
         root.join("crates/foundation/forge-isa-runtime/src"),
+        root.join("crates/frontend/forge-isa-dsl/src/dsl"),
     ];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -137,6 +146,14 @@ fn capability_gaps_guard() {
     );
 
     for (id, sites) in &src {
+        // **类别型 ID 允许多个触发点**（v26 M4）：`SPEC_*` 说的是"这份谱有没有这个能力"、
+        // `ABI_*` 说的是"这份约定/布局有没有这条数据"——都是**一个类**，同一类可以在多处
+        // fail-closed（实测生成器里 66 个发射点归并成 5 个 `SPEC_*` 类）。其余 ID 仍守 v24 M3
+        // 的原始判据：**一个决定点**（抽不出一个失败点，说明这个缺口的边界还没想清）。
+        if is_class_id(id) {
+            assert!(!sites.is_empty(), "类别型缺口 `{id}` 一个触发点都没有");
+            continue;
+        }
         assert_eq!(
             sites.len(),
             1,

@@ -568,7 +568,9 @@ impl<M: TargetMachine> CompileSession<M> {
                 ("relocs", events::Field::Usize(relocs)),
             ],
         );
-        if std::env::var("CF_CODEGEN_TIMING").is_ok() {
+        // v26 M4：原名 `CF_CODEGEN_TIMING`——它属于**第三个命名族**、绕过了观测开关台账
+        // （M1 的守卫只认 `FORGE_TRACE_*`，所以它一直没被发现）。改名并登记进 `KNOBS`。
+        if crate::pipeline::trace::knob("FORGE_TRACE_TIMING") {
             eprintln!(
                 "[codegen {}] total={:?} blocks={:?} vreg={:?} lower={:?} peep={:?} regalloc={:?} frame={:?} emit={:?}",
                 func_ref.name,

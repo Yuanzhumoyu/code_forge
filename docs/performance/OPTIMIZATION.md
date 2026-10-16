@@ -16,8 +16,8 @@
 | --- | --- | --- | --- |
 | **P0** | forge-grammar 解析 O(n³) 病态 | 2 条指令 13.0 ms → 8 条 100 ms → 300 条 ≈ 5.6 h | **已修复（2026-08-03）**：根因为 lexer O(n²)，零拷贝 + match_here 后 simple_add 13ms→317µs；再经 logos+lalrpop 重写 → 9.34µs（见 §9） |
 | **P1** | SCCP 单 pass 最贵 | 72.5 µs @ many_ops（const_fold 的 2.5×） | **已部分实施**：小整数快路径（§9，-12%） |
-| **P1** | codegen_mem 最贵 | 451.9 µs（x86），e2e 172.6 µs | 需分析 |
-| **P1** | codegen_big_loop | 1.14 ms（x86），e2e 310.9 µs | 需分析 |
+| **P1** | codegen_mem 最贵 | 291.5 µs（x86，2026-10-11 实测），e2e 172.6 µs | **已分析（v26 M4）**：regalloc 55–70%，无落地项 |
+| **P1** | codegen_big_loop | 453.2 µs（x86，2026-10-11 实测），e2e 310.9 µs | **已分析（v26 M4）**：regalloc 60–70%，无落地项 |
 | **P1** | Nop tombstone 残留 | O2/O3 管线留下 Nop，拖入 codegen | **已实施（2026-08-03）**：O2/O3 末尾追加 DeadCodeElim，e2e_compile_loop -36% |
 | **P2** | const_fold（O1 最贵） | 28.9 µs @ many_ops | 可实施 |
 | **P2** | codegen_float | 251.7 µs；e2e 206.7 µs | 需分析 |
@@ -122,6 +122,35 @@
 寄存器分配/溢出上的开销。
 
 **验证**：`cargo bench --bench compile_bench -- 'codegen_(mem|big_loop|float)'`。
+
+### 3.1 阶段细分实测（v26 M4 收口，2026-10-11）
+
+命令：`FORGE_TRACE_TIMING=1 cargo bench --bench compile_bench -- 'codegen_(mem|big_loop)' --measurement-time 1`
+（`[codegen {name}] total/lower/peep/regalloc/frame/emit`，取稳态中位数；本机 Windows x86_64）。
+**立项时这一格写的是"需分析"**——`codegen_stage_profile.md` 当时只给了 many_ops/complex/sum_to_n，
+这两个 case 用"regalloc 压力更大"的**推断**代替测量。现在补上：
+
+| 基准（内部名） | IR 指令 | criterion 中位 | total（计时口径） | lower | **regalloc** | emit | 其它 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `codegen_mem`（`mem_ops`） | 61 | **291.5 µs** | ~255–430 µs | 25–40 µs（~10%） | **148–298 µs（55–70%）** | 12–28 µs（~4%） | blocks/vreg/peep/frame 合计 <1% |
+| `codegen_big_loop` | ~100（多块+循环） | **453.2 µs** | ~310–685 µs | 21–46 µs（~7%） | **191–461 µs（60–70%）** | 39–108 µs（~12–20%） | 同上 <1% |
+| `codegen_many_ops`（对照） | 61 | — | ~315–400 µs | ~35 µs（~9%） | **186–283 µs（59–70%）** | 15–24 µs（~5%） | — |
+| `codegen_complex`（对照） | 17（4 块） | — | ~197–254 µs | ~13–22 µs（~8%） | 94–100 µs（~48%） | 13–27 µs（~9%） | — |
+| `codegen_sum_to_n`（对照） | 10（多块） | — | ~155 µs | ~7–11 µs（~6%） | 65–80 µs（~50%） | 9–13 µs（~7%） | — |
+| `codegen_add`（对照） | 3 | — | ~112–129 µs | 3.5–6 µs（~5%） | 22–27 µs（~20%） | 9–15 µs（~10%） | — |
+
+**结论（项目 v26 M4 的交付）**：
+
+1. mem / big_loop **都是 regalloc 主导（55–70%）**——立项时那条"以多数函数 63-67% 推断"的
+   结论**被实测证实**，且与 08-31 重测（many_ops 56-60%）同量级；
+2. `lower` 已不是关键路径（7–12%），`emit` 在 big_loop 上偏高（12–20%）但绝对值小（39–108 µs）；
+   `frame`/`blocks`/`vreg`/`peep` 合计 <1%；
+3. 因此这一项**没有新的低风险高收益落地项**：唯一的大头是 regalloc 的数据流规模本身
+   （第三轮评估已定"进入测量/维护期"），本轮**不改代码**，只把"需分析"变成"已分析"。
+   将来若要再动，必须先把 regalloc 的数据结构换成增量/分区间形态——那是另一个专项。
+
+> 计时口径的 `total` 比 criterion 中位大（同一份测量里含环境变量检查与内部计时开销）；
+> 两者**不能混用**：份额看计时口径（同一次运行内自洽），绝对耗时看 criterion。
 
 ---
 

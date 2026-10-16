@@ -158,6 +158,81 @@ M2 若中途发现"某个面其实还有消费者"（守卫/`rg` 反证），**�
 
 ## 8. 批次记录（逐里程碑回写）
 
+### M4 能力补齐 —— **一次落地**（2026-10-11，工作区）
+
+三件事全部落地（后两件按计划允许的「明确降级」口径收口）：
+
+已完成：
+
+1. **两项 P1 只做分析**（计划原文"只做分析"）：立项时 `OPTIMIZATION.md` §3 的
+   `codegen_mem` / `codegen_big_loop` 两格写的是"需分析"，而 `codegen_stage_profile.md`
+   只有 many_ops/complex/sum_to_n，这两例当时用"regalloc 压力更大"的**推断**代替。本轮**补测**：
+   - `FORGE_TRACE_TIMING=1 cargo bench --bench compile_bench -- 'codegen_(mem|big_loop)' --measurement-time 1`
+     （`[codegen 名字] total/lower/peep/regalloc/frame/emit`，取稳态中位数）
+   - `codegen_mem`（内部名 `mem_ops`，61 IR 指令）：criterion 中位 **291.5 µs**，
+     lower ~10%、**regalloc 55–70%**、emit ~4%
+   - `codegen_big_loop`（~100 指令，多块+循环）：criterion 中位 **453.2 µs**，
+     lower ~7%、**regalloc 60–70%**、emit ~12–20%
+   - 对照：many_ops 59–70% / complex ~48% / sum_to_n ~50% / add ~20% ⇒ **推断被实测证实**；
+     `frame`/`blocks`/`vreg`/`peep` 合计 <1%。**结论：无新的低风险高收益落地项**（唯一大头是
+     regalloc 的数据流规模本身），本轮**不改代码**，只把"需分析"变成"已分析"。
+   - 写回：[`OPTIMIZATION.md`](../performance/OPTIMIZATION.md) §3 与新增 §3.1（含口径说明）、
+     [`codegen_stage_profile.md`](../performance/codegen_stage_profile.md) 文末两例实测表。
+2. **顺手修掉测量时暴露的一个真缺陷**：`CF_CODEGEN_TIMING` 是**第三个命名族**（`CF_*`），
+   绕过了 M1 立起来的观测开关台账——M1 的守卫只认 `FORGE_TRACE_*`，所以它一直没被发现。
+   现改名为 **`FORGE_TRACE_TIMING`**、登记进 `diagnostics::KNOBS`（口径 41 → **42**）
+   与契约文档 §7 表（三方守卫钉住），历史文档里的旧名保留为史料并注明现名。
+3. **`[cap:SPEC_*]` 的分类设计（下一轮机械执行）**：实测生成器里 **67 个发射型
+   `Unsupported`**（`dsl/codegen/{lowering,frame,moves}.rs` 等），**零个**带 `[cap:]` 标记——
+   它们都在 `quote!` 里、是**使用者看得到的错误**。按 v25 M2 的四分类逐条判定的结果：
+
+   | 类别 | ID | 判据（消息关键词） | 条数 |
+   | --- | --- | --- | ---: |
+   | 能力（谱） | `SPEC_LOWERING_RULE_MISSING` | `no matching rule` / `DSL lowering` / `谱面没有匹配的 move 模板` | ~8 |
+   | 能力（谱） | `SPEC_MOVE_TABLE_GAP` | `没有 … 搬运指令` / `movef` / `data_width` / `向量寄存器 ← 内存` | ~22 |
+   | 能力（谱） | `SPEC_ROLE_MISSING` | `缺 roles = [` / `arg_bytes_load/imm/add 角色…形状不符` | ~7 |
+   | 能力（谱） | `SPEC_FRAME_OP_MISSING` | `spill … 没有溢出模板` / `FPR spill … 宽度` | ~4 |
+   | 能力（谱） | `SPEC_TERMINATOR_MISSING` | `缺 [lower.Jmp/Br]` / `terminator` / `no trap inst` / `call inst missing` | ~9 |
+   | 数据层 | `ABI_PLAN_UNAVAILABLE`（已有行） | `需要调用布局（plan）` / `调用点布局缺…落点` | ~8 |
+   | 数据层 | `ABI_RET_SLOT_MISSING`（新） | `隐藏 sret 槽` / `返回寄存器需要调用布局` / `约定级返回槽` | ~4 |
+   | 数据层 | `ABI_PLACEMENT_UNEMITTED`（新） | `落点尚未接进发射（RegPair/RegGroup/Indirect）` | 1 |
+   | 数据层 | `ABI_CLOBBERS_MISSING`（新） | `破坏集需要宿主的约定数据` | 1 |
+   | 畸形 IR | `IrError::Internal` | `未知的 IR 整数条件码` / `没有对应的 IR 条件` / `…既不是整数也不是浮点` / `未知寄存器类` / `missing func ref` / `…只有 {} 个结果` / `unknown pattern name` | ~8 |
+
+   **执行方式**：按上表逐站点改写 `Unsupported(` 为 `capability(` 形态（首参 = 表中的 ID）
+   （畸形 IR 那一类改 `Internal(`），**保留原消息文本**；完成后：
+   - 判据 = `rg 'Unsupported\(' crates/frontend/forge-isa-dsl/src/dsl` **为 0**；
+   - 扩展 `capability_gaps_guard` 的扫描面到生成器源（认 `capability("SPEC_…"`/`"ABI_…"` 字面量），
+     与台账双向相等；
+   - 台账加 3 条新行（`ABI_RET_SLOT_MISSING`/`ABI_PLACEMENT_UNEMITTED`/`ABI_CLOBBERS_MISSING`）
+     并修 `SPEC_*` 行的"证据"列（指向生成器站点）；
+   - 验证靠生成期自测**真的编译生成物**（`cargo test -p forge-isa-dsl` 会把三份谱与全部夹具
+     生成成 Rust 再编译 ⇒ 改写错一处就编译不过）。
+
+已执行（同轮收口）：
+
+1. **67 站点改写**：按上表逐站点改写（`Internal` 那 9 处按"畸形 IR"分类），实际落地 **66 处**
+   （第 67 处 `lib.rs:595` 落在 `#[cfg(test)]` 里——那是路径改写的单测夹具，不是发射面，扫描时按
+   截断口径排除）。落地时踩到一个真坑并修掉：`capability(id, msg: impl Display)` 下
+   **`.into()` 会产生类型推断歧义**（E0283，42 处，其中一批是**尾随逗号**形态
+   `"…".into(),` ⇒ 第一次归一漏掉）⇒ 全部去掉 `.into()`，生成物才编得过。
+   判据：`rg 'Unsupported\(' crates/frontend/forge-isa-dsl/src/dsl` **== 0**。
+2. **守卫扩面**：`capability_gaps_guard` 的扫描面加 `crates/frontend/forge-isa-dsl/src/dsl`，
+   并引入**类别型 ID**（`SPEC_*`/`ABI_*` 允许多触发点——它们说的是"这份谱/约定有没有这个能力"
+   这一个**类**；其余 ID 仍守 v24 M3 的"一个决定点"）。台账加 7 行（4 个 `SPEC_*` + 3 个 `ABI_*`）
+   与 §3.4 证据小节 ⇒ 守卫绿。
+3. **三条 `待做` 清零**（计划要求的"逐条落地或明确降级"）：三条都改成 **`不做`** 并写明数据条件，
+   见 `backend-gaps.md` §3.5；**台账里 `待做` 行数 = 0**。其中 `VA_ARG_AGG_RULE` 的结论值得记住：
+   照 win64 形状声明能让**我方自洽**过，但与**外部 C 调用方**互操作会静默错值（引擎给
+   aapcs64/lp64d 的聚合落点是 `ByRef`，而这两份 psABI 的聚合变参按值展平）⇒ 保持 fail-closed。
+4. **验证**：`cargo test -p forge-isa-dsl`（301 lib + 12 个测试二进制，**会真的编译三份发行谱与
+   全部夹具的生成物**）与 `cargo test -p forge-codegen --lib`（2746，含 x86/arm64/riscv64 三个宿主
+   的生成模块）全绿；`capability_gaps` 守卫绿；全套门禁见下。
+
+**删除清单（本里程碑）**：生成器里 66 个裸 `Unsupported(`（判据：`rg` 为 0）；
+`CF_CODEGEN_TIMING` 这个绕过台账的第三个命名族（改名并登记）；
+三条 `待做` 台账行（改成有条件的 `不做`）。
+
 ### M3 单命令门禁 + CI 补齐 —— **一次落地**（2026-10-11，工作区）
 
 ① `cargo forge gate`（复用既有 clap CLI，没有新开 xtask 层）

@@ -175,7 +175,7 @@ impl Knob {
 /// v26 M1 从 `forge-codegen::pipeline::trace` 下沉到这里，并把**两侧**的名字并成一张表
 /// （后端 11 项 + 直读项 + `forge-rustc` 27 项）。下沉的连带收获：原先 5 处**绕过台账直读**
 /// 环境变量的地方（`FN_SIZE`/`CODE_HEX`/`LIVE`/`DW`）改走本 API，"漏登记"这一类再无处可藏。
-pub static KNOBS: [Knob; 41] = [
+pub static KNOBS: [Knob; 42] = [
     Knob::new(
         "FORGE_TRACE_ABI",
         "调用约定规划与落点回填（forge-codegen abi_setup/compiler；forge-rustc FnAbi 形态）",
@@ -258,6 +258,10 @@ pub static KNOBS: [Knob; 41] = [
     Knob::new("FORGE_TRACE_SLOT", "栈槽分配（forge-rustc mod.rs）"),
     Knob::new("FORGE_TRACE_SPILL", "溢出与回填（emission / regalloc_bt）"),
     Knob::new("FORGE_TRACE_STACK", "栈槽与帧布局（lowering）"),
+    Knob::new(
+        "FORGE_TRACE_TIMING",
+        "编译阶段计时（`[codegen 名字] total/lower/peep/regalloc/frame/emit`；基准与专项分析用；原名 `CF_CODEGEN_TIMING`）",
+    ),
     Knob::new("FORGE_TRACE_STMT", "MIR statement 级跟踪（forge-rustc）"),
     Knob::new("FORGE_TRACE_STORE", "store lowering（forge-rustc）"),
     Knob::new(
@@ -354,7 +358,7 @@ mod tests {
             assert!(k.name.starts_with("FORGE_TRACE_"), "名字前缀：{}", k.name);
             assert!(!k.what.is_empty(), "缺说明：{}", k.name);
         }
-        assert_eq!(KNOBS.len(), 41, "台账条数变化时同步文档表与守卫");
+        assert_eq!(KNOBS.len(), 42, "台账条数变化时同步文档表与守卫");
     }
 
     /// 已登记的开关真的按环境变量生效（缓存路径给出确定答案，不 panic、不警告）。

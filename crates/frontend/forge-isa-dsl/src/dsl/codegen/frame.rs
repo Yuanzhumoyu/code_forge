@@ -220,8 +220,8 @@ pub(crate) fn gen_frame_lowering(
         }
     } else {
         quote! {
-            Err(crate::IrError::Unsupported(
-                "epilogue jump: 本 ISA 未声明 roles = [\"jump\"]/[\"epilogue_jump\"] 的指令".into(),
+            Err(crate::IrError::capability("SPEC_FRAME_OP_MISSING",
+                "epilogue jump: 本 ISA 未声明 roles = [\"jump\"]/[\"epilogue_jump\"] 的指令",
             ))
         }
     };
@@ -319,8 +319,8 @@ pub(crate) fn gen_frame_lowering(
                 // "是不是浮点文件"，FPR/VEC 与 KReg 在同一个 `false` 上撞车；现在
                 // 掩码类显式 fail-closed，不静默走通用寄存器搬运。
                 if class.is_mask() {
-                    return Err(crate::IrError::Unsupported(
-                        "spill: 掩码寄存器类（KReg）没有溢出模板（本 ISA 未声明）——不退回通用寄存器搬运".into(),
+                    return Err(crate::IrError::capability("SPEC_FRAME_OP_MISSING",
+                        "spill: 掩码寄存器类（KReg）没有溢出模板（本 ISA 未声明）——不退回通用寄存器搬运",
                     ));
                 }
                 if class.is_fp() {
@@ -344,8 +344,8 @@ pub(crate) fn gen_frame_lowering(
                 let __off = offset as i64;
                 let __sink = sink;
                 if class.is_mask() {
-                    return Err(crate::IrError::Unsupported(
-                        "spill: 掩码寄存器类（KReg）没有溢出模板（本 ISA 未声明）——不退回通用寄存器搬运".into(),
+                    return Err(crate::IrError::capability("SPEC_FRAME_OP_MISSING",
+                        "spill: 掩码寄存器类（KReg）没有溢出模板（本 ISA 未声明）——不退回通用寄存器搬运",
                     ));
                 }
                 if class.is_fp() {
@@ -945,11 +945,11 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
     let cross = |want: &Want, have: bool| -> Result<TokenStream, String> {
         if !have {
             return Ok(quote! {
-                return Err(crate::IrError::Unsupported(
+                return Err(crate::IrError::capability("SPEC_MOVE_TABLE_GAP",
                     "ISA-DSL move_args: ABI 落点的寄存器类与值的类不同（整数约定收浮点），需要跨类的\
                      位搬移指令（在指令上写 `data_width`，方向由操作数结构定）\
                      ——本 ISA 没有（拿同类搬移顶上是静默错值）"
-                        .into(),
+                        ,
                 ));
             });
         }
@@ -1083,7 +1083,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
         if !has_fpr_mov {
             let msg = format!("ISA-DSL {what}: 本 ISA 没有「浮点寄存器 ← 浮点寄存器」的搬运指令");
             return Ok(quote! {
-                return Err(crate::IrError::Unsupported(#msg.into()));
+                return Err(crate::IrError::capability("SPEC_MOVE_TABLE_GAP", #msg));
             });
         }
         moves.dispatch(&fpr_want, bits, |arm| {
@@ -1212,18 +1212,18 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
     ) = (
         quote! {},
         quote! {
-            return Err(crate::IrError::Unsupported(
-                "ISA-DSL move_args: 浮点/向量参数收参需要调用布局（plan）".into(),
+            return Err(crate::IrError::capability("ABI_PLAN_UNAVAILABLE",
+                "ISA-DSL move_args: 浮点/向量参数收参需要调用布局（plan）",
             ));
         },
         quote! {
-            return Err(crate::IrError::Unsupported(
-                "ISA-DSL move_args: 整数参数收参需要调用布局（plan）".into(),
+            return Err(crate::IrError::capability("ABI_PLAN_UNAVAILABLE",
+                "ISA-DSL move_args: 整数参数收参需要调用布局（plan）",
             ));
         },
         quote! {
-            return Err(crate::IrError::Unsupported(
-                "ISA-DSL move_args: by-ref 参数收参需要调用布局（plan）".into(),
+            return Err(crate::IrError::capability("ABI_PLAN_UNAVAILABLE",
+                "ISA-DSL move_args: by-ref 参数收参需要调用布局（plan）",
             ));
         },
     );
@@ -1309,10 +1309,10 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
                 {
                     Some(__r) => Reg::from_index(__r.slot, __r.class),
                     None => {
-                        return Err(crate::IrError::Unsupported(
+                        return Err(crate::IrError::capability("ABI_PLAN_UNAVAILABLE",
                             "ISA-DSL move_args: spilled 寄存器参数需要布局给的寄存器落点\
                              （调用布局缺失或落点不是寄存器）"
-                                .into(),
+                                ,
                         ));
                     }
                 };
@@ -1380,8 +1380,8 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
             }
         }
         None => quote! {
-            return Err(crate::IrError::Unsupported(
-                "ISA-DSL move_args: 栈参数收参需要 roles = [\"stack_arg_load\"] 的指令".into(),
+            return Err(crate::IrError::capability("SPEC_ROLE_MISSING",
+                "ISA-DSL move_args: 栈参数收参需要 roles = [\"stack_arg_load\"] 的指令",
             ));
         },
     };
@@ -1402,9 +1402,9 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
             }
         }
         None => quote! {
-            return Err(crate::IrError::Unsupported(
+            return Err(crate::IrError::capability("SPEC_FRAME_OP_MISSING",
                 "ISA-DSL move_args: 栈上的浮点形参收到了寄存器，但本 ISA 没有 \
-                 { role = \"stack_arg_load\", class = \"fpr\" } 的收参指令".into(),
+                 { role = \"stack_arg_load\", class = \"fpr\" } 的收参指令",
             ));
         },
     };
@@ -1435,10 +1435,10 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
                     }
                 }
                 None => quote! {
-                    return Err(crate::IrError::Unsupported(
+                    return Err(crate::IrError::capability("SPEC_ROLE_MISSING",
                         "ISA-DSL move_args: 寄存器保存区里的浮点槽需要 \
                          { role = \"stack_arg_store\", class = \"fpr\" } 的指令"
-                            .into(),
+                            ,
                     ));
                 },
             };
@@ -1536,8 +1536,8 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
                         } else {
                             // 既不是整数类也不是浮点/向量类（如掩码寄存器类）——
                             // 本片没有对应的搬运角色，**明确拒绝**而不是当浮点搬。
-                            return Err(crate::IrError::Unsupported(
-                                "ISA-DSL move_args: 布局给的寄存器类没有收参搬运指令".into(),
+                            return Err(crate::IrError::capability("SPEC_MOVE_TABLE_GAP",
+                                "ISA-DSL move_args: 布局给的寄存器类没有收参搬运指令",
                             ));
                         }
                     }
@@ -1659,7 +1659,7 @@ fn gen_fpr_spill_dispatch(
             #scalar
         } #(#arms)*
         else {
-            return Err(crate::IrError::Unsupported(format!(
+            return Err(crate::IrError::capability("SPEC_FRAME_OP_MISSING", format!(
                 "FPR spill {}: 不支持 {} 字节宽度（本 ISA 支持 {}）",
                 #what, width, #supported
             )));

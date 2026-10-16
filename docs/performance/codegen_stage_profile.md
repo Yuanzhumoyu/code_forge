@@ -1,9 +1,13 @@
 # Codegen Stage Profile（2026-08 优化后）
 
-用 `CF_CODEGEN_TIMING=1 cargo bench --bench compile_bench -- 'codegen_*' --measurement-time 1`
+用 `FORGE_TRACE_TIMING=1 cargo bench --bench compile_bench -- 'codegen_*' --measurement-time 1`
 采集的 stage 分解（`compiler.rs` 的 `[codegen {name}] total/lower/regalloc/emit` 输出，稳态中位数）。
 
-> **时效性（2026-08-31 第二轮实测）**：本表为 2026-08-06 采集；08-31
+> **时效性（2026-10-11 第三轮实测，v26 M4）**：`CF_CODEGEN_TIMING` 已按 v26 的开关台账
+> 改名为 `FORGE_TRACE_TIMING`（见 `reference/backend-pipeline.md` §7 的观测开关表）。
+> 下表仍是 2026-08-06 基线；两例补齐见文末。
+>
+> **2026-08-31 第二轮实测**：本表为 2026-08-06 采集；08-31
 > 用 `CF_CODEGEN_TIMING` 重测 many_ops：**regalloc 56-60%、lowering 33%→
 > 26%（SmallVec 后）、emit 8%**——regalloc 仍是第一瓶颈，lowering 曾是
 > 意外高占比（第二轮新热点，已处理）。
@@ -31,8 +35,17 @@
 | complex（17 inst，4 块） | ~63µs | ~8.8µs（14%） | ~41µs（**65%**） | ~7.3µs（12%） | ~2% |
 | sum_to_n（multi_block，10 inst） | ~51µs | ~7.3µs（14%） | ~34µs（**67%**） | ~5.5µs（11%） | ~4% |
 
-（`codegen_big_loop`/`codegen_mem` 的精确 stage 未单独采集，二者 regalloc 压力更大——有
-spill 路径；以多数函数 63-67% 的比例推断 regalloc 仍是第一瓶颈。）
+**v26 M4 补齐（2026-10-11 实测）**：`codegen_big_loop` 与 `codegen_mem` 原先**未单独采集**
+（用"regalloc 压力更大"的推断代替），现已补测：
+
+| 函数 | criterion 中位 | lower | **regalloc** | emit |
+| --- | ---: | ---: | ---: | ---: |
+| `codegen_mem`（`mem_ops`，61 inst） | 291.5 µs | 25–40 µs（~10%） | **148–298 µs（55–70%）** | 12–28 µs（~4%） |
+| `codegen_big_loop`（~100 inst，多块） | 453.2 µs | 21–46 µs（~7%） | **191–461 µs（60–70%）** | 39–108 µs（~12–20%） |
+| `codegen_many_ops`（对照） | — | ~35 µs（~9%） | 186–283 µs（59–70%） | 15–24 µs（~5%） |
+
+⇒ 推断被证实：**两个 case 同样由 regalloc 主导**；`frame`/`blocks`/`vreg`/`peep` 合计 <1%。
+命令与结论详见 [`OPTIMIZATION.md`](OPTIMIZATION.md) §3.1（时钟口径与 criterion 口径的差别也写在那里）。
 
 ## 结论（阶段优先级，2026-08-31 更新）
 
@@ -45,5 +58,5 @@ spill 路径；以多数函数 63-67% 的比例推断 regalloc 仍是第一瓶�
 
 ## 测量方法备注
 
-`CF_CODEGEN_TIMING` 输出来自 `pipeline/compiler.rs` 的 `compile_with_alloc`（release
+`FORGE_TRACE_TIMING` 输出来自 `pipeline/compiler.rs` 的 `compile_with_alloc`（release
 构建下同样打印）。warmup 阶段数字偏高（首次编译/冷缓存），取稳态中位数。

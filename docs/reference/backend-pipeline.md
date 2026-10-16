@@ -148,7 +148,7 @@ pass 清单与**合并次序**（下表与 `LegalizeDriver::with_aggregates().pa
 
 **一张表管两侧**（v26 M1）：后端与 `forge-rustc` 的 `FORGE_TRACE_*` 都登记在
 `forge_isa_runtime::diagnostics::KNOBS`（本表 ↔ 该台账 ↔ 源码字面量三方双向相等，守卫
-`trace_knobs_are_bijective`）；下表共 **41** 项。
+`trace_knobs_are_bijective`）；下表共 **42** 项。
 
 诊断开关**不可能静默失效**：`forge_isa_runtime::diagnostics::knob("FORGE_TRACE_*")` 直接按
 名字问环境变量（**任何名字都生效**；`forge-rustc` 侧写 `trace_enabled("后缀")`，同源转发；
@@ -198,6 +198,7 @@ pass 清单与**合并次序**（下表与 `LegalizeDriver::with_aggregates().pa
 | `FORGE_TRACE_SLOT` | 栈槽分配（forge-rustc mod.rs） |
 | `FORGE_TRACE_SPILL` | 溢出与回填（emission / regalloc_bt） |
 | `FORGE_TRACE_STACK` | 栈槽与帧布局（lowering） |
+| `FORGE_TRACE_TIMING` | 编译阶段计时（`[codegen 名字] total/lower/…/emit`；基准用；原名 `CF_CODEGEN_TIMING`） |
 | `FORGE_TRACE_STMT` | MIR statement 级跟踪（forge-rustc） |
 | `FORGE_TRACE_STORE` | store lowering（forge-rustc） |
 | `FORGE_TRACE_SUBSTS` | 泛型替换解析（FnDef → instance，forge-rustc mod.rs） |
