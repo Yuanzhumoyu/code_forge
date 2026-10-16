@@ -5,7 +5,7 @@
 > 本表与**源码里的缺口集合逐一相等**（多一行、少一行都红）。
 > 相关：[`backend-pipeline.md`](backend-pipeline.md)（管线契约）、
 > [`calling-conventions.md`](calling-conventions.md)（约定层）、
-> 活账本 [`backend-v24-plan.md`](../plans/backend-v24-plan.md) §M3。
+> v24 收口记录 [`backend-v24-plan.md`](../archive/backend-v24-plan.md) §M3（已归档）。
 
 ## 1. 这张表解决什么问题
 

@@ -3,7 +3,7 @@
 > 状态：**[active]**（2026-10-11 起）。本文是后端的**现行契约**：覆盖 v24 落地后的
 > 合法化两相化、值描述单一来源、能力缺口与观测台账（v23 的收口记录见
 > [`archive/backend-v23-plan.md`](../archive/backend-v23-plan.md)；v24 逐批证据见
-> [`plans/backend-v24-plan.md`](../plans/backend-v24-plan.md)）。
+> [`archive/backend-v24-plan.md`](../archive/backend-v24-plan.md)，已归档）。
 >
 > 术语：本文的"后端"= IR 之后的全部阶段（合法化 / 指令选择 / 寄存器分配 / 帧布局 /
 > 发射 / 装载）。ISA-DSL 语法、生成的指令编码与汇编器见 [`isa-dsl.md`](isa-dsl.md)；
@@ -175,5 +175,5 @@ pass 清单与**合并次序**（下表与 `LegalizeDriver::with_aggregates().pa
 ## 8. 相关账本与下一步
 
 * 能力缺口：[`backend-gaps.md`](backend-gaps.md)（21 条，含逐条决策证据）。
-* v24 逐批证据与删除清单：[`plans/backend-v24-plan.md`](../plans/backend-v24-plan.md)。
+* v24 逐批证据与删除清单：[`archive/backend-v24-plan.md`](../archive/backend-v24-plan.md)（已归档）。
 * v23 收口记录（历史）：[`archive/backend-v23-plan.md`](../archive/backend-v23-plan.md)。

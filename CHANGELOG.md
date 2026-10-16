@@ -95,7 +95,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   （−0.109%）、riscv64 −0.130%、arm64 −0.011%——三份谱全部变小。
 + 验收全绿：workspace 全量测试、JIT 两矩阵（197/3/0 · 136/64/0）、asm 三档（3/1/1）、
   `forge-codegen` 2826 passed、`read_path_budget` 2 passed、clippy `-D warnings`/fmt 干净。
-+ 逐批证据见 `docs/plans/backend-v24-plan.md` §6。
++ 逐批证据见 `docs/archive/backend-v24-plan.md` §6（v24 收口后归档）。
 
 ### Changed (2026-10-11) — 后端 v24 M1：合法化**两相化**（计划只读 + 一次性物化）
 
@@ -122,7 +122,7 @@ ABI 边界计划，**物化相**按指令序**单遍**改写。用户可见行�
 + **删除清单清零**：`AggSlots`、按值驱动的旧改写函数、按地址内存化助手与"生成后搬运"助手
   在代码里**零引用**；`markdownlint`/`clippy`/`fmt` 与全量门禁（workspace + JIT 两矩阵 +
   asm 三档棘轮）全绿；读路径预算按**实测**下调（`agg_expand.rs` 6 → 2，新增两相各 1）。
-+ 逐批证据与后续批次见 `docs/plans/backend-v24-plan.md` §6。
++ 逐批证据与后续批次见 `docs/archive/backend-v24-plan.md` §6（v24 收口后归档）。
 
 ### Docs (2026-10-11) — v23 方案收口归档
 

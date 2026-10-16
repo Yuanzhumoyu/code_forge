@@ -18,7 +18,7 @@ docs/
 │   ├── backend-gaps.md        # 后端能力缺口台账（v24 M3：21 条 `[cap:ID]` + 决策 + 双向守卫）
 │   └── imm_str.md             # ImmStr 类型设计（forge-ir 代码注释引用）
 ├── plans/                 # 进行中专项方案（活账本）[progress]
-│   └── backend-v24-plan.md    # 后端 v24：合法化两相化/值描述单一来源/缺口与观测台账化（含证据、删除清单、守卫与判据）
+│   └── （空：v24 已收口归档 → archive/backend-v24-plan.md）
 ├── forge-ir/              # forge-ir 工作流 [active]
 │   ├── README.md              # 组说明（历轮计划已归档、如何继续）
 │   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）
@@ -45,6 +45,7 @@ docs/
     ├── forge-ir-v3-plan.md      # forge-ir v3（S1–S8 全部收口；未关闭项移交 ../forge-ir/backlog.md）
     ├── forge-rustc-vec_push-plan.md # forge-rustc vec 族（2026-10-11 归档：验收 4/4 达成，e2e 103 条用例全绿）
     ├── backend-v23-plan.md     # 后端 v23 里程碑 M1–M6 + M7（2026-10-11 归档：全部收口；现行入口 = reference/backend-pipeline.md + CHANGELOG）
+    ├── backend-v24-plan.md     # 后端 v24 里程碑 M1–M5（2026-10-11 归档：全部收口；现行入口 = reference/backend-pipeline.md + backend-gaps.md + CHANGELOG）
     └── forge-ir/              # forge-ir 历轮计划/审计 7 篇（452 收敛基线，2026-08 停更）
 ```
 
