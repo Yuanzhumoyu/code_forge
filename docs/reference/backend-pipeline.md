@@ -1,17 +1,19 @@
 # 后端编译管线契约
 
-> 状态：**[active]**（2026-10-11 起）。本文是后端的**现行契约**：覆盖 v24 落地后的
-> 合法化两相化、值描述单一来源、能力缺口与观测台账（v23 的收口记录见
-> [`archive/backend-v23-plan.md`](../archive/backend-v23-plan.md)；v24 逐批证据见
-> [`archive/backend-v24-plan.md`](../archive/backend-v24-plan.md)，已归档）。
+> 状态：**[active]**（2026-10-11 起；v25 收口时回写）。本文是后端的**现行契约**：编译入口、
+> 管线阶段、合法化两相、**一次分类处处消费**、值描述单一来源、能力缺口台账、**错误分类学**、
+> **模块边界与规模棘轮**、观测开关与事件表（v23/v24 的收口记录见
+> [`archive/backend-v23-plan.md`](../archive/backend-v23-plan.md) 与
+> [`archive/backend-v24-plan.md`](../archive/backend-v24-plan.md)，均已归档）。
 >
 > 术语：本文的"后端"= IR 之后的全部阶段（合法化 / 指令选择 / 寄存器分配 / 帧布局 /
 > 发射 / 装载）。ISA-DSL 语法、生成的指令编码与汇编器见 [`isa-dsl.md`](isa-dsl.md)；
 > 调用约定数据与引擎见 [`calling-conventions.md`](calling-conventions.md)；
 > **能力缺口台账**见 [`backend-gaps.md`](backend-gaps.md)。
 >
-> 三条"别绕过"的纪律：① 编译只有**一个入口**（§1）；② 合法化只有**一个改写者**
-> （物化相，§3）；③ 值只有**一份描述**（§4）。每节都有一条守卫钉着，改代码就同时改本节。
+> 四条"别绕过"的纪律：① 编译只有**一个入口**（§1）；② 合法化只有**一个改写者**
+> （物化相，§3）；③ ABI 落点只有**一个来源**（计划相，§6）；④ 值只有**一份描述**（§4）。
+> 每节都有一条守卫钉着，改代码就同时改本节。
 
 ## 1. 编译入口：只有一份实现
 
@@ -172,7 +174,96 @@ pass 清单与**合并次序**（下表与 `LegalizeDriver::with_aggregates().pa
 性能：每个开关一个 `OnceLock` 缓存（首次查询后零开销）——regalloc/lowering/emission 的
 **每指令热路径**上都有查询，实测裸 `std::env::var_os` 会占 codegen 的 7–18%。
 
-## 8. 事件表（codegen 的机读出口）
+## 6. 一次分类，处处消费
+
+ABI 落点**只有一个来源**：合法化计划相（`legalize/plan.rs`）。它只读地算出 `AbiEdges`，
+物化与各 `pass` **只消费**它。
+
+```text
+                 ┌──────────────── 唯一分类处（只读）────────────────┐
+   IR + 约定 ──► │ legalize/classify.rs  Classifier                 │ ──► AbiEdges
+                 │   · 唯一问 forge-abi 引擎的通道（plan_for_shapes）│     · params / ret
+                 │   · 按类型去重（同一类型只问一次）                │     · call_args / call_results
+                 │   · 返回规范类型 ArgLoc/RetLoc/Placement          │     · shift / plans（诊断）
+                 └──────────────────────────────────────────────────┘
+                                        │ 只读
+                    agg-param ─ agg-store ─ agg-call ─ agg-leftover ─ materialize ─ gep
+```
+
+契约要点：
+
+* **一个入口**：问引擎只经 `Classifier`（`plan_for_shapes` 只允许出现在 `classify.rs`、
+  `abi_setup.rs`、`abi_target.rs`（引擎入口本身）三处）。
+* **规范类型**：计划里装的是 `forge-abi-model` 的 `ArgLoc`/`RetLoc`/`Placement`——本仓**不再有**
+  自己的"计划枚举"或落点投影（旧实现的手抄枚举与两个单类型探针已删除，守卫钉住零出现）。
+* **生产者签名里没有机器与约定名**：`expand_large_agg_params` / `expand_sret_return` /
+  `expand_large_agg_call_results` / `expand_agg_call_args` 只拿 `&AbiEdges`——规则由**类型系统**
+  保证（想再问一次引擎，得先把机器传回去）。计划缺失 ⇒ `IrError::Internal`（`PlanPass` 恒排首位）。
+* **按值查，不按序号查**：`agg-call` 批次里 `expand_large_agg_call_results` 会往实参表**前插**
+  sret 缓冲指针，之后的 `op_idx` 比计划记录时大 1 ⇒ 计划按**值句柄**查（`call_arg_of(inst, val)`）。
+* **不登记 `va_arg`**：那一条的规则是**约定数据**（`VaInfo::arg_rules`），`va` pass 本来就在手边
+  并自己 fail-closed——计划只描述**物化相要改写的边界**。
+
+守卫 = `classification_single_entry`（三条：唯一入口双向相等、生产者必须引用计划且只有计划相建
+分类器、旧符号零出现）。
+
+## 7. 错误分类学：失败语义分层
+
+`IrError::Unsupported` 曾经一名三用（能力缺口 / 畸形 IR / 使用错误），三者对用户的意义完全不同。
+现在**冻结四分类**，`forge-codegen` 与 `forge-isa-runtime` 的 `src/` 里不许出现裸 `Unsupported(`：
+
+| 类别 | 变体 | 判据（谁来解） |
+| --- | --- | --- |
+| `capability` | `IrError::Unsupported` + **`[cap:ID]`**（`IrError::capability(id, msg)`） | 换约定 / 补规则 / 换 ISA 就能解 ⇒ 进 [`backend-gaps.md`](backend-gaps.md) 台账 |
+| `internal` | `IrError::Internal` | 畸形 IR / 内部不变量被破坏 ⇒ 报 bug 或修输入 |
+| `semantic` | `IrError::Semantic` | 使用或数据错误（约定未注册、装载 ISA 不匹配、约定数据自相矛盾） |
+| `other` | 现成变体（`Emit`/`RegAlloc`/`Verify`/`UnknownOpcode`…） | 各阶段自己的失败，保持原样 |
+
+* 构造器住在 **`forge-ir`**（`IrError::capability` / `IrError::gap_id`）——`forge-isa-runtime`
+  的 trait 默认实现也要能构造缺口错误（"这份谱没覆盖这个帧操作"就是缺口，不是"未实现"）。
+* **缺口 ID 一律以字面量写在构造点**：台账守卫靠字面量识别失败点，把 ID 变成变量会让台账行被判成
+  **死行**（实测撞到过）。
+* `IrError::Unimplemented` 已删除（与 `Unsupported` 语义重叠：第二套说法）；全仓零出现。
+
+守卫 = `error_taxonomy`（后端 + 运行时的 `src/` 无裸 `Unsupported(`；全仓无 `Unimplemented`）
+加 `capability_gaps_guard`（台账与源码缺口集合双向相等）。
+
+## 8. 模块边界与规模棘轮
+
+大文件不是风格问题，是**读改成本**：立项时 `compiler.rs` 1616 行、`regalloc_bt.rs` 1544、
+`va_expand.rs` 1113、`agg_call.rs` 690。v25 M4 按职责切成目录——**模块路径不变**
+（`pipeline/compiler/mod.rs` 取代 `pipeline/compiler.rs`），所以调用点零改动。
+
+| 目录 | 各文件职责 |
+| --- | --- |
+| `pipeline/compiler/` | `mod.rs` 会话入口与模块编排；`state.rs` `CompileState` + 单函数管线；`alloc_integration_tests.rs` 集成用例 |
+| `pipeline/regalloc_bt/` | `mod.rs` 分配器与 `Default`；`state.rs` `BtState` 状态机；`spill.rs` 溢出编辑；`tests.rs` / `clobber_map_tests.rs` 用例 |
+| `pipeline/va_expand/` | `mod.rs` `AbiSlots` 与模块文档；`slots.rs` ABI 槽规划；`expand.rs` 展开主体；`tests.rs` 用例 |
+| `pipeline/legalize/agg_call/` | `mod.rs` sret 形参入口；`args.rs` 实参展开；`results.rs` 结果拆段与宽聚合返回 |
+
+两条纪律：
+
+* **叶子方向**：`legalize/**`、`va_expand/**`、`regalloc_bt/**` 只能被驱动调用，**不得**依赖
+  `compiler`/`session`——`pass` 的次序与状态只由驱动持有（v23 那四个缺陷同源）。
+  `emission`/`frame_layout`/`lowering` 例外：它们按参数拿 `&CompileState`（不是反向拥有）。
+* **规模棘轮**（只许按实测**下调**，要放行更大的文件必须进表并写明理由）：
+
+| 文件 | 上限（行） | 为什么允许这么长 |
+| --- | --- | --- |
+| `pipeline/regalloc_bt/state.rs` | 944 | `BtState`：13 字段 + 17 方法构成一台状态机，切开会把"谁改了哪个字段"拆散 |
+| `pipeline/lowering.rs` | 835 | 生成物 lowering 的宿主侧辅助，与谱面规则一一对应 |
+| `pipeline/legalize/materialize.rs` | 657 | 物化相：按 IR 形态分段单遍改写，切开反而难对照 |
+| `pipeline/va_expand/expand.rs` | 621 | `expand_start`/`expand_arg` 共享局部不变量（游标推进次序） |
+| `pipeline/compiler/mod.rs` | 615 | 会话入口 + 模块编排（state 与测试已切出） |
+| `pipeline/compiler/alloc_integration_tests.rs` | 615 | 集成用例（测试长不构成阅读负担，与实现同源） |
+
+缺省上限 **700** 行；上表与守卫里的预算表由 `file_size_ratchet` 钉成**双向相等**（改动其一就红）。
+
+**测试专属模块的识别**（给两条扫描型守卫用）：`#[cfg(test)] mod X;` 声明出来的文件整份跳过——
+M4 把测试搬成独立文件后，文件内不再有 `#[cfg(test)]` 可供"截断扫描"。识别方式是**向上找声明它的
+`mod.rs`**，看那条 `mod X;` 是否带 `#[cfg(test)]`（比按文件名猜精确，也盖得住改名）。
+
+## 9. 事件表（codegen 的机读出口）
 
 诊断开关给的是**人读**的散文；CI 要的是**机读**的一行 JSON。出口 = 环境变量
 **`FORGE_CODEGEN_EVENTS=<文件>`**（追加写；未设置 ⇒ 零开销返回；**写失败静默**——观测不得
@@ -192,7 +283,7 @@ pass 清单与**合并次序**（下表与 `LegalizeDriver::with_aggregates().pa
 | `ALLOC-SUMMARY` | 寄存器分配完成：`assigned`、`spills`、`edits` |
 | `EMIT-SUMMARY` | 发射完成：`code_bytes`、`relocs` |
 
-## 9. 相关账本与下一步
+## 10. 相关账本与下一步
 
 * 能力缺口：[`backend-gaps.md`](backend-gaps.md)（含逐条决策证据）。
 * v25 逐批证据与删除清单：[`plans/backend-v25-plan.md`](../plans/backend-v25-plan.md)（进行中）。

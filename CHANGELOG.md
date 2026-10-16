@@ -11,6 +11,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Docs (2026-10-11) — 后端 v25 M5：契约回写（`backend-pipeline.md` 补齐 v25 的四项结构）
+
+`reference/backend-pipeline.md` 此前是 v24 口径（合法化两相 / 值描述 / 缺口台账 / 观测开关 +
+M3 加的事件表），v25 的四项结构变化没有落进契约。
+
++ 新增 **§6 一次分类，处处消费**：数据流图 + 五条契约（一个入口 / 规范类型 / 生产者签名里没有
+  机器与约定名 / **按值查不按序号查**（sret 前插会让 `op_idx` 漂移）/ 不登记 `va_arg` 的理由）。
++ 新增 **§7 错误分类学**：四分类表（`capability`/`internal`/`semantic`/`other`）+ 构造器住
+  `forge-ir` + "缺口 ID 必须是字面量"这条实测教训 + `Unimplemented` 已删除。
++ 新增 **§8 模块边界与规模棘轮**：切分后的目录职责表 + 叶子方向纪律（含 emission/frame_layout/
+  lowering 的例外与理由）+ **规模棘轮表** + "测试专属模块怎么识别"。
++ 状态头与"别绕过"的纪律从三条扩到**四条**（新增"ABI 落点只有一个来源"）；相关账本改指 v25。
++ **守卫扩展**（文档表 ↔ 代码表双向相等）：`file_size_ratchet` 新增 `ratchet_table_matches_doc`
+  （规模表 = `BUDGETS`；目录表 = 四个切分目录且树上存在）；`error_taxonomy` 新增
+  `taxonomy_matches_doc`（文档分类表 = 守卫冻结的四分类）。
++ 验收：`forge-codegen --lib` 2836 passed；workspace 全量 exit 0；JIT 两矩阵（197/3/0 ·
+  136/64/0）；asm 三档（3/1/1）；**十二条**管线守卫全绿；clippy `-D warnings` 与 fmt 干净；
+  改动文档 markdownlint 0 issues。
++ **v25 收口**：M1–M5 全部落地、各自单独提交；删除清单全部清零（`AggArgLoc`、两个单类型探针、
+  五种计划枚举、`IrError::Unimplemented`、`pipeline/gaps.rs` 在代码里零引用）。
+
 ### Changed (2026-10-11) — 后端 v25 M4：管线大文件按职责切分（模块名不变，调用点零改动）
 
 **问题**：四个管线文件 >1000 行（`compiler.rs` 1616 / `regalloc_bt.rs` 1544 / `va_expand.rs` 1113、

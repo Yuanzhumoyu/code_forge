@@ -12,7 +12,7 @@
 //!    是**叶子**（它们只提供 pass / 展开 / 分配），不得依赖编译会话 `compiler`/`session`。
 //!    这条把"调用点抄次序/抄状态"的旧毛病挡在门外（v23 M6 起 legalize 就不再依赖 `compiler.rs`）。
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 fn repo_root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -144,4 +144,82 @@ fn leaf_modules_do_not_depend_on_the_driver() {
         "叶子模块反向依赖了编译会话（次序/状态应只由驱动持有）：\n{}",
         hits.join("\n")
     );
+}
+
+/// 取某小节里"第一列是反引号内容"的表格行（`| `x` | y |`）。
+fn doc_rows(doc: &str, heading_contains: &str) -> Vec<Vec<String>> {
+    let mut out = Vec::new();
+    let mut inside = false;
+    for line in doc.lines() {
+        if line.starts_with("## ") {
+            inside = line.contains(heading_contains);
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        let l = line.trim();
+        if !l.starts_with("| `") {
+            continue;
+        }
+        let cells: Vec<String> = l
+            .trim_matches('|')
+            .split('|')
+            .map(|c| c.trim().trim_matches('`').to_string())
+            .collect();
+        out.push(cells);
+    }
+    out
+}
+
+/// **规模棘轮与契约文档双向相等**（v25 M5）：文档的"规模棘轮"表就是 [`BUDGETS`]，
+/// "哪些目录切过"与树上的目录一致——改其一不改另一个就红。
+#[test]
+fn ratchet_table_matches_doc() {
+    let root = repo_root();
+    let doc_path = root.join("docs/reference/backend-pipeline.md");
+    let doc = std::fs::read_to_string(&doc_path)
+        .unwrap_or_else(|e| panic!("读不到 {}：{e}", doc_path.display()));
+
+    // 规模表： (文件, 上限)
+    let doc_budgets: BTreeMap<String, usize> = doc_rows(&doc, "规模棘轮")
+        .into_iter()
+        .filter(|r| r.len() >= 2 && r[1].chars().all(|c| c.is_ascii_digit()) && !r[1].is_empty())
+        .map(|r| (r[0].clone(), r[1].parse().expect("上限是数字")))
+        .collect();
+    let code_budgets: BTreeMap<String, usize> = BUDGETS
+        .iter()
+        .map(|(f, n)| ((*f).to_string(), *n))
+        .collect();
+    assert_eq!(
+        doc_budgets, code_budgets,
+        "契约文档的规模棘轮表与 `BUDGETS` 不一致（改其一必须改另一个）"
+    );
+    assert_eq!(
+        code_budgets.len(),
+        BUDGETS.len(),
+        "BUDGETS 里有重复文件条目"
+    );
+
+    // 目录表：切过的四个目录（文档里写成 `pipeline/xxx/`）
+    let doc_dirs: BTreeSet<String> = doc_rows(&doc, "模块边界与规模棘轮")
+        .into_iter()
+        .map(|r| r[0].clone())
+        .filter(|p| p.starts_with("pipeline/") && p.ends_with('/'))
+        .collect();
+    let want_dirs: BTreeSet<String> = [
+        "pipeline/compiler/",
+        "pipeline/regalloc_bt/",
+        "pipeline/va_expand/",
+        "pipeline/legalize/agg_call/",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect();
+    assert_eq!(doc_dirs, want_dirs, "契约文档的模块目录表与切分现状不符");
+    // 这些目录在树上必须真的存在（死条目也红）
+    for d in &want_dirs {
+        let abs = root.join("crates/backend/forge-codegen/src").join(d);
+        assert!(abs.is_dir(), "文档列出的目录不存在：{}", abs.display());
+    }
 }

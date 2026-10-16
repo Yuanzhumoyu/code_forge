@@ -129,3 +129,37 @@ fn second_variant_for_not_supported_is_gone() {
         hits.join("\n")
     );
 }
+
+/// 分类学的**四个类别**（文档表的第一列必须与它逐一相等）。
+const TAXONOMY_CLASSES: [&str; 4] = ["capability", "internal", "semantic", "other"];
+
+/// **错误分类学与契约文档双向相等**（v25 M5）：文档"错误分类学"表的第一列 = 上面那四个类别。
+#[test]
+fn taxonomy_matches_doc() {
+    let root = repo_root();
+    let doc_path = root.join("docs/reference/backend-pipeline.md");
+    let doc = std::fs::read_to_string(&doc_path)
+        .unwrap_or_else(|e| panic!("读不到 {}：{e}", doc_path.display()));
+    let mut inside = false;
+    let mut doc_classes: BTreeSet<String> = BTreeSet::new();
+    for line in doc.lines() {
+        if line.starts_with("## ") {
+            inside = line.contains("错误分类学");
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        let l = line.trim();
+        if let Some(rest) = l.strip_prefix("| `")
+            && let Some(end) = rest.find('`')
+        {
+            doc_classes.insert(rest[..end].to_string());
+        }
+    }
+    let want: BTreeSet<String> = TAXONOMY_CLASSES.iter().map(|s| (*s).to_string()).collect();
+    assert_eq!(
+        doc_classes, want,
+        "契约文档的错误分类学表与守卫冻结的四分类不一致（改分类就同时改文档与这里）"
+    );
+}

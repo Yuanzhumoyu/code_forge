@@ -171,6 +171,34 @@ M1 成功判据不达标（含"删除清单未清零"）即**停止推进**：�
 
 ## 6. 批次记录（逐里程碑回写）
 
+### M5 契约回写 + 账本工程化 —— **一次落地**（M5 收口，2026-10-11，工作区）
+
+**做了什么**：
+
+- [`reference/backend-pipeline.md`](../reference/backend-pipeline.md) 从 9 节扩到 10 节，补齐 v25 的四项结构：
+  - **§6 一次分类，处处消费**：数据流图（唯一分类处 → 只读消费）+ 五条契约
+    （一个入口 / 规范类型 / 生产者签名里没有机器与约定名 / **按值查不按序号查**（sret 前插会让
+    `op_idx` 漂移）/ 不登记 `va_arg` 的理由）；
+  - **§7 错误分类学**：四分类表（`capability` / `internal` / `semantic` / `other`）+ 构造器住
+    `forge-ir` + "缺口 ID 必须是字面量"这条实测教训 + `Unimplemented` 已删除；
+  - **§8 模块边界与规模棘轮**：切分后的目录职责表 + 叶子方向纪律（含 emission/frame_layout/lowering
+    的**例外与理由**）+ **规模棘轮表**（缺省 700 + 6 条预算，与守卫里的表双向相等）+
+    "测试专属模块怎么识别"（两条扫描型守卫向上看 `mod` 声明）；
+  - 状态头与"别绕过"的纪律从三条扩到**四条**（新增"ABI 落点只有一个来源"）；相关账本一节改指 v25。
+- **守卫扩展（文档表 ↔ 代码表双向相等）**：
+  - `file_size_ratchet` 新增 `ratchet_table_matches_doc`：契约文档的**规模棘轮表** = `BUDGETS`
+    （逐条相等），**模块目录表** = 四个切分目录（且它们在树上真的存在——死条目也红）；
+  - `error_taxonomy` 新增 `taxonomy_matches_doc`：文档"错误分类学"表的第一列 = 守卫冻结的
+    四分类（`TAXONOMY_CLASSES`）。
+- 两条 `legalize_passes_match_doc` / `pipeline_stages_match_doc`（v24 M5 的文档钉住）在新结构下仍绿
+  （它们按**小节关键词**定位，不靠编号）。
+
+**实测**：`forge-codegen --lib` **2836 passed**；`file_size_ratchet` 3 passed；
+`error_taxonomy` 3 passed；全量门禁见下（同批实测）。
+
+**v25 收口**：M1–M5 全部落地、各自单独提交；删除清单全部清零（`AggArgLoc`、两个单类型探针、
+五种计划枚举、`IrError::Unimplemented`、`pipeline/gaps.rs` 在代码里零引用）。
+
 ### M4 模块收敛 —— **一次落地**（M4 收口，2026-10-11，工作区）
 
 **做了什么**（全部是**逐字搬移**，模块名不变 ⇒ **调用点零改动**）：
