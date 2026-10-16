@@ -12,7 +12,6 @@ pub mod frame_layout;
 pub mod frame_slots;
 /// **能力缺口台账的代码侧锚点**（v24 M3）：`capability(ID, msg)` ⇒ 消息带 `[cap:ID]`，
 /// 让"这台机器/这份约定/这份谱做不了什么"成为**可机读的集合**（守卫与台账逐一相等）。
-pub mod gaps;
 pub mod legalize;
 pub mod liverange;
 pub mod lowering;

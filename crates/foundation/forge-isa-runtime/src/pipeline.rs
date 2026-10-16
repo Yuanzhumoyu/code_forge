@@ -59,12 +59,12 @@ pub fn compile_via_pipeline(
 ) -> Result<CompiledFunction, IrError> {
     let factory = factories().lock().ok().and_then(|m| m.get(isa).copied());
     let Some(factory) = factory else {
-        return Err(IrError::Unsupported(format!(
+        return Err(IrError::Semantic(format!(
             "ISA `{isa}` 未注册编译管线：宿主需调用 forge_isa_runtime::register_pipeline(\"{isa}\", <工厂>)"
         )));
     };
     let Some(pipeline) = factory(tm) else {
-        return Err(IrError::Unsupported(format!(
+        return Err(IrError::Semantic(format!(
             "ISA `{isa}` 的管线工厂不认这台机器类型（注册的工厂与 TargetMachine 不匹配）"
         )));
     };

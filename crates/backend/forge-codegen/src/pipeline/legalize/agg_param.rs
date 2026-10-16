@@ -266,13 +266,11 @@ pub(crate) fn expand_large_aggs(
                                     Immediate::Uint(u) => Some(*u as u32),
                                     _ => None,
                                 })
-                                .ok_or_else(|| {
-                                    IrError::Unsupported("extractvalue 索引缺失".into())
-                                })?;
+                                .ok_or_else(|| IrError::Internal("extractvalue 索引缺失".into()))?;
                             UseKind::Extract(idx)
                         }
                         _ => {
-                            return Err(crate::pipeline::gaps::capability(
+                            return Err(crate::IrError::capability(
                                 "AGG_LOAD_USE",
                                 format!(
                                     "大聚合 load 值用于 {:?}（仅支持 store 拷贝/extractvalue 提取）",
@@ -374,11 +372,12 @@ pub(crate) fn expand_large_aggs(
                     .value_type(hit_inst.operands[0])
                     .ok_or_else(|| crate::IrError::Internal("嵌套字段源值没有类型".into()))?;
                 let ts = func.types.borrow();
-                let foff = ts.field_offset(slot_ty, idx).ok_or_else(|| {
-                    IrError::Unsupported(format!("extractvalue 字段偏移缺失：{idx}"))
-                })? as usize;
+                let foff = ts
+                    .field_offset(slot_ty, idx)
+                    .ok_or_else(|| IrError::Internal(format!("extractvalue 字段偏移缺失：{idx}")))?
+                    as usize;
                 let fty = ts.aggregate_elem_type(slot_ty, idx).ok_or_else(|| {
-                    IrError::Unsupported(format!("extractvalue 字段类型缺失：{idx}"))
+                    IrError::Internal(format!("extractvalue 字段类型缺失：{idx}"))
                 })?;
                 if ts.is_aggregate(fty) {
                     drop(ts);
@@ -477,12 +476,12 @@ pub(crate) fn expand_large_aggs(
             let ts = func.types.borrow();
             let field_ty = ts
                 .aggregate_elem_type(li.ty, idx)
-                .ok_or_else(|| IrError::Unsupported(format!("extractvalue 索引 {idx} 越界")))?;
+                .ok_or_else(|| IrError::Internal(format!("extractvalue 索引 {idx} 越界")))?;
             if ts.is_aggregate(field_ty) {
                 // S1：嵌套聚合字段——登记槽地址链（li.addr + off），原指令 Nop；
                 // 后续提取命中 agg_slots 链式 GEP+load
                 let off2 = ts.field_offset(li.ty, idx).ok_or_else(|| {
-                    IrError::Unsupported(format!("extractvalue 字段偏移缺失：{idx}"))
+                    IrError::Internal(format!("extractvalue 字段偏移缺失：{idx}"))
                 })?;
                 drop(ts);
                 let mut addr2 = li.addr;
@@ -516,7 +515,7 @@ pub(crate) fn expand_large_aggs(
                 collect_extract_jobs(func, &mut jobs, res_new, job.load);
             } else {
                 let off = ts.field_offset(li.ty, idx).ok_or_else(|| {
-                    IrError::Unsupported(format!("extractvalue 字段偏移缺失：{idx}"))
+                    IrError::Internal(format!("extractvalue 字段偏移缺失：{idx}"))
                 })?;
                 drop(ts);
                 let mut prev_addr = li.addr;

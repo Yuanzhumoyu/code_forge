@@ -227,7 +227,7 @@ pub(crate) fn plan_abi_edges(
                     {
                         let ret = clf.ret_place(rt)?;
                         if !matches!(ret, RetLoc::Indirect { .. }) && store.size_bytes(rt) > 16 {
-                            return Err(crate::pipeline::gaps::capability(
+                            return Err(crate::IrError::capability(
                                 "AGG_RET_PLACEMENT",
                                 format!(
                                     "聚合返回 {} 字节：这份约定既不是 sret 也不是寄存器档：type {rt:?}",

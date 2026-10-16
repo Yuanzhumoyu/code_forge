@@ -15,8 +15,6 @@ pub enum IrError {
     Verify(String),
     /// 常量求值/字节打包等未支持操作。
     Unsupported(String),
-    /// 尚未实现的特性(编译期拒绝——按路线图推进)。
-    Unimplemented(String),
     /// 发射/对象写入错误。
     Emit(String),
     /// 后端(ISA)未注册/未找到。
@@ -52,7 +50,6 @@ impl std::fmt::Display for IrError {
             IrError::Semantic(m) => write!(f, "Semantic error: {m}"),
             IrError::Verify(m) => write!(f, "Verify error: {m}"),
             IrError::Unsupported(m) => write!(f, "Unsupported: {m}"),
-            IrError::Unimplemented(m) => write!(f, "Unimplemented: {m}"),
             IrError::Emit(m) => write!(f, "Emit error: {m}"),
             IrError::BackendNotFound(m) => write!(f, "Backend not found: {m}"),
             IrError::RegAlloc(m) => write!(f, "Register allocation failed: {m}"),
@@ -71,6 +68,35 @@ impl std::fmt::Display for IrError {
 
 impl std::error::Error for IrError {}
 
+impl IrError {
+    /// 构造一条**能力缺口**错误（v25 M2 起住在 `forge-ir`：`forge-isa-runtime` 的 trait 默认
+    /// 实现也要能构造缺口错误）。
+    ///
+    /// 消息以 **`[cap:ID]`** 开头 ⇒ 用户/CI 能按前缀搜索归类；`id` 与
+    /// `docs/reference/backend-gaps.md` 台账的 ID 列一致，且**每个 ID 在源码里只出现一次**
+    /// （守卫 `capability_gaps_guard` 钉住）。
+    ///
+    /// **什么不算缺口**（混进来会让台账失去意义）：畸形 IR / 内部不变量（用 `IrError::Internal`）、
+    /// 使用错误（约定未注册、装载 ISA 不匹配 ⇒ `IrError::Semantic`）、
+    /// 约定/形状数据自相矛盾（`IrError::Semantic`，报错已点名"数据有问题"）。
+    pub fn capability(id: &str, msg: impl std::fmt::Display) -> Self {
+        Self::Unsupported(format!("[cap:{id}] {msg}"))
+    }
+
+    /// 从一条错误里取出**缺口 ID**（`[cap:ID]`）；不是缺口错误 ⇒ `None`。
+    ///
+    /// 为什么要访问器而不是让调用方自己解析字符串：`IrError::Unsupported` 的 `Display`
+    /// 会在前面加 `Unsupported: `，位置会变；把"怎么从错误里认出缺口"收在一处，
+    /// 上层（测试、CI、诊断工具）就不用各自写正则。
+    pub fn gap_id(&self) -> Option<String> {
+        let s = format!("{self}");
+        let start = s.find("[cap:")? + "[cap:".len();
+        let rest = &s[start..];
+        let end = rest.find(']')?;
+        Some(rest[..end].to_string())
+    }
+}
+
 impl From<String> for IrError {
     fn from(s: String) -> Self {
         IrError::Semantic(s)
@@ -80,5 +106,29 @@ impl From<String> for IrError {
 impl From<&str> for IrError {
     fn from(s: &str) -> Self {
         IrError::Semantic(s.to_string())
+    }
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+
+    /// 缺口错误的消息里必须带 `[cap:ID]`（台账守卫靠这个前缀把集合抓出来），
+    /// 且 `gap_id` 能原样取回 ID（不依赖 `Display` 的前缀位置）。
+    ///
+    /// v25 M2 从 `forge-codegen::pipeline::gaps` 迁来（构造器随之下沉到 `forge-ir`，
+    /// 因为 `forge-isa-runtime` 的 trait 默认实现也要能构造缺口错误）。
+    #[test]
+    fn capability_errors_are_marked() {
+        let e = IrError::capability("DEMO_GAP", "这台机器没有该能力");
+        let s = format!("{e}");
+        assert!(s.contains("[cap:DEMO_GAP]"), "实际：{s}");
+        assert!(s.contains("这台机器没有该能力"));
+        assert_eq!(e.gap_id().as_deref(), Some("DEMO_GAP"));
+        // 非缺口错误 ⇒ `None`（不能把普通 Unsupported 也认成缺口）。
+        assert_eq!(IrError::Unsupported("普通失败".into()).gap_id(), None);
+        // 分类学：畸形 IR / 数据错误各有自己的变体，不该伪装成缺口。
+        assert_eq!(IrError::Internal("字段越界".into()).gap_id(), None);
+        assert_eq!(IrError::Semantic("约定没注册".into()).gap_id(), None);
     }
 }

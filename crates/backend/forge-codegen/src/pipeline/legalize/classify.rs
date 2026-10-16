@@ -70,7 +70,7 @@ impl<'a, M: TargetMachine> Classifier<'a, M> {
             let req = CallRequest::new(self.conv.to_string())
                 .args([TyView::from_ir_type(self.store, ty)]);
             let plan = self.plan(req).map_err(|e| {
-                crate::pipeline::gaps::capability(
+                crate::IrError::capability(
                     "AGG_PLACE_PROBE",
                     format!("聚合落点查询：约定 `{}` 规划失败（{e}）", self.conv),
                 )
@@ -93,7 +93,7 @@ impl<'a, M: TargetMachine> Classifier<'a, M> {
             let req = CallRequest::new(self.conv.to_string())
                 .rets([TyView::from_ir_type(self.store, ty)]);
             let plan = self.plan(req).map_err(|e| {
-                crate::pipeline::gaps::capability(
+                crate::IrError::capability(
                     "AGG_RET_PLACE_PROBE",
                     format!("聚合返回落点查询：约定 `{}` 规划失败（{e}）", self.conv),
                 )
@@ -143,7 +143,7 @@ impl<'a, M: TargetMachine> Classifier<'a, M> {
 /// 单独成函数是为了让调用点写清口径：`Placement::Stack` 的语义是"一格一个值"，
 /// 聚合走它意味着规则数据自相矛盾（v24 M3 的边界分类：这属于**数据错误**，不是缺口）。
 pub(crate) fn scalar_stack_is_a_data_error(conv: &str, size: u32) -> IrError {
-    IrError::Unsupported(format!(
+    IrError::Semantic(format!(
         "聚合落点查询：约定 `{conv}` 把 {size} 字节聚合判成标量栈落点（约定数据有问题）"
     ))
 }

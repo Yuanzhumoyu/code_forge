@@ -261,7 +261,7 @@ pub(crate) fn memoryize_from_segs(
     let n_segs = size.div_ceil(8);
     let start = off / 8;
     if start + n_segs > segs.len() {
-        return Err(IrError::Unsupported("嵌套聚合字段提取：段值不足".into()));
+        return Err(IrError::Internal("嵌套聚合字段提取：段值不足".into()));
     }
     // 1) 分配帧槽（Alloca 指令——预扫描分配帧偏移，lowering 经 lea_off 取址）
     // **immediate 必须是规范形态** `Type(elem) + Uint(count)`：帧槽预扫描

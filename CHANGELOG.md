@@ -11,6 +11,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v25 M2：错误分类学（失败语义分层 + 变体去冗余）
+
+**问题**：`IrError::Unsupported` 一名三用——**能力缺口**（换约定/补规则/换 ISA 就能解）、
+**畸形 IR / 内部不变量**（输入坏或代码 bug）、**使用错误**（约定没注册、装载 ISA 不匹配）。
+三者对用户的意义完全不同，混在一起 ⇒ 台账失焦、CI 没法按类分流；而
+`IrError::Unimplemented` 与它语义重叠（"没实现"就是"做不了"），是纯粹的第二套说法。
+
++ **构造器下沉**：`capability`/`gap_id` 从 `forge-codegen::pipeline::gaps` 移到 **`forge-ir`**
+  （`IrError::capability(id, msg)` / `IrError::gap_id()`）——`forge-isa-runtime` 的 trait
+  默认实现也要能构造缺口错误；`pipeline/gaps.rs` 删除，**21 处调用点**迁移，自测随之下沉
+  （并新增"`Internal`/`Semantic` 不该伪装成缺口"的断言）。
++ **四分类落地（41 处）**：畸形 IR/内部不变量 ⇒ `Internal`（33 处）；使用/数据错误 ⇒
+  `Semantic`（5 处：约定未注册、JIT 装载 ISA 不匹配、管线未注册/工厂不匹配、约定数据自相矛盾）；
+  能力缺口 ⇒ `IrError::capability(ID)`（3 处）。前提核对：`IrError` **不进二进制格式** ⇒
+  删变体无需升 `IR_FORMAT_VERSION`。
++ **删掉第二套说法**：`IrError::Unimplemented` 变体连同 `Display` 臂删除，全仓零出现；它的
+  3 处调用点是 `TargetFrameLowering` 的 trait 默认实现（"这份谱没覆盖这个帧操作"）⇒ 转为能力缺口
+  `FRAME_EMIT_EPILOGUE_JUMP`/`FRAME_SPILL_LOAD`/`FRAME_SPILL_STORE`（进台账，可搜索、可追踪
+  "哪份谱没接"）。
++ **台账补 5 行**（`FRAME_*`×3、`SPEC_LOWERING_RULE_MISSING`、`VECTOR_TIER_UNSUPPORTED`），
+  守卫扫描面扩到 `forge-isa-runtime/src`；能力缺口 ID 一律以**字面量**写在构造点
+  （改成变量会让台账守卫把行判成死行——M1 实测撞到过）。
++ **新增守卫** `error_taxonomy`（2 条）：后端 + 运行时的 `src/` 不允许裸 `Unsupported(`；
+  全仓无 `Unimplemented`。**守卫抓出一处 M3 期错误标注**：`va_expand` 里"宿主 plan 缺字段"
+  借用了向量缺口的 ID ⇒ 改为 `Internal`，那条 ID 的语义不再被稀释。
++ 验收：`forge-codegen --lib` 2834 passed；workspace 全量 exit 0；JIT 两矩阵（197/3/0 ·
+  136/64/0）；asm 三档（3/1/1）；`error_taxonomy`/`capability_gaps`/`trace_knobs`/
+  `entity_tables`/`classification_single_entry`/`read_path_budget` 全绿；clippy `-D warnings`
+  与 fmt 干净。
+
 ### Changed (2026-10-11) — 后端 v25 M1：一次分类处处消费（ABI 落点只有一个来源）
 
 **问题**（立项侦察实测）：v24 的两相化只做完了**改写**那一半——计划相产出的 `AbiEdges`

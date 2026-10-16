@@ -2,7 +2,10 @@
 
 > 状态：`[active]`（2026-10-11 建立；随缺口增删同步更新）
 > 守卫：[`capability_gaps_guard`](../../crates/backend/forge-codegen/tests/capability_gaps.rs) ——
-> 本表与**源码里的缺口集合逐一相等**（多一行、少一行都红）。
+> 本表与**源码里的缺口集合逐一相等**（多一行、少一行都红）；扫描面 = `forge-codegen/src`
+> 与 `forge-isa-runtime/src`（v25 M2 起，后者也构造缺口错误）。
+> 分类学守卫：[`error_taxonomy`](../../crates/backend/forge-codegen/tests/error_taxonomy.rs) ——
+> 后端/运行时的 `Unsupported` **必须**是缺口（畸形 IR ⇒ `Internal`，使用/数据错误 ⇒ `Semantic`）。
 > 相关：[`backend-pipeline.md`](backend-pipeline.md)（管线契约）、
 > [`calling-conventions.md`](calling-conventions.md)（约定层）、
 > v24 收口记录 [`backend-v24-plan.md`](../archive/backend-v24-plan.md) §M3（已归档）。
@@ -13,7 +16,8 @@ v24 立项时的侦察结论：能力缺口以 60+ 处 `Unsupported(...)` 的形
 没人知道"这台机器 / 这份约定 / 这份谱到底缺什么"，失败信息也只在触发那一刻可见。
 后果是同一类问题被反复重新发现，而"其实已经支持了、只是没人试"的缺口也长期没人动。
 
-现在每个"做不了"的失败点都用 `pipeline::gaps::capability(ID, msg)` 构造，消息以
+现在每个"做不了"的失败点都用 `IrError::capability(ID, msg)` 构造（v25 M2 起住在 `forge-ir`：
+`forge-isa-runtime` 的 trait 默认实现也要能构造缺口错误），消息以
 **`[cap:ID]`** 开头：
 
 * **失败信息自带身份**：用户/CI 可以按 `[cap:…]` 搜索、归类、按 ID 豁免；
@@ -36,14 +40,19 @@ v24 立项时的侦察结论：能力缺口以 60+ 处 `Unsupported(...)` 的形
 | `SIMD_WIDE_VECTOR_TIER` | 宽向量（>16B）字节数不在本 ISA 的宽向量档位里 | 数据层 | 谱声明 `[machine].vector_tiers`；`wide_vector_bytes()` 读它 |
 | `SIMD_VECTOR_BYREF` | 该约定没声明向量 by-ref（`>16B` 向量参数/返回无处落） | 数据层 | 约定规则 `by_ref`；win64/sysv64 已声明，`forge-isa abi check <谱>` 逐条报告 |
 | `VECTOR_BYTES_LOWERING` | IR 向量字节数既不是 32 也不是 64（没有 lowering 规则） | 不做 | 仅 V256/V512 有规则；其它宽度是 IR 层构造错误（v20 拍板） |
+| `VECTOR_TIER_UNSUPPORTED` | IR 层出现了**宿主能力表**里没有的宽向量字节数（管线无法为它选指令） | 数据层 | 宿主 `wide_vector_bytes()` / 谱 `[machine].vector_tiers`（分工：`SIMD_WIDE_VECTOR_TIER` 是**谱**声明的档位表，这条是**宿主**交给管线的能力表） |
 | `EXCEPTION_LANDINGPAD` | 异常处理 `landingpad` 无机器指令映射 | 不做 | P1.1 仅文本层解析/展示（见 `docs/reference/isa-dsl.md`） |
 | `EXCEPTION_INVOKE_RESUME` | 异常处理 `invoke`/`resume` 同上 | 不做 | 同上 |
 | `VA_SHAPE_MISSING` | 函数用了 `VaStart`/`VaArg`，但它这份约定没声明 `hidden.va_list` | 数据层 | 约定规则 `hidden.va_list`（形状数据） |
 | `VA_INIT_MISSING` | 宿主没给 `LowerCtx::conv.va.init`（对象字段初值） | 数据层 | 宿主注册表给的 plan；`abi_setup` 填它 |
 | `VA_CURSOR_FIELD_WIDTH` | `va_list` 游标字段宽度不是 1/2/4/8 | 不做 | 形状数据只应写这四档（写别的属数据错） |
 | `VA_ARG_AGG_RULE` | 约定没声明聚合取参规则（`aggregate_arg`） | 待做 | 见 §3.1（aapcs64/lp64d 的实测结论与前置条件） |
-| `VA_ARG_VECTOR_MEM` | `va_arg` 结果是向量：缺"内存→向量寄存器"取值能力 | 待做 | 需要能力申报 + 发射侧的 mem→向量搬移；当前无消费者（前置条件：真实用例） |
+| `VA_ARG_VECTOR_MEM` | `va_arg` 结果是向量：缺"内存→向量寄存器"取值能力 | 待做 | 失败点在 `va_expand`（v25 M2 起正式带此 ID，fail-closed）；需要能力申报 + 发射侧的 mem→向量搬移（前置条件：真实用例） |
 | `VA_ARG_FLOAT_WIDTH` | `va_arg` 的浮点结果不是 f64/f32 | 不做 | 更窄浮点在变参里按默认提升走（f32→f64） |
+| `SPEC_LOWERING_RULE_MISSING` | 这份谱没有该 op/树型匹配的降低规则（生成物的默认实现报错） | 数据层 | 谱里补 `[[lower.<op>]]`；`forge-isa lint --ops <宿主 op 表>` 逐条报告缺哪条 |
+| `FRAME_EMIT_EPILOGUE_JUMP` | 这份谱没覆盖 `emit_epilogue_jump`（帧降低的默认实现报错，v25 M2 从 `Unimplemented` 收编） | 数据层 | 谱/生成器补该帧操作；默认实现 fail-closed |
+| `FRAME_SPILL_LOAD` | 同上：没覆盖溢出回填的 load | 数据层 | 同上 |
+| `FRAME_SPILL_STORE` | 同上：没覆盖溢出回填的 store | 数据层 | 同上 |
 | `AGG_RET_PLACEMENT` | 聚合返回的约定落点既不是 sret 也不是寄存器档 | 数据层 | 约定 `ret_classify` 必须覆盖该尺寸（否则 fail-closed） |
 | `AGG_RET_STACK_UNSUPPORTED` | 聚合返回走"栈返回"（非 sret） | 不做 | v23 已证**前提有误**（`RetLoc` 无栈变体、四份约定全走 `hidden_sret`）；守卫 `wide_return_uses_each_conventions_own_sret_slot` |
 | `AGG_ARG_PLACEMENT` | 聚合实参的约定落点既不是寄存器档也不是按引用档 | 数据层 | 约定 `arg_classify` / `by_ref` |

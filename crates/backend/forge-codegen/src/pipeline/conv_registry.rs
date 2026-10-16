@@ -84,7 +84,7 @@ pub fn resolve(id: &CallConvId) -> Result<String, IrError> {
         return Ok(key);
     }
     let known = reg.conv_names();
-    Err(IrError::Unsupported(format!(
+    Err(IrError::Semantic(format!(
         "调用约定 `{key}` 未在宿主注册表里注册（已注册：{}）——约定是使用者的数据，\
          请用 forge_codegen::pipeline::conv_registry::register_rules_toml 注册，\
          或改用已注册的名字（内置：{}）",

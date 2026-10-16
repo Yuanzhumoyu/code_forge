@@ -48,7 +48,7 @@ pub fn signature_view(func: &Function) -> Result<Signature, IrError> {
     let store = func.types.borrow();
     let sig = store
         .signature_opt(func.signature)
-        .ok_or_else(|| IrError::Unsupported("函数引用的签名不在类型表里（IR 结构损坏）".into()))?;
+        .ok_or_else(|| IrError::Internal("函数引用的签名不在类型表里（IR 结构损坏）".into()))?;
 
     let params: Vec<(String, TyView)> = sig
         .params

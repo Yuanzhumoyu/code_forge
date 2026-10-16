@@ -79,19 +79,19 @@ pub(crate) fn expand_geps(func: &mut Function) -> Result<(), IrError> {
             }
             if let TypeEntry::Struct { .. } = ts.get(cur_ty) {
                 let c = fold(func, idx).ok_or_else(|| {
-                    IrError::Unsupported("GEP struct 索引必须为常量（LLVM 语义）".into())
+                    IrError::Internal("GEP struct 索引必须为常量（LLVM 语义）".into())
                 })?;
                 let off = ts.field_offset(cur_ty, c as u32).ok_or_else(|| {
-                    IrError::Unsupported(format!("GEP struct 索引越界：{c}（type {cur_ty:?}）"))
+                    IrError::Internal(format!("GEP struct 索引越界：{c}（type {cur_ty:?}）"))
                 })?;
                 const_off += off as i64;
                 cur_ty = ts
                     .aggregate_elem_type(cur_ty, c as u32)
-                    .ok_or_else(|| IrError::Unsupported("GEP 字段类型缺失".into()))?;
+                    .ok_or_else(|| IrError::Internal("GEP 字段类型缺失".into()))?;
             } else {
-                let elem_ty = ts.element_type(cur_ty).ok_or_else(|| {
-                    IrError::Unsupported("GEP 索引作用于非数组/结构体类型".into())
-                })?;
+                let elem_ty = ts
+                    .element_type(cur_ty)
+                    .ok_or_else(|| IrError::Internal("GEP 索引作用于非数组/结构体类型".into()))?;
                 let elem_size = ts.size_bytes(elem_ty) as i64;
                 match fold(func, idx) {
                     Some(c) => const_off += c * elem_size,

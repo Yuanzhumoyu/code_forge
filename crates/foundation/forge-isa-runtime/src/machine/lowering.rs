@@ -248,9 +248,10 @@ pub trait TargetLowering: Send + Sync + 'static {
         _results: &[XReg],
         _ctx: &mut LowerCtx,
     ) -> Result<InstPacket<Self::Inst>, IrError> {
-        Err(IrError::Unsupported(format!(
-            "DSL lowering: 未声明的树型匹配 '{_pattern_name}'（无此模式的发射实现）"
-        )))
+        Err(IrError::capability(
+            "SPEC_LOWERING_RULE_MISSING",
+            format!("DSL lowering: 未声明的树型匹配 '{_pattern_name}'（无此模式的发射实现）"),
+        ))
     }
 
     /// 已编译的模式规格表（S6）。已按（Op 节点数降, when 叶子数降, 声明序升）

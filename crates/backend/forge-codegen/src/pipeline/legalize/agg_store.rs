@@ -34,7 +34,7 @@ pub(crate) fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
                         && let ValueDef::AggConst(aid) = func.dfg.value_data(*v).def
                     {
                         let agg = func.constants.get_aggregate(aid).ok_or_else(|| {
-                            IrError::Unsupported("聚合常量 store：常量池缺失 AggId".into())
+                            IrError::Internal("聚合常量 store：常量池缺失 AggId".into())
                         })?;
                         let bytes = crate::pipeline::agg_const::pack_agg_bytes(func, agg)?;
                         jobs.push((b, pos, 0, bytes, true));
@@ -50,7 +50,7 @@ pub(crate) fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
                     for (op_idx, v) in inst.operands.iter().enumerate().skip(skip) {
                         if let ValueDef::AggConst(aid) = func.dfg.value_data(*v).def {
                             let agg = func.constants.get_aggregate(aid).ok_or_else(|| {
-                                IrError::Unsupported("聚合常量参数：常量池缺失 AggId".into())
+                                IrError::Internal("聚合常量参数：常量池缺失 AggId".into())
                             })?;
                             let size = store.size_bytes(agg.ty);
                             if size > 8 {

@@ -45,8 +45,10 @@ pub trait TargetFrameLowering: Send + Sync + 'static {
         _sink: &mut CodeSink,
     ) -> Result<(), IrError> {
         // 默认实现：未覆盖的 ISA 报错而非 panic（错误优雅传播）
-        Err(IrError::Unimplemented(
-            "TargetFrameLowering::emit_epilogue_jump must be overridden per ISA".into(),
+        // 这份谱没覆盖这个帧操作 ⇒ **能力缺口**（进台账，可搜索、可豁免），不是"未实现"。
+        Err(IrError::capability(
+            "FRAME_EMIT_EPILOGUE_JUMP",
+            "TargetFrameLowering::emit_epilogue_jump must be overridden per ISA",
         ))
     }
 
@@ -74,8 +76,10 @@ pub trait TargetFrameLowering: Send + Sync + 'static {
         _class: RegClass,
         _sink: &mut CodeSink,
     ) -> Result<(), IrError> {
-        Err(IrError::Unimplemented(
-            "TargetFrameLowering::emit_spill_load must be overridden per ISA".into(),
+        // 这份谱没覆盖这个帧操作 ⇒ **能力缺口**（进台账，可搜索、可豁免），不是"未实现"。
+        Err(IrError::capability(
+            "FRAME_SPILL_LOAD",
+            "TargetFrameLowering::emit_spill_load must be overridden per ISA",
         ))
     }
 
@@ -89,8 +93,10 @@ pub trait TargetFrameLowering: Send + Sync + 'static {
         _class: RegClass,
         _sink: &mut CodeSink,
     ) -> Result<(), IrError> {
-        Err(IrError::Unimplemented(
-            "TargetFrameLowering::emit_spill_store must be overridden per ISA".into(),
+        // 这份谱没覆盖这个帧操作 ⇒ **能力缺口**（进台账，可搜索、可豁免），不是"未实现"。
+        Err(IrError::capability(
+            "FRAME_SPILL_STORE",
+            "TargetFrameLowering::emit_spill_store must be overridden per ISA",
         ))
     }
 }

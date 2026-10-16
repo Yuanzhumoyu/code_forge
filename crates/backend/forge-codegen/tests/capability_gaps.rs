@@ -31,8 +31,12 @@ fn repo_root() -> std::path::PathBuf {
 /// 源码里所有 `capability("ID", …)` 的 (ID → 出现处)。
 fn source_gaps(root: &std::path::Path) -> BTreeMap<String, Vec<String>> {
     let mut found: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    let src = root.join("crates/backend/forge-codegen/src");
-    let mut stack = vec![src];
+    // 扫描面 = 后端 + 运行时（v25 M2：构造器 `IrError::capability` 下沉到 forge-ir，
+    // 运行时的 trait 默认实现也在构造缺口错误）。
+    let mut stack = vec![
+        root.join("crates/backend/forge-codegen/src"),
+        root.join("crates/foundation/forge-isa-runtime/src"),
+    ];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;

@@ -171,6 +171,44 @@ M1 成功判据不达标（含"删除清单未清零"）即**停止推进**：�
 
 ## 6. 批次记录（逐里程碑回写）
 
+### M2 错误分类学 —— **一次落地**（M2 收口，2026-10-11，工作区）
+
+**前提核对**：`IrError` **不进二进制格式**（`docs/reference/binary-format.md` 只在 API 签名里
+提到它）⇒ 删变体**不需要**升 `IR_FORMAT_VERSION` ✔。
+
+**做了什么**：
+
+- **构造器下沉（通用性）**：`capability`/`gap_id` 从 `forge-codegen::pipeline::gaps` 移到
+  **`forge-ir`**（`IrError::capability(id, msg)` / `IrError::gap_id()`）——`forge-isa-runtime`
+  的 trait 默认实现也要能构造缺口错误。`pipeline/gaps.rs` 删除，**21 处调用点**机械迁移；
+  自测随之下沉（`capability_errors_are_marked` 现在住在 `forge-ir`，并多加了两条"不该伪装成
+  缺口"的断言：`Internal`/`Semantic` 的 `gap_id()` 都是 `None`）。
+- **四分类落地**（41 处）：**畸形 IR / 内部不变量 ⇒ `Internal`（33 处）**（字段越界、常量池缺项、
+  索引缺失、段值不足、IR 结构损坏…）；**使用/数据错误 ⇒ `Semantic`（5 处）**（约定未注册、
+  JIT 装载 ISA 不匹配、管线未注册/工厂不匹配、约定把聚合判成标量栈落点）；**能力缺口 ⇒
+  `capability(ID)`（3 处）**。
+- **删掉第二套说法**：`IrError::Unimplemented` 变体 + `Display` 臂删除，全仓**零出现**；它的
+  3 处调用点是 `TargetFrameLowering` 的 trait 默认实现（"这份谱没覆盖这个帧操作"）⇒ 转为能力缺口
+  `FRAME_EMIT_EPILOGUE_JUMP` / `FRAME_SPILL_LOAD` / `FRAME_SPILL_STORE`（进台账：可搜索、可豁免、
+  可追踪"哪份谱没接"）。
+- **新增 5 条台账行**：`FRAME_*`×3、`SPEC_LOWERING_RULE_MISSING`（这份谱没有该 op 的降低规则——
+  最经典的能力缺口之一）、`VECTOR_TIER_UNSUPPORTED`（宿主能力表里没有该宽向量档位，与
+  `SIMD_WIDE_VECTOR_TIER`（**谱**声明的档位表）分工写明）。台账守卫的扫描面扩到
+  `forge-isa-runtime/src`（两侧的缺口集合现在一起管）。
+- **新增守卫** [`error_taxonomy`](../../crates/backend/forge-codegen/tests/error_taxonomy.rs)（2 条）：
+  `unsupported_is_always_a_capability`（后端 + 运行时 **`src/`** 里不允许裸 `Unsupported(`，
+  白名单条目必须被命中——`tests/` 允许构造负例）；`second_variant_for_not_supported_is_gone`
+  （全仓无 `Unimplemented`）。
+- **守卫抓出一处 M3 期的错误标注**（如实记录）：`va_expand` 里"宿主 plan 缺字段"的失败点
+  借用了 `VA_ARG_VECTOR_MEM`（向量缺口）的 ID ⇒ 它其实是**输入/数据不一致**，改为 `Internal`；
+  该 ID 现在只剩真正的失败点（向量结果缺 mem→向量搬移能力），台账那行的语义不再被稀释。
+
+**实测**：`forge-codegen --lib` **2834 passed**（少的那 1 条随 `gaps.rs` 迁到 `forge-ir`）；
+workspace 全量 exit 0；`error_taxonomy` 2 passed；`capability_gaps` 1 passed（含新扫描面）；
+其余守卫与矩阵见下（同批实测）。
+
+**下一步**：M3 观测事件化。
+
 ### M1 一次分类处处消费 —— 批次 3：**计划驱动改写 + 删五种枚举**（M1 收口，2026-10-11，工作区）
 
 **做了什么**：

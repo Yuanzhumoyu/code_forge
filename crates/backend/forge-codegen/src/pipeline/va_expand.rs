@@ -180,7 +180,7 @@ fn int_ty(bytes: u32) -> Result<TypeId, IrError> {
         2 => Ok(TypeId::I16),
         4 => Ok(TypeId::I32),
         8 => Ok(TypeId::I64),
-        other => Err(crate::pipeline::gaps::capability(
+        other => Err(crate::IrError::capability(
             "VA_CURSOR_FIELD_WIDTH",
             format!(
                 "变参游标字段宽度 {other} 字节：只支持 1/2/4/8（形状数据给的宽度必须落在这四档）——             以前会静默按 8 字节读写，与相邻字段互相踩"
@@ -201,7 +201,7 @@ pub(crate) fn expand_va(
     agg_slots: &mut Places,
 ) -> Result<(usize, usize), IrError> {
     let Some(init) = va.init.clone() else {
-        return Err(crate::pipeline::gaps::capability(
+        return Err(crate::IrError::capability(
             "VA_INIT_MISSING",
             format!(
                 "变参：宿主没给 `LowerCtx::conv.va.init`（对象字段初值），无法物化 `va_list`——\
@@ -377,7 +377,7 @@ fn expand_start(
         }
     }
     if init.fields.len() != va.fields.len() {
-        return Err(IrError::Unsupported(format!(
+        return Err(IrError::Internal(format!(
             "va_start（保存区形态）：`va.init` 给了 {} 个字段初值，但布局有 {} 个字段",
             init.fields.len(),
             va.fields.len()
@@ -547,7 +547,7 @@ fn expand_arg(
     // 不是 int/fp 两类能表达的。没声明 ⇒ fail-closed（不猜、也不按标量 load）。
     let agg_rule = if is_agg {
         Some(va.arg_rules.aggregate.ok_or_else(|| {
-            crate::pipeline::gaps::capability(
+            crate::IrError::capability(
                 "VA_ARG_AGG_RULE",
                 "va_arg：本约定没有声明聚合取参规则（`va_list` 形状的 `aggregate_arg`）——\
                  调用方可按标量逐个 va_arg，或先在约定层补这条规则",
@@ -566,13 +566,12 @@ fn expand_arg(
             .get(i)
             .map(|f| (f.offset, f.size.max(1)))
             .ok_or_else(|| {
-                crate::pipeline::gaps::capability(
-                    "VA_ARG_VECTOR_MEM",
-                    format!(
-                        "va_arg：plan 的 `va.fields` 缺第 {} 个字段（取参规则引用了它）",
-                        i + 1
-                    ),
-                )
+                // 宿主给的 plan 里缺了取参规则引用的字段 ⇒ **输入/数据不一致**，不是能力缺口
+                //（v25 M2 修正：这里以前借用了向量缺口的 ID，让台账里那条的语义被稀释）。
+                IrError::Internal(format!(
+                    "va_arg：plan 的 `va.fields` 缺第 {} 个字段（取参规则引用了它）",
+                    i + 1
+                ))
             })
     };
     let (cur_off, cur_size) = field(rule.cursor)?;
@@ -784,12 +783,13 @@ fn va_arg_site(func: &Function, ii: Inst) -> Result<VaArgSite, IrError> {
     // 聚合不再无条件拒绝：`expand_arg` 会去查 `arg_rules.aggregate`，**没声明**那条规则才
     // fail-closed（v23 收尾：数据面已支持，win64 已声明"间接"形态）。
     if is_vec {
-        return Err(IrError::Unsupported(
-            "va_arg: 向量结果需要「mem → 向量寄存器」的取值能力（尚未申报）".into(),
+        return Err(IrError::capability(
+            "VA_ARG_VECTOR_MEM",
+            "va_arg: 向量结果需要「mem → 向量寄存器」的取值能力（尚未申报）",
         ));
     }
     if is_fp && bits != 32 && bits != 64 {
-        return Err(crate::pipeline::gaps::capability(
+        return Err(crate::IrError::capability(
             "VA_ARG_FLOAT_WIDTH",
             "va_arg: 只支持 f64 与 f32（f32 走默认提升的窄回）；更窄的浮点还没有能力声明",
         ));

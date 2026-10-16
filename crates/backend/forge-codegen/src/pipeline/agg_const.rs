@@ -41,17 +41,17 @@ pub fn pack_agg_into_bytes(
     let big = matches!(ts.data_layout.endianness, Endianness::Big);
     for (i, child) in agg.children.iter().enumerate() {
         let fty = ts.aggregate_elem_type(agg.ty, i as u32).ok_or_else(|| {
-            IrError::Unsupported(format!("聚合常量打包：字段 {i} 越界（type {:?}）", agg.ty))
+            IrError::Internal(format!("聚合常量打包：字段 {i} 越界（type {:?}）", agg.ty))
         })?;
         let off = base + ts.field_offset(agg.ty, i as u32).unwrap_or(0) as usize;
         match child {
             AggChild::Scalar(c) => {
                 let raw = if ts.is_float(fty) {
                     cp.get_float128(*c)
-                        .ok_or_else(|| IrError::Unsupported("聚合常量打包：浮点标量缺失".into()))?
+                        .ok_or_else(|| IrError::Internal("聚合常量打包：浮点标量缺失".into()))?
                 } else {
                     cp.get_int(*c)
-                        .ok_or_else(|| IrError::Unsupported("聚合常量打包：整数标量缺失".into()))?
+                        .ok_or_else(|| IrError::Internal("聚合常量打包：整数标量缺失".into()))?
                         .0 as u128
                 };
                 let n = ts.size_bytes(fty) as usize;
@@ -64,7 +64,7 @@ pub fn pack_agg_into_bytes(
             AggChild::Agg(aid) => {
                 let sub = cp
                     .get_aggregate(*aid)
-                    .ok_or_else(|| IrError::Unsupported("聚合常量打包：嵌套聚合缺失".into()))?;
+                    .ok_or_else(|| IrError::Internal("聚合常量打包：嵌套聚合缺失".into()))?;
                 pack_agg_into_bytes(cp, ts, sub, off, out)?;
             }
         }

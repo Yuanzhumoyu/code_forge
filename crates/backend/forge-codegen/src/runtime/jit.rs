@@ -189,7 +189,7 @@ impl<M: TargetMachine + Clone> JitLoader<M> {
     pub fn install(&mut self, compiled: CompiledModule) -> Result<(), IrError> {
         let isa = self.machine.isa_info().name();
         if compiled.isa() != isa {
-            return Err(IrError::Unsupported(format!(
+            return Err(IrError::Semantic(format!(
                 "JIT 装载：产物是给 ISA `{}` 编的，装载器是 `{isa}`——拒绝装载",
                 compiled.isa()
             )));

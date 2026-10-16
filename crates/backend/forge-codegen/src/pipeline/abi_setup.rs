@@ -62,7 +62,7 @@ pub(crate) fn setup_conv<M: TargetMachine>(
                 if crate::pipeline::trace::knob("FORGE_TRACE_ABI") {
                     eprintln!("[abi-plan] {e}");
                 }
-                return Err(crate::pipeline::gaps::capability(
+                return Err(crate::IrError::capability(
                     "ABI_PLAN_UNAVAILABLE",
                     format!(
                         "DSL 编译入口：这台机器上的约定 `{}` 规划不出该函数的调用布局（{e}）——\

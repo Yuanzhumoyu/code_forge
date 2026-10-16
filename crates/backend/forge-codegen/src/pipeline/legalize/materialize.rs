@@ -155,9 +155,7 @@ pub(crate) fn memoryize_insertvalue(
             return Ok(());
         };
         let Some(Immediate::Uint(idx)) = inst.immediates.first() else {
-            return Err(IrError::Unsupported(
-                "insertvalue 缺字段索引 immediate".into(),
-            ));
+            return Err(IrError::Internal("insertvalue 缺字段索引 immediate".into()));
         };
         (agg_v, elem, res, *idx as u32)
     };
@@ -167,10 +165,10 @@ pub(crate) fn memoryize_insertvalue(
     let size = store.size_bytes(agg_ty) as usize;
     let foff = store
         .field_offset(agg_ty, idx)
-        .ok_or_else(|| IrError::Unsupported(format!("insertvalue 字段越界：{idx}")))?;
+        .ok_or_else(|| IrError::Internal(format!("insertvalue 字段越界：{idx}")))?;
     let fty = store
         .aggregate_elem_type(agg_ty, idx)
-        .ok_or_else(|| IrError::Unsupported(format!("insertvalue 字段类型缺失：{idx}")))?;
+        .ok_or_else(|| IrError::Internal(format!("insertvalue 字段类型缺失：{idx}")))?;
     let field_is_fp = store.is_float(fty);
     // **沿定义链求来源地址**（v24 M3）：基值可能是另一个 `insertvalue`（链式构造）或 `undef`
     //（全 0）。以前只看 `places` 里有没有现成的地址，于是链式场景里基值的字段会**静默丢掉**
@@ -315,7 +313,7 @@ fn expand_extract(
             return Ok(());
         };
         let Some(Immediate::Uint(idx)) = inst.immediates.first() else {
-            return Err(IrError::Unsupported("extractvalue 索引缺失".into()));
+            return Err(IrError::Internal("extractvalue 索引缺失".into()));
         };
         (agg_v, res, *idx as u32)
     };
@@ -330,10 +328,10 @@ fn expand_extract(
     };
     let foff = store
         .field_offset(agg_ty, idx)
-        .ok_or_else(|| IrError::Unsupported(format!("extractvalue 字段偏移缺失：{idx}")))?;
+        .ok_or_else(|| IrError::Internal(format!("extractvalue 字段偏移缺失：{idx}")))?;
     let fty = store
         .aggregate_elem_type(agg_ty, idx)
-        .ok_or_else(|| IrError::Unsupported(format!("extractvalue 字段类型缺失：{idx}")))?;
+        .ok_or_else(|| IrError::Internal(format!("extractvalue 字段类型缺失：{idx}")))?;
 
     match place {
         Place::Mem(addr) => {
@@ -367,7 +365,7 @@ fn expand_extract(
             let base = segs
                 .get(off / 8)
                 .copied()
-                .ok_or_else(|| IrError::Unsupported("extractvalue 段值缺失".into()))?;
+                .ok_or_else(|| IrError::Internal("extractvalue 段值缺失".into()))?;
             let inner = (off % 8) as u32;
             let mut v = base;
             if inner > 0 {
@@ -426,7 +424,7 @@ fn expand_store(
             let size = agg_ty_of(func, store, shadow_agg, src_v)
                 .map(|t| store.size_bytes(t) as usize)
                 .ok_or_else(|| {
-                    IrError::Unsupported("聚合 store：内存档值缺字节数（类型未知）".into())
+                    IrError::Internal("聚合 store：内存档值缺字节数（类型未知）".into())
                 })?;
             let mut cur_src = src;
             let mut cur_dst = dst;
@@ -460,7 +458,7 @@ fn expand_store(
         }
         Place::Segs(segs) => {
             if segs.is_empty() {
-                return Err(IrError::Unsupported("聚合 store：段值档却没有段值".into()));
+                return Err(IrError::Internal("聚合 store：段值档却没有段值".into()));
             }
             let mut addr = dst;
             for (k, s) in segs.iter().enumerate() {

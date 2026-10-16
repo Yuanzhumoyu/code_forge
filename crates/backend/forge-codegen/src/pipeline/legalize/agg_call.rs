@@ -186,7 +186,7 @@ pub(crate) fn expand_large_agg_ret(
     for job in jobs {
         let size = store.size_bytes(job.ty) as usize;
         if !sret && size > 16 {
-            return Err(crate::pipeline::gaps::capability(
+            return Err(crate::IrError::capability(
                 "AGG_RET_STACK_UNSUPPORTED",
                 format!(
                     "聚合返回 {size} 字节：这份约定既不是 sret 也不是寄存器档（栈返回未实现）：type {:?}",
@@ -203,7 +203,7 @@ pub(crate) fn expand_large_agg_ret(
                 let agg = func
                     .constants
                     .get_aggregate(aid)
-                    .ok_or_else(|| IrError::Unsupported("聚合返回：常量池缺失 AggId".into()))?;
+                    .ok_or_else(|| IrError::Internal("聚合返回：常量池缺失 AggId".into()))?;
                 let bytes = crate::pipeline::agg_const::pack_agg_bytes(func, agg)?;
                 let mut off = 0usize;
                 while off < size {
@@ -232,7 +232,7 @@ pub(crate) fn expand_large_agg_ret(
                     .operands
                     .first()
                     .copied()
-                    .ok_or_else(|| IrError::Unsupported("聚合返回：load 无地址".into()))?;
+                    .ok_or_else(|| IrError::Internal("聚合返回：load 无地址".into()))?;
                 let mut prev_addr = addr;
                 let mut off = 0usize;
                 while off < size {
@@ -276,7 +276,7 @@ pub(crate) fn expand_large_agg_ret(
             _ => {
                 // by-ref 档（值住在指针指向的内存）：从该地址逐段 load
                 let Some(addr) = mem_addr else {
-                    return Err(IrError::Unsupported(format!(
+                    return Err(IrError::Internal(format!(
                         "聚合返回：值来源不支持（def {:?}）",
                         func.dfg.value_data(job.val).def
                     )));
@@ -512,7 +512,7 @@ pub(crate) fn expand_agg_call_args(
         // 被调方一侧的地址口径已由 lowering 的"正立即数 = ABI 相对"钉住。
         let stack_by_val = matches!(place, Placement::StackByVal { .. });
         if !by_ref && !stack_by_val && size > 16 {
-            return Err(crate::pipeline::gaps::capability(
+            return Err(crate::IrError::capability(
                 "AGG_ARG_PLACEMENT",
                 format!(
                     "聚合实参 {size} 字节：约定落点既不是寄存器档也不是按引用档（type {ty:?}）"
@@ -527,7 +527,7 @@ pub(crate) fn expand_agg_call_args(
                 let agg = func
                     .constants
                     .get_aggregate(aid)
-                    .ok_or_else(|| IrError::Unsupported("聚合实参：常量池缺失 AggId".into()))?;
+                    .ok_or_else(|| IrError::Internal("聚合实参：常量池缺失 AggId".into()))?;
                 let bytes = crate::pipeline::agg_const::pack_agg_bytes(func, agg)?;
                 let mut off = 0usize;
                 while off < size {
@@ -560,7 +560,7 @@ pub(crate) fn expand_agg_call_args(
                     .operands
                     .first()
                     .copied()
-                    .ok_or_else(|| IrError::Unsupported("聚合实参：load 无地址".into()))?;
+                    .ok_or_else(|| IrError::Internal("聚合实参：load 无地址".into()))?;
                 let (s, ins) = load_segs_from_addr(func, job.block, addr, size);
                 segs.extend(s);
                 new_insts.extend(ins);
@@ -590,7 +590,7 @@ pub(crate) fn expand_agg_call_args(
                         new_insts.extend(ins);
                     }
                     None => {
-                        return Err(crate::pipeline::gaps::capability(
+                        return Err(crate::IrError::capability(
                             "AGG_ARG_INSERTVALUE_CHAIN",
                             format!(
                                 "聚合实参拆段：值来源既不是 load，也不是可物化的 `insertvalue`/`undef` \
