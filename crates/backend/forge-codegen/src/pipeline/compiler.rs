@@ -733,18 +733,20 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 .unwrap_or(0),
         };
 
-        // **v23 M4 批次 C 第二步：把 `xreg_types`（vreg → IR 类型）折进绑定表一次。**
+        // **折入绑定表：把值的描述类折进 `OperandBind` 一次（v24 M2 起描述已单一来源）。**
         //
         // 以前两个回填点各自把这张表推成"值宽类"，**且口径不同**：
         // `compiler.rs` 主回填走 `ctx.reg_class_for(ty)`（ISA 类型映射），
         // `emission.rs` 的 spill 回填走 `forge_ir::RegClass::from_type_id(ty)`。
         // 现场只有一处是对的、另一处是兜底——同一件事两种写法。现在在这里折成
-        // `OperandBind::class`，两个回填点读同一个值。折完 `xreg_types` 在本函数后续
+        // `OperandBind::class`，两个回填点读同一个值。
         // 不再被读（写入面仍留在 lowering 期作草稿，见方案 §13 的余项）。
         for slot in self.inst_ops.iter_mut() {
             for bind in slot.iter_mut() {
-                if let Some(ty) = self.ctx.xreg_types.get(&bind.vreg).copied() {
-                    bind.class = Some(self.ctx.reg_class_for(&ty));
+                if let Some(d) = self.ctx.desc_of(&bind.vreg) {
+                    // 类**就是描述里的类**（`set_value_desc` 的唯一推导处算好）——
+                    // 不再由这里"从类型再推一次"（那正是两处口径分叉的来源）。
+                    bind.class = Some(d.class);
                 }
             }
         }
@@ -781,12 +783,12 @@ impl<I: MachineInst + 'static> CompileState<I> {
                             // **多类槽的值宽类来源：可见但不强制**（v23 M4，2026-10-11 实测）。
                             //
                             // 形状表说该字段是**多类槽**（`class == None` = 宽度由运行期决定）
-                            // 时，回填用的是绑定带的类；绑定没带（`xreg_types` 里没有这个 vreg
+                            // 时，回填用的是绑定带的类；绑定没带（值描述表里没有这个 vreg
                             // 的记录）就退到 vreg 的**池宽类**。
                             //
                             // 实测：确实存在这种绑定（如 `test_jit_agg_by_value_stack_sysv64`
                             // 第 15 条指令、riscv 侧也有）——但这是**既有**行为：改动前的两个
-                            // 回填点同样先查 `xreg_types`、查不到就退池宽类，所以 M4 没有改变
+                            // 回填点同样先查值描述、查不到就退池宽类，所以 M4 没有改变
                             // 它。这里**断言**会过强（等于要求代码具备它从来没有的性质），
                             // 因此改成**可观测**：`FORGE_TRACE_M4=1` 时报出来，留存量级。
                             if let Some(op) = ops
@@ -862,9 +864,8 @@ impl<I: MachineInst + 'static> CompileState<I> {
             .iter()
             .map(|v| {
                 self.ctx
-                    .xreg_types
-                    .get(v)
-                    .and_then(|t| self.ctx.type_store.as_ref().map(|s| s.size_bytes(*t)))
+                    .desc_of(v)
+                    .and_then(|d| self.ctx.type_store.as_ref().map(|s| s.size_bytes(d.ty)))
                     .map(|b| b as u16)
                     .unwrap_or(0)
             })
@@ -879,7 +880,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                         let (xreg, field_idx) = (bind.vreg, bind.field);
                         if let Some(preg) = alloc_result.preg(xreg) {
                             // class：值宽类已由上面的折入步骤写进绑定（原实现现场从
-                            // `xreg_types` 推，与 emission 的 spill 回填口径不同）；
+                            // 值描述推，与 emission 的 spill 回填口径不同）；
                             // `None`（该 vreg 没有类型记录）退到 vreg 自身类。
                             let cls = bind.class.unwrap_or_else(|| xreg.class());
                             inst.set_reg_field(field_idx as usize, preg.num, cls);

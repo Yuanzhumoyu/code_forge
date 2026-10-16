@@ -1152,7 +1152,7 @@ impl<'a> BtState<'a> {
             stack_arg_bytes: 0,
             va_save_off: None,
             va_top: 0,
-            // 参数字节宽由 CompileState 分配后按 xreg_types 填充（regalloc
+            // 参数字节宽由 CompileState 分配后按值描述填充（regalloc
             // 不持有 IR 类型；见 AllocResult::param_bytes 文档）。
             param_bytes: Vec::new(),
             callee_saved_to_save: callee_saved_pregs,

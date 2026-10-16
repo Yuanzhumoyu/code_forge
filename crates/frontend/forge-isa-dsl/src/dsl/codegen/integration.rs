@@ -185,42 +185,42 @@ pub(crate) fn gen_lowering_attrs() -> Result<TokenStream, String> {
 fn core_attr_body(name: &str) -> Result<TokenStream, String> {
     Ok(match name {
         "rd" => quote! {
-            self.results.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
-                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
-                    (ctx.type_store.as_ref().map(|s| s.size_bytes(*t)).unwrap_or(0) * 8) as i64
+            self.results.first().and_then(|x| ctx.desc_of(x)).map(|d| {
+                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(d.ty)) {
+                    (ctx.type_store.as_ref().map(|s| s.size_bytes(d.ty)).unwrap_or(0) * 8) as i64
                 } else {
-                    ctx.type_store.as_ref().and_then(|s| s.scalar_bits(*t)).unwrap_or(0) as i64
+                    ctx.type_store.as_ref().and_then(|s| s.scalar_bits(d.ty)).unwrap_or(0) as i64
                 }
             })
         },
         "rs1_width" => quote! {
-            self.args.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
-                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
-                    (ctx.type_store.as_ref().map(|s| s.size_bytes(*t)).unwrap_or(0) * 8) as i64
+            self.args.first().and_then(|x| ctx.desc_of(x)).map(|d| {
+                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(d.ty)) {
+                    (ctx.type_store.as_ref().map(|s| s.size_bytes(d.ty)).unwrap_or(0) * 8) as i64
                 } else {
-                    ctx.type_store.as_ref().and_then(|s| s.scalar_bits(*t)).unwrap_or(0) as i64
+                    ctx.type_store.as_ref().and_then(|s| s.scalar_bits(d.ty)).unwrap_or(0) as i64
                 }
             })
         },
         "rs2_width" => quote! {
-            self.args.get(1).and_then(|x| ctx.xreg_types.get(x)).map(|t| {
-                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
-                    (ctx.type_store.as_ref().map(|s| s.size_bytes(*t)).unwrap_or(0) * 8) as i64
+            self.args.get(1).and_then(|x| ctx.desc_of(x)).map(|d| {
+                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(d.ty)) {
+                    (ctx.type_store.as_ref().map(|s| s.size_bytes(d.ty)).unwrap_or(0) * 8) as i64
                 } else {
-                    ctx.type_store.as_ref().and_then(|s| s.scalar_bits(*t)).unwrap_or(0) as i64
+                    ctx.type_store.as_ref().and_then(|s| s.scalar_bits(d.ty)).unwrap_or(0) as i64
                 }
             })
         },
         "elem" => quote! {
-            self.results.first().and_then(|x| ctx.xreg_types.get(x)).map(|t| {
-                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(*t)) {
+            self.results.first().and_then(|x| ctx.desc_of(x)).map(|d| {
+                if ctx.type_store.as_ref().is_some_and(|s| s.is_vector(d.ty)) {
                     ctx.type_store
                         .as_ref()
-                        .and_then(|s| s.element_type(*t))
+                        .and_then(|s| s.element_type(d.ty))
                         .map(elem_id_of)
                         .unwrap_or(0)
                 } else {
-                    elem_id_of(*t)
+                    elem_id_of(d.ty)
                 }
             })
         },
@@ -228,10 +228,10 @@ fn core_attr_body(name: &str) -> Result<TokenStream, String> {
         // None。Store 无结果（elem 恒 None）时据此区分向量 store 与标量
         //（WA-37 D3：≤16B Direct 向量值的 Load/Store 需全宽向量内存移动）。
         "rd_vec" => quote! {
-            self.results.first().and_then(|x| ctx.xreg_types.get(x)).and_then(|t| {
+            self.results.first().and_then(|x| ctx.desc_of(x)).and_then(|d| {
                 ctx.type_store.as_ref().and_then(|s| {
-                    if s.is_vector(*t) {
-                        Some(s.size_bytes(*t) as i64)
+                    if s.is_vector(d.ty) {
+                        Some(s.size_bytes(d.ty) as i64)
                     } else {
                         None
                     }
@@ -239,10 +239,10 @@ fn core_attr_body(name: &str) -> Result<TokenStream, String> {
             })
         },
         "rs1_vec" => quote! {
-            self.args.first().and_then(|x| ctx.xreg_types.get(x)).and_then(|t| {
+            self.args.first().and_then(|x| ctx.desc_of(x)).and_then(|d| {
                 ctx.type_store.as_ref().and_then(|s| {
-                    if s.is_vector(*t) {
-                        Some(s.size_bytes(*t) as i64)
+                    if s.is_vector(d.ty) {
+                        Some(s.size_bytes(d.ty) as i64)
                     } else {
                         None
                     }

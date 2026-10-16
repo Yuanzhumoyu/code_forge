@@ -86,7 +86,7 @@ pub struct AllocResult {
     /// 这一个量——生成物按它给自己的存取偏移减掉；0 = 历史布局（逐字节不变）。
     pub va_top: u32,
     /// 每个参数的 **IR 类型字节数**（与 param_vregs 对齐）——由 `CompileState`
-    /// 在分配后按 `xreg_types` 填充。用途：`@move_args` 的 by-ref 宽向量收参
+    /// 在分配后按值描述填充。用途：`@move_args` 的 by-ref 宽向量收参
     /// 必须按**真实字节宽**分派 32B/64B load 变体——寄存器类宽对 >128 位向量
     /// 恒为 `VEC(32)`（`reg_class_for`），无法区分 V256(32B)/V512(64B)，旧实现
     /// 因此让 64B 分支永不可达 → V512 只 load 32B（lane8..15 丢失，WA-37 D5）。

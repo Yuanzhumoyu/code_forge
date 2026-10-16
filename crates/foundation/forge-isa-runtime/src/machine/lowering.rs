@@ -26,7 +26,7 @@ pub struct OperandBind {
     pub role: crate::machine::inst::OperandRole,
     /// 该 vreg 的**值宽类**（回填多类槽 `gprx` 用；`None` = 回填时退到 vreg 自身类）。
     ///
-    /// v23 M4 批次 C 第二步：这类信息以前存在管线级的 `LowerCtx::xreg_types`
+    /// v23 M4 批次 C 第二步：这类信息以前存在管线级的侧表里
     /// （vreg → IR 类型）里，**两个回填点各自把它推成类、而口径还不一样**
     /// （`compiler.rs` 走 `ctx.reg_class_for(ty)`、`emission.rs` 走
     /// `RegClass::from_type_id`）。现在由管线在 lowering 之后**折一次**进这里，
@@ -54,7 +54,7 @@ impl OperandBind {
         Self::new(vreg, field, crate::machine::inst::OperandRole::Use)
     }
 
-    /// 带上值宽类（管线折 `xreg_types` 时用）。
+    /// 带上值宽类（管线折值描述时用）。
     pub fn with_class(mut self, class: forge_ir::RegClass) -> Self {
         self.class = Some(class);
         self

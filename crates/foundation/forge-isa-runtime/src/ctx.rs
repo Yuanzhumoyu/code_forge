@@ -1,9 +1,8 @@
 //! 生成物 lowering 上下文与内存引用（v19 V1 由 forge-codegen 迁入）。
 
-use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
 use smallvec::SmallVec;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// 内存引用 —— DSL `MemRef` 字段的 Rust 表示（基址 + 偏移 + 数据宽度）。
 ///
@@ -118,28 +117,67 @@ impl CallConvCtx {
     }
 }
 
+/// **一个值的完整描述**（v24 M2 的单一来源）：寄存器类 + 位宽 + IR 类型。
+///
+/// 为什么要有它：这三件事以前分散在四张表里（一张 XReg 键的与三张 VReg 键的），
+/// 消费点取到"类型"后还得各自再推"类"与"位宽"——两处回填口径不同就是这么来的。
+/// 现在**一个值只有一份描述**，且**只在两个地方产生**：
+///
+/// * [`LowerCtx::set_value_desc`]（唯一的写入口，类与位宽都从 IR 类型推导）；
+/// * [`LowerCtx::desc_of`] / [`LowerCtx::type_bits_of`] 等访问器（唯一的读入口）。
+///
+/// 生成物因此**不再需要任何"值→类型"旁表**：它读的是访问器，而不是表本身。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ValDesc {
+    /// 寄存器类（`GPR`/`FPR`/`VEC`/`KReg`，payload = 位宽）。
+    pub class: RegClass,
+    /// 该值占用的位宽（标量 = 标量位宽；向量 = 整宽；指针按 DataLayout）。
+    pub bits: u16,
+    /// 对应的 IR 类型（谓词与规则可继续问类型系统）。
+    pub ty: TypeId,
+}
+
+impl ValDesc {
+    /// 是否浮点寄存器类。
+    pub fn is_fp(&self) -> bool {
+        self.class.is_fp()
+    }
+
+    /// 是否整数寄存器类。
+    pub fn is_int(&self) -> bool {
+        self.class.is_int()
+    }
+
+    /// 是否向量寄存器类。
+    pub fn is_vector(&self) -> bool {
+        matches!(self.class, RegClass::VEC(_))
+    }
+
+    /// 占用字节数（向上取整）。
+    pub fn bytes(&self) -> u16 {
+        self.bits.div_ceil(8)
+    }
+}
+
 /// 指令选择上下文 — 在 lowering 阶段提供给 [`machine::lowering::TargetLowering`]。
 pub struct LowerCtx {
-    /// 下一个可用的虚拟寄存器号。
-    pub next_vreg: u32,
     /// 临时寄存器（XReg）分配器 — XReg 的唯一受控创建入口。
     pub xregs: forge_ir::XRegAllocator,
-    /// XReg → IR 类型映射（用于 `.if` 条件汇编中的类型查询）。
-    pub xreg_types: HashMap<XReg, TypeId>,
+    /// **值的描述表**（v24 M2 的单一来源）：`XReg → ValDesc{类, 位宽, IR 类型}`。
+    ///
+    /// 以前这里是四张平行表（一张 XReg 键的 + 三张 VReg 键的），类/位宽/类型分散存放，
+    /// 消费点还得各自"从类型推类"（两处口径不同 ⇒ 同一条绑定两种回填结果）。现在
+    /// **一个值只有一份描述**，且**表本身私有**——读写一律走访问器
+    ///（[`LowerCtx::set_value_desc`] / [`LowerCtx::desc_of`] / [`LowerCtx::type_bits_of`]）。
+    ///
+    /// 键是 `XReg`（`{index, class}`，**含 class 参与相等**——同一 index 配不同类是不同键；
+    /// 按 index 做下标的密集表会把它们合并，属语义变化，所以这里仍是哈希表）。
+    values: HashMap<XReg, ValDesc>,
     /// **调用约定相关的一切**（IR 标识 / 解析后的名字 / 本函数布局 / 约定级破坏集与
     /// 返回槽 / 模块级签名表）——见 [`CallConvCtx`]。
     pub conv: CallConvCtx,
     /// 当前函数的常量池（用于解析 Iconst/Fconst 的索引）。
     pub constant_pool: Option<forge_ir::ConstantPool>,
-    /// VReg → 寄存器类别映射（用于寄存器分配）。
-    ///
-    /// **密集表**（v3 S2）：`VReg` 是 forge-ir 的密集句柄（已实现 `EntityRef`），
-    /// 下标即句柄——不必按句柄哈希。
-    pub vreg_classes: SecondaryMap<VReg, RegClass>,
-    /// VReg → IR 类型映射（用于 `.if` 条件汇编中的类型查询）。
-    pub vreg_types: SecondaryMap<VReg, TypeId>,
-    /// VReg → 字节宽度（用于寄存器分配器宽度感知）。
-    pub vreg_widths: SecondaryMap<VReg, u16>,
     /// 是否为浮点返回值（影响 Return 降低时使用 RetVal 还是 RetValFloat）。
     pub is_float_return: bool,
     /// 是否 sret 返回（函数返回宽向量 >16 字节——隐藏 sret 指针参数占首
@@ -216,11 +254,6 @@ pub struct LowerCtx {
     /// 由管线在**编译入口**预留（与保存区同一条分配通路），IR 展开（`pipeline::va_expand`）
     /// 用 `StackAddr(本偏移)` 取对象地址——不再依赖 lowering 中途的 `current_offset`。
     pub va_obj_off: Option<i64>,
-    /// 临时 VReg 集合（替代 VReg(96-100) 硬编码）。
-    pub temp_vregs: HashSet<VReg>,
-    /// 零值 VReg（复用，避免重复分配）。
-    zero_vreg: Option<VReg>,
-    /// 零值 XReg（复用，避免重复分配）。
     zero_xreg: Option<XReg>,
     /// 当前 lowering 包的写死物理寄存器（来自 insts 自动推导）——
     /// 生成代码在规则 arm 尾部设置，编译器聚合到 inst_clobbers 供分配器避开。
@@ -254,9 +287,8 @@ pub struct LowerCtx {
 impl LowerCtx {
     pub fn new() -> Self {
         Self {
-            next_vreg: 0,
             xregs: forge_ir::XRegAllocator::new(),
-            xreg_types: HashMap::new(),
+            values: HashMap::new(),
             conv: CallConvCtx::default(),
             constant_pool: None,
             is_float_return: false,
@@ -278,12 +310,7 @@ impl LowerCtx {
             va_save_off: None,
             va_top: 0,
             va_obj_off: None,
-            vreg_classes: SecondaryMap::new(),
-            vreg_types: SecondaryMap::new(),
-            vreg_widths: SecondaryMap::new(),
             default_opsize: 64,
-            temp_vregs: HashSet::new(),
-            zero_vreg: None,
             zero_xreg: None,
             current_clobbers: Vec::new(),
             value_gpr_class: RegClass::GPR64,
@@ -352,19 +379,6 @@ impl LowerCtx {
         x
     }
 
-    /// 查询 XReg 的字节宽度（位宽内嵌在值上）。
-    pub fn xreg_width(&self, x: XReg) -> u16 {
-        x.bytes()
-    }
-
-    /// 查询 VReg 对应的 IR 类型是否为浮点类型。
-    pub fn is_float_vreg(&self, vreg: VReg) -> bool {
-        self.vreg_types
-            .get(vreg)
-            .map(|t| self.reg_class_for(t).is_fp())
-            .unwrap_or(false)
-    }
-
     /// 从 TypeId 推导寄存器类（统一的集中处理）。
     pub fn reg_class_for_type(ty: TypeId) -> RegClass {
         RegClass::from_type_id(ty)
@@ -427,43 +441,60 @@ impl LowerCtx {
         self.mem_opsize_from_type(ty)
     }
 
+    /// **登记一个值的描述**（v24 M2 的唯一写入口）：类与位宽都从 IR 类型推导。
+    ///
+    /// 以前这条信息由调用方分两处写（`pipeline/lowering.rs` 写类型、回填点再推类），
+    /// 两边口径不同时同一条绑定会得到两种结果；现在只有这一处产生描述。
+    pub fn set_value_desc(&mut self, x: XReg, ty: TypeId) {
+        let class = self.reg_class_for(&ty);
+        let bits = self.value_bits(&ty, class);
+        self.values.insert(x, ValDesc { class, bits, ty });
+    }
+
+    /// 值的描述（v24 M2 的唯一读入口之一）；未登记 → `None`。
+    pub fn desc_of(&self, x: &XReg) -> Option<ValDesc> {
+        self.values.get(x).copied()
+    }
+
+    /// 该值是否为浮点类（生成物谓词用；未登记 → 假）。
+    pub fn is_fp_value(&self, x: &XReg) -> bool {
+        self.desc_of(x).is_some_and(|d| d.is_fp())
+    }
+
+    /// 该值是否为向量类（定长或可伸缩都算；未登记 → 假）。
+    pub fn is_vector_value(&self, x: &XReg) -> bool {
+        self.desc_of(x).is_some_and(|d| {
+            self.type_store
+                .as_ref()
+                .is_some_and(|s| s.is_vector(d.ty) || s.is_scalable_vector(d.ty))
+        })
+    }
+
     /// 值 → 标量位宽（生成的 lowering 用）：问类型快照（指针宽度按 DataLayout、
     /// 动态整数位宽也能答）；值未登记类型或非标量 → `None`。
     pub fn type_bits_of(&self, val: &XReg) -> Option<u32> {
-        let ty = *self.xreg_types.get(val)?;
-        self.type_store.as_ref().and_then(|s| s.scalar_bits(ty))
+        let d = self.desc_of(val)?;
+        self.type_store.as_ref().and_then(|s| s.scalar_bits(d.ty))
     }
 
-    /// 分配一个新的整数类虚拟寄存器。
-    pub fn alloc_vreg(&mut self) -> VReg {
-        self.alloc_vreg_with_class(self.value_gpr_class)
+    /// 值的**对象字节数**（与 `TypeStore::size_bytes` 同源）：生成物的"按值搬运/收参"
+    /// 按真实字节数分派时用它——**不要**用 `ValDesc::bytes()`：后者由位宽向上取整，
+    /// 对"存储尺寸 ≠ 标量位宽"的类型（如 80 位扩展浮点存 16 字节）会给出不同答案。
+    pub fn value_bytes(&self, x: &XReg) -> Option<u32> {
+        let d = self.desc_of(x)?;
+        self.type_store.as_ref().map(|s| s.size_bytes(d.ty))
     }
 
-    /// 分配一个指定寄存器类别的虚拟寄存器。
-    pub fn alloc_vreg_with_class(&mut self, class: RegClass) -> VReg {
-        let vreg = VReg::new(self.next_vreg);
-        self.next_vreg += 1;
-        self.vreg_classes.insert(vreg, class);
-        self.vreg_widths.insert(vreg, class.default_bits());
-        vreg
-    }
-
-    /// 分配一个临时 VReg（用于 lowering 中的中间值）。
-    /// 替代硬编码的 VReg(96)/VReg(97)/VReg(100)。
-    pub fn alloc_temp_vreg(&mut self, class: RegClass) -> VReg {
-        let vreg = self.alloc_vreg_with_class(class);
-        self.temp_vregs.insert(vreg);
-        vreg
-    }
-
-    /// 分配或复用零值 VReg（用于比较零值）。
-    pub fn alloc_zero_vreg(&mut self) -> VReg {
-        if let Some(vreg) = self.zero_vreg {
-            return vreg;
+    /// 类与位宽的唯一推导处（`set_value_desc` 用）：标量取标量位宽，向量取整宽，
+    /// 其余退回该寄存器的池宽。
+    fn value_bits(&self, ty: &TypeId, class: RegClass) -> u16 {
+        let store = self.type_store.as_ref();
+        match store.and_then(|s| s.scalar_bits(*ty)) {
+            Some(b) => b as u16,
+            None => store
+                .map(|s| (s.size_bytes(*ty).saturating_mul(8)) as u16)
+                .unwrap_or_else(|| class.bits()),
         }
-        let vreg = self.alloc_temp_vreg(self.value_gpr_class);
-        self.zero_vreg = Some(vreg);
-        vreg
     }
 }
 

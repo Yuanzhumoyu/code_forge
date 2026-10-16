@@ -35,7 +35,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 // 动态 vector → 位宽感知 VEC）
                 let class = self.ctx.reg_class_for(param_ty);
                 let xreg = self.ctx.alloc_xreg_with_width(class);
-                self.ctx.xreg_types.insert(xreg, *param_ty);
+                self.ctx.set_value_desc(xreg, *param_ty);
 
                 self.param_xregs.push(xreg);
                 if let Some(&param_val) = param_values.get(i) {
@@ -58,7 +58,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     // 值 XReg 保持**池宽**（int→GPR64、fp→FPR64）；类由元数据
                     // 提供（`value_gpr_class`/`value_fpr_class`：x86 = GPR(8)/FPR(8)，
                     // 1 字节寄存器 ISA = GPR(1)）。宽度只在 set_reg_field 回填多类槽
-                    // （gprx）时从 xreg_types 查 IR 类型推导（见 compiler.rs 回填处
+                    // （gprx）时从值描述查 IR 类型推导（见 compiler.rs 回填处
                     // ——WA-35 DSL 修复）。
                     let class = inst
                         .results
@@ -80,12 +80,12 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     if let Some(v) = inst.results.first().copied() {
                         let ty = func.dfg.value_type(v).unwrap_or(TypeId::VOID);
                         self.value_to_xreg.insert(v, xreg);
-                        self.ctx.xreg_types.insert(xreg, ty);
+                        self.ctx.set_value_desc(xreg, ty);
                     }
                     for v in &inst.operands {
                         let ty = func.dfg.value_type(*v).unwrap_or(TypeId::VOID);
                         self.value_to_xreg.insert(*v, xreg);
-                        self.ctx.xreg_types.insert(xreg, ty);
+                        self.ctx.set_value_desc(xreg, ty);
                     }
                 }
             }
@@ -127,7 +127,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 .map(|ty| {
                     let class = self.ctx.reg_class_for(ty);
                     let xreg = self.ctx.alloc_xreg(class);
-                    self.ctx.xreg_types.insert(xreg, *ty);
+                    self.ctx.set_value_desc(xreg, *ty);
                     xreg
                 })
                 .collect();
@@ -183,7 +183,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     }
                     self.value_to_xreg.insert(arg, param_xregs[i]);
                     let ty = param_tys.get(i).copied().unwrap_or(TypeId::VOID);
-                    self.ctx.xreg_types.insert(param_xregs[i], ty);
+                    self.ctx.set_value_desc(param_xregs[i], ty);
                 }
             }
         }
@@ -319,7 +319,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                         // 值 XReg 保持池宽（int→GPR64、fp→FPR64）——spill/ABI/
                         // ScalarPair 打包等下游按 64 位 GPR 值约定工作（按类型
                         // 窄分配会破坏，e2e slice/vec 迭代回归实证）。宽度只在
-                        // set_reg_field 回填多类槽（gprx）时从 xreg_types 查
+                        // set_reg_field 回填多类槽（gprx）时从值描述查
                         // IR 类型推导（见 compiler.rs 回填处——WA-35 DSL 修复）。
                         //
                         // **向量例外（2026-09-26 实测）**：>8 字节的向量值不能保持
@@ -342,7 +342,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                         };
                         let xreg = self.ctx.alloc_xreg(class);
                         self.value_to_xreg.insert(v, xreg);
-                        self.ctx.xreg_types.insert(xreg, result_ty);
+                        self.ctx.set_value_desc(xreg, result_ty);
                         xreg
                     })
                 })
@@ -581,7 +581,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                         // 动态 vector → VEC）
                         let xreg = self.ctx.alloc_xreg(self.ctx.reg_class_for(&result_ty));
                         self.value_to_xreg.insert(*v, xreg);
-                        self.ctx.xreg_types.insert(xreg, result_ty);
+                        self.ctx.set_value_desc(xreg, result_ty);
                         xreg
                     })
                 })
@@ -764,7 +764,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
     }
 
     /// S6：根指令的派生属性（镜像生成器 `gen_lowering_attrs` 的 `__attr`）——
-    /// 类型从 IR 值推导（`dfg.value_type`，与生成代码经 `ctx.xreg_types`
+    /// 类型从 IR 值推导（`dfg.value_type`，与生成代码经 `ctx.desc_of`
     /// 推导同值）。模式根为算术 op，`cond`/`imm0` 恒 None → 走 `_ => None`。
     fn pattern_root_attr(
         &self,

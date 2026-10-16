@@ -221,7 +221,7 @@ pub trait MachineInst: Clone + std::fmt::Debug + Send + Sync + Hash + Eq {
     }
 
     /// 回写第 `i` 个 Ireg/Freg 寄存器字段的物理索引（寄存器分配后调用）。
-    /// `class` 是该操作数的**类型宽度类**（调用方从 `LowerCtx::xreg_types`
+    /// `class` 是该操作数的**类型宽度类**（调用方从值描述 [`crate::ctx::ValDesc`]
     /// 的 IR 类型推导：I32 → `GPR(4)`、u8 → `GPR(1)`）——不是 XReg 的分配
     /// 类（值 XReg 恒池宽 GPR64，spill/ABI 依赖）。DSL 生成的实现：单类槽
     /// （如 `[gpr32]`）按槽声明的 class 重建（指令声明宽度，现状语义）；

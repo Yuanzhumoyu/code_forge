@@ -237,6 +237,58 @@ C ABI 语义**不变**。
 
 ## 6. 批次记录（逐里程碑回写）
 
+### M2 值描述单一来源 —— **一次落地**（2026-10-11，工作区）
+
+**做了什么**：
+
+- 新增 `forge_isa_runtime::ctx::ValDesc { class, bits, ty }`：**值的完整描述**，只有两个
+  产生点——`LowerCtx::set_value_desc`（唯一写入口，类与位宽都从 IR 类型推导）与访问器
+  （`desc_of`/`is_fp_value`/`is_vector_value`/`value_bytes`/`type_bits_of`）。
+- `LowerCtx` 的**四张平行表并为一张**：`values: HashMap<XReg, ValDesc>`（**私有字段**，
+  对外只给访问器）。表名 `xreg_types` 与三张 `VReg` 键的表（`vreg_classes`/`vreg_types`/
+  `vreg_widths`）**整族删除**。
+- **实测的额外收获（无冗余）**：三张 `VReg` 表是**孑遗**——`vreg_classes`/`vreg_widths`
+  只写不读，`vreg_types` 只被 `is_float_vreg` 读、而后者**没有任何调用者**；
+  `xreg_width` 同样无调用者。⇒ 连同 `next_vreg`/`temp_vregs`/`zero_vreg` 与
+  `alloc_vreg*` 一族**一起删除**（整个 VReg 机制在管线里是死的）。
+- 消费侧迁移（**语义逐字不变**，只换"类型的来源"）：
+  - 生成物模板 16 处（`dsl/codegen/lowering.rs`）→ `desc_of` / `is_vector_value` /
+    `value_bytes`；其中 8 处原本问 `type_store.size_bytes`，改用 **同源**访问器
+    `value_bytes`（**不**用 `ValDesc::bytes()`——后者由位宽取整，对"存储尺寸 ≠ 标量位宽"
+    的类型如 80 位扩展浮点会给出不同答案）；
+  - 谓词属性 6 处（`dsl/codegen/integration.rs`：`rd`/`rs1_width`/`rs2_width`/`elem`/
+    `rd_vec`/`rs1_vec`）→ `desc_of`，闭包内 `*t` → `d.ty`；
+  - 宿主 9 处（`pipeline/lowering.rs` 的 7 个写点 → `set_value_desc`；
+    `compiler.rs` 的"折进绑定"与"参数字节宽"两个读点 → `desc_of`）。
+- **一处口径分叉被真正消除**（M4 遗留）：以前 `compiler.rs` 的绑定折入要
+  `reg_class_for(ty)` 自己再推一次类，而 `emission.rs` 的 spill 回填推法不同；
+  现在类的**唯一推导处**是 `set_value_desc`，折入直接 `bind.class = Some(d.class)`。
+- 守卫改写：`tests/entity_tables.rs` 的"三张 VReg 表必须密集"（表已不存在）换成
+  **`only_one_value_desc_table`**——`LowerCtx` 里值描述表**恰好一张**、值类型是 `ValDesc`、
+  **表不得 `pub`**（否则又会长出第二套读法）、且四个旧名在**全仓生产代码里零出现**
+  （守卫文件自身的检查名单自跳过，并在注释里写明这一点）。
+
+**验收**（`cargo clean` 后**整树重建**再跑一遍；数字即该次重跑结果）：
+
+| 判据 | 结果 |
+| --- | --- |
+| `rg 'xreg_types' crates/` | **0**（生产代码；唯一提及在守卫的检查名单里，它自跳过） |
+| `forge-codegen --lib --all-features` | **2826 passed / 0 failed** |
+| `forge-codegen --test entity_tables`（新守卫） | **4 passed** |
+| `forge-ir --test read_path_budget` | **2 passed**（M2 未增删取锁 ⇒ 预算不变） |
+| `cargo test --workspace --exclude forge-rustc` | **exit 0** |
+| `clippy --workspace --all-targets --all-features -- -D warnings` / `fmt --check` | 干净 |
+| 两矩阵 / asm 三档 | **197/3/0** · **136/64/0** · **3/1/1** |
+| **生成物体积不回潮**（按时间切分 A/B：迁移前 06:57 的产物 vs 迁移后 07:16 的产物） | x86 6,355,380 → **6,348,453**（−6,927，−0.109%）；riscv64 2,513,978 → **2,510,701**（−3,277，−0.130%）；arm64 6,745,567 → **6,744,803**（−764，−0.011%）——**三份谱全部变小** |
+
+**过程中的两处环境事故（如实记录，都不改结论）**：
+
+1. 有一次 `cargo clippy` 报 `E0786 invalid metadata files`——根因是**门禁作业还在编译时我又改了
+   源文件**（两个 cargo 进程重叠写同一个 target）。处置：`cargo clean` 后**全量重建**并把整条
+   门禁重跑一遍（上表数字即重跑结果）。
+2. `Get-PSDrive D` 曾报"可用 0 GB"，`fsutil`/WMI 又被拒——用 `DriveInfo` 复核实际可用
+   **38.2 GB**、写 1 MB 探测成功 ⇒ **不是磁盘满**，别按"磁盘满"误处置。
+
 ### M1 合法化两相化 —— 批次 5：**旧改写族删除（M1 收口）**（2026-10-11，工作区）
 
 **做了什么**：

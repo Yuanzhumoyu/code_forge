@@ -11,6 +11,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v24 M2：值描述**单一来源**（`xreg_types` 退场）
+
+"值的类 / 位宽 / IR 类型"过去分散在**四张平行表**里（一张 `XReg` 键的 `xreg_types` 加三张
+`VReg` 键的 `vreg_classes`/`vreg_types`/`vreg_widths`），消费点取到类型后还要各自再推类与位宽
+（两个回填点口径不同 ⇒ 同一条绑定两种结果）。现在**一个值只有一份描述**。
+
++ 新增 `forge_isa_runtime::ctx::ValDesc { class, bits, ty }`：类与位宽**只有一个推导处**
+  （`LowerCtx::set_value_desc`，从 IR 类型推），读写一律走访问器（`desc_of` /
+  `is_fp_value` / `is_vector_value` / `value_bytes` / `type_bits_of`），**表本身私有**。
++ **删除** `LowCtx::xreg_types` 与三张 `VReg` 键的表；实测其中三张是**孑遗**
+  （只写不读 / 唯一读者 `is_float_vreg` 无调用者，`xreg_width` 亦无调用者）⇒ 连同
+  `alloc_vreg*`/`next_vreg`/`temp_vregs`/`zero_vreg` 整族删除。
++ 生成物**不再依赖任何"值→类型"旁表**：模板 16 处 + 谓词属性 6 处改走访问器，
+  宿主 9 处（7 写点 + 2 读点）改走 `set_value_desc`/`desc_of`；**三份发行谱的 TOML 零改动**。
++ 新守卫 `only_one_value_desc_table`（`tests/entity_tables.rs`）：值描述表恰好一张、值类型是
+  `ValDesc`、表不得 `pub`，且四个旧名在全仓生产代码里零出现。
++ **不回潮实测**（按时间切分的产物 A/B）：生成物 x86 6,355,380 → 6,348,453 字节
+  （−0.109%）、riscv64 −0.130%、arm64 −0.011%——三份谱全部变小。
++ 验收全绿：workspace 全量测试、JIT 两矩阵（197/3/0 · 136/64/0）、asm 三档（3/1/1）、
+  `forge-codegen` 2826 passed、`read_path_budget` 2 passed、clippy `-D warnings`/fmt 干净。
++ 逐批证据见 `docs/plans/backend-v24-plan.md` §6。
+
 ### Changed (2026-10-11) — 后端 v24 M1：合法化**两相化**（计划只读 + 一次性物化）
 
 聚合合法化从"每个 pass 就地改写 IR 并各自重写使用处"改成**两相**：只读的**计划相**算出

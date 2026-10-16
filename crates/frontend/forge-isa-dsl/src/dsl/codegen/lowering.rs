@@ -374,7 +374,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     //
     // 条件键是**数据**（bank/width/by_ref/multi ✗），不是 `ret_kind = "f32"` 那种枚举：
     // 宽度写任意整数 ⇒ f8/f16/f32/f64/f128、i8…i128、指针都表达得了 ✗。
-    // 银行/宽度/是否按引用都是**运行期**事实（`type_bits_of`/`xreg_types` ✗）⇒ 规则编译成
+    // 银行/宽度/是否按引用都是**运行期**事实（`type_bits_of`/`desc_of` ✗）⇒ 规则编译成
     // 一串 `if`；**没有规则命中 ⇒ 旧的硬编码四形态**（行为不变 ✗）。
     //
     // 返回槽（只在被选中的分支里求值 ⇒ fail-closed 不会误触发 ✗）：
@@ -567,9 +567,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                     }
                 };
                 let __vbytes = ctx
-                    .xreg_types
-                    .get(&val)
-                    .and_then(|t| ctx.type_store.as_ref().map(|s| s.size_bytes(*t)))
+                    .value_bytes(&val)
                     .unwrap_or(__SLOT_BYTES as u32)
                     .max(__SLOT_BYTES as u32);
                 #store_body
@@ -749,19 +747,12 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             //  · 银行（整数/浮点/向量 ✗）与"是否按引用"（>16B 向量 ✗）先算 ✗；
             //  · `__ret_bits` = **形态正确的总位宽**：标量用 `type_bits_of`（= `scalar_bits` ✗），
             //    向量必须用 `size_bytes * 8`（`scalar_bits` 对向量给的是**元素**位宽 ✗）。
-            let __ret_is_fpr = ctx.xreg_types.get(&val).is_some_and(|t| t.is_float());
-            let __ret_is_vec = ctx.xreg_types.get(&val).is_some_and(|t| {
-                ctx.type_store.as_ref().is_some_and(|s| {
-                    s.is_vector(*t) || s.is_scalable_vector(*t)
-                })
-            });
-            let __ret_by_ref = __ret_is_vec && ctx.xreg_types.get(&val).is_some_and(|t| {
-                ctx.type_store.as_ref().is_some_and(|s| s.size_bytes(*t) > 16)
-            });
+            let __ret_is_fpr = ctx.desc_of(&val).is_some_and(|d| d.ty.is_float());
+            let __ret_is_vec = ctx.is_vector_value(&val);
+            let __ret_by_ref =
+                __ret_is_vec && ctx.value_bytes(&val).is_some_and(|b| b > 16);
             let __ret_bits = if __ret_is_vec {
-                ctx.xreg_types
-                    .get(&val)
-                    .and_then(|t| ctx.type_store.as_ref().map(|s| s.size_bytes(*t)))
+                ctx.value_bytes(&val)
                     .unwrap_or(__SLOT_BYTES as u32)
                     .max(__SLOT_BYTES as u32)
                     * 8
@@ -1038,8 +1029,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             ctx: &crate::prelude::LowerCtx,
             results: &[crate::prelude::XReg],
         ) -> u64 {
-            let t = results.first().and_then(|x| ctx.xreg_types.get(x));
-            t.and_then(|&t| {
+            let t = results.first().and_then(|x| ctx.desc_of(x)).map(|d| d.ty);
+            t.and_then(|t| {
                 ctx.type_store
                     .as_ref()
                     .and_then(|s| s.element_type(t).and_then(|e| s.scalar_bits(e)))
@@ -1784,7 +1775,7 @@ fn gen_call_lowering(
             __SLOT_BYTES as u32,
         );
         let __shape_of = |__v: crate::prelude::XReg| -> crate::machine::abi_model::TyView {
-            let __t = ctx.xreg_types.get(&__v).copied();
+            let __t = ctx.desc_of(&__v).map(|d| d.ty);
             match (__t, ctx.type_store.as_ref()) {
                 (Some(__t), Some(__store)) => {
                     crate::machine::abi_model::TyView::from_ir_type(__store, __t)
@@ -1947,9 +1938,7 @@ fn gen_call_lowering(
         })?;
         quote! {
             let __vbytes = ctx
-                .xreg_types
-                .get(&__r)
-                .and_then(|t| ctx.type_store.as_ref().map(|s| s.size_bytes(*t)))
+                .value_bytes(&__r)
                 .unwrap_or(__SLOT_BYTES as u32)
                 .max(__SLOT_BYTES as u32);
             #body
@@ -2027,13 +2016,11 @@ fn gen_call_lowering(
                 }
             }
         } else if let Some(&__r) = results.first() {
-            if ctx.xreg_types.get(&__r).is_some_and(|t| t.is_float()) {
+            if ctx.desc_of(&__r).is_some_and(|d| d.ty.is_float()) {
                 #fpr_ret_stmt
-            } else if ctx.xreg_types.get(&__r).is_some_and(|t| {
-                ctx.type_store.as_ref().is_some_and(|s| {
-                    (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) <= 16
-                })
-            }) {
+            } else if ctx.is_vector_value(&__r)
+                && ctx.value_bytes(&__r).is_some_and(|b| b <= 16)
+            {
                 // ≤16B 向量（V64/V128）按值返回：XMM0 全宽回读
                 #vec_ret_stmt
             } else if __sret {
@@ -2267,9 +2254,7 @@ fn gen_call_lowering(
         )?;
         quote! {
             let __vbytes = ctx
-                .xreg_types
-                .get(&__a)
-                .and_then(|t| ctx.type_store.as_ref().map(|s| s.size_bytes(*t)))
+                .value_bytes(&__a)
                 .unwrap_or(__SLOT_BYTES as u32)
                 .max(__SLOT_BYTES as u32);
             // 槽偏移/帧需求：槽单位由元数据给出（`__SLOT_BYTES`；x86 = 8）——
@@ -2391,11 +2376,8 @@ fn gen_call_lowering(
                 // sret 槽 = 帧内 [RBP-8-shift]（与 by-ref 实参槽共用空间，
                 // call 间天然死）。
                 let __sret = results.first().copied().is_some_and(|r| {
-                    ctx.xreg_types.get(&r).is_some_and(|t| {
-                        ctx.type_store.as_ref().is_some_and(|s| {
-                            (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) > 16
-                        })
-                    })
+                    ctx.is_vector_value(&r)
+                        && ctx.value_bytes(&r).is_some_and(|b| b > 16)
                 });
                 let __sret_off: i64 = if __sret {
                     -(__SLOT_BYTES as i64) - ctx.stack_slot_shift as i64
@@ -2510,11 +2492,7 @@ fn arg_move_loop(
     )?;
     let vector_fp = fp_body(&quote! { 128u32 }, "按值向量")?;
     let __is_vec = quote! {
-        ctx.xreg_types.get(&__a).is_some_and(|t| {
-            ctx.type_store.as_ref().is_some_and(|s| {
-                (s.is_vector(*t) || s.is_scalable_vector(*t)) && s.size_bytes(*t) <= 16
-            })
-        })
+        ctx.is_vector_value(&__a) && ctx.value_bytes(&__a).is_some_and(|b| b <= 16)
     };
     let fp_mov: TokenStream = quote! {
         if #__is_vec { #vector_fp } else { #scalar_fp }
@@ -2528,9 +2506,8 @@ fn arg_move_loop(
     //
     // 运行期判据与浮点/向量分派同一套：`is_float(t) || (向量 && ≤16B)` = "值在 FPR 池"。
     let __val_is_float = quote! {
-        ctx.xreg_types
-            .get(&__a)
-            .is_some_and(|__t| ctx.type_store.as_ref().is_some_and(|__s| __s.is_float(*__t)))
+        ctx.desc_of(&__a)
+            .is_some_and(|__d| ctx.type_store.as_ref().is_some_and(|__s| __s.is_float(__d.ty)))
     };
     let __val_in_fpr = quote! { #__is_vec || (#__val_is_float) };
     let __val_bits = quote! { ctx.type_bits_of(&__a).unwrap_or(#addr_bits32) };
@@ -2646,10 +2623,10 @@ fn arg_move_loop(
                 __stack_seen += 1;
                 let __off = __cl.caller_offset(__k) as i64;
                 let __slot = __cl.slot_bytes();
-                let __is_fp = ctx.xreg_types.get(&__a).is_some_and(|__t| {
+                let __is_fp = ctx.desc_of(&__a).is_some_and(|__d| {
                     ctx.type_store
                         .as_ref()
-                        .is_some_and(|__s| __s.is_float(*__t))
+                        .is_some_and(|__s| __s.is_float(__d.ty))
                 });
                 if __is_fp {
                     #fpr_store
