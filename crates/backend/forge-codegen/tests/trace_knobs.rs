@@ -1,15 +1,17 @@
-//! **观测开关台账守卫**（v24 M4）：`pipeline::trace::KNOBS`、源码调用点与
-//! `docs/reference/backend-pipeline.md` 的表格**三方双向相等**。
+//! **观测开关台账守卫**（v24 M4 立，v26 M1 扩到两侧）：`diagnostics::KNOBS`、
+//! 源码里的 `FORGE_TRACE_*` 字面量、`docs/reference/backend-pipeline.md` 的表格
+//! **三方双向相等**。
 //!
 //! ## 为什么是三方 + 双向
 //!
-//! 病根是一个**静默失效**：`trace_enabled` 的白名单漏了一个名字，那个开关就恒为假、
-//! 探针一句不打印而没人发现（`FORGE_TRACE_AGG` 死了几个月，`FORGE_TRACE_M4` 同病）。
-//! 所以这条守卫要同时钉住三个面：
+//! 病根是一个**静默失效**：旧 `trace_enabled` 的白名单漏了一个名字，那个开关就恒为假、
+//! 探针一句不打印而没人发现（`FORGE_TRACE_AGG` 死了几个月，`FORGE_TRACE_M4` 同病；
+//! 白名单里的 `FORGE_TRACE_ISEL` 则一处调用点都没有——死条目）。所以这条守卫要同时钉住：
 //!
-//! 1. **源码**：`trace::knob("…")` 的字面量集合 —— 真实用到的开关；
-//! 2. **台账**：`KNOBS` 表 —— 我们声称拥有的开关与它们的用途；
-//! 3. **文档**：`reference/backend-pipeline.md` 的表格 —— 使用者看到的清单。
+//! 1. **源码**：`knob("FORGE_TRACE_X")` 与 `trace_enabled("X")` 的字面量集合 —— 真实用到的开关
+//!    （含**直读** `env::var_os("FORGE_TRACE_X")` 的写法：v26 M1 之前有 4 处绕过台账）；
+//! 2. **台账**：`forge_isa_runtime::diagnostics::KNOBS` —— 我们声称拥有的开关与用途；
+//! 3. **文档**：契约文档「观测开关」小节的表 —— 使用者看到的清单。
 //!
 //! 任一面多一条或少一条都红：源码多 ⇒ 漏登记（正是旧病）；台账多 ⇒ 死条目
 //! （`FORGE_TRACE_ISEL` 就是这样）；文档多/少 ⇒ 承诺与实现分叉。
@@ -25,60 +27,75 @@ fn repo_root() -> std::path::PathBuf {
         .join("..")
 }
 
-/// `KNOBS` 表里的名字（`Knob::new("NAME", …)`）。
-///
-/// **跨行**解析：`rustfmt` 会把长行折成 `Knob::new(\n    "NAME",\n    "说明",\n)`——按行匹配
-/// 会在格式化之后**静默漏掉条目**（M3 的能力缺口守卫踩过同一个坑）。
-fn table_knobs(root: &std::path::Path) -> BTreeSet<String> {
-    let text =
-        std::fs::read_to_string(root.join("crates/backend/forge-codegen/src/pipeline/trace.rs"))
-            .expect("读 trace.rs");
-    let mut out = BTreeSet::new();
-    let mut from = 0usize;
-    while let Some(rel) = text[from..].find("Knob::new(") {
-        let at = from + rel + "Knob::new(".len();
-        let rest = text[at..].trim_start();
-        if let Some(after_quote) = rest.strip_prefix('"')
-            && let Some((name, _)) = after_quote.split_once('"')
-        {
-            out.insert(name.to_string());
-        }
-        from = at;
-    }
-    out
+/// 台账里的名字——**直接读类型**（不再解析源码文本：台账已下沉，`Knob.name` 是公开字段）。
+fn table_knobs() -> BTreeSet<String> {
+    forge_isa_runtime::diagnostics::KNOBS
+        .iter()
+        .map(|k| k.name.to_string())
+        .collect()
 }
 
-/// 源码里 `trace::knob("NAME")` 的字面量（生产代码，不含 trace.rs 自己）。
+fn rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() {
+            rs_files(&p, out);
+        } else if p.extension().is_some_and(|x| x == "rs") {
+            out.push(p);
+        }
+    }
+}
+
+/// 源码里的开关名：`FORGE_TRACE_*` 字面量 ∪ `trace_enabled("后缀")`。
+///
+/// * 跳过台账定义文件（否则"台账里的每个名字都在源码里"恒真，死条目永远抓不到）；
+/// * 跳过注释行（文档注释里会举 `FORGE_TRACE_ISEL` 这类历史名）；
+/// * 每个文件在第一个 `#[cfg(test)]` 处截断（测试夹具名如
+///   `FORGE_TRACE_NOT_REGISTERED_AT_ALL` 不属于生产面——本仓扫描型守卫的既有惯用法）。
 fn source_knobs(root: &std::path::Path) -> BTreeSet<String> {
+    let mut files = Vec::new();
+    rs_files(&root.join("crates"), &mut files);
     let mut out = BTreeSet::new();
-    let src = root.join("crates/backend/forge-codegen/src");
-    let mut stack = vec![src];
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+    for p in &files {
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name == "diagnostics.rs" || name == "trace_knobs.rs" {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(p) else {
             continue;
         };
-        for e in entries.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                stack.push(p);
+        for line in text.lines() {
+            let t = line.trim_start();
+            if t.starts_with("//") {
                 continue;
             }
-            if p.extension().is_none_or(|x| x != "rs")
-                || p.file_name().is_some_and(|n| n == "trace.rs")
-            {
-                continue;
+            if t.contains("#[cfg(test)]") {
+                break; // 之后的都是测试面
             }
-            let Ok(text) = std::fs::read_to_string(&p) else {
-                continue;
-            };
-            let mut from = 0usize;
-            while let Some(rel) = text[from..].find("trace::knob(\"") {
-                let at = from + rel + "trace::knob(\"".len();
-                let rest = &text[at..];
-                if let Some((name, _)) = rest.split_once('"') {
-                    out.insert(name.to_string());
+            // 全名字面量（knob("FORGE_TRACE_X") / env::var_os("FORGE_TRACE_X")）
+            let mut rest = line;
+            while let Some(i) = rest.find("FORGE_TRACE_") {
+                let tail = &rest[i + "FORGE_TRACE_".len()..];
+                let n: String = tail
+                    .chars()
+                    .take_while(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == '_')
+                    .collect();
+                if !n.is_empty() {
+                    out.insert(format!("FORGE_TRACE_{n}"));
                 }
-                from = at;
+                rest = tail;
+            }
+            // `trace_enabled("后缀")`（forge-rustc 侧写法）
+            let mut rest = line;
+            while let Some(i) = rest.find("trace_enabled(\"") {
+                let tail = &rest[i + "trace_enabled(\"".len()..];
+                if let Some((suffix, _)) = tail.split_once('"') {
+                    out.insert(format!("FORGE_TRACE_{suffix}"));
+                }
+                rest = tail;
             }
         }
     }
@@ -105,13 +122,14 @@ fn doc_knobs(root: &std::path::Path) -> BTreeSet<String> {
 #[test]
 fn trace_knobs_are_bijective() {
     let root = repo_root();
-    let table = table_knobs(&root);
+    let table = table_knobs();
     let source = source_knobs(&root);
     let doc = doc_knobs(&root);
 
     assert!(
-        !table.is_empty(),
-        "KNOBS 表为空——守卫本身失效了（解析失败？）"
+        table.len() > 10,
+        "台账只有 {} 条——守卫本身失效了？（v26 M1 后应为 41 条：后端 + forge-rustc）",
+        table.len()
     );
 
     let diff = |a: &BTreeSet<String>, b: &BTreeSet<String>, what: &str, hint: &str| {
@@ -125,13 +143,13 @@ fn trace_knobs_are_bijective() {
     diff(
         &source,
         &table,
-        "源码调用点 vs `KNOBS` 台账",
-        "源码多 ⇒ 漏登记（旧病的形状：恒为假、静默失效）；台账多 ⇒ 死条目",
+        "源码字面量 vs `diagnostics::KNOBS` 台账",
+        "源码多 ⇒ 漏登记（旧病的形状：恒为假、静默失效）；台账多 ⇒ 死条目（如当年的 FORGE_TRACE_ISEL）",
     );
     diff(
         &doc,
         &table,
-        "文档表格 vs `KNOBS` 台账",
+        "文档表格 vs `diagnostics::KNOBS` 台账",
         "文档是使用者看到的承诺；分叉就是当年\"文档承诺可见、实际看不见\"",
     );
 }

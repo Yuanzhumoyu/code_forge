@@ -61,35 +61,9 @@ pub static EVENTS: [EventSpec; 6] = [
     },
 ];
 
-/// 事件的字段值（固定类型集合 ⇒ 输出确定、无需 JSON 依赖）。
-#[derive(Debug, Clone, Copy)]
-pub enum Field<'a> {
-    Str(&'a str),
-    U64(u64),
-    Usize(usize),
-}
-
-impl std::fmt::Display for Field<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            // JSON 最小转义：只需处理 `"` 与 `\`（事件字段都是函数名/ID 这类短标识）。
-            Field::Str(s) => {
-                write!(f, "\"")?;
-                for c in s.chars() {
-                    match c {
-                        '"' => write!(f, "\\\"")?,
-                        '\\' => write!(f, "\\\\")?,
-                        '\n' => write!(f, "\\n")?,
-                        _ => write!(f, "{c}")?,
-                    }
-                }
-                write!(f, "\"")
-            }
-            Field::U64(v) => write!(f, "{v}"),
-            Field::Usize(v) => write!(f, "{v}"),
-        }
-    }
-}
+/// 事件的字段值：直接用下沉后的实现（`forge-isa-runtime::diagnostics`）——
+/// 转义与落盘只有一份，这里只保留**名字台账**。
+pub use forge_isa_runtime::diagnostics::Field;
 
 /// 发出一个事件（`FORGE_CODEGEN_EVENTS=<文件>` 时追加一行 JSON；写失败静默）。
 ///
@@ -99,23 +73,8 @@ pub fn emit(name: &'static str, fields: &[(&str, Field<'_>)]) {
         EVENTS.iter().any(|e| e.name == name),
         "事件 `{name}` 未登记进 `pipeline::events::EVENTS`（守卫 event_names_are_bijective 会红）"
     );
-    use std::io::Write;
-    let Some(path) = std::env::var_os("FORGE_CODEGEN_EVENTS") else {
-        return;
-    };
-    let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    else {
-        return;
-    };
-    let mut line = format!("{{\"event\":\"{name}\"");
-    for (k, v) in fields {
-        line.push_str(&format!(",\"{k}\":{v}"));
-    }
-    line.push('}');
-    let _ = writeln!(f, "{line}");
+    // 落盘与转义只有一份实现（v26 M1 下沉到 `forge-isa-runtime::diagnostics`）。
+    forge_isa_runtime::diagnostics::emit("codegen", name, fields);
 }
 
 #[cfg(test)]

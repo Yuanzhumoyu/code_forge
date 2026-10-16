@@ -6,23 +6,10 @@
 //! rustc 自己的 panic hook（ICE 报告/abort）会被链式保留。
 //!
 //! # 诊断 env 收拢
-//! 所有 `FORGE_TRACE_*` 读取统一走 [`trace_enabled`]，取值集中在本文件：
-//!
-//! | env | 输出内容 |
-//! |---|---|
-//! | `FORGE_TRACE_FN` | 每个函数的 lowering 开始 |
-//! | `FORGE_TRACE_STMT` | 每条 MIR statement |
-//! | `FORGE_TRACE_SLOT` | 栈槽分配 |
-//! | `FORGE_TRACE_PAIR` | ScalarPair 判定与偏移 |
-//! | `FORGE_TRACE_ENUM` | enum 布局细节 |
-//! | `FORGE_TRACE_FIELD` | 字段偏移计算 |
-//! | `FORGE_TRACE_GLOBAL` | 全局/重定位符号解析 |
-//! | `FORGE_TRACE_SYM` | 符号名计算 |
-//! | `FORGE_TRACE_CALL` | 直接调用（callee 签名 / 实参打包明细） |
-//! | `FORGE_TRACE_SUBSTS` | 泛型替换解析（FnDef → instance） |
-//! | `FORGE_TRACE_ABI` | rustc FnAbi 参数/返回形态（P4.1 一致性校验用） |
-//! | `FORGE_TRACE_LIVE` | 活区间 dump（forge-codegen liverange，调试 regalloc 用） |
-//! | `FORGE_TRACE_LOWER/ALLOC/SPILL/EXPIRE`（主库 forge-codegen） | 主库 lowering 逐指令 / regalloc 分配 / spill-reload / expire 诊断（`pipeline::trace_enabled`） |
+//! 所有 `FORGE_TRACE_*` 读取统一走 [`trace_enabled`]（内部转发到运行时的唯一台账
+//! `forge_isa_runtime::diagnostics::KNOBS`）。**名字清单不在这里重复一份**——它住在
+//! `docs/reference/backend-pipeline.md` 的「观测开关」表，与台账、源码调用点由守卫
+//! `trace_knobs_are_bijective` 三方钉住；这里再抄一遍必然漂移（v26 M1 之前就是这样）。
 
 use std::cell::RefCell;
 
@@ -57,6 +44,11 @@ pub(crate) fn install_panic_hook() {
 }
 
 /// 查询 `FORGE_TRACE_<name>` 是否开启（诊断输出开关）。
+///
+/// v26 M1：转发到 `forge_isa_runtime::diagnostics::trace`——**开关台账只有一张**
+/// （后端 11 项 + 直读项 + 本 crate 27 项），本 crate 不再自带名字集合。未登记的名字
+/// debug 下当场 panic、release 下警告一次，绝不静默（旧的白名单曾让 `FORGE_TRACE_AGG`
+/// 静默失效数月）。
 pub(crate) fn trace_enabled(name: &str) -> bool {
-    std::env::var_os(format!("FORGE_TRACE_{name}")).is_some()
+    code_forge::forge_isa_runtime::diagnostics::trace(name)
 }

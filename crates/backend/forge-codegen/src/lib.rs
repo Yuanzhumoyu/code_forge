@@ -119,18 +119,8 @@ pub use pipeline::session::CompiledModule;
 /// 打印 `... ok`）——落盘事件 + CI 的 `if: always()` 步骤是唯一判据（与 e2e 的
 /// `FORGE_E2E_EVENTS` 同模式）。写失败静默：可见性辅助不得影响测试结论。
 pub fn jit_event(kind: &str, case: &str) {
-    use std::io::Write;
-    let Some(path) = std::env::var_os("FORGE_JIT_EVENTS") else {
-        return;
-    };
-    let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    else {
-        return;
-    };
-    let _ = writeln!(f, "{kind} {case}");
+    // 落盘实现只有一份（v26 M1 下沉）：本函数只决定**格式**（`<事件> <用例>`，CI 依赖）。
+    forge_isa_runtime::diagnostics::emit_text("jit", &format!("{kind} {case}"));
 }
 
 /// 寄存器位置 — 表示一个虚拟寄存器被分配到哪里。

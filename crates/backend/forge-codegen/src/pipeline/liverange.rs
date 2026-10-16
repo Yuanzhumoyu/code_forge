@@ -254,7 +254,7 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
     }
 
     // [调试] FORGE_TRACE_LIVE：dump 所有活区间（定位循环块参数/常量断裂）
-    if std::env::var_os("FORGE_TRACE_LIVE").is_some() {
+    if crate::pipeline::trace::knob("FORGE_TRACE_LIVE") {
         let mut v: Vec<_> = intervals.iter().collect();
         v.sort_by_key(|(x, _)| x.index());
         for (x, i) in &v {

@@ -158,4 +158,73 @@ M2 若中途发现"某个面其实还有消费者"（守卫/`rg` 反证），**�
 
 ## 8. 批次记录（逐里程碑回写）
 
-（立项时为空；每里程碑落地后在此追加：做了什么、实测数字、删除清单进度、偏差与下一批。）
+### M1 诊断单一来源 —— **一次落地**（2026-10-11，工作区）
+
+**做了什么**（三块，都在"承诺与实现分叉"这一类上）：
+
+① DSL 错误码台账（E1 收口，且比立项时的判断更深一层）：
+
+立项时只看到"两侧集合不等"（源码 29 / 文档 31）。落地时查明**根因在实现**：`section_code(kind)`
+的映射表**缺 `operand`/`operand_slots`/`machine` 三个 kind** ⇒ `[operand.<名>]` 与 `[machine]`
+的诊断一律落到 `DSL-OTHER`，而文档恰写着"出现 `DSL-OTHER` 就说明消息缺前缀、应报 bug"——
+判据被反用。文档承诺的 `DSL-SLOT`/`DSL-ABI` 因此**从来没被发出过**。
+
+- `diag.rs` 补三个映射（`operand`/`operand_slots` → `DSL-SLOT`；`machine` → **`DSL-MACHINE`**，
+  旧名 `DSL-ABI` 指 `[machine]` 属误导，按"码名与节名对齐"改名）。
+- `isa-dsl-errors.md`：`DSL-ABI` 行改 `DSL-MACHINE`；被划掉的 `DSL-EMIT` 行写回现实
+  （该码仍活着：`machine.text`/`emit` 两个 kind 都映射它）；`LINT` 行补 `LINT-ASM-AMBIG`、
+  `LINT-FORM-FIELD-UNUSED`（源码有、文档漏）。
+- **新守卫** `crates/frontend/forge-isa-dsl/tests/error_codes_match_doc.rs`：源码字面量 ↔
+  文档 **§2 表**码集合双向相等（只扫该小节：实测全文正则会误命中 `dsl-tutorial` 这类链接文本）。
+- **诊断矩阵如实抓到 2 例**（`diag_matrix_tests.rs` 钉每例的码与精确行）：它们此前把"缺映射"
+  写成了契约（`DSL-OTHER`）⇒ 期望码改正为 `DSL-SLOT`/`DSL-MACHINE`；改名只记进 CHANGELOG
+  （代码串里不留旧码名，否则守卫会把它当发射点）。
+- 实测终态：源码 **31** 码 == 文档 §2 **31** 码；`cargo test -p forge-isa-dsl` 全绿（301 lib + 12 个二进制）。
+
+② 事件 sink 下沉（E2 收口）：
+
+四个 `FORGE_*_EVENTS` 通道原先各写一遍 `OpenOptions+append+writeln`（环境变量名也散在四处）。
+新增 **`forge_isa_runtime::diagnostics`**（叶层）：
+
+- `CHANNELS` 注册表（`codegen`/`jit`/`asm`/`e2e` + 各自 env + 用途）+ `emit`（JSON 行，唯一转义）
+  与 `emit_text`（逐字文本，三个文本通道的既有格式**不动**：CI 的 `Select-String` 依赖
+  `MATRIX-SKIP`/`RETRY`/`ASM-EXEC-SKIP` 这些 token）+ **写失败静默**（四个通道一致）
+  与未登记通道 fail-closed（debug panic / release 警告一次）。
+- `pipeline/events.rs`、`lib.rs::jit_event`、`forge-tests/src/asm/report.rs::emit_event`、
+  `forge-rustc/tests/e2e.rs::record_event` 全部改**薄转发**（只决定行的格式）。
+- 根 facade 补 `pub use forge_isa_runtime;`（测试面经它用同一 sink）。
+- **新守卫** `event_channels_are_bijective`（`events_guard.rs` 第 3 条）：`CHANNELS` ↔ 源码调用点
+  ↔ 契约文档 §12 的通道表**三方双向**。落地时踩到两个真坑并如实修掉：① 通道表原先放在
+  "事件表"小节里，被 `event_names_are_bijective` 的整节解析吞掉 ⇒ 独立成 §12；
+  ② 守卫扫源码时**自己被命中**（它写出了 `diagnostics::emit(` 这个标记串）⇒ 自跳过 +
+  跨行解析（rustfmt 折行，本仓守卫的常客）。
+
+③ 开关台账归并（E3 收口）：
+
+- `KNOBS`/`knob` 从 `forge-codegen::pipeline::trace` 下沉到同一 leaf，**两侧并成一张表**：
+  后端 11 项 + 直读项（`FN_SIZE`/`CODE_HEX`/`LIVE`/`DW`）+ `forge-rustc` 的 27 项 = **41 项**；
+  新增 `trace(suffix)`（`forge-rustc` 的 `trace_enabled("SLOT")` 写法同源转发）。
+- **5 处绕过台账的直读**（`FORGE_TRACE_FN_SIZE`/`CODE_HEX`/`LIVE`/`DW`，以及 `forge-ir` 内
+  因层依赖必须自持的 `FORGE_TRACE_IR`）里，前四个改走 API；`IR` 登记进表并在"看什么"里写明
+  为什么实现在本 crate。
+- `forge-rustc/src/trace.rs` 的 13 行名字表**删掉**（第二份清单必然漂移），改为指向契约文档。
+- 守卫 `trace_knobs_are_bijective` 重写为**真三方**：源码字面量（全 `crates/**/src`，
+  跳过台账定义文件、跳过注释、在第一个 `#[cfg(test)]` 处截断）↔ `diagnostics::KNOBS` ↔
+  文档 §7 表（扩到 41 行）。
+- **连带发现并修掉文档重号**：v25 M5 插入 `## 6/7/8` 时没顺延既有的 `## 6 模块签名表`/`## 7 观测开关`
+  ⇒ 同号并存（守卫按关键词定位所以没红）。现按物理顺序重排为 1–13。
+
+**验收（同批实测）**：`cargo fmt --all -- --check` / `cargo clippy --workspace --exclude forge-rustc
+--all-targets --all-features -D warnings` / `cargo check -p forge-rustc` / `cargo test --workspace
+--exclude forge-rustc` 全部 exit 0；`forge-codegen --lib --all-features` **2834 passed**（比 M1 前少 2：
+`trace.rs` 的 3 条台账单测搬进 `diagnostics.rs` 并合成 1 条跨 crate 用例，属预期）；新增/改动守卫
+`error_codes_match_doc` 1、`events_guard` 3、`trace_knobs` 2 全绿，其余守卫不回归；JIT 两矩阵
+**197/3/0** 与 **136/64/0**；asm 三档 **3/1/1**；改动文档 markdownlint 0 issues。
+
+**删除清单（本里程碑）**：
+
+- `pipeline/trace.rs` 的 `Knob`/`KNOBS`/`knob`/`warn_unregistered` 实现（改薄转发）；
+- `lib.rs::jit_event`、`forge-tests/src/asm/report.rs::emit_event`、`forge-rustc/tests/e2e.rs::record_event`
+  各自的 `OpenOptions`/`writeln` 实现（改薄转发）；
+- `forge-rustc/src/trace.rs` 的 13 行名字表（第二份清单）；
+- 4 处直读环境变量的开关写法；旧码名 `DSL-ABI`（代码串零出现；改名只记 CHANGELOG）。

@@ -33,6 +33,7 @@ description = "Code Forge: specification-driven compiler infrastructure — writ
 
 [dependencies]
 forge-ir = { path = "crates/foundation/forge-ir" }
+forge-isa-runtime = { path = "crates/foundation/forge-isa-runtime" }
 forge-mem = { path = "crates/foundation/forge-mem" }
 forge-opt = { path = "crates/middle/forge-opt" }
 forge-codegen = { path = "crates/backend/forge-codegen" }

@@ -408,17 +408,8 @@ fn parse_encoding_ratchet(text: &str) -> (std::collections::BTreeMap<String, usi
 /// 追加事件（`FORGE_ASM_EVENTS=<路径>`；与 JIT 矩阵的 `FORGE_JIT_EVENTS` 同款理由：
 /// libtest 吞掉**通过**用例的 stdout，CI 上就看不见计数与跳过原因）。
 pub fn emit_event(kind: &str, msg: &str) {
-    let Some(path) = std::env::var_os("FORGE_ASM_EVENTS") else {
-        return;
-    };
-    use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        let _ = writeln!(f, "{kind} {msg}");
-    }
+    // 落盘实现只有一份（v26 M1 下沉）：本函数只决定格式（`<事件> <说明>`，CI 依赖）。
+    code_forge::forge_isa_runtime::diagnostics::emit_text("asm", &format!("{kind} {msg}"));
 }
 
 /// JSON 字符串转义（**含控制字符**）：红桶样例是 `行号\t文本\t错误`，裸制表符在 JSON

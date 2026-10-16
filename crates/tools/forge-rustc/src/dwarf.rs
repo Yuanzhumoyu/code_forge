@@ -440,7 +440,7 @@ pub fn gen_debug_info(
             buf.extend_from_slice(simple.as_bytes());
             buf.push(0);
             buf.extend_from_slice(&entry.size.to_le_bytes()); // byte_size data4
-            if std::env::var("FORGE_TRACE_DW").is_ok() {
+            if crate::trace::trace_enabled("DW") {
                 eprintln!(
                     "[dw-struct] desc={desc} size={} members={:?}",
                     entry.size,

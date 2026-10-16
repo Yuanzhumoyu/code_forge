@@ -582,10 +582,10 @@ impl<M: TargetMachine> CompileSession<M> {
                 _t7
             );
         }
-        if std::env::var_os("FORGE_TRACE_FN_SIZE").is_some() {
+        if crate::pipeline::trace::knob("FORGE_TRACE_FN_SIZE") {
             let sz = result.as_ref().map(|r| r.code.len()).unwrap_or(0);
             eprintln!("[codegen] fn={} code_bytes={sz}", func_ref.name);
-            if std::env::var_os("FORGE_TRACE_CODE_HEX").is_some()
+            if crate::pipeline::trace::knob("FORGE_TRACE_CODE_HEX")
                 && let Ok(cf) = result.as_ref()
             {
                 let hex: String = cf

@@ -1,7 +1,9 @@
 # ISA-DSL 错误码目录（v18）
 
 > 状态：[active]（2026-09-19 起；2026-09-20 补 `DSL-ENCODING` 与 §3.7 `[encoding]` 三态；
-> 2026-09-21 补 §3.8 多文件组合与 `parts`）。对应实现：
+> 2026-09-21 补 §3.8 多文件组合与 `parts`；**2026-10-11（v26 M1）补 `DSL-MACHINE`/`DSL-SLOT`
+> 的缺失映射与两个 `LINT-*` 行，并由守卫 `error_codes_match_doc` 钉住「本表 ↔ 源码码集合」**）。
+> 对应实现：
 > `crates/frontend/forge-isa-dsl/src/dsl/diag.rs`（诊断收集与定位）、`validate.rs`（各节校验）、
 > `model.rs`（模型级派生与 gate）、`src/loader.rs`（多文件组合的加载期错误）。
 > 语法规范见 [`docs/reference/isa-dsl.md`](isa-dsl.md)，教程见
@@ -50,10 +52,10 @@
 | `DSL-LOWER` | `[[lower.<op>]]` | 引用名未声明、占位符未知、**`when` 属性未知**（恒假 ⇒ 规则永不命中）、完全重复、死规则、树型匹配的死模式 |
 | `DSL-OVERLAP` | `[[lower.<op>]]`（**仅 `validate --strict-overlap`**） | 同 op 两条规则的取值域**相交但互不包含**（部分重叠）：裁决序里前者先命中。**默认档不报**——真谱里"特化 + 兜底"遍地都是（实测三 ISA 共 61 条，全是合法写法）；该档是**评审清单**，不是错误判据 |
 | `DSL-LOWER` | `[[lower.<op>]]` 的树模式（`match`） | 匹配树语法错、内部节点用 Fcmp/Icmp/Copy/Nop、叶变量重复、`when` 属性未知、死模式 |
-| `DSL-ABI` | `[machine]`（`[abi]` 已删除） | 寄存器名未在 `[reg.*]` 声明（`fixed`/`scratch`/`link`；v21 W9 前的 `fixed_regs`/`spill_scratch`/`link_reg` 已改名） |
-| ~~`DSL-EMIT`~~ | ~~`[machine.text]`~~ | **已随 v20 A4 删除**（序/尾声键不存在；`[machine.text]` 只剩机器事实） |
+| `DSL-MACHINE` | `[machine]`（v20 A5-3 前这一节叫 `[abi]`；码名随 v26 与节名对齐） | 寄存器名未在 `[reg.*]` 声明（`fixed`/`scratch`/`link`；v21 W9 前的 `fixed_regs`/`spill_scratch`/`link_reg` 已改名） |
+| `DSL-EMIT` | `[machine.text]` / `[emit]` | 机器事实类（`[machine.text]` 的字段/模板）——**序/尾声键已随 v20 A4 删除**，该码本身仍在使用 |
 | `DSL-SPILL` | `[machine.spill.<模板名>]`（v21 W9 前叫 `[spill.<名>]`） | 指令引用未声明、占位符不是 `{N}`、`base` 未在 `[reg.*]` 声明、`class` 未声明 |
-| `LINT-*` | `forge-isa lint`（**静态体检，不是校验错误**） | `LINT-UNUSED-SLOT`/`LINT-UNUSED-FORM`/`LINT-UNUSED-BITFIELD`（默认档）、`LINT-BITFIELD-OVERLAP`（默认档）、`LINT-OP-GAP`（`--ops`）、`LINT-REF-UNUSED`（`--refs`）、`LINT-UNASSIGNED-BITS`（`--bits`）、`LINT-VARY-CANDIDATE`（`--suggest`，只建议）——判据与档位见 `docs/reference/isa-dsl.md`「静态体检」 |
+| `LINT-*` | `forge-isa lint`（**静态体检，不是校验错误**） | `LINT-UNUSED-SLOT`/`LINT-UNUSED-FORM`/`LINT-UNUSED-BITFIELD`（默认档）、`LINT-BITFIELD-OVERLAP`（默认档）、`LINT-ASM-AMBIG`（`--strict-asm-ambig`：同助记符 + 同操作数类只能靠声明序兜）、`LINT-FORM-FIELD-UNUSED`（`[form.<名>]` 的字段没有任何指令绑定）、`LINT-OP-GAP`（`--ops`）、`LINT-REF-UNUSED`（`--refs`）、`LINT-UNASSIGNED-BITS`（`--bits`）、`LINT-VARY-CANDIDATE`（`--suggest`，只建议）——判据与档位见 `docs/reference/isa-dsl.md`「静态体检」 |
 | `DSL-INCLUDE` | `include`（v18 S7） | 文件缺失、循环 include、同名标量冲突 |
 | `DSL-OTHER` | 无节可归 | 模型级错误（如缺 `[reg.*]` 顶层派生失败）——**出现即说明该消息缺节前缀，应报 bug** |
 

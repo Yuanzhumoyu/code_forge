@@ -11,6 +11,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 项目 v26 M1：诊断面单一来源（错误码台账 · 事件 sink · 开关台账）
+
+**破坏性变更**：ISA-DSL 错误码 `DSL-ABI` → **`DSL-MACHINE`**（`[abi]` 节 v20 A5-3 已删，
+用 `DSL-ABI` 指 `[machine]` 误导）；`[operand.<名>]` 与 `[machine]` 的诊断码从 `DSL-OTHER`
+改为承诺已久的 `DSL-SLOT`/`DSL-MACHINE`。按码过滤/统计的下游需同步。
+
++ **错误码台账（+ 修一个真 bug）**：`section_code` 的 kind 映射表**缺 `operand`/`operand_slots`/
+  `machine`** ⇒ 这两节的诊断一律落到 `DSL-OTHER`，而文档写着"出现 `DSL-OTHER` 即说明消息缺前缀、
+  应报 bug"——判据被反用，文档承诺的 `DSL-SLOT`/`DSL-ABI` **从未发出过**。补齐映射后：
+  源码 **31** 码 == `docs/reference/isa-dsl-errors.md` §2 表 **31** 码。
+  文档另修两处：被划掉写成"已删除"的 `DSL-EMIT`（该码仍在用）与 `LINT` 行漏掉的两个码
+  （`LINT-ASM-AMBIG`/`LINT-FORM-FIELD-UNUSED`）。
++ **新守卫** `error_codes_match_doc`（`forge-isa-dsl/tests/`）：源码字面量 ↔ 文档 §2 表
+  **双向相等**（只扫该小节，避免 `dsl-tutorial` 这类链接文本误命中）。诊断矩阵
+  `diag_matrix_tests.rs` 如实抓到 2 例把"缺映射"当契约的期望码，已改正。
++ **事件 sink 下沉**：新增 `forge_isa_runtime::diagnostics`——四个 `FORGE_*_EVENTS` 通道原先
+  各写一遍 `OpenOptions+append+writeln`，现共用一处落盘实现 + `CHANNELS` 注册表；
+  `pipeline::events`、`jit_event`、asm 与 e2e 事件全部改薄转发（**行的格式不动**，CI 的
+  `Select-String` 依赖那些 token）。写失败仍静默，未登记通道 fail-closed。
+  根 facade 补 `pub use forge_isa_runtime;`。
++ **新守卫** `event_channels_are_bijective`：`CHANNELS` ↔ 源码调用点 ↔ 契约文档通道表三方双向。
++ **开关台账归并**：`KNOBS`/`knob` 从 `forge-codegen::pipeline::trace` 下沉到同一 leaf，**后端与
+  `forge-rustc` 并成一张 41 项的表**（新增 `trace(后缀)`）；4 处**绕过台账直读环境变量**的写法
+  （`FORGE_TRACE_FN_SIZE`/`CODE_HEX`/`LIVE`/`DW`）改走 API；`forge-rustc/src/trace.rs` 里那份
+  会漂移的 13 行名字表删除。守卫 `trace_knobs_are_bijective` 重写为**真三方**（源码字面量 ↔
+  台账 ↔ 文档 §7 表，扩到 41 行）。
++ **文档**：契约文档修掉 v25 插入小节留下的**重号**（同号 `## 6`/`## 7` 并存），现按物理顺序 1–13；
+  §7 开关表扩到 41 项并写明"一张表管两侧"；§12 新增事件通道表。
++ 验收：`forge-codegen --lib --all-features` 全绿；workspace exit 0；JIT 两矩阵（197/3/0 · 136/64/0）；
+  asm 三档（3/1/1）；守卫全绿（新增 2 条）；clippy `-D warnings`、fmt、`cargo check -p forge-rustc` 干净；
+  改动文档 markdownlint 0 issues。
+
 ### Docs (2026-10-11) — 后端 v25 M5：契约回写（`backend-pipeline.md` 补齐 v25 的四项结构）
 
 `reference/backend-pipeline.md` 此前是 v24 口径（合法化两相 / 值描述 / 缺口台账 / 观测开关 +

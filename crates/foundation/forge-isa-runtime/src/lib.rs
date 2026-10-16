@@ -18,6 +18,7 @@ pub use forge_ir::IrError;
 pub mod alloc_result;
 pub mod cpu;
 pub mod ctx;
+pub mod diagnostics;
 pub mod emit;
 mod erased;
 pub mod machine;

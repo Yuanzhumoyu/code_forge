@@ -146,35 +146,70 @@ pass 清单与**合并次序**（下表与 `LegalizeDriver::with_aggregates().pa
 
 ## 7. 观测开关（诊断面台账）
 
-诊断开关**不可能静默失效**：`pipeline::trace::knob("FORGE_TRACE_*")` 直接按名字问环境变量
-（**任何名字都生效**），`pipeline::trace::KNOBS` 是**唯一登记处**，只回答"我们有哪些观测
+**一张表管两侧**（v26 M1）：后端与 `forge-rustc` 的 `FORGE_TRACE_*` 都登记在
+`forge_isa_runtime::diagnostics::KNOBS`（本表 ↔ 该台账 ↔ 源码字面量三方双向相等，守卫
+`trace_knobs_are_bijective`）；下表共 **41** 项。
+
+诊断开关**不可能静默失效**：`forge_isa_runtime::diagnostics::knob("FORGE_TRACE_*")` 直接按
+名字问环境变量（**任何名字都生效**；`forge-rustc` 侧写 `trace_enabled("后缀")`，同源转发；
+`pipeline::trace` 只是转发层），`diagnostics::KNOBS` 是**唯一登记处**，只回答"我们有哪些观测
 开关、各自看什么"。忘登记的名字：debug 下 `debug_assert!` **当场 panic**，release 下照常
 生效但 `eprintln` 一次警告。
 
 为什么值得一节：旧实现维护一份开关白名单，**名字漏进白名单 ⇒ 该开关恒为假、静默失效**
 ——`FORGE_TRACE_AGG` 就这样死了几个月（"文档承诺可见、实际看不见"），M4 落地时又抓到第二个
 同类 `FORGE_TRACE_M4`（调用点在、白名单里没有），而白名单里的 `FORGE_TRACE_ISEL` 一处调用点
-都没有（死条目）。下表与源码调用点由守卫 `trace_knobs_are_bijective` 钉成**双向相等**
-（多一行、少一行都红）。
+都没有（死条目）。下表与源码字面量、与 `KNOBS` 台账由守卫 `trace_knobs_are_bijective` 钉成
+**三方双向相等**（多一行、少一行都红）；v26 M1 起 `forge-rustc` 的 27 项也在同一张表里。
 
 | 开关 | 看什么 |
 | --- | --- |
-| `FORGE_TRACE_ABI` | 调用约定规划与落点回填（abi_setup / compiler） |
+| `FORGE_TRACE_ABI` | 调用约定规划与落点回填（forge-codegen abi_setup/compiler；forge-rustc FnAbi 形态） |
 | `FORGE_TRACE_AGG` | 聚合展开与合法化（legalize 各 pass / 计划相 / 物化相） |
 | `FORGE_TRACE_ALLOC` | 寄存器分配主循环（regalloc_bt） |
-| `FORGE_TRACE_EMIT` | 机器码发射（emission） |
+| `FORGE_TRACE_ARGS` | 调用实参打包明细（forge-rustc mod.rs） |
+| `FORGE_TRACE_ASSERT` | 编译期断言与 const 求值路径（forge-rustc） |
+| `FORGE_TRACE_BC` | 机器码字节 dump（forge-rustc compile.rs；配 llvm-objdump 对照） |
+| `FORGE_TRACE_BLOCK` | 基本块 lowering 边界（forge-rustc mod.rs） |
+| `FORGE_TRACE_CALL` | 直接调用：callee 签名与实参打包（forge-rustc mod.rs） |
+| `FORGE_TRACE_CAST` | 类型转换 lowering（forge-rustc） |
+| `FORGE_TRACE_CGU` | codegen unit 划分（forge-rustc） |
+| `FORGE_TRACE_CODE_HEX` | 函数机器码 hex dump（forge-codegen compiler；`FN_SIZE` 的细节档） |
+| `FORGE_TRACE_CONST` | 常量求值（forge-rustc const_eval.rs） |
+| `FORGE_TRACE_DISCR` | 判别式（discriminant）取值与布局（forge-rustc） |
+| `FORGE_TRACE_DW` | DWARF 调试信息生成（forge-rustc dwarf.rs） |
+| `FORGE_TRACE_EMIT` | 机器码发射（emission；`[machine.text]` 相关诊断也归此） |
 | `FORGE_TRACE_EXPIRE` | 活跃区间到期处理（regalloc_bt） |
+| `FORGE_TRACE_FIELD` | 字段偏移计算（forge-rustc mod.rs） |
+| `FORGE_TRACE_FN` | 每个函数的 lowering 开始（forge-rustc mod.rs） |
+| `FORGE_TRACE_FN_SIZE` | 每个函数的入口/体积摘要（forge-codegen compiler） |
+| `FORGE_TRACE_GLOBAL` | 全局与重定位符号解析（forge-rustc） |
+| `FORGE_TRACE_IR` | IR 构建期 dump（forge-ir builder —— 该层不允许依赖运行时，故实现在本 crate 内） |
+| `FORGE_TRACE_LIVE` | 活区间全量 dump（forge-codegen liverange；调 regalloc 用） |
+| `FORGE_TRACE_LOAD` | load lowering（forge-rustc） |
+| `FORGE_TRACE_LOC` | 源码位置/行号映射（forge-rustc mod.rs） |
 | `FORGE_TRACE_LOWER` | 指令选择（lowering；每指令一条） |
 | `FORGE_TRACE_M4` | 绑定折入与多类槽回填类诊断（compiler） |
+| `FORGE_TRACE_META` | 实例元数据（forge-rustc） |
+| `FORGE_TRACE_MIR` | 每条 MIR statement（forge-rustc mod.rs） |
+| `FORGE_TRACE_PAIR` | ScalarPair 判定与偏移（forge-rustc） |
+| `FORGE_TRACE_PLACE` | place 投影 lowering（forge-rustc place.rs） |
 | `FORGE_TRACE_REGALLOC` | 寄存器分配编排（regalloc_bt 入口） |
+| `FORGE_TRACE_SLOT` | 栈槽分配（forge-rustc mod.rs） |
 | `FORGE_TRACE_SPILL` | 溢出与回填（emission / regalloc_bt） |
 | `FORGE_TRACE_STACK` | 栈槽与帧布局（lowering） |
+| `FORGE_TRACE_STMT` | MIR statement 级跟踪（forge-rustc） |
+| `FORGE_TRACE_STORE` | store lowering（forge-rustc） |
+| `FORGE_TRACE_SUBSTS` | 泛型替换解析（FnDef → instance，forge-rustc mod.rs） |
+| `FORGE_TRACE_SYM` | 符号名计算（forge-rustc mod.rs） |
+| `FORGE_TRACE_TERM` | 终结符 lowering（forge-rustc mod.rs） |
+| `FORGE_TRACE_VAR` | 局部变量与调试变量（forge-rustc mod.rs） |
 | `FORGE_TRACE_VCODE` | 虚拟指令流（compiler） |
 
 性能：每个开关一个 `OnceLock` 缓存（首次查询后零开销）——regalloc/lowering/emission 的
 **每指令热路径**上都有查询，实测裸 `std::env::var_os` 会占 codegen 的 7–18%。
 
-## 6. 一次分类，处处消费
+## 8. 一次分类，处处消费
 
 ABI 落点**只有一个来源**：合法化计划相（`legalize/plan.rs`）。它只读地算出 `AbiEdges`，
 物化与各 `pass` **只消费**它。
@@ -207,7 +242,7 @@ ABI 落点**只有一个来源**：合法化计划相（`legalize/plan.rs`）。
 守卫 = `classification_single_entry`（三条：唯一入口双向相等、生产者必须引用计划且只有计划相建
 分类器、旧符号零出现）。
 
-## 7. 错误分类学：失败语义分层
+## 9. 错误分类学：失败语义分层
 
 `IrError::Unsupported` 曾经一名三用（能力缺口 / 畸形 IR / 使用错误），三者对用户的意义完全不同。
 现在**冻结四分类**，`forge-codegen` 与 `forge-isa-runtime` 的 `src/` 里不许出现裸 `Unsupported(`：
@@ -228,7 +263,7 @@ ABI 落点**只有一个来源**：合法化计划相（`legalize/plan.rs`）。
 守卫 = `error_taxonomy`（后端 + 运行时的 `src/` 无裸 `Unsupported(`；全仓无 `Unimplemented`）
 加 `capability_gaps_guard`（台账与源码缺口集合双向相等）。
 
-## 8. 模块边界与规模棘轮
+## 10. 模块边界与规模棘轮
 
 大文件不是风格问题，是**读改成本**：立项时 `compiler.rs` 1616 行、`regalloc_bt.rs` 1544、
 `va_expand.rs` 1113、`agg_call.rs` 690。v25 M4 按职责切成目录——**模块路径不变**
@@ -263,7 +298,7 @@ ABI 落点**只有一个来源**：合法化计划相（`legalize/plan.rs`）。
 M4 把测试搬成独立文件后，文件内不再有 `#[cfg(test)]` 可供"截断扫描"。识别方式是**向上找声明它的
 `mod.rs`**，看那条 `mod X;` 是否带 `#[cfg(test)]`（比按文件名猜精确，也盖得住改名）。
 
-## 9. 事件表（codegen 的机读出口）
+## 11. 事件表（codegen 的机读出口）
 
 诊断开关给的是**人读**的散文；CI 要的是**机读**的一行 JSON。出口 = 环境变量
 **`FORGE_CODEGEN_EVENTS=<文件>`**（追加写；未设置 ⇒ 零开销返回；**写失败静默**——观测不得
@@ -283,7 +318,24 @@ M4 把测试搬成独立文件后，文件内不再有 `#[cfg(test)]` 可供"截
 | `ALLOC-SUMMARY` | 寄存器分配完成：`assigned`、`spills`、`edits` |
 | `EMIT-SUMMARY` | 发射完成：`code_bytes`、`relocs` |
 
-## 10. 相关账本与下一步
+## 12. 事件通道（四个出口，一处实现）
+
+四个通道**共用一处落盘实现**（`forge_isa_runtime::diagnostics`：唯一的环境变量查表 + 开文件 +
+追加 + **写失败静默**），各自只决定**行的格式**。未登记的通道名 fail-closed（debug 下当场 panic、
+release 下警告一次并放弃写入）。下表与 `diagnostics::CHANNELS`、源码调用点由守卫
+`event_channels_are_bijective` 钉成**三方双向相等**。
+
+| 通道 | 环境变量 | 格式与用途 |
+| --- | --- | --- |
+| `codegen` | `FORGE_CODEGEN_EVENTS` | **JSON 行**（`{"event":…}`）：编译管线事件（见上表） |
+| `jit` | `FORGE_JIT_EVENTS` | 文本 `<事件> <用例>`：JIT 矩阵可见性（skip 与真跑过在日志里同形） |
+| `asm` | `FORGE_ASM_EVENTS` | 文本 `<事件> <说明>`：汇编语料测试台（解析桶/棘轮/SKIP 原因） |
+| `e2e` | `FORGE_E2E_EVENTS` | 文本 `[<事件>] <用例> <细节>`：forge-rustc e2e（RETRY/KNOWN/AV 探针） |
+
+`forge-rustc` 的编译期跟踪开关（`FORGE_TRACE_*`）用**同一张**开关台账（§7 的 `KNOBS` 下沉到
+`forge-isa-runtime::diagnostics`），因此"漏登记导致开关静默失效"这一类问题在两侧都不再可能。
+
+## 13. 相关账本与下一步
 
 * 能力缺口：[`backend-gaps.md`](backend-gaps.md)（含逐条决策证据）。
 * v25 逐批证据与删除清单：[`archive/backend-v25-plan.md`](../archive/backend-v25-plan.md)（已归档）。

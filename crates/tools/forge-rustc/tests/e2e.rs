@@ -1679,17 +1679,11 @@ fn strict_flaky() -> bool {
 /// "本轮到底有没有踩到环境性 AV/超时"。设 `FORGE_E2E_EVENTS=<路径>` 时把关键事件与
 /// 汇总追加到该文件，CI 用 `if: always()` 步骤打印出来（见 .github/workflows/ci.yml）。
 fn record_event(kind: &str, case: &str, detail: &str) {
-    use std::io::Write as _;
-    let Some(path) = std::env::var_os("FORGE_E2E_EVENTS") else {
-        return;
-    };
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-    {
-        let _ = writeln!(f, "[{kind}] {case} {detail}");
-    }
+    // 落盘实现只有一份（v26 M1 下沉）：本函数只决定格式（`[<事件>] <用例> <细节>`，CI 依赖）。
+    code_forge::forge_isa_runtime::diagnostics::emit_text(
+        "e2e",
+        &format!("[{kind}] {case} {detail}"),
+    );
 }
 
 /// CI 运行环境 AV 签名：`0xC0000005` = `-1073741819`。

@@ -186,3 +186,88 @@ fn compile_fixture() {
     let s = forge_codegen::CompileSession::new(tm);
     let _ = s.compile(&f);
 }
+
+/// **事件通道三方双向相等**（v26 M1）：`diagnostics::CHANNELS` ↔ 源码调用点 ↔ 契约文档通道表。
+///
+/// 为什么值钱：四个 `FORGE_*_EVENTS` 通道原先各写各的（四份 `OpenOptions+append+writeln`），
+/// 环境变量名散在四处、格式无人对照；这层把"落盘"收成一处、把"有哪些通道"变成台账。
+#[test]
+fn event_channels_are_bijective() {
+    let root = repo_root();
+
+    // 台账侧（名字, 环境变量）
+    let table: BTreeSet<(String, String)> = forge_isa_runtime::diagnostics::CHANNELS
+        .iter()
+        .map(|c| (c.name.to_string(), c.env.to_string()))
+        .collect();
+    assert!(!table.is_empty(), "`CHANNELS` 台账为空");
+
+    // 源码侧：`diagnostics::emit("…"` / `diagnostics::emit_text("…"` 的通道名。
+    // **跨行解析**（rustfmt 会把参数折到下一行——本仓守卫反复踩到的坑）＋跳过定义处与本守卫文件
+    // （后者为测试自己写出了这两个标记串 ⇒ 会把 `", "` 当成通道名，实测撞到过）。
+    let mut files = Vec::new();
+    rs_files(&root.join("crates"), &mut files);
+    let mut source: BTreeSet<String> = BTreeSet::new();
+    for p in &files {
+        let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name == "diagnostics.rs" || name == "events_guard.rs" {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(p) else {
+            continue;
+        };
+        let mut rest = text.as_str();
+        while let Some(i) = rest.find("diagnostics::emit") {
+            let after = &rest[i + "diagnostics::emit".len()..];
+            // 允许 `(` 或 `_text(` 之后跨行
+            let after = after.trim_start();
+            let after = after
+                .strip_prefix("_text(")
+                .or_else(|| after.strip_prefix('('))
+                .unwrap_or(after);
+            let after = after.trim_start();
+            if let Some(stripped) = after.strip_prefix('"')
+                && let Some(end) = stripped.find('"')
+            {
+                source.insert(stripped[..end].to_string());
+            }
+            rest = after;
+        }
+    }
+    let table_names: BTreeSet<String> = table.iter().map(|(n, _)| n.clone()).collect();
+    assert_eq!(
+        source, table_names,
+        "事件通道的源码调用点与 `CHANNELS` 台账不一致（源码多 = 漏登记；台账多 = 死条目）：\n           源码 {source:?}\n  台账 {table_names:?}"
+    );
+
+    // 文档侧：契约文档「事件通道」小节的 `| \`通道\` | \`ENV\` |` 行
+    let doc = std::fs::read_to_string(root.join("docs/reference/backend-pipeline.md"))
+        .unwrap_or_else(|e| panic!("读不到契约文档：{e}"));
+    let mut inside = false;
+    let mut documented: BTreeSet<(String, String)> = BTreeSet::new();
+    for line in doc.lines() {
+        if line.starts_with("### ") || line.starts_with("## ") {
+            inside = line.contains("事件通道");
+            continue;
+        }
+        if !inside {
+            continue;
+        }
+        let l = line.trim();
+        if let Some(rest) = l.strip_prefix("| `")
+            && let Some(end) = rest.find('`')
+        {
+            let name = rest[..end].to_string();
+            let tail = &rest[end..];
+            if let Some(e2) = tail.find("`FORGE_")
+                && let Some(e3) = tail[e2 + 1..].find('`')
+            {
+                documented.insert((name, tail[e2 + 1..e2 + 1 + e3].to_string()));
+            }
+        }
+    }
+    assert_eq!(
+        table, documented,
+        "契约文档的通道表与 `CHANNELS` 台账不一致（改通道就同时改两处）：\n  台账 {table:?}\n  文档 {documented:?}"
+    );
+}

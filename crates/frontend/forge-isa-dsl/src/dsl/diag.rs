@@ -187,6 +187,18 @@ pub(crate) fn section_code(kind: &str) -> &'static str {
         "machine.text" => "DSL-EMIT",
         "machine.spill" => "DSL-SPILL",
         "conventions" => "DSL-CONV",
+        // v26 M1：两个 kind 以前**没有映射**，于是 `[operand.<名>]` 与 `[machine]` 的诊断一律落到
+        // `DSL-OTHER`——而文档一直承诺 `DSL-SLOT` / `DSL-ABI`（「出现 DSL-OTHER 就是消息缺前缀」
+        // 的判据因此被反用）。现在补齐：`operand_slots` 是 `parse_prefix` 对 `[operand.<名>]`
+        // 给出的 kind；`machine` 是裸 `[machine]`（寄存器名未在 `[reg.*]` 声明这类）。
+        // 码名取**节名**：`DSL-SLOT` 沿用（operand = 操作数槽，名副其实），旧的 `DSL-ABI` 改名为
+        // `DSL-MACHINE`（`[abi]` 节 v20 A5-3 已整节删除，用 `DSL-ABI` 指 `[machine]` 会误导）。
+        // `[operand.<名>]` 有两种前缀形态：带 `('名字')` 尾巴的走 `operand_slots`，
+        // 不带尾巴的走通用分支得到 `operand`——两者都是操作数槽节，都要落到 `DSL-SLOT`
+        //（实测：漏了 `operand` 时"槽宽为 0"仍报 `DSL-OTHER`）。
+        "operand" => "DSL-SLOT",
+        "operand_slots" => "DSL-SLOT",
+        "machine" => "DSL-MACHINE",
         // v21 W10：表头即名字的两张表（`[form.<名>]` / `[inst.<名>]`）。
         "form" => "DSL-FORM",
         "inst" => "DSL-INST",

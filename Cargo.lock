@@ -257,6 +257,7 @@ dependencies = [
  "forge-dsl",
  "forge-grammar",
  "forge-ir",
+ "forge-isa-runtime",
  "forge-mem",
  "forge-object",
  "forge-opt",

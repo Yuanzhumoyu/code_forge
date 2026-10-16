@@ -150,7 +150,7 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
         (
             "槽宽为 0",
             plus("[operand.imm0]\nkind = \"imm\"\nbits = 0"),
-            "DSL-OTHER",
+            "DSL-SLOT",
             "imm0",
         ),
         (
@@ -273,9 +273,9 @@ fn diagnostic_matrix_has_codes_and_exact_lines() {
             "重复出现",
         ),
         (
-            "abi 未知寄存器名",
+            "machine 未知寄存器名（v26 M1：码名与节名对齐）",
             BASE.replace("scratch = [\"X9\"]", "scratch = [\"NOPE\"]"),
-            "DSL-OTHER",
+            "DSL-MACHINE",
             "NOPE",
         ),
         (
