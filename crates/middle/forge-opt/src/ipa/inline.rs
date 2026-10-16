@@ -198,7 +198,7 @@ pub fn inline_calls(
                     .collect();
 
                 // Create new instruction in caller（保留全字段：flags/mem_flags/
-                // metadata/loc/isel_strategy）
+                // metadata/loc）
                 let new_inst = func.make_inst_with_meta_and_loc(
                     ci.opcode,
                     block,
@@ -210,12 +210,6 @@ pub fn inline_calls(
                     ci.metadata().iter().cloned().collect(),
                     ci.loc.clone(),
                 );
-                if let Some(strategy) = ci.isel_strategy() {
-                    func.dfg
-                        .inst_mut(new_inst)
-                        .set_isel_strategy(strategy.clone());
-                }
-
                 // Map old callee results → new caller values
                 let new_results = func.dfg.inst_results(new_inst).to_vec();
                 for (old_val, &new_val) in ci.results.iter().zip(new_results.iter()) {

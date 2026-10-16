@@ -77,19 +77,6 @@ pub struct Instruction {
     pub(crate) metadata: SmallVec<[AttachedMetadata; 2]>,
     /// Source location — file, line, column for debugging and diagnostics.
     pub loc: Option<SourceLocation>,
-    /// Instruction-selection strategy tag produced by pattern matching
-    /// (Stage 3). When set, the lowering pass should emit the fused machine
-    /// sequence named by the tag instead of lowering the opcode verbatim
-    /// (e.g. `"lea_sib:4"` for `Iadd(Imul(idx,4), base)` → LEA).
-    /// `None` = default lowering.
-    ///
-    /// 类型见 [`crate::ir::isel_strategy::IselStrategy`]：标签名由目标 ISA 数据
-    /// 决定，forge-ir 不认识任何具体名字（无枚举/白名单/长度限制）。
-    ///
-    /// **字段私有**（v3 方案 S5 可见性）：读 [`Instruction::isel_strategy`]、
-    /// 写 [`Instruction::set_isel_strategy`] / [`Instruction::clear_isel_strategy`]
-    /// ——与 `BlockData.terminator` 同一约定，附件只经入口改。
-    pub(crate) isel_strategy: Option<crate::ir::isel_strategy::IselStrategy>,
     /// **墓碑标志**（v3 方案 S2：墓碑语义显式化）。
     ///
     /// 删除是"标墓碑"而非回收槽位：`remove_inst` 把块内顺序表条目摘掉，就地墓碑化
@@ -125,21 +112,6 @@ impl Instruction {
     /// [`DataFlowGraph::make_inst_with_meta_and_loc`]。
     pub fn attach_metadata(&mut self, metadata: AttachedMetadata) {
         self.metadata.push(metadata);
-    }
-
-    /// 指令选择标签；`None` = 无标签（按 opcode 逐条降级）。
-    pub fn isel_strategy(&self) -> Option<&crate::ir::isel_strategy::IselStrategy> {
-        self.isel_strategy.as_ref()
-    }
-
-    /// 写指令选择标签（覆盖既有标签）。
-    pub fn set_isel_strategy(&mut self, strategy: crate::ir::isel_strategy::IselStrategy) {
-        self.isel_strategy = Some(strategy);
-    }
-
-    /// 摘除指令选择标签，返回被摘下的那个。
-    pub fn clear_isel_strategy(&mut self) -> Option<crate::ir::isel_strategy::IselStrategy> {
-        self.isel_strategy.take()
     }
 }
 
@@ -389,7 +361,6 @@ impl DataFlowGraph {
             mem_flags,
             metadata,
             loc,
-            isel_strategy: None,
             param_attrs: SmallVec::new(),
             fn_attrs: crate::ir::function::FunctionAttributes::NONE,
             tombstone: false,
@@ -402,7 +373,7 @@ impl DataFlowGraph {
     }
 
     /// 克隆一条指令到目标块，**保留全字段**（opcode/operands/immediates/
-    /// flags/mem_flags/metadata/loc/isel_strategy——licm/loop_unroll/inline
+    /// flags/mem_flags/metadata/loc——licm/loop_unroll/inline
     /// 此前手写模板会丢 flags/mem_flags/metadata）。
     ///
     /// `value_remap`（old → new）：克隆前先对 operands 应用已有映射（链式克隆
@@ -448,10 +419,6 @@ impl DataFlowGraph {
             metadata,
             loc,
         );
-        // 保留 isel_strategy / param_attrs（make_inst_* 系列不接收该字段）
-        if let Some(strategy) = self.insts[inst.0 as usize].isel_strategy.clone() {
-            self.insts[new_inst.0 as usize].set_isel_strategy(strategy);
-        }
         self.insts[new_inst.0 as usize].tombstone = self.insts[inst.0 as usize].tombstone;
         self.insts[new_inst.0 as usize].param_attrs =
             self.insts[inst.0 as usize].param_attrs.clone();
@@ -565,7 +532,6 @@ impl DataFlowGraph {
             mem_flags: MemFlags::NONE,
             metadata: SmallVec::new(),
             loc: None,
-            isel_strategy: None,
             param_attrs: SmallVec::new(),
             fn_attrs: crate::ir::function::FunctionAttributes::NONE,
             tombstone: false,
@@ -604,12 +570,11 @@ impl DataFlowGraph {
         i.opcode = Opcode::Nop;
         i.operands.clear();
         i.immediates.clear();
-        // 附件一并清掉：墓碑上的 metadata/isel_strategy/param_attrs 是陈旧状态，
+        // 附件一并清掉：墓碑上的 metadata/param_attrs 是陈旧状态，
         // 只会误导 dump 与诊断（"删了但看起来还带 TBAA/融合标签"）。
         i.metadata.clear();
         i.param_attrs.clear();
         i.fn_attrs = crate::ir::function::FunctionAttributes::NONE;
-        i.isel_strategy = None;
     }
 
     /// 删指令：从所在块摘掉、标成墓碑，并把它的结果值类型置为 VOID
@@ -732,7 +697,7 @@ impl DataFlowGraph {
     /// # 契约（改错字段会破坏不变量）
     ///
     /// - 安全字段：`opcode`/`immediates`/`flags`/`mem_flags`/`param_attrs`/
-    ///   `fn_attrs`/`metadata`/`loc`/`isel_strategy`/`block`（块归属变更是 S2 余项）。
+    ///   `fn_attrs`/`metadata`/`loc`/`block`（块归属变更是 S2 余项）。
     /// - **`operands`/`results` 不在此列**：改操作数会绕过 use-lists，必须走
     ///   [`crate::Function::replace_all_uses`]/`apply_replacements`，或"就地改写 +
     ///   [`crate::Function::refresh_inst_uses`] 重登记"（后者是本口的既有用法）。
@@ -1322,23 +1287,15 @@ mod tests {
         );
         dfg.remove_inst(i1); // 墓碑
 
-        // 遍历活跃指令：应只剩 i2，且可打 isel_strategy 标签
+        // 遍历活跃指令：应只剩 i2，且可变迭代能写回
         let mut visited = 0;
         for inst in dfg.block_insts_mut(b) {
             assert_eq!(inst.opcode, Opcode::Iconst);
-            inst.set_isel_strategy(crate::ir::isel_strategy::IselStrategy::from_static(
-                "tagged",
-            ));
+            inst.flags = InstFlags::MAY_UB;
             visited += 1;
         }
         assert_eq!(visited, 1, "墓碑指令应被跳过");
-        assert_eq!(
-            dfg.inst_data(i2)
-                .isel_strategy()
-                .map(crate::ir::isel_strategy::IselStrategy::name),
-            Some("tagged"),
-            "可变迭代应写回"
-        );
+        assert_eq!(dfg.inst_data(i2).flags, InstFlags::MAY_UB, "可变迭代应写回");
     }
 
     #[test]

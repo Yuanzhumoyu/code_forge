@@ -13,8 +13,8 @@ use forge_ir::ir::metadata::{AttachedMetadata, MetadataKind, MetadataNode, Metad
 use forge_ir::util::string_pool::InternedStr;
 use forge_ir::{
     Block, FuncRef, FunctionAttributes, FunctionBuilder, FunctionSignature, IR_FORMAT_VERSION,
-    ImmStr, Inst, IntCC, IrError, IselStrategy, Module, Opcode, SectionId, SourceLocation, TypeId,
-    Value, check_binary_compat,
+    ImmStr, Inst, IntCC, IrError, Module, Opcode, SectionId, SourceLocation, TypeId, Value,
+    check_binary_compat,
 };
 
 // ============================================================
@@ -233,7 +233,6 @@ fn mini_inst(
     put_varint(&mut out, 0); // fn_attrs
     put_varint(&mut out, 0); // metadata
     out.push(0); // loc none
-    out.push(0); // isel none
     out.push(0); // tombstone
     out
 }
@@ -309,7 +308,6 @@ fn reference_module() -> Module {
             node,
         });
         inst.loc = Some(SourceLocation::new("main.c", 12, 7));
-        inst.set_isel_strategy(IselStrategy::new("lea_sib:4"));
     }
     func.value_names
         .insert(zero, func.types.borrow_mut().strings.intern("zero"));
@@ -384,10 +382,6 @@ fn function_roundtrips_with_control_flow() {
                 orig.dfg.inst_data(inst).metadata()
             );
             assert_eq!(got.dfg.inst_data(inst).loc, orig.dfg.inst_data(inst).loc);
-            assert_eq!(
-                got.dfg.inst_data(inst).isel_strategy(),
-                orig.dfg.inst_data(inst).isel_strategy()
-            );
             assert_eq!(
                 got.dfg.inst_data(inst).is_tombstone(),
                 orig.dfg.inst_data(inst).is_tombstone()

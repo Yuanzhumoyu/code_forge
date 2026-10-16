@@ -795,7 +795,7 @@ impl Function {
     /// 替换）：占位条目仍在 `inst_order` 里，遍历方靠
     /// [`Instruction::is_tombstone`] 跳过。此前这些调用点各自手写
     /// "`opcode = Nop` + 清三张表 + `refresh_inst_uses`"，附件（metadata/
-    /// isel_strategy/param_attrs）留在墓碑上（S2 实测不一致）。
+    /// param_attrs）留在墓碑上（S2 实测不一致）。
     pub fn tombstone_inst(&mut self, inst: Inst) {
         self.dfg.tombstone_inst_low(inst);
         self.refresh_inst_uses(inst);
@@ -1782,7 +1782,7 @@ mod tests {
         assert!(verifier.verify(&func).is_ok(), "一体替换后 IR 仍有效");
     }
 
-    /// clone_inst 保留全字段（flags/mem_flags/metadata/loc/isel_strategy），
+    /// clone_inst 保留全字段（flags/mem_flags/metadata/loc），
     /// 并自动维护 value_remap（旧结果 → 新结果）。
     #[test]
     fn test_clone_inst_preserves_fields() {
@@ -1806,7 +1806,6 @@ mod tests {
         {
             let inst = fb.func.dfg.inst_mut(x_inst);
             inst.flags = crate::ir::inst_flags::InstFlags::MAY_UB;
-            inst.set_isel_strategy(crate::IselStrategy::from_static("lea_sib:4"));
             inst.loc = Some(crate::analysis::debug_info::SourceLocation {
                 file: Some(crate::util::imm_str::ImmStr::from("test.rs")),
                 line: Some(42),
@@ -1826,11 +1825,6 @@ mod tests {
         assert_eq!(cloned.mem_flags, orig.mem_flags, "mem_flags 保留");
         assert_eq!(cloned.metadata, orig.metadata, "metadata 保留");
         assert_eq!(cloned.loc, orig.loc, "loc 保留");
-        assert_eq!(
-            cloned.isel_strategy(),
-            orig.isel_strategy(),
-            "isel_strategy 保留"
-        );
         assert_eq!(cloned.block, target, "克隆到目标块");
         // value_remap：旧结果 → 新结果
         let new_x = remap.get(x).expect("旧结果应映射到新结果");

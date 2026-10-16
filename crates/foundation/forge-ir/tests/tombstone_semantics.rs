@@ -17,9 +17,7 @@
 use forge_ir::ir::builder::FunctionBuilder;
 use forge_ir::ir::dfg::ValueDef;
 use forge_ir::ir::types::{FunctionSignature, TypeContext};
-use forge_ir::{
-    CallConvId, Function, ImmStr, Immediate, Inst, InstFlags, IselStrategy, Opcode, TypeId,
-};
+use forge_ir::{CallConvId, Function, ImmStr, Immediate, Inst, InstFlags, Opcode, TypeId};
 
 /// 造一个 `ret(load(store(...)))` 形态的函数：一条有结果的指令 + 一条 Store。
 fn fixture() -> (Function, Inst, Inst) {
@@ -109,9 +107,6 @@ fn in_place_tombstone_keeps_results_and_clears_attachments() {
             kind: forge_ir::ir::metadata::MetadataKind::TBAA,
             node: forge_ir::ir::metadata::MetadataId(0),
         });
-    func.dfg
-        .inst_mut(c)
-        .set_isel_strategy(IselStrategy::from_static("lea_sib:4"));
 
     func.tombstone_inst(c);
 
@@ -119,10 +114,6 @@ fn in_place_tombstone_keeps_results_and_clears_attachments() {
     assert!(inst.is_tombstone());
     assert_eq!(inst.results.len(), 1, "就地墓碑化保留 results");
     assert!(inst.metadata().is_empty(), "附件必须清掉（S2 一致性）");
-    assert!(
-        inst.isel_strategy().is_none(),
-        "isel_strategy 必须清掉（S2 一致性）"
-    );
     // 顺序表条目保留（就地墓碑化的语义）
     let entry = func.entry_block.expect("entry");
     assert!(func.dfg.block(entry).inst_order.contains(&c));

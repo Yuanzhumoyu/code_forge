@@ -158,6 +158,77 @@ M2 若中途发现"某个面其实还有消费者"（守卫/`rg` 反证），**�
 
 ## 8. 批次记录（逐里程碑回写）
 
+### M2 无消费者面清理 —— **一次落地**（2026-10-11，工作区）
+
+**破坏性变更（有意）**：`forge-mem` crate 删除；`Instruction::isel_strategy` 删除且
+`IR_FORMAT_VERSION` **3 → 4**；前端线（`forge-hir`/`forge-hir-macro`/`mini_c`）移出工作区。
+
+① `forge-mem` 折叠（E4 收口）
+
+- `ExecutableMemory`/`MemError` 用 `git mv` 搬进 `forge_isa_runtime::mem`（保留历史）；
+  `forge-codegen/src/runtime/jit.rs` 改一处 `use`；删 crate + 依赖边 + workspace 成员。
+- **`CpuFeatures` 只留一个函数**：`detect()`（含一套 CPUID/xgetbv 检测）**零调用者**，只有
+  `host_arch_name()` 被 mem 的 GDB 描述符用来写 ELF `e_machine` ⇒ 把它并入 `cpu.rs`
+  （主机探测本来就住那儿），其余 191 行删掉。
+- 根 facade 的 `code_forge::mem` 路径**保持不变**（`pub use forge_isa_runtime::mem;`）⇒
+  `forge-tests`/`benches`/`examples` 的 7 处调用点零改动。
+
+② 删 `isel_strategy`（E5 收口）
+
+- 删除面：`Instruction` 私有字段 + 三个访问器 + `ir/isel_strategy.rs` 类型本体 + 二进制读写，
+  以及 `verify.rs` 的墓碑校验项、`forge-isa-runtime` prelude 重导出、**`forge-opt` 三处真透传
+  代码块**（先前侦察只看到注释，实现里其实各有一段 `if let Some(strategy) = … set_isel_strategy`）。
+- `IR_FORMAT_VERSION` 3 → 4 + `format.rs` 版本史 + `docs/reference/binary-format.md`（标题/状态头/
+  FUNCS 字段清单）。
+- 测试面：删专用 `tests/isel_strategy.rs`；`binary_functions.rs`/`tombstone_semantics.rs` 去掉
+  相关断言；**`mini_inst` 夹具少一个字段**——两个负向夹具原先靠手写字节布局，字段一删就错位
+  （实测 `Option 判别位应为 0/1，实测 4`），已同步。
+
+③ v11 遗留与"停更注释"（E6 的一半）
+
+- 删 `forge-grammar/grammars/asm_v11.lx` 与只测它的 `tests/asm_grammar_test.rs`；
+  `ast_lowering_test.rs` 收敛到 `ir.lx`（补回因此丢掉的 `use`）。
+- **立项判断修正（如实记录）**：E6 说 `forge-grammar/src/lib.rs:47` 的注释"已停更"——实读是
+  **准确的**（写明语义层已删及其原因）⇒ **不动**。审查结论以代码为准，此处以代码为准。
+
+④ 前端线降级为示例（已批准）
+
+- `crates/frontend/forge-hir` → `examples/hir-demo/hir`、`forge-hir-macro` → `examples/hir-demo/hir-macro`、
+  `examples/mini_c` → `examples/hir-demo/`（均 `git mv`）；路径依赖改写；根 `Cargo.toml` 去掉三个成员
+  并 `exclude = ["examples/hir-demo"]`；新增 README 写明**它不再有 CI 覆盖、会静默失效**以及重新纳入的两条路。
+- `forge-grammar`（CST/AST/visit + `ir.lx` 测试）**仍是成员**；账本记明：它的剩余消费者只有该示例，
+  示例若再移除，它按"无消费者面"删除。
+
+⑤ `allow(dead_code)` 审计（34 处，E6 的剩余项）
+
+用**证据**而不是判断：先把 34 处属性全部摘掉，让 rustc/clippy 指认，再分类回填。结果：
+
+- **17 处是多余的**——它们**发射进生成物**（`dsl/codegen/asm.rs` 10 + `dsl/codegen/mod.rs` 4 +
+  `lib.rs` 3），而生成物整体带 `#[allow(warnings, clippy::all)]`（证据：`gen_file.rs:274`）⇒ 直接删；
+  删后全量 clippy `-D warnings` 仍零告警（这就是判据）。
+- **1 处是真死代码**：`forge-ir` 的 `#[cfg(debug_assertions)] fn debug_check_shape`（文档自己写着
+  "不在发射路径上强制"）⇒ 删（类型规则的强制点在 verifier；builder 的宽松是有意的，5 条测试依赖它）。
+- **2 处只在 test 目标里被用**（`lexer.rs::matches_pattern`、`Reader::header`）：摘掉后 `lib` 目标报
+  never used、测试目标编译失败——**两个目标同时成立**才是真相 ⇒ 升级为精确写法
+  `#[cfg_attr(not(test), allow(dead_code))]` 并写明理由（无条件 allow 会连测试目标一起豁免，掩盖真死代码）。
+- 其余 14 处保留（含 3 处模块级 `#![cfg_attr(not(test), …)]`，那是"测试支持模块"的既有惯用法）。
+
+**验收（同批实测）**：`cargo fmt --all -- --check` / `cargo clippy --workspace --exclude forge-rustc
+--all-targets --all-features -D warnings` / `cargo clippy -p forge-ir --no-default-features --lib
+-D warnings`（文本层门）/ `cargo check -p forge-rustc` / `cargo test --workspace --exclude forge-rustc`
+全部 exit 0；`forge-codegen --lib --all-features` **2834 passed**；守卫全绿（9 条后端、`read_path_budget`
+与 `error_codes_match_doc`）；JIT 两矩阵 **197/3/0** 与 **136/64/0**；asm 三档 **3/1/1**；改动文档
+markdownlint 0 issues。
+
+**删除清单（本里程碑）**：
+
+- crate：`forge-mem`（含 `src/host_cpu.rs` 与 `CpuFeatures::detect` 一套 CPUID/xgetbv）；
+- IR：`isel_strategy` 字段 + 三访问器 + 类型本体文件 + 二进制读写 + verifier 校验项 + prelude 重导出，
+  以及 `forge-opt` 三处透传块（判据：`rg 'isel_strategy|IselStrategy' crates/` 只剩 `format.rs` 的版本史注释）；
+- 语法/测试：`grammars/asm_v11.lx` + `tests/asm_grammar_test.rs`；`forge-ir/tests/isel_strategy.rs`；
+- 死代码：`debug_check_shape`（1 项）+ 17 处多余的发射用 `allow(dead_code)`；
+- 工作区成员：`forge-hir`/`forge-hir-macro`/`mini_c`（3 个，改为 `exclude`）。
+
 ### M1 诊断单一来源 —— **一次落地**（2026-10-11，工作区）
 
 **做了什么**（三块，都在"承诺与实现分叉"这一类上）：

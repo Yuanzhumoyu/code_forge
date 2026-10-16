@@ -31,7 +31,7 @@ use crate::pipeline::session::CompiledModule;
 use crate::{CompiledFunction, RelocKind, Relocation};
 use forge_ir::ImmStr;
 use forge_ir::{FuncSigEntry, FunctionBuilder, FunctionSignature, IrError, Module, ModuleSigs};
-use forge_mem::{ExecutableMemory, MemError};
+use forge_isa_runtime::mem::{ExecutableMemory, MemError};
 
 fn mem_to_compile_err(e: MemError) -> IrError {
     IrError::Emit(e.0)

@@ -439,7 +439,9 @@ impl<'a> Reader<'a> {
         })
     }
 
-    #[allow(dead_code)] // B2+ 各段 reader 使用；B1 只有单测覆盖
+    // B2+ 各段 reader 使用；B1 只有单测覆盖。v26 M2 审计：只被同文件 `#[cfg(test)]` 用
+    // ⇒ 精确豁免非 test 目标（无条件 allow 会连测试目标一起豁免，掩盖真死代码）。
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn header(&self) -> &Header {
         &self.header
     }

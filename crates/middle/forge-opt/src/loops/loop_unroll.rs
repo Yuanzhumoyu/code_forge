@@ -254,7 +254,7 @@ fn clone_body_chain(
     }
 
     // Phase 3: clone instructions（clone_inst 保留全字段：flags/mem_flags/
-    // metadata/loc/isel_strategy，并自动维护 val_remap——块参数映射已在
+    // metadata/loc，并自动维护 val_remap——块参数映射已在
     // Phase 2 建立，克隆结果按顺序写入）
     for tmpl in &templates {
         let new_block = block_remap[tmpl.block];

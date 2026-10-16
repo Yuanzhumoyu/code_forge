@@ -1,4 +1,5 @@
-//! 可执行内存分配器 — JIT 编译核心工具。
+//! 可执行内存分配器 — JIT 编译核心工具（`forge-isa-runtime::mem`，v26 M2 从独立 crate
+//! `forge-mem` 折叠进来：那个 crate 全仓只有 `jit.rs` 一处使用，`CpuFeatures` 更是零调用者）。
 //!
 //! 提供跨平台的可执行内存分配/释放功能，使编译后的机器码可以在运行时直接调用。
 //!
@@ -19,10 +20,6 @@
 //! let add_fn: extern "C" fn(i32, i32) -> i32 = unsafe { exec_mem.get_fn(0) };
 //! assert_eq!(unsafe { add_fn(1, 2) }, 3);
 //! ```
-
-pub mod host_cpu;
-
-pub use host_cpu::*;
 
 /// Error type for executable memory operations.
 #[derive(Debug, Clone)]
@@ -630,7 +627,7 @@ fn create_jit_symfile(ptr: *mut u8, size: usize, name: &str) -> Vec<u8> {
     buf.extend_from_slice(&[0u8; 8]); // padding
     buf.extend_from_slice(&2u16.to_le_bytes()); // ET_EXEC
     // e_machine 按宿主架构（P4：原硬编码 EM_X86_64——aarch64 宿主上 GDB 无法解析）
-    let e_machine: u16 = match crate::CpuFeatures::host_arch_name() {
+    let e_machine: u16 = match crate::cpu::host_arch_name() {
         "aarch64" => 183, // EM_AARCH64
         "riscv64" => 243, // EM_RISCV
         _ => 62,          // EM_X86_64（含未知架构回退——x86_64 与 aarch64 之外默认）

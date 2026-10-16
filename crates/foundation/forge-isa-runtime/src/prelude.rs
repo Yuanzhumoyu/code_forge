@@ -7,6 +7,6 @@ pub use crate::{
 pub use forge_ir::entity::map::SecondaryMap;
 pub use forge_ir::{
     AtomicRmwOp, Block, ConstId, DataFlowGraph, Endianness, FloatCC, FrameAccess, Immediate,
-    Instruction, IntCC, IrError, IselStrategy, Opcode, PReg, PhysReg, RegClass, TermKind, TypeId,
-    VReg, Value, XReg, XRegAllocator, intcc_name,
+    Instruction, IntCC, IrError, Opcode, PReg, PhysReg, RegClass, TermKind, TypeId, VReg, Value,
+    XReg, XRegAllocator, intcc_name,
 };

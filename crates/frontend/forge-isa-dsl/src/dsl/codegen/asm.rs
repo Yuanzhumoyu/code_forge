@@ -382,7 +382,6 @@ fn tok_expr(t: &Tok) -> TokenStream {
 /// 生成 std-only 手写 tokenizer（镜像 `assembler::lex`，token 集合一致）。
 fn gen_lexer_ts(_model: &IsaModel) -> Result<TokenStream, String> {
     Ok(quote! {
-        #[allow(dead_code)]
         #[derive(Debug, Clone, PartialEq)]
         pub(crate) enum __Tok {
             Ident(String), Num(i64), Float(f64), Char(char), Str(String),
@@ -391,7 +390,6 @@ fn gen_lexer_ts(_model: &IsaModel) -> Result<TokenStream, String> {
             Caret, Question, Eq, Backslash, Shl, Shr,
         }
 
-        #[allow(dead_code)]
         struct __Iter<'a> { toks: &'a [__Tok], pos: usize }
         impl<'a> __Iter<'a> {
             fn peek(&self) -> Option<&__Tok> { self.toks.get(self.pos) }
@@ -409,7 +407,6 @@ fn gen_lexer_ts(_model: &IsaModel) -> Result<TokenStream, String> {
 
         /// 符号常量表（`.equ`/`.set`；parse_insts 在汇编前填充，指令的立即数与位移
         /// 求值读取——两者共用同一套值语法）。
-        #[allow(dead_code)]
         thread_local! {
             static __EQU: std::cell::RefCell<std::collections::HashMap<String, i64>> =
                 std::cell::RefCell::new(std::collections::HashMap::new());
@@ -419,7 +416,6 @@ fn gen_lexer_ts(_model: &IsaModel) -> Result<TokenStream, String> {
         /// 被**武装**时写这里（`(修饰下标, 名字)`），当 0 参与算术；命中后随 `__lsyms` 一起
         /// 提交、由两遍回填解析成"标签的块下标（或 `.` 的自引用）"。只有声明了 `symbols` 的槽
         /// 在解析自己的值时武装——`.equ`/`.set` 的表达式与其它槽照旧"未知 ident 即不匹配"。
-        #[allow(dead_code)]
         thread_local! {
             static __SYMREF: std::cell::RefCell<Vec<(Option<usize>, String)>> =
                 std::cell::RefCell::new(Vec::new());
@@ -427,7 +423,6 @@ fn gen_lexer_ts(_model: &IsaModel) -> Result<TokenStream, String> {
             static __SYMREF_MOD: std::cell::Cell<Option<usize>> = std::cell::Cell::new(None);
         }
 
-        #[allow(dead_code)]
         /// `.` 是否算 ident 的开头：下一字符是 ident 片段才算
         /// （`.Lp` 是局部标签名；裸 `.` 是位置符号，走 `__Tok::Dot`）。
         fn is_ident_start(cs: &mut std::iter::Peekable<std::str::Chars<'_>>) -> bool {
@@ -730,7 +725,6 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
             /// （`__primary` 把未知 ident 记成"符号引用 + 当前修饰下标"并当 0 参与运算），
             /// 命中后随 `__lsyms` 一起提交、由两遍回填解析。未声明 `symbols` 的槽
             /// 不武装——未知 ident 照旧是不匹配（**能力是声明的，不是隐含的**）。
-            #[allow(dead_code)]
             fn __imm(
                 it: &mut __Iter,
                 min: i64,
@@ -951,7 +945,6 @@ fn gen_asm_primitives(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStrea
             /// 标签：数字/表达式 = **源单位**偏移；非寄存器 ident = 符号引用
             /// （回填期解析成 `块下标 × unit`）；`.` = **本条指令自身的地址**（自引用，
             /// 回填期换成当前指令的下标）。失败回滚。
-            #[allow(dead_code)]
             fn __label(
                 it: &mut __Iter,
                 min: i64,
@@ -1222,7 +1215,6 @@ fn gen_imm_fns(model: &IsaModel) -> Result<(TokenStream, TokenStream), String> {
         let fname = format_ident!("__imm_fn{i}");
         fns.push(quote! {
             /// 立即数修饰的值语义（谱声明；`{0}` 已换成本次的内层值）。
-            #[allow(dead_code)]
             fn #fname(__x: i64) -> Option<i64> {
                 let __toks: Vec<__Tok> = vec![
                     #(#pre_expr_toks,)*
@@ -1868,7 +1860,6 @@ pub(crate) fn gen_assemble(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         #primitives
         #scan_probe
         /// 前导字面（助记符位）大小写豁免匹配（`__eat_name`）。
-        #[allow(dead_code)]
         fn __eat_name(it: &mut __Iter, name: &str) -> bool {
             if matches!(it.toks.get(it.pos), Some(__Tok::Ident(x)) if x.eq_ignore_ascii_case(name)) {
                 it.pos += 1;
@@ -1879,7 +1870,6 @@ pub(crate) fn gen_assemble(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         }
         /// 前导多 token 字面大小写豁免匹配：Ident token 用 `eq_ignore_ascii_case`，
         /// 标点/数值 token 严格相等（LOCK 前缀族 `lock cmpxchg [` 等）。
-        #[allow(dead_code)]
         fn __eat_lit_ci(it: &mut __Iter, lit: &[__Tok]) -> bool {
             let mut p = it.pos;
             for t in lit {

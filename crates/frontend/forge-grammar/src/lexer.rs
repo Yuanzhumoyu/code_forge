@@ -285,7 +285,10 @@ fn match_regex_prefix(pattern: &str, chars: &[char]) -> Option<usize> {
 }
 
 /// Check if a string matches a simplified regex pattern (full match).
-#[allow(dead_code)] // 测试辅助
+///
+/// v26 M2 审计：**只被本文件的 `#[cfg(test)]` 用**（`lib` 目标下无调用者）⇒ 精确豁免
+/// 非 test 目标，而不是无条件 `allow(dead_code)`。
+#[cfg_attr(not(test), allow(dead_code))]
 fn matches_pattern(pattern: &str, chars: &[char]) -> bool {
     let matcher = SimpleRegex::compile(pattern);
     // Must match the ENTIRE input (not just a prefix)

@@ -1,5 +1,24 @@
 //! CPU 能力探测（AVX / AVX2 / AVX-512F）——生成物与测试共用。
 
+/// 主机架构名（GDB JIT 描述符要写进 ELF 头 `e_machine`）。
+///
+/// v26 M2：从 `forge-mem` 的 `CpuFeatures::host_arch_name` 搬来——那边整份
+/// `CpuFeatures`（含一套 CPUID/xgetbv 检测）**没有任何调用者**，只有这一个函数被用；
+/// 主机探测本来就住在本模块（avx/avx2/avx512 三个探针），故并到这里。
+pub fn host_arch_name() -> &'static str {
+    if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else if cfg!(target_arch = "arm") {
+        "arm"
+    } else if cfg!(target_arch = "riscv64") {
+        "riscv64"
+    } else {
+        "unknown"
+    }
+}
+
 /// AVX 可用性（OnceLock 缓存 cpuid 检测，供 VEX 编码宏断言）。
 /// 非 x86_64 或检测失败 → false（V256 指令编码时 panic 提示）。
 pub fn avx_available() -> bool {
@@ -89,5 +108,27 @@ pub fn host_wide_vector_limit() -> u16 {
         32
     } else {
         16
+    }
+}
+
+#[cfg(test)]
+mod host_arch_tests {
+    /// 架构名非空且与本机 `cfg!` 一致（搬自 `forge-mem/src/host_cpu.rs` 的用例）。
+    #[test]
+    fn host_arch_name_matches_cfg() {
+        let name = super::host_arch_name();
+        assert!(!name.is_empty());
+        let expected = if cfg!(target_arch = "x86_64") {
+            "x86_64"
+        } else if cfg!(target_arch = "aarch64") {
+            "aarch64"
+        } else if cfg!(target_arch = "arm") {
+            "arm"
+        } else if cfg!(target_arch = "riscv64") {
+            "riscv64"
+        } else {
+            "unknown"
+        };
+        assert_eq!(name, expected);
     }
 }

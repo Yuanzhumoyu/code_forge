@@ -258,7 +258,6 @@ dependencies = [
  "forge-grammar",
  "forge-ir",
  "forge-isa-runtime",
- "forge-mem",
  "forge-object",
  "forge-opt",
  "forge-plugin",
@@ -556,7 +555,6 @@ dependencies = [
  "forge-ir",
  "forge-isa-dsl",
  "forge-isa-runtime",
- "forge-mem",
  "forge-opt",
  "log",
  "rayon",
@@ -579,26 +577,6 @@ name = "forge-grammar"
 version = "0.1.0"
 dependencies = [
  "thiserror",
-]
-
-[[package]]
-name = "forge-hir"
-version = "0.1.0"
-dependencies = [
- "forge-codegen",
- "forge-grammar",
- "forge-hir-macro",
- "forge-ir",
- "smallvec",
-]
-
-[[package]]
-name = "forge-hir-macro"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.4",
 ]
 
 [[package]]
@@ -650,10 +628,6 @@ dependencies = [
  "smallvec",
  "thiserror",
 ]
-
-[[package]]
-name = "forge-mem"
-version = "0.1.0"
 
 [[package]]
 name = "forge-object"
@@ -942,14 +916,6 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
-
-[[package]]
-name = "mini_c"
-version = "0.1.0"
-dependencies = [
- "code-forge",
- "forge-hir",
-]
 
 [[package]]
 name = "miniz_oxide"

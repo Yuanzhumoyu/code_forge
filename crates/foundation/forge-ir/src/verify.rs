@@ -142,8 +142,8 @@ pub enum VerifyError {
     },
     /// 墓碑指令不满足规范形态（`tombstone = true` 却仍带内容/附件）。
     ///
-    /// `what` = `"operands"` / `"immediates"` / `"metadata"` / `"param_attrs"` /
-    /// `"isel_strategy"`。墓碑化必须走 `DataFlowGraph::tombstone_inst_low`
+    /// `what` = `"operands"` / `"immediates"` / `"metadata"` / `"param_attrs"`。
+    /// 墓碑化必须走 `DataFlowGraph::tombstone_inst_low`
     /// （`kill_inst`/`Function::tombstone_inst`），手写"只改 opcode"会留下陈旧状态。
     TombstoneNotCanonical {
         inst: Inst,
@@ -1984,12 +1984,11 @@ impl Verifier {
             if !inst.is_tombstone() {
                 continue;
             }
-            let bad: [(&str, bool); 5] = [
+            let bad: [(&str, bool); 4] = [
                 ("operands", !inst.operands.is_empty()),
                 ("immediates", !inst.immediates.is_empty()),
                 ("metadata", !inst.metadata().is_empty()),
                 ("param_attrs", !inst.param_attrs.is_empty()),
-                ("isel_strategy", inst.isel_strategy().is_some()),
             ];
             for (what, is_bad) in bad {
                 if is_bad {

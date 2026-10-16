@@ -53,7 +53,7 @@ pub use forge_dsl;
 pub use forge_grammar;
 pub use forge_ir as ir;
 pub use forge_isa_runtime;
-pub use forge_mem as mem;
+pub use forge_isa_runtime::mem;
 pub use forge_opt as optimize;
 pub use smallvec;
 

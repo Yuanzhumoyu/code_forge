@@ -1,6 +1,7 @@
-# forge-ir 二进制格式（IR bitcode v3）
+# forge-ir 二进制格式（IR bitcode v4）
 
-> 状态：[active]（2026-09-24 起；`IR_FORMAT_VERSION = 3`——v3 换 `CallConvId`；v2 是段体压缩）。
+> 状态：[active]（2026-10-11 起；`IR_FORMAT_VERSION = 4`——v4 删 `Instruction::isel_strategy`；
+> v3 换 `CallConvId`；v2 是段体压缩）。
 > 实现：`crates/foundation/forge-ir/src/binary/`；执行方案与逐切片证据见
 > `docs/archive/forge-ir-binary-serialization-plan.md`。**本文件是格式的规范文本**，
 > 与代码不一致时以代码为准（`IR_FORMAT_VERSION` 常量即版本号）。
@@ -146,7 +147,8 @@ name | signature | call_conv | attributes | extra_attrs
 - `values`：每个值写**显式 `ValueDef`**（`Inst(i,k)` / `Param(b,k)` / `AggConst` /
   `UndefNamed(str)`）+ 类型；
 - `insts`：opcode 名、所属块、结果、操作数、immediates（11 变体）、
-  `InstFlags`/`MemFlags`、调用点属性、metadata、`loc`、`isel_strategy`、墓碑位；
+  `InstFlags`/`MemFlags`、调用点属性、metadata、`loc`、墓碑位
+  （**v4 起不含 `isel_strategy`**：该字段只有存取与往返、后端零读点，已整条删除）；
 - `blocks`：参数类型、参数值、块内指令顺序、终结符指令。
 
 **use-lists 不落盘**：解码后按每条指令的操作数重建（终结符指令同在 `insts` 里）。

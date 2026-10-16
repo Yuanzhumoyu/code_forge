@@ -1,11 +1,12 @@
 # forge-ir
 
 `forge-ir` 是 code-forge 的**目标无关中间表示**（SSA + 基本块 + 显式块参数），
-被 `forge-opt`（优化）、`forge-codegen`（后端 lowering）、`forge-hir`（前端降级）、
+被 `forge-opt`（优化）、`forge-codegen`（后端 lowering）、`forge-hir`（前端降级，**示例**：
+`examples/hir-demo/hir`，v26 M2 起脱离工作区）、
 `forge-object`（目标文件）与 `forge-rustc`（rustc 后端）消费。
 
 ```text
-前端（HIR / mini_c / LLVM 文本）
+前端（HIR / mini_c —— 见 `examples/hir-demo`；LLVM 文本）
         │  FunctionBuilder / text::parser
         ▼
    forge-ir（本 crate）──► forge-opt（pass 流水线）──► forge-codegen（机器 IR + 编码）

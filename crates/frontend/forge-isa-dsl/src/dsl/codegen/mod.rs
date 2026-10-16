@@ -1189,7 +1189,6 @@ fn gen_encode(infos: &[InstInfo], m: &IsaModel) -> Result<TokenStream, String> {
 fn gen_bitset_helpers() -> TokenStream {
     quote! {
         /// 命名位集合解析：贪心最长匹配拼名，返回按位或；整串吃不干净 ⇒ `None`。
-        #[allow(dead_code)]
         fn __bitset(it: &mut __Iter, names: &[(&str, u64)]) -> Option<i64> {
             let Some(__Tok::Ident(text)) = it.toks.get(it.pos) else {
                 return None;
@@ -1214,7 +1213,6 @@ fn gen_bitset_helpers() -> TokenStream {
         }
 
         /// 命名位集合渲染：按表的名字**字典序**拼出置位的名字（全 0 ⇒ 空串）。
-        #[allow(dead_code)]
         fn __render_bitset(v: i64, names: &[(&str, u64)]) -> String {
             let mut out = String::new();
             for (n, b) in names {
@@ -1237,7 +1235,6 @@ fn gen_bitset_helpers() -> TokenStream {
 fn gen_imm_name_helpers() -> TokenStream {
     quote! {
         /// 命名立即数解析：当前 token 是表里的名字 ⇒ 消费它并返回该值。
-        #[allow(dead_code)]
         fn __named_imm(it: &mut __Iter, names: &[(&str, i64)]) -> Option<i64> {
             let Some(__Tok::Ident(text)) = it.toks.get(it.pos) else {
                 return None;
@@ -1250,7 +1247,6 @@ fn gen_imm_name_helpers() -> TokenStream {
         }
 
         /// 命名立即数渲染：值在表里 ⇒ 写名字；不在 ⇒ 写十进制。
-        #[allow(dead_code)]
         fn __render_named_imm(v: i64, names: &[(&str, i64)]) -> String {
             match names.iter().find(|(_, x)| *x == v) {
                 Some((n, _)) => (*n).to_string(),

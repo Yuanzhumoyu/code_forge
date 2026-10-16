@@ -2,7 +2,7 @@
 name = "mini_c"
 version = "0.1.0"
 edition = "2024"
-description = "Mini C subset compiler — demonstrates forge-grammar frontend + forge-codegen backend"
+description = "Mini C 子集编译器 —— **示例/非产品**（演示 forge-grammar 前端 + forge-hir + forge-codegen 后端；不进门禁）"
 
 [lib]
 name = "mini_c"
@@ -15,4 +15,4 @@ path = "src/main.rs"
 [dependencies]
 # mini_c 是 JIT 演示——显式启用 jit feature（即使根 crate 以 --no-default-features 构建）
 code-forge = { path = "../..", features = ["jit"] }
-forge-hir = { path = "../../crates/frontend/forge-hir" }
+forge-hir = { path = "hir" }

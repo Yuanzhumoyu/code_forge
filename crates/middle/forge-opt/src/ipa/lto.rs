@@ -232,7 +232,7 @@ fn lto_inline_callee(
                 .map(|&v| callee.dfg.value_data(v).ty)
                 .collect();
 
-            // 保留全字段（flags/mem_flags/metadata/loc/isel_strategy）
+            // 保留全字段（flags/mem_flags/metadata/loc）
             let new_inst = caller.make_inst_with_meta_and_loc(
                 inst.opcode,
                 target_block,
@@ -244,13 +244,6 @@ fn lto_inline_callee(
                 inst.metadata().iter().cloned().collect(),
                 inst.loc.clone(),
             );
-            if let Some(strategy) = inst.isel_strategy() {
-                caller
-                    .dfg
-                    .inst_mut(new_inst)
-                    .set_isel_strategy(strategy.clone());
-            }
-
             // Map old results to new results
             let new_results = &caller.dfg.inst_data(new_inst).results;
             for (i, &old_r) in inst.results.iter().enumerate() {

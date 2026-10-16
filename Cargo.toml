@@ -4,13 +4,10 @@ members = [
     "crates/foundation/forge-ir",
     "crates/foundation/forge-abi-model",
     "crates/foundation/forge-abi",
-    "crates/foundation/forge-mem",
     "crates/foundation/forge-isa-runtime",
     "crates/frontend/forge-grammar",
     "crates/frontend/forge-isa-dsl",
     "crates/frontend/forge-dsl",
-    "crates/frontend/forge-hir",
-    "crates/frontend/forge-hir-macro",
     "crates/middle/forge-opt",
     "crates/backend/forge-codegen",
     "crates/tools/forge-object",
@@ -20,8 +17,12 @@ members = [
     "crates/tools/cargo-forge",
     "crates/tools/forge-isa",
     "examples/isa-host-demo",
-    "examples/mini_c",
 ]
+# v26 M2：前端线（forge-hir / forge-hir-macro / mini_c）已降级为**示例**，
+# 脱离工作区 ⇒ 不再被全量门禁构建。要手动检查：
+#   cargo check --manifest-path examples/hir-demo/Cargo.toml
+exclude = ["examples/hir-demo"]
+
 resolver = "3"
 
 [package]
@@ -34,7 +35,6 @@ description = "Code Forge: specification-driven compiler infrastructure — writ
 [dependencies]
 forge-ir = { path = "crates/foundation/forge-ir" }
 forge-isa-runtime = { path = "crates/foundation/forge-isa-runtime" }
-forge-mem = { path = "crates/foundation/forge-mem" }
 forge-opt = { path = "crates/middle/forge-opt" }
 forge-codegen = { path = "crates/backend/forge-codegen" }
 forge-dsl = { path = "crates/frontend/forge-dsl" }

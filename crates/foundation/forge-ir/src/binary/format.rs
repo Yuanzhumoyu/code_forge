@@ -23,7 +23,11 @@ pub const MAGIC: [u8; 8] = *b"FORGEIR\0";
 ///   `CallConvId::{Builtin(ConvName), Named(ImmStr), Index(u32)}`——`TYPES` 段签名体里
 ///   那 1 字节判别值改成 `tag`（0 内置 / 1 命名 / 2 数值）+ 载荷（内置 = 稳定小整数、
 ///   命名 = 字符串表下标、数值 = varint）。破坏性更新：旧流在头部就报版本不符。
-pub const IR_FORMAT_VERSION: u16 = 3;
+/// - **4**（2026-10-11，v26 M2）：删 `Instruction::isel_strategy`（IR 字段 + 三个访问器 +
+///   `ir/isel_strategy.rs` 类型本体）。它只有存取与二进制往返、**后端零读点**（`forge-opt`
+///   那几处是克隆时顺手保留的透传），属"无消费者面"。`FUNCS` 段的指令记录少一个
+///   `Option<str>`。破坏性更新：旧流在头部就报版本不符。
+pub const IR_FORMAT_VERSION: u16 = 4;
 
 /// producer 串（写入头部，**仅用于诊断**；跨版本不保证字节流逐字节相同）。
 ///

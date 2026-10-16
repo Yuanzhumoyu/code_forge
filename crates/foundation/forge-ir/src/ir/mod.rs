@@ -11,7 +11,6 @@ pub mod dfg;
 pub mod function;
 pub mod immediate;
 pub mod inst_flags;
-pub mod isel_strategy;
 pub mod mem_flags;
 pub mod metadata;
 pub mod opcode;

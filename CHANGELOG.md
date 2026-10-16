@@ -11,6 +11,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 项目 v26 M2：无消费者面清理（三项破坏性变更）
+
+**破坏性**：① `Instruction::isel_strategy` 整条删除，`IR_FORMAT_VERSION` **3 → 4**（旧流在头部
+即报版本不符）；② `forge-mem` crate 删除（并入 `forge-isa-runtime::mem`）；③ 前端线
+（`forge-hir`/`forge-hir-macro`/`mini_c`）移出工作区、降级为 `examples/hir-demo/`。
+
++ **`forge-mem` 折叠**：`ExecutableMemory`/`MemError` 搬进 `forge_isa_runtime::mem`（`git mv`
+  保留历史），`forge-codegen` 改一处 `use`，删 crate + 依赖边 + workspace 成员。其
+  `CpuFeatures::detect()`（含一套 CPUID/xgetbv）**零调用者**，只有 `host_arch_name()` 有用
+  ⇒ 并入 `forge-isa-runtime/src/cpu.rs`，其余删。根的 `code_forge::mem` 路径保持不变 ⇒ 7 处调用点零改动。
++ **删 `isel_strategy`**（IR 字段只有存取 + 二进制往返、后端零读点）：字段 + 三访问器 +
+  `ir/isel_strategy.rs` + 二进制读写 + verifier 校验项 + prelude + `forge-opt` 三处**真透传代码块**
+  （此前只看到注释）；契约文档 `binary-format.md` 同步（标题/状态头/FUNCS 字段清单）。
+  测试面：删专用测试文件，`mini_inst` 夹具少一个字段（两个手写字节布局的负向夹具随之错位，已同步）。
++ **v11 遗留**：删 `forge-grammar/grammars/asm_v11.lx` 与只测它的 `asm_grammar_test.rs`；
+  `ast_lowering_test.rs` 收敛到 `ir.lx`。
++ **前端线降级为示例**：三个目录 `git mv` 到 `examples/hir-demo/`（`hir/`、`hir-macro/`、mini_c 内容），
+  根 `Cargo.toml` 去掉三个成员并 `exclude`；新增 README 写明"不再有 CI 覆盖、会静默失效"与重新纳入的两条路。
+  `forge-grammar`（CST/AST/visit + `ir.lx` 测试）仍是成员。
++ **`allow(dead_code)` 审计（34 处，证据化）**：先全摘、让 rustc/clippy 指认再分类回填——
+  **17 处多余**（发射进生成物；生成物整体带 `#[allow(warnings, clippy::all)]`，证据 `gen_file.rs:274`）已删；
+  **1 处真死**（`debug_check_shape`，其文档自述"不在发射路径上强制"）已删；**2 处只被 test 目标用**
+  （`matches_pattern`/`Reader::header`）升级为精确写法 `#[cfg_attr(not(test), allow(dead_code))]` + 理由。
++ 验收：fmt / clippy（workspace `--all-features -D warnings` + `forge-ir --no-default-features` 文本层门）/
+  `cargo check -p forge-rustc` / `cargo test --workspace --exclude forge-rustc` 全绿；JIT 两矩阵
+  （197/3/0 · 136/64/0）；asm 三档（3/1/1）；守卫全绿；改动文档 markdownlint 0 issues。
+
 ### Changed (2026-10-11) — 项目 v26 M1：诊断面单一来源（错误码台账 · 事件 sink · 开关台账）
 
 **破坏性变更**：ISA-DSL 错误码 `DSL-ABI` → **`DSL-MACHINE`**（`[abi]` 节 v20 A5-3 已删，

@@ -29,7 +29,6 @@ use crate::ir::function::Module;
 use crate::ir::function::{Function, FunctionAttributes, ParamAttributes};
 use crate::ir::immediate::Immediate;
 use crate::ir::inst_flags::InstFlags;
-use crate::ir::isel_strategy::IselStrategy;
 use crate::ir::mem_flags::MemFlags;
 use crate::util::imm_str::ImmStr;
 use crate::util::string_pool::InternedStr;
@@ -328,10 +327,6 @@ fn encode_inst(
     writer::put_option_tag(out, inst.loc.is_some());
     if let Some(loc) = &inst.loc {
         encode_source_location(out, w, loc);
-    }
-    writer::put_option_tag(out, inst.isel_strategy.is_some());
-    if let Some(s) = &inst.isel_strategy {
-        put_str(out, w, &ImmStr::from(s.name()));
     }
     put_bool(out, inst.tombstone);
 }
@@ -706,7 +701,6 @@ fn decode_inst(c: &mut Cursor<'_>, strings: &[ImmStr]) -> Result<Instruction, Ir
         fn_attrs: FunctionAttributes::NONE,
         metadata: Default::default(),
         loc: None,
-        isel_strategy: None,
         tombstone: false,
     };
     let n_at = c.offset();
@@ -741,14 +735,6 @@ fn decode_inst(c: &mut Cursor<'_>, strings: &[ImmStr]) -> Result<Instruction, Ir
         inst.attach_metadata(m);
     }
     inst.loc = read_opt(c, |c| decode_source_location(c, strings))?;
-    inst.isel_strategy = read_opt(c, |c| {
-        let at = c.offset();
-        let name = read_str(c, strings)?;
-        if name.is_empty() {
-            return err(at, "指令选择标签不得为空");
-        }
-        Ok(IselStrategy::new(name))
-    })?;
     inst.tombstone = read_bool(c)?;
     Ok(inst)
 }

@@ -454,16 +454,13 @@ fn is_colon2(toks: &[proc_macro2::TokenTree], i: usize) -> bool {
 fn short_form_helpers() -> proc_macro2::TokenStream {
     quote::quote! {
         /// 生成物内部短名（v18 S8c）：`forge_ir::RegClass` 的别名。
-        #[allow(dead_code)]
         type __RC = forge_ir::RegClass;
         /// 生成物内部短名（v18 S8c）：`Reg::from_index` 的薄封装（占位寄存器构造）。
-        #[allow(dead_code)]
         #[inline]
         fn __ph(idx: u32, class: forge_ir::RegClass) -> Reg {
             <Reg as forge_ir::PhysReg>::from_index(idx, class)
         }
         /// 生成物内部短名（v18 S8c）：`Reg::to_index` 的薄封装。
-        #[allow(dead_code)]
         #[inline]
         fn __ti(r: Reg) -> u32 {
             forge_ir::PhysReg::to_index(r)

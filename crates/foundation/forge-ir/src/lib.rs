@@ -79,7 +79,6 @@ pub use util::string_pool::StringPool;
 pub use ir::data_layout::*;
 pub use ir::immediate::*;
 pub use ir::inst_flags::*;
-pub use ir::isel_strategy::IselStrategy;
 pub use ir::opcode::*;
 pub use ir::types::*;
 
