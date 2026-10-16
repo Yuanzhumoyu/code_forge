@@ -11,6 +11,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Docs (2026-10-11) — 后端 v24 M5：契约回写（`backend-pipeline.md` 改为 v24 现行契约）
+
+`reference/backend-pipeline.md` 此前只写 v23 M1 的编译入口，v24 的四项结构变化没有落进契约。
+
++ 文档改写为 **8 节现行契约**：编译入口与装载 / **管线阶段表** / **合法化两相 + pass
+  合并次序**（含"位置只有一种表示、它写一次"、三批入口的理由、聚合与变参的表示契约）/
+  **值描述单一来源**（含"别用 `ValDesc::bytes()` 代替 `value_bytes()`"这条实测教训）/
+  能力缺口台账指针 / 模块签名表与擦除入口 / 观测开关表 / 相关账本。
++ 新增机器可读的阶段清单 `pipeline::STAGES`（`legalize`/`isel`/`regalloc`/`frame`/`emit`/`jit`），
+  以及两条守卫：`pipeline_stages_match_doc`（文档阶段表 ↔ `STAGES` 集合相等）与
+  `legalize_passes_match_doc`（文档 pass 表 ↔ 驱动合并次序**含顺序**相等）。
++ 文档地图指向 v24 口径；交叉引用复查无死链。
++ 验收：`forge-codegen --lib` 2832 passed；workspace 全量、JIT 两矩阵（197/3/0 · 136/64/0）、
+  asm 三档（3/1/1）、clippy `-D warnings`、fmt、markdownlint 全绿。
++ **v24 收口**：M1–M5 全部落地、各自单独提交；删除清单全部清零（`AggSlots`、旧改写函数、
+  `move_to_front`、`xreg_types`、旧开关白名单在代码里零引用）。
+
 ### Changed (2026-10-11) — 后端 v24 M4：观测开关**台账化**（诊断开关不可能静默失效）
 
 旧实现维护一份开关白名单（`TRACE_KEYS`）+ 整表缓存：**名字漏进白名单 ⇒ 该开关恒为假、

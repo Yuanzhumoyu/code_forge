@@ -237,6 +237,36 @@ C ABI 语义**不变**。
 
 ## 6. 批次记录（逐里程碑回写）
 
+### M5 契约回写 + 账本工程化 —— **一次落地**（2026-10-11，工作区）
+
+**做了什么**：
+
+- **契约文档改写成 v24 现行契约**（[`docs/reference/backend-pipeline.md`](../reference/backend-pipeline.md)，
+  从 64 行扩到 8 节）：① 编译入口与装载；② **管线阶段表**；③ **合法化两相 + pass 合并次序**
+  （含"位置只有一种表示 `Places`、它写一次"、"三批入口为什么这么切"、聚合与变参的
+  **表示契约**：C ABI 是硬的、`ByRef`/`StackByVal`/`Registers` 三种落点、`shadow_agg`
+  事实交接、`va_arg(聚合)` 必须由约定声明）；④ **值描述单一来源**（含"别用
+  `ValDesc::bytes()` 代替 `value_bytes()`"这条实测教训）；⑤ 能力缺口台账指针；
+  ⑥ 模块签名表与擦除入口；⑦ 观测开关表（M4 已建，本文件保留）；⑧ 相关账本与下一步。
+  状态头 `[active]` + 日期；开篇三条"别绕过"的纪律（一个入口 / 一个改写者 / 一份描述）。
+- **新增机器可读的阶段清单** `pipeline::STAGES`（6 个阶段：`legalize`/`isel`/`regalloc`/
+  `frame`/`emit`/`jit`）——契约文档的阶段表由它钉住。
+- **新增两条守卫**（crate 内，`pipeline/mod.rs` 的 `stage_contract_tests`）：
+  - `pipeline_stages_match_doc`：文档阶段表 ↔ `STAGES` **集合相等**（多一个少一个都红）；
+  - `legalize_passes_match_doc`：文档 pass 表 ↔ `LegalizeDriver::with_aggregates().pass_names()`
+    **含次序**相等。
+  两条都必须**跨行解析**（表行由反引号名开头）——这与 M3/M4 守卫踩过的坑同源，写进注释。
+- **文档地图**：`docs/README.md` 的 reference 行改成 v24 口径；`plans/backend-v24-plan.md`
+  在两处（`docs/README.md` 的 plans 表、`CLAUDE.md` 的目录树）都已指向 ✔；
+  `git grep` 复查交叉引用无死链。
+
+**实测**：`forge-codegen --lib --all-features` **2832 passed / 0 failed**（新增 2 条文档守卫）；
+全量门禁见下（同批实测）；改动文档 markdownlint 0 issues。
+
+**v24 收口**：M1–M5 全部落地并各自单独提交（`ff50134a` / `3bad3bca` / `280ff4ee` /
+`50e55ef3` / 本条），删除清单全部清零（`AggSlots`、旧改写函数、`move_to_front`、
+`xreg_types`、`TRACE_KEYS` 在代码里零引用）。
+
 ### M4 观测台账化 —— **一次落地**（2026-10-11，工作区）
 
 **做了什么**：

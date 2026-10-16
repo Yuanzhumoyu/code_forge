@@ -16,7 +16,7 @@
 | `reference/imm_str.md` | ImmStr 不可变字符串类型设计（已实现，forge-ir 代码注释引用） | active |
 | `reference/calling-conventions.md` | **调用约定层（`forge-abi`，v20 A1/A2）**：三层数据（规则/绑定/计划）+ 通用引擎、IR 侧 `CallConvId`（`Builtin`/`Named`/`Index`，未注册即 fail-closed）、内置四份约定与参考绑定、`AbiTarget` 能力视图、`AbiHooks`、`forge-isa abi list\|check\|plan`、已知缺口与"加自己的约定" | active |
 | `reference/binary-format.md` | forge-ir 二进制格式（IR bitcode **v2**：段体压缩 + 段表 `raw_len`）规范：容器/段/原语/各段细节/压缩/确定性/版本策略/验证基线/消费者/已知限制 | active |
-| `reference/backend-pipeline.md` | **后端编译管线契约**（v23 M1 起）：唯一编译入口 `CompileSession`/`CompiledModule`、JIT 装载器 `JitLoader`、模块签名表 `ModuleSigs`、擦除入口注册；v23 里程碑（[`archive/backend-v23-plan.md`](archive/backend-v23-plan.md)，已收口）回写 | active |
+| `reference/backend-pipeline.md` | **后端编译管线契约**（**v24 现行**）：编译入口（`CompileSession`/`CompiledModule`/`JitLoader`）、**管线阶段表**（由守卫与 `pipeline::STAGES` 集合相等钉住）、**合法化两相**（计划只读 + 物化单遍）与 pass 合并次序、聚合/变参表示契约、**值描述单一来源**、能力缺口与观测开关的台账指针 | active |
 | `reference/backend-gaps.md` | **后端能力缺口台账**（v24 M3 建）：21 条缺口逐行给出"谁在什么条件下撞到 / 决策（已实现·数据层·不做·待做）/ 钉住它的守卫或数据条件"；失败信息带 `[cap:ID]`，守卫 `capability_gaps_guard` 与源码缺口集合**双向逐一相等** | active |
 
 ## plans/ — 进行中的专项方案（活账本）
