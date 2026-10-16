@@ -100,7 +100,7 @@ impl BacktrackingAllocator {
                 let class = state.vreg_class(vreg);
                 let preg = state.assign_reg(vreg, constraint, class, &[], true)?;
                 state.active.insert(vreg, preg); // 将预分配的参数 XReg 添加到 active 列表中
-                if crate::pipeline::trace_enabled("FORGE_TRACE_REGALLOC") {
+                if crate::pipeline::trace::knob("FORGE_TRACE_REGALLOC") {
                     eprintln!("[pre] v{} class={class:?} -> {preg:?}", vreg.index());
                 }
             }
@@ -381,7 +381,7 @@ impl<'a> BtState<'a> {
             // 更新当前指令点（用于 Belady's MIN 溢出决策）
             self.current_point = use_point;
 
-            if crate::pipeline::trace_enabled("FORGE_TRACE_ALLOC") {
+            if crate::pipeline::trace::knob("FORGE_TRACE_ALLOC") {
                 eprintln!(
                     "[inst {:?}] {:?} xregs={:?} defs={:?}",
                     use_point,
@@ -443,7 +443,7 @@ impl<'a> BtState<'a> {
                     // Reload from stack
                     self.reload_from_stack(vreg, OperandConstraint::Any)?;
                 } else if !self.assignments.contains_key(&vreg) {
-                    if crate::pipeline::trace_enabled("FORGE_TRACE_ALLOC") {
+                    if crate::pipeline::trace::knob("FORGE_TRACE_ALLOC") {
                         let was_def = self
                             .intervals
                             .get(&vreg)
@@ -547,7 +547,7 @@ impl<'a> BtState<'a> {
             OperandConstraint::Any => {
                 // 从空闲池获取
                 if let Some(preg) = self.pop_free(class) {
-                    if crate::pipeline::trace_enabled("FORGE_TRACE_ALLOC") {
+                    if crate::pipeline::trace::knob("FORGE_TRACE_ALLOC") {
                         eprintln!(
                             "[alloc] v{} -> {} at {:?} (free)",
                             vreg.index(),
@@ -560,7 +560,7 @@ impl<'a> BtState<'a> {
                     return Ok(preg);
                 }
                 // 无空闲 → 驱逐
-                if crate::pipeline::trace_enabled("FORGE_TRACE_ALLOC") {
+                if crate::pipeline::trace::knob("FORGE_TRACE_ALLOC") {
                     eprintln!(
                         "[alloc] v{} evict at {:?}",
                         vreg.index(),
@@ -686,8 +686,8 @@ impl<'a> BtState<'a> {
             // ——atomic/向量高压力用例因此读到垃圾（`-163`、`-1774193535`）。所以这里只要
             // 释放寄存器即可：`spill_vreg` 分配槽（若还没有）并归还寄存器。
             self.spill_vreg(victim_vreg)?;
-            if crate::pipeline::trace_enabled("FORGE_TRACE_ALLOC")
-                || crate::pipeline::trace_enabled("FORGE_TRACE_SPILL")
+            if crate::pipeline::trace::knob("FORGE_TRACE_ALLOC")
+                || crate::pipeline::trace::knob("FORGE_TRACE_SPILL")
             {
                 eprintln!(
                     "[evict] v{} at {:?} evicts v{} from {} (victim next_use={:?}, cur={:?})",
@@ -716,8 +716,8 @@ impl<'a> BtState<'a> {
             // 指令执行后把 def 结果 store 回槽；后续 use 经 reload_from_stack
             // 从槽 load。因此 spilled def **不需要真实寄存器分配**。
             self.spill_vreg(vreg)?;
-            if crate::pipeline::trace_enabled("FORGE_TRACE_ALLOC")
-                || crate::pipeline::trace_enabled("FORGE_TRACE_SPILL")
+            if crate::pipeline::trace::knob("FORGE_TRACE_ALLOC")
+                || crate::pipeline::trace::knob("FORGE_TRACE_SPILL")
             {
                 eprintln!(
                     "[spill-def] v{} at {:?} -> spilled (def, slot={:?})",
@@ -748,8 +748,8 @@ impl<'a> BtState<'a> {
             // 可 spill，但分配器无法在此区分）。保守终止编译——不产出
             // 错误代码。P0-8：旧代码驱逐"next_use 最大"的活 victim 不 store
             // → 读垃圾；现在只驱逐死值，无可驱逐时显式报错。
-            if crate::pipeline::trace_enabled("FORGE_TRACE_ALLOC")
-                || crate::pipeline::trace_enabled("FORGE_TRACE_SPILL")
+            if crate::pipeline::trace::knob("FORGE_TRACE_ALLOC")
+                || crate::pipeline::trace::knob("FORGE_TRACE_SPILL")
             {
                 eprintln!(
                     "[evict-fail] v{} class={:?} free={:?} active={}",
@@ -769,8 +769,8 @@ impl<'a> BtState<'a> {
     // ── Spill/Restore ──
 
     fn spill_vreg(&mut self, vreg: XReg) -> Result<(), IrError> {
-        if crate::pipeline::trace_enabled("FORGE_TRACE_ALLOC")
-            || crate::pipeline::trace_enabled("FORGE_TRACE_SPILL")
+        if crate::pipeline::trace::knob("FORGE_TRACE_ALLOC")
+            || crate::pipeline::trace::knob("FORGE_TRACE_SPILL")
         {
             eprintln!(
                 "[spill] v{} at {:?} (preg={:?})",
@@ -832,8 +832,8 @@ impl<'a> BtState<'a> {
         // 为 spilled XReg 分配一个寄存器（实际 load 在 emit 阶段完成）。
         // 尊重约束：Fixed 约束必须使用指定寄存器。
         let class = self.vreg_class(vreg);
-        let trace = crate::pipeline::trace_enabled("FORGE_TRACE_ALLOC")
-            || crate::pipeline::trace_enabled("FORGE_TRACE_SPILL");
+        let trace = crate::pipeline::trace::knob("FORGE_TRACE_ALLOC")
+            || crate::pipeline::trace::knob("FORGE_TRACE_SPILL");
         match constraint {
             OperandConstraint::Fixed(required_preg) => {
                 // 如果目标寄存器被占用（含跨宽度类重叠，如 GPR(4) 与 GPR(8) 同编号），
@@ -954,7 +954,7 @@ impl<'a> BtState<'a> {
             if let Some(interval) = self.intervals.get(vreg)
                 && interval.end_point() <= current_point
             {
-                if crate::pipeline::trace_enabled("FORGE_TRACE_EXPIRE") {
+                if crate::pipeline::trace::knob("FORGE_TRACE_EXPIRE") {
                     eprintln!(
                         "[expire] v{} end={:?} cur={:?} preg={:?}",
                         vreg.index(),

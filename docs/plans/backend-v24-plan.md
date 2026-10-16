@@ -237,6 +237,33 @@ C ABI 语义**不变**。
 
 ## 6. 批次记录（逐里程碑回写）
 
+### M4 观测台账化 —— **一次落地**（2026-10-11，工作区）
+
+**做了什么**：
+
+- 新增 [`pipeline/trace.rs`](../../crates/backend/forge-codegen/src/pipeline/trace.rs)：
+  `pub static KNOBS: [Knob; 11]`（名字 + "看什么" + 每行一个 `OnceLock` 缓存）与
+  `pub fn knob(name: &'static str) -> bool`。
+  **语义**：直接按名字问环境变量 ⇒ **任何名字都生效、不可能因为漏登记而失效**；
+  未登记的名字 debug 下 `debug_assert!` **panic**、release 下警告一次后照常生效。
+  缓存保留的理由写进模块文档（regalloc/lowering/emission 的**每指令热路径**上都有查询，
+  裸 `var_os` 实测占 codegen 7–18%）——缓存的前提"环境变量在进程内不变"与旧实现同一条假设。
+- **删除**旧白名单实现（白名单表 + 整表缓存）与其 `trace_enabled`；**35 处调用点**迁移到
+  `trace::knob("…")`。
+- **落地时侦察抓到第二个同类静默失效**：`FORGE_TRACE_M4`（regalloc 折入类诊断）的调用点在，
+  **白名单里却从来没有它** ⇒ 与 `FORGE_TRACE_AGG` 一模一样地恒为假；反过来，白名单里的
+  `FORGE_TRACE_ISEL` **一处调用点都没有**（死条目）。新机制下前者自动生效、后者不再登记。
+- **新增守卫** [`trace_knobs_are_bijective`](../../crates/backend/forge-codegen/tests/trace_knobs.rs)：
+  源码调用点 ↔ `KNOBS` 表 ↔ `docs/reference/backend-pipeline.md` 的表格**三方双向相等**
+  （源码多 ⇒ 漏登记 = 旧病；台账多 ⇒ 死条目；文档分叉 ⇒ "承诺可见、实际看不见"）；
+  同文件钉住验收判据 **全仓旧白名单名 == 0**（守卫文件自跳过，注释写明原因）。
+- `trace.rs` 自带三条单测：台账自洽（名字唯一/前缀/说明非空）、登记项按环境变量生效、
+  **未登记名字在 debug 下 panic**（`catch_unwind` 钉住）。
+- 契约文档新增 §4「观测开关」并把 11 行表格写进去（守卫钉住与代码一致）。
+
+**实测**：`forge-codegen --lib --all-features` **2830 passed / 0 failed**；
+`trace_knobs_are_bijective` + 旧白名单清零守卫 **2 passed**；全量门禁见下（同批实测）。
+
 ### M3 能力缺口台账化 —— **一次落地**（2026-10-11，工作区）
 
 **做了什么**：

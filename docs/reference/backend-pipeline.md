@@ -58,7 +58,39 @@
 后端 x86_64 / riscv64 / arm64 的工厂闭包 + 调用点布局钩子）。`CompileSession::new` 会调它，
 因此"忘记注册"在本仓内部不可达。
 
-## 4. 未完成项（指向方案）
+## 4. 观测开关（诊断面台账，v24 M4）
+
+诊断开关**不可能静默失效**：`pipeline::trace::knob("FORGE_TRACE_*")` 直接按名字问环境变量
+（**任何名字都生效**），`pipeline::trace::KNOBS` 是**唯一登记处**，只回答"我们有哪些观测
+开关、各自看什么"。忘登记的名字：debug 下 `debug_assert!` **当场 panic**，release 下照常
+生效但 `eprintln` 一次警告。
+
+为什么值得一节：旧实现维护一份 `TRACE_KEYS` 白名单，**名字漏进白名单 ⇒ 该开关恒为假、
+静默失效**——`FORGE_TRACE_AGG` 就这样死了几个月（"文档承诺可见、实际看不见"），M4 落地时
+又抓到第二个同类 `FORGE_TRACE_M4`（调用点在、白名单里没有），而白名单里的
+`FORGE_TRACE_ISEL` 一处调用点都没有（死条目）。下表与源码调用点由守卫
+`trace_knobs_are_bijective` 钉成**双向相等**（多一行、少一行都红）。
+
+| 开关 | 看什么 |
+| --- | --- |
+| `FORGE_TRACE_ABI` | 调用约定规划与落点回填（abi_setup / compiler） |
+| `FORGE_TRACE_AGG` | 聚合展开与合法化（legalize 各 pass / 计划相 / 物化相） |
+| `FORGE_TRACE_ALLOC` | 寄存器分配主循环（regalloc_bt） |
+| `FORGE_TRACE_EMIT` | 机器码发射（emission） |
+| `FORGE_TRACE_EXPIRE` | 活跃区间到期处理（regalloc_bt） |
+| `FORGE_TRACE_LOWER` | 指令选择（lowering；每指令一条） |
+| `FORGE_TRACE_M4` | 绑定折入与多类槽回填类诊断（compiler） |
+| `FORGE_TRACE_REGALLOC` | 寄存器分配编排（regalloc_bt 入口） |
+| `FORGE_TRACE_SPILL` | 溢出与回填（emission / regalloc_bt） |
+| `FORGE_TRACE_STACK` | 栈槽与帧布局（lowering） |
+| `FORGE_TRACE_VCODE` | 虚拟指令流（compiler） |
+
+性能：每个开关一个 `OnceLock` 缓存（首次查询后零开销）——regalloc/lowering/emission 的
+**每指令热路径**上都有查询，实测裸 `std::env::var_os` 会占 codegen 的 7–18%。
+
+## 5. 未完成项（指向方案）
 
 M2–M6 的契约变化（单一 ABI 数据模型、能力数据化、单一操作数模型、分配/发射契约、
-合法化单一驱动）见 `docs/archive/backend-v23-plan.md` §5（v23 已收口归档）；每个里程碑落地时在本文件补对应小节。
+合法化单一驱动）见 `docs/archive/backend-v23-plan.md` §5（v23 已收口归档）；v24 的契约
+回写（合法化两相化 / 值描述单一来源 / 缺口与观测台账 / 阶段清单守卫）见
+`docs/plans/backend-v24-plan.md`，**M5 落地时在本文件补齐并改为 v24 契约**。

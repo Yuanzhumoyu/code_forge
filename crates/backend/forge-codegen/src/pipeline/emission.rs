@@ -189,7 +189,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         alloc_result: &AllocResult,
         sink: &mut CodeSink,
     ) -> Result<(), IrError> {
-        if crate::pipeline::trace_enabled("FORGE_TRACE_EMIT") {
+        if crate::pipeline::trace::knob("FORGE_TRACE_EMIT") {
             eprintln!("[forge] emit {inst:?} alloc={alloc_result:?}");
         }
         encoder
@@ -244,7 +244,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 width,
             } = e
             {
-                if crate::pipeline::trace_enabled("FORGE_TRACE_SPILL") {
+                if crate::pipeline::trace::knob("FORGE_TRACE_SPILL") {
                     eprintln!(
                         "[spill] {fname} load {} width={} off={} class={class:?}",
                         scratch.num,
@@ -287,7 +287,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 width,
             } = e
             {
-                if crate::pipeline::trace_enabled("FORGE_TRACE_SPILL") {
+                if crate::pipeline::trace::knob("FORGE_TRACE_SPILL") {
                     eprintln!(
                         "[spill] {fname} store {} width={} off={} class={class:?}",
                         scratch.num,

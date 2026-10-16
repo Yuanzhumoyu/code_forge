@@ -394,7 +394,7 @@ impl<M: TargetMachine> CompileSession<M> {
             // **④ 收尾**（物化相 + GEP）：物化必须等 va 也登记完位置（va 会把聚合实参拷进
             // 自己的帧槽）；GEP 与聚合无关，一起收尾。
             changes.merge(crate::pipeline::legalize::LegalizeDriver::finalize().run(f, &mut lctx)?);
-            if crate::pipeline::trace_enabled("FORGE_TRACE_AGG") {
+            if crate::pipeline::trace::knob("FORGE_TRACE_AGG") {
                 eprintln!(
                     "[forge] 聚合展开 {}：共 {} 项（+{} 指令 / +{} 值 / +{} 常量 / sret={}）",
                     f.name,
@@ -453,14 +453,14 @@ impl<M: TargetMachine> CompileSession<M> {
 
         // v20 A3b 预备：`FORGE_TRACE_ABI=1` 打印该函数的调用计划（引擎产物）——发射尚未切换，
         // 但"计划长什么样"现在可诊断（与既有 ABI 路径对照时这是唯一证据面）。
-        if crate::pipeline::trace_enabled("FORGE_TRACE_ABI") {
+        if crate::pipeline::trace::knob("FORGE_TRACE_ABI") {
             eprintln!("[abi] === fn: {}", func_ref.name);
             for line in state.abi_plan.to_text().lines() {
                 eprintln!("[abi] {line}");
             }
         }
 
-        if crate::pipeline::trace_enabled("FORGE_TRACE_VCODE") {
+        if crate::pipeline::trace::knob("FORGE_TRACE_VCODE") {
             eprintln!("[vcode] === fn: {}", func_ref.name);
             for (bi, block) in state.vcode.blocks().enumerate() {
                 eprintln!("[vcode] block {bi}: {:?}", block.ir_block);
@@ -813,7 +813,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                                 .find(|o| o.field == bind.field && o.role == bind.role)
                                 && op.class.is_none()
                                 && bind.class.is_none()
-                                && crate::pipeline::trace_enabled("FORGE_TRACE_M4")
+                                && crate::pipeline::trace::knob("FORGE_TRACE_M4")
                             {
                                 eprintln!(
                                     "[m4] 多类槽字段 {} 的 vreg {} 没有值宽类记录 ⇒ 回填退池宽类\

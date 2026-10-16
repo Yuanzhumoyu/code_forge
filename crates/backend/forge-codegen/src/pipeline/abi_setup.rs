@@ -59,7 +59,7 @@ pub(crate) fn setup_conv<M: TargetMachine>(
         match crate::pipeline::abi_target::plan_for_function(machine, &reg, &ctx.conv.name, func) {
             Ok(p) => p,
             Err(e) => {
-                if crate::pipeline::trace_enabled("FORGE_TRACE_ABI") {
+                if crate::pipeline::trace::knob("FORGE_TRACE_ABI") {
                     eprintln!("[abi-plan] {e}");
                 }
                 return Err(crate::pipeline::gaps::capability(

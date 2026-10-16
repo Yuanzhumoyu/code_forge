@@ -303,7 +303,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     .and_then(|v| self.value_to_xreg.get(*v).copied())
                     .or_else(|| Some(self.ctx.alloc_xreg(self.ctx.value_gpr_class)));
                 if let (Some(xr), Some(r)) = (x, inst.results.first()) {
-                    if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER") {
+                    if crate::pipeline::trace::knob("FORGE_TRACE_LOWER") {
                         eprintln!(
                             "[copy] result={r:?} -> xreg={xr:?} op0={:?}",
                             inst.operands.first()
@@ -498,7 +498,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     }
                 })();
                 self.ctx.current_immediates.insert(0, fold_idx.unwrap_or(0));
-                if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER") {
+                if crate::pipeline::trace::knob("FORGE_TRACE_LOWER") {
                     let dbg = dfg.value_data_opt(idx_v).map(|v| &v.def);
                     let idbg = dfg
                         .inst_data_opt(forge_ir::Inst::new(1))
@@ -519,7 +519,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 //（覆盖调用者寄存器保存值）。
                 // v 是负数（-4, -8, ...），槽深 = -v + 槽宽（8 字节对齐）；记录
                 // 最大需求供 calculate_frame_size 分配（否则槽落在 rsp 之下）。
-                if crate::pipeline::trace_enabled("FORGE_TRACE_STACK") {
+                if crate::pipeline::trace::knob("FORGE_TRACE_STACK") {
                     eprintln!(
                         "[forge] StackAddr v={v} shift={} -> lea rbp{:+}",
                         self.ctx.stack_slot_shift,
@@ -555,7 +555,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 let depth = base.saturating_add(size);
                 self.ctx.current_offset = -depth - self.ctx.stack_slot_shift as i64;
                 self.ctx.max_stack_bytes = self.ctx.max_stack_bytes.max(depth as u32);
-                if crate::pipeline::trace_enabled("FORGE_TRACE_STACK") {
+                if crate::pipeline::trace::knob("FORGE_TRACE_STACK") {
                     eprintln!(
                         "[forge] VaStart 对象槽：size={size} align={align} depth={depth} \
                          -> lea rbp{:+}",
@@ -587,7 +587,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 })
                 .collect();
 
-            if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER") {
+            if crate::pipeline::trace::knob("FORGE_TRACE_LOWER") {
                 eprintln!(
                     "[forge] lower op={:?} operands={:?} args={:?} results={:?}",
                     inst.opcode, inst.operands, args, results
@@ -597,7 +597,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             self.ctx.current_clobbers.clear();
             let mut machine_insts = if let Some((name, leaves)) = roots.get(ii) {
                 // S6 pattern 命中：叶变量 → XReg（树 DFS 序），根结果 XReg 不变。
-                if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER") {
+                if crate::pipeline::trace::knob("FORGE_TRACE_LOWER") {
                     eprintln!(
                         "[forge] pattern name={name} op={:?} leaves={leaves:?} results={results:?}",
                         inst.opcode

@@ -21,45 +21,8 @@ pub mod regalloc_bt;
 pub mod session;
 /// IR 视图 → 引擎视图（签名 + 参数属性；v20 A2b）。
 pub mod sig_view;
+/// **观测开关台账**（v24 M4）：诊断开关不可能静默失效（见模块文档）。
+pub mod trace;
 pub mod va_expand;
-
-use std::sync::OnceLock;
-
-/// FORGE_TRACE_* 环境变量的静态缓存。
-///
-/// `std::env::var_os` 每次调用都会线性扫描整个环境块，而 codegen 管线在
-/// 每指令热路径上会多次查询（regalloc/lowering/emission），基准显示 500
-/// 条指令的函数编译中该开销可占 7-18%。用 `OnceLock` 缓存全部 trace 开关：
-/// 语义不变（调试期环境变量不会在运行时改变），首次查询后零开销。
-pub(crate) fn trace_enabled(key: &'static str) -> bool {
-    const TRACE_KEYS: &[&str] = &[
-        "FORGE_TRACE_VCODE",
-        "FORGE_TRACE_EMIT",
-        "FORGE_TRACE_ISEL",
-        "FORGE_TRACE_STACK",
-        "FORGE_TRACE_LOWER",
-        "FORGE_TRACE_REGALLOC",
-        "FORGE_TRACE_ALLOC",
-        "FORGE_TRACE_EXPIRE",
-        "FORGE_TRACE_SPILL",
-        "FORGE_TRACE_ABI",
-        // v23 收尾实测补：`FORGE_TRACE_AGG` 是**被文档与代码多处引用**的合法化/聚合展开诊断
-        // 开关（`pipeline/legalize/*`、`agg_expand`、M3 的 `ChangeSet` 报告都说"可见"），
-        // 但它**不在白名单里** ⇒ `trace_enabled("FORGE_TRACE_AGG")` 恒为假、相关 eprintln 全是
-        // 死代码。加进来（顺带修掉"文档承诺可见、实际看不见"这类静默失效）。
-        "FORGE_TRACE_AGG",
-    ];
-    static CACHE: OnceLock<std::collections::HashMap<&'static str, bool>> = OnceLock::new();
-    CACHE
-        .get_or_init(|| {
-            TRACE_KEYS
-                .iter()
-                .map(|k| (*k, std::env::var_os(k).is_some()))
-                .collect()
-        })
-        .get(key)
-        .copied()
-        .unwrap_or(false)
-}
 
 pub use forge_isa_runtime::{alloc_result, emit, vcode};

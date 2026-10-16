@@ -11,6 +11,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v24 M4：观测开关**台账化**（诊断开关不可能静默失效）
+
+旧实现维护一份开关白名单（`TRACE_KEYS`）+ 整表缓存：**名字漏进白名单 ⇒ 该开关恒为假、
+静默失效**，探针一句都不打印而没人发现——`FORGE_TRACE_AGG` 就这样死了几个月
+（"文档承诺可见、实际看不见"）。
+
++ 新增 `pipeline::trace`：`KNOBS` 台账（11 项，每项写清"看什么"）+ `knob(name)`。
+  **直接按名字问环境变量 ⇒ 任何名字都生效、不可能因为漏登记而失效**；忘登记的名字
+  debug 下 **panic**（当场暴露）、release 下警告一次后照常生效。每开关一个 `OnceLock`
+  缓存（每指令热路径上都有查询，裸 `var_os` 实测占 codegen 7–18%）。
++ **落地时抓到第二个同类静默失效**：`FORGE_TRACE_M4` 的调用点在、白名单里却从来没有它
+  （与 `FORGE_TRACE_AGG` 同病）；反过来白名单里的 `FORGE_TRACE_ISEL` 一处调用点都没有
+  （死条目）。新机制下前者自动生效、后者不再登记。
++ **删除**旧白名单与 `trace_enabled`，**35 处调用点**迁移到 `trace::knob("…")`。
++ 新增守卫 `trace_knobs_are_bijective`：源码调用点 ↔ `KNOBS` 台账 ↔
+  `reference/backend-pipeline.md` 的表格**三方双向相等**（源码多 = 旧病、台账多 = 死条目、
+  文档分叉 = 承诺与实现不符）；同文件钉住"旧白名单名全仓归零"。
++ 契约文档新增「观测开关」一节（11 行表格由守卫钉住与代码一致）。
++ 验收：`forge-codegen --lib` 2830 passed；`trace_knobs` 2 passed；workspace 全量、
+  JIT 两矩阵（197/3/0 · 136/64/0）、asm 三档（3/1/1）、clippy `-D warnings`、fmt 全绿。
+
 ### Changed (2026-10-11) — 后端 v24 M3：能力缺口**台账化** + `insertvalue` 链聚合实参**打通**
 
 能力缺口过去以 60+ 处 `Unsupported(...)` 的形态散在代码里：没人知道"这台机器 / 这份约定 /

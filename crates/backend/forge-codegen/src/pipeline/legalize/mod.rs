@@ -175,7 +175,7 @@ impl<M: TargetMachine> LegalizeDriver<M> {
         func: &mut Function,
         ctx: &mut LegalizeCtx<'_, M>,
     ) -> Result<ChangeSet, IrError> {
-        if crate::pipeline::trace_enabled("FORGE_TRACE_AGG") {
+        if crate::pipeline::trace::knob("FORGE_TRACE_AGG") {
             eprintln!(
                 "[forge] 合法化驱动：{} 个 pass，次序 {:?}",
                 self.passes.len(),
@@ -189,7 +189,7 @@ impl<M: TargetMachine> LegalizeDriver<M> {
             total.new_values += c.new_values;
             total.new_consts += c.new_consts;
             total.sret |= c.sret;
-            if crate::pipeline::trace_enabled("FORGE_TRACE_AGG") {
+            if crate::pipeline::trace::knob("FORGE_TRACE_AGG") {
                 eprintln!(
                     "[forge] 合法化 pass {}：+{} 指令 / +{} 值 / +{} 常量 / sret={}",
                     pass.name(),
@@ -231,8 +231,8 @@ impl<M: TargetMachine> LegalizePass<M> for VaPass {
         let before = IrSize::of(func);
         let (n_objs, n_args) =
             crate::pipeline::va_expand::expand_va(func, &va, &slots, &mut ctx.agg_slots)?;
-        if crate::pipeline::trace_enabled("FORGE_TRACE_LOWER")
-            || crate::pipeline::trace_enabled("FORGE_TRACE_AGG")
+        if crate::pipeline::trace::knob("FORGE_TRACE_LOWER")
+            || crate::pipeline::trace::knob("FORGE_TRACE_AGG")
         {
             eprintln!(
                 "[forge] 变参展开：物化 {n_objs} 份对象、取值 {n_args} 条\
@@ -262,7 +262,7 @@ impl<M: TargetMachine> LegalizePass<M> for PlanPass {
         let before = IrSize::of(func);
         let va = ctx.va.as_ref().map(|(v, _)| v);
         let edges = plan::plan_abi_edges(func, ctx.machine, &ctx.conv, va)?;
-        if crate::pipeline::trace_enabled("FORGE_TRACE_AGG") {
+        if crate::pipeline::trace::knob("FORGE_TRACE_AGG") {
             eprintln!(
                 "[forge] ABI 计划 {}：{} 条可动边界（{}）",
                 func.name,
