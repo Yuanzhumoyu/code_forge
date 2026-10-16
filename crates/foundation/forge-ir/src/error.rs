@@ -116,7 +116,7 @@ mod capability_tests {
     /// 缺口错误的消息里必须带 `[cap:ID]`（台账守卫靠这个前缀把集合抓出来），
     /// 且 `gap_id` 能原样取回 ID（不依赖 `Display` 的前缀位置）。
     ///
-    /// v25 M2 从 `forge-codegen::pipeline::gaps` 迁来（构造器随之下沉到 `forge-ir`，
+    /// v25 M2 从后端的旧缺口构造层迁来（构造器随之下沉到 `forge-ir`，
     /// 因为 `forge-isa-runtime` 的 trait 默认实现也要能构造缺口错误）。
     #[test]
     fn capability_errors_are_marked() {
