@@ -11,6 +11,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v24 M3：能力缺口**台账化** + `insertvalue` 链聚合实参**打通**
+
+能力缺口过去以 60+ 处 `Unsupported(...)` 的形态散在代码里：没人知道"这台机器 / 这份约定 /
+这份谱到底缺什么"，失败信息也只在触发那一刻可见。
+
++ **失败信息自带身份**：新增 `pipeline::gaps::capability(ID, msg)`，21 处能力类失败点改成
+  以 **`[cap:ID]`** 开头（另有 `gap_id(&IrError)` 供上层取 ID）。用户/CI 可按 `[cap:…]`
+  搜索、归类、豁免。
++ **新增台账** [`docs/reference/backend-gaps.md`](docs/reference/backend-gaps.md)：21 行，
+  每行给出"谁在什么条件下撞到 / 决策（**已实现·数据层·不做·待做** 四值封闭）/ 钉住它的
+  守卫或数据条件"，§3 记逐条证据。
++ **新增双向守卫** `capability_gaps_guard`：源码缺口集合与台账 ID 列**逐一相等**（多一行、
+  少一行都红）、每个 ID 在源码里恰好一处、决策列必须落在封闭词表；守卫自身抓出并修好了
+  两处盲点（ID 写在下一行的多行调用、决策列的 Markdown 强调）。
++ **`insertvalue`/`undef` 链搭出来的聚合作为实参：从 v23 的 fail-closed 变为已实现**——
+  物化相导出共享助手 `ensure_value_addr`（**沿定义链递归**求地址），调用实参 pass 复用它
+  并与 `load` 来源共用同一条逐段 load 路径。v23 的契约断言翻转为**真执行断言**
+  （`test_jit_va_arg_reads_unnamed_aggregate_arg` 的 `f2() == 11`）。
++ **aapcs64/lp64d 的聚合变参**：只读测量（生产同一探针）——24B 聚合形参 `win64 ⇒ ByRef`、
+  `sysv64 ⇒ StackByVal{16,24}`、`aapcs64/lp64d ⇒ ByRef`。台账记 `待做`：与 win64 同形**可**
+  声明，但这两份约定没有聚合变参的真执行通道 ⇒ 按"不静默错值"先不声明（前置条件写明）。
++ 文档地图登记 `reference/backend-gaps.md`（`docs/README.md` + `CLAUDE.md`）。
++ 验收：`forge-codegen --lib` 2827 passed；`capability_gaps_guard` 1 passed；
+  workspace 全量、JIT 两矩阵（197/3/0 · 136/64/0）、asm 三档（3/1/1）、clippy `-D warnings`
+  与 fmt 全绿。
+
 ### Changed (2026-10-11) — 后端 v24 M2：值描述**单一来源**（`xreg_types` 退场）
 
 "值的类 / 位宽 / IR 类型"过去分散在**四张平行表**里（一张 `XReg` 键的 `xreg_types` 加三张

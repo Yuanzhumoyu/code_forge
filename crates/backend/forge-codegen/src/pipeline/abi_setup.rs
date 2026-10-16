@@ -62,8 +62,10 @@ pub(crate) fn setup_conv<M: TargetMachine>(
                 if crate::pipeline::trace_enabled("FORGE_TRACE_ABI") {
                     eprintln!("[abi-plan] {e}");
                 }
-                return Err(forge_ir::IrError::Unsupported(format!(
-                    "DSL 编译入口：这台机器上的约定 `{}` 规划不出该函数的调用布局（{e}）——\
+                return Err(crate::pipeline::gaps::capability(
+                    "ABI_PLAN_UNAVAILABLE",
+                    format!(
+                        "DSL 编译入口：这台机器上的约定 `{}` 规划不出该函数的调用布局（{e}）——\
                  无 plan 不再继续编译（fail-closed）。\n\
                  \x20 怎么修：① 约定数据缺/写错 ⇒ 用 \
                  forge_codegen::pipeline::conv_registry::register_rules_toml / \
@@ -73,8 +75,9 @@ pub(crate) fn setup_conv<M: TargetMachine>(
                  ③ 口径与缺口清单 ⇒ docs/reference/calling-conventions.md、\
                  docs/archive/calling-convention-redesign-plan.md 的 A6。\n\
                  \x20 提示：设 FORGE_TRACE_ABI=1 可看到该函数的 plan 或失败原因。",
-                    ctx.conv.name
-                )));
+                        ctx.conv.name
+                    ),
+                ));
             }
         };
     ctx.conv.va = crate::pipeline::abi_target::va_info(&plan, machine);

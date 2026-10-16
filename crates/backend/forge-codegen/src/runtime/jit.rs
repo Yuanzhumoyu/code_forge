@@ -3303,18 +3303,17 @@ ret_int = ["RAX"]
         main_ins.ret(&[got_i]);
         module2.add_function(main_ins.finish().expect("main_ins"));
         let mut jit2 = JitLoader::new(x86::TargetMachine::new());
-        match jit2.compile_module(&module2) {
-            Ok(()) => {
-                panic!("`insertvalue` 链作为聚合实参已被支持 ⇒ 本断言要改成真执行断言：f2() == 11")
-            }
-            Err(e) => {
-                let msg = format!("{e}");
-                assert!(
-                    msg.contains("insertvalue"),
-                    "期望错误信息点名 insertvalue（链搭出来的聚合作为实参尚未实现），实际：{msg}"
-                );
-            }
-        }
+        jit2.compile_module(&module2)
+            .expect("`insertvalue` 链作为聚合实参：v24 M1 两相物化之后必须能编");
+        let f2: extern "C" fn() -> i64 = jit2.get_fn("main_ins").expect("get_fn");
+        assert_eq!(
+            f2(),
+            11,
+            "`insertvalue` 链搭出来的聚合作为未命名实参：被调方必须读回 4 + 7 = 11。\
+             来历：v23 曾编出 `72198297058681447` ⇒ 当时按\"宁可明确拒绝也不要静默错值\"\
+             回退成 fail-closed；v24 M1 的两相物化把\"按定义链求地址\"变成**计划相一次算出、\
+             物化相单遍写入**，这条路径因此被覆盖（本断言 = v23 契约断言的翻转）。"
+        );
     }
 
     /// **sysv64 的聚合变参**（v23 收尾 M7 批次 8）：调用方把 24 字节聚合作为**未命名实参**

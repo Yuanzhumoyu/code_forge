@@ -275,10 +275,13 @@ pub(crate) fn expand_large_aggs(
                             UseKind::Extract(idx)
                         }
                         _ => {
-                            return Err(IrError::Unsupported(format!(
-                                "大聚合 load 值用于 {:?}（仅支持 store 拷贝/extractvalue 提取）",
-                                inst.opcode
-                            )));
+                            return Err(crate::pipeline::gaps::capability(
+                                "AGG_LOAD_USE",
+                                format!(
+                                    "大聚合 load 值用于 {:?}（仅支持 store 拷贝/extractvalue 提取）",
+                                    inst.opcode
+                                ),
+                            ));
                         }
                     };
                     jobs.push(UseJob {

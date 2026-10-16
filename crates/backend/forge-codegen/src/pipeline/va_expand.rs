@@ -180,9 +180,12 @@ fn int_ty(bytes: u32) -> Result<TypeId, IrError> {
         2 => Ok(TypeId::I16),
         4 => Ok(TypeId::I32),
         8 => Ok(TypeId::I64),
-        other => Err(IrError::Unsupported(format!(
-            "变参游标字段宽度 {other} 字节：只支持 1/2/4/8（形状数据给的宽度必须落在这四档）——             以前会静默按 8 字节读写，与相邻字段互相踩"
-        ))),
+        other => Err(crate::pipeline::gaps::capability(
+            "VA_CURSOR_FIELD_WIDTH",
+            format!(
+                "变参游标字段宽度 {other} 字节：只支持 1/2/4/8（形状数据给的宽度必须落在这四档）——             以前会静默按 8 字节读写，与相邻字段互相踩"
+            ),
+        )),
     }
 }
 
@@ -198,13 +201,16 @@ pub(crate) fn expand_va(
     agg_slots: &mut Places,
 ) -> Result<(usize, usize), IrError> {
     let Some(init) = va.init.clone() else {
-        return Err(IrError::Unsupported(format!(
-            "变参：宿主没给 `LowerCtx::conv.va.init`（对象字段初值），无法物化 `va_list`——\
+        return Err(crate::pipeline::gaps::capability(
+            "VA_INIT_MISSING",
+            format!(
+                "变参：宿主没给 `LowerCtx::conv.va.init`（对象字段初值），无法物化 `va_list`——\
              形状 = {}（保存区 {} / 字段 {} 个）",
-            va.shape.as_deref().unwrap_or("<explicit>"),
-            if va.save.is_some() { "有" } else { "无" },
-            va.fields.len()
-        )));
+                va.shape.as_deref().unwrap_or("<explicit>"),
+                if va.save.is_some() { "有" } else { "无" },
+                va.fields.len()
+            ),
+        ));
     };
     // ① 收集（不能边遍历边改）
     let mut starts: Vec<(Block, Inst)> = Vec::new();
@@ -541,10 +547,10 @@ fn expand_arg(
     // 不是 int/fp 两类能表达的。没声明 ⇒ fail-closed（不猜、也不按标量 load）。
     let agg_rule = if is_agg {
         Some(va.arg_rules.aggregate.ok_or_else(|| {
-            IrError::Unsupported(
+            crate::pipeline::gaps::capability(
+                "VA_ARG_AGG_RULE",
                 "va_arg：本约定没有声明聚合取参规则（`va_list` 形状的 `aggregate_arg`）——\
-                 调用方可按标量逐个 va_arg，或先在约定层补这条规则"
-                    .into(),
+                 调用方可按标量逐个 va_arg，或先在约定层补这条规则",
             )
         })?)
     } else {
@@ -560,10 +566,13 @@ fn expand_arg(
             .get(i)
             .map(|f| (f.offset, f.size.max(1)))
             .ok_or_else(|| {
-                IrError::Unsupported(format!(
-                    "va_arg：plan 的 `va.fields` 缺第 {} 个字段（取参规则引用了它）",
-                    i + 1
-                ))
+                crate::pipeline::gaps::capability(
+                    "VA_ARG_VECTOR_MEM",
+                    format!(
+                        "va_arg：plan 的 `va.fields` 缺第 {} 个字段（取参规则引用了它）",
+                        i + 1
+                    ),
+                )
             })
     };
     let (cur_off, cur_size) = field(rule.cursor)?;
@@ -780,8 +789,9 @@ fn va_arg_site(func: &Function, ii: Inst) -> Result<VaArgSite, IrError> {
         ));
     }
     if is_fp && bits != 32 && bits != 64 {
-        return Err(IrError::Unsupported(
-            "va_arg: 只支持 f64 与 f32（f32 走默认提升的窄回）；更窄的浮点还没有能力声明".into(),
+        return Err(crate::pipeline::gaps::capability(
+            "VA_ARG_FLOAT_WIDTH",
+            "va_arg: 只支持 f64 与 f32（f32 走默认提升的窄回）；更窄的浮点还没有能力声明",
         ));
     }
     Ok(VaArgSite {

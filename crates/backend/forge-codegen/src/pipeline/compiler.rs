@@ -135,17 +135,20 @@ impl<M: TargetMachine> CompileSession<M> {
                 continue;
             }
             if ri.class_for_type(ty).is_none() {
-                return Err(IrError::Unsupported(format!(
-                    "ISA 值池无法承载类型 {}（{} 位；值池 GPR {} 字节 / FPR {} 字节。\
+                return Err(crate::pipeline::gaps::capability(
+                    "VALUE_POOL_TYPE",
+                    format!(
+                        "ISA 值池无法承载类型 {}（{} 位；值池 GPR {} 字节 / FPR {} 字节。\
                      需要 [meta].value_gpr_width / addr_width / value_fpr_width 声明更宽的\
                      寄存器组，或改用更窄的 IR 类型）",
-                    crate::machine::reg_info::type_label(ty),
-                    ty.builtin_scalar_bits()
-                        .map(|b| b.to_string())
-                        .unwrap_or_else(|| "非标量".to_string()),
-                    gpr.bytes(),
-                    fpr.bytes()
-                )));
+                        crate::machine::reg_info::type_label(ty),
+                        ty.builtin_scalar_bits()
+                            .map(|b| b.to_string())
+                            .unwrap_or_else(|| "非标量".to_string()),
+                        gpr.bytes(),
+                        fpr.bytes()
+                    ),
+                ));
             }
         }
         Ok(())
@@ -203,10 +206,13 @@ impl<M: TargetMachine> CompileSession<M> {
             // 通用管线**不认识** `avx512` 这类能力名（v23 M3）。
             let wide_caps = self.machine.reg_info().wide_vector_bytes();
             if bytes > 16 && !wide_caps.contains(&(bytes as u16)) {
-                return Err(IrError::Unsupported(format!(
-                    "SIMD 参数/返回 {bytes} 字节宽向量：本 ISA/宿主的宽向量档位是 {wide_caps:?}\
+                return Err(crate::pipeline::gaps::capability(
+                    "SIMD_WIDE_VECTOR_TIER",
+                    format!(
+                        "SIMD 参数/返回 {bytes} 字节宽向量：本 ISA/宿主的宽向量档位是 {wide_caps:?}\
                      （type {ty:?}）"
-                )));
+                    ),
+                ));
             }
             match by_ref_limit {
                 Some(lim) if bytes <= lim => {
@@ -220,9 +226,12 @@ impl<M: TargetMachine> CompileSession<M> {
                     let _ = lim;
                 }
                 None => {
-                    return Err(IrError::Unsupported(format!(
-                        "SIMD 参数/返回 {bytes} 字节暂不支持（ABI 未声明 vector by-ref；type {ty:?}）"
-                    )));
+                    return Err(crate::pipeline::gaps::capability(
+                        "SIMD_VECTOR_BYREF",
+                        format!(
+                            "SIMD 参数/返回 {bytes} 字节暂不支持（ABI 未声明 vector by-ref；type {ty:?}）"
+                        ),
+                    ));
                 }
             }
         }
@@ -259,10 +268,13 @@ impl<M: TargetMachine> CompileSession<M> {
                     )));
                 }
                 if bytes != 32 && bytes != 64 {
-                    return Err(IrError::Unsupported(format!(
-                        "IR {bytes} 字节向量暂不支持（仅 V256 32B / V512 64B 有 lowering \
+                    return Err(crate::pipeline::gaps::capability(
+                        "VECTOR_BYTES_LOWERING",
+                        format!(
+                            "IR {bytes} 字节向量暂不支持（仅 V256 32B / V512 64B 有 lowering \
                          规则；type {ty:?}）"
-                    )));
+                        ),
+                    ));
                 }
             }
         }
@@ -271,7 +283,8 @@ impl<M: TargetMachine> CompileSession<M> {
         // 异常处理（P1.1）：invoke/landingpad/resume 无机器指令映射，编译期拒绝
         for (_, inst) in func.dfg.insts() {
             if matches!(inst.opcode, Opcode::LandingPad) {
-                return Err(IrError::Unsupported(
+                return Err(crate::pipeline::gaps::capability(
+                    "EXCEPTION_LANDINGPAD",
                     "异常处理 landingpad 无机器指令映射（P1.1 仅文本层解析/展示）".to_string(),
                 ));
             }
@@ -281,7 +294,8 @@ impl<M: TargetMachine> CompileSession<M> {
                 func.dfg.term_kind(b),
                 Some(TermKind::Invoke | TermKind::Resume)
             ) {
-                return Err(IrError::Unsupported(
+                return Err(crate::pipeline::gaps::capability(
+                    "EXCEPTION_INVOKE_RESUME",
                     "异常处理 invoke/resume 无机器指令映射（P1.1 仅文本层解析/展示）".to_string(),
                 ));
             }
@@ -330,11 +344,14 @@ impl<M: TargetMachine> CompileSession<M> {
                     func_owned.get_or_insert_with(|| func.clone());
                 }
                 None => {
-                    return Err(IrError::Unsupported(format!(
-                        "变参：函数 `{}` 用了 VaStart/VaArg，但它的约定没声明 `hidden.va_list`\
+                    return Err(crate::pipeline::gaps::capability(
+                        "VA_SHAPE_MISSING",
+                        format!(
+                            "变参：函数 `{}` 用了 VaStart/VaArg，但它的约定没声明 `hidden.va_list`\
                          （`va_list` 的形状）——变参需要形状数据，生成器不再有专用臂",
-                        func.name
-                    )));
+                            func.name
+                        ),
+                    ));
                 }
             }
         }
@@ -1192,7 +1209,7 @@ mod alloc_integration_tests {
     /// AVX-512 runner 的 run）。本测试用「**无宽向量参数/返回** + 函数内局部 V512
     /// 常量」构造——不触发宽向量 ABI 的 AVX-512 入口守卫，任何机器都能编译验证。
     ///
-    /// 断言：①编译成功（修复前 `Unsupported("DSL lowering: Vconst no matching rule")`）；
+    /// 断言：①编译成功（修复前 `crate::pipeline::gaps::capability("VCONST_NO_RULE", "DSL lowering: Vconst no matching rule")`）；
     /// ②机器码含 **4 条 EVEX `VINSERTF32X4`**（`62 P0 P1 P2 18 /r ib`）且 imm 恰为
     /// 0/1/2/3 各一次 ⇒ 512 位的 4 个 128 位 lane 都被显式写入（这也是 Vconst 规则
     /// 「`{out}` 自身当累加器、初始值不影响结果」这一构造前提的可执行证据）。

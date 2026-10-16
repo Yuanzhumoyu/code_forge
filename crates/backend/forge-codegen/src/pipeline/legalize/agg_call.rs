@@ -7,6 +7,7 @@ use super::common::{AggArgLoc, agg_arg_place, agg_ret_is_sret, append_param};
 use crate::IrError;
 
 use crate::pipeline::agg_expand::{Place, Places};
+use crate::pipeline::legalize::materialize::ensure_value_addr;
 use forge_ir::*;
 
 /// 按值返回 sret 的**前置**处理（A1′-ret）：约定把 `>8B` 聚合返回落进**调用方缓冲**
@@ -90,9 +91,12 @@ pub(crate) fn expand_large_agg_call_results(
                 let size = store.size_bytes(rt) as usize;
                 let sret = agg_ret_is_sret(machine, conv, &store, rt)?;
                 if !sret && size > 16 {
-                    return Err(IrError::Unsupported(format!(
-                        "聚合返回 {size} 字节：这份约定既不是 sret 也不是寄存器档：type {rt:?}"
-                    )));
+                    return Err(crate::pipeline::gaps::capability(
+                        "AGG_RET_PLACEMENT",
+                        format!(
+                            "聚合返回 {size} 字节：这份约定既不是 sret 也不是寄存器档：type {rt:?}"
+                        ),
+                    ));
                 }
                 jobs.push(Job {
                     block: b,
@@ -194,10 +198,13 @@ pub(crate) fn expand_large_agg_ret(
     for job in jobs {
         let size = store.size_bytes(job.ty) as usize;
         if !sret && size > 16 {
-            return Err(IrError::Unsupported(format!(
-                "聚合返回 {size} 字节：这份约定既不是 sret 也不是寄存器档（栈返回未实现）：type {:?}",
-                job.ty
-            )));
+            return Err(crate::pipeline::gaps::capability(
+                "AGG_RET_STACK_UNSUPPORTED",
+                format!(
+                    "聚合返回 {size} 字节：这份约定既不是 sret 也不是寄存器档（栈返回未实现）：type {:?}",
+                    job.ty
+                ),
+            ));
         }
         // by-ref 档优先：值可能住在内存里（by-ref 形参 / sret call 结果）⇒ 段值 = 逐段 load
         let mem_addr = agg_slots.addr(job.val);
@@ -397,10 +404,67 @@ pub(crate) fn expand_large_agg_ret(
 /// 未实现（Unsupported）。
 /// 必须在 expand_large_aggs **之前**：拆段后大聚合值不再被 call 使用，
 /// expand_large_aggs 的使用检测不命中 Call。
+/// 从地址 `addr` **逐段 load** `size` 字节（返回 (段值, 生成的指令)）。
+///
+/// v24 M3：抽出来给两个来源共用——`load` 结果（追踪它的地址）与
+/// `insertvalue`/`undef` 链（先由物化相求出槽地址）。两处共用一份实现，
+/// "这边支持了、那边还 fail-closed"的分叉就没了。
+fn load_segs_from_addr(
+    func: &mut Function,
+    block: Block,
+    addr: Value,
+    size: usize,
+) -> (Vec<Value>, Vec<Inst>) {
+    let mut segs: Vec<Value> = Vec::new();
+    let mut insts: Vec<Inst> = Vec::new();
+    let mut prev_addr = addr;
+    let mut off = 0usize;
+    while off < size {
+        let ld = func.make_inst(
+            Opcode::Load,
+            block,
+            smallvec::smallvec![prev_addr],
+            smallvec::smallvec![],
+            &[TypeId::I64],
+            InstFlags::NONE,
+        );
+        let ldv = func.dfg.inst_data(ld).results[0];
+        insts.push(ld);
+        segs.push(ldv);
+        off += 8;
+        if off < size {
+            let off_cid = func.constants.insert_int(8, 64);
+            let off_inst = func.make_inst(
+                Opcode::Iconst,
+                block,
+                smallvec::smallvec![],
+                smallvec::smallvec![Immediate::Const(off_cid)],
+                &[TypeId::I64],
+                InstFlags::NONE,
+            );
+            let off_v = func.dfg.inst_data(off_inst).results[0];
+            insts.push(off_inst);
+            let add = func.make_inst(
+                Opcode::Iadd,
+                block,
+                smallvec::smallvec![prev_addr, off_v],
+                smallvec::smallvec![],
+                &[TypeId::PTR],
+                InstFlags::NONE,
+            );
+            prev_addr = func.dfg.inst_data(add).results[0];
+            insts.push(add);
+        }
+    }
+    (segs, insts)
+}
+
 pub(crate) fn expand_agg_call_args(
     func: &mut Function,
     machine: &impl forge_isa_runtime::machine::target::TargetMachine,
     conv: &str,
+    agg_slots: &mut Places,
+    shadow_agg: &forge_ir::entity::map::SecondaryMap<Value, TypeId>,
 ) -> Result<(), IrError> {
     // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
     // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
@@ -453,9 +517,12 @@ pub(crate) fn expand_agg_call_args(
         // 被调方一侧的地址口径已由 lowering 的"正立即数 = ABI 相对"钉住。
         let stack_by_val = matches!(place, AggArgLoc::StackByVal { .. });
         if !by_ref && !stack_by_val && size > 16 {
-            return Err(IrError::Unsupported(format!(
-                "聚合实参 {size} 字节：约定落点既不是寄存器档也不是按引用档（type {ty:?}）"
-            )));
+            return Err(crate::pipeline::gaps::capability(
+                "AGG_ARG_PLACEMENT",
+                format!(
+                    "聚合实参 {size} 字节：约定落点既不是寄存器档也不是按引用档（type {ty:?}）"
+                ),
+            ));
         }
         // 段值生成
         let mut segs: Vec<Value> = Vec::new();
@@ -499,58 +566,45 @@ pub(crate) fn expand_agg_call_args(
                     .first()
                     .copied()
                     .ok_or_else(|| IrError::Unsupported("聚合实参：load 无地址".into()))?;
-                let mut prev_addr = addr;
-                let mut off = 0usize;
-                while off < size {
-                    let ld = func.make_inst(
-                        Opcode::Load,
-                        job.block,
-                        smallvec::smallvec![prev_addr],
-                        smallvec::smallvec![],
-                        &[TypeId::I64],
-                        InstFlags::NONE,
-                    );
-                    let ldv = func.dfg.inst_data(ld).results[0];
-                    new_insts.push(ld);
-                    segs.push(ldv);
-                    off += 8;
-                    if off < size {
-                        let off_cid = func.constants.insert_int(8, 64);
-                        let off_inst = func.make_inst(
-                            Opcode::Iconst,
-                            job.block,
-                            smallvec::smallvec![],
-                            smallvec::smallvec![Immediate::Const(off_cid)],
-                            &[TypeId::I64],
-                            InstFlags::NONE,
-                        );
-                        let off_v = func.dfg.inst_data(off_inst).results[0];
-                        new_insts.push(off_inst);
-                        let add = func.make_inst(
-                            Opcode::Iadd,
-                            job.block,
-                            smallvec::smallvec![prev_addr, off_v],
-                            smallvec::smallvec![],
-                            &[TypeId::PTR],
-                            InstFlags::NONE,
-                        );
-                        prev_addr = func.dfg.inst_data(add).results[0];
-                        new_insts.push(add);
-                    }
-                }
+                let (s, ins) = load_segs_from_addr(func, job.block, addr, size);
+                segs.extend(s);
+                new_insts.extend(ins);
             }
             _ => {
-                // **未知来源**：`insertvalue`/`undef`/`copy` 链搭出来的聚合值。
+                // **v24 M3：`insertvalue`/`undef` 链搭出来的聚合**——沿定义链求地址
+                //（复用物化相的 `ensure_value_addr`，递归处理链式构造），拿到槽地址后
+                // 与上面的 `Load` 臂走**同一条**逐段 load 路径。
                 //
-                // v23 收尾 M7 批次 8 实测：给它写了个"只内存化、不动使用处"的助手
-                //（按值定义链开槽 + 搬字节 + 写插入字段 + 登记），编译与运行都通了，但**值不对**
-                // （`main_ins` 返回 `72198297058681447` 而非 11）⇒ 按本片的铁律**回退**：
-                // 宁可在编译期明确拒绝，也不要静默错值。助手已删除，缺陷记在账本待查。
-                return Err(IrError::Unsupported(format!(
-                    "聚合实参拆段：值来源不支持（def {:?}）——`insertvalue`/`undef` 链搭出来的聚合\
-                     作为实参尚未实现（记档待查）",
-                    func.dfg.value_data(job.val).def
-                )));
+                // 来历：v23 收尾 M7 批次 8 曾写过"只内存化、不动使用处"的助手，能编能跑但
+                // **值不对**（`main_ins` 返回 `72198297058681447` 而非 11）⇒ 当时按铁律回退成
+                // fail-closed。M3 的修法是**沿定义链递归**：那次错误正是因为**基值自己也是链**
+                //（`%t1 = insertvalue undef, …`）而助手只看了一步，把基值字段按 0 处理了。
+                // **捕获物化生成的指令**：`ensure_value_addr` 会往块尾追加一串指令
+                //（开槽 + 搬基值字节 + 写插入字段），它们**必须**与下面的逐段 load 一起
+                // 被搬到调用点之前——否则 load 会排在自己的地址定义之前，又是 use-before-def
+                //（实测症状：编译通过、运行 ACCESS_VIOLATION，因为用的地址是垃圾）。
+                let tail_before = func.dfg.block(job.block).inst_order.len();
+                let addr =
+                    ensure_value_addr(func, &store, agg_slots, shadow_agg, job.block, job.val)?;
+                let emitted = func.dfg.block(job.block).inst_order[tail_before..].to_vec();
+                new_insts.extend(emitted);
+                match addr {
+                    Some(a) => {
+                        let (s, ins) = load_segs_from_addr(func, job.block, a, size);
+                        segs.extend(s);
+                        new_insts.extend(ins);
+                    }
+                    None => {
+                        return Err(crate::pipeline::gaps::capability(
+                            "AGG_ARG_INSERTVALUE_CHAIN",
+                            format!(
+                                "聚合实参拆段：值来源既不是 load，也不是可物化的 `insertvalue`/`undef` \
+                                 链（def {:?}）",
+                                func.dfg.value_data(job.val).def
+                            ),
+                        ));
+                    }
+                }
             }
         }
         // 落点落地：ByRef ⇒ 建一个调用方帧内副本、逐段 store，实参传**该副本的指针**

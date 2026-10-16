@@ -91,15 +91,53 @@ fn handle_inst(
         Opcode::ExtractValue => expand_extract(func, store, places, shadow_agg, block, ii),
         Opcode::Store => expand_store(func, store, places, shadow_agg, block, ii),
         Opcode::Call | Opcode::CallIndirect => expand_call(func, places, ii),
-        Opcode::InsertValue => expand_insertvalue(func, store, places, shadow_agg, block, ii),
+        Opcode::InsertValue => memoryize_insertvalue(func, store, places, shadow_agg, block, ii),
         _ => Ok(()),
+    }
+}
+
+/// **沿定义链求一个聚合值的内存地址**（v24 M3 的共享助手）：拿到地址 ⇒ 它的字节就在那儿。
+///
+/// 三种情形：
+///
+/// * `places` 里已有地址（形参 / call 结果 / 已物化过的链）⇒ 直接返回；
+/// * 定义是 `insertvalue` ⇒ **先物化它**（递归，因为它的基值也可能是链），再取地址；
+/// * `undef` / `poison` / 其它未知来源 ⇒ `None`（由调用方决定"补 0"还是 fail-closed）。
+///
+/// 为什么要"沿链"而不是只看一步：`%t1 = insertvalue undef, 4, 0` → `%t2 = insertvalue %t1, 7, 1`
+/// 这种构造里，**`%t2` 的基值 `%t1` 自己就是链**。只看一步会拿到 `None`、把 `%t1` 的字段
+/// 按 0 处理——那是**静默错值**（v23 的教训），所以这里必须递归。
+pub(crate) fn ensure_value_addr(
+    func: &mut Function,
+    store: &forge_isa_runtime::ir::ir::types::TypeStore,
+    places: &mut Places,
+    shadow_agg: &SecondaryMap<Value, TypeId>,
+    block: Block,
+    v: Value,
+) -> Result<Option<Value>, IrError> {
+    if let Some(a) = places.addr(v) {
+        return Ok(Some(a));
+    }
+    let ValueDef::Inst(def, _) = func.dfg.value_data(v).def else {
+        return Ok(None);
+    };
+    match func.dfg.inst_data(def).opcode {
+        Opcode::InsertValue => {
+            memoryize_insertvalue(func, store, places, shadow_agg, block, def)?;
+            Ok(places.addr(v))
+        }
+        _ => Ok(None),
     }
 }
 
 /// 展开 `%r = insertvalue <聚合> %agg, %x, i`：把**来源聚合的字节**搬进一个**自己的**帧槽
 /// （不能就地改来源——来源可能住在调用方内存里，改它就是改调用方的数据），再把插入的字段写进
 /// 槽内对应偏移；结果值登记成"住在该槽"。后续使用由本相在这条指令**之后**自然处理，无需递归。
-fn expand_insertvalue(
+///
+/// **v24 M3：公开为共享助手**——调用实参 pass 也要用同一条路径（`insertvalue` 链搭出来的聚合
+/// 作为实参时，它需要先拿到槽地址才能逐段 load）。两处共用一份实现，才不会出现
+/// "这边支持了、那边还 fail-closed"的分叉。
+pub(crate) fn memoryize_insertvalue(
     func: &mut Function,
     store: &forge_isa_runtime::ir::ir::types::TypeStore,
     places: &mut Places,
@@ -134,7 +172,11 @@ fn expand_insertvalue(
         .aggregate_elem_type(agg_ty, idx)
         .ok_or_else(|| IrError::Unsupported(format!("insertvalue 字段类型缺失：{idx}")))?;
     let field_is_fp = store.is_float(fty);
-    let src = places.get(agg_v).cloned();
+    // **沿定义链求来源地址**（v24 M3）：基值可能是另一个 `insertvalue`（链式构造）或 `undef`
+    //（全 0）。以前只看 `places` 里有没有现成的地址，于是链式场景里基值的字段会**静默丢掉**
+    //（症状：v23 那条 `main_ins` 返回 `72198297058681447` 而非 11）。现在递归地把基值也
+    // 内存化，拿到地址后再搬；`undef`/`poison` 与中国式 `None` 一样按**补 0** 处理。
+    let src = ensure_value_addr(func, store, places, shadow_agg, block, agg_v)?.map(Place::Mem);
     // 1) 新槽 + 把来源字节搬进去（内存档逐段 load；段值档直接 store；无来源则**补 0**——
     //    保守且确定，不读未初始化内存）。
     let (_alloca, slot) = crate::pipeline::legalize::common::place_addr_of_slot(func, block, size);

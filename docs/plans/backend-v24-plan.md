@@ -237,6 +237,49 @@ C ABI 语义**不变**。
 
 ## 6. 批次记录（逐里程碑回写）
 
+### M3 能力缺口台账化 —— **一次落地**（2026-10-11，工作区）
+
+**做了什么**：
+
+- **代码侧锚点**：新增 `pipeline/gaps.rs`——`capability(ID, msg)` 让每条"做不了"的失败点
+  以 **`[cap:ID]`** 开头，另有 `gap_id(&IrError)` 供上层取 ID（不依赖 `Display` 前缀位置）。
+  边界写进模块文档：**畸形 IR / 使用错误 / 约定数据自相矛盾三类不进来**（混进来台账就没意义）。
+- **21 处能力类失败点**改成 `capability(...)`：`VA_*`（5）、`AGG_*`（8）、`SIMD/VECTOR/VALUE_POOL`
+  （4）、`EXCEPTION_*`（2）、`ABI_PLAN_UNAVAILABLE`、`VCONST_NO_RULE`
+  （逐条站点与转换过程：先按行号、行号漂移后改按**消息特征串**定位，避免脚本改错）。
+- **新增台账文档** [`docs/reference/backend-gaps.md`](../reference/backend-gaps.md)：21 行，
+  每行 = 缺口（谁在什么条件下撞到）/ 决策（**已实现·数据层·不做·待做** 四值封闭）/ 钉住它的
+  守卫或数据条件；§3 记逐条证据。
+- **新增守卫** [`capability_gaps_guard`](../../crates/backend/forge-codegen/tests/capability_gaps.rs)：
+  源码缺口集合与台账 ID 列**双向逐一相等**（只查一个方向都能被绕过：台账可留死行、源码可偷加
+  缺口）；每个 ID 在源码里**恰好一处**；决策列必须在封闭词表里。守卫自己抓出了两处盲点并修好：
+  **ID 写在 `capability(` 下一行**（多行调用）与**决策列的 Markdown 强调**（`**已实现**`）。
+- 文档地图登记：`docs/README.md` 的 reference 表 + `CLAUDE.md` 的文档地图。
+
+**逐条决策的实测结论**（§3）：
+
+- **§3.1 aapcs64/lp64d 聚合变参**（只读测量，用**生产同一探针** `agg_arg_place`，夹具 24B 聚合）：
+  `win64 ⇒ ByRef`、`sysv64 ⇒ StackByVal{16,24}`、**`aapcs64 ⇒ ByRef`、`lp64d ⇒ ByRef`**。
+  ⇒ 台账记 **`待做`**：`ByRef` 与 win64 同形（**可**声明 `aggregate_arg` + `indirect` +
+  阈值），但这两份约定**没有聚合变参的真执行通道**（arm64 无 JIT 矩阵；riscv64 有 QEMU
+  但缺 `va_arg` 夹具）⇒ 按铁律**先不声明**，前置条件写明。
+- **§3.2 `insertvalue` 链作为聚合实参**：台账从 `待做` 改为 **`已实现`**——但**方案原本的
+  假设（"M1 天然覆盖"）是错的**，实测纠正：
+  1. 拦住它的是**调用实参 pass** 自己的"值来源"分派 ⇒ 修法 = 物化相导出共享助手
+     `ensure_value_addr`（**沿定义链递归**求地址），实参 pass 复用，之后与 `load` 来源走
+     **同一条**逐段 load 路径（抽出 `load_segs_from_addr`）；
+  2. **递归是必须的**：`%t2 = insertvalue %t1, …` 的基值自己就是链；只看一步会把基值字段
+     按 0 处理——这正是 v23 "能编能跑、值不对"的根因形状；
+  3. **生成的指令必须被捕获并一起搬到调用点之前**（比较块序长度取新增段）——不捕获的实测
+     症状是**编译通过、运行 `STATUS_ACCESS_VIOLATION`**（use-before-def 的又一变体）。
+  v23 的**契约断言已翻转**为真执行断言：`test_jit_va_arg_reads_unnamed_aggregate_arg` 里
+  `f2() == 11`。
+- **§3.3 其余三条**（`VECTOR_BYTES_LOWERING`/`EXCEPTION_*`/`AGG_RET_STACK_UNSUPPORTED` +
+  宽向量第 5+ GPR 槽）：**不做**，各自在台账行写明理由与既有守卫。
+
+**实测**：`forge-codegen --lib --all-features` **2827 passed / 0 failed**；
+`capability_gaps_guard` **1 passed**；`entity_tables` 4 passed；全量门禁见下（同批实测）。
+
 ### M2 值描述单一来源 —— **一次落地**（2026-10-11，工作区）
 
 **做了什么**：

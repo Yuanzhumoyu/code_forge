@@ -45,7 +45,10 @@ pub(crate) fn agg_arg_place(
         .read()
         .expect("约定注册表被投毒");
     let plan = crate::pipeline::abi_target::plan_for_shapes(machine, &reg, &req).map_err(|e| {
-        IrError::Unsupported(format!("聚合落点查询：约定 `{conv}` 规划失败（{e}）"))
+        crate::pipeline::gaps::capability(
+            "AGG_PLACE_PROBE",
+            format!("聚合落点查询：约定 `{conv}` 规划失败（{e}）"),
+        )
     })?;
     // callee-saved 区平移：与 `LowerCtx::stack_slot_shift` 同源（`frame_layout_info`）。
     // `[[lower.StackAddr]]` 的 lea 位移 = **立即数 − 平移**，所以被调方要落在
@@ -89,7 +92,10 @@ pub(crate) fn agg_ret_is_sret(
         .read()
         .expect("约定注册表被投毒");
     let plan = crate::pipeline::abi_target::plan_for_shapes(machine, &reg, &req).map_err(|e| {
-        IrError::Unsupported(format!("聚合返回落点查询：约定 `{conv}` 规划失败（{e}）"))
+        crate::pipeline::gaps::capability(
+            "AGG_RET_PLACE_PROBE",
+            format!("聚合返回落点查询：约定 `{conv}` 规划失败（{e}）"),
+        )
     })?;
     Ok(matches!(plan.ret, forge_abi::RetLoc::Indirect { .. }))
 }
