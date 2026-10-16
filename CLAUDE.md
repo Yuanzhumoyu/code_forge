@@ -18,7 +18,7 @@ docs/
 │   ├── backend-gaps.md        # 后端能力缺口台账（v24 M3：21 条 `[cap:ID]` + 决策 + 双向守卫）
 │   └── imm_str.md             # ImmStr 类型设计（forge-ir 代码注释引用）
 ├── plans/                 # 进行中专项方案（活账本）[progress]
-│   └── （空：v24 已收口归档 → archive/backend-v24-plan.md）
+│   └── backend-v25-plan.md    # 后端 v25：一次分类（AbiEdges 唯一落点来源）/ 诊断分层 / 事件化 / 模块收敛
 ├── forge-ir/              # forge-ir 工作流 [active]
 │   ├── README.md              # 组说明（历轮计划已归档、如何继续）
 │   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）
