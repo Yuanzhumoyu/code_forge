@@ -23,7 +23,7 @@
 
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
-| [`plans/backend-v25-plan.md`](plans/backend-v25-plan.md) | **后端 v25：一次分类 · 诊断分层 · 模块收敛**（M1 `AbiEdges` 成为唯一落点来源、删 `AggArgLoc`/两个探针/五种计划枚举；M2 错误分类学 `[cap:ID]` + 畸形 IR 收编 `Internal` + 删 `Unimplemented`；M3 `FORGE_CODEGEN_EVENTS` 机读事件；M4 管线大文件切分 + 规模棘轮；M5 契约回写）；含侦察证据、删除清单、守卫与验收判据 | progress |
+| —（已归档） | 后端 v25 的账本已收口：见 [`archive/backend-v25-plan.md`](archive/backend-v25-plan.md)（M1–M5 全部落地；现行入口 = `reference/backend-pipeline.md`） | archive |
 | —（已归档） | 后端 v24 的账本已收口：见 [`archive/backend-v24-plan.md`](archive/backend-v24-plan.md)（M1–M5 全部落地；现行入口 = `reference/backend-pipeline.md` + `reference/backend-gaps.md`） | archive |
 | —（已归档） | 后端 v23 的账本已收口：见 [`archive/backend-v23-plan.md`](archive/backend-v23-plan.md) | archive |
 

@@ -1,11 +1,17 @@
 # 后端 v25 里程碑方案：一次分类 · 诊断分层 · 模块收敛
 
-> **状态：[progress]**（2026-10-11 立项）。本文是**活账本**：每个里程碑落地时在 §6 追加
-> 批次记录（含实测数字、命令、偏差），任何"说得出但没做到"的东西必须如实写在这里。
-> 立项时的代码基线 = v24 收口提交 `cc9236ce`；**行号随迭代漂移，以符号名为准**。
-> 上一轮方案（v24，已收口归档）见 [`docs/archive/backend-v24-plan.md`](../archive/backend-v24-plan.md)；
-> 现行契约 [`reference/backend-pipeline.md`](../reference/backend-pipeline.md)、
-> 能力缺口台账 [`reference/backend-gaps.md`](../reference/backend-gaps.md)。
+> ⚠️ **ARCHIVED（2026-10-11）** —— 本方案 **M1–M5 全部收口**，逐批证据与实测数字在 §6。
+> **现行入口**（本文件只作历史记录，一切以代码与测试为准）：
+>
+> - 后端管线契约：[`reference/backend-pipeline.md`](../reference/backend-pipeline.md)
+>   （v25 现行：一次分类处处消费 / 错误分类学 / 模块边界与规模棘轮 / 事件表）
+> - 能力缺口台账：[`reference/backend-gaps.md`](../reference/backend-gaps.md)
+> - 逐批变更与实测：[`CHANGELOG.md`](../../CHANGELOG.md)（搜 `v25`）
+>
+> 状态：**[archive]**（2026-10-11 归档）。立项时的代码基线 = v24 收口提交 `cc9236ce`；
+> 收口后的提交：M1 `a3bdcca4` / M2 `f72f2a9f` / M3 `42d7388e` / M4 `8806b51a` / M5 `e78565ce`。
+> **行号随迭代漂移，以符号名为准**。上一轮方案（v24）见
+> [`backend-v24-plan.md`](backend-v24-plan.md)。
 
 前提纪律（沿用既有约定）：
 

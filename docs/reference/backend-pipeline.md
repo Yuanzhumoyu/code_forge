@@ -286,6 +286,6 @@ M4 把测试搬成独立文件后，文件内不再有 `#[cfg(test)]` 可供"截
 ## 10. 相关账本与下一步
 
 * 能力缺口：[`backend-gaps.md`](backend-gaps.md)（含逐条决策证据）。
-* v25 逐批证据与删除清单：[`plans/backend-v25-plan.md`](../plans/backend-v25-plan.md)（进行中）。
+* v25 逐批证据与删除清单：[`archive/backend-v25-plan.md`](../archive/backend-v25-plan.md)（已归档）。
 * v24 逐批证据：[`archive/backend-v24-plan.md`](../archive/backend-v24-plan.md)（已归档）；
   v23 收口记录：[`archive/backend-v23-plan.md`](../archive/backend-v23-plan.md)（已归档）。
