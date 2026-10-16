@@ -1,0 +1,161 @@
+# 项目 v26 里程碑方案：审查收口（诊断单一来源 · 无消费者面清理 · 单命令门禁 · 能力补齐）
+
+> **状态：[progress]**（2026-10-11 立项）。本文是**活账本**：每个里程碑落地时在 §8 追加批次记录
+> （含实测数字、命令、偏差），任何"说得出但没做到"的东西必须如实写在这里。
+> 基线 = v25 收口提交 `574eb82c`；**行号随迭代漂移，以符号名为准**。
+> 上一轮方案（v25，已收口归档）见 [`docs/archive/backend-v25-plan.md`](../archive/backend-v25-plan.md)；
+> 现行契约 [`reference/backend-pipeline.md`](../reference/backend-pipeline.md)、
+> 能力缺口台账 [`reference/backend-gaps.md`](../reference/backend-gaps.md)。
+
+前提纪律（沿用既有约定）：
+
+- **一个任务一次提交**（不按批次拆 PR）；**里程碑未完成不提交**，工作累积在工作区。
+- 每个里程碑以全量门禁（M3 起 = `cargo forge gate`：fmt / clippy×2 / workspace tests /
+  `forge-codegen --lib --all-features` / 守卫清单 / JIT 两矩阵 / asm 三档 / markdownlint）+ 该里程碑
+  **新增守卫**为验收；**删除清单逐条清零**才算完成。
+- 守卫必须精确（白名单条目**必须被命中**）；预算/棘轮只许按实测**下调**，不许为放过而上调。
+- 破坏性更新允许（已批准两项：前端线收缩降级为示例、删 `isel_strategy` 并升 `IR_FORMAT_VERSION`）；
+  **C ABI 互操作不可破坏**。
+
+## 1. 立项证据（本次只读审查实测，2026-10-11）
+
+| # | 证据 | 数字 / 位置 |
+| --- | --- | --- |
+| E1 | **DSL 错误码台账漂移且无守卫** | 源码发出 **29** 个 `DSL-*`/`LINT-*` 码；`docs/reference/isa-dsl-errors.md` 列 **31** 个。源码有而文档无：`LINT-ASM-AMBIG`、`LINT-FORM-FIELD-UNUSED`；文档有而源码无：**`DSL-ABI`**（`[abi]` 节 v20 A5-3 已整节删除）、`DSL-SLOT`。全仓**没有任何守卫**钉这两侧（`rg isa-dsl-errors crates/frontend/forge-isa-dsl/tests` = 0） |
+| E2 | **事件出口四份实现** | `forge-codegen/src/pipeline/events.rs`（新，JSON 行 + 台账）、`forge-codegen/src/lib.rs::jit_event`、`forge-tests` 的 asm 事件与 e2e 事件各写一遍 `OpenOptions+append+writeln`；四个 env（`FORGE_CODEGEN_EVENTS`/`FORGE_JIT_EVENTS`/`FORGE_ASM_EVENTS`/`FORGE_E2E_EVENTS`）无统一 schema 文档 |
+| E3 | **开关台账两套** | `pipeline::trace::KNOBS`（11 项，有双向守卫）↔ `forge-rustc/src/trace.rs::trace_enabled`（自带名字集合，无守卫）；v24 M4 明确把后者留在范围外 |
+| E4 | **`forge-mem` 只有 1 处使用** | 全仓 `forge_mem` 引用 = `forge-codegen/src/runtime/jit.rs:34`（`ExecutableMemory`、`MemError`）+ 一条 Cargo 依赖；其 `CpuFeatures`/`host_cpu.rs` **零外部使用者**（`forge-isa-runtime/src/cpu.rs` 已是现行主机探测实现） |
+| E5 | **`isel_strategy` 无消费者** | 引用面：`forge-ir` src 4 文件（含 `ir/isel_strategy.rs` 类型本体）、`forge-ir` tests 3 文件、`forge-isa-runtime/src/prelude.rs` 重导出、`forge-opt` 4 处**纯透传拷贝**（`ipa/{func_specialize,inline,lto}.rs`、`loops/loop_unroll.rs` 的注释）；后端**零读点**（backlog 第 2 条记为"仍需决策"）。`IR_FORMAT_VERSION = 3`（`forge-ir/src/binary/format.rs:26`） |
+| E6 | **前端线只服务一个示例** | `forge-grammar`(7110 行 src) 仅被 `forge-hir` 依赖；`forge-hir`(3533)+`forge-hir-macro`(835) 仅被 `examples/mini_c` 使用（`mini_c/src/atoms.rs` 等）；`forge_grammar::`/`forge_hir::` 在 `crates/` 其他位置的引用 = 0；`forge-grammar/src/lib.rs:47` 的"语义层零外部调用"注释**已停更**（那些类型当前不存在）；`grammars/asm_v11.lx` 只被 `forge-grammar` 自己的两个测试引用 |
+| E7 | **门禁只能手抄** | 无 `xtask`、无脚本；全套命令只写在 `CLAUDE.md`（fmt / clippy×2 / workspace / lib / 12 条守卫 / 两矩阵 / asm 三档 / markdownlint）。既有 CLI `cargo-forge`（clap，`cmd/{build,init,run,doctor,backend}.rs`）已具备加子命令的形状 |
+| E8 | **CI 缺口** | CI 无 markdownlint（命中 0）；`forge-codegen` 的 `parallel` 与根 `--all-features` 只被 clippy 覆盖、**没有被执行**（workspace 跑默认 features）；覆盖率 job `fail_ci_if_error: false`（无下限）；`FORGE_CODEGEN_EVENTS` 未在 CI 落盘 |
+| E9 | **能力/性能待办** | 台账三条 `待做`：`AGG_LOAD_USE`、`VA_ARG_AGG_RULE`、`VA_ARG_VECTOR_MEM`；谱侧 `dsl/codegen` 的 66 处发射型 `Unsupported` 无 `[cap:ID]`（v25 M2 明确留作另一条线）；`OPTIMIZATION.md` 两项 P1（`codegen_mem` 451.9 µs / `codegen_big_loop` 1.14 ms）标"需分析" |
+
+## 2. 里程碑
+
+### M1 诊断单一来源：错误码台账 + 事件 sink + 开关归并
+
+**问题**：E1/E2/E3——三处诊断面各写各的，且其中之一已经漂移（`DSL-ABI` 文档还在教一个已删除的节）。
+
+- **错误码台账**：新增 `docs/reference/isa-dsl-errors.md` ↔ 源码的**双向守卫**（扫
+  `crates/frontend/forge-isa-dsl/src` 的 `"DSL-*"`/`"LINT-*"` 字面量；文档侧只认全大写 `XXX-YYY` 形态，
+  排除 `dsl-tutorial` 这类链接文本误命中）。修 4 处漂移：删文档里的 `DSL-ABI`（节已不存在）与 `DSL-SLOT`
+  （无源码点时删，有则补源）；补 `LINT-ASM-AMBIG`、`LINT-FORM-FIELD-UNUSED` 两行。
+- **事件 sink 下沉（通用性）**：新增 `forge-isa-runtime::diagnostics`（leaf 层，`cpu.rs` 已在此）：
+  - `CHANNELS` 注册表（`codegen`/`jit`/`asm`/`e2e`，每条含 env 名与用途）+ `emit(channel, name, fields)`：
+    **唯一**的 JSON 转义/落盘实现（写失败静默，沿用既有约定）；
+  - `forge-codegen/src/pipeline/events.rs` 改为**薄转发**（保留 `EVENTS` 台账与 `event_names_are_bijective`）；
+  - `forge-codegen/src/lib.rs::jit_event` 与 `forge-tests` 的两处事件写入改为调用同一 sink（删掉各自的
+    `OpenOptions`/`writeln` 复制）。
+  - 守卫：`CHANNELS` ↔ 四个 env 名 ↔ 契约文档的通道表**三方双向**。
+- **开关台账归并**：`pipeline::trace::KNOBS` 下沉到同一 leaf（`diagnostics::KNOBS`），`forge-rustc/src/trace.rs`
+  的名字进**同一张表**（`knob()` 语义不变：未登记名字 debug panic、release 警告一次）；`trace_knobs_are_bijective`
+  的扫描面扩到 `crates/tools/forge-rustc`。
+- **删除清单**：`jit_event` 的独立实现、forge-tests 的两处事件写入函数体、`forge-rustc` 自带的开关名字集合
+  （`rg 'fn trace_enabled' crates/tools/forge-rustc/src == 0`）。
+
+### M2 无消费者面清理（无冗余）
+
+**问题**：E4/E5/E6 + 34 处 `#[allow(dead_code)]`。
+
+- **`forge-mem` 折叠并删除**：`ExecutableMemory`/`MemError` 移入 `forge-isa-runtime::mem`
+  （`jit.rs` 改一处 `use`）；删 `CpuFeatures`/`host_cpu.rs`（与 `cpu.rs` 重复且无使用者）；
+  删 crate、workspace 成员、`forge-codegen` 的依赖边、根 `Cargo.toml` 的 `forge-mem` 条目。
+- **删 `isel_strategy`（已批准）**：删 `ir/isel_strategy.rs`、`Instruction` 字段与
+  `isel_strategy()/set_isel_strategy()/clear_isel_strategy()`、`binary/funcs.rs` 的读写、`verify.rs` 两处、
+  `forge-isa-runtime/src/prelude.rs` 重导出、`forge-opt` 的 4 处透传拷贝（**它们的存在理由只是保住这个字段**）；
+  **`IR_FORMAT_VERSION` 3 → 4** + `docs/reference/binary-format.md` 版本历史；删 `tests/isel_strategy.rs`，
+  改 `binary_functions.rs`/`tombstone_semantics.rs` 的引用。删除清单：`rg 'isel_strategy|IselStrategy' crates/ == 0`。
+- **v11 遗留与停更注释**：删 `forge-grammar/grammars/asm_v11.lx` 与引用它的两个测试
+  （`asm_grammar_test.rs`/`ast_lowering_test.rs` 收敛到 `ir.lx`）；改 `forge-grammar/src/lib.rs:47` 的停更注释。
+- **前端线降级为示例（已批准）**：`crates/frontend/forge-hir`、`crates/frontend/forge-hir-macro`、
+  `examples/mini_c` 用 `git mv` 移入 `examples/hir-demo/`（自带 `Cargo.toml` + README：「示例 / 非产品 /
+  不进门禁」），根 `Cargo.toml` 加 `exclude`；`forge-grammar` 保留为成员（CST/AST 核心 + `ir.lx` 测试），
+  账本写明"其剩余消费者只有该示例；示例若再移除，它按无消费者面删除"。
+- **`#[allow(dead_code)]` 审计（34 处 src）**：逐条"用起来或删掉"；生成物发射器的条目保留并在守卫/注释里写明理由。
+
+### M3 单命令门禁 + CI 补齐（人体工学 / 验证）
+
+**问题**：E7/E8——全套门禁只写在文档里，CI 少两道闸。
+
+- **`cargo forge gate`**（复用既有 clap CLI 与 `cmd/` 模式，不新开 xtask 层）：
+  一条命令依次跑 **fmt → clippy(workspace + 文本层门) → workspace tests → `forge-codegen --all-features` →
+  守卫清单 → JIT 两矩阵 → asm 三档 → markdownlint**，**逐项打印**（名称/命令/耗时/退出码），
+  失败即汇总非零退出；开关 `--subset linux|windows|quick`、`--guards`（只跑守卫）、`--no-docs`、`--json`。
+  守卫清单 = CLI 里**一张注册表**（新增守卫只加一行）；markdownlint 缺失时明确 SKIP 并提示安装。
+- **CI 补齐**：新增 markdownlint job（pin `markdownlint-cli2` 版本、读仓库 `.markdownlint.json`、覆盖
+  `docs/**` + `CLAUDE.md`/`CHANGELOG.md`/`README.md`）；Windows job 增 `cargo test -p forge-codegen --all-features`
+  （覆盖 `parallel` + `jit`），Linux job 增 `cargo check --workspace --all-features`；Windows job 设
+  `FORGE_CODEGEN_EVENTS` 且用 `if: always()` 步骤打印（同 e2e 既有模式）；覆盖率加**下限棘轮**
+  （先实测钉一次，此后只许上调）。
+- **文档**：`docs/guides/lint.md` 补 CI 命令；`CLAUDE.md` 的 Build Commands 改为指向 `cargo forge gate`。
+
+### M4 能力补齐（功能）
+
+**问题**：E9。
+
+- **谱侧能力台账（`[cap:SPEC_*]`）**：枚举 `forge-isa-dsl/src/dsl/codegen` 的 66 处发射型 `Unsupported`，
+  按 v25 M2 的四分类逐条判定"这份谱做不了"的那一类，改成发射 `[cap:SPEC_<名>]`；`capability_gaps_guard`
+  的扫描面扩到生成器源（扫 `[cap:SPEC_` 字面量），台账加对应行、每条写清决策与数据条件。
+- **后端三条 `待做` 缺口**：`AGG_LOAD_USE`（大聚合 `load` 值用于 store/extractvalue 之外的使用点）、
+  `VA_ARG_AGG_RULE`（aapcs64/lp64d 声明 + 该 ISA 的聚合变参真执行通道）、`VA_ARG_VECTOR_MEM`（mem→向量取值）。
+  逐条**落地或明确降级为不做**并写回台账——决策必须离开"待做"，或写明不可做的数据条件。
+- **性能两项只做分析**（`codegen_mem` 451.9 µs / `codegen_big_loop` 1.14 ms「需分析」）：产出结论写回
+  `docs/performance/OPTIMIZATION.md` + 账本，**不承诺实施**。
+
+### M5 契约回写 + 账本工程化
+
+- 文档：`docs/reference/isa-dsl-errors.md`（台账 + 守卫指针 + 状态头日期）、
+  `docs/reference/backend-pipeline.md`（事件表扩到四通道 + 新增"诊断出口"一节）、
+  `docs/reference/binary-format.md`（格式版本 4 与历史表）、`docs/guides/lint.md`、`README.md`/`CLAUDE.md`
+  （依赖图去掉 `forge-mem`；前端线降级说明；`cargo forge gate` 为唯一门禁入口）。
+- 账本 §8 逐里程碑回写（实测数字、偏差、踩坑）；`CHANGELOG.md` 每里程碑一条；**收口后归档到 `docs/archive/`**
+  并全量更新引用与文档地图（同 v23/v24/v25）。
+
+## 3. 顺序与窗口
+
+`M1`（诊断面，风险低、面广）→ `M2`（破坏性删除，单独窗口：格式版本升 + 前端线搬运）→ `M3`（门禁）→
+`M4`（能力，逐条可裁剪）→ `M5`（收口）。
+
+M2 若中途发现"某个面其实还有消费者"（守卫/`rg` 反证），**停下并如实记录**，不为了删而放宽判据。
+
+## 4. 交付物与提交
+
+1. 活账本 `docs/plans/project-v26-plan.md`（首次提交）。
+2. 代码/配置：`forge-isa-runtime::diagnostics`（M1）、`ExecutableMemory` 折叠与 `isel_strategy` 删除（M2）、
+   `cargo-forge` 的 `cmd/gate.rs` + CI（M3）、`[cap:SPEC_*]`（M4）、文档回写（M5）。
+3. 新增守卫：`error_codes_match_doc`、`event_channels_are_bijective`、`knobs_are_bijective`（扩面）、
+   `capability_gaps_guard`（扩面到谱侧）。
+4. 每里程碑一次提交（单 subject 长标题，`git commit -F target/tmp/*.txt`）。
+
+## 5. 成功判据（每里程碑）
+
+- 全量门禁（= `cargo forge gate`，M3 起单命令）逐项绿：fmt、clippy×2、workspace tests、
+  `forge-codegen --lib --all-features`、12+ 条守卫、JIT 两矩阵（197/3/0 · 136/64/0）、asm 三档（3/1/1）、
+  markdownlint 0 issues。
+- 该里程碑的删除清单归零（`rg` 判据逐条列出并复核）；新增守卫在 CI 里会跑到。
+- 账本 §8 与 CHANGELOG 已回写；改动文档 markdownlint 干净。
+
+## 6. 假设与不做清单
+
+- **不做**：Windows SEH / ARM EH codegen、statepoint（长期无近计划）；不新增 ISA；不改 `forge-abi` 的
+  规则/绑定数据模型；不动 C ABI 互操作行为。
+- **假设**：`examples/hir-demo/` 脱离工作区后仍可独立 `cargo run`（保留其 `Cargo.toml` 与 path 依赖指向
+  workspace 内的 `forge-grammar`/`forge-ir`）；CI 的 `markdownlint-cli2` 与工具链版本在实现时以仓库现状为准；
+  `IR_FORMAT_VERSION` 升版只影响二进制接口（`check_binary_compat` 的黄金与版本表同步改）。
+- **风险**：M2 的格式升版会改变二进制 IR 兼容面（仓库允许破坏性更新，但必须同步 `binary-format.md` 与相关测试）；
+  前端线搬运会让历史路径变化（用 `git mv` 保留追溯）。
+
+## 7. 外部参考
+
+- [matklad/cargo-xtask](https://github.com/matklad/cargo-xtask/) 与
+  [cargo-xtask-example](https://github.com/nickgerace/cargo-xtask-example)：把"构建/门禁自动化"做成一条命令的
+  通行做法——本仓**复用既有 `cargo-forge`**（少一层 xtask crate，"无冗余"），只借它的"单入口 + 逐项报告"形态。
+- [rust-lang/measureme](https://github.com/rust-lang/measureme) 与 rustc 的 `SelfProfiler`
+  （[`SelfProfiler` 文档](https://doc.rust-lang.org/stable/nightly-rustc/rustc_data_structures/profiling/struct.SelfProfiler.html)）：
+  编译器诊断/性能数据以**结构化行**落盘的成型做法——M1 的事件 sink 对齐这一思路（统一转义与通道注册表、
+  名字由守卫钉住、文档化 schema）。
+
+## 8. 批次记录（逐里程碑回写）
+
+（立项时为空；每里程碑落地后在此追加：做了什么、实测数字、删除清单进度、偏差与下一批。）
