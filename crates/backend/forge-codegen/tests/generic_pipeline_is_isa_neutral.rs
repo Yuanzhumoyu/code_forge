@@ -52,6 +52,53 @@ fn hits_capability_name(line: &str) -> bool {
     false
 }
 
+/// 该文件是不是**测试专属模块**（它的 `mod` 声明带 `#[cfg(test)]`）？
+///
+/// v25 M4 把 `#[cfg(test)] mod tests` 从原文件搬成独立文件后，文件内不再有 `#[cfg(test)]`
+/// 可供截断；于是改为**向上找声明它的那份文件**（同目录的 `mod.rs`，或父目录的 `mod.rs`）。
+fn is_test_only_module(path: &Path) -> bool {
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    if stem == "mod" || stem == "lib" {
+        return false;
+    }
+    // 声明可能在同目录的 `mod.rs`，也可能在父目录的 `mod.rs`（`foo/tests.rs` ⇒ `foo/mod.rs`）。
+    let mut cands: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(dir) = path.parent() {
+        cands.push(dir.join("mod.rs"));
+        if let Some(up) = dir.parent() {
+            cands.push(up.join("mod.rs"));
+        }
+    }
+    for c in cands {
+        let Ok(text) = std::fs::read_to_string(&c) else {
+            continue;
+        };
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, l) in lines.iter().enumerate() {
+            let t = l.trim();
+            if t == format!("mod {stem};")
+                || t == format!("pub mod {stem};")
+                || t == format!("pub(crate) mod {stem};")
+            {
+                // 往上找紧邻的属性行
+                let mut j = i;
+                while j > 0 {
+                    j -= 1;
+                    let prev = lines[j].trim();
+                    if prev.is_empty() {
+                        continue;
+                    }
+                    if prev == "#[cfg(test)]" {
+                        return true;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    false
+}
+
 fn scan_dir(root: &Path, dir: &Path, out: &mut Vec<(String, usize, String)>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -68,6 +115,12 @@ fn scan_dir(root: &Path, dir: &Path, out: &mut Vec<(String, usize, String)>) {
         let Ok(text) = std::fs::read_to_string(&p) else {
             continue;
         };
+        // **测试专属文件整份跳过**（v25 M4 把 `#[cfg(test)] mod tests` 从原文件搬成了独立文件，
+        // 文件内不再有 `#[cfg(test)]` 可供截断）。识别方式：看**哪个 `mod` 声明带 `#[cfg(test)]`**——
+        // 比按文件名猜（`*_tests.rs`）精确，也盖得住将来改名的测试模块。
+        if is_test_only_module(&p) {
+            continue;
+        }
         let rel = p
             .strip_prefix(root)
             .unwrap_or(&p)

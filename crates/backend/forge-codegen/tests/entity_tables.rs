@@ -107,7 +107,8 @@ fn scan_for_old_names(dir: &std::path::Path, root: &std::path::Path, hits: &mut 
 /// 测试里拿不到值，只能扫源码）。
 #[test]
 fn compile_state_tables_are_dense() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pipeline/compiler.rs");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/pipeline/compiler/state.rs");
     let text =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("读不到 {}：{e}", path.display()));
     for field in ["value_to_xreg", "block_map", "alloca_offsets"] {

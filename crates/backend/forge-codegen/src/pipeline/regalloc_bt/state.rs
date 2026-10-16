@@ -1,275 +1,54 @@
-//! Backtracking 寄存器分配器。
-//!
-//! 受 regalloc2 (Cranelift) 和 IonMonkey 启发，
-//! 使用 Belady's MIN 启发式进行溢出决策，原生支持固定寄存器约束。
-//!
-//! ## 算法概要
-//!
-//! 1. 计算 LiveInterval（带 holes）
-//! 2. 按块顺序处理指令：
-//!    - 释放已死亡 XReg 的寄存器
-//!    - 为 use 操作数确保 XReg 在寄存器中（必要时 reload）
-//!    - 为 def 操作数分配寄存器（必要时驱逐）
-//!    - 处理固定寄存器约束和 reuse 约束
-//! 3. 生成 AllocResult
-//!
-//! ## Spill 启发式（**与实现一致**，v23 M5 校正）
-//!
-//! 无空闲寄存器时按 `next_use_after` 做 Belady 选择，但**只驱逐"死值"**
-//! （`next_use == ProgPoint::MAX`，即没有未来使用）：
-//!
-//! - 有死值 ⇒ 取 `(next_use, vreg index)` 最大的那个驱逐（确定性 tie-breaker）；
-//! - 无死值且当前 vreg 是本指令的 **def** ⇒ spill 当前 vreg（emission 会把 def 结果
-//!   store 回槽，安全）；
-//! - 无死值且当前 vreg 是 **use** ⇒ **明确报错**（`IrError::RegAlloc`），不猜。
-//!
-//! **为什么不驱逐活跃值**：`spill_vreg` 只分配槽并释放寄存器，**不把寄存器当前值写进槽**
-//! （emission 的 load/store 只围绕当前指令的操作数）。驱逐带活值的 victim 会让它下次
-//! use 时从空槽读垃圾。要真正做到"取最远的下一次使用"（完整 Belady）并让 spill cost
-//! （`LiveInterval::weight`——v23 M5 已删，见 `liverange.rs` 的说明）参与决策，
-//! 必须先有 **`SpillEdit`**：分配器产出"把活跃值 store 回槽"的显式编辑序列，
-//! 由 emission 按序发射（M5 的下一批）。在那之前，"Belady + 循环加权 spill cost"
-//! 只是文档里的说法——本段即为校正后的实情。
+//! 从 `regalloc_bt.rs` 拆出（v25 M4：逐字搬移，不改行为）。
 
 use crate::IrError;
 use crate::machine::inst::{MachineInst, OperandConstraint};
 use crate::pipeline::alloc_config::RegAllocConfig;
-use crate::pipeline::alloc_result::{AllocResult, FrameInfo, SpillEdit, SpillSlot};
+use crate::pipeline::alloc_result::{AllocResult, FrameInfo, SpillSlot};
 use crate::pipeline::liverange::{self, ProgPoint};
 use forge_ir::*;
 use std::collections::HashMap;
 
-// ============================================================
-// Backtracking Allocator
-// ============================================================
-
-/// Backtracking 寄存器分配器。
-pub struct BacktrackingAllocator;
-
-impl BacktrackingAllocator {
-    pub fn new() -> Self {
-        Self
-    }
-
-    /// 执行寄存器分配。
-    pub fn allocate<I: MachineInst>(
-        &self,
-        vcode: &crate::VCode<I>,
-        config: &RegAllocConfig,
-        inst_ops: &[smallvec::SmallVec<[crate::machine::lowering::OperandBind; 2]>],
-        clobber_map: &[Vec<(u32, crate::prelude::RegClass)>],
-    ) -> Result<AllocResult, IrError> {
-        // 1. 计算 LiveInterval（XReg → 微指令字段映射驱动）
-        let intervals = liverange::compute_live_intervals(vcode, inst_ops, &config.param_xregs);
-
-        // 2. 构建状态
-        let mut state = BtState::new(config, intervals);
-
-        // 3. 预分配前 param_reg_count 个参数 XReg，确保它们在函数入口处有
-        // 不同的寄存器。序言 (gen_move_args) 在函数体执行之前批量复制 ABI
-        // 参数寄存器 → 参数 XReg。如果两个参数共享同一物理寄存器，第二个
-        // MOV 会覆盖第一个参数的值。通过在此处（早于任何指令处理）分配
-        // 这些参数，分配器将它们视为在 ProgPoint(0,0) 同时活跃，从而分配
-        // 不同寄存器。
-        // 注意：dead 参数（函数体无 use 的 XReg）区间为 [0,0]，与活参数的重叠
-        // 判定（end > start）不成立，会被复用活参数的寄存器——但 @move_args
-        // 的收参 mov 实际写入该寄存器，在活参数 store 前覆盖其值（混合参数
-        // 场景：f(i32, f64) 的 b 覆盖 a → a=0）。因此 dead 参数不预分配，
-        // gen_move_args 依 assignments 跳过其收参 mov。
-        // 栈参数（下标 ≥ param_reg_count，Windows x64 第 5+）不预分配寄存器：
-        // 直接 spill 到栈槽（gen_move_args 从 ABI 栈槽 load 到 spill 槽），
-        // 避免参数占满寄存器 → 函数体无寄存器可驱逐（grow_impl_runtime
-        // 7 参数 regalloc 失败）。AllocResult.spill_slot 可查其槽偏移。
-        for (pi, &vreg) in config.param_xregs.iter().enumerate() {
-            if pi >= config.param_reg_count {
-                // 栈参数：强制 spill（分配槽 + 不占寄存器）
-                if !state.spill_slots.contains_key(&vreg) {
-                    let _ = state.spill_vreg(vreg);
-                }
-                continue;
-            }
-            if !state.assignments.contains_key(&vreg) {
-                let live = state.intervals.get(&vreg);
-                let is_dead = live
-                    .map(|iv| iv.uses.is_empty() && iv.defs.is_empty())
-                    .unwrap_or(false);
-                if is_dead {
-                    continue;
-                }
-                let constraint = OperandConstraint::Any;
-                let class = state.vreg_class(vreg);
-                let preg = state.assign_reg(vreg, constraint, class, &[], true)?;
-                state.active.insert(vreg, preg); // 将预分配的参数 XReg 添加到 active 列表中
-                if crate::pipeline::trace::knob("FORGE_TRACE_REGALLOC") {
-                    eprintln!("[pre] v{} class={class:?} -> {preg:?}", vreg.index());
-                }
-            }
-        }
-
-        // 4. 逐块处理（按 inst_ops 分配 XReg）
-        let mut global_inst = 0usize;
-        for (block_idx, block) in vcode.blocks().enumerate() {
-            let block_u32 = block_idx as u32;
-            state.process_block(block_u32, block, inst_ops, clobber_map, &mut global_inst)?;
-        }
-
-        // 5. 构建 AllocResult，并补上**逐指令溢出编辑**（决策在分配器里做）
-        let mut result = state.build_result()?;
-        result.edits = build_spill_edits(
-            vcode,
-            inst_ops,
-            &result.assignments,
-            &result.spill_slots,
-            config,
-        )?;
-        Ok(result)
-    }
-}
-
-/// **逐指令溢出编辑**（v23 M5 的 `SpillEdit`）：决策在分配器里做出、发射侧只按序执行。
-///
-/// 原来决策与执行混在发射侧（`emit_inst_with_spills` 现查最终表、现挑 scratch、现判
-/// `settable`）——分配器真正的逐点状态反而用不上。搬到这里之后：① scratch 池不够 =
-/// **分配期** fail-closed；② `settable` 预检也在这里（指令在手）；③ 将来要驱逐**活跃值**，
-/// 只需多产出一条 `Store`。
-///
-/// 口径与旧发射实现逐条对齐（**输出等价**）：scratch 的**号**取自 `config.scratch_regs`、
-/// **类**取值的类；每条指令的编辑顺序是 `Reload`（全部被溢出的值）→ `Bind`（每个被溢出的
-/// 绑定）→ `Store`（被溢出的 def）。没被溢出的绑定**不**产生编辑：它的字段已由管线在发射
-/// 前按 `inst_ops` 统一回写过（旧发射实现里那次重写是冗余的）。
-fn build_spill_edits<I: crate::machine::inst::MachineInst>(
-    vcode: &crate::VCode<I>,
-    inst_ops: &[smallvec::SmallVec<[crate::machine::lowering::OperandBind; 2]>],
-    assignments: &[Option<PReg>],
-    spill_slots: &[Option<SpillSlot>],
-    config: &RegAllocConfig,
-) -> Result<Vec<Vec<SpillEdit>>, IrError> {
-    use crate::machine::inst::OperandRole;
-    // **逐点判据**（取证 ②）：此刻真的在栈上 = 有槽 **且** 没有寄存器。只看"有槽"会把
-    // "曾被驱逐、之后 reload 回寄存器"的值也当成栈上的——那会把字段重定向到 scratch 并
-    // 从槽里读**陈旧值**。
-    // **判据回到"有槽"**（取证 ② 被推翻）：发射前的统一回写用的是**最终**分配表，所以
-    // 只要某 vreg 有槽，就一律"从槽经 scratch 读"——这样才与回写无关地自洽。反过来按
-    // "此刻没有寄存器"判，会让**早期**指令的字段停在**最终**（可能更晚的）寄存器号上，
-    // 读到那个时刻的垃圾（实测：单跑 atomic 用例直接 0xc0000005 访问违规）。
-    let slot_of =
-        |v: XReg| -> Option<SpillSlot> { spill_slots.get(v.index() as usize).copied().flatten() };
-    let mut edits: Vec<Vec<SpillEdit>> = Vec::new();
-    let mut gi = 0usize;
-    for block in vcode.blocks() {
-        for inst in block.instructions.iter() {
-            let mut e: Vec<SpillEdit> = Vec::new();
-            if let Some(binds) = inst_ops.get(gi) {
-                // 去重收集被溢出的 vreg（同一 vreg 的 use/def 共用同一个 scratch）。
-                let mut spilled: smallvec::SmallVec<[XReg; 8]> = smallvec::SmallVec::new();
-                for b in binds.iter() {
-                    if slot_of(b.vreg).is_some() && !spilled.contains(&b.vreg) {
-                        spilled.push(b.vreg);
-                    }
-                }
-                if !spilled.is_empty() {
-                    if spilled.len() > config.scratch_regs.len() {
-                        return Err(IrError::RegAlloc(format!(
-                            "第 {gi} 条指令需要 {} 个 scratch 寄存器搬溢出值，\
-                             但本 ISA 只声明了 {} 个",
-                            spilled.len(),
-                            config.scratch_regs.len()
-                        )));
-                    }
-                    // scratch 绑定：号来自 scratch 池，**类取值的类**（与旧发射口径一致）。
-                    let scratch_of =
-                        |v: XReg, i: usize| PReg::new(config.scratch_regs[i].num, v.class());
-                    for (i, &v) in spilled.iter().enumerate() {
-                        let slot = slot_of(v).expect("上面刚判过该 vreg 有溢出槽");
-                        e.push(SpillEdit::Reload {
-                            slot,
-                            scratch: scratch_of(v, i),
-                            class: v.class(),
-                            width: v.bytes(),
-                        });
-                    }
-                    let mut stored: smallvec::SmallVec<[XReg; 8]> = smallvec::SmallVec::new();
-                    for b in binds.iter() {
-                        let Some(i) = spilled.iter().position(|&v| v == b.vreg) else {
-                            continue;
-                        };
-                        if !inst.is_reg_field_settable(usize::from(b.field)) {
-                            return Err(IrError::RegAlloc(format!(
-                                "第 {gi} 条指令的字段 {} 不可改写（固定物理字段）\
-                                 却是被溢出值的落点",
-                                b.field
-                            )));
-                        }
-                        e.push(SpillEdit::Bind {
-                            field: b.field,
-                            scratch: scratch_of(b.vreg, i),
-                            // **与该绑定的折入类一致**（`bind.class` = 值宽类，多类槽靠它定
-                            // opsize；退到 vreg 的池宽类是 WA-35 的老病）。
-                            class: b.class.unwrap_or_else(|| b.vreg.class()),
-                        });
-                        if b.role == OperandRole::Def && !stored.contains(&b.vreg) {
-                            stored.push(b.vreg);
-                            let slot = slot_of(b.vreg).expect("上面刚判过该 vreg 有溢出槽");
-                            e.push(SpillEdit::Store {
-                                slot,
-                                scratch: scratch_of(b.vreg, i),
-                                class: b.vreg.class(),
-                                width: b.vreg.bytes(),
-                            });
-                        }
-                    }
-                }
-            }
-            edits.push(e);
-            gi += 1;
-        }
-    }
-    let _ = assignments;
-    Ok(edits)
-}
-
-// ============================================================
-// Allocator State
-// ============================================================
-
-struct BtState<'a> {
-    config: &'a RegAllocConfig,
+pub(super) struct BtState<'a> {
+    pub(super) config: &'a RegAllocConfig,
     /// XReg → LiveInterval (for liveness queries)
-    intervals: HashMap<XReg, liverange::LiveInterval>,
+    pub(super) intervals: HashMap<XReg, liverange::LiveInterval>,
 
     /// XReg → 分配的 PReg
-    assignments: HashMap<XReg, PReg>,
+    pub(super) assignments: HashMap<XReg, PReg>,
     /// XReg → spill 槽
-    spill_slots: HashMap<XReg, SpillSlot>,
+    pub(super) spill_slots: HashMap<XReg, SpillSlot>,
     /// 每条指令同时 spill 数的最大值
-    max_concurrent_spills: usize,
+    pub(super) max_concurrent_spills: usize,
 
     /// 物理寄存器编号 → 该编号上的占用者（跨类；同编号的 GPR 与 FPR 是不同
     /// 物理寄存器、可共存，冲突类（如 GPR(4)/GPR(8)）只能有一个）。
     /// 数组索引 = PReg.num，槽位内 SmallVec 通常 ≤2 项 —— 冲突检测 O(1)。
-    reg_owner: Vec<smallvec::SmallVec<[(RegClass, XReg); 2]>>,
+    pub(super) reg_owner: Vec<smallvec::SmallVec<[(RegClass, XReg); 2]>>,
     /// RegClass → 可用的空闲 PReg 池
-    free_regs: HashMap<RegClass, Vec<PReg>>,
+    pub(super) free_regs: HashMap<RegClass, Vec<PReg>>,
 
     /// 当前活跃的 XReg 及其 PReg（插入/移除 O(1)）
-    active: HashMap<XReg, PReg>,
+    pub(super) active: HashMap<XReg, PReg>,
 
     /// **本指令的 use 集合**：驱逐候选人要排除它们（那条 use 马上要读自己的寄存器）。
-    current_uses: smallvec::SmallVec<[XReg; 8]>,
+    pub(super) current_uses: smallvec::SmallVec<[XReg; 8]>,
     /// **本指令的 def 集合**（同上）：被它定义的 vreg 不能当驱逐候选——旧值已死，
     /// 而 `next_use` 报的是**新值**的未来使用。
-    current_defs: smallvec::SmallVec<[XReg; 8]>,
+    pub(super) current_defs: smallvec::SmallVec<[XReg; 8]>,
 
     /// Spill 槽分配器
-    next_spill_offset: i32,
+    pub(super) next_spill_offset: i32,
     /// 当前正在处理的指令点（用于 Belady's MIN 溢出决策）。
-    current_point: ProgPoint,
+    pub(super) current_point: ProgPoint,
     /// 当前指令点的写死物理寄存器（来自 clobber_map）：本点内分配必须避开。
-    current_clobbers: smallvec::SmallVec<[PReg; 4]>,
+    pub(super) current_clobbers: smallvec::SmallVec<[PReg; 4]>,
 }
 
 impl<'a> BtState<'a> {
-    fn new(config: &'a RegAllocConfig, intervals: HashMap<XReg, liverange::LiveInterval>) -> Self {
+    pub(super) fn new(
+        config: &'a RegAllocConfig,
+        intervals: HashMap<XReg, liverange::LiveInterval>,
+    ) -> Self {
         // 为每个 class 初始化空闲寄存器池。
         // 根因修复（param XReg 预分配）后不再需要 abi_param_regs 排序 hack。
         let mut free_regs: HashMap<RegClass, Vec<PReg>> = HashMap::new();
@@ -328,7 +107,7 @@ impl<'a> BtState<'a> {
 
     // ── 块处理 ──
 
-    fn process_block<I: MachineInst>(
+    pub(super) fn process_block<I: MachineInst>(
         &mut self,
         block_idx: u32,
         block: &crate::VCodeBlock<I>,
@@ -530,7 +309,7 @@ impl<'a> BtState<'a> {
 
     // ── 寄存器分配 ──
 
-    fn assign_reg(
+    pub(super) fn assign_reg(
         &mut self,
         vreg: XReg,
         constraint: OperandConstraint,
@@ -633,7 +412,7 @@ impl<'a> BtState<'a> {
     /// current_point 会错误地将它们设为 MAX（"永不使用"）。
     /// 注意：segment 模型通过 cover() 的 point.before() 合并修复了相邻
     /// 指令间的微间隙，因此从 (0,0) 查找 next_use 已经足够可靠。
-    fn evict_and_assign(
+    pub(super) fn evict_and_assign(
         &mut self,
         vreg: XReg,
         class: RegClass,
@@ -768,7 +547,7 @@ impl<'a> BtState<'a> {
 
     // ── Spill/Restore ──
 
-    fn spill_vreg(&mut self, vreg: XReg) -> Result<(), IrError> {
+    pub(super) fn spill_vreg(&mut self, vreg: XReg) -> Result<(), IrError> {
         if crate::pipeline::trace::knob("FORGE_TRACE_ALLOC")
             || crate::pipeline::trace::knob("FORGE_TRACE_SPILL")
         {
@@ -824,7 +603,7 @@ impl<'a> BtState<'a> {
         Ok(())
     }
 
-    fn reload_from_stack(
+    pub(super) fn reload_from_stack(
         &mut self,
         vreg: XReg,
         constraint: OperandConstraint,
@@ -873,13 +652,13 @@ impl<'a> BtState<'a> {
         Ok(())
     }
 
-    fn is_spilled(&self, vreg: XReg) -> bool {
+    pub(super) fn is_spilled(&self, vreg: XReg) -> bool {
         self.spill_slots.contains_key(&vreg)
     }
 
     // ── 辅助方法 ──
 
-    fn vreg_class(&self, vreg: XReg) -> RegClass {
+    pub(super) fn vreg_class(&self, vreg: XReg) -> RegClass {
         // XReg 值内嵌类型，严格限定。
         vreg.class()
     }
@@ -888,7 +667,7 @@ impl<'a> BtState<'a> {
 
     /// 取物理寄存器编号 num 上的占用者列表（只读）。
     #[inline]
-    fn reg_owner_slot(&self, num: u32) -> &[(RegClass, XReg)] {
+    pub(super) fn reg_owner_slot(&self, num: u32) -> &[(RegClass, XReg)] {
         self.reg_owner
             .get(num as usize)
             .map(|s| s.as_slice())
@@ -897,7 +676,7 @@ impl<'a> BtState<'a> {
 
     /// 记录 preg 被 vreg 占用（移除同冲突类的旧占用者——通常不存在）。
     #[inline]
-    fn set_reg_owner(&mut self, preg: PReg, vreg: XReg) {
+    pub(super) fn set_reg_owner(&mut self, preg: PReg, vreg: XReg) {
         let idx = preg.num as usize;
         if self.reg_owner.len() <= idx {
             self.reg_owner.resize(idx + 1, smallvec::SmallVec::new());
@@ -909,7 +688,7 @@ impl<'a> BtState<'a> {
 
     /// 移除 preg 的占用者（含跨宽度类重叠的占用者）。
     #[inline]
-    fn clear_reg_owner(&mut self, preg: PReg) {
+    pub(super) fn clear_reg_owner(&mut self, preg: PReg) {
         if let Some(slot) = self.reg_owner.get_mut(preg.num as usize) {
             slot.retain(|(c, _)| !c.overlaps(preg.class));
         }
@@ -920,7 +699,7 @@ impl<'a> BtState<'a> {
     /// reg_owner 按 (num, class) 精确键存储，多宽度类（GPR(4)/GPR(8)）的
     /// 相同编号必须视为同一物理寄存器，否则两个 XReg 会分到同一物理寄存器。
     #[inline]
-    fn phys_conflicts(&self, preg: PReg) -> bool {
+    pub(super) fn phys_conflicts(&self, preg: PReg) -> bool {
         if self
             .current_clobbers
             .iter()
@@ -935,14 +714,14 @@ impl<'a> BtState<'a> {
 
     /// 物理寄存器占用者查询（跨类重叠）。
     #[inline]
-    fn phys_owner(&self, preg: PReg) -> Option<XReg> {
+    pub(super) fn phys_owner(&self, preg: PReg) -> Option<XReg> {
         self.reg_owner_slot(preg.num)
             .iter()
             .find(|(c, _)| c.overlaps(preg.class))
             .map(|&(_, v)| v)
     }
 
-    fn expire_dead(&mut self, current_point: ProgPoint) {
+    pub(super) fn expire_dead(&mut self, current_point: ProgPoint) {
         // 释放 end_point 在当前点之前或恰好在当前点的 XReg。
         // 注意：使用 end_point() 而非 contains() 因为当前 live interval 模型
         // 只覆盖具体使用/定义点和块边界点，而非整个块连续区间。
@@ -975,7 +754,7 @@ impl<'a> BtState<'a> {
         }
     }
 
-    fn pop_free(&mut self, class: RegClass) -> Option<PReg> {
+    pub(super) fn pop_free(&mut self, class: RegClass) -> Option<PReg> {
         loop {
             // 先取号（结束 free_regs 的可变借用），再检查物理占用
             let preg = {
@@ -1053,7 +832,7 @@ impl<'a> BtState<'a> {
         }
     }
 
-    fn remove_from_free(&mut self, preg: PReg) {
+    pub(super) fn remove_from_free(&mut self, preg: PReg) {
         if let Some(pool) = self.free_regs.get_mut(&preg.class) {
             pool.retain(|p| *p != preg);
         }
@@ -1061,7 +840,7 @@ impl<'a> BtState<'a> {
 
     // ── 构建结果 ──
 
-    fn build_result(self) -> Result<AllocResult, IrError> {
+    pub(super) fn build_result(self) -> Result<AllocResult, IrError> {
         let spill_area_size = if self.next_spill_offset > 0 {
             // 对齐到 16 字节
             (self.next_spill_offset as u32).div_ceil(16) * 16
@@ -1161,384 +940,5 @@ impl<'a> BtState<'a> {
                 max_concurrent_spills: self.max_concurrent_spills,
             },
         })
-    }
-}
-
-impl Default for BacktrackingAllocator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// ============================================================
-// 测试
-// ============================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::machine::inst::DummyInst;
-
-    /// 构造第 n 号 GPR 临时寄存器（测试辅助）。
-    fn xgpr(n: u32) -> XReg {
-        let mut xa = XRegAllocator::new();
-        for _ in 0..n {
-            xa.alloc_default(RegClass::GPR64);
-        }
-        xa.alloc_default(RegClass::GPR64)
-    }
-
-    fn make_config(num_gp: u32, num_fp: u32) -> RegAllocConfig {
-        let mut cfg = RegAllocConfig::new(num_gp, num_fp, 4, Some(5));
-        // 溢出编辑由分配器产出后，"scratch 池够不够"在**分配期**就判——测试给一个，
-        // 好让"可改写字段上的 def spill"这类用例走到它本意的那条路（借用 scratch 写回）。
-        cfg.scratch_regs = vec![PReg::new(15, RegClass::GPR64)];
-        cfg
-    }
-
-    #[test]
-    fn test_empty_function() {
-        let config = make_config(8, 8);
-        let alloc = BacktrackingAllocator::new();
-        let vcode = crate::VCode::<DummyInst>::new();
-        let result = alloc.allocate(&vcode, &config, &[], &[]);
-        let _ = result;
-    }
-
-    #[test]
-    fn test_basic_allocation() {
-        let config = make_config(8, 8);
-        let alloc = BacktrackingAllocator::new();
-        let vcode = crate::VCode::<DummyInst>::new();
-        let result = alloc.allocate(&vcode, &config, &[], &[]);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_fixed_reg_constraint() {
-        // 验证 BT 分配器创建
-        let alloc = BacktrackingAllocator::new();
-        let _ = alloc;
-    }
-
-    #[test]
-    fn test_phys_conflicts_cross_width_classes() {
-        // 跨宽度类物理重叠：GPR(4) 与 GPR(8) 的相同编号是同一物理寄存器
-        //（RAX=EAX），分配器必须视为冲突；FPR 的 0（XMM0）与 GPR 的 0（RAX）
-        // 是不同物理寄存器，不冲突。
-        let config = make_config(8, 8);
-        let mut state = BtState::new(&config, HashMap::new());
-        let gpr4 = PReg::new(0, RegClass::GPR(32));
-        let gpr8 = PReg::new(0, RegClass::GPR(64));
-        let fpr8 = PReg::new(0, RegClass::FPR(64));
-        let v4 = XReg::new(512, RegClass::GPR(32));
-        let v8 = XReg::new(513, RegClass::GPR(64));
-
-        assert!(!state.phys_conflicts(gpr4));
-        state.set_reg_owner(gpr4, v4);
-        // 同编号跨宽度类（GPR(4) vs GPR(8)）冲突
-        assert!(state.phys_conflicts(gpr8), "GPR(4) 与 GPR(8) 同编号应冲突");
-        assert_eq!(state.phys_owner(gpr8), Some(v4));
-        // 同编号同 class 冲突
-        assert!(state.phys_conflicts(gpr4));
-        // FPR(8) 的 0（XMM0）与 GPR 的 0（RAX）不冲突
-        assert!(!state.phys_conflicts(fpr8), "FPR 与 GPR 同编号不应冲突");
-        // 反向：GPR(8) 占用后 GPR(4) 同编号也冲突
-        state.set_reg_owner(gpr8, v8);
-        assert!(state.phys_conflicts(gpr4));
-    }
-
-    #[test]
-    fn test_reg_class_width_from_config() {
-        // 验证 DSL 生成的 reg_class_width 通过配置正确传播
-        let config = make_config(16, 16);
-        let gpr_cfg = config.classes.get(&RegClass::GPR64).unwrap();
-        assert_eq!(gpr_cfg.reg_width, 8);
-        let fpr_cfg = config.classes.get(&RegClass::FPR64).unwrap();
-        assert_eq!(fpr_cfg.reg_width, 8);
-    }
-
-    #[test]
-    fn test_all_regclasses_have_allocatable() {
-        // 验证所有寄存器类都有非空的可分配列表
-        let config = make_config(16, 16);
-        for (class, cfg) in &config.classes {
-            assert!(
-                !cfg.allocatable.is_empty(),
-                "{:?} should have allocatable registers",
-                class
-            );
-        }
-    }
-
-    #[test]
-    fn test_param_vregs_preassign() {
-        // 验证 param XReg 预分配机制：参数 XReg 在函数入口获得不同寄存器。
-        let mut config = make_config(16, 16);
-        config.param_xregs = vec![xgpr(0), xgpr(1), xgpr(2), xgpr(3)];
-        assert_eq!(config.param_xregs.len(), 4);
-        let alloc = BacktrackingAllocator::new();
-        let vcode = crate::VCode::<DummyInst>::new();
-        let result = alloc.allocate(&vcode, &config, &[], &[]);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_spill_slot_width_aware() {
-        // 验证 BT 分配器在仅有 1 个可分配寄存器时仍能完成分配
-        let mut config = make_config(8, 8);
-        config
-            .classes
-            .get_mut(&RegClass::GPR64)
-            .unwrap()
-            .allocatable = vec![3]; // RBX only
-        let alloc = BacktrackingAllocator::new();
-        let vcode = crate::VCode::<DummyInst>::new();
-        let result = alloc.allocate(&vcode, &config, &[], &[]);
-        assert!(
-            result.is_ok(),
-            "Allocator should handle high register pressure"
-        );
-    }
-}
-
-#[cfg(test)]
-mod clobber_map_tests {
-    use super::*;
-    use crate::machine::inst::DummyInst;
-    use crate::machine::lowering::OperandBind;
-
-    fn xgpr(n: u32) -> XReg {
-        let mut xa = XRegAllocator::new();
-        for _ in 0..n {
-            xa.alloc_default(RegClass::GPR64);
-        }
-        xa.alloc_default(RegClass::GPR64)
-    }
-
-    fn make_config(num_gp: u32, num_fp: u32) -> RegAllocConfig {
-        let mut cfg = RegAllocConfig::new(num_gp, num_fp, 4, Some(5));
-        // 溢出编辑由分配器产出后，"scratch 池够不够"在**分配期**就判——测试给一个，
-        // 好让"可改写字段上的 def spill"这类用例走到它本意的那条路（借用 scratch 写回）。
-        cfg.scratch_regs = vec![PReg::new(15, RegClass::GPR64)];
-        cfg
-    }
-
-    fn clobber_vcode() -> crate::VCode<DummyInst> {
-        let mut vcode = crate::VCode::<DummyInst>::new();
-        let bid = vcode.create_block(Block::new(0));
-        vcode.switch_to_block(bid);
-        for i in 0..3 {
-            vcode.push_inst(DummyInst { id: i });
-        }
-        vcode
-    }
-
-    /// clobber 点占用者若同时是本指令 use：值保留在寄存器（不 spill）——
-    /// spill_vreg 不 store 当前寄存器值，reload 会读空槽垃圾。
-    #[test]
-    fn test_clobber_use_owner_not_spilled() {
-        let mut config = make_config(16, 16);
-        config
-            .classes
-            .get_mut(&RegClass::GPR64)
-            .unwrap()
-            .allocatable = vec![0, 1]; // RAX + RCX
-        let x0 = xgpr(0);
-        let vcode = clobber_vcode();
-        let inst_ops = vec![
-            smallvec::smallvec![OperandBind::def(x0, 0)], // inst0: def
-            smallvec::smallvec![OperandBind::use_(x0, 0)], // inst1: use（clobber 点）
-            smallvec::smallvec![OperandBind::use_(x0, 0)], // inst2: use 结束
-        ];
-        let clobber_map = vec![vec![], vec![(0u32, RegClass::GPR64)], vec![]]; // inst1 写死 RAX
-        let alloc = BacktrackingAllocator::new();
-        let result = alloc
-            .allocate(&vcode, &config, &inst_ops, &clobber_map)
-            .expect("alloc should succeed");
-        // x0 在 clobber 点被使用（值需在寄存器）→ 不应被 spill
-        assert!(
-            !result.is_spilled(x0),
-            "clobber 点 use 的占用者不应 spill（值保留在寄存器）"
-        );
-    }
-
-    /// phys_conflicts 避开路径：唯一可分配寄存器在 clobber 点被写死 → 新分配失败。
-    #[test]
-    fn test_clobber_blocks_fresh_alloc() {
-        let mut config = make_config(16, 16);
-        config
-            .classes
-            .get_mut(&RegClass::GPR64)
-            .unwrap()
-            .allocatable = vec![0];
-        let x0 = xgpr(0);
-        let vcode = clobber_vcode();
-        let inst_ops = vec![smallvec::smallvec![OperandBind::def(x0, 0)]]; // inst0: def
-        let clobber_map = vec![vec![(0u32, RegClass::GPR64)]]; // inst0 写死 RAX → def 无法分配
-        let alloc = BacktrackingAllocator::new();
-        let result = alloc.allocate(&vcode, &config, &inst_ops, &clobber_map);
-        // 2026-09 语义变更：def（写新值）在唯一寄存器被 clobber 时**spill 到栈**
-        // 而非报错——emission 的 emit_inst_with_spills 用 scratch 写入 def、
-        // 随后 store 回槽，后续 use 经 reload_from_stack 从槽 load，值正确。
-        // 这只对 def 安全（写新值，不读旧寄存器）；use 场景仍保守报错。
-        assert!(
-            result.is_ok(),
-            "def 在 clobber 时 spill 到栈（emission scratch 写入）"
-        );
-        assert!(
-            result.as_ref().unwrap().is_spilled(x0),
-            "def 应被 spill 到栈槽"
-        );
-    }
-
-    /// 对照：无 clobber 时 1 个 XReg 配唯一寄存器 RAX 成功且不 spill。
-    /// **scratch 的号在任何类里都保留**（C4 根因的守卫，v23 M5）。
-    ///
-    /// 溢出搬运用"号取自 scratch 池、类取值的类"的寄存器（x86: R10/R11 ⇒ 浮点 reload 实际
-    /// 写 XMM10/XMM11）。若某个类的池能把**活值**分到这些号上，reload 就会踩掉活值。
-    /// 这条用例把 scratch 号放进 GPR 池内，断言分配器**绝不**把它分给任何 vreg。
-    #[test]
-    fn scratch_reg_numbers_are_never_allocated() {
-        const SCRATCH: u32 = 3;
-        let mut config = RegAllocConfig::new(8, 8, 7, Some(6));
-        config.scratch_regs = vec![PReg::new(SCRATCH, RegClass::GPR64)];
-        let x0 = xgpr(0);
-        let x1 = xgpr(1);
-        let vcode = clobber_vcode();
-        let inst_ops = vec![
-            smallvec::smallvec![OperandBind::def(x0, 0), OperandBind::def(x1, 1)],
-            smallvec::smallvec![OperandBind::use_(x0, 0), OperandBind::use_(x1, 1)],
-            smallvec::smallvec![OperandBind::use_(x0, 0), OperandBind::use_(x1, 1)],
-        ];
-        let clobber_map = vec![vec![], vec![], vec![]];
-        let alloc = BacktrackingAllocator::new();
-        let result = alloc
-            .allocate(&vcode, &config, &inst_ops, &clobber_map)
-            .expect("两个 vreg 在 8 个寄存器的池里应当都有位置");
-        for v in [x0, x1] {
-            if let Some(p) = result.preg(v) {
-                assert_ne!(
-                    p.num,
-                    SCRATCH,
-                    "scratch 号 {SCRATCH} 被分给了 v{}——浮点 reload 会踩掉这里的活值",
-                    v.index()
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_no_clobber_allocates_rax() {
-        let mut config = make_config(16, 16);
-        config
-            .classes
-            .get_mut(&RegClass::GPR64)
-            .unwrap()
-            .allocatable = vec![0];
-        let x0 = xgpr(0);
-        let vcode = clobber_vcode();
-        let inst_ops = vec![
-            smallvec::smallvec![OperandBind::def(x0, 0)],
-            smallvec::smallvec![OperandBind::use_(x0, 0)],
-            smallvec::smallvec![OperandBind::use_(x0, 0)],
-        ];
-        let clobber_map = vec![vec![], vec![], vec![]];
-        let alloc = BacktrackingAllocator::new();
-        let result = alloc
-            .allocate(&vcode, &config, &inst_ops, &clobber_map)
-            .expect("no clobber: RAX 可用，分配成功");
-        assert!(
-            !result.is_spilled(x0),
-            "无 clobber 时 x0 应留在 RAX 不 spill"
-        );
-    }
-
-    /// W1 正向守卫（WORKAROUNDS WA-40）：def-spill 在**可被 set_reg_field 改写**
-    /// 的字段上合法——emission 会把该字段重设 scratch 后 store 回槽，值仍正确。
-    /// 与 `test_clobber_blocks_fresh_alloc` 同形，但显式声明"可改写性"前提。
-    #[test]
-    fn test_def_spill_on_settable_field_ok() {
-        let mut config = make_config(16, 16);
-        config
-            .classes
-            .get_mut(&RegClass::GPR64)
-            .unwrap()
-            .allocatable = vec![0]; // 仅 RAX，且被 clobber → def 只能 spill
-        let x0 = xgpr(0);
-        let vcode = clobber_vcode();
-        let inst_ops = vec![smallvec::smallvec![OperandBind::def(x0, 0)]];
-        let clobber_map = vec![vec![(0u32, RegClass::GPR64)]];
-        let alloc = BacktrackingAllocator::new();
-        let result = alloc
-            .allocate(&vcode, &config, &inst_ops, &clobber_map)
-            .expect("def-spill 在可改写字段上必须成功（emission 用 scratch 写入 + store 回槽）");
-        assert!(
-            result.is_spilled(x0),
-            "该构造下 def 应被 spill（守卫不得误报）"
-        );
-        // DummyInst 未覆写 → 默认字段可改写（旧契约）。
-        assert!(
-            DummyInst { id: 0 }.is_reg_field_settable(0),
-            "默认 MachineInst 实现必须保持字段可改写（向后兼容）"
-        );
-    }
-
-    /// W1 fail-closed（WORKAROUNDS WA-40）：def-spill 落在**固定物理字段**
-    /// （`is_reg_field_settable == false`，DSL 对这类字段不生成 set_reg_field
-    /// 分支 → 静默 no-op）时必须编译期报错——否则指令写物理寄存器、store-back
-    /// 从 scratch 读，spill 槽静默留下陈旧值（后续 reload 读垃圾 → 偶发 AV/挂起）。
-    #[test]
-    fn test_def_spill_on_fixed_field_errors() {
-        #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-        struct FixedFieldInst {
-            #[allow(dead_code)]
-            id: u32,
-        }
-        impl MachineInst for FixedFieldInst {
-            /// 手写替身：没有操作数表（v23 M4 起这是唯一必答的方法）。
-            fn operands(&self) -> smallvec::SmallVec<[crate::machine::inst::InstOperand; 4]> {
-                smallvec::SmallVec::new()
-            }
-            fn is_branch(&self) -> bool {
-                false
-            }
-            fn branch_targets(&self) -> smallvec::SmallVec<[Block; 2]> {
-                smallvec::SmallVec::new()
-            }
-            fn is_call(&self) -> bool {
-                false
-            }
-            fn is_ret(&self) -> bool {
-                false
-            }
-            /// 模拟"模板里写死的物理字段"：无字段可被改写。
-            fn is_reg_field_settable(&self, _i: usize) -> bool {
-                false
-            }
-        }
-
-        let mut config = make_config(16, 16);
-        config
-            .classes
-            .get_mut(&RegClass::GPR64)
-            .unwrap()
-            .allocatable = vec![0];
-        let x0 = xgpr(0);
-        let mut vcode = crate::VCode::<FixedFieldInst>::new();
-        let bid = vcode.create_block(Block::new(0));
-        vcode.switch_to_block(bid);
-        vcode.push_inst(FixedFieldInst { id: 0 });
-        let inst_ops = vec![smallvec::smallvec![OperandBind::def(x0, 0)]];
-        let clobber_map = vec![vec![(0u32, RegClass::GPR64)]];
-        let alloc = BacktrackingAllocator::new();
-        let err = alloc
-            .allocate(&vcode, &config, &inst_ops, &clobber_map)
-            .expect_err("固定物理字段上的 def-spill 必须 fail-closed 报错");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("WA-40") && msg.contains("fixed physical"),
-            "错误信息应说明固定物理字段并指向 WA-40：{msg}"
-        );
     }
 }

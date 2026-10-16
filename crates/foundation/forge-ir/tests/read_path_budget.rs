@@ -63,10 +63,19 @@ const BUDGETS: &[(&str, usize, &str)] = &[
         "TypeContext 一次性查询封装（每次调用恰好 1 次）",
     ),
     (
-        "crates/backend/forge-codegen/src/pipeline/compiler.rs",
-        3,
-        "3 处：读写交错短读段 + 1 处测试辅助——**合法化 8 个 `expand_*` 的函数体与共享件都已\n\
-         迁出**到 pipeline/legalize/*（v23 M6 批次 2+3+4：20 → 13 → 4 → 3）",
+        "crates/backend/forge-codegen/src/pipeline/compiler/mod.rs",
+        1,
+        "读写交错短读段（v23 M6 批次 2+3+4：20 → 13 → 4 → 3；v25 M4 切分后按文件记账）",
+    ),
+    (
+        "crates/backend/forge-codegen/src/pipeline/compiler/state.rs",
+        1,
+        "会话状态构造里的短读段（v25 M4 从 compiler.rs 切出）",
+    ),
+    (
+        "crates/backend/forge-codegen/src/pipeline/compiler/alloc_integration_tests.rs",
+        1,
+        "测试辅助（给 `LowerCtx` 取快照；v25 M4 从 compiler.rs 切出）",
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/legalize/common.rs",
@@ -75,10 +84,19 @@ const BUDGETS: &[(&str, usize, &str)] = &[
          compiler.rs 迁出）",
     ),
     (
-        "crates/backend/forge-codegen/src/pipeline/legalize/agg_call.rs",
-        4,
-        "调用侧聚合展开（sret 形参 / call 结果拆段）：每个展开入口取一次锁，内部不再逐次取\n\
-         （v25 M1：sret 入口改读计划后少一处）",
+        "crates/backend/forge-codegen/src/pipeline/legalize/agg_call/mod.rs",
+        1,
+        "sret 形参入口取一次锁（v25 M4 从 agg_call.rs 切出）",
+    ),
+    (
+        "crates/backend/forge-codegen/src/pipeline/legalize/agg_call/args.rs",
+        1,
+        "实参展开入口取一次锁（v25 M4 切出）",
+    ),
+    (
+        "crates/backend/forge-codegen/src/pipeline/legalize/agg_call/results.rs",
+        2,
+        "call 结果拆段 + 宽聚合返回两个入口各一次（v25 M4 切出）",
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/legalize/agg_param.rs",

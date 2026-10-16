@@ -171,6 +171,53 @@ M1 成功判据不达标（含"删除清单未清零"）即**停止推进**：�
 
 ## 6. 批次记录（逐里程碑回写）
 
+### M4 模块收敛 —— **一次落地**（M4 收口，2026-10-11，工作区）
+
+**做了什么**（全部是**逐字搬移**，模块名不变 ⇒ **调用点零改动**）：
+
+- `compiler.rs`（1616）→ `compiler/`：`mod.rs` 615（会话入口 + 模块编排）、`state.rs` 399
+  （`CompileState` + 单函数管线）、`alloc_integration_tests.rs` 615（测试体）。
+- `regalloc_bt.rs`（1544）→ `regalloc_bt/`：`mod.rs` 148（分配器 + `Default`）、`state.rs` 941
+  （`BtState` 状态机）、`spill.rs` 113（`build_spill_edits` 与溢出编辑）、`tests.rs` 126、
+  `clobber_map_tests.rs` 239。
+- `va_expand.rs`（1113）→ `va_expand/`：`mod.rs` 73（`AbiSlots` + 模块文档）、`slots.rs` 126
+  （ABI 槽规划）、`expand.rs` 621（展开主体）、`tests.rs` 311。
+- `legalize/agg_call.rs`（690）→ `legalize/agg_call/`：`mod.rs` 45（sret 入口）、`args.rs` 313、
+  `results.rs` 342。
+- **新增守卫** [`file_size_ratchet`](../../crates/backend/forge-codegen/tests/file_size_ratchet.rs)（2 条）：
+  - `file_size_ratchet`：`src/pipeline/**` 每个文件 ≤ 签入上限（缺省 **700**；超限的 6 个文件
+    逐条写明"为什么它必须长"），**只许按实测下调**；白名单死条目也红（与 asm 棘轮同纪律）；
+  - `leaf_modules_do_not_depend_on_the_driver`：`legalize/**`、`va_expand/**`、`regalloc_bt/**`
+    不得依赖 `compiler`/`session`/`CompileSession`（次序与状态只由驱动持有——v23 那四个缺陷同源）。
+- **实测踩到的三个坑（都写进了代码注释/测试注释）**：
+  1. **子模块可见性**：搬出后 `BtState`/`CompileState` 的私有字段与方法要 `pub(super)` 才能被同级的
+     驱动读到（13 字段 + 17 方法 / 结构 + 2 方法）；`CompileState` 还被 emission/frame_layout/lowering
+     引用 ⇒ 必须是 `pub(crate)` 并由 `mod.rs` `pub(crate) use state::CompileState;` 重导出。
+  2. **导入裁剪必须按 `cargo test` 的口径**：父模块的导入若只被 `#[cfg(test)]` 子模块经
+     `use super::*;` 使用，`cargo check` 会报"未用" ⇒ 按它删会让测试构建红（`LowerCtx`/`HashMap`
+     两处实测踩到）。
+  3. **切分脚本别抓嵌套 `use`**：测试模块体内的缩进 `use` 是它自己的，父文件的顶层 `use` 才是要复制的；
+     测试体原样搬（它自带 `use super::*;`），不要额外注入。
+
+**实测**：`forge-codegen --lib` **2836 passed**；`file_size_ratchet` 2 passed；
+叶子模块反向依赖 **0** 处；全量门禁见下（同批实测）。
+
+**门禁抓出的连带修正（都是"按路径/按文件"的旧守卫，搬移后必须同步——如实记录）**：
+
+1. `entity_tables`：它读 `pipeline/compiler.rs` ⇒ 改读 `pipeline/compiler/state.rs`（`CompileState` 的表在那里）；
+2. `classification_single_entry`（M1 的守卫）：消费者白名单从 `agg_call.rs` 改成目录里三个文件；
+3. `read_path_budget`：`compiler.rs`（3 处）与 `agg_call.rs`（4 处）按新文件重记
+   （`compiler/{mod,state,alloc_integration_tests}` 各 1；`agg_call/{mod,args,results}` = 1/1/2）；
+4. `generic_pipeline_is_isa_neutral` 与 `no_hardcoded_widths`：它们的"测试代码豁免"靠**文件内
+   第一个 `#[cfg(test)]` 截断**，而 M4 把测试搬成了独立文件 ⇒ 两个守卫都学会**识别测试专属模块**
+   （向上找声明它的 `mod.rs`，看那条 `mod NAME;` 是否带 `#[cfg(test)]`）——比按文件名猜精确，
+   也盖得住将来改名的测试模块。
+5. clippy `-D warnings`：`LowerCtx`/`HashMap` 这类"只被测试模块经 `use super::*;` 使用"的父模块导入
+   在 lib 构建下被判未用 ⇒ 改为**测试模块自己导入**（`#![allow]` 不是这里的答案：那会把真·死导入
+   一起放过）。
+
+**下一步**：M5 契约回写（`backend-pipeline.md` 补分类/规模等小节 + 守卫扩展 + 账本归档）。
+
 ### M3 观测事件化 —— **一次落地**（M3 收口，2026-10-11，工作区）
 
 **做了什么**：

@@ -11,6 +11,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v25 M4：管线大文件按职责切分（模块名不变，调用点零改动）
+
+**问题**：四个管线文件 >1000 行（`compiler.rs` 1616 / `regalloc_bt.rs` 1544 / `va_expand.rs` 1113、
+`agg_call.rs` 690）——读改成本高、评审难。
+
++ **逐字搬移**成目录（模块路径不变 ⇒ 调用点**零改动**）：`compiler/`（mod 615 / state 399 /
+  alloc_integration_tests 615）、`regalloc_bt/`（mod 148 / state 944 / spill 113 / tests 126 /
+  clobber_map_tests 239）、`va_expand/`（mod 73 / slots 126 / expand 621 / tests 311）、
+  `legalize/agg_call/`（mod 45 / args 313 / results 342）。
++ **新增守卫** `file_size_ratchet`（2 条）：`src/pipeline/**` 每个文件 ≤ 签入上限（缺省 700；
+  超限的 6 个文件逐条写明"为什么它必须长"），**只许按实测下调**，白名单死条目也红；
+  `leaf_modules_do_not_depend_on_the_driver`：`legalize/**`、`va_expand/**`、`regalloc_bt/**`
+  不得依赖 `compiler`/`session`（次序与状态只由驱动持有）。
++ 拆分的连带修正（都有实测记录）：子模块私有成员经 `pub(super)` 放开；`CompileState` 仍被
+  emission/frame_layout/lowering 引用 ⇒ `pub(crate)` + `mod.rs` 重导出；
+  **导入裁剪必须按 `cargo test` 口径**（只被测试模块经 `use super::*;` 使用的导入在 `cargo check`
+  下"未用"，删了测试就红）；三条按路径白名单的旧守卫（`entity_tables`/`classification_single_entry`/
+  规模棘轮）同步更新到新布局。
++ 验收：`forge-codegen --lib` 2836 passed；workspace 全量 exit 0；JIT 两矩阵（197/3/0 ·
+  136/64/0）；asm 三档（3/1/1）；八条管线守卫全绿；clippy `-D warnings` 与 fmt 干净。
+
 ### Added (2026-10-11) — 后端 v25 M3：codegen 的机读事件出口（`FORGE_CODEGEN_EVENTS`）
 
 **问题**：JIT / asm / E2E 三个面早就有落盘事件，**codegen 是唯一没有机读出口的阶段**——

@@ -127,8 +127,11 @@ fn edges_drive_the_rewrite() {
         "plan.rs",
         "classify.rs",
         "agg_param.rs",
-        "agg_call.rs",
         "mod.rs",
+        // v25 M4 把 `agg_call.rs` 切成目录 ⇒ 三段都引用计划（同一个 pass 的三部分）。
+        "agg_call/mod.rs",
+        "agg_call/args.rs",
+        "agg_call/results.rs",
     ]
     .iter()
     .map(|s| (*s).to_string())
