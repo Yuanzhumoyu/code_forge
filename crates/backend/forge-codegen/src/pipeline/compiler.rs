@@ -918,7 +918,6 @@ mod alloc_integration_tests {
     use crate::arch::x86;
     // 落点探针与它的类别枚举住在 `legalize::common`（v23 M6 批次 4 从本文件迁出）——
     // 只有这些集成用例还从"编译侧"看它们，所以 import 留在测试模块里。
-    use crate::pipeline::legalize::common::{AggArgLoc, agg_arg_place};
 
     /// 生成期 AVX-512 可行性开关的作用域守卫（Drop 时清除，**panic 安全**）。
     /// 必须与 `crate::AVX512_ENV_LOCK` 配对使用——env 只放开"能否发射 EVEX"
@@ -965,17 +964,18 @@ mod alloc_integration_tests {
         assert_eq!(store.size_bytes(hfa), 24);
         assert_eq!(store.size_bytes(plain), 24);
 
-        let (hfa_place, _) = agg_arg_place(&tm, "aapcs64", &store, hfa).expect("HFA 探针");
-        assert_eq!(
-            hfa_place,
-            AggArgLoc::Registers,
-            "aapcs64 的 24 字节 HFA 必须走寄存器档（探针丢了成员就会错判成 by-ref）"
+        // v25 M1：分类只有一处入口（`legalize/classify.rs`），本测试的断言意图不变——
+        // **两者答案必须不同**，才说明形状带了成员（C1 修复的不变量）。
+        let mut clf = crate::pipeline::legalize::classify::Classifier::new(&tm, "aapcs64", &store);
+        let hfa_place = clf.arg_place(hfa).expect("HFA 分类");
+        assert!(
+            !crate::pipeline::legalize::classify::is_by_ref(&hfa_place),
+            "aapcs64 的 24 字节 HFA 必须走寄存器档（形状丢了成员就会错判成 by-ref）：{hfa_place:?}"
         );
-        let (plain_place, _) = agg_arg_place(&tm, "aapcs64", &store, plain).expect("普通聚合探针");
-        assert_eq!(
-            plain_place,
-            AggArgLoc::ByRef,
-            "同尺寸但非 HFA 的聚合按引用（内存）——两者答案必须不同，才说明形状带了成员"
+        let plain_place = clf.arg_place(plain).expect("普通聚合分类");
+        assert!(
+            crate::pipeline::legalize::classify::is_by_ref(&plain_place),
+            "同尺寸但非 HFA 的聚合按引用（内存）：{plain_place:?}"
         );
     }
 

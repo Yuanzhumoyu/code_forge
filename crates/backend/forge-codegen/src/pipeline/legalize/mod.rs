@@ -17,6 +17,7 @@
 pub(crate) mod agg_call;
 pub(crate) mod agg_param;
 pub(crate) mod agg_store;
+pub(crate) mod classify;
 pub(crate) mod common;
 pub(crate) mod gep;
 pub(crate) mod materialize;
@@ -260,8 +261,7 @@ impl<M: TargetMachine> LegalizePass<M> for PlanPass {
     }
     fn run(&self, func: &mut Function, ctx: &mut LegalizeCtx<'_, M>) -> Result<ChangeSet, IrError> {
         let before = IrSize::of(func);
-        let va = ctx.va.as_ref().map(|(v, _)| v);
-        let edges = plan::plan_abi_edges(func, ctx.machine, &ctx.conv, va)?;
+        let edges = plan::plan_abi_edges(func, ctx.machine, &ctx.conv)?;
         if crate::pipeline::trace::knob("FORGE_TRACE_AGG") {
             eprintln!(
                 "[forge] ABI 计划 {}：{} 条可动边界（{}）",
@@ -317,18 +317,18 @@ impl<M: TargetMachine> LegalizePass<M> for AggCallPass {
     fn run(&self, func: &mut Function, ctx: &mut LegalizeCtx<'_, M>) -> Result<ChangeSet, IrError> {
         let before = IrSize::of(func);
         let had_sret = ctx.sret_ptr.is_some();
-        let sret = agg_call::expand_sret_return(func, ctx.machine, &ctx.conv)?;
+        // **计划相必须先跑**（驱动恒把 `PlanPass` 排首位，由
+        // `driver_has_the_documented_pass_order` 钉住）⇒ 缺计划是内部错误。
+        let edges = ctx
+            .edges
+            .as_ref()
+            .ok_or_else(|| IrError::Internal("合法化计划缺失（PlanPass 未跑）".to_string()))?;
+        let sret = agg_call::expand_sret_return(func, edges)?;
         if sret.is_some() {
             ctx.sret_ptr = sret;
         }
-        agg_call::expand_large_agg_call_results(func, &mut ctx.agg_slots, ctx.machine, &ctx.conv)?;
-        agg_call::expand_agg_call_args(
-            func,
-            ctx.machine,
-            &ctx.conv,
-            &mut ctx.agg_slots,
-            &ctx.shadow_agg,
-        )?;
+        agg_call::expand_large_agg_call_results(func, edges, &mut ctx.agg_slots)?;
+        agg_call::expand_agg_call_args(func, edges, &mut ctx.agg_slots, &ctx.shadow_agg)?;
         agg_call::expand_large_agg_ret(func, &mut ctx.agg_slots, ctx.sret_ptr)?;
         Ok(IrSize::of(func).delta_to(before, !had_sret && ctx.sret_ptr.is_some()))
     }
@@ -342,13 +342,11 @@ impl<M: TargetMachine> LegalizePass<M> for AggParamPass {
     }
     fn run(&self, func: &mut Function, ctx: &mut LegalizeCtx<'_, M>) -> Result<ChangeSet, IrError> {
         let before = IrSize::of(func);
-        agg_param::expand_large_agg_params(
-            func,
-            &mut ctx.agg_slots,
-            &mut ctx.shadow_agg,
-            ctx.machine,
-            &ctx.conv,
-        )?;
+        let edges = ctx
+            .edges
+            .as_ref()
+            .ok_or_else(|| IrError::Internal("合法化计划缺失（PlanPass 未跑）".to_string()))?;
+        agg_param::expand_large_agg_params(func, edges, &mut ctx.agg_slots, &mut ctx.shadow_agg)?;
         Ok(IrSize::of(func).delta_to(before, false))
     }
 }

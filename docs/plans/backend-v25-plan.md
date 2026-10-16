@@ -171,7 +171,116 @@ M1 成功判据不达标（含"删除清单未清零"）即**停止推进**：�
 
 ## 6. 批次记录（逐里程碑回写）
 
-（立项时为空；每里程碑落地后在此追加：做了什么、实测数字、删除清单进度、偏差与下一批。）
+### M1 一次分类处处消费 —— 批次 3：**计划驱动改写 + 删五种枚举**（M1 收口，2026-10-11，工作区）
+
+**做了什么**：
+
+- **计划载荷换成规范类型**（删五种枚举 `ParamPlan`/`RetPlan`/`ArgPlan`/`CallResultPlan`/`VaArgPlan`
+  及其三张边结构）：`AbiEdges { plans, shift, params: Vec<ParamEdge>, ret: Option<RetLoc>,
+  call_args: Vec<CallArgEdge>, call_results: Vec<CallResultEdge> }`——里面装的是
+  `forge-abi-model` 的 `ArgLoc` / `RetLoc`，本仓不再有自己的"计划枚举"。
+  **稀疏载荷**取代"与形参一一对齐的表"（`ParamEdge{index, loc}` + `param_of(i)`）：
+  对齐表要读者自己判"这一项是不是聚合"，稀疏表连序号都显式。
+- **生产者改为只读计划**，而且**签名上就拿不到机器与约定名**——规则由类型系统保证：
+  - `expand_large_agg_params(func, edges, agg_slots, shadow_agg)`（原 `machine, conv` 退场）；
+  - `expand_sret_return(func, edges)`：`edges.ret` 是 `RetLoc::Indirect` 才算 sret；
+  - `expand_large_agg_call_results(func, edges, agg_slots)`；
+  - `expand_agg_call_args(func, edges, agg_slots, shadow_agg)`。
+  驱动侧缺计划 ⇒ `IrError::Internal("合法化计划缺失（PlanPass 未跑）")`（`PlanPass` 恒排首位，
+  已由 `driver_has_the_documented_pass_order` 钉住）。
+- **按值查而不是按序号查**（实测踩到的坑，写进 `CallArgEdge` 文档）：`agg-call` 批次里
+  `expand_large_agg_call_results` 会往 call 的实参表**前插** sret 缓冲指针，之后
+  `expand_agg_call_args` 看到的 `op_idx` 比计划记录时**大 1** ⇒ 按序号查必然错位；
+  值句柄不受插入影响（且"一次分类"保证同一值只有一种落点）。
+- **两处"判据重复"收进计划相**（同一判据只有一处）：
+  - "既不是 sret 也不是寄存器档" ⇒ 计划相报 `[cap:AGG_RET_PLACEMENT]`，pass 侧改为
+    `IrError::Internal`（计划与 pass 不一致才是内部错误）；
+  - "约定把聚合判成标量栈落点" ⇒ 计划相拒绝（数据错误），pass 侧同改为 `Internal`。
+- **删掉两处冗余面**（都是"只在摘要里被读"的装饰）：
+  - `AbiEdges.va_args`：`va_arg(聚合)` 的规则是**约定数据**（`VaInfo::arg_rules`），
+    `va` pass 本来就在手边并自己 fail-closed ⇒ 计划不做"规则的第三份转录"
+    （顺带 `plan_abi_edges` 少一个入参）；
+  - `Classifier::ret_is_sret`：计划相直接看 `RetLoc`，布尔包装是重复面。
+- **新增守卫** `edges_drive_the_rewrite`（第三条）：`Classifier::new` 只许出现在计划相
+  （与定义处 `classify.rs` 及其单测）；`plan.rs`/`classify.rs`/`agg_param.rs`/`agg_call.rs`/`mod.rs`
+  **必须**引用 `AbiEdges`——否则计划又沦为装饰。**两向都红**。
+- **计划相单测更新**：`plan_is_read_only` 改按 `param_of(0)` / `Option<RetLoc>` 断言；
+  新增 `one_plan_per_distinct_type`（形参与返回同型但各查一次 ⇒ `plans == 2`，把"引擎调用次数"
+  变成可观测量）。
+
+**实测**：`forge-codegen --lib --all-features` **2835 passed / 0 failed**；
+`classification_single_entry` 3 passed；全量门禁见下（同批实测）。
+
+**M1 删除清单**：手抄落点枚举与两个单类型探针 **清零**（守卫 `hand_copied_placement_is_gone` 钉住）；
+五种计划枚举 **清零**；`plan_for_shapes` 只出现在三处白名单（守卫钉住）。
+
+**下一步**：M2 错误分类学。
+
+### M1 一次分类处处消费 —— 批次 2：**五处调用点全切 + 删除清单清零 + 两条守卫**（2026-10-11，工作区）
+
+**做了什么**：
+
+- `agg_param`（1 处）、`agg_call`（3 处：sret 探测 / call 结果 / 实参落点）全部切到 `Classifier`；
+  `plan.rs` 两处 match 改为按 `forge-abi-model` 的 `Placement` 分流（`is_by_ref` / `StackByVal` /
+  `Stack`（数据错误）/ 其余 ⇒ 寄存器档）。
+- **分类器返回拥有权**（`arg_place -> Placement`、`ret_place -> RetLoc`）：`&mut self` 借出的引用
+  会让同一个 `match` 里再问 `shift()` 冲突（实测 `E0502`），改为克隆（每形参/实参一次，代价可忽略）
+  ⇒ 调用点不必关心借用次序。**这条写进了 `classify.rs` 的文档**。
+- **删除清单清零**：`common.rs` 删除手抄落点枚举 `AggArgLoc` 与两个单类型探针
+  （共 92 行）；全仓生产代码零引用（守卫钉住）。
+- **新增守卫** [`classification_single_entry`](../../crates/backend/forge-codegen/tests/classification_single_entry.rs)：
+  1. `classification_has_one_entry`：`plan_for_shapes` 只允许出现在
+     `legalize/classify.rs` / `abi_setup.rs` / **`abi_target.rs`（引擎入口本身）**——**双向相等**
+     （未列出的文件 = 分类分叉；列出的没出现 = 白名单死条目）；
+  2. `hand_copied_placement_is_gone`：`AggArgLoc` / `agg_arg_place` / `agg_ret_is_sret`
+     在全仓（含注释）零出现——守卫文件自跳过。
+- **守卫当场抓到两处批次 1 未发现的遗漏**（如实记录）：
+  1. `compiler.rs` 的 `#[cfg(test)]` 里有一个**很有价值**的 C1 不变量测试
+     （aapcs64 的 24B **HFA** 必须走寄存器档、同尺寸非 HFA 必须按引用，"两者答案必须不同"
+     才说明形状带了成员）仍在用已删类型 ⇒ **迁到分类器**（断言意图不变）；
+  2. `abi_target.rs` 是管线的**引擎入口**（`impl AbiTarget` 的工厂闭包），不是消费者 ⇒ 进白名单并写明理由。
+- **引用纪律**：5 处注释/文档里残留的旧符号名一并改写（`agg_param`、`classify`、`plan`、
+  `forge-abi/src/rules.rs`、`read_path_budget` 的说明串）——`read_path_budget` 实测**无变化**
+  （预算表不必改）。
+
+**实测**：`forge-codegen --lib --all-features` **2834 passed / 0 failed**；
+`classification_single_entry` 2 passed；`read_path_budget` 2 passed；
+`clippy -p forge-codegen --all-targets --all-features -D warnings` 干净。
+
+**下一批（批次 3，M1 收口）**：让生产者**读 `ctx.edges`**（而不是各自建分类器）⇒ 计划相成为
+唯一的分类处、"一次分类"名副其实（现状：计划相与两个 pass 各自分类 ⇒ 同一类型一次编译最多算 3 次）；
+同时把计划载荷里的五种枚举（`ParamPlan`/`RetPlan`/`ArgPlan`/`CallResultPlan`/`VaArgPlan`）
+换成 `forge-abi-model` 的 `ArgLoc`/`RetLoc`（那 38 处引用是它们唯一的栖身地）；补
+`edges_drive_the_rewrite` 守卫；跑全量门禁 + 两矩阵 + asm 三档 ⇒ M1 一次提交。
+
+### M1 一次分类处处消费 —— 批次 1：**分类器落地 + 计划相接线**（2026-10-11，工作区）
+
+**做了什么**：
+
+- 新增 [`legalize/classify.rs`](../../crates/backend/forge-codegen/src/pipeline/legalize/classify.rs)：
+  `Classifier`——**唯一**允许问引擎的通道。要点：
+  - 返回 **`forge-abi-model` 的规范类型**（`ArgLoc` / `RetLoc` / `Placement`），不再手抄落点枚举；
+    另配两个口径函数：`is_by_ref`（`Placement::Indirect`）与 `scalar_stack_is_a_data_error`
+    （"约定把聚合判成**标量**栈落点" = 数据错误，**不是**能力缺口——v24 M3 的边界分类）；
+  - **按类型去重**：同一类型在一个编译单元里只问一次引擎（旧实现每个使用点各问一次，每次重跑
+    `plan_for_shapes` + 注册表读锁）；`plans()` 暴露引擎调用次数供守卫/诊断；
+  - 形状一律走 `TyView::from_ir_type`（保留 C1 修复的不变量：成员必须摊开，否则 HFA 被当普通聚合）；
+  - **请求形状与旧探针一致**（单类型请求）⇒ **决策内容不变**，本批只改"从哪来、问几次"；
+    "整签名一次问全"（更贴合真实落点，尤其前面已有栈实参时的 `StackByVal.offset`）留作
+    后续批次，届时以全量门禁 + 对拍为证据单独评估。
+- `plan.rs` 的 `plan_abi_edges` 全部改走分类器（形参 / 返回 / 调用实参 / 调用结果四处），
+  文档里的探针引用改指 `Classifier`。
+- 两条单测：`classification_is_deduplicated`（同类型两次查询 ⇒ 引擎只调用一次；
+  win64 的 24B 聚合实参是 `ByRef`）与 `ret_classification_matches_abi_model`（24B 返回是 sret）。
+
+**实测**：`forge-codegen --lib --all-features` **2834 passed / 0 failed**（新增 2 条）。
+
+**下一批（批次 2）**：把 `agg_param`（1 处）与 `agg_call`（3 处）也切到分类器 ⇒ 删除
+`common.rs` 的两个探针与 `AggArgLoc`（删除清单清零）⇒ 加四条守卫。
+
+### 立项（2026-10-11）
+
+先落盘账本（本文），实现自下一轮开始；侦察证据见 §1，删除清单与守卫见 §2。
 
 ## 7. 外部参考
 

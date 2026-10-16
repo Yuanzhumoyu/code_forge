@@ -71,18 +71,19 @@ const BUDGETS: &[(&str, usize, &str)] = &[
     (
         "crates/backend/forge-codegen/src/pipeline/legalize/common.rs",
         1,
-        "落点探针（`agg_arg_place`/`agg_ret_is_sret`）：入口取一次锁（v23 M6 批次 4 从 \
+        "落点分类（`Classifier`，v25 M1 起是唯一入口）：入口取一次锁（v23 M6 批次 4 从 \
          compiler.rs 迁出）",
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/legalize/agg_call.rs",
-        5,
-        "调用侧聚合展开（sret 形参 / call 结果拆段）：每个展开入口取一次锁，内部不再逐次取",
+        4,
+        "调用侧聚合展开（sret 形参 / call 结果拆段）：每个展开入口取一次锁，内部不再逐次取\n\
+         （v25 M1：sret 入口改读计划后少一处）",
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/legalize/agg_param.rs",
-        9,
-        "被调方聚合形参展开：入口取一次锁",
+        8,
+        "被调方聚合形参展开：入口取一次锁（v25 M1：形参循环改读计划后少一处）",
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/legalize/agg_store.rs",

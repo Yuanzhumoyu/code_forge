@@ -1,4 +1,4 @@
-//! 合法化**计划相**（v24 M1）：**只读地**算出"每条 ABI 边界上的聚合该怎么办"。
+//! 合法化**计划相**（v24 M1 立项，v25 M1 收口）：**只读地**算出"每条 ABI 边界上的聚合该怎么办"。
 //!
 //! ## 为什么要有这一相
 //!
@@ -7,181 +7,132 @@
 //! 后续使用点、实参来源覆盖不全、pass 次序两向约束逼出 pass 拆分）。根因是**决策与改写
 //! 缠在一起**：决策要读 IR、改写要写 IR，两者在同一遍里交替，谁先谁后就变成了语义。
 //!
-//! 本文件把**决策**单独摘出来：读 IR（含向 `forge-abi` 的落点探针问路），产出一份
-//! [`AbiEdges`] 计划，**一个字节的 IR 都不改**。物化（Phase B）拿到计划后**单遍**改写。
+//! 本文件把**决策**单独摘出来：读 IR（落点一律问 [`Classifier`]），产出一份 [`AbiEdges`]
+//! 计划，**一个字节的 IR 都不改**。物化（Phase B）拿到计划后**单遍**改写。
 //!
-//! ## 契约
+//! ## 契约（v25 M1 起）
 //!
 //! - **只读**：`plan_abi_edges` 不调用任何 `make_inst` / `make_value` / `register_signature`
 //!   / `tombstone_inst`；守卫 `plan_is_read_only` 用 IR 规模快照钉住这一点。
-//! - **决策来源唯一**：落点一律问 `forge-abi`（[`agg_arg_place`] / [`agg_ret_is_sret`] /
-//!   变参形状的 `arg_rules`）——管线里**不出现**约定名分支（通用性）。
+//! - **决策来源唯一**：落点一律问 `forge-abi`，且**只经** [`Classifier`]
+//!   （`legalize/classify.rs`）——管线里**不出现**约定名分支，也不手抄落点枚举（通用性）。
+//! - **载荷是规范类型**：计划里存的是 `forge-abi-model` 的 `ArgLoc` / `RetLoc`，不是本仓
+//!   自己的一套"计划枚举"（v25 M1 删掉了那五种枚举——它们只在本文件内部构造与打印，
+//!   是 `Placement` 的手抄投影）。
+//! - **消费者按它改写**：`agg-param` / `agg-call` 只读计划、**不再自己问引擎**
+//!   （它们的签名里已经拿不到机器与约定名，规则由类型系统保证）。
 //! - **写一次**：[`Places`] 的每条键只允许写一次（第二次写是计划本身的 bug，
 //!   守卫 `place_is_written_once` 钉住）。
 
 use crate::IrError;
-use crate::pipeline::legalize::common::{AggArgLoc, agg_arg_place, agg_ret_is_sret};
+use crate::pipeline::legalize::classify::{Classifier, scalar_stack_is_a_data_error};
+use forge_abi::{ArgLoc, Placement, RetLoc};
 use forge_ir::*;
-use forge_isa_runtime::machine::call_layout::VaInfo;
 use forge_isa_runtime::machine::target::TargetMachine;
 
-/// 形参的落点计划（决定签名怎么重建、值住哪）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ParamPlan {
-    /// 原样保留（非聚合；或标量语义、无需 ABI 展开）。
-    Keep,
-    /// **拆成 `n` 个 `i64` 形参**（寄存器档：`<<= 约定阈值` 的聚合）。
-    AsSegs(u8),
-    /// **改成单个 `ptr` 形参**（by-ref：指针指向调用方的副本，win64 `>8B` 就是这条）。
-    AsPtr,
-    /// 签名不动，值**住在 `[fp + offset]`**（按值整块进栈区，sysv64 `>16B` 那条）。
-    AsStackMem { offset: i32, size: u32 },
+/// 一个**宽聚合形参**（`>8B`）的落点：只登记要动的那些，`index` 是形参序号。
+///
+/// 为什么稀疏列表而不是"与形参一一对齐的 `Vec`"：对齐表要读者自己判"这一项是不是聚合"，
+/// 而稀疏表连"索引"都显式写出来（`param_of(i)` 是 O(n) 的小查找，n = 聚合形参数）。
+#[derive(Debug, Clone)]
+pub(crate) struct ParamEdge {
+    pub index: usize,
+    pub loc: ArgLoc,
 }
 
-/// 返回的落点计划。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum RetPlan {
-    /// 原样返回（标量 / 小聚合寄存器档）。
-    #[default]
-    Keep,
-    /// **sret**：调用方给缓冲指针，被调方按段写进去。
-    Sret,
-    /// 拆成 `n` 个返回值。
-    AsSegs(u8),
-}
-
-/// 一条 call **实参**的落点计划。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ArgPlan {
-    /// 非聚合 / 无需展开。
-    Keep,
-    /// 拆成 `n` 个 `i64` 实参（寄存器档）。
-    Segs(u8),
-    /// 调用方自建副本、传**指针**（by-ref）。
-    ByRef { size: u32 },
-    /// 调用方自建副本、整块写进传出参数区（sysv64 `>16B`）。
-    StackByVal { offset: i32, size: u32 },
-}
-
-/// 一条 call **结果**的落点计划。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum CallResultPlan {
-    /// 非聚合 / 无需展开。
-    Keep,
-    /// 拆成 `n` 个 `i64` 结果（寄存器档）。
-    Segs(u8),
-    /// 结果写进调用方缓冲（sret），结果值本身作废。
-    SretMem,
-}
-
-/// 一条 `va_arg`（聚合结果）的取参计划。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum VaArgPlan {
-    /// 非聚合 / 结果不是聚合。
-    Keep,
-    /// 变参区那个槽里放的是**指向聚合的指针**（win64 `>8B`）。
-    Pointer { size: u32 },
-    /// 变参区里**直接是聚合字节**（sysv64 `>16B` 的 memory class、或 ≤阈值的内联档）。
-    Inline { size: u32 },
-}
-
-/// 一条 call 实参的完整记录（物化时按 `inst` 定位、按 `op_idx` 替换）。
-#[derive(Debug, Clone, Copy)]
+/// 一条 call **实参**的落点（只登记宽聚合实参）。
+///
+/// 查表用**值**而不是 `op_idx`：`agg-call` 批次里 `expand_large_agg_call_results` 会往
+/// call 的实参表**前插**一个 sret 缓冲指针，之后的 `expand_agg_call_args` 看到的
+/// `op_idx` 比计划记录时**大 1**。值句柄不受插入影响，而"一次分类"保证同一个值只有
+/// 一种落点（同一类型只问一次引擎）——所以按值查是稳的，按序号查是个陷阱。
+#[derive(Debug, Clone)]
 pub(crate) struct CallArgEdge {
     pub inst: Inst,
-    pub op_idx: usize,
     pub val: Value,
-    pub plan: ArgPlan,
+    pub loc: ArgLoc,
 }
 
-/// 一条 call 结果的完整记录。
-#[derive(Debug, Clone, Copy)]
+/// 一条 call **结果**（宽聚合）的落点。
+#[derive(Debug, Clone)]
 pub(crate) struct CallResultEdge {
     pub inst: Inst,
     pub val: Value,
-    pub plan: CallResultPlan,
-}
-
-/// 一条 `va_arg` 的完整记录。
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct VaArgEdge {
-    pub inst: Inst,
-    pub val: Value,
-    pub plan: VaArgPlan,
+    pub ret: RetLoc,
 }
 
 /// **整个函数的 ABI 边界计划**（Phase A 的产物；Phase B 只读它）。
 #[derive(Debug, Default, Clone)]
 pub(crate) struct AbiEdges {
-    pub params: Vec<ParamPlan>,
-    pub ret: RetPlan,
+    /// 这次计划问了引擎几次（同一类型只问一次；诊断与守卫的观测量）。
+    pub plans: usize,
+    /// callee-saved 区平移（与 `LowerCtx::stack_slot_shift` 同源）。
+    pub shift: i32,
+    /// 宽聚合形参的落点（稀疏；按 `index` 查）。
+    pub params: Vec<ParamEdge>,
+    /// 宽聚合返回的落点（`None` = 没有要处理的宽聚合返回）。
+    pub ret: Option<RetLoc>,
+    /// 各调用点的宽聚合实参落点（按 `(inst, val)` 查）。
     pub call_args: Vec<CallArgEdge>,
+    /// 各调用点的宽聚合结果落点（按 `inst` 查）。
     pub call_results: Vec<CallResultEdge>,
-    pub va_args: Vec<VaArgEdge>,
 }
 
 impl AbiEdges {
-    /// 计划里一共有多少个"要动"的边界（`Keep` 不算）——诊断与"是否需要物化"判据用。
+    /// 形参 `index` 的落点（`None` = 非宽聚合 / 不在计划里）。
+    pub fn param_of(&self, index: usize) -> Option<&ArgLoc> {
+        self.params
+            .iter()
+            .find(|e| e.index == index)
+            .map(|e| &e.loc)
+    }
+
+    /// call `inst` 里实参**值** `val` 的落点（理由见 [`CallArgEdge`]）。
+    pub fn call_arg_of(&self, inst: Inst, val: Value) -> Option<&ArgLoc> {
+        self.call_args
+            .iter()
+            .find(|e| e.inst == inst && e.val == val)
+            .map(|e| &e.loc)
+    }
+
+    /// call `inst` 的结果落点。
+    pub fn call_result_of(&self, inst: Inst) -> Option<&RetLoc> {
+        self.call_results
+            .iter()
+            .find(|e| e.inst == inst)
+            .map(|e| &e.ret)
+    }
+
+    /// 计划里一共有多少条"要动"的边界——诊断与"是否需要物化"判据用。
     pub fn actionable(&self) -> usize {
-        let p = self
-            .params
-            .iter()
-            .filter(|x| !matches!(x, ParamPlan::Keep))
-            .count();
-        let r = usize::from(!matches!(self.ret, RetPlan::Keep));
-        let a = self
-            .call_args
-            .iter()
-            .filter(|x| !matches!(x.plan, ArgPlan::Keep))
-            .count();
-        let c = self
-            .call_results
-            .iter()
-            .filter(|x| !matches!(x.plan, CallResultPlan::Keep))
-            .count();
-        let v = self
-            .va_args
-            .iter()
-            .filter(|x| !matches!(x.plan, VaArgPlan::Keep))
-            .count();
-        p + r + a + c + v
+        self.params.len()
+            + usize::from(self.ret.is_some())
+            + self.call_args.len()
+            + self.call_results.len()
     }
 
     /// 诊断用的一行摘要（`FORGE_TRACE_AGG`）：**逐条点名**要动的边界（哪条指令、哪个值、
-    /// 落成什么）——调试"这条实参怎么传的"时，这一行比一串计数有用得多。计数字段仍然保留，
-    /// 因为它给出"这个函数到底有多少条边界"的规模感。
+    /// 落成什么）——调试"这条实参怎么传的"时，这一行比一串计数有用得多。
     pub fn summary(&self) -> String {
         let mut parts = vec![format!(
-            "params={:?} ret={:?} call_args={} call_rets={} va_args={}",
-            self.params,
+            "params={} ret={:?} call_args={} call_rets={} 引擎规划={}",
+            self.params.len(),
             self.ret,
             self.call_args.len(),
             self.call_results.len(),
-            self.va_args.len()
+            self.plans
         )];
-        for e in self
-            .call_args
-            .iter()
-            .filter(|e| !matches!(e.plan, ArgPlan::Keep))
-        {
+        for e in &self.params {
             parts.push(format!(
-                "arg {}#{} {:?} => {:?}",
-                e.inst, e.op_idx, e.val, e.plan
+                "param#{} {} => {:?}",
+                e.index, e.loc.what, e.loc.place
             ));
         }
-        for e in self
-            .call_results
-            .iter()
-            .filter(|e| !matches!(e.plan, CallResultPlan::Keep))
-        {
-            parts.push(format!("ret {:?} {:?} => {:?}", e.inst, e.val, e.plan));
+        for e in &self.call_args {
+            parts.push(format!("arg {:?} {:?} => {:?}", e.inst, e.val, e.loc.place));
         }
-        for e in self
-            .va_args
-            .iter()
-            .filter(|e| !matches!(e.plan, VaArgPlan::Keep))
-        {
-            parts.push(format!("va {:?} {:?} => {:?}", e.inst, e.val, e.plan));
+        for e in &self.call_results {
+            parts.push(format!("ret {:?} {:?} => {:?}", e.inst, e.val, e.ret));
         }
         parts.join("；")
     }
@@ -189,59 +140,55 @@ impl AbiEdges {
 
 /// **计划相主入口**：只读地算出 [`AbiEdges`]。
 ///
-/// 输入：函数 + 机器视图 + 已解析的约定名 + （可选）变参形状信息。
+/// 输入：函数 + 机器视图 + 已解析的约定名。
+///
+/// **不登记 `va_arg`**：那一条的规则是**约定数据**（`VaInfo::arg_rules`），
+/// `va` pass 本来就在手边（它自己 fail-closed 并点名缺哪条规则）——计划只描述
+/// **物化相要改写的边界**，不做第三份"规则的转录"。
 /// 输出：计划；**函数与它的类型表在整个过程中只被读**。
 ///
-/// 落点决策一律来自 `forge-abi` 的探针（[`agg_arg_place`] / [`agg_ret_is_sret`]），
+/// 落点决策一律来自 `forge-abi`，并只经 [`Classifier`]（`legalize/classify.rs`），
 /// 需要"按值整块"还是"按引用"由**数据**说了算——这里没有任何约定名分支。
 pub(crate) fn plan_abi_edges(
     func: &Function,
     machine: &impl TargetMachine,
     conv: &str,
-    va: Option<&VaInfo>,
 ) -> Result<AbiEdges, IrError> {
     // 读路径纪律：入口取一次读锁，内部把 `&TypeStore` 传下去（不再逐次 borrow）。
     let types = func.types.clone();
     let store = types.borrow();
+    // **分类器**：本函数与它所有调用点的落点都从这里问（同一类型只问一次引擎）。
+    let mut clf = Classifier::new(machine, conv, &store);
     let mut edges = AbiEdges::default();
 
-    // ── 形参 ──────────────────────────────────────────────────────────
-    for t in func.param_types() {
-        if !store.is_aggregate(t) {
-            edges.params.push(ParamPlan::Keep);
+    // ── 形参（只登记宽聚合：`>8B` 才需要 ABI 展开）─────────────────────
+    for (i, t) in func.param_types().iter().enumerate() {
+        if !store.is_aggregate(*t) || store.size_bytes(*t) <= 8 {
             continue;
         }
-        let size = store.size_bytes(t);
-        if size <= 8 {
-            // 小聚合：约定可能仍走寄存器档（C ABI 强制），保持原样交给物化按段处理。
-            edges.params.push(ParamPlan::Keep);
-            continue;
+        let place = clf.arg_place(*t)?;
+        if let Placement::Stack { size, .. } = place {
+            // 标量语义的 `Stack` 对聚合不该出现；出现了就是约定数据有问题。
+            return Err(scalar_stack_is_a_data_error(conv, u32::from(size)));
         }
-        let (loc, _shift) = agg_arg_place(machine, conv, &store, t)?;
-        edges.params.push(match loc {
-            AggArgLoc::ByRef => ParamPlan::AsPtr,
-            AggArgLoc::StackByVal { offset, size } => ParamPlan::AsStackMem {
-                offset,
-                size: u32::from(size),
+        edges.params.push(ParamEdge {
+            index: i,
+            loc: ArgLoc {
+                what: format!("param#{i}"),
+                index: Some(i),
+                size: store.size_bytes(*t),
+                place,
             },
-            AggArgLoc::Registers => ParamPlan::AsSegs(size.div_ceil(8) as u8),
         });
     }
 
-    // ── 返回 ─────────────────────────────────────────────────────────
-    for t in func.return_types() {
-        if !store.is_aggregate(t) {
-            continue;
-        }
-        let size = store.size_bytes(t);
-        if size <= 8 {
-            continue;
-        }
-        edges.ret = if agg_ret_is_sret(machine, conv, &store, t)? {
-            RetPlan::Sret
-        } else {
-            RetPlan::AsSegs(size.div_ceil(8) as u8)
-        };
+    // ── 返回（只登记宽聚合；函数侧通常 0/1 个）─────────────────────────
+    if let Some(t) = func
+        .return_types()
+        .into_iter()
+        .find(|t| store.is_aggregate(*t) && store.size_bytes(*t) > 8)
+    {
+        edges.ret = Some(clf.ret_place(t)?);
     }
 
     // ── call 实参 / 结果、`va_arg` ────────────────────────────────────
@@ -251,94 +198,57 @@ pub(crate) fn plan_abi_edges(
             match inst.opcode {
                 Opcode::Call | Opcode::CallIndirect => {
                     let skip = usize::from(inst.opcode == Opcode::CallIndirect);
-                    for (op_idx, &v) in inst.operands.iter().enumerate().skip(skip) {
+                    for &v in inst.operands.iter().skip(skip) {
                         let Some(ty) = func.dfg.value_type(v) else {
                             continue;
                         };
-                        // **完整描述**：不需要动的实参也进计划（记 `Keep`），这样"计划 = 这个
-                        // 调用点全部 ABI 边界"是可枚举的，而不是"只有异常的那几条"。
-                        let plan = if !store.is_aggregate(ty) || store.size_bytes(ty) <= 8 {
-                            ArgPlan::Keep
-                        } else {
-                            let size = store.size_bytes(ty);
-                            let (loc, _shift) = agg_arg_place(machine, conv, &store, ty)?;
-                            match loc {
-                                AggArgLoc::ByRef => ArgPlan::ByRef { size },
-                                AggArgLoc::StackByVal { offset, size } => ArgPlan::StackByVal {
-                                    offset,
-                                    size: u32::from(size),
-                                },
-                                AggArgLoc::Registers => ArgPlan::Segs(size.div_ceil(8) as u8),
-                            }
-                        };
+                        if !store.is_aggregate(ty) || store.size_bytes(ty) <= 8 {
+                            continue;
+                        }
+                        let place = clf.arg_place(ty)?;
+                        if let Placement::Stack { size, .. } = place {
+                            return Err(scalar_stack_is_a_data_error(conv, u32::from(size)));
+                        }
                         edges.call_args.push(CallArgEdge {
                             inst: ii,
-                            op_idx,
                             val: v,
-                            plan,
+                            loc: ArgLoc {
+                                what: format!("arg{skip}+"),
+                                index: None,
+                                size: store.size_bytes(ty),
+                                place,
+                            },
                         });
                     }
-                    // call 结果（完整描述：不需要动的也记 `Keep`）
-                    if let Some(rt) = inst.results.first().and_then(|v| func.dfg.value_type(*v)) {
-                        let plan = if !store.is_aggregate(rt) || store.size_bytes(rt) <= 8 {
-                            CallResultPlan::Keep
-                        } else {
-                            let size = store.size_bytes(rt);
-                            if agg_ret_is_sret(machine, conv, &store, rt)? {
-                                CallResultPlan::SretMem
-                            } else {
-                                CallResultPlan::Segs(size.div_ceil(8) as u8)
-                            }
-                        };
+                    // call 结果（宽聚合才登记）
+                    if let Some(rt) = inst.results.first().and_then(|v| func.dfg.value_type(*v))
+                        && store.is_aggregate(rt)
+                        && store.size_bytes(rt) > 8
+                    {
+                        let ret = clf.ret_place(rt)?;
+                        if !matches!(ret, RetLoc::Indirect { .. }) && store.size_bytes(rt) > 16 {
+                            return Err(crate::pipeline::gaps::capability(
+                                "AGG_RET_PLACEMENT",
+                                format!(
+                                    "聚合返回 {} 字节：这份约定既不是 sret 也不是寄存器档：type {rt:?}",
+                                    store.size_bytes(rt)
+                                ),
+                            ));
+                        }
                         edges.call_results.push(CallResultEdge {
                             inst: ii,
                             val: inst.results[0],
-                            plan,
+                            ret,
                         });
                     }
-                }
-                Opcode::VaArg => {
-                    let Some(res) = inst.results.first().copied() else {
-                        continue;
-                    };
-                    let Some(ty) = func.dfg.value_type(res) else {
-                        continue;
-                    };
-                    if !store.is_aggregate(ty) {
-                        // 完整描述：标量取参也进计划。
-                        edges.va_args.push(VaArgEdge {
-                            inst: ii,
-                            val: res,
-                            plan: VaArgPlan::Keep,
-                        });
-                        continue;
-                    }
-                    let size = store.size_bytes(ty);
-                    let rule = va.and_then(|v| v.arg_rules.aggregate);
-                    let plan = match rule {
-                        // 约定声明了聚合取参规则：按"区域里是指针还是内联字节"分档
-                        // （阈值语义：`indirect` 只对**大于**阈值的尺寸成立）。
-                        Some(a)
-                            if a.indirect
-                                && (a.indirect_size_gt == 0 || size > a.indirect_size_gt) =>
-                        {
-                            VaArgPlan::Pointer { size }
-                        }
-                        Some(_) => VaArgPlan::Inline { size },
-                        // 没声明 ⇒ 保持 `Keep`，物化相会 fail-closed（点名缺哪条规则）。
-                        None => VaArgPlan::Keep,
-                    };
-                    edges.va_args.push(VaArgEdge {
-                        inst: ii,
-                        val: res,
-                        plan,
-                    });
                 }
                 _ => {}
             }
         }
     }
 
+    edges.shift = clf.shift();
+    edges.plans = clf.plans();
     Ok(edges)
 }
 
@@ -346,6 +256,7 @@ pub(crate) fn plan_abi_edges(
 mod tests {
     use super::*;
     use crate::pipeline::agg_expand::{IrSize, Place, Places};
+    use crate::pipeline::legalize::classify::is_by_ref;
 
     /// 建一个"含聚合形参 + 聚合返回"的函数（够触发计划里的两条路径）。
     fn fixture() -> Function {
@@ -373,7 +284,7 @@ mod tests {
         let f = fixture();
         let before = IrSize::of(&f);
         let m = crate::arch::x86::TargetMachine::new();
-        let edges = plan_abi_edges(&f, &m, "win64", None).expect("plan");
+        let edges = plan_abi_edges(&f, &m, "win64").expect("plan");
         let after = IrSize::of(&f);
         assert_eq!(before.insts, after.insts, "计划相不得新增/删除指令");
         assert_eq!(before.values, after.values, "计划相不得新增值");
@@ -385,12 +296,32 @@ mod tests {
             edges.summary()
         );
         assert_eq!(edges.params.len(), 1);
-        assert_eq!(
-            edges.params[0],
-            ParamPlan::AsPtr,
-            "win64 的 24B 形参应走 by-ref"
+        let p = edges.param_of(0).expect("形参 #0 应在计划里");
+        assert!(
+            is_by_ref(&p.place),
+            "win64 的 24B 形参应走 by-ref：{:?}",
+            p.place
         );
-        assert_eq!(edges.ret, RetPlan::Sret, "win64 的 24B 返回应走 sret");
+        assert!(
+            matches!(edges.ret, Some(RetLoc::Indirect { .. })),
+            "win64 的 24B 返回应走 sret：{:?}",
+            edges.ret
+        );
+    }
+
+    /// **一次分类**：计划里的引擎规划次数 = **不同**类型个数（不是使用点个数）。
+    #[test]
+    fn one_plan_per_distinct_type() {
+        let f = fixture();
+        let m = crate::arch::x86::TargetMachine::new();
+        let edges = plan_abi_edges(&f, &m, "win64").expect("plan");
+        // 夹具只有 1 个聚合类型（形参与返回同型）⇒ 形参一次 + 返回一次 = 2。
+        assert_eq!(
+            edges.plans,
+            2,
+            "形参与返回是同一类型，但各查一次（形参与返回是两个不同的落点问题）：{}",
+            edges.summary()
+        );
     }
 
     /// **位置表写一次**：同一值计划两次是计划本身的 bug（不是运行时数据问题）。

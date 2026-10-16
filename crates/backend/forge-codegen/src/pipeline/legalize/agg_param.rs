@@ -2,10 +2,12 @@
 //!
 //! 从 `compiler.rs` 迁出（v23 M6 批次 2）。
 
-use super::common::{AggArgLoc, agg_arg_place, collect_extract_jobs};
+use super::classify::is_by_ref;
+use super::common::collect_extract_jobs;
 use crate::IrError;
 use crate::pipeline::agg_expand::UseJob;
 use crate::pipeline::agg_expand::UseKind;
+use forge_abi::Placement;
 
 use crate::pipeline::agg_expand::{Place, Places};
 use forge_ir::*;
@@ -24,12 +26,13 @@ use forge_ir::*;
 /// - `Stack`（sysv64 `>16B`）：发射侧尚未接 ⇒ 明确 Unsupported（A2′）。
 pub(crate) fn expand_large_agg_params(
     func: &mut Function,
+    edges: &crate::pipeline::legalize::plan::AbiEdges,
     agg_slots: &mut Places,
     shadow_agg: &mut forge_ir::entity::map::SecondaryMap<Value, TypeId>,
-    machine: &impl forge_isa_runtime::machine::target::TargetMachine,
-    conv: &str,
 ) -> Result<(), IrError> {
     let old_params = func.param_types();
+    // **只读计划**（v25 M1）：宽聚合形参的落点由计划相给出——本 pass **不再问引擎**
+    //（签名里连机器与约定名都没有，规则由类型系统保证）。
     // 每参数：寄存器档的段数（by-ref / 按值进传出区档记 0 = 不拆段）
     let mut seg_map: Vec<usize> = Vec::with_capacity(old_params.len());
     let mut by_ref: Vec<bool> = Vec::with_capacity(old_params.len());
@@ -41,46 +44,40 @@ pub(crate) fn expand_large_agg_params(
     let mut agg_stack_shift = 0i32;
     let mut has_large = false;
     for (i, t) in old_params.iter().enumerate() {
-        // **一次取锁**（读路径纪律）：判定与落点探针在同一段读锁里做——探针只要
-        // `&TypeStore`，不碰 `&mut func`，所以不必为它再取一次读锁。
-        let (size, probed) = {
-            let ts = func.types.borrow();
-            let is_agg = ts.is_aggregate(*t);
-            let size = ts.size_bytes(*t);
-            let probed = if is_agg && size > 8 {
-                Some(agg_arg_place(machine, conv, &ts, *t)?)
-            } else {
-                None
-            };
-            (size, probed)
-        };
-        if let Some((place, shift)) = probed {
-            match place {
-                AggArgLoc::ByRef => {
-                    seg_map.push(0);
-                    by_ref.push(true);
-                    keep_param.push(false);
-                    has_large = true;
-                }
-                AggArgLoc::StackByVal { offset, .. } => {
-                    seg_map.push(0);
-                    by_ref.push(false);
-                    keep_param.push(true);
-                    agg_stack_shift = shift;
-                    stack_agg.push((i, offset, *t));
-                    has_large = true;
-                }
-                AggArgLoc::Registers => {
-                    seg_map.push(size.div_ceil(8) as usize);
-                    by_ref.push(false);
-                    keep_param.push(false);
-                    has_large = true;
-                }
-            }
-        } else {
+        // 非宽聚合（`≤8B` 或非聚合：约定可能仍走寄存器档，C ABI 强制）⇒ 原样保留。
+        let Some(loc) = edges.param_of(i) else {
             seg_map.push(1);
             by_ref.push(false);
             keep_param.push(true);
+            continue;
+        };
+        match &loc.place {
+            p if is_by_ref(p) => {
+                seg_map.push(0);
+                by_ref.push(true);
+                keep_param.push(false);
+                has_large = true;
+            }
+            Placement::StackByVal { offset, .. } => {
+                seg_map.push(0);
+                by_ref.push(false);
+                keep_param.push(true);
+                agg_stack_shift = edges.shift;
+                stack_agg.push((i, *offset, *t));
+                has_large = true;
+            }
+            // 计划相已经拒绝过这一档（判据只有一处），走到这里就是计划与 pass 不一致。
+            Placement::Stack { .. } => {
+                return Err(IrError::Internal(format!(
+                    "形参 #{i} 的计划是标量栈落点（计划相应已拒绝）"
+                )));
+            }
+            _ => {
+                seg_map.push((loc.size as usize).div_ceil(8));
+                by_ref.push(false);
+                keep_param.push(false);
+                has_large = true;
+            }
         }
     }
     if !has_large {
@@ -162,7 +159,7 @@ pub(crate) fn expand_large_agg_params(
     // 把"该聚合住在 `[fp + offset]`"登记进 `agg_slots`，使用处按地址读。
     // `StackAddr` 的 lea 位移 = 立即数 − callee-saved 区平移（`lowering.rs` 的
     // `current_offset`）⇒ 立即数写 `offset + shift` 才正好落在 `[fp + offset]`
-    //（`shift` 与 `LowerCtx::stack_slot_shift` 同源，见 `agg_arg_place`）。
+    //（`shift` 与 `LowerCtx::stack_slot_shift` 同源，由分类器给出）。
     for (i, offset, _ty) in stack_agg {
         let old_v = old_bvals[i];
         let sa = func.make_inst(

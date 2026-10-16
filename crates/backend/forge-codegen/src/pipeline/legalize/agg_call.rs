@@ -3,8 +3,10 @@
 //! 从 `compiler.rs` 迁出（v23 M6 批次 2）——pass 体不再住在调用点旁边，
 //! 由 `legalize::LegalizeDriver` 定序调用。
 
-use super::common::{AggArgLoc, agg_arg_place, agg_ret_is_sret, append_param};
+use super::classify::is_by_ref;
+use super::common::append_param;
 use crate::IrError;
+use forge_abi::Placement;
 
 use crate::pipeline::agg_expand::{Place, Places};
 use crate::pipeline::legalize::materialize::ensure_value_addr;
@@ -18,24 +20,13 @@ use forge_ir::*;
 /// `agg_slots`，早一步把 sret 形参立起来，后续它们才知道"返回值往哪儿写"。
 pub(crate) fn expand_sret_return(
     func: &mut Function,
-    machine: &impl forge_isa_runtime::machine::target::TargetMachine,
-    conv: &str,
+    edges: &crate::pipeline::legalize::plan::AbiEdges,
 ) -> Result<Option<Value>, IrError> {
-    // **一次取锁**：找宽聚合返回 + 问它的落点，在同一段读锁里做（探针只要 `&TypeStore`）。
-    let sret_ty: Option<TypeId> = {
-        let store = func.types.borrow();
-        let hit = func
-            .return_types()
-            .into_iter()
-            .find(|t| store.is_aggregate(*t) && store.size_bytes(*t) > 8);
-        match hit {
-            Some(ty) if agg_ret_is_sret(machine, conv, &store, ty)? => Some(ty),
-            _ => None,
-        }
-    };
-    let Some(_ty) = sret_ty else {
+    // **只读计划**（v25 M1）：宽聚合返回是不是 sret，由计划相给出的 `RetLoc` 说
+    //（`Indirect` = 调用方出缓冲）。本 pass 不再问引擎。
+    if !matches!(edges.ret, Some(forge_abi::RetLoc::Indirect { .. })) {
         return Ok(None);
-    };
+    }
     // **不写 `sret` 属性**（与 A1′ 的 by-ref 形参同一条规律）：引擎对带 sret/byval 的落点
     // 给 `Indirect`，而生成物 `move_args` 的 `Indirect` 收参是"从指针 **load** 出值"
     // （值为寄存器语义）——那样形参拿到的是**缓冲里的内容**而不是缓冲地址。
@@ -59,9 +50,8 @@ pub(crate) fn expand_sret_return(
 /// RAX/RDX 双 mov），旧结果值使用处重写（extractvalue/store/转传）。
 pub(crate) fn expand_large_agg_call_results(
     func: &mut Function,
+    edges: &crate::pipeline::legalize::plan::AbiEdges,
     agg_slots: &mut Places,
-    machine: &impl forge_isa_runtime::machine::target::TargetMachine,
-    conv: &str,
 ) -> Result<(), IrError> {
     // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
     // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
@@ -88,16 +78,14 @@ pub(crate) fn expand_large_agg_call_results(
                 && store.is_aggregate(rt)
                 && store.size_bytes(rt) > 8
             {
-                let size = store.size_bytes(rt) as usize;
-                let sret = agg_ret_is_sret(machine, conv, &store, rt)?;
-                if !sret && size > 16 {
-                    return Err(crate::pipeline::gaps::capability(
-                        "AGG_RET_PLACEMENT",
-                        format!(
-                            "聚合返回 {size} 字节：这份约定既不是 sret 也不是寄存器档：type {rt:?}"
-                        ),
-                    ));
-                }
+                // **只读计划**（v25 M1）：「既不是 sret 也不是寄存器档」这条判据只有一处
+                //（计划相），走到这里说明计划与 pass 不一致。
+                let Some(ret) = edges.call_result_of(ii) else {
+                    return Err(IrError::Internal(format!(
+                        "call {ii:?} 的宽聚合结果不在计划里（计划相应已登记）"
+                    )));
+                };
+                let sret = matches!(ret, forge_abi::RetLoc::Indirect { .. });
                 jobs.push(Job {
                     block: b,
                     pos,
@@ -461,8 +449,7 @@ fn load_segs_from_addr(
 
 pub(crate) fn expand_agg_call_args(
     func: &mut Function,
-    machine: &impl forge_isa_runtime::machine::target::TargetMachine,
-    conv: &str,
+    edges: &crate::pipeline::legalize::plan::AbiEdges,
     agg_slots: &mut Places,
     shadow_agg: &forge_ir::entity::map::SecondaryMap<Value, TypeId>,
 ) -> Result<(), IrError> {
@@ -509,13 +496,21 @@ pub(crate) fn expand_agg_call_args(
         //  - `StackByVal`（sysv64）：同样建副本 + 传指针，但**写 `byval(聚合类型)` 属性**
         //    ⇒ 调用点形状按**聚合**算 ⇒ 落点 `StackByVal`，发射侧从指针逐段拷进传出区；
         //  - `Registers`：现有拆段路径。
-        let (place, _) = agg_arg_place(machine, conv, &store, ty)?;
-        let by_ref = matches!(place, AggArgLoc::ByRef);
+        // **只读计划**（v25 M1）：按**值**查（`expand_large_agg_call_results` 可能已经
+        // 往实参表前插了 sret 缓冲指针 ⇒ `op_idx` 会漂移，值句柄不会，见 `CallArgEdge`）。
+        let Some(loc) = edges.call_arg_of(job.inst, job.val) else {
+            return Err(IrError::Internal(format!(
+                "call {:?} 的宽聚合实参 {:?} 不在计划里（计划相应已登记）",
+                job.inst, job.val
+            )));
+        };
+        let place = loc.place.clone();
+        let by_ref = is_by_ref(&place);
         // **按值整块进传出区**（sysv64）：与 by-ref 一样先在调用方本地建副本、传指针；
         // 区别是**写 `byval(聚合类型)` 属性**——调用点形状据此按**聚合**算（⇒ 落点
         // `StackByVal`），发射侧再从该指针逐 8 字节拷进传出区（`arg_bytes_*` 三角色）。
         // 被调方一侧的地址口径已由 lowering 的"正立即数 = ABI 相对"钉住。
-        let stack_by_val = matches!(place, AggArgLoc::StackByVal { .. });
+        let stack_by_val = matches!(place, Placement::StackByVal { .. });
         if !by_ref && !stack_by_val && size > 16 {
             return Err(crate::pipeline::gaps::capability(
                 "AGG_ARG_PLACEMENT",

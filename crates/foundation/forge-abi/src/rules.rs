@@ -369,7 +369,7 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                     float_arg: a("cursor", None, None, false),
                     // win64：聚合实参（>8B）按 psABI 走"调用方副本 + 指针" ⇒ 变参区里是**指针**，
                     // 游标与整数类同一条（每个实参槽 8 字节）。≤8B 的聚合按整数值传，
-                    // 由调用方的聚合分类决定（`agg_arg_place`），读取侧只管"间接"这一种。
+                    // 由调用方的聚合分类决定（见 forge-codegen 的 `legalize/classify.rs`），读取侧只管"间接"这一种。
                     aggregate_arg: Some(a("cursor", None, None, false)),
                     aggregate_indirect: true,
                     // win64 的分类是 `aggregate size_gt 8 ⇒ indirect`、`size_le 8 ⇒ 整数池直传`：

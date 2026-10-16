@@ -175,7 +175,7 @@ pub(crate) fn memoryize_insertvalue(
     // **沿定义链求来源地址**（v24 M3）：基值可能是另一个 `insertvalue`（链式构造）或 `undef`
     //（全 0）。以前只看 `places` 里有没有现成的地址，于是链式场景里基值的字段会**静默丢掉**
     //（症状：v23 那条 `main_ins` 返回 `72198297058681447` 而非 11）。现在递归地把基值也
-    // 内存化，拿到地址后再搬；`undef`/`poison` 与中国式 `None` 一样按**补 0** 处理。
+    // 内存化，拿到地址后再搬；`undef`/`poison` 与"没有来源"一样按**补 0** 处理。
     let src = ensure_value_addr(func, store, places, shadow_agg, block, agg_v)?.map(Place::Mem);
     // 1) 新槽 + 把来源字节搬进去（内存档逐段 load；段值档直接 store；无来源则**补 0**——
     //    保守且确定，不读未初始化内存）。

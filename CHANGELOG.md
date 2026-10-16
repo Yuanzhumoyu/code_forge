@@ -11,6 +11,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — 后端 v25 M1：一次分类处处消费（ABI 落点只有一个来源）
+
+**问题**（立项侦察实测）：v24 的两相化只做完了**改写**那一半——计划相产出的 `AbiEdges`
+**8 处引用里只有 1 处写、零消费者**；落点决策散在 **5 个调用点**，每处各自跑一遍引擎规划
+（`plan_for_shapes` + 注册表读锁），并用本仓手抄的三值枚举表达（它只是 `Placement` 的投影）。
+
++ 新增 `pipeline/legalize/classify.rs`：`Classifier` 是**唯一**问 ABI 引擎的通道，返回
+  `forge-abi-model` 的**规范类型**（`ArgLoc`/`RetLoc`/`Placement`），**按类型去重**
+  （同一类型只问一次引擎）。另配两个口径函数：`is_by_ref` 与 `scalar_stack_is_a_data_error`
+  （"约定把聚合判成标量栈落点" = **数据错误**，不是能力缺口）。
++ `AbiEdges` 成为**唯一落点来源**并被生产者消费：`params`/`ret`/`call_args`/`call_results`
+  换成规范类型（**删除**五种计划枚举 `ParamPlan`/`RetPlan`/`ArgPlan`/`CallResultPlan`/
+  `VaArgPlan` 及其手抄边结构）；生产者签名里**不再有机器与约定名**——规则由类型系统保证，
+  计划缺失 ⇒ `IrError::Internal`。
++ **删除清单清零**：手抄落点枚举与两个单类型探针（`common.rs` 92 行）全仓零引用。
++ **按值查而不是按序号查**（实测踩到的坑）：`agg-call` 会往 call 实参表前插 sret 缓冲指针，
+  之后 `op_idx` 比计划记录时大 1 ⇒ 计划按**值句柄**查，不受插入影响。
++ 两处"判据重复"收进计划相（`[cap:AGG_RET_PLACEMENT]`、标量栈落点），pass 侧改为 `Internal`；
+  删掉只在摘要里被读的两处装饰（`va_args` 载荷、`Classifier::ret_is_sret`）。
++ 新增守卫 `classification_single_entry`（3 条）：`plan_for_shapes` 只许出现在三处白名单
+  （双向相等）；`Classifier::new` 只许在计划相、生产者**必须**引用 `AbiEdges`
+  （否则计划只是装饰）；旧符号全仓含注释零出现。
++ 读路径预算按实测**下调**（`agg_call` 5→4、`agg_param` 9→8）。
++ 验收：`forge-codegen --lib` **2835 passed**；workspace 全量 exit 0；JIT 两矩阵（197/3/0 ·
+  136/64/0）；asm 三档（3/1/1）；`capability_gaps`/`trace_knobs`/`entity_tables`/
+  `read_path_budget`/`classification_single_entry` 全绿；clippy `-D warnings` 与 fmt 干净。
+
 ### Docs (2026-10-11) — 后端 v24 M5：契约回写（`backend-pipeline.md` 改为 v24 现行契约）
 
 `reference/backend-pipeline.md` 此前只写 v23 M1 的编译入口，v24 的四项结构变化没有落进契约。
