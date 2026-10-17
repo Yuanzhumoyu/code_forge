@@ -1613,6 +1613,22 @@ const CASES: &[Case] = &[
         reason: "",
     },
     // ── F2 负向测试：编译失败断言（失败即报错）──
+    // ── v27：`core::intrinsics::abort()`（此前落到 `unsupported intrinsic`）──
+    //   后端无内联 `asm!` ⇒ 实现为 kernel32 `ExitProcess(3)`（MSVC `abort` 的码；
+    //   Rust 对 `abort()` 的退出码未规定）。用例走**真调用**路径，断言退出码 = 3。
+    Case {
+        name: "intrinsic_abort",
+        body: "if core::hint::black_box(true) { unsafe { core::intrinsics::abort() } } 42",
+        expected: 3,
+        extra: "#![feature(core_intrinsics)]",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 intrinsics",
+        reason: "abort() → ExitProcess(3)，进程立即终止（不返回 42）",
+    },
     // ── v27 M2：`panic=unwind` **明确拒绝**（`[cap:UNWIND]`）──
     //   后端的拒绝原点是 `codegen_crate` 里的 panic 策略检查：缺 SEH 展开表
     //   （`.pdata`/`.xdata`）与 `__rust_eh_personality`。用例名含 `panic_unwind`

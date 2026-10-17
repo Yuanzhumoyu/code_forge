@@ -15,6 +15,18 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         cur_block: Block,
     ) -> Result<Vec<Value>, ForgeError> {
         let r: Vec<Value> = match name {
+            // `core::intrinsics::abort()`：**立即终止进程**（不展开、不跑析构）。
+            // v27：此前它会落到末尾的 `unsupported intrinsic` ⇒ 任何调用 `abort()` 的真实
+            // crate（`std` 的 `abort_internal`、`panic=abort` 的部分路径）都编不过。
+            // 后端**没有内联 `asm!`**（`[cap:INLINE_ASM]`）⇒ 用 kernel32 的 `ExitProcess`：
+            // Rust 对 `abort()` 的退出码**未作规定**，这里取 MSVC `abort()` 的 3。
+            // 之后的 `unreachable()` 由调用点（Call 终结符的 `target: None` 分支）发。
+            "abort" => {
+                let code = self.builder.iconst(3, TypeId::I64);
+                let fr = self.func_refs.intern("ExitProcess");
+                self.builder.call(FuncRef::new(fr), &[code], &[]);
+                vec![]
+            }
             "size_of_val" | "align_of_val" => {
                 let t = substs_first_ty(&substs).unwrap_or(fty);
                 let sz = layout_bytes(self.tcx, t);

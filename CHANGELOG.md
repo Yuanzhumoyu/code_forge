@@ -11,6 +11,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-rustc v27：`abort()` intrinsics 落地 + TLS 明确决策 + 契约回写
+
++ **`core::intrinsics::abort()` 落地**（`lower/intrinsics.rs`）：此前落到 `unsupported intrinsic`
+  ⇒ 任何走 `abort` 路径的真实 crate（`std` 的 `abort_internal`、部分 `panic=abort` 收尾）都编不过。
+  实现发 kernel32 `ExitProcess(3)`（MSVC `abort()` 的退出码；Rust 对 `abort()` 的退出码**未规定**）；
+  其后的 `unreachable()` 由调用点（`Call` 终结符的 `target: None` 分支）发——后端没有内联 `asm!`
+  （`[cap:INLINE_ASM]`），FFI 终止进程是当前唯一正确出口。
+  e2e：`intrinsic_abort` ⇒ **`PASS intrinsic_abort exit=3`**；用例总数 **111**
+  （README 机读计数标记同步，由 `rustc_doc_counts_guard` 强制）。
++ **TLS 从"待做"改为"明确 `不做`（附条件）"**：两条路线都已量到代价——**静态路**（`.tls$` +
+  `gs:[58]`）需要 IR 先支持**段前缀**（`MemRef` 现只有 base/disp/index/scale）；**动态路**
+  （`TlsAlloc`/`TlsGetValue` + 首触初始化 + 每静态两个隐藏全局 + **4 个静态地址物化调用点**）
+  约两轮，且半成品会"能编过但语义可疑" ⇒ 保持 `[cap:TLS]` fail-closed。**条件**：推进 `std`
+  （M3-②）时必须先做动态路，清单已写进方案 §8。台账行同步改判。
++ **契约回写**：`crates/tools/forge-rustc/README.md` 路线图结尾不再写"无剩余开放项"
+  （新增「v27 能力与缺口面」节：`global_asm!`、trap 语义、四个缺口 ID 决策表、门禁两步+两守卫、
+  M2.5→TLS→M3 顺序依赖）；`CLAUDE.md` 新增「forge-rustc 现状速查」；`WORKAROUNDS.md` 的
+  `WA-02` 改判已关闭、补回悬空的 `WA-26`/`WA-28`；`M3-①` alloc 运行时改**按需注入**
+  （链 `std` 时不再注入手写 shim，`WA-02` 的正解）。
++ 验收：全量 e2e **111/111**、零 `KNOWN`；三个守卫（`capability_gaps` / `rustc_doc_counts` /
+  `workarounds_guard`）绿；文档 0 issues。
+
 ### Added (2026-10-11) — forge-rustc v27 M5：门禁与守卫收口（后端 e2e 进门禁 + 两处文档漂移被钉住）
 
 + **门禁覆盖后端真值**（治 E9）：`cargo forge gate` 新增两步（`Scope::Windows`）——

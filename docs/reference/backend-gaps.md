@@ -58,7 +58,7 @@ v24 立项时的侦察结论：能力缺口以 60+ 处 `Unsupported(...)` 的形
 | `ABI_RET_SLOT_MISSING` | 调用布局里没有返回寄存器落点（`ret` 槽与约定级 `ret_gpr` 都没有），或宽返回缺 `hidden_sret` 槽 | 数据层 | 约定的 `ret_classify`/`hidden_sret` + 该机绑定（v26 M4 新增；4 个发射点） |
 | `ABI_CLOBBERS_MISSING` | 调用点的破坏集既没有 plan、约定级破坏集也是空的 | 数据层 | 宿主注册该约定（`conv_registry`）或约定数据补 `clobbers`（v26 M4 新增） |
 | `UNWIND` | `panic=unwind`：缺 SEH 展开表（`.pdata`/`.xdata`）、缺 `__rust_eh_personality`、缺 landing pad 降级 | **不做** | （v27 M2 决策）真做需要：CFI 描述每个函数的 prologue + 展开指令表 + personality 实现 + rustc 侧 `unwind` 表接线；当前 e2e 全部 `-C panic=abort`，拒绝点是 `codegen_crate` 的 panic 策略检查（带此 ID） |
-| `TLS` | 线程局部静态（`#[thread_local]`）：static 路径只发 `.data`/`.rodata` ⇒ **线程私有语义静默丢失** | **待做** | （v27 M2 先 fail-closed）真实现需要 `.tls$` 段 + TLS 回调目录/`__tls_index`（Windows）或 `%fs:` 相对寻址 + 访问模型降级；判据 = 双线程读写互不干扰的真执行用例 |
+| `TLS` | 线程局部静态（`#[thread_local]`）：static 路径只发 `.data`/`.rodata` ⇒ **线程私有语义静默丢失** | **不做** | （v27 决策，2026-10-11 实测复核）两条路线都已量：**静态路**（`.tls$` + `gs:[58]`）需 IR 先支持**段前缀**（当前 `MemRef` 只有 base/disp/index/scale）；**动态路**（`TlsAlloc`/`TlsGetValue` + 首触初始化 + 每静态两个隐藏全局 + 4 个静态地址物化调用点）约两轮，且半成品会「能编过但语义可疑」⇒ 保持 fail-closed。**条件**：推进 `std`（M3-②）时必须先做动态路，清单见方案 §8 的 TLS 决策节 |
 | `INLINE_ASM` | 内联 `asm!`（`TerminatorKind::InlineAsm`）：IR 层无法表达「原始汇编文本 + 操作数寄存器约束」 | **待做** | （v27 M2 的下一项） 落地前它是**静默错值**（落进兜底 `_ => unreachable()`：编译无声通过、运行退出 `0xC000_001D`，2026-10-11 实测）⇒ 先改成**明确拒绝**；真做要 IR 层新增节点 + 约束降级，与 `global_asm!`（整段交汇编器）不是一条路 |
 | `MIR_TERMINATOR` | MIR 终结符里后端尚未支持的那些（协程的 `FalseEdge`/`FalseUnwind`/`CoroutineDrop` 等） | **不做** | 兜底必须**明确拒绝**、不许静默 `unreachable`： 未知终结符 ⇒ 编译期报错点名 kind；静默 `unreachable` 会把「没实现」伪装成「程序自己不可达」——`InlineAsm` 就是这么被藏了很久（v27 M2） |
 | `ABI_PLACEMENT_UNEMITTED` | 调用布局给了发射侧还没接的落点（`RegPair`/`RegGroup`/无指针 `Indirect`） | 数据层 | 约定改用已接的落点，或补齐发射侧（A6 余项；v26 M4 新增） |

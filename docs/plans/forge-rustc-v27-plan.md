@@ -97,6 +97,35 @@ unwrap 触发 `catch_unwind` 或用例级 SEH 决策文档、`thread_local!` 读
      以及内联 `asm!`（`[cap:INLINE_ASM]`，若用户 crate 或平台胶水层用到）。
      ⇒ **M3 的真实顺序依赖 M2.5（内联 asm）与 TLS**，这一点本轮已用代码事实确认，不是猜测。
 
+### TLS 的决策（2026-10-11 实测复核后定为 **不做**，附条件）
+
+v27 M2 曾把 TLS 记成"待做（先 fail-closed）"。本轮把两条实现路线都量到了具体代价，
+按"宁可明确拒绝，不要半途的错语义"的口径**改判为 `不做`**，并把条件写清：
+
+**路线 A：静态 TLS（`.tls$` 段 + TEB 相对寻址）**
+
+- 需要的机器码形态是 `mov rax, gs:[58]`（TEB→ThreadLocalStoragePointer）+ `[rax + 8*_tls_index + off]`；
+- **阻塞点**：我们的 `MemRef` 只有 base/disp/index/scale，**没有段前缀（`gs:`）**，IR 与谱都表达不了
+  ⇒ 要先扩 IR（一个新地址形态）+ 谱模板 + 编码器，连锁面很大。
+
+**路线 B：动态 TLS（`TlsAlloc`/`TlsGetValue`/`TlsSetValue`，kernel32 已链）**
+
+- 语义正确、**不需要**新的 IR 能力（就是一个运行时函数 + 调用），代价是每次访问一次函数调用；
+- 实测确认的改动面：① 生成运行时
+  `__forge_tls_addr(slot, size, align, init) -> ptr`（首触 `TlsAlloc` + `TlsGetValue` 判空 +
+  `__rust_alloc` + `memcpy` + `TlsSetValue`，约 8 个基本块，全用现有 builder 能力）；
+  ② 每个 TLS 静态发**两个隐藏数据符号**（初值模板 `__forge_tls_init_<sym>` 与索引槽
+  `__forge_tls_slot_<sym>`，命名确定 ⇒ 降级侧不必查表）；③ 把"静态地址物化"统一到一个 helper——
+  但 `intern_const_data` 现有 **4 个调用点**（`rvalue.rs`、`mod.rs`、`statement.rs` ×2），
+  且其中两处用它做 slice 字节/promoted 路径 ⇒ 返回类型要改成枚举、四处同步；
+  ④ `FuncRefTable` 需要一个"按符号名取 GlobalId"的入口（现有 `intern_global` 按 `alloc_id` 键）。
+- 估算：**约两轮**（含调试），且中途若停在半成品，`#[thread_local]` 会"能编过但语义可疑"——
+  比现在**明确拒绝**更糟。
+
+**结论**：在本专项里 **不做**，保持 `[cap:TLS]` fail-closed（诊断里现已写明"会静默丢线程私有语义"）。
+**条件（什么时候重启）**：只要决定推进 `std` 可用性（M3-②），就必须先做路线 B——因为 `std` 的
+`thread_local!` 是硬依赖；届时按上面 ①–④ 的顺序做，并把本期 4 个调用点当作既有清单。
+
 ### 收口待办（M6）
 
 - **forge-rustc 的测试代码此前没有 lint 标准**：门禁的 clippy 只把 forge-rustc 当 **path 依赖**
@@ -106,6 +135,16 @@ unwrap 触发 `catch_unwind` 或用例级 SEH 决策文档、`thread_local!` 读
   加一步 `clippy -p forge-rustc --all-targets`（让它与其余 crate 同标准）。
 - **`-Zshare-generics=yes`（`WA-04`）**：现在仍是"链接期才发现的 LNK2019"⇒ 收口时可改为
   **编译期明确拒绝**（带缺口 ID）或补齐"被引用但上游未生成"的实例。
+
+### M3-③ `core::intrinsics::abort()` 落地（2026-10-11，工作区）
+
+- 现状：`abort()` 落到 `lower_intrinsic` 的末尾 ⇒ `unsupported intrinsic`（编译失败）。
+  任何走 `abort` 路径的真实 crate（`std` 的 `abort_internal`、部分 `panic=abort` 收尾）都编不过。
+- 落地：`"abort"` 分支发 kernel32 `ExitProcess(3)`（MSVC `abort()` 的退出码；Rust 对 `abort()`
+  的退出码**未作规定**）；其后的 `unreachable()` 由调用点（`Call` 终结符的 `target: None` 分支）发。
+  后端没有内联 `asm!`（`[cap:INLINE_ASM]`）⇒ 不能发 `ud2`，用 FFI 终止进程是当前唯一正确出口。
+- e2e：`intrinsic_abort`（`black_box(true)` 后调 `abort()`）⇒ **`PASS intrinsic_abort exit=3`**；
+  用例总数 **111**（README 的机读计数标记同步更新——`rustc_doc_counts_guard` 会强制这件事）。
 
 ### M3 原始条目
 
@@ -394,7 +433,7 @@ match 的兜底 `_ => { self.builder.unreachable(); }`。实测（`asm!("mov {0}
 | `global_asm!` | **已实现**（含 `const`/`sym` 占位符） | `src/global_asm.rs`（新增）+ e2e `global_asm_call`（exit=42）/`global_asm_sym_const`（exit=42，`sym` 写错名字会在链接期报未定义符号）；`WA-03` 改判已关闭 |
 | 内联 `asm!` | **fail-closed**（原来是静默错值）→ 真实现**另立 M2.5** | `[cap:INLINE_ASM]` + e2e `neg_inline_asm`；设计见下一节 |
 | `panic=unwind` | **明确 `不做`**（带缺口 ID） | `[cap:UNWIND]` + 台账行 + e2e `neg_panic_unwind` |
-| TLS | **fail-closed**（原来是静默丢语义），决策 `待做` | `[cap:TLS]` + 台账行 + e2e `neg_thread_local` |
+| TLS | **fail-closed**（原来是静默丢语义），决策改为 **`不做`**（条件见下节：推进 std 时必须先做路线 B） | `[cap:TLS]` + 台账行 + e2e `neg_thread_local` |
 
 **顺带堵住的静默黑洞**：MIR 终结符 match 的兜底 `_ => unreachable()` 改成
 `[cap:MIR_TERMINATOR]` 明确拒绝——静默 `unreachable` 会把「没实现」伪装成「程序自己不可达」
