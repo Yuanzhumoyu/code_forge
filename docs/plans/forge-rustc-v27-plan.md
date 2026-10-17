@@ -163,6 +163,17 @@ v27 M2 曾把 TLS 记成"待做（先 fail-closed）"。本轮把两条实现路
 - **`-Zshare-generics=yes`（`WA-04`）**：现在仍是"链接期才发现的 LNK2019"⇒ 收口时可改为
   **编译期明确拒绝**（带缺口 ID）或补齐"被引用但上游未生成"的实例。
 
+### S4 第二刀（2026-10-11）：`options(noreturn)` 可用
+
+- **此前**：`options.contains(NORETURN)` 参与 `ok` 判定 ⇒ 一票否决（`[cap:INLINE_ASM]`）。
+- **现在**：`noreturn` **不改变汇编文本**、只改**落点**——没有 fallthrough（rustc 侧 `targets`
+  为空）⇒ 当前块以 `unreachable()` 收尾（与"发散调用"用同一个终结符写法）。
+  CFG 可达性那一步本来就按 `NORETURN` 不排后继（`lower/mod.rs` 的落点收集），所以两处口径一致。
+- **e2e**：`inline_asm_noreturn`（`asm!("ud2", options(noreturn))` ⇒ **trap 0xC000001D**；
+  此前连编译都过不去）⇒ 用例数 **118**、`expect_trap` 3 条。
+- **口径提醒**：trap 用例的 `expected` 必须写**非零 NTSTATUS**（`-1073741795`），写 0 会被判
+  "want 0" 红——本轮踩了一次。
+
 ### M4-T4 首结论（2026-10-11）：`WA-01` 按设计关闭（不是待根治项）
 
 - **证据链**：① `add_data_with_relocs` 的文档写明**实测**——"MSVC 链接器对 `.rodata` 段的

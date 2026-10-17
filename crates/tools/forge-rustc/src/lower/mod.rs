@@ -1029,7 +1029,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             }
                         };
                     let mut ok =
-                        !options.contains(rustc_ast::InlineAsmOptions::NORETURN) && template_ok;
+                        // v27 S4：`options(noreturn)` 现在**支持**（此前一票否决）。它不改变汇编文本，
+        // 只改落点：没有 fallthrough，当前块必须以 `unreachable` 收尾（见下面的发射段）。
+        template_ok;
                     let mut constraints: Vec<String> = Vec::new();
                     let mut in_vals: Vec<Value> = Vec::new();
                     let mut out_tys: Vec<TypeId> = Vec::new();
@@ -1109,7 +1111,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 self.store_place(p, v);
                             }
                         }
-                        if let Some(t) = targets.first() {
+                        if options.contains(rustc_ast::InlineAsmOptions::NORETURN) {
+                            // v27 S4：`options(noreturn)` —— 汇编不返回 ⇒ 没有 fallthrough
+                            // （rustc 侧 `targets` 为空），当前块**必须**以 unreachable 收尾，
+                            // 否则 finish 断言报"块无终结符"。
+                            self.builder.unreachable();
+                        } else if let Some(t) = targets.first() {
                             let tgt = self.blocks[t];
                             self.builder.jump(tgt, &[]);
                         }

@@ -1783,6 +1783,23 @@ const CASES: &[Case] = &[
         reason: "clobber_abi(\"C\") 从 fail-closed 变成可用（纯 clobber 槽）",
     },
 
+    // ── v27 M2.5/S4：`options(noreturn)` ──
+    //   此前被一票否决（`[cap:INLINE_ASM]`）。现在支持：汇编不返回 ⇒ 没有 fallthrough
+    //   （rustc 侧 `targets` 为空）⇒ 当前块以 `unreachable` 收尾，`ud2` 真 trap。
+    Case {
+        name: "inline_asm_noreturn",
+        body: "unsafe { core::arch::asm!(\"ud2\", options(noreturn)) }",
+        expected: -1073741795, // 0xC000001D = NTSTATUS #UD（与 inline_asm_ud2 同口径）
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: true,
+        known_failure: false,
+        phase: "v27 M2.5 S4",
+        reason: "options(noreturn)：汇编不返回 ⇒ 块以 unreachable 收尾，ud2 真 trap",
+    },
+
     Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",

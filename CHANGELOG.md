@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-rustc v27 M2.5/S4 第二刀：内联 `asm!` 的 `options(noreturn)` 可用
+
++ `asm!("ud2", options(noreturn))` 从 **编译期拒绝**变成真 trap（e2e `inline_asm_noreturn`
+  ⇒ `0xC000001D`），用例总数 **118**（`expect_trap` 3 条）。
++ 实现口径：`noreturn` **不改变汇编文本**、只改**落点**——没有 fallthrough（rustc 侧 `targets`
+  为空）⇒ 当前块以 `unreachable()` 收尾（与"发散调用"同一个终结符写法）；CFG 可达性那一步本就连
+  `NORETURN` 不排后继，两处口径一致。
++ 口径提醒（本轮踩过）：trap 用例的 `expected` 必须写**非零 NTSTATUS**（`-1073741795`），写 0
+  会被判 "want 0" 红。
+
 ### Changed (2026-10-11) — v27 M4-T4：`WA-01` 按设计关闭（vtable 落 `.data` 不是技术债）
 
 + **证据链**：① `add_data_with_relocs` 的文档里有**实测**——"MSVC 链接器对 `.rodata` 段的
