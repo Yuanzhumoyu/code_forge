@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — v27 M4-T4：`WA-01` 按设计关闭（vtable 落 `.data` 不是技术债）
+
++ **证据链**：① `add_data_with_relocs` 的文档里有**实测**——"MSVC 链接器对 `.rodata` 段的
+  ADDR64 重定位不应用（链接后全 0），`.data` 段正常"；② `forge-object` 的 `add_rodata`
+  **故意没有** relocs 变体 ⇒ "只读段 + 重定位"这种链接后必坏的形态**不可表达**；
+  ③ 所以 vtable 指针表落 `.data` 是**给定工具链下的正确实现**。
++ 处置：`WA-01` 判**已关闭（按设计）**；`add_rodata` 的文档把不变量写清（后来者不必再试一次）；
+  `WORKAROUNDS.md` 的"根治方向"不再写"需主库兼容"（那是**无法根治**的外部行为）。
++ **残余代价如实记录**：指针表运行期**可写** ⇒ 丢掉只读页保护（W^X 层面的轻微退化）；
+  恢复只读语义要换链接器口径或做加载时重定位，都超出本后端的可控范围。
+
 ### Added (2026-10-11) — cargo-forge：`init --std`（std 探测从"手工改配置"变成一条命令）
 
 + `cargo forge init --std` 直接生成 **std** 口径的 `.cargo/config.toml`

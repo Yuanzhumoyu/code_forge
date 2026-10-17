@@ -181,6 +181,12 @@ impl<'a> ObjectWriter<'a> {
     }
 
     /// 添加只读数据到 `.rodata` 段。
+    ///
+    /// **故意没有 relocs 变体**（v27 M4-T4 / `WA-01` 的结论）：MSVC 链接器**不应用**
+    /// `.rodata` 段里的 ADDR64 重定位（实测链接后全 0）⇒ "只读段 + 重定位"这个组合
+    /// 在本工具链下**没有可用实现**。与其让调用方能写出"链接后变成 0"的对象，
+    /// 不如让这种形态**不可表达**：带重定位的数据（vtable 指针表等）必须走
+    /// [`Self::add_data_with_relocs`]（`.data`，运行期可写）。见 `WORKAROUNDS.md` 的 `WA-01`。
     pub fn add_rodata(&mut self, name: &str, data: &[u8], alignment: u64) -> Result<(), IrError> {
         let section = self.rodata_section.ok_or_else(|| {
             IrError::Emit("rodata section not available (use new() not new_text_only())".into())
