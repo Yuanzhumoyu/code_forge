@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-rustc v27 M3-②：`std` 探测工程（一条命令取结论）
+
++ 新增 [`examples/forge-rustc-std-hello/`](examples/forge-rustc-std-hello/README.md)：
+  用 forge-rustc 当后端、`std` 由 **LLVM 预编译**（`-Zbuild-std=std,panic_abort` +
+  `tools/forge-rustc-wrapper` 按 crate 名剥掉系统 crate 的 `-Zcodegen-backend`）编译的
+  最小 `println!` 程序。命令、前置（`rust-src`、dll、wrapper）与"已排除的前置阻塞"
+  （动态 TLS、`abort()`、alloc 按需注入）都写在它自己的 README 里。
++ **本仓 sandbox 内跑不通（环境限制，非后端缺陷）**：`-Zbuild-std=std` 需要从 registry 解析
+  `std` 的构建依赖（`cfg-if`/`getopts`），而 sandbox 无网络凭证（实测
+  `SSL connect error … SEC_E_NO_CREDENTIALS`）。把 `CARGO_HOME` 重定向进 workspace 能绕过
+  "`~/.cargo` 不可写"，但绕不过没有网络 ⇒ 结论须在沙箱外/CI 取（命令已固化）。
++ 方案账本 §8 记入 M3-② 的现状与下一步验收口径（跑通 `hello from std`；
+  失败时应以**明确的 `[cap:…]` 或编译错误**暴露缺口，而后逐条落成实现项或缺口 ID）。
++ 验收：文档 0 issues、`rustc_doc_counts` 守卫绿（用例数未变）。
+
 ### Added (2026-10-11) — forge-rustc v27：`#[thread_local]` 真实现（动态 TLS）
 
 + **线程局部静态真的能用**（此前是 `[cap:TLS]` fail-closed，更早则会把 `#[thread_local]`

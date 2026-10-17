@@ -417,6 +417,12 @@ unresolved_type_refs_fall_back_to_unspecified）为准。e2e `debuginfo_full` + 
 共 **44 步**；另有 `rustc_doc_counts`（本 README 的计数标记 ↔ `tests/e2e.rs` 双向相等）
 与 `workarounds_guard`（`[WA-NN]` 编号唯一 + 引用可解析）两个守卫。
 
+**`std` 探测工程**：
+[`examples/forge-rustc-std-hello/`](../../examples/forge-rustc-std-hello/README.md)
+——`std` 由 LLVM 预编译、wrapper 按 crate 名剥掉系统 crate 的 `-Zcodegen-backend`；
+需要网络与 `rust-src`。库内两个前置阻塞已排除：动态 TLS（`thread_local_roundtrip`）
+与 `abort()`（`intrinsic_abort`）。
+
 **下一批（方案里编号）**：**M2.5** 内联 `asm!` 真实现（S1–S4）→ **TLS 真实现** →
 **M3** `std` 可用性（依赖前两者：std 的 `thread_local!` 与平台胶水层用到它们）→
 **M4** 第二目标 + 对象层根治 → **M6** 契约回写与账本归档。

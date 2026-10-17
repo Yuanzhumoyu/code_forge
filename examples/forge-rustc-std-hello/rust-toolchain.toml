@@ -1,0 +1,4 @@
+﻿# 浮动 nightly：本机/CI 通常只装浮动通道（`-Zbuild-std` 需要 nightly）。
+# 若你的环境装的是固定日期通道，把 channel 改成那一版。
+[toolchain]
+channel = "nightly"

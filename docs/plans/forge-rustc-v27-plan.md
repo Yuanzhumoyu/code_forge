@@ -163,6 +163,36 @@ v27 M2 曾把 TLS 记成"待做（先 fail-closed）"。本轮把两条实现路
 - **`-Zshare-generics=yes`（`WA-04`）**：现在仍是"链接期才发现的 LNK2019"⇒ 收口时可改为
   **编译期明确拒绝**（带缺口 ID）或补齐"被引用但上游未生成"的实例。
 
+### M3-② `std` 探测：工程与命令已固化，**库内前置阻塞已排除**（2026-10-11）
+
+**已排除的前置阻塞**（本轮之前/本轮落地，均有 e2e 守护）：
+
+- **TLS**：`std` 的 `thread_local!` 依赖线程局部静态 ⇒ 动态 TLS 已实现
+  （`thread_local_roundtrip`，exit=14）；
+- **`abort()`**：`std` 的 `abort_internal` 走 `core::intrinsics::abort()` ⇒ 已实现
+  （`intrinsic_abort`，exit=3）；
+- **alloc 运行时**：链 `std` 时不再注入手写 shim（`WA-02`），避免 LNK2005。
+
+**新增探测工程**：`examples/forge-rustc-std-hello/`（`Cargo.toml` + `src/main.rs` +
+`rust-toolchain.toml`（浮动 `nightly`）+ README 里的精确命令）。形态与 `forge-rustc-hello`
+一致（独立 `[workspace]`，`panic=abort`），差别是 `build-std = ["std", "panic_abort"]`
+且 `std` 由 LLVM 编译（`tools/forge-rustc-wrapper` 按 crate 名剥离 `-Zcodegen-backend`）。
+
+**本仓 sandbox 内跑不通（环境限制，不是后端缺陷）**：`-Zbuild-std=std` 要解析 `std` 的
+构建依赖（`cfg-if`/`getopts` 等），而 sandbox **无网络凭证**——实测原文：
+
+```text
+error: failed to get `cfg-if` as a dependency of package `std v0.0.0 (…/library/std)`
+[35] SSL connect error (schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS)
+```
+
+补充实测：把 `CARGO_HOME` 重定向到 workspace 内（`target/cargo-home`，并复制 `~/.cargo/config.toml`
+的 ustc 镜像）能绕过"`~/.cargo` 不可写"，但**绕不过没有网络**这一条。⇒ 结论必须**在沙箱外
+（或 CI）**取；命令已固化到该工程 README，一条命令即可。
+
+**下一步（M3-② 的验收口径）**：在沙箱外/CI 跑通 `hello from std`；若失败，按后端原则它应当
+以**明确的 `[cap:…]` 或编译错误**暴露缺口 ⇒ 逐条落成新的缺口 ID 或实现项。
+
 ### M3-③ `core::intrinsics::abort()` 落地（2026-10-11，工作区）
 
 - 现状：`abort()` 落到 `lower_intrinsic` 的末尾 ⇒ `unsupported intrinsic`（编译失败）。
