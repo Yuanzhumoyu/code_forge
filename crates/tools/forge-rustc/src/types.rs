@@ -107,6 +107,21 @@ pub fn map_type<'tcx>(
         ty::TyKind::Never => Ok(TypeId::VOID),
         // 零大小类型用 I8 占位（不占栈空间，仅用于类型系统）
         _ => {
+            // v27 M5 审计（`u128` 事件的精确防线）：兜底**可以**接聚合/闭包/分配器形态
+            // （它们按指针形状表示，实测有 12+ 条用例依赖），但**标量**落到这里就是
+            // "静默变成指针"——`u128`/`i128` 当年正是这样被当成 64 位、整条算术链算错。
+            // 所以这里只钉标量：debug 构建（e2e 就是）一违反就炸，release 不受影响。
+            debug_assert!(
+                !matches!(
+                    ty.kind(),
+                    ty::TyKind::Int(_)
+                        | ty::TyKind::Uint(_)
+                        | ty::TyKind::Float(_)
+                        | ty::TyKind::Bool
+                        | ty::TyKind::Char
+                ),
+                "标量类型 `{ty}` 落到了 `map_type` 的兜底分支（会被静默当成指针）"
+            );
             if ty.is_unit() {
                 Ok(TypeId::VOID)
             } else {

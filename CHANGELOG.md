@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — v27 M5 补面之七：`map_type` 兜底加**标量**断言（一次被否掉的过界改动）
+
++ 上轮 `u128` 的根因是"兜底 `_ => PTR` 把未识别类型静默当指针"。本轮试图把兜底改成
+  **白名单**（只有 `Ref/RawPtr/FnPtr/FnDef/Dynamic/Str` 走 PTR）——**全量 e2e 12+ 条红**
+  （`nested_struct`/`box_value`/`vec_push`/`vec_string`/`closure_capture`/`drop_glue`/…）
+  ⇒ 兜底是**load-bearing** 的：聚合/闭包/分配器形态确实靠它拿"指针形状"表示。
++ 精确的防线是**只钉标量**：兜底分支加 `debug_assert!`（标量落到这里直接炸；debug 构建
+  就是 e2e，release 不受影响），并保留 `Int/Uint(I128)` 的显式拒绝。回退后 **122/122 绿**。
++ 教训记在账本 §8：审计要**先测再改**——"看起来更严格的兜底"可能正在承载别的语义；
+  但结论比改动值钱：这一类（标量静默变指针）现在被断言永久钉住。
+
 ### Fixed (2026-10-11) — v27 M5 补面之六：`u128`/`i128` 从**静默错值**改为明确拒绝
 
 + **怎么发现的**：想给 128 位整数补用例（此前**零覆盖**），写完真跑 ⇒ 返回 1 而不是 42；
