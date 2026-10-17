@@ -818,8 +818,8 @@ mnemonic = "inline_asm"
 type_rule = "none"
 llvm = "inline_asm"
 category = "asm"
-doc = "内联汇编（v27 M2.5/S1）：立即数给汇编文本，由本 ISA 的汇编器逐条解析后就地插入；无操作数、无结果、有副作用。"
-operands = 0
+doc = "内联汇编（v27 M2.5）：immediates[0] = 约束描述、immediates[1] = 汇编文本；操作数 = in/out/inout 的值（就地写回，故无结果）；有副作用。"
+operands = "variadic"
 results = 0
 side_effect = true
 

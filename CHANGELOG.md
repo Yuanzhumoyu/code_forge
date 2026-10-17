@@ -11,6 +11,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-ir/forge-codegen v27 M2.5/S2a 基础设施（内联汇编的寄存器约束）
+
++ **`Opcode::InlineAsm` 的操作数改成变参**（`ops.toml: operands = "variadic"`，`results` 仍 0），
+  立即数约定为 `[0] = 约束描述`、`[1] = 汇编文本`；`builder::inline_asm_with(constraints, text,
+  operands)` 是新的入口（`inline_asm(text)` 保留为 S1 纯文本形态）。
++ **`CompileState` 新增两个 `'static` 快照**：`reg_name_of`（寄存器编号+类 → 汇编拼写，来自
+  `Arc::clone(machine.reg_info())`——借 `&M` 活不过构造函数）与 `gp_alloc_order`
+  （可分配 GPR 顺序，内联 asm 挑约束寄存器用）。
++ **降级期的 S2a 全流程**（`pipeline/inline_asm.rs`，已编译通过但**尚未接线**）：
+  解析约束 → 挑寄存器 → 名字替换 → 占位符替换（`{}`/`{n}`，其它修饰明确拒绝）→ 汇编 →
+  `in`/`inout` 搬入（dst 侧写死、src 侧绑 `OperandRole::Use`）→ asm 本体 → `out`/`inout` 搬出
+  （dst 侧绑 `Def`）→ 每条相关指令带 `inst_clobbers`。
++ **两处待接线**（下一轮）：① `ops.toml` 的 `results` 需要变参（`out` 值必须作为 IR 结果——
+  实测本后端局部变量在栈槽，写回要 `store_place(place, v)`，而它要 IR `Value`）；
+  ② rustc 侧把 `InlineAsmOperand::{In,Out,InOut}` 变成约束+操作数并重建 `{n}` 文本。
++ 验收：`cargo forge gate --subset rustc` **9 步全绿**（行为未变：还没有东西发约束，
+  e2e 仍 113/113）。
+
 ### Added (2026-10-11) — forge-rustc v27 M2.5/S2 前置：寄存器名表（`TargetRegInfo::reg_name`）
 
 + **`TargetRegInfo::reg_name(reg, class) -> Option<&'static str>`**：寄存器编号 + 寄存器类 →

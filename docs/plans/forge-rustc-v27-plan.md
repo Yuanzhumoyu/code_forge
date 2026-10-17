@@ -321,6 +321,37 @@ error: failed to get `cfg-if` as a dependency of package `std v0.0.0 (…/librar
 **同批提交的代码**：`M3-①`（alloc 运行时**按需注入**，见下节）——它是 std 的前置条件，
 与本批文档同源，故一并提交；**M3 本身未完成**（M3-② 的真跑 `std` 需要 M2.5 与 TLS）。
 
+### S2a 进度（2026-10-11，工作区）：**基础设施已落地并编译，接线还差两处**
+
+**已完成**（代码在，行为未变——还没有东西发约束）：
+
+- `ops.toml` 的 `InlineAsm` 从"0 操作数"改成 **`operands = "variadic"`**（`results` 仍是 0）。
+- `builder` 新增 `inline_asm_with(constraints, text, operands)`（`inline_asm(text)` 保留 = S1 形态，
+  实现转调它）；`immediates = [约束, 文本]`。
+- `CompileState` 新增两个 `'static` 快照（`Arc::clone(machine.reg_info())`——借 `&M` 活不过
+  `CompileState::new`）：`reg_name_of: Fn(u32, RegClass) -> Option<&'static str>` 与
+  `gp_alloc_order: Vec<u32>`。
+- `pipeline/inline_asm.rs` 的 **S2a 全流程**（已编译通过）：解析约束 → 从
+  `gp_alloc_order` 挑互不重复的寄存器 → `reg_name` 换成名字 → **占位符替换**
+  （`{}`/`{n}`，其它修饰一律明确拒绝）→ 汇编 → `in`/`inout` 的**搬入**（dst 侧
+  `set_reg_field` 写死、src 侧 `OperandBind{vreg, field:1, role: Use}`）
+  → asm 本体（字面量寄存器）→ `out`/`inout` 的**搬出**（dst 侧绑 `Def`）
+  → 每条相关指令带 `inst_clobbers = 选中的寄存器 + 类`。
+
+**还差两处（下一轮）**：
+
+1. **`results` 变参**：`out`/`inout` 的值必须作为 IR **结果**产出。原因实测：本后端的局部变量
+   住在**栈槽**里（`load_place` → `place_addr` → `load`），所以 asm 写完寄存器后必须
+   `store_place(place, v)` 才可见，而 `store_place` 要一个 IR `Value` ⇒ 需要结果。
+   `ops.toml` 的 `results` 目前只吃整数（`build.rs` 的 `results: u8`）⇒ 要按 `operands`
+   的模式加 `"variadic"`，并同步校验器/表生成处。
+2. **rustc 侧接线**：把 `InlineAsmOperand::{In, Out, InOut}` 变成"约束文本 + 操作数值"，
+   并**重建带 `{n}` 的文本**（模板里的 `Placeholder{operand_idx}` 直接写成 `{idx}`）；
+   显式寄存器名（`Reg(_)`）保持 fail-closed（S2b），`const`/`sym`/`label` 同（S3/S4）。
+
+**验收用例已定**：`let x = 5; let y = 37; asm!("add {0}, {1}", inout(reg) x, in(reg) y); x`
+⇒ **exit 42**（不带 asm 时是 5）。
+
 ### S2 施工图：寄存器约束（侦察完成，2026-10-11）
 
 **结论先说**：S2 **不需要**给分配器加新能力。管线里已有的三件东西足以表达

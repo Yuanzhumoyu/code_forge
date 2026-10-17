@@ -638,14 +638,27 @@ impl FunctionBuilder {
             InstFlags::SIDE_EFFECT,
         );
     }
-    /// 内联汇编（v27 M2.5/S1）：立即数给**汇编文本**，由本 ISA 的汇编器在降级期
-    /// 解析成机器指令就地插入。文本以 `Immediate::String` 携带（无操作数/无结果）。
+    /// 内联汇编（v27 M2.5）：**纯文本形态**（S1）——无操作数、无结果，
+    /// 由本 ISA 的汇编器在降级期解析成机器指令就地插入。
     pub fn inline_asm(&mut self, text: &str) {
-        let s = self.ctx.borrow_mut().intern_str(text);
+        self.inline_asm_with("", text, &[]);
+    }
+
+    /// 内联汇编（v27 M2.5/S2a）：带**寄存器约束**。
+    ///
+    /// `constraints` 是紧凑文本（`"i,g;o,g;io,g"`：`i`/`o`/`io` = in/out/inout，
+    /// 第二段是寄存器类/显式寄存器）；`operands` 与约束**一一对应**，out/inout 的
+    /// 操作数由 asm **就地写回**（因此本指令没有结果——vreg 在 asm 期间是活跃的，
+    /// 就地写回在分配器看来就是同一个活跃寄存器被改写）。
+    pub fn inline_asm_with(&mut self, constraints: &str, text: &str, operands: &[Value]) {
+        let (c, s) = {
+            let mut ctx = self.ctx.borrow_mut();
+            (ctx.intern_str(constraints), ctx.intern_str(text))
+        };
         self.emit(
             Opcode::InlineAsm,
-            vec![],
-            vec![Immediate::String(s)],
+            operands.to_vec(),
+            vec![Immediate::String(c), Immediate::String(s)],
             &[],
             InstFlags::SIDE_EFFECT,
         );
