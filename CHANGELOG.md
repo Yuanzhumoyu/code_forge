@@ -11,6 +11,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-rustc v27 M1：trap 语义 + 零容忍名单守卫（含台账纠偏）
+
++ **e2e trap 语义**（`crates/tools/forge-rustc/tests/e2e.rs`，破坏性）：模板的 `#[panic_handler]`
+  从 `loop {}` 改成 `unsafe { core::arch::asm!("ud2", options(noreturn)) }`；`Case` 新增
+  **`expect_trap`**；退出结局分成**正常退出 / 异常终止 / 超时**三态（此前"异常终止"与"超时"
+  共用一个分支 ⇒ **溢出被拦住看起来像产物挂起**）；新增 `is_trap_code` 按 Windows **NTSTATUS
+  severity**（`0xC0000000` 及以上）判异常终止。新用例 `overflow_runtime_trap` 把期望钉到
+  **`0xC000_001D`**（`ud2` 的 NTSTATUS）——静默回绕会正常退出 `-2147483648`，必红。
++ **新守卫 `e2e_trap_semantics_invariants`**：钉住三件"改坏了不会红"的事——panic handler 必须是
+  `ud2`、代码里不许有 `known_failure: true`、每个 `expect_trap` 用例必须钉一个真实 trap 码
+  （≥ `0xC0000000`，避免与"回绕值"撞车）。守卫自己两次踩到**自我命中**（扫描面含自身字面量），
+  已改用 `concat!` 编译期拼针。
++ **台账纠偏（实测推翻立项前提）**：`WORKAROUNDS.md` 的 `WA-05`（溢出 Assert）改判**已关闭**
+  ——`TerminatorKind::Assert` 早已实现（`lower/mod.rs:847-899`）、套件默认路径**早已不传**
+  `-C overflow-checks=off`；`WA-36`（窄有符号）v14 已关闭（`lower/rvalue.rs:47-75`）；
+  `WA-46`（向量溢出宽度）生成级已就位（`isa/x86.toml` 的 `[machine.spill.fpr16/32/64]` +
+  按宽度分派 + fail-closed），残余只是**仅有 AVX-512F 机器**才能复现的 CI 偶发；
+  `WA-40`/`WA-41` 已随 `WA-42` 根治关闭。方案 §1 的 E5 加了"已被 M1 推翻"标注，
+  账本 §8 记下教训：**`WORKAROUNDS.md` 的"根治方向"列是写那一行时的判断，不是现状**。
++ 验收：全量 e2e **106/106、零 `KNOWN`**；代码里 `known_failure: true` = 0；新守卫绿；文档 0 issues。
+
 ### Docs (2026-10-11) — 项目 v26 M5：契约回写 + 账本归档（`CLAUDE.md` 回到指令预算内）
 
 + **`CLAUDE.md` 的 v26 口径回写**：依赖图删掉已删除的 `forge-mem`（并写明 `forge-isa-runtime`

@@ -43,6 +43,14 @@ fn e2e_toolchain() -> String {
 }
 
 /// 用例：程序体（i32 表达式）+ 期望退出码。
+/// `expect_trap` 用例的**通用 trap 码**哨兵：宿主机强制结束（拿不到具体 NTSTATUS）时用它。
+///
+/// 取值刻意落在 [`is_trap_code`] 的区间内（`0xC000_0000`），这样"归一"后的值仍然
+/// 是一个 trap 码——**不要**用 `i32::MIN`：实测 `i32::MAX + 1` 的回绕值恰好是
+/// `i32::MIN`，那样"溢出 trap"与"静默回绕"会在判定上**撞车**（v27 M1 第一次就踩到）。
+const TRAP_EXIT: i32 = 0xC000_0000u32 as i32;
+
+/// e2e 用例。
 struct Case {
     name: &'static str,
     /// 入口函数体（可含辅助 fn 定义）。
@@ -57,6 +65,10 @@ struct Case {
     /// 则只断言编译失败）。
     expect_compile_fail: bool,
     expect_compile_err: &'static str,
+    /// **必须异常终止**（trap 语义，v27 M1）：溢出/越界等 `Assert` 失败边在真机上
+    /// 表现为进程**异常终止**（Windows 上 `status.code()` 为 `None`）⇒ 本标记为真时，
+    /// "异常终止"算 PASS、"正常退出"算 FAIL。退出码用 [`TRAP_EXIT`] 表达。
+    expect_trap: bool,
     /// 已知失败（当前后端限制），仅记录不失败。
     known_failure: bool,
     /// 已知失败的阶段归属（Phase 2 = 调用语义）。
@@ -74,6 +86,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -86,6 +99,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -98,6 +112,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -110,6 +125,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -122,6 +138,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -134,6 +151,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -146,6 +164,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -158,6 +177,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -170,6 +190,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -182,6 +203,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -194,6 +216,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P1",
         reason: "",
@@ -207,6 +230,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P2",
         reason: "",
@@ -219,6 +243,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P2",
         reason: "",
@@ -231,6 +256,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P2",
         reason: "",
@@ -243,6 +269,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P2",
         reason: "",
@@ -256,6 +283,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P2 abi",
         reason: "",
@@ -268,6 +296,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P2 abi",
         reason: "",
@@ -284,6 +313,7 @@ const CASES: &[Case] = &[
         // f(1.5, 2.0) 实测 exit=1 通过——浮点比较/分支链在 Fload/Fstore +
         // fcmp is_fp 分派修复后已正确（比较结果经 Setcc 后分支返回 1）。
         // 2026-08 复验：最小复现 exit=1，known_failure 移除。
+        expect_trap: false,
         known_failure: false,
         phase: "P5.1",
         reason: "",
@@ -296,6 +326,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P5.1",
         reason: "",
@@ -309,6 +340,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P2 ffi",
         reason: "",
@@ -322,6 +354,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P3 agg",
         reason: "",
@@ -334,6 +367,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P3 agg",
         reason: "",
@@ -346,6 +380,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P3 agg",
         reason: "",
@@ -358,6 +393,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P3 agg",
         reason: "",
@@ -370,6 +406,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P3 agg",
         reason: "",
@@ -382,6 +419,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P3 agg",
         reason: "",
@@ -394,6 +432,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P3 regalloc",
         reason: "",
@@ -408,6 +447,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P5.1",
         reason: "",
@@ -421,6 +461,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P5.2",
         reason: "",
@@ -434,6 +475,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P5.1",
         reason: "",
@@ -448,6 +490,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P5.1",
         reason: "",
@@ -461,6 +504,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P5.3",
         reason: "",
@@ -473,6 +517,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P5.3",
         reason: "",
@@ -485,6 +530,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P5.3",
         reason: "",
@@ -497,6 +543,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P5.3",
         reason: "",
@@ -509,6 +556,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P5.3",
         reason: "",
@@ -523,6 +571,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P5.1",
         reason: "",
@@ -539,6 +588,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P6 alloc",
         reason: "",
@@ -551,6 +601,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P6 alloc",
         reason: "",
@@ -570,6 +621,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P7 intrinsics",
         reason: "",
@@ -584,6 +636,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P6 alloc",
         reason: "2026-09-12 转正（WA-42 根治：niche 枚举 tag 写入宽度 = tag 标量）——CI run 93927221004
@@ -622,6 +675,7 @@ const CASES: &[Case] = &[
         //    + copy_agg/pack_sp 统一原语）累积修复了"两次 deref 的 [rbp-0x68] 槽未初始化
         //    垃圾"与 Box 链 enum 解构偏移——ASLR 与固定基址下均稳定 exit=42（3 次运行确认），
         //    从 known_failure 移除。
+        expect_trap: false,
         known_failure: false,
         phase: "P6 alloc",
         reason: "",
@@ -640,6 +694,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P2",
         reason: "2026-09-12 转正（WA-42 根治：niche 枚举 tag 写入宽度 = tag 标量）——CI run 93927221004
@@ -668,6 +723,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P2",
         reason: "2026-09-12 转正（WA-42 根治：niche 枚举 tag 写入宽度 = tag 标量）——CI run 93927221004
@@ -690,6 +746,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P6 alloc",
         reason: "2026-09-12 转正（WA-42 根治：niche 枚举 tag 写入宽度 = tag 标量）——CI run 93927221004
@@ -720,6 +777,7 @@ const CASES: &[Case] = &[
         // ③ 间接调用返回值修复：CALL_RM 后缺 "MOV_RM8_R64 rd, RAX"（与直接调用
         //    [lower.Call] 一致）——结果 XReg 被 regalloc 分配到任意寄存器读到垃圾
         //    （曾返回 vtable+24=0x40003018）。最小用例 exit=7 稳定（3 次运行确认）。
+        expect_trap: false,
         known_failure: false,
         phase: "P7 dyn",
         reason: "",
@@ -735,6 +793,7 @@ const CASES: &[Case] = &[
         entry: "main",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P2 main",
         reason: "",
@@ -749,6 +808,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P4 closure",
         reason: "",
@@ -761,6 +821,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P4 closure",
         reason: "",
@@ -776,6 +837,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P4 static",
         reason: "",
@@ -788,6 +850,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P4 static",
         reason: "",
@@ -800,6 +863,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P4 static",
         reason: "",
@@ -814,6 +878,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P4 drop",
         reason: "",
@@ -828,6 +893,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P3 checked",
         reason: "",
@@ -840,6 +906,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P3 checked",
         reason: "",
@@ -855,6 +922,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P3 checked",
         reason: "",
@@ -868,6 +936,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P1 agg",
         reason: "",
@@ -880,6 +949,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P1 agg",
         reason: "",
@@ -899,6 +969,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P9 niche",
         reason: "",
@@ -914,6 +985,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "A3 overflow",
         reason: "",
@@ -926,6 +998,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "A3 overflow",
         reason: "",
@@ -942,6 +1015,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "P1 agg",
         reason: "",
@@ -960,6 +1034,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "B3 simd",
         reason: "V128 局部按值链路转正（WA-37 D3）：Direct XMM 返回 + 全宽收参",
@@ -972,6 +1047,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "B3 simd",
         reason: "V128 按值参数跨函数往返转正（WA-37 D3）：高半 lane3 不截断",
@@ -984,6 +1060,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "B3 simd",
         reason: "V128 按值返回转正（WA-37 D3）：Direct XMM0 返回全宽",
@@ -996,6 +1073,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "B3 simd",
         reason: "V64 按值参数/返回转正（WA-37 D3）",
@@ -1017,6 +1095,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "B3 simd",
         reason: "V256 by-ref/sret + 内存值建模转正（WA-37 D2）；全 lane 抽查 87654321 亦绿",
@@ -1029,6 +1108,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "B3 simd",
         reason: "V256 向量值基建转正（WA-37 D2）：SimdVector>16B→Indirect + CopyNonOverlapping 全宽",
@@ -1045,6 +1125,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1057,6 +1138,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1073,6 +1155,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1088,6 +1171,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1100,6 +1184,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1112,6 +1197,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1124,6 +1210,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1136,6 +1223,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1151,6 +1239,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1163,6 +1252,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1175,6 +1265,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1187,6 +1278,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1199,6 +1291,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1211,6 +1304,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1223,6 +1317,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1238,6 +1333,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1250,6 +1346,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1262,6 +1359,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1274,6 +1372,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1291,6 +1390,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "WA-44 niche",
         reason: "niche 偏移一般化（tag_field 派生）的守卫用例",
@@ -1304,6 +1404,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "WA-44 niche",
         reason: "niche 偏移一般化（tag_field 派生）的守卫用例（None 侧）",
@@ -1317,6 +1418,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "F1 iter",
         reason: "",
@@ -1329,6 +1431,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "F1 iter",
         reason: "2026-08 转正：WA-23（ScalarPair pack_sp/unpack_sp 按标量宽度读写）——Option<i32> 的 hi 字段 8 字节写越界覆盖相邻 Range.start 槽 → start 不递增；修复后第二次 next 正确返回 Some(1)",
@@ -1342,6 +1445,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "F1 iter",
         reason: "2026-08 转正：WA-24（switchInt const 判别折叠）——Iter::next 的 `switchInt(UbChecks)` 判别是编译期常量（core::intrinsics::ub_checks 求值 false），折叠后只生成目标分支，不可达的 precondition_check 调用块不再 lower → 无 LNK2019",
@@ -1354,6 +1458,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "F1 iter",
         reason: "2026-09-12 转正（WA-42 根治：niche 枚举 tag 写入宽度 = tag 标量）——CI run 93927221004
@@ -1371,6 +1476,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "F1 string",
         reason: "",
@@ -1383,6 +1489,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "F1 agg",
         reason: "",
@@ -1395,6 +1502,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "F1 agg",
         reason: "",
@@ -1407,6 +1515,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "F1 agg",
         reason: "2026-08 转正：{i32,i64} 是 ScalarPair（2 标量）→ 拆 lo/hi 传参路径正确（旧 reason 的\"16 字节非 ScalarPair\"过时；用例原 body 返回 i64 与入口 i32 不匹配属用例自身错误）",
@@ -1419,6 +1528,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "F1 control",
         reason: "2026-08 转正：WA-23（pack_sp/unpack_sp 宽度）修复 Range 迭代链后循环正确终止；LLVM 实证真实语义为 15（原 expected=12 注释手算错误：i=3 时 j=0,1,2 三次 3*0/3*1/3*2≠9 均累加，j=3 才 break 'outer）",
@@ -1431,6 +1541,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "F1 enum",
         reason: "",
@@ -1445,6 +1556,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "C1 dwarf",
         reason: "",
@@ -1460,6 +1572,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "C2 dwarf",
         reason: "",
@@ -1475,6 +1588,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1487,6 +1601,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: false,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
@@ -1500,6 +1615,7 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: true,
         expect_compile_err: "global_asm",
+        expect_trap: false,
         known_failure: false,
         phase: "F2 neg",
         reason: "MonoItem::GlobalAsm → dcx().err（WA-03）",
@@ -1512,16 +1628,39 @@ const CASES: &[Case] = &[
         entry: "mainCRTStartup",
         expect_compile_fail: true,
         expect_compile_err: "",
+        expect_trap: false,
         known_failure: false,
         phase: "F2 neg",
         reason: "std 程序（no_std 上下文用 String）→ 编译失败（std 未链接/未声明 extern crate std）",
+    },
+    // ── M1（v27，2026-10-11）：**运行期溢出必须 trap**（`WA-05` 的真实残余）──
+    //   实测取证链：溢出 + checks on ⇒ `Assert` 失败边分流 ⇒ panic handler。
+    //   此前 handler 是 `loop {}` ⇒ 表现成"挂起"，而 `run_exe_with_timeout` 又把
+    //   "异常终止（无退出码）"与"超时"混在一个分支 ⇒ **trap 被误报成挂起**。
+    //   本里程碑两件都修：handler 改 `ud2`（真异常终止）、退出结局分三态
+    //   （正常 / 异常终止 / 超时）并加 `expect_trap` 显式断言。
+    //   探针口径：静默回绕会**正常退出** `-2147483648`（⇒ FAIL）；trap 必须异常终止。
+    Case {
+        name: "overflow_runtime_trap",
+        body: "let a = core::hint::black_box(2147483647i32); let b = core::hint::black_box(1i32); a + b",
+        // 期望**具体机制**：`ud2` ⇒ STATUS_ILLEGAL_INSTRUCTION（0xC000001D）。
+        // 静默回绕会正常退出 -2147483648（≠ 任何 trap 码）⇒ 必红。
+        expected: 0xC000_001Du32 as i32,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: true,
+        known_failure: false,
+        phase: "M1 overflow trap",
+        reason: "运行期溢出必须 trap（异常终止）；正常退出（回绕）即失败",
     },
 ];
 
 /// 生成 no_std 程序源码。
 fn make_source(body: &str, extra: &str, entry: &str) -> String {
     format!(
-        "#![no_std]\n#![no_main]\n{extra}\n#[unsafe(no_mangle)]\npub extern \"C\" fn {entry}() -> i32 {{\n    {body}\n}}\n\n#[panic_handler]\nfn panic(_info: &core::panic::PanicInfo) -> ! {{\n    loop {{}}\n}}\n"
+        "#![no_std]\n#![no_main]\n{extra}\n#[unsafe(no_mangle)]\npub extern \"C\" fn {entry}() -> i32 {{\n    {body}\n}}\n\n#[panic_handler]\nfn panic(_info: &core::panic::PanicInfo) -> ! {{\n    unsafe {{ core::arch::asm!(\"ud2\", options(noreturn)) }}\n}}\n"
     )
 }
 
@@ -1641,7 +1780,8 @@ fn run_case_with(
         }
     }
 
-    // 运行并取退出码（带超时：panic handler 是 loop{}，assert 失败会挂起）
+    // 运行并取退出码（带超时）。v27 M1 起 panic handler 是 `ud2`（异常终止）
+    // ⇒ assert 失败不再表现为挂起，而是 `None` 退出码（见 run_exe_with_timeout）。
     let mut result = run_exe_with_timeout(&exe);
     // 超时重试（2026-09-10 取证，见 docs/archive/forge-rustc-vec_push-plan.md §9.2）：
     // 本机 8 并发负载下复现过该假败——首次运行 15 s 未退出，而**同一产物**事后独立
@@ -1658,12 +1798,61 @@ fn run_case_with(
         record_event("RETRY", case.name, "首次运行超时，同产物复跑一次");
         result = run_exe_with_timeout(&exe);
     }
-    result
+    // v27 M1（trap 语义）：把"异常终止"与用例期望对齐，并**保留真实 NTSTATUS**
+    //   ——`expect_trap` 用例的 `expected` 直接写它要钉的那条 trap 码
+    //   （如 `0xC000_001D` = `ud2`），这样"trap 发生了"与"trap 的是**这个**机制"都被断言。
+    //   `expect_trap = false` 时异常终止 = **未预期的崩溃**（此前被误报成超时）。
+    match result {
+        // 正常退出码（含普通非零码；NTSTATUS error 级见下支）
+        Ok(c) if !is_trap_code(c) => {
+            if case.expect_trap {
+                Err(format!(
+                    "期望 trap（NTSTATUS 异常终止），实际**正常退出** exit={c}——断言失败边没触发"
+                ))
+            } else {
+                Ok(c)
+            }
+        }
+        // 异常终止：`expect_trap` ⇒ 成功并返回真实码；否则未预期崩溃
+        Ok(c) => {
+            if case.expect_trap {
+                record_event(
+                    "TRAP",
+                    case.name,
+                    &format!("异常终止 NTSTATUS 0x{c:08X}（预期）"),
+                );
+                Ok(c)
+            } else {
+                Err(format!(
+                    "未预期的异常终止（NTSTATUS 0x{c:08X}：trap/AV/ud2）——产物崩溃了"
+                ))
+            }
+        }
+        Err(ref e) if e.contains(TIMEOUT_MARKER) && case.expect_trap => Err(format!(
+            "期望 trap（异常终止）但产物挂起——断言失败边没有触发：{e}"
+        )),
+        other => other,
+    }
 }
 
 /// 超时错误标记：`run_exe_with_timeout` 产生、`run_case_with` 据此做一次「同产物复跑」
 /// 以剔除宿主侧起进程/映像延迟造成的假败（真挂起会两次都超时，仍上报）。
 const TIMEOUT_MARKER: &str = "timeout (挂起";
+
+/// **异常终止**标记（v27 M1）：进程已终止但 `status.code()` 为 `None`（trap/AV/`ud2`）。
+/// 与 [`TIMEOUT_MARKER`] 分开是本里程碑的关键——两者此前混在一个分支里，
+/// 于是"断言真的拦住了溢出"看起来像"产物挂起"。
+const TRAP_MARKER: &str = "trap (异常终止";
+
+/// Windows NTSTATUS 的 severity 位：`0xC0000000` 及以上 = 异常终止（error 级）。
+///
+/// 实测取值：`ud2` = `0xC000001D`（ILLEGAL_INSTRUCTION）、AV = `0xC0000005`、
+/// `__fastfail` = `0xC0000409`、栈溢出 = `0xC00000FD`、除零 = `0xC0000094`。
+/// **不要**改用"`status.code()` 为 `None`"来判 trap——Windows 上 `ud2` 有码，
+/// 那个假设实测为假（v27 M1 第一次跑就证伪）。
+fn is_trap_code(code: i32) -> bool {
+    (code as u32) >= 0xC000_0000
+}
 
 /// `FORGE_E2E_STRICT_FLAKY=1`：FLAKY 用例**只容忍超时 + CI 运行环境 AV**（两者均已
 /// 定性为宿主侧环境性、且有同产物复跑兜底），**其余错码改按 FAIL 硬失败**。
@@ -1700,9 +1889,11 @@ fn record_event(kind: &str, case: &str, detail: &str) {
 /// 对照保留（勿据此把新的 AV 判为"环境性"——先查 WA-42 类宽度/判空路径）。
 const CI_ENV_AV_CODE: i32 = -1073741819;
 
-/// 运行产物并取退出码。超时（默认 15 s，`FORGE_E2E_TIMEOUT_SECS` 可覆盖，便于区分
-/// 「真挂起」与「负载下起得慢」）时杀掉子进程并返回含 [`TIMEOUT_MARKER`] 的错误
-/// ——panic handler 是 `loop {}`，assert 失败即挂起。
+/// 运行产物并取退出码。三种结局分开返回（v27 M1）：
+/// - 正常退出 ⇒ `Ok(码)`；
+/// - **异常终止**（trap/AV/`ud2`，`status.code()` 为 `None`）⇒ 含 [`TRAP_MARKER`] 的错误；
+/// - 超时（默认 15 s，`FORGE_E2E_TIMEOUT_SECS` 可覆盖，用于区分「真挂起」与「负载下起得慢」）
+///   ⇒ 杀掉子进程并返回含 [`TIMEOUT_MARKER`] 的错误。
 fn run_exe_with_timeout(exe: &Path) -> Result<i32, String> {
     let secs: u64 = std::env::var("FORGE_E2E_TIMEOUT_SECS")
         .ok()
@@ -1713,24 +1904,107 @@ fn run_exe_with_timeout(exe: &Path) -> Result<i32, String> {
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| format!("failed to spawn {}: {e}", exe.display()))?;
-    let mut code = None;
+    let mut settled: Option<Option<i32>> = None;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
     while std::time::Instant::now() < deadline {
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            code = status.code();
+            settled = Some(status.code());
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
-    match code {
-        Some(c) => Ok(c),
+    match settled {
+        // **实测（v27 M1）**：Windows 上 `ud2` 走的是**有码**退出
+        // （`0xC000001D` = STATUS_ILLEGAL_INSTRUCTION，`status.code()` = `Some(-1073741795)`）
+        // ⇒ 本函数不在这里分类"正常/trap"，把码原样交给 `run_case_with`
+        // （它按 [`is_trap_code`] 的 NTSTATUS 语义判，并被 `expect_trap` 归一）。
+        // 此前这里把"异常终止"与"超时"混在一个分支 ⇒ **trap 被误报成挂起**。
+        Some(Some(c)) => Ok(c),
+        // 已终止但拿不到码 = 被宿主强行结束（也是异常终止）⇒ 用通用 trap 码哨兵。
+        Some(None) => Ok(TRAP_EXIT),
         None => {
             let _ = child.kill();
             Err(format!(
-                "{TIMEOUT_MARKER}：{secs} s 内未退出——可能 assert 失败进入 panic loop)"
+                "{TIMEOUT_MARKER}：{secs} s 内未退出——产物真挂起（无 trap、无退出）"
             ))
         }
     }
+}
+
+/// **M1 不变量守卫（v27）**：把 trap 语义与"零容忍名单"钉死在源码上。
+///
+/// 为什么需要它：本文件里的这三件事**改坏了不会红**——
+/// ① panic handler 退回 `loop {}` ⇒ `expect_trap` 用例从"异常终止"变回"超时"，只是慢一点；
+/// ② 新加用例又写 `known_failure: true` ⇒ 套件照绿，容忍名单悄悄长回来；
+/// ③ `expect_trap` 用例的 `expected` 不是 trap 码（如又被写成 `i32::MIN`）⇒ 与"静默回绕"
+///    撞车，用例形同虚设（v27 M1 第一次就踩过这个坑）。
+#[test]
+fn e2e_trap_semantics_invariants() {
+    let src = include_str!("e2e.rs");
+    let code_lines: Vec<&str> = src
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("//"))
+        .collect();
+
+    // ① handler 必须是真 trap（`ud2`）。源码里是**转义后**的形态（它处在 format! 的串里）。
+    let code = code_lines.join("\n");
+    assert!(
+        code.contains(r#"core::arch::asm!(\"ud2\", options(noreturn))"#),
+        "panic handler 不是 ud2 trap ⇒ expect_trap 用例会退化成超时（见 v27 M1）"
+    );
+
+    // ② 不许有待转正的 known_failure（注释里的历史说明不算）
+    //
+    // **自我命中陷阱**（与 v26 的事件守卫同源）：本守卫自己在 `include_str!` 的扫描面里，
+    // 所以"要找的字面量"不能用连续字符串写出来（否则守卫永远报自己）。用 `concat!`
+    // 在**编译期**拼出针，源码里就不存在那个连续形态。
+    let needle = concat!("known_failure", ":", " true");
+    let still_known: Vec<&&str> = code_lines.iter().filter(|l| l.contains(needle)).collect();
+    assert!(
+        still_known.is_empty(),
+        "e2e 里还有 {} 命中（{} 处）——转正必须翻标记：{still_known:?}",
+        needle,
+        still_known.len()
+    );
+
+    // ③ 每个 expect_trap 用例必须在同块内钉一个真实 trap 码（NTSTATUS ≥ 0xC0000000）
+    let lines: Vec<&str> = code.lines().collect();
+    let mut trap_cases = 0usize;
+    // 同样用 `concat!` 拼针（否则会命中本守卫自己那一行）
+    let trap_needle = concat!("expect_trap", ":", " true");
+    for (i, l) in lines.iter().enumerate() {
+        if !l.contains(trap_needle) {
+            continue;
+        }
+        trap_cases += 1;
+        let lo = i.saturating_sub(5);
+        let hi = (i + 5).min(lines.len());
+        let want = lines[lo..hi]
+            .iter()
+            .find(|w| w.trim_start().starts_with("expected:"))
+            .unwrap_or_else(|| panic!("expect_trap 用例缺 expected 行（第 {} 行附近）", i + 1));
+        let hex = want
+            .split("0x")
+            .nth(1)
+            .unwrap_or_else(|| panic!("expect_trap 的 expected 必须是 `0x… as i32` 形态：{want}"));
+        let digits: String = hex
+            .chars()
+            .take_while(|c| c.is_ascii_hexdigit() || *c == '_')
+            .collect();
+        let code_v = i64::from_str_radix(&digits.replace('_', ""), 16)
+            .unwrap_or_else(|e| panic!("解析 trap 码失败 {digits:?}: {e}"))
+            as i32;
+        assert!(
+            is_trap_code(code_v),
+            "expect_trap 的 expected 不是 trap 码（0x{code_v:08X}）——必须不小于 0xC0000000，\
+             否则与正常退出（含溢出回绕）撞车：{want}"
+        );
+    }
+    assert!(
+        trap_cases > 0,
+        "一个 expect_trap 用例都没有——trap 语义没有真值覆盖"
+    );
+    println!("OK  e2e_trap_semantics_invariants：trap 用例 {trap_cases} 个、known_failure 0 个");
 }
 
 /// 双向 flake 用例名单（**2026-09-12 起为空 = 全量门禁**）。
@@ -2013,15 +2287,19 @@ fn e2e_alloc_step_probe() {
             expected: want,
             expect_compile_fail: false,
             expect_compile_err: "",
+            expect_trap: false,
             known_failure: false,
             phase: "probe",
             reason: "分配路径逐步探针（诊断用，不参与门禁）",
         };
         // 诊断优先：任何结果都只打印，不让本测试红（真实门禁在 stage_a）
+        // v27 M1：trap（含 AV）现在由 `Err(TRAP_MARKER…)` 表达（进程异常终止），
+        // 不再落进 `Ok(码)`——所以 AV 从错误文本里认（消息里带 `0x…` NTSTATUS）。
         let (verdict, detail) = match run_case(&case, &workdir) {
             Ok(code) if code == want => ("ok", format!("exit={code}")),
-            Ok(-1073741819) => ("AV", "exit=-1073741819 (0xC0000005)".to_string()),
             Ok(code) => ("WRONG", format!("exit={code} (want {want})")),
+            Err(e) if e.contains("0xC0000005") => ("AV", format!("0xC0000005：{e}")),
+            Err(e) if e.contains(TRAP_MARKER) => ("TRAP", e),
             Err(e) => ("ERR", format!("error: {e}")),
         };
         println!("PROBE {name:<22} {verdict:<5} {detail}");

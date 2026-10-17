@@ -23,7 +23,7 @@
 | E2 | **已有能力面**（README §支持矩阵，逐条可核） | 标量算术/控制流/直接调用/递归/Windows x64 调用约定（含 shadow space、sret、浮点 XMM0-3）/FFI/聚合/枚举（含 niche）/`__rust_alloc` 全家/static 段/Box/闭包/Drop/`dyn` 虚调用（vtable 表）/DWARF5 C1+C2（gdb 16.2 实证）/多 CGU 并行 + 每 CGU 独立对象 + `-C incremental` |
 | E3 | **e2e 现状（代码为真）** | `CASES` **105 条**；`known_failure: true` = **1**、`false` = 106；`expect_compile_fail: true` = **2**；`overflow-checks=off` 仍出现在 **6** 处（含默认编译路径 `e2e.rs:1584`） |
 | E4 | **文档与代码已经分叉** | README §支持矩阵 仍写「**103 用例：98 硬断言 + 5 个 `FLAKY` 容忍项**」，而 `WORKAROUNDS.md` 的 WA-11 记「2026-09-12 五例全部转正、`FLAKY` 清空（CI run 93927221004 `known=[]`）」⇒ 现状是 **1 个 `known_failure`**。**没有任何守卫**钉这两侧 |
-| E5 | **正确性类开放绕法**（`WORKAROUNDS.md`，逐条读后判定） | `WA-05` 常规 `+`/`-`/`*` 的溢出 Assert 未覆盖（测试统一关 `overflow-checks`）；`WA-36` 窄 signed 值 32 位符号扩展缺口（`i8` load 零扩展 ⇒ -50 读成 +206）；`WA-40` def 落在**写死物理寄存器**的指令上被 spill ⇒ 静默写坏槽；`WA-41` 可确定性复现的错编（`Vec::new(); v.push(1)` 后读 `APTR[0]`）；`WA-46` FPR/向量溢出恒按 8 字节搬运 + 64B 值类宽只有 32 ⇒ **向量 spill 静默截断** |
+| E5 | **正确性类开放绕法**（`WORKAROUNDS.md` —— ⚠️ **本条在 M1 逐条核实后被推翻，见 §8**） | `WA-05` 常规 `+`/`-`/`*` 的溢出 Assert 未覆盖（测试统一关 `overflow-checks`）；`WA-36` 窄 signed 值 32 位符号扩展缺口（`i8` load 零扩展 ⇒ -50 读成 +206）；`WA-40` def 落在**写死物理寄存器**的指令上被 spill ⇒ 静默写坏槽；`WA-41` 可确定性复现的错编（`Vec::new(); v.push(1)` 后读 `APTR[0]`）；`WA-46` FPR/向量溢出恒按 8 字节搬运 + 64B 值类宽只有 32 ⇒ **向量 spill 静默截断** |
 | E6 | **对象/链接层绕法** | `WA-01` MSVC 链接器不应用 `.rodata` 的 ADDR64 重定位（实测全 0）⇒ vtable 指针表被迫放 `.data`；`WA-07` 靠 `/DEFAULTLIB:vcruntime.lib` 提供 `__CxxFrameHandler3` |
 | E7 | **缺能力三类** | ① `global_asm` 无实现（`WA-03`，直接报错）；② **内联 `asm!` 完全没做**（全仓 `inline_asm` 命中 **0**）；③ `panic=unwind` **明确拒绝**（`backend.rs:73-79`；`eh_personality` 命中 0、`.xdata` 命中 0），TLS 实质没有（`tls`/`thread_local` 各 1 处提及） |
 | E8 | **冗余** | `WA-02`：rustc 的 alloc shim 实例与手写的 `alloc_runtime.rs`（401 行）**重复定义**（LNK2005）⇒ 靠 `keep_item` 过滤掉 rustc 侧实例维持"一份" |
@@ -150,4 +150,131 @@ unwrap 触发 `catch_unwind` 或用例级 SEH 决策文档、`thread_local!` 读
 
 ## 8. 批次记录（逐里程碑回写）
 
-（立项时为空；每里程碑落地后在此追加：做了什么、实测数字、删除清单进度、偏差与下一批。）
+### M1 正确性清零 —— **已收口（2026-10-11，工作区）**
+
+**结论先说**：立项时按 `WORKAROUNDS.md` 的字面描述列的四个 M1 项（`WA-05`/`WA-36`/`WA-46`/
+`WA-40`+`WA-41`）**逐条对代码与测试核实后，三项早已被历史修复关闭、一项只剩无法在本机复现的
+CI 偶发**。M1 真正的缺口是**测量过程本身暴露的那个**：套件**无法表达"必须 trap"**——断言失败边
+确实会分流（不是静默回绕），但 e2e 的 panic handler 是 `loop {}`、而 `run_exe_with_timeout` 把
+"异常终止"与"超时"混在一个分支 ⇒ 溢出被拦**看起来像产物挂起**，没有任何硬断言。
+
+逐项核实表（判据 = 代码/测试，不是文档）：
+
+| 项 | 立项描述 | 实测结论 | 证据 |
+| --- | --- | --- | --- |
+| `WA-05` 溢出 Assert | "未覆盖、测试统一关 checks" | **早已实现**，描述过时 | `lower/mod.rs:847-899` 按 `expected` 分流 + 失败边调 `panic_impl`；默认路径**不传** `overflow-checks=off`（只有 `overflow_off*` 显式关）；`overflow_checks_on`/`_mul` 两例本就跑在 checks on 下 |
+| `WA-36` 窄有符号 | "符号扩展未实现（i8 max 实证）" | **v14 已关闭**（修复链 ①–⑤ 在代码里） | `lower/rvalue.rs:47-75`：无符号窄源 mask、有符号窄源 `sextend`；`WORKAROUNDS.md` 该行标"已关闭（v14）" |
+| `WA-46` 向量溢出宽度 | "恒按 8 字节搬运、64B 值类宽只有 32" | **生成级已修**，残余是硬件相关偶发 | `isa/x86.toml` 有 `[machine.spill.fpr16/32/64]` 三档 + `gen_fpr_spill_dispatch` 按 `width` 分派（未声明宽度 ⇒ 生成期 fail-closed）+ `reg_class_for` 的 `VEC(64)` 档；残余 `test_jit_v512_byref_param` 只在**有 AVX-512F 的 runner** 上真跑 ⇒ 本机无法复现，转入 M4 窗口 |
+| `WA-40`/`WA-41` regalloc def-spill / 错编 | "def 被 spill 静默写坏槽 / 本机可复现错编" | **已关闭**（根因 = `WA-42` niche tag 写入宽度） | vec 族 5 例全部转正（`known_failure: false`，reason 记 CI run 93927221004）；本机全量 e2e 106/106 |
+
+M1 实际交付（本轮）：
+
+1. **trap 语义**（`tests/e2e.rs`，破坏性）：panic handler `loop {}` → `ud2`；`Case` 新增
+   `expect_trap`；`run_exe_with_timeout` 把三态（正常/异常终止/超时）分开；新增 `is_trap_code`
+   按 **NTSTATUS severity** 判异常；新用例 `overflow_runtime_trap` 把 `expected` 钉到
+   **`0xC000_001D`**（`ud2` 的 NTSTATUS）。
+2. **不变量守卫** `e2e_trap_semantics_invariants`：钉住三件"改坏了不会红"的事——handler 必须
+   是 `ud2`、代码里不许有 `known_failure: true`、每个 `expect_trap` 用例必须钉一个真实 trap 码
+   （≥ `0xC0000000`）。**它自己踩了两次自我命中**（守卫扫描自己文件时命中自己写的字面量）——
+   与 v26 事件守卫同源，改用 `concat!` 在编译期拼针解决。
+3. **台账纠偏**：`WORKAROUNDS.md` 的 `WA-05` 改判为已关闭（附判据）、`WA-32` 状态词显式化、
+   `WA-46` 补上"生成级已就位 + 残余归 M4"的复核结论；本方案 §1 的 E5 加"已被 M1 推翻"的标注。
+
+判据达成：全量 e2e **`passed: 106/106`**、零 `KNOWN`、95 s；代码里 `known_failure: true` = **0**；
+新守卫绿。删除清单：`expect_trap` 之前无表达力（0 → 1 个硬断言用例）、`loop {}` handler（1 处）、
+`WA-05` 的陈旧描述（1 行）。
+
+教训（写给后续里程碑）：`WORKAROUNDS.md` 的"根治方向"列**不是现状**——它记录的是**写那一行时**
+的判断；下游方案若照抄它做计划，会把早已关闭的项当缺口（本轮 E5/E6 就是这样）。**M5 的
+`workarounds_guard` 必须同时检查"状态词与代码引用"**，并给每行加**机器可读的状态列**。
+
+### M1 侦察（2026-10-11，工作区，未提交）
+
+**目的**：动手前先把"绕法"的现状量准（避免照抄 WORKAROUNDS 的旧描述）。
+
+实测发现（三条，都推翻了立项时引用的文档口径）：
+
+1. **`WA-05` 的描述已过时**：`TerminatorKind::Assert` **已经实现**——
+   `lower/mod.rs:847-899` 会按 `expected` 分流（`branch(cond, succ, fail)`），失败边**调
+   `panic_impl`（`#[panic_handler]`）后 `unreachable`**；`lower/mod.rs:219` 的 CFG 预建也走
+   success target。e2e 里还有两条**在 overflow-checks 打开（默认）下运行**的用例：
+   `overflow_checks_on`（`black_box(1000i32) + black_box(2000i32)` == 3000）与
+   `overflow_checks_on_mul`（7×6 == 42），均 `known_failure: false`。
+   ⇒ **真正的残余不是"Assert 没实现"**，而是两件事：
+   (a) **溢出发生时的路径从未被测试**（现用例只走不溢出路径；注释自己写明"常量溢出在
+   const-eval 拦截"⇒ 运行期溢出触发 `panic_const_*` 的那条路没有真值用例）；
+   (b) 套件的默认编译参数仍带 `-C overflow-checks=off`（`e2e.rs:1584` 等 6 处）
+   ⇒ 默认口径下"溢出必须被拦"这件事**没有门禁**。
+2. **e2e 计数以代码为真**：`CASES` = **105** 条、`known_failure: true` = **1**、
+   `expect_compile_fail: true` = **2**；README §支持矩阵仍写"**103 用例：98 硬断言 + 5 个
+   `FLAKY` 容忍项**"⇒ **文档与代码已经分叉**（M5 的 `rustc_doc_counts_guard` 正是治它）。
+3. **`WA-36` 的落点已定位**：`lower/rvalue.rs:56` 的注释"符号扩展依赖 ireduce 后的使用未实现
+   （i8 max 实证）"——窄有符号（`i8`/`i16`）符号扩展就是 M1 的第四项。
+
+下一步（M1 的四个动作，按可测性排序）：
+
+| 动作 | 站点 | 判据 |
+| --- | --- | --- |
+| 运行期溢出必须被拦 | `lower/mod.rs:847` + e2e | 新增负向用例：运行期溢出 + `#[panic_handler]` ⇒ 必须 abort/panic 而非静默回绕；随后**默认路径去掉 `overflow-checks=off`** |
+| 窄有符号符号扩展 | `lower/rvalue.rs:56` + `i8`/`i16` load 路径 | 新增用例：`-50i8` 参与比较/除法/转型读回负值 |
+| 向量/FPR 溢出宽度 | `WA-46`（主库 `[spill.FPR]` + 类宽） | 溢出 32B/64B 向量后读回逐 lane 相等 |
+| regalloc def-spill + 错编 | `WA-40` / `WA-41`（主库 `regalloc_bt.rs`） | `WA-41` 的最小复现进 e2e；`Vec::new(); push` 读回正确 |
+
+> 说明：四条里前三条的站点在 **forge-rustc**（后端侧），第四条在**主库** `forge-codegen`
+> （共享代码 ⇒ 改完必须跑全套门禁 + 两条 JIT 矩阵，见 §6 风险）。
+
+M1 第一项已测得结论（同轮，探针实测）：
+
+新增探针用例 `overflow_runtime_probe`（`black_box(i32::MAX) + black_box(1)`，
+`FORGE_E2E_ONLY=overflow_runtime_probe` 单跑）实测：
+
+```text
+RETRY overflow_runtime_probe 首次运行超时（疑宿主侧起进程/映像延迟），同产物复跑一次
+KNOWN overflow_runtime_probe error: timeout（挂起：20 s 内未退出——可能 assert 失败进入 panic loop）
+```
+
+⇒ **判定：`Assert` 失败边真的分流出去了**（**不是**静默回绕——回绕会退出 `-2147483648`）。
+`WA-05` 的"Assert 分支未覆盖"确实是过时描述。真正的残余是**两件可落地的事**：
+
+1. **trap 语义没有表达力**：e2e 的 `#[panic_handler]` 是 `loop {}` ⇒ "溢出被拦"表现为
+   **挂起**，harness 只能记 timeout；要把它变成**硬断言**，得给 `Case` 加
+   `expect_trap`（异常终止 / 平台 abort 码即算过）+ 让 panic 路径 `abort`
+   （`core::intrinsics::abort()` 在 no_std nightly 可用）。这是**破坏性**改动（允许）。
+2. **默认口径仍关检查**：6 处 `-C overflow-checks=off`（含默认编译路径）⇒ 溢出拦截在默认
+   门禁里**不可见**；trap 用例落地后要删掉默认路径那一处。
+
+附带踩坑（写给下一轮）：`FORGE_E2E_ONLY=<已知失败用例>` 单跑会**报 `no cases passed —
+backend broken` 硬失败**（harness 要求至少一条通过）——探针用例要单跑，必须同时带上一条通过的
+用例名，或先把它转成硬断言用例。本轮因此多花了一次 20 s×2 的超时。
+
+M1-① trap 语义：已落地并实测（同轮）
+
+改动（`crates/tools/forge-rustc/tests/e2e.rs`，破坏性）：① 模板的 `#[panic_handler]` 从
+`loop {}` 改成 `unsafe { core::arch::asm!("ud2", options(noreturn)) }`（真异常终止）；
+② `Case` 加 **`expect_trap: bool`**（106 个用例字面量 + 数组外的诊断探针全部补字段）；
+③ `run_case_with` 把退出结局分三态并按 `expect_trap` 归一，**保留真实 NTSTATUS**；
+④ 新增 `is_trap_code`（NTSTATUS severity：`0xC0000000` 及以上算异常终止）。
+
+实测两坑（都已写进代码注释，别再踩）：：
+
+1. **Windows 上 `ud2` 是"有码"退出**：`status.code()` = `Some(-1073741795)` = `0xC000001D`
+   （STATUS_ILLEGAL_INSTRUCTION），**不是** `None` ⇒ "`code() == None` 即 trap" 的假设
+   **第一次跑就被证伪**；判定必须按 NTSTATUS severity。
+2. **哨兵值会与合法退出码撞车**：最初把 trap 归一成 `TRAP_EXIT = i32::MIN`，而
+   `i32::MAX + 1` 的**回绕值恰好就是 `i32::MIN`** ⇒ "溢出 trap"与"静默回绕"在判定上无法区分
+   （该用例形同虚设）。现在：归一保留**真实 NTSTATUS**、用例直接钉 `expected: 0xC000_001D`；
+   `TRAP_EXIT` 只作"拿不到码（宿主强行结束）"的兜底，取值落在 trap 区间内（`0xC000_0000`）。
+
+判据达成：：`PASS overflow_runtime_trap exit=-1073741795`（`FORGE_E2E_ONLY` 单跑，1/106）；
+静默回绕会正常退出 `-2147483648`（≠ 任何 trap 码）⇒ 必红；断言失败边不触发（挂起）⇒ 也必红。
+
+**全量验收（同轮实测）**：`cargo test -p forge-rustc --test e2e -- --nocapture
+--test-threads=1 e2e_stage_a_scalar_cases` ⇒ **`passed: 106/106`**、`test result: ok`、
+**零 `KNOWN`**、95 s（单机、串行）⇒ ① 改造对既有 105 例无回归；② 代码里
+`known_failure: true` **已归零**（M1 的一条硬判据达成——最后一个是本里程碑的溢出探针，
+现已转正为硬断言；`rg` 计数时注意排除文档注释里那处 `known_failure:true` 的历史说明）。
+
+遗留（下一轮）：：`run_exe_with_timeout` 的 `Some(None)`（宿主强行结束）现在归成 `TRAP_EXIT`；
+`CI_ENV_AV_CODE`（`0xC0000005`）这条历史容忍码在新语义下走 trap 分支——`FLAKY` 名单为空且只在
+`FORGE_E2E_STRICT_FLAKY=1` 时有意义，故当前无影响，但 **M5 的守卫要把它钉住**（否则将来把 AV
+当"环境性"容忍会重新走进这条路）。
