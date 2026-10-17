@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — v27 M4-T2：约定按目标选（**实测已成立**，新增双向守卫）
+
++ 实测结论：同一个**抽象** `CallConvId::Builtin(C)` 在 aarch64 机器上 plan 出 **`aapcs64`**、
+  在 x86_64 机器上是 **`win64`** ⇒ v20 的"`c` 由规则 `aliases` + 该机绑定共同代答"在设计层面
+  已经工作，后端**没有**把 win64 写死。**T2 无需改动**。
++ 新守卫 `abi_target_real::abstract_c_on_arm64_resolves_to_aapcs64`：同一个探针跑两台真机、
+  两条断言互为对照（只断言 aapcs64 的话，"偶然默认"也能过）。
++ `abi_target_real`（26 个 ABI 用例，0.01s）纳入 `cargo forge gate --subset rustc` 白名单。
++ T2 剩下的部分不在约定层而在目标相关的**对象层/链接层**（`.debug_frame` 的 CFI、PE 异常表、
+  `global_asm` 的汇编器参数、链接器与入口）⇒ 已并入方案里的 T3。
+
 ### Fixed (2026-10-11) — forge-rustc v27 M4-T1：未知目标不再静默回落 x86_64
 
 + `isa_name_for_target` 原来在 `else` 里返回 `"x86_64"` ⇒ 交叉编译到 riscv64 之类会**静默编出

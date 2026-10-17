@@ -1551,3 +1551,52 @@ fn aapcs64_variadic_shape_is_pure_data() {
         "AAPCS64 初值：__stack 地址 / 两个 top / 有符号计数（−8）"
     );
 }
+
+// ============================================================================
+// v27 M4-T2：**按目标选约定**——抽象名 `c` 在 arm64 上必须落到 `aapcs64`
+// ============================================================================
+
+/// `fn f(i64) -> i64`，用**抽象 `c`**（`CallConvId::Builtin(C)`）。
+///
+/// 它不带平台信息："这台机器上的 C 是哪一份"由**规则里的 `aliases`** 决定
+/// （v20 A3b-2b-2a）⇒ x86_64 → win64、aarch64 → aapcs64。
+fn abstract_c_probe() -> Function {
+    let ctx = TypeContext::new();
+    let sig = FunctionSignature::new(&[(TypeId::I64, "n")], &[TypeId::I64])
+        .with_calling_convention(CallConvId::builtin(ConvName::C));
+    let mut b = FunctionBuilder::new("abstract_c_probe", ctx, sig);
+    let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "n")]);
+    b.switch_to_block(entry);
+    b.ret(&[params[0]]);
+    b.finish().expect("build")
+}
+
+/// 抽象 `c` 在 arm64 机器上必须解析成 **aapcs64**（不是 x86 的 win64）。
+///
+/// 这条钉住的是 M4-T2 的核心断言：**约定选择由"规则 + 该机绑定"共同决定**，
+/// 后端不得把 win64 写死。
+#[test]
+fn abstract_c_on_arm64_resolves_to_aapcs64() {
+    use forge_codegen::arch::arm64::TargetMachine as Arm64Machine;
+    let tm = Arm64Machine::new();
+    let reg = builtin::registry().expect("内置注册表");
+    let func = abstract_c_probe();
+    let plan = plan_for_function(&tm, &reg, "c", &func)
+        .unwrap_or_else(|e| panic!("arm64 上 `c` 的 plan 应成立，实际：{e:?}"));
+    assert_eq!(
+        plan.conv, "aapcs64",
+        "抽象 `c` 在 aarch64 上必须落到 aapcs64（实际 {}）",
+        plan.conv
+    );
+
+    // 双向钉住：同一个抽象 `c` 在 x86_64 上必须落到 **win64**（不是 aapcs64）。
+    // 两条一起才说明"约定由**目标**决定"，而不是某一边的偶然默认。
+    let x86 = TargetMachine::new();
+    let plan_x86 = plan_for_function(&x86, &reg, "c", &abstract_c_probe())
+        .unwrap_or_else(|e| panic!("x86_64 上 `c` 的 plan 应成立，实际：{e:?}"));
+    assert_eq!(
+        plan_x86.conv, "win64",
+        "抽象 `c` 在 x86_64 上必须落到 win64（实际 {}）",
+        plan_x86.conv
+    );
+}
