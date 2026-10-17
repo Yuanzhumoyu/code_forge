@@ -48,6 +48,7 @@ mod global_data;
 mod layout;
 mod prelude;
 mod rustc_compat;
+mod tls_runtime;
 mod trace;
 mod types;
 

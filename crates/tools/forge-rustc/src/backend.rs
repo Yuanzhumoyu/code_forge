@@ -147,6 +147,15 @@ impl CodegenBackend for CodegenLibBackend {
         // 与 cranelift 后端同构：文本拼一起、交系统汇编器、报 global_asm_object）。
         let mut global_asm_text: Option<crate::global_asm::GlobalAsmText> = None;
 
+        // v27 TLS：先扫一遍计划，决定要不要生成动态 TLS 运行时（无 TLS ⇒ 不留死代码）。
+        // 必须在循环前算：运行时要落到**首个** CGU 对象里，而 TLS 静态可能出现在任何 CGU。
+        let tls_any = plans.iter().any(|p| {
+            p.items.iter().any(|item| match item {
+                MonoItem::Static(d) => tcx.is_thread_local_static(*d),
+                _ => false,
+            })
+        });
+
         if plans.is_empty() {
             compiled_modules.push(CompiledModule {
                 name: "empty".to_string(),
@@ -465,17 +474,21 @@ impl CodegenBackend for CodegenLibBackend {
                         // 真实现需要：`.tls$` 段 + TLS 回调/`__tls_index`（Windows）或
                         // `%fs:` 相对寻址 + 访问模型的降级（见 backend-gaps.md 的 TLS 行）。
                         if tcx.is_thread_local_static(*def_id) {
-                            tcx.dcx().err(format!(
-                                "code-forge: {}",
-                                IrError::capability(
-                                    "TLS",
-                                    format!(
-                                        "线程局部静态 `{}` 尚未支持——static 路径只发 .data/.rodata，\
-                                         会把线程私有语义静默丢掉",
-                                        tcx.def_path_str(*def_id)
-                                    )
-                                )
-                            ));
+                            // v27 TLS（动态模型）：线程局部静态**不**发普通 .data 符号——
+                            // 发两个隐藏符号：初值模板 `__forge_tls_init_<sym>` 与索引槽
+                            // `__forge_tls_slot_<sym>`；地址物化走动态 TLS 运行时
+                            // （见 `tls_runtime.rs` 与 `lower::const_data_addr`）。
+                            match crate::global_data::build_static_data(tcx, *def_id) {
+                                Ok(sd) => {
+                                    let init_sym = crate::tls_runtime::tls_init_sym(&sd.sym);
+                                    let slot_sym = crate::tls_runtime::tls_slot_sym(&sd.sym);
+                                    let _ = writer.add_data(&init_sym, &sd.data, sd.align);
+                                    let _ = writer.add_data(&slot_sym, &[0u8; 8], 8);
+                                }
+                                Err(msg) => {
+                                    let _ = tcx.dcx().err(format!("code-forge: {msg}"));
+                                }
+                            }
                             continue;
                         }
                         // 静态数据：求值初始值 → .data/.rodata 段符号（global_data.rs）。
@@ -505,6 +518,23 @@ impl CodegenBackend for CodegenLibBackend {
                 }
             }
             debug_assert!(plan_fns.next().is_none(), "M6: 残留未消费的 fn 结果");
+
+            // v27 TLS：动态 TLS 运行时（只在真有线程局部静态时生成）。
+            if pi == 0 && tls_any {
+                match crate::tls_runtime::build_tls_runtime(&mut func_ref_table, isa_name) {
+                    Ok(runtime_fns) => {
+                        for (sym, mut compiled) in runtime_fns {
+                            func_ref_table.resolve_relocs(&mut compiled);
+                            let _ = writer.add_function(&sym, &compiled);
+                        }
+                    }
+                    Err(e) => {
+                        let _ = tcx
+                            .dcx()
+                            .err(format!("code-forge: TLS 运行时生成失败：{e}"));
+                    }
+                }
+            }
 
             // 注入 alloc 运行时（__rust_alloc/dealloc/realloc/alloc_zeroed，基于
             // VirtualAlloc/VirtualFree），使 **no_std + extern crate alloc** 可用。

@@ -1649,21 +1649,23 @@ const CASES: &[Case] = &[
         phase: "M2 neg",
         reason: "panic=unwind 明确拒绝（缺 SEH 展开表）——v27 M2 加缺口 ID",
     },
-    // ── v27 M2：线程局部静态 **明确拒绝**（`[cap:TLS]`）──
-    //   此前 `#[thread_local] static` 会走普通 static 路径 ⇒ 发射 `.data`，
-    //   **线程私有语义静默丢失**（所有线程共享一份）。现在编译期拒绝。
+    // ── v27 TLS（动态模型）：`#[thread_local]` 真的能用 ──
+    //   路径：`const_data_addr` 认出线程局部静态 ⇒ 调 `__forge_tls_addr`
+    //   （TlsAlloc/TlsGetValue 惰性初始化 + 首触拷贝初值）。
+    //   用例同时钉三件事：① 零初值静态能读写；② **非零初值模板真的被拷贝**
+    //   （Y=5 起步，+2 后应为 7）；③ 读回的是本线程的块（X=7）。⇒ 7 + 7 = 14。
     Case {
-        name: "neg_thread_local",
-        body: "unsafe { X = 7 } unsafe { X }",
-        expected: -1,
-        extra: "#![feature(thread_local)]\n#[thread_local]\nstatic mut X: i32 = 0;",
+        name: "thread_local_roundtrip",
+        body: "unsafe { X = 7; Y = Y + 2; } unsafe { X + Y }",
+        expected: 14,
+        extra: "#![feature(thread_local)]\n#[thread_local]\nstatic mut X: i32 = 0;\n#[thread_local]\nstatic mut Y: i32 = 5;",
         entry: "mainCRTStartup",
-        expect_compile_fail: true,
-        expect_compile_err: "cap:TLS",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         expect_trap: false,
         known_failure: false,
-        phase: "M2 neg",
-        reason: "线程局部静态尚未支持（会静默丢线程私有语义）——v27 M2 fail-closed",
+        phase: "v27 TLS",
+        reason: "动态 TLS：零初值 + 非零初值模板 + 读回（v27 TLS 真实现）",
     },
     // ── v27 M2：内联 `asm!` **明确拒绝**（fail-closed，不再是静默 `unreachable`）──
     //   落地前实测：`asm!("mov {0}, 7", out(reg) x)` **编译无声通过**、运行退出

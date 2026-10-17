@@ -83,6 +83,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     _ => Ok(val),
                 }
             }
+            // v27 TLS：`&TLS` / 读写 TLS 静态用的是**专门的 rvalue**（不是 const 路径）。
+            // 以前它落到 `unsupported rvalue`（fail-closed，不是静默错值）；现在走动态 TLS。
+            Rvalue::ThreadLocalRef(def_id) => self.tls_static_addr(*def_id),
             Rvalue::Ref(_, _, place) => {
                 // &x / &mut x → 该 place 的栈地址
                 Ok(self.place_addr(place))
@@ -386,11 +389,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     // `__slice_{hash}`，intern_promoted 落 .rodata）、static 是
                     // GlobalAlloc::Static（真实符号名，intern_global 落 .data）。
                     // 其余（Function 等）不在此路径，落到下方标量求值。
-                    if let Some(g) = self.intern_const_data(alloc_id) {
+                    // v27 TLS：线程局部静态在这里被拦成动态 TLS 调用（`const_data_addr`）。
+                    if let Some(addr) = self.const_data_addr(alloc_id)? {
                         if crate::trace::trace_enabled("GLOBAL") {
-                            eprintln!("[forge] global_addr alloc={alloc_id:?} -> G{g}");
+                            eprintln!("[forge] global_addr alloc={alloc_id:?}（TLS 走运行时）");
                         }
-                        return Ok(self.builder.global_addr(GlobalId::new(g)));
+                        return Ok(addr);
                     }
                     if crate::trace::trace_enabled("GLOBAL") {
                         eprintln!("[forge] const alloc={alloc_id:?} non-data, skip");

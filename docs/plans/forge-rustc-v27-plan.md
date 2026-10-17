@@ -97,7 +97,34 @@ unwrap 触发 `catch_unwind` 或用例级 SEH 决策文档、`thread_local!` 读
      以及内联 `asm!`（`[cap:INLINE_ASM]`，若用户 crate 或平台胶水层用到）。
      ⇒ **M3 的真实顺序依赖 M2.5（内联 asm）与 TLS**，这一点本轮已用代码事实确认，不是猜测。
 
-### TLS 的决策（2026-10-11 实测复核后定为 **不做**，附条件）
+### TLS 真实现 —— **动态模型已落地**（2026-10-11，工作区）
+
+> 上一轮把 TLS 判成"不做（附条件）"，条件就是"推进 std 前必须做动态路"。本轮直接把
+> 动态路做完了，**该决策已被实现取代**（保留下面这段历史记录，便于理解为什么选动态模型）。
+
+- **为什么动态模型**：静态 TLS（`.tls$` + `gs:[58]`）需要 IR 支持**段前缀**，
+  而 `MemRef` 只有 base/disp/index/scale；动态模型（`TlsAlloc`/`TlsGetValue`/`TlsSetValue`，
+  kernel32 已链）**不需要新的 IR 能力**，代价是每次访问一次函数调用。
+- **落地**（新增 `src/tls_runtime.rs`，约 140 行）：
+  - 每个 TLS 静态发**两个隐藏数据符号**（命名确定 ⇒ 降级侧不查表）：
+    `__forge_tls_init_<sym>`（初值模板）与 `__forge_tls_slot_<sym>`（索引槽，0 = 未分配）；
+  - 运行时 `__forge_tls_addr(slot, size, align, init)`：槽里存 `TlsAlloc` **索引 + 1**（0 保留为
+    "未分配"）⇒ 首次访问为**当前线程**分配 + 拷贝初值 + `TlsSetValue`，之后直接返回该线程块；
+    `TlsAlloc` 失败（索引耗尽）⇒ `ExitProcess(3)`（与 `abort()` 同码，不做半吊子降级）；
+  - 地址物化统一在两个入口：`lower::const_data_addr`（const/静态地址）与
+    **`Rvalue::ThreadLocalRef`**（rustc 对 `&TLS` 用的专门 rvalue——**这是实测发现的**：
+    第一版只改 `const_data_addr`，报 `unsupported rvalue: &/*tls*/ mut X`）；
+  - `FuncRefTable` 新增 `intern_global_named`（按符号名取 GlobalId——隐藏符号不是 `AllocId`）。
+- **实测踩坑**：`create_block_with_params` **会切换当前块**（它的 doc 却写"不切换"，
+  实际调用的 `create_block_with_tys` 里有一行 `self.cur_block = block`）⇒ 运行时函数的入口块
+  丢了终结符（`block 0 has no explicit terminator`）。处置：建完所有块后**显式切回入口块**。
+- **边界（写清，不静默）**：每静态独占一个 TLS 索引（不共享槽）、无析构、
+  索引耗尽即终止进程；静态 `.tls$` 模型（更快）留作将来优化。
+- **e2e**：`thread_local_roundtrip`（`X: 0 初值写 7` + `Y: 5 初值 +2` ⇒ **exit=14**）——
+  同时钉住"零初值可用""非零初值模板真的被拷贝""读回的是本线程块"三件事。
+  负向用例 `neg_thread_local` 随之**删除**（能力已落地，它的断言不再成立）。
+
+### TLS 的决策（2026-10-11 实测复核后定为 **不做**，附条件 —— **已被上面的实现取代，留作历史**）
 
 v27 M2 曾把 TLS 记成"待做（先 fail-closed）"。本轮把两条实现路线都量到了具体代价，
 按"宁可明确拒绝，不要半途的错语义"的口径**改判为 `不做`**，并把条件写清：

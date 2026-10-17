@@ -11,6 +11,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-rustc v27：`#[thread_local]` 真实现（动态 TLS）
+
++ **线程局部静态真的能用**（此前是 `[cap:TLS]` fail-closed，更早则会把 `#[thread_local]`
+  发成普通 `.data`、**线程私有语义静默丢失**）。选**动态 TLS**：静态模型（`.tls$` + `gs:[58]`）
+  需要 IR 支持**段前缀**（`MemRef` 只有 base/disp/index/scale），而 `TlsAlloc`/`TlsGetValue`/
+  `TlsSetValue`（kernel32 已链）**不需要新的 IR 能力**，代价是每次访问一次函数调用。
+  新增 `src/tls_runtime.rs`：每个 TLS 静态发两个隐藏符号（`__forge_tls_init_<sym>` 初值模板 +
+  `__forge_tls_slot_<sym>` 索引槽），运行时 `__forge_tls_addr` 用「`TlsAlloc` 索引 + 1」惰性
+  初始化（首访为当前线程分配 + 拷贝初值 + `TlsSetValue`）；`TlsAlloc` 失败 ⇒ `ExitProcess(3)`
+  （不做半吊子降级）。地址物化统一到 `lower::const_data_addr` 与 **`Rvalue::ThreadLocalRef`**。
+  `FuncRefTable` 新增 `intern_global_named`（隐藏符号不是 `AllocId`）。
+  e2e：`thread_local_roundtrip`（零初值写 7 + 非零初值 5→7 ⇒ **exit=14**）；
+  负向用例 `neg_thread_local` 随之删除。
++ **实测踩坑（写进注释）**：① `create_block_with_params` **会切换当前块**（doc 却写"不切换"）
+  ⇒ 运行时函数入口块丢终结符，处置是建完块后显式切回入口块；② TLS 的地址走的是**专门的**
+  MIR rvalue（`ThreadLocalRef`），只改 `const_data_addr` 会报 `unsupported rvalue`；
+  ③ 缺口守卫是**文本扫描**——注释里原样写构造器调用形态会被算成第二个站点。
++ 契约：`backend-gaps.md` 的 `TLS` 行改判**已实现**（边界写明：每静态独占一个索引、无析构、
+  索引耗尽即终止；静态 `.tls$` 模型仍需 IR 段前缀，未做）；方案账本 §8 新增"TLS 真实现"节。
++ 验收：全量 e2e **111/111**、零 `KNOWN`；三个守卫绿；文档 0 issues。
+
 ### Added (2026-10-11) — forge-rustc v27：`abort()` intrinsics 落地 + TLS 明确决策 + 契约回写
 
 + **`core::intrinsics::abort()` 落地**（`lower/intrinsics.rs`）：此前落到 `unsupported intrinsic`

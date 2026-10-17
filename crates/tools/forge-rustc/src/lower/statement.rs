@@ -27,6 +27,85 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
     ///   与 mono_symbol 一致——static 项符号不参与 alloc_id 编号）；
     /// - 其他种类（Function/VTable/TypeId）→ `None`（调用方跳过；slice 常量
     ///   引用路径上不应出现）。
+    /// 常量/静态的**地址值**（v27 TLS：线程局部静态在这里被拦截成动态 TLS 调用）。
+    ///
+    /// 四个调用点（`rvalue.rs` 的 const 地址、`mod.rs` 的 slice 实参、本文件的
+    /// slice 字面量与 Unevaluated 引用）都走这一个入口 —— 隐藏符号/运行时命名只在这里
+    /// 出现一次。返回 `None` 表示"不是可取地址的数据分配"。
+    /// 线程局部静态的**本线程块指针**（动态 TLS 运行时；v27）。
+    ///
+    /// 两个调用者：`Rvalue::ThreadLocalRef`（rustc 对 `&TLS`/`TLS` 的专门 rvalue）
+    /// 与 `const_data_addr` 的静态分支。
+    pub(crate) fn tls_static_addr(
+        &mut self,
+        def_id: rustc_hir::def_id::DefId,
+    ) -> Result<Value, ForgeError> {
+        let ty = self.tcx.type_of(def_id).skip_binder();
+        let layout = self
+            .tcx
+            .layout_of(ty::PseudoCanonicalInput {
+                typing_env: ty::TypingEnv::fully_monomorphized(),
+                value: ty,
+            })
+            .map_err(|e| {
+                // 用构造器而不是裸字符串：缺口守卫认的是构造器调用这个形态
+                //（台账行 ↔ 源码站点双向相等）。**别在注释里原样写它的字面形态**
+                //——守卫是文本扫描，注释里的示例也会被算成第二个站点（实测踩过）。
+                ForgeError::from(IrError::capability(
+                    "TLS",
+                    format!(
+                        "取不到线程局部静态 `{}` 的布局：{e:?}",
+                        self.tcx.def_path_str(def_id)
+                    ),
+                ))
+            })?;
+        let size = layout.size.bytes() as i64;
+        let align = layout.align.abi.bytes() as i64;
+        let instantiating_crate = if def_id.is_local() {
+            rustc_hir::def_id::LOCAL_CRATE
+        } else {
+            def_id.krate
+        };
+        let sym = rustc_symbol_mangling::symbol_name_for_instance_in_crate(
+            self.tcx,
+            rustc_middle::ty::Instance::mono(self.tcx, def_id),
+            instantiating_crate,
+        );
+        let slot = self
+            .func_refs
+            .intern_global_named(&crate::tls_runtime::tls_slot_sym(&sym));
+        let init = self
+            .func_refs
+            .intern_global_named(&crate::tls_runtime::tls_init_sym(&sym));
+        let slot_addr = self.builder.global_addr(GlobalId::new(slot));
+        let init_addr = self.builder.global_addr(GlobalId::new(init));
+        let size_v = self.builder.iconst(size, TypeId::I64);
+        let align_v = self.builder.iconst(align, TypeId::I64);
+        let fr = self.func_refs.intern(crate::tls_runtime::TLS_RUNTIME);
+        let p = self.builder.call(
+            FuncRef::new(fr),
+            &[slot_addr, size_v, align_v, init_addr],
+            &[TypeId::I64],
+        )[0];
+        Ok(p)
+    }
+
+    pub(crate) fn const_data_addr(
+        &mut self,
+        alloc_id: rustc_middle::mir::interpret::AllocId,
+    ) -> Result<Option<Value>, ForgeError> {
+        use rustc_middle::mir::interpret::GlobalAlloc;
+        if let GlobalAlloc::Static(def_id) = self.tcx.global_alloc(alloc_id)
+            && self.tcx.is_thread_local_static(def_id)
+        {
+            // 线程局部静态：不取 .data 符号地址（那会丢线程私有语义），走动态 TLS。
+            return Ok(Some(self.tls_static_addr(def_id)?));
+        }
+        Ok(self
+            .intern_const_data(alloc_id)
+            .map(|g| self.builder.global_addr(GlobalId::new(g))))
+    }
+
     pub(crate) fn intern_const_data(
         &mut self,
         alloc_id: rustc_middle::mir::interpret::AllocId,
@@ -497,14 +576,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     }
                                     // 登记 slice 字节（intern_const_data 内容去重幂等，
                                     // 返回唯一 G 索引——与 global_addr 引用一致）
-                                    let Some(g) = self.intern_const_data(alloc_id) else {
+                                    let Some(ptr) = self.const_data_addr(alloc_id)? else {
                                         // 不可达防御：Slice 字面量恒为 Memory/Static，
                                         // 其余 GlobalAlloc 种类不应出现在此（见
                                         // intern_const_data）。
                                         return Ok(());
                                     };
                                     let base = self.place_addr(place);
-                                    let ptr = self.builder.global_addr(GlobalId::new(g));
                                     self.builder.store(ptr, base);
                                     let lenv = self.builder.iconst(meta as i64, TypeId::I64);
                                     let eight = self.builder.iconst(8, TypeId::I64);
@@ -536,12 +614,11 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         );
                                     }
                                     let alloc_id = ptr.provenance.alloc_id();
-                                    let Some(g) = self.intern_const_data(alloc_id) else {
+                                    let Some(ptrv) = self.const_data_addr(alloc_id)? else {
                                         // 不可达防御（见上）。
                                         return Ok(());
                                     };
                                     let base = self.place_addr(place);
-                                    let ptrv = self.builder.global_addr(GlobalId::new(g));
                                     self.builder.store(ptrv, base);
                                     return Ok(());
                                 }

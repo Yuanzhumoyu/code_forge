@@ -669,9 +669,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 rustc_middle::mir::ConstValue::Slice { alloc_id, meta },
                                 _,
                             ) = ct.const_
-                            && let Some(g) = self.intern_const_data(alloc_id)
+                            && let Some(addr) = self.const_data_addr(alloc_id)?
                         {
-                            call_args.push(self.builder.global_addr(GlobalId::new(g)));
+                            call_args.push(addr);
                             call_args.push(self.builder.iconst(meta as i64, TypeId::I64));
                             continue;
                         }

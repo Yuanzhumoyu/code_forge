@@ -54,6 +54,9 @@ pub struct FuncRefTable {
     /// 符号为 "G{N}"，与函数重定位 "@N" 前缀区分）。
     global_next: u32,
     global_by_alloc: HashMap<rustc_middle::mir::interpret::AllocId, u32>,
+    /// 按**符号名**索引的 GlobalId（隐藏数据符号：TLS 的槽/初值模板等——
+    /// 它们不是 `AllocId`，`intern_global` 的键用不上）。
+    global_by_sym: HashMap<String, u32>,
     global_by_idx: HashMap<u32, String>,
     /// vtable 数据段（unsize cast 生成）：记录见 [`VtableRecord`]——主流程
     /// 统一写 .data（[WA-01] MSVC 链接器不应用 .rodata 的 ADDR64 重定位，
@@ -113,6 +116,19 @@ impl FuncRefTable {
         let id = self.global_next;
         self.global_next += 1;
         self.global_by_alloc.insert(alloc_id, id);
+        self.global_by_idx.insert(id, sym.to_string());
+        id
+    }
+
+    /// 按**符号名**取 GlobalId（幂等）。用于不是 `AllocId` 的隐藏数据符号
+    /// （v27 TLS：`__forge_tls_slot_<sym>` / `__forge_tls_init_<sym>`）。
+    pub fn intern_global_named(&mut self, sym: &str) -> u32 {
+        if let Some(&id) = self.global_by_sym.get(sym) {
+            return id;
+        }
+        let id = self.global_next;
+        self.global_next += 1;
+        self.global_by_sym.insert(sym.to_string(), id);
         self.global_by_idx.insert(id, sym.to_string());
         id
     }
