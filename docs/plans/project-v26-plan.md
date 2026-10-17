@@ -158,6 +158,38 @@ M2 若中途发现"某个面其实还有消费者"（守卫/`rg` 反证），**�
 
 ## 8. 批次记录（逐里程碑回写）
 
+### M5 契约回写 + 账本工程化 —— **一次落地**（2026-10-11，工作区）
+
+**① `CLAUDE.md` 的 v26 口径回写**
+
+- **依赖图**：删掉 `forge-mem`（M2 折叠进 `forge-isa-runtime::mem`），`forge-isa-runtime` 一行写明
+  它现在承载什么（生成物 trait/数据型 + `cpu` 主机探测 + `diagnostics` 诊断出口 + `mem`）；
+  `forge-codegen` 的依赖边同步；**前端线**（`forge-hir`/`forge-hir-macro`/`mini_c`）从依赖图里
+  拿掉，改成一段注释说明它们已移到 `examples/hir-demo/` 并从工作区 `exclude`（含手动检查命令）。
+- **两处小节加降级横幅**：`Frontend Pipeline (forge-grammar v21)` 与 `HIR Lowering (forge-hir)`
+  ——写明"这一线只服务示例、不进门禁、会静默失效"。
+- **格式版本**：`IR_FORMAT_VERSION` 的说明从"当前 3"更新到 **4**（M2 删 `isel_strategy` 时升过）。
+
+**② 顺手修掉一个真问题：`CLAUDE.md` 超出工作区指令预算**
+
+回写后实测 `CLAUDE.md` = **66069 字节 > 65536 预算** ⇒ 加载器**截断**它（系统当场报了
+"truncated CLAUDE.md from 66069 to 65244 bytes"）——也就是说**代理看到的指令文件是不完整的**。
+按仓库文档纪律（长内容按主题进 `docs/guides/`，`CLAUDE.md` 留索引）把体量最大的
+`## Testing Notes`（297 行 / 18 KB）**原地搬**进新文档 [`guides/testing-notes.md`](../guides/testing-notes.md)：
+
+- 新文档带状态头 + "从 `CLAUDE.md` 搬出"的来历说明 + `## 条目` 小节；
+- `CLAUDE.md` 侧留 4 条最易踩的摘要（CRLF 归一化、磁盘满 `os error 112`、门禁只有一条命令、
+  两条 JIT 矩阵都要跑）与到新文档的链接；
+- 两处文档地图（`CLAUDE.md` 的树 + `docs/README.md` 的 guides 表）登记新文档；`Key Architecture
+  Rules §4` 里"见本文件 Testing Notes"的指针改指新文档。
+- 实测：`CLAUDE.md` **66069 → 37659 字节**（预算内），新文档 30112 字节；两者 markdownlint 干净。
+
+**③ 账本归档**（本文 → `docs/archive/project-v26-plan.md`）
+
+同 v23/v24/v25 的做法：`git mv` 保留历史 + `⚠️ ARCHIVED` 头（写清现行入口与五个里程碑的提交号）
+  并全量更新引用（`docs/README.md` 的 plans 表、`CLAUDE.md` 的树、`docs/archive/README.md` 的清单），
+  `git grep` 复查死链。**归档单独一次 docs 提交**（与代码提交分开）。
+
 ### M4 能力补齐 —— **一次落地**（2026-10-11，工作区）
 
 三件事全部落地（后两件按计划允许的「明确降级」口径收口）：

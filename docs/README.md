@@ -53,6 +53,7 @@
 | `guides/isa-dsl-tutorial.md` | ISA-DSL 教程：30 分钟接入一个小 ISA（骨架 → 操作数槽 → 指令 → 模板 → 生成期自测 → CLI 自查） |
 | `guides/coverage.md` | cargo-llvm-cov 覆盖率工作流（CI Coverage job 现行方法） |
 | `guides/lint.md` | markdownlint 检查命令/豁免形式/存量基线（写文档后自查） |
+| `guides/testing-notes.md` | **测试与夹具笔记**（v26 M5 从 `CLAUDE.md` 搬出的约 300 行：JIT 矩阵/汇编三档/生成物落盘/谱内向量/工具链 lint 档/宽度元数据/…） |
 
 ## archive/ — 历史归档（⚠️ 先看 ARCHIVED 头）
 

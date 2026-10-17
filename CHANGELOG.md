@@ -11,6 +11,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Docs (2026-10-11) — 项目 v26 M5：契约回写 + 账本归档（`CLAUDE.md` 回到指令预算内）
+
++ **`CLAUDE.md` 的 v26 口径回写**：依赖图删掉已删除的 `forge-mem`（并写明 `forge-isa-runtime`
+  现在承载什么：生成物 trait/数据型 + `cpu` 主机探测 + `diagnostics` 诊断出口 + `mem`）；
+  前端线（`forge-hir`/`forge-hir-macro`/`mini_c`）从图里移出，改成"已降级为 `examples/hir-demo/`
+  并从工作区 exclude"的说明；`Frontend Pipeline` 与 `HIR Lowering` 两节加降级横幅；
+  `IR_FORMAT_VERSION` 的说明从"当前 3"更新到 **4**。
++ **修掉一个真问题：`CLAUDE.md` 超出工作区指令预算（65536 字节）而被加载器截断**——
+  实测回写后 66069 字节 ⇒ 代理看到的指令文件不完整。按文档纪律把体量最大的 `## Testing Notes`
+  （297 行）**原地搬**进 [`docs/guides/testing-notes.md`](docs/guides/testing-notes.md)
+  （带状态头与来历），`CLAUDE.md` 留 4 条最易踩的摘要 + 链接；两处文档地图（`CLAUDE.md` 树、
+  `docs/README.md` guides 表）登记新文档，`Key Architecture Rules §4` 的指针改指它。
+  **实测 66069 → 37659 字节**（预算内），新文档 30112 字节，两者 markdownlint 0 issues。
++ **账本归档**：`docs/plans/project-v26-plan.md` → `docs/archive/project-v26-plan.md`
+  （`git mv` + `⚠️ ARCHIVED` 头 + 五个里程碑提交号 + 现行入口），并全量更新引用
+  （`docs/README.md` 的 plans 表、`CLAUDE.md` 的树、`docs/archive/README.md` 的清单）；
+  归档为单独一次 docs 提交。
++ 验收：`cargo forge gate` 全套见下。
+
 ### Changed (2026-10-11) — 项目 v26 M4：能力补齐（谱侧缺口台账 · 三条待做收口 · 两项 P1 分析）
 
 + **谱侧能力台账（`[cap:SPEC_*]`）**：生成器 `forge-isa-dsl/src/dsl/codegen/**` 里有 **66 个发射型
