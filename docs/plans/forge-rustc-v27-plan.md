@@ -1,4 +1,4 @@
-# forge-rustc v27 方案：从"能跑的部分后端"到**完整 rustc 后端**
+﻿# forge-rustc v27 方案：从"能跑的部分后端"到**完整 rustc 后端**
 
 > **状态：[progress]**（2026-10-11 立项）。本文是**活账本**：每个里程碑落地时在 §8 追加批次记录
 > （含实测数字、命令、偏差），任何"说得出但没做到"的东西必须如实写在这里。
@@ -320,6 +320,73 @@ error: failed to get `cfg-if` as a dependency of package `std v0.0.0 (…/librar
 
 **同批提交的代码**：`M3-①`（alloc 运行时**按需注入**，见下节）——它是 std 的前置条件，
 与本批文档同源，故一并提交；**M3 本身未完成**（M3-② 的真跑 `std` 需要 M2.5 与 TLS）。
+
+### S2 施工图：寄存器约束（侦察完成，2026-10-11）
+
+**结论先说**：S2 **不需要**给分配器加新能力。管线里已有的三件东西足以表达
+"值 ↔ 物理寄存器"：
+
+| 机制 | 是什么 | 位置 |
+| --- | --- | --- |
+| `OperandBind { vreg, field, role, class }` | 把一条机器指令的**寄存器字段**绑定到某个 vreg（分配器回填） | `machine/lowering.rs`、`CompileState.inst_ops` |
+| `MachineInst::set_reg_field(i, preg, class)` | 把字段**写死**成物理寄存器（分配器不管它） | 序言/尾声与 `state.rs:403` 的先例 |
+| `inst_clobbers: Vec<Vec<(u32, RegClass)>>` | 该指令**破坏**的物理寄存器集（分配器据此不把别的值放那儿） | `state.rs:19`、传给 `allocate(...)` |
+
+且 `is_reg_field_settable` 明确：**模板里写死的寄存器字段不可改写**（DSL 不为它生成
+`set_reg_field` 分支）——这正好是我们要的两种语义的分界线。
+
+#### ① IR 表达（设计决定）
+
+`InlineAsm` 从"0 操作数"扩成：**操作数 = 输入/输出值**，外加**两个** `Immediate::String`：
+`[0]` = 约束描述、`[1]` = 汇编文本。约束描述用紧凑文本（如 `"i,g;o,g;io,g"`，
+`i`=in / `o`=out / `io`=inout，第二段是寄存器类或显式寄存器名）。
+
+理由：① 不引入新 IR 类型（S3 的 `const`/`sym` 与 S4 的 `clobber_abi`/`label` 都能往同一段
+文本里加字段）；② IR dump 里人可读；③ 顺序即占位符序号（`{0}`/`{1}` 直接对应操作数）。
+
+#### ② 降级（`pipeline/inline_asm.rs`）
+
+1. **选寄存器**：显式名 ⇒ 用它；`reg` 类 ⇒ 从**调用者保存**池里贪心挑，避开已占用与该
+   指令的 clobber 集；
+2. **替换文本**：把 `{}`/`{n}` 换成选中的**物理寄存器名**（需要 `RegInfo` 的寄存器名表——
+   **待验证**：拿到名字的入口名与形状）；
+3. **汇编**：替换后的文本经 `asm_parse` ⇒ 机器指令（这些指令里的寄存器是**字面量**，
+   不带 `OperandBind`）；
+4. **输入搬运**：每条 `in`/`inout` 前插一条 `mov dst=<选中 preg>, src=<vreg>`——
+   `dst` 用 `set_reg_field` 写死、`src` 用 `OperandBind{ role: Read }` 绑定；
+5. **输出搬运**：每条 `out`/`inout` 后插 `mov dst=<vreg>, src=<选中 preg>`
+   （`src` 写死、`dst` 绑定 `role: Write`）；
+6. **clobber**：把选中的寄存器 + 声明的 clobber 集写进**每条**相关指令的 `inst_clobbers`。
+
+#### ③ 分配器交互：**零改动**
+
+`inst_clobbers` 让分配器把选中寄存器视为"此处被破坏"，于是不会把别的值放在那儿；
+搬运指令的 vreg 操作数走正常分配。**不需要** pinned live range、不需要改 regalloc——
+这是本设计最重要的收敛点。
+
+#### ④ 分期与验收
+
+- **S2a**：`in`/`out`/`inout` + `reg` 类（调用者保存池）。
+  验收：`let x = 5; let y = 37; asm!("add {0}, {1}", inout(reg) x, in(reg) y); x`
+  ⇒ **exit 42**（不带 asm 时是 5 ⇒ 强断言；用 `add` 是因为本谱的 `mov` 只有 reg-reg/reg-mem，
+  **没有** `mov reg, imm` 形态）。
+- **S2b**：显式寄存器名（`in("rcx") x`）+ `lateout`/`inlateout` 的次序语义。
+- **S2c**：`const`/`sym` 占位符（= S3；S2 落地后它们才有可验证的用法）、`clobber_abi`、
+  `options(...)`、`label`（= S4）。
+
+#### ⑤ 清单：两条已实测确认，一条仍是开工第一件事
+
+- **已确认**：`OperandBind.role` 的枚举是 `OperandRole::{Use, Def}`（不是 Read/Write）——
+  输入绑 `Use`、输出绑 `Def`。
+- **已确认**：`MachineInst::set_reg_field(i, preg, class)` 只对**可改写**字段生效；模板里写死的
+  寄存器（DSL 不为它生成该分支）正是"字面量寄存器"那一侧，语义边界天然清楚。
+- **仍缺（下一轮开工先解决）**：**寄存器名表**。`machine.reg_info()` 上**没有**取名字的方法
+  （连 `RegInfo` 这个名字都不是 trait，`pub trait RegInfo` 全仓搜不到）；而 S2 必须"把选中的
+  物理寄存器写成汇编文本里的名字"再交给汇编器 ⇒ 先找生成物里 `Reg`/汇编信息里的名字表
+  （正向"名字 → 索引"在汇编器里已有，反向表要找），找不到就在生成侧补一个
+  `name(idx) -> &'static str`。
+- **不变式**：`push_inst_line` 与 `inst_ops`/`inst_clobbers` 必须**逐条**平行（漏一条就错位）；
+  `inline_asm.rs` 现在每次 push 都配一条，扩成多指令后要保持。
 
 ### S1 收口：规模棘轮回退修复 + 后端管线契约回写（2026-10-11）
 
