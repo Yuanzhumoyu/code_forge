@@ -191,6 +191,19 @@ v27 M2 曾把 TLS 记成"待做（先 fail-closed）"。本轮把两条实现路
 - **`-Zshare-generics=yes`（`WA-04`）**：现在仍是"链接期才发现的 LNK2019"⇒ 收口时可改为
   **编译期明确拒绝**（带缺口 ID）或补齐"被引用但上游未生成"的实例。
 
+### M5 补面之三（2026-10-11）：DWARF 调试段从"手工 gdb"变成自动核对
+
+- **缺口**：README 写着"DWARF5（gdb 实证）"——那条是**手工**验的，后续改动把它弄坏没人拦得住。
+- **落地**：`tests/dwarf_sections.rs` 直接读**对象文件的 COFF 段表**（20 字节文件头 + 40 字节段头
+  - 长名走字符串表，不引第三方库），断言：
+  - `-C debuginfo=2` ⇒ `.debug_info` / `.debug_abbrev` / `.debug_line` / `.debug_line_str` /
+    `.debug_aranges` / `.debug_frame` 都在；
+  - `-C debuginfo=0` ⇒ **一个都不在**（负向对照，防止"永远为真"的空断言）；
+  - `-C debuginfo=2` 编出来的程序答案仍是 42（调试信息不改变语义）。
+- **实测纠了一个预期**：我原以为会有 `.debug_str`，实际用的是 DWARF5 的 **`.debug_line_str`**
+  ⇒ 断言按**实测集合**写（不是照抄 LLVM 的段名）。
+- **纳入门禁**：新步骤 `rustc-dwarf` + 进 `--subset rustc` ⇒ 子集 **15 步**。
+
 ### M5 补面之二（2026-10-11）：其它 codegen 旋钮
 
 同一条测试文件里加了"旋钮要么支持、要么点名拒绝"的矩阵（`tests/opt_levels.rs`）：

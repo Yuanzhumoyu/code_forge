@@ -361,6 +361,21 @@ fn build_steps(a: &Args) -> Vec<Step> {
             "--test-threads=1",
         ],
     ));
+    // DWARF 调试段的**自动**核对（此前"DWARF5 已实现"只靠手工跑 gdb 验过）。
+    push!(cargo_step(
+        "rustc-dwarf",
+        "rustc 后端 DWARF 段核对（debuginfo=2 有段 / =0 无段 / 语义不变）",
+        Scope::Windows,
+        &[
+            "test",
+            "-p",
+            "forge-rustc",
+            "--test",
+            "dwarf_sections",
+            "--",
+            "--test-threads=1",
+        ],
+    ));
     push!(cargo_step(
         "fmt",
         "格式（`cargo fmt --all -- --check`）",
@@ -596,6 +611,7 @@ pub fn run(a: &Args, verbose: bool) -> anyhow::Result<i32> {
             "rustc-e2e-guards",
             "rustc-determinism",
             "rustc-opt-levels",
+            "rustc-dwarf",
             "capability_gaps",
             // 后端 `Unsupported(` 的错误分类学（v27 S1–S4 曾整族违规而本子集看不见）
             "error_taxonomy",

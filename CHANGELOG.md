@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — v27 M5 补面之三：DWARF 调试段自动核对
+
++ "DWARF5（gdb 实证）"此前只是**手工**验过，改坏了没人拦。新增 `tests/dwarf_sections.rs`：
+  直接读**对象文件的 COFF 段表**（文件头 + 段头 + 长名字符串表，不引第三方库），断言
+  `-C debuginfo=2` 产出 `.debug_info/.debug_abbrev/.debug_line/.debug_line_str/.debug_aranges/`
+  `.debug_frame`，而 `-C debuginfo=0` **一个都不产出**（负向对照，防止空断言）；另有
+  "debuginfo=2 不改变程序语义"（仍返回 42）。
++ 实测纠了一个预期：没有 `.debug_str`，行号表用的是 DWARF5 的 **`.debug_line_str`**
+  ⇒ 断言按实测集合写，不照抄 LLVM 段名。
++ 纳入门禁：新步骤 `rustc-dwarf` + `--subset rustc` ⇒ 子集 **15 步**。
+
 ### Added (2026-10-11) — v27 M5 补面之二：其它 codegen 旋钮
 
 + 与 opt-level 同一测试文件（`tests/opt_levels.rs`）：
