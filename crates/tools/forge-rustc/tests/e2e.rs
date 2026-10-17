@@ -1944,6 +1944,23 @@ const CASES: &[Case] = &[
         phase: "v27 M5",
         reason: "i32::MIN / -1 在 overflow-checks=on 下必须 panic；black_box 防常量折叠",
     },
+    // ── v27 M5 缺陷修复：浮点比较语义（含 NaN 的无序行为）──
+    //   根因：rustc 侧把 `Ne` 映射成 `FloatCC::One`（**有序**不等）⇒ `NaN != x` 返回 false；
+    //   Rust 的 `!=` 是**无序**不等（`Une`），NaN 参与时必须为 true。
+    //   探针实测（位掩码）：其余五种比较都对，只有 `!=` 在 NaN 上错 ⇒ 一处映射错。
+    Case {
+        name: "float_cmp_semantics",
+        body: "let n = 0.0f64 / 0.0f64; let g = 1.5f64; let h = 2.5f64; let mut m: i32 = 0; if g == g { m |= 1 } if !(g == h) { m |= 2 } if n != 1.0 { m |= 4 } if !(n == n) { m |= 8 } if !(n < 1.0) { m |= 16 } if !(n > 1.0) { m |= 32 } if m == 63 { 42 } else { 1 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "浮点比较语义：==/< /> 有序（NaN 全 false），!= 无序（NaN 为 true）",
+    },
     Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",

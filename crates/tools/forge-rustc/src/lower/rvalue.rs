@@ -644,7 +644,11 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             }
             mir::BinOp::Ne => {
                 if is_fp {
-                    Ok(self.builder.fcmp(FloatCC::One, lhs, rhs))
+                    // v27 M5 缺陷（NaN 比较）：Rust 的 `!=` 是**无序不等**（`Une`）——
+                    // 任一侧是 NaN 都必须返回 **true**。原来映射成 `One`（有序不等）⇒
+                    // `NaN != 1.0` 返回 false。实测（位掩码探针）：其余五种比较都对，
+                    // 只有 `!=` 在 NaN 上错，正是这一处。
+                    Ok(self.builder.fcmp(FloatCC::Une, lhs, rhs))
                 } else {
                     Ok(self.builder.icmp(IntCC::Ne, lhs, rhs))
                 }

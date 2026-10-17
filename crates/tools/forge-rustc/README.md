@@ -175,9 +175,9 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 
 ## 支持矩阵（x86_64-pc-windows-msvc 宿主）
 
-### ✅ 已验证（e2e 127 用例：**127 硬断言 + 0 个 `FLAKY` 容忍项**）
+### ✅ 已验证（e2e 128 用例：**128 硬断言 + 0 个 `FLAKY` 容忍项**）
 
-> **2026-10-11 核（v27 M1–M2 实测）**：`tests/e2e.rs` 的 `CASES` 现为 **127 个 `Case`**、
+> **2026-10-11 核（v27 M1–M2 实测）**：`tests/e2e.rs` 的 `CASES` 现为 **128 个 `Case`**、
 > **`known_failure: true` = 0、`FLAKY` 名单为空** ⇒ 套件是**真全过**，不是容忍式全绿。
 > 早先的「103 用例 + 5 个 `FLAKY`」（2026-09-06 回归）里的那 5 例
 > （`vec_push`/`vec_string`/`vec_from_slice`/`vec_iter_enumerate`/`box_value`）已随
@@ -195,10 +195,11 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 > `neg_u128` 钉住「`i128`/`u128` 此前被静默当 64 位算 ⇒ 现在 `[cap:WIDE_INT]` 拒绝」，
 > `narrow_shift_semantics` / `narrow_arith_signed` 钉住窄宽度移位与算术的**符号性**，
 > `cast_int_float_matrix` 钉住整数↔浮点转换（含 `f64 → i8/u8`）；
+> `float_cmp_semantics` 钉住浮点比较语义（NaN：`==`/`<` 全 false、`!=` 为 true），
 > `overflow_panic_shl` / `overflow_panic_div` 钉住 **溢出检查真的会 panic**（exit=101，`black_box` 防常量折叠）；期望值均由 LLVM 对照；
 > 删除了被正当推翻的 `neg_global_asm`。
 >
-> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=127 hard=127 flaky=0 known=0 expect_trap=3 -->
+> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=128 hard=128 flaky=0 known=0 expect_trap=3 -->
 >
 > **上面这段机读标记与 `tests/e2e.rs` 双向相等**：改用例数/容忍名单时必须同步它，
 > 否则 `cargo forge gate --guards` 会红（守卫就是为了治「文档与代码分叉」这件事）。
