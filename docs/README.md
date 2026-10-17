@@ -23,7 +23,8 @@
 
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
-| [`plans/project-v26-plan.md`](plans/project-v26-plan.md) | **项目 v26：审查收口**（M1 诊断单一来源：DSL 错误码台账 + 双向守卫、事件 sink 下沉 `forge-isa-runtime::diagnostics`、开关台账归并 `forge-rustc`；M2 无消费者面清理：删 `forge-mem`/`isel_strategy`（`IR_FORMAT_VERSION` 3→4）/`asm_v11.lx`，前端线降级为 `examples/hir-demo`；M3 `cargo forge gate` 单命令门禁 + CI 补齐；M4 `[cap:SPEC_*]` 谱侧台账与能力补齐；M5 契约回写）；含审查证据、删除清单、守卫与判据 | progress |
+| —（已归档） | 项目 v26 的账本已收口：见 [`archive/project-v26-plan.md`](archive/project-v26-plan.md)（M1–M5 全部落地；现行入口 = `reference/backend-pipeline.md` + `reference/backend-gaps.md`） | archive |
+| ~~`plans/project-v26-plan.md`~~（原文，已移走） | **项目 v26：审查收口**（M1 诊断单一来源：DSL 错误码台账 + 双向守卫、事件 sink 下沉 `forge-isa-runtime::diagnostics`、开关台账归并 `forge-rustc`；M2 无消费者面清理：删 `forge-mem`/`isel_strategy`（`IR_FORMAT_VERSION` 3→4）/`asm_v11.lx`，前端线降级为 `examples/hir-demo`；M3 `cargo forge gate` 单命令门禁 + CI 补齐；M4 `[cap:SPEC_*]` 谱侧台账与能力补齐；M5 契约回写）；含审查证据、删除清单、守卫与判据 | progress |
 | —（已归档） | 后端 v25 的账本已收口：见 [`archive/backend-v25-plan.md`](archive/backend-v25-plan.md)（M1–M5 全部落地；现行入口 = `reference/backend-pipeline.md`） | archive |
 | —（已归档） | 后端 v24 的账本已收口：见 [`archive/backend-v24-plan.md`](archive/backend-v24-plan.md)（M1–M5 全部落地；现行入口 = `reference/backend-pipeline.md` + `reference/backend-gaps.md`） | archive |
 | —（已归档） | 后端 v23 的账本已收口：见 [`archive/backend-v23-plan.md`](archive/backend-v23-plan.md) | archive |

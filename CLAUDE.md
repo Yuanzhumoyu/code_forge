@@ -18,7 +18,7 @@ docs/
 │   ├── backend-gaps.md        # 后端能力缺口台账（v24 M3：21 条 `[cap:ID]` + 决策 + 双向守卫）
 │   └── imm_str.md             # ImmStr 类型设计（forge-ir 代码注释引用）
 ├── plans/                 # 进行中专项方案（活账本）[progress]
-│   └── project-v26-plan.md    # 项目 v26：审查收口（诊断单一来源 / 无消费者面清理 / 单命令门禁 / 能力补齐）
+│   └── （空：v26 已收口归档 → archive/project-v26-plan.md）
 ├── forge-ir/              # forge-ir 工作流 [active]
 │   ├── README.md              # 组说明（历轮计划已归档、如何继续）
 │   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）
@@ -46,6 +46,7 @@ docs/
     ├── varargs-plan.md / isa-dsl-variant-field-values.md # 变参（功能面已完成）/ 按变体给字段值（早已落地）
     ├── forge-ir-v3-plan.md      # forge-ir v3（S1–S8 全部收口；未关闭项移交 ../forge-ir/backlog.md）
     ├── forge-rustc-vec_push-plan.md # forge-rustc vec 族（2026-10-11 归档：验收 4/4 达成，e2e 103 条用例全绿）
+    ├── project-v26-plan.md       # 项目 v26 里程碑 M1–M5（2026-10-11 归档：全部收口；现行入口 = reference/backend-pipeline.md + backend-gaps.md + guides/testing-notes.md + CHANGELOG）
     ├── backend-v23-plan.md     # 后端 v23 里程碑 M1–M6 + M7（2026-10-11 归档：全部收口；现行入口 = reference/backend-pipeline.md + CHANGELOG）
     ├── backend-v24-plan.md     # 后端 v24 里程碑 M1–M5（2026-10-11 归档：全部收口；现行入口 = reference/backend-pipeline.md + backend-gaps.md + CHANGELOG）
     ├── backend-v25-plan.md     # 后端 v25 里程碑 M1–M5（2026-10-11 归档：全部收口；现行入口 = reference/backend-pipeline.md（一次分类/错误分类学/规模棘轮/事件表）+ CHANGELOG）

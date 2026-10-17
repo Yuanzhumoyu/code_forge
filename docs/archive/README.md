@@ -10,6 +10,7 @@
 
 | 文件 | 内容 | 现行替代 |
 | --- | --- | --- |
+| `project-v26-plan.md` | 项目 v26 里程碑方案（**2026-10-11 归档**：M1–M5 **全部收口** —— 诊断单一来源（DSL 错误码台账 + 事件 sink + 开关台账归并）/ 无消费者面清理（删 `forge-mem`/`isel_strategy` 且 `IR_FORMAT_VERSION` 3→4/前端线降级为 `examples/hir-demo`）/ 单命令门禁 `cargo forge gate` + CI 补齐（docs 作业、`--all-features` 执行、覆盖率下限棘轮）/ 能力补齐（谱侧 `[cap:SPEC_*]` 台账、三条 `待做` 收口、两项 P1 分析）/ 契约回写） | `../reference/backend-pipeline.md` + `../reference/backend-gaps.md` + `../guides/testing-notes.md` |
 | `backend-v25-plan.md` | 后端 v25 里程碑方案（**2026-10-11 归档**：M1–M5 **全部收口** —— 一次分类处处消费（`AbiEdges` 成为唯一落点来源，删手抄落点枚举/两个探针/五种计划枚举）/ 错误分类学（`Unsupported` 一律带 `[cap:ID]`、畸形 IR 收编 `Internal`、构造器下沉 `forge-ir`、删 `Unimplemented`）/ 观测事件化（`FORGE_CODEGEN_EVENTS`）/ 模块收敛（管线大文件切分 + 规模棘轮 + 叶子方向）/ 契约回写） | `../reference/backend-pipeline.md`（v25 现行契约）+ 根 `CHANGELOG.md`（搜 `v25`） |
 | `backend-v24-plan.md` | 后端 v24 里程碑方案（**2026-10-11 归档**：M1–M5 **全部收口** —— 合法化两相化（计划只读 + 一次性物化，删除清单清零）/ 值描述单一来源（删 `xreg_types`，生成物不再依赖旁表）/ 能力缺口台账 + 双向守卫 / 观测开关台账 / 契约回写） | `../reference/backend-pipeline.md`（v24 现行契约）+ `../reference/backend-gaps.md`（缺口台账）+ 根 `CHANGELOG.md`（搜 `v24`） |
 | `backend-v23-plan.md` | 后端 v23 里程碑方案（**2026-10-11 归档**：M1–M6 与追加的 M7 **全部收口** —— 入口收敛 / 单一 ABI 数据模型 / 能力数据化 / 单一操作数模型 / 分配器与发射 / 合法化单一驱动；M7 打通 `va_arg` 聚合（win64 指针档 + sysv64 `>16B` 内联档，含真执行用例）并修掉四个缺陷） | `../reference/backend-pipeline.md`（管线契约）+ 根 `CHANGELOG.md`（逐批变更，搜 `v23`） |

@@ -1,11 +1,21 @@
 # 项目 v26 里程碑方案：审查收口（诊断单一来源 · 无消费者面清理 · 单命令门禁 · 能力补齐）
 
-> **状态：[progress]**（2026-10-11 立项）。本文是**活账本**：每个里程碑落地时在 §8 追加批次记录
-> （含实测数字、命令、偏差），任何"说得出但没做到"的东西必须如实写在这里。
-> 基线 = v25 收口提交 `574eb82c`；**行号随迭代漂移，以符号名为准**。
-> 上一轮方案（v25，已收口归档）见 [`docs/archive/backend-v25-plan.md`](../archive/backend-v25-plan.md)；
-> 现行契约 [`reference/backend-pipeline.md`](../reference/backend-pipeline.md)、
-> 能力缺口台账 [`reference/backend-gaps.md`](../reference/backend-gaps.md)。
+> ⚠️ **ARCHIVED（2026-10-11）** —— 本方案 **M1–M5 全部收口**，逐批证据与实测数字在 §8。
+> **现行入口**（本文件只作历史记录，一切以代码与测试为准）：
+>
+> - 后端管线契约（一次分类 / 错误分类学 / 事件通道 / 观测开关 / 模块棘轮）：
+>   [`reference/backend-pipeline.md`](../reference/backend-pipeline.md)
+> - 能力缺口台账（含 §3.4 的谱侧 `SPEC_*` 类与 §3.5 的三条"不做"决定）：
+>   [`reference/backend-gaps.md`](../reference/backend-gaps.md)
+> - 错误码目录：[`reference/isa-dsl-errors.md`](../reference/isa-dsl-errors.md)；
+>   二进制格式版本史：[`reference/binary-format.md`](../reference/binary-format.md)（v4）
+> - 测试与夹具笔记：[`guides/testing-notes.md`](../guides/testing-notes.md)（本轮的 `CLAUDE.md` 拆分）
+> - 逐批变更与实测：[`CHANGELOG.md`](../../CHANGELOG.md)（搜 `v26`）
+>
+> 状态：**[archive]**（2026-10-11 归档）。基线 = v25 收口提交 `574eb82c`；
+> 收口后的提交：立项 `f24105a5` / M1 `1c000744` / M2 `ca390292` / M3 `803f909c` /
+> M4 `887c594c` / M5 `95433ca3`。**行号随迭代漂移，以符号名为准**。
+> 上一轮方案（v25）见 [`backend-v25-plan.md`](backend-v25-plan.md)。
 
 前提纪律（沿用既有约定）：
 
