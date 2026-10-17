@@ -85,6 +85,9 @@ impl<I: MachineInst + 'static> CompileState<I> {
             In,
             Out,
             InOut,
+            /// 纯 clobber（`out(reg) _` / `clobber_abi` 展开出来的那些）：不产物值、不搬数据，
+            /// 只把该寄存器记进 `inst_clobbers`。
+            Clobber,
         }
         // ① 解析约束（`角色,类;…`）
         // 每个槽的寄存器来源：`g` = 从可分配池里挑；其它 = **显式寄存器名**（S2b）。
@@ -100,6 +103,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 Some("i") => Role::In,
                 Some("o") => Role::Out,
                 Some("io") => Role::InOut,
+                Some("c") => Role::Clobber,
                 other => {
                     return Err(IrError::Unsupported(format!(
                         "内联 asm 的约束角色不支持：{other:?}（只有 i/o/io）"
@@ -134,47 +138,89 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 inst.results.len()
             )));
         }
-        // ② 定寄存器：显式名按名字解析（S2b），`g` 从可分配池里挑（互不重复）
-        let mut chosen: Vec<u32> = Vec::with_capacity(specs.len());
-        for (_, choice) in &specs {
-            let reg = match choice {
+        // ② 定寄存器：显式名按名字解析（S2b；**纯 clobber** 允许跨类——`clobber_abi` 会
+        // 展开出 FPR 之类的非 GPR 寄存器），`g` 从可分配池里挑（互不重复）。
+        let mut chosen: Vec<Option<(u32, RegClass)>> = Vec::with_capacity(specs.len());
+        for (role, choice) in &specs {
+            let picked = match choice {
                 RegChoice::Named(name) => {
                     let by_name = self.reg_by_name_of.clone().ok_or_else(|| {
                         IrError::Unsupported(
                             "本 ISA 未提供寄存器名反查表（显式寄存器名无法解析）".to_string(),
                         )
                     })?;
-                    let r = by_name(name, class).ok_or_else(|| {
-                        IrError::Unsupported(format!(
-                            "内联 asm 的显式寄存器 {name:?} 在本 ISA 的该寄存器类里不存在"
-                        ))
-                    })?;
-                    if chosen.contains(&r) {
-                        return Err(IrError::Unsupported(format!(
-                            "内联 asm 的显式寄存器 {name:?} 被重复使用"
-                        )));
+                    // 纯 clobber 跨所有已声明类找；其余只认 GPR 类（搬运指令是 GPR 的 mov）。
+                    let mut found = None;
+                    let classes: Vec<RegClass> = if matches!(role, Role::Clobber) {
+                        self.reg_classes.clone()
+                    } else {
+                        vec![class]
+                    };
+                    for c in classes {
+                        if let Some(n) = by_name(name, c) {
+                            found = Some((n, c));
+                            break;
+                        }
                     }
-                    r
+                    match found {
+                        Some(p) => p,
+                        None if matches!(role, Role::Clobber) => {
+                            // 纯 clobber 且本 ISA 不认识这个寄存器（如 `clobber_abi` 展开出的
+                            // AVX-512 mask `k0`）：我们从不在那些寄存器里放值 ⇒ **跳过无害**。
+                            chosen.push(None);
+                            continue;
+                        }
+                        None => {
+                            return Err(IrError::Unsupported(format!(
+                                "内联 asm 的寄存器 {name:?} 在本 ISA 里不存在（或不在允许的类里）"
+                            )));
+                        }
+                    }
                 }
-                RegChoice::Pool => *self
-                    .gp_alloc_order
-                    .iter()
-                    .find(|r| !chosen.contains(r))
-                    .ok_or_else(|| {
-                        IrError::Unsupported("内联 asm 的寄存器需求超过可分配 GPR 数量".to_string())
-                    })?,
+                RegChoice::Pool => {
+                    let r = *self
+                        .gp_alloc_order
+                        .iter()
+                        .find(|r| {
+                            !chosen
+                                .iter()
+                                .any(|e| matches!(e, Some((c, cl)) if *c == **r && *cl == class))
+                        })
+                        .ok_or_else(|| {
+                            IrError::Unsupported(
+                                "内联 asm 的寄存器需求超过可分配 GPR 数量".to_string(),
+                            )
+                        })?;
+                    (r, class)
+                }
             };
-            chosen.push(reg);
+            // 去重必须按 **(编号, 类)**：`to_index` 跨类会撞车（x86 的 `rax` 与 `xmm0`
+            // 可能同为 0），只比编号会把"不同类的不同寄存器"误判成重复。
+            if chosen
+                .iter()
+                .any(|e| matches!(e, Some((c, cl)) if *c == picked.0 && *cl == picked.1))
+            {
+                return Err(IrError::Unsupported(format!(
+                    "内联 asm 里同一寄存器被重复使用（{picked:?}）"
+                )));
+            }
+            chosen.push(Some(picked));
         }
         // ③ 名字 → 文本替换 → 汇编
         let name_of = self.reg_name_of.clone().ok_or_else(|| {
             IrError::Unsupported("本 ISA 未提供寄存器名表（S2a 无法替换占位符）".to_string())
         })?;
         let mut names: Vec<String> = Vec::with_capacity(chosen.len());
-        for r in &chosen {
-            let n = name_of(*r, class)
-                .ok_or_else(|| IrError::Unsupported(format!("寄存器 {r} 没有汇编拼写（S2a）")))?;
-            names.push(n.to_string());
+        for e in &chosen {
+            match e {
+                Some((r, c)) => {
+                    let n = name_of(*r, *c)
+                        .ok_or_else(|| IrError::Unsupported(format!("寄存器 {r} 没有汇编拼写")))?;
+                    names.push(n.to_string());
+                }
+                // 跳过掉的纯 clobber：占位符不可能引用它（rustc 不允许引用 clobber 操作数）。
+                None => names.push(String::new()),
+            }
         }
         let asm_text = substitute_placeholders(text, &names)?;
         let parse = self.asm_parse.clone().ok_or_else(|| {
@@ -184,7 +230,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
             IrError::Unsupported(format!("内联汇编文本无法被汇编器解析：{asm_text:?}"))
         })?;
         let line = inst.loc.as_ref().and_then(|l| l.line);
-        let clobbers: Vec<(u32, RegClass)> = chosen.iter().map(|r| (*r, class)).collect();
+        let clobbers: Vec<(u32, RegClass)> = chosen.iter().filter_map(|e| *e).collect();
 
         // ④ in/inout：搬入（dst 侧写死 = chosen[i]，src 侧绑 vreg）
         let mut next_in = 0usize;
@@ -192,7 +238,12 @@ impl<I: MachineInst + 'static> CompileState<I> {
             if matches!(role, Role::In | Role::InOut) {
                 let vreg = self.vreg_of(inst.operands[next_in])?;
                 next_in += 1;
-                let mov = self.make_mov_reg(parse.as_ref(), name_of.as_ref(), chosen[i], class)?;
+                let mov = {
+                    let (num, cls) = chosen[i].ok_or_else(|| {
+                        IrError::Unsupported("内联 asm 的输入/输出寄存器无法解析".to_string())
+                    })?;
+                    self.make_mov_reg(parse.as_ref(), name_of.as_ref(), num, cls)?
+                };
                 let (_dst_field, src_field) = Self::mov_fields(&mov)?;
                 self.inst_ops
                     .push(smallvec::smallvec![crate::machine::lowering::OperandBind {
@@ -217,7 +268,12 @@ impl<I: MachineInst + 'static> CompileState<I> {
             if matches!(role, Role::Out | Role::InOut) {
                 let vreg = self.vreg_of(inst.results[next_out])?;
                 next_out += 1;
-                let mov = self.make_mov_reg(parse.as_ref(), name_of.as_ref(), chosen[i], class)?;
+                let mov = {
+                    let (num, cls) = chosen[i].ok_or_else(|| {
+                        IrError::Unsupported("内联 asm 的输入/输出寄存器无法解析".to_string())
+                    })?;
+                    self.make_mov_reg(parse.as_ref(), name_of.as_ref(), num, cls)?
+                };
                 let (dst_field, _src_field) = Self::mov_fields(&mov)?;
                 self.inst_ops
                     .push(smallvec::smallvec![crate::machine::lowering::OperandBind {

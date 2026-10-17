@@ -163,6 +163,21 @@ v27 M2 曾把 TLS 记成"待做（先 fail-closed）"。本轮把两条实现路
 - **`-Zshare-generics=yes`（`WA-04`）**：现在仍是"链接期才发现的 LNK2019"⇒ 收口时可改为
   **编译期明确拒绝**（带缺口 ID）或补齐"被引用但上游未生成"的实例。
 
+### S4 首刀（2026-10-11）：`clobber_abi` 可用（纯 clobber 槽）
+
+- **发现**：这个 nightly 的 MIR `TerminatorKind::InlineAsm` **没有 `clobber_abi` 字段**——
+  `clobber_abi("C")` 在 MIR 构建期就被展开成一批 `Out { reg, place: None }` 操作数。
+  之前我们把它当成"输出寄存器"去解析（要 GPR 类）⇒ 撞上 `xmm0`/`k0` 直接 fail-closed
+  （不静默错，但真实代码编不过）。
+- **落地**：`Out`/`InOut` 的 `place: None` 视为**纯 clobber 槽**（约束 `c,<suffix>`）：
+  不产物值、不搬数据，只把该寄存器记进 `inst_clobbers`。纯 clobber 的显式名**跨类解析**
+  （`CompileState::reg_classes`），解析不到（本 ISA 没有的寄存器，如 AVX-512 mask `k0`）
+  **跳过无害**——我们从不在那些寄存器里放值。
+- **两处踩坑**：① 去重必须按 **(编号, 类)**——不同类的 `to_index` 会撞车（`rax`/`xmm0` 都可能为 0）；
+  ② 手工验证一度"挂起"，其实是 shell 里 `Start-Job` 的 rustup/toolchain 解析问题，
+  换到 e2e 夹具（自带超时与正确旗标）后 **0.77s 通过**——**别把工具链问题误判成后端 bug**。
+- **e2e**：`inline_asm_clobber_abi`（`asm!("nop", clobber_abi("C"))` ⇒ **42**），用例数 **117**。
+
 ### M4-② 首刀（2026-10-11）：`-Zshare-generics=yes` 编译期明确拒绝（`WA-04` 关闭）
 
 - **问题**：用户显式开 `-Zshare-generics=yes` 时，跨 crate 的泛型实例会被"共享"给上游 crate

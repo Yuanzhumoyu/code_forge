@@ -175,9 +175,9 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 
 ## 支持矩阵（x86_64-pc-windows-msvc 宿主）
 
-### ✅ 已验证（e2e 116 用例：**116 硬断言 + 0 个 `FLAKY` 容忍项**）
+### ✅ 已验证（e2e 117 用例：**117 硬断言 + 0 个 `FLAKY` 容忍项**）
 
-> **2026-10-11 核（v27 M1–M2 实测）**：`tests/e2e.rs` 的 `CASES` 现为 **116 个 `Case`**、
+> **2026-10-11 核（v27 M1–M2 实测）**：`tests/e2e.rs` 的 `CASES` 现为 **117 个 `Case`**、
 > **`known_failure: true` = 0、`FLAKY` 名单为空** ⇒ 套件是**真全过**，不是容忍式全绿。
 > 早先的「103 用例 + 5 个 `FLAKY`」（2026-09-06 回归）里的那 5 例
 > （`vec_push`/`vec_string`/`vec_from_slice`/`vec_iter_enumerate`/`box_value`）已随
@@ -186,10 +186,11 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 > `ExitProcess(3)`）、`global_asm_call` / `global_asm_sym_const`（`global_asm!`）、
 > `inline_asm_nop` / `inline_asm_ud2`（M2.5/S1 内联 `asm!`）、`inline_asm_reg_inout`
 > （S2a 寄存器约束）、`inline_asm_const`（S3 `const` 占位符）、`inline_asm_named_reg`
-> （S2b 显式寄存器名）；负向 `neg_inline_asm` / `neg_panic_unwind` / `neg_thread_local`
+> （S2b 显式寄存器名）、`inline_asm_clobber_abi`（S4 `clobber_abi`）；负向 `neg_inline_asm` /
+> `neg_panic_unwind` / `neg_thread_local`
 > 钉住三条缺口 ID 的 fail-closed；删除了被正当推翻的 `neg_global_asm`。
 >
-> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=116 hard=116 flaky=0 known=0 expect_trap=2 -->
+> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=117 hard=117 flaky=0 known=0 expect_trap=2 -->
 >
 > **上面这段机读标记与 `tests/e2e.rs` 双向相等**：改用例数/容忍名单时必须同步它，
 > 否则 `cargo forge gate --guards` 会红（守卫就是为了治「文档与代码分叉」这件事）。

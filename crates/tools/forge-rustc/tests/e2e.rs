@@ -1765,6 +1765,24 @@ const CASES: &[Case] = &[
         reason: "out(\"rax\")：显式寄存器名必须真的被用上（否则 x 留在 5）",
     },
 
+    // ── v27 M2.5/S4：`clobber_abi("C")` ──
+    //   rustc 在 MIR 构建期把 `clobber_abi` 展开成一批 `Out { place: None }`（纯 clobber）
+    //   ⇒ 后端把它们记进 `inst_clobbers`（本 ISA 不认识的寄存器——如 AVX-512 mask `k0`——
+    //   跳过无害：我们从不在那些寄存器里放值）。
+    Case {
+        name: "inline_asm_clobber_abi",
+        body: "unsafe { core::arch::asm!(\"nop\", clobber_abi(\"C\")) }; 42",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M2.5 S4",
+        reason: "clobber_abi(\"C\") 从 fail-closed 变成可用（纯 clobber 槽）",
+    },
+
     Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",

@@ -930,6 +930,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     targets,
                     ..
                 } => {
+                    // 这个 nightly 的 MIR `InlineAsm` **没有** `clobber_abi` 字段——它在 MIR
+                    // 构建期就被展开成具体的 `Out` 操作数（`place: None`）⇒ 由下面的
+                    // "纯 clobber 槽"路径处理（v27 S4）。
                     // v27 M2.5：**文本重建**——寄存器类占位符写成 `{槽序号}`（后端替换成挑中的物理
                     // 寄存器名），`const`/`sym` 占位符**就地换成字面文本**（S3；格式化内核见
                     // `global_asm::const_text`，与 `global_asm!` 同一处实现）。
@@ -1045,6 +1048,15 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 }
                             }
                             rustc_middle::mir::InlineAsmOperand::Out { reg, place, .. } => {
+                                // `place: None` = **纯 clobber**（`out(reg) _` 与 `clobber_abi`
+                                // 展开出来的那些）：不产物值，只要把该寄存器记为被破坏。
+                                if place.is_none() {
+                                    match reg_suffix(reg) {
+                                        Some(sfx) => constraints.push(format!("c,{sfx}")),
+                                        None => ok = false,
+                                    }
+                                    continue;
+                                }
                                 let ty = place
                                     .map(|p| p.ty(&self.body.local_decls, self.tcx).ty)
                                     .unwrap_or(self.tcx.types.i64);

@@ -47,6 +47,9 @@ pub(crate) struct CompileState<I: MachineInst> {
     /// v27 M2.5/S2a：**可分配的通用寄存器顺序**（内联 asm 挑约束寄存器用；挑中的会
     /// 写进 `inst_clobbers`，所以挑到 callee-saved 也只是多存一次、不会错）。
     pub(crate) gp_alloc_order: Vec<u32>,
+    /// v27 S4：本 ISA 声明的寄存器类（纯 clobber 的显式名要**跨类**解析——
+    /// `clobber_abi` 会展开出 FPR 之类的非 GPR 寄存器）。
+    pub(crate) reg_classes: Vec<RegClass>,
 }
 
 impl<I: MachineInst + 'static> CompileState<I> {
@@ -82,6 +85,12 @@ impl<I: MachineInst + 'static> CompileState<I> {
             let ri = std::sync::Arc::clone(machine.reg_info());
             std::sync::Arc::new(move |reg: u32, class: RegClass| ri.reg_name(reg, class))
         });
+        let reg_classes: Vec<RegClass> = machine
+            .reg_info()
+            .register_classes()
+            .into_iter()
+            .map(|c| c.reg_class)
+            .collect();
         let gp_alloc_order: Vec<u32> = machine
             .reg_info()
             .allocatable_gp_order()
@@ -171,6 +180,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
             reg_name_of,
             reg_by_name_of,
             gp_alloc_order,
+            reg_classes,
         })
     }
 

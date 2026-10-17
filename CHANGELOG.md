@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-rustc v27 M2.5/S4 首刀：内联 `asm!` 的 `clobber_abi` 可用
+
++ `asm!("nop", clobber_abi("C"))` 从 **fail-closed** 变成可用（e2e `inline_asm_clobber_abi` ⇒ 42）。
++ **发现**：这个 nightly 的 MIR `TerminatorKind::InlineAsm` **没有 `clobber_abi` 字段**——
+  它在 MIR 构建期就被展开成一批 `Out { reg, place: None }` 操作数。之前我们把它当"输出寄存器"
+  去解析（要 GPR 类）⇒ 撞上 `xmm0`/`k0` 直接拒绝（不静默错，但真实代码编不过）。
++ **落地**：`Out`/`InOut` 的 `place: None` 视为**纯 clobber 槽**（约束 `c,<suffix>`）：不产物值、
+  不搬数据，只把寄存器记进 `inst_clobbers`；纯 clobber 的显式名**跨类解析**
+  （新增 `CompileState::reg_classes` 快照），解析不到（本 ISA 没有的寄存器，如 AVX-512 mask
+  `k0`）**跳过无害**——我们从不在那些寄存器里放值。
++ 两处踩坑：① 去重必须按 **(编号, 类)**（不同类的 `to_index` 会撞车，`rax`/`xmm0` 都可能为 0）；
+  ② 手工验证一度"挂起"，实为 shell 里 `Start-Job` 的 toolchain 解析问题，换到 e2e 夹具
+  （自带超时与正确旗标）后 **0.77s 通过**——别把工具链问题误判成后端 bug。
++ 验收：`cargo forge gate --subset rustc` **9 步全绿（217.8s）**；e2e **117/117**。
+
 ### Fixed (2026-10-11) — forge-rustc v27 M4-② 首刀：`-Zshare-generics=yes` 编译期明确拒绝
 
 + 用户显式开 `-Zshare-generics=yes` 时，过去会在**链接期**缺符号（LNK2019，`WA-04`）——
