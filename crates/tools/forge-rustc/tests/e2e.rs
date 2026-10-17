@@ -1818,6 +1818,22 @@ const CASES: &[Case] = &[
         phase: "v27 M2.5 S3",
         reason: "sym：本谱汇编器不接受符号操作数 ⇒ fail-closed 且点名原因",
     },
+    // ── v27 M5：`#[link_section]` 必须**明确拒绝**（不许静默放错段）──
+    //   后端只发 .text/.data/.rodata 三段，段名/段标志由发射层决定 ⇒ 静默忽略
+    //   等于"写了不生效"，那是最糟的一种错。这里连同诊断一起钉住。
+    Case {
+        name: "neg_link_section",
+        body: "#[unsafe(link_section = \".mydata\")] static X: u32 = 7; X as i32",
+        expected: 0,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: true,
+        expect_compile_err: "LINK_SECTION",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "#[link_section] 静默忽略 = 写了不生效 ⇒ 明确拒绝并点名段名",
+    },
     Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",

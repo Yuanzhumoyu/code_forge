@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-11) — v27 M5 补面之四：`#[link_section]` 从**静默忽略**改为明确拒绝
+
++ 后端**从没读过** `codegen_fn_attrs(..).link_section` ⇒ 用户写 `#[link_section = ".CRT$XCU"]`
+  之类会被**静默忽略**（照旧进 `.data`/`.rodata`）。"写了不生效"是最难查的一种错。
++ 现在 `backend.rs::reject_link_section`（**缺口 ID `LINK_SECTION`，全仓只一处**）明确拒绝，
+  诊断点名**段名**并指向 M4-T4 的对象层"任意段"支持；静态与函数两个入口共用同一助手。
++ e2e `neg_link_section`（`#[unsafe(link_section = ".mydata")] static X` ⇒ 编译期拒绝）⇒ 用例数 **120**。
++ 顺带确认：`#[export_name]` **不需要**后端做什么（由 rustc 的符号名解析负责，既有用例已覆盖）。
+
 ### Added (2026-10-11) — v27 M5 补面之三：DWARF 调试段自动核对
 
 + "DWARF5（gdb 实证）"此前只是**手工**验过，改坏了没人拦。新增 `tests/dwarf_sections.rs`：

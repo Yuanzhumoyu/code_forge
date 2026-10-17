@@ -508,6 +508,9 @@ impl CodegenBackend for CodegenLibBackend {
                         // 线程共享一份），与「宁可明确拒绝，不要静默错值」冲突。
                         // 真实现需要：`.tls$` 段 + TLS 回调/`__tls_index`（Windows）或
                         // `%fs:` 相对寻址 + 访问模型的降级（见 backend-gaps.md 的 TLS 行）。
+                        if reject_link_section(tcx, *def_id) {
+                            continue;
+                        }
                         if tcx.is_thread_local_static(*def_id) {
                             // v27 TLS（动态模型）：线程局部静态**不**发普通 .data 符号——
                             // 发两个隐藏符号：初值模板 `__forge_tls_init_<sym>` 与索引槽
@@ -1026,6 +1029,26 @@ fn compile_fn_task_guarded<'tcx>(
 /// 并行分支），也可运行在主线程（串行分支/非并行模式），两处都是 rustc
 /// 注册线程（或主线程本身），查询 TLS 完整（WA-38/M4：自定义 std::thread
 /// 无此上下文——见 codegen_crate 注释）。
+/// `#[link_section]` 会被本后端**静默忽略**（它只发 `.text`/`.data`/`.rodata` 三段）
+/// ⇒ 这里**明确拒绝**。缺口 ID 只在这一处出现（`capability_gaps_guard` 要求恰好一处）。
+fn reject_link_section(tcx: TyCtxt<'_>, def_id: rustc_hir::def_id::DefId) -> bool {
+    let Some(section) = tcx.codegen_fn_attrs(def_id).link_section else {
+        return false;
+    };
+    tcx.dcx().err(format!(
+        "{}",
+        IrError::capability(
+            "LINK_SECTION",
+            format!(
+                "`#[link_section = \"{section}\"]` 不支持：本后端只发射 .text/.data/.rodata \
+                 三段（段名/段标志由发射层决定），放错段既不报错也不生效。请去掉该属性；\
+                 或把它迁到对象层的\"任意段\"支持（方案 M4-T4）"
+            )
+        )
+    ));
+    true
+}
+
 fn compile_fn_task<'tcx>(
     tcx: TyCtxt<'tcx>,
     plans: &[CguPlan<'tcx>],
@@ -1068,6 +1091,9 @@ fn compile_fn_task<'tcx>(
         // 泛型实例的 body 需按实例替换（否则 Call 的 FnDef 常量 substs 含
         // 未替换参数，symbol_name_for_instance 会断言 panic）
         let result: Result<CompiledFunction, String> = (|| {
+            if reject_link_section(tcx, instance.def_id()) {
+                return Err("`#[link_section]` 已拒绝（诊断见上）".to_string());
+            }
             let body = tcx.instance_mir(instance.def);
             let monomorphized = instance.instantiate_mir_and_normalize_erasing_regions(
                 tcx,

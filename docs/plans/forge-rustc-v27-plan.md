@@ -191,6 +191,18 @@ v27 M2 曾把 TLS 记成"待做（先 fail-closed）"。本轮把两条实现路
 - **`-Zshare-generics=yes`（`WA-04`）**：现在仍是"链接期才发现的 LNK2019"⇒ 收口时可改为
   **编译期明确拒绝**（带缺口 ID）或补齐"被引用但上游未生成"的实例。
 
+### M5 补面之四（2026-10-11）：`#[link_section]` 明确拒绝（不许静默放错段）
+
+- **发现**：后端**从没读过** `tcx.codegen_fn_attrs(..).link_section` ⇒ 用户写
+  `#[link_section = ".CRT$XCU"]` 之类会被**静默忽略**（照旧进 `.data`/`.rodata`）——
+  "写了不生效"是最糟的一种错，比报错难查得多。
+- **处置**：`backend.rs::reject_link_section`（**一个**缺口 ID `LINK_SECTION`，静态与函数两处
+  调用同一助手）明确拒绝，诊断里点名**段名**并指向 M4-T4 的对象层"任意段"支持。
+- **e2e**：`neg_link_section`（`#[unsafe(link_section = ".mydata")] static X` ⇒ 编译期拒绝，
+  `expect_compile_err` 匹配 `LINK_SECTION`）⇒ 用例数 **120**。
+- 顺带：`#[export_name]` **不需要**后端做什么——它由 rustc 的符号名解析（`symbol_name_for_instance`）
+  负责，已由既有用例覆盖。
+
 ### M5 补面之三（2026-10-11）：DWARF 调试段从"手工 gdb"变成自动核对
 
 - **缺口**：README 写着"DWARF5（gdb 实证）"——那条是**手工**验的，后续改动把它弄坏没人拦得住。
