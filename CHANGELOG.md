@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — v27：确定性测试进门禁（多 CGU/并行/增量）
+
++ **`rustc-determinism` 步骤**（`Scope::Windows`）：`cargo test -p forge-rustc --test determinism`
+  ——多 CGU 逐字节相等、并行与串行全等、`-C incremental`。此前它**既不在全量门禁也不在后端子集**
+  （只有 CI 作业跑），而这是"完整后端"的**对外承诺**（`WA-38`/`WA-39`）⇒ 本地可复现性也该被门禁覆盖。
+  实测 3 个测试 16s，够便宜。
++ `--subset rustc` 现 **11 步**（含 e2e、e2e 不变量、确定性、三个后端守卫、ABI 真机核对、文档）。
++ 方案账本 §8 同时记下 **`label` 操作数的结构性阻塞分析**：标签必须落在指令流的某个**位置**，
+  而当前模型是"文本 → 一次汇编 → 一串机器指令"、发射按块线性拼接 ⇒ 中间标签表达不了；
+  可行解法（汇编器分段 / 把 asm 拆成多段 IR op）都要动结构，属 S4 的独立设计项。
+
 ### Added (2026-10-11) — v27 M4-T2：约定按目标选（**实测已成立**，新增双向守卫）
 
 + 实测结论：同一个**抽象** `CallConvId::Builtin(C)` 在 aarch64 机器上 plan 出 **`aapcs64`**、

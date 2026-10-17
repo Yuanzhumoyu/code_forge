@@ -330,6 +330,22 @@ fn build_steps(a: &Args) -> Vec<Step> {
     ));
 
     // ── 格式与静态检查 ────────────────────────────────────────────────
+    // 多 CGU / 并行 / 增量的**确定性**（WA-38/39 的核心承诺）：此前只在 CI 作业里跑，
+    // 本地"全套门禁"其实没覆盖它。实测 3 个测试 16s，够便宜 ⇒ 进门禁。
+    push!(cargo_step(
+        "rustc-determinism",
+        "rustc 后端确定性（多 CGU 逐字节相等 / 并行==串行 / 增量）",
+        Scope::Windows,
+        &[
+            "test",
+            "-p",
+            "forge-rustc",
+            "--test",
+            "determinism",
+            "--",
+            "--test-threads=1",
+        ],
+    ));
     push!(cargo_step(
         "fmt",
         "格式（`cargo fmt --all -- --check`）",
@@ -563,6 +579,7 @@ pub fn run(a: &Args, verbose: bool) -> anyhow::Result<i32> {
             "fmt",
             "rustc-e2e",
             "rustc-e2e-guards",
+            "rustc-determinism",
             "capability_gaps",
             "file_size_ratchet", // 管线文件的规模棘轮：v27 S1 曾漏跑它而把 lowering.rs 撑破上限
             "abi_target_real",
