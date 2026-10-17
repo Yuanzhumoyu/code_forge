@@ -39,6 +39,9 @@ pub(crate) struct CompileState<I: MachineInst> {
     /// `Arc<dyn TargetAssembler>`（`Send + Sync + 'static`）⇒ clone 一个 Arc 即可。
     pub(crate) asm_parse: Option<std::sync::Arc<dyn Fn(&str) -> Option<Vec<I>> + Send + Sync>>,
     /// v27 M2.5/S2a：寄存器编号 + 类 → 汇编拼写（内联 asm 替换占位符用）。
+    /// v27 M2.5/S2b：汇编拼写 → 寄存器编号（显式寄存器名用）。
+    pub(crate) reg_by_name_of:
+        Option<std::sync::Arc<dyn Fn(&str, RegClass) -> Option<u32> + Send + Sync>>,
     pub(crate) reg_name_of:
         Option<std::sync::Arc<dyn Fn(u32, RegClass) -> Option<&'static str> + Send + Sync>>,
     /// v27 M2.5/S2a：**可分配的通用寄存器顺序**（内联 asm 挑约束寄存器用；挑中的会
@@ -66,6 +69,12 @@ impl<I: MachineInst + 'static> CompileState<I> {
                     as std::sync::Arc<dyn Fn(&str) -> Option<Vec<I>> + Send + Sync>
             });
         // v27 M2.5/S2a：寄存器名表与可分配 GPR 顺序的快照（同上：不借住 &M）。
+        let reg_by_name_of: Option<
+            std::sync::Arc<dyn Fn(&str, RegClass) -> Option<u32> + Send + Sync>,
+        > = Some({
+            let ri = std::sync::Arc::clone(machine.reg_info());
+            std::sync::Arc::new(move |name: &str, class: RegClass| ri.reg_by_name(name, class))
+        });
         let reg_name_of: Option<
             std::sync::Arc<dyn Fn(u32, RegClass) -> Option<&'static str> + Send + Sync>,
         > = Some({
@@ -160,6 +169,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
             abi_plan,
             asm_parse,
             reg_name_of,
+            reg_by_name_of,
             gp_alloc_order,
         })
     }

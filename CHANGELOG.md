@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-rustc v27 M2.5/S2b：内联 `asm!` 的**显式寄存器名**
+
++ `asm!("xor r8, r8", out("r8") x)` 现在能用：x 从 5 变 **0**（强断言——若实现忽略显式名而改挑
+  别的寄存器，x 会留在 5 ⇒ 必红）。e2e `inline_asm_named_reg`，用例总数 **116**。
++ 机制：约束后缀从 `g`（池）扩展成"`g` 或显式拼写"；后端经新的
+  **`TargetRegInfo::reg_by_name(name, class)`** 反查编号（生成器用 `FromStr` + `PhysReg::class`
+  回验，与汇编器同源）；同一寄存器被重复使用会被拒绝。
++ 实测的两条 rustc 前端规则：① 模板里**不能**用 `{0}` 引用显式寄存器操作数
+  （"explicit register arguments cannot be used in the asm template"）⇒ 文本里直接写寄存器名；
+  ② `InlineAsmReg::name()` 是 rustc 的**规范短名**——x86 传统寄存器是 `ax`/`cx`/…（不是
+  `rax`/`rcx`），与 x86 谱的 `RAX`/`RCX` 不同名 ⇒ **传统寄存器的显式名暂不可用**，
+  `r8`/`r9`… 两侧一致 ⇒ 已可用。给谱加 `aliases` 试过但没进生成物（已回退、不留死数据），
+  记为待办。
++ 验收：`cargo forge gate --subset rustc` **9 步全绿（146.2s）**；e2e 116/116、零 `KNOWN`。
+
 ### Added (2026-10-11) — forge-rustc v27 M2.5/S3 前半：内联 `asm!` 的 `const` 占位符
 
 + `asm!("add {0}, {1}", inout(reg) x, const 7)` 现在真的能用：`const` 占位符在 **rustc 侧

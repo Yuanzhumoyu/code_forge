@@ -1746,6 +1746,25 @@ const CASES: &[Case] = &[
         reason: "asm!(\"add {0}, {1}\", inout(reg) x, const 7)：const 7 被格式化成字面文本",
     },
 
+    // ── v27 M2.5/S2b：内联 asm 的**显式寄存器名** ──
+    //   `out("r8")` 要求槽 0 就用 R8（用 r8 而不是 rax：rustc 对后者的**规范名是 `ax`**，
+    //   与 x86 谱的 `RAX` 不同名，短名映射还待做）。rustc 前端**不允许**模板里用 `{0}` 引用显式寄存器
+    //   （必须直接写寄存器名）⇒ 模板写 `xor r8, r8` 把 R8 清零 ⇒ x 必须变 0。
+    //   强断言：若实现忽略显式名（挑了别的寄存器），x 仍是 5 ⇒ exit 5 ⇒ 红。
+    Case {
+        name: "inline_asm_named_reg",
+        body: "let mut x = 5u64; unsafe { core::arch::asm!(\"xor r8, r8\", out(\"r8\") x) }; x as i32",
+        expected: 0,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M2.5 S2b",
+        reason: "out(\"rax\")：显式寄存器名必须真的被用上（否则 x 留在 5）",
+    },
+
     Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",

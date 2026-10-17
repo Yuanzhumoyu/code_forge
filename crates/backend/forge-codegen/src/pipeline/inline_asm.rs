@@ -87,7 +87,13 @@ impl<I: MachineInst + 'static> CompileState<I> {
             InOut,
         }
         // ① 解析约束（`角色,类;…`）
-        let mut specs: Vec<Role> = Vec::new();
+        // 每个槽的寄存器来源：`g` = 从可分配池里挑；其它 = **显式寄存器名**（S2b）。
+        #[derive(Clone)]
+        enum RegChoice {
+            Pool,
+            Named(String),
+        }
+        let mut specs: Vec<(Role, RegChoice)> = Vec::new();
         for part in constraints.split(';').filter(|s| !s.is_empty()) {
             let mut it = part.split(',');
             let role = match it.next() {
@@ -96,28 +102,29 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 Some("io") => Role::InOut,
                 other => {
                     return Err(IrError::Unsupported(format!(
-                        "内联 asm 的约束角色不支持：{other:?}（S2a 只有 i/o/io）"
+                        "内联 asm 的约束角色不支持：{other:?}（只有 i/o/io）"
                     )));
                 }
             };
-            match it.next() {
-                Some("g") => {}
+            let choice = match it.next() {
+                Some("g") => RegChoice::Pool,
+                Some(name) if !name.is_empty() => RegChoice::Named(name.to_string()),
                 other => {
                     return Err(IrError::Unsupported(format!(
-                        "内联 asm 的寄存器类不支持：{other:?}（S2a 只有 g；显式寄存器名见 S2b）"
+                        "内联 asm 的寄存器约束不支持：{other:?}（`g` 或显式寄存器名）"
                     )));
                 }
-            }
-            specs.push(role);
+            };
+            specs.push((role, choice));
         }
         // 输入走 operands、输出走 results：先按约束算各自应有几个。
         let need_in = specs
             .iter()
-            .filter(|r| matches!(r, Role::In | Role::InOut))
+            .filter(|(r, _)| matches!(r, Role::In | Role::InOut))
             .count();
         let need_out = specs
             .iter()
-            .filter(|r| matches!(r, Role::Out | Role::InOut))
+            .filter(|(r, _)| matches!(r, Role::Out | Role::InOut))
             .count();
         if need_in != inst.operands.len() || need_out != inst.results.len() {
             return Err(IrError::Unsupported(format!(
@@ -127,16 +134,36 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 inst.results.len()
             )));
         }
-        // ② 挑寄存器（可分配 GPR 顺序，互不重复）
+        // ② 定寄存器：显式名按名字解析（S2b），`g` 从可分配池里挑（互不重复）
         let mut chosen: Vec<u32> = Vec::with_capacity(specs.len());
-        for _ in 0..specs.len() {
-            let reg = *self
-                .gp_alloc_order
-                .iter()
-                .find(|r| !chosen.contains(r))
-                .ok_or_else(|| {
-                    IrError::Unsupported("内联 asm 的寄存器需求超过可分配 GPR 数量".to_string())
-                })?;
+        for (_, choice) in &specs {
+            let reg = match choice {
+                RegChoice::Named(name) => {
+                    let by_name = self.reg_by_name_of.clone().ok_or_else(|| {
+                        IrError::Unsupported(
+                            "本 ISA 未提供寄存器名反查表（显式寄存器名无法解析）".to_string(),
+                        )
+                    })?;
+                    let r = by_name(name, class).ok_or_else(|| {
+                        IrError::Unsupported(format!(
+                            "内联 asm 的显式寄存器 {name:?} 在本 ISA 的该寄存器类里不存在"
+                        ))
+                    })?;
+                    if chosen.contains(&r) {
+                        return Err(IrError::Unsupported(format!(
+                            "内联 asm 的显式寄存器 {name:?} 被重复使用"
+                        )));
+                    }
+                    r
+                }
+                RegChoice::Pool => *self
+                    .gp_alloc_order
+                    .iter()
+                    .find(|r| !chosen.contains(r))
+                    .ok_or_else(|| {
+                        IrError::Unsupported("内联 asm 的寄存器需求超过可分配 GPR 数量".to_string())
+                    })?,
+            };
             chosen.push(reg);
         }
         // ③ 名字 → 文本替换 → 汇编
@@ -161,7 +188,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
 
         // ④ in/inout：搬入（dst 侧写死 = chosen[i]，src 侧绑 vreg）
         let mut next_in = 0usize;
-        for (i, role) in specs.iter().enumerate() {
+        for (i, (role, _choice)) in specs.iter().enumerate() {
             if matches!(role, Role::In | Role::InOut) {
                 let vreg = self.vreg_of(inst.operands[next_in])?;
                 next_in += 1;
@@ -186,7 +213,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
         }
         // ⑥ out/inout：搬出（dst 侧绑 vreg，src 侧写死 = chosen[i]）
         let mut next_out = 0usize;
-        for (i, role) in specs.iter().enumerate() {
+        for (i, (role, _choice)) in specs.iter().enumerate() {
             if matches!(role, Role::Out | Role::InOut) {
                 let vreg = self.vreg_of(inst.results[next_out])?;
                 next_out += 1;

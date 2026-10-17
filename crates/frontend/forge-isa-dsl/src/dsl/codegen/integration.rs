@@ -715,6 +715,15 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
             }
             fn default_gpr_class(&self) -> forge_ir::RegClass { __DEFAULT_GPR_CLASS }
             fn default_fpr_class(&self) -> forge_ir::RegClass { __DEFAULT_FPR_CLASS }
+            /// v27 M2.5/S2b：汇编拼写 → 寄存器编号（显式寄存器名用；`FromStr` 与
+            /// 汇编器同源，类由 `PhysReg::class` 回验）。
+            fn reg_by_name(&self, name: &str, class: forge_ir::RegClass) -> Option<u32> {
+                use std::str::FromStr as _;
+                Reg::from_str(name)
+                    .ok()
+                    .filter(|r| <Reg as forge_ir::PhysReg>::class(*r) == class)
+                    .map(|r| <Reg as forge_ir::PhysReg>::to_index(r))
+            }
             /// v27 M2.5/S2：寄存器编号 + 类 → 汇编文本拼写（内联 asm 替换占位符用）。
             fn reg_name(&self, reg: u32, class: forge_ir::RegClass) -> Option<&'static str> {
                 [#(#reg_name_pairs),*]

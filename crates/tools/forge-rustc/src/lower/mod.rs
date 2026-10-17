@@ -1012,12 +1012,22 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     // S2a 口径：只接 `in(reg)`/`out(reg)`/`inout(reg)`（`RegClass` 形态）且**只接 64 位整数**
                     // （搬运指令是 64 位 `mov`）；显式寄存器名（S2b）、const/sym（S3）、label（S4）、
                     // noreturn 保持 fail-closed。
-                    let is_reg_class = |reg: &rustc_target::asm::InlineAsmRegOrRegClass| {
-                        matches!(reg, rustc_target::asm::InlineAsmRegOrRegClass::RegClass(_))
-                    };
+                    // 寄存器约束的后缀：`g` = 让后端挑；其余 = **显式寄存器名**（S2b）。
+                    // 本 nightly 的 MIR 侧枚举来自 `rustc_target`（与 `rustc_ast` 同名不同类型）。
+                    let reg_suffix =
+                        |reg: &rustc_target::asm::InlineAsmRegOrRegClass| -> Option<String> {
+                            match reg {
+                                rustc_target::asm::InlineAsmRegOrRegClass::RegClass(_) => {
+                                    Some("g".to_string())
+                                }
+                                rustc_target::asm::InlineAsmRegOrRegClass::Reg(r) => {
+                                    Some(r.name().to_string())
+                                }
+                            }
+                        };
                     let mut ok =
                         !options.contains(rustc_ast::InlineAsmOptions::NORETURN) && template_ok;
-                    let mut constraints: Vec<&str> = Vec::new();
+                    let mut constraints: Vec<String> = Vec::new();
                     let mut in_vals: Vec<Value> = Vec::new();
                     let mut out_tys: Vec<TypeId> = Vec::new();
                     // `out(reg) _` 的 place 是 `None`（值被丢弃）⇒ 仍要产出结果，但不 store。
@@ -1026,23 +1036,25 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         match op {
                             rustc_middle::mir::InlineAsmOperand::In { reg, value } => {
                                 let ty = value.ty(&self.body.local_decls, self.tcx);
-                                if is_reg_class(reg) && layout_bytes(self.tcx, ty) == 8 {
-                                    constraints.push("i,g");
-                                    in_vals.push(self.lower_operand(value)?);
-                                } else {
-                                    ok = false;
+                                match (reg_suffix(reg), layout_bytes(self.tcx, ty) == 8) {
+                                    (Some(sfx), true) => {
+                                        constraints.push(format!("i,{sfx}"));
+                                        in_vals.push(self.lower_operand(value)?);
+                                    }
+                                    _ => ok = false,
                                 }
                             }
                             rustc_middle::mir::InlineAsmOperand::Out { reg, place, .. } => {
                                 let ty = place
                                     .map(|p| p.ty(&self.body.local_decls, self.tcx).ty)
                                     .unwrap_or(self.tcx.types.i64);
-                                if is_reg_class(reg) && layout_bytes(self.tcx, ty) == 8 {
-                                    constraints.push("o,g");
-                                    out_tys.push(map_type(ty, self.tcx)?);
-                                    out_places.push(*place);
-                                } else {
-                                    ok = false;
+                                match (reg_suffix(reg), layout_bytes(self.tcx, ty) == 8) {
+                                    (Some(sfx), true) => {
+                                        constraints.push(format!("o,{sfx}"));
+                                        out_tys.push(map_type(ty, self.tcx)?);
+                                        out_places.push(*place);
+                                    }
+                                    _ => ok = false,
                                 }
                             }
                             rustc_middle::mir::InlineAsmOperand::InOut {
@@ -1055,16 +1067,16 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 let ty = out_place
                                     .map(|p| p.ty(&self.body.local_decls, self.tcx).ty)
                                     .unwrap_or(ity);
-                                if is_reg_class(reg)
-                                    && layout_bytes(self.tcx, ty) == 8
-                                    && layout_bytes(self.tcx, ity) == 8
-                                {
-                                    constraints.push("io,g");
-                                    in_vals.push(self.lower_operand(in_value)?);
-                                    out_tys.push(map_type(ty, self.tcx)?);
-                                    out_places.push(*out_place);
-                                } else {
-                                    ok = false;
+                                let wide = layout_bytes(self.tcx, ty) == 8
+                                    && layout_bytes(self.tcx, ity) == 8;
+                                match (reg_suffix(reg), wide) {
+                                    (Some(sfx), true) => {
+                                        constraints.push(format!("io,{sfx}"));
+                                        in_vals.push(self.lower_operand(in_value)?);
+                                        out_tys.push(map_type(ty, self.tcx)?);
+                                        out_places.push(*out_place);
+                                    }
+                                    _ => ok = false,
                                 }
                             }
                             // S3：`const` 已在文本重建阶段就地替换成字面文本 ⇒ 这里不贡献操作数/结果。

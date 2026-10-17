@@ -26,6 +26,14 @@ pub trait TargetRegInfo: Send + Sync + 'static {
         None
     }
 
+    /// 汇编拼写 → 寄存器编号（v27 M2.5/S2b：内联 asm 的**显式寄存器名** `in("rcx")`）。
+    ///
+    /// 缺省 `None`（非 DSL 后端/测试替身）⇒ 调用方 fail-closed。带 `class` 是因为
+    /// "拼写"在不同类里可能重名（x86 的 `al`/`rax` 在各自组内都叫得响）。
+    fn reg_by_name(&self, _name: &str, _class: RegClass) -> Option<u32> {
+        None
+    }
+
     /// 寄存器类表（ISA 声明）：**分配器类表的唯一来源**。
     ///
     /// 每个"宿主可能请求的类"都指向同族的物理寄存器文件；未声明的族不产生类

@@ -321,6 +321,21 @@ error: failed to get `cfg-if` as a dependency of package `std v0.0.0 (…/librar
 **同批提交的代码**：`M3-①`（alloc 运行时**按需注入**，见下节）——它是 std 的前置条件，
 与本批文档同源，故一并提交；**M3 本身未完成**（M3-② 的真跑 `std` 需要 M2.5 与 TLS）。
 
+### S2b 落地（2026-10-11）：显式寄存器名
+
+- **能力**：`asm!("xor r8, r8", out("r8") x)` ⇒ x 从 5 变 **0**（e2e `inline_asm_named_reg`）。
+  强断言：若实现忽略显式名（改挑别的寄存器），x 会留在 5 ⇒ 必红。
+- **机制**：约束后缀从 `g`（池）扩展成"`g` 或**显式拼写**"；后端经新加的
+  `TargetRegInfo::reg_by_name(name, class)` 反查编号（生成器用 `FromStr` + `PhysReg::class` 回验，
+  与汇编器同源）；重复使用同一寄存器会被拒绝。
+- **rustc 前端的两条实测规则**：
+  ① 模板里**不能**用 `{0}` 引用显式寄存器操作数（"explicit register arguments cannot be used
+  in the asm template"）⇒ 必须在文本里直接写寄存器名；
+  ② `InlineAsmReg::name()` 给的是 rustc 的**规范短名**——x86 传统寄存器是 `ax`/`cx`/…（不是
+  `rax`/`rcx`），与 x86 谱的 `RAX`/`RCX` 不同名 ⇒ **传统寄存器的显式名暂不可用**；
+  `r8`/`r9`… 两侧一致 ⇒ 已可用。给谱加 `aliases` 试过但**没进生成物**（表形状另有要求，
+  已回退、不留死数据），记为待办。
+
 ### S3 前半落地（2026-10-11）：`const` 占位符
 
 - **设计**：`const`/`sym` 在 **rustc 侧就地换成字面文本**，只有寄存器占位符进入约束表
