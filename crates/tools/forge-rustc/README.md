@@ -175,14 +175,21 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 
 ## 支持矩阵（x86_64-pc-windows-msvc 宿主）
 
-### ✅ 已验证（e2e 103 用例：98 硬断言 + 5 个 `FLAKY` 容忍项）
+### ✅ 已验证（e2e 110 用例：**110 硬断言 + 0 个 `FLAKY` 容忍项**）
 
-> ⚠️ **2026-09-10 核**：本 README 早先的「85 用例全绿、known_failure 清零」已过时。
-> `tests/e2e.rs` 现为 **103 个 `Case`**，其中 5 个 vec/alloc 用例因 **2026-09-06 回归**
-> （`b56225d` + `b836a78`）重标 `known_failure` 并列入 `FLAKY` 双向容忍名单：
-> `vec_push`/`vec_string`/`vec_from_slice`/`vec_iter_enumerate`/`box_value`——
-> 套件「全绿」是**容忍式全绿**，不等于 103 用例真全过。根因疑为 forge-codegen
-> regalloc「def-spill × 写死物理寄存器」（见 WORKAROUNDS [WA-40]）。
+> **2026-10-11 核（v27 M1–M2 实测）**：`tests/e2e.rs` 的 `CASES` 现为 **110 个 `Case`**、
+> **`known_failure: true` = 0、`FLAKY` 名单为空** ⇒ 套件是**真全过**，不是容忍式全绿。
+> 早先的「103 用例 + 5 个 `FLAKY`」（2026-09-06 回归）里的那 5 例
+> （`vec_push`/`vec_string`/`vec_from_slice`/`vec_iter_enumerate`/`box_value`）已随
+> **WA-42**（niche tag 写入宽度）在 2026-09-12 全部转正（见 WORKAROUNDS [WA-11]/[WA-42]）。
+> v27 M1–M2 新增用例：`overflow_runtime_trap`（trap 语义）、`global_asm_call` /
+> `global_asm_sym_const`（`global_asm!`）、`neg_inline_asm` / `neg_panic_unwind` /
+> `neg_thread_local`（三条缺口 ID 的 fail-closed）；删除了被正当推翻的 `neg_global_asm`。
+>
+> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=110 hard=110 flaky=0 known=0 expect_trap=1 -->
+>
+> **上面这段机读标记与 `tests/e2e.rs` 双向相等**：改用例数/容忍名单时必须同步它，
+> 否则 `cargo forge gate --guards` 会红（守卫就是为了治「文档与代码分叉」这件事）。
 
 | 类别 | 内容 |
 | ------ | ------ |

@@ -101,7 +101,14 @@ unwrap 触发 `catch_unwind` 或用例级 SEH 决策文档、`thread_local!` 读
   至少覆盖 M1 的 e2e 标量/调用子集；ABI 面复用 `forge-abi` 的四份约定。
 **判据**：`.rodata` 用例（vtable）在新位置通过；第二目标的 e2e 子集在 QEMU 真跑绿。
 
-### M5 契约与门禁收口
+### M5 门禁与守卫收口
+
+**已落地（2026-10-11，见 §8）**：两个新守卫（`rustc_doc_counts`：README 计数 ↔ `tests/e2e.rs`
+双向相等；`workarounds_guard`：`[WA-NN]` 编号唯一 + 代码引用可解析）+ 门禁新增两步
+（`rustc-e2e` 110 用例真执行、`rustc-e2e-guards` 不变量，均限 Windows 口径）。
+原 M5 里的"契约回写 + 账本归档"**另立 M6**（它只能在 M2.5/M3/M4 都收口之后做）。
+
+### M6 契约回写与账本归档
 
 - **门禁**：`cargo forge gate` 加 `--subset rustc`（或步骤 `rustc-e2e`）——把 E9 的缺口补上，
   CI 复用同一命令。
@@ -157,6 +164,54 @@ unwrap 触发 `catch_unwind` 或用例级 SEH 决策文档、`thread_local!` 读
   ——M2 的 `panic=unwind` 决策要用（`.pdata`/`.xdata` 与 personality 的职责边界）。
 
 ## 8. 批次记录（逐里程碑回写）
+
+### M5 门禁与守卫收口 —— **已落地**（2026-10-11，工作区）
+
+治的病（立项证据 E4/E9）：
+
+- **E4 文档与代码分叉**：README 的「支持矩阵」写着「**103** 用例：98 硬断言 + 5 个 `FLAKY`
+  容忍项」，而 `tests/e2e.rs` 实测是 **110 用例 / `known_failure: true` = 0 / `FLAKY` 为空**
+  （那 5 例已随 `WA-42` 在 2026-09-12 全部转正）。两边谁都没错——只是**没有任何东西钉住它们**。
+- **E9 门禁不覆盖后端**：`cargo forge gate` 对 rustc 只有 `check -p forge-rustc`，
+  110 条"编译→链接→真执行"用例**只活在 CI 作业里** ⇒ 本地"全套门禁通过"并不覆盖后端真值。
+
+落地的两件东西：
+
+1. **两个新守卫**（都放在 `crates/backend/forge-codegen/tests/`，与既有的 `capability_gaps`
+   同处——它们是仓库级守卫，不需要 rustc_private）：
+   - `rustc_doc_counts`（`rustc_doc_counts_guard`）：README 里新增一段**机读计数标记**
+     （`cases=… hard=… flaky=… known=… expect_trap=…`），守卫把它与 `tests/e2e.rs` 的实测
+     计数**逐项双向比对**；README 缺标记 ⇒ 红（否则守卫"看不见"文档）。
+     同时改正 README 的陈旧段落与 `Vec/String` 行。
+   - `workarounds_guard`：`[WA-NN]` 编号唯一（口径 = **裸编号行唯一**，该表允许
+     `WA-33 增补（M2）` 这类共用基础编号的续记行）+ 代码里的引用**都能在表里找到**。
+     反向（表里有、代码没回指）只**报告不失败**——有些行是约定/工具链要求，本就没有代码站点。
+2. **门禁两步**（`Scope::Windows`；跨目标见 M4）：`rustc-e2e`（110 用例真执行，
+   `--test-threads=1`）+ `rustc-e2e-guards`（trap 语义/零容忍名单/模板契约不变量）。
+
+守卫第一次运行就抓到两处真漂移（这正是它的价值）：
+
+1. **`WA-26`/`WA-28` 是悬空引用**：代码注释（`lower/mod.rs`、`lower/rvalue.rs`）引用这两个编号，
+   而表里**没有这两行**（某轮清理时删了行、注释没跟上）⇒ 读者照号去查会扑空。
+   处置：补回两行并标明「**已并入**」（结论现由 `WA-44`/`WA-42` 承载），不删注释里的历史引用。
+2. `WA-33` 有三行（原行 + `增补（M2）`/`（M10）`）⇒ 守卫口径修正为"裸编号行唯一"。
+
+实测：`rustc_doc_counts_guard` → `{cases: 110, hard: 110, flaky: 0, known: 0, expect_trap: 1}`；
+`workarounds_guard` → 表内 **43** 编号、唯一、代码引用全部可解析（12 个无回指，按设计只报告）；
+`cargo forge gate --list` → 共 **44** 步（含上述两步与两个守卫）。
+
+**门禁全量结果（同轮实测）**：`cargo forge gate` ⇒ **42/44 步通过**，两步失败且**都是沙箱外的写权限**，
+与本次改动无关（同一会话里第 6 轮已记录过同类）：
+
+| 步骤 | 失败原因（原文） |
+| --- | --- |
+| `workspace` | `cli_cargo_mode_run_mini_project` / `cli_init_then_bare_cargo_build` 失败：`failed to unpack package getopts v0.2.24` → `failed to create directory C:\Users\13523\.cargo\registry\src\…`（`workspace-write` 沙箱不允许写 `~/.cargo`） |
+| `rustc-e2e` | 9 个测试函数里只有 `e2e_cargo_template_workflow` 红：`syncing channel updates…` → `could not create temp file C:\Users\13523\.rustup\tmp\…: 拒绝访问 (os error 5)`（同第 6 轮记录的 rustup 写权限） |
+
+**实质验证**（剥掉环境因素）：e2e 的 **110/110 用例**与不变量守卫全绿（`rustc-e2e-guards` 步 `ok`；
+单独跑 `e2e_stage_a_scalar_cases` 亦 110/110）；`workspace` 步的失败仅限那两个需要 cargo 解包
+registry 的 cli 测试，其余套件全绿（含 2834 条 forge-codegen lib 测试）。
+⇒ **M5 的交付物本身已验证**；那两步在无沙箱环境（CI）不受此限。
 
 ### M2-① `global_asm!` —— **已落地并实测**（2026-10-11，工作区）
 

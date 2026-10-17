@@ -11,6 +11,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-rustc v27 M5：门禁与守卫收口（后端 e2e 进门禁 + 两处文档漂移被钉住）
+
++ **门禁覆盖后端真值**（治 E9）：`cargo forge gate` 新增两步（`Scope::Windows`）——
+  `rustc-e2e`（110 用例：编译→链接→**真执行**，`--test-threads=1`）与 `rustc-e2e-guards`
+  （trap 语义 / 零容忍名单 / 模板契约不变量）。此前门禁对 rustc 只有 `check -p forge-rustc`，
+  这些用例只活在 CI 作业里 ⇒ 本地"全套门禁通过"并不覆盖后端。门禁现共 **44 步**。
++ **新守卫 `rustc_doc_counts_guard`**（治 E4：文档与代码分叉）：README 的「支持矩阵」写
+  「103 用例 + 5 个 `FLAKY`」，而代码实测 **110 用例 / `known_failure: true` = 0 / `FLAKY` 空**
+  （那 5 例已随 `WA-42` 于 2026-09-12 全部转正）。现在 README 带一段**机读计数标记**
+  （`cases=… hard=… flaky=… known=… expect_trap=…`），守卫与 `tests/e2e.rs` **逐项双向比对**；
+  README 缺标记也红。README 的陈旧段落与 `Vec/String` 行一并改正。
++ **新守卫 `workarounds_guard`**：`[WA-NN]` 编号唯一（口径 = **裸编号行唯一**，允许
+  `WA-33 增补（M2）` 这类共用基础编号的续记）+ 代码里的引用都能在表里找到（反向只报告不失败）。
++ **守卫首次运行抓到两处真漂移**：① `WA-26`/`WA-28` 是**悬空引用**——代码注释
+  （`lower/mod.rs`、`lower/rvalue.rs`）引用这两个编号，表里却没有行（某轮清理时删了行、注释未跟上）
+  ⇒ 补回两行并标明「已并入」（结论现由 `WA-44`/`WA-42` 承载）；② `WA-33` 有三行（原行 +
+  `增补（M2）`/`（M10）`）⇒ 守卫口径据此修正。
++ 验收：`cargo forge gate` **44 步全绿**；两个新守卫自证
+  （`rustc_doc_counts_guard` → `{cases: 110, hard: 110, flaky: 0, known: 0, expect_trap: 1}`；
+  `workarounds_guard` → 43 编号、唯一、引用全可解析）；文档 0 issues。
+
 ### Added (2026-10-11) — forge-rustc v27 M2：缺能力闭环（`global_asm!` 落地 · 三项明确决策 · 守卫扩面）
 
 + **`global_asm!` 落地**（`crates/tools/forge-rustc/src/global_asm.rs` 新增；`WA-03` 改判已关闭）。

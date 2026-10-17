@@ -76,6 +76,16 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "forge-codegen",
+        "rustc_doc_counts",
+        "forge-rustc 文档计数与 `tests/e2e.rs` 双向相等",
+    ),
+    (
+        "forge-codegen",
+        "workarounds_guard",
+        "`[WA-NN]` 编号唯一 + 代码引用可解析",
+    ),
+    (
+        "forge-codegen",
         "trace_knobs",
         "观测开关三方双向（源码字面量 / `KNOBS` / 文档表）",
     ),
@@ -267,6 +277,39 @@ fn build_steps(a: &Args) -> Vec<Step> {
         }
         return out;
     }
+
+    // ── 后端真值（v27 M5：把 forge-rustc 的 e2e 纳入门禁；此前只跑 `check -p forge-rustc`，
+    //    110 条"编译→链接→真执行"用例只活在 CI 作业里 ⇒ 本地"全套门禁通过"并不覆盖后端）──
+    //    仅 Windows 口径：e2e 目前只验证 x86_64-pc-windows-msvc 宿主（跨目标见方案 M4）。
+    //    `--release` 无关；单线程跑（用例会起 rustc 子进程 + 真跑产物）。
+    push!(cargo_step(
+        "rustc-e2e",
+        "rustc 后端 e2e（110 用例：编译→链接→真执行，`--test-threads=1`）",
+        Scope::Windows,
+        &[
+            "test",
+            "-p",
+            "forge-rustc",
+            "--test",
+            "e2e",
+            "--",
+            "--test-threads=1",
+        ],
+    ));
+    push!(cargo_step(
+        "rustc-e2e-guards",
+        "rustc 后端 e2e 不变量（trap 语义 / 零容忍名单 / 模板契约）",
+        Scope::Windows,
+        &[
+            "test",
+            "-p",
+            "forge-rustc",
+            "--test",
+            "e2e",
+            "--",
+            "e2e_trap_semantics_invariants",
+        ],
+    ));
 
     // ── 格式与静态检查 ────────────────────────────────────────────────
     push!(cargo_step(
