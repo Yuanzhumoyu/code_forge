@@ -1705,6 +1705,11 @@ const CASES: &[Case] = &[
         reason: "asm!(\"ud2\") 的字节必须真的被执行 ⇒ NTSTATUS 0xC000001D",
     },
 
+    // ── v27 M2.5/S2a：内联 asm 的**寄存器约束**（in/out/inout + reg 类）──
+    //   机制：挑物理寄存器 → 文本占位符换成寄存器名 → 搬入（dst 写死、src 绑 vreg）
+    //   → asm 本体 → 搬出（dst 绑 vreg）→ 相关指令带 clobbers。
+    //   强断言：不带 asm 时 x 还是 5（exit 5）；asm 生效后 x = 5 + 37 = 42。
+
     Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",

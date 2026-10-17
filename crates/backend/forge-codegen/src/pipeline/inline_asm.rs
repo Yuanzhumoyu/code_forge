@@ -110,11 +110,21 @@ impl<I: MachineInst + 'static> CompileState<I> {
             }
             specs.push(role);
         }
-        if specs.len() != inst.operands.len() {
+        // 输入走 operands、输出走 results：先按约束算各自应有几个。
+        let need_in = specs
+            .iter()
+            .filter(|r| matches!(r, Role::In | Role::InOut))
+            .count();
+        let need_out = specs
+            .iter()
+            .filter(|r| matches!(r, Role::Out | Role::InOut))
+            .count();
+        if need_in != inst.operands.len() || need_out != inst.results.len() {
             return Err(IrError::Unsupported(format!(
-                "内联 asm 的约束数（{}）与操作数数（{}）不一致",
-                specs.len(),
-                inst.operands.len()
+                "内联 asm 的约束与实参不符：约束要 {need_in} 个输入 / {need_out} 个输出，\
+                 实到 {} 个操作数 / {} 个结果",
+                inst.operands.len(),
+                inst.results.len()
             )));
         }
         // ② 挑寄存器（可分配 GPR 顺序，互不重复）
@@ -150,9 +160,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
         let clobbers: Vec<(u32, RegClass)> = chosen.iter().map(|r| (*r, class)).collect();
 
         // ④ in/inout：搬入（dst 侧写死 = chosen[i]，src 侧绑 vreg）
+        let mut next_in = 0usize;
         for (i, role) in specs.iter().enumerate() {
             if matches!(role, Role::In | Role::InOut) {
-                let vreg = self.vreg_of(inst.operands[i])?;
+                let vreg = self.vreg_of(inst.operands[next_in])?;
+                next_in += 1;
                 let mov = self.make_mov_reg(parse.as_ref(), name_of.as_ref(), chosen[i], class)?;
                 self.inst_ops
                     .push(smallvec::smallvec![crate::machine::lowering::OperandBind {
@@ -172,9 +184,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
             self.vcode.push_inst_line(mi, line);
         }
         // ⑥ out/inout：搬出（dst 侧绑 vreg，src 侧写死 = chosen[i]）
+        let mut next_out = 0usize;
         for (i, role) in specs.iter().enumerate() {
             if matches!(role, Role::Out | Role::InOut) {
-                let vreg = self.vreg_of(inst.operands[i])?;
+                let vreg = self.vreg_of(inst.results[next_out])?;
+                next_out += 1;
                 let mov = self.make_mov_reg(parse.as_ref(), name_of.as_ref(), chosen[i], class)?;
                 self.inst_ops
                     .push(smallvec::smallvec![crate::machine::lowering::OperandBind {

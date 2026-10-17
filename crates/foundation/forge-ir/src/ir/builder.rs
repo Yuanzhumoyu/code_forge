@@ -641,7 +641,7 @@ impl FunctionBuilder {
     /// 内联汇编（v27 M2.5）：**纯文本形态**（S1）——无操作数、无结果，
     /// 由本 ISA 的汇编器在降级期解析成机器指令就地插入。
     pub fn inline_asm(&mut self, text: &str) {
-        self.inline_asm_with("", text, &[]);
+        let _ = self.inline_asm_with("", text, &[], &[]);
     }
 
     /// 内联汇编（v27 M2.5/S2a）：带**寄存器约束**。
@@ -650,18 +650,26 @@ impl FunctionBuilder {
     /// 第二段是寄存器类/显式寄存器）；`operands` 与约束**一一对应**，out/inout 的
     /// 操作数由 asm **就地写回**（因此本指令没有结果——vreg 在 asm 期间是活跃的，
     /// 就地写回在分配器看来就是同一个活跃寄存器被改写）。
-    pub fn inline_asm_with(&mut self, constraints: &str, text: &str, operands: &[Value]) {
+    pub fn inline_asm_with(
+        &mut self,
+        constraints: &str,
+        text: &str,
+        in_operands: &[Value],
+        out_tys: &[TypeId],
+    ) -> Vec<Value> {
         let (c, s) = {
             let mut ctx = self.ctx.borrow_mut();
             (ctx.intern_str(constraints), ctx.intern_str(text))
         };
         self.emit(
             Opcode::InlineAsm,
-            operands.to_vec(),
+            in_operands.to_vec(),
             vec![Immediate::String(c), Immediate::String(s)],
-            &[],
+            out_tys,
             InstFlags::SIDE_EFFECT,
-        );
+        )
+        .into_iter()
+        .collect()
     }
 
     /// 浮点 store：value 为 F32/F64 时用 Fstore（后端按类型分派到

@@ -321,6 +321,38 @@ error: failed to get `cfg-if` as a dependency of package `std v0.0.0 (…/librar
 **同批提交的代码**：`M3-①`（alloc 运行时**按需注入**，见下节）——它是 std 的前置条件，
 与本批文档同源，故一并提交；**M3 本身未完成**（M3-② 的真跑 `std` 需要 M2.5 与 TLS）。
 
+### S2a 第二轮（2026-10-11）：results 变参 + 两侧接线完成，**接线暂挂**
+
+**本轮做完的**：
+
+- `ops.toml` 的 `results` 支持 **`"variadic"`**（`build.rs` 新增 `ResArity::{Fixed, Variadic}`
+  与 `Display`；生成物里的 `result_count` 仍是 `u8`，变参记 0——它只是"声明形状"，不参与校验）；
+  `InlineAsm` 因此变成 `operands = "variadic"` + `results = "variadic"`。
+- `builder::inline_asm_with(constraints, text, in_operands, out_tys) -> Vec<Value>`。
+- `pipeline/inline_asm.rs` 的 S2a 改用**操作数/结果双游标**（`i` 取操作数、`o` 取结果、
+  `io` 两边各取一个）。
+- `forge-rustc` 侧：模板重建（`Placeholder{operand_idx}` → 文本里的 `{idx}`）、
+  `In`/`Out`/`InOut` 收集成"约束 + 输入值 + 输出类型 + 输出落点"、结果经 `store_place` 写回。
+  两处实测细节：MIR 侧的 `InlineAsmRegOrRegClass` 来自 **`rustc_target`**（与 `rustc_ast`
+  同名但不同类型）；`Out`/`InOut` 的 `place` 是 **`Option<Place>`**（`out(reg) _` 为 None）。
+
+**为什么还挂着（诚实记录）**：接线跑起来后，管线自己的**一致性检查**当场拒绝：
+
+```text
+codegen worker panic: 第 22 条指令的字段 0 被登记为 Def（vreg 10323），
+但操作数表里没有这一项：[InstOperand { field: 0, slot: Some(0), … }]
+```
+
+根因：**搬运指令的操作数字段索引取决于汇编器为 `mov rax, rax` 选中的编码形态**
+（`MOV_R_RM` / `MOV_RM_R` 等 form 的 dst/src 字段序号不同），按 `(0=dst, 1=src)` 硬绑定是错的。
+⇒ 正确做法是**按角色挑字段**（看 `MachineInst::operands()` 里每个 `InstOperand` 的
+`field`/`slot`/`role`），或者更稳：在管线里加一个"造一条 bound 操作数的 mov"的**辅助构造器**，
+把"哪个字段是 dst"这件事收敛到一处。
+
+**当前状态**：`forge-rustc` 侧把 S2a 接线**暂挂回 fail-closed**（只有 `operands.is_empty()`
+才走 S1 文本路径），带说明的 e2e 用例已删除 ⇒ 行为与 S1 一致、e2e 仍 113/113。
+基础设施（IR 变参、builder、降级体、两侧收集逻辑）全部保留在树里，下一轮只需解字段问题。
+
 ### S2a 进度（2026-10-11，工作区）：**基础设施已落地并编译，接线还差两处**
 
 **已完成**（代码在，行为未变——还没有东西发约束）：

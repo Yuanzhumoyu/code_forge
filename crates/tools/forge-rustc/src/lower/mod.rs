@@ -1,4 +1,4 @@
-﻿//! MIR → code-forge IR 降级（手写 lowering 核心）。
+//! MIR → code-forge IR 降级（手写 lowering 核心）。
 //!
 //! 入口：`LowerCtxt::new` + `lower_body`。方法按职责拆分到子模块：
 //! `statement`/`rvalue`/`place`/`vtable`/`const_eval`（同类型多 impl 块）。
@@ -925,40 +925,110 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 }
                 TerminatorKind::InlineAsm {
                     template,
+                    operands,
                     options,
                     targets,
                     ..
                 } => {
-                    // v27 M2.5/S1：**纯文本形态**（模板里没有 `{}` 占位符、且不是
-                    // `options(noreturn)`）交给 IR 层就地展开——文本原样递给后端，
-                    // 由本 ISA 的汇编器编成机器指令插进函数体。
-                    // 其余形态（寄存器/`const`/`sym` 约束、标签、noreturn）保持
-                    // fail-closed，待 S2–S4：
-                    //   · 约束要先在 IR 层表达"操作数 ↔ 寄存器"，还要参与分配；
-                    //   · 标签要延伸 IR 的块模型；
-                    //   · noreturn 要改 CFG（不产生落点跳转）。
-                    let mut plain_text = String::new();
-                    let mut plain = true;
+                    // v27 M2.5：**文本重建**——String 片段原样，占位符写成 `{idx}`
+                    // （后端按位置占位符替换成挑中的物理寄存器名）。
+                    let mut text = String::new();
                     for piece in template.iter() {
                         match piece {
                             rustc_ast::InlineAsmTemplatePiece::String(s) => {
-                                plain_text.push_str(s.as_ref());
+                                text.push_str(s.as_ref())
                             }
-                            rustc_ast::InlineAsmTemplatePiece::Placeholder { .. } => plain = false,
+                            rustc_ast::InlineAsmTemplatePiece::Placeholder {
+                                operand_idx, ..
+                            } => {
+                                text.push_str(&format!("{{{operand_idx}}}"));
+                            }
                         }
                     }
-                    let noreturn = options.contains(rustc_ast::InlineAsmOptions::NORETURN);
-                    if plain && !noreturn {
-                        self.builder.inline_asm(&plain_text);
+                    // S2a 口径：只接 `in(reg)`/`out(reg)`/`inout(reg)`（`RegClass` 形态）且**只接 64 位整数**
+                    // （搬运指令是 64 位 `mov`）；显式寄存器名（S2b）、const/sym（S3）、label（S4）、
+                    // noreturn 保持 fail-closed。
+                    let is_reg_class = |reg: &rustc_target::asm::InlineAsmRegOrRegClass| {
+                        matches!(reg, rustc_target::asm::InlineAsmRegOrRegClass::RegClass(_))
+                    };
+                    // ⚠️ 暂挂（2026-10-11）：S2a 的**接线**先回 fail-closed——寄存器搬运指令的操作数
+                    // **字段索引取决于汇编器选中的编码形态**（`mov rax, rax` 落到哪个 form 决定 dst/src
+                    // 的 field 序号），按 (0=dst,1=src) 硬绑定会被管线的一致性检查当场拒掉
+                    //（"字段被登记为 Def 但操作数表里没有这一项"）。正确做法是**按角色挑字段**
+                    // （`MachineInst::operands()` 里 `role`/`slot` 的形态），见方案 §8 的 S2a 记录。
+                    let mut ok = !options.contains(rustc_ast::InlineAsmOptions::NORETURN)
+                        && operands.is_empty();
+                    let mut constraints: Vec<&str> = Vec::new();
+                    let mut in_vals: Vec<Value> = Vec::new();
+                    let mut out_tys: Vec<TypeId> = Vec::new();
+                    // `out(reg) _` 的 place 是 `None`（值被丢弃）⇒ 仍要产出结果，但不 store。
+                    let mut out_places: Vec<Option<rustc_middle::mir::Place<'tcx>>> = Vec::new();
+                    for op in operands.iter() {
+                        match op {
+                            rustc_middle::mir::InlineAsmOperand::In { reg, value } => {
+                                let ty = value.ty(&self.body.local_decls, self.tcx);
+                                if is_reg_class(reg) && layout_bytes(self.tcx, ty) == 8 {
+                                    constraints.push("i,g");
+                                    in_vals.push(self.lower_operand(value)?);
+                                } else {
+                                    ok = false;
+                                }
+                            }
+                            rustc_middle::mir::InlineAsmOperand::Out { reg, place, .. } => {
+                                let ty = place
+                                    .map(|p| p.ty(&self.body.local_decls, self.tcx).ty)
+                                    .unwrap_or(self.tcx.types.i64);
+                                if is_reg_class(reg) && layout_bytes(self.tcx, ty) == 8 {
+                                    constraints.push("o,g");
+                                    out_tys.push(map_type(ty, self.tcx)?);
+                                    out_places.push(*place);
+                                } else {
+                                    ok = false;
+                                }
+                            }
+                            rustc_middle::mir::InlineAsmOperand::InOut {
+                                reg,
+                                in_value,
+                                out_place,
+                                ..
+                            } => {
+                                let ity = in_value.ty(&self.body.local_decls, self.tcx);
+                                let ty = out_place
+                                    .map(|p| p.ty(&self.body.local_decls, self.tcx).ty)
+                                    .unwrap_or(ity);
+                                if is_reg_class(reg)
+                                    && layout_bytes(self.tcx, ty) == 8
+                                    && layout_bytes(self.tcx, ity) == 8
+                                {
+                                    constraints.push("io,g");
+                                    in_vals.push(self.lower_operand(in_value)?);
+                                    out_tys.push(map_type(ty, self.tcx)?);
+                                    out_places.push(*out_place);
+                                } else {
+                                    ok = false;
+                                }
+                            }
+                            _ => ok = false,
+                        }
+                    }
+                    if ok {
+                        let results = self.builder.inline_asm_with(
+                            &constraints.join(";"),
+                            &text,
+                            &in_vals,
+                            &out_tys,
+                        );
+                        for (place, v) in out_places.iter().zip(results) {
+                            if let Some(p) = place {
+                                self.store_place(p, v);
+                            }
+                        }
                         if let Some(t) = targets.first() {
                             let tgt = self.blocks[t];
                             self.builder.jump(tgt, &[]);
                         }
                     } else {
                         // 不支持的形态：**明确拒绝**（M2 的 fail-closed 保留）。
-                        // 与 `global_asm!` 的差别决定了不能照搬那套：global_asm 是整段独立文本
-                        // （交给汇编器进独立对象即可），而内联 asm 要嵌在函数体里、还要绑定寄存器
-                        // 约束 ⇒ 需要 IR 层表达"原始文本 + 操作数寄存器约束"（S2–S4）。
                         let excerpt: String = template
                             .iter()
                             .map(|piece| match piece {

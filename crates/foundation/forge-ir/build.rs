@@ -27,13 +27,43 @@ enum Arity {
     Variadic,
 }
 
+/// 结果值个数的声明：固定 N 或变参（`InlineAsm` 这类"个数由宿主决定"的 op）。
+///
+/// 与 `operands` 的 `Arity` 对称——两者都是"形状"，显示/文档按同一口径渲染。
+#[derive(Clone, Copy)]
+enum ResArity {
+    Fixed(u8),
+    Variadic,
+}
+
+impl ResArity {
+    /// 生成物 `OpMeta::result_count` 的口径：固定个数；**变参记 0**（真实个数由
+    /// 指令自己的 `results.len()` 决定，元数据只是"声明形状"，不参与校验）。
+    fn fixed_count(self) -> u8 {
+        match self {
+            ResArity::Fixed(n) => n,
+            ResArity::Variadic => 0,
+        }
+    }
+}
+
+impl std::fmt::Display for ResArity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResArity::Fixed(n) => write!(f, "{n}"),
+            ResArity::Variadic => write!(f, "variadic"),
+        }
+    }
+}
+
 struct OpDef {
     name: String,
     mnemonic: String,
     category: String,
     doc: String,
     arity: Arity,
-    results: u8,
+    /// 结果值个数：`Fixed(n)` 或 `Variadic`（宿主决定个数的 op 用，如内联汇编）。
+    results: ResArity,
     may_ub: bool,
     side_effect: bool,
     /// 比较条件 immediate 的通道类型（`Icmp`/`Fcmp` 专用）：`IntCC` | `FloatCC`。
@@ -154,15 +184,16 @@ fn generate_opcode_table() {
             }
         };
         let results = match table.get("results") {
-            None => 1u8,
+            None => ResArity::Fixed(1),
             Some(toml::Value::Integer(n)) => {
                 assert!(
                     (0..=255).contains(n),
                     "ops.toml `{name}` 的 results={n} 越界（0..=255）"
                 );
-                *n as u8
+                ResArity::Fixed(*n as u8)
             }
-            other => panic!("ops.toml `{name}` 的 results 须为整数，实际 {other:?}"),
+            Some(toml::Value::String(s)) if s == "variadic" => ResArity::Variadic,
+            other => panic!("ops.toml `{name}` 的 results 须为整数或 \"variadic\"，实际 {other:?}"),
         };
         let flag = |key: &str| -> bool {
             match table.get(key) {
@@ -589,7 +620,14 @@ fn render(defs: &[OpDef]) -> String {
                  arity: {arity}, result_count: {}, may_ub: {}, side_effect: {}, cond: {cond}, \
                  llvm: {:?}, llvm_parse: {llvm_parse}, llvm_aliases: {aliases}, \
                  type_rule: {type_rule}, convert: {convert} }},\n",
-                d.name, d.mnemonic, d.category, d.doc, d.results, d.may_ub, d.side_effect, d.llvm
+                d.name,
+                d.mnemonic,
+                d.category,
+                d.doc,
+                d.results.fixed_count(),
+                d.may_ub,
+                d.side_effect,
+                d.llvm
             ),
         );
     }

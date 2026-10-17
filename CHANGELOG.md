@@ -11,6 +11,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-ir v27 M2.5/S2a：`results` 变参 + 两侧接线（接线暂挂）
+
++ **`ops.toml` 的 `results` 支持 `"variadic"`**（`build.rs` 新增 `ResArity::{Fixed, Variadic}` +
+  `Display`；生成物的 `result_count: u8` 保持原样，变参记 0——它只是"声明形状"，不参与校验）。
+  `InlineAsm` 因此是 `operands = "variadic"` + `results = "variadic"`。
++ **`builder::inline_asm_with(constraints, text, in_operands, out_tys) -> Vec<Value>`**：
+  输入走操作数、输出作为结果（本后端局部变量在栈槽 ⇒ 写回必须经 `store_place(place, value)`，
+  所以输出必须是 IR 值）。
++ `pipeline/inline_asm.rs` 的 S2a 改用**操作数/结果双游标**；`forge-rustc` 侧完成模板重建
+  （`Placeholder{operand_idx}` → `{idx}`）、`In`/`Out`/`InOut` 收集与结果写回。
++ **接线暂挂（诚实记录）**：跑起来后管线的一致性检查当场拒绝——**搬运指令的操作数字段索引
+  取决于汇编器为 `mov rax, rax` 选中的编码形态**，按 `(0=dst, 1=src)` 硬绑定是错的
+  （`第 22 条指令的字段 0 被登记为 Def 但操作数表里没有这一项`）。⇒ 下一轮改成**按角色挑
+  字段**（或加一个"造 bound 操作数的 mov"的辅助构造器）。当前行为与 S1 一致、e2e 113/113。
++ 两处实测细节已写进注释：MIR 侧的 `InlineAsmRegOrRegClass` 来自 **`rustc_target`**
+  （与 `rustc_ast` 同名不同类型）；`Out`/`InOut` 的 `place` 是 **`Option<Place>`**。
++ 验收：`cargo forge gate --subset rustc` **9 步全绿**（252.3s）。
+
 ### Added (2026-10-11) — forge-ir/forge-codegen v27 M2.5/S2a 基础设施（内联汇编的寄存器约束）
 
 + **`Opcode::InlineAsm` 的操作数改成变参**（`ops.toml: operands = "variadic"`，`results` 仍 0），
