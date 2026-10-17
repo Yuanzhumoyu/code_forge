@@ -581,6 +581,10 @@ pub fn run(a: &Args, verbose: bool) -> anyhow::Result<i32> {
             "rustc-e2e-guards",
             "rustc-determinism",
             "capability_gaps",
+            // 后端 `Unsupported(` 的错误分类学（v27 S1–S4 曾整族违规而本子集看不见）
+            "error_taxonomy",
+            // 发行谱 lint（`InlineAsm` 归入"宿主直查"op 的缺口口径）
+            "lint_shipped",
             "file_size_ratchet", // 管线文件的规模棘轮：v27 S1 曾漏跑它而把 lowering.rs 撑破上限
             "abi_target_real",
             "reg_name_table",

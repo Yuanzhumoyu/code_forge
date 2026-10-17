@@ -57,7 +57,7 @@ pub const TERMINATOR_OPS: [&str; 6] = ["Ret", "Jmp", "Br", "Switch", "Unreachabl
 /// `dsl/codegen/lowering.rs::gen_va_start_lowering`），所以谱里同样**没有**它的
 /// `[[lower.<op>]]`（写法与 `frame_set`/`frame_alloc` 一族相同：谱只申报能力）。
 /// 两类都"不是缺口"，但成因不同，改这一列前先看清是哪种。
-pub const HOST_PIPELINE_OPS: [&str; 8] = [
+pub const HOST_PIPELINE_OPS: [&str; 9] = [
     "Bitcast",
     "Call",
     "CallIndirect",
@@ -66,6 +66,11 @@ pub const HOST_PIPELINE_OPS: [&str; 8] = [
     "GetElementPtr",
     "LandingPad",
     "VaStart",
+    // v27：内联 `asm!` 的 `InlineAsm` 由**宿主管线**展开（`forge-codegen` 的
+    // `pipeline/inline_asm.rs`：约束解析 → 寄存器绑定 → 交给谱的汇编器），谱里同样
+    // **没有也不该有** `[[lower.InlineAsm]]`（它带文本与变长操作数，DSL 表达不了）。
+    // 归入这一类后，三谱的"真缺口"数不变（x86 的缺口 4 → 3）。
+    "InlineAsm",
 ];
 
 /// lint 档位（v19 V4c）：两项可选输入。

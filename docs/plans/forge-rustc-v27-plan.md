@@ -37,6 +37,34 @@
 
 ## 2. 里程碑
 
+> **状态总表（2026-10-11 校准；事实以代码/e2e/台账为准，§8 是逐轮记录）**：
+> 本表只回答"现在到哪了"，判据的细节在各期正文与 §8 里。e2e 用例数**不写死**——
+> 以 `crates/tools/forge-rustc/README.md` 的机读计数为准（`rustc_doc_counts` 守卫钉住）。
+
+| 里程碑 / 切片 | 状态 | 证据落点 |
+| --- | --- | --- |
+| M1 正确性清零（溢出/窄有符号/向量溢出/regalloc） | ✅ 落地 | §8 M1；e2e 硬断言、`known_failure` = 0 |
+| M2 `global_asm!` | ✅ 落地 | §8 M2；e2e `global_asm_call`/`global_asm_sym_const` |
+| M2 展开（`panic=unwind`/SEH） | ❌ **不做**（明确拒绝） | 台账 `UNWIND` |
+| M2 TLS | ✅ 落地（动态 TLS） | §8 TLS；e2e `thread_local_roundtrip` |
+| M2.5 S1 内联 asm 骨架 | ✅ 落地 | §8 S1；e2e `inline_asm_nop`/`inline_asm_ud2` |
+| M2.5 S2a 寄存器约束（`reg`） | ✅ 落地 | e2e `inline_asm_reg_inout` |
+| M2.5 S2b 显式寄存器名（含短名映射） | ✅ 落地 | e2e `inline_asm_named_reg`；`reg_name_table` 守卫 |
+| M2.5 S3 `const` 占位符 | ✅ 落地 | e2e `inline_asm_const` |
+| M2.5 S3 `sym` 占位符 | ❌ **受 ISA 限制**：本谱汇编模板无法表达符号操作数 ⇒ 即使做了也**无法验证**、且编不过 ⇒ 保持 fail-closed | §8 S3 记录 |
+| M2.5 S4 `clobber_abi` | ✅ 落地（纯 clobber 槽） | e2e `inline_asm_clobber_abi` |
+| M2.5 S4 `options(noreturn)` | ✅ 落地 | e2e `inline_asm_noreturn` |
+| M2.5 S4 `label` 操作数 | ❌ **结构性阻塞**：标签必须落在指令流**中间**，当前"文本→一次汇编→一串指令"表达不了 | §8 的阻塞分析 |
+| M3-① alloc 按需注入 | ✅ 落地 | §8；`WA-02` 关闭 |
+| M3-② 真跑 `std` | ⏳ **卡在环境**：需要 `-Zbuild-std` + 网络（本仓沙箱无网络凭证） | §8；`cargo forge init --std` 已就位 |
+| M4-T1 目标校验（不再静默回落） | ✅ 落地 | 台账 `TARGET`；§8 M4-T1 |
+| M4-T2 约定按目标选 | ✅ **实测已成立**（双向守卫） | `abi_target_real` 的 `abstract_c_…` |
+| M4-T3 目标相关对象层/链接层 | ❌ 未做（需交叉工具链验证） | §8 M4 施工图 |
+| M4-T4 对象层根治（`WA-01`） | ✅ 首结论：**按设计关闭**；剩余项见 §8 | `WORKAROUNDS.md` `WA-01` |
+| M5 契约与门禁 | ✅ 落地 | §8；`--subset rustc` 步骤表 |
+| M6-① 清理 | 🔶 部分（`forge-rustc` 测试目标的 clippy 仍未纳入） | §8 |
+| M6-② 账本归档 + 参考全扫 | ⏳ 待做（前置是各里程碑收口） | — |
+
 ### M1 正确性清零：把绕法换成实现
 
 **问题**：E3/E5/E6——测试默认关溢出检查，窄类型/向量溢出/regalloc 四处有静默错值风险。
@@ -92,10 +120,10 @@ unwrap 触发 `catch_unwind` 或用例级 SEH 决策文档、`thread_local!` 读
   1. `-Zbuild-std=std,panic_abort` 需要在 workspace 内建 std（`rust-src` 已装 ✔，不写 `~/.cargo`）；
   2. 若要让**用户 crate** 用 forge、**sysroot crate** 用 LLVM，需要 README 提到的
      `forge-rustc-wrapper`（`cargo forge init` 会写进 `.cargo/config.toml`）；
-  3. 已知会遇到：std 的 `thread_local!`（后端现对 `#[thread_local]` 是 `[cap:TLS]` fail-closed）、
-     std 的 `lang_start` 入口链（`mainCRTStartup` → `std::rt::lang_start`）、
-     以及内联 `asm!`（`[cap:INLINE_ASM]`，若用户 crate 或平台胶水层用到）。
-     ⇒ **M3 的真实顺序依赖 M2.5（内联 asm）与 TLS**，这一点本轮已用代码事实确认，不是猜测。
+  3. 立项时的三项阻塞**已解除两项**（2026-10-11 校准）：TLS ✅ 已实现（动态 TLS），
+     内联 `asm!` ✅ 已实现（S1/S2a/S2b/S3-const/S4）；剩下的未知是 std 的
+     `lang_start` 入口链（`mainCRTStartup` → `std::rt::lang_start`）与 build-std 的网络依赖。
+     跑法已固定成一条命令：`cargo forge init --std`。
 
 ### TLS 真实现 —— **动态模型已落地**（2026-10-11，工作区）
 
@@ -162,6 +190,28 @@ v27 M2 曾把 TLS 记成"待做（先 fail-closed）"。本轮把两条实现路
   加一步 `clippy -p forge-rustc --all-targets`（让它与其余 crate 同标准）。
 - **`-Zshare-generics=yes`（`WA-04`）**：现在仍是"链接期才发现的 LNK2019"⇒ 收口时可改为
   **编译期明确拒绝**（带缺口 ID）或补齐"被引用但上游未生成"的实例。
+
+### M5 补漏（2026-10-11）：后端子集看不见的两个守卫，红了
+
+跑 `--subset quick`（= fmt + **全部**守卫 + 文档）才暴露的两件事——都是 v27 自己造成的：
+
+1. **`error_taxonomy`（forge-codegen）**：仓库规定后端 `Unsupported(` 必须是能力缺口
+   （`IrError::capability(ID, …)`），畸形 IR ⇒ `Internal`、数据/使用错误 ⇒ `Semantic`。
+   而 v27 S1–S4 在 `pipeline/inline_asm.rs` 里写了 **26 处**裸 `IrError::Unsupported(`
+   ⇒ 一直红，`--subset rustc` 却看不见（该守卫不在子集里）。处置：按分类学重判 ——
+   约束协议/搬运形态这类"我们自己产物的形状" ⇒ `Internal`（7 处），
+   用户文本/谱数据（汇编文本解析失败、显式寄存器不存在、没有汇编器等）⇒ `Semantic`（19 处）。
+   **不新增能力 ID**（`capability_gaps` 要求每个 ID 恰好一处，而 `INLINE_ASM` 的失败点在
+   `forge-rustc` 侧，不该被后端重复计入）。
+2. **`lint_shipped`/`op_gap`（forge-isa-dsl）**：v27 给 `ops.toml` 加了 `InlineAsm`，
+   而谱里**没有也不该有** `[[lower.InlineAsm]]`（它带文本与变长操作数，DSL 表达不了，
+   由宿主管线展开）⇒ 被算成"真缺口"（x86 3 → 4）。处置：把 `InlineAsm` 归入
+   `HOST_PIPELINE_OPS`（与 `VaStart` 同类），三谱 pin 的"宿主管线"8 → 9、真缺口不变；
+   守卫的数组长度 8 → 9。
+
+**把这两个守卫加进 `--subset rustc`**（各 0.2s / 0.6s）⇒ 后端子集 **13 步**。
+教训与 v27 立项时那次同类：**"只跑后端子集"会漏掉跨 crate 的契约守卫**；
+凡是"后端代码属于 workspace 契约一部分"的守卫，都应该在子集里。
 
 ### S4 第二刀（2026-10-11）：`options(noreturn)` 可用
 

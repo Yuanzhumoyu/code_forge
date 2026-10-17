@@ -11,6 +11,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-11) — v27 M5 补漏：两个"子集看不见"的守卫
+
++ **`error_taxonomy`（forge-codegen）**：仓库规定后端 `Unsupported(` 必须是能力缺口
+  （`IrError::capability`），畸形 IR ⇒ `Internal`、数据/使用错误 ⇒ `Semantic`。v27 S1–S4 在
+  `pipeline/inline_asm.rs` 写了 **26 处**裸 `Unsupported(` ⇒ 一直红而子集看不见。按分类学重判：
+  **`Internal` 7 处**（约束协议/搬运形态等我们自己产物的形状）、**`Semantic` 19 处**
+  （汇编文本解析失败、显式寄存器不存在、无汇编器等）。不新增能力 ID（`INLINE_ASM` 的唯一失败点
+  在 `forge-rustc` 侧）。
++ **`lint_shipped`/`op_gap`（forge-isa-dsl）**：新增的 `InlineAsm` op 谱里没有也不该有
+  `[[lower.InlineAsm]]`（带文本/变长操作数，由宿主管线展开）⇒ 被算成"真缺口"。归入
+  `HOST_PIPELINE_OPS`（与 `VaStart` 同类）：三谱 pin 的"宿主管线" 8 → 9、真缺口不变。
++ **两个守卫都加进 `--subset rustc`**（各 0.2s / 0.6s）⇒ 后端子集 **13 步**。
+  教训：只跑后端子集会漏掉跨 crate 的契约守卫。
++ 方案账本 §2 新增**状态总表**（里程碑 → 状态 → 证据落点）并修掉 M3-② 的失效措辞
+  （TLS 与内联 asm 两项阻塞已解除）。
+
 ### Added (2026-10-11) — forge-rustc v27 M2.5/S4 第二刀：内联 `asm!` 的 `options(noreturn)` 可用
 
 + `asm!("ud2", options(noreturn))` 从 **编译期拒绝**变成真 trap（e2e `inline_asm_noreturn`

@@ -32,7 +32,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 .as_ref()
                 .map(|s| s.lookup_str(sid).to_string())
                 .ok_or_else(|| {
-                    IrError::Unsupported(
+                    IrError::Semantic(
                         "InlineAsm：本次编译没有类型表快照，取不到汇编文本".to_string(),
                     )
                 })
@@ -41,7 +41,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
             (Some(Immediate::String(a)), Some(Immediate::String(b))) => (lookup(*a)?, lookup(*b)?),
             (Some(Immediate::String(a)), None) => (String::new(), lookup(*a)?),
             _ => {
-                return Err(IrError::Unsupported(
+                return Err(IrError::Semantic(
                     "InlineAsm 需要 1~2 个 String 立即数（约束、汇编文本）".to_string(),
                 ));
             }
@@ -54,10 +54,10 @@ impl<I: MachineInst + 'static> CompileState<I> {
         }
 
         let parse = self.asm_parse.clone().ok_or_else(|| {
-            IrError::Unsupported("本 ISA 未提供汇编器：内联汇编无法展开".to_string())
+            IrError::Semantic("本 ISA 未提供汇编器：内联汇编无法展开".to_string())
         })?;
         let insts = parse(&text).ok_or_else(|| {
-            IrError::Unsupported(format!("内联汇编文本无法被本 ISA 的汇编器解析：{text:?}"))
+            IrError::Semantic(format!("内联汇编文本无法被本 ISA 的汇编器解析：{text:?}"))
         })?;
         let line = inst.loc.as_ref().and_then(|l| l.line);
         for mi in insts {
@@ -105,7 +105,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 Some("io") => Role::InOut,
                 Some("c") => Role::Clobber,
                 other => {
-                    return Err(IrError::Unsupported(format!(
+                    return Err(IrError::Internal(format!(
                         "内联 asm 的约束角色不支持：{other:?}（只有 i/o/io）"
                     )));
                 }
@@ -114,7 +114,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 Some("g") => RegChoice::Pool,
                 Some(name) if !name.is_empty() => RegChoice::Named(name.to_string()),
                 other => {
-                    return Err(IrError::Unsupported(format!(
+                    return Err(IrError::Semantic(format!(
                         "内联 asm 的寄存器约束不支持：{other:?}（`g` 或显式寄存器名）"
                     )));
                 }
@@ -131,7 +131,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
             .filter(|(r, _)| matches!(r, Role::Out | Role::InOut))
             .count();
         if need_in != inst.operands.len() || need_out != inst.results.len() {
-            return Err(IrError::Unsupported(format!(
+            return Err(IrError::Internal(format!(
                 "内联 asm 的约束与实参不符：约束要 {need_in} 个输入 / {need_out} 个输出，\
                  实到 {} 个操作数 / {} 个结果",
                 inst.operands.len(),
@@ -145,7 +145,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
             let picked = match choice {
                 RegChoice::Named(name) => {
                     let by_name = self.reg_by_name_of.clone().ok_or_else(|| {
-                        IrError::Unsupported(
+                        IrError::Semantic(
                             "本 ISA 未提供寄存器名反查表（显式寄存器名无法解析）".to_string(),
                         )
                     })?;
@@ -171,7 +171,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                             continue;
                         }
                         None => {
-                            return Err(IrError::Unsupported(format!(
+                            return Err(IrError::Semantic(format!(
                                 "内联 asm 的寄存器 {name:?} 在本 ISA 里不存在（或不在允许的类里）"
                             )));
                         }
@@ -187,7 +187,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                                 .any(|e| matches!(e, Some((c, cl)) if *c == **r && *cl == class))
                         })
                         .ok_or_else(|| {
-                            IrError::Unsupported(
+                            IrError::Semantic(
                                 "内联 asm 的寄存器需求超过可分配 GPR 数量".to_string(),
                             )
                         })?;
@@ -200,7 +200,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 .iter()
                 .any(|e| matches!(e, Some((c, cl)) if *c == picked.0 && *cl == picked.1))
             {
-                return Err(IrError::Unsupported(format!(
+                return Err(IrError::Internal(format!(
                     "内联 asm 里同一寄存器被重复使用（{picked:?}）"
                 )));
             }
@@ -208,14 +208,14 @@ impl<I: MachineInst + 'static> CompileState<I> {
         }
         // ③ 名字 → 文本替换 → 汇编
         let name_of = self.reg_name_of.clone().ok_or_else(|| {
-            IrError::Unsupported("本 ISA 未提供寄存器名表（S2a 无法替换占位符）".to_string())
+            IrError::Semantic("本 ISA 未提供寄存器名表（S2a 无法替换占位符）".to_string())
         })?;
         let mut names: Vec<String> = Vec::with_capacity(chosen.len());
         for e in &chosen {
             match e {
                 Some((r, c)) => {
                     let n = name_of(*r, *c)
-                        .ok_or_else(|| IrError::Unsupported(format!("寄存器 {r} 没有汇编拼写")))?;
+                        .ok_or_else(|| IrError::Semantic(format!("寄存器 {r} 没有汇编拼写")))?;
                     names.push(n.to_string());
                 }
                 // 跳过掉的纯 clobber：占位符不可能引用它（rustc 不允许引用 clobber 操作数）。
@@ -224,10 +224,10 @@ impl<I: MachineInst + 'static> CompileState<I> {
         }
         let asm_text = substitute_placeholders(text, &names)?;
         let parse = self.asm_parse.clone().ok_or_else(|| {
-            IrError::Unsupported("本 ISA 未提供汇编器：内联汇编无法展开".to_string())
+            IrError::Semantic("本 ISA 未提供汇编器：内联汇编无法展开".to_string())
         })?;
         let asm_insts = parse(&asm_text).ok_or_else(|| {
-            IrError::Unsupported(format!("内联汇编文本无法被汇编器解析：{asm_text:?}"))
+            IrError::Semantic(format!("内联汇编文本无法被汇编器解析：{asm_text:?}"))
         })?;
         let line = inst.loc.as_ref().and_then(|l| l.line);
         let clobbers: Vec<(u32, RegClass)> = chosen.iter().filter_map(|e| *e).collect();
@@ -240,7 +240,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 next_in += 1;
                 let mov = {
                     let (num, cls) = chosen[i].ok_or_else(|| {
-                        IrError::Unsupported("内联 asm 的输入/输出寄存器无法解析".to_string())
+                        IrError::Internal("内联 asm 的输入/输出寄存器无法解析".to_string())
                     })?;
                     self.make_mov_reg(parse.as_ref(), name_of.as_ref(), num, cls)?
                 };
@@ -270,7 +270,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 next_out += 1;
                 let mov = {
                     let (num, cls) = chosen[i].ok_or_else(|| {
-                        IrError::Unsupported("内联 asm 的输入/输出寄存器无法解析".to_string())
+                        IrError::Internal("内联 asm 的输入/输出寄存器无法解析".to_string())
                     })?;
                     self.make_mov_reg(parse.as_ref(), name_of.as_ref(), num, cls)?
                 };
@@ -303,14 +303,14 @@ impl<I: MachineInst + 'static> CompileState<I> {
             .find(|o| o.role == OperandRole::Def && o.settable)
             .map(|o| o.field)
             .ok_or_else(|| {
-                IrError::Unsupported("搬运指令没有可改写的 dst 字段（mov 形态不对？）".to_string())
+                IrError::Internal("搬运指令没有可改写的 dst 字段（mov 形态不对？）".to_string())
             })?;
         let src = ops
             .iter()
             .find(|o| o.role == OperandRole::Use && o.settable && o.field != dst)
             .map(|o| o.field)
             .ok_or_else(|| {
-                IrError::Unsupported("搬运指令没有可改写的 src 字段（mov 形态不对？）".to_string())
+                IrError::Internal("搬运指令没有可改写的 src 字段（mov 形态不对？）".to_string())
             })?;
         Ok((dst, src))
     }
@@ -318,7 +318,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
     /// IR 值 → 已分配的 vreg（asm 的操作数必须已经拿到寄存器）。
     fn vreg_of(&self, v: Value) -> Result<XReg, IrError> {
         self.value_to_xreg.get(v).copied().ok_or_else(|| {
-            IrError::Unsupported(format!(
+            IrError::Semantic(format!(
                 "内联 asm 的操作数 {v:?} 没有分配寄存器（值未落寄存器？）"
             ))
         })
@@ -333,14 +333,13 @@ impl<I: MachineInst + 'static> CompileState<I> {
         preg: u32,
         class: RegClass,
     ) -> Result<I, IrError> {
-        let name = name_of(preg, class).ok_or_else(|| {
-            IrError::Unsupported(format!("寄存器 {preg} 没有汇编拼写（搬运指令）"))
-        })?;
+        let name = name_of(preg, class)
+            .ok_or_else(|| IrError::Semantic(format!("寄存器 {preg} 没有汇编拼写（搬运指令）")))?;
         let text = format!("mov {name}, {name}");
-        let mut insts = parse(&text)
-            .ok_or_else(|| IrError::Unsupported(format!("搬运指令无法汇编：{text:?}")))?;
+        let mut insts =
+            parse(&text).ok_or_else(|| IrError::Semantic(format!("搬运指令无法汇编：{text:?}")))?;
         if insts.len() != 1 {
-            return Err(IrError::Unsupported(format!(
+            return Err(IrError::Semantic(format!(
                 "搬运指令应恰好编成一条：{text:?}（得到 {} 条）",
                 insts.len()
             )));
@@ -368,7 +367,7 @@ fn substitute_placeholders(text: &str, names: &[String]) -> Result<String, IrErr
                 Some('}') => break,
                 Some(ch) => spec.push(ch),
                 None => {
-                    return Err(IrError::Unsupported(
+                    return Err(IrError::Semantic(
                         "内联汇编文本里有未闭合的 `{`".to_string(),
                     ));
                 }
@@ -381,12 +380,12 @@ fn substitute_placeholders(text: &str, names: &[String]) -> Result<String, IrErr
         } else if let Ok(i) = spec.parse::<usize>() {
             i
         } else {
-            return Err(IrError::Unsupported(format!(
+            return Err(IrError::Semantic(format!(
                 "内联汇编占位符修饰不支持：{{{spec}}}（S2a 只支持位置占位符）"
             )));
         };
         let name = names.get(idx).ok_or_else(|| {
-            IrError::Unsupported(format!(
+            IrError::Semantic(format!(
                 "内联汇编占位符 {{{idx}}} 越界（只有 {} 个操作数）",
                 names.len()
             ))
