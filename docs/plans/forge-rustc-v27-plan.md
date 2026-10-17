@@ -79,6 +79,36 @@ unwrap 触发 `catch_unwind` 或用例级 SEH 决策文档、`thread_local!` 读
 
 ### M3 `std` 可用性：让真实程序能编能跑
 
+**M3-① 已落地（2026-10-11）：alloc 运行时改为按需注入**（`WA-02` 的正解，也是 std 的前置条件）
+
+- 现状（落地前）：后端在**每个 crate 的首个 CGU 无条件注入**手写 alloc shim
+  （`__rust_alloc`/`dealloc`/`realloc`/`alloc_zeroed`，基于 `VirtualAlloc`）；链 `std` 时
+  std 的 rlib **自带同一族符号** ⇒ 必然 LNK2005 重复定义。
+- 落地：用 `tcx.crates(())` 判定"是否链了 std"（与本文件既有的 `crate_name` 惯用法同源），
+  **链 std ⇒ 不注入**；no_std ⇒ 照旧注入（那正是这个 shim 存在的理由）。
+  原来的做法是反过来的——用 `keep_item` 过滤 rustc 侧的 alloc 实例，既绕、又挡不住 std 场景。
+- 回归：全量 e2e（110 用例，全部 no_std ⇒ 仍注入）见 §8 的实测。
+- **下一步（M3-②）**：真正跑一个 `std` 程序。已确认的可行路径与已知阻塞：
+  1. `-Zbuild-std=std,panic_abort` 需要在 workspace 内建 std（`rust-src` 已装 ✔，不写 `~/.cargo`）；
+  2. 若要让**用户 crate** 用 forge、**sysroot crate** 用 LLVM，需要 README 提到的
+     `forge-rustc-wrapper`（`cargo forge init` 会写进 `.cargo/config.toml`）；
+  3. 已知会遇到：std 的 `thread_local!`（后端现对 `#[thread_local]` 是 `[cap:TLS]` fail-closed）、
+     std 的 `lang_start` 入口链（`mainCRTStartup` → `std::rt::lang_start`）、
+     以及内联 `asm!`（`[cap:INLINE_ASM]`，若用户 crate 或平台胶水层用到）。
+     ⇒ **M3 的真实顺序依赖 M2.5（内联 asm）与 TLS**，这一点本轮已用代码事实确认，不是猜测。
+
+### 收口待办（M6）
+
+- **forge-rustc 的测试代码此前没有 lint 标准**：门禁的 clippy 只把 forge-rustc 当 **path 依赖**
+  （只 lint lib），它的 `tests/*.rs` 从未被 `-D warnings` 覆盖。实测 `cargo clippy -p forge-rustc
+  --all-targets -- -D warnings` 会报若干**既有** lint（`determinism.rs` 的 doc 列表缩进、
+  `is_multiple_of`、冗余 cast 等，**不是 v27 引入的**）⇒ 收口时：先修这些既有 lint，再给门禁
+  加一步 `clippy -p forge-rustc --all-targets`（让它与其余 crate 同标准）。
+- **`-Zshare-generics=yes`（`WA-04`）**：现在仍是"链接期才发现的 LNK2019"⇒ 收口时可改为
+  **编译期明确拒绝**（带缺口 ID）或补齐"被引用但上游未生成"的实例。
+
+### M3 原始条目
+
 **问题**：今天只能 `no_std` + `no_main` + `#[no_mangle] extern "C" fn main`（README §支持矩阵），
 `std` 程序（E2/E7 的 runtime 符号链）编不了 ⇒ "后端"用不起来。
 
@@ -109,6 +139,10 @@ unwrap 触发 `catch_unwind` 或用例级 SEH 决策文档、`thread_local!` 读
 原 M5 里的"契约回写 + 账本归档"**另立 M6**（它只能在 M2.5/M3/M4 都收口之后做）。
 
 ### M6 契约回写与账本归档
+
+**已拆为两步**：**M6-① 契约回写**（README 的能力面/路线图、`CLAUDE.md` 的 forge-rustc 速查、
+`WORKAROUNDS.md` 状态纠偏——2026-10-11 已落地，见 §8）；**M6-② 账本归档**（`plans/` → `archive/`
+并全量更新引用，只能在 M2.5/M3/M4 都收口后做）。
 
 - **门禁**：`cargo forge gate` 加 `--subset rustc`（或步骤 `rustc-e2e`）——把 E9 的缺口补上，
   CI 复用同一命令。
@@ -164,6 +198,32 @@ unwrap 触发 `catch_unwind` 或用例级 SEH 决策文档、`thread_local!` 读
   ——M2 的 `panic=unwind` 决策要用（`.pdata`/`.xdata` 与 personality 的职责边界）。
 
 ## 8. 批次记录（逐里程碑回写）
+
+### M6-① 契约回写（2026-10-11，工作区）
+
+**动机**：v27 前十个轮次的改动全落在代码/账本上，而**对外契约**还停在 v26：
+`crates/tools/forge-rustc/README.md` 的「路线图」结尾写着 **"路线图无剩余开放项"**，
+`CLAUDE.md` 里没有 forge-rustc 后端的现状章节 ⇒ 新读者会得到一份错的"当前能力面"。
+
+**改动**：
+
+- `crates/tools/forge-rustc/README.md`：
+  ① 路线图结尾改为"v27 重新定义了'什么算完整后端'"，并指向方案账本；
+  ② 新增 **「v27 能力与缺口面」** 一节：`global_asm!`（含 `const`/`sym`）的实现路线、
+  e2e 的 trap 语义与 `known_failure` 清零、**四个缺口 ID 的决策表**
+  （`INLINE_ASM` 待做 / `UNWIND` 不做 / `TLS` 待做 / `MIR_TERMINATOR` 不做）、
+  门禁两步 + 两个守卫、以及 M2.5/TLS/M3/M4/M6 的顺序依赖。
+- `CLAUDE.md`：新增 **「forge-rustc（rustc 代码生成后端）现状速查」** 一节（能力面 / e2e 与
+  机读计数标记 / 四个缺口 ID / WORKAROUNDS 的"根治方向不是现状"教训 / 门禁两步 / 顺序依赖）。
+- `WORKAROUNDS.md`：`WA-02` 改判**已关闭**（按需注入），并补回 `WA-26`/`WA-28` 两行
+  （此前是悬空引用，由新守卫抓到）。
+
+**自检**：两个守卫在改动后重跑均绿——`rustc_doc_counts_guard`
+（`{cases: 110, hard: 110, flaky: 0, known: 0, expect_trap: 1}`，README 的机读标记与代码一致）、
+`workarounds_guard`（43 编号唯一、引用全可解析）；文档 0 issues。
+
+**同批提交的代码**：`M3-①`（alloc 运行时**按需注入**，见下节）——它是 std 的前置条件，
+与本批文档同源，故一并提交；**M3 本身未完成**（M3-② 的真跑 `std` 需要 M2.5 与 TLS）。
 
 ### M5 门禁与守卫收口 —— **已落地**（2026-10-11，工作区）
 

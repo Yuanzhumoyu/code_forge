@@ -381,5 +381,42 @@ unresolved_type_refs_fall_back_to_unspecified）为准。e2e `debuginfo_full` + 
 > 16.2：`p y`=42、`ptype y`=i32、complaints 清零。对照矩阵其余项（M3-M9：
 > external/decl_column/prototyped、comp_dir/name 形态、language C11、
 > decl_file/文件表、类型 DIE 排位、ref_addr、双 CU）**全无需执行**——M10
-> 自诊 + M1 abbrev 字节 diff 直接命中发射侧 form 错误（收敛优先）。路线图
-> 无剩余开放项。
+> 自诊 + M1 abbrev 字节 diff 直接命中发射侧 form 错误（收敛优先）。
+>
+> ⚠️ **2026-10-11 起：路线图不再是"无剩余开放项"**——v27 专项（
+> [`docs/plans/forge-rustc-v27-plan.md`](../../docs/plans/forge-rustc-v27-plan.md)）
+> 重新定义了"什么算完整后端"，并把下面这些缺口**变成带 ID 的台账项**（见下一节）。
+
+## v27 能力与缺口面（2026-10-11）
+
+**新增能力**（v27 M2 落地）：
+
+- **`global_asm!` 全支持**：字面文本（指令/标签/伪指令，交给 LLVM 的 asm parser）、
+  `const` 占位符（按常量类型符号性格式化）、`sym` 占位符（复用 crate 内**同一份**
+  `symbol_name_for_instance`）。实现走 cranelift 后端同构的"委托汇编器"路线：
+  另起 `rustc` 子进程（默认后端 = LLVM，`--emit obj`）汇编成**独立对象**，经
+  `CompiledModule::global_asm_object` 交给 rustc 链接。e2e：`global_asm_call`、
+  `global_asm_sym_const`（`sym` 名字写错 ⇒ **链接期**报未定义符号）。
+- **e2e 表达"必须 trap"**：`Case::expect_trap` + 三态退出结局（正常/异常终止/超时）；
+  panic 出口是**确定性 abort**（FFI `ExitProcess(101)`，经 `#[link_name]` 别名）。
+  e2e 新用例 `overflow_runtime_trap` 钉住"运行期溢出必须被拦"。
+- **`known_failure` 清零**：`known_failure: true` = **0**、`FLAKY` 为空 ⇒ 110 用例**真全过**。
+
+**四个缺口 ID**（进 `docs/reference/backend-gaps.md` 台账，由 `cargo forge gate --guards`
+的 `capability_gaps` 双向钉住；源码侧在 `crates/tools/forge-rustc/src`）：
+
+| ID | 决策 | 现状 |
+| --- | --- | --- |
+| `INLINE_ASM` | 待做 | 内联 `asm!` 明确拒绝（此前是静默降级成 `unreachable` ⇒ 编译无声通过、运行退出 `0xC000001D`）；真实现需 IR 层「原始文本 + 寄存器约束」，分期 S1–S4 |
+| `UNWIND` | 不做 | `panic=unwind` 明确拒绝（缺 SEH `.pdata`/`.xdata` + `__rust_eh_personality`） |
+| `TLS` | 待做 | `#[thread_local]` 明确拒绝（此前会发射成普通 `.data`、**线程私有语义静默丢失**） |
+| `MIR_TERMINATOR` | 不做 | MIR 终结符兜底**明确拒绝**，不再静默 `unreachable` |
+
+**门禁**：`cargo forge gate` 现含 `rustc-e2e`（110 用例真执行）与 `rustc-e2e-guards`
+（trap 语义/零容忍名单/模板契约不变量）两步（仅 Windows 口径；跨目标见方案 M4），
+共 **44 步**；另有 `rustc_doc_counts`（本 README 的计数标记 ↔ `tests/e2e.rs` 双向相等）
+与 `workarounds_guard`（`[WA-NN]` 编号唯一 + 引用可解析）两个守卫。
+
+**下一批（方案里编号）**：**M2.5** 内联 `asm!` 真实现（S1–S4）→ **TLS 真实现** →
+**M3** `std` 可用性（依赖前两者：std 的 `thread_local!` 与平台胶水层用到它们）→
+**M4** 第二目标 + 对象层根治 → **M6** 契约回写与账本归档。

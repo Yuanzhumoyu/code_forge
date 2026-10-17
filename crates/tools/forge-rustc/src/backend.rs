@@ -507,10 +507,20 @@ impl CodegenBackend for CodegenLibBackend {
             debug_assert!(plan_fns.next().is_none(), "M6: 残留未消费的 fn 结果");
 
             // 注入 alloc 运行时（__rust_alloc/dealloc/realloc/alloc_zeroed，基于
-            // VirtualAlloc/VirtualFree），使 no_std + extern crate alloc 可用。
+            // VirtualAlloc/VirtualFree），使 **no_std + extern crate alloc** 可用。
             // Stage A 语义 = 单对象尾注；Stage B 多对象 = 首 CGU 对象（确定性
             // 归属——无跨对象重复定义）。
-            if pi == 0 {
+            //
+            // v27 M3 / `WA-02`：**链接 std 的 crate 不能注入**——std 的 rlib 自带
+            // `__rust_alloc` 一族，再注入我们的手写 shim 就是重复定义（LNK2005）。
+            // 这就是 `WA-02` 的正解：不是"过滤掉 rustc 侧的实例"，而是**按需注入**
+            // （no_std 时注入，链 std 时让 std 自己提供）。判定用 `tcx.crates(())`
+            // ——与 `crate_name` 同源的现成惯用法（见本文件 `in_alloc` 处）。
+            let links_std = tcx
+                .crates(())
+                .iter()
+                .any(|&c| tcx.crate_name(c).as_str() == "std");
+            if pi == 0 && !links_std {
                 match build_alloc_runtime(tcx, &mut func_ref_table, isa_name) {
                     Ok(runtime_fns) => {
                         for (sym, mut compiled) in runtime_fns {

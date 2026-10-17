@@ -467,6 +467,27 @@ base/disp/index/scale、`reg` 槽仅 `[base]`）。取代 v14 的六个魔法串
 统一收敛成三条索引规则（`i == reg` / `i == rm` / 其余 → VEX.vvvv）。
 `modrm` 因此从 form 下移到指令/家族（form 只留非位置性的键）。
 
+## forge-rustc（rustc 代码生成后端）现状速查
+
+`crates/tools/forge-rustc` 是**用 code-forge 当 rustc 后端的 dylib**（`-Zcodegen-backend=…`）。
+现状与边界**以代码与 e2e 为准**，方案见
+[`docs/plans/forge-rustc-v27-plan.md`](docs/plans/forge-rustc-v27-plan.md)：
+
+- **能力面**：标量/控制流/调用/Windows x64 约定/FFI/聚合/枚举（含 niche）/alloc 运行时/
+  static/Box/闭包/Drop/`dyn` 虚调用/DWARF5（gdb 实证）/多 CGU 并行 + 每 CGU 独立对象 +
+  `-C incremental`；v27 新增 **`global_asm!`**（含 `const`/`sym`）。
+- **e2e**：`cargo test -p forge-rustc --test e2e -- --test-threads=1`（110 用例，真执行；
+  `known_failure` = 0）。**用例计数写在本 crate README 的机读标记里**，由守卫
+  `rustc_doc_counts` 与代码双向钉住——改用例数必须同步它。
+- **四个缺口 ID**（台账 `docs/reference/backend-gaps.md` + `[cap:…]` fail-closed）：
+  `INLINE_ASM`（待做，需 IR 层原始文本+约束）、`UNWIND`（不做，缺 SEH 表）、
+  `TLS`（待做，现明确拒绝）、`MIR_TERMINATOR`（不做，兜底必须明确拒绝）。
+- **绕法登记**：`crates/tools/forge-rustc/WORKAROUNDS.md`（`[WA-NN]`，机读；由
+  `workarounds_guard` 钉住编号唯一与引用可解析）。**注意：该表的"根治方向"列是写那一行时的
+  判断，不是现状**——v27 立项时据此误判了四项，实际早已关闭（见方案 §8 的教训）。
+- **门禁**：`cargo forge gate` 已含 `rustc-e2e` / `rustc-e2e-guards` 两步（Windows 口径）。
+  顺序依赖：`std` 可用性（M3）依赖内联 asm 与 TLS。
+
 ## Code Conventions
 
 - Edition 2024 throughout
