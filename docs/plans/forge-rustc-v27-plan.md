@@ -321,6 +321,40 @@ error: failed to get `cfg-if` as a dependency of package `std v0.0.0 (…/librar
 **同批提交的代码**：`M3-①`（alloc 运行时**按需注入**，见下节）——它是 std 的前置条件，
 与本批文档同源，故一并提交；**M3 本身未完成**（M3-② 的真跑 `std` 需要 M2.5 与 TLS）。
 
+### S1 施工图（2026-10-11 二轮侦察：**要穿两样东西进管线**）
+
+早先担心的"给生成的 `Inst` 加 raw 变体"**不需要**——正确路径是：降级期用本 ISA 的
+`TargetAssembler::parse_insts(&str) -> Result<Vec<Inst>, AsmError>` 解析文本，把得到的
+`Inst` 就地推进当前虚拟块（`vcode.push_inst_line` + 平行的 `inst_ops`/`inst_clobbers`）。
+
+真正的阻塞是管线里**拿不到这两样**（均为实测）：
+
+| # | 缺什么 | 现状 | 施工 |
+| --- | --- | --- | --- |
+| 1 | **汇编器** | `lower_block` 只有 `&dyn TargetLowering`；`CompileState` 字段里没有 machine/assembler | `CompileState` 加 `asm_parse: Option<Arc<dyn Fn(&str) -> Option<Vec<I>> + Send + Sync>>`，在 `CompileState::new(&self.machine, …)`（`pipeline/compiler/mod.rs` 的调用点，**那里有 machine**）里由 `machine.assembler()` 构造（`TargetAssembler: Send + Sync + 'static`，可直接 `Arc::clone`） |
+| 2 | **字符串表** | `Immediate::String(InternedStr)` 目前**只有二进制序列化器**（`funcs.rs` 的 `store.lookup_str`）会解析；降级期**无人读** | 同 `new` 里把 `lookup_str` 闭包一并传入（`CompileState` 持 `Arc`） |
+| 3 | IR op | `ops.toml` 无内联 asm 的 op | 加 `InlineAsm`（`operands = 0`、`results = 0`、`side_effect = true`、`type_rule = "none"`），文本走 `Immediate::String` |
+| 4 | builder 入口 | 无 | `pub fn inline_asm(&mut self, text: &str)` ⇒ `self.emit(Opcode::InlineAsm, vec![], vec![Immediate::String(interned)], &[], InstFlags::SIDE_EFFECT)` |
+| 5 | rustc 侧 | `TerminatorKind::InlineAsm` → `[cap:INLINE_ASM]` | S1 只放行**纯 String 模板**（无 `{}` 占位、无 `label` 操作数）；`const`/`sym`/寄存器留 S2–S4 |
+
+**S1 验收**：e2e `inline_asm_nop`（`asm!("nop")` 后返回 42 ⇒ exit 42）与 `inline_asm_ud2`
+（`asm!("ud2")` ⇒ NTSTATUS trap `0xC000001D`）——后者能证明"字节真的被执行"（不只是编译通过）。
+
+### M5-② `--subset rustc`：后端工作流一条命令（2026-10-11）
+
+- 动机：全量门禁 44 步（约 10 分钟）里后端只占 2 步；改后端的人要么等全量、要么手工挑命令，
+  容易漏守卫。
+- 口径：`cargo forge gate --subset rustc` = `fmt` + `rustc-e2e` + `rustc-e2e-guards` +
+  `capability_gaps` + `rustc_doc_counts` + `workarounds_guard` + `docs`（**7 步**，3–4 分钟）。
+- 实现：**显式白名单**（`RUSTC_STEPS`）而不是给 `Scope` 加变体——后端步骤横跨 fmt/守卫/e2e
+  三类，语义上不属于同一个 Scope，而白名单本身就是这个子集的文档。
+- `rustc-e2e` 步显式 `--skip e2e_cargo_template_workflow`：该用例要 rustup **下载固定的
+  dated 通道**（本机/沙箱里因写 `~/.rustup` 或没网络而失败），由 CI 的 `forge-rustc-e2e`
+  作业覆盖——门禁跑"能跑的"，不装作跑过。
+- 顺带修三处**存量漂移**（同类问题：写死会变的数字）：门禁步描述里的"110 用例"、`CLAUDE.md`
+  的"28 条守卫"与"110 用例"、`CLAUDE.md` 的 TLS 状态行（已实现，但文档还写"待做"）。改法统一为
+  **去掉具体数字/指向单一事实源**。
+
 ### M5 门禁与守卫收口 —— **已落地**（2026-10-11，工作区）
 
 治的病（立项证据 E4/E9）：

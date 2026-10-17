@@ -176,9 +176,10 @@ CI 的 Linux/Windows 作业也复用它的子集）：
 cargo run -p cargo-forge -- gate          # 或把 target/debug 加进 PATH 后：cargo forge gate
 
 # 常用变体
-cargo forge gate --guards                 # 只跑守卫注册表（28 条，约 1 分钟）
+cargo forge gate --guards                 # 只跑守卫注册表（条数以 GUARDS 表为准，约 1 分钟）
 cargo forge gate --subset quick           # fmt + 守卫 + 文档
 cargo forge gate --subset linux|windows   # CI 的两套口径（Linux 不含 forge-codegen 的 JIT 测试）
+cargo forge gate --subset rustc           # **只跑后端**（fmt + e2e + 三个后端守卫 + 文档，约 3–4 分钟）
 cargo forge gate --list                   # 只列出将要跑的步骤
 cargo forge gate --json                   # 机器可读汇总
 
@@ -476,17 +477,20 @@ base/disp/index/scale、`reg` 槽仅 `[base]`）。取代 v14 的六个魔法串
 - **能力面**：标量/控制流/调用/Windows x64 约定/FFI/聚合/枚举（含 niche）/alloc 运行时/
   static/Box/闭包/Drop/`dyn` 虚调用/DWARF5（gdb 实证）/多 CGU 并行 + 每 CGU 独立对象 +
   `-C incremental`；v27 新增 **`global_asm!`**（含 `const`/`sym`）。
-- **e2e**：`cargo test -p forge-rustc --test e2e -- --test-threads=1`（110 用例，真执行；
-  `known_failure` = 0）。**用例计数写在本 crate README 的机读标记里**，由守卫
-  `rustc_doc_counts` 与代码双向钉住——改用例数必须同步它。
+- **e2e**：`cargo test -p forge-rustc --test e2e -- --test-threads=1`（真执行；
+  `known_failure` = 0）。**用例数见本 crate README 的机读计数标记**——由守卫
+  `rustc_doc_counts` 与 `tests/e2e.rs` 双向钉住（改用例数必须同步它；本文不写具体数字，
+  免得再漂）。
 - **四个缺口 ID**（台账 `docs/reference/backend-gaps.md` + `[cap:…]` fail-closed）：
-  `INLINE_ASM`（待做，需 IR 层原始文本+约束）、`UNWIND`（不做，缺 SEH 表）、
-  `TLS`（待做，现明确拒绝）、`MIR_TERMINATOR`（不做，兜底必须明确拒绝）。
+  `INLINE_ASM`（待做：S1 施工图见方案 §8，需把汇编器与字符串表穿进管线）、`UNWIND`
+  （不做，缺 SEH 表）、`TLS`（**已实现**：动态 TLS，`thread_local_roundtrip` 守护）、
+  `MIR_TERMINATOR`（不做，兜底必须明确拒绝）。
 - **绕法登记**：`crates/tools/forge-rustc/WORKAROUNDS.md`（`[WA-NN]`，机读；由
   `workarounds_guard` 钉住编号唯一与引用可解析）。**注意：该表的"根治方向"列是写那一行时的
   判断，不是现状**——v27 立项时据此误判了四项，实际早已关闭（见方案 §8 的教训）。
-- **门禁**：`cargo forge gate` 已含 `rustc-e2e` / `rustc-e2e-guards` 两步（Windows 口径）。
-  顺序依赖：`std` 可用性（M3）依赖内联 asm 与 TLS。
+- **门禁**：`cargo forge gate --subset rustc` = 只跑后端（fmt + e2e + 三个后端守卫 + 文档）。
+  `std` 探测工程见 `examples/forge-rustc-std-hello/`（TLS 与 `abort()` 已排除，剩余未知
+  会在探测时以明确 `[cap:…]` 暴露）。
 
 ## Code Conventions
 

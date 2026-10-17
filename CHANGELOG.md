@@ -11,6 +11,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-rustc v27 M5-②：`cargo forge gate --subset rustc`（后端一条命令）
+
++ **`--subset rustc`**：只跑后端相关的 **7 步**（`fmt` / `rustc-e2e` / `rustc-e2e-guards` /
+  `capability_gaps` / `rustc_doc_counts` / `workarounds_guard` / `docs`），实测 **133.6s 全绿**。
+  全量门禁 44 步里后端只占 2 步，改后端的人此前要么等全量、要么手工挑命令（容易漏守卫）。
+  实现用**显式白名单**（`RUSTC_STEPS`）而不是给 `Scope` 加变体——后端步骤横跨 fmt/守卫/e2e
+  三类，白名单本身就是这个子集的文档。
++ `rustc-e2e` 步显式 `--skip e2e_cargo_template_workflow`：该用例要 rustup 下载固定的 dated
+  通道（本机/沙箱里失败），由 CI 作业覆盖——门禁跑"能跑的"，不装作跑过。
++ 修三处**存量漂移**（都是"写死会变的数字/状态"）：门禁步描述里的"110 用例"、`CLAUDE.md` 的
+  "28 条守卫"/"110 用例"、`CLAUDE.md` 里 TLS 仍写"待做"（实际已实现动态 TLS）。改法统一为
+  **去掉具体数字 / 指向单一事实源**。
++ 方案账本 §8 记入 **S1 施工图**（二轮侦察结论）：不需要给生成的 `Inst` 加 raw 变体；真正的
+  阻塞是"汇编器与字符串表都拿不到"——5 点施工清单与验收用例（`inline_asm_nop` /
+  `inline_asm_ud2`）已落纸。
+
 ### Added (2026-10-11) — forge-rustc v27 M3-②：`std` 探测工程（一条命令取结论）
 
 + 新增 [`examples/forge-rustc-std-hello/`](examples/forge-rustc-std-hello/README.md)：

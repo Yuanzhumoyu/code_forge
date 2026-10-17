@@ -190,8 +190,11 @@ impl Args {
             Some("quick") => "quick",
             Some("linux") => "linux",
             Some("windows") => "windows",
+            Some("rustc") => "rustc",
             Some(other) => {
-                eprintln!("未知子集 `{other}`（可用：quick / linux / windows）——按 all 处理");
+                eprintln!(
+                    "未知子集 `{other}`（可用：quick / linux / windows / rustc）——按 all 处理"
+                );
                 "all"
             }
             None => "all",
@@ -284,7 +287,7 @@ fn build_steps(a: &Args) -> Vec<Step> {
     //    `--release` 无关；单线程跑（用例会起 rustc 子进程 + 真跑产物）。
     push!(cargo_step(
         "rustc-e2e",
-        "rustc 后端 e2e（110 用例：编译→链接→真执行，`--test-threads=1`）",
+        "rustc 后端 e2e（编译→链接→真执行，`--test-threads=1`；用例数以 tests/e2e.rs 为准）",
         Scope::Windows,
         &[
             "test",
@@ -294,6 +297,11 @@ fn build_steps(a: &Args) -> Vec<Step> {
             "e2e",
             "--",
             "--test-threads=1",
+            // 环境性用例：它要 rustup **下载固定的 dated 通道**（实测在本机/沙箱里因
+            // 写 `~/.rustup` 或没有网络而失败）。门禁跑"能跑的"，这个用例由 CI 的
+            // `forge-rustc-e2e` 作业（有网络、有全量通道）覆盖——不在这里装作跑过。
+            "--skip",
+            "e2e_cargo_template_workflow",
         ],
     ));
     push!(cargo_step(
@@ -535,6 +543,23 @@ fn npx_available() -> bool {
 
 pub fn run(a: &Args, verbose: bool) -> anyhow::Result<i32> {
     let mut steps = build_steps(a);
+
+    // v27：`--subset rustc` = **只跑后端（forge-rustc）相关步骤**，给"改后端"这条工作流
+    // 一条一两分钟能跑完的命令。用**显式白名单**而不是给 `Scope` 加变体：
+    // ① 后端步骤横跨 fmt/守卫/e2e 三类，语义上不属于同一个 Scope；
+    // ② 白名单本身就是这个子集的文档。名单外的步骤在这里被丢掉——**新增后端步骤时记得加进来**。
+    if a.subset.as_deref() == Some("rustc") {
+        const RUSTC_STEPS: &[&str] = &[
+            "fmt",
+            "rustc-e2e",
+            "rustc-e2e-guards",
+            "capability_gaps",
+            "rustc_doc_counts",
+            "workarounds_guard",
+            "docs",
+        ];
+        steps.retain(|s| RUSTC_STEPS.contains(&s.name));
+    }
 
     // 文档步（放在最后：它最可能 SKIP，且失败信息与代码无关）
     if !a.no_docs && !a.guards {
