@@ -487,6 +487,23 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         };
         Ok((v, f))
     }
+    /// 窄（i8/u8/i16/u16）移位的结果**截回原宽度**。
+    ///
+    /// 移位的操作数为了符号正确被扩展到 64 位（见 `lower_binary_op`），所以结果必须先
+    /// 截回原类型，否则高阶位会漏出去（例如 `i8: -1 << 1` 会留下 64 位的 -2）。
+    fn reduce_narrow_shift(&mut self, v: Value, ty: Ty<'tcx>) -> Result<Value, ForgeError> {
+        if !matches!(
+            ty.kind(),
+            rustc_middle::ty::TyKind::Int(_) | rustc_middle::ty::TyKind::Uint(_)
+        ) {
+            return Ok(v);
+        }
+        if crate::layout::layout_bytes(self.tcx, ty) < 4 {
+            return Ok(self.builder.ireduce(v, map_type(ty, self.tcx)?));
+        }
+        Ok(v)
+    }
+
     pub(crate) fn lower_binary_op(
         &mut self,
         op: mir::BinOp,
@@ -510,13 +527,21 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 | mir::BinOp::Gt
                 | mir::BinOp::Ge
         );
-        let (lhs, rhs) = if cmp_op && !is_fp {
-            let narrow_w = match op1_ty.kind() {
-                rustc_middle::ty::TyKind::Int(_) | rustc_middle::ty::TyKind::Uint(_) => {
-                    layout_bytes(self.tcx, op1_ty)
-                }
-                _ => 4,
-            };
+        // v27 M5 缺陷①：**移位也要扩展**（不止比较）。`i8: -128 >> 7` 曾经算成 1：
+        // 局部变量用 `MovzxR8Mem` 零扩展载入（0x80=128），`sar` 再算术右移就得到 1。
+        // 谱规则里的 `movsxd {out}, {0}` 救不回来（只扩展低 32 位的符号位）。
+        // 所以移位前按**符号性**把值扩展到 64 位（结果再截回原宽度，见下面两个 shift 分支）。
+        let shift_op = matches!(
+            op,
+            mir::BinOp::Shl | mir::BinOp::ShlUnchecked | mir::BinOp::Shr | mir::BinOp::ShrUnchecked
+        );
+        let narrow_w = match op1_ty.kind() {
+            rustc_middle::ty::TyKind::Int(_) | rustc_middle::ty::TyKind::Uint(_) => {
+                layout_bytes(self.tcx, op1_ty)
+            }
+            _ => 4,
+        };
+        let (lhs, rhs) = if !is_fp && narrow_w < 4 {
             if narrow_w < 4 {
                 let mut ext = |v: Value| -> Value {
                     if signed {
@@ -539,50 +564,61 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 if is_fp {
                     Ok(self.builder.fadd(lhs, rhs))
                 } else {
-                    Ok(self.builder.iadd(lhs, rhs))
+                    let r = self.builder.iadd(lhs, rhs);
+                    self.reduce_narrow_shift(r, op1_ty)
                 }
             }
             mir::BinOp::Sub | mir::BinOp::SubWithOverflow | mir::BinOp::SubUnchecked => {
                 if is_fp {
                     Ok(self.builder.fsub(lhs, rhs))
                 } else {
-                    Ok(self.builder.isub(lhs, rhs))
+                    let r = self.builder.isub(lhs, rhs);
+                    self.reduce_narrow_shift(r, op1_ty)
                 }
             }
             mir::BinOp::Mul | mir::BinOp::MulWithOverflow | mir::BinOp::MulUnchecked => {
                 if is_fp {
                     Ok(self.builder.fmul(lhs, rhs))
                 } else {
-                    Ok(self.builder.imul(lhs, rhs))
+                    let r = self.builder.imul(lhs, rhs);
+                    self.reduce_narrow_shift(r, op1_ty)
                 }
             }
             mir::BinOp::Div => {
                 if is_fp {
                     Ok(self.builder.fdiv(lhs, rhs))
-                } else if signed {
-                    Ok(self.builder.sdiv(lhs, rhs))
                 } else {
-                    Ok(self.builder.udiv(lhs, rhs))
+                    let r = if signed {
+                        self.builder.sdiv(lhs, rhs)
+                    } else {
+                        self.builder.udiv(lhs, rhs)
+                    };
+                    self.reduce_narrow_shift(r, op1_ty)
                 }
             }
             mir::BinOp::Rem => {
-                if signed {
-                    Ok(self.builder.srem(lhs, rhs))
+                let r = if signed {
+                    self.builder.srem(lhs, rhs)
                 } else {
-                    Ok(self.builder.urem(lhs, rhs))
-                }
+                    self.builder.urem(lhs, rhs)
+                };
+                self.reduce_narrow_shift(r, op1_ty)
             }
             mir::BinOp::BitAnd => Ok(self.builder.band(lhs, rhs)),
             mir::BinOp::BitOr => Ok(self.builder.bor(lhs, rhs)),
             mir::BinOp::BitXor => Ok(self.builder.bxor(lhs, rhs)),
-            mir::BinOp::Shl | mir::BinOp::ShlUnchecked => Ok(self.builder.ishl(lhs, rhs)),
+            mir::BinOp::Shl | mir::BinOp::ShlUnchecked => {
+                let r = self.builder.ishl(lhs, rhs);
+                self.reduce_narrow_shift(r, op1_ty)
+            }
             mir::BinOp::Shr | mir::BinOp::ShrUnchecked => {
                 // 有符号 >> 是算术右移，无符号 >> 是逻辑右移
-                if signed {
-                    Ok(self.builder.sshr(lhs, rhs))
+                let r = if signed {
+                    self.builder.sshr(lhs, rhs)
                 } else {
-                    Ok(self.builder.ushr(lhs, rhs))
-                }
+                    self.builder.ushr(lhs, rhs)
+                };
+                self.reduce_narrow_shift(r, op1_ty)
             }
             mir::BinOp::Offset => {
                 // ptr.offset(count)：字节偏移 = count * size_of::<T>()（ZST noop）

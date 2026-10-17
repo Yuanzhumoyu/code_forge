@@ -1867,6 +1867,37 @@ const CASES: &[Case] = &[
         phase: "v27 M5",
         reason: "i128/u128 此前静默当 64 位算 ⇒ 现在 fail-closed（[cap:WIDE_INT]）",
     },
+    // ── v27 M5 缺陷①修复：窄宽度移位语义 ──
+    //   曾经 `i8: -128 >> 7` 算成 1（局部变量用 `MovzxR8Mem` 零扩展载入，
+    //   之后 `sar` 得到 1）。修法：移位前按符号性扩展到 64 位、结果截回原宽度。
+    //   期望值全部由 LLVM 对照取得（b=-1 d=1 f=1 h=-1）。
+    Case {
+        name: "narrow_shift_semantics",
+        body: "let a: i8 = -128; let b = a >> 7; let c: u8 = 128; let d = c >> 7; let e: u16 = 0x8000; let f = e >> 15; let g: i16 = -32768; let h = g >> 15; if b == -1 && d == 1 && f == 1 && h == -1 { 42 } else { 1 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "窄有符号/无符号右移按操作数位宽与符号性（算术 vs 逻辑）",
+    },
+    // ── v27 M5 缺陷③：窄有符号算术（期望值由 LLVM 对照：s=-60 m=96 d=-33 r=-1）──
+    Case {
+        name: "narrow_arith_signed",
+        body: "let a: i8 = -100; let b: i8 = 40; let s = a.wrapping_add(b); let m = a.wrapping_mul(b); let d = a / 3; let r = a % 3; if s == -60 && m == 96 && d == -33 && r == -1 { 42 } else { 1 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "窄有符号：回绕加/乘、除法/取模向零截断（负数余数符号跟被除数）",
+    },
     Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",

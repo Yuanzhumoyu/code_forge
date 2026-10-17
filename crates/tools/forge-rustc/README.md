@@ -175,9 +175,9 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 
 ## 支持矩阵（x86_64-pc-windows-msvc 宿主）
 
-### ✅ 已验证（e2e 122 用例：**122 硬断言 + 0 个 `FLAKY` 容忍项**）
+### ✅ 已验证（e2e 124 用例：**124 硬断言 + 0 个 `FLAKY` 容忍项**）
 
-> **2026-10-11 核（v27 M1–M2 实测）**：`tests/e2e.rs` 的 `CASES` 现为 **122 个 `Case`**、
+> **2026-10-11 核（v27 M1–M2 实测）**：`tests/e2e.rs` 的 `CASES` 现为 **124 个 `Case`**、
 > **`known_failure: true` = 0、`FLAKY` 名单为空** ⇒ 套件是**真全过**，不是容忍式全绿。
 > 早先的「103 用例 + 5 个 `FLAKY`」（2026-09-06 回归）里的那 5 例
 > （`vec_push`/`vec_string`/`vec_from_slice`/`vec_iter_enumerate`/`box_value`）已随
@@ -192,10 +192,11 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 > `neg_inline_asm_sym` 钉住「`sym` 受谱汇编器文法限制」的**点名诊断**，
 > `neg_link_section` 钉住「`#[link_section]` 静默忽略 = 写了不生效」的明确拒绝；
 > `static_align_64` 钉住「`#[repr(align(64))]` 的符号地址真 64 对齐」，
-> `neg_u128` 钉住「`i128`/`u128` 此前被静默当 64 位算 ⇒ 现在 `[cap:WIDE_INT]` 拒绝」；
+> `neg_u128` 钉住「`i128`/`u128` 此前被静默当 64 位算 ⇒ 现在 `[cap:WIDE_INT]` 拒绝」，
+> `narrow_shift_semantics` / `narrow_arith_signed` 钉住窄宽度移位与算术的**符号性**（期望值由 LLVM 对照）；
 > 删除了被正当推翻的 `neg_global_asm`。
 >
-> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=122 hard=122 flaky=0 known=0 expect_trap=3 -->
+> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=124 hard=124 flaky=0 known=0 expect_trap=3 -->
 >
 > **上面这段机读标记与 `tests/e2e.rs` 双向相等**：改用例数/容忍名单时必须同步它，
 > 否则 `cargo forge gate --guards` 会红（守卫就是为了治「文档与代码分叉」这件事）。
