@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Docs (2026-10-11) — v27 M5 缺陷 ② 调查：排除三种猜法（`elem` = TypeId，不是位宽）
+
++ 缺陷 ②（`3.99f64 as u8` ⇒ `Fptosi no matching rule`）本轮尝试补谱规则，**仍未命中**，
+  按"不留未验证改动"**回退了谱与用例**，把实测事实记进方案账本 §8：
+  1. `elem` 谓词的值是**结果类型的 TypeId**（`VOID=0/I8=2/I16=3/I32=4/I64=5/F32=6/F64=7/PTR=8`），
+     **不是位宽**——既有规则 `{ in = ["elem", [3,4]] }` 覆盖的是 i16/i32；
+  2. 照此补 `rs1_width=64 && elem=[2]`(I8) 的两条规则**仍然不命中** ⇒ `rs1_width` 或 `elem`
+     在"转换"这种 op 上取到的值与我的假设不同（转换的源是浮点、结果是整数，没有常规的
+     "源操作数宽度"语义）；
+  3. 下一步应**在 lowering 侧打印实际谓词上下文**（或读 `dsl/codegen/integration.rs` 的
+     `elem`/`rs1_width` 取值路径），而不是继续猜。
+
 ### Fixed (2026-10-11) — v27 M5 缺陷 ①/③：窄有符号值被按**零扩展**参与运算
 
 + **根因**（`FORGE_TRACE_ALLOC` 实证）：`i8` 局部变量用 `MovzxR8Mem` **零扩展**载入

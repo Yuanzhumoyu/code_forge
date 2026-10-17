@@ -213,7 +213,20 @@ v27 M2 曾把 TLS 记成"待做（先 fail-closed）"。本轮把两条实现路
   比较仍返回 i1，不受截断影响。
 - 验证：`narrow_shift_semantics`（`i8 >> 7` = -1、`u8/u16` 逻辑右移 = 1）⇒ **exit=42** ✔。
 
-#### ② 浮点→整数转换缺 lowering 规则
+#### ② 浮点→整数转换缺 lowering 规则 —— **仍在**（已排除三种猜法）
+
+- 复现：`let z = 3.99f64 as u8;` ⇒ 编译期
+  `[cap:SPEC_LOWERING_RULE_MISSING] DSL lowering: Fptosi no matching rule`。
+- 事实：x86 只有 32/64 位目的宽度的 `cvttss2si`/`cvttsd2si`；8/16 位目的要先转 32 位再截断
+  ⇒ 属**谱侧规则序列**要补的。
+- **已排除/已确认**（2026-10-11 本轮实测）：
+  1. `elem` 谓词的值是**结果类型的 TypeId**，不是位宽：`VOID=0/I8=2/I16=3/I32=4/I64=5/F32=6/F64=7/PTR=8`
+     ⇒ 既有规则写 `{ in = ["elem", [3,4]] }` 覆盖的是 i16/i32（**不是**"3 字节/4 字节"）；
+  2. 照此补 `rs1_width=64 && elem=[2]`(I8) 的 `Fptosi`/`Fptoui` 两条规则**仍然不命中**
+     ⇒ `rs1_width` 或 `elem` 在**转换**这种 op 上取到的值与我假设的不同（转换没有"源操作数宽度"
+     的常规语义：源是浮点、结果是整数）⇒ **下一步要在 `lowering` 侧打印实际谓词上下文**
+     （或读 `dsl/codegen/integration.rs` 的 `elem`/`rs1_width` 取值路径），而不是继续猜；
+  3. 回退那两条规则（不留未验证的谱改动）。
 
 - 复现：`3.99f64 as u8`、`-2.5f32 as i8` 之类 ⇒ 编译期
   `[cap:SPEC_LOWERING_RULE_MISSING] DSL lowering: Fptosi no matching rule`。
