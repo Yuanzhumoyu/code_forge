@@ -19,6 +19,13 @@ pub struct Args {
     /// 启用 alloc：build-std=["core","alloc"] 且 rustflags 加 -Zshare-generics=yes
     #[arg(long)]
     pub alloc: bool,
+
+    /// 生成 **std** 工程的配置：build-std=["std","panic_abort"]（M3-② 的探测工作流）。
+    ///
+    /// 与 `--alloc` 互斥（两者是不同的 build-std 口径）。注意这里**不加**
+    /// `-Zshare-generics=yes`：本后端明确拒绝它（`[cap:SHARE_GENERICS]`，见 `WA-04`）。
+    #[arg(long = "std", conflicts_with = "alloc")]
+    pub std_build: bool,
 }
 
 pub fn run(args: &Args, env: &Env, verbose: bool) -> anyhow::Result<()> {
@@ -68,7 +75,7 @@ pub fn run(args: &Args, env: &Env, verbose: bool) -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("备份 {} 失败: {e}", config_path.display()))?;
         println!("备份旧配置 → {}", backup.display());
     }
-    let config_body = config_toml(&dll, wrapper, args.alloc);
+    let config_body = config_toml(&dll, wrapper, args.alloc, args.std_build);
     std::fs::write(&config_path, &config_body)
         .map_err(|e| anyhow::anyhow!("写入 {} 失败: {e}", config_path.display()))?;
     println!("写入 {}", config_path.display());
@@ -90,7 +97,7 @@ pub fn run(args: &Args, env: &Env, verbose: bool) -> anyhow::Result<()> {
 }
 
 /// .cargo/config.toml 内容（幂等：重跑生成一致文本）。
-fn config_toml(dll: &Path, wrapper: &Path, alloc: bool) -> String {
+fn config_toml(dll: &Path, wrapper: &Path, alloc: bool, std_build: bool) -> String {
     let esc = |p: &Path| p.display().to_string().replace('\\', "\\\\");
     let mut flags: Vec<String> = vec![
         format!("-Zcodegen-backend={}", esc(dll)),
@@ -115,7 +122,10 @@ fn config_toml(dll: &Path, wrapper: &Path, alloc: bool) -> String {
     s.push_str("]\n");
     s.push_str(&format!("rustc-wrapper = \"{}\"\n\n", esc(wrapper)));
     s.push_str("[unstable]\n");
-    s.push_str(if alloc {
+    s.push_str(if std_build {
+        // std 探测：std 由 LLVM 预编译（wrapper 剥掉系统 crate 的 -Zcodegen-backend）。
+        "build-std = [\"std\", \"panic_abort\"]\n"
+    } else if alloc {
         "build-std = [\"core\", \"alloc\"]\n"
     } else {
         "build-std = [\"core\"]\n"

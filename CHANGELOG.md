@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — cargo-forge：`init --std`（std 探测从"手工改配置"变成一条命令）
+
++ `cargo forge init --std` 直接生成 **std** 口径的 `.cargo/config.toml`
+  （`build-std = ["std", "panic_abort"]`），与 `--alloc` **互斥**（两种不同的 build-std 口径）。
+  此前 M3-② 的探测要"先 init（no_std 口径）再手工改 build-std"，容易漏一步。
++ **不**加 `-Zshare-generics=yes`：本后端明确拒绝它（`[cap:SHARE_GENERICS]`，`WA-04`）。
++ 实测：探针工程跑 `init --std` ⇒ 配置正确 ✔；`--std --alloc` ⇒ clap 报互斥 ✔；
+  `examples/forge-rustc-std-hello/README.md` 的跑法同步改成一条命令。
+
 ### Added (2026-10-11) — v27：确定性测试进门禁（多 CGU/并行/增量）
 
 + **`rustc-determinism` 步骤**（`Scope::Windows`）：`cargo test -p forge-rustc --test determinism`

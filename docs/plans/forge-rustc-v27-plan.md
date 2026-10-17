@@ -163,6 +163,18 @@ v27 M2 曾把 TLS 记成"待做（先 fail-closed）"。本轮把两条实现路
 - **`-Zshare-generics=yes`（`WA-04`）**：现在仍是"链接期才发现的 LNK2019"⇒ 收口时可改为
   **编译期明确拒绝**（带缺口 ID）或补齐"被引用但上游未生成"的实例。
 
+### M3-② 工作流收口（2026-10-11）：`cargo forge init --std`
+
+- **问题**：M3-② 的探测工程原先要"先 `cargo forge init`（no_std 口径）再**手工编辑**
+  `.cargo/config.toml` 把 `build-std` 改成 `["std","panic_abort"]`"——多一步手工、容易漏。
+- **落地**：`init` 新增 `--std`（`build-std = ["std","panic_abort"]`），与 `--alloc` **互斥**
+  （两者是不同的 build-std 口径）。**不加** `-Zshare-generics=yes`——本后端明确拒绝它
+  （`[cap:SHARE_GENERICS]`，`WA-04`）。
+- **实测**：在 `target/tmp` 的探针工程里跑 `cargo forge init --std` ⇒ 生成
+  `build-std = ["std", "panic_abort"]` ✔；`--std --alloc` ⇒ clap 报
+  "the argument '--std' cannot be used with '--alloc'" ✔；
+  `examples/forge-rustc-std-hello/README.md` 的跑法同步改成一条命令。
+
 ### 门禁补面 + `label` 的阻塞分析（2026-10-11）
 
 **① 确定性测试进门禁**：`determinism`（多 CGU 逐字节相等 / 并行==串行 / 增量）此前**既不在全量门禁

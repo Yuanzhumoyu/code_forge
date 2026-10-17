@@ -31,15 +31,11 @@
 在**本目录**下：
 
 ```bash
-# ① 写 .cargo/config.toml（rustflags + rustc-wrapper + build-std=core）
-cargo forge init
+# ① 写 .cargo/config.toml（rustflags + rustc-wrapper + build-std=["std","panic_abort"]）
+#    `--std` 是 v27 新增的口径；它**不加** `-Zshare-generics=yes`（本后端明确拒绝，见 WA-04）。
+cargo forge init --std
 
-# ② 把 build-std 改成 std（init 默认给 no_std 口径；std 需要 std + panic_abort）
-#    编辑 .cargo/config.toml：
-#      [unstable]
-#      build-std = ["std", "panic_abort"]
-
-# ③ 构建并运行
+# ② 构建并运行
 cargo build
 ./target/debug/forge-rustc-std-hello.exe
 ```
