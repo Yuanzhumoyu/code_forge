@@ -33,6 +33,16 @@ pub fn map_type<'tcx>(
             32 => Ok(TypeId::I32),
             _ => Ok(TypeId::I64),
         },
+        // 128 位整数**明确拒绝**（v27 M5 审计发现）：它们此前落到下面的兜底分支，
+        // 被当成 `PTR`（64 位）⇒ `1u128 << 64` 按 64 位移位掩码成 `1 << 0`，
+        // 静默算出 6 而不是 (1<<64)+5。真支持需要「两寄存器对」表示 + 全部运算 +
+        // libcall（`__multi3`/`__udivti3`/…）+ ABI，属独立专项。
+        ty::TyKind::Int(ty::IntTy::I128) | ty::TyKind::Uint(ty::UintTy::U128) => {
+            Err(IrError::capability(
+                "WIDE_INT",
+                "128 位整数（i128/u128）暂不支持：本后端没有「两寄存器对」表示与相应 libcall",
+            ))
+        }
         ty::TyKind::Float(ty::FloatTy::F32) => Ok(TypeId::F32),
         ty::TyKind::Float(ty::FloatTy::F64) => Ok(TypeId::F64),
         ty::TyKind::Char => Ok(TypeId::I32),

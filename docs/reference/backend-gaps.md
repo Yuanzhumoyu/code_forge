@@ -63,6 +63,7 @@ v24 立项时的侦察结论：能力缺口以 60+ 处 `Unsupported(...)` 的形
 | `SHARE_GENERICS` | `-Zshare-generics=yes`：跨 crate 共享泛型实例会让链接期缺符号（LNK2019），错误离现场很远（`WA-04`） | **不做** | v27 M4-②：**编译期明确拒绝**（只拒用户显式指定的 `Some(true)`，rustc 内部默认决策不受影响）；根治（补辅助实例）需要对象层的实例导出/引用模型，见方案 M4 |
 | `TARGET` | 没有 ISA 后端的目标：此前 `isa_name_for_target` **静默回落 x86_64**（给 riscv64 之类编出 x86 机器码） | **不做** | v27 M4-T1：改为返回 `Option` + 编译期明确拒绝（已支持 x86_64 / aarch64）；新增目标的代价见方案 M4-T2/T3 |
 | `LINK_SECTION` | `#[link_section]` 会被**静默忽略**（只发 .text/.data/.rodata 三段） ⇒ 静态数据放错段既不报错也不生效 | **不做** | 明确拒绝（诊断点名段名 + 指向 M4-T4 的对象层任意段支持）；缺口 ID 只在 `backend.rs::reject_link_section` 出现一次 |
+| `WIDE_INT` | 128 位整数（`i128`/`u128`）：此前**静默**落到 `map_type` 的兜底分支被当成 `PTR`（64 位）⇒ `1u128 << 64` 按 64 位移位掩码算成 `1 << 0`，整条算术链静默错值（2026-10-11 审计发现） | **待做** | 明确拒绝（诊断点名）；真实现需要「两寄存器对」表示 + 全部运算 + libcall（`__multi3`/`__udivti3`/…）+ ABI，属独立专项 |
 | `MIR_TERMINATOR` | MIR 终结符里后端尚未支持的那些（协程的 `FalseEdge`/`FalseUnwind`/`CoroutineDrop` 等） | **不做** | 兜底必须**明确拒绝**、不许静默 `unreachable`： 未知终结符 ⇒ 编译期报错点名 kind；静默 `unreachable` 会把「没实现」伪装成「程序自己不可达」——`InlineAsm` 就是这么被藏了很久（v27 M2） |
 | `ABI_PLACEMENT_UNEMITTED` | 调用布局给了发射侧还没接的落点（`RegPair`/`RegGroup`/无指针 `Indirect`） | 数据层 | 约定改用已接的落点，或补齐发射侧（A6 余项；v26 M4 新增） |
 | `FRAME_SPILL_LOAD` | 同上：没覆盖溢出回填的 load | 数据层 | 同上 |

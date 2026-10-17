@@ -1850,6 +1850,23 @@ const CASES: &[Case] = &[
         phase: "v27 M5",
         reason: "#[repr(align(64))] 的符号地址必须 64 对齐（不止是「类型布局」，要真摆对）",
     },
+    // ── v27 M5 审计：128 位整数**明确拒绝**（此前静默错值）──
+    //   审计发现 `u128`/`i128` 落到 `map_type` 的兜底分支、被当成 64 位 `PTR`
+    //   ⇒ `1u128 << 64` 按"64 位移位"掩码成 `1 << 0`，整条链静默算错（实测低半=6）。
+    //   现在 `[cap:I128]` 明确拒绝；真支持需要「两寄存器对」+ 全套运算 + libcall + ABI。
+    Case {
+        name: "neg_u128",
+        body: "let x: u128 = (1u128 << 64) + 5; x as u64 as i32",
+        expected: 0,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: true,
+        expect_compile_err: "WIDE_INT",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "i128/u128 此前静默当 64 位算 ⇒ 现在 fail-closed（[cap:WIDE_INT]）",
+    },
     Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",
