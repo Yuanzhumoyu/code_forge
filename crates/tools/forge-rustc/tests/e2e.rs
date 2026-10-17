@@ -1834,6 +1834,22 @@ const CASES: &[Case] = &[
         phase: "v27 M5",
         reason: "#[link_section] 静默忽略 = 写了不生效 ⇒ 明确拒绝并点名段名",
     },
+    // ── v27 M5 补面：静对齐（`#[repr(align(N))]`）必须真的生效 ──
+    //   对齐取自 layout（`inner.align.bytes()`）⇒ 发射器按 `sd.align` 摆符号。
+    //   这里在**运行期**验地址：64 对齐才返回 42（否则 1），不依赖对象格式细节。
+    Case {
+        name: "static_align_64",
+        body: "#[repr(align(64))] struct Aligned(u64); #[unsafe(no_mangle)] static LATE: Aligned = Aligned(7); if (&LATE as *const Aligned as usize) % 64 == 0 { 42 } else { 1 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "#[repr(align(64))] 的符号地址必须 64 对齐（不止是「类型布局」，要真摆对）",
+    },
     Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",

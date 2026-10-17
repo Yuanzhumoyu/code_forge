@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — v27 M5 补面之五：静对齐的**运行期**用例
+
++ `align` 取自 layout（`inner.align.bytes()`）⇒ `#[repr(align(N))]` 一直生效，但**没有任何用例**
+  验证"符号地址真的对齐"。新增 e2e `static_align_64`：`#[repr(align(64))] static LATE` 的地址
+  运行期检查 `% 64 == 0`，返回 42（否则 1）⇒ **exit=42**，用例数 **121**。
++ 同轮否掉一个假设：no_std 自带 `#[global_allocator]` + 我们的 alloc shim **不会**撞重复符号
+  ——`vec_push`/`vec_string` 既有用例本来就是这样且全绿 ⇒ 不必改（实测优先于猜测）。
+
 ### Fixed (2026-10-11) — v27 M5 补面之四：`#[link_section]` 从**静默忽略**改为明确拒绝
 
 + 后端**从没读过** `codegen_fn_attrs(..).link_section` ⇒ 用户写 `#[link_section = ".CRT$XCU"]`
