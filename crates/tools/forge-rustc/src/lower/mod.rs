@@ -930,9 +930,24 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     targets,
                     ..
                 } => {
-                    // v27 M2.5：**文本重建**——String 片段原样，占位符写成 `{idx}`
-                    // （后端按位置占位符替换成挑中的物理寄存器名）。
+                    // v27 M2.5：**文本重建**——寄存器类占位符写成 `{槽序号}`（后端替换成挑中的物理
+                    // 寄存器名），`const`/`sym` 占位符**就地换成字面文本**（S3；格式化内核见
+                    // `global_asm::const_text`，与 `global_asm!` 同一处实现）。
+                    let mut reg_ord: Vec<Option<usize>> = vec![None; operands.len()];
+                    let mut next_ord = 0usize;
+                    for (i, op) in operands.iter().enumerate() {
+                        if matches!(
+                            op,
+                            rustc_middle::mir::InlineAsmOperand::In { .. }
+                                | rustc_middle::mir::InlineAsmOperand::Out { .. }
+                                | rustc_middle::mir::InlineAsmOperand::InOut { .. }
+                        ) {
+                            reg_ord[i] = Some(next_ord);
+                            next_ord += 1;
+                        }
+                    }
                     let mut text = String::new();
+                    let mut template_ok = true;
                     for piece in template.iter() {
                         match piece {
                             rustc_ast::InlineAsmTemplatePiece::String(s) => {
@@ -941,17 +956,67 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             rustc_ast::InlineAsmTemplatePiece::Placeholder {
                                 operand_idx, ..
                             } => {
-                                text.push_str(&format!("{{{operand_idx}}}"));
+                                let idx = *operand_idx;
+                                match reg_ord[idx] {
+                                    Some(ord) => {
+                                        // 手工拼 `{序}`：`format!` 的字面大括号在模板化生成里太容易出错。
+                                        text.push('{');
+                                        text.push_str(&ord.to_string());
+                                        text.push('}');
+                                    }
+                                    None => match &operands[idx] {
+                                        rustc_middle::mir::InlineAsmOperand::Const { value } => {
+                                            let cv = value
+                                                .const_
+                                                .eval(
+                                                    self.tcx,
+                                                    rustc_middle::ty::TypingEnv::fully_monomorphized(),
+                                                    rustc_span::DUMMY_SP,
+                                                )
+                                                // 缺口守卫要求同一 ID 在源码里**恰好一处**；`const` 求值失败
+                                                // 不是能力缺口，用普通消息。
+                                                .map_err(|e| {
+                                                    ForgeError::Message(format!(
+                                                        "内联 asm 的 `const` 求值失败：{e:?}"
+                                                    ))
+                                                })?;
+                                            let rustc_middle::mir::ConstValue::Scalar(
+                                                rustc_middle::mir::interpret::Scalar::Int(i),
+                                            ) = cv
+                                            else {
+                                                return Err(ForgeError::Message(
+                                                    "内联 asm 的 `const` 不是整数标量（仅支持整数常量）"
+                                                        .to_string(),
+                                                ));
+                                            };
+                                            let signed = value.const_.ty().is_signed();
+                                            let lit = crate::global_asm::scalar_text(
+                                                signed,
+                                                i.to_bits(i.size()),
+                                                i.size().bits() as u32,
+                                            );
+                                            text.push_str(&lit);
+                                        }
+                                        // `sym`（函数/静态）：S3 的下一半，暂不支持（fail-closed）。
+                                        rustc_middle::mir::InlineAsmOperand::SymFn { .. }
+                                        | rustc_middle::mir::InlineAsmOperand::SymStatic {
+                                            ..
+                                        } => template_ok = false,
+                                        _ => template_ok = false,
+                                    },
+                                }
                             }
                         }
                     }
+
                     // S2a 口径：只接 `in(reg)`/`out(reg)`/`inout(reg)`（`RegClass` 形态）且**只接 64 位整数**
                     // （搬运指令是 64 位 `mov`）；显式寄存器名（S2b）、const/sym（S3）、label（S4）、
                     // noreturn 保持 fail-closed。
                     let is_reg_class = |reg: &rustc_target::asm::InlineAsmRegOrRegClass| {
                         matches!(reg, rustc_target::asm::InlineAsmRegOrRegClass::RegClass(_))
                     };
-                    let mut ok = !options.contains(rustc_ast::InlineAsmOptions::NORETURN);
+                    let mut ok =
+                        !options.contains(rustc_ast::InlineAsmOptions::NORETURN) && template_ok;
                     let mut constraints: Vec<&str> = Vec::new();
                     let mut in_vals: Vec<Value> = Vec::new();
                     let mut out_tys: Vec<TypeId> = Vec::new();
@@ -1002,6 +1067,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     ok = false;
                                 }
                             }
+                            // S3：`const` 已在文本重建阶段就地替换成字面文本 ⇒ 这里不贡献操作数/结果。
+                            // （`sym` 仍是 fail-closed：`template_ok` 在上一步被置假。）
+                            rustc_middle::mir::InlineAsmOperand::Const { .. } => {}
                             _ => ok = false,
                         }
                     }

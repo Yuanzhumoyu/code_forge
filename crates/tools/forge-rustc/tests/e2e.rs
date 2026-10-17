@@ -1728,6 +1728,24 @@ const CASES: &[Case] = &[
         reason: "asm!(\"add {0}, {1}\", inout(reg) x, in(reg) y)：x 从 5 变 42",
     },
 
+    // ── v27 M2.5/S3：内联 asm 的 `const` 占位符 ──
+    //   模板里 `{1}` 是 `const 7` ⇒ rustc 侧**就地换成字面文本**"7"
+    //   （格式化内核 `global_asm::scalar_text`，与 global_asm! 同一处实现），
+    //   只有寄存器占位符进入约束表。x = 35 + 7 = 42。
+    Case {
+        name: "inline_asm_const",
+        body: "let mut x = 35u64; unsafe { core::arch::asm!(\"add {0}, {1}\", inout(reg) x, const 7) }; x as i32",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M2.5 S3",
+        reason: "asm!(\"add {0}, {1}\", inout(reg) x, const 7)：const 7 被格式化成字面文本",
+    },
+
     Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",

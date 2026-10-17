@@ -44,6 +44,45 @@ pub struct GlobalAsmText {
     is_x86: bool,
 }
 
+/// 常量 → 汇编文本（**内核**：`global_asm!` 与内联 `asm!` 共用这一处）。
+///
+/// 口径：按常量类型的**符号性**格式化成十进制（有符号 ⇒ i128，负值可读；无符号 ⇒ u128）。
+/// rustc 自带的 `asm_const_to_str` 需要 LayoutCx（本 crate 没实现那套 helper trait）⇒ 简化。
+pub(crate) fn const_text<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    did: rustc_hir::def_id::DefId,
+) -> Result<String, String> {
+    let signed = tcx.type_of(did).skip_binder().is_signed();
+    let cv = tcx
+        .const_eval_poly(did)
+        .map_err(|e| format!("[cap:GLOBAL_ASM_CONST] `const` 求值失败：{e:?}"))?;
+    let rustc_middle::mir::ConstValue::Scalar(rustc_middle::mir::interpret::Scalar::Int(i)) = cv
+    else {
+        return Err("[cap:GLOBAL_ASM_CONST] `const` 不是整数标量（仅支持整数常量）".to_string());
+    };
+    Ok(scalar_text(
+        signed,
+        i.to_bits(i.size()),
+        i.size().bits() as u32,
+    ))
+}
+
+/// 标量 → 汇编文本（**纯函数**：`const_text` 与 MIR 侧 `Const` 操作数共用）。
+///
+/// 口径：按**符号性**格式化成十进制——有符号按位宽做符号扩展（负值可读），无符号直出。
+pub(crate) fn scalar_text(signed: bool, bits: u128, width: u32) -> String {
+    if signed {
+        let v = if width < 128 {
+            ((bits as i128) << (128 - width)) >> (128 - width)
+        } else {
+            bits as i128
+        };
+        format!("{v}")
+    } else {
+        format!("{bits}")
+    }
+}
+
 impl GlobalAsmText {
     /// `isa_name` 决定要不要发语法指示（x86 的 `asm!` 家族默认 Intel 语法）。
     pub fn new(isa_name: &str) -> Self {
@@ -85,63 +124,13 @@ impl GlobalAsmText {
                 InlineAsmTemplatePiece::String(s) => self.text.push_str(s),
                 InlineAsmTemplatePiece::Placeholder { operand_idx, .. } => {
                     let (op, _span) = &asm.operands[*operand_idx];
-                    match op {
-                        // `const N`：求值后按**常量类型的符号性**格式化成十进制。
-                        // rustc 的 `asm_const_to_str` 需要 LayoutCx（本 crate 没实现那套
-                        // helper trait）⇒ 按同一语义简化：有符号 ⇒ i128（负值可读）、
-                        // 无符号 ⇒ u128。
-                        InlineAsmOperand::Const { anon_const } => {
-                            let did = anon_const.def_id.to_def_id();
-                            let signed = tcx.type_of(did).skip_binder().is_signed();
-                            let cv = tcx.const_eval_poly(did).map_err(|e| {
-                                format!(
-                                    "[cap:GLOBAL_ASM_CONST] global_asm! 的 `const` 求值失败：{e:?}"
-                                )
-                            })?;
-                            let rustc_middle::mir::ConstValue::Scalar(scalar) = cv else {
-                                return Err(
-                                    "[cap:GLOBAL_ASM_CONST] global_asm! 的 `const` 不是标量\
-                                     （仅支持整数常量）"
-                                        .to_string(),
-                                );
-                            };
-                            let rustc_middle::mir::interpret::Scalar::Int(i) = scalar else {
-                                return Err(
-                                    "[cap:GLOBAL_ASM_CONST] global_asm! 的 `const` 不是整数\
-                                     （指针常量尚未支持）"
-                                        .to_string(),
-                                );
-                            };
-                            let bits = i.to_bits(i.size());
-                            if signed {
-                                let width = i.size().bits() as u32;
-                                let v = if width < 128 {
-                                    ((bits as i128) << (128 - width)) >> (128 - width)
-                                } else {
-                                    bits as i128
-                                };
-                                self.text.push_str(&format!("{v}"));
-                            } else {
-                                self.text.push_str(&format!("{bits}"));
-                            }
-                        }
-                        // `sym f`：写 Rust 符号名——复用 crate 内**同一份**
-                        // `symbol_name_for_instance`（与函数/调用点符号同源，名字不会两处漂移）。
-                        InlineAsmOperand::SymFn { expr } => {
-                            let name = self.sym_fn_name(tcx, **expr)?;
-                            self.text.push_str(&name);
-                        }
-                        InlineAsmOperand::SymStatic { def_id, .. } => {
-                            let inst = rustc_middle::ty::Instance::new_raw(
-                                *def_id,
-                                rustc_middle::ty::GenericArgs::empty(),
-                            );
-                            self.text
-                                .push_str(&crate::lower::symbol_name_for_instance(tcx, &inst));
-                        }
-                        other => {
+                    // 字面量（const/sym）与寄存器：**同一份**格式化逻辑见 `operand_text`
+                    // （避免 global_asm 与内联 asm 两处漂移）。
+                    match Self::operand_text(tcx, op)? {
+                        Some(text) => self.text.push_str(&text),
+                        None => {
                             return Err(format!(
-                                "[cap:GLOBAL_ASM_OPERAND] global_asm! 里出现寄存器操作数 {other:?}\
+                                "[cap:GLOBAL_ASM_OPERAND] global_asm! 里出现寄存器操作数 {op:?}\\
                                  ——global_asm! 只接受字面文本/常量/符号"
                             ));
                         }
@@ -154,26 +143,39 @@ impl GlobalAsmText {
         Ok(())
     }
 
-    /// `sym` 占位符里的**函数**表达式 → 符号名。
+    /// 把 `const`/`sym` 操作数格式化成**汇编文本**（v27 S3；`global_asm!` 与内联 `asm!` 共用）。
     ///
-    /// 与 `lower/mod.rs` 的直接调用路径同源：`Instance::try_resolve` 取完整单态化，
-    /// 失败再 `new_raw` 兜底（部分替换的 substs 会让符号名断言 panic）。
-    fn sym_fn_name<'tcx>(
-        &self,
+    /// 返回 `Ok(None)` 表示"不是字面量类操作数"（寄存器等），由调用方自行处理。
+    /// 口径与 `global_asm!` 完全一致（这里就是它那份实现搬出来的，避免两处漂移）：
+    /// `const` 按常量类型的**符号性**格式化成十进制；`sym` 复用 crate 内同一份
+    /// `symbol_name_for_instance`。
+    pub(crate) fn operand_text<'tcx>(
         tcx: TyCtxt<'tcx>,
-        expr: rustc_hir::Expr<'tcx>,
-    ) -> Result<String, String> {
+        op: &rustc_hir::InlineAsmOperand<'tcx>,
+    ) -> Result<Option<String>, String> {
+        match op {
+            InlineAsmOperand::Const { anon_const } => {
+                Ok(Some(const_text(tcx, anon_const.def_id.to_def_id())?))
+            }
+            InlineAsmOperand::SymFn { expr } => Ok(Some(Self::sym_fn_text(tcx, **expr)?)),
+            InlineAsmOperand::SymStatic { def_id, .. } => {
+                let inst = rustc_middle::ty::Instance::new_raw(
+                    *def_id,
+                    rustc_middle::ty::GenericArgs::empty(),
+                );
+                Ok(Some(crate::lower::symbol_name_for_instance(tcx, &inst)))
+            }
+            _ => Ok(None),
+        }
+    }
+
+    /// `sym` 占位符里的**函数**表达式 → 符号名（自由函数版，供 [`operand_text`] 用）。
+    fn sym_fn_text<'tcx>(tcx: TyCtxt<'tcx>, expr: rustc_hir::Expr<'tcx>) -> Result<String, String> {
         use rustc_middle::ty::{self, TyKind};
         let ty = tcx.typeck(expr.hir_id.owner).node_type(expr.hir_id);
-        // 注意：`ty.kind()` 返回 `&TyKind`，直接按变体匹配会把 `args` 绑成 `&&List`
-        // （⇒ `try_resolve`/`new_raw` 报类型不符）。解引用后绑 Copy 字段才是 `GenericArgsRef`。
         let TyKind::FnDef(def_id, args) = *ty.kind() else {
-            return Err(format!(
-                "[cap:GLOBAL_ASM_SYM] global_asm! 的 `sym` 不是函数项（实际类型 {ty}）"
-            ));
+            return Err(format!("[cap:ASM_SYM] `sym` 不是函数项（实际类型 {ty}）"));
         };
-        // 本 nightly 的 `TyKind::FnDef` 第二字段是 **`Binder<GenericArgsRef>`**
-        // （与 `lower/mod.rs` 直接调用路径的 `substs.skip_binder()` 同源）⇒ 先去 binder。
         let args = args.skip_binder();
         let resolved =
             ty::Instance::try_resolve(tcx, ty::TypingEnv::fully_monomorphized(), def_id, args)

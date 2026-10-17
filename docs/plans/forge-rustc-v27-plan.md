@@ -321,6 +321,20 @@ error: failed to get `cfg-if` as a dependency of package `std v0.0.0 (…/librar
 **同批提交的代码**：`M3-①`（alloc 运行时**按需注入**，见下节）——它是 std 的前置条件，
 与本批文档同源，故一并提交；**M3 本身未完成**（M3-② 的真跑 `std` 需要 M2.5 与 TLS）。
 
+### S3 前半落地（2026-10-11）：`const` 占位符
+
+- **设计**：`const`/`sym` 在 **rustc 侧就地换成字面文本**，只有寄存器占位符进入约束表
+  （`{槽序号}`）——后端完全不用改，`const`/`sym` 也不需要寄存器分配。
+- **无冗余**：常量格式化抽成 `global_asm::scalar_text`（纯函数）+ `const_text`（吃 DefId），
+  `global_asm!` 的 HIR 路径与内联 `asm!` 的 MIR 路径**共用这一处**
+  （本 nightly 的两侧枚举是不同类型：`rustc_hir::InlineAsmOperand` 与
+  `rustc_middle::mir::InlineAsmOperand{ Const { value: Box<ConstOperand> } }`，
+  `value.const_.eval(...)` 求值）。
+- **实测**：`inline_asm_const`（`x = 35`、`asm!("add {0}, {1}", inout(reg) x, const 7)`
+  ⇒ **exit=42**）。
+- **`sym` 仍是 fail-closed**（MIR 侧 `SymFn { value }` 是 `ExprId`/`ConstOperand` 形态，
+  取符号名要另做一层；S3 的下一半）。
+
 ### S2a 落地（2026-10-11）：寄存器约束端到端可用
 
 **上一轮定位的字段问题的解法**：搬运指令的操作数字段**按角色挑**，不写死 0/1。

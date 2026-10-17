@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-rustc v27 M2.5/S3 前半：内联 `asm!` 的 `const` 占位符
+
++ `asm!("add {0}, {1}", inout(reg) x, const 7)` 现在真的能用：`const` 占位符在 **rustc 侧
+  就地换成字面文本**（只有寄存器占位符进入约束表），后端无需改动、`const` 也不需要寄存器。
++ **无冗余**：常量格式化抽成 `global_asm::scalar_text`（纯函数）+ `const_text`（吃 `DefId`），
+  `global_asm!` 的 HIR 路径与内联 `asm!` 的 MIR 路径**共用同一处**——两侧的
+  `InlineAsmOperand` 是不同类型（`rustc_hir` / `rustc_middle::mir`），格式化内核不复制。
++ e2e：`inline_asm_const`（`x = 35`、`add {0}, {1}` + `const 7` ⇒ **exit=42**），用例总数 **115**；
+  README 机读计数同步。
++ 边界：`sym` 仍是 fail-closed（MIR 侧 `SymFn { value }` 是另一种形态，取符号名要另做一层，
+  属 S3 的下一半）；显式寄存器名（S2b）、`label`/`clobber_abi`（S4）同理。
+
 ### Added (2026-10-11) — forge-rustc v27 M2.5/S2a：内联 `asm!` 的**寄存器约束端到端可用**
 
 + `asm!("add {0}, {1}", inout(reg) x, in(reg) y)` 现在**真的能用**：挑物理寄存器（可分配 GPR
