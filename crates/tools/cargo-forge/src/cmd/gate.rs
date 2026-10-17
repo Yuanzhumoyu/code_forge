@@ -346,6 +346,21 @@ fn build_steps(a: &Args) -> Vec<Step> {
             "--test-threads=1",
         ],
     ));
+    // `-C opt-level` 六个档位 + 同档确定性（v27 M5 补面：e2e 只在 debug 档跑过）。
+    push!(cargo_step(
+        "rustc-opt-levels",
+        "rustc 后端 `-C opt-level` 全档回归（0/1/2/3/s/z 同一答案 + 同档逐字节相等）",
+        Scope::Windows,
+        &[
+            "test",
+            "-p",
+            "forge-rustc",
+            "--test",
+            "opt_levels",
+            "--",
+            "--test-threads=1",
+        ],
+    ));
     push!(cargo_step(
         "fmt",
         "格式（`cargo fmt --all -- --check`）",
@@ -580,6 +595,7 @@ pub fn run(a: &Args, verbose: bool) -> anyhow::Result<i32> {
             "rustc-e2e",
             "rustc-e2e-guards",
             "rustc-determinism",
+            "rustc-opt-levels",
             "capability_gaps",
             // 后端 `Unsupported(` 的错误分类学（v27 S1–S4 曾整族违规而本子集看不见）
             "error_taxonomy",

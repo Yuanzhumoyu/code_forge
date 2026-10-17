@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — v27 M5 补面：`-C opt-level` 全档回归
+
++ **缺口**：e2e 的用例结构没有"rustc 旗标"这一维（`extra` 是**源码级**附加）⇒ 全部用例
+  **只跑过 debug 档**，而"后端在 `-O` 各档也对"是完整后端的硬承诺。
++ 新增 `tests/opt_levels.rs`：同一个无 std 程序（循环 + 递归 + 乘法 + 窄化 + 溢出检查）在
+  **`0/1/2/3/s/z` 六档**各编一次、链接、**真执行**，断言都返回 **42**；
+  外加"同档编两次"的**确定性**断言（object 逐字节相等）。
++ 两个坑（都是断言选错对象）：① 拿 `.exe` 比逐字节 ⇒ 含链接器时间戳/PDB 路径，测的是**链接器**；
+  ② `--emit=obj=<路径>` 在本版 rustc 不生效，且后端对象名固定为 `forge_codegen_output.o`
+  ⇒ 用 `--out-dir` 分目录定位再比。
++ 纳入门禁：新步骤 `rustc-opt-levels`（`Scope::Windows`）+ `--subset rustc` ⇒ 子集 **14 步**。
+
 ### Changed (2026-10-11) — v27 M2.5/S3-sym：受**谱汇编器文法**限制，改为 fail-closed + 点名诊断
 
 + **实测过程**：把 `sym` 的符号名替换写进去后，汇编器报
