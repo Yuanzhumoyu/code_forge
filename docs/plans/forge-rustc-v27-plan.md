@@ -163,6 +163,18 @@ v27 M2 曾把 TLS 记成"待做（先 fail-closed）"。本轮把两条实现路
 - **`-Zshare-generics=yes`（`WA-04`）**：现在仍是"链接期才发现的 LNK2019"⇒ 收口时可改为
   **编译期明确拒绝**（带缺口 ID）或补齐"被引用但上游未生成"的实例。
 
+### M4-② 首刀（2026-10-11）：`-Zshare-generics=yes` 编译期明确拒绝（`WA-04` 关闭）
+
+- **问题**：用户显式开 `-Zshare-generics=yes` 时，跨 crate 的泛型实例会被"共享"给上游 crate
+  生成，而本后端不生成辅助实例 ⇒ **链接期**才缺符号（LNK2019），错误离现场很远。
+- **落地**：`codegen_crate` 开头判 `tcx.sess.opts.unstable_opts.share_generics == Some(true)`
+  ⇒ 编译期 `[cap:SHARE_GENERICS]` 明确拒绝。**只拒用户显式指定**：该选项默认是 `None`，
+  由 rustc 按优化级别解析（debug/`-O0` 下默认 true）⇒ 默认路径不受影响 ✔。
+- **实测**（手工，因为 e2e 的 `extra` 是源码级附加、不是 rustc flag）：
+  带 flag ⇒ `error: Unsupported: [cap:SHARE_GENERICS] …`；不带 ⇒ 正常产出 11264 字节的 exe。
+- **台账**：新增 `SHARE_GENERICS` 行（决策 `不做`）+ `WA-04` 改判**已关闭**。
+  根治（补辅助实例）仍归 M4——它需要对象层的"实例导出/引用"模型。
+
 ### M3-② `std` 探测：工程与命令已固化，**库内前置阻塞已排除**（2026-10-11）
 
 **已排除的前置阻塞**（本轮之前/本轮落地，均有 e2e 守护）：

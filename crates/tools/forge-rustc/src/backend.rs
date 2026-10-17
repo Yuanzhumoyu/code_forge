@@ -61,6 +61,26 @@ impl CodegenBackend for CodegenLibBackend {
 
     fn codegen_crate<'tcx>(&self, tcx: TyCtxt<'tcx>) -> Box<dyn Any> {
         crate::trace::install_panic_hook();
+
+        // v27 M4-② / `WA-04`：**用户显式**指定 `-Zshare-generics=yes` 时明确拒绝。
+        //
+        // 为什么在编译期拒绝：开了它以后，跨 crate 的泛型实例会被"共享"给上游 crate 生成，
+        // 而本后端不生成辅助实例 ⇒ 到**链接期**才缺符号（LNK2019），错误离现场很远。
+        // 只拒"用户显式指定"（`Some(true)`）；rustc 内部默认决策（`None`）不受影响。
+        if tcx.sess.opts.unstable_opts.share_generics == Some(true) {
+            tcx.dcx().err(format!(
+                "{}",
+                IrError::capability(
+                    "SHARE_GENERICS",
+                    "本后端不支持 `-Zshare-generics=yes`：跨 crate 的泛型实例不会被外部 crate \
+                     生成，链接期会缺符号（LNK2019）。请去掉该 flag"
+                )
+            ));
+            return Box::new(CompiledModules {
+                modules: Vec::new(),
+                allocator_module: None,
+            });
+        }
         // 1. 从环境变量加载外部 ISA 插件
         let _plugin_loader = code_forge::forge_plugin::PluginLoader::load_from_env();
 

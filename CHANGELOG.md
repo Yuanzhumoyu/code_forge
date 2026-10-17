@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-11) — forge-rustc v27 M4-② 首刀：`-Zshare-generics=yes` 编译期明确拒绝
+
++ 用户显式开 `-Zshare-generics=yes` 时，过去会在**链接期**缺符号（LNK2019，`WA-04`）——
+  错误离现场很远。现在 `codegen_crate` 开头就判 `share_generics == Some(true)`并给出
+  **`[cap:SHARE_GENERICS]`** 的编译期诊断（实测：`error: Unsupported: [cap:SHARE_GENERICS] …`）。
++ **只拒"用户显式指定"**：该选项默认 `None`，由 rustc 按优化级别解析（debug/`-O0` 下默认 true）
+  ⇒ 默认路径与既有用例**完全不受影响**（不带 flag 时正常产出）。
++ 台账：新增 `SHARE_GENERICS` 行（决策 `不做`）；`WORKAROUNDS.md` 的 `WA-04` 改判**已关闭**。
+  根治（补辅助实例）仍归 M4——需要对象层的"实例导出/引用"模型。
++ 验收：`cargo forge gate --subset rustc` 全绿（含 `capability_gaps` 对新增 ID 的双向校验）。
+
 ### Fixed (2026-10-11) — v27 M2.5/S2b：传统寄存器**短名映射**（`out("rax")` 现在可用）
 
 + rustc 对 x86 传统寄存器的**规范名是短名**（`out("rax")` 的 `InlineAsmReg::name()` 给 `ax`），
