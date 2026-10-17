@@ -166,10 +166,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 let vreg = self.vreg_of(inst.operands[next_in])?;
                 next_in += 1;
                 let mov = self.make_mov_reg(parse.as_ref(), name_of.as_ref(), chosen[i], class)?;
+                let (_dst_field, src_field) = Self::mov_fields(&mov)?;
                 self.inst_ops
                     .push(smallvec::smallvec![crate::machine::lowering::OperandBind {
                         vreg,
-                        field: 1,
+                        field: src_field,
                         role: crate::machine::inst::OperandRole::Use,
                         class: Some(class),
                     }]);
@@ -190,10 +191,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 let vreg = self.vreg_of(inst.results[next_out])?;
                 next_out += 1;
                 let mov = self.make_mov_reg(parse.as_ref(), name_of.as_ref(), chosen[i], class)?;
+                let (dst_field, _src_field) = Self::mov_fields(&mov)?;
                 self.inst_ops
                     .push(smallvec::smallvec![crate::machine::lowering::OperandBind {
                         vreg,
-                        field: 0,
+                        field: dst_field,
                         role: crate::machine::inst::OperandRole::Def,
                         class: Some(class),
                     }]);
@@ -202,6 +204,32 @@ impl<I: MachineInst + 'static> CompileState<I> {
             }
         }
         Ok(())
+    }
+
+    /// 取一条搬运指令的 **(dst 字段, src 字段)**。
+    ///
+    /// **不能写死 0/1**：汇编器为 `mov rax, rax` 选中的**编码形态**决定字段序号
+    /// （`MOV_R_RM` / `MOV_RM_R` 等 form 的 dst/src 位置不同）。按**角色**挑：
+    /// 操作数表的顺序契约是"Use 在前、Def 在后"，且模板里写死的字段 `settable == false`
+    /// ——两个条件一起就能唯一确定可改写的 dst / src。
+    fn mov_fields(inst: &I) -> Result<(u8, u8), IrError> {
+        use crate::machine::inst::OperandRole;
+        let ops = inst.operands();
+        let dst = ops
+            .iter()
+            .find(|o| o.role == OperandRole::Def && o.settable)
+            .map(|o| o.field)
+            .ok_or_else(|| {
+                IrError::Unsupported("搬运指令没有可改写的 dst 字段（mov 形态不对？）".to_string())
+            })?;
+        let src = ops
+            .iter()
+            .find(|o| o.role == OperandRole::Use && o.settable && o.field != dst)
+            .map(|o| o.field)
+            .ok_or_else(|| {
+                IrError::Unsupported("搬运指令没有可改写的 src 字段（mov 形态不对？）".to_string())
+            })?;
+        Ok((dst, src))
     }
 
     /// IR 值 → 已分配的 vreg（asm 的操作数必须已经拿到寄存器）。

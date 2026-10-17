@@ -1710,6 +1710,24 @@ const CASES: &[Case] = &[
     //   → asm 本体 → 搬出（dst 绑 vreg）→ 相关指令带 clobbers。
     //   强断言：不带 asm 时 x 还是 5（exit 5）；asm 生效后 x = 5 + 37 = 42。
 
+    // ── v27 M2.5/S2a：内联 asm 的**寄存器约束**（in/out/inout + reg 类）──
+    //   机制：挑物理寄存器 → 占位符换成寄存器名 → 搬入（dst 写死、src 绑 vreg，
+    //   字段按角色挑而不是写死 0/1）→ asm 本体 → 搬出（dst 绑 vreg）→ 带 clobbers。
+    //   强断言：不带 asm 时 x 还是 5（exit 5）；asm 生效后 x = 5 + 37 = 42。
+    Case {
+        name: "inline_asm_reg_inout",
+        body: "let mut x = 5u64; let y = 37u64; unsafe { core::arch::asm!(\"add {0}, {1}\", inout(reg) x, in(reg) y) }; x as i32",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M2.5 S2a",
+        reason: "asm!(\"add {0}, {1}\", inout(reg) x, in(reg) y)：x 从 5 变 42",
+    },
+
     Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",

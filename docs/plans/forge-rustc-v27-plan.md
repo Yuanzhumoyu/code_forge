@@ -321,6 +321,25 @@ error: failed to get `cfg-if` as a dependency of package `std v0.0.0 (…/librar
 **同批提交的代码**：`M3-①`（alloc 运行时**按需注入**，见下节）——它是 std 的前置条件，
 与本批文档同源，故一并提交；**M3 本身未完成**（M3-② 的真跑 `std` 需要 M2.5 与 TLS）。
 
+### S2a 落地（2026-10-11）：寄存器约束端到端可用
+
+**上一轮定位的字段问题的解法**：搬运指令的操作数字段**按角色挑**，不写死 0/1。
+
+- 依据 `InstOperand { field, slot, class, constraint, role, settable }`：
+  操作数表的顺序契约是"**Use 在前、Def 在后**"，且模板里写死的字段 `settable == false`
+  ⇒ "`role == Def && settable`"唯一确定 dst、"`role == Use && settable && field != dst`"
+  唯一确定 src（`inline_asm.rs::mov_fields`）。
+  误按 0/1 绑定时，管线自己的 v23 M4 一致性检查会当场拒（
+  "字段被登记为 Def 但操作数表里没有这一项"）——**守卫替我们抓了一次**。
+
+**现在的能力**：`in(reg)`/`out(reg)`/`inout(reg)` 全部可用（只接 64 位整数；
+显式寄存器名 = S2b、`const`/`sym` = S3、`label`/`clobber_abi` = S4 仍 fail-closed）。
+
+**e2e 新用例**：`inline_asm_reg_inout`
+（`let mut x = 5; let y = 37; asm!("add {0}, {1}", inout(reg) x, in(reg) y)` ⇒ **exit=42**；
+不带 asm 时是 5 ⇒ 强断言）——它同时验证了：挑寄存器、名字替换、搬入/搬出、
+`inst_clobbers`、以及结果写回 `store_place`。
+
 ### S2a 第二轮（2026-10-11）：results 变参 + 两侧接线完成，**接线暂挂**
 
 **本轮做完的**：

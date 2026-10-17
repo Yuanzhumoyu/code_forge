@@ -951,13 +951,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     let is_reg_class = |reg: &rustc_target::asm::InlineAsmRegOrRegClass| {
                         matches!(reg, rustc_target::asm::InlineAsmRegOrRegClass::RegClass(_))
                     };
-                    // ⚠️ 暂挂（2026-10-11）：S2a 的**接线**先回 fail-closed——寄存器搬运指令的操作数
-                    // **字段索引取决于汇编器选中的编码形态**（`mov rax, rax` 落到哪个 form 决定 dst/src
-                    // 的 field 序号），按 (0=dst,1=src) 硬绑定会被管线的一致性检查当场拒掉
-                    //（"字段被登记为 Def 但操作数表里没有这一项"）。正确做法是**按角色挑字段**
-                    // （`MachineInst::operands()` 里 `role`/`slot` 的形态），见方案 §8 的 S2a 记录。
-                    let mut ok = !options.contains(rustc_ast::InlineAsmOptions::NORETURN)
-                        && operands.is_empty();
+                    let mut ok = !options.contains(rustc_ast::InlineAsmOptions::NORETURN);
                     let mut constraints: Vec<&str> = Vec::new();
                     let mut in_vals: Vec<Value> = Vec::new();
                     let mut out_tys: Vec<TypeId> = Vec::new();

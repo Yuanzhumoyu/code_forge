@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-rustc v27 M2.5/S2a：内联 `asm!` 的**寄存器约束端到端可用**
+
++ `asm!("add {0}, {1}", inout(reg) x, in(reg) y)` 现在**真的能用**：挑物理寄存器（可分配 GPR
+  顺序、互不重复）→ 占位符换成寄存器名 → 搬入/搬出 `mov`（一侧写死、另一侧绑 vreg）→
+  `asm` 本体 → 相关指令带 `inst_clobbers` → 结果经 `store_place` 写回 IR 值。
++ **上一轮的字段问题解法**：搬运指令的操作数字段**按角色挑**而不写死 0/1
+  ——`InstOperand` 的契约是"Use 在前、Def 在后"且模板写死的字段 `settable == false`，
+  于是 `role == Def && settable` 唯一确定 dst、`role == Use && settable && field != dst`
+  唯一确定 src。误绑时管线自己的 v23 M4 一致性检查会当场拒绝（这次正是它抓到的）。
++ e2e：`inline_asm_reg_inout`（`x = 5`、`y = 37`、`add` ⇒ **exit=42**；不带 asm 时是 5），
+  用例总数 **114**；README 机读计数同步。
++ 边界：只接 **64 位整数**与 `in`/`out`/`inout` + `reg` 类；显式寄存器名（S2b）、
+  `const`/`sym`（S3）、`label`/`clobber_abi`（S4）仍 fail-closed（带 `[cap:INLINE_ASM]`）。
+
 ### Added (2026-10-11) — forge-ir v27 M2.5/S2a：`results` 变参 + 两侧接线（接线暂挂）
 
 + **`ops.toml` 的 `results` 支持 `"variadic"`**（`build.rs` 新增 `ResArity::{Fixed, Variadic}` +
