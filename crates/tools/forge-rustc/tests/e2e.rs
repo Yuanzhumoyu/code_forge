@@ -1800,6 +1800,24 @@ const CASES: &[Case] = &[
         reason: "options(noreturn)：汇编不返回 ⇒ 块以 unreachable 收尾，ud2 真 trap",
     },
 
+    // ── v27 M2.5/S3 第二半：`sym` 占位符（**fail-closed，点名原因**）──
+    //   `sym` 的符号文本能拼出来，但**本谱的汇编器不接受符号操作数**
+    //   （`global_asm!` 能用符号是因为它走 LLVM 汇编器，inline asm 走的是本谱汇编器）。
+    //   要支持它，得给 ISA-DSL 的汇编器加"符号立即数 + `reloc abs64`"的解析形态。
+    //   这条负向用例钉住"拒绝 + 说清原因"，避免将来有人以为"没实现"而重复踩。
+    Case {
+        name: "neg_inline_asm_sym",
+        body: "fn seven() -> i32 { 7 } let mut p: u64 = 0; unsafe { core::arch::asm!(\"mov {}, {}\", out(reg) p, sym seven) }; p as i32",
+        expected: 0,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: true,
+        expect_compile_err: "操作数暂不可用",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M2.5 S3",
+        reason: "sym：本谱汇编器不接受符号操作数 ⇒ fail-closed 且点名原因",
+    },
     Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",

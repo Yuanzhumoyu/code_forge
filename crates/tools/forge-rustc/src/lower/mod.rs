@@ -951,6 +951,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     }
                     let mut text = String::new();
                     let mut template_ok = true;
+                    // `sym` 单独记一笔：它**不是**"没实现"，而是本谱的汇编器不接受符号
+                    // 操作数（`global_asm!` 能用符号是因为它走 LLVM 汇编器）⇒ 诊断要点名原因。
+                    let mut sym_seen = false;
                     for piece in template.iter() {
                         match piece {
                             rustc_ast::InlineAsmTemplatePiece::String(s) => {
@@ -966,6 +969,17 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         text.push('{');
                                         text.push_str(&ord.to_string());
                                         text.push('}');
+                                    }
+                                    // `sym` 无法验证也不该假装能做：本谱汇编器的操作数文法
+                                    // 只吃寄存器/数值字面量（见方案 §8 的 S3-sym 结论）。
+                                    None if matches!(
+                                        &operands[idx],
+                                        rustc_middle::mir::InlineAsmOperand::SymFn { .. }
+                                            | rustc_middle::mir::InlineAsmOperand::SymStatic { .. }
+                                    ) =>
+                                    {
+                                        sym_seen = true;
+                                        template_ok = false;
                                     }
                                     None => match &operands[idx] {
                                         rustc_middle::mir::InlineAsmOperand::Const { value } => {
@@ -1120,6 +1134,16 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             let tgt = self.blocks[t];
                             self.builder.jump(tgt, &[]);
                         }
+                    } else if sym_seen {
+                        // 比"不支持"更准的话：`sym` 的符号文本已经能拼出来，但**本谱的汇编器
+                        // 不接受符号操作数**（`global_asm!` 走 LLVM 汇编器，所以能用）。
+                        return Err(ForgeError::Message(
+                            "内联 asm 的 `sym` 操作数暂不可用：本谱汇编器的操作数文法只接受"
+                                .to_string()
+                                + "寄存器与数值字面量（`global_asm!` 因为走 LLVM 汇编器所以能用符号）。"
+                                + "要让 inline asm 支持 `sym`，需给 ISA-DSL 的汇编器加「符号"
+                                + "立即数 + reloc abs64」的解析形态——见方案 §8 的 S3-sym 结论。",
+                        ));
                     } else {
                         // 不支持的形态：**明确拒绝**（M2 的 fail-closed 保留）。
                         let excerpt: String = template

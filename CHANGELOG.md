@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-11) — v27 M2.5/S3-sym：受**谱汇编器文法**限制，改为 fail-closed + 点名诊断
+
++ **实测过程**：把 `sym` 的符号名替换写进去后，汇编器报
+  `内联汇编文本无法被汇编器解析："mov RAX, _RNv…seven"` ⇒ **替换是对的**，卡在
+  **谱汇编器的操作数文法**（只接手寄存器与数值字面量）。
++ **关键区别**：`global_asm!` 能用符号，是因为它**不走本谱汇编器**（包成 `global_asm!`
+  交给 **LLVM** 汇编）；inline `asm!` 走的是本谱汇编器 ⇒ 两者能力不同，别互相类推。
++ **处置**：按"不留未测代码"原则回退替换实现，改成 **fail-closed + 点名诊断**
+  （说清"谱汇编器只吃寄存器/数值"、"`global_asm!` 为何能用"、"根治方向"），
+  并用负向用例 `neg_inline_asm_sym` 钉住（`expect_compile_err` 匹配"操作数暂不可用"）。
+  e2e 用例数 **119**。
++ **根治方向（ISA-DSL 的活）**：给汇编器加「符号立即数 + `reloc abs64`」的解析形态；
+  谱侧已有 `MOVABS_GLOBAL`（`reloc = "abs64"`）承接重定位，缺的只是词法/文法这一层。
+
 ### Fixed (2026-10-11) — v27 M5 补漏：两个"子集看不见"的守卫
 
 + **`error_taxonomy`（forge-codegen）**：仓库规定后端 `Unsupported(` 必须是能力缺口
