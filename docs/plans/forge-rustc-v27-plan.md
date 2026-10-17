@@ -321,6 +321,20 @@ error: failed to get `cfg-if` as a dependency of package `std v0.0.0 (…/librar
 **同批提交的代码**：`M3-①`（alloc 运行时**按需注入**，见下节）——它是 std 的前置条件，
 与本批文档同源，故一并提交；**M3 本身未完成**（M3-② 的真跑 `std` 需要 M2.5 与 TLS）。
 
+### S2b 补丁（2026-10-11）：传统寄存器短名映射
+
+上一轮记的待办（`out("rax")` 因 rustc 规范名是 `ax` 而不可用）已解：
+
+- **谱**：`[reg.gpr64]` 加 `aliases = { ax = 0, cx = 1, … }`。上一轮没生效的原因是**插入位置**
+  （落在 `names` 数组范围内侧、被当成注释/别的键）；正确位置是该表的顶层键（本谱的
+  `alloc_count = 16` 之后）。
+- **生成器**：`reg_by_name` 不再走生成的 `FromStr`——**跨组同名时它的先匹配规则不可靠**
+  （`ax` 会落到 16 位组）。改成直接扫"主名 + 别名"两张表（`eq_ignore_ascii_case`、类必须一致），
+  别名对与主名对**同源**（都在 `gen_reg_info` 里由 `group_names` + `aliases` 生成）。
+- **守卫**：`reg_name_table` 新增断言——短名 `ax`/`AX` 必须解析到 `RAX` 的编号；
+  并记下"两个类里编号恰好都是 0"这个事实（`to_index` 跨组冲突的由来，别再用编号区分类）。
+- **e2e**：`inline_asm_named_reg` 改回最自然的写法 `asm!("xor rax, rax", out("rax") x)` ⇒ **exit=0**。
+
 ### S2b 落地（2026-10-11）：显式寄存器名
 
 - **能力**：`asm!("xor r8, r8", out("r8") x)` ⇒ x 从 5 变 **0**（e2e `inline_asm_named_reg`）。

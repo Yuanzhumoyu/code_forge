@@ -39,4 +39,26 @@ fn reg_name_is_assembler_compatible() {
             .unwrap_or_else(|e| panic!("汇编器不认 {text:?}（reg_name 给出 {name:?}）：{e:?}"));
         assert_eq!(insts.len(), 1, "{text:?} 应编成恰好一条指令");
     }
+
+    // v27 M2.5/S2b：**短名别名**必须能反查回同一个寄存器。
+    // rustc 对 x86 传统寄存器的规范名是短名（`out("rax")` → `ax`），而本谱主名是
+    // `RAX` ⇒ 谱里的 `aliases` 必须同时被**汇编器**和 `reg_by_name` 认。
+    let rax_idx = PhysReg::to_index(Reg::RAX);
+    let rax_cls = PhysReg::class(Reg::RAX);
+    assert_eq!(
+        tm.reg_info().reg_by_name("ax", rax_cls),
+        Some(rax_idx),
+        "短名 `ax` 必须解析到 RAX（同组主名 {rax_idx}）"
+    );
+    // 大小写不敏感
+    assert_eq!(tm.reg_info().reg_by_name("AX", rax_cls), Some(rax_idx));
+    // 类必须一致：16 位类里也有 `ax`（它就是 AX）；两个类里**编号恰好都是 0**，
+    // 所以这里只能断言"能查到"，区分靠的是传入的类而不是返回值（这正是
+    // `to_index` 跨组冲突的由来）。
+    assert!(
+        tm.reg_info()
+            .reg_by_name("AX", forge_ir::RegClass::GPR(16))
+            .is_some(),
+        "16 位类里必须能查到 AX"
+    );
 }

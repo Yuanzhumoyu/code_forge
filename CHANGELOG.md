@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-11) — v27 M2.5/S2b：传统寄存器**短名映射**（`out("rax")` 现在可用）
+
++ rustc 对 x86 传统寄存器的**规范名是短名**（`out("rax")` 的 `InlineAsmReg::name()` 给 `ax`），
+  与 x86 谱的 `RAX` 不同名 ⇒ 上一轮只能 `out("r8")`。现在 `[reg.gpr64]` 用
+  `aliases = { ax = 0, cx = 1, … }` 补上映射（上一轮没生效是**插入位置**问题：落在 `names`
+  数组范围内侧；正确位置是该表的顶层键）。
++ 生成的 `reg_by_name` 改为**直接扫"主名 + 别名"两张表**（`eq_ignore_ascii_case`、类必须一致），
+  不再走生成的 `FromStr`——跨组同名时它的先匹配规则不可靠（`ax` 会落到 16 位组）。
+  别名对与主名对同源（都在 `gen_reg_info` 里由 `group_names` + `aliases` 生成，不新增数据）。
++ 守卫 `reg_name_table` 新增断言：短名 `ax`/`AX` 必须解析到 `RAX`；并记下"两个寄存器的
+  `to_index` 恰好都是 0"（跨组冲突的由来，别再拿编号区分类）。
++ e2e `inline_asm_named_reg` 改回最自然的写法 `asm!("xor rax, rax", out("rax") x)` ⇒ **exit=0**
+  （若显式名被忽略，x 会留在 5 ⇒ 必红）。
++ 验收：`cargo forge gate --subset rustc` **9 步全绿（233.5s）**；e2e 116/116。
+
 ### Added (2026-10-11) — forge-rustc v27 M2.5/S2b：内联 `asm!` 的**显式寄存器名**
 
 + `asm!("xor r8, r8", out("r8") x)` 现在能用：x 从 5 变 **0**（强断言——若实现忽略显式名而改挑

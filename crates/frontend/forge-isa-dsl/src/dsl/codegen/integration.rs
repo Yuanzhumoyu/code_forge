@@ -521,18 +521,31 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
     // v27 M2.5/S2：寄存器编号 → 汇编拼写。与 `to_str`/`FromStr` **同源**（同一份
     // `group_names`），运行时按 `to_index` 线性查找——只有内联 asm 替换占位符会走，非热路径。
     let mut reg_name_pairs = Vec::new();
+    // v27 M2.5/S2b：**别名对**（`aliases = { ax = 0 }`）也要能反查——`reg_by_name`
+    // 靠这两张表匹配，不走生成的 `FromStr`（跨组同名时它的先匹配规则不可靠：
+    // `ax` 会落到 16 位组而不是 64 位组）。
+    let mut reg_alias_pairs: Vec<proc_macro2::TokenStream> = Vec::new();
     for (reg_class, group) in &model.reg {
-        for name in crate::dsl::shared::group_names(group)? {
+        let group_names = crate::dsl::shared::group_names(group)?;
+        // `RegClass` 没有 ToTokens 实现 ⇒ 显式展开成构造式（四个变体都带位宽 payload）。
+        let rc = match *reg_class {
+            RegClass::GPR(w) => quote::quote! { forge_ir::RegClass::GPR(#w) },
+            RegClass::FPR(w) => quote::quote! { forge_ir::RegClass::FPR(#w) },
+            RegClass::VEC(w) => quote::quote! { forge_ir::RegClass::VEC(#w) },
+            RegClass::KReg(w) => quote::quote! { forge_ir::RegClass::KReg(#w) },
+        };
+        if let Some(aliases) = &group.aliases {
+            for (alias, idx) in aliases {
+                if let Some(name) = group_names.get(*idx as usize) {
+                    let reg_lit = proc_macro2::Ident::new(name, proc_macro2::Span::call_site());
+                    reg_alias_pairs.push(quote::quote! { (Reg::#reg_lit, #rc, #alias) });
+                }
+            }
+        }
+        for name in group_names {
             let reg_lit = proc_macro2::Ident::new(&name, proc_macro2::Span::call_site());
             // 三元组：`to_index` 在多宽度视图 ISA 上跨组冲突（AL 与 RAX 同为 0），
             // 所以**必须连类一起**匹配。
-            // `RegClass` 没有 ToTokens 实现 ⇒ 显式展开成构造式（四个变体都带位宽 payload）。
-            let rc = match *reg_class {
-                RegClass::GPR(w) => quote::quote! { forge_ir::RegClass::GPR(#w) },
-                RegClass::FPR(w) => quote::quote! { forge_ir::RegClass::FPR(#w) },
-                RegClass::VEC(w) => quote::quote! { forge_ir::RegClass::VEC(#w) },
-                RegClass::KReg(w) => quote::quote! { forge_ir::RegClass::KReg(#w) },
-            };
             reg_name_pairs.push(quote::quote! { (Reg::#reg_lit, #rc, #name) });
         }
     }
@@ -718,11 +731,12 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
             /// v27 M2.5/S2b：汇编拼写 → 寄存器编号（显式寄存器名用；`FromStr` 与
             /// 汇编器同源，类由 `PhysReg::class` 回验）。
             fn reg_by_name(&self, name: &str, class: forge_ir::RegClass) -> Option<u32> {
-                use std::str::FromStr as _;
-                Reg::from_str(name)
-                    .ok()
-                    .filter(|r| <Reg as forge_ir::PhysReg>::class(*r) == class)
-                    .map(|r| <Reg as forge_ir::PhysReg>::to_index(r))
+                // 主名 + 别名一起扫，**大小写不敏感**、类必须一致。
+                [#(#reg_name_pairs),*]
+                    .into_iter()
+                    .chain([#(#reg_alias_pairs),*])
+                    .find(|(_, c, n)| *c == class && n.eq_ignore_ascii_case(name))
+                    .map(|(r, _, _)| <Reg as forge_ir::PhysReg>::to_index(r))
             }
             /// v27 M2.5/S2：寄存器编号 + 类 → 汇编文本拼写（内联 asm 替换占位符用）。
             fn reg_name(&self, reg: u32, class: forge_ir::RegClass) -> Option<&'static str> {

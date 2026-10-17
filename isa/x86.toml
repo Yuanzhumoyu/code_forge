@@ -103,6 +103,10 @@ names = [
 # 分配池只到 r15：EGPR（r16..r31）**能编码不能分配**——本后端不假设跑它的 CPU 支持
 # APX，ABI 也不认它们；分配器一用，JIT 产物在没有 APX 的机器上就是非法指令。
 alloc_count = 16
+# v27 M2.5/S2b：rustc 对 x86 传统寄存器的**规范名是短名**（`out("rax")` 的
+# `InlineAsmReg::name()` 给 `ax`）⇒ 用解析别名映射到 64 位组索引。
+# 别名**解析认、渲染不认**（反汇编仍出 `RAX`），不污染输出。
+aliases = { ax = 0, cx = 1, dx = 2, bx = 3, sp = 4, bp = 5, si = 6, di = 7 }
 
 [reg.gpr32]
 base_index = 0
