@@ -321,6 +321,27 @@ error: failed to get `cfg-if` as a dependency of package `std v0.0.0 (…/librar
 **同批提交的代码**：`M3-①`（alloc 运行时**按需注入**，见下节）——它是 std 的前置条件，
 与本批文档同源，故一并提交；**M3 本身未完成**（M3-② 的真跑 `std` 需要 M2.5 与 TLS）。
 
+### S1 收口：规模棘轮回退修复 + 后端管线契约回写（2026-10-11）
+
+**上一轮留下的真实回退（本轮修好）**：S1 往 `pipeline/lowering.rs` 里塞了 ~36 行，
+把该文件撑到 **871 行 > 规模棘轮上限 835** ⇒ `file_size_ratchet` 红。上一轮只跑了
+`cargo forge gate --subset rustc`，而那个子集**不含**这条守卫 ⇒ "验收通过"是**不完整的**。
+
+处置（按仓库纪律，**切文件而不是抬上限**）：
+
+1. 内联汇编的展开体抽成新模块 `pipeline/inline_asm.rs`
+   （`CompileState::expand_inline_asm(&Instruction) -> Result<bool, IrError>`，
+   调用点缩成 `if self.expand_inline_asm(inst)? { continue; }`）；
+2. 顺手把两处冗长注释压缩（Nop 墓碑 4→1 行、Load/Store 宽度 4→2 行）⇒ 836 行，
+   棘轮恢复绿；
+3. **把 `file_size_ratchet` 加进 `--subset rustc` 白名单**——它是"改后端"最该跑到的守卫之一，
+   上一轮正是漏了它。规矩记下：**给后端子集加步骤时，先问"这一步会不会因为我改的文件而红"**。
+
+**契约回写**：`docs/reference/backend-pipeline.md` 新增 **§13「v27 增量」**（原 §13 顺延为 §14）：
+13.1 内联汇编（IR 形态 / 展开时机 / 文本来源 / fail-closed / S1 边界）、
+13.2 运行时注入（alloc 与 TLS 的"何时注入 + 关键契约"表）、13.3 `abort()` 的出口。
+这三处都是**宿主侧**能力（不新增机器能力），写进管线契约是为了下次改它们时不必再摸一遍。
+
 ### S1 落地（2026-10-11，工作区）——**无操作数的内联 `asm!` 真实现**
 
 按施工图做完，实测结论与预期一致，另有两处"施工时才发现"的细节：

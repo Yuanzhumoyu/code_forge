@@ -336,7 +336,47 @@ release 下警告一次并放弃写入）。下表与 `diagnostics::CHANNELS`、
 `forge-rustc` 的编译期跟踪开关（`FORGE_TRACE_*`）用**同一张**开关台账（§7 的 `KNOBS` 下沉到
 `forge-isa-runtime::diagnostics`），因此"漏登记导致开关静默失效"这一类问题在两侧都不再可能。
 
-## 13. 相关账本与下一步
+## 13. v27 增量：宿主伪 op / 运行时注入 / 内联汇编
+
+v27（`docs/plans/forge-rustc-v27-plan.md`）往管线里加了三处**宿主侧**能力。它们都不是
+新的机器能力，而是"把编译期已经确定的东西变成 IR 或数据"——这里记契约，避免下次改它们时
+再摸一遍。
+
+### 13.1 内联汇编（`Opcode::InlineAsm`，v27 M2.5/S1）
+
+* **IR 形态**：`operands = 0`、`results = 0`、`side_effect = true`、`type_rule = "none"`；
+  汇编文本放在**唯一一个** `Immediate::String` 里（`builder::inline_asm(&str)`）。
+* **展开时机**：降级期（`pipeline/inline_asm.rs::expand_inline_asm`）。把文本交给
+  **本 ISA 的汇编器**（`CompileState::asm_parse`，由 `CompileState::new` 从
+  `machine.assembler()` clone），得到 `Vec<I>` 后连同与 vcode 平行的
+  `inst_ops`/`inst_clobbers` 推进当前虚拟块。
+* **文本从哪里取**：`ctx.type_store`（`CompileState::new` 早已放进去的 `TypeStore` 快照）
+  的 `lookup_str` ⇒ **不需要**额外的字符串表通道。
+* **fail-closed**：本 ISA 无汇编器 / 文本解析失败 / `InlineAsm` 没带 `String` 立即数 ⇒
+  明确 `Unsupported`；`forge-opt` 的 `const_fold` 对它是**穷尽 match** 的一条
+  （`InlineAsm => Ok(None)`，不透明文本永不折叠）。
+* **边界（S1 口径）**：只放行**无占位符的纯文本**。寄存器/`const`/`sym` 约束、标签、
+  `options(noreturn)` 由 `forge-rustc` 侧继续 `[cap:INLINE_ASM]`——它们的瓶颈在
+  **IR 缺"操作数 ↔ 物理寄存器"的表达**（S2+），不是文本能否拿到。
+
+### 13.2 运行时注入（alloc / TLS）
+
+后端会在**首个 CGU 对象**里注入运行时函数（`writer.add_function`），它们都是普通 IR 函数：
+
+| 运行时 | 何时注入 | 关键契约 |
+| --- | --- | --- |
+| `__rust_alloc` 一族（`alloc_runtime.rs`） | `tcx.crates(())` 里**没有** `std` 时 | 链 `std` 时 std 自带那一族，再注入就是 LNK2005（`WA-02`） |
+| `__forge_tls_addr`（`tls_runtime.rs`） | 计划里**真有**线程局部静态时 | 每静态两个隐藏数据符号（初值模板 / 索引槽）；`TlsAlloc` 索引 + 1 存槽（0 = 未分配）；每静态独占一个索引、无析构 |
+
+两条共同纪律：**按需**（不产出死代码）、**坐标固定**（注入点在首个 CGU，符号名确定性，
+降级侧不查表）。
+
+### 13.3 `abort()`
+
+`core::intrinsics::abort()` ⇒ `ExitProcess(3)`（无 `asm!` 可用时的唯一正确出口）；
+其后的 `unreachable()` 由调用点（`Call` 终结符的 `target: None` 分支）发。
+
+## 14. 相关账本与下一步
 
 * 能力缺口：[`backend-gaps.md`](backend-gaps.md)（含逐条决策证据）。
 * v25 逐批证据与删除清单：[`archive/backend-v25-plan.md`](../archive/backend-v25-plan.md)（已归档）。

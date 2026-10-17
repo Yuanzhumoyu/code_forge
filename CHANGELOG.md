@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-11) — forge-rustc v27：规模棘轮回退修复 + 后端管线契约回写
+
++ **修回退**：v27 M2.5/S1 把 `pipeline/lowering.rs` 撑到 871 行、超过 `file_size_ratchet`
+  的上限 835（上一轮只跑了 `--subset rustc`，该子集不含这条守卫 ⇒ 验收不完整）。按纪律
+  **切文件而不是抬上限**：内联汇编展开体抽成 `pipeline/inline_asm.rs`
+  （`CompileState::expand_inline_asm`），并压缩两处冗长注释 ⇒ 836 行，棘轮恢复绿。
++ **`file_size_ratchet` 进入 `--subset rustc` 白名单**——它是"改后端"最该跑到的守卫，
+  上一轮正是漏了它。
++ **契约回写**：`docs/reference/backend-pipeline.md` 新增 §13「v27 增量」——内联汇编
+  （IR 形态 / 降级期展开 / 文本来源 / fail-closed / S1 边界）、运行时注入
+  （alloc 按需注入、动态 TLS 的隐藏符号与索引约定）、`abort()` 的出口；原 §13 顺延为 §14。
++ 验收：全量 e2e **113/113**、零 `KNOWN`；`file_size_ratchet` 绿；文档 0 issues。
+
 ### Added (2026-10-11) — forge-rustc v27 M2.5/S1：无操作数的内联 `asm!` 真实现
 
 + **内联 `asm!` 从"明确拒绝"推进到真实现**（S1 口径：模板无 `{}` 占位符、非 `options(noreturn)`）。

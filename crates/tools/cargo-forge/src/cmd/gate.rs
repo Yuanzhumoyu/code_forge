@@ -554,6 +554,7 @@ pub fn run(a: &Args, verbose: bool) -> anyhow::Result<i32> {
             "rustc-e2e",
             "rustc-e2e-guards",
             "capability_gaps",
+            "file_size_ratchet", // 管线文件的规模棘轮：v27 S1 曾漏跑它而把 lowering.rs 撑破上限
             "rustc_doc_counts",
             "workarounds_guard",
             "docs",

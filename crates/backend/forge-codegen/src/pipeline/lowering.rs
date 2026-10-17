@@ -353,46 +353,12 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 continue; // Phi doesn't generate machine instructions
             }
 
-            // v27 M2.5/S1：**内联汇编**——立即数给汇编文本，交本 ISA 的汇编器解析成机器
-            // 指令，就地插进当前虚拟块（`inst_ops`/`inst_clobbers` 平行推进）。
-            // 文本的解析走 `ctx.type_store`（`CompileState::new` 已把类型表快照放进去）。
-            if inst.opcode == Opcode::InlineAsm {
-                let text: String = match inst.immediates.first() {
-                    Some(Immediate::String(sid)) => self
-                        .ctx
-                        .type_store
-                        .as_ref()
-                        .map(|s| s.lookup_str(*sid).to_string())
-                        .ok_or_else(|| {
-                            IrError::Unsupported(
-                                "InlineAsm：本次编译没有类型表快照，取不到汇编文本".to_string(),
-                            )
-                        })?,
-                    _ => {
-                        return Err(IrError::Unsupported(
-                            "InlineAsm 需要恰好一个 String 立即数（汇编文本）".to_string(),
-                        ));
-                    }
-                };
-                let parse = self.asm_parse.clone().ok_or_else(|| {
-                    IrError::Unsupported("本 ISA 未提供汇编器：内联汇编无法展开".to_string())
-                })?;
-                let insts = parse(&text).ok_or_else(|| {
-                    IrError::Unsupported(format!("内联汇编文本无法被本 ISA 的汇编器解析：{text:?}"))
-                })?;
-                let line = inst.loc.as_ref().and_then(|l| l.line);
-                for mi in insts {
-                    self.inst_ops.push(Default::default());
-                    self.inst_clobbers.push(Vec::new());
-                    self.vcode.push_inst_line(mi, line);
-                }
+            // v27 M2.5/S1：内联汇编——文本交本 ISA 汇编器展开（实现见 `pipeline/inline_asm.rs`）。
+            if self.expand_inline_asm(inst)? {
                 continue;
             }
 
-            // Nop instructions (used as tombstone by optimization passes such as
-            // GVN/CSE/dead-code) generate no machine instructions. Skipping them
-            // here keeps IR that has been through an optimization pipeline
-            // compilable on every target.
+            // Nop 是优化 pass 的墓碑指令，不生成机器指令（任何目标上都可编译）。
             if matches!(inst.opcode, Opcode::Nop) {
                 continue;
             }
@@ -410,10 +376,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 // 1 字节寄存器 ISA = 8 位）——不再是 x86 的常量 64。
                 None => self.ctx.value_gpr_class.bits() as u8,
             };
-            // Load/Store 用真实内存宽度：opsize_from_type 对 <4 字节类型返回 32
-            // 是寄存器安全折中（窄类型算术用 32 位避免残留高位），但 load/store
-            // 按 32 位会越界读写内存——u8 元素读/写 4 字节（write_bytes 循环写
-            // 8 次 × 4 字节破坏相邻槽；buf[0] 读 4 字节得到 0xABABABAB 垃圾）。
+            // Load/Store 用真实内存宽度：opsize_from_type 对 <4 字节类型返回 32 是寄存器安全
+            // 折中，但按 32 位读写会越界（u8 读 4 字节得到 0xABABABAB；写 4×8 次破坏相邻槽）。
             // Load 用结果类型（读入宽度）、Store 用被存值（操作数 0）宽度。
             // mem_opsize_for：聚合类型（bits()=0）走 TypeStore::size_bytes，
             // 否则 {i32,i32} store 宽度为 0（机器码缺陷 → 执行 SEGV）。
