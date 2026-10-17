@@ -45,6 +45,8 @@ fn source_gaps(root: &std::path::Path) -> BTreeMap<String, Vec<String>> {
         root.join("crates/backend/forge-codegen/src"),
         root.join("crates/foundation/forge-isa-runtime/src"),
         root.join("crates/frontend/forge-isa-dsl/src/dsl"),
+        // v27 M2：后端（forge-rustc）自己的 fail-closed 站点也带缺口 ID ⇒ 一并扫。
+        root.join("crates/tools/forge-rustc/src"),
     ];
     while let Some(dir) = stack.pop() {
         let Ok(entries) = std::fs::read_dir(&dir) else {

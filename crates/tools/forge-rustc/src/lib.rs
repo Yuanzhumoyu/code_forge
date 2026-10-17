@@ -21,6 +21,8 @@
 )]
 
 extern crate rustc_abi;
+// v27 M2：global_asm! 的模板/选项类型在 rustc_ast（`InlineAsmTemplatePiece` 等）。
+extern crate rustc_ast;
 extern crate rustc_codegen_ssa;
 extern crate rustc_data_structures;
 extern crate rustc_driver;
@@ -41,6 +43,7 @@ mod compile;
 mod dwarf;
 mod error;
 mod func_ref;
+mod global_asm;
 mod global_data;
 mod layout;
 mod prelude;

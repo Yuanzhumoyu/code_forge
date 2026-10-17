@@ -69,6 +69,14 @@
 **判据**：四类各有 e2e/真执行用例（`global_asm` 小函数、`asm!("nop")`/`asm!("add {0}, 1", inout(reg) x)`、
 unwrap 触发 `catch_unwind` 或用例级 SEH 决策文档、`thread_local!` 读回值）。
 
+### M2.5 内联 `asm!` 的真实现（**从 M2 拆出的专项**，S1–S4）
+
+**为什么拆出来**：M2 的其余四项都已在"落地或明确降级"的口径下闭环（见 §8）；
+内联 asm 与它们不同——它**不能降级**（`asm!` 在真实 crate 里随处可见，长期 fail-closed
+等于把后端锁死在玩具规模），而真实现需要**跨 crate 的 IR 变更**（路线 A：
+`forge-ir` 新增「原始文本 + 操作数约束」节点 + 发射期汇编），工作量与风险都独立成一级。
+设计（三路线取舍 + S1–S4 分期 + 每期判据）见 §8 的「M2 剩余项的设计」一节。
+
 ### M3 `std` 可用性：让真实程序能编能跑
 
 **问题**：今天只能 `no_std` + `no_main` + `#[no_mangle] extern "C" fn main`（README §支持矩阵），
@@ -149,6 +157,189 @@ unwrap 触发 `catch_unwind` 或用例级 SEH 决策文档、`thread_local!` 读
   ——M2 的 `panic=unwind` 决策要用（`.pdata`/`.xdata` 与 personality 的职责边界）。
 
 ## 8. 批次记录（逐里程碑回写）
+
+### M2-① `global_asm!` —— **已落地并实测**（2026-10-11，工作区）
+
+**设计（先落纸后动手，照 §7 的参考实现）**：`global_asm!` 的输入是**汇编文本**（指令 + 标签 +
+一串伪指令）。用我们自己的 ISA 汇编器（`TargetAssembler::parse_insts`）做等于把 LLVM 的 asm
+parser 重写一遍（它既不懂伪指令也没有符号表）——**冗余**。真实后端（cranelift / gcc 后端）的
+做法一致：**把文本交给系统上的汇编器**。本实现走 cranelift 那条**可移植**的路：另起一个
+`rustc` 子进程（默认后端 = LLVM）把文本包进 `global_asm!(r###"…"###)` 汇编成对象。
+
+**接入点（本仓已有基础设施，无需新造）**：`build_plans` 本来就**保留** `MonoItem::GlobalAsm`
+（注释写着"GlobalAsm 不去重"），每个 CGU 的循环里有 `writer` 与 `outdir`；产物以
+`CompiledModule::global_asm_object` 报给 rustc（`global_asm_object: Option<PathBuf>` 本来就是
+rustc API 的字段，之前恒为 `None`）——rustc 侧 `rustc_codegen_ssa/back/link.rs:565` 会把每个
+模块的这个对象加进链接命令。
+
+**支持面**：字面文本（指令/标签/伪指令）**全覆盖**（因为就是 LLVM 的 asm parser）；
+**`const` 占位符**（按常量类型的符号性格式化成十进制：有符号 ⇒ i128 负值可读、无符号 ⇒ u128）、
+**`sym` 占位符**（复用 crate 内**同一份** `symbol_name_for_instance`——与函数/调用点符号同源，
+名字不会两处漂移）均已支持；寄存器操作数与 `label` → `[cap:GLOBAL_ASM_OPERAND]`
+（`global_asm!` 本不该有）。
+
+`sym`/`const` 是**同一里程碑内**从 fail-closed 转正的（原先两个分支直接报缺口 ID）。
+实测用例 `global_asm_sym_const`：`lea rax, [rip + {f}]`（`f = sym forge_sym_target`——
+**名字写错会在链接期报未定义符号**，所以这条真的在测符号解析）+ `mov eax, {c}`
+（`c = const 42`）⇒ **`PASS global_asm_sym_const exit=42`**。
+
+踩到的 API 细节（本 nightly，写进代码注释）：`TyKind::FnDef` 的第二字段是
+**`Binder<GenericArgsRef>`**（要先 `skip_binder()`，与 `lower/mod.rs` 直接调用路径同源）；
+`ConstValue` 在 `rustc_middle::mir::ConstValue`（不在 `mir::interpret`）；
+`InlineAsmOperand::SymStatic` 还有 `path` 字段（用 `..` 忽略）。
+
+**实测**：e2e 新用例 `global_asm_call`（`global_asm!` 定义 `forge_gas_add`，Rust 侧
+`unsafe extern "C"` 调用，20+22）⇒ **`PASS global_asm_call exit=42`**；产物链可见：
+`forge_codegen_output.o` + **`forge_global_asm.o`（361 字节）**同目录产出。
+
+**连带删除（"允许破坏性更新、无冗余"）**：原有负向用例 **`neg_global_asm` 删除**——它断言
+"`global_asm!` 必须编译失败"（`expect_compile_err = "global_asm"`），被本项落地**正当地推翻**；
+不支持的三类形态改由生成期的 `[cap:GLOBAL_ASM_*]` **定向 fail-closed**，不再需要笼统的负向用例。
+全量 e2e 复跑 ⇒ **`passed: 106/106`**（用例数净不变：+`global_asm_call`、−`neg_global_asm`），
+零 `KNOWN`。
+
+踩坑两条（写给后续）：
+
+1. **用了没登记的观测开关 ⇒ 硬 panic**：第一版写 `trace_enabled("GLOBAL_ASM")`，而 v26 M1 的
+   开关台账守卫对未登记名字是**panic**（不是警告）⇒ 编译直接 101。改用**已登记**且语义匹配的
+   `FORGE_TRACE_GLOBAL`（"全局与重定位符号解析"）——**不新增登记项**（无冗余）。
+2. **子 rustc 必须清 `RUSTFLAGS`/`CARGO_ENCODED_RUSTFLAGS`**：否则子进程会再次加载本后端
+   （`-Zcodegen-backend=<本 dylib>`）⇒ 递归。已在 `assemble()` 里 `env_remove` 并写进文档注释。
+
+### M2-② 内联 `asm!` —— **明确拒绝（fail-closed）** + 堵住静默兜底（2026-10-11，工作区）
+
+**取证（先量再改）**：`TerminatorKind::InlineAsm` 在 `lower/mod.rs` **没有分支** ⇒ 落进终结符
+match 的兜底 `_ => { self.builder.unreachable(); }`。实测（`asm!("mov {0}, 7", out(reg) x)`
+后返回 `x`）：**编译无声通过**，运行退出 **`0xC000001D`**（就是后端自己的 `unreachable` 兜底）
+⇒ **静默错值**，违反仓库铁律。
+
+**落地**：
+
+1. `TerminatorKind::InlineAsm` 显式分支 ⇒ `IrError::capability("INLINE_ASM", …)`，诊断带
+   **模板首片**（如 `"mov {…}, 7"`），并说明它为什么不能照搬 `global_asm!`：global_asm 是
+   **整段独立**文本（交汇编器进独立对象即可），而内联 asm 要**嵌在函数体里**、还要绑定
+   **寄存器约束** ⇒ 需要 IR 层能表达「原始文本 + 操作数寄存器约束」。
+2. **兜底不再静默**：`_ => unreachable()` ⇒ `IrError::capability("MIR_TERMINATOR", …)` 并点名
+   终结符 kind。静默 `unreachable` 会把「没实现」伪装成「程序自己不可达」——`InlineAsm`
+   就被这么藏了很久。
+3. CFG 可达性预扫补上 `InlineAsm` 的落点（本 nightly 字段名是 `targets: Box<[BasicBlock]>`，
+   不是 `destination`；首元素 = 落点，除非 `options(noreturn)`/`naked_asm!`）。
+4. **守卫扩面**：`capability_gaps_guard` 扫描面加 `crates/tools/forge-rustc/src` ⇒ 后端自己的
+   缺口 ID 也进台账；台账加 `INLINE_ASM`（**待做**：需要 IR 层新节点 + 约束降级）与
+   `MIR_TERMINATOR`（**不做**：兜底必须明确拒绝）两行，守卫双向绿。
+5. **e2e**：新增负向用例 `neg_inline_asm`（`expect_compile_fail` + 断言 stderr 含
+   `cap:INLINE_ASM`）。
+
+**连带破坏性变更（M1 ↔ M2 的真实冲突）**：M1 的 panic 出口 `asm!("ud2")` 在 M2 下编不过
+⇒ 改为 FFI `ExitProcess(101)`；M1 的守卫同步改判（模板必须用确定性 abort、且**不许出现内联 asm**）。
+
+**实测**：全量 e2e ⇒ **`passed: 107/107`**、零 `KNOWN`；`e2e_trap_semantics_invariants` 绿；
+`capability_gaps` 守卫绿。
+
+**踩坑（自我命中第三次）**：新守卫「模板不许用内联 asm」的**针写在守卫自己那行** ⇒ 恒真失败。
+改成**只扫模板切片**（`make_source` 起、到下一个顶层函数前）——既不自我命中，也比扫全文件精确。
+
+### M2-③④ `panic=unwind` 决策 + TLS fail-closed（2026-10-11，工作区）
+
+两项都做了**"先量现状 → 明确决策 → 进台账 → 负向用例钉住"**（M2 的"落地或明确降级"口径）。
+
+**③ `panic=unwind` → 明确 `不做`（带缺口 ID）**
+
+- 现状：拒绝点是 `codegen_crate` 里的 panic 策略检查，**原来只是一个裸字符串**——既不在
+  缺口台账里、也没有守卫覆盖 ⇒ 读者从"缺口全貌"看不到它。
+- 落地：改用 `IrError::capability("UNWIND", …)`（⇒ 被 `capability_gaps_guard` 双向钉住），
+  台账加行、决策 **不做**，条件写清（真做需要：每函数 prologue 的 CFI 描述 + 展开指令表 +
+  personality 实现 + rustc 侧 `unwind` 表接线）。
+- 负向用例 `neg_panic_unwind`：**踩了一个真坑**——`no_std` + `panic=unwind` 下 rustc
+  **先**要求 `eh_personality` lang item（缺它时分析期就报错，根本走不到后端的检查）⇒ 用例
+  自带一个哑 `#[lang = "eh_personality"]` 才能推进到 codegen，从而真正断言那条拒绝。
+
+**④ TLS → 先 fail-closed（`待做`）**
+
+- 现状（本轮新发现）：静态数据路径**完全没有** thread-local 处理 ⇒ `#[thread_local] static`
+  会走普通 static 分支、发射成 `.data`/`.rodata` ⇒ **线程私有语义静默丢失**（所有线程共享
+  一份）——与 `InlineAsm` 同一类静默错值，只是没人碰过。
+- 落地：`MonoItem::Static` 分支先查 `tcx.is_thread_local_static(def_id)` ⇒
+  `IrError::capability("TLS", …)`（诊断带静态名）；台账加行、决策 **待做**，条件写清
+  （`.tls$` 段 + TLS 回调目录/`__tls_index`（Windows）或 `%fs:` 相对寻址 + 访问模型降级；
+  判据 = **双线程读写互不干扰**的真执行用例）。
+- 负向用例 `neg_thread_local`（`#![feature(thread_local)]` + `#[thread_local] static mut`）。
+
+**连带的 harness 变更**：新增**用例级 panic 策略开关**（用例名含 `panic_unwind` 时不加
+`-C panic=abort`）——否则那条拒绝路径永远走不到。
+
+**实测**：`neg_panic_unwind` / `neg_thread_local` 均 `PASS … compile-fail (gated)`；
+`capability_gaps` 守卫绿（现在 forge-rustc 侧有 3 个 ID：`INLINE_ASM`/`UNWIND`/`TLS` +
+兜底 `MIR_TERMINATOR`）。
+
+### M2 缺能力闭环 —— **已收口**（2026-10-11，工作区）
+
+| 项 | 状态 | 证据 |
+| --- | --- | --- |
+| `global_asm!` | **已实现**（含 `const`/`sym` 占位符） | `src/global_asm.rs`（新增）+ e2e `global_asm_call`（exit=42）/`global_asm_sym_const`（exit=42，`sym` 写错名字会在链接期报未定义符号）；`WA-03` 改判已关闭 |
+| 内联 `asm!` | **fail-closed**（原来是静默错值）→ 真实现**另立 M2.5** | `[cap:INLINE_ASM]` + e2e `neg_inline_asm`；设计见下一节 |
+| `panic=unwind` | **明确 `不做`**（带缺口 ID） | `[cap:UNWIND]` + 台账行 + e2e `neg_panic_unwind` |
+| TLS | **fail-closed**（原来是静默丢语义），决策 `待做` | `[cap:TLS]` + 台账行 + e2e `neg_thread_local` |
+
+**顺带堵住的静默黑洞**：MIR 终结符 match 的兜底 `_ => unreachable()` 改成
+`[cap:MIR_TERMINATOR]` 明确拒绝——静默 `unreachable` 会把「没实现」伪装成「程序自己不可达」
+（内联 asm 就是这么被藏了很久）。
+
+**守卫**：`capability_gaps_guard` 的扫描面加 `crates/tools/forge-rustc/src` ⇒ 后端侧 4 个 ID
+（`INLINE_ASM`/`UNWIND`/`TLS`/`MIR_TERMINATOR`）与台账**双向相等**；e2e 目标三个"不变量"
+（trap 语义 / 零容忍名单 / 模板不许用内联 asm）由 `e2e_trap_semantics_invariants` 钉住。
+
+**实测**：全量 e2e **`passed: 110/110`**、零 `KNOWN`、`known_failure: true` = 0；
+`capability_gaps` + `e2e_trap_semantics_invariants` 均绿；文档 0 issues。
+
+### M2 剩余项的设计（内联 `asm!` 真实现，先落纸）
+
+**为什么不能照抄 `global_asm!` 那条路**：global_asm 是**整段独立文本**（交系统汇编器产独立对象、
+报 `global_asm_object` 即可）；内联 asm 要**嵌在函数体里**、并且要绑定**操作数寄存器约束**
+（`in(reg)`/`out("rax")`/`inout`…），它影响的是**本函数的指令流与寄存器分配**。
+
+**三条候选路线与取舍**：
+
+| 路线 | 做法 | 判断 |
+| --- | --- | --- |
+| **A. IR 层新增「原始文本 + 约束」节点**（推荐） | `forge-ir` 加一个带文本与操作数槽的节点（`IR_FORMAT_VERSION` 4→5）；约束在**降级期**绑定到 IR vreg（`in(reg)` = 任选 GPR、`in("rax")` = 定死物理寄存器）；**发射期**（regalloc 之后、物理寄存器已知）把文本按占位符替换成真实寄存器名并交给汇编器编码进本函数代码流 | 唯一语义正确的路线；跨 crate（foundation + backend），工作量最大 |
+| B. 每处 asm 合成一个**本模块函数**再 `call` | 复用 global_asm 的"交汇编器"机制 | ✗ **语义错误**：多一层帧、破坏 `nostack`/clobber 期望，`asm!("mov rax,[rsp+8]")` 这类会读错栈 |
+| C. 只用我们自己 ISA 汇编器解析文本成 IR 指令 | 无外部工具链 | ✗ 方向不对：ISA 汇编器产出 `Inst`（ISA 层），而 forge-rustc 造的是 forge-ir；且它不懂伪指令/符号表 |
+
+**选 A，分四阶段**（每阶段都可独立验收）：
+
+- **S1 无操作数、无标签、无 clobber 的文本**：文本按行用 A 的发射期汇编器编成字节，直接进本函数
+  代码流（`asm!("sfence")`/`asm!("ud2")`/`asm!("pause")` 这类）。判据：e2e 用例真跑。
+- **S2 `in(reg)`/`out(reg)`/`inout(reg)`（任选寄存器）**：占位符 `{0}` 交给发射期替换；
+  操作数用 IR vreg 表达，寄存器类别由 `reg_class` 决定（GPR/FPR）。
+- **S3 定死物理寄存器与显式约束**（`in("rax")`、`out("xmm0")`、`const`、`sym`）：需要"预着色"
+  （IR vreg 钉到物理寄存器）——主线已有"写死物理寄存器"的指令槽机制可复用（见 `WA-40` 的上下文）。
+- **S4 `clobber_abi` / `options(nostack, nomem, pure, noreturn)` / 标签**：语义收尾。
+
+**在那之前，现状是 fail-closed**（`[cap:INLINE_ASM]` + `neg_inline_asm` 负向用例）——
+比落地前的"静默降级成 `unreachable`"严格更好。
+
+S1 的接入点侦察（2026-10-11，只读实测——比上面的路线 A 更具体）：
+
+- **op 是数据**：宿主 op 表是 `ops.toml`（`VaStart` 就是 2026-09-30 进表、
+  2026-10-01 归入 `HOST_PIPELINE_OPS` 的先例）⇒ 新增 `InlineAsm` op 走同一条路，
+  **不需要**在 forge-ir 里手写枚举分支。
+- **载体已有**：`forge_ir::util::imm_str::ImmStr` 是 IR 里的字符串载体（`CallConvId::Named`/
+  debug info 都用它）⇒ 原始汇编文本可以原样作为 op 的 payload。
+- **发射期能追加原始字节**：`pipeline::emit::CodeSink` 有 `bytes()`/追加接口（
+  `alloc_integration_tests.rs` 直接用 `sink.bytes()` 做断言）⇒ "把汇编文本编成的字节
+  拼进本函数代码流"这一步在发射层是现成的。
+- **扩展 pass 的先例**：`pipeline/va_expand/` 正是"把宿主伪 op 展开成显式指令"的现成形态
+  ⇒ S1 可以照它写成 `inline_asm_expand`（把无操作数文本用 ISA 汇编器解析成机器指令、
+  就地插入当前块），S2+ 再引入操作数绑定。
+- **结论**：S1 的改动面比预估小（ops.toml + 一个扩展 pass + forge-rustc 侧改为发该 op），
+  `IR_FORMAT_VERSION` 是否要升取决于 op 表是否进二进制格式签名段——动手前先确认这一点。
+
+### M2 剩余（下一轮起）
+
+- **内联 `asm!` 的真实现**（③④ 的决策已在前两节落地）（`RUSTFLAGS` 那条同源；`InlineAsm` 的寄存器操作数解析 + 发射）；参考
+  cranelift 的 [`inline_asm.rs`](https://rust.googlesource.com/rust/+/d14c1c75ab284d382bd1e9c499596c274f1abe58/compiler/rustc_codegen_cranelift/src/inline_asm.rs)。
+- **`panic=unwind` 二选一决策**（发射 SEH 表 / 明确不做并进缺口台账）与 **TLS**。
 
 ### M1 正确性清零 —— **已收口（2026-10-11，工作区）**
 
@@ -279,8 +470,14 @@ M1-① trap 语义：已落地并实测（同轮）
    （该用例形同虚设）。现在：归一保留**真实 NTSTATUS**、用例直接钉 `expected: 0xC000_001D`；
    `TRAP_EXIT` 只作"拿不到码（宿主强行结束）"的兜底，取值落在 trap 区间内（`0xC000_0000`）。
 
-判据达成：：`PASS overflow_runtime_trap exit=-1073741795`（`FORGE_E2E_ONLY` 单跑，1/106）；
-静默回绕会正常退出 `-2147483648`（≠ 任何 trap 码）⇒ 必红；断言失败边不触发（挂起）⇒ 也必红。
+判据达成：`PASS overflow_runtime_trap`（`FORGE_E2E_ONLY` 单跑）；静默回绕会正常退出
+`-2147483648`（≠ 期望码）⇒ 必红；断言失败边不触发（挂起）⇒ 也必红。
+
+> ⚠️ **M2 更正**：本项第一版的 panic 出口是 `asm!("ud2")`（期望码 `0xC000_001D`）。M2 把内联
+> `asm!` 改成 **fail-closed** 后，模板自己用 `asm!` 会让**全套用例编不过**（实测）⇒ 改为
+> **FFI `ExitProcess(101)`**（`#[link_name]` 别名，避免与既有 `ffi_exit_process` 撞名——
+> 这个撞名也是实测撞出来的，全量套件当场 106/107）⇒ 期望码 = **101**（`TRAP_EXIT`）。
+> 确定性更强（不依赖硬件异常码）；`is_trap_code` 仍用于识别**未预期**的 NTSTATUS 崩溃。
 
 **全量验收（同轮实测）**：`cargo test -p forge-rustc --test e2e -- --nocapture
 --test-threads=1 e2e_stage_a_scalar_cases` ⇒ **`passed: 106/106`**、`test result: ok`、
@@ -288,7 +485,7 @@ M1-① trap 语义：已落地并实测（同轮）
 `known_failure: true` **已归零**（M1 的一条硬判据达成——最后一个是本里程碑的溢出探针，
 现已转正为硬断言；`rg` 计数时注意排除文档注释里那处 `known_failure:true` 的历史说明）。
 
-遗留（下一轮）：：`run_exe_with_timeout` 的 `Some(None)`（宿主强行结束）现在归成 `TRAP_EXIT`；
+遗留（下一轮）：`run_exe_with_timeout` 的 `Some(None)`（宿主强行结束）现在归成 `TRAP_EXIT`；
 `CI_ENV_AV_CODE`（`0xC0000005`）这条历史容忍码在新语义下走 trap 分支——`FLAKY` 名单为空且只在
 `FORGE_E2E_STRICT_FLAKY=1` 时有意义，故当前无影响，但 **M5 的守卫要把它钉住**（否则将来把 AV
 当"环境性"容忍会重新走进这条路）。

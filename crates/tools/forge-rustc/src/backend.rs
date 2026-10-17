@@ -70,13 +70,21 @@ impl CodegenBackend for CodegenLibBackend {
 
         let mut compiled_modules = Vec::new();
 
-        // G5：panic=unwind 明确拒绝（当前后端仅支持 panic=abort——无
-        // unwind/异常表，unwind 会产生未定义行为/链接错误）。用
-        // dcx().err 使编译失败而非静默产出错误程序。
+        // G5 / v27 M2：`panic=unwind` **明确拒绝**（当前后端只支持 panic=abort——没有
+        // SEH 展开表（`.pdata`/`.xdata`）、没有 `__rust_eh_personality`、也没有 rustc
+        // 侧的 landing pad 降级 ⇒ 真按 unwind 编会产出未定义行为/链接错误）。
+        // v27 M2 起这条拒绝**带缺口 ID**（进 `backend-gaps.md` 台账、被
+        // `capability_gaps_guard` 双向钉住）——原来只是一个裸字符串，既不在台账里、
+        // 也没有守卫覆盖（读者无法从缺口全貌里看到它）。
         let panic_abort = tcx.sess.panic_strategy() == rustc_target::spec::PanicStrategy::Abort;
         if !panic_abort {
-            tcx.dcx()
-                .err("code-forge: panic=unwind 暂不支持——仅 panic=abort（请加 -C panic=abort）");
+            tcx.dcx().err(format!(
+                "code-forge: {}",
+                IrError::capability(
+                    "UNWIND",
+                    "panic=unwind 不支持：缺 SEH 展开表（.pdata/.xdata）与 __rust_eh_personality，                     请用 -C panic=abort（决策见 backend-gaps.md 的 UNWIND 行）"
+                )
+            ));
             compiled_modules.push(CompiledModule {
                 name: "empty".to_string(),
                 kind: ModuleKind::Regular,
@@ -135,6 +143,9 @@ impl CodegenBackend for CodegenLibBackend {
         // 实例分组计划：单对象 = 1 个（跨 CGU 摊平）计划；多对象 = 每 CGU 一个
         //（组内过滤 allocator shim 等 + 按符号名排序 + 跨 CGU 同名去重）。
         let plans = build_plans(tcx, codegen_units, multi_object);
+        // v27 M2：`global_asm!` 的汇编文本收集器（跨 CGU 汇总成**一份**对象——
+        // 与 cranelift 后端同构：文本拼一起、交系统汇编器、报 global_asm_object）。
+        let mut global_asm_text: Option<crate::global_asm::GlobalAsmText> = None;
 
         if plans.is_empty() {
             compiled_modules.push(CompiledModule {
@@ -448,6 +459,25 @@ impl CodegenBackend for CodegenLibBackend {
                         }
                     }
                     MonoItem::Static(def_id) => {
+                        // v27 M2：**线程局部静态明确拒绝**。此前它会走下面的普通 static
+                        // 路径 → 发射成 `.data`/`.rodata` ⇒ **线程私有语义静默丢失**（所有
+                        // 线程共享一份），与「宁可明确拒绝，不要静默错值」冲突。
+                        // 真实现需要：`.tls$` 段 + TLS 回调/`__tls_index`（Windows）或
+                        // `%fs:` 相对寻址 + 访问模型的降级（见 backend-gaps.md 的 TLS 行）。
+                        if tcx.is_thread_local_static(*def_id) {
+                            tcx.dcx().err(format!(
+                                "code-forge: {}",
+                                IrError::capability(
+                                    "TLS",
+                                    format!(
+                                        "线程局部静态 `{}` 尚未支持——static 路径只发 .data/.rodata，\
+                                         会把线程私有语义静默丢掉",
+                                        tcx.def_path_str(*def_id)
+                                    )
+                                )
+                            ));
+                            continue;
+                        }
                         // 静态数据：求值初始值 → .data/.rodata 段符号（global_data.rs）。
                         // `const {allocN}` 引用通过符号名解析，缺失会导致 static 读取错误。
                         match crate::global_data::build_static_data(tcx, *def_id) {
@@ -463,10 +493,14 @@ impl CodegenBackend for CodegenLibBackend {
                             }
                         }
                     }
-                    MonoItem::GlobalAsm(_) => {
-                        // A4：报错附 WA 编号（WORKAROUNDS.md 机读清单）。
-                        tcx.dcx()
-                            .err("code-forge: global_asm not supported [WA-03]");
+                    MonoItem::GlobalAsm(item_id) => {
+                        // v27 M2：不再是 `[WA-03] 不支持`——把模板展开进收集器，
+                        // 循环外统一汇编成**独立对象**交给 rustc 链接（见 global_asm.rs）。
+                        let collector = global_asm_text
+                            .get_or_insert_with(|| crate::global_asm::GlobalAsmText::new(isa_name));
+                        if let Err(e) = collector.push_item(tcx, *item_id) {
+                            tcx.dcx().err(format!("code-forge: {e}"));
+                        }
                     }
                 }
             }
@@ -604,6 +638,35 @@ impl CodegenBackend for CodegenLibBackend {
                 Err(e) => {
                     tcx.dcx()
                         .err(format!("code-forge: failed to write object file: {e}"));
+                }
+            }
+        }
+
+        // v27 M2：把收集到的 global_asm 文本汇编成对象，并以
+        // `CompiledModule::global_asm_object` 报给 rustc（rustc 的 link.rs 会把它
+        // 加进链接命令）。失败**不静默**：`dcx().err` 并点名缺口 ID。
+        if let Some(collector) = &global_asm_text
+            && !collector.is_empty()
+        {
+            match collector.assemble(&outdir) {
+                Ok(obj) => {
+                    if let Some(first) = compiled_modules.first_mut() {
+                        first.global_asm_object = Some(obj);
+                        crate::trace::trace_enabled("GLOBAL").then(|| {
+                            eprintln!(
+                                "[forge] global_asm: {} 项已汇编为独立对象并报给 rustc",
+                                collector.count()
+                            )
+                        });
+                    } else {
+                        // 没有对象模块（不应发生：至少有一个 CGU 计划）——不静默。
+                        let _ = tcx.dcx().err(
+                            "code-forge: [cap:GLOBAL_ASM] 有 global_asm 项但没有对象模块可挂载",
+                        );
+                    }
+                }
+                Err(e) => {
+                    let _ = tcx.dcx().err(format!("code-forge: {e}"));
                 }
             }
         }

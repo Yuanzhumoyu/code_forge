@@ -219,6 +219,20 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 TerminatorKind::Assert { target, .. } => queue.push(*target),
                 TerminatorKind::Drop { target, .. } => queue.push(*target),
                 TerminatorKind::FalseEdge { real_target, .. } => queue.push(*real_target),
+                // v27 M2：内联 asm 的落点（`destination`）——虽然下面的降级会**明确拒绝**
+                // 内联 asm，可达性分析仍要如实走它的落点（否则开启 `-C debuginfo` 或
+                // 诊断路径时会把其后的块当不可达）。
+                TerminatorKind::InlineAsm {
+                    targets, options, ..
+                } => {
+                    // 落点 = `targets[0]`（除非 `options(noreturn)` / `naked_asm!`）。本 nightly
+                    // 的字段名是 `targets: Box<[BasicBlock]>`，不是 `destination`。
+                    if !options.contains(rustc_ast::InlineAsmOptions::NORETURN)
+                        && let Some(t) = targets.first()
+                    {
+                        queue.push(*t);
+                    }
+                }
                 _ => {}
             }
         }
@@ -909,8 +923,39 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     let tgt = self.blocks[target];
                     self.builder.jump(tgt, &[]);
                 }
-                _ => {
-                    self.builder.unreachable();
+                TerminatorKind::InlineAsm { template, .. } => {
+                    // v27 M2：内联 `asm!` **明确拒绝**。此前它落进下面的兜底 `_`，被静默
+                    // 降级成 `unreachable`——实测（2026-10-11）：`asm!("mov {0}, 7", out(reg) x)`
+                    // **编译无声通过**，运行却退出 `0xC000001D`（= 本后端的 `ud2` 兜底），
+                    // 即**静默错值**，违反仓库铁律。
+                    //
+                    // 与 `global_asm!` 的差别决定了它不能照搬那套：global_asm 是**整段独立**
+                    // 文本（交给汇编器进独立对象即可），而内联 asm 要**嵌在函数体里**、还要绑定
+                    // 寄存器约束 ⇒ 需要 IR 层能表达"原始文本 + 操作数寄存器约束"。
+                    let excerpt: String = template
+                        .iter()
+                        .map(|piece| match piece {
+                            rustc_ast::InlineAsmTemplatePiece::String(s) => s.as_ref(),
+                            rustc_ast::InlineAsmTemplatePiece::Placeholder { .. } => "{…}",
+                        })
+                        .collect::<Vec<_>>()
+                        .join("")
+                        .chars()
+                        .take(64)
+                        .collect();
+                    return Err(ForgeError::from(IrError::capability(
+                        "INLINE_ASM",
+                        format!("内联 asm! 尚未支持（首个片段：{excerpt:?}）"),
+                    )));
+                }
+                other => {
+                    // 兜底**不再静默发 unreachable**（v27 M2）：未知/未接的终结符一律明确
+                    // 拒绝。静默 `unreachable` 会让"没实现"看起来像"程序自己不可达"——
+                    // 上面的 `InlineAsm` 就是这么被藏了很久。
+                    return Err(ForgeError::from(IrError::capability(
+                        "MIR_TERMINATOR",
+                        format!("终结符 {other:?} 尚未支持"),
+                    )));
                 }
             }
         }

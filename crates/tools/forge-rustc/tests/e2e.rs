@@ -43,12 +43,18 @@ fn e2e_toolchain() -> String {
 }
 
 /// 用例：程序体（i32 表达式）+ 期望退出码。
-/// `expect_trap` 用例的**通用 trap 码**哨兵：宿主机强制结束（拿不到具体 NTSTATUS）时用它。
+/// e2e 模板的 panic 出口码：panic handler 调 `ExitProcess(101)`（Windows 上 Rust 的
+/// 约定 abort 码）。**v27 M2 起不再用 `asm!("ud2")`**——内联 asm 在该里程碑被改为
+/// **fail-closed**（`[cap:INLINE_ASM]`），而 e2e 模板自己也用 `asm!` 的话，全套用例
+/// 会立刻编不过（实测确实如此）。`ExitProcess` 走 FFI（e2e 已链 kernel32）⇒ 无需 asm。
+const PANIC_ABORT_CODE: u32 = 101;
+
+/// `expect_trap` 用例的期望码 = panic abort 码（见 [`PANIC_ABORT_CODE`]）。
 ///
-/// 取值刻意落在 [`is_trap_code`] 的区间内（`0xC000_0000`），这样"归一"后的值仍然
-/// 是一个 trap 码——**不要**用 `i32::MIN`：实测 `i32::MAX + 1` 的回绕值恰好是
-/// `i32::MIN`，那样"溢出 trap"与"静默回绕"会在判定上**撞车**（v27 M1 第一次就踩到）。
-const TRAP_EXIT: i32 = 0xC000_0000u32 as i32;
+/// 语义：**断言失败边真的分流出去了**（溢出被拦）⇒ 进程以 `101` 退出；
+/// 静默回绕会正常退出回绕值（如 `i32::MIN`）⇒ 必红；断言没触发而挂起 ⇒ 超时 ⇒ 也必红。
+/// **不要**把期望码写成 `i32::MIN`：`i32::MAX + 1` 的回绕值恰好是它（v27 M1 踩过）。
+const TRAP_EXIT: i32 = PANIC_ABORT_CODE as i32;
 
 /// e2e 用例。
 struct Case {
@@ -1607,19 +1613,63 @@ const CASES: &[Case] = &[
         reason: "",
     },
     // ── F2 负向测试：编译失败断言（失败即报错）──
+    // ── v27 M2：`panic=unwind` **明确拒绝**（`[cap:UNWIND]`）──
+    //   后端的拒绝原点是 `codegen_crate` 里的 panic 策略检查：缺 SEH 展开表
+    //   （`.pdata`/`.xdata`）与 `__rust_eh_personality`。用例名含 `panic_unwind`
+    //   ⇒ harness 不为它加 `-C panic=abort`（否则这条路径走不到）。
     Case {
-        name: "neg_global_asm",
+        name: "neg_panic_unwind",
         body: "42",
         expected: -1,
-        extra: "core::arch::global_asm!(\"nop\");",
+        // `no_std` + `panic=unwind` 下 rustc **先**要求 `eh_personality` lang item
+        // （缺它时分析期就报错、根本走不到后端的 panic 策略检查）⇒ 用例自带一个哑实现，
+        // 让编译推进到 codegen，从而真正断言后端那条 `[cap:UNWIND]` 拒绝。
+        extra: "#![feature(lang_items)]\n#[lang = \"eh_personality\"]\nextern \"C\" fn eh_personality() {}",
         entry: "mainCRTStartup",
         expect_compile_fail: true,
-        expect_compile_err: "global_asm",
+        expect_compile_err: "cap:UNWIND",
         expect_trap: false,
         known_failure: false,
-        phase: "F2 neg",
-        reason: "MonoItem::GlobalAsm → dcx().err（WA-03）",
+        phase: "M2 neg",
+        reason: "panic=unwind 明确拒绝（缺 SEH 展开表）——v27 M2 加缺口 ID",
     },
+    // ── v27 M2：线程局部静态 **明确拒绝**（`[cap:TLS]`）──
+    //   此前 `#[thread_local] static` 会走普通 static 路径 ⇒ 发射 `.data`，
+    //   **线程私有语义静默丢失**（所有线程共享一份）。现在编译期拒绝。
+    Case {
+        name: "neg_thread_local",
+        body: "unsafe { X = 7 } unsafe { X }",
+        expected: -1,
+        extra: "#![feature(thread_local)]\n#[thread_local]\nstatic mut X: i32 = 0;",
+        entry: "mainCRTStartup",
+        expect_compile_fail: true,
+        expect_compile_err: "cap:TLS",
+        expect_trap: false,
+        known_failure: false,
+        phase: "M2 neg",
+        reason: "线程局部静态尚未支持（会静默丢线程私有语义）——v27 M2 fail-closed",
+    },
+    // ── v27 M2：内联 `asm!` **明确拒绝**（fail-closed，不再是静默 `unreachable`）──
+    //   落地前实测：`asm!("mov {0}, 7", out(reg) x)` **编译无声通过**、运行退出
+    //   `0xC000001D`（后端把该处降级成兜底 `unreachable`）⇒ 静默错值。
+    //   现在 ⇒ 编译期报 `[cap:INLINE_ASM]`（本用例钉住"必须编译失败 + 报缺口 ID"）。
+    Case {
+        name: "neg_inline_asm",
+        body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",
+        expected: -1,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: true,
+        expect_compile_err: "cap:INLINE_ASM",
+        expect_trap: false,
+        known_failure: false,
+        phase: "M2 neg",
+        reason: "内联 asm! 尚未支持 ⇒ 编译期 fail-closed（v27 M2）",
+    },
+    //   注：`neg_global_asm` 于 **v27 M2 删除**——`global_asm!` 已落地（正向用例
+    //   `global_asm_call` 钉住"符号真的可调用"），旧的"必须编译失败"断言随之过时；
+    //   不支持的三类形态（`const`/`sym`/寄存器操作数）由生成期的 `[cap:GLOBAL_ASM_*]`
+    //   缺口 ID 拒绝，属"定向 fail-closed"，不再需要一个笼统的负向用例。
     Case {
         name: "neg_std_program",
         body: "let s = String::from(\"hi\"); s.len() as i32",
@@ -1643,9 +1693,9 @@ const CASES: &[Case] = &[
     Case {
         name: "overflow_runtime_trap",
         body: "let a = core::hint::black_box(2147483647i32); let b = core::hint::black_box(1i32); a + b",
-        // 期望**具体机制**：`ud2` ⇒ STATUS_ILLEGAL_INSTRUCTION（0xC000001D）。
-        // 静默回绕会正常退出 -2147483648（≠ 任何 trap 码）⇒ 必红。
-        expected: 0xC000_001Du32 as i32,
+        // 期望**具体机制**：断言失败边分流 ⇒ panic handler ⇒ `ExitProcess(101)`。
+        // 静默回绕会正常退出 -2147483648（≠ 101）⇒ 必红；断言不触发而挂起 ⇒ 超时 ⇒ 也必红。
+        expected: TRAP_EXIT,
         extra: "",
         entry: "mainCRTStartup",
         expect_compile_fail: false,
@@ -1655,12 +1705,50 @@ const CASES: &[Case] = &[
         phase: "M1 overflow trap",
         reason: "运行期溢出必须 trap（异常终止）；正常退出（回绕）即失败",
     },
+    // ── v27 M2：`global_asm!`（`WA-03` 落地）──
+    //   文本交给系统上的 LLVM（另起 rustc 子进程，`--emit obj`）汇编成**独立对象**，
+    //   由 `CompiledModule::global_asm_object` 交给 rustc 链接（参考 cranelift 后端）。
+    //   本用例钉"符号真的可被 Rust 侧 `extern "C"` 调到"：20 + 22 = 42。
+    //   Windows x64 前两个整型参数在 ECX/EDX。
+    //
+    //   v27 M2 收尾：`sym` / `const` 占位符也支持了——下面第二个用例同时用两者：
+    //   `lea rax, [rip + {f}]`（`sym` 名字写错 ⇒ **链接期**就报未定义符号）+
+    //   `mov eax, {c}`（`c = const 42` ⇒ 退出码可断言）。
+    Case {
+        name: "global_asm_call",
+        body: "unsafe extern \"C\" { fn forge_gas_add(a: i32, b: i32) -> i32; } unsafe { forge_gas_add(20, 22) }",
+        extra: "core::arch::global_asm!(\".globl forge_gas_add\", \".p2align 4\", \"forge_gas_add:\", \"mov eax, ecx\", \"add eax, edx\", \"ret\");",
+        expected: 42,
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "M2 global_asm",
+        reason: "global_asm! 定义符号 + Rust 侧 extern 调用（v27 M2 落地）",
+    },
+    // ── v27 M2 收尾：`global_asm!` 的 `sym` 与 `const` 占位符 ──
+    //   `sym` 走 crate 内同一份 `symbol_name_for_instance`（与函数符号同源）；
+    //   `const` 按常量类型的符号性格式化成十进制（有符号 ⇒ i128）。
+    Case {
+        name: "global_asm_sym_const",
+        body: "unsafe extern \"C\" { fn forge_sym_const() -> i32; } unsafe { forge_sym_const() }",
+        extra: "#[unsafe(no_mangle)]\npub extern \"C\" fn forge_sym_target() -> i32 { 0 }\ncore::arch::global_asm!(\".globl forge_sym_const\", \"forge_sym_const:\", \"lea rax, [rip + {f}]\", \"mov eax, {c}\", \"ret\", f = sym forge_sym_target, c = const 42);",
+        expected: 42,
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "M2 global_asm",
+        reason: "global_asm! 的 sym/const 占位符（v27 M2 收尾落地）",
+    },
 ];
 
 /// 生成 no_std 程序源码。
 fn make_source(body: &str, extra: &str, entry: &str) -> String {
     format!(
-        "#![no_std]\n#![no_main]\n{extra}\n#[unsafe(no_mangle)]\npub extern \"C\" fn {entry}() -> i32 {{\n    {body}\n}}\n\n#[panic_handler]\nfn panic(_info: &core::panic::PanicInfo) -> ! {{\n    unsafe {{ core::arch::asm!(\"ud2\", options(noreturn)) }}\n}}\n"
+        "#![no_std]\n#![no_main]\n{extra}\n#[unsafe(no_mangle)]\npub extern \"C\" fn {entry}() -> i32 {{\n    {body}\n}}\n\nunsafe extern \"system\" {{\n    #[link_name = \"ExitProcess\"]\n    fn forge_panic_exit(code: u32) -> !;\n}}\n#[panic_handler]\nfn panic(_info: &core::panic::PanicInfo) -> ! {{\n    unsafe {{ forge_panic_exit({PANIC_ABORT_CODE}) }}\n}}\n"
     )
 }
 
@@ -1710,13 +1798,17 @@ fn run_case_with(
     } else {
         "/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE /DEFAULTLIB:kernel32.lib /DEFAULTLIB:vcruntime.lib".to_string()
     };
+    // 用例级 panic 策略（v27 M2）：名为 `*panic_unwind*` 的用例**不**加 `-C panic=abort`
+    // ——否则后端那条 `[cap:UNWIND]` 拒绝路径永远不会被走到（负向用例就无从断言）。
     let mut rustc_args = vec![
         "-Zcodegen-backend=".to_string() + &backend_dll().display().to_string(),
-        "-C".to_string(),
-        "panic=abort".to_string(),
         "--edition".to_string(),
         "2024".to_string(),
     ];
+    if !case.name.contains("panic_unwind") {
+        rustc_args.push("-C".to_string());
+        rustc_args.push("panic=abort".to_string());
+    }
     // 用例级溢出开关：`overflow_off` 用例（需要 wrapping 语义的）显式关闭。
     if case.name.contains("overflow_off") {
         rustc_args.push("-C".to_string());
@@ -1805,12 +1897,16 @@ fn run_case_with(
     match result {
         // 正常退出码（含普通非零码；NTSTATUS error 级见下支）
         Ok(c) if !is_trap_code(c) => {
-            if case.expect_trap {
-                Err(format!(
-                    "期望 trap（NTSTATUS 异常终止），实际**正常退出** exit={c}——断言失败边没触发"
-                ))
-            } else {
+            if !case.expect_trap {
                 Ok(c)
+            } else if c == TRAP_EXIT {
+                // 期望的就是"断言失败边分流 ⇒ panic ⇒ ExitProcess(101)"
+                record_event("TRAP", case.name, &format!("panic abort exit={c}（预期）"));
+                Ok(c)
+            } else {
+                Err(format!(
+                    "期望 trap（panic abort = {TRAP_EXIT}），实际正常退出 exit={c}——断言失败边没触发"
+                ))
             }
         }
         // 异常终止：`expect_trap` ⇒ 成功并返回真实码；否则未预期崩溃
@@ -1946,11 +2042,26 @@ fn e2e_trap_semantics_invariants() {
         .filter(|l| !l.trim_start().starts_with("//"))
         .collect();
 
-    // ① handler 必须是真 trap（`ud2`）。源码里是**转义后**的形态（它处在 format! 的串里）。
-    let code = code_lines.join("\n");
+    // ① **只扫模板切片**（`make_source` 的 `format!` 串）：既避免"针写在守卫自己身上"
+    //    的自我命中（本轮第三次踩），也比扫全文件精确——校验的就是模板契约本身。
+    let tpl_start = src.find("fn make_source").expect("make_source 存在");
+    // 切片 = `make_source` 起、到下一个顶层函数（`fn backend_dll`）之前；
+    // 不要按 `\n}\n` 找结尾——模板函数的收尾是缩进的 `    }`。
+    let tpl_end = src[tpl_start..]
+        .find("\nfn ")
+        .map(|i| tpl_start + i)
+        .expect("模板函数后还有下一个函数");
+    let tpl = &src[tpl_start..tpl_end];
+    // ①a panic 出口必须是**确定性 abort**（`forge_panic_exit(PANIC_ABORT_CODE)`）。
     assert!(
-        code.contains(r#"core::arch::asm!(\"ud2\", options(noreturn))"#),
-        "panic handler 不是 ud2 trap ⇒ expect_trap 用例会退化成超时（见 v27 M1）"
+        tpl.contains("forge_panic_exit({PANIC_ABORT_CODE})"),
+        "模板的 panic 出口不是确定性 abort ⇒ expect_trap 用例会退化成超时"
+    );
+    // ①b 模板自身**不许用内联 asm**：v27 M2 起内联 asm 是 fail-closed（`[cap:INLINE_ASM]`），
+    //     模板一旦用它，全套用例会立刻编不过（M1→M2 的实测教训）。
+    assert!(
+        !tpl.contains("asm!"),
+        "模板不许用内联 asm（M2 起 fail-closed）——panic 出口请用 forge_panic_exit"
     );
 
     // ② 不许有待转正的 known_failure（注释里的历史说明不算）
@@ -1966,6 +2077,8 @@ fn e2e_trap_semantics_invariants() {
         needle,
         still_known.len()
     );
+
+    let code = code_lines.join("\n");
 
     // ③ 每个 expect_trap 用例必须在同块内钉一个真实 trap 码（NTSTATUS ≥ 0xC0000000）
     let lines: Vec<&str> = code.lines().collect();
@@ -1983,21 +2096,25 @@ fn e2e_trap_semantics_invariants() {
             .iter()
             .find(|w| w.trim_start().starts_with("expected:"))
             .unwrap_or_else(|| panic!("expect_trap 用例缺 expected 行（第 {} 行附近）", i + 1));
-        let hex = want
-            .split("0x")
-            .nth(1)
-            .unwrap_or_else(|| panic!("expect_trap 的 expected 必须是 `0x… as i32` 形态：{want}"));
-        let digits: String = hex
-            .chars()
-            .take_while(|c| c.is_ascii_hexdigit() || *c == '_')
-            .collect();
-        let code_v = i64::from_str_radix(&digits.replace('_', ""), 16)
-            .unwrap_or_else(|e| panic!("解析 trap 码失败 {digits:?}: {e}"))
-            as i32;
+        // 期望码两种合法形态：`TRAP_EXIT`（panic abort 码）或显式 NTSTATUS 字面量
+        // `0x… as i32`（硬件异常终止）。
+        let code_v = if want.contains("TRAP_EXIT") {
+            TRAP_EXIT
+        } else {
+            let hex = want.split("0x").nth(1).unwrap_or_else(|| {
+                panic!("expect_trap 的 expected 必须是 `TRAP_EXIT` 或 `0x… as i32`：{want}")
+            });
+            let digits: String = hex
+                .chars()
+                .take_while(|c| c.is_ascii_hexdigit() || *c == '_')
+                .collect();
+            i64::from_str_radix(&digits.replace('_', ""), 16)
+                .unwrap_or_else(|e| panic!("解析 trap 码失败 {digits:?}: {e}")) as i32
+        };
         assert!(
-            is_trap_code(code_v),
-            "expect_trap 的 expected 不是 trap 码（0x{code_v:08X}）——必须不小于 0xC0000000，\
-             否则与正常退出（含溢出回绕）撞车：{want}"
+            code_v == TRAP_EXIT || is_trap_code(code_v),
+            "expect_trap 的 expected（{code_v}）既不是 panic abort 码（{TRAP_EXIT}）\
+             也不是 NTSTATUS trap 码（≥ 0xC0000000）——会与正常退出（含溢出回绕）撞车：{want}"
         );
     }
     assert!(

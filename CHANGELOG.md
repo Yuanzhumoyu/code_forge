@@ -11,6 +11,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-rustc v27 M2：缺能力闭环（`global_asm!` 落地 · 三项明确决策 · 守卫扩面）
+
++ **`global_asm!` 落地**（`crates/tools/forge-rustc/src/global_asm.rs` 新增；`WA-03` 改判已关闭）。
+  设计照 cranelift 后端（`global_asm.rs`）的**可移植**那条路：把 crate 里所有 `global_asm!` 的模板
+  拼成一份文本，另起一个 `rustc` 子进程（默认后端 = LLVM，`--emit obj` + `#![no_core]` 包装）
+  汇编成**独立对象**，再由 `CompiledModule::global_asm_object` 交给 rustc 链接（rustc 的
+  `link.rs` 会把它加进链接命令）。⇒ 指令/标签/**伪指令全支持**（就是 LLVM 的 asm parser）。
+  支持 `const` 占位符（按常量类型的符号性格式化）与 `sym` 占位符（复用 crate 内同一份
+  `symbol_name_for_instance`）；寄存器操作数/`label` fail-closed 并点名 `[cap:GLOBAL_ASM_OPERAND]`。
+  子进程**必须清 `RUSTFLAGS`/`CARGO_ENCODED_RUSTFLAGS`**（否则会再次加载本后端 ⇒ 递归）。
+  e2e：`global_asm_call`（exit=42）、`global_asm_sym_const`（exit=42，`sym` 写错名字会在链接期报错）；
+  **删除已过时的负向用例 `neg_global_asm`**（它断言"global_asm 必须编译失败"，被本项正当推翻）。
++ **内联 `asm!` 从"静默错值"改为 fail-closed**：此前 `TerminatorKind::InlineAsm` 落进终结符 match
+  的兜底 `_ => unreachable()` —— 实测 `asm!("mov {0}, 7", out(reg) x)` **编译无声通过**、运行退出
+  `0xC000001D`。现在 ⇒ `[cap:INLINE_ASM]`（诊断带模板首片）+ e2e 负向用例 `neg_inline_asm`；
+  真实现另立 **M2.5**（设计：IR 层「原始文本 + 操作数约束」节点 + 发射期汇编，S1–S4 分期）。
++ **MIR 兜底不再静默**：`_ => unreachable()` ⇒ `[cap:MIR_TERMINATOR]` 并点名终结符 kind。
+  静默 `unreachable` 会把「没实现」伪装成「程序自己不可达」（内联 asm 就被藏了很久）。
++ **`panic=unwind` 明确 `不做`**（`[cap:UNWIND]` + 台账行 + e2e `neg_panic_unwind`）。原来只是一个
+  裸字符串（不在台账、无守卫覆盖）。用例自带哑 `#[lang = "eh_personality"]`——`no_std` +
+  `panic=unwind` 下 rustc 会**先**要求该 lang item，否则走不到后端检查。
++ **TLS 先 fail-closed**（本轮新发现的静默错值）：`#[thread_local] static` 会走普通 static 路径
+  ⇒ 发射成 `.data`、**线程私有语义静默丢失**。现在 ⇒ `[cap:TLS]` + 台账行（决策 `待做`，
+  判据 = 双线程读写互不干扰的真执行用例）+ e2e `neg_thread_local`。
++ **守卫扩面**：`capability_gaps_guard` 的扫描面加 `crates/tools/forge-rustc/src` ⇒ 后端侧 4 个
+  缺口 ID（`INLINE_ASM`/`UNWIND`/`TLS`/`MIR_TERMINATOR`）与台账**双向相等**。
++ **连带变更（M1 ↔ M2 的真实冲突）**：M2 的 fail-closed 让 M1 的 panic 出口 `asm!("ud2")` 编不过
+  ⇒ 改为 FFI `ExitProcess(101)`（`#[link_name]` 别名，避免与既有 `ffi_exit_process` 撞名——该撞名是
+  全量套件实测撞出来的）；`expect_trap` 的期望码随之变为 **101**（确定性 panic abort），
+  M1 的守卫同步改判（模板必须确定性 abort、且不许出现内联 asm）。
++ 验收：`cargo forge gate` **40 步全绿**（204 s）；全量 e2e **110/110、零 `KNOWN`**、
+  `known_failure: true` = 0；`capability_gaps` + `e2e_trap_semantics_invariants` 守卫绿；文档 0 issues。
+
 ### Added (2026-10-11) — forge-rustc v27 M1：trap 语义 + 零容忍名单守卫（含台账纠偏）
 
 + **e2e trap 语义**（`crates/tools/forge-rustc/tests/e2e.rs`，破坏性）：模板的 `#[panic_handler]`
