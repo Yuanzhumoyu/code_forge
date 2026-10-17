@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — v27 M5 补面之八：溢出 panic 路径用例（此前零覆盖）
+
++ 新增 `overflow_panic_shl`（`1u32 << 32`）与 `overflow_panic_div`（`i32::MIN / -1`）⇒ 两条都
+  **exit=101**（模板 panic 处理器），证明 `-C overflow-checks=on` 的**运行期检查真的走得到**。
++ 两次自己的坑（记进账本）：① 直接写常量会被**编译期 lint** `unconditional_panic` 拦下，走不到
+  运行期检查；② 改成非常量还不够，需要 `core::hint::black_box` 才能阻止**常量折叠**。
++ **同时探到新缺陷（未进套件，记入台账）**：NaN 比较语义错——`0.0/0.0 == 0.0/0.0` 在 Rust 里必须
+  `false`，后端给 `true`；可疑点是 `comisd` 在无序时置 **PF** 而规则只发 `sete`（缺 `setnp` 合取）。
++ 用例数 **127**。
+
 ### Fixed (2026-10-11) — v27 M5 缺陷 ②：`f64 → i8/i16` 转换补上谱规则
 
 + **真因**：`elem` 谓词用的既不是位宽也不是 `TypeId`，而是 `dsl/codegen/lowering.rs::elem_id_of`

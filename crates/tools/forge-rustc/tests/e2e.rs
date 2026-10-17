@@ -1914,6 +1914,36 @@ const CASES: &[Case] = &[
         phase: "v27 M5",
         reason: "整数↔浮点转换（截断向零、符号扩展、u64 大值、f64→窄整）",
     },
+    // ── v27 M5 补面：溢出检查**真的**会 panic（e2e 默认 `-C overflow-checks=on`）──
+    //   注意：操作数必须经 `black_box` 否则会被**编译期 lint**（unconditional_panic）拦下，
+    //   根本走不到运行期检查——第一次写这条用例就是这么被"骗"过的。
+    Case {
+        name: "overflow_panic_shl",
+        body: "let x: u32 = 1; let s = core::hint::black_box(32u32); let _ = x << s; 42",
+        expected: 101,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "移位溢出在 overflow-checks=on 下必须 panic（退出码 101）；black_box 防常量折叠",
+    },
+    // ── v27 M5 补面：`i32::MIN / -1` 溢出 panic ──
+    Case {
+        name: "overflow_panic_div",
+        body: "let x = core::hint::black_box(i32::MIN); let y = core::hint::black_box(-1i32); let _ = x / y; 42",
+        expected: 101,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "i32::MIN / -1 在 overflow-checks=on 下必须 panic；black_box 防常量折叠",
+    },
     Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",

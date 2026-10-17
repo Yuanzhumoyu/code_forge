@@ -232,6 +232,21 @@ v27 M2 曾把 TLS 记成"待做（先 fail-closed）"。本轮把两条实现路
 **修复顺序**：① → ③ → ② **三条全部修复并转成 e2e 用例**
 （`narrow_shift_semantics`、`narrow_arith_signed`、`cast_int_float_matrix`，用例数 +3 ⇒ 现 **125**）。
 
+### M5 补面之八（2026-10-11）：溢出 panic 路径**验到了**；NaN 比较是新缺陷
+
+- **溢出检查路径**（此前零覆盖）：新增 `overflow_panic_shl`（`1u32 << 32`）与
+  `overflow_panic_div`（`i32::MIN / -1`）⇒ 两条都 **exit=101** ✔（模板的 panic 处理器）。
+  **踩了两次自己的坑**（都记下来）：
+  1. 直接写常量 ⇒ 被**编译期 lint** `unconditional_panic` 拦下，根本走不到运行期检查；
+  2. 改成非常量还不够——要 `core::hint::black_box` 才能阻止**常量折叠**。
+  ⇒ 现在两条用例都用 `black_box`，并在注释里写明原因。
+- **NaN 比较是新缺陷**（`float_nan_cmp`，未进套件）：
+  `let n = 0.0f64/0.0f64; n == n` 在 Rust 里必须 **false**，后端给 **true**（所以整条判定返回 1）。
+  同类：`n < 1.0`、`n > 1.0`、`n <= 1.0` 也必须都是 false。
+  **可疑点**：`ucomisd/comisd` 在无序（NaN）时会置 **PF**，只发 `sete`/`setb` 之类会得到 1
+  ⇒ 浮点比较的每条规则都要带 `setnp` 合取（`Ne` 则是 `setne ∨ setp`）。
+  下一步：看 `isa/x86.toml` 的 Fcmp 规则并按此修。
+
 ### M5 补面之七（2026-10-11）：一次**被用例否掉**的过界改动（`map_type` 兜底）
 
 - **动机**：上轮 `u128` 的根因是"兜底 `_ => PTR` 把未识别类型静默当指针"。想把兜底改成
