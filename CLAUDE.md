@@ -18,7 +18,10 @@ docs/
 │   ├── backend-gaps.md        # 后端能力缺口台账（v24 M3：21 条 `[cap:ID]` + 决策 + 双向守卫）
 │   └── imm_str.md             # ImmStr 类型设计（forge-ir 代码注释引用）
 ├── plans/                 # 进行中专项方案（活账本）[progress]
-│   └── （空：v26 已收口归档 → archive/project-v26-plan.md）
+│   ├── forge-rustc-v27-plan.md # **forge-rustc v27：完整 rustc 后端**（M1 正确性清零「把绕法换成
+│   │                          #   实现」/ M2 global_asm·asm!·unwind·TLS / M3 `std` 可用性 /
+│   │                          #   M4 第二目标 + 对象层根治 / M5 契约与门禁）
+│   └── （v26 已收口归档 → archive/project-v26-plan.md）
 ├── forge-ir/              # forge-ir 工作流 [active]
 │   ├── README.md              # 组说明（历轮计划已归档、如何继续）
 │   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）
