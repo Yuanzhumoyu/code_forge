@@ -191,6 +191,21 @@ v27 M2 曾把 TLS 记成"待做（先 fail-closed）"。本轮把两条实现路
 - **`-Zshare-generics=yes`（`WA-04`）**：现在仍是"链接期才发现的 LNK2019"⇒ 收口时可改为
   **编译期明确拒绝**（带缺口 ID）或补齐"被引用但上游未生成"的实例。
 
+### M5 补面之二（2026-10-11）：其它 codegen 旋钮
+
+同一条测试文件里加了"旋钮要么支持、要么点名拒绝"的矩阵（`tests/opt_levels.rs`）：
+
+| 旋钮 | 结果 |
+| --- | --- |
+| `-C debuginfo=0/1/2` | 各档都能编能跑，答案 42 ✔ |
+| `-C codegen-units=1/8`、`-Z threads=4` | 同上 ✔ |
+| `-C panic=unwind` | **干净拒绝**（见下） |
+
+**`panic=unwind` 的实测口径（重要）**：**no_std** crate 会被 **rustc 前端**先拒
+（"unwinding panics are not supported without std"），根本走不到后端的 `[cap:UNWIND]`——
+那条诊断只对 **std** 场景有意义，而 std 场景本地跑不了（M3-② 阻塞）。
+所以测试断言"拒绝 + 诊断提到 unwind"（前端或后端任一），**不假装**后端那条路被测到了。
+
 ### M5 补面（2026-10-11）：`-C opt-level` 全档回归
 
 - **缺口**：e2e 夹具的用例结构里没有"rustc 旗标"这一维（`extra` 是**源码级**附加）⇒

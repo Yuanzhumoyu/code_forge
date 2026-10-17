@@ -56,14 +56,14 @@ fn backend_dll() -> PathBuf {
     root.join("target").join("debug").join("forge_rustc.dll")
 }
 
-/// 编译 + 链接 + 真执行一个源码，返回进程退出码。
-fn run_at_level(src: &Path, dll: &Path, level: &str, out: &Path) -> Result<i32, String> {
+/// 编译 + 链接 + 真执行一个源码，返回进程退出码（**任意额外旗标**，`-C opt-level` 只是其中一种）。
+fn run_with(src: &Path, dll: &Path, extra: &[&str], out: &Path) -> Result<i32, String> {
     let status = Command::new("rustc")
         .arg(format!("-Zcodegen-backend={}", dll.display()))
         .args(["-Z", "threads=1"])
         .args(["-C", "panic=abort"])
         .args(["-C", "overflow-checks=on"])
-        .args(["-C", &format!("opt-level={level}")])
+        .args(extra)
         .args(["--edition", "2024"])
         .args(["--crate-type", "bin"])
         .arg(src)
@@ -78,7 +78,7 @@ fn run_at_level(src: &Path, dll: &Path, level: &str, out: &Path) -> Result<i32, 
         .map_err(|e| format!("启动 rustc 失败：{e}"))?;
     if !status.status.success() {
         return Err(format!(
-            "编译失败（opt-level={level}）：\n{}",
+            "编译失败（旗标 {extra:?}）：\n{}",
             String::from_utf8_lossy(&status.stderr)
         ));
     }
@@ -87,6 +87,11 @@ fn run_at_level(src: &Path, dll: &Path, level: &str, out: &Path) -> Result<i32, 
         .map_err(|e| format!("启动产物失败：{e}"))?;
     let status = child.wait().map_err(|e| format!("等待产物失败：{e}"))?;
     Ok(status.code().unwrap_or(-1))
+}
+
+/// `-C opt-level=<level>` 的特例（薄包装）。
+fn run_at_level(src: &Path, dll: &Path, level: &str, out: &Path) -> Result<i32, String> {
+    run_with(src, dll, &["-C", &format!("opt-level={level}")], out)
 }
 
 #[test]
@@ -177,4 +182,57 @@ fn same_level_is_bytewise_deterministic() {
             bb.len()
         );
     }
+}
+
+/// 其它 codegen 旋钮：**要么支持、要么点名拒绝**（不许静默产出坏码）。
+///
+/// - `-C panic=unwind`：本后端没有 SEH 表 ⇒ 必须**明确拒绝**且诊断带 `[cap:UNWIND]`
+///   （台账 `docs/reference/backend-gaps.md` 的同一 ID）；
+/// - `-C debuginfo=0/2`、`-C codegen-units=1/8`、`-Z threads=4`：都得能编能跑、答案不变。
+#[test]
+fn codegen_knobs_are_either_supported_or_rejected_cleanly() {
+    let dll = backend_dll();
+    assert!(dll.is_file(), "找不到后端 dylib：{}", dll.display());
+    let dir = std::env::temp_dir().join("forge_rustc_knobs");
+    std::fs::create_dir_all(&dir).expect("建临时目录");
+    let src = dir.join("prog.rs");
+    std::fs::write(&src, SRC).expect("写源码");
+
+    // ① `panic=unwind`：必须**干净拒绝**（不是静默产出坏码）。
+    //
+    //   实测口径：**no_std** crate 在 `-C panic=unwind` 下会被 **rustc 前端**先拒
+    //   （"unwinding panics are not supported without std"），走不到后端的
+    //   `[cap:UNWIND]`——那条只对 **std** 场景有意义，而 std 场景在本地跑不了
+    //   （见方案 M3-②）。所以这里断言"拒绝 + 诊断提到 unwind"，两种拒绝都算通过。
+    match run_with(&src, &dll, &["-C", "panic=unwind"], &dir.join("unwind.exe")) {
+        Ok(code) => panic!("panic=unwind 应被拒绝，却编出并返回 {code}"),
+        Err(e) => assert!(
+            e.to_lowercase().contains("unwind") || e.contains("[cap:UNWIND]"),
+            "拒绝信息应当点名 unwind（前端或后端），实际：\n{e}"
+        ),
+    }
+
+    // ② 其余旋钮：各档都答卷 42。
+    let cases: Vec<Vec<&str>> = vec![
+        vec!["-C", "debuginfo=0"],
+        vec!["-C", "debuginfo=1"],
+        vec!["-C", "debuginfo=2"],
+        vec!["-C", "codegen-units=1"],
+        vec!["-C", "codegen-units=8"],
+        vec!["-C", "codegen-units=8", "-Z", "threads=4"],
+    ];
+    let mut failures: Vec<String> = Vec::new();
+    for (i, extra) in cases.iter().enumerate() {
+        let out = dir.join(format!("knob_{i}.exe"));
+        match run_with(&src, &dll, extra, &out) {
+            Ok(42) => {}
+            Ok(code) => failures.push(format!("{extra:?} ⇒ 退出码 {code}（期望 42）")),
+            Err(e) => failures.push(format!("{extra:?} ⇒ {e}")),
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "各旋钮档必须给出同一答案（42）：\n{}",
+        failures.join("\n")
+    );
 }

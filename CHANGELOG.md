@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — v27 M5 补面之二：其它 codegen 旋钮
+
++ 与 opt-level 同一测试文件（`tests/opt_levels.rs`）：
+
+  | 旋钮 | 结果 |
+  | --- | --- |
+  | `-C debuginfo=0/1/2` | 各档能编能跑，答案 42 ✔ |
+  | `-C codegen-units=1/8`、`-Z threads=4` | 同上 ✔ |
+  | `-C panic=unwind` | **干净拒绝** ✔ |
+
++ `panic=unwind` 的实测口径：**no_std** crate 被 **rustc 前端**先拒（"unwinding panics are not
+  supported without std"），走不到后端的 `[cap:UNWIND]`——那条只对 **std** 场景有意义，而 std
+  场景本地跑不了（M3-②）。测试因此断言"拒绝 + 诊断提到 unwind"，**不假装**后端那条路被测到了。
+
 ### Added (2026-10-11) — v27 M5 补面：`-C opt-level` 全档回归
 
 + **缺口**：e2e 的用例结构没有"rustc 旗标"这一维（`extra` 是**源码级**附加）⇒ 全部用例
