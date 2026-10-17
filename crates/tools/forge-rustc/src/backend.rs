@@ -420,7 +420,22 @@ impl CodegenBackend for CodegenLibBackend {
             None
         };
 
-        let isa_name = isa_name_for_target(&target_triple);
+        // v27 M4-T1：没有该目标的 ISA 后端 ⇒ **明确拒绝**（此前会静默回落 x86_64）。
+        let Some(isa_name) = isa_name_for_target(&target_triple) else {
+            tcx.dcx().err(format!(
+                "{}",
+                IrError::capability(
+                    "TARGET",
+                    format!(
+                        "本后端没有目标 `{target_triple}` 的 ISA 后端（已支持：x86_64 / aarch64）"
+                    )
+                )
+            ));
+            return Box::new(CompiledModules {
+                modules: Vec::new(),
+                allocator_module: None,
+            });
+        };
         for (pi, plan) in plans.iter().enumerate() {
             if crate::trace::trace_enabled("CGU") {
                 eprintln!(
@@ -1019,6 +1034,10 @@ fn compile_fn_task<'tcx>(
 ) -> TaskOutcome {
     let mut table = FuncRefTable::default();
     let mut fns = Vec::with_capacity(1);
+    // 目标校验已在 `codegen_crate` 入口做过（缺口 ID `TARGET` 只在那里出现一次）⇒
+    // 这里是**不变量**：走到这里说明目标已被接受。推导失败即内部错误，不静默回落。
+    let isa_name = crate::compile::isa_name_for_target(&format!("{}", tcx.sess.opts.target_triple))
+        .expect("codegen_crate 已校验目标：这里不应出现未支持的目标");
     {
         let MonoItem::Fn(instance) = &plans[pi].items[fi] else {
             return TaskOutcome {
@@ -1056,8 +1075,9 @@ fn compile_fn_task<'tcx>(
                 ty::EarlyBinder::bind(tcx, body.clone()),
             );
             let body = tcx.arena.alloc(monomorphized);
-            let mut compiled = crate::compile::lower_and_compile(tcx, instance, body, &mut table)
-                .map_err(|e| e.to_string())?;
+            let mut compiled =
+                crate::compile::lower_and_compile(tcx, instance, body, &mut table, isa_name)
+                    .map_err(|e| e.to_string())?;
             // 直接调用的重定位符号是 "@{FuncRef 序号}"，替换为真实符号名
             // GlobalAddr 重定位 "G{N}" → 真实数据符号名（两条 resolve 只读
             // 查询本任务表——就地完成，编号不跨函数逃逸）

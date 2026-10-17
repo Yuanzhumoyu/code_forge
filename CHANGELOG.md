@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-11) — forge-rustc v27 M4-T1：未知目标不再静默回落 x86_64
+
++ `isa_name_for_target` 原来在 `else` 里返回 `"x86_64"` ⇒ 交叉编译到 riscv64 之类会**静默编出
+  x86 机器码**。现在返回 `Option<&'static str>`，`codegen_crate` 入口对 `None` 报
+  **`[cap:TARGET]`** 并直接返回空模块；目标校验**只有一个失败点**（缺口守卫要求 ID 恰好一处），
+  `compile_fn_task` 里的推导写成不变量（`expect`）。
++ 台账新增 `TARGET` 行（决策 `不做`）；方案账本 §8 记 M4 施工图（实测：18 处 `x86_64|win64`
+  命中里**真正写死的只有 4 处**，ISA 与约定层已就绪）与 T1 落地。
++ 诚实边界：本仓沙箱**无法端到端验证**交叉目标（只有宿主 target 的 core）⇒ 验收靠单点+台账+
+  守卫+审查；T2（约定）/T3（对象层/SEH）的验证条件也记在方案里。
+
 ### Added (2026-10-11) — forge-rustc v27 M2.5/S4 首刀：内联 `asm!` 的 `clobber_abi` 可用
 
 + `asm!("nop", clobber_abi("C"))` 从 **fail-closed** 变成可用（e2e `inline_asm_clobber_abi` ⇒ 42）。

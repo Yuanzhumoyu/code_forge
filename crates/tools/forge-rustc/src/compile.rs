@@ -15,6 +15,9 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
     instance: &Instance<'tcx>,
     body: &'tcx Body<'tcx>,
     func_refs: &'f mut FuncRefTable,
+    // 目标对应的 ISA 名——由调用方（`backend::codegen_crate`）选定并校验过目标。
+    // **本函数不再二次推导**：目标校验只能有一个失败点（缺口守卫要求 ID 恰好一处）。
+    isa_name: &str,
 ) -> Result<CompiledFunction, ForgeError> {
     // 按目标三元组选择 ISA 后端（仅 x86_64 支持——唯一的发行后端；
     // aarch64/riscv64 v11 后端已随 v11 语法层删除）
@@ -23,8 +26,7 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
         tcx.def_path_str(instance.def_id()),
         crate::lower::symbol_name_for_instance(tcx, instance),
     )));
-    let target_triple = format!("{}", tcx.sess.opts.target_triple);
-    let isa_name = isa_name_for_target(&target_triple);
+
     let lctx = LowerCtxt::new(tcx, instance, body, func_refs);
     if crate::trace::trace_enabled("GLOBAL") {
         eprintln!(
@@ -84,14 +86,20 @@ pub fn auto_register_isa_for_target(target_triple: &str) {
 }
 
 /// 从目标三元组确定 ISA 名称（Registry 注册名 = `[meta].name`）。
-pub fn isa_name_for_target(target_triple: &str) -> &'static str {
+///
+/// `None` = 本后端**没有**该目标的 ISA 后端。
+///
+/// v27 M4-T1：**不再回落 x86_64**。回落的后果是给 riscv64 之类的目标静默编出 x86
+/// 机器码—— 这正是仓库明令禁止的"静默降级"。调用方必须把 `None` 变成明确的诊断。
+pub fn isa_name_for_target(target_triple: &str) -> Option<&'static str> {
     if target_triple.contains("x86_64") || target_triple.contains("amd64") {
-        "x86_64"
+        Some("x86_64")
     } else if target_triple.contains("aarch64") || target_triple.contains("arm64") {
-        "arm64"
+        // ISA 与约定层已就绪（arm64.toml / aapcs64），但目标相关对象层（`.debug_frame`、
+        // PE 异常表、global_asm 的汇编器参数）还没接 ⇒ 见方案 M4-T2/T3。
+        Some("arm64")
     } else {
-        // 非 x86/aarch64 目标无 DSL 后端：回落宿主路径（与旧 x86_64 回落一致）
-        "x86_64"
+        None
     }
 }
 
