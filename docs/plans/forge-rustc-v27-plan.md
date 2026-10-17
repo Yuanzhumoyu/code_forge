@@ -188,6 +188,20 @@ M1 实际交付（本轮）：
 的判断；下游方案若照抄它做计划，会把早已关闭的项当缺口（本轮 E5/E6 就是这样）。**M5 的
 `workarounds_guard` 必须同时检查"状态词与代码引用"**，并给每行加**机器可读的状态列**。
 
+**e2e 目标整体验收（同轮实测）**：`cargo test -p forge-rustc --test e2e -- --test-threads=1`
+⇒ **8 passed / 1 failed**。唯一失败是 `e2e_cargo_template_workflow`，且是**环境性的**：
+
+```text
+info: syncing channel updates for nightly-2026-09-05-x86_64-pc-windows-msvc
+error: could not create temp file C:\Users\13523\.rustup\tmp\…: 拒绝访问。 (os error 5)
+```
+
+它在 **rustup 同步阶段**就失败（早于任何编译/后端行为）：本会话的文件沙箱是 `workspace-write`，
+而 rustup 要写 workspace 之外的 `~/.rustup/tmp` ⇒ **与 M1 改动无关**（该用例走
+`cargo +nightly …` 子进程，不经过被改的 `run_case`/`run_exe_with_timeout` 路径）。
+⇒ M1 的验收口径取：**106/106 用例 + 新守卫 + 另外 8 个 e2e 测试全绿**；此例在沙箱内不可跑
+（CI 上不受此限）。
+
 ### M1 侦察（2026-10-11，工作区，未提交）
 
 **目的**：动手前先把"绕法"的现状量准（避免照抄 WORKAROUNDS 的旧描述）。
