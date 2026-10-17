@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-11) — v27 M5 缺陷 ②：`f64 → i8/i16` 转换补上谱规则
+
++ **真因**：`elem` 谓词用的既不是位宽也不是 `TypeId`，而是 `dsl/codegen/lowering.rs::elem_id_of`
+  的**自有编号**（`F32=1/F64=2/I32=3/I64=4/I8=5/I16=6`）；既有规则 `{ in = ["elem", [3,4]] }`
+  覆盖的是 **i32/i64** ⇒ `f64 → i8/i16`（elem 5/6）**一条规则都没有**，`3.99f64 as u8` 因此报
+  `[cap:SPEC_LOWERING_RULE_MISSING] Fptosi no matching rule`。
++ **修法**（`isa/x86.toml`）：补 `Fptosi`/`Fptoui` 的 `(rs1_width=64 && elem ∈ {5,6})` 两条规则，
+  `CVTTSD2SI`（x86 只有 32/64 位目的形式 ⇒ 先按 32 位目的截断，`as` 就是截断向零）。
++ **验证**：`cast_int_float_matrix`（`-7i32→i8→i64→f64→i32`、`3.99f64 as u8`、`12345u64 as f64 as u64`、
+  `-2.5f32 as i8`、`1e10f64 as i64`）⇒ **exit=42**，用例数 **125**。
++ 两条被否掉的猜法记进账本（`elem` 当位宽 ✗、当 `TypeId` ✗），另记一条坑：
+  **规则插在 `when` 与 `insts` 之间会静默失效**，必须插在完整规则之后。
+
 ### Docs (2026-10-11) — v27 M5 缺陷 ② 调查：排除三种猜法（`elem` = TypeId，不是位宽）
 
 + 缺陷 ②（`3.99f64 as u8` ⇒ `Fptosi no matching rule`）本轮尝试补谱规则，**仍未命中**，

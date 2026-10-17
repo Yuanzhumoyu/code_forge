@@ -1898,6 +1898,22 @@ const CASES: &[Case] = &[
         phase: "v27 M5",
         reason: "窄有符号：回绕加/乘、除法/取模向零截断（负数余数符号跟被除数）",
     },
+    // ── v27 M5 缺陷②修复：整数 ↔ 浮点转换矩阵（期望值由 LLVM 对照）──
+    //   关键事实：`elem` 谓词用的是 `elem_id_of` 的**自有编号**（I8=5/I16=6/I32=3/I64=4），
+    //   既不是位宽也不是 TypeId ⇒ `f64 → i8/i16` 这类此前根本没有规则。
+    Case {
+        name: "cast_int_float_matrix",
+        body: "let x = -7i32; let y = x as i8 as i64 as f64 as i32; let z = 3.99f64 as u8; let w = 12345u64 as f64 as u64; let q = -2.5f32 as i8; let big = 1e10f64 as i64; if y == -7 && z == 3 && w == 12345 && q == -2 && big == 10_000_000_000 { 42 } else { 1 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "整数↔浮点转换（截断向零、符号扩展、u64 大值、f64→窄整）",
+    },
     Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",

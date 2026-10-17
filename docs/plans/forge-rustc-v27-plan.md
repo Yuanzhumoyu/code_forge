@@ -213,35 +213,24 @@ v27 M2 曾把 TLS 记成"待做（先 fail-closed）"。本轮把两条实现路
   比较仍返回 i1，不受截断影响。
 - 验证：`narrow_shift_semantics`（`i8 >> 7` = -1、`u8/u16` 逻辑右移 = 1）⇒ **exit=42** ✔。
 
-#### ② 浮点→整数转换缺 lowering 规则 —— **仍在**（已排除三种猜法）
+#### ② 浮点→整数转换缺 lowering 规则 —— **已修复**（`f64 → i8/i16` 没有规则）
 
-- 复现：`let z = 3.99f64 as u8;` ⇒ 编译期
-  `[cap:SPEC_LOWERING_RULE_MISSING] DSL lowering: Fptosi no matching rule`。
-- 事实：x86 只有 32/64 位目的宽度的 `cvttss2si`/`cvttsd2si`；8/16 位目的要先转 32 位再截断
-  ⇒ 属**谱侧规则序列**要补的。
-- **已排除/已确认**（2026-10-11 本轮实测）：
-  1. `elem` 谓词的值是**结果类型的 TypeId**，不是位宽：`VOID=0/I8=2/I16=3/I32=4/I64=5/F32=6/F64=7/PTR=8`
-     ⇒ 既有规则写 `{ in = ["elem", [3,4]] }` 覆盖的是 i16/i32（**不是**"3 字节/4 字节"）；
-  2. 照此补 `rs1_width=64 && elem=[2]`(I8) 的 `Fptosi`/`Fptoui` 两条规则**仍然不命中**
-     ⇒ `rs1_width` 或 `elem` 在**转换**这种 op 上取到的值与我假设的不同（转换没有"源操作数宽度"
-     的常规语义：源是浮点、结果是整数）⇒ **下一步要在 `lowering` 侧打印实际谓词上下文**
-     （或读 `dsl/codegen/integration.rs` 的 `elem`/`rs1_width` 取值路径），而不是继续猜；
-  3. 回退那两条规则（不留未验证的谱改动）。
+- 复现（修复前）：`let z = 3.99f64 as u8;` ⇒ `[cap:SPEC_LOWERING_RULE_MISSING] DSL lowering: Fptosi no matching rule`。
+- **真因（索引到了）**：`elem` 谓词用的既不是位宽也不是 `TypeId`，而是
+  `dsl/codegen/lowering.rs::elem_id_of` 的**自有编号**：
+  `F32=1 / F64=2 / I32=3 / I64=4 / I8=5 / I16=6`（其它 = 0）。
+  既有规则 `{ in = ["elem", [3, 4]] }` 覆盖的是 **i32/i64** ⇒ `f64 → i8/i16`（elem 5/6）
+  **一条规则都没有**。
+- **修法**（`isa/x86.toml`）：补 `Fptosi`/`Fptoui` 的 `(rs1_width=64 && elem ∈ {5,6})` 两条规则，
+  用 `CVTTSD2SI`（x86 只有 32/64 位目的形式 ⇒ 先按 32 位目的截断，`as` 的语义就是截断向零）。
+- **验证**：`cast_int_float_matrix`（`-7i32→i8→i64→f64→i32`、`3.99f64 as u8`、
+  `12345u64 as f64 as u64`、`-2.5f32 as i8`、`1e10f64 as i64`）⇒ **exit=42** ✔（期望值 LLVM 对照）。
+- 过程中被否掉的两种猜法（都记在这儿，省下一次重复探索）：`elem` 当位宽（`[1,2]`）✗、
+  `elem` 当 `TypeId`（`[2]`）✗；另外**规则插在 `when` 与 `insts` 之间会静默失效**——
+  必须插在**完整规则之后**。
 
-- 复现：`3.99f64 as u8`、`-2.5f32 as i8` 之类 ⇒ 编译期
-  `[cap:SPEC_LOWERING_RULE_MISSING] DSL lowering: Fptosi no matching rule`。
-- 事实：x86 只有 32/64 位目的宽度的 `cvttss2si`/`cvttsd2si` ⇒ 8/16 位目的必须"先转 32/64 位再截断"，
-  属**谱侧规则序列**要补的（不是后端问题）。
-
-#### ③ 窄有符号算术 —— **已修复**（与 ① 同源）
-
-- 复现（修复前）：`-100i8 / 3`、`-100i8 % 3` 错（分位诊断掩码 12 = {bit4, bit8}）——
-  同样是被零扩展的载入喂给 `sdiv`/`srem`（0x9C=156 ⇒ 156/3=52）。
-- 修法：与 ① 同一处（全窄整数运算统一扩展 + 截回）。
-- 验证：`narrow_arith_signed`（回绕加/乘、除法/取模向零截断）⇒ **exit=42** ✔
-  （期望值由 LLVM 对照：`-100i8*40i8` 回绕 = **96**）。
-
-**修复顺序**：① → ③ **均已修复并转成 e2e 用例**（`narrow_shift_semantics`、`narrow_arith_signed`，用例数 +2）；②（`Fptosi` 谱规则）仍待做。
+**修复顺序**：① → ③ → ② **三条全部修复并转成 e2e 用例**
+（`narrow_shift_semantics`、`narrow_arith_signed`、`cast_int_float_matrix`，用例数 +3 ⇒ 现 **125**）。
 
 ### M5 补面之七（2026-10-11）：一次**被用例否掉**的过界改动（`map_type` 兜底）
 

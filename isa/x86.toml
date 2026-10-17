@@ -3532,6 +3532,21 @@ insts = ["CVTTSS2SI {out}, {0}"]
 when = { eq = ["rs1_width", 32] }
 insts = ["CVTTSS2SI {out}, {0}"]
 
+# v27 M5 缺陷②：`f64 → i8/i16` 此前**没有规则** ⇒ `3.99f64 as u8` 报
+# `Fptosi no matching rule`。关键事实：`elem` 谓词用的是 `elem_id_of` 的**自有编号**
+# （F32=1/F64=2/I32=3/I64=4/**I8=5**/**I16=6**），既不是位宽也不是 TypeId——
+# 既有 `{ in = ["elem", [3, 4]] }` 覆盖的是 i32/i64。
+# x86 的 `cvttsd2si` 只有 32/64 位目的形式 ⇒ 先按 32 位目的截断（`as` 的语义就是截断向零）。
+[[lower.Fptosi]]
+when = { and = [{ eq = ["rs1_width", 64] }, { in = ["elem", [5, 6]] }] }
+insts = ["CVTTSD2SI {out}, {0}"]
+
+[[lower.Fptoui]]
+when = { and = [{ eq = ["rs1_width", 64] }, { in = ["elem", [5, 6]] }] }
+insts = ["CVTTSD2SI {out}, {0}"]
+
+
+
 # ── Fptoui / Uitofp（无符号；32 位域精确，u64 ≥ 2^63 边界 Phase 7）──
 
 [[lower.Fptoui]]
