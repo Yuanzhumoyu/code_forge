@@ -321,6 +321,32 @@ error: failed to get `cfg-if` as a dependency of package `std v0.0.0 (…/librar
 **同批提交的代码**：`M3-①`（alloc 运行时**按需注入**，见下节）——它是 std 的前置条件，
 与本批文档同源，故一并提交；**M3 本身未完成**（M3-② 的真跑 `std` 需要 M2.5 与 TLS）。
 
+### S1 落地（2026-10-11，工作区）——**无操作数的内联 `asm!` 真实现**
+
+按施工图做完，实测结论与预期一致，另有两处"施工时才发现"的细节：
+
+1. **汇编器**：`CompileState` 新增 `asm_parse: Option<Arc<dyn Fn(&str) -> Option<Vec<I>> + Send + Sync>>`，
+   在 `CompileState::new` 里由 `machine.assembler()` 构造（`Arc::clone`，`TargetAssembler: Send + Sync`）。
+   `new` 的 where 子句补 `M: TargetMachine<Inst = I>`（原来只写 `M: TargetMachine`）。
+2. **字符串表**：**不需要新字段**——`CompileState::new` 早已把 `TypeStore` 快照放进
+   `ctx.type_store`（v3 S3 的读路径优化），`lower_block` 直接 `lookup_str` 取文本。
+   这是施工图里"要穿两样东西"被**推翻一半**的地方：施工前必须实测，别照图纸闷头做。
+3. **IR 侧**：`ops.toml` 新增 `InlineAsm`（`operands = 0`、`results = 0`、`side_effect = true`、
+   `type_rule = "none"`）；`builder::inline_asm(&str)` 以 `Immediate::String` 携带文本；
+   `lowering.rs` 在逐指令循环里特判该 op ⇒ 解析文本、把每条 `Inst` 连同平行的
+   `inst_ops`/`inst_clobbers` 推进当前虚拟块。
+4. **施工时才发现的两处**：
+   - `forge-opt` 的 `const_fold` 对 `Opcode` 是**穷尽 match** ⇒ 新 op 必须显式加一条
+     （`InlineAsm => Ok(None)`，语义正确：不透明文本永不折叠）；
+   - `TerminatorKind::InlineAsm` 的 `template` 字段在本 nightly 上**直接 `.iter()` 即可**
+     （`.as_ref()` 会触发 `AsRef` 歧义：`&[T]` 有多个 `AsRef` 实现）。
+5. **rustc 侧放行条件（S1 口径）**：模板全是 `String` 片段（无 `{}` 占位符）且非
+   `options(noreturn)` ⇒ 发 IR op + `jump(targets[0])`；其余形态保持 `[cap:INLINE_ASM]`。
+
+**实测**：`inline_asm_nop` **exit=42**（编过、跑通、后续代码照常执行）；
+`inline_asm_ud2` **exit=-1073741795**（NTSTATUS #UD ⇒ 插进去的字节**真的被 CPU 执行**）；
+用例总数 **113**。
+
 ### S1 施工图（2026-10-11 二轮侦察：**要穿两样东西进管线**）
 
 早先担心的"给生成的 `Inst` 加 raw 变体"**不需要**——正确路径是：降级期用本 ISA 的

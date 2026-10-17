@@ -353,6 +353,42 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 continue; // Phi doesn't generate machine instructions
             }
 
+            // v27 M2.5/S1：**内联汇编**——立即数给汇编文本，交本 ISA 的汇编器解析成机器
+            // 指令，就地插进当前虚拟块（`inst_ops`/`inst_clobbers` 平行推进）。
+            // 文本的解析走 `ctx.type_store`（`CompileState::new` 已把类型表快照放进去）。
+            if inst.opcode == Opcode::InlineAsm {
+                let text: String = match inst.immediates.first() {
+                    Some(Immediate::String(sid)) => self
+                        .ctx
+                        .type_store
+                        .as_ref()
+                        .map(|s| s.lookup_str(*sid).to_string())
+                        .ok_or_else(|| {
+                            IrError::Unsupported(
+                                "InlineAsm：本次编译没有类型表快照，取不到汇编文本".to_string(),
+                            )
+                        })?,
+                    _ => {
+                        return Err(IrError::Unsupported(
+                            "InlineAsm 需要恰好一个 String 立即数（汇编文本）".to_string(),
+                        ));
+                    }
+                };
+                let parse = self.asm_parse.clone().ok_or_else(|| {
+                    IrError::Unsupported("本 ISA 未提供汇编器：内联汇编无法展开".to_string())
+                })?;
+                let insts = parse(&text).ok_or_else(|| {
+                    IrError::Unsupported(format!("内联汇编文本无法被本 ISA 的汇编器解析：{text:?}"))
+                })?;
+                let line = inst.loc.as_ref().and_then(|l| l.line);
+                for mi in insts {
+                    self.inst_ops.push(Default::default());
+                    self.inst_clobbers.push(Vec::new());
+                    self.vcode.push_inst_line(mi, line);
+                }
+                continue;
+            }
+
             // Nop instructions (used as tombstone by optimization passes such as
             // GVN/CSE/dead-code) generate no machine instructions. Skipping them
             // here keeps IR that has been through an optimization pipeline

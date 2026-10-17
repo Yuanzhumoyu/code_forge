@@ -1671,6 +1671,40 @@ const CASES: &[Case] = &[
     //   落地前实测：`asm!("mov {0}, 7", out(reg) x)` **编译无声通过**、运行退出
     //   `0xC000001D`（后端把该处降级成兜底 `unreachable`）⇒ 静默错值。
     //   现在 ⇒ 编译期报 `[cap:INLINE_ASM]`（本用例钉住"必须编译失败 + 报缺口 ID"）。
+    // ── v27 M2.5/S1：无操作数的内联 `asm!`（纯文本形态）真的能用 ──
+    //   路径：`TerminatorKind::InlineAsm`（纯 String 模板、非 noreturn）
+    //   ⇒ IR `InlineAsm`（文本走 `Immediate::String`）⇒ 降级期本 ISA 汇编器解析
+    //   ⇒ 机器指令就地插进函数体。`nop` 只验证"编过 + 跑通 + 后续代码照常执行"；
+    //   "字节真的被执行"由下面的 `inline_asm_ud2` 证明。
+    Case {
+        name: "inline_asm_nop",
+        body: "unsafe { core::arch::asm!(\"nop\") }; 42",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M2.5 S1",
+        reason: "asm!(\"nop\")：文本经 ISA 汇编器编成 0x90 插进函数体，后续代码照常执行",
+    },
+    //   `ud2` 是非法指令 ⇒ 真执行到就必是 NTSTATUS 异常（0xC000001D）。比 nop 强：
+    //   它证明插进去的**字节真的被 CPU 执行了**，而不是被默默丢掉。
+    Case {
+        name: "inline_asm_ud2",
+        body: "unsafe { core::arch::asm!(\"ud2\") }; 42",
+        expected: -1073741795, // 0xC000001D = NTSTATUS #UD（非法指令）
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: true,
+        known_failure: false,
+        phase: "v27 M2.5 S1",
+        reason: "asm!(\"ud2\") 的字节必须真的被执行 ⇒ NTSTATUS 0xC000001D",
+    },
+
     Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",

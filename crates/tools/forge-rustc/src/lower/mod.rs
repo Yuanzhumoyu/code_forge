@@ -1,4 +1,4 @@
-//! MIR → code-forge IR 降级（手写 lowering 核心）。
+﻿//! MIR → code-forge IR 降级（手写 lowering 核心）。
 //!
 //! 入口：`LowerCtxt::new` + `lower_body`。方法按职责拆分到子模块：
 //! `statement`/`rvalue`/`place`/`vtable`/`const_eval`（同类型多 impl 块）。
@@ -923,30 +923,58 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     let tgt = self.blocks[target];
                     self.builder.jump(tgt, &[]);
                 }
-                TerminatorKind::InlineAsm { template, .. } => {
-                    // v27 M2：内联 `asm!` **明确拒绝**。此前它落进下面的兜底 `_`，被静默
-                    // 降级成 `unreachable`——实测（2026-10-11）：`asm!("mov {0}, 7", out(reg) x)`
-                    // **编译无声通过**，运行却退出 `0xC000001D`（= 本后端的 `ud2` 兜底），
-                    // 即**静默错值**，违反仓库铁律。
-                    //
-                    // 与 `global_asm!` 的差别决定了它不能照搬那套：global_asm 是**整段独立**
-                    // 文本（交给汇编器进独立对象即可），而内联 asm 要**嵌在函数体里**、还要绑定
-                    // 寄存器约束 ⇒ 需要 IR 层能表达"原始文本 + 操作数寄存器约束"。
-                    let excerpt: String = template
-                        .iter()
-                        .map(|piece| match piece {
-                            rustc_ast::InlineAsmTemplatePiece::String(s) => s.as_ref(),
-                            rustc_ast::InlineAsmTemplatePiece::Placeholder { .. } => "{…}",
-                        })
-                        .collect::<Vec<_>>()
-                        .join("")
-                        .chars()
-                        .take(64)
-                        .collect();
-                    return Err(ForgeError::from(IrError::capability(
-                        "INLINE_ASM",
-                        format!("内联 asm! 尚未支持（首个片段：{excerpt:?}）"),
-                    )));
+                TerminatorKind::InlineAsm {
+                    template,
+                    options,
+                    targets,
+                    ..
+                } => {
+                    // v27 M2.5/S1：**纯文本形态**（模板里没有 `{}` 占位符、且不是
+                    // `options(noreturn)`）交给 IR 层就地展开——文本原样递给后端，
+                    // 由本 ISA 的汇编器编成机器指令插进函数体。
+                    // 其余形态（寄存器/`const`/`sym` 约束、标签、noreturn）保持
+                    // fail-closed，待 S2–S4：
+                    //   · 约束要先在 IR 层表达"操作数 ↔ 寄存器"，还要参与分配；
+                    //   · 标签要延伸 IR 的块模型；
+                    //   · noreturn 要改 CFG（不产生落点跳转）。
+                    let mut plain_text = String::new();
+                    let mut plain = true;
+                    for piece in template.iter() {
+                        match piece {
+                            rustc_ast::InlineAsmTemplatePiece::String(s) => {
+                                plain_text.push_str(s.as_ref());
+                            }
+                            rustc_ast::InlineAsmTemplatePiece::Placeholder { .. } => plain = false,
+                        }
+                    }
+                    let noreturn = options.contains(rustc_ast::InlineAsmOptions::NORETURN);
+                    if plain && !noreturn {
+                        self.builder.inline_asm(&plain_text);
+                        if let Some(t) = targets.first() {
+                            let tgt = self.blocks[t];
+                            self.builder.jump(tgt, &[]);
+                        }
+                    } else {
+                        // 不支持的形态：**明确拒绝**（M2 的 fail-closed 保留）。
+                        // 与 `global_asm!` 的差别决定了不能照搬那套：global_asm 是整段独立文本
+                        // （交给汇编器进独立对象即可），而内联 asm 要嵌在函数体里、还要绑定寄存器
+                        // 约束 ⇒ 需要 IR 层表达"原始文本 + 操作数寄存器约束"（S2–S4）。
+                        let excerpt: String = template
+                            .iter()
+                            .map(|piece| match piece {
+                                rustc_ast::InlineAsmTemplatePiece::String(s) => s.as_ref(),
+                                rustc_ast::InlineAsmTemplatePiece::Placeholder { .. } => "{…}",
+                            })
+                            .collect::<Vec<_>>()
+                            .join("")
+                            .chars()
+                            .take(64)
+                            .collect();
+                        return Err(ForgeError::from(IrError::capability(
+                            "INLINE_ASM",
+                            format!("内联 asm! 尚未支持（首个片段：{excerpt:?}）"),
+                        )));
+                    }
                 }
                 other => {
                     // 兜底**不再静默发 unreachable**（v27 M2）：未知/未接的终结符一律明确

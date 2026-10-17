@@ -638,6 +638,19 @@ impl FunctionBuilder {
             InstFlags::SIDE_EFFECT,
         );
     }
+    /// 内联汇编（v27 M2.5/S1）：立即数给**汇编文本**，由本 ISA 的汇编器在降级期
+    /// 解析成机器指令就地插入。文本以 `Immediate::String` 携带（无操作数/无结果）。
+    pub fn inline_asm(&mut self, text: &str) {
+        let s = self.ctx.borrow_mut().intern_str(text);
+        self.emit(
+            Opcode::InlineAsm,
+            vec![],
+            vec![Immediate::String(s)],
+            &[],
+            InstFlags::SIDE_EFFECT,
+        );
+    }
+
     /// 浮点 store：value 为 F32/F64 时用 Fstore（后端按类型分派到
     /// MOVSD_MR 等浮点内存移动指令）。
     pub fn fstore(&mut self, value: Value, addr: Value) {

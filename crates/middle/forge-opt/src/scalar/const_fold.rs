@@ -208,6 +208,9 @@ pub fn fold_opcode(
         return Ok(None);
     }
     match opcode {
+        // v27 M2.5：内联汇编是**副作用 + 不透明文本**，永远不折叠（也不许被
+        // DCE/CSE 动到——`side_effect = true` 的那一侧由 pass 各自判）。
+        Opcode::InlineAsm => Ok(None),
         // === 整数算术 ===
         Opcode::Iadd => fold_binary_int(operands, ty, |a, b| a + b, |a, b| a.checked_add(b)),
         Opcode::Isub => fold_binary_int(operands, ty, |a, b| a - b, |a, b| a.checked_sub(b)),

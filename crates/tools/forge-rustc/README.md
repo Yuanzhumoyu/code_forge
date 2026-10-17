@@ -175,18 +175,19 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 
 ## 支持矩阵（x86_64-pc-windows-msvc 宿主）
 
-### ✅ 已验证（e2e 111 用例：**111 硬断言 + 0 个 `FLAKY` 容忍项**）
+### ✅ 已验证（e2e 113 用例：**113 硬断言 + 0 个 `FLAKY` 容忍项**）
 
-> **2026-10-11 核（v27 M1–M2 实测）**：`tests/e2e.rs` 的 `CASES` 现为 **111 个 `Case`**、
+> **2026-10-11 核（v27 M1–M2 实测）**：`tests/e2e.rs` 的 `CASES` 现为 **113 个 `Case`**、
 > **`known_failure: true` = 0、`FLAKY` 名单为空** ⇒ 套件是**真全过**，不是容忍式全绿。
 > 早先的「103 用例 + 5 个 `FLAKY`」（2026-09-06 回归）里的那 5 例
 > （`vec_push`/`vec_string`/`vec_from_slice`/`vec_iter_enumerate`/`box_value`）已随
 > **WA-42**（niche tag 写入宽度）在 2026-09-12 全部转正（见 WORKAROUNDS [WA-11]/[WA-42]）。
-> v27 M1–M2 新增用例：`overflow_runtime_trap`（trap 语义）、`intrinsic_abort`（`abort()` → `ExitProcess(3)`）、`global_asm_call` /
+> v27 新增用例：`overflow_runtime_trap`（trap 语义）、`intrinsic_abort`（`abort()` → `ExitProcess(3)`）、
+`inline_asm_nop` / `inline_asm_ud2`（M2.5/S1 内联 `asm!`）、`global_asm_call` /
 > `global_asm_sym_const`（`global_asm!`）、`neg_inline_asm` / `neg_panic_unwind` /
 > `neg_thread_local`（三条缺口 ID 的 fail-closed）；删除了被正当推翻的 `neg_global_asm`。
 >
-> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=111 hard=111 flaky=0 known=0 expect_trap=1 -->
+> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=113 hard=113 flaky=0 known=0 expect_trap=2 -->
 >
 > **上面这段机读标记与 `tests/e2e.rs` 双向相等**：改用例数/容忍名单时必须同步它，
 > 否则 `cargo forge gate --guards` 会红（守卫就是为了治「文档与代码分叉」这件事）。

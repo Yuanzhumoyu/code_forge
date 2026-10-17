@@ -11,6 +11,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-rustc v27 M2.5/S1：无操作数的内联 `asm!` 真实现
+
++ **内联 `asm!` 从"明确拒绝"推进到真实现**（S1 口径：模板无 `{}` 占位符、非 `options(noreturn)`）。
+  链路：`TerminatorKind::InlineAsm` → IR `Opcode::InlineAsm`（文本走 `Immediate::String`）→
+  降级期用**本 ISA 的汇编器**（`TargetAssembler::parse_insts`）解析 → 机器指令就地插进函数体
+  （`inst_ops`/`inst_clobbers` 平行推进）。**不需要**给生成的 `Inst` 加"raw 字节"变体。
++ 管线接线：`CompileState` 新增 `asm_parse` 闭包（由 `machine.assembler()` 传入，
+  `CompileState::new` 的 where 子句补 `M: TargetMachine<Inst = I>`）；文本解析**复用已有的**
+  `ctx.type_store`（不需要新字段——施工图里"要穿两样东西"被推翻一半）。
++ 仍需 fail-closed（`[cap:INLINE_ASM]`）：寄存器/`const`/`sym` 约束、标签、
+  `options(noreturn)`、非本 ISA 文本（S2–S4）。
++ e2e：`inline_asm_nop`（**exit=42**：编过、跑通、后续代码照常）与 `inline_asm_ud2`
+  （**exit=-1073741795** = NTSTATUS `#UD`：证明插进去的字节**真的被 CPU 执行**）；
+  用例总数 **113**（README 机读计数标记同步，守卫钉住）。
++ 施工时发现的两处坑（已写进代码注释）：`forge-opt` 的 `const_fold` 对 `Opcode` 是**穷尽
+  match**（新 op 必须显式加一条，`InlineAsm => Ok(None)`）；本 nightly 的
+  `InlineAsm.template` 用 `.iter()` 直接迭代（`.as_ref()` 会撞 `AsRef` 歧义）。
++ 验收：全量 e2e **113/113**、零 `KNOWN`；三个守卫绿；`cargo forge gate --subset rustc` 7 步全绿。
+
 ### Added (2026-10-11) — forge-rustc v27 M5-②：`cargo forge gate --subset rustc`（后端一条命令）
 
 + **`--subset rustc`**：只跑后端相关的 **7 步**（`fmt` / `rustc-e2e` / `rustc-e2e-guards` /

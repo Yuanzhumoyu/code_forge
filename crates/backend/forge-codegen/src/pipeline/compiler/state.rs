@@ -33,10 +33,15 @@ pub(crate) struct CompileState<I: MachineInst> {
     /// 有 plan，否则调用点/收参处会各自 fail-closed，错误消息离现场远，且"算不出来"容易被
     /// 误当成"这条签名能编"。缺口清单见 `docs/archive/calling-convention-redesign-plan.md` 的 A6。
     pub(crate) abi_plan: forge_abi::AbiPlan,
+    /// v27 M2.5/S1：**内联汇编文本 → 机器指令**。由本 ISA 的 `TargetAssembler` 提供；
+    /// ISA 没接汇编器时为 `None`（此时遇到 `InlineAsm` 就 fail-closed）。
+    /// 为什么存成闭包：`CompileState` 不能借住 `&M`（生命周期），而汇编器本身是
+    /// `Arc<dyn TargetAssembler>`（`Send + Sync + 'static`）⇒ clone 一个 Arc 即可。
+    pub(crate) asm_parse: Option<std::sync::Arc<dyn Fn(&str) -> Option<Vec<I>> + Send + Sync>>,
 }
 
 impl<I: MachineInst + 'static> CompileState<I> {
-    pub(super) fn new<M: TargetMachine>(
+    pub(super) fn new<M: TargetMachine<Inst = I>>(
         machine: &M,
         func: &Function,
         module_sigs: Option<std::sync::Arc<forge_ir::ModuleSigs>>,
@@ -46,6 +51,14 @@ impl<I: MachineInst + 'static> CompileState<I> {
         // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取**一次快照**——守卫借的是
         // 这个局部，不与 func 的 &mut 借用冲突；快照交给 LowerCtx（lowering 期间类型表
         // 只读，生成代码不再逐指令取锁，见 v3 S3 余项①）。
+        // v27 M2.5/S1：把本 ISA 的汇编器 clone 进来（闭包转 `Vec<I>`；无汇编器 ⇒ None）。
+        let asm_parse: Option<std::sync::Arc<dyn Fn(&str) -> Option<Vec<I>> + Send + Sync>> =
+            machine.assembler().map(|a| {
+                let a = std::sync::Arc::clone(a);
+                let f = move |text: &str| a.parse_insts(text).ok();
+                std::sync::Arc::new(f)
+                    as std::sync::Arc<dyn Fn(&str) -> Option<Vec<I>> + Send + Sync>
+            });
         let types_ctx = func.types.clone();
         let store = types_ctx.borrow();
         let mut ctx = LowerCtx::new();
@@ -125,6 +138,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
             param_xregs: Vec::new(),
             alloca_offsets: SecondaryMap::new(),
             abi_plan,
+            asm_parse,
         })
     }
 
