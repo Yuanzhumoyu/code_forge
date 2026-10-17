@@ -76,6 +76,11 @@ pub const GUARDS: &[(&str, &str, &str)] = &[
     ),
     (
         "forge-codegen",
+        "reg_name_table",
+        "`TargetRegInfo::reg_name` 给出汇编器认得的寄存器拼写（v27 S2 前置）",
+    ),
+    (
+        "forge-codegen",
         "rustc_doc_counts",
         "forge-rustc 文档计数与 `tests/e2e.rs` 双向相等",
     ),
@@ -554,7 +559,8 @@ pub fn run(a: &Args, verbose: bool) -> anyhow::Result<i32> {
             "rustc-e2e",
             "rustc-e2e-guards",
             "capability_gaps",
-            "file_size_ratchet", // 管线文件的规模棘轮：v27 S1 曾漏跑它而把 lowering.rs 撑破上限
+            "file_size_ratchet",
+            "reg_name_table", // 管线文件的规模棘轮：v27 S1 曾漏跑它而把 lowering.rs 撑破上限
             "rustc_doc_counts",
             "workarounds_guard",
             "docs",

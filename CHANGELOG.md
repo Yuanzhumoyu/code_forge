@@ -11,6 +11,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-11) — forge-rustc v27 M2.5/S2 前置：寄存器名表（`TargetRegInfo::reg_name`）
+
++ **`TargetRegInfo::reg_name(reg, class) -> Option<&'static str>`**：寄存器编号 + 寄存器类 →
+  **汇编文本里的拼写**。生成器（`forge-isa-dsl`）从**与 `FromStr` / `From<Reg> for &'static str`
+  同源**的 `group_names` 发出反向表（不为第二个名字表维护两份数据）；缺省 `None`
+  （非 DSL 后端/测试替身），调用方按"拿不到就 fail-closed"处理。
++ **接口必须带 `RegClass`**——这是新守卫当场抓到的真缺陷：`PhysReg::to_index` 在"多宽度
+  视图"ISA 上**跨组冲突**（x86 的 `AL` 与 `RAX` 同为编号 0），第一版只按编号查会返回 `"AL"`。
+  反向表因此按 `(编号, 类)` 匹配。
++ **新守卫 `reg_name_table`**（`crates/backend/forge-codegen/tests/reg_name_table.rs`）：
+  对 x86 的 RAX/RCX/RDX 做"名字 → `add {name}, {name}` → 汇编器解析成功"的往返，
+  同时钉住"拿得到名字"与"汇编器认这个名字"两件事；已登记进 `GUARDS` 与 `--subset rustc`
+  （后者现为 **9 步**）。
++ 验收：`cargo forge gate --subset rustc` ⇒ **9 步全绿，174.7s**（含全量 e2e 113/113、
+  规模棘轮、三个既有守卫与文档 lint）；工作区 `cargo check --workspace --exclude forge-rustc`
+  全绿（生成器改动会重生成三份 ISA 模块）。
+
 ### Fixed (2026-10-11) — forge-rustc v27：规模棘轮回退修复 + 后端管线契约回写
 
 + **修回退**：v27 M2.5/S1 把 `pipeline/lowering.rs` 撑到 871 行、超过 `file_size_ratchet`

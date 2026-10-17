@@ -1,4 +1,4 @@
-//! ISA-DSL codegen — TargetMachine 集成层（迭代 5）。
+﻿//! ISA-DSL codegen — TargetMachine 集成层（迭代 5）。
 //!
 //! 自包含模块（encode/decode/disassemble/assemble）之上生成 forge-codegen
 //! 组件：MachineInst impl、TargetEncoder/Decoder/Disassembler/Assembler、
@@ -518,6 +518,25 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
     // 主浮点/向量组数量：与默认 FPR 类一致（优先 16 字节 XMM 组——ABI/SSE
     // 占位以 XMM 为基准；ZMM 等 EVEX 组不改变 num_fp_regs，否则 regalloc 会
     // 用 XMM 类分配 16-31 号越界）。riscv F32/F64 同为 32 号组；无 FPR 组 → 0。
+    // v27 M2.5/S2：寄存器编号 → 汇编拼写。与 `to_str`/`FromStr` **同源**（同一份
+    // `group_names`），运行时按 `to_index` 线性查找——只有内联 asm 替换占位符会走，非热路径。
+    let mut reg_name_pairs = Vec::new();
+    for (reg_class, group) in &model.reg {
+        for name in crate::dsl::shared::group_names(group)? {
+            let reg_lit = proc_macro2::Ident::new(&name, proc_macro2::Span::call_site());
+            // 三元组：`to_index` 在多宽度视图 ISA 上跨组冲突（AL 与 RAX 同为 0），
+            // 所以**必须连类一起**匹配。
+            // `RegClass` 没有 ToTokens 实现 ⇒ 显式展开成构造式（四个变体都带位宽 payload）。
+            let rc = match *reg_class {
+                RegClass::GPR(w) => quote::quote! { forge_ir::RegClass::GPR(#w) },
+                RegClass::FPR(w) => quote::quote! { forge_ir::RegClass::FPR(#w) },
+                RegClass::VEC(w) => quote::quote! { forge_ir::RegClass::VEC(#w) },
+                RegClass::KReg(w) => quote::quote! { forge_ir::RegClass::KReg(#w) },
+            };
+            reg_name_pairs.push(quote::quote! { (Reg::#reg_lit, #rc, #name) });
+        }
+    }
+
     let fpr_count = match model.main_fpr_class()? {
         Some(rc) => model.names_of(rc)?.len() as u32,
         None => 0,
@@ -696,6 +715,15 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
             }
             fn default_gpr_class(&self) -> forge_ir::RegClass { __DEFAULT_GPR_CLASS }
             fn default_fpr_class(&self) -> forge_ir::RegClass { __DEFAULT_FPR_CLASS }
+            /// v27 M2.5/S2：寄存器编号 + 类 → 汇编文本拼写（内联 asm 替换占位符用）。
+            fn reg_name(&self, reg: u32, class: forge_ir::RegClass) -> Option<&'static str> {
+                [#(#reg_name_pairs),*]
+                    .into_iter()
+                    .find(|(r, c, _)| {
+                        <Reg as forge_ir::PhysReg>::to_index(*r) == reg && *c == class
+                    })
+                    .map(|(_, _, n)| n)
+            }
             fn addr_class(&self) -> forge_ir::RegClass { __ADDR_CLASS }
             fn value_gpr_class(&self) -> forge_ir::RegClass { __VALUE_GPR_CLASS }
             fn value_fpr_class(&self) -> forge_ir::RegClass { __VALUE_FPR_CLASS }

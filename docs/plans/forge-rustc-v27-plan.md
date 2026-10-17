@@ -380,11 +380,13 @@ error: failed to get `cfg-if` as a dependency of package `std v0.0.0 (…/librar
   输入绑 `Use`、输出绑 `Def`。
 - **已确认**：`MachineInst::set_reg_field(i, preg, class)` 只对**可改写**字段生效；模板里写死的
   寄存器（DSL 不为它生成该分支）正是"字面量寄存器"那一侧，语义边界天然清楚。
-- **仍缺（下一轮开工先解决）**：**寄存器名表**。`machine.reg_info()` 上**没有**取名字的方法
-  （连 `RegInfo` 这个名字都不是 trait，`pub trait RegInfo` 全仓搜不到）；而 S2 必须"把选中的
-  物理寄存器写成汇编文本里的名字"再交给汇编器 ⇒ 先找生成物里 `Reg`/汇编信息里的名字表
-  （正向"名字 → 索引"在汇编器里已有，反向表要找），找不到就在生成侧补一个
-  `name(idx) -> &'static str`。
+- **已解决（2026-10-11，S2 开工第一件事）**：**寄存器名表**。`TargetRegInfo::reg_name(reg, class)`
+  已落地——生成器从**与 `FromStr`/`From<Reg> for &'static str` 同源**的 `group_names` 发出
+  反向表，经 `TargetRegInfo` 暴露给管线。**踩到一个真缺陷（被新守卫当场抓到）**：
+  `PhysReg::to_index` 在"多宽度视图"ISA 上**跨组冲突**（x86 的 `AL` 与 `RAX` 同为编号 0），
+  第一版只按编号查 ⇒ 返回 `"AL"` 而不是 `"RAX"`。修正：接口**必须带 `RegClass`**，
+  反向表按 `(编号, 类)` 匹配。守卫 `crates/backend/forge-codegen/tests/reg_name_table.rs`
+  同时钉住两件事：拿得到名字，且**汇编器认这个名字**（`add {name}, {name}` 往返解析）。
 - **不变式**：`push_inst_line` 与 `inst_ops`/`inst_clobbers` 必须**逐条**平行（漏一条就错位）；
   `inline_asm.rs` 现在每次 push 都配一条，扩成多指令后要保持。
 

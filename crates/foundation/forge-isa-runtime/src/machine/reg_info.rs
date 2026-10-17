@@ -15,6 +15,17 @@ pub trait TargetRegInfo: Send + Sync + 'static {
     /// 浮点/向量寄存器数量。
     fn num_fp_regs(&self) -> u32;
 
+    /// 寄存器编号 → **汇编文本里的拼写**（v27 M2.5/S2：内联 asm 替换占位符要用）。
+    ///
+    /// 缺省 `None`（非 DSL 后端/测试替身）。调用方必须按"拿不到就 fail-closed"处理，
+    /// **不许**自己拼名字（拼错会变成"汇编器解析失败"，错误离现场很远）。
+    /// **必须带类**：`PhysReg::to_index` 在"多宽度视图"的 ISA 上**跨组冲突**
+    /// （x86 的 `AL` 与 `RAX` 都是编号 0），只按编号查会返回错的名字——v27 的
+    /// 守卫测试 `reg_name_table` 就是这么抓到第一版的错。
+    fn reg_name(&self, _reg: u32, _class: RegClass) -> Option<&'static str> {
+        None
+    }
+
     /// 寄存器类表（ISA 声明）：**分配器类表的唯一来源**。
     ///
     /// 每个"宿主可能请求的类"都指向同族的物理寄存器文件；未声明的族不产生类
