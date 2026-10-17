@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Docs (2026-10-11) — 状态修正：**M5 未完成**（不提交 PR）
+
++ 用户明确要求「M5 没有完成，不要提交 PR」⇒ 修正方案账本 §2 状态总表：M5 由 `✅ 落地` 改为
+  **🔶 进行中（未完成）**，并新增「M5 未闭环清单」：
+  ① **NaN 比较缺陷仍在**（`0.0/0.0 == 0.0/0.0` 返回 `true`）；
+  ② "已知缺陷不进套件"本身就是未闭环证据（零容忍目前靠把有缺陷的用例挡在套件外）；
+  ③ `i128`/`u128` 仍 `[cap:WIDE_INT]` 拒绝；④ `label`/`sym` 仍 fail-closed。
++ 确认纪律：**子集全绿 + 一次提交 ≠ 里程碑完成**；完成 = 契约面无已知缺陷。
++ 本轮无任何 PR / 看板动作。
+
 ### Added (2026-10-11) — v27 M5 补面之八：溢出 panic 路径用例（此前零覆盖）
 
 + 新增 `overflow_panic_shl`（`1u32 << 32`）与 `overflow_panic_div`（`i32::MIN / -1`）⇒ 两条都
