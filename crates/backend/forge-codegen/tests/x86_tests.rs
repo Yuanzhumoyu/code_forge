@@ -214,3 +214,26 @@ fn class_table_is_declared_isa_data() {
     assert_eq!(v512.width, 64, "VEC(64).width 必须是 64（spill 槽按值宽）");
     assert!(v512.allocatable.contains(&15), "池应含 XMM15：{v512:?}");
 }
+
+/// `[machine] reg_move` 生成的 `make_reg_move`（块参数拷贝的基础设施）。
+///
+/// 为什么需要它：块参数过去靠"复用跳转实参的寄存器"省拷贝，**同一实参喂多个
+/// 参数**时会静默错值（v27 M6 实测）。正解是发显式拷贝，而拷贝需要"造一条搬移
+/// 指令"的与 ISA 无关入口——就是这条。
+#[test]
+fn make_reg_move_builds_a_real_move() {
+    use forge_ir::RegClass;
+    // `make_reg_move` 是 `MachineInst` 的关联函数 ⇒ trait 必须在作用域里。
+    use forge_isa_runtime::machine::inst::MachineInst as _;
+    let mv = Inst::make_reg_move(0, 1, RegClass::GPR(64)).expect("x86 声明了 reg_move");
+    // 是搬移、且方向正确（dst=字段0 的值，src=字段1）。
+    assert_eq!(
+        mv.is_move(),
+        Some((0, 1)),
+        "必须被识别为 Move 且 dst/src 就位"
+    );
+    // 宽度跟着 class 走：64 位视图 → dst/src 都是 64 位寄存器名。
+    let d = mv.reg_field(0);
+    let s = mv.reg_field(1);
+    assert_eq!((d, s), (0, 1), "字段回读与构造参数一致");
+}

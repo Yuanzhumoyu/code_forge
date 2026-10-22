@@ -127,8 +127,8 @@ mod tests {
         let exit = b.create_block();
 
         b.switch_to_block(entry);
-        let one = b.iconst_i32(1);
-        let zero = b.iconst_i32(0);
+        let one = b.constant(1i32);
+        let zero = b.constant(0i32);
         let c1 = b.icmp(IntCC::Ne, one, zero);
         b.branch(c1, left, &[], right, &[]);
 
@@ -205,8 +205,8 @@ mod tests {
 
         b.switch_to_block(entry);
         let p = b.stack_addr(0); // 地址在循环外
-        let one = b.iconst_i32(1);
-        let zero = b.iconst_i32(0);
+        let one = b.constant(1i32);
+        let zero = b.constant(0i32);
         let c1 = b.icmp(IntCC::Ne, one, zero);
         b.branch(c1, left, &[], right, &[]);
 

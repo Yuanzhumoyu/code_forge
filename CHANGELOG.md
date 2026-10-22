@@ -11,6 +11,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-19) — `forge-rustc`：`--emit=obj -o <path>` 现在真的写出那个路径
+
++ **症状**：`rustc -Zcodegen-backend=forge_rustc.dll --emit=obj -o foo.obj` 编译"成功"，
+  但 `foo.obj` **根本不存在**——目录里只多出后端自选的 `forge_codegen_output.o`。
+  同一条命令交 LLVM 后端则正常得到 `foo.obj`。
++ **真因**：把 CGU 临时对象复制到用户 `-o` 的那一步（`copy_if_one_unit`）住在
+  `rustc_codegen_ssa::back::write` 里，只有"走 ssa 自带 write 流程"的后端才执行；
+  自定义 `CodegenBackend` 走 `codegen_crate` → `link_binary`，**这一跳不会替我们复制**。
++ **修法**：单对象时在写完自己的对象后，再复制一份到 `output_filenames().path(Object)`
+  （它优先返回用户的 `-o`，否则是 `--out-dir` + 文件名词干 + `.o`）；用户点名了具体文件时
+  清掉我们那份临时对象（`-C save-temps` 保留）。多 CGU 维持 rustc 自己的口径
+  （警告 + 保留编号文件），不逐个覆盖同一目标。
++ **回归守卫**：新增 `crates/tools/forge-rustc/tests/object_output.rs`——同时钉
+  "`-o <具体文件>` 必须存在且不留临时对象"与"`--out-dir` 形态下固定名仍在"
+  （确定性与数据符号两类测试按 `forge_codegen_output*` 前缀认产物）。
+
+### Changed (2026-10-18) — v28 新常量池：比特值统一 + 四元枚举句柄 + `AsConst`（IR 二进制 v6）
+
++ **`ConstantPool` 重设计**（不兼容旧池）：整数与浮点合并为**比特值** `BitValue { bits, width }`
+  ——"整数还是浮点"由使用点的类型/opcode 决定，池不再分通道；新增 `intern_bits` /
+  `intern_int`（符号扩展规范形，`i1` 例外）/ `intern_float` / `intern_agg` / `intern_vector`
+  （**端序进去重键**）/ `intern_big`；读取统一为 `get → ConstValue` 与 `bits`/`big`/
+  `vector`/`aggregate` 分型入口，视图强转 `as_i64`/`as_big`/`as_f64_bits`（按位宽取补码值）；
+  跨池 `import`（聚合递归）。删除：bool 预置槽、`int_dedup`/`float_dedup` 与 `big` 双去重、
+  `insert_sint`、`total_len`、死类型 `IntConst`/`FloatConst`。
++ **`ConstId` 四元枚举**：`Bits` / `Big` / `Vector` / `Agg`（2 bit tag 恰好铺满 ⇒ `raw`/`from_raw`
+  全域定义、永不 panic）；`AggId`/`AggChild` 删除，聚合并入同一句柄空间
+  （`ValueDef::AggConst(ConstId)`、`Immediate::Agg` → `Immediate::Const`）。
++ **`AsConst` 成为唯一常量糖**：`fb.constant(42i32)` / `42i32.as_const(&mut fb)`；
+  原语精简为 `const_int` / `const_float` / `const_bool` / `const_big`；
+  删除 `iconst_i8/i16/i32/i64`、`fconst_f32/f64`、`iconst_i128`、`fconst128`。
++ **IR 二进制格式升到 v6**（`IR_FORMAT_VERSION = 6`）：CONSTS 改为带 tag 单流
+  （bits / big / vector / aggregate），**无兼容读取**；`docs/reference/binary-format.md` 同步。
++ **验证**：`cargo test -p forge-ir` 全绿（含新增"合并键/无预置槽/端序进键/跨池导入/
+  句柄编码全域/`AsConst`"6 组回归）；`cargo test --workspace --exclude forge-rustc` 全绿；
+  `forge-rustc` e2e **164/164**。
+
 ### Fixed (2026-10-11) — v27 M5：NaN 比较缺陷修复（`Ne` 该走无序不等 `Une`）
 
 + **先测后改**：用位掩码探针把六种浮点比较逐项打出来 ⇒ 只有 **`NaN != 1.0` 返回 false**

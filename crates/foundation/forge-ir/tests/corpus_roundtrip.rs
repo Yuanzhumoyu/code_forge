@@ -134,12 +134,17 @@ mod fidelity {
 
     /// f16/bfloat 全局常量：按 LLVM 的**位模式**写法输出（`0xH....`/`0xR....`），
     /// 且回读保真（此前落通用 hex 臂，打 4 字节且无前缀 ⇒ 回读按整数截断成 0）。
+    ///
+    /// 三段建模后 `half` 与 `bfloat` 是**两种**格式（同为 16 位、阶码/尾数不同）：
+    /// half ⇒ `f16`(1+5+10) 打印 `0xH....`，bfloat ⇒ `bf16`(1+8+7) 打印 `0xR....`
+    /// （旧期望把 bfloat 也写成 `0xH7e00`，那是"16 位只有 f16"时代的折中）。
     #[test]
     fn half_and_bfloat_globals_roundtrip() {
         for (src, want) in [
             // half +qnan / -qnan：f16 位模式 0x7e00 / 0xfe00（符号位由实现保留）
             ("@a = global half -qnan\n", "0xH7e00"),
-            ("@a = global bfloat +qnan\n", "0xH7e00"),
+            // bfloat +qnan：bf16 位模式 = f32 qnan 的高 16 位 0x7fc0（`0xR` 前缀）
+            ("@a = global bfloat +qnan\n", "0xR7fc0"),
             // C99 十六进制浮点（denormal）：LLVM 期望 f0x01e3
             ("@a = global half +0x1.e3p-16\n", "0xH01e3"),
             ("@a = global half 2.878904342651367875e-5\n", "0xH01e3"),
@@ -174,15 +179,16 @@ mod fidelity {
     /// `bfloat`→`i32`、`fp128`→`f64`——**静默类型损坏**，而往返测试只比对 m1/m2 两边
     /// （两边错得一样）所以看不出来。这里按**打印形态**钉住（用户可见的口径）。
     ///
-    /// 注：`x86_fp80` 沿用既有标量约定映射为 `f128`；`bfloat` 向量元素与 `half` 同
-    /// `Float(16)`（标量 bfloat 另有 `BFloat` 条目，向量元素尚未区分——如实记录现状）。
+    /// 注：`x86_fp80` 沿用既有标量约定映射为 `f128`；**`bfloat` 现在是独立格式**
+    /// （`bf16` = 1+8+7），向量元素与标量一样按 `Float { fmt }` 落位，不再折成
+    /// `f16`（1+5+10）——两者同为 16 位但尾数/阶码不同，混为一谈会静默丢格式。
     #[test]
     fn vector_element_type_names_are_not_guessed() {
         for (elem, want) in [
             ("float", "f32"),
             ("double", "f64"),
             ("half", "f16"),
-            ("bfloat", "f16"),
+            ("bfloat", "bf16"),
             ("fp128", "f128"),
             ("x86_fp80", "f128"),
             ("ptr", "ptr"),

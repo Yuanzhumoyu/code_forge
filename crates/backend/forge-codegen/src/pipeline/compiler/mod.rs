@@ -71,7 +71,7 @@ impl<M: TargetMachine> CompileSession<M> {
         Self {
             machine,
             reg_alloc: BacktrackingAllocator,
-            opt_level: None,
+            opt_level: opt_default::default_opt_level(),
             module_sigs: None,
         }
     }
@@ -382,22 +382,22 @@ impl<M: TargetMachine> CompileSession<M> {
         // >8 字节聚合显式 Unsupported）。必须在 CompileState 创建**之前**
         // 执行：CompileState 克隆 func 的常量池，若先建 state 再展开，新常量
         // 只进 func_owned 副本的池，lowering 读 state 里旧池（idx 错位 → 0）。
+        crate::pipeline::legalize::ensure_scalar_owned(&self.machine, func, &mut func_owned);
         if let Some(f) = func_owned.as_mut() {
-            // **合法化单一驱动**（v23 M6）：定序、依赖传递（sret 先立、结果拆段先于实参拆段）
+            // **合法化单一驱动**（v23 M6）：定序、依赖传递与"改了什么"都收在驱动里。
             // 与"改了什么"都收在 `legalize::LegalizeDriver` 里，调用点不再抄一份次序。
             // 聚合按值传参的落点判据来自**约定数据**（只读单参探针）：win64 `>8B ⇒ 调用方
             // 副本 + 指针`、sysv64 `>16B ⇒ 传出参数区（未接）`。约定名解析失败 ⇒ fail-closed
             //（与 `abi_setup::setup_conv` 同口径）。
             let agg_conv = crate::pipeline::conv_registry::resolve(&f.calling_convention)?;
             let mut lctx = crate::pipeline::legalize::LegalizeCtx::new(&self.machine, agg_conv);
-            // **① 聚合族先跑**（不含 va）：它会新增 `Alloca` ⇒ 必须在 ABI 槽排布之前落定。
-            // **展开自报改动了什么**（v23 M3）：`ChangeSet` 取代了原来"先按 7 个
-            // `has_*` 预判、再决定跑不跑"的做法——预判漏一类模式就是**静默少跑一个 pass**
-            // （历史事故：大聚合返回展开不到 ⇒ 5 vs 6 错值）。现在 pass 无条件跑，
-            // 改动量由每个 pass 自报、驱动累加，`FORGE_TRACE_AGG` 可见、下方断言可查。
             let mut changes =
+                crate::pipeline::legalize::LegalizeDriver::scalar().run(f, &mut lctx)?;
+            // ① 聚合族先跑（不含 va）：它新增 `Alloca` ⇒ 必须在 ABI 槽排布前落定。
+            changes.merge(
                 crate::pipeline::legalize::LegalizeDriver::with_aggregates_except_va()
-                    .run(f, &mut lctx)?;
+                    .run(f, &mut lctx)?,
+            );
             // **② 排 ABI 槽**：此时才扫 IR——深度里已含聚合族新建的槽（见上方时机注释）。
             if let Some((va, shift)) = va_pending.take() {
                 let slots = crate::pipeline::va_expand::plan_abi_slots(
@@ -413,8 +413,7 @@ impl<M: TargetMachine> CompileSession<M> {
                 changes
                     .merge(crate::pipeline::legalize::LegalizeDriver::va_only().run(f, &mut lctx)?);
             }
-            // **④ 收尾**（物化相 + GEP）：物化必须等 va 也登记完位置（va 会把聚合实参拷进
-            // 自己的帧槽）；GEP 与聚合无关，一起收尾。
+            // ④ 收尾（物化相 + GEP）：物化须等 va 登记完位置。
             changes.merge(crate::pipeline::legalize::LegalizeDriver::finalize().run(f, &mut lctx)?);
             if crate::pipeline::trace::knob("FORGE_TRACE_AGG") {
                 eprintln!(
@@ -607,6 +606,7 @@ impl<M: TargetMachine> CompileSession<M> {
 // CompileState — mutable pipeline state
 // ============================================================
 
+pub mod opt_default;
 mod state;
 
 pub(crate) use state::CompileState;

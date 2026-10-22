@@ -2,7 +2,7 @@
 //! 状态依赖;供 Stage 0.5 聚合展开阶段的 Store/Call 常量参数打包使用）。
 
 use forge_ir::Endianness;
-use forge_ir::{AggChild, AggConst, ConstantPool, Function, IrError, TypeStore};
+use forge_ir::{AggConst, ConstantPool, Function, IrError, TypeStore};
 
 /// 把 `bytes[off .. off+len]` 按**小端**打包成一个整数（`len ≤ 8`）。
 ///
@@ -44,28 +44,20 @@ pub fn pack_agg_into_bytes(
             IrError::Internal(format!("聚合常量打包：字段 {i} 越界（type {:?}）", agg.ty))
         })?;
         let off = base + ts.field_offset(agg.ty, i as u32).unwrap_or(0) as usize;
-        match child {
-            AggChild::Scalar(c) => {
-                let raw = if ts.is_float(fty) {
-                    cp.get_float128(*c)
-                        .ok_or_else(|| IrError::Internal("聚合常量打包：浮点标量缺失".into()))?
-                } else {
-                    cp.get_int(*c)
-                        .ok_or_else(|| IrError::Internal("聚合常量打包：整数标量缺失".into()))?
-                        .0 as u128
-                };
-                let n = ts.size_bytes(fty) as usize;
-                for k in 0..n {
-                    // `k` 是**字节内序号**：小端 = 低位在前；大端 = 低位在后（整字节反序）。
-                    let at = if big { off + n - 1 - k } else { off + k };
-                    out[at] = (raw >> (k * 8)) as u8;
-                }
-            }
-            AggChild::Agg(aid) => {
-                let sub = cp
-                    .get_aggregate(*aid)
-                    .ok_or_else(|| IrError::Internal("聚合常量打包：嵌套聚合缺失".into()))?;
-                pack_agg_into_bytes(cp, ts, sub, off, out)?;
+        // 子节点是**统一句柄**：按 tag 自行分派（标量打包字节，嵌套聚合递归）。
+        let cid = *child;
+        if let Some(sub) = cp.agg(cid) {
+            pack_agg_into_bytes(cp, ts, sub, off, out)?;
+        } else {
+            let raw = cp
+                .bits(cid)
+                .map(|bv| bv.bits)
+                .ok_or_else(|| IrError::Internal("聚合常量打包：标量子缺失".into()))?;
+            let n = ts.size_bytes(fty) as usize;
+            for k in 0..n {
+                // `k` 是**字节内序号**：小端 = 低位在前；大端 = 低位在后（整字节反序）。
+                let at = if big { off + n - 1 - k } else { off + k };
+                out[at] = (raw >> (k * 8)) as u8;
             }
         }
     }

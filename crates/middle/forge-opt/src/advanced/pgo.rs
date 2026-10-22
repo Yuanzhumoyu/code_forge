@@ -77,8 +77,8 @@ fn instrument_function(func: &mut Function) -> Result<PassResult, IrError> {
         return Ok(result);
     }
 
-    let one_const = func.constants.insert_int(1, 64);
-    let slot_const = func.constants.insert_int(8, 64); // 8 bytes per counter
+    let one_const = func.constants.intern_int(1, 64);
+    let slot_const = func.constants.intern_int(8, 64); // 8 bytes per counter
 
     for bi in 0..block_count {
         let block = Block::new(bi as u32);
@@ -241,7 +241,7 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let v = b.iconst_i32(42);
+        let v = b.constant(42i32);
         b.ret(&[v]);
         let mut func = b.finish().expect("build");
         let inst_before = func.dfg.inst_count();
@@ -264,7 +264,7 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let v = b.iconst_i32(42);
+        let v = b.constant(42i32);
         b.ret(&[v]);
         let mut func = b.finish().expect("build");
 

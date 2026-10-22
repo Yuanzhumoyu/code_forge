@@ -447,7 +447,7 @@ mod semantics_tests {
             if matches!(inst.opcode, crate::Opcode::Vconst)
                 && let Some(crate::Immediate::Const(cid)) = inst.immediates.first()
             {
-                return func.constants.get_vector(*cid).unwrap_or(&[]).to_vec();
+                return func.constants.vector(*cid).unwrap_or(&[]).to_vec();
             }
         }
         Vec::new()

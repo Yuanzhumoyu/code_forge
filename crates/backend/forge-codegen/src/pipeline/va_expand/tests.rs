@@ -38,7 +38,7 @@ fn probe_with_local() -> Function {
     let (e, _) = b.create_block_with_params(&[]);
     b.switch_to_block(e);
     let slot = b.stack_addr(-16);
-    let v = b.iconst(7, TypeId::I64);
+    let v = b.const_int(7, TypeId::I64);
     b.store(v, slot);
     let got = b.load(slot, TypeId::I64);
     b.ret(&[got]);

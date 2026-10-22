@@ -260,7 +260,9 @@ fn clone_body_chain(
         let new_block = block_remap[tmpl.block];
 
         for &inst_id in &tmpl.insts {
-            func.dfg.clone_inst(inst_id, new_block, &mut val_remap);
+            // 走 `Function::clone_inst_into`：它额外登记 use-list（直接调
+            // `dfg.clone_inst` 会让新指令的操作数在 use-list 里查不到）。
+            func.clone_inst_into(inst_id, new_block, &mut val_remap);
         }
 
         // Clone terminator：从**源块**按投影读取并重映射，经按形式写入口发射
@@ -425,7 +427,7 @@ fn estimate_trip_count(func: &Function, loop_info: &forge_ir::LoopInfo) -> u64 {
                 let inst_data = &func.dfg.inst_data(inst);
                 if inst_data.opcode == Opcode::Iconst
                     && let Some(cid) = inst_data.immediates.iter().find_map(|i| i.as_const())
-                    && let Some(big) = func.constants.resolve_int(cid)
+                    && let Some(big) = func.constants.as_i64(cid)
                 {
                     init_value = Some(big);
                     iv_param_idx = Some(pi);
@@ -462,7 +464,7 @@ fn estimate_trip_count(func: &Function, loop_info: &forge_ir::LoopInfo) -> u64 {
                             && let Some(cid) =
                                 other_data.immediates.iter().find_map(|i| i.as_const())
                         {
-                            bound_value = func.constants.resolve_int(cid);
+                            bound_value = func.constants.as_i64(cid);
                         }
                     }
                 }
@@ -513,7 +515,7 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let v = b.iconst_i32(42);
+        let v = b.constant(42i32);
         b.ret(&[v]);
         let mut func = b.finish().expect("build");
 
@@ -531,8 +533,8 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let v1 = b.iconst_i32(1);
-        let v2 = b.iconst_i32(2);
+        let v1 = b.constant(1i32);
+        let v2 = b.constant(2i32);
         // Two iadd instructions in the same block — same opcode, same result count
         let v3 = b.iadd(v1, v2); // 1 + 2 = 3
         let v4 = b.iadd(v3, v1); // 3 + 1 = 4
@@ -562,13 +564,13 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let zero = b.iconst_i32(0);
+        let zero = b.constant(0i32);
         let (header, header_params) = b.create_block_with_params(&[(TypeId::I32, "i")]);
         b.switch_to_block(entry);
         b.jump(header, &[zero]);
 
         b.switch_to_block(header);
-        let four = b.iconst_i32(4);
+        let four = b.constant(4i32);
         let cond = b.icmp(IntCC::Slt, header_params[0], four);
         let body_block = b.create_block();
         let exit_block = b.create_block();
@@ -576,7 +578,7 @@ mod tests {
         b.branch(cond, body_block, &[], exit_block, &[]);
 
         b.switch_to_block(body_block);
-        let one = b.iconst_i32(1);
+        let one = b.constant(1i32);
         let next_i = b.iadd(header_params[0], one);
         b.jump(header, &[next_i]);
 
@@ -600,13 +602,13 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let zero = b.iconst_i32(0);
+        let zero = b.constant(0i32);
         let (header, header_params) = b.create_block_with_params(&[(TypeId::I32, "i")]);
         b.switch_to_block(entry);
         b.jump(header, &[zero]);
 
         b.switch_to_block(header);
-        let neg_five = b.iconst_i32(-5);
+        let neg_five = b.constant(-5i32);
         let cond = b.icmp(IntCC::Slt, header_params[0], neg_five);
         let body_block = b.create_block();
         let exit_block = b.create_block();
@@ -614,7 +616,7 @@ mod tests {
         b.branch(cond, body_block, &[], exit_block, &[]);
 
         b.switch_to_block(body_block);
-        let one = b.iconst_i32(1);
+        let one = b.constant(1i32);
         let next_i = b.iadd(header_params[0], one);
         b.jump(header, &[next_i]);
 

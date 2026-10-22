@@ -409,8 +409,8 @@ mod tests {
         let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
         b.switch_to_block(entry);
         let x = params[0];
-        let c3 = b.iconst_i32(3);
-        let _c5 = b.iconst_i32(5);
+        let c3 = b.constant(3i32);
+        let _c5 = b.constant(5i32);
         let expr1 = b.imul(x, c3);
         let expr2 = b.imul(x, c3); // x * 3 computed twice
         let result = b.iadd(expr1, expr2);
@@ -452,7 +452,7 @@ mod tests {
         let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
         b.switch_to_block(entry);
         let x = params[0];
-        let c = b.iconst_i32(2);
+        let c = b.constant(2i32);
         let e1 = b.imul(x, c);
         let e2 = b.imul(x, c); // duplicate
         let r = b.iadd(e1, e2);
@@ -555,7 +555,7 @@ mod tests {
         let p0 = b.stack_addr(0);
         let p1 = b.stack_addr(1);
         let l1 = b.load(p0, TypeId::I32);
-        let sv = b.iconst_i32(7);
+        let sv = b.constant(7i32);
         b.store(sv, p1); // 写 slot1 —— 与 slot0 NoAlias
         let l2 = b.load(p0, TypeId::I32); // 可复用 l1
         let sum = b.iadd(l1, l2);
@@ -586,7 +586,7 @@ mod tests {
         b.switch_to_block(entry);
         let p0 = b.stack_addr(0);
         let l1 = b.load(p0, TypeId::I32);
-        let sv = b.iconst_i32(7);
+        let sv = b.constant(7i32);
         b.store(sv, p0); // 写同一槽 —— MayAlias
         let l2 = b.load(p0, TypeId::I32);
         let sum = b.iadd(l1, l2);

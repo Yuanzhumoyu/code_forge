@@ -27,14 +27,41 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
         crate::lower::symbol_name_for_instance(tcx, instance),
     )));
 
-    let lctx = LowerCtxt::new(tcx, instance, body, func_refs);
+    // `#[unsafe(naked)]`：既不建栈槽（`LowerCtxt::new` 的 naked 形参），
+    // 也不发射序/尾声（IR `NO_FRAME`）——两条都到位才是"没有编译器痕迹"的函数。
+    let naked = tcx
+        .codegen_fn_attrs(instance.def_id())
+        .flags
+        .contains(rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrFlags::NAKED);
+    // 定义侧调用约定先 fail-closed（`extern "sysv64"` 之类不是 Win64 的约定，
+    // 按 C 打包会静默错值）。调用点另有一查，覆盖 `extern` 块里声明的外部函数。
+    crate::abi::check_conv_supported(
+        tcx,
+        instance,
+        &format!("定义 `{}`", tcx.def_path_str(instance.def_id())),
+    )?;
+    // C 变参**定义** fail-closed（`[cap:VARARGS_DEF]`）：真做需要被调方序言建寄存器保存区，
+    // 见 `abi::varargs_def_unsupported` 的说明。不这样拦，用户只会看到一串
+    // `unsupported intrinsic: va_end`（且此前还会先 panic 在 ABI 计数断言上）。
+    if crate::abi::fn_abi_is_c_variadic(tcx, instance) {
+        return Err(crate::abi::varargs_def_unsupported(&format!(
+            "定义 `{}`",
+            tcx.def_path_str(instance.def_id())
+        )));
+    }
+    let lctx = LowerCtxt::new(tcx, instance, body, func_refs, naked);
     if crate::trace::trace_enabled("GLOBAL") {
         eprintln!(
             "[forge] lowering fn {:?}",
             tcx.def_path_str(instance.def_id())
         );
     }
-    let func = lctx.lower_body(body)?;
+    let mut func = lctx.lower_body(body)?;
+    // `#[unsafe(naked)]`：函数体只有汇编、**没有**编译器序/尾声与栈帧 ⇒ 打上 `NO_FRAME`，
+    // 由发射侧跳过序言/尾声（`pipeline/emission.rs` 里那条硬约束会兜住"naked 却要栈槽"）。
+    if naked {
+        func.attributes.set(FunctionAttributes::NO_FRAME);
+    }
     // IR 层诊断（用户建议：先确认后端 IR 是否正确，再查字节码）：
     // FORGE_TRACE_IR=1 时 dump forge-ir（LLVM 风格）——确认 StackAddr/Store
     // 的槽偏移与构造/判别的一致性（enumerate None 路径错位排查）。

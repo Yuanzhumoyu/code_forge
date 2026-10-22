@@ -824,6 +824,25 @@ fn validate_widths(m: &IsaModel) -> Result<(), String> {
             }
         }
     }
+    // 原生整数位宽（v27 M5）：非 0、严格升序（legalize 的"最近位宽补位"按它做二分/向上取整）。
+    // 空表示用缺省 `[8, 16, 32, 64]`，合法。
+    if let Some(mach) = m.machine.as_ref() {
+        let ws = &mach.int_widths;
+        if !ws.is_empty() {
+            let mut prev = 0u16;
+            for w in ws {
+                if *w == 0 {
+                    return Err("[machine].int_widths must be > 0（位宽至少 1 位）".into());
+                }
+                if *w <= prev {
+                    return Err(format!(
+                        "[machine].int_widths must be strictly ascending (got {ws:?})"
+                    ));
+                }
+                prev = *w;
+            }
+        }
+    }
     // 向量档位：升序、非 0、去重（生成代码按"最小的 ≥ 请求字节数的档位"选择）。
     if let Some(tiers) = &m.meta.vector_tiers {
         if tiers.is_empty() {

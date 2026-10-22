@@ -124,7 +124,7 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let src = b.iconst_i32(42);
+        let src = b.constant(42i32);
         let copied = b.copy(src);
         b.ret(&[copied]);
 
@@ -148,8 +148,8 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let a = b.iconst_i32(3);
-        let b_val = b.iconst_i32(5);
+        let a = b.constant(3i32);
+        let b_val = b.constant(5i32);
         let sum = b.iadd(a, b_val);
         b.ret(&[sum]);
 

@@ -54,8 +54,8 @@ fn fixture() -> (Function, Value, Value) {
     let sig = FunctionSignature::new(&[], &[ctx.i64_ty()]);
     let mut fb = FunctionBuilder::new("f", ctx, sig);
     let (entry, _) = fb.create_entry_block();
-    let a = fb.iconst_i64(1);
-    let b = fb.iconst_i64(2);
+    let a = fb.constant(1i64);
+    let b = fb.constant(2i64);
     let sum = fb.iadd(a, b);
     fb.ret(&[sum]);
     let _ = entry;
@@ -227,7 +227,7 @@ fn inst_mut_operand_edit_needs_refresh() {
         Opcode::Iconst,
         b0,
         smallvec::SmallVec::new(),
-        smallvec::smallvec![Immediate::Const(func.constants.insert_int(1, 32))],
+        smallvec::smallvec![Immediate::Const(func.constants.intern_int(1, 32))],
         &[TypeId::I32],
         InstFlags::NONE,
     );
@@ -235,7 +235,7 @@ fn inst_mut_operand_edit_needs_refresh() {
         Opcode::Iconst,
         b0,
         smallvec::SmallVec::new(),
-        smallvec::smallvec![Immediate::Const(func.constants.insert_int(2, 32))],
+        smallvec::smallvec![Immediate::Const(func.constants.intern_int(2, 32))],
         &[TypeId::I32],
         InstFlags::NONE,
     );
@@ -290,7 +290,7 @@ fn refined_value_type_stays_verifiable() {
         Opcode::Iconst,
         b0,
         smallvec::SmallVec::new(),
-        smallvec::smallvec![Immediate::Const(func.constants.insert_int(7, 64))],
+        smallvec::smallvec![Immediate::Const(func.constants.intern_int(7, 64))],
         &[TypeId::I64],
         InstFlags::NONE,
     );

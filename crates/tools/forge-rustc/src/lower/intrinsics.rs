@@ -6,6 +6,60 @@ use super::*;
 use rustc_middle::ty::{Binder, GenericArgsRef};
 
 impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
+    /// 内建函数操作数的整数**位宽**（按 `substs` 首个类型；取不到时按 64 位）。
+    fn intrinsic_width(
+        &self,
+        substs: &rustc_middle::ty::Binder<rustc_middle::ty::GenericArgsRef<'tcx>>,
+    ) -> u64 {
+        let t = substs_first_ty(substs).unwrap_or(self.tcx.types.u64);
+        (crate::layout::layout_bytes(self.tcx, t) as u64) * 8
+    }
+
+    /// SWAR popcount，**按值的位宽生成掩码**（`bits` = 该值的位数：8/16/32/64/128）。
+    ///
+    /// 掩码是"每个分组里重复同一模式"，所以同一组 `u128` 常量按 `bits` 截断后对任何位宽都成立：
+    /// 8 位取低 8 位、128 位用满 128 位。这样 `ctpop` 对宽值也能**直接对值**做，
+    /// 不需要"把 128 位拆成两半各数一次"的前端特化（v27 M5）。
+    fn swar_popcount(&mut self, x: Value, bits: u64, ty: TypeId) -> Value {
+        let mask = |pat: u8| -> i128 {
+            // 每 8 位重复 pat ⇒ 任意 8 的倍数位宽都取同一份常量
+            let mut v: u128 = 0;
+            let mut i = 0;
+            while i < 128 {
+                v |= (pat as u128) << i;
+                i += 8;
+            }
+            v as i128
+        };
+        let iconst = |b: &mut FunctionBuilder, v: i128| b.const_int(v, ty);
+        let small = |b: &mut FunctionBuilder, v: i64| b.const_int(v, TypeId::I64);
+        let m1 = iconst(&mut self.builder, mask(0x55));
+        let m2 = iconst(&mut self.builder, mask(0x33));
+        let m4 = iconst(&mut self.builder, mask(0x0f));
+        let m8 = iconst(&mut self.builder, mask(0x01));
+        let one = small(&mut self.builder, 1);
+        let two = small(&mut self.builder, 2);
+        let four = small(&mut self.builder, 4);
+
+        // x - ((x >> 1) & 0x55..)
+        let s1 = self.builder.ushr(x, one);
+        let a = self.builder.band(s1, m1);
+        let x = self.builder.isub(x, a);
+        // (x & 0x33..) + ((x >> 2) & 0x33..)
+        let b1 = self.builder.band(x, m2);
+        let b2 = self.builder.ushr(x, two);
+        let b2 = self.builder.band(b2, m2);
+        let x = self.builder.iadd(b1, b2);
+        // (x + (x >> 4)) & 0x0f..
+        let shr4 = self.builder.ushr(x, four);
+        let c1 = self.builder.iadd(x, shr4);
+        let x = self.builder.band(c1, m4);
+        // 逐字节求和：x * 0x0101.. 后取最高的那个字节
+        let p = self.builder.imul(x, m8);
+        let sh = small(&mut self.builder, (bits.saturating_sub(8)) as i64);
+        self.builder.ushr(p, sh)
+    }
+
     pub(crate) fn lower_intrinsic(
         &mut self,
         name: &str,
@@ -22,7 +76,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             // Rust 对 `abort()` 的退出码**未作规定**，这里取 MSVC `abort()` 的 3。
             // 之后的 `unreachable()` 由调用点（Call 终结符的 `target: None` 分支）发。
             "abort" => {
-                let code = self.builder.iconst(3, TypeId::I64);
+                let code = self.builder.const_int(3, TypeId::I64);
                 let fr = self.func_refs.intern("ExitProcess");
                 self.builder.call(FuncRef::new(fr), &[code], &[]);
                 vec![]
@@ -43,41 +97,33 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 } else {
                     align as i64
                 };
-                vec![self.builder.iconst(v, TypeId::I64)]
+                vec![self.builder.const_int(v, TypeId::I64)]
             }
             "ctpop" => {
+                // **MIR→IR 一一对应**（v27 M5）：实参就是完整值（内建实参不走 ABI 拆分），
+                // SWAR 掩码按**值的位宽**生成 ⇒ 8/16/32/64/128 位走同一段代码，
+                // 不再需要"把 128 位拆两半各数一次"的前端特化。
                 let x = args
                     .first()
                     .copied()
-                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
-                // SWAR popcount（64 位）
-                let m5555 = self.builder.iconst(0x5555555555555555, TypeId::I64);
-                let one = self.builder.iconst(1, TypeId::I64);
-                let s1 = self.builder.ushr(x, one);
-                let a = self.builder.band(s1, m5555);
-                let mut x = self.builder.isub(x, a);
-                let m3333 = self.builder.iconst(0x3333333333333333, TypeId::I64);
-                let b1 = self.builder.band(x, m3333);
-                let two = self.builder.iconst(2, TypeId::I64);
-                let b2 = self.builder.ushr(x, two);
-                let b2 = self.builder.band(b2, m3333);
-                x = self.builder.iadd(b1, b2);
-                let m0f = self.builder.iconst(0x0f0f0f0f0f0f0f0f, TypeId::I64);
-                let c1 = self.builder.band(x, m0f);
-                let four = self.builder.iconst(4, TypeId::I64);
-                let c2 = self.builder.ushr(x, four);
-                x = self.builder.iadd(c1, c2);
-                // SWAR 第三行需整体 & 0x0f0f...（清除字节内进位/垃圾高位）
-                x = self.builder.band(x, m0f);
-                let mul = self.builder.iconst(0x0101010101010101, TypeId::I64);
-                let p = self.builder.imul(x, mul);
-                let fifty_six = self.builder.iconst(56, TypeId::I64);
-                vec![self.builder.ushr(p, fifty_six)]
+                    .unwrap_or_else(|| self.builder.const_int(0, TypeId::I64));
+                let bits = self.intrinsic_width(&substs).max(8);
+                let ty = substs_first_ty(&substs)
+                    .and_then(|t| crate::types::map_type(t, self.tcx).ok())
+                    .unwrap_or(TypeId::I64);
+                let c = self.swar_popcount(x, bits, ty);
+                // 内建返回 `u32`：宽值结果需要显式截断。
+                let out = if bits > 32 {
+                    self.builder.ireduce(c, TypeId::I32)
+                } else {
+                    c
+                };
+                vec![out]
             }
             "transmute" => vec![
                 args.first()
                     .copied()
-                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64)),
+                    .unwrap_or_else(|| self.builder.const_int(0, TypeId::I64)),
             ],
             // 冷路径标记（UB 检查）：不返回（!）
             "cold_path" => vec![],
@@ -104,8 +150,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     // iconst 必须等 switch_to_block(cur_block) 之后发，否则会插进
                     // body_blk（初值被后续 jump 经参数别名机制读到未初始化寄存器）
                     self.builder.switch_to_block(cur_block);
-                    let zero = self.builder.iconst(0, TypeId::I64);
-                    let one = self.builder.iconst(1, TypeId::I64);
+                    let zero = self.builder.const_int(0, TypeId::I64);
+                    let one = self.builder.const_int(1, TypeId::I64);
                     self.builder.jump(loop_blk, &[zero]);
                     // loop_blk：i < count 则进 body，否则 done
                     self.builder.switch_to_block(loop_blk);
@@ -126,12 +172,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             "black_box" => vec![
                 args.first()
                     .copied()
-                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64)),
+                    .unwrap_or_else(|| self.builder.const_int(0, TypeId::I64)),
             ],
             // caller_location()：返回 &'static Location（编译期已知 span）。
             // codegen 阶段返回 0 指针（panic 路径 Location 为 null，e2e
             // panic handler 不解引用 info——语义安全）。
-            "caller_location" => vec![self.builder.iconst(0, TypeId::PTR)],
+            "caller_location" => vec![self.builder.const_int(0, TypeId::PTR)],
             // fabs(f)：浮点绝对值（主库 Fabs lowering：andps 掩码）。
             "fabs" => vec![self.builder.fabs(args[0])],
             // simd_splat<T>(x)：向量广播（vbroadcast——主库向量指令；
@@ -141,7 +187,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 let elem = args
                     .first()
                     .copied()
-                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
+                    .unwrap_or_else(|| self.builder.const_int(0, TypeId::I64));
                 let t = substs_first_ty(&substs).unwrap_or(fty);
                 let ty = map_type(t, self.tcx)?;
                 vec![self.builder.vbroadcast(elem, ty)]
@@ -157,8 +203,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
                     let (ret_blk, rp) =
                         self.builder.create_block_with_params(&[(TypeId::I64, "r")]);
-                    let zero = self.builder.iconst(0, TypeId::I64);
-                    let one = self.builder.iconst(1, TypeId::I64);
+                    let zero = self.builder.const_int(0, TypeId::I64);
+                    let one = self.builder.const_int(1, TypeId::I64);
                     self.builder.switch_to_block(cur_block);
                     self.builder.jump(loop_blk, &[zero]);
                     self.builder.switch_to_block(loop_blk);
@@ -250,24 +296,77 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             }
             "rotate_left" | "rotate_right" => {
                 let (a, b) = (args[0], args[1]);
-                if name == "rotate_left" {
-                    vec![self.builder.rotl(a, b)]
+                // v27 M5 缺陷（位运算内建按位宽）：谱的 `Rotl/Rotr` 是 64 位 `rol/ror`，
+                // 而 `rotate_*` 按**操作数位宽**定义（`0b1011u8.rotate_left(2)` = 44，
+                // LLVM 对照）⇒ 窄类型按位宽展开：n = b & (w-1)，
+                // 一侧移 n、另一侧移 (w-n)&(w-1)，结果再掩码到 w 位。
+                let w = self.intrinsic_width(&substs);
+                if w >= 64 {
+                    if name == "rotate_left" {
+                        vec![self.builder.rotl(a, b)]
+                    } else {
+                        vec![self.builder.rotr(a, b)]
+                    }
                 } else {
-                    vec![self.builder.rotr(a, b)]
+                    let wv = self.builder.const_int(w as i64, TypeId::I64);
+                    let nmask = self.builder.const_int((w - 1) as i64, TypeId::I64);
+                    let wide = self.builder.uextend(a, TypeId::I64);
+                    let n = self.builder.band(b, nmask);
+                    let diff = self.builder.isub(wv, n);
+                    let other = self.builder.band(diff, nmask);
+                    let (l, r) = if name == "rotate_left" {
+                        (self.builder.ishl(wide, n), self.builder.ushr(wide, other))
+                    } else {
+                        (self.builder.ushr(wide, n), self.builder.ishl(wide, other))
+                    };
+                    let joined = self.builder.bor(l, r);
+                    let mask = self
+                        .builder
+                        .const_int(((1u64 << w) - 1) as i64, TypeId::I64);
+                    vec![self.builder.band(joined, mask)]
                 }
             }
             // unchecked_funnel_shl/shr（FunnelShift trait 底层）：rustc 的
             // rotate 经 `FunnelShift::unchecked_funnel_shl(a, b, n)` 组合。
             // 兜底：n==0 时返回 a（单态化后 rotate 直通 rotl/rotr，n 恒 0；
             // 非 0 的通用 funnel shift 暂不展开——编译报错而非错值）。
+            // `unchecked_funnel_shl/shr`：**真实现**（此前是"返回 a"的兜底 ⇒ `rotate_left` 恒返回原值）
             "unchecked_funnel_shl" | "unchecked_funnel_shr" => {
-                let a = args
-                    .first()
-                    .copied()
-                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
-                vec![a]
+                let a = args[0];
+                let b = args[1];
+                let n = args[2];
+                let w = self.intrinsic_width(&substs);
+                let wv = self.builder.const_int(w as i64, TypeId::I64);
+                let nmask = self.builder.const_int((w - 1) as i64, TypeId::I64);
+                let aw = if w < 64 {
+                    self.builder.uextend(a, TypeId::I64)
+                } else {
+                    a
+                };
+                let bw = if w < 64 {
+                    self.builder.uextend(b, TypeId::I64)
+                } else {
+                    b
+                };
+                let nn = self.builder.band(n, nmask);
+                let diff = self.builder.isub(wv, nn);
+                let other = self.builder.band(diff, nmask);
+                let (l, r) = if name == "unchecked_funnel_shl" {
+                    (self.builder.ishl(aw, nn), self.builder.ushr(bw, other))
+                } else {
+                    (self.builder.ishl(aw, other), self.builder.ushr(bw, nn))
+                };
+                let joined = self.builder.bor(l, r);
+                if w < 64 {
+                    let mask = self
+                        .builder
+                        .const_int(((1u64 << w) - 1) as i64, TypeId::I64);
+                    vec![self.builder.band(joined, mask)]
+                } else {
+                    vec![joined]
+                }
             }
-            // disjoint_bitor(a, b) = a | b（无公共位假设，与 or 等价）
+
             "disjoint_bitor" => {
                 let (a, b) = (args[0], args[1]);
                 vec![self.builder.bor(a, b)]
@@ -276,18 +375,37 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 let x = args
                     .first()
                     .copied()
-                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
-                match name {
-                    "cttz" | "cttz_nonzero" => vec![self.builder.ctz(x)],
-                    _ => vec![self.builder.clz(x)],
-                }
+                    .unwrap_or_else(|| self.builder.const_int(0, TypeId::I64));
+                // **MIR→IR 一一对应**（v27 M5）：实参就是完整值（内建实参不走 ABI 拆分），
+                // 直接对值发 `ctz/clz`；宽值由 `legalize::wide_split` 按 n 肢处理，
+                // 位宽语义（"数几位的前导零"）也在那里定。
+                let c = match name {
+                    "cttz" | "cttz_nonzero" => self.builder.ctz(x),
+                    _ => self.builder.clz(x),
+                };
+                // 窄类型的 `Clz` 校正（谱里 8/16 位走 32 位形式，见账本「阻塞 2」）。
+                let w = self.intrinsic_width(&substs);
+                let c = if matches!(name, "cttz" | "cttz_nonzero") || w >= 32 {
+                    c
+                } else {
+                    let adj = self.builder.const_int((32 - w) as i64, TypeId::I64);
+                    self.builder.isub(c, adj)
+                };
+                // 内建返回 `u32`：宽值结果（`i128`）要显式截断。
+                // 用 substs 的位宽判断（`x` 的类型就是它）。
+                let out = if self.intrinsic_width(&substs) > 32 {
+                    self.builder.ireduce(c, TypeId::I32)
+                } else {
+                    c
+                };
+                vec![out]
             }
             // bswap（to_be_bytes/to_le_bytes）：主库有 Bswap lowering。
             "bswap" => vec![self.builder.bswap(args[0])],
             // is_val_statically_known(v)：编译期已知性查询——codegen 阶段
             // 恒返回 false（值已单态化，rustc 用 const eval 判定；此处
             // 返回 0 使分支走运行时路径，语义保守正确）。
-            "is_val_statically_known" => vec![self.builder.iconst(0, TypeId::BOOL)],
+            "is_val_statically_known" => vec![self.builder.const_int(0, TypeId::BOOL)],
             // ptr_offset_from(ptr, base) = (ptr - base) / size（有符号差值，
             // 与 ptr_offset_from_unsigned 区别：结果带符号除法）。
             "ptr_offset_from" => {
@@ -298,7 +416,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     if sz == 1 {
                         vec![self.builder.isub(ptr, base)]
                     } else {
-                        let szv = self.builder.iconst(sz, TypeId::I64);
+                        let szv = self.builder.const_int(sz, TypeId::I64);
                         let diff = self.builder.isub(ptr, base);
                         vec![self.builder.sdiv(diff, szv)]
                     }
@@ -363,8 +481,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
                     let done = self.builder.create_block();
                     self.builder.switch_to_block(cur_block);
-                    let zero = self.builder.iconst(0, TypeId::I64);
-                    let one = self.builder.iconst(1, TypeId::I64);
+                    let zero = self.builder.const_int(0, TypeId::I64);
+                    let one = self.builder.const_int(1, TypeId::I64);
                     self.builder.jump(loop_blk, &[zero]);
                     self.builder.switch_to_block(loop_blk);
                     let i = lp[0];
@@ -375,7 +493,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     let off = if sz == 1 {
                         bi
                     } else {
-                        let szv = self.builder.iconst(sz, TypeId::I64);
+                        let szv = self.builder.const_int(sz, TypeId::I64);
                         self.builder.imul(bi, szv)
                     };
                     let saddr = self.builder.iadd(src, off);
@@ -426,10 +544,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
                     let done = self.builder.create_block();
                     self.builder.switch_to_block(cur_block);
-                    let zero = self.builder.iconst(0, TypeId::I64);
-                    let one = self.builder.iconst(1, TypeId::I64);
-                    let eight = self.builder.iconst(8, TypeId::I64);
-                    let n = self.builder.iconst((sz + 7) / 8, TypeId::I64);
+                    let zero = self.builder.const_int(0, TypeId::I64);
+                    let one = self.builder.const_int(1, TypeId::I64);
+                    let eight = self.builder.const_int(8, TypeId::I64);
+                    let n = self.builder.const_int((sz + 7) / 8, TypeId::I64);
                     self.builder.jump(loop_blk, &[zero]);
                     self.builder.switch_to_block(loop_blk);
                     let i = lp[0];
@@ -501,11 +619,11 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 let ptr = args
                     .first()
                     .copied()
-                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
+                    .unwrap_or_else(|| self.builder.const_int(0, TypeId::I64));
                 let val = args
                     .get(1)
                     .copied()
-                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
+                    .unwrap_or_else(|| self.builder.const_int(0, TypeId::I64));
                 // 宽度分派：≥4 字节（i32/i64/usize）走 XADD/XCHG 指令快路径
                 //（AtomicRmw lowering 用结果 {out} 承载 dest——out 有 IR 类型
                 // 登记，gprx 回填按类型宽度：i32→32 位 xadd/xchg 无越界）；
@@ -614,7 +732,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 let val = args
                     .get(1)
                     .copied()
-                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
+                    .unwrap_or_else(|| self.builder.const_int(0, TypeId::I64));
                 let kind = if name.contains("nand") {
                     RmwLoop::Nand
                 } else if name.contains("umax") {
@@ -668,7 +786,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 let new = args
                     .get(2)
                     .copied()
-                    .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
+                    .unwrap_or_else(|| self.builder.const_int(0, TypeId::I64));
                 let weak = name.contains("weak");
                 let old = self.builder.cmpxchg(
                     ptr,
@@ -717,7 +835,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     if sz == 1 {
                         vec![self.builder.iadd(ptr, count)]
                     } else {
-                        let szv = self.builder.iconst(sz, TypeId::I64);
+                        let szv = self.builder.const_int(sz, TypeId::I64);
                         let off = self.builder.imul(count, szv);
                         vec![self.builder.iadd(ptr, off)]
                     }
@@ -737,7 +855,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     if sz == 1 {
                         vec![self.builder.isub(ptr, base)]
                     } else {
-                        let szv = self.builder.iconst(sz, TypeId::I64);
+                        let szv = self.builder.const_int(sz, TypeId::I64);
                         let diff = self.builder.isub(ptr, base);
                         vec![self.builder.udiv(diff, szv)]
                     }
@@ -746,6 +864,15 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 }
             }
             _ => {
+                // C 变参族（`va_start`/`va_arg`/`va_end`）单独归到缺口 `VARARGS_DEF`：
+                // 它们只会在 C 变参函数体里出现（`VaList::drop` 调用 `va_end`），
+                // 给用户一句"本后端不支持 C 变参定义"比"unsupported intrinsic"有用得多。
+                if name.starts_with("va_") {
+                    return Err(crate::abi::varargs_def_unsupported(&format!(
+                        "`{}` 里的 intrinsic `{name}`",
+                        self.fn_name
+                    )));
+                }
                 // A4：unsupported intrinsic 报错附函数名（定位到具体调用点）。
                 return Err(ForgeError::Message(format!(
                     "{}: unsupported intrinsic: {name}",
@@ -810,7 +937,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             RmwLoop::Xor => self.builder.bxor(old, val),
             RmwLoop::Nand => {
                 let a = self.builder.band(old, val);
-                let ones = self.builder.iconst(-1, t);
+                let ones = self.builder.const_int(-1, t);
                 self.builder.bxor(a, ones)
             }
             // fetch_max/min 语义：写 max(old,val)（有符号/无符号 cc）。

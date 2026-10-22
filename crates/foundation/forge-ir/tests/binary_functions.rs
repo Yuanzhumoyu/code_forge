@@ -192,10 +192,8 @@ fn mini_func_tail(values: &[u8], insts: &[u8], blocks: &[u8], layout: &[u8]) -> 
     out.push(0); // debug_info none
     put_varint(&mut out, 0); // value_names
     put_varint(&mut out, 0); // block_names
-    // 每函数常量池：五通道计数全 0
-    for _ in 0..5 {
-        put_varint(&mut out, 0);
-    }
+    // 每函数常量池（v6 带 tag 单流）：条目数 0 即空池
+    put_varint(&mut out, 0);
     out.extend_from_slice(values);
     out.extend_from_slice(insts);
     out.extend_from_slice(blocks);
@@ -276,7 +274,7 @@ fn reference_module() -> Module {
     let else_blk = b.create_block();
     let (merge, merge_params) = b.create_block_with_params(&[(TypeId::I32, "r")]);
     b.switch_to_block(entry);
-    let zero = b.iconst_i32(0);
+    let zero = b.constant(0i32);
     let cond = b.icmp(IntCC::Sgt, params[0], zero);
     b.branch(cond, then_blk, &[], else_blk, &[]);
     b.switch_to_block(then_blk);

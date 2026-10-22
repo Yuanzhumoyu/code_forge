@@ -1,6 +1,7 @@
 //! 解析中间表示（AST）—— grammar.lalrpop 的 action 产物，semantics 消费。
 
-use super::lexer::ElemTy;
+use super::lexer::{ElemTy, float_fmt_from_text};
+use crate::ir::types::FloatFmt;
 
 // ── 模块级 ──
 
@@ -670,7 +671,7 @@ pub struct ParsedOperand {
 pub fn fmt_parsed_type(t: &ParsedType) -> String {
     match t {
         ParsedType::Int(bits) => format!("i{bits}"),
-        ParsedType::Float(bits) => format!("f{bits}"),
+        ParsedType::Float(fmt) => fmt.name(),
         ParsedType::Ptr => "ptr".to_string(),
         ParsedType::PtrAddrSpace(n) => format!("ptr addrspace({n})"),
         ParsedType::Vec(n, e) => format!("<{n} x {}>", fmt_parsed_type(e)),
@@ -835,13 +836,7 @@ fn parse_vec_type(s: &str) -> ParsedType {
     let elem = match elem {
         "ptr" => ParsedType::Ptr,
         _ if elem.starts_with('i') => ParsedType::Int(elem[1..].parse::<u32>().unwrap_or(32)),
-        _ => ParsedType::Float(match elem {
-            "half" | "bfloat" => 16,
-            "float" => 32,
-            "double" => 64,
-            "fp128" => 128,
-            _ => elem[1..].parse::<u16>().unwrap_or(64),
-        }),
+        _ => ParsedType::Float(float_fmt_from_text(elem)),
     };
     ParsedType::Vec(n.parse::<u32>().unwrap_or(0), Box::new(elem))
 }
@@ -853,13 +848,7 @@ pub fn split_scalar_ty(lit: &str) -> ParsedType {
         "ptr" => ParsedType::Ptr,
         "void" => ParsedType::Void,
         _ if ty.starts_with('i') => ParsedType::Int(ty[1..].parse::<u32>().unwrap_or(32)),
-        _ => ParsedType::Float(match ty {
-            "half" | "bfloat" => 16,
-            "float" => 32,
-            "double" => 64,
-            "fp128" => 128,
-            _ => ty[1..].parse::<u16>().unwrap_or(64),
-        }),
+        _ => ParsedType::Float(float_fmt_from_text(ty)),
     }
 }
 
@@ -1046,7 +1035,8 @@ pub enum ParsedTerminator {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ParsedType {
     Int(u32),
-    Float(u16),
+    /// 浮点：**三段格式**（`f16` 与 `bf16` 同为 16 位但格式不同，不能只存总位宽）。
+    Float(FloatFmt),
     Ptr,
     /// `ptr addrspace(N)`（N != 0）。
     PtrAddrSpace(u32),
@@ -1075,7 +1065,7 @@ impl From<ElemTy> for ParsedType {
     fn from(e: ElemTy) -> Self {
         match e {
             ElemTy::Int(bits) => ParsedType::Int(bits),
-            ElemTy::Float(bits) => ParsedType::Float(bits),
+            ElemTy::Float(fmt) => ParsedType::Float(fmt),
             ElemTy::Ptr => ParsedType::Ptr,
         }
     }

@@ -154,6 +154,16 @@ impl PassManager {
     }
 
     pub fn add_pass(&mut self, pass: Box<dyn OptimizationPass>, mode: PassRunMode) {
+        // 诊断开关 `FORGE_OPT_SKIP=pass1,pass2`：**跳过指定 pass**——用来二分定位
+        // "哪个 pass 把正确 IR 改成错语义"（校验能过但结果错的那类）。只影响调试，
+        // 不进生产默认路径。
+        if let Ok(skip) = std::env::var("FORGE_OPT_SKIP") {
+            let name = pass.name();
+            if skip.split(',').map(str::trim).any(|s| s == name) {
+                eprintln!("[forge-opt] skip pass '{name}'（FORGE_OPT_SKIP）");
+                return;
+            }
+        }
         self.passes.push((pass, mode));
     }
 
@@ -196,6 +206,16 @@ impl PassManager {
                     }
                 }
 
+                // 诊断开关 `FORGE_OPT_DUMP_EACH=1`：**每个 pass 之后**都 dump
+                // （不只在失败时），用来定位"校验通过但语义被改错"的那种 pass。
+                if std::env::var("FORGE_OPT_DUMP_EACH").is_ok() {
+                    eprintln!(
+                        "[forge-opt] === IR after pass '{}' ===\n{}",
+                        pass.name(),
+                        forge_ir::text::function_to_string(func)
+                    );
+                }
+
                 // Debug 构建下逐 pass 校验 IR 一致性。策略见 `PassVerify`。
                 #[cfg(debug_assertions)]
                 {
@@ -225,6 +245,15 @@ impl PassManager {
                                             .map(|e| format!("{e:?}"))
                                             .collect::<Vec<_>>()
                                             .join("; ");
+                                        // 诊断开关（v27 M5）：校验失败时把**整份 IR**打出来，
+                                        // 否则只有 `Inst(22)` 这种下标，查不动是哪个指令。
+                                        if std::env::var("FORGE_OPT_DUMP_IR").is_ok() {
+                                            eprintln!(
+                                                "[forge-opt] === IR after pass '{}'（校验失败）===\n{}",
+                                                pass.name(),
+                                                forge_ir::text::function_to_string(func)
+                                            );
+                                        }
                                         return Err(IrError::Internal(format!(
                                             "pass '{}' 之后 '{}' 未通过 IR 校验：{hard_msg}",
                                             pass.name(),
@@ -374,6 +403,10 @@ impl PassManager {
                 Box::new(crate::loops::insert_preheader::InsertPreheaderPass::new()),
                 PassRunMode::Once,
             );
+            // LICM 已重新入列（2026-10-19 二次修正）：**它不再外提 `StackAddr`**
+            // （那类外提会让"槽地址值"跨块活跃，触发后端寄存器分配的干扰建错——
+            // 机器级证据见 `loops/licm.rs` 的注释）。`Iconst`/纯运算/只读循环里的
+            // `load` 外提保持不变，两档隔离实测均正确。排查仍可用 `FORGE_LICM_ONLY`。
             pm.add_pass(
                 Box::new(crate::loops::licm::LicmPass::new()),
                 PassRunMode::Once,
@@ -452,7 +485,7 @@ mod pipeline_tests {
         let mut b = FunctionBuilder::new("add_one", TypeContext::new(), sig);
         let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
         b.switch_to_block(entry);
-        let one = b.iconst_i32(1);
+        let one = b.constant(1i32);
         let sum = b.iadd(params[0], one);
         b.ret(&[sum]);
         b.finish().expect("build")
@@ -472,7 +505,7 @@ mod pipeline_tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let c41 = b.iconst_i32(41);
+        let c41 = b.constant(41i32);
         let ret = b.call(callee_ref, &[c41], &[TypeId::I32]);
         b.ret(&[ret[0]]);
         let mut caller = b.finish().expect("build");
@@ -492,8 +525,8 @@ mod pipeline_tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let a = b.iconst_i32(3);
-        let bv = b.iconst_i32(5);
+        let a = b.constant(3i32);
+        let bv = b.constant(5i32);
         let sum = b.iadd(a, bv);
         b.ret(&[sum]);
         let mut func = b.finish().expect("build");
@@ -518,11 +551,11 @@ mod pipeline_tests {
         let mut b = FunctionBuilder::new("many_ops", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let v1 = b.iconst_i32(1);
-        let v2 = b.iconst_i32(2);
+        let v1 = b.constant(1i32);
+        let v2 = b.constant(2i32);
         let mut acc = b.iadd(v1, v2);
         for _ in 0..19 {
-            let x = b.iconst_i32(3);
+            let x = b.constant(3i32);
             acc = b.iadd(acc, x);
             acc = b.imul(acc, v1);
         }
@@ -549,8 +582,8 @@ mod pipeline_tests {
             let body = b.create_block();
             let exit = b.create_block();
             b.switch_to_block(entry);
-            let zero = b.iconst_i32(0);
-            let one = b.iconst_i32(1);
+            let zero = b.constant(0i32);
+            let one = b.constant(1i32);
             b.jump(header, &[zero, zero]);
             b.switch_to_block(header);
             let i = hparams[0];
@@ -608,8 +641,8 @@ mod pipeline_tests {
             let body = b.create_block();
             let exit = b.create_block();
             b.switch_to_block(entry);
-            let zero = b.iconst_i32(0);
-            let one = b.iconst_i32(1);
+            let zero = b.constant(0i32);
+            let one = b.constant(1i32);
             b.jump(header, &[zero, zero]);
             b.switch_to_block(header);
             let i = hparams[0];
@@ -635,7 +668,7 @@ mod pipeline_tests {
             let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
             let entry = b.create_block();
             b.switch_to_block(entry);
-            let c41 = b.iconst_i32(41);
+            let c41 = b.constant(41i32);
             let call_ret = b.call(callee_ref, &[c41], &[TypeId::I32]);
             b.ret(&[call_ret[0]]);
             (b.finish().expect("build"), table)

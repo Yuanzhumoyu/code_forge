@@ -17,9 +17,10 @@
 //! 不同**（每 CGU .text 内仍按符号序、对象按 CGU 名字序——组内布局确定）。
 //! 因此确定性矩阵口径调整为：
 //! 1. **同配置重复编译**：逐对象字节全等 + 链接产物指令序列全等
-//!   （`-C codegen-units=1/4/16` 各两次；cgu=4 另加 `-Z threads=2` +
-//!   `FORGE_CODEGEN_THREADS=4` 真并行池——并行与串行的 .o 字节必须全等）；
+//!    （`-C codegen-units=1/4/16` 各两次；cgu=4 另加 `-Z threads=2` +
+//!    `FORGE_CODEGEN_THREADS=4` 真并行池——并行与串行的 .o 字节必须全等）；
 //! 2. **跨配置**：退出码/运行行为一致（对象布局可不同——不再比较指令序列）。
+//!
 //! M5 符号稳定测试改为跨全部对象聚合（`__slice_*`/`__vtable_*` 只定义一次，
 //! owner CGU 归属确定）。
 //!
@@ -30,6 +31,15 @@
 //! 强制多 CGU，守护多对象确定性。
 
 use std::path::{Path, PathBuf};
+
+/// 一次变体编译的产物：`(对象名, 字节)` 列表 + 可执行文件路径。
+type Objects = Vec<(String, Vec<u8>)>;
+
+/// 编译变体：`(名字, 额外 rustc 参数, 额外环境变量)`。
+type Variant<'a> = (&'a str, &'a [&'a str], &'a [(&'a str, &'a str)]);
+
+/// 一个变体的观测结果：`(名字, 对象, 指令序列, 退出码)`。
+type VariantOut = (String, Objects, Vec<String>, i32);
 use std::process::Command;
 
 const SRC: &str = r#"#![no_std]
@@ -218,7 +228,7 @@ fn compile_to_dir(
     src: &str,
     extra: &[&str],
     envs: &[(&str, &str)],
-) -> Result<(Vec<(String, Vec<u8>)>, PathBuf), String> {
+) -> Result<(Objects, PathBuf), String> {
     let run = workdir.join(subdir);
     std::fs::create_dir_all(&run).map_err(|e| e.to_string())?;
     let src_path = workdir.join("prog_src.rs");
@@ -396,6 +406,7 @@ fn deterministic_output_across_runs() {
 /// - cgu=4 + debuginfo=1 ×2、cgu=4 + debuginfo=2 ×2（B-v2 per-CGU CU：
 ///   debuginfo 与多对象并存——每个带函数的对象各有独立 DWARF CU，
 ///   逐对象字节稳定）
+///
 /// 断言：
 /// 1. 同配置两次编译：对象文件**逐字节全等** + 链接产物指令序列全等；
 /// 2. 并行与串行（cgu=4）：对象字节全等（par_map 保序 + 归并确定）；
@@ -406,7 +417,7 @@ fn deterministic_multi_object_bytes_across_runs_and_modes() {
     let workdir = std::env::temp_dir().join(format!("forge_det_m6_{}", std::process::id()));
     std::fs::create_dir_all(&workdir).expect("create workdir");
     let src = m6_src();
-    let variants: [(&str, &[&str], &[(&str, &str)]); 11] = [
+    let variants: [Variant<'_>; 11] = [
         ("cgu1_a", &["-C", "codegen-units=1"], &[]),
         ("cgu1_b", &["-C", "codegen-units=1"], &[]),
         ("cgu4_a", &["-C", "codegen-units=4"], &[]),
@@ -441,7 +452,7 @@ fn deterministic_multi_object_bytes_across_runs_and_modes() {
             &[],
         ),
     ];
-    let mut outs: Vec<(String, Vec<(String, Vec<u8>)>, Vec<String>, i32)> = Vec::new();
+    let mut outs: Vec<VariantOut> = Vec::new();
     for (name, extra, envs) in variants {
         let (objs, exe) = compile_to_dir(&workdir, name, &src, extra, envs)
             .map_err(|e| format!("{name}: {e}"))
@@ -570,7 +581,7 @@ fn stable_data_symbol_names_across_scheduling() {
     std::fs::create_dir_all(&workdir).expect("create workdir");
     std::fs::write(workdir.join("sym.rs"), data_sym_stress_source()).expect("write source");
 
-    let variants: [(&str, &[&str], &[(&str, &str)]); 4] = [
+    let variants: [Variant<'_>; 4] = [
         ("serial", &[], &[]),
         (
             "par_a",

@@ -24,7 +24,7 @@ use crate::ir::mem_flags::MemFlags;
 use crate::ir::opcode::AtomicRmwOp;
 use crate::ir::opcode::Opcode;
 use crate::ir::opcode::Ordering;
-use crate::ir::types::{FunctionSignature, TypeContext, TypeEntry, TypeStore};
+use crate::ir::types::{FloatFmt, FunctionSignature, TypeContext, TypeEntry, TypeStore};
 use crate::util::imm_str::ImmStr;
 
 use super::ast_items::*;
@@ -1107,7 +1107,7 @@ fn const_expr_bytes(ctx: &TypeContext, e: &ConstExpr, size: u64) -> Result<Vec<u
 pub fn size_of_parsed_type(t: &ParsedType) -> u64 {
     match t {
         ParsedType::Int(bits) => *bits as u64 / 8,
-        ParsedType::Float(bits) => *bits as u64 / 8,
+        ParsedType::Float(fmt) => fmt.total_bits() as u64 / 8,
         ParsedType::Ptr | ParsedType::PtrAddrSpace(_) => 8,
         ParsedType::Vec(_, e) | ParsedType::VecScalable(_, e) => size_of_parsed_type(e),
         ParsedType::Array(n, e) => n * size_of_parsed_type(e),
@@ -1485,10 +1485,10 @@ fn pack_scalar_init(ctx: &TypeContext, ty: TypeId, v: &GlobalInitVal) -> Result<
             let size = std::cmp::max(1u32, (*bits).div_ceil(8)) as usize;
             (*n).to_le_bytes()[..size].to_vec()
         }
-        (GlobalInitVal::Float(f), crate::ir::types::TypeEntry::Float { bits: 32 }) => {
+        (GlobalInitVal::Float(f), crate::ir::types::TypeEntry::Float { fmt: FloatFmt::F32 }) => {
             (*f as f32).to_le_bytes().to_vec()
         }
-        (GlobalInitVal::Float(f), crate::ir::types::TypeEntry::Float { bits: 64 }) => {
+        (GlobalInitVal::Float(f), crate::ir::types::TypeEntry::Float { fmt: FloatFmt::F64 }) => {
             { *f }.to_le_bytes().to_vec()
         }
         (GlobalInitVal::Null, crate::ir::types::TypeEntry::Pointer { .. }) => {
@@ -1635,10 +1635,11 @@ fn int_init_bytes(ty: TypeId, n: i64, ctx: &TypeContext) -> Vec<u8> {
                 v.to_le_bytes()[..size].to_vec()
             }
         },
-        // **浮点类型上的整数字面量 = 位模式**（LLVM：`global double 0x7FF0000000000000`
-        // 是 +inf）。此前落 `_ => 32 位` ⇒ 低 32 位为 0 时静默变成 0.0（实测：
-        // 0x7FF0000000000000 → 0x00000000、0x7FEFFFFFFFFFFFFF → 0xffffffff）。
-        Some(TypeEntry::Float { bits }) | Some(TypeEntry::BFloat { bits }) => match *bits {
+        // 浮点类型上的整数字面量 = 位模式**按总位宽**（LLVM：`global double
+        // 0x7FF0000000000000` 是 +inf）。此前落 `_ => 32 位` ⇒ 低 32 位为 0 时静默
+        // 变成 0.0（实测：0x7FF0000000000000 → 0x00000000、0x7FEFFFFFFFFFFFFF →
+        // 0xffffffff）。格式（f16/bf16/自定义三段）不影响"位模式占几个字节"。
+        Some(TypeEntry::Float { fmt }) => match fmt.total_bits() {
             16 => (v as u16).to_le_bytes().to_vec(),
             32 => (v as u32).to_le_bytes().to_vec(),
             64 => v.to_le_bytes().to_vec(),
@@ -1655,12 +1656,14 @@ fn float_init_bytes(ty: TypeId, f: f64, ctx: &TypeContext) -> Vec<u8> {
     // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
     let store = ctx.borrow();
     match store.get(ty) {
-        TypeEntry::Float { bits: 32 } => (f as f32).to_le_bytes().to_vec(),
-        TypeEntry::Float { bits: 64 } => f.to_le_bytes().to_vec(),
-        // f16/bfloat：**真正的 16 位模式**（此前落 _ => (f as f32) 存 4 字节，
+        TypeEntry::Float { fmt: FloatFmt::F32 } => (f as f32).to_le_bytes().to_vec(),
+        TypeEntry::Float { fmt: FloatFmt::F64 } => f.to_le_bytes().to_vec(),
+        // f16/bf16：**真正的 16 位模式**（此前落 _ => (f as f32) 存 4 字节，
         // global half -qnan 被打印成 0x7fc00000、回读按整数截成 0x0000）
-        TypeEntry::Float { bits: 16 } => f32_to_f16_bits(f as f32).to_le_bytes().to_vec(),
-        TypeEntry::BFloat { .. } => f32_to_bf16_bits(f as f32).to_le_bytes().to_vec(),
+        TypeEntry::Float { fmt: FloatFmt::F16 } => f32_to_f16_bits(f as f32).to_le_bytes().to_vec(),
+        TypeEntry::Float {
+            fmt: FloatFmt::BF16,
+        } => f32_to_bf16_bits(f as f32).to_le_bytes().to_vec(),
         _ => (f as f32).to_le_bytes().to_vec(),
     }
 }
@@ -1747,7 +1750,7 @@ fn signature_of(f: &ParsedFunction, ctx: &TypeContext) -> FunctionSignature {
 fn to_type(pt: &ParsedType, ctx: &TypeContext) -> TypeId {
     match pt {
         ParsedType::Int(bits) => ctx.int_ty(*bits),
-        ParsedType::Float(bits) => ctx.float_ty(*bits),
+        ParsedType::Float(fmt) => ctx.float_ty_fmt(*fmt),
         ParsedType::Ptr => ctx.ptr_ty(),
         ParsedType::PtrAddrSpace(n) => ctx.pointer_ty(*n),
         ParsedType::Vec(n, e) => ctx.vector_ty(to_type(e, ctx), *n),
@@ -1791,7 +1794,7 @@ fn to_type_result(pt: &ParsedType, ctx: &TypeContext) -> Result<TypeId, IrError>
             }
             Ok(ctx.int_ty(*bits))
         }
-        ParsedType::Float(bits) => Ok(ctx.float_ty(*bits)),
+        ParsedType::Float(fmt) => Ok(ctx.float_ty_fmt(*fmt)),
         ParsedType::Ptr => Ok(ctx.ptr_ty()),
         // 地址空间值域（LLVM：addrspace < 2^24）
         ParsedType::PtrAddrSpace(n) => {
@@ -2375,7 +2378,7 @@ fn build_inst<'a>(
             }
             // extractelement / insertelement：idx 是 i32 操作数（常量或变量）
             let idx = match &inst.args.last().unwrap().op {
-                Operand::Int(n) => fb.iconst(*n, ctx.i32_ty()),
+                Operand::Int(n) => fb.const_int(*n, ctx.i32_ty()),
                 _ => operand_to_value(
                     inst.args.last().unwrap(),
                     ctx,
@@ -2452,9 +2455,9 @@ fn build_inst<'a>(
                             )),
                         };
                     let elem_cid = match &inst.args[1].op {
-                        Operand::Int(n) => fb.func.constants.insert_int(*n as i128, 32),
-                        Operand::UInt(n) => fb.func.constants.insert_int(*n as i128, 32),
-                        Operand::Float(f) => fb.func.constants.insert_float128(f.to_bits() as u128),
+                        Operand::Int(n) => fb.func.constants.intern_int(*n as i128, 32),
+                        Operand::UInt(n) => fb.func.constants.intern_int(*n as i128, 32),
+                        Operand::Float(f) => fb.func.constants.intern_float(f.to_bits() as u128, 128),
                         _ => {
                             return Err(IrError::Semantic(
                                 "insertvalue aggregate literal requires a literal element (or use a value aggregate operand)"
@@ -2465,19 +2468,19 @@ fn build_inst<'a>(
                     let mut children = fb
                         .func
                         .constants
-                        .get_aggregate(agg_id)
+                        .agg(agg_id)
                         .map(|a| a.children.clone())
                         .unwrap_or_default();
                     if (idx as usize) < children.len() {
-                        children[idx as usize] = crate::ir::constant::AggChild::Scalar(elem_cid);
+                        children[idx as usize] = elem_cid;
                     }
-                    let new_agg = fb.func.constants.insert_aggregate(agg_ty, children);
+                    let new_agg = fb.func.constants.intern_agg(agg_ty, children);
                     let v = fb.emit1(
                         Opcode::InsertValue,
                         vec![],
                         vec![
                             Immediate::Uint(idx as u64),
-                            Immediate::Agg(new_agg),
+                            Immediate::Const(new_agg),
                             Immediate::Type(agg_ty),
                         ],
                         agg_ty,
@@ -2489,7 +2492,7 @@ fn build_inst<'a>(
                     }
                     return Ok(());
                 }
-                let agg_id: Option<crate::AggId> = match &inst.args[0].op {
+                let agg_id: Option<crate::ConstId> = match &inst.args[0].op {
                     Operand::Agg(elems) => Some(agg_const_from_operands(fb, agg_ty, elems, ctx)?),
                     _ => None, // zeroinitializer
                 };
@@ -2507,22 +2510,19 @@ fn build_inst<'a>(
                     })?;
                     let mut imm = vec![Immediate::Uint(i as u64), Immediate::Type(cur_ty)];
                     match &cur_agg {
-                        Some(id) => imm.insert(1, Immediate::Agg(*id)),
+                        Some(id) => imm.insert(1, Immediate::Const(*id)),
                         None => imm.insert(1, Immediate::Uint(0)),
                     }
                     v = Some(fb.emit1(Opcode::ExtractValue, vec![], imm, ety, InstFlags::NONE));
                     cur_ty = ety;
                     if k + 1 < idxs.len() {
                         cur_agg = match &cur_agg {
-                            Some(id) => match fb
+                            Some(id) => fb
                                 .func
                                 .constants
-                                .get_aggregate(*id)
+                                .agg(*id)
                                 .and_then(|a| a.children.get(i as usize))
-                            {
-                                Some(crate::ir::constant::AggChild::Agg(aid)) => Some(*aid),
-                                _ => None,
-                            },
+                                .copied(),
                             None => None,
                         };
                     }
@@ -3073,11 +3073,11 @@ fn build_inst<'a>(
             encode_lanes_to_bytes(ctx, elem, &vl, inst.endian)?
         };
         let cid = if inst.endian {
+            fb.func.constants.intern_vector(&lane_data, Endianness::Big)
+        } else {
             fb.func
                 .constants
-                .insert_vector_with_endian(&lane_data, Endianness::Big)
-        } else {
-            fb.func.constants.insert_vector(&lane_data)
+                .intern_vector(&lane_data, Endianness::Little)
         };
         let v = fb.emit1(
             Opcode::Vconst,
@@ -3329,16 +3329,15 @@ fn parse_rmw_op(s: &str) -> Result<AtomicRmwOp, IrError> {
 /// 属性名列表 → ParamAttributes（参数/返回共用；未知属性严格报错）。
 /// 按类型生成零常量（extractvalue zeroinitializer 特判用）。
 /// 聚合字面量 → ConstantPool 聚合常量（3.1：递归构建 AggConst 树）。
-/// 标量叶子 → ConstId（int/float）；嵌套聚合 → 子 AggId；zeroinitializer → 零标量。
+/// 标量叶子 → `ConstId`（位值）；嵌套聚合 → 子 `ConstId`（Agg tag）；zeroinitializer → 零标量。
 fn agg_const_from_operands(
     fb: &mut FunctionBuilder,
     ty: TypeId,
     elems: &[ParsedOperand],
     ctx: &TypeContext,
-) -> Result<crate::AggId, IrError> {
+) -> Result<crate::ConstId, IrError> {
     // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
     let store = ctx.borrow();
-    use crate::ir::constant::AggChild;
     use crate::ir::types::TypeEntry;
     let mut children = Vec::new();
     for (i, e) in elems.iter().enumerate() {
@@ -3351,23 +3350,23 @@ fn agg_const_from_operands(
                     TypeEntry::Int { bits } => *bits,
                     _ => 32,
                 };
-                AggChild::Scalar(fb.func.constants.insert_int(*n as i128, bits))
+                fb.func.constants.intern_int(*n as i128, bits)
             }
             Operand::UInt(n) => {
                 let bits = match store.get(ety) {
                     TypeEntry::Int { bits } => *bits,
                     _ => 32,
                 };
-                AggChild::Scalar(fb.func.constants.insert_int(*n as i128, bits))
+                fb.func.constants.intern_int(*n as i128, bits)
             }
             Operand::Float(f) => {
                 let bits = match store.get(ety) {
-                    TypeEntry::Float { bits: 32 } => (*f as f32).to_bits() as u128,
+                    TypeEntry::Float { fmt: FloatFmt::F32 } => (*f as f32).to_bits() as u128,
                     _ => f.to_bits() as u128,
                 };
-                AggChild::Scalar(fb.func.constants.insert_float128(bits))
+                fb.func.constants.intern_float(bits, 128)
             }
-            Operand::Agg(sub) => AggChild::Agg(agg_const_from_operands(fb, ety, sub, ctx)?),
+            Operand::Agg(sub) => agg_const_from_operands(fb, ety, sub, ctx)?,
             // `zeroinitializer` / `undef` / `poison` / `null` 作聚合元素：
             // 标量 → 零标量；**聚合 → 递归零聚合**（此前一律落 `insert_int(0, 8)`，
             // `%1 zeroinitializer`（元素类型是结构体）就存成 i8 标量、打印成 `i8 0`，
@@ -3383,7 +3382,7 @@ fn agg_const_from_operands(
         };
         children.push(child);
     }
-    Ok(fb.func.constants.insert_aggregate(ty, children))
+    Ok(fb.func.constants.intern_agg(ty, children))
 }
 
 /// 聚合元素的零值：标量 → 零常量；**结构体/数组 → 递归零聚合**。
@@ -3395,36 +3394,27 @@ fn zero_agg_child(
     fb: &mut FunctionBuilder,
     ety: crate::TypeId,
     store: &crate::ir::types::TypeStore,
-) -> Result<crate::ir::constant::AggChild, IrError> {
-    use crate::ir::constant::AggChild;
+) -> Result<crate::ConstId, IrError> {
     use crate::ir::types::TypeEntry;
     match store.entry_opt(ety) {
-        Some(TypeEntry::Int { bits }) => {
-            Ok(AggChild::Scalar(fb.func.constants.insert_int(0, *bits)))
-        }
-        Some(TypeEntry::Float { .. }) | Some(TypeEntry::BFloat { .. }) => {
-            Ok(AggChild::Scalar(fb.func.constants.insert_float128(0)))
-        }
+        Some(TypeEntry::Int { bits }) => Ok(fb.func.constants.intern_int(0, *bits)),
+        Some(TypeEntry::Float { .. }) => Ok(fb.func.constants.intern_float(0, 128)),
         Some(TypeEntry::Struct { fields, .. }) => {
             let mut children = Vec::with_capacity(fields.len());
             for f in fields {
                 children.push(zero_agg_child(fb, f.ty, store)?);
             }
-            Ok(AggChild::Agg(
-                fb.func.constants.insert_aggregate(ety, children),
-            ))
+            Ok(fb.func.constants.intern_agg(ety, children))
         }
         Some(TypeEntry::Array { elem, len }) => {
             let mut children = Vec::with_capacity(*len as usize);
             for _ in 0..*len {
                 children.push(zero_agg_child(fb, *elem, store)?);
             }
-            Ok(AggChild::Agg(
-                fb.func.constants.insert_aggregate(ety, children),
-            ))
+            Ok(fb.func.constants.intern_agg(ety, children))
         }
         // 其他（指针/token/metadata/向量…）：零标量占位（保持既有行为）
-        _ => Ok(AggChild::Scalar(fb.func.constants.insert_int(0, 8))),
+        _ => Ok(fb.func.constants.intern_int(0, 8)),
     }
 }
 /// `#N` 属性组引用 → 组内具体属性名（LLVM：`attributes #0 = { nounwind }`）。
@@ -4157,8 +4147,19 @@ fn attr_ty_to_type(s: &str, ctx: &TypeContext) -> Result<TypeId, IrError> {
     if let Some(bits) = s.strip_prefix('i').and_then(|b| b.parse::<u32>().ok()) {
         return Ok(ctx.int_ty(bits));
     }
-    if let Some(bits) = s.strip_prefix('f').and_then(|b| b.parse::<u16>().ok()) {
-        return Ok(ctx.float_ty(bits));
+    // 浮点属性类型：`f16/f32/f64/f128`、任意 `f<exp>_<mant>`（如 `f5_2`）、`bf16`
+    // （以及 LLVM 的 `half`/`float`/`double`/`fp128` 等写法）。
+    let is_float_name = matches!(
+        s,
+        "half" | "bfloat" | "bf16" | "float" | "double" | "fp128" | "x86_fp80" | "ppc_fp128"
+    ) || s.strip_prefix('f').is_some_and(|rest| {
+        rest.parse::<u16>().is_ok()
+            || rest
+                .split_once('_')
+                .is_some_and(|(e, m)| e.parse::<u8>().is_ok() && m.parse::<u16>().is_ok())
+    });
+    if is_float_name {
+        return Ok(ctx.float_ty_fmt(super::lexer::float_fmt_from_text(s)));
     }
     if s == "ptr" {
         return Ok(ctx.ptr_ty());
@@ -4213,21 +4214,23 @@ fn encode_lanes_to_bytes(
             (VecLane::UInt(n), TypeEntry::Int { bits }) if *bits <= 64 => {
                 data.extend({ *n }.to_le_bytes()[..(*bits as usize / 8)].to_vec())
             }
-            (VecLane::Float(f), TypeEntry::Float { bits: 32 }) => {
+            (VecLane::Float(f), TypeEntry::Float { fmt: FloatFmt::F32 }) => {
                 data.extend((*f as f32).to_le_bytes())
             }
-            (VecLane::Float(f), TypeEntry::Float { bits: 64 }) => data.extend({ *f }.to_le_bytes()),
+            (VecLane::Float(f), TypeEntry::Float { fmt: FloatFmt::F64 }) => {
+                data.extend({ *f }.to_le_bytes())
+            }
             // LLVM 允许整数字面量出现在浮点元素位置（`float 0` ≡ 0.0）
-            (VecLane::Int(n), TypeEntry::Float { bits: 32 }) => {
+            (VecLane::Int(n), TypeEntry::Float { fmt: FloatFmt::F32 }) => {
                 data.extend((*n as f32).to_le_bytes())
             }
-            (VecLane::Int(n), TypeEntry::Float { bits: 64 }) => {
+            (VecLane::Int(n), TypeEntry::Float { fmt: FloatFmt::F64 }) => {
                 data.extend((*n as f64).to_le_bytes())
             }
-            (VecLane::UInt(n), TypeEntry::Float { bits: 32 }) => {
+            (VecLane::UInt(n), TypeEntry::Float { fmt: FloatFmt::F32 }) => {
                 data.extend((*n as f32).to_le_bytes())
             }
-            (VecLane::UInt(n), TypeEntry::Float { bits: 64 }) => {
+            (VecLane::UInt(n), TypeEntry::Float { fmt: FloatFmt::F64 }) => {
                 data.extend((*n as f64).to_le_bytes())
             }
             // 整数元素（i1/i8/i16/...——位宽任意；第十二轮补齐 i1/i8 lane）
@@ -4286,11 +4289,12 @@ struct OperandTyFacts {
 fn operand_ty_facts(types: &TypeStore, ty: TypeId) -> OperandTyFacts {
     OperandTyFacts {
         is_metadata: matches!(types.get(ty), TypeEntry::Metadata),
+        // 十六进制整数字面量按**位模式**解释：16/32/64 位浮点（含 bf16）
         int_literal_is_bits: matches!(
             types.get(ty),
-            TypeEntry::Float { bits: 16 | 32 | 64 } | TypeEntry::BFloat { .. }
+            TypeEntry::Float { fmt } if matches!(fmt.total_bits(), 16 | 32 | 64)
         ),
-        is_f32: matches!(types.get(ty), TypeEntry::Float { bits: 32 }),
+        is_f32: matches!(types.get(ty), TypeEntry::Float { fmt } if *fmt == FloatFmt::F32),
         is_float: matches!(types.get(ty), TypeEntry::Float { .. }),
         is_vector: matches!(types.get(ty), TypeEntry::Vector { .. }),
         elem: types.element_type(ty),
@@ -4357,33 +4361,33 @@ fn operand_to_value<'a>(
                 fb.global_addr(crate::GlobalId(u32::MAX))
             }
         }
-        Operand::Int(n) => fb.iconst(*n, ty),
+        Operand::Int(n) => fb.const_int(*n, ty),
         Operand::UInt(n) => {
             // 浮点类型的 hex 字面量是 bit 模式（LLVM：`float 0x3FC00000`）;
             // f32/f64 按位模式存;half/bfloat 低 16 位(第二十九轮重建)
             if facts.int_literal_is_bits {
-                fb.fconst(*n, ty)
+                fb.const_float(*n, ty)
             } else {
-                fb.iconst(*n as i64, ty)
+                fb.const_int(*n, ty)
             }
         }
         Operand::Float(fv) => {
             if facts.is_f32 {
                 let bits = (*fv as f32).to_bits() as u64;
-                fb.fconst(bits, ty)
+                fb.const_float(bits, ty)
             } else {
-                fb.fconst(fv.to_bits(), ty)
+                fb.const_float(fv.to_bits(), ty)
             }
         }
-        Operand::Bool(b) => fb.iconst(if *b { 1 } else { 0 }, ty),
-        Operand::Null => fb.iconst(0, ty),
+        Operand::Bool(b) => fb.const_int(i128::from(*b), ty),
+        Operand::Null => fb.const_int(0, ty),
         // 向量常量字面量 `<4 x float> <1.5, ...>` → 小端 vconst 值
         Operand::VecConst(lanes) => {
             let elem = facts.elem.ok_or_else(|| {
                 IrError::Semantic("vector literal requires a vector type".to_string())
             })?;
             let data = encode_lanes_to_bytes(ctx, elem, lanes, false)?;
-            fb.vconst_bytes(data, ty)
+            fb.const_vector_bytes(data, ty)
         }
         // 聚合常量字面量（3.1 值表示）：构建 AggConst 常量池节点 + AggConst Value
         //（display 原样还原字面量；store/ret/call 实参等任意操作数位置可用）
@@ -4396,9 +4400,9 @@ fn operand_to_value<'a>(
         Operand::ZeroInit => {
             let size = facts.bytes;
             if facts.is_vector {
-                fb.vconst_bytes(vec![0u8; size], ty)
+                fb.const_vector_bytes(vec![0u8; size], ty)
             } else {
-                fb.iconst(0, ty)
+                fb.const_int(0, ty)
             }
         }
         // 常量折叠表达式：`ret i64 add (i64 <l>, i64 <r>)` ——求值后落常量
@@ -4406,14 +4410,14 @@ fn operand_to_value<'a>(
         Operand::ConstExpr(e) => {
             let v = const_expr_value(ctx, e)?;
             if facts.is_f32 {
-                fb.fconst(v as u64 & 0xFFFF_FFFF, ty)
+                fb.const_float(v as u64 & 0xFFFF_FFFF, ty)
             } else if facts.is_float {
-                fb.fconst(v as u64, ty)
+                fb.const_float(v as u64, ty)
             } else if facts.is_vector {
                 // 向量常量（折叠值无意义）→ 零向量
-                fb.vconst_bytes(vec![0u8; facts.bytes], ty)
+                fb.const_vector_bytes(vec![0u8; facts.bytes], ty)
             } else {
-                fb.iconst(v as i64, ty)
+                fb.const_int(v, ty)
             }
         }
         Operand::Undef => fb.emit1(Opcode::Undef, vec![], vec![], ty, InstFlags::NONE),

@@ -31,7 +31,7 @@ fn two_fn_module(callee_variadic: bool) -> Module {
     let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
     let mut bm = FunctionBuilder::new("caller", TypeContext::new(), sig_m);
     bm.create_block_here();
-    let v = bm.iconst(7, TypeId::I64);
+    let v = bm.const_int(7, TypeId::I64);
     let callee = FuncRef::new(0);
     let r = bm.call(callee, &[v], &[TypeId::I64]);
     bm.ret(&[r[0]]);
@@ -90,7 +90,7 @@ fn large_modules_take_the_same_path() {
         let mut b = FunctionBuilder::new(name.as_str(), TypeContext::new(), sig);
         let (blk, p) = b.create_block_with_params(&[(TypeId::I64, "x")]);
         b.switch_to_block(blk);
-        let two = b.iconst(2, TypeId::I64);
+        let two = b.const_int(2, TypeId::I64);
         let sum = b.iadd(p[0], two);
         b.ret(&[sum]);
         m.add_function(b.finish().expect("f"));
@@ -136,8 +136,8 @@ fn add_function_honours_the_session_signature_table() {
 /// 向量寄存器，变参调用点因此必须写元信息寄存器（`variadic_meta.rs` 的同款形状）。
 fn caller_with_float_arg(b: &mut FunctionBuilder) {
     b.create_block_here();
-    let fmt = b.iconst_i64(0);
-    let x = b.fconst(1.5f64.to_bits(), TypeId::F64);
+    let fmt = b.constant(0i64);
+    let x = b.const_float(1.5f64.to_bits(), TypeId::F64);
     let r = b.call(FuncRef::new(0), &[fmt, x], &[TypeId::I64]);
     b.ret(&[r[0]]);
 }

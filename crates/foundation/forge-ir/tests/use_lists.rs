@@ -19,8 +19,8 @@ fn build_add() -> (Function, Value, Value, Inst) {
     let sig = FunctionSignature::new(&[], &[TypeId::I32]);
     let mut b = FunctionBuilder::new("f", TypeContext::new(), sig);
     let (_entry, _) = b.create_entry_block();
-    let a = b.iconst_i32(1);
-    let bv = b.iconst_i32(2);
+    let a = b.constant(1i32);
+    let bv = b.constant(2i32);
     let s = b.iadd(a, bv);
     b.ret(&[s]);
     let func = b.finish().expect("build");
@@ -128,7 +128,7 @@ fn build_branch() -> (Function, Value, Value) {
     // create_block_with_tys 会把 cur_block 切到新块 ⇒ 最后回到入口块发指令
     let (_entry, params) = b.create_entry_block();
     let x = params[0];
-    let cond = b.iconst_i32(1);
+    let cond = b.constant(1i32);
     b.branch(cond, then_blk, &[x], else_blk, &[]);
     b.switch_to_block(then_blk);
     b.ret(&[x]);

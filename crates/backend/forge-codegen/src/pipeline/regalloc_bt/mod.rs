@@ -58,6 +58,23 @@ impl BacktrackingAllocator {
         inst_ops: &[smallvec::SmallVec<[crate::machine::lowering::OperandBind; 2]>],
         clobber_map: &[Vec<(u32, crate::prelude::RegClass)>],
     ) -> Result<AllocResult, IrError> {
+        self.allocate_named("", vcode, config, inst_ops, clobber_map)
+    }
+
+    /// 同 [`Self::allocate`]，但带**函数名**——只服务诊断
+    /// （`FORGE_DUMP_ALLOC` 的分段标题与过滤）。名字不参与任何分配决策。
+    ///
+    /// 为什么单独一个入口而不是加参数：分配器是**编译器共享字段**（`&self` 跨函数复用、
+    /// 并行编译时还被多线程同时借用），把名字塞进 `self` 会造成数据竞争；而给
+    /// `allocate` 加必填参数会逼所有测试调用点跟着改。
+    pub fn allocate_named<I: MachineInst>(
+        &self,
+        func_name: &str,
+        vcode: &crate::VCode<I>,
+        config: &RegAllocConfig,
+        inst_ops: &[smallvec::SmallVec<[crate::machine::lowering::OperandBind; 2]>],
+        clobber_map: &[Vec<(u32, crate::prelude::RegClass)>],
+    ) -> Result<AllocResult, IrError> {
         // 1. 计算 LiveInterval（XReg → 微指令字段映射驱动）
         let intervals = liverange::compute_live_intervals(vcode, inst_ops, &config.param_xregs);
 
@@ -113,6 +130,20 @@ impl BacktrackingAllocator {
         }
 
         // 5. 构建 AllocResult，并补上**逐指令溢出编辑**（决策在分配器里做）
+        //
+        // 自检（常开；成本 O(区间数²) 仅在 debug 下做，release 只做快速版本）：
+        // **同一物理寄存器上不得出现重叠的活区间**。分配器一旦把两个同时活着的值分到
+        // 同一寄存器，机器码就会出现"store 的地址寄存器 == 上一条 load 的目标"这类形态
+        // （v27 M6 实测：LICM 外提 `StackAddr` 触发），结果只有错值/AV 两种。
+        // 有 spill 槽的 vreg 不参与（它没有物理寄存器）。
+        // debug 构建常开；release 只在显式开关下做（O(段数²) 的自检不该进生产热路径）。
+        if cfg!(debug_assertions) || std::env::var_os("FORGE_VERIFY_REGALLOC").is_some() {
+            verify::verify_no_overlap(&state.assignments, &state.spill_slots, &state.intervals)?;
+        }
+        // 取证视图（`FORGE_DUMP_ALLOC=1`，可用 `FORGE_DUMP_ALLOC_FILTER=<名子串>` 过滤）。
+        if std::env::var_os("FORGE_DUMP_ALLOC").is_some() {
+            dump::dump_alloc(func_name, vcode, inst_ops, &state);
+        }
         let mut result = state.build_result()?;
         result.edits = build_spill_edits(
             vcode,
@@ -135,8 +166,10 @@ impl Default for BacktrackingAllocator {
 // 测试
 // ============================================================
 
+mod dump;
 mod spill;
 mod state;
+mod verify;
 
 use state::BtState;
 

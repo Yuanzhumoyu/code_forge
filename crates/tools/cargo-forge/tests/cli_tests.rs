@@ -19,14 +19,29 @@
 //! （--test-threads=1）避免并发 cargo 争抢。
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::Once;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 static DIR_SEQ: AtomicU32 = AtomicU32::new(0);
+/// 本次测试进程**只清一次**上次运行残留的夹具目录（每个夹具含一份 `-Zbuild-std`
+/// 编出来的 `core`，实测 18 个 ≈ 457 MB；不清就会一直涨）。
+static PRUNE_ONCE: Once = Once::new();
 
-/// 每个用例的独立临时目录（%TEMP%\cargo_forge_cli_<tag>_<pid>_<seq>）。
+/// 每个用例的独立夹具目录：**仓库 `target/cli-tests/<tag>_<pid>_<seq>`**。
+///
+/// 为什么不用 `%TEMP%`：夹具会在里面 `cargo build`（`-Zbuild-std` 编 `core`），而系统临时
+/// 目录**在工作区之外** ⇒ 带沙箱的环境写不进去（实测：`failed to write to
+/// C:\Users\…\AppData\Local\Temp\dsh-…/target/debug/build/core-…/output`）。
+/// 本仓 CLAUDE.md 的「生成物落盘」早就规定生成物一律进 `target/`——夹具目录也遵守同一条，
+/// 于是它既是沙箱内可写，也随 `target/` 一起被清理，不污染工作区。
 fn tmpdir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "cargo_forge_cli_{}_{}_{}",
+    let base = repo_root().join("target").join("cli-tests");
+    // 清掉**上次运行**的残留夹具（本进程只做一次；本次运行自己的夹具留着，便于失败取证）。
+    PRUNE_ONCE.call_once(|| {
+        let _ = std::fs::remove_dir_all(&base);
+    });
+    let dir = base.join(format!(
+        "{}_{}_{}",
         tag,
         std::process::id(),
         DIR_SEQ.fetch_add(1, Ordering::Relaxed)
@@ -80,11 +95,37 @@ fn backend_dll_path() -> Option<PathBuf> {
 /// RUSTUP_HOME：进程未设且仓库 target/rustup_home 存在时用重定向
 /// （与工具 env.rs 同一规则；本仓库 backend 与该浮点 nightly 配对）。
 fn ensure_rustup_home(cmd: &mut Command) {
-    if std::env::var_os("RUSTUP_HOME").is_none() {
+    // **空串也算未设**：某些环境（含本仓脚本）会导出空 `RUSTUP_HOME=""`，
+    // 只判 `is_none()` 会漏掉重定向（cargo/rustup 拿到空值仍回落到用户目录）。
+    if std::env::var_os("RUSTUP_HOME").is_none_or(|v| v.is_empty()) {
         let redirect = repo_root().join("target").join("rustup_home");
         if redirect.is_dir() {
             cmd.env("RUSTUP_HOME", &redirect);
         }
+    }
+}
+
+/// CARGO_HOME：同样的重定向（→ 仓库 `target/cargo-home`）。
+///
+/// **为什么必须有**：夹具工程要 `cargo build`，而默认 `~/.cargo` 在带沙箱/受限权限的
+/// 环境里**建不了解包目录**（实测：`failed to create directory
+/// C:\Users\…\.cargo\registry\src\mirrors.ustc.edu.cn-…\getopts-0.2.24`）⇒
+/// `workspace` 门禁步骤整步红，而这与代码无关。本仓 CLAUDE.md 的"生成物落盘"一节
+/// 早就规定 cargo 包缓存放 `target/cargo-home`——这里让**夹具子进程**也遵守同一条。
+/// CARGO_HOME：**无条件**重定向到仓库 `target/cargo-home`（存在时）。
+///
+/// **为什么必须是"无条件"**：`cargo test` 会给测试进程设 `CARGO_HOME=<用户全局缓存>`
+/// （本机 = `C:\Users\<user>\.cargo`），于是只判"未设才重定向"根本不会生效；而夹具工程
+/// 要 `cargo build`，解包 `getopts` 时往那个全局目录建子目录**被沙箱拒绝**
+/// （实测：`failed to create directory C:\Users\…\.cargo\registry\src\…\getopts-0.2.24`）
+/// ⇒ `workspace` 门禁整步红，与代码无关。
+///
+/// 夹具是**测试**：它不该依赖、也不该写宿主的全局缓存（本仓 CLAUDE.md「生成物落盘」
+/// 早就规定 cargo 包缓存放 `target/cargo-home`）。这里让夹具子进程遵守同一条。
+fn ensure_cargo_home(cmd: &mut Command) {
+    let redirect = repo_root().join("target").join("cargo-home");
+    if redirect.is_dir() {
+        cmd.env("CARGO_HOME", &redirect);
     }
 }
 
@@ -219,6 +260,7 @@ fn run_tool(args: &[&str], proj: Option<&Path>, timeout_s: u64) -> Output {
         cmd.current_dir(p);
     }
     ensure_rustup_home(&mut cmd);
+    ensure_cargo_home(&mut cmd);
     run_with_timeout(&mut cmd, timeout_s)
 }
 
@@ -496,11 +538,12 @@ fn cli_init_then_bare_cargo_build() {
     let out2 = run_tool(&["init"], Some(&dir), 60);
     assert_ok(&out2, "⑥ init 幂等重跑");
 
-    // 裸 `cargo build`：无 RUSTFLAGS/RUSTC_WRAPPER/env（仅 RUSTUP_HOME 若需要）
+    // 裸 `cargo build`：无 RUSTFLAGS/RUSTC_WRAPPER/env（仅 RUSTUP_HOME/CARGO_HOME 若需要）
     let mut cmd = Command::new("cargo");
     cmd.arg("build").current_dir(&dir);
     cmd.env_remove("RUSTFLAGS").env_remove("RUSTC_WRAPPER");
     ensure_rustup_home(&mut cmd);
+    ensure_cargo_home(&mut cmd);
     let out = run_with_timeout(&mut cmd, 300);
     assert_ok(&out, "⑥ 裸 cargo build");
 

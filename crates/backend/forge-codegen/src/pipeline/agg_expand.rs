@@ -277,7 +277,7 @@ pub(crate) fn memoryize_from_segs(
     // 取 `hi` 时严格按"这一段的字节是否落在字段内"判，越界/超出字段就补 0（不读别人的字节）。
     let mut cur = slot;
     let const_i64 = |func: &mut Function, v: i64| -> Value {
-        let cid = func.constants.insert_int(i128::from(v), 64);
+        let cid = func.constants.intern_int(i128::from(v), 64);
         let ci = func.make_inst(
             Opcode::Iconst,
             use_pos.block,
@@ -344,7 +344,7 @@ pub(crate) fn memoryize_from_segs(
         );
         if i + 1 < n_segs {
             // 先把常量塞进池（`func.make_inst` 会借整个 func，参数里不能再借 constants）
-            let c8 = func.constants.insert_int(8, 64);
+            let c8 = func.constants.intern_int(8, 64);
             let ci = func.make_inst(
                 Opcode::Iconst,
                 use_pos.block,
@@ -404,7 +404,7 @@ mod tests {
         let mut b = FunctionBuilder::new("agg_param", ctx, sig);
         let (e, params) = b.create_block_with_params(&[(agg, "a")]);
         b.switch_to_block(e);
-        let one = b.iconst(1, TypeId::I64);
+        let one = b.const_int(1, TypeId::I64);
         let _ = params;
         b.ret(&[one]);
         let f = b.finish().expect("agg_param");
@@ -419,7 +419,7 @@ mod tests {
         let mut b = FunctionBuilder::new("scalar", ctx, sig);
         let (e, params) = b.create_block_with_params(&[(TypeId::I64, "x")]);
         b.switch_to_block(e);
-        let one = b.iconst(1, TypeId::I64);
+        let one = b.const_int(1, TypeId::I64);
         let sum = b.iadd(params[0], one);
         b.ret(&[sum]);
         let f = b.finish().expect("scalar");
@@ -470,7 +470,7 @@ mod tests {
         b.switch_to_block(e);
         // 两个段值（i64）与一个"提取点"指令（有结果——函数会把它墓碑化并登记结果值）。
         let s0 = params[0];
-        let one = b.iconst_i64(1);
+        let one = b.constant(1i64);
         let s1 = b.iadd(s0, one);
         let _extract = b.iadd(s0, s1);
         b.ret(&[s0]); // 每个块必须有终结符（builder 的契约）

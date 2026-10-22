@@ -50,7 +50,7 @@ mod tests {
             let sig = FunctionSignature::new(&[], &[TypeId::I64]);
             let mut b = crate::FunctionBuilder::new("const42", TypeContext::new(), sig);
             b.create_block_here();
-            let v = b.iconst_i64(42);
+            let v = b.constant(42i64);
             b.ret(&[v]);
             m.add_function(b.finish().expect("build"));
         }
@@ -78,7 +78,7 @@ mod tests {
             let sig = FunctionSignature::new(&[], &[TypeId::I64]);
             let mut b = crate::FunctionBuilder::new("const42", TypeContext::new(), sig);
             b.create_block_here();
-            let v = b.iconst_i64(42);
+            let v = b.constant(42i64);
             b.ret(&[v]);
             m.add_function(b.finish().expect("build"));
         }

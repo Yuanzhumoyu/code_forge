@@ -373,8 +373,8 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let a = b.iconst_i32(1);
-        let bv = b.iconst_i32(2);
+        let a = b.constant(1i32);
+        let bv = b.constant(2i32);
         let c = b.iadd(a, bv);
         b.ret(&[c]);
         let mut func = b.finish().expect("build");
@@ -397,8 +397,8 @@ mod tests {
         let merge = b.create_block();
 
         b.switch_to_block(entry);
-        let one = b.iconst_i32(1);
-        let zero = b.iconst_i32(0);
+        let one = b.constant(1i32);
+        let zero = b.constant(0i32);
         let cond = b.icmp(IntCC::Ne, one, zero);
         b.branch(cond, then_blk, &[], else_blk, &[]);
 
@@ -435,8 +435,8 @@ mod tests {
 
         b.switch_to_block(entry);
         let sum = b.iadd(a, b_val);
-        let one = b.iconst_i32(1);
-        let zero = b.iconst_i32(0);
+        let one = b.constant(1i32);
+        let zero = b.constant(0i32);
         let cond = b.icmp(IntCC::Ne, one, zero);
         b.branch(cond, left, &[sum], right, &[sum]);
 

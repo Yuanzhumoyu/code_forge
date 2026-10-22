@@ -220,14 +220,14 @@ mod tests {
         fb.jump(header, &[]);
 
         fb.switch_to_block(header);
-        let cond = fb.iconst_i32(1);
+        let cond = fb.constant(1i32);
         fb.branch(cond, body, &[], exit_blk, &[]);
 
         fb.switch_to_block(body);
         fb.jump(header, &[]); // back-edge: body → header
 
         fb.switch_to_block(exit_blk);
-        let r = fb.iconst_i32(0);
+        let r = fb.constant(0i32);
         fb.ret(&[r]);
 
         let func = fb.finish().expect("build");
@@ -253,11 +253,11 @@ mod tests {
         fb.jump(outer_header, &[]);
 
         fb.switch_to_block(outer_header);
-        let c1 = fb.iconst_i32(1);
+        let c1 = fb.constant(1i32);
         fb.branch(c1, inner_header, &[], exit_blk, &[]);
 
         fb.switch_to_block(inner_header);
-        let c2 = fb.iconst_i32(1);
+        let c2 = fb.constant(1i32);
         fb.branch(c2, inner_body, &[], outer_body, &[]);
 
         fb.switch_to_block(inner_body);
@@ -267,7 +267,7 @@ mod tests {
         fb.jump(outer_header, &[]); // outer back-edge
 
         fb.switch_to_block(exit_blk);
-        let r = fb.iconst_i32(0);
+        let r = fb.constant(0i32);
         fb.ret(&[r]);
 
         let func = fb.finish().expect("build");
@@ -283,7 +283,7 @@ mod tests {
         let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
         let entry = fb.create_block();
         fb.switch_to_block(entry);
-        let v = fb.iconst_i32(42);
+        let v = fb.constant(42i32);
         fb.ret(&[v]);
         let func = fb.finish().expect("build");
         let dt = DominatorTree::build(&func);
@@ -370,17 +370,17 @@ mod tests {
         let (merge_blk, merge_params) = fb.create_block_with_params(&[(TypeId::I32, "r")]);
         {
             fb.switch_to_block(entry);
-            let c = fb.iconst_i32(1);
+            let c = fb.constant(1i32);
             fb.branch(c, then_blk, &[], else_blk, &[]);
         }
         {
             fb.switch_to_block(then_blk);
-            let v = fb.iconst_i32(42);
+            let v = fb.constant(42i32);
             fb.jump(merge_blk, &[v]);
         }
         {
             fb.switch_to_block(else_blk);
-            let v = fb.iconst_i32(0);
+            let v = fb.constant(0i32);
             fb.jump(merge_blk, &[v]);
         }
         {

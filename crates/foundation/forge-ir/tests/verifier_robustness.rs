@@ -21,13 +21,13 @@ fn diamond() -> (forge_ir::Function, Block, Block, Block) {
     let (entry, _) = fb.create_entry_block();
     let then_b = fb.create_block();
     let else_b = fb.create_block();
-    let c = fb.iconst_bool(true);
+    let c = fb.constant(true);
     fb.branch(c, then_b, &[], else_b, &[]);
     fb.switch_to_block(then_b);
-    let v1 = fb.iconst_i32(1);
+    let v1 = fb.constant(1i32);
     fb.ret(&[v1]);
     fb.switch_to_block(else_b);
-    let v2 = fb.iconst_i32(2);
+    let v2 = fb.constant(2i32);
     fb.ret(&[v2]);
     let func = fb.finish().expect("build");
     (func, entry, then_b, else_b)
@@ -132,7 +132,7 @@ fn truncated_switch_case_table_reports_instead_of_panicking() {
         forge_ir::Opcode::Iconst,
         b0,
         smallvec::SmallVec::new(),
-        smallvec::smallvec![forge_ir::Immediate::Const(func.constants.insert_int(0, 32))],
+        smallvec::smallvec![forge_ir::Immediate::Const(func.constants.intern_int(0, 32))],
         &[forge_ir::TypeId::I32],
         forge_ir::InstFlags::NONE,
     );
@@ -172,7 +172,7 @@ fn unreachable_block_is_a_warning_not_an_error() {
                 forge_ir::Opcode::Iconst,
                 else_b,
                 smallvec::SmallVec::new(),
-                smallvec::smallvec![forge_ir::Immediate::Const(func.constants.insert_int(k, 32))],
+                smallvec::smallvec![forge_ir::Immediate::Const(func.constants.intern_int(k, 32))],
                 &[forge_ir::TypeId::I32],
                 forge_ir::InstFlags::NONE,
             );

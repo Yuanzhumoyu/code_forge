@@ -18,6 +18,8 @@
 | `reference/binary-format.md` | forge-ir 二进制格式（IR bitcode **v2**：段体压缩 + 段表 `raw_len`）规范：容器/段/原语/各段细节/压缩/确定性/版本策略/验证基线/消费者/已知限制 | active |
 | `reference/backend-pipeline.md` | **后端编译管线契约**（**v24 现行**）：编译入口（`CompileSession`/`CompiledModule`/`JitLoader`）、**管线阶段表**（由守卫与 `pipeline::STAGES` 集合相等钉住）、**合法化两相**（计划只读 + 物化单遍）与 pass 合并次序、聚合/变参表示契约、**值描述单一来源**、能力缺口与观测开关的台账指针 | active |
 | `reference/backend-gaps.md` | **后端能力缺口台账**（v24 M3 建）：21 条缺口逐行给出"谁在什么条件下撞到 / 决策（已实现·数据层·不做·待做）/ 钉住它的守卫或数据条件"；失败信息带 `[cap:ID]`，守卫 `capability_gaps_guard` 与源码缺口集合**双向逐一相等** | active |
+| `reference/ir-int-semantics.md` | **IR 整数/浮点位宽语义（v27 M5 建）**：整数是"无符号位图 + 任意位宽"（符号性由 opcode 表达）、逐运算语义（含移位量 ≥ 位宽的定值行为）、常量按位宽规范化、浮点按 **(阶码, 尾数)** 建模（符号恒 1 位，覆盖 f16/bf16/f8 变体/自定义格式）、**补位规则 R1–R4**（精确 → 就近升位 → 分字展开 → 死规则）与规模公式 | active |
+| `reference/constants.md` | **常量层（v28 建）**：`BitValue`（整数与浮点合并为位模式 + 位宽，种类由使用点决定）、`ConstId` 四元枚举（`Bits/Big/Vector/Agg`，tag 铺满 ⇒ `raw`/`from_raw` 全域）、`ConstantPool` 四条 interner 通道（无预置槽、端序进键）、读取视图与 `as_i64`/`as_big` 的**原位宽补码**语义、`AsConst` 常量糖、失败模式与回归网 | active |
 
 ## plans/ — 进行中的专项方案（活账本）
 
@@ -62,6 +64,7 @@
 | 文件 | 内容（归档原因） |
 | --- | --- |
 | `archive/calling-convention-redesign-plan.md` | 调用约定重设计 v20 A1–A8（**2026-10-08 归档**：A1–A8 全部落地 —— A7 异域钩子 = `forge-abi/tests/exotic_hooks.rs`、A8 文档一致性收口；现行参考 = `reference/calling-conventions.md`） |
+| `archive/forge-rustc-v27-milestones.md` | forge-rustc v27 的**逐轮记录与旧施工图**（**2026-10-19 归档**：原活账本 3200+ 行，状态与历史混在一起 —— 状态留 `plans/forge-rustc-v27-plan.md`、决策留 `reference/backend-gaps.md`；本文只作历史证据） |
 | `archive/forge-rustc-vec_push-plan.md` | forge-rustc vec 族方案（**2026-10-11 归档**：§4 验收 4/4 达成 —— `e2e.rs` 103 条用例全部 `known_failure: false`、CI job `forge-rustc (e2e, Windows)` 绿；现行入口 = `tests/e2e.rs` 用例表 + 该 CI job） |
 | `archive/forge-ir-v3-plan.md` | forge-ir v3 改进方案（**2026-10-08 归档**：S1–S8 **全部收口** —— S3 三余项已落地、**S7 余项清零**、S8 经拍板只做二进制序列化且已落地；未关闭项在 `forge-ir/backlog.md`） |
 | `archive/isa-dsl-variant-field-values.md` | 按变体给字段值（**2026-10-08 归档**：工作**早已落地** —— 键名是 `fields_variant`、`rev8` 正在用；本文留设计取舍与教训） |

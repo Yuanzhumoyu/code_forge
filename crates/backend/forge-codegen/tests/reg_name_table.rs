@@ -12,7 +12,6 @@
 use forge_codegen::arch::x86::{Reg, TargetMachine};
 use forge_codegen::machine::target::TargetMachine as _;
 use forge_ir::PhysReg;
-use forge_isa_runtime::machine::reg_info::TargetRegInfo;
 
 #[test]
 fn reg_name_is_assembler_compatible() {

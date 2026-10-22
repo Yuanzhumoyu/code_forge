@@ -44,7 +44,7 @@ fn backend_dll() -> PathBuf {
     root.join("target").join("debug").join("forge_rustc.dll")
 }
 
-/// 编译成对象（后端产出的对象名是固定的 `forge_codegen_output.o`）。
+/// 编译成对象（`--out-dir` 形态：后端产出的固定名 `forge_codegen_output.o` 保留）。
 fn build_object(dll: &Path, src: &Path, debuginfo: &str, outdir: &Path) -> PathBuf {
     std::fs::create_dir_all(outdir).expect("建输出目录");
     let out = Command::new("rustc")

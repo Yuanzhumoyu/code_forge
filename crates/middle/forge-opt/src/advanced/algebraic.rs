@@ -66,7 +66,7 @@ impl ConstCache {
                         Opcode::Iconst | Opcode::Fconst
                             if let Some(cid) =
                                 inst.immediates.first().and_then(|i| i.as_const())
-                                && let Some(i) = func.constants.resolve_int(cid) =>
+                                && let Some(i) = func.constants.as_i64(cid) =>
                         {
                             map.insert(v, i);
                         }
@@ -188,7 +188,7 @@ pub fn apply_rewrite_rules(func: &mut Function) -> Result<PassResult, IrError> {
                         let value = truncate_to_type(value, ty);
                         // 常量池条目要记位宽：问 store（指针宽度按 DataLayout；动态整数位宽也能答）
                         let bits = func.types.borrow().scalar_bits(ty).unwrap_or(1).max(1);
-                        let cid = func.constants.insert_int(value as i128, bits);
+                        let cid = func.constants.intern_int(value as i128, bits);
                         inst.opcode = Opcode::Iconst;
                         inst.operands.clear();
                         inst.immediates.clear();
@@ -472,7 +472,7 @@ mod tests {
         let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
         b.switch_to_block(entry);
         let x = params[0];
-        let zero = b.iconst_i32(0);
+        let zero = b.constant(0i32);
         let sum = b.iadd(x, zero); // x + 0 → x
         b.ret(&[sum]);
 
@@ -489,7 +489,7 @@ mod tests {
         let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
         b.switch_to_block(entry);
         let x = params[0];
-        let one = b.iconst_i32(1);
+        let one = b.constant(1i32);
         let prod = b.imul(x, one); // x * 1 → x
         b.ret(&[prod]);
 
@@ -526,8 +526,8 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let a = b.iconst_i8(100);
-        let b_val = b.iconst_i8(100);
+        let a = b.constant(100i8);
+        let b_val = b.constant(100i8);
         let sum = b.iadd(a, b_val); // 100+100=200, I8 truncation: 200 & 0xFF = 200
         b.ret(&[sum]);
 

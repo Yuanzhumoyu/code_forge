@@ -1,148 +1,209 @@
-//! 常量池与浮点宽度守卫（S0 止血回归）。
-//!
-//! 背景（2026-09-14 审计）：
-//! 1. `float_consts: Vec<u128>` 不记位宽 → f32 `1.5`（0x3FC0_0000）与位模式相同的
-//!    f64 去重成**同一个 `ConstId`**，而 phi 打印路径恒按 `f64::from_bits` 还原
-//!    → f32 常量作为 phi 入边被打印成错误的十进制值；
-//! 2. `#[derive(Default)]` 绕过 `new()` 的 bool 预置槽，而 `bool_const` 直接构造
-//!    `ConstId(index 0|1)` → `ConstantPool::default()` 造出的池里这两个 id 悬空；
-//! 3. `total_len()/is_empty()` 漏了聚合池。
+//! 常量池（v28 新设计）回归：比特值合并、无预置槽、端序进键、跨池导入、聚合句柄统一。
 
-use forge_ir::{AggChild, ConstantPool, FunctionBuilder, FunctionSignature, Module, TypeId};
+use forge_ir::ir::constant::{BitValue, ConstEntry};
+use forge_ir::{ConstId, ConstantPool, Endianness, TypeId};
 
-/// 位宽必须进去重键：同一位模式、不同精度 = 两个常量（不再合并）。
+/// 整数与浮点合并成**同一个比特值通道**：同 `(bits,width)` 即同一条目。
 #[test]
-fn float_width_is_part_of_dedup_key() {
+fn bits_channel_merges_int_and_float() {
     let mut pool = ConstantPool::new();
     let f32_bits = 0x3FC0_0000u128; // f32 1.5 的位模式
-    let as_f32 = pool.insert_float_typed(f32_bits, 32);
-    let as_f64 = pool.insert_float_typed(f32_bits, 64);
-    assert_ne!(
-        as_f32, as_f64,
-        "同一位模式不同值宽必须是两个 ConstId（历史实现合并成一个）"
-    );
-    assert_eq!(pool.get_float_width(as_f32), Some(32));
-    assert_eq!(pool.get_float_width(as_f64), Some(64));
-    // 位模式本身不变（宽度是元数据，不做掩码/截断）
-    assert_eq!(pool.get_float128(as_f32), Some(f32_bits));
-    assert_eq!(pool.get_float128(as_f64), Some(f32_bits));
-
-    // 同 (bits, width) 才去重
-    let again = pool.insert_float_typed(f32_bits, 32);
-    assert_eq!(again, as_f32, "同 (bits,width) 必须去重");
+    // 同一个位模式，一条按 int 入池、一条按 float 入池
+    let as_int = pool.intern_bits(BitValue::new(f32_bits, 32));
+    let as_float = pool.intern_float(f32_bits, 32);
     assert_eq!(
-        pool.total_len(),
-        4,
-        "bool 预置 2 项 + f32/f64 各 1 项（同键不再新增）"
+        as_int, as_float,
+        "合并通道：(bits,width) 相同 ⇒ 同一 ConstId（解释由使用点类型决定）"
     );
+    // 位宽参与键：同一位模式不同宽度是不同常量
+    let as_f64 = pool.intern_float(f32_bits, 64);
+    assert_ne!(as_float, as_f64, "同一位模式不同值宽必须是两个 ConstId");
+    assert_eq!(pool.bits(as_float), Some(BitValue::new(f32_bits, 32)));
+    assert_eq!(pool.bits(as_f64), Some(BitValue::new(f32_bits, 64)));
+    assert_eq!(pool.len(), 2, "两个不同 (bits,width) ⇒ 两条");
 }
 
-/// 旧入口语义不变：`insert_float` = 64 位、`insert_float128` = 128 位。
+/// 整数入池是**符号扩展规范形**：`intern_int(-1,64)` 与 `intern_bits(u64::MAX, 64)` 同一条目。
 #[test]
-fn legacy_inserters_record_their_width() {
+fn int_canonical_form_is_sign_extended() {
     let mut pool = ConstantPool::new();
-    let a = pool.insert_float(0x3FF8_0000_0000_0000);
-    let b = pool.insert_float128(0x3FF8_0000_0000_0000);
-    assert_eq!(pool.get_float_width(a), Some(64));
-    assert_eq!(pool.get_float_width(b), Some(128));
-    assert_eq!(pool.get_float(a), Some(0x3FF8_0000_0000_0000));
-    assert_eq!(pool.get_float128(b), Some(0x3FF8_0000_0000_0000));
+    let a = pool.intern_int(-1, 64);
+    // 规范形是**符号扩展**后的位图（低 64 位全 1、高位也全 1）
+    let b = pool.intern_bits(BitValue::new(u128::MAX, 64));
+    assert_eq!(a, b, "-1 在 64 位里的规范形是全 1 位图");
+    assert_eq!(pool.bits(a), Some(BitValue::new(u128::MAX, 64)));
+    // `i1` 是 bool：不做符号扩展
+    let t = pool.intern_int(1, 1);
+    let f = pool.intern_int(0, 1);
+    assert_ne!(t, f);
+    assert_eq!(pool.bits(t), Some(BitValue::new(1, 1)));
+    assert_eq!(pool.bits(f), Some(BitValue::new(0, 1)));
 }
 
-/// `Default` == `new()`：bool 预置槽存在，`bool_const` 不再是悬空 id。
+/// 空池：**没有**预置槽；bool 只是普通常量（去重后自然两条）。
 #[test]
-fn default_pool_has_bool_slots() {
-    let pool = ConstantPool::default();
-    assert_eq!(pool.total_len(), ConstantPool::new().total_len());
-    assert_eq!(
-        pool.get_int(pool.bool_const(false)),
-        Some((0, 1)),
-        "Default 池必须预置 false 槽（历史实现绕过 new()，该 id 悬空）"
-    );
-    assert_eq!(pool.get_int(pool.bool_const(true)), Some((1, 1)));
-    assert_eq!(pool.get_float(pool.bool_const(false)), None);
-}
-
-/// 聚合池计入 total_len / is_empty。
-#[test]
-fn totals_include_aggregates() {
+fn pool_has_no_presets() {
     let mut pool = ConstantPool::new();
-    let before = pool.total_len();
-    let scalar = pool.insert_int(7, 32);
-    let agg = pool.insert_aggregate(TypeId::I32, vec![AggChild::Scalar(scalar)]);
-    assert!(pool.get_aggregate(agg).is_some());
-    assert_eq!(
-        pool.total_len(),
-        before + 2,
-        "聚合必须计入 total_len（历史实现漏算）"
-    );
-    assert!(!pool.is_empty());
+    assert!(pool.is_empty());
+    assert_eq!(pool.len(), 0);
+    let f = pool.intern_int(0, 1);
+    let t = pool.intern_int(1, 1);
+    assert_ne!(f, t);
+    // 反复入池不膨胀
+    for _ in 0..10 {
+        pool.intern_int(1, 1);
+    }
+    assert_eq!(pool.len(), 2);
 }
 
-/// 跨池重定位保留位宽（内联/克隆路径）。
+/// 向量：**端序进去重键**（同字节不同端序是不同常量）。
 #[test]
-fn remap_carries_float_width() {
+fn vector_endian_is_part_of_key() {
+    let mut pool = ConstantPool::new();
+    let le = pool.intern_vector(&[1, 2, 3, 4], Endianness::Little);
+    let be = pool.intern_vector(&[1, 2, 3, 4], Endianness::Big);
+    assert_ne!(le, be, "同字节不同端序不能去重");
+    assert_eq!(pool.vector(le), Some(&[1u8, 2, 3, 4][..]));
+    assert_eq!(pool.vector_endian(le), Some(Endianness::Little));
+    assert_eq!(pool.vector_endian(be), Some(Endianness::Big));
+    // 同字节同端序去重
+    assert_eq!(pool.intern_vector(&[1, 2, 3, 4], Endianness::Big), be);
+}
+
+/// 聚合：子节点就是 `ConstId`（标量或嵌套聚合），不再有独立 `AggId`。
+#[test]
+fn aggregate_children_are_const_ids() {
+    let mut pool = ConstantPool::new();
+    let one = pool.intern_int(1, 32);
+    let inner = pool.intern_agg(TypeId::I32, vec![one]);
+    let outer = pool.intern_agg(TypeId::I16, vec![one, inner]);
+    let agg = pool.agg(outer).expect("聚合可解析");
+    assert_eq!(agg.children, vec![one, inner]);
+    // 子节点类型按 tag 自辨
+    assert!(matches!(pool.get(one), Some(ConstEntry::Bits(_))));
+    assert!(matches!(pool.get(inner), Some(ConstEntry::Agg(_))));
+    assert_ne!(one.tag(), outer.tag());
+}
+
+/// 跨池导入：四通道全覆盖、聚合递归、端序保留、不依赖索引。
+#[test]
+fn import_rebuilds_all_channels() {
     let mut src = ConstantPool::new();
-    let cid = src.insert_float_typed(0x3FC0_0000, 32);
     let mut dst = ConstantPool::new();
-    let moved = dst.remap_from(&src, cid);
-    assert_eq!(dst.get_float_width(moved), Some(32));
-    assert_eq!(dst.get_float128(moved), Some(0x3FC0_0000));
+
+    let i = src.intern_int(42, 64);
+    let f = src.intern_float(1.5f64.to_bits() as u128, 64);
+    let b = src.intern_big(forge_ir::util::big::Big::from_i128(1i128 << 100));
+    let v = src.intern_vector(&[9, 8, 7, 6], Endianness::Big);
+    let agg = src.intern_agg(TypeId::I32, vec![i, b]);
+
+    // 先让 dst 索引错开，验证导入不依赖索引
+    dst.intern_int(7, 8);
+
+    let ri = dst.import(&src, i);
+    let rf = dst.import(&src, f);
+    let rb = dst.import(&src, b);
+    let rv = dst.import(&src, v);
+    let ragg = dst.import(&src, agg);
+
+    assert_eq!(dst.bits(ri), src.bits(i));
+    assert_eq!(dst.bits(rf), src.bits(f));
+    assert_eq!(dst.big(rb), src.big(b));
+    assert_eq!(dst.vector(rv), src.vector(v));
+    assert_eq!(dst.vector_endian(rv), src.vector_endian(v));
+    let children = dst.agg(ragg).expect("聚合已导入").children.clone();
+    assert_eq!(children.len(), 2);
+    assert_eq!(dst.big(children[1]), src.big(b), "聚合子节点也被重建");
 }
 
-/// f32 常量作为 **phi 入边** 必须按 f32 还原（历史实现恒按 f64 → 错值）。
-///
-/// 注意：函数的类型上下文必须与 `Module` 的一致——`Module` 展示时用**模块的**
-/// `TypeContext` 解析类型 id，用独立 ctx 造函数会让 id 越界 panic（同一陷阱见
-/// `Module::set_data_layout` 的文档）。
+/// 超 128 位的整数只能走 `Big` 通道：`bits()` 对其返回 None。
 #[test]
-fn f32_constant_in_phi_prints_as_f32() {
-    let mut m = Module::new();
-    let ctx = m.types.clone();
-    let f32_ty = ctx.f32_ty();
-    let sig = FunctionSignature::new(&[], &[f32_ty]);
-    let mut b = FunctionBuilder::new("f32_phi", ctx, sig);
-    let (entry, _) = b.create_entry_block();
-    // `create_block_with_params` 会把当前块切到新块 → 建完目标块再切回 entry 填体
-    let (tgt, params) = b.create_block_with_params(&[(f32_ty, "p")]);
-    b.switch_to_block(entry);
-    let c = b.fconst_f32(1.5);
-    b.jump(tgt, &[c]);
-    b.switch_to_block(tgt);
-    b.ret(&[params[0]]);
-    let func = b.finish().expect("finish");
-    m.add_function(func);
-
-    let text = format!("{m}");
-    assert!(
-        text.contains("phi f32 [ 1.5,"),
-        "f32 常量应打印成 f32 十进制 1.5；实际：\n{text}"
-    );
-    assert!(
-        !text.contains("e-314"),
-        "不得按 f64 还原 f32 位模式（0x3FC0_0000 会是 ~1.9e-314）：\n{text}"
-    );
+fn big_channel_is_not_bits() {
+    let mut pool = ConstantPool::new();
+    let big = pool.intern_big(forge_ir::util::big::Big::from_i128(-5));
+    assert_eq!(pool.bits(big), None);
+    assert!(pool.big(big).is_some());
+    // 视图强转仍可用
+    assert_eq!(pool.as_i64(big), Some(-5));
 }
 
-/// 同一 f32 位模式的 f64 常量与之**并存**且各自还原。
+/// 句柄编码：四元 tag 全域定义，任何 `u32` 都能往返。
 #[test]
-fn f32_and_f64_same_bit_pattern_coexist() {
-    let ctx = forge_ir::TypeContext::new();
-    let f32_ty = ctx.f32_ty();
-    let f64_ty = ctx.f64_ty();
-    let sig = FunctionSignature::new(&[], &[f32_ty, f64_ty]);
-    let mut b = FunctionBuilder::new("both", ctx, sig);
-    let (_entry, _) = b.create_entry_block();
-    let a = b.fconst_f32(1.5);
-    // 同一个位模式当 f64 常量插入（公开入口 `fconst(bits, ty)`）
-    let c = b.fconst(0x3FC0_0000, f64_ty);
-    b.ret(&[a, c]);
-    let func = b.finish().expect("finish");
+fn const_id_encoding_is_total() {
+    for raw in [0u32, 1, 0x4000_0001, 0x8000_0002, 0xC000_0003, u32::MAX] {
+        let id = ConstId::from_raw(raw);
+        assert_eq!(id.raw(), raw, "raw/from_raw 对已编码值必须逐位往返");
+    }
+    let ids = [
+        ConstId::Bits(3),
+        ConstId::Big(4),
+        ConstId::Vector(5),
+        ConstId::Agg(6),
+    ];
+    for id in ids {
+        assert_eq!(ConstId::from_raw(id.raw()), id, "raw/from_raw 往返");
+        assert_eq!(
+            ConstId::pack(id.tag(), id.index()),
+            id,
+            "pack/tag/index 往返"
+        );
+        assert!(
+            id.index() < (1 << 30),
+            "索引只占低 30 位（tag 在最高 2 位）"
+        );
+    }
+    assert_eq!(ConstId::default(), ConstId::Bits(0));
+}
 
-    // 两个常量占两个槽位（不再合并）
-    assert_eq!(
-        func.constants.total_len(),
-        4,
-        "bool 预置 2 项 + f32/f64 各 1 项（历史实现合并成 1 项 → 3）"
+/// `AsConst`：Rust 标量 → IR 常量的类型与值。
+#[test]
+fn as_const_covers_scalars() {
+    use forge_ir::ir::builder::FunctionBuilder;
+    use forge_ir::ir::constant::AsConst;
+    use forge_ir::ir::types::{FunctionSignature, TypeContext};
+
+    let tc = TypeContext::new();
+    let mut fb = FunctionBuilder::new("c", tc, FunctionSignature::new(&[], &[TypeId::I64]));
+    fb.create_block_here();
+    // 每个标量都物化成一条常量指令；类型由 Rust 类型决定
+    let (i32v, i8v, u64v, f32v, f64v, bv, i128v, u128v, sugar, explicit) = (
+        42i32.into_const(&mut fb),
+        7i8.into_const(&mut fb),
+        9u64.into_const(&mut fb),
+        1.5f32.into_const(&mut fb),
+        2.5f64.into_const(&mut fb),
+        true.into_const(&mut fb),
+        1i128.into_const(&mut fb),
+        u128::MAX.into_const(&mut fb),
+        fb.constant(3i32),
+        fb.const_int(3, TypeId::I32),
     );
+    fb.ret(&[i32v]);
+    let func = fb.finish().expect("build");
+
+    let ty = |v: forge_ir::Value| func.dfg.value_type(v);
+    assert_eq!(ty(i32v), Some(TypeId::I32));
+    assert_eq!(ty(i8v), Some(TypeId::I8));
+    assert_eq!(ty(u64v), Some(TypeId::I64), "u64 与 i64 同位宽");
+    assert_eq!(ty(f32v), Some(TypeId::F32));
+    assert_eq!(ty(f64v), Some(TypeId::F64));
+    assert_eq!(ty(bv), Some(TypeId::BOOL));
+    assert_eq!(ty(i128v), Some(TypeId::I128));
+    assert_eq!(ty(u128v), Some(TypeId::I128), "u128 以位图形式落在 i128");
+
+    // 常量值：便捷入口与显式构造落到同一个 ConstId
+    let cid_of = |v: forge_ir::Value| -> ConstId {
+        let forge_ir::ValueDef::Inst(inst, _) = func.dfg.value_def(v).expect("值是 Define")
+        else {
+            panic!("常量应由指令定义");
+        };
+        match func.dfg.inst_data(*inst).immediates.first() {
+            Some(forge_ir::Immediate::Const(c)) => *c,
+            other => panic!("常量指令应带 Const 立即数，实测 {other:?}"),
+        }
+    };
+    assert_eq!(cid_of(sugar), cid_of(explicit));
+    let v = func.constants.bits(cid_of(u128v)).expect("u128 位值");
+    assert_eq!(v.bits, u128::MAX);
+    assert_eq!(v.width, 128);
 }

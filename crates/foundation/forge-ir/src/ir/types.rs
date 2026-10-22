@@ -19,17 +19,93 @@ use std::fmt;
 // TypeEntry
 // ============================================================
 
+/// 浮点格式：**阶码 + 尾数** 两段（v27 M5）。
+///
+/// 只存"总位宽"无法区分格式——16 位既可能是 f16（1+5+10），也可能是 bf16（1+8+7），
+/// 8 位有 e4m3/e5m2 等变体，还有大量厂商自定义格式。按 IEEE-754 的**结构**建模后，
+/// 任意浮点格式都能表达，不再局限于已知常用的那几种。
+///
+/// **符号位不入参**：所有被支持的浮点格式都是 1 个符号位（已知常量），只有阶码与尾数
+/// 是不确定的 ⇒ `total_bits = 1 + exp_bits + mant_bits`。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct FloatFmt {
+    pub exp_bits: u8,
+    pub mant_bits: u16,
+}
+
+impl FloatFmt {
+    /// 总位宽 = 1（符号位）+ 阶码 + 尾数。
+    pub const fn total_bits(self) -> u16 {
+        1 + self.exp_bits as u16 + self.mant_bits
+    }
+    /// IEEE-754 binary16（1+5+10）。
+    pub const F16: Self = Self {
+        exp_bits: 5,
+        mant_bits: 10,
+    };
+    /// IEEE-754 binary32（1+8+23）。
+    pub const F32: Self = Self {
+        exp_bits: 8,
+        mant_bits: 23,
+    };
+    /// IEEE-754 binary64（1+11+52）。
+    pub const F64: Self = Self {
+        exp_bits: 11,
+        mant_bits: 52,
+    };
+    /// IEEE-754 binary128（1+15+112）。
+    pub const F128: Self = Self {
+        exp_bits: 15,
+        mant_bits: 112,
+    };
+    /// bfloat16（1+8+7）——与 f16 同 16 位但格式不同，正因如此必须按三段建模。
+    pub const BF16: Self = Self {
+        exp_bits: 8,
+        mant_bits: 7,
+    };
+    /// 按**总位宽**取规范 IEEE 格式（16/32/64/128）；其它位宽返回 `None`
+    /// （非 IEEE 位宽走 [`Self::new`] 显式给出三段）。
+    pub const fn ieee_for_bits(bits: u16) -> Option<Self> {
+        match bits {
+            16 => Some(Self::F16),
+            32 => Some(Self::F32),
+            64 => Some(Self::F64),
+            128 => Some(Self::F128),
+            _ => None,
+        }
+    }
+    /// 显式构造（任意格式；符号位恒为 1 位）。
+    pub const fn new(exp_bits: u8, mant_bits: u16) -> Self {
+        Self {
+            exp_bits,
+            mant_bits,
+        }
+    }
+    /// 规范名：已知格式用通用写法（`f16/f32/f64/f128/bf16`），其余用 `f<exp>_<mant>`。
+    pub fn name(self) -> String {
+        match self {
+            Self::F16 => "f16".to_string(),
+            Self::F32 => "f32".to_string(),
+            Self::F64 => "f64".to_string(),
+            Self::F128 => "f128".to_string(),
+            Self::BF16 => "bf16".to_string(),
+            Self {
+                exp_bits,
+                mant_bits,
+            } => format!("f{exp_bits}_{mant_bits}"),
+        }
+    }
+}
+
 /// 类型定义 — 存储在 TypeStore 的扁平数组中。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TypeEntry {
     /// 任意位宽整数: i1 (bool), i8, i32, i64...
     Int { bits: u32 },
 
-    /// IEEE 754 浮点: f16, f32, f64, f128
-    Float { bits: u16 },
-
-    /// Brain Float 16 (ML/AI 工作负载常用)
-    BFloat { bits: u16 },
+    /// 浮点：**按格式**（符号位/阶码/尾数）存储，覆盖任意 IEEE 及自定义格式。
+    /// 旧的 `BFloat { bits }` 变体已删除——bf16 就是 `Float { 1, 8, 7 }`（无冗余）。
+    Float { fmt: FloatFmt },
 
     /// 固定长度向量: <N x elem>
     Vector { elem: TypeId, len: u32 },
@@ -102,8 +178,8 @@ impl TypeField {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum TypeKey {
     IntBits(u32),
-    FloatBits(u16),
-    BFloatBits(u16),
+    /// 浮点去重键 = 三段格式（不用总位宽：f16 与 bf16 同为 16 位但必须区分）。
+    FloatFmt(FloatFmt),
     Vector(TypeId, u32),
     ScalableVector(TypeId, u32),
     Array(TypeId, u64),
@@ -123,8 +199,7 @@ enum TypeKey {
 fn type_key(entry: &TypeEntry) -> Option<TypeKey> {
     Some(match entry {
         TypeEntry::Int { bits } => TypeKey::IntBits(*bits),
-        TypeEntry::Float { bits } => TypeKey::FloatBits(*bits),
-        TypeEntry::BFloat { bits } => TypeKey::BFloatBits(*bits),
+        TypeEntry::Float { fmt } => TypeKey::FloatFmt(*fmt),
         TypeEntry::Vector { elem, len } => TypeKey::Vector(*elem, *len),
         TypeEntry::ScalableVector { elem, min_len } => TypeKey::ScalableVector(*elem, *min_len),
         TypeEntry::Array { elem, len } => TypeKey::Array(*elem, *len),
@@ -232,8 +307,14 @@ impl TypeStore {
         store.i32_ty = store.raw_insert(TypeEntry::Int { bits: 32 }, TypeKey::IntBits(32));
         store.i64_ty = store.raw_insert(TypeEntry::Int { bits: 64 }, TypeKey::IntBits(64));
         // 索引 6-7: 浮点
-        store.f32_ty = store.raw_insert(TypeEntry::Float { bits: 32 }, TypeKey::FloatBits(32));
-        store.f64_ty = store.raw_insert(TypeEntry::Float { bits: 64 }, TypeKey::FloatBits(64));
+        store.f32_ty = store.raw_insert(
+            TypeEntry::Float { fmt: FloatFmt::F32 },
+            TypeKey::FloatFmt(FloatFmt::F32),
+        );
+        store.f64_ty = store.raw_insert(
+            TypeEntry::Float { fmt: FloatFmt::F64 },
+            TypeKey::FloatFmt(FloatFmt::F64),
+        );
         // 索引 8: 指针 (地址空间 0)
         store.ptr_ty = store.raw_insert(TypeEntry::Pointer { addr_space: 0 }, TypeKey::Pointer(0));
 
@@ -244,8 +325,16 @@ impl TypeStore {
         // 索引 10-12: 扩展标量（统一预注册，保证 TypeId 常量与 entries 索引对齐，
         // 消除 get(I128/F16/F128) 越界）。
         store.raw_insert(TypeEntry::Int { bits: 128 }, TypeKey::IntBits(128));
-        store.raw_insert(TypeEntry::Float { bits: 16 }, TypeKey::FloatBits(16));
-        store.raw_insert(TypeEntry::Float { bits: 128 }, TypeKey::FloatBits(128));
+        store.raw_insert(
+            TypeEntry::Float { fmt: FloatFmt::F16 },
+            TypeKey::FloatFmt(FloatFmt::F16),
+        );
+        store.raw_insert(
+            TypeEntry::Float {
+                fmt: FloatFmt::F128,
+            },
+            TypeKey::FloatFmt(FloatFmt::F128),
+        );
 
         // 索引 13-15: 内建向量 <2 x f32>/<4 x f32>/<8 x f32>。
         // 与 x86 PS 指令族 f32×4 语义对齐；RegClass::from_type_id 已有
@@ -290,11 +379,19 @@ impl TypeStore {
             "index 10 must be I128"
         );
         debug_assert!(
-            matches!(store.get(TypeId::F16), TypeEntry::Float { bits: 16 }),
+            matches!(
+                store.get(TypeId::F16),
+                TypeEntry::Float { fmt: FloatFmt::F16 }
+            ),
             "index 11 must be F16"
         );
         debug_assert!(
-            matches!(store.get(TypeId::F128), TypeEntry::Float { bits: 128 }),
+            matches!(
+                store.get(TypeId::F128),
+                TypeEntry::Float {
+                    fmt: FloatFmt::F128
+                }
+            ),
             "index 12 must be F128"
         );
         debug_assert!(
@@ -496,8 +593,22 @@ impl TypeStore {
     }
 
     /// 取（或新建）N 位浮点类型。
+    /// 取（或新建）**规范 IEEE 格式**的浮点类型（按总位宽 16/32/64/128）。
+    ///
+    /// 任意格式（bf16、f8 变体、自定义三段）走 [`Self::float_ty_fmt`]——只按总位宽
+    /// 无法区分格式（f16 与 bf16 同为 16 位）。
     pub fn float_ty(&mut self, bits: u16) -> TypeId {
-        self.intern(TypeEntry::Float { bits }, TypeKey::FloatBits(bits))
+        let fmt = FloatFmt::ieee_for_bits(bits).unwrap_or_else(|| {
+            panic!(
+                "float_ty({bits}) 不是规范 IEEE 位宽；任意格式请用 float_ty_fmt(sign, exp, mant)"
+            )
+        });
+        self.float_ty_fmt(fmt)
+    }
+
+    /// 取（或新建）**任意格式**浮点类型（符号位/阶码/尾数三段）。
+    pub fn float_ty_fmt(&mut self, fmt: FloatFmt) -> TypeId {
+        self.intern(TypeEntry::Float { fmt }, TypeKey::FloatFmt(fmt))
     }
 
     /// 取（或新建）固定长度向量类型：元素类型 + lane 数。
@@ -515,7 +626,9 @@ impl TypeStore {
 
     /// 取（或新建）bfloat 类型（brain float 语义，16 位）。
     pub fn bfloat_ty(&mut self, bits: u16) -> TypeId {
-        self.intern(TypeEntry::BFloat { bits }, TypeKey::BFloatBits(bits))
+        // bf16 现在就是 `Float { 1, 8, 7 }`（删除 BFloat 变体的冗余）。
+        assert_eq!(bits, 16, "bfloat 目前只有 16 位形态（bf16 = 1+8+7）");
+        self.float_ty_fmt(FloatFmt::BF16)
     }
 
     /// 取（或新建）token 类型：GC/异常用的不透明值，不能参与普通运算。
@@ -678,9 +791,9 @@ impl TypeStore {
         matches!(self.get(id), TypeEntry::ScalableVector { .. })
     }
 
-    /// 该类型是不是 bfloat。
+    /// 该类型是不是 bfloat16（1+8+7）。
     pub fn is_bfloat(&self, id: TypeId) -> bool {
-        matches!(self.get(id), TypeEntry::BFloat { .. })
+        matches!(self.get(id), TypeEntry::Float { fmt } if *fmt == FloatFmt::BF16)
     }
 
     /// 该类型是不是 token。
@@ -701,12 +814,55 @@ impl TypeStore {
         id == self.void_ty
     }
 
+    /// 两个标量类型的**公共上层类型**（`TypeId::upcast` 的任意位宽版本）。
+    ///
+    /// 规则与 LLVM 的 `upcast` 同构，但**按位宽**而非固定枚举：
+    /// - 整数 × 整数 ⇒ `int_ty(max(bits))`（`i3 × i7` ⇒ `i7`，`i8 × i128` ⇒ `i128`）；
+    /// - 浮点 × 浮点 ⇒ `float_ty(max(bits))`；
+    /// - 指针 × 指针 / 指针 × 整数 ⇒ 指针（与 `TypeId::upcast` 的既有语义一致：IR 的
+    ///   指针算术结果仍是指针）；
+    /// - 其余类别混用（int × float）⇒ `None`（调用方据此拒绝混合运算）。
+    ///
+    /// 与 [`TypeId::upcast`] 的区别：后者是**内建类型枚举**的固定表，看不到 `i3`/`i1024`
+    /// 这类任意位宽类型；二进制运算走 store 版本。
+    pub fn upcast(&mut self, a: TypeId, b: TypeId) -> Option<TypeId> {
+        if a == b {
+            return Some(a);
+        }
+        match (self.get(a), self.get(b)) {
+            (TypeEntry::Int { bits: ba }, TypeEntry::Int { bits: bb }) => {
+                Some(self.int_ty(*ba.max(bb)))
+            }
+            (TypeEntry::Float { fmt: fa }, TypeEntry::Float { fmt: fb }) => {
+                // 只有"严格支配"（阶码与尾数都不小于）才可合并；f16 与 bf16 同为 16 位
+                // 但互不支配 ⇒ 返回 None（混合格式是二义的，必须显式转换）。
+                if fa.exp_bits >= fb.exp_bits && fa.mant_bits >= fb.mant_bits {
+                    Some(a)
+                } else if fb.exp_bits >= fa.exp_bits && fb.mant_bits >= fa.mant_bits {
+                    Some(b)
+                } else {
+                    None
+                }
+            }
+            (TypeEntry::Pointer { .. }, TypeEntry::Pointer { .. }) => Some(a),
+            (TypeEntry::Pointer { .. }, TypeEntry::Int { .. })
+            | (TypeEntry::Int { .. }, TypeEntry::Pointer { .. }) => {
+                if self.is_ptr(a) {
+                    Some(a)
+                } else {
+                    Some(b)
+                }
+            }
+            _ => None,
+        }
+    }
+
     // === 大小 / 对齐 ===
 
     /// 标量类型的位宽 —— **类型事实**（不是宿主常量视图）。
     ///
     /// - `Int { bits }` → `bits`（含 `i1`/bool）
-    /// - `Float { bits }` / `BFloat { bits }` → `bits`
+    /// - `Float { fmt }` → `fmt.total_bits()`
     /// - `Pointer { addr_space }` → **按 `DataLayout` 取**（`pointer_size(addr_space) * 8`），
     ///   不是硬编码 64
     /// - 向量 / 数组 / 结构体 / 函数 / void / opaque → `None`
@@ -718,8 +874,7 @@ impl TypeStore {
     pub fn scalar_bits(&self, id: TypeId) -> Option<u32> {
         match self.get(id) {
             TypeEntry::Int { bits } => Some(*bits),
-            TypeEntry::Float { bits } => Some(*bits as u32),
-            TypeEntry::BFloat { bits } => Some(*bits as u32),
+            TypeEntry::Float { fmt } => Some(fmt.total_bits() as u32),
             TypeEntry::Pointer { addr_space } => {
                 Some(self.data_layout.pointer_size(*addr_space).saturating_mul(8))
             }
@@ -736,8 +891,7 @@ impl TypeStore {
         let entry = self.get(id);
         match entry {
             TypeEntry::Int { bits } => (*bits).div_ceil(8),
-            TypeEntry::Float { bits } => (*bits).div_ceil(8) as u32,
-            TypeEntry::BFloat { .. } => 2, // bf16 = 2 bytes
+            TypeEntry::Float { fmt } => fmt.total_bits().div_ceil(8) as u32,
             TypeEntry::Vector { elem, len } => self.size_bytes(*elem) * len,
             TypeEntry::ScalableVector { elem, min_len } => {
                 // Minimum compile-time size: one lane * min_len
@@ -775,8 +929,7 @@ impl TypeStore {
         let entry = self.get(id);
         match entry {
             TypeEntry::Int { bits } => self.data_layout.integer_align(*bits),
-            TypeEntry::Float { bits } => self.data_layout.float_align(*bits),
-            TypeEntry::BFloat { .. } => 2,
+            TypeEntry::Float { fmt } => self.data_layout.float_align(fmt.total_bits()),
             TypeEntry::Vector { elem: _, len: _ } => {
                 let total_bits = self.size_bytes(id) * 8;
                 self.data_layout.vector_align(total_bits)
@@ -1121,8 +1274,7 @@ impl TypeStore {
             TypeEntry::Int { bits: 0 } => "void".to_string(),
             TypeEntry::Int { bits: 1 } => "i1".to_string(), // LLVM 严格：i1 而非 bool
             TypeEntry::Int { bits } => format!("i{}", bits),
-            TypeEntry::Float { bits } => format!("f{}", bits),
-            TypeEntry::BFloat { .. } => "bfloat".to_string(), // LLVM 名
+            TypeEntry::Float { fmt } => fmt.name(),
             TypeEntry::Vector { elem, len } => format!("<{} x {}>", len, self.fmt_type(*elem)),
             TypeEntry::ScalableVector { elem, min_len } => {
                 format!("<vscale x {} x {}>", min_len, self.fmt_type(*elem))
@@ -1435,7 +1587,15 @@ impl TypeContext {
     pub fn float_ty(&self, bits: u16) -> TypeId {
         self.borrow_mut().float_ty(bits)
     }
-    /// 取（或新建）bfloat 类型（brain float 语义，16 位）。
+    /// 两个标量类型的公共上层类型（**任意位宽**；见 `TypeStore::upcast`）。
+    pub fn upcast(&self, a: TypeId, b: TypeId) -> Option<TypeId> {
+        self.borrow_mut().upcast(a, b)
+    }
+    /// 取（或新建）**任意格式**浮点类型（符号位/阶码/尾数三段）。
+    pub fn float_ty_fmt(&self, fmt: FloatFmt) -> TypeId {
+        self.borrow_mut().float_ty_fmt(fmt)
+    }
+    /// 取（或新建）bfloat 类型（1+8+7）。
     pub fn bfloat_ty(&self, bits: u16) -> TypeId {
         self.borrow_mut().bfloat_ty(bits)
     }
@@ -1535,6 +1695,48 @@ impl_vector_trait!(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// v27 M5（任意位宽整数 · M-A）：`int_ty` 对**任意**位宽都成立，布局按 `ceil(bits/8)`。
+    #[test]
+    fn test_arbitrary_int_widths_types() {
+        let mut store = TypeStore::new();
+        for (bits, size) in [
+            (1u32, 1u32),
+            (2, 1),
+            (3, 1),
+            (7, 1),
+            (9, 2),
+            (31, 4),
+            (128, 16),
+            (1024, 128),
+        ] {
+            let t = store.int_ty(bits);
+            assert_eq!(store.size_bytes(t), size, "i{bits} 的字节数");
+            assert!(store.is_int(t), "i{bits} 应判为整数（store 判定）");
+            assert_eq!(store.fmt_type(t), format!("i{bits}"));
+        }
+        // 1 位与内建 bool 是同一个类型（既有约定）。
+        assert_eq!(store.int_ty(1), TypeId::BOOL);
+    }
+
+    /// `TypeStore::upcast` 按**位宽**取公共上层类型（任意位宽），类别混用返回 None。
+    #[test]
+    fn test_arbitrary_upcast_matrix() {
+        let mut store = TypeStore::new();
+        let i3 = store.int_ty(3);
+        let i7 = store.int_ty(7);
+        let i1024 = store.int_ty(1024);
+        assert_eq!(store.upcast(i3, i7), Some(i7));
+        assert_eq!(store.upcast(i7, i3), Some(i7));
+        assert_eq!(store.upcast(i7, i1024), Some(i1024));
+        assert_eq!(store.upcast(i3, i3), Some(i3));
+        let f32ty = store.float_ty(32);
+        assert_eq!(store.upcast(i3, f32ty), None);
+        // 指针 × 整数 ⇒ 指针（与 `TypeId::upcast` 的既有语义一致）
+        assert_eq!(store.upcast(i3, TypeId::PTR), Some(TypeId::PTR));
+        let f64ty = store.float_ty(64);
+        assert_eq!(store.upcast(f32ty, f64ty), Some(f64ty));
+    }
 
     #[test]
     fn test_basic_types() {

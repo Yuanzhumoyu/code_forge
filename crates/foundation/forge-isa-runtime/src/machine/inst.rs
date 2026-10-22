@@ -208,6 +208,27 @@ pub trait MachineInst: Clone + std::fmt::Debug + Send + Sync + Hash + Eq {
         None
     }
 
+    /// 构造一条"寄存器 ← 寄存器"搬移指令（**块参数拷贝**用）。
+    ///
+    /// ## 为什么需要它
+    ///
+    /// lowering 过去靠"让块参数复用跳转实参的寄存器"省掉参数拷贝（见
+    /// `pipeline/lowering.rs::map_terminator_args_to_params`）。这条捷径在
+    /// **同一个值喂多个块参数**时不成立——两个参数会拿到同一个寄存器，语义就塌了
+    /// （实测：`jump(loop, &[0, 0])` 的两个参数被绑到同一 xreg ⇒ 循环体里
+    /// `acc += 1` 与 `acc + a` 互相覆盖，结果多出一个 1）。
+    ///
+    /// 正解是"参数分配**独立**寄存器 + 终结符处发**显式拷贝**"，而那需要一个
+    /// 与 ISA 无关的"造一条搬移指令"的入口。谱里用 `[machine] reg_move = "<指令名>"`
+    /// 声明哪条指令是搬移（x86 = `MovRRm`）；未声明 ⇒ `None` ⇒ 调用方必须退回
+    /// 旧的别名路径（并在文档里记明该 ISA 尚不支持块参数拷贝）。
+    fn make_reg_move(_dst: u32, _src: u32, _class: RegClass) -> Option<Self>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
     /// 读取第 `i` 个 Ireg/Freg 寄存器字段的物理索引。
     /// 微指令构造时以默认寄存器占位，分配器分配后经 [`Self::set_reg_field`] 回填。
     ///

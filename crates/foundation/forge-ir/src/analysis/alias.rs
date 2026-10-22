@@ -156,7 +156,7 @@ mod tests {
         b.switch_to_block(entry);
         let s0 = b.stack_addr(0);
         let s1 = b.stack_addr(1);
-        let idx = b.iconst_i32(0);
+        let idx = b.constant(0i32);
         let gs0 = b.gep(s0, &[idx], TypeId::I32);
         let g0 = b.global_addr(GlobalId(0));
         let al0 = b.alloca(TypeId::I32, 1);

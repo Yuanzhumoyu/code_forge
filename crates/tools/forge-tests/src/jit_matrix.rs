@@ -537,15 +537,15 @@ pub const CASES: &[Case] = &[
     Case {
         name: "const_42",
         ops: &["Iconst"],
-        kind: CaseKind::I32(|b| b.iconst_i32(42), 42),
+        kind: CaseKind::I32(|b| b.constant(42i32), 42),
     },
     Case {
         name: "add",
         ops: &["Iadd"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(20);
-                let c = b.iconst_i32(22);
+                let a = b.constant(20i32);
+                let c = b.constant(22i32);
                 b.iadd(a, c)
             },
             42,
@@ -556,8 +556,8 @@ pub const CASES: &[Case] = &[
         ops: &["Isub"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(84);
-                let c = b.iconst_i32(42);
+                let a = b.constant(84i32);
+                let c = b.constant(42i32);
                 b.isub(a, c)
             },
             42,
@@ -568,8 +568,8 @@ pub const CASES: &[Case] = &[
         ops: &["Imul"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(6);
-                let c = b.iconst_i32(7);
+                let a = b.constant(6i32);
+                let c = b.constant(7i32);
                 b.imul(a, c)
             },
             42,
@@ -580,10 +580,10 @@ pub const CASES: &[Case] = &[
         ops: &["Imul", "Iadd"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(5);
-                let c = b.iconst_i32(8);
+                let a = b.constant(5i32);
+                let c = b.constant(8i32);
                 let m = b.imul(a, c);
-                let d = b.iconst_i32(2);
+                let d = b.constant(2i32);
                 b.iadd(m, d)
             },
             42,
@@ -594,10 +594,10 @@ pub const CASES: &[Case] = &[
         ops: &["Ishl", "Iadd"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(20);
-                let s = b.iconst_i32(1);
+                let a = b.constant(20i32);
+                let s = b.constant(1i32);
                 let sh = b.ishl(a, s);
-                let c = b.iconst_i32(2);
+                let c = b.constant(2i32);
                 b.iadd(sh, c)
             },
             42,
@@ -608,10 +608,10 @@ pub const CASES: &[Case] = &[
         ops: &["Iadd", "Imul", "Isub"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(6);
-                let c = b.iconst_i32(7);
+                let a = b.constant(6i32);
+                let c = b.constant(7i32);
                 let m = b.imul(a, c);
-                let d = b.iconst_i32(10);
+                let d = b.constant(10i32);
                 b.isub(m, d)
             },
             32,
@@ -622,9 +622,9 @@ pub const CASES: &[Case] = &[
         ops: &["Iadd", "Imul"],
         kind: CaseKind::I32(
             |b| {
-                let x = b.iconst_i32(2);
-                let y = b.iconst_i32(3);
-                let z = b.iconst_i32(4);
+                let x = b.constant(2i32);
+                let y = b.constant(3i32);
+                let z = b.constant(4i32);
                 let s = b.iadd(x, y);
                 b.imul(s, z)
             },
@@ -637,8 +637,8 @@ pub const CASES: &[Case] = &[
         ops: &["Band"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(0xFF);
-                let c = b.iconst_i32(42);
+                let a = b.constant(0xFFi32);
+                let c = b.constant(42i32);
                 b.band(a, c)
             },
             42,
@@ -649,8 +649,8 @@ pub const CASES: &[Case] = &[
         ops: &["Bor"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(40);
-                let c = b.iconst_i32(2);
+                let a = b.constant(40i32);
+                let c = b.constant(2i32);
                 b.bor(a, c)
             },
             42,
@@ -661,8 +661,8 @@ pub const CASES: &[Case] = &[
         ops: &["Bxor"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(63);
-                let c = b.iconst_i32(21);
+                let a = b.constant(63i32);
+                let c = b.constant(21i32);
                 b.bxor(a, c)
             },
             42,
@@ -673,7 +673,7 @@ pub const CASES: &[Case] = &[
         ops: &["Bnot"],
         kind: CaseKind::I64(
             |b| {
-                let a = b.iconst_i64(!42i64);
+                let a = b.constant(!42i64);
                 b.bnot(a)
             },
             42,
@@ -684,10 +684,10 @@ pub const CASES: &[Case] = &[
         ops: &["Band", "Bor"],
         kind: CaseKind::I32(
             |b| {
-                let x = b.iconst_i32(0x0F);
-                let y = b.iconst_i32(0xF0);
+                let x = b.constant(0x0Fi32);
+                let y = b.constant(0xF0i32);
                 let a = b.bor(x, y);
-                let m = b.iconst_i32(0xFF);
+                let m = b.constant(0xFFi32);
                 b.band(a, m)
             },
             0xFF,
@@ -699,8 +699,8 @@ pub const CASES: &[Case] = &[
         ops: &["Ishl"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(21);
-                let s = b.iconst_i32(1);
+                let a = b.constant(21i32);
+                let s = b.constant(1i32);
                 b.ishl(a, s)
             },
             42,
@@ -711,8 +711,8 @@ pub const CASES: &[Case] = &[
         ops: &["Ushr"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(168);
-                let s = b.iconst_i32(2);
+                let a = b.constant(168i32);
+                let s = b.constant(2i32);
                 b.ushr(a, s)
             },
             42,
@@ -723,8 +723,8 @@ pub const CASES: &[Case] = &[
         ops: &["Sshr"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(-84);
-                let s = b.iconst_i32(1);
+                let a = b.constant(-84i32);
+                let s = b.constant(1i32);
                 b.sshr(a, s)
             },
             -42,
@@ -735,10 +735,10 @@ pub const CASES: &[Case] = &[
         ops: &["Ishl", "Ushr"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(84);
-                let s1 = b.iconst_i32(1);
+                let a = b.constant(84i32);
+                let s1 = b.constant(1i32);
                 let sh = b.ishl(a, s1);
-                let s2 = b.iconst_i32(1);
+                let s2 = b.constant(1i32);
                 b.ushr(sh, s2)
             },
             84,
@@ -750,8 +750,8 @@ pub const CASES: &[Case] = &[
         ops: &["Sdiv"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(84);
-                let c = b.iconst_i32(2);
+                let a = b.constant(84i32);
+                let c = b.constant(2i32);
                 b.sdiv(a, c)
             },
             42,
@@ -762,8 +762,8 @@ pub const CASES: &[Case] = &[
         ops: &["Sdiv"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(10);
-                let c = b.iconst_i32(3);
+                let a = b.constant(10i32);
+                let c = b.constant(3i32);
                 b.sdiv(a, c)
             },
             3,
@@ -781,14 +781,14 @@ pub const CASES: &[Case] = &[
                 let mut b = FunctionBuilder::new("main", TypeContext::new(), sig);
                 b.create_block_here();
                 let base1 = b.stack_addr(0);
-                let off1 = b.iconst_i32(-4);
+                let off1 = b.constant(-4i32);
                 let p1 = b.iadd(base1, off1);
-                let x = b.iconst_i32(100);
+                let x = b.constant(100i32);
                 b.store(x, p1);
                 let base2 = b.stack_addr(0);
-                let off2 = b.iconst_i32(-8);
+                let off2 = b.constant(-8i32);
                 let p2 = b.iadd(base2, off2);
-                let y = b.iconst_i32(7);
+                let y = b.constant(7i32);
                 b.store(y, p2);
                 let lx = b.load(p1, TypeId::I32);
                 let ly = b.load(p2, TypeId::I32);
@@ -804,8 +804,8 @@ pub const CASES: &[Case] = &[
         ops: &["Udiv"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(126);
-                let c = b.iconst_i32(3);
+                let a = b.constant(126i32);
+                let c = b.constant(3i32);
                 b.udiv(a, c)
             },
             42,
@@ -816,8 +816,8 @@ pub const CASES: &[Case] = &[
         ops: &["Srem"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(100);
-                let c = b.iconst_i32(7);
+                let a = b.constant(100i32);
+                let c = b.constant(7i32);
                 b.srem(a, c)
             },
             2,
@@ -828,8 +828,8 @@ pub const CASES: &[Case] = &[
         ops: &["Urem"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(100);
-                let c = b.iconst_i32(7);
+                let a = b.constant(100i32);
+                let c = b.constant(7i32);
                 b.urem(a, c)
             },
             2,
@@ -841,8 +841,8 @@ pub const CASES: &[Case] = &[
         ops: &["Icmp"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.iconst_i32(42);
-                let c = b.iconst_i32(42);
+                let a = b.constant(42i32);
+                let c = b.constant(42i32);
                 b.icmp(IntCC::Eq, a, c)
             },
             true,
@@ -853,8 +853,8 @@ pub const CASES: &[Case] = &[
         ops: &["Icmp"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.iconst_i32(42);
-                let c = b.iconst_i32(43);
+                let a = b.constant(42i32);
+                let c = b.constant(43i32);
                 b.icmp(IntCC::Ne, a, c)
             },
             true,
@@ -865,8 +865,8 @@ pub const CASES: &[Case] = &[
         ops: &["Icmp"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.iconst_i32(50);
-                let c = b.iconst_i32(42);
+                let a = b.constant(50i32);
+                let c = b.constant(42i32);
                 b.icmp(IntCC::Sgt, a, c)
             },
             true,
@@ -877,8 +877,8 @@ pub const CASES: &[Case] = &[
         ops: &["Icmp"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.iconst_i32(42);
-                let c = b.iconst_i32(50);
+                let a = b.constant(42i32);
+                let c = b.constant(50i32);
                 b.icmp(IntCC::Slt, a, c)
             },
             true,
@@ -889,8 +889,8 @@ pub const CASES: &[Case] = &[
         ops: &["Icmp"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.iconst_i32(42);
-                let c = b.iconst_i32(42);
+                let a = b.constant(42i32);
+                let c = b.constant(42i32);
                 b.icmp(IntCC::Sle, a, c)
             },
             true,
@@ -901,8 +901,8 @@ pub const CASES: &[Case] = &[
         ops: &["Icmp"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.iconst_i32(1);
-                let c = b.iconst_i32(2);
+                let a = b.constant(1i32);
+                let c = b.constant(2i32);
                 b.icmp(IntCC::Ult, a, c)
             },
             true,
@@ -913,8 +913,8 @@ pub const CASES: &[Case] = &[
         ops: &["Icmp"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.iconst_i32(2);
-                let c = b.iconst_i32(1);
+                let a = b.constant(2i32);
+                let c = b.constant(1i32);
                 b.icmp(IntCC::Ugt, a, c)
             },
             true,
@@ -925,8 +925,8 @@ pub const CASES: &[Case] = &[
         ops: &["Icmp"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.iconst_i32(42);
-                let c = b.iconst_i32(42);
+                let a = b.constant(42i32);
+                let c = b.constant(42i32);
                 b.icmp(IntCC::Uge, a, c)
             },
             true,
@@ -937,8 +937,8 @@ pub const CASES: &[Case] = &[
         ops: &["Icmp"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.iconst_i32(42);
-                let c = b.iconst_i32(42);
+                let a = b.constant(42i32);
+                let c = b.constant(42i32);
                 b.icmp(IntCC::Ule, a, c)
             },
             true,
@@ -950,7 +950,7 @@ pub const CASES: &[Case] = &[
         ops: &["Sextend"],
         kind: CaseKind::I64(
             |b| {
-                let a = b.iconst_i32(-42);
+                let a = b.constant(-42i32);
                 b.sextend(a, TypeId::I64)
             },
             -42,
@@ -961,7 +961,7 @@ pub const CASES: &[Case] = &[
         ops: &["Sextend"],
         kind: CaseKind::I64(
             |b| {
-                let a = b.iconst_i32(-1);
+                let a = b.constant(-1i32);
                 b.sextend(a, TypeId::I64)
             },
             -1,
@@ -972,7 +972,7 @@ pub const CASES: &[Case] = &[
         ops: &["Sextend"],
         kind: CaseKind::I64(
             |b| {
-                let a = b.iconst_i32(42);
+                let a = b.constant(42i32);
                 b.sextend(a, TypeId::I64)
             },
             42,
@@ -985,7 +985,7 @@ pub const CASES: &[Case] = &[
         kind: CaseKind::I32(
             |b| {
                 let addr = b.stack_addr(0);
-                let v = b.iconst_i32(42);
+                let v = b.constant(42i32);
                 b.store(v, addr);
                 b.load(addr, TypeId::I32)
             },
@@ -998,7 +998,7 @@ pub const CASES: &[Case] = &[
         kind: CaseKind::I32(
             |b| {
                 let addr = b.stack_addr(0);
-                let v = b.iconst_i32(7);
+                let v = b.constant(7i32);
                 b.store(v, addr);
                 b.load(addr, TypeId::I32)
             },
@@ -1016,9 +1016,9 @@ pub const CASES: &[Case] = &[
         kind: CaseKind::I32(
             |b| {
                 let base = b.stack_addr(0);
-                let off = b.iconst_i32(-4);
+                let off = b.constant(-4i32);
                 let slot = b.iadd(base, off);
-                let v = b.iconst_i32(42);
+                let v = b.constant(42i32);
                 b.store(v, slot);
                 b.load(slot, TypeId::I32)
             },
@@ -1032,15 +1032,15 @@ pub const CASES: &[Case] = &[
         kind: CaseKind::Block(
             |b| {
                 b.create_block_here();
-                let c = b.iconst_bool(true);
+                let c = b.constant(true);
                 let then = b.create_block();
                 let els = b.create_block();
                 b.branch(c, then, &[], els, &[]);
                 b.switch_to_block(then);
-                let v = b.iconst_i32(42);
+                let v = b.constant(42i32);
                 b.ret(&[v]);
                 b.switch_to_block(els);
-                let v2 = b.iconst_i32(0);
+                let v2 = b.constant(0i32);
                 b.ret(&[v2]);
             },
             42,
@@ -1052,15 +1052,15 @@ pub const CASES: &[Case] = &[
         kind: CaseKind::Block(
             |b| {
                 b.create_block_here();
-                let c = b.iconst_bool(false);
+                let c = b.constant(false);
                 let then = b.create_block();
                 let els = b.create_block();
                 b.branch(c, then, &[], els, &[]);
                 b.switch_to_block(then);
-                let v = b.iconst_i32(0);
+                let v = b.constant(0i32);
                 b.ret(&[v]);
                 b.switch_to_block(els);
-                let v2 = b.iconst_i32(42);
+                let v2 = b.constant(42i32);
                 b.ret(&[v2]);
             },
             42,
@@ -1077,14 +1077,14 @@ pub const CASES: &[Case] = &[
                     b.create_block_with_params(&[(TypeId::I32, "i"), (TypeId::I32, "acc")]);
                 let exit = b.create_block();
                 b.switch_to_block(entry);
-                let i0 = b.iconst_i32(0);
-                let a0 = b.iconst_i32(0);
+                let i0 = b.constant(0i32);
+                let a0 = b.constant(0i32);
                 b.jump(loop_h, &[i0, a0]);
                 b.switch_to_block(loop_h);
-                let one = b.iconst_i32(1);
+                let one = b.constant(1i32);
                 let new_i = b.iadd(lp[0], one);
                 let new_acc = b.iadd(lp[1], new_i);
-                let ten = b.iconst_i32(10);
+                let ten = b.constant(10i32);
                 let done = b.icmp(IntCC::Sge, new_i, ten);
                 b.branch(done, exit, &[], loop_h, &[new_i, new_acc]);
                 b.switch_to_block(exit);
@@ -1103,16 +1103,16 @@ pub const CASES: &[Case] = &[
                 let els = b.create_block();
                 let (end, phi) = b.create_block_with_params(&[(TypeId::I32, "phi")]);
                 b.switch_to_block(entry);
-                let c = b.iconst_bool(true);
+                let c = b.constant(true);
                 b.branch(c, then, &[], els, &[]);
                 b.switch_to_block(then);
-                let v1 = b.iconst_i32(40);
+                let v1 = b.constant(40i32);
                 b.jump(end, &[v1]);
                 b.switch_to_block(els);
-                let v2 = b.iconst_i32(2);
+                let v2 = b.constant(2i32);
                 b.jump(end, &[v2]);
                 b.switch_to_block(end);
-                let z = b.iconst_i32(0);
+                let z = b.constant(0i32);
                 let r = b.iadd(phi[0], z);
                 b.ret(&[r]);
             },
@@ -1132,9 +1132,9 @@ pub const CASES: &[Case] = &[
                 let (end, phi) = b.create_block_with_params(&[(TypeId::I64, "phi")]);
                 b.switch_to_block(entry);
                 // 用动态值做条件（10 > 20 恒假 → 走 else 传 20）
-                let ten = b.iconst_i64(10);
-                let twenty = b.iconst_i64(20);
-                let zero = b.iconst_i64(0);
+                let ten = b.constant(10i64);
+                let twenty = b.constant(20i64);
+                let zero = b.constant(0i64);
                 let c = b.icmp(IntCC::Sgt, ten, twenty);
                 b.branch(c, then, &[], els, &[]);
                 b.switch_to_block(then);
@@ -1166,7 +1166,7 @@ pub const CASES: &[Case] = &[
             params: &[(TypeId::I64, "a")],
             args: &[40],
             build: |b, p| {
-                let c = b.iconst_i64(2);
+                let c = b.constant(2i64);
                 b.iadd(p[0], c)
             },
             expected: 42,
@@ -1266,7 +1266,7 @@ pub const CASES: &[Case] = &[
             params: &[(TypeId::I64, "a")],
             args: &[0x2_0000_0000],
             build: |b, p| {
-                let off = b.iconst_i32(-4);
+                let off = b.constant(-4i32);
                 b.iadd(p[0], off)
             },
             expected: 0x1_FFFF_FFFC,
@@ -1279,7 +1279,7 @@ pub const CASES: &[Case] = &[
             params: &[(TypeId::I64, "a")],
             args: &[0x2_0000_0000],
             build: |b, p| {
-                let off = b.iconst_i32(4);
+                let off = b.constant(4i32);
                 b.isub(p[0], off)
             },
             expected: 0x1_FFFF_FFFC,
@@ -1292,7 +1292,7 @@ pub const CASES: &[Case] = &[
             params: &[(TypeId::I64, "a")],
             args: &[0x2_0000_0000],
             build: |b, p| {
-                let m = b.iconst_i32(42);
+                let m = b.constant(42i32);
                 b.bor(p[0], m)
             },
             expected: 0x2_0000_002A,
@@ -1305,7 +1305,7 @@ pub const CASES: &[Case] = &[
             params: &[(TypeId::I64, "a")],
             args: &[0x2_0000_0000],
             build: |b, p| {
-                let m = b.iconst_i32(42);
+                let m = b.constant(42i32);
                 b.bxor(p[0], m)
             },
             expected: 0x2_0000_002A,
@@ -1318,7 +1318,7 @@ pub const CASES: &[Case] = &[
             params: &[(TypeId::I64, "a")],
             args: &[0x2_0000_00FF],
             build: |b, p| {
-                let m = b.iconst_i32(-1); // 全 1 掩码：符号扩展后 64 位恒等
+                let m = b.constant(-1i32); // 全 1 掩码：符号扩展后 64 位恒等
                 b.band(p[0], m)
             },
             expected: 0x2_0000_00FF,
@@ -1334,7 +1334,7 @@ pub const CASES: &[Case] = &[
             params: &[(TypeId::I64, "a")],
             args: &[0x2_0000_0000],
             build: |b, p| {
-                let z = b.iconst_i32(0);
+                let z = b.constant(0i32);
                 let c = b.icmp(IntCC::Eq, p[0], z);
                 b.sextend(c, TypeId::I64)
             },
@@ -1348,7 +1348,7 @@ pub const CASES: &[Case] = &[
             params: &[(TypeId::I64, "a")],
             args: &[0x2_0000_0000],
             build: |b, p| {
-                let z = b.iconst_i32(0);
+                let z = b.constant(0i32);
                 let c = b.icmp(IntCC::Ne, p[0], z);
                 b.sextend(c, TypeId::I64)
             },
@@ -1362,7 +1362,7 @@ pub const CASES: &[Case] = &[
             params: &[(TypeId::I64, "a")],
             args: &[0x2_0000_0000],
             build: |b, p| {
-                let one = b.iconst_i32(1);
+                let one = b.constant(1i32);
                 // 0x2_0000_0000 < 1 为假；32 位比较只看低半（0 < 1）会误判为真
                 let c = b.icmp(IntCC::Slt, p[0], one);
                 b.sextend(c, TypeId::I64)
@@ -1374,32 +1374,32 @@ pub const CASES: &[Case] = &[
     Case {
         name: "return_negative",
         ops: &["Iconst"],
-        kind: CaseKind::I32(|b| b.iconst_i32(-42), -42),
+        kind: CaseKind::I32(|b| b.constant(-42i32), -42),
     },
     Case {
         name: "return_zero",
         ops: &["Iconst"],
-        kind: CaseKind::I32(|b| b.iconst_i32(0), 0),
+        kind: CaseKind::I32(|b| b.constant(0i32), 0),
     },
     Case {
         name: "return_minus_one",
         ops: &["Iconst"],
-        kind: CaseKind::I32(|b| b.iconst_i32(-1), -1),
+        kind: CaseKind::I32(|b| b.constant(-1i32), -1),
     },
     Case {
         name: "return_large_positive",
         ops: &["Iconst"],
-        kind: CaseKind::I64(|b| b.iconst_i64(3_000_000_000), 3_000_000_000),
+        kind: CaseKind::I64(|b| b.constant(3_000_000_000i64), 3_000_000_000),
     },
     Case {
         name: "return_max_i32",
         ops: &["Iconst"],
-        kind: CaseKind::I32(|b| b.iconst_i32(i32::MAX), i32::MAX),
+        kind: CaseKind::I32(|b| b.constant(i32::MAX), i32::MAX),
     },
     Case {
         name: "return_min_i32",
         ops: &["Iconst"],
-        kind: CaseKind::I32(|b| b.iconst_i32(i32::MIN), i32::MIN),
+        kind: CaseKind::I32(|b| b.constant(i32::MIN), i32::MIN),
     },
     // ── 布尔逻辑（经 icmp + band/bor/bnot）──
     Case {
@@ -1407,10 +1407,10 @@ pub const CASES: &[Case] = &[
         ops: &["Icmp", "Band"],
         kind: CaseKind::Bool(
             |b| {
-                let t = b.iconst_bool(true);
-                let f = b.iconst_bool(false);
+                let t = b.constant(true);
+                let f = b.constant(false);
                 let r = b.band(t, f);
-                let one = b.iconst_bool(true);
+                let one = b.constant(true);
                 b.icmp(IntCC::Ne, r, one)
             },
             true,
@@ -1422,9 +1422,9 @@ pub const CASES: &[Case] = &[
         ops: &["Iadd", "Iconst"],
         kind: CaseKind::I32(
             |b| {
-                let mut acc = b.iconst_i32(0);
+                let mut acc = b.constant(0i32);
                 for i in 1..=12i32 {
-                    let v = b.iconst_i32(i);
+                    let v = b.constant(i);
                     acc = b.iadd(acc, v);
                 }
                 acc
@@ -1436,7 +1436,7 @@ pub const CASES: &[Case] = &[
     Case {
         name: "multi_return_first",
         ops: &["Iconst"],
-        kind: CaseKind::I32(|b| b.iconst_i32(42), 42),
+        kind: CaseKind::I32(|b| b.constant(42i32), 42),
     },
     // ══════════════════ 迭代 6 续：整数全量（when 谓词接线）══════════════════
     // ── Select(cond, a, b) ──
@@ -1445,9 +1445,9 @@ pub const CASES: &[Case] = &[
         ops: &["Select", "Iconst"],
         kind: CaseKind::I32(
             |b| {
-                let c = b.iconst_bool(true);
-                let t = b.iconst_i32(42);
-                let f = b.iconst_i32(0);
+                let c = b.constant(true);
+                let t = b.constant(42i32);
+                let f = b.constant(0i32);
                 b.select(c, t, f)
             },
             42,
@@ -1458,9 +1458,9 @@ pub const CASES: &[Case] = &[
         ops: &["Select", "Iconst"],
         kind: CaseKind::I32(
             |b| {
-                let c = b.iconst_bool(false);
-                let t = b.iconst_i32(42);
-                let f = b.iconst_i32(7);
+                let c = b.constant(false);
+                let t = b.constant(42i32);
+                let f = b.constant(7i32);
                 b.select(c, t, f)
             },
             7,
@@ -1473,7 +1473,7 @@ pub const CASES: &[Case] = &[
             params: &[(TypeId::I64, "a"), (TypeId::I64, "b"), (TypeId::I64, "c")],
             args: &[1, 42, 0],
             build: |b, p| {
-                let zero = b.iconst_i64(0);
+                let zero = b.constant(0i64);
                 let c = b.icmp(IntCC::Ne, p[0], zero);
                 b.select(c, p[1], p[2])
             },
@@ -1526,8 +1526,8 @@ pub const CASES: &[Case] = &[
         ops: &["Rotl"],
         kind: CaseKind::I32(
             |b| {
-                let v = b.iconst_i32(0x12345678);
-                let n = b.iconst_i32(8);
+                let v = b.constant(0x12345678i32);
+                let n = b.constant(8i32);
                 b.rotl(v, n)
             },
             0x34567812,
@@ -1538,8 +1538,8 @@ pub const CASES: &[Case] = &[
         ops: &["Rotr"],
         kind: CaseKind::I32(
             |b| {
-                let v = b.iconst_i32(0x12345678);
-                let n = b.iconst_i32(8);
+                let v = b.constant(0x12345678i32);
+                let n = b.constant(8i32);
                 b.rotr(v, n)
             },
             0x78123456,
@@ -1550,8 +1550,8 @@ pub const CASES: &[Case] = &[
         ops: &["Rotl"],
         kind: CaseKind::I64(
             |b| {
-                let v = b.iconst_i64(0x1122334455667788);
-                let n = b.iconst_i64(32);
+                let v = b.constant(0x1122334455667788i64);
+                let n = b.constant(32i64);
                 b.rotl(v, n)
             },
             0x5566778811223344,
@@ -1563,8 +1563,8 @@ pub const CASES: &[Case] = &[
         ops: &["Smin"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(-5);
-                let c = b.iconst_i32(3);
+                let a = b.constant(-5i32);
+                let c = b.constant(3i32);
                 b.smin(a, c)
             },
             -5,
@@ -1575,8 +1575,8 @@ pub const CASES: &[Case] = &[
         ops: &["Smax"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(-5);
-                let c = b.iconst_i32(3);
+                let a = b.constant(-5i32);
+                let c = b.constant(3i32);
                 b.smax(a, c)
             },
             3,
@@ -1587,8 +1587,8 @@ pub const CASES: &[Case] = &[
         ops: &["Umin"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(-1); // 0xFFFFFFFF（无符号大）
-                let c = b.iconst_i32(5);
+                let a = b.constant(-1i32); // 0xFFFFFFFF（无符号大）
+                let c = b.constant(5i32);
                 b.umin(a, c)
             },
             5,
@@ -1599,8 +1599,8 @@ pub const CASES: &[Case] = &[
         ops: &["Umax"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(-1);
-                let c = b.iconst_i32(5);
+                let a = b.constant(-1i32);
+                let c = b.constant(5i32);
                 b.umax(a, c)
             },
             -1,
@@ -1622,7 +1622,7 @@ pub const CASES: &[Case] = &[
         ops: &["Abs"],
         kind: CaseKind::I32(
             |b| {
-                let v = b.iconst_i32(-42);
+                let v = b.constant(-42i32);
                 b.abs(v)
             },
             42,
@@ -1633,7 +1633,7 @@ pub const CASES: &[Case] = &[
         ops: &["Abs"],
         kind: CaseKind::I32(
             |b| {
-                let v = b.iconst_i32(42);
+                let v = b.constant(42i32);
                 b.abs(v)
             },
             42,
@@ -1644,7 +1644,7 @@ pub const CASES: &[Case] = &[
         ops: &["Abs"],
         kind: CaseKind::I32(
             |b| {
-                let v = b.iconst_i32(i32::MIN);
+                let v = b.constant(i32::MIN);
                 b.abs(v)
             },
             i32::MIN,
@@ -1656,7 +1656,7 @@ pub const CASES: &[Case] = &[
         ops: &["Clz"],
         kind: CaseKind::I64(
             |b| {
-                let v = b.iconst_i64(1);
+                let v = b.constant(1i64);
                 b.clz(v)
             },
             63,
@@ -1667,7 +1667,7 @@ pub const CASES: &[Case] = &[
         ops: &["Clz"],
         kind: CaseKind::I64(
             |b| {
-                let v = b.iconst_i64(i64::MIN);
+                let v = b.constant(i64::MIN);
                 b.clz(v)
             },
             0,
@@ -1678,7 +1678,7 @@ pub const CASES: &[Case] = &[
         ops: &["Ctz"],
         kind: CaseKind::I64(
             |b| {
-                let v = b.iconst_i64(i64::MIN);
+                let v = b.constant(i64::MIN);
                 b.ctz(v)
             },
             63,
@@ -1689,7 +1689,7 @@ pub const CASES: &[Case] = &[
         ops: &["Ctz"],
         kind: CaseKind::I64(
             |b| {
-                let v = b.iconst_i64(1);
+                let v = b.constant(1i64);
                 b.ctz(v)
             },
             0,
@@ -1700,7 +1700,7 @@ pub const CASES: &[Case] = &[
         ops: &["Popcnt"],
         kind: CaseKind::I64(
             |b| {
-                let v = b.iconst_i64(0x0F0F0F0F0F0F0F0F);
+                let v = b.constant(0x0F0F0F0F0F0F0F0Fi64);
                 b.popcnt(v)
             },
             32,
@@ -1711,7 +1711,7 @@ pub const CASES: &[Case] = &[
         ops: &["Bswap"],
         kind: CaseKind::I64(
             |b| {
-                let v = b.iconst_i64(0x0000000011223344);
+                let v = b.constant(0x0000000011223344i64);
                 b.bswap(v)
             },
             0x4433221100000000,
@@ -1745,7 +1745,7 @@ pub const CASES: &[Case] = &[
         ops: &["Freeze"],
         kind: CaseKind::I32(
             |b| {
-                let v = b.iconst_i32(42);
+                let v = b.constant(42i32);
                 b.freeze(v)
             },
             42,
@@ -1757,7 +1757,7 @@ pub const CASES: &[Case] = &[
         ops: &["Trap"],
         kind: CaseKind::CompileOnly(|b| {
             // compile_only 已 create_block_here（勿重复建块——空块无终结符）
-            let v = b.iconst_i32(0);
+            let v = b.constant(0i32);
             b.trap();
             b.unreachable();
             v
@@ -1771,7 +1771,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 b.create_block_here();
                 b.fence(Ordering::SequentiallyConsistent);
-                let v = b.iconst_i32(42);
+                let v = b.constant(42i32);
                 b.ret(&[v]);
             },
             42,
@@ -1784,7 +1784,7 @@ pub const CASES: &[Case] = &[
         kind: CaseKind::I32(
             |b| {
                 let ptr = b.alloca(TypeId::I32, 1);
-                let v = b.iconst_i32(42);
+                let v = b.constant(42i32);
                 b.store(v, ptr);
                 b.load(ptr, TypeId::I32)
             },
@@ -1797,8 +1797,8 @@ pub const CASES: &[Case] = &[
         ops: &["SaddOverflow"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(30);
-                let c = b.iconst_i32(12);
+                let a = b.constant(30i32);
+                let c = b.constant(12i32);
                 let (v, _f) = b.sadd_overflow(a, c);
                 v
             },
@@ -1810,8 +1810,8 @@ pub const CASES: &[Case] = &[
         ops: &["SaddOverflow"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.iconst_i32(i32::MAX);
-                let c = b.iconst_i32(1);
+                let a = b.constant(i32::MAX);
+                let c = b.constant(1i32);
                 let (_v, f) = b.sadd_overflow(a, c);
                 f
             },
@@ -1823,8 +1823,8 @@ pub const CASES: &[Case] = &[
         ops: &["UaddOverflow"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(20);
-                let c = b.iconst_i32(22);
+                let a = b.constant(20i32);
+                let c = b.constant(22i32);
                 let (v, _f) = b.uadd_overflow(a, c);
                 v
             },
@@ -1836,8 +1836,8 @@ pub const CASES: &[Case] = &[
         ops: &["UaddOverflow"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.iconst_i32(-1);
-                let c = b.iconst_i32(1);
+                let a = b.constant(-1i32);
+                let c = b.constant(1i32);
                 let (_v, f) = b.uadd_overflow(a, c);
                 f
             },
@@ -1849,8 +1849,8 @@ pub const CASES: &[Case] = &[
         ops: &["SsubOverflow"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(-42);
-                let c = b.iconst_i32(0);
+                let a = b.constant(-42i32);
+                let c = b.constant(0i32);
                 let (v, _f) = b.ssub_overflow(a, c);
                 v
             },
@@ -1862,8 +1862,8 @@ pub const CASES: &[Case] = &[
         ops: &["SsubOverflow"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.iconst_i32(i32::MIN);
-                let c = b.iconst_i32(1);
+                let a = b.constant(i32::MIN);
+                let c = b.constant(1i32);
                 let (_v, f) = b.ssub_overflow(a, c);
                 f
             },
@@ -1875,8 +1875,8 @@ pub const CASES: &[Case] = &[
         ops: &["UsubOverflow"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.iconst_i32(0);
-                let c = b.iconst_i32(1);
+                let a = b.constant(0i32);
+                let c = b.constant(1i32);
                 let (_v, f) = b.usub_overflow(a, c);
                 f
             },
@@ -1888,8 +1888,8 @@ pub const CASES: &[Case] = &[
         ops: &["SmulOverflow"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(6);
-                let c = b.iconst_i32(7);
+                let a = b.constant(6i32);
+                let c = b.constant(7i32);
                 let (v, _f) = b.smul_overflow(a, c);
                 v
             },
@@ -1901,8 +1901,8 @@ pub const CASES: &[Case] = &[
         ops: &["SmulOverflow"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.iconst_i32(i32::MAX);
-                let c = b.iconst_i32(2);
+                let a = b.constant(i32::MAX);
+                let c = b.constant(2i32);
                 let (_v, f) = b.smul_overflow(a, c);
                 f
             },
@@ -1914,8 +1914,8 @@ pub const CASES: &[Case] = &[
         ops: &["UmulOverflow"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(6);
-                let c = b.iconst_i32(7);
+                let a = b.constant(6i32);
+                let c = b.constant(7i32);
                 let (v, _f) = b.umul_overflow(a, c);
                 v
             },
@@ -1927,8 +1927,8 @@ pub const CASES: &[Case] = &[
         ops: &["UmulOverflow"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.iconst_i32(-1);
-                let c = b.iconst_i32(2);
+                let a = b.constant(-1i32);
+                let c = b.constant(2i32);
                 let (_v, f) = b.umul_overflow(a, c);
                 f
             },
@@ -1941,8 +1941,8 @@ pub const CASES: &[Case] = &[
         ops: &["SaddSat"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(i32::MAX);
-                let c = b.iconst_i32(1);
+                let a = b.constant(i32::MAX);
+                let c = b.constant(1i32);
                 b.sadd_sat(a, c)
             },
             i32::MAX,
@@ -1953,8 +1953,8 @@ pub const CASES: &[Case] = &[
         ops: &["SaddSat"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(i32::MIN);
-                let c = b.iconst_i32(-1);
+                let a = b.constant(i32::MIN);
+                let c = b.constant(-1i32);
                 b.sadd_sat(a, c)
             },
             i32::MIN,
@@ -1965,8 +1965,8 @@ pub const CASES: &[Case] = &[
         ops: &["SaddSat"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(20);
-                let c = b.iconst_i32(22);
+                let a = b.constant(20i32);
+                let c = b.constant(22i32);
                 b.sadd_sat(a, c)
             },
             42,
@@ -1977,8 +1977,8 @@ pub const CASES: &[Case] = &[
         ops: &["SaddSat"],
         kind: CaseKind::I64(
             |b| {
-                let a = b.iconst_i64(i64::MAX);
-                let c = b.iconst_i64(1);
+                let a = b.constant(i64::MAX);
+                let c = b.constant(1i64);
                 b.sadd_sat(a, c)
             },
             i64::MAX,
@@ -1989,8 +1989,8 @@ pub const CASES: &[Case] = &[
         ops: &["UaddSat"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(-1);
-                let c = b.iconst_i32(1);
+                let a = b.constant(-1i32);
+                let c = b.constant(1i32);
                 b.uadd_sat(a, c)
             },
             -1,
@@ -2001,8 +2001,8 @@ pub const CASES: &[Case] = &[
         ops: &["UaddSat"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(20);
-                let c = b.iconst_i32(22);
+                let a = b.constant(20i32);
+                let c = b.constant(22i32);
                 b.uadd_sat(a, c)
             },
             42,
@@ -2013,8 +2013,8 @@ pub const CASES: &[Case] = &[
         ops: &["UsubSat"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(0);
-                let c = b.iconst_i32(1);
+                let a = b.constant(0i32);
+                let c = b.constant(1i32);
                 b.usub_sat(a, c)
             },
             0,
@@ -2025,8 +2025,8 @@ pub const CASES: &[Case] = &[
         ops: &["UsubSat"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(50);
-                let c = b.iconst_i32(8);
+                let a = b.constant(50i32);
+                let c = b.constant(8i32);
                 b.usub_sat(a, c)
             },
             42,
@@ -2038,7 +2038,7 @@ pub const CASES: &[Case] = &[
         ops: &["Bitreverse"],
         kind: CaseKind::I64(
             |b| {
-                let v = b.iconst_i64(1);
+                let v = b.constant(1i64);
                 b.bitreverse(v)
             },
             i64::MIN,
@@ -2049,7 +2049,7 @@ pub const CASES: &[Case] = &[
         ops: &["Bitreverse"],
         kind: CaseKind::I64(
             |b| {
-                let v = b.iconst_i64(i64::MIN);
+                let v = b.constant(i64::MIN);
                 b.bitreverse(v)
             },
             1,
@@ -2060,15 +2060,15 @@ pub const CASES: &[Case] = &[
     Case {
         name: "fconst_only",
         ops: &["Fconst"],
-        kind: CaseKind::F64(|b| b.fconst(1.5f64.to_bits(), TypeId::F64), 1.5),
+        kind: CaseKind::F64(|b| b.const_float(1.5f64.to_bits(), TypeId::F64), 1.5),
     },
     Case {
         name: "fadd_const",
         ops: &["Fadd", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.fconst(1.5f64.to_bits(), TypeId::F64);
-                let c = b.fconst(2.25f64.to_bits(), TypeId::F64);
+                let a = b.const_float(1.5f64.to_bits(), TypeId::F64);
+                let c = b.const_float(2.25f64.to_bits(), TypeId::F64);
                 b.fadd(a, c)
             },
             3.75,
@@ -2079,8 +2079,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fsub", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.fconst(5.0f64.to_bits(), TypeId::F64);
-                let c = b.fconst(2.5f64.to_bits(), TypeId::F64);
+                let a = b.const_float(5.0f64.to_bits(), TypeId::F64);
+                let c = b.const_float(2.5f64.to_bits(), TypeId::F64);
                 b.fsub(a, c)
             },
             2.5,
@@ -2091,8 +2091,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fmul", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.fconst(3.0f64.to_bits(), TypeId::F64);
-                let c = b.fconst(2.5f64.to_bits(), TypeId::F64);
+                let a = b.const_float(3.0f64.to_bits(), TypeId::F64);
+                let c = b.const_float(2.5f64.to_bits(), TypeId::F64);
                 b.fmul(a, c)
             },
             7.5,
@@ -2103,8 +2103,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fdiv", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.fconst(7.5f64.to_bits(), TypeId::F64);
-                let c = b.fconst(2.5f64.to_bits(), TypeId::F64);
+                let a = b.const_float(7.5f64.to_bits(), TypeId::F64);
+                let c = b.const_float(2.5f64.to_bits(), TypeId::F64);
                 b.fdiv(a, c)
             },
             3.0,
@@ -2115,8 +2115,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fadd", "Fpext", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.fconst(1.5f32.to_bits() as u64, TypeId::F32);
-                let c = b.fconst(2.25f32.to_bits() as u64, TypeId::F32);
+                let a = b.const_float(1.5f32.to_bits() as u64, TypeId::F32);
+                let c = b.const_float(2.25f32.to_bits() as u64, TypeId::F32);
                 let s = b.fadd(a, c);
                 b.fpext(s, TypeId::F64)
             },
@@ -2129,7 +2129,7 @@ pub const CASES: &[Case] = &[
         ops: &["Fneg", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let v = b.fconst(2.5f64.to_bits(), TypeId::F64);
+                let v = b.const_float(2.5f64.to_bits(), TypeId::F64);
                 b.fneg(v)
             },
             -2.5,
@@ -2140,7 +2140,7 @@ pub const CASES: &[Case] = &[
         ops: &["Fabs", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let v = b.fconst((-3.5f64).to_bits(), TypeId::F64);
+                let v = b.const_float((-3.5f64).to_bits(), TypeId::F64);
                 b.fabs(v)
             },
             3.5,
@@ -2151,7 +2151,7 @@ pub const CASES: &[Case] = &[
         ops: &["Fsqrt", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let v = b.fconst(16.0f64.to_bits(), TypeId::F64);
+                let v = b.const_float(16.0f64.to_bits(), TypeId::F64);
                 b.fsqrt(v)
             },
             4.0,
@@ -2163,8 +2163,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fmin", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.fconst(1.5f64.to_bits(), TypeId::F64);
-                let c = b.fconst(2.5f64.to_bits(), TypeId::F64);
+                let a = b.const_float(1.5f64.to_bits(), TypeId::F64);
+                let c = b.const_float(2.5f64.to_bits(), TypeId::F64);
                 b.fmin(a, c)
             },
             1.5,
@@ -2175,8 +2175,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fmax", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.fconst(1.5f64.to_bits(), TypeId::F64);
-                let c = b.fconst(2.5f64.to_bits(), TypeId::F64);
+                let a = b.const_float(1.5f64.to_bits(), TypeId::F64);
+                let c = b.const_float(2.5f64.to_bits(), TypeId::F64);
                 b.fmax(a, c)
             },
             2.5,
@@ -2188,7 +2188,7 @@ pub const CASES: &[Case] = &[
         ops: &["Ffloor", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let v = b.fconst(2.7f64.to_bits(), TypeId::F64);
+                let v = b.const_float(2.7f64.to_bits(), TypeId::F64);
                 b.ffloor(v)
             },
             2.0,
@@ -2199,7 +2199,7 @@ pub const CASES: &[Case] = &[
         ops: &["Fceil", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let v = b.fconst(2.3f64.to_bits(), TypeId::F64);
+                let v = b.const_float(2.3f64.to_bits(), TypeId::F64);
                 b.fceil(v)
             },
             3.0,
@@ -2210,7 +2210,7 @@ pub const CASES: &[Case] = &[
         ops: &["Ftrunc", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let v = b.fconst(2.7f64.to_bits(), TypeId::F64);
+                let v = b.const_float(2.7f64.to_bits(), TypeId::F64);
                 b.ftrunc(v)
             },
             2.0,
@@ -2221,7 +2221,7 @@ pub const CASES: &[Case] = &[
         ops: &["Ftrunc", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let v = b.fconst((-2.7f64).to_bits(), TypeId::F64);
+                let v = b.const_float((-2.7f64).to_bits(), TypeId::F64);
                 b.ftrunc(v)
             },
             -2.0,
@@ -2232,7 +2232,7 @@ pub const CASES: &[Case] = &[
         ops: &["Fround", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let v = b.fconst(2.5f64.to_bits(), TypeId::F64);
+                let v = b.const_float(2.5f64.to_bits(), TypeId::F64);
                 b.fround(v)
             },
             2.0,
@@ -2244,7 +2244,7 @@ pub const CASES: &[Case] = &[
         ops: &["Fpext", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let v = b.fconst(2.5f32.to_bits() as u64, TypeId::F32);
+                let v = b.const_float(2.5f32.to_bits() as u64, TypeId::F32);
                 b.fpext(v, TypeId::F64)
             },
             2.5,
@@ -2255,7 +2255,7 @@ pub const CASES: &[Case] = &[
         ops: &["Fptrunc", "Fpext", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let v = b.fconst(2.5f64.to_bits(), TypeId::F64);
+                let v = b.const_float(2.5f64.to_bits(), TypeId::F64);
                 let s = b.fptrunc(v, TypeId::F32);
                 b.fpext(s, TypeId::F64)
             },
@@ -2268,8 +2268,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fcmp", "Fconst"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.fconst(1.5f64.to_bits(), TypeId::F64);
-                let c = b.fconst(1.5f64.to_bits(), TypeId::F64);
+                let a = b.const_float(1.5f64.to_bits(), TypeId::F64);
+                let c = b.const_float(1.5f64.to_bits(), TypeId::F64);
                 b.fcmp(FloatCC::Oeq, a, c)
             },
             true,
@@ -2280,8 +2280,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fcmp", "Fconst"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.fconst(1.5f64.to_bits(), TypeId::F64);
-                let c = b.fconst(2.5f64.to_bits(), TypeId::F64);
+                let a = b.const_float(1.5f64.to_bits(), TypeId::F64);
+                let c = b.const_float(2.5f64.to_bits(), TypeId::F64);
                 b.fcmp(FloatCC::Olt, a, c)
             },
             true,
@@ -2292,8 +2292,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fcmp", "Fconst"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.fconst(1.5f64.to_bits(), TypeId::F64);
-                let c = b.fconst(2.5f64.to_bits(), TypeId::F64);
+                let a = b.const_float(1.5f64.to_bits(), TypeId::F64);
+                let c = b.const_float(2.5f64.to_bits(), TypeId::F64);
                 b.fcmp(FloatCC::Ogt, a, c)
             },
             false,
@@ -2304,8 +2304,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fcmp", "Fconst"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.fconst(1.5f64.to_bits(), TypeId::F64);
-                let c = b.fconst(2.5f64.to_bits(), TypeId::F64);
+                let a = b.const_float(1.5f64.to_bits(), TypeId::F64);
+                let c = b.const_float(2.5f64.to_bits(), TypeId::F64);
                 b.fcmp(FloatCC::One, a, c)
             },
             true,
@@ -2316,8 +2316,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fcmp", "Fconst"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.fconst(1.5f64.to_bits(), TypeId::F64);
-                let c = b.fconst(2.5f64.to_bits(), TypeId::F64);
+                let a = b.const_float(1.5f64.to_bits(), TypeId::F64);
+                let c = b.const_float(2.5f64.to_bits(), TypeId::F64);
                 b.fcmp(FloatCC::Ole, a, c)
             },
             true,
@@ -2328,8 +2328,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fcmp", "Fconst"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.fconst(2.5f64.to_bits(), TypeId::F64);
-                let c = b.fconst(2.5f64.to_bits(), TypeId::F64);
+                let a = b.const_float(2.5f64.to_bits(), TypeId::F64);
+                let c = b.const_float(2.5f64.to_bits(), TypeId::F64);
                 b.fcmp(FloatCC::Oge, a, c)
             },
             true,
@@ -2340,8 +2340,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fcmp", "Fconst"],
         kind: CaseKind::Bool(
             |b| {
-                let nan = b.fconst(f64::NAN.to_bits(), TypeId::F64);
-                let one = b.fconst(1.0f64.to_bits(), TypeId::F64);
+                let nan = b.const_float(f64::NAN.to_bits(), TypeId::F64);
+                let one = b.const_float(1.0f64.to_bits(), TypeId::F64);
                 b.fcmp(FloatCC::Ord, nan, one)
             },
             false,
@@ -2352,8 +2352,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fcmp", "Fconst"],
         kind: CaseKind::Bool(
             |b| {
-                let nan = b.fconst(f64::NAN.to_bits(), TypeId::F64);
-                let one = b.fconst(1.0f64.to_bits(), TypeId::F64);
+                let nan = b.const_float(f64::NAN.to_bits(), TypeId::F64);
+                let one = b.const_float(1.0f64.to_bits(), TypeId::F64);
                 b.fcmp(FloatCC::Uno, nan, one)
             },
             true,
@@ -2364,8 +2364,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fcmp", "Fconst"],
         kind: CaseKind::Bool(
             |b| {
-                let a = b.fconst(1.5f32.to_bits() as u64, TypeId::F32);
-                let c = b.fconst(2.5f32.to_bits() as u64, TypeId::F32);
+                let a = b.const_float(1.5f32.to_bits() as u64, TypeId::F32);
+                let c = b.const_float(2.5f32.to_bits() as u64, TypeId::F32);
                 b.fcmp(FloatCC::Olt, a, c)
             },
             true,
@@ -2378,7 +2378,7 @@ pub const CASES: &[Case] = &[
         kind: CaseKind::F64(
             |b| {
                 let ptr = b.alloca(TypeId::F64, 1);
-                let v = b.fconst(3.25f64.to_bits(), TypeId::F64);
+                let v = b.const_float(3.25f64.to_bits(), TypeId::F64);
                 b.fstore(v, ptr);
                 b.fload(ptr, TypeId::F64)
             },
@@ -2391,7 +2391,7 @@ pub const CASES: &[Case] = &[
         kind: CaseKind::F64(
             |b| {
                 let ptr = b.alloca(TypeId::F32, 1);
-                let v = b.fconst(3.25f32.to_bits() as u64, TypeId::F32);
+                let v = b.const_float(3.25f32.to_bits() as u64, TypeId::F32);
                 b.fstore(v, ptr);
                 let s = b.fload(ptr, TypeId::F32);
                 b.fpext(s, TypeId::F64)
@@ -2405,7 +2405,7 @@ pub const CASES: &[Case] = &[
         ops: &["Sitofp"],
         kind: CaseKind::F64(
             |b| {
-                let v = b.iconst_i32(42);
+                let v = b.constant(42i32);
                 b.sitofp(v, TypeId::F64)
             },
             42.0,
@@ -2416,7 +2416,7 @@ pub const CASES: &[Case] = &[
         ops: &["Sitofp"],
         kind: CaseKind::F64(
             |b| {
-                let v = b.iconst_i64(-42);
+                let v = b.constant(-42i64);
                 b.sitofp(v, TypeId::F64)
             },
             -42.0,
@@ -2427,7 +2427,7 @@ pub const CASES: &[Case] = &[
         ops: &["Sitofp", "Fpext"],
         kind: CaseKind::F64(
             |b| {
-                let v = b.iconst_i32(42);
+                let v = b.constant(42i32);
                 let s = b.sitofp(v, TypeId::F32);
                 b.fpext(s, TypeId::F64)
             },
@@ -2439,7 +2439,7 @@ pub const CASES: &[Case] = &[
         ops: &["Fptosi", "Fconst"],
         kind: CaseKind::I32(
             |b| {
-                let v = b.fconst(42.7f64.to_bits(), TypeId::F64);
+                let v = b.const_float(42.7f64.to_bits(), TypeId::F64);
                 b.fptosi(v, TypeId::I32)
             },
             42,
@@ -2450,7 +2450,7 @@ pub const CASES: &[Case] = &[
         ops: &["Fptosi", "Fconst"],
         kind: CaseKind::I64(
             |b| {
-                let v = b.fconst((-42.7f64).to_bits(), TypeId::F64);
+                let v = b.const_float((-42.7f64).to_bits(), TypeId::F64);
                 b.fptosi(v, TypeId::I64)
             },
             -42,
@@ -2461,7 +2461,7 @@ pub const CASES: &[Case] = &[
         ops: &["Fptoui", "Fconst"],
         kind: CaseKind::I32(
             |b| {
-                let v = b.fconst(42.7f64.to_bits(), TypeId::F64);
+                let v = b.const_float(42.7f64.to_bits(), TypeId::F64);
                 b.fptoui(v, TypeId::I32)
             },
             42,
@@ -2472,7 +2472,7 @@ pub const CASES: &[Case] = &[
         ops: &["Uitofp"],
         kind: CaseKind::F64(
             |b| {
-                let v = b.iconst_i32(42);
+                let v = b.constant(42i32);
                 b.uitofp(v, TypeId::F64)
             },
             42.0,
@@ -2484,9 +2484,9 @@ pub const CASES: &[Case] = &[
         ops: &["Fma", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.fconst(2.0f64.to_bits(), TypeId::F64);
-                let c = b.fconst(3.0f64.to_bits(), TypeId::F64);
-                let d = b.fconst(1.0f64.to_bits(), TypeId::F64);
+                let a = b.const_float(2.0f64.to_bits(), TypeId::F64);
+                let c = b.const_float(3.0f64.to_bits(), TypeId::F64);
+                let d = b.const_float(1.0f64.to_bits(), TypeId::F64);
                 b.fma(a, c, d)
             },
             7.0,
@@ -2499,9 +2499,9 @@ pub const CASES: &[Case] = &[
         ops: &["Fadd", "Fmul", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.fconst(2.0f64.to_bits(), TypeId::F64);
-                let c = b.fconst(3.0f64.to_bits(), TypeId::F64);
-                let d = b.fconst(4.0f64.to_bits(), TypeId::F64);
+                let a = b.const_float(2.0f64.to_bits(), TypeId::F64);
+                let c = b.const_float(3.0f64.to_bits(), TypeId::F64);
+                let d = b.const_float(4.0f64.to_bits(), TypeId::F64);
                 let t = b.fmul(a, c);
                 b.fadd(t, d)
             },
@@ -2513,9 +2513,9 @@ pub const CASES: &[Case] = &[
         ops: &["Fadd", "Fmul", "Fpext", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.fconst(2.0f32.to_bits() as u64, TypeId::F32);
-                let c = b.fconst(3.0f32.to_bits() as u64, TypeId::F32);
-                let d = b.fconst(4.0f32.to_bits() as u64, TypeId::F32);
+                let a = b.const_float(2.0f32.to_bits() as u64, TypeId::F32);
+                let c = b.const_float(3.0f32.to_bits() as u64, TypeId::F32);
+                let d = b.const_float(4.0f32.to_bits() as u64, TypeId::F32);
                 let t = b.fmul(a, c);
                 let s = b.fadd(t, d);
                 b.fpext(s, TypeId::F64)
@@ -2528,8 +2528,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fcopysign", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.fconst((-3.5f64).to_bits(), TypeId::F64);
-                let c = b.fconst(2.0f64.to_bits(), TypeId::F64);
+                let a = b.const_float((-3.5f64).to_bits(), TypeId::F64);
+                let c = b.const_float(2.0f64.to_bits(), TypeId::F64);
                 b.fcopysign(a, c)
             },
             3.5,
@@ -2540,8 +2540,8 @@ pub const CASES: &[Case] = &[
         ops: &["Fcopysign", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.fconst(3.5f64.to_bits(), TypeId::F64);
-                let c = b.fconst((-2.0f64).to_bits(), TypeId::F64);
+                let a = b.const_float(3.5f64.to_bits(), TypeId::F64);
+                let c = b.const_float((-2.0f64).to_bits(), TypeId::F64);
                 b.fcopysign(a, c)
             },
             -3.5,
@@ -2608,8 +2608,8 @@ pub const CASES: &[Case] = &[
                 let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
                 let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
                 bm.create_block_here();
-                let a = bm.iconst_i64(20);
-                let b2 = bm.iconst_i64(22);
+                let a = bm.constant(20i64);
+                let b2 = bm.constant(22i64);
                 let r = bm.call(callee_ref, &[a, b2], &[TypeId::I64]);
                 bm.ret(&r);
                 m.add_function(bm.finish().expect("main"))
@@ -2628,14 +2628,14 @@ pub const CASES: &[Case] = &[
                 let mut placeholder =
                     FunctionBuilder::new("fib", TypeContext::new(), sig_f.clone());
                 placeholder.create_block_here();
-                let z0 = placeholder.iconst_i32(0);
+                let z0 = placeholder.constant(0i32);
                 placeholder.ret(&[z0]);
                 let fib_ref = m.add_function(placeholder.finish().expect("placeholder"));
 
                 let mut bf = FunctionBuilder::new("fib", TypeContext::new(), sig_f);
                 let (blk, p) = bf.create_block_with_params(&[(TypeId::I32, "n")]);
                 bf.switch_to_block(blk);
-                let one = bf.iconst_i32(1);
+                let one = bf.constant(1i32);
                 let le = bf.icmp(IntCC::Sle, p[0], one);
                 let then_blk = bf.create_block();
                 let else_blk = bf.create_block();
@@ -2645,10 +2645,10 @@ pub const CASES: &[Case] = &[
                 bf.ret(&[p[0]]);
                 // else: fib(n-1) + fib(n-2)
                 bf.switch_to_block(else_blk);
-                let one2 = bf.iconst_i32(1);
+                let one2 = bf.constant(1i32);
                 let nm1 = bf.isub(p[0], one2);
                 let r1 = bf.call(fib_ref, &[nm1], &[TypeId::I32]);
-                let two = bf.iconst_i32(2);
+                let two = bf.constant(2i32);
                 let nm2 = bf.isub(p[0], two);
                 let r2 = bf.call(fib_ref, &[nm2], &[TypeId::I32]);
                 let sum = bf.iadd(r1[0], r2[0]);
@@ -2659,7 +2659,7 @@ pub const CASES: &[Case] = &[
                 let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
                 let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
                 bm.create_block_here();
-                let five = bm.iconst_i32(5);
+                let five = bm.constant(5i32);
                 let r = bm.call(fib_ref, &[five], &[TypeId::I32]);
                 bm.ret(&r);
                 m.add_function(bm.finish().expect("main"))
@@ -2686,7 +2686,7 @@ pub const CASES: &[Case] = &[
                 let mut placeholder =
                     FunctionBuilder::new("fib", TypeContext::new(), sig_f.clone());
                 placeholder.create_block_here();
-                let z0 = placeholder.iconst_i32(0);
+                let z0 = placeholder.constant(0i32);
                 placeholder.ret(&[z0]);
                 let fib_ref = m.add_function(placeholder.finish().expect("placeholder"));
 
@@ -2695,11 +2695,11 @@ pub const CASES: &[Case] = &[
                 bf.switch_to_block(blk);
                 // n 存栈槽
                 let base = bf.stack_addr(0);
-                let off = bf.iconst_i32(-4);
+                let off = bf.constant(-4i32);
                 let slot = bf.iadd(base, off);
                 bf.store(p[0], slot);
                 // if n <= 1
-                let one = bf.iconst_i32(1);
+                let one = bf.constant(1i32);
                 let le = bf.icmp(IntCC::Sle, p[0], one);
                 let then_blk = bf.create_block();
                 let else_blk = bf.create_block();
@@ -2709,12 +2709,12 @@ pub const CASES: &[Case] = &[
                 bf.switch_to_block(else_blk);
                 // n-1
                 let n = bf.load(slot, TypeId::I32);
-                let one2 = bf.iconst_i32(1);
+                let one2 = bf.constant(1i32);
                 let nm1 = bf.isub(n, one2);
                 let r1 = bf.call(fib_ref, &[nm1], &[TypeId::I32]);
                 // n-2
                 let n2 = bf.load(slot, TypeId::I32);
-                let two = bf.iconst_i32(2);
+                let two = bf.constant(2i32);
                 let nm2 = bf.isub(n2, two);
                 let r2 = bf.call(fib_ref, &[nm2], &[TypeId::I32]);
                 let sum = bf.iadd(r1[0], r2[0]);
@@ -2725,7 +2725,7 @@ pub const CASES: &[Case] = &[
                 let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
                 let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
                 bm.create_block_here();
-                let three = bm.iconst_i32(3);
+                let three = bm.constant(3i32);
                 let r = bm.call(fib_ref, &[three], &[TypeId::I32]);
                 bm.ret(&r);
                 m.add_function(bm.finish().expect("main"))
@@ -2743,7 +2743,7 @@ pub const CASES: &[Case] = &[
                 let mut ba = FunctionBuilder::new("add2", TypeContext::new(), sig_a);
                 let (blk, p) = ba.create_block_with_params(&[(TypeId::I64, "x")]);
                 ba.switch_to_block(blk);
-                let two = ba.iconst_i64(2);
+                let two = ba.constant(2i64);
                 let s = ba.iadd(p[0], two);
                 ba.ret(&[s]);
                 let add2_ref = m.add_function(ba.finish().expect("add2"));
@@ -2752,7 +2752,7 @@ pub const CASES: &[Case] = &[
                 let mut bm = FunctionBuilder::new("mul3", TypeContext::new(), sig_m);
                 let (blk2, p2) = bm.create_block_with_params(&[(TypeId::I64, "x")]);
                 bm.switch_to_block(blk2);
-                let three = bm.iconst_i64(3);
+                let three = bm.constant(3i64);
                 let s2 = bm.imul(p2[0], three);
                 bm.ret(&[s2]);
                 let mul3_ref = m.add_function(bm.finish().expect("mul3"));
@@ -2760,7 +2760,7 @@ pub const CASES: &[Case] = &[
                 let sig_main = FunctionSignature::new(&[], &[TypeId::I64]);
                 let mut bmain = FunctionBuilder::new("main", TypeContext::new(), sig_main);
                 bmain.create_block_here();
-                let twenty = bmain.iconst_i64(20);
+                let twenty = bmain.constant(20i64);
                 let r1 = bmain.call(mul3_ref, &[twenty], &[TypeId::I64]);
                 let r2 = bmain.call(add2_ref, &r1, &[TypeId::I64]);
                 bmain.ret(&r2);
@@ -2790,8 +2790,8 @@ pub const CASES: &[Case] = &[
                 let sig_main = FunctionSignature::new(&[], &[TypeId::I64]);
                 let mut bmain = FunctionBuilder::new("main", TypeContext::new(), sig_main);
                 bmain.create_block_here();
-                let a = bmain.fconst(1.5f64.to_bits(), TypeId::F64);
-                let b2 = bmain.fconst(2.25f64.to_bits(), TypeId::F64);
+                let a = bmain.const_float(1.5f64.to_bits(), TypeId::F64);
+                let b2 = bmain.const_float(2.25f64.to_bits(), TypeId::F64);
                 let r = bmain.call(callee_ref, &[a, b2], &[TypeId::F64]);
                 let i = bmain.fptosi(r[0], TypeId::I64);
                 bmain.ret(&[i]);
@@ -2810,8 +2810,8 @@ pub const CASES: &[Case] = &[
                 let sig_main = FunctionSignature::new(&[], &[TypeId::I64]);
                 let mut bmain = FunctionBuilder::new("main", TypeContext::new(), sig_main);
                 bmain.create_block_here();
-                let ptr = bmain.iconst_i64(addr);
-                let arg = bmain.iconst_i64(20);
+                let ptr = bmain.constant(addr);
+                let arg = bmain.constant(20i64);
                 let r = bmain.call_indirect(ptr, &[arg], &[TypeId::I64]);
                 bmain.ret(&r);
                 m.add_function(bmain.finish().expect("main"))
@@ -2826,10 +2826,10 @@ pub const CASES: &[Case] = &[
         ops: &["Vadd", "Vconst", "Vextract", "Fpext"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.vconst(vec![1.0f32, 2.0, 3.0, 4.0]);
-                let c = b.vconst(vec![10.0f32, 20.0, 30.0, 40.0]);
+                let a = b.const_vector(vec![1.0f32, 2.0, 3.0, 4.0]);
+                let c = b.const_vector(vec![10.0f32, 20.0, 30.0, 40.0]);
                 let s = b.vadd(a, c);
-                let idx = b.iconst_i32(0);
+                let idx = b.constant(0i32);
                 let lane = b.vextract(s, idx);
                 b.fpext(lane, TypeId::F64)
             },
@@ -2841,10 +2841,10 @@ pub const CASES: &[Case] = &[
         ops: &["Vsub", "Vconst", "Vextract", "Fpext"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.vconst(vec![1.0f32, 2.0, 3.0, 4.0]);
-                let c = b.vconst(vec![10.0f32, 20.0, 30.0, 40.0]);
+                let a = b.const_vector(vec![1.0f32, 2.0, 3.0, 4.0]);
+                let c = b.const_vector(vec![10.0f32, 20.0, 30.0, 40.0]);
                 let s = b.vsub(a, c);
-                let idx = b.iconst_i32(2);
+                let idx = b.constant(2i32);
                 let lane = b.vextract(s, idx);
                 b.fpext(lane, TypeId::F64)
             },
@@ -2856,10 +2856,10 @@ pub const CASES: &[Case] = &[
         ops: &["Vmul", "Vconst", "Vextract", "Fpext"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.vconst(vec![1.0f32, 2.0, 3.0, 4.0]);
-                let c = b.vconst(vec![10.0f32, 20.0, 30.0, 40.0]);
+                let a = b.const_vector(vec![1.0f32, 2.0, 3.0, 4.0]);
+                let c = b.const_vector(vec![10.0f32, 20.0, 30.0, 40.0]);
                 let s = b.vmul(a, c);
-                let idx = b.iconst_i32(1);
+                let idx = b.constant(1i32);
                 let lane = b.vextract(s, idx);
                 b.fpext(lane, TypeId::F64)
             },
@@ -2871,10 +2871,10 @@ pub const CASES: &[Case] = &[
         ops: &["Vdiv", "Vconst", "Vextract", "Fpext"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.vconst(vec![1.0f32, 2.0, 3.0, 4.0]);
-                let c = b.vconst(vec![10.0f32, 20.0, 30.0, 40.0]);
+                let a = b.const_vector(vec![1.0f32, 2.0, 3.0, 4.0]);
+                let c = b.const_vector(vec![10.0f32, 20.0, 30.0, 40.0]);
                 let s = b.vdiv(a, c);
-                let idx = b.iconst_i32(3);
+                let idx = b.constant(3i32);
                 let lane = b.vextract(s, idx);
                 b.fpext(lane, TypeId::F64)
             },
@@ -2886,10 +2886,10 @@ pub const CASES: &[Case] = &[
         ops: &["Vadd", "Vconst", "Vextract"],
         kind: CaseKind::I64(
             |b| {
-                let a = b.vconst(vec![1i32, 2, 3, 4]);
-                let c = b.vconst(vec![10i32, 20, 30, 40]);
+                let a = b.const_vector(vec![1i32, 2, 3, 4]);
+                let c = b.const_vector(vec![10i32, 20, 30, 40]);
                 let s = b.vadd(a, c);
-                let idx = b.iconst_i32(0);
+                let idx = b.constant(0i32);
                 let lane = b.vextract(s, idx);
                 b.uextend(lane, TypeId::I64)
             },
@@ -2901,9 +2901,9 @@ pub const CASES: &[Case] = &[
         ops: &["Vneg", "Vconst", "Vextract", "Fpext"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.vconst(vec![1.0f32, 2.0, 3.0, 4.0]);
+                let a = b.const_vector(vec![1.0f32, 2.0, 3.0, 4.0]);
                 let s = b.vneg(a);
-                let idx = b.iconst_i32(0);
+                let idx = b.constant(0i32);
                 let lane = b.vextract(s, idx);
                 b.fpext(lane, TypeId::F64)
             },
@@ -2915,9 +2915,9 @@ pub const CASES: &[Case] = &[
         ops: &["Vabs", "Vconst", "Vextract", "Fpext"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.vconst(vec![-1.5f32, 2.0, 3.0, 4.0]);
+                let a = b.const_vector(vec![-1.5f32, 2.0, 3.0, 4.0]);
                 let s = b.vabs(a);
-                let idx = b.iconst_i32(0);
+                let idx = b.constant(0i32);
                 let lane = b.vextract(s, idx);
                 b.fpext(lane, TypeId::F64)
             },
@@ -2930,9 +2930,9 @@ pub const CASES: &[Case] = &[
         kind: CaseKind::F64(
             |b| {
                 let vt = b.type_ctx().vector_ty(TypeId::F32, 4);
-                let e = b.fconst(5.0f32.to_bits() as u64, TypeId::F32);
+                let e = b.const_float(5.0f32.to_bits() as u64, TypeId::F32);
                 let v = b.vbroadcast(e, vt);
-                let idx = b.iconst_i32(2);
+                let idx = b.constant(2i32);
                 let lane = b.vextract(v, idx);
                 b.fpext(lane, TypeId::F64)
             },
@@ -2944,8 +2944,8 @@ pub const CASES: &[Case] = &[
         ops: &["Vconst", "Vextract"],
         kind: CaseKind::I64(
             |b| {
-                let a = b.vconst(vec![1i32, 2, 3, 4]);
-                let idx = b.iconst_i32(1);
+                let a = b.const_vector(vec![1i32, 2, 3, 4]);
+                let idx = b.constant(1i32);
                 let lane = b.vextract(a, idx);
                 b.uextend(lane, TypeId::I64)
             },
@@ -2957,11 +2957,11 @@ pub const CASES: &[Case] = &[
         ops: &["Vinsert", "Vconst", "Vextract", "Fpext", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.vconst(vec![1.0f32, 2.0, 3.0, 4.0]);
-                let e = b.fconst(99.0f32.to_bits() as u64, TypeId::F32);
-                let idx = b.iconst_i32(0);
+                let a = b.const_vector(vec![1.0f32, 2.0, 3.0, 4.0]);
+                let e = b.const_float(99.0f32.to_bits() as u64, TypeId::F32);
+                let idx = b.constant(0i32);
                 let v = b.vinsert(a, e, idx);
-                let lidx = b.iconst_i32(0);
+                let lidx = b.constant(0i32);
                 let lane = b.vextract(v, lidx);
                 b.fpext(lane, TypeId::F64)
             },
@@ -2973,10 +2973,10 @@ pub const CASES: &[Case] = &[
         ops: &["Vbitcast", "Vconst", "Vextract"],
         kind: CaseKind::I64(
             |b| {
-                let a = b.vconst(vec![1.0f32, 2.0, 3.0, 4.0]);
+                let a = b.const_vector(vec![1.0f32, 2.0, 3.0, 4.0]);
                 let vt = b.type_ctx().vector_ty(TypeId::I32, 4);
                 let v = b.vbitcast(a, vt);
-                let idx = b.iconst_i32(0);
+                let idx = b.constant(0i32);
                 let lane = b.vextract(v, idx);
                 b.uextend(lane, TypeId::I64)
             },
@@ -2990,10 +2990,10 @@ pub const CASES: &[Case] = &[
             |b| {
                 // SHUFPS 固定源：lane0/1 ← a、lane2/3 ← b。mask [0,1,4,5]
                 // → [a0, a1, b0, b1] = [1, 2, 5, 6]
-                let a = b.vconst(vec![1.0f32, 2.0, 3.0, 4.0]);
-                let c = b.vconst(vec![5.0f32, 6.0, 7.0, 8.0]);
+                let a = b.const_vector(vec![1.0f32, 2.0, 3.0, 4.0]);
+                let c = b.const_vector(vec![5.0f32, 6.0, 7.0, 8.0]);
                 let s = b.shuffle_vector(a, c, &[0, 1, 4, 5]);
-                let idx = b.iconst_i32(2);
+                let idx = b.constant(2i32);
                 let lane = b.vextract(s, idx);
                 b.fpext(lane, TypeId::F64)
             },
@@ -3006,11 +3006,11 @@ pub const CASES: &[Case] = &[
         kind: CaseKind::F64(
             |b| {
                 // 高半 lane0 = 5 + 50 = 55
-                let a = b.vconst(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
-                let c = b.vconst(vec![10.0f32, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0]);
+                let a = b.const_vector(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+                let c = b.const_vector(vec![10.0f32, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0]);
                 let s = b.vadd(a, c);
                 let hi = b.vsplit(s, 1);
-                let idx = b.iconst_i32(0);
+                let idx = b.constant(0i32);
                 let lane = b.vextract(hi, idx);
                 b.fpext(lane, TypeId::F64)
             },
@@ -3023,8 +3023,8 @@ pub const CASES: &[Case] = &[
         ops: &["SsubSat"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(20);
-                let c = b.iconst_i32(22);
+                let a = b.constant(20i32);
+                let c = b.constant(22i32);
                 b.ssub_sat(a, c)
             },
             -2,
@@ -3035,8 +3035,8 @@ pub const CASES: &[Case] = &[
         ops: &["SsubSat"],
         kind: CaseKind::I32(
             |b| {
-                let a = b.iconst_i32(i32::MIN);
-                let c = b.iconst_i32(1);
+                let a = b.constant(i32::MIN);
+                let c = b.constant(1i32);
                 b.ssub_sat(a, c)
             },
             i32::MIN,
@@ -3047,8 +3047,8 @@ pub const CASES: &[Case] = &[
         ops: &["SsubSat"],
         kind: CaseKind::I64(
             |b| {
-                let a = b.iconst_i64(i64::MAX);
-                let c = b.iconst_i64(-1);
+                let a = b.constant(i64::MAX);
+                let c = b.constant(-1i64);
                 b.ssub_sat(a, c)
             },
             i64::MAX,
@@ -3059,7 +3059,7 @@ pub const CASES: &[Case] = &[
         ops: &["Ptrtoint", "Inttoptr"],
         kind: CaseKind::I64(
             |b| {
-                let v = b.iconst_i64(0x12345678);
+                let v = b.constant(0x12345678i64);
                 let p = b.inttoptr(v, TypeId::PTR);
                 b.ptrtoint(p, TypeId::I64)
             },
@@ -3115,7 +3115,7 @@ pub const CASES: &[Case] = &[
                 let mut b = FunctionBuilder::new("main", TypeContext::new(), sig);
                 b.create_block_here();
                 let addr = b.global_addr(g);
-                let hundred = b.iconst_i64(100);
+                let hundred = b.constant(100i64);
                 b.store(hundred, addr);
                 let v = b.load(addr, TypeId::I64);
                 b.ret(&[v]);
@@ -3129,8 +3129,8 @@ pub const CASES: &[Case] = &[
         ops: &["Frem", "Fconst"],
         kind: CaseKind::F64(
             |b| {
-                let a = b.fconst(10.5f64.to_bits(), TypeId::F64);
-                let d = b.fconst(3.0f64.to_bits(), TypeId::F64);
+                let a = b.const_float(10.5f64.to_bits(), TypeId::F64);
+                let d = b.const_float(3.0f64.to_bits(), TypeId::F64);
                 b.frem(a, d)
             },
             1.5,
@@ -3151,7 +3151,7 @@ pub const CASES: &[Case] = &[
                 let mut b = FunctionBuilder::new("main", TypeContext::new(), sig);
                 b.create_block_here();
                 let addr = b.global_addr(g);
-                let five = b.iconst_i64(5);
+                let five = b.constant(5i64);
                 b.atomic_rmw(
                     AtomicRmwOp::Add,
                     addr,
@@ -3180,7 +3180,7 @@ pub const CASES: &[Case] = &[
                 let mut b = FunctionBuilder::new("main", TypeContext::new(), sig);
                 b.create_block_here();
                 let addr = b.global_addr(g);
-                let six = b.iconst_i64(6);
+                let six = b.constant(6i64);
                 b.atomic_rmw(
                     AtomicRmwOp::Sub,
                     addr,
@@ -3209,7 +3209,7 @@ pub const CASES: &[Case] = &[
                 let mut b = FunctionBuilder::new("main", TypeContext::new(), sig);
                 b.create_block_here();
                 let addr = b.global_addr(g);
-                let hundred = b.iconst_i64(100);
+                let hundred = b.constant(100i64);
                 b.atomic_rmw(
                     AtomicRmwOp::Xchg,
                     addr,
@@ -3238,8 +3238,8 @@ pub const CASES: &[Case] = &[
                 let mut b = FunctionBuilder::new("main", TypeContext::new(), sig);
                 b.create_block_here();
                 let addr = b.global_addr(g);
-                let cmp = b.iconst_i64(10);
-                let new = b.iconst_i64(99);
+                let cmp = b.constant(10i64);
+                let new = b.constant(99i64);
                 b.cmpxchg(
                     addr,
                     cmp,
@@ -3270,8 +3270,8 @@ pub const CASES: &[Case] = &[
                 let mut b = FunctionBuilder::new("main", TypeContext::new(), sig);
                 b.create_block_here();
                 let addr = b.global_addr(g);
-                let cmp = b.iconst_i64(123); // 不匹配 → 内存保持
-                let new = b.iconst_i64(99);
+                let cmp = b.constant(123i64); // 不匹配 → 内存保持
+                let new = b.constant(99i64);
                 b.cmpxchg(
                     addr,
                     cmp,
@@ -3304,7 +3304,7 @@ pub const CASES: &[Case] = &[
                 let mut b = FunctionBuilder::new("main", TypeContext::new(), sig);
                 b.create_block_here();
                 let base = b.global_addr(g);
-                let idx = b.iconst_i64(2);
+                let idx = b.constant(2i64);
                 let elem = b.gep(base, &[idx], TypeId::I64);
                 let v = b.load(elem, TypeId::I64);
                 b.ret(&[v]);
@@ -3330,8 +3330,8 @@ pub const CASES: &[Case] = &[
                 let mut b = FunctionBuilder::new("main", TypeContext::new(), sig);
                 b.create_block_here();
                 let base = b.global_addr(g);
-                let one = b.iconst_i64(1);
-                let two = b.iconst_i64(1);
+                let one = b.constant(1i64);
+                let two = b.constant(1i64);
                 let idx = b.iadd(one, two);
                 let elem = b.gep(base, &[idx], TypeId::I64);
                 let v = b.load(elem, TypeId::I64);
@@ -3348,7 +3348,7 @@ pub const CASES: &[Case] = &[
             |b| {
                 b.create_block_here();
                 b.nop();
-                let v = b.iconst_i32(42);
+                let v = b.constant(42i32);
                 b.ret(&[v]);
             },
             42,
@@ -3382,7 +3382,7 @@ pub const CASES: &[Case] = &[
                 let ap = bc.va_start();
                 let a = bc.va_arg(ap, TypeId::I64);
                 let b = bc.va_arg(ap, TypeId::I64);
-                let ten = bc.iconst_i64(10);
+                let ten = bc.constant(10i64);
                 let a10 = bc.imul(a, ten);
                 let r = bc.iadd(a10, b);
                 bc.ret(&[r]);
@@ -3391,9 +3391,9 @@ pub const CASES: &[Case] = &[
                 let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
                 let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
                 bm.create_block_here();
-                let fmt = bm.iconst_i64(0);
-                let x = bm.iconst_i64(4);
-                let y = bm.iconst_i64(7);
+                let fmt = bm.constant(0i64);
+                let x = bm.constant(4i64);
+                let y = bm.constant(7i64);
                 let got = bm.call(callee_ref, &[fmt, x, y], &[TypeId::I64])[0];
                 bm.ret(&[got]);
                 m.add_function(bm.finish().expect("main"))
@@ -3424,7 +3424,7 @@ pub const CASES: &[Case] = &[
                 let a = bc.va_arg(ap, TypeId::I64);
                 let b = bc.va_arg(ap, TypeId::I64);
                 let d = bc.va_arg(ap, TypeId::F64);
-                let ten = bc.iconst_i64(10);
+                let ten = bc.constant(10i64);
                 let a10 = bc.imul(a, ten);
                 let s = bc.iadd(a10, b);
                 let di = bc.fptosi(d, TypeId::I64);
@@ -3435,10 +3435,10 @@ pub const CASES: &[Case] = &[
                 let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
                 let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
                 bm.create_block_here();
-                let fmt = bm.iconst_i64(0);
-                let x = bm.iconst_i64(4);
-                let y = bm.iconst_i64(7);
-                let z = bm.fconst(2.5f64.to_bits(), TypeId::F64);
+                let fmt = bm.constant(0i64);
+                let x = bm.constant(4i64);
+                let y = bm.constant(7i64);
+                let z = bm.const_float(2.5f64.to_bits(), TypeId::F64);
                 let got = bm.call(callee_ref, &[fmt, x, y, z], &[TypeId::I64])[0];
                 bm.ret(&[got]);
                 m.add_function(bm.finish().expect("main"))

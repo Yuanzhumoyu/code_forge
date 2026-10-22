@@ -131,7 +131,7 @@ pub fn compile_and_run_with(source: &str, backend: Backend) -> Result<i32, Strin
         let sig = FunctionSignature::new(&params_refs, &[code_forge::ir::TypeId::I32]);
         let mut b = code_forge::ir::FunctionBuilder::new(name.as_str(), module.types.clone(), sig);
         b.create_block_here();
-        let zero = b.iconst_i32(0);
+        let zero = b.constant(0i32);
         b.ret(&[zero]);
         let fr = module.add_function(b.finish().expect("placeholder"));
         syms.funcs.insert(name, fr);

@@ -167,6 +167,7 @@ pass 清单与**合并次序**（下表与 `LegalizeDriver::with_aggregates().pa
 | `FORGE_TRACE_ABI` | 调用约定规划与落点回填（forge-codegen abi_setup/compiler；forge-rustc FnAbi 形态） |
 | `FORGE_TRACE_AGG` | 聚合展开与合法化（legalize 各 pass / 计划相 / 物化相） |
 | `FORGE_TRACE_ALLOC` | 寄存器分配主循环（regalloc_bt） |
+| `FORGE_TRACE_CALLCLOBBER` | 调用点的约定级破坏集合并（pipeline/clobbers） |
 | `FORGE_TRACE_ARGS` | 调用实参打包明细（forge-rustc mod.rs） |
 | `FORGE_TRACE_ASSERT` | 编译期断言与 const 求值路径（forge-rustc） |
 | `FORGE_TRACE_BC` | 机器码字节 dump（forge-rustc compile.rs；配 llvm-objdump 对照） |
@@ -264,6 +265,35 @@ ABI 落点**只有一个来源**：合法化计划相（`legalize/plan.rs`）。
 守卫 = `error_taxonomy`（后端 + 运行时的 `src/` 无裸 `Unsupported(`；全仓无 `Unimplemented`）
 加 `capability_gaps_guard`（台账与源码缺口集合双向相等）。
 
+## 9b. 标量批：宽值的多寄存器表示（v27 M5）
+
+**触发**：函数里出现 `bits > machine.int_widths().max()` 的**整数标量**（值或块参数）。
+`CompileSession` 只在"变参/聚合"时为函数建可变副本，因此用
+`legalize::needs_scalar_legalize()` 单独判断并补建（此前普通函数**从不跑 legalize**，
+`wide_split` 形同虚设 —— v27 M5 实测踩了十几轮才定位）。
+
+**表示**：一个宽值 = **n 个原生宽 SSA 值**（肢，`n = ceil(bits/W)`，下标 0 = 最低肢）。
+`n = 2` 即 i128 形态；`i100`（非字宽整数倍）靠**顶肢规范化**处理；`i256`（4 肢）同样适用。
+isel 因此**永远看不到** 16 字节标量（它没有多寄存器表示，`bitcast [i64;2] ↔ i128` 也没有
+lowering，实测 `[cap:SPEC_LOWERING_RULE_MISSING]`）。
+
+**pass 顺序**：`scalar() = [wide_split, int_width]`。
+`wide_split` 只产出原生宽值；`int_width` 的 R1/R2 再处理 `i3/i7` 等非原生**窄**位宽
+（`i1` 是 bool，不参与升位）。
+
+**覆盖**：`Iconst`（≤128 走整数池、>128 走 `Big` 取肢）、`Iadd/Isub`（进位链 `icmp Ult`）、
+`Band/Bor/Bxor/Bnot`、`Select`、`Icmp`（n 肢字典序，**标志走 i64 通道**）、`Ireduce`、
+`Sextend/Uextend`、`Load/Store`（n 次窄存取）、`Ishl/Ushr/Sshr`（常量 → O(n) 快路径；
+运行期 → O(n²) select 链）、`Imul`（子肢梳状，`s = W/2`）。
+
+**未覆盖 ⇒ 明确 fail-closed（`WIDE_INT_SHAPE`，单一触发点）**：宽值**块参数（phi）**、
+`Div/Rem`、函数级宽形参/宽返回（边界由前端用指针/byref/sret 处理，IR 里不该出现）。
+
+**两条实测踩过的坑（都写进代码注释）**：
+① 不动点循环必须记"已处理指令"，否则重复处理 ⇒ 死循环；
+② `store` 的肢改写是**就地**的（原指令改成"存最后一个肢"）⇒ **不能**再把它 Nop 掉
+（否则高位肢根本没写进内存；症状是所有"从内存读 i128 再算"的用例错值）。
+
 ## 10. 模块边界与规模棘轮
 
 大文件不是风格问题，是**读改成本**：立项时 `compiler.rs` 1616 行、`regalloc_bt.rs` 1544、
@@ -291,7 +321,7 @@ ABI 落点**只有一个来源**：合法化计划相（`legalize/plan.rs`）。
 | `pipeline/legalize/materialize.rs` | 657 | 物化相：按 IR 形态分段单遍改写，切开反而难对照 |
 | `pipeline/va_expand/expand.rs` | 621 | `expand_start`/`expand_arg` 共享局部不变量（游标推进次序） |
 | `pipeline/compiler/mod.rs` | 615 | 会话入口 + 模块编排（state 与测试已切出） |
-| `pipeline/compiler/alloc_integration_tests.rs` | 615 | 集成用例（测试长不构成阅读负担，与实现同源） |
+| `pipeline/compiler/alloc_integration_tests.rs` | 690 | 集成用例（测试长不构成阅读负担，与实现同源；+栈探测正反用例 v27 M6-78） |
 
 缺省上限 **700** 行；上表与守卫里的预算表由 `file_size_ratchet` 钉成**双向相等**（改动其一就红）。
 

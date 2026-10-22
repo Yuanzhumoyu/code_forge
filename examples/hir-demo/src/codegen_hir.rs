@@ -99,7 +99,7 @@ pub fn codegen_function_hir(
     if let Some(cur) = graph.current_block()
         && !graph.has_terminator(cur)
     {
-        let v = graph.iconst_i32(0).map_err(|e| e.to_string())?;
+        let v = graph.constant(0i32).map_err(|e| e.to_string())?;
         graph.emit_ret(v).map_err(|e| e.to_string())?;
     }
 
@@ -168,7 +168,7 @@ fn lower_stmt(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), Hi
 fn lower_return(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<(), HirError> {
     let v = match node.get_optional("value") {
         Some(Some(expr_node)) => lower_expr(ctx, expr_node)?,
-        _ => ctx.graph.iconst_i32(0)?,
+        _ => ctx.graph.constant(0i32)?,
     };
 
     // Inlining mode: store the return value and jump to the after-block.
@@ -313,7 +313,7 @@ fn apply_compound_op(
 
 /// 真值化：`v != 0` → i1（`if` / `while` / `for` / `do-while` 共用的比较惯用法）。
 fn truthy(ctx: &mut HirCtx<'_, SymTable>, v: GraphValue) -> Result<GraphValue, HirError> {
-    let zero = ctx.graph.iconst_i32(0)?;
+    let zero = ctx.graph.constant(0i32)?;
     ctx.graph.icmp(IntCC::Ne, v, zero)
 }
 
@@ -795,7 +795,7 @@ fn lower_logical_and(
     if children.len() == 1 {
         return lower_expr(ctx, children[0]);
     }
-    let zero = ctx.graph.iconst_i32(0)?;
+    let zero = ctx.graph.constant(0i32)?;
     let lhs = lower_expr(ctx, children[0])?;
     let mut result = ctx.graph.icmp(IntCC::Ne, lhs, zero)?;
     let mut i = 1;
@@ -821,7 +821,7 @@ fn lower_logical_or(
     if children.len() == 1 {
         return lower_expr(ctx, children[0]);
     }
-    let zero = ctx.graph.iconst_i32(0)?;
+    let zero = ctx.graph.constant(0i32)?;
     let lhs = lower_expr(ctx, children[0])?;
     let mut result = ctx.graph.icmp(IntCC::Ne, lhs, zero)?;
     let mut i = 1;
@@ -849,12 +849,12 @@ fn lower_unary(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<Graph
     let operand = lower_expr(ctx, children[1])?;
     match op {
         "-" => {
-            let zero = ctx.graph.iconst_i32(0)?;
+            let zero = ctx.graph.constant(0i32)?;
             minic_lowering::build_isub(ctx.graph, zero, operand)
         }
         "+" => Ok(operand), // unary plus is no-op
         "!" => {
-            let zero = ctx.graph.iconst_i32(0)?;
+            let zero = ctx.graph.constant(0i32)?;
             let cmp = ctx.graph.icmp(IntCC::Eq, operand, zero)?;
             ctx.graph.sextend(cmp, TypeId::I32)
         }
@@ -1053,7 +1053,7 @@ fn lower_call(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<GraphV
         let slot = ctx.alloc_slot()?;
         let val = match arg_vals.get(i).copied() {
             Some(v) => v,
-            None => ctx.graph.iconst_i32(0)?, // missing arg → 0
+            None => ctx.graph.constant(0i32)?, // missing arg → 0
         };
         minic_lowering::build_store(ctx.graph, val, slot)?;
         ctx.locals.insert(pname, slot);
@@ -1078,7 +1078,7 @@ fn lower_call(ctx: &mut HirCtx<'_, SymTable>, node: AstRef<'_>) -> Result<GraphV
         .current_block()
         .ok_or_else(|| HirError::Internal("no current block".into()))?;
     if !ctx.graph.has_terminator(cur) {
-        let zero = ctx.graph.iconst_i32(0)?;
+        let zero = ctx.graph.constant(0i32)?;
         minic_lowering::build_store(ctx.graph, zero, ret_slot)?;
         ctx.graph.emit_jump(after_blk)?;
     }
@@ -1155,7 +1155,7 @@ mod tests {
         let mut graph = IrGraph::new();
         let entry = graph.create_block(&[]);
         graph.set_current_block(entry);
-        let v = graph.iconst_i32(42).unwrap();
+        let v = graph.constant(42i32).unwrap();
         graph.emit_ret(v).unwrap();
 
         let mut registry = BrickRegistry::new();
@@ -1180,7 +1180,7 @@ mod tests {
         let mut graph = IrGraph::new();
         let entry = graph.create_block(&[]);
         graph.set_current_block(entry);
-        let v = graph.iconst_i32(42).unwrap();
+        let v = graph.constant(42i32).unwrap();
         graph.emit_ret(v).unwrap();
 
         let mut registry = BrickRegistry::new();
@@ -1211,7 +1211,7 @@ mod tests {
         let mut builder = FunctionBuilder::new("test_direct", ctx, sig);
         let (entry, _) = builder.create_entry_block();
         builder.switch_to_block(entry);
-        let v = builder.iconst_i32(42);
+        let v = builder.constant(42i32);
         builder.ret(&[v]);
         let func = builder.finish().expect("build");
 

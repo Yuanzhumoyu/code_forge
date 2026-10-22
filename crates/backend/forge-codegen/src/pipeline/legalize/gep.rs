@@ -58,7 +58,7 @@ pub(crate) fn expand_geps(func: &mut Function) -> Result<(), IrError> {
             match im {
                 Immediate::Uint(v) => Some(*v as i64),
                 Immediate::Int(v) => Some(*v),
-                Immediate::Const(c) => func.constants.get_int(*c).map(|(v, _)| v as i64),
+                Immediate::Const(c) => func.constants.bits(*c).map(|bv| bv.bits as i64),
                 _ => None,
             }
         };
@@ -106,7 +106,7 @@ pub(crate) fn expand_geps(func: &mut Function) -> Result<(), IrError> {
         let mut new_count = 0usize;
         for (idx_v, size) in dyn_parts {
             // %t = mul i64 %idx, size
-            let size_cid = func.constants.insert_int(size as i128, 64);
+            let size_cid = func.constants.intern_int(size as i128, 64);
             let size_inst = func.make_inst(
                 Opcode::Iconst,
                 b,
@@ -138,7 +138,7 @@ pub(crate) fn expand_geps(func: &mut Function) -> Result<(), IrError> {
             new_count += 3;
         }
         if const_off != 0 || new_count > 0 {
-            let off_cid = func.constants.insert_int(const_off as i128, 64);
+            let off_cid = func.constants.intern_int(const_off as i128, 64);
             let off_inst = func.make_inst(
                 Opcode::Iconst,
                 b,

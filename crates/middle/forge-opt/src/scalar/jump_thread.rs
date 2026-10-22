@@ -206,8 +206,8 @@ mod tests {
         let b3 = b.create_block();
 
         b.switch_to_block(b0);
-        let v1 = b.iconst_i32(1);
-        let v0 = b.iconst_i32(0);
+        let v1 = b.constant(1i32);
+        let v0 = b.constant(0i32);
         let cond = b.icmp(IntCC::Ne, v1, v0);
         b.branch(cond, b1, &[], b2, &[]);
 
@@ -240,7 +240,7 @@ mod tests {
         let b1 = b.create_block();
 
         b.switch_to_block(b0);
-        let v = b.iconst_i32(42);
+        let v = b.constant(42i32);
         b.jump(b1, &[v]);
 
         b.switch_to_block(b1);

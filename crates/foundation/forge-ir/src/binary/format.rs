@@ -27,7 +27,10 @@ pub const MAGIC: [u8; 8] = *b"FORGEIR\0";
 ///   `ir/isel_strategy.rs` 类型本体）。它只有存取与二进制往返、**后端零读点**（`forge-opt`
 ///   那几处是克隆时顺手保留的透传），属"无消费者面"。`FUNCS` 段的指令记录少一个
 ///   `Option<str>`。破坏性更新：旧流在头部就报版本不符。
-pub const IR_FORMAT_VERSION: u16 = 4;
+/// - **6**（2026-10-18，v28 新常量池）：`CONSTS` 改为带 tag 单流（bits / big / vector /
+///   aggregate），int/float 合并为 `bits`、聚合并入 `ConstId`（删 `AggId`）、`Immediate`
+///   去 `Agg`（聚合操作数走 `Const` 的 tag）、池无预置槽。破坏性更新：无兼容读取。
+pub const IR_FORMAT_VERSION: u16 = 6;
 
 /// producer 串（写入头部，**仅用于诊断**；跨版本不保证字节流逐字节相同）。
 ///

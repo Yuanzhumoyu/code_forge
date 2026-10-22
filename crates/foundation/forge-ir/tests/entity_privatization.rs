@@ -1,6 +1,6 @@
 //! 句柄字段私有化的守卫（v3 方案 S2：句柄字段私有化）。
 //!
-//! 裸 u32 句柄（`Value`/`Inst`/`Block`/`TypeId`/`FuncRef`/`ConstId`/`AggId`/
+//! 裸 u32 句柄（`Value`/`Inst`/`Block`/`TypeId`/`FuncRef`/`ConstId`/
 //! `GlobalId`/`SigRef`/`VReg`）此前字段是 `pub u32`：crate 外可以 `Value(999)`
 //! 凭空造句柄（把"坏句柄"从构造点泄漏到整个下游），也可以 `v.0` 直读索引
 //! （让句柄的**表示**成为公开契约，表示一改就全仓编译失败）。
@@ -9,7 +9,7 @@
 //!
 //! | 句柄 | 构造 | 读索引 |
 //! | --- | --- | --- |
-//! | `Value`/`Inst`/`Block`/`TypeId`/`FuncRef`/`GlobalId`/`SigRef`/`AggId`/`VReg` | `::new(u32)` | `.index()` |
+//! | `Value`/`Inst`/`Block`/`TypeId`/`FuncRef`/`GlobalId`/`SigRef`/`VReg` | `::new(u32)` | `.index()` |
 //! | `ConstId` | `::from_raw(u32)` / `::pack(tag, index)` | `.raw()` / `.index()`（低 30 位池内索引）/ `.tag()` |
 //!
 //! **注意 `ConstId` 的语义**：`index()` 早于本步就存在，含义是"低 30 位池内索引"，
@@ -21,7 +21,7 @@
 //!    里的 `quote!` 文本，32 处）；④ `forge-rustc`（本机不可编译，改为文本审计 +
 //!    定点修补：`FuncRef`/`GlobalId`/`Block` 构造与 `block_id.0`）。
 
-use forge_ir::{AggId, Block, ConstId, FuncRef, GlobalId, Inst, SigRef, TypeId, VReg, Value};
+use forge_ir::{Block, ConstId, FuncRef, GlobalId, Inst, SigRef, TypeId, VReg, Value};
 
 /// 9 个"裸 u32"句柄：`new`/`index` 往返、`Default` 为零、Display/Debug 不变。
 #[test]
@@ -36,11 +36,9 @@ fn plain_handles_roundtrip_new_and_index() {
             assert_eq!(format!("{:?}", h).is_empty(), false, "Debug 可用");
         })*};
     }
-    check!(
-        Value, Inst, Block, TypeId, FuncRef, GlobalId, SigRef, AggId, VReg
-    );
+    check!(Value, Inst, Block, TypeId, FuncRef, GlobalId, SigRef, VReg);
 
-    // `Default` = 0（`AggId` 无此 derive——它只用于聚合常量池句柄）
+    // `Default` = 0
     macro_rules! check_default {
         ($($t:ty),* $(,)?) => {$({
             assert_eq!(<$t>::default().index(), 0, "{} Default = 0", stringify!($t));
@@ -60,9 +58,9 @@ fn const_id_raw_vs_pool_index() {
     // from_raw 与 raw 往返（解析器/常量池恢复句柄的路径）
     assert_eq!(ConstId::from_raw(0xDEAD_BEEF).raw(), 0xDEAD_BEEF);
     // 大索引不被截断（30 位上限内的最大索引）
-    let big = ConstId::pack(ConstId::TAG_VEC, (1 << 30) - 1);
+    let big = ConstId::pack(ConstId::TAG_VECTOR, (1 << 30) - 1);
     assert_eq!(big.index(), (1 << 30) - 1);
-    assert_eq!(big.tag(), ConstId::TAG_VEC);
+    assert_eq!(big.tag(), ConstId::TAG_VECTOR);
 }
 
 fn packed_from_parts(tag: u32, index: u32) -> u32 {
@@ -89,8 +87,7 @@ fn no_public_handle_field_in_entity_rs() {
         .join("mod.rs");
     let text = std::fs::read_to_string(&path).expect("读 entity/mod.rs");
     const HANDLES: &[&str] = &[
-        "Value", "Inst", "Block", "TypeId", "FuncRef", "ConstId", "AggId", "GlobalId", "SigRef",
-        "VReg",
+        "Value", "Inst", "Block", "TypeId", "FuncRef", "GlobalId", "SigRef", "VReg",
     ];
     let mut violations = Vec::new();
     for (i, line) in text.lines().enumerate() {
@@ -110,7 +107,7 @@ fn no_public_handle_field_in_entity_rs() {
     assert!(
         violations.is_empty(),
         "句柄字段必须私有（`pub(crate) u32`）；crate 外经 `::new`/`.index()` \
-         （ConstId 为 `::from_raw`/`.raw()`）：\n{}",
+         （`ConstId` 是枚举，走 `::from_raw`/`.raw()`，不在此清单内）：\n{}",
         violations.join("\n")
     );
 }

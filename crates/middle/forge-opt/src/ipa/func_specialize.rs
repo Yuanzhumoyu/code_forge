@@ -169,7 +169,7 @@ fn clone_callee_into_caller(
                 .iter()
                 .map(|im| match im {
                     Immediate::Const(cid) => {
-                        Immediate::Const(caller.constants.remap_from(&callee.constants, *cid))
+                        Immediate::Const(caller.constants.import(&callee.constants, *cid))
                     }
                     _ => *im,
                 })
@@ -232,7 +232,7 @@ mod tests {
         let mut b = FunctionBuilder::new("mul2", TypeContext::new(), sig);
         let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
         b.switch_to_block(entry);
-        let two = b.iconst_i32(2);
+        let two = b.constant(2i32);
         let prod = b.imul(params[0], two);
         b.ret(&[prod]);
         let mut cf = b.finish().expect("build");
@@ -260,7 +260,7 @@ mod tests {
         let mut b = FunctionBuilder::new("mul2", TypeContext::new(), sig);
         let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
         b.switch_to_block(entry);
-        let two = b.iconst_i32(2);
+        let two = b.constant(2i32);
         let prod = b.imul(params[0], two);
         b.ret(&[prod]);
         let cf = b.finish().expect("build");
@@ -274,7 +274,7 @@ mod tests {
         let mut b2 = FunctionBuilder::new("caller", TypeContext::new(), sig2);
         let entry2 = b2.create_block();
         b2.switch_to_block(entry2);
-        let five = b2.iconst_i32(5);
+        let five = b2.constant(5i32);
         let result = b2.call(callee_ref, &[five], &[TypeId::I32]);
         b2.ret(&[result[0]]);
         let mut caller = b2.finish().expect("build");

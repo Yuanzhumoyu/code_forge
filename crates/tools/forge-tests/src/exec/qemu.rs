@@ -643,7 +643,7 @@ mod tests {
             let sig = FunctionSignature::new(&[], &[TypeId::I64]);
             let mut b = FunctionBuilder::new(name, TypeContext::new(), sig);
             b.create_block_here();
-            let c = b.iconst_i64(v);
+            let c = b.constant(v);
             b.ret(&[c]);
             let func = b.finish().expect("build");
             let cf = CompileSession::new(code_forge::backend::riscv64::TargetMachine::new())
@@ -671,7 +671,7 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[TypeId::I64]);
         let mut b = FunctionBuilder::new("only", TypeContext::new(), sig);
         b.create_block_here();
-        let c = b.iconst_i64(1);
+        let c = b.constant(1i64);
         b.ret(&[c]);
         let func = b.finish().expect("build");
         let cf = CompileSession::new(code_forge::backend::riscv64::TargetMachine::new())
@@ -705,8 +705,8 @@ mod tests {
         let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
-        let a = bm.iconst_i64(20);
-        let b2 = bm.iconst_i64(22);
+        let a = bm.constant(20i64);
+        let b2 = bm.constant(22i64);
         let r = bm.call(_callee_ref, &[a, b2], &[TypeId::I64]);
         bm.ret(&r);
         let _main_ref = module.add_function(bm.finish().expect("main"));

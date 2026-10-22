@@ -453,35 +453,31 @@ fn types_body_without_tail_is_rejected() {
 // B3：CONSTS 段（五通道常量）
 // ============================================================
 
-/// 常量池各通道的快照（只用公开 API：逐索引取到 `None` 为止）。
+/// 常量池各通道的快照（只用公开 API：按 tag + 索引逐条取到 `None` 为止）。
 fn pool_snapshot_consts(pool: &forge_ir::ConstantPool) -> Vec<String> {
-    use forge_ir::{AggId, ConstId};
+    use forge_ir::ConstId;
     let mut out = Vec::new();
+    // 位值通道（整数与浮点合并，靠 width 区分）
     let mut i = 0u32;
-    while let Some((v, bits)) = pool.get_int(ConstId::pack(ConstId::TAG_INT, i)) {
-        out.push(format!("int({v},{bits})"));
+    while let Some(v) = pool.bits(ConstId::pack(ConstId::TAG_BITS, i)) {
+        out.push(format!("bits({:#x},{})", v.bits, v.width));
         i += 1;
     }
     let mut i = 0u32;
-    while let Some((bits, w)) = pool.get_float_with_width(ConstId::pack(ConstId::TAG_FLOAT, i)) {
-        out.push(format!("float({bits:#x},{w})"));
-        i += 1;
-    }
-    let mut i = 0u32;
-    while let Some(b) = pool.get_big(ConstId::pack(ConstId::TAG_BIG, i)) {
+    while let Some(b) = pool.big(ConstId::pack(ConstId::TAG_BIG, i)) {
         out.push(format!("big({b:?})"));
         i += 1;
     }
     let mut i = 0u32;
-    while let Some(data) = pool.get_vector(ConstId::pack(ConstId::TAG_VEC, i)) {
+    while let Some(data) = pool.vector(ConstId::pack(ConstId::TAG_VECTOR, i)) {
         let endian = pool
-            .get_vector_endian(ConstId::pack(ConstId::TAG_VEC, i))
+            .vector_endian(ConstId::pack(ConstId::TAG_VECTOR, i))
             .expect("端序与数据同生");
         out.push(format!("vec({data:?},{endian:?})"));
         i += 1;
     }
     let mut i = 0u32;
-    while let Some(agg) = pool.get_aggregate(AggId::new(i)) {
+    while let Some(agg) = pool.agg(ConstId::pack(ConstId::TAG_AGG, i)) {
         out.push(format!("agg({:?},{:?})", agg.ty, agg.children));
         i += 1;
     }
@@ -491,7 +487,7 @@ fn pool_snapshot_consts(pool: &forge_ir::ConstantPool) -> Vec<String> {
 /// 建一个"常量丰富"的模块：五通道都非空（含负 i128、f32/f64 同位模式、NaN 载荷、
 /// 两种端序的向量、嵌套聚合）。
 fn rich_consts_module() -> Module {
-    use forge_ir::{AggChild, Big, ConstId, Endianness};
+    use forge_ir::{Big, ConstId, Endianness};
 
     let mut m = Module::new();
     let f32_bits = 0x3FC0_0000u128; // f32 1.5
@@ -500,27 +496,23 @@ fn rich_consts_module() -> Module {
     {
         let pool = &mut m.constants;
         // 预置 (0,1)/(1,1) 已在 index 0/1；再加边界值与负数。
-        pool.insert_int(-42, 32);
-        pool.insert_int(i128::MIN, 128);
-        pool.insert_int(i128::MAX, 128);
+        pool.intern_int(-42, 32);
+        pool.intern_int(i128::MIN, 128);
+        pool.intern_int(i128::MAX, 128);
         // 同一 u64 位模式在 f32/f64 下必须保持两条（值宽进 key）
-        let a = pool.insert_float_typed(f32_bits, 32);
-        let b = pool.insert_float_typed(f32_bits, 64);
+        let a = pool.intern_float(f32_bits, 32);
+        let b = pool.intern_float(f32_bits, 64);
         assert_ne!(a, b, "同一位模式不同值宽不得去重");
-        pool.insert_float_typed(f64::NAN.to_bits() as u128, 64);
-        pool.insert_float(1.5f64.to_bits());
-        pool.insert_big(Big::from_i128(-12345678901234567890));
-        pool.insert_big(Big::U_ZERO);
-        pool.insert_big(Big::from_f64(1.5).expect("1.5 是有限实数"));
-        pool.insert_vector(&[1, 2, 3, 4]);
-        pool.insert_vector_with_endian(&[9, 9], Endianness::Big);
-        nested_scalar = ConstId::pack(ConstId::TAG_INT, 0);
-        let nested =
-            pool.insert_aggregate(forge_ir::TypeId::I32, vec![AggChild::Scalar(nested_scalar)]);
-        agg_id = pool.insert_aggregate(
-            forge_ir::TypeId::I32,
-            vec![AggChild::Scalar(nested_scalar), AggChild::Agg(nested)],
-        );
+        pool.intern_float(f64::NAN.to_bits() as u128, 64);
+        pool.intern_float(1.5f64.to_bits() as u128, 64);
+        pool.intern_big(Big::from_i128(-12345678901234567890));
+        pool.intern_big(Big::U_ZERO);
+        pool.intern_big(Big::from_f64(1.5).expect("1.5 是有限实数"));
+        pool.intern_vector(&[1, 2, 3, 4], Endianness::Little);
+        pool.intern_vector(&[9, 9], Endianness::Big);
+        nested_scalar = ConstId::pack(ConstId::TAG_BITS, 0);
+        let nested = pool.intern_agg(forge_ir::TypeId::I32, vec![nested_scalar]);
+        agg_id = pool.intern_agg(forge_ir::TypeId::I32, vec![nested_scalar, nested]);
     }
     // 让构造出的 id 一定被用到（避免"没插入"的假象）
     assert_eq!(agg_id.index(), 1, "两个聚合：嵌套子在前");
@@ -538,8 +530,7 @@ fn constant_pool_roundtrips_all_channels() {
     let after = pool_snapshot_consts(&back.constants);
     assert!(!before.is_empty());
     assert_eq!(after, before, "五通道逐条（含索引顺序）必须一致");
-    assert_eq!(back.constants.total_len(), m.constants.total_len());
-    assert_eq!(back.constants.vec_len(), m.constants.vec_len());
+    assert_eq!(back.constants.len(), m.constants.len());
 }
 
 #[test]
@@ -551,43 +542,38 @@ fn consts_encoding_is_idempotent() {
 
 #[test]
 fn empty_constants_pool_still_roundtrips() {
-    // 空池仍带预置 bool 槽 ⇒ 往返后槽位不变（bool_const 的 id 仍有效）
+    // 新池**没有**预置槽：空池往返后仍是空池；随后插入的 bool 常量索引一致。
     let m = Module::new();
     let back = Module::from_binary(&m.to_binary()).expect("解码");
+    assert!(m.constants.is_empty(), "空池就是空池");
     assert_eq!(
         pool_snapshot_consts(&back.constants),
         pool_snapshot_consts(&m.constants),
-        "预置槽位必须原样保留"
+        "空池快照一致"
+    );
+    let mut m = m;
+    let mut back = back;
+    assert_eq!(
+        back.constants.intern_int(i128::from(false), 1),
+        m.constants.intern_int(i128::from(false), 1)
     );
     assert_eq!(
-        back.constants.bool_const(false),
-        m.constants.bool_const(false)
-    );
-    assert_eq!(
-        back.constants.bool_const(true),
-        m.constants.bool_const(true)
+        back.constants.intern_int(i128::from(true), 1),
+        m.constants.intern_int(i128::from(true), 1)
     );
 }
 
-/// 测试侧装配 CONSTS 段体（各通道按格式顺序）。
+/// 测试侧装配 CONSTS 段体（v6：带 tag 单流）。
+///
+/// 默认值 = **空池**（v28 起池没有预置槽）。
+#[derive(Default)]
 struct ConstsFixture {
-    ints: Vec<(i128, u32)>,
-    floats: Vec<(u128, u16)>,
+    /// 位值条目 `(位模式, 位宽)`（整数与浮点共用同一通道）。
+    bits: Vec<(i128, u32)>,
     bigs: Vec<Vec<u8>>,
     vecs: Vec<(Vec<u8>, u8)>,
-    aggs: Vec<(u32, Vec<(u8, u64)>)>,
-}
-
-impl Default for ConstsFixture {
-    fn default() -> Self {
-        Self {
-            ints: vec![(0, 1), (1, 1)],
-            floats: Vec::new(),
-            bigs: Vec::new(),
-            vecs: Vec::new(),
-            aggs: Vec::new(),
-        }
-    }
+    /// 聚合条目 `(类型, 子句柄 raw)`；子句柄指向**前序**条目。
+    aggs: Vec<(u32, Vec<u32>)>,
 }
 
 impl ConstsFixture {
@@ -606,42 +592,29 @@ impl ConstsFixture {
                 out.push(b | 0x80);
             }
         };
-        let put_u128 = |out: &mut Vec<u8>, mut v: u128| loop {
-            let b = (v & 0x7f) as u8;
-            v >>= 7;
-            if v == 0 {
-                out.push(b);
-                break;
-            }
-            out.push(b | 0x80);
-        };
-        put_varint(&mut out, self.ints.len() as u64);
-        for (v, bits) in &self.ints {
+        let total = self.bits.len() + self.bigs.len() + self.vecs.len() + self.aggs.len();
+        put_varint(&mut out, total as u64);
+        for (v, width) in &self.bits {
+            out.push(0); // TAG_BITS
             put_i128(&mut out, *v);
-            put_varint(&mut out, u64::from(*bits));
+            put_varint(&mut out, u64::from(*width));
         }
-        put_varint(&mut out, self.floats.len() as u64);
-        for (bits, w) in &self.floats {
-            put_u128(&mut out, *bits);
-            put_varint(&mut out, u64::from(*w));
-        }
-        put_varint(&mut out, self.bigs.len() as u64);
         for b in &self.bigs {
+            out.push(1); // TAG_BIG
             out.extend_from_slice(b);
         }
-        put_varint(&mut out, self.vecs.len() as u64);
         for (data, endian) in &self.vecs {
+            out.push(2); // TAG_VECTOR
             put_varint(&mut out, data.len() as u64);
             out.extend_from_slice(data);
             out.push(*endian);
         }
-        put_varint(&mut out, self.aggs.len() as u64);
         for (ty, children) in &self.aggs {
+            out.push(3); // TAG_AGG
             put_varint(&mut out, u64::from(*ty));
             put_varint(&mut out, children.len() as u64);
-            for (tag, idx) in children {
-                out.push(*tag);
-                put_varint(&mut out, *idx);
+            for raw in children {
+                put_varint(&mut out, u64::from(*raw));
             }
         }
         out
@@ -662,9 +635,9 @@ impl ConstsFixture {
 
 #[test]
 fn duplicate_int_constant_is_rejected() {
-    // 第三条与第一条相同 ⇒ insert_int 去重返回索引 0 ≠ 2 ⇒ Err
+    // 第三条与第一条相同 ⇒ 去重返回索引 0 ≠ 2 ⇒ Err
     let fixture = ConstsFixture {
-        ints: vec![(0, 1), (1, 1), (0, 1)],
+        bits: vec![(0, 1), (1, 1), (0, 1)],
         ..Default::default()
     };
     let e = decode_err(&fixture.stream());
@@ -683,21 +656,25 @@ fn unknown_big_variant_is_rejected() {
 
 #[test]
 fn aggregate_scalar_out_of_range_is_rejected() {
-    // 标量子指向 big 通道 index 5（池里没有 big）
+    // 子句柄指向 big 通道 index 5（池里没有 big）
     let raw = forge_ir::ConstId::pack(forge_ir::ConstId::TAG_BIG, 5).raw();
     let fixture = ConstsFixture {
-        aggs: vec![(4, vec![(0, u64::from(raw))])],
+        aggs: vec![(4, vec![raw])],
         ..Default::default()
     };
     let e = decode_err(&fixture.stream());
-    assert!(msg_of(&e).contains("越界"), "{e:?}");
+    assert!(
+        msg_of(&e).contains("越界") || msg_of(&e).contains("未解码"),
+        "{e:?}"
+    );
 }
 
 #[test]
 fn aggregate_forward_reference_is_rejected() {
     // 聚合 0 引用聚合 0（自身）⇒ 未解码引用，必须错（防环）
+    let raw = forge_ir::ConstId::pack(forge_ir::ConstId::TAG_AGG, 0).raw();
     let fixture = ConstsFixture {
-        aggs: vec![(4, vec![(1, 0)])],
+        aggs: vec![(4, vec![raw])],
         ..Default::default()
     };
     let e = decode_err(&fixture.stream());

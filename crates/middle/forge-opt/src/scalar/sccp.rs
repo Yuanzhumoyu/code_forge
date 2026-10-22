@@ -64,13 +64,13 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
                 match &inst.opcode {
                     Opcode::Iconst
                         if let Some(cid) = inst.immediates.first().and_then(|i| i.as_const())
-                            && let Some(big) = func.constants.resolve_big(cid) =>
+                            && let Some(big) = func.constants.as_big(cid) =>
                     {
                         lattice.insert(v, LatticeValue::Constant(ConstValue::Int(big, ty)));
                     }
                     Opcode::Fconst
                         if let Some(cid) = inst.immediates.first().and_then(|i| i.as_const())
-                            && let Some(big) = func.constants.resolve_big(cid) =>
+                            && let Some(big) = func.constants.as_big(cid) =>
                     {
                         lattice.insert(v, LatticeValue::Constant(ConstValue::Float(big, ty)));
                     }
@@ -165,7 +165,7 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
             {
                 match cv {
                     ConstValue::Int(big, _) | ConstValue::Float(big, _) => {
-                        let cid = func.constants.insert_big(big.clone());
+                        let cid = func.constants.intern_big(big.clone());
                         let new_op = match cv {
                             ConstValue::Int(..) => Opcode::Iconst,
                             _ => Opcode::Fconst,
@@ -201,8 +201,14 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
             }
         }
         if let Some(target) = folded {
-            func.jump(Block::new(bi as u32), target, []);
-            result.changed = true;
+            // **目标块有参数时不折叠**：`jump(..., target, [])` 会丢掉传入实参，目标块的
+            // 参数值随即变成"被引用但无定义"的无主值。实测（2026-10-19）：SCCP 之后有
+            // 60 个值失去定义，后端拿到垃圾 ⇒ `-O` 下 `buf[1]` 读到旧值。
+            // 参数化块的分支交给 copy-prop / block-param-coalesce 处理。
+            if func.dfg.block(target).params.is_empty() {
+                func.jump(Block::new(bi as u32), target, []);
+                result.changed = true;
+            }
         }
     }
 
@@ -210,7 +216,12 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
     for bi in 0..func.dfg.block_count() {
         let block_id = Block::new(bi as u32);
         if !reachable.contains(&block_id) {
-            func.dfg.block_mut(Block::new(bi as u32)).inst_order.clear();
+            // **不要 `inst_order.clear()`**：不可达块里的指令仍可能定义着**可达代码
+            // 正在引用的值**。实测（2026-10-19）：`buf` 的 0 初始化常量指令落在 SCCP
+            // 判为不可达的块里，清掉 inst_order 之后可达的 `store i64 %v1 …` 就引用了
+            // 一个"没有定义的指令"，打印成 `%v1`、后端拿到垃圾 ⇒ `-O` 下读到旧值。
+            // 死指令交给 `dead-code-elim` 按**使用关系**删（它会先确认没人用），
+            // 这里只把块标成不可达。
             func.unreachable(block_id);
             result.blocks_removed += 1;
             result.changed = true;
@@ -279,8 +290,8 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let c1 = b.iconst_i32(3);
-        let c2 = b.iconst_i32(5);
+        let c1 = b.constant(3i32);
+        let c2 = b.constant(5i32);
         let sum = b.iadd(c1, c2);
         b.ret(&[sum]);
         let mut func = b.finish().expect("build");
@@ -307,7 +318,7 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
         b.switch_to_block(entry);
-        let one = b.iconst_i32(1);
+        let one = b.constant(1i32);
         let sum = b.iadd(params[0], one);
         b.ret(&[sum]);
         let mut func = b.finish().expect("build");

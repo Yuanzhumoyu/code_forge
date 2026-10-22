@@ -1639,7 +1639,7 @@ mod tests {
         let tup = ((4 + 2 + 4 + 1 + 1) + 3) & !3;
         let _ = tup;
         let mut p = 12usize;
-        while p % 16 != 0 {
+        while !p.is_multiple_of(16) {
             assert_eq!(bytes[p], 0, "pad byte");
             p += 1;
         }
@@ -1762,10 +1762,7 @@ mod tests {
         let e_size = u32::from_le_bytes(bytes[p..p + 4].try_into().unwrap());
         p += 4;
         assert_eq!(e_size, 1, "enum byte_size");
-        assert_eq!(
-            enum_start as usize, enum_ref as usize,
-            "var ref → enum DIE 起点"
-        );
+        assert_eq!(enum_start, enum_ref as usize, "var ref → enum DIE 起点");
         for (vn, vv) in [("Red", 0u64), ("Green", 1u64), ("Blue", 2u64)] {
             assert_eq!(bytes[p], 11, "enumerator");
             p += 1;

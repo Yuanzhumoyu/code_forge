@@ -29,18 +29,108 @@ pub enum ShapeViolation {
     CompareClass { want_int: bool },
 }
 
+/// **类型分类视图**：形状规则需要的三类判定。
+///
+/// 引入它的原因（v27 M5 · 任意位宽整数）：`TypeId::is_int` 是**内建类型枚举**的固定表，
+/// 看不到 `int_ty(3)`/`int_ty(1024)` 这类任意位宽类型；有类型上下文时必须走
+/// `TypeStore` 判定（`TypeEntry::Int { bits }`），否则 `i3` 的 `iadd`/`icmp` 会被误判
+/// 成"非整数"。
+///
+/// 三个实现：
+/// - `TypeStore`（及其 `&TypeStore`）：**权威**判定，支持任意位宽；
+/// - `Option<&TypeStore>`：`Some` ⇒ store；`None` ⇒ 内建兜底（verifier 在无 store 时）；
+/// - `()`：内建兜底（builder 的 debug 断言与单测）。
+pub trait TypeClassView {
+    fn is_aggregate(&self, t: TypeId) -> bool;
+    fn is_int(&self, t: TypeId) -> bool;
+    fn is_float(&self, t: TypeId) -> bool;
+    /// 该类型是不是指针（`binop_ptr_off` 需要它判「指针 + 字节偏移」）。
+    fn is_ptr(&self, t: TypeId) -> bool;
+}
+
+impl TypeClassView for crate::ir::types::TypeStore {
+    fn is_aggregate(&self, t: TypeId) -> bool {
+        crate::ir::types::TypeStore::is_aggregate(self, t)
+    }
+    fn is_int(&self, t: TypeId) -> bool {
+        crate::ir::types::TypeStore::is_int(self, t)
+    }
+    fn is_float(&self, t: TypeId) -> bool {
+        crate::ir::types::TypeStore::is_float(self, t)
+    }
+    fn is_ptr(&self, t: TypeId) -> bool {
+        crate::ir::types::TypeStore::is_ptr(self, t)
+    }
+}
+
+impl TypeClassView for &crate::ir::types::TypeStore {
+    fn is_aggregate(&self, t: TypeId) -> bool {
+        crate::ir::types::TypeStore::is_aggregate(self, t)
+    }
+    fn is_int(&self, t: TypeId) -> bool {
+        crate::ir::types::TypeStore::is_int(self, t)
+    }
+    fn is_float(&self, t: TypeId) -> bool {
+        crate::ir::types::TypeStore::is_float(self, t)
+    }
+    fn is_ptr(&self, t: TypeId) -> bool {
+        crate::ir::types::TypeStore::is_ptr(self, t)
+    }
+}
+
+impl TypeClassView for Option<&crate::ir::types::TypeStore> {
+    fn is_aggregate(&self, t: TypeId) -> bool {
+        match self {
+            Some(store) => crate::ir::types::TypeStore::is_aggregate(store, t),
+            None => false,
+        }
+    }
+    fn is_int(&self, t: TypeId) -> bool {
+        match self {
+            Some(store) => crate::ir::types::TypeStore::is_int(store, t),
+            None => t.is_int(),
+        }
+    }
+    fn is_float(&self, t: TypeId) -> bool {
+        match self {
+            Some(store) => crate::ir::types::TypeStore::is_float(store, t),
+            None => t.is_float(),
+        }
+    }
+    fn is_ptr(&self, t: TypeId) -> bool {
+        match self {
+            Some(store) => crate::ir::types::TypeStore::is_ptr(store, t),
+            None => t == TypeId::PTR,
+        }
+    }
+}
+
+impl TypeClassView for () {
+    fn is_aggregate(&self, _t: TypeId) -> bool {
+        false
+    }
+    fn is_int(&self, t: TypeId) -> bool {
+        t.is_int()
+    }
+    fn is_float(&self, t: TypeId) -> bool {
+        t.is_float()
+    }
+    fn is_ptr(&self, t: TypeId) -> bool {
+        t == TypeId::PTR
+    }
+}
+
 /// 按 `type_rule` 检查形状；返回全部违规（空 = 通过）。
 ///
 /// `operand_tys[i]` 为 `None` 表示该操作数类型未知（未解析）——与 verifier 的
 /// 既有行为一致：**未知则跳过对应检查**，不误报。
 ///
-/// `is_aggregate`：类型是否为聚合（只有 `BinopSame` 用；调用方无类型上下文时
-/// 可传 `|_| false`，此时不检查聚合）。
+/// `view`：类型分类视图（见 [`TypeClassView`]）。有 `TypeStore` 时传它，任意位宽都能正确分类。
 pub fn check_shape(
     opcode: Opcode,
     operand_tys: &[Option<TypeId>],
     result_ty: Option<TypeId>,
-    is_aggregate: &dyn Fn(TypeId) -> bool,
+    view: &dyn TypeClassView,
 ) -> Vec<ShapeViolation> {
     let mut out = Vec::new();
     let two = || -> Option<(TypeId, TypeId)> {
@@ -60,6 +150,29 @@ pub fn check_shape(
         | TypeRule::Store
         | TypeRule::Call
         | TypeRule::CallIndirect => {}
+        TypeRule::BinopPtrOff => {
+            // 指针算术按**字节偏移**表达（本 IR 的约定：`add ptr, i64` 等价
+            // `getelementptr i8`）。三种合法形状：
+            //   ① 两操作数同类型（普通整数加法）；
+            //   ② 结果为指针：一个指针操作数 + 一个整数操作数（偏移）；
+            // 其余一律违规。
+            if let Some((a, b)) = two() {
+                let result_is_ptr = result_ty.is_some_and(|t| view.is_ptr(t));
+                let ptr_int = result_is_ptr
+                    && ((view.is_ptr(a) && view.is_int(b)) || (view.is_int(a) && view.is_ptr(b)));
+                if a != b && !ptr_int {
+                    out.push(ShapeViolation::OperandTypeMismatch {
+                        expected: a,
+                        found: b,
+                    });
+                }
+                for t in [a, b] {
+                    if view.is_aggregate(t) {
+                        out.push(ShapeViolation::NotScalar { found: t });
+                    }
+                }
+            }
+        }
         TypeRule::BinopSame => {
             if let Some((a, b)) = two() {
                 if a != b {
@@ -69,7 +182,7 @@ pub fn check_shape(
                     });
                 }
                 for t in [a, b] {
-                    if is_aggregate(t) {
+                    if view.is_aggregate(t) {
                         out.push(ShapeViolation::NotScalar { found: t });
                     }
                 }
@@ -93,10 +206,16 @@ pub fn check_shape(
                     });
                 }
                 let want_int = opcode.type_rule() == TypeRule::CmpInt;
+                // **`icmp` 也允许比较指针**：`ptr < ptr`（切片迭代器的边界判断、
+                // 指针区间判定）在本 IR 里就是同宽无符号比较，后端按 GPR 比较即可。
+                // 此前只认 `is_int`（而 `TypeStore::is_int(ptr) == false`）⇒
+                // 指针比较被判 `IcmpOperandNotInt`（v27 M6 实测：`for v in &data[1..4]`
+                // 在 `-O` 下编译失败）。
+                let both_ptr = view.is_ptr(a) && view.is_ptr(b);
                 let ok = if want_int {
-                    a.is_int() && b.is_int()
+                    (view.is_int(a) && view.is_int(b)) || both_ptr
                 } else {
-                    a.is_float() && b.is_float()
+                    view.is_float(a) && view.is_float(b)
                 };
                 if !ok {
                     out.push(ShapeViolation::CompareClass { want_int });
@@ -139,7 +258,7 @@ mod tests {
     use crate::ir::opcode::Opcode;
 
     fn viol(op: Opcode, ops: &[Option<TypeId>], res: Option<TypeId>) -> Vec<ShapeViolation> {
-        check_shape(op, ops, res, &|_| false)
+        check_shape(op, ops, res, &())
     }
 
     #[test]

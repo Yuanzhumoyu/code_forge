@@ -26,13 +26,13 @@ fn diamond() -> (forge_ir::Function, Block, Block, Block) {
     let (entry, _) = fb.create_entry_block();
     let then_b = fb.create_block();
     let else_b = fb.create_block();
-    let c = fb.iconst_bool(true);
+    let c = fb.constant(true);
     fb.branch(c, then_b, &[], else_b, &[]);
     fb.switch_to_block(then_b);
-    let v1 = fb.iconst_i32(1);
+    let v1 = fb.constant(1i32);
     fb.ret(&[v1]);
     fb.switch_to_block(else_b);
-    let v2 = fb.iconst_i32(2);
+    let v2 = fb.constant(2i32);
     fb.ret(&[v2]);
     let func = fb.finish().expect("build");
     (func, entry, then_b, else_b)
@@ -180,7 +180,7 @@ fn non_cfg_write_reuses_cache() {
         Opcode::Iconst,
         b,
         smallvec::SmallVec::new(),
-        smallvec::smallvec![forge_ir::Immediate::Const(func.constants.insert_int(3, 32))],
+        smallvec::smallvec![forge_ir::Immediate::Const(func.constants.intern_int(3, 32))],
         &[ty],
         InstFlags::NONE,
     );

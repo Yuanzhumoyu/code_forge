@@ -8,6 +8,7 @@ use crate::machine::lowering::TargetLowering;
 use crate::machine::pattern::{
     PatTerm, PatternSpec, eval_pat_pred, type_elem_id, type_vec_bytes, type_width_bits,
 };
+use crate::pipeline::clobbers;
 use crate::pipeline::compiler::{CompileState, atomic_op_from_u64};
 use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
@@ -87,73 +88,6 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                         self.value_to_xreg.insert(*v, xreg);
                         self.ctx.set_value_desc(xreg, ty);
                     }
-                }
-            }
-        }
-    }
-
-    pub(crate) fn pre_allocate_block_param_xregs(&mut self, func: &Function) {
-        struct BlockParamInfo {
-            block: Block,
-            param_values: Vec<Value>,
-            param_tys: Vec<TypeId>,
-        }
-
-        let mut block_params_list: Vec<BlockParamInfo> = Vec::new();
-        for (block, block_data) in func.dfg.blocks() {
-            if Some(block) == func.entry_block {
-                continue;
-            }
-            let param_values: Vec<Value> = block_data.param_values.iter().copied().collect();
-            if !param_values.is_empty() {
-                block_params_list.push(BlockParamInfo {
-                    block,
-                    param_values,
-                    param_tys: block_data.params.iter().copied().collect(),
-                });
-            }
-        }
-
-        if block_params_list.is_empty() {
-            return;
-        }
-
-        let preds = func.predecessors();
-
-        for info in &block_params_list {
-            let mut param_xregs: Vec<XReg> = info
-                .param_tys
-                .iter()
-                .map(|ty| {
-                    let class = self.ctx.reg_class_for(ty);
-                    let xreg = self.ctx.alloc_xreg(class);
-                    self.ctx.set_value_desc(xreg, *ty);
-                    xreg
-                })
-                .collect();
-
-            // 先处理所有 pred 的传参映射（map_terminator 可能复用 arg 的
-            // 已有寄存器到 param_xregs，如循环中块参数 value 作为跳转 arg）
-            if let Some(pred_list) = preds.get(info.block) {
-                for pred in pred_list {
-                    self.map_terminator_args_to_params(
-                        &func.dfg,
-                        *pred,
-                        info.block,
-                        &mut param_xregs,
-                        &info.param_tys,
-                    );
-                }
-            }
-
-            // 最后：块参数 value 映射到（复用后的）param_xregs——必须与
-            // 传参寄存器一致，否则目标块读取参数时用旧寄存器拿到错误值
-            // （write_bytes 循环 body 的 bi 读到 dst 的寄存器，[WA-14]）。
-            // 注：多 pred 且各 pred 的 arg 寄存器不同时，param_xregs 取
-            // 最后处理的 pred（预先存在的限制，单 pred 循环为实际修复点）。
-            for (i, &pv) in info.param_values.iter().enumerate() {
-                if i < param_xregs.len() {
-                    self.value_to_xreg.insert(pv, param_xregs[i]);
                 }
             }
         }
@@ -456,10 +390,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                     Immediate::Func(f) => f.index() as u64,
                     Immediate::IntCC(cc) => cc.code() as u64,
                     Immediate::FloatCC(cc) => cc.code() as u64,
-                    Immediate::Block(_)
-                    | Immediate::Type(_)
-                    | Immediate::String(_)
-                    | Immediate::Agg(_) => 0,
+                    Immediate::Block(_) | Immediate::Type(_) | Immediate::String(_) => 0,
                 })
                 .collect();
             if let Some(Immediate::Func(f)) = inst.immediates.first() {
@@ -492,8 +423,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                             .ctx
                             .constant_pool
                             .as_ref()
-                            .and_then(|cp| cp.get_int(*c))
-                            .map(|(v, _)| v as u64),
+                            .and_then(|cp| cp.bits(*c))
+                            .map(|bv| bv.bits as u64),
                         _ => None,
                     }
                 })();
@@ -629,10 +560,11 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 }
             }
             self.inst_ops.extend(machine_insts.inst_ops);
-            // 规则级写死寄存器（insts 自动推导，生成代码写入 ctx.current_clobbers）
-            // 展开到包内每条指令（与 vcode.instructions 平行）。每次 lowering 前
-            // 已 clear，此处取走。
-            let pack_clobbers = std::mem::take(&mut self.ctx.current_clobbers);
+            // 规则级写死寄存器（`ctx.current_clobbers`，每次 lowering 前已 clear）
+            // + 调用点的约定级破坏集；包级展开到包内每条指令。
+            let mut pack_clobbers = std::mem::take(&mut self.ctx.current_clobbers);
+            // 调用点带上约定级破坏集（详见 `pipeline/clobbers.rs`）。
+            clobbers::merge_call_clobbers(&self.ctx.conv, &machine_insts.insts, &mut pack_clobbers);
             self.inst_clobbers.extend(std::iter::repeat_n(
                 pack_clobbers,
                 machine_insts.insts.len(),
@@ -654,6 +586,8 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 "IR 含未终止的基本块：无法 lower 终结符".to_string(),
             ));
         }
+        // 块参数拷贝必须在终结符**之前**（跳转一执行，参数寄存器就该是新值）。
+        self.emit_block_arg_copies(dfg, block);
         let mut term_insts = lowering.lower_terminator(
             dfg,
             block,

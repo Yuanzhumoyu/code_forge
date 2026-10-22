@@ -6,12 +6,64 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         match rvalue {
             Rvalue::Use(op, _) => self.lower_operand(op),
             Rvalue::BinaryOp(bin_op, (op1, op2)) => {
+                // **宽整数 ÷ 2 的幂常量 ⇒ 直接发移位/掩码**（v27 M6-70）。
+                //
+                // 128 位的 `Div`/`Rem` 在 isel 里没有规则（`wide_split` 明确 fail-closed），
+                // 只有"除数是 2 的幂"能**无关 ABI**地改写成算术：
+                //   `x / 2^k` ⇒ `x >> k`；`x % 2^k` ⇒ `x & (2^k - 1)`
+                // 为什么放在降级层而不是 legalize 的 pass：pass 看到的已经是 SSA 值，
+                // `-O2` 下 rustc 会把除数常量提升/先 load 进值 ⇒ 认不出"常量"；
+                // 这里 `op2` 还拿着 `Operand::Constant`，是唯一能稳定识别的层次。
+                // 有符号的除法舍入（向零取整）需要额外修正，本轮只做**无符号**；
+                // 其余（非 2 的幂、有符号）继续 fail-closed。
+                let bop_ty = op1.ty(&self.body.local_decls, self.tcx);
+                let wide = matches!(
+                    bop_ty.kind(),
+                    rustc_middle::ty::TyKind::Int(ty::IntTy::I128)
+                        | rustc_middle::ty::TyKind::Uint(ty::UintTy::U128)
+                );
+                if wide
+                    && !bop_ty.is_signed()
+                    && matches!(bin_op, mir::BinOp::Div | mir::BinOp::Rem)
+                    && let Some(pow2) = self.mir_const_pow2(op2)
+                {
+                    let x = self.lower_operand(op1)?;
+                    let k = pow2.trailing_zeros();
+                    if k == 0 {
+                        // ÷1 / %1
+                        return Ok(if matches!(bin_op, mir::BinOp::Rem) {
+                            self.builder.const_int(
+                                0i128,
+                                map_type(bop_ty, self.tcx).unwrap_or(TypeId::I128),
+                            )
+                        } else {
+                            x
+                        });
+                    }
+                    let ty = map_type(bop_ty, self.tcx).unwrap_or(TypeId::I128);
+                    return Ok(if matches!(bin_op, mir::BinOp::Rem) {
+                        let mask = self.builder.const_int((pow2 - 1) as i128, ty);
+                        self.builder.band(x, mask)
+                    } else {
+                        // 移位量必须与 `x` **同类型**（`Ushr` 两侧位宽一致，否则 IR 校验不过）：
+                        // 宽值就是 i128 常量，别写成 I64（实测 `TypeMismatch: Ushr 期望 t10`）。
+                        let sh = self.builder.const_int(i128::from(k), ty);
+                        self.builder.ushr(x, sh)
+                    });
+                }
                 let lhs = self.lower_operand(op1)?;
                 let rhs = self.lower_operand(op2)?;
                 // 符号性决定 sdiv/udiv、srem/urem、sshr/ushr 的选择
                 // （forge-ir 的 Int 类型不带符号位，必须从 MIR 操作数类型推导）
                 let op1_ty = op1.ty(&self.body.local_decls, self.tcx);
+                let op2_ty = op2.ty(&self.body.local_decls, self.tcx);
                 let signed = op1_ty.is_signed();
+                // **两侧 MIR 类型不同就先对齐 IR 宽度**：常量操作数的 IR 类型由
+                // `map_type(常量类型)` 决定，可能与另一侧不同（实测：`b[0] == 7`
+                // 一边是 `load i8`、另一边是 i32 ⇒ `icmp eq i8 %x, i32 7` 是非法 IR，
+                // `-O` 下 verifier 直接拒绝）。按 MIR 类型判宽，把窄的一侧
+                // zxt/sext 到宽的一侧（语义同 C 的整型提升）。
+                let (lhs, rhs) = self.coerce_binop_operands(lhs, rhs, op1_ty, op2_ty, signed)?;
                 self.lower_binary_op(*bin_op, lhs, rhs, signed, op1_ty)
             }
             Rvalue::UnaryOp(un_op, op) => {
@@ -30,6 +82,32 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 self.lower_unary_op(*un_op, val, is_bool)
             }
             Rvalue::Cast(cast_kind, op, to_ty) => {
+                let op_ty = op.ty(&self.body.local_decls, self.tcx);
+                let wide_src = matches!(
+                    op_ty.kind(),
+                    rustc_middle::ty::TyKind::Int(rustc_middle::ty::IntTy::I128)
+                        | rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U128)
+                );
+                let wide_dst = matches!(
+                    to_ty.kind(),
+                    rustc_middle::ty::TyKind::Int(rustc_middle::ty::IntTy::I128)
+                        | rustc_middle::ty::TyKind::Uint(rustc_middle::ty::UintTy::U128)
+                );
+                if wide_src && !wide_dst {
+                    if let rustc_middle::mir::Operand::Copy(pl)
+                    | rustc_middle::mir::Operand::Move(pl) = op
+                    {
+                        let addr = self.place_addr(pl);
+                        let to_type = map_type(*to_ty, self.tcx)?;
+                        let lo = self.builder.load(addr, TypeId::I64);
+                        let dst_bytes = crate::layout::layout_bytes(self.tcx, *to_ty);
+                        return Ok(if dst_bytes < 8 {
+                            self.builder.ireduce(lo, to_type)
+                        } else {
+                            lo
+                        });
+                    }
+                }
                 let mut val = self.lower_operand(op)?;
                 let to_type = map_type(*to_ty, self.tcx)?;
                 match cast_kind {
@@ -64,19 +142,37 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         if is_int && !src_ty.is_signed() {
                             let sz = src_ty.primitive_size(self.tcx);
                             if sz.bytes() < 4 {
+                                // **掩码要用源类型的 IR 类型**：此前恒用 `I64` 常量 ⇒
+                                // `Band(i8, i64)` 操作数类型不符（verifier `TypeMismatch`），
+                                // 随后那条 `ireduce` 跟着报 `ConversionBitWidthMismatch
+                                // t5 → t4`。v27 M6 实测：`buf[1] as i32`（源 u8）在 `-O` 下
+                                // 直接编译失败。
                                 let mask = (1u64 << (sz.bytes() * 8)) - 1;
-                                let m = self.builder.iconst(mask as i64, TypeId::I64);
+                                let src_ir = map_type(src_ty, self.tcx)?;
+                                let m = self.builder.const_int(mask as i64, src_ir);
                                 val = self.builder.band(val, m);
                             }
                         }
-                        if is_int && src_ty.is_signed() {
-                            let src_w = src_ty.primitive_size(self.tcx).bytes() as u32;
-                            let to_w = layout_bytes(self.tcx, *to_ty);
-                            if src_w < to_w {
-                                return Ok(self.builder.sextend(val, to_type));
+                        // **按 IR 位宽选指令**：`ireduce` 只能**变窄**（sext/zext 只能变宽）。
+                        // 原实现无条件 `ireduce` ⇒ 加宽转换（`bool`/`u8`/`i8`/`i32` → 更宽）
+                        // 产出非法 IR（verifier: ConversionBitWidthMismatch `t1 → t4`），
+                        // 只在优化管线真跑起来（v27 M5 接线）后才暴露。
+                        // 位宽口径用 rustc 侧的布局字节数（`bool` 是 1 字节、`i32` 是 4 字节）：
+                        // 它和 `map_type` 出来的 IR 类宽度同序，且不需要 IR 侧的宽度查询。
+                        let s_bits = layout_bytes(self.tcx, src_ty);
+                        let d_bits = layout_bytes(self.tcx, *to_ty);
+                        Ok(if d_bits < s_bits {
+                            self.builder.ireduce(val, to_type)
+                        } else if d_bits > s_bits {
+                            if is_int && src_ty.is_signed() {
+                                self.builder.sextend(val, to_type)
+                            } else {
+                                self.builder.uextend(val, to_type)
                             }
-                        }
-                        Ok(self.builder.ireduce(val, to_type))
+                        } else {
+                            // 同宽：值不变（窄类型的"高垃圾位"已在上面的 mask 分支清掉）
+                            val
+                        })
                     }
                     rustc_middle::mir::CastKind::PtrToPtr
                     | rustc_middle::mir::CastKind::FnPtrToPtr => Ok(val),
@@ -95,6 +191,21 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 Ok(self.place_addr(place))
             }
             Rvalue::Discriminant(place) => {
+                // 判别观测（DIscr）：入口处打印布局事实，避免被分支内的打印挡住
+                if crate::trace::trace_enabled("DISCR") {
+                    let dty = place.ty(&self.body.local_decls, self.tcx).ty;
+                    if let Ok(dl) = self.tcx.layout_of(ty::PseudoCanonicalInput {
+                        typing_env: ty::TypingEnv::fully_monomorphized(),
+                        value: dty,
+                    }) {
+                        eprintln!(
+                            "[forge] DISCR-ENTRY ty={dty} size={} repr={:?} variants={:?}",
+                            dl.layout.size().bytes(),
+                            dl.layout.backend_repr,
+                            dl.layout.variants()
+                        );
+                    }
+                }
                 // 枚举判别读取：
                 // - Direct tag（非 niche）：判别字段在 tag_field（通常 offset 0），读 I32
                 // - Niche（Option/Result）：判别嵌入 payload，读 8 字节原始值后按 niche
@@ -112,6 +223,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 match &layout.layout.variants() {
                     rustc_abi::Variants::Multiple {
                         tag_encoding: rustc_abi::TagEncoding::Direct,
+                        tag_field,
+                        variants,
                         ..
                     } => {
                         if crate::trace::trace_enabled("DISCR") {
@@ -131,7 +244,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     // 但防御性处理避免极端情况下 ICE
                                     let Some(v0) = variants.iter().next() else {
                                         eprintln!("[forge] warn: enum with zero variants");
-                                        return Ok(self.builder.iconst(0, TypeId::I64));
+                                        return Ok(self.builder.const_int(0, TypeId::I64));
                                     };
                                     let mut vf = Vec::new();
                                     for i in 0..v0.field_offsets.len() {
@@ -171,11 +284,18 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         // 返回寄存器残留垃圾 → nested_loop_break_outer 挂起
                         // 实证）。非 ScalarPair（普通 enum tag 紧凑无 pad）
                         // fallback I32（保持既有行为）。
-                        let tag_bits = match &layout.layout.backend_repr {
-                            rustc_abi::BackendRepr::ScalarPair { a, .. } => {
-                                a.primitive().size(&self.tcx).bits()
-                            }
-                            _ => 32,
+                        // v27 M5 缺陷（`Range::contains` → ud2）：tag 宽度不能从
+                        // `BackendRepr::ScalarPair { a, .. }` 猜——`Bound<&u32>` 的 `a` 是
+                        // payload 指针（8B）、tag 是另一个标量 ⇒ 读 8 字节载荷去比 case 0
+                        // ⇒ payload≠0 就落 otherwise（unreachable）⇒ ud2。
+                        // 正确做法：tag 宽度按**变体数**（rustc 对 repr(Rust) 枚举的规则）。
+                        let n_var = variants.len();
+                        let tag_bits = if n_var <= 256 {
+                            8
+                        } else if n_var <= 65536 {
+                            16
+                        } else {
+                            32
                         };
                         let tag_t = match tag_bits {
                             8 => TypeId::I8,
@@ -183,7 +303,14 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             32 => TypeId::I32,
                             _ => TypeId::I64,
                         };
-                        let tag = self.builder.load(addr, tag_t);
+                        let tag_off = layout.layout.fields().offset((*tag_field).index()).bytes();
+                        let tag_addr = if tag_off == 0 {
+                            addr
+                        } else {
+                            let off = self.builder.const_int(tag_off as i64, TypeId::I64);
+                            self.builder.gep(addr, &[off], TypeId::I8)
+                        };
+                        let tag = self.builder.load(tag_addr, tag_t);
                         Ok(self.builder.uextend(tag, TypeId::I64))
                     }
                     rustc_abi::Variants::Multiple {
@@ -213,12 +340,40 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         // offset 0 会读到 usize=0 → 误判 None，mn2 实证）；聚合 payload
                         // 用 `tag_field` 的字段偏移（niche 在非 0 偏移时不再读错）。
                         let niche_off = self.niche_tag_offset(&layout)?;
-                        let raw = if niche_off == 0 {
-                            self.builder.load(addr, TypeId::I64)
+                        // v27 M5 缺陷（`char::from_u32` 错值）：niche 值必须按**它自己的宽度**读，
+                        // 不能恒读 I64——`Result<char, CharTryFromError>` 只有 4 字节，
+                        // 读 8 字节会把栈上 4 字节垃圾掺进 `relative`（`raw - niche_start`），
+                        // 于是 `is_niche` 判错 ⇒ 无效码点被当成 `Ok`。
+                        let niche_bits = match &layout.layout.backend_repr {
+                            rustc_abi::BackendRepr::Scalar(s) => {
+                                s.primitive().size(&self.tcx).bits()
+                            }
+                            rustc_abi::BackendRepr::ScalarPair { a, b, .. } => {
+                                if niche_off == 0 {
+                                    a.primitive().size(&self.tcx).bits()
+                                } else {
+                                    b.primitive().size(&self.tcx).bits()
+                                }
+                            }
+                            _ => 64,
+                        };
+                        let niche_t = match niche_bits {
+                            8 => TypeId::I8,
+                            16 => TypeId::I16,
+                            32 => TypeId::I32,
+                            _ => TypeId::I64,
+                        };
+                        let raw_addr = if niche_off == 0 {
+                            addr
                         } else {
-                            let off_v = self.builder.iconst(niche_off, TypeId::I64);
-                            let naddr = self.builder.iadd(addr, off_v);
-                            self.builder.load(naddr, TypeId::I64)
+                            let off_v = self.builder.const_int(niche_off, TypeId::I64);
+                            self.builder.iadd(addr, off_v)
+                        };
+                        let raw_v = self.builder.load(raw_addr, niche_t);
+                        let raw = if niche_bits >= 64 {
+                            raw_v
+                        } else {
+                            self.builder.uextend(raw_v, TypeId::I64)
                         };
                         // 常见单 niche（count==1 且 niche 值 0）：判别 = is_eq ? 0 : untagged
                         //（原生 Select：主库 [lower.Select] test+mov+cmovcc 已由
@@ -226,12 +381,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         // 变量臂/任意 cond/链式/多 XReg 压力全过，2026-08-31 nightly）
                         let niche_count = niche_variants.clone().into_iter().count();
                         if niche_count == 1 && *niche_start == 0 {
-                            let z = self.builder.iconst(0, TypeId::I64);
+                            let z = self.builder.const_int(0, TypeId::I64);
                             let is_eq = self.builder.icmp(IntCC::Eq, raw, z);
                             let ut = self
                                 .builder
-                                .iconst(untagged_variant.index() as i64, TypeId::I32);
-                            let z32 = self.builder.iconst(0, TypeId::I32);
+                                .const_int(untagged_variant.index() as i64, TypeId::I32);
+                            let z32 = self.builder.const_int(0, TypeId::I32);
                             let disc = self.builder.select(is_eq, z32, ut);
                             // 同 Direct：扩展 I32 → I64（isize 语义，防 switchInt
                             // 8 字节比较读到槽高 4 字节垃圾）
@@ -243,40 +398,38 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             //   discr = is_niche ? (relative + variants.start) : untagged
                             let relative_max =
                                 niche_variants.last.as_u32() - niche_variants.start.as_u32();
-                            let start_v = self.builder.iconst(*niche_start as i64, TypeId::I64);
+                            let start_v = self.builder.const_int(*niche_start as i64, TypeId::I64);
                             let relative = self.builder.isub(raw, start_v);
-                            let max_v = self.builder.iconst(relative_max as i64, TypeId::I64);
+                            let max_v = self.builder.const_int(relative_max as i64, TypeId::I64);
                             let is_niche = self.builder.icmp(IntCC::Ule, relative, max_v);
                             let tagged = {
                                 let rel32 = self.builder.ireduce(relative, TypeId::I32);
                                 let start_idx = self
                                     .builder
-                                    .iconst(niche_variants.start.as_u32() as i64, TypeId::I32);
+                                    .const_int(niche_variants.start.as_u32() as i64, TypeId::I32);
                                 self.builder.iadd(rel32, start_idx)
                             };
                             let untagged_v = self
                                 .builder
-                                .iconst(untagged_variant.index() as i64, TypeId::I32);
+                                .const_int(untagged_variant.index() as i64, TypeId::I32);
                             // 原生 Select（2026-08-31 恢复）：主库 [lower.Select]
                             // 严格矩阵验证通过（变量臂/任意 cond/链式/多 XReg）。
                             let disc = self.builder.select(is_niche, tagged, untagged_v);
                             Ok(self.builder.uextend(disc, TypeId::I64))
                         }
                     }
+                    rustc_abi::Variants::Single { index } => {
+                        // v27 M5 缺陷（`RangeInclusive::fold` ud2）：`Variants::Single` 表示
+                        // **没有独立 tag**（如 `ControlFlow<NeverShortCircuitResidual, i32>`
+                        // 被优化成 4 字节 `Scalar(i32)`）⇒ 判别值就是该唯一变体的索引（常量）。
+                        // 此前这里按内存读 4 字节 ⇒ 把 payload 当判别 ⇒ `isize` 判别值不是 0/1
+                        // ⇒ 落 `otherwise: unreachable` ⇒ ud2。
+                        let idx = self.builder.const_int(index.index() as i64, TypeId::I64);
+                        Ok(idx)
+                    }
                     _ => {
-                        let tag_bits = match &layout.layout.backend_repr {
-                            rustc_abi::BackendRepr::ScalarPair { a, .. } => {
-                                a.primitive().size(&self.tcx).bits()
-                            }
-                            _ => 32,
-                        };
-                        let tag_t = match tag_bits {
-                            8 => TypeId::I8,
-                            16 => TypeId::I16,
-                            32 => TypeId::I32,
-                            _ => TypeId::I64,
-                        };
-                        let tag = self.builder.load(addr, tag_t);
+                        // 其余形态（理论上不可达）：保持旧的"整 4 字节 @0"行为。
+                        let tag = self.builder.load(addr, TypeId::I32);
                         Ok(self.builder.uextend(tag, TypeId::I64))
                     }
                 }
@@ -284,7 +437,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             Rvalue::Repeat(op, _len) => self.lower_operand(op),
             Rvalue::Aggregate(_kind, _fields) => {
                 // 结构体/元组构造 → 返回 0 占位
-                Ok(self.builder.iconst_i32(0))
+                Ok(self.builder.constant(0i32))
             }
             _ => Err(ForgeError::Message(format!(
                 "unsupported rvalue: {:?}",
@@ -420,7 +573,20 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     if crate::trace::trace_enabled("CONST") {
                         eprintln!("[forge] fconst ty={ty} bits={bits:#x} scalar={scalar:?}");
                     }
-                    return Ok(self.builder.fconst(bits as u64, ty));
+                    return Ok(self.builder.const_float(bits as u64, ty));
+                }
+                // **128 位整数常量（v27 M5 · M-E）**：16 字节标量**不能**截成 `i64`
+                // （下面那组 1/2/4/8 分支的 `_ => bits as i64` 会丢掉高 64 位）。
+                // 走 `Big` 通道，由 `iconst_big` 生成真正的 i128 常量。
+                if let Some(s) = scalar
+                    && s.size().bytes() == 16
+                {
+                    let bits = s.to_bits(s.size());
+                    let v = bits as i128;
+                    if crate::trace::trace_enabled("CONST") {
+                        eprintln!("[forge] i128const ty={ty} val={v} (0x{bits:032x})");
+                    }
+                    return Ok(self.builder.const_int(v, ty));
                 }
                 let val = scalar
                     .map(|s| {
@@ -444,11 +610,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 if crate::trace::trace_enabled("CONST") {
                     eprintln!("[forge] iconst ty={ty} val={val} scalar={scalar:?}");
                 }
-                Ok(self.builder.iconst(val, ty))
+                Ok(self.builder.const_int(val, ty))
             }
-            Operand::RuntimeChecks(_) => Ok(self.builder.iconst_i32(0)),
+            Operand::RuntimeChecks(_) => Ok(self.builder.constant(0i32)),
         }
     }
+    /// checked 算术（`*WithOverflow`）：返回值与溢出标志。
     pub(crate) fn lower_checked_op(
         &mut self,
         op: mir::BinOp,
@@ -487,6 +654,101 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         };
         Ok((v, f))
     }
+    /// 二元运算前按 **MIR 类型**对齐两侧的 IR 宽度。
+    ///
+    /// 为什么不能只靠值自身的 IR 类型：常量操作数的 IR 类型来自
+    /// `map_type(常量类型)`，可能与另一侧（`load` 出来的窄值）不同，
+    /// 于是产出 `icmp eq i8 %x, i32 7` 这种非法 IR（v27 M6 实测：
+    /// `let mut b = [0u8; 4]; b[0] = 7; if b[0] == 7 { … }`，`-O` 下 verifier 拒绝）。
+    /// 这里按 MIR 类型的字节宽判宽，把窄的一侧 zxt/sext 到宽的那侧；宽度相同
+    /// 或任一侧非整数（指针/浮点/聚合）就原样返回。
+    fn coerce_binop_operands(
+        &mut self,
+        lhs: Value,
+        rhs: Value,
+        lhs_ty: Ty<'tcx>,
+        rhs_ty: Ty<'tcx>,
+        signed: bool,
+    ) -> Result<(Value, Value), ForgeError> {
+        use rustc_middle::ty::TyKind;
+        let is_int = |t: Ty<'tcx>| matches!(t.kind(), TyKind::Int(_) | TyKind::Uint(_));
+        if !is_int(lhs_ty) || !is_int(rhs_ty) {
+            return Ok((lhs, rhs));
+        }
+        let lb = crate::layout::layout_bytes(self.tcx, lhs_ty);
+        let rb = crate::layout::layout_bytes(self.tcx, rhs_ty);
+        if crate::trace::trace_enabled("CONST") {
+            eprintln!(
+                "[forge] coerce lhs={lhs_ty} ({lb}B) rhs={rhs_ty} ({rb}B) \
+                 ir=({:?},{:?})",
+                self.builder.value_type(lhs),
+                self.builder.value_type(rhs)
+            );
+        }
+        if lb == rb {
+            return Ok((lhs, rhs));
+        }
+        let (narrow, wide_ty) = if lb < rb {
+            (lhs, map_type(rhs_ty, self.tcx)?)
+        } else {
+            (rhs, map_type(lhs_ty, self.tcx)?)
+        };
+        let ext = if signed {
+            self.builder.sextend(narrow, wide_ty)
+        } else {
+            self.builder.uextend(narrow, wide_ty)
+        };
+        Ok(if lb < rb { (ext, rhs) } else { (lhs, ext) })
+    }
+
+    /// 把两个整数操作数对齐到**同一个 IR 类型**（比较类指令的前提）。
+    ///
+    /// 为什么需要：`icmp` 的类型规则是 `binop_same`（两侧同类型、非聚合）。而本后端的
+    /// 常量可能以**更宽的规范宽度**出现（`const_int` 走的是类型的 `scalar_bits`，但
+    /// rustc 给的 `op1_ty` 有时是提升后的宽类型），于是一条真实比较会变成
+    /// `icmp eq i8 %load, i32 7`——非法 IR，`-O` 下 verifier 立刻拒绝
+    /// （v27 M6 实测：`let mut b = [0u8; 4]; b[0] = 7; if b[0] == 7 { … }`）。
+    ///
+    /// 规则：按**值的真实类型**取位宽，把窄的一侧按 `signed` 扩展（zxt/sext）到宽的一侧；
+    /// 类型相同或拿不到位宽（动态位宽）时原样返回——不猜。
+    fn align_int_operands(&mut self, a: Value, b: Value, signed: bool) -> (Value, Value) {
+        let (Some(at), Some(bt)) = (self.builder.value_type(a), self.builder.value_type(b)) else {
+            return (a, b);
+        };
+        if at == bt {
+            return (a, b);
+        }
+        let (Some(ab), Some(bb)) = (at.builtin_scalar_bits(), bt.builtin_scalar_bits()) else {
+            return (a, b);
+        };
+        if ab == bb {
+            // 位宽相同、编码不同（如 i8 与 u8）：按目标类型的宽度转一次即可让类型一致。
+            let wide = if ab >= bb { at } else { bt };
+            let (x, y) = if ab >= bb { (a, b) } else { (b, a) };
+            let y2 = if signed {
+                self.builder.sextend(y, wide)
+            } else {
+                self.builder.uextend(y, wide)
+            };
+            return if ab >= bb { (x, y2) } else { (y2, x) };
+        }
+        if ab < bb {
+            let e = if signed {
+                self.builder.sextend(a, bt)
+            } else {
+                self.builder.uextend(a, bt)
+            };
+            (e, b)
+        } else {
+            let e = if signed {
+                self.builder.sextend(b, at)
+            } else {
+                self.builder.uextend(b, at)
+            };
+            (a, e)
+        }
+    }
+
     /// 窄（i8/u8/i16/u16）移位的结果**截回原宽度**。
     ///
     /// 移位的操作数为了符号正确被扩展到 64 位（见 `lower_binary_op`），所以结果必须先
@@ -504,6 +766,23 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         Ok(v)
     }
 
+    /// 若 MIR 操作数是**整数常量**且其值为 2 的幂，返回该值（宽值除法的改写用）。
+    fn mir_const_pow2(&self, op: &mir::Operand<'tcx>) -> Option<u128> {
+        let mir::Operand::Constant(c) = op else {
+            return None;
+        };
+        let s = c.const_.try_to_scalar_int().or_else(|| {
+            c.const_
+                .try_eval_scalar_int(self.tcx, ty::TypingEnv::fully_monomorphized())
+        })?;
+        let v = s.to_bits(s.size());
+        if v != 0 && v.is_power_of_two() {
+            Some(v)
+        } else {
+            None
+        }
+    }
+
     pub(crate) fn lower_binary_op(
         &mut self,
         op: mir::BinOp,
@@ -513,28 +792,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         op1_ty: Ty<'tcx>,
     ) -> Result<Value, ForgeError> {
         let is_fp = op1_ty.is_floating_point();
-        // WA-36：整数 icmp 窄域（rustc i8/u8/i16/u16）统一扩展——x86
-        // cmp 走 32/64 位域，未扩展窄位模式无法比较（i8 -50(0xCE) movzx
-        // 后 +206 被当正数、signed < 错；常量侧已按类型扩展，值侧 load
-        // 是 movzx 零扩展——两侧扩展方式不一致则 Eq/比较错）。比较前把
-        // 窄操作数按 signed 语义 sext/zext 到 64（movsx/movzx 链）。
-        let cmp_op = matches!(
-            op,
-            mir::BinOp::Eq
-                | mir::BinOp::Ne
-                | mir::BinOp::Lt
-                | mir::BinOp::Le
-                | mir::BinOp::Gt
-                | mir::BinOp::Ge
-        );
-        // v27 M5 缺陷①：**移位也要扩展**（不止比较）。`i8: -128 >> 7` 曾经算成 1：
-        // 局部变量用 `MovzxR8Mem` 零扩展载入（0x80=128），`sar` 再算术右移就得到 1。
-        // 谱规则里的 `movsxd {out}, {0}` 救不回来（只扩展低 32 位的符号位）。
-        // 所以移位前按**符号性**把值扩展到 64 位（结果再截回原宽度，见下面两个 shift 分支）。
-        let shift_op = matches!(
-            op,
-            mir::BinOp::Shl | mir::BinOp::ShlUnchecked | mir::BinOp::Shr | mir::BinOp::ShrUnchecked
-        );
+        // WA-36 + v27 M5 缺陷①：窄域（rustc i8/u8/i16/u16）的**比较与移位**都要先扩展——
+        // x86 的 cmp/sar 走 32/64 位域，未扩展的窄位模式会算错（i8 -50 被当 +206、
+        // `i8: -128 >> 7` 得 1）。下面按 `narrow_w < 4` 统一 sext/zext 到 64，
+        // 结果再按需要截回原宽度。
         let narrow_w = match op1_ty.kind() {
             rustc_middle::ty::TyKind::Int(_) | rustc_middle::ty::TyKind::Uint(_) => {
                 layout_bytes(self.tcx, op1_ty)
@@ -558,6 +819,17 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             }
         } else {
             (lhs, rhs)
+        };
+        // 兜底对齐：**比较两侧必须同类型**（`icmp` 的 `binop_same` 规则）。
+        // 上面那条按 `op1_ty` 判窄的路径覆盖不到的情况（实测：`op1_ty` 给了宽类型，
+        // 而实际值是窄的 `load i8` + 一个被提升成 i32 的常量）会产出
+        // `icmp eq i8 %x, i32 7` 这种非法 IR——`-O` 下 verifier 立刻炸
+        //（v27 M6 实测：`let mut b = [0u8; 4]; b[0] = 7; if b[0] == 7 { … }`）。
+        // 这里按**值的真实类型**把窄的一侧扩到宽的一侧（语义同 C 的整型提升）。
+        let (lhs, rhs) = if is_fp {
+            (lhs, rhs)
+        } else {
+            self.align_int_operands(lhs, rhs, signed)
         };
         match op {
             mir::BinOp::Add | mir::BinOp::AddWithOverflow | mir::BinOp::AddUnchecked => {
@@ -629,7 +901,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 } else if elem_size == 1 {
                     Ok(self.builder.iadd(lhs, rhs))
                 } else {
-                    let sz = self.builder.iconst(elem_size, TypeId::I64);
+                    let sz = self.builder.const_int(elem_size, TypeId::I64);
                     let scaled = self.builder.imul(rhs, sz);
                     Ok(self.builder.iadd(lhs, scaled))
                 }
@@ -718,7 +990,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             eprintln!("[forge] fat_ptr_metadata ty={ty} place={place:?}");
         }
         let base = self.place_addr(place);
-        let eight = self.builder.iconst(8, TypeId::I64);
+        let eight = self.builder.const_int(8, TypeId::I64);
         let hi = self.builder.iadd(base, eight);
         Some(self.builder.load(hi, TypeId::I64))
     }
@@ -733,19 +1005,19 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             mir::UnOp::Not => {
                 // bool 的 ! 是翻转 0/1（bnot 会产生 -1，作为真值判定会出错）
                 if is_bool {
-                    let zero = self.builder.iconst(0, TypeId::BOOL);
+                    let zero = self.builder.const_int(0, TypeId::BOOL);
                     Ok(self.builder.icmp(IntCC::Eq, val, zero))
                 } else {
                     Ok(self.builder.bnot(val))
                 }
             }
             mir::UnOp::Neg => {
-                let zero = self.builder.iconst_i32(0);
+                let zero = self.builder.constant(0i32);
                 Ok(self.builder.isub(zero, val))
             }
             mir::UnOp::PtrMetadata => {
                 // 指针元数据：thin 指针的 metadata 为空（值无关紧要，恒 0）
-                Ok(self.builder.iconst(0, TypeId::I64))
+                Ok(self.builder.const_int(0, TypeId::I64))
             }
         }
     }

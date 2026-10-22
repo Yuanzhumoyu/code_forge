@@ -22,7 +22,7 @@
 #               不再靠"读者自己比对正反两张表"
 #   llvm_alias  额外的可解析名（字符串数组；旧名/宽松名，如 callbr/ptrtoaddr）
 #   type_rule   **verifier 的逐指令类型规则族**（必填）：
-#               none / binop_same / same3 / cmp_int / cmp_float / select /
+#               none / binop_same / binop_ptr_off / same3 / cmp_int / cmp_float / select /
 #               convert / cmpxchg_pair / load / store / call / call_indirect
 #               规则本体在 `verify.rs`（形状类规则在 `type_rules.rs`，verifier 与
 #               builder 共用一份实现）；族名写错 → 构建期报错，新增族名 →
@@ -53,10 +53,10 @@ version = 1
 [[op]]
 name = "Iadd"
 mnemonic = "iadd"
-type_rule = "binop_same"
+type_rule = "binop_ptr_off"
 llvm = "add"
 category = "int-arith"
-doc = "整数加法：a + b，结果类型 = 两操作数 upcast 后的公共类型；溢出按位环绕，不 trap。"
+doc = "整数加法：a + b，结果类型 = 两操作数 upcast 后的公共类型；溢出按位环绕，不 trap。结果为**指针**时允许「指针 + 整数」＝按字节偏移的地址算术（本 IR 的约定，等价 LLVM `getelementptr i8`）。"
 operands = 2
 
 [[op]]

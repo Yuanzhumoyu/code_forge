@@ -13,6 +13,8 @@ pub(crate) struct CompileState<I: MachineInst> {
     pub(crate) vcode: VCode<I>,
     /// XReg → 微指令寄存器字段映射（与 vcode 的指令序列平行）。
     /// 由各指令包的 inst_ops 聚合；分配器按此构建活区间并回写字段。
+    /// 本函数的符号名（诊断用：`FORGE_DUMP_ALLOC` 的分段标题与过滤都靠它）。
+    pub(crate) fn_name: forge_ir::ImmStr,
     pub(crate) inst_ops: Vec<smallvec::SmallVec<[crate::machine::lowering::OperandBind; 2]>>,
     /// 每条 vcode 指令的写死物理寄存器集（与 inst_ops/instructions 平行；
     /// 来自 lower 规则的 clobbers 声明，包级展开到包内每条指令）。
@@ -21,6 +23,11 @@ pub(crate) struct CompileState<I: MachineInst> {
     pub(crate) value_to_xreg: SecondaryMap<Value, XReg>,
     /// IR 块 → VCode 块映射（同理：`Block` 是密集句柄）。
     pub(crate) block_map: SecondaryMap<Block, VBlockId>,
+    /// **块参数各自的 XReg 与类**（`map_block_params` 填）：终结符要按这张表发拷贝。
+    ///
+    /// 为什么不能只看 `value_to_xreg`：参数值 → xreg 的映射一旦被"实参复用"改写，
+    /// 就分不清"参数独立寄存器"与"实参寄存器别名"了；拷贝需要后者恒为独立。
+    pub(crate) block_param_xregs: SecondaryMap<Block, Vec<(XReg, crate::prelude::RegClass)>>,
     pub(crate) ctx: LowerCtx,
     pub(crate) param_xregs: Vec<XReg>,
     /// Alloca 指令 → 帧槽偏移（预扫描分配；lowering 时经 ctx.current_alloca_offset
@@ -95,7 +102,6 @@ impl<I: MachineInst + 'static> CompileState<I> {
             .reg_info()
             .allocatable_gp_order()
             .into_iter()
-            .map(|p| p)
             .collect();
         let types_ctx = func.types.clone();
         let store = types_ctx.borrow();
@@ -167,11 +173,13 @@ impl<I: MachineInst + 'static> CompileState<I> {
             ctx.max_stack_bytes = ctx.max_stack_bytes.max(sl.max_depth);
         }
         Ok(Self {
+            fn_name: func.name.clone(),
             vcode: VCode::new(),
             inst_ops: Vec::new(),
             inst_clobbers: Vec::new(),
             value_to_xreg: SecondaryMap::new(),
             block_map: SecondaryMap::new(),
+            block_param_xregs: SecondaryMap::new(),
             ctx,
             param_xregs: Vec::new(),
             alloca_offsets: SecondaryMap::new(),
@@ -399,8 +407,13 @@ impl<I: MachineInst + 'static> CompileState<I> {
             }
         }
 
-        let alloc_result =
-            allocator.allocate(&self.vcode, &reg_info, &self.inst_ops, &self.inst_clobbers)?;
+        let alloc_result = allocator.allocate_named(
+            self.fn_name.as_str(),
+            &self.vcode,
+            &reg_info,
+            &self.inst_ops,
+            &self.inst_clobbers,
+        )?;
 
         // S2：sret 隐藏参数标记（move_args 收参跳过首 int 槽）——
         // 由 CompileState::new 的 LowerCtx.is_sret_return 预计算。
@@ -450,6 +463,22 @@ impl<I: MachineInst + 'static> CompileState<I> {
             }
         }
         let _ = std::mem::take(&mut self.param_xregs); // param_xregs 现在由 alloc_result 管理
+
+        // 回写自检（debug 常开 / release 由 `FORGE_VERIFY_FIELDS` 开）：字段里的寄存器
+        // 必须来自"分配结果"或"溢出编辑"，不许停在 lowering 期的占位寄存器上。
+        if cfg!(debug_assertions) || std::env::var_os("FORGE_VERIFY_FIELDS").is_some() {
+            crate::pipeline::field_check::verify_field_bindings(
+                self.fn_name.as_str(),
+                &self.vcode,
+                &self.inst_ops,
+                &alloc_result,
+            )?;
+            // 槽初始化探针**只在显式开关下跑**：它目前会误报（序言写槽不在种子里），
+            // 每编一个函数就刷几十行 stderr 会淹没真正要看的东西。
+            if std::env::var_os("FORGE_VERIFY_SPILL_INIT").is_some() {
+                crate::pipeline::spill_init::verify_spill_init("", &self.vcode, &alloc_result)?;
+            }
+        }
         Ok(alloc_result)
     }
 }

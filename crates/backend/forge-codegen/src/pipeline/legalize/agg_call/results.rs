@@ -161,14 +161,14 @@ pub(crate) fn expand_large_agg_ret(
             ValueDef::AggConst(aid) if mem_addr.is_none() => {
                 let agg = func
                     .constants
-                    .get_aggregate(aid)
-                    .ok_or_else(|| IrError::Internal("聚合返回：常量池缺失 AggId".into()))?;
+                    .agg(aid)
+                    .ok_or_else(|| IrError::Internal("聚合返回：常量池缺失聚合常量".into()))?;
                 let bytes = crate::pipeline::agg_const::pack_agg_bytes(func, agg)?;
                 let mut off = 0usize;
                 while off < size {
                     // v23 M6：打包口径单点化（`agg_const::pack_segment`）。
                     let seg_val = crate::pipeline::agg_const::pack_segment(&bytes, off, 8);
-                    let cid = func.constants.insert_int(seg_val as i128, 64);
+                    let cid = func.constants.intern_int(seg_val as i128, 64);
                     let ci = func.make_inst(
                         Opcode::Iconst,
                         job.block,
@@ -208,7 +208,7 @@ pub(crate) fn expand_large_agg_ret(
                     segs.push(ldv);
                     off += 8;
                     if off < size {
-                        let cid = func.constants.insert_int(8, 64);
+                        let cid = func.constants.intern_int(8, 64);
                         let ci = func.make_inst(
                             Opcode::Iconst,
                             job.block,
@@ -256,7 +256,7 @@ pub(crate) fn expand_large_agg_ret(
                     segs.push(ldv);
                     off += 8;
                     if off < size {
-                        let cid = func.constants.insert_int(8, 64);
+                        let cid = func.constants.intern_int(8, 64);
                         let ci = func.make_inst(
                             Opcode::Iconst,
                             job.block,
@@ -295,7 +295,7 @@ pub(crate) fn expand_large_agg_ret(
                 );
                 gen_insts.push(st);
                 if k + 1 < segs.len() {
-                    let c8 = func.constants.insert_int(8, 64);
+                    let c8 = func.constants.intern_int(8, 64);
                     let ci = func.make_inst(
                         Opcode::Iconst,
                         job.block,

@@ -13,7 +13,7 @@ pub(crate) struct CPlace<'tcx> {
 impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
     pub(crate) fn copy_agg(&mut self, dst: Value, src: Value, size: u32) {
         for off in (0..size).step_by(8) {
-            let off_v = self.builder.iconst(off as i64, TypeId::I64);
+            let off_v = self.builder.const_int(off as i64, TypeId::I64);
             let saddr = if off == 0 {
                 src
             } else {
@@ -36,7 +36,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         let a0 = if o0 == 0 {
             addr
         } else {
-            let off = self.builder.iconst(o0, TypeId::I64);
+            let off = self.builder.const_int(o0, TypeId::I64);
             self.builder.iadd(addr, off)
         };
         // WA-23：按 ScalarPair 标量真实宽度读——恒 I64 会对窄字段读 8 字节
@@ -44,7 +44,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         // 写回时带进相邻槽 → Range.start 被覆盖 → for 循环不终止）。
         let lo = self.builder.load(a0, t0);
         let lo = self.builder.uextend(lo, TypeId::I64);
-        let off1 = self.builder.iconst(o1, TypeId::I64);
+        let off1 = self.builder.const_int(o1, TypeId::I64);
         let a1 = self.builder.iadd(addr, off1);
         let hi = self.builder.load(a1, t1);
         let hi = self.builder.uextend(hi, TypeId::I64);
@@ -58,16 +58,29 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         let a0 = if o0 == 0 {
             addr
         } else {
-            let off = self.builder.iconst(o0, TypeId::I64);
+            let off = self.builder.const_int(o0, TypeId::I64);
             self.builder.iadd(addr, off)
         };
         // WA-23：按标量宽度写——窄字段（如 Option<i32> 的 value@4）8 字节写
         // 越界覆盖相邻槽（range1 实证：hi 写 -0x6c..-0x65 覆盖 _4.start）。
-        let lo_n = self.builder.ireduce(lo, t0);
+        //
+        // **同宽时不能发 `ireduce`**：`ireduce` 只能变窄，8 字节分量（如 `(u64,u64)`
+        // 的 lo/hi）会得到 `ireduce i64 → i64` ⇒ 非法 IR
+        //（`ConversionBitWidthMismatch`，v27 M6 实测：`a[i]`、常量提升静态读取在
+        // `-O` 下必炸）。同宽直接原样存。
+        let lo_n = if self.builder.value_type(lo) == Some(t0) {
+            lo
+        } else {
+            self.builder.ireduce(lo, t0)
+        };
         self.builder.store(lo_n, a0);
-        let off1 = self.builder.iconst(o1, TypeId::I64);
+        let off1 = self.builder.const_int(o1, TypeId::I64);
         let a1 = self.builder.iadd(addr, off1);
-        let hi_n = self.builder.ireduce(hi, t1);
+        let hi_n = if self.builder.value_type(hi) == Some(t1) {
+            hi
+        } else {
+            self.builder.ireduce(hi, t1)
+        };
         self.builder.store(hi_n, a1);
     }
     pub(crate) fn agg_const_bytes(&mut self, addr: Value, bytes: &[u8]) {
@@ -80,10 +93,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             let daddr = if off == 0 {
                 addr
             } else {
-                let off_v = self.builder.iconst(off, TypeId::I64);
+                let off_v = self.builder.const_int(off, TypeId::I64);
                 self.builder.iadd(addr, off_v)
             };
-            let val = self.builder.iconst(v as i64, TypeId::I64);
+            let val = self.builder.const_int(v as i64, TypeId::I64);
             self.builder.store(val, daddr);
         }
     }
@@ -125,7 +138,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     }
                     let off = self.field_offset(ty, idx.index());
                     if off != 0 {
-                        let off_v = self.builder.iconst(off, TypeId::I64);
+                        let off_v = self.builder.const_int(off, TypeId::I64);
                         addr = self.builder.iadd(addr, off_v);
                     }
                     ty = self.field_ty(ty, idx.index());
@@ -138,13 +151,52 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     let idx_v = self.load_local(idx_local);
                     let idx64 = self.builder.uextend(idx_v, TypeId::I64);
                     let elem_size = layout_bytes(self.tcx, self.elem_ty(ty));
-                    let es_v = self.builder.iconst(elem_size as i64, TypeId::I64);
+                    let es_v = self.builder.const_int(elem_size as i64, TypeId::I64);
                     let scaled = self.builder.imul(idx64, es_v);
                     addr = self.builder.iadd(addr, scaled);
                     ty = self.elem_ty(ty);
                 }
+                // **`ConstantIndex`：常量下标的数组元素**（`a[1 of 2]`）。
+                // 此前落到 `_ =>` 的"保持当前地址"⇒ **静默读成 offset 0**！
+                // 实测（v27 M6）：`buf[1]` 在 `-O` 下读到 `buf[0]` 的值——rustc 的
+                // **优化 MIR** 用 `ConstantIndex`、未优化 MIR 用 `Index(_const)`，
+                // 所以只有 `-O` 才暴露。`from_end` 时下标从末尾倒数：
+                // `min_length - 1 - offset`（编译器已保证 len ≥ min_length）。
+                mir::ProjectionElem::ConstantIndex {
+                    offset,
+                    min_length,
+                    from_end,
+                } => {
+                    let idx = if from_end {
+                        min_length.saturating_sub(1).saturating_sub(offset)
+                    } else {
+                        offset
+                    };
+                    let elem_ty = self.elem_ty(ty);
+                    let elem_size = layout_bytes(self.tcx, elem_ty);
+                    let byte_off = (idx as i64).saturating_mul(elem_size as i64);
+                    if byte_off != 0 {
+                        let off_v = self.builder.const_int(byte_off, TypeId::I64);
+                        addr = self.builder.iadd(addr, off_v);
+                    }
+                    ty = elem_ty;
+                }
+                // `arr[from..to]`：数据指针前移 `from * elem_size`。
+                // `from_end`（`arr[..-k]`）需要运行时长度，本后端拿不到 ⇒ 静默按
+                // `from` 处理会读到错的区间，故此处**不猜**：保持原地址并留给
+                // 上层行为（切片元数据的构造在别处），不引入新的错值路径。
+                mir::ProjectionElem::Subslice { from, .. } => {
+                    let elem_ty = self.elem_ty(ty);
+                    let elem_size = layout_bytes(self.tcx, elem_ty);
+                    let byte_off = (from as i64).saturating_mul(elem_size as i64);
+                    if byte_off != 0 {
+                        let off_v = self.builder.const_int(byte_off, TypeId::I64);
+                        addr = self.builder.iadd(addr, off_v);
+                    }
+                    ty = self.elem_ty(ty);
+                }
                 _ => {
-                    // ConstantIndex/Subslice 等投影暂不支持：保持当前地址。
+                    // 其余投影（OpaqueCast 等）：保持当前地址。
                 }
             }
         }
@@ -167,13 +219,15 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         if place.ty(&self.body.local_decls, self.tcx).ty.is_unit()
             || place.ty(&self.body.local_decls, self.tcx).ty.is_never()
         {
-            return Ok(self.builder.iconst(0, TypeId::I64));
+            return Ok(self.builder.const_int(0, TypeId::I64));
         }
         if crate::trace::trace_enabled("LOAD") {
             eprintln!(
-                "[forge] load_place local={} proj={:?}",
+                "[forge] load_place local={} proj={:?} ty={} codegen_ty={:?}",
                 place.local.index(),
                 place.projection,
+                place.ty(&self.body.local_decls, self.tcx).ty,
+                self.locals.get(&place.local).map(|s| s.ty),
             );
         }
         let cp = self.place(place)?;

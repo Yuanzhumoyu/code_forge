@@ -183,7 +183,7 @@ pub fn inline_calls(
                 for imm in &ci.immediates {
                     match imm {
                         Immediate::Const(cid) => {
-                            let new_cid = func.constants.remap_from(&callee.constants, *cid);
+                            let new_cid = func.constants.import(&callee.constants, *cid);
                             new_immediates.push(Immediate::Const(new_cid));
                         }
                         other => new_immediates.push(*other),
@@ -398,7 +398,7 @@ mod tests {
         let mut b = FunctionBuilder::new("add_one", TypeContext::new(), sig);
         let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
         b.switch_to_block(entry);
-        let one = b.iconst_i32(1);
+        let one = b.constant(1i32);
         let sum = b.iadd(params[0], one);
         b.ret(&[sum]);
         b.finish().expect("build")
@@ -415,7 +415,7 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let c41 = b.iconst_i32(41);
+        let c41 = b.constant(41i32);
         let ret = b.call(FuncRef::new(0), &[c41], &[TypeId::I32]);
         b.ret(&[ret[0]]);
 
@@ -462,7 +462,7 @@ mod tests {
         let mut b2 = FunctionBuilder::new("test", TypeContext::new(), sig2);
         let entry2 = b2.create_block();
         b2.switch_to_block(entry2);
-        let c = b2.iconst_i32(5);
+        let c = b2.constant(5i32);
         let ret = b2.call(FuncRef::new(0), &[c], &[TypeId::I32]);
         b2.ret(&[ret[0]]);
         let mut caller = b2.finish().expect("build");
@@ -501,7 +501,7 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let c = b.iconst_i32(10);
+        let c = b.constant(10i32);
         let ret = b.call(FuncRef::new(0), &[c], &[TypeId::I32]);
         let doubled = b.iadd(ret[0], ret[0]);
         b.ret(&[doubled]);
@@ -518,7 +518,7 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let c = b.iconst_i32(1);
+        let c = b.constant(1i32);
         let ret = b.call(FuncRef::new(99), &[c], &[TypeId::I32]); // not in table
         b.ret(&[ret[0]]);
 
@@ -553,7 +553,7 @@ mod tests {
         let mut b2 = FunctionBuilder::new("test", TypeContext::new(), sig2);
         let entry2 = b2.create_block();
         b2.switch_to_block(entry2);
-        let c = b2.iconst_i32(5);
+        let c = b2.constant(5i32);
         let ret = b2.call(FuncRef::new(0), &[c], &[TypeId::I32]);
         b2.ret(&[ret[0]]);
         let mut caller = b2.finish().expect("build");
@@ -569,7 +569,7 @@ mod tests {
         let mut callee_builder = FunctionBuilder::new("never_fn", TypeContext::new(), sig);
         let (entry, params) = callee_builder.create_block_with_params(&[(TypeId::I32, "x")]);
         callee_builder.switch_to_block(entry);
-        let one = callee_builder.iconst_i32(1);
+        let one = callee_builder.constant(1i32);
         let result = callee_builder.iadd(params[0], one);
         callee_builder.ret(&[result]);
         let mut callee = callee_builder.finish().expect("build");
@@ -582,7 +582,7 @@ mod tests {
         let mut b2 = FunctionBuilder::new("test", TypeContext::new(), sig2);
         let entry2 = b2.create_block();
         b2.switch_to_block(entry2);
-        let c = b2.iconst_i32(5);
+        let c = b2.constant(5i32);
         let ret = b2.call(FuncRef::new(0), &[c], &[TypeId::I32]);
         b2.ret(&[ret[0]]);
         let mut caller = b2.finish().expect("build");
@@ -602,7 +602,7 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let c = b.iconst_i32(41);
+        let c = b.constant(41i32);
         let ret = b.call(FuncRef::new(0), &[c], &[TypeId::I32]);
         b.ret(&[ret[0]]);
         let mut caller = b.finish().expect("build");
@@ -636,15 +636,15 @@ mod tests {
         let exit_blk = b.create_block();
 
         b.switch_to_block(entry_blk);
-        let iv = b.iconst_i32(0);
+        let iv = b.constant(0i32);
         b.jump(body_blk, &[]);
 
         b.switch_to_block(body_blk);
-        let c10 = b.iconst_i32(10);
+        let c10 = b.constant(10i32);
         let cmp = b.icmp(IntCC::Slt, iv, c10);
-        let c5 = b.iconst_i32(5);
+        let c5 = b.constant(5i32);
         let _call_res = b.call(FuncRef::new(0), &[c5], &[TypeId::I32]); // call inside loop!
-        let inc = b.iconst_i32(1);
+        let inc = b.constant(1i32);
         let _next = b.iadd(iv, inc);
         b.branch(cmp, body_blk, &[], exit_blk, &[]);
 
@@ -676,7 +676,7 @@ mod tests {
         let mut b = FunctionBuilder::new("caller", TypeContext::new(), sig2);
         let entry2 = b.create_block();
         b.switch_to_block(entry2);
-        let c = b.iconst_i32(1);
+        let c = b.constant(1i32);
         let ret = b.call(FuncRef::new(0), &[c], &[TypeId::I32]);
         b.ret(&[ret[0]]);
         let mut caller = b.finish().expect("build");

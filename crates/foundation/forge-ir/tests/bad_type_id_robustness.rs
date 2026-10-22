@@ -20,7 +20,7 @@ fn func_with_bad_value_type(ctx: &TypeContext) -> forge_ir::Function {
     let sig = FunctionSignature::new(&[], &[ctx.i32_ty()]);
     let mut fb = FunctionBuilder::new("bad_value_ty", ctx.clone(), sig);
     let (_entry, _) = fb.create_entry_block();
-    let v = fb.iconst_i32(7);
+    let v = fb.constant(7i32);
     fb.ret(&[v]);
     let mut func = fb.finish().expect("build");
     assert!(
@@ -74,7 +74,7 @@ fn verifier_reports_bad_sig_ref() {
     let sig = FunctionSignature::new(&[], &[ctx.i32_ty()]);
     let mut fb = FunctionBuilder::new("bad_sigref", ctx.clone(), sig);
     let (_entry, _) = fb.create_entry_block();
-    let v = fb.iconst_i32(3);
+    let v = fb.constant(3i32);
     fb.ret(&[v]);
     let mut func = fb.finish().expect("build");
     func.signature = SigRef::new(BAD);

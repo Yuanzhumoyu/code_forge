@@ -15,7 +15,7 @@ use crate::entity::*;
 use crate::ir::constant::ConstantPool;
 use crate::ir::data_layout::DataLayout;
 use crate::ir::data_layout::TargetTriple;
-use crate::ir::dfg::{BlockData, DataFlowGraph, Instruction};
+use crate::ir::dfg::{BlockData, DataFlowGraph, Instruction, ValueDef};
 use crate::ir::immediate::Immediate;
 use crate::ir::metadata::{AttachedMetadata, MetadataStore};
 use crate::ir::opcode::Opcode;
@@ -61,6 +61,13 @@ impl FunctionAttributes {
     // Calling convention
     pub const NO_RED_ZONE: Self = Self(1 << 16); // no red zone in stack frame
     pub const SPECULATABLE: Self = Self(1 << 17); // safe to speculate
+    /// **不要栈帧**（`#[unsafe(naked)]` 函数）：管线**不发射**序言/尾声、不保存
+    /// callee-saved、不建立帧指针——函数体里的汇编自带 `ret`。
+    ///
+    /// 语义边界（发射侧强制）：置了该位还出现栈槽/spill/frame 需求 ⇒ 报内部错误
+    /// （"naked 与栈帧互斥"），绝不静默忽略——那会产出"`ret` 之前 push 过 rbp"的错值路径。
+    /// 编号取 18：0-17 已分配（位模式原样落盘，新增位不升 `IR_FORMAT_VERSION`）。
+    pub const NO_FRAME: Self = Self(1 << 18);
 
     /// 二进制序列化层：原始位模式（写侧）。
     ///
@@ -757,6 +764,44 @@ impl Function {
     /// case 实参、`ret` 返回值、`invoke`/`resume` 用值（S4 主体之前它们不在
     /// use-lists 里，这里改不到——该缺口已随表示归一消失）。
     /// 需要一次替换多组值时用 [`Function::apply_replacements`]。
+    /// 克隆一条指令到 `target` 块，并**登记 use-list**。
+    ///
+    /// `DataFlowGraph::clone_inst` 只负责建值/挂块/搬运全字段——它拿不到
+    /// `use_lists`，所以**必须**由这里补一次 `record_inst`。漏登记的直接后果是
+    /// verifier 报 `UseListInconsistency`（`inst i165 operand 0 … not found in
+    /// use-lists`），而 LICM 外提恰好就是"克隆 + RAUW + 杀原件"的形状。
+    /// v27 M5 实测：`forge-opt` 的 LICM 一跑就因此炸掉。
+    ///
+    /// 优化 pass 请一律走这个入口，别直接调 `dfg.clone_inst`。
+    pub fn clone_inst_into(
+        &mut self,
+        inst: Inst,
+        target: Block,
+        value_remap: &mut SecondaryMap<Value, Value>,
+    ) -> Inst {
+        let new_inst = self.dfg.clone_inst(inst, target, value_remap);
+        // **插入位置修正**：`dfg.clone_inst` 走的是"新建指令 → append 到 inst_order
+        // 末尾"。若目标块已有终结符（常见：把指令外提到循环头），克隆就落在**终结符
+        // 之后** ⇒ 死位置：指令不会被发射/执行，而它的结果已被 RAUW 到各处使用
+        // ⇒ 读到垃圾（v27 M6 实测：`while i <= 4 { acc += sq(i + seed()); i += 1 }`
+        // 在优化档下错值 / AV 崩溃；`FORGE_OPT_SKIP=licm` 即恢复）。
+        // 这里把克隆挪到终结符**之前**（克隆自身是终结符时不动）。
+        let term = self.dfg.block_terminator(target);
+        if let Some(term) = term
+            && term != new_inst
+        {
+            let order = &mut self.dfg.block_mut(target).inst_order;
+            if let Some(pos) = order.iter().position(|&i| i == new_inst) {
+                order.remove(pos);
+            }
+            let tpos = order.iter().position(|&i| i == term).unwrap_or(order.len());
+            order.insert(tpos, new_inst);
+        }
+        let operands = self.dfg.inst_data(new_inst).operands.clone();
+        self.use_lists.record_inst(new_inst, &operands);
+        new_inst
+    }
+
     pub fn replace_all_uses(&mut self, old: Value, new: Value) -> usize {
         let uses: Vec<(Inst, u32)> = self
             .use_lists
@@ -914,6 +959,171 @@ impl Function {
         }
         if idx < bd.param_values.len() {
             bd.param_values.remove(idx);
+        }
+    }
+
+    /// 把 `block` 的第 `idx` 个块参数**替换成** `new_tys` 指定的若干个参数，并同步改写
+    /// **所有前驱**传给该位置的实参（旧的单个实参 → `per_pred[前驱]` 给出的序列，
+    /// 顺序与 `new_tys` 一致；后续参数的实参照样保留，位置平移由本方法负责）。
+    ///
+    /// 返回新建参数的值句柄（顺序与 `new_tys` 一致）。
+    ///
+    /// 为什么调用方要给 `per_pred`：把宽值拆成肢时（`wide_split`），每个前驱手上的实参不同、
+    /// 肢也只能在前驱里就地取——本方法只负责**结构变更**与 `ValueDef::Param` 索引修正。
+    ///
+    /// 旧参数值的使用必须由调用方先 RAUW（本方法只把它从参数表里摘掉）。
+    ///
+    /// **两阶段用法**（宽值拆肢需要）：先 [`Function::split_block_param_shallow`] 把参数建出来，
+    /// 等前驱实参的肢算好后再 [`Function::splice_terminator_args`] 回填——
+    /// 中间态 IR 不合法（实参个数对不上），所以两阶段之间**不能**跑校验或其它 pass。
+    pub fn splice_block_param(
+        &mut self,
+        block: Block,
+        idx: usize,
+        new_tys: &[TypeId],
+        per_pred: &SecondaryMap<Block, Vec<Value>>,
+    ) -> Vec<Value> {
+        let new_values = self.split_block_param_shallow(block, idx, new_tys);
+        if new_values.is_empty() {
+            return new_values;
+        }
+        // 前驱实参展开
+        let preds: Vec<Block> = self.predecessors().get(block).cloned().unwrap_or_default();
+        for pred in preds {
+            let Some(repl) = per_pred.get(pred) else {
+                continue;
+            };
+            self.splice_terminator_args(pred, block, idx, repl);
+        }
+        new_values
+    }
+
+    /// [`Function::splice_block_param`] 的**前半**：只改块参数表（把一个参数换成 `new_tys`
+    /// 指定的若干个），**不动前驱实参** ⇒ 返回后 IR 暂时不合法，调用方必须紧接着用
+    /// [`Function::splice_terminator_args`] 给每个前驱回填实参。
+    ///
+    /// 两阶段存在的理由：宽值拆肢时，肢只能在前驱里算（`wide_split` 的 `parts`），
+    /// 而参数的**值句柄**又要先建出来供使用点解析 —— 顺序不能只有一个阶段。
+    pub fn split_block_param_shallow(
+        &mut self,
+        block: Block,
+        idx: usize,
+        new_tys: &[TypeId],
+    ) -> Vec<Value> {
+        if self.dfg.block_param_values(block).get(idx).is_none() {
+            return Vec::new();
+        }
+        // ① 先建新参数值（占位下标，稍后统一修正 ValueDef）
+        let mut new_values: Vec<Value> = Vec::with_capacity(new_tys.len());
+        for (k, ty) in new_tys.iter().enumerate() {
+            let v = self
+                .dfg
+                .make_value(*ty, ValueDef::Param(block, (idx + k) as u16));
+            new_values.push(v);
+        }
+        // ② 重建参数表（类型 + 值）
+        {
+            let bd = self.dfg.block_mut(block);
+            if idx < bd.params.len() {
+                bd.params.remove(idx);
+            }
+            if idx < bd.param_values.len() {
+                bd.param_values.remove(idx);
+            }
+            for (k, (ty, v)) in new_tys.iter().zip(new_values.iter()).enumerate() {
+                bd.params.insert(idx + k, *ty);
+                bd.param_values.insert(idx + k, *v);
+            }
+        }
+        // ③ 修正**所有**参数值的 `ValueDef::Param` 下标（后面的参数平移了）
+        let params: Vec<Value> = self.dfg.block_param_values(block).to_vec();
+        for (k, v) in params.iter().enumerate() {
+            self.dfg.set_value_def(*v, ValueDef::Param(block, k as u16));
+        }
+        new_values
+    }
+
+    /// 从 `block` 终结符传给 `target` 的实参里把第 `idx` 个替换成 `new_args`（可多个）。
+    ///
+    /// 与 [`Function::remove_terminator_arg`] 同一手法：解码 → 改 → 按形式写回，
+    /// 写入口顺带保证 use-def 新鲜。
+    pub fn splice_terminator_args(
+        &mut self,
+        block: Block,
+        target: Block,
+        idx: usize,
+        new_args: &[Value],
+    ) {
+        match self.dfg.term_kind(block) {
+            Some(TermKind::Jump) => {
+                if let Some((t, args)) = self.dfg.term_jump(block)
+                    && t == target
+                    && idx < args.len()
+                {
+                    let mut v = args.to_vec();
+                    v.splice(idx..idx + 1, new_args.iter().copied());
+                    self.jump(block, t, &v);
+                }
+            }
+            Some(TermKind::Branch) => {
+                let Some((cond, t, targs, e, eargs)) = self.dfg.term_branch(block) else {
+                    return;
+                };
+                let mut new_targs = targs.to_vec();
+                let mut new_eargs = eargs.to_vec();
+                if t == target && idx < new_targs.len() {
+                    new_targs.splice(idx..idx + 1, new_args.iter().copied());
+                } else if e == target && idx < new_eargs.len() {
+                    new_eargs.splice(idx..idx + 1, new_args.iter().copied());
+                } else {
+                    return;
+                }
+                self.branch(block, cond, t, &new_targs, e, &new_eargs);
+            }
+            Some(TermKind::Switch) => {
+                let Some(view) = self.dfg.term_switch(block) else {
+                    return;
+                };
+                let disc = view.discriminant;
+                let default_block = view.default_block;
+                let mut default_args = view.default_args.to_vec();
+                if default_block == target && idx < default_args.len() {
+                    default_args.splice(idx..idx + 1, new_args.iter().copied());
+                }
+                let mut cases: Vec<(i64, Block, Vec<Value>)> = view
+                    .cases
+                    .iter()
+                    .map(|c| (c.value, c.target, c.args.to_vec()))
+                    .collect();
+                for (_, cb, a) in cases.iter_mut() {
+                    if *cb == target && idx < a.len() {
+                        a.splice(idx..idx + 1, new_args.iter().copied());
+                    }
+                }
+                let case_refs: Vec<(i64, Block, &[Value])> = cases
+                    .iter()
+                    .map(|(v, b, a)| (*v, *b, a.as_slice()))
+                    .collect();
+                self.switch(block, disc, default_block, &default_args, &case_refs);
+            }
+            Some(TermKind::Invoke) => {
+                let Some((callee, iargs, ret_ty, n, nargs, u, uargs)) = self.dfg.term_invoke(block)
+                else {
+                    return;
+                };
+                let iargs = iargs.to_vec();
+                let mut new_nargs = nargs.to_vec();
+                let mut new_uargs = uargs.to_vec();
+                if n == target && idx < new_nargs.len() {
+                    new_nargs.splice(idx..idx + 1, new_args.iter().copied());
+                } else if u == target && idx < new_uargs.len() {
+                    new_uargs.splice(idx..idx + 1, new_args.iter().copied());
+                } else {
+                    return;
+                }
+                self.invoke(block, callee, &iargs, ret_ty, n, &new_nargs, u, &new_uargs);
+            }
+            _ => {}
         }
     }
 
@@ -1606,7 +1816,7 @@ mod tests {
         );
         let (e, _p) = fb.create_block_with_params(&[(TypeId::I64, "x")]);
         fb.switch_to_block(e);
-        let z = fb.iconst(0, TypeId::I64);
+        let z = fb.const_int(0, TypeId::I64);
         fb.ret(&[z]);
         module.add_function(fb.finish().expect("plain"));
 
@@ -1618,7 +1828,7 @@ mod tests {
         );
         let (e, _p) = fb.create_block_with_params(&[(TypeId::I64, "fmt")]);
         fb.switch_to_block(e);
-        let z = fb.iconst(0, TypeId::I64);
+        let z = fb.const_int(0, TypeId::I64);
         fb.ret(&[z]);
         module.add_function(fb.finish().expect("variadic"));
 
@@ -1662,10 +1872,10 @@ mod tests {
         fb.switch_to_block(entry);
         fb.branch(params[0], then_blk, &[], else_blk, &[]);
         fb.switch_to_block(then_blk);
-        let v1 = fb.iconst_i32(1);
+        let v1 = fb.constant(1i32);
         fb.ret(&[v1]);
         fb.switch_to_block(else_blk);
-        let v2 = fb.iconst_i32(2);
+        let v2 = fb.constant(2i32);
         fb.ret(&[v2]);
         let func = Arc::new(fb.finish().expect("build"));
 
@@ -1700,8 +1910,8 @@ mod tests {
         let mut fb = crate::ir::builder::FunctionBuilder::new("test", ctx.clone(), sig);
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let a = fb.iconst_i32(1);
-        let c = fb.iconst_i32(2);
+        let a = fb.constant(1i32);
+        let c = fb.constant(2i32);
         let x = fb.iadd(a, c);
         let y = fb.iadd(x, a);
         let z = fb.iadd(x, y);
@@ -1761,8 +1971,8 @@ mod tests {
         let mut fb = crate::ir::builder::FunctionBuilder::new("test", ctx.clone(), sig);
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let a = fb.iconst_i32(1);
-        let c = fb.iconst_i32(2);
+        let a = fb.constant(1i32);
+        let c = fb.constant(2i32);
         let x = fb.iadd(a, c);
         let y = fb.iadd(x, a);
         fb.ret(&[y]);
@@ -1794,8 +2004,8 @@ mod tests {
         let (entry, _) = fb.create_entry_block();
         let target = fb.create_block();
         fb.switch_to_block(entry);
-        let a = fb.iconst_i32(1);
-        let c = fb.iconst_i32(2);
+        let a = fb.constant(1i32);
+        let c = fb.constant(2i32);
         let x = fb.iadd(a, c);
         fb.ret(&[x]);
 
@@ -1837,25 +2047,27 @@ mod tests {
     fn test_remap_from_cross_pool() {
         let mut src = ConstantPool::new();
         let mut dst = ConstantPool::new();
-        let i = src.insert_int(42, 64);
-        let f = src.insert_float(1.5f64.to_bits());
-        let b = src.insert_big(crate::util::big::Big::from_i128(1i128 << 100));
-        let v = src.insert_vector(&[1, 2, 3, 4]);
+        let i = src.intern_int(42, 64);
+        let f = src.intern_float(1.5f64.to_bits() as u128, 64);
+        let b = src.intern_big(crate::util::big::Big::from_i128(1i128 << 100));
+        let v = src.intern_vector(&[1, 2, 3, 4], Endianness::Little);
         // dst 先插入一条让两池索引错开，验证重定位不依赖索引
-        dst.insert_int(7, 8);
+        dst.intern_int(7, 8);
 
-        let ri = dst.remap_from(&src, i);
-        let rf = dst.remap_from(&src, f);
-        let rb = dst.remap_from(&src, b);
-        let rv = dst.remap_from(&src, v);
-        assert_eq!(dst.get_int(ri), Some((42, 64)));
-        assert_eq!(dst.get_float(rf), Some(1.5f64.to_bits()));
-        assert_eq!(dst.get_big(rb), src.get_big(b));
-        assert_eq!(dst.get_vector(rv), src.get_vector(v));
+        let ri = dst.import(&src, i);
+        let rf = dst.import(&src, f);
+        let rb = dst.import(&src, b);
+        let rv = dst.import(&src, v);
         assert_eq!(
-            dst.get_vector_endian(rv),
-            src.get_vector_endian(v),
-            "向量端序保留"
+            dst.bits(ri),
+            Some(crate::ir::constant::BitValue {
+                bits: 42,
+                width: 64
+            })
         );
+        assert_eq!(dst.bits(rf).map(|v| v.bits as u64), Some(1.5f64.to_bits()));
+        assert_eq!(dst.big(rb), src.big(b));
+        assert_eq!(dst.vector(rv), src.vector(v));
+        assert_eq!(dst.vector_endian(rv), src.vector_endian(v), "向量端序保留");
     }
 }

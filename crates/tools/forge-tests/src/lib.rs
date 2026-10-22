@@ -38,7 +38,7 @@ macro_rules! backend_tests {
                 let mut fb = FunctionBuilder::new("test", TypeContext::new(), sig);
                 fb.create_block_here();
                 let func = {
-                    let v = fb.iconst_i32(42);
+                    let v = fb.constant(42i32);
                     fb.ret(&[v]);
                     fb.finish().expect("build")
                 };
@@ -341,7 +341,7 @@ pub fn run_x86_64_pipeline_tests() {
     let (entry, _) = fb.create_entry_block();
     let func = {
         fb.switch_to_block(entry);
-        let v = fb.iconst_i32(42);
+        let v = fb.constant(42i32);
         fb.ret(&[v]);
         fb.finish().expect("build")
     };
@@ -366,10 +366,16 @@ pub mod nightly {
         forge_rustc::auto_register_isa_for_target("amd64");
         use code_forge::backend::Registry;
         assert!(Registry::global().contains("x86_64"));
-        assert_eq!(forge_rustc::isa_name_for_target("amd64"), "x86_64");
+        // v27 M4-T1 起 `isa_name_for_target` **不再静默回落**：返回 `Option<&str>`，
+        // 认不出的目标给 `None`（而不是悄悄编出 x86 机器码）。
+        assert_eq!(forge_rustc::isa_name_for_target("amd64"), Some("x86_64"));
         assert_eq!(
             forge_rustc::isa_name_for_target("x86_64-unknown-linux-gnu"),
-            "x86_64"
+            Some("x86_64")
+        );
+        assert_eq!(
+            forge_rustc::isa_name_for_target("riscv64-unknown-elf"),
+            None
         );
     }
 

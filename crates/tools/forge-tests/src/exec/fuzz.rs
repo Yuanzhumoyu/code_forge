@@ -78,7 +78,7 @@ fn check_equivalent(
 fn fuzz_deterministic_constants() {
     for val in [0i64, 1, -1, 42, i64::MAX, i64::MIN] {
         let v = val; // capture by value
-        check_deterministic(&format!("const_{val}"), move |b| b.iconst_i64(v));
+        check_deterministic(&format!("const_{val}"), move |b| b.constant(v));
     }
 }
 
@@ -92,13 +92,13 @@ fn fuzz_commutative_add() {
     check_equivalent(
         "comm_add",
         |b| {
-            let a = b.iconst_i64(30);
-            let c = b.iconst_i64(12);
+            let a = b.constant(30i64);
+            let c = b.constant(12i64);
             b.iadd(a, c)
         },
         |b| {
-            let a = b.iconst_i64(12);
-            let c = b.iconst_i64(30);
+            let a = b.constant(12i64);
+            let c = b.constant(30i64);
             b.iadd(a, c)
         },
     );
@@ -110,13 +110,13 @@ fn fuzz_commutative_mul() {
     check_equivalent(
         "comm_mul",
         |b| {
-            let a = b.iconst_i64(7);
-            let c = b.iconst_i64(11);
+            let a = b.constant(7i64);
+            let c = b.constant(11i64);
             b.imul(a, c)
         },
         |b| {
-            let a = b.iconst_i64(11);
-            let c = b.iconst_i64(7);
+            let a = b.constant(11i64);
+            let c = b.constant(7i64);
             b.imul(a, c)
         },
     );
@@ -128,16 +128,16 @@ fn fuzz_distributive() {
     check_equivalent(
         "distrib",
         |b| {
-            let a = b.iconst_i64(3);
-            let d = b.iconst_i64(5);
+            let a = b.constant(3i64);
+            let d = b.constant(5i64);
             let sum = b.iadd(a, d);
-            let c = b.iconst_i64(7);
+            let c = b.constant(7i64);
             b.imul(sum, c)
         },
         |b| {
-            let a = b.iconst_i64(3);
-            let d = b.iconst_i64(5);
-            let c = b.iconst_i64(7);
+            let a = b.constant(3i64);
+            let d = b.constant(5i64);
+            let c = b.constant(7i64);
             let ac = b.imul(a, c);
             let dc = b.imul(d, c);
             b.iadd(ac, dc)
@@ -150,10 +150,10 @@ fn fuzz_add_sub_identity() {
     // (a+b)-b == a
     check_equivalent(
         "add_sub_id",
-        |b| b.iconst_i64(42),
+        |b| b.constant(42i64),
         |b| {
-            let a = b.iconst_i64(42);
-            let d = b.iconst_i64(15);
+            let a = b.constant(42i64);
+            let d = b.constant(15i64);
             let sum = b.iadd(a, d);
             b.isub(sum, d)
         },
@@ -165,9 +165,9 @@ fn fuzz_double_negate() {
     // bnot(bnot(x)) == x
     check_equivalent(
         "double_not",
-        |b| b.iconst_i64(0x12345678),
+        |b| b.constant(0x12345678i64),
         |b| {
-            let x = b.iconst_i64(0x12345678);
+            let x = b.constant(0x12345678i64);
             let n1 = b.bnot(x);
             b.bnot(n1)
         },
@@ -178,7 +178,7 @@ fn fuzz_double_negate() {
 fn fuzz_xor_self_zero() {
     // x ^ x == 0
     check_result("xor_self", 0, |b| {
-        let x = b.iconst_i64(0xDEADBEEF);
+        let x = b.constant(0xDEADBEEFi64);
         b.bxor(x, x)
     });
 }
@@ -187,8 +187,8 @@ fn fuzz_xor_self_zero() {
 fn fuzz_and_zero() {
     // x & 0 == 0
     check_result("and_zero", 0, |b| {
-        let x = b.iconst_i64(0xFFFFFFFF);
-        let z = b.iconst_i64(0);
+        let x = b.constant(0xFFFFFFFFi64);
+        let z = b.constant(0i64);
         b.band(x, z)
     });
 }
@@ -197,8 +197,8 @@ fn fuzz_and_zero() {
 fn fuzz_or_all_ones() {
     // x | 0 == x
     check_result("or_identity", 0xABCD, |b| {
-        let x = b.iconst_i64(0xABCD);
-        let z = b.iconst_i64(0);
+        let x = b.constant(0xABCDi64);
+        let z = b.constant(0i64);
         b.bor(x, z)
     });
 }
@@ -207,8 +207,8 @@ fn fuzz_or_all_ones() {
 fn fuzz_shift_left_right() {
     // (x << 8) >> 8 == x (logical, for positive numbers)
     check_result("shl8_shr8", 0x1234, |b| {
-        let x = b.iconst_i64(0x1234);
-        let s = b.iconst_i64(8);
+        let x = b.constant(0x1234i64);
+        let s = b.constant(8i64);
         let shl = b.ishl(x, s);
         b.ushr(shl, s)
     });
@@ -218,8 +218,8 @@ fn fuzz_shift_left_right() {
 fn fuzz_div_mul_identity() {
     // (x / y) * y == x - (x % y)  (use small values to avoid urem issues)
     check_result("div_mul_check", 98, |b| {
-        let x = b.iconst_i64(100);
-        let y = b.iconst_i64(7);
+        let x = b.constant(100i64);
+        let y = b.constant(7i64);
         let q = b.udiv(x, y); // 100/7 = 14
         b.imul(q, y) // 14*7 = 98
     });
@@ -233,8 +233,8 @@ fn fuzz_div_mul_identity() {
 fn fuzz_boundary_i64_max_add() {
     // i64::MAX + 1 wraps to i64::MIN (requires REX.W)
     check_result("i64_max_add_1", i64::MIN, |b| {
-        let a = b.iconst_i64(i64::MAX);
-        let c = b.iconst_i64(1);
+        let a = b.constant(i64::MAX);
+        let c = b.constant(1i64);
         b.iadd(a, c)
     });
 }
@@ -243,8 +243,8 @@ fn fuzz_boundary_i64_max_add() {
 fn fuzz_boundary_i64_min_sub() {
     // i64::MIN - 1 wraps to i64::MAX (requires REX.W)
     check_result("i64_min_sub_1", i64::MAX, |b| {
-        let a = b.iconst_i64(i64::MIN);
-        let c = b.iconst_i64(1);
+        let a = b.constant(i64::MIN);
+        let c = b.constant(1i64);
         b.isub(a, c)
     });
 }
@@ -253,8 +253,8 @@ fn fuzz_boundary_i64_min_sub() {
 fn fuzz_boundary_large_mul() {
     // 1_000_000_000 × 1_000_000_000 = 10^18 (> 2^32, requires REX.W)
     check_result("large_mul", 1_000_000_000_000_000_000, |b| {
-        let a = b.iconst_i64(1_000_000_000);
-        let c = b.iconst_i64(1_000_000_000);
+        let a = b.constant(1_000_000_000i64);
+        let c = b.constant(1_000_000_000i64);
         b.imul(a, c)
     });
 }
@@ -263,8 +263,8 @@ fn fuzz_boundary_large_mul() {
 fn fuzz_boundary_power_of_two_shl() {
     // 1 << 62 = 4611686018427387904 (> 2^32, requires REX.W)
     check_result("shl_62", 1i64 << 62, |b| {
-        let a = b.iconst_i64(1);
-        let c = b.iconst_i64(62);
+        let a = b.constant(1i64);
+        let c = b.constant(62i64);
         b.ishl(a, c)
     });
 }
@@ -273,7 +273,7 @@ fn fuzz_boundary_power_of_two_shl() {
 fn fuzz_boundary_not_i64_max() {
     // NOT(i64::MAX) = i64::MIN (all bits inverted, requires REX.W)
     check_result("not_max", i64::MIN, |b| {
-        let a = b.iconst_i64(i64::MAX);
+        let a = b.constant(i64::MAX);
         b.bnot(a)
     });
 }

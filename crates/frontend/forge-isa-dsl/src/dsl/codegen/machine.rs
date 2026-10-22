@@ -222,6 +222,10 @@ pub(crate) fn gen_machine_inst(
     let mut move_arms = Vec::new();
     let mut branch_targets_arms = Vec::new();
     let mut implicit_arms: Vec<TokenStream> = Vec::new();
+    // `[machine] reg_move`：哪条指令是"寄存器 ← 寄存器"搬移（块参数拷贝用）。
+    // 命中时生成 `MachineInst::make_reg_move`；未声明 ⇒ 不生成（trait 缺省返回 None）。
+    let reg_move_name = model.machine.as_ref().and_then(|m| m.reg_move.clone());
+    let mut reg_move_arm: Option<TokenStream> = None;
     // 物理寄存器名 → 索引（implicit_regs 解析用）。锚点 = **元数据派生**的
     // 主 GPR 类（`[meta].default_gpr_width` > 最宽已声明组），缺组即 Err——
     // 历史实现锚定 `GPR(8).or(GPR(4))`，1 字节寄存器 ISA 会得到空表并静默
@@ -423,6 +427,24 @@ pub(crate) fn gen_machine_inst(
                 );
             }
         }
+        // `[machine] reg_move = "<本指令名>"` ⇒ 生成"造一条搬移"的构造臂。
+        // 判据用**名字**（谱里显式点名），不用 effect 推断：同一条谱里可能有多条
+        // Move-effect 指令（8/16/32/64 位视图），而块参数拷贝只该用最通用的那条。
+        if reg_move_name.as_deref() == Some(info.inst.name.as_str())
+            && def_idxs.len() == 1
+            && use_idxs.len() == 1
+        {
+            let d = fids[usize::from(def_idxs[0])];
+            let u = fids[usize::from(use_idxs[0])];
+            if d != u && reg_move_arm.is_none() {
+                reg_move_arm = Some(quote! {
+                    Inst::#vn {
+                        #d: Reg::from_index(dst, class),
+                        #u: Reg::from_index(src, class),
+                    }
+                });
+            }
+        }
     }
 
     // `Inst::Raw` 用一行空形状（表尾）。
@@ -435,6 +457,11 @@ pub(crate) fn gen_machine_inst(
     shape_index_arms.push(quote! { Inst::Raw(_) => #raw_row });
     reg_slot_arms.push(quote! { Inst::Raw(_) => None });
     set_reg_slot_arms.push(quote! { Inst::Raw(_) => false });
+
+    let reg_move_body = match reg_move_arm {
+        Some(arm) => quote! { Some(#arm) },
+        None => quote! { None },
+    };
 
     Ok(quote! {
         /// 每条指令的**形状**（v18 S8a）：uses/defs/reg_field/约束/effect 的单一事实源。
@@ -503,6 +530,18 @@ pub(crate) fn gen_machine_inst(
             }
             fn is_move(&self) -> Option<(u32, u32)> {
                 match self { #(#move_arms,)* _ => None }
+            }
+            /// 「寄存器 ← 寄存器」搬移（`[machine] reg_move` 声明的指令）。
+            ///
+            /// 未声明 ⇒ `None` ⇒ 调用方必须退回"块参数别名"路径（该 ISA 尚不支持
+            /// 块参数拷贝）。**这不是可选优化**：块参数别名在"同一实参喂多个参数"时
+            /// 会静默错值（v27 M6 实测），有搬移指令的谱才有正确退路。
+            fn make_reg_move(
+                dst: u32,
+                src: u32,
+                class: forge_ir::RegClass,
+            ) -> Option<Self> {
+                #reg_move_body
             }
             /// **操作数表**（v23 M4 的单一模型）：uses/defs 的**字段序** + 各自的
             /// 占位槽/声明类/约束/角色/可改写性。`uses`/`defs`/`*_constraints`/`reg_field`

@@ -1049,10 +1049,10 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             elem64: bool,
         ) -> i64 {
             let Some(p) = pool else { return 0 };
-            let Some(bytes) = p.get_vector(crate::prelude::ConstId::from_raw(cid)) else { return 0 };
+            let Some(bytes) = p.vector(crate::prelude::ConstId::from_raw(cid)) else { return 0 };
             let base = half * 16;
             let le = matches!(
-                p.get_vector_endian(crate::prelude::ConstId::from_raw(cid)),
+                p.vector_endian(crate::prelude::ConstId::from_raw(cid)),
                 None | Some(crate::prelude::Endianness::Little)
             );
             if elem64 {
@@ -1081,7 +1081,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             cid: u32,
         ) -> i64 {
             let Some(p) = pool else { return 0 };
-            let Some(bytes) = p.get_vector(crate::prelude::ConstId::from_raw(cid)) else { return 0 };
+            let Some(bytes) = p.vector(crate::prelude::ConstId::from_raw(cid)) else { return 0 };
             if bytes.len() < 8 { return 0; }
             let mut a = [0u8; 8];
             a.copy_from_slice(&bytes[0..8]);
@@ -2034,6 +2034,19 @@ fn gen_call_lowering(
                 // 结果 vreg 绑 **dest 序号**（x86 MOV_RM8_R64 dest=op1=1；
                 // riscv mv dest=op0=0）——按角色泛化，防定宽方向反。
                 __pack.map_reg_field(__r, __idx, #m_dest_idx, true);
+                // **`源` 是固定物理寄存器**（x86 RAX / arm64 x0 / riscv a0），没有 vreg
+                // 绑定 ⇒ 分配器看不见这次"读"。不声明的话，别的活值可能被分到同一个
+                // 寄存器，这条搬运就会读到它的值（实测：循环内调用后 acc 被算成 2*acc / AV）。
+                // 声明成"本指令点写死的寄存器"后，分配器不会把活值放在它上面。
+                // 只在"该寄存器没被本次调用当参数寄存器"时声明——arm64/riscv 的
+                // a0/x0 同时是首个整数参数寄存器，无条件声明会把实参搬运挤走。
+                if let Some((__ri, __rc)) = ctx.conv.ret_gpr
+                    && !__cl.args.iter().any(|__a| {
+                        __a.place.as_reg().is_some_and(|__r| __r.slot == __ri)
+                    })
+                {
+                    ctx.current_clobbers.push((__ri, __rc));
+                }
             }
         }
     };

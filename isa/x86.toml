@@ -3143,6 +3143,17 @@ insts = ["MFENCE"]
 insts = ["LEA_R64_SIB {out}, [RBP+{alloca}]"]
 
 # ── 溢出 6 条：{out}=值、{out2}=flag（seto=0/setb=2）──
+#
+# **已知限制（2026-10-19，v27 M6-㊸/㊽）**：这 6 条规则**只在操作数真的落在本类型宽度上**
+# 时才给出正确的标志位——x86 的 8 位 reg-reg 算术是**另一个 opcode**（`00 /r`），而
+# `ADD_RM_R` 只有 16/32/64 形态（`gprx` 显式排除 8 位），8 位操作数因此落到 16/32 位编码上，
+# `setb/seto` 反映的是加宽后的进位/溢出 ⇒ **IR 层 `*add_overflow` 直接喂 8 位值会得到恒 0 的
+# 标志**（JIT 复现 `jit_uadd_overflow_flag_is_correct`）。
+# **但真实 rustc 代码不受影响**：`forge-rustc` 的 `lower_checked_op` 对 8/16 位的
+# 加/减改成"扩宽到 I32 算 + 比较区间出标志 + 截回"，完全不依赖 CF/OF
+# （实测 `200u8 + 100u8` 在 `-Coverflow-checks=on` 下真的 panic）。
+# 端口化修法（未做）：让 reg-reg form 支持按 opsize 换 opcode，或给这 6 条规则按位宽
+# 分派到 8 位指令名。见 `docs/archive/forge-rustc-v27-milestones.md` 的 M6-㊽。
 
 [[lower.SaddOverflow]]
 insts = [
@@ -3609,12 +3620,20 @@ vary = { cond = [1, 2, 4, 7, 8, 11, 14, 15], k = [11, 10, 5, 7, 3, 4, 2, 6] }
 insts = ["xor {out}, {out}", "COMISD {0}, {1}", "SETCC_F {out}, {k}"]
 
 # 形状 B：setcc 11（非 NaN）与 setcc k 取交——有序比较
+#
+# **两个中间寄存器都必须先清零**：`SETCC_F` 只写低 8 位（编码不可改），高位是垃圾；
+# 而 `and`/`or` 是按 64 位做的 ⇒ 未清零的 `{g}` 会把垃圾位带进结果（v27 M5 实测：
+# Ugt/Uge/Une 返回 `-118417152` 这类值）。清零必须放在 `COMIS*` **之前**——`xor` 会清
+# 标志位。
+# 结果必须写回 `{out}`（`{out}` 是 IR 结果的寄存器；写成 `and {g}, …` 会让结果落在临时
+# 寄存器上，调用方读到的是未被组合的那一半）。
 
 [[lower.Fcmp]]
 when = { eq = ["elem", 1] } # f32
 vary = { cond = [3, 5, 6], k = [4, 2, 6] }
 insts = [
   "xor {out}, {out}",
+  "xor {g}, {g}",
   "COMISS {0}, {1}",
   "SETCC_F {out}, 11",
   "SETCC_F {g}, {k}",
@@ -3625,19 +3644,21 @@ insts = [
 vary = { cond = [3, 5, 6], k = [4, 2, 6] }
 insts = [
   "xor {out}, {out}",
+  "xor {g}, {g}",
   "COMISD {0}, {1}",
   "SETCC_F {out}, 11",
   "SETCC_F {g}, {k}",
   "and {g}, {out}",
 ]
 
-# 形状 C：setcc 10（NaN）与 setcc k 取并——无序比较
+# 形状 C：setcc 10（NaN）与 setcc k 取并——无序比较（清零/写回纪律同形状 B）
 
 [[lower.Fcmp]]
 when = { eq = ["elem", 1] } # f32
 vary = { cond = [12, 13, 16], k = [7, 3, 5] }
 insts = [
   "xor {out}, {out}",
+  "xor {g}, {g}",
   "COMISS {0}, {1}",
   "SETCC_F {out}, 10",
   "SETCC_F {g}, {k}",
@@ -3648,6 +3669,7 @@ insts = [
 vary = { cond = [12, 13, 16], k = [7, 3, 5] }
 insts = [
   "xor {out}, {out}",
+  "xor {g}, {g}",
   "COMISD {0}, {1}",
   "SETCC_F {out}, 10",
   "SETCC_F {g}, {k}",
@@ -5134,6 +5156,17 @@ bytes = [0x48, 0x0F, 0xBF, 0x04, 0x8E]
 # ── 向量区段结束
 
 [machine]
+# ── 原生整数位宽（v27 M5）──
+# legalize 的"最近位宽补位"依据：非原生位宽（i3/i7/i128…）会被升位到这里的最近宽度、
+# 或按最宽者分字处理。x86-64 的 GPR 有 8/16/32/64 四种宽度形态。
+int_widths = [8, 16, 32, 64]
+# 有原生进位/借位指令（ADC/SBB）⇒ 宽加/宽减优先用进位链。
+multiword_carry = true
+# 「寄存器 ← 寄存器」搬移是哪条指令（块参数拷贝用，v27 M6）。
+# 为什么必须显式声明：生成器要能**造**一条搬移（`MachineInst::make_reg_move`），
+# 而"哪条是搬移"无法从名字可靠推断（前缀启发式早已删除，语义靠 effect 标签）。
+# MOV_R_RM = `mov {dst:gprx:out}, {src:gprx}`（16/32/64 位按类型自动分发）。
+reg_move = "MOV_R_RM"
 # ── 寄存器类指针（v21 W1）：宽度只在 `[reg.<名>]` 表头里，这里只指"哪一组" ──
 gpr = "gpr64"       # 主 GPR 类（名字/索引锚点 + 整数值池）
 fpr = "fpr128"      # 主 FPR 类 = XMM（ABI/SSE 占位基准；ZMM 组不参与）
@@ -5165,6 +5198,17 @@ byref_bytes = 16
 sp = "RSP"
 fp = "RBP"
 fp_push_bytes = 8
+
+# **栈探测**（v27 M6-78）：Windows 上帧超过一页时必须先逐页触摸，否则单条
+# `sub rsp, 帧大小` 会跳过 guard page，首次深访栈就 AV（实测同一二进制随机崩）。
+# `__chkstk` 从 RAX 取分配量、自身**不改 RSP**（调用方随后照常 sub）。
+[machine.frame.stack_probe]
+symbol = "__chkstk"
+threshold = 4096
+size_inst = "MOV_REG_IMM64"
+size_reg = "RAX"
+call_inst = "CALL_RIP_REL"
+reloc_offset = 1
 
 # v21 W6：终结层谱面——跳转序列（原硬编码在编译器里 ✗）。
 [[lower.Jmp]]

@@ -37,87 +37,87 @@ fn main() {
 
     // ═══ 数据移动 ═══
     t!("iconst (42)", 42, |b| {
-        let v = b.iconst_i32(42);
+        let v = b.constant(42i32);
         b.ret(&[v]);
     });
 
     // ═══ 整数算术 ═══
     t!("iadd (20+22)", 42, |b| {
-        let a = b.iconst_i32(20);
-        let c = b.iconst_i32(22);
+        let a = b.constant(20i32);
+        let c = b.constant(22i32);
         let r = b.iadd(a, c);
         b.ret(&[r]);
     });
     t!("isub (84-42)", 42, |b| {
-        let a = b.iconst_i32(84);
-        let c = b.iconst_i32(42);
+        let a = b.constant(84i32);
+        let c = b.constant(42i32);
         let r = b.isub(a, c);
         b.ret(&[r]);
     });
     t!("imul (6*7)", 42, |b| {
-        let a = b.iconst_i32(6);
-        let c = b.iconst_i32(7);
+        let a = b.constant(6i32);
+        let c = b.constant(7i32);
         let r = b.imul(a, c);
         b.ret(&[r]);
     });
     t!("imul+iadd (5*8+2)", 42, |b| {
-        let a = b.iconst_i32(5);
-        let c = b.iconst_i32(8);
+        let a = b.constant(5i32);
+        let c = b.constant(8i32);
         let m = b.imul(a, c);
-        let d = b.iconst_i32(2);
+        let d = b.constant(2i32);
         let r = b.iadd(m, d);
         b.ret(&[r]);
     });
 
     // ═══ 位运算 ═══
     t!("band (0xFF & 42)", 42, |b| {
-        let a = b.iconst_i32(0xFF);
-        let c = b.iconst_i32(42);
+        let a = b.constant(0xFF);
+        let c = b.constant(42i32);
         let r = b.band(a, c);
         b.ret(&[r]);
     });
     t!("bor (40|2)", 42, |b| {
-        let a = b.iconst_i32(40);
-        let c = b.iconst_i32(2);
+        let a = b.constant(40i32);
+        let c = b.constant(2i32);
         let r = b.bor(a, c);
         b.ret(&[r]);
     });
     t!("bxor (63^21)", 42, |b| {
-        let a = b.iconst_i32(63);
-        let c = b.iconst_i32(21);
+        let a = b.constant(63i32);
+        let c = b.constant(21i32);
         let r = b.bxor(a, c);
         b.ret(&[r]);
     });
     t!("bnot (~213 unsigned)", 42, |b| {
-        let a = b.iconst_i64(!42i64);
+        let a = b.constant(!42i64);
         let r = b.bnot(a);
         b.ret(&[r]);
     });
 
     // ═══ 移位 ═══
     t!("ishl (21<<1)", 42, |b| {
-        let a = b.iconst_i32(21);
-        let s = b.iconst_i32(1);
+        let a = b.constant(21i32);
+        let s = b.constant(1i32);
         let r = b.ishl(a, s);
         b.ret(&[r]);
     });
     t!("ushr (168>>2)", 42, |b| {
-        let a = b.iconst_i32(168);
-        let s = b.iconst_i32(2);
+        let a = b.constant(168i32);
+        let s = b.constant(2i32);
         let r = b.ushr(a, s);
         b.ret(&[r]);
     });
 
     // ═══ 大数值 64 位算术 (验证 REX.W) ═══
     t!("iadd_i64_large (2B+1=3B)", 3_000_000_000i64, |b| {
-        let a = b.iconst_i64(2_000_000_000i64);
-        let c = b.iconst_i64(1_000_000_000i64);
+        let a = b.constant(2_000_000_000i64);
+        let c = b.constant(1_000_000_000i64);
         let r = b.iadd(a, c);
         b.ret(&[r]);
     });
     t!("imul_i64_large (1G*3=3G)", 3_000_000_000i64, |b| {
-        let a = b.iconst_i64(1_000_000_000i64);
-        let c = b.iconst_i64(3);
+        let a = b.constant(1_000_000_000i64);
+        let c = b.constant(3i64);
         let r = b.imul(a, c);
         b.ret(&[r]);
     });

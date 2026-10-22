@@ -115,7 +115,7 @@ pub fn simplify_ind_vars(func: &mut Function) -> Result<PassResult, IrError> {
                             if iconst_data.opcode == Opcode::Iconst
                                 && let Some(cid) =
                                     iconst_data.immediates.iter().find_map(|i| i.as_const())
-                                && let Some(step) = func.constants.resolve_int(cid)
+                                && let Some(step) = func.constants.as_i64(cid)
                                 && step != 0
                             {
                                 // （init 值查询已随 IndVar.init_val 字段删除——38 轮）
@@ -150,7 +150,7 @@ fn resolve_iconst_value(func: &Function, v: Value) -> Option<i64> {
             let inst_data = &func.dfg.inst_data(inst);
             if inst_data.opcode == Opcode::Iconst {
                 let cid = inst_data.immediates.iter().find_map(|i| i.as_const())?;
-                func.constants.resolve_int(cid)
+                func.constants.as_i64(cid)
             } else {
                 None
             }
@@ -269,7 +269,7 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let v = b.iconst_i32(42);
+        let v = b.constant(42i32);
         b.ret(&[v]);
         let mut func = b.finish().expect("build");
 
@@ -291,18 +291,18 @@ mod tests {
         let exit = b.create_block();
 
         b.switch_to_block(entry);
-        let zero = b.iconst_i32(0);
-        let _ten = b.iconst_i32(10);
+        let zero = b.constant(0i32);
+        let _ten = b.constant(10i32);
         b.jump(header_blk, &[zero]); // init iv=0
 
         b.switch_to_block(header_blk);
         let iv = header_params[0];
-        let ten2 = b.iconst_i32(10);
+        let ten2 = b.constant(10i32);
         let cmp = b.icmp(IntCC::Slt, iv, ten2);
         b.branch(cmp, body, &[], exit, &[]);
 
         b.switch_to_block(body);
-        let one = b.iconst_i32(1);
+        let one = b.constant(1i32);
         let next_iv = b.iadd(iv, one); // iv + 1
         b.jump(header_blk, &[next_iv]); // back edge: iv+1 → param
 
@@ -327,17 +327,17 @@ mod tests {
         let exit = b.create_block();
 
         b.switch_to_block(entry);
-        let zero = b.iconst_i32(0);
+        let zero = b.constant(0i32);
         b.jump(header_blk, &[zero]);
 
         b.switch_to_block(header_blk);
         let iv = header_params[0];
-        let ten = b.iconst_i32(10);
+        let ten = b.constant(10i32);
         let cmp = b.icmp(IntCC::Slt, iv, ten);
         b.branch(cmp, body, &[], exit, &[]);
 
         b.switch_to_block(body);
-        let one_const = b.iconst_i32(1);
+        let one_const = b.constant(1i32);
         let scaled = b.imul(iv, one_const); // imul(iv, 1) → should be replaced with iv
         let next_iv = b.iadd(iv, one_const);
         b.jump(header_blk, &[next_iv]);
@@ -363,19 +363,19 @@ mod tests {
         let exit = b.create_block();
 
         b.switch_to_block(entry);
-        let zero = b.iconst_i32(0);
+        let zero = b.constant(0i32);
         b.jump(header_blk, &[zero]);
 
         b.switch_to_block(header_blk);
         let iv = header_params[0];
-        let ten = b.iconst_i32(10);
+        let ten = b.constant(10i32);
         let cmp = b.icmp(IntCC::Slt, iv, ten);
         b.branch(cmp, body, &[], exit, &[]);
 
         b.switch_to_block(body);
-        let zero_const = b.iconst_i32(0);
+        let zero_const = b.constant(0i32);
         let zero_add = b.iadd(iv, zero_const); // iadd(iv, 0) → should be replaced with iv
-        let one = b.iconst_i32(1);
+        let one = b.constant(1i32);
         let next_iv = b.iadd(iv, one);
         b.jump(header_blk, &[next_iv]);
 

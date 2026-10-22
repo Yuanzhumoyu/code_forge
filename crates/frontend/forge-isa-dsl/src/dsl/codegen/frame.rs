@@ -415,6 +415,74 @@ fn inst_info_by_name<'a>(infos: &'a [InstInfo<'a>], name: &str) -> Option<&'a In
 /// **缺角色的步不发射**：角色是 ISA 的**能力申报**，没申报就做不了（例如没有 `frame_set`
 /// 的谱不建立帧指针、没有 `callee_save` 的谱不写帧内保存槽）。缺口由
 /// `forge-isa abi check`/`validate` 与运行期行为说话——这里不猜别家 ISA 的指令名。
+/// 栈探测（`[machine.frame.stack_probe]`，v27 M6-78）。
+///
+/// 生成的是"帧超过阈值 ⇒ `mov size_reg, 帧大小` + `call symbol`"这两条，**全部字段来自谱**：
+/// 指令名、寄存器名、符号、阈值、相对位移在调用指令里的偏移。生成器不写死任何平台细节。
+///
+/// 位置：必须**在帧分配之前**（探测触摸的是 `[sp - k*页]`，此时 sp 尚未下移；
+/// `__chkstk` 自身不改 RSP，调用方随后照常 `sub`）。
+fn gen_stack_probe(infos: &[InstInfo], frame: &AbiFrame) -> Result<Option<TokenStream>, String> {
+    let Some(probe) = frame.stack_probe.as_ref() else {
+        return Ok(None);
+    };
+    let sym = &probe.symbol;
+    let thr = proc_macro2::Literal::u32_suffixed(probe.threshold.unwrap_or(4096));
+    let roff = proc_macro2::Literal::u32_suffixed(probe.reloc_offset.unwrap_or(1));
+    // ① `mov size_reg, 帧大小`
+    let (reg_fids, imm_fids) = inst_reg_imm_fids(infos, &probe.size_inst).ok_or_else(|| {
+        format!(
+            "[{}] 作为栈探测的 size_inst 需要 reg + imm 槽",
+            probe.size_inst
+        )
+    })?;
+    if reg_fids.is_empty() || imm_fids.is_empty() {
+        return Err(format!(
+            "[{}] 作为栈探测的 size_inst 需要「一个 Reg + 一个 imm」槽",
+            probe.size_inst
+        ));
+    }
+    let size_reg = format_ident!("{}", probe.size_reg);
+    let mut binds: Vec<TokenStream> = reg_fids
+        .iter()
+        .map(|f| quote! { #f: Reg::#size_reg })
+        .collect();
+    binds.extend(imm_fids.iter().map(|f| quote! { #f: __frame_size as i64 }));
+    let size_vn = pascal_ident(&probe.size_inst);
+    let size_ctor = quote! { Inst::#size_vn { #(#binds,)* } };
+    // ② `call symbol`：单 imm 槽（相对位移先填 -1，紧接着打重定位）
+    let (call_regs, call_imms) = inst_reg_imm_fids(infos, &probe.call_inst).ok_or_else(|| {
+        format!(
+            "[{}] 作为栈探测的 call_inst 需要一个 imm 槽",
+            probe.call_inst
+        )
+    })?;
+    if !call_regs.is_empty() || call_imms.len() != 1 {
+        return Err(format!(
+            "[{}] 作为栈探测的 call_inst 需要「恰好一个 imm、无 Reg」槽",
+            probe.call_inst
+        ));
+    }
+    let call_field = &call_imms[0];
+    let call_vn = pascal_ident(&probe.call_inst);
+    let call_ctor = quote! { Inst::#call_vn { #call_field: -1 } };
+    Ok(Some(quote! {
+        if __frame_size > #thr {
+            let __sz_bytes = encode(&#size_ctor).map_err(crate::IrError::Emit)?;
+            __sink.put_bytes(&__sz_bytes);
+            let __call_site = __sink.offset();
+            let __call_bytes = encode(&#call_ctor).map_err(crate::IrError::Emit)?;
+            __sink.put_bytes(&__call_bytes);
+            __sink.add_reloc(
+                __call_site + #roff as usize,
+                crate::RelocKind::Relative(4, -4),
+                #sym,
+                0,
+            );
+        }
+    }))
+}
+
 fn gen_frame_sequence(
     infos: &[InstInfo],
     model: &IsaModel,
@@ -423,6 +491,10 @@ fn gen_frame_sequence(
     let mut pre: Vec<TokenStream> = Vec::new();
     let mut post: Vec<TokenStream> = Vec::new();
     if let Some(frame) = model.machine_frame() {
+        // 栈探测必须排在最前（在 callee-saved 保存与帧分配之前）。
+        if is_prologue && let Some(stmt) = gen_stack_probe(infos, frame)? {
+            pre.push(stmt);
+        }
         let push_inst = role_name(infos, Role::Push).unwrap_or_default();
         let pop_inst = role_name(infos, Role::Pop).unwrap_or_default();
         if inst_exists(infos, &push_inst) && inst_exists(infos, &pop_inst) {

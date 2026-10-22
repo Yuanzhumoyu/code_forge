@@ -113,6 +113,19 @@ pub fn layout_size<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> u32 {
     layout_bytes(tcx, ty).max(8).div_ceil(8) * 8
 }
 
+/// 类型的 ABI 对齐（字节）。槽位分配必须用它——16 字节对齐的局部（`#[repr(align(16))]`、
+/// `u128`、V128）若被放在 8 对齐地址，rustc 插入的 `assert(misaligned pointer dereference)`
+/// 会在运行期触发（v27 M5 实测：产物 panic）。
+pub fn layout_align<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> u32 {
+    match tcx.layout_of(ty::PseudoCanonicalInput {
+        typing_env: ty::TypingEnv::fully_monomorphized(),
+        value: ty,
+    }) {
+        Ok(l) => l.align.abi.bytes() as u32,
+        Err(_) => 8,
+    }
+}
+
 /// ScalarPair 两个标量在内存中的真实字节宽度。pack_sp/unpack_sp 按此宽度
 /// 做字段 load/store——恒用 I64（8 字节）会对窄字段越界（Option<i32> 的
 /// value@4 8 字节写覆盖相邻槽，range1 for 循环挂起实证：main 收 next 返回
@@ -145,7 +158,22 @@ pub fn scalar_width_type(w: u32) -> TypeId {
 /// 否则 entry 收参与调用方传参错位（Windows x64 浮点走 XMM、整数走 GPR），
 /// 混合参数/跨 crate 泛型（如 i64.wrapping_add）会读到垃圾。
 pub fn is_scalar_pair_abi<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
-    let r = crate::abi::abi_kind_of_ty(tcx, ty) == crate::abi::AbiKind::Pair;
+    let kind = crate::abi::abi_kind_of_ty(tcx, ty);
+    let r = match kind {
+        crate::abi::AbiKind::Wide => true,
+        crate::abi::AbiKind::Pair => {
+            // v27 M5 缺陷（`Iterator::map` 丢字段 / 带 ZST 字段的 8 字节结构体）：
+            // pair 协议要求**两个半区都落在类型大小内**。8 字节结构体（如
+            // `S { r: Range<i32>, f: ZST }`、`Map`）被分成 lo@0/hi@8 时，
+            // hi 的 8 字节落在结构体外 ⇒ `unpack_sp`/`pack_sp` 越界读写，
+            // 字段被邻居覆盖（实测 `s.r.end` = 0）。这种类型应按单个 8 字节值传。
+            let (o0, o1) = scalar_pair_offsets(tcx, ty);
+            let (w0, w1) = scalar_pair_widths(tcx, ty);
+            let size = layout_bytes(tcx, ty) as i64;
+            (o0 + w0 as i64) <= size && (o1 + w1 as i64) <= size
+        }
+        _ => false,
+    };
     if crate::trace::trace_enabled("PAIR") {
         eprintln!("[forge] is_scalar_pair_abi({ty}) = {r}");
     }

@@ -1,4 +1,4 @@
-﻿//! ISA-DSL codegen — TargetMachine 集成层（迭代 5）。
+//! ISA-DSL codegen — TargetMachine 集成层（迭代 5）。
 //!
 //! 自包含模块（encode/decode/disassemble/assemble）之上生成 forge-codegen
 //! 组件：MachineInst impl、TargetEncoder/Decoder/Disassembler/Assembler、
@@ -271,7 +271,7 @@ fn core_attr_body(name: &str) -> Result<TokenStream, String> {
         // 判断符号/大小必须用池解析值。Constant 引用恒以 cid 指向池条目。
         "iconst" => quote! {
             ctx.constant_pool.as_ref().and_then(|p| {
-                p.resolve_int(crate::prelude::ConstId::from_raw(ctx.current_const_index))
+                p.as_i64(crate::prelude::ConstId::from_raw(ctx.current_const_index))
             })
         },
         other => {
@@ -911,6 +911,18 @@ fn gen_target_machine(
         .iter()
         .map(|(name, bits)| quote! { #name => Some(#bits), })
         .collect();
+    // 目标机原生整数位宽（v27 M5 · 任意位宽整数的"最近位宽补位"依据）。
+    // 缺省 = 8/16/32/64（绝大多数 ISA）；谱里 `[machine] int_widths = [...]` 可覆盖。
+    let machine_sec = model.machine.as_ref();
+    let mut int_widths: Vec<u16> = machine_sec
+        .map(|m| m.int_widths.clone())
+        .unwrap_or_default();
+    if int_widths.is_empty() {
+        int_widths = vec![8, 16, 32, 64];
+    }
+    let int_widths_vals: Vec<proc_macro2::TokenStream> =
+        int_widths.iter().map(|w| quote! { #w }).collect();
+    let multiword_carry = machine_sec.map(|m| m.multiword_carry).unwrap_or(false);
     Ok(quote! {
         #[derive(Clone)]
         pub struct TargetMachine {
@@ -967,6 +979,17 @@ fn gen_target_machine(
                     #(#cap_arms)*
                     _ => None,
                 }
+            }
+
+            /// 目标机原生支持的整数位宽（升序）——legalize 的"最近位宽补位"依据。
+            /// 来源：`[machine] int_widths`；缺省 `[8, 16, 32, 64]`。
+            fn int_widths(&self) -> &[u16] {
+                &[#(#int_widths_vals),*]
+            }
+
+            /// 是否有原生进位/借位指令（`[machine] multiword_carry`；x86 的 ADC/SBB = true）。
+            fn multiword_carry(&self) -> bool {
+                #multiword_carry
             }
         }
 

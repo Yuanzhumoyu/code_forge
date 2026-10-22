@@ -55,7 +55,7 @@ pub(crate) fn expand_va(
 // ── 生成小工具（**自由函数**、显式传输出向量：闭包会同时可变借用输出）────────────
 
 fn mk_iconst(func: &mut Function, b: Block, out: &mut Vec<Inst>, v: i64) -> Value {
-    let cid = func.constants.insert_int(v as i128, 64);
+    let cid = func.constants.intern_int(v as i128, 64);
     let ci = func.make_inst(
         Opcode::Iconst,
         b,

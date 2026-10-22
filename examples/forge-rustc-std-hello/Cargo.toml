@@ -11,3 +11,35 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
+
+# 第三方 crate = **独立代码语料**（不是我们自己写的代码）：它们同样由 forge 后端编译，
+# 于是把「unsafe 指针写 / f64 位技巧 / SIMD intrinsic / 泛型 + union」这些真实写法带进验证面。
+# 版本都取本机 registry 缓存里已有的（离线可解包，见 README「离线跑法」）。
+[dependencies]
+itoa = "1.0.18"
+ryu = "1.0.23"
+memchr = "2.8.3"
+smallvec = "1.16.3"
+once_cell = "1.21.4"
+bitflags = "2.13.2"
+
+# 第二批（更硬）：`#[target_feature]` + SIMD intrinsic、swiss-table 位运算、大整数乘除
+crc32fast = "1"
+blake3 = "1"
+hashbrown = "0.17.1"
+base64 = "0.22"
+dashu-int = "0.6"
+
+# 第三批（最硬的一类）：正则引擎族——巨型泛型状态机 + 惰性 DFA 构建
+regex = "1.13.1"
+
+# 第四批（分水岭）：proc-macro 线——`serde` 的 derive 会先在**宿主侧**编出
+# `serde_derive`（proc-macro crate）再由编译器加载执行。它自己也由 forge 编译，
+# 于是 `syn`/`quote`/`proc-macro2` 的 unsafe 与 dylib 链接面都进了验证面。
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 第五批：crypto 族（`sha2` 纯计算、`chacha20` SIMD/多路）+ `clap` derive（当前能拉的
+# 最大真实依赖图：proc-macro 巨量展开 + `windows-sys` FFI + 终端样式栈）。
+sha2 = "=0.10.9"
+clap = { version = "4.6.6", features = ["derive"] }

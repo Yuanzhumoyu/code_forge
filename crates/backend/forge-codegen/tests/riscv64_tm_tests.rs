@@ -28,7 +28,7 @@ fn compile_const(name: &str, v: i64) -> forge_codegen::CompiledFunction {
     let sig = FunctionSignature::new(&[], &[TypeId::I64]);
     let mut b = FunctionBuilder::new(name, TypeContext::new(), sig);
     b.create_block_here();
-    let c = b.iconst_i64(v);
+    let c = b.constant(v);
     b.ret(&[c]);
     let func = b.finish().expect("build");
     let compiler = CompileSession::new(forge_codegen::riscv64::TargetMachine::new());

@@ -126,15 +126,27 @@ fn eliminate_dead_instructions(func: &mut Function) -> usize {
 
 /// 构建 Value → use-count 映射。
 ///
-/// 指令操作数部分来自官方 `UseLists`（各 pass 经 kill/RAUW/apply_replacements
-/// 维护的新鲜 def-use 链）；终结符参数不在 use-lists 记录范围，需补充计数。
+/// **扫描式**（不复用 `UseLists`）：按块遍历每条活跃指令的操作数计数，再补终结符
+/// （终结符也是指令，但这里按 `term_used_values` 再补一遍以防表示差异）。
+///
+/// 为什么不信 use-lists：任何一处"直接改 operands 却没刷新 use-list"的 pass 都会让计数
+/// **偏低**，于是 DCE 把**仍被使用的定义**当死代码删掉——IR 里留下引用已删指令的操作数，
+/// 后端读到垃圾。v27 M6 实测：`while { acc += sq(i + seed()) }` 在优化档出现
+/// `store i64 %v1, ptr %v0`（`%v1` 已被删）⇒ 错值 / AV 崩溃。
+/// 计数的正确性远比常数因子重要，这里选扫描。
 fn build_use_counts(func: &Function) -> SecondaryMap<Value, usize> {
     let mut counts: SecondaryMap<Value, usize> = SecondaryMap::new();
 
-    for (value, _) in func.dfg.values() {
-        let n = func.use_lists.use_count(value);
-        if n > 0 {
-            counts.insert(value, n);
+    for bi in 0..func.dfg.block_count() {
+        let block = Block::new(bi as u32);
+        for &inst_id in &func.dfg.block(block).inst_order {
+            let inst = &func.dfg.inst_data(inst_id);
+            if matches!(inst.opcode, Opcode::Nop) {
+                continue;
+            }
+            for &op in &inst.operands {
+                *counts.get_mut_or_default(op) += 1;
+            }
         }
     }
 
@@ -243,8 +255,8 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let _c = b.iconst_i32(42); // unused -> dead
-        let ret_val = b.iconst_i32(0); // used by return -> live
+        let _c = b.constant(42i32); // unused -> dead
+        let ret_val = b.constant(0i32); // used by return -> live
         b.ret(&[ret_val]);
 
         let mut func = b.finish().expect("build");
@@ -273,7 +285,7 @@ mod tests {
         let (entry, params) = b.create_block_with_params(&[(TypeId::PTR, "p")]);
         b.switch_to_block(entry);
         let p = params[0];
-        let val = b.iconst_i32(99);
+        let val = b.constant(99i32);
         b.store(val, p); // Store has side effects, cannot eliminate
         b.ret(&[]);
 
@@ -296,12 +308,12 @@ mod tests {
         let merge = b.create_block();
 
         b.switch_to_block(entry);
-        let one = b.iconst_i32(1);
+        let one = b.constant(1i32);
         b.jump(merge, &[one]);
 
         // dead_block is unreachable (entry jumps directly to merge)
         b.switch_to_block(dead_block);
-        let two = b.iconst_i32(2);
+        let two = b.constant(2i32);
         b.jump(merge, &[two]);
 
         b.switch_to_block(merge);
@@ -328,7 +340,7 @@ mod tests {
         let (entry, params) = b.create_block_with_params(&[(TypeId::PTR, "p")]);
         b.switch_to_block(entry);
         let p = params[0];
-        let one = b.iconst_i32(1);
+        let one = b.constant(1i32);
         // AtomicRmw 结果未用（旧值丢弃）——但原子写副作用必须保留
         let _rmw = b.atomic_rmw(
             forge_ir::AtomicRmwOp::Add,

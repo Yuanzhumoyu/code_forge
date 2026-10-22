@@ -16,9 +16,7 @@ pub mod map;
 
 use std::fmt::{self, Display};
 
-crate::entity_ref_impls!(
-    Value, Inst, Block, TypeId, FuncRef, ConstId, GlobalId, SigRef, AggId, VReg
-);
+crate::entity_ref_impls!(Value, Inst, Block, TypeId, FuncRef, GlobalId, SigRef, VReg);
 
 /// 为"裸 u32 句柄"生成 `new`/`index` —— **字段私有化后的唯一构造/读取口**
 /// （v3 方案 S2：句柄字段私有化）。
@@ -44,9 +42,7 @@ macro_rules! entity_index_accessors {
     )*};
 }
 
-entity_index_accessors!(
-    Value, Inst, Block, TypeId, FuncRef, GlobalId, SigRef, AggId, VReg
-);
+entity_index_accessors!(Value, Inst, Block, TypeId, FuncRef, GlobalId, SigRef, VReg);
 
 // ============================================================
 // 实体定义
@@ -96,58 +92,87 @@ impl TypeId {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct FuncRef(pub(crate) u32);
 
-/// 常量引用 (在 ConstantPool 中解析)。
+/// 常量引用（在 `ConstantPool` 中解析）——**唯一常量句柄**（v28）。
 ///
-/// ## Encoding
+/// 四个变体恰好铺满 2 bit tag，因此 `raw()`/`from_raw()` 是**全域**函数：
+/// 任何 `u32` 都能解码成合法句柄，没有非法 tag、没有 panic 分支。
 ///
-/// ConstId packs a 2-bit type tag to disambiguate int/float/big/vec pools:
-/// - bits 31..30: tag (0 = int, 1 = float, 2 = big, 3 = vec)
-/// - bits 29..0:  index (30 bits, up to ~1B entries per category)
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct ConstId(pub(crate) u32);
+/// ## 编码
+///
+/// - bits 31..30：tag（0 = `Bits`，1 = `Big`，2 = `Vector`，3 = `Agg`）
+/// - bits 29..0：池内索引（每通道上限 ~10 亿条）
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(C, u32)]
+pub enum ConstId {
+    /// 位值（整数/浮点标量，`BitValue`）。
+    Bits(u32),
+    /// 任意精度整数/实数（`Big`）。
+    Big(u32),
+    /// 向量常量的字节段（+ 端序）。
+    Vector(u32),
+    /// 聚合常量（树形）。
+    Agg(u32),
+}
 
-/// 聚合常量 id（ConstantPool::aggregates 池索引；与 ConstId 分离——聚合是树形）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct AggId(pub(crate) u32);
+impl Default for ConstId {
+    /// 默认句柄 = 第一位值。语义上等价于旧的 `ConstId(0)`。
+    fn default() -> Self {
+        ConstId::Bits(0)
+    }
+}
 
 impl ConstId {
-    /// 由**打包后的原始值**构造（crate 外句柄唯一构造口，v3 S2）。
+    pub const TAG_BITS: u32 = 0;
+    pub const TAG_BIG: u32 = 1;
+    pub const TAG_VECTOR: u32 = 2;
+    pub const TAG_AGG: u32 = 3;
+
+    /// 每通道索引上限（30 位）。
+    const MAX_INDEX: u32 = (1 << 30) - 1;
+
+    /// 由**打包后的原始值**构造（crate 外句柄的唯一构造口）。
+    ///
     /// 注意与 [`ConstId::index`] 的区别：后者是低 30 位的池内索引。
+    /// 全域定义：tag 空间与变体数一致，不会失败。
     pub const fn from_raw(raw: u32) -> Self {
-        Self(raw)
+        let index = raw & Self::MAX_INDEX;
+        match raw >> 30 {
+            Self::TAG_BIG => ConstId::Big(index),
+            Self::TAG_VECTOR => ConstId::Vector(index),
+            Self::TAG_AGG => ConstId::Agg(index),
+            _ => ConstId::Bits(index),
+        }
     }
 
     /// 打包后的原始值（tag 位 + 池内索引）。
     pub const fn raw(self) -> u32 {
-        self.0
+        match self {
+            ConstId::Bits(index) => Self::TAG_BITS << 30 | index,
+            ConstId::Big(index) => Self::TAG_BIG << 30 | index,
+            ConstId::Vector(index) => Self::TAG_VECTOR << 30 | index,
+            ConstId::Agg(index) => Self::TAG_AGG << 30 | index,
+        }
     }
 
-    /// Tag indicating this is an integer constant.
-    pub const TAG_INT: u32 = 0;
-    /// Tag indicating this is a float constant.
-    pub const TAG_FLOAT: u32 = 1;
-    /// Tag indicating this is a big (arbitrary precision) constant.
-    pub const TAG_BIG: u32 = 2;
-    /// Tag indicating this is a vector constant (lane bit-pattern list).
-    pub const TAG_VEC: u32 = 3;
-
-    /// Maximum index value per category (30 bits).
-    const MAX_INDEX: u32 = (1 << 30) - 1;
-
-    /// Pack a tag and index into a ConstId.
-    /// Invalid tag/index values are silently masked to prevent corruption in release builds.
+    /// 按 tag + 索引构造（索引高位被掩掉到 30 位）。
     pub const fn pack(tag: u32, index: u32) -> Self {
-        ConstId(((tag & 0x3) << 30) | (index & Self::MAX_INDEX))
+        let index = index & Self::MAX_INDEX;
+        match tag & 0x3 {
+            Self::TAG_BIG => ConstId::Big(index),
+            Self::TAG_VECTOR => ConstId::Vector(index),
+            Self::TAG_AGG => ConstId::Agg(index),
+            _ => ConstId::Bits(index),
+        }
     }
 
-    /// Extract the type tag (upper 2 bits).
-    pub fn tag(self) -> u32 {
-        self.0 >> 30
+    /// 类型 tag（高 2 位）。
+    pub const fn tag(self) -> u32 {
+        self.raw() >> 30
     }
 
-    /// Extract the index (lower 30 bits).
-    pub fn index(self) -> u32 {
-        self.0 & Self::MAX_INDEX
+    /// 池内索引（低 30 位）。
+    pub const fn index(self) -> u32 {
+        self.raw() & Self::MAX_INDEX
     }
 }
 
@@ -292,7 +317,7 @@ impl PReg {
 }
 
 /// 目标端序。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Endianness {
     #[default]
     Little,
@@ -650,7 +675,7 @@ impl fmt::Display for FuncRef {
 
 impl fmt::Display for ConstId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "c{}", self.0)
+        write!(f, "c{}", self.raw())
     }
 }
 
@@ -705,7 +730,12 @@ impl fmt::Debug for FuncRef {
 
 impl fmt::Debug for ConstId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ConstId({})", self.0)
+        match self {
+            ConstId::Bits(i) => write!(f, "ConstId::Bits({i})"),
+            ConstId::Big(i) => write!(f, "ConstId::Big({i})"),
+            ConstId::Vector(i) => write!(f, "ConstId::Vector({i})"),
+            ConstId::Agg(i) => write!(f, "ConstId::Agg({i})"),
+        }
     }
 }
 
@@ -765,15 +795,15 @@ mod tests {
 
     #[test]
     fn const_id_pack_roundtrip_int() {
-        let c = ConstId::pack(ConstId::TAG_INT, 42);
-        assert_eq!(c.tag(), ConstId::TAG_INT);
+        let c = ConstId::pack(ConstId::TAG_BITS, 42);
+        assert_eq!(c.tag(), ConstId::TAG_BITS);
         assert_eq!(c.index(), 42);
     }
 
     #[test]
     fn const_id_pack_roundtrip_float() {
-        let c = ConstId::pack(ConstId::TAG_FLOAT, 7);
-        assert_eq!(c.tag(), ConstId::TAG_FLOAT);
+        let c = ConstId::pack(ConstId::TAG_BITS, 7);
+        assert_eq!(c.tag(), ConstId::TAG_BITS);
         assert_eq!(c.index(), 7);
     }
 
@@ -787,10 +817,10 @@ mod tests {
     #[test]
     fn const_id_boundary_values() {
         // Index 0
-        let c = ConstId::pack(ConstId::TAG_INT, 0);
+        let c = ConstId::pack(ConstId::TAG_BITS, 0);
         assert_eq!(c.index(), 0);
         // Index MAX
-        let c = ConstId::pack(ConstId::TAG_INT, ConstId::MAX_INDEX);
+        let c = ConstId::pack(ConstId::TAG_BITS, ConstId::MAX_INDEX);
         assert_eq!(c.index(), ConstId::MAX_INDEX);
         // Tag > 3 is masked
         let c = ConstId::pack(7, 5);
@@ -801,7 +831,7 @@ mod tests {
     #[test]
     fn const_id_default() {
         let c = ConstId::default();
-        assert_eq!(c.tag(), ConstId::TAG_INT);
+        assert_eq!(c.tag(), ConstId::TAG_BITS);
         assert_eq!(c.index(), 0);
     }
 
@@ -837,7 +867,7 @@ mod tests {
 
     #[test]
     fn const_id_display() {
-        assert_eq!(format!("{}", ConstId(7)), "c7");
+        assert_eq!(format!("{}", ConstId::Bits(7)), "c7");
     }
 
     #[test]
@@ -893,7 +923,7 @@ mod tests {
 
     #[test]
     fn const_id_debug() {
-        assert_eq!(format!("{:?}", ConstId(0)), "ConstId(0)");
+        assert_eq!(format!("{:?}", ConstId::Bits(0)), "ConstId::Bits(0)");
     }
 
     #[test]

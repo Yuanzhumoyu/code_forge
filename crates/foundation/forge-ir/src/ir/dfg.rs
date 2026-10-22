@@ -33,7 +33,7 @@ pub enum ValueDef {
     Param(Block, u16),
     /// 聚合常量值（ConstantPool 聚合常量——store/ret 等操作数位置的
     /// `{i32 1, i32 2}` 字面量；display 原样还原）。
-    AggConst(crate::AggId),
+    AggConst(ConstId),
     /// 未定义引用占位（LLVM 前向引用/故意未定义值——operand_to_value
     /// 宽松保留名字,display 输出 `%name` 原样还原;第二十九轮）。
     UndefNamed(crate::util::string_pool::InternedStr),
@@ -297,7 +297,7 @@ impl DataFlowGraph {
     }
 
     /// 创建聚合常量值（`{i32 1, i32 2}` 字面量操作数）。
-    pub fn make_agg_const_value(&mut self, ty: TypeId, agg_id: crate::AggId) -> Value {
+    pub fn make_agg_const_value(&mut self, ty: TypeId, agg_id: ConstId) -> Value {
         self.make_value(ty, ValueDef::AggConst(agg_id))
     }
 
@@ -650,6 +650,22 @@ impl DataFlowGraph {
         match self.values.get_mut(v.0 as usize) {
             Some(vd) => {
                 vd.ty = ty;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 改写值的**定义**（`ValueDef`）——与 [`DataFlowGraph::set_value_type`] 同一层的受限写口，
+    /// **仅供 crate 内结构性编辑用**。
+    ///
+    /// 为什么需要它：`ValueDef::Param(block, idx)` 里的 `idx` 是**块参数下标**——一旦在块参数表
+    /// 里插入/替换参数，后面所有参数的下标都会平移 ⇒ 必须同步重写。对外不暴露（`pub(crate)`）：
+    /// 块参数的结构性编辑只允许走 `Function::splice_block_param` / `Function::remove_block_param`。
+    pub(crate) fn set_value_def(&mut self, v: Value, def: ValueDef) -> bool {
+        match self.values.get_mut(v.0 as usize) {
+            Some(vd) => {
+                vd.def = def;
                 true
             }
             None => false,
@@ -1270,7 +1286,7 @@ mod tests {
             b,
             SmallVec::new(),
             smallvec::smallvec![Immediate::Const(
-                crate::ir::constant::ConstantPool::new().insert_int(1, 32)
+                crate::ir::constant::ConstantPool::new().intern_int(1, 32)
             )],
             &[ty],
             InstFlags::NONE,
@@ -1280,7 +1296,7 @@ mod tests {
             b,
             SmallVec::new(),
             smallvec::smallvec![Immediate::Const(
-                crate::ir::constant::ConstantPool::new().insert_int(2, 32)
+                crate::ir::constant::ConstantPool::new().intern_int(2, 32)
             )],
             &[ty],
             InstFlags::NONE,

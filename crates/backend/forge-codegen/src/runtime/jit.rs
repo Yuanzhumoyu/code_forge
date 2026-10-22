@@ -124,13 +124,42 @@ pub struct JitLoader<M: TargetMachine> {
     user_resolver: Option<Box<dyn Fn(&str) -> Option<u64> + Send + Sync>>,
 }
 
+/// 栈探测符号名（与 `isa/x86.toml` 的 `[machine.frame.stack_probe].symbol` 一致）。
+const STACK_PROBE_SYMBOL: &str = "__chkstk";
+
+/// JIT 侧的栈探测**桩**。
+///
+/// AOT（rustc 路径）由 `isa/x86.toml` 声明的 `__chkstk` 完成真正的逐页触摸，实测大帧
+/// 的随机 AV 已消失。JIT 里没有链接器，必须自己把这个符号解析到某个地址——本轮先用
+/// **no-op 桩**：保证重定位能解析（不会跳进垃圾地址），JIT 函数因此**不做探测**。
+/// 汇编版（从近往远逐页摸）在 JIT 里仍会崩，留作单独排查（`WA-51`）。
+#[cfg(target_arch = "x86_64")]
+#[unsafe(no_mangle)]
+extern "C" fn __forge_jit_chkstk() {}
+
+fn stack_probe_addr() -> u64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        __forge_jit_chkstk as *const () as usize as u64
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        0
+    }
+}
+
 impl<M: TargetMachine + Clone> JitLoader<M> {
     /// 创建新的 JIT 装载器。
     pub fn new(machine: M) -> Self {
+        let mut symbols: HashMap<ImmStr, u64> = HashMap::new();
+        // **栈探测符号**（v27 M6-79）：大帧函数的序言会 `call __chkstk`（由 ISA 数据声明，
+        // 见 `[machine.frame.stack_probe]`）。AOT 由 MSVC 运行时提供它；**JIT 没有链接器**
+        // ⇒ 必须在这里注册，否则那条重定位解析不到、调用会跳进垃圾地址。
+        symbols.insert(ImmStr::from(STACK_PROBE_SYMBOL), stack_probe_addr());
         Self {
             machine,
             compiled: HashMap::new(),
-            symbols: HashMap::new(),
+            symbols,
             pending_relocs: Vec::new(),
             data_segments: Vec::new(),
             sigs: ModuleSigs::default(),
@@ -165,7 +194,14 @@ impl<M: TargetMachine + Clone> JitLoader<M> {
             variadic: signature.variadic,
             fixed_args: signature.params.len() as u32,
         });
-        self.load_function(ImmStr::from(name), compiled, None)?;
+        // **`@N` 符号别名必须一起注册**（FuncRef 序 = 添加序）：生成物的跨函数
+        // `Call`/`Jmp` 用 `@N` 形式的符号发重定位（`RelocKind::CALL`）。只有
+        // `install`（模块路径）注册过它，`add_function` 这条路径此前**不注册**
+        // ⇒ 调用点重定位永远解析不到，编码出的 `E8` 位移保持 -1，跳进垃圾地址
+        // ⇒ 进程 AV（实测：JIT 里"先 add 被调方、再 add 调用方"必崩；
+        // 单函数编译/直接调被调方都正常）。
+        let func_ref = self.sigs.len() - 1;
+        self.load_function(ImmStr::from(name), compiled, Some(func_ref))?;
         // 重新解析之前未能解析的重定位
         self.resolve_pending()
     }
@@ -426,10 +462,12 @@ mod tests {
     #[test]
     fn test_jit_function_names() {
         let mut jit = JitLoader::new(x86::TargetMachine::new());
-        // 注册符号（不实际编译）
+        // 注册符号（不实际编译）。注意 `new()` 会**预注册栈探测符号**（`__chkstk`，
+        // v27 M6-79：JIT 没有链接器，大帧函数的序言调它）⇒ 断言按"基线 + 2"写。
+        let base = jit.symbols.len();
         jit.register_external("foo", 0x1000).unwrap();
         jit.register_external("bar", 0x2000).unwrap();
-        assert_eq!(jit.symbols.len(), 2);
+        assert_eq!(jit.symbols.len(), base + 2);
     }
 
     #[test]
@@ -471,7 +509,7 @@ mod tests {
         jit.add_function("answer", &sig, |b| {
             let entry = b.create_block();
             b.switch_to_block(entry);
-            let v = b.iconst_i32(42);
+            let v = b.constant(42i32);
             b.ret(&[v]);
         })
         .expect("compile");
@@ -496,7 +534,7 @@ mod tests {
             let sig = FunctionSignature::new(&[], &[TypeId::I32]);
             let mut b = FunctionBuilder::new(name.as_str(), TypeContext::new(), sig);
             b.create_block_here();
-            let v = b.iconst_i32(10 * (i + 1));
+            let v = b.constant(10 * (i + 1));
             b.ret(&[v]);
             m.add_function(b.finish().expect("build"));
         }
@@ -546,7 +584,7 @@ mod tests {
         jit.add_function("answer", &sig0, |b| {
             let entry = b.create_block();
             b.switch_to_block(entry);
-            let v = b.iconst_i32(99);
+            let v = b.constant(99i32);
             b.ret(&[v]);
         })
         .expect("compile answer");
@@ -556,7 +594,7 @@ mod tests {
         jit.add_function("double", &sig1, |b| {
             let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
             b.switch_to_block(entry);
-            let two = b.iconst_i32(2);
+            let two = b.constant(2i32);
             let result = b.imul(params[0], two);
             b.ret(&[result]);
         })
@@ -592,7 +630,7 @@ mod tests {
             let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
             b.switch_to_block(entry);
 
-            let zero = b.iconst_i32(0);
+            let zero = b.constant(0i32);
             let cond = b.icmp(forge_ir::IntCC::Sgt, params[0], zero);
 
             let then_block = b.create_block();
@@ -604,7 +642,7 @@ mod tests {
 
             // then_block: return 1 directly (no phi)
             b.switch_to_block(then_block);
-            let one = b.iconst_i32(1);
+            let one = b.constant(1i32);
             b.ret(&[one]);
 
             // else_block: return 0 directly (no phi)
@@ -646,7 +684,7 @@ mod tests {
             ]);
             b.switch_to_block(entry);
 
-            let zero = b.iconst_i32(0);
+            let zero = b.constant(0i32);
             let cond = b.icmp(forge_ir::IntCC::Ne, params[0], zero);
 
             let then_block = b.create_block();
@@ -738,7 +776,7 @@ mod tests {
         jit.add_function("max_i32", &sig, |b| {
             let entry = b.create_block();
             b.switch_to_block(entry);
-            let v = b.iconst_i32(i32::MAX);
+            let v = b.constant(i32::MAX);
             b.ret(&[v]);
         })
         .expect("compile max_i32");
@@ -750,7 +788,7 @@ mod tests {
         jit.add_function("min_i32", &sig, |b| {
             let entry = b.create_block();
             b.switch_to_block(entry);
-            let v = b.iconst_i32(i32::MIN);
+            let v = b.constant(i32::MIN);
             b.ret(&[v]);
         })
         .expect("compile min_i32");
@@ -763,7 +801,7 @@ mod tests {
         jit.add_function("max_i64", &sig64, |b| {
             let entry = b.create_block();
             b.switch_to_block(entry);
-            let v = b.iconst_i64(i64::MAX);
+            let v = b.constant(i64::MAX);
             b.ret(&[v]);
         })
         .expect("compile max_i64");
@@ -801,7 +839,7 @@ mod tests {
             b.jump(loop_block, &[]);
 
             b.switch_to_block(loop_block);
-            let zero = b.iconst_i32(0);
+            let zero = b.constant(0i32);
             let done_cond = b.icmp(forge_ir::IntCC::Sle, params[0], zero);
             let body_block = b.create_block();
             let done_block = b.create_block();
@@ -814,7 +852,7 @@ mod tests {
 
             // body: n = n - 1, jump back to loop
             b.switch_to_block(body_block);
-            let one = b.iconst_i32(1);
+            let one = b.constant(1i32);
             // Note: params[0] still references the entry block's n param,
             // which is valid in SSA. The subtraction creates a new value.
             let new_n = b.isub(params[0], one);
@@ -852,7 +890,7 @@ mod tests {
             let (entry, params) = b.create_block_with_params(&[(vt, "v")]);
             b.switch_to_block(entry);
             // 完整验证：by-ref load 后 vextract lane0 → fptosi 返回
-            let idx = b.iconst_i32(0);
+            let idx = b.constant(0i32);
             let lane = b.vextract(params[0], idx);
             let wide = b.fpext(lane, TypeId::F64);
             let int = b.fptosi(wide, TypeId::I32);
@@ -1103,7 +1141,7 @@ define i64 @main() {
         let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
         let (blk, p) = bc.create_block_with_params(&[(vt, "v")]);
         bc.switch_to_block(blk);
-        let idx = bc.iconst_i32(0);
+        let idx = bc.constant(0i32);
         let lane = bc.vextract(p[0], idx);
         let wide = bc.fpext(lane, TypeId::F64);
         let int = bc.fptosi(wide, TypeId::I32);
@@ -1114,7 +1152,7 @@ define i64 @main() {
         let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
-        let v = bm.vconst(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        let v = bm.const_vector(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
         let r = bm.call(callee_ref, &[v], &[TypeId::I32]);
         bm.ret(&r);
         module.add_function(bm.finish().expect("main"));
@@ -1141,7 +1179,7 @@ define i64 @main() {
         jit.add_function("v256_ret", &sig, |b| {
             let entry = b.create_block();
             b.switch_to_block(entry);
-            let v = b.vconst(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+            let v = b.const_vector(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
             b.ret(&[v]);
         })
         .expect("compile v256_ret");
@@ -1174,7 +1212,7 @@ define i64 @main() {
         let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
         let blk = bc.create_block();
         bc.switch_to_block(blk);
-        let v = bc.vconst(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        let v = bc.const_vector(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
         bc.ret(&[v]);
         let mut module = Module::new();
         let callee_ref = module.add_function(bc.finish().expect("callee"));
@@ -1183,7 +1221,7 @@ define i64 @main() {
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
         let r = bm.call(callee_ref, &[], &[vt]);
-        let idx = bm.iconst_i32(0);
+        let idx = bm.constant(0i32);
         let lane = bm.vextract(r[0], idx);
         let wide = bm.fpext(lane, TypeId::F64);
         let int = bm.fptosi(wide, TypeId::I32);
@@ -1215,10 +1253,10 @@ define i64 @main() {
             let entry = b.create_block();
             b.switch_to_block(entry);
             let addr = b.stack_addr(-32);
-            let v = b.vconst(vec![1.0f32, 2.0, 3.0, 7.5]);
+            let v = b.const_vector(vec![1.0f32, 2.0, 3.0, 7.5]);
             b.store(v, addr);
             let vl = b.load(addr, vt128);
-            let idx = b.iconst_i32(3);
+            let idx = b.constant(3i32);
             let lane = b.vextract(vl, idx);
             let wide = b.fpext(lane, TypeId::F64);
             let int = b.fptosi(wide, TypeId::I32);
@@ -1239,10 +1277,10 @@ define i64 @main() {
             let entry = b.create_block();
             b.switch_to_block(entry);
             let addr = b.stack_addr(-24);
-            let v = b.vconst(vec![1.0f32, 6.5]);
+            let v = b.const_vector(vec![1.0f32, 6.5]);
             b.store(v, addr);
             let vl = b.load(addr, vt64);
-            let idx = b.iconst_i32(1);
+            let idx = b.constant(1i32);
             let lane = b.vextract(vl, idx);
             let wide = b.fpext(lane, TypeId::F64);
             let int = b.fptosi(wide, TypeId::I32);
@@ -1279,10 +1317,10 @@ define i64 @main() {
             let entry = b.create_block();
             b.switch_to_block(entry);
             let addr = b.stack_addr(-48);
-            let v = b.vconst(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 16.5]);
+            let v = b.const_vector(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 16.5]);
             b.store(v, addr);
             let vl = b.load(addr, vt256);
-            let idx = b.iconst_i32(7);
+            let idx = b.constant(7i32);
             let lane = b.vextract(vl, idx);
             let wide = b.fpext(lane, TypeId::F64);
             let int = b.fptosi(wide, TypeId::I32);
@@ -1325,12 +1363,12 @@ define i64 @main() {
         let (blk, _p) = b.create_block_with_params(&[]);
         b.switch_to_block(blk);
         let vals: Vec<_> = (0..N)
-            .map(|i| b.vconst(vec![1.0f32 + i as f32; 8]))
+            .map(|i| b.const_vector(vec![1.0f32 + i as f32; 8]))
             .collect();
-        let mut acc = b.iconst_i32(0);
+        let mut acc = b.constant(0i32);
         for v in &vals {
             let neg = b.vneg(*v);
-            let idx = b.iconst_i32(7);
+            let idx = b.constant(7i32);
             let lane = b.vextract(neg, idx);
             let wide = b.fpext(lane, TypeId::F64);
             let int = b.fptosi(wide, TypeId::I32);
@@ -1371,7 +1409,7 @@ define i64 @main() {
         let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
         let (blk, p) = bc.create_block_with_params(&[(vt, "v")]);
         bc.switch_to_block(blk);
-        let idx = bc.iconst_i32(3);
+        let idx = bc.constant(3i32);
         let lane = bc.vextract(p[0], idx);
         let wide = bc.fpext(lane, TypeId::F64);
         let int = bc.fptosi(wide, TypeId::I32);
@@ -1382,9 +1420,9 @@ define i64 @main() {
         let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
-        let v1 = bm.vconst(vec![1.5f32, 2.0, 3.0, 4.5]);
+        let v1 = bm.const_vector(vec![1.5f32, 2.0, 3.0, 4.5]);
         let r1 = bm.call(callee_ref, &[v1], &[TypeId::I32]);
-        let v2 = bm.vconst(vec![10.5f32, 11.0, 12.0, 13.5]);
+        let v2 = bm.const_vector(vec![10.5f32, 11.0, 12.0, 13.5]);
         let r2 = bm.call(callee_ref, &[v2], &[TypeId::I32]);
         let s = bm.iadd(r1[0], r2[0]);
         bm.ret(&[s]);
@@ -1414,7 +1452,7 @@ define i64 @main() {
         let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
         let blk = bc.create_block();
         bc.switch_to_block(blk);
-        let v = bc.vconst(vec![1.0f32, 2.0, 3.0, 7.5]);
+        let v = bc.const_vector(vec![1.0f32, 2.0, 3.0, 7.5]);
         bc.ret(&[v]);
         let mut module = Module::new();
         let callee_ref = module.add_function(bc.finish().expect("callee"));
@@ -1422,7 +1460,7 @@ define i64 @main() {
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
         let r = bm.call(callee_ref, &[], &[vt]);
-        let idx = bm.iconst_i32(3);
+        let idx = bm.constant(3i32);
         let lane = bm.vextract(r[0], idx);
         let wide = bm.fpext(lane, TypeId::F64);
         let int = bm.fptosi(wide, TypeId::I32);
@@ -1451,7 +1489,7 @@ define i64 @main() {
         let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
         let (blk, p) = bc.create_block_with_params(&[(vt, "v")]);
         bc.switch_to_block(blk);
-        let idx = bc.iconst_i32(1);
+        let idx = bc.constant(1i32);
         let lane = bc.vextract(p[0], idx);
         let wide = bc.fpext(lane, TypeId::F64);
         let int = bc.fptosi(wide, TypeId::I32);
@@ -1461,7 +1499,7 @@ define i64 @main() {
         let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
-        let v = bm.vconst(vec![1.5f32, 6.5]);
+        let v = bm.const_vector(vec![1.5f32, 6.5]);
         let r = bm.call(callee_ref, &[v], &[TypeId::I32]);
         bm.ret(&r);
         module.add_function(bm.finish().expect("main"));
@@ -1487,7 +1525,7 @@ define i64 @main() {
         let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
         let blk = bc.create_block();
         bc.switch_to_block(blk);
-        let v = bc.vconst(vec![1.0f32, 8.5]);
+        let v = bc.const_vector(vec![1.0f32, 8.5]);
         bc.ret(&[v]);
         let mut module = Module::new();
         let callee_ref = module.add_function(bc.finish().expect("callee"));
@@ -1495,7 +1533,7 @@ define i64 @main() {
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
         let r = bm.call(callee_ref, &[], &[vt]);
-        let idx = bm.iconst_i32(1);
+        let idx = bm.constant(1i32);
         let lane = bm.vextract(r[0], idx);
         let wide = bm.fpext(lane, TypeId::F64);
         let int = bm.fptosi(wide, TypeId::I32);
@@ -1526,7 +1564,7 @@ define i64 @main() {
         let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
         let (blk, p) = bc.create_block_with_params(&[(TypeId::I32, "a"), (vt, "v")]);
         bc.switch_to_block(blk);
-        let idx = bc.iconst_i32(2);
+        let idx = bc.constant(2i32);
         let lane = bc.vextract(p[1], idx);
         let wide = bc.fpext(lane, TypeId::F64);
         let int = bc.fptosi(wide, TypeId::I32);
@@ -1538,8 +1576,8 @@ define i64 @main() {
         let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
-        let ten = bm.iconst_i32(10);
-        let v = bm.vconst(vec![1.5f32, 2.0, 3.5, 4.0]);
+        let ten = bm.constant(10i32);
+        let v = bm.const_vector(vec![1.5f32, 2.0, 3.5, 4.0]);
         let r = bm.call(callee_ref, &[ten, v], &[TypeId::I32]);
         bm.ret(&r);
         module.add_function(bm.finish().expect("main"));
@@ -1567,7 +1605,7 @@ define i64 @main() {
         let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
         let (blk, p) = bc.create_block_with_params(&[(TypeId::I32, "a"), (vt, "v")]);
         bc.switch_to_block(blk);
-        let idx = bc.iconst_i32(0);
+        let idx = bc.constant(0i32);
         let lane = bc.vextract(p[1], idx);
         let wide = bc.fpext(lane, TypeId::F64);
         let int = bc.fptosi(wide, TypeId::I32);
@@ -1579,8 +1617,8 @@ define i64 @main() {
         let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
-        let ten = bm.iconst_i32(10);
-        let v = bm.vconst(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        let ten = bm.constant(10i32);
+        let v = bm.const_vector(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
         let r = bm.call(callee_ref, &[ten, v], &[TypeId::I32]);
         bm.ret(&r);
         module.add_function(bm.finish().expect("main"));
@@ -1616,9 +1654,9 @@ define i64 @main() {
         let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
-        let v = bm.vconst(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        let v = bm.const_vector(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
         let r = bm.call(callee_ref, &[v], &[vt]);
-        let idx = bm.iconst_i32(0);
+        let idx = bm.constant(0i32);
         let lane = bm.vextract(r[0], idx);
         let wide = bm.fpext(lane, TypeId::F64);
         let int = bm.fptosi(wide, TypeId::I32);
@@ -1665,7 +1703,7 @@ define i64 @main() {
         let mut bc = FunctionBuilder::new("callee", tc, sig_c);
         let (blk, p) = bc.create_block_with_params(&[(vt, "v")]);
         bc.switch_to_block(blk);
-        let idx = bc.iconst_i32(15);
+        let idx = bc.constant(15i32);
         let lane = bc.vextract(p[0], idx);
         let wide = bc.fpext(lane, TypeId::F64);
         let int = bc.fptosi(wide, TypeId::I32);
@@ -1676,7 +1714,7 @@ define i64 @main() {
         let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
-        let v = bm.vconst(vec![
+        let v = bm.const_vector(vec![
             1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
             16.0,
         ]);
@@ -1715,15 +1753,15 @@ define i64 @main() {
         bc.switch_to_block(blk);
         // callee: (v256) -> i32（lane7 * 10 + lane4 = 8*10 + 5 = 85）
         // 覆盖高半区两条路径：lane7（imm0≥4 → imm0_sub4=3）与 lane4（imm0=4 → sub4=0）。
-        let idx7 = bc.iconst_i32(7);
+        let idx7 = bc.constant(7i32);
         let l7 = bc.vextract(p[0], idx7);
         let w7 = bc.fpext(l7, TypeId::F64);
         let i7 = bc.fptosi(w7, TypeId::I32);
-        let idx4 = bc.iconst_i32(4);
+        let idx4 = bc.constant(4i32);
         let l4 = bc.vextract(p[0], idx4);
         let w4 = bc.fpext(l4, TypeId::F64);
         let i4 = bc.fptosi(w4, TypeId::I32);
-        let ten = bc.iconst_i32(10);
+        let ten = bc.constant(10i32);
         let scaled = bc.imul(i7, ten);
         let sum = bc.iadd(scaled, i4);
         bc.ret(&[sum]);
@@ -1732,7 +1770,7 @@ define i64 @main() {
         let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut bm = FunctionBuilder::new("v256_hi_main", TypeContext::new(), sig_m);
         bm.create_block_here();
-        let v = bm.vconst(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        let v = bm.const_vector(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
         let r = bm.call(callee_ref, &[v], &[TypeId::I32]);
         bm.ret(&r);
         module.add_function(bm.finish().expect("v256_hi_main"));
@@ -1765,7 +1803,7 @@ define i64 @main() {
         let mut bc = FunctionBuilder::new("ci_callee", TypeContext::new(), sig_c.clone());
         let (blk, p) = bc.create_block_with_params(&[(vt, "v")]);
         bc.switch_to_block(blk);
-        let idx = bc.iconst_i32(0);
+        let idx = bc.constant(0i32);
         let lane = bc.vextract(p[0], idx);
         let wide = bc.fpext(lane, TypeId::F64);
         let int = bc.fptosi(wide, TypeId::I32);
@@ -1775,7 +1813,7 @@ define i64 @main() {
         let mut bm = FunctionBuilder::new("ci_main", TypeContext::new(), sig_m);
         let (mb, mp) = bm.create_block_with_params(&[(TypeId::I64, "fp")]);
         bm.switch_to_block(mb);
-        let v = bm.vconst(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        let v = bm.const_vector(vec![1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
         let r = bm.call_indirect(mp[0], &[v], &[TypeId::I32]);
         bm.ret(&r);
 
@@ -1816,7 +1854,7 @@ define i64 @main() {
         let mut bc = FunctionBuilder::new("callee", tc, sig_c);
         let (blk, p) = bc.create_block_with_params(&[(vt, "v")]);
         bc.switch_to_block(blk);
-        let idx = bc.iconst_i32(15);
+        let idx = bc.constant(15i32);
         let lane = bc.vextract(p[0], idx);
         let wide = bc.fpext(lane, TypeId::F64);
         let int = bc.fptosi(wide, TypeId::I32);
@@ -1826,13 +1864,13 @@ define i64 @main() {
         let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
-        let v = bm.vconst(vec![
+        let v = bm.const_vector(vec![
             1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
             16.0,
         ]);
-        let ptr = bm.iconst_i64(0);
+        let ptr = bm.constant(0i64);
         let _ = bm.call_indirect(ptr, &[v], &[TypeId::I32]);
-        let zero = bm.iconst_i32(0);
+        let zero = bm.constant(0i32);
         bm.ret(&[zero]);
         let main_func = bm.finish().expect("build main");
         let is_evex = |code: &[u8], op: u8| {
@@ -1927,16 +1965,16 @@ define i64 @main() {
         let mut bc = FunctionBuilder::new("ci_ret_callee", TypeContext::new(), sig_c.clone());
         let (blk, _p) = bc.create_block_with_params(&[(TypeId::I32, "n")]);
         bc.switch_to_block(blk);
-        let v = bc.vconst(vec![3.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+        let v = bc.const_vector(vec![3.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
         bc.ret(&[v]);
         // main: (fn_ptr: i64) -> i32 { v = call_indirect(fp, [0], [v256]); lane0 → i32 }
         let sig_m = FunctionSignature::new(&[(TypeId::I64, "fp")], &[TypeId::I32]);
         let mut bm = FunctionBuilder::new("ci_ret_main", TypeContext::new(), sig_m);
         let (mb, mp) = bm.create_block_with_params(&[(TypeId::I64, "fp")]);
         bm.switch_to_block(mb);
-        let n = bm.iconst_i32(0);
+        let n = bm.constant(0i32);
         let r = bm.call_indirect(mp[0], &[n], &[vt]);
-        let idx = bm.iconst_i32(0);
+        let idx = bm.constant(0i32);
         let lane = bm.vextract(r[0], idx);
         let wide = bm.fpext(lane, TypeId::F64);
         let int = bm.fptosi(wide, TypeId::I32);
@@ -1973,10 +2011,10 @@ define i64 @main() {
         jit.add_function("sel_bool", &sig, |b| {
             let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x")]);
             b.switch_to_block(entry);
-            let zero = b.iconst_i64(0);
+            let zero = b.constant(0i64);
             let cond = b.icmp(IntCC::Ne, params[0], zero);
-            let c100 = b.iconst_i64(100);
-            let c7 = b.iconst_i64(7);
+            let c100 = b.constant(100i64);
+            let c7 = b.constant(7i64);
             let sel = b.select(cond, c100, c7);
             b.ret(&[sel]);
         })
@@ -1990,10 +2028,10 @@ define i64 @main() {
         jit.add_function("sel_i32", &sig2, |b| {
             let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
             b.switch_to_block(entry);
-            let zero = b.iconst_i32(0);
+            let zero = b.constant(0i32);
             let cond = b.icmp(IntCC::Ne, params[0], zero);
-            let c42 = b.iconst_i32(42);
-            let c9 = b.iconst_i32(9);
+            let c42 = b.constant(42i32);
+            let c9 = b.constant(9i32);
             let sel = b.select(cond, c42, c9);
             b.ret(&[sel]);
         })
@@ -2037,14 +2075,14 @@ define i64 @main() {
         let mut b = FunctionBuilder::new("fib", TypeContext::new(), sig.clone());
         let (entry, p) = b.create_block_with_params(&[(TypeId::I64, "n")]);
         b.switch_to_block(entry);
-        let two = b.iconst_i64(2);
+        let two = b.constant(2i64);
         let lt = b.icmp(IntCC::Slt, p[0], two);
         let rec = b.create_block();
         let (done, dp) = b.create_block_with_params(&[(TypeId::I64, "r")]);
         b.switch_to_block(entry);
         b.branch(lt, done, &[p[0]], rec, &[]);
         b.switch_to_block(rec);
-        let one = b.iconst_i64(1);
+        let one = b.constant(1i64);
         let nm1 = b.isub(p[0], one);
         let r1 = b.call(FuncRef::new(0), &[nm1], &[TypeId::I64]);
         let nm2 = b.isub(p[0], two);
@@ -2061,7 +2099,7 @@ define i64 @main() {
         let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
-        let ten = bm.iconst_i64(10);
+        let ten = bm.constant(10i64);
         let r = bm.call(fib_ref, &[ten], &[TypeId::I64]);
         bm.ret(&r);
         module.add_function(bm.finish().expect("main"));
@@ -2087,10 +2125,10 @@ define i64 @main() {
                 b.create_block_with_params(&[(TypeId::F64, "a"), (TypeId::F64, "b")]);
             b.switch_to_block(entry);
             let sum = b.fadd(params[0], params[1]);
-            let three = b.fconst_f64(3.0f64);
+            let three = b.constant(3.0f64);
             let gt = b.fcmp(FloatCC::Ogt, sum, three);
-            let c1 = b.iconst_i32(1);
-            let c0 = b.iconst_i32(0);
+            let c1 = b.constant(1i32);
+            let c0 = b.constant(0i32);
             let sel = b.select(gt, c1, c0);
             b.ret(&[sel]);
         })
@@ -2098,6 +2136,109 @@ define i64 @main() {
         let f: extern "C" fn(f64, f64) -> i32 = jit.get_fn("float_gt").expect("get_fn");
         assert_eq!(f(1.5, 2.0), 1, "1.5+2.0=3.5 > 3.0 → 1");
         assert_eq!(f(1.0, 1.0), 0, "1.0+1.0=2.0 ≤ 3.0 → 0");
+    }
+
+    /// **`Fcmp` 全条件矩阵（16 个 `FloatCC`）**，含 NaN 的六种操作数组合。
+    ///
+    /// 为什么要有这条：v27 M5 的「已知缺陷」清单里剩的最后一项是"窄类型/转换族同类仍可能有遗留
+    /// （下一步要在 `Fcmp` 发射路径上实测 `cond` 取值，别再靠枚举序推断）"。谱里 14 条
+    /// `cond` 规则 + 2 条常量条件（`False`/`True`）此前**没有**逐条实测覆盖，
+    /// 这里用 Rust 自身的比较语义当 oracle 一次钉死 16×6 = 96 个判定。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_fcmp_all_conditions_matrix() {
+        use forge_ir::{FloatCC, FunctionSignature, TypeId};
+
+        ensure_registered();
+        const CCS: [FloatCC; 16] = [
+            FloatCC::Ord,
+            FloatCC::Uno,
+            FloatCC::Oeq,
+            FloatCC::One,
+            FloatCC::Olt,
+            FloatCC::Ole,
+            FloatCC::Ogt,
+            FloatCC::Oge,
+            FloatCC::False,
+            FloatCC::True,
+            FloatCC::Ueq,
+            FloatCC::Ugt,
+            FloatCC::Uge,
+            FloatCC::Ult,
+            FloatCC::Ule,
+            FloatCC::Une,
+        ];
+
+        // oracle：LLVM 语义（有序条件遇 NaN 为假；无序条件遇 NaN 为真）
+        fn oracle(cc: FloatCC, a: f64, b: f64) -> i32 {
+            let nan = a.is_nan() || b.is_nan();
+            let r = match cc {
+                FloatCC::Ord => !nan,
+                FloatCC::Uno => nan,
+                FloatCC::Oeq => a == b,
+                FloatCC::One => a != b && !nan,
+                FloatCC::Olt => a < b,
+                FloatCC::Ole => a <= b,
+                FloatCC::Ogt => a > b,
+                FloatCC::Oge => a >= b,
+                FloatCC::False => false,
+                FloatCC::True => true,
+                FloatCC::Ueq => nan || a == b,
+                FloatCC::Une => nan || a != b,
+                FloatCC::Ugt => nan || a > b,
+                FloatCC::Uge => nan || a >= b,
+                FloatCC::Ult => nan || a < b,
+                FloatCC::Ule => nan || a <= b,
+            };
+            i32::from(r)
+        }
+
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+        for (i, cc) in CCS.iter().enumerate() {
+            let name = format!("fcmp_{i}");
+            let sig =
+                FunctionSignature::new(&[(TypeId::F64, "a"), (TypeId::F64, "b")], &[TypeId::I32]);
+            jit.add_function(&name, &sig, |b| {
+                let (entry, params) =
+                    b.create_block_with_params(&[(TypeId::F64, "a"), (TypeId::F64, "b")]);
+                b.switch_to_block(entry);
+                let c = b.fcmp(*cc, params[0], params[1]);
+                let z = b.uextend(c, TypeId::I32);
+                b.ret(&[z]);
+            })
+            .expect("compile fcmp");
+        }
+
+        // 六种操作数组合：有序两侧、相等、NaN 在左/右/两侧
+        let pairs = [
+            (1.0, 2.0),
+            (2.0, 1.0),
+            (1.0, 1.0),
+            (f64::NAN, 1.0),
+            (1.0, f64::NAN),
+            (f64::NAN, f64::NAN),
+        ];
+        // 六种操作数组合：有序两侧、相等、NaN 在左/右/两侧。
+        // **收集全部不符项再断言**：组合形态的缺陷往往一次命中多个条件，
+        // 逐条 `assert_eq!` 只会报第一个（v27 M5 排查时正是这样漏掉了另一半）。
+        let mut bad: Vec<String> = Vec::new();
+        for (i, cc) in CCS.iter().enumerate() {
+            let name = format!("fcmp_{i}");
+            let f: extern "C" fn(f64, f64) -> i32 = jit.get_fn(&name).expect("get_fn");
+            for (a, b) in pairs {
+                let got = f(a, b);
+                let want = oracle(*cc, a, b);
+                if got != want {
+                    bad.push(format!("{cc:?}({a}, {b}) 得 {got} 期望 {want}"));
+                }
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "Fcmp 判定不符 {} 条：\n{}",
+            bad.len(),
+            bad.join("\n")
+        );
     }
 
     /// e2e 值错隔离：mixed_args 主库等价——int/float 混合参数（by-position
@@ -2123,10 +2264,10 @@ define i64 @main() {
             ]);
             b.switch_to_block(entry);
             let sum = b.iadd(p[0], p[2]);
-            let half = b.fconst_f64(0.5f64);
+            let half = b.constant(0.5f64);
             let gt = b.fcmp(FloatCC::Ogt, p[1], half);
-            let ten = b.iconst_i32(10);
-            let zero = b.iconst_i32(0);
+            let ten = b.constant(10i32);
+            let zero = b.constant(0i32);
             let bonus = b.select(gt, ten, zero);
             let r = b.iadd(sum, bonus);
             b.ret(&[r]);
@@ -2151,10 +2292,10 @@ define i64 @main() {
         let mut bc = FunctionBuilder::new("callee", TypeContext::new(), sig_c);
         let (blk, p) = bc.create_block_with_params(&[(TypeId::F64, "b")]);
         bc.switch_to_block(blk);
-        let three = bc.fconst_f64(3.0f64);
+        let three = bc.constant(3.0f64);
         let gt = bc.fcmp(FloatCC::Ogt, p[0], three);
-        let c1 = bc.iconst_i32(1);
-        let c0 = bc.iconst_i32(0);
+        let c1 = bc.constant(1i32);
+        let c0 = bc.constant(0i32);
         let sel = bc.select(gt, c1, c0);
         bc.ret(&[sel]);
         let mut module = Module::new();
@@ -2163,7 +2304,7 @@ define i64 @main() {
         let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
-        let v = bm.fconst_f64(2.5f64);
+        let v = bm.constant(2.5f64);
         let r = bm.call(callee_ref, &[v], &[TypeId::I32]);
         bm.ret(&r);
         module.add_function(bm.finish().expect("main"));
@@ -2187,17 +2328,17 @@ define i64 @main() {
             let (entry, p) = b.create_block_with_params(&[(TypeId::F64, "a"), (TypeId::F64, "b")]);
             b.switch_to_block(entry);
             let sum = b.fadd(p[0], p[1]);
-            let three = b.fconst_f64(3.0f64);
+            let three = b.constant(3.0f64);
             let gt = b.fcmp(FloatCC::Ogt, sum, three);
             let then_b = b.create_block();
             let else_b = b.create_block();
             b.switch_to_block(entry);
             b.branch(gt, then_b, &[], else_b, &[]);
             b.switch_to_block(then_b);
-            let c1 = b.iconst_i32(1);
+            let c1 = b.constant(1i32);
             b.ret(&[c1]);
             b.switch_to_block(else_b);
-            let c0 = b.iconst_i32(0);
+            let c0 = b.constant(0i32);
             b.ret(&[c0]);
         })
         .expect("compile f_branch");
@@ -2222,17 +2363,17 @@ define i64 @main() {
         let (blk, p) = bc.create_block_with_params(&[(TypeId::F64, "a"), (TypeId::F64, "b")]);
         bc.switch_to_block(blk);
         let sum = bc.fadd(p[0], p[1]);
-        let three = bc.fconst_f64(3.0f64);
+        let three = bc.constant(3.0f64);
         let gt = bc.fcmp(FloatCC::Ogt, sum, three);
         let then_b = bc.create_block();
         let else_b = bc.create_block();
         bc.switch_to_block(blk);
         bc.branch(gt, then_b, &[], else_b, &[]);
         bc.switch_to_block(then_b);
-        let c1 = bc.iconst_i32(1);
+        let c1 = bc.constant(1i32);
         bc.ret(&[c1]);
         bc.switch_to_block(else_b);
-        let c0 = bc.iconst_i32(0);
+        let c0 = bc.constant(0i32);
         bc.ret(&[c0]);
         let mut module = Module::new();
         let callee_ref = module.add_function(bc.finish().expect("callee"));
@@ -2240,8 +2381,8 @@ define i64 @main() {
         let sig_m = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
-        let v1 = bm.fconst_f64(1.5f64);
-        let v2 = bm.fconst_f64(2.0f64);
+        let v1 = bm.constant(1.5f64);
+        let v2 = bm.constant(2.0f64);
         let r = bm.call(callee_ref, &[v1, v2], &[TypeId::I32]);
         bm.ret(&r);
         module.add_function(bm.finish().expect("main"));
@@ -2272,17 +2413,17 @@ define i64 @main() {
             let slot = b.stack_addr(-16);
             b.fstore(p[0], slot);
             let v = b.fload(slot, TypeId::F64);
-            let three = b.fconst_f64(3.0f64);
+            let three = b.constant(3.0f64);
             let gt = b.fcmp(FloatCC::Ogt, v, three);
             let then_b = b.create_block();
             let else_b = b.create_block();
             b.switch_to_block(entry);
             b.branch(gt, then_b, &[], else_b, &[]);
             b.switch_to_block(then_b);
-            let c1 = b.iconst_i32(1);
+            let c1 = b.constant(1i32);
             b.ret(&[c1]);
             b.switch_to_block(else_b);
-            let c0 = b.iconst_i32(0);
+            let c0 = b.constant(0i32);
             b.ret(&[c0]);
         })
         .expect("compile f_slot");
@@ -2315,8 +2456,8 @@ define i64 @main() {
         let sig_m = FunctionSignature::new(&[], &[TypeId::I64]);
         let mut bm = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         bm.create_block_here();
-        let five = bm.iconst_i64(5);
-        let big = bm.iconst_i64(2995);
+        let five = bm.constant(5i64);
+        let big = bm.constant(2995i64);
         let r = bm.call(callee_ref, &[five, big], &[TypeId::I64]);
         bm.ret(&r);
         module.add_function(bm.finish().expect("main"));
@@ -2392,7 +2533,7 @@ define i64 @main() {
             let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "ptr")]);
             b.switch_to_block(entry);
             let p = params[0];
-            let three = b.iconst(3, TypeId::I64);
+            let three = b.const_int(3, TypeId::I64);
             let old = b.atomic_rmw(AtomicRmwOp::Add, p, three, Ordering::Monotonic);
             let old32 = b.ireduce(old, TypeId::I32);
             b.ret(&[old32]);
@@ -2490,7 +2631,7 @@ define i64 @main() {
             let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "ptr")]);
             b.switch_to_block(entry);
             let p = params[0];
-            let val = b.iconst(0b1010, TypeId::I8);
+            let val = b.const_int(0b1010, TypeId::I8);
             let (loop_b, la) = b.create_block_with_tys(&[TypeId::I8]);
             let (exit_b, ea) = b.create_block_with_tys(&[TypeId::I8]);
             b.switch_to_block(entry);
@@ -2599,7 +2740,7 @@ define i64 @main() {
             let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "ptr")]);
             b.switch_to_block(entry);
             let p = params[0];
-            let val = b.iconst(0b1010, TypeId::I64);
+            let val = b.const_int(0b1010, TypeId::I64);
             let (loop_b, la) = b.create_block_with_tys(&[TypeId::I64]);
             let (exit_b, ea) = b.create_block_with_tys(&[TypeId::I64]);
             b.switch_to_block(entry);
@@ -2640,7 +2781,7 @@ define i64 @main() {
             let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "ptr")]);
             b.switch_to_block(entry);
             let p = params[0];
-            let val = b.iconst(0b1010, TypeId::I32);
+            let val = b.const_int(0b1010, TypeId::I32);
             let (loop_b, la) = b.create_block_with_tys(&[TypeId::I32]);
             let (exit_b, ea) = b.create_block_with_tys(&[TypeId::I32]);
             b.switch_to_block(entry);
@@ -2692,8 +2833,8 @@ define i64 @main() {
             let new = b.band(old, val);
             let actual = b.cmpxchg(p, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
             let ok = b.icmp(forge_ir::IntCC::Eq, actual, old);
-            let z = b.iconst(0, TypeId::I32);
-            let o = b.iconst(1, TypeId::I32);
+            let z = b.const_int(0, TypeId::I32);
+            let o = b.const_int(1, TypeId::I32);
             let pick = b.select(ok, z, o);
             b.ret(&[pick]);
         })
@@ -2723,8 +2864,8 @@ define i64 @main() {
             let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "ptr")]);
             b.switch_to_block(entry);
             let p = params[0];
-            let old = b.iconst(12, TypeId::I32);
-            let new = b.iconst(8, TypeId::I32);
+            let old = b.const_int(12, TypeId::I32);
+            let new = b.const_int(8, TypeId::I32);
             let actual = b.cmpxchg(p, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
             b.ret(&[actual]);
         })
@@ -2754,13 +2895,13 @@ define i64 @main() {
             b.switch_to_block(entry);
             let p = params[0];
             let old = b.load(p, TypeId::I32);
-            let mask = b.iconst(0b1010, TypeId::I32);
+            let mask = b.const_int(0b1010, TypeId::I32);
             let new = b.band(old, mask);
             let actual = b.cmpxchg(p, old, new, Ordering::Monotonic, Ordering::Monotonic, false);
             let ok = b.icmp(forge_ir::IntCC::Eq, actual, old);
             // 用 ok 选择返回值（防止 dead code 消除把比较消掉）
-            let z = b.iconst(0, TypeId::I32);
-            let o = b.iconst(1, TypeId::I32);
+            let z = b.const_int(0, TypeId::I32);
+            let o = b.const_int(1, TypeId::I32);
             let pick = b.select(ok, z, o);
             b.ret(&[pick]);
         })
@@ -2791,9 +2932,9 @@ define i64 @main() {
             // 10 个存活标量（占寄存器，制造 spill 压力）
             let mut vals = Vec::new();
             for i in 0..10 {
-                vals.push(b.iconst(i as i64, TypeId::I64));
+                vals.push(b.const_int(i as i64, TypeId::I64));
             }
-            let three = b.iconst(3, TypeId::I64);
+            let three = b.const_int(3, TypeId::I64);
             let old = b.atomic_rmw(AtomicRmwOp::Add, p, three, Ordering::Monotonic);
             // 消费所有存活值 + old（防死代码消除）
             let mut acc = old;
@@ -2844,7 +2985,7 @@ define i64 @main() {
             // 10 个存活常量（占寄存器，制造 spill 压力）
             let mut acc = val;
             for i in 0..10 {
-                let c = b.iconst(i as i64, TypeId::I64);
+                let c = b.const_int(i as i64, TypeId::I64);
                 acc = b.iadd(acc, c);
             }
             let back = b.load(slot_a, TypeId::I64);
@@ -2882,7 +3023,7 @@ define i64 @main() {
         let (ce, cp) = callee_fn.create_block_with_params(&[(TypeId::I64, "ptr")]);
         callee_fn.switch_to_block(ce);
         let val = callee_fn.load(cp[0], TypeId::I64);
-        let one = callee_fn.iconst(1, TypeId::I64);
+        let one = callee_fn.const_int(1, TypeId::I64);
         let nv = callee_fn.iadd(val, one);
         callee_fn.store(nv, cp[0]);
         callee_fn.ret(&[val]);
@@ -2895,12 +3036,12 @@ define i64 @main() {
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
         let x_slot = main_fn.stack_addr(-16);
-        let zero = main_fn.iconst(0, TypeId::I64);
+        let zero = main_fn.const_int(0, TypeId::I64);
         main_fn.store(zero, x_slot);
         let x_addr = main_fn.stack_addr(-16);
         let a = main_fn.call(callee_ref, &[x_addr], &[TypeId::I64])[0];
         let b = main_fn.call(callee_ref, &[x_addr], &[TypeId::I64])[0];
-        let hundred = main_fn.iconst(100, TypeId::I64);
+        let hundred = main_fn.const_int(100, TypeId::I64);
         let a100 = main_fn.imul(a, hundred);
         let r = main_fn.iadd(a100, b);
         main_fn.ret(&[r]);
@@ -2999,8 +3140,8 @@ ret_int = ["RAX"]
         let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
-        let a = main_fn.iconst(20, TypeId::I64);
-        let b = main_fn.iconst(7, TypeId::I64);
+        let a = main_fn.const_int(20, TypeId::I64);
+        let b = main_fn.const_int(7, TypeId::I64);
         let r = main_fn.call(cref, &[a, b], &[TypeId::I64])[0];
         main_fn.ret(&[r]);
         module.add_function(main_fn.finish().expect("main"));
@@ -3050,9 +3191,9 @@ ret_int = ["RAX"]
         let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
-        let n = main_fn.iconst(3, TypeId::I64);
-        let a = main_fn.iconst(4, TypeId::I64);
-        let b = main_fn.iconst(5, TypeId::I64);
+        let n = main_fn.const_int(3, TypeId::I64);
+        let a = main_fn.const_int(4, TypeId::I64);
+        let b = main_fn.const_int(5, TypeId::I64);
         let r = main_fn.call(cref, &[n, a, b], &[TypeId::I64])[0];
         main_fn.ret(&[r]);
         module.add_function(main_fn.finish().expect("main"));
@@ -3109,7 +3250,7 @@ ret_int = ["RAX"]
         let va = callee.va_start();
         let a = callee.va_arg(va, TypeId::I64);
         let b = callee.va_arg(va, TypeId::I64);
-        let ten = callee.iconst(10, TypeId::I64);
+        let ten = callee.const_int(10, TypeId::I64);
         let a10 = callee.imul(a, ten);
         let r = callee.iadd(a10, b);
         callee.ret(&[r]);
@@ -3121,9 +3262,9 @@ ret_int = ["RAX"]
         let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
-        let fmt = main_fn.iconst(0, TypeId::I64);
-        let x = main_fn.iconst(4, TypeId::I64);
-        let y = main_fn.iconst(7, TypeId::I64);
+        let fmt = main_fn.const_int(0, TypeId::I64);
+        let x = main_fn.const_int(4, TypeId::I64);
+        let y = main_fn.const_int(7, TypeId::I64);
         let got = main_fn.call(cref, &[fmt, x, y], &[TypeId::I64])[0];
         main_fn.ret(&[got]);
         module.add_function(main_fn.finish().expect("main"));
@@ -3174,7 +3315,7 @@ ret_int = ["RAX"]
         let mut main_fn = FunctionBuilder::new("main", ctx_m, sig_m);
         let (me, mp) = main_fn.create_block_with_params(&[(agg_ty_m, "agg")]);
         main_fn.switch_to_block(me);
-        let fmt = main_fn.iconst(0, TypeId::I64);
+        let fmt = main_fn.const_int(0, TypeId::I64);
         let got = main_fn.call(cref, &[fmt, mp[0]], &[TypeId::I64])[0];
         main_fn.ret(&[got]);
         module.add_function(main_fn.finish().expect("main"));
@@ -3244,7 +3385,7 @@ ret_int = ["RAX"]
         let mut main_fn = FunctionBuilder::new("main", ctx_m, sig_m);
         let (me, mp) = main_fn.create_block_with_params(&[(agg_ty_m, "agg")]);
         main_fn.switch_to_block(me);
-        let fmt = main_fn.iconst(0, TypeId::I64);
+        let fmt = main_fn.const_int(0, TypeId::I64);
         let got = main_fn.call(cref, &[fmt, mp[0]], &[TypeId::I64])[0];
         main_fn.ret(&[got]);
         module.add_function(main_fn.finish().expect("main"));
@@ -3293,10 +3434,10 @@ ret_int = ["RAX"]
         let mut main_ins = FunctionBuilder::new("main_ins", ctx_i2, sig_i);
         let (ie, _) = main_ins.create_block_with_params(&[]);
         main_ins.switch_to_block(ie);
-        let fmt_i = main_ins.iconst(0, TypeId::I64);
+        let fmt_i = main_ins.const_int(0, TypeId::I64);
         let base = main_ins.undef(agg_ty_i2);
-        let four = main_ins.iconst(4, TypeId::I64);
-        let seven = main_ins.iconst(7, TypeId::I64);
+        let four = main_ins.const_int(4, TypeId::I64);
+        let seven = main_ins.const_int(7, TypeId::I64);
         let t1 = main_ins.insert_value(base, four, 0);
         let t2 = main_ins.insert_value(t1, seven, 1);
         let got_i = main_ins.call(cref2, &[fmt_i, t2], &[TypeId::I64])[0];
@@ -3362,13 +3503,13 @@ ret_int = ["RAX"]
         let mut main_fn = FunctionBuilder::new("main", ctx_m, sig_m);
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
-        let fmt = main_fn.iconst(0, TypeId::I64);
+        let fmt = main_fn.const_int(0, TypeId::I64);
         // 三个字段写进一个本地槽，再**按聚合类型 load 回来**当实参——
         // `Load` 是实参拆段已支持的来源（`insertvalue` 链那条仍未支持）。
         let slot = main_fn.stack_addr(-32);
         for (k, v) in [(0i32, 11i64), (8, 22), (16, 33)] {
-            let val = main_fn.iconst(v, TypeId::I64);
-            let off = main_fn.iconst(i64::from(k), TypeId::I64);
+            let val = main_fn.const_int(v, TypeId::I64);
+            let off = main_fn.const_int(i64::from(k), TypeId::I64);
             let addr = main_fn.iadd(slot, off);
             main_fn.store(val, addr);
         }
@@ -3432,9 +3573,9 @@ ret_int = ["RAX"]
         let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
-        let fmt = main_fn.iconst(0, TypeId::I64);
-        let x = main_fn.fconst_f64(4.5);
-        let y = main_fn.fconst_f64(7.0);
+        let fmt = main_fn.const_int(0, TypeId::I64);
+        let x = main_fn.constant(4.5f64);
+        let y = main_fn.constant(7.0f64);
         let got = main_fn.call(cref, &[fmt, x, y], &[TypeId::I64])[0];
         main_fn.ret(&[got]);
         module.add_function(main_fn.finish().expect("main"));
@@ -3483,9 +3624,9 @@ ret_int = ["RAX"]
         let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
-        let fmt = main_fn.iconst(0, TypeId::I64);
-        let x = main_fn.fconst_f64(2.5);
-        let y = main_fn.fconst_f64(3.25);
+        let fmt = main_fn.const_int(0, TypeId::I64);
+        let x = main_fn.constant(2.5f64);
+        let y = main_fn.constant(3.25f64);
         let got = main_fn.call(cref, &[fmt, x, y], &[TypeId::I64])[0];
         main_fn.ret(&[got]);
         module.add_function(main_fn.finish().expect("main"));
@@ -3541,7 +3682,7 @@ ret_int = ["RAX"]
         main_fn.switch_to_block(me);
         let args: Vec<_> = [1.0f64, 2.0, 1.0, 2.0, 3.0, 4.0]
             .into_iter()
-            .map(|v| main_fn.fconst_f64(v))
+            .map(|v| main_fn.constant(v))
             .collect();
         let got = main_fn.call(cref, &args, &[TypeId::I64])[0];
         main_fn.ret(&[got]);
@@ -3601,7 +3742,7 @@ ret_int = ["RAX"]
         main_fn.switch_to_block(me);
         let args: Vec<_> = [1.0f64, 2.0, 4.0, 8.0, 16.0, 32.0]
             .into_iter()
-            .map(|v| main_fn.fconst_f64(v))
+            .map(|v| main_fn.constant(v))
             .collect();
         let got = main_fn.call(cref, &args, &[TypeId::I64])[0];
         main_fn.ret(&[got]);
@@ -3651,7 +3792,7 @@ ret_int = ["RAX"]
         main_fn.switch_to_block(me);
         let args: Vec<_> = [1.0f64, 2.0, 1.0, 2.0, 9.0]
             .into_iter()
-            .map(|v| main_fn.fconst_f64(v))
+            .map(|v| main_fn.constant(v))
             .collect();
         let got = main_fn.call(cref, &args, &[TypeId::I64])[0];
         main_fn.ret(&[got]);
@@ -3698,9 +3839,9 @@ ret_int = ["RAX"]
         callee.switch_to_block(ce);
         let ap = callee.va_start();
         let packed = callee.load(ap, TypeId::I64);
-        let mask = callee.iconst(0xFFFF_FFFF, TypeId::I64);
+        let mask = callee.const_int(0xFFFF_FFFFi64, TypeId::I64);
         let gp = callee.band(packed, mask);
-        let two = callee.iconst(2, TypeId::I64);
+        let two = callee.const_int(2, TypeId::I64);
         let rs_p = callee.gep(ap, &[two], TypeId::I64);
         let rs = callee.load(rs_p, TypeId::I64);
         let p_a = {
@@ -3708,14 +3849,14 @@ ret_int = ["RAX"]
             callee.inttoptr(__i, TypeId::PTR)
         };
         let a = callee.load(p_a, TypeId::I64);
-        let eight = callee.iconst(8, TypeId::I64);
+        let eight = callee.const_int(8, TypeId::I64);
         let gp8 = callee.iadd(gp, eight);
         let p_b = {
             let __i = callee.iadd(rs, gp8);
             callee.inttoptr(__i, TypeId::PTR)
         };
         let b = callee.load(p_b, TypeId::I64);
-        let ten = callee.iconst(10, TypeId::I64);
+        let ten = callee.const_int(10, TypeId::I64);
         let a10 = callee.imul(a, ten);
         let r = callee.iadd(a10, b);
         callee.ret(&[r]);
@@ -3726,9 +3867,9 @@ ret_int = ["RAX"]
         let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
-        let fmt = main_fn.iconst(0, TypeId::I64);
-        let x = main_fn.iconst(4, TypeId::I64);
-        let y = main_fn.iconst(7, TypeId::I64);
+        let fmt = main_fn.const_int(0, TypeId::I64);
+        let x = main_fn.const_int(4, TypeId::I64);
+        let y = main_fn.const_int(7, TypeId::I64);
         let got = main_fn.call(cref, &[fmt, x, y], &[TypeId::I64])[0];
         main_fn.ret(&[got]);
         module.add_function(main_fn.finish().expect("main"));
@@ -3782,7 +3923,7 @@ ret_int = ["RAX"]
         main_fn.switch_to_block(me);
         let args: Vec<_> = [1i64, 2, 3, 4, 5, 6, 7]
             .into_iter()
-            .map(|v| main_fn.iconst(v, TypeId::I64))
+            .map(|v| main_fn.const_int(v, TypeId::I64))
             .collect();
         let got = main_fn.call(cref, &args, &[TypeId::I64])[0];
         main_fn.ret(&[got]);
@@ -3821,7 +3962,7 @@ ret_int = ["RAX"]
         let ap = callee.va_start();
         let a = callee.va_arg(ap, TypeId::I64);
         let b = callee.va_arg(ap, TypeId::I64);
-        let ten = callee.iconst(10, TypeId::I64);
+        let ten = callee.const_int(10, TypeId::I64);
         let a10 = callee.imul(a, ten);
         let r = callee.iadd(a10, b);
         callee.ret(&[r]);
@@ -3832,9 +3973,9 @@ ret_int = ["RAX"]
         let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
-        let fmt = main_fn.iconst(0, TypeId::I64);
-        let x = main_fn.iconst(4, TypeId::I64);
-        let y = main_fn.iconst(7, TypeId::I64);
+        let fmt = main_fn.const_int(0, TypeId::I64);
+        let x = main_fn.const_int(4, TypeId::I64);
+        let y = main_fn.const_int(7, TypeId::I64);
         let got = main_fn.call(cref, &[fmt, x, y], &[TypeId::I64])[0];
         main_fn.ret(&[got]);
         module.add_function(main_fn.finish().expect("main"));
@@ -3882,7 +4023,7 @@ ret_int = ["RAX"]
         main_fn.switch_to_block(me);
         let args: Vec<_> = [0i64, 1, 2, 3, 4, 5, 42]
             .into_iter()
-            .map(|v| main_fn.iconst(v, TypeId::I64))
+            .map(|v| main_fn.const_int(v, TypeId::I64))
             .collect();
         let got = main_fn.call(cref, &args, &[TypeId::I64])[0];
         main_fn.ret(&[got]);
@@ -3924,7 +4065,7 @@ ret_int = ["RAX"]
         callee.switch_to_block(ce);
         // 前端局部槽：slot = stack_addr(-16)，存 4 再读回
         let slot = callee.stack_addr(-16);
-        let four = callee.iconst(4, TypeId::I64);
+        let four = callee.const_int(4, TypeId::I64);
         callee.store(four, slot);
         let x = callee.load(slot, TypeId::I64);
         // va_start + 两个未命名实参
@@ -3932,8 +4073,8 @@ ret_int = ["RAX"]
         let a = callee.va_arg(ap, TypeId::I64);
         let b = callee.va_arg(ap, TypeId::I64);
         // ret x*10 + a*100 + b ⇒ 若局部槽与 ABI 槽互相覆盖，任一项都会错。
-        let ten = callee.iconst(10, TypeId::I64);
-        let hundred = callee.iconst(100, TypeId::I64);
+        let ten = callee.const_int(10, TypeId::I64);
+        let hundred = callee.const_int(100, TypeId::I64);
         let x10 = callee.imul(x, ten);
         let a100 = callee.imul(a, hundred);
         let s1 = callee.iadd(x10, a100);
@@ -3946,9 +4087,9 @@ ret_int = ["RAX"]
         let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m);
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
-        let fmt = main_fn.iconst(0, TypeId::I64);
-        let xa = main_fn.iconst(4, TypeId::I64);
-        let xb = main_fn.iconst(7, TypeId::I64);
+        let fmt = main_fn.const_int(0, TypeId::I64);
+        let xa = main_fn.const_int(4, TypeId::I64);
+        let xb = main_fn.const_int(7, TypeId::I64);
         let got = main_fn.call(cref, &[fmt, xa, xb], &[TypeId::I64])[0];
         main_fn.ret(&[got]);
         module.add_function(main_fn.finish().expect("main"));
@@ -3981,8 +4122,8 @@ ret_int = ["RAX"]
         let mut callee = FunctionBuilder::new("callee", TypeContext::new(), sig_c.clone());
         let (ce, cp) = callee.create_block_with_params(&[(TypeId::I64, "n")]);
         callee.switch_to_block(ce);
-        let one = callee.iconst(1, TypeId::I64);
-        let two = callee.iconst(2, TypeId::I64);
+        let one = callee.const_int(1, TypeId::I64);
+        let two = callee.const_int(2, TypeId::I64);
         let lo = callee.iadd(cp[0], one);
         let hi = callee.iadd(cp[0], two);
         callee.ret(&[lo, hi]);
@@ -3994,9 +4135,9 @@ ret_int = ["RAX"]
         let mut main_fn = FunctionBuilder::new("main", TypeContext::new(), sig_m.clone());
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
-        let five = main_fn.iconst(5, TypeId::I64);
+        let five = main_fn.const_int(5, TypeId::I64);
         let r = main_fn.call(cref, &[five], &[TypeId::I64, TypeId::I64]);
-        let ten = main_fn.iconst(10, TypeId::I64);
+        let ten = main_fn.const_int(10, TypeId::I64);
         let a10 = main_fn.imul(r[0], ten);
         let sum = main_fn.iadd(a10, r[1]);
         main_fn.ret(&[sum]);
@@ -4027,7 +4168,7 @@ ret_int = ["RAX"]
         let (e2, p2) = f2.create_block_with_params(&[(TypeId::I64, "ptr")]);
         f2.switch_to_block(e2);
         let val2 = f2.load(p2[0], TypeId::I64);
-        let one2 = f2.iconst(1, TypeId::I64);
+        let one2 = f2.const_int(1, TypeId::I64);
         let nv2 = f2.iadd(val2, one2);
         f2.store(nv2, p2[0]);
         f2.ret(&[val2]);
@@ -4049,12 +4190,12 @@ ret_int = ["RAX"]
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
         let x_slot = main_fn.stack_addr(-16);
-        let zero = main_fn.iconst(0, TypeId::I64);
+        let zero = main_fn.const_int(0, TypeId::I64);
         main_fn.store(zero, x_slot);
         let x_addr = main_fn.stack_addr(-16);
         let a = main_fn.call(callee1_ref, &[x_addr], &[TypeId::I64])[0];
         let b = main_fn.call(callee1_ref, &[x_addr], &[TypeId::I64])[0];
-        let hundred = main_fn.iconst(100, TypeId::I64);
+        let hundred = main_fn.const_int(100, TypeId::I64);
         let a100 = main_fn.imul(a, hundred);
         let r = main_fn.iadd(a100, b);
         main_fn.ret(&[r]);
@@ -4082,7 +4223,7 @@ ret_int = ["RAX"]
         let mut f3 = FunctionBuilder::new("callee3", TypeContext::new(), sig3.clone());
         let (e3, p3) = f3.create_block_with_params(&[(TypeId::I64, "x")]);
         f3.switch_to_block(e3);
-        let t = f3.iconst(1000, TypeId::I64);
+        let t = f3.const_int(1000, TypeId::I64);
         let r3 = f3.iadd(p3[0], t);
         f3.ret(&[r3]);
         let mut module = Module::new();
@@ -4096,7 +4237,7 @@ ret_int = ["RAX"]
         f2.switch_to_block(e2);
         let val2 = f2.load(p2[0], TypeId::I64);
         let _junk = f2.call(callee3_ref, &[val2], &[TypeId::I64])[0];
-        let one2 = f2.iconst(1, TypeId::I64);
+        let one2 = f2.const_int(1, TypeId::I64);
         let nv2 = f2.iadd(val2, one2);
         f2.store(nv2, p2[0]);
         f2.ret(&[val2]);
@@ -4108,12 +4249,12 @@ ret_int = ["RAX"]
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
         let x_slot = main_fn.stack_addr(-16);
-        let zero = main_fn.iconst(0, TypeId::I64);
+        let zero = main_fn.const_int(0, TypeId::I64);
         main_fn.store(zero, x_slot);
         let x_addr = main_fn.stack_addr(-16);
         let a = main_fn.call(callee2_ref, &[x_addr], &[TypeId::I64])[0];
         let b = main_fn.call(callee2_ref, &[x_addr], &[TypeId::I64])[0];
-        let hundred = main_fn.iconst(100, TypeId::I64);
+        let hundred = main_fn.const_int(100, TypeId::I64);
         let a100 = main_fn.imul(a, hundred);
         let r = main_fn.iadd(a100, b);
         main_fn.ret(&[r]);
@@ -4142,7 +4283,7 @@ ret_int = ["RAX"]
         let mut f3 = FunctionBuilder::new("callee3", TypeContext::new(), sig3.clone());
         let (e3, p3) = f3.create_block_with_params(&[(TypeId::I64, "x")]);
         f3.switch_to_block(e3);
-        let t = f3.iconst(1000, TypeId::I64);
+        let t = f3.const_int(1000, TypeId::I64);
         let r3 = f3.iadd(p3[0], t);
         f3.ret(&[r3]);
         let mut module = Module::new();
@@ -4161,7 +4302,7 @@ ret_int = ["RAX"]
         let v1 = f2.load(p2[0], TypeId::I64);
         let _junk = f2.call(callee3_ref, &[v1], &[TypeId::I64])[0];
         let v2 = f2.load(p2[0], TypeId::I64);
-        let one2 = f2.iconst(1, TypeId::I64);
+        let one2 = f2.const_int(1, TypeId::I64);
         let nv2 = f2.iadd(v2, one2);
         f2.store(nv2, p2[0]);
         f2.ret(&[v1]);
@@ -4173,12 +4314,12 @@ ret_int = ["RAX"]
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
         let x_slot = main_fn.stack_addr(-16);
-        let zero = main_fn.iconst(0, TypeId::I64);
+        let zero = main_fn.const_int(0, TypeId::I64);
         main_fn.store(zero, x_slot);
         let x_addr = main_fn.stack_addr(-16);
         let a = main_fn.call(callee2_ref, &[x_addr], &[TypeId::I64])[0];
         let b = main_fn.call(callee2_ref, &[x_addr], &[TypeId::I64])[0];
-        let hundred = main_fn.iconst(100, TypeId::I64);
+        let hundred = main_fn.const_int(100, TypeId::I64);
         let a100 = main_fn.imul(a, hundred);
         let r = main_fn.iadd(a100, b);
         main_fn.ret(&[r]);
@@ -4207,7 +4348,7 @@ ret_int = ["RAX"]
         let mut f3 = FunctionBuilder::new("callee3", TypeContext::new(), sig3.clone());
         let (e3, p3) = f3.create_block_with_params(&[(TypeId::I64, "x")]);
         f3.switch_to_block(e3);
-        let t = f3.iconst(1000, TypeId::I64);
+        let t = f3.const_int(1000, TypeId::I64);
         let r3 = f3.iadd(p3[0], t);
         f3.ret(&[r3]);
         let mut module = Module::new();
@@ -4228,14 +4369,14 @@ ret_int = ["RAX"]
         f2.store(p2[0], slot_p);
         let mut acc = p2[0];
         for i in 0..12 {
-            let c = f2.iconst(i as i64, TypeId::I64);
+            let c = f2.const_int(i as i64, TypeId::I64);
             acc = f2.iadd(acc, c);
         }
         let a1 = f2.load(slot_p, TypeId::I64);
         let v1 = f2.load(a1, TypeId::I64);
         let _junk = f2.call(callee3_ref, &[v1], &[TypeId::I64])[0];
         let a2 = f2.load(slot_p, TypeId::I64);
-        let one2 = f2.iconst(1, TypeId::I64);
+        let one2 = f2.const_int(1, TypeId::I64);
         let nv2 = f2.iadd(v1, one2);
         f2.store(nv2, a2);
         let r = f2.iadd(v1, acc);
@@ -4250,12 +4391,12 @@ ret_int = ["RAX"]
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
         let x_slot = main_fn.stack_addr(-16);
-        let zero = main_fn.iconst(0, TypeId::I64);
+        let zero = main_fn.const_int(0, TypeId::I64);
         main_fn.store(zero, x_slot);
         let x_addr = main_fn.stack_addr(-16);
         let a = main_fn.call(callee2_ref, &[x_addr], &[TypeId::I64])[0];
         let b = main_fn.call(callee2_ref, &[x_addr], &[TypeId::I64])[0];
-        let one = main_fn.iconst(1, TypeId::I64);
+        let one = main_fn.const_int(1, TypeId::I64);
         let diff = main_fn.isub(b, a);
         let eq = main_fn.icmp(forge_ir::IntCC::Eq, diff, one);
         let cond = main_fn.uextend(eq, TypeId::I64);
@@ -4284,7 +4425,7 @@ ret_int = ["RAX"]
         let mut f3 = FunctionBuilder::new("callee3", TypeContext::new(), sig3.clone());
         let (e3, p3) = f3.create_block_with_params(&[(TypeId::I64, "x")]);
         f3.switch_to_block(e3);
-        let t = f3.iconst(1000, TypeId::I64);
+        let t = f3.const_int(1000, TypeId::I64);
         let r3 = f3.iadd(p3[0], t);
         f3.ret(&[r3]);
         let mut module = Module::new();
@@ -4308,7 +4449,7 @@ ret_int = ["RAX"]
         let _j1 = f2.call(callee3_ref, &[v1], &[TypeId::I64])[0];
         let _j2 = f2.call(callee3_ref, &[v1], &[TypeId::I64])[0];
         let a2 = f2.load(slot_p, TypeId::I64);
-        let one2 = f2.iconst(1, TypeId::I64);
+        let one2 = f2.const_int(1, TypeId::I64);
         let nv2 = f2.iadd(v1, one2);
         f2.store(nv2, a2);
         f2.ret(&[v1]);
@@ -4320,12 +4461,12 @@ ret_int = ["RAX"]
         let (me, _) = main_fn.create_block_with_params(&[]);
         main_fn.switch_to_block(me);
         let x_slot = main_fn.stack_addr(-16);
-        let zero = main_fn.iconst(0, TypeId::I64);
+        let zero = main_fn.const_int(0, TypeId::I64);
         main_fn.store(zero, x_slot);
         let x_addr = main_fn.stack_addr(-16);
         let a = main_fn.call(callee2_ref, &[x_addr], &[TypeId::I64])[0];
         let b = main_fn.call(callee2_ref, &[x_addr], &[TypeId::I64])[0];
-        let one = main_fn.iconst(1, TypeId::I64);
+        let one = main_fn.const_int(1, TypeId::I64);
         let diff = main_fn.isub(b, a);
         let eq = main_fn.icmp(forge_ir::IntCC::Eq, diff, one);
         let cond = main_fn.uextend(eq, TypeId::I64);
@@ -4369,16 +4510,16 @@ ret_int = ["RAX"]
 
         // guard 槽 -32（聚合槽之上，越界写会覆盖它）
         let guard = main_fn.stack_addr(-32);
-        let sentinel = main_fn.iconst(0xDEAD_BEEF, TypeId::I64);
+        let sentinel = main_fn.const_int(0xDEAD_BEEFi64, TypeId::I64);
         main_fn.store(sentinel, guard);
 
         // 聚合槽 -24..-16：value@0 + flag@4（各 4 字节，总 8 字节）
         let base = main_fn.stack_addr(-24);
-        let value = main_fn.iconst(0x1122_3344, TypeId::I64);
+        let value = main_fn.const_int(0x1122_3344, TypeId::I64);
         main_fn.store(value, base);
-        let four = main_fn.iconst(4, TypeId::I64);
+        let four = main_fn.const_int(4, TypeId::I64);
         let flag_addr = main_fn.iadd(base, four);
-        let flag = main_fn.iconst(1, TypeId::I64);
+        let flag = main_fn.const_int(1, TypeId::I64);
         main_fn.store(flag, flag_addr);
 
         // 读回 value（32 位读——窄字段语义，验证窄写后低 32 位仍正确）
@@ -4389,10 +4530,10 @@ ret_int = ["RAX"]
         let g_eq = main_fn.icmp(forge_ir::IntCC::Eq, g, sentinel);
         let g_i = main_fn.uextend(g_eq, TypeId::I64);
         // 结果 = (value 正确 ? 1 : 0) * 4 + (guard 未破坏 ? 1 : 0)
-        let want_v = main_fn.iconst(0x1122_3344, TypeId::I64);
+        let want_v = main_fn.const_int(0x1122_3344, TypeId::I64);
         let v_eq = main_fn.icmp(forge_ir::IntCC::Eq, masked, want_v);
         let v_i = main_fn.uextend(v_eq, TypeId::I64);
-        let four2 = main_fn.iconst(4, TypeId::I64);
+        let four2 = main_fn.const_int(4, TypeId::I64);
         let v4 = main_fn.imul(v_i, four2);
         let res = main_fn.iadd(v4, g_i);
         main_fn.ret(&[res]);
@@ -4439,7 +4580,7 @@ ret_int = ["RAX"]
                 (TypeId::I64, "c"),
             ]);
             b.switch_to_block(entry);
-            let zero = b.iconst_i64(0);
+            let zero = b.constant(0i64);
             let cond = b.icmp(IntCC::Ne, params[2], zero);
             let sel = b.select(cond, params[0], params[1]);
             b.ret(&[sel]);
@@ -4462,7 +4603,7 @@ ret_int = ["RAX"]
                 (TypeId::I32, "c"),
             ]);
             b.switch_to_block(entry);
-            let zero = b.iconst_i32(0);
+            let zero = b.constant(0i32);
             let cond = b.icmp(IntCC::Ne, params[2], zero);
             let sel = b.select(cond, params[0], params[1]);
             b.ret(&[sel]);
@@ -4480,13 +4621,13 @@ ret_int = ["RAX"]
             let (entry, params) =
                 b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
             b.switch_to_block(entry);
-            let zero = b.iconst_i64(0);
+            let zero = b.constant(0i64);
             let cb = b.icmp(IntCC::Ne, params[1], zero);
-            let c3 = b.iconst_i64(3);
-            let c4 = b.iconst_i64(4);
+            let c3 = b.constant(3i64);
+            let c4 = b.constant(4i64);
             let inner = b.select(cb, c3, c4);
             let ca = b.icmp(IntCC::Ne, params[0], zero);
-            let c5 = b.iconst_i64(5);
+            let c5 = b.constant(5i64);
             let outer = b.select(ca, inner, c5);
             b.ret(&[outer]);
         })
@@ -4504,10 +4645,10 @@ ret_int = ["RAX"]
             let (entry, params) =
                 b.create_block_with_params(&[(TypeId::I64, "x"), (TypeId::I64, "c")]);
             b.switch_to_block(entry);
-            let zero = b.iconst_i64(0);
+            let zero = b.constant(0i64);
             let cond = b.icmp(IntCC::Ne, params[1], zero);
-            let c100 = b.iconst_i64(100);
-            let c7 = b.iconst_i64(7);
+            let c100 = b.constant(100i64);
+            let c7 = b.constant(7i64);
             let sel = b.select(cond, c100, c7);
             let sum = b.iadd(sel, params[0]);
             b.ret(&[sum]);
@@ -4523,18 +4664,18 @@ ret_int = ["RAX"]
         jit.add_function("sel_pressure", &sig5, |b| {
             let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x")]);
             b.switch_to_block(entry);
-            let one = b.iconst_i64(1);
-            let two = b.iconst_i64(2);
+            let one = b.constant(1i64);
+            let two = b.constant(2i64);
             let a1 = b.band(params[0], one);
-            let z1 = b.iconst_i64(0);
+            let z1 = b.constant(0i64);
             let c1 = b.icmp(IntCC::Ne, a1, z1);
-            let c10 = b.iconst_i64(10);
-            let c20 = b.iconst_i64(20);
+            let c10 = b.constant(10i64);
+            let c20 = b.constant(20i64);
             let s1 = b.select(c1, c10, c20);
             let a2 = b.band(params[0], two);
             let c2 = b.icmp(IntCC::Ne, a2, z1);
-            let c30 = b.iconst_i64(30);
-            let c40 = b.iconst_i64(40);
+            let c30 = b.constant(30i64);
+            let c40 = b.constant(40i64);
             let s2 = b.select(c2, c30, c40);
             let prod = b.imul(s1, s2);
             b.ret(&[prod]);
@@ -4560,7 +4701,7 @@ ret_int = ["RAX"]
         let sig = FunctionSignature::new(&[], &[TypeId::I64]);
         let mut b = FunctionBuilder::new("f", TypeContext::new(), sig);
         b.create_block_here();
-        let one = b.iconst_i64(1);
+        let one = b.constant(1i64);
         b.ret(&[one]);
         m.add_function(b.finish().expect("f"));
 
@@ -4575,6 +4716,740 @@ ret_int = ["RAX"]
         assert!(
             msg.contains("x86_64") && msg.contains("riscv64"),
             "错误消息点名两侧：{msg}"
+        );
+    }
+
+    /// **溢出压力压测（含调用版）**：与 `…_inline` 同形状，但循环体内改为**调用另一个
+    /// JIT 函数**（`step(x) = 3x+1`）。这一版在 `n >= 1` 时直接
+    /// `STATUS_ACCESS_VIOLATION`（见 M6-㉑ 的机器级证据）；内联版则给干净的错值。
+    /// 两版一起钉住同一族缺陷的两种表现（崩 / 静默错值）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    #[ignore = "已知失败：n>=1 时 STATUS_ACCESS_VIOLATION（分配器缺陷，见 M6-㉑/㉔）"]
+    fn test_jit_spill_pressure_loop_with_call() {
+        use forge_ir::{FuncRef, FunctionSignature, IntCC, TypeId};
+
+        fn expected(a: [i64; 8], n: i64) -> i64 {
+            fn step(x: i64) -> i64 {
+                x.wrapping_mul(3).wrapping_add(1)
+            }
+            let mut acc = 0i64;
+            let mut i = 0i64;
+            while i < n {
+                acc = acc
+                    .wrapping_add(step(i))
+                    .wrapping_add(a[0])
+                    .wrapping_sub(a[1])
+                    .wrapping_add(a[2])
+                    .wrapping_sub(a[3])
+                    .wrapping_add(a[4])
+                    .wrapping_sub(a[5])
+                    .wrapping_add(a[6])
+                    .wrapping_sub(a[7]);
+                i += 1;
+            }
+            acc
+        }
+
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+        let sig = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
+        jit.add_function("sp_step_call", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x")]);
+            b.switch_to_block(entry);
+            let three = b.const_int(3, TypeId::I64);
+            let one = b.const_int(1, TypeId::I64);
+            let m = b.imul(params[0], three);
+            let r = b.iadd(m, one);
+            b.ret(&[r]);
+        })
+        .expect("compile step");
+
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h", "n"];
+        let sig = FunctionSignature::new(
+            &names.iter().map(|n| (TypeId::I64, *n)).collect::<Vec<_>>(),
+            &[TypeId::I64],
+        );
+        jit.add_function("sp_stress_call", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(
+                &names.iter().map(|n| (TypeId::I64, *n)).collect::<Vec<_>>(),
+            );
+            let (loop_b, la) = b.create_block_with_tys(&[TypeId::I64, TypeId::I64]);
+            let (body_b, _) = b.create_block_with_tys(&[]);
+            let (exit_b, ea) = b.create_block_with_tys(&[TypeId::I64]);
+            b.switch_to_block(entry);
+            let zero = b.const_int(0, TypeId::I64);
+            let one = b.const_int(1, TypeId::I64);
+            b.jump(loop_b, &[zero, zero]);
+            b.switch_to_block(loop_b);
+            let acc = la[0];
+            let i = la[1];
+            let cond = b.icmp(IntCC::Slt, i, params[8]);
+            b.branch(cond, body_b, &[], exit_b, &[acc]);
+            b.switch_to_block(body_b);
+            let r = b.call(FuncRef::new(0), &[i], &[TypeId::I64])[0];
+            let mut sum = acc;
+            sum = b.iadd(sum, r);
+            let signs = [true, false, true, false, true, false, true, false];
+            for (k, positive) in signs.iter().enumerate() {
+                sum = if *positive {
+                    b.iadd(sum, params[k])
+                } else {
+                    b.isub(sum, params[k])
+                };
+            }
+            let i_next = b.iadd(i, one);
+            b.jump(loop_b, &[sum, i_next]);
+            b.switch_to_block(exit_b);
+            b.ret(&[ea[0]]);
+        })
+        .expect("compile stress");
+
+        let f: extern "C" fn(i64, i64, i64, i64, i64, i64, i64, i64, i64) -> i64 =
+            jit.get_fn("sp_stress_call").expect("get_fn");
+        for (a, n) in [
+            ([1i64, 2, 3, 4, 5, 6, 7, 8], 0i64),
+            ([1i64, 2, 3, 4, 5, 6, 7, 8], 1i64),
+        ] {
+            assert_eq!(
+                f(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], n),
+                expected(a, n)
+            );
+        }
+    }
+
+    /// **溢出压力压测：跨调用 + 循环携带值**（v27 M6-⑳ 定下的定点压测）。
+    ///
+    /// 形状：9 个 `i64` 形参（Windows x64 只有 4 个寄存器槽 ⇒ 5 个走栈）、循环体内
+    /// 调用另一个函数、8 个形参全部**活在调用两侧**、`acc` / `i` 两个值**跨回边携带**。
+    /// 这是"分配器潜伏缺陷"最容易现形的压力形状（见
+    /// `docs/archive/forge-rustc-v27-milestones.md` 的 M6-⑳：错值首现于第 2 次迭代、
+    /// 跳过 O2 里任意一个 pass 都不再复现 ⇒ 压力相关）。oracle 用 Rust 侧同式计算结果。
+    ///
+    /// **当前 `#[ignore]`（已知失败，2026-10-19）**：`n >= 1` 时产物 **AV 崩溃**
+    /// （`n = 0` 通过 ⇒ 问题在循环体）。机器级证据（`FORGE_TRACE_SPILL=1`）：
+    /// 第 9 个形参 `n` 分配在 **RDI**，循环头用 `CmpRmR { src: R10, src2: RDI }` 读它，
+    /// 而**循环体把 RDI 当累加器写**（`SubRmR { src: R10, dst: RDI }` /
+    /// `AddRmR { src: R10, dst: RDI }`）⇒ `n` 在第一次迭代后就被毁，循环不再按上界退出。
+    /// 这正是"分配器在压力形状下把两个同时活跃的值分到同一寄存器"那一类缺陷
+    /// （见 `docs/archive/forge-rustc-v27-milestones.md` M6-⑳/㉑）；
+    /// 它现在有了**不依赖 rustc 的确定性复现**，修好后把 `#[ignore]` 去掉即可当回归。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_spill_pressure_loop_inline() {
+        use forge_ir::{FunctionSignature, IntCC, TypeId};
+
+        fn expected(a: [i64; 8], n: i64) -> i64 {
+            fn step(x: i64) -> i64 {
+                x.wrapping_mul(3).wrapping_add(1)
+            }
+            let mut acc = 0i64;
+            let mut i = 0i64;
+            while i < n {
+                acc = acc
+                    .wrapping_add(step(i))
+                    .wrapping_add(a[0])
+                    .wrapping_sub(a[1])
+                    .wrapping_add(a[2])
+                    .wrapping_sub(a[3])
+                    .wrapping_add(a[4])
+                    .wrapping_sub(a[5])
+                    .wrapping_add(a[6])
+                    .wrapping_sub(a[7]);
+                i += 1;
+            }
+            acc
+        }
+
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+
+        // ① 被调方：step(x) = 3x + 1（第 0 个函数 ⇒ FuncRef(0)）
+        let sig = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
+        jit.add_function("sp_step", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x")]);
+            b.switch_to_block(entry);
+            let x = params[0];
+            let three = b.const_int(3, TypeId::I64);
+            let one = b.const_int(1, TypeId::I64);
+            let m = b.imul(x, three);
+            let r = b.iadd(m, one);
+            b.ret(&[r]);
+        })
+        .expect("compile step");
+
+        // ② 压测方
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h", "n"];
+        let sig = FunctionSignature::new(
+            &names.iter().map(|n| (TypeId::I64, *n)).collect::<Vec<_>>(),
+            &[TypeId::I64],
+        );
+        jit.add_function("sp_stress", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(
+                &names.iter().map(|n| (TypeId::I64, *n)).collect::<Vec<_>>(),
+            );
+            // 先把块都建好（`create_block*` 会把"当前块"切到新块上），
+            // 再逐块 `switch_to_block` —— 否则终止符会挂到最后一个新建块上。
+            let (loop_b, la) = b.create_block_with_tys(&[TypeId::I64, TypeId::I64]);
+            let (body_b, _) = b.create_block_with_tys(&[]);
+            let (exit_b, ea) = b.create_block_with_tys(&[TypeId::I64]);
+
+            b.switch_to_block(entry);
+            let zero = b.const_int(0, TypeId::I64);
+            let one = b.const_int(1, TypeId::I64);
+            b.jump(loop_b, &[zero, zero]);
+
+            b.switch_to_block(loop_b);
+            let acc = la[0];
+            let i = la[1];
+            let cond = b.icmp(IntCC::Slt, i, params[8]);
+            b.branch(cond, body_b, &[], exit_b, &[acc]);
+            b.switch_to_block(body_b);
+            // TEMP-EXP：把调用换成内联计算，用来判定"循环内调用"是否必要
+            let three = b.const_int(3, TypeId::I64);
+            let m = b.imul(i, three);
+            let r = b.iadd(m, one);
+            let mut sum = acc;
+            sum = b.iadd(sum, r);
+            let signs = [true, false, true, false, true, false, true, false];
+            for (k, positive) in signs.iter().enumerate() {
+                sum = if *positive {
+                    b.iadd(sum, params[k])
+                } else {
+                    b.isub(sum, params[k])
+                };
+            }
+            let i_next = b.iadd(i, one);
+            b.jump(loop_b, &[sum, i_next]);
+            b.switch_to_block(exit_b);
+            b.ret(&[ea[0]]);
+        })
+        .expect("compile stress");
+
+        let f: extern "C" fn(i64, i64, i64, i64, i64, i64, i64, i64, i64) -> i64 =
+            jit.get_fn("sp_stress").expect("get_fn");
+
+        // 多组输入：小/大、正负混合、n=0
+        // 先只跑 n=0（零次迭代）：如果这里就崩，问题在**入口/收参**而不在循环体。
+        let cases: [([i64; 8], i64); 5] = [
+            ([1, 2, 3, 4, 5, 6, 7, 8], 0),
+            ([1, 2, 3, 4, 5, 6, 7, 8], 1),
+            ([10, -20, 30, -40, 50, -60, 70, -80], 7),
+            ([-1, -2, -3, -4, -5, -6, -7, -8], 33),
+            ([100, 200, 300, 400, 500, 600, 700, 800], 64),
+        ];
+        for (a, n) in cases {
+            let got = f(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], n);
+            assert_eq!(
+                got,
+                expected(a, n),
+                "溢出压力形态结果不符（a={a:?}, n={n}）"
+            );
+        }
+    }
+
+    /// **最小复现（5 形参 + 循环 + 两个块参数）**：`n = 1` 应得 107，实得 **108**。
+    ///
+    /// 根因（2026-10-19 定位，`pipeline/lowering.rs::map_terminator_args_to_params`）：
+    /// 该函数用"**让跳转实参复用块参数寄存器**"来省掉拷贝，但同一个值传给**多个**
+    /// 块参数时会退化成"多个块参数共用一个 xreg"。本用例的入口跳转是
+    /// `jump(loop, &[zero, zero])`（`acc` 与 `i` 初值都是常量 0）⇒ 两个块参数被
+    /// 绑到同一个 xreg ⇒ 循环体里 `acc + 1` 与 `acc + a - b + c - d` 互相覆盖，
+    /// 结果恰好多出那个 `+1`。
+    ///
+    /// 修法方向：块参数一律分配**独立** xreg，终结符处对"实参 xreg ≠ 参数 xreg"
+    /// 的位置发显式拷贝（并行拷贝语义），不再靠别名省拷贝。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn test_jit_block_param_alias_minimal() {
+        use forge_ir::{FunctionSignature, IntCC, TypeId};
+
+        fn expected(a: [i64; 4], n: i64) -> i64 {
+            let mut acc = 0i64;
+            let mut i = 0i64;
+            while i < n {
+                acc = acc
+                    .wrapping_add(a[0])
+                    .wrapping_sub(a[1])
+                    .wrapping_add(a[2])
+                    .wrapping_sub(a[3]);
+                i += 1;
+            }
+            acc
+        }
+
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+        let names = ["a", "b", "c", "d", "n"];
+        let sig = FunctionSignature::new(
+            &names.iter().map(|n| (TypeId::I64, *n)).collect::<Vec<_>>(),
+            &[TypeId::I64],
+        );
+        jit.add_function("bisect5", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(
+                &names.iter().map(|n| (TypeId::I64, *n)).collect::<Vec<_>>(),
+            );
+            let (loop_b, la) = b.create_block_with_tys(&[TypeId::I64, TypeId::I64]);
+            let (body_b, _) = b.create_block_with_tys(&[]);
+            let (exit_b, ea) = b.create_block_with_tys(&[TypeId::I64]);
+            b.switch_to_block(entry);
+            let zero = b.const_int(0, TypeId::I64);
+            let one = b.const_int(1, TypeId::I64);
+            b.jump(loop_b, &[zero, zero]);
+            b.switch_to_block(loop_b);
+            let acc = la[0];
+            let i = la[1];
+            let cond = b.icmp(IntCC::Slt, i, params[4]);
+            b.branch(cond, body_b, &[], exit_b, &[acc]);
+            b.switch_to_block(body_b);
+            let mut sum = acc;
+            sum = b.iadd(sum, params[0]);
+            sum = b.isub(sum, params[1]);
+            sum = b.iadd(sum, params[2]);
+            sum = b.isub(sum, params[3]);
+            let i_next = b.iadd(i, one);
+            b.jump(loop_b, &[sum, i_next]);
+            b.switch_to_block(exit_b);
+            b.ret(&[ea[0]]);
+        })
+        .expect("compile bisect5");
+
+        let f: extern "C" fn(i64, i64, i64, i64, i64) -> i64 =
+            jit.get_fn("bisect5").expect("get_fn");
+        for (a, n) in [([10i64, 1, 100, 2], 1i64), ([10i64, 1, 100, 2], 3i64)] {
+            let got = f(a[0], a[1], a[2], a[3], n);
+            assert_eq!(got, expected(a, n), "5 形参版不符（a={a:?}, n={n}）");
+        }
+    }
+
+    /// **跨函数调用（带实参）**：回归 `@N` 符号注册——`add_function` 曾经不注册
+    /// `@N` 别名，跨函数 `Call` 的重定位永远解析不到（`E8` 位移停在 -1 ⇒ 跳垃圾地址 ⇒ AV）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn jit_cross_function_call_with_arg() {
+        use forge_ir::{FuncRef, FunctionSignature, TypeId};
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+        let sig = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
+        jit.add_function("a_step", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x")]);
+            b.switch_to_block(entry);
+            let three = b.const_int(3, TypeId::I64);
+            let one = b.const_int(1, TypeId::I64);
+            let m = b.imul(params[0], three);
+            let r = b.iadd(m, one);
+            b.ret(&[r]);
+        })
+        .expect("step");
+        let sig = FunctionSignature::new(&[(TypeId::I64, "a")], &[TypeId::I64]);
+        jit.add_function("a_once", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "a")]);
+            b.switch_to_block(entry);
+            let five = b.const_int(7, TypeId::I64);
+            let r = b.call(FuncRef::new(0), &[five], &[TypeId::I64])[0];
+            let s = b.iadd(r, params[0]);
+            b.ret(&[s]);
+        })
+        .expect("once");
+        let f: extern "C" fn(i64) -> i64 = jit.get_fn("a_once").expect("get_fn");
+        assert_eq!(f(100), 122, "7*3+1 + 100");
+    }
+
+    /// **跨函数调用（无实参）**：同一回归的最小形态（排除实参搬运的干扰）。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn jit_cross_function_call_no_args() {
+        use forge_ir::{FuncRef, FunctionSignature, TypeId};
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+        let sig = FunctionSignature::new(&[], &[TypeId::I64]);
+        jit.add_function("c0_callee", &sig, |b| {
+            let (entry, _) = b.create_block_with_params(&[]);
+            b.switch_to_block(entry);
+            let v = b.const_int(42, TypeId::I64);
+            b.ret(&[v]);
+        })
+        .expect("callee");
+        let sig = FunctionSignature::new(&[(TypeId::I64, "a")], &[TypeId::I64]);
+        jit.add_function("c0_caller", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "a")]);
+            b.switch_to_block(entry);
+            let r = b.call(FuncRef::new(0), &[], &[TypeId::I64])[0];
+            let s = b.iadd(r, params[0]);
+            b.ret(&[s]);
+        })
+        .expect("caller");
+        let f: extern "C" fn(i64) -> i64 = jit.get_fn("c0_caller").expect("get_fn");
+        assert_eq!(f(100), 142);
+    }
+
+    /// **栈形参 × 调用**（无循环）：9 个形参里后 5 个走栈，函数体里再调一次被调方。
+    ///
+    /// 为什么要单独一条：`test_jit_spill_pressure_loop_with_call` 在"循环内调用"上给出错值，
+    /// 但要先分清是"**栈形参收参**错"还是"**循环携带值**错"——这条把循环去掉，
+    /// 只留栈形参 + 调用。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn jit_stack_params_with_call() {
+        use forge_ir::{FuncRef, FunctionSignature, TypeId};
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+        let sig = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
+        jit.add_function("sp_call_step", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x")]);
+            b.switch_to_block(entry);
+            let three = b.const_int(3, TypeId::I64);
+            let one = b.const_int(1, TypeId::I64);
+            let m = b.imul(params[0], three);
+            let r = b.iadd(m, one);
+            b.ret(&[r]);
+        })
+        .expect("callee");
+
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h", "n"];
+        let sig = FunctionSignature::new(
+            &names.iter().map(|n| (TypeId::I64, *n)).collect::<Vec<_>>(),
+            &[TypeId::I64],
+        );
+        jit.add_function("sp_call_sum", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(
+                &names.iter().map(|n| (TypeId::I64, *n)).collect::<Vec<_>>(),
+            );
+            b.switch_to_block(entry);
+            // a - b + c - d + e - f + g - h（后四个形参走栈）
+            let mut sum = params[0];
+            sum = b.isub(sum, params[1]);
+            sum = b.iadd(sum, params[2]);
+            sum = b.isub(sum, params[3]);
+            sum = b.iadd(sum, params[4]);
+            sum = b.isub(sum, params[5]);
+            sum = b.iadd(sum, params[6]);
+            sum = b.isub(sum, params[7]);
+            let r = b.call(FuncRef::new(0), &[params[8]], &[TypeId::I64])[0];
+            let total = b.iadd(sum, r);
+            b.ret(&[total]);
+        })
+        .expect("caller");
+
+        let f: extern "C" fn(i64, i64, i64, i64, i64, i64, i64, i64, i64) -> i64 =
+            jit.get_fn("sp_call_sum").expect("get_fn");
+        // 1-2+3-4+5-6+7-8 = -4；step(10) = 31 ⇒ 27
+        assert_eq!(f(1, 2, 3, 4, 5, 6, 7, 8, 10), 27, "栈形参 + 调用");
+    }
+
+    /// **循环携带值 × 调用**（形参全在寄存器：`a` 与上界 `n` 都走寄存器）。
+    ///
+    /// 与 `test_jit_spill_pressure_loop_with_call`（上界走栈、9 形参）配对使用：
+    /// 这条若通过，说明"上界走栈"是必要条件；若也失败，问题纯粹是"跨调用的循环携带值"。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn jit_loop_with_call_register_params() {
+        use forge_ir::{FuncRef, FunctionSignature, IntCC, TypeId};
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+        let sig = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
+        jit.add_function("lp_step", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x")]);
+            b.switch_to_block(entry);
+            let three = b.const_int(3, TypeId::I64);
+            let one = b.const_int(1, TypeId::I64);
+            let m = b.imul(params[0], three);
+            let r = b.iadd(m, one);
+            b.ret(&[r]);
+        })
+        .expect("callee");
+
+        let sig = FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "n")], &[TypeId::I64]);
+        jit.add_function("lp_stress", &sig, |b| {
+            let (entry, params) =
+                b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "n")]);
+            let (loop_b, la) = b.create_block_with_tys(&[TypeId::I64, TypeId::I64]);
+            let (body_b, _) = b.create_block_with_tys(&[]);
+            let (exit_b, ea) = b.create_block_with_tys(&[TypeId::I64]);
+            b.switch_to_block(entry);
+            let zero = b.const_int(0, TypeId::I64);
+            let one = b.const_int(1, TypeId::I64);
+            b.jump(loop_b, &[zero, zero]);
+            b.switch_to_block(loop_b);
+            let acc = la[0];
+            let i = la[1];
+            let cond = b.icmp(IntCC::Slt, i, params[1]);
+            b.branch(cond, body_b, &[], exit_b, &[acc]);
+            b.switch_to_block(body_b);
+            let r = b.call(FuncRef::new(0), &[i], &[TypeId::I64])[0];
+            let s1 = b.iadd(acc, r);
+            let s2 = b.iadd(s1, params[0]);
+            let i_next = b.iadd(i, one);
+            b.jump(loop_b, &[s2, i_next]);
+            b.switch_to_block(exit_b);
+            b.ret(&[ea[0]]);
+        })
+        .expect("caller");
+
+        let f: extern "C" fn(i64, i64) -> i64 = jit.get_fn("lp_stress").expect("get_fn");
+        // i=0,1,2 时 step=1,4,7 ⇒ 12；每轮再加 a=10 ⇒ 12+30=42
+        assert_eq!(f(10, 3), 42, "循环携带值 × 调用（形参全在寄存器）");
+    }
+
+    /// **栈形参 + 循环 + 调用，但上界是常量**：把"`n` 的槽在循环里被重读"这一项单独摘出来。
+    ///
+    /// 通过 ⇒ 红点出在"**栈形参 `n` 的槽**被循环体内的调用踩到"；
+    /// 失败 ⇒ 只要"栈形参 × 循环 × 调用"同时在场就坏，与 `n` 是否参与上界判定无关。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn jit_stack_param_loop_const_bound_with_call() {
+        use forge_ir::{FuncRef, FunctionSignature, IntCC, TypeId};
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+        let sig = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
+        jit.add_function("sb_step", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x")]);
+            b.switch_to_block(entry);
+            let three = b.const_int(3, TypeId::I64);
+            let one = b.const_int(1, TypeId::I64);
+            let m = b.imul(params[0], three);
+            let r = b.iadd(m, one);
+            b.ret(&[r]);
+        })
+        .expect("callee");
+
+        let names = ["a", "b", "c", "d", "n"];
+        let sig = FunctionSignature::new(
+            &names.iter().map(|n| (TypeId::I64, *n)).collect::<Vec<_>>(),
+            &[TypeId::I64],
+        );
+        jit.add_function("sb_stress", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(
+                &names.iter().map(|n| (TypeId::I64, *n)).collect::<Vec<_>>(),
+            );
+            let (loop_b, la) = b.create_block_with_tys(&[TypeId::I64, TypeId::I64]);
+            let (body_b, _) = b.create_block_with_tys(&[]);
+            let (exit_b, ea) = b.create_block_with_tys(&[TypeId::I64]);
+            b.switch_to_block(entry);
+            let zero = b.const_int(0, TypeId::I64);
+            let one = b.const_int(1, TypeId::I64);
+            let three = b.const_int(3, TypeId::I64);
+            b.jump(loop_b, &[zero, zero]);
+            b.switch_to_block(loop_b);
+            let acc = la[0];
+            let i = la[1];
+            // **上界是常量**（不看 `n`）——`n` 仍作为第 5 个形参走栈。
+            let cond = b.icmp(IntCC::Slt, i, three);
+            b.branch(cond, body_b, &[], exit_b, &[acc]);
+            b.switch_to_block(body_b);
+            let r = b.call(FuncRef::new(0), &[i], &[TypeId::I64])[0];
+            let mut sum = b.iadd(acc, r);
+            sum = b.iadd(sum, params[0]);
+            let i_next = b.iadd(i, one);
+            b.jump(loop_b, &[sum, i_next]);
+            b.switch_to_block(exit_b);
+            b.ret(&[ea[0]]);
+        })
+        .expect("stress");
+
+        let f: extern "C" fn(i64, i64, i64, i64, i64) -> i64 =
+            jit.get_fn("sb_stress").expect("get_fn");
+        // step(0,1,2)=1,4,7 ⇒ 12；每轮再加 a=10 ⇒ 42
+        assert_eq!(f(10, 1, 0, 0, 99), 42, "栈形参 + 循环 + 调用（常量上界）");
+    }
+
+    /// **只累加 `step(i)`**（9 形参签名保留、上界来自栈形参 `n`、循环内调用）。
+    ///
+    /// 用来把"`step(i)` 累加 + 调用"与"8 个形参参与运算"两件事分开。
+    /// **当前 `#[ignore]`：实测挂起**（死循环）——说明纯"栈形参上界 + 循环 + 调用"
+    /// 就已经坏，与形参参与累加无关。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    #[ignore = "已知失败：死循环（栈形参上界 + 循环 + 调用，见 M6-㉝）"]
+    fn jit_stack_param_loop_call_only_step() {
+        use forge_ir::{FuncRef, FunctionSignature, IntCC, TypeId};
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+        let sig = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
+        jit.add_function("so_step", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "x")]);
+            b.switch_to_block(entry);
+            let three = b.const_int(3, TypeId::I64);
+            let one = b.const_int(1, TypeId::I64);
+            let m = b.imul(params[0], three);
+            let r = b.iadd(m, one);
+            b.ret(&[r]);
+        })
+        .expect("callee");
+
+        let names = ["a", "b", "c", "d", "n"];
+        let sig = FunctionSignature::new(
+            &names.iter().map(|n| (TypeId::I64, *n)).collect::<Vec<_>>(),
+            &[TypeId::I64],
+        );
+        jit.add_function("so_stress", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(
+                &names.iter().map(|n| (TypeId::I64, *n)).collect::<Vec<_>>(),
+            );
+            let (loop_b, la) = b.create_block_with_tys(&[TypeId::I64, TypeId::I64]);
+            let (body_b, _) = b.create_block_with_tys(&[]);
+            let (exit_b, ea) = b.create_block_with_tys(&[TypeId::I64]);
+            b.switch_to_block(entry);
+            let zero = b.const_int(0, TypeId::I64);
+            let one = b.const_int(1, TypeId::I64);
+            b.jump(loop_b, &[zero, zero]);
+            b.switch_to_block(loop_b);
+            let acc = la[0];
+            let i = la[1];
+            let cond = b.icmp(IntCC::Slt, i, params[4]);
+            b.branch(cond, body_b, &[], exit_b, &[acc]);
+            b.switch_to_block(body_b);
+            let r = b.call(FuncRef::new(0), &[i], &[TypeId::I64])[0];
+            let sum = b.iadd(acc, r);
+            let i_next = b.iadd(i, one);
+            b.jump(loop_b, &[sum, i_next]);
+            b.switch_to_block(exit_b);
+            b.ret(&[ea[0]]);
+        })
+        .expect("stress");
+
+        let f: extern "C" fn(i64, i64, i64, i64, i64) -> i64 =
+            jit.get_fn("so_stress").expect("get_fn");
+        // i=0,1,2 ⇒ step=1,4,7 ⇒ 12
+        assert_eq!(f(0, 0, 0, 0, 3), 12, "纯 step 累加（上界来自栈形参）");
+    }
+
+    /// **IR 层 `*add_overflow` 的 8 位标志恒 0**（v27 M6-㊻ 的最小复现，0.01s）。
+    ///
+    /// 已经查清（vcode 与机器码逐条对过）：
+    /// - 规则序列本身是对的：`xor {out2}` → `mov` → `add` → `SETCC_FLAG`；
+    /// - vcode 里操作数是 **8 位类**（`AddRmR { src: R12B, dst: SIL }`）；
+    /// - **但标志恒假**（值正确），且**有符号 `seto` 与无符号 `setb` 同时为假**
+    ///   ⇒ 不是条件码选错，而是这条 `add` 没有按 8 位编码（发成 16/32 位：
+    ///   300 无进位/无溢出 ⇒ CF=OF=0），值仍对是因为后面只取低 8 位。
+    ///   根因：`ADD_RM_R` 只有 16/32/64 形态（`gprx` 显式排除 8 位），而 8 位 reg-reg
+    ///   算术是另一个 opcode（`00 /r`）。
+    ///
+    /// **真实 rustc 代码不再走这条**（v27 M6-㊽）：`forge-rustc` 的 `lower_checked_op`
+    /// 对 8/16 位的加/减改成"扩宽到 I32 算 + 比较区间出标志 + 截回"，不依赖 CF/OF。
+    /// 这条 `#[ignore]` 钉住的是**IR/JIT 直接使用者**仍会踩到的那个缺口，
+    /// 等 reg-reg form 支持按 opsize 换 opcode（或规则按位宽分派到 8 位指令名）后去掉。
+    /// **宽值块参数（phi）拆肢**（v27 M6-74）：两条分支各产出一个 i128，merge 的块参数
+    /// 接收后截断返回。`wide_split` 现在把宽 phi 换成 n 个原生宽参数，并把前驱实参换成
+    /// 对应值的**肢**——这条用例钉住"肢真的从两条入边各自流进来"。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn jit_wide_phi_splits_limbs() {
+        use forge_ir::{FunctionSignature, IntCC, TypeId};
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+        let sig = FunctionSignature::new(&[(TypeId::I64, "c")], &[TypeId::I64]);
+        jit.add_function("widephi", &sig, |b| {
+            let (entry, params) = b.create_block_with_params(&[(TypeId::I64, "c")]);
+            let then_blk = b.create_block();
+            let else_blk = b.create_block();
+            let (merge, mp) = b.create_block_with_params(&[(TypeId::I128, "r")]);
+            b.switch_to_block(entry);
+            let zero = b.const_int(0i64, TypeId::I64);
+            let cond = b.icmp(IntCC::Sgt, params[0], zero);
+            b.branch(cond, then_blk, &[], else_blk, &[]);
+            // 分支 A：常量 + 计算 ⇒ 肢来自"常量拆肢"与"宽值加法"
+            b.switch_to_block(then_blk);
+            let a = b.const_int(7i128, TypeId::I128);
+            let one = b.const_int(1i128, TypeId::I128);
+            let a2 = b.iadd(a, one);
+            b.jump(merge, &[a2]);
+            // 分支 B：另一个常量
+            b.switch_to_block(else_blk);
+            let c = b.const_int(9i128, TypeId::I128);
+            b.jump(merge, &[c]);
+            b.switch_to_block(merge);
+            let lo = b.ireduce(mp[0], TypeId::I64);
+            b.ret(&[lo]);
+        })
+        .expect("widephi");
+        let f: extern "C" fn(i64) -> i64 = jit.get_fn("widephi").expect("get_fn");
+        assert_eq!(f(1), 8, "分支 A：7+1");
+        assert_eq!(f(-1), 9, "分支 B：9");
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn jit_uadd_overflow_flag_is_correct() {
+        use forge_ir::{FunctionSignature, TypeId};
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+
+        let sig = FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "b")], &[TypeId::I64]);
+        jit.add_function("ovf8", &sig, |b| {
+            let (entry, params) =
+                b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
+            b.switch_to_block(entry);
+            let a = b.ireduce(params[0], TypeId::I8);
+            let c = b.ireduce(params[1], TypeId::I8);
+            let (v, f) = b.uadd_overflow(a, c);
+            let v64 = b.uextend(v, TypeId::I64);
+            let f64 = b.uextend(f, TypeId::I64);
+            let thousand = b.const_int(1000, TypeId::I64);
+            let scaled = b.imul(f64, thousand);
+            let total = b.iadd(v64, scaled);
+            b.ret(&[total]);
+        })
+        .expect("ovf8");
+
+        jit.add_function("ovf32", &sig, |b| {
+            let (entry, params) =
+                b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
+            b.switch_to_block(entry);
+            let a = b.ireduce(params[0], TypeId::I32);
+            let c = b.ireduce(params[1], TypeId::I32);
+            let (v, f) = b.uadd_overflow(a, c);
+            let v64 = b.uextend(v, TypeId::I64);
+            let f64 = b.uextend(f, TypeId::I64);
+            let thousand = b.const_int(1000, TypeId::I64);
+            let scaled = b.imul(f64, thousand);
+            let total = b.iadd(v64, scaled);
+            b.ret(&[total]);
+        })
+        .expect("ovf32");
+
+        // **有符号对照**：同样 8 位、同样走溢出规则，只有 `SETCC_FLAG` 的 cc 不同
+        // （有符号 = `seto`，无符号 = `setb`）。两者结果不同就能定位是"加法宽度"
+        // 还是"条件码编码"。
+        jit.add_function("ovfs8", &sig, |b| {
+            let (entry, params) =
+                b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
+            b.switch_to_block(entry);
+            let a = b.ireduce(params[0], TypeId::I8);
+            let c = b.ireduce(params[1], TypeId::I8);
+            let (v, f) = b.sadd_overflow(a, c);
+            let v64 = b.uextend(v, TypeId::I64);
+            let f64 = b.uextend(f, TypeId::I64);
+            let thousand = b.const_int(1000, TypeId::I64);
+            let scaled = b.imul(f64, thousand);
+            let total = b.iadd(v64, scaled);
+            b.ret(&[total]);
+        })
+        .expect("ovfs8");
+
+        let fs8: extern "C" fn(i64, i64) -> i64 = jit.get_fn("ovfs8").expect("get_fn ovfs8");
+        // 有符号：100+100 = 200 超出 i8 ⇒ 值 200（零扩展），标志 1
+        assert_eq!(
+            fs8(100, 100),
+            200 + 1000,
+            "8 位 sadd_overflow：值 200 + 标志"
+        );
+        let f8: extern "C" fn(i64, i64) -> i64 = jit.get_fn("ovf8").expect("get_fn ovf8");
+        // 200+100 = 300 ⇒ 截到 8 位 = 44，溢出标志应为 1 ⇒ 44 + 1000
+        assert_eq!(f8(200, 100), 1044, "8 位 uadd_overflow：值 44 + 标志 1000");
+        assert_eq!(f8(10, 20), 30, "8 位不溢出：值 30 + 标志 0");
+        let f32: extern "C" fn(i64, i64) -> i64 = jit.get_fn("ovf32").expect("get_fn ovf32");
+        // **无符号 32 位**：3e9 + 2e9 = 5e9 > `u32::MAX` ⇒ 值 = 5e9 - 2^32 = 705032704，标志 1。
+        //（2e9+2e9 = 4e9 < 2^32 **不溢出**——一开始把期望写错在这里，白追了一轮。）
+        assert_eq!(
+            f32(3_000_000_000, 2_000_000_000),
+            705_032_704 + 1000,
+            "32 位 uadd_overflow：值 705032704 + 标志 1000"
+        );
+        assert_eq!(
+            f32(2_000_000_000, 2_000_000_000),
+            4_000_000_000,
+            "32 位不溢出：值 4e9 + 标志 0"
         );
     }
 }

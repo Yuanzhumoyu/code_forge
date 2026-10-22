@@ -327,7 +327,7 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("ret_0x12345678", TypeContext::new(), sig);
         b.create_block_here();
-        let c = b.iconst_i32(0x1234_5678);
+        let c = b.constant(0x1234_5678i32);
         b.ret(&[c]);
         let func = b.finish().expect("build");
         let compiled = CompileSession::new(TargetMachine::new())
@@ -353,7 +353,7 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[TypeId::I64]);
         let mut b = FunctionBuilder::new("ret_neg1b", TypeContext::new(), sig);
         b.create_block_here();
-        let c = b.iconst_i64(-1_000_000_007);
+        let c = b.constant(-1_000_000_007);
         b.ret(&[c]);
         let func = b.finish().expect("build");
         let compiled = CompileSession::new(TargetMachine::new())
@@ -382,16 +382,16 @@ mod tests {
         let els = b.create_block();
         let (end, phi) = b.create_block_with_params(&[(TypeId::I32, "phi")]);
         b.switch_to_block(entry);
-        let c = b.iconst_bool(cond);
+        let c = b.const_bool(cond);
         b.branch(c, then, &[], els, &[]);
         b.switch_to_block(then);
-        let v1 = b.iconst_i32(40);
+        let v1 = b.constant(40i32);
         b.jump(end, &[v1]);
         b.switch_to_block(els);
-        let v2 = b.iconst_i32(2);
+        let v2 = b.constant(2i32);
         b.jump(end, &[v2]);
         b.switch_to_block(end);
-        let z = b.iconst_i32(0);
+        let z = b.constant(0i32);
         let r = b.iadd(phi[0], z);
         b.ret(&[r]);
         let func = b.finish().expect("build");

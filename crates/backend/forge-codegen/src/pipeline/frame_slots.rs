@@ -67,9 +67,9 @@ pub(crate) fn scan_frontend_slots(
                     Opcode::StackAddr => has_stack = true,
                     Opcode::Iconst => {
                         if let Some(Immediate::Const(cid)) = def.immediates.first()
-                            && let Some((v, _)) = func.constants.get_int(*cid)
+                            && let Some(bv) = func.constants.bits(*cid)
                         {
-                            cval = v as i64;
+                            cval = bv.bits as i64;
                             has_const = true;
                         }
                     }
@@ -146,7 +146,7 @@ mod tests {
         let mut b = FunctionBuilder::new("f", ctx, sig);
         let (e, _) = b.create_block_with_params(&[]);
         b.switch_to_block(e);
-        let one = b.iconst_i64(1);
+        let one = b.constant(1i64);
         b.ret(&[one]);
         let f = b.finish().expect("build");
         let inst = f.dfg.insts().map(|(i, _)| i).next().expect("至少一条指令");

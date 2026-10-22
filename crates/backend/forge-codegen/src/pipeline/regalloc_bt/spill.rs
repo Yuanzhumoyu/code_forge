@@ -36,6 +36,11 @@ pub(super) fn build_spill_edits<I: crate::machine::inst::MachineInst>(
         |v: XReg| -> Option<SpillSlot> { spill_slots.get(v.index() as usize).copied().flatten() };
     let mut edits: Vec<Vec<SpillEdit>> = Vec::new();
     let mut gi = 0usize;
+    // **溢出事件不产生编辑**（2026-10-11 取证；2026-10-19 两次实测复核）：槽是**权威副本**
+    // （def 走 scratch 写槽、use 从槽读），寄存器里往往是**陈旧值**；在溢出点把寄存器写回槽
+    // 会覆盖正确内容。两次尝试（"驱逐即落槽"与"仅首次落槽"）都打红了原本绿的用例
+    //（第二次直接让 `jit_stack_param_loop_const_bound_with_call` 死循环），故整条回退。
+    // 诊断探针保留在 `spill_vreg`（`FORGE_VERIFY_SPILL_LIVE`）。
     for block in vcode.blocks() {
         for inst in block.instructions.iter() {
             let mut e: Vec<SpillEdit> = Vec::new();

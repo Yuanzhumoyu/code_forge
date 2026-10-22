@@ -145,7 +145,7 @@ fn call_site_float_arg_into_an_int_place_uses_the_cross_bank_move() {
         .with_calling_convention(CallConvId::named("zfinx_like"));
     let mut bm = FunctionBuilder::new("caller", TypeContext::new(), sig_m);
     bm.create_block_here();
-    let x = bm.fconst(1.5f64.to_bits(), TypeId::F64);
+    let x = bm.const_float(1.5f64.to_bits(), TypeId::F64);
     let r = bm.call(callee, &[x], &[TypeId::I64]);
     // 单值返回：`call` 返回 Vec，取第 0 个。
     bm.ret(&[r[0]]);

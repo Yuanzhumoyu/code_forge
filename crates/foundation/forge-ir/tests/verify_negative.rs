@@ -124,8 +124,8 @@ fn verify_fcmp_operand_not_float() {
     let errs = verify_builder(&[], |fb, ctx| {
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let a = fb.iconst(1, ctx.i32_ty());
-        let b = fb.iconst(2, ctx.i32_ty());
+        let a = fb.const_int(1, ctx.i32_ty());
+        let b = fb.const_int(2, ctx.i32_ty());
         // builder 的 fcmp 对非浮点操作数直接 assert，须用 emit1 绕过构建层检查，
         // 由 verify 的 check_immediates 报 FcmpOperandNotFloat
         fb.emit1(
@@ -152,8 +152,8 @@ fn verify_icmp_missing_cond_immediate() {
     let errs = verify_builder(&[], |fb, ctx| {
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let a = fb.iconst(1, ctx.i32_ty());
-        let b = fb.iconst(2, ctx.i32_ty());
+        let a = fb.const_int(1, ctx.i32_ty());
+        let b = fb.const_int(2, ctx.i32_ty());
         // 直接 emit 一条无条件的 Icmp（builder.icmp 一定带条件）
         fb.emit1(
             Opcode::Icmp,
@@ -177,8 +177,8 @@ fn verify_icmp_wrong_cond_immediate() {
     let errs = verify_builder(&[], |fb, ctx| {
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let a = fb.iconst(1, ctx.i32_ty());
-        let b = fb.iconst(2, ctx.i32_ty());
+        let a = fb.const_int(1, ctx.i32_ty());
+        let b = fb.const_int(2, ctx.i32_ty());
         fb.emit1(
             Opcode::Icmp,
             vec![a, b],
@@ -208,8 +208,8 @@ fn verify_store_addr_not_pointer() {
     let errs = verify_builder(&[], |fb, ctx| {
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let v = fb.iconst(1, ctx.i32_ty());
-        let addr = fb.iconst(2, ctx.i32_ty()); // 非指针地址
+        let v = fb.const_int(1, ctx.i32_ty());
+        let addr = fb.const_int(2, ctx.i32_ty()); // 非指针地址
         fb.store(v, addr);
         fb.ret(&[]);
     });
@@ -227,7 +227,7 @@ fn verify_call_invalid_target() {
     let errs = verify_builder(&[], |fb, ctx| {
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let target = fb.iconst(1, ctx.i32_ty()); // call_indirect 目标非指针
+        let target = fb.const_int(1, ctx.i32_ty()); // call_indirect 目标非指针
         fb.call_indirect(target, &[], &[ctx.i32_ty()]);
         fb.ret(&[]);
     });
@@ -327,14 +327,14 @@ fn build_branch_merge(fb: &mut FunctionBuilder, ctx: &TypeContext) {
     // bb2: ret v2  ← v2 定义于 bb1，bb2 还有 entry 前驱 → bb1 不支配 bb2
     let (entry, _) = fb.create_entry_block();
     fb.switch_to_block(entry);
-    let a = fb.iconst(1, ctx.i32_ty());
-    let b = fb.iconst(2, ctx.i32_ty());
+    let a = fb.const_int(1, ctx.i32_ty());
+    let b = fb.const_int(2, ctx.i32_ty());
     let c = fb.icmp(IntCC::Eq, a, b);
     let bb1 = fb.create_block();
     let bb2 = fb.create_block();
     fb.branch(c, bb1, &[], bb2, &[]);
     fb.switch_to_block(bb1);
-    let v2 = fb.iconst(3, ctx.i32_ty());
+    let v2 = fb.const_int(3, ctx.i32_ty());
     fb.jump(bb2, &[]);
     fb.switch_to_block(bb2);
     fb.ret(&[v2]);
@@ -364,7 +364,7 @@ fn verify_invoke_unwind_exempt_from_dominance() {
         fb.switch_to_block(entry);
         let ok = fb.create_block();
         let pad = fb.create_block();
-        let v = fb.iconst(1, ctx.i32_ty());
+        let v = fb.const_int(1, ctx.i32_ty());
         let l = fb.landingpad(ctx.ptr_ty());
         fb.resume(l);
         fb.switch_to_block(ok);
@@ -400,14 +400,14 @@ fn verify_same_shape_but_legal_merge() {
     let errs = verify_builder(&[TypeId::I32], |fb, ctx| {
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let a = fb.iconst(1, ctx.i32_ty());
-        let b = fb.iconst(2, ctx.i32_ty());
+        let a = fb.const_int(1, ctx.i32_ty());
+        let b = fb.const_int(2, ctx.i32_ty());
         let c = fb.icmp(IntCC::Eq, a, b);
         let bb1 = fb.create_block();
         let bb2 = fb.create_block();
         fb.branch(c, bb1, &[], bb1, &[]); // 两个目标都是 bb1
         fb.switch_to_block(bb1);
-        let v2 = fb.iconst(3, ctx.i32_ty());
+        let v2 = fb.const_int(3, ctx.i32_ty());
         fb.jump(bb2, &[]);
         fb.switch_to_block(bb2);
         fb.ret(&[v2]);
@@ -895,7 +895,7 @@ fn verify_dominance_violation() {
         Opcode::Iconst,
         entry,
         smallvec::SmallVec::new(),
-        smallvec::smallvec![Immediate::Const(func.constants.insert_int(1, 1))],
+        smallvec::smallvec![Immediate::Const(func.constants.intern_int(1, 1))],
         &[TypeId::BOOL],
         InstFlags::NONE,
     );
@@ -906,7 +906,7 @@ fn verify_dominance_violation() {
         Opcode::Iconst,
         a,
         smallvec::SmallVec::new(),
-        smallvec::smallvec![Immediate::Const(func.constants.insert_int(7, 32))],
+        smallvec::smallvec![Immediate::Const(func.constants.intern_int(7, 32))],
         &[TypeId::I32],
         InstFlags::NONE,
     );
@@ -940,7 +940,7 @@ fn verify_missing_type_context() {
     let sig = FunctionSignature::new(&[], &[ctx.i32_ty()]);
     let mut fb = FunctionBuilder::new("f", ctx.clone(), sig);
     let (_entry, _) = fb.create_entry_block();
-    let v = fb.iconst_i32(3);
+    let v = fb.constant(3i32);
     fb.ret(&[v]);
     let func = fb.finish().expect("build");
 

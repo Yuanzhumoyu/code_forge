@@ -33,8 +33,8 @@ pub(crate) fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
                     if let Some(v) = inst.operands.first()
                         && let ValueDef::AggConst(aid) = func.dfg.value_data(*v).def
                     {
-                        let agg = func.constants.get_aggregate(aid).ok_or_else(|| {
-                            IrError::Internal("聚合常量 store：常量池缺失 AggId".into())
+                        let agg = func.constants.agg(aid).ok_or_else(|| {
+                            IrError::Internal("聚合常量 store：常量池缺失聚合常量".into())
                         })?;
                         let bytes = crate::pipeline::agg_const::pack_agg_bytes(func, agg)?;
                         jobs.push((b, pos, 0, bytes, true));
@@ -49,8 +49,8 @@ pub(crate) fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
                     let skip = usize::from(inst.opcode == Opcode::CallIndirect);
                     for (op_idx, v) in inst.operands.iter().enumerate().skip(skip) {
                         if let ValueDef::AggConst(aid) = func.dfg.value_data(*v).def {
-                            let agg = func.constants.get_aggregate(aid).ok_or_else(|| {
-                                IrError::Internal("聚合常量参数：常量池缺失 AggId".into())
+                            let agg = func.constants.agg(aid).ok_or_else(|| {
+                                IrError::Internal("聚合常量参数：常量池缺失聚合常量".into())
                             })?;
                             let size = store.size_bytes(agg.ty);
                             if size > 8 {
@@ -93,7 +93,7 @@ pub(crate) fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
                 // 段常量（复用 make_inst 的 results[0]——不可再 make_value）
                 let cid = func
                     .constants
-                    .insert_int(seg_val as i128, (seg_len * 8) as u32);
+                    .intern_int(seg_val as i128, (seg_len * 8) as u32);
                 let iconst = func.make_inst(
                     Opcode::Iconst,
                     b,
@@ -116,7 +116,7 @@ pub(crate) fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
                 seg_off += seg_len;
                 if seg_off < bytes.len() {
                     // prev_addr = add ptr prev_addr, seg_len（非 GEP——expand_geps 不碰）
-                    let off_cid = func.constants.insert_int(seg_len as i128, 64);
+                    let off_cid = func.constants.intern_int(seg_len as i128, 64);
                     let off_inst = func.make_inst(
                         Opcode::Iconst,
                         b,
@@ -144,7 +144,7 @@ pub(crate) fn expand_agg_stores(func: &mut Function) -> Result<(), IrError> {
             // Call 参数（≤8 字节）：打包为单 i64 常量替换 operand
             // v23 M6：打包口径单点化（`agg_const::pack_segment`）。
             let packed = crate::pipeline::agg_const::pack_segment(&bytes, 0, bytes.len().min(8));
-            let cid = func.constants.insert_int(packed as i128, 64);
+            let cid = func.constants.intern_int(packed as i128, 64);
             let iconst = func.make_inst(
                 Opcode::Iconst,
                 b,

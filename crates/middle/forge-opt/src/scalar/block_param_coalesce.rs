@@ -126,7 +126,7 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let v = b.iconst_i32(42);
+        let v = b.constant(42i32);
         b.ret(&[v]);
         let mut func = b.finish().expect("build");
 
@@ -161,8 +161,8 @@ mod tests {
         let merge_block = b.create_block_with_tys(&[TypeId::I32]);
 
         b.switch_to_block(entry);
-        let c42 = b.iconst_i32(42);
-        let c0 = b.iconst_i32(0);
+        let c42 = b.constant(42i32);
+        let c0 = b.constant(0i32);
         let cond = b.icmp(IntCC::Ne, c42, c0);
         b.branch(cond, then_block, &[], else_block, &[]);
 
@@ -201,8 +201,8 @@ mod tests {
         let merge_block = b.create_block_with_tys(&[TypeId::I32]);
 
         b.switch_to_block(entry);
-        let c42 = b.iconst_i32(42);
-        let c99 = b.iconst_i32(99);
+        let c42 = b.constant(42i32);
+        let c99 = b.constant(99i32);
         let cond = b.icmp(IntCC::Ne, c42, c99);
         b.branch(cond, then_block, &[], else_block, &[]);
 

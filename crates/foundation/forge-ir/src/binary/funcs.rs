@@ -13,7 +13,7 @@
 //!
 //! `DataFlowGraph` 里值的 dense 顺序 = "块参数先建、指令结果后建"。为了让"顺序即
 //! 索引"在解码侧**可校验**而不是靠隐式假设，每个值都写一条显式 `ValueDef`
-//! （`Inst(inst, k)` / `Param(block, k)` / `AggConst(AggId)` / `UndefNamed(str)`），
+//! （`Inst(inst, k)` / `Param(block, k)` / `AggConst(ConstId)` / `UndefNamed(str)`），
 //! 解码后逐条回查：该值必须恰好是它所声称的那条指令的第 k 个结果 / 那个块的第 k 个
 //! 参数（见 [`validate_dfg`]）。任何不一致 → `Err`，绝不"猜一个"。
 //!
@@ -264,7 +264,7 @@ fn encode_dfg(
             }
             ValueDef::AggConst(a) => {
                 writer::put_u8(out, 2);
-                put_handle(out, a.0);
+                put_handle(out, a.raw());
             }
             ValueDef::UndefNamed(name) => {
                 writer::put_u8(out, 3);
@@ -369,10 +369,6 @@ fn encode_immediate(
         Immediate::String(s) => {
             writer::put_u8(out, 7);
             put_str(out, w, &ImmStr::from(store.lookup_str(*s)));
-        }
-        Immediate::Agg(a) => {
-            writer::put_u8(out, 8);
-            put_handle(out, a.0);
         }
         Immediate::IntCC(cc) => {
             writer::put_u8(out, 9);
@@ -614,7 +610,7 @@ fn decode_dfg(
                 let k = read_u16(c, "块参数下标")?;
                 ValueDef::Param(b, k)
             }
-            2 => ValueDef::AggConst(crate::AggId(read_u32(c, "聚合常量")?)),
+            2 => ValueDef::AggConst(ConstId::from_raw(read_u32(c, "聚合常量")?)),
             3 => ValueDef::UndefNamed(read_interned(c, strings)?),
             other => return err(at, format!("未知值定义 tag {other}")),
         };
@@ -750,7 +746,6 @@ fn decode_immediate(c: &mut Cursor<'_>, strings: &[ImmStr]) -> Result<Immediate,
         5 => Immediate::Global(GlobalId(read_u32(c, "全局引用")?)),
         6 => Immediate::Type(TypeId(read_u32(c, "类型引用")?)),
         7 => Immediate::String(read_interned(c, strings)?),
-        8 => Immediate::Agg(crate::AggId(read_u32(c, "聚合引用")?)),
         9 => {
             let at = c.offset();
             let code = c.read_u8()?;

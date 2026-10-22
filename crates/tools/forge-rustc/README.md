@@ -45,6 +45,13 @@ cargo forge build --file hello.rs --debuginfo 2
 # **裸 `cargo build` / `cargo run`** 即走 forge 后端（不经本工具）
 cargo forge init
 cargo build && ./target/debug/<包名>.exe
+
+# `cargo test`：**必须加 `-Z panic-abort-tests`**
+#   默认的 libtest 会捕获 panic ⇒ 要 unwind 的 std ⇒ 本后端按 [cap:UNWIND] 明确拒绝
+#  （`error: the crate panic_abort does not have the panic strategy abort`）。
+#   加了 `-Z panic-abort-tests` 后单元测试与 doc-test 都会跑（2026-10-19 实测：
+#   2 条 `#[test]` + 0 条 doc-test，全绿）。
+cargo test -Z panic-abort-tests
 ```
 
 顶层全局参数：`--backend-dll <path>`（默认：env `FORGE_RUSTC_DLL` → 仓库
@@ -175,9 +182,9 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 
 ## 支持矩阵（x86_64-pc-windows-msvc 宿主）
 
-### ✅ 已验证（e2e 128 用例：**128 硬断言 + 0 个 `FLAKY` 容忍项**）
+### ✅ 已验证（e2e 197 用例：**197 硬断言 + 0 个 `FLAKY` 容忍项**）
 
-> **2026-10-11 核（v27 M1–M2 实测）**：`tests/e2e.rs` 的 `CASES` 现为 **128 个 `Case`**、
+> **2026-10-19 核（v27 M6 实测）**：`tests/e2e.rs` 的 `CASES` 现为 **197 个 `Case`**、
 > **`known_failure: true` = 0、`FLAKY` 名单为空** ⇒ 套件是**真全过**，不是容忍式全绿。
 > 早先的「103 用例 + 5 个 `FLAKY`」（2026-09-06 回归）里的那 5 例
 > （`vec_push`/`vec_string`/`vec_from_slice`/`vec_iter_enumerate`/`box_value`）已随
@@ -195,11 +202,39 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 > `neg_u128` 钉住「`i128`/`u128` 此前被静默当 64 位算 ⇒ 现在 `[cap:WIDE_INT]` 拒绝」，
 > `narrow_shift_semantics` / `narrow_arith_signed` 钉住窄宽度移位与算术的**符号性**，
 > `cast_int_float_matrix` 钉住整数↔浮点转换（含 `f64 → i8/u8`）；
-> `float_cmp_semantics` 钉住浮点比较语义（NaN：`==`/`<` 全 false、`!=` 为 true），
+> `float_cmp_semantics` 钉住浮点比较语义（NaN：`==`/`<` 全 false、`!=` 为 true）、
+> `bit_intrinsics_narrow` 钉住窄类型位运算内建按位宽、`ptr_arith_size12` 钉住非 2 幂元素大小的指针算术、
+> `range_contains` 钉住 `Range::contains`（枚举判别宽度按变体数 + `tag_field` 偏移）、
+> `char_from_u32` 钉住 `char::from_u32` 的合法性判定（niche 值按真实宽度读），
+> `local_align16` 钉住栈槽按类型 ABI 对齐、`u128_trunc` 钉住 128 位截断（u64/u32/u8）、`u128_cmp` 钉住 128 位比较、
+> `zst_field_struct`/`iter_map` 钉住 pair 半区越界、
+> `u128_byval`/`u128_addsub`/`u128_bitops`/`u128_shift`/`u128_shift_var`（128 位全运算面）
+> 、`range_fold_sum`/`range_sum`/`filter_product`（`Variants::Single` 判别）
+> 、`struct12_byval`/`range_inclusive_count`
+> 钉住聚合传递阈值（>8 字节按引用）、八条 CFG 形态用例（短路 `&&`/`||`、
+> else-if 链、元组/Option `match`、`while`+`continue`、
+> early return、match guard；期望值 LLVM 对照）钉住分支 lowering，
 > `overflow_panic_shl` / `overflow_panic_div` 钉住 **溢出检查真的会 panic**（exit=101，`black_box` 防常量折叠）；期望值均由 LLVM 对照；
+> v27 M6 新增负向三条 `flag_lto` / `flag_coverage` / `flag_sanitizer`：靠 LLVM 管线的
+> 代码生成选项（`-C lto`、`-C instrument-coverage`、`-Zsanitizer`、PGO、CFG 防护、
+> `prefer-dynamic`、非默认 `relocation-model`）**此前全部静默接受**，现在统一按
+> `[cap:CODEGEN_OPTS]` 明确拒绝（静默忽略最坏等于"用户以为开了 ASan 而实际没开"）；
+> 负向 `neg_sysv64` 钉住**非 Win64 调用约定**（`extern "sysv64"` ⇒ `[cap:CALL_CONV]`）——
+> 此前一律当 C 打包（RCX/RDX/R8/R9），而 sysv64 是 RDI/RSI/RDX…；调用方与被调方都由
+> 本后端编译时"自洽"看不出来，跨到 LLVM 编的代码或 `extern` 声明的外部函数就是错值；
+> `narrow_switch_compare` 钉住 **`switchInt` 的 case 常量类型**（u8 判别值 + i32 常量曾是
+> 非法 IR，`-O` 下 verifier 拒绝；rustc 会把 `b[0] == 7` 优化成 `switchInt`）；
+> **`opt_const_index` 是第一条用 `-C opt-level=2` 编译的用例**（`opt_*` 前缀由 harness
+> 注入该 flag）：优化过的 MIR 把 `a[1]` 写成 `ConstantIndex`（未优化是 `Index(_const)`），
+> 而 `ConstantIndex` 曾被静默忽略（读到 `a[0]`）——正是"外部调用写完缓冲后 `buf[1]`
+> 读到旧值"的真因。顺带修掉：`Call` 的 verifier 规则错误地要求"callee 在操作数 0"
+> （实际在 `Immediate::Func` 立即数通道）⇒ 零参数调用在优化档下校验失败；
+> `flag_emit_asm` 钉住 **`--emit=asm` 必须明确拒绝**（`[cap:EMIT_KINDS]`）——此前是
+> "成功但没产物"（退出码 0、用户点名的 `.s` 根本不出现）；本后端只产机器码对象
+> （`--emit=obj/link/metadata/mir` 正常），汇编请对产物反编译，不由后端伪造文本；
 > 删除了被正当推翻的 `neg_global_asm`。
 >
-> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=128 hard=128 flaky=0 known=0 expect_trap=3 -->
+> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=197 hard=197 flaky=0 known=0 expect_trap=9 -->
 >
 > **上面这段机读标记与 `tests/e2e.rs` 双向相等**：改用例数/容忍名单时必须同步它，
 > 否则 `cargo forge gate --guards` 会红（守卫就是为了治「文档与代码分叉」这件事）。
@@ -236,7 +271,7 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 | Assert 失败路径 | **已修复**：assert 失败不再裸 ud2，改走 panic_handler（`rust_begin_unwind`，lang_items().panic_impl() 解析符号；占位 &PanicInfo=0）——失败可观测（panic loop 挂起，与 e2e 超时判挂起对齐）；成功路径不受影响。**注意**：当前传空指针占位，panic_handler 内不得解引用 `info`（e2e 用例的 handler 为 `loop {}`，安全） |
 | 浮点比较分支（float_args） | **已修复**：`if a + b > 3.0 { 1 } else { 0 }` 最小用例 f(1.5, 2.0) 实测 exit=1 通过——Fcmp 模板（xor rd,rd; comisd rs1,rs2; set$CC rd）的 rd 类别/Setcc 宽度/分支链均正确，known_failure 为过时标志，已移除（float_args 转 PASS） |
 | Box 写回 | **已修复（转正）**：`let mut b = Box::new(7); *b = 42; *b` 曾 0xC000001D——五轮定位：movabs 绝对地址 + .reloc VirtualSize 截断（ASLR 下第 5 个重定位不应用）已**根治**（[lower.GlobalAddr] 重构为 RIP 相对 lea + REL32，@lea_rip_rel）；六轮后（统一聚合框架：槽零初始化 + enum 嵌套投影 field_ty 修复 + copy_agg/pack_sp 统一原语）累积修复了两次 deref 的 [rbp-0x68] 槽未初始化垃圾与 Box 链 enum 解构偏移——**ASLR 与固定基址下均稳定 exit=42（多次运行确认），e2e 中 box_write 用例已实际通过，known_failure 移除** |
-| checked 算术 | `AddWithOverflow` 等元组结果已实现（`sadd_overflow`/`uadd_overflow` API + 元组 0/4 偏移拆写）：简单场景（多次 `+=`、if 内）通过；**循环体内 checked 加法已修复（转正）**——曾 0xC000001D（assert 指针槽 32 位截断 0x15fed4，循环块 phi/槽 bug）——统一聚合框架（1.1 sret 判定统一 + field_ty enum 嵌套投影 + 槽零初始化）累积修复——`while i<3 { acc+=i; i+=1 }` 最小用例 ASLR 与固定基址均稳定 exit=3（多次运行确认）；测试与 cargo 工作流仍统一 `-C overflow-checks=off`（README 用法已包含） |
+| checked 算术 | **已可用（含 8/16 位窄类型）**：`AddWithOverflow` 等元组结果的拆写在任意宽度都走通了。8/16 位的加/减/乘**不再依赖 x86 的 CF/OF**——`lower_checked_op` 改成"扩宽算 + 比较区间 + 截回"（x86 的 8 位 reg-reg 算术是另一个 opcode，落到 16/32 位编码上会让 `setb/seto` 读到加宽后的进位）。e2e 由 `oc_*` 用例钉住（harness 注入 `-C overflow-checks=on`）：`200u8+100u8`、`-100i8-100i8`、`200u8*2u8`、`1000u16*1000u16` 都必须 trap，`200u16*100u16` 必须正常返回 20000。**残留**：直接对 IR `uadd_overflow(I8)` 喂值仍拿不到正确标志（JIT 夹具 `jit_uadd_overflow_flag_is_correct` 钉住，等 reg-reg form 支持按 opsize 换 opcode） |
 
 ### ❌ 明确不支持（编译报错而非静默错误）
 
@@ -425,10 +460,28 @@ unresolved_type_refs_fall_back_to_unspecified）为准。e2e `debuginfo_full` + 
 | `TLS` | 待做 | `#[thread_local]` 明确拒绝（此前会发射成普通 `.data`、**线程私有语义静默丢失**） |
 | `MIR_TERMINATOR` | 不做 | MIR 终结符兜底**明确拒绝**，不再静默 `unreachable` |
 
-**门禁**：`cargo forge gate` 现含 `rustc-e2e`（110 用例真执行）与 `rustc-e2e-guards`
-（trap 语义/零容忍名单/模板契约不变量）两步（仅 Windows 口径；跨目标见方案 M4），
-共 **44 步**；另有 `rustc_doc_counts`（本 README 的计数标记 ↔ `tests/e2e.rs` 双向相等）
-与 `workarounds_guard`（`[WA-NN]` 编号唯一 + 引用可解析）两个守卫。
+**裸函数（`#[unsafe(naked)]`）已支持（2026-10-19）**：函数体里的汇编自带 `ret`，后端
+**不发射**序言/尾声、不保存 callee-saved（IR `FunctionAttributes::NO_FRAME`），lowering 也
+不给它建任何栈槽（`LowerCtxt::new` 的 `naked` 形参）。`const` 操作数（`k = const 7`）走
+"就地替换成字面文本"的既有路径，同样无栈帧（e2e `naked_const_operand` 钉住）。
+
+**语言面澄清**：`naked_asm!` 里的**寄存器操作数**是 rustc 前端自己禁止的
+（原文 `the ... operand cannot be used with naked_asm!`，对 LLVM 后端同样报），不是本后端的限制
+⇒ 裸函数的操作数形态只有 `const`/`sym`；`sym` 仍受谱汇编器文法限制（`neg_inline_asm_sym`）。
+
+**IR 优化管线已接入（2026-10-19，v27 M6）**：此前 `forge-opt` 在生产路径上**一次都没跑过**
+（`CompileSession::with_opt_level` 只有测试在调），所以每个 MIR 局部都留在栈槽、`-C opt-level`
+几乎无效。现在按 rustc 的 `-C opt-level` 映射档位（0 = 不优化、1/2/3 = O1/O2/O3、s/z = O2），
+`FORGE_OPT_LEVEL=0..3` 可覆盖（对照实验用）。接线时一并修掉了 6 处既有非法 IR 与 2 个
+pass 记账 bug（详见方案账本「从未启用 IR 优化管线」一节）。
+
+**门禁**：`cargo forge gate` 现含 `rustc-e2e`（197 用例真执行）、`rustc-e2e-guards`
+（trap 语义/零容忍名单/模板契约不变量）、`rustc-std`（真 `std` 语料：forge 编 vs LLVM 编
+逐行对拍，`-O0`/`-O2`）、`rustc-determinism`、`rustc-opt-levels`、
+`rustc-dwarf` 与 `rustc-clippy`（`-p forge-rustc --all-targets -- -D warnings`）七步
+（仅 Windows 口径；跨目标见方案 M4），共 **51 步**；另有 `rustc_doc_counts`
+（本 README 的计数标记 ↔ `tests/e2e.rs` 双向相等）与 `workarounds_guard`
+（`[WA-NN]` 编号唯一 + 引用可解析）两个守卫。步数用 `cargo forge gate --list` 复核。
 
 **`std` 探测工程**：
 [`examples/forge-rustc-std-hello/`](../../examples/forge-rustc-std-hello/README.md)

@@ -1,0 +1,9 @@
+# 本工程是**探测**用（独立于主 workspace）：机器相关的 cargo 配置与构建产物都不入库。
+#
+# 生成物现在**全部**落在仓库的 `target/` 下（见 `run-offline.ps1` 的纪律 ②）：
+#   配置      → <repo>/target/forge-rustc-std-hello/{forge,llvm}-cwd/.cargo/config.toml
+#   每档产物  → <repo>/target/forge-rustc-std-hello/{forge,llvm}-o<档>/
+# 因此本目录正常情况下**只有一个 `src/`** + 清单文件；下面两条只是兜底
+# （例如手工跑 `cargo build` 或 `cargo forge init --std` 时）：
+/target
+/.cargo

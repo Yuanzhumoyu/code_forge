@@ -37,8 +37,8 @@ fn caller_calling(callee_variadic: bool) -> Vec<u8> {
         .with_calling_convention(CallConvId::builtin(ConvName::SysV64));
     let mut bm = FunctionBuilder::new("caller", TypeContext::new(), sig_m);
     bm.create_block_here();
-    let fmt = bm.iconst_i64(0);
-    let x = bm.fconst(1.5f64.to_bits(), TypeId::F64);
+    let fmt = bm.constant(0i64);
+    let x = bm.const_float(1.5f64.to_bits(), TypeId::F64);
     let r = bm.call(callee, &[fmt, x], &[TypeId::I64]);
     bm.ret(&[r[0]]);
     let caller = m.add_function(bm.finish().expect("caller"));

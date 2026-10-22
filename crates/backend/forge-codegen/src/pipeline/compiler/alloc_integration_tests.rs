@@ -76,8 +76,8 @@ fn test_alloc_result_assignments() {
         build_sig(&[], TypeId::I64),
     );
     b.create_block_here();
-    let a = b.iconst_i64(21);
-    let c = b.iconst_i64(2);
+    let a = b.constant(21i64);
+    let c = b.constant(2i64);
     let s = b.imul(a, c);
     b.ret(&[s]);
     let func = b.finish().expect("build");
@@ -167,10 +167,10 @@ fn test_div_clobber_alloc_integrity() {
     let sig = FunctionSignature::new(&[], &[ctx.i64_ty()]);
     let mut b = FunctionBuilder::new("div_clobber_alloc", ctx, sig);
     b.create_block_here();
-    let mut acc = b.iconst_i64(0);
+    let mut acc = b.constant(0i64);
     for i in 1..=16i64 {
-        let a = b.iconst_i64(i * 42);
-        let c = b.iconst_i64(i);
+        let a = b.constant(i * 42);
+        let c = b.constant(i);
         let d = b.udiv(a, c);
         acc = b.iadd(acc, d);
     }
@@ -207,8 +207,8 @@ fn p0_compile_with_opt_level() {
         build_sig(&[], TypeId::I64),
     );
     b.create_block_here();
-    let a = b.iconst_i64(21);
-    let c = b.iconst_i64(2);
+    let a = b.constant(21i64);
+    let c = b.constant(2i64);
     let s = b.imul(a, c);
     b.ret(&[s]);
     let func = b.finish().expect("build");
@@ -257,7 +257,7 @@ fn test_v512_byref_callee_load_is_64b() {
     let mut b = FunctionBuilder::new("callee_v512", tc, sig);
     let (blk, p) = b.create_block_with_params(&[(vt, "v")]);
     b.switch_to_block(blk);
-    let idx = b.iconst_i32(0);
+    let idx = b.constant(0i32);
     let lane = b.vextract(p[0], idx);
     let wide = b.fpext(lane, TypeId::F64);
     let int = b.fptosi(wide, TypeId::I32);
@@ -319,11 +319,11 @@ fn test_v512_vconst_generates_four_evex_inserts() {
     let mut b = FunctionBuilder::new("v512_vconst", tc, sig);
     b.create_block_here();
     // 16 × f32 = 64 字节 = V512（类型由 T+len 推导）。
-    let v = b.vconst(vec![
+    let v = b.const_vector(vec![
         1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
     ]);
     // 取 lane15（=16.0）——与运行级 V512 用例同形，便于两处对照。
-    let idx = b.iconst_i32(15);
+    let idx = b.constant(15i32);
     let lane = b.vextract(v, idx);
     let wide = b.fpext(lane, TypeId::F64);
     let int = b.fptosi(wide, TypeId::I32);
@@ -358,17 +358,80 @@ fn compile_wide_slot_roundtrip(lanes: usize) -> Result<CompiledFunction, IrError
     let mut b = FunctionBuilder::new("wide_vec_slot", tc, sig);
     let (blk, _p) = b.create_block_with_params(&[]);
     b.switch_to_block(blk);
-    let v = b.vconst(vec![1.0f32; lanes]);
+    let v = b.const_vector(vec![1.0f32; lanes]);
     let slot = b.alloca(vt, 1);
     b.store(v, slot);
     let back = b.load(slot, vt);
-    let idx = b.iconst_i32(0);
+    let idx = b.constant(0i32);
     let lane = b.vextract(back, idx);
     let wide = b.fpext(lane, TypeId::F64);
     let int = b.fptosi(wide, TypeId::I32);
     b.ret(&[int]);
     let func = b.finish().expect("build wide vector slot roundtrip");
     CompileSession::new(x86::TargetMachine::new()).compile(&func)
+}
+
+/// **栈探测**（v27 M6-78）：帧超过阈值时序言必须先 `mov rax, 帧大小` + `call __chkstk`
+/// （带 `__chkstk` 重定位），否则 Windows 上会跳过 guard page ⇒ 随机 AV。
+///
+/// 正反两面都钉：大帧 ⇒ 有探测；小帧 ⇒ 无探测（不能给所有函数都加一条 call）。
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn stack_probe_emitted_only_for_big_frames() {
+    // 大帧：64KB 的栈槽
+    let tc = TypeContext::new();
+    let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+    let mut b = FunctionBuilder::new("big_frame", tc.clone(), sig);
+    let (blk, _p) = b.create_block_with_params(&[]);
+    b.switch_to_block(blk);
+    let slot = b.alloca(TypeId::I8, 65536);
+    let z = b.constant(0i8);
+    b.store(z, slot);
+    let back = b.load(slot, TypeId::I8);
+    let v = b.uextend(back, TypeId::I32);
+    b.ret(&[v]);
+    let func = b.finish().expect("build big_frame");
+    let cf = CompileSession::new(x86::TargetMachine::new())
+        .compile(&func)
+        .expect("compile big_frame");
+    assert!(
+        cf.code.len() > 10,
+        "大帧函数应有可观代码量，实测 {}",
+        cf.code.len()
+    );
+    // 序言 = `48 B8 <imm64>`（mov rax, size）紧跟 `E8`（call rel32）
+    assert_eq!(cf.code[0], 0x48, "序言首字节应为 mov rax, imm64 的 REX.W");
+    assert_eq!(cf.code[1], 0xB8, "序言应为 mov rax, imm64（48 B8）");
+    assert_eq!(cf.code[10], 0xE8, "mov 之后应紧跟 call rel32（E8）");
+    let probe_reloc = cf
+        .relocations
+        .iter()
+        .find(|r| r.symbol.as_str() == "__chkstk");
+    assert!(
+        probe_reloc.is_some(),
+        "大帧序言必须带 `__chkstk` 重定位，实测重定位：{:?}",
+        cf.relocations
+    );
+
+    // 小帧：同一形状但不该触发探测
+    let tc2 = TypeContext::new();
+    let sig2 = FunctionSignature::new(&[], &[TypeId::I32]);
+    let mut b2 = FunctionBuilder::new("small_frame", tc2, sig2);
+    let (blk2, _p2) = b2.create_block_with_params(&[]);
+    b2.switch_to_block(blk2);
+    let z2 = b2.constant(7i32);
+    b2.ret(&[z2]);
+    let func2 = b2.finish().expect("build small_frame");
+    let cf2 = CompileSession::new(x86::TargetMachine::new())
+        .compile(&func2)
+        .expect("compile small_frame");
+    assert!(
+        !cf2.relocations
+            .iter()
+            .any(|r| r.symbol.as_str() == "__chkstk"),
+        "小帧不得发栈探测，实测重定位：{:?}",
+        cf2.relocations
+    );
 }
 
 /// W3（2026-09-12）：V256（32B）向量的 **IR 层 Load/Store 已可降级**——

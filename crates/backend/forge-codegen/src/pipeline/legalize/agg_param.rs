@@ -336,7 +336,7 @@ pub(crate) fn expand_large_aggs(
                 if src_off < li.size {
                     // 推进 src/dst 地址（Iadd + 常量）
                     for cur in [&mut src_addr, &mut dst_addr] {
-                        let off_cid = func.constants.insert_int(seg_len as i128, 64);
+                        let off_cid = func.constants.intern_int(seg_len as i128, 64);
                         let off_inst = func.make_inst(
                             Opcode::Iconst,
                             job.block,
@@ -385,7 +385,7 @@ pub(crate) fn expand_large_aggs(
                     let res = hit_inst.results[0];
                     let mut addr2 = slot_addr;
                     if foff > 0 {
-                        let off_cid = func.constants.insert_int(foff as i128, 64);
+                        let off_cid = func.constants.intern_int(foff as i128, 64);
                         let off_inst = func.make_inst(
                             Opcode::Iconst,
                             job.block,
@@ -415,7 +415,7 @@ pub(crate) fn expand_large_aggs(
                 } else {
                     drop(ts);
                     // 标量字段：GEP + load（结果 Copy 绑定）
-                    let off_cid = func.constants.insert_int(foff as i128, 64);
+                    let off_cid = func.constants.intern_int(foff as i128, 64);
                     let off_inst = func.make_inst(
                         Opcode::Iconst,
                         job.block,
@@ -486,7 +486,7 @@ pub(crate) fn expand_large_aggs(
                 drop(ts);
                 let mut addr2 = li.addr;
                 if off2 > 0 {
-                    let off2_cid = func.constants.insert_int(off2 as i128, 64);
+                    let off2_cid = func.constants.intern_int(off2 as i128, 64);
                     let off2_inst = func.make_inst(
                         Opcode::Iconst,
                         job.block,
@@ -520,7 +520,7 @@ pub(crate) fn expand_large_aggs(
                 drop(ts);
                 let mut prev_addr = li.addr;
                 if off > 0 {
-                    let off_cid = func.constants.insert_int(off as i128, 64);
+                    let off_cid = func.constants.intern_int(off as i128, 64);
                     let off_inst = func.make_inst(
                         Opcode::Iconst,
                         job.block,

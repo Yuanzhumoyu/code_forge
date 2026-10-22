@@ -14,7 +14,8 @@ pub enum Immediate {
     Int(i64),
     /// 无符号小整数。
     Uint(u64),
-    /// 常量池引用 (大整数、浮点常量等)。
+    /// 常量池引用（标量 / `Big` / 向量 / **聚合**——聚合用 `ConstId::Agg` tag，
+    /// 不再有独立的 `Agg` 变体：一个句柄类型管住全部常量）。
     Const(ConstId),
     /// 基本块引用 (jump/branch 目标)。
     Block(Block),
@@ -26,8 +27,6 @@ pub enum Immediate {
     Type(TypeId),
     /// Interned 字符串。
     String(InternedStr),
-    /// 聚合常量引用（3.1：extractvalue/insertvalue 的聚合字面量操作数）。
-    Agg(AggId),
     /// 整数比较条件（`Icmp` 的唯一 immediate；v3 S1 之前是变体载荷 `Icmp { cond }`）。
     IntCC(IntCC),
     /// 浮点比较条件（`Fcmp` 的唯一 immediate；v3 S1 之前是变体载荷 `Fcmp { cond }`）。

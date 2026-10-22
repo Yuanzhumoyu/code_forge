@@ -46,14 +46,20 @@ pub(crate) struct LowerCtxt<'tcx, 'f> {
     /// 聚合常量实参（Layout 等非 ScalarPair）的临时槽偏移：调用前写字节、
     /// 被调方入口复制后废弃。每函数一个（嵌套调用各用各的帧，不冲突）。
     pub(crate) temp_arg_off: Option<i32>,
+    /// `#[unsafe(naked)]`：**不建栈槽、不做入口收参**（裸函数的参数直接留在 ABI
+    /// 寄存器里，由函数体里的汇编自己读）。与 IR `NO_FRAME` 配对使用。
+    pub(crate) naked: bool,
 }
 
 impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
+    /// `naked = true`（`#[unsafe(naked)]`）：**一个栈槽都不建**——裸函数不许有栈帧，
+    /// 它的函数体只有汇编（参数直接落 ABI 寄存器、由汇编自己读）。
     pub(crate) fn new(
         tcx: TyCtxt<'tcx>,
         instance: &Instance<'tcx>,
         body: &'tcx Body<'tcx>,
         func_refs: &'f mut FuncRefTable,
+        naked: bool,
     ) -> Self {
         let sig = build_signature(tcx, instance, body);
         // 函数名（display 用）：闭包/内部 shim 的 DefId 无 item_name（ICE），
@@ -66,6 +72,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         let mut next_offset = 0i32;
         let args_set: std::collections::HashSet<mir::Local> = body.args_iter().collect();
         for (i, local_decl) in body.local_decls.iter().enumerate() {
+            // naked：不建槽（见 `new` 的文档），直接跳过。
+            if naked {
+                break;
+            }
             let local = mir::Local::from_usize(i);
             let ty = map_type(local_decl.ty, tcx).unwrap_or(TypeId::I32);
             if ty == TypeId::VOID {
@@ -98,7 +108,16 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 continue;
             }
             let size = layout_size(tcx, local_decl.ty);
+            // v27 M5 缺陷：槽位必须按**类型的 ABI 对齐**放（此前只减 size ⇒ 16 字节对齐的
+            // 局部（`#[repr(align(16))]`、u128）拿到 8 对齐地址 ⇒ rustc 插入的
+            // `assert(misaligned pointer dereference)` 在运行期触发 ⇒ 产物 panic）。
+            // 负偏移用位与向下（更负）取整：`-40 & !15 == -48`，且
+            // `offset + size <= 取整前的 next_offset` ⇒ 不会与已分配槽重叠。
+            let align = crate::layout::layout_align(tcx, local_decl.ty).max(1) as i32;
             next_offset -= size as i32;
+            if align > 0 && (align & (align - 1)) == 0 {
+                next_offset &= !(align - 1);
+            }
             if crate::trace::trace_enabled("SLOT") {
                 let kind = if i == 0 {
                     "ret"
@@ -121,8 +140,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             );
         }
         // 聚合常量实参临时槽（32 字节，覆盖最大 16 字节聚合 + 对齐）
-        next_offset -= 32;
-        let temp_arg_off = Some(next_offset);
+        let temp_arg_off = if naked {
+            None
+        } else {
+            next_offset -= 32;
+            Some(next_offset)
+        };
         // mangled 符号名（与 backend.rs add_function 的对象符号一致）
         let sym_name = mono_symbol_of(tcx, instance);
         LowerCtxt {
@@ -136,6 +159,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             func_refs,
             sret_ptr: None,
             temp_arg_off,
+            naked,
         }
     }
     /// switchInt 的判别值：枚举（Adt）discr 先读判别（switchInt 的 case 是
@@ -146,6 +170,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
     /// unreachable → panic handler 死循环）。与 rustc codegen 的隐式
     /// discriminant 一致；非枚举（bool/整数）走原 lower_operand。
     fn lower_switch_discr(&mut self, discr: &Operand<'tcx>) -> Result<Value, ForgeError> {
+        if crate::trace::trace_enabled("DISCR") {
+            let t = discr.ty(&self.body.local_decls, self.tcx);
+            eprintln!("[forge] SWITCH-DISCR operand={discr:?} ty={t}");
+        }
         if let Operand::Move(p) | Operand::Copy(p) = discr {
             let ty = p.ty(&self.body.local_decls, self.tcx).ty;
             if matches!(ty.kind(), ty::TyKind::Adt(adt, _) if adt.is_enum()) {
@@ -407,20 +435,21 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             if let Some(slot) = self.locals.get(&local) {
                 let sz = layout_size(self.tcx, ty);
                 let base = self.builder.stack_addr(slot.offset);
-                let zero = self.builder.iconst(0, TypeId::I64);
+                let zero = self.builder.const_int(0, TypeId::I64);
                 for k in (0..sz).step_by(8) {
                     let addr = if k == 0 {
                         base
                     } else {
-                        let kv = self.builder.iconst(k as i64, TypeId::I64);
+                        let kv = self.builder.const_int(k as i64, TypeId::I64);
                         self.builder.iadd(base, kv)
                     };
                     self.builder.store(zero, addr);
                 }
             }
         }
+        // naked：**不做入口收参**——没有槽可写，参数留在 ABI 寄存器里给汇编用。
         for &local in arg_locals.iter() {
-            if pi >= entry_params.len() {
+            if self.naked || pi >= entry_params.len() {
                 break;
             }
             let ty = body.local_decls[local].ty;
@@ -519,9 +548,14 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         let sz = layout_bytes(self.tcx, ret_ty);
                         let slot = &self.locals[&ret_local];
                         let base = self.builder.stack_addr(slot.offset);
-                        // sret（≥16 字节非 ScalarPair 聚合）：写 ret 缓冲（复制
-                        // 全部字节）+ void 返回
-                        if let Some(rp) = self.sret_ptr
+                        // **`()`/ZST 返回：什么都不返**。此前落到下面 `load_local + ret(&[val])`
+                        // 两支：IR 里先是 `Load` 一个 `TypeId(0)`（void 没有大小 ⇒ 校验报
+                        // "loadable type with nonzero size"），再是 `Ret` 带 1 个值而签名要 0 个
+                        //（`ReturnTypeMismatch`）。实测触发点：`core::intrinsics::cold_path`
+                        // （`-Coverflow-checks=on` 的 panic 冷路径必经）⇒ 后端直接 Internal error。
+                        if sz == 0 {
+                            self.builder.ret(&[]);
+                        } else if let Some(rp) = self.sret_ptr
                             && is_agg_mem(self.tcx, ret_ty)
                         {
                             self.copy_agg(rp, base, sz);
@@ -569,7 +603,17 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         let tgt_blk = self.blocks[&tgt];
                         self.builder.jump(tgt_blk, &[]);
                     } else {
+                        if crate::trace::trace_enabled("TERM") {
+                            let mir_ty = discr.ty(&self.body.local_decls, self.tcx);
+                            eprintln!(
+                                "[forge] SWITCH discr={discr:?} ty={mir_ty} cases={:?}",
+                                targets.iter().collect::<Vec<_>>()
+                            );
+                        }
                         let discr_val = self.lower_switch_discr(discr)?;
+                        // 而 case 只有 0/1（`ControlFlow` 的 tag 只写低位）⇒ 高 4 字节是垃圾，
+                        // 8 字节比较失败 ⇒ 落 `otherwise: unreachable` ⇒ ud2。按**case 值能表示的
+                        // 最小宽度**裁剪后再零扩展参与比较（case 集定义了判别值的有效位宽）。
                         let otherwise = targets.otherwise();
                         let targets_vec: Vec<_> = targets.iter().collect();
 
@@ -585,10 +629,19 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             // XReg，其长活区间与多个 case 常量的 XReg 在 regalloc 中
                             // 冲突（常量 XReg 重叠分配 → 运行时比较错乱）。
                             let mut cur_blk = block_id;
+                            // case 常量必须与**判别值的 IR 类型**一致：`icmp` 要求两侧同类型，
+                            // 而判别值可能是 i8/i16/i32/i64（`switchInt` 的判别类型 = MIR
+                            // 操作数类型）。此前恒用 `constant(value as i32)` ⇒
+                            // `icmp eq i8 %disc, i32 7` 这种非法 IR（v27 M6 实测：
+                            // `let mut b = [0u8; 4]; b[0] = 7; if b[0] == 7 { … }` —— rustc
+                            // 把这条比较优化成 `switchInt(copy _2) -> [7: …]`，
+                            // `-O` 下 verifier 直接拒绝）。
+                            let discr_mir_ty = discr.ty(&self.body.local_decls, self.tcx);
+                            let case_ty = map_type(discr_mir_ty, self.tcx)?;
                             for &(value, tgt_bb) in &targets_vec {
                                 self.builder.switch_to_block(cur_blk);
                                 let d = self.lower_switch_discr(discr)?;
-                                let const_val = self.builder.iconst_i32(value as i32);
+                                let const_val = self.builder.const_int(value as i128, case_ty);
                                 let eq = self.builder.icmp(IntCC::Eq, d, const_val);
                                 let tgt_blk = self.blocks[&tgt_bb];
                                 let next_blk = self.builder.create_block();
@@ -672,7 +725,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             && let Some(addr) = self.const_data_addr(alloc_id)?
                         {
                             call_args.push(addr);
-                            call_args.push(self.builder.iconst(meta as i64, TypeId::I64));
+                            call_args.push(self.builder.const_int(meta as i64, TypeId::I64));
                             continue;
                         }
                         // ScalarPair 聚合常量实参（如 Layout 常量
@@ -691,8 +744,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 let hi = u64::from_le_bytes(
                                     bytes.get(8..16).unwrap_or(&[0; 8]).try_into().unwrap(),
                                 );
-                                call_args.push(self.builder.iconst(lo as i64, TypeId::I64));
-                                call_args.push(self.builder.iconst(hi as i64, TypeId::I64));
+                                call_args.push(self.builder.const_int(lo as i64, TypeId::I64));
+                                call_args.push(self.builder.const_int(hi as i64, TypeId::I64));
                                 continue;
                             }
                         }
@@ -722,10 +775,26 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             call_args.push(self.lower_operand(&arg.node)?);
                         }
                     }
+                    let arg_ops: Vec<rustc_middle::mir::Operand<'tcx>> =
+                        args.iter().map(|a| a.node.clone()).collect();
                     let args = call_args;
 
+                    // v27 M5 缺陷（`u128` 值传输）：返回类型不能只看 `map_type`——
+                    // `map_type(u128)` 会被 `WIDE_INT` 拒绝 ⇒ `unwrap_or(VOID)` ⇒ 调用不绑定返回值，
+                    // 被调方的两个寄存器返回被丢弃（IR 实测 `call @f1(...)` 没有结果）。
+                    // 128 位按 ABI 是 **ScalarPair 两个 I64**（与 `build_signature` 一致）。
                     let ret_ty = map_type(dest_ty, self.tcx).unwrap_or(TypeId::VOID);
 
+                    // ABI 观测：调用点对返回值的判级（dest_ty + 两个谓词）
+                    if crate::trace::trace_enabled("ABI") {
+                        eprintln!(
+                            "[forge] CALLSITE dest_ty={dest_ty} ret_ty={ret_ty:?} agg_mem={} pair_abi={}",
+                            is_agg_mem(self.tcx, dest_ty),
+                            is_scalar_pair_abi(self.tcx, dest_ty)
+                        );
+                    }
+                    // 128 位整数现在是真正的 `i128` 值（后端 legalize 拆成 n 肢），
+                    // 不是"两个 i64 寄存器返回" ⇒ 走普通单返回值路径。
                     let ret_tys: Vec<TypeId> = if ret_ty == TypeId::VOID {
                         vec![]
                     } else if is_agg_mem(self.tcx, dest_ty) {
@@ -748,7 +817,18 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             // 在单态化实例中内联处理，不生成外部调用
                             if let Some(intr) = self.tcx.intrinsic(*def_id) {
                                 let name = intr.name.as_str();
-                                self.lower_intrinsic(name, args, substs, fty, block_id)?
+                                // **内建的实参与 MIR 操作数一一对应**（v27 M5）：内建是**内联**的，
+                                // 不走 ABI——而上面 `call_args` 会按约定把 `ScalarPair` 实参
+                                // 拆成 lo/hi 两半（`u128` 就落在里面）⇒ 内建只能看到低半
+                                //（实测 `u128::leading_zeros(0)` 得 64 而非 128）。
+                                let intr_args: Vec<Value> = {
+                                    let mut v = Vec::with_capacity(arg_ops.len());
+                                    for op in &arg_ops {
+                                        v.push(self.lower_operand(op)?);
+                                    }
+                                    v
+                                };
+                                self.lower_intrinsic(name, intr_args, substs, fty, block_id)?
                             } else if self.tcx.is_lang_item(
                                 *def_id,
                                 rustc_hir::attrs::lang_items::LangItem::DropGlue,
@@ -793,10 +873,11 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     let vtable = args
                                         .get(1)
                                         .copied()
-                                        .unwrap_or_else(|| self.builder.iconst(0, TypeId::I64));
+                                        .unwrap_or_else(|| self.builder.const_int(0, TypeId::I64));
                                     // vtable 槽：rustc 的 idx 是绝对索引（含
                                     // drop_in_place/size/align 公共槽偏移），直接用
-                                    let slot_v = self.builder.iconst(idx as i64 * 8, TypeId::I64);
+                                    let slot_v =
+                                        self.builder.const_int(idx as i64 * 8, TypeId::I64);
                                     let slot_addr = self.builder.iadd(vtable, slot_v);
                                     let fn_ptr = self.builder.load(slot_addr, TypeId::I64);
                                     // 方法只收 receiver（data 指针）——vtable 是 fat
@@ -809,11 +890,18 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     // 隐藏 &Location 等），否则被调方收参错位。
                                     // A2：补齐后做 arg count 一致性校验（release
                                     // 也生效，FORGE_STRICT_ABI=0 可关闭）。
+                                    // 调用约定也必须先过白名单：`extern "sysv64"` 这类
+                                    // 不是 Win64 的约定按 C 打包会静默错值（`[cap:CALL_CONV]`）。
+                                    crate::abi::check_conv_supported(
+                                        self.tcx,
+                                        &instance,
+                                        &format!("调用（在 `{}` 内）", self.fn_name),
+                                    )?;
                                     let args = crate::abi::pad_call_args(
                                         self.tcx,
                                         &instance,
                                         args,
-                                        || self.builder.iconst(0, TypeId::I64),
+                                        || self.builder.const_int(0, TypeId::I64),
                                     );
                                     crate::abi::check_arg_count_consistency(
                                         self.tcx,
@@ -822,6 +910,15 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         &format!("call in {}", self.fn_name),
                                     );
                                     let sym = symbol_name_for_instance(self.tcx, &instance);
+                                    if crate::trace::trace_enabled("CALL") {
+                                        // v27 M5：mangled 符号会被截断/难读 ⇒ 同时打印
+                                        // **可读的 def path**（与 `=== IR dump: … ===` 同名）。
+                                        eprintln!(
+                                            "[forge] CALLSYM {} -> {}",
+                                            self.fn_name,
+                                            self.tcx.def_path_str(instance.def_id())
+                                        );
+                                    }
                                     let fr = self.func_refs.intern(&sym);
                                     self.builder.call(FuncRef::new(fr), &args, &ret_tys)
                                 }
@@ -896,7 +993,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             let fr = self.func_refs.intern(&sym);
                             // 占位 &PanicInfo（当前后端不构造 PanicInfo；panic_handler
                             // 若访问 info 需自备占位布局——e2e 用例的 handler 为 loop）
-                            let zero = self.builder.iconst(0, TypeId::I64);
+                            let zero = self.builder.const_int(0, TypeId::I64);
                             self.builder.call(FuncRef::new(fr), &[zero], &[]);
                         }
                         self.builder.unreachable();
@@ -1125,7 +1222,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 self.store_place(p, v);
                             }
                         }
-                        if options.contains(rustc_ast::InlineAsmOptions::NORETURN) {
+                        // **没有 fallthrough 的一律 `unreachable`**：`options(noreturn)` 是显式声明，
+                        // 而 `#[unsafe(naked)]` 的 `naked_asm!` 在 MIR 里是 **options() 为空 +
+                        // `targets` 空**（rustc 的约定：`targets` 非空 ⇔ 有落点）⇒ 只看 NORETURN
+                        // 会让裸函数收尾时"块没有终结符"（v27 M5 实测的内部错误）。
+                        if options.contains(rustc_ast::InlineAsmOptions::NORETURN)
+                            || targets.is_empty()
+                        {
                             // v27 S4：`options(noreturn)` —— 汇编不返回 ⇒ 没有 fallthrough
                             // （rustc 侧 `targets` 为空），当前块**必须**以 unreachable 收尾，
                             // 否则 finish 断言报"块无终结符"。
@@ -1407,6 +1510,14 @@ fn build_signature<'tcx>(
     // 不能用 ret_sz > 16——16 字节非 ScalarPair 聚合（如 Result<Layout,
     // LayoutError>）在两条路径判定不一致会导致签名与入口错位。
     let sret = is_agg_mem(tcx, return_ty);
+    // ABI 观测：签名对返回值的判级（return_ty + 两个谓词）
+    if crate::trace::trace_enabled("ABI") {
+        eprintln!(
+            "[forge] SIGNATURE return_ty={return_ty} agg_mem={} pair_abi={}",
+            is_agg_mem(tcx, return_ty),
+            is_scalar_pair_abi(tcx, return_ty)
+        );
+    }
     let returns = if return_ty.is_unit() || return_ty.is_never() || sret {
         vec![]
     } else if is_scalar_pair_abi(tcx, return_ty) {

@@ -258,15 +258,15 @@ pub fn build_min(op: Opcode) -> Function {
         Opcode::GetElementPtr => b.gep(bv, &[a], TypeId::I32),
         Opcode::GlobalAddr => b.global_addr(GlobalId::new(0)),
         // ── constants / misc ──
-        Opcode::Iconst => b.iconst_i32(1),
-        Opcode::Fconst => b.fconst_f64(1.0),
+        Opcode::Iconst => b.constant(1i32),
+        Opcode::Fconst => b.constant(1.0f64),
         Opcode::Nop => {
             b.nop();
-            b.iconst_i32(0)
+            b.constant(0i32)
         }
         Opcode::Trap => {
             b.trap();
-            b.iconst_i32(0)
+            b.constant(0i32)
         }
         Opcode::Copy => b.copy(a),
         Opcode::Freeze => b.freeze(a),
@@ -290,11 +290,11 @@ pub fn build_min(op: Opcode) -> Function {
         }
         Opcode::Fence => {
             b.fence(Ordering::SequentiallyConsistent);
-            b.iconst_i32(0)
+            b.constant(0i32)
         }
         _ => {
             // Unsupported / vector / aggregate opcodes: use a trivial fallback.
-            b.iconst_i32(0)
+            b.constant(0i32)
         }
     };
     let ret_val = r;
@@ -400,7 +400,7 @@ mod capability_tests {
 
 /// **矩阵未覆盖**的 opcode（带原因）——`Opcode::ALL \ COVERAGE_OPS`。
 ///
-/// 历史实现的 `check_isa` 用 `match op { ... _ => b.iconst_i32(0) }` 兜底：
+/// 历史实现的 `check_isa` 用 `match op { ... _ => b.constant(0i32) }` 兜底：
 /// 未覆盖的 opcode 静默走 fallback（既不算通过也不算失败），新增 opcode 也不会
 /// 被发现。本清单把它变成**显式契约**：
 /// - 每个 `Opcode` 要么在 `COVERAGE_OPS`（有矩阵行），要么在这里（有名有因）；
@@ -415,6 +415,12 @@ mod no_coverage_list {
         ("Store", "由后端 lowering 用例覆盖（矩阵只取代表性行）"),
         ("Fload", "浮点 load：由 f64/f32 用例覆盖"),
         ("Fstore", "浮点 store：由 f64/f32 用例覆盖"),
+        // 内联汇编：操作数/结果个数由宿主约束决定（variadic），矩阵无法用固定形状建行；
+        // 由 forge-rustc 的 `inline_asm_*` e2e 与 x86 汇编器用例覆盖（v27 M2.5）。
+        (
+            "InlineAsm",
+            "variadic 形状：由 inline asm e2e + 汇编器用例覆盖",
+        ),
         // 浮点单目/转换/指针转换：不在 ISA-DSL 声明集（见 LOWERING_OPS 注释）。
         ("Frem", "ISA-DSL 未声明 lowering（浮点取余）"),
         ("Fptrunc", "ISA-DSL 未声明 lowering"),

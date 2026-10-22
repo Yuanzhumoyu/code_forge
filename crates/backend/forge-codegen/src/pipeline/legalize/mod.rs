@@ -20,8 +20,12 @@ pub(crate) mod agg_store;
 pub(crate) mod classify;
 pub(crate) mod common;
 pub(crate) mod gep;
+pub(crate) mod int_width;
 pub(crate) mod materialize;
+pub(crate) mod narrow_overflow;
 pub(crate) mod plan;
+pub(crate) mod wide_div;
+pub(crate) mod wide_split;
 
 use crate::IrError;
 use crate::machine::target::TargetMachine;
@@ -75,6 +79,96 @@ impl<'a, M: TargetMachine> LegalizeCtx<'a, M> {
     }
 }
 
+/// 标量合法化的**按需可变副本**：没有 `func_owned` 且函数里有宽值时建 clone。
+///
+/// 抽成函数是为了让调用点只有一行（`compiler/mod.rs` 有文件规模棘轮）。
+pub(crate) fn ensure_scalar_owned<M: TargetMachine>(
+    machine: &M,
+    func: &Function,
+    owned: &mut Option<Function>,
+) {
+    if owned.is_none() && needs_scalar_legalize(machine, func) {
+        *owned = Some(func.clone());
+    }
+}
+
+/// 宽值合法化面临"本版还覆盖不了"的宽值形态时的**唯一失败点**。
+///
+/// 为什么收敛成一个函数：`capability_gaps` 守卫要求**每个缺口 ID 恰好一个触发点**
+///（抽不出一个失败点，说明缺口边界还没想清）。这里统一走 `WIDE_INT_SHAPE`
+///（与 `forge-rustc` 的 `WIDE_INT` 是两个不同层次的决定点：那边是"前端不支持"，
+/// 这边是"legalize 还搬不动这种形态"）。
+pub(crate) fn wide_shape_unsupported(detail: &str) -> IrError {
+    let msg = format!("宽值合法化暂不覆盖：{detail}");
+    IrError::capability("WIDE_INT_SHAPE", &msg)
+}
+
+/// 该函数是否需要**标量合法化**（整数位宽补位 / 宽值载体化）。
+///
+/// 触发条件：函数里存在 `bits > int_widths.max()` 的整数值。
+///
+/// 为什么需要这个判据：`CompileSession` 只在"变参 / 聚合展开"时才为函数建**可变副本**
+/// （`func_owned`），legalize 整块写在 `if let Some(f) = func_owned.as_mut()` 里 ⇒ 普通函数
+/// **从来不会跑 legalize**（v27 M5 实测：JIT 探针看到的是**未合法化的原始 IR**，
+/// 因此 `wide_mem` 的槽载体从未生效）。
+pub(crate) fn needs_scalar_legalize<M: TargetMachine>(machine: &M, func: &Function) -> bool {
+    let Some(&wmax) = machine.int_widths().iter().max() else {
+        return true;
+    };
+    let wmax = wmax as u32;
+    let store = func.types.borrow();
+    // 宽值**形参**：isel 没有"一个值占两个寄存器"的表示 ⇒ 也必须走标量合法化
+    //（否则会静默产生垃圾代码——实测 i128 形参的 JIT 返回值是随机数）。
+    for (_, bd) in func.dfg.blocks() {
+        for &pv in bd.param_values.iter() {
+            let Some(t) = func.dfg.value_type(pv) else {
+                continue;
+            };
+            if store.is_int(t) && store.scalar_bits(t).map(|b| b > wmax).unwrap_or(false) {
+                return true;
+            }
+        }
+        for &ii in bd.inst_order.iter() {
+            // **窄 `*_overflow` 也要触发标量批**（v27 M6-53）：8/16 位的加/减/乘溢出不
+            // 能靠 x86 的 CF/OF（8 位 reg-reg 算术是另一个 opcode，谱里没有），要由
+            // `narrow_overflow` 改写成"扩宽算 + 比较区间"。而本判据此前只看"**宽于**
+            // int_widths.max()"的值 ⇒ 纯 8 位函数**整批 legalize 都被跳过**，
+            // 新 pass 根本不会跑（实测：JIT 复现里标志仍然恒 0）。
+            if matches!(
+                func.dfg.inst_data(ii).opcode,
+                forge_ir::ir::opcode::Opcode::UaddOverflow
+                    | forge_ir::ir::opcode::Opcode::SaddOverflow
+                    | forge_ir::ir::opcode::Opcode::UsubOverflow
+                    | forge_ir::ir::opcode::Opcode::SsubOverflow
+                    | forge_ir::ir::opcode::Opcode::UmulOverflow
+                    | forge_ir::ir::opcode::Opcode::SmulOverflow
+            ) {
+                let narrow = func
+                    .dfg
+                    .inst_data(ii)
+                    .operands
+                    .first()
+                    .and_then(|v| func.dfg.value_type(*v))
+                    .and_then(|t| store.scalar_bits(t))
+                    .is_some_and(|b| b < 32);
+                if narrow {
+                    return true;
+                }
+            }
+            for r in func.dfg.inst_data(ii).results.iter() {
+                let Some(t) = func.dfg.value_type(*r) else {
+                    continue;
+                };
+                // 只认整数标量（向量总位宽也 > 64，但那是向量规则的事）
+                if store.is_int(t) && store.scalar_bits(t).map(|b| b > wmax).unwrap_or(false) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// 一个合法化 pass：**只看 `func` 与 `ctx`**，返回自己改动了什么。
 pub(crate) trait LegalizePass<M: TargetMachine> {
     /// pass 名（诊断/守卫用）。
@@ -88,6 +182,33 @@ pub(crate) struct LegalizeDriver<M: TargetMachine> {
 }
 
 impl<M: TargetMachine> LegalizeDriver<M> {
+    /// **标量批**：整数位宽补位（v27 M5 · 任意位宽整数）。
+    ///
+    /// 位置：**最前面**——它只碰标量值的位宽（`i3` → `i8` + 截回），与聚合/ABI 无关，
+    /// 先做可以让后面的 pass 少看见非原生位宽。
+    pub fn scalar() -> Self {
+        Self {
+            // 顺序：**先**把宽值落到内存载体（isel 没有多寄存器表示），**再**做位宽补位——
+            // 否则 `IntWidth` 的 R3 会试图用 `bitcast [i64;2] ↔ i128` 拼宽值，而那条 lowering
+            // 不存在（实测 `[cap:SPEC_LOWERING_RULE_MISSING]`）。
+            passes: vec![
+                // 窄整数（8/16 位）与**宽整数**（> 最大原生位宽，如 i128）的
+                // `*_overflow`：改成"算术 + 比较"。
+                // **必须排在 `wide_split` 之前**：`wide_split` 只认 Iadd/Isub/…，
+                // 碰到 `UaddOverflow` 这类会直接 fail-closed ⇒ 根本轮不到本 pass
+                //（实测：128 位加法在 `opt-level=0`（debug-assertions 开）下报
+                // `WIDE_INT_SHAPE: 宽值指令形态 UaddOverflow 未覆盖`）。
+                Box::new(narrow_overflow::NarrowOverflowPass),
+                // **宽值除/余**：分肢长除法（无分支展开，v27 M6-79）。必须排在
+                // `wide_split` **之前**——它产出的是宽值上的算术语义，靠 `wide_split` 落成肢。
+                Box::new(wide_div::WideDivPass),
+                // 多寄存器表示（宽值 → n 个原生宽 SSA 值）；未覆盖形态明确 fail-closed。
+                Box::new(wide_split::WideSplitPass),
+                Box::new(int_width::IntWidthPass),
+            ],
+        }
+    }
+
     /// **分批**：聚合族（**不含 Va**）——供"先跑聚合、再排 ABI 槽、最后跑 Va"的入口用。
     ///
     /// 为什么必须能分批（v23 收尾 M7 实测的**帧槽重叠**）：`plan_abi_slots` 要把变参 ABI 槽

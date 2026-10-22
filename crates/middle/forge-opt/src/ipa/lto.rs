@@ -220,7 +220,7 @@ fn lto_inline_callee(
                 .iter()
                 .map(|im| match im {
                     Immediate::Const(cid) => {
-                        Immediate::Const(caller.constants.remap_from(&callee.constants, *cid))
+                        Immediate::Const(caller.constants.import(&callee.constants, *cid))
                     }
                     _ => *im,
                 })

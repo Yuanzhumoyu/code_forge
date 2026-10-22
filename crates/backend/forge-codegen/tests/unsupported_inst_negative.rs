@@ -23,7 +23,7 @@ fn addrspacecast_compile_rejected() {
         ctx.ptr_ty(),
         InstFlags::NONE,
     );
-    let v = b.iconst(1, ctx.i32_ty());
+    let v = b.const_int(1, ctx.i32_ty());
     b.ret(&[v]);
     let func = b.finish().expect("build");
 

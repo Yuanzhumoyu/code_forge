@@ -7,7 +7,7 @@
 //! ```ignore
 //! let mut fb = FunctionBuilder::new("add", TypeStore::new(), sig);
 //! fb.create_block_here();
-//! let v = fb.iconst_i32(42);
+//! let v = fb.constant(42i32);
 //! fb.ret(&[v]);
 //! let func = fb.finish().expect("build");
 //! ```
@@ -41,10 +41,10 @@ macro_rules! int_binop {
             let at = self.type_of(a);
             let bt = self.type_of(b);
             assert!(
-                at.is_int() && bt.is_int(),
+                self.ty_is_int(at) && self.ty_is_int(bt),
                 concat!(stringify!($name), " only support int")
             );
-            let t = at.upcast(bt).unwrap();
+            let t = self.upcast_ty(at, bt).unwrap();
             self.emit1(Opcode::$op, vec![a, b], vec![], t, InstFlags::NONE)
         }
     };
@@ -56,10 +56,10 @@ macro_rules! int_binop_ub {
             let at = self.type_of(a);
             let bt = self.type_of(b);
             assert!(
-                at.is_int() && bt.is_int(),
+                self.ty_is_int(at) && self.ty_is_int(bt),
                 concat!(stringify!($name), " only support int")
             );
-            let t = at.upcast(bt).unwrap();
+            let t = self.upcast_ty(at, bt).unwrap();
             self.emit1(Opcode::$op, vec![a, b], vec![], t, InstFlags::MAY_UB)
         }
     };
@@ -74,7 +74,7 @@ macro_rules! float_binop {
                 at.is_float() && bt.is_float(),
                 concat!(stringify!($name), " only support float")
             );
-            let t = at.upcast(bt).unwrap();
+            let t = self.upcast_ty(at, bt).unwrap();
             self.emit1(Opcode::$op, vec![a, b], vec![], t, InstFlags::NONE)
         }
     };
@@ -84,7 +84,7 @@ macro_rules! unop_int {
         #[doc = concat!("整数一元运算（`Opcode::", stringify!($op), "`）：结果与操作数同宽；语义/UB 见该 opcode 的生成文档。")]
         pub fn $name(&mut self, a: Value) -> Value {
             let t = self.type_of(a);
-            assert!(t.is_int(), concat!(stringify!($name), " only support int"));
+            assert!(self.ty_is_int(t), concat!(stringify!($name), " only support int"));
             self.emit1(Opcode::$op, vec![a], vec![], t, InstFlags::NONE)
         }
     };
@@ -109,10 +109,10 @@ macro_rules! overflow_binop {
             let at = self.type_of(a);
             let bt = self.type_of(b);
             assert!(
-                at.is_int() && bt.is_int(),
+                self.ty_is_int(at) && self.ty_is_int(bt),
                 concat!(stringify!($name), " only support int")
             );
-            let t = at.upcast(bt).unwrap();
+            let t = self.upcast_ty(at, bt).unwrap();
             let results = self.emit(
                 Opcode::$op,
                 vec![a, b],
@@ -153,6 +153,21 @@ impl FunctionBuilder {
     /// 取只读类型上下文（查或建类型用），不改变构建器状态。
     pub fn type_ctx(&self) -> &TypeContext {
         &self.ctx
+    }
+
+    /// 该类型是否为整数——**走 type store**，因此任意位宽（`i1`/`i3`/`i31`/`i1024`）都正确。
+    ///
+    /// 与 `TypeId::is_int()` 的区别：后者是内建类型枚举的固定表，看不到任意位宽类型。
+    /// builder 的类别断言一律走本方法（v27 M5 · 任意位宽整数）。
+    /// 语义与 `TypeId::is_int()` 保持**同集**：指针也算（`Isub` 的 ptr-diff 等既有用法依赖它）。
+    fn ty_is_int(&self, t: TypeId) -> bool {
+        let store = self.type_ctx().borrow();
+        store.is_int(t) || store.is_ptr(t)
+    }
+
+    /// 两类型的公共上层类型（**任意位宽**；见 `TypeStore::upcast`）。
+    fn upcast_ty(&self, a: TypeId, b: TypeId) -> Option<TypeId> {
+        self.type_ctx().upcast(a, b)
     }
 
     /// 设置后续发射指令的源码位置（B1 per-statement line-tables：
@@ -245,16 +260,13 @@ impl FunctionBuilder {
         Ok(self.func)
     }
 
-    /// 构造向量常量（lane 位模式列表，每 lane 一个 u64）。
+    /// 构造向量常量（lane 值列表；元素类型由 `T` 推导）。
     ///
-    /// 主 API：从值语义动态数组构造向量常量。
-    /// 元素类型由 `T` 推导（i8..i128/u8..u128/f32/f64），向量类型为动态
-    /// `vector_ty(T::vector_ty(), lanes.len())`。元素按 LE 字节序拼接存储
-    /// （u128 → 16 字节，全位宽不丢失）。
+    /// 常量命名家族：`const_int` / `const_float` / `const_bool` / `const_big` /
+    /// **`const_vector`**（本函数）——与池侧 `intern_*` 呼应。
     ///
-    /// 从值数组构造向量常量（元素类型由 `T` 推导，向量类型 = `vector_ty(elem, len)`）。
-    /// 字节端序默认 Little（x86 后端规范存储）；大端框架用 `vconst_with_endian`
-    /// 显式指定端序。端序随常量记录进常量池，DSL 还原时按端序 from_le/from_be。
+    /// 元素按 LE 字节序拼接存储（u128 → 16 字节，全位宽不丢失）；大端框架用
+    /// [`Self::const_vector_endian`]。端序随常量记进池，DSL 还原时按 `from_le`/`from_be`。
     ///
     /// ```
     /// # use forge_ir::ir::builder::FunctionBuilder;
@@ -262,26 +274,25 @@ impl FunctionBuilder {
     /// let sig = FunctionSignature::new(&[], &[TypeId::F32]);
     /// let mut b = FunctionBuilder::new("f", TypeContext::new(), sig);
     /// b.create_block_here();
-    /// let v = b.vconst(vec![1.0f32, 2.0, 3.0, 4.0]); // <4 x f32>
+    /// let v = b.const_vector(vec![1.0f32, 2.0, 3.0, 4.0]); // <4 x f32>
     /// ```
-    pub fn vconst<T: Vector>(&mut self, lanes: Vec<T>) -> Value {
-        self.vconst_with_endian(lanes, Endianness::Little)
+    pub fn const_vector<T: Vector>(&mut self, lanes: Vec<T>) -> Value {
+        self.const_vector_endian(lanes, Endianness::Little)
     }
 
-    /// 显式端序版 `vconst`：按 `endian` 将各元素值转为字节（Little → `to_le_bytes`、
-    /// Big → `to_be_bytes`）拼接存储。大端框架的数值常量可经此构造。
-    pub fn vconst_with_endian<T: Vector>(&mut self, lanes: Vec<T>, endian: Endianness) -> Value {
+    /// 显式端序版：按 `endian` 把各元素值转字节（Little → `to_le_bytes`、
+    /// Big → `to_be_bytes`）拼接存储。大端框架的数值常量用这个。
+    pub fn const_vector_endian<T: Vector>(&mut self, lanes: Vec<T>, endian: Endianness) -> Value {
         let len = lanes.len() as u32;
         let data: Vec<u8> = lanes
             .into_iter()
             .flat_map(|lane| lane.lane_bytes(endian))
             .collect();
         let ty = self.ctx.vector_ty(T::vector_ty(), len);
-        self.vconst_bytes_with_endian(data, ty, endian)
+        self.const_vector_bytes_endian(data, ty, endian)
     }
 
-    /// 便捷：从静态数组构造向量常量（与 `vconst` 的区别 = `[T; N]` vs `Vec<T>`；
-    /// 空数组返回 `None`）。元素类型由 `T` 推导，向量类型为 `vector_ty(elem, N)`。
+    /// 便捷：从静态数组构造向量常量（`[T; N]` 版，空数组断言）。
     ///
     /// ```
     /// # use forge_ir::ir::builder::FunctionBuilder;
@@ -289,16 +300,16 @@ impl FunctionBuilder {
     /// let sig = FunctionSignature::new(&[], &[TypeId::F32]);
     /// let mut b = FunctionBuilder::new("f", TypeContext::new(), sig);
     /// b.create_block_here();
-    /// let v = b.vconst_array([1.0f32, 2.0, 3.0, 4.0]); // <4 x f32>
+    /// let v = b.const_vector_array([1.0f32, 2.0, 3.0, 4.0]); // <4 x f32>
     /// ```
-    pub fn vconst_array<const N: usize, T: Vector>(&mut self, v: [T; N]) -> Value {
-        assert!(N != 0, "vconst_array: array length must not be 0");
+    pub fn const_vector_array<const N: usize, T: Vector>(&mut self, v: [T; N]) -> Value {
+        assert!(N != 0, "const_vector_array: 数组长度不能为 0");
         let data: Vec<u8> = v
             .into_iter()
             .flat_map(|lane| lane.lane_bytes(Endianness::Little))
             .collect();
         let ty = self.ctx.vector_ty(T::vector_ty(), N as u32);
-        self.vconst_bytes(data, ty)
+        self.const_vector_bytes(data, ty)
     }
 }
 
@@ -443,13 +454,16 @@ impl FunctionBuilder {
     pub fn iadd(&mut self, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
-        assert!(at.is_int() && bt.is_int(), "iadd only support int");
+        assert!(
+            self.ty_is_int(at) && self.ty_is_int(bt),
+            "iadd only support int"
+        );
         if at == TypeId::BOOL && bt == TypeId::BOOL {
             // bool 加法 = 模 2（XOR）：1+1=0。后端 32 位 ADD 会产生 2（脏值，
             // 高位非 0），用 Bxor 保证结果 0/1 规范化且结果类型保持 BOOL。
             return self.emit1(Opcode::Bxor, vec![a, b], vec![], at, InstFlags::NONE);
         }
-        let t = at.upcast(bt).unwrap();
+        let t = self.upcast_ty(at, bt).unwrap();
         self.emit1(Opcode::Iadd, vec![a, b], vec![], t, InstFlags::NONE)
     }
     /// Opcode::Isub 的构建入口：整数减法：a 减 b，结果类型 = upcast 后的公共类型。
@@ -457,13 +471,16 @@ impl FunctionBuilder {
         let at = self.type_of(a);
         let bt = self.type_of(b);
         // 指针差（PTR - PTR，ptrdiff）是合法操作；is_int 已涵盖 bool/ptr
-        assert!(at.is_int() && bt.is_int(), "isub only support int/ptr");
+        assert!(
+            self.ty_is_int(at) && self.ty_is_int(bt),
+            "isub only support int/ptr"
+        );
         if at == TypeId::BOOL && bt == TypeId::BOOL {
             // bool 减法 = 模 2（XOR）：0-1=1。后端 32 位 SUB 会产生 0xFFFFFFFF
             // （脏值），用 Bxor 保证结果 0/1 规范化且结果类型保持 BOOL。
             return self.emit1(Opcode::Bxor, vec![a, b], vec![], at, InstFlags::NONE);
         }
-        let t = at.upcast(bt).unwrap();
+        let t = self.upcast_ty(at, bt).unwrap();
         self.emit1(Opcode::Isub, vec![a, b], vec![], t, InstFlags::NONE)
     }
     int_binop!(imul, Imul);
@@ -477,12 +494,12 @@ impl FunctionBuilder {
     /// Opcode::Bnot 的构建入口：按位取反：逐位取反，结果与操作数同宽。
     pub fn bnot(&mut self, a: Value) -> Value {
         let t = self.type_of(a);
-        assert!(t.is_int(), "bnot only support int");
+        assert!(self.ty_is_int(t), "bnot only support int");
         if t == TypeId::BOOL {
             // bool 取反规范化：~x & 1 == x ^ 1。后端 32 位 NOT 对 bool 输入
             // 产生 0xFFFFFFFF（-1），破坏 0/1 布尔语义；用 xor true（预置常量槽）
             // 保证结果规范化，且指令类型仍为 BOOL。
-            let one = self.iconst_bool(true);
+            let one = self.const_bool(true);
             self.emit1(Opcode::Bxor, vec![a, one], vec![], t, InstFlags::NONE)
         } else {
             self.emit1(Opcode::Bnot, vec![a], vec![], t, InstFlags::NONE)
@@ -492,28 +509,40 @@ impl FunctionBuilder {
     pub fn ishl(&mut self, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
-        assert!(at.is_int() && bt.is_int(), "ishl only support int");
+        assert!(
+            self.ty_is_int(at) && self.ty_is_int(bt),
+            "ishl only support int"
+        );
         self.emit1(Opcode::Ishl, vec![a, b], vec![], at, InstFlags::NONE)
     }
     /// Opcode::Ushr 的构建入口：逻辑右移：高位补 0 的无符号移位，结果同宽。
     pub fn ushr(&mut self, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
-        assert!(at.is_int() && bt.is_int(), "ushr only support int");
+        assert!(
+            self.ty_is_int(at) && self.ty_is_int(bt),
+            "ushr only support int"
+        );
         self.emit1(Opcode::Ushr, vec![a, b], vec![], at, InstFlags::NONE)
     }
     /// Opcode::Sshr 的构建入口：算术右移：高位补符号位，结果同宽。
     pub fn sshr(&mut self, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
-        assert!(at.is_int() && bt.is_int(), "sshr only support int");
+        assert!(
+            self.ty_is_int(at) && self.ty_is_int(bt),
+            "sshr only support int"
+        );
         self.emit1(Opcode::Sshr, vec![a, b], vec![], at, InstFlags::NONE)
     }
     /// Opcode::Icmp 的构建入口：整数比较：结果 i1。
     pub fn icmp(&mut self, cond: IntCC, a: Value, b: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(b);
-        assert!(at.is_int() && bt.is_int(), "icmp only support int");
+        assert!(
+            self.ty_is_int(at) && self.ty_is_int(bt),
+            "icmp only support int"
+        );
         self.emit1(
             Opcode::Icmp,
             vec![a, b],
@@ -551,7 +580,7 @@ impl FunctionBuilder {
             at.is_float() && bt.is_float(),
             "fadd_fast only support float"
         );
-        let t = at.upcast(bt).unwrap();
+        let t = self.upcast_ty(at, bt).unwrap();
         self.emit1(Opcode::Fadd, vec![a, b], vec![], t, InstFlags::FMF_FAST)
     }
     /// Opcode::Fadd 的构建入口：浮点加法：按 IEEE-754 舍入，NaN 与 Inf 依 IEEE 传播，不 trap。
@@ -562,7 +591,7 @@ impl FunctionBuilder {
             at.is_float() && bt.is_float(),
             "fadd_with_flags only support float"
         );
-        let t = at.upcast(bt).unwrap();
+        let t = self.upcast_ty(at, bt).unwrap();
         self.emit1(Opcode::Fadd, vec![a, b], vec![], t, flags)
     }
     /// Opcode::StackAddr 的构建入口：取帧内地址：立即数给相对帧基址的字节偏移。
@@ -856,21 +885,26 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
-    /// Opcode::Iconst 的构建入口：整数常量：立即数通道指向常量池里的 i64，无操作数，也无副作用。
-    pub fn iconst_bool(&mut self, value: bool) -> Value {
-        let cid = self.func.constants.bool_const(value);
-        self.emit1(
-            Opcode::Iconst,
-            vec![],
-            vec![Immediate::Const(cid)],
-            TypeId::BOOL,
-            InstFlags::NONE,
-        )
+    /// 类型便捷入口：按位宽取整数类型（`i1` 即 bool，见 `TypeContext::int_ty`）。
+    pub fn int_type(&self, bits: u32) -> TypeId {
+        self.ctx.int_ty(bits)
     }
-    /// Opcode::Iconst 的构建入口：整数常量：立即数通道指向常量池里的 i64，无操作数，也无副作用。
-    pub fn iconst(&mut self, value: i64, ty: TypeId) -> Value {
-        // 常量池条目要记位宽：问 store（按 DataLayout 处理指针、支持动态整数
-        // 位宽）；非标量类型（不该出现在这里）退到内建标量表，最后兜底 1 位。
+
+    /// 类型便捷入口：按总位宽取浮点类型（16/32/64/128）。
+    pub fn float_type(&self, bits: u16) -> TypeId {
+        self.ctx.float_ty(bits)
+    }
+
+    /// 常量**唯一**的便捷入口：把 Rust 标量物化成 IR 常量（见 [`AsConst`]）。
+    pub fn constant<V: crate::ir::constant::AsConst>(&mut self, value: V) -> Value {
+        value.into_const(self)
+    }
+
+    /// `Opcode::Iconst`：整数常量（`i1` 即 bool）。
+    ///
+    /// 取代旧的 `iconst` / `iconst_i128` / `iconst_bool`：一个入口覆盖全部整数位宽，
+    /// 位宽取自结果类型的 `scalar_bits`，入池前套 `canonical_int`（符号扩展规范形）。
+    pub fn const_int<V: Into<i128>>(&mut self, value: V, ty: TypeId) -> Value {
         let bits = self
             .func
             .types
@@ -879,7 +913,7 @@ impl FunctionBuilder {
             .or_else(|| ty.builtin_scalar_bits())
             .unwrap_or(1)
             .max(1);
-        let cid = self.func.constants.insert_int(value as i128, bits);
+        let cid = self.func.constants.intern_int(value.into(), bits);
         self.emit1(
             Opcode::Iconst,
             vec![],
@@ -888,36 +922,50 @@ impl FunctionBuilder {
             InstFlags::NONE,
         )
     }
-    /// Opcode::Iconst 的构建入口：整数常量：立即数通道指向常量池里的 i64，无操作数，也无副作用。
-    pub fn iconst_i8(&mut self, v: i8) -> Value {
-        self.iconst(v as i64, self.ctx.i8_ty())
+
+    /// `Opcode::Iconst`：任意精度整数常量（`bits > 128` 只能走这里）。
+    ///
+    /// 值先按类型位宽规范化（`Big::truncate_to_bits`），保证 `-1` 在 `i3` 里与 `7` 同常量。
+    pub fn const_big(&mut self, value: crate::util::big::Big, ty: TypeId) -> Value {
+        let bits = self
+            .func
+            .types
+            .borrow()
+            .scalar_bits(ty)
+            .or_else(|| ty.builtin_scalar_bits())
+            .unwrap_or(1)
+            .max(1);
+        let norm = if bits >= 128 {
+            value
+        } else {
+            value.truncate_to_bits(bits)
+        };
+        let cid = self.func.constants.intern_big(norm);
+        self.emit1(
+            Opcode::Iconst,
+            vec![],
+            vec![Immediate::Const(cid)],
+            ty,
+            InstFlags::NONE,
+        )
     }
-    /// Opcode::Iconst 的构建入口：整数常量：立即数通道指向常量池里的 i64，无操作数，也无副作用。
-    pub fn iconst_i16(&mut self, v: i16) -> Value {
-        self.iconst(v as i64, self.ctx.i16_ty())
-    }
-    /// Opcode::Iconst 的构建入口：整数常量：立即数通道指向常量池里的 i64，无操作数，也无副作用。
-    pub fn iconst_i32(&mut self, v: i32) -> Value {
-        self.iconst(v as i64, self.ctx.i32_ty())
-    }
-    /// Opcode::Iconst 的构建入口：整数常量：立即数通道指向常量池里的 i64，无操作数，也无副作用。
-    pub fn iconst_i64(&mut self, v: i64) -> Value {
-        self.iconst(v, self.ctx.i64_ty())
-    }
-    /// 浮点常量的**值宽**（bits）——取自结果类型；拿不到类型信息时按 64 位
-    /// （`fconst` 的参数宽度）兜底。位宽进常量池的去重键，f32/f64/f128 不再合并。
+
+    /// 浮点常量的**值宽**（bits）——取自结果类型的浮点格式；拿不到类型信息时按 64 位兜底。
+    /// 值宽进常量池的去重键：同一位模式在 f32/f64/f128 下是不同常量。
     fn float_const_width(&self, ty: TypeId) -> u16 {
         use crate::ir::types::TypeEntry;
         match self.ctx.borrow().get(ty) {
-            TypeEntry::Float { bits } => *bits,
+            TypeEntry::Float { fmt } => fmt.total_bits(),
             _ => 64,
         }
     }
 
-    /// Opcode::Fconst 的构建入口：浮点常量：立即数通道指向常量池，按结果类型的位宽解释那串位模式。
-    pub fn fconst(&mut self, bits: u64, ty: TypeId) -> Value {
+    /// `Opcode::Fconst`：浮点常量（`f16`/`bf16`/`f32`/`f64`/`f128` 共用一个入口）。
+    ///
+    /// `bits` 是 IEEE 754 位模式；值宽取自结果类型的浮点格式（拿不到时按 64 位兜底）。
+    pub fn const_float<B: Into<u128>>(&mut self, bits: B, ty: TypeId) -> Value {
         let width = self.float_const_width(ty);
-        let cid = self.func.constants.insert_float_typed(bits as u128, width);
+        let cid = self.func.constants.intern_float(bits.into(), width);
         self.emit1(
             Opcode::Fconst,
             vec![],
@@ -927,36 +975,19 @@ impl FunctionBuilder {
         )
     }
 
-    /// f128 常量（128 位 IEEE 754 bits）。
-    pub fn fconst128(&mut self, bits: u128, ty: TypeId) -> Value {
-        let cid = self.func.constants.insert_float_typed(bits, 128);
-        self.emit1(
-            Opcode::Fconst,
-            vec![],
-            vec![Immediate::Const(cid)],
-            ty,
-            InstFlags::NONE,
-        )
+    /// `Opcode::Iconst`：bool 常量（`i1`）。
+    pub fn const_bool(&mut self, value: bool) -> Value {
+        self.const_int(i128::from(value), TypeId::BOOL)
     }
 
-    /// Opcode::Fconst 的构建入口：浮点常量：立即数通道指向常量池，按结果类型的位宽解释那串位模式。
-    pub fn fconst_f32(&mut self, v: f32) -> Value {
-        self.fconst(v.to_bits() as u64, self.ctx.f32_ty())
+    /// 底层：从**原始字节**构造向量常量（默认 Little 端序）。
+    pub fn const_vector_bytes(&mut self, data: Vec<u8>, ty: TypeId) -> Value {
+        self.const_vector_bytes_endian(data, ty, Endianness::Little)
     }
 
-    /// Opcode::Fconst 的构建入口：浮点常量：立即数通道指向常量池，按结果类型的位宽解释那串位模式。
-    pub fn fconst_f64(&mut self, v: f64) -> Value {
-        self.fconst(v.to_bits(), self.ctx.f64_ty())
-    }
-
-    /// 底层：从原始字节构造向量常量（元素 Little 端序拼接，存入扁平字节池）。
-    pub fn vconst_bytes(&mut self, data: Vec<u8>, ty: TypeId) -> Value {
-        self.vconst_bytes_with_endian(data, ty, Endianness::Little)
-    }
-
-    /// 底层：显式端序版——字节按 `endian` 解释，端序记录进常量池供 DSL 还原。
-    /// debug 下校验段长 = vector_len × elem_size（与 FunctionBuilder 版一致）。
-    pub fn vconst_bytes_with_endian(
+    /// 底层：显式端序版——字节按 `endian` 解释，端序记进常量池供 DSL 还原。
+    /// debug 下校验段长 = vector_len × elem_size。
+    pub fn const_vector_bytes_endian(
         &mut self,
         data: Vec<u8>,
         ty: TypeId,
@@ -972,10 +1003,10 @@ impl FunctionBuilder {
         debug_assert_eq!(
             data.len(),
             expect,
-            "vconst_bytes: byte length {data_len} must equal vector_len*elem_size = {expect}",
+            "const_vector_bytes: 字节长度 {data_len} 必须等于 vector_len*elem_size = {expect}",
             data_len = data.len()
         );
-        let cid = self.func.constants.insert_vector_with_endian(&data, endian);
+        let cid = self.func.constants.intern_vector(&data, endian);
         self.emit1(
             Opcode::Vconst,
             vec![],
@@ -987,6 +1018,12 @@ impl FunctionBuilder {
 
     /// Opcode::Sextend 的构建入口：有符号扩展：把源整数按符号位扩展到更宽的目标整数，位模式变长。
     pub fn sextend(&mut self, v: Value, to: TypeId) -> Value {
+        // **同类型 = 无操作**：`sextend` 要求 src 严格窄于 dst（同宽在 IR 里非法）。
+        // 唯一入口兜住，避免各调用点自己判宽时漏（v27 M6：`usize` 下标直接
+        // `uextend(i64→i64)` ⇒ `int src (5) < int dst (5)`）。
+        if self.func.dfg.value_type(v) == Some(to) {
+            return v;
+        }
         self.emit1(
             Opcode::Sextend,
             vec![v],
@@ -997,6 +1034,10 @@ impl FunctionBuilder {
     }
     /// Opcode::Uextend 的构建入口：零扩展：高位补 0，把源整数扩展到更宽的目标整数，值不变。
     pub fn uextend(&mut self, v: Value, to: TypeId) -> Value {
+        // 同 `sextend`：同宽扩展是恒等操作，发指令反而非法。
+        if self.func.dfg.value_type(v) == Some(to) {
+            return v;
+        }
         self.emit1(
             Opcode::Uextend,
             vec![v],
@@ -1007,6 +1048,13 @@ impl FunctionBuilder {
     }
     /// Opcode::Ireduce 的构建入口：整数截断：取源整数的低 N 位，源宽必须严格大于目标宽，值按位模式截断。
     pub fn ireduce(&mut self, v: Value, to: TypeId) -> Value {
+        // **同类型 = 无操作**：`ireduce` 是"变窄"，同宽调用在 IR 里非法
+        // （verifier 的 Convert 族要求 src **严格**宽于 dst）。各调用点自己判宽容易漏
+        // （v27 M6 实测：`pack_sp`、判别值 `discr` 两处都漏过 ⇒ `int src (5) < int dst (5)`），
+        // 所以在这唯一入口兜住——语义等价于返回原值，不改变行为。
+        if self.func.dfg.value_type(v) == Some(to) {
+            return v;
+        }
         self.emit1(
             Opcode::Ireduce,
             vec![v],
@@ -1131,14 +1179,20 @@ impl FunctionBuilder {
     pub fn rotl(&mut self, a: Value, amount: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(amount);
-        assert!(at.is_int() && bt.is_int(), "rotl only support int");
+        assert!(
+            self.ty_is_int(at) && self.ty_is_int(bt),
+            "rotl only support int"
+        );
         self.emit1(Opcode::Rotl, vec![a, amount], vec![], at, InstFlags::NONE)
     }
     /// Opcode::Rotr 的构建入口：循环右移：移出的低位绕回高位，位数按位宽取模，纯运算无副作用。
     pub fn rotr(&mut self, a: Value, amount: Value) -> Value {
         let at = self.type_of(a);
         let bt = self.type_of(amount);
-        assert!(at.is_int() && bt.is_int(), "rotr only support int");
+        assert!(
+            self.ty_is_int(at) && self.ty_is_int(bt),
+            "rotr only support int"
+        );
         self.emit1(Opcode::Rotr, vec![a, amount], vec![], at, InstFlags::NONE)
     }
 
@@ -1166,7 +1220,7 @@ impl FunctionBuilder {
             at.is_float() && bt.is_float() && ct.is_float(),
             "fma only support float"
         );
-        let t = at.upcast(bt).unwrap();
+        let t = self.upcast_ty(at, bt).unwrap();
         self.emit1(Opcode::Fma, vec![a, b, c], vec![], t, InstFlags::NONE)
     }
     float_binop!(fmin, Fmin);
@@ -1467,6 +1521,7 @@ impl FunctionBuilder {
         .to_vec()
     }
 }
+
 // ============================================================
 // 测试
 // ============================================================
@@ -1474,12 +1529,56 @@ impl FunctionBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// v27 M5（任意位宽整数 · M-A 验收）：**非 2 的幂位宽**（i3/i7）能通过 builder 断言与
+    /// verifier —— `iadd`/`icmp`/`ishl` 全部可用，且结果类型保持原位宽（R1 精确路径的前提）。
+    #[test]
+    fn test_arbitrary_width_i3_binops_verify() {
+        let ctx = TypeContext::new();
+        let i3 = ctx.int_ty(3);
+        let i7 = ctx.int_ty(7);
+        let sig = FunctionSignature::new(&[], &[TypeId::BOOL]);
+        let mut fb = FunctionBuilder::new("w3", ctx, sig);
+        fb.create_block_here();
+        let a = fb.const_int(5, i3);
+        let b = fb.const_int(3, i3);
+        let sum = fb.iadd(a, b);
+        assert_eq!(fb.func.dfg.value_type(sum), Some(i3), "i3 加法结果仍是 i3");
+        let one3 = fb.const_int(1, i3);
+        let sh = fb.ishl(sum, one3);
+        assert_eq!(fb.func.dfg.value_type(sh), Some(i3));
+        let cmp = fb.icmp(IntCC::Ult, sh, a);
+        assert_eq!(fb.func.dfg.value_type(cmp), Some(TypeId::BOOL));
+        // 混合位宽按位宽 upcast：i3 + i7 ⇒ i7
+        let one7 = fb.const_int(1, i7);
+        let wide = fb.iadd(a, one7);
+        assert_eq!(fb.func.dfg.value_type(wide), Some(i7));
+        fb.ret(&[cmp]);
+        let func = fb.finish().expect("i3/i7 的整数运算应能通过 verifier");
+        assert_eq!(func.dfg.block_count(), 1);
+    }
+
+    /// 超过 128 位的常量走 `Big` 通道（`iconst_big`），值按类型位宽规范化后入池。
+    #[test]
+    fn test_iconst_big_arbitrary_width() {
+        let ctx = TypeContext::new();
+        let i1024 = ctx.int_ty(1024);
+        let sig = FunctionSignature::new(&[], &[i1024]);
+        let mut fb = FunctionBuilder::new("w1024", ctx, sig);
+        fb.create_block_here();
+        let big = crate::util::big::Big::from_i128(1i128 << 100);
+        let v = fb.const_big(big, i1024);
+        assert_eq!(fb.func.dfg.value_type(v), Some(i1024));
+        fb.ret(&[v]);
+        let func = fb.finish().expect("i1024 常量应可构建");
+        assert_eq!(func.dfg.block_count(), 1);
+    }
     #[test]
     fn test_simple() {
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut fb = FunctionBuilder::new("test", TypeContext::new(), sig);
         fb.create_block_here();
-        let v = fb.iconst_i32(42);
+        let v = fb.constant(42i32);
         fb.ret(&[v]);
         let func = fb.finish().expect("build");
         assert_eq!(func.dfg.block_count(), 1);
@@ -1504,9 +1603,9 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[TypeId::F32]);
         let mut fb = FunctionBuilder::new("vconst", TypeContext::new(), sig);
         fb.create_block_here();
-        let v = fb.vconst(vec![1.5f32, 2.5, 3.5, 4.5]);
+        let v = fb.const_vector(vec![1.5f32, 2.5, 3.5, 4.5]);
         assert_eq!(fb.func.dfg.value_type(v), Some(TypeId::V128));
-        let zero = fb.iconst_i32(0);
+        let zero = fb.constant(0i32);
         let e = fb.vextract(v, zero);
         assert_eq!(fb.func.dfg.value_type(e), Some(TypeId::F32));
         fb.ret(&[e]);
@@ -1521,16 +1620,16 @@ mod tests {
         fb.create_block_here();
 
         // f32 数组 → <4 x f32>（去重命中内建 V128）
-        let v = fb.vconst_array([1.0f32, 2.0, 3.0, 4.0]);
+        let v = fb.const_vector_array([1.0f32, 2.0, 3.0, 4.0]);
         assert_eq!(fb.func.dfg.value_type(v), Some(TypeId::V128));
 
         // f64 数组 → 动态 <2 x f64>（非内建）
-        let v2 = fb.vconst_array([1.5f64, -2.5]);
+        let v2 = fb.const_vector_array([1.5f64, -2.5]);
         let ty2 = fb.type_ctx().vector_ty(TypeId::F64, 2);
         assert_eq!(fb.func.dfg.value_type(v2), Some(ty2));
 
         // i32 数组 → 动态 <4 x i32>（V128 内建仅 <4 x f32>，不参与去重）
-        let v3 = fb.vconst_array([1i32, -1, 7, 2]);
+        let v3 = fb.const_vector_array([1i32, -1, 7, 2]);
         let ty3 = fb.type_ctx().vector_ty(TypeId::I32, 4);
         assert_eq!(fb.func.dfg.value_type(v3), Some(ty3));
         assert_eq!(
@@ -1549,7 +1648,7 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[TypeId::I128]);
         let mut fb = FunctionBuilder::new("u128", TypeContext::new(), sig);
         fb.create_block_here();
-        let v = fb.vconst(vec![u128::MAX]);
+        let v = fb.const_vector(vec![u128::MAX]);
         let ty = fb.type_ctx().vector_ty(TypeId::I128, 1);
         assert_eq!(fb.func.dfg.value_type(v), Some(ty));
     }
@@ -1588,8 +1687,8 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[TypeId::I64]);
         let mut fb = FunctionBuilder::new("upcast", TypeContext::new(), sig);
         fb.create_block_here();
-        let a = fb.iconst_i32(1);
-        let b = fb.iconst_i64(2);
+        let a = fb.constant(1i32);
+        let b = fb.constant(2i64);
         // 新覆盖的整数二元运算：结果类型应向上转型为 i64
         let r = fb.band(a, b);
         assert_eq!(fb.func.dfg.value_type(r), Some(TypeId::I64));
@@ -1602,13 +1701,32 @@ mod tests {
         fb.ret(&[r]);
     }
 
+    /// v27 M5（128 位迁移 · 第 1 步）：`forge-ir` 已有一等 `I128` 类型。
+    /// 本测试钉住"**IR 层可以合法表达 128 位算术**"这个前提——
+    /// 拆分/指令选择属于后端（legalize/isel），不该由前端 lowering 手工拼两半。
+    #[test]
+    fn test_i128_binop_is_expressible() {
+        let sig = FunctionSignature::new(&[], &[TypeId::I128]);
+        let mut fb = FunctionBuilder::new("w128", TypeContext::new(), sig);
+        fb.create_block_here();
+        let a = fb.const_int(7, TypeId::I128);
+        let b = fb.const_int(5, TypeId::I128);
+        let sum = fb.iadd(a, b);
+        assert_eq!(fb.func.dfg.value_type(sum), Some(TypeId::I128));
+        let masked = fb.band(sum, b);
+        assert_eq!(fb.func.dfg.value_type(masked), Some(TypeId::I128));
+        fb.ret(&[masked]);
+        let func = fb.finish().expect("128 位二元运算应可合法构建");
+        assert_eq!(func.dfg.block_count(), 1);
+    }
+
     #[test]
     fn test_float_binary_upcast_result_ty() {
         let sig = FunctionSignature::new(&[], &[TypeId::F64]);
         let mut fb = FunctionBuilder::new("fupcast", TypeContext::new(), sig);
         fb.create_block_here();
-        let x = fb.fconst_f32(1.0);
-        let y = fb.fconst_f64(2.0);
+        let x = fb.constant(1.0f32);
+        let y = fb.constant(2.0f64);
         let r = fb.fmin(x, y);
         assert_eq!(fb.func.dfg.value_type(r), Some(TypeId::F64));
         let r2 = fb.fma(x, y, y);
@@ -1621,8 +1739,8 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut fb = FunctionBuilder::new("shift", TypeContext::new(), sig);
         fb.create_block_here();
-        let a = fb.iconst_i32(1);
-        let amt = fb.iconst_i8(2);
+        let a = fb.constant(1i32);
+        let amt = fb.constant(2i8);
         // 移位结果类型取左操作数，不随 amount 类型改变
         let r = fb.ishl(a, amt);
         assert_eq!(fb.func.dfg.value_type(r), Some(TypeId::I32));
@@ -1637,8 +1755,8 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[]);
         let mut fb = FunctionBuilder::new("p1", TypeContext::new(), sig);
         fb.create_block_here();
-        let a = fb.fconst_f64(1.0);
-        let b = fb.fconst_f64(2.0);
+        let a = fb.constant(1.0f64);
+        let b = fb.constant(2.0f64);
         fb.band(a, b);
     }
 
@@ -1648,7 +1766,7 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[]);
         let mut fb = FunctionBuilder::new("p2", TypeContext::new(), sig);
         fb.create_block_here();
-        let a = fb.fconst_f64(1.0);
+        let a = fb.constant(1.0f64);
         fb.bnot(a);
     }
 
@@ -1658,8 +1776,8 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[]);
         let mut fb = FunctionBuilder::new("p3", TypeContext::new(), sig);
         fb.create_block_here();
-        let a = fb.iconst_i32(1);
-        let amt = fb.fconst_f64(1.0);
+        let a = fb.constant(1i32);
+        let amt = fb.constant(1.0f64);
         fb.ishl(a, amt);
     }
 
@@ -1669,8 +1787,8 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[]);
         let mut fb = FunctionBuilder::new("p4", TypeContext::new(), sig);
         fb.create_block_here();
-        let a = fb.iconst_i32(1);
-        let b = fb.fconst_f64(1.0);
+        let a = fb.constant(1i32);
+        let b = fb.constant(1.0f64);
         fb.sadd_overflow(a, b);
     }
 
@@ -1680,8 +1798,8 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[]);
         let mut fb = FunctionBuilder::new("p5", TypeContext::new(), sig);
         fb.create_block_here();
-        let a = fb.iconst_i32(1);
-        let b = fb.iconst_i32(2);
+        let a = fb.constant(1i32);
+        let b = fb.constant(2i32);
         fb.fmin(a, b);
     }
 
@@ -1691,7 +1809,7 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[]);
         let mut fb = FunctionBuilder::new("p6", TypeContext::new(), sig);
         fb.create_block_here();
-        let a = fb.iconst_i32(1);
+        let a = fb.constant(1i32);
         fb.ffloor(a);
     }
 
@@ -1701,8 +1819,8 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[]);
         let mut fb = FunctionBuilder::new("p7", TypeContext::new(), sig);
         fb.create_block_here();
-        let a = fb.iconst_i32(1);
-        let b = fb.iconst_i32(2);
+        let a = fb.constant(1i32);
+        let b = fb.constant(2i32);
         fb.vadd(a, b);
     }
 
@@ -1712,25 +1830,25 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[]);
         let mut fb = FunctionBuilder::new("p8", TypeContext::new(), sig);
         fb.create_block_here();
-        let a = fb.iconst_i32(1);
-        let zero = fb.iconst_i32(0);
+        let a = fb.constant(1i32);
+        let zero = fb.constant(0i32);
         fb.vextract(a, zero);
     }
 
     // ── bool 特殊处理：is_int 涵盖 bool/ptr；bool×bool 保持 bool，bool×int 按 upcast 提升 ──
 
-    /// iconst_bool 复用常量池预置的 0/1 槽位，不膨胀常量池。
+    /// bool 常量去重进同一条位值：反复调用不膨胀常量池（新池无预置槽）。
     #[test]
     fn test_iconst_bool_reuses_preset_slot() {
         let sig = FunctionSignature::new(&[], &[TypeId::BOOL]);
         let mut fb = FunctionBuilder::new("bool_slot", TypeContext::new(), sig);
         fb.create_block_here();
-        let _t1 = fb.iconst_bool(true);
-        let _t2 = fb.iconst_bool(true);
-        let f1 = fb.iconst_bool(false);
-        // 常量池保持预置的 2 个槽位，反复调用不膨胀
-        assert_eq!(fb.func.constants.total_len(), 2);
-        // 收集所有 Iconst 指令的 ConstId，验证 true/false 各命中固定槽
+        let _t1 = fb.constant(true);
+        let _t2 = fb.constant(true);
+        let f1 = fb.constant(false);
+        // 只有 true/false 两条（首次插入后去重命中）
+        assert_eq!(fb.func.constants.len(), 2, "bool 只有 0/1 两条（无预置槽）");
+        // 收集所有 Iconst 指令的 ConstId，验证 true/false 各命中同一条
         let mut const_ids = Vec::new();
         for (_, inst) in fb.func.dfg.insts() {
             if inst.opcode == Opcode::Iconst
@@ -1740,9 +1858,13 @@ mod tests {
             }
         }
         assert_eq!(const_ids.len(), 3);
-        assert_eq!(const_ids[0], const_ids[1]); // t1/t2 引用同一槽
-        assert_eq!(const_ids[0].index(), 1); // true → index 1
-        assert_eq!(const_ids[2].index(), 0); // false → index 0
+        assert_eq!(const_ids[0], const_ids[1], "t1/t2 引用同一条");
+        assert_ne!(const_ids[0], const_ids[2], "true 与 false 是两条");
+        // 位宽都是 1（bool），值为 1/0
+        let t = fb.func.constants.bits(const_ids[0]).expect("true 位值");
+        let f = fb.func.constants.bits(const_ids[2]).expect("false 位值");
+        assert_eq!((t.bits, t.width), (1, 1));
+        assert_eq!((f.bits, f.width), (0, 1));
         fb.ret(&[f1]);
     }
 
@@ -1752,8 +1874,8 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[TypeId::BOOL]);
         let mut fb = FunctionBuilder::new("bnot_bool", TypeContext::new(), sig);
         fb.create_block_here();
-        let a = fb.iconst_i32(1);
-        let b = fb.iconst_i32(2);
+        let a = fb.constant(1i32);
+        let b = fb.constant(2i32);
         let cond = fb.icmp(IntCC::Eq, a, b); // bool false(0)
         let not = fb.bnot(cond);
         assert_eq!(fb.func.dfg.value_type(not), Some(TypeId::BOOL));
@@ -1772,8 +1894,8 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut fb = FunctionBuilder::new("bool_arith_norm", TypeContext::new(), sig);
         fb.create_block_here();
-        let a = fb.iconst_i32(1);
-        let b = fb.iconst_i32(2);
+        let a = fb.constant(1i32);
+        let b = fb.constant(2i32);
         let c1 = fb.icmp(IntCC::Eq, a, a); // bool true
         let c2 = fb.icmp(IntCC::Eq, b, a); // bool false
         // bool×bool：iadd/isub 均生成 Bxor，结果保持 BOOL
@@ -1804,8 +1926,8 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[TypeId::BOOL]);
         let mut fb = FunctionBuilder::new("bool_special", TypeContext::new(), sig);
         fb.create_block_here();
-        let a = fb.iconst_i32(1);
-        let b = fb.iconst_i32(2);
+        let a = fb.constant(1i32);
+        let b = fb.constant(2i32);
         let c1 = fb.icmp(IntCC::Eq, a, a); // bool（true）
         let c2 = fb.icmp(IntCC::Ne, b, b); // bool（false）
         // 逻辑运算：band(bool, bool) 保持 bool 结果

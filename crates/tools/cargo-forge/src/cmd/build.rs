@@ -113,7 +113,13 @@ fn file_mode(
         );
     }
     let out = file.with_extension("exe");
-    let flags = env::rustflags_list(&spec(args, dll));
+    // 单文件模式**不**注入 `-Zshare-generics=yes`：它只在 cargo 模式配 `-Zbuild-std`
+    // 才有意义，而本后端对该 flag 是明确拒绝的（`[cap:SHARE_GENERICS]`，v27 M4/WA-04）。
+    // 历史实现走了 `spec(args, dll)` 的默认路径 ⇒ `--alloc` 会把这个被拒绝的 flag 传给
+    // rustc ⇒ `cargo forge run --file x.rs --alloc` 必然失败（cli_tests ③ 的根因）。
+    let mut sp = spec(args, dll);
+    sp.alloc = false;
+    let flags = env::rustflags_list(&sp);
 
     let mut cmd = Command::new("rustc");
     cmd.arg(&env.toolchain).args(&flags);

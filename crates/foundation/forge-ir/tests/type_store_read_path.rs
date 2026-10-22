@@ -35,9 +35,9 @@ fn rich_module() -> (Module, TypeContext) {
     let (entry, params) = fb.create_block_with_params(&[(TypeId::I32, "p")]);
     fb.switch_to_block(entry);
     let a = fb.iadd(params[0], params[0]);
-    let f = fb.fconst_f32(1.5);
-    let v = fb.vconst_bytes(vec![0u8; 16], v4f32);
-    let cond = fb.iconst_bool(true);
+    let f = fb.constant(1.5f32);
+    let v = fb.const_vector_bytes(vec![0u8; 16], v4f32);
+    let cond = fb.constant(true);
     let body = fb.create_block();
     fb.branch(cond, body, &[], entry, &[]);
     fb.switch_to_block(body);

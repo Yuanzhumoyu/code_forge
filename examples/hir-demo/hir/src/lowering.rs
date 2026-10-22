@@ -306,12 +306,12 @@ impl<'a> LoweringContext<'a> {
                     .get(&sym_intern("ty"))
                     .and_then(|a| a.as_type())
                     .unwrap_or(TypeId::I32);
-                vec![self.builder.iconst(value, ty)]
+                vec![self.builder.const_int(value, ty)]
             }
             Opcode::Fconst => {
                 let bits = extract_attr_u64(attrs, "bits")?;
                 let ty = extract_attr_type(attrs, "ty").unwrap_or(TypeId::F64);
-                vec![self.builder.fconst(bits, ty)]
+                vec![self.builder.const_float(bits, ty)]
             }
 
             // === Type conversions (4) ===

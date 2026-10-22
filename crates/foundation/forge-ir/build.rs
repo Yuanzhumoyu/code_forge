@@ -14,6 +14,13 @@ fn main() {
     // `CARGO_FEATURE_TEXT` 决定是否生成；关闭时不生成也没有消费者
     // （`src/text` 整模块 `#[cfg(feature = "text")]`）。
     if std::env::var_os("CARGO_FEATURE_TEXT").is_some() {
+        // **显式重跑依赖**：本文件末尾的指令元数据生成会打印
+        // `rerun-if-changed=ops.toml|build.rs`，一旦有任何 rerun 指令，Cargo 就**不再**
+        // 按"包内任何文件变动"的默认口径重跑本脚本；lalrpop 的 `process_root()`
+        // 不负责发这条指令 ⇒ 单改 `grammar.lalrpop` 时不重生成，编译会拿**旧**
+        // 生成物（实测：把 `FloatTy(u16)` 改成 `FloatTy(FloatFmt)` 后仍报
+        // `expected u16, found FloatFmt`）。这里补上，保证文法改动必定重生成。
+        println!("cargo:rerun-if-changed=src/text/parser/grammar.lalrpop");
         lalrpop::process_root().unwrap();
     }
     // ② 指令元数据（核心也读：Opcode 枚举/派生表/名字查找）——**不随 feature 关**。
@@ -93,6 +100,7 @@ struct OpDef {
 const TYPE_RULES: &[&str] = &[
     "none",
     "binop_same",
+    "binop_ptr_off",
     "same3",
     "cmp_int",
     "cmp_float",
@@ -507,6 +515,10 @@ fn render(defs: &[OpDef]) -> String {
          \x20   None,\n\
          \x20   /// 前两个值操作数同类型，且不是聚合类型。\n\
          \x20   BinopSame,\n\
+         \x20   /// 前两个值操作数同类型（非聚合）；**结果为指针时**允许「指针 + 整数」\n\
+         \x20   /// ——本 IR 里指针算术按**字节偏移**表达（`add ptr, i64`），与后端\n\
+         \x20   /// 「地址就是 GPR 里的整数」一致。\n\
+         \x20   BinopPtrOff,\n\
          \x20   /// 三个操作数同类型（`Fma`）。\n\
          \x20   Same3,\n\
          \x20   /// 两个操作数同类型且为整型（`Icmp`）。\n\

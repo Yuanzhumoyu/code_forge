@@ -300,7 +300,7 @@ fn terminator_return_packet() {
         FunctionSignature::new(&[], &[TypeId::I32]),
     );
     let (entry, _) = fb.create_entry_block();
-    let v = fb.iconst_i32(7);
+    let v = fb.constant(7i32);
     fb.ret(&[v]);
     let func = fb.finish().expect("build");
     let ret_value = func.dfg.term_return_values(entry).expect("ret 投影")[0];
@@ -353,7 +353,7 @@ fn terminator_jump_packet() {
     fb.switch_to_block(b0);
     fb.jump(b1, &[]);
     fb.switch_to_block(b1);
-    let v = fb.iconst_i32(0);
+    let v = fb.constant(0i32);
     fb.ret(&[v]);
     let func = fb.finish().expect("build");
 

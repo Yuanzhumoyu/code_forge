@@ -40,7 +40,7 @@ impl TyView {
         let member = |t: TypeId| Self::from_ir_type_at(store, t, depth + 1);
         let agg = |members: Vec<TyView>| TyView::new(size, align, TyKind::Aggregate { members });
         match store.get(ty) {
-            TypeEntry::Float { .. } | TypeEntry::BFloat { .. } => TyView::float(size),
+            TypeEntry::Float { .. } => TyView::float(size),
             TypeEntry::Pointer { .. } | TypeEntry::Function { .. } => TyView::ptr(size),
             TypeEntry::Int { .. } => TyView::int(size, align),
             // 向量的 size/align 用 store 的权威值（不按 lanes × elem 重算）。

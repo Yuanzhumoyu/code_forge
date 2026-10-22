@@ -72,6 +72,25 @@ pub trait TargetMachine: Send + Sync + 'static {
         None
     }
 
+    /// 目标机**原生支持的整数位宽**（严格升序）——后端 legalize 的"最近位宽补位"依据。
+    ///
+    /// 缺省 `[8, 16, 32, 64]`：绝大多数 ISA 的通用寄存器位宽。谱里 `[machine] int_widths`
+    /// 覆盖它（例如只有 32 位寄存器的 ISA 写 `int_widths = [8, 16, 32]`）。
+    ///
+    /// **位宽本身无上限**：非原生位宽（`i3`/`i128`/`i1024`…）由 legalize 升位或分字消除，
+    /// 不需要在这里逐一枚举，也不需要为它们写 lowering 规则。
+    fn int_widths(&self) -> &[u16] {
+        &[8, 16, 32, 64]
+    }
+
+    /// 目标机是否有**原生进位/借位指令**（x86 `ADC/SBB`、AArch64 `ADCS/SBCS`）。
+    ///
+    /// 宽加/宽减据此在"进位链"与"`icmp` + `add` 组合"之间择一。缺省 `false`（保守：
+    /// 只依赖最小指令集；谱里 `[machine] multiword_carry = true` 可打开）。
+    fn multiword_carry(&self) -> bool {
+        false
+    }
+
     /// 重定位编码器（可选）。默认按 ISA 名查后端注册表；后端也可覆盖。
     /// 用于把 PC 相对/绝对 relocation 按 ISA 编码写入代码（x86 rel32、
     /// AArch64 BL imm26、RISC-V B/J 位重组）。

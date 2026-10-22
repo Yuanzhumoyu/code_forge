@@ -1,4 +1,4 @@
-# forge-ir 二进制格式（IR bitcode v4）
+# forge-ir 二进制格式（IR bitcode v5）
 
 > 状态：[active]（2026-10-11 起；`IR_FORMAT_VERSION = 4`——v4 删 `Instruction::isel_strategy`；
 > v3 换 `CallConvId`；v2 是段体压缩）。
@@ -66,7 +66,7 @@ offset 0   magic "FORGEIR\0"（8 字节）
 | `0x00` | COMPAT | `flags` varint（当前只认 `0`；未知位置位即 `Err`） | 无 |
 | `0x01` | STRINGS | `num` + `num` 个长度 + 字节拼接（UTF-8）；`num = 0` = 空池 | 无 |
 | `0x02` | TYPES | 类型条目表 + 命名类型表 + 签名表 + `DataLayout` | STRINGS |
-| `0x03` | CONSTS | 常量池五通道：int / float / big / vector / aggregate | STRINGS、TYPES |
+| `0x03` | CONSTS | 常量池（v6：带 tag 单流——bits / big / vector / aggregate） | STRINGS、TYPES |
 | `0x04` | METADATA | `MetadataStore` 节点表 + 命名表 | STRINGS |
 | `0x05` | FUNCS | 每个函数：头部 + 每函数常量池 + `dfg` + `layout` | STRINGS、TYPES、CONSTS、METADATA |
 | `0x06` | GLOBALS | 全局变量、别名、comdat | STRINGS、TYPES、CONSTS、METADATA |
@@ -106,8 +106,10 @@ offset 0   magic "FORGEIR\0"（8 字节）
 
 ### 7.1 TYPES
 
-条目表（12 种 tag：Int/Float/BFloat/Vector/ScalableVector/Array/Struct/Pointer/
-Function/Token/Metadata/Opaque，按 `TypeId` 顺序）→ 命名类型表（按名字节序排序）→
+条目表（**11 种 tag**：Int/Float/Vector/ScalableVector/Array/Struct/Pointer/Function/
+Token/Metadata/Opaque，按 `TypeId` 顺序）。**v5 变更**：原 `Float`(tag 1) 的载荷从"总位宽"
+改为**格式** `exp_bits: u8 + mant_bits: varint`（符号位恒 1 位，不入参）；`BFloat`(tag 2)
+删除（bf16 就是 `Float{exp:8, mant:7}`），旧 tag 2 在解码时**明确报错**（不静默）。→ 命名类型表（按名字节序排序）→
 签名表（含 `CallConv::Custom`）→ `DataLayout`（指针表与三张对齐表**按 key 排序**）。
 
 解码：清空到"无类型"→ 按原样插入条目（去重键"先出现者胜"，保留空洞
@@ -117,10 +119,22 @@ Function/Token/Metadata/Opaque，按 `TypeId` 顺序）→ 命名类型表（按
 
 ### 7.2 CONSTS
 
-`int`（值 zigzag + 位宽）→ `float`（位模式 u128 + 值宽）→ `big` → `vector`
-（字节 + 端序）→ `aggregate`（类型 + 子节点：`Scalar(ConstId)` / `Agg(AggId)`，
-只允许引用**已解码**的聚合 ⇒ 防环）。解码按同序 `insert_*` 重建：返回索引与该条
-位置不符（文件含重复条目）即 `Err`。函数级常量池复用同一编码。
+v6 起是**带 tag 的单流**：`varint 条目数` → 逐条 `u8 tag + 载荷`。
+
+| tag | 形态 | 载荷 |
+| --- | --- | --- |
+| 0 | `Bits`（整数/浮点合并） | zigzag varint(位模式) + varint(位宽 1..=128) |
+| 1 | `Big` | 三变体（有符号整数 / 无符号整数 / 实数） |
+| 2 | `Vector` | len-prefixed 字节 + u8 端序 |
+| 3 | `Agg` | varint(类型 `TypeId`) + varint(子数) + 子 × varint(`ConstId::raw`) |
+
+解码按同序 `intern_*` 重建（句柄索引 = 通道内插入序号）：某通道第 i 条拿到的索引
+不等于 i（文件含重复条目）即 `Err`。聚合子可引用**任意通道已解码**的句柄；引用自身
+通道时必须是**前序**索引（⇒ 无环）。函数级常量池复用同一编码。
+
+位值是**唯一**标量形态——"这是整数还是浮点"由使用点的类型/opcode 决定，池不记录种类，
+因此 `i32 0x3FC0_0000` 与 `f32 1.5` 是同一个条目；整数入池前套符号扩展规范形
+（`i1` 例外，取值 0/1）。
 
 ### 7.3 METADATA
 
@@ -226,6 +240,9 @@ header 为奇：回引段，长度 = header / 2 + 4，随后跟 varint(距离 - 
   | 1 | 首版容器：8 段 + 段表 `{id, offset, len}` |
   | 2 | 段表加第 4 字段 `raw_len` + 段体压缩（§8）；**无兼容读取**，v1 字节流在 v2 读侧直接报版本不符 |
   | 3 | 调用约定换成 `CallConvId`：签名体的判别值改 tag（`0..=4` 内置 / `5` 命名 / `6` 数值）；**无兼容读取**，见 `calling-conventions.md` |
+  | 4 | 删 `Instruction::isel_strategy`（后端零读点）；**无兼容读取** |
+  | 5 | 浮点类型按**格式**编码：tag 1 的载荷由"总位宽"改为 `exp_bits: u8 + mant_bits: varint`（符号位恒 1 位不入参）；删除 `BFloat` tag 2（bf16 = `Float{8,7}`），旧 tag 2 解码**明确报错**；**无兼容读取**（v27 M5 任意浮点格式） |
+  | 6 | **CONSTS 改为带 tag 单流**：`int`/`float` 两通道合并为 `bits`（位模式 + 位宽）；聚合并入 `ConstId`（新 tag 值 3，`AggId` 删除）；`Immediate` 去 `Agg`（聚合操作数走 `Const` 的 tag）；`ConstantPool` 无预置槽。**无兼容读取**（v28 新常量池） |
 
 ## 10. 验证基线
 

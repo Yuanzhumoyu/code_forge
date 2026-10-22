@@ -126,6 +126,8 @@ fn variant_name_exhaustive(op: &Opcode) -> &'static str {
         Opcode::Select => "Select",
         Opcode::Freeze => "Freeze",
         Opcode::Nop => "Nop",
+        // v27 M2.5：内联汇编（variadic，immediates 存约束与文本）
+        Opcode::InlineAsm => "InlineAsm",
         // 终结符（v3 方案 S4 主体：终结符并入指令流）
         Opcode::Ret => "Ret",
         Opcode::Jmp => "Jmp",
@@ -233,6 +235,7 @@ fn type_rule_classification_is_complete() {
         let name = match info.type_rule {
             TypeRule::None => "none",
             TypeRule::BinopSame => "binop_same",
+            TypeRule::BinopPtrOff => "binop_ptr_off",
             TypeRule::Same3 => "same3",
             TypeRule::CmpInt => "cmp_int",
             TypeRule::CmpFloat => "cmp_float",
@@ -258,9 +261,11 @@ fn type_rule_classification_is_complete() {
             ),
         }
     }
-    // 计数基线（2026-09-14 实测；改 ops.toml 分类时同步这里）
+    // 计数基线（2026-09-14 实测；改 ops.toml 分类时同步这里）。
+    // 2026-10-19：`Iadd` 从 `binop_same` 挪到新族 `binop_ptr_off`（指针 + 字节偏移）⇒ 37 → 36。
     let expected: &[(&str, usize)] = &[
-        ("binop_same", 37),
+        ("binop_same", 36),
+        ("binop_ptr_off", 1),
         ("same3", 1),
         ("cmp_int", 1),
         ("cmp_float", 1),
@@ -272,7 +277,8 @@ fn type_rule_classification_is_complete() {
         ("call", 1),
         ("call_indirect", 1),
         // v20 变参 V2：`VaStart`（0 操作数 → 指针）的类型检查在发射侧（落点由约定给）。
-        ("none", 56),
+        // +1：v27 M2.5 的 `InlineAsm`（variadic，操作数/结果由约束决定，检查在发射侧）。
+        ("none", 57),
     ];
     let total: usize = expected.iter().map(|(_, n)| n).sum();
     assert_eq!(total, Opcode::ALL.len(), "计数基线总和必须等于变体数");

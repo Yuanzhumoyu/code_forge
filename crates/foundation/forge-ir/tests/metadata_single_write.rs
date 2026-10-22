@@ -265,7 +265,7 @@ fn builder_built_function_accepts_metadata() {
     let sig = FunctionSignature::new(&[], &[ctx.i32_ty()]);
     let mut fb = FunctionBuilder::new("h", ctx, sig);
     let (entry, _) = fb.create_entry_block();
-    let v = fb.iconst_i32(7);
+    let v = fb.constant(7i32);
     fb.ret(&[v]);
     let mut func = fb.finish().expect("build");
 

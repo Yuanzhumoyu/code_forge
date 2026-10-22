@@ -17,6 +17,38 @@
 | 7 | Windows SEH/ARM EH codegen（随 ABI 选择）、statepoint（无近期计划）、M1 拆分监控（>15s 触发） | 长期/条件性；**2026-09-12 未复核** | next-iterations.md §0/§3 |
 | 8 | forge-grammar semantic 层接入（产品决策）、forge-tests fuzz 归并、jit `register_external` 吞错改 Result 透传 | **2026-09-12 复核**：fuzz 归并 ✅ 已落地（`forge-tests/src/exec/fuzz.rs`，16 条性质测试）；`register_external` ✅ 已是 `Result<(), IrError>` 且透传 patch 错误；**仍开放**：semantic 层零外部调用（`forge-grammar/src/lib.rs` 注明"第二十九轮起 NameResolver/SymbolTable/TypeChecker 零外部调用，mini_c 用自研"） | remaining-tasks.md §3 |
 
+## 2026-10-18 记录（v28 新常量池落地）
+
+**已完成**：常量层重设计（不兼容旧池）——整数与浮点合并为**比特值** `BitValue { bits, width }`；
+`ConstId` 改为四元枚举 `Bits/Big/Vector/Agg`（2 bit tag 铺满 ⇒ `raw`/`from_raw` 全域、
+永不 panic）；`AggId`/`AggChild` 删除，聚合并入同一句柄空间；池无预置槽、四条通道统一走
+interner（端序进向量去重键）；跨池 `import` 四通道全覆盖；IR 二进制升到 **v6**（CONSTS 带
+tag 单流，无兼容读取，见 `reference/binary-format.md`）；构造糖统一为 `AsConst`
+（`fb.constant(x)`），原语精简为 `const_int`/`const_float`/`const_bool`/`const_big`。
+
+**顺带修掉的真缺陷**：`as_i64`/`as_big` 原先对"符号扩展后的位图"直接试转 ⇒ `i32::MIN`
+这类值越界返回 `None`，isel 静默回落成 0（JIT `boundary_constants` 实测）。现在按**原位宽**
+截断再符号扩展解释，两处入口共用 `signed_of`。
+
+**顺带完成**：向量常量构造器统一到 `const_vector*` 家族（`const_vector` /
+`const_vector_endian` / `const_vector_array` / `const_vector_bytes` /
+`const_vector_bytes_endian`，旧 `vconst*` 全删）；新增现行参考文档
+`docs/reference/constants.md`（常量层单一事实源）。
+
+**遗留（有意）**：`import` 遇到悬空句柄直接 panic（旧实现静默返回源池句柄，会让跨池句柄
+泄漏）；`usize/isize` 不提供 `AsConst`（宽度随目标）。
+
+**顺带修掉的既有冲突（2026-10-18）**：`cargo forge run --file … --alloc` 的 file 模式会把
+`-Zshare-generics=yes` 传给 rustc（`cargo-forge/src/env.rs` 的 `FlagSpec.alloc` 无条件注入），
+而 `forge-rustc` 按 v27 M4 **明确拒绝**该 flag（`[cap:SHARE_GENERICS]`）⇒ 本机（backend dll
+存在、用例不 SKIP）上 `cli_tests.rs::cli_file_mode_alloc` 必然失败。修法：file 模式构造
+`FlagSpec` 后把 `alloc` 清掉（该 flag 只在 cargo 模式配 `-Zbuild-std` 才有意义，file 模式走
+sysroot rlib 直链）——与 `file_mode` 里既有的 verbose 提示一致。用例现已通过。
+
+**仍开放（环境性，非代码）**：`cli_cargo_mode_run_mini_project` / `cli_init_then_bare_cargo_build`
+在本机沙箱下无法跑（`~/.cargo/registry` 不可写 ⇒ `getopts` 下载失败）；需要可联网/可写 registry
+的环境验证。
+
 ## 2026-09-14 复核记录（forge-ir v3 方案 S0）
 
 新增待办（S0 实测发现的 pass 不变量欠账，归属 v3 方案 **S6**）：

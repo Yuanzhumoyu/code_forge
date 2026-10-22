@@ -15,7 +15,7 @@ use crate::ir::function::{Function, Module};
 use crate::ir::immediate::Immediate;
 use crate::ir::opcode::Opcode;
 use crate::ir::terminator::TermKind;
-use crate::ir::types::{TypeEntry, TypeStore};
+use crate::ir::types::{FloatFmt, TypeEntry, TypeStore};
 use crate::text::parser::llvm_mapping::llvm_mnemonic;
 use crate::util::imm_str::ImmStr;
 use std::collections::HashSet;
@@ -696,7 +696,7 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                     crate::Immediate::Const(cid) => self
                         .func
                         .constants
-                        .get_vector_endian(*cid)
+                        .vector_endian(*cid)
                         .is_some_and(|e| matches!(e, crate::Endianness::Little)),
                     _ => false,
                 })
@@ -1091,14 +1091,13 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                     match tag {
                         Immediate::Uint(0) => write!(f, " zeroinitializer")?,
                         Immediate::String(s) => write!(f, " {}", store.lookup_str(*s))?,
-                        Immediate::Agg(id) => {
+                        Immediate::Const(id) if matches!(id, crate::ConstId::Agg(_)) => {
                             write!(f, " {}", fmt_agg_const(store, &self.func.constants, *id))?;
                             // insertvalue 聚合字面量：补出 elem 值（折叠后 children[idx] 即插入元素）
                             if matches!(instruction.opcode, Opcode::InsertValue)
                                 && let Some(Immediate::Uint(idx)) = instruction.immediates.first()
-                                && let Some(agg) = self.func.constants.get_aggregate(*id)
-                                && let Some(crate::ir::constant::AggChild::Scalar(cid)) =
-                                    agg.children.get(*idx as usize)
+                                && let Some(agg) = self.func.constants.agg(*id)
+                                && let Some(cid) = agg.children.get(*idx as usize)
                             {
                                 let ety = store
                                     .aggregate_elem_type(agg.ty, *idx as u32)
@@ -1309,8 +1308,8 @@ impl<'a> fmt::Display for InstDisplay<'a> {
                         return Ok(());
                     }
                     if let Some(Immediate::Const(cid)) = instruction.immediates.first()
-                        && let Some(data) = self.func.constants.get_vector(*cid)
-                        && let Some(endian) = self.func.constants.get_vector_endian(*cid)
+                        && let Some(data) = self.func.constants.vector(*cid)
+                        && let Some(endian) = self.func.constants.vector_endian(*cid)
                         && let Some(&TypeEntry::Vector { elem, len }) = store.entry_opt(ty)
                     {
                         let lane_size = size_bytes_or_zero(store, elem) as usize;
@@ -1781,34 +1780,33 @@ fn fmt_phi_value(
     match inst_data.opcode {
         crate::Opcode::Iconst => {
             if let Some(crate::Immediate::Const(cid)) = inst_data.immediates.first()
-                && let Some((val, _bits)) = func.constants.get_int(*cid)
+                && let Some(v) = func.constants.bits(*cid)
             {
-                write!(f, "{val}")
+                write!(f, "{}", fmt_int_const(v.bits as i128, v.width))
             } else {
                 write!(f, "undef")
             }
         }
         crate::Opcode::Fconst => {
             if let Some(crate::Immediate::Const(cid)) = inst_data.immediates.first()
-                && let Some((bits, pool_width)) = func.constants.get_float_with_width(*cid)
+                && let Some(bv) = func.constants.bits(*cid)
             {
-                // 位宽：优先看**值类型**（16 位的 half 与 bfloat 只能靠类型区分），
+                // 位宽：优先看**值类型**（16 位的 half 与 bf16 只能靠类型区分），
                 // 类型不可用时用常量池记录的宽度兜底。
                 // 历史实现恒按 `f64::from_bits` 还原 → f32 常量（如 1.5，
                 // 位模式 0x3FC0_0000）作为 phi 入边被打印成反规格化 f64
                 // 的错误十进制值（2026-09-14 审计发现）。
                 let width = match func.dfg.value_type(v) {
                     Some(ty) => match store.entry_opt(ty) {
-                        Some(crate::ir::types::TypeEntry::Float { bits }) => *bits,
-                        Some(crate::ir::types::TypeEntry::BFloat { bits }) => *bits,
-                        _ => pool_width,
+                        Some(crate::ir::types::TypeEntry::Float { fmt }) => fmt.total_bits(),
+                        _ => bv.width as u16,
                     },
-                    None => pool_width,
+                    None => bv.width as u16,
                 };
                 match width {
-                    16 => write!(f, "0xH{:04x}", bits as u16),
-                    32 => write!(f, "{}", f32::from_bits(bits as u32)),
-                    _ => write!(f, "{}", f64::from_bits(bits as u64)),
+                    16 => write!(f, "0xH{:04x}", bv.bits as u16),
+                    32 => write!(f, "{}", f32::from_bits(bv.bits as u32)),
+                    _ => write!(f, "{}", f64::from_bits(bv.bits as u64)),
                 }
             } else {
                 write!(f, "undef")
@@ -1885,6 +1883,33 @@ fn fmt_f64_literal(v: f64) -> String {
     }
 }
 
+/// 整数常量的**文本字面量**：按有符号补码打印（LLVM 文本约定：`i64 -1`）。
+///
+/// IR 里整数是"低 N 位有效的**无符号位图**"（`ConstantPool::insert_int` 现在按位宽
+/// 规范化：`-1` 在 `i64` 里存成 `0xFFFF_FFFF_FFFF_FFFF`），而 LLVM 文本用**有符号**
+/// 字面量表达同一个位图（`i64 -1` ≡ `i64 18446744073709551615`）。打印机必须挑
+/// **能被自己的解析器精确读回**的那一种：解析侧无符号巨数走 `i64` 字面量通道，
+/// `big_as_i64` 会把它钳成 `i64::MAX`（实测 `flags.ll`/`getelementptr.ll`/
+/// `amdgcn-unreachable.ll` 的 `i64 -1`/`i64 -91` 因此打印→解析→打印漂移）。
+///
+/// 口径：
+/// - `i1`（bool）恒为 `0`/`1`（LLVM 也写 `true`，但本打印器统一用数字）；
+/// - `bits >= 128` 时值本身已是 i128 有符号形态（`mask_to_bits` 在该区间不掩码），原样打印；
+/// - 其余：**最高位是符号位**，置位就回绕成负值（`i3` 的 `7` → `-1`，与解析侧
+///   `insert_int(-1, 3)` → `7` 互逆）。
+fn fmt_int_const(value: i128, bits: u32) -> String {
+    if bits <= 1 || bits >= 128 {
+        return value.to_string();
+    }
+    let sign_bit = 1i128 << (bits - 1);
+    if value >= 0 && value & sign_bit != 0 {
+        // 补码回绕：`bits < 128` 时 `1 << bits` 在 i128 内安全
+        (value - (1i128 << bits)).to_string()
+    } else {
+        value.to_string()
+    }
+}
+
 /// 聚合标量元素文本（`i32 1` / `double 2`；按元素类型格式化）。
 fn fmt_agg_scalar(
     store: &TypeStore,
@@ -1892,24 +1917,23 @@ fn fmt_agg_scalar(
     ety: TypeId,
     cid: crate::ConstId,
 ) -> String {
-    if let Some((v, bits)) = pool.get_int(cid) {
-        // 用**元素类型**的位宽打印，而不是池里记的宽度：池条目可能来自别处（如
-        // `%1 zeroinitializer` 展开出的 0 记在 i8 上），照池宽度打印会让文本与聚合
-        // 类型不一致 ⇒ 往返漂移（实测 unnamed.ll：`i8 0` ↔ `i32 0`）。
-        let ebits = match store.entry_opt(ety) {
-            Some(crate::ir::types::TypeEntry::Int { bits }) => *bits,
-            _ => bits,
-        };
-        format!("i{ebits} {v}")
-    } else if let Some(bits) = pool.get_float128(cid) {
-        match store.entry_opt(ety) {
-            Some(crate::ir::types::TypeEntry::Float { bits: 32 }) => {
-                format!("float {}", fmt_f32_literal(f32::from_bits(bits as u32)))
-            }
-            _ => format!("double {}", fmt_f64_literal(f64::from_bits(bits as u64))),
+    // **按元素类型分派**：合并后的位值通道不记"整数/浮点"，区分只能靠元素类型。
+    // 位宽也优先取元素类型的（池条目可能来自别处，如 `zeroinitializer` 展开出的 0
+    // 记在 i8 上，照池宽度打印会让文本与聚合类型不一致 ⇒ 往返漂移，实测 unnamed.ll）。
+    let Some(bv) = pool.bits(cid) else {
+        return format!("{} undef", fmt_llvm_type(store, ety));
+    };
+    match store.entry_opt(ety) {
+        Some(crate::ir::types::TypeEntry::Float { fmt }) => match *fmt {
+            FloatFmt::F16 => format!("half 0xH{:04x}", bv.bits as u16),
+            FloatFmt::F32 => format!("float {}", fmt_f32_literal(f32::from_bits(bv.bits as u32))),
+            FloatFmt::F64 => format!("double {}", fmt_f64_literal(f64::from_bits(bv.bits as u64))),
+            other => format!("f{} 0x{:x}", other.total_bits(), bv.bits),
+        },
+        Some(crate::ir::types::TypeEntry::Int { bits }) => {
+            format!("i{bits} {}", fmt_int_const(bv.bits as i128, *bits))
         }
-    } else {
-        format!("{} undef", fmt_llvm_type(store, ety))
+        _ => format!("i{} {}", bv.width, fmt_int_const(bv.bits as i128, bv.width)),
     }
 }
 
@@ -1917,10 +1941,9 @@ fn fmt_agg_scalar(
 fn fmt_agg_const(
     store: &TypeStore,
     pool: &crate::ir::constant::ConstantPool,
-    id: crate::AggId,
+    id: crate::ConstId,
 ) -> String {
-    use crate::ir::constant::AggChild;
-    let agg = match pool.get_aggregate(id) {
+    let agg = match pool.agg(id) {
         Some(a) => a,
         None => return "<agg?>".to_string(),
     };
@@ -1932,14 +1955,14 @@ fn fmt_agg_const(
             let ety = store
                 .aggregate_elem_type(agg.ty, i as u32)
                 .unwrap_or(crate::TypeId::I32);
-            match c {
-                AggChild::Scalar(cid) => fmt_agg_scalar(store, pool, ety, *cid),
-                // 嵌套聚合元素带类型前缀：`[2 x i32] [i32 1, i32 2]`
-                AggChild::Agg(inner_id) => format!(
+            // 子句柄可能是标量（Bits/Big）或嵌套聚合（Agg）——按 tag 自行分派。
+            match pool.get(*c) {
+                Some(crate::ir::constant::ConstEntry::Agg(_)) => format!(
                     "{} {}",
                     fmt_llvm_type(store, ety),
-                    fmt_agg_const(store, pool, *inner_id)
+                    fmt_agg_const(store, pool, *c)
                 ),
+                _ => fmt_agg_scalar(store, pool, ety, *c),
             }
         })
         .collect();
@@ -1983,7 +2006,7 @@ fn fmt_global_init(store: &TypeStore, ty: TypeId, init: &[u8]) -> String {
             format!("{}", i16::from_le_bytes([init[0], init[1]]))
         }
         TypeEntry::Int { bits: 8 } => format!("{}", init[0] as i8),
-        TypeEntry::Float { bits: 32 } if init.len() >= 4 => {
+        TypeEntry::Float { fmt: FloatFmt::F32 } if init.len() >= 4 => {
             let bits = u32::from_le_bytes([init[0], init[1], init[2], init[3]]);
             let f = f32::from_bits(bits);
             // NaN/Inf 输出 hex 位模式（LLVM 关键字 qnan/snan/inf 无法还原
@@ -2001,7 +2024,7 @@ fn fmt_global_init(store: &TypeStore, ty: TypeId, init: &[u8]) -> String {
                 format!("{f}")
             }
         }
-        TypeEntry::Float { bits: 64 } if init.len() >= 8 => {
+        TypeEntry::Float { fmt: FloatFmt::F64 } if init.len() >= 8 => {
             let bits = u64::from_le_bytes(init[..8].try_into().unwrap_or([0; 8]));
             let f = f64::from_bits(bits);
             if f.is_nan() || f.is_infinite() {
@@ -2017,15 +2040,15 @@ fn fmt_global_init(store: &TypeStore, ty: TypeId, init: &[u8]) -> String {
         }
         // half/bfloat：LLVM 的位模式写法 `0xH....` / `0xR....`（此前落下面那条通用
         // hex 臂，打 4 字节且无前缀 ⇒ 回读按整数截断，值静默丢失：实测 float-literals.ll）
-        TypeEntry::Float { bits: 16 } if init.len() >= 2 => {
+        TypeEntry::Float { fmt: FloatFmt::F16 } if init.len() >= 2 => {
             format!("0xH{:04x}", u16::from_le_bytes([init[0], init[1]]))
         }
-        TypeEntry::BFloat { bits: 16 } if init.len() >= 2 => {
-            format!("0xR{:04x}", u16::from_le_bytes([init[0], init[1]]))
-        }
-        // 其他位宽浮点（fp128/x86_fp80/ppc_fp128）：hex 位模式（第二十九轮:原落兜底
-        // `0x{bytes}` 无类型标注,reparse 歧义）
-        TypeEntry::Float { bits } | TypeEntry::BFloat { bits } if init.len() >= 2 => {
+        TypeEntry::Float {
+            fmt: FloatFmt::BF16,
+        } if init.len() >= 2 => format!("0xR{:04x}", u16::from_le_bytes([init[0], init[1]])),
+        // 其他位宽浮点（fp128/x86_fp80/ppc_fp128/自定义三段）：hex 位模式（第二十九轮:
+        // 原落兜底 `0x{bytes}` 无类型标注,reparse 歧义）
+        TypeEntry::Float { .. } if init.len() >= 2 => {
             format!(
                 "0x{}",
                 init[..init.len().min(8)]
@@ -2229,7 +2252,7 @@ fn fmt_vconst_lane(
             }
             format!("{v}")
         }
-        Some(TypeEntry::Float { bits: 32 }) if le.len() >= 4 => {
+        Some(TypeEntry::Float { fmt: FloatFmt::F32 }) if le.len() >= 4 => {
             let f = f32::from_le_bytes([le[0], le[1], le[2], le[3]]);
             if f.is_finite() && f.fract() == 0.0 && f.abs() < 1e15 {
                 format!("{f:.1}") // 整数值浮点带小数点（LLVM 浮点字面量风格）
@@ -2237,7 +2260,7 @@ fn fmt_vconst_lane(
                 format!("{f}")
             }
         }
-        Some(TypeEntry::Float { bits: 64 }) if le.len() >= 8 => {
+        Some(TypeEntry::Float { fmt: FloatFmt::F64 }) if le.len() >= 8 => {
             let f = f64::from_le_bytes(le[..8].try_into().unwrap_or([0; 8]));
             if f.is_finite() && f.fract() == 0.0 && f.abs() < 1e15 {
                 format!("{f:.1}")
@@ -2363,8 +2386,9 @@ fn fmt_llvm_type(store: &TypeStore, ty: TypeId) -> String {
         TypeEntry::Int { bits: 0 } => "void".to_string(),
         TypeEntry::Int { bits: 1 } => "i1".to_string(),
         TypeEntry::Int { bits } => format!("i{bits}"),
-        TypeEntry::Float { bits } => format!("f{bits}"),
-        TypeEntry::BFloat { .. } => "bfloat".to_string(),
+        // 三段格式的规范名：已知格式 `f16/f32/f64/f128/bf16`，其余 `f<exp>_<mant>`
+        // （与解析侧 `float_fmt_from_text` 互逆 ⇒ 文本层对任意浮点格式可往返）。
+        TypeEntry::Float { fmt } => fmt.name(),
         TypeEntry::Vector { elem, len } => {
             format!("<{len} x {}>", fmt_llvm_type(store, *elem))
         }
@@ -2419,7 +2443,8 @@ fn value_as_literal(
             let Immediate::Const(cid) = inst_data.immediates.first().copied()? else {
                 return None;
             };
-            let (val, bits) = func.constants.get_int(cid)?;
+            let bv = func.constants.bits(cid)?;
+            let (val, bits) = (bv.bits, bv.width);
             let vty = func.dfg.value_data_opt(v)?.ty;
             // 向量类型的常量（向量 GEP 求值宽松 0——第二十九轮:原输出
             // `i{bits}` 类型漂移为标量,reparse 后类型不等）
@@ -2446,27 +2471,38 @@ fn value_as_literal(
                 if val == 0 {
                     return Some(ImmStr::from(format!("{pfx} null")));
                 }
-                return Some(ImmStr::from(format!("{pfx} {val}")));
+                // 非零指针偏移同样按有符号补码打印（`ptr -13`）：位图是 64 位无符号，
+                // 解析侧 `big_as_i64` 读不了 > i64::MAX 的十进制巨数（会钳成 i64::MAX）。
+                return Some(ImmStr::from(format!(
+                    "{pfx} {}",
+                    fmt_int_const(val as i128, bits)
+                )));
             }
-            Some(ImmStr::from(format!("i{} {}", bits, val)))
+            Some(ImmStr::from(format!(
+                "i{} {}",
+                bits,
+                fmt_int_const(val as i128, bits)
+            )))
         }
         Opcode::Fconst => {
             let Immediate::Const(cid) = inst_data.immediates.first().copied()? else {
                 return None;
             };
-            let bits = func.constants.get_float(cid)?;
+            let bits = func.constants.bits(cid)?.bits as u64;
             // LLVM 标准浮点 hex 形式（位精确，round-trip 无损）：
             // f32 → `0x3FC00000`（8 位 hex）、f64 → `0x3FF8000000000000`（16 位 hex）、
             // half → `0xH...`、bfloat → `0xR...`（第二十九轮）
             let ty = func.dfg.value_type(v)?;
             let hex = match store.get(ty) {
-                crate::ir::types::TypeEntry::Float { bits: 16 } => {
+                crate::ir::types::TypeEntry::Float { fmt: FloatFmt::F16 } => {
                     format!("0xH{:04x}", bits as u16)
                 }
-                crate::ir::types::TypeEntry::BFloat { .. } => {
-                    format!("0xR{:04x}", bits as u16)
+                crate::ir::types::TypeEntry::Float {
+                    fmt: FloatFmt::BF16,
+                } => format!("0xR{:04x}", bits as u16),
+                crate::ir::types::TypeEntry::Float { fmt: FloatFmt::F32 } => {
+                    format!("0x{:08x}", bits as u32)
                 }
-                crate::ir::types::TypeEntry::Float { bits: 32 } => format!("0x{:08x}", bits as u32),
                 _ => format!("0x{bits:016x}"),
             };
             Some(ImmStr::from(format!(
@@ -2517,10 +2553,10 @@ fn value_as_literal(
             let Immediate::Const(cid) = inst_data.immediates.first().copied()? else {
                 return None;
             };
-            if func.constants.get_vector_endian(cid) != Some(crate::Endianness::Little) {
+            if func.constants.vector_endian(cid) != Some(crate::Endianness::Little) {
                 return None; // 大端走 vconst 扩展指令行
             }
-            let data = func.constants.get_vector(cid)?;
+            let data = func.constants.vector(cid)?;
             let ty = func.dfg.value_type(v)?;
             let store_ref = store;
             let &crate::ir::types::TypeEntry::Vector { elem, len } = store_ref.get(ty) else {
@@ -2655,10 +2691,10 @@ mod tests {
         fb.switch_to_block(entry);
         fb.branch(params[0], then_blk, &[], else_blk, &[]);
         fb.switch_to_block(then_blk);
-        let v1 = fb.iconst_i32(1);
+        let v1 = fb.constant(1i32);
         fb.ret(&[v1]);
         fb.switch_to_block(else_blk);
-        let v2 = fb.iconst_i32(0);
+        let v2 = fb.constant(0i32);
         fb.ret(&[v2]);
         let func = fb.finish().expect("build");
         // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
@@ -2686,7 +2722,7 @@ mod tests {
         let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
         let entry = fb.create_block();
         fb.switch_to_block(entry);
-        let v = fb.iconst_i32(42);
+        let v = fb.constant(42i32);
         fb.ret(&[v]);
         let func = fb.finish().expect("build");
         let text = format!("{}", func.dfg);
@@ -2707,10 +2743,10 @@ mod tests {
         fb.switch_to_block(entry);
         fb.switch(params[0], default_blk, &[(1, case1_blk, &[])]);
         fb.switch_to_block(default_blk);
-        let v = fb.iconst_i32(0);
+        let v = fb.constant(0i32);
         fb.ret(&[v]);
         fb.switch_to_block(case1_blk);
-        let v1 = fb.iconst_i32(1);
+        let v1 = fb.constant(1i32);
         fb.ret(&[v1]);
         let func = fb.finish().expect("build");
         // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
@@ -2763,7 +2799,7 @@ mod tests {
         fb.switch_to_block(entry);
         fb.jump(target, &[]);
         fb.switch_to_block(target);
-        let v = fb.iconst_i32(42);
+        let v = fb.constant(42i32);
         fb.ret(&[v]);
         let func = fb.finish().expect("build");
         // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
@@ -2820,8 +2856,8 @@ mod tests {
         let (entry, _params) =
             fb.create_block_with_params(&[(TypeId::I32, "a"), (TypeId::F64, "b")]);
         fb.switch_to_block(entry);
-        let v = fb.iconst_i32(2);
-        let fv = fb.fconst_f64(1.0);
+        let v = fb.constant(2i32);
+        let fv = fb.constant(1.0f64);
         fb.ret(&[v, fv]);
         let func = fb.finish().expect("build");
         // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
@@ -2893,8 +2929,8 @@ mod tests {
         let mut fb = FunctionBuilder::new("f", ctx.clone(), sig);
         let entry = fb.create_block();
         fb.switch_to_block(entry);
-        let a = fb.iconst_i32(1);
-        let b = fb.iconst_i32(2);
+        let a = fb.constant(1i32);
+        let b = fb.constant(2i32);
         let r = fb.iadd(a, b);
         fb.ret(&[r]);
         let func = fb.finish().expect("build");
@@ -2960,7 +2996,7 @@ mod tests {
         let mut fb = FunctionBuilder::new("f", ctx.clone(), sig);
         let entry = fb.create_block();
         fb.switch_to_block(entry);
-        let x = fb.iconst_i32(1);
+        let x = fb.constant(1i32);
         let a = fb.iadd(x, x);
         fb.bind_name(a, "first");
         fb.bind_name(a, "second");
@@ -2993,7 +3029,7 @@ mod tests {
         let entry = fb.create_block();
         fb.bind_block_name(entry, "entry");
         fb.switch_to_block(entry);
-        let r = fb.iconst_i32(1);
+        let r = fb.constant(1i32);
         fb.ret(&[r]);
         let func = fb.finish().expect("build");
         // 取一次读锁后整棵树无锁查询（v3 S3 读路径纪律）
@@ -3007,6 +3043,32 @@ mod tests {
             }
         );
         assert!(text.contains("%entry:"), "block name shown, got: {}", text);
+    }
+
+    /// 三段浮点格式的文本往返：`bf16` 与任意 `f<exp>_<mant>`（`f5_2` = 1+5+2 = 8 位）
+    /// 打印 → 解析 → 打印 必须稳定，且总位宽来自**格式本身**（不是"16 位就是 half"）。
+    #[test]
+    fn float_fmt_text_roundtrip_bf16_and_custom() {
+        use crate::entity::FuncRef;
+        use crate::text::parser::parse_module;
+
+        let src = "define bf16 @ret_bf16(bf16 %x) {\nentry:\n  ret bf16 %x\n}\n\
+                   define f5_2 @ret_custom(f5_2 %x) {\nentry:\n  ret f5_2 %x\n}\n";
+        let m = parse_module(src).expect("parse bf16/f5_2");
+        let text1 = format!("{}", m);
+        assert!(text1.contains("bf16"), "bf16 打印缺失: {text1}");
+        assert!(text1.contains("f5_2"), "f5_2 打印缺失: {text1}");
+
+        // 打印 → 解析 → 打印：文本幂等（任何格式名都可回读）
+        let m2 = parse_module(&text1).expect("re-parse");
+        let text2 = format!("{}", m2);
+        assert_eq!(text1, text2, "打印→解析→打印 必须稳定");
+
+        // 类型事实：bf16 = 1+8+7 = 16 位、f5_2 = 1+5+2 = 8 位
+        let bf16_ret = m2.get_function(FuncRef(0)).return_types();
+        let custom_ret = m2.get_function(FuncRef(1)).return_types();
+        assert_eq!(m2.types.scalar_bits(bf16_ret[0]), Some(16), "bf16 总位宽");
+        assert_eq!(m2.types.scalar_bits(custom_ret[0]), Some(8), "f5_2 总位宽");
     }
 }
 

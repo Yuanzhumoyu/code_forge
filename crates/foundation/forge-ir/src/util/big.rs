@@ -454,7 +454,29 @@ impl Big {
         }
     }
     pub fn trunc_to_u64(&self) -> u64 {
-        self.try_to_u64().unwrap_or(0)
+        // **取低 64 位（模 2^64）**，语义与 `trunc` 一致。
+        //
+        // 为什么不能写成 `try_to_u64().unwrap_or(0)`：那对"装不下 u64"的值**静默返回 0**。
+        // 宽值拆肢（`wide_split::const_limbs`）正是拿它逐肢取数 ⇒ 任何 > `u64::MAX` 的
+        // 宽常量（如 `u128` 的 `0x1_99aa…ff00`）低半会恒为 0 —— 实测表现为
+        // "`-O2` 下 `u128` 常量经 `black_box` 后低半丢失"（`WORKAROUNDS.md` `WA-48`）。
+        match self {
+            Big::Unsigned(u) => {
+                let m = Natural::from(1u32) << 64usize;
+                u64::try_from(&(u % &m)).unwrap_or(0)
+            }
+            Big::Signed(i) => {
+                let m = Natural::from(1u32) << 64usize;
+                let abs = Natural::try_from(i.abs()).unwrap_or(Natural::ZERO);
+                let rem = &abs % &m;
+                if i.is_negative() && !rem.is_zero() {
+                    u64::try_from(&(&m - &rem)).unwrap_or(0)
+                } else {
+                    u64::try_from(&rem).unwrap_or(0)
+                }
+            }
+            _ => self.try_to_u64().unwrap_or(0),
+        }
     }
 
     // 位宽截断

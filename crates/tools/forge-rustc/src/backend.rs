@@ -47,6 +47,165 @@ use crate::func_ref::FuncRefTable;
 use crate::prelude::*;
 use rustc_middle::mono::{CodegenUnit, MonoItemPartitions};
 
+/// 这些选项的"关闭"拼写（`Debug` 形式）。用拼写而不是变体路径比较：这些枚举在
+/// rustc 内部**反复改名/搬家**（`Lto`→`LtoCli`、`ControlFlowGuard`→`CFGuard`），
+/// 而"关"总归是 `Unspecified`（= 目标默认）/`No`/`Off`/`Disabled`/`None` 之一。
+/// **认不出就当开着**（fail-closed：宁可多拒一次并让用户看到实际拼写，
+/// 绝不静默放过一个安全特性开关）。
+fn option_is_off(value: &impl std::fmt::Debug) -> bool {
+    matches!(
+        format!("{value:?}").as_str(),
+        "Unspecified" | "No" | "Off" | "Disabled" | "None" | "Default"
+    )
+}
+
+/// 挑出一个**本后端无法实现、且静默忽略会改变产物语义**的代码生成选项。
+///
+/// 返回 `Some(说明)` ⇒ 调用方按缺口 `CODEGEN_OPTS` 明确拒绝（fail-closed）。
+/// 返回 `None` ⇒ 选项要么没开，要么是"我们的实现天然满足"的那几个
+/// （`no-redzone`/`force-frame-pointers`/`split-debuginfo=packed`，见调用点注释）。
+/// `--emit=obj` 时把对象从 rustc 的 temp 路径**再复制到最终产物路径**（用户 `-o`）。
+///
+/// 为什么必须自己复制：`rustc_codegen_ssa` 的 `copy_if_one_unit` 只在"走 ssa 自带
+/// write 流程"的后端里执行；自定义 `CodegenBackend` 走的是 `codegen_crate` →
+/// `link_binary`，**这一跳不会替我们复制** ⇒ `--emit=obj -o foo.obj` 静默不生效
+/// （实测：只留下 temp 文件，用户要的文件根本不存在；LLVM 后端则正常）。
+///
+/// 目标路径取自 `output_filenames().path(Object)`：它优先返回用户的 `-o`
+/// （`single_output_file`），否则用目录 + 文件名词干 + `.o`；与 `from` 相同就跳过。
+fn copy_object_to_requested_output(tcx: TyCtxt<'_>, from: &std::path::Path) {
+    use rustc_session::config::OutputType;
+    if !tcx.sess.opts.output_types.contains_key(&OutputType::Object) {
+        return;
+    }
+    let want = tcx.output_filenames(()).path(OutputType::Object);
+    if want.is_stdout() {
+        return;
+    }
+    let target = want.as_path();
+    if target == from {
+        return;
+    }
+    if let Err(e) = std::fs::copy(from, target) {
+        tcx.dcx().err(format!(
+            "code-forge: 无法把对象写到 `-o {}`：{e}",
+            target.display()
+        ));
+        return;
+    }
+    // 只有"用户点名了一个具体输出文件"（`-o foo.obj`）时才收拾掉我们自己的那份：
+    // 那是他自己要的产物，目录里不该再多一个名字。`--out-dir` 形态（没点名文件）
+    // **保留** `forge_codegen_output*.o`——确定性与数据符号两类测试按这个前缀认产物。
+    //（`-C save-temps` 一律保留，便于对拍。）
+    let explicit_file = tcx.output_filenames(()).single_output_file.is_some();
+    if explicit_file && !tcx.sess.opts.cg.save_temps {
+        let _ = std::fs::remove_file(from);
+    }
+}
+
+/// 用户请求了**本后端不产出**的产物种类？返回它的 `--emit=` 拼写。
+///
+/// 覆盖面：只判"需要 LLVM 侧产物"的那几种。`Exe`（链接）、`Object`（对象）、
+/// `Metadata`（rustc 自己写）、`DepInfo`、`Mir` 都不在此列。
+///
+/// 为什么必须显式拒绝：`--emit=asm`/`--emit=llvm-ir` 在本后端上**静默什么都不生成**
+/// （退出码 0，用户要的文件根本不存在）——实测如此。静默不产出比报错更伤人。
+fn unsupported_emit_kind(tcx: TyCtxt<'_>) -> Option<&'static str> {
+    use rustc_session::config::OutputType;
+    // 固定顺序，保证报错稳定（output_types 的遍历序不定）。
+    // 本 rustc 的 `OutputType` 变体全集：Assembly / Bitcode / DepInfo / Exe /
+    // LlvmAssembly / Metadata / Mir / Object / ThinLinkBitcode（**没有** `LlvmIr`，
+    // LLVM IR 就是 `LlvmAssembly`）——所以这里只列四个"需要 LLVM 侧产物"的。
+    const ORDER: [(OutputType, &str); 4] = [
+        (OutputType::Assembly, "asm"),
+        (OutputType::LlvmAssembly, "llvm-ir"),
+        (OutputType::Bitcode, "llvm-bc"),
+        (OutputType::ThinLinkBitcode, "thin-link-bitcode"),
+    ];
+    ORDER
+        .iter()
+        .find(|(ty, _)| tcx.sess.opts.output_types.contains_key(ty))
+        .map(|(_, name)| *name)
+}
+
+fn unsupported_codegen_option<'tcx>(tcx: TyCtxt<'tcx>) -> Option<String> {
+    let cg = &tcx.sess.opts.cg;
+    let opts = &tcx.sess.opts;
+
+    // LTO / 位码：两者都建立在"后端吐 LLVM bitcode"之上，我们吐的是成品对象文件。
+    // 注意：**不拒 `-C embed-bitcode`**。它在新版 rustc 里默认就是开（rlib 里存 bitcode
+    // 供下游 LTO 用）——本后端不产出 bitcode，但这个选项不改变**本次产物**的语义，
+    // 只是"给下游留不留料"。拒它会拒掉每一次正常构建（实测踩过）。
+    if !option_is_off(&cg.lto) {
+        return Some(format!(
+            "`-C lto`（当前 {:?}）不支持：LTO 需要后端产出 LLVM bitcode，\
+             本后端直达机器码/对象文件。请去掉 `-C lto`（跨 crate 优化本后端不做）",
+            cg.lto
+        ));
+    }
+    // 覆盖率 / 插桩 / PGO / CFG 防护 / sanitizer：全是 LLVM pass 或 IR 插桩的语义。
+    if !option_is_off(&cg.instrument_coverage) {
+        return Some(
+            "`-C instrument-coverage` 不支持：覆盖率计数与 `__llvm_covmap` 段由 LLVM 插桩产生，\
+             本后端没有该管线。请去掉该 flag（覆盖率请用 LLVM 后端构建）"
+                .to_string(),
+        );
+    }
+    if !opts.unstable_opts.sanitizer.is_empty() {
+        return Some(format!(
+            "`-Zsanitizer`（当前 {:?}）不支持：sanitizer 是在 IR 上插桩的 LLVM pass，\
+             本后端没有该管线 ⇒ 静默忽略会让你以为有检测、实际没有。请去掉该 flag",
+            opts.unstable_opts.sanitizer
+        ));
+    }
+    if !option_is_off(&opts.unstable_opts.instrument_mcount) {
+        return Some(
+            "`-Z instrument-mcount` 不支持：函数入口计数插桩由 LLVM 产生。请去掉该 flag"
+                .to_string(),
+        );
+    }
+    if !option_is_off(&cg.profile_generate) {
+        return Some(
+            "`-C profile-generate`（PGO 采集）不支持：插桩由 LLVM 产生，本后端没有该管线。\
+             请去掉该 flag"
+                .to_string(),
+        );
+    }
+    if cg.profile_use.is_some() {
+        return Some(
+            "`-C profile-use`（PGO 使用）不支持：profile 指导优化由 LLVM pass 实现。请去掉该 flag"
+                .to_string(),
+        );
+    }
+    if !option_is_off(&cg.control_flow_guard) {
+        return Some(format!(
+            "`-C control-flow-guard`（当前 {:?}）不支持：CFG 检测在 LLVM 里插入 \
+             `__guard_check_icall` 检查，本后端没有该插桩 ⇒ 静默忽略等于**安全特性没开**。\
+             请去掉该 flag",
+            cg.control_flow_guard
+        ));
+    }
+    // 动态链接 / 重定位模型：我们的对象层只按"静态链接 + MSVC 默认重定位模型"发射。
+    if cg.prefer_dynamic {
+        return Some(
+            "`-C prefer-dynamic` 不支持：对象/链接层按**静态**链接 rustc 运行时发射。\
+             请去掉该 flag"
+                .to_string(),
+        );
+    }
+    if let Some(model) = cg.relocation_model
+        && !option_is_off(&model)
+        && !matches!(format!("{model:?}").as_str(), "Pic")
+    {
+        return Some(format!(
+            "`-C relocation-model={:?}` 不支持：对象层按 MSVC 默认（pic：绝对 `ADDR64` 重定位）\
+             发射。目前只接受默认值（`pic` 即本机默认）；其他重定位模型需要对象层的重写",
+            model
+        ));
+    }
+    None
+}
+
 /// rustc 的 `-Zcodegen-backend` 入口实现。
 pub struct CodegenLibBackend;
 
@@ -60,6 +219,33 @@ impl CodegenBackend for CodegenLibBackend {
     }
 
     fn codegen_crate<'tcx>(&self, tcx: TyCtxt<'tcx>) -> Box<dyn Any> {
+        // **IR 优化管线（v27 M5/M6）**：此前 rustc 后端**从未**启用过 `forge-opt`
+        // （`CompileSession::with_opt_level` 只在测试里被调用）⇒ 所有 MIR 局部都留在栈槽、
+        // `-C opt-level` 对产物几乎没有影响。现在按 `-C opt-level` 映射到 `forge-opt` 档位，
+        // 与 rustc 的语义对齐（0 = 不跑优化；1/2/3 = O1/O2/O3；s/z = O2）。
+        //
+        // `FORGE_OPT_LEVEL=0|1|2|3` 可**覆盖**（调试/对照用：`0` = 强制不优化）。
+        {
+            use code_forge::optimize::OptimizationLevel as L;
+            let level = match std::env::var("FORGE_OPT_LEVEL").ok().as_deref() {
+                Some("0") => None,
+                Some("1") => Some(L::O1),
+                Some("2") => Some(L::O2),
+                Some("3") => Some(L::O3),
+                // 未覆盖 ⇒ 跟随 rustc 的 `-C opt-level`。
+                // 变体名在不同 nightly 上会漂（`Default` 曾改过名），而它只有 6 个稳定拼写
+                // ⇒ 用 Debug 文本映射，未知拼写按 O2 兜底（优化但不激进）。
+                _ => match format!("{:?}", tcx.sess.opts.optimize).as_str() {
+                    "No" => None,
+                    "Less" => Some(L::O1),
+                    "Size" | "SizeMin" => Some(L::O2),
+                    "Aggressive" => Some(L::O3),
+                    _ => Some(L::O2),
+                },
+            };
+            code_forge::backend::pipeline_hooks::ensure_registered();
+            code_forge::backend::pipeline::compiler::opt_default::set_default_opt_level(level);
+        }
         crate::trace::install_panic_hook();
 
         // v27 M4-② / `WA-04`：**用户显式**指定 `-Zshare-generics=yes` 时明确拒绝。
@@ -74,6 +260,46 @@ impl CodegenBackend for CodegenLibBackend {
                     "SHARE_GENERICS",
                     "本后端不支持 `-Zshare-generics=yes`：跨 crate 的泛型实例不会被外部 crate \
                      生成，链接期会缺符号（LNK2019）。请去掉该 flag"
+                )
+            ));
+            return Box::new(CompiledModules {
+                modules: Vec::new(),
+                allocator_module: None,
+            });
+        }
+
+        // `[cap:CODEGEN_OPTS]`：**靠 LLVM 管线实现的代码生成选项一律明确拒绝**。
+        //
+        // 为什么必须拒绝而不是忽略：这些 flag 的语义都由 LLVM 后端实现（LTO 要吃 bitcode、
+        // 覆盖率/`-Zsanitizer`/CFG 防护要在 IR 上插桩、PGO 要用 profile 指导优化）。
+        // 本后端不吃 bitcode、也不跑那些 pass ⇒ 静默忽略会**悄悄产出与用户预期不同的
+        // 产物**（最坏是安全问题：用户以为开了 CFG/ASAN）。实测（2026-10-19）这些 flag
+        // 此前全部编译成功、一个都没报。
+        //
+        // 真正生效且我们**确实实现**的选项不在此列：`-C opt-level`（→ forge-opt）、
+        // `-C debuginfo`（→ DWARF5）、`-C codegen-units`（→ 多 CGU）、`-C panic=abort`
+        // （`panic=unwind` 另有 `[cap:UNWIND]` 拒绝）、`-C overflow-checks`（→ `Assert` 降级）、
+        // `-C no-redzone`（我们从不使用红区）、`-C force-frame-pointers`（我们恒维护 RBP 帧指针）、
+        // `-C split-debuginfo=packed`（调试信息本来就并进对象文件）。
+        if let Some(msg) = unsupported_codegen_option(tcx) {
+            tcx.dcx()
+                .err(format!("{}", IrError::capability("CODEGEN_OPTS", msg)));
+            return Box::new(CompiledModules {
+                modules: Vec::new(),
+                allocator_module: None,
+            });
+        }
+        // **产物种类**：本后端只产出**对象文件**（`--emit=obj` / `--emit=link`）。其余
+        // LLVM 专属产物我们不产出——此前是**静默什么都不生成**（退出码 0、用户要的文件
+        // 根本不存在）：`--emit=asm` / `--emit=llvm-ir` 实测就是"成功但没产物"。
+        if let Some(kind) = unsupported_emit_kind(tcx) {
+            tcx.dcx().err(format!(
+                "{}",
+                IrError::capability(
+                    "EMIT_KINDS",
+                    format!(
+                        "`--emit={kind}` 不支持：本后端直接产出机器码对象                         （`--emit=obj`/`--emit=link`）；汇编 / LLVM IR / bitcode 需要 LLVM 侧产物，                         我们既不生成也不伪造（静默不产出比报错更糟）"
+                    )
                 )
             ));
             return Box::new(CompiledModules {
@@ -690,17 +916,24 @@ impl CodegenBackend for CodegenLibBackend {
                 }
             }
 
-            // 写入对象文件到磁盘（单对象 = forge_codegen_output.o——Stage A
-            // 同名锚；多对象 = forge_codegen_output.{cgu 名}.o）
+            // 写入对象文件到磁盘（单对象 = forge_codegen_output.o——Stage A 的同名锚，
+            // 多对象 = forge_codegen_output.{cgu 名}.o）。**这个名字保持不变**：
+            // 确定性与数据符号两类测试都按 `forge_codegen_output*` 前缀认产物。
+            // 用户要的 `--emit=obj -o <path>` 由随后的 `copy_object_to_requested_output`
+            // 补一份（自定义后端不走 `rustc_codegen_ssa` 的 `copy_if_one_unit`）。
             let module_name = match &plan.cgu_name {
-                Some(cgu) => {
-                    format!("forge_codegen_output.{cgu}")
-                }
+                Some(cgu) => format!("forge_codegen_output.{cgu}"),
                 None => "forge_codegen_output".to_string(),
             };
             let obj_path = outdir.join(format!("{module_name}.o"));
             match writer.write_to_file(&obj_path) {
                 Ok(()) => {
+                    // 只有**单对象**才复制到用户路径：多 CGU 时 rustc 自己的口径是
+                    // "警告 + 保留编号文件"（`IgnoringOutput`），逐个 CGU 覆盖同一目标
+                    // 会静默丢掉其它 CGU 的代码。
+                    if plan.cgu_name.is_none() {
+                        copy_object_to_requested_output(tcx, &obj_path);
+                    }
                     compiled_modules.push(CompiledModule {
                         name: plan.cgu_name.clone().unwrap_or_else(|| module_name.clone()),
                         kind: ModuleKind::Regular,

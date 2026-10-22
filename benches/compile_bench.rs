@@ -57,11 +57,11 @@ fn build_many_ops() -> Function {
     let mut b = FunctionBuilder::new("many_ops", TypeContext::new(), sig);
     let entry = b.create_block();
     b.switch_to_block(entry);
-    let v1 = b.iconst(1, TypeId::I32);
-    let v2 = b.iconst(2, TypeId::I32);
+    let v1 = b.const_int(1, TypeId::I32);
+    let v2 = b.const_int(2, TypeId::I32);
     let mut acc = b.iadd(v1, v2);
     for _ in 0..19 {
-        let x = b.iconst(3, TypeId::I32);
+        let x = b.const_int(3, TypeId::I32);
         acc = b.iadd(acc, x);
         acc = b.imul(acc, v1);
     }
@@ -76,11 +76,11 @@ fn build_n_ops(n: usize) -> Function {
     let mut b = FunctionBuilder::new("n_ops", TypeContext::new(), sig);
     let entry = b.create_block();
     b.switch_to_block(entry);
-    let v1 = b.iconst(1, TypeId::I32);
-    let v2 = b.iconst(2, TypeId::I32);
+    let v1 = b.const_int(1, TypeId::I32);
+    let v2 = b.const_int(2, TypeId::I32);
     let mut acc = b.iadd(v1, v2);
     for _ in 0..n {
-        let x = b.iconst(3, TypeId::I32);
+        let x = b.const_int(3, TypeId::I32);
         acc = b.iadd(acc, x);
         acc = b.imul(acc, v1);
     }
@@ -104,23 +104,23 @@ fn build_complex_function() -> Function {
     let bv = params[1];
     let x = b.imul(a, a);
     let f_b = b.fmul(bv, bv);
-    let ten = b.iconst(10, TypeId::I32);
+    let ten = b.const_int(10, TypeId::I32);
     let cond = b.icmp(IntCC::Sgt, x, ten);
     b.branch(cond, then_block, &[], else_block, &[]);
 
     let one_bits = 1.0_f64.to_bits();
     b.switch_to_block(then_block);
-    let one = b.fconst(one_bits, TypeId::F64);
+    let one = b.const_float(one_bits, TypeId::F64);
     let ty = b.fadd(f_b, one);
     b.jump(merge_block, &[ty]);
 
     b.switch_to_block(else_block);
-    let one2 = b.fconst(one_bits, TypeId::F64);
+    let one2 = b.const_float(one_bits, TypeId::F64);
     let fy = b.fsub(f_b, one2);
     b.jump(merge_block, &[fy]);
 
     b.switch_to_block(merge_block);
-    let result_param = b.iconst(0, TypeId::F64); // Simplified phi
+    let result_param = b.const_float(0u64, TypeId::F64); // Simplified phi
     b.ret(&[result_param]);
     b.finish().unwrap()
 }
@@ -135,13 +135,13 @@ fn build_multi_block_function() -> Function {
 
     b.switch_to_block(entry);
     let n = params[0];
-    let zero = b.iconst(0, TypeId::I32);
-    let one = b.iconst(1, TypeId::I32);
+    let zero = b.const_int(0, TypeId::I32);
+    let one = b.const_int(1, TypeId::I32);
     b.jump(header, &[zero, zero]);
 
     b.switch_to_block(header);
-    let i = b.iconst(0, TypeId::I32);
-    let sum = b.iconst(0, TypeId::I32);
+    let i = b.const_int(0, TypeId::I32);
+    let sum = b.const_int(0, TypeId::I32);
     let cond = b.icmp(IntCC::Slt, i, n);
     b.branch(cond, body, &[], exit, &[]);
 
@@ -163,9 +163,9 @@ fn build_mem_func() -> Function {
     let mut b = FunctionBuilder::new("mem_ops", TypeContext::new(), sig);
     let (entry, params) = b.create_block_with_params(&[(TypeId::PTR, "p")]);
     b.switch_to_block(entry);
-    let mut acc = b.iconst(0, TypeId::I32);
+    let mut acc = b.const_int(0, TypeId::I32);
     for i in 0..20 {
-        let v = b.iconst(i as i64, TypeId::I32);
+        let v = b.const_int(i as i64, TypeId::I32);
         b.store(v, params[0]);
         let loaded = b.load(params[0], TypeId::I32);
         acc = b.iadd(acc, loaded);
@@ -180,7 +180,7 @@ fn build_float_func() -> Function {
     let mut b = FunctionBuilder::new("float_chain", TypeContext::new(), sig);
     let (entry, params) = b.create_block_with_params(&[(TypeId::F64, "x")]);
     b.switch_to_block(entry);
-    let one = b.fconst(1.0_f64.to_bits(), TypeId::F64);
+    let one = b.const_float(1.0_f64.to_bits(), TypeId::F64);
     let mut acc = b.fmul(params[0], params[0]);
     for _ in 0..19 {
         acc = b.fadd(acc, one);
@@ -211,18 +211,18 @@ fn build_spill_pressure() -> Function {
     let mut b = FunctionBuilder::new("spill_pressure", TypeContext::new(), sig);
     let entry = b.create_block();
     b.switch_to_block(entry);
-    let v1 = b.iconst(1, TypeId::I32);
-    let v2 = b.iconst(2, TypeId::I32);
-    let v3 = b.iconst(3, TypeId::I32);
-    let v4 = b.iconst(4, TypeId::I32);
-    let v5 = b.iconst(5, TypeId::I32);
-    let v6 = b.iconst(6, TypeId::I32);
-    let v7 = b.iconst(7, TypeId::I32);
-    let v8 = b.iconst(8, TypeId::I32);
-    let v9 = b.iconst(9, TypeId::I32);
-    let v10 = b.iconst(10, TypeId::I32);
-    let v11 = b.iconst(11, TypeId::I32);
-    let v12 = b.iconst(12, TypeId::I32);
+    let v1 = b.const_int(1, TypeId::I32);
+    let v2 = b.const_int(2, TypeId::I32);
+    let v3 = b.const_int(3, TypeId::I32);
+    let v4 = b.const_int(4, TypeId::I32);
+    let v5 = b.const_int(5, TypeId::I32);
+    let v6 = b.const_int(6, TypeId::I32);
+    let v7 = b.const_int(7, TypeId::I32);
+    let v8 = b.const_int(8, TypeId::I32);
+    let v9 = b.const_int(9, TypeId::I32);
+    let v10 = b.const_int(10, TypeId::I32);
+    let v11 = b.const_int(11, TypeId::I32);
+    let v12 = b.const_int(12, TypeId::I32);
     let s1 = b.iadd(v1, v2);
     let s2 = b.iadd(v3, v4);
     let s3 = b.iadd(v5, v6);
@@ -249,20 +249,20 @@ fn build_big_loop() -> Function {
 
     b.switch_to_block(entry);
     let n = params[0];
-    let zero = b.iconst(0, TypeId::I32);
-    let one = b.iconst(1, TypeId::I32);
+    let zero = b.const_int(0, TypeId::I32);
+    let one = b.const_int(1, TypeId::I32);
     b.jump(header, &[zero, zero]);
 
     b.switch_to_block(header);
-    let i = b.iconst(0, TypeId::I32);
-    let sum = b.iconst(0, TypeId::I32);
+    let i = b.const_int(0, TypeId::I32);
+    let sum = b.const_int(0, TypeId::I32);
     let cond = b.icmp(IntCC::Slt, i, n);
     b.branch(cond, body, &[], exit, &[]);
 
     b.switch_to_block(body);
     let mut acc = b.iadd(sum, i);
     for k in 0..19 {
-        let c = b.iconst(k + 2, TypeId::I32);
+        let c = b.const_int(k + 2, TypeId::I32);
         acc = b.iadd(acc, c);
         acc = b.imul(acc, c);
     }
@@ -977,7 +977,7 @@ fn build_callee() -> Function {
     let mut b = FunctionBuilder::new("callee_double", TypeContext::new(), sig);
     let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "a")]);
     b.switch_to_block(entry);
-    let two = b.iconst(2, TypeId::I32);
+    let two = b.const_int(2, TypeId::I32);
     let r = b.imul(params[0], two);
     b.ret(&[r]);
     b.finish().unwrap()
@@ -991,7 +991,7 @@ fn build_test_module() -> forge_ir::Module {
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("f0", TypeContext::new(), sig);
         b.create_block_here();
-        let v = b.iconst(42, TypeId::I32);
+        let v = b.const_int(42, TypeId::I32);
         b.ret(&[v]);
         m.add_function(b.finish().unwrap());
     }
@@ -999,7 +999,7 @@ fn build_test_module() -> forge_ir::Module {
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("f1", TypeContext::new(), sig);
         b.create_block_here();
-        let v = b.iconst(7, TypeId::I32);
+        let v = b.const_int(7, TypeId::I32);
         b.ret(&[v]);
         m.add_function(b.finish().unwrap());
     }

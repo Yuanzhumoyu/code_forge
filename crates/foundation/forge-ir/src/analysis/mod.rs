@@ -445,17 +445,17 @@ mod tests {
         let (merge_blk, _) = fb.create_block_with_params(&[(TypeId::I32, "r")]);
         {
             fb.switch_to_block(entry);
-            let c = fb.iconst_i32(1);
+            let c = fb.constant(1i32);
             fb.branch(c, then_blk, &[], else_blk, &[]);
         }
         {
             fb.switch_to_block(then_blk);
-            let v = fb.iconst_i32(42);
+            let v = fb.constant(42i32);
             fb.jump(merge_blk, &[v]);
         }
         {
             fb.switch_to_block(else_blk);
-            let v = fb.iconst_i32(0);
+            let v = fb.constant(0i32);
             fb.jump(merge_blk, &[v]);
         }
         {
@@ -481,17 +481,17 @@ mod tests {
         let (merge_blk, _) = fb.create_block_with_params(&[(TypeId::I32, "r")]);
         {
             fb.switch_to_block(entry);
-            let c = fb.iconst_i32(1);
+            let c = fb.constant(1i32);
             fb.branch(c, then_blk, &[], else_blk, &[]);
         }
         {
             fb.switch_to_block(then_blk);
-            let v = fb.iconst_i32(42);
+            let v = fb.constant(42i32);
             fb.jump(merge_blk, &[v]);
         }
         {
             fb.switch_to_block(else_blk);
-            let v = fb.iconst_i32(0);
+            let v = fb.constant(0i32);
             fb.jump(merge_blk, &[v]);
         }
         {

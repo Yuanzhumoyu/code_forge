@@ -183,7 +183,7 @@ impl IrGraph {
         if self.value_type(v) == Some(TypeId::BOOL) {
             return Ok(v);
         }
-        let zero = self.iconst_i32(0)?;
+        let zero = self.constant(0i32)?;
         self.icmp(forge_ir::IntCC::Ne, v, zero)
     }
 
@@ -446,7 +446,7 @@ mod tests {
     fn test_emit_iconst() {
         let mut graph = IrGraph::new();
         graph.create_block(&[]);
-        let v = graph.iconst_i32(42).unwrap();
+        let v = graph.constant(42i32).unwrap();
         assert!(graph.value_type(v).is_some());
     }
 
@@ -454,17 +454,17 @@ mod tests {
     fn test_build_if_else() {
         let mut graph = IrGraph::new();
         graph.create_block(&[]);
-        let cond = graph.iconst_i32(1).unwrap();
+        let cond = graph.constant(1i32).unwrap();
 
         let merge = graph
             .build_if_else(
                 cond,
                 |g| {
-                    g.iconst_i32(10)?;
+                    g.constant(10i32)?;
                     Ok(())
                 },
                 Some(|g: &mut IrGraph| {
-                    g.iconst_i32(20)?;
+                    g.constant(20i32)?;
                     Ok(())
                 }),
             )
@@ -480,9 +480,9 @@ mod tests {
 
         let (cond_blk, exit_blk) = graph
             .build_while_loop(
-                |g| g.iconst_i32(1),
+                |g| g.constant(1i32),
                 |g| {
-                    g.iconst_i32(0)?;
+                    g.constant(0i32)?;
                     Ok(())
                 },
             )
@@ -500,16 +500,16 @@ mod tests {
         let (cond_blk, exit_blk) = graph
             .build_for_loop(
                 |g| {
-                    g.iconst_i32(0)?;
+                    g.constant(0i32)?;
                     Ok(())
                 },
-                |g| Ok(Some(g.iconst_i32(1)?)),
+                |g| Ok(Some(g.constant(1i32)?)),
                 |g| {
-                    g.iconst_i32(2)?;
+                    g.constant(2i32)?;
                     Ok(())
                 },
                 |g| {
-                    g.iconst_i32(3)?;
+                    g.constant(3i32)?;
                     Ok(())
                 },
             )
@@ -541,8 +541,8 @@ mod tests {
     fn test_normalize_bool_passes_bool_through() {
         let mut graph = IrGraph::new();
         graph.create_block(&[]);
-        let zero = graph.iconst_i32(0).unwrap();
-        let one = graph.iconst_i32(1).unwrap();
+        let zero = graph.constant(0i32).unwrap();
+        let one = graph.constant(1i32).unwrap();
         let cmp = graph.icmp(forge_ir::IntCC::Ne, one, zero).unwrap();
         assert_eq!(graph.value_type(cmp), Some(TypeId::BOOL));
         // BOOL values pass through normalize_bool unchanged: no extra nodes.
@@ -555,7 +555,7 @@ mod tests {
     fn test_normalize_bool_emits_icmp_for_int() {
         let mut graph = IrGraph::new();
         graph.create_block(&[]);
-        let v = graph.iconst_i32(5).unwrap();
+        let v = graph.constant(5i32).unwrap();
         let before = graph.node_count();
         let b = graph.normalize_bool(v).unwrap();
         assert_eq!(graph.node_count(), before + 2, "iconst(0) + icmp");
@@ -595,8 +595,8 @@ mod tests {
     fn test_icmp_unsigned_mapping() {
         let mut graph = IrGraph::new();
         graph.create_block(&[]);
-        let a = graph.iconst_i32(1).unwrap();
-        let b = graph.iconst_i32(2).unwrap();
+        let a = graph.constant(1i32).unwrap();
+        let b = graph.constant(2i32).unwrap();
         let cmp = graph.icmp(forge_ir::IntCC::Ult, a, b).unwrap();
         let node_id = match graph.value_def(cmp).unwrap() {
             crate::graph::ValueDef::NodeResult(nid, 0) => *nid,

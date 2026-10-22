@@ -22,54 +22,42 @@ fn assert_roundtrip(src: &str) {
     assert_modules_eq(&m1, &m2, &text);
 }
 
-/// 两个常量池中的 ConstId 按值语义比较（int/float/vector 内容，而非索引）。
+/// 两个常量池中的 ConstId 按值语义比较（bits/big/vector/聚合内容，而非索引）。
 fn const_eq(f1: &Function, a: &Immediate, f2: &Function, b: &Immediate) -> bool {
     match (a, b) {
         (Immediate::Const(c1), Immediate::Const(c2)) => {
-            if let (Some((v1, b1)), Some((v2, b2))) =
-                (f1.constants.get_int(*c1), f2.constants.get_int(*c2))
-            {
-                v1 == v2 && b1 == b2
-            } else if let (Some(v1), Some(v2)) =
-                (f1.constants.get_float(*c1), f2.constants.get_float(*c2))
-            {
+            // 聚合常量按值比较（句柄是池索引，跨模块可能不同）
+            fn agg_eq(
+                f1: &Function,
+                a: forge_ir::ConstId,
+                f2: &Function,
+                b: forge_ir::ConstId,
+            ) -> bool {
+                match (f1.constants.agg(a), f2.constants.agg(b)) {
+                    (Some(ga), Some(gb))
+                        if ga.ty == gb.ty && ga.children.len() == gb.children.len() =>
+                    {
+                        ga.children.iter().zip(&gb.children).all(|(ca, cb)| {
+                            const_eq(f1, &Immediate::Const(*ca), f2, &Immediate::Const(*cb))
+                        })
+                    }
+                    _ => false,
+                }
+            }
+            if matches!(c1, forge_ir::ConstId::Agg(_)) || matches!(c2, forge_ir::ConstId::Agg(_)) {
+                return agg_eq(f1, *c1, f2, *c2);
+            }
+            if let (Some(v1), Some(v2)) = (f1.constants.bits(*c1), f2.constants.bits(*c2)) {
+                v1 == v2
+            } else if let (Some(v1), Some(v2)) = (f1.constants.big(*c1), f2.constants.big(*c2)) {
                 v1 == v2
             } else if let (Some(v1), Some(v2)) =
-                (f1.constants.get_vector(*c1), f2.constants.get_vector(*c2))
+                (f1.constants.vector(*c1), f2.constants.vector(*c2))
             {
                 v1 == v2
             } else {
                 a == b
             }
-        }
-        // 聚合常量按值比较（AggId 是池索引，跨模块可能不同）
-        (Immediate::Agg(a_id), Immediate::Agg(b_id)) => {
-            fn agg_eq(
-                f1: &Function,
-                a: forge_ir::AggId,
-                f2: &Function,
-                b: forge_ir::AggId,
-            ) -> bool {
-                match (f1.constants.get_aggregate(a), f2.constants.get_aggregate(b)) {
-                    (Some(ga), Some(gb))
-                        if ga.ty == gb.ty && ga.children.len() == gb.children.len() =>
-                    {
-                        use forge_ir::ir::constant::AggChild;
-                        ga.children
-                            .iter()
-                            .zip(&gb.children)
-                            .all(|(ca, cb)| match (ca, cb) {
-                                (AggChild::Scalar(x), AggChild::Scalar(y)) => {
-                                    const_eq(f1, &Immediate::Const(*x), f2, &Immediate::Const(*y))
-                                }
-                                (AggChild::Agg(x), AggChild::Agg(y)) => agg_eq(f1, *x, f2, *y),
-                                _ => false,
-                            })
-                    }
-                    _ => false,
-                }
-            }
-            agg_eq(f1, *a_id, f2, *b_id)
         }
         _ => a == b,
     }
@@ -1254,8 +1242,8 @@ fn test_verify_fastmath_misuse() {
     let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
     let (entry, _) = fb.create_entry_block();
     fb.switch_to_block(entry);
-    let a = fb.iconst(1, ctx.i32_ty());
-    let b = fb.iconst(2, ctx.i32_ty());
+    let a = fb.const_int(1, ctx.i32_ty());
+    let b = fb.const_int(2, ctx.i32_ty());
     let v = fb.emit1(
         forge_ir::Opcode::Iadd,
         vec![a, b],

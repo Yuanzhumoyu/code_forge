@@ -16,6 +16,7 @@ docs/
 │   ├── aarch64-encoding-ref.md# A64 编码参考（arm64 后端/golden 依据）
 │   ├── backend-pipeline.md    # 后端编译管线契约（v23 M1：CompileSession/JitLoader/ModuleSigs）
 │   ├── backend-gaps.md        # 后端能力缺口台账（v24 M3：21 条 `[cap:ID]` + 决策 + 双向守卫）
+│   ├── constants.md           # 常量层（v28：BitValue 比特值 / ConstId 四元枚举 / ConstantPool 四通道 / AsConst）
 │   └── imm_str.md             # ImmStr 类型设计（forge-ir 代码注释引用）
 ├── plans/                 # 进行中专项方案（活账本）[progress]
 │   ├── forge-rustc-v27-plan.md # **forge-rustc v27：完整 rustc 后端**（M1 正确性清零「把绕法换成
@@ -165,6 +166,76 @@ docs/
    （豁免须带注释；命令/豁免形式/存量基线见 `docs/guides/lint.md`）；相对
    链接/锚点全可解析；状态头与日期已写；首行 H1 且单换行结尾；未引入过时
    陈述（对照 `docs/README.md` 图例与 archive 头）。
+
+## 编辑纪律（改代码怎么动手）
+
+**默认：改代码用 `edit`/`write` 的精确文本替换，一次一处、改完立刻验证；脚本只做机械操作。**
+
+这条规则要治的具体毛病：批量脚本"成功退出"了，但改动其实落在错的地方、或漏了某些文件——
+树里留下一堆看起来对、跑起来错的东西，而且没法 review。手改的成本是几行 diff，
+脚本出错的成本是一次**假绿**。
+
+### 允许用脚本（机械操作，穷举）
+
+- **同名批量改名**：同一标识符跨多文件的字面量替换；
+- **同一处字面量在 N 个文件里重复替换**（如同一个 API 调用换签名）；
+- **生成/格式化**：表驱动生成物、`cargo fmt`、统一行尾/编码；
+- **只读统计**：数出现次数、列文件清单、比对两棵树（**不写文件**）。
+
+### 禁止用脚本（必须手改）
+
+- 任何**语义变更**：加/删控制流、改条件、换算法、改错误处理路径；
+- **修编译错误**：一条条读完再改，不许用正则"猜"改法；
+- **新写代码**：新函数、新分支、新测试用例的正文；
+- **按模式推断的改写**（启发式正则 / AST 重写）：改错不会报错。
+
+### 真要用脚本，四条硬要求（缺一即违规）
+
+1. **精确字面量替换**，不做"聪明"匹配；需要上下文就把上下文写进 `old` 串；
+2. **断言命中数**：每处替换前断言 `count == 期望`，命中 0 或超出立即退出——宁可红，
+   不许静默；
+3. **改完看 diff**：`git diff --stat` + 抽查改动文件（改名类必须逐处看）；
+4. **改完跑验证**：`cargo fmt --all` + 受影响 crate 的 `cargo check` / 对应测试；
+   **跨 crate 的 API 迁移还要跑一次全量 clippy**（子集门禁 `quick`/`rustc` 都**不含**
+   全量 lint，这是红点漏网的常见路径）。
+
+只碰任务点名的文件：脚本不遍历全仓乱改，改完的文件清单要能逐条说出理由。
+
+### 本仓踩过的实例（为什么写这条）
+
+- v28 删 `iconst_*`/`fconst_*` 糖时用脚本做跨 crate 迁移，**漏了
+  `benches/compile_bench.rs` 的 37 处**——脚本正常退出，红点到几轮后跑全量 clippy 才暴露；
+- 同一次迁移里十六进制/下划线字面量缺类型后缀，脚本按 `git diff` 配对补完后仍要
+  **手工修** `runtime/jit.rs`、`tls_runtime.rs` 等 20 处；
+- PowerShell 写脚本还要当心：`$home` 是只读自动变量；`.NET` 静态调用用的是**进程 CWD**
+  而不是 `Set-Location` 之后的路径（两条都实际踩过，报错还很误导）。
+
+## 生成物落盘（别弄脏工作区）
+
+**规矩：任何"跑出来的东西"一律写进 `target/`。** 工作区里出现的每个文件都要能说出
+"它为什么属于仓库"；说不出的就该在 `target/` 下（`/target` 已在 `.gitignore`）。
+
+**"被 gitignore" ≠ "目录干净"**：`.gitignore` 只让 `git status` 好看，目录里照样堆垃圾
+（本项目实测：仓库根 14 个 `rustc-ice-*.txt`、`.npm-cache/`，示例工程里 `.cargo/` +
+`target-o*/target-llvm-o*/target/`）。检查要用 `Get-ChildItem -Force`，不能只看 `git status`。
+
+| 生成物 | 落到 | 做法 |
+| --- | --- | --- |
+| npm/npx 缓存 | `target/.npm-cache` | `$env:npm_config_cache = "<repo>/target/.npm-cache"` |
+| cargo 包缓存/解包 | `target/cargo-home` | `$env:CARGO_HOME = "<repo>/target/cargo-home"`（沙箱下也是必需，默认 `~/.cargo` 会 `os error 5`） |
+| 探测/示例工程的构建 | `target/<工程名>/*` | `cargo build --target-dir <repo>/target/…`；**集成配置**放 `target/…/cwd/.cargo/config.toml`，用 `--manifest-path` 指回工程（cargo 从 **CWD 及父目录**读配置），工程目录里什么都不留 |
+| 一次性脚本/抓取物/IR dump | `target/tmp/` | 别写在仓库根 |
+| rustc ICE 转储 | 不出现在工作区 | `$env:RUSTC_ICE = "0"`；或在 `target/` 下的目录里跑 rustc（它写 CWD） |
+| 基准/实验的多档产物 | `target/<名字>-o<档>` | 与正式 `target/` 分开，随时可整目录删 |
+
+**两条实测教训**：
+
+- `run-offline.ps1` 曾用 `RUSTFLAGS` 环境变量代替 `.cargo/config.toml` —— **不等价**：
+  `RUSTFLAGS` 连 host 侧 `std_detect` 也一起塞进 forge 后端，ABI 断言当场炸
+  （`rustc FnAbi expects 0, forge packs 1`）。集成必须走 config；
+- wrapper 只认 **`RUSTC_WRAPPER`**（`CARGO_BUILD_RUSTC_WRAPPER` 无效）：漏了就会用 forge 去编
+  `core`/`std`，报一堆 `Unsupported: SIMD type` / intrinsic 错误，看起来像"后端缺能力"，
+  其实是配置没生效。
 
 ## Build Commands
 
@@ -408,8 +479,8 @@ JIT 矩阵 / 汇编语料三档 / 生成物落盘 / 谱内向量 / ISA-DSL 工�
 | --- | --- | --- |
 | 长度 | V64（2×f32）、V128（4×f32）、V256（8×f32，AVX）/（8×i32、4×i64，AVX2）、V512（16×f32/8×f64，EVEX；算术/常量/by-ref ABI/Load-Store 均已支持，>32B 需 AVX-512F） | 动态 `vector_ty(elem, len)` 与内建去重；`<3 x f32>` 等非 2 幂长度用 128 位指令低 lane 语义（未用 lane 无定义）；V256/V512 测试在无 AVX/AVX-512 机器自动 skip |
 | 元素 | f32/f64/i32/i64 | vadd/vsub/vneg 全元素（f32→addps、f64→addpd、i32→paddd、i64→paddq/psubq；V256 整数走 AVX2 vpaddd/vpsubd/vpaddq/vpsubq）；vmul 浮点 + i32（PMULLD/VPMULLD）；i64 vmul/vdiv 与整数 vdiv 无 SIMD 指令 → 编译期 Unsupported；vabs 用按位掩码（andps 0x7FFFFFFF×4）对 f64/i64 亦正确 |
-| 运算 | vconst/vconst_array/vadd/vsub/vmul/vdiv/vneg/vabs/vbitcast/vextract（全 lane）/vinsert/vbroadcast/vsplit/vconcat/shuffle_vector | `vconst<T: Vector>(Vec<T>)` 泛型值语义（动态数组，ty 由 T+长度推导）；`vconst_array([T; N])` 静态数组；`vconst_bytes(Vec<u8>, ty)` 底层字节 API（元素 LE 字节序，用户自定义 `Vector::lane_bytes` 即可接入）；shuffle_vector：V128 单 shufps、V256 拆半双 shufps（mask 组内语义）；vbroadcast 64 位元素用 vbroadcastsd。**vextract 的 V256 规则按 `rs1_width`（向量操作数）判定**——结果类型是标量，用 `rd` 会永不命中（2026-09-10 修复：V256 lane≥4 曾取到低半区值，`test_jit_v256_byref_high_lane` 守护） |
-| 常量 | 扁平字节池（`Vec<u8>` + offset 表 + 每段端序 `vec_endian`） | `vconst<T: Vector>(Vec<T>)` 泛型值语义（ty 由 T+len 推导，默认 Little）、`vconst_array([T; N])` 静态数组、`vconst_bytes` 底层字节；**端序**：`Vector::lane_bytes(endian)`（Little→to_le、Big→to_be，u8..u128/f32/f64 全位宽，u128 16 字节不截断）、`vconst_with_endian`/`vconst_bytes_with_endian` 显式端序（大端框架数据）、`ConstantPool::get_vector_endian` 查询；DSL 按常量端序还原（LE→from_le、BE→from_be，32 位元素逐元素 BE 读）；**V512（64 字节）常量**按 4×128 位段各自装好后用 4 条 EVEX `VINSERTF32X4`（imm=0..3，覆盖全部 128 位 lane）拼成——占位符 `{vconst_lo_h2}`/`{vconst_hi_h2}`/`{vconst_lo_h3}`/`{vconst_hi_h3}`，生成级测试 `test_v512_vconst_generates_four_evex_inserts`（无需 AVX-512 硬件）守护，见 WORKAROUNDS WA-43；rodata 数据段加载为长期优化 |
+| 运算 | const_vector/const_vector_array/vadd/vsub/vmul/vdiv/vneg/vabs/vbitcast/vextract（全 lane）/vinsert/vbroadcast/vsplit/vconcat/shuffle_vector | `const_vector<T: Vector>(Vec<T>)` 泛型值语义（动态数组，ty 由 T+长度推导）；`const_vector_array([T; N])` 静态数组；`const_vector_bytes(Vec<u8>, ty)` 底层字节 API（元素 LE 字节序，用户自定义 `Vector::lane_bytes` 即可接入）；shuffle_vector：V128 单 shufps、V256 拆半双 shufps（mask 组内语义）；vbroadcast 64 位元素用 vbroadcastsd。**vextract 的 V256 规则按 `rs1_width`（向量操作数）判定**——结果类型是标量，用 `rd` 会永不命中（2026-09-10 修复：V256 lane≥4 曾取到低半区值，`test_jit_v256_byref_high_lane` 守护） |
+| 常量 | 向量常量走池的 `Vector` 通道（字节 + 端序，端序进去重键） | 构造器（v28 起统一为 `const_vector*` 家族）：`const_vector<T: Vector>(Vec<T>)`（ty 由 T+len 推导，默认 Little）、`const_vector_array([T; N])`、`const_vector_bytes(Vec<u8>, ty)`；**端序**：`Vector::lane_bytes(endian)`（Little→to_le、Big→to_be，u8..u128/f32/f64 全位宽，u128 16 字节不截断）、`const_vector_endian`/`const_vector_bytes_endian` 显式端序（大端框架数据）、`ConstantPool::vector_endian` 查询；DSL 按常量端序还原（LE→from_le、BE→from_be，32 位元素逐元素 BE 读）；**V512（64 字节）常量**按 4×128 位段各自装好后用 4 条 EVEX `VINSERTF32X4`（imm=0..3，覆盖全部 128 位 lane）拼成——占位符 `{vconst_lo_h2}`/`{vconst_hi_h2}`/`{vconst_lo_h3}`/`{vconst_hi_h3}`，生成级测试 `test_v512_vconst_generates_four_evex_inserts`（无需 AVX-512 硬件）守护，见 WORKAROUNDS WA-43；rodata 数据段加载为长期优化 |
 | ABI | **≤16B（V64/V128）按值 XMM 全宽 + >16B（V256）by-ref/sret 全线支持**（2026-09 D3 补齐 VEC(16) 全宽） | Windows x64 无 YMM 参数寄存器——>8B 非标量按引用传指针（占 GPR 槽）、返回 >64 位走首参 RCX 隐藏 sret；≤16B 向量（VEC(16) 类）按值进 XMM{pos}（by-position 槽）：收参/实参/返回用**全宽 128 位 MOVAPS**（按值向量按**整寄存器槽**请求 128 位 → 取到全宽搬移那条（x86 = MOVAPS）；MOVSD/MOVSS 只移 8/4B 会静默截断高半，WA-37 D3 修复）。Load/Store 谓词加 `rd_vec`/`rs1_vec`（向量类型字节数）→ V128 走 MOVUPS_128（0F 10/11 无前缀 16 字节）、V64 走 movsd 8B。jit 12+ 测试绿（v128/v64 byval param/return、mixed、wide byref/sret、v512）；forge-rustc B3 门控已撤、simd_v128/v64/v256 e2e 全绿。**残余**：宽向量第 5+ GPR 槽显式 Unsupported（调用方 + 被调方 by-position/by-class 三处均 fail-closed；设计取舍，建议不做）。CallIndirect 宽参/返回**已测**（`test_jit_call_indirect_wide_vector_byref` / `test_jit_call_indirect_wide_vector_sret_return`，2026-09-12 逐条核查 WA-37 残留清单时确认）。IR 层 >16B 向量 Load/Store 已于 2026-09-12 支持（32B 恒可、>32B 需 AVX-512F，`rd_vec`/`rs1_vec` = 32/64 → `VMOVUPS_256_*`/`VMOVUPS_512_*` 的 **reg 基址**形式；ABI by-ref 仍走 MemRef 形式）。V512 被调方收参已按**参数 IR 字节数**分派 64B load（EVEX；生成级测试 `test_v512_byref_callee_load_is_64b` 守护，运行级 lane15 断言需 AVX-512F 硬件）。见 forge-rustc WORKAROUNDS.md WA-37 |
 | 编码 | SSE（0F/0F38 前缀族）+ AVX（VEX C4 语义键）+ AVX2（VEX 族） | 生成器内联实现 ModRM/REX/VEX 发射（`dsl/codegen/mod.rs` 的 VlenCtx）；VEX 三操作数 r/m=src2、vvvv=~src1；无源指令 vvvv 编码 1111；vextractf128 的 dest 在 r/m、src 在 reg；vzeroupper 无需（Windows x64 ABI 允许破坏 YMM 高半） |
 
@@ -474,23 +545,44 @@ base/disp/index/scale、`reg` 槽仅 `[base]`）。取代 v14 的六个魔法串
 现状与边界**以代码与 e2e 为准**，方案见
 [`docs/plans/forge-rustc-v27-plan.md`](docs/plans/forge-rustc-v27-plan.md)：
 
+### 分层红线（2026-10-22 明确，改降级层前必读）
+
+**降级层不得写死"这台机器上才成立"的东西**——具体三类，都踩过：
+
+1. **运行时符号**：不要在 lowering 里直接 `intern("__udivti3")` 之类的 libcall 名字
+   （MSVC 有 `__udivti3`／没有 `__sdivti3`；别的目标连名字都不同）；
+2. **寄存器/向量类型**：不要假定存在 16 字节向量寄存器（曾经用"返回类型声明成 `TypeId::V128`
+   借 `xmm0`"来实现 128 位除法——ISA 没有 V128 就全崩）；
+3. **原生位宽**：不要假定 64 位肢（`wide_split` 的 `w` 来自 `machine.int_widths()`，
+   8 位 ISA 上是 8）。
+
+⇒ 这类"语义补全"（宽值除法、溢出、位宽提升……）**必须落在 IR/legalize 层**，用
+`Iadd/Isub/Ishl/Ushr/Sshr/Icmp/Select` 这类 ISA 无关的 IR 表达，并对**任意原生位宽**成立。
+降级层只负责"把 MIR 映射成 IR"，不做寄存器/符号层面的猜测。
+
 - **能力面**：标量/控制流/调用/Windows x64 约定/FFI/聚合/枚举（含 niche）/alloc 运行时/
   static/Box/闭包/Drop/`dyn` 虚调用/DWARF5（gdb 实证）/多 CGU 并行 + 每 CGU 独立对象 +
   `-C incremental`；v27 新增 **`global_asm!`**（含 `const`/`sym`）。
 - **e2e**：`cargo test -p forge-rustc --test e2e -- --test-threads=1`（真执行；
-  `known_failure` = 0）。**用例数见本 crate README 的机读计数标记**——由守卫
+  `known_failure` = 0）。**用例级并行已默认开启**（每个 worker 独立编译+运行，产物按用例名
+  分子目录隔离；结果按 `CASES` 顺序回收后再分类，输出与串行一致）——并发度由
+  `FORGE_E2E_JOBS` 覆盖（默认 = 可用核数，`1` = 串行）。**用例数见本 crate README 的机读计数标记**——由守卫
   `rustc_doc_counts` 与 `tests/e2e.rs` 双向钉住（改用例数必须同步它；本文不写具体数字，
   免得再漂）。
-- **四个缺口 ID**（台账 `docs/reference/backend-gaps.md` + `[cap:…]` fail-closed）：
-  `INLINE_ASM`（待做：S1 施工图见方案 §8，需把汇编器与字符串表穿进管线）、`UNWIND`
+- **能力缺口**：权威清单 = 台账 `docs/reference/backend-gaps.md`（每条一个 `[cap:ID]`，
+  由 `capability_gaps` 守卫与源码**双向相等**钉住，别在这里抄一遍）。几条重要的：
+  `INLINE_ASM`（待做：S1 施工图见归档账本，需把汇编器与字符串表穿进管线）、`UNWIND`
   （不做，缺 SEH 表）、`TLS`（**已实现**：动态 TLS，`thread_local_roundtrip` 守护）、
-  `MIR_TERMINATOR`（不做，兜底必须明确拒绝）。
+  `MIR_TERMINATOR`（不做，兜底必须明确拒绝）、`CODEGEN_OPTS`（不做：`-C lto`/覆盖率/
+  sanitizer/PGO/CFG 防护等**靠 LLVM 管线**的选项统一**明确拒绝**——静默忽略等于安全特性没开）。
 - **绕法登记**：`crates/tools/forge-rustc/WORKAROUNDS.md`（`[WA-NN]`，机读；由
   `workarounds_guard` 钉住编号唯一与引用可解析）。**注意：该表的"根治方向"列是写那一行时的
   判断，不是现状**——v27 立项时据此误判了四项，实际早已关闭（见方案 §8 的教训）。
-- **门禁**：`cargo forge gate --subset rustc` = 只跑后端（fmt + e2e + 三个后端守卫 + 文档）。
-  `std` 探测工程见 `examples/forge-rustc-std-hello/`（TLS 与 `abort()` 已排除，剩余未知
-  会在探测时以明确 `[cap:…]` 暴露）。
+- **门禁**：`cargo forge gate --subset rustc` = 只跑后端（fmt + e2e + 三个后端守卫 + clippy + 文档）。
+- **真 `std` 已跑通（2026-10-18）**：`examples/forge-rustc-std-hello/` 的
+  `run-offline.ps1` 一条命令构建并运行 `println!`/`String`/`Vec`/`env::args`/`HashMap`
+  五个用例（`std` 由 LLVM 编、我们的 crate 由 forge 编）。沙箱里的关键是
+  **`CARGO_HOME` 指到工作区**（默认 `~/.cargo` 解包会 `os error 5`），与网络无关。
 
 ## Code Conventions
 
@@ -500,3 +592,5 @@ base/disp/index/scale、`reg` 槽仅 `[base]`）。取代 v14 的六个魔法串
 - 生成物路径**恒为** `forge_isa_runtime::…`（v19 V1b 起没有 `krate`）：任意 crate 只要
   依赖它 + build script 预生成就能承载谱（最小例子 `examples/isa-host-demo`）
 - Root `src/lib.rs` is a thin facade — all real code in `crates/`
+- **改代码默认用 `edit`/`write` 的精确文本替换，脚本只做机械操作**——完整规则（允许/禁止清单、
+  用脚本的四条硬要求、本仓踩过的实例）见上文「编辑纪律（改代码怎么动手）」

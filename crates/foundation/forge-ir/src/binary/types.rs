@@ -61,13 +61,12 @@ fn encode_entry(out: &mut Vec<u8>, entry: &TypeEntry, w: &mut Writer) {
             writer::put_u8(out, 0);
             writer::put_varint(out, u64::from(*bits));
         }
-        TypeEntry::Float { bits } => {
+        TypeEntry::Float { fmt } => {
+            // v5：浮点按**格式**编码（符号位/阶码/尾数）——只存总位宽无法区分
+            // f16(1+5+10) 与 bf16(1+8+7)。
             writer::put_u8(out, 1);
-            writer::put_varint(out, u64::from(*bits));
-        }
-        TypeEntry::BFloat { bits } => {
-            writer::put_u8(out, 2);
-            writer::put_varint(out, u64::from(*bits));
+            writer::put_u8(out, fmt.exp_bits);
+            writer::put_varint(out, u64::from(fmt.mant_bits));
         }
         TypeEntry::Vector { elem, len } => {
             writer::put_u8(out, 3);
@@ -394,17 +393,21 @@ fn decode_entry(
             })?,
         },
         1 => TypeEntry::Float {
-            bits: u16::try_from(c.read_varint()?).map_err(|_| IrError::BinaryDecode {
-                offset: at,
-                msg: "Float 位宽超出 u16".to_string(),
-            })?,
+            fmt: crate::ir::types::FloatFmt::new(
+                c.read_u8()?,
+                u16::try_from(c.read_varint()?).map_err(|_| IrError::BinaryDecode {
+                    offset: at,
+                    msg: "Float 尾数位宽超出 u16".to_string(),
+                })?,
+            ),
         },
-        2 => TypeEntry::BFloat {
-            bits: u16::try_from(c.read_varint()?).map_err(|_| IrError::BinaryDecode {
+        2 => {
+            // v4 的 BFloat tag：v5 起 bf16 = Float{1,8,7}，旧流按明确错误拒绝（不静默）。
+            return Err(IrError::BinaryDecode {
                 offset: at,
-                msg: "BFloat 位宽超出 u16".to_string(),
-            })?,
-        },
+                msg: "v5 已删除 BFloat 类型 tag（bf16 改为 Float{1,8,7}）".to_string(),
+            });
+        }
         3 => {
             let elem = ty(c)?;
             let len = u32::try_from(c.read_varint()?).map_err(|_| IrError::BinaryDecode {

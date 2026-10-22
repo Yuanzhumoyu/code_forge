@@ -147,7 +147,7 @@ mod smoke {
         let sig = FunctionSignature::new(&[], &[TypeId::I64]);
         let mut b = FunctionBuilder::new(name, TypeContext::new(), sig);
         b.create_block_here();
-        let c = b.iconst_i64(v);
+        let c = b.constant(v);
         b.ret(&[c]);
         let func = b.finish().expect("build");
         code_forge::backend::CompileSession::new(code_forge::backend::riscv64::TargetMachine::new())
@@ -240,8 +240,8 @@ mod smoke {
     #[test]
     fn compile_sub_mul_smoke() {
         let cf = compile_binop("sub_mul", |b, p| {
-            let five = b.iconst_i64(5);
-            let three = b.iconst_i64(3);
+            let five = b.constant(5i64);
+            let three = b.constant(3i64);
             let d = b.isub(p[0], five);
             b.imul(d, three)
         });

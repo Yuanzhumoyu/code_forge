@@ -126,8 +126,8 @@ mod tests {
         let entry = b.create_block();
         b.switch_to_block(entry);
         let p0 = b.stack_addr(0);
-        let v1 = b.iconst_i32(1);
-        let v2 = b.iconst_i32(2);
+        let v1 = b.constant(1i32);
+        let v2 = b.constant(2i32);
         b.store(v1, p0);
         b.store(v2, p0);
         b.ret(&[]);
@@ -148,8 +148,8 @@ mod tests {
         b.switch_to_block(entry);
         let p0 = b.stack_addr(0);
         let p1 = b.stack_addr(1);
-        let v1 = b.iconst_i32(1);
-        let v2 = b.iconst_i32(2);
+        let v1 = b.constant(1i32);
+        let v2 = b.constant(2i32);
         b.store(v1, p0);
         b.store(v2, p1);
         b.ret(&[]);
@@ -169,8 +169,8 @@ mod tests {
         let entry = b.create_block();
         b.switch_to_block(entry);
         let p0 = b.stack_addr(0);
-        let v1 = b.iconst_i32(1);
-        let v2 = b.iconst_i32(2);
+        let v1 = b.constant(1i32);
+        let v2 = b.constant(2i32);
         b.store(v1, p0);
         let _l = b.load(p0, TypeId::I32); // 读同槽 → 第一个 store 不可删
         b.store(v2, p0);
@@ -191,8 +191,8 @@ mod tests {
         let entry = b.create_block();
         b.switch_to_block(entry);
         let p0 = b.stack_addr(0);
-        let v1 = b.iconst_i32(1);
-        let v2 = b.iconst_i32(2);
+        let v1 = b.constant(1i32);
+        let v2 = b.constant(2i32);
         let flags = forge_ir::ir::mem_flags::MemFlags::VOLATILE;
         b.store_with_flags(v1, p0, flags);
         b.store_with_flags(v2, p0, flags);
@@ -215,8 +215,8 @@ mod tests {
         let entry = b.create_block();
         b.switch_to_block(entry);
         let p0 = b.stack_addr(0);
-        let v1 = b.iconst_i32(1);
-        let v2 = b.iconst_i32(2);
+        let v1 = b.constant(1i32);
+        let v2 = b.constant(2i32);
         b.store(v1, p0);
         b.atomic_rmw(AtomicRmwOp::Add, p0, v1, Ordering::SequentiallyConsistent);
         b.store(v2, p0);
@@ -239,9 +239,9 @@ mod tests {
         let (entry, params) = b.create_block_with_params(&[(TypeId::PTR, "p")]);
         b.switch_to_block(entry);
         let p0 = b.stack_addr(0);
-        let v1 = b.iconst_i32(1);
-        let v2 = b.iconst_i32(2);
-        let v3 = b.iconst_i32(3);
+        let v1 = b.constant(1i32);
+        let v2 = b.constant(2i32);
+        let v3 = b.constant(3i32);
         b.store(v1, p0);
         b.store(v3, params[0]); // 未知地址（实参指针）——保守清表
         b.store(v2, p0);

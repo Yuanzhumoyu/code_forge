@@ -819,15 +819,21 @@ impl Verifier {
         // 不是"每个 opcode 一条手写 if"。穷举 match（无 `_` 臂）：新增族名会让
         // 这里编译失败，写成未实现的族名则构建期就报错（双向 fail-closed）。
         let mismatch = |this: &mut Self, inst: Inst, expected: String, found: String| {
+            // 诊断里带上**这条指令本身**：只有 `Inst(206)` + 两个类型号时，
+            // 排查基本靠猜（v27 M5/M6 两次踩过）。opcode + 操作数个数足以定位。
             this.errors.push(VerifyError::TypeMismatch {
                 inst,
-                expected,
+                expected: format!(
+                    "{op:?}（{} 个操作数）：{expected}",
+                    instruction.operands.len()
+                ),
                 found,
             });
         };
         match op.type_rule() {
             TypeRule::None => {}
             TypeRule::BinopSame
+            | TypeRule::BinopPtrOff
             | TypeRule::Same3
             | TypeRule::CmpInt
             | TypeRule::CmpFloat
@@ -846,9 +852,7 @@ impl Verifier {
                     .and_then(|v| defined.get(*v))
                     .copied();
                 let violations =
-                    crate::ir::type_rules::check_shape(*op, &operand_tys, result_ty, &|t| {
-                        types.map(|store| store.is_aggregate(t)).unwrap_or(false)
-                    });
+                    crate::ir::type_rules::check_shape(*op, &operand_tys, result_ty, &types);
                 for v in violations {
                     use crate::ir::type_rules::ShapeViolation as SV;
                     match v {
@@ -856,7 +860,17 @@ impl Verifier {
                             self,
                             inst,
                             format!("t{}", expected.0),
-                            format!("t{}", found.0),
+                            // 带上**全部操作数的类型**：只有 "expected t2 / found t4" 时
+                            // 分不清是"哪个操作数"错了（v27 M6 排查 const-fold 折叠出的
+                            // `icmp eq i8 %x, i32 52` 时正卡在这）。
+                            format!(
+                                "t{}（操作数类型 {:?}）",
+                                found.0,
+                                operand_tys
+                                    .iter()
+                                    .map(|t| t.map(|t| format!("t{}", t.0)))
+                                    .collect::<Vec<_>>()
+                            ),
                         ),
                         SV::NotScalar { found } => {
                             mismatch(self, inst, "scalar".to_string(), format!("t{}", found.0))
@@ -922,14 +936,29 @@ impl Verifier {
                 }
             }
             TypeRule::Call | TypeRule::CallIndirect => {
-                // 低配检查：call 至少 1 个操作数（callee）；call_indirect 首操作数须指针
-                if instruction.operands.is_empty() {
+                // **直接调用（`Call`）的被调方在立即数通道**（`Immediate::Func`），
+                // 操作数只有实参——所以"至少 1 个操作数"这条检查对零参数调用是**错的**。
+                // v27 M6 实测：`-C opt-level=2` 下 `pick()`（无参）被优化管线校验时
+                // 报 `CallInvalidTarget { detail: "no callee operand" }`；debug 构建
+                // 不跑优化 ⇒ 之前一直没暴露。
+                // `CallIndirect` 才是"首操作数 = 函数指针"。
+                if op.type_rule() == TypeRule::Call {
+                    let has_func_imm = instruction
+                        .immediates
+                        .iter()
+                        .any(|i| matches!(i, crate::ir::immediate::Immediate::Func(_)));
+                    if !has_func_imm {
+                        self.errors.push(VerifyError::CallInvalidTarget {
+                            inst,
+                            detail: "no callee immediate (`Immediate::Func`)".to_string(),
+                        });
+                    }
+                } else if instruction.operands.is_empty() {
                     self.errors.push(VerifyError::CallInvalidTarget {
                         inst,
                         detail: "no callee operand".to_string(),
                     });
-                } else if op.type_rule() == TypeRule::CallIndirect
-                    && let Some(&callee_ty) = defined.get(instruction.operands[0])
+                } else if let Some(&callee_ty) = defined.get(instruction.operands[0])
                     && !Self::is_pointer_ty(types, callee_ty)
                 {
                     self.errors.push(VerifyError::CallInvalidTarget {
@@ -963,13 +992,18 @@ impl Verifier {
             return;
         };
         // 类别：`Any` 不限制；`Vector` 只在能确认是向量时才判否（保持既有行为）
+        //
+        // **指针要先判**：内建 `TypeId::is_int()` 把 `TypeId::PTR` 也算作整数
+        //（"指针在分类上也是整数"），若先判 int，`inttoptr`/`ptrtoint` 的
+        // ptr 侧永远被归成 `Int` ⇒ 这两条转换规则的类检查**恒失败**
+        //（v27 M5 排查 `__rust_realloc` 时实测：`dst=Some(Int)/要求 Ptr`）。
         let class_of = |ty: TypeId| -> Option<TypeClass> {
-            if ty.is_int() {
+            if Self::is_pointer_ty(types, ty) {
+                Some(TypeClass::Ptr)
+            } else if ty.is_int() {
                 Some(TypeClass::Int)
             } else if ty.is_float() {
                 Some(TypeClass::Float)
-            } else if Self::is_pointer_ty(types, ty) {
-                Some(TypeClass::Ptr)
             } else if types.map(|store| store.is_vector(ty)).unwrap_or(false) {
                 Some(TypeClass::Vector)
             } else {
@@ -1018,7 +1052,7 @@ impl Verifier {
                 let vector_bits = |ty: TypeId| match store.get(ty) {
                     TypeEntry::Vector { elem, len } => match store.get(*elem) {
                         TypeEntry::Int { bits } => Some(bits * len),
-                        TypeEntry::Float { bits } => Some(*bits as u32 * len),
+                        TypeEntry::Float { fmt } => Some(fmt.total_bits() as u32 * len),
                         _ => None,
                     },
                     _ => None,
@@ -1030,7 +1064,20 @@ impl Verifier {
             }
         };
         if !src_ok || !dst_ok || !width_ok {
-            let (expected, found) = conversion_expectation(&rule, src_ty, dst_ty);
+            let (expected, mut found) = conversion_expectation(&rule, src_ty, dst_ty);
+            // 诊断：`found` 原本只有类型号，看不出是**哪一项**没过（类不匹配还是位宽不匹配）。
+            // 这里补一句"哪一项失败"——否则只能靠猜（v27 M5 排查 `inttoptr i64→ptr` 时踩过）。
+            if !src_ok || !dst_ok {
+                found.push_str(&format!(
+                    "（类别不匹配：src={:?}/要求 {:?}，dst={:?}/要求 {:?}）",
+                    class_of(src_ty),
+                    rule.src,
+                    class_of(dst_ty),
+                    rule.dst
+                ));
+            } else {
+                found.push_str("（位宽不匹配）");
+            }
             self.errors.push(VerifyError::ConversionBitWidthMismatch {
                 inst,
                 expected,
@@ -1112,7 +1159,7 @@ impl Verifier {
                     di.immediates.first().and_then(|i| match i {
                         Immediate::Int(x) => Some(*x),
                         Immediate::Uint(x) => Some(*x as i64),
-                        Immediate::Const(c) => func.constants.get_int(*c).map(|(x, _)| x as i64),
+                        Immediate::Const(c) => func.constants.bits(*c).map(|v| v.bits as i64),
                         _ => None,
                     })
                 }),
@@ -1313,10 +1360,7 @@ impl Verifier {
             // ConstId 有效性（跨 tag 池解析）
             for imm in &instruction.immediates {
                 if let Immediate::Const(cid) = imm {
-                    let valid = func.constants.get_int(*cid).is_some()
-                        || func.constants.get_float128(*cid).is_some()
-                        || func.constants.get_big(*cid).is_some()
-                        || func.constants.get_vector(*cid).is_some();
+                    let valid = func.constants.get(*cid).is_some();
                     if !valid {
                         self.errors.push(VerifyError::InvalidImmediate {
                             inst,
@@ -1334,7 +1378,7 @@ impl Verifier {
                 && let Some(store) = types
             {
                 let expected = store.size_bytes(ty) as usize;
-                if let Some(data) = func.constants.get_vector(*cid)
+                if let Some(data) = func.constants.vector(*cid)
                     && data.len() != expected
                 {
                     self.errors.push(VerifyError::InvalidImmediate {
@@ -1439,10 +1483,34 @@ impl Verifier {
         for (v, _) in dfg.values() {
             defined.insert(v);
         }
+        // **活定义集**：值存在 ≠ 它"还有定义"——指令可能已从块的 `inst_order` 里
+        // 被摘掉（或整块被清空），而值仍被引用。只看 `dfg.values()` 会漏掉这一类：
+        // v27 M6 实测（SCCP 清空不可达块之后），可达代码仍在引用被摘掉的常量值——
+        // IR 打印成 `%v1`、后端拿到垃圾，编译"成功"但结果错。
+        let mut live_insts: HashSet<Inst> = HashSet::new();
+        for block in dfg.block_data_iter() {
+            for &i in &block.inst_order {
+                live_insts.insert(i);
+            }
+        }
+        let is_live = |v: Value| -> bool {
+            let Some(vd) = dfg.value_data_opt(v) else {
+                return false;
+            };
+            match vd.def {
+                // 墓碑（Nop）不算活定义：值仍被引用时是真错误（此前放行 ⇒ 静默通过）。
+                ValueDef::Inst(i, _) => live_insts.contains(&i) && !dfg.inst_data(i).is_tombstone(),
+                ValueDef::Param(b, idx) => {
+                    (b.0 as usize) < dfg.block_count() && (idx as usize) < dfg.block(b).params.len()
+                }
+                // 聚合常量 / 未定义占位：不需要指令定义。
+                ValueDef::AggConst(_) | ValueDef::UndefNamed(_) => true,
+            }
+        };
 
         for (inst, instruction) in dfg.insts() {
             for &operand in &instruction.operands {
-                if !defined.contains(&operand) {
+                if !defined.contains(&operand) || !is_live(operand) {
                     self.errors.push(VerifyError::UndefinedValue {
                         value: operand,
                         user: inst,
@@ -1765,24 +1833,31 @@ impl Verifier {
                     }
                     let block_data = &dfg.block(block);
                     if param_idx as usize >= block_data.params.len() {
-                        self.errors.push(VerifyError::ValueDefMismatch {
-                            value,
-                            expected_def: format!(
-                                "block {} param {} (block has {} params)",
-                                block,
-                                param_idx,
-                                block_data.params.len()
-                            ),
-                            found_def: "param index out of bounds".to_string(),
-                        });
+                        // 与 `ValueDef::Inst` 的墓碑容忍同构：**被删掉的块参数**（例如
+                        // `block-param-coalesce` 做过 RAUW + `remove_block_param`）会留下一个
+                        // **已无使用者**的残值，其 def 自然越界。只有"仍被使用"才是错误
+                        //——此前这里硬报错，于是优化管线一跑就炸（v27 M5 账本第 8 条）。
+                        if func.use_lists.use_count(value) > 0 {
+                            self.errors.push(VerifyError::ValueDefMismatch {
+                                value,
+                                expected_def: format!(
+                                    "block {} param {} (block has {} params)",
+                                    block,
+                                    param_idx,
+                                    block_data.params.len()
+                                ),
+                                found_def: "param index out of bounds but value is still used"
+                                    .to_string(),
+                            });
+                        }
                     }
                 }
                 ValueDef::AggConst(agg_id) => {
-                    // 聚合常量值：常量池引用（越界防御——池外 AggId 报错）
-                    if func.constants.get_aggregate(agg_id).is_none() {
+                    // 聚合常量值：常量池引用（越界防御）
+                    if func.constants.agg(agg_id).is_none() {
                         self.errors.push(VerifyError::ValueDefMismatch {
                             value,
-                            expected_def: format!("agg const {}", agg_id.0),
+                            expected_def: format!("agg const {agg_id:?}"),
                             found_def: "aggregate id out of bounds".to_string(),
                         });
                     }
@@ -1895,8 +1970,16 @@ impl Verifier {
                 if inst.is_tombstone() {
                     continue;
                 }
-                // 结果数必须与 opcode 元数据一致（Store/Trap 无结果、overflow 双结果）
-                let expected_results = inst.opcode.result_count() as usize;
+                // 结果数必须与 opcode 元数据一致（Store/Trap 无结果、overflow 双结果）。
+                // **`Call`/`CallIndirect` 例外**：它们的结果数由**被调方签名**决定（void 调用
+                // 是 0 个结果），opcode 元数据里的固定值只对定长操作码有意义——与
+                // `check_operand_counts` 里对这两个 opcode 的豁免同理。此前没豁免，
+                // 于是任何"调用 `!`/`()` 返回的函数"都被判成 ResultCountMismatch
+                // （v27 M5 接上优化管线、verifier 真正跑起来后才暴露）。
+                let expected_results = match inst.opcode {
+                    Opcode::Call | Opcode::CallIndirect => inst.results.len(),
+                    op => op.result_count() as usize,
+                };
                 if inst.results.len() != expected_results {
                     self.errors.push(VerifyError::ResultCountMismatch {
                         inst: inst_id,
@@ -2034,7 +2117,7 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[ctx.i32_ty()]);
         let mut fb = FunctionBuilder::new("t", ctx.clone(), sig);
         let (_entry, _) = fb.create_entry_block();
-        let v = fb.iconst_i32(7);
+        let v = fb.constant(7i32);
         fb.ret(&[v]);
         let mut func = fb.finish().expect("build");
 
@@ -2067,7 +2150,7 @@ mod tests {
         let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let v = fb.iconst_i32(42);
+        let v = fb.constant(42i32);
         fb.ret(&[v]);
         let func = fb.finish().expect("build");
 
@@ -2167,10 +2250,10 @@ mod tests {
         let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let a = fb.iconst_i32(1);
-        let c = fb.iconst_i32(2);
-        let f = fb.fconst(1.5f64.to_bits(), TypeId::F64);
-        let f2 = fb.fconst(2.5f64.to_bits(), TypeId::F64);
+        let a = fb.constant(1i32);
+        let c = fb.constant(2i32);
+        let f = fb.const_float(1.5f64.to_bits(), TypeId::F64);
+        let f2 = fb.const_float(2.5f64.to_bits(), TypeId::F64);
         fb.ret(&[a]);
 
         // 1) select cond 用 i32 → SelectCondNotBool
@@ -2187,7 +2270,7 @@ mod tests {
             Opcode::Iconst,
             entry,
             smallvec::smallvec![],
-            smallvec::smallvec![Immediate::Const(fb.func.constants.insert_int(1, 64))],
+            smallvec::smallvec![Immediate::Const(fb.func.constants.intern_int(1, 64))],
             &[TypeId::I64],
             InstFlags::NONE,
         );
@@ -2259,7 +2342,7 @@ mod tests {
         let (entry, _) = fb.create_entry_block();
 
         // Manually create iadd with too few operands
-        let v = fb.iconst_i32(1);
+        let v = fb.constant(1i32);
         let _inst = fb.func.dfg.make_inst(
             Opcode::Iadd,
             entry,
@@ -2269,7 +2352,7 @@ mod tests {
             InstFlags::NONE,
         );
         // Add ret to avoid PathWithoutReturn error
-        let r = fb.iconst_i32(0);
+        let r = fb.constant(0i32);
         fb.ret(&[r]);
 
         let mut verifier = Verifier::with_ctx(ctx.clone());
@@ -2284,7 +2367,7 @@ mod tests {
         let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
         let entry = fb.create_block();
         fb.switch_to_block(entry);
-        let v = fb.iconst_i32(42);
+        let v = fb.constant(42i32);
         fb.ret(&[v]); // only 1 return value, but signature expects 2
         let func = fb.finish().expect("build");
 
@@ -2304,7 +2387,7 @@ mod tests {
         fb.switch_to_block(entry);
         fb.jump(target, &[]); // 0 args → should be 2
         fb.switch_to_block(target);
-        let r = fb.iconst_i32(0);
+        let r = fb.constant(0i32);
         fb.ret(&[r]);
         let func = fb.finish().expect("build");
 
@@ -2326,13 +2409,13 @@ mod tests {
         // 孤儿块带指令（非空死块——P0-14 后只有近空死 merge 豁免，
         // 带指令的不可达块仍是错误）
         fb.switch_to_block(orphan);
-        let dead1 = fb.iconst_i32(1);
-        let dead2 = fb.iconst_i32(2);
+        let dead1 = fb.constant(1i32);
+        let dead2 = fb.constant(2i32);
         let _ = (dead1, dead2);
         fb.unreachable();
 
         fb.switch_to_block(entry);
-        let v = fb.iconst_i32(42);
+        let v = fb.constant(42i32);
         fb.ret(&[v]);
         let func = fb.finish().expect("build");
 
@@ -2351,7 +2434,10 @@ mod tests {
         // <4 x f32> 应为 16 字节，恶意只给 8 字节（2 lane）——
         // 直接 emit 绕过 vconst_bytes 的 debug_assert 长度校验
         let ty = ctx.vector_ty(ctx.f32_ty(), 4);
-        let cid = fb.func.constants.insert_vector(&[0u8; 8]);
+        let cid = fb
+            .func
+            .constants
+            .intern_vector(&[0u8; 8], Endianness::Little);
         let v = fb.emit1(
             crate::Opcode::Vconst,
             vec![],
@@ -2379,7 +2465,7 @@ mod tests {
         let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let d = fb.fconst(1.0f64.to_bits(), ctx.f64_ty());
+        let d = fb.const_float(1.0f64.to_bits(), ctx.f64_ty());
         let v = fb.fpext(d, ctx.f32_ty()); // 错误方向：f64 → f32
         fb.ret(&[v]);
         let func = fb.finish().expect("build");
@@ -2400,7 +2486,7 @@ mod tests {
         let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let a = fb.iconst(42, ctx.i64_ty());
+        let a = fb.const_int(42, ctx.i64_ty());
         let v = fb.ptrtoint(a, ctx.i64_ty()); // 源是 i64 非指针
         fb.ret(&[v]);
         let func = fb.finish().expect("build");
@@ -2422,8 +2508,8 @@ mod tests {
         let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let a = fb.iconst(1, ctx.i32_ty());
-        let b = fb.iconst(2, ctx.i32_ty());
+        let a = fb.const_int(1, ctx.i32_ty());
+        let b = fb.const_int(2, ctx.i32_ty());
         let v = fb.emit1(
             crate::Opcode::Iadd,
             vec![a, b],
@@ -2451,8 +2537,8 @@ mod tests {
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
         let p = fb.alloca(ctx.i32_ty(), 1);
-        let c = fb.iconst(1, ctx.i32_ty());
-        let n = fb.iconst(2, ctx.i32_ty());
+        let c = fb.const_int(1, ctx.i32_ty());
+        let n = fb.const_int(2, ctx.i32_ty());
         let v = fb.cmpxchg(
             p,
             c,
@@ -2479,7 +2565,7 @@ mod tests {
         let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let v = fb.iconst_i32(42);
+        let v = fb.constant(42i32);
         let addr = fb.stack_addr(0);
         fb.store(v, addr); // Store 无结果
         fb.ret(&[]);
@@ -2518,16 +2604,16 @@ mod tests {
 
         // Set up proper CFG: entry → blk_a or blk_b
         fb.switch_to_block(entry);
-        let c = fb.iconst_i32(1);
+        let c = fb.constant(1i32);
         fb.branch(c, blk_a, &[], blk_b, &[]);
 
         // Create a value in blk_a
         fb.switch_to_block(blk_a);
-        let val_a = fb.iconst_i32(1);
+        let val_a = fb.constant(1i32);
         fb.jump(blk_b, &[]);
 
         fb.switch_to_block(blk_b);
-        let r = fb.iconst_i32(0);
+        let r = fb.constant(0i32);
         fb.ret(&[r]);
         let mut func = fb.finish().expect("build");
 
@@ -2557,11 +2643,11 @@ mod tests {
 
         fb.switch_to_block(entry);
         // Jump with i32 value — type mismatch: expect f64, found i32
-        let val = fb.iconst_i32(1);
+        let val = fb.constant(1i32);
         fb.jump(target, &[val]);
 
         fb.switch_to_block(target);
-        let r = fb.fconst_f64(0.0);
+        let r = fb.constant(0.0f64);
         fb.ret(&[r]);
         let func = fb.finish().expect("build");
 
@@ -2593,7 +2679,7 @@ mod tests {
         let (target, _) = fb.create_block_with_params(&[(TypeId::I32, "x")]);
 
         fb.switch_to_block(entry);
-        let val = fb.iconst_i32(1);
+        let val = fb.constant(1i32);
         fb.jump(target, &[val]); // correct type
 
         fb.switch_to_block(target);
@@ -2616,7 +2702,7 @@ mod tests {
         let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let v = fb.iconst_i64(42);
+        let v = fb.constant(42i64);
         fb.ret(&[v]);
         let func = fb.finish().expect("build");
 
@@ -2638,7 +2724,7 @@ mod tests {
         let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let v = fb.iconst_i32(42);
+        let v = fb.constant(42i32);
         fb.ret(&[v]);
         let func = fb.finish().expect("build");
 
@@ -2655,7 +2741,7 @@ mod tests {
         let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
         let (entry, _) = fb.create_entry_block();
         fb.switch_to_block(entry);
-        let a = fb.iconst_i32(1);
+        let a = fb.constant(1i32);
         let v1 = fb.iadd(a, a);
         let v2 = fb.iadd(v1, a);
         fb.ret(&[v2]);
@@ -2688,12 +2774,12 @@ mod tests {
         let floating = fb.create_block(); // never targeted by any block
 
         fb.switch_to_block(entry);
-        let v = fb.iconst_i32(42);
+        let v = fb.constant(42i32);
         fb.ret(&[v]);
 
         fb.switch_to_block(floating);
-        let r1 = fb.iconst_i32(0);
-        let r2 = fb.iconst_i32(1);
+        let r1 = fb.constant(0i32);
+        let r2 = fb.constant(1i32);
         let r = fb.iadd(r1, r2);
         fb.ret(&[r]);
         let func = fb.finish().expect("build");
@@ -2714,7 +2800,7 @@ mod tests {
         let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
         let entry = fb.create_block();
         fb.switch_to_block(entry);
-        let v = fb.iconst_i32(42);
+        let v = fb.constant(42i32);
         fb.ret(&[v]);
         let mut func = fb.finish().expect("build");
 
@@ -2739,7 +2825,7 @@ mod tests {
         fb.switch_to_block(entry);
         fb.jump(real_blk, &[]);
         fb.switch_to_block(real_blk);
-        let v = fb.iconst_i32(42);
+        let v = fb.constant(42i32);
         fb.ret(&[v]);
         let mut func = fb.finish().expect("build");
 
@@ -2760,7 +2846,7 @@ mod tests {
         let sig = FunctionSignature::new(&[], &[ctx.i32_ty()]);
         let mut fb = FunctionBuilder::new("test", ctx.clone(), sig);
         let (_entry, _) = fb.create_entry_block();
-        let v = fb.iconst_i32(42);
+        let v = fb.constant(42i32);
         fb.ret(&[v]);
         let mut func = fb.finish().expect("build");
 

@@ -46,8 +46,60 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         //（旧的 `cs_skipped` = 静态表长 − 实际推入数，随两键删除一并消失）。
         let frame_size_emitted = frame_size;
 
+        // **`NO_FRAME`（`#[unsafe(naked)]`）**：不建栈帧、不存 callee-saved、不发序/尾声
+        //（函数体里的汇编自带 `ret`）。与栈帧互斥是硬约束——真要了栈槽就是错值路径，
+        // 所以这里**明确报错**而不是静默忽略。
+        let no_frame = _func.attributes.contains(FunctionAttributes::NO_FRAME);
+        if no_frame {
+            // 硬约束只有一条：**不许 spill**（spill 槽要在帧里）。`frame_size` 本身不必为 0
+            // ——它含 fp 保存槽那 8 字节的记账，而 naked **根本不发序言**，那 8 字节不会存在。
+            // 真正的「函数体不许有局部」由 lowering 保证（`LowerCtxt::new` 的 `naked` 形参
+            // 不建任何栈槽、入口也不收参），两侧各守一半。
+            let spills = alloc_result.frame_info.spill_area_size;
+            if spills != 0 {
+                return Err(IrError::Internal(format!(
+                    "naked 与栈帧互斥：`{}` 标了 NO_FRAME，却需要 {spills} 字节 spill 区 \
+                     （naked 函数体不应有局部/spill）",
+                    _func.name.as_str()
+                )));
+            }
+        }
+
+        // 诊断：`FORGE_DUMP_VCODE=1` 打印**寄存器分配之后**的机器级代码（每块逐条，
+        // 含物理寄存器与 spill 编辑）。IR 语义等价却编出错值时，这是唯一能看到
+        // "到底发成了什么"的入口（v27 M6：LICM 仅外提 StackAddr 就改变结果，
+        // 而末态 IR 逐行等价 ⇒ 必须对照机器级输出）。
+        if std::env::var_os("FORGE_DUMP_VCODE").is_some() {
+            eprintln!(
+                "[vcode] === {}（frame_size={frame_size}, callee_saved={}, stack_args={}）===",
+                _func.name.as_str(),
+                self.ctx.callee_saved_bytes,
+                self.ctx.max_stack_arg_bytes
+            );
+            let mut gi = 0usize;
+            for vb in self.vcode.blocks() {
+                eprintln!(
+                    "[vcode] block {:?} (ir {:?}, ret={})",
+                    vb.id, vb.ir_block, vb.is_return_block
+                );
+                for inst in &vb.instructions {
+                    // **绑定表**（旁表）才是分配器看到的真实操作数：字段里放的是占位
+                    // 物理寄存器，`inst_ops[gi]` 才给出该字段对应的 vreg 与角色。
+                    let binds = self.inst_ops.get(gi);
+                    eprintln!(
+                        "[vcode]   {inst:?}\n            binds={binds:?} uses={:?} defs={:?}",
+                        crate::machine::inst::MachineInst::uses(inst),
+                        crate::machine::inst::MachineInst::defs(inst)
+                    );
+                    gi += 1;
+                }
+            }
+        }
+
         // Stage 8: Prologue
-        frame_lowering.emit_prologue(frame_size_emitted, alloc_result, &mut sink)?;
+        if !no_frame {
+            frame_lowering.emit_prologue(frame_size_emitted, alloc_result, &mut sink)?;
+        }
 
         // Stage 9: Instruction Emission（自然次序；重排 hack 已随 v23 M5 删除，见下）
         // 可变借用 vcode 收集块引用（替代整 VCode clone），inst_ops 单独
@@ -106,6 +158,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 let inst_local_idx = gi - block_starts[vcode_idx];
                 let line = vb.inst_lines.get(inst_local_idx).copied().flatten();
                 let start_off = sink.offset() as u32;
+                let dump_gi = gi;
                 Self::emit_inst_with_spills(
                     inst,
                     encoder.as_ref(),
@@ -125,6 +178,10 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                         .unwrap_or(&[]),
                     _func.name.as_str(),
                 )?;
+                // 诊断：连同**全局指令序号**一起打，便于与 `FORGE_DUMP_ALLOC` 的绑定表对齐。
+                if crate::pipeline::trace::knob("FORGE_TRACE_SPILL") {
+                    eprintln!("[spill-gi] #{} ⇒ {inst:?}", dump_gi);
+                }
                 if let Some(ln) = line {
                     // 相邻同源指令行合并（同一条语句的多条微指令 / 相邻
                     // 同语句行）——只记行变化处（每行起点）。
@@ -149,13 +206,15 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             emit_one(&mut sink, vb, vcode_idx)?;
         }
 
-        // Stage 10: Epilogue
-        if let Some(epilogue) = epilogue_label {
-            // 把所有 return 块的前向跳转落到这里。标签由 `sink.new_label()` 分配（独立 id
-            // 区间），不再有哨兵常量、也不需要"块数不撞保留区间"的空间断言。
-            sink.bind_label(epilogue);
+        // Stage 10: Epilogue（`NO_FRAME` 时整段跳过：naked 的返回由它自己的汇编负责）
+        if !no_frame {
+            if let Some(epilogue) = epilogue_label {
+                // 把所有 return 块的前向跳转落到这里。标签由 `sink.new_label()` 分配（独立 id
+                // 区间），不再有哨兵常量、也不需要"块数不撞保留区间"的空间断言。
+                sink.bind_label(epilogue);
+            }
+            frame_lowering.emit_epilogue(frame_size, alloc_result, &mut sink)?;
         }
-        frame_lowering.emit_epilogue(frame_size, alloc_result, &mut sink)?;
 
         // Stage 11: Fixup resolution
         let relocations = sink.relocations();
@@ -276,6 +335,13 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         }
 
         // 3) 发指令（encode 从指令字段读寄存器，已由上面的 Bind 改写）。
+        //
+        // 诊断：`FORGE_TRACE_SPILL=1` 时把**改写后**的指令打出来——此时字段里是
+        // **实际生效**的物理寄存器（含 scratch），这是"机器码语义"的唯一可读快照
+        //（`FORGE_DUMP_VCODE` 打的是回写前的占位态）。
+        if crate::pipeline::trace::knob("FORGE_TRACE_SPILL") {
+            eprintln!("[spill] {fname} ⇒ {inst:?}");
+        }
         let result = Self::emit_inst(inst, encoder, alloc_result, sink);
 
         // 4) 写回槽：spilled def 的结果 store 回它自己的槽。

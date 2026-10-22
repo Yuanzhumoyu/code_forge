@@ -8,6 +8,7 @@
 //! 只在向量/数组类型的分隔位置出现（参数/局部名总是 `%`/`@` 前缀），因此
 //! `x` 关键字 token 不会与用户标识符冲突。
 
+use crate::ir::types::FloatFmt;
 use logos::Logos;
 
 #[derive(Logos, Debug, Clone, PartialEq)]
@@ -50,7 +51,7 @@ pub enum Token {
     OpaqueKw,
     // 可伸缩向量类型（单 token）：`<vscale x 4 x i32>`（SVE/RVV）——语法层
     // 5-token 序列致 LALR 状态爆炸（第十一轮实测），lexer 合并最简
-    #[regex(r"<vscale +x +[0-9]+ +x +([ib][1-9][0-9]*|f(16|32|64|128)|bfloat|half|float|double|fp128|x86_fp80|ppc_fp128|ptr)>", |lex| {
+    #[regex(r"<vscale +x +[0-9]+ +x +([ib][1-9][0-9]*|f(16|32|64|128)|bf16|bfloat|half|float|double|fp128|x86_fp80|ppc_fp128|f[0-9]+_[0-9]+|ptr)>", |lex| {
         let s = lex.slice();
         let body = s.trim_start_matches("<vscale x ").trim_end_matches('>');
         let (n, rest) = body.split_once(" x ").unwrap_or(("0", "i32"));
@@ -61,7 +62,7 @@ pub enum Token {
         } else if bits.starts_with('i') || bits.starts_with('b') {
             ElemTy::Int(bits[1..].parse().unwrap_or(32))
         } else {
-            ElemTy::Float(bits.parse().unwrap_or(64))
+            ElemTy::Float(float_fmt_from_text(bits))
         };
         VecElem { len, elem }
     })]
@@ -481,17 +482,14 @@ pub enum Token {
     // u32 足以覆盖 i838608，避免 u16 截断成位宽 0 的误报）
     #[regex(r"[ib][1-9][0-9]*", |lex| lex.slice()[1..].parse::<u32>().unwrap_or(0))]
     IntTy(u32),
-    #[regex(r"f(16|32|64|128)|bfloat|half|float|double|fp128|x86_fp80|ppc_fp128", |lex| match lex.slice() {
-        "half" | "bfloat" => 16,
-        "float" => 32,
-        "double" => 64,
-        "fp128" | "x86_fp80" | "ppc_fp128" => 128,
-        s => s[1..].parse::<u16>().unwrap_or(64),
-    })]
-    FloatTy(u16),
+    // 浮点类型名：LLVM 写法（`half`/`bfloat`/`float`/`double`/`fp128`/`x86_fp80`/
+    // `ppc_fp128`）+ 本 crate 的规范名（`f16/f32/f64/f128`/`bf16`）+ **任意三段格式**
+    // `f<exp>_<mant>`（如 `f5_2` = 1+5+2 = 8 位）。
+    #[regex(r"f(16|32|64|128)|bf16|bfloat|half|float|double|fp128|x86_fp80|ppc_fp128|f[0-9]+_[0-9]+", |lex| float_fmt_from_text(lex.slice()))]
+    FloatTy(FloatFmt),
 
     // ── 向量类型（整体，元素为标量 iN/fN/ptr）──
-    #[regex(r"<[0-9]+ +x +([ib][1-9][0-9]*|f(16|32|64|128)|bfloat|half|float|double|fp128|x86_fp80|ppc_fp128|ptr( addrspace\([0-9]+\))?)>", |lex| {
+    #[regex(r"<[0-9]+ +x +([ib][1-9][0-9]*|f(16|32|64|128)|bf16|bfloat|half|float|double|fp128|x86_fp80|ppc_fp128|f[0-9]+_[0-9]+|ptr( addrspace\([0-9]+\))?)>", |lex| {
         let inner = lex.slice().trim_start_matches('<').trim_end_matches('>');
         let (n, elem) = inner.split_once('x').map(|(n, e)| (n.trim(), e.trim())).unwrap_or(("0", "i32"));
         VecElem {
@@ -504,16 +502,16 @@ pub enum Token {
     // ── 向量常量字面量（单 token）：`<4 x float> <1.5, 2.5, -3.5, 4.25>` ──
     // VecTy + 紧跟的 lane 列表整体；比 VecTy 长，logos 最长匹配优先。
     // lane 值形态：数字 / `name 数字` / `name undef|poison|null|true|false`（select 掩码等）
-    #[regex(r"<[0-9]+ +x +([ib][1-9][0-9]*|f(16|32|64|128)|bfloat|half|float|double|fp128|x86_fp80|ppc_fp128|ptr)> <([-0-9.,eE\s]+|([a-zA-Z][a-zA-Z0-9]* (undef|poison|null|true|false|zeroinitializer|[0-9.-]+))(, [a-zA-Z][a-zA-Z0-9]* (undef|poison|null|true|false|zeroinitializer|[0-9.-]+))*)>", |lex| lex.slice().to_string())]
+    #[regex(r"<[0-9]+ +x +([ib][1-9][0-9]*|f(16|32|64|128)|bf16|bfloat|half|float|double|fp128|x86_fp80|ppc_fp128|f[0-9]+_[0-9]+|ptr)> <([-0-9.,eE\s]+|([a-zA-Z][a-zA-Z0-9]* (undef|poison|null|true|false|zeroinitializer|[0-9.-]+))(, [a-zA-Z][a-zA-Z0-9]* (undef|poison|null|true|false|zeroinitializer|[0-9.-]+))*)>", |lex| lex.slice().to_string())]
     VecConstLit(String),
     // 裸 `zeroinitializer` 关键字（类型在别处：`[4 x i32] zeroinitializer`）
     #[token("zeroinitializer", priority = 2)]
     ZeroInitKw,
     // ── zeroinitializer 单 token（标量）：`i32 zeroinitializer` ──
-    #[regex(r"(i[1-9][0-9]*|f(16|32|64|128)|bfloat|half|float|double|fp128|ptr|void) zeroinitializer", |lex| lex.slice().to_string())]
+    #[regex(r"(i[1-9][0-9]*|f(16|32|64|128)|bf16|bfloat|half|float|double|fp128|f[0-9]+_[0-9]+|ptr|void) zeroinitializer", |lex| lex.slice().to_string())]
     ZeroInitLit(String),
     // ── zeroinitializer 单 token（向量）：`<4 x float> zeroinitializer` ──
-    #[regex(r"<[0-9]+ +x +([ib][1-9][0-9]*|f(16|32|64|128)|bfloat|half|float|double|fp128|ptr)> zeroinitializer", |lex| lex.slice().to_string())]
+    #[regex(r"<[0-9]+ +x +([ib][1-9][0-9]*|f(16|32|64|128)|bf16|bfloat|half|float|double|fp128|f[0-9]+_[0-9]+|ptr)> zeroinitializer", |lex| lex.slice().to_string())]
     VecZeroInitLit(String),
 
     // shufflevector 掩码（单 token）：`<i32 0, i32 1, i32 2, i32 3>`（带类型 lane）
@@ -693,8 +691,43 @@ pub enum Token {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ElemTy {
     Int(u32),
-    Float(u16),
+    Float(FloatFmt),
     Ptr,
+}
+
+/// 浮点类型文本 → [`FloatFmt`]（**唯一**的浮点点名映射表）。
+///
+/// 认识 LLVM 的写法（`half`/`bfloat`/`float`/`double`/`fp128`/`x86_fp80`/`ppc_fp128`）
+/// 与本 crate 的规范名（`f16/f32/f64/f128`/`bf16`），以及**任意三段格式**
+/// `f<exp>_<mant>`（如 `f5_2` → 1+5+2 = 8 位；与 [`FloatFmt::name`] 互逆）。
+///
+/// 三段建模后 16 位不再只有一种含义：`half`/`f16` = 1+5+10、`bfloat`/`bf16` = 1+8+7。
+pub fn float_fmt_from_text(s: &str) -> FloatFmt {
+    match s {
+        "half" | "f16" => FloatFmt::F16,
+        "bfloat" | "bf16" => FloatFmt::BF16,
+        "float" | "f32" => FloatFmt::F32,
+        "double" | "f64" => FloatFmt::F64,
+        // `x86_fp80`/`ppc_fp128` 沿用旧口径（视作 128 位宽）——改动会挪动大小/布局。
+        "fp128" | "x86_fp80" | "ppc_fp128" | "f128" => FloatFmt::F128,
+        other => {
+            if let Some(rest) = other.strip_prefix('f') {
+                // `f<exp>_<mant>`：任意三段格式
+                if let Some((e, m)) = rest.split_once('_')
+                    && let (Ok(exp), Ok(mant)) = (e.parse::<u8>(), m.parse::<u16>())
+                {
+                    return FloatFmt::new(exp, mant);
+                }
+                // 非 IEEE 位宽的裸 `fN`：能映射就映射，否则沿用旧的 f64 兜底
+                if let Ok(bits) = rest.parse::<u16>()
+                    && let Some(fmt) = FloatFmt::ieee_for_bits(bits)
+                {
+                    return fmt;
+                }
+            }
+            FloatFmt::F64
+        }
+    }
 }
 
 /// 向量元素文本 → [`ElemTy`]（**唯一**的元素名映射表）。
@@ -709,16 +742,18 @@ pub enum ElemTy {
 /// "规范化"，幂等仍然成立）。
 pub fn elem_ty_from_text(elem: &str) -> ElemTy {
     match elem {
-        "half" | "bfloat" => ElemTy::Float(16),
-        "float" => ElemTy::Float(32),
-        "double" => ElemTy::Float(64),
-        "fp128" | "x86_fp80" | "ppc_fp128" => ElemTy::Float(128),
+        // 已知浮点名（含 `bf16`：以 `b` 开头，不能落下面按首字母猜的分支）
+        "half" | "bfloat" | "float" | "double" | "fp128" | "x86_fp80" | "ppc_fp128" | "bf16" => {
+            ElemTy::Float(float_fmt_from_text(elem))
+        }
         "ptr" => ElemTy::Ptr,
         other if other.starts_with("ptr ") => ElemTy::Ptr, // `ptr addrspace(N)`
+        "" => ElemTy::Ptr,
         other => match other.split_at(1) {
             // `iN` 与 `bN`（bit-precise）同 IR 表示 Int(bits)
             ("i" | "b", rest) => ElemTy::Int(rest.parse().unwrap_or(32)),
-            ("f", rest) => ElemTy::Float(rest.parse().unwrap_or(64)),
+            // `fN` / `f<exp>_<mant>`
+            ("f", _) => ElemTy::Float(float_fmt_from_text(other)),
             _ => ElemTy::Ptr,
         },
     }
@@ -872,13 +907,13 @@ mod tests {
 
     #[test]
     fn lex_types() {
-        let toks = lex_all("i32 i1 f64 ptr void label <4 x i32> <2 x ptr> <4 x b64>");
+        let toks = lex_all("i32 i1 f64 ptr void label <4 x i32> <2 x ptr> <4 x b64> bf16 f5_2");
         assert_eq!(
             toks,
             vec![
                 Token::IntTy(32),
                 Token::IntTy(1),
-                Token::FloatTy(64),
+                Token::FloatTy(FloatFmt::F64),
                 Token::PtrTy,
                 Token::VoidTy,
                 Token::LabelTy,
@@ -894,6 +929,9 @@ mod tests {
                     len: 4,
                     elem: ElemTy::Int(64)
                 }),
+                // 三段建模后 16 位有两种格式，`bfloat` 与任意 `f<exp>_<mant>` 都要认
+                Token::FloatTy(FloatFmt::BF16),
+                Token::FloatTy(FloatFmt::new(5, 2)),
             ]
         );
     }

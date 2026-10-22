@@ -698,16 +698,12 @@ fn gen_global_init(ctx: &mut GenCtx, defined: &[String]) -> (String, String) {
 fn const_eq(f1: &Function, a: &Immediate, f2: &Function, b: &Immediate) -> bool {
     match (a, b) {
         (Immediate::Const(c1), Immediate::Const(c2)) => {
-            if let (Some((v1, b1)), Some((v2, b2))) =
-                (f1.constants.get_int(*c1), f2.constants.get_int(*c2))
-            {
-                v1 == v2 && b1 == b2
-            } else if let (Some(v1), Some(v2)) =
-                (f1.constants.get_float(*c1), f2.constants.get_float(*c2))
-            {
+            if let (Some(v1), Some(v2)) = (f1.constants.bits(*c1), f2.constants.bits(*c2)) {
+                v1 == v2
+            } else if let (Some(v1), Some(v2)) = (f1.constants.bits(*c1), f2.constants.bits(*c2)) {
                 v1 == v2
             } else if let (Some(v1), Some(v2)) =
-                (f1.constants.get_vector(*c1), f2.constants.get_vector(*c2))
+                (f1.constants.vector(*c1), f2.constants.vector(*c2))
             {
                 v1 == v2
             } else {

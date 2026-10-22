@@ -522,7 +522,7 @@ fn add_const(func: &mut Function, block: Block, addr: Value, k: u32) -> Value {
 
 /// `i64` 常量值（常量池去重）。
 fn const_i64(func: &mut Function, block: Block, v: i64) -> Value {
-    let cid = func.constants.insert_int(i128::from(v), 64);
+    let cid = func.constants.intern_int(i128::from(v), 64);
     let ci = func.make_inst(
         Opcode::Iconst,
         block,

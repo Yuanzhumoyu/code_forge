@@ -9,19 +9,25 @@ use std::collections::{HashMap, HashSet};
 
 /// 程序点 — VCode 中的精确位置。
 ///
-/// 编码: 高 16 bit = block_index, 低 16 bit = instruction_index * 2.
+/// 编码: 高 32 bit = block_index, 低 32 bit = instruction_index * 2.
 /// 每个指令占两个程序点: 偶数 = use/输入, 奇数 = def/输出.
+///
+/// **为什么是 u64**（v27 M6-77）：原实现用 u32（高 16 位块号 + 低 16 位指令号×2），
+/// 于是**单块超过 32768 条指令**时位置会越界撞进下一块的区间 ⇒ 活区间排序错乱
+/// ⇒ 两个真正重叠的值被判成不重叠、被分到同一物理寄存器 ⇒ 运行期错值/AV。
+/// 实测：`-C opt-level=2` 下同一函数里 ~80 条 `u128` 乘法链（≈ 5000+ 条指令）就会触发，
+/// 分配器自检报"活跃区间重叠"（`WA-50`）。块步长取 2^32 后，单块可容纳 2^31 条指令。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ProgPoint(u32);
+pub struct ProgPoint(u64);
 
 impl ProgPoint {
-    /// 每个块的最大指令数 (2^16 / 2 = 32768).
-    pub const BLOCK_STRIDE: u32 = 0x10000;
+    /// 每个块的程序点跨度（单块最多 2^31 条指令）。
+    pub const BLOCK_STRIDE: u64 = 1u64 << 32;
 
     /// 从 (block_index, instruction_index_in_block) 构造程序点。
     /// instruction_index 自动翻倍以预留 use/def 空间。
     pub fn new(block: u32, inst: u32) -> Self {
-        ProgPoint(block * Self::BLOCK_STRIDE + inst * 2)
+        ProgPoint(u64::from(block) * Self::BLOCK_STRIDE + u64::from(inst) * 2)
     }
 
     /// 程序点之前的位置。
@@ -45,10 +51,10 @@ impl ProgPoint {
     }
 
     /// 最大值（用于 "永远不被使用的下一个使用点"）。
-    pub const MAX: ProgPoint = ProgPoint(u32::MAX);
+    pub const MAX: ProgPoint = ProgPoint(u64::MAX);
 
     /// 获取原始值。
-    pub fn raw(self) -> u32 {
+    pub fn raw(self) -> u64 {
         self.0
     }
 }
@@ -138,6 +144,34 @@ impl LiveInterval {
         self.segments.iter().any(|seg| seg.contains(point))
     }
 
+    /// **把 `[start, end]` 整段都标成活跃**（同一块内的"定义 → 使用"跨度）。
+    ///
+    /// 为什么需要：`cover(point)` 只覆盖单点（`[p, p+1)`），且只在"相邻"时合并。
+    /// 于是一个值"在 #0 定义、在 #2 使用"会得到 `[1,2)` 与 `[4,5)` 两段、中间
+    /// `[2,4)` 是**空洞**——分配器据此认为它在 #1 已死，可以把那个物理寄存器
+    /// 分给别人 ⇒ **两个同时活着的值共用一个寄存器**（v27 M6 实测：`lea` 出的地址
+    /// 被后来的值踩掉，机器码出现 `StoreMemR { src: RAX, src2: RAX }`，静默错值/AV）。
+    ///
+    /// 约束：`start`/`end` 必须来自**同一个块**（调用方保证）。跨块的"活进活出"
+    /// 由 `live_in`/`live_out` 那一步按整块扩展，不靠这里。
+    pub fn cover_range(&mut self, start: ProgPoint, end: ProgPoint) {
+        if end < start {
+            return;
+        }
+        self.cover(start);
+        let end_after = end.after();
+        // 从后往前找第一段"起点在 end 之前"的段，把它延到 end_after。
+        // 段始终按扫描序升序（`cover` 只往后 push），所以这里取到的是正确的那一段。
+        for seg in self.segments.iter_mut().rev() {
+            if seg.start <= end {
+                if seg.end < end_after {
+                    seg.end = end_after;
+                }
+                return;
+            }
+        }
+    }
+
     /// 在 point 之后的第一个使用点（用于 spill 启发式）。
     ///
     /// `uses` 按程序点升序（阶段 1 按块/指令遍历序 `add_use`，每个 use 点
@@ -205,6 +239,9 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
     let mut global_inst = 0usize;
     for (block_idx, block) in blocks.iter().enumerate() {
         let block_u32 = block_idx as u32;
+        // 本块内 xreg → 首次定义点：同块内"定义 → 使用"的整段要填上
+        // （否则中间留洞，见 `LiveInterval::cover_range` 的说明）。每块重置。
+        let mut block_first_def: HashMap<XReg, ProgPoint> = HashMap::new();
 
         for (inst_idx, _inst) in block.instructions.iter().enumerate() {
             let inst_u32 = inst_idx as u32;
@@ -232,9 +269,14 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
                     if is_def {
                         interval.add_def(def_point);
                         interval.cover(def_point);
+                        block_first_def.entry(xreg).or_insert(def_point);
                     } else {
                         interval.add_use(use_point);
                         interval.cover(use_point);
+                        // 同块内已有定义 ⇒ 把 `[首次定义, 使用]` 整段标活。
+                        if let Some(&dp) = block_first_def.get(&xreg) {
+                            interval.cover_range(dp, use_point);
+                        }
                     }
                 }
             }
@@ -290,6 +332,17 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
     let mut live_in: Vec<HashSet<XReg>> = vec![HashSet::new(); num_blocks];
     let mut live_out: Vec<HashSet<XReg>> = vec![HashSet::new(); num_blocks];
 
+    // 诊断：`FORGE_TRACE_LIVE=1` 打印 CFG 后继表——活区间断裂最常见的根因是
+    // 某条分支没报告 target ⇒ `live_out` 偏小 ⇒ 两个同时活着的值被分到同一寄存器。
+    if crate::pipeline::trace::knob("FORGE_TRACE_LIVE") {
+        for (i, succs) in block_succs.iter().enumerate() {
+            eprintln!(
+                "[live] succ[b{i}] = {succs:?}（末指令 {:?}）",
+                blocks[i].instructions.last()
+            );
+        }
+    }
+
     loop {
         let mut changed = false;
         // 逆序处理（从出口向后传播）
@@ -321,21 +374,27 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
     // 扩展 interval 以覆盖跨块活跃范围
     // 仅当 XReg 来自前驱（在 block 外部定义）时扩展到 block_start
     // 仅当 XReg 到达后继时扩展到 block_end
+    //
+    // **必须 `cover_range` 覆盖整块，而不是 `cover` 单点**：`cover` 只标 `[p, p+1)`，
+    // 于是"在块首和块尾各标一个点"中间全是**洞**——分配器认为该值在这段里已死，
+    // 可以把它的物理寄存器分给别人（v27 M6 实测：活区间 `[7,8) [12,13)` 中间 4 个
+    // 程序点不设防，`lea` 出来的地址被后来的值踩掉 ⇒ `store` 写到垃圾地址）。
+    // 块级 liveness（live_in/live_out）语义上就是"整块都活着"，这里如实覆盖。
     for (vreg, interval) in intervals.iter_mut() {
         for block_idx in 0..num_blocks {
             let block_u32 = block_idx as u32;
             let last_inst = blocks[block_idx].instructions.len().saturating_sub(1) as u32;
+            let block_start = ProgPoint::new(block_u32, 0);
+            let block_end = ProgPoint::inst_end(block_u32, last_inst);
 
-            // 扩展到 block_end：VReg 活跃并传递到后继块
+            // 传递到后继块 ⇒ 从块首（或本块内首次定义之后）到块尾都活着。
             if live_out[block_idx].contains(vreg) {
-                let block_end = ProgPoint::inst_end(block_u32, last_inst);
-                interval.cover(block_end);
+                interval.cover_range(block_start, block_end);
             }
 
-            // 扩展到 block_start：VReg 来自前驱块（未在本块定义）
+            // 来自前驱块（未在本块定义）⇒ 块首到块尾都活着。
             if live_in[block_idx].contains(vreg) && !block_defs[block_idx].contains(vreg) {
-                let block_start = ProgPoint::new(block_u32, 0);
-                interval.cover(block_start);
+                interval.cover_range(block_start, block_end);
             }
         }
     }

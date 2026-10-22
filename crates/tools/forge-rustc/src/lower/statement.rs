@@ -27,6 +27,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
     ///   与 mono_symbol 一致——static 项符号不参与 alloc_id 编号）；
     /// - 其他种类（Function/VTable/TypeId）→ `None`（调用方跳过；slice 常量
     ///   引用路径上不应出现）。
+    ///
     /// 常量/静态的**地址值**（v27 TLS：线程局部静态在这里被拦截成动态 TLS 调用）。
     ///
     /// 四个调用点（`rvalue.rs` 的 const 地址、`mod.rs` 的 slice 实参、本文件的
@@ -79,8 +80,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             .intern_global_named(&crate::tls_runtime::tls_init_sym(&sym));
         let slot_addr = self.builder.global_addr(GlobalId::new(slot));
         let init_addr = self.builder.global_addr(GlobalId::new(init));
-        let size_v = self.builder.iconst(size, TypeId::I64);
-        let align_v = self.builder.iconst(align, TypeId::I64);
+        let size_v = self.builder.const_int(size, TypeId::I64);
+        let align_v = self.builder.const_int(align, TypeId::I64);
         let fr = self.func_refs.intern(crate::tls_runtime::TLS_RUNTIME);
         let p = self.builder.call(
             FuncRef::new(fr),
@@ -205,7 +206,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     let discr = enum_def
                                         .discriminant_for_variant(self.tcx, variant_idx)
                                         .val;
-                                    let dval = self.builder.iconst(discr as i64, TypeId::I32);
+                                    let dval = self.builder.const_int(discr as i64, TypeId::I32);
                                     self.builder.store(dval, base);
                                 } else if let rustc_abi::Variants::Multiple {
                                     tag,
@@ -269,9 +270,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     //（WA-41 本机确定性复现的根因）。
                                     let tag_w = tag.primitive().size(&self.tcx).bytes() as u32;
                                     let nv = if tag_w >= 8 {
-                                        self.builder.iconst(niche_value as i64, TypeId::I64)
+                                        self.builder.const_int(niche_value as i64, TypeId::I64)
                                     } else {
-                                        self.builder.iconst(niche_value as i64, TypeId::I32)
+                                        self.builder.const_int(niche_value as i64, TypeId::I32)
                                     };
                                     // tag 位置：**按 rustc 布局派生**（WA-44）——
                                     // `niche_tag_offset` 统一处理 ScalarPair 的标量
@@ -282,7 +283,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     if tag_off == 0 {
                                         self.builder.store(nv, base);
                                     } else {
-                                        let off_v = self.builder.iconst(tag_off, TypeId::I64);
+                                        let off_v = self.builder.const_int(tag_off, TypeId::I64);
                                         let tag_addr = self.builder.iadd(base, off_v);
                                         self.builder.store(nv, tag_addr);
                                     }
@@ -296,7 +297,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     let faddr = if off == 0 {
                                         base
                                     } else {
-                                        let off_v = self.builder.iconst(off, TypeId::I64);
+                                        let off_v = self.builder.const_int(off, TypeId::I64);
                                         self.builder.iadd(base, off_v)
                                     };
                                     // 聚合 payload（如 Result::Ok(Layout) 的 16 字节
@@ -331,10 +332,18 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             let faddr = if off == 0 {
                                 base
                             } else {
-                                let off_v = self.builder.iconst(off, TypeId::I64);
+                                let off_v = self.builder.const_int(off, TypeId::I64);
                                 // base 统一为 I64（PTR 的 iadd 在特定上下文 lowering 丢——绕开）
-                                let base_i = self.builder.ireduce(base, TypeId::I64);
-                                self.builder.iadd(base_i, off_v)
+                                //
+                                // **必须是 `ptrtoint`/`inttoptr` 往返，不能 `ireduce`**：
+                                // base 的类型是 PTR，`ireduce` 只接受整数源（verifier 报
+                                // `ConversionBitWidthMismatch ... 类别不匹配`，实测
+                                // `opt_bounds_panic`/`opt_slice_sum` 编译失败）；而
+                                // `store`/`load` 的地址**必须**是指针类型（否则
+                                // `StoreAddrNotPointer`），所以算完偏移要转回 PTR。
+                                let base_i = self.builder.ptrtoint(base, TypeId::I64);
+                                let fa_i = self.builder.iadd(base_i, off_v);
+                                self.builder.inttoptr(fa_i, TypeId::PTR)
                             };
                             let f_ty = f.ty(&self.body.local_decls, self.tcx);
                             let f_sz = layout_bytes(self.tcx, f_ty);
@@ -386,7 +395,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             let addr = if off == 0 {
                                 base
                             } else {
-                                let off_v = self.builder.iconst(off, TypeId::I64);
+                                let off_v = self.builder.const_int(off, TypeId::I64);
                                 self.builder.iadd(base, off_v)
                             };
                             self.builder.store(v, addr);
@@ -471,7 +480,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     let hi = self.builder.global_addr(GlobalId::new(g));
                                     let dst = self.place_addr(place);
                                     self.builder.store(lo, dst);
-                                    let eight = self.builder.iconst(8, TypeId::I64);
+                                    let eight = self.builder.const_int(8, TypeId::I64);
                                     let hi_addr = self.builder.iadd(dst, eight);
                                     self.builder.store(hi, hi_addr);
                                 } else if matches!(dyn_ty.kind(), ty::TyKind::Slice(_)) {
@@ -497,9 +506,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     }
                                     let dst = self.place_addr(place);
                                     self.builder.store(lo, dst);
-                                    let eight = self.builder.iconst(8, TypeId::I64);
+                                    let eight = self.builder.const_int(8, TypeId::I64);
                                     let hi_addr = self.builder.iadd(dst, eight);
-                                    let hi = self.builder.iconst(n as i64, TypeId::I64);
+                                    let hi = self.builder.const_int(n as i64, TypeId::I64);
                                     self.builder.store(hi, hi_addr);
                                 } else {
                                     let val = self.lower_rvalue(rvalue)?;
@@ -522,6 +531,61 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             {
                                 let place_ty = place.ty(&self.body.local_decls, self.tcx).ty;
                                 let place_sz = layout_bytes(self.tcx, place_ty);
+                                // **`place_sz <= 4` 也走这里**（2026-10-19 修）：以前只在
+                                // `> 4` 时拆写，小聚合（如 `(u16, bool)` 4 字节、
+                                // `(u8, bool)` 2 字节）落到下面"当普通 rvalue"⇒ 标志位
+                                // **被丢掉** ⇒ `-Coverflow-checks=on` 静默回绕。
+                                // 小聚合**不能**沿用"I32 存标志"（2 字节槽写 4 字节会
+                                // 覆盖相邻局部，WA-22 的坑）⇒ 按标志字段的**真实字节宽**
+                                // 落槽。
+                                if place_sz <= 4 {
+                                    let lhs = self.lower_operand(op1)?;
+                                    let rhs = self.lower_operand(op2)?;
+                                    let op1_ty = op1.ty(&self.body.local_decls, self.tcx);
+                                    let signed = op1_ty.is_signed();
+                                    let (v, f) =
+                                        self.lower_checked_op(*bin_op, lhs, rhs, signed)?;
+                                    let flag_ty = self.field_ty(place_ty, 1);
+                                    let flag_sz = layout_bytes(self.tcx, flag_ty);
+                                    let base = self.place_addr(place);
+                                    // 值半区：宽度由值自身类型决定（u8 → 1 字节）
+                                    self.builder.store(v, base);
+                                    let target = match flag_sz {
+                                        1 => Some(TypeId::I8),
+                                        2 => Some(TypeId::I16),
+                                        4 => Some(TypeId::I32),
+                                        8 => Some(TypeId::I64),
+                                        _ => None,
+                                    };
+                                    let Some(target) = target else {
+                                        return Err(ForgeError::Message(format!(
+                                            "checked 算术的标志字段宽度不支持：{flag_sz} 字节（{place_ty}）"
+                                        )));
+                                    };
+                                    // MIR 里 checked 算术的标志**恒为 `bool`** ⇒ 先
+                                    // uextend 到 **I32**（既有路径实证可用），再按标志
+                                    // 字段真实宽度 ireduce。**不能**直接
+                                    // `uextend(BOOL → I8)`。
+                                    let f32v = if self.builder.value_type(f) == Some(TypeId::BOOL) {
+                                        self.builder.uextend(f, TypeId::I32)
+                                    } else {
+                                        f
+                                    };
+                                    let f_val = if target == TypeId::I32 {
+                                        f32v
+                                    } else {
+                                        self.builder.ireduce(f32v, target)
+                                    };
+                                    let f_off = self.field_offset(place_ty, 1);
+                                    let f_addr = if f_off != 0 {
+                                        let off_v = self.builder.const_int(f_off, TypeId::I64);
+                                        self.builder.iadd(base, off_v)
+                                    } else {
+                                        base
+                                    };
+                                    self.builder.store(f_val, f_addr);
+                                    return Ok(());
+                                }
                                 if place_sz > 4 {
                                     let lhs = self.lower_operand(op1)?;
                                     let rhs = self.lower_operand(op2)?;
@@ -539,7 +603,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         1,
                                     );
                                     let f_addr = if f_off != 0 {
-                                        let off_v = self.builder.iconst(f_off, TypeId::I64);
+                                        let off_v = self.builder.const_int(f_off, TypeId::I64);
                                         self.builder.iadd(base, off_v)
                                     } else {
                                         base
@@ -548,9 +612,17 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     // BOOL 值的 store 在 (i32,bool) 聚合邻槽场景写 8 字节
                                     //（movq），覆盖相邻局部槽（bump1 实证：flag@+4 的
                                     // movq 覆盖 _1 参数槽 -0x50 的 p → 写回 store [0]
-                                    // SEGV）。显式 ireduce 到 I32（4 字节，槽内不越界），
+                                    // SEGV）。显式收窄到 I32（4 字节，槽内不越界），
                                     // 解构读 bool 只取低字节不受影响。
-                                    let f32 = self.builder.ireduce(f, TypeId::I32);
+                                    //
+                                    // **`bool`(i1) → i32 是加宽**：`ireduce` 只能变窄，用它
+                                    // 会产出非法 IR（verifier: ConversionBitWidthMismatch
+                                    // `t1 → t4`）。按值类型分派。
+                                    let f32 = if self.builder.value_type(f) == Some(TypeId::BOOL) {
+                                        self.builder.uextend(f, TypeId::I32)
+                                    } else {
+                                        self.builder.ireduce(f, TypeId::I32)
+                                    };
                                     self.builder.store(f32, f_addr);
                                     return Ok(());
                                 }
@@ -584,8 +656,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     };
                                     let base = self.place_addr(place);
                                     self.builder.store(ptr, base);
-                                    let lenv = self.builder.iconst(meta as i64, TypeId::I64);
-                                    let eight = self.builder.iconst(8, TypeId::I64);
+                                    let lenv = self.builder.const_int(meta as i64, TypeId::I64);
+                                    let eight = self.builder.const_int(8, TypeId::I64);
                                     let hi = self.builder.iadd(base, eight);
                                     self.builder.store(lenv, hi);
                                     return Ok(());
@@ -664,8 +736,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 let (body_blk, bp) = self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
                 let done = self.builder.create_block();
                 self.builder.switch_to_block(cur);
-                let zero = self.builder.iconst(0, TypeId::I64);
-                let one = self.builder.iconst(1, TypeId::I64);
+                let zero = self.builder.const_int(0, TypeId::I64);
+                let one = self.builder.const_int(1, TypeId::I64);
                 self.builder.jump(loop_blk, &[zero]);
                 self.builder.switch_to_block(loop_blk);
                 let i = lp[0];
@@ -676,7 +748,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 let off = if sz == 1 {
                     bi
                 } else {
-                    let szv = self.builder.iconst(sz, TypeId::I64);
+                    let szv = self.builder.const_int(sz, TypeId::I64);
                     self.builder.imul(bi, szv)
                 };
                 // WA-37 D2：逐元素复制必须是**全宽**——元素 >8B（如
@@ -692,7 +764,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     let chunk_off = if chunk == 0 {
                         off
                     } else {
-                        let co = self.builder.iconst(chunk, TypeId::I64);
+                        let co = self.builder.const_int(chunk, TypeId::I64);
                         self.builder.iadd(off, co)
                     };
                     let saddr = self.builder.iadd(src_v, chunk_off);

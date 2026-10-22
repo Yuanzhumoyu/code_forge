@@ -125,7 +125,7 @@ impl<'a> CodegenCtx<'a> {
     /// Allocate a new stack slot for a local variable, return its pointer.
     fn alloc_slot(&mut self) -> Value {
         let base = self.builder.stack_addr(0);
-        let offset = self.builder.iconst_i32(self.next_offset);
+        let offset = self.builder.constant(self.next_offset);
         self.next_offset -= 4;
         self.builder.iadd(base, offset)
     }
@@ -184,7 +184,7 @@ pub fn codegen_function(
     for (i, param_node) in func_node.get_children("params").iter().enumerate() {
         let pname = param_node.get_text("name").unwrap_or("_").to_string();
         let base = b.stack_addr(0);
-        let offset = b.iconst_i32(-4 * (i as i32 + 1));
+        let offset = b.constant(-4 * (i as i32 + 1));
         let slot = b.iadd(base, offset);
         b.store(entry_params[i], slot);
         syms.locals.insert(pname, slot);
@@ -204,7 +204,7 @@ pub fn codegen_function(
 
         // Implicit return 0 if no explicit return
         if !cg.terminated {
-            let zero = cg.builder.iconst_i32(0);
+            let zero = cg.builder.constant(0i32);
             cg.builder.ret(&[zero]);
         }
     } // cg dropped — borrow on b released
@@ -287,7 +287,7 @@ fn codegen_return(cg: &mut CodegenCtx, node: AstRef<'_>) {
     let val = node.get_optional("value");
     let v = match val {
         Some(Some(expr_node)) => codegen_expr(cg, expr_node),
-        _ => cg.builder.iconst_i32(0),
+        _ => cg.builder.constant(0i32),
     };
 
     // Inlining mode: store return value to temp slot and jump to after-block
@@ -380,7 +380,7 @@ fn codegen_if(cg: &mut CodegenCtx, node: AstRef<'_>) {
     // Evaluate condition expression. For integer comparisons this produces an i1
     // (0 or 1). icmp(NE, val, 0) normalizes non-boolean values to i1.
     let cond_val = codegen_expr(cg, cond_node);
-    let zero = cg.builder.iconst_i32(0);
+    let zero = cg.builder.constant(0i32);
     let is_true = cg.builder.icmp(IntCC::Ne, cond_val, zero);
 
     let then_blk = cg.builder.create_block();
@@ -451,7 +451,7 @@ fn codegen_while(cg: &mut CodegenCtx, node: AstRef<'_>) {
     // Condition block
     cg.builder.switch_to_block(cond_blk);
     let cond_val = codegen_expr(cg, cond_node);
-    let zero = cg.builder.iconst_i32(0);
+    let zero = cg.builder.constant(0i32);
     let is_true = cg.builder.icmp(IntCC::Ne, cond_val, zero);
     // NOTE: branch directly on the i1 icmp result (like for/do-while).
     // The old `sextend(is_true, I32)` made the branch condition i32, which
@@ -505,7 +505,7 @@ fn codegen_for(cg: &mut CodegenCtx, node: AstRef<'_>) {
     cg.builder.switch_to_block(cond_blk);
     if let Some(Some(cond_node)) = node.get_optional("condition") {
         let cond_val = codegen_expr(cg, cond_node);
-        let zero = cg.builder.iconst_i32(0);
+        let zero = cg.builder.constant(0i32);
         let is_true = cg.builder.icmp(IntCC::Ne, cond_val, zero);
         cg.builder.branch(is_true, body_blk, &[], exit_blk, &[]);
     } else {
@@ -591,7 +591,7 @@ fn codegen_do_while(cg: &mut CodegenCtx, node: AstRef<'_>) {
     // Condition block
     cg.builder.switch_to_block(cond_blk);
     let cond_val = codegen_expr(cg, cond_node);
-    let zero = cg.builder.iconst_i32(0);
+    let zero = cg.builder.constant(0i32);
     let is_true = cg.builder.icmp(IntCC::Ne, cond_val, zero);
     cg.builder.branch(is_true, body_blk, &[], exit_blk, &[]);
 
@@ -655,19 +655,19 @@ fn codegen_expr(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
         "NUMBER" => {
             let text = node.text().unwrap_or("0");
             let val = parse_number(text);
-            cg.builder.iconst_i32(val)
+            cg.builder.constant(val)
         }
         "CHAR" => {
             let text = node.text().unwrap_or("'\\0'");
             // Extract the character between the quotes
             let ch = text.chars().nth(1).unwrap_or('\0');
-            cg.builder.iconst_i32(ch as i32)
+            cg.builder.constant(ch as i32)
         }
         "IDENT" => {
             let name = node.text().unwrap_or("_");
             // Check enum values first
             if let Some(&val) = cg.syms.enum_values.get(name) {
-                return cg.builder.iconst_i32(val);
+                return cg.builder.constant(val);
             }
             // Then check variables
             let ptr = cg
@@ -820,7 +820,7 @@ fn codegen_assign_expr(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
     }
     // Not an assignment (just a logical_or) — process first child
     if children.is_empty() {
-        return cg.builder.iconst_i32(0);
+        return cg.builder.constant(0i32);
     }
     codegen_expr(cg, children[0])
 }
@@ -960,7 +960,7 @@ fn apply_compound_op(cg: &mut CodegenCtx, op: &str, ptr: Value, rhs: Value) -> V
 fn codegen_bitwise_binary(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
     let children = flat_children(node);
     if children.is_empty() {
-        return cg.builder.iconst_i32(0);
+        return cg.builder.constant(0i32);
     }
     if children.len() == 1 {
         return codegen_expr(cg, children[0]);
@@ -988,7 +988,7 @@ fn codegen_bitwise_binary(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
 fn codegen_binary_arith(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
     let children = flat_children(node);
     if children.is_empty() {
-        return cg.builder.iconst_i32(0);
+        return cg.builder.constant(0i32);
     }
     let mut lhs = codegen_expr(cg, children[0]);
     let mut i = 1;
@@ -1013,7 +1013,7 @@ fn codegen_binary_arith(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
 fn codegen_binary_comparison(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
     let children = flat_children(node);
     if children.is_empty() {
-        return cg.builder.iconst_i32(0);
+        return cg.builder.constant(0i32);
     }
     if children.len() == 1 {
         return codegen_expr(cg, children[0]);
@@ -1044,12 +1044,12 @@ fn codegen_binary_comparison(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
 fn codegen_logical_and(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
     let children = flat_children(node);
     if children.is_empty() {
-        return cg.builder.iconst_i32(0);
+        return cg.builder.constant(0i32);
     }
     if children.len() == 1 {
         return codegen_expr(cg, children[0]);
     }
-    let zero = cg.builder.iconst_i32(0);
+    let zero = cg.builder.constant(0i32);
 
     let lhs = codegen_expr(cg, children[0]);
     let mut result = cg.builder.icmp(IntCC::Ne, lhs, zero);
@@ -1069,12 +1069,12 @@ fn codegen_logical_and(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
 fn codegen_logical_or(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
     let children = flat_children(node);
     if children.is_empty() {
-        return cg.builder.iconst_i32(0);
+        return cg.builder.constant(0i32);
     }
     if children.len() == 1 {
         return codegen_expr(cg, children[0]);
     }
-    let zero = cg.builder.iconst_i32(0);
+    let zero = cg.builder.constant(0i32);
 
     let lhs = codegen_expr(cg, children[0]);
     let mut result = cg.builder.icmp(IntCC::Ne, lhs, zero);
@@ -1094,7 +1094,7 @@ fn codegen_logical_or(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
 fn codegen_unary_expr(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
     let children = flat_children(node);
     if children.is_empty() {
-        return cg.builder.iconst_i32(0);
+        return cg.builder.constant(0i32);
     }
     if children.len() == 1 {
         return codegen_expr(cg, children[0]);
@@ -1104,12 +1104,12 @@ fn codegen_unary_expr(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
     let operand = codegen_expr(cg, children[1]);
     match op {
         "-" => {
-            let zero = cg.builder.iconst_i32(0);
+            let zero = cg.builder.constant(0i32);
             cg.builder.isub(zero, operand)
         }
         "+" => operand, // unary plus is no-op
         "!" => {
-            let zero = cg.builder.iconst_i32(0);
+            let zero = cg.builder.constant(0i32);
             let cmp = cg.builder.icmp(IntCC::Eq, operand, zero);
             cg.builder.sextend(cmp, TypeId::I32)
         }
@@ -1158,7 +1158,7 @@ fn codegen_call(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
         return r
             .first()
             .copied()
-            .unwrap_or_else(|| cg.builder.iconst_i32(0));
+            .unwrap_or_else(|| cg.builder.constant(0i32));
     }
 
     // Evaluate call arguments
@@ -1195,7 +1195,7 @@ fn codegen_call(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
         let val = arg_vals
             .get(i)
             .copied()
-            .unwrap_or_else(|| cg.builder.iconst_i32(0));
+            .unwrap_or_else(|| cg.builder.constant(0i32));
         cg.builder.store(val, slot);
         cg.syms.locals.insert(pname, slot);
     }
@@ -1213,7 +1213,7 @@ fn codegen_call(cg: &mut CodegenCtx, node: AstRef<'_>) -> Value {
 
     // If the body didn't return, store 0 and jump to after
     if !cg.terminated {
-        let zero = cg.builder.iconst_i32(0);
+        let zero = cg.builder.constant(0i32);
         cg.builder.store(zero, ret_slot);
         cg.builder.jump(after_blk, &[]);
     }

@@ -66,7 +66,7 @@ pub(crate) fn build_tls_runtime(
     let (entry, params) = b.create_entry_block();
     let _ = entry;
     let (slot, size, align, init) = (params[0], params[1], params[2], params[3]);
-    let zero = b.iconst(0, TypeId::I64);
+    let zero = b.const_int(0, TypeId::I64);
 
     let use_bb = b.create_block();
     let alloc_bb = b.create_block();
@@ -94,27 +94,27 @@ pub(crate) fn build_tls_runtime(
     b.switch_to_block(alloc_bb);
     let raw = b.call(FuncRef::new(tls_alloc), &[], &[TypeId::I32])[0];
     let raw64 = b.uextend(raw, TypeId::I64);
-    let bad = b.iconst(0xFFFF_FFFF, TypeId::I64);
+    let bad = b.const_int(0xFFFF_FFFFi64, TypeId::I64);
     let failed = b.icmp(IntCC::Eq, raw64, bad);
     b.branch(failed, die_bb, &[], ok_bb, &[]);
 
     // ok_bb：槽里存 **索引 + 1**（0 保留为"未分配"）
     b.switch_to_block(ok_bb);
-    let one = b.iconst(1, TypeId::I64);
+    let one = b.const_int(1, TypeId::I64);
     let stored = b.iadd(raw64, one);
     b.store(stored, slot);
     b.jump(merge_bb, &[stored]);
 
     // die_bb：索引耗尽 —— 明确终止，不做半吊子降级
     b.switch_to_block(die_bb);
-    let code = b.iconst(3, TypeId::I64);
+    let code = b.const_int(3, TypeId::I64);
     b.call(FuncRef::new(exit), &[code], &[]);
     b.unreachable();
 
     // merge：本线程的块已存在？
     b.switch_to_block(merge_bb);
     let mi = merge_p[0];
-    let one2 = b.iconst(1, TypeId::I64);
+    let one2 = b.const_int(1, TypeId::I64);
     let idx0 = b.isub(mi, one2);
     let cur = b.call(FuncRef::new(tls_get), &[idx0], &[TypeId::I64])[0];
     let have_ptr = b.icmp(IntCC::Ne, cur, zero);

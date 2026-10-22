@@ -90,18 +90,15 @@ fn bit_mask(bits: u32) -> Big {
 /// 返回最终落点的子节点 ✗（标量或更深的聚合 ✗）；路径越界 / 中途落到标量 ⇒ `None` ✗。
 fn agg_child_at(
     pool: &forge_ir::ir::constant::ConstantPool,
-    agg: forge_ir::AggId,
+    agg: forge_ir::ConstId,
     path: &[usize],
-) -> Option<forge_ir::ir::constant::AggChild> {
-    use forge_ir::ir::constant::AggChild;
+) -> Option<forge_ir::ConstId> {
     let (first, rest) = path.split_first()?;
-    let mut node: AggChild = pool.get_aggregate(agg)?.children.get(*first)?.clone();
+    let mut node: forge_ir::ConstId = *pool.agg(agg)?.children.get(*first)?;
     for idx in rest {
-        let sub = match &node {
-            AggChild::Agg(id) => *id,
-            AggChild::Scalar(_) => return None,
-        };
-        node = pool.get_aggregate(sub)?.children.get(*idx)?.clone();
+        // 子节点是聚合才能继续下钻；标量子节点 ⇒ 路径越界
+        pool.agg(node)?;
+        node = *pool.agg(node)?.children.get(*idx)?;
     }
     Some(node)
 }
@@ -118,7 +115,7 @@ fn resolve_agg_chain(
     func: &forge_ir::Function,
     value: Value,
     extra: usize,
-) -> Option<(forge_ir::AggId, Vec<usize>)> {
+) -> Option<(forge_ir::ConstId, Vec<usize>)> {
     use forge_ir::ir::dfg::ValueDef;
     let inst_id = match func.dfg.value_def(value)? {
         ValueDef::Inst(i, _) => *i,
@@ -133,8 +130,10 @@ fn resolve_agg_chain(
         _ => return None,
     };
     match inst.immediates.get(1) {
-        // 链的根部：常量聚合 ✗ ⇒ 路径 = [本层 idx, 追加的 extra] ✗
-        Some(Immediate::Agg(root)) => Some((*root, vec![own, extra])),
+        // 链的根部：常量聚合（`Const` 里的 Agg tag）⇒ 路径 = [本层 idx, 追加的 extra]
+        Some(Immediate::Const(root)) if root.tag() == forge_ir::ConstId::TAG_AGG => {
+            Some((*root, vec![own, extra]))
+        }
         _ => {
             let src = *inst.operands.first()?;
             let (root, mut path) = resolve_agg_chain(func, src, own)?;
@@ -152,30 +151,25 @@ fn resolve_agg_chain(
 /// 但**链上的下一层**会带着完整路径再折一次（见 [`resolve_agg_chain`] ✗）。
 fn fold_extract_value(
     pool: &forge_ir::ir::constant::ConstantPool,
-    agg: forge_ir::AggId,
+    agg: forge_ir::ConstId,
     path: &[usize],
     result_ty: TypeId,
 ) -> Result<Option<ConstValue>, IrError> {
-    use forge_ir::ir::constant::AggChild;
-    let child = match agg_child_at(pool, agg, path) {
-        Some(c) => c,
-        None => return Ok(None),
+    let Some(cid) = agg_child_at(pool, agg, path) else {
+        return Ok(None);
     };
-    Ok(match child {
-        AggChild::Scalar(cid) => {
-            if let Some((v, _bits)) = pool.get_int(cid) {
-                Some(ConstValue::Int(Big::from_i128(v), result_ty))
-            } else {
-                pool.get_float128(cid).map(|bits| {
-                    ConstValue::Float(
-                        Big::from_f64(f64::from_bits(bits as u64)).unwrap_or(Big::F_ZERO),
-                        result_ty,
-                    )
-                })
-            }
+    // 嵌套聚合结果：不做标量折叠（值语义；codegen 仅折叠时读取）
+    if pool.agg(cid).is_some() {
+        return Ok(None);
+    }
+    Ok(match pool.get(cid) {
+        Some(forge_ir::ir::constant::ConstEntry::Bits(bv)) => {
+            Some(ConstValue::Int(Big::from_i128(bv.bits as i128), result_ty))
         }
-        // 嵌套聚合结果：不做标量折叠（值语义；codegen 仅折叠时读取）
-        AggChild::Agg(_) => None,
+        Some(forge_ir::ir::constant::ConstEntry::Big(b)) => {
+            Some(ConstValue::Int(b.clone(), result_ty))
+        }
+        _ => None,
     })
 }
 
@@ -1129,7 +1123,7 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
             match &inst.opcode {
                 Opcode::Iconst | Opcode::Fconst | Opcode::Vconst => {
                     if let Some(cid) = inst.immediates.first().and_then(|i| i.as_const())
-                        && let Some(big) = func.constants.resolve_big(cid)
+                        && let Some(big) = func.constants.as_big(cid)
                     {
                         let ty = func.dfg.value_type(v).unwrap_or(TypeId::VOID);
                         let cv = if matches!(inst.opcode, Opcode::Iconst) {
@@ -1176,13 +1170,17 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
         // 保证 worklist 单遍收敛（否则 UntilFixedPoint 要跑数十轮）。
         // backlog #3：`extractvalue` 的聚合源可以是**值**（嵌套聚合链 ✗）——这种指令的操作数
         // 不是常量 ✗，但只要能沿定义链上溯到**常量聚合** ✗，仍可一次折到底 ✗。
-        let extract_path: Option<(forge_ir::AggId, Vec<usize>)> =
+        let extract_path: Option<(forge_ir::ConstId, Vec<usize>)> =
             if matches!(inst_info.opcode, Opcode::ExtractValue) {
                 match inst_info.immediates.first() {
                     Some(Immediate::Uint(i)) => {
                         let idx = *i as usize;
                         match inst_info.immediates.get(1) {
-                            Some(Immediate::Agg(id)) => Some((*id, vec![idx])),
+                            Some(Immediate::Const(id))
+                                if id.tag() == forge_ir::ConstId::TAG_AGG =>
+                            {
+                                Some((*id, vec![idx]))
+                            }
                             _ => inst_info
                                 .operands
                                 .first()
@@ -1220,11 +1218,11 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
         } {
             // 替换指令为 Iconst/Fconst (插入常量池)
             let new_const_id = match &folded {
-                ConstValue::Int(v, _) => func.constants.insert_big(v.clone()),
-                ConstValue::Float(v, _) => func.constants.insert_big(v.clone()),
+                ConstValue::Int(v, _) => func.constants.intern_big(v.clone()),
+                ConstValue::Float(v, _) => func.constants.intern_big(v.clone()),
                 ConstValue::Bool(b) => {
                     let big = Big::from_i64(if *b { 1 } else { 0 });
-                    func.constants.insert_big(big)
+                    func.constants.intern_big(big)
                 }
             };
 
@@ -1243,10 +1241,16 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
             inst.operands.clear();
             inst.immediates = smallvec::smallvec![Immediate::Const(new_const_id)];
             // Update result value type if bool was folded
+            //
+            // **必须是 `BOOL`（i1），不是 `I32`**：本 IR 里比较结果与 `br` 条件恒为 i1
+            // （verifier 的 "icmp/fcmp results are Bool" 规则要求）。设成 i32 会让下游
+            // 第二条比较一边是 i32、另一边仍是 i8/i64 ⇒ 折叠后 IR 非法。
+            // 2026-10-19 实测：`wsprintfA("%d", 42)` + `-O` 触发
+            // `TypeMismatch { Icmp, expected: t2, found: t4 }`（i8 vs i32）。
             if matches!(folded, ConstValue::Bool(_))
                 && let Some(result_val) = inst.results.first().copied()
             {
-                func.dfg.set_value_type(result_val, TypeId::I32);
+                func.dfg.set_value_type(result_val, TypeId::BOOL);
             }
 
             known.insert(value, folded);
@@ -1334,7 +1338,7 @@ mod tests {
             inst.immediates
                 .first()
                 .and_then(|i| i.as_const())
-                .and_then(|cid| func.constants.get_big(cid))
+                .and_then(|cid| func.constants.big(cid))
                 .and_then(|b| b.try_to_i64())
         } else {
             None
@@ -1409,8 +1413,8 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let a = b.iconst_i32(3);
-        let b_val = b.iconst_i32(5);
+        let a = b.constant(3i32);
+        let b_val = b.constant(5i32);
         let sum = b.iadd(a, b_val);
         b.ret(&[sum]);
 
@@ -1429,8 +1433,8 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let a = b.iconst_i32(100);
-        let b_val = b.iconst_i32(200);
+        let a = b.constant(100i32);
+        let b_val = b.constant(200i32);
         let sum = b.iadd(a, b_val);
         b.ret(&[sum]);
 
@@ -1450,7 +1454,7 @@ mod tests {
         let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
         b.switch_to_block(entry);
         let x = params[0];
-        let c = b.iconst_i32(5);
+        let c = b.constant(5i32);
         let sum = b.iadd(x, c);
         b.ret(&[sum]);
 
@@ -1472,15 +1476,15 @@ mod tests {
         let else_blk = b.create_block();
 
         b.switch_to_block(entry);
-        let one = b.iconst_i32(1); // always true (non-zero)
+        let one = b.constant(1i32); // always true (non-zero)
         b.branch(one, then_blk, &[], else_blk, &[]);
 
         b.switch_to_block(then_blk);
-        let v42 = b.iconst_i32(42);
+        let v42 = b.constant(42i32);
         b.ret(&[v42]);
 
         b.switch_to_block(else_blk);
-        let v99 = b.iconst_i32(99);
+        let v99 = b.constant(99i32);
         b.ret(&[v99]);
 
         let mut func = b.finish().expect("build");

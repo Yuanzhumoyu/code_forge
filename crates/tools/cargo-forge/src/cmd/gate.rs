@@ -328,6 +328,29 @@ fn build_steps(a: &Args) -> Vec<Step> {
             "e2e_trap_semantics_invariants",
         ],
     ));
+    // **真 `std` 语料**（v27 M6）：`examples/forge-rustc-std-hello` 用 forge 编一个
+    // 用到 `println!`/`String`/`Vec`/`HashMap`/thread/fs/net/第三方 crate 的程序，
+    // 并把输出与**LLVM 编译的同一份源码**逐行对拍（`-O0` 与 `-O2` 各一遍）。
+    //
+    // 为什么进门禁：e2e 是**自造小用例**，覆盖不到"std 内部的循环/迭代器/分配器组合"；
+    // 这条是唯一能证明"真 std 程序跑得对且与 LLVM 等价"的检查，此前只在手工验证时跑。
+    // 脚本自身是**离线**的（把 CARGO_HOME 播种到 `target/cargo-home`，见其头部注释），
+    // 且生成物全落 `target/`；单步实测约 40s。
+    push!((
+        Step {
+            name: "rustc-std",
+            what: "真 `std` 语料（forge 编 vs LLVM 编，逐行对拍；`-O0`/`-O2`）",
+            program: "powershell",
+            args: vec![
+                "-NoProfile".into(),
+                "-ExecutionPolicy".into(),
+                "Bypass".into(),
+                "-File".into(),
+                "examples/forge-rustc-std-hello/run-offline.ps1".into(),
+            ],
+        },
+        Scope::Windows,
+    ));
 
     // ── 格式与静态检查 ────────────────────────────────────────────────
     // 多 CGU / 并行 / 增量的**确定性**（WA-38/39 的核心承诺）：此前只在 CI 作业里跑，
@@ -374,6 +397,25 @@ fn build_steps(a: &Args) -> Vec<Step> {
             "dwarf_sections",
             "--",
             "--test-threads=1",
+        ],
+    ));
+    // M6-①：`forge-rustc` 的 clippy 此前被排除在全量 lint 之外（下面的 `clippy` 步骤
+    // 带 `--exclude forge-rustc`）——它需要 nightly + rustc-dev，而 `rustc-*` 系列步骤
+    // 本来就跑在这套工具链上。0 告警是 2026-10-18 逐条修出来的，进门禁防回潮。
+    push!(cargo_step(
+        "rustc-clippy",
+        "rustc 后端 lint（`cargo clippy -p forge-rustc --all-targets -- -D warnings`）",
+        Scope::Windows,
+        &[
+            "clippy",
+            "-p",
+            "forge-rustc",
+            "--all-targets",
+            "-j",
+            "4",
+            "--",
+            "-D",
+            "warnings",
         ],
     ));
     push!(cargo_step(

@@ -31,9 +31,9 @@ pub fn build_alloc_runtime<'tcx>(
         );
         let mut b = FunctionBuilder::new("__rust_alloc", TypeContext::new(), sig);
         let (_blk, p) = b.create_entry_block();
-        let zero = b.iconst(0, TypeId::I64);
-        let ty = b.iconst(0x3000, TypeId::I64);
-        let prot = b.iconst(0x04, TypeId::I64);
+        let zero = b.const_int(0, TypeId::I64);
+        let ty = b.const_int(0x3000, TypeId::I64);
+        let prot = b.const_int(0x04, TypeId::I64);
         let r = b.call(
             FuncRef::new(valloc),
             &[zero, p[0], ty, prot],
@@ -56,8 +56,8 @@ pub fn build_alloc_runtime<'tcx>(
         );
         let mut b = FunctionBuilder::new("__rust_dealloc", TypeContext::new(), sig);
         let (_blk, p) = b.create_entry_block();
-        let zero = b.iconst(0, TypeId::I64);
-        let rel = b.iconst(0x8000, TypeId::I64);
+        let zero = b.const_int(0, TypeId::I64);
+        let rel = b.const_int(0x8000, TypeId::I64);
         b.call(FuncRef::new(vfree), &[p[0], zero, rel], &[]);
         b.ret(&[]);
         let f = b.finish().expect("build");
@@ -110,8 +110,8 @@ pub fn build_alloc_runtime<'tcx>(
         let new_ptr = nr[0];
         let lt = b.icmp(IntCC::Ult, p[1], p[3]);
         let n = b.select(lt, p[1], p[3]);
-        let zero = b.iconst(0, TypeId::I64);
-        let eight = b.iconst(8, TypeId::I64);
+        let zero = b.const_int(0, TypeId::I64);
+        let eight = b.const_int(8, TypeId::I64);
         b.jump(loop_blk, &[zero]);
         b.switch_to_block(loop_blk);
         let i = lp[0];
@@ -121,8 +121,14 @@ pub fn build_alloc_runtime<'tcx>(
         let ib = bp[0];
         let src = b.iadd(p[0], ib);
         let dst = b.iadd(new_ptr, ib);
-        let v = b.load(src, TypeId::I64);
-        b.store(v, dst);
+        // **load/store 的地址必须是 `ptr`**（verifier：`LoadAddrNotPointer` /
+        // `StoreAddrNotPointer`）。shim 的参数按 ABI 是 i64（GPR 里的地址），
+        // 内存访问前显式 `inttoptr`——漏了这步 IR 在类型上就是非法的，
+        // 只是此前没有 verifier 在生产路径跑过（v27 M5 接上优化管线后暴露）。
+        let src_p = b.inttoptr(src, TypeId::PTR);
+        let dst_p = b.inttoptr(dst, TypeId::PTR);
+        let v = b.load(src_p, TypeId::I64);
+        b.store(v, dst_p);
         let i2 = b.iadd(ib, eight);
         b.jump(loop_blk, &[i2]);
         b.switch_to_block(done_blk);
@@ -185,8 +191,8 @@ pub fn build_alloc_runtime<'tcx>(
         let loop_blk = b.create_block();
         let body_blk = b.create_block();
         let done = b.create_block();
-        let zero = b.iconst(0, TypeId::I64);
-        let one = b.iconst(1, TypeId::I64);
+        let zero = b.const_int(0, TypeId::I64);
+        let one = b.const_int(1, TypeId::I64);
         // 循环索引存栈槽（block 参数在独立 shim 的 regalloc 未写初值）
         let slot = b.stack_addr(-8);
         b.store(zero, slot);
@@ -200,9 +206,13 @@ pub fn build_alloc_runtime<'tcx>(
         b.switch_to_block(body_blk);
         let bi = b.load(slot, TypeId::I64);
         let sa = b.iadd(p[1], bi);
-        let v = b.load(sa, TypeId::I8);
         let da = b.iadd(p[0], bi);
-        b.store(v, da);
+        // 地址必须是 `ptr`：shim 参数按 ABI 是 i64（GPR 里的地址），内存访问前
+        // 显式 `inttoptr`（否则 verifier 报 `LoadAddrNotPointer`/`StoreAddrNotPointer`）。
+        let sa_p = b.inttoptr(sa, TypeId::PTR);
+        let da_p = b.inttoptr(da, TypeId::PTR);
+        let v = b.load(sa_p, TypeId::I8);
+        b.store(v, da_p);
         let i2 = b.iadd(bi, one);
         b.store(i2, slot);
         b.jump(loop_blk, &[]);
@@ -223,8 +233,8 @@ pub fn build_alloc_runtime<'tcx>(
         let loop_blk = b.create_block();
         let body_blk = b.create_block();
         let done = b.create_block();
-        let zero = b.iconst(0, TypeId::I64);
-        let one = b.iconst(1, TypeId::I64);
+        let zero = b.const_int(0, TypeId::I64);
+        let one = b.const_int(1, TypeId::I64);
         let cv = b.ireduce(p[1], TypeId::I8);
         let slot = b.stack_addr(-8);
         b.store(zero, slot);
@@ -236,7 +246,10 @@ pub fn build_alloc_runtime<'tcx>(
         b.switch_to_block(body_blk);
         let bi = b.load(slot, TypeId::I64);
         let da = b.iadd(p[0], bi);
-        b.store(cv, da);
+        // 地址必须是 `ptr`（ABI 的 i64 地址 → `inttoptr`），否则 verifier 报
+        // `StoreAddrNotPointer`。
+        let da_p = b.inttoptr(da, TypeId::PTR);
+        b.store(cv, da_p);
         let i2 = b.iadd(bi, one);
         b.store(i2, slot);
         b.jump(loop_blk, &[]);
@@ -261,9 +274,9 @@ pub fn build_alloc_runtime<'tcx>(
         let (_entry, p) = b.create_entry_block();
         let fwd_lt = b.icmp(IntCC::Ult, p[0], p[1]);
         // 反向起点 i = n - 1；条件 i < n（无符号回绕使 n-1 >= 0 恒成立后递减）
-        let one = b.iconst(1, TypeId::I64);
+        let one = b.const_int(1, TypeId::I64);
         let nm1 = b.isub(p[2], one);
-        let z = b.iconst(0, TypeId::I64);
+        let z = b.const_int(0, TypeId::I64);
         let (fwd_loop, fwd_body, rev_loop, rev_body, done) = (
             b.create_block(),
             b.create_block(),
@@ -285,9 +298,12 @@ pub fn build_alloc_runtime<'tcx>(
         b.switch_to_block(fwd_body);
         let fbi = b.load(fwd_slot, TypeId::I64);
         let fsa = b.iadd(p[1], fbi);
-        let fv = b.load(fsa, TypeId::I8);
         let fda = b.iadd(p[0], fbi);
-        b.store(fv, fda);
+        // 地址必须是 `ptr`（ABI 的 i64 地址 → `inttoptr`）。
+        let fsa_p = b.inttoptr(fsa, TypeId::PTR);
+        let fda_p = b.inttoptr(fda, TypeId::PTR);
+        let fv = b.load(fsa_p, TypeId::I8);
+        b.store(fv, fda_p);
         let fi2 = b.iadd(fbi, one);
         b.store(fi2, fwd_slot);
         b.jump(fwd_loop, &[]);
@@ -300,9 +316,12 @@ pub fn build_alloc_runtime<'tcx>(
         b.switch_to_block(rev_body);
         let rbi = b.load(rev_slot, TypeId::I64);
         let rsa = b.iadd(p[1], rbi);
-        let rv = b.load(rsa, TypeId::I8);
         let rda = b.iadd(p[0], rbi);
-        b.store(rv, rda);
+        // 地址必须是 `ptr`（ABI 的 i64 地址 → `inttoptr`）。
+        let rsa_p = b.inttoptr(rsa, TypeId::PTR);
+        let rda_p = b.inttoptr(rda, TypeId::PTR);
+        let rv = b.load(rsa_p, TypeId::I8);
+        b.store(rv, rda_p);
         let ri2 = b.isub(rbi, one);
         b.store(ri2, rev_slot);
         b.jump(rev_loop, &[]);
@@ -325,8 +344,8 @@ pub fn build_alloc_runtime<'tcx>(
         let body_blk = b.create_block();
         let diff_blk = b.create_block();
         let done = b.create_block();
-        let zero = b.iconst(0, TypeId::I64);
-        let one = b.iconst(1, TypeId::I64);
+        let zero = b.const_int(0, TypeId::I64);
+        let one = b.const_int(1, TypeId::I64);
         let slot = b.stack_addr(-8);
         b.store(zero, slot);
         b.jump(loop_blk, &[]);
@@ -340,8 +359,11 @@ pub fn build_alloc_runtime<'tcx>(
         let bi = b.load(slot, TypeId::I64);
         let aa = b.iadd(p[0], bi);
         let ba = b.iadd(p[1], bi);
-        let av8 = b.load(aa, TypeId::I8);
-        let bv8 = b.load(ba, TypeId::I8);
+        // 地址必须是 `ptr`（ABI 的 i64 地址 → `inttoptr`）。
+        let aa_p = b.inttoptr(aa, TypeId::PTR);
+        let ba_p = b.inttoptr(ba, TypeId::PTR);
+        let av8 = b.load(aa_p, TypeId::I8);
+        let bv8 = b.load(ba_p, TypeId::I8);
         let av = b.uextend(av8, TypeId::I32);
         let bv = b.uextend(bv8, TypeId::I32);
         let ne = b.icmp(IntCC::Ne, av, bv);
@@ -354,7 +376,7 @@ pub fn build_alloc_runtime<'tcx>(
         b.ret(&[d]);
         // done：全部相同返回 0
         b.switch_to_block(done);
-        let zero32 = b.iconst(0, TypeId::I32);
+        let zero32 = b.const_int(0, TypeId::I32);
         b.ret(&[zero32]);
         let f = b.finish().expect("build");
         out.push(("memcmp".to_string(), compile_with_isa(&f, isa_name)?));
@@ -371,8 +393,8 @@ pub fn build_alloc_runtime<'tcx>(
         let loop_blk = b.create_block();
         let body_blk = b.create_block();
         let done = b.create_block();
-        let zero = b.iconst(0, TypeId::I64);
-        let one = b.iconst(1, TypeId::I64);
+        let zero = b.const_int(0, TypeId::I64);
+        let one = b.const_int(1, TypeId::I64);
         let slot = b.stack_addr(-8);
         b.store(zero, slot);
         b.jump(loop_blk, &[]);
@@ -380,7 +402,9 @@ pub fn build_alloc_runtime<'tcx>(
         b.switch_to_block(loop_blk);
         let i = b.load(slot, TypeId::I64);
         let addr = b.iadd(p[0], i);
-        let c = b.load(addr, TypeId::I8);
+        // 地址必须是 `ptr`（ABI 的 i64 地址 → `inttoptr`）。
+        let addr_p = b.inttoptr(addr, TypeId::PTR);
+        let c = b.load(addr_p, TypeId::I8);
         let c64 = b.uextend(c, TypeId::I64);
         let is_nul = b.icmp(IntCC::Eq, c64, zero);
         b.branch(is_nul, done, &[], body_blk, &[]);

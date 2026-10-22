@@ -30,7 +30,7 @@ fn fixture() -> (Function, Inst, Inst) {
         Opcode::Iconst,
         b0,
         smallvec::SmallVec::new(),
-        smallvec::smallvec![Immediate::Const(func.constants.insert_int(7, 32))],
+        smallvec::smallvec![Immediate::Const(func.constants.intern_int(7, 32))],
         &[TypeId::I32],
         InstFlags::NONE,
     );

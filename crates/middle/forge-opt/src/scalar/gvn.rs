@@ -216,7 +216,7 @@ fn gvn_dfs(
         match &inst.opcode {
             Opcode::Iconst => {
                 if let Some(cid) = inst.immediates.first().and_then(|i| i.as_const())
-                    && let Some(big) = func.constants.resolve_big(cid)
+                    && let Some(big) = func.constants.as_big(cid)
                 {
                     const_map.insert(inst_result, (big, ty));
                 }
@@ -224,7 +224,7 @@ fn gvn_dfs(
             }
             Opcode::Fconst => {
                 if let Some(cid) = inst.immediates.first().and_then(|i| i.as_const())
-                    && let Some(big) = func.constants.resolve_big(cid)
+                    && let Some(big) = func.constants.as_big(cid)
                 {
                     const_map.insert(inst_result, (big, ty));
                 }
@@ -266,7 +266,7 @@ fn gvn_dfs(
                 try_const_fold(&inst.opcode, &mapped_operands, &inst.immediates, const_map)
         {
             // Replace current instruction with a constant
-            let cid = func.constants.insert_big(folded_val.clone());
+            let cid = func.constants.intern_big(folded_val.clone());
             inst.opcode = Opcode::Iconst;
             inst.operands.clear();
             inst.immediates.clear();
@@ -353,8 +353,8 @@ mod tests {
         let a = params[0];
         let b_val = params[1];
         let sum = b.iadd(a, b_val);
-        let c = b.iconst_i32(1);
-        let zero_val = b.iconst_i32(0);
+        let c = b.constant(1i32);
+        let zero_val = b.constant(0i32);
         let cond = b.icmp(IntCC::Ne, c, zero_val);
         b.branch(cond, then_block, &[], else_block, &[]);
 
@@ -387,8 +387,8 @@ mod tests {
 
         b.switch_to_block(entry);
         let sum = b.iadd(params[0], params[1]);
-        let c = b.iconst_i32(1);
-        let zero = b.iconst_i32(0);
+        let c = b.constant(1i32);
+        let zero = b.constant(0i32);
         let cond = b.icmp(IntCC::Ne, c, zero);
         b.branch(cond, left, &[sum], right, &[sum]);
 
@@ -436,7 +436,7 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let v = b.iconst_i32(42);
+        let v = b.constant(42i32);
         let not_v = b.bnot(v);
         b.ret(&[not_v]);
 
@@ -458,8 +458,8 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let max_u32 = b.iconst_i32(-1); // 0xFFFFFFFF as i32
-        let one = b.iconst_i32(1);
+        let max_u32 = b.constant(-1i32); // 0xFFFFFFFF as i32
+        let one = b.constant(1i32);
         let sum = b.iadd(max_u32, one);
         b.ret(&[sum]);
 
@@ -485,16 +485,16 @@ mod tests {
 
         b.switch_to_block(entry);
         let n = params[0];
-        let zero = b.iconst_i32(0);
+        let zero = b.constant(0i32);
         b.jump(header, &[zero]);
 
         b.switch_to_block(header);
-        let i = b.iconst_i32(0);
+        let i = b.constant(0i32);
         let cond = b.icmp(IntCC::Slt, i, n);
         b.branch(cond, body, &[], exit, &[]);
 
         b.switch_to_block(body);
-        let one = b.iconst_i32(1);
+        let one = b.constant(1i32);
         let next_i = b.iadd(i, one);
         b.jump(header, &[next_i]);
 
@@ -522,8 +522,8 @@ mod tests {
         b.switch_to_block(entry);
         let p = b.stack_addr(0);
         let l1 = b.load(p, TypeId::I32);
-        let one = b.iconst_i32(1);
-        let zero = b.iconst_i32(0);
+        let one = b.constant(1i32);
+        let zero = b.constant(0i32);
         let cond = b.icmp(IntCC::Ne, one, zero);
         b.branch(cond, then_blk, &[], else_blk, &[]);
 

@@ -77,7 +77,7 @@ fn existing_function_sees_layout_update() {
     let sig = FunctionSignature::new(&[], &[ctx.i32_ty()]);
     let mut fb = FunctionBuilder::new("f", ctx.clone(), sig);
     let (_entry, _) = fb.create_entry_block();
-    let v = fb.iconst_i32(7);
+    let v = fb.constant(7i32);
     fb.ret(&[v]);
     let func = fb.finish().expect("build");
 

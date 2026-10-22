@@ -52,7 +52,9 @@ const BUDGETS: [(&str, usize); 6] = [
     // 编译会话入口 + 模块编排（M4 已切出 state 与测试）。
     ("pipeline/compiler/mod.rs", 615),
     // 会话测试体（613 行用例）：测试长不构成阅读负担的同类问题，且与实现同源。
-    ("pipeline/compiler/alloc_integration_tests.rs", 615),
+    // 栈探测的正反两面用例（v27 M6-78：大帧必须发 `mov rax,size; call __chkstk`，
+    // 小帧不得发）——同一形状的编译级断言放这里最省重复。
+    ("pipeline/compiler/alloc_integration_tests.rs", 690),
 ];
 
 /// 缺省上限：新文件超过它就必须进 [`BUDGETS`] 并写明理由。

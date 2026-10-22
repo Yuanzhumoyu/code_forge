@@ -100,7 +100,7 @@ const CASES: &[Case] = &[
     Case {
         name: "add",
         body: "let a = 1i32; let b = 2i32; a + b",
-        expected: 3,
+        expected: 3, // 1 + 2（上一轮脚本误改成 0，已修回）
         extra: "",
         entry: "mainCRTStartup",
         expect_compile_fail: false,
@@ -1805,6 +1805,45 @@ const CASES: &[Case] = &[
     //   （`global_asm!` 能用符号是因为它走 LLVM 汇编器，inline asm 走的是本谱汇编器）。
     //   要支持它，得给 ISA-DSL 的汇编器加"符号立即数 + `reloc abs64`"的解析形态。
     //   这条负向用例钉住"拒绝 + 说清原因"，避免将来有人以为"没实现"而重复踩。
+    // ── v27 M5：`#[unsafe(naked)]` **真支持**（v28 起）──
+    //   裸函数的函数体只有汇编、没有编译器序/尾声与栈帧。实测落地需要三件事同时到位：
+    //   ① IR `FunctionAttributes::NO_FRAME`（发射侧据此跳过序言/尾声）；
+    //   ② lowering **不建任何栈槽**（`LowerCtxt::new` 的 `naked` 形参）——否则帧里会有槽，
+    //      而 naked 没帧可指；
+    //   ③ 无落点的 `InlineAsm` 必须以 `unreachable` 收尾（裸函数的 MIR 是
+    //      `options()` 空 + `targets` 空，此前只看 `NORETURN` ⇒ "块没有终结符"的内部错误）。
+    //   本用例走完整条链：`add_one(41)` 由裸汇编 `lea rax,[rcx+1]; ret` 算出 42。
+    Case {
+        name: "naked_fn",
+        body: "add_one(41) as i32",
+        expected: 42,
+        extra: "#[unsafe(naked)]\nextern \"C\" fn add_one(x: i64) -> i64 {\n    core::arch::naked_asm!(\"lea rax, [rcx + 1]\", \"ret\");\n}\n",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "裸函数：NO_FRAME（无栈帧）+ 不建栈槽 + 无落点 asm 以 unreachable 收尾",
+    },
+    // ── v27 M5：裸函数 + `const` 操作数（`naked_asm!` 允许的另一种操作数形态）──
+    //   rustc 前端**明确禁止**在 `naked_asm!` 里用寄存器操作数
+    //   （"the `in` operand cannot be used with `naked_asm!`"，实测同一条消息对 LLVM 后端也一样）
+    //   ⇒ 语言层面裸函数的操作数只有 `const`/`sym` 两种。`sym` 仍受谱汇编器限制（见下一条用例），
+    //   `const` 走 S3 的"就地换成字面文本"路径，本用例钉住它。
+    Case {
+        name: "naked_const_operand",
+        body: "add_k(35) as i32",
+        expected: 42,
+        extra: "#[unsafe(naked)]\nextern \"C\" fn add_k(x: i64) -> i64 {\n    core::arch::naked_asm!(\"lea rax, [rcx + {k}]\", \"ret\", k = const 7);\n}\n",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "裸函数 + const 操作数：文本就地替换成字面量，仍无栈帧",
+    },
     Case {
         name: "neg_inline_asm_sym",
         body: "fn seven() -> i32 { 7 } let mut p: u64 = 0; unsafe { core::arch::asm!(\"mov {}, {}\", out(reg) p, sym seven) }; p as i32",
@@ -1850,22 +1889,26 @@ const CASES: &[Case] = &[
         phase: "v27 M5",
         reason: "#[repr(align(64))] 的符号地址必须 64 对齐（不止是「类型布局」，要真摆对）",
     },
-    // ── v27 M5 审计：128 位整数**明确拒绝**（此前静默错值）──
-    //   审计发现 `u128`/`i128` 落到 `map_type` 的兜底分支、被当成 64 位 `PTR`
-    //   ⇒ `1u128 << 64` 按"64 位移位"掩码成 `1 << 0`，整条链静默算错（实测低半=6）。
-    //   现在 `[cap:I128]` 明确拒绝；真支持需要「两寄存器对」+ 全套运算 + libcall + ABI。
+    // ── v27 M5 · M-E：128 位整数**现已真支持**（分字展开）──
+    //   历史：`u128`/`i128` 曾落到 `map_type` 的兜底分支被当成 64 位 `PTR`
+    //   ⇒ `1u128 << 64` 被掩码成 `1 << 0`、整条链静默算错（实测低半=6）。
+    //   **本轮（v27 M6-56）常量形态也通了**：`legalize` 的 `narrow_overflow` pass 现在
+    //   接管 8/16 位**与宽值**（> 最大原生位宽）的 `*_overflow` 加/减，改成"算术 + 比较"，
+    //   并把该 pass 排在 `wide_split` **之前**（否则 `wide_split` 先因为不认
+    //   `UaddOverflow` 而 fail-closed）。⇒ 本用例由负向翻正（O0/O2 实测 exit=5）。
     Case {
-        name: "neg_u128",
+        name: "u128_const_shift_add",
         body: "let x: u128 = (1u128 << 64) + 5; x as u64 as i32",
-        expected: 0,
+        // (1<<64)+5 截断到 u64 = 5
+        expected: 5,
         extra: "",
         entry: "mainCRTStartup",
-        expect_compile_fail: true,
-        expect_compile_err: "WIDE_INT",
+        expect_compile_fail: false,
+        expect_compile_err: "",
         expect_trap: false,
         known_failure: false,
         phase: "v27 M5",
-        reason: "i128/u128 此前静默当 64 位算 ⇒ 现在 fail-closed（[cap:WIDE_INT]）",
+        reason: "128 位常量移位 + 加法 + 截断（M6-56 起检查算术也支持；原负向门控已过时）",
     },
     // ── v27 M5 缺陷①修复：窄宽度移位语义 ──
     //   曾经 `i8: -128 >> 7` 算成 1（局部变量用 `MovzxR8Mem` 零扩展载入，
@@ -1962,6 +2005,531 @@ const CASES: &[Case] = &[
         reason: "浮点比较语义：==/< /> 有序（NaN 全 false），!= 无序（NaN 为 true）",
     },
     Case {
+        name: "float_cmp_normalized_bool",
+        // **严格数值**（不是 truthy 判断）：把每个比较结果直接 `as i32` 累加。
+        // 六个条件里有六个走"两个 setcc 组合"的形态（oeq/olt/ole/ugt/uge/une），
+        // 组合用的临时寄存器若只写了低 8 位（`SETCC` 的编码事实）而没清零，高位垃圾
+        // 会被 `and`/`or` 带进结果 ⇒ 值不再规范化成 0/1，这条用例立刻偏。
+        // 历史实测：`Ugt(1,2)` 曾得 `-118417152`（v27 M5 修：`isa/x86.toml` 的
+        // 形状 B/C 规则在 `COMIS*` 之前补 `xor {g}, {g}`）。
+        body: "let a = core::hint::black_box(1.5f64); let b = core::hint::black_box(2.5f64); let n = core::hint::black_box(0.0f64 / 0.0f64); let mut m: i32 = 0; m += (a == a) as i32; m += (a < b) as i32; m += (a > b) as i32; m += (a <= a) as i32; m += (n == n) as i32; m += (n != n) as i32; m += (n < a) as i32; m += (n >= a) as i32; m += (a != b) as i32; m += (!(a == b)) as i32; m + 36",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "六个组合形态浮点比较（oeq/olt/ole/ugt/uge/une）必须把结果规范化成 0/1",
+    },
+    // ── v27 M5 缺陷修复：位运算内建按**操作数位宽** ──
+    //   `ctlz`：谱对 8/16 位输入走 32 位 `lzcntl` ⇒ 实测 `u8::leading_zeros(0x10)` = 27，
+    //   修正为减 `(32 - w)` 后 = 3 ✔；`rotate_left/right`：此前走 `funnel_shl` 的
+    //   "返回 a" 兜底（恒返回原值）⇒ 现已实现真正的 funnel shift。
+    //   **期望值全部由 LLVM 对照**：lz=3 tz=4 lz0=8 tz_16=8 ones=16 rotl=**44** rotr=**194** lz_u64=7。
+    Case {
+        name: "bit_intrinsics_narrow",
+        body: "let a = core::hint::black_box(0x10u8); let b = core::hint::black_box(0u8); let c = core::hint::black_box(0xFF00u16); let d = core::hint::black_box(0xF0F0_F0F0u32); let e = core::hint::black_box(0b1011u8); let f = core::hint::black_box(0x0100_0000_0000_0000u64); let mut m: i32 = 0; if a.leading_zeros() != 3 { m |= 1 } if a.trailing_zeros() != 4 { m |= 2 } if b.leading_zeros() != 8 { m |= 4 } if c.trailing_zeros() != 8 { m |= 8 } if d.count_ones() != 16 { m |= 16 } if e.rotate_left(2) != 44 { m |= 32 } if f.leading_zeros() != 7 { m |= 64 } if e.rotate_right(2) != 194 { m |= 128 } if m == 0 { 42 } else { 1 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "窄类型 leading/trailing zeros、count_ones、rotate（期望值 LLVM 对照）",
+    },
+    // ── v27 M5 补面：**非 2 幂**元素大小的指针算术（add 是乘 12、offset_from 是除 12）──
+    Case {
+        name: "ptr_arith_size12",
+        body: "let arr = [[1u32, 2, 3], [4, 5, 6], [7, 8, 9]]; let p = arr.as_ptr(); let q = unsafe { p.add(2) }; let r = unsafe { q.sub(1) }; let off = unsafe { r.offset_from(p) }; let ok = off == 1 && unsafe { (*r)[0] } == 4 && unsafe { (*q)[2] } == 9; if ok { 42 } else { 1 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "元素大小 12 的 add/sub/offset_from（乘法与除法链）",
+    },
+    // ── v27 M5 缺陷修复：`Range::contains`（此前 ud2 崩溃）──
+    //   根因：`Discriminant` 的 Direct-tag 分支从 `BackendRepr::ScalarPair { a, .. }` 推 tag
+    //   宽度，而 `Bound<&u32>` 的 `a` 是 **payload 指针（8B）** ⇒ 读 8 字节载荷去比 case 0
+    //   ⇒ payload≠0 就落 otherwise（unreachable）⇒ ud2。修法：tag 宽度按**变体数**、
+    //   偏移按 `tag_field`。
+    Case {
+        name: "range_contains",
+        body: "let v = core::hint::black_box(0x11_0000u32); if (0xD800u32..0xE000u32).contains(&v) { 1 } else { 42 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "char::from_u32：有效码点 Some、越界与代理区 None（niche 宽度正确）",
+    },
+    // ── v27 M5 缺陷修复：`char::from_u32`（niche 值宽度）──
+    //   根因：niche 判别值恒按 **I64** 读，而 `Result<char, CharTryFromError>` 只有 4 字节
+    //   ⇒ 多读 4 字节栈垃圾掺进 `raw - niche_start` ⇒ `is_niche` 判错 ⇒ 无效码点被当 `Ok`。
+    //   修法：niche 宽度按标量真实大小（`backend_repr` 的 Scalar/ScalarPair 一半）读，再 uextend。
+    Case {
+        name: "char_from_u32",
+        body: "let ok = core::char::from_u32(66) == Some('B'); let bad_hi = core::char::from_u32(core::hint::black_box(0x11_0000u32)).is_none(); let bad_sur = core::char::from_u32(core::hint::black_box(0xD800u32)).is_none(); if ok && bad_hi && bad_sur { 42 } else { 1 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "16 字节对齐的栈局部真的 16 对齐（此前被放在 8 对齐地址）",
+    },
+    // ── v27 M5 补面：CFG 形态「短路 &&（左假则不评估右）」（期望值 LLVM 对照）──
+    Case {
+        name: "probe_cfg_and",
+        body: "let a = core::hint::black_box(true); let b = core::hint::black_box(false); if a && b { 1 } else { 42 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "短路 &&（左假则不评估右）（期望值 LLVM 对照）",
+    },
+    // ── v27 M5 补面：CFG 形态「短路 ||（左假则评估右）」（期望值 LLVM 对照）──
+    Case {
+        name: "probe_cfg_or",
+        body: "let a = core::hint::black_box(true); let b = core::hint::black_box(false); if b || a { 42 } else { 1 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "短路 ||（左假则评估右）（期望值 LLVM 对照）",
+    },
+    // ── v27 M5 补面：CFG 形态「if / else-if / else 链」（期望值 LLVM 对照）──
+    Case {
+        name: "probe_cfg_elsechain",
+        body: "let x = core::hint::black_box(2); if x == 0 { 1 } else if x == 1 { 2 } else { 42 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "if / else-if / else 链（期望值 LLVM 对照）",
+    },
+    // ── v27 M5 补面：CFG 形态「元组 match（两 bool）」（期望值 LLVM 对照）──
+    Case {
+        name: "probe_cfg_tuplematch",
+        body: "let a = core::hint::black_box(true); let b = core::hint::black_box(false); match (a, b) { (true, true) => 1, (true, false) => 42, _ => 1 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "元组 match（两 bool）（期望值 LLVM 对照）",
+    },
+    // ── v27 M5 补面：CFG 形态「Option match（niche 判别）」（期望值 LLVM 对照）──
+    Case {
+        name: "probe_cfg_optmatch",
+        body: "let o: Option<i32> = Some(core::hint::black_box(7)); match o { Some(v) => v, None => 1 }",
+        expected: 7,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "Option match（niche 判别）（期望值 LLVM 对照）",
+    },
+    // ── v27 M5 补面：CFG 形态「while + continue（跳过累加）」（期望值 LLVM 对照）──
+    Case {
+        name: "probe_cfg_loop",
+        body: "let mut i = 0; let mut s = 0; while i < 5 { if i == 3 { i += 1; continue } s += i; i += 1 } if s == 7 { 42 } else { 1 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "while + continue（跳过累加）（期望值 LLVM 对照）",
+    },
+    // ── v27 M5 补面：CFG 形态「函数内 early return」（期望值 LLVM 对照）──
+    Case {
+        name: "probe_cfg_earlyret",
+        body: "fn f(x: i32) -> i32 { if x > 0 { return 42 } 1 } f(core::hint::black_box(5))",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "函数内 early return（期望值 LLVM 对照）",
+    },
+    // ── v27 M5 补面：CFG 形态「match guard（`n if n > 2`）」（期望值 LLVM 对照）──
+    Case {
+        name: "probe_cfg_guard",
+        body: "match core::hint::black_box(3) { n if n > 2 => 42, _ => 1 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "match guard（`n if n > 2`）（期望值 LLVM 对照）",
+    },
+    // ── v27 M5 缺陷修复：**栈槽按类型 ABI 对齐** ──
+    //   此前槽位只做 `next_offset -= size`（无对齐）⇒ `#[repr(align(16))]`/u128 的局部
+    //   落在 8 对齐地址 ⇒ rustc 插入的 `assert(misaligned pointer dereference)` 运行期触发。
+    Case {
+        name: "local_align16",
+        body: "#[repr(align(16))] struct A(u64); let a = A(1); if (&a as *const A as usize) % 16 == 0 { 42 } else { 1 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "u128 截断到 u64/u32/u8（期望值 LLVM 对照：1122334455667788 / 55667788 / 88）",
+    },
+    // ── v27 M5-③：`i128/u128` 第一步 —— **128 位 → 更窄整数**的截断 ──
+    //   `u128` 在 ABI 上是 Indirect ⇒ 值只存在于 16 字节栈槽；截断取槽的低 8 字节再按
+    //   目标宽度截（对齐由 local_align16 的修复保证，否则 rustc 的对齐断言会先崩）。
+    Case {
+        name: "u128_trunc",
+        body: "#[repr(align(16))] struct A([u64; 2]); let a = A([0x1122_3344_5566_7788, 0]); let p = &a as *const A as *const u128; if unsafe { *p as u64 } == 0x1122_3344_5566_7788u64 && unsafe { *p as u32 } == 0x5566_7788u32 && unsafe { *p as u8 } == 0x88u8 { 42 } else { 1 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "u128 的 <、==、>（含 hi/lo 两级比较）",
+    },
+    // ── v27 M5-③：`u128/i128` 的**比较**（先比 hi、相等再比 lo，`select` 合成）──
+    //   Eq/Ne 用 and/or；Lt/Le/Gt/Ge 用 `select(eq_hi, lo_cmp, hi_cmp)`。
+    Case {
+        name: "u128_cmp",
+        body: "#[repr(align(16))] struct A([u64; 2]); let a = A([5, 0]); let b = A([7, 0]); let pa = &a as *const A as *const u128; let pb = &b as *const A as *const u128; let lt = unsafe { *pa < *pb }; let eq = unsafe { *pa == *pb }; let gt = unsafe { *pa > *pb }; if lt && !eq && !gt { 42 } else { 1 }",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "probe",
+        reason: "临时探针",
+    },
+    // 带 ZST 字段的 8 字节结构体按值返回后字段不丢
+    Case {
+        name: "zst_field_struct",
+        body: "struct M; struct S { r: core::ops::Range<i32>, f: M } #[inline(never)] fn mk2(r: core::ops::Range<i32>) -> S { S { r, f: M } } let s = mk2(0..5); s.r.end",
+        expected: 5,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "带 ZST 字段的 8 字节结构体按值返回后字段不丢",
+    },
+    // Iterator::map（Map = Range + ZST 闭包）：next 与 size_hint
+    Case {
+        name: "iter_map",
+        body: "let v = (0..5).map(|x| x * 2 + 1).next().unwrap_or(99); let h = (0..5).map(|x| x * 2).size_hint().0 as i32; v + h",
+        expected: 6,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "Iterator::map（Map = Range + ZST 闭包）：next 与 size_hint",
+    },
+    // RangeInclusive（12 字节）迭代 count
+    Case {
+        name: "range_inclusive_count",
+        body: "let n = (1..=4).count(); n as i32",
+        expected: 4,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "probe",
+        reason: "临时探针",
+    },
+    // 12 字节结构体按值返回：字段不丢（聚合传递阈值 8 字节）
+    Case {
+        name: "struct12_byval",
+        body: "struct T { a: i32, b: i32, c: i32 } #[inline(never)] fn mk() -> T { T { a: 1, b: 2, c: 3 } } let t = mk(); t.c",
+        expected: 3,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "probe",
+        reason: "临时探针",
+    },
+    // RangeInclusive::fold / sum（Variants::Single 判别）
+    Case {
+        name: "range_fold_sum",
+        body: "let s = (1..=4).fold(0, |a, b| a + b); s",
+        expected: 10,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "probe",
+        reason: "临时探针",
+    },
+    // RangeInclusive::sum（同上）
+    Case {
+        name: "range_sum",
+        body: "let s: i32 = (1..=4).sum(); s",
+        expected: 10,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "probe",
+        reason: "临时探针",
+    },
+    // filter + product（同上）
+    Case {
+        name: "filter_product",
+        body: "let j: i32 = (1..=4).filter(|x| x % 2 == 0).product(); j",
+        expected: 8,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "probe",
+        reason: "临时探针",
+    },
+    // v27 M5-③：`u128` 按值传参 + 按值返回（128 位 = ScalarPair 两寄存器；调用点绑定两个返回值）
+    Case {
+        name: "u128_byval",
+        body: "#[repr(align(16))] struct A([u64; 2]); #[inline(never)] fn id(x: u128) -> u128 { x } let a = A([7, 0]); let p = &a as *const A as *const u128; let y = unsafe { id(*p) }; let z = unsafe { y as u64 }; z as i32",
+        expected: 7,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "u128 按值传参/返回（调用点按 ScalarPair 绑定两个返回值）",
+    },
+    // v27 M5-③：`u128` 的 add/sub（lo±lo 取进位/借位，hi±hi±carry）
+    Case {
+        name: "u128_addsub",
+        body: "#[repr(align(16))] struct A([u64; 2]); let a = A([7, 0]); let b = A([5, 0]); let pa = &a as *const A as *const u128; let pb = &b as *const A as *const u128; let s = unsafe { (*pa).wrapping_add(*pb) }; let d = unsafe { (*pa).wrapping_sub(*pb) }; let sw = unsafe { s as u64 }; let dw = unsafe { d as u64 }; (sw as i32) * 10 + dw as i32",
+        expected: 122,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "u128 add/sub（wrapping，含进位/借位）"
+    },
+    // v27 M5-③：`u128` 的 &/|/^（两半各自做，无跨半进位）
+    Case {
+        name: "u128_bitops",
+        body: "#[repr(align(16))] struct A([u64; 2]); let a = A([0b1100, 0b1010]); let b = A([0b1010, 0b0110]); let pa = &a as *const A as *const u128; let pb = &b as *const A as *const u128; let x = unsafe { (*pa) & (*pb) }; let y = unsafe { (*pa) | (*pb) }; let z = unsafe { (*pa) ^ (*pb) }; let xw = unsafe { x as u64 }; let yw = unsafe { y as u64 }; let zw = unsafe { z as u64 }; (xw as i32) * 100 + (yw as i32) * 10 + zw as i32",
+        expected: 946,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "u128 的 &/|/^（8/14/6 ⇒ 946）",
+    },
+    // v27 M5-③：`u128` 的移位（跨半拼接；`(1<<70)>>70 = 1`、`(1<<4)>>2 = 4` ⇒ 14）
+    Case {
+        name: "u128_shift",
+        body: "#[repr(align(16))] struct A([u64; 2]); let a = A([1, 0]); let pa = &a as *const A as *const u128; let h = unsafe { (*pa) << 70 }; let back = unsafe { h >> 70 }; let l = unsafe { (*pa) << 4 }; let lr = unsafe { l >> 2 }; let hw = unsafe { back as u64 }; let lw = unsafe { lr as u64 }; (hw as i32) * 10 + lw as i32",
+        expected: 14,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "u128 移位（跨半 70 位往返 + 低位 4/2 ⇒ 14）",
+    },
+    // v27 M5-③：`u128` 的**变量**移位计数（非常量 ⇒ 走 place 分支）
+    Case {
+        name: "u128_shift_var",
+        body: "#[repr(align(16))] struct A([u64; 2]); let a = A([1, 0]); let pa = &a as *const A as *const u128; let n = core::hint::black_box(4u32); let s = unsafe { (*pa) << n }; let m = core::hint::black_box(70u32); let h = unsafe { (*pa) << m }; let back = unsafe { h >> m }; let w = unsafe { s as u64 }; let b = unsafe { back as u64 }; (w as i32) * 10 + b as i32",
+        expected: 161,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "u128 变量移位（1<<4=16、70 位往返=1 ⇒ 161）",
+    },
+    // v27 M5：有符号右移语义（-8 >> 1 = -4；同时覆盖夹具的负退出码比对）
+    Case {
+        name: "signed_shr",
+        body: "let x: i32 = -8; let y = x >> 1; y",
+        expected: -4,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "有符号右移（-8>>1 = -4）"
+    },
+    // 临时探针
+    // 临时探针
+    // v27 M5-③：`i128` 的**算术**右移（-8 >> 1 = -4；高半走 `sshr` 符号填充）
+    Case {
+        name: "i128_ashr",
+        body: "#[repr(align(16))] struct A([u64; 2]); let a = A([0xFFFF_FFFF_FFFF_FFF8, 0xFFFF_FFFF_FFFF_FFFF]); let p = &a as *const A as *const i128; let y = unsafe { *p >> 1 }; let z = unsafe { y as i64 }; z as i32",
+        expected: -4,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "i128 算术右移（-8>>1 = -4，跨半符号填充）",
+    },
+    // v27 M5-③：128 位一元 `!`（此前掉进通用路径 ⇒ 运行期 AV；现在两半各自 `bnot`）
+    Case {
+        name: "u128_not",
+        body: "#[repr(align(16))] struct A([u64; 2]); let a = A([0, 0]); let p = &a as *const A as *const u128; let n = unsafe { !(*p) }; let lo = unsafe { n as u64 }; let hi = unsafe { (n >> 64) as u64 }; (lo as i32) + ((hi & 1) as i32)",
+        expected: 0,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "128 位 `!`（全 1；lo=-1 + hi&1=1 ⇒ 0）",
+    },
+    // v27 M5-③：`u128::wrapping_neg`（= `!self + 1`，常量在左侧 + 128 位 checked 加法）
+    Case {
+        name: "u128_neg",
+        body: "#[repr(align(16))] struct A([u64; 2]); let a = A([1, 0]); let p = &a as *const A as *const u128; let n = unsafe { (*p).wrapping_neg() }; let lo = unsafe { n as u64 }; let hi = unsafe { (n >> 64) as u64 }; (lo as i32) + (hi as i32)",
+        expected: -2,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "u128 wrapping_neg（lo/hi 均为 -1 ⇒ -2）",
+    },
+    // v27 M5-③：`u128` 乘法（32 位肢的梳状乘法，纯 lowering）
+    Case {
+        name: "u128_mul",
+        body: "#[repr(align(16))] struct A([u64; 2]); let a = A([6, 0]); let b = A([7, 0]); let pa = &a as *const A as *const u128; let pb = &b as *const A as *const u128; let m = unsafe { (*pa).wrapping_mul(*pb) }; let w = unsafe { m as u64 }; w as i32",
+        expected: 42,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "u128 乘法（6*7=42）",
+    },
+    Case {
+        name: "u128_mul_hi",
+        body: "#[repr(align(16))] struct A([u64; 2]); let a = A([0x1_0000_0001, 0]); let b = A([0x1_0000_0001, 0]); let pa = &a as *const A as *const u128; let pb = &b as *const A as *const u128; let m = unsafe { (*pa).wrapping_mul(*pb) }; let lo = unsafe { m as u64 }; let hi = unsafe { (m >> 64) as u64 }; ((hi as i32) * 100) + ((lo & 0xFF) as i32)",
+        expected: 101,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "u128 乘法跨肢进位（0x100000001² ⇒ 101）",
+    },
+    // v27 M5-③：`u128` 的 count_ones（两半 SWAR 相加；须用实参 place 取高半）
+    Case {
+        name: "u128_count_ones",
+        body: "#[repr(align(16))] struct A([u64; 2]); let a = A([0b1011, 0b1]); let p = &a as *const A as *const u128; let c = unsafe { (*p).count_ones() }; c as i32",
+        expected: 4,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "u128 count_ones（0b1011 + 高半 1 ⇒ 4）",
+    },
+    Case {
+        name: "u128_leading_zeros",
+        body: "#[repr(align(16))] struct A([u64; 2]); let a = A([0, 0]); let p = &a as *const A as *const u128; let z = unsafe { (*p).leading_zeros() }; z as i32",
+        expected: 128,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M5",
+        reason: "u128 leading_zeros（全 0 ⇒ 128）",
+    },
+    Case {
         name: "neg_inline_asm",
         body: "let mut x: i32 = 0; unsafe { core::arch::asm!(\"mov {0}, 7\", out(reg) x) }; x",
         expected: -1,
@@ -2051,6 +2619,492 @@ const CASES: &[Case] = &[
         phase: "M2 global_asm",
         reason: "global_asm! 的 sym/const 占位符（v27 M2 收尾落地）",
     },
+    // ── v27 M6：**靠 LLVM 管线的代码生成选项必须明确拒绝**（`[cap:CODEGEN_OPTS]`）──
+    //   2026-10-19 实测：`-C lto` / `-C instrument-coverage` / `-Zsanitizer` / PGO /
+    //   `-C control-flow-guard` / `-C prefer-dynamic` / `-C relocation-model`(非默认)
+    //   此前**全部静默接受**——最坏情况是用户以为开了 ASan/CFG 防护而实际没开。
+    //   这三条负向用例把"拒绝 + 点名缺口"钉住（flag 由用例名注入，见下方
+    //   `flag_name_suffix` 的分派）。
+    Case {
+        name: "flag_lto",
+        body: "42",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 0,
+        expect_compile_fail: true,
+        expect_compile_err: "CODEGEN_OPTS",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "`-C lto=fat` 必须明确拒绝：我们没有 bitcode 管线，静默忽略等于 LTO 没做",
+    },
+    Case {
+        name: "flag_coverage",
+        body: "42",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 0,
+        expect_compile_fail: true,
+        expect_compile_err: "CODEGEN_OPTS",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "`-C instrument-coverage` 必须明确拒绝：覆盖率计数与 `__llvm_covmap` 由 LLVM 插桩产生",
+    },
+    Case {
+        name: "flag_sanitizer",
+        body: "42",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 0,
+        expect_compile_fail: true,
+        expect_compile_err: "CODEGEN_OPTS",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "`-Zsanitizer=address` 必须明确拒绝：静默忽略会让用户以为有内存检测",
+    },
+    // ── v27 M6：**非 Win64 调用约定必须明确拒绝**（`[cap:CALL_CONV]`）──
+    //   `extern "sysv64"` 在 rustc 里是 `Conv::X86(X86Conv::SysV64)`（RDI/RSI/RDX…），
+    //   而我们按 Win64（RCX/RDX/R8/R9 + shadow space）打包 ⇒ 寄存器全错位。
+    //   因为调用方/被调方都用本后端编译，本地"自洽"看不出来，一旦跨到 LLVM 编的代码
+    //   或 `extern` 声明的外部函数就是错值 ⇒ 必须 fail-closed。
+    Case {
+        name: "neg_sysv64",
+        body: "add_sysv(1, 2) as i32",
+        extra: "#[unsafe(no_mangle)]\npub extern \"sysv64\" fn add_sysv(a: i64, b: i64) -> i64 { a + b }",
+        entry: "mainCRTStartup",
+        expected: 0,
+        expect_compile_fail: true,
+        expect_compile_err: "CALL_CONV",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "`extern \"sysv64\"` 不是 Win64 一族 ⇒ 明确拒绝（按 C 打包会静默错值）",
+    },
+    // ── v27 M6：`switchInt` 的 case 常量必须与判别值同类型（窄判别回归）──
+    //   rustc 会把 `b[0] == 7`（u8）优化成 `switchInt(copy _2) -> [7: …]`；我们的
+    //   switch 降级此前恒用 `constant(value as i32)` ⇒ `icmp eq i8 %d, i32 7` 是非法 IR，
+    //   `-O`（优化管线默认开启）下 verifier 直接拒绝编译。这条在**真执行**上钉住修复
+    //   （42 = 走对了分支）。
+    Case {
+        name: "narrow_switch_compare",
+        body: "let mut b = [0u8; 4]; b[0] = 7; if b[0] == 7 { 42 } else { 1 }",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "u8 判别值的 switchInt：case 常量的 IR 类型必须跟判别值（i8），不能恒 i32",
+    },
+    // ── v27 M6：`ConstantIndex` 投影必须真的加偏移（优化档专测）──
+    //   优化过的 MIR 把 `a[1]` 写成 `ConstantIndex { offset: 1, .. }`（未优化 MIR 是
+    //   `Index(_const)`）⇒ 旧实现落到"保持当前地址"的兜底分支，**静默读成 a[0]**。
+    //   `pick()` 是 `#[inline(never)]`，防止 rustc 把整个数组折成常量而绕过内存访问。
+    // ── v27 M6：`--emit=asm` 必须明确拒绝（`[cap:EMIT_KINDS]`）──
+    //   此前是"成功但没产物"：编译退出 0，用户点名的 `.s` 根本不出现。
+    Case {
+        name: "flag_emit_asm",
+        body: "7",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 0,
+        expect_compile_fail: true,
+        expect_compile_err: "EMIT_KINDS",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "`--emit=asm` 需要 LLVM 侧产物 ⇒ 明确拒绝，不许静默不产出",
+    },
+    Case {
+        name: "u128_div_non_pow2",
+        // **非 2 的幂的 128 位除/余**：legalize 的 `wide_div` 分肢长除法（v27 M6-79）。
+        body: "let v = core::hint::black_box(0x99aa_bbcc_ddee_ff00u128);              if (v / 7) as u64 == 0x99aa_bbcc_ddee_ff00u64 / 7 && (v % 7) as u64 == 0x99aa_bbcc_ddee_ff00u64 % 7 { 42 } else { 7 }",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "128 位除/余非 2 的幂必须走分肢长除法且结果正确（O0）",
+    },
+    Case {
+        name: "opt_u128_div_non_pow2",
+        body: "let v = core::hint::black_box(0x99aa_bbcc_ddee_ff00u128);              if (v / 7) as u64 == 0x99aa_bbcc_ddee_ff00u64 / 7 && (v % 7) as u64 == 0x99aa_bbcc_ddee_ff00u64 % 7 { 42 } else { 7 }",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "-O2 下 128 位除/余非 2 的幂同样必须正确",
+    },
+    Case {
+        name: "i128_div_non_pow2",
+        body: "let v = core::hint::black_box(-1000i128);              if (v / 7) as i64 == -1000i64 / 7 && (v % 7) as i64 == -1000i64 % 7 { 42 } else { 7 }",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "有符号 128 位除/余必须按向零取整（绝对值 + 符号补回）",
+    },
+    Case {
+        name: "u128_div_wide_divisor",
+        // 除数**跨肢**（> 2^64）：`(2^64 + 100) / (2^63 + 3) = 2`，余数 = 2^64+100 - 2*(2^63+3) = 94
+        body: "let a = core::hint::black_box((1u128 << 64) + 100);              let b = core::hint::black_box((1u128 << 63) + 3);              if a / b == 2 && a % b == 94 { 42 } else { 7 }",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "除数也跨肢的 128 位除/余（长除法逐位比较必须正确）",
+    },
+    Case {
+        name: "u128_div_pow2",
+        // 宽值 ÷ **2 的幂常量**：改写层在降级（`x / 2^k ⇒ x >> k`、`x % 2^k ⇒ x & (2^k-1)`），
+        // 因为 legalize 的 pass 在 `-O2` 下认不出被提升/load 过的除数常量（v27 M6-70）。
+        // oracle 用手算常量：`(2^64 + 5000) / 1024 = 2^54 + 4`，`% 1024 = 904`。
+        body: "let a = core::hint::black_box((1u128 << 64) + 5000);              if (a / 1024) as u64 == (1u64 << 54) + 4 && (a % 1024) as u64 == 904 { 42 } else { 7 }",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "128 位除/余 2 的幂常量必须走移位/掩码并且结果正确",
+    },
+    Case {
+        name: "opt_u128_div_pow2",
+        // 同一条在 `-C opt-level=2` 下也要对——O2 的 MIR 形态不同（除数常量会被提升），
+        // 这条专门钉"降级层识别常量"这条路径在两个优化档都成立。
+        body: "let a = core::hint::black_box((1u128 << 64) + 5000);              if (a / 1024) as u64 == (1u64 << 54) + 4 && (a % 1024) as u64 == 904 { 42 } else { 7 }",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "-O2 下 128 位除/余 2 的幂常量同样必须正确",
+    },
+    Case {
+        name: "opt_u128_const_low_half",
+        // **`u128` 常量的低半在 `-O2` 下必须真的落地**（v27 M6-66 修）：
+        // 根因是 `Big::trunc_to_u64()` 对"装不下 u64"的值静默返回 0，而 `-O2` 下
+        // 该常量被 intern 成 `Big`（O0 走位值通道）⇒ 拆肢时低半恒 0 ⇒ 取 `>> 56`
+        // 得 0 而不是 0x99。这条用例把 `black_box`（内联成恒等）+ 常量 + 截断的组合钉住。
+        body: "let v = core::hint::black_box(0x1122_3344_5566_7788_99aa_bbcc_ddee_ff00u128);              ((v as u64) >> 56) as i32",
+        extra: "",
+        entry: "mainCRTStartup",
+        // 0x99 = 153
+        expected: 153,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "u128 常量低半在 -O2 必须正确（Big::trunc_to_u64 取低 64 位，不再退化为 0）",
+    },
+    Case {
+        name: "opt_const_index",
+        body: "let mut a = [0u8; 4]; a[1] = pick(); if a[1] == 7 && a[0] == 0 { 42 } else { 1 }",
+        extra: "#[inline(never)]\nfn pick() -> u8 { 7 }",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "-C opt-level=2 下 `ConstantIndex` 投影必须加元素偏移（否则读成 a[0]）",
+    },
+    // ── v27 M6：**优化档 MIR 形态**批量覆盖（`opt_*` ⇒ harness 注入 `-C opt-level=2`）──
+    //   为什么单独一组：rustc 优化过的 MIR 与 debug 形态**不同**（内联、常量提升、
+    //   `switchInt` 多分支、`ConstantIndex`、slice 投影、128 位分字…），
+    //   而此前 e2e 全是 debug 编译 ⇒ 这条路径没有任何用例（`ConstantIndex` 就是这样漏的）。
+    Case {
+        name: "opt_loop_call_inline",
+        // 曾经在优化档 AV 崩溃（0xC0000005）的形状：**循环体内调用 + 内联计算**三者同时在场。
+        // 根因锁定在 LICM（`FORGE_OPT_SKIP=licm` 即恢复；其余 17 个 pass 逐个跳过都无效），
+        // 该 pass 现已默认不装进流水线（见 forge-opt 的 `FORGE_LICM` 注释）。
+        // 本用例就是那条崩溃形状的回归：1+4+9+16 = 30。
+        body: "let mut acc = 0u64; let mut i = 1u64; while i <= 4 { acc = acc.wrapping_add(sq(i + seed())); i += 1; } acc as i32",
+        extra: "#[inline(always)]\nfn sq(x: u64) -> u64 { x.wrapping_mul(x) }\n#[inline(never)]\nfn seed() -> u64 { 0 }",
+        entry: "mainCRTStartup",
+        expected: 30,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6-opt",
+        reason: "循环内调用 + 内联计算（曾因 LICM 在优化档 AV 崩溃，现由流水线门控 + 本用例钉住）",
+    },
+    // ── v27 M6-㊽：**溢出检查开启**（`oc_*` ⇒ harness 注入 `-C overflow-checks=on`）──
+    //   默认 e2e 编译是 debug-assertions 关 ⇒ 溢出检查关，所以"溢出必须 trap"这条语义
+    //   此前**没有任何用例**（修 8 位溢出时才发现只能靠手工探针验）。
+    //   期望值口径：`TRAP_EXIT`（panic handler 的 `ExitProcess(101)`），静默回绕会正常退出
+    //   一个错值 ⇒ 必红。
+    Case {
+        name: "oc_u8_add_overflow_traps",
+        // 8 位：`200u8 + 100u8` 必须 panic 而不是回绕成 44
+        //（v27 M6-㊽ 修前实测 exit=44；修后 exit=101）
+        body: "let a = core::hint::black_box(200u8); let b = core::hint::black_box(100u8); (a + b) as i32",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: TRAP_EXIT,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: true,
+        known_failure: false,
+        phase: "v27 M6-ovf",
+        reason: "8 位加法溢出在 overflow-checks=on 下必须 trap",
+    },
+    Case {
+        name: "oc_i8_sub_overflow_traps",
+        // 有符号 8 位**下溢**：`-100i8 - 100i8` 必须 panic
+        body: "let a = core::hint::black_box(-100i8); let b = core::hint::black_box(100i8); (a - b) as i32",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: TRAP_EXIT,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: true,
+        known_failure: false,
+        phase: "v27 M6-ovf",
+        reason: "有符号 8 位减法下溢必须 trap（比较法要同时判上下界）",
+    },
+    Case {
+        name: "oc_u8_mul_overflow_traps",
+        // 8 位乘法溢出：`200u8 * 2u8 = 400` 超出 u8 ⇒ 必须 panic
+        //（v27 M6-㊿ 修前实测 exit=144 = 回绕）
+        body: "let a = core::hint::black_box(200u8); let b = core::hint::black_box(2u8); (a * b) as i32",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: TRAP_EXIT,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: true,
+        known_failure: false,
+        phase: "v27 M6-ovf",
+        reason: "8 位乘法溢出必须 trap（乘法在 I64 里算再比区间）",
+    },
+    Case {
+        name: "oc_u16_mul_overflow_traps",
+        // 16 位乘法：`1000 * 1000 = 1e6` 超出 u16 ⇒ 必须 panic。
+        // 这条专门钉"乘法必须在 I64 里算"：I32 里 1e6 不会回绕但 65535*65535 ≈ 4.29e9 会。
+        body: "let a = core::hint::black_box(1000u16); let b = core::hint::black_box(1000u16); (a * b) as i32",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: TRAP_EXIT,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: true,
+        known_failure: false,
+        phase: "v27 M6-ovf",
+        reason: "16 位乘法溢出必须 trap（乘积超出 I32 时不能先回绕）",
+    },
+    Case {
+        name: "oc_u128_add_overflow_traps",
+        // **宽值**（128 位）加法溢出：`u128::MAX + 1` ⇒ 必须 panic。
+        // 走的是 `narrow_overflow` pass 的**宽值分支**（不扩宽，直接用回绕值比较）。
+        body: "let a = core::hint::black_box(u128::MAX); let b = core::hint::black_box(1u128); (a + b) as i32",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: TRAP_EXIT,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: true,
+        known_failure: false,
+        phase: "v27 M6-ovf",
+        reason: "128 位无符号加法溢出必须 trap（宽值分支用 `value < a` 判）",
+    },
+    Case {
+        name: "oc_i128_add_overflow_traps",
+        // **有符号**宽值溢出：判据是 `((a ^ r) & (b ^ r)) < 0`（走 Bxor/Band）——
+        // 这条专门钉那个有符号宽值分支，别让它在没人跑的情况下烂掉。
+        body: "let a = core::hint::black_box(i128::MAX); let b = core::hint::black_box(1i128); (a + b) as i32",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: TRAP_EXIT,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: true,
+        known_failure: false,
+        phase: "v27 M6-ovf",
+        reason: "128 位有符号加法溢出必须 trap（符号判据走 bxor/band）",
+    },
+    Case {
+        name: "oc_u16_mul_no_overflow",
+        // 16 位**不**溢出：`200u16 * 100u16 = 20000` ⇒ 正常返回 20000 的低 16 位（仍是 20000）
+        // 用来防止"把检查做成一律 trap"这种过度修正。
+        body: "let a = core::hint::black_box(200u16); let b = core::hint::black_box(100u16); (a * b) as i32",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 20000,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6-ovf",
+        reason: "不溢出的窄乘法必须正常返回（防止检查过度触发）",
+    },
+    Case {
+        name: "opt_many_params_loop_call",
+        // **栈形参 × 循环 × 调用**（v27 M6 的开放缺陷形状）：9 个 u64 形参里后 5 个走栈，
+        // 循环体里调一个 `#[inline(never)]` 函数，上界由**栈形参**给出。
+        // 这条在 JIT 侧（`test_jit_spill_pressure_loop_with_call`）是确定性错值/挂起；
+        // 本用例检查 **rustc 路径**是否同样中招——若通过，说明该缺陷只影响 JIT 侧
+        // （rustc 的 MIR 降级走栈槽而非块参数），据此可以给它定优先级。
+        // 期望：Σ_{i=1..5}(step(i)) = 4+7+10+13+16 = 50；再加 5*(a-b+c-d+e-f+g-h) = 5*(-4) = -20 ⇒ 30
+        body: "let (p0, p1, p2, p3, p4, p5, p6, p7, p8) = \
+               (1u64, 2u64, 3u64, 4u64, 5u64, 6u64, 7u64, 8u64, 5u64); \
+               let mut acc = 0u64; let mut i = 1u64; \
+               while i <= p8 { acc = acc.wrapping_add(step(i)).wrapping_add(p0); \
+               acc = acc.wrapping_sub(p1); acc = acc.wrapping_add(p2); acc = acc.wrapping_sub(p3); \
+               acc = acc.wrapping_add(p4); acc = acc.wrapping_sub(p5); \
+               acc = acc.wrapping_add(p6); acc = acc.wrapping_sub(p7); i += 1; } acc as i32",
+        extra: "#[inline(never)]\nfn step(x: u64) -> u64 { x.wrapping_mul(3).wrapping_add(1) }",
+        entry: "mainCRTStartup",
+        expected: 30,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6-opt",
+        reason: "栈形参 × 循环 × 调用：检查 rustc 路径是否与 JIT 侧同样中招",
+    },
+    Case {
+        name: "opt_inline_small",
+        // 注意：**不要在循环体里再调用一个 `#[inline(never)]` 函数**——那种组合
+        // （`while … { acc += sq(i + seed()) }`）目前在优化档会 AV 崩溃（0xC0000005），
+        // 已登记为开放缺陷（见 `docs/archive/forge-rustc-v27-milestones.md`，含源码）。
+        // 这里保留"内联 + 循环"这一稳定形态作为回归。
+        body: "let mut acc = 0u64; let mut i = 1u64; while i <= 4 { acc = acc.wrapping_add(sq(i)); i += 1; } acc as i32",
+        extra: "#[inline(always)]\nfn sq(x: u64) -> u64 { x.wrapping_mul(x) }",
+        entry: "mainCRTStartup",
+        expected: 30,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6-opt",
+        reason: "内联后的算术（1+4+9+16=30）；优化档会把 `sq` 内联进循环体",
+    },
+    Case {
+        name: "opt_switch_multi",
+        body: "let mut acc = 0; let mut i = 0u8; while i < 6 { acc += match i { 0 => 1, 1 => 10, 2 => 100, 3 => 1000, 4 => 7, _ => 9 }; i += 1; } acc",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 1127,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6-opt",
+        reason: "u8 判别的多分支 `switchInt`（case 常量类型须跟判别值 i8）",
+    },
+    Case {
+        name: "opt_slice_sum",
+        body: "let data = [1u16, 2, 3, 4, 5]; let s: &[u16] = &data[1..4]; let mut acc = 0u32; for v in s { acc += *v as u32; } acc as i32",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 9,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6-opt",
+        reason: "`&data[1..4]`：Subslice 投影要按元素大小前移数据指针（2+3+4=9）",
+    },
+    Case {
+        name: "opt_promoted_static",
+        body: "let a: &[u8; 4] = b\"ABCD\"; let mut acc = 0u32; let mut i = 0usize; while i < 4 { acc += a[i] as u32; i += 1; } acc as i32",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 266,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6-opt",
+        reason: "常量提升的静态字节串（65+66+67+68=266）+ 常量下标读取",
+    },
+    Case {
+        name: "opt_nested_field",
+        body: "let p = Pair { a: Inner { x: 3, y: 4 }, b: 5 }; let mut acc = 0i64; acc += p.a.x as i64; acc += p.a.y as i64; acc += p.b as i64; (acc * 3) as i32",
+        extra: "struct Inner { x: i32, y: i32 }\nstruct Pair { a: Inner, b: i32 }",
+        entry: "mainCRTStartup",
+        expected: 36,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6-opt",
+        reason: "嵌套字段投影（优化档 MIR 会把整个结构体放进一个槽里逐字段读）",
+    },
+    Case {
+        name: "opt_u128_arith",
+        // 期望值可手算：r = 3*(2^70+5)+1 = 3*2^70+16 ⇒ r>>70 = 3 ⇒ 3+39 = 42。
+        // `wide()` 是 `#[inline(never)]`，保证 128 位运算真的在运行期发生（不被常量折叠）。
+        body: "let a: u128 = (1u128 << 70) + 5; let r = wide(a); ((r >> 70) as i32) + 39",
+        extra: "#[inline(never)]\nfn wide(x: u128) -> u128 { x.wrapping_mul(3).wrapping_add(1) }",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6-opt",
+        reason: "128 位算术在优化档下（wide_split 分字 + const-fold 交互）",
+    },
+    Case {
+        name: "opt_bounds_panic",
+        body: "let a = [1u8, 2u8]; let i = idx(); a[i] as i32",
+        extra: "#[inline(never)]\nfn idx() -> usize { 5 }",
+        entry: "mainCRTStartup",
+        expected: 101,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6-opt",
+        reason: "越界索引必须走 panic 路径（panic handler 走 ExitProcess(101)），不能静默读垃圾",
+    },
+    // ── v27 M6：C 变参**定义**必须明确拒绝（`[cap:VARARGS_DEF]`）──
+    //   此前：调用这种函数会让 `check_arg_count_consistency` 的 `assert_eq!`
+    //   **panic 掉 rustc**（"the compiler unexpectedly panicked. This is a bug"）；
+    //   修好 panic 后，剩下的路径只报裸 `unsupported intrinsic: va_end`。
+    //   现在定义侧就按缺口 ID 拒绝并说明原因（真做需要被调方序言建寄存器保存区）。
+    Case {
+        name: "neg_c_variadic",
+        body: "unsafe { add_variadic(1, 2i64) as i32 }",
+        extra: "#![feature(c_variadic)]\n#![allow(incomplete_features)]\n#[unsafe(no_mangle)]\npub unsafe extern \"C\" fn add_variadic(n: i32, mut ap: ...) -> i64 { let _ = n; let _ = &mut ap; 7 }",
+        entry: "mainCRTStartup",
+        expected: 0,
+        expect_compile_fail: true,
+        expect_compile_err: "VARARGS_DEF",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "C 变参定义不支持 ⇒ 明确拒绝（此前会让 rustc ICE 在 ABI 计数断言上）",
+    },
 ];
 
 /// 生成 no_std 程序源码。
@@ -2059,6 +3113,31 @@ fn make_source(body: &str, extra: &str, entry: &str) -> String {
         "#![no_std]\n#![no_main]\n{extra}\n#[unsafe(no_mangle)]\npub extern \"C\" fn {entry}() -> i32 {{\n    {body}\n}}\n\nunsafe extern \"system\" {{\n    #[link_name = \"ExitProcess\"]\n    fn forge_panic_exit(code: u32) -> !;\n}}\n#[panic_handler]\nfn panic(_info: &core::panic::PanicInfo) -> ! {{\n    unsafe {{ forge_panic_exit({PANIC_ABORT_CODE}) }}\n}}\n"
     )
 }
+
+/// **关闭 Windows 错误报告（WER）弹窗**——`expect_trap` 用例会主动 `ud2`/越界，
+/// 未处理异常默认会拉起 WER 对话框把进程**挂住**（15 s 超时那句"产物真挂起"就是它）。
+///
+/// 子进程**继承**父进程的 error mode，所以在 harness 进程里设一次即可覆盖所有用例产物。
+/// 这条同时解释了账本里长期记着的"偶发 timeout（挂起）"——那类瞬态大半是 WER 排队/
+/// 弹窗的宿主侧行为，不是错编译。幂等：重复调用无害。
+#[cfg(windows)]
+fn suppress_wer_popups() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        // SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX
+        const MODE: u32 = 0x0001 | 0x0002 | 0x8000;
+        unsafe extern "system" {
+            fn SetErrorMode(mode: u32) -> u32;
+        }
+        unsafe {
+            SetErrorMode(MODE);
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn suppress_wer_popups() {}
 
 /// 定位 backend dll（cargo test 构建产物）。
 fn backend_dll() -> PathBuf {
@@ -2091,8 +3170,16 @@ fn run_case_with(
     extra_rustc_args: &[&str],
     extra_envs: &[(&str, &str)],
 ) -> Result<i32, String> {
-    let src = workdir.join(format!("{}.rs", case.name));
-    let exe = workdir.join(format!("{}.exe", case.name));
+    // 每个用例都可能跑出**未处理异常**（`expect_trap`），先关掉 WER 弹窗：
+    // 否则异常的产物会挂 15 s 超时（见 suppress_wer_popups 的说明）。
+    suppress_wer_popups();
+    // v27 M5 并行化：**每个用例一个子目录**，编译也在其中进行（`current_dir`），
+    // 否则多个 rustc 会在同一 workdir 里争抢对象/临时文件（实测并行时出现
+    // "退出码是别的用例的期望值" 与大量 compile failed）。
+    let case_dir = workdir.join(case.name);
+    std::fs::create_dir_all(&case_dir).map_err(|e| e.to_string())?;
+    let src = case_dir.join(format!("{}.rs", case.name));
+    let exe = case_dir.join(format!("{}.exe", case.name));
     std::fs::write(&src, make_source(case.body, case.extra, case.entry))
         .map_err(|e| e.to_string())?;
 
@@ -2131,6 +3218,30 @@ fn run_case_with(
         rustc_args.push("-C".to_string());
         rustc_args.push("debuginfo=1".to_string());
     }
+    // v27 M6：`flag_*` 用例注入"应被明确拒绝"的代码生成选项
+    //（断言见用例的 `expect_compile_err = "CODEGEN_OPTS"`）。
+    match case.name {
+        "flag_lto" => rustc_args.extend(["-C".to_string(), "lto=fat".to_string()]),
+        "flag_coverage" => rustc_args.extend(["-C".to_string(), "instrument-coverage".to_string()]),
+        "flag_sanitizer" => rustc_args.extend(["-Z".to_string(), "sanitizer=address".to_string()]),
+        // `--emit=asm`：本后端只产对象文件 ⇒ 必须按 `[cap:EMIT_KINDS]` 拒绝
+        //（此前**静默什么都不生成**：退出码 0、用户要的文件不存在）。
+        "flag_emit_asm" => rustc_args.extend(["--emit=asm".to_string()]),
+        _ => {}
+    }
+    // `opt_*` 用例用 `-C opt-level=2` 编译：**优化过的 MIR 形态不同**（例如数组常量
+    // 下标从 `Index(_const)` 变成 `ConstantIndex`），只有开优化才走那条 lowering
+    // （v27 M6：`ConstantIndex` 曾被静默忽略 ⇒ `buf[1]` 读成 `buf[0]`）。
+    // 这类用例专门覆盖"带优化的路径"——其余用例都是 debug（无优化）编译。
+    if case.name.starts_with("opt_") {
+        rustc_args.extend(["-C".to_string(), "opt-level=2".to_string()]);
+    }
+    // `oc_*` 用例用 `-C overflow-checks=on` 编译：默认（debug-assertions 关）**溢出检查是关的**，
+    // 于是"溢出必须 panic"这条语义在 e2e 里根本没有用例覆盖（v27 M6-㊽ 修 8 位溢出时才发现：
+    // 修完只能靠手工探针验）。这类用例专覆盖检查开启后的路径。
+    if case.name.starts_with("oc_") {
+        rustc_args.extend(["-C".to_string(), "overflow-checks=on".to_string()]);
+    }
     // M4 注入：真并行池编译（-Z threads 开启 rustc 前端并行池 → forge 的
     // par_map 函数任务才会上池，见 backend.rs 门控）。
     rustc_args.extend(extra_rustc_args.iter().map(|s| s.to_string()));
@@ -2141,7 +3252,8 @@ fn run_case_with(
         .arg(&src)
         .arg("-o")
         .arg(&exe)
-        .envs(extra_envs.iter().copied());
+        .envs(extra_envs.iter().copied())
+        .current_dir(&case_dir);
     let compile = cmd
         .output()
         .map_err(|e| format!("failed to spawn rustc: {e}"))?;
@@ -2168,9 +3280,7 @@ fn run_case_with(
         ));
     }
     if case.expect_compile_fail {
-        return Err(format!(
-            "expected compile failure but compilation succeeded (门控失效)"
-        ));
+        return Err("expected compile failure but compilation succeeded (门控失效)".to_string());
     }
     // 诊断：FORGE_E2E_TRACE=1 时编译成功也打印 stderr（FORGE_TRACE_* 输出）
     if std::env::var_os("FORGE_E2E_TRACE").is_some() {
@@ -2203,6 +3313,10 @@ fn run_case_with(
     //   （如 `0xC000_001D` = `ud2`），这样"trap 发生了"与"trap 的是**这个**机制"都被断言。
     //   `expect_trap = false` 时异常终止 = **未预期的崩溃**（此前被误报成超时）。
     match result {
+        // v27 M5：**先**与用例期望对齐，再判 trap。否则"负的期望退出码"（如 `-4`）
+        // 会被 `is_trap_code` 误判为 NTSTATUS（`-4 as u32 = 0xFFFFFFFC >= 0xC0000000`），
+        // 导致正确的有符号结果被报成"未预期的异常终止"。
+        Ok(c) if c == case.expected => Ok(c),
         // 正常退出码（含普通非零码；NTSTATUS error 级见下支）
         Ok(c) if !is_trap_code(c) => {
             if !case.expect_trap {
@@ -2465,13 +3579,55 @@ fn e2e_stage_a_scalar_cases() {
     // 单用例调试：FORGE_E2E_ONLY=用例名 只跑一个（配合 FORGE_TRACE_*）
     let only = std::env::var("FORGE_E2E_ONLY").ok();
 
-    for case in CASES {
-        if let Some(ref only_name) = only
-            && only_name != case.name
-        {
-            continue;
+    // ── 用例级并行（v27 M5）──
+    // 每个 worker 独立"编译 + 运行"一个用例；产物按用例名隔离（`<name>.rs`/`<name>.exe`），
+    // 无共享可变状态。结果**按 CASES 顺序回收**后再串行分类 ⇒ 输出/事件/汇总与串行完全一致。
+    // 并发度：`FORGE_E2E_JOBS`（显式覆盖）> 可用核数；1 = 串行（原行为）。
+    let selected: Vec<&Case> = CASES
+        .iter()
+        .filter(|c| only.as_ref().is_none_or(|n| n == c.name))
+        .collect();
+    let jobs = std::env::var("FORGE_E2E_JOBS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or_else(|| {
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(1)
+        })
+        .clamp(1, 16)
+        .min(selected.len().max(1));
+    println!("cases: {} 并行度: {}", selected.len(), jobs);
+    let outcomes: Vec<Result<i32, String>> = if jobs <= 1 {
+        selected.iter().map(|c| run_case(c, &workdir)).collect()
+    } else {
+        use std::sync::Mutex;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let next = AtomicUsize::new(0);
+        let slots: Mutex<Vec<Option<Result<i32, String>>>> =
+            Mutex::new((0..selected.len()).map(|_| None).collect());
+        std::thread::scope(|s| {
+            for _ in 0..jobs {
+                s.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        if i >= selected.len() {
+                            break;
+                        }
+                        let r = run_case(selected[i], &workdir);
+                        slots.lock().expect("e2e slots poisoned")[i] = Some(r);
+                    }
+                });
+            }
+        });
+        let mut out = Vec::with_capacity(selected.len());
+        for slot in slots.into_inner().expect("e2e slots poisoned") {
+            out.push(slot.expect("e2e slot not filled"));
         }
-        match run_case(case, &workdir) {
+        out
+    };
+    for (case, result) in selected.iter().copied().zip(outcomes) {
+        match result {
             Ok(code) if code == case.expected => {
                 // P0-20：known_failure 转正必须显式翻转标记——否则 bug 修复
                 // 后无人更新（known_failure 永不 assert，CI 照绿）。
@@ -2838,8 +3994,10 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 /// 这里抽用例逐一以两种方式编译并运行：
 /// - 无参编译（无 -Z threads → 旧 T=1 串行路径）；
 /// - `-Z threads=2` + `FORGE_CODEGEN_THREADS=4`（真并行池路径）。
+///
 /// 两路径退出码必须一致且等于期望值（产物指令序列一致性由 determinism.rs
 /// 的 -Z threads 矩阵守护）。
+///
 /// ⚠️ 名单不含 alloc/Vec grow 与 V256 用例：2026-09-06 起它们在本测试出现
 /// 非确定性残余（vec AV / par 编译偶发 timeout 挂起——见 vec_push reason 与
 /// FLAKY 名单），其编译正确性由 stage_a/并行 case 清单与 jit 矩阵覆盖；
@@ -3026,9 +4184,9 @@ fn e2e_multi_object_cgu_units() {
         let mut cmd = Command::new("rustc");
         cmd.args(rustc_args)
             .arg("-C")
-            .arg(format!(
-                "link-args=/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE /DEFAULTLIB:kernel32.lib /DEFAULTLIB:vcruntime.lib"
-            ))
+            .arg(
+                "link-args=/ENTRY:mainCRTStartup /SUBSYSTEM:CONSOLE /DEFAULTLIB:kernel32.lib /DEFAULTLIB:vcruntime.lib",
+            )
             .arg(&src_path)
             .arg("-o")
             .arg(&out_exe)

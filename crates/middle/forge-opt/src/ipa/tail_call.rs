@@ -148,11 +148,11 @@ mod tests {
         let recurse = b.create_block();
         let done = b.create_block();
         b.switch_to_block(entry);
-        let zero = b.iconst_i32(0);
+        let zero = b.constant(0i32);
         let cond = b.icmp(IntCC::Eq, params[0], zero);
         b.branch(cond, done, &[], recurse, &[]);
         b.switch_to_block(recurse);
-        let one = b.iconst_i32(1);
+        let one = b.constant(1i32);
         let dec = b.isub(params[0], one);
         // 自递归调用：FuncRef(0) 指向函数自身（函数表里放同名函数的克隆）
         let call_ret = b.call(FuncRef::new(0), &[dec], &[TypeId::I32]);
@@ -206,7 +206,7 @@ mod tests {
         let mut b = FunctionBuilder::new("callee", TypeContext::new(), sig);
         let (entry, params) = b.create_block_with_params(&[(TypeId::I32, "x")]);
         b.switch_to_block(entry);
-        let one = b.iconst_i32(1);
+        let one = b.constant(1i32);
         let result = b.iadd(params[0], one);
         b.ret(&[result]);
         let callee_func = b.finish().expect("build");

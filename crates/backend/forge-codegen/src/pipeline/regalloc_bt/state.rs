@@ -326,26 +326,13 @@ impl<'a> BtState<'a> {
             OperandConstraint::Any => {
                 // 从空闲池获取
                 if let Some(preg) = self.pop_free(class) {
-                    if crate::pipeline::trace::knob("FORGE_TRACE_ALLOC") {
-                        eprintln!(
-                            "[alloc] v{} -> {} at {:?} (free)",
-                            vreg.index(),
-                            preg,
-                            self.current_point
-                        );
-                    }
+                    super::verify::trace_assign_free(vreg, preg, self.current_point);
                     self.assignments.insert(vreg, preg);
                     self.set_reg_owner(preg, vreg);
                     return Ok(preg);
                 }
                 // 无空闲 → 驱逐
-                if crate::pipeline::trace::knob("FORGE_TRACE_ALLOC") {
-                    eprintln!(
-                        "[alloc] v{} evict at {:?}",
-                        vreg.index(),
-                        self.current_point
-                    );
-                }
+                super::verify::trace_evict(vreg, self.current_point);
                 self.evict_and_assign(vreg, class, is_def)
             }
 
@@ -452,18 +439,16 @@ impl<'a> BtState<'a> {
             })
             .collect();
         // **真正的 Belady**（v23 M5 第五步）：死值（`next_use == MAX`）优先，其次是"下次使用
-        // 最远"的**活跃值**——后者的当前寄存器值由 `SpillEdit::SpillLive` 在指令**前**落盘，
-        // 因此驱逐活跃值是安全的（旧实现只驱逐死值，无死值就 spill 当前 def 或报错）。
+        // 最远"的**活跃值**——活跃值驱逐后槽仍是权威副本（见下一条注释），因此安全。
         dead_victims.sort_by_key(|&(nu, v, _)| (nu, v.index()));
         let victim = dead_victims.pop();
         if let Some((_, victim_vreg, victim_preg)) = victim {
-            // **活跃值驱逐不需要落盘**（2026-10-11 取证定性，见账本）：发射侧按**最终表**
-            // 决定，凡"最终有槽"的 vreg，其每次 def 都被重定向到 scratch 并 `Store` 回槽、
-            // 每次 use 都**从槽 load** ⇒ **槽始终是权威副本**，寄存器的内容可能早已陈旧
-            // （def 走过 scratch 路径时寄存器根本没被写）。早先版本在这里"把受害者的寄存器
-            // 内容写回槽"（`SpillEdit::SpillLive`），实测正是用陈旧值**覆盖**了槽里的正确值
-            // ——atomic/向量高压力用例因此读到垃圾（`-163`、`-1774193535`）。所以这里只要
-            // 释放寄存器即可：`spill_vreg` 分配槽（若还没有）并归还寄存器。
+            // **活跃值驱逐不需要落盘**（2026-10-11 取证；2026-10-19 再次实测确认）：发射侧按
+            // **最终表**决定，凡"最终有槽"的 vreg，其每次 def 都被重定向到 scratch 并 `Store`
+            // 回槽、每次 use 都**从槽 load** ⇒ **槽始终是权威副本**，寄存器内容可能早已陈旧
+            // （def 走过 scratch 路径时寄存器根本没被写）。"把受害者寄存器写回槽"实测正是用
+            // 陈旧值**覆盖**槽里的正确值（atomic/向量压力用例读到垃圾；2026-10-19 重实现后
+            // `jit_stack_params_with_call` 等多台用例立刻红）。所以这里只归还寄存器。
             self.spill_vreg(victim_vreg)?;
             if crate::pipeline::trace::knob("FORGE_TRACE_ALLOC")
                 || crate::pipeline::trace::knob("FORGE_TRACE_SPILL")
@@ -558,6 +543,27 @@ impl<'a> BtState<'a> {
                 self.assignments.get(&vreg)
             );
         }
+        // **探针**：本次驱逐的是**活值**吗？（打印在 `verify.rs::report_live_eviction`，
+        // 那里也写了"为什么不能据此改回驱逐时落槽"的实测结论。）
+        if std::env::var_os("FORGE_VERIFY_SPILL_LIVE").is_some()
+            && self.assignments.contains_key(&vreg)
+            && self
+                .intervals
+                .get(&vreg)
+                .and_then(|iv| iv.next_use_after(self.current_point))
+                .is_some()
+        {
+            super::verify::report_live_eviction(
+                vreg,
+                self.current_point,
+                self.assignments.get(&vreg).copied(),
+                self.spill_slots.contains_key(&vreg),
+            );
+        }
+        // **活值驱逐也不落槽**（2026-10-19 再次实测确认）：槽是权威副本（def 走 scratch
+        // 直接写槽），寄存器里可能是陈旧值；在驱逐点把寄存器写回槽会覆盖正确内容
+        //（实测：加落槽后 `jit_stack_params_with_call` 等多台原本绿的用例立刻红）。
+        // 诊断探针见上方 `FORGE_VERIFY_SPILL_LIVE`。
         if self.spill_slots.contains_key(&vreg) {
             // **已经有槽也必须把寄存器还回来**（v23 M5 第五步取证 ①）：活跃值被驱逐 →
             // 之后 reload 拿到寄存器 → **再次**被驱逐时走到这里。早退而不释放 ⇒ 调用方
@@ -637,12 +643,7 @@ impl<'a> BtState<'a> {
                 // 任意空闲寄存器即可
                 if let Some(preg) = self.pop_free(class) {
                     if trace {
-                        eprintln!(
-                            "[reload] v{} at {:?} -> {}",
-                            vreg.index(),
-                            self.current_point,
-                            preg
-                        );
+                        super::verify::trace_reload(vreg, preg, self.current_point);
                     }
                     self.assignments.insert(vreg, preg);
                     self.set_reg_owner(preg, vreg);
@@ -923,7 +924,6 @@ impl<'a> BtState<'a> {
             call_layout: None,
             assignments,
             spill_slots,
-            // 逐指令溢出编辑由 llocate 在 uild_result 之后补上（见 uild_spill_edits）。
             edits: Vec::new(),
             param_vregs: self.config.param_xregs.clone(),
             // S2：sret 由 CompileState 在分配后填充（LowerCtx.is_sret_return）

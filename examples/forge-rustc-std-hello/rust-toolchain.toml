@@ -1,4 +1,4 @@
-﻿# 浮动 nightly：本机/CI 通常只装浮动通道（`-Zbuild-std` 需要 nightly）。
-# 若你的环境装的是固定日期通道，把 channel 改成那一版。
+# 由 cargo-forge init 生成：forge backend 需 nightly rustc（见
+# crates/tools/forge-rustc README；版本与 backend 构建所用 nightly 对齐）。
 [toolchain]
 channel = "nightly"

@@ -220,6 +220,22 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
                                 continue;
                             }
 
+                            // **调用点必须清空"可达的 store"**：调用可能写任意内存
+                            // （外部函数 / 传出去的指针别名），块内转发若越过调用，
+                            // 就会把调用**之后**的 `load` 换成调用**之前**的旧值。
+                            // 2026-10-19 实测：`wsprintfA(buf, "%d", 42)` 之后读 `buf[1]`
+                            // 在 `-O` 下读到初始的 0（`-C opt-level=0` 正确）。
+                            if matches!(
+                                inst.opcode,
+                                Opcode::Call
+                                    | Opcode::CallIndirect
+                                    | Opcode::AtomicRmw
+                                    | Opcode::Cmpxchg
+                            ) {
+                                reaching = None;
+                                continue;
+                            }
+
                             // Store(value, ptr) to our slot → update reaching def
                             if matches!(inst.opcode, Opcode::Store)
                                 && inst.operands.len() >= 2
@@ -227,6 +243,10 @@ pub fn promote_to_ssa(func: &mut Function) -> Result<PassResult, IrError> {
                                 && let Some(&stored_val) = inst.operands.first()
                             {
                                 reaching = Some(stored_val);
+                            } else if matches!(inst.opcode, Opcode::Store | Opcode::Fstore) {
+                                // 写到**别处**的 store 也可能与我们的槽别名
+                                // （`buf` 与 `buf+1` 是两个不同 Value）⇒ 保守失效。
+                                reaching = None;
                             }
 
                             // Load(ptr) from our slot → forward if reaching def exists
@@ -292,7 +312,7 @@ mod tests {
         let entry = b.create_block();
         b.switch_to_block(entry);
         let addr = b.stack_addr(0); // StackAddr
-        let v42 = b.iconst_i32(42);
+        let v42 = b.constant(42i32);
         b.store(v42, addr); // Store 42
         let loaded = b.load(addr, TypeId::I32); // Load
         b.ret(&[loaded]);
@@ -324,7 +344,7 @@ mod tests {
         let entry = b.create_block();
         b.switch_to_block(entry);
         let addr = b.stack_addr(0);
-        let v42 = b.iconst_i32(42);
+        let v42 = b.constant(42i32);
         b.store(v42, addr);
         b.ret(&[v42]); // uses v42 directly, not loaded
 
@@ -341,7 +361,7 @@ mod tests {
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let entry = b.create_block();
         b.switch_to_block(entry);
-        let v = b.iconst_i32(42);
+        let v = b.constant(42i32);
         b.ret(&[v]);
         let mut func = b.finish().expect("build");
 
@@ -359,7 +379,7 @@ mod tests {
         let entry = b.create_block();
         b.switch_to_block(entry);
         let addr = b.stack_addr(0);
-        let v42 = b.iconst_i32(42);
+        let v42 = b.constant(42i32);
         b.store(v42, addr);
         let loaded = b.load(addr, TypeId::I32);
         b.ret(&[loaded]);
@@ -379,8 +399,8 @@ mod tests {
         let entry = b.create_block();
         b.switch_to_block(entry);
         let addr = b.stack_addr(0);
-        let v42 = b.iconst_i32(42);
-        let v99 = b.iconst_i32(99);
+        let v42 = b.constant(42i32);
+        let v99 = b.constant(99i32);
         b.store(v42, addr);
         let load1 = b.load(addr, TypeId::I32);
         b.store(v99, addr);
@@ -410,7 +430,7 @@ mod tests {
         let addr = b.stack_addr(0);
         // Load before any store — no reaching definition
         let _load_uninit = b.load(addr, TypeId::I32);
-        let v42 = b.iconst_i32(42);
+        let v42 = b.constant(42i32);
         b.store(v42, addr);
         let loaded = b.load(addr, TypeId::I32);
         b.ret(&[loaded]);
