@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-24) — `forge-rustc`：函数指针 / `dyn` 虚调用不再崩溃或丢实参
+
++ **函数指针常量是 `nullptr`**：`let f: fn(i64)->i64 = add1;` 的常量分配是
+  `GlobalAlloc::Function`，不在数据段路径里 ⇒ 被当成标量求值成 0 ⇒ 间接调用 AV
+  （连最普通的标量 fn 指针都崩）。现在取该实例的符号地址（隐藏全局符号 + `abs64` 重定位），
+  `FnDef` 常量与 `GlobalAlloc::Function` 两种形态都接。
++ **虚方法丢显式实参**：`dyn Trait` 分支此前只传 receiver（`args[0]`），vtable 之后的
+  实参整批丢弃 ⇒ 带参数的 `dyn` 方法一律错值。现在按
+  `[receiver.data] + args[2..]` 传（vtable 是元数据）。
++ **间接调用的 `u128`/`i128` 形态**：fn 指针与虚方法拿不到被调方实例 ⇒ 由
+  `FnSig` 走 `fn_abi_of_fn_ptr` 取 `PassMode`（`wide_int_abi_of_callee_ty`），不再
+  fail-closed；`[cap:WIDE_INT_ABI]` 收窄到"签名本身不可得"的边角。
++ **回归守卫**：e2e 新增 `fnptr_scalar` / `fnptr_u128` / `dyn_args` / `dyn_u128`
+  （全 42）；README 机读计数同步到 203。
+
 ### Fixed (2026-10-24) — `forge-rustc`：128 位标量的 C-ABI 与 LLVM 双向互操作（`WA-52` 收口）
 
 + **症状**：`extern "C"` 边界上的 `u128`/`i128` 与 **LLVM 编的代码混链**时崩溃或错值

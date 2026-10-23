@@ -163,8 +163,9 @@
 ### 实现落点（四处同源）
 
 1. **形态查询**：`crates/tools/forge-rustc/src/abi.rs` 的 `wide_int_abi(tcx, instance)` 与
-   `callee_wide_int_abi(tcx, func)`（调用点从 `Operand::Constant(FnDef)` 解析被调方）。
-   解析不出（间接调用 / 虚调用）⇒ 调用方拿不到形态，**必须 fail-closed**。
+   `callee_wide_int_abi(tcx, func, body)`：先按被调方**实例**问，实例解析不出时退回
+   **操作数类型上的 `FnSig`**（`wide_int_abi_of_callee_ty` → `fn_abi_of_fn_ptr`）——
+   fn 指针与 `dyn Trait` 方法因此可用（M6-89）；两条都拿不到才 fail-closed。
 2. **定义侧**（`lower/mod.rs` 的 `build_signature`）：128 位形参按形态落成"一个指针"或
    "两个 `i64`"；返回落成 `V128`（向量槽）或两个 `i64`。入口收参：指针形态用
    `copy_agg` 复制 16 字节进本地槽，返回用 `load_ty(base, V128)` 读一个 16 字节向量。

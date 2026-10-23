@@ -2749,6 +2749,65 @@ const CASES: &[Case] = &[
         reason: "Rust ABI 的 u128 返回（RAX:RDX）必须正确——与 C 家族的 XMM0 区分",
     },
     Case {
+        name: "fnptr_scalar",
+        // **函数指针**：此前 `take as fn(..)` 的常量被标量求值成 `nullptr`
+        // （`GlobalAlloc::Function` 不在数据段路径里）⇒ 间接调用 AV。
+        body: "let f: fn(i64) -> i64 = add1; if f(core::hint::black_box(6)) == 7 { 42 } else { 7 }",
+        extra: "#[inline(never)]\nfn add1(a: i64) -> i64 { a + 1 }\n",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "函数指针常量必须取到符号地址（此前是 null）——间接调用通路的基础",
+    },
+    Case {
+        name: "fnptr_u128",
+        // **fn 指针 + 128 位实参**：形态来自操作数类型上的 `FnSig`（fn_abi_of_fn_ptr），
+        // 不再因"拿不到被调方实例"而 fail-closed。
+        body: "let f: fn(u128) -> u64 = take_hi; let v = core::hint::black_box((7u128) << 64 | 11); if f(v) == 7 { 42 } else { 7 }",
+        extra: "#[inline(never)]\nfn take_hi(a: u128) -> u64 { (a >> 64) as u64 }\n",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "fn 指针调用的 u128 实参：形态问 FnSig（两整数槽），且函数地址必须真实",
+    },
+    Case {
+        name: "dyn_args",
+        // **虚方法带显式实参**：此前虚调用只传 receiver，显式实参被整批丢掉
+        // （被调方读寄存器垃圾）——带参数的 `dyn Trait` 方法一律错值。
+        body: "let s = S; let d: &dyn T = &s; if d.m(core::hint::black_box(4), core::hint::black_box(2)) == 42 { 42 } else { 7 }",
+        extra: "trait T { fn m(&self, a: i64, b: i64) -> i64; }\nstruct S;\nimpl T for S { #[inline(never)] fn m(&self, a: i64, b: i64) -> i64 { a * 10 + b } }\n",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "虚调用必须把 receiver 之后的显式实参也传给方法（此前只传 receiver）",
+    },
+    Case {
+        name: "dyn_u128",
+        // 虚方法 + 128 位实参：形态来自虚方法实例的 `FnAbi`（Rust ABI 两槽）。
+        body: "let s = S; let d: &dyn T = &s; let v = core::hint::black_box((9u128) << 64 | 11); if d.w(v) == 9 { 42 } else { 7 }",
+        extra: "trait T { fn w(&self, a: u128) -> u64; }\nstruct S;\nimpl T for S { #[inline(never)] fn w(&self, a: u128) -> u64 { (a >> 64) as u64 } }\n",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "dyn 方法的 u128 实参：形态来自 FnAbi/FnSig，且显式实参要传到方法",
+    },
+    Case {
         name: "u128_div_non_pow2",
         // **非 2 的幂的 128 位除/余**：legalize 的 `wide_div` 分肢长除法（v27 M6-79）。
         body: "let v = core::hint::black_box(0x99aa_bbcc_ddee_ff00u128);              if (v / 7) as u64 == 0x99aa_bbcc_ddee_ff00u64 / 7 && (v % 7) as u64 == 0x99aa_bbcc_ddee_ff00u64 % 7 { 42 } else { 7 }",

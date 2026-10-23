@@ -252,17 +252,8 @@ fn is_wide_int_ty(ty: Ty<'_>) -> bool {
     )
 }
 
-/// 问该实例的 `FnAbi`：128 位边界的形态（没有 128 位边界 ⇒ `None`）。
-///
-/// 返回 `None` 还有一种情形：`FnAbi` 求不出来（布局错误等）——调用点拿到 `None`
-/// 而手上又有 128 位值时**必须 fail-closed**（`WA-52` 的成因就是"猜一个继续"）。
-pub(crate) fn wide_int_abi<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    instance: &Instance<'tcx>,
-) -> Option<WideIntAbi> {
-    let abi = MonoLayoutCx(tcx)
-        .fn_abi_of_instance(*instance, ty::List::empty())
-        .ok()?;
+/// 从一份 `FnAbi` 读出 128 位边界的形态（没有 128 位边界 ⇒ `None`）。
+fn shapes_of_fn_abi(abi: &rustc_target::callconv::FnAbi<'_, Ty<'_>>) -> Option<WideIntAbi> {
     let mut arg = None;
     for a in &abi.args {
         if is_wide_int_ty(a.layout.ty) {
@@ -286,6 +277,47 @@ pub(crate) fn wide_int_abi<'tcx>(
         return None;
     }
     Some(WideIntAbi { arg, ret })
+}
+
+/// 问该实例的 `FnAbi`：128 位边界的形态（没有 128 位边界 ⇒ `None`）。
+///
+/// 返回 `None` 还有一种情形：`FnAbi` 求不出来（布局错误等）——调用点拿到 `None`
+/// 而手上又有 128 位值时**必须 fail-closed**（`WA-52` 的成因就是"猜一个继续"）。
+pub(crate) fn wide_int_abi<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: &Instance<'tcx>,
+) -> Option<WideIntAbi> {
+    let abi = MonoLayoutCx(tcx)
+        .fn_abi_of_instance(*instance, ty::List::empty())
+        .ok()?;
+    shapes_of_fn_abi(abi)
+}
+
+/// 从**函数类型**（`fn(..)`/`extern "C" fn(..)` 指针或未解析的 `FnDef`）问 `FnAbi`。
+///
+/// 为什么需要它（v27 M6-89）：间接调用（fn 指针、`dyn Trait` 方法）**拿不到被调方实例**，
+/// 但 MIR 的操作数类型里带着 `FnSig`——`FnSig.abi` 就是"这个指针指向的函数用哪份调用
+/// 约定"的权威声明。`fn_abi_of_fn_ptr` 让形态判定从"实例"扩展到"类型"，于是
+/// `fn(u128) -> u64` / `dyn Trait { fn m(&self, u128) }` 不再 fail-closed。
+pub(crate) fn wide_int_abi_of_callee_ty<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    ty: Ty<'tcx>,
+) -> Option<WideIntAbi> {
+    let sig: ty::PolyFnSig<'tcx> = match ty.kind() {
+        // 本 nightly 把 `FnSig` 拆成 (tys, header) 两块（省 8 字节）；`with` 合回去。
+        ty::TyKind::FnPtr(sig_tys, header) => (*sig_tys).with(*header),
+        ty::TyKind::FnDef(def_id, substs) => tcx
+            .fn_sig(*def_id)
+            .instantiate(tcx, substs.skip_binder())
+            // 本 nightly 的 `fn_sig` 查询把结果包在 `Unnormalized` 里（查询输入/输出
+            // 的规范化状态）；降级层只做位点判定，不需要再归一化。
+            .skip_normalization(),
+        _ => return None,
+    };
+    let abi = MonoLayoutCx(tcx)
+        .fn_abi_of_fn_ptr(sig, ty::List::empty())
+        .ok()?;
+    shapes_of_fn_abi(abi)
 }
 
 /// 调用点：从 MIR 的 `Operand` 解析**被调方实例**。
@@ -312,12 +344,21 @@ pub(crate) fn callee_instance<'tcx>(
     .flatten()
 }
 
-/// 调用点：被调方的 128 位边界形态（`None` = 间接调用 / 求不出）。
+/// 调用点：被调方的 128 位边界形态。
+///
+/// 先按**实例**问（直接调用最精确）；实例解析不出（fn 指针 / 虚调用 / 部分替换）时
+/// 退回**操作数类型上的 `FnSig`**（`wide_int_abi_of_callee_ty`）。两条都拿不到才 `None`。
 pub(crate) fn callee_wide_int_abi<'tcx>(
     tcx: TyCtxt<'tcx>,
     func: &Operand<'tcx>,
+    body: &Body<'tcx>,
 ) -> Option<WideIntAbi> {
-    wide_int_abi(tcx, &callee_instance(tcx, func)?)
+    if let Some(inst) = callee_instance(tcx, func)
+        && let Some(wide) = wide_int_abi(tcx, &inst)
+    {
+        return Some(wide);
+    }
+    wide_int_abi_of_callee_ty(tcx, func.ty(&body.local_decls, tcx))
 }
 
 /// 128 位值跨 ABI 边界的形态求不出来 ⇒ **明确拒绝**（fail-closed）。

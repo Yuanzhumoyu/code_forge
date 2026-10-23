@@ -12,6 +12,27 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-24 · M6-89：fn 指针 / 虚方法的真实地址与显式实参（P1 的连带修复）
+
+P1 收口后按"让 `u128` 走通间接调用"做探针，抓到三个**独立的既有缺陷**（都与 128 位无关，
+只是被这条探针暴露）：
+
+1. **函数指针常量编成 `nullptr`**：`take as fn(..)` 的常量分配是
+   `GlobalAlloc::Function`，不在数据段路径里 ⇒ `const_data_addr` 返回 `None` 后落到标量求值
+   ⇒ `store ptr null`，间接调用 AV（连 `fn(i64)->i64` 都崩）。修法：把该实例的符号登记进
+   隐藏全局符号表（`intern_global_named`）+ `global_addr`，用 `abs64` 重定位让链接器
+   填函数地址（`GlobalAlloc::Function` 与 `FnDef` 常量两条形态都接）。
+2. **虚调用丢显式实参**：`dyn Trait` 方法的分支只传了 `args[0]`（receiver data），
+   receiver 的 vtable（`args[1]`）之后的实参整批丢弃 ⇒ 带参数的虚方法一律错值。
+   修法：`method_args = [args[0]] + args[2..]`（vtable 是元数据，不传）。
+3. **间接调用的 128 位形态 fail-closed**：fn 指针/虚方法拿不到被调方实例。
+   修法：`wide_int_abi_of_callee_ty` 从**操作数类型的 `FnSig`** 走 `fn_abi_of_fn_ptr`
+   （本 nightly 的 `FnPtr` 把 `FnSig` 拆成 `(tys, header)`，用 `with(header)` 合回去）。
+
+**验收**：e2e 新增 4 条（`fnptr_scalar`/`fnptr_u128`/`dyn_args`/`dyn_u128`，全 42），
+`rustc_doc_counts` 同步到 203；探针 `fn(u128)->u64`、`dyn Trait::m(&self,u128)`、
+两者混合（期望 77）全部真跑正确。
+
 ### 2026-10-24 · M6-88：P1 收口——128 位形态**问 `FnAbi`**，跨后端双向 42
 
 **做法**：降级层不再按"约定名/启发式"决定 `u128` 的传参/返回形态，而是读被调方（定义侧读自己）

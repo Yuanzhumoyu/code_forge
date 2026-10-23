@@ -541,7 +541,6 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     // promoted/slice 字面量是 GlobalAlloc::Memory（内容稳定名
                     // `__slice_{hash}`，intern_promoted 落 .rodata）、static 是
                     // GlobalAlloc::Static（真实符号名，intern_global 落 .data）。
-                    // 其余（Function 等）不在此路径，落到下方标量求值。
                     // v27 TLS：线程局部静态在这里被拦成动态 TLS 调用（`const_data_addr`）。
                     if let Some(addr) = self.const_data_addr(alloc_id)? {
                         if crate::trace::trace_enabled("GLOBAL") {
@@ -549,9 +548,40 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         }
                         return Ok(addr);
                     }
+                    // **函数指针常量**（v27 M6-89）：`take as fn(..)` 的分配是
+                    // `GlobalAlloc::Function`——不是数据段，`const_data_addr` 返回 `None`。
+                    // 取该实例的**符号地址**：借隐藏全局符号表（`G{N}` → 真实符号名）
+                    // 走 `GlobalAddr` 的 `abs64` 重定位，链接器把函数符号填进来。
+                    // 此前这里落到标量求值 ⇒ 指针是 `null`（fn 指针一律 AV）。
+                    if let rustc_middle::mir::interpret::GlobalAlloc::Function { instance } =
+                        self.tcx.global_alloc(alloc_id)
+                    {
+                        let sym = super::symbol_name_for_instance(self.tcx, &instance);
+                        if crate::trace::trace_enabled("GLOBAL") {
+                            eprintln!("[forge] func_addr alloc={alloc_id:?} sym={sym}");
+                        }
+                        let g = self.func_refs.intern_global_named(&sym);
+                        return Ok(self.builder.global_addr(GlobalId::new(g)));
+                    }
                     if crate::trace::trace_enabled("GLOBAL") {
                         eprintln!("[forge] const alloc={alloc_id:?} non-data, skip");
                     }
+                }
+                // `FnDef` 直接作为值（`take as fn(..)` 的另一形态：MIR 的常量类型就是
+                // `FnDef`）：解析实例 → 符号地址（与上面 `GlobalAlloc::Function` 同路）。
+                if let TyKind::FnDef(def_id, substs) = constant.const_.ty().kind()
+                    && let Some(inst) = ty::Instance::try_resolve(
+                        self.tcx,
+                        ty::TypingEnv::fully_monomorphized(),
+                        *def_id,
+                        substs.skip_binder(),
+                    )
+                    .ok()
+                    .flatten()
+                {
+                    let sym = super::symbol_name_for_instance(self.tcx, &inst);
+                    let g = self.func_refs.intern_global_named(&sym);
+                    return Ok(self.builder.global_addr(GlobalId::new(g)));
                 }
                 // 求值标量常量：用 ScalarInt 自身位宽取位（s.size()），再按
                 // 类型位宽分派——不能对 size 1/2/4 的标量调 to_i64()（固定 8

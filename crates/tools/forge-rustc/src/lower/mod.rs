@@ -172,7 +172,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             let mut max_slots = 0usize;
             for bb in body.basic_blocks.iter() {
                 if let TerminatorKind::Call { func, args, .. } = &bb.terminator().kind {
-                    if crate::abi::callee_wide_int_abi(tcx, func).and_then(|w| w.arg)
+                    if crate::abi::callee_wide_int_abi(tcx, func, body).and_then(|w| w.arg)
                         == Some(crate::abi::WideIntArg::ByRef)
                     {
                         let n = args
@@ -770,7 +770,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     // **调用点 128 位形态：问被调方的 `FnAbi`**（v27 M6-88，`WA-52`）。
                     // 打包必须在参数循环**之前**拿到它：同一个 `u128` 实参，按引用是
                     // 一个指针、两个整数槽是 lo/hi——形状不同，不能事后补。
-                    let callee_wide = crate::abi::callee_wide_int_abi(self.tcx, func);
+                    let callee_wide = crate::abi::callee_wide_int_abi(self.tcx, func, self.body);
                     if crate::trace::trace_enabled("CALL") {
                         let callee = match func {
                             Operand::Constant(c) => format!("{}", c.const_.ty()),
@@ -1063,9 +1063,17 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     let slot_addr = self.builder.iadd(vtable, slot_v);
                                     let fn_ptr = self.builder.load(slot_addr, TypeId::I64);
                                     // 方法只收 receiver（data 指针）——vtable 是 fat
-                                    // pointer 元数据，不传给方法
-                                    let method_args =
-                                        args.first().copied().map(|a| vec![a]).unwrap_or_default();
+                                    // pointer 元数据，不传给方法；**但显式实参必须带上**
+                                    // （此前只传 args[0] ⇒ 带参数的虚方法会把实参丢掉、
+                                    // 被调方读寄存器垃圾；v27 M6-89 修）。
+                                    // 布局：args = [receiver.data, receiver.vtable, 显式实参…]。
+                                    let mut method_args: Vec<Value> = Vec::new();
+                                    if let Some(&r) = args.first() {
+                                        method_args.push(r);
+                                    }
+                                    if let Some(rest) = args.get(2..) {
+                                        method_args.extend_from_slice(rest);
+                                    }
                                     self.builder.call_indirect(fn_ptr, &method_args, &ret_tys)
                                 } else {
                                     // P4.1：按 rustc FnAbi 补齐参数（track_caller
