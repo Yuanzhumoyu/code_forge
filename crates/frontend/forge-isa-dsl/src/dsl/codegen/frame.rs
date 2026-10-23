@@ -415,10 +415,15 @@ fn inst_info_by_name<'a>(infos: &'a [InstInfo<'a>], name: &str) -> Option<&'a In
 /// **缺角色的步不发射**：角色是 ISA 的**能力申报**，没申报就做不了（例如没有 `frame_set`
 /// 的谱不建立帧指针、没有 `callee_save` 的谱不写帧内保存槽）。缺口由
 /// `forge-isa abi check`/`validate` 与运行期行为说话——这里不猜别家 ISA 的指令名。
-/// 栈探测（`[machine.frame.stack_probe]`，v27 M6-78）。
+/// 栈探测（`[machine.frame.stack_probe]`，v27 M6-78 / M6-80）。
 ///
-/// 生成的是"帧超过阈值 ⇒ `mov size_reg, 帧大小` + `call symbol`"这两条，**全部字段来自谱**：
-/// 指令名、寄存器名、符号、阈值、相对位移在调用指令里的偏移。生成器不写死任何平台细节。
+/// 生成"帧超过阈值 ⇒ `sym_inst`（符号**绝对地址** → `sym_reg`）+ `size_inst`
+/// （帧大小 → `size_reg`）+ `call_reg_inst`（经 `call_reg` 间接调用）"这三条，
+/// **全部字段来自谱** ⇒ 生成器不写死任何平台细节。
+///
+/// 为什么用**绝对地址**而不是 `call rel32`（`WA-51`）：JIT 代码页由 `VirtualAlloc`
+/// 放在低地址，而探测函数在可执行文件高位，两者实测相差 ~10^14 字节 ⇒ rel32 被截断、
+/// 调用跳进垃圾。绝对地址重定位（`Absolute(8)`）没有距离限制，AOT/JIT 同一形态。
 ///
 /// 位置：必须**在帧分配之前**（探测触摸的是 `[sp - k*页]`，此时 sp 尚未下移；
 /// `__chkstk` 自身不改 RSP，调用方随后照常 `sub`）。
@@ -428,57 +433,81 @@ fn gen_stack_probe(infos: &[InstInfo], frame: &AbiFrame) -> Result<Option<TokenS
     };
     let sym = &probe.symbol;
     let thr = proc_macro2::Literal::u32_suffixed(probe.threshold.unwrap_or(4096));
-    let roff = proc_macro2::Literal::u32_suffixed(probe.reloc_offset.unwrap_or(1));
-    // ① `mov size_reg, 帧大小`
-    let (reg_fids, imm_fids) = inst_reg_imm_fids(infos, &probe.size_inst).ok_or_else(|| {
+    let sym_reg = format_ident!("{}", probe.sym_reg);
+    let size_reg = format_ident!("{}", probe.size_reg);
+    let call_reg = format_ident!("{}", probe.call_reg);
+    // ① `mov sym_reg, <符号绝对地址>`
+    let (sym_regs, sym_imms) = inst_reg_imm_fids(infos, &probe.sym_inst).ok_or_else(|| {
+        format!(
+            "[{}] 作为栈探测的 sym_inst 需要 reg + imm 槽",
+            probe.sym_inst
+        )
+    })?;
+    if sym_regs.len() != 1 || sym_imms.len() != 1 {
+        return Err(format!(
+            "[{}] 作为栈探测的 sym_inst 需要「一个 Reg + 一个 imm」槽",
+            probe.sym_inst
+        ));
+    }
+    let sym_binds: Vec<TokenStream> = sym_regs
+        .iter()
+        .map(|f| quote! { #f: Reg::#sym_reg })
+        .collect();
+    let sym_imm = &sym_imms[0];
+    let sym_vn = pascal_ident(&probe.sym_inst);
+    let sym_ctor = quote! { Inst::#sym_vn { #(#sym_binds,)* #sym_imm: 0 } };
+    // ② `mov size_reg, 帧大小`
+    let (size_regs, size_imms) = inst_reg_imm_fids(infos, &probe.size_inst).ok_or_else(|| {
         format!(
             "[{}] 作为栈探测的 size_inst 需要 reg + imm 槽",
             probe.size_inst
         )
     })?;
-    if reg_fids.is_empty() || imm_fids.is_empty() {
+    if size_regs.len() != 1 || size_imms.len() != 1 {
         return Err(format!(
             "[{}] 作为栈探测的 size_inst 需要「一个 Reg + 一个 imm」槽",
             probe.size_inst
         ));
     }
-    let size_reg = format_ident!("{}", probe.size_reg);
-    let mut binds: Vec<TokenStream> = reg_fids
+    let size_binds: Vec<TokenStream> = size_regs
         .iter()
         .map(|f| quote! { #f: Reg::#size_reg })
         .collect();
-    binds.extend(imm_fids.iter().map(|f| quote! { #f: __frame_size as i64 }));
     let size_vn = pascal_ident(&probe.size_inst);
-    let size_ctor = quote! { Inst::#size_vn { #(#binds,)* } };
-    // ② `call symbol`：单 imm 槽（相对位移先填 -1，紧接着打重定位）
-    let (call_regs, call_imms) = inst_reg_imm_fids(infos, &probe.call_inst).ok_or_else(|| {
-        format!(
-            "[{}] 作为栈探测的 call_inst 需要一个 imm 槽",
-            probe.call_inst
-        )
-    })?;
-    if !call_regs.is_empty() || call_imms.len() != 1 {
+    let size_ctor =
+        quote! { Inst::#size_vn { #(#size_binds,)* #(#size_imms: __frame_size as i64),* } };
+    // ③ `call call_reg`（寄存器间接）
+    let (call_regs, _call_imms) =
+        inst_reg_imm_fids(infos, &probe.call_reg_inst).ok_or_else(|| {
+            format!(
+                "[{}] 作为栈探测的 call_reg_inst 需要一个 Reg 槽",
+                probe.call_reg_inst
+            )
+        })?;
+    if call_regs.len() != 1 {
         return Err(format!(
-            "[{}] 作为栈探测的 call_inst 需要「恰好一个 imm、无 Reg」槽",
-            probe.call_inst
+            "[{}] 作为栈探测的 call_reg_inst 需要「恰好一个 Reg」槽",
+            probe.call_reg_inst
         ));
     }
-    let call_field = &call_imms[0];
-    let call_vn = pascal_ident(&probe.call_inst);
-    let call_ctor = quote! { Inst::#call_vn { #call_field: -1 } };
+    let call_binds: Vec<TokenStream> = call_regs
+        .iter()
+        .map(|f| quote! { #f: Reg::#call_reg })
+        .collect();
+    let call_vn = pascal_ident(&probe.call_reg_inst);
+    let call_ctor = quote! { Inst::#call_vn { #(#call_binds,)* } };
     Ok(Some(quote! {
         if __frame_size > #thr {
+            let __sym_site = __sink.offset();
+            let __sym_bytes = encode(&#sym_ctor).map_err(crate::IrError::Emit)?;
+            // `abs64` 重定位落在立即数上：指令末尾 8 字节。
+            let __sym_off = __sym_site + __sym_bytes.len() - 8;
+            __sink.put_bytes(&__sym_bytes);
+            __sink.add_reloc(__sym_off, crate::RelocKind::Absolute(8), #sym, 0);
             let __sz_bytes = encode(&#size_ctor).map_err(crate::IrError::Emit)?;
             __sink.put_bytes(&__sz_bytes);
-            let __call_site = __sink.offset();
             let __call_bytes = encode(&#call_ctor).map_err(crate::IrError::Emit)?;
             __sink.put_bytes(&__call_bytes);
-            __sink.add_reloc(
-                __call_site + #roff as usize,
-                crate::RelocKind::Relative(4, -4),
-                #sym,
-                0,
-            );
         }
     }))
 }

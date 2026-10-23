@@ -487,38 +487,31 @@ mod tests {
         }
     }
 
-    /// **JIT 大帧函数**：栈探测的 `call rel32` 到不了外部符号 ⇒ 必须 **fail-closed**。
+    /// **JIT 大帧函数**：栈探测走**绝对地址 thunk**，JIT 里也能真正逐页触摸。
     ///
-    /// 背景（`WA-51`）：JIT 代码页常被 `VirtualAlloc` 放在低地址（实测 `0x1935…`），而
-    /// `__chkstk` 这类符号在可执行文件的高位（`0x7ff7…`），两者差到上万亿字节 ——
-    /// `RelocKind::Relative(4)` 的位移会被**截断**，调用跳进垃圾地址（进程直接 AV）。
-    /// 现在在补丁前做可达性检查：超出 ±2GB 就报错，绝不静默截断。
-    ///
-    /// AOT（rustc 路径）不受影响：由链接器处理，实测大帧函数 8/8 稳定。
+    /// 历史（`WA-51`）：曾用 `call rel32`，而 JIT 代码页（`VirtualAlloc`，实测 `0x1935…`）
+    /// 与可执行文件里的 `__chkstk`（`0x7ff7…`）相距 ~10^14 字节 ⇒ 位移被截断、调用跳进垃圾。
+    /// 现在探针发 `mov r11, <绝对地址>`（`Absolute(8)` 重定位，无距离限制）+ `call r11`。
     #[cfg(target_arch = "x86_64")]
     #[test]
-    fn jit_big_frame_probe_fails_closed() {
+    fn jit_big_frame_probe_touches_stack() {
         use forge_ir::{FunctionSignature, TypeId};
         ensure_registered();
         let mut jit = JitLoader::new(x86::TargetMachine::new());
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
-        let err = jit
-            .add_function("bigframe", &sig, |b| {
-                let (e, _p) = b.create_block_with_params(&[]);
-                b.switch_to_block(e);
-                let slot = b.alloca(TypeId::I8, 16384);
-                let z = b.constant(0i8);
-                b.store(z, slot);
-                let back = b.load(slot, TypeId::I8);
-                let v = b.uextend(back, TypeId::I32);
-                b.ret(&[v]);
-            })
-            .expect_err("大帧 JIT 函数必须 fail-closed（rel32 够不到外部 __chkstk）");
-        let msg = format!("{err:?}");
-        assert!(
-            msg.contains("±2GB"),
-            "错误应说明 PC 相对重定位越界，实测：{msg}"
-        );
+        jit.add_function("bigframe", &sig, |b| {
+            let (e, _p) = b.create_block_with_params(&[]);
+            b.switch_to_block(e);
+            let slot = b.alloca(TypeId::I8, 16384);
+            let z = b.constant(0i8);
+            b.store(z, slot);
+            let back = b.load(slot, TypeId::I8);
+            let v = b.uextend(back, TypeId::I32);
+            b.ret(&[v]);
+        })
+        .expect("大帧 JIT 函数应能编译（绝对地址 thunk 无距离限制）");
+        let f: extern "C" fn() -> i32 = jit.get_fn("bigframe").expect("get_fn");
+        assert_eq!(f(), 0);
     }
 
     #[test]

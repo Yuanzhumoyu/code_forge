@@ -4379,9 +4379,11 @@ pub struct AbiFrame {
 
 /// `[machine.frame.stack_probe]`：序言里"分配前先探栈"的机器事实。
 ///
-/// 生成器只按这里给的**指令名 + 字段**拼两条指令，不写死任何平台细节：
+/// 生成器只按这里给的**指令名 + 字段**拼三条指令，不写死任何平台细节：
+/// `sym_inst` 把探测函数地址装进 `sym_reg`（**绝对地址**，v27 M6-80 起不再用 rel32——
+/// JIT 代码页与可执行文件可能相距远超 ±2GB，见 `WORKAROUNDS.md` `WA-51`），
 /// `size_inst` 把帧大小放进 `size_reg`（win64 的 `__chkstk` 从 RAX 取分配量），
-/// `call_inst` 是对 `symbol` 的直达调用（相对重定位、偏移由 `reloc_offset` 指出）。
+/// `call_reg_inst` 经寄存器间接调用。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StackProbe {
@@ -4390,15 +4392,18 @@ pub struct StackProbe {
     /// 触发阈值（字节）。缺省 4096（一页）。
     #[serde(default)]
     pub threshold: Option<u32>,
-    /// 把帧大小放进寄存器的指令（x86 = `"MOV_R64_IMM64"`，字段由谱自报 reg/imm）。
+    /// 把符号**绝对地址**装进寄存器的指令（x86 = `"MOVABS_GLOBAL"`，带 `abs64` 重定位）。
+    pub sym_inst: String,
+    /// `sym_inst` 里接收符号地址的寄存器名（x86 = `"R11"`，调用者保存、入口未被占用）。
+    pub sym_reg: String,
+    /// 把帧大小放进寄存器的指令（x86 = `"MOV_REG_IMM64"`）。
     pub size_inst: String,
     /// `size_inst` 里接收帧大小的寄存器名（x86 = `"RAX"`）。
     pub size_reg: String,
-    /// 直达调用指令（x86 = `"CALL_RIP_REL"`）。
-    pub call_inst: String,
-    /// 调用指令里相对位移的字节偏移（x86 `E8 rel32` = 1）。缺省 1。
-    #[serde(default)]
-    pub reloc_offset: Option<u32>,
+    /// 寄存器间接调用指令（x86 = `"CALL_RM"`）。
+    pub call_reg_inst: String,
+    /// `call_reg_inst` 里承载调用目标的寄存器名（x86 = `"R11"`）。
+    pub call_reg: String,
 }
 
 // ───────────────────────── [emit] ─────────────────────────

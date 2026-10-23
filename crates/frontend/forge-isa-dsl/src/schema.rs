@@ -383,11 +383,19 @@ pub const SECTIONS: &[Section] = &[
     Section {
         path: "[machine.frame.stack_probe]",
         model: "StackProbe",
-        required: &["symbol", "size_inst", "size_reg", "call_inst"],
-        optional: &["threshold", "reloc_offset"],
+        required: &[
+            "symbol",
+            "sym_inst",
+            "sym_reg",
+            "size_inst",
+            "size_reg",
+            "call_reg_inst",
+            "call_reg",
+        ],
+        optional: &["threshold"],
         flatten: &[],
         additional: false,
-        doc: "栈探测（v27 M6-78）：帧超过 `threshold`（缺省 4096）时，序言在**帧分配之前**发 `size_inst`（把帧大小放进 `size_reg`）+ `call_inst`（对 `symbol` 的直达调用，相对位移落在 `reloc_offset`，缺省 1）。Windows 上单条 `sub rsp, 帧大小` 会跳过 guard page ⇒ 随机 AV，必须逐页探测（`__chkstk` 从 RAX 取分配量、自身不改 RSP）",
+        doc: "栈探测（v27 M6-78/M6-80）：帧超过 `threshold`（缺省 4096）时，序言在**帧分配之前**发 `sym_inst`（把 `symbol` 的**绝对地址**装进 `sym_reg`）+ `size_inst`（把帧大小放进 `size_reg`）+ `call_reg_inst`（经 `call_reg` 间接调用）。Windows 上单条 `sub rsp, 帧大小` 会跳过 guard page ⇒ 随机 AV，必须逐页探测（`__chkstk` 从 RAX 取分配量、自身不改 RSP）。用绝对地址而非 rel32 是因为 JIT 代码页与可执行文件可能相距远超 ±2GB",
     },
     Section {
         path: "[machine.text]",

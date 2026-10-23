@@ -12,6 +12,47 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-23 · M6-80：栈探测改**绝对地址 thunk** —— `WA-51` 收口，JIT 大帧也能跑
+
+`WA-51` 的真因不是 reloc 口径算错（实测补丁值与预期**完全一致**），而是**距离**：
+
+| 位置 | 地址 |
+| --- | --- |
+| JIT 代码页（`VirtualAlloc`） | `0x1935_cd60_000` |
+| 可执行文件里的 `__chkstk` | `0x7ff7_5bf6_93d4` |
+| 差值 | ≈ **1.07×10^14** 字节 |
+
+`RelocKind::Relative(4)` 只能表达 ±2GB ⇒ 位移被截断、调用跳进垃圾、进程 AV。这条也解释了
+为什么"符号解析对、偏移对、补丁值对，却还是崩"。
+
+**修法**：探针改**绝对地址**形态，AOT/JIT 同一份代码：
+
+```text
+mov r11, <__chkstk>   # MOVABS_GLOBAL + RelocKind::Absolute(8)（无距离限制）
+mov rax, <帧大小>      # __chkstk 从 RAX 取分配量
+call r11              # CALL_RM 寄存器间接
+```
+
+表字段全部落进 ISA 数据 `[machine.frame.stack_probe]`（`sym_inst`/`sym_reg`/`call_reg_inst`/
+`call_reg`），生成器不写死平台细节。JIT 侧 `__chkstk` 是**汇编**桩（入口 `rsp ≡ 0 (mod 16)`，
+Rust 桩会在自己的 `movaps` 上 AV）。另外 JIT 补丁器加了 **±2GB 可达性检查**：越界报
+`Internal` 而不是静默截断。
+
+**验收（全部实测）**：
+
+| 检查 | 结果 |
+| --- | --- |
+| AOT 三个曾经随机崩的探针（`u128` 乘法链 ×73/×75/×80） | **各 6/6** |
+| `jit_big_frame_probe_touches_stack`（16KB 帧 JIT 真跑） | ✅ |
+| `jit_wide_div_correct`（JIT 大帧 + 128 位除/余 6 用例） | ✅（上一轮因 `WA-51` 撤下，本轮加回） |
+| `stack_probe_emitted_only_for_big_frames`（字节级：`49 BB` / `48 B8` / `41 FF D3`） | ✅ |
+| `forge-codegen --lib` | **2863 passed + 2 ignored** |
+| e2e | **197/197** |
+| **全套门禁** | **51 步 0 失败**（1365s） |
+
+⇒ `WA-51` 关闭。**教训**：instrument 到"值全对却仍崩"时，下一个该怀疑的是**编码范围**
+（±2GB），而不是继续怀疑补丁算术。
+
 ### 2026-10-22 · M6-78：**栈探测落地**（数据驱动）——曾经的"随机 AV"绝迹
 
 在 `WA-50` 定案的基础上把修法做出来，且**没有把平台细节写死进生成器**：

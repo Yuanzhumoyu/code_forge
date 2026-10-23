@@ -399,10 +399,20 @@ fn stack_probe_emitted_only_for_big_frames() {
         "大帧函数应有可观代码量，实测 {}",
         cf.code.len()
     );
-    // 序言 = `48 B8 <imm64>`（mov rax, size）紧跟 `E8`（call rel32）
-    assert_eq!(cf.code[0], 0x48, "序言首字节应为 mov rax, imm64 的 REX.W");
-    assert_eq!(cf.code[1], 0xB8, "序言应为 mov rax, imm64（48 B8）");
-    assert_eq!(cf.code[10], 0xE8, "mov 之后应紧跟 call rel32（E8）");
+    // 序言 = `49 BB <imm64>`（mov r11, <绝对地址>）+ `48 B8 <imm64>`（mov rax, size）
+    // + `41 FF D3`（call r11）——绝对地址 thunk，`WA-51` 的距离问题不再存在。
+    assert_eq!(cf.code[0], 0x49, "序言首字节应为 mov r11, imm64 的 REX.WB");
+    assert_eq!(cf.code[1], 0xBB, "序言应为 mov r11, imm64（49 BB）");
+    assert_eq!(
+        cf.code[10], 0x48,
+        "符号装载之后应是 mov rax, imm64 的 REX.W"
+    );
+    assert_eq!(cf.code[11], 0xB8, "第二条应为 mov rax, imm64（48 B8）");
+    assert_eq!(
+        &cf.code[20..23],
+        &[0x41, 0xFF, 0xD3],
+        "第三条应为 call r11（41 FF D3）"
+    );
     let probe_reloc = cf
         .relocations
         .iter()

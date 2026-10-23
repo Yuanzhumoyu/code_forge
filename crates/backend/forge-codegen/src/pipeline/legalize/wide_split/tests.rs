@@ -272,6 +272,74 @@ mod jit {
         assert!(msg.contains("WIDE_INT_SHAPE"), "应带缺口 ID，实测：{msg}");
     }
 
+    /// **宽值除/余**：`wide_div` pass 的分肢长除法（v27 M6-79）。
+    ///
+    /// 形参 `(lo, hi, d)` 全是 i64：IR 里用 `zext(lo) | (zext(hi) << 64)` 拼出 128 位被除数、
+    /// `zext(d)` 当除数 —— 值真的随运行期变化（不会被常量折叠），oracle 用本进程的原生
+    /// `u128` 除法对比。覆盖：商不跨肢 / 被除数高位参与 / 除数跨肢 / `u128::MAX / 3`。
+    #[test]
+    fn jit_wide_div_correct() {
+        ensure_registered();
+        let tc = TypeContext::new();
+        let mut m = Module::new();
+        let mut cases: Vec<(String, u128, u128, bool)> = Vec::new();
+        for (idx, (x, y, is_rem)) in [
+            (100u128, 7u128, false),
+            (100, 7, true),
+            ((1u128 << 64) + 100, 7, false),
+            ((1u128 << 64) + 100, 7, true),
+            (u128::MAX, 3, false),
+            (9007199254740993u128 * 12345, (1u128 << 63) + 3, false),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let name = format!("wdiv{idx}");
+            cases.push((name.clone(), x, y, is_rem));
+            let mut fb = FunctionBuilder::new(
+                name.as_str(),
+                tc.clone(),
+                FunctionSignature::new(
+                    &[(TypeId::I64, "lo"), (TypeId::I64, "hi"), (TypeId::I64, "d")],
+                    &[TypeId::I64],
+                ),
+            );
+            let (e, p) = fb.create_block_with_params(&[
+                (TypeId::I64, "lo"),
+                (TypeId::I64, "hi"),
+                (TypeId::I64, "d"),
+            ]);
+            fb.switch_to_block(e);
+            let lo = fb.uextend(p[0], TypeId::I128);
+            let hi = fb.uextend(p[1], TypeId::I128);
+            let sh = fb.const_int(64, TypeId::I128);
+            let hi_sh = fb.ishl(hi, sh);
+            let xv = fb.bor(lo, hi_sh);
+            let yv = fb.uextend(p[2], TypeId::I128);
+            let q = if is_rem {
+                fb.urem(xv, yv)
+            } else {
+                fb.udiv(xv, yv)
+            };
+            let out = fb.ireduce(q, TypeId::I64);
+            fb.ret(&[out]);
+            m.add_function(fb.finish().expect("build"));
+        }
+        let mut jit = crate::jit::JitLoader::new(TargetMachine::new());
+        jit.compile_module(&m).expect("module compile");
+        for (name, x, y, is_rem) in cases {
+            let f: extern "C" fn(i64, i64, i64) -> i64 = jit.get_fn(name.as_str()).expect("fn");
+            let got = f(x as i64, (x >> 64) as i64, y as i64) as u64 as u128;
+            let want = if is_rem { x % y } else { x / y };
+            assert_eq!(
+                got,
+                want & 0xFFFF_FFFF_FFFF_FFFF,
+                "{name}: {x} {} {y}",
+                if is_rem { "%" } else { "/" }
+            );
+        }
+    }
+
     /// 复现 e2e `u128_shift`：`(1 << 70) >> 70` 必须回到 1。
     #[test]
     fn jit_i128_shl_then_ushr_same_amount() {
