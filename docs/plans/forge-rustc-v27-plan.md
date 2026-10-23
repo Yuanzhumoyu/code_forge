@@ -44,7 +44,7 @@
 | 里程碑 / 切片 | 状态 | 证据落点 |
 | --- | --- | --- |
 | **P1 128 位 C-ABI 跨后端兼容**（2026-10-23 起） | ✅ **已落地（2026-10-24）**：定义侧/调用侧都问 rustc `FnAbi` 的 `PassMode`（按引用 ⇒ 16 字节对齐副本的指针；`Cast{Vector}` ⇒ `XMM0`；`Direct` ⇒ 两整数槽/`RAX:RDX`）；跨后端探针**双向** 42 | §2.8；`WA-52`（已修）；`tests/cross_abi.rs` |
-| **P2 `INLINE_ASM` 的 `sym`/`label`** | 🔶 **`sym` 已落地（2026-10-24）**：**不经谱面操作数种类**——符号地址物化成 IR 值（隐藏全局符号 + `abs64` 重定位），以普通输入寄存器承载，模板按寄存器形态用（`mov`/`call`/`[reg]`）；字面符号写法由汇编器明确拒绝。**`label` 仍 fail-closed**（需块内标签映射，独立设计） | §2.6 进度；台账 `INLINE_ASM` |
+| **P2 `INLINE_ASM` 的 `sym`/`label`** | ✅ **已完成（2026-10-24）**：`sym` 走"地址物化到输入寄存器"（M6-93），`label` 走"目标块 → 外部标签表 → 编码器 `use_label_at`"（M6-94，x86_64 变长谱；定宽谱明确拒绝）；正反两面的 e2e 都钉住 | §2.6 进度；台账 `INLINE_ASM` |
 | **P3 M4-T3 第二目标** | 🔶 **对象级已落地（2026-10-24）**：A64 编码逐字节对照 clang（24 条指令）+ 真实 ELF64/AArch64 对象（`.text` 字节/ELF 头/反汇编）；**执行级**仍受环境限制（无 emulator / aarch64 std / 交叉 gcc-ld） | §2.7；`tests/arm64_clang_oracle.rs`；`arm64-oracle` 门禁步 |
 | **P4 分配器事件化** | ✅ **已完成（2026-10-24）**：`SPILL-VALUE`（逐值）+ `SPILL-EDIT`（逐指令 kind/offset/scratch/width）+ `ALLOC-SUMMARY.peak_live`（寄存器压力峰值）+ `Field::I64`；`events_guard` 用**高压夹具**钉住三种粒度都真触发 | §8 M6-87/M6-90/M6-91；`events_guard` 三方双向 |
 | M1 正确性清零（溢出 / 窄有符号 / 向量溢出 / regalloc） | ✅ 落地 | §8 M1；e2e 硬断言、`known_failure` = 0 |
@@ -126,8 +126,16 @@
   `sym` 可能先挑走 `RAX`，随后显式 `out("rax")` 被判成重复），且"纯 clobber 与值槽同名"
   改为合法（LLVM 的 `={rax},~{rax}` 同形）——`inline_asm_sym_call` 钉住。
 
-`label` 仍未做：它需要把文本标签映射到 **vcode 块**（当前 `parse_insts` 的 label 值是指令
-下标、伪指令展开会让映射非平凡），排在独立设计。
+`label` 的落法（2026-10-24，M6-94）——**不需要改谱面操作数文法，也不需要动发射器**：
+rustc 给的是 `targets[target_index]`（目标 MIR 块），降级层把它换成"文本里唯一的标签名 +
+外部标签表项 `(名字, IR 块下标)`"（作为 IR 立即数对跟着文本走）；汇编器 `parse_insts` 在
+文本标签表里查不到该名字时回退到外部表，把**块下标**写进 label 槽；指令编码器本来就会对
+label 槽 `use_label_at`（`LabelRef::from_id(rel)` → 相对位移），于是分支自然落到目标块。
+连带修了两处真问题：① 可达性分析此前只看 `targets[0]`（fallthrough），label 目标块会被
+判不可达 ⇒ 没有 IR 落点；现在 `targets` 全推入；② 外部标签的值是"块下标"，若谱的 label
+槽带 unit（A64 的 4 字节单位）回填会乘 unit ⇒ 生成物对这类谱**明确拒绝**（x86_64 变长谱
+unit = 1，正常支持）。正反两面 e2e：`inline_asm_label`（无条件命中）、
+`inline_asm_label_cond`（`jcc e` 命中）、`inline_asm_label_cond_skip`（不命中 ⇒ 不误入）。
 
 结论：两项都**可做**，但都需要先扩展谱面（`isa-dsl` 的 operand kind 与汇编器），
 不是降级层的活。优先级排在 `WA-52`（128 位 C-ABI 兼容）之后——

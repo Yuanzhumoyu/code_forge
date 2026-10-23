@@ -12,6 +12,26 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-24 · M6-94：P2 的 `label` 落地——目标块 → 外部标签表 → 编码器 `use_label_at`
+
+`sym` 之后 P2 只剩 `label`（rustc `asm!` 的 `label` 操作数 = 目标基本块）。方案原估"给汇编器
+加块内标签表"，真做下来是**三个已有机制的对接**，没有新发射路径：
+
+- 降级层：`targets[target_index]` → `self.blocks` 的 IR 块下标；文本占位符写成
+  `__forge_asm_label_{i}`；`(名字, 块下标)` 作为 IR 立即数对 `(String, Uint)` 跟在文本后
+  （新 builder API `inline_asm_with_labels`）。
+- 汇编器：`TargetAssembler::parse_insts_with_labels(source, external)`（默认：无外部标签 ⇒
+  退化为 `parse_insts`，有则明确拒绝）；生成物把 `external` 种进标签表，并在"标签槽 unit != 1"
+  的谱上拒绝（外部标签的值是块下标，文本标签回填会乘 unit，语义不成立）——x86_64 变长谱
+  unit = 1，正常。
+- 编码器：本来就有"label 槽 → `use_label_at(LabelRef::from_id(rel))`"的生成臂 ⇒ 分支落到
+  目标块的相对位移**自动成立**，发射器零改动。
+- 连带修复：可达性分析此前只推 `targets[0]`（fallthrough），label 目标块被判不可达 ⇒
+  降级期"label 指向不可达块"直接报错（实测）。现在 `targets` 全推入。
+
+**验收**：e2e 208/208（新增 `inline_asm_label` / `inline_asm_label_cond` /
+`inline_asm_label_cond_skip`，覆盖命中/不命中两面）；`cargo check`/clippy 干净。
+
 ### 2026-10-24 · M6-93：P2 的 `sym` 落地——地址物化到输入寄存器（比"谱面操作数种类"更小的落法）
 
 方案 §2.6 原定"给汇编器加 `[operand.sym]` + 符号重定位"；实现时发现更小的落点：

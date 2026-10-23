@@ -29,4 +29,26 @@ pub trait TargetAssembler: Send + Sync + 'static {
 
     /// 解析 ASM 源码 → 指令列表（含标签解析）。
     fn parse_insts(&self, source: &str) -> Result<Vec<Self::Inst>, AsmError>;
+
+    /// 解析 ASM 源码，并允许**文本里出现、定义在文本之外**的标签（v27 M6-94）。
+    ///
+    /// `external` = `(名字, 值)`：rustc inline asm 的 `label` 操作数把**目标基本块**
+    /// 当作标签用；值与"文本内标签回填后的值"同一空间（本仓 = IR 块下标），因此
+    /// 汇编器只需在找不到文本标签时查这张表。默认实现：
+    ///
+    /// - 没有外部标签 ⇒ 退化为 [`Self::parse_insts`]（零行为变化）；
+    /// - 有外部标签 ⇒ **明确拒绝**（不认识这个能力的 ISA 不该静默按别的语义解析）。
+    fn parse_insts_with_labels(
+        &self,
+        source: &str,
+        external: &[(&str, i64)],
+    ) -> Result<Vec<Self::Inst>, AsmError> {
+        if external.is_empty() {
+            self.parse_insts(source)
+        } else {
+            Err(AsmError::Other(
+                "本 ISA 的汇编器不支持外部标签（inline asm 的 label 操作数）".to_string(),
+            ))
+        }
+    }
 }

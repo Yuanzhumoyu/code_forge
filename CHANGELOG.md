@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-24) — `forge-rustc`：内联 `asm!` 的 `label` 操作数
+
++ `asm!("jmp {0}", label { ... })` / `asm!("jcc e, {0}", label { ... })` 现在可用：`label`
+  指向的目标基本块被映射成"外部标签"（名字 → IR 块下标），汇编器回填后由编码器
+  `use_label_at` 生成相对位移；命中/不命中两个方向都有 e2e（`inline_asm_label*`）。
++ 连带修复：内联 asm 的可达性分析此前只看 fallthrough（`targets[0]`），`label` 目标块会被
+  当不可达；现在 `targets` 全部计入。
++ **边界**：外部标签的值与"文本标签回填值"同空间（IR 块下标），所以只对**标签槽 unit = 1**
+  的 ISA 成立（x86_64 变长谱）；定宽谱（如 A64 的 4 字节单位）会**明确拒绝**，不静默乘错。
+
 ### Added (2026-10-24) — `forge-rustc`：内联 `asm!` 的 `sym` 操作数
 
 + `asm!("mov {0}, {1}", out(reg) p, sym target)` / `sym STATIC` 现在可用：符号**地址**被物化成

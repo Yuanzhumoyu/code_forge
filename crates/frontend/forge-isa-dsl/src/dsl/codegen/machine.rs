@@ -1461,21 +1461,52 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
             }
         }
     };
+    // **外部标签**（rustc inline asm 的 `label` 操作数，v27 M6-94）：外部标签的值与
+    // "文本内标签回填后的值"同一空间（IR 块下标），所以直接种进标签表即可；但文本标签
+    // 的回填会乘槽的 `unit`（如 A64 分支槽是 4 字节单位）——unit != 1 的谱上"外部标签
+    // = 块下标"不成立 ⇒ 生成物**明确拒绝**，不乘成 4 倍块号。
+    let multi_unit_label = model
+        .operand_slots
+        .iter()
+        .any(|s| s.kind == OperandKind::Label && s.unit() > 1);
+    let multi_unit_label_lit = syn::LitBool::new(multi_unit_label, proc_macro2::Span::call_site());
     quote! {
         pub struct Assembler;
 
         impl crate::machine::assembler::TargetAssembler for Assembler {
             type Inst = Inst;
 
-            /// 两遍布局：行解析（标签定义 / 指令 / 符号引用）→ 符号回填。
-            ///
-            /// label 槽语义与 encode 契约一致：分支 label 操作数 = Block 索引
-            /// （`use_label_at` 在链接期把 Block 解析为实际偏移）；未定义标签 →
-            /// `AsmError::UndefinedLabel`。符号引用在前向/后向标签均可解析。
+            /// 无外部标签的常规解析（trait 契约：行为与旧实现逐字节一致）。
             fn parse_insts(
                 &self,
                 source: &str,
             ) -> Result<Vec<Self::Inst>, crate::machine::assembler::AsmError> {
+                __parse_insts_ex(source, &[])
+            }
+
+            /// 带**外部标签**的解析（v27 M6-94）：只在文本标签表查不到时回退到 `external`。
+            fn parse_insts_with_labels(
+                &self,
+                source: &str,
+                external: &[(&str, i64)],
+            ) -> Result<Vec<Self::Inst>, crate::machine::assembler::AsmError> {
+                __parse_insts_ex(source, external)
+            }
+        }
+
+        /// 两遍布局：行解析（标签定义 / 指令 / 符号引用）→ 符号回填。
+        ///
+        /// `__external` = （名字, 块下标）表：rustc inline asm 的 `label` 操作数把目标
+        /// **基本块**当标签用；文本里没有它的定义 ⇒ 从这张表回退取值（值与文本标签
+        /// 回填值同空间）。
+        ///
+        /// label 槽语义与 encode 契约一致：分支 label 操作数 = Block 索引
+        /// （`use_label_at` 在链接期把 Block 解析为实际偏移）；未定义标签 →
+        /// `AsmError::UndefinedLabel`。符号引用在前向/后向标签均可解析。
+        fn __parse_insts_ex(
+                source: &str,
+                __external: &[(&str, i64)],
+            ) -> Result<Vec<Inst>, crate::machine::assembler::AsmError> {
                 use crate::machine::assembler::AsmError;
                 // ── 预处理：.macro/.endm 展开（文本级）──
                 let expanded = __expand_macros(source).map_err(AsmError::Other)?;
@@ -1483,6 +1514,17 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                 let mut insts: Vec<Inst> = Vec::new();
                 let mut labels: std::collections::BTreeMap<String, u32> =
                     std::collections::BTreeMap::new();
+                // 外部标签（inline asm 的 `label`）：值与文本标签回填后的值同空间
+                // （IR 块下标）。unit != 1 的谱不能这样表达（回填会乘 unit）⇒ 拒绝。
+                if !__external.is_empty() && #multi_unit_label_lit {
+                    return Err(AsmError::Other(
+                        "本 ISA 的标签槽单位 != 1：外部标签（inline asm label）暂不支持"
+                            .to_string(),
+                    ));
+                }
+                for (__n, __v) in __external {
+                    labels.insert((*__n).to_string(), *__v as u32);
+                }
                 // **数字局部标签**（`1:`）：同一个编号可以**反复定义**，所以按"编号 → 定义位置列表"
                 // 收集；引用 `1b` 取最近的上一个、`1f` 取下一个（GNU as / LLVM MC 同款语义）。
                 let mut locals: std::collections::BTreeMap<u32, Vec<u32>> =
@@ -1728,7 +1770,6 @@ pub(crate) fn gen_assembler(model: &IsaModel) -> TokenStream {
                 }
                 Ok(insts)
             }
-        }
 
         /// 数字局部标签引用（`1b`/`1f`）→ `(编号, 方向)`；其它名字 → `None`。
         ///

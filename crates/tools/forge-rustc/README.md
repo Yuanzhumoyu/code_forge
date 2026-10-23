@@ -195,7 +195,9 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 > （S2a 寄存器约束）、`inline_asm_const`（S3 `const` 占位符）、`inline_asm_named_reg`
 > （S2b 显式寄存器名）、`inline_asm_clobber_abi`（S4 `clobber_abi`）、
 > `inline_asm_noreturn`（S4 `options(noreturn)`）、`inline_asm_sym` / `inline_asm_sym_call`
-> （S3 `sym`：函数/静态地址物化到寄存器，可作 `mov`/`call` 目标）；
+> （S3 `sym`：函数/静态地址物化到寄存器，可作 `mov`/`call` 目标）、
+> `inline_asm_label` / `inline_asm_label_cond` / `inline_asm_label_cond_skip`
+> （S4 `label`：目标基本块 → 外部标签表 → 相对位移，命中/不命中两个方向都钉住）；
 > 负向 `neg_inline_asm` / `neg_panic_unwind` / `neg_thread_local` 钉住缺口 ID 的 fail-closed，
 > `inline_asm_sym_literal` 钉住「`sym` 只保证寄存器形态；`[rip + {0}]` 这类字面符号写法
 > 编译期明确拒绝」，
@@ -236,7 +238,7 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 > （`--emit=obj/link/metadata/mir` 正常），汇编请对产物反编译，不由后端伪造文本；
 > 删除了被正当推翻的 `neg_global_asm`。
 >
-> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=205 hard=205 flaky=0 known=0 expect_trap=9 -->
+> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=208 hard=208 flaky=0 known=0 expect_trap=9 -->
 >
 > **上面这段机读标记与 `tests/e2e.rs` 双向相等**：改用例数/容忍名单时必须同步它，
 > 否则 `cargo forge gate --guards` 会红（守卫就是为了治「文档与代码分叉」这件事）。

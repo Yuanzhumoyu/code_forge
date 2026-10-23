@@ -296,16 +296,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 // v27 M2：内联 asm 的落点（`destination`）——虽然下面的降级会**明确拒绝**
                 // 内联 asm，可达性分析仍要如实走它的落点（否则开启 `-C debuginfo` 或
                 // 诊断路径时会把其后的块当不可达）。
-                TerminatorKind::InlineAsm {
-                    targets, options, ..
-                } => {
-                    // 落点 = `targets[0]`（除非 `options(noreturn)` / `naked_asm!`）。本 nightly
-                    // 的字段名是 `targets: Box<[BasicBlock]>`，不是 `destination`。
-                    if !options.contains(rustc_ast::InlineAsmOptions::NORETURN)
-                        && let Some(t) = targets.first()
-                    {
-                        queue.push(*t);
-                    }
+                TerminatorKind::InlineAsm { targets, .. } => {
+                    // 落点 = `targets[0]`（除非 `options(noreturn)` / `naked_asm!`，此时 targets 为空）；
+                    // `targets[1..]` = `label` 操作数的目标基本块——汇编可以**跳过去**，
+                    // 所以它们同样是可达块（v27 M6-94：漏掉会让 label 目标被当不可达 ⇒
+                    // 没有 IR 落点，编不出跳转）。本 nightly 的字段名是
+                    // `targets: Box<[BasicBlock]>`，不是 `destination`。
+                    queue.extend(targets.iter().copied());
                 }
                 _ => {}
             }
@@ -1226,6 +1223,33 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     // **文本重建**：寄存器类与 `sym` 类占位符写成 `{槽序号}`（后端替换成
                     // 挑中的物理寄存器名）；`const` 占位符**就地换成字面文本**（S3；格式化内核
                     // 见 `global_asm::const_text`，与 `global_asm!` 同一处实现）。
+                    // **`label` 操作数**（v27 M6-94）：rustc 的 `label` 指向 MIR 基本块
+                    // （`targets[target_index]`）。文本里写一个**唯一名字**，同时把
+                    // (名字 → 目标 IR 块下标) 作为额外立即数交给管线；汇编器在文本标签表里
+                    // 查不到该名字时回退到这张外部表，把值（块下标）写进 label 槽；指令的
+                    // 编码器随后用 `use_label_at` 把它变成相对位移（与普通分支同一条路）。
+                    //
+                    // 名字前缀 + 操作数序号保证唯一（同一 asm 里多个 label 不撞）。
+                    let mut asm_labels: Vec<Option<(String, i64)>> = vec![None; operands.len()];
+                    for (i, op) in operands.iter().enumerate() {
+                        if let rustc_middle::mir::InlineAsmOperand::Label { target_index } = op {
+                            let Some(bb) = targets.get(*target_index) else {
+                                return Err(ForgeError::Message(format!(
+                                    "内联 asm 的 label 操作数 #{i} 指向 targets[{target_index}]，\
+                                     但该终结符只有 {} 个 target",
+                                    targets.len()
+                                )));
+                            };
+                            let Some(ir_blk) = self.blocks.get(bb) else {
+                                return Err(ForgeError::Message(format!(
+                                    "内联 asm 的 label 操作数 #{i} 指向不可达块 {bb:?}\
+                                     （该块没有 IR 落点）"
+                                )));
+                            };
+                            asm_labels[i] =
+                                Some((format!("__forge_asm_label_{i}"), i64::from(ir_blk.index())));
+                        }
+                    }
                     let mut reg_ord: Vec<Option<usize>> = vec![None; operands.len()];
                     let mut next_ord = 0usize;
                     for (i, op) in operands.iter().enumerate() {
@@ -1260,9 +1284,15 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         text.push_str(&ord.to_string());
                                         text.push('}');
                                     }
-                                    None => match &operands[idx] {
-                                        rustc_middle::mir::InlineAsmOperand::Const { value } => {
-                                            let cv = value
+                                    None => {
+                                        if let Some((name, _)) = &asm_labels[idx] {
+                                            text.push_str(name);
+                                        } else {
+                                            match &operands[idx] {
+                                                rustc_middle::mir::InlineAsmOperand::Const {
+                                                    value,
+                                                } => {
+                                                    let cv = value
                                                 .const_
                                                 .eval(
                                                     self.tcx,
@@ -1276,25 +1306,29 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                                         "内联 asm 的 `const` 求值失败：{e:?}"
                                                     ))
                                                 })?;
-                                            let rustc_middle::mir::ConstValue::Scalar(
-                                                rustc_middle::mir::interpret::Scalar::Int(i),
-                                            ) = cv
-                                            else {
-                                                return Err(ForgeError::Message(
+                                                    let rustc_middle::mir::ConstValue::Scalar(
+                                                        rustc_middle::mir::interpret::Scalar::Int(
+                                                            i,
+                                                        ),
+                                                    ) = cv
+                                                    else {
+                                                        return Err(ForgeError::Message(
                                                     "内联 asm 的 `const` 不是整数标量（仅支持整数常量）"
                                                         .to_string(),
                                                 ));
-                                            };
-                                            let signed = value.const_.ty().is_signed();
-                                            let lit = crate::global_asm::scalar_text(
-                                                signed,
-                                                i.to_bits(i.size()),
-                                                i.size().bits() as u32,
-                                            );
-                                            text.push_str(&lit);
+                                                    };
+                                                    let signed = value.const_.ty().is_signed();
+                                                    let lit = crate::global_asm::scalar_text(
+                                                        signed,
+                                                        i.to_bits(i.size()),
+                                                        i.size().bits() as u32,
+                                                    );
+                                                    text.push_str(&lit);
+                                                }
+                                                _ => template_ok = false,
+                                            }
                                         }
-                                        _ => template_ok = false,
-                                    },
+                                    }
                                 }
                             }
                         }
@@ -1400,16 +1434,38 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             }
                             // S3：`const` 已在文本重建阶段就地替换成字面文本 ⇒ 这里不贡献操作数/结果。
                             rustc_middle::mir::InlineAsmOperand::Const { .. } => {}
-                            _ => ok = false,
+                            // v27 M6-94：`label` 只贡献**文本标签名** + 外部标签表项
+                            // （已由文本重建阶段写进 `text`/`asm_labels`）⇒ 不贡献约束/操作数。
+                            rustc_middle::mir::InlineAsmOperand::Label { .. } => {}
                         }
                     }
                     if ok {
-                        let results = self.builder.inline_asm_with(
-                            &constraints.join(";"),
-                            &text,
-                            &in_vals,
-                            &out_tys,
-                        );
+                        // 带 `label` 操作数时，额外立即数对 `(String 名字, Uint 块下标)` 跟着
+                        // 文本一起进 IR（v27 M6-94）：管线据此把外部标签交给汇编器。
+                        let label_pairs: Vec<(&str, i64)> = asm_labels
+                            .iter()
+                            .flatten()
+                            .map(|(n, v)| (n.as_str(), *v))
+                            .collect();
+                        let results: Vec<Value> = if label_pairs.is_empty() {
+                            self.builder.inline_asm_with(
+                                &constraints.join(";"),
+                                &text,
+                                &in_vals,
+                                &out_tys,
+                            )
+                        } else {
+                            self.builder.inline_asm_with_labels(
+                                &constraints.join(";"),
+                                &text,
+                                &label_pairs
+                                    .iter()
+                                    .map(|(n, v)| (*n, *v as u64))
+                                    .collect::<Vec<_>>(),
+                                &in_vals,
+                                &out_tys,
+                            )
+                        };
                         for (place, v) in out_places.iter().zip(results) {
                             if let Some(p) = place {
                                 self.store_place(p, v);

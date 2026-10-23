@@ -46,17 +46,32 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 ));
             }
         };
+        // **外部标签表**（v27 M6-94）：紧随文本之后的 `(String 名字, Uint 块下标)` 对，
+        // 对应 rustc `asm!` 的 `label` 操作数（目标基本块）。值与"文本标签回填值"同空间。
+        let ext_start = usize::from(matches!(inst.immediates.get(1), Some(Immediate::String(_))));
+        let mut externals: Vec<(String, i64)> = Vec::new();
+        let mut k = ext_start + 1;
+        while k + 1 < inst.immediates.len() {
+            let (Immediate::String(n), Immediate::Uint(v)) =
+                (&inst.immediates[k], &inst.immediates[k + 1])
+            else {
+                break;
+            };
+            externals.push((lookup(*n)?, *v as i64));
+            k += 2;
+        }
+        let ext_refs: Vec<(&str, i64)> = externals.iter().map(|(n, v)| (n.as_str(), *v)).collect();
         let class = self.ctx.value_gpr_class;
         if !constraints.is_empty() {
             return self
-                .expand_inline_asm_s2a(inst, &constraints, &text, class)
+                .expand_inline_asm_s2a(inst, &constraints, &text, class, &ext_refs)
                 .map(|()| true);
         }
 
         let parse = self.asm_parse.clone().ok_or_else(|| {
             IrError::Semantic("本 ISA 未提供汇编器：内联汇编无法展开".to_string())
         })?;
-        let insts = parse(&text).ok_or_else(|| {
+        let insts = parse(&text, &ext_refs).ok_or_else(|| {
             IrError::Semantic(format!("内联汇编文本无法被本 ISA 的汇编器解析：{text:?}"))
         })?;
         let line = inst.loc.as_ref().and_then(|l| l.line);
@@ -79,6 +94,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
         constraints: &str,
         text: &str,
         class: RegClass,
+        external: &[(&str, i64)],
     ) -> Result<(), IrError> {
         #[derive(Clone, Copy, PartialEq, Eq)]
         enum Role {
@@ -251,7 +267,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
         let parse = self.asm_parse.clone().ok_or_else(|| {
             IrError::Semantic("本 ISA 未提供汇编器：内联汇编无法展开".to_string())
         })?;
-        let asm_insts = parse(&asm_text).ok_or_else(|| {
+        let asm_insts = parse(&asm_text, external).ok_or_else(|| {
             IrError::Semantic(format!("内联汇编文本无法被汇编器解析：{asm_text:?}"))
         })?;
         let line = inst.loc.as_ref().and_then(|l| l.line);
@@ -353,7 +369,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
     /// 另一侧由 `OperandBind` 在分配后改写。
     fn make_mov_reg(
         &self,
-        parse: &(dyn Fn(&str) -> Option<Vec<I>> + Send + Sync),
+        parse: &(dyn Fn(&str, &[(&str, i64)]) -> Option<Vec<I>> + Send + Sync),
         name_of: &(dyn Fn(u32, RegClass) -> Option<&'static str> + Send + Sync),
         preg: u32,
         class: RegClass,
@@ -361,8 +377,8 @@ impl<I: MachineInst + 'static> CompileState<I> {
         let name = name_of(preg, class)
             .ok_or_else(|| IrError::Semantic(format!("寄存器 {preg} 没有汇编拼写（搬运指令）")))?;
         let text = format!("mov {name}, {name}");
-        let mut insts =
-            parse(&text).ok_or_else(|| IrError::Semantic(format!("搬运指令无法汇编：{text:?}")))?;
+        let mut insts = parse(&text, &[])
+            .ok_or_else(|| IrError::Semantic(format!("搬运指令无法汇编：{text:?}")))?;
         if insts.len() != 1 {
             return Err(IrError::Semantic(format!(
                 "搬运指令应恰好编成一条：{text:?}（得到 {} 条）",

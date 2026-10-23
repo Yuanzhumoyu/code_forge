@@ -701,6 +701,43 @@ impl FunctionBuilder {
         .collect()
     }
 
+    /// 带**外部标签**的内联汇编（v27 M6-94）：`labels` = （文本里的标签名, 块下标）。
+    ///
+    /// IR 立即数布局 = `[String 约束, String 文本, (String 名字, Uint 块下标)*]`。
+    /// 后半段是 rustc `asm!` 的 `label` 操作数（目标基本块）：汇编器在文本标签表里
+    /// 找不到这些名字时，从这张表取值（值与文本标签回填值同空间 = IR 块下标）。
+    pub fn inline_asm_with_labels(
+        &mut self,
+        constraints: &str,
+        text: &str,
+        labels: &[(&str, u64)],
+        in_operands: &[Value],
+        out_tys: &[TypeId],
+    ) -> Vec<Value> {
+        let (c, s) = {
+            let mut ctx = self.ctx.borrow_mut();
+            (ctx.intern_str(constraints), ctx.intern_str(text))
+        };
+        let mut imms = vec![Immediate::String(c), Immediate::String(s)];
+        for (name, block) in labels {
+            let nid = {
+                let mut ctx = self.ctx.borrow_mut();
+                ctx.intern_str(name)
+            };
+            imms.push(Immediate::String(nid));
+            imms.push(Immediate::Uint(*block));
+        }
+        self.emit(
+            Opcode::InlineAsm,
+            in_operands.to_vec(),
+            imms,
+            out_tys,
+            InstFlags::SIDE_EFFECT,
+        )
+        .into_iter()
+        .collect()
+    }
+
     /// 浮点 store：value 为 F32/F64 时用 Fstore（后端按类型分派到
     /// MOVSD_MR 等浮点内存移动指令）。
     pub fn fstore(&mut self, value: Value, addr: Value) {

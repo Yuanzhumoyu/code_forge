@@ -1790,6 +1790,50 @@ const CASES: &[Case] = &[
         phase: "v27 M2.5 S3",
         reason: "sym 只保证寄存器形态；字面符号写法（[rip + {0}]）必须明确拒绝（fail-closed）",
     },
+    Case {
+        name: "inline_asm_label",
+        // v27 M6-94：`label` 操作数 = 目标基本块。文本里的名字由 ISA 汇编器从**外部标签表**
+        // 取值（值 = IR 块下标），编码器的 label 槽走 `use_label_at` ⇒ 与普通分支同一条路。
+        // 强断言：jmp 真的落到 label 块的入口（n = 7），不是"编过了但跳错/没跳"。
+        body: "let mut n: u64 = 0; unsafe { core::arch::asm!(\"jmp {0}\", label { n = 7; }) }; if n == 7 { 42 } else { 7 }",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M2.5 S4",
+        reason: "asm! 的 label：jmp 到目标块（外部标签 → IR 块下标 → 相对位移）",
+    },
+    Case {
+        name: "inline_asm_label_cond",
+        // 条件分支 + label：`cmp 0` 置 ZF，`jcc e` 命中时跳到 label 块（n = 7）。
+        body: "let x: u64 = 0; let mut n: u64 = 0; unsafe { core::arch::asm!(\"cmp {0}, 0\", \"jcc e, {1}\", in(reg) x, label { n = 7; }) }; if n == 7 { 42 } else { 7 }",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M2.5 S4",
+        reason: "条件分支 jcc 命中 label（带输入寄存器约束 + 外部标签共存）",
+    },
+    Case {
+        name: "inline_asm_label_cond_skip",
+        // 反向：条件不命中 ⇒ label 块**不执行**（n 仍 0），落回 asm 后的正常控制流。
+        body: "let x: u64 = 1; let mut n: u64 = 0; unsafe { core::arch::asm!(\"cmp {0}, 0\", \"jcc e, {1}\", in(reg) x, label { n = 7; }) }; if n == 0 { 42 } else { 7 }",
+        extra: "",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M2.5 S4",
+        reason: "label 未命中时不误入目标块（fallthrough 与目标块是两条路）",
+    },
 
     // ── v27 M2.5/S2b：内联 asm 的**显式寄存器名** ──
     //   `out("rax")` 要求槽 0 就用 RAX（rustc 对它的**规范名是 `ax`**，靠谱里的
