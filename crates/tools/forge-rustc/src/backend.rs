@@ -218,6 +218,32 @@ impl CodegenBackend for CodegenLibBackend {
         "generic".to_string()
     }
 
+    /// **基线目标特性**（v27 M6-82）：申报本后端**确实会发**的指令集，而不是空集。
+    ///
+    /// 为什么要申报：rustc 用这份集合做**调用点检查**。`extern "C" fn() -> u128` 在
+    /// win64 上按约定用 XMM0 返回，rustc 要求调用方具备 `sse` —— 空集会让这类签名在
+    /// 前端就被拒（`this function call requires the sse target feature`），而我们的
+    /// 后端本来就在发 SSE2（f32/f64 标量、XMM 传参/返回）。
+    ///
+    /// 只申报 **x86-64 基线**（该架构规范强制 SSE2）：不申报 AVX/AVX2/AVX-512——
+    /// 那些要看具体机器能力（`FORGE_ASSUME_AVX512` 只影响向量降级策略，不该让
+    /// `cfg(target_feature)` 说谎）。其它架构不申报任何特性（谱面自己决定）。
+    fn target_config(&self, sess: &Session) -> rustc_codegen_ssa::TargetConfig {
+        let mut internal_target_features = rustc_data_structures::unord::UnordSet::default();
+        if sess.target.arch == rustc_target::spec::Arch::X86_64 {
+            for f in ["sse", "sse2", "fxsr"] {
+                internal_target_features.insert(rustc_span::Symbol::intern(f));
+            }
+        }
+        rustc_codegen_ssa::TargetConfig {
+            internal_target_features,
+            has_reliable_f16: true,
+            has_reliable_f16_math: true,
+            has_reliable_f128: true,
+            has_reliable_f128_math: true,
+        }
+    }
+
     fn codegen_crate<'tcx>(&self, tcx: TyCtxt<'tcx>) -> Box<dyn Any> {
         // **IR 优化管线（v27 M5/M6）**：此前 rustc 后端**从未**启用过 `forge-opt`
         // （`CompileSession::with_opt_level` 只在测试里被调用）⇒ 所有 MIR 局部都留在栈槽、

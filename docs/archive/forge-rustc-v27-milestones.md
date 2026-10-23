@@ -12,6 +12,31 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-23 · M6-82：基线目标特性 + **跨后端 ABI 实测**（P1 第一步）
+
+**做了的**：`CodegenBackend::target_config` 申报 **x86-64 基线特性**（`sse`/`sse2`/`fxsr`）——
+我们本来就在发 SSE2（f32/f64 标量、XMM 传参/返回），此前申报空集 ⇒ rustc 的调用点检查会把
+`extern "C"` 的 `u128` 返回（w in XMM0）在前端拒掉（`requires the sse target feature`）。
+现在 `extern "C" fn() -> u128` 能编且跑对（42）。**只报基线**，不报 AVX/AVX2/AVX-512
+（`cfg(target_feature)` 不该说谎）。
+
+**量到的（决定性）**：用本仓库的 LLVM/rustc 编被调方、forge 编调用方，拿下 win64 的**真事实**：
+
+| 签名 | LLVM 实际做法 |
+| --- | --- |
+| `extern "C" fn wide_arg(u128) -> u64` | `mov 0x8(%rcx),%rax` ⇒ 参数**按引用**（RCX 是指针） |
+| `extern "C" fn wide_ret(u64) -> u128` | `movdqa (%rsp),%xmm0` ⇒ 返回在 **XMM0** |
+
+我们的 `win64` 规则把 >8 字节标量当普通标量塞整数槽（参数 RCX:RDX、返回 RAX:RDX）⇒
+forge 自编自调自洽，**跨后端混链直接 AV**（实测 `0xC0000005`）。登记 `WA-52`。
+
+**为什么没顺手改规则**：改了之后 `black_box`/任何宽值跨界都会在发射侧报
+`MOV_RM8_R64: operand 0 must be a 64-bit register` —— 返回侧需要**发射桥**（把拆肢后的
+宽值装配成 `V128` 交给向量返回槽），参数侧要改走 `caller_stack_copy`。规则翻转必须与
+桥同时落地，否则整棵树变红；已按"数据 → 桥 → 跨后端验收"三步写进 `WA-52`。
+
+**验收**：`gate --subset rustc` **15/15**；`u128` 参数/返回探针（Rust ABI）各 42 ✔。
+
 ### 2026-10-23 · M6-81：真 `std` **六档矩阵全绿**（栈探测改形态后的最强回归）
 
 新的栈探测（绝对地址 thunk，M6-80）改的是**每个大帧函数**的序言，所以拿真实语料压一遍：
