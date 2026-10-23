@@ -127,15 +127,32 @@ pub struct JitLoader<M: TargetMachine> {
 /// 栈探测符号名（与 `isa/x86.toml` 的 `[machine.frame.stack_probe].symbol` 一致）。
 const STACK_PROBE_SYMBOL: &str = "__chkstk";
 
-/// JIT 侧的栈探测**桩**。
-///
-/// AOT（rustc 路径）由 `isa/x86.toml` 声明的 `__chkstk` 完成真正的逐页触摸，实测大帧
-/// 的随机 AV 已消失。JIT 里没有链接器，必须自己把这个符号解析到某个地址——本轮先用
-/// **no-op 桩**：保证重定位能解析（不会跳进垃圾地址），JIT 函数因此**不做探测**。
-/// 汇编版（从近往远逐页摸）在 JIT 里仍会崩，留作单独排查（`WA-51`）。
+// JIT 侧的 `__chkstk` 实现（汇编）。
+//
+// **为什么必须是汇编**：序言在**任何**栈调整之前调用它，此刻 `rsp ≡ 0 (mod 16)`，
+// 而 Rust 函数的序言假定入口是 `≡ 8` —— 一个 Rust 桩会在自己的 `movaps` 上直接 AV
+// （实测：符号解析、reloc 补丁全对，桩却进不去）。真实运行时的 `__chkstk` 同样是手写汇编。
+//
+// 语义与 x64 `__chkstk` 一致：分配量在 **RAX**，**从近往远**逐页触摸（先摸远页会跳过
+// 中间的 guard page ⇒ AV），**不改 RSP**。
 #[cfg(target_arch = "x86_64")]
-#[unsafe(no_mangle)]
-extern "C" fn __forge_jit_chkstk() {}
+core::arch::global_asm!(
+    ".globl __forge_jit_chkstk",
+    "__forge_jit_chkstk:",
+    "mov r11, rsp",
+    "2:",
+    "sub r11, 4096",
+    "mov byte ptr [r11], 0",
+    "sub rax, 4096",
+    "ja 2b",
+    "ret",
+);
+
+#[cfg(target_arch = "x86_64")]
+unsafe extern "C" {
+    /// 上面那段汇编的入口（只在取地址时引用）。
+    fn __forge_jit_chkstk();
+}
 
 fn stack_probe_addr() -> u64 {
     #[cfg(target_arch = "x86_64")]
@@ -376,6 +393,31 @@ impl<M: TargetMachine + Clone> JitLoader<M> {
                     // against the emitted code length during emission.
                     unsafe {
                         mem.modify(|bytes| {
+                            // **PC 相对重定位的可达性检查**（`WA-51`）：x86 的
+                            // `RelocKind::Relative(4, _)` 只能表达 ±2GB 的位移。JIT 代码页
+                            // 常在低地址（VirtualAlloc），而外部符号（可执行文件里的函数）
+                            // 在 `0x7ff6…` 高位——两者差到上万亿字节，位移会被**截断**成
+                            // 垃圾地址（实测：桩永远进不去、进程 AV）。这里改成明确报错。
+                            if let RelocKind::Relative(w, adj) = kind
+                                && w >= 4
+                                && let Some(patcher) = self.machine.reloc_patcher()
+                            {
+                                let _ = (patcher, adj);
+                            }
+                            if let RelocKind::Relative(w, adj) = kind
+                                && w >= 4
+                                && self.machine.reloc_patcher().is_none()
+                            {
+                                let disp =
+                                    target_addr as i64 - site_addr as i64 + adj as i64;
+                                if disp < i32::MIN as i64 || disp > i32::MAX as i64 {
+                                    patch_err = Err(IrError::Internal(format!(
+                                        "JIT: PC 相对重定位超出 ±2GB（符号 {:?}：目标 {target_addr:#x} / 站点 {site_addr:#x}）——\
+                                         JIT 代码页与外部符号距离过远，需要绝对地址 thunk（见 WA-51）",
+                                        reloc.symbol
+                                    )));
+                                }
+                            }
                             if let Some(patcher) = self.machine.reloc_patcher() {
                                 let end = (reloc_offset + 8).min(bytes.len());
                                 let slice = &mut bytes[reloc_offset..end];
@@ -443,6 +485,40 @@ mod tests {
         fn drop(&mut self) {
             unsafe { std::env::remove_var("FORGE_ASSUME_AVX512") };
         }
+    }
+
+    /// **JIT 大帧函数**：栈探测的 `call rel32` 到不了外部符号 ⇒ 必须 **fail-closed**。
+    ///
+    /// 背景（`WA-51`）：JIT 代码页常被 `VirtualAlloc` 放在低地址（实测 `0x1935…`），而
+    /// `__chkstk` 这类符号在可执行文件的高位（`0x7ff7…`），两者差到上万亿字节 ——
+    /// `RelocKind::Relative(4)` 的位移会被**截断**，调用跳进垃圾地址（进程直接 AV）。
+    /// 现在在补丁前做可达性检查：超出 ±2GB 就报错，绝不静默截断。
+    ///
+    /// AOT（rustc 路径）不受影响：由链接器处理，实测大帧函数 8/8 稳定。
+    #[cfg(target_arch = "x86_64")]
+    #[test]
+    fn jit_big_frame_probe_fails_closed() {
+        use forge_ir::{FunctionSignature, TypeId};
+        ensure_registered();
+        let mut jit = JitLoader::new(x86::TargetMachine::new());
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let err = jit
+            .add_function("bigframe", &sig, |b| {
+                let (e, _p) = b.create_block_with_params(&[]);
+                b.switch_to_block(e);
+                let slot = b.alloca(TypeId::I8, 16384);
+                let z = b.constant(0i8);
+                b.store(z, slot);
+                let back = b.load(slot, TypeId::I8);
+                let v = b.uextend(back, TypeId::I32);
+                b.ret(&[v]);
+            })
+            .expect_err("大帧 JIT 函数必须 fail-closed（rel32 够不到外部 __chkstk）");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("±2GB"),
+            "错误应说明 PC 相对重定位越界，实测：{msg}"
+        );
     }
 
     #[test]
