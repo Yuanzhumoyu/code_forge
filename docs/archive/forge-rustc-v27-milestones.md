@@ -12,6 +12,21 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-23 · M6-81：真 `std` **六档矩阵全绿**（栈探测改形态后的最强回归）
+
+新的栈探测（绝对地址 thunk，M6-80）改的是**每个大帧函数**的序言，所以拿真实语料压一遍：
+`examples/forge-rustc-std-hello/run-offline.ps1 -AllOptLevels`（`std` 由 LLVM 编、我们的
+crate 由 forge 编；含 `HashMap`/`thread::spawn`/`Box<dyn FnOnce>`/`itoa`/`ryu`/`memchr`/
+`smallvec`/`once_cell`/`bitflags` 六个第三方 crate 也由 forge 编）。
+
+| opt-level | 结果 |
+| --- | --- |
+| 0 / 1 / 2 / 3 / s / z | **全部 `oracle_ok=true`**（forge 与 LLVM 输出逐行相同） |
+
+⇒ 序言形态改动没有破坏任何真实代码路径。顺手把 `WA-49`（128 位非 2 的幂除/余）标为
+**已修**，`backend-gaps.md` 的 `WIDE_INT_SHAPE` 行同步（该形态已由 `wide_div` 关闭）。
+产物已清理（磁盘曾到 6.7 GB，删 `target/debug/incremental` 5.0 GB 后回到 11.5 GB）。
+
 ### 2026-10-23 · M6-80：栈探测改**绝对地址 thunk** —— `WA-51` 收口，JIT 大帧也能跑
 
 `WA-51` 的真因不是 reloc 口径算错（实测补丁值与预期**完全一致**），而是**距离**：
