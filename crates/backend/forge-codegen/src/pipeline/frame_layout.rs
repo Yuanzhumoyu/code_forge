@@ -66,6 +66,14 @@ pub(crate) fn frame_layout_info<M: TargetMachine + ?Sized>(
     let cs_count = plan.callee_saved.regs.len() as i32;
     let cs_bytes = cs_count * (ri.reg_class_width(ri.default_gpr_class()) as i32);
     let pushed = (ri.frame_pointer_overhead() as i32) + cs_bytes;
+    // **帧指针保存槽不算"rbp 之下"**（v27 M6-95）：fp-outside 的序言是
+    // `push rbp; mov rsp,rbp; push callee-saved…` ⇒ rbp **指向** fp 保存槽，
+    // rbp 之下只有 callee-saved。此前这里把 `frame_pointer_overhead` 也算进
+    // `callee_saved_bytes`/`stack_slot_shift`，于是 spill 基点比 rsp 低 8 字节
+    // （槽 0 = `rsp - 8`），而循环里的 `call` 恰好把返回地址压在那里 ⇒ 槽 0 被
+    // 写成代码地址，reload 当基址用就 AV（hoisted `StackAddr` 跨调用实测）。
+    // fp-inside（arm64/riscv）不用这两个字段（保存区在帧内顶部），不受影响。
+    // （`frame_pointer_overhead` 仍由 frame 最小帧/序言账目消费，不是丢弃。）
     // **帧顶保存区**（v20 V7）：形状要求"保存区与栈实参连续"时，保存区占 `[入口 sp - save, 入口 sp)`，
     // 帧顶那一串（fp/lr 保存槽 + callee-saved）整体下移 ⇒ 帧至少要装得下 保存区 + 那串。
     let va_top = plan
@@ -78,7 +86,11 @@ pub(crate) fn frame_layout_info<M: TargetMachine + ?Sized>(
     match fl.kind {
         FrameLayoutKind::Outside => FrameLayoutInfo {
             min_frame: va_top,
-            callee_saved_bytes: pushed,
+            // rbp 之下只有 callee-saved push（fp 保存槽在 `[rbp]`）。**只**影响 spill
+            // 基点；`stack_slot_shift` 仍按 `pushed` 保留原来的 8 字节间隙——局部槽
+            // （`stack_addr`）的既有偏移已由 DWARF fbreg 等消费方按 64 写死/推算，
+            // 一起改会牵动无关路径（实测 u128 用例挂起）。
+            callee_saved_bytes: cs_bytes,
             stack_slot_shift: pushed,
         },
         FrameLayoutKind::Inside => FrameLayoutInfo {
@@ -142,6 +154,47 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
 mod tests {
     use super::*;
     use crate::arch::arm64::TargetMachine as ArmTm;
+
+    /// **fp 保存槽不在 rbp 之下**（v27 M6-95 回归守卫）：spill 基点用的
+    /// `callee_saved_bytes` 必须**只算 callee-saved push**；`stack_slot_shift`
+    /// （局部槽平移）保持历史值（含 fp）不动。两者相等会把槽 0 放到 `rsp - 8`——
+    /// 正好是 `call` 压返回地址的位置（hoisted `StackAddr` 跨调用 ⇒ AV）。
+    #[test]
+    fn outside_spill_base_excludes_the_frame_pointer_slot() {
+        let tm = crate::arch::x86::TargetMachine::new();
+        let reg = forge_abi::builtin::registry().expect("内置注册表");
+        let sig = forge_abi::Signature::new(vec![], Some(forge_abi::TyView::int(8, 8)));
+        let plan = crate::pipeline::abi_target::plan_for_signature(&tm, &reg, "win64", &sig)
+            .expect("win64 plan");
+        let info = frame_layout_info(&tm, Some(&plan));
+        let fp = tm.reg_info().frame_pointer_overhead() as i32;
+        let pushed = plan.callee_saved.regs.len() as i32
+            * (tm
+                .reg_info()
+                .reg_class_width(tm.reg_info().default_gpr_class()) as i32)
+            + fp;
+        assert!(
+            info.callee_saved_bytes > 0 && info.callee_saved_bytes < pushed,
+            "spill 基点必须排除 fp 保存槽：csb={} pushed={pushed}",
+            info.callee_saved_bytes
+        );
+        assert_eq!(
+            info.stack_slot_shift, pushed,
+            "局部槽平移保持历史口径（含 fp），不随 spill 基点一起改"
+        );
+    }
+
+    /// **fp-inside**（arm64）不需要扣：保存区在帧内顶部，`callee_saved_bytes = 0`。
+    #[test]
+    fn inside_spill_base_is_zero() {
+        let tm = ArmTm::new();
+        let reg = forge_abi::builtin::registry().expect("内置注册表");
+        let sig = forge_abi::Signature::new(vec![], Some(forge_abi::TyView::float(8)));
+        let plan = crate::pipeline::abi_target::plan_for_signature(&tm, &reg, "aapcs64", &sig)
+            .expect("aapcs64 plan");
+        let info = frame_layout_info(&tm, Some(&plan));
+        assert_eq!(info.callee_saved_bytes, 0);
+    }
 
     /// **FPR callee-saved 进得了帧**（v20 A6 激活的守卫）：AAPCS64 的表是
     /// X19-X28（10）+ V8-V15（8）= 18 条，而谱里声明的 `[machine].callee_saved_gpr`

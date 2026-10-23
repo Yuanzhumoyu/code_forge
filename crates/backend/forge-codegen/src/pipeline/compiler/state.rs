@@ -429,6 +429,9 @@ impl<I: MachineInst + 'static> CompileState<I> {
         alloc_result.call_layout = self.ctx.conv.layout.clone();
         // 栈参数区字节数（move_args 收栈参数时计算 spill 槽地址）
         alloc_result.stack_arg_bytes = self.ctx.max_stack_arg_bytes;
+        // rbp 之下的字节数（spill 基点）：与 emission 同一来源（frame_layout_info），
+        // 否则 move_args 收 spilled 参数与 spill 编辑按不同基点寻址（v27 M6-95）。
+        alloc_result.callee_saved_bytes = i64::from(self.ctx.callee_saved_bytes);
         // 寄存器保存区 / 对象槽偏移（v20 变参 V3）：序言 spill 用前者。
         alloc_result.va_save_off = self.ctx.va_save_off;
         // 帧顶保存区字节数（v20 V7）：fp-inside 的存取机制要按它把自己的偏移减掉一份。

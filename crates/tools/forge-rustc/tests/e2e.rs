@@ -3006,9 +3006,10 @@ const CASES: &[Case] = &[
     Case {
         name: "opt_loop_call_inline",
         // 曾经在优化档 AV 崩溃（0xC0000005）的形状：**循环体内调用 + 内联计算**三者同时在场。
-        // 根因锁定在 LICM（`FORGE_OPT_SKIP=licm` 即恢复；其余 17 个 pass 逐个跳过都无效），
-        // 该 pass 现已默认不装进流水线（见 forge-opt 的 `FORGE_LICM` 注释）。
-        // 本用例就是那条崩溃形状的回归：1+4+9+16 = 30。
+        // 根因不在 LICM（外提后 IR 逐行等价），而在发射侧**帧记账**：spill 槽 0 落在
+        // `rsp - 8`（`callee_saved_bytes` 误把 fp 保存槽算进 rbp 之下），`call` 的返回地址
+        // 恰好压进槽 0 ⇒ 下一轮 reload 拿代码地址当基址。根因已修（v27 M6-95），
+        // `StackAddr` 外提回归默认；本用例就是那条崩溃形状的端到端守卫：1+4+9+16 = 30。
         body: "let mut acc = 0u64; let mut i = 1u64; while i <= 4 { acc = acc.wrapping_add(sq(i + seed())); i += 1; } acc as i32",
         extra: "#[inline(always)]\nfn sq(x: u64) -> u64 { x.wrapping_mul(x) }\n#[inline(never)]\nfn seed() -> u64 { 0 }",
         entry: "mainCRTStartup",

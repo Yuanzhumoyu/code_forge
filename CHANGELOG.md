@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-24) — 帧记账：spill 槽 0 与 `call` 返回地址重叠（M6-⑩）
+
++ `callee_saved_bytes` 不再把帧指针保存槽算进"rbp 之下"：`push rbp; mov rsp,rbp` 之后
+  rbp 指向那个槽。此前 spill 基点比 `rsp` 低 8 字节，**槽 0 正好是 `call` 压返回地址的位置**；
+  循环内一调用就把槽写成代码地址，下一轮 reload 拿它当基址 ⇒ 访问违规。
++ `@move_args` 的 spilled-param 基点改用 `AllocResult.callee_saved_bytes`（与 emission 同源），
+  不再在生成物里用 `fp_push + saved*slot` 另算一份。
++ `LICM` 对 `StackAddr` 的外提回归默认（`FORGE_LICM_STACKADDR` 门控删除）：此前的"不外提"
+  规避的就是上述帧缺陷。守卫：帧账单测 `outside_spill_base_excludes_the_frame_pointer_slot`、
+  LICM 单测 `stack_addr_is_hoisted_by_default`、e2e `opt_loop_call_inline`（O2、真执行）。
+
 ### Added (2026-10-24) — `forge-rustc`：内联 `asm!` 的 `label` 操作数
 
 + `asm!("jmp {0}", label { ... })` / `asm!("jcc e, {0}", label { ... })` 现在可用：`label`

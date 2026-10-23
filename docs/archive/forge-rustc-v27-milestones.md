@@ -12,6 +12,34 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-24 · M6-95：M6-⑩ 闭合——根因是帧记账，不是分配器的"活值驱逐"
+
+两条症状（`spill_vreg` 驱逐活值疑似不写回；`StackAddr` 外提后 AV）被同一条根因解释：
+
+- **复现**：`while i <= 4 { acc += sq(i + seed()); i += 1 }`（e2e `opt_loop_call_inline`）
+  在 O2 + `FORGE_LICM_STACKADDR=1` 下 AV；O2 关外提 / O0 均正确。
+- **机器级定位**：故障指令 `mov %r10, (%r11)` 的 `%r11` 来自 `-0x1c8(%rbp)`，值是**代码地址**
+  （`call` 的返回地址）；该槽只在序言写过一次"栈地址"。计算：`push rbp; mov rsp,rbp;
+  push ×7; sub 0x188` ⇒ `rsp = rbp - 0x1c0`，但 `sp_base = -(frame) - callee_saved_bytes`
+  = `rbp - 0x1c8` ⇒ **槽 0 = `rsp - 8`，正好是 `call` 压返回地址的位置**。循环里每次调用都
+  把槽 0 写成代码地址；下一轮 reload 拿它当基址 ⇒ AV。"第一次迭代对、第二次起坏"由此成立
+  （第一轮调用前的 reload 读到的是序言写过的正确值）。
+- **根因**：`frame_layout_info` 把 `frame_pointer_overhead` 算进了 `callee_saved_bytes`，
+  但 fp 保存槽在 `[rbp]`（`push rbp` 后 rbp 指向它），**不在 rbp 之下**。
+- **修法**（单一事实源）：`callee_saved_bytes` 只算 rbp 之下的 push；经新增的
+  `AllocResult.callee_saved_bytes` 让 emission 的 spill 基点与 `@move_args` 的
+  spilled-param 基点同源（此前生成物用 `fp_push + saved*slot` 另算一份，两边会分叉）。
+  `stack_slot_shift`（局部槽平移）**保持原口径**——一起改会牵动 `stack_addr`/DWARF 的既有
+  偏移（实测 u128 用例挂起）。
+- **顺带**：`StackAddr` 外提回归默认，`FORGE_LICM_STACKADDR` 门控删除；LICM 本就在 O1+ 流水线里。
+  "活值驱逐不写回"经复核**不是缺陷**：槽一旦在最终表里存在，def 就走 scratch 写槽，eviction
+  点的 reload 读到的是 def 写的权威副本（前提是 def 支配驱逐点，SSA 成立）。
+
+**验收**：e2e 208/208（`opt_loop_call_inline` 现在就是该缺陷的端到端守卫）；`forge-codegen --lib`
+2864/2864；JIT `jit_stack_params_with_call` 等回归绿；新增帧账单测
+`outside_spill_base_excludes_the_frame_pointer_slot` / `inside_spill_base_is_zero`，
+LICM 守卫改为 `stack_addr_is_hoisted_by_default`。
+
 ### 2026-10-24 · M6-94：P2 的 `label` 落地——目标块 → 外部标签表 → 编码器 `use_label_at`
 
 `sym` 之后 P2 只剩 `label`（rustc `asm!` 的 `label` 操作数 = 目标基本块）。方案原估"给汇编器

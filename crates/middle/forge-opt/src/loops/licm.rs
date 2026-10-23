@@ -25,12 +25,11 @@ impl OptimizationPass for LicmPass {
         "Loop-invariant code motion"
     }
     fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
-        // 注：默认**不把这个 pass 装进 O1+ 流水线**（见 `PassManager::for_level_with_table`
-        // 里的 `FORGE_LICM` 门控）：本 pass 目前在"循环体内有调用 + 内联计算"的形状上
-        // 会把正确程序改成错值/AV（`-C opt-level>=1`），`FORGE_OPT_SKIP=licm` 即恢复，
-        // 其余 17 个 pass 逐个跳过都无法恢复 ⇒ 锁定本 pass。已排除的猜测：load 外提
-        // 规则、块内 RAUW 方式、克隆插入位置（已修到终结符之前）。算法本身仍由单元
-        // 测试直接覆盖（`hoist_loop_invariants`），需要继续排查时用 `FORGE_LICM=1`。
+        // v27 M6-95：本 pass **在 O1+ 流水线里**（见 `PassManager::for_level_with_table`）。
+        // 历史上它曾在"循环体内有调用 + 内联计算"的形状上产出错值/AV，根因不在 LICM
+        // 的搬移规则，而在发射侧：spill 槽 0 落在 `rsp - 8`，循环内的 `call` 把返回地址
+        // 压进该槽（详见 `emission.rs` 的 sp_base 注释）。根因修掉后 `StackAddr` 外提也
+        // 回归默认；端到端守卫 = e2e `opt_loop_call_inline`（O2、真执行 30）。
         hoist_loop_invariants(func)
     }
 }
@@ -228,23 +227,13 @@ fn mark_invariants(
                     }
                 } else if has_side_effects(&inst.opcode) {
                     continue;
-                } else if matches!(inst.opcode, Opcode::StackAddr)
-                    && std::env::var_os("FORGE_LICM_STACKADDR").is_none()
-                {
-                    // **`StackAddr` 不外提（规避已知后端缺陷，2026-10-19）**。
-                    //
-                    // 外提它会让"槽地址值"变成**跨块活跃**的值，而后端寄存器分配在这种
-                    // 值上会建错干扰关系。机器级实测（`FORGE_DUMP_VCODE=1`）：
-                    // 循环头块发出 `MovRMem { dst: RAX, src: R15 }` 紧接
-                    // `StoreMemR { src: RAX, src2: RAX }` ⇒ **store 的地址寄存器被分到
-                    // RAX**，就是上一条 load 的目标 ⇒ 拿"加载值"当地址写（错值 / AV）。
-                    // 不外提时同一段是 `MovRMem{R14,R15}` + `StoreMemR{R14,R13}`（正确）。
-                    //
-                    // 隔离证据（`FORGE_LICM_ONLY=…`）：`stack_addr` 复现错值，
-                    // `iconst` / `load` 两档都正确 ⇒ 只有这一类有害。
-                    // 真正的修法在分配器（跨块活跃的地址值干扰建错），修好后删掉本条。
-                    continue;
                 }
+                // **`StackAddr` 现在也外提**（v27 M6-95）：此前它被排除，是因为"槽地址值
+                // 跨块活跃"会踩中发射侧的栈帧缺陷——**spill 槽 0 落在 `rsp - 8`**
+                // （`callee_saved_bytes` 误把帧指针保存槽算进 rbp 之下），循环内的 `call`
+                // 把返回地址压进槽 0，之后 reload 当基址用 ⇒ AV。根因已在发射侧修掉
+                //（`emission.rs` 的 sp_base 扣除 `frame_pointer_overhead`），外提回归默认；
+                // 端到端守卫 = e2e `opt_loop_call_inline`（O2、循环内有调用、真执行 30）。
                 if inst
                     .operands
                     .iter()
@@ -618,16 +607,14 @@ mod tests {
         let _ = r;
     }
 
-    /// **回归守卫（v27 M6）**：`StackAddr` **默认不外提**。
+    /// **回归守卫（v27 M6-95）**：`StackAddr` **默认外提**。
     ///
-    /// 外提它会让"槽地址值"跨块活跃，而后端寄存器分配在这种形状上会出错——
-    /// 实测（`FORGE_LICM_STACKADDR=1` 打开外提）某个"循环体内有调用 + 内联计算"的
-    /// 形状在 `-O2` 下崩溃/错值，且**跳过 O2 里任意一个 pass 都不再复现**
-    /// ⇒ 属"压力相关的分配器潜伏缺陷"，与 LICM 本身无误（外提后 IR 逐行等价）。
-    /// 在分配器事件化修好之前，`StackAddr` 外提保持关闭；本测试钉住这条规避，
-    /// 防止有人"顺手打开"再把用户代码弄崩。
+    /// 它曾是例外（"槽地址跨块活跃"会踩中发射侧的 spill 槽错位 ⇒ AV）。根因已修：
+    /// spill 基点曾把帧指针保存槽算进"rbp 之下"，槽 0 = `rsp - 8` = `call` 压返回
+    /// 地址的位置（详见 `emission.rs` 的 sp_base 注释）。现在外提回归默认；本测试钉住
+    /// "外提真的发生"，端到端正确性由 e2e `opt_loop_call_inline`（O2 + 循环内调用）钉住。
     #[test]
-    fn stack_addr_is_not_hoisted_by_default() {
+    fn stack_addr_is_hoisted_by_default() {
         // while (cond) { p = stack_addr(-8); store 1, p; }  —— 槽地址在循环体内
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
@@ -656,22 +643,26 @@ mod tests {
         let pass = LicmPass::new();
         let _ = pass.run_on_function(&mut func).unwrap();
 
-        // 断言：循环体里仍有 StackAddr（没被搬到入口块）。
+        // 断言：循环体里**没有** StackAddr（已被外提），preheader/header 里恰好一条。
         let mut body_stack_addrs = 0usize;
+        let mut outside_stack_addrs = 0usize;
         for bi in 0..func.dfg.block_count() {
             let bid = Block::new(bi as u32);
-            if bid == Block::new(0) || bid == Block::new(1) || bid == Block::new(3) {
-                continue; // preheader / header / exit
-            }
             for &inst_id in &func.dfg.block(bid).inst_order {
-                if matches!(func.dfg.inst_data(inst_id).opcode, Opcode::StackAddr) {
+                if !matches!(func.dfg.inst_data(inst_id).opcode, Opcode::StackAddr) {
+                    continue;
+                }
+                if bid == Block::new(2) {
                     body_stack_addrs += 1;
+                } else {
+                    outside_stack_addrs += 1;
                 }
             }
         }
+        assert_eq!(body_stack_addrs, 0, "StackAddr 默认应当外提（v27 M6-95）");
         assert_eq!(
-            body_stack_addrs, 1,
-            "StackAddr 默认不得外提（这层规避挡着一个已知的后端分配器缺陷）"
+            outside_stack_addrs, 1,
+            "外提后的 StackAddr 应落在 preheader/header"
         );
     }
 }

@@ -935,6 +935,7 @@ impl<'a> BtState<'a> {
             // S2：sret 由 CompileState 在分配后填充（LowerCtx.is_sret_return）
             sret: false,
             stack_arg_bytes: 0,
+            callee_saved_bytes: 0,
             va_save_off: None,
             va_top: 0,
             // 参数字节宽由 CompileState 分配后按值描述填充（regalloc

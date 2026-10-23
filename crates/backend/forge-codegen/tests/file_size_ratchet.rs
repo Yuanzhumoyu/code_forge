@@ -43,7 +43,8 @@ const BUDGETS: [(&str, usize); 6] = [
     // "谁改了哪个字段"拆散（M4 只切出 spill/tests；再切需先把状态字段收敛成内聚子结构）。
     // 944 = 切分后实测（比初测 +3：跨模块可见性把 13 字段 / 17 方法标成 `pub(super)`）。
     // +6（v27 M6-91，P4）：`peak_active` 的字段/初始化/三处更新（寄存器压力峰值观测）。
-    ("pipeline/regalloc_bt/state.rs", 950),
+    // +1（v27 M6-95）：`AllocResult.callee_saved_bytes` 的初值（spill 基点与 move_args 同源）。
+    ("pipeline/regalloc_bt/state.rs", 951),
     // 生成物 lowering 的宿主侧辅助（与谱面规则一一对应）。
     ("pipeline/lowering.rs", 835),
     // 物化相：按指令序单遍改写，条目按 IR 形态分段，切开反而难对照。

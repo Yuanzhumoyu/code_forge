@@ -996,13 +996,11 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
     // callee-saved 区字节数（**运行时值**，v21 W9 选项 A）：fp 保存槽 + plan 整表 × 槽单位。
     // 谱面两键删除后与序言**同源**（`__rm.callee_saved_to_save` 就是 plan 的整张表），
     // 不再有"静态表 vs 运行时子集"的差；`__rm` 在收参体里始终可用。
-    let fp_push_lit: i64 = model
-        .machine_frame()
-        .and_then(|f| f.fp_push_bytes)
-        .unwrap_or(model.addr_class()?.bytes() as u32) as i64;
-    let cs_bytes = quote! {
-        (#fp_push_lit as i64) + (__rm.callee_saved_to_save.len() as i64) * (__SLOT_BYTES as i64)
-    };
+    // **rbp 之下的字节数**（spill 基点用，v27 M6-95）：与 frame_layout_info / emission
+    // 同源，经 `AllocResult.callee_saved_bytes` 传入。**不要**在这里用
+    // `fp_push_bytes + saved*slot` 重算——那样会把帧指针保存槽算进 rbp 之下，spill 槽 0
+    // 落到 `rsp - 8`（`call` 压返回地址处），与 emission 的基点也分叉。
+    let cs_bytes = quote! { __rm.callee_saved_bytes };
     // 收参：v20 A5-3 起**只走布局路径**（`ArgPlace::Reg`/`Indirect`/`Stack`）。
     // 谱面的 `[abi].arg_class` 已删除——拿不到布局或落点不受支持时，下面的
     // `*_stmt_use` 一律 **fail-closed**（旧实现按谱面顺序塞寄存器，那是静默错值）。

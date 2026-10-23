@@ -83,6 +83,13 @@ pub struct AllocResult {
     /// max_stack_arg_bytes）：move_args 收栈参数时计算 spill 槽地址
     ///（sp_base = -(frame) - callee_saved + stack_arg_bytes）需用它。
     pub stack_arg_bytes: u32,
+    /// **rbp 之下**、spill 基点用的字节数（v27 M6-95，与 `frame_layout_info` 同源）。
+    ///
+    /// fp-outside（x86） = callee-saved push 的字节数（**不含帧指针保存槽**：它在
+    /// `[rbp]`，不在 rbp 之下）；fp-inside（arm64/riscv） = 0（保存区在帧内顶部）。
+    /// `move_args` 收 spilled 参数与 emission 的 spill 编辑**必须**用同一个值，否则
+    /// 同一槽被两处按不同基点寻址（实测：槽 0 落在 `rsp - 8` = `call` 压返回地址处）。
+    pub callee_saved_bytes: i64,
     /// **寄存器保存区**在帧内的偏移（相对帧基址；`None` = 本函数没有，v20 变参 V3）。
     /// 序言按 `call_layout.va.save` 的槽表把参数寄存器存到 `[帧基址 + 本偏移 + 槽偏移]`。
     pub va_save_off: Option<i64>,
@@ -134,6 +141,7 @@ impl Default for AllocResult {
             param_vregs: Vec::new(),
             sret: false,
             stack_arg_bytes: 0,
+            callee_saved_bytes: 0,
             va_save_off: None,
             va_top: 0,
             param_bytes: Vec::new(),
