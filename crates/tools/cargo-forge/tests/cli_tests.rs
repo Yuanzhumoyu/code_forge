@@ -122,10 +122,39 @@ fn ensure_rustup_home(cmd: &mut Command) {
 ///
 /// 夹具是**测试**：它不该依赖、也不该写宿主的全局缓存（本仓 CLAUDE.md「生成物落盘」
 /// 早就规定 cargo 包缓存放 `target/cargo-home`）。这里让夹具子进程遵守同一条。
+///
+/// **镜像源声明也要播种**：cache/index 按 registry 源哈希分目录；本机
+/// `~/.cargo/config.toml` 有 `[source.crates-io] replace-with = 'ustc'`，缓存在
+/// `mirrors.ustc…` 下。`target/cargo-home` 没有 config.toml 时子进程按 crates.io 解析，
+/// 离线报 `no matching package named …`（实测：`rustc-literal-escaper`）。
 fn ensure_cargo_home(cmd: &mut Command) {
     let redirect = repo_root().join("target").join("cargo-home");
     if redirect.is_dir() {
+        seed_cargo_home_config(&redirect);
         cmd.env("CARGO_HOME", &redirect);
+    }
+}
+
+/// 把真实 `CARGO_HOME`（或 `%USERPROFILE%\.cargo`）的 `config.toml` 复制到重定向目录
+/// （只补缺、不覆盖；没有源配置时静默跳过——CI 用默认 crates.io，本来就是对的）。
+fn seed_cargo_home_config(redirect: &std::path::Path) {
+    let dst = redirect.join("config.toml");
+    if dst.is_file() {
+        return;
+    }
+    let src = std::env::var_os("CARGO_HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.join("config.toml").is_file())
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .map(|p| std::path::Path::new(&p).join(".cargo").join("config.toml"))
+                .filter(|p| p.is_file())
+        });
+    if let Some(src) = src
+        && src != dst
+        && let Ok(bytes) = std::fs::read(&src)
+    {
+        let _ = std::fs::write(&dst, bytes);
     }
 }
 

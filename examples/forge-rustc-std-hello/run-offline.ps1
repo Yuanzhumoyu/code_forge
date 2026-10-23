@@ -74,6 +74,15 @@ if (-not (Test-Path (Join-Path $regDst "cache"))) {
         Copy-Item -Recurse -Force (Join-Path $regSrc $d) (Join-Path $regDst $d)
     }
 }
+# ①.b **镜像源声明必须跟着 CARGO_HOME 一起走**：cache/index 是按 registry 源哈希分目录的，
+# 本机 `~/.cargo/config.toml` 用 `[source.crates-io] replace-with = 'ustc'` ⇒ 缓存在
+# `mirrors.ustc...` 下。不播种 config.toml 时子进程按 crates.io 解析，离线直接报
+# `no matching package named base64`（实测）。只补缺，不覆盖用户已有配置。
+$cfgDst = Join-Path $cargoHomeDst "config.toml"
+$cfgSrc = Join-Path $cargoHomeSrc "config.toml"
+if ((Test-Path $cfgSrc) -and (-not (Test-Path $cfgDst))) {
+    Copy-Item -Force $cfgSrc $cfgDst
+}
 
 $env:CARGO_HOME = $cargoHomeDst
 $env:CARGO_NET_OFFLINE = "true"

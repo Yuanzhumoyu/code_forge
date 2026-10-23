@@ -172,10 +172,14 @@ cargo build --manifest-path tools/forge-rustc-wrapper/Cargo.toml
 rustup component add rust-src --toolchain nightly
 
 # ② 把 CARGO_HOME 指到**工作区内**（解包/锁文件都落在可写区），
-#    并把真实 registry 的 cache+index 拷过去（离线解析要用；约 250 MB，一次即可）
+#    并把真实 registry 的 cache+index 拷过去（离线解析要用；约 250 MB，一次即可）。
+#    **镜像源声明（~/.cargo/config.toml）也要一并拷**：cache/index 按 registry 源哈希分目录，
+#    缺了它子 cargo 会按 crates.io 解析，离线报 `no matching package named …`
+#    （`run-offline.ps1` 已自动播种，见其 ①.b）
 $env:CARGO_HOME = "<repo>/target/cargo-home"
 New-Item -ItemType Directory -Force "$env:CARGO_HOME\registry" | Out-Null
 Copy-Item -Recurse ... "$env:CARGO_HOME\registry\cache", "$env:CARGO_HOME\registry\index"
+Copy-Item "$env:USERPROFILE\.cargo\config.toml" "$env:CARGO_HOME\config.toml"
 $env:CARGO_NET_OFFLINE = "true"
 
 # ③ 把 cargo 配置写进 <repo>/target/forge-rustc-std-hello/forge-cwd/.cargo/config.toml
