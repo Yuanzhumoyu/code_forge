@@ -34,7 +34,7 @@ pub struct EventSpec {
 }
 
 /// **事件台账**（唯一登记处；守卫与文档表双向相等）。
-pub static EVENTS: [EventSpec; 7] = [
+pub static EVENTS: [EventSpec; 8] = [
     EventSpec {
         name: "COMPILE-START",
         what: "开始编译一个函数（`fn`）",
@@ -58,6 +58,10 @@ pub static EVENTS: [EventSpec; 7] = [
     EventSpec {
         name: "SPILL-VALUE",
         what: "溢出决策：每个被溢出的值 `vreg` + 槽偏移 `offset` + 槽宽 `size`（v27 M6-87，P4 事件化）",
+    },
+    EventSpec {
+        name: "SPILL-EDIT",
+        what: "逐指令溢出编辑：`inst`（vcode 全局序号）+ `kind`（reload/bind/store）+ `offset` + `scratch` + `width`（v27 M6-90，P4 事件化）",
     },
     EventSpec {
         name: "EMIT-SUMMARY",

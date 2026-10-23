@@ -348,6 +348,7 @@ M4 把测试搬成独立文件后，文件内不再有 `#[cfg(test)]` 可供"截
 | `LEGALIZE-PLAN` | 合法化计划相完成：`actionable`（可动边界条数）、`plans`（问引擎次数） |
 | `ALLOC-SUMMARY` | 寄存器分配完成：`assigned`、`spills`、`edits` |
 | `SPILL-VALUE` | 溢出决策（逐值）：`vreg`、`offset`（有符号帧偏移）、`size`——v27 M6-87 起，P4 事件化 |
+| `SPILL-EDIT` | 逐指令溢出编辑：`inst`（vcode 全局序号）、`kind`（reload/bind/store）、`offset`、`scratch`、`width`——v27 M6-90 起，P4 事件化 |
 | `EMIT-SUMMARY` | 发射完成：`code_bytes`、`relocs` |
 
 ## 12. 事件通道（四个出口，一处实现）

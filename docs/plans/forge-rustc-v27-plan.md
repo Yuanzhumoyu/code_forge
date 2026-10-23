@@ -46,7 +46,7 @@
 | **P1 128 位 C-ABI 跨后端兼容**（2026-10-23 起） | ✅ **已落地（2026-10-24）**：定义侧/调用侧都问 rustc `FnAbi` 的 `PassMode`（按引用 ⇒ 16 字节对齐副本的指针；`Cast{Vector}` ⇒ `XMM0`；`Direct` ⇒ 两整数槽/`RAX:RDX`）；跨后端探针**双向** 42 | §2.8；`WA-52`（已修）；`tests/cross_abi.rs` |
 | **P2 `INLINE_ASM` 的 `sym`/`label`** | 📋 **结论已定、待实现**：需在谱面层做（`[operand.sym]` + 汇编器块内标签），排在 P1 之后；现状 fail-closed | §2.6；台账 `INLINE_ASM` |
 | **P3 M4-T3 第二目标** | ⛔ **执行级受环境限制**（本机无 emulator / aarch64 std / 交叉 gcc-ld）；**对象级可做**（clang/ld.lld/llvm-objdump 齐备） | §2.7 实测表 |
-| **P4 分配器事件化** | 🔶 **首块落地**：`SPILL-VALUE`（逐值 vreg/offset/size）+ `Field::I64`；下一步寄存器压力峰值与逐指令编辑 | §8 M6-87；`events_guard` 三方双向 |
+| **P4 分配器事件化** | 🔶 **两块落地**：`SPILL-VALUE`（逐值 vreg/offset/size）+ `SPILL-EDIT`（逐指令 kind/offset/scratch/width）+ `Field::I64`；下一步寄存器压力峰值 | §8 M6-87/M6-90；`events_guard` 三方双向 |
 | M1 正确性清零（溢出 / 窄有符号 / 向量溢出 / regalloc） | ✅ 落地 | §8 M1；e2e 硬断言、`known_failure` = 0 |
 | M2 `global_asm!` | ✅ 落地 | §8 M2；e2e `global_asm_call` / `global_asm_sym_const` |
 | M2 展开（`panic=unwind` / SEH） | ❌ **不做**（明确拒绝） | 台账 `UNWIND` |

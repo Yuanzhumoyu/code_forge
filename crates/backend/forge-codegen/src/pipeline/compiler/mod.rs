@@ -516,6 +516,41 @@ impl<M: TargetMachine> CompileSession<M> {
                 );
             }
         }
+        // **逐指令溢出编辑事件化**（v27 M6-90，P4）：`SPILL-VALUE` 只说"谁溢出到哪"，
+        // 这里补上"在哪条指令前后搬、搬到哪个 scratch"——排查错值的顺序从此可机读
+        // （reload → bind → store 与发射侧的分段顺序一一对应）。
+        for (inst_idx, edits) in alloc_result.edits.iter().enumerate() {
+            for e in edits {
+                let (kind, offset, scratch, width) = match e {
+                    crate::alloc_result::SpillEdit::Reload {
+                        slot,
+                        scratch,
+                        width,
+                        ..
+                    } => ("reload", i64::from(slot.offset), scratch, *width),
+                    crate::alloc_result::SpillEdit::Bind { scratch, .. } => {
+                        ("bind", 0, scratch, 0u16)
+                    }
+                    crate::alloc_result::SpillEdit::Store {
+                        slot,
+                        scratch,
+                        width,
+                        ..
+                    } => ("store", i64::from(slot.offset), scratch, *width),
+                };
+                events::emit(
+                    "SPILL-EDIT",
+                    &[
+                        ("fn", events::Field::Str(&fname)),
+                        ("inst", events::Field::Usize(inst_idx)),
+                        ("kind", events::Field::Str(kind)),
+                        ("offset", events::Field::I64(offset)),
+                        ("scratch", events::Field::U64(u64::from(scratch.num))),
+                        ("width", events::Field::Usize(usize::from(width))),
+                    ],
+                );
+            }
+        }
         events::emit(
             "ALLOC-SUMMARY",
             &[

@@ -137,6 +137,7 @@ fn events_land_on_disk() {
     // 安全：本测试独占该 env（文件内串行 + 其它测试文件不设置它）。
     unsafe { std::env::set_var("FORGE_CODEGEN_EVENTS", &path) };
     compile_fixture();
+    compile_spill_fixture();
     unsafe { std::env::remove_var("FORGE_CODEGEN_EVENTS") };
 
     let text = std::fs::read_to_string(&path).unwrap_or_default();
@@ -155,10 +156,51 @@ fn events_land_on_disk() {
     ] {
         assert!(text.contains(want), "应含事件片段 `{want}`：\n{text}");
     }
+    // **溢出事件化**（v27 M6-87/M6-90）：高压夹具必须真的溢出，并同时给出
+    // "逐值"（SPILL-VALUE）与"逐指令编辑"（SPILL-EDIT）两种粒度。
+    assert!(
+        text.contains("\"event\":\"SPILL-VALUE\",\"fn\":\"events_spill_fixture\""),
+        "高压夹具应产生 SPILL-VALUE：\n{text}"
+    );
+    assert!(
+        text.contains("\"event\":\"SPILL-EDIT\",\"fn\":\"events_spill_fixture\""),
+        "高压夹具应产生 SPILL-EDIT：\n{text}"
+    );
     assert!(
         text.contains("\"code_bytes\":") && text.contains("\"plans\":"),
         "COMPILE-DONE/EMIT-SUMMARY/LEGALIZE-PLAN 的关键字段应在：\n{text}"
     );
+}
+
+/// **高压夹具**：40 个同时活跃的 `i64`，强制分配器溢出（P4 事件化的真值输入）。
+///
+/// 为什么不用普通夹具：`events_fixture` 只有一次聚合拷贝，不溢出 ⇒ `SPILL-*` 永远
+/// 不会发；而"事件代码写错了"与"没触发"在日志上长得一样，必须让夹具**必然**溢出。
+fn compile_spill_fixture() {
+    use forge_ir::TypeId;
+    use forge_ir::ir::builder::FunctionBuilder;
+    use forge_ir::ir::types::{FunctionSignature, TypeContext};
+    forge_codegen::pipeline_hooks::ensure_registered();
+    let ctx = TypeContext::new();
+    let sig = FunctionSignature::new(&[], &[TypeId::I64]);
+    let mut b = FunctionBuilder::new("events_spill_fixture", ctx, sig);
+    let (e, _) = b.create_block_with_params(&[]);
+    b.switch_to_block(e);
+    // 每个值都活到函数末尾（先全部定义、再逐个累加）⇒ 活区间大面积重叠。
+    let mut vals = Vec::new();
+    for i in 0..40i64 {
+        let c = b.const_int(i, TypeId::I64);
+        vals.push(b.iadd(c, c));
+    }
+    let mut acc = vals[0];
+    for &v in &vals[1..] {
+        acc = b.iadd(acc, v);
+    }
+    b.ret(&[acc]);
+    let f = b.finish().expect("build");
+    let tm = forge_codegen::arch::x86::TargetMachine::new();
+    let s = forge_codegen::CompileSession::new(tm);
+    let _ = s.compile(&f);
 }
 
 fn compile_fixture() {
