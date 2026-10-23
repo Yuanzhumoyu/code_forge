@@ -316,11 +316,11 @@ lowering，实测 `[cap:SPEC_LOWERING_RULE_MISSING]`）。
 
 | 文件 | 上限（行） | 为什么允许这么长 |
 | --- | --- | --- |
-| `pipeline/regalloc_bt/state.rs` | 944 | `BtState`：13 字段 + 17 方法构成一台状态机，切开会把"谁改了哪个字段"拆散 |
+| `pipeline/regalloc_bt/state.rs` | 950 | `BtState`：13 字段 + 17 方法构成一台状态机，切开会把"谁改了哪个字段"拆散（+压力峰值 `peak_active`，v27 M6-91） |
 | `pipeline/lowering.rs` | 835 | 生成物 lowering 的宿主侧辅助，与谱面规则一一对应 |
 | `pipeline/legalize/materialize.rs` | 657 | 物化相：按 IR 形态分段单遍改写，切开反而难对照 |
 | `pipeline/va_expand/expand.rs` | 621 | `expand_start`/`expand_arg` 共享局部不变量（游标推进次序） |
-| `pipeline/compiler/mod.rs` | 640 | 会话入口 + 模块编排（state 与测试已切出；+宽值批调用点 v27 M6-84、+溢出事件 v27 M6-87） |
+| `pipeline/compiler/mod.rs` | 670 | 会话入口 + 模块编排（state 与测试已切出；+宽值批调用点 v27 M6-84、+溢出事件 v27 M6-87、+逐指令编辑/压力峰值 v27 M6-90/M6-91） |
 | `pipeline/compiler/alloc_integration_tests.rs` | 690 | 集成用例（测试长不构成阅读负担，与实现同源；+栈探测正反用例 v27 M6-78） |
 
 缺省上限 **700** 行；上表与守卫里的预算表由 `file_size_ratchet` 钉成**双向相等**（改动其一就红）。

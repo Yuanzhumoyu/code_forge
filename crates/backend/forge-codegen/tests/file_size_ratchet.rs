@@ -42,7 +42,8 @@ const BUDGETS: [(&str, usize); 6] = [
     // 分配器状态机：`BtState` 的 13 个字段 + 17 个方法构成一台状态机，切开会把
     // "谁改了哪个字段"拆散（M4 只切出 spill/tests；再切需先把状态字段收敛成内聚子结构）。
     // 944 = 切分后实测（比初测 +3：跨模块可见性把 13 字段 / 17 方法标成 `pub(super)`）。
-    ("pipeline/regalloc_bt/state.rs", 944),
+    // +6（v27 M6-91，P4）：`peak_active` 的字段/初始化/三处更新（寄存器压力峰值观测）。
+    ("pipeline/regalloc_bt/state.rs", 950),
     // 生成物 lowering 的宿主侧辅助（与谱面规则一一对应）。
     ("pipeline/lowering.rs", 835),
     // 物化相：按指令序单遍改写，条目按 IR 形态分段，切开反而难对照。
@@ -52,7 +53,8 @@ const BUDGETS: [(&str, usize); 6] = [
     // 编译会话入口 + 模块编排（M4 已切出 state 与测试）。
     // 宽值批的调用点 + 说明（v27 M6-84：ABI 编组次序）——比原上限多 4 行，理由在此。
     // +溢出决策事件化（v27 M6-87，P4：逐值报 vreg/offset/size）——比上一档多 9 行。
-    ("pipeline/compiler/mod.rs", 640),
+    // +逐指令编辑事件化（v27 M6-90：SPILL-EDIT 循环）+ 压力峰值字段（M6-91）——共 +30 行。
+    ("pipeline/compiler/mod.rs", 670),
     // 会话测试体（613 行用例）：测试长不构成阅读负担的同类问题，且与实现同源。
     // 栈探测的正反两面用例（v27 M6-78：大帧必须发 `mov rax,size; call __chkstk`，
     // 小帧不得发）——同一形状的编译级断言放这里最省重复。
