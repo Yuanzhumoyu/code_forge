@@ -12,6 +12,25 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-24 · M6-93：P2 的 `sym` 落地——地址物化到输入寄存器（比"谱面操作数种类"更小的落法）
+
+方案 §2.6 原定"给汇编器加 `[operand.sym]` + 符号重定位"；实现时发现更小的落点：
+**符号地址本来就能物化成 IR 值**（上一轮 M6-89 的函数指针已打通 `intern_global_named` +
+`GlobalAddr`），而 inline asm 的 S2a 已能把任意输入值搬到指定寄存器。于是：
+
+- 降级层：`SymFn` → `lower_operand`（复用 `GlobalAlloc::Function`/`FnDef` 分支）；
+  `SymStatic` → 新的 `static_addr_value`（符号名与 `intern_const_data` 同源）；
+  两者都以约束 `i,g` 进 `in_vals`，文本占位符写成 `{序}`。
+- **语义边界**：模板必须把 `{n}` 当寄存器（`mov`/`call`/`[reg]`）；字面符号写法
+  （`[rip + {0}]`）被汇编器拒绝 ⇒ 编译期明确报错。e2e `inline_asm_sym_literal` 钉住。
+- **顺带修的真缺陷**：S2a 的池选择只看"已挑过的"，不看**显式名** ⇒ `sym` 先挑走 RAX 后，
+  显式 `out("rax")` 被判"重复使用"（实测 `call {0}` + `sym` + `out("rax")` 直接内部错误）。
+  现在先解析全部显式名、池选择避开它们；并允许"纯 clobber 与值槽同名"（LLVM `={rax},~{rax}`）。
+- 旧负向用例 `neg_inline_asm_sym`（断言 sym 被拒）删除；改由 `inline_asm_sym` /
+  `inline_asm_sym_call` / `inline_asm_sym_literal` 三条覆盖正反两面。
+
+**验收**：e2e 205/205；探针（`mov` fn/static、`call {0}` ± `clobber_abi`）全绿。
+
 ### 2026-10-24 · M6-92：P3 对象级第二目标——arm64 编码/对象层 clang oracle
 
 方案 §2.7 把 M4-T3 拆成"对象级（本机可做）/执行级（环境依赖）"；本轮落地对象级：

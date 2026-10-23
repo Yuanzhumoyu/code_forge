@@ -138,24 +138,28 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 inst.results.len()
             )));
         }
-        // ② 定寄存器：显式名按名字解析（S2b；**纯 clobber** 允许跨类——`clobber_abi` 会
-        // 展开出 FPR 之类的非 GPR 寄存器），`g` 从可分配池里挑（互不重复）。
-        let mut chosen: Vec<Option<(u32, RegClass)>> = Vec::with_capacity(specs.len());
+        // ② 定寄存器：先把**显式名**全部解析好（S2b；纯 clobber 允许跨类——`clobber_abi`
+        // 会展开出 FPR 之类的非 GPR 寄存器），再给 `g` 从可分配池里挑——挑的时候必须
+        // **避开所有显式名**，而不只是"已经挑过的"。
+        //
+        // 为什么必须避开（v27 M6-93 实测）：`call {0}` + `sym target` + `out("rax") r` 的
+        // 操作数顺序让 sym 的池选择先发生；若它挑中 RAX，后面显式 `out("rax")` 就会被
+        // 判成"同一寄存器被重复使用"——而 RAX 在显式名里写得明明白白。
+        let by_name = self.reg_by_name_of.clone().ok_or_else(|| {
+            IrError::Semantic("本 ISA 未提供寄存器名反查表（显式寄存器名无法解析）".to_string())
+        })?;
+        let mut named: Vec<Option<(u32, RegClass)>> = Vec::with_capacity(specs.len());
         for (role, choice) in &specs {
-            let picked = match choice {
+            match choice {
+                RegChoice::Pool => named.push(None),
                 RegChoice::Named(name) => {
-                    let by_name = self.reg_by_name_of.clone().ok_or_else(|| {
-                        IrError::Semantic(
-                            "本 ISA 未提供寄存器名反查表（显式寄存器名无法解析）".to_string(),
-                        )
-                    })?;
                     // 纯 clobber 跨所有已声明类找；其余只认 GPR 类（搬运指令是 GPR 的 mov）。
-                    let mut found = None;
                     let classes: Vec<RegClass> = if matches!(role, Role::Clobber) {
                         self.reg_classes.clone()
                     } else {
                         vec![class]
                     };
+                    let mut found = None;
                     for c in classes {
                         if let Some(n) = by_name(name, c) {
                             found = Some((n, c));
@@ -163,12 +167,11 @@ impl<I: MachineInst + 'static> CompileState<I> {
                         }
                     }
                     match found {
-                        Some(p) => p,
+                        Some(p) => named.push(Some(p)),
                         None if matches!(role, Role::Clobber) => {
                             // 纯 clobber 且本 ISA 不认识这个寄存器（如 `clobber_abi` 展开出的
                             // AVX-512 mask `k0`）：我们从不在那些寄存器里放值 ⇒ **跳过无害**。
-                            chosen.push(None);
-                            continue;
+                            named.push(None);
                         }
                         None => {
                             return Err(IrError::Semantic(format!(
@@ -177,34 +180,56 @@ impl<I: MachineInst + 'static> CompileState<I> {
                         }
                     }
                 }
+            }
+        }
+        let mut chosen: Vec<Option<(u32, RegClass)>> = Vec::with_capacity(specs.len());
+        for (i, (role, choice)) in specs.iter().enumerate() {
+            let picked = match choice {
+                RegChoice::Named(_) => named[i],
                 RegChoice::Pool => {
                     let r = *self
                         .gp_alloc_order
                         .iter()
                         .find(|r| {
-                            !chosen
+                            // 避开**全部**显式名（含尚未轮到的、以及纯 clobber）
+                            !named
                                 .iter()
-                                .any(|e| matches!(e, Some((c, cl)) if *c == **r && *cl == class))
+                                .flatten()
+                                .any(|(c, cl)| *c == **r && *cl == class)
+                                // 也避开已挑过的池寄存器
+                                && !chosen
+                                    .iter()
+                                    .flatten()
+                                    .any(|(c, cl)| *c == **r && *cl == class)
                         })
                         .ok_or_else(|| {
                             IrError::Semantic(
                                 "内联 asm 的寄存器需求超过可分配 GPR 数量".to_string(),
                             )
                         })?;
-                    (r, class)
+                    Some((r, class))
                 }
             };
             // 去重必须按 **(编号, 类)**：`to_index` 跨类会撞车（x86 的 `rax` 与 `xmm0`
             // 可能同为 0），只比编号会把"不同类的不同寄存器"误判成重复。
-            if chosen
-                .iter()
-                .any(|e| matches!(e, Some((c, cl)) if *c == picked.0 && *cl == picked.1))
+            //
+            // **纯 clobber 与值槽同名是合法的**（LLVM 的 `={rax},~{rax}` 就是这种写法）：
+            // clobber 只是"这个寄存器在汇编里会被破坏"的声明，不承载值。两个**值**槽
+            // 共用寄存器才是真的内部错误。
+            if let Some(p) = picked
+                && !matches!(role, Role::Clobber)
             {
-                return Err(IrError::Internal(format!(
-                    "内联 asm 里同一寄存器被重复使用（{picked:?}）"
-                )));
+                let conflict = chosen.iter().enumerate().any(|(j, e)| {
+                    matches!(e, Some((c, cl)) if *c == p.0 && *cl == p.1)
+                        && !matches!(specs[j].0, Role::Clobber)
+                });
+                if conflict {
+                    return Err(IrError::Internal(format!(
+                        "内联 asm 里同一寄存器被两个值槽重复使用（{p:?}）"
+                    )));
+                }
             }
-            chosen.push(Some(picked));
+            chosen.push(picked);
         }
         // ③ 名字 → 文本替换 → 汇编
         let name_of = self.reg_name_of.clone().ok_or_else(|| {

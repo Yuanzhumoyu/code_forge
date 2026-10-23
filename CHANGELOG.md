@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-24) — `forge-rustc`：内联 `asm!` 的 `sym` 操作数
+
++ `asm!("mov {0}, {1}", out(reg) p, sym target)` / `sym STATIC` 现在可用：符号**地址**被物化成
+  IR 值（隐藏全局符号 + `abs64` 重定位），以输入寄存器承载，模板按寄存器形态使用
+  （`mov` / `call {0}` / `[…{0}…]` 均正确）。
++ **语义边界（fail-closed）**：把 `sym` 当**字面符号**写的模板（如 `[rip + {0}]`）会被
+  汇编器拒绝并给出编译期错误，不会静默生成错码。
++ 顺带修复内联 asm 定寄存器的一个缺陷：池选择现在避开**所有显式名**（此前 `sym` 可能
+  先挑走 `RAX`，随后显式 `out("rax")` 被判成"同一寄存器重复使用"），并允许纯 clobber
+  与值槽同名（LLVM 的 `={rax},~{rax}` 同形）。
++ **回归守卫**：e2e 新增 `inline_asm_sym` / `inline_asm_sym_call` / `inline_asm_sym_literal`
+  （删除过时的 `neg_inline_asm_sym`），README 机读计数同步到 205。
+
 ### Fixed (2026-10-24) — `forge-rustc`：函数指针 / `dyn` 虚调用不再崩溃或丢实参
 
 + **函数指针常量是 `nullptr`**：`let f: fn(i64)->i64 = add1;` 的常量分配是

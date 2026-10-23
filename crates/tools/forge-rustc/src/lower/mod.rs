@@ -1223,6 +1223,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     // v27 M2.5：**文本重建**——寄存器类占位符写成 `{槽序号}`（后端替换成挑中的物理
                     // 寄存器名），`const`/`sym` 占位符**就地换成字面文本**（S3；格式化内核见
                     // `global_asm::const_text`，与 `global_asm!` 同一处实现）。
+                    // **文本重建**：寄存器类与 `sym` 类占位符写成 `{槽序号}`（后端替换成
+                    // 挑中的物理寄存器名）；`const` 占位符**就地换成字面文本**（S3；格式化内核
+                    // 见 `global_asm::const_text`，与 `global_asm!` 同一处实现）。
                     let mut reg_ord: Vec<Option<usize>> = vec![None; operands.len()];
                     let mut next_ord = 0usize;
                     for (i, op) in operands.iter().enumerate() {
@@ -1231,6 +1234,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             rustc_middle::mir::InlineAsmOperand::In { .. }
                                 | rustc_middle::mir::InlineAsmOperand::Out { .. }
                                 | rustc_middle::mir::InlineAsmOperand::InOut { .. }
+                                // `sym` 走**寄存器承载地址**（见下面约束循环的说明）。
+                                | rustc_middle::mir::InlineAsmOperand::SymFn { .. }
+                                | rustc_middle::mir::InlineAsmOperand::SymStatic { .. }
                         ) {
                             reg_ord[i] = Some(next_ord);
                             next_ord += 1;
@@ -1238,9 +1244,6 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     }
                     let mut text = String::new();
                     let mut template_ok = true;
-                    // `sym` 单独记一笔：它**不是**"没实现"，而是本谱的汇编器不接受符号
-                    // 操作数（`global_asm!` 能用符号是因为它走 LLVM 汇编器）⇒ 诊断要点名原因。
-                    let mut sym_seen = false;
                     for piece in template.iter() {
                         match piece {
                             rustc_ast::InlineAsmTemplatePiece::String(s) => {
@@ -1256,17 +1259,6 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         text.push('{');
                                         text.push_str(&ord.to_string());
                                         text.push('}');
-                                    }
-                                    // `sym` 无法验证也不该假装能做：本谱汇编器的操作数文法
-                                    // 只吃寄存器/数值字面量（见方案 §8 的 S3-sym 结论）。
-                                    None if matches!(
-                                        &operands[idx],
-                                        rustc_middle::mir::InlineAsmOperand::SymFn { .. }
-                                            | rustc_middle::mir::InlineAsmOperand::SymStatic { .. }
-                                    ) =>
-                                    {
-                                        sym_seen = true;
-                                        template_ok = false;
                                     }
                                     None => match &operands[idx] {
                                         rustc_middle::mir::InlineAsmOperand::Const { value } => {
@@ -1301,11 +1293,6 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                             );
                                             text.push_str(&lit);
                                         }
-                                        // `sym`（函数/静态）：S3 的下一半，暂不支持（fail-closed）。
-                                        rustc_middle::mir::InlineAsmOperand::SymFn { .. }
-                                        | rustc_middle::mir::InlineAsmOperand::SymStatic {
-                                            ..
-                                        } => template_ok = false,
                                         _ => template_ok = false,
                                     },
                                 }
@@ -1394,8 +1381,24 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     _ => ok = false,
                                 }
                             }
+                            // **`sym`（函数/静态）**（v27 M6-93）：本谱汇编器只吃寄存器/数值
+                            // 操作数，符号文本无法表达 ⇒ 把**符号地址**物化成一个值、以
+                            // 普通输入寄存器承载，模板占位符就是那个寄存器。
+                            //
+                            // 语义边界（务必如实告知使用者）：模板必须把 `{n}` 当**寄存器**用
+                            // （`call {0}` / `jmp {0}` / `mov {0}, {1}` / `[…{0}…]` 均正确）；
+                            // 把 sym 当**字面符号**的写法（如 `[rip + {0}]`、`offset {0}`）会被
+                            // 本谱汇编器拒绝 ⇒ 编译期明确报错（fail-closed，不会静默错码）。
+                            rustc_middle::mir::InlineAsmOperand::SymFn { value } => {
+                                let operand = Operand::Constant((*value).clone());
+                                constraints.push("i,g".to_string());
+                                in_vals.push(self.lower_operand(&operand)?);
+                            }
+                            rustc_middle::mir::InlineAsmOperand::SymStatic { def_id } => {
+                                constraints.push("i,g".to_string());
+                                in_vals.push(self.static_addr_value(*def_id));
+                            }
                             // S3：`const` 已在文本重建阶段就地替换成字面文本 ⇒ 这里不贡献操作数/结果。
-                            // （`sym` 仍是 fail-closed：`template_ok` 在上一步被置假。）
                             rustc_middle::mir::InlineAsmOperand::Const { .. } => {}
                             _ => ok = false,
                         }
@@ -1427,16 +1430,6 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             let tgt = self.blocks[t];
                             self.builder.jump(tgt, &[]);
                         }
-                    } else if sym_seen {
-                        // 比"不支持"更准的话：`sym` 的符号文本已经能拼出来，但**本谱的汇编器
-                        // 不接受符号操作数**（`global_asm!` 走 LLVM 汇编器，所以能用）。
-                        return Err(ForgeError::Message(
-                            "内联 asm 的 `sym` 操作数暂不可用：本谱汇编器的操作数文法只接受"
-                                .to_string()
-                                + "寄存器与数值字面量（`global_asm!` 因为走 LLVM 汇编器所以能用符号）。"
-                                + "要让 inline asm 支持 `sym`，需给 ISA-DSL 的汇编器加「符号"
-                                + "立即数 + reloc abs64」的解析形态——见方案 §8 的 S3-sym 结论。",
-                        ));
                     } else {
                         // 不支持的形态：**明确拒绝**（M2 的 fail-closed 保留）。
                         let excerpt: String = template
@@ -1472,6 +1465,35 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
     }
     pub(crate) fn mono_symbol(&self, instance: &Instance<'tcx>) -> String {
         mono_symbol_of(self.tcx, instance)
+    }
+    /// **符号地址值**：登记隐藏全局符号 + `GlobalAddr`（对象层用 `abs64` 重定位填地址）。
+    ///
+    /// 与函数指针常量（`GlobalAlloc::Function`）、`asm!` 的 `sym` 操作数共用一条路：
+    /// 符号表里只有"符号名"，地址由链接器/重定位决定（v27 M6-93）。
+    pub(crate) fn symbol_addr_value(&mut self, sym: &str) -> Value {
+        let g = self.func_refs.intern_global_named(sym);
+        self.builder.global_addr(GlobalId::new(g))
+    }
+    /// 函数项/函数指针常量的地址值（符号名 = 该实例的 mangled 名）。
+    pub(crate) fn fn_addr_value(&mut self, instance: &Instance<'tcx>) -> Value {
+        let sym = symbol_name_for_instance(self.tcx, instance);
+        self.symbol_addr_value(&sym)
+    }
+    /// 静态（`static`/`static mut`）的符号地址值。符号名规则与 `intern_const_data`
+    /// 的 `GlobalAlloc::Static` 分支**同源**（同一个 mangling 入口），否则重定位指向
+    /// 一个不存在的名字。
+    pub(crate) fn static_addr_value(&mut self, def_id: rustc_hir::def_id::DefId) -> Value {
+        let krate = if def_id.is_local() {
+            rustc_hir::def_id::LOCAL_CRATE
+        } else {
+            def_id.krate
+        };
+        let sym = rustc_symbol_mangling::symbol_name_for_instance_in_crate(
+            self.tcx,
+            Instance::mono(self.tcx, def_id),
+            krate,
+        );
+        self.symbol_addr_value(&sym)
     }
     pub(crate) fn field_offset(&self, ty: Ty<'tcx>, idx: usize) -> i64 {
         if let ty::TyKind::Adt(def, _) = ty.kind()

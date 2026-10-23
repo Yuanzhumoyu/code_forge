@@ -194,9 +194,11 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 > `inline_asm_nop` / `inline_asm_ud2`（M2.5/S1 内联 `asm!`）、`inline_asm_reg_inout`
 > （S2a 寄存器约束）、`inline_asm_const`（S3 `const` 占位符）、`inline_asm_named_reg`
 > （S2b 显式寄存器名）、`inline_asm_clobber_abi`（S4 `clobber_abi`）、
-> `inline_asm_noreturn`（S4 `options(noreturn)`）；负向 `neg_inline_asm` /
-> `neg_panic_unwind` / `neg_thread_local` 钉住缺口 ID 的 fail-closed，
-> `neg_inline_asm_sym` 钉住「`sym` 受谱汇编器文法限制」的**点名诊断**，
+> `inline_asm_noreturn`（S4 `options(noreturn)`）、`inline_asm_sym` / `inline_asm_sym_call`
+> （S3 `sym`：函数/静态地址物化到寄存器，可作 `mov`/`call` 目标）；
+> 负向 `neg_inline_asm` / `neg_panic_unwind` / `neg_thread_local` 钉住缺口 ID 的 fail-closed，
+> `inline_asm_sym_literal` 钉住「`sym` 只保证寄存器形态；`[rip + {0}]` 这类字面符号写法
+> 编译期明确拒绝」，
 > `neg_link_section` 钉住「`#[link_section]` 静默忽略 = 写了不生效」的明确拒绝；
 > `static_align_64` 钉住「`#[repr(align(64))]` 的符号地址真 64 对齐」，
 > `neg_u128` 钉住「`i128`/`u128` 此前被静默当 64 位算 ⇒ 现在 `[cap:WIDE_INT]` 拒绝」，
@@ -234,7 +236,7 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 > （`--emit=obj/link/metadata/mir` 正常），汇编请对产物反编译，不由后端伪造文本；
 > 删除了被正当推翻的 `neg_global_asm`。
 >
-> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=203 hard=203 flaky=0 known=0 expect_trap=9 -->
+> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=205 hard=205 flaky=0 known=0 expect_trap=9 -->
 >
 > **上面这段机读标记与 `tests/e2e.rs` 双向相等**：改用例数/容忍名单时必须同步它，
 > 否则 `cargo forge gate --guards` 会红（守卫就是为了治「文档与代码分叉」这件事）。
@@ -467,7 +469,8 @@ unresolved_type_refs_fall_back_to_unspecified）为准。e2e `debuginfo_full` + 
 
 **语言面澄清**：`naked_asm!` 里的**寄存器操作数**是 rustc 前端自己禁止的
 （原文 `the ... operand cannot be used with naked_asm!`，对 LLVM 后端同样报），不是本后端的限制
-⇒ 裸函数的操作数形态只有 `const`/`sym`；`sym` 仍受谱汇编器文法限制（`neg_inline_asm_sym`）。
+⇒ 裸函数的操作数形态只有 `const`/`sym`；`sym` 已支持（v27 M6-93：地址物化到输入寄存器，
+可作 `mov`/`call` 目标；把 sym 当字面符号的写法在编译期明确拒绝）。
 
 **IR 优化管线已接入（2026-10-19，v27 M6）**：此前 `forge-opt` 在生产路径上**一次都没跑过**
 （`CompileSession::with_opt_level` 只有测试在调），所以每个 MIR 局部都留在栈槽、`-C opt-level`

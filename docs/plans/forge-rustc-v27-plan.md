@@ -44,7 +44,7 @@
 | 里程碑 / 切片 | 状态 | 证据落点 |
 | --- | --- | --- |
 | **P1 128 位 C-ABI 跨后端兼容**（2026-10-23 起） | ✅ **已落地（2026-10-24）**：定义侧/调用侧都问 rustc `FnAbi` 的 `PassMode`（按引用 ⇒ 16 字节对齐副本的指针；`Cast{Vector}` ⇒ `XMM0`；`Direct` ⇒ 两整数槽/`RAX:RDX`）；跨后端探针**双向** 42 | §2.8；`WA-52`（已修）；`tests/cross_abi.rs` |
-| **P2 `INLINE_ASM` 的 `sym`/`label`** | 📋 **结论已定、待实现**：需在谱面层做（`[operand.sym]` + 汇编器块内标签），排在 P1 之后；现状 fail-closed | §2.6；台账 `INLINE_ASM` |
+| **P2 `INLINE_ASM` 的 `sym`/`label`** | 🔶 **`sym` 已落地（2026-10-24）**：**不经谱面操作数种类**——符号地址物化成 IR 值（隐藏全局符号 + `abs64` 重定位），以普通输入寄存器承载，模板按寄存器形态用（`mov`/`call`/`[reg]`）；字面符号写法由汇编器明确拒绝。**`label` 仍 fail-closed**（需块内标签映射，独立设计） | §2.6 进度；台账 `INLINE_ASM` |
 | **P3 M4-T3 第二目标** | 🔶 **对象级已落地（2026-10-24）**：A64 编码逐字节对照 clang（24 条指令）+ 真实 ELF64/AArch64 对象（`.text` 字节/ELF 头/反汇编）；**执行级**仍受环境限制（无 emulator / aarch64 std / 交叉 gcc-ld） | §2.7；`tests/arm64_clang_oracle.rs`；`arm64-oracle` 门禁步 |
 | **P4 分配器事件化** | ✅ **已完成（2026-10-24）**：`SPILL-VALUE`（逐值）+ `SPILL-EDIT`（逐指令 kind/offset/scratch/width）+ `ALLOC-SUMMARY.peak_live`（寄存器压力峰值）+ `Field::I64`；`events_guard` 用**高压夹具**钉住三种粒度都真触发 | §8 M6-87/M6-90/M6-91；`events_guard` 三方双向 |
 | M1 正确性清零（溢出 / 窄有符号 / 向量溢出 / regalloc） | ✅ 落地 | §8 M1；e2e 硬断言、`known_failure` = 0 |
@@ -113,6 +113,21 @@
 | --- | --- | --- | --- |
 | `sym` | 谱面汇编器的操作数文法只吃寄存器/数值字面量（`[operand.*]` 的 `kind = imm/mem/gpr/...`），符号没有对应的槽 | 新增操作数种类 `[operand.sym]`（`kind = "sym"`）+ 汇编器把标识符 token 绑到该槽 + 该槽带 `reloc = "abs64"`（x86 已有 `MOVABS_GLOBAL` 可承接）+ 降级层把 `InlineAsmOperand::Sym` 渲染成符号文本并登记重定位 | 中（DSL 模型/解析/生成 + 一处降级层 + e2e） |
 | `label` | 标签必须落在**指令流中间**，而现在的形态是"文本 → 一次汇编 → 一串指令" | 汇编器支持**块内标签**：文本里 `L: ... jmp L` 在**同一次汇编**里解析成相对偏移（不需要跨 IR 块的 `LabelRef`）；rustc 的 `label` 操作数 `{0}` 只要绑定成"本块内的标签 id"即可 | 中（汇编器加标签表 + 分支绑定） |
+
+**进度（2026-10-24，M6-93）——`sym` 用更小的落法完成**：谱面汇编器的操作数文法**不用动**。
+降级层把符号**地址**物化成一个 IR 值（函数：`fn_addr_value`；静态：`static_addr_value`；
+都走隐藏全局符号表 + `GlobalAddr` 的 `abs64` 重定位），并以普通**输入寄存器**（约束 `i,g`）
+承载；模板占位符就是那个寄存器。因此：
+
+- 覆盖 `mov {0}, {1}` / `call {0}` / `jmp {0}` / `[…{0}…]` 等**寄存器形态**；
+- 把 `sym` 当**字面符号**用的写法（`[rip + {0}]`、`offset {0}`）会被汇编器拒绝
+  ⇒ 编译期明确报错（fail-closed，不静默错码），由 e2e `inline_asm_sym_literal` 钉住；
+- 同时修了 inline asm 定寄存器的一个真缺陷：**池选择必须避开所有显式名**（此前
+  `sym` 可能先挑走 `RAX`，随后显式 `out("rax")` 被判成重复），且"纯 clobber 与值槽同名"
+  改为合法（LLVM 的 `={rax},~{rax}` 同形）——`inline_asm_sym_call` 钉住。
+
+`label` 仍未做：它需要把文本标签映射到 **vcode 块**（当前 `parse_insts` 的 label 值是指令
+下标、伪指令展开会让映射非平凡），排在独立设计。
 
 结论：两项都**可做**，但都需要先扩展谱面（`isa-dsl` 的 operand kind 与汇编器），
 不是降级层的活。优先级排在 `WA-52`（128 位 C-ABI 兼容）之后——

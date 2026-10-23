@@ -1745,6 +1745,51 @@ const CASES: &[Case] = &[
         phase: "v27 M2.5 S3",
         reason: "asm!(\"add {0}, {1}\", inout(reg) x, const 7)：const 7 被格式化成字面文本",
     },
+    Case {
+        name: "inline_asm_sym",
+        // v27 M6-93：`sym` 以**输入寄存器**承载符号地址（函数 + 静态两种）。
+        // 强断言：地址必须等于 Rust 侧同一符号的 `as usize`，且静态内容可读。
+        body: "let f: fn() -> i64 = sym_target;                                     let mut got: usize;                                                       unsafe { core::arch::asm!(\"mov {0}, {1}\", out(reg) got, sym sym_target) };                       let mut p: usize;                                                         unsafe { core::arch::asm!(\"mov {0}, {1}\", out(reg) p, sym SYM_BYTE) };                          let v = unsafe { *(p as *const u8) };                                     if got == f as usize && v == 7 { 42 } else { 7 }",
+        extra: "#[inline(never)]\nfn sym_target() -> i64 { 42 }\nstatic SYM_BYTE: u8 = 7;\n",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M2.5 S3",
+        reason: "asm! 的 sym（函数/静态）：地址经隐藏全局符号 + abs64 重定位物化到输入寄存器",
+    },
+    Case {
+        name: "inline_asm_sym_call",
+        // `sym` 用在 `call {0}`：同时覆盖"池寄存器避开显式名"（`out(\"rax\")` 与
+        // `clobber_abi` 都点名 RAX，sym 的池选择不能再挑 RAX）。
+        body: "let r: i64; unsafe { core::arch::asm!(\"call {0}\", sym sym_target, out(\"rax\") r, clobber_abi(\"C\")) }; if r == 42 { 42 } else { 7 }",
+        extra: "#[inline(never)]\nfn sym_target() -> i64 { 42 }\n",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M2.5 S3",
+        reason: "sym 作为 call 目标（寄存器间接调用），并与显式 out(\"rax\")/clobber_abi 共存",
+    },
+    Case {
+        name: "inline_asm_sym_literal",
+        // **语义边界**：把 sym 当**字面符号**写（`[rip + {0}]`）时，替换出来的是寄存器，
+        // 本谱汇编器拒绝该文本 ⇒ 编译期明确报错（fail-closed，不静默错码）。
+        body: "let mut got: usize; unsafe { core::arch::asm!(\"lea {0}, [rip + {1}]\", out(reg) got, sym sym_target) }; got as i32",
+        extra: "#[inline(never)]\nfn sym_target() -> i64 { 42 }\n",
+        entry: "mainCRTStartup",
+        expected: 0,
+        expect_compile_fail: true,
+        expect_compile_err: "内联汇编文本无法被汇编器解析",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M2.5 S3",
+        reason: "sym 只保证寄存器形态；字面符号写法（[rip + {0}]）必须明确拒绝（fail-closed）",
+    },
 
     // ── v27 M2.5/S2b：内联 asm 的**显式寄存器名** ──
     //   `out("rax")` 要求槽 0 就用 RAX（rustc 对它的**规范名是 `ax`**，靠谱里的
@@ -1843,19 +1888,6 @@ const CASES: &[Case] = &[
         known_failure: false,
         phase: "v27 M5",
         reason: "裸函数 + const 操作数：文本就地替换成字面量，仍无栈帧",
-    },
-    Case {
-        name: "neg_inline_asm_sym",
-        body: "fn seven() -> i32 { 7 } let mut p: u64 = 0; unsafe { core::arch::asm!(\"mov {}, {}\", out(reg) p, sym seven) }; p as i32",
-        expected: 0,
-        extra: "",
-        entry: "mainCRTStartup",
-        expect_compile_fail: true,
-        expect_compile_err: "操作数暂不可用",
-        expect_trap: false,
-        known_failure: false,
-        phase: "v27 M2.5 S3",
-        reason: "sym：本谱汇编器不接受符号操作数 ⇒ fail-closed 且点名原因",
     },
     // ── v27 M5：`#[link_section]` 必须**明确拒绝**（不许静默放错段）──
     //   后端只发 .text/.data/.rodata 三段，段名/段标志由发射层决定 ⇒ 静默忽略

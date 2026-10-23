@@ -556,12 +556,10 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     if let rustc_middle::mir::interpret::GlobalAlloc::Function { instance } =
                         self.tcx.global_alloc(alloc_id)
                     {
-                        let sym = super::symbol_name_for_instance(self.tcx, &instance);
                         if crate::trace::trace_enabled("GLOBAL") {
-                            eprintln!("[forge] func_addr alloc={alloc_id:?} sym={sym}");
+                            eprintln!("[forge] func_addr alloc={alloc_id:?} inst={instance:?}");
                         }
-                        let g = self.func_refs.intern_global_named(&sym);
-                        return Ok(self.builder.global_addr(GlobalId::new(g)));
+                        return Ok(self.fn_addr_value(&instance));
                     }
                     if crate::trace::trace_enabled("GLOBAL") {
                         eprintln!("[forge] const alloc={alloc_id:?} non-data, skip");
@@ -579,9 +577,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     .ok()
                     .flatten()
                 {
-                    let sym = super::symbol_name_for_instance(self.tcx, &inst);
-                    let g = self.func_refs.intern_global_named(&sym);
-                    return Ok(self.builder.global_addr(GlobalId::new(g)));
+                    return Ok(self.fn_addr_value(&inst));
                 }
                 // 求值标量常量：用 ScalarInt 自身位宽取位（s.size()），再按
                 // 类型位宽分派——不能对 size 1/2/4 的标量调 to_i64()（固定 8
