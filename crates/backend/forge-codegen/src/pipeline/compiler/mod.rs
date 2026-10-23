@@ -579,6 +579,7 @@ impl<M: TargetMachine> CompileSession<M> {
                     "edits",
                     events::Field::Usize(alloc_result.edits.iter().map(|e| e.len()).sum()),
                 ),
+                ("peak_live", events::Field::Usize(alloc_result.peak_live)),
             ],
         );
         let _t = std::time::Instant::now();

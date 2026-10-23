@@ -166,9 +166,23 @@ fn events_land_on_disk() {
         text.contains("\"event\":\"SPILL-EDIT\",\"fn\":\"events_spill_fixture\""),
         "高压夹具应产生 SPILL-EDIT：\n{text}"
     );
+    // **压力峰值**（v27 M6-91）：高压夹具的 `peak_live` 必须 > 0（否则这个字段就是假的 0）。
+    let summary = text
+        .lines()
+        .find(|l| {
+            l.contains("\"event\":\"ALLOC-SUMMARY\"")
+                && l.contains("\"fn\":\"events_spill_fixture\"")
+        })
+        .expect("高压夹具应有 ALLOC-SUMMARY 行");
     assert!(
-        text.contains("\"code_bytes\":") && text.contains("\"plans\":"),
-        "COMPILE-DONE/EMIT-SUMMARY/LEGALIZE-PLAN 的关键字段应在：\n{text}"
+        !summary.contains("\"peak_live\":0"),
+        "高压夹具的 peak_live 应 > 0：{summary}"
+    );
+    assert!(
+        text.contains("\"code_bytes\":")
+            && text.contains("\"plans\":")
+            && text.contains("\"peak_live\":"),
+        "COMPILE-DONE/EMIT-SUMMARY/LEGALIZE-PLAN/ALLOC-SUMMARY 的关键字段应在：\n{text}"
     );
 }
 

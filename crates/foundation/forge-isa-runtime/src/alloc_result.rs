@@ -61,6 +61,11 @@ pub struct AllocResult {
     /// **密集**的 XReg → 溢出槽映射（下标 = `XReg::index()`；`None` = 没溢出）。
     /// 同 `assignments`：热路径查询，走 [`AllocResult::spill_slot`]/[`AllocResult::is_spilled`]。
     pub spill_slots: Vec<Option<SpillSlot>>,
+    /// **寄存器压力峰值**：分配过程中"同时占用物理寄存器"的值数上限（v27 M6-91，P4）。
+    ///
+    /// 判读：接近/超过可分配寄存器数 ⇒ 必然有值被溢出（配合 `SPILL-VALUE`/`SPILL-EDIT`
+    /// 事件定位"是谁、搬到哪"）。它是**观测值**，不参与分配决策。
+    pub peak_live: usize,
     /// **逐指令的溢出编辑序列**（下标 = 指令在 vcode 里的全局序号；空 = 该指令不需要
     /// 任何溢出搬运）。由分配器产出、发射侧按序执行——见 [`SpillEdit`]。
     pub edits: Vec<Vec<SpillEdit>>,
@@ -124,6 +129,7 @@ impl Default for AllocResult {
             call_layout: None,
             assignments: Vec::new(),
             spill_slots: Vec::new(),
+            peak_live: 0,
             edits: Vec::new(),
             param_vregs: Vec::new(),
             sret: false,

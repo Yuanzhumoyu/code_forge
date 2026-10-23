@@ -29,6 +29,8 @@ pub(super) struct BtState<'a> {
 
     /// 当前活跃的 XReg 及其 PReg（插入/移除 O(1)）
     pub(super) active: HashMap<XReg, PReg>,
+    /// `active` 的历史最大值（寄存器压力峰值；v27 M6-91 事件化）。
+    pub(super) peak_active: usize,
 
     /// **本指令的 use 集合**：驱逐候选人要排除它们（那条 use 马上要读自己的寄存器）。
     pub(super) current_uses: smallvec::SmallVec<[XReg; 8]>,
@@ -97,6 +99,7 @@ impl<'a> BtState<'a> {
             reg_owner: Vec::new(),
             free_regs,
             active: HashMap::new(),
+            peak_active: 0,
             next_spill_offset: 0,
             current_point: ProgPoint::new(0, 0),
             current_uses: smallvec::SmallVec::new(),
@@ -302,6 +305,7 @@ impl<'a> BtState<'a> {
                     self.active.insert(vreg, preg);
                 }
             }
+            self.peak_active = self.peak_active.max(self.active.len());
         }
 
         Ok(())
@@ -497,6 +501,7 @@ impl<'a> BtState<'a> {
                 self.assignments.insert(vreg, preg);
                 self.set_reg_owner(preg, vreg);
                 self.active.insert(vreg, preg);
+                self.peak_active = self.peak_active.max(self.active.len());
                 Ok(preg)
             } else {
                 // 占位 PReg（不 insert assignments——emission 对 spilled
@@ -924,6 +929,7 @@ impl<'a> BtState<'a> {
             call_layout: None,
             assignments,
             spill_slots,
+            peak_live: self.peak_active,
             edits: Vec::new(),
             param_vregs: self.config.param_xregs.clone(),
             // S2：sret 由 CompileState 在分配后填充（LowerCtx.is_sret_return）

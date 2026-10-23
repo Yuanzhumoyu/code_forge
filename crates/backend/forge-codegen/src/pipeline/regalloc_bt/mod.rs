@@ -116,6 +116,7 @@ impl BacktrackingAllocator {
                 let class = state.vreg_class(vreg);
                 let preg = state.assign_reg(vreg, constraint, class, &[], true)?;
                 state.active.insert(vreg, preg); // 将预分配的参数 XReg 添加到 active 列表中
+                state.peak_active = state.peak_active.max(state.active.len());
                 if crate::pipeline::trace::knob("FORGE_TRACE_REGALLOC") {
                     eprintln!("[pre] v{} class={class:?} -> {preg:?}", vreg.index());
                 }

@@ -346,7 +346,7 @@ M4 把测试搬成独立文件后，文件内不再有 `#[cfg(test)]` 可供"截
 | `COMPILE-DONE` | 函数编译成功：`total_us` + 各阶段微秒（`blocks_us`/`vreg_us`/`lower_us`/`peep_us`/`regalloc_us`/`frame_us`/`emit_us`）+ `code_bytes` |
 | `CAPABILITY-GAP` | 编译失败：`gap` = 缺口 ID（非缺口错误时为空串）+ `fn` |
 | `LEGALIZE-PLAN` | 合法化计划相完成：`actionable`（可动边界条数）、`plans`（问引擎次数） |
-| `ALLOC-SUMMARY` | 寄存器分配完成：`assigned`、`spills`、`edits` |
+| `ALLOC-SUMMARY` | 寄存器分配完成：`assigned`、`spills`、`edits`、`peak_live`（压力峰值，v27 M6-91） |
 | `SPILL-VALUE` | 溢出决策（逐值）：`vreg`、`offset`（有符号帧偏移）、`size`——v27 M6-87 起，P4 事件化 |
 | `SPILL-EDIT` | 逐指令溢出编辑：`inst`（vcode 全局序号）、`kind`（reload/bind/store）、`offset`、`scratch`、`width`——v27 M6-90 起，P4 事件化 |
 | `EMIT-SUMMARY` | 发射完成：`code_bytes`、`relocs` |

@@ -53,7 +53,7 @@ pub static EVENTS: [EventSpec; 8] = [
     },
     EventSpec {
         name: "ALLOC-SUMMARY",
-        what: "寄存器分配完成：`assigned` = 分配到的值数、`spills` = 溢出编辑数",
+        what: "寄存器分配完成：`assigned` = 分配到的值数、`spills` = 溢出编辑数、`edits` = 逐指令编辑条数、`peak_live` = 寄存器压力峰值（v27 M6-91）",
     },
     EventSpec {
         name: "SPILL-VALUE",
