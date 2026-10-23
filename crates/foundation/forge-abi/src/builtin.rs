@@ -61,6 +61,9 @@ classify = [
   { when = { kind = "vector", size_le = 16 }, do = { direct = { pool = "float" } } },
   { when = { kind = "vector", size_gt = 16 }, do = { indirect = { via = "caller_stack_copy" } } },
   { when = { kind = "aggregate", size_gt = 8 }, do = { indirect = { via = "caller_stack_copy" } } },
+  # **>8 字节整数标量按引用**（v27 M6-85，`WA-52`）：win64 实测入口是 `mov 0x8(%rcx),%rax`
+  #（RCX 是指针）。此前当普通标量塞整数槽（RCX:RDX）⇒ 与 LLVM 混链 AV。
+  { when = { kind = "scalar", size_gt = 8 },  do = { indirect = { via = "caller_stack_copy" } } },
   { when = { kind = "aggregate" },            do = { direct = { pool = "int" } } },
   { when = { kind = "scalar" },               do = { direct = { pool = "int" } } },
 ]
@@ -68,6 +71,10 @@ classify = [
 ret_classify = [
   { when = { kind = "float", size_le = 8 },      do = { direct = { pool = "ret_float" } } },
   { when = { kind = "vector", size_le = 16 },    do = { direct = { pool = "ret_float" } } },
+  # **16 字节整数标量按 XMM0 返回**（v27 M6-84，`WA-52`）：实测 LLVM 的 `extern "C"` 出口是
+  # `movdqa (%rsp),%xmm0`。Rust ABI 的 `u128` 返回是 RAX:RDX，但那条路在降级层就是**两个
+  # `i64`**（不会出现单个 16 字节标量），所以这条规则只对 C 家族生效。
+  { when = { kind = "scalar", size_gt = 8, size_le = 16 }, do = { direct = { pool = "ret_float" } } },
   { when = { kind = "aggregate", size_gt = 8 },  do = { indirect = { via = "hidden_sret" } } },
   { when = { kind = "vector", size_gt = 16 },    do = { indirect = { via = "hidden_sret" } } },
   { when = { kind = "aggregate" },               do = { direct = { pool = "ret_int" } } },
@@ -105,6 +112,9 @@ classify = [
   { when = { kind = "aggregate", size_le = 16 }, do = { direct = { pool = "int", slots = 2 } } },
   { when = { kind = "aggregate", size_gt = 16 }, do = { stack = {} } },
   { when = { kind = "scalar", size_le = 8 },  do = { direct = { pool = "int" } } },
+  # **≤16 字节的整数标量是两个整数槽**（v27 M6-85，`WA-52`）：SysV 的 `i128` 走 rdi:rsi 一类。
+  # 原来只有 `size_le = 8` 的规则 ⇒ 16 字节标量落到 `fallback`（栈），那是**静默错值**。
+  { when = { kind = "scalar", size_le = 16 }, do = { direct = { pool = "int", slots = 2 } } },
 ]
 ret_classify = [
   { when = { kind = "float", size_le = 8 },      do = { direct = { pool = "ret_float" } } },
@@ -113,6 +123,8 @@ ret_classify = [
   { when = { kind = "vector", size_gt = 16 },    do = { indirect = { via = "hidden_sret" } } },
   { when = { kind = "aggregate", size_le = 16 }, do = { direct = { pool = "ret_int", slots = 2 } } },
   { when = { kind = "scalar", size_le = 8 },     do = { direct = { pool = "ret_int" } } },
+  # **≤16 字节整数标量返回两个整数寄存器**（v27 M6-85）：SysV 的 `i128` 走 RAX:RDX。
+  { when = { kind = "scalar", size_le = 16 },    do = { direct = { pool = "ret_int", slots = 2 } } },
 ]
 hidden = { sret_pool = "int", sret_slot = 0, va_meta_pool = "va_meta", va_list = "sysv_reg_save" }
 callee_saved = { mechanism = "push", pools = ["cs_gpr"], includes_fp = true }
@@ -166,6 +178,7 @@ note = "HFA 用连续浮点槽表达；寄存器不足时整块走栈（规范�
 /// 有稳定的枚举序。
 pub const BINDING_FILES: &[&str] = &[
     include_str!("../conventions/win64-x86_64.toml"),
+    include_str!("../conventions/rust-x86_64.toml"),
     include_str!("../conventions/sysv64-x86_64.toml"),
     include_str!("../conventions/aapcs64-arm64.toml"),
     include_str!("../conventions/lp64d-riscv64.toml"),
@@ -253,10 +266,42 @@ tail_calls = { allowed = true, must_match_stack = true }
 note = "HFA 用连续浮点槽表达；寄存器不足时整块走栈（A6 扩展）"
 "#;
 
+/// **Rust ABI（x86_64）**：寄存器与 win64 相同，但 **128 位标量不按引用/向量**。
+///
+/// 实测 LLVM（本仓库）：`fn(u64) -> u128` 的 Rust ABI 返回是 **RAX:RDX**
+/// （`mov %rcx,%rdx; mov $3,%eax`），参数也是两个整数槽；只有 `extern "C"` 才走
+/// 「参数按引用 + 返回 XMM0」。所以 C 家族那份规则（`win64`）**不能**套到 Rust ABI 上
+/// （v27 M6-86，`WA-52`）。
+pub const RUST_ABI: &str = r#"
+name = "rust"
+parent = "win64"
+classify = [
+  { when = { kind = "float", size_le = 8 },    do = { direct = { pool = "float" } } },
+  { when = { kind = "vector", size_le = 16 },  do = { direct = { pool = "float" } } },
+  { when = { kind = "vector", size_gt = 16 },  do = { indirect = { via = "caller_stack_copy" } } },
+  { when = { kind = "aggregate", size_gt = 8 }, do = { indirect = { via = "caller_stack_copy" } } },
+  { when = { kind = "aggregate" },             do = { direct = { pool = "int" } } },
+  { when = { kind = "scalar", size_le = 8 },   do = { direct = { pool = "int" } } },
+  { when = { kind = "scalar", size_le = 16 },  do = { direct = { pool = "int", slots = 2 } } },
+]
+ret_classify = [
+  { when = { kind = "float", size_le = 8 },     do = { direct = { pool = "ret_float" } } },
+  { when = { kind = "vector", size_le = 16 },   do = { direct = { pool = "ret_float" } } },
+  { when = { kind = "aggregate", size_gt = 8 }, do = { indirect = { via = "hidden_sret" } } },
+  { when = { kind = "vector", size_gt = 16 },   do = { indirect = { via = "hidden_sret" } } },
+  { when = { kind = "aggregate" },              do = { direct = { pool = "ret_int" } } },
+  { when = { kind = "scalar", size_le = 8 },    do = { direct = { pool = "ret_int" } } },
+  { when = { kind = "scalar", size_le = 16 },   do = { direct = { pool = "ret_int", slots = 2 } } },
+]
+note = "Rust ABI（x86_64）：128 位标量走两个整数槽/寄存器（实测 LLVM 用 RAX:RDX）；寄存器由绑定给出"
+"#;
+
 /// 内置约定文本（名字, TOML）。顺序即依赖顺序（子约定在父之后）。
 pub const ALL: &[(&str, &str)] = &[
     ("c", C),
     ("win64", WIN64),
+    // Rust ABI：必须排在 `win64` 之后（父在前）。
+    ("rust", RUST_ABI),
     ("sysv64", SYSV64),
     ("aapcs64", AAPCS64),
     ("lp64d", LP64D),

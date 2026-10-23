@@ -12,6 +12,88 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-24 · M6-88：P1 收口——128 位形态**问 `FnAbi`**，跨后端双向 42
+
+**做法**：降级层不再按"约定名/启发式"决定 `u128` 的传参/返回形态，而是读被调方（定义侧读自己）
+`FnAbi` 的 `PassMode`（实测：Rust ABI 实参/返回都是 `Direct` ⇒ 两整数槽/`RAX:RDX`；
+Win64 的 C 家族实参 `Indirect` ⇒ 按引用、返回 `Cast{Vector 16}` ⇒ `XMM0`）：
+
+- `abi::wide_int_abi` / `callee_wide_int_abi`（后者从 `Operand::Constant(FnDef)` 解析被调方；
+  解析不出 ⇒ `[cap:WIDE_INT_SHAPE]` fail-closed）；
+- `build_signature` 的形参/返回、入口收参/返回、调用点实参/结果四处同源；
+- 按引用实参**总是**复制到 16 字节对齐的临时槽再传地址（LLVM 的 `Indirect` 带
+  `pointee_align: 16`；直接传对齐不足的字段地址会 AV）；临时槽按调用点最大个数预分配；
+- **合法化层排除向量**：M6-83/84 的"按大小"编组会把 `V128` 也当成宽聚合 ⇒ 拆成两个 `i64`
+  结果（发射侧会去读 `RAX:RDX`）。向量必须留给发射侧的 `bank = "vec"`。
+  ⇒ **M6-84 的 ③ `wide_split/ret.rs` 随之删除**（它服务的是"IR 里保留 `i128` 返回值"的设计，
+  与最终落地的"降级层直接发 `V128`"不兼容；留着就是死代码）。
+
+**验收（真值）**：新增 `tests/cross_abi.rs`，两个方向都真执行 42——
+① forge 编调用方 + LLVM 编被调方；② LLVM 编调用方 + forge 编被调方；
+覆盖"按引用实参 / 向量返回 / 两者同时"。`u128_abi_param`/`u128_abi_return` 钉住
+Rust ABI 仍是两整数槽。e2e 全量、`forge-codegen --lib` 2864、clippy 干净。
+门禁新增 `rustc-abi-cross` 步骤。
+
+**踩坑**：① 128 位 by-ref 实参复用聚合拆段路径会报 `AGG_ARG_INSERTVALUE_CHAIN`
+（宽标量既不是 `load` 也不是可物化的聚合链）⇒ 需要自己的临时槽路径；
+② 别用**调用方**的约定判被调方（跨 ABI 调用时错）；
+③ 一次批量替换 17 处 `is_scalar_pair_abi` 把辅助函数自己的函数体也换了 ⇒ 无限递归、
+rustc 线程栈溢出（事后看与 `abi_is_rust` 无关）。
+
+### 2026-10-23 · M6-86：Rust ABI 与 C 家族**分开**（`WA-52` 的前置）
+
+实测（本仓库 LLVM）：`fn(u64) -> u128` 的 **Rust ABI** 返回是 **RAX:RDX**
+（`mov %rcx,%rdx; mov $3,%eax`），只有 `extern "C"` 才用 **XMM0**（`movdqa (%rsp),%xmm0`）。
+⇒ 两者在 128 位标量上的形态**不同**，共用 win64 规则会误伤 Rust ABI。
+
+- 新增约定 `rust`（`builtin::RUST_ABI`，`parent = win64`，覆写两条 `classify`：128 位 ⇒ 两整数槽/两寄存器）与绑定
+- `abi_is_rust(tcx, instance)`（读 `FnAbi.conv`）；`build_signature` 给 `extern "Rust"` 设
+  `CallConvId::named("rust")`，其余保持默认（`C`）。
+
+验收：`forge-codegen --lib` 2864、`forge-abi` 通过、rustc 子集 15/15、clippy 干净、
+宽参数/返回探针各 42（换约定后行为不变，符合预期）。
+
+### 2026-10-23 · M6-85：规则数据两处**真缺口**（`Classifier` 一查就露）
+
+用 16 字节标量问 `Classifier`，发现两处：
+
+| 约定 | 缺口 | 修法 |
+| --- | --- | --- |
+| win64 | 16 字节标量的**参数**没有按引用规则 | `scalar size_gt = 8 ⇒ indirect caller_stack_copy` |
+| **sysv64** | 16 字节标量**完全没有规则** ⇒ 落 `fallback`（栈）——**静默错值** | 参数两整数槽、返回两整数寄存器，显式写 |
+
+同时验证了"问数据"的形态：`win64 ⇒ (Indirect, Vector)`、`sysv64/aapcs64/lp64d ⇒ (Pairs, Registers)`。
+（`abi_query` 模块本轮写完即撤：没有非测试消费者时 clippy `-D warnings` 会拦死代码，
+接进 `lower/` 的 17 处 `is_scalar_pair_abi` 时再加回。）
+
+### 2026-10-23 · M6-84：边界编组按大小 + `wide_split` 挪到 ABI 批之后 + 返回侧编组
+
+三件事一起落地（缺一即红）：
+
+1. **边界编组**从「只认聚合」推广成**按大小**（`plan.rs` 的形参/返回/call 实参与结果；
+   `agg_call` 的 byref 实参/结果/返回）——128 位标量现在**会**被计划相看见；
+2. **`wide_split`（+`int_width`）挪进 `wide()` 批**，排在聚合批**之后**：跨边界宽值先被改写成
+   指针/缓冲/向量槽，它只处理函数内部宽值。⾃此 `宽值指令形态 Call` 的 fail-closed 才有解；
+3. **返回侧编组** `wide_split/ret.rs`：落点是向量类寄存器时，把肢 `Bitcast` + 逐层 `Vconcat`
+   成 `V128`（逐层合并，对任意原生位宽成立）。
+   **⚠️ 2026-10-24 已删除**：最终设计改为降级层直接发 `V128` 返回值（见 M6-88），
+   这条 pass 服务的是"IR 里保留 `i128` 返回"的设计，留下即死代码。
+
+踩坑记录：`ret_classify` 先写成 `scalar size_le = 16` ⇒ 把 `i32/i64` 也送进 XMM0，套件大面积红；
+收紧为 `size_gt = 8 && size_le = 16` 才正确（这就是"必须跑全套件"的价值）。
+
+验收：`forge-codegen --lib` 2864、e2e 15/15、quick 43/43、clippy 干净、探针 42。
+
+### 2026-10-23 · M6-83：先证伪两条错路，再定 P1 的四步
+
+- **「模块级合法化」不需要**：边界形态是**类型驱动**（同一类型在任何函数里落点一致），
+  两侧各自按类型改写即自洽 ⇒ 我写的模块级骨架已删（不留死代码）；
+- **「只改规则」不行**：翻规则后 `black_box` 之类立刻报
+  `MOV_RM8_R64: operand 0 must be a 64-bit register (got 128-bit)`；
+- 由此定下 P1 四步（规则数据 → 边界编组 → 返回侧编组 → 降级层 pair 判定），
+  以及**诊断改进**：泄漏守卫现在报出"是谁"（`值 Value(23) 类型 TypeId(10)（128 位）`），
+  并且**没有使用者的旧宽值不算泄漏**（ABI 改写摘掉的旧值不误报）。
+
 ### 2026-10-23 · M6-82：基线目标特性 + **跨后端 ABI 实测**（P1 第一步）
 
 **做了的**：`CodegenBackend::target_config` 申报 **x86-64 基线特性**（`sse`/`sse2`/`fxsr`）——

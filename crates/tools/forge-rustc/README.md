@@ -234,7 +234,7 @@ powershell -ExecutionPolicy Bypass -File tests/rustc_integration_test.ps1
 > （`--emit=obj/link/metadata/mir` 正常），汇编请对产物反编译，不由后端伪造文本；
 > 删除了被正当推翻的 `neg_global_asm`。
 >
-> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=197 hard=197 flaky=0 known=0 expect_trap=9 -->
+> <!-- 计数（机读，守卫 rustc_doc_counts_guard 钉住）：cases=199 hard=199 flaky=0 known=0 expect_trap=9 -->
 >
 > **上面这段机读标记与 `tests/e2e.rs` 双向相等**：改用例数/容忍名单时必须同步它，
 > 否则 `cargo forge gate --guards` 会红（守卫就是为了治「文档与代码分叉」这件事）。

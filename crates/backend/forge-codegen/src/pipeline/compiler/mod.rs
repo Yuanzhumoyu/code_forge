@@ -398,6 +398,10 @@ impl<M: TargetMachine> CompileSession<M> {
                 crate::pipeline::legalize::LegalizeDriver::with_aggregates_except_va()
                     .run(f, &mut lctx)?,
             );
+            // **①.5 宽值批**：必须在**聚合批之后**（跨界宽值已由计划相/聚合批改写成
+            // 按引用指针、sret 缓冲或向量槽），在**收尾批之前**（物化相要看到已拆肢的
+            // load/store）。见 `LegalizeDriver::wide` 的说明与 `WA-52`。
+            changes.merge(crate::pipeline::legalize::LegalizeDriver::wide().run(f, &mut lctx)?);
             // **② 排 ABI 槽**：此时才扫 IR——深度里已含聚合族新建的槽（见上方时机注释）。
             if let Some((va, shift)) = va_pending.take() {
                 let slots = crate::pipeline::va_expand::plan_abi_slots(
@@ -497,6 +501,21 @@ impl<M: TargetMachine> CompileSession<M> {
         // Stage 6: Register allocation
         let alloc_result = state.run_regalloc(&self.reg_alloc, &self.machine)?;
         let _t5 = _t.elapsed();
+        // **溢出决策事件化**（v27 M6-87，P4）：逐值报出"谁被溢出、落在哪个槽"。
+        // 只是可见性：`emit` 未设置出口环境变量时零开销（见 `pipeline::events` 契约）。
+        for (vreg_idx, slot) in alloc_result.spill_slots.iter().enumerate() {
+            if let Some(slot) = slot {
+                events::emit(
+                    "SPILL-VALUE",
+                    &[
+                        ("fn", events::Field::Str(&fname)),
+                        ("vreg", events::Field::Usize(vreg_idx)),
+                        ("offset", events::Field::I64(i64::from(slot.offset))),
+                        ("size", events::Field::Usize(usize::from(slot.size))),
+                    ],
+                );
+            }
+        }
         events::emit(
             "ALLOC-SUMMARY",
             &[

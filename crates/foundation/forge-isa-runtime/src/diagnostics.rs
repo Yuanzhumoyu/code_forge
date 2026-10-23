@@ -65,6 +65,9 @@ pub static CHANNELS: [Channel; 4] = [
 pub enum Field<'a> {
     Str(&'a str),
     U64(u64),
+    /// **有符号**整数（v27 M6-87）：帧偏移这类值可能是负数（`[rbp-96]`）。
+    /// 早先只有无符号变体 ⇒ 调用方只能报绝对值，读的人分不清高低。
+    I64(i64),
     Usize(usize),
 }
 
@@ -85,6 +88,7 @@ impl std::fmt::Display for Field<'_> {
                 write!(f, "\"")
             }
             Field::U64(v) => write!(f, "{v}"),
+            Field::I64(v) => write!(f, "{v}"),
             Field::Usize(v) => write!(f, "{v}"),
         }
     }

@@ -328,6 +328,23 @@ fn build_steps(a: &Args) -> Vec<Step> {
             "e2e_trap_semantics_invariants",
         ],
     ));
+    // **跨后端 ABI 互操作**（v27 P1 / `WA-52`）：同名函数的两个方向——forge 编调用方
+    // + LLVM 编被调方、LLVM 编调用方 + forge 编被调方——在同一条 128 位 C ABI 边界上
+    // 真跑。自编自调的 e2e **测不出**这类错误（两边自洽）；这一条是唯一真值来源。
+    push!(cargo_step(
+        "rustc-abi-cross",
+        "跨后端 128 位 C ABI 互操作（forge↔LLVM 双向，真执行）",
+        Scope::Windows,
+        &[
+            "test",
+            "-p",
+            "forge-rustc",
+            "--test",
+            "cross_abi",
+            "--",
+            "--test-threads=2",
+        ],
+    ));
     // **真 `std` 语料**（v27 M6）：`examples/forge-rustc-std-hello` 用 forge 编一个
     // 用到 `println!`/`String`/`Vec`/`HashMap`/thread/fs/net/第三方 crate 的程序，
     // 并把输出与**LLVM 编译的同一份源码**逐行对拍（`-O0` 与 `-O2` 各一遍）。
@@ -651,6 +668,8 @@ pub fn run(a: &Args, verbose: bool) -> anyhow::Result<i32> {
             "fmt",
             "rustc-e2e",
             "rustc-e2e-guards",
+            // 跨后端 ABI 真值（v27 P1 / `WA-52`）：自编自调的 e2e 测不出混链错误
+            "rustc-abi-cross",
             "rustc-determinism",
             "rustc-opt-levels",
             "rustc-dwarf",
@@ -664,6 +683,8 @@ pub fn run(a: &Args, verbose: bool) -> anyhow::Result<i32> {
             "reg_name_table",
             "rustc_doc_counts",
             "workarounds_guard",
+            // 后端 lint（M6-① 修到 0 告警；`--subset rustc` 的说明里一直写着它）
+            "rustc-clippy",
             "docs",
         ];
         steps.retain(|s| RUSTC_STEPS.contains(&s.name));

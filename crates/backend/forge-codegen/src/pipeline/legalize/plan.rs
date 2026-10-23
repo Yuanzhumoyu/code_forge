@@ -162,8 +162,15 @@ pub(crate) fn plan_abi_edges(
     let mut edges = AbiEdges::default();
 
     // ── 形参（只登记宽聚合：`>8B` 才需要 ABI 展开）─────────────────────
+    // **按大小登记，不只认聚合**（v27 M6-83，`WA-52`）：128 位整数是 16 字节**标量**，
+    // 它的落点同样可能要求"按引用 / 向量槽"，不能因为"不是聚合"就不登记——
+    // 那样 ABI 层与物化层都看不到这条边界，最后只能在发射侧炸成 `MOV_RM8_R64`。
     for (i, t) in func.param_types().iter().enumerate() {
-        if !store.is_aggregate(*t) || store.size_bytes(*t) <= 8 {
+        // **向量不在这里改写**：向量（V64/V128/V256）的按值/按引用传递由
+        // `forge-rustc` 的降级层与发射侧的 `bank = "vec"` 规则负责——它们在 IR 里要么
+        // 是单个向量值（≤16B，走 XMM），要么已经是 sret 缓冲（>16B）。把向量按
+        // "宽聚合"改写会让 `V128` 被拆成两个 i64 结果（静默读错寄存器）。
+        if store.is_vector(*t) || store.size_bytes(*t) <= 8 {
             continue;
         }
         let place = clf.arg_place(*t)?;
@@ -186,7 +193,7 @@ pub(crate) fn plan_abi_edges(
     if let Some(t) = func
         .return_types()
         .into_iter()
-        .find(|t| store.is_aggregate(*t) && store.size_bytes(*t) > 8)
+        .find(|t| !store.is_vector(*t) && store.size_bytes(*t) > 8)
     {
         edges.ret = Some(clf.ret_place(t)?);
     }
@@ -202,7 +209,9 @@ pub(crate) fn plan_abi_edges(
                         let Some(ty) = func.dfg.value_type(v) else {
                             continue;
                         };
-                        if !store.is_aggregate(ty) || store.size_bytes(ty) <= 8 {
+                        // 同形参：**按大小**登记（128 位标量也算边界对象，见上面的说明）；
+                        // 向量同样不登记（见形参处的说明）。
+                        if store.is_vector(ty) || store.size_bytes(ty) <= 8 {
                             continue;
                         }
                         let place = clf.arg_place(ty)?;
@@ -222,7 +231,7 @@ pub(crate) fn plan_abi_edges(
                     }
                     // call 结果（宽聚合才登记）
                     if let Some(rt) = inst.results.first().and_then(|v| func.dfg.value_type(*v))
-                        && store.is_aggregate(rt)
+                        && !store.is_vector(rt)
                         && store.size_bytes(rt) > 8
                     {
                         let ret = clf.ret_place(rt)?;

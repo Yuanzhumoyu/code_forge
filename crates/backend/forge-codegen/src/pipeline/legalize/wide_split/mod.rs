@@ -570,7 +570,13 @@ fn guard_no_wide_left(
     w: u32,
 ) -> Result<(), IrError> {
     let store = types_ctx.borrow();
+    // 用法表：**没有使用者的宽值不算泄漏**——ABI 边界改写会把原来的形参值摘掉
+    // （换成指针 + load），旧值仍留在块参数表里但已没人用。判"还在参与"才是有意义的判据。
     let check = |v: Value| -> Result<(), IrError> {
+        // 没有使用者的宽值不算泄漏（返回值也走 use_lists ⇒ 真被用着就一定有使用者）。
+        if !func.use_lists.has_uses(v) {
+            return Ok(());
+        }
         let Some(t) = func.dfg.value_type(v) else {
             return Ok(());
         };
@@ -578,7 +584,11 @@ fn guard_no_wide_left(
             return Ok(());
         }
         if is_wide_int(&store, t, w) {
-            return Err(wide_shape_unsupported("宽值未完全 split（泄漏守卫）"));
+            // **诊断价值**：说清"剩下的是谁"。只报"泄漏"会让下一个人从头猜（本轮实测踩到）。
+            return Err(wide_shape_unsupported(&format!(
+                "宽值未完全 split（泄漏守卫）：值 {v:?} 类型 {t:?}（{} 位）",
+                store.size_bytes(t) * 8
+            )));
         }
         Ok(())
     };

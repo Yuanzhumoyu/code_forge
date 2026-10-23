@@ -265,11 +265,46 @@ mod jit {
         let mut func = fb.finish().expect("build");
         let machine = crate::arch::x86::TargetMachine::new();
         let mut lctx = LegalizeCtx::new(&machine, "win64".to_string());
-        let err = LegalizeDriver::scalar()
+        // v27 M6-84：`wide_split` 现在排在聚合批**之后**（跨界宽值先由 ABI 改写成指针/缓冲），
+        // 所以它**自己**跑时仍然 fail-closed —— 这条不变式保留（它变不出指针）。
+        let err = LegalizeDriver::wide()
             .run(&mut func, &mut lctx)
-            .expect_err("宽值块参数必须被拒绝");
+            .expect_err("单独跑 wide_split 时入口宽值必须被拒绝");
         let msg = format!("{err:?}");
         assert!(msg.contains("WIDE_INT_SHAPE"), "应带缺口 ID，实测：{msg}");
+    }
+
+    /// **从指针读宽值**（ABI 按引用传参的形态）：`fn(ptr) -> i64 { load i128 }`。
+    ///
+    /// 为什么单测这一条：Win64 上 `u128` 形参**按引用**（实测 LLVM 入口
+    /// `mov 0x8(%rcx),%rax`），所以 ABI 改写后函数体要 `load i128`。这条路径得先独立成立，
+    /// 再谈翻规则（`WA-52`）。
+    #[test]
+    fn jit_wide_load_from_param_ptr() {
+        ensure_registered();
+        let tc = TypeContext::new();
+        let mut m = Module::new();
+        let mut fb = FunctionBuilder::new(
+            "load_wide",
+            tc.clone(),
+            FunctionSignature::new(&[(TypeId::PTR, "p")], &[TypeId::I64]),
+        );
+        let (e, p) = fb.create_block_with_params(&[(TypeId::PTR, "p")]);
+        fb.switch_to_block(e);
+        let v = fb.load(p[0], TypeId::I128);
+        let sixty_four = fb.const_int(64, TypeId::I128);
+        let hi = fb.ushr(v, sixty_four);
+        let out = fb.ireduce(hi, TypeId::I64);
+        fb.ret(&[out]);
+        m.add_function(fb.finish().expect("build"));
+        let mut jit = crate::jit::JitLoader::new(TargetMachine::new());
+        jit.compile_module(&m).expect("module compile");
+        let f: extern "C" fn(*const u8) -> i64 = jit.get_fn("load_wide").expect("fn");
+        // 内存里放 `0x0000_0000_0000_0009_0000_0000_0000_0003`（低 64 位 = 3，高 64 位 = 9）
+        let mut buf = [0u8; 16];
+        buf[0..8].copy_from_slice(&3u64.to_le_bytes());
+        buf[8..16].copy_from_slice(&9u64.to_le_bytes());
+        assert_eq!(f(buf.as_ptr()), 9, "从指针读 i128 的高肢");
     }
 
     /// **宽值除/余**：`wide_div` pass 的分肢长除法（v27 M6-79）。

@@ -33,7 +33,9 @@ pub(crate) fn expand_large_agg_call_results(
             if matches!(inst.opcode, Opcode::Call | Opcode::CallIndirect)
                 && inst.results.len() == 1
                 && let Some(rt) = inst.results.first().and_then(|v| func.dfg.value_type(*v))
-                && store.is_aggregate(rt)
+                // 向量结果不在这里拆（≤16B 按值进 XMM；>16B 是 sret）：拆成两个 i64
+                // 结果会让发射侧去读 RAX/RDX（静默错值）。
+                && !store.is_vector(rt)
                 && store.size_bytes(rt) > 8
             {
                 // **只读计划**（v25 M1）：「既不是 sret 也不是寄存器档」这条判据只有一处
@@ -111,10 +113,9 @@ pub(crate) fn expand_large_agg_ret(
     // sret 档：签名的返回已被 `expand_sret_return` 清空 ⇒ 判据只能看**终结符里的实参**
     let sret = sret_ptr.is_some();
     let rets = func.return_types();
-    let has_large = rets.iter().any(|t| {
-        let s = &store;
-        s.is_aggregate(*t) && s.size_bytes(*t) > 8
-    });
+    // **按大小**判（v27 M6-83）：16 字节标量的返回在 Win64 上走 XMM0，
+    // 与聚合一样需要物化相参与，不能因为"不是聚合"就跳过。
+    let has_large = rets.iter().any(|t| store.size_bytes(*t) > 8);
     if !has_large && !sret {
         return Ok(());
     }
@@ -131,7 +132,9 @@ pub(crate) fn expand_large_agg_ret(
         };
         for &v in values {
             if let Some(ty) = func.dfg.value_type(v)
-                && store.is_aggregate(ty)
+                // 向量返回不按聚合拆段：≤16B 走 XMM（`bank = "vec"`），>16B 走 sret
+                // （签名已无返回）。拆成 i64 段会与"一个向量值"的签名冲突。
+                && !store.is_vector(ty)
                 && store.size_bytes(ty) > 8
             {
                 jobs.push(RetJob {

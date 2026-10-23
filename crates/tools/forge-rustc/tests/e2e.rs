@@ -2720,6 +2720,35 @@ const CASES: &[Case] = &[
         reason: "`--emit=asm` 需要 LLVM 侧产物 ⇒ 明确拒绝，不许静默不产出",
     },
     Case {
+        name: "u128_abi_param",
+        // **Rust ABI 的 128 位形参**（`WA-52` 的护栏）：跨函数传 `u128` 必须正确。
+        // 这条钉住"Rust ABI 走两整数槽"这一形态——改 ABI 编组时最先会红的就是它。
+        body: "let v = core::hint::black_box((7u128 << 64) | 11);              if take_hi(v) == 7 { 42 } else { 7 }",
+        extra: "#[inline(never)]\nfn take_hi(a: u128) -> u64 { (a >> 64) as u64 }\n",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "Rust ABI 的 u128 形参（两整数槽）必须正确——ABI 编组改动的护栏",
+    },
+    Case {
+        name: "u128_abi_return",
+        // **Rust ABI 的 128 位返回**：实测 LLVM 用 `RAX:RDX`（不是 XMM0），这条钉住该形态。
+        body: "let w = make_wide(core::hint::black_box(9u64));              if (w >> 64) as u64 == 9 && (w & 0xFF) as u64 == 3 { 42 } else { 7 }",
+        extra: "#[inline(never)]\nfn make_wide(a: u64) -> u128 { ((a as u128) << 64) | 3 }\n",
+        entry: "mainCRTStartup",
+        expected: 42,
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 M6",
+        reason: "Rust ABI 的 u128 返回（RAX:RDX）必须正确——与 C 家族的 XMM0 区分",
+    },
+    Case {
         name: "u128_div_non_pow2",
         // **非 2 的幂的 128 位除/余**：legalize 的 `wide_div` 分肢长除法（v27 M6-79）。
         body: "let v = core::hint::black_box(0x99aa_bbcc_ddee_ff00u128);              if (v / 7) as u64 == 0x99aa_bbcc_ddee_ff00u64 / 7 && (v % 7) as u64 == 0x99aa_bbcc_ddee_ff00u64 % 7 { 42 } else { 7 }",

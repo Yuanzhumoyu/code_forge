@@ -11,6 +11,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-24) — `forge-rustc`：128 位标量的 C-ABI 与 LLVM 双向互操作（`WA-52` 收口）
+
++ **症状**：`extern "C"` 边界上的 `u128`/`i128` 与 **LLVM 编的代码混链**时崩溃或错值
+  （实测调用方 AV `0xC0000005`、被调方返回垃圾）。自编自调的 e2e **测不出来**：两边用同一套
+  （错误的）形态也自洽——这正是该缺陷长期只在"混链"时暴露的原因。
++ **真因**：降级层用**启发式**（`is_scalar_pair_abi`）决定 128 位值的形态，一律发两个整数槽
+  （`RCX:RDX` / `RAX:RDX`）；而 Win64 的 C 家族是**按引用传参 + `XMM0` 返回**（LLVM 实测
+  `mov 0x8(%rcx),%rax` / `movdqa (%rsp),%xmm0`）。
++ **修法**：形态改**问 rustc `FnAbi` 的 `PassMode`**——`Indirect` ⇒ 传"16 字节对齐副本"的指针；
+  `Cast{Vector 16}` ⇒ 以 `V128` 返回（`XMM0`）；`Direct` ⇒ 两整数槽（Rust ABI 仍是 `RAX:RDX`）。
+  定义侧（签名/收参/返回）与调用侧（实参/结果）同源；被调方解析不出（间接调用）⇒ 明确
+  `[cap:WIDE_INT_SHAPE]` fail-closed。合法化层的"按大小"ABI 编组显式排除**向量**
+  （≤16B 向量按值进 XMM，>16B 是 sret）。
++ **回归守卫**：新增 `crates/tools/forge-rustc/tests/cross_abi.rs`——两个方向都**真执行** 42：
+  forge 编调用方 + LLVM 编被调方、LLVM 编调用方 + forge 编被调方；覆盖按引用实参 /
+  向量返回 / 两者同时。门禁新增 `rustc-abi-cross` 步骤。
++ **验证**：`cross_abi` 2/2；e2e 全量不回归（`u128_abi_param`/`u128_abi_return` 钉住 Rust ABI
+  两槽形态）；`forge-codegen --lib` 2864/2864；`forge-rustc` clippy 干净。
+
 ### Fixed (2026-10-19) — `forge-rustc`：`--emit=obj -o <path>` 现在真的写出那个路径
 
 + **症状**：`rustc -Zcodegen-backend=forge_rustc.dll --emit=obj -o foo.obj` 编译"成功"，

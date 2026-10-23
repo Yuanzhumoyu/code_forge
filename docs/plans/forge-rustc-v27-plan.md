@@ -43,6 +43,10 @@
 
 | 里程碑 / 切片 | 状态 | 证据落点 |
 | --- | --- | --- |
+| **P1 128 位 C-ABI 跨后端兼容**（2026-10-23 起） | ✅ **已落地（2026-10-24）**：定义侧/调用侧都问 rustc `FnAbi` 的 `PassMode`（按引用 ⇒ 16 字节对齐副本的指针；`Cast{Vector}` ⇒ `XMM0`；`Direct` ⇒ 两整数槽/`RAX:RDX`）；跨后端探针**双向** 42 | §2.8；`WA-52`（已修）；`tests/cross_abi.rs` |
+| **P2 `INLINE_ASM` 的 `sym`/`label`** | 📋 **结论已定、待实现**：需在谱面层做（`[operand.sym]` + 汇编器块内标签），排在 P1 之后；现状 fail-closed | §2.6；台账 `INLINE_ASM` |
+| **P3 M4-T3 第二目标** | ⛔ **执行级受环境限制**（本机无 emulator / aarch64 std / 交叉 gcc-ld）；**对象级可做**（clang/ld.lld/llvm-objdump 齐备） | §2.7 实测表 |
+| **P4 分配器事件化** | 🔶 **首块落地**：`SPILL-VALUE`（逐值 vreg/offset/size）+ `Field::I64`；下一步寄存器压力峰值与逐指令编辑 | §8 M6-87；`events_guard` 三方双向 |
 | M1 正确性清零（溢出 / 窄有符号 / 向量溢出 / regalloc） | ✅ 落地 | §8 M1；e2e 硬断言、`known_failure` = 0 |
 | M2 `global_asm!` | ✅ 落地 | §8 M2；e2e `global_asm_call` / `global_asm_sym_const` |
 | M2 展开（`panic=unwind` / SEH） | ❌ **不做**（明确拒绝） | 台账 `UNWIND` |
@@ -96,6 +100,107 @@
 - `label`/`sym` 仍 fail-closed（前者受"指令流内标签"的结构限制，后者受谱汇编器文法限制）。
 - **零容忍口径现在是"实测过的 0"，不是"挡在套件外的 0"**：`known_failure: true` 计数 = 0，
   且新加的浮点条件矩阵是**逐条件**断言（不是代表性抽样）。
+
+## 2.6 P2 决策：`INLINE_ASM` 的 `sym` / `label`（2026-10-23）
+
+现状（见 `docs/reference/backend-gaps.md` 的 `INLINE_ASM` 行）：S1–S4 的可用面已落地
+（纯文本、`in`/`out`/`inout`+`reg`、`const`、`clobber_abi`、`options(noreturn)`），
+**`sym` 与 `label` 仍 fail-closed**（`[cap:INLINE_ASM]`，明确报错而非静默错值）。
+
+两条都**不是**"在降级层补一段字符串拼接"能解决的，它们要动的是**谱面汇编器**这一层：
+
+| 操作数 | 缺什么 | 正解（按层） | 成本 |
+| --- | --- | --- | --- |
+| `sym` | 谱面汇编器的操作数文法只吃寄存器/数值字面量（`[operand.*]` 的 `kind = imm/mem/gpr/...`），符号没有对应的槽 | 新增操作数种类 `[operand.sym]`（`kind = "sym"`）+ 汇编器把标识符 token 绑到该槽 + 该槽带 `reloc = "abs64"`（x86 已有 `MOVABS_GLOBAL` 可承接）+ 降级层把 `InlineAsmOperand::Sym` 渲染成符号文本并登记重定位 | 中（DSL 模型/解析/生成 + 一处降级层 + e2e） |
+| `label` | 标签必须落在**指令流中间**，而现在的形态是"文本 → 一次汇编 → 一串指令" | 汇编器支持**块内标签**：文本里 `L: ... jmp L` 在**同一次汇编**里解析成相对偏移（不需要跨 IR 块的 `LabelRef`）；rustc 的 `label` 操作数 `{0}` 只要绑定成"本块内的标签 id"即可 | 中（汇编器加标签表 + 分支绑定） |
+
+结论：两项都**可做**，但都需要先扩展谱面（`isa-dsl` 的 operand kind 与汇编器），
+不是降级层的活。优先级排在 `WA-52`（128 位 C-ABI 兼容）之后——
+`asm!` 带 `sym`/`label` 的代码在真实语料里比例很低，而 ABI 不兼容是**静默错值**级风险。
+
+在那之前保持 **fail-closed**（现状）：给出明确诊断，不静默降级。
+
+## 2.7 P3 结论：M4-T3「第二目标」的本机可行性（2026-10-23 实测）
+
+探测结果（本机一次性测，命令见下）：
+
+| 依赖 | 结果 |
+| --- | --- |
+| `rustup target list --installed` | 只有 `x86_64-pc-windows-msvc`、`riscv32imc-unknown-none-elf` —— **没有 aarch64 的 std** |
+| `aarch64-linux-gnu-gcc` / `aarch64-linux-gnu-ld` / `aarch64-w64-mingw32-gcc` | **都不在** |
+| `qemu-aarch64` / `qemu-aarch64-static` | **都不在** ⇒ 本机**无法执行** aarch64 产物 |
+| `clang` / `ld.lld` / `llvm-objdump` | **在**（`D:\Program Files\LLVM\bin`），且 `clang --target=aarch64-unknown-linux-gnu` **能出 `.o`** |
+| `rust-src` 组件 | **在**（`lib/rustlib/src/rust/library`） |
+
+结论：M4-T3 必须拆成两档，别混为一谈——
+
+- **对象/重定位级验证（本机可做）**：用 `clang --target=aarch64…` 做**独立 oracle**（同一段汇编/同一份 IR 的手写对应物），
+  用 `llvm-objdump`/`clang -c` 出的字节对照我们的生成物，用 `ld.lld` 验证重定位可解析。
+  这能证明"编码/重定位/ABI 布局"层面正确，**不能**证明运行期语义。
+- **真机/模拟器执行级验证（本机不可做）**：需要 aarch64 执行环境（qemu 或真机），
+  以及 `rustup target add aarch64-…`（要网络）或 `-Z build-std`（`rust-src` 已在 ⇒ 可行但慢）。
+
+⇒ P3 的"执行级"部分是**环境依赖**，不是代码缺口：记在这里，等有换机/换环境时再开；
+本机先把"对象级"那一档做起来（验收 = 与 clang 的字节/重定位对照表全绿）。
+
+## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
+
+目标：让 `forge` 与 **LLVM 编的外部函数**在 128 位标量上**双向互操作**
+（验收 = 跨后端探针两个方向都真跑出 42）。
+
+### 结论：形态问 `FnAbi` 的 `PassMode`，不问约定名
+
+`rustc` 的 `FnAbi` 就是目标 ABI 在本机上的权威投影（实测，x86_64-pc-windows-msvc）：
+
+| 边界 | Rust ABI（默认） | `extern "C"`（Win64） |
+| --- | --- | --- |
+| 实参 | `PassMode::Direct`（≡ 两个整数槽 lo/hi） | `PassMode::Indirect { pointee_size: 16 }`（按引用） |
+| 返回 | `PassMode::Direct`（≡ `RAX:RDX`） | `PassMode::Cast { unit: Vector { size: 16 } }`（`XMM0`） |
+
+⇒ 降级层**不写**"如果是 C 就按引用"这类判断：`abi::wide_int_abi` 读 `PassMode`，
+`Indirect` ⇒ 传指针、`Cast{Vector}` ⇒ 按 `V128` 返回、`Direct` ⇒ 两整数槽。
+
+### 实现落点（四处同源）
+
+1. **形态查询**：`crates/tools/forge-rustc/src/abi.rs` 的 `wide_int_abi(tcx, instance)` 与
+   `callee_wide_int_abi(tcx, func)`（调用点从 `Operand::Constant(FnDef)` 解析被调方）。
+   解析不出（间接调用 / 虚调用）⇒ 调用方拿不到形态，**必须 fail-closed**。
+2. **定义侧**（`lower/mod.rs` 的 `build_signature`）：128 位形参按形态落成"一个指针"或
+   "两个 `i64`"；返回落成 `V128`（向量槽）或两个 `i64`。入口收参：指针形态用
+   `copy_agg` 复制 16 字节进本地槽，返回用 `load_ty(base, V128)` 读一个 16 字节向量。
+3. **调用侧**：实参 `Indirect` ⇒ 先把值复制到**16 字节对齐的临时槽**、传地址（即使实参
+   本来是 place 也复制：LLVM 的 `Indirect` 带 `pointee_align: 16`，而对齐不足的字段
+   ——`#[repr(packed)]`/相邻槽——直接用 `movdqa` 会 AV）；结果是向量槽 ⇒ 调用按
+   `ret_tys = [V128]` 取回，直接 `store` 进 destination 槽（位模式语义），整数对时仍是
+   `pack_sp`。临时槽在 `LowerCtxt::new` 按"一次调用最多的按引用宽实参个数"预分配。
+4. **合法化层**：ABI 边界编组按**大小**（v27 M6-83/84），但**显式排除向量**——≤16B 向量
+   的按值/按引用由发射侧的 `bank = "vec"` 负责，>16B 向量在 IR 里已经是 sret/指针；
+   把向量当"宽聚合"会拆成两个 `i64` 结果（静默读 `RAX:RDX`）。
+
+### 验收（代码为真）
+
+- `crates/tools/forge-rustc/tests/cross_abi.rs`：**双向**跨后端真执行——
+  forge 编调用方 + LLVM 编被调方；LLVM 编调用方 + forge 编被调方。三个函数覆盖
+  "按引用实参 / 向量返回 / 两者同时"，期望 42。已进门禁（`rustc-abi-cross`）。
+- e2e `u128_abi_param` / `u128_abi_return` 钉住 **Rust ABI 仍是 `RAX:RDX` 两槽**（不回归）。
+- 实测（2026-10-24）：`cross_abi` 2/2、e2e 全量（`e2e_stage_a_scalar_cases`）、
+  `forge-codegen --lib` 2864/2864、`forge-rustc` clippy 干净。
+- **为什么系统 e2e 测不出这一类**：自编自调时两边用同一套形态（哪怕错的）也自洽；
+  `WA-52` 之前 105 条用例全绿而混链必 AV，正是这个原因——跨后端门禁是唯一真值。
+
+### 踩坑记录（过程细节见 archive M6-84…M6-88）
+
+- 128 位按引用实参**不能复用聚合的拆段路径**（`AGG_ARG_INSERTVALUE_CHAIN`：宽标量值
+  既不是 `load` 也不是可物化的聚合链）⇒ 需要自己的"临时槽 + 传地址"路径；
+- 一次替换 17 处 `is_scalar_pair_abi` 曾把辅助函数自己的函数体也换掉 ⇒ 无限递归、
+  rustc 线程栈溢出（不是 `abi_is_rust` 的问题）；**改判据时先加辅助函数、再逐个站点接**；
+- 别用**调用方**的约定判被调方的形态（调用方 `extern "C"`、被调方 Rust ABI 时就错）。
+
+### 纪律
+
+- 边界形态只来自**目标 ABI 的数据**（`FnAbi` 的 `PassMode`）；寄存器/重定位仍只来自
+  `forge-abi` 的规则数据（`Classifier`/`CallPlan`）。降级层不写约定名判断。
+- 解析不到被调方就**明确失败**，不静默按某一个约定继续（那正是 `WA-52` 的成因）。
 
 ## 3. 历史记录（已归档）
 

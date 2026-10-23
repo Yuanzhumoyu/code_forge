@@ -320,7 +320,7 @@ lowering，实测 `[cap:SPEC_LOWERING_RULE_MISSING]`）。
 | `pipeline/lowering.rs` | 835 | 生成物 lowering 的宿主侧辅助，与谱面规则一一对应 |
 | `pipeline/legalize/materialize.rs` | 657 | 物化相：按 IR 形态分段单遍改写，切开反而难对照 |
 | `pipeline/va_expand/expand.rs` | 621 | `expand_start`/`expand_arg` 共享局部不变量（游标推进次序） |
-| `pipeline/compiler/mod.rs` | 615 | 会话入口 + 模块编排（state 与测试已切出） |
+| `pipeline/compiler/mod.rs` | 640 | 会话入口 + 模块编排（state 与测试已切出；+宽值批调用点 v27 M6-84、+溢出事件 v27 M6-87） |
 | `pipeline/compiler/alloc_integration_tests.rs` | 690 | 集成用例（测试长不构成阅读负担，与实现同源；+栈探测正反用例 v27 M6-78） |
 
 缺省上限 **700** 行；上表与守卫里的预算表由 `file_size_ratchet` 钉成**双向相等**（改动其一就红）。
@@ -347,6 +347,7 @@ M4 把测试搬成独立文件后，文件内不再有 `#[cfg(test)]` 可供"截
 | `CAPABILITY-GAP` | 编译失败：`gap` = 缺口 ID（非缺口错误时为空串）+ `fn` |
 | `LEGALIZE-PLAN` | 合法化计划相完成：`actionable`（可动边界条数）、`plans`（问引擎次数） |
 | `ALLOC-SUMMARY` | 寄存器分配完成：`assigned`、`spills`、`edits` |
+| `SPILL-VALUE` | 溢出决策（逐值）：`vreg`、`offset`（有符号帧偏移）、`size`——v27 M6-87 起，P4 事件化 |
 | `EMIT-SUMMARY` | 发射完成：`code_bytes`、`relocs` |
 
 ## 12. 事件通道（四个出口，一处实现）

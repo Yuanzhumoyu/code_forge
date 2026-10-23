@@ -20,6 +20,15 @@ pub(crate) mod rvalue;
 pub(crate) mod statement;
 pub(crate) mod vtable;
 
+/// `i128`/`u128`（16 字节整数标量）：**跨 ABI 边界**的形态由 rustc `FnAbi` 决定
+/// （`abi::wide_int_abi`），函数体内部仍是真正的 `i128`，由 legalize 的 `wide_split` 拆肢。
+pub(crate) fn is_wide_int_ty(ty: Ty<'_>) -> bool {
+    matches!(
+        ty.kind(),
+        ty::TyKind::Int(ty::IntTy::I128) | ty::TyKind::Uint(ty::UintTy::U128)
+    )
+}
+
 pub(crate) struct LocalSlot {
     /// 相对 rbp 的负偏移（-8, -16, ...，8 字节对齐）。
     offset: i32,
@@ -49,6 +58,14 @@ pub(crate) struct LowerCtxt<'tcx, 'f> {
     /// `#[unsafe(naked)]`：**不建栈槽、不做入口收参**（裸函数的参数直接留在 ABI
     /// 寄存器里，由函数体里的汇编自己读）。与 IR `NO_FRAME` 配对使用。
     pub(crate) naked: bool,
+    /// 本函数 128 位整数边界的形态（问 rustc `FnAbi` 得来；见 `abi::wide_int_abi`）。
+    /// `None` = 签名里没有 128 位边界。
+    pub(crate) own_wide: Option<crate::abi::WideIntAbi>,
+    /// **按引用**传 128 位的临时槽（16 字节对齐，每个 32 字节）：调用前把值写进去、
+    /// 把地址当实参传。数量 = 本函数里"一次调用最多几个 128 位按引用实参"。
+    pub(crate) wide_temps: Vec<i32>,
+    /// 当前调用点已用掉的临时槽数（每个 `TerminatorKind::Call` 开始时归零）。
+    pub(crate) wide_temp_used: usize,
 }
 
 impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
@@ -61,7 +78,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         func_refs: &'f mut FuncRefTable,
         naked: bool,
     ) -> Self {
-        let sig = build_signature(tcx, instance, body);
+        let own_wide = crate::abi::wide_int_abi(tcx, instance);
+        let sig = build_signature(tcx, instance, body, own_wide);
         // 函数名（display 用）：闭包/内部 shim 的 DefId 无 item_name（ICE），
         // 用 def_path_str 安全获取（如 `crate::main::{{closure}}`）
         let name = tcx.def_path_str(instance.def_id());
@@ -146,6 +164,31 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             next_offset -= 32;
             Some(next_offset)
         };
+        // **128 位按引用实参的临时槽**：16 字节对齐（LLVM 的 `Indirect` 带
+        // `pointee_align: 16`，被调方可能用对齐搬移）。数量取"一次调用里最多的
+        // 128 位按引用实参个数"——同一调用点的多个常量实参不能共用一个槽。
+        let mut wide_temps = Vec::new();
+        if !naked {
+            let mut max_slots = 0usize;
+            for bb in body.basic_blocks.iter() {
+                if let TerminatorKind::Call { func, args, .. } = &bb.terminator().kind {
+                    if crate::abi::callee_wide_int_abi(tcx, func).and_then(|w| w.arg)
+                        == Some(crate::abi::WideIntArg::ByRef)
+                    {
+                        let n = args
+                            .iter()
+                            .filter(|a| is_wide_int_ty(a.node.ty(&body.local_decls, tcx)))
+                            .count();
+                        max_slots = max_slots.max(n);
+                    }
+                }
+            }
+            for _ in 0..max_slots {
+                next_offset -= 32;
+                next_offset &= !15;
+                wide_temps.push(next_offset);
+            }
+        }
         // mangled 符号名（与 backend.rs add_function 的对象符号一致）
         let sym_name = mono_symbol_of(tcx, instance);
         LowerCtxt {
@@ -160,6 +203,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             sret_ptr: None,
             temp_arg_off,
             naked,
+            own_wide,
+            wide_temps,
+            wide_temp_used: 0,
         }
     }
     /// switchInt 的判别值：枚举（Adt）discr 先读判别（switchInt 的 case 是
@@ -372,7 +418,18 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 .flat_map(|local| {
                     let ty = body.local_decls[local].ty;
                     let codegen_ty = map_type(ty, self.tcx).unwrap_or(TypeId::I32);
-                    if is_scalar_pair_abi(self.tcx, ty) {
+                    if is_wide_int_ty(ty) {
+                        // 128 位整数标量：形态来自 `FnAbi`（与 `build_signature` 同一判据）。
+                        match self.own_wide.and_then(|w| w.arg) {
+                            Some(crate::abi::WideIntArg::ByRef) => {
+                                vec![(TypeId::I64, format!("arg_{}_ptr", local.index()))]
+                            }
+                            _ => vec![
+                                (TypeId::I64, format!("arg_{}_lo", local.index())),
+                                (TypeId::I64, format!("arg_{}_hi", local.index())),
+                            ],
+                        }
+                    } else if is_scalar_pair_abi(self.tcx, ty) {
                         vec![
                             (TypeId::I64, format!("arg_{}_lo", local.index())),
                             (TypeId::I64, format!("arg_{}_hi", local.index())),
@@ -464,7 +521,31 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 }
                 continue;
             }
-            if is_scalar_pair_abi(self.tcx, ty) && pi + 1 < entry_params.len() {
+            if is_wide_int_ty(ty) {
+                // **128 位形参的收参形态来自 `FnAbi`**（v27 M6-88，`WA-52`）：
+                // 按引用 ⇒ 入口参数是指针，复制 16 字节进本地槽；其余 ⇒ 两个整数槽。
+                // 形态求不出时**明确失败**（不按某一侧猜着继续）。
+                let shape = self.own_wide.and_then(|w| w.arg);
+                let slot = &self.locals[&local];
+                let base = self.builder.stack_addr(slot.offset);
+                match shape {
+                    Some(crate::abi::WideIntArg::ByRef) => {
+                        let size = layout_bytes(self.tcx, ty);
+                        self.copy_agg(base, entry_params[pi], size);
+                        pi += 1;
+                    }
+                    Some(crate::abi::WideIntArg::Pairs) => {
+                        self.pack_sp(base, entry_params[pi], entry_params[pi + 1], ty);
+                        pi += 2;
+                    }
+                    None => {
+                        return Err(crate::abi::wide_int_shape_unsupported(format!(
+                            "定义 `{}`：128 位形参 `{ty}`",
+                            self.fn_name
+                        )));
+                    }
+                }
+            } else if is_scalar_pair_abi(self.tcx, ty) && pi + 1 < entry_params.len() {
                 // 聚合参数拆两个标量：按 pair 内存偏移写槽（重排后非固定 0/8）
                 let slot = &self.locals[&local];
                 let base = self.builder.stack_addr(slot.offset);
@@ -560,6 +641,27 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         {
                             self.copy_agg(rp, base, sz);
                             self.builder.ret(&[]);
+                        } else if is_wide_int_ty(ret_ty) {
+                            // **128 位返回的落点来自 `FnAbi`**（v27 M6-88，`WA-52`）：
+                            // `Cast{Vector 16}` ⇒ 一个 16 字节向量值（`XMM0`）；`Direct` ⇒
+                            // 两个整数寄存器。槽按位模式读，不关心向量的元素类型。
+                            let shape = self.own_wide.and_then(|w| w.ret);
+                            match shape {
+                                Some(crate::abi::WideIntRet::Vector) => {
+                                    let v = self.load_ty(base, TypeId::V128);
+                                    self.builder.ret(&[v]);
+                                }
+                                Some(crate::abi::WideIntRet::Registers) => {
+                                    let (lo, hi) = self.unpack_sp(base, ret_ty);
+                                    self.builder.ret(&[lo, hi]);
+                                }
+                                _ => {
+                                    return Err(crate::abi::wide_int_shape_unsupported(format!(
+                                        "定义 `{}`：128 位返回 `{ret_ty}`",
+                                        self.fn_name
+                                    )));
+                                }
+                            }
                         } else if is_scalar_pair_abi(self.tcx, ret_ty) {
                             let (lo, hi) = self.unpack_sp(base, ret_ty);
                             self.builder.ret(&[lo, hi]);
@@ -665,17 +767,22 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 } => {
                     let dest_ty = body.local_decls[destination.local].ty;
                     let _dest_sz = layout_bytes(self.tcx, dest_ty);
+                    // **调用点 128 位形态：问被调方的 `FnAbi`**（v27 M6-88，`WA-52`）。
+                    // 打包必须在参数循环**之前**拿到它：同一个 `u128` 实参，按引用是
+                    // 一个指针、两个整数槽是 lo/hi——形状不同，不能事后补。
+                    let callee_wide = crate::abi::callee_wide_int_abi(self.tcx, func);
                     if crate::trace::trace_enabled("CALL") {
                         let callee = match func {
                             Operand::Constant(c) => format!("{}", c.const_.ty()),
                             _ => "indirect".to_string(),
                         };
                         eprintln!(
-                            "[forge] CALL {} dest={} dest_ty={} args={}",
+                            "[forge] CALL {} dest={} dest_ty={} args={} callee_wide={:?}",
                             callee,
                             destination.local.index(),
                             dest_ty,
-                            args.len()
+                            args.len(),
+                            callee_wide
                         );
                     }
                     // 聚合参数（≤16 字节、2 标量）调用方按 rcx/rdx 两个寄存器传值
@@ -691,6 +798,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     // expects 3 / packs 4）。ZST（size==0）判定与 rustc FnAbi 的
                     // Ignore mode 务实一致（打包循环先于 callee instance 解析，
                     // 无法查 FnAbi）。
+                    self.wide_temp_used = 0;
                     for (arg_i, arg) in args.iter().enumerate() {
                         let a_ty = arg.node.ty(&self.body.local_decls, self.tcx);
                         if layout_bytes(self.tcx, a_ty) == 0 {
@@ -712,6 +820,66 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 is_agg_mem(self.tcx, a_ty),
                                 kind
                             );
+                        }
+                        // **128 位整数实参：形态问被调方 `FnAbi`**（v27 M6-88，`WA-52`）。
+                        // 按引用 ⇒ 传"指向**调用方 16 字节对齐副本**的指针"；其余 ⇒
+                        // 落到下面的 lo/hi 两条路。形态求不出（间接调用等）⇒ **明确失败**。
+                        //
+                        // 为什么即使实参本来就是 place 也要复制：LLVM 的 `Indirect` 带
+                        // `pointee_align: 16`（实测），被调方可能用对齐搬移；而 place 可能是
+                        // 对齐不足的字段（相邻槽、`#[repr(packed)]`）。复制 16 字节最便宜。
+                        if is_wide_int_ty(a_ty) {
+                            match callee_wide.and_then(|w| w.arg) {
+                                Some(crate::abi::WideIntArg::ByRef) => {
+                                    let Some(&off) = self.wide_temps.get(self.wide_temp_used)
+                                    else {
+                                        return Err(ForgeError::from(IrError::Internal(
+                                            "128 位按引用实参的临时槽不足（预扫描与实参个数不一致）"
+                                                .to_string(),
+                                        )));
+                                    };
+                                    self.wide_temp_used += 1;
+                                    let base = self.builder.stack_addr(off);
+                                    match &arg.node {
+                                        Operand::Move(p) | Operand::Copy(p) => {
+                                            let src = self.place_addr(p);
+                                            let size = layout_bytes(self.tcx, a_ty);
+                                            self.copy_agg(base, src, size);
+                                        }
+                                        Operand::Constant(ct) => {
+                                            let Some(bytes) = self.eval_const_bytes(ct.const_)
+                                            else {
+                                                return Err(
+                                                    crate::abi::wide_int_shape_unsupported(
+                                                        format!(
+                                                            "调用 `{}`：128 位按引用实参常量 `{a_ty}` 求不出字节",
+                                                            self.fn_name
+                                                        ),
+                                                    ),
+                                                );
+                                            };
+                                            self.agg_const_bytes(base, &bytes);
+                                        }
+                                        _ => {
+                                            return Err(crate::abi::wide_int_shape_unsupported(
+                                                format!(
+                                                    "调用 `{}`：128 位按引用实参来源不可物化（{:?}）",
+                                                    self.fn_name, arg.node
+                                                ),
+                                            ));
+                                        }
+                                    }
+                                    call_args.push(base);
+                                    continue;
+                                }
+                                Some(crate::abi::WideIntArg::Pairs) => {}
+                                None => {
+                                    return Err(crate::abi::wide_int_shape_unsupported(format!(
+                                        "调用 `{}`：128 位实参 `{a_ty}` 的被调方",
+                                        self.fn_name
+                                    )));
+                                }
+                            }
                         }
                         // &str/&[T] 字面量实参（ConstValue::Slice）：ptr = rodata
                         // 地址（global_addr + intern_const_data 内容去重落盘）、
@@ -794,13 +962,27 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         );
                     }
                     // 128 位整数现在是真正的 `i128` 值（后端 legalize 拆成 n 肢），
-                    // 不是"两个 i64 寄存器返回" ⇒ 走普通单返回值路径。
+                    // 但**跨 ABI 边界的返回形态**按被调方 `FnAbi` 决定（v27 M6-88，`WA-52`）：
+                    // 16 字节向量槽 ⇒ 一个 `V128` 值（发射侧读 `XMM0`）；否则两个整数槽。
                     let ret_tys: Vec<TypeId> = if ret_ty == TypeId::VOID {
                         vec![]
                     } else if is_agg_mem(self.tcx, dest_ty) {
                         // sret（16 字节及以上非 ScalarPair 聚合）：void 返回
                         //（ret 缓冲由隐藏参数写入）
                         vec![]
+                    } else if is_wide_int_ty(dest_ty) {
+                        match callee_wide.and_then(|w| w.ret) {
+                            Some(crate::abi::WideIntRet::Vector) => vec![TypeId::V128],
+                            Some(crate::abi::WideIntRet::Registers) => {
+                                vec![TypeId::I64, TypeId::I64]
+                            }
+                            _ => {
+                                return Err(crate::abi::wide_int_shape_unsupported(format!(
+                                    "调用 `{}`：128 位返回 `{dest_ty}` 的被调方",
+                                    self.fn_name
+                                )));
+                            }
+                        }
                     } else if is_scalar_pair_abi(self.tcx, dest_ty) {
                         // ScalarPair（如 (i32,bool) 8 字节、16 字节结构体）返回：
                         // RAX + RDX 两个标量。判断用 backend_repr 而非字节区间——
@@ -1476,8 +1658,9 @@ pub(crate) fn fnv1a64(data: &[u8]) -> u64 {
 
 fn build_signature<'tcx>(
     tcx: TyCtxt<'tcx>,
-    _instance: &Instance<'tcx>,
+    instance: &Instance<'tcx>,
     body: &Body<'tcx>,
+    own_wide: Option<crate::abi::WideIntAbi>,
 ) -> FunctionSignature {
     // 提取参数类型（P4.1：跳过 Ignore/ZST 参数 + ScalarPair 拆 2 / 聚合指针，
     // 与 lower_body 入口收参 / call 打包三处一致——否则 FunctionSignature 的
@@ -1487,6 +1670,21 @@ fn build_signature<'tcx>(
         .filter(|local| layout_bytes(tcx, body.local_decls[*local].ty) > 0)
         .flat_map(|local| {
             let ty = body.local_decls[local].ty;
+            // **128 位整数标量：形态来自 `FnAbi`**（v27 M6-88，`WA-52`）——按引用就是
+            // 一个指针槽，其余是两个整数槽。放在 `is_scalar_pair_abi` 之前：它对
+            // `Wide` 的旧答案恒为"两个槽"，那正是 C 家族被编错的根源。
+            if is_wide_int_ty(ty) {
+                return match own_wide.and_then(|w| w.arg) {
+                    Some(crate::abi::WideIntArg::ByRef) => {
+                        vec![(TypeId::I64, format!("arg_{}_ptr", local.index()))]
+                    }
+                    // 形态未知时按 Rust 形态落签名；入口收参会明确报错（不静默编下去）。
+                    _ => vec![
+                        (TypeId::I64, format!("arg_{}_lo", local.index())),
+                        (TypeId::I64, format!("arg_{}_hi", local.index())),
+                    ],
+                };
+            }
             if is_scalar_pair_abi(tcx, ty) {
                 // ScalarPair 参数：两个整数寄存器（与入口收参/调用侧一致）
                 vec![
@@ -1520,6 +1718,15 @@ fn build_signature<'tcx>(
     }
     let returns = if return_ty.is_unit() || return_ty.is_never() || sret {
         vec![]
+    } else if is_wide_int_ty(return_ty) {
+        // **128 位整数返回：形态来自 `FnAbi`**（`Cast{Vector 16}` ⇒ `XMM0`，
+        // `Direct` ⇒ `RAX:RDX`）。载体用内建 `V128`：16 字节向量，发射侧按
+        // `bank = "vec"` 的规则整寄存器搬移（`MOVAPS`），位模式不受元素类型影响。
+        match own_wide.and_then(|w| w.ret) {
+            Some(crate::abi::WideIntRet::Vector) => vec![TypeId::V128],
+            Some(crate::abi::WideIntRet::Indirect) => vec![],
+            _ => vec![TypeId::I64, TypeId::I64],
+        }
     } else if is_scalar_pair_abi(tcx, return_ty) {
         // ScalarPair 返回（如 (i32,bool) 8 字节）：RAX + RDX 两个标量
         vec![TypeId::I64, TypeId::I64]
@@ -1531,13 +1738,24 @@ fn build_signature<'tcx>(
         all_params.insert(0, (TypeId::I64, "sret_ptr".to_string()));
     }
 
-    FunctionSignature::new(
+    let sig = FunctionSignature::new(
         &all_params
             .iter()
             .map(|(t, s)| (*t, s.as_str()))
             .collect::<Vec<_>>(),
         &returns,
-    )
+    );
+    // **Rust ABI 与 C 家族分开**（v27 M6-86，`WA-52`）：`rust` 约定在 x86_64 上
+    // 只为了"128 位标量不按 Win64 C 的引用/XMM0"（规则 `builtin::RUST_ABI`，父 `win64`）。
+    // 其它目标（aarch64/riscv64）的 C 家族本来就是两整数槽/两寄存器，与 Rust ABI 同形
+    // ⇒ **不切换**，沿用该目标自己的 C 约定（否则会查不到 (arm64, rust) 的绑定）。
+    if crate::abi::abi_is_rust(tcx, instance)
+        && matches!(tcx.sess.target.arch, rustc_target::spec::Arch::X86_64)
+    {
+        sig.with_calling_convention(CallConvId::named("rust"))
+    } else {
+        sig
+    }
 }
 
 pub(crate) fn symbol_name_for_instance<'tcx>(

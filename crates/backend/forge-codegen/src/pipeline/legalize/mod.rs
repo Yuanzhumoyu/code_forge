@@ -202,7 +202,22 @@ impl<M: TargetMachine> LegalizeDriver<M> {
                 // **宽值除/余**：分肢长除法（无分支展开，v27 M6-79）。必须排在
                 // `wide_split` **之前**——它产出的是宽值上的算术语义，靠 `wide_split` 落成肢。
                 Box::new(wide_div::WideDivPass),
-                // 多寄存器表示（宽值 → n 个原生宽 SSA 值）；未覆盖形态明确 fail-closed。
+            ],
+        }
+    }
+
+    /// **宽值批**：多寄存器表示（宽值 → n 个原生宽 SSA 值）+ 位宽补位。
+    ///
+    /// **必须排在聚合批（`with_aggregates_except_va`）之后**（v27 M6-84，`WA-52`）：
+    /// 跨 ABI 边界的宽值要先由计划相/聚合批改写成"按引用指针 / sret 缓冲 / 向量槽"，
+    /// `wide_split` 才只面对**函数内部**的宽值。它以前排在标量批里 ⇒ 128 位标量一跨界就
+    /// fail-closed（`宽值指令形态 Call`）。
+    ///
+    /// 两条顺序仍钉死：`wide_split` 在 `narrow_overflow`/`wide_div` **之后**；
+    /// `int_width` 在 `wide_split` **之后**（否则会试图用不存在的 `bitcast [i64;2] ↔ i128`）。
+    pub fn wide() -> Self {
+        Self {
+            passes: vec![
                 Box::new(wide_split::WideSplitPass),
                 Box::new(int_width::IntWidthPass),
             ],

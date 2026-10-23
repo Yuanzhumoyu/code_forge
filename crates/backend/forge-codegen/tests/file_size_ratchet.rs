@@ -50,7 +50,9 @@ const BUDGETS: [(&str, usize); 6] = [
     // va 展开主体：`expand_start` + `expand_arg` 共享局部不变量（游标推进次序）。
     ("pipeline/va_expand/expand.rs", 621),
     // 编译会话入口 + 模块编排（M4 已切出 state 与测试）。
-    ("pipeline/compiler/mod.rs", 615),
+    // 宽值批的调用点 + 说明（v27 M6-84：ABI 编组次序）——比原上限多 4 行，理由在此。
+    // +溢出决策事件化（v27 M6-87，P4：逐值报 vreg/offset/size）——比上一档多 9 行。
+    ("pipeline/compiler/mod.rs", 640),
     // 会话测试体（613 行用例）：测试长不构成阅读负担的同类问题，且与实现同源。
     // 栈探测的正反两面用例（v27 M6-78：大帧必须发 `mov rax,size; call __chkstk`，
     // 小帧不得发）——同一形状的编译级断言放这里最省重复。

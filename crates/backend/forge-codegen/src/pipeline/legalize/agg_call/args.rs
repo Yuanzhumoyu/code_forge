@@ -95,8 +95,12 @@ pub(crate) fn expand_agg_call_args(
             if matches!(inst.opcode, Opcode::Call | Opcode::CallIndirect) {
                 let skip = usize::from(inst.opcode == Opcode::CallIndirect);
                 for (op_idx, &v) in inst.operands.iter().enumerate().skip(skip) {
+                    // **按大小**判，不只认聚合（v27 M6-83，`WA-52`）：16 字节**标量**
+                    //（`i128`/`u128`）在 Win64 上同样要求"调用方副本 + 指针"。
+                    // **向量除外**：≤16B 向量按值进 XMM（发射侧管），>16B 向量在 IR 里
+                    // 已经是 sret/指针——按聚合改写会把它们拆成 i64 段（静默错值）。
                     if let Some(ty) = func.dfg.value_type(v)
-                        && store.is_aggregate(ty)
+                        && !store.is_vector(ty)
                         && store.size_bytes(ty) > 8
                     {
                         jobs.push(ArgJob {

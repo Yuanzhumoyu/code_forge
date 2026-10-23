@@ -191,6 +191,150 @@ pub(crate) fn fn_abi_is_c_variadic<'tcx>(tcx: TyCtxt<'tcx>, instance: &Instance<
         .is_ok_and(|abi| abi.c_variadic)
 }
 
+/// 该实例的调用约定是不是 **Rust ABI**（`extern "Rust"`，即没有写 `extern`）。
+///
+/// 为什么降级层要区分它（v27 M6-86，`WA-52`）：同一台机器上 `u128` 的传参/返回形态
+/// **随约定而变**——Rust ABI 是两整数槽/`RAX:RDX`（实测 LLVM `mov %rcx,%rdx; mov $3,%eax`），
+/// 而 `extern "C"`（win64）是**按引用 + XMM0**。把后者套到 Rust ABI 上会立刻破坏
+/// 现已正确的宽参数/宽返回。
+pub(crate) fn abi_is_rust<'tcx>(tcx: TyCtxt<'tcx>, instance: &Instance<'tcx>) -> bool {
+    MonoLayoutCx(tcx)
+        .fn_abi_of_instance(*instance, ty::List::empty())
+        .is_ok_and(|abi| format!("{:?}", abi.conv) == "Rust")
+}
+
+/// **16 字节整数标量**（`i128`/`u128`）在一个函数边界上的形态——**问 rustc 的 `FnAbi`**。
+///
+/// # 为什么不能按"约定名"分
+///
+/// 同一台机器、同一份约定数据下，`u128` 的形态由**目标 ABI 的传递规则**决定，而 rustc
+/// 的 `FnAbi` 就是这条规则在本目标上的权威投影（实测，2026-10-24，x86_64-pc-windows-msvc）：
+///
+/// | 边界 | Rust ABI | `extern "C"`（Win64） |
+/// | --- | --- | --- |
+/// | 实参 | `Direct`（≡ 两个整数槽） | `Indirect { pointee_size: 16 }`（按引用） |
+/// | 返回 | `Direct`（≡ `RAX:RDX`） | `Cast { unit: Vector { size: 16 } }`（`XMM0`） |
+///
+/// 所以降级层问的是**数据**（`PassMode`），不写"如果是 C 就一定按引用"这类判断：
+/// 换目标、换约定、rustc 改分类，这里都跟着走；问不到就 fail-closed（不猜）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WideIntArg {
+    /// 两个整数槽（lo/hi）——Rust ABI、SysV 等。
+    Pairs,
+    /// 按引用：调用方副本的指针（Win64 的 C 家族）。
+    ByRef,
+}
+
+/// 16 字节整数标量的**返回**落点。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WideIntRet {
+    /// 两个整数寄存器（`RAX:RDX`）——Rust ABI、SysV 等。
+    Registers,
+    /// 一个 16 字节向量寄存器（`XMM0`）——Win64 的 C 家族（`PassMode::Cast` 的
+    /// `Vector { size: 16 }` 单元就是它）。
+    Vector,
+    /// 隐藏 sret 指针（本后端未见；见到即由降级层明确拒绝，不猜形态）。
+    Indirect,
+}
+
+/// 一个签名的 128 位边界形态（两侧按需给：只关心存在的那一侧）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WideIntAbi {
+    pub arg: Option<WideIntArg>,
+    pub ret: Option<WideIntRet>,
+}
+
+/// 该类型是不是 16 字节整数标量（`i128`/`u128`）。
+fn is_wide_int_ty(ty: Ty<'_>) -> bool {
+    matches!(
+        ty.kind(),
+        ty::TyKind::Int(ty::IntTy::I128) | ty::TyKind::Uint(ty::UintTy::U128)
+    )
+}
+
+/// 问该实例的 `FnAbi`：128 位边界的形态（没有 128 位边界 ⇒ `None`）。
+///
+/// 返回 `None` 还有一种情形：`FnAbi` 求不出来（布局错误等）——调用点拿到 `None`
+/// 而手上又有 128 位值时**必须 fail-closed**（`WA-52` 的成因就是"猜一个继续"）。
+pub(crate) fn wide_int_abi<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: &Instance<'tcx>,
+) -> Option<WideIntAbi> {
+    let abi = MonoLayoutCx(tcx)
+        .fn_abi_of_instance(*instance, ty::List::empty())
+        .ok()?;
+    let mut arg = None;
+    for a in &abi.args {
+        if is_wide_int_ty(a.layout.ty) {
+            // 同一签名里同一类型的形态一致（类型驱动）；取到一条即可。
+            arg = Some(match &a.mode {
+                PassMode::Indirect { .. } => WideIntArg::ByRef,
+                _ => WideIntArg::Pairs,
+            });
+        }
+    }
+    let ret = if is_wide_int_ty(abi.ret.layout.ty) {
+        Some(match &abi.ret.mode {
+            PassMode::Cast { .. } => WideIntRet::Vector,
+            PassMode::Indirect { .. } => WideIntRet::Indirect,
+            _ => WideIntRet::Registers,
+        })
+    } else {
+        None
+    };
+    if arg.is_none() && ret.is_none() {
+        return None;
+    }
+    Some(WideIntAbi { arg, ret })
+}
+
+/// 调用点：从 MIR 的 `Operand` 解析**被调方实例**。
+///
+/// 返回 `None` = 间接调用 / 解析不了。调用方拿不到被调方时就**必须 fail-closed**：
+/// 128 位值的形态取决于被调方，猜一个约定继续正是 `WA-52` 的成因。
+pub(crate) fn callee_instance<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    func: &Operand<'tcx>,
+) -> Option<Instance<'tcx>> {
+    let Operand::Constant(c) = func else {
+        return None;
+    };
+    let ty::TyKind::FnDef(def_id, substs) = c.const_.ty().kind() else {
+        return None;
+    };
+    ty::Instance::try_resolve(
+        tcx,
+        ty::TypingEnv::fully_monomorphized(),
+        *def_id,
+        substs.skip_binder(),
+    )
+    .ok()
+    .flatten()
+}
+
+/// 调用点：被调方的 128 位边界形态（`None` = 间接调用 / 求不出）。
+pub(crate) fn callee_wide_int_abi<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    func: &Operand<'tcx>,
+) -> Option<WideIntAbi> {
+    wide_int_abi(tcx, &callee_instance(tcx, func)?)
+}
+
+/// 128 位值跨 ABI 边界的形态求不出来 ⇒ **明确拒绝**（fail-closed）。
+///
+/// **单点构造**：缺口守卫要求每个 `[cap:ID]` 在源码里恰好一处 `capability(` 调用，
+/// 所以降级层的各站点都经这个助手（只说明"哪一侧、哪个值"）。见 `backend-gaps.md`
+/// 的 `WIDE_INT_ABI`——间接调用 / `FnAbi` 查询失败时**不猜**形态，正是 `WA-52` 的教训。
+pub(crate) fn wide_int_shape_unsupported(what: impl std::fmt::Display) -> crate::error::ForgeError {
+    crate::error::ForgeError::from(IrError::capability(
+        "WIDE_INT_ABI",
+        format!(
+            "{what}：128 位值跨 ABI 边界的形态求不出来（rustc `FnAbi` 查询失败，或间接调用\
+             拿不到被调方）——不猜形态，也不按某一侧约定继续"
+        ),
+    ))
+}
+
 /// 本后端**实现**的调用约定白名单（Win64 一族）；不在其中的一律 fail-closed。
 ///
 /// 为什么必须拒绝而不是当成 C 处理：收参/传参按 **Win64** 硬编码
@@ -244,27 +388,30 @@ pub(crate) fn fn_abi_kinds<'tcx>(
             fn_abi.args.iter().map(|a| &a.mode).collect::<Vec<_>>()
         );
     }
-    // v27 M5-③：`FnAbi` 把 `i128/u128` 记作 `Direct`（**1 槽**），而我们发射
-    // **两个整数寄存器**（lo/hi）⇒ 计数口径按类型改成 `Wide`（计 2），与打包一致。
+    // **128 位标量的槽数取决于 `PassMode`**（v27 M6-88，`WA-52`）：按引用 = 1 个指针槽，
+    // 其余 = 2 个整数槽。旧实现按**类型**一律记 2 ⇒ C 家族（按引用）会被算成"期望 2 个
+    // 实参而实际打包 1 个"，一致性断言当场 panic（这正是"按约定猜"留下的口径）。
     let args: Vec<AbiKind> = fn_abi
         .args
         .iter()
         .map(|a| {
-            if matches!(
-                a.layout.ty.kind(),
-                ty::TyKind::Int(ty::IntTy::I128) | ty::TyKind::Uint(ty::UintTy::U128)
-            ) {
-                AbiKind::Wide
+            if is_wide_int_ty(a.layout.ty) {
+                if matches!(a.mode, PassMode::Indirect { .. }) {
+                    AbiKind::Direct
+                } else {
+                    AbiKind::Wide
+                }
             } else {
                 abi_kind_of_mode(&a.mode)
             }
         })
         .collect();
-    let ret = if matches!(
-        fn_abi.ret.layout.ty.kind(),
-        ty::TyKind::Int(ty::IntTy::I128) | ty::TyKind::Uint(ty::UintTy::U128)
-    ) {
-        AbiKind::Wide
+    let ret = if is_wide_int_ty(fn_abi.ret.layout.ty) {
+        if matches!(fn_abi.ret.mode, PassMode::Indirect { .. }) {
+            AbiKind::Indirect
+        } else {
+            AbiKind::Wide
+        }
     } else {
         abi_kind_of_mode(&fn_abi.ret.mode)
     };

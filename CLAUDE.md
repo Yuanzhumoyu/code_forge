@@ -15,7 +15,7 @@ docs/
 │   ├── calling-conventions.md # 调用约定层 forge-abi（v20 A1：规则/绑定/计划 + forge-isa abi）
 │   ├── aarch64-encoding-ref.md# A64 编码参考（arm64 后端/golden 依据）
 │   ├── backend-pipeline.md    # 后端编译管线契约（v23 M1：CompileSession/JitLoader/ModuleSigs）
-│   ├── backend-gaps.md        # 后端能力缺口台账（v24 M3：21 条 `[cap:ID]` + 决策 + 双向守卫）
+│   ├── backend-gaps.md        # 后端能力缺口台账（`[cap:ID]` + 决策 + 双向守卫；条数以台账为准）
 │   ├── constants.md           # 常量层（v28：BitValue 比特值 / ConstId 四元枚举 / ConstantPool 四通道 / AsConst）
 │   └── imm_str.md             # ImmStr 类型设计（forge-ir 代码注释引用）
 ├── plans/                 # 进行中专项方案（活账本）[progress]
