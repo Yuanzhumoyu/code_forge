@@ -520,6 +520,21 @@ fn build_steps(a: &Args) -> Vec<Step> {
             "4",
         ],
     ));
+    // **arm64 对象级 oracle**（v27 P3）：同一段 A64 汇编交 clang 逐字节对照；编译产物
+    // 写成真实 ELF64/AArch64 对象后核对 .text 字节、ELF 头与反汇编。缺 LLVM 工具时
+    // 测试自身打印 SKIP（不是假绿，也不是环境红）。
+    push!(cargo_step(
+        "arm64-oracle",
+        "arm64 对象级 oracle（编码逐字节对照 clang + ELF 对象层）",
+        Scope::Windows,
+        &[
+            "test",
+            "-p",
+            "forge-codegen",
+            "--test",
+            "arm64_clang_oracle"
+        ],
+    ));
 
     // ── 守卫注册表 ────────────────────────────────────────────────────
     for (krate, target, what) in GUARDS {
@@ -670,6 +685,8 @@ pub fn run(a: &Args, verbose: bool) -> anyhow::Result<i32> {
             "rustc-e2e-guards",
             // 跨后端 ABI 真值（v27 P1 / `WA-52`）：自编自调的 e2e 测不出混链错误
             "rustc-abi-cross",
+            // arm64 对象级 oracle（v27 P3：第二目标的编码/对象层真值）
+            "arm64-oracle",
             "rustc-determinism",
             "rustc-opt-levels",
             "rustc-dwarf",

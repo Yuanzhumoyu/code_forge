@@ -12,6 +12,23 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-24 · M6-92：P3 对象级第二目标——arm64 编码/对象层 clang oracle
+
+方案 §2.7 把 M4-T3 拆成"对象级（本机可做）/执行级（环境依赖）"；本轮落地对象级：
+
+- **编码 oracle**：24 条后端会发射的 A64 指令（ALU 立即数/寄存器/移位、乘除、
+  MOVZ/MOVK、访存、BR/BLR/RET、NOP）由本谱 `assemble+encode` 编一遍、由
+  `clang --target=aarch64-unknown-linux-gnu -c` 汇编同一段文本（`llvm-objcopy` 取
+  `.text`）再逐字节对照——**独立于手抄 golden**（golden 防回退，oracle 防抄错）。
+- **对象级 oracle**：编译 `fn add(a,b)->i64`（arm64 TM）→ `forge-object` 写
+  `elf64-littleaarch64` 对象 → `llvm-objcopy` 取 `.text` 与 `CompiledFunction.code`
+  **逐字节相等**；`llvm-readobj` 核对 ELF 头；`llvm-objdump -d` 核对函数条目与 `ret`。
+- 缺 LLVM 工具时打印 `SKIP arm64-oracle`（明确跳过，不是假绿）；门禁新增
+  `arm64-oracle` 步（并进 `--subset rustc`）。
+- **未验证（如实记录）**：arm64 的 **Call lowering 尚不存在**（`isa/arm64.toml` 注明
+  "P1 尚未有 Call lowering 规则"）⇒ 外部调用重定位（`R_AARCH64_CALL26`）与链接层
+  还无从对照；执行级仍需 qemu 或 aarch64 std（环境依赖）。
+
 ### 2026-10-24 · M6-91：P4 第三块——寄存器压力峰值（`ALLOC-SUMMARY.peak_live`）
 
 前两块给了"谁溢出到哪"（`SPILL-VALUE`）与"在哪条指令搬、搬到哪个 scratch"

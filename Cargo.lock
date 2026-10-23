@@ -590,6 +590,7 @@ dependencies = [
  "forge-ir",
  "forge-isa-dsl",
  "forge-isa-runtime",
+ "forge-object",
  "forge-opt",
  "log",
  "rayon",

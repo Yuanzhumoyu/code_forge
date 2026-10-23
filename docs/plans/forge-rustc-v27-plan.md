@@ -45,7 +45,7 @@
 | --- | --- | --- |
 | **P1 128 位 C-ABI 跨后端兼容**（2026-10-23 起） | ✅ **已落地（2026-10-24）**：定义侧/调用侧都问 rustc `FnAbi` 的 `PassMode`（按引用 ⇒ 16 字节对齐副本的指针；`Cast{Vector}` ⇒ `XMM0`；`Direct` ⇒ 两整数槽/`RAX:RDX`）；跨后端探针**双向** 42 | §2.8；`WA-52`（已修）；`tests/cross_abi.rs` |
 | **P2 `INLINE_ASM` 的 `sym`/`label`** | 📋 **结论已定、待实现**：需在谱面层做（`[operand.sym]` + 汇编器块内标签），排在 P1 之后；现状 fail-closed | §2.6；台账 `INLINE_ASM` |
-| **P3 M4-T3 第二目标** | ⛔ **执行级受环境限制**（本机无 emulator / aarch64 std / 交叉 gcc-ld）；**对象级可做**（clang/ld.lld/llvm-objdump 齐备） | §2.7 实测表 |
+| **P3 M4-T3 第二目标** | 🔶 **对象级已落地（2026-10-24）**：A64 编码逐字节对照 clang（24 条指令）+ 真实 ELF64/AArch64 对象（`.text` 字节/ELF 头/反汇编）；**执行级**仍受环境限制（无 emulator / aarch64 std / 交叉 gcc-ld） | §2.7；`tests/arm64_clang_oracle.rs`；`arm64-oracle` 门禁步 |
 | **P4 分配器事件化** | ✅ **已完成（2026-10-24）**：`SPILL-VALUE`（逐值）+ `SPILL-EDIT`（逐指令 kind/offset/scratch/width）+ `ALLOC-SUMMARY.peak_live`（寄存器压力峰值）+ `Field::I64`；`events_guard` 用**高压夹具**钉住三种粒度都真触发 | §8 M6-87/M6-90/M6-91；`events_guard` 三方双向 |
 | M1 正确性清零（溢出 / 窄有符号 / 向量溢出 / regalloc） | ✅ 落地 | §8 M1；e2e 硬断言、`known_failure` = 0 |
 | M2 `global_asm!` | ✅ 落地 | §8 M2；e2e `global_asm_call` / `global_asm_sym_const` |
@@ -142,6 +142,14 @@
 
 ⇒ P3 的"执行级"部分是**环境依赖**，不是代码缺口：记在这里，等有换机/换环境时再开；
 本机先把"对象级"那一档做起来（验收 = 与 clang 的字节/重定位对照表全绿）。
+
+**进度（2026-10-24，M6-92）**：对象级的**编码 + 对象层**已落地——
+`crates/backend/forge-codegen/tests/arm64_clang_oracle.rs` 用 clang 做独立 oracle：
+24 条 A64 指令逐字节对照；`fn add(a,b)` 编成 `elf64-littleaarch64` 对象后 `.text`
+与 `CompiledFunction.code` 逐字节相等，ELF 头/反汇编由 `llvm-readobj`/`llvm-objdump`
+核对；门禁新增 `arm64-oracle`。**仍未覆盖**：arm64 的 Call lowering 还不存在
+（`isa/arm64.toml` 注明），所以外部调用的 `R_AARCH64_CALL26`/链接层尚无从对照；
+执行级仍是环境依赖。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

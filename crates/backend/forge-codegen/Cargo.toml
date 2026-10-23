@@ -18,6 +18,10 @@ log = "0.4.34"
 # Optional dependencies
 rayon = { version = "1", optional = true }
 
+[dev-dependencies]
+# arm64 对象级 oracle（v27 P3）：把编译结果写成 ELF 对象，与 clang 的产物逐项对照。
+forge-object = { path = "../../tools/forge-object" }
+
 [features]
 default = []
 parallel = ["dep:rayon", "forge-opt/parallel"]
