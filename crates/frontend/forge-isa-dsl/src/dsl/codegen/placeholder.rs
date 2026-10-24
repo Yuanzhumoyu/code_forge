@@ -438,6 +438,59 @@ pub(crate) fn placeholders() -> &'static [Ph] {
                 }
             }),
         },
+        // {fconst_f0}：浮点常量位模式的 16 位分片（与 iconst_f* 同序）——
+        // A64 Fconst 用它把 f32/f64 位型经 GPR 装进 FPR（v27 M6-102）。
+        Ph {
+            name: "{fconst_f0}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(
+                |_| quote! { ({ let __v = ctx.constant_pool.as_ref().and_then(|p| p.as_f64_bits(crate::prelude::ConstId::from_raw(ctx.current_const_index))).unwrap_or(0) as u64; ((__v >> (16 * 0)) & 0xFFFF) as i64 }) },
+            ),
+        }, // {fconst_f1}：浮点常量位模式的 16 位分片（与 iconst_f* 同序）——
+        // A64 Fconst 用它把 f32/f64 位型经 GPR 装进 FPR（v27 M6-102）。
+        Ph {
+            name: "{fconst_f1}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(
+                |_| quote! { ({ let __v = ctx.constant_pool.as_ref().and_then(|p| p.as_f64_bits(crate::prelude::ConstId::from_raw(ctx.current_const_index))).unwrap_or(0) as u64; ((__v >> (16 * 1)) & 0xFFFF) as i64 }) },
+            ),
+        }, // {fconst_f2}：浮点常量位模式的 16 位分片（与 iconst_f* 同序）——
+        // A64 Fconst 用它把 f32/f64 位型经 GPR 装进 FPR（v27 M6-102）。
+        Ph {
+            name: "{fconst_f2}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(
+                |_| quote! { ({ let __v = ctx.constant_pool.as_ref().and_then(|p| p.as_f64_bits(crate::prelude::ConstId::from_raw(ctx.current_const_index))).unwrap_or(0) as u64; ((__v >> (16 * 2)) & 0xFFFF) as i64 }) },
+            ),
+        }, // {fconst_f3}：浮点常量位模式的 16 位分片（与 iconst_f* 同序）——
+        // A64 Fconst 用它把 f32/f64 位型经 GPR 装进 FPR（v27 M6-102）。
+        Ph {
+            name: "{fconst_f3}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(
+                |_| quote! { ({ let __v = ctx.constant_pool.as_ref().and_then(|p| p.as_f64_bits(crate::prelude::ConstId::from_raw(ctx.current_const_index))).unwrap_or(0) as u64; ((__v >> (16 * 3)) & 0xFFFF) as i64 }) },
+            ),
+        },
         Ph {
             name: "{fconst_hi32_hi20}",
             kind: PhKind::Imm,

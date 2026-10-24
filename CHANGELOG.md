@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-25) — arm64：浮点常量 / Fma / 取整 + FPR↔GPR 桥
+
++ 新增占位符 `{fconst_f0}..{fconst_f3}`（浮点位模式的 16 位分片，与 `{iconst_f*}` 同序），
+  以及 `fmov x↔d` / `w↔s` 四条桥指令 ⇒ `Fconst` 可用（4 片 movz/movk + `fmov` 进 FPR）。
++ 新增 `fmadd`（`Fma`）、`frintp`/`frintm`（`Fceil`/`Ffloor`）的 S/D 编码与降级。
++ 修正 `Fcmp` 降级谓词：`elem` 取的是**结果**类型（bool ⇒ 5），全部规则不命中；
+  改用 `rs1_width`（32/64）。
++ 结果：`jit_matrix_arm64` **75 passed / 0 failed**（was 63）；arm64 op 覆盖 42→46、真缺口 61→57。
+
 ### Added (2026-10-25) — arm64：标量浮点（算术 / 比较 / 转换 / 访存）
 
 + `isa/arm64.toml` 新增标量浮点编码（clang oracle 逐字节核对）：`fadd/fsub/fmul/

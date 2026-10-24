@@ -1778,6 +1778,7 @@ insts = ["cvttsd2si {out}, {0}"]
 | `{g}`、`{gN}` | 临时 GPR XReg（模板级预分配，变量 `__g`/`__gN`） |
 | `{f}`、`{fN}` | 临时 FPR XReg（变量 `__f`/`__fN`） |
 | `{iconst}` / `{fconst}` | 常量池整数/浮点位模式（`current_const_index`） |
+| `{iconst_f0}`..`{iconst_f3}` / `{fconst_f0}`..`{fconst_f3}` | 位模式的 16 位分片（低位序 f0=[15:0]…；A64 用 `movz+movk` 造任意 64 位常量，v27 M6-98/M6-102） |
 | `{off}` | `ctx.current_offset`（StackAddr 帧偏移，已平移 callee_saved） |
 | `{off_f0}`..`{off_f3}` | 同上偏移的 16 位分片（低位序 f0=[15:0]…；A64 用 `movz+movk` 造任意 64 位偏移，v27 M6-98） |
 | `{alloca}` | `ctx.current_alloca_offset`（Alloca 栈槽偏移） |

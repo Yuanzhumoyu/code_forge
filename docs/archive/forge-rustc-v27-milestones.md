@@ -12,6 +12,22 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-25 · M6-102：arm64 浮点常量 / Fma / 取整 + FPR↔GPR 桥
+
+- **占位符**：新增 `{fconst_f0}..{fconst_f3}`（浮点位模式的 16 位分片，与 `{iconst_f*}`
+  同序）——`{fconst}` 原本只有 riscv 风格的 hi20/lo12，A64 的 4 片材料化缺这一层。
+- **编码**（clang oracle +10 条）：`FMADD`（FPD3 形态，bit15 保留位不分配）、
+  `FRINTP`/`FRINTM`（FP1，opc 0x130/0x150）、`FMOV_{X_FROM_D,D_FROM_X,W_FROM_S,S_FROM_W}`
+  （FP1，opcode 0x4F3/0xF1，opc 0x180/0x1C0）。
+- **降级**：`Fconst`（f32/f64 → 4 片 `MOVZ/MOVK` + `fmov`）、`Fma`、`Fceil`、`Ffloor`。
+- **谓词修正**：`Fcmp` 规则原写 `elem`，但 `elem` 取**结果**类型（bool ⇒ 5）⇒ 全部不命中；
+  改为 `rs1_width`（32/64）。这是补 `Fconst` 后矩阵用例真正开跑才暴露的。
+- **验收**：`jit_matrix_arm64` **75 passed / 0 failed**（was 63）；oracle 2/2（+10 条）；
+  pins 刷新（digest、roundtrip 2693、spec 608、op-gap `46, 6, 9, 57`、vary 45、unassigned 270、
+  strict_overlap arm64 18）；asm 语料棘轮计数不变。
+
+**仍未覆盖**：aarch64 core/std、`Fcopysign`、NEON 向量、原子/宽乘除、DWARF/CFI。
+
 ### 2026-10-25 · M6-101：arm64 标量浮点（算术/比较/转换/访存 + QEMU 浮点实参）
 
 - **ISA 编码**（clang oracle 逐字节核对，oracle 表 +18 条）：`FADD/FSUB/FMUL/FDIV/

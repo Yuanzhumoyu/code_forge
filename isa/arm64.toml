@@ -3355,21 +3355,21 @@ insts = ["MOVX {out}, {0}"]
 # 按**宽度**两条：64 位用 X 形式；其余（i1/i8/i16/i32）用 W 形式。`dispatch =
 # "rs1_width"` 只做候选排序、没有窄宽度兜底——`bool_and`（i1）曾因此报 Band 无规则。
 [[lower.Band]]
-when = { eq = ["rs1_width", 64] }
+when = { eq = ["elem", 2] }
 insts = ["ANDREGX {out}, {0}, {1}"]
 
 [[lower.Band]]
 insts = ["ANDREGW {out}, {0}, {1}"]
 
 [[lower.Bor]]
-when = { eq = ["rs1_width", 64] }
+when = { eq = ["elem", 2] }
 insts = ["ORRREGX {out}, {0}, {1}"]
 
 [[lower.Bor]]
 insts = ["ORRREGW {out}, {0}, {1}"]
 
 [[lower.Bxor]]
-when = { eq = ["rs1_width", 64] }
+when = { eq = ["elem", 2] }
 insts = ["EORREGX {out}, {0}, {1}"]
 
 [[lower.Bxor]]
@@ -5055,7 +5055,7 @@ when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 16] }] }
 insts = ["MOVZX {g}, 0", "ADD_X_EXTW_NA {out}, {g}, {0}, 5"]
 
 [[lower.Sextend]]
-when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 32] }] }
+when = { and = [{ eq = ["rd", 64] }, { eq = ["elem", 1] }] }
 insts = ["MOVZX {g}, 0", "ADD_X_EXTW_NA {out}, {g}, {0}, 6"]
 
 [[lower.Sextend]]
@@ -5075,7 +5075,7 @@ when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 16] }] }
 insts = ["MOVZX {g}, 0", "ADD_X_EXTW_NA {out}, {g}, {0}, 1"]
 
 [[lower.Uextend]]
-when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 32] }] }
+when = { and = [{ eq = ["rd", 64] }, { eq = ["elem", 1] }] }
 insts = ["MOVZX {g}, 0", "ADD_X_EXTW_NA {out}, {g}, {0}, 2"]
 
 [[lower.Uextend]]
@@ -5495,35 +5495,35 @@ insts = ["FCVT_D2S {out}, {0}"]
 
 # 整数 ↔ 浮点：按**结果**宽度（rd）与**源**宽度（rs1_width）选形态。
 [[lower.Sitofp]]
-when = { and = [{ eq = ["rd", 32] }, { eq = ["rs1_width", 32] }] }
+when = { and = [{ eq = ["rd", 32] }, { eq = ["elem", 1] }] }
 insts = ["SCVTF_S_W {out}, {0}"]
 
 [[lower.Sitofp]]
-when = { and = [{ eq = ["rd", 32] }, { eq = ["rs1_width", 64] }] }
+when = { and = [{ eq = ["rd", 32] }, { eq = ["elem", 2] }] }
 insts = ["SCVTF_S_X {out}, {0}"]
 
 [[lower.Sitofp]]
-when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 32] }] }
+when = { and = [{ eq = ["rd", 64] }, { eq = ["elem", 1] }] }
 insts = ["SCVTF_D_W {out}, {0}"]
 
 [[lower.Sitofp]]
-when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 64] }] }
+when = { and = [{ eq = ["rd", 64] }, { eq = ["elem", 2] }] }
 insts = ["SCVTF_D_X {out}, {0}"]
 
 [[lower.Uitofp]]
-when = { and = [{ eq = ["rd", 32] }, { eq = ["rs1_width", 32] }] }
+when = { and = [{ eq = ["rd", 32] }, { eq = ["elem", 1] }] }
 insts = ["UCVTF_S_W {out}, {0}"]
 
 [[lower.Uitofp]]
-when = { and = [{ eq = ["rd", 32] }, { eq = ["rs1_width", 64] }] }
+when = { and = [{ eq = ["rd", 32] }, { eq = ["elem", 2] }] }
 insts = ["UCVTF_S_X {out}, {0}"]
 
 [[lower.Uitofp]]
-when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 32] }] }
+when = { and = [{ eq = ["rd", 64] }, { eq = ["elem", 1] }] }
 insts = ["UCVTF_D_W {out}, {0}"]
 
 [[lower.Uitofp]]
-when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 64] }] }
+when = { and = [{ eq = ["rd", 64] }, { eq = ["elem", 2] }] }
 insts = ["UCVTF_D_X {out}, {0}"]
 
 [[lower.Fptosi]]
@@ -5564,131 +5564,131 @@ insts = ["FCVTZU_X_D {out}, {0}"]
 #   标志位银行**的 `CSELW_F` + `FlagCC::{S,O,No}`（mi→S、vs→O、vc→No）。
 # 无序（NaN）条件（U*）用"先按有序判定、再 OR 上 vs"两步。
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 1] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 1] }] }
 insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW_F {out}, {g}, FlagCC::No, SP"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 2] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 2] }] }
 insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW_F {out}, {g}, FlagCC::O, SP"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 3] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 3] }] }
 insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 0, SP"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 4] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 4] }] }
 insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 1, SP", "CSELW_F {out}, {g}, FlagCC::No, {out}"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 5] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 5] }] }
 insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW_F {out}, {g}, FlagCC::S, SP"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 6] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 6] }] }
 insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 9, SP"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 7] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 7] }] }
 insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 12, SP"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 8] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 8] }] }
 insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 10, SP"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 9] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 9] }] }
 insts = ["MOVZW {out}, 0"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 10] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 10] }] }
 insts = ["MOVZW {out}, 1"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 11] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 11] }] }
 insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 0, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 12] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 12] }] }
 insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 12, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 13] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 13] }] }
 insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 10, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 14] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 14] }] }
 insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW_F {out}, {g}, FlagCC::S, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 15] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 15] }] }
 insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 9, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 16] }] }
+when = { and = [{ eq = ["rs1_width", 32] }, { eq = ["cond", 16] }] }
 insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 1, SP"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 1] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 1] }] }
 insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW_F {out}, {g}, FlagCC::No, SP"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 2] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 2] }] }
 insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW_F {out}, {g}, FlagCC::O, SP"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 3] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 3] }] }
 insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 0, SP"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 4] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 4] }] }
 insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 1, SP", "CSELW_F {out}, {g}, FlagCC::No, {out}"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 5] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 5] }] }
 insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW_F {out}, {g}, FlagCC::S, SP"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 6] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 6] }] }
 insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 9, SP"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 7] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 7] }] }
 insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 12, SP"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 8] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 8] }] }
 insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 10, SP"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 9] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 9] }] }
 insts = ["MOVZW {out}, 0"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 10] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 10] }] }
 insts = ["MOVZW {out}, 1"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 11] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 11] }] }
 insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 0, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 12] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 12] }] }
 insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 12, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 13] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 13] }] }
 insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 10, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 14] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 14] }] }
 insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW_F {out}, {g}, FlagCC::S, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 15] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 15] }] }
 insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 9, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
 
 [[lower.Fcmp]]
-when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 16] }] }
+when = { and = [{ eq = ["rs1_width", 64] }, { eq = ["cond", 16] }] }
 insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 1, SP"]
 
 
@@ -5708,3 +5708,123 @@ insts = ["STRS_BASE {0}, [{1}]"]
 [[lower.Fstore]]
 when = { eq = ["rs1_width", 64] }
 insts = ["STRD_BASE {0}, [{1}]"]
+
+[form.FPD3]
+# FP 3 源（FMADD/FMSUB）：opcode u11[31:21]（0xF8=S / 0xFA=D）、rd/rn/rm/ra，
+# bit15 是保留位（不分配，编码从 0 字起写为 0）。
+fields = [
+  "u11[31:21]:opcode",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u5[14:10]:ra",
+]
+
+[inst.FMADD_S]
+form = "FPD3"
+opcode = 0xF8
+asm = "fmadd {dst:fprs:out}, {src:fprs}, {src2:fprs}, {src3:fprs}"
+
+[inst.FMADD_D]
+form = "FPD3"
+opcode = 0xFA
+asm = "fmadd {dst:fpr:out}, {src:fpr}, {src2:fpr}, {src3:fpr}"
+
+[inst.FRINTP_S]
+form = "FP1"
+opcode = 0xF1
+match = { opc = 0x130 }
+asm = "frintp {dst:fprs:out}, {src:fprs}"
+
+[inst.FRINTP_D]
+form = "FP1"
+opcode = 0xF3
+match = { opc = 0x130 }
+asm = "frintp {dst:fpr:out}, {src:fpr}"
+
+[inst.FRINTM_S]
+form = "FP1"
+opcode = 0xF1
+match = { opc = 0x150 }
+asm = "frintm {dst:fprs:out}, {src:fprs}"
+
+[inst.FRINTM_D]
+form = "FP1"
+opcode = 0xF3
+match = { opc = 0x150 }
+asm = "frintm {dst:fpr:out}, {src:fpr}"
+
+# Fma / Fceil / Ffloor（v27 M6-102）：FMADD 与 FRINTP(向 +∞)/FRINTM(向 −∞)。
+# `Fcopysign` 仍未做（需要 FPR↔GPR fmov + 符号位掩码的组合，单独一轮）。
+
+[[lower.Fma]]
+when = { eq = ["elem", 1] }
+insts = ["FMADD_S {out}, {0}, {1}, {2}"]
+
+[[lower.Fma]]
+when = { eq = ["elem", 2] }
+insts = ["FMADD_D {out}, {0}, {1}, {2}"]
+
+[[lower.Fceil]]
+when = { eq = ["elem", 1] }
+insts = ["FRINTP_S {out}, {0}"]
+
+[[lower.Fceil]]
+when = { eq = ["elem", 2] }
+insts = ["FRINTP_D {out}, {0}"]
+
+[[lower.Ffloor]]
+when = { eq = ["elem", 1] }
+insts = ["FRINTM_S {out}, {0}"]
+
+[[lower.Ffloor]]
+when = { eq = ["elem", 2] }
+insts = ["FRINTM_D {out}, {0}"]
+
+# FPR ↔ GPR 的 fmov（v27 M6-102：Fconst 的末步 + fcopysign/位操作的桥）。
+# 复用 FP1 的 `opcode`（[31:21]）+ `opc`（[20:10]）两段常量：
+#   fmov x←d: 0x4F3/0x180；d←x: 0x4F3/0x1C0；w←s: 0xF1/0x180；s←w: 0xF1/0x1C0。
+[inst.FMOV_X_FROM_D]
+form = "FP1"
+opcode = 0x4F3
+match = { opc = 0x180 }
+asm = "fmov {dst:r64:out}, {src:fpr}"
+
+[inst.FMOV_D_FROM_X]
+form = "FP1"
+opcode = 0x4F3
+match = { opc = 0x1C0 }
+asm = "fmov {dst:fpr:out}, {src:r64}"
+
+[inst.FMOV_W_FROM_S]
+form = "FP1"
+opcode = 0xF1
+match = { opc = 0x180 }
+asm = "fmov {dst:r32:out}, {src:fprs}"
+
+[inst.FMOV_S_FROM_W]
+form = "FP1"
+opcode = 0xF1
+match = { opc = 0x1C0 }
+asm = "fmov {dst:fprs:out}, {src:r32}"
+
+# Fconst：位模式先按 X 宽材料化（同 Iconst 的四片），再 `fmov` 进 FPR。
+[[lower.Fconst]]
+when = { eq = ["elem", 1] }
+insts = [
+  "MOVZX3 {g}, {fconst_f3}",
+  "MOVKX2 {g}, {fconst_f2}",
+  "MOVKX1 {g}, {fconst_f1}",
+  "MOVKX {g}, {fconst_f0}",
+  "FMOV_S_FROM_W {out}, {g}",
+]
+
+[[lower.Fconst]]
+when = { eq = ["elem", 2] }
+insts = [
+  "MOVZX3 {g}, {fconst_f3}",
+  "MOVKX2 {g}, {fconst_f2}",
+  "MOVKX1 {g}, {fconst_f1}",
+  "MOVKX {g}, {fconst_f0}",
+  "FMOV_D_FROM_X {out}, {g}",
+]

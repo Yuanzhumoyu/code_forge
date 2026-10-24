@@ -265,8 +265,19 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
 - 结果：`jit_matrix_arm64` **63 passed / 137 skipped / 0 failed**；其余浮点用例
   （`Fma`/`Fceil`/`Ffloor`/`Fcopysign`、向量）仍按能力集 Skip。
 
-**仍未覆盖**：aarch64 的 core/std（当前只能 `#![no_core]`）、`Fma/Fceil/Ffloor/Fcopysign`、
-向量/原子/宽乘除，以及 DWARF/CFI 的 aarch64 形态。
+**进度（2026-10-25，M6-102）——arm64 浮点常量 / Fma / 取整 + FPR↔GPR 桥**：
+
+- `{fconst_f0}..{fconst_f3}` 占位符（浮点位模式的 16 位分片，与 `{iconst_f*}` 同序）+
+  `FMOV_*_FROM_*`（x↔d、w↔s）⇒ `Fconst` 不再缺规则：f32/f64 常量经 GPR 材料化后
+  `fmov` 进 FPR。
+- 新增 `FMADD`（`Fma` 的融合乘加）、`FRINTP`/`FRINTM`（`Fceil`/`Ffloor`，S/D）。
+- `Fcmp` 的谓词从 `elem` 改为 **`rs1_width`**：`elem` 取的是**结果**类型，而 `Fcmp` 的结果是
+  bool（elem=5）⇒ 之前所有 `Fcmp` 规则都不命中（本轮补 `Fconst` 后才暴露）。
+- 结果：`jit_matrix_arm64` **75 passed / 125 skipped / 0 failed**（M6-101 为 63）。
+- 剩余：`Fcopysign`（需符号位掩码 + FPR/GPR 往返，单独一轮）尚未做，仍按能力集 Skip。
+
+**仍未覆盖**：aarch64 的 core/std（当前只能 `#![no_core]`）、`Fcopysign`、NEON 向量、
+原子/宽乘除，以及 DWARF/CFI 的 aarch64 形态。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 
