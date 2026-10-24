@@ -65,7 +65,7 @@
 | M4-T2 约定按目标选 | ✅ **实测已成立**（双向守卫） | `abi_target_real` 的 `abstract_c_…` |
 | M4-T3 目标相关对象层 / 链接层 | ❌ 未做（需交叉工具链验证） | §8 M4 施工图 |
 | M4-T4 对象层根治（`WA-01`） | ✅ 首结论：**按设计关闭**；剩余项见 §8 | `WORKAROUNDS.md` `WA-01` |
-| M5 契约与门禁 | 🔶 **进行中**：门禁 / 子集骨架已在；`i128`/`u128` 已闭环；浮点比较语义已实测清零；余项见下方清单 | 见下方"未闭环清单" |
+| M5 契约与门禁 | ✅ **已完成（2026-10-24）**：门禁/子集骨架、`i128`/`u128`、浮点比较语义（96 判定矩阵）、`sym`/`label` 全部闭环，`known_failure=0`；未覆盖形态一律用 `[cap:…]` 明确拒绝 | 下方清单 + 各里程碑记录 |
 | M6-① 清理 | ✅ **已完成（2026-10-18）**：`forge-rustc` clippy 清零并进全量门禁 | `gate` 的 `rustc-clippy` 步骤 |
 | M6-② 账本归档 + 参考全扫 | ✅ **已完成（2026-10-19）**：本文收缩成"状态表 + 未闭环清单" | `docs/archive/forge-rustc-v27-milestones.md` |
 | M6-③ 代码生成选项 fail-closed | ✅ **已完成（2026-10-19）**：靠 LLVM 管线的 `-C` 选项统一拒绝 | 台账 `CODEGEN_OPTS` |
@@ -81,7 +81,7 @@
 | M6-⑬ 门禁自洽与真 std 语料 | ✅ **已完成（2026-10-19）**：`cli_tests` 夹具改用工作区 `CARGO_HOME` + `target/cli-tests`（沙箱可写）；`rustc-std` 步骤进全套门禁（forge 编 vs LLVM 编逐行对拍，默认 O0/O2）；全套 **51 步 0 失败** | archive M6-㊱/㊲ |
 | M6-⑭ `cargo test` 能力 | ✅ **已实测（2026-10-19）**：`cargo test -Z panic-abort-tests` 在 forge 编的夹具工程上跑通（默认 `cargo test` 因 libtest 要 unwind 而与 `[cap:UNWIND]` 冲突，属明确拒绝而非缺陷） | README「用法」；archive M6-51 |
 
-**M5 未闭环清单（2026-10-11 状态修正；**M5 未完成**，不提交 PR）**：
+**M5 清单（2026-10-11 立项；2026-10-24 全部销项——原标注的「M5 未完成，不提交 PR」已失效）**：
 
 - ~~NaN 比较缺陷~~ **已修复**（`Ne` → `FloatCC::Une`；`float_cmp_semantics` 钉住）；
 - ~~同类仍可能有遗留：「下一步要在 `Fcmp` 发射路径上实测 `cond` 取值，别再靠枚举序推断」~~
@@ -97,15 +97,21 @@
   后端 `legalize::wide_split` 用**多寄存器表示**（n 个原生宽 SSA 值）拆解；任意位宽（含 `i100`、
   `i256`）都有 JIT 验证，e2e 全量（`u128_*`/`i128_*` 在内）。未覆盖形态（宽值 phi、除/余）
   明确 `[cap:WIDE_INT_SHAPE]`；
-- `label`/`sym` 仍 fail-closed（前者受"指令流内标签"的结构限制，后者受谱汇编器文法限制）。
+- ~~`label`/`sym` 仍 fail-closed（前者受"指令流内标签"的结构限制，后者受谱汇编器文法限制）~~
+  **已闭环（2026-10-24，M6-93/M6-94）**：`sym` 走"符号地址物化到输入寄存器 + abs64 重定位"，
+  `label` 走"目标块 → 外部标签表 → 编码器 `use_label_at`"；两者都有正反两面的 e2e 守卫，
+  字面符号写法仍显式 fail-closed（`inline_asm_sym_literal`）。
 - **零容忍口径现在是"实测过的 0"，不是"挡在套件外的 0"**：`known_failure: true` 计数 = 0，
   且新加的浮点条件矩阵是**逐条件**断言（不是代表性抽样）。
 
+⇒ **M5 清单已清零（2026-10-24）**：上列每一条都有"修复 + 守卫/用例"的落点，且全量门禁连续为绿。
+
 ## 2.6 P2 决策：`INLINE_ASM` 的 `sym` / `label`（2026-10-23）
 
-现状（见 `docs/reference/backend-gaps.md` 的 `INLINE_ASM` 行）：S1–S4 的可用面已落地
-（纯文本、`in`/`out`/`inout`+`reg`、`const`、`clobber_abi`、`options(noreturn)`），
-**`sym` 与 `label` 仍 fail-closed**（`[cap:INLINE_ASM]`，明确报错而非静默错值）。
+现状（见 `docs/reference/backend-gaps.md` 的 `INLINE_ASM` 行）：S1–S4、`sym`、`label`
+**已全部落地**（`sym` M6-93、`label` M6-94）；两者**没有**按当时预估去扩谱面操作数文法，
+而是分别用"地址物化到输入寄存器"与"外部标签表 + 编码器既有 `use_label_at`"完成。
+字面符号写法仍显式 fail-closed（`inline_asm_sym_literal`）。下面是当时的决策记录（保留）。
 
 两条都**不是**"在降级层补一段字符串拼接"能解决的，它们要动的是**谱面汇编器**这一层：
 

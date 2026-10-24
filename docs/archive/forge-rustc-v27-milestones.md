@@ -12,6 +12,22 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-24 · M6-96：M5 清单销项（账本与代码对齐）
+
+M5 的"未闭环清单"最后一项（`sym`/`label` fail-closed）随 M6-93/M6-94 落地而闭合；
+逐项核对后把 M5 从"进行中"改为"已完成"：
+
+| 清单项 | 证据 |
+| --- | --- |
+| NaN 比较缺陷 | `Ne → FloatCC::Une`；e2e `float_cmp_semantics` |
+| `Fcmp` 条件矩阵（96 判定） | JIT `test_jit_fcmp_all_conditions_matrix`；e2e `float_cmp_normalized_bool`（数值化断言） |
+| `i128`/`u128` | `map_type` 真 128 位 + `legalize::wide_split`；e2e `u128_*`/`i128_*`；未覆盖形态 `[cap:WIDE_INT_SHAPE]` |
+| `sym`/`label` | e2e `inline_asm_sym*` / `inline_asm_label*`（M6-93/94） |
+| 零容忍 | `known_failure: true` 计数 = 0（`rustc_doc_counts` 守卫） |
+
+同步修掉两处会误导的旧陈述：状态表 M5 行、§2.6 开头的"sym/label 仍 fail-closed"。
+文档改动仅此三处，无代码变更；验收 = markdownlint 0 + `gate --subset quick`。
+
 ### 2026-10-24 · M6-95：M6-⑩ 闭合——根因是帧记账，不是分配器的"活值驱逐"
 
 两条症状（`spill_vreg` 驱逐活值疑似不写回；`StackAddr` 外提后 AV）被同一条根因解释：
