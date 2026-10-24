@@ -163,9 +163,24 @@ impl CodeSink {
 
     /// Record a relocation entry.
     pub fn add_reloc(&mut self, offset: usize, kind: RelocKind, symbol: &str, addend: i64) {
+        self.add_reloc_ex(offset, kind, None, symbol, addend);
+    }
+
+    /// Record a relocation entry with the **ISA reloc 语义名**（`[asm.reloc.<名>]`；
+    /// v27 M6-98）。对象层按"格式 + 语义名"查目标约定的链接器重定位类型表；
+    /// 未命名的重定位走对象库的 Generic 映射（x86 现状）。
+    pub fn add_reloc_ex(
+        &mut self,
+        offset: usize,
+        kind: RelocKind,
+        reloc: Option<&str>,
+        symbol: &str,
+        addend: i64,
+    ) {
         self.relocs.push(Relocation {
             offset,
             kind,
+            reloc: reloc.map_or_else(ImmStr::default, ImmStr::from),
             symbol: ImmStr::from(symbol),
             addend,
         });
@@ -210,6 +225,7 @@ impl CodeSink {
                 self.relocs.push(Relocation {
                     offset: *patch_offset,
                     kind: *kind,
+                    reloc: ImmStr::default(),
                     symbol: ImmStr::default(),
                     addend: *target as i64,
                 });
@@ -230,6 +246,7 @@ impl CodeSink {
                     self.relocs.push(Relocation {
                         offset: *patch_offset,
                         kind: *kind,
+                        reloc: ImmStr::default(),
                         symbol: ImmStr::default(),
                         addend: *target as i64,
                     });
@@ -240,6 +257,7 @@ impl CodeSink {
                     self.relocs.push(Relocation {
                         offset: *patch_offset,
                         kind: *kind,
+                        reloc: ImmStr::default(),
                         symbol: ImmStr::default(),
                         addend: rel_target,
                     });

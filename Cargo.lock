@@ -586,6 +586,7 @@ name = "forge-codegen"
 version = "0.1.0"
 dependencies = [
  "forge-abi",
+ "forge-abi-model",
  "forge-dsl",
  "forge-ir",
  "forge-isa-dsl",
@@ -671,6 +672,7 @@ dependencies = [
 name = "forge-object"
 version = "0.1.0"
 dependencies = [
+ "forge-abi-model",
  "forge-codegen",
  "forge-ir",
  "object",

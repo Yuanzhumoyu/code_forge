@@ -6,6 +6,9 @@ description = "Forge Object: ELF/PE/Mach-O object file writer for compiled funct
 
 [dependencies]
 forge-ir = { path = "../../foundation/forge-ir" }
+# 链接层重定位表的**数据形状**（`LinkFormat`/`LinkRelocTable`，v27 M6-98）：
+# 表的内容来自目标约定（conventions/*.toml），本 crate 只查表、不做 arch 判断。
+forge-abi-model = { path = "../../foundation/forge-abi-model" }
 forge-codegen = { path = "../../backend/forge-codegen" }
 object = { version = "0.40.0", features = ["write"] }
 target-lexicon = "0.13.5"

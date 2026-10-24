@@ -163,6 +163,14 @@ sxtx = 7
 # （不按操作数失败回退），形状相同就会互相遮蔽（实测：加了重定位变体后
 # `add W0, W1, #0` 反而装配不出来）。一张表覆盖带 `#` 与不带 `#` 两种写法。
 # 名字清单 = A64 的重定位修饰集合（语料普查 47 个名字）。
+
+# ── 链接器重定位命名（v27 M6-98）──
+# **仅命名形态**（不写 `operand`）：给指令 **label 槽**的外部引用起语义名；
+# 对象层按目标约定的 `[link.<format>]` 把该名字映射成链接器重定位类型
+#（`forge-object` 里没有任何 `Architecture` 分支——新增 ISA 只加数据）。
+[asm.reloc.call26]
+semantics = "pc_relative"
+
 [asm.immfn.abs_g0]
 texts = ["#:abs_g0:{0}", ":abs_g0:{0}"]
 expr = "{0}"
@@ -1462,6 +1470,9 @@ asm = "b {target:off26}"
 form = "BREL"
 opcode = 0x25
 roles = ["call"]
+# `call26`（仅命名形态）：BL 的 label 槽逃逸成外部符号时，对象层按目标约定的
+# `[link.<format>] call26` 落链接器重定位类型（ELF = R_AARCH64_CALL26）。
+reloc = "call26"
 asm = "bl {target:off26}"
 
 # ── 逻辑寄存器 AND/BIC/ORR/ORN/EOR/EON（寄存器三操作数）──
@@ -3302,75 +3313,22 @@ insts = ["MULX {out}, {0}, {1}"]
 # Iconst 的 immediate 是 `Immediate::Const(cid)`，imm0 = 池索引正数，无值语义，
 # P3① 实证 imm0<0 规则永不命中）：
 #   16 位域内（|v| < 0x10000）→ 单条 MOVZ（正）/MOVN（负，高位全 1 = 符号扩展）。
-#   域外 → 全片序列：X 恒 4 条 movz(hw3)+movk(hw2/hw1/hw0)、W 恒 2 条
-#   movz(hw1)+movk(hw0)——任意 64/32 位位型均可构造（含 i64 负大值：两补码
-#   位型逐片写入，movz hw3 置高片后 movk 覆盖低片，其余位先清零后覆写，正确）。
+#   域外 → 全片序列（恒 X 4 条）：movz(hw3)+movk(hw2/hw1/hw0)——任意 64 位位型
+#   均可构造（含 i64 负大值：两补码位型逐片写入，movz hw3 置高片后 movk 覆盖低片）。
 # 序列构造先后序 = 高片 movz 先（清零其它）→ 低片 movk 依 hw 降序覆写。
+#
+# **按 X 宽材料化，不按 rd 分 X/W**（v27 M6-98）：i32 常量也用 X 形式 ⇒ 物理寄存器
+# 里是**符号扩展后的 64 位**值。这是"规范寄存器形态"约定（x86 的
+# `MOV_REG_IMM64` 同样恒 64 位）：混合宽度使用（如 `iadd(ptr, i32)` 的 -4 偏移）
+# 读 64 位时才是对的；W 形式会把高位清零（-4 变 0x0000_0000_FFFF_FFFC → 野地址，
+# 实测 QEMU 走异常向量死循环）。32 位使用者读低 32 位，语义不受影响。
 [[lower.Iconst]]
-when = { and = [
-  { eq = [
-    "rd",
-    64,
-  ] },
-  { lt = [
-    "iconst",
-    0,
-  ] },
-  { ge = [
-    "iconst",
-    -65536,
-  ] },
-] }
+when = { and = [{ lt = ["iconst", 0] }, { ge = ["iconst", -65536] }] }
 insts = ["MOVNX {out}, {iconst_c16}"]
 
 [[lower.Iconst]]
-when = { and = [
-  { eq = [
-    "rd",
-    64,
-  ] },
-  { ge = [
-    "iconst",
-    0,
-  ] },
-  { lt = [
-    "iconst",
-    65536,
-  ] },
-] }
-insts = ["MOVZX {out}, {iconst}"]
-
-[[lower.Iconst]]
-when = { and = [
-  { eq = [
-    "rd",
-    64,
-  ] },
-  { not = { and = [
-    { ge = [
-      "iconst",
-      -65536,
-    ] },
-    { lt = [
-      "iconst",
-      65536,
-    ] },
-  ] } },
-] }
-insts = [
-  "MOVZX3 {out}, {iconst_f3}",
-  "MOVKX2 {out}, {iconst_f2}",
-  "MOVKX1 {out}, {iconst_f1}",
-  "MOVKX {out}, {iconst_f0}",
-]
-
-[[lower.Iconst]]
-when = { and = [{ lt = ["iconst", 0] }, { ge = ["iconst", -65536] }] }
-insts = ["MOVNW {out}, {iconst_c16}"]
-
-[[lower.Iconst]]
 when = { and = [{ ge = ["iconst", 0] }, { lt = ["iconst", 65536] }] }
-insts = ["MOVZW {out}, {iconst}"]
+insts = ["MOVZX {out}, {iconst}"]
 
 [[lower.Iconst]]
 when = { not = { and = [
@@ -3383,7 +3341,12 @@ when = { not = { and = [
     65536,
   ] },
 ] } }
-insts = ["MOVZW1 {out}, {iconst_f1}", "MOVKW {out}, {iconst_f0}"]
+insts = [
+  "MOVZX3 {out}, {iconst_f3}",
+  "MOVKX2 {out}, {iconst_f2}",
+  "MOVKX1 {out}, {iconst_f1}",
+  "MOVKX {out}, {iconst_f0}",
+]
 
 [[lower.Copy]]
 insts = ["MOVX {out}, {0}"]
@@ -4990,3 +4953,33 @@ insts = ["CBZX {cond}, {false}", "B {true}"]
 [[lower.Ret]]
 when = { bank = "gpr" }
 insts = ["MOVX {ret}, {ret_src}"]
+
+# ── rustc 后端首光（v27 M6-98）：栈槽地址 / 访存 / 指针 ↔ 整数 ──
+# StackAddr：偏移 `{off}` 可正可负可 0，A64 的 `add/sub #imm12` 收不了负数 ⇒
+# 用 `movz(hw3)+movk(hw2..hw0)` 造任意 64 位偏移，再 `add` 帧指针（X29）。
+[[lower.StackAddr]]
+insts = ["MOVZX3 {g}, {off_f3}", "MOVKX2 {g}, {off_f2}", "MOVKX1 {g}, {off_f1}", "MOVKX {g}, {off_f0}", "ADDREGX {out}, X29, {g}"]
+
+# 访存按**宽度**分派（此谱只有 32/64 位的 ldr/str）：i8/i16 的 Load/Store 没有
+# 规则 ⇒ 明确 `[cap:SPEC_LOWERING_RULE_MISSING]`（不静默按 64 位读写）。
+[[lower.Load]]
+when = { eq = ["rd", 32] }
+insts = ["LDRW_ND {out}, [{0}]"]
+
+[[lower.Load]]
+when = { eq = ["rd", 64] }
+insts = ["LDRX_ND {out}, [{0}]"]
+
+[[lower.Store]]
+when = { eq = ["rs1_width", 32] }
+insts = ["STRW_ND {0}, [{1}]"]
+
+[[lower.Store]]
+when = { eq = ["rs1_width", 64] }
+insts = ["STRX_ND {0}, [{1}]"]
+
+[[lower.Inttoptr]]
+insts = ["MOVX {out}, {0}"]
+
+[[lower.Ptrtoint]]
+insts = ["MOVX {out}, {0}"]

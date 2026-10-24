@@ -11,6 +11,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-24) — `forge-rustc`：`--target aarch64-unknown-none` 首光
+
++ 后端按 `--target` 建对象（此前固定 `TargetConfig::host()`，任何非宿主目标都会
+  静默写出 host 的 COFF 对象）；裸机三元组（`*-none`）按 **ELF** 处理。
++ 对象层重定位改成**数据驱动**（库里零架构分支）：`Relocation` 带上 ISA 语义名，
+  链接器重定位类型写在 `conventions/*.toml` 的 `[link.<format>]`（arm64 的
+  `call26 = { type = 283, clear_mask = 0x03FF_FFFF }` = `R_AARCH64_CALL26`）；
+  `forge-object` 只按 `(格式, 名字)` 查表落类型、按 `clear_mask` 清零位段，
+  未命中回退 `object` 的 Generic。**新增指令集只加 ISA/约定 TOML，不改
+  `forge-object`/`forge-rustc` 代码**。
++ `[asm.reloc.<名>]` 支持**仅命名形态**（省略 `operand`）：给指令的 label 槽外部引用
+  起语义名（arm64 `BL` 的 `call26`），供目标约定映射到链接器重定位类型。
++ arm64 谱面补齐 `StackAddr` / `Load` / `Store` / `Inttoptr` / `Ptrtoint` 的降级规则；
+  新占位符 `{off_f0}`..`{off_f3}`（栈槽偏移的 16 位分片，供 `movz+movk` 造任意偏移）；
+  降级模板校验现在接受算术表达式占位符。**同时把 arm64 的 `Iconst` 改成按 X 宽
+  材料化**（规范寄存器形态 = 符号扩展后的 64 位，与 x86 的 `MOV_REG_IMM64` 同约定）
+  ——W 形式会把 `-4` 的高位清零，混合宽度使用（`iadd(ptr, i32)`）会算出野地址。
++ Windows VirtualAlloc 的 alloc runtime 只在 Windows x64 注入（目标面由运行时自己
+  声明 `SUPPORTED_ARCHES`，后端不再按 arch 分支判断）。
++ 守卫：`forge-rustc` 的 `arm64_exec`（ELF `e_machine=183` + clang crt0 + `ld.lld` +
+  `qemu-system-aarch64` 真执行 42）进全量门禁（`arm64-rustc-exec`）。
++ **边界**：当前仅 `#![no_core]` crate（本机无 aarch64 core/std）；Icmp/Select/移位/
+  除法/原子与 DWARF/CFI 的 aarch64 形态尚未覆盖。
+
 ### Added (2026-10-24) — arm64 后端：函数调用（`BL`/`BLR`）与 QEMU 真执行
 
 + `isa/arm64.toml` 的 `BL` 现在声明 `roles = ["call"]`、`BLR` 声明

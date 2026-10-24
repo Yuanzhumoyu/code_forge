@@ -256,24 +256,32 @@ fn tm_decode_roundtrip() {
 /// **aapcs64 变参：计划面已通、编译面被 arm64 谱的**覆盖度**挡住**（v20 V6，**已知缺口如实钉住**）。
 ///
 /// 实测：把 `va_start` + 两次 `va_arg(i64)` 编到 arm64 会报 `Unsupported("DSL lowering")` ——
-/// **arm64 谱目前只有 8 个 op 的 lowering**（`Band`/`Bor`/`Bxor`/`Copy`/`Iadd`/`Iconst`/`Imul`/
-/// `Isub`，全是算术），而变参展开用的 IR 词汇（`StackAddr`/`Store`/`Load`/`Icmp`/`Select`/
-/// `Sextend`/`Ireduce`）**一个都没有**（x86/riscv 有，所以 win64/sysv64/lp64d 能真跑）。
-/// ⇒ 这不是变参数据的问题：**要 aapcs64 变参落地，先得把 arm64 后端补成能用的后端**
-///（访存/比较/选择/扩展/栈地址/分支/调用），那是一份独立的、比变参大得多的工作；
-/// 本机也没有 arm64 执行通道（补完也只是"编得出"）。
+/// **arm64 谱的 lowering 覆盖度仍在扩张中**（v27 M6-98 前只有 8 个算术 op；现在已有
+/// `StackAddr`/`Load`/`Store`/`Inttoptr`/`Ptrtoint` 与 32/64 位分派的访存），而变参展开
+/// 还要 `Icmp`/`Select`/`Sextend`（游标比较/选择/扩展）**仍然缺**（x86/riscv 有，
+/// 所以 win64/sysv64/lp64d 能真跑）。⇒ 这不是变参数据的问题：**要 aapcs64 变参落地，
+/// 先得把 arm64 后端补到访存之外**（比较/选择/扩展/分支/调用），那是一份独立工作；
+/// 本机已有 QEMU 执行通道（`forge-tests` 的 `jit_matrix_arm64`）。
 ///
 /// 与变参数据无关的部分已经就位：形状/规则/逐字段初值由
 /// `abi_target_real::aapcs64_variadic_shape_is_pure_data` 逐格钉住。
 ///
-/// 这条守卫钉两件事：① 现在必须是**明确 Unsupported**（不许静默编错）；② **arm64 的 op 覆盖度
-/// 就停在这里**——等它补上这些 lowering 时守卫会红，提醒把 aapcs64 从"数据面"升级成"编得出 +
-/// 真跑"。
+/// 这条守卫钉三件事：① 访存/栈地址已落地（v27 M6-98）；② 变参展开缺的 op
+/// （`Icmp`/`Select`/`Sextend`）仍缺，覆盖度一变就红；③ 现在必须是**明确
+/// Unsupported**（不许静默编错）。
 #[test]
 fn tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering() {
-    // ② 覆盖度事实（实测）：这些 op 在 arm64 谱里还没有 lowering。
+    // ② 覆盖度事实（实测）：变参展开要的词汇里，`StackAddr`/`Load`/`Store` 已在
+    //    v27 M6-98 落地；`Icmp`/`Select`/`Sextend`（va_arg 的游标比较/选择/扩展）
+    //    仍然缺 ⇒ 编译面依旧必须**明确 Unsupported**。
     let ops = forge_codegen::arm64::SUPPORTED_OPS;
-    for need in ["StackAddr", "Store", "Load", "Icmp", "Select", "Sextend"] {
+    for have in ["StackAddr", "Load", "Store"] {
+        assert!(
+            ops.contains(&have),
+            "arm64 应已有 `{have}` 的 lowering（v27 M6-98：rustc→aarch64 首光需要它）"
+        );
+    }
+    for need in ["Icmp", "Select", "Sextend"] {
         assert!(
             !ops.contains(&need),
             "arm64 现在有 `{need}` 的 lowering 了（覆盖度变了）⇒ 这条守卫要升级成\

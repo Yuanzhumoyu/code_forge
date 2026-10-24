@@ -12,6 +12,44 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-24 · M6-98：rustc→aarch64 首光（no_core → ELF → crt0/ld.lld → QEMU 42）
+
+把"用 rustc 编 aarch64"从"缺 core/std"变成**可执行的一条链**（本机无 aarch64 core，
+先用 `#![no_core]` 绕开；这不是 `no_std` 产品路径，是首光验证）：
+
+- **后端**：`TargetConfig::from_triple(target)` 取代 `host()`——之前 `--target
+  aarch64-unknown-none` 静默写 **host 的 COFF/x86-64** 对象；`ObjectWriter::new` 失败
+  从 `.expect`（ICE）改为 `dcx().err`；Windows 的 `VirtualAlloc` alloc runtime 只在
+  Windows x86_64 注入（aarch64 勿注入）。
+- **对象层（数据驱动，库里零 arch 分支）**：`map_triple` 把裸机三元组的
+  `BinaryFormat::Unknown` 按 ELF；`Relocation` 增加 ISA 语义名（arm64 `BL` 声明
+  `reloc = "call26"`，`[asm.reloc.call26]` 取**仅命名形态**）；链接器类型写在
+  `conventions/aapcs64-arm64.toml` 的 `[link.elf]`
+  （`call26 = { type = 283, clear_mask = 0x03FF_FFFF }` = `R_AARCH64_CALL26`）；
+  `forge-object` 按 `(格式, 名字)` 查表落类型、按 `clear_mask` 清零 BL 的 imm26
+  （ELF RELA ⇒ addend 在重定位项），未命中回退 Generic。**首版把
+  `Architecture::Aarch64` 写进 `forge-object`，属于"给指令集开后门"，已按
+  数据驱动重做**——新增 ISA 现在只加 TOML，不改 `forge-object`/`forge-rustc`。
+- **arm64 谱面**：`[[lower.StackAddr]]` = `movz(hw3)+movk(hw2..hw0)` 造任意 64 位偏移
+  （`{off_f0}`..`{off_f3}` 分片）+ `add {out}, X29, {g}`；`Load`/`Store`（32/64 位
+  分派）/`Inttoptr`/`Ptrtoint` 规则。首版 Store 写成 `str {1}, [{0}]` ⇒ 值被当地址、
+  QEMU 走异常向量挂起；按 IR 操作数 `(value, addr)` 修正为 `str {0}, [{1}]`。
+- **Iconst 规范寄存器形态**：arm64 的常量一律按 **X 宽**材料化（i32 常量也写 X 形式）
+  ⇒ 物理寄存器里是符号扩展后的 64 位值。W 形式会把 `-4` 变成
+  `0x0000_0000_FFFF_FFFC`，`iadd(ptr, i32)` 这类混合宽度使用会算出野地址
+  （`jit_matrix_arm64` 的 `stack_addr_iadd_offset_store_load` 实测死循环）。
+  与 x86 的 `MOV_REG_IMM64`（恒 64 位）同一约定。
+- **工具链**：`validate_inst_lines` 接受算术表达式占位符（codegen 早支持、校验层误杀）；
+  `{off_f0}`..`{off_f3}` 注册。
+- **验收**：`tests/arm64_exec.rs`（no_core crate 里 `pick(42,7)` + 栈槽常量）：
+  - 对象头 `e_machine = 183`；
+  - clang 汇编 crt0 → `ld.lld -Ttext=0x40000000` 链接 → `qemu-system-aarch64 -M virt`
+    semihosting 退出码 **42**；
+  - 门禁新增 `arm64-rustc-exec`（缺工具 SKIP）。
+
+**仍未覆盖**：aarch64 core/std（只能 no_core）、更大 opcode 面（Icmp/Select/移位/除法/
+原子）、DWARF/CFI 的 aarch64 形态。
+
 ### 2026-10-24 · M6-97：P3 执行级——arm64 `Call` 角色 + qemu 模块真执行
 
 本机装有 `qemu-system-aarch64`（此前误判为"无 emulator"）：`exec/qemu_aarch64.rs` 早已有

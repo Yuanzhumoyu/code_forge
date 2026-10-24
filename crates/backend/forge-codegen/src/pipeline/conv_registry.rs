@@ -111,3 +111,17 @@ pub fn registered_names() -> Vec<String> {
         .map(str::to_string)
         .collect()
 }
+
+/// 某 ISA 的**链接层重定位表**（目标约定数据，v27 M6-98）：从注册表里该 ISA
+/// 所有绑定的 `[link.<format>]` 段合并。宿主把它交给 `forge_object::ObjectWriter`，
+/// 对象层只查表、不做任何架构判断——新增指令集只需加 TOML。
+pub fn link_table(
+    isa: &str,
+    format: forge_abi_model::LinkFormat,
+) -> Result<forge_abi_model::LinkRelocTable, IrError> {
+    registry()
+        .read()
+        .expect("约定注册表被投毒")
+        .link_table(isa, format)
+        .map_err(|e| IrError::Semantic(format!("链接层重定位表（{isa}/{}）：{e}", format.as_str())))
+}

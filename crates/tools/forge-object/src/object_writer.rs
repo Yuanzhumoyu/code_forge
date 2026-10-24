@@ -37,6 +37,10 @@ pub struct ObjectWriter<'a> {
     format: BinaryFormat,
     /// 目标架构。
     arch: Architecture,
+    /// **链接层重定位表**（目标约定数据，v27 M6-98）：`(格式, ISA 语义名)` →
+    /// 链接器重定位类型 + 需清零的位段。空表 = 全部走 [`map_reloc_flags`] 的
+    /// Generic 兜底（x86 现状）。
+    link: forge_abi_model::LinkRelocTable,
     /// 已写入的函数名集合（防止重复符号）。
     written_symbols: std::collections::HashSet<ImmStr>,
     /// 已声明的外部符号名 -> SymbolId 映射（避免重复创建 UNDEF 条目）。
@@ -83,10 +87,21 @@ impl<'a> ObjectWriter<'a> {
             rodata_section: Some(rodata_section),
             format,
             arch,
+            link: forge_abi_model::LinkRelocTable::default(),
             written_symbols: std::collections::HashSet::new(),
             declared_externs: std::collections::HashMap::new(),
             defined_symbols: std::collections::HashMap::new(),
         })
+    }
+
+    /// 挂上**链接层重定位表**（目标约定数据；v27 M6-98）。
+    ///
+    /// 表来自 `conventions/*.toml` 的 `[link.<format>]`，由宿主解析后传入。
+    /// 未挂表（或表里没有某条语义名）→ 该重定位走 [`map_reloc_flags`] 的
+    /// 与架构无关的兜底路径（x86 现状）。**本 crate 不感知任何具体 ISA**。
+    pub fn with_link_table(mut self, link: forge_abi_model::LinkRelocTable) -> Self {
+        self.link = link;
+        self
     }
 
     /// 创建或升级符号为定义（Text/Data）：
@@ -171,6 +186,7 @@ impl<'a> ObjectWriter<'a> {
                 self.text_section,
                 actual_offset + reloc.offset as u64,
                 &reloc.kind,
+                &reloc.reloc,
                 &reloc.symbol,
                 reloc.addend,
             )?;
@@ -227,6 +243,7 @@ impl<'a> ObjectWriter<'a> {
                 section,
                 actual_offset + *off as u64,
                 kind,
+                "",
                 sym,
                 *addend,
             )?;
@@ -305,18 +322,37 @@ impl<'a> ObjectWriter<'a> {
 
     // ---- 内部方法 ----
 
+    /// 本对象格式对应的**链接层表键**（与 `[link.<format>]` 段名一致）。
+    fn link_format(&self) -> Option<forge_abi_model::LinkFormat> {
+        match self.format {
+            BinaryFormat::Elf => Some(forge_abi_model::LinkFormat::Elf),
+            BinaryFormat::Coff => Some(forge_abi_model::LinkFormat::Coff),
+            BinaryFormat::MachO => Some(forge_abi_model::LinkFormat::MachO),
+            _ => None,
+        }
+    }
+
     fn add_relocation_to_section(
         &mut self,
         section: SectionId,
         offset: u64,
         kind: &RelocKind,
+        reloc_name: &str,
         symbol_name: &str,
         addend: i64,
     ) -> Result<(), IrError> {
         // 确保目标符号已声明（外部符号）
         let target_sym = self.find_or_declare_symbol(symbol_name);
 
-        let flags = map_reloc_flags(kind, self.format, self.arch);
+        // 目标约定数据里有没有这条语义名的链接器类型？有 → 用数据；没有 → 兜底。
+        let link_entry = self
+            .link_format()
+            .and_then(|f| self.link.lookup(f, reloc_name))
+            .map(|e| (e.rtype, e.clear_mask));
+        let flags = match link_entry {
+            Some((rtype, _)) => map_link_flags(rtype, self.format, kind)?,
+            None => map_reloc_flags(kind, self.format, self.arch),
+        };
 
         // COFF 重定位的 addend 是**隐式**的——存在被重定位字段的原始数据里
         // （链接器按 S + A - P 系列公式计算，A 取字段初值）。我们的编码器在
@@ -340,6 +376,34 @@ impl<'a> ObjectWriter<'a> {
         } else {
             None
         };
+        // **位段清零**（v27 M6-98，数据驱动）：目标约定给出 `clear_mask` = 链接器
+        // 要重写的位段（A64 `BL` 的 imm26 = `0x03FF_FFFF`）。编码器在槽里留的是
+        // "函数符号负编号"占位（`0x97FF_FFFF`）——链接器按 `R_AARCH64_CALL26`
+        // **加法叠加**字段里的 addend ⇒ 必须清零、只留 opcode（`0x9400_0000`）。
+        if let Some((_, mask)) = link_entry
+            && mask != 0
+        {
+            if kind.width_bytes() != 4 {
+                return Err(IrError::Emit(format!(
+                    "reloc '{reloc_name}': clear_mask {mask:#x} 只支持 4 字节位段，\
+                     实际宽度 {} 字节",
+                    kind.width_bytes()
+                )));
+            }
+            let section = self.obj.section_mut(section);
+            let data = section.data_mut();
+            let start = offset as usize;
+            if start + 4 <= data.len() {
+                let mut word = u32::from_le_bytes([
+                    data[start],
+                    data[start + 1],
+                    data[start + 2],
+                    data[start + 3],
+                ]);
+                word &= !mask;
+                data[start..start + 4].copy_from_slice(&word.to_le_bytes());
+            }
+        }
         if let Some(typ) = coff_flags {
             let bytes = match typ {
                 object::pe::IMAGE_REL_AMD64_REL32 => Some(4),
@@ -415,6 +479,10 @@ fn map_triple(triple: &Triple) -> Result<(BinaryFormat, Architecture, Endianness
         target_lexicon::BinaryFormat::Coff => BinaryFormat::Coff,
         target_lexicon::BinaryFormat::Macho => BinaryFormat::MachO,
         target_lexicon::BinaryFormat::Xcoff => BinaryFormat::Xcoff,
+        // `*-none` 这类裸机三元组在 target_lexicon 里是 `Unknown`；rustc 对
+        // `aarch64-unknown-none` 等产出的就是 **ELF** 对象 ⇒ 明确按 ELF 处理
+        //（v27 M6-98 首光实测：不认它就只能写出 host 格式）。
+        target_lexicon::BinaryFormat::Unknown => BinaryFormat::Elf,
         _ => {
             return Err(IrError::Unsupported(format!(
                 "unsupported binary format in triple: {}",
@@ -453,6 +521,10 @@ fn map_architecture(arch: &target_lexicon::Architecture) -> Result<Architecture,
 }
 
 /// 将 codegen-lib 的 RelocKind 映射到 object crate 的 RelocationFlags。
+///
+/// 这里只做**与架构无关**的 Generic/COFF-x64 兜底；目标相关的链接器重定位类型
+/// 由**目标约定数据**经 [`Self::with_link_table`] 传入（v27 M6-98）——本函数
+/// 不再出现任何 `Architecture::` 分支，新增指令集不需要改 `forge-object`。
 fn map_reloc_flags(kind: &RelocKind, format: BinaryFormat, _arch: Architecture) -> RelocationFlags {
     /// 位宽（bits）映射：object crate 的 `size` 字段是 u8 位宽。
     /// 宽度由 ISA 声明（`RelocKind` 是字节数）；超出 8 字节的 fixup 在目标
@@ -542,6 +614,47 @@ fn map_reloc_flags(kind: &RelocKind, format: BinaryFormat, _arch: Architecture) 
     }
 }
 
+/// **目标约定数据 → object crate flags**（v27 M6-98）。
+///
+/// `rtype` 是 `conventions/*.toml` 的 `[link.<format>]` 里声明的**链接器重定位
+/// 类型号**；本函数只做"按格式包一层"——不判断任何架构。
+fn map_link_flags(
+    rtype: u32,
+    format: BinaryFormat,
+    kind: &RelocKind,
+) -> Result<RelocationFlags, IrError> {
+    match format {
+        BinaryFormat::Coff => {
+            let typ = u16::try_from(rtype).map_err(|_| {
+                IrError::Emit(format!(
+                    "COFF 重定位类型 {rtype} 超出 u16（约定数据写错？）"
+                ))
+            })?;
+            Ok(RelocationFlags::Coff {
+                typ: object::pe::RelocationType(typ),
+            })
+        }
+        BinaryFormat::MachO => {
+            let r_type = u8::try_from(rtype).map_err(|_| {
+                IrError::Emit(format!(
+                    "MachO 重定位类型 {rtype} 超出 u8（约定数据写错？）"
+                ))
+            })?;
+            Ok(RelocationFlags::MachO {
+                r_type: object::macho::RelocationType(r_type),
+                r_pcrel: matches!(kind, RelocKind::Relative(..)),
+                r_length: match kind.width_bytes() {
+                    8 => 3,
+                    _ => 2,
+                },
+            })
+        }
+        _ => Ok(RelocationFlags::Elf {
+            r_type: object::elf::RelocationType(rtype),
+        }),
+    }
+}
+
 // ============================================================
 // 测试
 // ============================================================
@@ -559,6 +672,64 @@ mod tests {
             line_entries: Vec::new(),
             cfi: None,
         }
+    }
+
+    /// **链接层重定位由数据驱动**（v27 M6-98）：`forge-object` 里没有
+    /// `Architecture::` 分支——同一 `RelocKind`，ELF/COFF 的类型各自由
+    /// 目标约定声明的 `rtype` 决定；未挂表的相对重定位仍走 Generic。
+    #[test]
+    fn link_table_drives_object_reloc_types() {
+        let elf = super::map_link_flags(283, BinaryFormat::Elf, &RelocKind::Relative(4, 0))
+            .expect("ELF flags");
+        assert!(matches!(
+            elf,
+            RelocationFlags::Elf { r_type } if r_type == object::elf::R_AARCH64_CALL26
+        ));
+        let coff = super::map_link_flags(
+            u32::from(object::pe::IMAGE_REL_ARM64_BRANCH26.0),
+            BinaryFormat::Coff,
+            &RelocKind::Relative(4, 0),
+        )
+        .expect("COFF flags");
+        assert!(matches!(
+            coff,
+            RelocationFlags::Coff { typ } if typ == object::pe::IMAGE_REL_ARM64_BRANCH26
+        ));
+        // 未挂表 ⇒ 与架构无关的 Generic（x86 现状；架构参数不影响结果）。
+        // 三种 `Architecture` 传进来必须得到**同一个** flags —— 这就是"没有
+        // 按架构分派"的语义守卫（不靠 grep 源码）。
+        let reference = super::map_reloc_flags(
+            &RelocKind::Relative(4, 0),
+            BinaryFormat::Elf,
+            Architecture::X86_64,
+        );
+        for arch in [
+            Architecture::Aarch64,
+            Architecture::Riscv64,
+            Architecture::X86_64,
+        ] {
+            let f = super::map_reloc_flags(&RelocKind::Relative(4, 0), BinaryFormat::Elf, arch);
+            assert_eq!(
+                std::mem::discriminant(&f),
+                std::mem::discriminant(&reference),
+                "map_reloc_flags 不得按架构分派（{arch:?} 与其他架构结果不同）"
+            );
+            assert!(
+                matches!(f, RelocationFlags::Generic { .. }),
+                "无约定数据时应为 Generic"
+            );
+        }
+    }
+
+    /// `*-none` 裸机三元组在 target_lexicon 里 binary format 是 `Unknown`；
+    /// rustc 对这类目标产 **ELF**（v27 M6-98 首光实测）。
+    #[test]
+    fn bare_metal_triple_defaults_to_elf() {
+        let config =
+            crate::target::TargetConfig::from_triple("aarch64-unknown-none").expect("valid triple");
+        let writer = ObjectWriter::new(&config).expect("aarch64-unknown-none 应能建 ELF 对象");
+        assert_eq!(writer.format, BinaryFormat::Elf);
+        assert_eq!(writer.arch, Architecture::Aarch64);
     }
 
     #[test]
@@ -685,6 +856,7 @@ mod tests {
             relocations: vec![forge_codegen::Relocation {
                 offset: 1,
                 kind: RelocKind::REL4,
+                reloc: ImmStr::default(),
                 symbol: ImmStr::from(callee),
                 addend: 0,
             }],

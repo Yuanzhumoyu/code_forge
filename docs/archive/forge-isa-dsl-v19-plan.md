@@ -635,6 +635,11 @@ npx markdownlint-cli2 <改动文档>
 | riscv64 | 61 | 6 | 8 | **42**（浮点/向量/指针转换一整套） |
 | arm64 | 8 | 6 | 8 | **95**（几乎全部整数/浮点/内存 op） |
 
+> 上表是 **v19 立项时**的快照（归档值）。**现行口径**以
+> `crates/tools/forge-tests/asm/ratchet/pins.txt` 的 `lint.op_gap.*` 为准：
+> arm64 在 v27 M6-98（2026-10-24，补 `StackAddr`/`Load`/`Store`/`Inttoptr`/`Ptrtoint`）
+> 后为 `13, 6, 9, 90`，riscv64 为 `67, 6, 9, 36`，x86 为 `100, 6, 9, 3`。
+
 **V0 的关键发现（纠正了"全体都缺 16 个 op"的粗口径）**：
 
 1. **终结指令不走 `[[lowering]].op`**：生成器为每个 ISA 生成 `lower_terminator`，按 IR 的

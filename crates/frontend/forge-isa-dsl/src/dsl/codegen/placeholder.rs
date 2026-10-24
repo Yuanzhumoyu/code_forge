@@ -138,6 +138,51 @@ pub(crate) fn placeholders() -> &'static [Ph] {
             xreg: "0u32",
             ctor: Some(|_| quote! { ctx.current_offset }),
         },
+        // {off_f0}..{off_f3}：栈槽偏移的 16 位分片（低位序，同 `{iconst_f*}`
+        // 的取片规则）——A64 用 `movz(hw3)+movk(hw2..hw0)` 造**任意** 64 位偏移，
+        // 再 `add fp, x` 得槽地址。`add/sub #imm12` 收不了负数、单条 `movn`
+        // 只覆盖 [-65536,-1] 且 offset=0 时语义错（v27 M6-98 实测：0 会造出
+        // 0xFFFF_FFFF_FFFF_0000 ⇒ store 写到野地址、QEMU 走异常向量死循环）。
+        Ph {
+            name: "{off_f0}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { ((ctx.current_offset as u64 >> (16 * 0)) & 0xFFFF) as i64 }),
+        },
+        Ph {
+            name: "{off_f1}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { ((ctx.current_offset as u64 >> (16 * 1)) & 0xFFFF) as i64 }),
+        },
+        Ph {
+            name: "{off_f2}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { ((ctx.current_offset as u64 >> (16 * 2)) & 0xFFFF) as i64 }),
+        },
+        Ph {
+            name: "{off_f3}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| quote! { ((ctx.current_offset as u64 >> (16 * 3)) & 0xFFFF) as i64 }),
+        },
         Ph {
             name: "{alloca}",
             kind: PhKind::Imm,
@@ -1144,6 +1189,57 @@ pub(crate) fn expr_ctor(op: &str, slot: &OperandSlot) -> Option<TokenStream> {
         return Some(quote! { ( #expr ) });
     }
     None
+}
+
+/// 算术表达式占位符的**全部操作数**都是已知 token/数字（校验用）。
+///
+/// codegen 侧 `expr_ctor` 逐段构造操作数；这里只回答"这段表达式允许出现吗"——
+/// 否则 `[[lower.X]] insts = ["... #{0 - off}"]` 会被 `validate_inst_lines` 的
+/// `is_known` 误判成未知占位符（v27 M6-98 实测）。
+pub(crate) fn arith_expr_known(op: &str) -> bool {
+    if !is_arith_expr(op) {
+        return false;
+    }
+    let Some(inner) = op.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
+        return false;
+    };
+    let check = |s: &str| -> bool {
+        let s = s.trim();
+        if s.is_empty() {
+            return true;
+        }
+        if s.parse::<i64>().is_ok() {
+            return true;
+        }
+        let name = if s.starts_with('{') {
+            s.to_string()
+        } else {
+            format!("{{{s}}}")
+        };
+        is_known(&name)
+    };
+    let mut cur = String::new();
+    let mut depth = 0i32;
+    for c in inner.chars() {
+        match c {
+            '{' => {
+                depth += 1;
+                cur.push(c);
+            }
+            '}' => {
+                depth -= 1;
+                cur.push(c);
+            }
+            '+' | '-' | '*' | '/' | '&' | '|' | '^' | '<' | '>' if depth == 0 => {
+                if !check(&cur) {
+                    return false;
+                }
+                cur.clear();
+            }
+            _ => cur.push(c),
+        }
+    }
+    check(&cur)
 }
 
 /// 槽类型约束检查：占位符是否可用于该槽（编号临时归入 Reg；loose 不约束；

@@ -535,6 +535,16 @@ fn build_steps(a: &Args) -> Vec<Step> {
             "arm64_clang_oracle"
         ],
     ));
+    // **rustc → aarch64 首光**（v27 M6-98）：`--target aarch64-unknown-none` 的
+    // no_core crate 经后端编成 ELF64/AArch64 对象，clang 汇 crt0、ld.lld 链接、
+    // qemu-system-aarch64 真执行（semihosting 退出码 = 函数返回值）。
+    // 缺 dylib/clang/ld.lld/qemu 时测试自身打印 SKIP。
+    push!(cargo_step(
+        "arm64-rustc-exec",
+        "rustc→aarch64 首光（ELF 对象 + crt0/ld.lld + QEMU 真执行）",
+        Scope::Windows,
+        &["test", "-p", "forge-rustc", "--test", "arm64_exec"],
+    ));
 
     // ── 守卫注册表 ────────────────────────────────────────────────────
     for (krate, target, what) in GUARDS {
@@ -687,6 +697,7 @@ pub fn run(a: &Args, verbose: bool) -> anyhow::Result<i32> {
             "rustc-abi-cross",
             // arm64 对象级 oracle（v27 P3：第二目标的编码/对象层真值）
             "arm64-oracle",
+            "arm64-rustc-exec",
             "rustc-determinism",
             "rustc-opt-levels",
             "rustc-dwarf",

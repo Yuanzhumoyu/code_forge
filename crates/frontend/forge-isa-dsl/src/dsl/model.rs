@@ -3200,8 +3200,11 @@ pub struct ImmFnBody {
 pub struct RelocBody {
     /// 宿主语义——有限集合，新增语义才需要宿主代码。
     pub semantics: RelocSemantics,
-    /// 绑定的操作数槽（须是 `kind = "imm"` 的槽）。
-    pub operand: String,
+    /// 绑定的操作数槽（须是 `kind = "imm"` 的槽）。**省略** = 仅给该指令的
+    /// **label 槽**外部引用命名（v27 M6-98：`BL` 的 `call26`），对象层按
+    /// `(格式, 名字)` 查目标约定的链接器重定位类型表。
+    #[serde(default)]
+    pub operand: Option<String>,
     /// 重定位值的链接期加减（缺省 0）。
     #[serde(default)]
     pub addend: Option<i64>,
@@ -3298,8 +3301,10 @@ pub struct RelocDef {
     pub name: String,
     /// 宿主语义——有限集合，新增语义才需要宿主代码。
     pub semantics: RelocSemantics,
-    /// 绑定的操作数槽（须是 `kind = "imm"` 的槽）。
-    pub operand: String,
+    /// 绑定的操作数槽（须是 `kind = "imm"` 的槽）。**略 = 仅命名**（label 槽外部
+    /// 引用用，v27 M6-98）。
+    #[serde(default)]
+    pub operand: Option<String>,
     /// 重定位值的链接期加减（缺省 0）。
     #[serde(default)]
     pub addend: Option<i64>,

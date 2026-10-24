@@ -1467,17 +1467,22 @@ fn validate_relocs(m: &IsaModel) -> Result<(), String> {
         if !seen.insert(r.name.clone()) {
             return Err(format!("[asm.reloc.{}]: 重定位名重复", r.name));
         }
-        let Some(slot) = m.operand_slots.iter().find(|s| s.name == r.operand) else {
-            return Err(format!(
-                "[asm.reloc.{}]: `operand` 指向的槽 '{}' 未在 [operand.<名字>] 声明",
-                r.name, r.operand
-            ));
-        };
-        if slot.kind != OperandKind::Imm {
-            return Err(format!(
-                "[asm.reloc.{}]: `operand` 指向的槽 '{}' 必须是 imm 槽（重定位值要写进一个数值槽），实际是 {:?}",
-                r.name, r.operand, slot.kind
-            ));
+        // 有 `operand` = 立即数槽重定位；省略 = 仅给 label 槽的外部引用命名
+        //（v27 M6-98，`BL` 的 call26 走这条）。
+        if let Some(op) = &r.operand {
+            let Some(slot) = m.operand_slots.iter().find(|s| s.name == *op) else {
+                return Err(format!(
+                    "[asm.reloc.{}]: `operand` 指向的槽 '{op}' 未在 [operand.<名字>] 声明",
+                    r.name
+                ));
+            };
+            if slot.kind != OperandKind::Imm {
+                return Err(format!(
+                    "[asm.reloc.{}]: `operand` 指向的槽 '{op}' 必须是 imm 槽（重定位值要写进\
+                     一个数值槽），实际是 {:?}",
+                    r.name, slot.kind
+                ));
+            }
         }
         // v21 W8：`via` 必须指向已声明的立即数修饰（值变换是谱面数据）。
         if let Some(via) = &r.via {
@@ -1520,11 +1525,32 @@ fn validate_relocs(m: &IsaModel) -> Result<(), String> {
             &m.variant_param_names(),
         )?
         .0;
-        if !ops.iter().any(|o| o.slot == def.operand) {
-            return Err(format!(
-                "[inst.{}]: reloc '{name}' 的 `operand` '{}' 不在该指令的操作数里（asm '{}'）",
-                inst.name, def.operand, inst.asm
-            ));
+        match &def.operand {
+            Some(op) => {
+                if !ops.iter().any(|o| o.slot == *op) {
+                    return Err(format!(
+                        "[inst.{}]: reloc '{name}' 的 `operand` '{op}' 不在该指令的操作数里\
+                         （asm '{}'）",
+                        inst.name, inst.asm
+                    ));
+                }
+            }
+            // 仅命名（v27 M6-98）：必须用在**带 label 槽**的指令上——它是给
+            // "这条分支/调用逃逸成外部符号"时的链接器重定位起名字。
+            None => {
+                let has_label = m
+                    .operand_slots
+                    .iter()
+                    .filter(|s| s.kind == OperandKind::Label)
+                    .any(|s| ops.iter().any(|o| o.slot == s.name));
+                if !has_label {
+                    return Err(format!(
+                        "[inst.{}]: reloc '{name}' 没有 `operand`（仅命名形态）⇒ 该指令必须\
+                         自带 label 槽（分支/调用），asm '{}'",
+                        inst.name, inst.asm
+                    ));
+                }
+            }
         }
     }
     Ok(())
@@ -2482,6 +2508,7 @@ fn validate_inst_lines(
         }
         for tok in placeholder_tokens(trimmed) {
             let known = crate::dsl::codegen::placeholder::is_known(&tok)
+                || crate::dsl::codegen::placeholder::arith_expr_known(&tok)
                 || extra_known.iter().any(|k| k == &tok);
             if !known {
                 return Err(format!("{path}: 未知占位符 '{tok}'（行: {trimmed}）"));

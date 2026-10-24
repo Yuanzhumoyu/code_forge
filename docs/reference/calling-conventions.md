@@ -197,6 +197,27 @@ ret_float = ["XMM0"]
 - 绑定**不定义约定**，只回答"这个约定的这些池在这台机器上是哪些寄存器"——
   它没有别名、没有策略；`(ISA, 约定)` 对不上就是 `BadRules`。
 
+### `[link.<format>]` —— 目标工具链的链接层重定位（v27 M6-98）
+
+`AbiBinding` 还能声明**对象文件重定位类型**：这是"目标工具链事实"（LLVM 在
+`*ELFObjectWriter::getRelocType` 里做、rustc 在 `Target`/`TargetOptions` 里放），
+不是 ISA 编码事实，所以它属于约定数据，不属于通用库：
+
+```toml
+# conventions/aapcs64-arm64.toml
+[link.elf]
+# key = ISA `[asm.reloc.<名>]` 的语义名；值 = 链接器类型 + 需清零的位段
+call26 = { type = 283, clear_mask = 0x03FF_FFFF }   # R_AARCH64_CALL26 / BL 的 imm26
+```
+
+- `format` ∈ `elf` / `coff` / `macho`（一条重定位在每个格式里类型号不同时各写一份）；
+- `type` = 链接器重定位类型号（ELF `r_type`、COFF `typ`、MachO `r_type`）；
+- `clear_mask` = 链接器要重写的位段，写对象前 `word &= !clear_mask`。ELF 的 AArch64
+  用 **RELA**（addend 在重定位项）⇒ 位段应清零；COFF/MachO 的 addend 在字段里，
+  本仓的语义名条目统一按"字段已清零"处理。
+- 查表键 `(格式, 语义名)`；表里没有 ⇒ 回退 `object` 的 Generic 映射（x86 现状）。
+  **`forge-object` 里没有任何 `Architecture` 分支**——新增指令集只加 ISA/约定 TOML。
+
 ## IR 侧：`CallConvId`（声明用哪份约定）
 
 `forge-ir` 只声明**用哪份**约定，不定义任何一份：

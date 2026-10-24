@@ -1370,12 +1370,24 @@ addend = 0                     # 可选：重定位值的链接期加减（缺�
 [asm.reloc.pcrel_hi]           # riscv 的 %pcrel_hi/%pcrel_lo 对（patcher 按 opcode 分写位段）
 semantics = "pc_relative"
 operand = "imm20"
+
+[asm.reloc.call26]             # **仅命名形态**（v27 M6-98）：省略 operand = 只给该指令的
+semantics = "pc_relative"      # **label 槽**的外部引用起语义名（arm64 BL）；
+                               # 对象层按目标约定的 [link.<format>] 查链接器重定位类型
 ```
 
 | 语义 | fixup 落点 | 宿主 `RelocKind` |
 | --- | --- | --- |
 | `absolute` | 指令**末尾该槽的字节区间**（补丁宽度 = `ceil(槽宽/8)`） | `Absolute(槽字节数)` |
 | `pc_relative` | **指令起始**（补丁宽度 = 指令字长） | `Relative(字长, 0)` |
+
+- **省略 `operand` = 仅命名**（v27 M6-98）：该指令必须自带 **label 槽**（分支/调用）；
+  label 槽逃逸成**外部符号**（函数符号 `@N`）时，`Relocation` 带上这个名字，
+  `forge-object` 按目标约定 `[link.<format>]` 的 `(格式, 名字)` 落链接器重定位类型
+  （arm64 `BL` → `call26` → `R_AARCH64_CALL26`）。**函数内部**的 label 不受影响
+  （仍走 `use_label_at` 的谱内补丁）。**注意**：对象层的具体类型号写在
+  `conventions/*.toml`（见 `docs/reference/calling-conventions.md`），所以新增指令集
+  只加 TOML，不改 `forge-object`/`forge-rustc`。
 
 - **补丁器由谱面生成**（v21 W8，已落地）：定宽 ISA 的补丁器读回指令字 →
   `decode_partial` 还原指令 → 把 `d` 写进该变体的 **label 槽字段**（有 `reloc` 声明时
@@ -1392,8 +1404,8 @@ operand = "imm20"
   形状会命中 riscv 的 `MOV_RM8_R64`/`Nop`）会**明确报错**而不是静默不动。
 - 指令侧只有 `reloc = "<名>"`：编码器对该指令发固定重定位（汇编期 imm 槽 < 0 时
   = 全局符号引用 `"G{id}"`，≥ 0 时是普通立即数），**不按指令名特判**。
-- 校验：表项名非空唯一、`slot` 已声明且是 imm 槽、指令引用的名字必须存在、
-  该指令确实有那个槽的操作数、语义名必须是宿主已知的两个之一。
+- 校验：表项名非空唯一、`operand`（若写）已声明且是 imm 槽、指令引用的名字必须存在、
+  该指令确实有那个槽的操作数（仅命名形态则要求指令带 label 槽）、语义名必须是宿主已知的两个之一。
 
 ## `[asm.pseudo.<名>]` — 汇编器伪指令（表头即名字）
 
@@ -1767,6 +1779,7 @@ insts = ["cvttsd2si {out}, {0}"]
 | `{f}`、`{fN}` | 临时 FPR XReg（变量 `__f`/`__fN`） |
 | `{iconst}` / `{fconst}` | 常量池整数/浮点位模式（`current_const_index`） |
 | `{off}` | `ctx.current_offset`（StackAddr 帧偏移，已平移 callee_saved） |
+| `{off_f0}`..`{off_f3}` | 同上偏移的 16 位分片（低位序 f0=[15:0]…；A64 用 `movz+movk` 造任意 64 位偏移，v27 M6-98） |
 | `{alloca}` | `ctx.current_alloca_offset`（Alloca 栈槽偏移） |
 | `{imm0}` / `{imm0_sub4}` | `current_immediates[0]`（lane 索引；sub4 = 值-4） |
 | `{shufps_imm8}` / `{shufps_imm8_hi}` | SHUFPS mask 常量（低/高 2 位字段） |

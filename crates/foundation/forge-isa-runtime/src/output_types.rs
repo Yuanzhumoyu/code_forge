@@ -26,6 +26,10 @@ pub struct CompiledFunction {
 pub struct Relocation {
     pub offset: usize,
     pub kind: RelocKind,
+    /// 谱面 `[asm.reloc.<名>]` 的**语义名**（v27 M6-98）。空 = 未命名（x86 的
+    /// Call/Global 走对象库的 Generic 映射；arm64 的 `BL` 声明 `call26`，由
+    /// **目标约定数据**把它映射成链接器重定位类型 —— 对象层不再有 arch 分支）。
+    pub reloc: ImmStr,
     pub symbol: ImmStr,
     pub addend: i64,
 }

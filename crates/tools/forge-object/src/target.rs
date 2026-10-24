@@ -45,6 +45,18 @@ impl TargetConfig {
             .endianness()
             .unwrap_or(target_lexicon::Endianness::Little)
     }
+
+    /// 本目标的对象格式对应的**链接层重定位表键**（`conventions/*.toml` 的
+    /// `[link.<format>]` 段名）。裸机三元组（`*-none`）在 target_lexicon 里是
+    /// `BinaryFormat::Unknown`，而 rustc/LLVM 对它们产 ELF ⇒ 按 ELF 处理
+    ///（与 [`crate::object_writer`] 的 `map_triple` 同口径）。
+    pub fn link_format(&self) -> forge_abi_model::LinkFormat {
+        match self.triple.binary_format {
+            target_lexicon::BinaryFormat::Coff => forge_abi_model::LinkFormat::Coff,
+            target_lexicon::BinaryFormat::Macho => forge_abi_model::LinkFormat::MachO,
+            _ => forge_abi_model::LinkFormat::Elf,
+        }
+    }
 }
 
 impl Default for TargetConfig {

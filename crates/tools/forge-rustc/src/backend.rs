@@ -446,8 +446,23 @@ impl CodegenBackend for CodegenLibBackend {
             });
         }
 
-        // 创建对象文件写入器（每 CGU/每对象独立实例——自包含可多实例）
-        let config = TargetConfig::host().unwrap_or_default();
+        // 创建对象文件写入器（每 CGU/每对象独立实例——自包含可多实例）。
+        //
+        // **必须按 rustc 的 `--target` 建，不能 `TargetConfig::host()`**（v27 M6-98）：
+        // 后者让 `--target aarch64-unknown-none` 也写出 **host 的 COFF/x86-64** 对象
+        // （实测：段格式/机器类型全是 x86_64，A64 机器码套在 COFF 里，链接器直接拒）。
+        let config = match TargetConfig::from_triple(&target_triple) {
+            Ok(c) => c,
+            Err(e) => {
+                tcx.dcx().err(format!(
+                    "code-forge: 目标 `{target_triple}` 的对象格式不受支持：{e}"
+                ));
+                return Box::new(CompiledModules {
+                    modules: Vec::new(),
+                    allocator_module: None,
+                });
+            }
+        };
 
         // ── 函数降级任务（M4 机制沿用，M6 按 CGU 分组）──
         // rustc 对 -Zcodegen-backend 只调 codegen_crate 一次、无按 CGU 回调
@@ -688,6 +703,21 @@ impl CodegenBackend for CodegenLibBackend {
                 allocator_module: None,
             });
         };
+        // 目标约定的**链接层重定位表**（数据来自 conventions/*.toml）：对象层只
+        // 按 `(格式, ISA 语义名)` 查表落链接器类型，没有 arch 分支（v27 M6-98）。
+        let link_table = match code_forge::backend::pipeline::conv_registry::link_table(
+            isa_name,
+            config.link_format(),
+        ) {
+            Ok(t) => t,
+            Err(e) => {
+                tcx.dcx().err(format!("code-forge: {e}"));
+                return Box::new(CompiledModules {
+                    modules: Vec::new(),
+                    allocator_module: None,
+                });
+            }
+        };
         for (pi, plan) in plans.iter().enumerate() {
             if crate::trace::trace_enabled("CGU") {
                 eprintln!(
@@ -696,7 +726,15 @@ impl CodegenBackend for CodegenLibBackend {
                     plan.items.len()
                 );
             }
-            let mut writer = ObjectWriter::new(&config).expect("create object writer");
+            let mut writer = match ObjectWriter::new(&config) {
+                Ok(w) => w.with_link_table(link_table.clone()),
+                Err(e) => {
+                    tcx.dcx().err(format!(
+                        "code-forge: 目标 `{target_triple}` 的对象文件无法创建：{e}"
+                    ));
+                    continue;
+                }
+            };
             let mut plan_fns = std::mem::take(&mut outcomes_by_plan[pi]).into_iter();
 
             // 组内实例按符号序 emission：Fn 消费预编译结果（任务归并序 =
@@ -840,7 +878,15 @@ impl CodegenBackend for CodegenLibBackend {
                 .crates(())
                 .iter()
                 .any(|&c| tcx.crate_name(c).as_str() == "std");
-            if pi == 0 && !links_std {
+            // **目标门控**（v27 M6-98）：这个 shim 的实现是 Windows 的
+            // `VirtualAlloc/VirtualFree`（x64 约定），对 aarch64/其它目标既编不出
+            // （降级层 = 对应 ISA 的规则集）也没有意义 ⇒ 按**运行时自己声明的
+            // 可用面**（`alloc_runtime::SUPPORTED_ARCHES` + Windows）注入，
+            // 而不是把 `arch == X86_64` 写进 codegen 后端（那等于给指令集开后门）。
+            let target_arch = format!("{:?}", tcx.sess.target.arch).to_lowercase();
+            let alloc_runtime_ok = tcx.sess.target.is_like_windows
+                && crate::alloc_runtime::SUPPORTED_ARCHES.contains(&target_arch.as_str());
+            if pi == 0 && !links_std && alloc_runtime_ok {
                 match build_alloc_runtime(tcx, &mut func_ref_table, isa_name) {
                     Ok(runtime_fns) => {
                         for (sym, mut compiled) in runtime_fns {

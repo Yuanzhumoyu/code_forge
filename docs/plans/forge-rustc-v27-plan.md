@@ -45,7 +45,7 @@
 | --- | --- | --- |
 | **P1 128 位 C-ABI 跨后端兼容**（2026-10-23 起） | ✅ **已落地（2026-10-24）**：定义侧/调用侧都问 rustc `FnAbi` 的 `PassMode`（按引用 ⇒ 16 字节对齐副本的指针；`Cast{Vector}` ⇒ `XMM0`；`Direct` ⇒ 两整数槽/`RAX:RDX`）；跨后端探针**双向** 42 | §2.8；`WA-52`（已修）；`tests/cross_abi.rs` |
 | **P2 `INLINE_ASM` 的 `sym`/`label`** | ✅ **已完成（2026-10-24）**：`sym` 走"地址物化到输入寄存器"（M6-93），`label` 走"目标块 → 外部标签表 → 编码器 `use_label_at`"（M6-94，x86_64 变长谱；定宽谱明确拒绝）；正反两面的 e2e 都钉住 | §2.6 进度；台账 `INLINE_ASM` |
-| **P3 M4-T3 第二目标** | ✅ **对象级 + 执行级都已落地（2026-10-24）**：对象级 = A64 编码逐字节对照 clang + 真实 ELF64/AArch64 对象核对（M6-92）；执行级 = arm64 `Call`/`CallIndirect` 角色（BL/BLR）+ `LDURX/STURX` 的 stack_arg 角色 + qemu-system-aarch64 模块执行（直接调用 42、栈实参 45，M6-97），并据真机执行把 aapcs64 的 `first_offset_slots` 从 2 校正为 0。**仍缺**：forge-rustc 的 **aarch64 目标**（core/std、rustc target 接线），属独立的下一步 | §2.7；`tests/arm64_clang_oracle.rs`；`exec/qemu_aarch64.rs`；`arm64-oracle` 门禁步 |
+| **P3 M4-T3 第二目标** | ✅ **对象级 + 执行级都已落地（2026-10-24）**：对象级 = A64 编码逐字节对照 clang + 真实 ELF64/AArch64 对象核对（M6-92）；执行级 = arm64 `Call`/`CallIndirect` 角色（BL/BLR）+ `LDURX/STURX` 的 stack_arg 角色 + qemu 模块执行（M6-97），并据真机执行把 aapcs64 的 `first_offset_slots` 从 2 校正为 0。**rustc→aarch64 首光**（M6-98）：`--target aarch64-unknown-none` 的 no_core crate 编出 ELF64/AArch64 对象、clang crt0 + ld.lld 链接、QEMU 真执行（`pick(42,7)=42`）。**仍缺**：aarch64 的 **core/std**（仅 no_core 可用）与更大 opcode 面（Icmp/Select/移位/除法…） | §2.7；`tests/arm64_clang_oracle.rs`；`tests/arm64_exec.rs`；`exec/qemu_aarch64.rs`；`arm64-oracle` / `arm64-rustc-exec` 门禁步 |
 | **P4 分配器事件化** | ✅ **已完成（2026-10-24）**：`SPILL-VALUE`（逐值）+ `SPILL-EDIT`（逐指令 kind/offset/scratch/width）+ `ALLOC-SUMMARY.peak_live`（寄存器压力峰值）+ `Field::I64`；`events_guard` 用**高压夹具**钉住三种粒度都真触发 | §8 M6-87/M6-90/M6-91；`events_guard` 三方双向 |
 | M1 正确性清零（溢出 / 窄有符号 / 向量溢出 / regalloc） | ✅ 落地 | §8 M1；e2e 硬断言、`known_failure` = 0 |
 | M2 `global_asm!` | ✅ 落地 | §8 M2；e2e `global_asm_call` / `global_asm_sym_const` |
@@ -195,6 +195,37 @@ unit = 1，正常支持）。正反两面 e2e：`inline_asm_label`（无条件�
 
 **仍未覆盖**：`forge-rustc` 的 aarch64 目标本身（需要 aarch64 的 core/std 与 rustc
 target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是本节的代码生成层。
+
+**进度（2026-10-24，M6-98）——rustc→aarch64 首光**：`--target aarch64-unknown-none`
+的 **no_core** crate 已能编、链、跑：
+
+- 后端：对象文件按 `--target` 建（曾 `TargetConfig::host()` ⇒ 静默写 x86_64 COFF）；
+  裸机三元组 `*-none` 在 target_lexicon 里 binary format = `Unknown` ⇒ 按 ELF 处理；
+  `ObjectWriter::new` 失败改为报错（原来 `.expect` 直接 ICE）；Windows VirtualAlloc 的
+  alloc runtime 只在 Windows x86_64 注入（aarch64 不再被它拖住）。
+- 对象层（**数据驱动，库里零 arch 分支**）：`Relocation` 带上 ISA 侧语义名
+  （arm64 `BL` 声明 `reloc = "call26"`，`[asm.reloc.call26]` 为**仅命名形态**）；
+  链接器重定位类型写在 `conventions/aapcs64-arm64.toml` 的 `[link.elf]`
+  （`call26 = { type = 283, clear_mask = 0x03FF_FFFF }` = `R_AARCH64_CALL26` +
+  清零 imm26 位段）；`forge-object` 只按 `(格式, 名字)` 查表落类型/清位段，
+  未命中回退 `object` 的 Generic（x86 现状）。**新增指令集只加 TOML，不改
+  `forge-object`/`forge-rustc` 代码**（首版曾把 `Architecture::Aarch64` 写进
+  对象库，属越界，已按此设计重做）。
+- arm64 谱面：新增 `[[lower.StackAddr]]`（`movn` 造负偏移 + `add fp`）、
+  `Load`/`Store`、`Inttoptr`/`Ptrtoint` 规则；`[[lower.Store]]` 按 IR 操作数序
+  `(value, addr)` 写成 `str {0}, [{1}]`（首版写反 ⇒ store 拿值当地址，QEMU 走异常向量）。
+- 工具链层：`validate_inst_lines` 现在接受**算术表达式占位符**（`{off - 4}` 之类；
+  以前 codegen 支持、校验层误杀）；新增 `{off_f0}`..`{off_f3}`（栈槽偏移的 16 位分片，
+  `movz+movk` 造任意偏移）。arm64 的 `Iconst` 改成按 **X 宽**材料化（i32 常量也写 X
+  形式 = 符号扩展后的 64 位，与 x86 `MOV_REG_IMM64` 同约定）：W 形式会把 `-4` 高位清零，
+  混合宽度使用（矩阵的 `stack_addr_iadd_offset_store_load`）会算出野地址死循环。
+- 守卫：`crates/tools/forge-rustc/tests/arm64_exec.rs`（对象 `e_machine=183` 断言 +
+  crt0/ld.lld/QEMU 真执行 42）、`forge-object` 的"不按架构分派"语义守卫
+  （同一 RelocKind 在三种 `Architecture` 下必须给出同一 flags）、`link_table` 查表单测；
+  门禁新增 `arm64-rustc-exec`。
+
+**仍未覆盖**：aarch64 的 core/std（当前只能 `#![no_core]`）与更大 opcode 面
+（Icmp/Select/移位/除法/原子…），以及 DWARF/CFI 的 aarch64 形态。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

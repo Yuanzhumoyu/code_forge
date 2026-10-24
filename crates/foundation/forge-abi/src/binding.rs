@@ -41,6 +41,22 @@ impl std::fmt::Display for RegSelector {
     }
 }
 
+/// `[link.<format>]` 的一条：ISA 语义名 → 链接器重定位类型（v27 M6-98）。
+///
+/// 这是**目标工具链事实**（LLVM 的 `*ELFObjectWriter::getRelocType`、rustc 的
+/// `Target`/`TargetOptions` 都在目标层），放在约定数据里 ⇒ 新增指令集只需要加
+/// TOML，`forge-object`/`forge-rustc` 不改代码。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LinkEntry {
+    /// 链接器重定位类型号（ELF `r_type` / COFF `typ` / MachO `r_type`）。
+    #[serde(rename = "type")]
+    pub rtype: u32,
+    /// 链接器要重写的位段（写对象前 `word &= !clear_mask`）；0 = 不清。
+    #[serde(default)]
+    pub clear_mask: u32,
+}
+
 /// (ISA, 约定) 的寄存器绑定。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,6 +67,10 @@ pub struct AbiBinding {
     pub conv: String,
     /// 池名 → 有序寄存器列表。
     pub pools: BTreeMap<String, Vec<RegSelector>>,
+    /// 对象格式 → (ISA 语义名 → 链接器重定位类型)。省略 = 全部走对象库的
+    /// Generic 映射（x86 现状）。
+    #[serde(default)]
+    pub link: BTreeMap<String, BTreeMap<String, LinkEntry>>,
 }
 
 impl AbiBinding {
@@ -123,6 +143,41 @@ impl AbiBinding {
                 return Err(bad(format!("池 `{pool}` 为空——要么删掉它，要么给寄存器")));
             }
         }
+        // `[link.<format>]`：格式名必须是 elf/coff/macho、语义名非空。
+        for (format, entries) in &self.link {
+            if forge_abi_model::LinkFormat::parse(format).is_none() {
+                return Err(bad(format!(
+                    "`[link.{format}]` 不是已知对象格式（elf / coff / macho）"
+                )));
+            }
+            for name in entries.keys() {
+                if name.trim().is_empty() {
+                    return Err(bad(format!("`[link.{format}]` 里的重定位语义名不能为空")));
+                }
+            }
+        }
         Ok(())
+    }
+
+    /// 本绑定声明的链接层重定位表（只取 `format` 那一份）。
+    pub fn link_table(
+        &self,
+        format: forge_abi_model::LinkFormat,
+    ) -> forge_abi_model::LinkRelocTable {
+        let entries = self
+            .link
+            .get(format.as_str())
+            .map(|m| {
+                m.iter()
+                    .map(|(name, e)| forge_abi_model::LinkReloc {
+                        format,
+                        name: name.clone(),
+                        rtype: e.rtype,
+                        clear_mask: e.clear_mask,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        forge_abi_model::LinkRelocTable::new(entries)
     }
 }

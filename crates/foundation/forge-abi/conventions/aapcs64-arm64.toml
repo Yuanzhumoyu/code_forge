@@ -6,6 +6,15 @@
 isa = "arm64"
 conv = "aapcs64"
 
+# 对象层链接器重定位（v27 M6-98）：**目标工具链事实**，不是 ISA 编码事实。
+# key = ISA `[asm.reloc.<名>]` 的语义名；对象层按 (格式, 名字) 查表——
+# `forge-object` 只按数据落类型、清位段，没有任何 `Architecture` 分支。
+#   call26 = A64 `BL` 的 imm26 位段；ELF 的 R_AARCH64_CALL26 = 283，
+#            链接器重写低 26 位（`clear_mask` = 写对象前要清零的位段；
+#            ELF 用 RELA ⇒ addend 在重定位项，指令位段写 0）。
+[link.elf]
+call26 = { type = 283, clear_mask = 0x03FF_FFFF }
+
 [pools]
 
 # 整数/指针参数 x0-x7（按类计数）。

@@ -658,6 +658,17 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
             .map(|(_, fid, _, _)| fid)
         {
             let imm_bytes = (info.form.imm.unwrap_or(0) / 8) as usize;
+            // 该指令若把 label 槽声明成某条 `[asm.reloc.<名>]`（仅命名形态），
+            // 外部符号（rel < 0）的重定位就带上这个名字——对象层按
+            // `(格式, 名字)` 查目标约定的链接器重定位类型（v27 M6-98）。
+            // 内部标签仍走 `use_label_at`（名字对函数内 fixup 无意义）。
+            let reloc_name_tok = match info.inst.reloc.as_deref() {
+                Some(n) => {
+                    let lit = syn::LitStr::new(n, proc_macro2::Span::call_site());
+                    quote! { Some(#lit) }
+                }
+                None => quote! { None },
+            };
             if fixed {
                 // 定宽：label 槽散布在位段中，fixup = 指令起始（patcher 按
                 // ISA 重编码位段；Relative(字长,0) = 相对指令地址本身）。
@@ -673,9 +684,10 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
                         if rel < 0 {
                             // 函数符号调用（Call lowering 把 FuncRef 编码为 -(f+1)）：
                             // 记录 "@N" 符号重定位（JIT 符号表按 FuncRef 序注册）。
-                            sink.add_reloc(
+                            sink.add_reloc_ex(
                                 __base,
                                 crate::RelocKind::Relative(#fixed_bytes_lit, 0),
+                                #reloc_name_tok,
                                 &format!("@{}", -rel - 1),
                                 0,
                             );
@@ -700,9 +712,10 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
                         if rel < 0 {
                             // 函数符号调用（Call lowering 把 FuncRef 编码为 -(f+1)）：
                             // 记录 "@N" 符号重定位（JIT 符号表按 FuncRef 序注册）。
-                            sink.add_reloc(
+                            sink.add_reloc_ex(
                                 fixup,
                                 crate::RelocKind::CALL,
+                                #reloc_name_tok,
                                 &format!("@{}", -rel - 1),
                                 0,
                             );
@@ -739,23 +752,28 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
                     info.inst.name
                 )
             })?;
+        // 仅命名形态（无 `operand`）：给该指令的 **label 槽**命名（v27 M6-98，
+        // `BL` 的 call26）——它由上面的 label 臂发射，这里不能重复发全局重定位。
+        let Some(slot_name) = def.operand.as_deref() else {
+            continue;
+        };
         let vn = &info.vn;
         // 绑定的槽 → Inst 字段名 + 槽字节数（absolute 的补丁宽度）
         let slot_fid = info
             .operands
             .iter()
-            .find(|(_, _, s, _)| s.name == def.operand)
+            .find(|(_, _, s, _)| s.name == slot_name)
             .map(|(_, fid, _, _)| fid.clone())
             .ok_or_else(|| {
                 format!(
-                    "[inst.{}]: reloc '{reloc_name}' 绑定的槽 '{}' 不在该指令的操作数里",
-                    info.inst.name, def.operand
+                    "[inst.{}]: reloc '{reloc_name}' 绑定的槽 '{slot_name}' 不在该指令的操作数里",
+                    info.inst.name
                 )
             })?;
         let slot_bits = model
             .operand_slots
             .iter()
-            .find(|s| s.name == def.operand)
+            .find(|s| s.name == slot_name)
             .and_then(|s| s.width)
             .unwrap_or(64);
         let slot_bytes_lit = proc_macro2::Literal::u32_unsuffixed(slot_bits.div_ceil(8));
@@ -786,9 +804,10 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
                 let fixup = sink.offset() + bytes.len() - #slot_bytes_lit as usize;
                 sink.put_bytes(&bytes);
                 if imm < 0 {
-                    sink.add_reloc(
+                    sink.add_reloc_ex(
                         fixup,
                         crate::RelocKind::Absolute(#slot_bytes_lit),
+                        Some(#reloc_name),
                         &format!("G{}", -imm - 1),
                         #addend,
                     );
@@ -804,9 +823,10 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
                 let __base = sink.offset();
                 sink.put_bytes(&bytes);
                 if imm < 0 {
-                    sink.add_reloc(
+                    sink.add_reloc_ex(
                         __base,
                         crate::RelocKind::Relative(#reloc_bytes_lit, #addend_kind_tok),
+                        Some(#reloc_name),
                         &format!("G{}", -imm - 1),
                         #addend,
                     );
@@ -893,10 +913,13 @@ pub(crate) fn gen_reloc_patcher(
         // ① 该指令的某个槽被某条 reloc 点名 ⇒ 用声明里的 `via` 做值变换。
         let mut done = false;
         for def in &model.reloc {
+            let Some(slot_name) = def.operand.as_deref() else {
+                continue;
+            };
             let Some(fid) = info
                 .operands
                 .iter()
-                .find(|(_, _, s, _)| s.name == def.operand)
+                .find(|(_, _, s, _)| s.name == slot_name)
                 .map(|(_, fid, _, _)| fid.clone())
             else {
                 continue;

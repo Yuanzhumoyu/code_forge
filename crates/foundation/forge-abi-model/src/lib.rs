@@ -24,11 +24,13 @@
 //! C 的 ABI 布局——都能工作）；`from_ir_type` 只是本仓 IR 的适配器。
 
 pub mod ir_view;
+pub mod link;
 pub mod plan;
 pub mod rules_pod;
 pub mod ty;
 
 pub use ir_view::{MAX_DEPTH, MAX_MEMBERS};
+pub use link::{LinkFormat, LinkReloc, LinkRelocTable};
 pub use plan::{
     AbiPlan, ArgLoc, CalleeSaveMechanism, CalleeSavedPlan, DeclAttrs, Extension, HiddenSlots,
     Placement, Purpose, RegRef, RetLoc, StackLayout, VaArea, VaArgRule, VaArgRules, VaField,

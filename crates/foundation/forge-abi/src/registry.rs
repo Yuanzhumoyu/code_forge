@@ -111,6 +111,52 @@ impl AbiRegistry {
         self.insert_binding(AbiBinding::from_toml(text)?)
     }
 
+    /// 某 ISA 的**链接层重定位表**（目标约定数据，v27 M6-98）：合并该 ISA 所有
+    /// 绑定的 `[link.<format>]`。同一 `(format, 语义名)` 在多个约定里必须一致
+    /// （不一致 ⇒ 报错：链接类型不能"按约定"自相矛盾）。
+    pub fn link_table(
+        &self,
+        isa: &str,
+        format: forge_abi_model::LinkFormat,
+    ) -> Result<forge_abi_model::LinkRelocTable, AbiError> {
+        let mut merged: std::collections::BTreeMap<String, forge_abi_model::LinkReloc> =
+            Default::default();
+        for ((bisa, conv), binding) in &self.bindings {
+            if bisa != isa {
+                continue;
+            }
+            for (name, e) in binding.link.get(format.as_str()).into_iter().flatten() {
+                let ent = forge_abi_model::LinkReloc {
+                    format,
+                    name: name.clone(),
+                    rtype: e.rtype,
+                    clear_mask: e.clear_mask,
+                };
+                if let Some(prev) = merged.get(name) {
+                    if prev != &ent {
+                        return Err(AbiError::BadRules {
+                            name: format!("{isa}/{conv}"),
+                            why: format!(
+                                "`[link.{}] {name}` 与同 ISA 其它约定的声明冲突\
+                                 （{} vs {}，clear_mask {:#x} vs {:#x}）",
+                                format.as_str(),
+                                prev.rtype,
+                                e.rtype,
+                                prev.clear_mask,
+                                e.clear_mask
+                            ),
+                        });
+                    }
+                } else {
+                    merged.insert(name.clone(), ent);
+                }
+            }
+        }
+        Ok(forge_abi_model::LinkRelocTable::new(
+            merged.into_values().collect(),
+        ))
+    }
+
     /// 挂宿主钩子（按约定名）。
     pub fn insert_hooks(&mut self, conv: &str, hooks: Box<dyn AbiHooks>) {
         self.hooks.insert(conv.to_string(), hooks);
