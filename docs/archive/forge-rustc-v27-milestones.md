@@ -12,6 +12,31 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-24 · M6-99：arm64 比较/选择/窄宽扩展 + aapcs64 变参编得出、真跑
+
+M6-98 的首光只用了算术 + 访存；变参展开（`va_start`/`va_arg`）要的比较/选择/扩展
+仍是缺口。本轮全部用**既有指令**补齐（不新增编码）：
+
+- `Icmp`：`movz` 造 1/0 临时 → `cmp {lhs}, {rhs}` → `csel w dst, one, zero, {cc}`。
+- `Select`：i1 cond 与 0 比较 → `csel {dst}, then, else, ne`（32/64 两条）。
+- `Sextend`/`Uextend`：`add {dst}, {zero}, {src}, sxtb/sxth/sxtw/uxtb/uxth/uxtw`
+  （扩展寄存器 ADD 的无位移形态）。**零操作数不能用 Rn=31**：扩展形式里 31 编码的是
+  SP（只有移位寄存器形式才是 XZR）——首版写成 `add x27, sp, w28, sxtw`，QEMU 实测
+  `sextend_positive` 得 −118；改为先用 `movz` 造真零临时寄存器。
+- `Ireduce`：`mov w`（与 x86 的 32 位 `mov` 同口径）。
+- `Band`/`Bor`/`Bxor`：按宽度两条（64→X；其余 i1/i8/i16/i32→W）。`dispatch =
+  "rs1_width"` 只排序不兜底窄宽度，`bool_and` 曾因此报"无规则"。
+
+验收：
+
+- `jit_matrix_arm64` **50 passed / 150 skipped / 0 failed**（QEMU 真执行，含
+  `sextend_*`、`icmp_*_mixed_width`、`bool_and`、`variadic_va_arg_*`）；
+- `tm_aapcs64_varargs_compile_on_arm64`（原"必须 Unsupported"守卫升级为"必须编得出"）；
+- 快照更新：`pins.txt` arm64 op-gap `18, 6, 9, 85`、vary 候选 12；`strict_overlap`
+  arm64 0→9（"窄宽度特化 + 兜底"成对，合法）。
+
+**仍未覆盖**：aarch64 core/std（只能 no_core）、移位/除法/浮点/原子、DWARF/CFI。
+
 ### 2026-10-24 · M6-98：rustc→aarch64 首光（no_core → ELF → crt0/ld.lld → QEMU 42）
 
 把"用 rustc 编 aarch64"从"缺 core/std"变成**可执行的一条链**（本机无 aarch64 core，

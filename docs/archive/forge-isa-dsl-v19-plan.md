@@ -637,8 +637,9 @@ npx markdownlint-cli2 <改动文档>
 
 > 上表是 **v19 立项时**的快照（归档值）。**现行口径**以
 > `crates/tools/forge-tests/asm/ratchet/pins.txt` 的 `lint.op_gap.*` 为准：
-> arm64 在 v27 M6-98（2026-10-24，补 `StackAddr`/`Load`/`Store`/`Inttoptr`/`Ptrtoint`）
-> 后为 `13, 6, 9, 90`，riscv64 为 `67, 6, 9, 36`，x86 为 `100, 6, 9, 3`。
+> arm64 在 v27 M6-98（补 `StackAddr`/`Load`/`Store`/`Inttoptr`/`Ptrtoint`）后为
+> `13, 6, 9, 90`，M6-99（补 `Icmp`/`Select`/`Sextend`/`Uextend`/`Ireduce`）后为
+> `18, 6, 9, 85`；riscv64 为 `67, 6, 9, 36`，x86 为 `100, 6, 9, 3`。
 
 **V0 的关键发现（纠正了"全体都缺 16 个 op"的粗口径）**：
 

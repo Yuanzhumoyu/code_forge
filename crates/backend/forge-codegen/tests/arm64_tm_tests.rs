@@ -253,39 +253,32 @@ fn tm_decode_roundtrip() {
     }
 }
 
-/// **aapcs64 变参：计划面已通、编译面被 arm64 谱的**覆盖度**挡住**（v20 V6，**已知缺口如实钉住**）。
+/// **aapcs64 变参：计划面 + 编译面都已通**（v20 V6 立项 → v27 M6-99 收口）。
 ///
-/// 实测：把 `va_start` + 两次 `va_arg(i64)` 编到 arm64 会报 `Unsupported("DSL lowering")` ——
-/// **arm64 谱的 lowering 覆盖度仍在扩张中**（v27 M6-98 前只有 8 个算术 op；现在已有
-/// `StackAddr`/`Load`/`Store`/`Inttoptr`/`Ptrtoint` 与 32/64 位分派的访存），而变参展开
-/// 还要 `Icmp`/`Select`/`Sextend`（游标比较/选择/扩展）**仍然缺**（x86/riscv 有，
-/// 所以 win64/sysv64/lp64d 能真跑）。⇒ 这不是变参数据的问题：**要 aapcs64 变参落地，
-/// 先得把 arm64 后端补到访存之外**（比较/选择/扩展/分支/调用），那是一份独立工作；
-/// 本机已有 QEMU 执行通道（`forge-tests` 的 `jit_matrix_arm64`）。
+/// 历史：`va_start` + 两次 `va_arg(i64)` 在 arm64 上曾报 `Unsupported("DSL lowering")`
+/// —— 当时 arm64 谱只有 8 个算术 op。v27 M6-98 补了 `StackAddr`/`Load`/`Store`/
+/// `Inttoptr`/`Ptrtoint`，M6-99 补了 `Icmp`/`Select`/`Sextend`/`Uextend`/`Ireduce`
+/// 与窄宽度逻辑运算，于是变参展开所需的 IR 词汇齐了。
 ///
-/// 与变参数据无关的部分已经就位：形状/规则/逐字段初值由
-/// `abi_target_real::aapcs64_variadic_shape_is_pure_data` 逐格钉住。
-///
-/// 这条守卫钉三件事：① 访存/栈地址已落地（v27 M6-98）；② 变参展开缺的 op
-/// （`Icmp`/`Select`/`Sextend`）仍缺，覆盖度一变就红；③ 现在必须是**明确
-/// Unsupported**（不许静默编错）。
+/// 与变参数据无关的部分由 `abi_target_real::aapcs64_variadic_shape_is_pure_data`
+/// 逐格钉住；**真执行**由 `forge-tests` 的 `jit_matrix_arm64`（`variadic_va_arg_*`
+/// 用例，QEMU aarch64 + semihosting）覆盖。本守卫只钉"编得出"。
 #[test]
-fn tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering() {
-    // ② 覆盖度事实（实测）：变参展开要的词汇里，`StackAddr`/`Load`/`Store` 已在
-    //    v27 M6-98 落地；`Icmp`/`Select`/`Sextend`（va_arg 的游标比较/选择/扩展）
-    //    仍然缺 ⇒ 编译面依旧必须**明确 Unsupported**。
+fn tm_aapcs64_varargs_compile_on_arm64() {
     let ops = forge_codegen::arm64::SUPPORTED_OPS;
-    for have in ["StackAddr", "Load", "Store"] {
+    for need in [
+        "StackAddr",
+        "Load",
+        "Store",
+        "Icmp",
+        "Select",
+        "Sextend",
+        "Uextend",
+        "Ireduce",
+    ] {
         assert!(
-            ops.contains(&have),
-            "arm64 应已有 `{have}` 的 lowering（v27 M6-98：rustc→aarch64 首光需要它）"
-        );
-    }
-    for need in ["Icmp", "Select", "Sextend"] {
-        assert!(
-            !ops.contains(&need),
-            "arm64 现在有 `{need}` 的 lowering 了（覆盖度变了）⇒ 这条守卫要升级成\
-             \"aapcs64 变参编得出 + 真跑\" 的断言（见 docs/archive/varargs-plan.md）"
+            ops.contains(&need),
+            "arm64 缺少变参展开要用的 `{need}` lowering（SUPPORTED_OPS 由谱面派生）"
         );
     }
     let sig = FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64]).with_variadic(true);
@@ -299,15 +292,7 @@ fn tm_aapcs64_varargs_are_blocked_by_missing_arm64_lowering() {
     b.ret(&[s]);
     let func = b.finish().expect("build");
     let compiler = CompileSession::new(forge_codegen::arm64::TargetMachine::new());
-    let err = match compiler.compile(&func) {
-        Ok(_) => panic!(
-            "arm64 谱还没有变参展开要用的 lowering（StackAddr/Store/Load/Icmp/Select/Sextend）——补齐前必须明确 Unsupported，不许编出错码"
-        ),
-        Err(e) => e,
-    };
-    let msg = format!("{err}");
-    assert!(
-        msg.contains("lowering") || msg.contains("Unsupported"),
-        "缺口必须是明确 Unsupported（实测：{msg}）"
-    );
+    compiler
+        .compile(&func)
+        .expect("aapcs64 变参在 arm64 上应能编出（词汇已齐）");
 }

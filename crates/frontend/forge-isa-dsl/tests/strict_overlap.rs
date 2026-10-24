@@ -39,7 +39,10 @@ fn strict_overlap_inventory_matches_snapshot() {
     // arm64 2 → 0（2026-10-24，v27 M6-98）：`Iconst` 的 6 条规则去掉 `rd` 谓词、
     // 按值域单一分派（16 位内 MOVN/MOVZ + 域外 movz/movk 全片），原先
     // "rd=64 特化 + rd 无关兜底" 的两处部分重叠随之消失——不是 when 写窄。
-    for (isa, want) in [("x86.toml", 32), ("arm64.toml", 0), ("riscv64.toml", 14)] {
+    // arm64 0 → 9（2026-10-24，v27 M6-99）：`Sextend`/`Uextend`/`Select`/`Band`/
+    // `Bor`/`Bxor` 新增"窄宽度特化 + 无 when 兜底"成对规则（与 riscv 的
+    // `{rs1_width=32} + 兜底` 同款合法写法；兜底覆盖的是未显式列出的窄宽度）。
+    for (isa, want) in [("x86.toml", 32), ("arm64.toml", 9), ("riscv64.toml", 14)] {
         assert_eq!(
             overlaps(isa, true),
             want,

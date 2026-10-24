@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-24) — arm64：比较 / 选择 / 窄宽扩展；aapcs64 变参可编可跑
+
++ `isa/arm64.toml` 补齐 `Icmp`（`cmp` + `csel 1/0`）、`Select`、`Sextend`/`Uextend`
+  （`add {dst}, {zero}, {src}, sxtb/sxth/sxtw/uxtb/uxth/uxtw`）、`Ireduce`，以及
+  `Band`/`Bor`/`Bxor` 的窄宽度（i1/i8/i16/i32→W）兜底。
++ 结果：`jit_matrix_arm64` **50 passed / 0 failed**（was 26）；aapcs64 变参
+  （`va_start` + `va_arg`）在 arm64 上**编得出并在 QEMU 真跑**，
+  原"必须 Unsupported"守卫升级为"必须编得出"。
++ 已知坑（已写进注释）：扩展寄存器 ADD 的 **Rn=31 是 SP 不是 XZR**（首版
+  `add x27, sp, w28, sxtw` 把栈地址当结果）；窄宽度逻辑运算不能只靠
+  `dispatch = "rs1_width"`（它只排序不兜底）。
+
 ### Added (2026-10-24) — `forge-rustc`：`--target aarch64-unknown-none` 首光
 
 + 后端按 `--target` 建对象（此前固定 `TargetConfig::host()`，任何非宿主目标都会

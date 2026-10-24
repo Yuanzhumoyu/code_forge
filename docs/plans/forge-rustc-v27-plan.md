@@ -224,8 +224,20 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   （同一 RelocKind 在三种 `Architecture` 下必须给出同一 flags）、`link_table` 查表单测；
   门禁新增 `arm64-rustc-exec`。
 
-**仍未覆盖**：aarch64 的 core/std（当前只能 `#![no_core]`）与更大 opcode 面
-（Icmp/Select/移位/除法/原子…），以及 DWARF/CFI 的 aarch64 形态。
+**进度（2026-10-24，M6-99）——arm64 比较/选择/窄宽扩展落地，变参编得出**：
+在 M6-98 的访存面上再补 `Icmp`（`cmp` + `csel 1/0`）、`Select`（i1 与 0 比 → `csel`）、
+`Sextend`/`Uextend`（`add {out}, {zero}, {src}, sxtb/sxth/sxtw/uxtb/uxth/uxtw`；
+**零操作数不能用 Rn=31**——扩展形式里 31 是 SP，实测把栈地址当结果）、`Ireduce`
+（`mov w`），以及 `Band`/`Bor`/`Bxor` 的窄宽度兜底。结果：
+
+- `jit_matrix_arm64`：**50 passed / 150 skipped / 0 failed**（M6-98 时 26 passed）；
+  `variadic_va_arg_*` 用例在 QEMU 上真跑通过；
+- `tm_aapcs64_varargs_*` 守卫从"必须 Unsupported"升级成"必须编得出"；
+- 快照（`pins.txt`/`strict_overlap`）按实测更新：arm64 op 覆盖 13→18、真缺口 90→85、
+  vary 候选 9→12、部分重叠 0→9（都是"窄宽度特化 + 兜底"的合法写法）。
+
+**仍未覆盖**：aarch64 的 core/std（当前只能 `#![no_core]`）与移位/除法/浮点/原子指令，
+以及 DWARF/CFI 的 aarch64 形态。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 
