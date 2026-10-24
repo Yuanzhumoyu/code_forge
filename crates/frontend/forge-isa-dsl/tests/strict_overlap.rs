@@ -42,7 +42,9 @@ fn strict_overlap_inventory_matches_snapshot() {
     // arm64 0 → 9（2026-10-24，v27 M6-99）：`Sextend`/`Uextend`/`Select`/`Band`/
     // `Bor`/`Bxor` 新增"窄宽度特化 + 无 when 兜底"成对规则（与 riscv 的
     // `{rs1_width=32} + 兜底` 同款合法写法；兜底覆盖的是未显式列出的窄宽度）。
-    for (isa, want) in [("x86.toml", 32), ("arm64.toml", 9), ("riscv64.toml", 14)] {
+    // arm64 9 → 16（2026-10-25，v27 M6-100）：`Ishl`/`Ushr`/`Sshr`/`Sdiv`/`Udiv`/
+    // `Srem`/`Urem` 各按 64/其余 成对（同样"特化 + 兜底"）。
+    for (isa, want) in [("x86.toml", 32), ("arm64.toml", 16), ("riscv64.toml", 14)] {
         assert_eq!(
             overlaps(isa, true),
             want,

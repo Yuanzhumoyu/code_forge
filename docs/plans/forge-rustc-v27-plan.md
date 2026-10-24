@@ -236,7 +236,17 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
 - 快照（`pins.txt`/`strict_overlap`）按实测更新：arm64 op 覆盖 13→18、真缺口 90→85、
   vary 候选 9→12、部分重叠 0→9（都是"窄宽度特化 + 兜底"的合法写法）。
 
-**仍未覆盖**：aarch64 的 core/std（当前只能 `#![no_core]`）与移位/除法/浮点/原子指令，
+**进度（2026-10-25，M6-100）——arm64 移位/除法/取余落地**：
+
+- 新增编码（clang oracle 逐字节核对）：`LSLV`/`LSRV`/`ASRV` 的 X/W 六条（`DIV2A` 族，
+  `op2d` = 8/9/10，与 `SDIV/UDIV` 同编码空间）。
+- 降级规则：`Ishl/Ushr/Sshr` 直落 `LSLV/LSRV/ASRV`；`Sdiv/Udiv` 直落 `SDIV/UDIV`；
+  `Srem/Urem` = `q = a/b; rem = a - q*b`（`SDIV/UDIV` + `MSUB`）。
+- `jit_matrix_arm64`：**61 passed / 139 skipped / 0 failed**（M6-99 时 50 passed）。
+- 快照：arm64 op 覆盖 18→25、真缺口 85→78、vary 候选 12→19、部分重叠 9→16
+  （新增的 64/其余 成对规则，同样是"特化 + 兜底"）。
+
+**仍未覆盖**：aarch64 的 core/std（当前只能 `#![no_core]`）、浮点/原子/宽乘除指令，
 以及 DWARF/CFI 的 aarch64 形态。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）

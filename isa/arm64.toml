@@ -3654,6 +3654,44 @@ rows = [
   { inst = "UDIVX", slot = "r64", opcode = 0x4D6 },
   { inst = "UDIVW", slot = "r32", opcode = 0xD6 },
 ]
+
+# ── 移位（按寄存器计数，v27 M6-100）：LSLV/LSRV/ASRV 与 SDIV/UDIV 同编码族
+# （`DIV2A` 的 op2d 区分：LSLV=8 / LSRV=9 / ASRV=10，clang oracle 逐字节核对）。
+[inst.LSLVX]
+form = "DIV2A"
+opcode = 0x4D6
+match = { op2d = 8 }
+asm = "lslv {dst:r64:out}, {src:r64}, {src2:r64}"
+
+[inst.LSLVW]
+form = "DIV2A"
+opcode = 0xD6
+match = { op2d = 8 }
+asm = "lslv {dst:r32:out}, {src:r32}, {src2:r32}"
+
+[inst.LSRVX]
+form = "DIV2A"
+opcode = 0x4D6
+match = { op2d = 9 }
+asm = "lsrv {dst:r64:out}, {src:r64}, {src2:r64}"
+
+[inst.LSRVW]
+form = "DIV2A"
+opcode = 0xD6
+match = { op2d = 9 }
+asm = "lsrv {dst:r32:out}, {src:r32}, {src2:r32}"
+
+[inst.ASRVX]
+form = "DIV2A"
+opcode = 0x4D6
+match = { op2d = 10 }
+asm = "asrv {dst:r64:out}, {src:r64}, {src2:r64}"
+
+[inst.ASRVW]
+form = "DIV2A"
+opcode = 0xD6
+match = { op2d = 10 }
+asm = "asrv {dst:r32:out}, {src:r32}, {src2:r32}"
 [family.CBZ]
 body = { group = "cbz", form = "CBZF", opcode = "{opcode}", asm = "cbz {src:{slot}}, {target:off19}" }
 rows = [
@@ -5062,4 +5100,58 @@ insts = ["MOVZW {g}, 0", "ADD_W_EXTW_NA {out}, {g}, {0}, 0"]
 [[lower.Ireduce]]
 when = { eq = ["rd", 32] }
 insts = ["MOVW {out}, {0}"]
+
+# ── 移位 / 除法 / 取余（v27 M6-100）──
+# 移位：A64 的 LSLV/LSRV/ASRV 是**寄存器计数**（`{0}`=值、`{1}`=位数），与 IR 的
+# `Ishl/Ushr/Sshr` 同序。取余没有单条指令：`q = a / b; rem = a - q*b`（MSUB）。
+[[lower.Ishl]]
+when = { eq = ["rd", 64] }
+insts = ["LSLVX {out}, {0}, {1}"]
+
+[[lower.Ishl]]
+insts = ["LSLVW {out}, {0}, {1}"]
+
+[[lower.Ushr]]
+when = { eq = ["rd", 64] }
+insts = ["LSRVX {out}, {0}, {1}"]
+
+[[lower.Ushr]]
+insts = ["LSRVW {out}, {0}, {1}"]
+
+[[lower.Sshr]]
+when = { eq = ["rd", 64] }
+insts = ["ASRVX {out}, {0}, {1}"]
+
+[[lower.Sshr]]
+insts = ["ASRVW {out}, {0}, {1}"]
+
+[[lower.Sdiv]]
+when = { eq = ["rd", 64] }
+insts = ["SDIVX {out}, {0}, {1}"]
+
+[[lower.Sdiv]]
+insts = ["SDIVW {out}, {0}, {1}"]
+
+[[lower.Udiv]]
+when = { eq = ["rd", 64] }
+insts = ["UDIVX {out}, {0}, {1}"]
+
+[[lower.Udiv]]
+insts = ["UDIVW {out}, {0}, {1}"]
+
+# `MSUB dst, src, src2, acc` = acc - src*src2（`#` 声明序把 acc 放在第三位）。
+[[lower.Srem]]
+when = { eq = ["rd", 64] }
+insts = ["SDIVX {g}, {0}, {1}", "MSUBX {out}, {g}, {0}, {1}"]
+
+[[lower.Srem]]
+insts = ["SDIVW {g}, {0}, {1}", "MSUBW {out}, {g}, {0}, {1}"]
+
+[[lower.Urem]]
+when = { eq = ["rd", 64] }
+insts = ["UDIVX {g}, {0}, {1}", "MSUBX {out}, {g}, {0}, {1}"]
+
+[[lower.Urem]]
+insts = ["UDIVW {g}, {0}, {1}", "MSUBW {out}, {g}, {0}, {1}"]
+
 

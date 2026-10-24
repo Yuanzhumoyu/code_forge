@@ -12,6 +12,19 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-25 · M6-100：arm64 移位/除法/取余
+
+- **ISA（新编码，clang oracle 核对）**：`LSLVX/W`、`LSRVX/W`、`ASRVX/W` 六条——
+  与 `SDIV/UDIV` 同属 `DIV2A` 族（`op2d` = LSLV 8 / LSRV 9 / ASRV 10），
+  `opcode` 0x4D6（X）/0xD6（W）。oracle 表补 6 条（clang 汇编 + `llvm-objcopy` 对拍）。
+- **降级**：`Ishl/Ushr/Sshr` → `LSLV/LSRV/ASRV`；`Sdiv/Udiv` → `SDIV/UDIV`；
+  `Srem/Urem` → `SDIV/UDIV` + `MSUB`（`dst = acc − src*src2`，字段序 dst/src/acc/src2）。
+- **验收**：`jit_matrix_arm64` **61 passed / 0 failed**（QEMU 真执行，含
+  `i64_shl`/`i64_sdiv`/`i64_srem` 等）；快照 arm64 op-gap `25, 6, 9, 78`、vary 19、
+  部分重叠 16（64/其余 成对，合法）。
+
+**仍未覆盖**：aarch64 core/std（只能 no_core）、浮点/原子/宽乘除、DWARF/CFI。
+
 ### 2026-10-24 · M6-99：arm64 比较/选择/窄宽扩展 + aapcs64 变参编得出、真跑
 
 M6-98 的首光只用了算术 + 访存；变参展开（`va_start`/`va_arg`）要的比较/选择/扩展

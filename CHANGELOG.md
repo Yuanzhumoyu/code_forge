@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-25) — arm64：移位 / 除法 / 取余
+
++ `isa/arm64.toml` 新增 `LSLV`/`LSRV`/`ASRV` 的 X/W 六条编码（`DIV2A` 族，clang
+  oracle 逐字节核对），并补齐 `Ishl`/`Ushr`/`Sshr`（LSLV/LSRV/ASRV）、
+  `Sdiv`/`Udiv`（SDIV/UDIV）、`Srem`/`Urem`（`q=a/b; a−q*b`，SDIV/UDIV + MSUB）。
++ 结果：`jit_matrix_arm64` **61 passed / 0 failed**（was 50）；arm64 op 覆盖 18→25、
+  真缺口 85→78。
+
 ### Added (2026-10-24) — arm64：比较 / 选择 / 窄宽扩展；aapcs64 变参可编可跑
 
 + `isa/arm64.toml` 补齐 `Icmp`（`cmp` + `csel 1/0`）、`Select`、`Sextend`/`Uextend`

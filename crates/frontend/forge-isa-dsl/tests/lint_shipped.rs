@@ -77,6 +77,8 @@ fn op_gap_matches_section_10_3() {
     // `StackAddr`/`Load`/`Store`/`Inttoptr`/`Ptrtoint`（rustc→aarch64 首光所需）。
     // arm64 覆盖 13 → 18 / 真缺口 90 → 85（2026-10-24，v27 M6-99）：补了
     // `Icmp`/`Select`/`Sextend`/`Uextend`/`Ireduce`（aapcs64 变参展开所需）。
+    // arm64 覆盖 18 → 25 / 真缺口 85 → 78（2026-10-25，v27 M6-100）：补了
+    // `Ishl`/`Ushr`/`Sshr`/`Sdiv`/`Udiv`/`Srem`/`Urem`。
     for isa in ["x86.toml", "riscv64.toml", "arm64.toml"] {
         // 值在 `asm/ratchet/pins.txt`（B2 快照）：`lint.op_gap.<isa> = 覆盖,终结,宿主管线,真缺口`
         let want: (usize, usize, usize, usize) = {
@@ -253,6 +255,8 @@ fn unassigned_bits_inventory() {
 /// arm64 9 → 12（2026-10-24，v27 M6-99）：`Band`/`Bor`/`Bxor` 各多一条窄宽度兜底、
 /// `Sextend`/`Uextend` 各 5 条按 (rd, 源宽) 分派的同形状规则、`Select` 2 条（32/64）。
 /// 不合并成 `vary`：这些规则靠 `when` 消重比 `vary` 的 zip 更直观（同 riscv 的取舍）。
+/// arm64 12 → 19（2026-10-25，v27 M6-100）：`Ishl`/`Ushr`/`Sshr`/`Sdiv`/`Udiv`/`Srem`/
+/// `Urem` 各多一条 64/其余 成对（同一取舍）。
 #[test]
 fn vary_candidate_inventory() {
     for isa in ["x86.toml", "riscv64.toml", "arm64.toml"] {
