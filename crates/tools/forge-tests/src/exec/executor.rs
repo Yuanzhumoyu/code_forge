@@ -200,6 +200,12 @@ impl Executor for QemuAarch64Executor {
         sign_extend_exit8(raw)
     }
 
+    /// AAPCS64：f64 参数进 **d0..d7**（crt0 里用 `movz/movk` + `fmov dN, x9` 装）。
+    fn exec_f64_args(&self, compiled: &CompiledFunction, args: &[u64]) -> Result<u64, String> {
+        let raw = super::qemu_aarch64::exec_aarch64_f64(compiled, args)?;
+        Ok(sign_extend_exit8(raw))
+    }
+
     fn exec_module(
         &self,
         funcs: &[(String, CompiledFunction)],

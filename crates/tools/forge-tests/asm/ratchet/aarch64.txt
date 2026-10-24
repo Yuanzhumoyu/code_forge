@@ -5,7 +5,18 @@
 files = 51
 lines = 4166
 parsed = 575
-no_prefix = 474
-tail_mismatch = 1
+no_prefix = 448
+tail_mismatch = 27
 corpus_only = 3116
 # mismatch: arm64-nv-cond.s:4	csel x0,x0,x0,nv	line 1: no matching instruction
+# mismatch: neon-add-sub-instructions.s:47	fadd v0.4h, v1.4h, v2.4h	line 1: no matching instruction
+# mismatch: neon-add-sub-instructions.s:48	fadd v0.8h, v1.8h, v2.8h	line 1: no matching instruction
+# mismatch: neon-add-sub-instructions.s:49	fadd v0.2s, v1.2s, v2.2s	line 1: no matching instruction
+# mismatch: neon-add-sub-instructions.s:50	fadd v0.4s, v1.4s, v2.4s	line 1: no matching instruction
+# mismatch: neon-add-sub-instructions.s:51	fadd v0.2d, v1.2d, v2.2d	line 1: no matching instruction
+# mismatch: neon-add-sub-instructions.s:63	fsub v0.4h, v1.4h, v2.4h	line 1: no matching instruction
+# mismatch: neon-add-sub-instructions.s:64	fsub v0.8h, v1.8h, v2.8h	line 1: no matching instruction
+# mismatch: neon-add-sub-instructions.s:65	fsub v0.2s, v1.2s, v2.2s	line 1: no matching instruction
+# mismatch: neon-max-min.s:70	fmax v0.4h, v1.4h, v2.4h	line 1: no matching instruction
+# mismatch: neon-max-min.s:71	fmax v0.8h, v1.8h, v2.8h	line 1: no matching instruction
+# mismatch: neon-max-min.s:72	fmax v0.2s, v1.2s, v2.2s	line 1: no matching instruction

@@ -640,7 +640,8 @@ npx markdownlint-cli2 <改动文档>
 > arm64 在 v27 M6-98（补 `StackAddr`/`Load`/`Store`/`Inttoptr`/`Ptrtoint`）后为
 > `13, 6, 9, 90`，M6-99（补 `Icmp`/`Select`/`Sextend`/`Uextend`/`Ireduce`）后为
 > `18, 6, 9, 85`，M6-100（补 `Ishl`/`Ushr`/`Sshr`/`Sdiv`/`Udiv`/`Srem`/`Urem`）后为
-> `25, 6, 9, 78`；riscv64 为 `67, 6, 9, 36`，x86 为 `100, 6, 9, 3`。
+> `25, 6, 9, 78`，M6-101（补标量浮点：算术/比较/转换/访存）后为 `42, 6, 9, 61`；
+> riscv64 为 `67, 6, 9, 36`，x86 为 `100, 6, 9, 3`。
 
 **V0 的关键发现（纠正了"全体都缺 16 个 op"的粗口径）**：
 

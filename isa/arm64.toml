@@ -1,4 +1,4 @@
-#:schema ../isa-dsl.schema.json
+﻿#:schema ../isa-dsl.schema.json
 # ============================================================
 # AArch64 (ARM64) — A64 — ISA-DSL 语法（P1 迭代 A1：全链最小可信集）
 # ============================================================
@@ -2442,7 +2442,7 @@ opcode = 0x7C
 match = { opc2 = 0, mode = 1, zero21 = 0 }
 asm = "str {src:fprh}, [{base:r64}], #{off:imm9s}"
 
-[inst.LDRS_FP]
+[inst.LDRS_ND]
 form = "FPLSUI"
 opcode = 0xBD
 match = { opc2 = 1 }
@@ -2466,7 +2466,7 @@ opcode = 0xBC
 match = { opc2 = 1, mode = 1, zero21 = 0 }
 asm = "ldr {dst:fprs:out}, [{base:r64}], #{off:imm9s}"
 
-[inst.STRS_FP]
+[inst.STRS_ND]
 form = "FPLSUI"
 opcode = 0xBD
 match = { opc2 = 0 }
@@ -2490,7 +2490,7 @@ opcode = 0xBC
 match = { opc2 = 0, mode = 1, zero21 = 0 }
 asm = "str {src:fprs}, [{base:r64}], #{off:imm9s}"
 
-[inst.LDRD_FP]
+[inst.LDRD_ND]
 form = "FPLSUI"
 opcode = 0xFD
 match = { opc2 = 1 }
@@ -2508,7 +2508,7 @@ opcode = 0xFC
 match = { opc2 = 1, mode = 1, zero21 = 0 }
 asm = "ldr {dst:fpr:out}, [{base:r64}], #{off:imm9s}"
 
-[inst.STRD_FP]
+[inst.STRD_ND]
 form = "FPLSUI"
 opcode = 0xFD
 match = { opc2 = 0 }
@@ -4562,30 +4562,25 @@ class = "fpr128"
 kind = "reg"
 class = "fpr64"
 
-[form.FMOVR]
-# FMOV（标量寄存器）：rd/rn（[31:24] = op8 常量、[23:16]/[15:10] 保留位）
-fields = [
-  "u8[31:24]:opcode",
-  "u5[4:0]:rd",
-  "u5[9:5]:rn",
-  "u8[23:16]:op8b",
-  "u6[15:10]:zero6",
-]
-
-# FMOV (register) S/D = 0x1E204000 / 0x1E604000：
-#   [31:24]=0x1E、[23:16]=0x20(S)/0x60(D)、[15:10]=0、[9:5]=Rn、[4:0]=Rd
+# FMOV (register) S/D = 0x1E204000 / 0x1E604000（与其它标量浮点同族）：
+#   opcode u11[31:21]=0xF1(S)/0xF3(D)、[23:16]=0x20(S)/0x60(D)、[15:10]=0、
+#   [9:5]=Rn、[4:0]=Rd。
+# **为什么不用 8 位 opcode 形式**（v27 M6-101）：解码 trie 要求同一节点上的固定
+# 位段两两不相交；8 位 `[31:24]=0x1E` 与 11 位 `[31:21]=0xF1` 在 [24,32) 上交叠
+# 且取值相同 ⇒ 会被判歧义。全部标量浮点统一成 **11 位 opcode 前缀**（同为
+# 0xF1/0xF3/0x4F1/0x4F3 的共享边），再用 opc8/op2d 区分。
 [inst.FMOV_S]
 data_width = 32
-form = "FMOVR"
-opcode = 0x1E
-match = { op8b = 0x20, zero6 = 0 }
+form = "FP1"
+opcode = 0xF1
+match = { opc = 0x10 }
 asm = "fmov {dst:fpr:out}, {src:fpr}"
 
 [inst.FMOV_D]
 data_width = 64
-form = "FMOVR"
-opcode = 0x1E
-match = { op8b = 0x60, zero6 = 0 }
+form = "FP1"
+opcode = 0xF3
+match = { opc = 0x10 }
 asm = "fmov {dst:fpr:out}, {src:fpr}"
 
 # LDUR/STUR (SIMD&FP, unscaled imm9)：与 LDURX/STURX 同形，只是寄存器文件不同——
@@ -5155,3 +5150,561 @@ insts = ["UDIVX {g}, {0}, {1}", "MSUBX {out}, {g}, {0}, {1}"]
 insts = ["UDIVW {g}, {0}, {1}", "MSUBW {out}, {g}, {0}, {1}"]
 
 
+
+# ═════════════════════════ 标量浮点（v27 M6-101）═════════════════════════
+# 只用 S/D 标量形态（f32/f64）；向量形态已在上面（ABS/NEG 等按排列）。
+# 2 源 FP 与 SDIV/UDIV 同编码族（`DIV2A`：opcode u11[31:21]、op2d u6[15:10]），
+# 逐条字节经 clang oracle 核对（tests/arm64_clang_oracle.rs）。
+
+
+[form.FP1]
+# FP 1 源（fneg/fabs/fcvt/fcvtzs/fcvtzu/scvtf/ucvtf/fmov）：**操作数 = dst/src**，
+# 所以 rd/rn 排在常量字段之前；opcode（[31:21]，含类型位）与 opc（[20:10]，
+# 运算码 + op2d）拼出整条指令的常量位。两段位域**不重叠**（bitfield lint 要求）。
+# 与 2 源的共享前缀 = opcode u11[31:21]；1 源与 2 源靠 [20:10] 的取值区分
+# （1 源的 low6 ∈ {0,16,48}，2 源的 op2d ∈ {2,6,8,10,14,18,22}）。
+fields = [
+  "u11[31:21]:opcode",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u11[20:10]:opc",
+]
+
+[form.FPCMP]
+# FCMP：操作数 = src/src2（rn/rm），rd 恒 0（[4:0] 不分配，编码从 0 字起写）。
+fields = [
+  "u11[31:21]:opcode",
+  "u5[9:5]:rn",
+  "u5[20:16]:rm",
+  "u6[15:10]:op2d",
+]
+
+[inst.FADD_S]
+form = "DIV2A"
+opcode = 0xF1
+match = { op2d = 10 }
+asm = "fadd {dst:fprs:out}, {src:fprs}, {src2:fprs}"
+
+[inst.FADD_D]
+form = "DIV2A"
+opcode = 0xF3
+match = { op2d = 10 }
+asm = "fadd {dst:fpr:out}, {src:fpr}, {src2:fpr}"
+
+[inst.FSUB_S]
+form = "DIV2A"
+opcode = 0xF1
+match = { op2d = 14 }
+asm = "fsub {dst:fprs:out}, {src:fprs}, {src2:fprs}"
+
+[inst.FSUB_D]
+form = "DIV2A"
+opcode = 0xF3
+match = { op2d = 14 }
+asm = "fsub {dst:fpr:out}, {src:fpr}, {src2:fpr}"
+
+[inst.FMUL_S]
+form = "DIV2A"
+opcode = 0xF1
+match = { op2d = 2 }
+asm = "fmul {dst:fprs:out}, {src:fprs}, {src2:fprs}"
+
+[inst.FMUL_D]
+form = "DIV2A"
+opcode = 0xF3
+match = { op2d = 2 }
+asm = "fmul {dst:fpr:out}, {src:fpr}, {src2:fpr}"
+
+[inst.FDIV_S]
+form = "DIV2A"
+opcode = 0xF1
+match = { op2d = 6 }
+asm = "fdiv {dst:fprs:out}, {src:fprs}, {src2:fprs}"
+
+[inst.FDIV_D]
+form = "DIV2A"
+opcode = 0xF3
+match = { op2d = 6 }
+asm = "fdiv {dst:fpr:out}, {src:fpr}, {src2:fpr}"
+
+[inst.FMAX_S]
+form = "DIV2A"
+opcode = 0xF1
+match = { op2d = 18 }
+asm = "fmax {dst:fprs:out}, {src:fprs}, {src2:fprs}"
+
+[inst.FMAX_D]
+form = "DIV2A"
+opcode = 0xF3
+match = { op2d = 18 }
+asm = "fmax {dst:fpr:out}, {src:fpr}, {src2:fpr}"
+
+[inst.FMIN_S]
+form = "DIV2A"
+opcode = 0xF1
+match = { op2d = 22 }
+asm = "fmin {dst:fprs:out}, {src:fprs}, {src2:fprs}"
+
+[inst.FMIN_D]
+form = "DIV2A"
+opcode = 0xF3
+match = { op2d = 22 }
+asm = "fmin {dst:fpr:out}, {src:fpr}, {src2:fpr}"
+
+[inst.FCMP_S]
+form = "FPCMP"
+opcode = 0xF1
+match = { op2d = 8 }
+asm = "fcmp {src:fprs}, {src2:fprs}"
+
+[inst.FCMP_D]
+form = "FPCMP"
+opcode = 0xF3
+match = { op2d = 8 }
+asm = "fcmp {src:fpr}, {src2:fpr}"
+
+[inst.FNEG_S]
+form = "FP1"
+opcode = 0xF1
+match = { opc = 0x50 }
+asm = "fneg {dst:fprs:out}, {src:fprs}"
+
+[inst.FNEG_D]
+form = "FP1"
+opcode = 0xF3
+match = { opc = 0x50 }
+asm = "fneg {dst:fpr:out}, {src:fpr}"
+
+[inst.FABS_S]
+form = "FP1"
+opcode = 0xF1
+match = { opc = 0x30 }
+asm = "fabs {dst:fprs:out}, {src:fprs}"
+
+[inst.FABS_D]
+form = "FP1"
+opcode = 0xF3
+match = { opc = 0x30 }
+asm = "fabs {dst:fpr:out}, {src:fpr}"
+
+[inst.FCVT_S2D]
+form = "FP1"
+opcode = 0xF1
+match = { opc = 0xB0 }
+asm = "fcvt {dst:fpr:out}, {src:fprs}"
+
+[inst.FCVT_D2S]
+form = "FP1"
+opcode = 0xF3
+match = { opc = 0x90 }
+asm = "fcvt {dst:fprs:out}, {src:fpr}"
+
+[inst.FCVTZS_W_S]
+form = "FP1"
+opcode = 0xF1
+match = { opc = 0x600 }
+asm = "fcvtzs {dst:r32:out}, {src:fprs}"
+
+[inst.FCVTZS_X_S]
+form = "FP1"
+opcode = 0x4F1
+match = { opc = 0x600 }
+asm = "fcvtzs {dst:r64:out}, {src:fprs}"
+
+[inst.FCVTZS_W_D]
+form = "FP1"
+opcode = 0xF3
+match = { opc = 0x600 }
+asm = "fcvtzs {dst:r32:out}, {src:fpr}"
+
+[inst.FCVTZS_X_D]
+form = "FP1"
+opcode = 0x4F3
+match = { opc = 0x600 }
+asm = "fcvtzs {dst:r64:out}, {src:fpr}"
+
+[inst.FCVTZU_W_S]
+form = "FP1"
+opcode = 0xF1
+match = { opc = 0x640 }
+asm = "fcvtzu {dst:r32:out}, {src:fprs}"
+
+[inst.FCVTZU_X_S]
+form = "FP1"
+opcode = 0x4F1
+match = { opc = 0x640 }
+asm = "fcvtzu {dst:r64:out}, {src:fprs}"
+
+[inst.FCVTZU_W_D]
+form = "FP1"
+opcode = 0xF3
+match = { opc = 0x640 }
+asm = "fcvtzu {dst:r32:out}, {src:fpr}"
+
+[inst.FCVTZU_X_D]
+form = "FP1"
+opcode = 0x4F3
+match = { opc = 0x640 }
+asm = "fcvtzu {dst:r64:out}, {src:fpr}"
+
+[inst.SCVTF_S_W]
+form = "FP1"
+opcode = 0xF1
+match = { opc = 0x80 }
+asm = "scvtf {dst:fprs:out}, {src:r32}"
+
+[inst.SCVTF_S_X]
+form = "FP1"
+opcode = 0x4F1
+match = { opc = 0x80 }
+asm = "scvtf {dst:fprs:out}, {src:r64}"
+
+[inst.SCVTF_D_W]
+form = "FP1"
+opcode = 0xF3
+match = { opc = 0x80 }
+asm = "scvtf {dst:fpr:out}, {src:r32}"
+
+[inst.SCVTF_D_X]
+form = "FP1"
+opcode = 0x4F3
+match = { opc = 0x80 }
+asm = "scvtf {dst:fpr:out}, {src:r64}"
+
+[inst.UCVTF_S_W]
+form = "FP1"
+opcode = 0xF1
+match = { opc = 0xC0 }
+asm = "ucvtf {dst:fprs:out}, {src:r32}"
+
+[inst.UCVTF_S_X]
+form = "FP1"
+opcode = 0x4F1
+match = { opc = 0xC0 }
+asm = "ucvtf {dst:fprs:out}, {src:r64}"
+
+[inst.UCVTF_D_W]
+form = "FP1"
+opcode = 0xF3
+match = { opc = 0xC0 }
+asm = "ucvtf {dst:fpr:out}, {src:r32}"
+
+[inst.UCVTF_D_X]
+form = "FP1"
+opcode = 0x4F3
+match = { opc = 0xC0 }
+asm = "ucvtf {dst:fpr:out}, {src:r64}"
+
+# FP 无位移访存（无符号偏移族的 imm12=0 形态；见 LDURD 的勘误注释）。
+[inst.LDRS_BASE]
+form = "LSUIND"
+opcode = 0xBD
+match = { opc2 = 1, imm12s = 0 }
+asm = "ldr {dst:fprs:out}, [{base:r64}]"
+
+[inst.LDRD_BASE]
+form = "LSUIND"
+opcode = 0xFD
+match = { opc2 = 1, imm12s = 0 }
+asm = "ldr {dst:fpr:out}, [{base:r64}]"
+
+[inst.STRS_BASE]
+form = "LSUIND"
+opcode = 0xBD
+match = { opc2 = 0, imm12s = 0 }
+asm = "str {src:fprs}, [{base:r64}]"
+
+[inst.STRD_BASE]
+form = "LSUIND"
+opcode = 0xFD
+match = { opc2 = 0, imm12s = 0 }
+asm = "str {src:fpr}, [{base:r64}]"
+
+# ── 标量浮点降级（v27 M6-101）──
+# `elem`：F32 = 1、F64 = 2（生成物 `elem_id_of` 的标量映射）。
+[[lower.Fadd]]
+when = { eq = ["elem", 1] }
+insts = ["FADD_S {out}, {0}, {1}"]
+
+[[lower.Fadd]]
+when = { eq = ["elem", 2] }
+insts = ["FADD_D {out}, {0}, {1}"]
+
+[[lower.Fsub]]
+when = { eq = ["elem", 1] }
+insts = ["FSUB_S {out}, {0}, {1}"]
+
+[[lower.Fsub]]
+when = { eq = ["elem", 2] }
+insts = ["FSUB_D {out}, {0}, {1}"]
+
+[[lower.Fmul]]
+when = { eq = ["elem", 1] }
+insts = ["FMUL_S {out}, {0}, {1}"]
+
+[[lower.Fmul]]
+when = { eq = ["elem", 2] }
+insts = ["FMUL_D {out}, {0}, {1}"]
+
+[[lower.Fdiv]]
+when = { eq = ["elem", 1] }
+insts = ["FDIV_S {out}, {0}, {1}"]
+
+[[lower.Fdiv]]
+when = { eq = ["elem", 2] }
+insts = ["FDIV_D {out}, {0}, {1}"]
+
+[[lower.Fmax]]
+when = { eq = ["elem", 1] }
+insts = ["FMAX_S {out}, {0}, {1}"]
+
+[[lower.Fmax]]
+when = { eq = ["elem", 2] }
+insts = ["FMAX_D {out}, {0}, {1}"]
+
+[[lower.Fmin]]
+when = { eq = ["elem", 1] }
+insts = ["FMIN_S {out}, {0}, {1}"]
+
+[[lower.Fmin]]
+when = { eq = ["elem", 2] }
+insts = ["FMIN_D {out}, {0}, {1}"]
+
+[[lower.Fneg]]
+when = { eq = ["elem", 1] }
+insts = ["FNEG_S {out}, {0}"]
+
+[[lower.Fneg]]
+when = { eq = ["elem", 2] }
+insts = ["FNEG_D {out}, {0}"]
+
+[[lower.Fabs]]
+when = { eq = ["elem", 1] }
+insts = ["FABS_S {out}, {0}"]
+
+[[lower.Fabs]]
+when = { eq = ["elem", 2] }
+insts = ["FABS_D {out}, {0}"]
+
+# Fpext/Fptrunc：f32↔f64（FCVT）。IR 里 `Fpext` 必是窄→宽、`Fptrunc` 宽→窄。
+[[lower.Fpext]]
+insts = ["FCVT_S2D {out}, {0}"]
+
+[[lower.Fptrunc]]
+insts = ["FCVT_D2S {out}, {0}"]
+
+# 整数 ↔ 浮点：按**结果**宽度（rd）与**源**宽度（rs1_width）选形态。
+[[lower.Sitofp]]
+when = { and = [{ eq = ["rd", 32] }, { eq = ["rs1_width", 32] }] }
+insts = ["SCVTF_S_W {out}, {0}"]
+
+[[lower.Sitofp]]
+when = { and = [{ eq = ["rd", 32] }, { eq = ["rs1_width", 64] }] }
+insts = ["SCVTF_S_X {out}, {0}"]
+
+[[lower.Sitofp]]
+when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 32] }] }
+insts = ["SCVTF_D_W {out}, {0}"]
+
+[[lower.Sitofp]]
+when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 64] }] }
+insts = ["SCVTF_D_X {out}, {0}"]
+
+[[lower.Uitofp]]
+when = { and = [{ eq = ["rd", 32] }, { eq = ["rs1_width", 32] }] }
+insts = ["UCVTF_S_W {out}, {0}"]
+
+[[lower.Uitofp]]
+when = { and = [{ eq = ["rd", 32] }, { eq = ["rs1_width", 64] }] }
+insts = ["UCVTF_S_X {out}, {0}"]
+
+[[lower.Uitofp]]
+when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 32] }] }
+insts = ["UCVTF_D_W {out}, {0}"]
+
+[[lower.Uitofp]]
+when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 64] }] }
+insts = ["UCVTF_D_X {out}, {0}"]
+
+[[lower.Fptosi]]
+when = { and = [{ eq = ["rd", 32] }, { eq = ["rs1_width", 32] }] }
+insts = ["FCVTZS_W_S {out}, {0}"]
+
+[[lower.Fptosi]]
+when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 32] }] }
+insts = ["FCVTZS_X_S {out}, {0}"]
+
+[[lower.Fptosi]]
+when = { and = [{ eq = ["rd", 32] }, { eq = ["rs1_width", 64] }] }
+insts = ["FCVTZS_W_D {out}, {0}"]
+
+[[lower.Fptosi]]
+when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 64] }] }
+insts = ["FCVTZS_X_D {out}, {0}"]
+
+[[lower.Fptoui]]
+when = { and = [{ eq = ["rd", 32] }, { eq = ["rs1_width", 32] }] }
+insts = ["FCVTZU_W_S {out}, {0}"]
+
+[[lower.Fptoui]]
+when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 32] }] }
+insts = ["FCVTZU_X_S {out}, {0}"]
+
+[[lower.Fptoui]]
+when = { and = [{ eq = ["rd", 32] }, { eq = ["rs1_width", 64] }] }
+insts = ["FCVTZU_W_D {out}, {0}"]
+
+[[lower.Fptoui]]
+when = { and = [{ eq = ["rd", 64] }, { eq = ["rs1_width", 64] }] }
+insts = ["FCVTZU_X_D {out}, {0}"]
+
+# Fcmp：`fcmp` 置 NZCV 后按 A64 条件选 1/0。**条件码语义按 FCMP 的 NZCV 约定**：
+#   eq(0)/ne(1)/ls(9)/gt(12)/ge(10) 直接可用（int 银行，字面量走 enum.cond）；
+#   mi(4)=符号、vs(6)=溢出、vc(7)=无溢出 在 int 银行没有对应 IR 条件 ⇒ 用**
+#   标志位银行**的 `CSELW_F` + `FlagCC::{S,O,No}`（mi→S、vs→O、vc→No）。
+# 无序（NaN）条件（U*）用"先按有序判定、再 OR 上 vs"两步。
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 1] }] }
+insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW_F {out}, {g}, FlagCC::No, SP"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 2] }] }
+insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW_F {out}, {g}, FlagCC::O, SP"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 3] }] }
+insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 0, SP"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 4] }] }
+insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 1, SP", "CSELW_F {out}, {g}, FlagCC::No, {out}"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 5] }] }
+insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW_F {out}, {g}, FlagCC::S, SP"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 6] }] }
+insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 9, SP"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 7] }] }
+insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 12, SP"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 8] }] }
+insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 10, SP"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 9] }] }
+insts = ["MOVZW {out}, 0"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 10] }] }
+insts = ["MOVZW {out}, 1"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 11] }] }
+insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 0, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 12] }] }
+insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 12, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 13] }] }
+insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 10, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 14] }] }
+insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW_F {out}, {g}, FlagCC::S, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 15] }] }
+insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 9, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 1] }, { eq = ["cond", 16] }] }
+insts = ["MOVZW {g}, 1", "FCMP_S {0}, {1}", "CSELW {out}, {g}, 1, SP"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 1] }] }
+insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW_F {out}, {g}, FlagCC::No, SP"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 2] }] }
+insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW_F {out}, {g}, FlagCC::O, SP"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 3] }] }
+insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 0, SP"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 4] }] }
+insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 1, SP", "CSELW_F {out}, {g}, FlagCC::No, {out}"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 5] }] }
+insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW_F {out}, {g}, FlagCC::S, SP"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 6] }] }
+insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 9, SP"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 7] }] }
+insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 12, SP"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 8] }] }
+insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 10, SP"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 9] }] }
+insts = ["MOVZW {out}, 0"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 10] }] }
+insts = ["MOVZW {out}, 1"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 11] }] }
+insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 0, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 12] }] }
+insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 12, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 13] }] }
+insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 10, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 14] }] }
+insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW_F {out}, {g}, FlagCC::S, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 15] }] }
+insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 9, SP", "CSELW_F {out}, {g}, FlagCC::O, {out}"]
+
+[[lower.Fcmp]]
+when = { and = [{ eq = ["elem", 2] }, { eq = ["cond", 16] }] }
+insts = ["MOVZW {g}, 1", "FCMP_D {0}, {1}", "CSELW {out}, {g}, 1, SP"]
+
+
+# FP 访存（base-only 形态；`Fload` 结果类型 / `Fstore` 值宽度决定 S/D）。
+[[lower.Fload]]
+when = { eq = ["elem", 1] }
+insts = ["LDRS_BASE {out}, [{0}]"]
+
+[[lower.Fload]]
+when = { eq = ["elem", 2] }
+insts = ["LDRD_BASE {out}, [{0}]"]
+
+[[lower.Fstore]]
+when = { eq = ["rs1_width", 32] }
+insts = ["STRS_BASE {0}, [{1}]"]
+
+[[lower.Fstore]]
+when = { eq = ["rs1_width", 64] }
+insts = ["STRD_BASE {0}, [{1}]"]

@@ -3087,7 +3087,14 @@ fn gen_lowering_insts(
                             if let Some((en, var)) = op.split_once("::") {
                                 let (en_id, var_id) =
                                     (format_ident!("{en}"), format_ident!("{var}"));
-                                (quote! { forge_ir::#en_id::#var_id }, quote! { 0u32 })
+                                // `FlagCC` 是**本 ISA 生成的本地枚举**（不在 forge-ir 里），
+                                // 其余条件枚举（`IntCC`/`FloatCC`）才是 forge-ir 的。
+                                let path = if en == "FlagCC" {
+                                    quote! { FlagCC::#var_id }
+                                } else {
+                                    quote! { forge_ir::#en_id::#var_id }
+                                };
+                                (path, quote! { 0u32 })
                             } else {
                                 let v: u8 = op.parse().map_err(|_| {
                                     format!(

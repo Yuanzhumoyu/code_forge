@@ -12,6 +12,33 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-25 · M6-101：arm64 标量浮点（算术/比较/转换/访存 + QEMU 浮点实参）
+
+- **ISA 编码**（clang oracle 逐字节核对，oracle 表 +18 条）：`FADD/FSUB/FMUL/FDIV/
+  FMAX/FMIN`(S/D)、`FNEG/FABS`、`FCMP`(S/D)、`FCVT`(f32↔f64)、`SCVTF/UCVTF`
+  （i32/i64→f32/f64）、`FCVTZS/FCVTZU`（f→i，四组合）、`LDRS/LDRD/STRS/STRD`
+  （无位移 FP 访存）。
+- **解码 trie 约束驱动的设计**：固定位段必须两两不相交 ⇒ 所有标量浮点统一成
+  **11 位 opcode 前缀**（[31:21] = 0xF1/0xF3/0x4F1/0x4F3，与 `SDIV/UDIV` 同族）；
+  1 源指令用不重叠的 `opc`（[20:10]）区分；`FMOV` 从原来的 8 位 opcode 0x1E
+  并入该前缀（否则 `[24,32)` 与 0xF1 判歧义）。首版把 `opcode`/`opc8` 声明成
+  重叠位域，被 `LINT-BITFIELD-OVERLAP` 与 trie 拒绝——这是 DSL 的正确约束。
+- **降级**：`Fcmp` 14 个条件（有序直接 `csel`；`U*` 条件先有序判定再 OR `vs`；
+  `mi/vs/vc` 用 **flag 银行 `CSEL_F`** + `FlagCC::{S,O,No}`，因为 int 银行的
+  数字条件码表里没有这三个）；`Fpext/Fptrunc` → `FCVT`；`Sitofp/Uitofp/Fptosi/
+  Fptoui` 按 (结果宽, 源宽) 四条；`Fload/Fstore` → FP `ldr/str`。
+- **工具链修正**：lowering 条件字面量现在支持 `FlagCC::X`（`FlagCC` 是生成物里的
+  **本地枚举**，不是 `forge_ir::FlagCC`——codegen 已按此特判，签名分类也认
+  `IntCC::/FloatCC::/FlagCC::` 为 cond）。
+- **QEMU 夹具**：crt0 开 `CPACR_EL1.FPEN`（`mov x9,#0x300000; msr cpacr_el1,x9; isb`）
+  ——A64 复位时 FP/SIMD 关闭，`fmov d0,x9` 会 trap 到 0x200 死循环（实测）；
+  浮点实参进 `d0..d7`（`movz/movk` + `fmov dN, x9`），`exec_f64_args` 已实现。
+- **验收**：`jit_matrix_arm64` **63 passed / 0 failed**（was 61；新增浮点算术/比较/
+  转换/访存/浮点实参用例）；oracle 2/2（+18 条 FP 行）；pins 刷新（encoding.digest、
+  roundtrip 2673、spec_totals 598、op-gap `42, 6, 9, 61`、vary 41、unassigned 268）。
+
+**仍未覆盖**：aarch64 core/std、`Fma/Fceil/Ffloor/Fcopysign`、向量/原子/宽乘除、DWARF/CFI。
+
 ### 2026-10-25 · M6-100：arm64 移位/除法/取余
 
 - **ISA（新编码，clang oracle 核对）**：`LSLVX/W`、`LSRVX/W`、`ASRVX/W` 六条——

@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-25) — arm64：标量浮点（算术 / 比较 / 转换 / 访存）
+
++ `isa/arm64.toml` 新增标量浮点编码（clang oracle 逐字节核对）：`fadd/fsub/fmul/
+  fdiv/fmax/fmin`(s/d)、`fneg/fabs`、`fcmp`、`fcvt`(f32↔f64)、`scvtf/ucvtf`、
+  `fcvtzs/fcvtzu`、FP `ldr/str`。所有标量浮点统一成 **11 位 opcode 前缀**
+  （解码 trie 要求固定位段两两不相交）。
++ 降级：`Fadd/Fsub/Fmul/Fdiv/Fmax/Fmin/Fneg/Fabs`、`Fcmp`（14 条件，NaN 条件用
+  `csel` + `vs` 组合，`mi/vs/vc` 走 flag 银行 `CSEL_F`+`FlagCC`）、
+  `Fpext/Fptrunc`、`Sitofp/Uitofp/Fptosi/Fptoui`、`Fload/Fstore`。
++ QEMU aarch64 夹具：crt0 开 `CPACR_EL1.FPEN`；浮点实参进 `d0..d7`
+  （`Executor::exec_f64_args` 已有 aarch64 实现）。
++ 结果：`jit_matrix_arm64` **63 passed / 0 failed**；arm64 op 覆盖 25→42、真缺口 78→61。
+
 ### Added (2026-10-25) — arm64：移位 / 除法 / 取余
 
 + `isa/arm64.toml` 新增 `LSLV`/`LSRV`/`ASRV` 的 X/W 六条编码（`DIV2A` 族，clang

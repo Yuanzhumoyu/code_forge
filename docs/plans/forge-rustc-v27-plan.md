@@ -246,8 +246,27 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
 - 快照：arm64 op 覆盖 18→25、真缺口 85→78、vary 候选 12→19、部分重叠 9→16
   （新增的 64/其余 成对规则，同样是"特化 + 兜底"）。
 
-**仍未覆盖**：aarch64 的 core/std（当前只能 `#![no_core]`）、浮点/原子/宽乘除指令，
-以及 DWARF/CFI 的 aarch64 形态。
+**进度（2026-10-25，M6-101）——arm64 标量浮点落地**：
+
+- 新编码（全部经 clang oracle 逐字节核对）：`FADD/FSUB/FMUL/FDIV/FMAX/FMIN`（S/D）、
+  `FNEG/FABS`、`FCMP`、`FCVT`（f32↔f64）、`SCVTF/UCVTF`（i32/i64 → f32/f64）、
+  `FCVTZS/FCVTZU`（f32/f64 → i32/i64）、FP `ldr/str`（`LDRS/LDRD/STRS/STRD` 无位移形态）。
+- **解码 trie 的硬约束**：同一节点上固定位段两两不相交 ⇒ 标量浮点全部统一成
+  **11 位 opcode 前缀**（[31:21] = 0xF1/0xF3/0x4F1/0x4F3，与 `SDIV/UDIV` 同族），
+  1 源指令再用不重叠的 `opc` 字段（[20:10]）区分；`FMOV` 也并入该前缀
+  （原来 8 位 opcode 0x1E 会与 0xF1 在 [24,32) 判歧义）。
+- 降级：算术/取负/绝对值/比较（`Fcmp` 的 14 个条件——有序条件直接 `csel`，
+  NaN 相关条件用"先有序判定、再 OR `vs`"，`mi/vs/vc` 走 **flag 银行的 `CSEL_F`**
+  转 `FlagCC::{S,O,No}`）、`Fpext/Fptrunc`（`FCVT`）、`Sitofp/Uitofp/Fptosi/Fptoui`
+  按 (结果宽, 源宽) 四条、`Fload/Fstore`。
+- **QEMU 夹具**：crt0 必须开 `CPACR_EL1.FPEN`（复位时 FP/SIMD 关闭，访问 d 寄存器会
+  trap 到异常向量）；浮点实参按 AAPCS64 装 `d0..d7`（`movz/movk` → `fmov dN, x9`），
+  `Executor::exec_f64_args` 已有 aarch64 实现。
+- 结果：`jit_matrix_arm64` **63 passed / 137 skipped / 0 failed**；其余浮点用例
+  （`Fma`/`Fceil`/`Ffloor`/`Fcopysign`、向量）仍按能力集 Skip。
+
+**仍未覆盖**：aarch64 的 core/std（当前只能 `#![no_core]`）、`Fma/Fceil/Ffloor/Fcopysign`、
+向量/原子/宽乘除，以及 DWARF/CFI 的 aarch64 形态。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

@@ -929,6 +929,14 @@ pub(crate) fn token_kind(op: &str) -> &'static str {
     {
         return "reg";
     }
+    // 条件枚举字面量（`IntCC::Ne` / `FloatCC::Oeq` / `FlagCC::O`）：codegen 的
+    // ctor 已支持这种写法（按槽银行构造对应 IR 枚举），签名分类必须同口径认出
+    // "cond"——否则 lowering 模板 `CSELW_F ... FlagCC::O` 会被判成 reg 而不匹配。
+    if let Some((en, _)) = inner.split_once("::")
+        && matches!(en, "IntCC" | "FloatCC" | "FlagCC")
+    {
+        return "cond";
+    }
     // 数字立即数
     if super::integration::parse_i64_lit(inner).is_ok() {
         return "num";

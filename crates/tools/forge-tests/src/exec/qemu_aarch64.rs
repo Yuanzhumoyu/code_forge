@@ -68,7 +68,15 @@ const EM_AARCH64: u16 = 183;
 /// 运行单个编译函数（无全局数据）：退出码 = 函数返回值。
 pub fn exec_aarch64(compiled: &CompiledFunction, args: &[u64]) -> Result<u64, String> {
     let qemu = qemu_aarch64_path().ok_or("qemu-system-aarch64 未找到")?;
-    let elf = build_elf(&[(0u32, compiled.clone())], &[], 0, args)?;
+    let elf = build_elf(&[(0u32, compiled.clone())], &[], 0, args, false)?;
+    run_qemu(&qemu, &elf)
+}
+
+/// 浮点实参执行（v27 M6-101）：实参按 AAPCS64 装进 **d0..d7**（位模式），
+/// 返回值仍是 x0（退出码 = 低 8 位；调用方按有符号字节解释）。
+pub fn exec_aarch64_f64(compiled: &CompiledFunction, args: &[u64]) -> Result<u64, String> {
+    let qemu = qemu_aarch64_path().ok_or("qemu-system-aarch64 未找到")?;
+    let elf = build_elf(&[(0u32, compiled.clone())], &[], 0, args, true)?;
     run_qemu(&qemu, &elf)
 }
 
@@ -80,7 +88,7 @@ pub fn exec_aarch64_module(
     args: &[u64],
 ) -> Result<u64, String> {
     let qemu = qemu_aarch64_path().ok_or("qemu-system-aarch64 未找到")?;
-    let elf = build_elf(funcs, globals, main_idx, args)?;
+    let elf = build_elf(funcs, globals, main_idx, args, false)?;
     run_qemu(&qemu, &elf)
 }
 
@@ -127,12 +135,25 @@ fn bl_here(b: &mut Vec<u8>) -> usize {
 
 /// crt0 前缀：设栈 + 参数 + bl 占位 + semihosting 退出块。
 /// 返回 (bytes, bl_off) —— bl_off 由调用方回填跳 main。
-fn crt0_with_exit(args: &[u64]) -> (Vec<u8>, usize) {
+fn crt0_with_exit(args: &[u64], f64_args: bool) -> (Vec<u8>, usize) {
     let mut b: Vec<u8> = Vec::new();
     mov_imm(&mut b, 0, STACK_TOP);
     mov_sp_reg(&mut b, 31, 0); // mov sp, x0（add 形式）
+    // **开 FP/SIMD**（v27 M6-101）：A64 复位时 CPACR_EL1.FPEN=0，访问 d/v 寄存器
+    // 会 trap 到异常向量（实测：浮点用例在 `fmov d0, x9` 处跳 0x200 死循环）。
+    // 无条件开（整数路径无害）：mov x9,#0x300000; msr cpacr_el1,x9; isb。
+    w(&mut b, 0xD2A0_0609);
+    w(&mut b, 0xD518_1049);
+    w(&mut b, 0xD503_3FDF);
     for (i, a) in args.iter().enumerate().take(8) {
-        mov_imm(&mut b, i as u32, *a);
+        if f64_args {
+            // 浮点实参走 AAPCS64 的 d0..d7：位模式先进 x9，再 `fmov dN, x9`
+            // （0x9E670000 | (M<<5) | N，M=9）。
+            mov_imm(&mut b, 9, *a);
+            w(&mut b, 0x9E67_0000 | (9 << 5) | i as u32);
+        } else {
+            mov_imm(&mut b, i as u32, *a);
+        }
     }
     let bl_off = bl_here(&mut b);
     // ── 退出块（main ret 后执行；LR 指向 bl+4=本块开头）──
@@ -155,8 +176,9 @@ fn build_elf(
     globals: &[(String, Vec<u8>)],
     main_idx: u32,
     args: &[u64],
+    f64_args: bool,
 ) -> Result<Vec<u8>, String> {
-    let (mut code, bl_off) = crt0_with_exit(args);
+    let (mut code, bl_off) = crt0_with_exit(args, f64_args);
     // **布局全部函数**（v27 M6-97）：旧实现只拼 `main`，所以带 `Call` 的模块根本
     // 没有"另一个函数"可跳。现在按 `(idx, code)` 顺序各自 4 对齐落进代码段，
     // 记下函数下标 → 段内偏移，供 crt0 的 `bl main` 与函数内 `Call` 重定位回填。

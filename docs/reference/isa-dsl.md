@@ -1785,6 +1785,7 @@ insts = ["cvttsd2si {out}, {0}"]
 | `{shufps_imm8}` / `{shufps_imm8_hi}` | SHUFPS mask 常量（低/高 2 位字段） |
 | `{vconst_lo2}` / `{vconst_lo}` / `{vconst_hi}` / `{vconst_lo_hi}` / `{vconst_hi_hi}` | 向量常量字节池拆分（V64/V128/V256 lane 位模式） |
 | `{cc}` | 当前 IR 比较条件 → 本 ISA 条件码（**查 `[conventions.cond]` 的 `ir` 字段**；宿主函数 `intcc_name` 只做"IR 码 → 条件名"） |
+| `IntCC::X` / `FloatCC::X` / `FlagCC::X` | **条件枚举字面量**（可代替 `{cc}` 固定某个条件）。`FlagCC` 是生成物里的**本地枚举**（不在 forge-ir），legacy 的"裸机器码"写法仍接受 |
 | `{global}` | `ctx.current_global` 的 GlobalId（**负编码 -(id+1)**，配 `MOVABS_GLOBAL` → ABS8 重定位） |
 
 > **占位符单一注册表**：所有占位符的 token 分类、临时声明、xreg 绑定、ctor 表达式
