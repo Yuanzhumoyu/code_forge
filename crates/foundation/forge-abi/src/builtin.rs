@@ -138,7 +138,11 @@ note = "eightbyte（INT/SSE 混合）分类未建模：≤16B 聚合按两整数
 pub const AAPCS64: &str = r#"
 name = "aapcs64"
 parent = "c"
-stack = { slot_bytes = 8, first_offset_slots = 2 }
+# `first_offset_slots = 0`：**本实现的 arm64 被调方帧基址 = 入口 sp**（序言
+# `sub sp,#frame; …; add x29, sp, #frame`，保存的 fp/lr 在帧内 `[x29-16]/[x29-8]`），
+# A64 的 `bl` 不压返回地址 ⇒ 第一个栈实参就在 `[x29]`。x86 的 2 不适用
+# （那算的是 `push fp` 之后的 `[rbp+16]`）。M6-97 用 QEMU 真执行校准。
+stack = { slot_bytes = 8, first_offset_slots = 0 }
 aliases = ["c"]  # arm64 上的 C 约定
 classify = [
   { when = { kind = "float", size_le = 8 },      do = { direct = { pool = "float" } } },

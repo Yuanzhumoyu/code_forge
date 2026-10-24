@@ -1534,7 +1534,8 @@ fn aapcs64_variadic_shape_is_pure_data() {
         "浮点类：__vr_offs / __vr_top（V 槽 16 字节）"
     );
     // **逐字段初值**（宿主按 plan + 规则算）：`__stack` = 未命名区地址（arm64 的
-    // `first_offset_slots` = 2、`shadow_bytes` = 0 ⇒ 帧相对 16）、两个 top = 保存区基址 + 本类区域
+    // `first_offset_slots` = 0、`shadow_bytes` = 0 ⇒ 帧相对 0：本实现的被调方
+    // 帧基址 = 入口 sp，A64 的 `bl` 不压返回地址）、两个 top = 保存区基址 + 本类区域
     // 字节数（GR 区 = 8 槽 × 8 = 64；保存区总长 = 192）、两个 offs = −(步长 × 已用槽数)
     //（只有 1 个走寄存器的命名参数 ⇒ GR 用掉 1 个、VR 一个没用）。
     let save_size = va.save.as_ref().expect("aapcs64 有保存区").size;
@@ -1542,7 +1543,7 @@ fn aapcs64_variadic_shape_is_pure_data() {
     assert_eq!(
         va.init.as_ref().map(|i| i.fields.clone()),
         Some(vec![
-            VaInitVal::FrameOff(16),
+            VaInitVal::FrameOff(0),
             VaInitVal::SaveOff(64),
             VaInitVal::SaveOff(192),
             VaInitVal::Imm((-8i64) as u64),

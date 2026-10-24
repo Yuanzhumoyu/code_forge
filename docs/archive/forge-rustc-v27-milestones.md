@@ -12,6 +12,27 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-24 · M6-97：P3 执行级——arm64 `Call` 角色 + qemu 模块真执行
+
+本机装有 `qemu-system-aarch64`（此前误判为"无 emulator"）：`exec/qemu_aarch64.rs` 早已有
+semihosting 退出脚手架，但 `build_elf` **只拼入口函数**，`Call` 的第二个函数无处安放。
+
+- **ISA**：`BL` → `roles = ["call"]`；`BLR` → `roles = ["call_indirect"]`；`LDURX/STURX`
+  增 `stack_arg_load/stack_arg_store`（imm9 ±256；`@move_args` 的栈形参收参与溢出写槽用）。
+- **夹具**：`build_elf` 改为布局全部 `(idx, code)`（4 对齐），记录函数下标 → 段内偏移；
+  crt0 的 `bl main` 照旧回填；每个函数的 `@N` 重定位按 `RelocKind::patch_value` 算
+  `target-site`、写 A64 `BL` 的 imm26；非 `@N` 或非 4 字节 PC 相对/带 addend ⇒ 明确报错。
+- **真执行**：`qemu_aarch64_exec_direct_call`（add(20,22)=42）、
+  `qemu_aarch64_exec_call_with_stack_args`（sum9(1..9)=45，第 9 个实参走栈）。
+- **约定数据纠错**（由 QEMU trace 读出）：`aapcs64` 的 `first_offset_slots` 原为 2（x86 的
+  `push fp` 口径）；本实现 arm64 序言 `sub sp,#frame; …; add x29,sp,#frame` ⇒ 帧基址 =
+  入口 sp，A64 `bl` 不压返回地址 ⇒ 首个栈实参在 `[x29+0]`。改为 **0**；变参 `__stack`
+  初值 `FrameOff(16)` → `FrameOff(0)`（`abi_target_real` 同步）。trace 里 callee 原读
+  `[x29,#0x10]` 得 0（45 变 36），改后 `[x29,#0]` 正确。
+
+**验收**：forge-tests 60/60（含 6 条 qemu 用例）；`abi_target_real` 26/26；arm64 两套
+codegen 测试全绿。**仍缺**：forge-rustc 的 aarch64 目标（core/std + rustc 接线）。
+
 ### 2026-10-24 · M6-96：M5 清单销项（账本与代码对齐）
 
 M5 的"未闭环清单"最后一项（`sym`/`label` fail-closed）随 M6-93/M6-94 落地而闭合；

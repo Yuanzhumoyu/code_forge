@@ -157,17 +157,65 @@ fn build_elf(
     args: &[u64],
 ) -> Result<Vec<u8>, String> {
     let (mut code, bl_off) = crt0_with_exit(args);
-    // 在退出块后拼接入口函数机器码
-    let main = funcs
-        .iter()
-        .find(|(i, _)| *i == main_idx)
+    // **布局全部函数**（v27 M6-97）：旧实现只拼 `main`，所以带 `Call` 的模块根本
+    // 没有"另一个函数"可跳。现在按 `(idx, code)` 顺序各自 4 对齐落进代码段，
+    // 记下函数下标 → 段内偏移，供 crt0 的 `bl main` 与函数内 `Call` 重定位回填。
+    let mut starts: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
+    for (idx, cf) in funcs {
+        while code.len() % 4 != 0 {
+            code.push(0);
+        }
+        starts.insert(*idx, code.len());
+        code.extend_from_slice(&cf.code);
+    }
+    let main_start = *starts
+        .get(&main_idx)
         .ok_or_else(|| format!("main_idx {main_idx} 不存在"))?;
-    let main_start = code.len();
-    code.extend_from_slice(&main.1.code);
-    // 回填 bl imm26 = (main_start - bl_off)/4（A64：target = PC + imm26<<2）
+    // 回填 crt0 的 bl imm26 = (main_start - bl_off)/4（A64：target = PC + imm26<<2）
     let imm = ((main_start - bl_off) / 4) as u32;
     let inst = 0x94000000u32 | (imm & 0x03FF_FFFF);
     code[bl_off..bl_off + 4].copy_from_slice(&inst.to_le_bytes());
+
+    // **函数间 `Call` 重定位**：`Call` 降级成 `@N` 符号（N = 目标函数下标），
+    // 编码器留 `0x97FFFFFF` 占位；这里按 `RelocKind::patch_value` 统一口径算出
+    // 目标地址差，再写 A64 `BL` 的 imm26。只接 4 字节 PC 相对重定位（其余明确报错，
+    // 不猜）。
+    for (idx, cf) in funcs {
+        let fstart = *starts.get(idx).expect("刚插入");
+        for r in &cf.relocations {
+            let Some(sym) = r.symbol.as_str().strip_prefix('@') else {
+                return Err(format!(
+                    "不支持的符号重定位 '{}'（qemu aarch64 测试夹具只接 @N 函数引用）",
+                    r.symbol.as_str()
+                ));
+            };
+            let target_idx: u32 = sym
+                .parse()
+                .map_err(|_| format!("函数符号 '@{sym}' 不是函数下标"))?;
+            let tstart = *starts
+                .get(&target_idx)
+                .ok_or_else(|| format!("重定位 @{target_idx} 指向的函数不在本次模块里"))?;
+            if r.kind.width_bytes() != 4 || r.addend != 0 {
+                return Err(format!(
+                    "不支持的函数重定位形态：kind={:?} addend={}",
+                    r.kind, r.addend
+                ));
+            }
+            let site = ENTRY + (fstart + r.offset) as u64;
+            let target = ENTRY + tstart as u64;
+            let value = r.kind.patch_value(target, site) as i64;
+            if value % 4 != 0 {
+                return Err(format!("BL 目标未 4 字节对齐（delta={value}）"));
+            }
+            let imm26 = value >> 2;
+            if !(-(1 << 25)..(1 << 25)).contains(&imm26) {
+                return Err(format!("BL 超出 imm26 范围（delta={value}）"));
+            }
+            let patched = 0x94000000u32 | ((imm26 as u32) & 0x03FF_FFFF);
+            let at = fstart + r.offset;
+            code[at..at + 4].copy_from_slice(&patched.to_le_bytes());
+        }
+    }
 
     // 数据段（8 对齐）
     let mut data: Vec<u8> = Vec::new();
@@ -417,5 +465,105 @@ mod tests {
         let cf2 = compile_if_else(false);
         let r2 = exec_aarch64(&cf2, &[]).unwrap_or_else(|e| panic!("exec_aarch64: {e}"));
         assert_eq!(r2 & 0xFF, 2, "if(false) 应走 else 翼返回 2；got {r2:#x}");
+    }
+
+    /// **P3 执行级：函数间 `Call`（v27 M6-97）**。`add(a,b)` 与 `main = add(20,22)`
+    /// 分别编译，模块级 ELF 布局 + `@N` 重定位回填后交给 QEMU 真执行。
+    /// 这是 arm64 `[inst.BL]` 拿到 `roles=["call"]` 后的端到端验收：寄存器实参
+    /// （x0/x1）、寄存器返回（x0）、BL 的 imm26 相对位移全部走真实机器码。
+    #[test]
+    fn qemu_aarch64_exec_direct_call() {
+        if qemu_aarch64_path().is_none() {
+            eprintln!("SKIP: qemu-system-aarch64 未安装");
+            return;
+        }
+        use code_forge::backend::CompileSession;
+        use code_forge::backend::arm64::TargetMachine;
+        use code_forge::prelude::{
+            FuncRef, FunctionBuilder, FunctionSignature, TypeContext, TypeId,
+        };
+        // add(a, b) = a + b
+        let mut b = FunctionBuilder::new(
+            "add",
+            TypeContext::new(),
+            FunctionSignature::new(&[(TypeId::I64, "a"), (TypeId::I64, "b")], &[TypeId::I64]),
+        );
+        let (e, ps) = b.create_block_with_params(&[(TypeId::I64, "a"), (TypeId::I64, "b")]);
+        b.switch_to_block(e);
+        let s = b.iadd(ps[0], ps[1]);
+        b.ret(&[s]);
+        let add = b.finish().expect("add");
+        // main() = add(20, 22)
+        let mut b = FunctionBuilder::new(
+            "main",
+            TypeContext::new(),
+            FunctionSignature::new(&[], &[TypeId::I64]),
+        );
+        b.create_block_here();
+        let x = b.constant(20i64);
+        let y = b.constant(22i64);
+        let r = b.call(FuncRef::new(0), &[x, y], &[TypeId::I64])[0];
+        b.ret(&[r]);
+        let main = b.finish().expect("main");
+
+        let sess = CompileSession::new(TargetMachine::new());
+        let add_cf = sess.compile(&add).expect("compile add");
+        let main_cf = sess.compile(&main).expect("compile main");
+        assert!(
+            !main_cf.relocations.is_empty(),
+            "caller 应带 @N 函数重定位（BL 的 imm26 由夹具回填）"
+        );
+        let r = exec_aarch64_module(&[(0, add_cf), (1, main_cf)], &[], 1, &[])
+            .unwrap_or_else(|e| panic!("exec_aarch64_module: {e}"));
+        assert_eq!(r & 0xFF, 42, "add(20,22) 应返回 42；got {r:#x}");
+    }
+
+    /// **P3 执行级：带栈实参的 `Call`（v27 M6-97）**。AAPCS64 前 8 个整型实参走
+    /// x0..x7，第 9 个起走调用者栈；`main = sum9(1..9) = 45`。这条同时验证
+    /// 调用点栈实参区与 `@move_args` 的栈形参收参（两侧独立布局）。
+    #[test]
+    fn qemu_aarch64_exec_call_with_stack_args() {
+        if qemu_aarch64_path().is_none() {
+            eprintln!("SKIP: qemu-system-aarch64 未安装");
+            return;
+        }
+        use code_forge::backend::CompileSession;
+        use code_forge::backend::arm64::TargetMachine;
+        use code_forge::prelude::{
+            FuncRef, FunctionBuilder, FunctionSignature, TypeContext, TypeId,
+        };
+        let names = ["a", "b", "c", "d", "e", "f", "g", "h", "i"];
+        let params: Vec<(TypeId, &str)> = names.iter().map(|n| (TypeId::I64, *n)).collect();
+        let mut b = FunctionBuilder::new(
+            "sum9",
+            TypeContext::new(),
+            FunctionSignature::new(&params, &[TypeId::I64]),
+        );
+        let (e, ps) = b.create_block_with_params(&params);
+        b.switch_to_block(e);
+        let mut acc = ps[0];
+        for p in &ps[1..] {
+            acc = b.iadd(acc, *p);
+        }
+        b.ret(&[acc]);
+        let sum9 = b.finish().expect("sum9");
+        // main() = sum9(1..=9) = 45
+        let mut b = FunctionBuilder::new(
+            "main",
+            TypeContext::new(),
+            FunctionSignature::new(&[], &[TypeId::I64]),
+        );
+        b.create_block_here();
+        let args: Vec<_> = (1..=9).map(|v| b.constant(v as i64)).collect();
+        let r = b.call(FuncRef::new(0), &args, &[TypeId::I64])[0];
+        b.ret(&[r]);
+        let main = b.finish().expect("main");
+
+        let sess = CompileSession::new(TargetMachine::new());
+        let sum9_cf = sess.compile(&sum9).expect("compile sum9");
+        let main_cf = sess.compile(&main).expect("compile main");
+        let r = exec_aarch64_module(&[(0, sum9_cf), (1, main_cf)], &[], 1, &[])
+            .unwrap_or_else(|e| panic!("exec_aarch64_module: {e}"));
+        assert_eq!(r & 0xFF, 45, "sum9(1..9) 应返回 45；got {r:#x}");
     }
 }

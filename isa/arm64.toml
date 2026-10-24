@@ -1461,6 +1461,7 @@ asm = "b {target:off26}"
 [inst.BL]
 form = "BREL"
 opcode = 0x25
+roles = ["call"]
 asm = "bl {target:off26}"
 
 # ── 逻辑寄存器 AND/BIC/ORR/ORN/EOR/EON（寄存器三操作数）──
@@ -1669,6 +1670,7 @@ asm = "br {src:r64}"
 [inst.BLR]
 form = "BRREG2"
 opcode = 0xD63F
+roles = ["call_indirect"]
 asm = "blr {src:r64}"
 
 [inst.RET]
@@ -1762,7 +1764,8 @@ form = "LSUN"
 opcode = 0xF8
 match = { opc2 = 1, mode = 0, zero21 = 0 }
 asm = "ldur {dst:r64:out}, [{base:r64}, #{off:imm9s}]"
-roles = ["callee_load"]
+# stack_arg_load：被调方收栈形参（`[fp + plan 偏移]`，V29 的 ±256 立即数）
+roles = ["callee_load", "stack_arg_load"]
 
 [inst.LDURW]
 form = "LSUN"
@@ -1775,7 +1778,8 @@ form = "LSUN"
 opcode = 0xF8
 match = { opc2 = 0, mode = 0, zero21 = 0 }
 asm = "stur {src:r64}, [{base:r64}, #{off:imm9s}]"
-roles = ["callee_save"]
+# stack_arg_store：调用方写传出区（`[sp + caller_offset]`）+ 被调方写 spilled 形参
+roles = ["callee_save", "stack_arg_store"]
 
 [inst.STURW]
 form = "LSUN"

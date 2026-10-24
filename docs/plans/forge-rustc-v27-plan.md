@@ -45,7 +45,7 @@
 | --- | --- | --- |
 | **P1 128 位 C-ABI 跨后端兼容**（2026-10-23 起） | ✅ **已落地（2026-10-24）**：定义侧/调用侧都问 rustc `FnAbi` 的 `PassMode`（按引用 ⇒ 16 字节对齐副本的指针；`Cast{Vector}` ⇒ `XMM0`；`Direct` ⇒ 两整数槽/`RAX:RDX`）；跨后端探针**双向** 42 | §2.8；`WA-52`（已修）；`tests/cross_abi.rs` |
 | **P2 `INLINE_ASM` 的 `sym`/`label`** | ✅ **已完成（2026-10-24）**：`sym` 走"地址物化到输入寄存器"（M6-93），`label` 走"目标块 → 外部标签表 → 编码器 `use_label_at`"（M6-94，x86_64 变长谱；定宽谱明确拒绝）；正反两面的 e2e 都钉住 | §2.6 进度；台账 `INLINE_ASM` |
-| **P3 M4-T3 第二目标** | 🔶 **对象级已落地（2026-10-24）**：A64 编码逐字节对照 clang（24 条指令）+ 真实 ELF64/AArch64 对象（`.text` 字节/ELF 头/反汇编）；**执行级**仍受环境限制（无 emulator / aarch64 std / 交叉 gcc-ld） | §2.7；`tests/arm64_clang_oracle.rs`；`arm64-oracle` 门禁步 |
+| **P3 M4-T3 第二目标** | ✅ **对象级 + 执行级都已落地（2026-10-24）**：对象级 = A64 编码逐字节对照 clang + 真实 ELF64/AArch64 对象核对（M6-92）；执行级 = arm64 `Call`/`CallIndirect` 角色（BL/BLR）+ `LDURX/STURX` 的 stack_arg 角色 + qemu-system-aarch64 模块执行（直接调用 42、栈实参 45，M6-97），并据真机执行把 aapcs64 的 `first_offset_slots` 从 2 校正为 0。**仍缺**：forge-rustc 的 **aarch64 目标**（core/std、rustc target 接线），属独立的下一步 | §2.7；`tests/arm64_clang_oracle.rs`；`exec/qemu_aarch64.rs`；`arm64-oracle` 门禁步 |
 | **P4 分配器事件化** | ✅ **已完成（2026-10-24）**：`SPILL-VALUE`（逐值）+ `SPILL-EDIT`（逐指令 kind/offset/scratch/width）+ `ALLOC-SUMMARY.peak_live`（寄存器压力峰值）+ `Field::I64`；`events_guard` 用**高压夹具**钉住三种粒度都真触发 | §8 M6-87/M6-90/M6-91；`events_guard` 三方双向 |
 | M1 正确性清零（溢出 / 窄有符号 / 向量溢出 / regalloc） | ✅ 落地 | §8 M1；e2e 硬断言、`known_failure` = 0 |
 | M2 `global_asm!` | ✅ 落地 | §8 M2；e2e `global_asm_call` / `global_asm_sym_const` |
@@ -176,9 +176,25 @@ unit = 1，正常支持）。正反两面 e2e：`inline_asm_label`（无条件�
 `crates/backend/forge-codegen/tests/arm64_clang_oracle.rs` 用 clang 做独立 oracle：
 24 条 A64 指令逐字节对照；`fn add(a,b)` 编成 `elf64-littleaarch64` 对象后 `.text`
 与 `CompiledFunction.code` 逐字节相等，ELF 头/反汇编由 `llvm-readobj`/`llvm-objdump`
-核对；门禁新增 `arm64-oracle`。**仍未覆盖**：arm64 的 Call lowering 还不存在
-（`isa/arm64.toml` 注明），所以外部调用的 `R_AARCH64_CALL26`/链接层尚无从对照；
-执行级仍是环境依赖。
+核对；门禁新增 `arm64-oracle`。
+
+**进度（2026-10-24，M6-97）——执行级也落地了**：本机装有 `qemu-system-aarch64`
+（`D:\Program Files\qemu`，system 模式 + semihosting 退出，`exec/qemu_aarch64.rs`
+已有脚手架但此前只拼**入口函数**）。这一轮：
+
+- `isa/arm64.toml` 给 `BL` 加 `roles = ["call"]`、`BLR` 加 `roles = ["call_indirect"]`，
+  `LDURX/STURX` 加 `stack_arg_load/stack_arg_store`（±256 的 imm9 覆盖栈参数/溢出槽）；
+- qemu 夹具改为**布局全部函数**并按 `RelocKind::patch_value` 回填 `@N` 的 BL imm26
+  （只接 4 字节 PC 相对重定位，其余明确报错）；
+- 真执行两条：`qemu_aarch64_exec_direct_call`（add(20,22)=42，寄存器实参/返回）、
+  `qemu_aarch64_exec_call_with_stack_args`（sum9(1..9)=45，第 9 个实参走栈）。
+- 真机执行纠正了一处**约定数据**：aapcs64 的 `first_offset_slots` 原写 2（照 x86 的
+  "push fp 后 [rbp+16]"），但本实现 arm64 的帧基址 = **入口 sp**（A64 的 `bl` 不压返回
+  地址，保存 fp/lr 在帧内 `[x29-16]/[x29-8]`）⇒ 首个栈实参在 `[x29]`，改为 0；
+  变参对象的 `__stack` 初值随之 `FrameOff(0)`（`abi_target_real` 同步）。
+
+**仍未覆盖**：`forge-rustc` 的 aarch64 目标本身（需要 aarch64 的 core/std 与 rustc
+target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是本节的代码生成层。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

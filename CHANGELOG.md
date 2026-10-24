@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-24) — arm64 后端：函数调用（`BL`/`BLR`）与 QEMU 真执行
+
++ `isa/arm64.toml` 的 `BL` 现在声明 `roles = ["call"]`、`BLR` 声明
+  `roles = ["call_indirect"]`，"最简 CPU" 之外又补上了**函数调用**这条谱面能力；
+  `LDURX/STURX` 同时承担 `stack_arg_load/stack_arg_store`（栈形参收参 / 传参写槽）。
++ 测试夹具（`forge-tests` 的 `exec/qemu_aarch64.rs`）现在会布局**全部**函数并按 `@N`
+  重定位回填 `BL` 的 imm26：`qemu-system-aarch64` 真执行覆盖直接调用（add(20,22)=42）
+  与栈实参（sum9(1..9)=45）。
++ 由真机执行纠正 `aapcs64` 的数据：`first_offset_slots` 2 → **0**（本实现的 arm64 帧基址
+  等于入口 sp，A64 `bl` 不压返回地址 ⇒ 首个栈实参在 `[x29]`）；变参对象 `__stack`
+  初值同步为 `FrameOff(0)`。
+
 ### Fixed (2026-10-24) — 帧记账：spill 槽 0 与 `call` 返回地址重叠（M6-⑩）
 
 + `callee_saved_bytes` 不再把帧指针保存槽算进"rbp 之下"：`push rbp; mov rsp,rbp` 之后

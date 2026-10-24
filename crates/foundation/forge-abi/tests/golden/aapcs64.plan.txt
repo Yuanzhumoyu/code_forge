@@ -1,7 +1,7 @@
 # arm64 / aapcs64
 ## void0
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 ret void
 hidden sret=- context=- va_meta=- va_len=-
@@ -10,7 +10,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## i64
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 arg a size=8 -> reg X0
 ret reg X0
@@ -20,7 +20,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## i32_i32
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 arg a size=4 -> reg X0
 arg b size=4 -> reg X1
@@ -31,7 +31,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## i64_x6
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 arg a size=8 -> reg X0
 arg b size=8 -> reg X1
@@ -46,7 +46,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## i64_x8
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 arg a size=8 -> reg X0
 arg b size=8 -> reg X1
@@ -63,7 +63,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## f64
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 arg x size=8 -> reg V0
 ret reg V0
@@ -73,7 +73,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## f64_x4
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 arg a size=8 -> reg V0
 arg b size=8 -> reg V1
@@ -86,7 +86,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## ptr
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 arg p size=8 -> reg X0
 ret reg X0
@@ -96,7 +96,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## vec16
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 arg v size=16 -> reg V0
 ret reg V0
@@ -106,9 +106,9 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## vec32
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=48 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=32 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
-arg v size=32 -> stack off=32 size=32 align=32
+arg v size=32 -> stack off=0 size=32 align=32
 ret indirect size=32 align=32
 hidden sret=X8 context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28 V8 V9 V10 V11 V12 V13 V14 V15] fp=false link=true
@@ -116,7 +116,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## agg_ii
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 arg s size=16 -> pair X0:X1
 ret pair X0:X1
@@ -126,7 +126,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## agg_ii_f64
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 arg s size=16 -> pair X0:X1
 arg x size=8 -> reg V0
@@ -137,7 +137,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## agg24
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=24 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=24 red_zone=None frame_pad=0
 variadic false position by_class
 arg s size=24 -> indirect ptr=X0 at=Some(0) on_stack=true
 ret indirect size=24 align=1
@@ -147,7 +147,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## hfa1
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 arg s size=4 -> reg V0
 ret reg V0
@@ -157,7 +157,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## hfa2
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 arg s size=8 -> pair V0:V1
 ret pair V0:V1
@@ -169,7 +169,7 @@ widen_to_bits 32
 ERR Unsupported
 ## agg_mixed_float
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 arg s size=12 -> pair X0:X1
 ret void
@@ -179,7 +179,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## mixed_wide_ret
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 arg a size=8 -> reg X0
 arg x size=8 -> reg V0
@@ -190,7 +190,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## i64_x9
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=8 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=8 byval_area=0 red_zone=None frame_pad=0
 variadic false position by_class
 arg a0 size=8 -> reg X0
 arg a1 size=8 -> reg X1
@@ -200,7 +200,7 @@ arg a4 size=8 -> reg X4
 arg a5 size=8 -> reg X5
 arg a6 size=8 -> reg X6
 arg a7 size=8 -> reg X7
-arg a8 size=8 -> stack off=16 size=8 align=8
+arg a8 size=8 -> stack off=0 size=8 align=8
 ret reg X0
 hidden sret=- context=- va_meta=- va_len=-
 callee_saved StoreToFrame [X19 X20 X21 X22 X23 X24 X25 X26 X27 X28 V8 V9 V10 V11 V12 V13 V14 V15] fp=false link=true
@@ -208,7 +208,7 @@ clobbers [X0 X1 X2 X3 X4 X5 X6 X7 X8 X9 X10 X11 X12 X13 X14 X15 X16 X17 V0 V1 V2
 widen_to_bits 32
 ## va2p1
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic true position by_class
 arg fmt size=8 -> reg X0
 arg n size=4 -> reg X1
@@ -245,7 +245,7 @@ va_rule float cursor=4 base=2 overflow=0 limit=0 signed=true step=16 ov_step=8 o
 widen_to_bits 32
 ## va0p3
 conv aapcs64
-stack align=16 slot=8 shadow=0 first_arg_off=16 arg_area=0 byval_area=0 red_zone=None frame_pad=0
+stack align=16 slot=8 shadow=0 first_arg_off=0 arg_area=0 byval_area=0 red_zone=None frame_pad=0
 variadic true position by_class
 arg a size=8 -> reg X0
 arg b size=8 -> reg V0
