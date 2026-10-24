@@ -2434,6 +2434,33 @@ pub const CASES: &[Case] = &[
             42.0,
         ),
     },
+    // Fcopysign：经 Fptosi 转成 i64 后才能落进 i8 值域（F64 直出型会被 value-range 跳过）。
+    Case {
+        name: "fcopysign_neg_to_pos_i64",
+        ops: &["Fcopysign", "Fconst", "Fptosi"],
+        kind: CaseKind::I64(
+            |b| {
+                let a = b.const_float((-3.5f64).to_bits(), TypeId::F64);
+                let s = b.const_float(2.0f64.to_bits(), TypeId::F64);
+                let r = b.fcopysign(a, s);
+                b.fptosi(r, TypeId::I64)
+            },
+            3,
+        ),
+    },
+    Case {
+        name: "fcopysign_pos_to_neg_i64",
+        ops: &["Fcopysign", "Fconst", "Fptosi"],
+        kind: CaseKind::I64(
+            |b| {
+                let a = b.const_float(3.5f64.to_bits(), TypeId::F64);
+                let s = b.const_float((-2.0f64).to_bits(), TypeId::F64);
+                let r = b.fcopysign(a, s);
+                b.fptosi(r, TypeId::I64)
+            },
+            -3,
+        ),
+    },
     Case {
         name: "fptosi_f64_i32",
         ops: &["Fptosi", "Fconst"],

@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-25) — arm64：`Fcopysign`
+
++ `Fcopysign` 降级 = `fabs` + GPR 里拼符号位（`fmov` 取位型 → `movz` 造单 bit 掩码 →
+  `and` → `orr` → `fmov` 回 FPR），32/64 两套。
++ 矩阵新增两条可判定用例 `fcopysign_neg_to_pos_i64` / `fcopysign_pos_to_neg_i64`
+  （经 `Fptosi` 落进 i8 值域）。结果：`jit_matrix_arm64` **77 passed / 0 failed**；
+  arm64 op 覆盖 46→47、真缺口 57→56。
+
 ### Added (2026-10-25) — arm64：浮点常量 / Fma / 取整 + FPR↔GPR 桥
 
 + 新增占位符 `{fconst_f0}..{fconst_f3}`（浮点位模式的 16 位分片，与 `{iconst_f*}` 同序），

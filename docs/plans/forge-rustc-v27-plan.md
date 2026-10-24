@@ -276,8 +276,18 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
 - 结果：`jit_matrix_arm64` **75 passed / 125 skipped / 0 failed**（M6-101 为 63）。
 - 剩余：`Fcopysign`（需符号位掩码 + FPR/GPR 往返，单独一轮）尚未做，仍按能力集 Skip。
 
-**仍未覆盖**：aarch64 的 core/std（当前只能 `#![no_core]`）、`Fcopysign`、NEON 向量、
-原子/宽乘除，以及 DWARF/CFI 的 aarch64 形态。
+**进度（2026-10-25，M6-103）——arm64 `Fcopysign`**：
+
+- A64 没有 `fcopysign` 单指令：降级 = `fabs` 取幅值 + 在 GPR 里拼符号位
+  （`fmov` 取 b 的位型 → `and` 单 bit 掩码（`movz` 造 0x8000_0000 / 0x8000<<48）→
+  `orr` 到幅值位型 → `fmov` 回 FPR），32/64 两套。
+- 矩阵新增两条**可判定**用例（F64 直出型会被 i8 值域过滤跳过）：
+  `fcopysign_neg_to_pos_i64`（-3.5 配 +2.0 → 3）与 `fcopysign_pos_to_neg_i64`
+  （+3.5 配 −2.0 → −3），经 `Fptosi` 落进 i8 值域。
+- 结果：`jit_matrix_arm64` **77 passed / 125 skipped / 0 failed**。
+
+**仍未覆盖**：aarch64 的 core/std（当前只能 `#![no_core]`）、NEON 向量、原子/宽乘除，
+以及 DWARF/CFI 的 aarch64 形态。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

@@ -12,6 +12,19 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-25 · M6-103：arm64 `Fcopysign`
+
+- A64 无单指令：`fabs` 取 |a|；b 的位型经 `fmov` 进 GPR，用 `movz` 造的**单 bit 掩码**
+  （f64 = `movz x, 0x8000, lsl 48`；f32 = `movz x, 0x8000, lsl 16`）取出符号位，
+  `orr` 到幅值位型后 `fmov` 回 FPR（32/64 两套，共 6–7 条）。
+- 直接写 `and x, x, #0x8000_0000_0000_0000` 的立即数路径不可用：lowering 模板把带 `-` 的
+  字面量判成 mem、超大十六进制又过不了 imm 分类 ⇒ 改用 `movz` 造掩码 + 寄存器 `and`。
+- 矩阵新增两条可判定用例（F64 直出型会被 i8 值域过滤）：`fcopysign_neg_to_pos_i64`、
+  `fcopysign_pos_to_neg_i64`（经 `Fptosi`）。
+- 验收：`jit_matrix_arm64` **77 passed / 0 failed**；pins 刷新（op-gap `47, 6, 9, 56`、vary 46）。
+
+**仍未覆盖**：aarch64 core/std、NEON 向量、原子/宽乘除、DWARF/CFI。
+
 ### 2026-10-25 · M6-102：arm64 浮点常量 / Fma / 取整 + FPR↔GPR 桥
 
 - **占位符**：新增 `{fconst_f0}..{fconst_f3}`（浮点位模式的 16 位分片，与 `{iconst_f*}`

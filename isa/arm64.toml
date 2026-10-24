@@ -1,4 +1,4 @@
-﻿#:schema ../isa-dsl.schema.json
+#:schema ../isa-dsl.schema.json
 # ============================================================
 # AArch64 (ARM64) — A64 — ISA-DSL 语法（P1 迭代 A1：全链最小可信集）
 # ============================================================
@@ -5827,4 +5827,31 @@ insts = [
   "MOVKX1 {g}, {fconst_f1}",
   "MOVKX {g}, {fconst_f0}",
   "FMOV_D_FROM_X {out}, {g}",
+]
+
+# Fcopysign（v27 M6-103）：|a| 的位型 OR 上 b 的符号位。A64 没有单条指令 ⇒
+# `fabs` 取幅值 + 符号位在 GPR 里拼（`and` 单 bit 逻辑立即数 → `orr`）再 `fmov` 回去。
+# 起点用 `{f}`（FPR 临时）存 |a|，`{g}` 存 b 的符号位、`{g1}` 吞吐位型。
+[[lower.Fcopysign]]
+when = { eq = ["elem", 1] }
+insts = [
+  "FABS_S {f}, {0}",
+  "FMOV_W_FROM_S {g}, {1}",
+  "MOVZX1 {g2}, 32768",
+  "ANDREGX {g}, {g}, {g2}",
+  "FMOV_W_FROM_S {g1}, {f}",
+  "ORRREGX {g1}, {g1}, {g}",
+  "FMOV_S_FROM_W {out}, {g1}",
+]
+
+[[lower.Fcopysign]]
+when = { eq = ["elem", 2] }
+insts = [
+  "FABS_D {f}, {0}",
+  "FMOV_X_FROM_D {g}, {1}",
+  "MOVZX3 {g2}, 32768",
+  "ANDREGX {g}, {g}, {g2}",
+  "FMOV_X_FROM_D {g1}, {f}",
+  "ORRREGX {g1}, {g1}, {g}",
+  "FMOV_D_FROM_X {out}, {g1}",
 ]
