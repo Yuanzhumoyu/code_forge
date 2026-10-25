@@ -173,7 +173,9 @@ fn riscv_rv32_projection_snapshot() {
     // 引用的是 `FADD_S`/`FADD_D` 等 F 扩展指令，同样不随 `xlen` 投影消失。
     // 108 → 106（2026-10-07）：`Fptosi`/`Fptoui` 里点 `FCVT_L_D`/`FCVT_LU_D` 的两条规则
     // 随引用名（现在叫 `FCVT_L_D`/`FCVT_LU_D`，标了 `xlen=[64]`）被投影掉。
-    assert_eq!(p.lowering_count, 105, "RV32 投影的 lowering 剩 105 条");
+    // 105 → 111（2026-10-25，v27 M6-104）：riscv 补了 i1/i8/i16 的 `Load`/`Store` 规则
+    // 各 2 条（`lbu`/`lhu`/`sb`/`sh` 都在 RV32 视角里），投影后照样留下。
+    assert_eq!(p.lowering_count, 111, "RV32 投影的 lowering 剩 111 条");
     let dropped: usize = p.dropped_decls.iter().map(|(_, n)| n).sum();
     assert_eq!(
         dropped, 21,
@@ -190,7 +192,7 @@ fn riscv_rv32_projection_snapshot() {
     // 默认档对照：同一份谱不传参数 = 174/141（投影是纯 opt-in）。
     let (_, def_rows, def_p) = insts("riscv64.toml", &[]);
     assert_eq!(def_rows.len(), pin_usize("projection.native.riscv64"));
-    assert_eq!(def_p.lowering_count, 125);
+    assert_eq!(def_p.lowering_count, 131);
 }
 
 /// ④ 级联的**边界**：未被投影的指令其 lowering 规则必须留下（不许多丢）。
@@ -200,10 +202,11 @@ fn cascade_keeps_unrelated_lowering() {
     // RV64 的 64 位 Iadd/Isub/Imul/Load/Store 与帧件的通用规则都不该因投影消失过头：
     // 140 - 105 = 35 条全是"点了被投影掉的引用名"的规则（2026-10-07 起含
     // `Fptosi`/`Fptoui` 点 `FCVT_L_D`/`FCVT_LU_D` 的两条）。
+    // 140 - 111 = 29（M6-104 新增的窄宽度访存规则不被投影掉）。
     assert_eq!(
         140 - p.lowering_count,
-        35,
-        "只该丢那 35 条：{:#?}",
+        29,
+        "只该丢那 29 条：{:#?}",
         p.dropped_decls
     );
 }
@@ -214,7 +217,7 @@ fn only_supplied_params_gate() {
     let (_, rows, p) = insts("riscv64.toml", &["xlen=64"]);
     assert_eq!(rows.len(), 174, "xlen=64 是原生视角，一条都不该丢");
     assert!(p.dropped_insts.is_empty());
-    assert_eq!(p.lowering_count, 125);
+    assert_eq!(p.lowering_count, 131);
 }
 
 /// ⑥ `{参数名}` 替换：`asm` 与 `[[lower.<op>]].insts` 里的 `{参数名}` 换成本次取值。

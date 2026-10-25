@@ -993,6 +993,54 @@ pub const CASES: &[Case] = &[
         ),
     },
     Case {
+        name: "narrow_i8_store_load",
+        ops: &["StackAddr", "Load", "Store", "Ireduce", "Uextend"],
+        kind: CaseKind::I32(
+            |b| {
+                let addr = b.stack_addr(0);
+                let v = b.constant(200i32);
+                let t = b.ireduce(v, TypeId::I8);
+                b.store(t, addr);
+                let l = b.load(addr, TypeId::I8);
+                // 用**零扩展**判定：字节载入是零扩展口径（`ldrb`/`lbu`）；符号扩展由
+                // 各 ISA 自己的 Sextend 规则另行守护（riscv 的 i8 符号扩展路径另案）。
+                b.uextend(l, TypeId::I32)
+            },
+            200,
+        ),
+    },
+    Case {
+        name: "narrow_i16_store_load",
+        ops: &["StackAddr", "Load", "Store", "Ireduce", "Sextend"],
+        kind: CaseKind::I32(
+            |b| {
+                let addr = b.stack_addr(0);
+                let v = b.constant(0x10041i32);
+                let t = b.ireduce(v, TypeId::I16);
+                b.store(t, addr);
+                let l = b.load(addr, TypeId::I16);
+                b.sextend(l, TypeId::I32)
+            },
+            65,
+        ),
+    },
+    Case {
+        name: "bool_i1_store_load",
+        ops: &["StackAddr", "Load", "Store", "Ireduce", "Uextend"],
+        kind: CaseKind::I32(
+            |b| {
+                let addr = b.stack_addr(0);
+                let a = b.constant(5i32);
+                let c = b.constant(7i32);
+                let t = b.icmp(IntCC::Ne, a, c);
+                b.store(t, addr);
+                let l = b.load(addr, TypeId::BOOL);
+                b.uextend(l, TypeId::I32)
+            },
+            1,
+        ),
+    },
+    Case {
         name: "cross_block_store_load",
         ops: &["StackAddr", "Load", "Store"],
         kind: CaseKind::I32(

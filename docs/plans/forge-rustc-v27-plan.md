@@ -286,8 +286,23 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   （+3.5 配 −2.0 → −3），经 `Fptosi` 落进 i8 值域。
 - 结果：`jit_matrix_arm64` **77 passed / 125 skipped / 0 failed**。
 
-**仍未覆盖**：aarch64 的 core/std（当前只能 `#![no_core]`）、NEON 向量、原子/宽乘除，
-以及 DWARF/CFI 的 aarch64 形态。
+**进度（2026-10-25，M6-104）——窄宽度访存 / 掩码截断 / UDF 陷阱；aarch64 core 路线侦察**：
+
+- `Load`/`Store` 补 **i1/i8/i16** 宽度（arm64：`ldrb/ldrh/strb/strh`；riscv64：`lbu/lhu/sb/sh`），
+  `Ireduce` 补 1/8/16 的**显式掩码**（`and 1`/`and 0xFF`/`and 0xFFFF`）——A64 寄存器
+  没有窄写回，不掩码会让高位垃圾进入后续 X 宽比较/加法。
+- 新增 `UDF`（全零字）并标 `effect = ["Trap"]`：`Unreachable` terminator 现在按 DSL 的
+  "无操作数陷阱"约定发 `udf`；新增守卫 `tm_unreachable_emits_udf`。
+- 矩阵新增三条**真执行**用例（arm64 79 / riscv64 139，均 0 failed）：
+  `narrow_i8_store_load`、`narrow_i16_store_load`、`bool_i1_store_load`。
+- **aarch64 core 路线侦察结论**：rustup 无 `aarch64-unknown-none` 的 rust-std（离线装不上），
+  但 rust-src 在本地 ⇒ 可直接 `rustc` 为 aarch64 编出 `libcore.rlib` 与
+  `libcompiler_builtins.rlib`，再用 forge 后端编用户 `#![no_std]` crate（进度：
+  `Store/Ireduce` 缺口已清，`UDF` 已补）。**仍阻塞**：大函数溢出用 `STURX`（imm9，
+  ±256）——`swap_nonoverlapping_short` 需要 312 字节偏移，属帧/溢出**编码形态选择**
+  的缺口（下一步：溢出改用 SP 基址 + 无符号 scaled imm12，或寄存器偏移形态）。
+
+**仍未覆盖**：aarch64 的 core 端到端（阻塞点见上）、NEON 向量、原子/宽乘除、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

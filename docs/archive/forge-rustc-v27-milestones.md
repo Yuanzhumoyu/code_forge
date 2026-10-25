@@ -12,6 +12,28 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-25 · M6-104：窄宽度访存 / 掩码截断 / UDF 陷阱（aarch64 core 路线第一步）
+
+- **窄宽度访存**：`Load`/`Store` 补 i1/i8/i16（arm64 `ldrb/ldrh/strb/strh`、
+  riscv64 `lbu/lhu/sb/sh`）；`Ireduce` 补 1/8/16 的**显式掩码**（A64 没有窄写回，
+  不掩码会把高位垃圾带进后续 X 宽比较/加法）。arm64 +6 规则、riscv64 +6 规则。
+- **UDF 陷阱**：`[inst.UDF]`（全零字）+ `effect = ["Trap"]` ⇒ `Unreachable` terminator
+  按 DSL 的"无操作数陷阱"约定发射 `udf`；守卫 `tm_unreachable_emits_udf`。
+- **矩阵**：新增 `narrow_i8_store_load` / `narrow_i16_store_load` / `bool_i1_store_load`
+  （真执行）⇒ arm64 **79 passed / 0 failed**、riscv64 **139 passed / 0 failed**。
+  其中 i8 用例刻意用 `Uextend` 判定（字节载入是零扩展口径）；riscv 的 i8 **符号**扩展
+  路径另有问题（`sextend i8` 得 200 而非 −56），未在本轮展开，已记入待办。
+- **aarch64 core 侦察**：离线装不上 `rust-std-aarch64-unknown-none`，但 rust-src 在本地
+  ⇒ 直接 `rustc --target aarch64-unknown-none` 编出 `libcore.rlib` 与
+  `libcompiler_builtins.rlib`（`--cfg feature="mem"`），forge 后端能编 `#![no_std]`
+  用户 crate 并推进到 `swap_nonoverlapping_short`。**仍阻塞**：大函数溢出用 `STURX`
+  （imm9 ±256），该函数需要 312 ⇒ 帧/溢出编码形态选择缺口（下一步：SP 基址 +
+  unscaled/scaled 组合或寄存器偏移形态）。
+- 验收：pins 刷新（digest、roundtrip 2694、spec_totals arm64 609、unassigned 271、
+  vary 47；riscv strict_overlap 14→17）；`spec_migrate` 5/5（LF 归一化后幂等）。
+
+**仍未覆盖**：aarch64 core 端到端、riscv i8 符号扩展、NEON 向量、原子/宽乘除、DWARF/CFI。
+
 ### 2026-10-25 · M6-103：arm64 `Fcopysign`
 
 - A64 无单指令：`fabs` 取 |a|；b 的位型经 `fmov` 进 GPR，用 `movz` 造的**单 bit 掩码**

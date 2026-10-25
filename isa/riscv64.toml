@@ -3338,3 +3338,29 @@ movef = ["FSGNJ_S {retN}, {retN_src}, {retN_src}"]
 when = { multi = true, width = 64 }
 insts = []
 movef = ["FSGNJ_D {retN}, {retN_src}, {retN_src}"]
+# 窄宽度访存 + i1（v27 M6-104，与 arm64 同口径）：LLVM 把 bool 存成一个字节；
+# 字节/半字**零扩展**载入（`lbu`/`lhu`），符号扩展由 IR 的 Sextend 单独表达；
+# i1 载入后再 `andi 1` 归一化。
+[[lower.Load]]
+when = { eq = ["rd", 8] }
+insts = ["LBU {out}, {0}, 0"]
+
+[[lower.Load]]
+when = { eq = ["rd", 16] }
+insts = ["LHU {out}, {0}, 0"]
+
+[[lower.Load]]
+when = { eq = ["rd", 1] }
+insts = ["LBU {out}, {0}, 0", "ANDI {out}, {out}, 1"]
+
+[[lower.Store]]
+when = { eq = ["rs1_width", 8] }
+insts = ["SB {0}, {1}, 0"]
+
+[[lower.Store]]
+when = { eq = ["rs1_width", 16] }
+insts = ["SH {0}, {1}, 0"]
+
+[[lower.Store]]
+when = { eq = ["rs1_width", 1] }
+insts = ["SB {0}, {1}, 0"]

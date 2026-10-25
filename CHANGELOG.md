@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-25) — 窄宽度访存 / 掩码截断 / UDF 陷阱（arm64 + riscv64）
+
++ `Load`/`Store` 补 **i1/i8/i16**：arm64 用 `ldrb/ldrh/strb/strh`、riscv64 用
+  `lbu/lhu/sb/sh`；`Ireduce` 补 1/8/16 位截断的**显式掩码**（`and 1`/`and 0xFF`/`and 0xFFFF`）。
++ arm64 新增 `UDF`（全零字）并标 `effect = ["Trap"]`：`Unreachable` 现在按 DSL 约定
+  发射陷阱指令；守卫 `tm_unreachable_emits_udf`。
++ 矩阵新增三条真执行用例 `narrow_i8_store_load` / `narrow_i16_store_load` /
+  `bool_i1_store_load` ⇒ arm64 **79 passed / 0 failed**、riscv64 **139 passed / 0 failed**。
++ aarch64 `core` 路线侦察：可从 rust-src 直接编 `libcore.rlib` + `libcompiler_builtins.rlib`
+  供 forge 后端使用；当前阻塞在**溢出槽偏移超出 imm9**（下一步修帧/溢出形态选择）。
+
 ### Added (2026-10-25) — arm64：`Fcopysign`
 
 + `Fcopysign` 降级 = `fabs` + GPR 里拼符号位（`fmov` 取位型 → `movz` 造单 bit 掩码 →

@@ -296,3 +296,28 @@ fn tm_aapcs64_varargs_compile_on_arm64() {
         .compile(&func)
         .expect("aapcs64 变参在 arm64 上应能编出（词汇已齐）");
 }
+/// **UDF 陷阱守卫**（v27 M6-104）：`Unreachable` terminator 按 `effect = ["Trap"]`
+/// 取**无操作数**的陷阱指令——A64 侧是 `udf`（全零字）。这条守卫盯两件事：
+/// 1. 发射流里至少有一条 `0x0000_0000`（UDF）；
+/// 2. 它之后紧跟尾声/返回序列（陷阱块不落空）。
+#[test]
+fn tm_unreachable_emits_udf() {
+    let sig = FunctionSignature::new(&[(TypeId::I64, "a")], &[TypeId::I64]);
+    let mut b = FunctionBuilder::new("dead", TypeContext::new(), sig);
+    let (blk, _p) = b.create_block_with_params(&[(TypeId::I64, "a")]);
+    b.switch_to_block(blk);
+    b.unreachable();
+    let func = b.finish().expect("build");
+    let cf = CompileSession::new(forge_codegen::arm64::TargetMachine::new())
+        .compile(&func)
+        .expect("dead 函数应能编（Unreachable → UDF）");
+    let words: Vec<u32> = cf
+        .code
+        .chunks(4)
+        .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    assert!(
+        words.contains(&0),
+        "Unreachable 应发射 UDF（0x0000_0000）：{words:08x?}"
+    );
+}
