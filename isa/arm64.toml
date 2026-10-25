@@ -1751,6 +1751,9 @@ form = "LSUI"
 opcode = 0xF9
 match = { opc2 = 1 }
 asm = "ldr {dst:r64:out}, [{base:r64}, #{imm:imm12x}]"
+# 帧件的**大偏移档**（v27 M6-106）：callee-save/栈形参用 SP + scaled imm12
+# （单位 8、覆盖 0..32760B），取代 LDUR/STUR 的 imm9（±256）——大帧不再超范围。
+roles = ["callee_load"]
 
 [inst.LDRW]
 form = "LSUI"
@@ -1763,6 +1766,7 @@ form = "LSUI"
 opcode = 0xF9
 match = { opc2 = 0 }
 asm = "str {src:r64}, [{base:r64}, #{imm:imm12x}]"
+roles = ["callee_save"]
 
 [inst.STRW]
 form = "LSUI"
@@ -1775,8 +1779,9 @@ form = "LSUN"
 opcode = 0xF8
 match = { opc2 = 1, mode = 0, zero21 = 0 }
 asm = "ldur {dst:r64:out}, [{base:r64}, #{off:imm9s}]"
-# stack_arg_load：被调方收栈形参（`[fp + plan 偏移]`，V29 的 ±256 立即数）
-roles = ["callee_load", "stack_arg_load"]
+# 栈形参偏移是**负**的（调用方写 `[sp + caller_offset]`）⇒ scaled imm12 只收无符号，
+# 这一族留在 STUR/LDUR 的 imm9 上（v27 M6-106：只把 callee-save 换成 scaled imm12）。
+roles = ["stack_arg_load"]
 
 [inst.LDURW]
 form = "LSUN"
@@ -1789,8 +1794,7 @@ form = "LSUN"
 opcode = 0xF8
 match = { opc2 = 0, mode = 0, zero21 = 0 }
 asm = "stur {src:r64}, [{base:r64}, #{off:imm9s}]"
-# stack_arg_store：调用方写传出区（`[sp + caller_offset]`）+ 被调方写 spilled 形参
-roles = ["callee_save", "stack_arg_store"]
+roles = ["stack_arg_store"]
 
 [inst.STURW]
 form = "LSUN"
@@ -2495,6 +2499,7 @@ form = "FPLSUI"
 opcode = 0xFD
 match = { opc2 = 1 }
 asm = "ldr {dst:fpr:out}, [{base:r64}, #{imm:imm12fp8}]"
+roles = [{ role = "callee_load", class = "fpr" }]
 
 [inst.LDRD_FP_PRE]
 form = "LSUN"
@@ -2513,6 +2518,7 @@ form = "FPLSUI"
 opcode = 0xFD
 match = { opc2 = 0 }
 asm = "str {src:fpr}, [{base:r64}, #{imm:imm12fp8}]"
+roles = [{ role = "callee_save", class = "fpr" }]
 
 [inst.STRD_FP_PRE]
 form = "LSUN"
@@ -3276,13 +3282,14 @@ fp_save = 64 # 位
 
 [machine.spill.gpr]
 class = "gpr64"
-# base = X29（fp = 入口 sp，帧顶固定）：emission 的 sp_base = -(frame)
-# 是相对帧指针的偏移（spill 槽在帧内底部 [fp - frame + off]，递归各帧
-# 独立）；用 STUR/LDUR 真字节偏移（imm9 符号 ±256——与 riscv LD/SD 的
-# signed imm12 同角色，帧 > ~256B 报错为已知限制）。
-load = "LDURX {0}, X29, {1}"
-store = "STURX {0}, X29, {1}"
-base = "X29"
+# **SP 基址 + 无符号 scaled imm12**（v27 M6-106）：fp-inside 布局下
+# spill 槽在帧内底部，sp 偏移 = `frame + fp_offset`（恒非负、按槽宽对齐）
+# ⇒ 用 `str/ldr x, [sp, #off]`（imm12 以 8 缩放，覆盖 ±32KB），
+# 大帧不再受 STUR/LDUR 的 imm9（±256）限制。
+offset_base = "sp"
+load = "LDRX {0}, SP, {1}"
+store = "STRX {0}, SP, {1}"
+base = "SP"
 
 [machine.text]
 align_pad = 0
@@ -4595,16 +4602,12 @@ form = "LSUN"
 opcode = 0xFC
 match = { opc2 = 1, mode = 0, zero21 = 0 }
 asm = "ldur {dst:fpr:out}, [{base:r64}, #{off:imm9s}]"
-# 帧内保存/恢复的 **FPR 类**那条：AAPCS64 要求 v8-v15 的低 64 位由被调方保存，
-# 而 `LDURX`/`STURX` 只认 GPR。同一个"存到帧"能力按寄存器类分派（v20 A6）。
-roles = [{ role = "callee_load", class = "fpr" }]
 
 [inst.STURD]
 form = "LSUN"
 opcode = 0xFC
 match = { opc2 = 0, mode = 0, zero21 = 0 }
 asm = "stur {src:fpr}, [{base:r64}, #{off:imm9s}]"
-roles = [{ role = "callee_save", class = "fpr" }]
 
 [inst.LDURS]
 form = "LSUN"
@@ -4671,14 +4674,19 @@ asm = "str {src:fprq}, [{base:r64}], #{off:imm9s}"
 
 [machine.spill.fpr]
 class = "fpr64"
-load = "LDURD {0}, X29, {1}"
-store = "STURD {0}, X29, {1}"
+# 与 GPR 同口径：SP 基址 + scaled imm12（8 字节缩放）；见 [machine.spill.gpr]。
+offset_base = "sp"
+load = "LDRD_ND {0}, SP, {1}"
+store = "STRD_ND {0}, SP, {1}"
+base = "SP"
 
-# Q（128 位）视图的溢出：与 D 同口径（base = X29、真字节 imm9），只是走 16 字节的访存。
+# Q（128 位）视图的溢出：同口径（16 字节缩放）。
 [machine.spill.fpr16]
 class = "fpr128"
-load = "LDURQ_FP {0}, X29, {1}"
-store = "STURQ_FP {0}, X29, {1}"
+offset_base = "sp"
+load = "LDRQ_FP {0}, SP, {1}"
+store = "STRQ_FP {0}, SP, {1}"
+base = "SP"
 
 [machine]
 # ── 寄存器类指针（v21 W1）：宽度只在 `[reg.<名>]` 表头里，这里只指"哪一组" ──

@@ -72,18 +72,20 @@ fn tm_compile_add_prologue_epilogue() {
         "应含 sub sp,sp,#N: {:02x?}",
         cf.code
     );
-    // 帧顶保存：stur x30/x29 到 [sp + frame - 8/16]（顶层 0xF8、opc2=0 store）
-    let stur_count = cf
+    // 帧顶保存：**scaled `str x30/x29` 到 [sp + frame - 8/16]**（v27 M6-106：
+    // callee-save 从 LDUR/STUR 的 imm9（±256B）换成 LSUI 的 scaled imm12
+    // （顶层 0xF9、opc2=0 store、imm 以 8 缩放）——大帧不再超范围）。
+    let str_count = cf
         .code
         .windows(4)
         .filter(|c| {
             let w = u32::from_le_bytes([c[0], c[1], c[2], c[3]]);
-            (w & 0xFF00_0000) == 0xF800_0000 && ((w >> 22) & 3) == 0
+            (w & 0xFFC0_0000) == 0xF900_0000
         })
         .count();
     assert!(
-        (2..=14).contains(&stur_count),
-        "序言/尾声应含 stur 保存 x30/x29（按需保存 callee-saved 会追加）: {stur_count} {:02x?}",
+        (2..=14).contains(&str_count),
+        "序言/尾声应含 str 保存 x30/x29（按需保存 callee-saved 会追加）: {str_count} {:02x?}",
         cf.code
     );
     // fp 建立：add x29, sp, #N（顶层 0x91、rd=29、rn=31）

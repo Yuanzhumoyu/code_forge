@@ -222,6 +222,7 @@ v22 是 v21 收口后的**人体工学改造**（破坏性重写：不保留兼�
 `†` = 编码键（`[form.<名字>]` 预设与 `[inst.<名字>]` **共用同一组**，指令逐键覆盖）。
 
 <!-- BEGIN: schema-keys（由 tests/schema_guard.rs 校验，改 schema 时同步这一段）-->
+
 | 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
 | --- | --- | --- | --- |
 | `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `operand` `enum` `form` `inst` `family` `lower` `asm` `pred` `machine` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
@@ -250,13 +251,14 @@ v22 是 v21 收口后的**人体工学改造**（破坏性重写：不保留兼�
 | `[machine.frame]` | `sp` | `fp` `layout` `fp_push_bytes` `alloc_neg` `stack_probe` | 帧形状：栈指针/帧指针寄存器名 + 布局模式 + 帧指针保存槽 + 栈探测（唯一位置；`[abi.frame]` 已删除） |
 | `[machine.frame.stack_probe]` | `symbol` `sym_inst` `sym_reg` `size_inst` `size_reg` `call_reg_inst` `call_reg` | `threshold` | 栈探测（v27 M6-78/M6-80）：帧超过 `threshold`（缺省 4096）时，序言在**帧分配之前**发 `sym_inst`（把 `symbol` 的**绝对地址**装进 `sym_reg`）+ `size_inst`（把帧大小放进 `size_reg`）+ `call_reg_inst`（经 `call_reg` 间接调用）。Windows 上单条 `sub rsp, 帧大小` 会跳过 guard page ⇒ 随机 AV，必须逐页探测（`__chkstk` 从 RAX 取分配量、自身不改 RSP）。用绝对地址而非 rel32 是因为 JIT 代码页与可执行文件可能相距远超 ±2GB |
 | `[machine.text]` | — | `align_pad` `epilogue_label` | 代码对齐填充与尾声标签（从 `[emit]` 迁入；序/尾声由生成器按约定生成，谱里不再写） |
-| `[machine.spill.<模板名>]` | `class` `load` `store` | `base` `when` | 溢出/回填模板（表头 = 模板名，`class` = 它服务的寄存器类；`{N}` = 寄存器序号占位符） |
+| `[machine.spill.<模板名>]` | `class` `load` `store` | `base` `when` `offset_base` | 溢出/回填模板（表头 = 模板名，`class` = 它服务的寄存器类；`{N}` = 寄存器序号占位符；`offset_base` = `fp`/`sp` 偏移口径） |
 | `roles 的条目（内联表）` | `role` | `class` | `roles = [ {{ role = …, class = … }}, … ]`：语义角色声明（生成器按角色查指令，取代旧的 `*_inst` 名指针）；无宽度语义的角色全 ISA 唯一，有宽度语义的按 (角色, 位宽) 唯一 |
 | `[[vectors]]` | — | `asm` `bytes` `error` `partial` `comment` | 数据化测试向量：`{asm, bytes}` 正向 / `{asm, error}` 汇编错误 / `{bytes, error = "DECODE", partial}` 解码错误 / `{bytes}` 解码正向 |
 | `enc / vex / evex / modrm（内联子表）` | — | `reg` `rm` | `modrm = { reg = <名\|整数>, rm = <名\|"[base]"> }` |
 | `segments 的条目（内联表）` | `kind` | `fields` `bytes` `value` `map` `pp` `w` `l` `b` `z` `disp_scale` | `segments = [ {{ kind = …, … }}, … ]`：指令流里的一段（段序即发射序）；`kind` 是闭集（prefix/escape/rex/opcode/opcode_reg/modrm/vex/evex/…），VEX/EVEX 段的头字段（map/pp/w/l/b/z/disp_scale）就写在这里 |
 | `vex / evex（内联子表）` | — | `map` `pp` `w` `l` `b` `z` `disp_scale` | VEX/EVEX 结构键（map/pp/w/l + AVX-512 的 b/z/disp_scale） |
 | `[[override]]` | `key` `value` | — | 多文件组合：显式覆盖被包含文件里的键（点分路径 + 新值；由 loader 消费） |
+
 <!-- END: schema-keys -->
 
 ## 快速开始
@@ -1994,6 +1996,23 @@ emission 的 sp_base = `-(frame) - callee_saved_bytes` 是**相对帧指针**的
 槽落在 `[fp - frame + off] = [sp + off]` 帧内底部；`base = sp` 会双重减 frame（spill
 槽落帧外更深处），递归时与 callee 帧重叠（ra 槽被覆盖 → ret 跳 0，实测 fault_fetch
 epc=0）。
+
+**`offset_base`（v27 M6-106）**：偏移的**基准寄存器口径**（不是 `base` 那个"模板里
+写的基址名"）。缺省 / `"fp"` = 发射侧传「相对帧指针」的**有符号**字节偏移（imm9 /
+有符号 imm12 能直接表达）。`"sp"` = 发射侧改传「相对栈指针」的偏移
+（fp-inside 布局下 = `frame + fp_offset`，**恒非负、按槽宽对齐**），模板必须用
+**无符号 scaled imm12** 形态（如 A64 `load = "LDRX {0}, SP, {1}"`）——这是大帧
+（> ±256B）能继续溢出的唯一办法；生成物按寄存器类回答 `spill_offset_from_sp`，
+未声明的类仍走 fp 口径。
+
+```toml
+[machine.spill.gpr]
+class = "gpr64"
+offset_base = "sp"          # 偏移按 sp 口径传入
+load = "LDRX {0}, SP, {1}"  # scaled imm12（单位 8，覆盖 0..32760B）
+store = "STRX {0}, SP, {1}"
+base = "SP"
+```
 
 ## asm 模板
 

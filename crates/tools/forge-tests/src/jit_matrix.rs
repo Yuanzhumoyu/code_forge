@@ -992,6 +992,36 @@ pub const CASES: &[Case] = &[
             42,
         ),
     },
+    // 深帧（> ±256B）：栈槽足够多时溢出面进入 scaled 形态；arm64 的
+    // `LDRX/STRX + SP` 大偏移档（v27 M6-106）只有真执行才证明地址算对。
+    Case {
+        name: "deep_frame_many_slots",
+        ops: &["StackAddr", "Load", "Store", "Iadd"],
+        kind: CaseKind::I32(
+            |b| {
+                let mut acc = b.constant(0i32);
+                let mut i = 0usize;
+                let mut addrs = Vec::new();
+                while i < 40 {
+                    // StackAddr 的立即数是**相对帧基址的字节偏移**（负值 = 帧内）；
+                    // 每个 i32 槽 4 字节，最深 160 字节 > imm9 的 ±256 之外的旧限制。
+                    let a = b.stack_addr(-4 * (i as i32 + 1));
+                    let v = b.constant(i as i32);
+                    b.store(v, a);
+                    addrs.push(a);
+                    i += 1;
+                }
+                // 只读最深的两个槽（期望值必须落在 i8 退出码范围内）：
+                // 偏移 ~304/312B > imm9 的 ±256，正好逼出 scaled 形态。
+                let v38 = b.load(addrs[38], TypeId::I32);
+                let v39 = b.load(addrs[39], TypeId::I32);
+                acc = b.iadd(acc, v38);
+                acc = b.iadd(acc, v39);
+                acc
+            },
+            77,
+        ),
+    },
     Case {
         name: "narrow_i8_store_load",
         ops: &["StackAddr", "Load", "Store", "Ireduce", "Uextend"],

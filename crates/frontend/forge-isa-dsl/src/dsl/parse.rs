@@ -327,6 +327,15 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
                     body.class
                 )
             })?;
+            let offset_base = match body.offset_base.as_deref() {
+                None | Some("fp") => None,
+                Some("sp") => Some("sp".to_string()),
+                Some(other) => {
+                    return Err(format!(
+                        "[machine.spill.{name}].offset_base: 只接受 \"fp\" / \"sp\"，得到 {other:?}"
+                    ));
+                }
+            };
             model.spill.insert(
                 name,
                 crate::dsl::model::SpillTemplate {
@@ -335,6 +344,7 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
                     store: body.store,
                     base: body.base,
                     only_variants: body.when,
+                    offset_base,
                 },
             );
         }

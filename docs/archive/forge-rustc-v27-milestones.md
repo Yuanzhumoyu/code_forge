@@ -12,6 +12,26 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-26 · M6-106：大帧溢出（imm9 限制解除）
+
+- **数据键**：`[machine.spill.<名>].offset_base = "sp"`（缺省 `"fp"`）。发射侧据此把
+  偏移换成 sp 口径（fp-inside 下 = `frame + fp_offset`，恒非负、按槽宽对齐），模板
+  用无符号 scaled imm12（A64 `LDRX/STRX`、`LDRD_ND/STRD_ND`、`LDRQ_FP/STRQ_FP`）。
+- **帧件角色拆分**：`callee_save/callee_load` 从 `STURX/LDURX`（imm9）换到
+  `STRX/LDRX`（scaled）；栈形参的**负**偏移不能进 scaled ⇒ 仍留在 STUR/LDUR 族
+  （最初一刀切换档，`qemu_aarch64_exec_call_with_stack_args` 当场红：`Strx: -160
+  out of range`，据此拆开）。
+- **帧记账修正（fp-inside）**：局部槽在 `fp - stack_slot_shift - depth`，帧只按 depth
+  记账 ⇒ 新用例 40 个 i32 槽时最深槽落 `sp-12`（data abort 循环）。`calculate_frame_size`
+  对 `Inside` 补 `stack_slot_shift`；`Outside` 不加（x86 的 shift 是已 push 的字节数）。
+- 调试中发现自造用例也错过了：`stack_addr(i)` 的立即数是**字节偏移**（负值才在帧内），
+  正数会落到 fp 之上；修正为 `-4*(i+1)` 后才真正覆盖深槽。
+- 验收：新矩阵用例 `deep_frame_many_slots`（真执行）⇒ arm64 **89 passed / 0 failed**；
+  x86/riscv 矩阵绿（riscv 同为 fp-inside）；`core::swap_nonoverlapping_short` 已能编过，
+  core 探针剩余阻塞收敛为 `GlobalAddr` + `UmulOverflow`。
+
+**仍未覆盖**：aarch64 core 的 `GlobalAddr`/乘溢出、NEON 向量、原子、DWARF/CFI。
+
 ### 2026-10-25 · M6-105：aarch64 + `core` 首光
 
 - **闭环**：`#![no_std]` crate（`core::cmp::max/min` + `mem::size_of`）经 forge 编成 aarch64

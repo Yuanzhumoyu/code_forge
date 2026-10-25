@@ -260,6 +260,31 @@ pub(crate) fn gen_frame_lowering(
     let fpr_load = gen_fpr_spill_dispatch(infos, model, true, &default_base)?;
     let fpr_store = gen_fpr_spill_dispatch(infos, model, false, &default_base)?;
 
+    // **偏移基准**（v27 M6-106）：哪些寄存器类的 sp 偏移基准是 SP。
+    // 生成 `spill_offset_from_sp(class)`：按类族回答（发射侧据此把偏移换成
+    // `frame + fp_offset`，模板用无符号 scaled imm12 形态）；未声明的族 = false。
+    let mut sp_families: Vec<&'static str> = Vec::new();
+    for t in model.spill.values() {
+        if t.offset_base.as_deref() == Some("sp") {
+            let fam = match t.class {
+                RegClass::GPR(_) => "GPR",
+                RegClass::FPR(_) => "FPR",
+                RegClass::VEC(_) => "VEC",
+                RegClass::KReg(_) => "KReg",
+            };
+            if !sp_families.contains(&fam) {
+                sp_families.push(fam);
+            }
+        }
+    }
+    let sp_arms: Vec<TokenStream> = sp_families
+        .iter()
+        .map(|f| {
+            let v = format_ident!("{f}");
+            quote! { forge_ir::RegClass::#v(_) => true }
+        })
+        .collect();
+
     Ok(quote! {
         pub struct FrameLowering;
 
@@ -302,6 +327,13 @@ pub(crate) fn gen_frame_lowering(
                 let __sink = sink;
                 #epilogue_toks
                 Ok(())
+            }
+
+            fn spill_offset_from_sp(&self, class: forge_ir::RegClass) -> bool {
+                match class {
+                    #(#sp_arms,)*
+                    _ => false,
+                }
             }
 
             fn emit_spill_load(

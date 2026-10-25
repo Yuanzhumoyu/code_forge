@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-26) — aarch64/riscv 大帧溢出：imm9 → SP + scaled imm12
+
++ `[machine.spill.<名>].offset_base = "sp"`（数据键）：发射侧把溢出偏移换成 sp 口径
+  （fp-inside 下 = `frame + fp_offset`），模板用无符号 scaled imm12 ⇒ 溢出范围从
+  ±256B 扩到 32KB 量级；arm64 的溢出与 callee-save 全部换到 `LDRX/STRX`、
+  `LDRD_ND/STRD_ND`、`LDRQ_FP/STRQ_FP`。
++ 栈形参的**负**偏移仍留在 `LDURX/STURX`（scaled imm12 只收无符号）——角色按形态拆分。
++ 修正 fp-inside 帧记账：局部槽在 `fp - stack_slot_shift - depth`，帧须补
+  `stack_slot_shift`（否则深槽落到 `sp` 之下）。
++ 新矩阵用例 `deep_frame_many_slots`（40 个局部槽，真执行）⇒ `jit_matrix_arm64`
+  **89 passed / 0 failed**；x86/riscv 矩阵同步回归绿。
+
 ### Added (2026-10-25) — aarch64 + `core` 首光（溢出/Undef 规则 + 可运行闭环）
 
 + **aarch64 真跑 `#![no_std]` + `core`**：forge 编出对象，与从 `rust-src` 直接为目标编的

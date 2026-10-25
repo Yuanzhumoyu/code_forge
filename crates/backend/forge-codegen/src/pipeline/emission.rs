@@ -292,6 +292,18 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // spill 槽起始必须上移 stack_args，否则与调用方 store 的栈参数重叠
         //（five_args_stack 场景 spill 覆盖已写入的参数槽 → 值错）。
         let sp_base: i32 = -(frame_size as i32) - callee_saved_bytes + stack_args;
+        // **偏移基准**（v27 M6-106）：谱里的 `[machine.spill.<类>].offset_base = "sp"`
+        // 声明该类的模板用**栈指针**口径。fp-inside 布局下 sp 偏移 =
+        // `frame + fp_offset`（恒非负、按槽宽对齐）——大帧（> ±256B）靠无符号
+        // scaled imm12 形态表达，而不是有符号 imm9。
+        let spill_off = |class: &forge_ir::RegClass, slot_off: i32| -> i32 {
+            let off_fp = sp_base + slot_off;
+            if frame_lowering.spill_offset_from_sp(*class) {
+                frame_size as i32 + off_fp
+            } else {
+                off_fp
+            }
+        };
 
         // 1) 装值：把槽里的值装进各自的 scratch（宽度档由 width 选、指令族由 class 选）。
         //    纯 def 的值也装（其值会被指令覆盖，无害，但保持 use/def 语义统一）。
@@ -313,7 +325,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 }
                 frame_lowering.emit_spill_load(
                     scratch.num,
-                    sp_base + slot.offset,
+                    spill_off(class, slot.offset),
                     *width,
                     *class,
                     sink,
@@ -363,7 +375,7 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
                 }
                 frame_lowering.emit_spill_store(
                     scratch.num,
-                    sp_base + slot.offset,
+                    spill_off(class, slot.offset),
                     *width,
                     *class,
                     sink,

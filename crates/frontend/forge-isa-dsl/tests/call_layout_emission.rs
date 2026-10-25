@@ -226,8 +226,9 @@ fn the_store_to_frame_sequence_keeps_its_order() {
             "arm64",
             "isa/arm64.toml",
             "Inst :: Subimmx {",
-            "Inst :: Sturx {",
-            "Inst :: Ldurx {",
+            // v27 M6-106：callee-save 换到 scaled imm12（STURX/LDURX 的 imm9 只到 ±256B）。
+            "Inst :: Strx {",
+            "Inst :: Ldrx {",
             "Inst :: Addimmx { dst : Reg :: SP",
             "Inst :: Ret",
         ),

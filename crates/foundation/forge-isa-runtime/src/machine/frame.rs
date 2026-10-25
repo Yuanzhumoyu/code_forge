@@ -52,6 +52,21 @@ pub trait TargetFrameLowering: Send + Sync + 'static {
         ))
     }
 
+    /// 溢出槽偏移以**哪个寄存器**为基（v27 M6-106）。
+    ///
+    /// - `false`（缺省）= 帧指针口径：发射侧传入的偏移就是「相对 fp」的有符号字节数
+    ///   （历史口径，imm9/有符号 imm12 形态能直接表达）。
+    /// - `true` = 栈指针口径：发射侧改传「相对 sp」的偏移（fp-inside 布局下 =
+    ///   `frame + fp_offset`，恒非负、按槽宽对齐）——模板必须用**无符号 scaled
+    ///   imm12** 形态（如 A64 `LDRX {0}, SP, {1}`），这是大帧（> ±256B）能继续
+    ///   溢出的唯一办法。
+    ///
+    /// 生成物按 `[machine.spill.*].offset_base = "sp"` 覆盖（按寄存器类分派，因为
+    /// 不同类的模板可以选不同基准）。
+    fn spill_offset_from_sp(&self, _class: RegClass) -> bool {
+        false
+    }
+
     /// Emit a spill load: load a spilled value from stack into `dst_reg`.
     ///
     /// ## `class` 与 `width` 回答的是**两个不同的问题**（v23 M5 明确，别合并）

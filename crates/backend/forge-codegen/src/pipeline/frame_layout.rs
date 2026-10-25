@@ -115,6 +115,18 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
         // 局部变量区（stack_addr 槽）：lowering 时跟踪的最大深度。不含它，
         // 局部槽会落在 sub rsp 分配区之外（Windows 无 red zone → SEGV）。
         let locals: u32 = self.ctx.max_stack_bytes;
+        // **fp-inside 的偏移基准要算进帧**（v27 M6-106 修正）：局部槽地址是
+        // `fp - stack_slot_shift - depth`（riscv/arm64 的 shift = ra/fp 保存槽宽度），
+        // 而深度只记到 `max_stack_bytes` ⇒ 帧若只按深度分配，最深的槽会落到
+        // `sp` 之下（实测 40 个 i32 槽：地址 sp-12 → data abort 循环）。
+        // fp-outside（x86）的 shift 是**已 push 的 callee-saved 字节数**（在 rsp
+        // 之上、不在帧里），不能再加——那会白抬帧并挪错 spill 基点。
+        let locals = match machine.abi().frame_layout().kind {
+            crate::machine::abi::FrameLayoutKind::Inside => {
+                locals.saturating_add(self.ctx.stack_slot_shift.max(0) as u32)
+            }
+            crate::machine::abi::FrameLayoutKind::Outside => locals,
+        };
         // 两块区域必须相加：spill 槽从 sp_base = -(frame) - callee_saved 起向上
         // 分配，locals 槽从 rbp - callee_saved 起向下分配；若取 max，较小一方的
         // 槽会写进另一方的区域（stack_addr 多槽 + regalloc spill 并存时互相覆盖，

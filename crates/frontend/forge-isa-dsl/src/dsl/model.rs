@@ -4455,6 +4455,12 @@ pub struct MachineSpill {
     /// **只在给定参数取值下存在**（v19 V5）——见 [`variants_keep`]。
     #[serde(default)]
     pub when: Option<VariantGate>,
+    /// 溢出槽偏移的**基准寄存器**（v27 M6-106）：缺省（或 `"fp"`）= 帧指针；
+    /// `"sp"` = 栈指针。选 `"sp"` 时管线把偏移换算成 `frame + fp_offset`（fp-inside
+    /// 布局下恒为非负、按槽宽对齐），模板须用**无符号 scaled imm12** 访存形态
+    /// （如 A64 `LDRX {0}, SP, {1}`）——大帧（> ±256B）靠它，而不是 imm9。
+    #[serde(default)]
+    pub offset_base: Option<String>,
 }
 
 /// 溢出槽模板：load/store 指令 + 基址寄存器（内部载体；TOML 面是
@@ -4474,6 +4480,9 @@ pub struct SpillTemplate {
     /// **只在给定参数取值下存在**（v19 V5）——见 [`variants_keep`]。
     #[serde(default)]
     pub only_variants: Option<VariantGate>,
+    /// 偏移基准（`Some("sp")` = 栈指针；`None` = 帧指针）。口径见 [`MachineSpill::offset_base`]。
+    #[serde(default)]
+    pub offset_base: Option<String>,
 }
 
 // ───────────────────────── 变体条件（v19 V5） ─────────────────────────

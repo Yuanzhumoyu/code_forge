@@ -319,7 +319,27 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   以及 `core` 里遇得到的 `GlobalAddr`、乘溢出。
 - 结果：arm64 op 覆盖 47→53、真缺口 56→50；`jit_matrix_arm64` 79 passed / 0 failed 不变。
 
-**仍未覆盖**：aarch64 core 的完整表面（见上）、NEON 向量、原子/宽乘除、DWARF/CFI。
+**进度（2026-10-26，M6-106）——大帧溢出（imm9 限制解除）**：
+
+- **溢出槽**：`[machine.spill.*]` 新增**数据键** `offset_base = "sp"`。发射侧据此把偏移换成
+  「相对 sp」口径（fp-inside 下 = `frame + fp_offset`，恒非负、按槽宽对齐），模板用
+  **无符号 scaled imm12**（A64 `LDRX/STRX`、`LDRD_ND/STRD_ND`、`LDRQ_FP/STRQ_FP`）——
+  溢出从 ±256B 扩到 32KB 量级。
+- **帧件（callee-save / 栈形参）**：`callee_save/callee_load` 角色从 `STURX/LDURX`
+  （imm9）换到 `STRX/LDRX`（scaled imm12）；栈形参的**负**偏移仍留在 imm9 族
+  （scaled 只收无符号）——角色按形态拆分。
+- **帧尺寸记账修正**（fp-inside）：局部槽地址是 `fp - stack_slot_shift - depth`，而
+  帧只按 depth 记账 ⇒ 槽深到帧底时最深的槽落到 `sp` 之下（新矩阵用例 40 个槽实测
+  data abort 循环）。`calculate_frame_size` 对 `FrameLayoutKind::Inside` 补加
+  `stack_slot_shift`；fp-outside（x86，shift 是已 push 的字节数）不加。
+- 新矩阵用例 `deep_frame_many_slots`（40 个局部槽 + 读最深两槽，真执行）⇒
+  `jit_matrix_arm64` **89 passed / 0 failed**；riscv64/x86 矩阵同步回归绿（riscv 也是
+  fp-inside，帧记账修正对它同样生效）。
+- **收益**：`core::ptr::swap_nonoverlapping_bytes` 一类大帧函数不再因 `STURX imm9`
+  编不出（`swap_nonoverlapping_short` 已能编过）；aarch64 core 探针剩余阻塞收敛到
+  `GlobalAddr` 与 `UmulOverflow` 两项。
+
+**仍未覆盖**：aarch64 core 的 `GlobalAddr`/乘溢出（下一步）、NEON 向量、原子、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

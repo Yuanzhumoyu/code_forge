@@ -410,10 +410,10 @@ pub const SECTIONS: &[Section] = &[
         path: "[machine.spill.<模板名>]",
         model: "MachineSpill",
         required: &["class", "load", "store"],
-        optional: &["base", "when"],
+        optional: &["base", "when", "offset_base"],
         flatten: &[],
         additional: false,
-        doc: "溢出/回填模板（表头 = 模板名，`class` = 它服务的寄存器类；`{N}` = 寄存器序号占位符）",
+        doc: "溢出/回填模板（表头 = 模板名，`class` = 它服务的寄存器类；`{N}` = 寄存器序号占位符；`offset_base` = `fp`/`sp` 偏移口径）",
     },
     Section {
         path: "roles 的条目（内联表）",

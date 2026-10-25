@@ -64,7 +64,12 @@ fn jit_matrix_arm64() {
     for (name, outcome) in &results {
         match outcome {
             Outcome::Pass => pass += 1,
-            Outcome::Skip(_) => skip += 1,
+            Outcome::Skip(r) => {
+                if std::env::var_os("FORGE_SHOW_SKIP").is_some() {
+                    eprintln!("[skip] {name}: {r}");
+                }
+                skip += 1
+            }
             Outcome::Fail(e) => fail.push((name.clone(), e.clone())),
         }
     }
