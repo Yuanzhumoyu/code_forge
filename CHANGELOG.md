@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-26) — aarch64 scaled 溢出真执行守卫
+
++ 新测试 `rustc_aarch64_scaled_spill_probe_runs_under_qemu`：40 个跨调用活跃标量强制溢出，
+  断言对象里**没有** unscaled `stur/ldur`、**有** `str/ldr [sp,#imm>255]`，并 QEMU 真跑出
+  `39`（实测帧 ~0x6c0、24 条 >255B scaled 访存）——证明上一轮 SP+scaled imm12 形态真被走到。
++ 记录 core swap 侦查结论与 O2 暴露的两个后续缺口（栈实参负偏移仍 imm9、某实例
+  `Iadd no matching rule`），见方案 M6-107。
+
 ### Changed (2026-10-26) — aarch64/riscv 大帧溢出：imm9 → SP + scaled imm12
 
 + `[machine.spill.<名>].offset_base = "sp"`（数据键）：发射侧把溢出偏移换成 sp 口径

@@ -339,7 +339,23 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   编不出（`swap_nonoverlapping_short` 已能编过）；aarch64 core 探针剩余阻塞收敛到
   `GlobalAddr` 与 `UmulOverflow` 两项。
 
-**仍未覆盖**：aarch64 core 的 `GlobalAddr`/乘溢出（下一步）、NEON 向量、原子、DWARF/CFI。
+**进度（2026-10-26，M6-107）——scaled 溢出真执行守卫 + core swap 阻塞点收敛**：
+
+- 新增 **QEMU 真执行守卫** `rustc_aarch64_scaled_spill_probe_runs_under_qemu`：40 个跨调用活跃的
+  标量把寄存器压力拉满，断言（a）机器码里 **没有** unscaled `stur/ldur`（顶层 0xF8）、
+  （b）**有**至少一条 `str/ldr [sp, #imm>255]`（scaled imm12 ≥ 32）、（c）真跑出 `39`。
+  实测该探针帧 ~0x6c0、24 条 >255B 的 scaled 访存——这是"换了 scaled 形态"而非"偏移碰巧还小"
+  的直接证据（矩阵用例的帧太浅，分辨不出）。
+- **core swap 侦查（未通过，记录）**：`core::mem::swap` 探针在 **O0**（debug-assertions 开）仍会
+  卡住——触发的是 `swap_nonoverlapping_short` 之外的地址计算路径；关掉 debug-assertions 后能编过，
+  但运行期仍 fault（LLVM 编的 `mem::swap` 与 forge 编的调用方交互处拿到坏指针），待用 IR/机器码
+  对拍定位。
+- **O2 暴露的两个后续缺口**（`cargo`-侧真跑时踩到）：
+  1. `stack_arg_store/load` 的偏移是**负**的（`[sp + caller_offset]`），仍受 imm9 ±256 限制
+     （实测 `Sturx: -352`）——stack-arg 超过 32 槽的大调用需要寄存器偏移/地址材料化形态；
+  2. O2 下出现 `Iadd no matching rule`（兜底诊断已能点名 op）——待查该实例的属性组合。
+
+**仍未覆盖**：aarch64 core 的 `GlobalAddr`/乘溢出、stack-arg 大偏移、NEON 向量、原子、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

@@ -317,6 +317,7 @@ fn wrap_elf(image: &[u8]) -> Vec<u8> {
 /// 运行 ELF（子进程），返回退出码。超时（默认 15s）防 exit_seq 重试死循环
 /// 挂起 CI（sw 永不触发时 beq 自跳死循环）。
 fn run_qemu(elf: &[u8], label: &str) -> Result<u64, String> {
+    let _qemu_guard = super::qemu_serialize();
     let qemu = qemu_riscv64_path().ok_or_else(|| {
         "QEMU riscv64 未找到（设置 QEMU_RISCV64 或安装 qemu-system-riscv64）".to_string()
     })?;

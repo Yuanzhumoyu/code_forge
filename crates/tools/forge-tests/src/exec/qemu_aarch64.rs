@@ -308,6 +308,7 @@ fn run_qemu(qemu: &PathBuf, elf: &[u8]) -> Result<u64, String> {
     // 文件名必须唯一：并行测试（同进程多线程跑同一 lib）会互相覆盖
     // `{pid}.elf`——qemu 启动读到别的用例的 ELF，返回值串扰
     //（曾现：smoke(42) 拿到大常量用例的 0x12345678）。
+    let _qemu_guard = super::qemu_serialize();
     static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp = std::env::temp_dir().join(format!("forge_a64_{}_{}.elf", std::process::id(), n));

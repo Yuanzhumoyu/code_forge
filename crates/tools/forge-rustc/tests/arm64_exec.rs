@@ -460,3 +460,198 @@ fn rustc_aarch64_core_probe_runs_under_qemu() {
         dir.display()
     );
 }
+/// **scaled 溢出真执行守卫**（v27 M6-107）：40 个跨调用活跃的标量值把寄存器压力拉满，
+/// 溢出槽会落到 `sp + >255B`——只有 scaled `str/ldr [sp,#imm]` 能表达。该用例同时：
+///
+/// 1. QEMU 真跑出 `(Σ 期望 1039) % 100 = 39`；
+/// 2. 对**对象字节**断言：机器码里 **没有** unscaled `stur/ldur`（顶层 0xF8），
+///    但**有**至少一条 `str [sp, #imm>255]`（scaled imm12 的 imm ≥ 32）。
+///
+/// 为什么需要它：矩阵用例的帧都很浅（imm9 也能编过），单靠它们无法区分"换了 scaled
+/// 形态"与"碰巧偏移还小"。
+#[test]
+fn rustc_aarch64_scaled_spill_probe_runs_under_qemu() {
+    let dll = backend_dll();
+    if !dll.is_file() {
+        eprintln!("SKIP: 后端 dylib 缺失（先 `cargo build -p forge-rustc`）");
+        return;
+    }
+    let (Some(clang), Some(ldlld)) = (tool("clang"), tool("ld.lld")) else {
+        eprintln!("SKIP: 缺 clang / ld.lld");
+        return;
+    };
+    let Some(qemu) = qemu_aarch64() else {
+        eprintln!("SKIP: qemu-system-aarch64 未安装");
+        return;
+    };
+    let rustc = std::env::var_os("RUSTC").map_or_else(|| "rustc".into(), PathBuf::from);
+    let sysroot = run(Command::new(&rustc).arg("--print").arg("sysroot"));
+    assert_ok(&sysroot, "rustc --print sysroot");
+    let sysroot = PathBuf::from(String::from_utf8_lossy(&sysroot.stdout).trim());
+    let lib_dir = sysroot.join("lib/rustlib/src/rust/library");
+    let core_src = lib_dir.join("core/src/lib.rs");
+    let cb_src = lib_dir.join("compiler-builtins/compiler-builtins/src/lib.rs");
+    if !core_src.is_file() || !cb_src.is_file() {
+        eprintln!("SKIP: 缺 rust-src（{}）", lib_dir.display());
+        return;
+    }
+
+    let dir = workspace_root()
+        .join("target")
+        .join("tmp")
+        .join("arm64-core-probe");
+    let sys = dir.join("sysroot");
+    std::fs::create_dir_all(&sys).expect("创建产物目录");
+    let core = build_target_rlib(&rustc, &sys, "core", &core_src, &[]);
+    let cb = build_target_rlib(
+        &rustc,
+        &sys,
+        "compiler_builtins",
+        &cb_src,
+        &[
+            "--cfg",
+            r#"feature="mem""#,
+            "--cfg",
+            r#"feature="compiler-builtins""#,
+            "--extern",
+            &format!("core={}", core.display()),
+        ],
+    );
+
+    // 40 个标量跨 `bump` 调用活跃 ⇒ 必然溢出（寄存器池装不下）。
+    let mut src_text = String::from(
+        r#"#![no_std]
+#![no_main]
+
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! { loop {} }
+
+#[inline(never)]
+pub extern "C" fn bump(x: i64) -> i64 { x * 3 + 1 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
+"#,
+    );
+    for i in 0..40 {
+        src_text.push_str(&format!("    let x{i} = (a as i64) + (b as i64) + {i};\n"));
+    }
+    src_text
+        .push_str("    let x0 = bump(x0);\n    let x20 = bump(x20);\n    let x39 = bump(x39);\n");
+    let sum = (0..40)
+        .map(|i| format!("x{i}"))
+        .collect::<Vec<_>>()
+        .join(" + ");
+    src_text.push_str(&format!("    let s = {sum};\n    (s % 100) as i32\n}}\n"));
+
+    let src = dir.join("probe_scaled_spill.rs");
+    let obj = dir.join("probe_scaled_spill.o");
+    let crt0_s = dir.join("crt0_scaled_spill.s");
+    let crt0_o = dir.join("crt0_scaled_spill.o");
+    let elf = dir.join("probe_scaled_spill.elf");
+    std::fs::write(&src, &src_text).expect("写 probe_scaled_spill.rs");
+    std::fs::write(&crt0_s, CORE_CRT0_S).expect("写 crt0_scaled_spill.s");
+
+    let out = run(Command::new(&rustc).args([
+        format!("-Zcodegen-backend={}", dll.display()).as_str(),
+        "--target",
+        "aarch64-unknown-none",
+        "--edition",
+        "2021",
+        "--crate-type",
+        "lib",
+        "-C",
+        "panic=abort",
+        "-C",
+        "opt-level=0",
+        "-C",
+        "debug-assertions=off",
+        "-C",
+        "overflow-checks=off",
+        "--emit=obj",
+        "--extern",
+        &format!("core={}", core.display()),
+        "--extern",
+        &format!("compiler_builtins={}", cb.display()),
+        src.to_str().unwrap(),
+        "-o",
+        obj.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "forge 编 scaled 溢出探针");
+
+    // 字节层断言：没有 unscaled STUR/LDUR（顶层 0xF8），且有 scaled imm12 ≥ 32（>255B）。
+    let bytes = std::fs::read(&obj).expect("读对象");
+    let mut unscaled = 0usize;
+    let mut wide_scaled = 0usize;
+    for w in bytes.windows(4).step_by(4) {
+        let word = u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
+        if (word >> 24) == 0xF8 {
+            unscaled += 1;
+        }
+        // `str/ldr x, [sp,#imm]`：顶层 0xF9、Rn=31、imm12（以 8 缩放）≥ 32。
+        if (word >> 24) == 0xF9 && ((word >> 5) & 0x1F) == 31 && ((word >> 10) & 0xFFF) >= 32 {
+            wide_scaled += 1;
+        }
+    }
+    assert_eq!(
+        unscaled,
+        0,
+        "溢出/帧件不应再发 unscaled STUR/LDUR（顶层 0xF8）：{unscaled} 条（产物：{}）",
+        dir.display()
+    );
+    assert!(
+        wide_scaled > 0,
+        "应出现 scaled 且偏移 >255B 的 str/ldr [sp]（imm12≥32）：{wide_scaled} 条（产物：{}）",
+        dir.display()
+    );
+
+    let out = run(Command::new(&clang).args([
+        "--target=aarch64-unknown-none",
+        "-c",
+        crt0_s.to_str().unwrap(),
+        "-o",
+        crt0_o.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "clang 汇编 scaled 溢出 crt0");
+    let out = run(Command::new(&ldlld).args([
+        "-m",
+        "aarch64elf",
+        "-Ttext=0x40000000",
+        "--entry=_start",
+        crt0_o.to_str().unwrap(),
+        obj.to_str().unwrap(),
+        core.to_str().unwrap(),
+        cb.to_str().unwrap(),
+        "-o",
+        elf.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "ld.lld 链接 scaled 溢出探针");
+    let out = run(Command::new(&qemu).args([
+        "-M",
+        "virt",
+        "-cpu",
+        "cortex-a57",
+        "-kernel",
+        elf.to_str().unwrap(),
+        "-nographic",
+        "-semihosting-config",
+        "enable=on,target=native",
+        "-monitor",
+        "none",
+        "-serial",
+        "none",
+        "-no-reboot",
+    ]));
+    let code = out
+        .status
+        .code()
+        .unwrap_or_else(|| panic!("qemu 异常终止：\n{}", String::from_utf8_lossy(&out.stderr)));
+    assert_eq!(
+        code & 0xFF,
+        39,
+        "scaled 溢出探针结果应为 39（Σ 1039 % 100），got {code}（产物：{}）",
+        dir.display()
+    );
+}

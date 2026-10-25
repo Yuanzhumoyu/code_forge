@@ -12,6 +12,20 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-26 · M6-107：scaled 溢出真执行守卫（+ core swap 阻塞点侦查）
+
+- **新守卫** `rustc_aarch64_scaled_spill_probe_runs_under_qemu`：40 个跨调用活跃标量 ⇒
+  必然溢出；对**对象字节**断言没有 unscaled `stur/ldur`（顶层 0xF8）、至少一条
+  `str/ldr [sp,#imm>255]`（scaled imm12 ≥ 32），并 QEMU 真跑出 39。实测帧 ~0x6c0、
+  24 条 >255B scaled 访存——证明 M6-106 的形态切换真被走到（浅帧矩阵分辨不出）。
+- **core swap 侦查**：`core::mem::swap` 探针在 O0（debug-assertions 开）仍卡；关 assertions
+  后能编过但运行 fault（LLVM 编的 `mem::swap` 与 forge 调用方的指针交互），待 IR/机器码对拍。
+- **O2 暴露**：① `stack_arg_store/load` 偏移为负、仍 imm9（实测 `Sturx: -352`）——>32 槽
+  栈实参需要寄存器偏移/地址材料化形态；② `Iadd no matching rule`（兜底诊断已点名 op）。
+- 验收：新测试绿；矩阵不变（arm64 89/0）。pins 无变化。
+
+**仍未覆盖**：aarch64 core 的 `GlobalAddr`/乘溢出、stack-arg 大偏移、NEON 向量、原子、DWARF/CFI。
+
 ### 2026-10-26 · M6-106：大帧溢出（imm9 限制解除）
 
 - **数据键**：`[machine.spill.<名>].offset_base = "sp"`（缺省 `"fp"`）。发射侧据此把
