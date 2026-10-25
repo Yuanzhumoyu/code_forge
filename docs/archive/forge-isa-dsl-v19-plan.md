@@ -1,4 +1,4 @@
-﻿# forge-isa-dsl 改进方案（ISA-DSL v19：可独立接入 + 数据化验证 + 规范体检）
+# forge-isa-dsl 改进方案（ISA-DSL v19：可独立接入 + 数据化验证 + 规范体检）
 
 > ⚠️ **ARCHIVED（2026-10-08）** —— 本方案的**招牌切片已按代码事实核对落地**：V1 独立 runtime
 > （`pub use forge_ir as ir`）、V3 谱内向量（`SPEC_VECTORS`）、V4 lint（`lint_source`）、

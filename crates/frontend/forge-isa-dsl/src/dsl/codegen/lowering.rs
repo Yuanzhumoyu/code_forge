@@ -1110,7 +1110,15 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                 // 谓词属性源（S8d）：整个 `lower_inst` 调用共用一份；
                 // 被谓词引用到的属性才会被算（每次调用每属性最多算一次）。
                 let mut __ac = __AC::new(op, args, results);
-                match op { #(#arms,)* _ => Err(crate::prelude::IrError::capability("SPEC_LOWERING_RULE_MISSING", "DSL lowering")) }
+                match op {
+                    #(#arms,)*
+                    // 兜底必须**点名**是哪个 op（旧文本只有 "DSL lowering"，盲猜过一轮）：
+                    // 没规则 = 谱能力缺口，报错里给 `Opcode` 的 Debug 名。
+                    _ => Err(crate::prelude::IrError::capability(
+                        "SPEC_LOWERING_RULE_MISSING",
+                        format!("DSL lowering: 谱里没有 op {op:?} 的规则"),
+                    )),
+                }
             }
 
             #term_impl

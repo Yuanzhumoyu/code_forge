@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-25) — aarch64 + `core` 首光（溢出/Undef 规则 + 可运行闭环）
+
++ **aarch64 真跑 `#![no_std]` + `core`**：forge 编出对象，与从 `rust-src` 直接为目标编的
+  `libcore.rlib`/`libcompiler_builtins.rlib` 一起 `ld.lld` 链接，QEMU 退出码 12；
+  新增测试 `rustc_aarch64_core_probe_runs_under_qemu`。
++ arm64 谱面补 `SaddOverflow/UaddOverflow/SsubOverflow/UsubOverflow`（`ADDS/SUBS` +
+  `CSEL`/`CSEL_F` 读标志）与 `Undef/Poison`（零值特化）。
++ lowering 兜底错误现在**点名**缺失的 op（旧文本只有 `DSL lowering`）。
++ 结果：arm64 op 覆盖 47→53、真缺口 56→50。仍缺 `SmulOverflow/UmulOverflow`、`GlobalAddr`、
+  大函数溢出槽偏移超 imm9（帧形态选择）——已记入方案 M6-105 的下一步。
+
 ### Added (2026-10-25) — 窄宽度访存 / 掩码截断 / UDF 陷阱（arm64 + riscv64）
 
 + `Load`/`Store` 补 **i1/i8/i16**：arm64 用 `ldrb/ldrh/strb/strh`、riscv64 用

@@ -5905,3 +5905,104 @@ insts = ["LDRBW_ND {out}, [{0}]", "ANDIMMW {out}, {out}, 1"]
 [[lower.Store]]
 when = { eq = ["rs1_width", 1] }
 insts = ["STRBW_ND {0}, [{1}]"]
+# Undef/Poison（v27 M6-105）：任意值 ⇒ 取零（合法特化，不是"猜语义"）。
+# 整数/指针按 rd 选 X/W 零；浮点先造 GPR 零再 `fmov` 进 FPR（F32/F64 两档）。
+[[lower.Undef]]
+when = { eq = ["elem", 1] }
+insts = ["MOVZW {g}, 0", "FMOV_S_FROM_W {out}, {g}"]
+
+[[lower.Undef]]
+when = { eq = ["elem", 2] }
+insts = ["MOVZX {g}, 0", "FMOV_D_FROM_X {out}, {g}"]
+
+[[lower.Undef]]
+when = { eq = ["rd", 64] }
+insts = ["MOVZX {out}, 0"]
+
+[[lower.Undef]]
+insts = ["MOVZW {out}, 0"]
+
+[[lower.Poison]]
+when = { eq = ["elem", 1] }
+insts = ["MOVZW {g}, 0", "FMOV_S_FROM_W {out}, {g}"]
+
+[[lower.Poison]]
+when = { eq = ["elem", 2] }
+insts = ["MOVZX {g}, 0", "FMOV_D_FROM_X {out}, {g}"]
+
+[[lower.Poison]]
+when = { eq = ["rd", 64] }
+insts = ["MOVZX {out}, 0"]
+
+[[lower.Poison]]
+insts = ["MOVZW {out}, 0"]
+# 加/减溢出（v27 M6-105）：A64 的 `ADDS/SUBS` 置 NZCV；溢出位 = `vs`（有符号）、
+# 进位/借位 = `cs`/`cc`。x86 用 `xor`+`add`+`seto` 那套，这里直接读标志。
+# 乘溢出需要 SMULH/SMADDL 组合，另案（未声明时按"无规则"明确报错）。
+[[lower.SaddOverflow]]
+when = { eq = ["rd", 32] }
+insts = [
+  "MOVZW {g1}, 1",
+  "MOVZW {g2}, 0",
+  "ADDSREGW {out}, {0}, {1}",
+  "CSELW_F {out2}, {g1}, FlagCC::O, {g2}",
+]
+
+[[lower.SaddOverflow]]
+insts = [
+  "MOVZW {g1}, 1",
+  "MOVZW {g2}, 0",
+  "ADDSREGX {out}, {0}, {1}",
+  "CSELW_F {out2}, {g1}, FlagCC::O, {g2}",
+]
+
+[[lower.UaddOverflow]]
+when = { eq = ["rd", 32] }
+insts = [
+  "MOVZW {g1}, 1",
+  "MOVZW {g2}, 0",
+  "ADDSREGW {out}, {0}, {1}",
+  "CSELW {out2}, {g1}, 2, {g2}",
+]
+
+[[lower.UaddOverflow]]
+insts = [
+  "MOVZW {g1}, 1",
+  "MOVZW {g2}, 0",
+  "ADDSREGX {out}, {0}, {1}",
+  "CSELW {out2}, {g1}, 2, {g2}",
+]
+
+[[lower.SsubOverflow]]
+when = { eq = ["rd", 32] }
+insts = [
+  "MOVZW {g1}, 1",
+  "MOVZW {g2}, 0",
+  "SUBSREGW {out}, {0}, {1}",
+  "CSELW_F {out2}, {g1}, FlagCC::O, {g2}",
+]
+
+[[lower.SsubOverflow]]
+insts = [
+  "MOVZW {g1}, 1",
+  "MOVZW {g2}, 0",
+  "SUBSREGX {out}, {0}, {1}",
+  "CSELW_F {out2}, {g1}, FlagCC::O, {g2}",
+]
+
+[[lower.UsubOverflow]]
+when = { eq = ["rd", 32] }
+insts = [
+  "MOVZW {g1}, 1",
+  "MOVZW {g2}, 0",
+  "SUBSREGW {out}, {0}, {1}",
+  "CSELW {out2}, {g1}, 3, {g2}",
+]
+
+[[lower.UsubOverflow]]
+insts = [
+  "MOVZW {g1}, 1",
+  "MOVZW {g2}, 0",
+  "SUBSREGX {out}, {0}, {1}",
+  "CSELW {out2}, {g1}, 3, {g2}",
+]

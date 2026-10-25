@@ -12,6 +12,23 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-25 · M6-105：aarch64 + `core` 首光
+
+- **闭环**：`#![no_std]` crate（`core::cmp::max/min` + `mem::size_of`）经 forge 编成 aarch64
+  对象，与 rustc 从 `rust-src` 直接编出的 `libcore.rlib`/`libcompiler_builtins.rlib`
+  一起 `ld.lld` 链接，QEMU 真跑 ⇒ 退出码 **12**。测试
+  `rustc_aarch64_core_probe_runs_under_qemu`（rlib 缓存在 `target/tmp/arm64-core-probe/`）。
+- **arm64 谱面**：补 `SaddOverflow/UaddOverflow/SsubOverflow/UsubOverflow`（`ADDS/SUBS` +
+  `CSEL`/`CSEL_F` 读标志；`opt-level=0` 的 debug 溢出检查真的执行到）与 `Undef/Poison`
+  （零值特化）。7 条 lowering 规则。
+- **诊断**：lowering 兜底错误的旧文本只有 `DSL lowering`（无法知道缺哪个 op）⇒ 改为
+  `format!("DSL lowering: 谱里没有 op {op:?} 的规则")`；这次正是靠它定位到 `SaddOverflow`/`GlobalAddr`。
+- **阻塞**（下一步）：溢出槽偏移超 `STURX` imm9（实测 312/344；`swap_nonoverlapping_*` 触发）；
+  `SmulOverflow/UmulOverflow`（`SMULH`/`SMADDL` 组合）；`GlobalAddr`（`abs_g0..g3` 重定位）。
+- 验收：pins 刷新（op-gap `53, 6, 9, 50`、vary 55、strict_overlap arm64 32）；矩阵不变。
+
+**仍未覆盖**：aarch64 core 完整表面、NEON 向量、原子/宽乘除、DWARF/CFI。
+
 ### 2026-10-25 · M6-104：窄宽度访存 / 掩码截断 / UDF 陷阱（aarch64 core 路线第一步）
 
 - **窄宽度访存**：`Load`/`Store` 补 i1/i8/i16（arm64 `ldrb/ldrh/strb/strh`、

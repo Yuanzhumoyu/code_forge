@@ -302,7 +302,24 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   ±256）——`swap_nonoverlapping_short` 需要 312 字节偏移，属帧/溢出**编码形态选择**
   的缺口（下一步：溢出改用 SP 基址 + 无符号 scaled imm12，或寄存器偏移形态）。
 
-**仍未覆盖**：aarch64 的 core 端到端（阻塞点见上）、NEON 向量、原子/宽乘除、DWARF/CFI。
+**进度（2026-10-25，M6-105）——aarch64 + `core` 首光**：
+
+- **可运行闭环**：`#![no_std]` crate（`core::cmp::max/min`、`mem::size_of`）由 forge 后端编出
+  aarch64 对象，与 **LLVM 编的 `libcore.rlib` + `libcompiler_builtins.rlib`** 一起经 `ld.lld`
+  链接，在 QEMU 上真跑出 `12`。新增测试 `rustc_aarch64_core_probe_runs_under_qemu`
+  （离线装不上 `rust-std-aarch64-unknown-none`，改从本地 `rust-src` 直接为目标编两个 rlib，
+  产物缓存在 `target/tmp/arm64-core-probe/sysroot`）。
+- **为它补的谱面规则**（arm64）：`SaddOverflow/UaddOverflow/SsubOverflow/UsubOverflow`
+  （`ADDS/SUBS` + 标志 → `CSEL`/`CSEL_F`；debug 溢出检查真的走到了）、`Undef/Poison`
+  （取零的合法特化）。**仍缺**：`SmulOverflow/UmulOverflow`（需 `SMULH`/`SMADDL` 组合）、
+  `GlobalAddr`（静态数据地址；需 A64 `abs_g0..g3` 重定位序列）。
+- **诊断改进**：谱里没有某 op 的规则时，lowering 兜底错误现在**点名** op（旧文本只有
+  `DSL lowering`，盲猜过一轮）。
+- **仍阻塞**：大函数溢出槽偏移超 `STURX` imm9（±256，实测 312/344）——帧/溢出编码形态选择；
+  以及 `core` 里遇得到的 `GlobalAddr`、乘溢出。
+- 结果：arm64 op 覆盖 47→53、真缺口 56→50；`jit_matrix_arm64` 79 passed / 0 failed 不变。
+
+**仍未覆盖**：aarch64 core 的完整表面（见上）、NEON 向量、原子/宽乘除、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 
