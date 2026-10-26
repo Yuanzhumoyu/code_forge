@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-26) — 栈实参写槽统一 + 缺失值描述补齐 + 诊断带属性
+
++ `move_args` 的"spilled 形参 → spill 槽"改走 `emit_spill_store`（统一 fp/sp 口径与按类
+  分派），修掉大函数 `Sturx: -352` 编不出。
++ `lower_inst` 前用 IR 类型补齐**缺失**的值描述（`desc_of`）——修复 O2 下
+  `Iadd no matching rule（rs1_width=None）`（按宽度分派的规则需要描述）。
++ 无规则诊断升级：打印 8 个谓词属性 + 每个实参描述，`None` 直接暴露"描述缺失"根因。
++ 记录 core swap 的下一步：O2 可编过但运行坏码（`csel` 临时被当作 store 地址），疑似
+  指令包内 vreg 编号/字段串位。
+
 ### Added (2026-10-26) — aarch64 scaled 溢出真执行守卫
 
 + 新测试 `rustc_aarch64_scaled_spill_probe_runs_under_qemu`：40 个跨调用活跃标量强制溢出，

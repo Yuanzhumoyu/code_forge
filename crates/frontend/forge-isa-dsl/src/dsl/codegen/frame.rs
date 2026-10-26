@@ -1196,6 +1196,16 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
     // `[abi].scratch`）与 callee-saved 区字节数（sp_base 计算常量）。**只在真的要走
     // 栈参数收参时**要求声明（声明了 `stack_arg_load` 角色的 ISA）；缺声明 = 生成期
     // 明确报错——不回退到某个 ISA 的寄存器名（那等于把别家的命名约定写进通用生成器）。
+    // scratch 的类：栈实参收参的"按位写回"要走统一 spill 机制（按类分派 + 宽度），
+    // 所以从 `[reg.*]` 反查它的类，而不是写死 GPR。
+    let scratch0_class: crate::dsl::model::RegClass = match model.machine_scratch().first() {
+        Some(n) => model.reg_class_of_name(n).ok_or_else(|| {
+            format!("[machine].scratch 的寄存器 `{n}` 不在任何 [reg.*] 组里——无法确定收参写槽的类")
+        })?,
+        None => model.main_gpr_class()?,
+    };
+    let scratch0_class_tok = quote! { #scratch0_class };
+    let scratch0_bytes_lit = proc_macro2::Literal::u16_unsuffixed(scratch0_class.bytes());
     let scratch0 = match model.machine_scratch().first() {
         Some(s) => format_ident!("{s}"),
         None if has_stack_arg => {
@@ -1367,12 +1377,10 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
     let stack_arg_receive: TokenStream = match (load_shape.as_ref(), store_shape.as_ref()) {
         (Some(l), Some(s)) => {
             let l_inst = mem_inst_toks(l, &callee_base, &quote! { __off }, &quote! { __scratch0 });
-            let s_inst = mem_inst_toks(
-                s,
-                &callee_base,
-                &quote! { __sp_base + __slot_off },
-                &quote! { __scratch0 },
-            );
+            // **写回槽走 spill 机制**（v27 M6-108）：`stack_arg_store` 角色的 imm 槽
+            // 是 imm9（±256B），大函数的 spilled 形参（实测 352B）编不出；spill 已有
+            // 「fp/sp 偏移口径 + 按类分派」的统一机制，这里直接复用（避免两套写槽路径）。
+            let _ = &s;
             quote! {
                 if let Some(__cl) = __rm.call_layout.as_ref()
                     && let Some(__soff) = __cl.arg(__i as u32).and_then(|__a| __a.place.stack_offset())
@@ -1385,9 +1393,15 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
                     // load 布局给的栈槽 → scratch（角色 stack_arg_load 命中的指令）
                     let __lbytes = encode(&#l_inst).map_err(|e| crate::IrError::Emit(e))?;
                     __sink.put_bytes(&__lbytes);
-                    // store scratch → spill 槽（角色 stack_arg_store 命中的指令）
-                    let __sbytes = encode(&#s_inst).map_err(|e| crate::IrError::Emit(e))?;
-                    __sink.put_bytes(&__sbytes);
+                    // store scratch → spill 槽（**统一 spill 机制**：按类 + 偏移口径分派）
+                    // 宽度取**寄存器类的字节数**（spill 机制的口径：`xreg.bytes()`），不是参数 IR
+                // 字节数——同一条写槽指令搬的是整类槽（x86 的 f32 形参也走 8 字节 MOVSD）。
+                let __w = #scratch0_bytes_lit;
+                    let __cls = #scratch0_class_tok;
+                    let __off_fp = __sp_base + __slot_off;
+                    let __off_sp = __frame_size as i64 + __off_fp;
+                    let __off_final = if self.spill_offset_from_sp(__cls) { __off_sp } else { __off_fp };
+                    self.emit_spill_store(__scratch0.to_index(), __off_final as i32, __w, __cls, __sink)?;
                     continue;
                 }
             }
@@ -1405,12 +1419,8 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
         store_shape.as_ref(),
     ) {
         (true, Some(s)) => {
-            let s_inst = mem_inst_toks(
-                s,
-                &callee_base,
-                &quote! { __sp_base + __slot_off },
-                &quote! { __scratch0 },
-            );
+            // 同上：写回槽走统一 spill 机制（s 只用于「本 ISA 有写回能力」的门控）。
+            let _ = &s;
             quote! {
             // spilled 的**寄存器**参数：load 被调方 ABI 寄存器 → scratch
             // → spill 槽（mod.rs 210 写槽依赖 entry vreg 值正确）。
@@ -1455,9 +1465,15 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
                     #m_dest: __scratch0,
                 }).map_err(|e| crate::IrError::Emit(e))?;
                 __sink.put_bytes(&__lbytes);
-                // scratch → spill 槽（角色 stack_arg_store 命中的指令）
-                let __sbytes = encode(&#s_inst).map_err(|e| crate::IrError::Emit(e))?;
-                __sink.put_bytes(&__sbytes);
+                // scratch → spill 槽（统一 spill 机制）
+                // 宽度取**寄存器类的字节数**（spill 机制的口径：`xreg.bytes()`），不是参数 IR
+                // 字节数——同一条写槽指令搬的是整类槽（x86 的 f32 形参也走 8 字节 MOVSD）。
+                let __w = #scratch0_bytes_lit;
+                let __cls = #scratch0_class_tok;
+                let __off_fp = __sp_base + __slot_off;
+                let __off_sp = __frame_size as i64 + __off_fp;
+                let __off_final = if self.spill_offset_from_sp(__cls) { __off_sp } else { __off_fp };
+                self.emit_spill_store(__scratch0.to_index(), __off_final as i32, __w, __cls, __sink)?;
             }
             }
         }

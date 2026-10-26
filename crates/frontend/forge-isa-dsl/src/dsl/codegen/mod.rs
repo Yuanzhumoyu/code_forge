@@ -98,12 +98,7 @@ fn field_ty(slot: &OperandSlot) -> TokenStream {
 /// （元数据派生；历史实现写死 `GPR(8)`——1 字节寄存器 ISA 下不存在该类）。
 fn reg_class_expr(slot: &OperandSlot) -> TokenStream {
     match slot.class.as_ref() {
-        Some(c) => match c {
-            RegClass::GPR(w) => quote! { forge_ir::RegClass::GPR(#w) },
-            RegClass::FPR(w) => quote! { forge_ir::RegClass::FPR(#w) },
-            RegClass::VEC(w) => quote! { forge_ir::RegClass::VEC(#w) },
-            RegClass::KReg(w) => quote! { forge_ir::RegClass::KReg(#w) },
-        },
+        Some(c) => quote! { #c },
         _ => quote! { __DEFAULT_GPR_CLASS },
     }
 }

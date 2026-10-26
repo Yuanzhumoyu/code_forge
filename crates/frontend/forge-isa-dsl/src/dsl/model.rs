@@ -530,6 +530,27 @@ impl IsaModel {
     ///
     /// 见 [`RegGroup::alloc_count`]——APX 的 EGPR（r16..r31）能编码但不进分配池：
     /// 分配器一旦用了它们，JIT 产物在没有 APX 的机器上就是非法指令。
+    /// 按**寄存器名**反查它所属的组/类（`[reg.<名>]` 的显式 `names` 或 `prefix`+序号）。
+    ///
+    /// v27 M6-108：栈实参收参的"按位写回"需要 scratch 寄存器的**类与宽度**来走统一
+    /// spill 机制——谱里的 scratch 是物理名，这里把它折回类，不写死"就是 GPR64"。
+    pub(crate) fn reg_class_of_name(&self, name: &str) -> Option<RegClass> {
+        for (class, g) in &self.reg {
+            if let Some(names) = &g.names
+                && names.iter().any(|n| n == name)
+            {
+                return Some(*class);
+            }
+            if let Some(prefix) = &g.prefix
+                && let Some(rest) = name.strip_prefix(prefix.as_str())
+                && !rest.is_empty()
+                && rest.chars().all(|c| c.is_ascii_digit())
+            {
+                return Some(*class);
+            }
+        }
+        None
+    }
     pub(crate) fn gpr_alloc_count(&self) -> Result<u32, String> {
         let cls = self.main_gpr_class()?;
         let n = self.names_of(cls)?.len() as u32;

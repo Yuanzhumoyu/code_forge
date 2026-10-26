@@ -788,7 +788,7 @@ fn sample_operands(
                     .flatten()
                     .and_then(|w| view_class(slot, w));
                 let (cls, count) = match forced {
-                    Some(c) => (class_ts(&c), m.names_of(c)?.len() as u32),
+                    Some(c) => (quote! { #c }, m.names_of(c)?.len() as u32),
                     None => (reg_class_expr(slot), slot_reg_count(m, slot)?),
                 };
                 // 索引：低视图按操作数序号（不同操作数取不同寄存器，便于抓 reg/rm 互换）；
@@ -913,8 +913,11 @@ fn sample_operands(
             }
             OperandKind::Mem => {
                 let cls = match (&slot.class, &slot.classes) {
-                    (Some(c), _) => class_ts(c),
-                    (None, Some(cs)) if !cs.is_empty() => class_ts(&cs[cs.len() - 1]),
+                    (Some(c), _) => quote! { #c },
+                    (None, Some(cs)) if !cs.is_empty() => {
+                        let last = &cs[cs.len() - 1];
+                        quote! { #last }
+                    }
                     _ => quote! { __DEFAULT_GPR_CLASS },
                 };
                 exprs.push(mem_ref_expr(&cls, 0, None, 1));
@@ -1347,17 +1350,6 @@ fn gen_one(
             #cond_loop
         }
     })
-}
-
-/// 槽的寄存器组名（`RegClass` 字面量）。
-fn class_ts(c: &crate::dsl::model::RegClass) -> TokenStream {
-    use crate::dsl::model::RegClass;
-    match c {
-        RegClass::GPR(w) => quote! { forge_ir::RegClass::GPR(#w) },
-        RegClass::FPR(w) => quote! { forge_ir::RegClass::FPR(#w) },
-        RegClass::VEC(w) => quote! { forge_ir::RegClass::VEC(#w) },
-        RegClass::KReg(w) => quote! { forge_ir::RegClass::KReg(#w) },
-    }
 }
 
 /// Reg 槽可用的寄存器个数（多类槽取主 GPR 类）。

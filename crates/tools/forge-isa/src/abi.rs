@@ -669,8 +669,12 @@ impl ViewTarget {
             widths,
             classes,
             n_gpr: view.n_gpr,
-            pinned: (0..count).map(|i| pinned_set.contains(&i)).collect(),
-            allocatable: (0..count).filter(|i| !pinned_set.contains(i)).collect(),
+            pinned: (0..count)
+                .map(|i| pinned_set.binary_search(&i).is_ok())
+                .collect(),
+            allocatable: (0..count)
+                .filter(|i| !pinned_set.binary_search(i).is_ok())
+                .collect(),
             scratch: view.scratch.clone(),
             link: view.link,
             caps: abi_view::declared_capabilities(view),
@@ -725,23 +729,7 @@ impl AbiTarget for ViewTarget {
         self.link
     }
     fn cap(&self, cap: Capability) -> Option<u16> {
-        self.caps.get(capability_name(cap)).copied()
-    }
-}
-
-fn capability_name(c: Capability) -> &'static str {
-    match c {
-        Capability::GprMov => "gpr_mov",
-        Capability::FprMov => "fpr_mov",
-        Capability::VecMov => "vec_mov",
-        Capability::SpAdjust => "sp_adjust",
-        Capability::StackArgLoad => "stack_arg_load",
-        Capability::StackArgStore => "stack_arg_store",
-        Capability::FrameAddr => "frame_addr",
-        Capability::WideVecMove => "wide_vec_move",
-        Capability::Call => "call",
-        Capability::CallIndirect => "call_indirect",
-        Capability::Ret => "ret",
+        self.caps.get(cap.name()).copied()
     }
 }
 

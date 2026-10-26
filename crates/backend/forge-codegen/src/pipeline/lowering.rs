@@ -526,6 +526,31 @@ impl<I: crate::machine::inst::MachineInst + 'static> CompileState<I> {
             }
             // 每次 lowering 前清空写死寄存器（生成代码在 arm 尾部设置）
             self.ctx.current_clobbers.clear();
+            // **补登记缺失的值描述**（v27 M6-108）：谓词属性 `rs1_width`/`rd`/`elem`
+            // 读的是 `desc_of`；某些值（legalize 改写/复制/常量转发之后）没有描述，
+            // 于是按 `rs1_width` 分派的规则（arm64 `Iadd` 等）整体不命中——
+            // 报错形如 `Iadd no matching rule（attrs: rs1_width=None）`。这里在
+            // 调用 lower_inst 前用 IR 类型把**缺失**的描述补齐（已有描述不动）。
+            {
+                let mut __missing: Vec<(crate::prelude::XReg, forge_ir::TypeId)> = Vec::new();
+                for (__v, __x) in inst.operands.iter().zip(args.iter()) {
+                    if self.ctx.desc_of(__x).is_none()
+                        && let Some(__ty) = dfg.value_type(*__v)
+                    {
+                        __missing.push((*__x, __ty));
+                    }
+                }
+                for (__v, __x) in inst.results.iter().zip(results.iter()) {
+                    if self.ctx.desc_of(__x).is_none()
+                        && let Some(__ty) = dfg.value_type(*__v)
+                    {
+                        __missing.push((*__x, __ty));
+                    }
+                }
+                for (__x, __ty) in __missing {
+                    self.ctx.set_value_desc(__x, __ty);
+                }
+            }
             let mut machine_insts = if let Some((name, leaves)) = roots.get(ii) {
                 // S6 pattern 命中：叶变量 → XReg（树 DFS 序），根结果 XReg 不变。
                 if crate::pipeline::trace::knob("FORGE_TRACE_LOWER") {

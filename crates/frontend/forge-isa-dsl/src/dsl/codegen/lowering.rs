@@ -79,8 +79,31 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     for (op_name, rules) in by_op {
         let op_ident = format_ident!("{op_name}");
         // 从最后一条规则向前构建 if-else 链（无 when 的规则 = 无条件兜底）
+        // 每条 op 的兜底也带上属性快照（v27 M6-108：只有 op 名不够，Iadd 这类
+        // 按宽度分派的族要看到 rd/rs1_width 才能判断是哪一档没规则）。
         let mut chain: TokenStream = quote! {
-            Err(crate::prelude::IrError::capability("SPEC_LOWERING_RULE_MISSING", concat!("DSL lowering: ", #op_name, " no matching rule")))
+            {
+                let mut __a = String::new();
+                    __a.push_str(&format!(" rd={:?}", __ac.rd(ctx)));
+                    __a.push_str(&format!(" rs1_width={:?}", __ac.rs1_width(ctx)));
+                    __a.push_str(&format!(" rs2_width={:?}", __ac.rs2_width(ctx)));
+                    __a.push_str(&format!(" rd_vec={:?}", __ac.rd_vec(ctx)));
+                    __a.push_str(&format!(" rs1_vec={:?}", __ac.rs1_vec(ctx)));
+                    __a.push_str(&format!(" elem={:?}", __ac.elem(ctx)));
+                    __a.push_str(&format!(" cond={:?}", __ac.cond(ctx)));
+                    __a.push_str(&format!(" imm0={:?}", __ac.imm0(ctx)));
+                    __a.push_str(&format!(
+                        " args={:?} descs={:?}",
+                        args.len(),
+                        args.iter()
+                            .map(|__x| ctx.desc_of(__x).map(|__d| (__d.ty, __d.class)))
+                            .collect::<Vec<_>>()
+                    ));
+                Err(crate::prelude::IrError::capability(
+                    "SPEC_LOWERING_RULE_MISSING",
+                    format!("DSL lowering: {} no matching rule（attrs:{__a}）", #op_name),
+                ))
+            }
         };
         for rule in rules.iter().rev() {
             // 展开 insts 模板 → 指令构造序列（符号化操作数 {out}/{0}/{1}）
@@ -1112,12 +1135,30 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                 let mut __ac = __AC::new(op, args, results);
                 match op {
                     #(#arms,)*
-                    // 兜底必须**点名**是哪个 op（旧文本只有 "DSL lowering"，盲猜过一轮）：
-                    // 没规则 = 谱能力缺口，报错里给 `Opcode` 的 Debug 名。
-                    _ => Err(crate::prelude::IrError::capability(
-                        "SPEC_LOWERING_RULE_MISSING",
-                        format!("DSL lowering: 谱里没有 op {op:?} 的规则"),
-                    )),
+                    // 兜底必须**点名** op + 关键属性（旧文本只有 "DSL lowering"，盲猜过两轮）：
+                    // 没规则 = 谱能力缺口，报错里给 Opcode 的 Debug 名与谓词属性快照。
+                    _ => {
+                        let mut __a = String::new();
+                        __a.push_str(&format!(" rd={:?}", __ac.rd(ctx)));
+                        __a.push_str(&format!(" rs1_width={:?}", __ac.rs1_width(ctx)));
+                        __a.push_str(&format!(" rs2_width={:?}", __ac.rs2_width(ctx)));
+                        __a.push_str(&format!(" rd_vec={:?}", __ac.rd_vec(ctx)));
+                        __a.push_str(&format!(" rs1_vec={:?}", __ac.rs1_vec(ctx)));
+                        __a.push_str(&format!(" elem={:?}", __ac.elem(ctx)));
+                        __a.push_str(&format!(" cond={:?}", __ac.cond(ctx)));
+                        __a.push_str(&format!(" imm0={:?}", __ac.imm0(ctx)));
+                    __a.push_str(&format!(
+                        " args={:?} descs={:?}",
+                        args.len(),
+                        args.iter()
+                            .map(|__x| ctx.desc_of(__x).map(|__d| (__d.ty, __d.class)))
+                            .collect::<Vec<_>>()
+                    ));
+                        Err(crate::prelude::IrError::capability(
+                            "SPEC_LOWERING_RULE_MISSING",
+                            format!("DSL lowering: 谱里没有 op {op:?} 的规则（attrs:{__a}）"),
+                        ))
+                    }
                 }
             }
 

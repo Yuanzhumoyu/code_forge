@@ -355,7 +355,23 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
      （实测 `Sturx: -352`）——stack-arg 超过 32 槽的大调用需要寄存器偏移/地址材料化形态；
   2. O2 下出现 `Iadd no matching rule`（兜底诊断已能点名 op）——待查该实例的属性组合。
 
-**仍未覆盖**：aarch64 core 的 `GlobalAddr`/乘溢出、stack-arg 大偏移、NEON 向量、原子、DWARF/CFI。
+**进度（2026-10-26，M6-108）——栈实参写槽统一、缺失值描述补齐、诊断带属性快照**：
+
+- **栈实参写回槽走统一 spill 机制**：`move_args` 里"被 spill 的寄存器形参 → spill 槽"原先用
+  `stack_arg_store` 角色指令直发（imm9 ±256），大函数实测 `Sturx: -352` 编不出；现在改调
+  `emit_spill_store`（同一套 fp/sp 偏移口径 + 按类分派）——`stack_arg_store` 只保留"调用方
+  写传出区"那层。
+- **缺失值描述补齐**：谓词属性 `rs1_width`/`rd`/`elem` 读 `desc_of`；legalize 改写/复制/常量
+  转发后某些值没有描述 ⇒ 按宽度分派的规则整批不命中（O2 实测
+  `Iadd no matching rule（attrs: rs1_width=None, descs=[None, Some((i64,GPR64))]）`）。
+  现在 `lower_inst` 前用 **IR 类型**补齐**缺失**的描述（已有不动）。
+- **诊断带属性快照**：无规则错误现在同时打印 8 个谓词属性 + 每个实参的描述（`None` 会直接
+  暴露"值描述缺失"这类根因）——这轮正是靠它定位到 `Iadd` 的 `rs1_width=None`。
+- **core swap**：O2 下已能编过（上面两项），但运行期仍在 `forge_entry` 出错，机器码形如
+  `mov w13,#1 … strb w14,[x13]`（`csel` 的临时寄存器被当成 store 地址）——**疑似**指令包内
+  虚拟寄存器编号/字段映射串位，下一步从 `Icmp`+`store i1` 的 packet 对照查起。
+
+**仍未覆盖**：core swap 的寄存器映射问题、`GlobalAddr`/乘溢出、NEON 向量、原子、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

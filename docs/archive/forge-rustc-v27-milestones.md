@@ -12,6 +12,20 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-26 · M6-108：栈实参写槽统一 + 缺失值描述补齐 + 诊断带属性
+
+- **写槽统一**：`move_args` 的"spilled 形参 → spill 槽"改走 `emit_spill_store`（fp/sp 口径 +
+  按类分派），不再用 `stack_arg_store` 的 imm9 直发（O2 实测 `Sturx: -352` 编不出）。
+- **描述补齐**：`lower_inst` 前用 IR 类型给**缺失** `desc_of` 的实参/结果补登记（已有不动）。
+  修掉了 O2 的 `Iadd no matching rule（rs1_width=None）`——按宽度分派的族需要描述才命中。
+- **诊断升级**：无规则错误现在带 8 个谓词属性 + 每个实参描述；本轮定位 `Iadd` 根因靠它。
+- **core swap**：O2 能编过了，但运行期 `forge_entry` 出坏码（`strb w14,[x13]`，x13 是前一
+  条 `mov w13,#1` 的 csel 临时）——疑似指令包内 vreg 编号/字段串位；下一步对照
+  `Icmp`+`store i1` 的 inst_ops。
+- 验收：全部既有守卫/矩阵绿（arm64 89、riscv 140、x86 全绿；arm64_exec 3 条 QEMU 用例绿）。
+
+**仍未覆盖**：core swap 的寄存器映射、`GlobalAddr`/乘溢出、NEON 向量、原子、DWARF/CFI。
+
 ### 2026-10-26 · M6-107：scaled 溢出真执行守卫（+ core swap 阻塞点侦查）
 
 - **新守卫** `rustc_aarch64_scaled_spill_probe_runs_under_qemu`：40 个跨调用活跃标量 ⇒

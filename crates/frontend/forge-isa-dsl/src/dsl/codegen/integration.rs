@@ -528,12 +528,7 @@ fn gen_reg_info(model: &IsaModel) -> Result<TokenStream, String> {
     for (reg_class, group) in &model.reg {
         let group_names = crate::dsl::shared::group_names(group)?;
         // `RegClass` 没有 ToTokens 实现 ⇒ 显式展开成构造式（四个变体都带位宽 payload）。
-        let rc = match *reg_class {
-            RegClass::GPR(w) => quote::quote! { forge_ir::RegClass::GPR(#w) },
-            RegClass::FPR(w) => quote::quote! { forge_ir::RegClass::FPR(#w) },
-            RegClass::VEC(w) => quote::quote! { forge_ir::RegClass::VEC(#w) },
-            RegClass::KReg(w) => quote::quote! { forge_ir::RegClass::KReg(#w) },
-        };
+        let rc = quote! { #reg_class };
         if let Some(aliases) = &group.aliases {
             for (alias, idx) in aliases {
                 if let Some(name) = group_names.get(*idx as usize) {
