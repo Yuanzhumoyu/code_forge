@@ -14,6 +14,15 @@ conv = "aapcs64"
 #            ELF 用 RELA ⇒ addend 在重定位项，指令位段写 0）。
 [link.elf]
 call26 = { type = 283, clear_mask = 0x03FF_FFFF }
+# 全局地址（MOVZ/MOVK 的 16 位立即数，`hw` 选片）：R_AARCH64_MOVW_UABS_G0..G3 =
+# 262/264/266/268；补丁位段 = 指令字 [20:5]（clear_mask 让 RELA 的 addend 独自成值）。
+# 正确的 ELF 编号（AArch64）：PREL16=262、MOVW_UABS_G0=263、G0_NC=264、
+# G1=265、G1_NC=266、G2=267、G2_NC=268、G3=269。MOVZ 取 G3（溢出检查档），
+# 三条 MOVK 取对应的 _NC 档（movk 无溢出检查语义）。
+abs_g0 = { type = 264, clear_mask = 0x001F_FFE0 }
+abs_g1 = { type = 266, clear_mask = 0x001F_FFE0 }
+abs_g2 = { type = 268, clear_mask = 0x001F_FFE0 }
+abs_g3 = { type = 269, clear_mask = 0x001F_FFE0 }
 
 [pools]
 

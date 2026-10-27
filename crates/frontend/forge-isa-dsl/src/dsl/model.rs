@@ -3233,6 +3233,15 @@ pub struct RelocBody {
     /// `[asm.immfn.<名>]` 的 `expr` 再放进 `operand` 的位段（riscv 的 hi/lo）。
     #[serde(default)]
     pub via: Option<String>,
+    /// **补丁宽度（字节）**（v27 M6-112，可选）：绝对重定位的补丁区间宽度。
+    /// 缺省 = 槽宽（x86 `MOVABS_GLOBAL` 的 imm64 ⇒ 8）。A64 的 MOVW 族是
+    /// **指令字补丁**（16 位立即数嵌在 4 字节指令里），必须显式写 4。
+    #[serde(default)]
+    pub width: Option<u32>,
+    /// **fixup 落点**（v27 M6-112，可选）：`slot`（缺省，指令末尾该槽的字节区间）
+    /// 或 `inst`（指令起始，配合 `width` 用——A64 MOVW 重定位指向整条指令）。
+    #[serde(default)]
+    pub fixup: Option<RelocFixup>,
 }
 
 /// **汇编器侧数据**（v21 W7/W8）：`[asm]` —— 按名字索引的表（**表头 = 名字**，
@@ -3333,6 +3342,27 @@ pub struct RelocDef {
     /// 的 `expr` 再进字段（riscv 的 hi/lo 走这条路，于是宿主补丁器可整条删除）。
     #[serde(default)]
     pub via: Option<String>,
+    /// 见 [`RelocBody::width`]。
+    #[serde(default)]
+    pub width: Option<u32>,
+    /// 见 [`RelocBody::fixup`]。
+    #[serde(default)]
+    pub fixup: Option<RelocFixup>,
+}
+
+/// 绝对重定位的 **fixup 落点**（v27 M6-112）。
+///
+/// - `slot`（缺省）：指令末尾该槽的字节区间——x86 `MOVABS_GLOBAL` 的 imm64；
+/// - `inst`：指令**起始**（补丁宽度由 `width` 给）——A64 的 MOVW/MOVN 族，链接器
+///   改写整条指令字里的 16 位立即数位段（R_AARCH64_MOVW_UABS_G0..G3）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum RelocFixup {
+    /// 指令末尾该槽的字节区间（缺省）
+    #[default]
+    Slot,
+    /// 指令起始（配合 `width`）
+    Inst,
 }
 
 /// 重定位的**宿主语义**（与宿主 `RelocKind` 一一对应）。

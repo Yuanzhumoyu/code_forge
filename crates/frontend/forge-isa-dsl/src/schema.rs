@@ -291,10 +291,10 @@ pub const SECTIONS: &[Section] = &[
         path: "[asm.reloc.<名>]",
         model: "RelocBody",
         required: &["semantics", "operand"],
-        optional: &["addend", "via"],
+        optional: &["addend", "via", "width", "fixup"],
         flatten: &[],
         additional: false,
-        doc: "重定位（**表头即重定位名**）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`）",
+        doc: "重定位（**表头即重定位名**）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`）、`width` = 补丁宽度（字节，缺省 = 槽宽）、`fixup` = 落点（slot/inst；A64 MOVW 用 inst + width=4）",
     },
     Section {
         path: "[pred.<名字>]",

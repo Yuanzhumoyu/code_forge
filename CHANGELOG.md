@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-27) — arm64 GlobalAddr + UmulOverflow（debug 档 core 探针真跑通）
+
++ `[asm.reloc.<名>]` 新数据键 `width`（补丁宽度，缺省 = 槽宽）与 `fixup`（`slot`|`inst`）：
+  AArch64 的 `MOVW` 族是**指令字补丁**（16 位立即数嵌在 4 字节指令里），用 `fixup = "inst"`
+  + `width = 4` 表达；链接器类型仍写在 `conventions/*.toml` 的 `[link.elf]`。
++ arm64 `GlobalAddr`：`MOVZ/MOVK` 四片（G3→G2→G1→G0）带 `R_AARCH64_MOVW_UABS_G*` 重定位，
+  静态数据地址可被链接器解析（探针读 `static MAGIC = 5` 得到 5）。
++ arm64 `UmulOverflow`（64/32）：`MUL + MOVN + UDIV + CMP/CSEL + AND` 分支自由判溢出。
++ 守卫 `rustc_aarch64_core_swap_probe_runs_under_qemu` 扩成 **O0 / O2 / O0+debug-assertions**
+  三档（都断言 13）：debug 档会编出并执行 core 的 precondition/overflow 检查。
++ `QemuAarch64Executor::exec_module` 补齐（多函数 + 全局数据）：`@N` 调用与 `G{id}` 全局地址
+  就地补丁，全局地址用数据段**页对齐 p_vaddr**（用文件偏移会一读就 fault/hang）。arm64 矩阵
+  因此多跑 4 条 Module 用例：**93 passed / 0 failed**。
+
 ### Fixed (2026-10-27) — arm64/riscv 控制流 effect 缺失导致活区间 CFG 无边
 
 + arm64 的 `B`/`B_*`/`CBZ`/`CBNZ`/`BL`/`BLR`、riscv 的 `JAL`/条件分支补上 `effect`

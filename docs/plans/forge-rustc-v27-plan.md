@@ -421,7 +421,31 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   `current_dir`**：它们原先共享同一 `target/tmp/arm64-core-probe`，并行跑时 rustc 的
   `-o` 复制会撞上 `forge_codegen_output*` 临时产物 → `无法把对象写到 …（os error 2）`。
 
-**仍未覆盖**：`GlobalAddr`/乘溢出、NEON 向量、原子、DWARF/CFI。
+**进度（2026-10-27，M6-112）——`GlobalAddr` 与 `UmulOverflow` 补齐，debug-assertions 探针真跑通**：
+
+- **`GlobalAddr`**：A64 用 `MOVZ/MOVK` 四片（G3→G2→G1→G0）承载绝对地址，每片一个链接器
+  重定位。ELF 的 `R_AARCH64_MOVW_UABS_G*` 是**指令字补丁**（16 位立即数嵌在 4 字节指令里），
+  于是给 `[asm.reloc.<名>]` 加了两个**数据键**：`width`（补丁宽度，缺省 = 槽宽）与
+  `fixup`（`slot` 缺省 / `inst`）——宿主仍无 ISA 分支；链接器类型号写进
+  `conventions/aapcs64-arm64.toml` 的 `[link.elf]`（G3=269、G2_NC=268、G1_NC=266、G0_NC=264）。
+  编码期的负占位（`-(g+1)`）在无符号 imm 槽会被 `encode` 拒绝 ⇒ 带 `fixup="inst"` 的臂
+  **先按 0 编码**、再发重定位（占位只用来判"这是符号引用"）。
+- **`UmulOverflow`**（无符号乘溢出，64/32 两档）：`a*b > MAX ⟺ b≠0 ∧ a > MAX/b`，
+  用 `MUL` + `MOVN`(全 1) + `UDIV` + 两次 `CMP`/`CSEL` + `AND` 分支自由地算；A64 的
+  `UDIV` 除零返回 0（不陷入），所以 b=0 用 `b != 0` 掩掉。（有符号 `SmulOverflow` 还缺
+  `SMULH`，另案。）
+- **验收**：core swap 探针在 **O0 / O2 / O0+debug-assertions** 三档都真跑出 **13**
+  （含静态数据 `MAGIC=5` —— GlobalAddr 真正被解析并读回；debug 档会编出 core 的
+  precondition/overflow 检查，UmulOverflow 被真实执行）。守卫测试扩成三档。
+- 附带：`core` 的 debug 档会拉进 `escape_ascii`/`dec2flt` 等"只编不跑"的代码 ⇒ 链接需要
+  `memcmp/memset/memcpy/__udivti3` 兜底，守卫测试里加 `CORE_STUBS_S`（不参与被测路径）。
+- **矩阵解锁**：`GlobalAddr`/`UmulOverflow` 补齐后 arm64 多跑 4 条 `CaseKind::Module` 用例
+  （`globaladdr_load`/`globaladdr_store_load` 等）⇒ `jit_matrix_arm64` **93 passed / 0 failed**。
+  为此补了 `QemuAarch64Executor::exec_module`（多函数布局 + `@N`/`G{id}` 就地补丁 + 全局数据段）：
+  **全局地址必须用数据段页对齐的 `p_vaddr`**，拿文件偏移当地址会"看起来对、一读就 fault"
+  （实测挂起，已修）。
+
+**仍未覆盖**：有符号乘溢出（`SMULH`）、NEON 向量、原子、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

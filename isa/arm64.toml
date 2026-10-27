@@ -171,6 +171,34 @@ sxtx = 7
 [asm.reloc.call26]
 semantics = "pc_relative"
 
+# ── 全局地址（R_AARCH64_MOVW_UABS_G0..G3）──────────────────────────────
+# 一条 `GlobalAddr` 需要 4 条 MOVW（G3 → G2 → G1 → G0）各带一个重定位；ELF 的
+# MOVW 族是**指令字补丁**（16 位立即数嵌在 4 字节指令里）⇒ `fixup = "inst"` +
+# `width = 4`，链接器按目标约定的 `[link.elf]` 把名字映射成重定位类型。
+[asm.reloc.abs_g0]
+semantics = "absolute"
+operand = "imm16g0"
+width = 4
+fixup = "inst"
+
+[asm.reloc.abs_g1]
+semantics = "absolute"
+operand = "imm16g1"
+width = 4
+fixup = "inst"
+
+[asm.reloc.abs_g2]
+semantics = "absolute"
+operand = "imm16g2"
+width = 4
+fixup = "inst"
+
+[asm.reloc.abs_g3]
+semantics = "absolute"
+operand = "imm16g3"
+width = 4
+fixup = "inst"
+
 [asm.immfn.abs_g0]
 texts = ["#:abs_g0:{0}", ":abs_g0:{0}"]
 expr = "{0}"
@@ -3311,6 +3339,59 @@ epilogue_label = true
 # ─────────────────────── lowering（64 位主；32 位 W 变体按 rs1_width）───────────────────────
 # 覆盖 op 集 = P1 tm 测试所需最小集（SUPPORTED_OPS 由此唯一集派生）。
 
+# GlobalAddr（v27 M6-112）：把全局符号的绝对地址装进 GPR —— G3 → G2 → G1 → G0
+# 四条 MOVW，每条各自带 R_AARCH64_MOVW_UABS_G* 重定位（对象层按 `[link.elf]` 查表）。
+# `{global}` 是 lowering 的全局占位（负数 ⇒ 编码器换成一个符号重定位）。
+[[lower.GlobalAddr]]
+when = { eq = ["rd", 32] }
+insts = [
+  "MOVZW_G3_RELO {out}, {global}",
+  "MOVKW_G2_RELO {out}, {global}",
+  "MOVKW_G1_RELO {out}, {global}",
+  "MOVKW_G0_RELO {out}, {global}",
+]
+
+[[lower.GlobalAddr]]
+insts = [
+  "MOVZX_G3_RELO {out}, {global}",
+  "MOVKX_G2_RELO {out}, {global}",
+  "MOVKX_G1_RELO {out}, {global}",
+  "MOVKX_G0_RELO {out}, {global}",
+]
+# 乘溢出（v27 M6-112）：无 SMULH 也够判**无符号**溢出——`a*b > MAX ⟺ b≠0 ∧ a > MAX/b`
+# （A64 的 UDIV 除零返回 0、不陷入，所以 b=0 要单独用 `b != 0` 掩掉）。分支自由。
+[[lower.UmulOverflow]]
+when = { eq = ["rd", 32] }
+temps = ["g1:gpr", "g2:gpr", "g3:gpr", "g4:gpr", "g5:gpr", "g6:gpr", "g7:gpr"]
+insts = [
+  "MULW {out}, {0}, {1}",
+  "MOVNW {g1}, 0",
+  "UDIVW {g2}, {g1}, {1}",
+  "CMPREGW {0}, {g2}",
+  "MOVZW {g6}, 1",
+  "MOVZW {g7}, 0",
+  "CSELW {g3}, {g6}, 8, {g7}",
+  "MOVZW {g5}, 0",
+  "CMPREGW {1}, {g5}",
+  "CSELW {g4}, {g6}, 1, {g7}",
+  "ANDREGW {out2}, {g3}, {g4}",
+]
+
+[[lower.UmulOverflow]]
+temps = ["g1:gpr", "g2:gpr", "g3:gpr", "g4:gpr", "g5:gpr", "g6:gpr", "g7:gpr"]
+insts = [
+  "MULX {out}, {0}, {1}",
+  "MOVNX {g1}, 0",
+  "UDIVX {g2}, {g1}, {1}",
+  "CMPREGX {0}, {g2}",
+  "MOVZW {g6}, 1",
+  "MOVZW {g7}, 0",
+  "CSELW {g3}, {g6}, 8, {g7}",
+  "MOVZW {g5}, 0",
+  "CMPREGX {1}, {g5}",
+  "CSELW {g4}, {g6}, 1, {g7}",
+  "ANDREGW {out2}, {g3}, {g4}",
+]
 [[lower.Iadd]]
 dispatch = "rs1_width"
 insts = ["ADDREGX {out}, {0}, {1}"]
@@ -3879,50 +3960,50 @@ rows = [{ inst = "MOVWIMM_SYM_G3", slot = "r32", opcode = 0xA5 }]
 [family.MOVZ_RELO_G0]
 body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 0 }, asm = "movz {dst:{slot}:out}, {imm:imm16g0}" }
 rows = [
-  { inst = "MOVZX_G0_RELO", slot = "r64", opcode = 0x1A5 },
-  { inst = "MOVZW_G0_RELO", slot = "r32", opcode = 0xA5 },
+  { inst = "MOVZX_G0_RELO", slot = "r64", opcode = 0x1A5, reloc = "abs_g0" },
+  { inst = "MOVZW_G0_RELO", slot = "r32", opcode = 0xA5, reloc = "abs_g0" },
 ]
 [family.MOVZ_RELO_G1]
 body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 1 }, asm = "movz {dst:{slot}:out}, {imm:imm16g1}" }
 rows = [
-  { inst = "MOVZX_G1_RELO", slot = "r64", opcode = 0x1A5 },
-  { inst = "MOVZW_G1_RELO", slot = "r32", opcode = 0xA5 },
+  { inst = "MOVZX_G1_RELO", slot = "r64", opcode = 0x1A5, reloc = "abs_g1" },
+  { inst = "MOVZW_G1_RELO", slot = "r32", opcode = 0xA5, reloc = "abs_g1" },
 ]
 [family.MOVZ_RELO_G2]
 body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 2 }, asm = "movz {dst:{slot}:out}, {imm:imm16g2}" }
 rows = [
-  { inst = "MOVZX_G2_RELO", slot = "r64", opcode = 0x1A5 },
-  { inst = "MOVZW_G2_RELO", slot = "r32", opcode = 0xA5 },
+  { inst = "MOVZX_G2_RELO", slot = "r64", opcode = 0x1A5, reloc = "abs_g2" },
+  { inst = "MOVZW_G2_RELO", slot = "r32", opcode = 0xA5, reloc = "abs_g2" },
 ]
 [family.MOVZ_RELO_G3]
 body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 3 }, asm = "movz {dst:{slot}:out}, {imm:imm16g3}" }
 rows = [
-  { inst = "MOVZX_G3_RELO", slot = "r64", opcode = 0x1A5 },
-  { inst = "MOVZW_G3_RELO", slot = "r32", opcode = 0xA5 },
+  { inst = "MOVZX_G3_RELO", slot = "r64", opcode = 0x1A5, reloc = "abs_g3" },
+  { inst = "MOVZW_G3_RELO", slot = "r32", opcode = 0xA5, reloc = "abs_g3" },
 ]
 [family.MOVK_RELO_G0]
 body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 0 }, asm = "movk {dst:{slot}:out}, {imm:imm16g0}" }
 rows = [
-  { inst = "MOVKX_G0_RELO", slot = "r64", opcode = 0x1E5 },
-  { inst = "MOVKW_G0_RELO", slot = "r32", opcode = 0xE5 },
+  { inst = "MOVKX_G0_RELO", slot = "r64", opcode = 0x1E5, reloc = "abs_g0" },
+  { inst = "MOVKW_G0_RELO", slot = "r32", opcode = 0xE5, reloc = "abs_g0" },
 ]
 [family.MOVK_RELO_G1]
 body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 1 }, asm = "movk {dst:{slot}:out}, {imm:imm16g1}" }
 rows = [
-  { inst = "MOVKX_G1_RELO", slot = "r64", opcode = 0x1E5 },
-  { inst = "MOVKW_G1_RELO", slot = "r32", opcode = 0xE5 },
+  { inst = "MOVKX_G1_RELO", slot = "r64", opcode = 0x1E5, reloc = "abs_g1" },
+  { inst = "MOVKW_G1_RELO", slot = "r32", opcode = 0xE5, reloc = "abs_g1" },
 ]
 [family.MOVK_RELO_G2]
 body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 2 }, asm = "movk {dst:{slot}:out}, {imm:imm16g2}" }
 rows = [
-  { inst = "MOVKX_G2_RELO", slot = "r64", opcode = 0x1E5 },
-  { inst = "MOVKW_G2_RELO", slot = "r32", opcode = 0xE5 },
+  { inst = "MOVKX_G2_RELO", slot = "r64", opcode = 0x1E5, reloc = "abs_g2" },
+  { inst = "MOVKW_G2_RELO", slot = "r32", opcode = 0xE5, reloc = "abs_g2" },
 ]
 [family.MOVK_RELO_G3]
 body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 3 }, asm = "movk {dst:{slot}:out}, {imm:imm16g3}" }
 rows = [
-  { inst = "MOVKX_G3_RELO", slot = "r64", opcode = 0x1E5 },
-  { inst = "MOVKW_G3_RELO", slot = "r32", opcode = 0xE5 },
+  { inst = "MOVKX_G3_RELO", slot = "r64", opcode = 0x1E5, reloc = "abs_g3" },
+  { inst = "MOVKW_G3_RELO", slot = "r32", opcode = 0xE5, reloc = "abs_g3" },
 ]
 [family.MOVN_RELO_G0]
 body = { form = "MOVW16", opcode = "{opcode}", match = { hw = 0 }, asm = "movn {dst:{slot}:out}, {imm:imm16g0}" }

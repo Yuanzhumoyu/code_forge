@@ -80,7 +80,8 @@ pub fn exec_aarch64_f64(compiled: &CompiledFunction, args: &[u64]) -> Result<u64
     run_qemu(&qemu, &elf)
 }
 
-/// 运行多函数模块：main_idx 为入口函数序，globals 拼数据段。
+/// 运行多函数模块：`main_idx` 为入口函数序（= 列表位置），globals 拼数据段。
+/// 跨函数 `Call` 的 `@N` 与 `GlobalAddr` 的 `G{id}` 由 `build_elf` 就地补丁。
 pub fn exec_aarch64_module(
     funcs: &[(u32, CompiledFunction)],
     globals: &[(String, Vec<u8>)],
@@ -91,7 +92,6 @@ pub fn exec_aarch64_module(
     let elf = build_elf(funcs, globals, main_idx, args, false)?;
     run_qemu(&qemu, &elf)
 }
-
 // ─────────────────── 指令发射小工具 ───────────────────
 
 fn w(b: &mut Vec<u8>, inst: u32) {
@@ -200,57 +200,100 @@ fn build_elf(
 
     // **函数间 `Call` 重定位**：`Call` 降级成 `@N` 符号（N = 目标函数下标），
     // 编码器留 `0x97FFFFFF` 占位；这里按 `RelocKind::patch_value` 统一口径算出
-    // 目标地址差，再写 A64 `BL` 的 imm26。只接 4 字节 PC 相对重定位（其余明确报错，
-    // 不猜）。
-    for (idx, cf) in funcs {
-        let fstart = *starts.get(idx).expect("刚插入");
-        for r in &cf.relocations {
-            let Some(sym) = r.symbol.as_str().strip_prefix('@') else {
-                return Err(format!(
-                    "不支持的符号重定位 '{}'（qemu aarch64 测试夹具只接 @N 函数引用）",
-                    r.symbol.as_str()
-                ));
-            };
-            let target_idx: u32 = sym
-                .parse()
-                .map_err(|_| format!("函数符号 '@{sym}' 不是函数下标"))?;
-            let tstart = *starts
-                .get(&target_idx)
-                .ok_or_else(|| format!("重定位 @{target_idx} 指向的函数不在本次模块里"))?;
-            if r.kind.width_bytes() != 4 || r.addend != 0 {
-                return Err(format!(
-                    "不支持的函数重定位形态：kind={:?} addend={}",
-                    r.kind, r.addend
-                ));
-            }
-            let site = ENTRY + (fstart + r.offset) as u64;
-            let target = ENTRY + tstart as u64;
-            let value = r.kind.patch_value(target, site) as i64;
-            if value % 4 != 0 {
-                return Err(format!("BL 目标未 4 字节对齐（delta={value}）"));
-            }
-            let imm26 = value >> 2;
-            if !(-(1 << 25)..(1 << 25)).contains(&imm26) {
-                return Err(format!("BL 超出 imm26 范围（delta={value}）"));
-            }
-            let patched = 0x94000000u32 | ((imm26 as u32) & 0x03FF_FFFF);
-            let at = fstart + r.offset;
-            code[at..at + 4].copy_from_slice(&patched.to_le_bytes());
-        }
-    }
-
-    // 数据段（8 对齐）
+    // 目标地址差，再写 A64 `BL` 的 imm26。**全局地址**（`GlobalAddr`）走
+    // `G{id}`/名字 → 数据段地址 + MOVW_UABS_G0..G3 的 16 位切片补丁（v27 M6-112）。
+    // 其余形态明确报错，不猜。
+    // 数据段（8 对齐）+ 每个全局变量的段内偏移（补丁期要把它折成绝对地址）。
     let mut data: Vec<u8> = Vec::new();
+    let mut global_offsets: Vec<usize> = Vec::new();
     for g in globals {
         let pad = data.len() % 8;
         if pad != 0 {
             data.extend(std::iter::repeat_n(0u8, 8 - pad));
         }
+        global_offsets.push(data.len());
         data.extend_from_slice(&g.1);
+    }
+    // 数据段**虚拟地址**按页对齐（与程序头 p_vaddr 同口径）：全局地址补丁必须用它。
+    let data_vaddr = (ENTRY + code.len() as u64 + 0xFFF) & !0xFFF;
+
+    for (idx, cf) in funcs {
+        let fstart = *starts.get(idx).expect("刚插入");
+        for r in &cf.relocations {
+            if r.symbol.is_empty() {
+                continue; // 函数内 label fixup 已由 CodeSink 的补丁器解析
+            }
+            let site = ENTRY + (fstart + r.offset) as u64;
+            let at = fstart + r.offset;
+            let sym = r.symbol.as_str();
+            let target = if let Some(n) = sym.strip_prefix('@') {
+                let ti: u32 = n
+                    .parse()
+                    .map_err(|_| format!("函数符号 '@{n}' 不是函数下标"))?;
+                let tstart = *starts
+                    .get(&ti)
+                    .ok_or_else(|| format!("重定位 @{ti} 指向的函数不在本次模块里"))?;
+                ENTRY + tstart as u64
+            } else if let Some(n) = sym.strip_prefix('G') {
+                let gi: usize = n
+                    .parse()
+                    .map_err(|_| format!("全局符号 'G{n}' 不是全局下标"))?;
+                let goff = *global_offsets
+                    .get(gi)
+                    .ok_or_else(|| format!("重定位 G{gi} 指向的全局不在本次模块里"))?;
+                data_vaddr + goff as u64
+            } else {
+                return Err(format!(
+                    "未解析的符号 '{sym}'（qemu aarch64 夹具只接 @N 函数与 G{{id}} 全局）"
+                ));
+            };
+            match r.kind {
+                code_forge::RelocKind::Absolute(4) => {
+                    let name = r.reloc.as_str();
+                    let (shift, ok) = match name {
+                        "abs_g0" => (0u32, true),
+                        "abs_g1" => (16, true),
+                        "abs_g2" => (32, true),
+                        "abs_g3" => (48, true),
+                        _ => (0, false),
+                    };
+                    if !ok {
+                        return Err(format!(
+                            "不支持的绝对重定位 '{name}'（只接 MOVW_UABS_G0..G3）"
+                        ));
+                    }
+                    let slice = ((target >> shift) & 0xFFFF) as u32;
+                    let mut word = [0u8; 4];
+                    word.copy_from_slice(&code[at..at + 4]);
+                    let w = u32::from_le_bytes(word) & !0x001F_FFE0 | (slice << 5);
+                    code[at..at + 4].copy_from_slice(&w.to_le_bytes());
+                }
+                code_forge::RelocKind::Relative(4, _) => {
+                    let value = r.kind.patch_value(target, site) as i64;
+                    if value % 4 != 0 {
+                        return Err(format!("BL 目标未 4 字节对齐（delta={value}）"));
+                    }
+                    let imm26 = value >> 2;
+                    if !(-(1 << 25)..(1 << 25)).contains(&imm26) {
+                        return Err(format!("BL 超出 imm26 范围（delta={value}）"));
+                    }
+                    let patched = 0x94000000u32 | ((imm26 as u32) & 0x03FF_FFFF);
+                    code[at..at + 4].copy_from_slice(&patched.to_le_bytes());
+                }
+                other => {
+                    return Err(format!(
+                        "不支持的重定位形态：kind={other:?} symbol='{sym}' addend={}",
+                        r.addend
+                    ));
+                }
+            }
+        }
     }
 
     let text_off = 0x1000u64;
     let data_off = text_off + code.len() as u64;
+    // 数据段**虚拟地址**按页对齐（与程序头 p_vaddr 同口径）：全局地址补丁必须用它。
+    let data_vaddr = (ENTRY + code.len() as u64 + 0xFFF) & !0xFFF;
     let hdr_len = 64u64;
     let phentsize = 56u64;
     let phnum = if data.is_empty() { 1u64 } else { 2u64 };
@@ -288,8 +331,7 @@ fn build_elf(
     };
     e.extend(ph(text_off, ENTRY, code.len() as u64, 5)); // R+X
     if !data.is_empty() {
-        let dv = (ENTRY + code.len() as u64 + 0xFFF) & !0xFFF;
-        e.extend(ph(data_off, dv, data.len() as u64, 6)); // R+W
+        e.extend(ph(data_off, data_vaddr, data.len() as u64, 6)); // R+W
     }
     while (e.len() as u64) < text_off {
         e.push(0);

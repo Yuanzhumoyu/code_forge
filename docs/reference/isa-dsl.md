@@ -242,7 +242,7 @@ v22 是 v21 收口后的**人体工学改造**（破坏性重写：不保留兼�
 | `[form.<名字>]` | — | `fields` `segments` `doc` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖）；**表头即形式名**（不写 `name`） |
 | `[inst.<名字>]` | `asm` | `form` `opcode` `match` `fields` `segments` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `doc` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令（**表头即指令名**，不写 `name`）：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
 | `[family.<名>]` | — | `body` `rows` `vary` | 指令族：`body` 是各行共享的指令字段默认值，`rows` 每行一条指令实例（`inst` 必填，其余键即指令字段、可就地插值 `{键}`/`{inst}`），`vary` 是等长列表 zip 成行的便捷写法（与 `rows` 互斥）；族名即 `ref` 多态名 |
-| `[asm.reloc.<名>]` | `semantics` `operand` | `addend` `via` | 重定位（**表头即重定位名**）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`） |
+| `[asm.reloc.<名>]` | `semantics` `operand` | `addend` `via` `width` `fixup` | 重定位（**表头即重定位名**）：`semantics` = 宿主语义（absolute/pc_relative）、`operand` = 绑定的 imm 槽名、`addend` = 链接期加减、`via` = 值变换（引用 `[asm.immfn.<名>]`）、`width` = 补丁宽度（字节，缺省 = 槽宽）、`fixup` = 落点（slot/inst；A64 MOVW 用 inst + width=4） |
 | `[pred.<名字>]` | `expr` | — | 命名谓词（**表头即属性名**，不写 `name`） |
 | `[asm.pseudo.<名>]` | `asm` `emit` | `only_variants` | 汇编器伪指令（**表头即名字**）：文本级多指令展开，分派按 `asm` 的前导字面，`{名字}` 就是 `emit` 用的参数 |
 | `[asm.immfn.<名>]` | `texts` `expr` | — | 立即数修饰（**表头即修饰名**）：`texts` = 同一语义的等价写法列表（`{0}` 是内层表达式），`expr` = 值语义（`{0}` 是内层值） |
@@ -1383,12 +1383,25 @@ operand = "imm20"
 [asm.reloc.call26]             # **仅命名形态**（v27 M6-98）：省略 operand = 只给该指令的
 semantics = "pc_relative"      # **label 槽**的外部引用起语义名（arm64 BL）；
                                # 对象层按目标约定的 [link.<format>] 查链接器重定位类型
+
+[asm.reloc.abs_g0]             # **指令字补丁**（v27 M6-112，A64 的 MOVW 族）：
+semantics = "absolute"         # 16 位立即数嵌在 4 字节指令里 ⇒ 重定位项指向**指令起始**、
+operand = "imm16g0"            # 补丁宽度 = 4（链接器按 MOVW 类型改写 [20:5] 位段）。
+width = 4                      # 缺省：absolute 用槽宽、fixup 用指令末尾该槽区间
+fixup = "inst"
 ```
 
 | 语义 | fixup 落点 | 宿主 `RelocKind` |
 | --- | --- | --- |
-| `absolute` | 指令**末尾该槽的字节区间**（补丁宽度 = `ceil(槽宽/8)`） | `Absolute(槽字节数)` |
+| `absolute`（缺省 `fixup = "slot"`） | 指令**末尾该槽的字节区间**（补丁宽度 = `width`，缺省 `ceil(槽宽/8)`） | `Absolute(width)` |
+| `absolute` + `fixup = "inst"` | **指令起始**（补丁宽度 = `width`，须显式写） | `Absolute(width)` |
 | `pc_relative` | **指令起始**（补丁宽度 = 指令字长） | `Relative(字长, 0)` |
+
+> **`width`/`fixup` 的用途**（v27 M6-112）：AArch64 的 `MOVZ/MOVK` 用 16 位立即数位段承载
+> 全局地址的分片，ELF 的 `R_AARCH64_MOVW_UABS_G0..G3` 是**整条指令字**的重定位（补丁宽度 4、
+> 落点 = 指令起始），与 x86 `MOVABS_GLOBAL` 的"槽宽即补丁宽度"不同。置
+> `fixup = "inst"` + `width = 4` 即可用同一条数据通路表达，无需宿主分支；链接器类型号
+> 仍写在 `conventions/*.toml` 的 `[link.elf]`。
 
 - **省略 `operand` = 仅命名**（v27 M6-98）：该指令必须自带 **label 槽**（分支/调用）；
   label 槽逃逸成**外部符号**（函数符号 `@N`）时，`Relocation` 带上这个名字，

@@ -265,6 +265,8 @@ pub fn parse(source: &str) -> Result<IsaModel, DslError> {
                 operand: body.operand,
                 addend: body.addend,
                 via: body.via,
+                width: body.width,
+                fixup: body.fixup,
             });
         }
     }

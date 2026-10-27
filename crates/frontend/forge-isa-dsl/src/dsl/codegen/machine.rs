@@ -794,26 +794,76 @@ pub(crate) fn gen_encoder(infos: &[InstInfo], model: &IsaModel) -> Result<TokenS
             let v = proc_macro2::Literal::u8_unsuffixed(addend as u8);
             quote! { #v }
         };
+        // **补丁宽度 / fixup 落点**（v27 M6-112）：A64 的 MOVW 族是"指令字补丁"——
+        // 16 位立即数嵌在 4 字节指令里，重定位项必须指向**指令起始**且宽度 4。
+        // 缺省仍沿用旧口径（槽宽 / 指令末尾该槽区间）。
+        let width = def.width.unwrap_or_else(|| slot_bits.div_ceil(8));
+        if width == 0 {
+            return Err(format!("[asm.reloc.{reloc_name}]: width 必须 ≥ 1"));
+        }
+        if def.fixup == Some(crate::dsl::model::RelocFixup::Inst)
+            && def.semantics == RelocSemantics::Absolute
+            && def.width.is_none()
+        {
+            return Err(format!(
+                "[asm.reloc.{reloc_name}]: fixup = \"inst\" 需要同时写 width（补丁宽度，字节）"
+            ));
+        }
+        let width_lit = proc_macro2::Literal::u32_unsuffixed(width);
+        let inst_fixup = def.fixup == Some(crate::dsl::model::RelocFixup::Inst);
         let body = match def.semantics {
-            RelocSemantics::Absolute => quote! {
-                let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
-                let imm = match inst {
-                    Inst::#vn { #slot_fid, .. } => *#slot_fid,
-                    _ => unreachable!(),
-                };
-                let fixup = sink.offset() + bytes.len() - #slot_bytes_lit as usize;
-                sink.put_bytes(&bytes);
-                if imm < 0 {
-                    sink.add_reloc_ex(
-                        fixup,
-                        crate::RelocKind::Absolute(#slot_bytes_lit),
-                        Some(#reloc_name),
-                        &format!("G{}", -imm - 1),
-                        #addend,
-                    );
+            RelocSemantics::Absolute => {
+                if inst_fixup {
+                    quote! {
+                        // 全局占位值是**负数**，而无符号立即数槽（A64 的 imm16g*）的
+                        // `encode` 会拒绝它——先把该字段按 0 编码（重定位期链接器/
+                        // 补丁器负责填真值），占位值本身只用来判断"这是符号引用"。
+                        let mut __inst_for_encode = (*inst).clone();
+                        match &mut __inst_for_encode {
+                            Inst::#vn { #slot_fid, .. } => *#slot_fid = 0,
+                            _ => unreachable!(),
+                        }
+                        let bytes =
+                            encode(&__inst_for_encode).map_err(|e| crate::EncodeError::Other(e))?;
+                        let imm = match inst {
+                            Inst::#vn { #slot_fid, .. } => *#slot_fid,
+                            _ => unreachable!(),
+                        };
+                        let __base = sink.offset();
+                        sink.put_bytes(&bytes);
+                        if imm < 0 {
+                            sink.add_reloc_ex(
+                                __base,
+                                crate::RelocKind::Absolute(#width_lit),
+                                Some(#reloc_name),
+                                &format!("G{}", -imm - 1),
+                                #addend,
+                            );
+                        }
+                        Ok(())
+                    }
+                } else {
+                    quote! {
+                        let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
+                        let imm = match inst {
+                            Inst::#vn { #slot_fid, .. } => *#slot_fid,
+                            _ => unreachable!(),
+                        };
+                        let fixup = sink.offset() + bytes.len() - #slot_bytes_lit as usize;
+                        sink.put_bytes(&bytes);
+                        if imm < 0 {
+                            sink.add_reloc_ex(
+                                fixup,
+                                crate::RelocKind::Absolute(#width_lit),
+                                Some(#reloc_name),
+                                &format!("G{}", -imm - 1),
+                                #addend,
+                            );
+                        }
+                        Ok(())
+                    }
                 }
-                Ok(())
-            },
+            }
             RelocSemantics::PcRelative => quote! {
                 let bytes = encode(inst).map_err(|e| crate::EncodeError::Other(e))?;
                 let imm = match inst {

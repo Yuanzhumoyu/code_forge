@@ -292,6 +292,58 @@ _start:
     hlt #0xf000
 "#;
 
+/// **core 链接所需的 mem* 兜底**（v27 M6-112）：带 debug-assertions 的 core 会把
+/// `escape_ascii`/`dec2flt` 这类"只编不跑"的代码也拉进来，它们引用 `memset/memcpy/
+/// memcmp/__udivti3`（`compiler_builtins` 的 mem feature 只覆盖 aarch64 的一部分）。
+/// 不参与被测路径，只让链接通过；不带断言的两档用不到它们、链上也无害。
+const CORE_STUBS_S: &str = r#"
+.text
+.global memcmp
+memcmp:
+    cbz x2, 2f
+1:
+    ldrb w3, [x0], #1
+    ldrb w4, [x1], #1
+    subs w5, w3, w4
+    b.ne 3f
+    subs x2, x2, #1
+    b.ne 1b
+2:
+    mov x0, #0
+    ret
+3:
+    mov x0, x5
+    ret
+
+.global memset
+memset:
+    mov x3, x0
+    cbz x2, 2f
+1:
+    strb w1, [x3], #1
+    subs x2, x2, #1
+    b.ne 1b
+2:
+    ret
+
+.global memcpy
+memcpy:
+    mov x3, x0
+    cbz x2, 2f
+1:
+    ldrb w4, [x1], #1
+    strb w4, [x3], #1
+    subs x2, x2, #1
+    b.ne 1b
+2:
+    ret
+
+.global __udivti3
+__udivti3:
+    mov x0, #0
+    mov x1, #0
+    ret
+"#;
 /// 为目标编一个标准库 rlib（core / compiler_builtins）：已存在就复用。
 fn build_target_rlib(
     rustc: &Path,
@@ -727,6 +779,10 @@ use core::panic::PanicInfo;
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! { loop {} }
 
+// `GlobalAddr` 的真实使用：静态数据的地址由 MOVW 四片重定位给出，必须能读回 5
+//（只编不跑不算数——链接器给错片/漏片时这里会读成垃圾）。
+static MAGIC: i32 = 5;
+
 #[unsafe(no_mangle)]
 pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
     let mut x = a;
@@ -739,7 +795,8 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
         s += arr[i];
         i += 1;
     }
-    (y - x) + (x + y) + s
+    let m = unsafe { core::ptr::read_volatile(&MAGIC as *const i32) };
+    (y - x) + (x + y) + s + m
 }
 "#;
     let src = dir.join("probe_core_swap.rs");
@@ -755,49 +812,71 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
         crt0_o.to_str().unwrap(),
     ]));
     assert_ok(&out, "clang 汇编 core swap crt0");
+    let stubs_s = dir.join("core_stubs.s");
+    let stubs_o = dir.join("core_stubs.o");
+    std::fs::write(&stubs_s, CORE_STUBS_S).expect("写 core_stubs.s");
+    let out = run(Command::new(&clang).args([
+        "--target=aarch64-unknown-none",
+        "-c",
+        stubs_s.to_str().unwrap(),
+        "-o",
+        stubs_o.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "clang 汇编 core stubs");
 
-    for (level, want) in [("0", 8i32), ("2", 8i32)] {
-        let obj = dir.join(format!("probe_core_swap_o{level}.o"));
-        let elf = dir.join(format!("probe_core_swap_o{level}.elf"));
-        let out = run(Command::new(&rustc).current_dir(&dir).args([
-            format!("-Zcodegen-backend={}", dll.display()).as_str(),
-            "--target",
-            "aarch64-unknown-none",
-            "--edition",
-            "2021",
-            "--crate-type",
-            "lib",
-            "-C",
-            "panic=abort",
-            "-C",
-            &format!("opt-level={level}"),
-            "-C",
-            "debug-assertions=off",
-            "-C",
-            "overflow-checks=off",
-            "--emit=obj",
-            "--extern",
-            &format!("core={}", core.display()),
-            "--extern",
-            &format!("compiler_builtins={}", cb.display()),
-            src.to_str().unwrap(),
-            "-o",
-            obj.to_str().unwrap(),
-        ]));
-        assert_ok(&out, &format!("forge 编 core swap 探针（O{level}）"));
+    // 第三档是 **debug-assertions 开** 的 O0：这一档会编出 core 的
+    // precondition/overflow 检查，覆盖 `GlobalAddr`（MOVW 四片重定位）与
+    // `UmulOverflow`（UDIV 判溢出）——正是 v27 M6-112 新增的两条数据。
+    for (label, level, dbg_off, want) in [
+        ("o0", "0", true, 13i32),
+        ("o2", "2", true, 13i32),
+        ("o0dbg", "0", false, 13i32),
+    ] {
+        let obj = dir.join(format!("probe_core_swap_{label}.o"));
+        let elf = dir.join(format!("probe_core_swap_{label}.elf"));
+        let mut compile_flags: Vec<String> = vec![
+            format!("-Zcodegen-backend={}", dll.display()),
+            "--target".into(),
+            "aarch64-unknown-none".into(),
+            "--edition".into(),
+            "2021".into(),
+            "--crate-type".into(),
+            "lib".into(),
+            "-C".into(),
+            "panic=abort".into(),
+            "-C".into(),
+            format!("opt-level={level}"),
+            "-C".into(),
+            "overflow-checks=off".into(),
+            "--emit=obj".into(),
+            "--extern".into(),
+            format!("core={}", core.display()),
+            "--extern".into(),
+            format!("compiler_builtins={}", cb.display()),
+            src.to_str().unwrap().into(),
+            "-o".into(),
+            obj.to_str().unwrap().into(),
+        ];
+        if dbg_off {
+            compile_flags.push("-C".into());
+            compile_flags.push("debug-assertions=off".into());
+        }
+        let out = run(Command::new(&rustc).current_dir(&dir).args(&compile_flags));
+        assert_ok(&out, &format!("forge 编 core swap 探针（{label}）"));
         let out = run(Command::new(&ldlld).args([
             "-m",
             "aarch64elf",
             "-Ttext=0x40000000",
             "--entry=_start",
             crt0_o.to_str().unwrap(),
+            stubs_o.to_str().unwrap(),
             obj.to_str().unwrap(),
             core.to_str().unwrap(),
             cb.to_str().unwrap(),
             "-o",
             elf.to_str().unwrap(),
         ]));
-        assert_ok(&out, &format!("ld.lld 链接 core swap 探针（O{level}）"));
+        assert_ok(&out, &format!("ld.lld 链接 core swap 探针（{label}）"));
         let out = run(Command::new(&qemu).args([
             "-M",
             "virt",
@@ -816,14 +895,14 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
         ]));
         let code = out.status.code().unwrap_or_else(|| {
             panic!(
-                "qemu 异常终止（O{level}）：\n{}",
+                "qemu 异常终止（{label}）：\n{}",
                 String::from_utf8_lossy(&out.stderr)
             )
         });
         assert_eq!(
             code & 0xFF,
             want & 0xFF,
-            "core swap 探针 O{level} 应返回 8，got {code}（产物：{}）",
+            "core swap 探针 {label} 应返回 13（含静态数据 5），got {code}（产物：{}）",
             dir.display()
         );
     }

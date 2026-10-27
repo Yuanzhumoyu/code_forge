@@ -12,6 +12,18 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-27 · M6-112：GlobalAddr + UmulOverflow（debug-assertions 探针真跑通）
+
+- `[asm.reloc.<名>]` 加数据键 `width`（补丁宽度）/`fixup`（slot|inst）：A64 的 MOVW 族是
+  **指令字补丁**（G3→G2→G1→G0 四片，ELF MOVW_UABS_G*），宿主仍无 ISA 分支；链接器类型号写进
+  `conventions/aapcs64-arm64.toml` 的 `[link.elf]`。负占位在无符号 imm 槽会被 encode 拒绝 ⇒
+  `fixup="inst"` 的臂先按 0 编码再发重定位。
+- `UmulOverflow`（64/32）：`MUL + MOVN + UDIV + 2×CMP/CSEL + AND`（`a*b>MAX ⟺ b≠0 ∧ a>MAX/b`；
+  UDIV 除零返回 0，用 `b≠0` 掩掉）。有符号 `SmulOverflow` 仍需 `SMULH`，另案。
+- 验收：core swap 探针 **O0/O2/O0+debug-assertions 三档都返回 13**（含静态数据读取）；
+  守卫测试扩三档 + `CORE_STUBS_S`（debug 档把 core 的 mem* 引用也拉进来）。
+- §10.3 与 pins：arm64 `lint.op_gap = 55,6,9,48`、`vary_candidates = 57`。
+
 ### 2026-10-27 · M6-111：core swap 修好（控制流 effect 缺失 ⇒ CFG 无边）
 
 - **根因**：`is_branch`/`branch_targets` 只从 `effect` 派生；arm64 的 `B`/`B_*`/`CBZ`/`CBNZ`

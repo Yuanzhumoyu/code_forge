@@ -213,12 +213,20 @@ impl Executor for QemuAarch64Executor {
         main: &str,
         args: &[u64],
     ) -> u64 {
-        let _ = funcs;
-        let _ = globals;
-        let _ = main;
-        let _ = args;
-        // 多函数模块路径（跨函数 call 偏移 patch）为后续迭代；当前单函数入口
-        panic!("QemuAarch64Executor::exec_module 尚未实现（多函数 call 偏移 patch 后置）")
+        // v27 M6-112：多函数模块（跨函数 `@N` 调用 + `G{id}` 全局地址就地补丁）。
+        // 夹具的索引 = 本列表位置（矩阵按 0..function_count 收集）。
+        let list: Vec<(u32, CompiledFunction)> = funcs
+            .iter()
+            .enumerate()
+            .map(|(i, (_, cf))| (i as u32, cf.clone()))
+            .collect();
+        let main_idx = funcs
+            .iter()
+            .position(|(n, _)| n == main)
+            .unwrap_or_else(|| panic!("main 函数不在模块中")) as u32;
+        let raw = super::qemu_aarch64::exec_aarch64_module(&list, globals, main_idx, args)
+            .unwrap_or_else(|e| panic!("QemuAarch64Executor::exec_module: {e}"));
+        sign_extend_exit8(raw)
     }
 }
 
