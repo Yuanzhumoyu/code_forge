@@ -12,6 +12,19 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-27 · M6-109：core swap 根因定位（循环不动量活跃区间丢失）
+
+- **对照实验**：同探针纯 LLVM 编（加 `memcmp/memset/memcpy/__udivti3` stub）跑出 8 ⇒
+  `crt0`/链接/`libcore`/退出码都正常，坏码在 forge codegen。
+- **根因**：`core::mem::swap<i32>`（forge 编的泛型实例）循环里，上界常量 1 占了 `x21`，
+  循环体 `add x21, x25, x28`（指针 y + i*8）**把 x21 覆盖** ⇒ `cmp i, x21` 永真、指针越界 fault。
+  即：**preheader 定义、loop body 使用的常量，其活跃区间没被计入分配**（`evict` 未触发）。
+- 另一线索：O2 vcode 出现 `USE-LOST`（block 1 使用、block 5 才定义的 xreg）——同函数内编号复用，
+  与活跃区间问题一并查。
+- 未改代码（只定位）；下一步修 `regalloc_bt` 活跃区间 + 用 swap 探针（O0/O2）验收。
+
+**仍未覆盖**：core swap（活跃区间 bug）、`GlobalAddr`/乘溢出、NEON 向量、原子、DWARF/CFI。
+
 ### 2026-10-26 · M6-108：栈实参写槽统一 + 缺失值描述补齐 + 诊断带属性
 
 - **写槽统一**：`move_args` 的"spilled 形参 → spill 槽"改走 `emit_spill_store`（fp/sp 口径 +

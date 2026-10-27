@@ -371,7 +371,33 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   `mov w13,#1 … strb w14,[x13]`（`csel` 的临时寄存器被当成 store 地址）——**疑似**指令包内
   虚拟寄存器编号/字段映射串位，下一步从 `Icmp`+`store i1` 的 packet 对照查起。
 
-**仍未覆盖**：core swap 的寄存器映射问题、`GlobalAddr`/乘溢出、NEON 向量、原子、DWARF/CFI。
+**进度（2026-10-27，M6-109）——core swap 根因定位：循环不动量的活跃区间丢失**：
+
+- 对照实验：同一探针用 **纯 LLVM** 编（`crt0` + `memcmp/memset/memcpy` stub）**跑出 8**（正确值），
+  说明 `crt0`、链接、`libcore`、退出码链路都没问题 ⇒ 坏码来自 forge 自己的 codegen。
+- 定位到 `core::mem::swap<i32>`（泛型实例在探针 crate 里由 forge 编）的循环：
+
+  ```text
+  0x400002b4  mov x24,#0        ; i
+  0x400002c0  mov x21,#1        ; 循环上界（icmp 的常量 1）
+  0x400002ec  cmp x24,x21       ; i < 1
+  0x400002fc  mul x28,x24,x22   ; i*8
+  0x40000304  add x21,x25,x28   ; !!! x21 被"指针 y + 偏移"覆盖 —— 上界被冲掉
+  0x40000318  add x24,x24,x23   ; i += 1
+  0x4000031c  b   loop
+  ```
+
+  上界寄存器 `x21` 在循环体里被**另一个活跃值（指针 y）复用**：此后 `cmp i, x21` 永远成立，
+  指针按 `i*8` 一路越界 → `ldr` fault。结论：**跨循环活跃的值没有把活跃区间算进去**，
+  分配器把已被占用的物理寄存器再分配出去（`evict` 未触发）。
+
+- O2 的 `USE-LOST`（基址 vreg 在定义块之前使用）另有一条独立线索：vcode 里出现
+  "block 1 使用、block 5 才定义"的 xreg——同一函数内 xreg 编号复用，待与活跃区间问题一并查。
+- **下一步**（明确）：查 `regalloc_bt` 的活跃区间构建——特别是
+  **phi/循环携带值**与"定义在 preheader、使用在 loop body"的常量（本轮 x21 就是这类）；
+  修好后用 core swap 探针（O0/O2 两档）做验收，再补 IR 级守卫。
+
+**仍未覆盖**：core swap（活跃区间 bug）、`GlobalAddr`/乘溢出、NEON 向量、原子、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 
