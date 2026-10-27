@@ -503,6 +503,22 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   循环，待定位）；O2 在 `const-fold` 后 IR 校验失败（`Udiv`/`Ushr` 操作数类型不一致，
   优化档另案）。
 
+**进度（2026-10-28，M6-117）——迭代器跑通（ZST 字段写越界）**：
+
+- 现象：`v.iter()` 单独就 Data Abort（`x29` 在 `Iter::new` 返回后变 0）。QEMU gdbstub
+  写观察点（`Z2,<fp-16>,8`）抓到两次写：prologue 正确写 fp，随后 `Iter::new` 内一条
+  **间接 store** 写 0 到同一槽。
+- 根因：结构体逐字段构造循环（`lower/statement.rs` 的 Adt/Tuple/Array 分支）**没有跳过
+  ZST 字段**——`Iter` 的 `_marker: PhantomData`（0 字节）被当成 8 字节写到 `slot+16`；
+  `Iter` 槽只有 16 字节，于是越界 8 字节正好落在被调方 `x29` 保存槽 ⇒ 返回后 caller
+  fp=0 ⇒ 下一条 fp 相对 store 直接 Data Abort。（M6-116 只补了**枚举**分支。）
+- 修法：该分支同样 `if f_sz == 0 { continue; }`。
+- 验收：新守卫 `rustc_aarch64_iterator_probe_runs_under_qemu`：`while let Some(x)=it.next()`
+  与 `iter().copied().sum()` 两路求和，O0 真执行 **20**。
+- **仍未闭环**：`core::fmt` 整数格式化探针 O0 运行到 **`Undefined Instruction` @ `ELR=0x0`**
+  （跳到地址 0：空函数指针/坏返回地址，疑似 `&dyn Display` vtable 或函数指针收参）；
+  O1/O2 另有 `const-fold` 后 IR 校验失败（`StoreAddrNotPointer` / `Ushr` 类型不一致）。
+
 **仍未覆盖**：NEON 向量、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）

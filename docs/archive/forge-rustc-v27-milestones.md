@@ -12,6 +12,15 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-28 · M6-117：迭代器跑通（ZST 字段写越界修好）
+
+- 结构体逐字段构造没跳 ZST 字段（M6-116 只补了枚举）：`Iter::_marker` 的 PhantomData 被
+  写 8 字节到 `slot+16`，越界落在被调方 `x29` 保存槽 ⇒ 调用者 fp=0 ⇒ Data Abort。
+- gdbstub 写观察点（`Z2` + `P 20` 跳过触发指令）定位到两次写同一槽，是决定性证据。
+- 修法：Adt/Tuple/Array 分支同样 `f_sz == 0` 跳过。守卫
+  `rustc_aarch64_iterator_probe_runs_under_qemu`（O0 真执行 20）。
+- 未闭环：`core::fmt` 格式化跳 0（`ELR=0x0`）；O1/O2 `const-fold` 后 IR 校验失败。
+
 ### 2026-10-28 · M6-116：ZST 字段不产生 Store
 
 - `()` 字段 `map_type` = VOID ⇒ `Iconst ty=VOID` ⇒ `Store no matching rule`（fmt/sort 在 O0

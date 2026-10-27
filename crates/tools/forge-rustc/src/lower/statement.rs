@@ -354,6 +354,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             };
                             let f_ty = f.ty(&self.body.local_decls, self.tcx);
                             let f_sz = layout_bytes(self.tcx, f_ty);
+                            // **ZST 字段没有内存表示**（v27 M6-116 补漏）：`Iter` 的
+                            // `_marker: PhantomData` 是 0 字节；写它会越过槽尾写到
+                            // `fp-16`（= 被调方 x29 保存槽）⇒ 调用者 fp 变 0 ⇒ 下一条
+                            // fp 相对 store 直接 Data Abort。枚举分支已跳过，这里同样跳过。
+                            if f_sz == 0 {
+                                continue;
+                            }
                             if crate::trace::trace_enabled("AGG") {
                                 eprintln!(
                                     "[forge] agg field ty={ty} i={i} f_ty={f_ty} f_sz={f_sz} kind={:?}",

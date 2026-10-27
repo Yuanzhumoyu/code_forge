@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-28) — ZST 字段写越界打断迭代器
+
++ 结构体逐字段构造（Adt/Tuple/Array）没跳过 ZST 字段：`Iter::_marker`（PhantomData）
+  被写 8 字节到 `slot+16`，越界落在被调方 `x29` 保存槽 ⇒ 调用者 fp=0 ⇒ 任何
+  `v.iter()` 都 Data Abort。现在与枚举分支一致：`f_sz == 0` 跳过。
++ 守卫 `rustc_aarch64_iterator_probe_runs_under_qemu`（`next()` 循环 + `copied().sum()`，
+  O0 真执行 20）。定位手段：QEMU gdbstub 硬件写观察点 + `P 20` 跳过触发指令。
++ 仍未闭环：`core::fmt` 格式化跳 0（ELR=0x0）；O1/O2 const-fold 后 IR 校验失败。
+
 ### Fixed (2026-10-28) — ZST 字段/值不再产生 Store
 
 + 聚合构造里 `()` 等 ZST 字段原本会造出 `Iconst ty=VOID` 并 `Store` ⇒

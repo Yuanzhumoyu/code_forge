@@ -1033,6 +1033,182 @@ pub extern "C" fn forge_entry(a: i32) -> i32 {
         );
     }
 }
+/// **迭代器守卫**（v27 M6-117）：`v.iter()` / `next()` / `.copied().sum()` 真执行。
+///
+/// 根因（v27 M6-116 补漏）：结构体逐字段构造循环**没有跳过 ZST 字段**——
+/// `Iter` 的 `_marker: PhantomData`（0 字节）被写成 8 字节，写到 `fp-16`，
+/// 即被调方（`Iter::new`）的 **x29 保存槽**；返回后调用者 fp 变 0，下一条
+/// fp 相对 store 直接 Data Abort（QEMU `-d int`：FAR=-0x20、ELR 在
+/// `slice::<impl [T]>::iter`；gdbstub 写观察点抓到真凶 PC 写 0 到该槽）。
+///
+/// 断言真执行：a=1 ⇒ v=[1,2,3,4] ⇒ 两个 10 相加 = **20**。
+#[test]
+fn rustc_aarch64_iterator_probe_runs_under_qemu() {
+    let dll = backend_dll();
+    if !dll.is_file() {
+        eprintln!("SKIP: 后端 dylib 缺失（先 `cargo build -p forge-rustc`）");
+        return;
+    }
+    let (Some(clang), Some(ldlld)) = (tool("clang"), tool("ld.lld")) else {
+        eprintln!("SKIP: 缺 clang / ld.lld");
+        return;
+    };
+    let Some(qemu) = qemu_aarch64() else {
+        eprintln!("SKIP: qemu-system-aarch64 未安装");
+        return;
+    };
+    let rustc = std::env::var_os("RUSTC").map_or_else(|| "rustc".into(), PathBuf::from);
+    let sysroot = run(Command::new(&rustc).arg("--print").arg("sysroot"));
+    assert_ok(&sysroot, "rustc --print sysroot");
+    let sysroot = PathBuf::from(String::from_utf8_lossy(&sysroot.stdout).trim());
+    let lib_dir = sysroot.join("lib/rustlib/src/rust/library");
+    let core_src = lib_dir.join("core/src/lib.rs");
+    let cb_src = lib_dir.join("compiler-builtins/compiler-builtins/src/lib.rs");
+    if !core_src.is_file() || !cb_src.is_file() {
+        eprintln!("SKIP: 缺 rust-src（{}）", lib_dir.display());
+        return;
+    }
+
+    let dir = workspace_root()
+        .join("target")
+        .join("tmp")
+        .join("arm64-core-probe")
+        .join("iterator");
+    let sys = dir.join("sysroot");
+    std::fs::create_dir_all(&sys).expect("创建产物目录");
+    let core = build_target_rlib(&rustc, &sys, "core", &core_src, &[]);
+    let cb = build_target_rlib(
+        &rustc,
+        &sys,
+        "compiler_builtins",
+        &cb_src,
+        &[
+            "--cfg",
+            r#"feature="mem""#,
+            "--cfg",
+            r#"feature="compiler-builtins""#,
+            "--extern",
+            &format!("core={}", core.display()),
+        ],
+    );
+
+    let src_text = r#"#![no_std]
+#![no_main]
+
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! { loop {} }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
+    let _ = b;
+    let mut v = [0i32; 4];
+    let mut i = 0usize;
+    while i < v.len() { v[i] = a + i as i32; i += 1; }
+    let mut s1 = 0i32;
+    let mut it = v.iter();
+    while let Some(x) = it.next() { s1 += *x; }
+    let s2: i32 = v.iter().copied().sum();
+    (s1 + s2) & 0xFF
+}
+"#;
+
+    let src = dir.join("probe_iter.rs");
+    let obj = dir.join("probe_iter.o");
+    let crt0_s = dir.join("crt0_iter.s");
+    let crt0_o = dir.join("crt0_iter.o");
+    let elf = dir.join("probe_iter.elf");
+    std::fs::write(&src, src_text).expect("写 probe_iter.rs");
+    std::fs::write(&crt0_s, CORE_CRT0_S).expect("写 crt0_iter.s");
+
+    let out = run(Command::new(&rustc).current_dir(&dir).args([
+        format!("-Zcodegen-backend={}", dll.display()).as_str(),
+        "--target",
+        "aarch64-unknown-none",
+        "--edition",
+        "2021",
+        "--crate-type",
+        "lib",
+        "-C",
+        "panic=abort",
+        "-C",
+        "opt-level=0",
+        "-C",
+        "debug-assertions=off",
+        "-C",
+        "overflow-checks=off",
+        "--emit=obj",
+        "--extern",
+        &format!("core={}", core.display()),
+        "--extern",
+        &format!("compiler_builtins={}", cb.display()),
+        src.to_str().unwrap(),
+        "-o",
+        obj.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "forge 编迭代器探针");
+
+    let stubs_s = dir.join("stubs_iter.s");
+    let stubs_o = dir.join("stubs_iter.o");
+    std::fs::write(&stubs_s, CORE_STUBS_S).expect("写 stubs_iter.s");
+    let out = run(Command::new(&clang).args([
+        "--target=aarch64-unknown-none",
+        "-c",
+        crt0_s.to_str().unwrap(),
+        "-o",
+        crt0_o.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "clang 汇编迭代器 crt0");
+    let out = run(Command::new(&clang).args([
+        "--target=aarch64-unknown-none",
+        "-c",
+        stubs_s.to_str().unwrap(),
+        "-o",
+        stubs_o.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "clang 汇编迭代器 stubs");
+    let out = run(Command::new(&ldlld).args([
+        "-m",
+        "aarch64elf",
+        "-Ttext=0x40000000",
+        "--entry=_start",
+        crt0_o.to_str().unwrap(),
+        stubs_o.to_str().unwrap(),
+        obj.to_str().unwrap(),
+        core.to_str().unwrap(),
+        cb.to_str().unwrap(),
+        "-o",
+        elf.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "ld.lld 链接迭代器探针");
+    let out = run(Command::new(&qemu).args([
+        "-M",
+        "virt",
+        "-cpu",
+        "cortex-a57",
+        "-kernel",
+        elf.to_str().unwrap(),
+        "-nographic",
+        "-semihosting-config",
+        "enable=on,target=native",
+        "-monitor",
+        "none",
+        "-serial",
+        "none",
+        "-no-reboot",
+    ]));
+    let code = out
+        .status
+        .code()
+        .unwrap_or_else(|| panic!("qemu 异常终止：\n{}", String::from_utf8_lossy(&out.stderr)));
+    assert_eq!(
+        code & 0xFF,
+        20,
+        "迭代器探针结果应为 20（got {code}；产物：{}）",
+        dir.display()
+    );
+}
 /// **core 真程序守卫**（v27 M6-111）：`core::mem::swap` + 循环在 **O0/O2 两档**都要跑对。
 ///
 /// 这条用例覆盖的是本轮修掉的两个数据缺口：
