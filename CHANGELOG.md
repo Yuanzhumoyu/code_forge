@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-27) — arm64 原子（LSE：SWPAL/LDADDAL/LDCLRAL/LDSETAL/LDEORAL/CASAL）
+
++ 新 `[form.LSE3]` 与六个原子族（X/W 两档）：`AtomicRmw`（xchg/add/sub/and/or/xor）与
+  `Cmpxchg` 用 LSE 单指令实现（AL = seqcst 档；IR 的 ordering 是第二立即数，统一用最强序）。
++ CAS 的 `[11:10]` 位必须为 `11`（CASP 位型）；只写 4 位 opc2 会编出非法指令（QEMU 挂起）。
++ 矩阵解锁 5 条原子用例：arm64 **100 passed / 0 failed**；QEMU 测试默认 CPU 改 `max`
+  （LSE 需 ARMv8.1-A），`FORGE_A64_CPU` 可覆盖。
++ pins 刷新：`op_gap = 58,6,9,45`、`spec_totals` 622、`roundtrip` +24、encoding digest。
+
 ### Added (2026-10-27) — arm64 SMULH 与 SmulOverflow
 
 + 新指令 `SMULH`（MUL3 形状，`ra` 固定 31）：有符号乘法的 64 位高半。

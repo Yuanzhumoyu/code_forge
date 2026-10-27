@@ -358,11 +358,14 @@ fn run_qemu(qemu: &PathBuf, elf: &[u8]) -> Result<u64, String> {
     f.write_all(elf).map_err(|e| format!("write elf: {e}"))?;
     drop(f);
     let mut cmd = Command::new(qemu);
+    // LSE 原子（ARMv8.1）需要能执行它的 CPU 模型：默认 `max`（全特性，含 LSE/原子），
+    // 老机型（cortex-a57）只够非原子路径。`FORGE_A64_CPU` 可覆盖（如做基线回归）。
+    let cpu = std::env::var("FORGE_A64_CPU").unwrap_or_else(|_| "max".to_string());
     cmd.args([
         "-M",
         "virt",
         "-cpu",
-        "cortex-a57",
+        &cpu,
         "-kernel",
         tmp.to_str().unwrap(),
         "-nographic",

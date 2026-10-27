@@ -3392,6 +3392,99 @@ insts = [
   "MOVZW {g5}, 0",
   "CSELW {out2}, {g4}, 1, {g5}",
 ]
+# ── 原子（v27 M6-114）：LSE 单指令（seqcst/AL 档）────────────────────
+# `imm0` = AtomicRmwOp（Xchg=0 / Add=1 / Sub=2 / And=3 / Nand=4 / Or=5 / Xor=6）。
+[[lower.AtomicRmw]]
+when = { eq = ["imm0", 0] }
+insts = ["SWPALX {1}, {out}, [{0}]"]
+
+[[lower.AtomicRmw]]
+when = { eq = ["imm0", 1] }
+insts = ["LDADDALX {1}, {out}, [{0}]"]
+
+[[lower.AtomicRmw]]
+when = { eq = ["imm0", 2] }
+temps = ["g1:gpr"]
+insts = [
+  "MOVZX {g1}, 0",
+  "SUBREGX {g1}, {g1}, {1}",
+  "LDADDALX {g1}, {out}, [{0}]",
+]
+
+[[lower.AtomicRmw]]
+when = { eq = ["imm0", 3] }
+temps = ["g1:gpr", "g2:gpr"]
+insts = [
+  "MOVNX {g1}, 0",
+  "EORREGX {g2}, {1}, {g1}",
+  "LDCLRALX {g2}, {out}, [{0}]",
+]
+
+[[lower.AtomicRmw]]
+when = { eq = ["imm0", 5] }
+insts = ["LDSETALX {1}, {out}, [{0}]"]
+
+[[lower.AtomicRmw]]
+when = { eq = ["imm0", 6] }
+insts = ["LDEORALX {1}, {out}, [{0}]"]
+
+# 32 位档（`rd = 32`）：同样的 LSE 家族换 W 视图。
+[[lower.AtomicRmw]]
+when = { and = [{ eq = ["rd", 32] }, { eq = ["imm0", 0] }] }
+insts = ["SWPALW {1}, {out}, [{0}]"]
+
+[[lower.AtomicRmw]]
+when = { and = [{ eq = ["rd", 32] }, { eq = ["imm0", 1] }] }
+insts = ["LDADDALW {1}, {out}, [{0}]"]
+
+[[lower.AtomicRmw]]
+when = { and = [{ eq = ["rd", 32] }, { eq = ["imm0", 2] }] }
+temps = ["g1:gpr"]
+insts = [
+  "MOVZW {g1}, 0",
+  "SUBREGW {g1}, {g1}, {1}",
+  "LDADDALW {g1}, {out}, [{0}]",
+]
+
+[[lower.AtomicRmw]]
+when = { and = [{ eq = ["rd", 32] }, { eq = ["imm0", 3] }] }
+temps = ["g1:gpr", "g2:gpr"]
+insts = [
+  "MOVNW {g1}, 0",
+  "EORREGW {g2}, {1}, {g1}",
+  "LDCLRALW {g2}, {out}, [{0}]",
+]
+
+[[lower.AtomicRmw]]
+when = { and = [{ eq = ["rd", 32] }, { eq = ["imm0", 5] }] }
+insts = ["LDSETALW {1}, {out}, [{0}]"]
+
+[[lower.AtomicRmw]]
+when = { and = [{ eq = ["rd", 32] }, { eq = ["imm0", 6] }] }
+insts = ["LDEORALW {1}, {out}, [{0}]"]
+# Cmpxchg：CASAL 把"期望值"寄存器改成**读回值**，成功标志取 CAS 的 Z 标志。
+# `{out}` 先装期望值再交给 CAS（CAS 成功后它就是旧值）。
+[[lower.Cmpxchg]]
+when = { eq = ["rd", 32] }
+temps = ["g1:gpr", "g2:gpr", "g3:gpr"]
+insts = [
+  "MOVW {g1}, {1}",
+  "CASALW {g1}, {2}, [{0}]",
+  "MOVW {out}, {g1}",
+  "MOVZW {g2}, 1",
+  "MOVZW {g3}, 0",
+  "CSELW {out2}, {g2}, 0, {g3}",
+]
+[[lower.Cmpxchg]]
+temps = ["g1:gpr", "g2:gpr", "g3:gpr"]
+insts = [
+  "MOVX {g1}, {1}",
+  "CASALX {g1}, {2}, [{0}]",
+  "MOVX {out}, {g1}",
+  "MOVZW {g2}, 1",
+  "MOVZW {g3}, 0",
+  "CSELW {out2}, {g2}, 0, {g3}",
+]
 # 乘溢出（v27 M6-112）：无 SMULH 也够判**无符号**溢出——`a*b > MAX ⟺ b≠0 ∧ a > MAX/b`
 # （A64 的 UDIV 除零返回 0、不陷入，所以 b=0 要单独用 `b != 0` 掩掉）。分支自由。
 [[lower.UmulOverflow]]
@@ -3781,6 +3874,62 @@ opcode = 0x4DA
 match = { ra = 31 }
 asm = "smulh {dst:r64:out}, {src:r64}, {src2:r64}"
 doc = "有符号乘法高 64 位（SMULH）：与 MUL 组合判有符号乘溢出。"
+# ── LSE 原子（v27 M6-114，ARMv8.1-A 的 seqcst 档）──────────────────────
+# 取/放全用 **AL**（A=1,R=1）：IR 的内存序是第二个立即数，lowering 的谓词只看得到
+# `imm0`（op 判别值），用最强序对所有 order 都正确（略慢，但不会静默放宽语义）。
+[form.LSE3]
+# `opcode` = [31:21]（size[31:30] + 111000/001000 + A + R + 1）：AL 档固定 A=R=1。
+# 其余：[20:16] Rs、[15:12] opc2（LDADD=0/LDCLR=1/LDEOR=2/LDSET=3/SWP=8/CAS=0xF）、
+# [9:5] Rn、[4:0] Rt。
+fields = [
+  "u8[31:24]:opcode",
+  "u1[23]:a",
+  "u1[22]:r",
+  "u1[21]:one21",
+  "u5[20:16]:rs",
+  "u4[15:12]:opc2",
+  "u2[11:10]:fix2",
+  "u5[9:5]:rn",
+  "u5[4:0]:rt",
+]
+
+[family.SWPAL]
+body = { form = "LSE3", match = { a = 1, r = 1, one21 = 1, opc2 = 8, fix2 = 0 }, asm = "swpal {@rs:{slot}}{rsv:{slot}}, {@rt:{slot}:out}{rtv:{slot}:out}, [{@rn:r64}{rnv:r64}]" }
+rows = [
+  { inst = "SWPALX", slot = "r64", opcode = 0xF8 },
+  { inst = "SWPALW", slot = "r32", opcode = 0xB8 },
+]
+[family.LDADDAL]
+body = { form = "LSE3", match = { a = 1, r = 1, one21 = 1, opc2 = 0, fix2 = 0 }, asm = "ldaddal {@rs:{slot}}{rsv:{slot}}, {@rt:{slot}:out}{rtv:{slot}:out}, [{@rn:r64}{rnv:r64}]" }
+rows = [
+  { inst = "LDADDALX", slot = "r64", opcode = 0xF8 },
+  { inst = "LDADDALW", slot = "r32", opcode = 0xB8 },
+]
+[family.LDCLRAL]
+body = { form = "LSE3", match = { a = 1, r = 1, one21 = 1, opc2 = 1, fix2 = 0 }, asm = "ldclral {@rs:{slot}}{rsv:{slot}}, {@rt:{slot}:out}{rtv:{slot}:out}, [{@rn:r64}{rnv:r64}]" }
+rows = [
+  { inst = "LDCLRALX", slot = "r64", opcode = 0xF8 },
+  { inst = "LDCLRALW", slot = "r32", opcode = 0xB8 },
+]
+[family.LDSETAL]
+body = { form = "LSE3", match = { a = 1, r = 1, one21 = 1, opc2 = 3, fix2 = 0 }, asm = "ldsetal {@rs:{slot}}{rsv:{slot}}, {@rt:{slot}:out}{rtv:{slot}:out}, [{@rn:r64}{rnv:r64}]" }
+rows = [
+  { inst = "LDSETALX", slot = "r64", opcode = 0xF8 },
+  { inst = "LDSETALW", slot = "r32", opcode = 0xB8 },
+]
+[family.LDEORAL]
+body = { form = "LSE3", match = { a = 1, r = 1, one21 = 1, opc2 = 2, fix2 = 0 }, asm = "ldeoral {@rs:{slot}}{rsv:{slot}}, {@rt:{slot}:out}{rtv:{slot}:out}, [{@rn:r64}{rnv:r64}]" }
+rows = [
+  { inst = "LDEORALX", slot = "r64", opcode = 0xF8 },
+  { inst = "LDEORALW", slot = "r32", opcode = 0xB8 },
+]
+[family.CASAL]
+body = { form = "LSE3", match = { a = 1, r = 1, one21 = 1, opc2 = 0xF, fix2 = 3 }, asm = "casal {@rs:{slot}}{rsv:{slot}}, {@rt:{slot}}{rtv:{slot}}, [{@rn:r64}{rnv:r64}]" }
+rows = [
+  { inst = "CASALX", slot = "r64", opcode = 0xC8 },
+  { inst = "CASALW", slot = "r32", opcode = 0x88 },
+]
+
 [family.SDIV]
 body = { group = "sdiv", form = "DIV2A", opcode = "{opcode}", asm = "sdiv {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}", match = { op2d = 3 } }
 rows = [

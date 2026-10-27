@@ -458,7 +458,22 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   pins：arm64 `op_gap = 56,6,9,47`、`unassigned_bits = 272`、`spec_totals` 610、
   `roundtrip.derived` +2、编码 digest 更新（全部经官方写入器/实测值刷新）。
 
-**仍未覆盖**：NEON 向量、原子、DWARF/CFI。
+**进度（2026-10-27，M6-114）——arm64 原子：LSE 单指令（seqcst）**：
+
+- 新形状 `[form.LSE3]` + 六个族（`SWPAL`/`LDADDAL`/`LDCLRAL`/`LDSETAL`/`LDEORAL`/`CASAL`，
+  各 X/W 两行）。编码：`opcode` = [31:24]（含 size 位）、`[23:21]` = A/R/1 固定 1（AL =
+  seqcst 档）、`[15:12]` opc2、**`[11:10]` fix2**（LD* = 0、CAS = 3——CAS 的 `[15:10]`
+  是 `111111`，只写 4 位会编出非法字，实测 QEMU 直接 `<unknown>` 挂起）。
+- `AtomicRmw`：Xchg=SWPAL、Add=LDADDAL、Sub=LDADDAL(取负)、And=LDCLRAL(取反)、
+  Or=LDSETAL、Xor=LDEORAL；`Cmpxchg` = MOV+CASAL+MOV，成功标志取 CAS 的 Z（CSELW）。
+  32 位档同族换 W 视图。**IR 的内存序是第二个立即数、谓词看不到** ⇒ 一律用 AL
+  （对所有 ordering 都正确，略慢，不静默放宽）。
+- 验收：arm64 矩阵解锁 5 条原子用例（add/sub/xchg/cmpxchg 成败）⇒ **100 passed / 0 failed**。
+- 测试口径：QEMU 默认 CPU 改为 `max`（LSE 需要 ARMv8.1-A；老机型 `cortex-a57` 只能跑
+  非原子路径），`FORGE_A64_CPU` 可覆盖。
+- pins：arm64 `op_gap = 58,6,9,45`、`spec_totals` 622、`roundtrip` +24、encoding digest 更新。
+
+**仍未覆盖**：NEON 向量、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

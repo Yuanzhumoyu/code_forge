@@ -12,6 +12,16 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-27 · M6-114：arm64 原子（LSE 单指令）
+
+- `[form.LSE3]` + SWPAL/LDADDAL/LDCLRAL/LDSETAL/LDEORAL/CASAL（X/W）：A/R=1 用 seqcst 档；
+  **CAS 的 `[11:10]` 必须为 11**（CASP 位型），只写 4 位 opc2 会编成非法字（QEMU `<unknown>` 挂起）。
+- `AtomicRmw` 六种 op 与 `Cmpxchg`（标志取 CAS 的 Z）；32 位换 W 视图。IR 的 ordering 是
+  第二立即数、谓词不可见 ⇒ 统一 AL（保守正确）。
+- QEMU 测试默认 CPU 改 `max`（LSE 需 ARMv8.1-A），`FORGE_A64_CPU` 可覆盖。
+- 矩阵解锁 5 条原子用例 ⇒ arm64 **100 passed / 0 failed**；pins（op_gap 58,6,9,45 /
+  spec_totals 622 / roundtrip +24 / encoding digest / ambiguity 不变）已刷新。
+
 ### 2026-10-27 · M6-113：SmulOverflow（新 `SMULH` 指令）
 
 - `SMULH` 走 **MUL3** 形状（MULADD 的 `#0..#3` 全排列在 3 操作数时被 validate 拒；MUL3 的
