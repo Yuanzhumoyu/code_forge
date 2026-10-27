@@ -1066,6 +1066,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         }
     }
     pub(crate) fn store_ty(&mut self, val: Value, addr: Value, ty: TypeId) {
+        // **零尺寸类型（ZST）不产生 Store**（v27 M6-116）：`()` 等类型 `map_type` 给
+        // VOID，`lower_operand` 会造出 `Iconst ty=VOID`，随后 Store 拿着一个 bits=0
+        // 的值找规则 ⇒ `Store no matching rule`。ZST 没有内存表示，写它也没有语义。
+        if ty == TypeId::VOID {
+            return;
+        }
         if ty.is_float() {
             self.builder.fstore(val, addr)
         } else {

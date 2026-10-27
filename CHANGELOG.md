@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-28) — ZST 字段/值不再产生 Store
+
++ 聚合构造里 `()` 等 ZST 字段原本会造出 `Iconst ty=VOID` 并 `Store` ⇒
+  `Store no matching rule`（真实 fmt/sort 程序在 O0 全部卡住）。ZST 没有内存表示：
+  字段循环按 `f_sz == 0` 跳过，`store_ty` 对 VOID 提前返回。
++ 守卫 `rustc_aarch64_zst_aggregate_probe_runs_under_qemu`（`S{a,b:()}`，O0 真执行 7）。
+
 ### Added (2026-10-28) — aarch64：`select_unpredictable` / `Clz` / 大帧
 
 + `select_unpredictable` intrinsic 映射到 `Select`（core 的 sort 实现依赖它）。

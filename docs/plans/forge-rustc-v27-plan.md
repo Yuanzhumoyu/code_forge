@@ -488,6 +488,21 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   DCE/某 pass 删了仍被 Store 引用的 Iconst（use-list 刷新漏点）。真实 fmt/sort 程序卡
   在这里；修法必须钉在 IR 侧（删除必须连带重导向使用点），不是给 lowering 猜宽度。
 
+**进度（2026-10-28，M6-116）——ZST 字段/值的 Store**：
+
+- 真实 fmt/sort 程序在 O0 的硬阻塞：聚合构造按字段 `lower_operand`+`Store`；`()` 字段的
+  `map_type` 是 **VOID** ⇒ 造出 `Iconst ty=VOID`（desc `bits: 0`）⇒ `Store no matching rule`
+  （用 `FORGE_TRACE_LOWER` 的 `VOID-def op=Iconst imm=Const(Bits(6))` + backtrace 定位到
+  `lower/statement.rs` 的字段写入）。
+- 修法：**ZST 没有内存表示**——聚合字段循环里 `f_sz == 0` 跳过；`store_ty` 对
+  `ty == VOID` 直接返回（防御性，避免任何路径把 VOID 值写成 Store）。**不是**给 lowering
+  猜宽度。
+- 守卫 `rustc_aarch64_zst_aggregate_probe_runs_under_qemu`：`struct S { a: i32, b: () }`
+  的构造 + 元组含 `()`，O0 真执行 **7**（修前编译期就 `Store no matching rule`）。
+- 已知未闭环：fmt+sort 全量探针现在**能编过**（O0），但 QEMU 里挂起（panic 循环或异常
+  循环，待定位）；O2 在 `const-fold` 后 IR 校验失败（`Udiv`/`Ushr` 操作数类型不一致，
+  优化档另案）。
+
 **仍未覆盖**：NEON 向量、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）

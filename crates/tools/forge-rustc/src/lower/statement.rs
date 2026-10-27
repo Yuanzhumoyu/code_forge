@@ -294,6 +294,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     let off = data_fields.get(i).copied().unwrap_or(0);
                                     let f_ty = f.ty(&self.body.local_decls, self.tcx);
                                     let f_sz = layout_bytes(self.tcx, f_ty);
+                                    // **ZST 字段没有内存表示**（v27 M6-116）：`()` 等
+                                    // 字段的 `map_type` 是 VOID，lower_operand 会造
+                                    // `Iconst ty=VOID`，随后 Store 拿着 bits=0 的值
+                                    // 找不到规则（`Store no matching rule`）。
+                                    if f_sz == 0 {
+                                        continue;
+                                    }
                                     let faddr = if off == 0 {
                                         base
                                     } else {

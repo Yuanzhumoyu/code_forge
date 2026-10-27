@@ -12,6 +12,15 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-28 · M6-116：ZST 字段不产生 Store
+
+- `()` 字段 `map_type` = VOID ⇒ `Iconst ty=VOID` ⇒ `Store no matching rule`（fmt/sort 在 O0
+  全卡）。修法：聚合字段 `f_sz == 0` 跳过 + `store_ty` 对 VOID 提前返回（ZST 无内存表示）。
+- 守卫 `rustc_aarch64_zst_aggregate_probe_runs_under_qemu`（`S{a,b:()}` + 元组含 `()`，O0
+  真执行 7）。定位手段：`FORGE_TRACE_LOWER` 打 `VOID-def` + `Builder::store` backtrace。
+- 未闭环：fmt+sort 探针 O0 能编但 QEMU 挂起（另案）；O2 `const-fold` 后 IR 校验失败
+  （`Udiv`/`Ushr` 类型不一致，优化档另案）。
+
 ### 2026-10-28 · M6-115：`select_unpredictable` / `Clz` / 大帧分块
 
 - `select_unpredictable` → `Select`（core sort 的硬前置）。

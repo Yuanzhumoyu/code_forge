@@ -709,6 +709,164 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
         dir.display()
     );
 }
+/// **ZST 聚合字段守卫**（v27 M6-116）：`()` 字段没有内存表示。
+///
+/// 聚合构造的字段写入路径（`lower/statement.rs`）对每个字段都 `lower_operand` + `Store`；
+/// 单位字段的 `map_type` 是 VOID ⇒ 造出 `Iconst ty=VOID`（`ValDesc.bits = 0`）⇒
+/// `Store no matching rule`（真实 fmt/sort 程序在 O0 全部卡在这里）。ZST 字段跳过即修好。
+///
+/// 断言真执行：a=1,b=2 ⇒ S{a=3} ⇒ 3+3+1 = **7**。
+#[test]
+fn rustc_aarch64_zst_aggregate_probe_runs_under_qemu() {
+    let dll = backend_dll();
+    if !dll.is_file() {
+        eprintln!("SKIP: 后端 dylib 缺失（先 `cargo build -p forge-rustc`）");
+        return;
+    }
+    let (Some(clang), Some(ldlld)) = (tool("clang"), tool("ld.lld")) else {
+        eprintln!("SKIP: 缺 clang / ld.lld");
+        return;
+    };
+    let Some(qemu) = qemu_aarch64() else {
+        eprintln!("SKIP: qemu-system-aarch64 未安装");
+        return;
+    };
+    let rustc = std::env::var_os("RUSTC").map_or_else(|| "rustc".into(), PathBuf::from);
+    let sysroot = run(Command::new(&rustc).arg("--print").arg("sysroot"));
+    assert_ok(&sysroot, "rustc --print sysroot");
+    let sysroot = PathBuf::from(String::from_utf8_lossy(&sysroot.stdout).trim());
+    let lib_dir = sysroot.join("lib/rustlib/src/rust/library");
+    let core_src = lib_dir.join("core/src/lib.rs");
+    let cb_src = lib_dir.join("compiler-builtins/compiler-builtins/src/lib.rs");
+    if !core_src.is_file() || !cb_src.is_file() {
+        eprintln!("SKIP: 缺 rust-src（{}）", lib_dir.display());
+        return;
+    }
+
+    let dir = workspace_root()
+        .join("target")
+        .join("tmp")
+        .join("arm64-core-probe")
+        .join("zst_agg");
+    let sys = dir.join("sysroot");
+    std::fs::create_dir_all(&sys).expect("创建产物目录");
+    let core = build_target_rlib(&rustc, &sys, "core", &core_src, &[]);
+    let cb = build_target_rlib(
+        &rustc,
+        &sys,
+        "compiler_builtins",
+        &cb_src,
+        &[
+            "--cfg",
+            r#"feature="mem""#,
+            "--cfg",
+            r#"feature="compiler-builtins""#,
+            "--extern",
+            &format!("core={}", core.display()),
+        ],
+    );
+
+    let src_text = r#"#![no_std]
+#![no_main]
+
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! { loop {} }
+
+struct S { a: i32, b: () }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
+    let s = S { a: a + b, b: () };
+    let t = (s.a, ());
+    s.a + t.0 + a
+}
+"#;
+
+    let src = dir.join("probe_zst_agg.rs");
+    let obj = dir.join("probe_zst_agg.o");
+    let crt0_s = dir.join("crt0_zst_agg.s");
+    let crt0_o = dir.join("crt0_zst_agg.o");
+    let elf = dir.join("probe_zst_agg.elf");
+    std::fs::write(&src, src_text).expect("写 probe_zst_agg.rs");
+    std::fs::write(&crt0_s, CORE_CRT0_S).expect("写 crt0_zst_agg.s");
+
+    let out = run(Command::new(&rustc).current_dir(&dir).args([
+        format!("-Zcodegen-backend={}", dll.display()).as_str(),
+        "--target",
+        "aarch64-unknown-none",
+        "--edition",
+        "2021",
+        "--crate-type",
+        "lib",
+        "-C",
+        "panic=abort",
+        "-C",
+        "opt-level=0",
+        "-C",
+        "debug-assertions=off",
+        "-C",
+        "overflow-checks=off",
+        "--emit=obj",
+        "--extern",
+        &format!("core={}", core.display()),
+        "--extern",
+        &format!("compiler_builtins={}", cb.display()),
+        src.to_str().unwrap(),
+        "-o",
+        obj.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "forge 编 ZST 聚合探针");
+
+    let out = run(Command::new(&clang).args([
+        "--target=aarch64-unknown-none",
+        "-c",
+        crt0_s.to_str().unwrap(),
+        "-o",
+        crt0_o.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "clang 汇编 ZST 聚合 crt0");
+    let out = run(Command::new(&ldlld).args([
+        "-m",
+        "aarch64elf",
+        "-Ttext=0x40000000",
+        "--entry=_start",
+        crt0_o.to_str().unwrap(),
+        obj.to_str().unwrap(),
+        core.to_str().unwrap(),
+        cb.to_str().unwrap(),
+        "-o",
+        elf.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "ld.lld 链接 ZST 聚合探针");
+    let out = run(Command::new(&qemu).args([
+        "-M",
+        "virt",
+        "-cpu",
+        "cortex-a57",
+        "-kernel",
+        elf.to_str().unwrap(),
+        "-nographic",
+        "-semihosting-config",
+        "enable=on,target=native",
+        "-monitor",
+        "none",
+        "-serial",
+        "none",
+        "-no-reboot",
+    ]));
+    let code = out
+        .status
+        .code()
+        .unwrap_or_else(|| panic!("qemu 异常终止：\n{}", String::from_utf8_lossy(&out.stderr)));
+    assert_eq!(
+        code & 0xFF,
+        7,
+        "ZST 聚合探针结果应为 7（got {code}；产物：{}）",
+        dir.display()
+    );
+}
 /// **大帧守卫**（v27 M6-115）：帧 > 4095 字节时 `sub sp, sp, #imm12` 一条写不出来。
 ///
 /// 之前只在 `frame_alloc` 上按槽的 `min/max` 分块；`frame_set`（fp ← sp + frame）
