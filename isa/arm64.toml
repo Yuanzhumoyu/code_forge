@@ -3358,6 +3358,40 @@ insts = [
   "MOVKX_G1_RELO {out}, {global}",
   "MOVKX_G0_RELO {out}, {global}",
 ]
+# 有符号乘溢出（v27 M6-113）：SMULH 拿高半，与"低半的符号扩展"比——不相等即溢出。
+# 32 位档先把两个操作数 sxtw 到 64 位（乘积精确进 64 位），再用 `p>>63 != p>>31` 判
+# "p 是否等于 sext32(low)"。
+[[lower.SmulOverflow]]
+when = { eq = ["rd", 32] }
+temps = ["g1:gpr", "g2:gpr", "g3:gpr", "g4:gpr", "g5:gpr", "g6:gpr", "g7:gpr", "g8:gpr", "g9:gpr"]
+insts = [
+  "MOVZW {g1}, 0",
+  "ADD_X_EXTW_NA {g3}, {g1}, {0}, 6",
+  "ADD_X_EXTW_NA {g4}, {g1}, {1}, 6",
+  "MULX {g5}, {g3}, {g4}",
+  "MULW {out}, {0}, {1}",
+  "MOVZW {g6}, 63",
+  "MOVZW {g7}, 31",
+  "ASRVX {g8}, {g5}, {g6}",
+  "ASRVX {g9}, {g5}, {g7}",
+  "CMPREGX {g8}, {g9}",
+  "MOVZW {g2}, 1",
+  "MOVZW {g1}, 0",
+  "CSELW {out2}, {g2}, 1, {g1}",
+]
+
+[[lower.SmulOverflow]]
+temps = ["g1:gpr", "g2:gpr", "g3:gpr", "g4:gpr", "g5:gpr"]
+insts = [
+  "SMULH {g1}, {0}, {1}",
+  "MULX {out}, {0}, {1}",
+  "MOVZW {g2}, 63",
+  "ASRVX {g3}, {out}, {g2}",
+  "CMPREGX {g1}, {g3}",
+  "MOVZW {g4}, 1",
+  "MOVZW {g5}, 0",
+  "CSELW {out2}, {g4}, 1, {g5}",
+]
 # 乘溢出（v27 M6-112）：无 SMULH 也够判**无符号**溢出——`a*b > MAX ⟺ b≠0 ∧ a > MAX/b`
 # （A64 的 UDIV 除零返回 0、不陷入，所以 b=0 要单独用 `b != 0` 掩掉）。分支自由。
 [[lower.UmulOverflow]]
@@ -3737,6 +3771,16 @@ rows = [
   { inst = "MULX", word_size = 64, slot = "r64", opcode = 0x4D8 },
   { inst = "MULW", word_size = 32, slot = "r32", opcode = 0xD8 },
 ]
+# 有符号 64×64 高半（v27 M6-113）：`smulh xd, xn, xm`，Ra 固定 31、o0=0
+#（MULADD 形状复用；opcode 0x4DA = madd 的 op31=010 档）。
+[inst.SMULH]
+# 用 MUL3 形状（rd/rn/rm 三个 reg 字段 + Ra 固定）——MULADD 的四字段顺序需要
+# `#0..#3` 全排列，3 操作数写不出来（validate 要求 0..2 不重复）。
+form = "MUL3"
+opcode = 0x4DA
+match = { ra = 31 }
+asm = "smulh {dst:r64:out}, {src:r64}, {src2:r64}"
+doc = "有符号乘法高 64 位（SMULH）：与 MUL 组合判有符号乘溢出。"
 [family.SDIV]
 body = { group = "sdiv", form = "DIV2A", opcode = "{opcode}", asm = "sdiv {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}", match = { op2d = 3 } }
 rows = [

@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-27) — arm64 SMULH 与 SmulOverflow
+
++ 新指令 `SMULH`（MUL3 形状，`ra` 固定 31）：有符号乘法的 64 位高半。
++ `SmulOverflow`（64/32）：64 位用 `SMULH + MUL + ASRV #63` 比较；32 位把操作数 `sxtw`
+  进 64 位乘积后判 `p>>63 != p>>31`。arm64 矩阵解锁 2 条 `smul_overflow_*` 用例
+  （**95 passed / 0 failed**）。
++ 注意：`ADD_X_EXTW_NA` 的 ext 字段是 `[enum.extend_w]` 枚举值（`sxtw = 6`）。
+
 ### Added (2026-10-27) — arm64 GlobalAddr + UmulOverflow（debug 档 core 探针真跑通）
 
 + `[asm.reloc.<名>]` 新数据键 `width`（补丁宽度，缺省 = 槽宽）与 `fixup`（`slot`|`inst`）：

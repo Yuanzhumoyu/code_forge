@@ -445,7 +445,20 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   **全局地址必须用数据段页对齐的 `p_vaddr`**，拿文件偏移当地址会"看起来对、一读就 fault"
   （实测挂起，已修）。
 
-**仍未覆盖**：有符号乘溢出（`SMULH`）、NEON 向量、原子、DWARF/CFI。
+**进度（2026-10-27，M6-113）——`SmulOverflow`（含新 `SMULH` 指令）**：
+
+- 新指令 `SMULH`（有符号 64×64 高半）：复用 **MUL3** 形状（`MULADD` 的四字段需要
+  `#0..#3` 全排列，3 操作数写不出来——validate 要求 0..2 不重复；MUL3 的 `ra` 由
+  `match = { ra = 31 }` 固定，正好）。
+- `SmulOverflow`：64 位档 = `SMULH` + `MUL` + `ASRV #63` 与高半比较（不相等即溢出）；
+  32 位档先把两操作数 `sxtw` 到 64 位（乘积精确），再用 `p>>63 != p>>31` 判
+  `p == sext32(low)`。**教训**：`ADD_X_EXTW_NA` 的最后一个字段是 `[enum.extend_w]` 的
+  **枚举值**（`sxtw = 6`，不是 `4`）——写错时"无溢出"被判成溢出。
+- 验收：arm64 矩阵解锁 2 条 `smul_overflow_*` 用例 ⇒ **95 passed / 0 failed**；
+  pins：arm64 `op_gap = 56,6,9,47`、`unassigned_bits = 272`、`spec_totals` 610、
+  `roundtrip.derived` +2、编码 digest 更新（全部经官方写入器/实测值刷新）。
+
+**仍未覆盖**：NEON 向量、原子、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

@@ -12,6 +12,15 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-27 · M6-113：SmulOverflow（新 `SMULH` 指令）
+
+- `SMULH` 走 **MUL3** 形状（MULADD 的 `#0..#3` 全排列在 3 操作数时被 validate 拒；MUL3 的
+  `ra` 用 `match = { ra = 31 }` 固定）。
+- `SmulOverflow` 64 位：`SMULH` + `MUL` + `ASRV #63` 比较；32 位：`sxtw` 两操作数进 64 位乘积，
+  `p>>63 != p>>31` 判溢出。ext 字段是**枚举值**（sxtw=6），写成 4（sxtb）会静默判错。
+- 矩阵解锁 2 条 `smul_overflow_*` 用例：arm64 **95 passed / 0 failed**；pins（op_gap
+  56,6,9,47 / unassigned_bits 272 / spec_totals 610 / roundtrip +2 / encoding digest）全部刷新。
+
 ### 2026-10-27 · M6-112：GlobalAddr + UmulOverflow（debug-assertions 探针真跑通）
 
 - `[asm.reloc.<名>]` 加数据键 `width`（补丁宽度）/`fixup`（slot|inst）：A64 的 MOVW 族是
