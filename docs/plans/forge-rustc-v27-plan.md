@@ -393,6 +393,11 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
 
 - O2 的 `USE-LOST`（基址 vreg 在定义块之前使用）另有一条独立线索：vcode 里出现
   "block 1 使用、block 5 才定义"的 xreg——同一函数内 xreg 编号复用，待与活跃区间问题一并查。
+- **诊断已加**：`FORGE_TRACE_LIVE=1` 现在同时打印每块的 `uses/defs/live_in/live_out`
+  （此前只有 succ 表与区间，看不出"哪一块的 uses 漏了"）——下一步用它逐块核对
+  "preheader 常量 → 循环头使用"这条链。另注意：分配后自检 `verify_no_overlap` 通过，
+  说明**区间之间不重叠**（不是"两个活区间抢同一寄存器"，而是**区间少覆盖了循环体**）。
+
 - **下一步**（明确）：查 `regalloc_bt` 的活跃区间构建——特别是
   **phi/循环携带值**与"定义在 preheader、使用在 loop body"的常量（本轮 x21 就是这类）；
   修好后用 core swap 探针（O0/O2 两档）做验收，再补 IR 级守卫。

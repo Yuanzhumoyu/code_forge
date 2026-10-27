@@ -371,6 +371,20 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
         }
     }
 
+    // 诊断：`FORGE_TRACE_LIVE=1` 打印每块的 uses/defs 与数据流结果。
+    // （2026-10-27 定位"preheader 常量在循环体里被复用"时补：只看 succ 与区间
+    // 看不出**是哪一块的 uses 漏了**，这里把活集原样打出来。）
+    if crate::pipeline::trace::knob("FORGE_TRACE_LIVE") {
+        for b in 0..num_blocks {
+            eprintln!(
+                "[live] b{b}: uses={:?} defs={:?} in={:?} out={:?}",
+                block_uses[b].iter().map(|x| x.index()).collect::<Vec<_>>(),
+                block_defs[b].iter().map(|x| x.index()).collect::<Vec<_>>(),
+                live_in[b].iter().map(|x| x.index()).collect::<Vec<_>>(),
+                live_out[b].iter().map(|x| x.index()).collect::<Vec<_>>(),
+            );
+        }
+    }
     // 扩展 interval 以覆盖跨块活跃范围
     // 仅当 XReg 来自前驱（在 block 外部定义）时扩展到 block_start
     // 仅当 XReg 到达后继时扩展到 block_end
