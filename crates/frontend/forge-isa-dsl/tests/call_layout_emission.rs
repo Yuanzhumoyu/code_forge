@@ -219,7 +219,7 @@ fn the_store_to_frame_sequence_keeps_its_order() {
             "Inst :: Addi { dst : Reg :: X2",
             "Inst :: Sd {",
             "Inst :: Ld {",
-            "Inst :: Addi { dst : Reg :: X2 , src : Reg :: X2 , imm : __frame_size as i64",
+            "Inst :: Addi { dst : Reg :: X2 , src : Reg :: X2 , imm : __sp_chunk",
             "Inst :: Ret",
         ),
         (
@@ -229,7 +229,7 @@ fn the_store_to_frame_sequence_keeps_its_order() {
             // v27 M6-106：callee-save 换到 scaled imm12（STURX/LDURX 的 imm9 只到 ±256B）。
             "Inst :: Strx {",
             "Inst :: Ldrx {",
-            "Inst :: Addimmx { dst : Reg :: SP",
+            "Inst :: Addimmx { dst : Reg :: SP , src : Reg :: SP , imm : __sp_chunk",
             "Inst :: Ret",
         ),
     ] {

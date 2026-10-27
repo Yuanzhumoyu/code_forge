@@ -3519,6 +3519,14 @@ insts = [
   "CSELW {g4}, {g6}, 1, {g7}",
   "ANDREGW {out2}, {g3}, {g4}",
 ]
+# Clz（前导零计数）：A64 标量 CLZ；窄类型的 32-w 修正在 legalize 层做（见
+# `legalize/int_width.rs`），谱里只需覆盖 32/64 两种寄存器宽度。
+[[lower.Clz]]
+when = { eq = ["rd", 64] }
+insts = ["CLZX {out}, {0}"]
+
+[[lower.Clz]]
+insts = ["CLZW {out}, {0}"]
 [[lower.Iadd]]
 dispatch = "rs1_width"
 insts = ["ADDREGX {out}, {0}, {1}"]
@@ -3930,6 +3938,27 @@ rows = [
   { inst = "CASALW", slot = "r32", opcode = 0x88 },
 ]
 
+# ── 标量位运算单操作数（v27 M6-115）：CLZ/RBIT（DP1BIT 形状）────────────
+[form.DP1BIT]
+# opcode[31:21]（X/W 两档）+ Rd[4:0] + Rn[9:5] + op2[12:10]（RBIT=0/REV16=1/REV32=2/REV=3/CLZ=4）
+fields = [
+  "u11[31:21]:opcode",
+  "u5[4:0]:rd",
+  "u5[9:5]:rn",
+  "u3[12:10]:op2",
+]
+[family.CLZ]
+body = { form = "DP1BIT", asm = "clz {dst:{slot}:out}, {src:{slot}}" }
+rows = [
+  { inst = "CLZX", slot = "r64", opcode = 0x6D6, match = { op2 = 4 } },
+  { inst = "CLZW", slot = "r32", opcode = 0x2D6, match = { op2 = 4 } },
+]
+[family.RBIT]
+body = { form = "DP1BIT", asm = "rbit {dst:{slot}:out}, {src:{slot}}" }
+rows = [
+  { inst = "RBITX", slot = "r64", opcode = 0x6D6, match = { op2 = 0 } },
+  { inst = "RBITW", slot = "r32", opcode = 0x2D6, match = { op2 = 0 } },
+]
 [family.SDIV]
 body = { group = "sdiv", form = "DIV2A", opcode = "{opcode}", asm = "sdiv {dst:{slot}:out}, {src:{slot}}, {src2:{slot}}", match = { op2d = 3 } }
 rows = [
@@ -4980,7 +5009,7 @@ addr = "gpr64"
 value_gpr = "gpr64"
 value_fpr = "fpr64"
 # 机器事实（v20 A5）：溢出与栈参数收参用的 scratch（emission 的 spill load/store 也用它）。
-scratch = ["X16", "X17", "X18"]
+scratch = ["X15", "X16", "X17", "X18"]
 # callee-saved 不再由谱面声明（v21 W9）：唯一来源 = 约定数据（AbiPlan/绑定），
 # 序言按 plan 的整张表推。
 # regalloc 不可分配：X18 = 平台寄存器；X30 = lr（BL 返回地址/prologue

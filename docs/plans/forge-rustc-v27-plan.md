@@ -473,6 +473,21 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   非原子路径），`FORGE_A64_CPU` 可覆盖。
 - pins：arm64 `op_gap = 58,6,9,45`、`spec_totals` 622、`roundtrip` +24、encoding digest 更新。
 
+**进度（2026-10-28，M6-115）——真实 core 程序的三处阻塞**：
+
+- **`select_unpredictable`**：降级层新增 intrinsic 映射（语义就是 `Select`，分支预测提示后端
+  无法表达）——缺了它 core 的 sort 实现整条编不过。
+- **`Clz`**：新 `[form.DP1BIT]` + `CLZ`/`RBIT`（X/W 两档，clang 逐字节核对）；窄宽度的
+  `32-w` 修正在 legalize 层，谱只覆盖 32/64。arm64 `op_gap` 因此 59/44。
+- **大帧**：`sub sp, sp, #imm12` 只到 4095；`[u64; 600]`（帧 5936B）实测直接失败
+  （`Addimmx: immediate 5936 out of range`）。`sp_adjust` 与 **`frame_set`（fp ← sp + frame）**
+  现在都按**槽的 `min/max`** 分块（宿主不写死上限），落点仍是 frame_size；守卫
+  `rustc_aarch64_big_frame_probe_runs_under_qemu` 在 O0/O2 都真执行出 1799。
+- **已知阻塞（另案）**：`store i1 <常量>` 会拿到一个**已被墓碑化**的 `Iconst` 结果
+  （`ValueData.ty = VOID`），desc 变成 `bits: 0` ⇒ `Store no matching rule`。触发者是
+  DCE/某 pass 删了仍被 Store 引用的 Iconst（use-list 刷新漏点）。真实 fmt/sort 程序卡
+  在这里；修法必须钉在 IR 侧（删除必须连带重导向使用点），不是给 lowering 猜宽度。
+
 **仍未覆盖**：NEON 向量、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）

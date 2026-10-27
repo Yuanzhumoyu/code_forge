@@ -599,6 +599,7 @@ fn frame_size_imm(frame: &AbiFrame) -> TokenStream {
 /// （伪指令发射带尾逗号、模板行发射不带），与机器码无关。
 fn sp_adjust_stmt(
     infos: &[InstInfo],
+    model: &IsaModel,
     frame: &AbiFrame,
     role: Role,
     imm: &TokenStream,
@@ -616,16 +617,73 @@ fn sp_adjust_stmt(
     if imm_fids.is_empty() {
         return Err(format!("[{inst}] 作为帧调整指令需要一个 imm 槽"));
     }
+    // **立即数超范围时按槽的 min/max 分块**（v27 M6-115）：A64 的 `sub sp,sp,#imm12`
+    // 只到 4095，排序/格式化这类函数的帧可达几千字节（实测 4752）⇒ 一条写不出来。
+    // 分块依据来自槽数据（`[operand.<名>].min/max`），宿主不按 ISA 写死上限；
+    // 块间没有访存/调用，SP 的中间值不参与语义，最终落点仍是 frame_size。
+    let imm_slot = infos
+        .iter()
+        .find(|i| i.inst.name == inst)
+        .and_then(|i| {
+            i.operands
+                .iter()
+                .find(|(_, fid, _, _)| (*fid).clone() == imm_fids[0].clone())
+                .map(|(_, _, slot, _)| slot.name.clone())
+        })
+        .and_then(|name| model.operand_slots.iter().find(|s| s.name == name).cloned());
+    let (lo, hi) = imm_slot
+        .as_ref()
+        .map(|s| {
+            let width = s.width.unwrap_or(64).clamp(1, 62);
+            let signed = s.signed.unwrap_or(false);
+            let lo = s
+                .min
+                .unwrap_or(if signed { -(1i64 << (width - 1)) } else { 0 });
+            let hi = s.max.unwrap_or(if signed {
+                (1i64 << (width - 1)) - 1
+            } else {
+                (1i64 << width) - 1
+            });
+            (lo, hi)
+        })
+        .unwrap_or((i64::MIN / 2, i64::MAX / 2));
+    let lo_lit = proc_macro2::Literal::i64_unsuffixed(lo);
+    let hi_lit = proc_macro2::Literal::i64_unsuffixed(hi);
     let mut binds: Vec<TokenStream> = reg_fids.iter().map(|f| quote! { #f: Reg::#sp }).collect();
-    binds.extend(imm_fids.iter().map(|f| quote! { #f: #imm }));
+    binds.extend(imm_fids.iter().map(|f| quote! { #f: __sp_chunk }));
     let ctor = if trail {
         quote! { Inst::#vn { #(#binds,)* } }
     } else {
         quote! { Inst::#vn { #(#binds),* } }
     };
     let body = quote! {
-        let __bytes = encode(&#ctor).map_err(|e| crate::IrError::Emit(e))?;
-        __sink.put_bytes(&__bytes);
+        let mut __sp_adj: i64 = #imm;
+        let mut __sp_emitted = false;
+        while __sp_adj > #hi_lit {
+            let __sp_chunk = #hi_lit;
+            let __bytes = encode(&#ctor).map_err(|e| crate::IrError::Emit(e))?;
+            __sink.put_bytes(&__bytes);
+            __sp_adj -= #hi_lit;
+            __sp_emitted = true;
+        }
+        if #lo_lit < 0 {
+            while __sp_adj < #lo_lit {
+                let __sp_chunk = #lo_lit;
+                let __bytes = encode(&#ctor).map_err(|e| crate::IrError::Emit(e))?;
+                __sink.put_bytes(&__bytes);
+                __sp_adj -= #lo_lit;
+                __sp_emitted = true;
+            }
+        } else if __sp_adj < 0 {
+            return Err(crate::IrError::Emit(
+                "sp 调整值超出该 ISA 立即数范围（槽 min = 0，分块无法表达负数）".into(),
+            ));
+        }
+        if __sp_adj != 0 || !__sp_emitted {
+            let __sp_chunk = __sp_adj;
+            let __bytes = encode(&#ctor).map_err(|e| crate::IrError::Emit(e))?;
+            __sink.put_bytes(&__bytes);
+        }
     };
     Ok(Some(if guarded {
         quote! { if __frame_size != 0 { #body } }
@@ -633,10 +691,48 @@ fn sp_adjust_stmt(
         body
     }))
 }
+/// 找某条指令某个 imm 字段所属槽的 `(min, max)`（缺省按 width/signed 推）。
+///
+/// 帧相关立即数（frame_set / sp 调整）用它做**分块**：A64 的 imm12 只到 4095，
+/// 排序/格式化函数的帧可达几千字节；上限来自槽数据，宿主不写死。
+fn imm_range_of(
+    model: &IsaModel,
+    infos: &[InstInfo],
+    inst: &str,
+    fid: &proc_macro2::Ident,
+) -> (i64, i64) {
+    let slot = infos
+        .iter()
+        .find(|i| i.inst.name == inst)
+        .and_then(|i| {
+            i.operands
+                .iter()
+                .find(|(_, f, _, _)| (*f).clone() == *fid)
+                .map(|(_, _, s, _)| s.name.clone())
+        })
+        .and_then(|name| model.operand_slots.iter().find(|s| s.name == name).cloned());
+    match slot {
+        Some(s) => {
+            let width = s.width.unwrap_or(64).clamp(1, 62);
+            let signed = s.signed.unwrap_or(false);
+            let lo = s
+                .min
+                .unwrap_or(if signed { -(1i64 << (width - 1)) } else { 0 });
+            let hi = s.max.unwrap_or(if signed {
+                (1i64 << (width - 1)) - 1
+            } else {
+                (1i64 << width) - 1
+            });
+            (lo, hi)
+        }
+        None => (i64::MIN / 2, i64::MAX / 2),
+    }
+}
 
 /// `frame_set`：序言 `fp ← sp`（定宽 ISA 同时 `+ frame_size`）/ 尾声 `sp ← fp`。
 fn frame_set_stmt(
     infos: &[InstInfo],
+    model: &IsaModel,
     frame: &AbiFrame,
     is_prologue: bool,
 ) -> Result<Option<TokenStream>, String> {
@@ -657,28 +753,74 @@ fn frame_set_stmt(
     let vn = info.vn.clone();
     let sp = format_ident!("{}", frame.sp);
     let fp = format_ident!("{fp_name}");
-    let (src_reg, dst_reg) = if is_prologue { (sp, fp) } else { (fp, sp) };
+    let (src_reg, dst_reg) = if is_prologue {
+        (sp, fp.clone())
+    } else {
+        (fp.clone(), sp)
+    };
     let mut binds: Vec<TokenStream> = Vec::new();
+    let mut imm_fid: Option<proc_macro2::Ident> = None;
     for (_, fid, slot, _) in info.operands.iter() {
         if *fid == src_fid {
             binds.push(quote! { #fid: Reg::#src_reg });
         } else if *fid == dst_fid {
             binds.push(quote! { #fid: Reg::#dst_reg });
         } else if matches!(slot.kind, OperandKind::Imm | OperandKind::Label) {
+            imm_fid = Some(fid.clone());
             let imm = if is_prologue {
-                quote! { __frame_size as i64 }
+                quote! { __fs_chunk }
             } else {
                 quote! { 0i64 }
             };
             binds.push(quote! { #fid: #imm });
         }
     }
+    let Some(fid) = imm_fid else {
+        return Ok(Some(quote! {
+            let __bytes =
+                encode(&Inst::#vn { #(#binds),* }).map_err(|e| crate::IrError::Emit(e))?;
+            __sink.put_bytes(&__bytes);
+        }));
+    };
+    if !is_prologue {
+        return Ok(Some(quote! {
+            let __bytes =
+                encode(&Inst::#vn { #(#binds),* }).map_err(|e| crate::IrError::Emit(e))?;
+            __sink.put_bytes(&__bytes);
+        }));
+    }
+    // 序言带立即数：`hi` 之外分块；第一块 `src = sp`，后续块 `src = fp`（累加）。
+    let (_, hi) = imm_range_of(model, infos, &inst, &fid);
+    let hi_lit = proc_macro2::Literal::i64_unsuffixed(hi);
+    let ctor_first = quote! { Inst::#vn { #(#binds),* } };
+    let lits: Vec<TokenStream> = binds.iter().map(|_| quote! {}).collect();
+    let _ = lits;
+    let mut binds_next: Vec<TokenStream> = Vec::new();
+    for (_, f2, slot, _) in info.operands.iter() {
+        if *f2 == src_fid || *f2 == dst_fid {
+            binds_next.push(quote! { #f2: Reg::#fp });
+        } else if matches!(slot.kind, OperandKind::Imm | OperandKind::Label) {
+            binds_next.push(quote! { #f2: __fs_chunk });
+        }
+    }
+    let ctor_next = quote! { Inst::#vn { #(#binds_next),* } };
     Ok(Some(quote! {
-        let __bytes = encode(&Inst::#vn { #(#binds),* }).map_err(|e| crate::IrError::Emit(e))?;
-        __sink.put_bytes(&__bytes);
+        let mut __fs_adj: i64 = __frame_size as i64;
+        let mut __fs_first = true;
+        while __fs_adj > 0 {
+            let __fs_chunk = if __fs_adj > #hi_lit { #hi_lit } else { __fs_adj };
+            let __bytes = if __fs_first {
+                encode(&#ctor_first)
+            } else {
+                encode(&#ctor_next)
+            }
+            .map_err(|e| crate::IrError::Emit(e))?;
+            __sink.put_bytes(&__bytes);
+            __fs_adj -= __fs_chunk;
+            __fs_first = false;
+        }
     }))
 }
-
 /// `callee_save` / `callee_load`：Reg 槽[0] = 值、Reg 槽[1] = 基址、Imm 槽 = 偏移。
 ///
 /// `inst` 是**已解析好的指令名**（调用方按寄存器类解析，见
@@ -834,7 +976,7 @@ fn ret_stmt(infos: &[InstInfo]) -> Result<TokenStream, String> {
 #[allow(clippy::too_many_arguments)]
 fn gen_push_mechanism(
     infos: &[InstInfo],
-    _model: &IsaModel,
+    model: &IsaModel,
     frame: &AbiFrame,
     push_inst: &str,
     pop_inst: &str,
@@ -873,7 +1015,7 @@ fn gen_push_mechanism(
         if !fp_name.is_empty() {
             pre.push(push_one(&fp_name));
         }
-        if let Some(s) = frame_set_stmt(infos, frame, true)? {
+        if let Some(s) = frame_set_stmt(infos, model, frame, true)? {
             pre.push(s);
         }
         // callee-saved：**运行时按 `alloc_result.callee_saved_to_save` 循环**（v20 A6）。
@@ -890,18 +1032,20 @@ fn gen_push_mechanism(
             }
         });
         let imm = frame_size_imm(frame);
-        if let Some(s) = sp_adjust_stmt(infos, frame, Role::FrameAlloc, &imm, true, true)? {
+        if let Some(s) = sp_adjust_stmt(infos, model, frame, Role::FrameAlloc, &imm, true, true)? {
             post.push(s);
         }
     } else {
-        if let Some(s) = frame_set_stmt(infos, frame, false)? {
+        if let Some(s) = frame_set_stmt(infos, model, frame, false)? {
             pre.push(s);
         }
         // `sp -= callee-saved 区`：把 sp 从 fp 退到最后一个 push 槽。**长度取运行时值**
         // （与上面的 push 循环同源），否则"少保存时 sp 落点错位"。
         // `trail = false` = 模板时代的字面量形态。
         let cs_imm = quote! { (__rm.callee_saved_to_save.len() as i64) * (__SLOT_BYTES as i64) };
-        if let Some(s) = sp_adjust_stmt(infos, frame, Role::FrameAlloc, &cs_imm, false, false)? {
+        if let Some(s) =
+            sp_adjust_stmt(infos, model, frame, Role::FrameAlloc, &cs_imm, false, false)?
+        {
             pre.push(s);
         }
         pre.push(quote! {
@@ -956,7 +1100,7 @@ fn gen_store_mechanism(
         role_name_for_class(infos, Role::CalleeLoad, crate::dsl::model::RoleClass::Gpr);
     if is_prologue {
         let imm = frame_size_imm(frame);
-        if let Some(s) = sp_adjust_stmt(infos, frame, Role::FrameAlloc, &imm, true, true)? {
+        if let Some(s) = sp_adjust_stmt(infos, model, frame, Role::FrameAlloc, &imm, true, true)? {
             pre.push(s);
         }
         if fp_push >= 2 * slot
@@ -979,7 +1123,7 @@ fn gen_store_mechanism(
                 pre.push(s);
             }
         }
-        if let Some(s) = frame_set_stmt(infos, frame, true)? {
+        if let Some(s) = frame_set_stmt(infos, model, frame, true)? {
             pre.push(s);
         }
         if let Some(s) = callee_saved_loop(infos, Role::CalleeSave, true, &sp, fp_push)? {
@@ -1011,7 +1155,7 @@ fn gen_store_mechanism(
             }
         }
         let imm = quote! { __frame_size as i64 };
-        if let Some(s) = sp_adjust_stmt(infos, frame, Role::FrameFree, &imm, true, true)? {
+        if let Some(s) = sp_adjust_stmt(infos, model, frame, Role::FrameFree, &imm, true, true)? {
             pre.push(s);
         }
         pre.push(ret_stmt(infos)?);

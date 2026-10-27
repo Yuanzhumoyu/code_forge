@@ -367,6 +367,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 }
             }
 
+            // `select_unpredictable(cond, true_val, false_val)`（v27 M6-115）：语义就是
+            // Select，只是加了"分支预测器提示"——后端没法表达提示，直接映射成 Select
+            // （core 的 sort 实现会用它，缺了整条排序编不过）。
+            "select_unpredictable" => {
+                let (c, t, f) = (args[0], args[1], args[2]);
+                vec![self.builder.select(c, t, f)]
+            }
             "disjoint_bitor" => {
                 let (a, b) = (args[0], args[1]);
                 vec![self.builder.bor(a, b)]

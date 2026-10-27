@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-28) — aarch64：`select_unpredictable` / `Clz` / 大帧
+
++ `select_unpredictable` intrinsic 映射到 `Select`（core 的 sort 实现依赖它）。
++ 新 `[form.DP1BIT]` 与 `CLZ`/`RBIT`（X/W 两档）；`Clz` 降级补齐（arm64 op_gap 59/44）。
++ 帧调整分块：`sp_adjust`（frame_alloc/free）与 `frame_set` 都按槽 `min/max` 发多条，
+  `[u64; 600]`（5936B 帧）在 O0/O2 真执行通过（守卫
+  `rustc_aarch64_big_frame_probe_runs_under_qemu`，期望 1799）。
++ pins：arm64 `59, 6, 9, 44` / `unassigned_bits 276` / `vary 61` / `spec_totals 626`。
+
 ### Added (2026-10-27) — arm64 原子（LSE：SWPAL/LDADDAL/LDCLRAL/LDSETAL/LDEORAL/CASAL）
 
 + 新 `[form.LSE3]` 与六个原子族（X/W 两档）：`AtomicRmw`（xchg/add/sub/and/or/xor）与

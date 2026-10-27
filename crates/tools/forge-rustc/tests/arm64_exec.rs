@@ -709,6 +709,172 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
         dir.display()
     );
 }
+/// **大帧守卫**（v27 M6-115）：帧 > 4095 字节时 `sub sp, sp, #imm12` 一条写不出来。
+///
+/// 之前只在 `frame_alloc` 上按槽的 `min/max` 分块；`frame_set`（fp ← sp + frame）
+/// 仍是一条 `add imm12`，实测 `[u64; 600]`（4800B，帧 5936B）直接编译失败：
+/// `Addimmx: immediate 5936 out of range [0, 4095]`。现在两处都按槽范围分块，
+/// 落点仍是 frame_size（中间值不参与语义）。
+///
+/// 断言真执行：a=1 ⇒ big[i] = 3i+1 ⇒ big[0]+big[599] = 1+1798 = **1799**。
+#[test]
+fn rustc_aarch64_big_frame_probe_runs_under_qemu() {
+    let dll = backend_dll();
+    if !dll.is_file() {
+        eprintln!("SKIP: 后端 dylib 缺失（先 `cargo build -p forge-rustc`）");
+        return;
+    }
+    let (Some(clang), Some(ldlld)) = (tool("clang"), tool("ld.lld")) else {
+        eprintln!("SKIP: 缺 clang / ld.lld");
+        return;
+    };
+    let Some(qemu) = qemu_aarch64() else {
+        eprintln!("SKIP: qemu-system-aarch64 未安装");
+        return;
+    };
+    let rustc = std::env::var_os("RUSTC").map_or_else(|| "rustc".into(), PathBuf::from);
+    let sysroot = run(Command::new(&rustc).arg("--print").arg("sysroot"));
+    assert_ok(&sysroot, "rustc --print sysroot");
+    let sysroot = PathBuf::from(String::from_utf8_lossy(&sysroot.stdout).trim());
+    let lib_dir = sysroot.join("lib/rustlib/src/rust/library");
+    let core_src = lib_dir.join("core/src/lib.rs");
+    let cb_src = lib_dir.join("compiler-builtins/compiler-builtins/src/lib.rs");
+    if !core_src.is_file() || !cb_src.is_file() {
+        eprintln!("SKIP: 缺 rust-src（{}）", lib_dir.display());
+        return;
+    }
+
+    let dir = workspace_root()
+        .join("target")
+        .join("tmp")
+        .join("arm64-core-probe")
+        .join("big_frame");
+    let sys = dir.join("sysroot");
+    std::fs::create_dir_all(&sys).expect("创建产物目录");
+    let core = build_target_rlib(&rustc, &sys, "core", &core_src, &[]);
+    let cb = build_target_rlib(
+        &rustc,
+        &sys,
+        "compiler_builtins",
+        &cb_src,
+        &[
+            "--cfg",
+            r#"feature="mem""#,
+            "--cfg",
+            r#"feature="compiler-builtins""#,
+            "--extern",
+            &format!("core={}", core.display()),
+        ],
+    );
+
+    let src_text = r#"#![no_std]
+#![no_main]
+
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! { loop {} }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forge_entry(a: i32) -> i32 {
+    let mut big = [0u64; 600];
+    let mut i = 0usize;
+    while i < big.len() {
+        big[i] = (i as u64).wrapping_mul(3).wrapping_add(a as u64);
+        i += 1;
+    }
+    big[0].wrapping_add(big[599]) as i32
+}
+"#
+    .to_string();
+
+    let src = dir.join("probe_big_frame.rs");
+    let crt0_s = dir.join("crt0_big_frame.s");
+    let crt0_o = dir.join("crt0_big_frame.o");
+    std::fs::write(&src, &src_text).expect("写 probe_big_frame.rs");
+    std::fs::write(&crt0_s, CORE_CRT0_S).expect("写 crt0_big_frame.s");
+
+    for opt in ["0", "2"] {
+        let obj = dir.join(format!("probe_big_frame_o{opt}.o"));
+        let elf = dir.join(format!("probe_big_frame_o{opt}.elf"));
+        let out = run(Command::new(&rustc).current_dir(&dir).args([
+            format!("-Zcodegen-backend={}", dll.display()).as_str(),
+            "--target",
+            "aarch64-unknown-none",
+            "--edition",
+            "2021",
+            "--crate-type",
+            "lib",
+            "-C",
+            "panic=abort",
+            "-C",
+            &format!("opt-level={opt}"),
+            "-C",
+            "debug-assertions=off",
+            "-C",
+            "overflow-checks=off",
+            "--emit=obj",
+            "--extern",
+            &format!("core={}", core.display()),
+            "--extern",
+            &format!("compiler_builtins={}", cb.display()),
+            src.to_str().unwrap(),
+            "-o",
+            obj.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("forge 编大帧探针（O{opt}）"));
+
+        let out = run(Command::new(&clang).args([
+            "--target=aarch64-unknown-none",
+            "-c",
+            crt0_s.to_str().unwrap(),
+            "-o",
+            crt0_o.to_str().unwrap(),
+        ]));
+        assert_ok(&out, "clang 汇编大帧 crt0");
+        let out = run(Command::new(&ldlld).args([
+            "-m",
+            "aarch64elf",
+            "-Ttext=0x40000000",
+            "--entry=_start",
+            crt0_o.to_str().unwrap(),
+            obj.to_str().unwrap(),
+            core.to_str().unwrap(),
+            cb.to_str().unwrap(),
+            "-o",
+            elf.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("ld.lld 链接大帧探针（O{opt}）"));
+        let out = run(Command::new(&qemu).args([
+            "-M",
+            "virt",
+            "-cpu",
+            "cortex-a57",
+            "-kernel",
+            elf.to_str().unwrap(),
+            "-nographic",
+            "-semihosting-config",
+            "enable=on,target=native",
+            "-monitor",
+            "none",
+            "-serial",
+            "none",
+            "-no-reboot",
+        ]));
+        let code = out.status.code().unwrap_or_else(|| {
+            panic!(
+                "qemu 异常终止（O{opt}）：\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            )
+        });
+        assert_eq!(
+            code & 0xFF,
+            1799 & 0xFF,
+            "大帧探针结果应为 1799（got {code}，O{opt}；产物：{}）",
+            dir.display()
+        );
+    }
+}
 /// **core 真程序守卫**（v27 M6-111）：`core::mem::swap` + 循环在 **O0/O2 两档**都要跑对。
 ///
 /// 这条用例覆盖的是本轮修掉的两个数据缺口：

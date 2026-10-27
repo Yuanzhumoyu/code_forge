@@ -12,6 +12,17 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-28 · M6-115：`select_unpredictable` / `Clz` / 大帧分块
+
+- `select_unpredictable` → `Select`（core sort 的硬前置）。
+- 新 `[form.DP1BIT]` + `CLZ`/`RBIT`（X/W）；`Clz` 窄宽度修正在 legalize，谱只写 32/64。
+- 帧调整按槽 `min/max` 分块：`sp_adjust`（frame_alloc/free）与 `frame_set`（fp ← sp+frame）
+  都改；`[u64; 600]`（5936B 帧）在 O0/O2 真跑通（1799）。守卫：
+  `rustc_aarch64_big_frame_probe_runs_under_qemu`。
+- **未修（另案）**：`store i1 <常量>` 引用了被墓碑化的 `Iconst`（ty 被置 VOID）⇒
+  `Store no matching rule`。根因是"删指令 + use-list 未刷新"，须在 IR 侧修（别在 lowering
+  猜位宽）。pins：arm64 `59, 6, 9, 44`、`unassigned_bits 276`、`vary 61`、`spec_totals 626`。
+
 ### 2026-10-27 · M6-114：arm64 原子（LSE 单指令）
 
 - `[form.LSE3]` + SWPAL/LDADDAL/LDCLRAL/LDSETAL/LDEORAL/CASAL（X/W）：A/R=1 用 seqcst 档；
