@@ -215,6 +215,8 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
     vcode: &crate::VCode<I>,
     inst_ops: &[smallvec::SmallVec<[crate::machine::lowering::OperandBind; 2]>],
     param_xregs: &[XReg],
+    // 函数名：只服务诊断（`FORGE_TRACE_LIVE_FN` 过滤），不参与任何计算。
+    func_name: &str,
 ) -> HashMap<XReg, LiveInterval> {
     // 收集所有块（迭代器不暴露 len）
     let blocks: Vec<_> = vcode.blocks().collect();
@@ -223,6 +225,9 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
     // 构建 IR Block → VCode block index 的映射
     let mut ir_block_to_vblock: SecondaryMap<Block, usize> = SecondaryMap::new();
     for (idx, block) in blocks.iter().enumerate() {
+        if crate::pipeline::trace::knob("FORGE_TRACE_LIVE") {
+            eprintln!("[live] vblock{idx} -> ir {:?}", block.ir_block);
+        }
         ir_block_to_vblock.insert(block.ir_block, idx);
     }
 
@@ -311,7 +316,13 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
         for inst in &block.instructions {
             if inst.is_branch() {
                 for target_ir in inst.branch_targets().iter() {
-                    if let Some(&target_idx) = ir_block_to_vblock.get(*target_ir) {
+                    let mapped = ir_block_to_vblock.get(*target_ir);
+                    if crate::pipeline::trace::knob("FORGE_TRACE_LIVE") {
+                        eprintln!(
+                            "[live] branch b{block_idx} {inst:?} target_ir={target_ir:?} -> vblock={mapped:?}"
+                        );
+                    }
+                    if let Some(&target_idx) = mapped {
                         block_succs[block_idx].push(target_idx);
                     }
                 }
@@ -374,7 +385,12 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
     // 诊断：`FORGE_TRACE_LIVE=1` 打印每块的 uses/defs 与数据流结果。
     // （2026-10-27 定位"preheader 常量在循环体里被复用"时补：只看 succ 与区间
     // 看不出**是哪一块的 uses 漏了**，这里把活集原样打出来。）
-    if crate::pipeline::trace::knob("FORGE_TRACE_LIVE") {
+    let live_wanted = crate::pipeline::trace::knob("FORGE_TRACE_LIVE")
+        && std::env::var("FORGE_TRACE_LIVE_FN")
+            .ok()
+            .is_none_or(|w| func_name.contains(&w));
+    if live_wanted {
+        eprintln!("[live] === fn: {func_name}");
         for b in 0..num_blocks {
             eprintln!(
                 "[live] b{b}: uses={:?} defs={:?} in={:?} out={:?}",

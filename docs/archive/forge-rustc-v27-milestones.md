@@ -12,6 +12,16 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-27 · M6-111：core swap 修好（控制流 effect 缺失 ⇒ CFG 无边）
+
+- **根因**：`is_branch`/`branch_targets` 只从 `effect` 派生；arm64 的 `B`/`B_*`/`CBZ`/`CBNZ`
+  没写 effect（只有 `roles`）⇒ 活区间的 CFG 没有分支边、循环回边丢失 ⇒ preheader 常量被当成
+  已死，寄存器在循环体里被复用（swap 的上界 `x21` 被指针覆盖 → 越界 fault）。
+- **修法（纯数据）**：arm64 `B`/`BR`=Jump、`B_*`/`CBZ`/`CBNZ`=Branch、`BL`/`BLR`=Call；
+  riscv `JAL`=Call+Jump、`B 型`=Branch。CFG 修好后溢出压力上升，arm64 scratch 2→3（X16-X18）。
+- **验收**：swap+循环探针 **O0/O2 都跑出 8**（此前都挂）；新守卫
+  `rustc_aarch64_core_swap_probe_runs_under_qemu` 两档钉住；`isa-dsl.md` 加 effect 红线说明。
+
 ### 2026-10-27 · M6-109：core swap 根因定位（循环不动量活跃区间丢失）
 
 - **对照实验**：同探针纯 LLVM 编（加 `memcmp/memset/memcpy/__udivti3` stub）跑出 8 ⇒

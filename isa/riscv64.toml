@@ -918,7 +918,7 @@ rows = [
 
 # ── B 型分支（opcode 0x63；funct3 区分）──
 [family.BB]
-body = { form = "B", opcode = 0x63, asm = "{inst.lower} {src:gpr}, {src2:gpr}, {target:off_b}", doc = "B 型条件分支：比较两个寄存器后相对目标标签跳转，属终结指令；操作数 {ops}。" }
+body = { form = "B", opcode = 0x63, asm = "{inst.lower} {src:gpr}, {src2:gpr}, {target:off_b}", effect = ["Branch"], doc = "B 型条件分支：比较两个寄存器后相对目标标签跳转，属终结指令；操作数 {ops}。" }
 rows = [
   { inst = "BEQ", match = { funct3 = 0 }, roles = [
     "branch",
@@ -1399,6 +1399,9 @@ roles = ["callee_save", "stack_arg_store"]
 
 [inst.JAL]
 roles = ["call", "jump"]
+# 控制流 effect（v27 M6-111，与 arm64 同因）：活区间的 CFG 靠 effect 推导
+# `is_branch`/`branch_targets`；缺了它循环回边/尾声跳转都不进 CFG。
+effect = ["Call", "Jump"]
 form = "J"
 opcode = 0x6F
 asm = "jal {dst:gpr:out}, {target:off_j}"

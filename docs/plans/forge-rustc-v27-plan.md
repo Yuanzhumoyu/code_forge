@@ -402,7 +402,26 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   **phi/循环携带值**与"定义在 preheader、使用在 loop body"的常量（本轮 x21 就是这类）；
   修好后用 core swap 探针（O0/O2 两档）做验收，再补 IR 级守卫。
 
-**仍未覆盖**：core swap（活跃区间 bug）、`GlobalAddr`/乘溢出、NEON 向量、原子、DWARF/CFI。
+**进度（2026-10-27，M6-111）——core swap 修好：缺的是控制流 effect（CFG 无边）**：
+
+- **根因**：生成物的 `is_branch`/`branch_targets` **只从 `effect` 派生**，而 arm64 的
+  `B`/`B_*`/`CBZ`/`CBNZ` 当时**没写 effect**（`B` 只有 `roles`）⇒ 所有分支边都不进
+  liveness 的 CFG ⇒ 循环回边丢失 ⇒ "preheader 定义、循环头使用"的值被当成已死，寄存器
+  在循环体里被复用（`core::mem::swap` 的上界 `x21` 被"指针 y + i*8"覆盖 → `cmp` 永真、
+  指针越界 fault）。
+- **修法（纯数据）**：arm64 补 `effect`：`B`/`BR` = Jump、`B_*`/`CBZ`/`CBNZ` = Branch、
+  `BL`/`BLR` = Call；riscv 同缺口一并补（`JAL` = Call+Jump、`B 型` = Branch）。
+- **连带**：CFG 修好后溢出压力真实上升，实测"一条指令要 3 个 scratch"⇒ arm64 谱面
+  `[machine].scratch` 从 2 个补到 3 个（X16/X17/X18）。
+- **验收**：`core::mem::swap` + 循环探针在 **O0 与 O2 两档都真跑出 8**（此前两档都挂）；
+  新守卫 `rustc_aarch64_core_swap_probe_runs_under_qemu`（两档都跑、断言 8）钉住。
+- 附：`docs/reference/isa-dsl.md` 的 effect 小节加了"控制流指令必须写 effect"的红线说明。
+- 附带两处工程修正：① 新增 `FORGE_TRACE_LIVE_FN`（函数名过滤，已进 KNOBS 台账与契约文档表——
+  否则 `trace_knobs` 三方守卫红）；② `arm64_exec` 的三条 core 探针测试改为**各自独立子目录 +
+  `current_dir`**：它们原先共享同一 `target/tmp/arm64-core-probe`，并行跑时 rustc 的
+  `-o` 复制会撞上 `forge_codegen_output*` 临时产物 → `无法把对象写到 …（os error 2）`。
+
+**仍未覆盖**：`GlobalAddr`/乘溢出、NEON 向量、原子、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

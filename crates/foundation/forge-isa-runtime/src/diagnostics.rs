@@ -179,7 +179,7 @@ impl Knob {
 /// v26 M1 从 `forge-codegen::pipeline::trace` 下沉到这里，并把**两侧**的名字并成一张表
 /// （后端 11 项 + 直读项 + `forge-rustc` 27 项）。下沉的连带收获：原先 5 处**绕过台账直读**
 /// 环境变量的地方（`FN_SIZE`/`CODE_HEX`/`LIVE`/`DW`）改走本 API，"漏登记"这一类再无处可藏。
-pub static KNOBS: [Knob; 43] = [
+pub static KNOBS: [Knob; 44] = [
     Knob::new(
         "FORGE_TRACE_ABI",
         "调用约定规划与落点回填（forge-codegen abi_setup/compiler；forge-rustc FnAbi 形态）",
@@ -247,6 +247,10 @@ pub static KNOBS: [Knob; 43] = [
     Knob::new(
         "FORGE_TRACE_LIVE",
         "活区间全量 dump（forge-codegen liverange；调 regalloc 用）",
+    ),
+    Knob::new(
+        "FORGE_TRACE_LIVE_FN",
+        "活区间 dump 的**函数名过滤**（FORGE_TRACE_LIVE 同时开；值 = 子串匹配）",
     ),
     Knob::new("FORGE_TRACE_LOAD", "load lowering（forge-rustc）"),
     Knob::new("FORGE_TRACE_LOC", "源码位置/行号映射（forge-rustc mod.rs）"),
@@ -367,9 +371,10 @@ mod tests {
             assert!(!k.what.is_empty(), "缺说明：{}", k.name);
         }
         // 条数 = KNOBS 表长，且必须与 `docs/reference/backend-pipeline.md` 的开关表一致
-        //（43 = 含 `FORGE_TRACE_CALLCLOBBER`；**改表就一起改这里**——这条守卫就是为此存在，
-        //  它此前漏在 `quick`/`rustc` 子集之外，条数漂了整整一轮才被抓到）。
-        assert_eq!(KNOBS.len(), 43, "台账条数变化时同步文档表与守卫");
+        //（44 = 含 `FORGE_TRACE_CALLCLOBBER` 与 v27 的 `FORGE_TRACE_LIVE_FN`；**改表就一起
+        //  改这里**——这条守卫就是为此存在，它此前漏在 `quick`/`rustc` 子集之外，条数漂了
+        //  整整一轮才被抓到）。
+        assert_eq!(KNOBS.len(), 44, "台账条数变化时同步文档表与守卫");
     }
 
     /// 已登记的开关真的按环境变量生效（缓存路径给出确定答案，不 panic、不警告）。

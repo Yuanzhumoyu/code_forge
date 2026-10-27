@@ -164,7 +164,7 @@ fn rustc_aarch64_object_links_and_runs_under_qemu() {
     std::fs::write(&crt0_s, CRT0_S).expect("写 crt0.s");
 
     // ① forge 后端编出 aarch64 对象。
-    let out = run(Command::new(&rustc).args([
+    let out = run(Command::new(&rustc).current_dir(&dir).args([
         format!("-Zcodegen-backend={}", dll.display()).as_str(),
         "--target",
         "aarch64-unknown-none",
@@ -363,6 +363,7 @@ fn rustc_aarch64_core_probe_runs_under_qemu() {
         .join("target")
         .join("tmp")
         .join("arm64-core-probe");
+    let dir = dir.join("core_probe");
     let sys = dir.join("sysroot");
     std::fs::create_dir_all(&sys).expect("创建产物目录");
     let core = build_target_rlib(&rustc, &sys, "core", &core_src, &[]);
@@ -389,7 +390,7 @@ fn rustc_aarch64_core_probe_runs_under_qemu() {
     std::fs::write(&src, CORE_PROBE_RS).expect("写 probe_core.rs");
     std::fs::write(&crt0_s, CORE_CRT0_S).expect("写 crt0_core.s");
 
-    let out = run(Command::new(&rustc).args([
+    let out = run(Command::new(&rustc).current_dir(&dir).args([
         format!("-Zcodegen-backend={}", dll.display()).as_str(),
         "--target",
         "aarch64-unknown-none",
@@ -500,6 +501,7 @@ fn rustc_aarch64_scaled_spill_probe_runs_under_qemu() {
         .join("target")
         .join("tmp")
         .join("arm64-core-probe");
+    let dir = dir.join("scaled_spill");
     let sys = dir.join("sysroot");
     std::fs::create_dir_all(&sys).expect("创建产物目录");
     let core = build_target_rlib(&rustc, &sys, "core", &core_src, &[]);
@@ -554,7 +556,7 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
     std::fs::write(&src, &src_text).expect("写 probe_scaled_spill.rs");
     std::fs::write(&crt0_s, CORE_CRT0_S).expect("写 crt0_scaled_spill.s");
 
-    let out = run(Command::new(&rustc).args([
+    let out = run(Command::new(&rustc).current_dir(&dir).args([
         format!("-Zcodegen-backend={}", dll.display()).as_str(),
         "--target",
         "aarch64-unknown-none",
@@ -654,4 +656,175 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
         "scaled 溢出探针结果应为 39（Σ 1039 % 100），got {code}（产物：{}）",
         dir.display()
     );
+}
+/// **core 真程序守卫**（v27 M6-111）：`core::mem::swap` + 循环在 **O0/O2 两档**都要跑对。
+///
+/// 这条用例覆盖的是本轮修掉的两个数据缺口：
+///
+/// 1. arm64 的 `B`/`B_*`/`CBZ`/`CBNZ` 原先**没有 `effect`** ⇒ 生成物
+///    `is_branch()`/`branch_targets()` 恒假/恒空 ⇒ 活区间的 CFG **没有分支边**
+///    （循环回边丢失）⇒ "preheader 定义、循环头使用"的值被当成已死，寄存器在循环体里
+///    被复用（`core::mem::swap` 的循环上界被指针冲掉，指针越界 fault）；
+/// 2. 修好 CFG 后溢出压力真实上升，出现"一条指令要 3 个 scratch"⇒ 谱面 scratch 从
+///    2 个补到 3 个。
+///
+/// 断言真执行结果：a=1,b=2 ⇒ swap 后 (y−x)+(x+y)+Σ[1,2,3] = −1+3+6 = **8**。
+#[test]
+fn rustc_aarch64_core_swap_probe_runs_under_qemu() {
+    let dll = backend_dll();
+    if !dll.is_file() {
+        eprintln!("SKIP: 后端 dylib 缺失（先 `cargo build -p forge-rustc`）");
+        return;
+    }
+    let (Some(clang), Some(ldlld)) = (tool("clang"), tool("ld.lld")) else {
+        eprintln!("SKIP: 缺 clang / ld.lld");
+        return;
+    };
+    let Some(qemu) = qemu_aarch64() else {
+        eprintln!("SKIP: qemu-system-aarch64 未安装");
+        return;
+    };
+    let rustc = std::env::var_os("RUSTC").map_or_else(|| "rustc".into(), PathBuf::from);
+    let sysroot = run(Command::new(&rustc).arg("--print").arg("sysroot"));
+    assert_ok(&sysroot, "rustc --print sysroot");
+    let sysroot = PathBuf::from(String::from_utf8_lossy(&sysroot.stdout).trim());
+    let lib_dir = sysroot.join("lib/rustlib/src/rust/library");
+    let core_src = lib_dir.join("core/src/lib.rs");
+    let cb_src = lib_dir.join("compiler-builtins/compiler-builtins/src/lib.rs");
+    if !core_src.is_file() || !cb_src.is_file() {
+        eprintln!("SKIP: 缺 rust-src（{}）", lib_dir.display());
+        return;
+    }
+
+    let dir = workspace_root()
+        .join("target")
+        .join("tmp")
+        .join("arm64-core-probe");
+    let dir = dir.join("core_swap");
+    let sys = dir.join("sysroot");
+    std::fs::create_dir_all(&sys).expect("创建产物目录");
+    let core = build_target_rlib(&rustc, &sys, "core", &core_src, &[]);
+    let cb = build_target_rlib(
+        &rustc,
+        &sys,
+        "compiler_builtins",
+        &cb_src,
+        &[
+            "--cfg",
+            r#"feature="mem""#,
+            "--cfg",
+            r#"feature="compiler-builtins""#,
+            "--extern",
+            &format!("core={}", core.display()),
+        ],
+    );
+
+    let src_text = r#"#![no_std]
+#![no_main]
+
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! { loop {} }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
+    let mut x = a;
+    let mut y = b;
+    core::mem::swap(&mut x, &mut y);
+    let arr = [1i32, 2, 3];
+    let mut s = 0i32;
+    let mut i = 0usize;
+    while i < arr.len() {
+        s += arr[i];
+        i += 1;
+    }
+    (y - x) + (x + y) + s
+}
+"#;
+    let src = dir.join("probe_core_swap.rs");
+    let crt0_s = dir.join("crt0_core_swap.s");
+    let crt0_o = dir.join("crt0_core_swap.o");
+    std::fs::write(&src, src_text).expect("写 probe_core_swap.rs");
+    std::fs::write(&crt0_s, CORE_CRT0_S).expect("写 crt0_core_swap.s");
+    let out = run(Command::new(&clang).args([
+        "--target=aarch64-unknown-none",
+        "-c",
+        crt0_s.to_str().unwrap(),
+        "-o",
+        crt0_o.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "clang 汇编 core swap crt0");
+
+    for (level, want) in [("0", 8i32), ("2", 8i32)] {
+        let obj = dir.join(format!("probe_core_swap_o{level}.o"));
+        let elf = dir.join(format!("probe_core_swap_o{level}.elf"));
+        let out = run(Command::new(&rustc).current_dir(&dir).args([
+            format!("-Zcodegen-backend={}", dll.display()).as_str(),
+            "--target",
+            "aarch64-unknown-none",
+            "--edition",
+            "2021",
+            "--crate-type",
+            "lib",
+            "-C",
+            "panic=abort",
+            "-C",
+            &format!("opt-level={level}"),
+            "-C",
+            "debug-assertions=off",
+            "-C",
+            "overflow-checks=off",
+            "--emit=obj",
+            "--extern",
+            &format!("core={}", core.display()),
+            "--extern",
+            &format!("compiler_builtins={}", cb.display()),
+            src.to_str().unwrap(),
+            "-o",
+            obj.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("forge 编 core swap 探针（O{level}）"));
+        let out = run(Command::new(&ldlld).args([
+            "-m",
+            "aarch64elf",
+            "-Ttext=0x40000000",
+            "--entry=_start",
+            crt0_o.to_str().unwrap(),
+            obj.to_str().unwrap(),
+            core.to_str().unwrap(),
+            cb.to_str().unwrap(),
+            "-o",
+            elf.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("ld.lld 链接 core swap 探针（O{level}）"));
+        let out = run(Command::new(&qemu).args([
+            "-M",
+            "virt",
+            "-cpu",
+            "cortex-a57",
+            "-kernel",
+            elf.to_str().unwrap(),
+            "-nographic",
+            "-semihosting-config",
+            "enable=on,target=native",
+            "-monitor",
+            "none",
+            "-serial",
+            "none",
+            "-no-reboot",
+        ]));
+        let code = out.status.code().unwrap_or_else(|| {
+            panic!(
+                "qemu 异常终止（O{level}）：\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            )
+        });
+        assert_eq!(
+            code & 0xFF,
+            want & 0xFF,
+            "core swap 探针 O{level} 应返回 8，got {code}（产物：{}）",
+            dir.display()
+        );
+    }
 }

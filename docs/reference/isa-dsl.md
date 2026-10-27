@@ -1238,6 +1238,13 @@ serde 报错）。`MachineInst::is_branch/is_call/is_ret/is_move` 与 `effects()
 **全部从 effect 标签派生**——生成器**不以指令名作判断依据**。`Move` = 纯 reg→reg
 copy（regalloc coalesce 依据）；`Trap` = 陷阱（ud2/ebreak）；缺省 `Pure`。
 
+> **控制流指令必须写 effect**（v27 M6-111，踩过）：`is_branch`/`branch_targets` 只看
+> `effect`，**不看 `roles`**。分支/跳转不写 `effect = ["Branch"]`/`["Jump"]` ⇒ 生成的
+> `branch_targets()` 恒空 ⇒ 活区间的 CFG **没有分支边**（循环回边丢失）⇒ "定义在
+> preheader、循环头使用"的值被当成已死、寄存器在循环体里被复用——`core::mem::swap`
+> 实测因此把循环上界冲掉、指针越界 fault。调用/返回同理（`Call`/`Ret` 影响
+> `is_call`/clobber 与尾声识别）。
+
 **`roles` 语义角色**（S4）：指令声明自己担任的 ABI/帧/参数角色，生成器按角色查指令，
 取代 `[abi]` 的 13 个 `*_inst` 名指针与 v14 的 `tags` 字符串标签。
 

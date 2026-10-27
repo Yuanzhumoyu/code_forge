@@ -11,6 +11,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-27) — arm64/riscv 控制流 effect 缺失导致活区间 CFG 无边
+
++ arm64 的 `B`/`B_*`/`CBZ`/`CBNZ`/`BL`/`BLR`、riscv 的 `JAL`/条件分支补上 `effect`
+  （Jump/Branch/Call）——`is_branch`/`branch_targets` 只从 effect 派生，缺了它循环回边
+  不进 CFG，preheader 常量被当成已死、寄存器在循环体里被复用（`core::mem::swap` 实测
+  上界被指针覆盖 → 越界 fault）。
++ arm64 `[machine].scratch` 2 → 3（X16/X17/X18）：修好 CFG 后实测"一条指令要 3 个 scratch"。
++ 新 QEMU 守卫 `rustc_aarch64_core_swap_probe_runs_under_qemu`：`core::mem::swap` + 循环探针
+  在 O0/O2 两档都断言返回 8（此前两档都挂）。
++ `docs/reference/isa-dsl.md` 的 effect 小节加红线：控制流指令必须写 effect。
++ 新增观测开关 `FORGE_TRACE_LIVE_FN`（活区间 dump 的函数名过滤；已进 KNOBS 台账与契约文档表）。
++ `arm64_exec` 的 core 探针测试各自独立产物目录 + `current_dir`：并行跑时不再争用 rustc 的
+  `forge_codegen_output*` 临时对象（此前 gate 里会 `无法把对象写到 …（os error 2）`）。
+
 ### Changed (2026-10-26) — 栈实参写槽统一 + 缺失值描述补齐 + 诊断带属性
 
 + `move_args` 的"spilled 形参 → spill 槽"改走 `emit_spill_store`（统一 fp/sp 口径与按类

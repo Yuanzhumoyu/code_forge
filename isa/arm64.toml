@@ -1462,11 +1462,16 @@ asm = "rev64.4s {dst:fpr:out}, {src:fpr}"
 
 [inst.B]
 roles = ["jump", "epilogue_jump"]
+# 控制流 effect（v27 M6-111）：活区间/CFG 靠 `effect` 推导 `is_branch`/`branch_targets`
+# ——缺了它，**所有分支边都不进 CFG**，循环回边丢失 ⇒ 循环里"定义在 preheader、
+# 用到循环头"的值被当成已死，寄存器被循环体复用（core::mem::swap 实测踩内存）。
+effect = ["Jump"]
 form = "BREL"
 opcode = 0x05
 asm = "b {target:off26}"
 
 [inst.BL]
+effect = ["Call"]
 form = "BREL"
 opcode = 0x25
 roles = ["call"]
@@ -1674,11 +1679,13 @@ fields = ["nbit_l", "immr", "imms"]
 # X msub 9B069CA4、W 1B069CA4（o0=1）；mul= madd ra=31（9B027C20/1B027C20）
 
 [inst.BR]
+effect = ["Jump"]
 form = "BRREG2"
 opcode = 0xD61F
 asm = "br {src:r64}"
 
 [inst.BLR]
+effect = ["Call"]
 form = "BRREG2"
 opcode = 0xD63F
 roles = ["call_indirect"]
@@ -3700,7 +3707,7 @@ opcode = 0xD6
 match = { op2d = 10 }
 asm = "asrv {dst:r32:out}, {src:r32}, {src2:r32}"
 [family.CBZ]
-body = { group = "cbz", form = "CBZF", opcode = "{opcode}", asm = "cbz {src:{slot}}, {target:off19}" }
+body = { group = "cbz", form = "CBZF", opcode = "{opcode}", asm = "cbz {src:{slot}}, {target:off19}", effect = ["Branch"] }
 rows = [
   { inst = "CBZX", slot = "r64", opcode = 0xB4, roles = [
     "branch",
@@ -3708,7 +3715,7 @@ rows = [
   { inst = "CBZW", slot = "r32", opcode = 0x34 },
 ]
 [family.CBNZ]
-body = { group = "cbnz", form = "CBZF", opcode = "{opcode}", asm = "cbnz {src:{slot}}, {target:off19}" }
+body = { group = "cbnz", form = "CBZF", opcode = "{opcode}", asm = "cbnz {src:{slot}}, {target:off19}", effect = ["Branch"] }
 rows = [
   { inst = "CBNZX", slot = "r64", opcode = 0xB5 },
   { inst = "CBNZW", slot = "r32", opcode = 0x35 },
@@ -3816,7 +3823,7 @@ rows = [
 # `cs`/`cc` 的**同码别名**（表里已声明），故各给一行让汇编器也认这两个拼写
 # （反汇编只会渲染首选名 `cs`/`cc`）。表里的 `al`/`nv` 供 CSEL 族使用。
 [family.BCOND]
-body = { form = "BCF", opcode = 0x54, asm = "b.{cname} {target:off19}" }
+body = { form = "BCF", opcode = 0x54, asm = "b.{cname} {target:off19}", effect = ["Branch"] }
 rows = [
   { inst = "B_EQ", cname = "eq", match = { bcond = 0 } },
   { inst = "B_NE", cname = "ne", match = { bcond = 1 } },
@@ -4699,7 +4706,7 @@ addr = "gpr64"
 value_gpr = "gpr64"
 value_fpr = "fpr64"
 # 机器事实（v20 A5）：溢出与栈参数收参用的 scratch（emission 的 spill load/store 也用它）。
-scratch = ["X16", "X17"]
+scratch = ["X16", "X17", "X18"]
 # callee-saved 不再由谱面声明（v21 W9）：唯一来源 = 约定数据（AbiPlan/绑定），
 # 序言按 plan 的整张表推。
 # regalloc 不可分配：X18 = 平台寄存器；X30 = lr（BL 返回地址/prologue

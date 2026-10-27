@@ -76,7 +76,8 @@ impl BacktrackingAllocator {
         clobber_map: &[Vec<(u32, crate::prelude::RegClass)>],
     ) -> Result<AllocResult, IrError> {
         // 1. 计算 LiveInterval（XReg → 微指令字段映射驱动）
-        let intervals = liverange::compute_live_intervals(vcode, inst_ops, &config.param_xregs);
+        let intervals =
+            liverange::compute_live_intervals(vcode, inst_ops, &config.param_xregs, func_name);
 
         // 2. 构建状态
         let mut state = BtState::new(config, intervals);

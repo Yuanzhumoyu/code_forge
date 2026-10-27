@@ -187,6 +187,7 @@ pass 清单与**合并次序**（下表与 `LegalizeDriver::with_aggregates().pa
 | `FORGE_TRACE_GLOBAL` | 全局与重定位符号解析（forge-rustc） |
 | `FORGE_TRACE_IR` | IR 构建期 dump（forge-ir builder —— 该层不允许依赖运行时，故实现在本 crate 内） |
 | `FORGE_TRACE_LIVE` | 活区间全量 dump（forge-codegen liverange；调 regalloc 用） |
+| `FORGE_TRACE_LIVE_FN` | 活区间 dump 的函数名过滤（配合 `FORGE_TRACE_LIVE`；值 = 子串匹配） |
 | `FORGE_TRACE_LOAD` | load lowering（forge-rustc） |
 | `FORGE_TRACE_LOC` | 源码位置/行号映射（forge-rustc mod.rs） |
 | `FORGE_TRACE_LOWER` | 指令选择（lowering；每指令一条） |
