@@ -23,6 +23,9 @@ jobs:
           toolchain: nightly-2026-09-05
           components: rustfmt
       - run: rustup override set nightly-2026-09-05
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-2026-09-05-${{ hashFiles('**/Cargo.lock') }}
       - run: cargo fmt --all -- --check
 
   # Clippy (exclude forge-rustc which needs rustc_private)
@@ -36,6 +39,9 @@ jobs:
           toolchain: nightly-2026-09-05
           components: clippy, rustc-dev
       - run: rustup override set nightly-2026-09-05
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-2026-09-05-${{ hashFiles('**/Cargo.lock') }}
       - name: Clippy gate
         run: |
           set -o pipefail
@@ -79,6 +85,9 @@ jobs:
         with:
           toolchain: nightly-2026-09-05
       - run: rustup override set nightly-2026-09-05
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-2026-09-05-${{ hashFiles('**/Cargo.lock') }}
       # P0-18：安装 QEMU（qemu-system-misc 含 riscv64 模拟器）——riscv 矩阵
       # 必须真实执行（此前 CI 无 QEMU → 矩阵全 Skip 仍 PASS，假绿）。
       # P3：qemu-system-arm 提供 qemu-system-aarch64——arm64 jit_matrix
@@ -124,6 +133,9 @@ jobs:
         with:
           toolchain: nightly-2026-09-05
       - run: rustup override set nightly-2026-09-05
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-2026-09-05-${{ hashFiles('**/Cargo.lock') }}
       - name: Run workspace tests (Windows)
         shell: pwsh
         env:
@@ -204,6 +216,9 @@ jobs:
         with:
           toolchain: nightly-2026-09-05
       - run: rustup override set nightly-2026-09-05
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-2026-09-05-${{ hashFiles('**/Cargo.lock') }}
       - run: cargo test --workspace --exclude forge-rustc
 
   # forge-rustc 编译检查（rustc_private 依赖 nightly + rustc-dev；P4.6 纳入 CI）
@@ -217,6 +232,9 @@ jobs:
           toolchain: nightly-2026-09-05
           components: rustc-dev
       - run: rustup override set nightly-2026-09-05
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-2026-09-05-${{ hashFiles('**/Cargo.lock') }}
       - run: cargo check -p forge-rustc
 
   # forge-rustc 端到端真值测试（Windows：需 MSVC 链接器；rust-src 供
@@ -239,6 +257,9 @@ jobs:
           toolchain: nightly-2026-09-05
           components: rustc-dev, rust-src
       - run: rustup override set nightly-2026-09-05
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-2026-09-05-${{ hashFiles('**/Cargo.lock') }}
       # P0-21：先构建 wrapper（e2e.rs 断言 wrapper.exe 存在；此前 CI
       # fresh checkout 无此产物 → job 必红）。
       - name: Build forge-rustc-wrapper
@@ -404,6 +425,9 @@ jobs:
           toolchain: nightly-2026-09-05
           components: rustc-dev
       - run: rustup override set nightly-2026-09-05
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-2026-09-05-${{ hashFiles('**/Cargo.lock') }}
       # 只跑 **lib**：`nightly` 开了 crate 级 `feature(rustc_private)`（`src/lib.rs:7`），
       # 于是本 crate 的**每个 test 目标**都被带上 rustc_private ⇒ 纯汇编的 test 目标
       # （`asm_parse`/`asm_arrangement_pairs`/`asm_provenance`）会撞 sysroot 与
@@ -424,6 +448,9 @@ jobs:
         with:
           toolchain: nightly-2026-09-05
       - run: rustup override set nightly-2026-09-05
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-2026-09-05-${{ hashFiles('**/Cargo.lock') }}
       - run: cargo doc --no-deps --all-features
         env:
           RUSTDOCFLAGS: -D warnings
@@ -438,6 +465,9 @@ jobs:
         with:
           toolchain: nightly-2026-09-05
       - run: rustup override set nightly-2026-09-05
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-2026-09-05-${{ hashFiles('**/Cargo.lock') }}
       - run: cargo bench --no-run --workspace --exclude forge-rustc
 
   # Code coverage via cargo-tarpaulin
@@ -450,6 +480,9 @@ jobs:
         with:
           toolchain: nightly-2026-09-05
       - run: rustup override set nightly-2026-09-05
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-2026-09-05-${{ hashFiles('**/Cargo.lock') }}
       - run: rustup component add llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
       - name: Generate coverage
