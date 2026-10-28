@@ -12,6 +12,16 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-28 · M6-122：`core::slice::sort` 真跑（copy/drop/size_of_val/函数项）
+
+- `CopyNonOverlapping`/`ptr::copy`：按元素 size+align 精确字节复制，`copy` 补 memmove 反向。
+- 小聚合按 ABI 宽度（整数 Scalar / 自然对齐 Memory）load/store，指针聚合保持 PTR。
+- `Drop` 终结符真调 drop glue（`CopyOnDrop` gap 写回）；`size_of_val_raw::<[T]>` 动态求长。
+- `FnDef` place 调用直接取符号地址（不再 `blr 0`）；arm64 `[[lower.Trap]]`（UDF）；
+  `abort` 在非 Windows 目标落 `Trap`（不再引 `ExitProcess`）。
+- 守卫 `rustc_aarch64_sort_probe_runs_under_qemu`（-O0，16 元 sort_unstable）。
+- 未闭环：`-O1+` available-externally 实例（需后端按需发射/内联）。
+
 ### 2026-10-28 · M6-121：常量折叠全宽度/全格式（不再 `Big→固定类型→Big`）
 
 - `Big` 浮点位编解码升级为 `u128` + `Real` 精确算法（f16/32/64/128，f128 尾数逐位保留）。

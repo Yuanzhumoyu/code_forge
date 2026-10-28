@@ -1250,6 +1250,191 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
         );
     }
 }
+
+/// **core::slice::sort_unstable 守卫**（v27 M6-122）：真实排序入口真执行。
+///
+/// 这是迄今最"重"的 core 程序：`ipnsort`/`smallsort`/`CopyOnDrop` + `ptr::swap`/
+/// `ptr::copy`/`copy_nonoverlapping` + 函数项比较器（`&mut <i32 as PartialOrd>::lt`）。
+/// 它一次性暴露了四类后端缺陷（全部在本轮修掉）：
+///
+/// - `CopyNonOverlapping` 每元素固定 8 字节（i32 越界 4 字节 + 4 对齐地址 `str x`
+///   ⇒ arm64 Data Abort），且 `ptr::copy` 缺 memmove 反向分支（元素右移被复制成
+///   `[2,2,4,3]`）；
+/// - 小聚合（`MaybeUninit<[u8;4]>`）被 `map_type` 兜成 PTR ⇒ `swap_chunk` 用 8 字节
+///   读写 4 字节对象；
+/// - `TerminatorKind::Drop` 只连边、不调 drop glue ⇒ `CopyOnDrop` 从不写回 gap 元素；
+/// - `size_of_val_raw::<[T]>` 按 unsized layout 得 0 ⇒ `swap_nonoverlapping` 整个跳过。
+///
+/// 修前 `[2,1].sort_unstable()` 得 `[2,2]`；修后对 16 元乱序数组排序并校验
+/// 连续性（返回 `v[0]+v[15]==15`）。
+///
+/// 注：只跑 -O0。`-O1+` 时 rustc 的 MIR inliner 会把 `#[inline]` 实例标成
+/// available-externally 且不进 CGU 分区，而 forge 优化器**没有内联 pass** ⇒
+/// 直接调用点留未定义符号（`CopyOnDrop::drop`/`revswap`）。这是独立能力缺口
+/// （需要后端按需发射或自实现内联），已在方案文档登记，不在本守卫里掩盖。
+#[test]
+fn rustc_aarch64_sort_probe_runs_under_qemu() {
+    let dll = backend_dll();
+    if !dll.is_file() {
+        eprintln!("SKIP: 后端 dylib 缺失（先 `cargo build -p forge-rustc`）");
+        return;
+    }
+    let (Some(clang), Some(ldlld)) = (tool("clang"), tool("ld.lld")) else {
+        eprintln!("SKIP: 缺 clang / ld.lld");
+        return;
+    };
+    let Some(qemu) = qemu_aarch64() else {
+        eprintln!("SKIP: qemu-system-aarch64 未安装");
+        return;
+    };
+    let rustc = std::env::var_os("RUSTC").map_or_else(|| "rustc".into(), PathBuf::from);
+    let sysroot = run(Command::new(&rustc).arg("--print").arg("sysroot"));
+    assert_ok(&sysroot, "rustc --print sysroot");
+    let sysroot = PathBuf::from(String::from_utf8_lossy(&sysroot.stdout).trim());
+    let lib_dir = sysroot.join("lib/rustlib/src/rust/library");
+    let core_src = lib_dir.join("core/src/lib.rs");
+    let cb_src = lib_dir.join("compiler-builtins/compiler-builtins/src/lib.rs");
+    if !core_src.is_file() || !cb_src.is_file() {
+        eprintln!("SKIP: 缺 rust-src（{}）", lib_dir.display());
+        return;
+    }
+
+    let dir = workspace_root()
+        .join("target")
+        .join("tmp")
+        .join("arm64-core-probe")
+        .join("sort");
+    let sys = dir.join("sysroot");
+    std::fs::create_dir_all(&sys).expect("创建产物目录");
+    let core = build_target_rlib(&rustc, &sys, "core", &core_src, &[]);
+    let cb = build_target_rlib(
+        &rustc,
+        &sys,
+        "compiler_builtins",
+        &cb_src,
+        &[
+            "--cfg",
+            r#"feature="mem""#,
+            "--cfg",
+            r#"feature="compiler-builtins""#,
+            "--extern",
+            &format!("core={}", core.display()),
+        ],
+    );
+
+    let src_text = r#"#![no_std]
+#![no_main]
+
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! { loop {} }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
+    let _ = (a, b);
+    let mut v: [i32; 16] = [9, 3, 14, 1, 7, 12, 5, 2, 15, 8, 6, 11, 4, 13, 10, 0];
+    v.sort_unstable();
+    let mut k = 1usize;
+    while k < v.len() {
+        if v[k] != v[k - 1] + 1 { return 201; }
+        k += 1;
+    }
+    (v[0] + v[15]) & 0xFF
+}
+"#;
+
+    let src = dir.join("probe_sort.rs");
+    let crt0_s = dir.join("crt0_sort.s");
+    let crt0_o = dir.join("crt0_sort.o");
+    let stubs_s = dir.join("stubs_sort.s");
+    let stubs_o = dir.join("stubs_sort.o");
+    std::fs::write(&src, src_text).expect("写 probe_sort.rs");
+    std::fs::write(&crt0_s, CORE_CRT0_S).expect("写 crt0_sort.s");
+    std::fs::write(&stubs_s, CORE_STUBS_S).expect("写 stubs_sort.s");
+    for (src_s, out_o, what) in [(&crt0_s, &crt0_o, "crt0"), (&stubs_s, &stubs_o, "stubs")] {
+        let out = run(Command::new(&clang).args([
+            "--target=aarch64-unknown-none",
+            "-c",
+            src_s.to_str().unwrap(),
+            "-o",
+            out_o.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("clang 汇编 sort {what}"));
+    }
+
+    let obj = dir.join("probe_sort.o");
+    let elf = dir.join("probe_sort.elf");
+    let out = run(Command::new(&rustc).current_dir(&dir).args([
+        format!("-Zcodegen-backend={}", dll.display()).as_str(),
+        "--target",
+        "aarch64-unknown-none",
+        "--edition",
+        "2021",
+        "--crate-type",
+        "lib",
+        "-C",
+        "panic=abort",
+        "-C",
+        "opt-level=0",
+        "-C",
+        "debug-assertions=off",
+        "-C",
+        "overflow-checks=off",
+        "--emit=obj",
+        "--extern",
+        &format!("core={}", core.display()),
+        "--extern",
+        &format!("compiler_builtins={}", cb.display()),
+        src.to_str().unwrap(),
+        "-o",
+        obj.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "forge 编 sort 探针（-O0）");
+    let out = run(Command::new(&ldlld).args([
+        "-m",
+        "aarch64elf",
+        "-Ttext=0x40000000",
+        "--entry=_start",
+        crt0_o.to_str().unwrap(),
+        stubs_o.to_str().unwrap(),
+        obj.to_str().unwrap(),
+        core.to_str().unwrap(),
+        cb.to_str().unwrap(),
+        "-o",
+        elf.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "ld.lld 链接 sort 探针");
+    let out = run(Command::new(&qemu).args([
+        "-M",
+        "virt",
+        "-cpu",
+        "cortex-a57",
+        "-kernel",
+        elf.to_str().unwrap(),
+        "-nographic",
+        "-semihosting-config",
+        "enable=on,target=native",
+        "-monitor",
+        "none",
+        "-serial",
+        "none",
+        "-no-reboot",
+    ]));
+    let code = out.status.code().unwrap_or_else(|| {
+        panic!(
+            "qemu 异常终止（sort 探针）：\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        )
+    });
+    assert_eq!(
+        code & 0xFF,
+        15,
+        "sort 探针结果应为 15（排序后连续 0..15，首尾和；got {code}；产物：{}）",
+        dir.display()
+    );
+}
+
 /// **迭代器守卫**（v27 M6-117）：`v.iter()` / `next()` / `.copied().sum()` 真执行。
 ///
 /// 根因（v27 M6-116 补漏）：结构体逐字段构造循环**没有跳过 ZST 字段**——

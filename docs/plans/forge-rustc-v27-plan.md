@@ -593,7 +593,36 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   `fold_bitops_keep_i128_high_bits`、`fold_saturating_keeps_i128_bounds`、
   `fold_shift_amount_is_masked_like_backend`、`folded_float_constants_use_target_format_bits`。
 
-**仍未覆盖**：NEON 向量、DWARF/CFI。
+**进度（2026-10-28，M6-122）——`core::slice::sort` 真跑（连带 4 类后端缺陷）**：
+
+- 新增守卫 `rustc_aarch64_sort_probe_runs_under_qemu`：16 元乱序数组 `sort_unstable()`
+  后校验连续 0..15（返回值 15）。修前 `[2,1].sort_unstable()` 得 `[2,2]`/Data Abort。
+- **`ptr::copy_nonoverlapping` 逐元素宽度**：旧实现每元素固定搬 `step_by(8)` 个 8 字节块
+  ⇒ i32 元素越界 4 字节 + 4 对齐地址上 `str x` 触发 arm64 对齐异常；`ptr::copy` 还缺
+  **memmove 反向分支**（dst>src 重叠时把首元素一路复制，实测排序成 `[2,2,4,3]`）。
+  现按元素 `size`+`align` 用 8/4/2/1 阶梯精确覆盖；`copy` 在 dst>src 时反向复制。
+- **小聚合的按值宽度**：`map_type` 把聚合兜底成 `PTR`，`MaybeUninit<[u8;4]>` 这类
+  **整数 ABI 标量**被 8 字节读写（`swap_chunk` 越界 + 对齐异常）。`place()` 现在按
+  `backend_repr` 选宽度：整数 Scalar / 自然对齐的 Memory 小聚合 → I8/I16/I32/I64，
+  指针 Scalar（`Option<&T>` 等）保持 PTR。
+- **`TerminatorKind::Drop` 真调 drop glue**（`Instance::resolve_drop_glue`）：旧实现只
+  连边 ⇒ `CopyOnDrop` 的析构从不执行、gap 里暂存的元素从不写回（`[2,2]` 的直接原因）。
+- **`size_of_val_raw::<[T]>`（slice/str）动态求长**：unsized layout 旧实现得 0 ⇒
+  `swap_nonoverlapping` 认为 bytes=0 整个跳过；现从胖指针元数据取 len（slice:
+  len×elem_size，str: len）。
+- **函数项调用**（`&mut T::lt` 这类 `FnDef` place）：旧实现按 8 字节 load 零大小函数项
+  ⇒ 拿到 0 后 `blr 0`；现识别 `FnDef` place 直接取实例符号地址。
+- **arm64 补 `[[lower.Trap]]`**（UDF）——IR 层显式 `Opcode::Trap` 不再报
+  `[cap:SPEC_LOWERING_RULE_MISSING]`；`abort` intrinsic 按目标分派：Windows 保持
+  `ExitProcess(3)`，非 Windows 落 `Trap`（freestanding 目标不再因 `ExitProcess`
+  链接失败——`core::slice::sort` 内部 `abort()` 调用点实测）。
+- pins：arm64 `op_gap = 60,6,9,43`（补 `[[lower.Trap]]` 后覆盖 59→60、真缺口 44→43）。
+- **仍未闭环（另案）**：`-O1+` 时 rustc 的 MIR inliner 把 `#[inline]` 实例标成
+  available-externally 且不进 CGU 分区，而 forge 优化器**没有内联 pass** ⇒ 直接调用点
+  留未定义符号（sort 的 `CopyOnDrop::drop`/`revswap`）。当前 sort 守卫只跑 `-O0`；
+  真修需要后端"按需发射缺失实例"或自实现内联。
+
+**仍未覆盖**：NEON 向量、DWARF/CFI、`-O1+` 的 available-externally 实例发射。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

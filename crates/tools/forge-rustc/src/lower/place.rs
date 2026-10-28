@@ -11,6 +11,51 @@ pub(crate) struct CPlace<'tcx> {
 }
 
 impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
+    /// 精确按字节复制 `size` 字节（8/4/2/1 块阶梯，**不越界**）。
+    ///
+    /// `align` = 两端地址至少满足的对齐（2 的幂）：块宽不超过它，避免在
+    /// 低对齐对象（`i32` 元素、packed 聚合）上用 8 字节访存触发对齐异常。
+    ///
+    /// 旧实现（`for off in (0..size).step_by(8)`，固定 `I64`）有两个缺陷，
+    /// 2026-10-28 由 `core::slice::sort` 实测暴露并修掉（v27 M6-122）：
+    /// ① `size` 不是 8 的倍数时最后一块**越界读/写** 1..7 字节（写坏相邻局部）；
+    /// ② 元素只有 4 字节时按 8 字节搬 ⇒ arm64 上 4 对齐地址执行 `str x` 触发
+    ///    Data Abort（`insert_tail` 的逐元素复制循环必现）。
+    pub(crate) fn copy_bytes(&mut self, dst: Value, src: Value, size: u32, align: u32) {
+        if size == 0 {
+            return;
+        }
+        let chunk_ty = |w: u32| match w {
+            8 => TypeId::I64,
+            4 => TypeId::I32,
+            2 => TypeId::I16,
+            _ => TypeId::I8,
+        };
+        let mut off = 0u32;
+        for w in [8u32, 4, 2, 1] {
+            if w > align {
+                continue;
+            }
+            while off + w <= size {
+                let off_v = self.builder.const_int(off as i64, TypeId::I64);
+                let saddr = if off == 0 {
+                    src
+                } else {
+                    self.builder.iadd(src, off_v)
+                };
+                let daddr = if off == 0 {
+                    dst
+                } else {
+                    self.builder.iadd(dst, off_v)
+                };
+                let v = self.builder.load(saddr, chunk_ty(w));
+                self.builder.store(v, daddr);
+                off += w;
+            }
+        }
+        debug_assert_eq!(off, size, "copy_bytes 必须逐字节覆盖 size");
+    }
+
     pub(crate) fn copy_agg(&mut self, dst: Value, src: Value, size: u32) {
         // **地址必须是 PTR 类型**（v27 M6-119）：`copy_agg` 的调用方有两类——
         // 栈槽地址（`StackAddr`，PTR）与 **ABI 指针**（sret 隐藏返回指针、间接
@@ -27,21 +72,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         } else {
             self.builder.inttoptr(src, TypeId::PTR)
         };
-        for off in (0..size).step_by(8) {
-            let off_v = self.builder.const_int(off as i64, TypeId::I64);
-            let saddr = if off == 0 {
-                src
-            } else {
-                self.builder.iadd(src, off_v)
-            };
-            let v = self.builder.load(saddr, TypeId::I64);
-            let daddr = if off == 0 {
-                dst
-            } else {
-                self.builder.iadd(dst, off_v)
-            };
-            self.builder.store(v, daddr);
-        }
+        // 栈槽/ABI 指针按 ≥8 对齐处理（与旧实现同口径）；余数字节精确覆盖。
+        self.copy_bytes(dst, src, size, 8);
     }
     pub(crate) fn unpack_sp(&mut self, addr: Value, ty: Ty<'tcx>) -> (Value, Value) {
         let (o0, o1) = scalar_pair_offsets(self.tcx, ty);
@@ -220,12 +252,65 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
 
     /// 解析 place 为统一表示（P4.2）：地址 + 类型 + codegen 类型。
     /// load/store 统一经此入口，消除散落的 `place_addr` + `place.ty` 重复获取。
+    /// 小聚合（≤8B、按**标量** ABI 传、不是 ScalarPair/by-mem）的整数宽度。
+    ///
+    /// rustc 对这类值（`MaybeUninit<[u8;4]>`、`[u8;8]`、小结构体）在 LLVM 里就是
+    /// 一个整数寄存器值；`map_type` 却把聚合兜底成 `PTR` ⇒ `load_place` 会读 8 字节、
+    /// `store_place` 写 8 字节（4 字节对象越界 + 4 对齐地址上的 `ldr/str x` 对齐异常；
+    /// 实测 `core::ptr::swap_nonoverlapping`/`slice::sort` 崩在这）。这里给出按
+    /// **尺寸**映射的整数类型，让 load/store 宽度与对象一致。
+    fn scalar_agg_int_ty(&self, ty: Ty<'tcx>) -> Option<TypeId> {
+        if is_agg_mem(self.tcx, ty) || is_scalar_pair_abi(self.tcx, ty) {
+            return None;
+        }
+        // **只对"整数/无标量 ABI"的聚合**取整数宽度：`Option<&T>`、裸指针等
+        // Scalar(Ptr) 的 8 字节聚合**必须保持 PTR**（拿 i64 当指针用会产出
+        // `load i64, i64` 这类非法 IR——实测 `core::mem::swap` 在 -O2 内联后
+        // 被 verifier 拒）。`MaybeUninit<[u8;4]>` 的 ABI 是 Aggregate ⇒ 整数宽度。
+        let layout = self
+            .tcx
+            .layout_of(ty::PseudoCanonicalInput {
+                typing_env: ty::TypingEnv::fully_monomorphized(),
+                value: ty,
+            })
+            .ok()?;
+        let int_by_size = match layout.layout.size().bytes() {
+            1 => TypeId::I8,
+            2 => TypeId::I16,
+            4 => TypeId::I32,
+            8 => TypeId::I64,
+            _ => return None,
+        };
+        match layout.layout.backend_repr {
+            // 指针（`Option<&T>` 等）保持 PTR；只有整数标量才用整数宽度。
+            rustc_abi::BackendRepr::Scalar(s) => match s.primitive() {
+                rustc_abi::Primitive::Int(..) => Some(int_by_size),
+                _ => None,
+            },
+            // 按内存传但**自然对齐**的小聚合：逐字节 load/store 位精确，且
+            // 8/4/2/1 宽度与对齐一致（packed 类型 align<size ⇒ 不碰，避免
+            // 非对齐访问在 arm64 上 fault）。
+            rustc_abi::BackendRepr::Memory { .. }
+                if layout.layout.align().abi.bytes() == layout.layout.size().bytes() =>
+            {
+                Some(int_by_size)
+            }
+            _ => None,
+        }
+    }
+
     fn place(&mut self, place: &mir::Place<'tcx>) -> Result<CPlace<'tcx>, ForgeError> {
         let ty = place.ty(&self.body.local_decls, self.tcx).ty;
+        let mut codegen_ty = map_type(ty, self.tcx)?;
+        if codegen_ty == TypeId::PTR
+            && let Some(t) = self.scalar_agg_int_ty(ty)
+        {
+            codegen_ty = t;
+        }
         Ok(CPlace {
             addr: self.place_addr(place),
             ty,
-            codegen_ty: map_type(ty, self.tcx)?,
+            codegen_ty,
         })
     }
 

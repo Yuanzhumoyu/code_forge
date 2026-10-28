@@ -11,6 +11,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-28) — `core::slice::sort` 在 aarch64 真跑（4 类后端缺陷）
+
++ `ptr::copy_nonoverlapping`/`ptr::copy`：按元素 `size`+`align` 用 8/4/2/1 阶梯精确复制
+  （旧实现每元素固定 8 字节：i32 越界 + 4 对齐 `str x` ⇒ arm64 Data Abort）；`copy` 补
+  memmove 反向分支（重叠右移曾把元素复制成 `[2,2,4,3]`）。
++ 小聚合按 `backend_repr` 选 load/store 宽度（整数 Scalar / 自然对齐 Memory → I8..I64；
+  指针 Scalar 保持 PTR）——修 `swap_chunk` 对 `MaybeUninit<[u8;4]>` 的 8 字节读写。
++ `TerminatorKind::Drop` 真调 drop glue（`CopyOnDrop` 的 gap 元素现在会写回）。
++ `size_of_val_raw::<[T]>`/`str` 从胖指针元数据动态求长（旧实现按 unsized layout 得 0，
+  `swap_nonoverlapping` 被整段跳过）。
++ `FnDef` place 调用直接取实例符号地址（零大小函数项被当 8 字节 load ⇒ `blr 0`）。
++ arm64 补 `[[lower.Trap]]`（UDF）；`core::intrinsics::abort()` 按目标分派：Windows 保持
+  `ExitProcess(3)`，非 Windows 落 `Trap`（freestanding 目标不再缺 `ExitProcess`）。
++ 新守卫 `rustc_aarch64_sort_probe_runs_under_qemu`（-O0）：16 元 `sort_unstable()` 排序后
+  校验连续 0..15，真执行 15。
+
 ### Fixed (2026-10-28) — 常量折叠的 `Big→固定类型→Big` 往返丢数据
 
 + `Big::from_float_bits(u128, fmt)` / `Big::to_float_bits(fmt) -> u128`：f16/f32/f64/f128

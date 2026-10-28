@@ -1007,7 +1007,9 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     }
                                     v
                                 };
-                                self.lower_intrinsic(name, intr_args, substs, fty, block_id)?
+                                self.lower_intrinsic(
+                                    name, intr_args, &arg_ops, substs, fty, block_id,
+                                )?
                             } else if self.tcx.is_lang_item(
                                 *def_id,
                                 rustc_hir::attrs::lang_items::LangItem::DropGlue,
@@ -1111,11 +1113,17 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 }
                             }
                         } else {
-                            let func_val = self.lower_operand(func)?;
+                            let func_val = match self.fn_item_addr_operand(func, body)? {
+                                Some(v) => v,
+                                None => self.lower_operand(func)?,
+                            };
                             self.builder.call_indirect(func_val, &args, &ret_tys)
                         }
                     } else {
-                        let func_val = self.lower_operand(func)?;
+                        let func_val = match self.fn_item_addr_operand(func, body)? {
+                            Some(v) => v,
+                            None => self.lower_operand(func)?,
+                        };
                         self.builder.call_indirect(func_val, &args, &ret_tys)
                     };
 
@@ -1199,11 +1207,22 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 TerminatorKind::Yield { .. } => {
                     self.builder.unreachable();
                 }
-                // Drop terminator：作用域末的自动 drop。当前后端不生成 drop glue
-                // 调用（显式 drop() 是 Call terminator，会正确走 drop glue shim）；
-                // 这里只延续控制流到 target。若未来需要 Drop flag 语义（drop 后
-                // 再访问的 UB 检查），在此补 drop_glue 调用。
-                TerminatorKind::Drop { target, .. } => {
+                // Drop terminator：作用域末的自动 drop —— **必须真的调用 drop glue**。
+                // 此前这里只 jump 到 target（"显式 drop() 是 Call terminator"），于是
+                // 携带 `Drop` impl 的局部（`core::slice::sort` 的 `CopyOnDrop`，
+                // 负责把 gap 里暂存的元素写回数组）**永远不会执行析构**：实测
+                // `[2,1].sort_unstable()` 得到 `[2,2]`（元素 1 被 2 覆盖后没写回）。
+                // 现在按 rustc 的 `Instance::resolve_drop_in_place` 直接调用 glue；
+                // 类型不需要 drop 时保持原 no-op（只连边）。
+                TerminatorKind::Drop { place, target, .. } => {
+                    let ty = place.ty(&self.body.local_decls, self.tcx).ty;
+                    if ty.needs_drop(self.tcx, ty::TypingEnv::fully_monomorphized()) {
+                        let inst = ty::Instance::resolve_drop_glue(self.tcx, ty);
+                        let sym = symbol_name_for_instance(self.tcx, &inst);
+                        let fr = self.func_refs.intern(&sym);
+                        let addr = self.place_addr(place);
+                        self.builder.call(FuncRef::new(fr), &[addr], &[]);
+                    }
                     let tgt = self.blocks[target];
                     self.builder.jump(tgt, &[]);
                 }
@@ -1535,6 +1554,39 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         let sym = symbol_name_for_instance(self.tcx, instance);
         self.symbol_addr_value(&sym)
     }
+    /// 调用目标操作数是**函数项**（零大小 `FnDef` 类型）时，把它的值落成符号地址。
+    ///
+    /// MIR 里经 `*_1`（`&mut fn_item`）发起的调用（例如 core `sort_unstable` 把
+    /// `&mut T::lt` 传给 `sort_unstable_by`）：`lower_operand` 对 place 会按 8 字节
+    /// load，而函数项是 **ZST**（那份内存没有写入）⇒ 得到 0 ⇒ `blr 0`（实测
+    /// `core::slice::sort` 小数组排序必现）。函数项的值就是函数地址，直接取符号。
+    fn fn_item_addr_operand(
+        &mut self,
+        func: &Operand<'tcx>,
+        body: &Body<'tcx>,
+    ) -> Result<Option<Value>, ForgeError> {
+        let fty = match func {
+            Operand::Constant(c) => c.const_.ty(),
+            Operand::Copy(place) | Operand::Move(place) => place.ty(body, self.tcx).ty,
+            // RuntimeChecks 不是值（条件求值用）：不是函数项调用，交给间接路径。
+            Operand::RuntimeChecks(_) => return Ok(None),
+        };
+        let ty::TyKind::FnDef(def_id, substs) = fty.kind() else {
+            return Ok(None);
+        };
+        let Some(instance) = ty::Instance::try_resolve(
+            self.tcx,
+            ty::TypingEnv::fully_monomorphized(),
+            *def_id,
+            substs.skip_binder(),
+        )
+        .ok()
+        .flatten() else {
+            return Ok(None);
+        };
+        Ok(Some(self.fn_addr_value(&instance)))
+    }
+
     /// 静态（`static`/`static mut`）的符号地址值。符号名规则与 `intern_const_data`
     /// 的 `GlobalAlloc::Static` 分支**同源**（同一个 mangling 入口），否则重定位指向
     /// 一个不存在的名字。

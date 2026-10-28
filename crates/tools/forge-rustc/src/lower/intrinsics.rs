@@ -6,6 +6,104 @@ use super::*;
 use rustc_middle::ty::{Binder, GenericArgsRef};
 
 impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
+    /// 胖指针操作数的**元数据字**（第二 8 字节）：操作数是放在 local 槽里的
+    /// fat pointer（如 `*const [T]`），`place_addr` 取槽地址后 load 高半。
+    /// 拿不到（非 place 操作数）时返回 `None`（调用方退回静态布局）。
+    fn lower_fat_meta(&mut self, op: Option<&Operand<'tcx>>) -> Option<Value> {
+        let place = match op? {
+            Operand::Copy(p) | Operand::Move(p) => p,
+            _ => return None,
+        };
+        let addr = self.place_addr(place);
+        let eight = self.builder.const_int(8, TypeId::I64);
+        let maddr = self.builder.iadd(addr, eight);
+        Some(self.builder.load(maddr, TypeId::I64))
+    }
+    /// `ptr::copy` / `ptr::copy_nonoverlapping` 的公共实现：逐元素复制 `sz` 字节
+    /// （8/4/2/1 阶梯，按元素对齐选块宽，**不越界**）。`may_overlap` = `true`
+    /// 时按 **memmove** 语义：`dst > src` 从后往前复制（前向会把元素 shift 复制坏，
+    /// 实测 `core::slice::sort` 得到 `[2,2,4,3]`）。
+    fn lower_copy(
+        &mut self,
+        src: Value,
+        dst: Value,
+        count: Value,
+        t: Ty<'tcx>,
+        cur: Block,
+        may_overlap: bool,
+    ) {
+        let sz = layout_bytes(self.tcx, t);
+        if sz == 0 {
+            return;
+        }
+        // 地址统一成 PTR（`inttoptr`）：实参可能是 i64 槽里的 ABI 指针，直接
+        // 用 i64 做 `load`/`store` 地址会被 verifier 拒（LoadAddrNotPointer）。
+        let src = if self.builder.value_type(src) == Some(TypeId::PTR) {
+            src
+        } else {
+            self.builder.inttoptr(src, TypeId::PTR)
+        };
+        let dst = if self.builder.value_type(dst) == Some(TypeId::PTR) {
+            dst
+        } else {
+            self.builder.inttoptr(dst, TypeId::PTR)
+        };
+        let align = crate::layout::layout_align(self.tcx, t).max(1);
+        let zero = self.builder.const_int(0, TypeId::I64);
+        let one = self.builder.const_int(1, TypeId::I64);
+        let (fwd, fp) = self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
+        let (bwd, bp) = self.builder.create_block_with_params(&[(TypeId::I64, "j")]);
+        let (fbody, fbp) = self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
+        let (bbody, bbp) = self.builder.create_block_with_params(&[(TypeId::I64, "j")]);
+        let done = self.builder.create_block();
+        self.builder.switch_to_block(cur);
+        if may_overlap {
+            let ds = self.builder.ptrtoint(dst, TypeId::I64);
+            let ss = self.builder.ptrtoint(src, TypeId::I64);
+            let gt = self.builder.icmp(IntCC::Ugt, ds, ss);
+            self.builder.branch(gt, bwd, &[count], fwd, &[zero]);
+        } else {
+            self.builder.jump(fwd, &[zero]);
+        }
+        // 前向：i = 0 .. count
+        self.builder.switch_to_block(fwd);
+        let i = fp[0];
+        let cond = self.builder.icmp(IntCC::Ult, i, count);
+        self.builder.branch(cond, fbody, &[i], done, &[]);
+        self.builder.switch_to_block(fbody);
+        let bi = fbp[0];
+        let off = if sz == 1 {
+            bi
+        } else {
+            let szv = self.builder.const_int(i64::from(sz), TypeId::I64);
+            self.builder.imul(bi, szv)
+        };
+        let saddr = self.builder.iadd(src, off);
+        let daddr = self.builder.iadd(dst, off);
+        self.copy_bytes(daddr, saddr, sz, align);
+        let i2 = self.builder.iadd(bi, one);
+        self.builder.jump(fwd, &[i2]);
+        // 反向：j 从 count 递减到 0（先拷贝 j-1）
+        self.builder.switch_to_block(bwd);
+        let j = bp[0];
+        let cond = self.builder.icmp(IntCC::Ugt, j, zero);
+        self.builder.branch(cond, bbody, &[j], done, &[]);
+        self.builder.switch_to_block(bbody);
+        let bj = bbp[0];
+        let jm = self.builder.isub(bj, one);
+        let off = if sz == 1 {
+            jm
+        } else {
+            let szv = self.builder.const_int(i64::from(sz), TypeId::I64);
+            self.builder.imul(jm, szv)
+        };
+        let saddr = self.builder.iadd(src, off);
+        let daddr = self.builder.iadd(dst, off);
+        self.copy_bytes(daddr, saddr, sz, align);
+        self.builder.jump(bwd, &[jm]);
+        self.builder.switch_to_block(done);
+    }
+
     /// 内建函数操作数的整数**位宽**（按 `substs` 首个类型；取不到时按 64 位）。
     fn intrinsic_width(
         &self,
@@ -68,6 +166,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         &mut self,
         name: &str,
         args: Vec<Value>,
+        arg_ops: &[Operand<'tcx>],
         substs: &Binder<GenericArgsRef<'tcx>>,
         fty: Ty<'tcx>,
         cur_block: Block,
@@ -76,17 +175,56 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             // `core::intrinsics::abort()`：**立即终止进程**（不展开、不跑析构）。
             // v27：此前它会落到末尾的 `unsupported intrinsic` ⇒ 任何调用 `abort()` 的真实
             // crate（`std` 的 `abort_internal`、`panic=abort` 的部分路径）都编不过。
-            // 后端**没有内联 `asm!`**（`[cap:INLINE_ASM]`）⇒ 用 kernel32 的 `ExitProcess`：
-            // Rust 对 `abort()` 的退出码**未作规定**，这里取 MSVC `abort()` 的 3。
+            //
+            // **目标相关**（2026-10-28，M6-122）：Windows 上 Rust 的 abort 语义由
+            // `ExitProcess(3)`（MSVC `abort()` 的退出码）承载；但非 Windows 目标没有
+            // kernel32，写死 `ExitProcess` 会让 freestanding 目标（`aarch64-unknown-none`）
+            // 链接期缺符号（实测：`core::slice::sort` 内部 `abort()` 调用点 ⇒
+            // `undefined hidden symbol: ExitProcess`）。非 Windows 走 IR 的 `Trap`
+            // （= LLVM `llvm.trap` 语义；各后端都有 UDF/ud2/ebreak 规则），不引入宿主符号。
             // 之后的 `unreachable()` 由调用点（Call 终结符的 `target: None` 分支）发。
             "abort" => {
-                let code = self.builder.const_int(3, TypeId::I64);
-                let fr = self.func_refs.intern("ExitProcess");
-                self.builder.call(FuncRef::new(fr), &[code], &[]);
+                if self.tcx.sess.target.is_like_windows {
+                    let code = self.builder.const_int(3, TypeId::I64);
+                    let fr = self.func_refs.intern("ExitProcess");
+                    self.builder.call(FuncRef::new(fr), &[code], &[]);
+                } else {
+                    self.builder.trap();
+                }
                 vec![]
             }
-            "size_of_val" | "align_of_val" => {
+            name if name.starts_with("size_of_val") || name.starts_with("align_of_val") => {
                 let t = substs_first_ty(&substs).unwrap_or(fty);
+                let is_size = name.starts_with("size_of_val");
+                // **unsized 动态尺寸**（v27 M6-122）：`size_of_val_raw::<[T]>` 走
+                // `size_of_val` intrinsic 时，类型 `[T]` 的 layout 是 unsized ⇒
+                // `layout_bytes` 返回 0。旧实现因此把 `core::ptr::swap_nonoverlapping`
+                // 的字节数算成 0（`NonZero::new(0)` = None ⇒ 整个交换被跳过，sort 静默
+                // 不排序）。这里对 slice/str 从**胖指针的第二字**取长度：
+                //   slice: len × size_of(elem)（align = elem 对齐）
+                //   str:   len（align = 1）
+                if is_size {
+                    match t.kind() {
+                        ty::TyKind::Slice(elem) => {
+                            let esz = layout_bytes(self.tcx, *elem) as i64;
+                            if let Some(len) = self.lower_fat_meta(arg_ops.first()) {
+                                let esv = self.builder.const_int(esz, TypeId::I64);
+                                let size = if esz == 1 {
+                                    len
+                                } else {
+                                    self.builder.imul(len, esv)
+                                };
+                                return Ok(vec![size]);
+                            }
+                        }
+                        ty::TyKind::Str => {
+                            if let Some(len) = self.lower_fat_meta(arg_ops.first()) {
+                                return Ok(vec![len]);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 let sz = layout_bytes(self.tcx, t);
                 let align = self
                     .tcx
@@ -96,11 +234,12 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     })
                     .map(|l| l.layout.align().abi.bytes())
                     .unwrap_or(8);
-                let v: i64 = if name == "size_of_val" {
-                    sz as i64
-                } else {
-                    align as i64
+                let align = match t.kind() {
+                    ty::TyKind::Slice(elem) => crate::layout::layout_align(self.tcx, *elem) as u64,
+                    ty::TyKind::Str => 1,
+                    _ => align,
                 };
+                let v: i64 = if is_size { sz as i64 } else { align as i64 };
                 vec![self.builder.const_int(v, TypeId::I64)]
             }
             "ctpop" => {
@@ -474,52 +613,16 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 self.store_ty(val, ptr, vty);
                 vec![]
             }
-            // copy_nonoverlapping(src, dst, count)：逐 8 字节复制（count 是
-            // T 元素数；size 从 substs 取，与 arith_offset 一致）。
-            // core 的 intrinsic 签名：copy_nonoverlapping(src: *const T,
-            // dst: *mut T, count)——args[0]=src、args[1]=dst（曾写反 →
-            // 源/目标互换，buf[4] 恒 0）。
-            // `copy`（ptr::copy 允许重叠）与 copy_nonoverlapping 同实现
-            // （简单逐块复制；重叠场景由调用方保证顺序，slice::rotate
-            // 的 ptr_rotate_memmove 用 memmove 语义——当前逐 8 字节
-            // 从低到高复制，仅当 dst>src 且重叠时需反向；此处按
-            // copy_nonoverlapping 语义处理，重叠用例少见）。
+            // `copy_nonoverlapping(src, dst, count)` / `copy`（memmove 语义）。
+            // 逐元素**精确字节**复制（元素大小 + 对齐感知）：旧实现每元素固定
+            // 8 字节 → `i32` 元素越界 4 字节、4 对齐地址上 `str x` 触发 arm64
+            // Data Abort（`core::slice::sort` 的 insert_tail 必现）；`copy`
+            // 还必须是 memmove（dst>src 反向复制），否则 element shift 会
+            // 把首元素复制一路（实测排序结果 [2,2,4,3]）——v27 M6-122。
             "copy_nonoverlapping" | "copy" => {
                 if args.len() >= 3 {
-                    let src = args[0];
-                    let dst = args[1];
-                    let count = args[2];
                     let t = substs_first_ty(&substs).unwrap_or(self.tcx.types.u8);
-                    let sz = layout_bytes(self.tcx, t) as i64;
-                    // 循环 i in 0..count：src[i*sz] → dst[i*sz]
-                    let (loop_blk, lp) =
-                        self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
-                    let (body_blk, bp) =
-                        self.builder.create_block_with_params(&[(TypeId::I64, "i")]);
-                    let done = self.builder.create_block();
-                    self.builder.switch_to_block(cur_block);
-                    let zero = self.builder.const_int(0, TypeId::I64);
-                    let one = self.builder.const_int(1, TypeId::I64);
-                    self.builder.jump(loop_blk, &[zero]);
-                    self.builder.switch_to_block(loop_blk);
-                    let i = lp[0];
-                    let cond = self.builder.icmp(IntCC::Ult, i, count);
-                    self.builder.branch(cond, body_blk, &[i], done, &[]);
-                    self.builder.switch_to_block(body_blk);
-                    let bi = bp[0];
-                    let off = if sz == 1 {
-                        bi
-                    } else {
-                        let szv = self.builder.const_int(sz, TypeId::I64);
-                        self.builder.imul(bi, szv)
-                    };
-                    let saddr = self.builder.iadd(src, off);
-                    let v = self.builder.load(saddr, TypeId::I64);
-                    let daddr = self.builder.iadd(dst, off);
-                    self.builder.store(v, daddr);
-                    let i2 = self.builder.iadd(bi, one);
-                    self.builder.jump(loop_blk, &[i2]);
-                    self.builder.switch_to_block(done);
+                    self.lower_copy(args[0], args[1], args[2], t, cur_block, name == "copy");
                 }
                 vec![]
             }

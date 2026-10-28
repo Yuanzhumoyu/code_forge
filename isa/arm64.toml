@@ -6215,6 +6215,14 @@ opcode = 0
 match = { op5 = 0 }
 asm = "udf"
 effect = ["Trap"]
+
+# IR 层**显式** `Opcode::Trap`（不是 Unreachable 终结符）：与 x86 的 `[[lower.Trap]]`
+# / riscv 的 EBREAK 同形。缺这条时 `core::slice::sort` 等 core 代码里的
+# `intrinsics::abort()`（M6-122 起非 Windows 目标降到 Trap）会报
+# `[cap:SPEC_LOWERING_RULE_MISSING] 谱里没有 op Trap 的规则`。
+[[lower.Trap]]
+insts = ["UDF"]
+
 # i1（bool）的访存：LLVM 口径是一个**字节**（x86 也是 mov byte）。
 [[lower.Load]]
 when = { eq = ["rd", 1] }
