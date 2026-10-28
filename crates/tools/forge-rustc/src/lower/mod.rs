@@ -66,6 +66,11 @@ pub(crate) struct LowerCtxt<'tcx, 'f> {
     pub(crate) wide_temps: Vec<i32>,
     /// 当前调用点已用掉的临时槽数（每个 `TerminatorKind::Call` 开始时归零）。
     pub(crate) wide_temp_used: usize,
+    /// 本函数**直接引用**的被调实例（符号名 + Instance）：后端据此在 rustc 的
+    /// CGU 分区没有包含某个 AvailableExternally 实例时**按需补编**（-O1+ 的
+    /// MIR inliner 会把 #[inline] 实例内联掉、不留定义；forge 优化器没有内联
+    /// pass ⇒ 直接调用点会留未定义符号）。
+    pub(crate) referenced: &'f mut Vec<(String, Instance<'tcx>)>,
 }
 
 impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
@@ -76,6 +81,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         instance: &Instance<'tcx>,
         body: &'tcx Body<'tcx>,
         func_refs: &'f mut FuncRefTable,
+        referenced: &'f mut Vec<(String, Instance<'tcx>)>,
         naked: bool,
     ) -> Self {
         let own_wide = crate::abi::wide_int_abi(tcx, instance);
@@ -206,6 +212,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             own_wide,
             wide_temps,
             wide_temp_used: 0,
+            referenced,
         }
     }
     /// switchInt 的判别值：枚举（Adt）discr 先读判别（switchInt 的 case 是
@@ -1099,6 +1106,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         &format!("call in {}", self.fn_name),
                                     );
                                     let sym = symbol_name_for_instance(self.tcx, &instance);
+                                    self.referenced.push((sym.clone(), instance));
                                     if crate::trace::trace_enabled("CALL") {
                                         // v27 M5：mangled 符号会被截断/难读 ⇒ 同时打印
                                         // **可读的 def path**（与 `=== IR dump: … ===` 同名）。
@@ -1219,6 +1227,7 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     if ty.needs_drop(self.tcx, ty::TypingEnv::fully_monomorphized()) {
                         let inst = ty::Instance::resolve_drop_glue(self.tcx, ty);
                         let sym = symbol_name_for_instance(self.tcx, &inst);
+                        self.referenced.push((sym.clone(), inst));
                         let fr = self.func_refs.intern(&sym);
                         let addr = self.place_addr(place);
                         self.builder.call(FuncRef::new(fr), &[addr], &[]);
@@ -1584,6 +1593,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         .flatten() else {
             return Ok(None);
         };
+        self.referenced
+            .push((symbol_name_for_instance(self.tcx, &instance), instance));
         Ok(Some(self.fn_addr_value(&instance)))
     }
 

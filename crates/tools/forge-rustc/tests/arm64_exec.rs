@@ -1268,10 +1268,11 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
 /// 修前 `[2,1].sort_unstable()` 得 `[2,2]`；修后对 16 元乱序数组排序并校验
 /// 连续性（返回 `v[0]+v[15]==15`）。
 ///
-/// 注：只跑 -O0。`-O1+` 时 rustc 的 MIR inliner 会把 `#[inline]` 实例标成
-/// available-externally 且不进 CGU 分区，而 forge 优化器**没有内联 pass** ⇒
-/// 直接调用点留未定义符号（`CopyOnDrop::drop`/`revswap`）。这是独立能力缺口
-/// （需要后端按需发射或自实现内联），已在方案文档登记，不在本守卫里掩盖。
+/// 跑 **-O0/O1/O2 三档**（v27 M6-123）：`-O1+` 时 rustc 的 MIR inliner 会把
+/// `#[inline]` 实例标成 available-externally 且不进 CGU 分区，而 forge 优化器
+/// 没有内联 pass ⇒ 直接调用点会留未定义符号（`CopyOnDrop::drop`/`revswap`）。
+/// 后端现在按 lowering 期登记的"被引用实例"做 fixpoint，把缺失实例补编进一个
+/// 合成 CGU（`upstream_monomorphization` 为 None 的才补），三档都能链接真跑。
 #[test]
 fn rustc_aarch64_sort_probe_runs_under_qemu() {
     let dll = backend_dll();
@@ -1363,76 +1364,82 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
         assert_ok(&out, &format!("clang 汇编 sort {what}"));
     }
 
-    let obj = dir.join("probe_sort.o");
-    let elf = dir.join("probe_sort.elf");
-    let out = run(Command::new(&rustc).current_dir(&dir).args([
-        format!("-Zcodegen-backend={}", dll.display()).as_str(),
-        "--target",
-        "aarch64-unknown-none",
-        "--edition",
-        "2021",
-        "--crate-type",
-        "lib",
-        "-C",
-        "panic=abort",
-        "-C",
-        "opt-level=0",
-        "-C",
-        "debug-assertions=off",
-        "-C",
-        "overflow-checks=off",
-        "--emit=obj",
-        "--extern",
-        &format!("core={}", core.display()),
-        "--extern",
-        &format!("compiler_builtins={}", cb.display()),
-        src.to_str().unwrap(),
-        "-o",
-        obj.to_str().unwrap(),
-    ]));
-    assert_ok(&out, "forge 编 sort 探针（-O0）");
-    let out = run(Command::new(&ldlld).args([
-        "-m",
-        "aarch64elf",
-        "-Ttext=0x40000000",
-        "--entry=_start",
-        crt0_o.to_str().unwrap(),
-        stubs_o.to_str().unwrap(),
-        obj.to_str().unwrap(),
-        core.to_str().unwrap(),
-        cb.to_str().unwrap(),
-        "-o",
-        elf.to_str().unwrap(),
-    ]));
-    assert_ok(&out, "ld.lld 链接 sort 探针");
-    let out = run(Command::new(&qemu).args([
-        "-M",
-        "virt",
-        "-cpu",
-        "cortex-a57",
-        "-kernel",
-        elf.to_str().unwrap(),
-        "-nographic",
-        "-semihosting-config",
-        "enable=on,target=native",
-        "-monitor",
-        "none",
-        "-serial",
-        "none",
-        "-no-reboot",
-    ]));
-    let code = out.status.code().unwrap_or_else(|| {
-        panic!(
-            "qemu 异常终止（sort 探针）：\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        )
-    });
-    assert_eq!(
-        code & 0xFF,
-        15,
-        "sort 探针结果应为 15（排序后连续 0..15，首尾和；got {code}；产物：{}）",
-        dir.display()
-    );
+    // **O0/O1/O2 全档**（v27 M6-123）：-O1+ 的 MIR inliner 会把 `#[inline]`
+    // 实例标成 available-externally 且不进 CGU 分区；这次靠后端的"按需补编"
+    // 把被引用但未发射的实例补进合成 CGU，所以三档都能链接并真跑。
+    for level in ["0", "1", "2"] {
+        let obj = dir.join(format!("probe_sort_o{level}.o"));
+        let elf = dir.join(format!("probe_sort_o{level}.elf"));
+        let out = run(Command::new(&rustc).current_dir(&dir).args([
+            format!("-Zcodegen-backend={}", dll.display()).as_str(),
+            "--target",
+            "aarch64-unknown-none",
+            "--edition",
+            "2021",
+            "--crate-type",
+            "lib",
+            "-C",
+            "panic=abort",
+            "-C",
+            &format!("opt-level={level}"),
+            "-C",
+            "debug-assertions=off",
+            "-C",
+            "overflow-checks=off",
+            "--emit=obj",
+            "--extern",
+            &format!("core={}", core.display()),
+            "--extern",
+            &format!("compiler_builtins={}", cb.display()),
+            src.to_str().unwrap(),
+            "-o",
+            obj.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("forge 编 sort 探针（-O{level}）"));
+        let out = run(Command::new(&ldlld).args([
+            "-m",
+            "aarch64elf",
+            "-Ttext=0x40000000",
+            "--entry=_start",
+            crt0_o.to_str().unwrap(),
+            stubs_o.to_str().unwrap(),
+            obj.to_str().unwrap(),
+            core.to_str().unwrap(),
+            cb.to_str().unwrap(),
+            "-o",
+            elf.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("ld.lld 链接 sort 探针（-O{level}）"));
+        let out = run(Command::new(&qemu).args([
+            "-M",
+            "virt",
+            "-cpu",
+            "cortex-a57",
+            "-kernel",
+            elf.to_str().unwrap(),
+            "-nographic",
+            "-semihosting-config",
+            "enable=on,target=native",
+            "-monitor",
+            "none",
+            "-serial",
+            "none",
+            "-no-reboot",
+        ]));
+        let code = out.status.code().unwrap_or_else(|| {
+            panic!(
+                "qemu 异常终止（sort 探针 -O{level}）：\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            )
+        });
+        assert_eq!(
+            code & 0xFF,
+            15,
+            "sort 探针 -O{level} 结果应为 15（排序后连续 0..15，首尾和；got {code}；\
+             产物：{}）",
+            dir.display()
+        );
+    }
 }
 
 /// **迭代器守卫**（v27 M6-117）：`v.iter()` / `next()` / `.copied().sum()` 真执行。

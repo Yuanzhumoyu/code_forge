@@ -15,6 +15,7 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
     instance: &Instance<'tcx>,
     body: &'tcx Body<'tcx>,
     func_refs: &'f mut FuncRefTable,
+    referenced: &mut Vec<(String, Instance<'tcx>)>,
     // 目标对应的 ISA 名——由调用方（`backend::codegen_crate`）选定并校验过目标。
     // **本函数不再二次推导**：目标校验只能有一个失败点（缺口守卫要求 ID 恰好一处）。
     isa_name: &str,
@@ -49,7 +50,7 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
             tcx.def_path_str(instance.def_id())
         )));
     }
-    let lctx = LowerCtxt::new(tcx, instance, body, func_refs, naked);
+    let lctx = LowerCtxt::new(tcx, instance, body, func_refs, referenced, naked);
     if crate::trace::trace_enabled("GLOBAL") {
         eprintln!(
             "[forge] lowering fn {:?}",

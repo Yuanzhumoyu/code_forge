@@ -414,7 +414,7 @@ impl CodegenBackend for CodegenLibBackend {
 
         // 实例分组计划：单对象 = 1 个（跨 CGU 摊平）计划；多对象 = 每 CGU 一个
         //（组内过滤 allocator shim 等 + 按符号名排序 + 跨 CGU 同名去重）。
-        let plans = build_plans(tcx, codegen_units, multi_object);
+        let mut plans = build_plans(tcx, codegen_units, multi_object);
         // v27 M2：`global_asm!` 的汇编文本收集器（跨 CGU 汇总成**一份**对象——
         // 与 cranelift 后端同构：文本拼一起、交系统汇编器、报 global_asm_object）。
         let mut global_asm_text: Option<crate::global_asm::GlobalAsmText> = None;
@@ -515,7 +515,7 @@ impl CodegenBackend for CodegenLibBackend {
                  （WA-38/M4），当前串行编译（产物不变）"
             );
         }
-        let tasks: Vec<TaskOutcome> = if parallel {
+        let mut tasks: Vec<TaskOutcome<'tcx>> = if parallel {
             rustc_data_structures::sync::par_map(work.iter().copied(), |(pi, fi)| {
                 compile_fn_task_guarded(tcx, &plans, pi, fi)
             })
@@ -526,6 +526,100 @@ impl CodegenBackend for CodegenLibBackend {
                 .collect()
         };
 
+        // ── 按需补编：`AvailableExternally` 实例（-O1+ 的 MIR inliner 缺口）──
+        // rustc 在 -O1+ 会把 `#[inline]` 实例内联进调用者、并把独立定义标成
+        // available-externally（**不进 CGU 分区**）；forge 优化器没有内联 pass，
+        // 直接调用点会留下未定义符号（sort 的 `CopyOnDrop::drop`/`revswap`）。
+        // 这里用 lowering 期间登记的 (符号名, Instance) 做 fixpoint，把缺失实例
+        // 补编到**第一个 CGU**（不新增 CGU/对象：多对象与 DWARF per-CGU 的
+        // 对象数契约不变）。
+        let mut extra_items: Vec<MonoItem<'tcx>> = Vec::new();
+        let mut extra_outcomes: Vec<TaskOutcome<'tcx>> = Vec::new();
+        {
+            const EXTRA_PI: usize = 0;
+            let mut emitted: std::collections::HashSet<String> = tasks
+                .iter()
+                .flat_map(|t| t.fns.iter())
+                .filter(|f| f.result.is_ok())
+                .map(|f| f.sym_name.clone())
+                .collect();
+            let mut seen: std::collections::HashSet<String> = emitted.clone();
+            let mut queue: Vec<(String, Instance<'tcx>)> = Vec::new();
+            for t in &tasks {
+                for f in &t.fns {
+                    queue.extend(f.referenced.iter().cloned());
+                }
+            }
+            loop {
+                let mut newly: Vec<(String, Instance<'tcx>)> = Vec::new();
+                for (sym, inst) in queue.drain(..) {
+                    if emitted.contains(&sym) || !seen.insert(sym.clone()) {
+                        continue;
+                    }
+                    // 上游 crate 已提供定义（非泛型/非 inline 的外部函数，如
+                    // `core::panicking::panic`）：不在本 crate 发射，也不能按需补编
+                    //（`instance_mir` 对这种实例没有 MIR）。rustc 的
+                    // `upstream_monomorphization` 正好表达"上游会 codegen"。
+                    if inst.upstream_monomorphization(tcx).is_some() {
+                        continue;
+                    }
+                    // 没有 MIR 的实例（`extern` 块声明、无 body 的项）也不能补编：
+                    // `instance_mir` 会 ICE（`can't type-check body of …`）。
+                    if !tcx.is_mir_available(inst.def_id()) {
+                        continue;
+                    }
+                    newly.push((sym, inst));
+                }
+                if newly.is_empty() {
+                    break;
+                }
+                for (sym, inst) in newly {
+                    if crate::trace::trace_enabled("FN") {
+                        eprintln!("[forge] on-demand instance {sym}");
+                    }
+                    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        compile_instance(tcx, &inst, EXTRA_PI)
+                    }))
+                    .unwrap_or_else(|_| TaskOutcome {
+                        plan: EXTRA_PI,
+                        fns: Vec::new(),
+                        table: FuncRefTable::default(),
+                    });
+                    // 补编失败（含 worker panic）⇒ 不把这个 item 放进 CGU0：
+                    // 发射按 `plan.items` 与 outcomes 对位，空 outcome 会错位。
+                    if outcome.fns.is_empty() {
+                        continue;
+                    }
+                    for f in &outcome.fns {
+                        queue.extend(f.referenced.iter().cloned());
+                        if f.result.is_ok() {
+                            emitted.insert(f.sym_name.clone());
+                        }
+                    }
+                    extra_items.push(MonoItem::Fn(inst));
+                    extra_outcomes.push(outcome);
+                }
+            }
+            if extra_items.is_empty() {
+                seen.clear();
+            }
+        }
+        if !extra_items.is_empty() {
+            if crate::trace::trace_enabled("FN") {
+                eprintln!(
+                    "[forge] on-demand: {} extra instances appended to CGU0",
+                    extra_items.len()
+                );
+            }
+            // 追加到 CGU0 的 items 末尾，并把对应 TaskOutcome 插到 CGU0 任务段之后
+            //（归并循环按 plan 连续消费 tasks）。
+            let split = tasks.iter().take_while(|t| t.plan == 0).count();
+            for (k, mut t) in extra_outcomes.into_iter().enumerate() {
+                t.plan = 0;
+                tasks.insert(split + k, t);
+            }
+            plans[0].items.extend(extra_items);
+        }
         // ── 归并：每 CGU 组表 + 数据 owner 判定 ──
         // line/var/enum 并入模块级 func_ref_table（dwarf 用，任务序 = 全局
         // 函数序）；vtable/promoted 记录并入**规范表**（按符号名 = 内容稳定键
@@ -539,7 +633,7 @@ impl CodegenBackend for CodegenLibBackend {
         let mut promoted: Vec<crate::func_ref::PromotedRecord> = Vec::new();
         let mut promoted_owner: Vec<usize> = Vec::new();
         let mut promoted_sym_idx: HashMap<String, usize> = HashMap::new();
-        let mut outcomes_by_plan: Vec<Vec<FnOutcome>> = Vec::new();
+        let mut outcomes_by_plan: Vec<Vec<FnOutcome<'tcx>>> = Vec::new();
         outcomes_by_plan.resize_with(plans.len(), Vec::new);
         {
             let mut task_iter = tasks.into_iter().peekable();
@@ -605,9 +699,14 @@ impl CodegenBackend for CodegenLibBackend {
                 task_iter.next().is_none(),
                 "M6: 残留未归并的任务（plans/任务序错位）"
             );
+            // 计划里的 Fn 实例数 = 初始 work + 按需补编追加到 CGU0 的实例。
+            let expected_fns = plans
+                .iter()
+                .flat_map(|p| p.items.iter())
+                .filter(|item| matches!(item, MonoItem::Fn(_)))
+                .count();
             debug_assert_eq!(
-                total_fns,
-                work.len(),
+                total_fns, expected_fns,
                 "M6: worker 归并结果数必须等于函数实例数"
             );
         }
@@ -1278,18 +1377,22 @@ fn mono_item_sort_key<'tcx>(tcx: TyCtxt<'tcx>, item: MonoItem<'tcx>) -> String {
 // ============================================================
 
 /// 单个函数实例的编译产出（错误不中止后续函数——主线程统一报告）。
-struct FnOutcome {
+struct FnOutcome<'tcx> {
     /// mangled 符号名（错误报告/发射用）。
     sym_name: String,
     /// 编译 + 就地 resolve 完成的结果（@N/G{N} 已全部替换为真实符号名）。
     result: Result<CompiledFunction, String>,
+    /// 本函数**直接引用**的被调实例（符号名 + Instance）：`-O1+` 时 rustc 的
+    /// `#[inline]` 实例可能被 MIR inliner 内联掉、不进 CGU 分区；forge 没有
+    /// 内联 pass ⇒ 需要按需补编这些实例（`codegen_crate` 的 fixpoint）。
+    referenced: Vec<(String, Instance<'tcx>)>,
 }
 
 /// 一个函数任务的产出：函数结果（任务序 = 组内符号序）+ 任务私有
 /// FuncRefTable（登记条目待主线程归并）+ 所属 plan 下标。
-struct TaskOutcome {
+struct TaskOutcome<'tcx> {
     plan: usize,
-    fns: Vec<FnOutcome>,
+    fns: Vec<FnOutcome<'tcx>>,
     table: FuncRefTable,
 }
 
@@ -1301,7 +1404,7 @@ fn compile_fn_task_guarded<'tcx>(
     plans: &[CguPlan<'tcx>],
     pi: usize,
     fi: usize,
-) -> TaskOutcome {
+) -> TaskOutcome<'tcx> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         compile_fn_task(tcx, plans, pi, fi)
     }))
@@ -1320,6 +1423,7 @@ fn compile_fn_task_guarded<'tcx>(
             fns: vec![FnOutcome {
                 sym_name: format!("<worker panic @plan{pi} item{fi}>"),
                 result: Err(format!("codegen worker panic: {msg}")),
+                referenced: Vec::new(),
             }],
             table: FuncRefTable::default(),
         }
@@ -1359,24 +1463,35 @@ fn compile_fn_task<'tcx>(
     plans: &[CguPlan<'tcx>],
     pi: usize,
     fi: usize,
-) -> TaskOutcome {
+) -> TaskOutcome<'tcx> {
+    let MonoItem::Fn(instance) = &plans[pi].items[fi] else {
+        return TaskOutcome {
+            plan: pi,
+            fns: Vec::new(),
+            table: FuncRefTable::default(),
+        };
+    };
+    compile_instance(tcx, instance, pi)
+}
+
+/// 编译单个 `Instance`（CGU 分区里的普通函数任务，或 `-O1+` 缺失实例的
+/// **按需补编**共用）。`plan` 只影响产出分组/诊断。
+fn compile_instance<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    instance: &Instance<'tcx>,
+    pi: usize,
+) -> TaskOutcome<'tcx> {
     let mut table = FuncRefTable::default();
     let mut fns = Vec::with_capacity(1);
+    let mut referenced: Vec<(String, Instance<'tcx>)> = Vec::new();
     // 目标校验已在 `codegen_crate` 入口做过（缺口 ID `TARGET` 只在那里出现一次）⇒
     // 这里是**不变量**：走到这里说明目标已被接受。推导失败即内部错误，不静默回落。
     let isa_name = crate::compile::isa_name_for_target(&format!("{}", tcx.sess.opts.target_triple))
         .expect("codegen_crate 已校验目标：这里不应出现未支持的目标");
     {
-        let MonoItem::Fn(instance) = &plans[pi].items[fi] else {
-            return TaskOutcome {
-                plan: pi,
-                fns,
-                table,
-            };
-        };
         let def_id = instance.def_id();
         if crate::trace::trace_enabled("FN") {
-            eprintln!("[forge] emit plan#{pi}[{fi}] {}", tcx.def_path_str(def_id),);
+            eprintln!("[forge] emit plan#{pi} {}", tcx.def_path_str(def_id),);
         }
         // 获取符号名 — 使用定义 crate 的 CrateNum 以确保
         // 外部实例（如跨 crate 单态化的泛型）的哈希与 rlib 一致
@@ -1406,9 +1521,15 @@ fn compile_fn_task<'tcx>(
                 ty::EarlyBinder::bind(tcx, body.clone()),
             );
             let body = tcx.arena.alloc(monomorphized);
-            let mut compiled =
-                crate::compile::lower_and_compile(tcx, instance, body, &mut table, isa_name)
-                    .map_err(|e| e.to_string())?;
+            let mut compiled = crate::compile::lower_and_compile(
+                tcx,
+                instance,
+                body,
+                &mut table,
+                &mut referenced,
+                isa_name,
+            )
+            .map_err(|e| e.to_string())?;
             // 直接调用的重定位符号是 "@{FuncRef 序号}"，替换为真实符号名
             // GlobalAddr 重定位 "G{N}" → 真实数据符号名（两条 resolve 只读
             // 查询本任务表——就地完成，编号不跨函数逃逸）
@@ -1441,12 +1562,16 @@ fn compile_fn_task<'tcx>(
                 .map(|b| format!("{b:02x}"))
                 .collect();
             eprintln!(
-                "[forge] size plan#{pi}[{fi}] {sym_name} code_bytes={} head=[{}]",
+                "[forge] size plan#{pi} {sym_name} code_bytes={} head=[{}]",
                 code.code.len(),
                 head.join(" ")
             );
         }
-        fns.push(FnOutcome { sym_name, result });
+        fns.push(FnOutcome {
+            sym_name,
+            result,
+            referenced,
+        });
     }
     TaskOutcome {
         plan: pi,

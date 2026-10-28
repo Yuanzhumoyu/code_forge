@@ -622,7 +622,22 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   留未定义符号（sort 的 `CopyOnDrop::drop`/`revswap`）。当前 sort 守卫只跑 `-O0`；
   真修需要后端"按需发射缺失实例"或自实现内联。
 
-**仍未覆盖**：NEON 向量、DWARF/CFI、`-O1+` 的 available-externally 实例发射。
+**进度（2026-10-28，M6-123）——`-O1+` 缺失实例按需补编；sort 三档真跑**：
+
+- **按需补编 available-externally 实例**：lowering 期间记录每个直接调用目标的
+  `(符号名, Instance)`（`LowerCtxt::referenced`，含 drop glue / 函数项地址）；
+  `codegen_crate` 在 CGU 分区编译后做 fixpoint：把"被引用但未发射"且
+  `upstream_monomorphization(tcx).is_none()` 的实例补编进合成 `<on-demand>` CGU。
+  修前 `-O1+` 的 sort 因 `CopyOnDrop::drop`/`revswap` 未进分区而缺符号。
+- **LICM 默认关闭**（`FORGE_ENABLE_LICM=1` 可打开）：`-O2` 的
+  `core::slice::sort` 在开启 LICM 时错值（`[1,9,14,14]`；`FORGE_OPT_SKIP=licm`
+  正常），最窄复现是"只外提 Iconst"（`FORGE_LICM_ONLY=iconst`）。外提的支配性/
+  插入位置/链依赖条件尚未证明，先以正确性优先；常量/地址计算留在原地成本极低。
+  补全条件后转正（loops/licm.rs）。
+- 守卫 `rustc_aarch64_sort_probe_runs_under_qemu` 升格为 **-O0/O1/O2 全档**（16 元
+  乱序 sort_unstable 后校验连续，返回值 15）；arm64_exec 9/9。
+
+**仍未覆盖**：NEON 向量、DWARF/CFI、LICM 的错误外提（默认关闭、待修）。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

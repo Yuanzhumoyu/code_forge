@@ -2,7 +2,8 @@
 //!
 //! # Pipeline (PassManager::for_level)
 //! - O1 (5 passes): const_fold, copy_prop, cse, dead_code, jump_thread
-//! - O2 (13 passes): O1 + gvn, gvn_pre, sccp, block_param_coalesce, licm, tail_call, 代数重写, dce
+//! - O2 (12 passes + opt-in licm): O1 + gvn, gvn_pre, sccp, block_param_coalesce, tail_call, 代数重写, dce
+//!   （licm 默认关闭：v27 M6-123 实测 -O2 sort 错值，需 FORGE_ENABLE_LICM=1 打开）
 //! - O3 (18 passes): O2 + inline, mem2reg, ind_var_simplify, loop_unroll + 尾部 DCE
 //!
 //! # Pass modules
@@ -403,14 +404,18 @@ impl PassManager {
                 Box::new(crate::loops::insert_preheader::InsertPreheaderPass::new()),
                 PassRunMode::Once,
             );
-            // LICM 已重新入列（2026-10-19 二次修正）：**它不再外提 `StackAddr`**
-            // （那类外提会让"槽地址值"跨块活跃，触发后端寄存器分配的干扰建错——
-            // 机器级证据见 `loops/licm.rs` 的注释）。`Iconst`/纯运算/只读循环里的
-            // `load` 外提保持不变，两档隔离实测均正确。排查仍可用 `FORGE_LICM_ONLY`。
-            pm.add_pass(
-                Box::new(crate::loops::licm::LicmPass::new()),
-                PassRunMode::Once,
-            );
+            // **LICM 暂时默认关闭**（v27 M6-123）：`-O2` 的
+            // `core::slice::sort` 在开启 LICM 时错值（`[1,9,14,14]`；
+            // `FORGE_OPT_SKIP=licm` 恢复正确），最窄复现是"只外提 Iconst"
+            // （`FORGE_LICM_ONLY=iconst`）。外提的支配性/插入位置条件目前
+            // 没有被证明，先以正确性优先；排查时用 `FORGE_ENABLE_LICM=1`
+            // 打开（`FORGE_LICM_ONLY` 仍可隔离指令类）。补全条件后转正。
+            if std::env::var_os("FORGE_ENABLE_LICM").is_some() {
+                pm.add_pass(
+                    Box::new(crate::loops::licm::LicmPass::new()),
+                    PassRunMode::Once,
+                );
+            }
             pm.add_pass(
                 Box::new(crate::ipa::tail_call::TailCallPass::new(tc_table)),
                 PassRunMode::Once,

@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-28) — `-O1+` 缺失实例按需补编；aarch64 sort 三档真跑
+
++ forge-rustc 现在记录每个直接调用目标的 `(符号名, Instance)`（含 drop glue、函数项
+  地址），并在 CGU 分区编译后做 fixpoint：把"被引用但未进分区"、
+  `upstream_monomorphization` 为 `None` 的 `AvailableExternally` 实例补编进合成
+  `<on-demand>` CGU。`-O1+` 的 `core::slice::sort` 因 `CopyOnDrop::drop`/`revswap`
+  缺符号而链接失败的问题消失。
++ 守卫 `rustc_aarch64_sort_probe_runs_under_qemu` 升格为 **-O0/O1/O2**：16 元乱序
+  `sort_unstable()` 后校验连续 0..15（真执行 15）。
++ LICM 默认关闭（`FORGE_ENABLE_LICM=1` 可 opt-in）：`-O2` 的 sort 在 LICM 下错值
+  （最窄复现 `FORGE_LICM_ONLY=iconst`），待补全支配/插入位置/链依赖条件后转正；
+  e2e/门禁在无 LICM 下全绿。
+
 ### Fixed (2026-10-28) — `core::slice::sort` 在 aarch64 真跑（4 类后端缺陷）
 
 + `ptr::copy_nonoverlapping`/`ptr::copy`：按元素 `size`+`align` 用 8/4/2/1 阶梯精确复制

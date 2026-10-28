@@ -12,6 +12,14 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-28 · M6-123：available-externally 实例按需补编（sort -O1/O2 真跑）
+
+- lowering 记录直接调用目标 `(sym, Instance)`；`codegen_crate` fixpoint 补编
+  `upstream_monomorphization=None` 的缺失实例到合成 CGU（`<on-demand>`）。
+- `-O1+` 的 sort 因此可链接真跑；sort 守卫升到 O0/O1/O2。
+- LICM 默认关闭（`FORGE_ENABLE_LICM=1` 打开）：-O2 sort 在 LICM 下错值
+  （最窄复现 only-iconst），待补支配/位置条件。
+
 ### 2026-10-28 · M6-122：`core::slice::sort` 真跑（copy/drop/size_of_val/函数项）
 
 - `CopyNonOverlapping`/`ptr::copy`：按元素 size+align 精确字节复制，`copy` 补 memmove 反向。
