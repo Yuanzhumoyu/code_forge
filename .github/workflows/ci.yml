@@ -296,14 +296,14 @@ jobs:
             '--- e2e events ---'
             Get-Content target\tmp\e2e_events.txt
           } else { '--- e2e events: (file absent) ---' }
-      # CI 环境 AV 的**概率**探针（always）：产物与本机逐字节相同却只在 runner 上
-      # AV，机制未定位（OS/安全策略候选）。这里不依赖"本轮是否恰好命中"——用
-      # FORGE_E2E_ONLY + FORGE_E2E_TIMEOUT_SECS=0 让 harness 当轮"失败"从而保留
-      # 刚构建的产物，再对**同一 exe** 连跑 20 次给退出码直方图：
-      # 全 AV ⇒ 该 runner 上确定性；混合 ⇒ 与地址随机化/时序相关的环境性。
-      # （本机对照：两例各 20 次全为正确退出，0 AV。）
-      - name: Probe CI-env AV rate (always)
-        if: always()
+      # CI 环境 AV 的**概率**探针：产物与本机逐字节相同却只在 runner 上 AV，
+      # 机制未定位（OS/安全策略候选）。用 FORGE_E2E_ONLY + FORGE_E2E_TIMEOUT_SECS=0
+      # 让 harness 当轮"失败"从而保留刚构建的产物，再对**同一 exe** 连跑 20 次给
+      # 退出码直方图：全 AV ⇒ 该 runner 上确定性；混合 ⇒ 与地址随机化/时序相关。
+      # 成本：每次要故意失败跑两遍 e2e + 每例 20 次进程启动 + alloc 探针（数分钟）。
+      # ⇒ **只在 e2e 失败时或仓库变量 FORGE_PROBE=1 时运行**（成功轮不再付这份钱）。
+      - name: Probe CI-env AV rate (on failure / FORGE_PROBE=1)
+        if: ${{ failure() || vars.FORGE_PROBE == '1' }}
         run: |
           Remove-Item Env:FORGE_E2E_EVENTS -ErrorAction SilentlyContinue
           $env:FORGE_E2E_KEEP = '1'
