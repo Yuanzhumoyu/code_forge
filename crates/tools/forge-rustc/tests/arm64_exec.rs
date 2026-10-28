@@ -1033,6 +1033,217 @@ pub extern "C" fn forge_entry(a: i32) -> i32 {
         );
     }
 }
+/// **fmt 守卫**（v27 M6-118）：`core::fmt` 整数格式化 + 手写排序真执行。
+///
+/// 根因：`frame_layout_info` 的 **fp-inside** 分支只把栈槽平移设成 `fp_push_bytes`
+/// （=16），漏了 callee-saved 保存区（x19..x28，最多 80B）。于是局部槽会落进
+/// `[fp - fp_push - cs_bytes, fp)`：QEMU gdbstub 写观察点实测 `write_str` 的局部
+/// `fp-0x40` 正是 `x24` 的保存槽 ⇒ 返回后 `x24` 被局部值覆盖 ⇒ 内层
+/// `core::fmt::write` 的 `blr x24` 跳到 0。修法：栈槽平移 = `fp_push + cs_bytes`。
+///
+/// 断言真执行：a=1,b=2 ⇒ s=165、v[0]=3、v[9]=30、count_ones(165)=4、collatz(27)=111、
+/// 格式化 `"165:3:30"` 长 8 ⇒ 165+3+30+4+111+8 = 321 ⇒ 低 8 位 **65**。
+#[test]
+fn rustc_aarch64_fmt_probe_runs_under_qemu() {
+    let dll = backend_dll();
+    if !dll.is_file() {
+        eprintln!("SKIP: 后端 dylib 缺失（先 `cargo build -p forge-rustc`）");
+        return;
+    }
+    let (Some(clang), Some(ldlld)) = (tool("clang"), tool("ld.lld")) else {
+        eprintln!("SKIP: 缺 clang / ld.lld");
+        return;
+    };
+    let Some(qemu) = qemu_aarch64() else {
+        eprintln!("SKIP: qemu-system-aarch64 未安装");
+        return;
+    };
+    let rustc = std::env::var_os("RUSTC").map_or_else(|| "rustc".into(), PathBuf::from);
+    let sysroot = run(Command::new(&rustc).arg("--print").arg("sysroot"));
+    assert_ok(&sysroot, "rustc --print sysroot");
+    let sysroot = PathBuf::from(String::from_utf8_lossy(&sysroot.stdout).trim());
+    let lib_dir = sysroot.join("lib/rustlib/src/rust/library");
+    let core_src = lib_dir.join("core/src/lib.rs");
+    let cb_src = lib_dir.join("compiler-builtins/compiler-builtins/src/lib.rs");
+    if !core_src.is_file() || !cb_src.is_file() {
+        eprintln!("SKIP: 缺 rust-src（{}）", lib_dir.display());
+        return;
+    }
+
+    let dir = workspace_root()
+        .join("target")
+        .join("tmp")
+        .join("arm64-core-probe")
+        .join("fmt");
+    let sys = dir.join("sysroot");
+    std::fs::create_dir_all(&sys).expect("创建产物目录");
+    let core = build_target_rlib(&rustc, &sys, "core", &core_src, &[]);
+    let cb = build_target_rlib(
+        &rustc,
+        &sys,
+        "compiler_builtins",
+        &cb_src,
+        &[
+            "--cfg",
+            r#"feature="mem""#,
+            "--cfg",
+            r#"feature="compiler-builtins""#,
+            "--extern",
+            &format!("core={}", core.display()),
+        ],
+    );
+
+    let src_text = r#"#![no_std]
+#![no_main]
+
+use core::fmt::Write;
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! { loop {} }
+
+struct Buf { data: [u8; 64], len: usize }
+
+impl Write for Buf {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let mut i = 0usize;
+        while i < s.len() {
+            if self.len < self.data.len() {
+                self.data[self.len] = s.as_bytes()[i];
+                self.len += 1;
+            }
+            i += 1;
+        }
+        Ok(())
+    }
+}
+
+fn collatz(mut x: u32) -> u32 {
+    let mut steps = 0;
+    while x != 1 {
+        if x % 2 == 0 { x /= 2; } else { x = x * 3 + 1; }
+        steps += 1;
+    }
+    steps
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
+    let mut v = [0i32; 10];
+    let mut i = 0usize;
+    while i < v.len() { v[i] = (a + b) * (i as i32 + 1); i += 1; }
+    let mut s = 0i32;
+    let mut k = 0usize;
+    while k < v.len() { s += v[k]; k += 1; }
+    let mut i2 = 1usize;
+    while i2 < v.len() {
+        let mut j = i2;
+        while j > 0 && v[j - 1] > v[j] {
+            let t = v[j - 1];
+            v[j - 1] = v[j];
+            v[j] = t;
+            j -= 1;
+        }
+        i2 += 1;
+    }
+    let mut buf = Buf { data: [0u8; 64], len: 0 };
+    let _ = write!(buf, "{}:{}:{}", s, v[0], v[9]);
+    let opt: Option<i32> = if s > 0 { Some(s) } else { None };
+    let bits = match opt { Some(x) => x.count_ones() as i32, None => 0 };
+    let steps = collatz(27) as i32;
+    (s + v[0] + v[9] + bits + steps + buf.len as i32) & 0xFF
+}
+"#;
+
+    let src = dir.join("probe_fmt.rs");
+    let obj = dir.join("probe_fmt.o");
+    let crt0_s = dir.join("crt0_fmt.s");
+    let crt0_o = dir.join("crt0_fmt.o");
+    let stubs_s = dir.join("stubs_fmt.s");
+    let stubs_o = dir.join("stubs_fmt.o");
+    let elf = dir.join("probe_fmt.elf");
+    std::fs::write(&src, src_text).expect("写 probe_fmt.rs");
+    std::fs::write(&crt0_s, CORE_CRT0_S).expect("写 crt0_fmt.s");
+    std::fs::write(&stubs_s, CORE_STUBS_S).expect("写 stubs_fmt.s");
+
+    let out = run(Command::new(&rustc).current_dir(&dir).args([
+        format!("-Zcodegen-backend={}", dll.display()).as_str(),
+        "--target",
+        "aarch64-unknown-none",
+        "--edition",
+        "2021",
+        "--crate-type",
+        "lib",
+        "-C",
+        "panic=abort",
+        "-C",
+        "opt-level=0",
+        "-C",
+        "debug-assertions=off",
+        "-C",
+        "overflow-checks=off",
+        "--emit=obj",
+        "--extern",
+        &format!("core={}", core.display()),
+        "--extern",
+        &format!("compiler_builtins={}", cb.display()),
+        src.to_str().unwrap(),
+        "-o",
+        obj.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "forge 编 fmt 探针");
+
+    for (src_s, out_o, what) in [(&crt0_s, &crt0_o, "crt0"), (&stubs_s, &stubs_o, "stubs")] {
+        let out = run(Command::new(&clang).args([
+            "--target=aarch64-unknown-none",
+            "-c",
+            src_s.to_str().unwrap(),
+            "-o",
+            out_o.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("clang 汇编 fmt {what}"));
+    }
+    let out = run(Command::new(&ldlld).args([
+        "-m",
+        "aarch64elf",
+        "-Ttext=0x40000000",
+        "--entry=_start",
+        crt0_o.to_str().unwrap(),
+        stubs_o.to_str().unwrap(),
+        obj.to_str().unwrap(),
+        core.to_str().unwrap(),
+        cb.to_str().unwrap(),
+        "-o",
+        elf.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "ld.lld 链接 fmt 探针");
+    let out = run(Command::new(&qemu).args([
+        "-M",
+        "virt",
+        "-cpu",
+        "cortex-a57",
+        "-kernel",
+        elf.to_str().unwrap(),
+        "-nographic",
+        "-semihosting-config",
+        "enable=on,target=native",
+        "-monitor",
+        "none",
+        "-serial",
+        "none",
+        "-no-reboot",
+    ]));
+    let code = out
+        .status
+        .code()
+        .unwrap_or_else(|| panic!("qemu 异常终止：\n{}", String::from_utf8_lossy(&out.stderr)));
+    assert_eq!(
+        code & 0xFF,
+        65,
+        "fmt 探针结果应为 65（got {code}；产物：{}）",
+        dir.display()
+    );
+}
 /// **迭代器守卫**（v27 M6-117）：`v.iter()` / `next()` / `.copied().sum()` 真执行。
 ///
 /// 根因（v27 M6-116 补漏）：结构体逐字段构造循环**没有跳过 ZST 字段**——

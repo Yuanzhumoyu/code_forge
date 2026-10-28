@@ -426,6 +426,12 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
             ),
             // AAPCS64：`{ __stack, __gr_top, __vr_top, __gr_offs, __vr_offs }`，两个游标都是
             // **有符号**计数（从负值数到 0；0 ⇒ 寄存器用完，改取 `__stack`）。
+            //
+            // **`contiguous = true`（v27 M6-118）**：AAPCS64 定本要求 `__stack` 指向
+            // **入口 sp**（= 第一个栈实参），保存区紧贴它下方 ⇒ 与 riscv 同一条"帧顶
+            // 保存区"路径。此前写 `false` 把保存区排在局部槽之下：帧一大，`va_list`
+            // 初始化的保存区偏移就超出 `STURX` 的 imm9（-256..255）范围（实测
+            // `Sturx: immediate -368`）；而栈槽平移修正后偏移只会更负。
             (
                 "aapcs64_struct".to_string(),
                 VaListShape {
@@ -441,7 +447,7 @@ pub fn preset_va_shape(name: &str) -> Option<&'static VaListShape> {
                     save: Some(VaSaveDecl {
                         int_slot: 8,
                         float_slot: 16,
-                        contiguous: false,
+                        contiguous: true,
                     }),
                     int_arg: a("__gr_offs", Some("__gr_top"), Some("__stack"), true),
                     float_arg: a("__vr_offs", Some("__vr_top"), Some("__stack"), true),

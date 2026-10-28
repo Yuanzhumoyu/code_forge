@@ -12,6 +12,18 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-28 · M6-118：fp-inside 栈槽平移含 callee-saved 区（fmt 跑通）
+
+- gdbstub 写观察点证明 `write_str` 的局部 `fp-0x40` = x24 保存槽 ⇒ 返回后 x24 被覆盖
+  ⇒ `core::fmt::write` 的 `blr x24` 跳 0。
+- 根因：`frame_layout_info` fp-inside 的 `stack_slot_shift` 只有 `fp_push_bytes`，
+  漏了 callee-saved 区（x19..x28）。修法：加上 `cs_bytes`。
+- 验收：`write!(buf,"{}",a)` 真执行（输出 "1"）；守卫
+  `rustc_aarch64_fmt_probe_runs_under_qemu`（格式化+排序+Collatz，O0 真执行 65）；
+  arm64_exec 8/8、三矩阵、codegen、clippy 全绿。
+- 连带：`aapcs64_struct` 保存区改 `contiguous = true`（帧顶）——原先排在局部槽之下，
+  栈槽下移后偏移超 `STURX` imm9（`-368`）；定本 `__stack` 本就指向入口 sp。
+
 ### 2026-10-28 · M6-117：迭代器跑通（ZST 字段写越界修好）
 
 - 结构体逐字段构造没跳 ZST 字段（M6-116 只补了枚举）：`Iter::_marker` 的 PhantomData 被

@@ -519,6 +519,25 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   （跳到地址 0：空函数指针/坏返回地址，疑似 `&dyn Display` vtable 或函数指针收参）；
   O1/O2 另有 `const-fold` 后 IR 校验失败（`StoreAddrNotPointer` / `Ushr` 类型不一致）。
 
+**进度（2026-10-28，M6-118）——fp-inside 栈槽平移漏了 callee-saved 区**：
+
+- 现象：`write!(buf, "{}", a)`（带格式化实参）跳到地址 0；而 `write!(buf, "x")`
+  与直接 `write_str` 都正常。
+- 定位：QEMU gdbstub 写观察点打在 `Buf::write_str` 的 **x24 保存槽**（`fp-0x40`）上，
+  命中序列 = prologue 存 x24 → 零初始化 `str x25,[x24]` 写同一地址（局部槽）→ …
+  ⇒ 局部槽落在 callee-saved 保存区里；返回时 x24 被局部值覆盖 ⇒ 内层
+  `core::fmt::write` 的 `blr x24` 跳到 0。
+- 根因：`frame_layout_info` 的 **fp-inside** 分支 `stack_slot_shift = fp_push_bytes`
+  （16），但保存槽占了 `[fp - fp_push - cs_bytes, fp)`（x19..x28 最多 80B）。
+  修法：`stack_slot_shift = fp_push_bytes + cs_bytes`（Outside 不变）。
+- 验收：`write!(buf, "{}", a)` 真执行（f3 探针输出 `"1"` ⇒ exit 1）；新守卫
+  `rustc_aarch64_fmt_probe_runs_under_qemu`（`write!("{}:{}:{}")` + 手写排序 +
+  `count_ones` + Collatz，O0 真执行 **65**）。
+- 连带修正（同一缺陷面）：栈槽整体下移后，`aapcs64_struct` 的保存区（原先排在局部槽
+  之下）偏移超出 `STURX` 的 imm9 范围（实测 `Sturx: immediate -368`）。AAPCS64 定本要求
+  `__stack` 指向**入口 sp**、保存区紧贴其下 ⇒ 改成 `contiguous = true`（帧顶保存区），
+  与 riscv 同一条路径；arm64/riscv/x86 三个 JIT 矩阵（含变参用例）全绿。
+
 **仍未覆盖**：NEON 向量、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）

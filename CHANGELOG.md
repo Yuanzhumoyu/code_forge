@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-28) — fp-inside 栈槽落在 callee-saved 保存区上
+
++ `frame_layout_info` 的 fp-inside 分支 `stack_slot_shift` 只算了 `fp_push_bytes`
+  （16），漏掉 callee-saved 区（x19..x28，最多 80 字节）：局部槽会落进保存槽，
+  函数返回时恢复出被局部值覆盖的 x21/x24（实测 `core::fmt::write` 的 `blr x24`
+  跳到地址 0）。现在 `stack_slot_shift = fp_push_bytes + cs_bytes`。
++ 守卫 `rustc_aarch64_fmt_probe_runs_under_qemu`：`write!` 整数格式化 + 手写排序 +
+  `count_ones` + Collatz，O0 真执行 **65**；`write!(buf, "{}", a)` 也真执行（输出 "1"）。
++ 定位手段：QEMU gdbstub 硬件写观察点打在 `Buf::write_str` 的 x24 保存槽上。
++ 连带修正：`aapcs64_struct` 的寄存器保存区改为 `contiguous = true`（帧顶，紧贴入口 sp）。
+  原先排在局部槽之下，栈槽整体下移后偏移超出 `STURX` imm9 范围（`-368`）；
+  AAPCS64 定本本来就要求 `__stack` 指向入口 sp。
+
 ### Fixed (2026-10-28) — ZST 字段写越界打断迭代器
 
 + 结构体逐字段构造（Adt/Tuple/Array）没跳过 ZST 字段：`Iter::_marker`（PhantomData）

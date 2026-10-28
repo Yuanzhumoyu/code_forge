@@ -22,8 +22,9 @@ use forge_isa_runtime::machine::abi_model::AbiPlan;
 ///   （@push_callee 的 SD 到 [sp+frame-fp_push-(k+1)*8]）→ 帧最小 =
 ///   fp_push_bytes + Σcallee_saved×宽（否则 SD 偏移为负写坏 sp 下方）；
 ///   callee_saved_bytes = 0（spill 槽 sp_base = -(frame) 留在帧内，否则落
-///   帧外与递归帧重叠——fib 死循环）；栈槽平移 = fp_push_bytes（基准
-///   fp-16 避开保存槽、递归各帧独立）。
+///   帧外与递归帧重叠——fib 死循环）；栈槽平移 = **fp_push_bytes + cs_bytes**
+///   （整块保存区都在帧内顶部，局部槽必须整体下移；v27 M6-118 实测只移
+///   fp_push 会让局部落在 callee-saved 槽上）。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FrameLayoutInfo {
     pub min_frame: u32,
@@ -96,7 +97,12 @@ pub(crate) fn frame_layout_info<M: TargetMachine + ?Sized>(
         FrameLayoutKind::Inside => FrameLayoutInfo {
             min_frame: va_top + fl.fp_push_bytes + cs_bytes as u32,
             callee_saved_bytes: 0,
-            stack_slot_shift: fl.fp_push_bytes as i32,
+            // **栈槽平移必须覆盖整块保存区**（v27 M6-118 修正）：保存槽
+            // [fp - fp_push - cs_bytes, fp) 全在帧内顶部，局部槽若只按
+            // `fp_push` 平移就会落在 callee-saved 槽上（实测 `write_str` 的
+            // 局部 `fp-0x40` 正是 `x24` 的保存槽 ⇒ 返回时 x24 被局部值覆盖
+            // ⇒ `core::fmt::write` 里 `blr x24` 跳到 0）。
+            stack_slot_shift: fl.fp_push_bytes as i32 + cs_bytes,
         },
     }
 }
