@@ -1000,10 +1000,32 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     Ok(self.builder.icmp(IntCC::Uge, lhs, rhs))
                 }
             }
-            _ => Err(ForgeError::Message(format!(
-                "unsupported binary op: {:?}",
-                op
-            ))),
+            mir::BinOp::Cmp => {
+                // 三路比较（rustc 2026 新增 `BinOp::Cmp`，`Ord::cmp` 直接用它）：
+                // 结果 `core::cmp::Ordering` 是 `#[repr(i8)]` 枚举
+                //（Less=-1 / Equal=0 / Greater=1）——嵌套 select 合成。
+                // 浮点三路比较语义特殊（NaN 的 total order），fail-closed。
+                if is_fp {
+                    return Err(ForgeError::Message(
+                        "unsupported floating-point Cmp (three-way compare)".to_string(),
+                    ));
+                }
+                let (lt_cc, gt_cc) = if signed {
+                    (IntCC::Slt, IntCC::Sgt)
+                } else {
+                    (IntCC::Ult, IntCC::Ugt)
+                };
+                let is_lt = self.builder.icmp(lt_cc, lhs, rhs);
+                let is_gt = self.builder.icmp(gt_cc, lhs, rhs);
+                // 在 i32 里做 select（arm64 的 CSEL 只有 32/64 位形态），
+                // 再截到 i8（`Ordering` 的 repr）。
+                let neg = self.builder.const_int(-1i128, TypeId::I32);
+                let zero = self.builder.const_int(0i128, TypeId::I32);
+                let one = self.builder.const_int(1i128, TypeId::I32);
+                let pos = self.builder.select(is_gt, one, zero);
+                let ord32 = self.builder.select(is_lt, neg, pos);
+                Ok(self.builder.ireduce(ord32, TypeId::I8))
+            }
         }
     }
     /// fat pointer 的 metadata（len）：读 place 槽 [base+8]（fat ptr 布局

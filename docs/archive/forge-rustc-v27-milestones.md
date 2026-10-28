@@ -12,6 +12,16 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-28 · M6-124：`Ord::cmp`（BinOp::Cmp）+ 负判别 switchInt + 按需补编收口
+
+- `BinOp::Cmp`：i32 里 select 出 -1/0/1 再 ireduce i8（arm64 CSEL 只有 32/64 位）。
+- 窄有符号判别 switchInt：sext 到 i64、case 低 w 位符号扩展后比较（i8 的 -1 让
+  `matches!(3.cmp(&7), Less)` 在 -O0 恒假）。
+- 按需补编：追加 CGU0（不新增对象）；`is_mir_available` 拦住 extern 声明；
+  上游已提供实例仍跳过。
+- sort 守卫探针追加 Ord::cmp 三态断言；O0/O1/O2 仍真执行 15。
+- 新缺口（未修）：-O0 `filter().sum()` 挂起；-O2 `parse_u32` 错值。
+
 ### 2026-10-28 · M6-123：available-externally 实例按需补编（sort -O1/O2 真跑）
 
 - lowering 记录直接调用目标 `(sym, Instance)`；`codegen_crate` fixpoint 补编

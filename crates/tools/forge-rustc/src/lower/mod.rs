@@ -744,10 +744,30 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             // `-O` 下 verifier 直接拒绝）。
                             let discr_mir_ty = discr.ty(&self.body.local_decls, self.tcx);
                             let case_ty = map_type(discr_mir_ty, self.tcx)?;
+                            // **窄的有符号判别**（`Ordering` 等 `repr(i8)` 枚举）：
+                            // i8 的 -1 在寄存器里是 0xFF，而 A64 的 `CMPIMMW` 是 32 位
+                            // 比较（常量 -1 ⇒ 0xFFFF_FFFF）⇒ 0xFF ≠ 0xFFFF_FFFF，
+                            // `matches!(3.cmp(&7), Ordering::Less)` 在 -O0 恒假
+                            //（实测 exit 5 vs 7）。统一提升到 i64 再用六十四位比较。
+                            let narrow_signed = matches!(case_ty, TypeId::I8 | TypeId::I16)
+                                && discr_mir_ty.is_signed();
                             for &(value, tgt_bb) in &targets_vec {
                                 self.builder.switch_to_block(cur_blk);
                                 let d = self.lower_switch_discr(discr)?;
-                                let const_val = self.builder.const_int(value as i128, case_ty);
+                                let (d, const_val) = if narrow_signed {
+                                    let d = self.builder.sextend(d, TypeId::I64);
+                                    let w = if matches!(case_ty, TypeId::I8) { 8 } else { 16 };
+                                    let mask = (1u128 << w) - 1;
+                                    let low = value & mask;
+                                    let sv = if w == 8 {
+                                        (low as u8 as i8) as i64
+                                    } else {
+                                        (low as u16 as i16) as i64
+                                    };
+                                    (d, self.builder.const_int(sv as i128, TypeId::I64))
+                                } else {
+                                    (d, self.builder.const_int(value as i128, case_ty))
+                                };
                                 let eq = self.builder.icmp(IntCC::Eq, d, const_val);
                                 let tgt_blk = self.blocks[&tgt_bb];
                                 let next_blk = self.builder.create_block();

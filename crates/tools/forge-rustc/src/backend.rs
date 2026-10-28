@@ -556,10 +556,12 @@ impl CodegenBackend for CodegenLibBackend {
                     if emitted.contains(&sym) || !seen.insert(sym.clone()) {
                         continue;
                     }
-                    // 上游 crate 已提供定义（非泛型/非 inline 的外部函数，如
+                    // 上游 crate 已提供定义（非泛型/非 inline 的外部项，如
                     // `core::panicking::panic`）：不在本 crate 发射，也不能按需补编
-                    //（`instance_mir` 对这种实例没有 MIR）。rustc 的
-                    // `upstream_monomorphization` 正好表达"上游会 codegen"。
+                    //（`instance_mir` 对这种实例没有 MIR）。`upstream_monomorphization`
+                    // 表达的正是"上游会 codegen"；`#[inline]`/泛型实例返回 None
+                    // ——这些即使 impl 无泛型参数（`<i32 as Ord>::cmp`）也必须在本
+                    // crate 单态化发射（kitchen 探针实测：漏了会链接缺符号）。
                     if inst.upstream_monomorphization(tcx).is_some() {
                         continue;
                     }

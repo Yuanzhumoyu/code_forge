@@ -637,7 +637,28 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
 - 守卫 `rustc_aarch64_sort_probe_runs_under_qemu` 升格为 **-O0/O1/O2 全档**（16 元
   乱序 sort_unstable 后校验连续，返回值 15）；arm64_exec 9/9。
 
-**仍未覆盖**：NEON 向量、DWARF/CFI、LICM 的错误外提（默认关闭、待修）。
+**进度（2026-10-28，M6-124）——`Ord::cmp`/`binary_search`、负判别 switchInt**：
+
+- 新增 `BinOp::Cmp` 降级（rustc 2026 的三路比较，`Ord::cmp` 直接用）：按符号性
+  发 `icmp slt/ult`+`icmp sgt/ugt`，在 **i32** 里 `select` 出 -1/0/1 再 `ireduce` 到
+  i8（arm64 的 `CSEL` 只有 32/64 位形态，i8 会落 `[cap:SPEC_LOWERING_RULE_MISSING]`）。
+  浮点 `Cmp` fail-closed。
+- **窄的有符号判别 switchInt**：`matches!(3.cmp(&7), Ordering::Less)` 在 -O0 恒假
+  （exit 5 vs 7）——i8 的 -1 是 0xFF，而 A64 `CMPIMMW` 是 32 位比较（常量 -1 ⇒
+  0xFFFF_FFFF）。判别类型窄且有符号时统一 `sextend` 到 i64、case 常量按低位符号
+  扩展后再比。
+- **按需补编收口**：缺失实例追加到 **CGU0**（不新增 CGU/对象）；补编队列要求
+  `upstream_monomorphization == None` **且** `is_mir_available`（`extern` 声明 /
+  上游非 inline 项不能补编，否则 `instance_mir` ICE）；空 outcome 不入计划。
+- sort 守卫的探针源追加 `Ord::cmp` 三路比较断言（Greater/Less/Equal 都验，
+  不通过返回 100+m）；三档（O0/O1/O2）仍应真执行 15。
+- **新发现的待闭环缺陷**（kitchen 探针，尚未修）：
+  - `-O0`：`v.iter().copied().filter(|x| …).sum()` **挂起**（`filter` 闭包在
+    `next()` 里经间接调用，疑似闭包/ZST 调用路径在 -O0 出错）；
+  - `-O2`：`parse_u32`（`&str` 逐字节循环）返回 0（-O0 正确）——`-O2` 的 MIR
+    形态或某个优化档 pass 误编译，待二分（`FORGE_OPT_SKIP`）。
+
+**仍未覆盖**：NEON 向量、DWARF/CFI、LICM 的错误外提（默认关闭、待修）、上述两条 kitchen 缺陷。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

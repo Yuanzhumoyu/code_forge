@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-28) — `Ord::cmp`/`binary_search` 与负判别 switchInt
+
++ 新增 `BinOp::Cmp`（rustc 2026 三路比较）降级：i32 里 select -1/0/1 再 `ireduce`
+  到 i8（`Ordering` 的 repr），浮点 fail-closed。
++ 窄有符号判别 switchInt：判别值 `sextend` 到 i64、case 常量按低位符号扩展后比较
+  （修 `matches!(3.cmp(&7), Ordering::Less)` 在 -O0 恒假：A64 32 位 `CMPIMMW`
+  拿 0xFF 比 0xFFFF_FFFF）。
++ 按需补编追加到 CGU0（多对象/DWARF per-CGU 对象数契约不变）；补编队列加
+  `is_mir_available` 守卫（`extern` 声明/无 MIR 项不再触发 `instance_mir` ICE）。
++ sort 守卫探针追加 `Ord::cmp` 三态断言（Greater/Less/Equal），O0/O1/O2 仍真执行 15。
++ 已知新缺口（未修，已登记方案）：-O0 `iter().copied().filter(..).sum()` 挂起；
+  -O2 `&str` 逐字节 `parse` 错值。
+
 ### Fixed (2026-10-28) — `-O1+` 缺失实例按需补编；aarch64 sort 三档真跑
 
 + forge-rustc 现在记录每个直接调用目标的 `(符号名, Instance)`（含 drop glue、函数项

@@ -1326,6 +1326,7 @@ fn rustc_aarch64_sort_probe_runs_under_qemu() {
     let src_text = r#"#![no_std]
 #![no_main]
 
+use core::cmp::Ordering;
 use core::panic::PanicInfo;
 
 #[panic_handler]
@@ -1341,6 +1342,14 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
         if v[k] != v[k - 1] + 1 { return 201; }
         k += 1;
     }
+    // `Ord::cmp`（三路比较 `BinOp::Cmp` ⇒ `Ordering` repr(i8)，Less=-1 是负值）：
+    // -O0 不内联/不常量折叠这条路径，负判别参与 switchInt 时必须按符号扩展
+    //（否则 A64 的 32 位 CMPIMMW 用 0xFF 比 0xFFFF_FFFF 恒假）。
+    let mut m = 0i32;
+    if matches!(7.cmp(&3), Ordering::Greater) { m |= 1; }
+    if matches!(3.cmp(&7), Ordering::Less) { m |= 2; }
+    if matches!(5.cmp(&5), Ordering::Equal) { m |= 4; }
+    if m != 7 { return 100 + m; }
     (v[0] + v[15]) & 0xFF
 }
 "#;
