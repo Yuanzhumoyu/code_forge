@@ -7,11 +7,12 @@ all-features = true
 
 [advisories]
 version = 2
-vulnerability = "deny"
-unmaintained = "warn"
-unsound = "warn"
+# cargo-deny 0.20 的 v2 口径：vulnerability / unsound / notice 三键已删除
+# （漏洞恒报错、unsound/notice 恒报错，只能按 id 进 ignore）；unmaintained
+# 仍保留，但值是**检查范围**（all/workspace/transitive/none）而非严重级。
+# 首次 CI 失败就是因为这里写了旧键/非法值（本地 cargo-deny 0.20.2 复现）。
+unmaintained = "workspace"
 yanked = "warn"
-notice = "warn"
 ignore = []
 
 [licenses]
