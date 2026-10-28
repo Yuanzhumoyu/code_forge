@@ -319,7 +319,7 @@ jobs:
         run: |
           $log = "${{ runner.temp }}/e2e.log"
           if (-not (Test-Path $log)) { Write-Output "no e2e log ($log)"; exit 0 }
-          $hits = Select-String -Path $log -Pattern '^test .* FAILED$|^thread .* panicked|^test result: FAILED|^---- .* stdout ----|^error(\[|:)' -Context 0,4
+          $hits = Select-String -Path $log -Pattern '^FAIL  |^unexpected failures|^test .* FAILED$|^thread .* panicked|^test result: FAILED|^---- .* stdout ----|^error(\[|:)' -Context 2,8
           if ($hits.Count -eq 0) { Write-Output "no failing lines"; exit 0 }
           Write-Output "--- failing lines ---"
           foreach ($h in $hits) {
@@ -328,7 +328,9 @@ jobs:
             foreach ($c in $h.Context.PostContext) {
               if ($c.Trim()) { Write-Output ("::error::  " + $c) }
             }
-          }      # CI 环境 AV 的**概率**探针：产物与本机逐字节相同却只在 runner 上 AV，
+          }
+
+      # CI 环境 AV 的**概率**探针：产物与本机逐字节相同却只在 runner 上 AV，
       # 机制未定位（OS/安全策略候选）。用 FORGE_E2E_ONLY + FORGE_E2E_TIMEOUT_SECS=0
       # 让 harness 当轮"失败"从而保留刚构建的产物，再对**同一 exe** 连跑 20 次给
       # 退出码直方图：全 AV ⇒ 该 runner 上确定性；混合 ⇒ 与地址随机化/时序相关。
