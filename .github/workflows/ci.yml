@@ -2,9 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main, v14-forge-ir-redesign]
+    # 所有分支都触发（此前只列 main/v14，活跃的 v27-* 直接 push 完全不跑 CI）。
+    branches: ['**']
   pull_request:
-    branches: [main, v14-forge-ir-redesign]
+    # 按**目标分支**过滤：'**' 覆盖所有 base（此前以 v27-* 为 base 的 PR 不触发）。
+    branches: ['**']
 
 env:
   CARGO_TERM_COLOR: always
