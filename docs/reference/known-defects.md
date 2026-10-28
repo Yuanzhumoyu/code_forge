@@ -74,11 +74,19 @@ FORGE_ENABLE_LICM=1 cargo test -p forge-rustc --test arm64_exec \
   的 `s = &s[1..]` 走 `Rvalue::Ref` 的 WA-25 分支，整值复制 fat pointer、忽略
   `Subslice`，len 不缩短 ⇒ 死循环；新增 Subslice 分支后 O0/O1/O2 不再挂。
 - **新暴露（KD-08）**：解析**值**仍错——独立探针 `((parse::<i32>("12345") >> 8) & 0xFF)`
-  在 O0/O2 都是 0（正确应为 `0x30`）。IR 观测：`from_ascii_bytes_radix_impl` 的
-  `Result<i32, ParseIntError>` 返回被降成 `define ptr`（8 字节载体用 PTR 类型），
-  Ok 路径把 tag@0 / value@4 写进返回槽后 `load ptr` 返回内容；调用方按 Result 读回时
-  值与标签的 4 字节位置/载体语义不一致，导致高位丢失。另有 Err 路径
-  `store ptr 1` 把 1 字节 `IntErrorKind` 当 8 字节写（越界 4 字节）。
+  在 O0/O2 都是 0（正确应为 `0x30`）。
+- **2026-10-29 根因（最新）**：最小探针 `fn mk() -> Option<i32> { Some(0x1234) }` 在
+  O0/O2 都丢值。反汇编 `mk` 的返回序：
+  `ldr w28,[value]; add x26, x27, w28, uxtb; mov x0, x25(tag); mov x1, x26`
+  ⇒ **hi 半只取 1 字节（uxtb）**；而 `mk` 自己把 tag 写在 offset 0、value 写在 offset 4。
+  rustc 的 `ScalarPair{a,b,b_offset}` 中 `a` 在 offset 0：对 `Option<i32>` 即
+  **value@0(4B) / tag@4(1B)**；我们的 lowering 却用 **tag@0 / value@4** 模型
+  （判别式读 offset 0、聚合构造亦然）。两侧自洽能骗过单测，但一旦跨 pair ABI
+  就按 rustc 几何取 hi=b=1 字节 ⇒ 值被截成低 8 位；判别式也从错误偏移读。
+  这是 KD-08 的根因方向，修复需把“枚举判别式/聚合字段偏移”统一改成 **按 layout
+  取偏移**（不再假定 tag@0），影响面大，需单独立项 + 全量门禁。
+- 另：Err 路径 `store ptr 1` 把 1 字节 `IntErrorKind` 当 8 字节写（越界 4 字节），
+  同属该偏移模型问题。
 - **钉住方式**：无守卫（组合/载体形态不稳定，先定位再固化）。
 - **复现**：以 `crates/tools/forge-rustc/tests/arm64_exec.rs` 的 sort/iterator
   探针为模板，把四段合并进 `forge_entry`，按 O0/O1/O2 编译并在 QEMU 跑。
