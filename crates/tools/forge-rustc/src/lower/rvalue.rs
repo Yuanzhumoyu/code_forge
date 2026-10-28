@@ -483,6 +483,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     constant.const_.ty().kind(),
                     TyKind::Ref(..) | TyKind::RawPtr(..)
                 );
+                if is_ref_ty && crate::trace::trace_enabled("CONST") {
+                    eprintln!(
+                        "[forge] constval {:?} ty={}",
+                        constant.const_,
+                        constant.const_.ty()
+                    );
+                }
                 // Unevaluated（如 promoted 数组 `&[1,2,3]` = const promoted[0]）：
                 // 先求值再按形态提取（引用类型的 promoted 是 Ptr/Indirect）
                 let eval_cv = if is_ref_ty {

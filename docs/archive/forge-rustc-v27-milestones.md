@@ -12,6 +12,13 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-28 · M6-125：胖指针常量 transmute（`str::as_bytes`）
+
+- `Cast(Transmute)` 的源是 `ConstValue::Slice`（胖指针常量）时，按 ScalarPair 写
+  目标槽（ptr@0 + len@8）；旧实现写 null、PtrMetadata 读 len=0（-O2 parse 恒 0）。
+- sort 守卫追加 `as_bytes().len()/首字节` 断言，三档仍真执行 15。
+- 未修：-O0 `filter().sum()` 挂起（闭包间接调用）。
+
 ### 2026-10-28 · M6-124：`Ord::cmp`（BinOp::Cmp）+ 负判别 switchInt + 按需补编收口
 
 - `BinOp::Cmp`：i32 里 select 出 -1/0/1 再 ireduce i8（arm64 CSEL 只有 32/64 位）。

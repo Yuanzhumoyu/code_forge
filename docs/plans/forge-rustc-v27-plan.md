@@ -658,7 +658,23 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   - `-O2`：`parse_u32`（`&str` 逐字节循环）返回 0（-O0 正确）——`-O2` 的 MIR
     形态或某个优化档 pass 误编译，待二分（`FORGE_OPT_SKIP`）。
 
-**仍未覆盖**：NEON 向量、DWARF/CFI、LICM 的错误外提（默认关闭、待修）、上述两条 kitchen 缺陷。
+**进度（2026-10-28，M6-125）——胖指针常量 transmute（`str::as_bytes`）**：
+
+- `-O2` 把 `str::as_bytes` 内联成 `_3 = copy _1 as &[u8] (Transmute)`，常量是
+  `ConstValue::Slice { alloc_id, meta }`（胖指针：data 分配 + len）。旧实现的
+  `lower_operand` 只认 `Indirect`/`Scalar(Ptr)`，Slice 落到标量兜底 ⇒ 写 `null`，
+  `PtrMetadata` 读 len=0（实测 `"abcd".as_bytes().len()` 在 -O2 得 0、`parse_u32`
+  恒返回 0）。
+- 修法：赋值语句的 `Cast` 分支识别 `Operand::Constant(ConstValue::Slice)`，按
+  ScalarPair 直接写目标槽（ptr@0 = `const_data_addr(alloc_id)`、len@8 = meta）——
+  常量不在栈槽里，不能走 place 复制。
+- sort 守卫探针追加 `"abcd".as_bytes().len()==4` 与首字节 `== b'a'` 断言
+  （O0/O1/O2 都验）。
+- **仍未修**：`-O0` 的 `iter().copied().filter(..).sum()` 挂起（闭包经间接调用，
+  疑似 -O0 闭包/ZST 路径），已登记待办。
+
+**仍未覆盖**：NEON 向量、DWARF/CFI、LICM 的错误外提（默认关闭、待修）、
+`-O0` 的 `filter()` 闭包挂起。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

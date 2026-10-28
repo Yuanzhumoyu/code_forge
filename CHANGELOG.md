@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-28) — `&str → &[u8]` 胖指针常量 transmute
+
++ `Cast(Transmute)` 的源是 `ConstValue::Slice`（`&str`/`&[T]` 字面量常量）时，按
+  ScalarPair 写目标槽：ptr@0 = 数据地址、len@8 = meta。旧实现进标量兜底写 `null`，
+  `PtrMetadata` 读 len=0（-O2 的 `str::as_bytes().len()` 得 0、`parse_u32` 恒 0；
+  -O0 正常）。
++ sort 守卫探针追加 `"abcd".as_bytes().len()==4` 与首字节断言（O0/O1/O2）。
++ 未修（已登记）：-O0 `iter().copied().filter(..).sum()` 挂起。
+
 ### Fixed (2026-10-28) — `Ord::cmp`/`binary_search` 与负判别 switchInt
 
 + 新增 `BinOp::Cmp`（rustc 2026 三路比较）降级：i32 里 select -1/0/1 再 `ireduce`

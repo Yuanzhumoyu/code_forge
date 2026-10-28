@@ -1350,6 +1350,12 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
     if matches!(3.cmp(&7), Ordering::Less) { m |= 2; }
     if matches!(5.cmp(&5), Ordering::Equal) { m |= 4; }
     if m != 7 { return 100 + m; }
+    // `&str → &[u8]` 的胖指针 transmute（-O2 把 `str::as_bytes` 内联成它）：
+    // 常量不在栈槽里，必须按 ScalarPair 写 ptr+len（旧实现写 `null`，
+    // `PtrMetadata` 读 len=0）。
+    let s: &str = "abcd";
+    if s.as_bytes().len() != 4 { return 202; }
+    if s.as_bytes()[0] != b'a' { return 203; }
     (v[0] + v[15]) & 0xFF
 }
 "#;

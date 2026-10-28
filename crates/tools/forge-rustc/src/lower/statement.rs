@@ -456,6 +456,28 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             let src = self.place_addr(src);
                             self.copy_agg(dst, src, size);
                         } else if size > 8
+                            && let Rvalue::Cast(_kind, op, _to_ty) = rvalue
+                            && let Operand::Constant(ct) = op
+                            && let rustc_middle::mir::Const::Val(
+                                rustc_middle::mir::ConstValue::Slice { alloc_id, meta },
+                                _,
+                            ) = ct.const_
+                        {
+                            // **胖指针常量的 transmute**（`s.as_bytes()` 在 -O2 被
+                            // 内联成 `&str → &[u8]` 的 `Transmute`）：常量本身不在
+                            // 栈槽里，不能走下面的 place 复制；直接按 ScalarPair 写
+                            // dst（ptr@0 = rodata/data 地址、len@8 = meta）。
+                            // 旧实现落到 `lower_rvalue` 的标量兜底 ⇒ 写 `null`，
+                            // `PtrMetadata` 读 len=0（`parse_u32` 在 -O2 恒返回 0）。
+                            if let Some(ptr) = self.const_data_addr(alloc_id)? {
+                                let dst = self.place_addr(place);
+                                self.builder.store(ptr, dst);
+                                let eight = self.builder.const_int(8, TypeId::I64);
+                                let hi = self.builder.iadd(dst, eight);
+                                let lenv = self.builder.const_int(meta as i64, TypeId::I64);
+                                self.builder.store(lenv, hi);
+                            }
+                        } else if size > 8
                             && let Rvalue::Cast(kind, op, _to_ty) = rvalue
                             && let Operand::Move(src) | Operand::Copy(src) = op
                         {
