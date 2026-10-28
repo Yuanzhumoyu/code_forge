@@ -296,7 +296,24 @@ jobs:
             '--- e2e events ---'
             Get-Content target\tmp\e2e_events.txt
           } else { '--- e2e events: (file absent) ---' }
-      # CI 环境 AV 的**概率**探针：产物与本机逐字节相同却只在 runner 上 AV，
+      # 把 e2e 失败行报成 annotations：job 日志需登录才能读，而 check-run
+      # annotations 是公开 API 可读的（本仓库此前 e2e 失败只能看到 "exit code 1"，
+      # 无法判断是哪个用例/编译错误）。与 test-windows job 的同类步骤同口径。
+      - name: Surface failing e2e names as annotations (always)
+        if: always()
+        run: |
+          $log = "${{ runner.temp }}/e2e.log"
+          if (-not (Test-Path $log)) { Write-Output "no e2e log ($log)"; exit 0 }
+          $hits = Select-String -Path $log -Pattern '^test .* FAILED$|^thread .* panicked|^test result: FAILED|^---- .* stdout ----|^error(\[|:)' -Context 0,4
+          if ($hits.Count -eq 0) { Write-Output "no failing lines"; exit 0 }
+          Write-Output "--- failing lines ---"
+          foreach ($h in $hits) {
+            Write-Output $h.Line
+            Write-Output ("::error::" + $h.Line)
+            foreach ($c in $h.Context.PostContext) {
+              if ($c.Trim()) { Write-Output ("::error::  " + $c) }
+            }
+          }      # CI 环境 AV 的**概率**探针：产物与本机逐字节相同却只在 runner 上 AV，
       # 机制未定位（OS/安全策略候选）。用 FORGE_E2E_ONLY + FORGE_E2E_TIMEOUT_SECS=0
       # 让 harness 当轮"失败"从而保留刚构建的产物，再对**同一 exe** 连跑 20 次给
       # 退出码直方图：全 AV ⇒ 该 runner 上确定性；混合 ⇒ 与地址随机化/时序相关。
