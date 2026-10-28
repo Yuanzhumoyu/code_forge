@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-28) — 两寄存器聚合 ABI（`Map`/闭包适配器）
+
++ `abi_kind_of_ty` 目标化：x86_64（Win64）保持 8 字节聚合阈值；aarch64/riscv64
+  按 AAPCS/LP64D 用 16 字节（9..16 字节聚合 → 两寄存器 `Pair`，>16 → `Indirect`）。
++ `scalar_pair_offsets`/`scalar_pair_widths` 共用 `pair_geometry`：ZST 尾巴聚合
+  （`Map<I,F>`）几何越界时按 lo@0/hi@8、hi 宽 `size-8`（12 字节结构体 hi=4），
+  不再返回 `(0, size)` 越界偏移。
++ 修 `-O0` 的 `iter().map(..).sum()` / `filter(..).sum()` 死循环（`Map::fold`
+  的 self 被当指针读）；iterator 守卫追加 map/filter 断言（O0/O1/O2）。
++ 未决：kitchen 组合探针（from_str+sort+binary_search+write! 同函数）仍挂起。
+
 ### Fixed (2026-10-28) — `&str → &[u8]` 胖指针常量 transmute
 
 + `Cast(Transmute)` 的源是 `ConstValue::Slice`（`&str`/`&[T]` 字面量常量）时，按

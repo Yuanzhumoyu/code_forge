@@ -23,79 +23,42 @@ pub fn is_agg_mem<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
 /// ScalarPair 两个标量在内存中的字节偏移。rustc 允许字段重排（如 Layout 的
 /// align@0/size@8、RawVecInner 的 cap@0/ptr@8），pair_offsets 随之变化——
 /// 不能假定 0/8，否则寄存器与内存错位（cap/len 串槽）。
+/// ScalarPair 两半的几何：`Some((off_lo, off_hi, w_lo, w_hi))`，仅当 rustc 的
+/// `BackendRepr::ScalarPair` 两半都落在类型大小内**且 b_offset 合法**时返回。
+///
+/// ZST 尾巴的 16 字节结构体（`Map<I,F>`：16 字节 `Copied` + ZST 闭包）会被 rustc
+/// 标成 ScalarPair，但 `b_offset` 落在 size 之外——这种几何直接按内存 lo@0/hi@8
+/// 处理（首字 + 次字），与 aarch64 两寄存器传参一致。
+fn pair_geometry<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> Option<(i64, i64, u32, u32)> {
+    let l = tcx
+        .layout_of(ty::PseudoCanonicalInput {
+            typing_env: ty::TypingEnv::fully_monomorphized(),
+            value: ty,
+        })
+        .ok()?
+        .layout;
+    let size = l.size().bytes() as i64;
+    if let rustc_abi::BackendRepr::ScalarPair { a, b, b_offset, .. } = l.backend_repr {
+        let wa = a.primitive().size(&tcx).bytes() as u32;
+        let wb = b.primitive().size(&tcx).bytes() as u32;
+        let o1 = b_offset.bytes() as i64;
+        if o1 >= 0 && o1 + wb as i64 <= size && wa as i64 <= size {
+            return Some((0, o1, wa.max(1), wb.max(1)));
+        }
+    }
+    None
+}
+
 pub fn scalar_pair_offsets<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> (i64, i64) {
-    let l = match tcx.layout_of(ty::PseudoCanonicalInput {
-        typing_env: ty::TypingEnv::fully_monomorphized(),
-        value: ty,
-    }) {
-        Ok(l) => l.layout,
-        // layout_of 失败（ty 已单态化，正常不应发生）：回退标准标量对
-        // 偏移 (0, 8)，避免 ICE——调用方（unpack/pack_sp）对错位偏移
-        // 的容忍度低，但 (0,8) 是最常见布局，风险远小于 panic。
-        Err(_) => return (0, 8),
-    };
-    // ScalarPair 的 fields() 对普通结构体是 [0, 8]（重排后 [8, 0]）；
-    // 对 enum（tag+payload 组合）fields() 只含 tag 1 个字段——需从
-    // variants 布局取 payload 标量偏移（不能回退固定 0/8：Result<_, E> 等
-    // 的 payload 在 tag 之后的对齐位置，回退错位会读错槽——Vec grow 链
-    // 的 Result 解构崩溃根因）。
-    let n = l.fields().count();
-    if n < 2 {
-        use rustc_abi::Variants;
-        // niche/单字段 ScalarPair（Option<i32>、Result<(), E> 等）：
-        // fields()/variants 可能缺字段（tag_field 越界、空 variant——实测
-        // rustc_abi:1688 越界 panic）——优先用 BackendRepr::ScalarPair 的
-        // 标量宽度。**注意**：第 2 标量偏移必须用 b_offset（2026 nightly
-        // ScalarPair struct 的显式字段）——payload 是聚合（如 (usize,&i32)
-        // 16 字节）时对齐后不在 tag 之后立即（mn2 实证：Option<(usize,&i32)>
-        // 的 payload 在 offset 8，旧 (0, a.size)= (0,1) 错位 → 返回垃圾判别）。
-        if let rustc_abi::BackendRepr::ScalarPair { a, b_offset, .. } = l.backend_repr {
-            let b_off = b_offset.bytes() as i64;
-            if crate::trace::trace_enabled("PAIR") {
-                eprintln!(
-                    "[forge] pair_offsets niche a_size={} b_off={b_off} ty={ty}",
-                    a.primitive().size(&tcx).bytes()
-                );
-            }
-            return (0, b_off);
+    if let Some((o0, o1, _, _)) = pair_geometry(tcx, ty) {
+        if crate::trace::trace_enabled("PAIR") {
+            eprintln!("[forge] pair_offsets ty={ty} o=({o0},{o1})");
         }
-        if let Variants::Multiple {
-            tag_field,
-            variants,
-            ..
-        } = l.variants()
-        {
-            if let Some(v0) = variants.iter().next() {
-                let vn = v0.field_offsets.len();
-                if vn >= 2 {
-                    // 嵌套 ScalarPair payload（2 标量）：两个 payload 标量偏移
-                    let f0 = v0.field_offsets[FieldIdx::new(0)].bytes() as i64;
-                    let f1 = v0.field_offsets[FieldIdx::new(1)].bytes() as i64;
-                    return (f0, f1);
-                }
-                // tag + 1 标量 payload：两个标量 = (tag 偏移, payload 偏移)
-                let n = l.fields().count();
-                let tag_off = if tag_field.index() < n {
-                    l.fields().offset(tag_field.index()).bytes() as i64
-                } else {
-                    0
-                };
-                let payload_off = if vn > 0 {
-                    v0.field_offsets[FieldIdx::new(0)].bytes() as i64
-                } else {
-                    0
-                };
-                return (tag_off, payload_off);
-            }
-        }
-        return (0, 8);
+        return (o0, o1);
     }
-    let f0 = l.fields().offset(0).bytes() as i64;
-    let f1 = l.fields().offset(1).bytes() as i64;
-    if crate::trace::trace_enabled("PAIR") {
-        eprintln!("[forge] pair_offsets fields (f0={f0}, f1={f1}) ty={ty} n={n}");
-    }
-    (f0, f1)
+    // **非 ScalarPair / 几何越界（ZST 尾巴）**的 9..16 字节聚合（aarch64 AAPCS
+    // 两寄存器形态，见 `abi::abi_kind_of_ty`）：按内存布局 lo@0 / hi@8 直取。
+    (0, 8)
 }
 
 /// 类型真实布局大小（字节）。
@@ -131,14 +94,20 @@ pub fn layout_align<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> u32 {
 /// value@4 8 字节写覆盖相邻槽，range1 for 循环挂起实证：main 收 next 返回
 /// pack_sp 的 hi 8 字节写 -0x6c..-0x65 覆盖 _4 槽 -0x68 的 start → 循环不终止）。
 pub fn scalar_pair_widths<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> (u32, u32) {
+    if let Some((_, _, w0, w1)) = pair_geometry(tcx, ty) {
+        return (w0, w1);
+    }
+    // 几何越界（ZST 尾巴，如 `Map`）或非 ScalarPair 的两寄存器聚合
+    //（aarch64 9..16 字节，见 `abi::abi_kind_of_ty`）：lo 恒 8 字节、hi 是
+    //**剩余部分**（12 字节结构体的 hi 宽 4 —— 按 8 算会让 pair 协议越界）。
     if let Ok(l) = tcx.layout_of(ty::PseudoCanonicalInput {
         typing_env: ty::TypingEnv::fully_monomorphized(),
         value: ty,
-    }) && let rustc_abi::BackendRepr::ScalarPair { a, b, .. } = l.layout.backend_repr
-    {
-        let wa = a.primitive().size(&tcx).bytes() as u32;
-        let wb = b.primitive().size(&tcx).bytes() as u32;
-        return (wa.max(1), wb.max(1));
+    }) {
+        let size = l.layout.size().bytes();
+        if (9..=16).contains(&size) {
+            return (8, (size - 8) as u32);
+        }
     }
     (8, 8)
 }
@@ -175,7 +144,12 @@ pub fn is_scalar_pair_abi<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
         _ => false,
     };
     if crate::trace::trace_enabled("PAIR") {
-        eprintln!("[forge] is_scalar_pair_abi({ty}) = {r}");
+        let (o0, o1) = scalar_pair_offsets(tcx, ty);
+        let (w0, w1) = scalar_pair_widths(tcx, ty);
+        eprintln!(
+            "[forge] is_scalar_pair_abi({ty}) = {r} sz={} o=({o0},{o1}) w=({w0},{w1})",
+            layout_bytes(tcx, ty)
+        );
     }
     r
 }

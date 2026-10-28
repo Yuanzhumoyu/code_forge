@@ -1839,6 +1839,19 @@ fn build_signature<'tcx>(
         .filter(|local| layout_bytes(tcx, body.local_decls[*local].ty) > 0)
         .flat_map(|local| {
             let ty = body.local_decls[local].ty;
+            if crate::trace::trace_enabled("ABI")
+                && tcx.def_path_str(instance.def_id()).contains("Iterator")
+            {
+                eprintln!(
+                    "[forge] SIGPARAM {} arg={} sz={} pair={} agg={} wide={}",
+                    tcx.def_path_str(instance.def_id()),
+                    ty,
+                    layout_bytes(tcx, ty),
+                    is_scalar_pair_abi(tcx, ty),
+                    is_agg_mem(tcx, ty),
+                    is_wide_int_ty(ty)
+                );
+            }
             // **128 位整数标量：形态来自 `FnAbi`**（v27 M6-88，`WA-52`）——按引用就是
             // 一个指针槽，其余是两个整数槽。放在 `is_scalar_pair_abi` 之前：它对
             // `Wide` 的旧答案恒为"两个槽"，那正是 C 家族被编错的根源。

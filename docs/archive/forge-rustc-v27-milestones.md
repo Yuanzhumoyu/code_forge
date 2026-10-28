@@ -12,6 +12,15 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-28 · M6-126：两寄存器聚合 ABI（Map/闭包适配器真跑）
+
+- `abi_kind_of_ty` 目标化：x86_64 保持 8 字节聚合阈值，aarch64/riscv64 用 AAPCS
+  16 字节（9..16 → Pair，>16 → Indirect）。
+- `pair_geometry` 统一 offsets/widths：ZST 尾巴（`Map`）几何越界时按 lo@0/hi@8、
+  hi=size-8（12 字节结构体 hi=4）。
+- 修 `Map::fold` -O0 死循环（self 按 pair 传）；iterator 守卫加 map/filter 断言。
+- 未决：kitchen 组合探针仍挂起（分片正确）。
+
 ### 2026-10-28 · M6-125：胖指针常量 transmute（`str::as_bytes`）
 
 - `Cast(Transmute)` 的源是 `ConstValue::Slice`（胖指针常量）时，按 ScalarPair 写

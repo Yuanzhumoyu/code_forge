@@ -1534,6 +1534,13 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
     let mut it = v.iter();
     while let Some(x) = it.next() { s1 += *x; }
     let s2: i32 = v.iter().copied().sum();
+    // 闭包适配器（`Map`/`Filter`）：-O0 不内联，闭包经 `FnMut::call_mut`
+    // 间接调用；`Map` 是 16 字节 ZST-尾巴聚合（Pair 几何）+ 闭包环境，
+    // 曾因 ABI 分类不一致（Map::fold 的 self 当指针读）死循环。
+    let s3: i32 = v.iter().copied().map(|x| x * 2).sum();
+    if s3 != 20 { return 140; }
+    let s4: i32 = v.iter().copied().filter(|x| x % 2 == 0).sum();
+    if s4 != 6 { return 141; }
     (s1 + s2) & 0xFF
 }
 "#;

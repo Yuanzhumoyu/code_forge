@@ -126,7 +126,23 @@ pub(crate) fn abi_kind_of_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> AbiKind {
         Err(_) => return AbiKind::Direct,
     };
     match l.backend_repr {
-        rustc_abi::BackendRepr::ScalarPair { .. } => AbiKind::Pair,
+        rustc_abi::BackendRepr::ScalarPair { .. } => {
+            // **Pair 协议必须两半都落在类型大小内**（v27 M6-126）：`Map<I, F>`
+            // 这类 16 字节结构体（两个 8 字节字段 + ZST 尾巴）被 rustc 标成
+            // ScalarPair，但 `scalar_pair_widths` 推出的第二半跑到类型外——
+            // 旧实现仍归 `Pair`，而 `is_scalar_pair_abi` 判 false ⇒ 调用方按
+            // "单值"只传 Map 的首字、被调方把地址当字段读 ⇒ `Map::fold` 死循环
+            //（实测 `map().sum()` 在 -O0 永不退出）。改归 `Indirect`（按引用传
+            // 整个聚合），与 `is_scalar_pair_abi == false` 一致。
+            let (o0, o1) = crate::layout::scalar_pair_offsets(tcx, ty);
+            let (w0, w1) = crate::layout::scalar_pair_widths(tcx, ty);
+            let size = l.size().bytes() as i64;
+            if (o0 + w0 as i64) <= size && (o1 + w1 as i64) <= size {
+                AbiKind::Pair
+            } else {
+                AbiKind::Indirect
+            }
+        }
         rustc_abi::BackendRepr::SimdVector { .. } => {
             // 向量（含 128 位 __m128 等）在 Windows x64 ≤16B 走 XMM 寄存器
             //（Direct——V64/V128 按值 XMM 全宽 2026-09 已放行，WA-37 D3：
@@ -143,13 +159,21 @@ pub(crate) fn abi_kind_of_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> AbiKind {
             }
         }
         _ => {
-            // Scalar / Aggregate：**Windows x64 的聚合传递阈值是 8 字节**——
-            // 超过 8 字节的聚合一律按引用（Indirect/sret）。v27 M5 实测：阈值定成 16
-            // 会让 9..=15 字节的聚合（`RangeInclusive<i32>` 12 字节、三字段结构体）
-            // 走"单寄存器" ⇒ 只搬 8 字节 ⇒ 字段丢失 / 迭代崩
-            //（`(1..=4).sum()` ud2、12 字节结构体按值返回后字段为 0）。
-            // 16 字节标量（i128/u128/f128）已在上面单独归 `Wide`/`Indirect`。
-            if l.size().bytes() > 8 {
+            // Scalar / Aggregate。**阈值随目标 ABI 走**（v27 M6-126）：
+            // - x86_64（Win64）：聚合 >8 字节按引用（Indirect/sret）——v27 M5 实测
+            //   阈值定成 16 会让 9..=15 字节聚合走"单寄存器"只搬 8 字节；
+            // - aarch64/riscv64：AAPCS/LP64D 的复合类型 ≤16 字节**按两个寄存器传**，
+            //   >16 才按引用。旧实现沿用 Win64 阈值 ⇒ `Map<I,F>` 这类 16 字节聚合
+            //   被当 Indirect（sret/指针），与 rustc `FnAbi` 的 `PassMode::Pair`
+            //   不一致 —— 调用点断言 `ABI arg count mismatch`，且 `Map::fold`
+            //   在 -O0 读错 `self`（`map().sum()` 死循环）。
+            // 16 字节标量（i128/u128/f128）已在上面单独归 `Wide`。
+            let wide_regs = !matches!(tcx.sess.target.arch, rustc_target::spec::Arch::X86_64);
+            let size = l.size().bytes();
+            if size > 8 && size <= 16 && wide_regs {
+                // 非 ScalarPair 的 9..16 字节聚合：AAPCS 两寄存器（lo@0/hi@8）。
+                AbiKind::Pair
+            } else if size > if wide_regs { 16 } else { 8 } {
                 AbiKind::Indirect
             } else {
                 AbiKind::Direct

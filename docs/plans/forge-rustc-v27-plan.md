@@ -673,8 +673,30 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
 - **仍未修**：`-O0` 的 `iter().copied().filter(..).sum()` 挂起（闭包经间接调用，
   疑似 -O0 闭包/ZST 路径），已登记待办。
 
+**进度（2026-10-28，M6-126）——两寄存器聚合 ABI（`Map`/闭包适配器）**：
+
+- **迭代器闭包适配器在 -O0/-O1/-O2 全部真跑**：`map(|x| x*2).sum()`、
+  `filter(|x| x%2==0).sum()`、`count()` 都正确（此前 -O0 死循环）。
+- 根因：`Map<I,F>` 是 **16 字节 ZST-尾巴聚合**（`Copied` 16B + ZST 闭包），
+  rustc 标成 `BackendRepr::ScalarPair` 但 `b_offset` 落在 size 之外。旧实现：
+  `is_scalar_pair_abi` 判 false（几何越界）→ 签名单 `map_type` 退化成 ptr；
+  而 `abi_kind_of_ty` 在 aarch64 上又沿用 **Win64 的 8 字节阈值** → 调用方把
+  16B 当间接/单值、被调方把指针当字段读 ⇒ `Map::fold` 死循环。
+- 修法（三处一致化 + 目标 ABI）：
+  1. `abi_kind_of_ty`：Win64（x86_64）保持 8 字节聚合阈值；aarch64/riscv64 用
+     AAPCS 的 16 字节阈值——9..16 字节聚合归 `Pair`（两寄存器）、>16 才
+     `Indirect`；
+  2. `scalar_pair_offsets`/`scalar_pair_widths` 走同一 `pair_geometry`：几何
+     越界（ZST 尾巴）时按内存 lo@0/hi@8、hi 宽 `size-8`（12 字节结构体 hi=4），
+     不再返回 `(0, size)` 的越界偏移；
+  3. 结果：签名/调用打包/入口收参/返回一致（`Map::fold` 的 self 按 pair 传）。
+- iterator 守卫探针追加 `map(|x| x*2).sum()==20` 与 `filter(even).sum()==6`
+  断言（-O0/O1/O2 都验，失败返回 140/141）。
+- **仍待办**：kitchen 组合探针（`from_str` + `sort` + `binary_search` + `write!`
+  同函数）仍挂起——分片探针各自正确，需继续二分组合路径。
+
 **仍未覆盖**：NEON 向量、DWARF/CFI、LICM 的错误外提（默认关闭、待修）、
-`-O0` 的 `filter()` 闭包挂起。
+kitchen 组合探针挂起。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 
