@@ -453,16 +453,10 @@ fn stack_probe_emitted_only_for_big_frames() {
 /// 只编译不执行（运行级 lane 往返见 `runtime::jit::test_jit_v256_slot_roundtrip`）。
 /// 断言机器码含 **VEX.256** 的 0F 10/11（vmovups ymm）：本编码器恒发 3 字节
 /// VEX（`C4 P0 P1`），P1 = W=0/vvvv=1111/L=1/pp=00 → `0x7C`（仅 R̄/X̄/B̄ 在 P0）。
+#[cfg(target_arch = "x86_64")]
 #[test]
 fn test_v256_slot_load_store_is_lowered() {
     x86::ensure_registered();
-    // CI 的 macOS runner 是 arm64：x86 后端可编译但**宿主没有 AVX2/YMM 档位**
-    // （`wide_vector_bytes` = []）⇒ 32B 槽往返按能力门 fail-closed 是正确行为，
-    // 本用例的前提不成立。用例只编译不执行，故在无 AVX2 宿主机上跳过。
-    if !crate::avx2_available() {
-        eprintln!("SKIP: 宿主无 AVX2（无 32B 向量档位），V256 槽降级用例不适用");
-        return;
-    }
     let cf = compile_wide_slot_roundtrip(8).expect("32B 向量槽往返应可降级（W3）");
     let is_vex256 = |w: &[u8], op: u8| w[0] == 0xC4 && w[2] == 0x7C && w[3] == op;
     assert!(
