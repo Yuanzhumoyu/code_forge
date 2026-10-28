@@ -515,7 +515,7 @@ jobs:
         # 引号依赖、读上一步的 `lcov.info`（不要求 profdata 留存），本地同一条命令可复跑。
         run: awk -f docs/performance/coverage_floor.awk docs/performance/coverage_floor.txt lcov.info
       - name: Upload to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           files: lcov.info
           fail_ci_if_error: false
