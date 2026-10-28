@@ -553,10 +553,27 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
      旧实现给出 off=4 ⇒ `Strx: immediate 4 不是 8 的整数倍`）。
 - 验收：fmt 守卫升格为 **O0/O1/O2 全档**真执行 65（`write!` 整数格式化 + 插入排序 +
   `count_ones` + Collatz）；`-O1/-O2` 的 `forge_entry`/`Iter::len` 也能编过并跑。
-- **仍未闭环（已知误编译）**：迭代器探针在 **O1** 运行期 panic
-  （`ub_checks` 的 `0 < pointee_size` 断言误判；`FORGE_OPT_SKIP=const-fold` 可绕过
-  ⇒ `const-fold` 的语义缺陷，O2 反而正常）。下一步专项：`const-fold` 折叠 i1 检查时
-  的 store/load 宽度或分支折叠。
+- **已由 M6-120 闭环**：迭代器探针在 O1 的 panic 是 `const-fold` 的 `fold_icmp`
+  按**结果位宽**（i1）截断操作数（`0 < 4` 折成 false）——见下一节。
+
+**进度（2026-10-28，M6-120）——`const-fold` 的 `icmp` 按结果位宽截断（O1 误编译）**：
+
+- 现象：迭代器探针 `-O1` 运行期 panic（`ub_checks` 的
+  `0 < pointee_size && pointee_size <= isize::MAX`），`-O0`/`-O2` 正常；
+  `FORGE_OPT_SKIP=const-fold` 可绕过。
+- 根因：`fold_icmp` 用传入的 `ty`（**结果类型 i1**）做 `as_unsigned_big` 截断 ⇒
+  `icmp ult i64 0, i64 4` 把 4 截成 1 位 = 0 ⇒ `0 < 0` = false ⇒ `store i1 0`
+  ⇒ 断言分支走 panic（机器码实测：`mov x25,#0; strb w25,[..]`）。
+- 修法：按**操作数各自的类型**（`ConstValue::Int(_, ty)`）截断；有符号比较先
+  `truncate_to_type` 再比，无符号比较各自 `as_unsigned_big`。
+- 验收：两个真程序守卫都升到 **O0/O1/O2 全档**——迭代器守卫 20、fmt 守卫 65，
+  三档全绿；arm64_exec 8/8、三 JIT 矩阵、forge-opt 101、clippy 0。
+- **连带（同一批）**：`Big` 的比较全面回到**原生任意精度 `Ord`**（不再先转 `f64`/`i64`）：
+  `PartialOrd::partial_cmp` 直接复用 `Ord`（`Big::Float` 是任意精度实数、构造时拒绝 NaN，
+  三族之间是全序）；跨变体经 `Integer`/`Real` 精确转换；`fold_fcmp` 用 `Ord` 判
+  eq/lt/gt（`U*` 与 `O*` 在折叠层同值），`Fmin`/`Fmax` 直接选 Big（零按 IEEE 符号规则
+  取 `-0`/`+0`），`Fcopysign` 只搬符号位（f128 量值不再经 f64 变 `Inf`）。
+  同时删掉语义含糊、与 `Ord` 冲突的私有 `cmp_total`。
 
 **仍未覆盖**：NEON 向量、DWARF/CFI。
 

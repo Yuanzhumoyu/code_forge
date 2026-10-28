@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-28) — `const-fold` 按结果位宽截断 `icmp` 操作数（O1 误编译）
+
++ `fold_icmp` 用**结果类型**（i1）去截断比较操作数：`icmp ult i64 0, i64 4` 把 4 截成
+  1 位 = 0 ⇒ 判成 false ⇒ `store i1 0` ⇒ `ub_checks` 的 `0 < pointee_size` 断言
+  panic（arm64 `-O1` 的 `ExactSizeIterator::len` 一进就炸，`-O0/-O2` 正常）。
++ 修法：按各操作数自己的类型截断（有符号先 `truncate_to_type`、无符号走
+  `as_unsigned_big`）。
++ 守卫升级：迭代器探针（真执行 20）与 fmt 探针（真执行 65）都覆盖 **O0/O1/O2 全档**。
++ `Big` 的比较回到**原生任意精度 `Ord`**：`PartialOrd` 直接复用 `Ord`（`Big::Float`
+  是实数、拒绝 NaN ⇒ 全序），跨变体经 `Integer`/`Real` 精确转换（不再 `to_f64_lossy`）；
+  `fold_fcmp`/`Fmin`/`Fmax`/`Fcopysign` 不再把值转 f64（f128/超大值不再丢精度或变 `Inf`）；
+  删除语义含糊、与 `Ord` 冲突的私有 `cmp_total`。
+
 ### Fixed (2026-10-28) — arm64 在 `-O1/-O2` 编不过（pass 后 IR 非法）
 
 + `copy_agg` 的地址统一 `inttoptr` 成 PTR（sret 指针与间接聚合形参在签名里是 i64 槽）——

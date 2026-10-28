@@ -285,30 +285,32 @@ impl From<ConversionError> for BigConversionError {
 
 impl PartialOrd for Big {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        // `Big::Float` 是**任意精度实数**（`Big::from_f64` 拒绝 NaN，NaN 常量不进
+        // 常量池的 Big 通道）⇒ 三族之间的顺序是**全序**，直接复用 `Ord`。
+        // 旧实现跨变体走 `to_f64_lossy()`：f128/超大整数会丢精度、`Infinity` 也
+        // 被压成 f64 ⇒ 比较结果不再可靠（v27 M6-120）。
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Big {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // 原生任意精度比较：整数↔实数都走 dashu 自己的精确类型（**不要**先转 f64/i64）。
         match (self, other) {
-            (Big::Float(a), Big::Float(b)) => a.partial_cmp(b),
-            (Big::Float(_), _) | (_, Big::Float(_)) => {
-                // Float vs non-float: compare via to_f64
-                let a = self.to_f64_lossy();
-                let b = other.to_f64_lossy();
-                a.partial_cmp(&b)
-            }
-            _ => Some(self.cmp_total(other)),
+            (Big::Signed(a), Big::Signed(b)) => a.cmp(b),
+            (Big::Signed(a), Big::Unsigned(b)) => a.cmp(&Integer::from(b.clone())),
+            (Big::Signed(a), Big::Float(b)) => Real::from(a.clone()).cmp(b),
+            (Big::Unsigned(a), Big::Signed(b)) => Integer::from(a.clone()).cmp(b),
+            (Big::Unsigned(a), Big::Unsigned(b)) => a.cmp(b),
+            (Big::Unsigned(a), Big::Float(b)) => Real::from(Integer::from(a.clone())).cmp(b),
+            (Big::Float(a), Big::Signed(b)) => a.cmp(&Real::from(b.clone())),
+            (Big::Float(a), Big::Unsigned(b)) => a.cmp(&Real::from(Integer::from(b.clone()))),
+            (Big::Float(a), Big::Float(b)) => a.cmp(b),
         }
     }
 }
 
 impl Big {
-    fn cmp_total(&self, other: &Self) -> std::cmp::Ordering {
-        match (self, other) {
-            (Big::Signed(a), Big::Signed(b)) => a.cmp(b),
-            (Big::Unsigned(a), Big::Unsigned(b)) => a.cmp(b),
-            (Big::Signed(a), Big::Unsigned(b)) => a.cmp(&Integer::from(b.clone())),
-            (Big::Unsigned(a), Big::Signed(b)) => Integer::from(a.clone()).cmp(b),
-            _ => std::cmp::Ordering::Equal,
-        }
-    }
-
     fn to_f64_lossy(&self) -> f64 {
         match self {
             Big::Float(f) => f64::try_from(f.clone()).unwrap_or(0.0),

@@ -12,6 +12,15 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-28 · M6-120：`const-fold` 的 `icmp` 按结果位宽截断（O1 误编译收口）
+
+- `fold_icmp` 拿结果类型（i1）截断操作数：`icmp ult i64 0, i64 4` → `0 < 0` = false ⇒
+  `store i1 0` ⇒ `ub_checks` 断言 panic（`ExactSizeIterator::len` 一进就死）。
+- 修法：按操作数各自类型截断（有符号 `truncate_to_type`、无符号 `as_unsigned_big`）。
+- 守卫升级：迭代器（20）与 fmt（65）都改为 **O0/O1/O2 全档**真执行。
+- 同批：`Big` 比较改用原生 `Ord`（`PartialOrd` 复用 `Ord`、跨变体经整数/实数精确转换）；
+  `fold_fcmp`/`Fmin`/`Fmax`/`Fcopysign` 不再经 `f64`；删私有 `cmp_total`（语义含糊）。
+
 ### 2026-10-28 · M6-119：优化档 IR 合法性整批修复（O1/O2 编得过、fmt 全档真跑）
 
 - `copy_agg` 地址 `inttoptr`；指针↔整数 cast 显式转换；`ptr_offset_from(_unsigned)`

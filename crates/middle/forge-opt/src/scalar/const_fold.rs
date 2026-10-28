@@ -677,9 +677,13 @@ pub fn fold_opcode(
             }
             match (&operands[0], &operands[1]) {
                 (ConstValue::Float(a, _), ConstValue::Float(b, _)) => {
-                    let result = a.to_f64().min(b.to_f64());
-                    let result_big = Big::from_f64(result).unwrap_or(Big::F_ZERO);
-                    Ok(Some(ConstValue::Float(result_big, ty)))
+                    // 原生 `Ord` 选小者（不经 f64：f128/超大值不丢精度）；相等时按
+                    // IEEE-754 的零符号规则取负零（`-0.0 < +0.0` 的语义在 min 里）。
+                    let ord = a.cmp(b);
+                    let pick_b = ord == std::cmp::Ordering::Greater
+                        || (ord == std::cmp::Ordering::Equal && !a.is_neg() && b.is_neg());
+                    let picked = if pick_b { b } else { a };
+                    Ok(Some(ConstValue::Float(picked.clone(), ty)))
                 }
                 _ => Ok(None),
             }
@@ -690,9 +694,12 @@ pub fn fold_opcode(
             }
             match (&operands[0], &operands[1]) {
                 (ConstValue::Float(a, _), ConstValue::Float(b, _)) => {
-                    let result = a.to_f64().max(b.to_f64());
-                    let result_big = Big::from_f64(result).unwrap_or(Big::F_ZERO);
-                    Ok(Some(ConstValue::Float(result_big, ty)))
+                    // 同上；相等时取正零（max 方向）。
+                    let ord = a.cmp(b);
+                    let pick_b = ord == std::cmp::Ordering::Less
+                        || (ord == std::cmp::Ordering::Equal && a.is_neg() && !b.is_neg());
+                    let picked = if pick_b { b } else { a };
+                    Ok(Some(ConstValue::Float(picked.clone(), ty)))
                 }
                 _ => Ok(None),
             }
@@ -703,9 +710,13 @@ pub fn fold_opcode(
             }
             match (&operands[0], &operands[1]) {
                 (ConstValue::Float(a, _), ConstValue::Float(b, _)) => {
-                    let result = a.to_f64().copysign(b.to_f64());
-                    let result_big = Big::from_f64(result).unwrap_or(Big::F_ZERO);
-                    Ok(Some(ConstValue::Float(result_big, ty)))
+                    // 只复制**符号位**（量值原样保留，不经 f64——f128 转 f64 会变 Inf）。
+                    let mag = match a.abs() {
+                        Big::Float(r) => r,
+                        _ => return Ok(None),
+                    };
+                    let out = if b.is_neg() { -mag } else { mag };
+                    Ok(Some(ConstValue::Float(Big::Float(out), ty)))
                 }
                 _ => Ok(None),
             }
@@ -877,41 +888,32 @@ fn fold_binary_float(
 fn fold_icmp(
     operands: &[ConstValue],
     cond: IntCC,
-    ty: TypeId,
+    _ty: TypeId,
 ) -> Result<Option<ConstValue>, IrError> {
-    let (a, b) = match get_two_bigs(operands) {
-        Some(v) => v,
-        None => return Ok(None),
+    // **必须按操作数自己的位宽截断，不能用结果类型**（v27 M6-120）：`Icmp` 的结果
+    // 类型是 `i1`（BOOL），若拿结果类型去截断操作数，`icmp ult i64 0, i64 4` 会把
+    // 4 截成 1 位 = 0 ⇒ 0 < 0 = false。实测后果：`-O1` 下 `ub_checks` 的
+    // `0 < pointee_size` 被折叠成 false（`store i1 0`），`ExactSizeIterator::len`
+    // 一进就 panic。
+    let (ConstValue::Int(a, a_ty), ConstValue::Int(b, b_ty)) = (&operands[0], &operands[1]) else {
+        return Ok(None);
     };
+    let (a_ty, b_ty) = (*a_ty, *b_ty);
+    let sa = truncate_to_type(a, a_ty);
+    let sb = truncate_to_type(b, b_ty);
     let result = match cond {
-        IntCC::Eq => a == b,
-        IntCC::Ne => a != b,
-        IntCC::Slt => a < b,
-        IntCC::Sgt => a > b,
-        IntCC::Sle => a <= b,
-        IntCC::Sge => a >= b,
-        IntCC::Ult => {
-            let ua = as_unsigned_big(a, ty);
-            let ub = as_unsigned_big(b, ty);
-            ua < ub
-        }
-        IntCC::Ugt => {
-            let ua = as_unsigned_big(a, ty);
-            let ub = as_unsigned_big(b, ty);
-            ua > ub
-        }
-        IntCC::Ule => {
-            let ua = as_unsigned_big(a, ty);
-            let ub = as_unsigned_big(b, ty);
-            ua <= ub
-        }
-        IntCC::Uge => {
-            let ua = as_unsigned_big(a, ty);
-            let ub = as_unsigned_big(b, ty);
-            ua >= ub
-        }
+        IntCC::Eq => sa == sb,
+        IntCC::Ne => sa != sb,
+        IntCC::Slt => sa < sb,
+        IntCC::Sgt => sa > sb,
+        IntCC::Sle => sa <= sb,
+        IntCC::Sge => sa >= sb,
+        IntCC::Ult => as_unsigned_big(a, a_ty) < as_unsigned_big(b, b_ty),
+        IntCC::Ugt => as_unsigned_big(a, a_ty) > as_unsigned_big(b, b_ty),
+        IntCC::Ule => as_unsigned_big(a, a_ty) <= as_unsigned_big(b, b_ty),
+        IntCC::Uge => as_unsigned_big(a, a_ty) >= as_unsigned_big(b, b_ty),
     };
-    // 比较结果：true = 1, false = 0 (I32)
+    // 比较结果：true = 1, false = 0（折叠层统一用 `ConstValue::Bool`，类型由调用方设为 BOOL）
     Ok(Some(ConstValue::Bool(result)))
 }
 
@@ -925,29 +927,25 @@ fn fold_fcmp(
     }
     match (&operands[0], &operands[1]) {
         (ConstValue::Float(a, _), ConstValue::Float(b, _)) => {
-            let a_f = a.to_f64();
-            let b_f = b.to_f64();
-
-            let a_is_nan = a_f.is_nan();
-            let b_is_nan = b_f.is_nan();
-
+            // **用 Big 的原生 `Ord`**（任意精度实数），不要先转 f64（v27 M6-120）：
+            // f64 会把 f128/超大值截断；`Big::Float` 由 `from_f64` 构造时已拒绝 NaN
+            // （NaN 常量不进 Big 通道 ⇒ 这里不可能出现 NaN），所以有序/无序两族
+            // 判据在折叠层恒分别成立：`Ord` 恒真、`Uno` 恒假，`U*` 与 `O*` 同值。
+            let ord = a.cmp(b);
+            let eq = ord == std::cmp::Ordering::Equal;
+            let lt = ord == std::cmp::Ordering::Less;
+            let gt = ord == std::cmp::Ordering::Greater;
             let result = match cond {
                 FloatCC::False => false,
                 FloatCC::True => true,
-                FloatCC::Ord => !a_is_nan && !b_is_nan,
-                FloatCC::Uno => a_is_nan || b_is_nan,
-                FloatCC::Oeq => a_f == b_f,
-                FloatCC::One => a_f != b_f,
-                FloatCC::Olt => a_f < b_f,
-                FloatCC::Ole => a_f <= b_f,
-                FloatCC::Ogt => a_f > b_f,
-                FloatCC::Oge => a_f >= b_f,
-                FloatCC::Ueq => a_is_nan || b_is_nan || a_f == b_f,
-                FloatCC::Ugt => a_is_nan || b_is_nan || a_f > b_f,
-                FloatCC::Uge => a_is_nan || b_is_nan || a_f >= b_f,
-                FloatCC::Ult => a_is_nan || b_is_nan || a_f < b_f,
-                FloatCC::Ule => a_is_nan || b_is_nan || a_f <= b_f,
-                FloatCC::Une => a_is_nan || b_is_nan || a_f != b_f,
+                FloatCC::Ord => true,
+                FloatCC::Uno => false,
+                FloatCC::Oeq | FloatCC::Ueq => eq,
+                FloatCC::One | FloatCC::Une => !eq,
+                FloatCC::Olt | FloatCC::Ult => lt,
+                FloatCC::Ole | FloatCC::Ule => lt || eq,
+                FloatCC::Ogt | FloatCC::Ugt => gt,
+                FloatCC::Oge | FloatCC::Uge => gt || eq,
             };
             Ok(Some(ConstValue::Bool(result)))
         }

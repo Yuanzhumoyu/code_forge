@@ -1332,39 +1332,10 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
 "#;
 
     let src = dir.join("probe_iter.rs");
-    let obj = dir.join("probe_iter.o");
     let crt0_s = dir.join("crt0_iter.s");
     let crt0_o = dir.join("crt0_iter.o");
-    let elf = dir.join("probe_iter.elf");
     std::fs::write(&src, src_text).expect("写 probe_iter.rs");
     std::fs::write(&crt0_s, CORE_CRT0_S).expect("写 crt0_iter.s");
-
-    let out = run(Command::new(&rustc).current_dir(&dir).args([
-        format!("-Zcodegen-backend={}", dll.display()).as_str(),
-        "--target",
-        "aarch64-unknown-none",
-        "--edition",
-        "2021",
-        "--crate-type",
-        "lib",
-        "-C",
-        "panic=abort",
-        "-C",
-        "opt-level=0",
-        "-C",
-        "debug-assertions=off",
-        "-C",
-        "overflow-checks=off",
-        "--emit=obj",
-        "--extern",
-        &format!("core={}", core.display()),
-        "--extern",
-        &format!("compiler_builtins={}", cb.display()),
-        src.to_str().unwrap(),
-        "-o",
-        obj.to_str().unwrap(),
-    ]));
-    assert_ok(&out, "forge 编迭代器探针");
 
     let stubs_s = dir.join("stubs_iter.s");
     let stubs_o = dir.join("stubs_iter.o");
@@ -1385,47 +1356,83 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
         stubs_o.to_str().unwrap(),
     ]));
     assert_ok(&out, "clang 汇编迭代器 stubs");
-    let out = run(Command::new(&ldlld).args([
-        "-m",
-        "aarch64elf",
-        "-Ttext=0x40000000",
-        "--entry=_start",
-        crt0_o.to_str().unwrap(),
-        stubs_o.to_str().unwrap(),
-        obj.to_str().unwrap(),
-        core.to_str().unwrap(),
-        cb.to_str().unwrap(),
-        "-o",
-        elf.to_str().unwrap(),
-    ]));
-    assert_ok(&out, "ld.lld 链接迭代器探针");
-    let out = run(Command::new(&qemu).args([
-        "-M",
-        "virt",
-        "-cpu",
-        "cortex-a57",
-        "-kernel",
-        elf.to_str().unwrap(),
-        "-nographic",
-        "-semihosting-config",
-        "enable=on,target=native",
-        "-monitor",
-        "none",
-        "-serial",
-        "none",
-        "-no-reboot",
-    ]));
-    let code = out
-        .status
-        .code()
-        .unwrap_or_else(|| panic!("qemu 异常终止：\n{}", String::from_utf8_lossy(&out.stderr)));
-    assert_eq!(
-        code & 0xFF,
-        20,
-        "迭代器探针结果应为 20（got {code}；产物：{}）",
-        dir.display()
-    );
+
+    // **O0/O1/O2 全档**（v27 M6-120）：这条用例曾只在 O0 跑——O1 暴露了 `const-fold`
+    // 按结果位宽（i1）截断比较操作数的缺陷（`0 < 4` 折成 false → `ub_checks` 断言 panic）。
+    for level in ["0", "1", "2"] {
+        let obj = dir.join(format!("probe_iter_o{level}.o"));
+        let elf = dir.join(format!("probe_iter_o{level}.elf"));
+        let out = run(Command::new(&rustc).current_dir(&dir).args([
+            format!("-Zcodegen-backend={}", dll.display()).as_str(),
+            "--target",
+            "aarch64-unknown-none",
+            "--edition",
+            "2021",
+            "--crate-type",
+            "lib",
+            "-C",
+            "panic=abort",
+            "-C",
+            &format!("opt-level={level}"),
+            "-C",
+            "debug-assertions=off",
+            "-C",
+            "overflow-checks=off",
+            "--emit=obj",
+            "--extern",
+            &format!("core={}", core.display()),
+            "--extern",
+            &format!("compiler_builtins={}", cb.display()),
+            src.to_str().unwrap(),
+            "-o",
+            obj.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("forge 编迭代器探针（-O{level}）"));
+        let out = run(Command::new(&ldlld).args([
+            "-m",
+            "aarch64elf",
+            "-Ttext=0x40000000",
+            "--entry=_start",
+            crt0_o.to_str().unwrap(),
+            stubs_o.to_str().unwrap(),
+            obj.to_str().unwrap(),
+            core.to_str().unwrap(),
+            cb.to_str().unwrap(),
+            "-o",
+            elf.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("ld.lld 链接迭代器探针（-O{level}）"));
+        let out = run(Command::new(&qemu).args([
+            "-M",
+            "virt",
+            "-cpu",
+            "cortex-a57",
+            "-kernel",
+            elf.to_str().unwrap(),
+            "-nographic",
+            "-semihosting-config",
+            "enable=on,target=native",
+            "-monitor",
+            "none",
+            "-serial",
+            "none",
+            "-no-reboot",
+        ]));
+        let code = out.status.code().unwrap_or_else(|| {
+            panic!(
+                "qemu 异常终止（-O{level}）：\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            )
+        });
+        assert_eq!(
+            code & 0xFF,
+            20,
+            "迭代器探针 -O{level} 结果应为 20（got {code}；产物：{}）",
+            dir.display()
+        );
+    }
 }
+
 /// **core 真程序守卫**（v27 M6-111）：`core::mem::swap` + 循环在 **O0/O2 两档**都要跑对。
 ///
 /// 这条用例覆盖的是本轮修掉的两个数据缺口：
