@@ -18,10 +18,10 @@
 | KD-01 | JIT 栈形参 + 循环 + 调用：`n >= 1` 时产物 AV 崩溃（分配器缺陷，M6-㉑/㉔） | `crates/backend/forge-codegen/src/runtime/jit.rs`（`test_jit_spill_pressure_loop_with_call`） | `#[ignore]`，lib 测试不计红 |
 | KD-02 | JIT「栈形参上界 + 循环 + 调用」纯组合即挂起（死循环，M6-㉝） | 同上（`jit_stack_param_loop_call_only_step`） | `#[ignore]`，lib 测试不计红 |
 | KD-03 | LICM 默认关闭：`-O2` 的 `core::slice::sort` 在开启时错值（`[1,9,14,14]`） | `crates/middle/forge-opt/src/lib.rs`、`loops/licm.rs` | 运行时正确性无守卫；gate 只跑无 LICM 管线 |
-| KD-04 | aarch64 `&slice[from..to]`（Subslice）长度未重算：`from_str` 死循环 | ✅ **已修**（M6-127，`Rvalue::Ref` Subslice 分支） | 分片探针 O0/O1/O2 均正确；守卫缺位（见 KD-06） |
+| KD-04 | aarch64 `&slice[from..to]`（Subslice）长度未重算：`from_str` 死循环 | ✅ **死循环已修**（M6-127，`Rvalue::Ref` Subslice 分支） | 探针 O0/O1/O2 不再挂；但**解析值仍错**（见 KD-08） |
 | KD-05 | NEON 向量 / aarch64 DWARF-CFI 未覆盖 | `docs/plans/forge-rustc-v27-plan.md`、`docs/reference/backend-gaps.md` | 属能力缺口，fail-closed 或未接线 |
-| KD-06 | 大函数里先跑多段迭代器代码，再调 `str::parse`：O0 返回 Err/错值（独立小函数/独立探针正确） | `crates/tools/forge-rustc/src/lower/`（调用/常量重定位方向待查） | 无守卫；已知可复现组合 |
-| KD-07 | `parse::<i32>().ok() != Some(12345)`：`Option<i32>` 聚合常量比较在 -O0 失败 | `crates/tools/forge-rustc/src/lower/rvalue.rs`（聚合常量形态） | 无守卫；独立探针可复现 |
+| KD-06 | 大函数里先跑迭代器代码，再调 `str::parse`：结果错/挂起（独立小函数正确） | `crates/tools/forge-rustc/src/lower/`（串槽/ABI 方向待查） | 无守卫；已知可复现组合 |
+| KD-08 | **`i32::from_str` 返回值高位丢失**：独立探针里 `parse::<i32>("12345")` 的高位为 0（只保留低 8 位），标准化失败 | 返回/聚合 ABI：`Result<i32, ParseIntError>` 8 字节 ADT 的 Rust-ABI 形态（见下方 KD-04 分析） | 无守卫；独立最小复现：`((parse(...) >> 8) & 0xFF) == 0` |
 
 ## KD-01 / KD-02：JIT 分配器 AV 与死循环
 
@@ -68,9 +68,18 @@ FORGE_ENABLE_LICM=1 cargo test -p forge-rustc --test arm64_exec \
 - **症状**：单函数里同时用 `i32::from_str`、`sort_unstable`、`binary_search`、
   `write!` 的探针在 QEMU 下挂起（-O0/-O1/-O2 都挂）；但分片探针（`parse`、
   `even`、`map/filter`、`sort`、`binary_search`）各自正确。
-- **证据**：`docs/plans/forge-rustc-v27-plan.md` 的 M6-126 进度段；分片探针脚本
+- **证据**：`docs/plans/forge-rustc-v27-plan.md` 的 M6-126/127 进度段；分片探针脚本
   位于 `target/tmp`（不入库，可重建）。
-- **钉住方式**：无守卫（组合形态不稳定，先定位再固化）。
+- **2026-10-29 更新（M6-127 后）**：**挂起根因已修**——`from_ascii_bytes_radix_impl`
+  的 `s = &s[1..]` 走 `Rvalue::Ref` 的 WA-25 分支，整值复制 fat pointer、忽略
+  `Subslice`，len 不缩短 ⇒ 死循环；新增 Subslice 分支后 O0/O1/O2 不再挂。
+- **新暴露（KD-08）**：解析**值**仍错——独立探针 `((parse::<i32>("12345") >> 8) & 0xFF)`
+  在 O0/O2 都是 0（正确应为 `0x30`）。IR 观测：`from_ascii_bytes_radix_impl` 的
+  `Result<i32, ParseIntError>` 返回被降成 `define ptr`（8 字节载体用 PTR 类型），
+  Ok 路径把 tag@0 / value@4 写进返回槽后 `load ptr` 返回内容；调用方按 Result 读回时
+  值与标签的 4 字节位置/载体语义不一致，导致高位丢失。另有 Err 路径
+  `store ptr 1` 把 1 字节 `IntErrorKind` 当 8 字节写（越界 4 字节）。
+- **钉住方式**：无守卫（组合/载体形态不稳定，先定位再固化）。
 - **复现**：以 `crates/tools/forge-rustc/tests/arm64_exec.rs` 的 sort/iterator
   探针为模板，把四段合并进 `forge_entry`，按 O0/O1/O2 编译并在 QEMU 跑。
 - **关闭条件**：定位并修复后，把 kitchen 探针提升为 `arm64_exec` 守卫。
