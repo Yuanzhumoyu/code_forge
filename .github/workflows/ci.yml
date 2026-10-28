@@ -231,7 +231,9 @@ jobs:
           log="$RUNNER_TEMP/macos-test.log"
           [ -f "$log" ] || { echo "no macos log"; exit 0; }
           # 与 e2e/test-windows 同口径：失败行 + panic 上下文报成 annotations。
-          grep -nE '^test .* FAILED$|^thread .* panicked|^test result: FAILED|^---- .* stdout ----|^error(\[|:)' -A4 "$log" | while IFS= read -r line; do
+          # GitHub 的 bash 默认 -eo pipefail：grep 无匹配会返回 1，把“成功轮”误判成
+          # 步骤失败（本轮 macOS 测试全过、却红在诊断步）。整条管道兜底为 0。
+          { grep -nE '^test .* FAILED$|^thread .* panicked|^test result: FAILED|^---- .* stdout ----|^error(\[|:)' -A4 "$log" || true; } | while IFS= read -r line; do
             echo "$line"
             echo "::error::$line"
           done
@@ -298,6 +300,10 @@ jobs:
           # 看不见（run #28 就是全绿但无法判断有没有踩到环境性 AV）。落事件文件，
           # 由下方 if: always() 步骤打印。
           FORGE_E2E_EVENTS: "${{ github.workspace }}/target/tmp/e2e_events.txt"
+          # 默认进程超时 15s：2 核 runner 在“并行度 4 + 大帧用例”下起进程/映像
+          # 慢于 15s（write_bytes_loop 首跑超时、重试仍败）⇒ 调到 60s。真挂起
+          # 仍会超时失败，不是放宽正确性。
+          FORGE_E2E_TIMEOUT_SECS: "60"
         run: |
           New-Item -ItemType Directory -Force -Path target\tmp | Out-Null
           Remove-Item target\tmp\e2e_events.txt -ErrorAction SilentlyContinue
