@@ -304,6 +304,9 @@ jobs:
           # 慢于 15s（write_bytes_loop 首跑超时、重试仍败）⇒ 调到 60s。真挂起
           # 仍会超时失败，不是放宽正确性。
           FORGE_E2E_TIMEOUT_SECS: "60"
+          # 2 核 runner 上默认并行度 4 会互相抢进程/映像加载（超时首因）；
+          # 显式降到 2，仍保留并行收益。
+          FORGE_E2E_JOBS: "2"
         run: |
           New-Item -ItemType Directory -Force -Path target\tmp | Out-Null
           Remove-Item target\tmp\e2e_events.txt -ErrorAction SilentlyContinue
@@ -333,6 +336,26 @@ jobs:
             Write-Output ("::error::" + $h.Line)
             foreach ($c in $h.Context.PostContext) {
               if ($c.Trim()) { Write-Output ("::error::  " + $c) }
+            }
+          }
+          # 关键：libtest 把失败用例的 stdout（含 `FAIL  <case> …` 行）整段收在
+          # `---- <test> stdout ----` 与 `failures:` 之间；只带上下文会漏掉它。
+          # 这里整段转储（上限 150 行），下一轮失败即可在 annotations 里直接看到用例名。
+          Write-Output "--- captured stdout sections ---"
+          $in = $false
+          $count = 0
+          foreach ($l in (Get-Content $log)) {
+            if ($l -match '^---- .* stdout ----') {
+              $in = $true; $count = 0
+              Write-Output $l; Write-Output ("::error::" + $l); continue
+            }
+            if ($l -match '^failures:' -or $l -match '^test result:') { $in = $false }
+            if ($in) {
+              $count++
+              if ($count -le 150) {
+                Write-Output $l
+                if ($l.Trim()) { Write-Output ("::error::  " + $l) }
+              }
             }
           }
 
