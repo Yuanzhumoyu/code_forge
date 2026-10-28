@@ -1,4 +1,6 @@
 [package]
+license = "MIT OR Apache-2.0"
+publish = false
 name = "forge-dsl"
 version = "0.2.0"
 edition = "2024"
