@@ -21,7 +21,7 @@
 | KD-04 | aarch64 `&slice[from..to]`（Subslice）长度未重算：`from_str` 死循环 | ✅ **死循环已修**（M6-127，`Rvalue::Ref` Subslice 分支） | 探针 O0/O1/O2 不再挂；但**解析值仍错**（见 KD-08） |
 | KD-05 | NEON 向量 / aarch64 DWARF-CFI 未覆盖 | `docs/plans/forge-rustc-v27-plan.md`、`docs/reference/backend-gaps.md` | 属能力缺口，fail-closed 或未接线 |
 | KD-06 | 大函数里先跑迭代器代码，再调 `str::parse`：结果错/挂起（独立小函数正确） | `crates/tools/forge-rustc/src/lower/`（串槽/ABI 方向待查） | 无守卫；已知可复现组合 |
-| KD-08 | **`i32::from_str` 返回值高位丢失**：独立探针里 `parse::<i32>("12345")` 的高位为 0（只保留低 8 位），标准化失败 | 返回/聚合 ABI：`Result<i32, ParseIntError>` 8 字节 ADT 的 Rust-ABI 形态（见下方 KD-04 分析） | 无守卫；独立最小复现：`((parse(...) >> 8) & 0xFF) == 0` |
+| KD-08 | **`i32::from_str` 返回值高位丢失**：`parse::<i32>("12345")` 高位为 0（只留低 8 位） | ① **O2 聚合常量**已修（M6-128：纯数据 ≥8B 聚合常量按字节物化；含指针聚合仍走重定位路径）；② **O0 仍错**：core `from_str` 载体路径待修 | ① 守卫 `rustc_aarch64_sort_probe`（`Result<i32,i32>` 常量 == 断言，O0/O1/O2）；② 独立最小复现：`((parse(...) >> 8) & 0xFF) == 0` |
 
 ## KD-01 / KD-02：JIT 分配器 AV 与死循环
 

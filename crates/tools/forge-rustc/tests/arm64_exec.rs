@@ -1336,6 +1336,10 @@ fn panic(_: &PanicInfo) -> ! { loop {} }
 #[unsafe(no_mangle)]
 pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
     let _ = (a, b);
+    // -O2 会把 `Ok(0x12345678)` 常量传播成 8 字节聚合常量；必须按字节物化，
+    // 落到标量兜底会变成全零（KD-08/O2 症状：match 得 0）。
+    let pending: Result<i32, i32> = if a > 0 { Ok(0x12345678) } else { Err(1) };
+    if pending != Ok(0x12345678) { return 206; }
     let mut v: [i32; 16] = [9, 3, 14, 1, 7, 12, 5, 2, 15, 8, 6, 11, 4, 13, 10, 0];
     v.sort_unstable();
     let mut k = 1usize;

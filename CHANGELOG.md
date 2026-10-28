@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-29) — -O2 下 8 字节“纯数据”聚合常量被物化成零值
+
++ `-O2` 常量传播会把 `Ok(0x12345678)` 变成 8 字节聚合 `Operand::Constant`；此前只有
+  `>8` 字节常量走 `eval_const_bytes` 字节物化，8 字节聚合落标量兜底 ⇒ 变全零
+  （实测 `Result<i32,i32>` 返回在 O2 得 0、`parse::<i32>` O2 高位丢失）。
++ 现对 **非标量、≥8B、不含指针** 的聚合常量按字节写槽；含指针聚合（`Some(&x)`）
+  仍走原重定位路径（`eval_const_bytes` 对 `Scalar::Ptr` 只取比特、会丢重定位）。
++ 守卫：sort 探针加 `Result<i32,i32>` 常量相等断言（`return 206`，O0/O1/O2）。
+
 ### Fixed (2026-10-29) — `&slice[from..to]` 的 Subslice 长度（`str::parse` 死循环）
 
 + `Rvalue::Ref` 的 Subslice 投影此前走“整值复制 fat pointer”分支，忽略 `from/to` ⇒

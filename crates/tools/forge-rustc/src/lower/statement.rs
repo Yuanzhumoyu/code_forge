@@ -768,7 +768,38 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                     self.builder.store(ptrv, base);
                                     return Ok(());
                                 }
-                                if p_sz > 8
+                                // **任意非标量聚合常量**都按字节写槽（不再只限 >8）：
+                                // `Option<i32>`/`Result<i32,i32>` 这类 8 字节聚合
+                                // 在 -O2 会被常量传播成 `Operand::Constant`；若落
+                                // `lower_rvalue` 的标量兜底会变成 0 值（实测
+                                // `Ok(0x12345678)` → 全零 ⇒ match 得 0）。bool/
+                                // 整数/浮点/char 仍走标量路径（槽宽语义由
+                                // store_place 决定）。
+                                let scalar_like = matches!(
+                                    p_ty.kind(),
+                                    rustc_middle::ty::TyKind::Bool
+                                        | rustc_middle::ty::TyKind::Char
+                                        | rustc_middle::ty::TyKind::Int(_)
+                                        | rustc_middle::ty::TyKind::Uint(_)
+                                        | rustc_middle::ty::TyKind::Float(_)
+                                );
+                                // **含指针的聚合常量不能走字节**：`eval_const_bytes`
+                                // 对 `Scalar::Ptr` 只取比特，丢重定位（`Some(&x)` 会
+                                // 变成数字地址）。只放行“纯数据”聚合（如
+                                // `Result<i32,i32>`）。
+                                let has_ptr = p_ty.walk().any(|arg| {
+                                    arg.as_type().is_some_and(|t| {
+                                        matches!(
+                                            t.kind(),
+                                            rustc_middle::ty::TyKind::Ref(..)
+                                                | rustc_middle::ty::TyKind::RawPtr(..)
+                                                | rustc_middle::ty::TyKind::FnPtr(..)
+                                        )
+                                    })
+                                });
+                                if !scalar_like
+                                    && p_sz >= 8
+                                    && !has_ptr
                                     && let Some(bytes) = self.eval_const_bytes(ct.const_)
                                 {
                                     let base = self.place_addr(place);
