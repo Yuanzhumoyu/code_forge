@@ -30,8 +30,20 @@ impl FloatFormat {
         sig_bits: 112,
     };
 
-    pub fn total_bits(&self) -> u32 {
+    pub const fn total_bits(&self) -> u32 {
         1 + self.exp_bits + self.sig_bits
+    }
+
+    /// IEEE-754 三段布局：`(指数位数, 尾数位数, 偏置)`。
+    pub const fn layout(&self) -> (u32, u32, i64) {
+        match *self {
+            FloatFormat::F16 => (5, 10, 15),
+            FloatFormat::F32 => (8, 23, 127),
+            FloatFormat::F64 => (11, 52, 1023),
+            FloatFormat::F128 => (15, 112, 16383),
+            // 动态构造的 FloatFormat（非四预设）：按 f64 布局兜底
+            _ => (11, 52, 1023),
+        }
     }
 }
 
@@ -113,6 +125,17 @@ impl Big {
         }
     }
 
+    /// 以**至少** `bits` 位有效数字表示（就近偶数舍入）。
+    ///
+    /// 折叠层用它做"中间态"：目标格式 p 位时先提升到 `p + 8` 守卫位，运算后再按
+    /// 目标格式一次舍入 —— RNE 下 ≥2 位守卫即不会产生双重舍入误差。整型变体原样
+    /// 返回（整数本身就是精确值）。
+    pub fn with_precision_at_least(&self, bits: u32) -> Self {
+        match self {
+            Big::Float(f) => Big::Float(f.clone().with_precision(bits.max(2) as usize).value()),
+            _ => self.clone(),
+        }
+    }
     /// 返回绝对值。
     pub fn abs(&self) -> Self {
         match self {
@@ -121,6 +144,7 @@ impl Big {
             Self::Float(f) => Self::Float(f.clone().abs()),
         }
     }
+
     pub const fn is_one(&self) -> bool {
         match self {
             Self::Signed(i) => i.is_one(),
@@ -342,19 +366,13 @@ impl std::ops::Rem for Big {
         match (self, rhs) {
             (Big::Signed(a), Big::Signed(b)) => Big::Signed(a % b),
             (Big::Signed(a), Big::Unsigned(b)) => Big::Signed(a % Integer::from(b)),
+            (Big::Signed(a), Big::Float(b)) => Big::Signed(a % b.to_int().value()),
             (Big::Unsigned(a), Big::Signed(b)) => Big::Signed(Integer::from(a) % b),
             (Big::Unsigned(a), Big::Unsigned(b)) => Big::Unsigned(a % b),
-            // Float 取模 = fmod（dashu Real 的 `%`）。混合类型经 f64 中间值
-            // （有损但语义明确——不再静默返回第一个操作数）。
+            (Big::Unsigned(a), Big::Float(b)) => Big::Unsigned(a % b.to_int().value()),
             (Big::Float(a), Big::Float(b)) => Big::Float(a % b),
-            (Big::Float(a), b) => {
-                let af = f64::try_from(a.clone()).unwrap_or(0.0);
-                Big::from_f64(af % b.to_f64_lossy()).unwrap_or(Big::F_ZERO)
-            }
-            (a, Big::Float(b)) => {
-                let bf = f64::try_from(b.clone()).unwrap_or(0.0);
-                Big::from_f64(a.to_f64_lossy() % bf).unwrap_or(Big::F_ZERO)
-            }
+            (Big::Float(a), Big::Signed(b)) => Big::Float(a % Real::from(b)),
+            (Big::Float(a), Big::Unsigned(b)) => Big::Float(a % Real::from(b)),
         }
     }
 }
@@ -399,7 +417,7 @@ impl std::ops::Shl<usize> for Big {
         match self {
             Big::Signed(i) => Big::Signed(i << rhs),
             Big::Unsigned(u) => Big::Unsigned(u << rhs),
-            Big::Float(_) => self,
+            Big::Float(f) => Big::Float(f << rhs as isize),
         }
     }
 }
@@ -410,7 +428,7 @@ impl std::ops::Shr<usize> for Big {
         match self {
             Big::Signed(i) => Big::Signed(i >> rhs),
             Big::Unsigned(u) => Big::Unsigned(u >> rhs),
-            Big::Float(_) => self,
+            Big::Float(f) => Big::Float(f >> rhs as isize),
         }
     }
 }
@@ -429,6 +447,9 @@ impl Big {
     }
     pub fn from_i128(value: i128) -> Self {
         Big::Signed(Integer::from(value))
+    }
+    pub fn from_u128(value: u128) -> Self {
+        Big::Unsigned(Natural::from(value))
     }
 
     // 类型查询
@@ -478,6 +499,28 @@ impl Big {
                 }
             }
             _ => self.try_to_u64().unwrap_or(0),
+        }
+    }
+
+    /// 取**低 128 位**（模 2^128，二补数语义）——float 位模式 / 128 位整数的位视角。
+    pub fn trunc_to_u128(&self) -> u128 {
+        let m = Natural::from(1u8) << 128usize;
+        match self {
+            Big::Unsigned(u) => u128::try_from(&(u % &m)).unwrap_or(0),
+            Big::Signed(i) => {
+                let abs = Natural::try_from(i.abs()).unwrap_or(Natural::ZERO);
+                let rem = &abs % &m;
+                if i.is_negative() && !rem.is_zero() {
+                    u128::try_from(&(&m - &rem)).unwrap_or(0)
+                } else {
+                    u128::try_from(&rem).unwrap_or(0)
+                }
+            }
+            Big::Float(f) => {
+                let t = f.clone().trunc().to_int().value();
+                let s = Big::Signed(t);
+                s.trunc_to_u128()
+            }
         }
     }
 
@@ -577,85 +620,194 @@ impl Big {
             Big::Unsigned(u) => u.clone(),
             Big::Signed(i) => Natural::try_from(i.abs()).unwrap_or(Natural::ZERO),
             Big::Float(f) => {
-                Natural::try_from(Integer::from(f64::try_from(f.clone()).unwrap_or(0.0) as i64))
-                    .unwrap_or(Natural::ZERO)
+                // 精确截断（Real 任意精度，不经 f64/i64）。
+                let t = f.clone().trunc().to_int().value();
+                Natural::try_from(t.abs()).unwrap_or(Natural::ZERO)
             }
         }
     }
 
-    // 浮点位模式编解码
-    pub fn from_bits(bits: u64, fmt: FloatFormat) -> Self {
-        let f = match fmt.total_bits() {
-            16 => {
-                let sign = bits >> 15;
-                let exp = ((bits >> 10) & 0x1F) as i32;
-                let sig = bits & 0x3FF;
-                if exp == 0 {
-                    if sig == 0 {
-                        f64::from_bits(sign << 63)
-                    } else {
-                        let mut s = sig;
-                        let mut e = -14i32;
-                        while (s & 0x400) == 0 {
-                            s <<= 1;
-                            e -= 1;
-                        }
-                        f64::from_bits(
-                            (sign << 63) | (((e + 1023) as u64) << 52) | ((s & 0x3FF) << 42),
-                        )
-                    }
-                } else if exp == 0x1F {
-                    f64::from_bits((sign << 63) | (0x7FF_u64 << 52) | (sig << 42))
+    // 浮点位模式编解码（**全程任意精度**：f16/32/64/128 都不经 `f64` 中转）
+    //
+    // `Big::Float` 是精确有理值（`Real`），不能表示 NaN ⇒ `from_float_bits` 遇到
+    // NaN 返回 `None`（调用方 fail-closed、不折叠）；`to_float_bits` 按 IEEE-754
+    // "就近、偶数舍入"精确编码（f128 也是真 128 位，不截成 f64/f64 位模式）。
+    pub fn from_float_bits(bits: u128, fmt: FloatFormat) -> Option<Self> {
+        let (exp_bits, sig_bits, bias) = fmt.layout();
+        let total = 1 + exp_bits + sig_bits;
+        let neg = ((bits >> (total - 1)) & 1) != 0;
+        let exp_mask = (1u128 << exp_bits) - 1;
+        let e = ((bits >> sig_bits) & exp_mask) as i64;
+        let sig = bits & ((1u128 << sig_bits) - 1);
+        if e == exp_mask as i64 {
+            // 无穷 / NaN：NaN 无法用 `Real` 表示（调用方不折叠）
+            return if sig == 0 {
+                Some(Big::Float(if neg {
+                    Real::NEG_INFINITY
                 } else {
-                    f64::from_bits((sign << 63) | (((exp - 15 + 1023) as u64) << 52) | (sig << 42))
-                }
-            }
-            32 => f32::from_bits(bits as u32) as f64,
-            _ => f64::from_bits(bits),
+                    Real::INFINITY
+                }))
+            } else {
+                None
+            };
+        }
+        if e == 0 && sig == 0 {
+            return Some(Big::Float(if neg { -Real::ZERO } else { Real::ZERO }));
+        }
+        // value = mant × 2^exp；正规数的 mant 带隐含 1，次正规数没有
+        let (mant, exp) = if e == 0 {
+            (sig, 1 - bias - (sig_bits as i64))
+        } else {
+            ((1u128 << sig_bits) | sig, e - bias - (sig_bits as i64))
         };
-        Big::from_f64(f).unwrap_or(Big::F_ZERO)
+        let m = Integer::from(mant);
+        let m = if neg { -m } else { m };
+        Some(Big::Float(Real::from_parts(m, exp as isize)))
     }
 
-    pub fn to_bits_trunc(&self, fmt: FloatFormat) -> u64 {
-        let f = self.to_f64();
-        match fmt.total_bits() {
-            16 => {
-                let bits = f.to_bits();
-                let sign = ((bits >> 63) & 1) as u16;
-                let exp = ((bits >> 52) & 0x7FF) as i32;
-                let sig = bits & ((1u64 << 52) - 1);
-                if exp == 0 {
-                    return (sign as u64) << 15;
+    /// `Big` → IEEE-754 位模式：`f16/f32/f64/f128` 各自按**就近偶数**精确舍入
+    /// （整数变体按精确有理值编码）。`None` = 值无法表示（NaN）。
+    ///
+    /// 全程用 dashu 的原生整数/实数运算：`split_bits` 做"除 2^k 取商/余"、
+    /// `bit_len`/`bit` 探位（不经过 `f64`，也没有手写循环定位位长）。
+    pub fn to_float_bits(&self, fmt: FloatFormat) -> Option<u128> {
+        use dashu::base::BitTest;
+
+        let (exp_bits, sig_bits, bias) = fmt.layout();
+        let total = 1 + exp_bits + sig_bits;
+        let sign_mask = 1u128 << (total - 1);
+        let exp_mask = (1u128 << exp_bits) - 1;
+        let sig_mask = (1u128 << sig_bits) - 1;
+        let bias = i128::from(bias);
+        let emin = 1 - bias;
+        let emax = bias;
+        let p = i128::from(sig_bits) + 1;
+
+        // 精确值 = mag × 2^e（mag ≥ 0）；符号单独拿
+        let (neg, mag, e): (bool, Natural, i128) = match self {
+            Big::Float(r) => {
+                if r.repr().is_infinite() {
+                    let neg = r.is_negative();
+                    return Some((if neg { sign_mask } else { 0 }) | (exp_mask << sig_bits));
                 }
-                if exp == 0x7FF {
-                    return if sig == 0 {
-                        ((sign as u64) << 15) | (0x1F << 10)
-                    } else {
-                        ((sign as u64) << 15) | (0x1F << 10) | ((sig >> 42) & 0x3FF) | 0x200
-                    };
-                }
-                let f16_exp = exp - 1023 + 15;
-                if f16_exp <= 0 {
-                    if f16_exp < -10 {
-                        return (sign as u64) << 15;
-                    }
-                    return ((sign as u64) << 15) | ((sig | (1u64 << 52)) >> (1 - f16_exp + 42));
-                }
-                if f16_exp >= 0x1F {
-                    return ((sign as u64) << 15) | (0x1F << 10);
-                }
-                let f16_sig = (sig >> 42) as u16;
-                let round = (sig >> 41) & 1;
-                let sticky = (sig & ((1u64 << 41) - 1)) != 0;
-                let mut r = f16_sig;
-                if round == 1 && (sticky || (f16_sig & 1) != 0) {
-                    r += 1;
-                }
-                ((sign as u64) << 15) | ((f16_exp as u64) << 10) | (r as u64 & 0x3FF)
+                let repr = r.repr();
+                let m: Integer = repr.significand().clone();
+                let e = repr.exponent();
+                let neg = m.is_negative() || repr.is_neg_zero();
+                let mag = Natural::try_from(m.abs()).unwrap_or(Natural::ZERO);
+                (neg, mag, e as i128)
             }
-            32 => (f as f32).to_bits() as u64,
-            _ => f.to_bits(),
+            Big::Signed(i) => {
+                let neg = i.is_negative();
+                let mag = Natural::try_from(i.abs()).unwrap_or(Natural::ZERO);
+                (neg, mag, 0)
+            }
+            Big::Unsigned(u) => (false, u.clone(), 0),
+        };
+        let sign_bits = if neg { sign_mask } else { 0 };
+        if mag.is_zero() {
+            return Some(sign_bits);
         }
+        if e > 20_000 {
+            return Some(sign_bits | (exp_mask << sig_bits));
+        }
+        if e < -(20_000 + i128::from(sig_bits)) {
+            return Some(sign_bits);
+        }
+        let msb = i128::from(mag.bit_len() as u64);
+        let mut ee = e + msb - 1; // value = 1.xxx × 2^ee
+        if ee > emax + 8 {
+            return Some(sign_bits | (exp_mask << sig_bits));
+        }
+        if ee >= emin {
+            // 正规数：凑 p 位有效数字；右移用 `split_bits` 取商与余数，就近偶数舍入。
+            let shift = msb - p;
+            let mut q: Natural = if shift > 0 {
+                let sh = shift as usize;
+                let (rem, q) = mag.clone().split_bits(sh);
+                let half = Natural::from(1u8) << (sh - 1);
+                let round_up = rem > half || (rem == half && q.bit(0));
+                if round_up { q + Natural::from(1u8) } else { q }
+            } else {
+                &mag << ((-shift) as usize)
+            };
+            if i128::from(q.bit_len() as u64) > p {
+                q = &q >> 1usize;
+                ee += 1;
+            }
+            if ee > emax {
+                return Some(sign_bits | (exp_mask << sig_bits));
+            }
+            let (frac, _) = q.split_bits(sig_bits as usize);
+            let frac_u = u128::try_from(&frac).unwrap_or(0) & sig_mask;
+            let exp_field = u128::try_from(ee + bias).unwrap_or(0) & exp_mask;
+            Some(sign_bits | (exp_field << sig_bits) | frac_u)
+        } else {
+            // 次正规数：value × 2^(sig_bits - emin) 取整（同样就近偶数）。
+            let s = e + i128::from(sig_bits) - emin;
+            let f: Natural = if s >= 0 {
+                &mag << (s as usize)
+            } else {
+                let sh = (-s) as usize;
+                let (rem, q) = mag.clone().split_bits(sh);
+                let half = Natural::from(1u8) << (sh - 1);
+                let round_up = rem > half || (rem == half && q.bit(0));
+                if round_up { q + Natural::from(1u8) } else { q }
+            };
+            // 舍入进位到 2^sig_bits ⇒ 最小正规数（指数域 1、尾数 0）
+            if i128::from(f.bit_len() as u64) > i128::from(sig_bits) {
+                return Some(sign_bits | (1u128 << sig_bits));
+            }
+            let frac_u = u128::try_from(&f).unwrap_or(0) & sig_mask;
+            Some(sign_bits | frac_u)
+        }
+    }
+}
+
+/// 将 Big 结构体中的变体统一为目标变体。
+pub trait BigNormalize {
+    /// 转换为有符号整数变体 `Big::Signed`。
+    /// 对于浮点数，会进行取整。
+    fn to_signed(self) -> Big;
+
+    /// 尝试转换为无符号整数变体 `Big::Unsigned`。
+    /// 如果原值为负数，则会转换失败。
+    fn to_unsigned(self) -> Result<Big, BigConversionError>;
+
+    /// 转换为浮点数变体 `Big::Float`。
+    /// 这个转换通常是安全的。
+    fn to_float(self) -> Big;
+}
+
+impl BigNormalize for Big {
+    fn to_signed(self) -> Big {
+        Big::Signed(match self {
+            Big::Signed(ibig) => ibig,
+            Big::Unsigned(ubig) => Integer::from(ubig),
+            Big::Float(fbig) => fbig.to_int().value(),
+        })
+    }
+
+    fn to_unsigned(self) -> Result<Big, BigConversionError> {
+        match self {
+            Big::Signed(ibig) => ibig
+                .try_into()
+                .map(Big::Unsigned)
+                .map_err(BigConversionError::from),
+            Big::Unsigned(_) => Ok(self),
+            Big::Float(fbig) => fbig
+                .try_into()
+                .map(Big::Unsigned)
+                .map_err(BigConversionError::from),
+        }
+    }
+
+    fn to_float(self) -> Big {
+        Big::Float(match self {
+            Big::Signed(ibig) => Real::from(ibig),
+            Big::Unsigned(ubig) => Real::from(ubig),
+            Big::Float(fbig) => fbig,
+        })
     }
 }
 
@@ -797,15 +949,15 @@ mod tests {
 
     #[test]
     fn float_from_bits_f16() {
-        let bf = Big::from_bits(0x3C00, FloatFormat::F16);
+        let bf = Big::from_float_bits(0x3C00, FloatFormat::F16).expect("有限值");
         assert!((bf.to_f64() - 1.0).abs() < 0.01);
-        assert_eq!(bf.to_bits_trunc(FloatFormat::F16), 0x3C00);
+        assert_eq!(bf.to_float_bits(FloatFormat::F16), Some(0x3C00));
     }
 
     #[test]
     fn float_from_bits_f32() {
-        let bf = Big::from_bits(0x40490FDB, FloatFormat::F32);
-        assert_eq!(bf.to_bits_trunc(FloatFormat::F32), 0x40490FDB);
+        let bf = Big::from_float_bits(0x4049_0FDB, FloatFormat::F32).expect("有限值");
+        assert_eq!(bf.to_float_bits(FloatFormat::F32), Some(0x4049_0FDB));
     }
 
     // === Big enum 特定测试 ===
@@ -829,5 +981,94 @@ mod tests {
         let b = Big::from_u64(u64::MAX);
         let prod = a * b;
         assert!(prod.try_to_u64().is_none()); // too large
+    }
+    /// IEEE-754 位模式编解码：四种格式都**逐位**往返（不经 f64，f128 也不截）。
+    #[test]
+    fn float_bits_roundtrip_all_formats() {
+        // (格式, 位宽, 代表性有限位模式)
+        let cases = [
+            (FloatFormat::F16, 1.5f64),
+            (FloatFormat::F32, 1.5f64),
+            (FloatFormat::F64, 1.5f64),
+            (FloatFormat::F128, 1.5f64),
+        ];
+        for (fmt, v) in cases {
+            let bits = match fmt {
+                FloatFormat::F16 => 0x3E00u128, // 1.5
+                FloatFormat::F32 => 0x3FC0_0000u128,
+                FloatFormat::F64 => 0x3FF8_0000_0000_0000u128,
+                FloatFormat::F128 => 0x3FFFu128 << 112, // 1.0
+                _ => unreachable!(),
+            };
+            let b = Big::from_float_bits(bits, fmt).expect("有限值应可解码");
+            let back = b.to_float_bits(fmt).expect("有限值应可编码");
+            assert_eq!(back, bits, "{fmt:?} 往返丢位（v={v}）");
+        }
+    }
+
+    /// f128 的 112 位尾数必须**逐位保留**（旧实现经 f64 会把这几位全丢掉）。
+    #[test]
+    fn f128_bits_keep_full_mantissa() {
+        let fmt = FloatFormat::F128;
+        // 1.0 的指数域 + 尾数最低位 ⇒ 值 = 1 + 2^-112，f64 表示不了。
+        let bits = (0x3FFFu128 << 112) | 1u128;
+        let b = Big::from_float_bits(bits, fmt).expect("f128 有限值");
+        assert_eq!(b.to_float_bits(fmt).expect("编码"), bits);
+
+        // 次正规最小值：尾数只有最低位
+        let sub = 1u128;
+        let b = Big::from_float_bits(sub, fmt).expect("f128 次正规");
+        assert_eq!(b.to_float_bits(fmt).expect("编码"), sub);
+    }
+
+    /// NaN 无法用 `Big::Float` 表示 ⇒ 解码返回 `None`（fail-closed，不是错值）。
+    #[test]
+    fn nan_bits_are_rejected() {
+        let nan64 = 0x7FF8_0000_0000_0001u128;
+        assert!(Big::from_float_bits(nan64, FloatFormat::F64).is_none());
+        let nan16 = 0x7E01u128;
+        assert!(Big::from_float_bits(nan16, FloatFormat::F16).is_none());
+    }
+
+    /// 无穷与负零往返（符号位必须保留）。
+    #[test]
+    fn inf_and_zero_sign_roundtrip() {
+        for fmt in [
+            FloatFormat::F16,
+            FloatFormat::F32,
+            FloatFormat::F64,
+            FloatFormat::F128,
+        ] {
+            let (exp_bits, sig_bits, _) = fmt.layout();
+            let inf = (1u128 << (exp_bits + sig_bits)) - (1u128 << sig_bits);
+            let neg_inf = inf | (1u128 << (exp_bits + sig_bits));
+            assert_eq!(
+                Big::from_float_bits(inf, fmt).unwrap().to_float_bits(fmt),
+                Some(inf)
+            );
+            assert_eq!(
+                Big::from_float_bits(neg_inf, fmt)
+                    .unwrap()
+                    .to_float_bits(fmt),
+                Some(neg_inf)
+            );
+            let neg_zero = 1u128 << (exp_bits + sig_bits);
+            assert_eq!(
+                Big::from_float_bits(neg_zero, fmt)
+                    .unwrap()
+                    .to_float_bits(fmt),
+                Some(neg_zero)
+            );
+        }
+    }
+
+    /// `trunc_to_u128` 是**低 128 位**（大整数不被静默截成 0）。
+    #[test]
+    fn trunc_to_u128_keeps_low_bits() {
+        let v = Big::from_u128(u128::MAX).truncate_to_bits(128);
+        assert_eq!(v.trunc_to_u128(), u128::MAX);
+        let big = Big::from_u128(u128::MAX) * Big::from_u128(u128::MAX);
+        assert_eq!(big.trunc_to_u128(), 1, "大整数取低 128 位 = 1");
+        assert_eq!(Big::from_i128(-1).trunc_to_u128(), u128::MAX);
     }
 }

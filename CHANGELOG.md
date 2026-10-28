@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-28) — 常量折叠的 `Big→固定类型→Big` 往返丢数据
+
++ `Big::from_float_bits(u128, fmt)` / `Big::to_float_bits(fmt) -> u128`：f16/f32/f64/f128
+  全部**精确**编解码（dashu `Real` + 原生 `split_bits`/`bit_len`/`bit`；f128 的 112 位尾数
+  逐位保留，不经 f64；NaN 返回 `None`）。
++ 折叠层：`Fconst` 已知值按浮点解码（此前把位模式当整数）；浮点结果回 **Bits** 通道
+  （f32 不再落成 f64 位模式低 32 位）；`+ - * / fmod fma sqrt floor/ceil/trunc/round`
+  **全格式**折叠（守卫位中间态 + 一次正确舍入）。
++ 整数：`popcnt/clz/ctz/bitreverse/bswap` 用 dashu 原生位运算按目标位宽算（i128 高 64 位
+  不再丢）；`sat` 算术用 Big 任意精度边界（i128 正确饱和）；移位量按位宽取模（与后端
+  硬件语义一致），任意大移位量都能折叠。
++ 新增 9 条单测覆盖上述不变量（f128 尾数、NaN 拒绝、负零、i128 位操作/饱和/移位、f32 位宽）。
+
 ### Fixed (2026-10-28) — `const-fold` 按结果位宽截断 `icmp` 操作数（O1 误编译）
 
 + `fold_icmp` 用**结果类型**（i1）去截断比较操作数：`icmp ult i64 0, i64 4` 把 4 截成

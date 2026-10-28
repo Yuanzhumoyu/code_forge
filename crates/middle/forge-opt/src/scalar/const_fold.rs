@@ -13,40 +13,13 @@
 //! 5. 返回 PassResult
 
 use crate::{ConstValue, OptimizationPass, PassResult};
+use dashu::base::Abs;
+use dashu::base::BitTest;
+use dashu::integer::UBig;
 use forge_ir::IrError;
 use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
 use forge_ir::{Big, FloatFormat};
-
-// ============================================================
-// TypeId 辅助函数 (forge-ir v2: TypeId 无 is_int/is_float 方法)
-// ============================================================
-
-/// 检查 TypeId 是否为整数类型（预设索引 2-5, 10）。
-fn ty_is_int(ty: TypeId) -> bool {
-    matches!(ty.index(), 2 | 3 | 4 | 5 | 10)
-}
-
-/// 检查 TypeId 是否为浮点类型（预设索引 6-7, 11-12）。
-fn ty_is_float(ty: TypeId) -> bool {
-    matches!(ty.index(), 6 | 7 | 11 | 12)
-}
-
-/// 检查 TypeId 是否为指针类型（预设索引 8）。
-fn ty_is_ptr(ty: TypeId) -> bool {
-    ty.index() == 8
-}
-
-/// 获取浮点格式。仅对预设浮点类型有效。
-fn ty_float_format(ty: TypeId) -> Option<FloatFormat> {
-    match ty.index() {
-        6 => Some(FloatFormat::F32),   // F32
-        7 => Some(FloatFormat::F64),   // F64
-        11 => Some(FloatFormat::F16),  // F16
-        12 => Some(FloatFormat::F128), // F128
-        _ => None,
-    }
-}
 
 // ============================================================
 // 整数宽度辅助函数（基于 Big）
@@ -55,7 +28,7 @@ fn ty_float_format(ty: TypeId) -> Option<FloatFormat> {
 /// 按类型宽度截断 Big 值（有符号语义）。
 fn truncate_to_type(value: &Big, ty: TypeId) -> Big {
     let bits = scalar_bits(ty);
-    if bits == 0 || (!ty_is_int(ty) && !ty_is_ptr(ty)) {
+    if bits == 0 || (!ty.is_int()) {
         return value.clone();
     }
     value.truncate_to_bits_signed(bits)
@@ -75,10 +48,7 @@ fn bit_mask(bits: u32) -> Big {
     if bits == 0 {
         return Big::U_ZERO;
     }
-    if bits >= 128 {
-        return Big::Unsigned(dashu::Natural::from(u128::MAX));
-    }
-    Big::Unsigned(dashu::Natural::from((1u128 << bits) - 1))
+    Big::Unsigned((UBig::ONE << (bits as usize)) - UBig::ONE)
 }
 
 // ============================================================
@@ -277,8 +247,10 @@ pub fn fold_opcode(
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let shift = big_to_usize(b);
-            let result = a.clone() << shift;
+            let Some(shift) = shift_mod(b, scalar_bits(ty)) else {
+                return Ok(None);
+            };
+            let result = a.clone() << shift as usize;
             Ok(Some(ConstValue::Int(truncate_to_type(&result, ty), ty)))
         }
         Opcode::Ushr => {
@@ -286,9 +258,11 @@ pub fn fold_opcode(
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let shift = big_to_usize(b);
+            let Some(shift) = shift_mod(b, scalar_bits(ty)) else {
+                return Ok(None);
+            };
             let ua = as_unsigned_big(a, ty);
-            let result = ua >> shift;
+            let result = ua >> shift as usize;
             Ok(Some(ConstValue::Int(truncate_to_type(&result, ty), ty)))
         }
         Opcode::Sshr => {
@@ -296,13 +270,13 @@ pub fn fold_opcode(
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let shift = big_to_usize(b);
-            // For signed shift, convert to signed by truncating to bits first
+            let Some(shift) = shift_mod(b, scalar_bits(ty)) else {
+                return Ok(None);
+            };
             let sa = a.truncate_to_bits_signed(scalar_bits(ty));
-            let result = sa >> shift;
+            let result = sa >> shift as usize;
             Ok(Some(ConstValue::Int(truncate_to_type(&result, ty), ty)))
         }
-
         // === 整数比较 ===
         Opcode::Icmp => match immediates.iter().find_map(|im| im.as_int_cc()) {
             Some(cond) => fold_icmp(operands, cond, ty),
@@ -321,8 +295,8 @@ pub fn fold_opcode(
         Opcode::Fadd => fold_binary_float(operands, ty, |a, b| a + b),
         Opcode::Fsub => fold_binary_float(operands, ty, |a, b| a - b),
         Opcode::Fmul => fold_binary_float(operands, ty, |a, b| a * b),
-        Opcode::Fdiv => fold_binary_float(operands, ty, |a, b| a / b),
-        Opcode::Frem => fold_binary_float(operands, ty, |a, b| a % b),
+        Opcode::Fdiv => fold_fdiv(operands, ty),
+        Opcode::Frem => fold_frem(operands, ty),
         Opcode::Freeze => {
             // Freeze 阻止常量折叠 — 值不能跨 Freeze 被推断
             Ok(None)
@@ -355,17 +329,26 @@ pub fn fold_opcode(
             if operands.is_empty() {
                 return Ok(None);
             }
+            let Some(fmt) = ty.try_float_format() else {
+                return Ok(None);
+            };
             match &operands[0] {
-                ConstValue::Float(v, t) => {
-                    let f = v.to_f64();
-                    let result_f = if f < 0.0 { f64::NAN } else { f.sqrt() };
-                    let result_big = Big::from_f64(result_f).unwrap_or(Big::F_ZERO);
-                    Ok(Some(ConstValue::Float(result_big, *t)))
+                ConstValue::Float(v, _) => {
+                    // 负数的平方根 = NaN（Big::Float 无法表示）⇒ 唯一不折叠的情形。
+                    if v.is_neg() {
+                        return Ok(None);
+                    }
+                    // 目标 p 位 + 守卫位：`sqrt` 在提升后的精度上求值，最终一次舍入。
+                    let guard = fmt.sig_bits + 8;
+                    let r = match v.with_precision_at_least(guard) {
+                        Big::Float(r) => r,
+                        _ => return Ok(None),
+                    };
+                    Ok(Some(ConstValue::Float(Big::Float(r.sqrt()), ty)))
                 }
                 _ => Ok(None),
             }
         }
-
         // === 类型转换 ===
         Opcode::Sextend => fold_extend(operands, ty, true),
         Opcode::Uextend => fold_extend(operands, ty, false),
@@ -442,15 +425,23 @@ pub fn fold_opcode(
         Opcode::Iconst | Opcode::Fconst | Opcode::Vconst => Ok(None),
 
         // === 位操作 (6) ===
+        //
+        // 全部走 dashu 原生位运算（v27 M6-121）：`UBig::bit_len`/`bit`/`count_ones`/
+        // `trailing_zeros`/`split_bits` + Big 的移位/掩码。旧实现先 `trunc_to_u64()`
+        // 再算，i128 的高 64 位会被丢掉。
         Opcode::Clz => {
             let a = match get_one_big(operands) {
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let u = a.trunc_to_u64();
-            let result = u.leading_zeros() as u64;
+            let bits = scalar_bits(ty);
+            if bits == 0 {
+                return Ok(Some(ConstValue::Int(Big::U_ZERO, ty)));
+            }
+            let u = unsigned_bits_of(a, bits);
+            let result = bits.saturating_sub(u.bit_len() as u32);
             Ok(Some(ConstValue::Int(
-                Big::from_u64(result).truncate_to_bits(scalar_bits(ty)),
+                Big::from_u64(u64::from(result)).truncate_to_bits(bits),
                 ty,
             )))
         }
@@ -459,10 +450,14 @@ pub fn fold_opcode(
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let u = a.trunc_to_u64();
-            let result = u.trailing_zeros() as u64;
+            let bits = scalar_bits(ty);
+            if bits == 0 {
+                return Ok(Some(ConstValue::Int(Big::U_ZERO, ty)));
+            }
+            let u = unsigned_bits_of(a, bits);
+            let result = u.trailing_zeros().map_or(bits, |z| (z as u32).min(bits));
             Ok(Some(ConstValue::Int(
-                Big::from_u64(result).truncate_to_bits(scalar_bits(ty)),
+                Big::from_u64(u64::from(result)).truncate_to_bits(bits),
                 ty,
             )))
         }
@@ -471,10 +466,13 @@ pub fn fold_opcode(
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let u = a.trunc_to_u64();
-            let result = u.count_ones() as u64;
+            let bits = scalar_bits(ty);
+            if bits == 0 {
+                return Ok(Some(ConstValue::Int(Big::U_ZERO, ty)));
+            }
+            let u = unsigned_bits_of(a, bits);
             Ok(Some(ConstValue::Int(
-                Big::from_u64(result).truncate_to_bits(scalar_bits(ty)),
+                Big::from_u64(u.count_ones() as u64).truncate_to_bits(bits),
                 ty,
             )))
         }
@@ -483,10 +481,19 @@ pub fn fold_opcode(
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let u = a.trunc_to_u64();
-            let result = u.reverse_bits();
+            let bits = scalar_bits(ty);
+            if bits == 0 {
+                return Ok(Some(ConstValue::Int(Big::U_ZERO, ty)));
+            }
+            let u = unsigned_bits_of(a, bits);
+            let mut r = UBig::ZERO;
+            for i in 0..bits as usize {
+                if u.bit(i) {
+                    r.set_bit(bits as usize - 1 - i);
+                }
+            }
             Ok(Some(ConstValue::Int(
-                Big::from_u64(result).truncate_to_bits(scalar_bits(ty)),
+                Big::Unsigned(r).truncate_to_bits(bits),
                 ty,
             )))
         }
@@ -495,28 +502,43 @@ pub fn fold_opcode(
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let val = a.trunc_to_u64();
-            let shift = (big_to_usize(b) as u32) % (scalar_bits(ty).max(1));
-            let result = val.rotate_left(shift);
-            Ok(Some(ConstValue::Int(
-                Big::from_u64(result).truncate_to_bits(scalar_bits(ty)),
-                ty,
-            )))
+            let bits = scalar_bits(ty);
+            if bits == 0 {
+                return Ok(Some(ConstValue::Int(Big::U_ZERO, ty)));
+            }
+            let Some(shift) = shift_mod(b, bits) else {
+                return Ok(None);
+            };
+            let x = Big::Unsigned(unsigned_bits_of(a, bits));
+            let result = if shift == 0 {
+                x
+            } else {
+                ((x.clone() << shift as usize) | (x >> (bits - shift) as usize))
+                    & unsigned_max(bits)
+            };
+            Ok(Some(ConstValue::Int(result.truncate_to_bits(bits), ty)))
         }
         Opcode::Rotr => {
             let (a, b) = match get_two_bigs(operands) {
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let val = a.trunc_to_u64();
-            let shift = (big_to_usize(b) as u32) % (scalar_bits(ty).max(1));
-            let result = val.rotate_right(shift);
-            Ok(Some(ConstValue::Int(
-                Big::from_u64(result).truncate_to_bits(scalar_bits(ty)),
-                ty,
-            )))
+            let bits = scalar_bits(ty);
+            if bits == 0 {
+                return Ok(Some(ConstValue::Int(Big::U_ZERO, ty)));
+            }
+            let Some(shift) = shift_mod(b, bits) else {
+                return Ok(None);
+            };
+            let x = Big::Unsigned(unsigned_bits_of(a, bits));
+            let result = if shift == 0 {
+                x
+            } else {
+                ((x.clone() >> shift as usize) | (x << (bits - shift) as usize))
+                    & unsigned_max(bits)
+            };
+            Ok(Some(ConstValue::Int(result.truncate_to_bits(bits), ty)))
         }
-
         // === 整数扩展 (10) ===
         Opcode::Abs => {
             let a = match get_one_big(operands) {
@@ -570,17 +592,20 @@ pub fn fold_opcode(
             if bits == 0 {
                 return Ok(Some(ConstValue::Int(Big::S_ZERO, ty)));
             }
-            let a_i64 = a.try_to_i64();
-            let b_i64 = b.try_to_i64();
-            if let (Some(av), Some(bv)) = (a_i64, b_i64) {
-                let result = av.saturating_add(bv);
-                Ok(Some(ConstValue::Int(
-                    Big::from_i64(result).truncate_to_bits_signed(bits),
-                    ty,
-                )))
+            // 全在 Big 上做（v27 M6-121）：旧实现 `try_to_i64()` 对 i128 直接放弃、
+            // 且饱和边界写死 i64。现按 bits 精确算上下界并 clamp。
+            let sa = a.truncate_to_bits_signed(bits);
+            let sb = b.truncate_to_bits_signed(bits);
+            let (min, max) = signed_bounds(bits);
+            let sum = sa + sb;
+            let result = if sum > max {
+                max
+            } else if sum < min {
+                min
             } else {
-                Ok(None)
-            }
+                sum
+            };
+            Ok(Some(ConstValue::Int(truncate_to_type(&result, ty), ty)))
         }
         Opcode::SsubSat => {
             let (a, b) = match get_two_bigs(operands) {
@@ -591,17 +616,18 @@ pub fn fold_opcode(
             if bits == 0 {
                 return Ok(Some(ConstValue::Int(Big::S_ZERO, ty)));
             }
-            let a_i64 = a.try_to_i64();
-            let b_i64 = b.try_to_i64();
-            if let (Some(av), Some(bv)) = (a_i64, b_i64) {
-                let result = av.saturating_sub(bv);
-                Ok(Some(ConstValue::Int(
-                    Big::from_i64(result).truncate_to_bits_signed(bits),
-                    ty,
-                )))
+            let sa = a.truncate_to_bits_signed(bits);
+            let sb = b.truncate_to_bits_signed(bits);
+            let (min, max) = signed_bounds(bits);
+            let diff = sa - sb;
+            let result = if diff > max {
+                max
+            } else if diff < min {
+                min
             } else {
-                Ok(None)
-            }
+                diff
+            };
+            Ok(Some(ConstValue::Int(truncate_to_type(&result, ty), ty)))
         }
         Opcode::UaddSat => {
             let (a, b) = match get_two_bigs(operands) {
@@ -612,13 +638,12 @@ pub fn fold_opcode(
             if bits == 0 {
                 return Ok(Some(ConstValue::Int(Big::U_ZERO, ty)));
             }
-            let a_u64 = a.trunc_to_u64();
-            let b_u64 = b.trunc_to_u64();
-            let result = a_u64.saturating_add(b_u64);
-            Ok(Some(ConstValue::Int(
-                Big::from_u64(result).truncate_to_bits(bits),
-                ty,
-            )))
+            let ua = a.truncate_to_bits(bits);
+            let ub = b.truncate_to_bits(bits);
+            let max = unsigned_max(bits);
+            let sum = ua + ub;
+            let result = if sum > max { max } else { sum };
+            Ok(Some(ConstValue::Int(truncate_to_type(&result, ty), ty)))
         }
         Opcode::UsubSat => {
             let (a, b) = match get_two_bigs(operands) {
@@ -629,13 +654,10 @@ pub fn fold_opcode(
             if bits == 0 {
                 return Ok(Some(ConstValue::Int(Big::U_ZERO, ty)));
             }
-            let a_u64 = a.trunc_to_u64();
-            let b_u64 = b.trunc_to_u64();
-            let result = a_u64.saturating_sub(b_u64);
-            Ok(Some(ConstValue::Int(
-                Big::from_u64(result).truncate_to_bits(bits),
-                ty,
-            )))
+            let ua = a.truncate_to_bits(bits);
+            let ub = b.truncate_to_bits(bits);
+            let result = if ua < ub { Big::U_ZERO } else { ua - ub };
+            Ok(Some(ConstValue::Int(truncate_to_type(&result, ty), ty)))
         }
         Opcode::Bswap => {
             let a = match get_one_big(operands) {
@@ -643,30 +665,44 @@ pub fn fold_opcode(
                 None => return Ok(None),
             };
             let bits = scalar_bits(ty);
-            if bits == 0 {
-                return Ok(Some(ConstValue::Int(Big::S_ZERO, ty)));
+            if bits == 0 || !bits.is_multiple_of(8) {
+                // bswap 只对整字节位宽有定义（其余位宽不折叠）。
+                return Ok(None);
             }
-            let u = a.trunc_to_u64();
-            let result = u.swap_bytes();
+            let bytes = (bits / 8) as usize;
+            // dashu 原生 `split_bits(8)` 逐字节搬（不手写掩码）。
+            let mut x = unsigned_bits_of(a, bits);
+            let mut r = UBig::ZERO;
+            for _ in 0..bytes {
+                let (lo, hi) = x.split_bits(8);
+                r = (r << 8usize) | lo;
+                x = hi;
+            }
             Ok(Some(ConstValue::Int(
-                Big::from_u64(result).truncate_to_bits(bits),
+                Big::Unsigned(r).truncate_to_bits(bits),
                 ty,
             )))
         }
-
         // === 浮点扩展 (8) ===
+        //
+        // **全格式折叠**（v27 M6-121）：f16/f32/f64/f128 都支持。中间态按目标精度
+        // + 守卫位用 Big/Real 任意精度算，落到常量池时一次舍入；只有"结果是 NaN"
+        // （0/0、负数开方、fmod 0）不折叠——`Big::Float` 是精确实数，没有 NaN。
         Opcode::Fma => {
             if operands.len() < 3 {
                 return Ok(None);
             }
+            let Some(fmt) = ty.try_float_format() else {
+                return Ok(None);
+            };
             match (&operands[0], &operands[1], &operands[2]) {
                 (ConstValue::Float(a, _), ConstValue::Float(b, _), ConstValue::Float(c, _)) => {
-                    let a_f = a.to_f64();
-                    let b_f = b.to_f64();
-                    let c_f = c.to_f64();
-                    let result = a_f.mul_add(b_f, c_f);
-                    let result_big = Big::from_f64(result).unwrap_or(Big::F_ZERO);
-                    Ok(Some(ConstValue::Float(result_big, ty)))
+                    // a*b 需要 2p 位；再加 c ⇒ 留 2p+16 守卫位，最终一次舍入。
+                    let guard = fmt.sig_bits * 2 + 16;
+                    let aa = a.with_precision_at_least(guard);
+                    let bb = b.with_precision_at_least(guard);
+                    let cc = c.with_precision_at_least(guard);
+                    Ok(Some(ConstValue::Float(aa * bb + cc, ty)))
                 }
                 _ => Ok(None),
             }
@@ -726,10 +762,14 @@ pub fn fold_opcode(
                 return Ok(None);
             }
             match &operands[0] {
+                // floor/ceil/trunc/round 在精确实数上是**精确运算**（不引入舍入），
+                // 任意格式都直接做（整型变体本身就是整数 ⇒ 原样）。
                 ConstValue::Float(v, _) => {
-                    let result = v.to_f64().floor();
-                    let result_big = Big::from_f64(result).unwrap_or(Big::F_ZERO);
-                    Ok(Some(ConstValue::Float(result_big, ty)))
+                    let out = match v {
+                        Big::Float(r) => Big::Float(r.floor()),
+                        other => other.clone(),
+                    };
+                    Ok(Some(ConstValue::Float(out, ty)))
                 }
                 _ => Ok(None),
             }
@@ -740,9 +780,11 @@ pub fn fold_opcode(
             }
             match &operands[0] {
                 ConstValue::Float(v, _) => {
-                    let result = v.to_f64().ceil();
-                    let result_big = Big::from_f64(result).unwrap_or(Big::F_ZERO);
-                    Ok(Some(ConstValue::Float(result_big, ty)))
+                    let out = match v {
+                        Big::Float(r) => Big::Float(r.ceil()),
+                        other => other.clone(),
+                    };
+                    Ok(Some(ConstValue::Float(out, ty)))
                 }
                 _ => Ok(None),
             }
@@ -753,9 +795,11 @@ pub fn fold_opcode(
             }
             match &operands[0] {
                 ConstValue::Float(v, _) => {
-                    let result = v.to_f64().trunc();
-                    let result_big = Big::from_f64(result).unwrap_or(Big::F_ZERO);
-                    Ok(Some(ConstValue::Float(result_big, ty)))
+                    let out = match v {
+                        Big::Float(r) => Big::Float(r.trunc()),
+                        other => other.clone(),
+                    };
+                    Ok(Some(ConstValue::Float(out, ty)))
                 }
                 _ => Ok(None),
             }
@@ -766,14 +810,15 @@ pub fn fold_opcode(
             }
             match &operands[0] {
                 ConstValue::Float(v, _) => {
-                    let result = v.to_f64().round();
-                    let result_big = Big::from_f64(result).unwrap_or(Big::F_ZERO);
-                    Ok(Some(ConstValue::Float(result_big, ty)))
+                    let out = match v {
+                        Big::Float(r) => Big::Float(r.round()),
+                        other => other.clone(),
+                    };
+                    Ok(Some(ConstValue::Float(out, ty)))
                 }
                 _ => Ok(None),
             }
         }
-
         // === 溢出算术 (6) — 跳过: 双结果指令不适合当前单结果折叠框架 ===
         Opcode::SaddOverflow
         | Opcode::UaddOverflow
@@ -837,12 +882,44 @@ fn get_two_bigs(operands: &[ConstValue]) -> Option<(&Big, &Big)> {
     }
 }
 
-fn big_to_usize(b: &Big) -> usize {
-    match b {
-        Big::Unsigned(u) => usize::try_from(u).unwrap_or(0),
-        Big::Signed(i) => usize::try_from(i).unwrap_or(0),
-        Big::Float(f) => f64::try_from(f.clone()).unwrap_or(0.0) as usize,
+/// 移位量按位宽**取模**（与后端 lowering 的硬件语义一致：x86 的 `SHR CL`/arm64 的
+/// `LSRV` 都只使用低 log2(位宽) 位）。任意大的 Big 移位量都能精确取模。
+fn shift_mod(b: &Big, bits: u32) -> Option<u32> {
+    if bits == 0 {
+        return None;
     }
+    let v = unsigned_bits_of(b, 128);
+    let rem = v % UBig::from(bits);
+    Some(u32::try_from(&rem).unwrap_or(0))
+}
+
+/// 值的**低 `bits` 位**裸位模式（无符号视角；dashu 原生 `truncate_to_bits` 的结果
+/// 恒是 `Unsigned`）。
+fn unsigned_bits_of(a: &Big, bits: u32) -> UBig {
+    match a.truncate_to_bits(bits) {
+        Big::Unsigned(u) => u,
+        Big::Signed(i) => UBig::try_from(i.abs()).unwrap_or(UBig::ZERO),
+        Big::Float(_) => UBig::ZERO,
+    }
+}
+
+/// `bits` 位有符号整数的 `(min, max)`（任意精度构造，128 位也正确）。
+fn signed_bounds(bits: u32) -> (Big, Big) {
+    let half = Big::U_ONE << (bits as usize - 1);
+    let half_i = match &half {
+        Big::Unsigned(u) => dashu::Integer::from(u.clone()),
+        Big::Signed(i) => i.clone(),
+        _ => dashu::Integer::from(0u8),
+    };
+    (
+        Big::Signed(-half_i.clone()),
+        Big::Signed(half_i - dashu::Integer::from(1u8)),
+    )
+}
+
+/// `bits` 位无符号整数的最大值 `2^bits - 1`。
+fn unsigned_max(bits: u32) -> Big {
+    (Big::U_ONE << bits as usize) - Big::U_ONE
 }
 
 fn fold_binary_int(
@@ -868,6 +945,9 @@ fn fold_binary_int(
     Ok(Some(ConstValue::Int(truncate_to_type(&result, ty), ty)))
 }
 
+/// 浮点二元折叠（`+`/`-`/`*`）：目标格式 p 位，中间态提升到 `p + 8` 守卫位再做
+/// 运算，最终由落到常量池时的 `to_float_bits` **按目标格式一次舍入** ⇒ f16/f32/f64/
+/// f128 全部精确折叠（RNE 下 ≥2 位守卫即无双重舍入误差；v27 M6-121）。
 fn fold_binary_float(
     operands: &[ConstValue],
     ty: TypeId,
@@ -876,10 +956,69 @@ fn fold_binary_float(
     if operands.len() < 2 {
         return Ok(None);
     }
+    let Some(fmt) = ty.try_float_format() else {
+        return Ok(None);
+    };
+    let guard = fmt.sig_bits + 8;
     match (&operands[0], &operands[1]) {
         (ConstValue::Float(a, _), ConstValue::Float(b, _)) => {
-            let result_f = op(a.clone(), b.clone());
-            Ok(Some(ConstValue::Float(result_f, ty)))
+            let aa = a.with_precision_at_least(guard);
+            let bb = b.with_precision_at_least(guard);
+            Ok(Some(ConstValue::Float(op(aa, bb), ty)))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// 浮点除法折叠：`x / 0` 按 IEEE 得 ±inf（Big 能表示）；`0 / 0` = NaN
+/// （Big::Float 无 NaN ⇒ 唯一不折叠的情形）。
+fn fold_fdiv(operands: &[ConstValue], ty: TypeId) -> Result<Option<ConstValue>, IrError> {
+    if operands.len() < 2 {
+        return Ok(None);
+    }
+    let Some(fmt) = ty.try_float_format() else {
+        return Ok(None);
+    };
+    match (&operands[0], &operands[1]) {
+        (ConstValue::Float(a, _), ConstValue::Float(b, _)) => {
+            if b.is_zero() {
+                if a.is_zero() {
+                    return Ok(None); // NaN
+                }
+                let neg = a.is_neg() != b.is_neg();
+                let inf = if neg {
+                    Big::Float(dashu::Real::NEG_INFINITY)
+                } else {
+                    Big::Float(dashu::Real::INFINITY)
+                };
+                return Ok(Some(ConstValue::Float(inf, ty)));
+            }
+            let guard = fmt.sig_bits + 8;
+            let aa = a.with_precision_at_least(guard);
+            let bb = b.with_precision_at_least(guard);
+            Ok(Some(ConstValue::Float(aa / bb, ty)))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// 浮点取余折叠：`fmod(a, 0)` = NaN ⇒ 不折叠；其余按精确值取余（Big 原生 `%`）。
+fn fold_frem(operands: &[ConstValue], ty: TypeId) -> Result<Option<ConstValue>, IrError> {
+    if operands.len() < 2 {
+        return Ok(None);
+    }
+    let Some(fmt) = ty.try_float_format() else {
+        return Ok(None);
+    };
+    match (&operands[0], &operands[1]) {
+        (ConstValue::Float(a, _), ConstValue::Float(b, _)) => {
+            if b.is_zero() {
+                return Ok(None); // NaN
+            }
+            let guard = fmt.sig_bits + 8;
+            let aa = a.with_precision_at_least(guard);
+            let bb = b.with_precision_at_least(guard);
+            Ok(Some(ConstValue::Float(aa % bb, ty)))
         }
         _ => Ok(None),
     }
@@ -997,38 +1136,47 @@ fn fold_bitcast(operands: &[ConstValue], to_ty: TypeId) -> Result<Option<ConstVa
     }
     match &operands[0] {
         ConstValue::Int(v, _) => {
-            // 整数 → 浮点位模式
-            if ty_is_float(to_ty) {
-                let bits = match ty_float_format(to_ty) {
-                    Some(fmt) => v.to_bits_trunc(fmt),
-                    None => 0u64,
-                };
-                let float_big =
-                    Big::from_bits(bits, ty_float_format(to_ty).unwrap_or(FloatFormat::F64));
-                Ok(Some(ConstValue::Float(float_big, to_ty)))
+            // 整数 → 浮点：把**低 total_bits 位**当 IEEE 位模式（Big 上做，不经 u64）。
+            if let Some(fmt) = to_ty.try_float_format() {
+                let total = fmt.total_bits();
+                let bits = v.truncate_to_bits(total).trunc_to_u128();
+                match Big::from_float_bits(bits, fmt) {
+                    Some(float_big) => Ok(Some(ConstValue::Float(float_big, to_ty))),
+                    // NaN：Big 表示不了 ⇒ 不折叠（不是错值）
+                    None => Ok(None),
+                }
             } else {
                 Ok(Some(ConstValue::Int(truncate_to_type(v, to_ty), to_ty)))
             }
         }
-        ConstValue::Float(v, _) => {
-            // 浮点 → 整数位模式
-            if ty_is_int(to_ty) {
+        ConstValue::Float(v, src_ty) => {
+            let src_fmt = src_ty.try_float_format().unwrap_or(FloatFormat::F64);
+            // 浮点 → 整数：按**源格式**的位模式，截到目标整数位宽。
+            if to_ty.is_int() {
                 let Some(to_bits) = to_ty.builtin_scalar_bits() else {
                     return Ok(None);
                 };
-                let fmt = FloatFormat::F64; // default
-                let bits = v.to_bits_trunc(fmt);
+                let Some(bits) = v.to_float_bits(src_fmt) else {
+                    return Ok(None);
+                };
                 Ok(Some(ConstValue::Int(
-                    Big::from_u64(bits).truncate_to_bits(to_bits),
+                    Big::from_u128(bits).truncate_to_bits(to_bits),
                     to_ty,
                 )))
+            } else if let Some(dst_fmt) = to_ty.try_float_format() {
+                // 位转换只对**同宽**格式有定义；不同宽（f32↔f64）不是 bitcast 语义 ⇒ 不折叠。
+                if src_fmt.total_bits() != dst_fmt.total_bits() {
+                    return Ok(None);
+                }
+                let Some(bits) = v.to_float_bits(src_fmt) else {
+                    return Ok(None);
+                };
+                match Big::from_float_bits(bits, dst_fmt) {
+                    Some(result) => Ok(Some(ConstValue::Float(result, to_ty))),
+                    None => Ok(None),
+                }
             } else {
-                // 浮点到浮点 (f32 <-> f64) — 保持位模式然后截断
-                let target_fmt = ty_float_format(to_ty).unwrap_or(FloatFormat::F64);
-                let source_fmt = FloatFormat::F64; // default
-                let bits = v.to_bits_trunc(source_fmt);
-                let result = Big::from_bits(bits, target_fmt);
-                Ok(Some(ConstValue::Float(result, to_ty)))
+                Ok(None)
             }
         }
         ConstValue::Bool(b) => Ok(Some(ConstValue::Int(
@@ -1037,7 +1185,6 @@ fn fold_bitcast(operands: &[ConstValue], to_ty: TypeId) -> Result<Option<ConstVa
         ))),
     }
 }
-
 // ============================================================
 // Use-def 分析辅助
 // ============================================================
@@ -1120,16 +1267,28 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
 
             match &inst.opcode {
                 Opcode::Iconst | Opcode::Fconst | Opcode::Vconst => {
-                    if let Some(cid) = inst.immediates.first().and_then(|i| i.as_const())
-                        && let Some(big) = func.constants.as_big(cid)
-                    {
+                    if let Some(cid) = inst.immediates.first().and_then(|i| i.as_const()) {
                         let ty = func.dfg.value_type(v).unwrap_or(TypeId::VOID);
-                        let cv = if matches!(inst.opcode, Opcode::Iconst) {
-                            ConstValue::Int(big, ty)
-                        } else {
-                            ConstValue::Float(big, ty)
-                        };
-                        known.insert(v, cv);
+                        match inst.opcode {
+                            Opcode::Iconst => {
+                                if let Some(big) = func.constants.as_big(cid) {
+                                    known.insert(v, ConstValue::Int(big, ty));
+                                }
+                            }
+                            Opcode::Fconst => {
+                                // **浮点常量在池里是 Bits 位模式，不是整数**（v27 M6-121）：
+                                // `as_big` 会把位模式当补码整数解释 ⇒ 折叠层拿到的是
+                                // `4607182418800017408` 而不是 `1.0`。这里按目标浮点格式
+                                // 精确解码（f16/32/64/128；NaN 不进 known ⇒ 不折叠）。
+                                if let Some(fmt) = ty.try_float_format()
+                                    && let Some(bv) = func.constants.bits(cid)
+                                    && let Some(big) = Big::from_float_bits(bv.bits, fmt)
+                                {
+                                    known.insert(v, ConstValue::Float(big, ty));
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 _ => worklist.push(v),
@@ -1217,13 +1376,25 @@ pub fn fold_function(func: &mut Function) -> Result<PassResult, IrError> {
             // 替换指令为 Iconst/Fconst (插入常量池)
             let new_const_id = match &folded {
                 ConstValue::Int(v, _) => func.constants.intern_big(v.clone()),
-                ConstValue::Float(v, _) => func.constants.intern_big(v.clone()),
+                ConstValue::Float(v, ty) => {
+                    // **浮点结果按目标格式编码回 Bits 通道**（v27 M6-121）：此前走
+                    // `intern_big`（任意精度通道），后端 `as_f64_bits` 会把它按 f64
+                    // 位模式取——f32 结果因此变成 f64 模式的低 32 位（错值）。
+                    // `to_float_bits` 按目标格式**一次正确舍入**（f128 也是真 128 位）。
+                    let Some(fmt) = ty.try_float_format() else {
+                        continue;
+                    };
+                    let Some(bits) = v.to_float_bits(fmt) else {
+                        // NaN（Big 表示不了）：不折叠，保持原指令
+                        continue;
+                    };
+                    func.constants.intern_float(bits, fmt.total_bits() as u16)
+                }
                 ConstValue::Bool(b) => {
                     let big = Big::from_i64(if *b { 1 } else { 0 });
                     func.constants.intern_big(big)
                 }
             };
-
             let new_opcode = match &folded {
                 ConstValue::Int(..) => Opcode::Iconst,
                 ConstValue::Float(..) => Opcode::Fconst,
@@ -1500,6 +1671,158 @@ mod tests {
         assert!(
             else_block.inst_order.is_empty() || func.dfg.term_is_unreachable(else_blk),
             "Else block should be cleared (dead)"
+        );
+    }
+    /// 位操作必须保留 i128 的高 64 位（旧实现先 `trunc_to_u64` ⇒ 全丢）。
+    #[test]
+    fn fold_bitops_keep_i128_high_bits() {
+        let v = Big::from_u128((1u128 << 127) | (1u128 << 63) | 1);
+        let one = |op: Opcode| {
+            fold_opcode(
+                &op,
+                &[ConstValue::Int(v.clone(), TypeId::I128)],
+                &[],
+                TypeId::I128,
+            )
+            .unwrap()
+            .unwrap()
+            .as_int()
+            .unwrap()
+            .0
+            .trunc_to_u128()
+        };
+        assert_eq!(one(Opcode::Popcnt), 3, "popcnt 应数到 bit127/63/0");
+        assert_eq!(one(Opcode::Clz), 0, "最高位已置位 ⇒ clz = 0");
+        assert_eq!(one(Opcode::Ctz), 0, "最低位已置位 ⇒ ctz = 0");
+        assert_eq!(
+            one(Opcode::Bitreverse),
+            (1u128 << 127) | (1u128 << 64) | 1,
+            "128 位逐位反转"
+        );
+        // i128 的 bswap：低字节 1 → 最高字节
+        let one_val = |op: Opcode| {
+            fold_opcode(
+                &op,
+                &[ConstValue::Int(Big::from_u64(1), TypeId::I128)],
+                &[],
+                TypeId::I128,
+            )
+            .unwrap()
+            .unwrap()
+            .as_int()
+            .unwrap()
+            .0
+            .trunc_to_u128()
+        };
+        assert_eq!(one_val(Opcode::Bswap), 1u128 << 120, "16 字节反转");
+    }
+
+    /// 饱和算术按**目标位宽**的边界饱和（i128 也正确，旧实现写死 i64）。
+    #[test]
+    fn fold_saturating_keeps_i128_bounds() {
+        let fold2 = |op: Opcode, a: Big, b: Big| {
+            fold_opcode(
+                &op,
+                &[
+                    ConstValue::Int(a, TypeId::I128),
+                    ConstValue::Int(b, TypeId::I128),
+                ],
+                &[],
+                TypeId::I128,
+            )
+            .unwrap()
+            .unwrap()
+            .as_int()
+            .unwrap()
+            .0
+            .trunc_to_u128()
+        };
+        let one = Big::from_u64(1);
+        assert_eq!(
+            fold2(Opcode::UaddSat, Big::from_u128(u128::MAX), one.clone()),
+            u128::MAX,
+            "u128 加法饱和到 2^128-1（不是 u64::MAX）"
+        );
+        assert_eq!(
+            fold2(Opcode::UsubSat, Big::from_u64(0), one.clone()),
+            0,
+            "无符号减法下溢饱和到 0"
+        );
+        assert_eq!(
+            fold2(Opcode::SaddSat, Big::from_i128(i128::MAX), one.clone()),
+            i128::MAX as u128,
+            "有符号加法饱和到 i128::MAX"
+        );
+        assert_eq!(
+            fold2(Opcode::SsubSat, Big::from_i128(i128::MIN), one.clone()),
+            i128::MIN as u128,
+            "有符号减法饱和到 i128::MIN"
+        );
+    }
+
+    /// 移位量按位宽取模（与后端硬件语义一致），**任意大的常量都要折叠**。
+    #[test]
+    fn fold_shift_amount_is_masked_like_backend() {
+        let one = |amount: Big| {
+            fold_opcode(
+                &Opcode::Ishl,
+                &[
+                    ConstValue::Int(Big::from_u64(1), TypeId::I64),
+                    ConstValue::Int(amount, TypeId::I64),
+                ],
+                &[],
+                TypeId::I64,
+            )
+            .unwrap()
+            .unwrap()
+            .as_int()
+            .unwrap()
+            .0
+            .trunc_to_u128()
+        };
+        assert_eq!(one(Big::from_u64(64)), 1, "1 << (64 % 64) = 1");
+        assert_eq!(one(Big::from_u64(65)), 2, "1 << (65 % 64) = 2");
+        // 超大移位量也要能精确取模（旧实现装不下 u64 就放弃折叠）
+        let huge = Big::from_u128(u128::MAX);
+        // u128::MAX % 64 == 63 ⇒ 1 << 63（i64 视角 = i64::MIN，128 位二补数视角如下）
+        assert_eq!(
+            one(huge),
+            (-9223372036854775808i128) as u128,
+            "超大移位量取模后 = 63"
+        );
+    }
+
+    /// 常量池里的浮点是 **Bits 位模式**：known 表必须按浮点解码；
+    /// 折叠结果也必须是 Bits（f32 不能变成 f64 位模式的低 32 位）。
+    #[test]
+    fn folded_float_constants_use_target_format_bits() {
+        let src = "define float @f() {
+  %e:
+    %r = fadd float 1.5, float 2.5
+    ret float %r
+}";
+        let module = forge_ir::text::parse_module(src).expect("parse");
+        let mut func = module.iter_functions().next().unwrap().clone();
+        let pass = ConstFoldPass::new();
+        pass.run_on_function(&mut func).expect("fold");
+        // 找出 Fconst 的定义（折叠后 %r 应为常量 4.0f32）
+        let mut found = None;
+        for block in func.dfg.block_data_iter() {
+            for &inst_id in &block.inst_order {
+                let inst = func.dfg.inst_data(inst_id);
+                if inst.opcode == Opcode::Fconst
+                    && let Some(cid) = inst.immediates.first().and_then(|i| i.as_const())
+                {
+                    found = func.constants.bits(cid);
+                }
+            }
+        }
+        let bv = found.expect("应折叠出 Fconst");
+        assert_eq!(bv.width, 32, "float 常量位宽必须是 32（Bits 通道）");
+        assert_eq!(
+            bv.bits,
+            u128::from(4.0f32.to_bits()),
+            "1.5f32 + 2.5f32 应折叠成 4.0f32 的位模式"
         );
     }
 }

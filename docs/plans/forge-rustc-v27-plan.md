@@ -575,6 +575,24 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   取 `-0`/`+0`），`Fcopysign` 只搬符号位（f128 量值不再经 f64 变 `Inf`）。
   同时删掉语义含糊、与 `Ord` 冲突的私有 `cmp_total`。
 
+**进度（2026-10-28，M6-121）——常量折叠全宽度/全格式，不再有 `Big→固定类型→Big` 往返**：
+
+- 浮点 I/O：`Big::from_float_bits(u128, fmt)` / `to_float_bits(fmt) -> u128` 用 dashu 原生
+  `Real` + `split_bits`/`bit_len`/`bit` 精确编解码 **f16/f32/f64/f128**（不走 `f64`；
+  f128 的 112 位尾数逐位保留；NaN 返回 `None`）。
+- 折叠层：`Fconst` 的已知值按**浮点**解码（此前把位模式当整数）；浮点结果回写 **Bits
+  通道**（f32 不再落成 f64 位模式的低 32 位）；`+ - * / fmod fma sqrt floor ceil trunc
+  round` 全格式折叠（中间态 `p+8`/`2p+16` 守卫位，落到常量池时一次正确舍入；
+  `x/0 = ±inf` 折叠，NaN 结果除外——`Big::Float` 是精确实数、没有 NaN）。
+- 整数：`popcnt/clz/ctz/bitreverse/bswap` 按目标位宽用 dashu 原生
+  `bit_len/bit/count_ones/trailing_zeros/split_bits` 算（**i128 高 64 位不再丢**）；
+  移位量按位宽取模（与后端硬件语义一致，任意大常量都能折）；`sadd_sat/ssub_sat/
+  uadd_sat/usub_sat` 用 Big 的任意精度边界（i128 正确饱和，旧实现写死 i64）。
+- 测试：`float_bits_roundtrip_all_formats`、`f128_bits_keep_full_mantissa`、
+  `nan_bits_are_rejected`、`inf_and_zero_sign_roundtrip`、`trunc_to_u128_keeps_low_bits`、
+  `fold_bitops_keep_i128_high_bits`、`fold_saturating_keeps_i128_bounds`、
+  `fold_shift_amount_is_masked_like_backend`、`folded_float_constants_use_target_format_bits`。
+
 **仍未覆盖**：NEON 向量、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）

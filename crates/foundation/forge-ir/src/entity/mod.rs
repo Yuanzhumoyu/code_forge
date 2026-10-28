@@ -16,6 +16,8 @@ pub mod map;
 
 use std::fmt::{self, Display};
 
+use crate::FloatFormat;
+
 crate::entity_ref_impls!(Value, Inst, Block, TypeId, FuncRef, GlobalId, SigRef, VReg);
 
 /// 为"裸 u32 句柄"生成 `new`/`index` —— **字段私有化后的唯一构造/读取口**
@@ -86,6 +88,141 @@ impl TypeId {
     pub const V128: TypeId = TypeId(14);
     pub const V256: TypeId = TypeId(15);
     // NOTE: All type construction must go through TypeStore methods.
+}
+
+impl TypeId {
+    /// **内建**标量类型的位宽（无 `TypeStore` 也能答的部分）。
+    ///
+    /// - `BOOL` → `Some(1)`；`I8`/`I16`/`I32`/`I64`/`I128`、`F16`/`F32`/`F64`/`F128`
+    ///   → 各自位宽；
+    /// - `VOID`、`PTR`、向量/复合类型 → `None`。
+    ///
+    /// 指针**故意不给数**：宽度是 `DataLayout` 的事实（32 位目标 = 32 位），
+    /// 正确入口是 `TypeStore::scalar_bits` / `TypeStore::size_bytes`；
+    /// 动态整数位宽（`i24` 等经 `TypeStore::int_ty` 内部化）同理只能问 store。
+    ///
+    /// 本方法取代了会"猜 `PTR`=64、复合返回 0"的 `TypeId::bits()`
+    /// （v3 S3 方向；`bits()` 的调用点迁移见方案 §6）。
+    pub fn builtin_scalar_bits(self) -> Option<u32> {
+        Some(match self {
+            TypeId::BOOL => 1,
+            TypeId::I8 => 8,
+            TypeId::I16 => 16,
+            TypeId::I32 => 32,
+            TypeId::I64 => 64,
+            TypeId::I128 => 128,
+            TypeId::F16 => 16,
+            TypeId::F32 => 32,
+            TypeId::F64 => 64,
+            TypeId::F128 => 128,
+            // void / ptr / 向量：无静态标量位宽（见文档）
+            _ => return None,
+        })
+    }
+
+    /// **内建**向量常量的总位宽（`V64`/`V128`/`V256` → 64/128/256）。
+    ///
+    /// 与指针不同，这些是**静态事实**（类型名就写明了总位宽）；内部化的动态
+    /// 向量（`<3 x f32>` 等）返回 `None`，需要问 `TypeStore`。
+    pub fn builtin_vector_bits(self) -> Option<u32> {
+        Some(match self {
+            TypeId::V64 => 64,
+            TypeId::V128 => 128,
+            TypeId::V256 => 256,
+            _ => return None,
+        })
+    }
+
+    /// 获取浮点格式。仅对预设浮点类型有效。
+    pub const fn try_float_format(&self) -> Option<FloatFormat> {
+        match *self {
+            TypeId::F32 => Some(FloatFormat::F32),   // F32
+            TypeId::F64 => Some(FloatFormat::F64),   // F64
+            TypeId::F16 => Some(FloatFormat::F16),   // F16
+            TypeId::F128 => Some(FloatFormat::F128), // F128
+            _ => None,
+        }
+    }
+
+    /// 是否为整数类型。
+    pub const fn is_int(&self) -> bool {
+        matches!(
+            *self,
+            TypeId::I8
+                | TypeId::I16
+                | TypeId::I32
+                | TypeId::I64
+                | TypeId::I128
+                | TypeId::BOOL
+                | TypeId::PTR
+        )
+    }
+
+    /// 是否为浮点数类型。
+    pub const fn is_float(&self) -> bool {
+        matches!(
+            *self,
+            TypeId::F16 | TypeId::F32 | TypeId::F64 | TypeId::F128
+        )
+    }
+
+    /// 是否为向量类型
+    pub const fn is_vector(&self) -> bool {
+        matches!(*self, TypeId::V64 | TypeId::V128 | TypeId::V256)
+    }
+
+    /// 是否为指针类型
+    pub const fn is_ptr(&self) -> bool {
+        matches!(*self, TypeId::PTR)
+    }
+
+    /// 尝试向上转型。
+    pub const fn upcast(self, rhs: Self) -> Option<TypeId> {
+        match (self, rhs) {
+            // 布尔
+            (Self::BOOL, Self::BOOL) => Some(Self::BOOL),
+            (Self::BOOL, Self::I8) | (Self::I8, Self::BOOL) => Some(Self::I8),
+            (Self::BOOL, Self::I16) | (Self::I16, Self::BOOL) => Some(Self::I16),
+            (Self::BOOL, Self::I32) | (Self::I32, Self::BOOL) => Some(Self::I32),
+            (Self::BOOL, Self::I64) | (Self::I64, Self::BOOL) => Some(Self::I64),
+            (Self::BOOL, Self::I128) | (Self::I128, Self::BOOL) => Some(Self::I128),
+            // 整数
+            (Self::I8, Self::I8) => Some(Self::I8),
+            (Self::I8, Self::I16) | (Self::I16, Self::I8) => Some(Self::I16),
+            (Self::I8, Self::I32) | (Self::I32, Self::I8) => Some(Self::I32),
+            (Self::I8, Self::I64) | (Self::I64, Self::I8) => Some(Self::I64),
+            (Self::I8, Self::I128) | (Self::I128, Self::I8) => Some(Self::I128),
+            (Self::I16, Self::I16) => Some(Self::I16),
+            (Self::I16, Self::I32) | (Self::I32, Self::I16) => Some(Self::I32),
+            (Self::I16, Self::I64) | (Self::I64, Self::I16) => Some(Self::I64),
+            (Self::I16, Self::I128) | (Self::I128, Self::I16) => Some(Self::I128),
+            (Self::I32, Self::I32) => Some(Self::I32),
+            (Self::I32, Self::I64) | (Self::I64, Self::I32) => Some(Self::I64),
+            (Self::I32, Self::I128) | (Self::I128, Self::I32) => Some(Self::I128),
+            (Self::I64, Self::I64) => Some(Self::I64),
+            (Self::I64, Self::I128) | (Self::I128, Self::I64) => Some(Self::I128),
+            (Self::I128, Self::I128) => Some(Self::I128),
+            // 浮点数
+            (Self::F16, Self::F16) => Some(Self::F16),
+            (Self::F16, Self::F32) | (Self::F32, Self::F16) => Some(Self::F32),
+            (Self::F16, Self::F64) | (Self::F64, Self::F16) => Some(Self::F64),
+            (Self::F16, Self::F128) | (Self::F128, Self::F16) => Some(Self::F128),
+            (Self::F32, Self::F32) => Some(Self::F32),
+            (Self::F32, Self::F64) | (Self::F64, Self::F32) => Some(Self::F64),
+            (Self::F32, Self::F128) | (Self::F128, Self::F32) => Some(Self::F128),
+            (Self::F64, Self::F64) => Some(Self::F64),
+            (Self::F64, Self::F128) | (Self::F128, Self::F64) => Some(Self::F128),
+            (Self::F128, Self::F128) => Some(Self::F128),
+            // 指针
+            (Self::PTR, Self::PTR) => Some(Self::PTR),
+            (Self::PTR, Self::I8) | (Self::I8, Self::PTR) => Some(Self::PTR),
+            (Self::PTR, Self::I16) | (Self::I16, Self::PTR) => Some(Self::PTR),
+            (Self::PTR, Self::I32) | (Self::I32, Self::PTR) => Some(Self::PTR),
+            (Self::PTR, Self::I64) | (Self::I64, Self::PTR) => Some(Self::PTR),
+            (Self::PTR, Self::I128) | (Self::I128, Self::PTR) => Some(Self::PTR),
+            _ => None,
+        }
+    }
 }
 
 /// 函数引用 (在 Module 中解析)。
@@ -322,117 +459,6 @@ pub enum Endianness {
     #[default]
     Little,
     Big,
-}
-
-impl TypeId {
-    /// **内建**标量类型的位宽（无 `TypeStore` 也能答的部分）。
-    ///
-    /// - `BOOL` → `Some(1)`；`I8`/`I16`/`I32`/`I64`/`I128`、`F16`/`F32`/`F64`/`F128`
-    ///   → 各自位宽；
-    /// - `VOID`、`PTR`、向量/复合类型 → `None`。
-    ///
-    /// 指针**故意不给数**：宽度是 `DataLayout` 的事实（32 位目标 = 32 位），
-    /// 正确入口是 `TypeStore::scalar_bits` / `TypeStore::size_bytes`；
-    /// 动态整数位宽（`i24` 等经 `TypeStore::int_ty` 内部化）同理只能问 store。
-    ///
-    /// 本方法取代了会"猜 `PTR`=64、复合返回 0"的 `TypeId::bits()`
-    /// （v3 S3 方向；`bits()` 的调用点迁移见方案 §6）。
-    pub fn builtin_scalar_bits(self) -> Option<u32> {
-        Some(match self {
-            TypeId::BOOL => 1,
-            TypeId::I8 => 8,
-            TypeId::I16 => 16,
-            TypeId::I32 => 32,
-            TypeId::I64 => 64,
-            TypeId::I128 => 128,
-            TypeId::F16 => 16,
-            TypeId::F32 => 32,
-            TypeId::F64 => 64,
-            TypeId::F128 => 128,
-            // void / ptr / 向量：无静态标量位宽（见文档）
-            _ => return None,
-        })
-    }
-
-    /// **内建**向量常量的总位宽（`V64`/`V128`/`V256` → 64/128/256）。
-    ///
-    /// 与指针不同，这些是**静态事实**（类型名就写明了总位宽）；内部化的动态
-    /// 向量（`<3 x f32>` 等）返回 `None`，需要问 `TypeStore`。
-    pub fn builtin_vector_bits(self) -> Option<u32> {
-        Some(match self {
-            TypeId::V64 => 64,
-            TypeId::V128 => 128,
-            TypeId::V256 => 256,
-            _ => return None,
-        })
-    }
-
-    /// 是否为整数类型。
-    pub fn is_int(&self) -> bool {
-        matches!(
-            *self,
-            TypeId::I8
-                | TypeId::I16
-                | TypeId::I32
-                | TypeId::I64
-                | TypeId::I128
-                | TypeId::BOOL
-                | TypeId::PTR
-        )
-    }
-
-    /// 是否为浮点数类型。
-    pub fn is_float(&self) -> bool {
-        matches!(*self, TypeId::F32 | TypeId::F64 | TypeId::F128)
-    }
-
-    /// 尝试向上转型。
-    pub fn upcast(self, rhs: Self) -> Option<TypeId> {
-        match (self, rhs) {
-            // 布尔
-            (Self::BOOL, Self::BOOL) => Some(Self::BOOL),
-            (Self::BOOL, Self::I8) | (Self::I8, Self::BOOL) => Some(Self::I8),
-            (Self::BOOL, Self::I16) | (Self::I16, Self::BOOL) => Some(Self::I16),
-            (Self::BOOL, Self::I32) | (Self::I32, Self::BOOL) => Some(Self::I32),
-            (Self::BOOL, Self::I64) | (Self::I64, Self::BOOL) => Some(Self::I64),
-            (Self::BOOL, Self::I128) | (Self::I128, Self::BOOL) => Some(Self::I128),
-            // 整数
-            (Self::I8, Self::I8) => Some(Self::I8),
-            (Self::I8, Self::I16) | (Self::I16, Self::I8) => Some(Self::I16),
-            (Self::I8, Self::I32) | (Self::I32, Self::I8) => Some(Self::I32),
-            (Self::I8, Self::I64) | (Self::I64, Self::I8) => Some(Self::I64),
-            (Self::I8, Self::I128) | (Self::I128, Self::I8) => Some(Self::I128),
-            (Self::I16, Self::I16) => Some(Self::I16),
-            (Self::I16, Self::I32) | (Self::I32, Self::I16) => Some(Self::I32),
-            (Self::I16, Self::I64) | (Self::I64, Self::I16) => Some(Self::I64),
-            (Self::I16, Self::I128) | (Self::I128, Self::I16) => Some(Self::I128),
-            (Self::I32, Self::I32) => Some(Self::I32),
-            (Self::I32, Self::I64) | (Self::I64, Self::I32) => Some(Self::I64),
-            (Self::I32, Self::I128) | (Self::I128, Self::I32) => Some(Self::I128),
-            (Self::I64, Self::I64) => Some(Self::I64),
-            (Self::I64, Self::I128) | (Self::I128, Self::I64) => Some(Self::I128),
-            (Self::I128, Self::I128) => Some(Self::I128),
-            // 浮点数
-            (Self::F16, Self::F16) => Some(Self::F16),
-            (Self::F16, Self::F32) | (Self::F32, Self::F16) => Some(Self::F32),
-            (Self::F16, Self::F64) | (Self::F64, Self::F16) => Some(Self::F64),
-            (Self::F16, Self::F128) | (Self::F128, Self::F16) => Some(Self::F128),
-            (Self::F32, Self::F32) => Some(Self::F32),
-            (Self::F32, Self::F64) | (Self::F64, Self::F32) => Some(Self::F64),
-            (Self::F32, Self::F128) | (Self::F128, Self::F32) => Some(Self::F128),
-            (Self::F64, Self::F64) => Some(Self::F64),
-            (Self::F64, Self::F128) | (Self::F128, Self::F64) => Some(Self::F128),
-            (Self::F128, Self::F128) => Some(Self::F128),
-            // 指针
-            (Self::PTR, Self::PTR) => Some(Self::PTR),
-            (Self::PTR, Self::I8) | (Self::I8, Self::PTR) => Some(Self::PTR),
-            (Self::PTR, Self::I16) | (Self::I16, Self::PTR) => Some(Self::PTR),
-            (Self::PTR, Self::I32) | (Self::I32, Self::PTR) => Some(Self::PTR),
-            (Self::PTR, Self::I64) | (Self::I64, Self::PTR) => Some(Self::PTR),
-            (Self::PTR, Self::I128) | (Self::I128, Self::PTR) => Some(Self::PTR),
-            _ => None,
-        }
-    }
 }
 
 /// 寄存器类别 — 表示一组可互换的物理寄存器。
