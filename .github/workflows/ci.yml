@@ -449,9 +449,10 @@ jobs:
         with:
           arguments: --config .github/deny.toml check advisories licenses
 
-  # Docs check
-  docs:
-    name: Docs
+  # Docs check（rustdoc）。**job id 必须是 rustdoc**：文件前面的 markdownlint job 已
+  # 用了 `docs`——重复的 YAML 映射键会让后者覆盖前者（markdownlint 因此从未在 CI 跑）。
+  rustdoc:
+    name: Docs (rustdoc)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
