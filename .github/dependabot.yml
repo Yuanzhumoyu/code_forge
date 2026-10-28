@@ -1,0 +1,18 @@
+# Dependabot：cargo 依赖与 GitHub Actions 的周更 PR。
+# 安全公告由 CI 的 supply-chain job（cargo-deny advisories）兜底。
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci-deps"

@@ -438,6 +438,17 @@ jobs:
       # 都在 lib 里），端到端覆盖由 `forge-rustc (e2e, Windows)` 与 workspace 两个 job 负责。
       - run: cargo test -p forge-tests --features nightly --lib
 
+  # 供应链：cargo-deny 的 advisories + licenses（仓库有 Cargo.lock；许可白名单见
+  # `.github/deny.toml`）。只查已锁定的依赖图，不跑构建。
+  supply-chain:
+    name: Supply chain (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          arguments: --config .github/deny.toml check advisories licenses
+
   # Docs check
   docs:
     name: Docs
