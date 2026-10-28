@@ -143,11 +143,19 @@ fn insert_expression(func: &mut Function, block: Block, expr_key: &ExprKey) -> O
     let opcode = expr_key.opcode;
 
     // Create the instruction
+    //
+    // **必须带上 `immediates`**（v27 M6-119）：v22 起条件放在 `Immediate::IntCC`/
+    // `FloatCC` 通道里，`opcode` 只是 `Icmp`/`Fcmp` 本身。空 immediates 重建出来的
+    // `icmp` 没有条件 ⇒ `-O2` 下 verifier 报
+    // `MissingCondImmediate { inst, expected: "IntCC" }`（实测 `forge_entry`）。
+    // 其它带立即数的候选（移位常量等）同理：键里存了哪份就原样复制哪份。
+    let immediates: smallvec::SmallVec<[Immediate; 4]> =
+        expr_key.immediates.iter().copied().collect();
     let new_inst = func.make_inst(
         opcode,
         block,
         operands,
-        smallvec::smallvec![],
+        immediates,
         &[expr_key.ty],
         InstFlags::default(),
     );

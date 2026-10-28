@@ -12,6 +12,14 @@
 
 ## 逐轮记录与旧施工图（2026-10-11 → 2026-10-19）
 
+### 2026-10-28 · M6-119：优化档 IR 合法性整批修复（O1/O2 编得过、fmt 全档真跑）
+
+- `copy_agg` 地址 `inttoptr`；指针↔整数 cast 显式转换；`ptr_offset_from(_unsigned)`
+  先 `ptrtoint`；GVN-PRE 保留 immediates；溢出槽 ≥8 字节且 8 对齐。
+- fmt 守卫升格为 O0/O1/O2 全档真执行 65。
+- 已知误编译（未闭环）：迭代器探针 **O1** 运行期 panic（`ub_checks` 断言误判，
+  `FORGE_OPT_SKIP=const-fold` 绕过；O2 正常）——待 `const-fold` 专项。
+
 ### 2026-10-28 · M6-118：fp-inside 栈槽平移含 callee-saved 区（fmt 跑通）
 
 - gdbstub 写观察点证明 `write_str` 的局部 `fp-0x40` = x24 保存槽 ⇒ 返回后 x24 被覆盖

@@ -12,6 +12,21 @@ pub(crate) struct CPlace<'tcx> {
 
 impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
     pub(crate) fn copy_agg(&mut self, dst: Value, src: Value, size: u32) {
+        // **地址必须是 PTR 类型**（v27 M6-119）：`copy_agg` 的调用方有两类——
+        // 栈槽地址（`StackAddr`，PTR）与 **ABI 指针**（sret 隐藏返回指针、间接
+        // 聚合形参，签名里是 `i64` 槽）。后者直接拿 i64 当 `store`/`load` 的
+        // 地址产 IR 非法（verifier：`StoreAddrNotPointer` / `LoadAddrNotPointer`），
+        // 而 O0 不跑 pass、只有 `-O1` 之后才被 verifier 抓到。这里统一 `inttoptr`。
+        let dst = if self.builder.value_type(dst) == Some(TypeId::PTR) {
+            dst
+        } else {
+            self.builder.inttoptr(dst, TypeId::PTR)
+        };
+        let src = if self.builder.value_type(src) == Some(TypeId::PTR) {
+            src
+        } else {
+            self.builder.inttoptr(src, TypeId::PTR)
+        };
         for off in (0..size).step_by(8) {
             let off_v = self.builder.const_int(off as i64, TypeId::I64);
             let saddr = if off == 0 {

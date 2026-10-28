@@ -11,6 +11,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-28) — arm64 在 `-O1/-O2` 编不过（pass 后 IR 非法）
+
++ `copy_agg` 的地址统一 `inttoptr` 成 PTR（sret 指针与间接聚合形参在签名里是 i64 槽）——
+  修 `StoreAddrNotPointer`。
++ `CastKind::PointerExposeProvenance` / `PointerWithExposedProvenance` 显式
+  `ptrtoint`/`inttoptr`；`ptr_offset_from(_unsigned)` 先把指针转整数再差/除——修
+  `udiv ptr %x, i64 4` 这类非法 IR（`Iter::len` 必走）。
++ GVN-PRE `insert_expression` 复制表达式的 **immediates**——修 `MissingCondImmediate`
+  （v22 起比较条件在立即数通道）。
++ 溢出槽最小 8 字节、8 对齐：vreg 类可能 4 字节宽，而写槽是 8 字节 `STRX`——修
+  `Strx: immediate 4 不是 8 的整数倍`。
++ 守卫升级：`rustc_aarch64_fmt_probe_runs_under_qemu` 在 **O0/O1/O2 全档**真执行 65。
++ 已知未闭环：迭代器探针在 **O1** 运行期 panic（`const-fold` 误编译，`-O2` 正常），
+  已在账本记录，下一步专项。
+
 ### Fixed (2026-10-28) — fp-inside 栈槽落在 callee-saved 保存区上
 
 + `frame_layout_info` 的 fp-inside 分支 `stack_slot_shift` 只算了 `fp_push_bytes`

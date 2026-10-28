@@ -585,14 +585,14 @@ impl<'a> BtState<'a> {
         }
 
         let class = self.vreg_class(vreg);
-        let size = self
+        let raw_size = self
             .config
             .classes
             .get(&class)
             .map(|c| c.reg_width)
             .unwrap_or(8);
-
-        // 对齐
+        // 溢出槽最小 8B、8 对齐（v27 M6-119）：写槽按类视图搬整槽，类宽可能只有 4B。
+        let size = raw_size.max(8);
         let align = size as i32;
         self.next_spill_offset = (self.next_spill_offset + align - 1) / align * align;
 

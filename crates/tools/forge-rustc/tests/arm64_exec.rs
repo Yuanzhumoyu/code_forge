@@ -1156,42 +1156,13 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
 "#;
 
     let src = dir.join("probe_fmt.rs");
-    let obj = dir.join("probe_fmt.o");
     let crt0_s = dir.join("crt0_fmt.s");
     let crt0_o = dir.join("crt0_fmt.o");
     let stubs_s = dir.join("stubs_fmt.s");
     let stubs_o = dir.join("stubs_fmt.o");
-    let elf = dir.join("probe_fmt.elf");
     std::fs::write(&src, src_text).expect("写 probe_fmt.rs");
     std::fs::write(&crt0_s, CORE_CRT0_S).expect("写 crt0_fmt.s");
     std::fs::write(&stubs_s, CORE_STUBS_S).expect("写 stubs_fmt.s");
-
-    let out = run(Command::new(&rustc).current_dir(&dir).args([
-        format!("-Zcodegen-backend={}", dll.display()).as_str(),
-        "--target",
-        "aarch64-unknown-none",
-        "--edition",
-        "2021",
-        "--crate-type",
-        "lib",
-        "-C",
-        "panic=abort",
-        "-C",
-        "opt-level=0",
-        "-C",
-        "debug-assertions=off",
-        "-C",
-        "overflow-checks=off",
-        "--emit=obj",
-        "--extern",
-        &format!("core={}", core.display()),
-        "--extern",
-        &format!("compiler_builtins={}", cb.display()),
-        src.to_str().unwrap(),
-        "-o",
-        obj.to_str().unwrap(),
-    ]));
-    assert_ok(&out, "forge 编 fmt 探针");
 
     for (src_s, out_o, what) in [(&crt0_s, &crt0_o, "crt0"), (&stubs_s, &stubs_o, "stubs")] {
         let out = run(Command::new(&clang).args([
@@ -1203,46 +1174,81 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
         ]));
         assert_ok(&out, &format!("clang 汇编 fmt {what}"));
     }
-    let out = run(Command::new(&ldlld).args([
-        "-m",
-        "aarch64elf",
-        "-Ttext=0x40000000",
-        "--entry=_start",
-        crt0_o.to_str().unwrap(),
-        stubs_o.to_str().unwrap(),
-        obj.to_str().unwrap(),
-        core.to_str().unwrap(),
-        cb.to_str().unwrap(),
-        "-o",
-        elf.to_str().unwrap(),
-    ]));
-    assert_ok(&out, "ld.lld 链接 fmt 探针");
-    let out = run(Command::new(&qemu).args([
-        "-M",
-        "virt",
-        "-cpu",
-        "cortex-a57",
-        "-kernel",
-        elf.to_str().unwrap(),
-        "-nographic",
-        "-semihosting-config",
-        "enable=on,target=native",
-        "-monitor",
-        "none",
-        "-serial",
-        "none",
-        "-no-reboot",
-    ]));
-    let code = out
-        .status
-        .code()
-        .unwrap_or_else(|| panic!("qemu 异常终止：\n{}", String::from_utf8_lossy(&out.stderr)));
-    assert_eq!(
-        code & 0xFF,
-        65,
-        "fmt 探针结果应为 65（got {code}；产物：{}）",
-        dir.display()
-    );
+
+    // **O0/O1/O2 全档**（v27 M6-119）：O1/O2 会跑 IR pass 与 verifier——这一档是
+    // 「`const-fold`/`pre` 产出合法 IR」与「优化后语义不变」的双重证明。
+    for level in ["0", "1", "2"] {
+        let obj = dir.join(format!("probe_fmt_o{level}.o"));
+        let elf = dir.join(format!("probe_fmt_o{level}.elf"));
+        let out = run(Command::new(&rustc).current_dir(&dir).args([
+            format!("-Zcodegen-backend={}", dll.display()).as_str(),
+            "--target",
+            "aarch64-unknown-none",
+            "--edition",
+            "2021",
+            "--crate-type",
+            "lib",
+            "-C",
+            "panic=abort",
+            "-C",
+            &format!("opt-level={level}"),
+            "-C",
+            "debug-assertions=off",
+            "-C",
+            "overflow-checks=off",
+            "--emit=obj",
+            "--extern",
+            &format!("core={}", core.display()),
+            "--extern",
+            &format!("compiler_builtins={}", cb.display()),
+            src.to_str().unwrap(),
+            "-o",
+            obj.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("forge 编 fmt 探针（-O{level}）"));
+        let out = run(Command::new(&ldlld).args([
+            "-m",
+            "aarch64elf",
+            "-Ttext=0x40000000",
+            "--entry=_start",
+            crt0_o.to_str().unwrap(),
+            stubs_o.to_str().unwrap(),
+            obj.to_str().unwrap(),
+            core.to_str().unwrap(),
+            cb.to_str().unwrap(),
+            "-o",
+            elf.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("ld.lld 链接 fmt 探针（-O{level}）"));
+        let out = run(Command::new(&qemu).args([
+            "-M",
+            "virt",
+            "-cpu",
+            "cortex-a57",
+            "-kernel",
+            elf.to_str().unwrap(),
+            "-nographic",
+            "-semihosting-config",
+            "enable=on,target=native",
+            "-monitor",
+            "none",
+            "-serial",
+            "none",
+            "-no-reboot",
+        ]));
+        let code = out.status.code().unwrap_or_else(|| {
+            panic!(
+                "qemu 异常终止（-O{level}）：\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            )
+        });
+        assert_eq!(
+            code & 0xFF,
+            65,
+            "fmt 探针 -O{level} 结果应为 65（got {code}；产物：{}）",
+            dir.display()
+        );
+    }
 }
 /// **迭代器守卫**（v27 M6-117）：`v.iter()` / `next()` / `.copied().sum()` 真执行。
 ///

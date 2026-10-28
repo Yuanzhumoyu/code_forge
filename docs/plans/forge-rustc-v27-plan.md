@@ -538,6 +538,26 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   `__stack` 指向**入口 sp**、保存区紧贴其下 ⇒ 改成 `contiguous = true`（帧顶保存区），
   与 riscv 同一条路径；arm64/riscv/x86 三个 JIT 矩阵（含变参用例）全绿。
 
+**进度（2026-10-28，M6-119）——优化档（O1/O2）IR 合法性整批修复**：
+
+- `-C opt-level=1/2` 下此前连编都编不过（verifier 在 pass 之后拒绝），逐条修好：
+  1. `copy_agg` 的地址统一 `inttoptr` 成 PTR（sret 指针/间接聚合形参在签名里是 i64 槽）
+     ⇒ 消除 `StoreAddrNotPointer`；
+  2. `CastKind::PointerExposeProvenance` / `PointerWithExposedProvenance` 显式
+     `ptrtoint`/`inttoptr`（旧实现落进 `_ => Ok(val)`，指针值当整数用）；
+  3. `ptr_offset_from` / `ptr_offset_from_unsigned` 先把两个指针 `ptrtoint` 再做
+     差值/除法（旧实现产出 `udiv ptr %x, i64 4`）；
+  4. GVN-PRE 的 `insert_expression` 复制键里的 **immediates**（v22 起 `IntCC`/`FloatCC`
+     在立即数通道，空立即数重建的 `icmp` 没有条件 ⇒ `MissingCondImmediate`）；
+  5. 溢出槽最小 8 字节、8 对齐（vreg 类可能只有 4 字节宽，写槽却是 `STRX`（8B scaled）；
+     旧实现给出 off=4 ⇒ `Strx: immediate 4 不是 8 的整数倍`）。
+- 验收：fmt 守卫升格为 **O0/O1/O2 全档**真执行 65（`write!` 整数格式化 + 插入排序 +
+  `count_ones` + Collatz）；`-O1/-O2` 的 `forge_entry`/`Iter::len` 也能编过并跑。
+- **仍未闭环（已知误编译）**：迭代器探针在 **O1** 运行期 panic
+  （`ub_checks` 的 `0 < pointee_size` 断言误判；`FORGE_OPT_SKIP=const-fold` 可绕过
+  ⇒ `const-fold` 的语义缺陷，O2 反而正常）。下一步专项：`const-fold` 折叠 i1 检查时
+  的 store/load 宽度或分支折叠。
+
 **仍未覆盖**：NEON 向量、DWARF/CFI。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）

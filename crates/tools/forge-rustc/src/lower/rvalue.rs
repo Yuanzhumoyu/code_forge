@@ -174,6 +174,19 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                             val
                         })
                     }
+                    // **指针 ↔ 整数**（v27 M6-119）：`x as usize` 是
+                    // `PointerExposeProvenance`、`usize as *T` 是
+                    // `PointerWithExposedProvenance`。旧实现让它们落进 `_ => Ok(val)`
+                    // ⇒ 返回指针类型的值，随后 `(end as usize - ptr as usize) / 4`
+                    // 变成 `udiv ptr %x, i64 4`：O0 能编（不跑 pass），`-O1` 之后
+                    // verifier 报 `TypeMismatch { Udiv, expected: t_ptr, found: t_i64 }`
+                    //（实测 `Iter::len` 的除法）。这里显式转一次。
+                    rustc_middle::mir::CastKind::PointerExposeProvenance => {
+                        Ok(self.builder.ptrtoint(val, to_type))
+                    }
+                    rustc_middle::mir::CastKind::PointerWithExposedProvenance => {
+                        Ok(self.builder.inttoptr(val, to_type))
+                    }
                     rustc_middle::mir::CastKind::PtrToPtr
                     | rustc_middle::mir::CastKind::FnPtrToPtr => Ok(val),
                     _ => Ok(val),

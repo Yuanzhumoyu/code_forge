@@ -32,7 +32,11 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             v as i128
         };
         let iconst = |b: &mut FunctionBuilder, v: i128| b.const_int(v, ty);
-        let small = |b: &mut FunctionBuilder, v: i64| b.const_int(v, TypeId::I64);
+        // **移位量必须与值同类型**（v27 M6-119）：`Ushr` 两个操作数位宽必须一致，
+        // 否则 O0 能编（不跑 pass）、`-O1` 之后 verifier 报
+        // `TypeMismatch { Ushr, expected: t_i32, found: t_i64 }`——实测 i32 的
+        // `count_ones` 四条 `lshr i32 %x, i64 1/2/4/24` 全是非法 IR。
+        let small = |b: &mut FunctionBuilder, v: i64| b.const_int(i128::from(v), ty);
         let m1 = iconst(&mut self.builder, mask(0x55));
         let m2 = iconst(&mut self.builder, mask(0x33));
         let m4 = iconst(&mut self.builder, mask(0x0f));
@@ -420,11 +424,17 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     let (ptr, base) = (args[0], args[1]);
                     let t = substs_first_ty(&substs).unwrap_or(self.tcx.types.i8);
                     let sz = layout_bytes(self.tcx, t) as i64;
+                    // **指针先转整数**（v27 M6-119）：MIR 传给 intrinsic 的是
+                    // `*const T` 值（IR 里是 PTR 类型），直接 `isub`/`sdiv` 会得到
+                    // `udiv ptr %x, i64 4` 这种非法 IR（O0 不跑 pass 看不出来，
+                    // `-O1` 之后 verifier 报 `TypeMismatch { Udiv }`）。
+                    let lp = self.builder.ptrtoint(ptr, TypeId::I64);
+                    let lb = self.builder.ptrtoint(base, TypeId::I64);
+                    let diff = self.builder.isub(lp, lb);
                     if sz == 1 {
-                        vec![self.builder.isub(ptr, base)]
+                        vec![diff]
                     } else {
                         let szv = self.builder.const_int(sz, TypeId::I64);
-                        let diff = self.builder.isub(ptr, base);
                         vec![self.builder.sdiv(diff, szv)]
                     }
                 } else {
@@ -859,11 +869,14 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     let base = args[1];
                     let t = substs_first_ty(&substs).unwrap_or(self.tcx.types.i8);
                     let sz = layout_bytes(self.tcx, t) as i64;
+                    // 同上：指针 → 整数，再做无符号差值/除法。
+                    let lp = self.builder.ptrtoint(ptr, TypeId::I64);
+                    let lb = self.builder.ptrtoint(base, TypeId::I64);
+                    let diff = self.builder.isub(lp, lb);
                     if sz == 1 {
-                        vec![self.builder.isub(ptr, base)]
+                        vec![diff]
                     } else {
                         let szv = self.builder.const_int(sz, TypeId::I64);
-                        let diff = self.builder.isub(ptr, base);
                         vec![self.builder.udiv(diff, szv)]
                     }
                 } else {
