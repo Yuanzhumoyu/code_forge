@@ -219,7 +219,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: nightly-2026-09-05-${{ hashFiles('**/Cargo.lock') }}
-      - run: cargo test --workspace --exclude forge-rustc
+      - name: Run workspace tests (macOS)
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo test --workspace --exclude forge-rustc 2>&1 | tee "$RUNNER_TEMP/macos-test.log"
+      - name: Surface failing macOS names as annotations (always)
+        if: always()
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/macos-test.log"
+          [ -f "$log" ] || { echo "no macos log"; exit 0; }
+          # 与 e2e/test-windows 同口径：失败行 + panic 上下文报成 annotations。
+          grep -nE '^test .* FAILED$|^thread .* panicked|^test result: FAILED|^---- .* stdout ----|^error(\[|:)' -A4 "$log" | while IFS= read -r line; do
+            echo "$line"
+            echo "::error::$line"
+          done
 
   # forge-rustc 编译检查（rustc_private 依赖 nightly + rustc-dev；P4.6 纳入 CI）
   forge-rustc-check:
@@ -464,7 +479,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          arguments: --config .github/deny.toml check advisories licenses
+          # `arguments` 是**全局**参数（默认 --all-features），子命令参数放
+          # `command-arguments`。首轮把 "check advisories licenses" 全塞进
+          # arguments ⇒ action 失败（日志里看不到，属于调用约定错误）。
+          arguments: --config .github/deny.toml --all-features
+          command-arguments: advisories licenses
 
   # Docs check（rustdoc）。**job id 必须是 rustdoc**：文件前面的 markdownlint job 已
   # 用了 `docs`——重复的 YAML 映射键会让后者覆盖前者（markdownlint 因此从未在 CI 跑）。
