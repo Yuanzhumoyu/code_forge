@@ -692,11 +692,25 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   3. 结果：签名/调用打包/入口收参/返回一致（`Map::fold` 的 self 按 pair 传）。
 - iterator 守卫探针追加 `map(|x| x*2).sum()==20` 与 `filter(even).sum()==6`
   断言（-O0/O1/O2 都验，失败返回 140/141）。
-- **仍待办**：kitchen 组合探针（`from_str` + `sort` + `binary_search` + `write!`
-  同函数）仍挂起——分片探针各自正确，需继续二分组合路径。
+**进度（2026-10-29，M6-127）——KD-04 根因修复：`&slice[from..to]`（Subslice）**：
+
+- **根因**：`core::num::from_ascii_bytes_radix_impl` 的解析循环用 `s = &s[1..]`
+  缩短切片；`Rvalue::Ref` 的 WA-25 分支把整条 fat pointer **原样复制**（忽略
+  `Subslice` 投影）⇒ len 不变 ⇒ 循环永不结束。**`i32::from_str` 在 -O0/-O1/-O2
+  全部挂起**，其内部 `char::to_digit` 被无限调用。
+- 修法：语句层 `Rvalue::Ref` 增加 Subslice 分支：从源 fat pointer 读 lo/len，
+  构造 `(lo + from*elem_size, len - from - to)` 写回目标槽（`to` 按 rustc 语义
+  为尾端排除长度）。分片验证：`from_str("12345")` 在 O0/O1/O2 均得 57。
+- 顺带加固：`unpack_sp` 对 **宽度 1/2 的 pair 分量**按真实宽度掩码，去掉
+  I32 槽带出的 pad 残留（`Result<i32, E>` 的 tag 在 offset 4、width 1）。
+- **仍在册（KD-06/KD-07）**：① 同一大函数里先跑多段迭代器代码、再调
+  `str::parse` 时返回 Err/错值（独立小函数/独立探针正确；疑似对象级常量/重定位
+  与调用状态相关）；② `parse::<i32>().ok() != Some(12345)` 的
+  `Option<i32>` 聚合常量比较在 -O0 失败。二者已登记 `docs/reference/known-defects.md`，
+  不作为本里程碑的验收项。
 
 **仍未覆盖**：NEON 向量、DWARF/CFI、LICM 的错误外提（默认关闭、待修）、
-kitchen 组合探针挂起。
+KD-06/KD-07（组合/常量比较，见缺陷索引）。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

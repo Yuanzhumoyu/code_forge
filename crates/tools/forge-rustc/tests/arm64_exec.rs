@@ -1332,6 +1332,7 @@ use core::panic::PanicInfo;
 #[panic_handler]
 fn panic(_: &PanicInfo) -> ! { loop {} }
 
+
 #[unsafe(no_mangle)]
 pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
     let _ = (a, b);
@@ -1541,6 +1542,7 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
     if s3 != 20 { return 140; }
     let s4: i32 = v.iter().copied().filter(|x| x % 2 == 0).sum();
     if s4 != 6 { return 141; }
+
     (s1 + s2) & 0xFF
 }
 "#;

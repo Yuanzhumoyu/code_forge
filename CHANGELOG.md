@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-29) — `&slice[from..to]` 的 Subslice 长度（`str::parse` 死循环）
+
++ `Rvalue::Ref` 的 Subslice 投影此前走“整值复制 fat pointer”分支，忽略 `from/to` ⇒
+  `s = &s[1..]` 后 len 不变 ⇒ `core::num::from_ascii_bytes_radix_impl` 无限循环，
+  `i32::from_str` 在 -O0/-O1/-O2 全部挂起。现按 `(lo + from*elem, len - from - to)`
+  重算并写回目标槽。
++ `unpack_sp` 对宽度 1/2 的 pair 分量按真实宽度掩码，去掉 I32 槽带出的 pad 残留
+  （`Result<i32, E>` 的 tag 在 offset 4/width 1）。
++ 新登记 KD-06（大函数组合后 `str::parse` 错值）与 KD-07（`Option<i32>` 聚合常量
+  比较 -O0 失败），见 `docs/reference/known-defects.md`。
+
 ### Fixed (2026-10-28) — 两寄存器聚合 ABI（`Map`/闭包适配器）
 
 + `abi_kind_of_ty` 目标化：x86_64（Win64）保持 8 字节聚合阈值；aarch64/riscv64

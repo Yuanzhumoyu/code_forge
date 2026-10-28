@@ -426,7 +426,45 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                         // ptr，len 半区不写 → PtrMetadata 读 len=0（Vec deref
                         // 后 slice.len()=0）。按 size 整值复制（与 Use/Cast 的
                         // 聚合复制一致）。
+                        // **`&slice[from..to]`（Subslice 投影）**：语义是构造**新的**
+                        // fat pointer（ptr + from*elem，len - from - to）；WA-25 的
+                        // “整值复制”会原样复制旧 ptr/len ⇒ `from_ascii_bytes_radix_impl`
+                        // 的 `s = &s[1..]` 循环永不缩短 ⇒ `from_str` 在 -O0/-O1/-O2
+                        // 全部死循环（KD-04 根因，MIR bb13/bb18）。这里显式重算 len。
                         if size > 8
+                            && let Rvalue::Ref(_, _, p) = rvalue
+                            && matches!(ty.kind(), rustc_middle::ty::TyKind::Ref(_, _, _))
+                            && let Some((from, to)) = ref_subslice_bounds(p)
+                        {
+                            let src = self.place_addr(&mir::Place {
+                                local: p.local,
+                                projection: ty::List::empty(),
+                            });
+                            let lo = self.builder.load(src, TypeId::I64);
+                            let eight = self.builder.const_int(8, TypeId::I64);
+                            let hi_addr = self.builder.iadd(src, eight);
+                            let len = self.builder.load(hi_addr, TypeId::I64);
+                            let pointee = ty.builtin_deref(true).unwrap_or(ty);
+                            let elem_size = match pointee.kind() {
+                                rustc_middle::ty::TyKind::Slice(e) => {
+                                    layout_bytes(self.tcx, *e) as i64
+                                }
+                                _ => 1,
+                            };
+                            let from_v =
+                                self.builder.const_int(from as i64 * elem_size, TypeId::I64);
+                            let new_lo = self.builder.iadd(lo, from_v);
+                            let from_len = self.builder.const_int(from as i64, TypeId::I64);
+                            let mut new_len = self.builder.isub(len, from_len);
+                            if to != 0 {
+                                let to_v = self.builder.const_int(to as i64, TypeId::I64);
+                                new_len = self.builder.isub(new_len, to_v);
+                            }
+                            let dst = self.place_addr(place);
+                            self.builder.store(new_lo, dst);
+                            let dst_hi = self.builder.iadd(dst, eight);
+                            self.builder.store(new_len, dst_hi);
+                        } else if size > 8
                             && let Rvalue::Ref(_, _, p) = rvalue
                             && (matches!(ty.kind(), rustc_middle::ty::TyKind::Ref(_, _, _)))
                         {
@@ -827,4 +865,22 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         }
         Ok(())
     }
+}
+/// `&place` 的投影里若含 `Subslice { from, to }`（其余投影只允许 Deref/OpaqueCast），
+/// 返回 `(from, to)`；`to` 按 rustc 语义是**从尾部**排除的长度（`[from .. len-to]`）。
+fn ref_subslice_bounds<'tcx>(p: &mir::Place<'tcx>) -> Option<(u64, u64)> {
+    let mut found = None;
+    for pe in p.projection.iter() {
+        match pe {
+            mir::ProjectionElem::Deref | mir::ProjectionElem::OpaqueCast(_) => {}
+            mir::ProjectionElem::Subslice { from, to, .. } => {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some((from, to));
+            }
+            _ => return None,
+        }
+    }
+    found
 }

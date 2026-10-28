@@ -18,8 +18,10 @@
 | KD-01 | JIT 栈形参 + 循环 + 调用：`n >= 1` 时产物 AV 崩溃（分配器缺陷，M6-㉑/㉔） | `crates/backend/forge-codegen/src/runtime/jit.rs`（`test_jit_spill_pressure_loop_with_call`） | `#[ignore]`，lib 测试不计红 |
 | KD-02 | JIT「栈形参上界 + 循环 + 调用」纯组合即挂起（死循环，M6-㉝） | 同上（`jit_stack_param_loop_call_only_step`） | `#[ignore]`，lib 测试不计红 |
 | KD-03 | LICM 默认关闭：`-O2` 的 `core::slice::sort` 在开启时错值（`[1,9,14,14]`） | `crates/middle/forge-opt/src/lib.rs`、`loops/licm.rs` | 运行时正确性无守卫；gate 只跑无 LICM 管线 |
-| KD-04 | aarch64 kitchen 组合探针挂起（`from_str` + `sort` + `binary_search` + `write!` 同函数） | `docs/plans/forge-rustc-v27-plan.md`（M6-126 段） | 无守卫；分片探针各自正确 |
+| KD-04 | aarch64 `&slice[from..to]`（Subslice）长度未重算：`from_str` 死循环 | ✅ **已修**（M6-127，`Rvalue::Ref` Subslice 分支） | 分片探针 O0/O1/O2 均正确；守卫缺位（见 KD-06） |
 | KD-05 | NEON 向量 / aarch64 DWARF-CFI 未覆盖 | `docs/plans/forge-rustc-v27-plan.md`、`docs/reference/backend-gaps.md` | 属能力缺口，fail-closed 或未接线 |
+| KD-06 | 大函数里先跑多段迭代器代码，再调 `str::parse`：O0 返回 Err/错值（独立小函数/独立探针正确） | `crates/tools/forge-rustc/src/lower/`（调用/常量重定位方向待查） | 无守卫；已知可复现组合 |
+| KD-07 | `parse::<i32>().ok() != Some(12345)`：`Option<i32>` 聚合常量比较在 -O0 失败 | `crates/tools/forge-rustc/src/lower/rvalue.rs`（聚合常量形态） | 无守卫；独立探针可复现 |
 
 ## KD-01 / KD-02：JIT 分配器 AV 与死循环
 

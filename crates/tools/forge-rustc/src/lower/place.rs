@@ -89,12 +89,26 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         // WA-23：按 ScalarPair 标量真实宽度读——恒 I64 会对窄字段读 8 字节
         //（Option<i32> 的 value@4 读 -0x44..-0x3d 混入相邻槽垃圾高位，pack
         // 写回时带进相邻槽 → Range.start 被覆盖 → for 循环不终止）。
-        let lo = self.builder.load(a0, t0);
-        let lo = self.builder.uextend(lo, TypeId::I64);
+        let mut lo = self.builder.load(a0, t0);
+        lo = self.builder.uextend(lo, TypeId::I64);
+        if w0 < 4 {
+            // 窄分量按 I32 槽读会带出 3 字节 pad（`Result<i32, E>` 的 tag 在
+            // offset 4、width 1：pad 是上一轮栈残留）⇒ switch/比较把 tag 判错
+            //（同一程序里先跑一段迭代器代码后 `"12345".parse()` 返回 Err）。
+            // 读后按真实宽度掩码，彻底去掉 pad 垃圾。
+            let mask = (1u64 << (8 * w0)) - 1;
+            let m = self.builder.const_int(mask as i64, TypeId::I64);
+            lo = self.builder.band(lo, m);
+        }
         let off1 = self.builder.const_int(o1, TypeId::I64);
         let a1 = self.builder.iadd(addr, off1);
-        let hi = self.builder.load(a1, t1);
-        let hi = self.builder.uextend(hi, TypeId::I64);
+        let mut hi = self.builder.load(a1, t1);
+        hi = self.builder.uextend(hi, TypeId::I64);
+        if w1 < 4 {
+            let mask = (1u64 << (8 * w1)) - 1;
+            let m = self.builder.const_int(mask as i64, TypeId::I64);
+            hi = self.builder.band(hi, m);
+        }
         (lo, hi)
     }
     pub(crate) fn pack_sp(&mut self, addr: Value, lo: Value, hi: Value, ty: Ty<'tcx>) {
