@@ -54,9 +54,18 @@ cargo test -p forge-codegen --lib --all-features \
   全量 LICM 仍挂 ⇒ 不是常量本身，而是**链式外提的放置/支配性**（外提目标取
   `preheader.unwrap_or(header)`，未校验目标是否支配全部使用；嵌套循环/多出口
   时可能不成立；克隆顺序也只按块序、不看跨块定义顺序）。
-- **下一步**：给每个候选外提加“目标块支配所有使用块”的检查（用既有分析缓存），
-  并对跨块定义的链式外提按**定义序**拓扑排序后再克隆；IR 层加 verifier 级
-  支配性断言，最后再把 sort 守卫加一个 `FORGE_ENABLE_LICM=1` 变体。
+- **2026-10-29 尝试（已回退，未提交代码）**：按上述方向实现四件事——
+  ① 外提前过滤“目标块必须支配每个结果的全部使用块”；② 跨块链式外提按定义序
+  拓扑排序；③ 克隆落点改为“块首 + 按拓扑序排列”（修掉 `InstOrderViolation`）；
+  ④ 只允许有**真 preheader** 的循环外提（无 preheader 不外提）。结果：
+  IR 校验全部通过（不再有 InstOrderViolation），但 `-O2` kitchen 探针**仍然挂起**；
+  类二分仍是 `stack_addr`/`load` 单独通过、`iconst` 单独挂起，且“排除常量外提”
+  后组合仍挂 ⇒ 剩余根因在**发射侧/语义**（外提到的值跨块使用与栈槽/帧处理），
+  不是纯 LICM 放置问题。代码已回退，KD-03 继续 open，不建议在没有 IR/汇编
+  差分前默认开启。
+- **下一步**：在 `FORGE_ENABLE_LICM=1` 下对失败函数做“外提前后 IR + 汇编”差分，
+  重点看外提 `StackAddr/Ptrtoint/Inttoptr/Iadd` 链与发射侧栈槽/帧基址；修好后
+  再把 sort 守卫加 `FORGE_ENABLE_LICM=1` 变体并默认开启。
 - **现状**：`lib.rs` 的 O2 管线只在 `FORGE_ENABLE_LICM=1` 时注册 LICM；默认关闭。
 - **钉住方式**：无运行时守卫（默认路径不启用该 pass）；aarch64 sort 守卫覆盖的是
   无 LICM 管线（O0/O1/O2 真执行 15）。
