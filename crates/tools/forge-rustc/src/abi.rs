@@ -127,6 +127,14 @@ pub(crate) fn abi_kind_of_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> AbiKind {
     };
     match l.backend_repr {
         rustc_abi::BackendRepr::ScalarPair { .. } => {
+            // **≤8B 的枚举一律按单个 8 字节值传**（KD-08）：枚举的 ScalarPair
+            // 两半是“载荷/标签”，标签宽度按 layout 更窄（`Option<i32>` = 载荷
+            // i32@0 + tag i8@4）；若按 pair 拆两半，hi 只取 1 字节 ⇒ 值被截成低
+            // 8 位（实测 `Option<i32>` 返回 / `from_str` 解析值）。单值与内部
+            // tag@0 模型自洽，且与 LLVM 的 “≤8B 复合走一个整数寄存器”一致。
+            if ty.is_enum() && l.size().bytes() <= 8 {
+                return AbiKind::Direct;
+            }
             // **Pair 协议必须两半都落在类型大小内**（v27 M6-126）：`Map<I, F>`
             // 这类 16 字节结构体（两个 8 字节字段 + ZST 尾巴）被 rustc 标成
             // ScalarPair，但 `scalar_pair_widths` 推出的第二半跑到类型外——

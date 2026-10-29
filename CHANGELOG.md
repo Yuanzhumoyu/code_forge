@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-29) — ≤8B 枚举按单值传（收口 KD-04/KD-06/KD-08）
+
++ rustc 的 `ScalarPair` 两半对枚举是「载荷 + 标签」（`Option<i32>` = 载荷@0/4B +
+  tag@4/1B），而本后端内部用 tag@0 模型；按 pair 拆半时 hi 只取 1 字节
+  （反汇编 `add x26, x27, w28, uxtb`）⇒ `Option<i32>` 返回、`i32::from_str`
+  解析值都被截成低 8 位、判别式读错偏移。
++ 现 ≤8B 枚举一律按**单个 8 字节值**传（`abi_kind_of_ty` ScalarPair 分支改为
+  `Direct`）：与内部 tag@0 模型自洽，也与 “≤8B 复合走一个整数寄存器”一致。
++ 验证：`Option<i32>` 返回高位、`parse::<i32>("12345")` 高位在 O0/O1/O2 全部
+  正确；kitchen 组合探针（`from_str`+`sort`+`binary_search`+`write!`）O0/O1/O2
+  全部 65（正确）；守卫并入 sort 探针（`return 207/208/209`）。
++ KD-04 / KD-06 / KD-08 从 `docs/reference/known-defects.md` 移除（历史见本文件）。
+
 ### Fixed (2026-10-29) — -O2 下 8 字节“纯数据”聚合常量被物化成零值
 
 + `-O2` 常量传播会把 `Ok(0x12345678)` 变成 8 字节聚合 `Operand::Constant`；此前只有

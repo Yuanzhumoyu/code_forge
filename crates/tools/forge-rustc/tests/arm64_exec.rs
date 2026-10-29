@@ -1336,6 +1336,18 @@ fn panic(_: &PanicInfo) -> ! { loop {} }
 #[unsafe(no_mangle)]
 pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
     let _ = (a, b);
+    // ≤8B 枚举必须按**单个 8 字节值**传（KD-08）：按 rustc pair 拆两半时 hi 是
+    // 1 字节 tag（`Option<i32>`），值被截成低 8 位。这里覆盖返回 + from_str 两路。
+    #[inline(never)]
+    fn opt_probe() -> Option<i32> { Some(0x1234) }
+    match opt_probe() {
+        Some(0x1234) => {}
+        _ => return 207,
+    }
+    let parsed = "12345".parse::<i32>();
+    if parsed.is_err() { return 208; }
+    let n = parsed.ok().unwrap_or(0);
+    if n != 12345 || ((n >> 8) & 0xFF) != 0x30 { return 209; }
     // -O2 会把 `Ok(0x12345678)` 常量传播成 8 字节聚合常量；必须按字节物化，
     // 落到标量兜底会变成全零（KD-08/O2 症状：match 得 0）。
     let pending: Result<i32, i32> = if a > 0 { Ok(0x12345678) } else { Err(1) };

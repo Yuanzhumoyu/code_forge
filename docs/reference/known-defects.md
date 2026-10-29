@@ -18,10 +18,7 @@
 | KD-01 | JIT 栈形参 + 循环 + 调用：`n >= 1` 时产物 AV 崩溃（分配器缺陷，M6-㉑/㉔） | `crates/backend/forge-codegen/src/runtime/jit.rs`（`test_jit_spill_pressure_loop_with_call`） | `#[ignore]`，lib 测试不计红 |
 | KD-02 | JIT「栈形参上界 + 循环 + 调用」纯组合即挂起（死循环，M6-㉝） | 同上（`jit_stack_param_loop_call_only_step`） | `#[ignore]`，lib 测试不计红 |
 | KD-03 | LICM 默认关闭：`-O2` 的 `core::slice::sort` 在开启时错值（`[1,9,14,14]`） | `crates/middle/forge-opt/src/lib.rs`、`loops/licm.rs` | 运行时正确性无守卫；gate 只跑无 LICM 管线 |
-| KD-04 | aarch64 `&slice[from..to]`（Subslice）长度未重算：`from_str` 死循环 | ✅ **死循环已修**（M6-127，`Rvalue::Ref` Subslice 分支） | 探针 O0/O1/O2 不再挂；但**解析值仍错**（见 KD-08） |
 | KD-05 | NEON 向量 / aarch64 DWARF-CFI 未覆盖 | `docs/plans/forge-rustc-v27-plan.md`、`docs/reference/backend-gaps.md` | 属能力缺口，fail-closed 或未接线 |
-| KD-06 | 大函数里先跑迭代器代码，再调 `str::parse`：结果错/挂起（独立小函数正确） | `crates/tools/forge-rustc/src/lower/`（串槽/ABI 方向待查） | 无守卫；已知可复现组合 |
-| KD-08 | **`i32::from_str` 返回值高位丢失**：`parse::<i32>("12345")` 高位为 0（只留低 8 位） | ① **O2 聚合常量**已修（M6-128：纯数据 ≥8B 聚合常量按字节物化；含指针聚合仍走重定位路径）；② **O0 仍错**：core `from_str` 载体路径待修 | ① 守卫 `rustc_aarch64_sort_probe`（`Result<i32,i32>` 常量 == 断言，O0/O1/O2）；② 独立最小复现：`((parse(...) >> 8) & 0xFF) == 0` |
 
 ## KD-01 / KD-02：JIT 分配器 AV 与死循环
 
@@ -62,35 +59,6 @@ FORGE_ENABLE_LICM=1 cargo test -p forge-rustc --test arm64_exec \
 
 - **关闭条件**：补全外提条件（支配性 / 插入位置 / 链依赖）后默认开启，并给 sort
   守卫加一条「LICM 开启」变体；详见方案 M6-123 段与 `loops/licm.rs` 头注释。
-
-## KD-04：aarch64 kitchen 组合探针挂起
-
-- **症状**：单函数里同时用 `i32::from_str`、`sort_unstable`、`binary_search`、
-  `write!` 的探针在 QEMU 下挂起（-O0/-O1/-O2 都挂）；但分片探针（`parse`、
-  `even`、`map/filter`、`sort`、`binary_search`）各自正确。
-- **证据**：`docs/plans/forge-rustc-v27-plan.md` 的 M6-126/127 进度段；分片探针脚本
-  位于 `target/tmp`（不入库，可重建）。
-- **2026-10-29 更新（M6-127 后）**：**挂起根因已修**——`from_ascii_bytes_radix_impl`
-  的 `s = &s[1..]` 走 `Rvalue::Ref` 的 WA-25 分支，整值复制 fat pointer、忽略
-  `Subslice`，len 不缩短 ⇒ 死循环；新增 Subslice 分支后 O0/O1/O2 不再挂。
-- **新暴露（KD-08）**：解析**值**仍错——独立探针 `((parse::<i32>("12345") >> 8) & 0xFF)`
-  在 O0/O2 都是 0（正确应为 `0x30`）。
-- **2026-10-29 根因（最新）**：最小探针 `fn mk() -> Option<i32> { Some(0x1234) }` 在
-  O0/O2 都丢值。反汇编 `mk` 的返回序：
-  `ldr w28,[value]; add x26, x27, w28, uxtb; mov x0, x25(tag); mov x1, x26`
-  ⇒ **hi 半只取 1 字节（uxtb）**；而 `mk` 自己把 tag 写在 offset 0、value 写在 offset 4。
-  rustc 的 `ScalarPair{a,b,b_offset}` 中 `a` 在 offset 0：对 `Option<i32>` 即
-  **value@0(4B) / tag@4(1B)**；我们的 lowering 却用 **tag@0 / value@4** 模型
-  （判别式读 offset 0、聚合构造亦然）。两侧自洽能骗过单测，但一旦跨 pair ABI
-  就按 rustc 几何取 hi=b=1 字节 ⇒ 值被截成低 8 位；判别式也从错误偏移读。
-  这是 KD-08 的根因方向，修复需把“枚举判别式/聚合字段偏移”统一改成 **按 layout
-  取偏移**（不再假定 tag@0），影响面大，需单独立项 + 全量门禁。
-- 另：Err 路径 `store ptr 1` 把 1 字节 `IntErrorKind` 当 8 字节写（越界 4 字节），
-  同属该偏移模型问题。
-- **钉住方式**：无守卫（组合/载体形态不稳定，先定位再固化）。
-- **复现**：以 `crates/tools/forge-rustc/tests/arm64_exec.rs` 的 sort/iterator
-  探针为模板，把四段合并进 `forge_entry`，按 O0/O1/O2 编译并在 QEMU 跑。
-- **关闭条件**：定位并修复后，把 kitchen 探针提升为 `arm64_exec` 守卫。
 
 ## KD-05：NEON / aarch64 DWARF-CFI 未覆盖
 
