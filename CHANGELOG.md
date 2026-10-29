@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Tests (2026-10-29) — aarch64 sort 守卫并入 `core::fmt` 多参 `write!`
+
++ sort 探针（O0/O1/O2 真执行）新增：自定义 `core::fmt::Write` 实现 + 多参
+  `write!("{}:{}", even, 12345)`，校验输出长度与关键字节（`return 210/211/212`）。
+  该路径曾因 `fmt::write` 的 `blr x24` 跳 0（M6-118）与闭包/聚合 ABI 交互出错，
+  现在与 `sort`/`binary_search`/`parse`/`Option`/`Result` 常量同处一个真实程序里守护。
+
 ### Fixed (2026-10-29) — ≤8B 枚举按单值传（收口 KD-04/KD-06/KD-08）
 
 + rustc 的 `ScalarPair` 两半对枚举是「载荷 + 标签」（`Option<i32>` = 载荷@0/4B +

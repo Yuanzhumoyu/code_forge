@@ -1373,6 +1373,31 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
     let s: &str = "abcd";
     if s.as_bytes().len() != 4 { return 202; }
     if s.as_bytes()[0] != b'a' { return 203; }
+    // `core::fmt`：自定义 `Write` + 多参 `write!`（kitchen 组合里的 fmt 段；
+    // 曾因 `fmt::write` 的 `blr x24` 被保存槽覆盖而跳 0，见 M6-118）。
+    struct Buf {
+        data: [u8; 64],
+        len: usize,
+    }
+    impl core::fmt::Write for Buf {
+        fn write_str(&mut self, t: &str) -> core::fmt::Result {
+            let mut j = 0usize;
+            while j < t.len() {
+                if self.len < self.data.len() {
+                    self.data[self.len] = t.as_bytes()[j];
+                    self.len += 1;
+                }
+                j += 1;
+            }
+            Ok(())
+        }
+    }
+    let mut buf = Buf { data: [0u8; 64], len: 0 };
+    let even = v.iter().copied().filter(|x| x % 2 == 0).sum::<i32>();
+    use core::fmt::Write as _;
+    if write!(&mut buf, "{}:{}", even, 12345).is_err() { return 210; }
+    if buf.len != 8 { return 211; }
+    if buf.data[0] != b'5' || buf.data[2] != b':' { return 212; }
     (v[0] + v[15]) & 0xFF
 }
 "#;
