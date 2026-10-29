@@ -39,9 +39,17 @@
   后组合仍挂 ⇒ 剩余根因在**发射侧/语义**（外提到的值跨块使用与栈槽/帧处理），
   不是纯 LICM 放置问题。代码已回退，KD-03 继续 open，不建议在没有 IR/汇编
   差分前默认开启。
-- **下一步**：在 `FORGE_ENABLE_LICM=1` 下对失败函数做“外提前后 IR + 汇编”差分，
-  重点看外提 `StackAddr/Ptrtoint/Inttoptr/Iadd` 链与发射侧栈槽/帧基址；修好后
-  再把 sort 守卫加 `FORGE_ENABLE_LICM=1` 变体并默认开启。
+- **2026-10-29 最小复现（M6-133 调查）**：`sort_unstable(); binary_search(&9)` 在 LICM=1
+  下返回 **1**（正确 2），而 `v[3]` 等排序结果本身正确 ⇒ 缺陷集中在
+  `core::slice::binary_search_by` 的循环。类二分：`stack_addr`/`load` 单独通过；
+  `iadd`/`ptrtoint`/`inttoptr` 任一单独外提都能复现错值。
+- **依赖闭包陷阱（实测教训）**：只把“常量不收进外提集合”并不能变好——消费者仍被
+  判不变并外提到 preheader，而常量留在循环体 ⇒ **跨块 use-before-def**（`v[3]`
+  也从 14 变 1）。合法外提必须保证**依赖链一起外提或一起留**，并校验目标块
+  支配每个使用块；这条比“类二分”更关键。
+- **下一步**：在 LICM=1 下对 `binary_search_by` 做“外提前后 IR + 汇编”差分，
+  重点核对：① 外提依赖闭包 + 支配性；② 外提到的值跨循环内调用是否被正确
+  spill/reload；③ 分支块参数实参的 RAUW 路径（常量/纯值常作为 `br` 实参）。
 - **现状**：`lib.rs` 的 O2 管线只在 `FORGE_ENABLE_LICM=1` 时注册 LICM；默认关闭。
 - **钉住方式**：无运行时守卫（默认路径不启用该 pass）；aarch64 sort 守卫覆盖的是
   无 LICM 管线（O0/O1/O2 真执行 15）。
