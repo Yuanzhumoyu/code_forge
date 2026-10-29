@@ -53,9 +53,16 @@
   剩余可疑点收敛到**发射/寄存器分配**：外提值在 preheader 定义、循环内跨调用
   使用时的 spill/reload 是否完整（下一步用 `FORGE_TRACE_SPILL=1` 对
   `binary_search_by` 做机器级对照）。
-- **下一步**：在 LICM=1 下对 `binary_search_by` 做“外提前后 IR + 汇编”差分，
-  重点核对：① 外提依赖闭包 + 支配性；② 外提到的值跨循环内调用是否被正确
-  spill/reload（`FORGE_TRACE_SPILL=1`）。
+- **2026-10-30 进一步差分**：
+  - 反复 3 次编译都是同一结果（LICM=0 → 2，LICM=1 → 1），**确定性**、不是竞态；
+  - `binary_search_by` 汇编：LICM=1 时循环外出现 `mov x24..x27, #1/#2/#4/#8` 这类
+    **常量寄存器化**，随后循环内多处 `ldr/str [sp,#…]` 成对出现 ⇒ 外提把常量变成
+    “跨调用长期活跃值”，而发射/寄存器分配在该形态下的 spill 不可靠；
+  - 试过“常量完全不参与不变性判定”（既不外提也不作为不变操作数）：`v[3]` 恢复
+    正确（14），但 `binary_search` 仍返回 1 ⇒ 常量只是**放大因子**，根因仍在
+    外提值跨块/跨调用的分配路径。
+- **下一步**：以 `binary_search_by` 为样本，用 `FORGE_TRACE_ALLOC/SPILL=1` 对照
+  LICM=0/1 的活跃区间与 spill 槽；修好后再固化 `binary_search` 期望值守卫。
 - **现状**：`lib.rs` 的 O2 管线只在 `FORGE_ENABLE_LICM=1` 时注册 LICM；默认关闭。
 - **钉住方式**：无运行时守卫（默认路径不启用该 pass）；aarch64 sort 守卫覆盖的是
   无 LICM 管线（O0/O1/O2 真执行 15）。
