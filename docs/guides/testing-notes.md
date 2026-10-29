@@ -22,6 +22,14 @@
   处置：删 `target/debug/incremental`（安全——只是缓存，代价是下次全量重建），
   并给后续构建设 `$env:CARGO_INCREMENTAL='0'`（不再生成这类增量缓存）。
   这也是"门禁中途红、报错却指着 query-cache"的根因，别误判成代码问题。
+- **MSVC 链接器临时文件失败（2026-10-30 实测，沙箱会话）**：门禁/e2e 连续报
+  `LNK1104: 无法打开文件 "…\Temp\lnk{…}.tmp"`、以及 `link.exe … exit code 1318/1140`。
+  根因是沙箱把 `TEMP` 指向会话临时目录（`%LOCALAPPDATA%\Temp\dsh-XXXX`），
+  MSVC `link.exe` 在该目录建临时文件失败——**不是代码错误**。
+  处置：跑门禁前把临时目录改到工作区：
+  `$env:TEMP="$PWD\target\tmp\lnktmp"; $env:TMP=$env:TEMP`（目录先建好）。
+  实测改完后 `rustc-e2e` 与全套门禁恢复全绿；该现象会以"随机红"出现，先查
+  `$env:TEMP` 是否还指向会话目录，再怀疑代码。
 - **JIT 集成矩阵**（`forge-tests/src/jit_matrix.rs`）：架构无关、一次编写——
   用例**零 ISA 引用**，ISA 只存在于薄 runner（`isa/<name>/` 绑定机器 +
   能力集 `Capabilities`，riscv64 未来接入复用）。当前 **x86 197 passed /
