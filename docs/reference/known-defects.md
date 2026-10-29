@@ -47,9 +47,15 @@
   判不变并外提到 preheader，而常量留在循环体 ⇒ **跨块 use-before-def**（`v[3]`
   也从 14 变 1）。合法外提必须保证**依赖链一起外提或一起留**，并校验目标块
   支配每个使用块；这条比“类二分”更关键。
+- **2026-10-30 排查进展**：在 Phase 4 后扫描**全部操作数（含终结符实参）**是否
+  指向已删值 ⇒ `DANGLING use` 计数为 **0**：RAUW/br 实参不是根因（依赖闭包在
+  全量 LICM 下成立；类二分里“只提消费者”才会制造 use-before-def）。
+  剩余可疑点收敛到**发射/寄存器分配**：外提值在 preheader 定义、循环内跨调用
+  使用时的 spill/reload 是否完整（下一步用 `FORGE_TRACE_SPILL=1` 对
+  `binary_search_by` 做机器级对照）。
 - **下一步**：在 LICM=1 下对 `binary_search_by` 做“外提前后 IR + 汇编”差分，
   重点核对：① 外提依赖闭包 + 支配性；② 外提到的值跨循环内调用是否被正确
-  spill/reload；③ 分支块参数实参的 RAUW 路径（常量/纯值常作为 `br` 实参）。
+  spill/reload（`FORGE_TRACE_SPILL=1`）。
 - **现状**：`lib.rs` 的 O2 管线只在 `FORGE_ENABLE_LICM=1` 时注册 LICM；默认关闭。
 - **钉住方式**：无运行时守卫（默认路径不启用该 pass）；aarch64 sort 守卫覆盖的是
   无 LICM 管线（O0/O1/O2 真执行 15）。
