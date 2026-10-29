@@ -4794,7 +4794,6 @@ ret_int = ["RAX"]
     /// 两版一起钉住同一族缺陷的两种表现（崩 / 静默错值）。
     #[cfg(target_arch = "x86_64")]
     #[test]
-    #[ignore = "已知失败：n>=1 时 STATUS_ACCESS_VIOLATION（分配器缺陷，见 M6-㉑/㉔）"]
     fn test_jit_spill_pressure_loop_with_call() {
         use forge_ir::{FuncRef, FunctionSignature, IntCC, TypeId};
 
@@ -5329,7 +5328,6 @@ ret_int = ["RAX"]
     /// 就已经坏，与形参参与累加无关。
     #[cfg(target_arch = "x86_64")]
     #[test]
-    #[ignore = "已知失败：死循环（栈形参上界 + 循环 + 调用，见 M6-㉝）"]
     fn jit_stack_param_loop_call_only_step() {
         use forge_ir::{FuncRef, FunctionSignature, IntCC, TypeId};
         ensure_registered();

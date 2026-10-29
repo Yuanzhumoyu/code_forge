@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-29) — JIT 溢出压力 + 调用两条 `#[ignore]` 转正（KD-01/KD-02 关闭）
+
++ `test_jit_spill_pressure_loop_with_call` 与 `jit_stack_param_loop_call_only_step`
+  曾因寄存器分配/溢出槽冲突在 `n >= 1` 时 AV 崩溃或死循环，长期 `#[ignore]`。
+  发射侧栈槽修正（M6-95）后两条均已通过：去掉 `#[ignore]`，
+  `cargo test -p forge-codegen --lib --all-features` **3015 passed / 0 ignored**。
++ 缺陷索引移除 KD-01/KD-02（历史见本文件）。
+
 ### Tests (2026-10-29) — aarch64 sort 守卫并入 `core::fmt` 多参 `write!`
 
 + sort 探针（O0/O1/O2 真执行）新增：自定义 `core::fmt::Write` 实现 + 多参
