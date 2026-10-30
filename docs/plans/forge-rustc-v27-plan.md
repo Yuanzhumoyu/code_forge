@@ -783,3 +783,12 @@ aarch64 CFI 已接线（2026-10-30，M6-133：`scan_arm64_prologue` → `.debug_
 各里程碑的**能力决策**（做什么/不做什么/为什么）不在本文，在
 [`docs/reference/backend-gaps.md`](../reference/backend-gaps.md) 的 `[cap:ID]` 台账里（条数以那份文档为准，别在此抄数字）
 ——那份由 `capability_gaps` 守卫与源码双向钉住。
+
+**M6-134（2026-10-30）——arm64 NEON f32x4 算术 + Q 存取/搬运**：谱面新增
+`FADD4S`/`FSUB4S`/`FMUL4S`（编码 clang oracle 逐字核对）、`LDRQ_ND`/`STRQ_ND`、
+`VORR16B`（`data_width=128` 兼作 Q 搬运）；lowering 接 `Vadd`/`Vsub`/`Vmul`
+（rd=128∧elem=1 即 f32x4）与 `Load`/`Store`（128 位）。守卫
+`lowering_arm64_neon_f32x4`（降级+编码+谓词）。快照按实测更新：
+arm64 `op_gap = 63,6,9,40`、`unassigned_bits = 280`、`spec_totals arm64:632`、
+`roundtrip.derived = 1550,624,2740`。端到端 `core::simd` 算术仍缺 rustc 侧
+Simd 类型/intrinsic 降级（x86 同缺，见 KD-05）。
