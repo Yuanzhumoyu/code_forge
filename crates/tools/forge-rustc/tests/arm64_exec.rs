@@ -1790,8 +1790,8 @@ fn f(x: f32) -> f32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn forge_entry(_a: i32, _b: i32) -> i32 {
-    // 只测 KD-11（f32 形参跨调用）。**不要**写成 `a as f32`：那条路径另有 O2
-    // 误编译（KD-12，`i32 → f32` 的取值在 O2 被替换，独立缺陷），会把本守卫带偏。
+    // 只测 KD-11（f32 形参跨调用）。**不要**写成 `a as f32`：那条路径在 O2 曾因
+    // SCCP 误重写浮点常量而错值（已修，见 M6-143），用常量直传可把两者分开。
     let x = 1.0f32;
     if f(x) == 10.0 { 10 } else { 9 }
 }
@@ -1884,6 +1884,181 @@ pub extern "C" fn forge_entry(_a: i32, _b: i32) -> i32 {
             code & 0xFF,
             10,
             "float-param 探针 -O{level} 应返回 10（1.0 + 9.0；got {code}；产物：{}）",
+            dir.display()
+        );
+    }
+}
+
+/// **KD-09 守卫**：rustc 端到端 `Simd<f32,4>` 的“向量值跨多次 lane 读取存活”形态。
+///
+/// 根因（v27 M6-145）：`Icmp` 对 **i32 操作数**用了 64 位 `CMPREGX`——`Iconst` 的
+/// i32 常量按 X 宽符号扩展（-10 → 0xFFFF…F6），而运行时 i32（如 `f32 as i32` 的
+/// 结果）只有低 32 位有效 ⇒ `-10 != -10` 恒真。修法：`rs1_width == 32` 走
+/// `CMPREGW`。这里用完整 SIMD 链（splat/add/mul/sub/div + `-q` + 四次 lane 读取
+/// + `r[0] as i32 != -10`），O0/O1/O2 真执行期望 146。
+#[test]
+fn rustc_aarch64_simd_live_vector_probe_runs_under_qemu() {
+    let dll = backend_dll();
+    if !dll.is_file() {
+        eprintln!("SKIP: 后端 dylib 缺失（先 `cargo build -p forge-rustc`）");
+        return;
+    }
+    let (Some(clang), Some(ldlld)) = (tool("clang"), tool("ld.lld")) else {
+        eprintln!("SKIP: 缺 clang / ld.lld");
+        return;
+    };
+    let Some(qemu) = qemu_aarch64() else {
+        eprintln!("SKIP: qemu-system-aarch64 未安装");
+        return;
+    };
+    let rustc = std::env::var_os("RUSTC").map_or_else(|| "rustc".into(), PathBuf::from);
+    let sysroot = run(Command::new(&rustc).arg("--print").arg("sysroot"));
+    assert_ok(&sysroot, "rustc --print sysroot");
+    let sysroot = PathBuf::from(String::from_utf8_lossy(&sysroot.stdout).trim());
+    let lib_dir = sysroot.join("lib/rustlib/src/rust/library");
+    let core_src = lib_dir.join("core/src/lib.rs");
+    let cb_src = lib_dir.join("compiler-builtins/compiler-builtins/src/lib.rs");
+    if !core_src.is_file() || !cb_src.is_file() {
+        eprintln!("SKIP: 缺 rust-src（{}）", lib_dir.display());
+        return;
+    }
+
+    let dir = workspace_root()
+        .join("target")
+        .join("tmp")
+        .join("arm64-core-probe")
+        .join("simd_live");
+    std::fs::create_dir_all(&dir).expect("创建产物目录");
+    let sort_sys = workspace_root()
+        .join("target")
+        .join("tmp")
+        .join("arm64-core-probe")
+        .join("sort")
+        .join("sysroot");
+    std::fs::create_dir_all(&sort_sys).expect("创建 sysroot 缓存目录");
+    let core = build_target_rlib(&rustc, &sort_sys, "core", &core_src, &[]);
+    let cb = build_target_rlib(
+        &rustc,
+        &sort_sys,
+        "compiler_builtins",
+        &cb_src,
+        &[
+            "--cfg",
+            r#"feature="mem""#,
+            "--cfg",
+            r#"feature="compiler-builtins""#,
+            "--extern",
+            &format!("core={}", core.display()),
+        ],
+    );
+
+    let src_text = r#"#![no_std]
+#![no_main]
+#![feature(portable_simd)]
+use core::panic::PanicInfo;
+use core::simd::Simd;
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! { loop {} }
+#[unsafe(no_mangle)]
+pub extern "C" fn forge_entry(_a: i32, _b: i32) -> i32 {
+    let x = Simd::<f32,4>::from_array([1.0, 2.0, 3.0, 4.0]);
+    let y = Simd::<f32,4>::splat(10.0);
+    let q = (((x + y) * y) - y) / y;
+    let r = -q;
+    let sum = (q[0] as i32) + (q[1] as i32) + (q[2] as i32) + (q[3] as i32);
+    if sum != 46 { return 100 + sum; }
+    if (r[0] as i32) != -10 { return 150; }
+    146
+}
+"#;
+    let src = dir.join("probe_simd_live.rs");
+    let crt0_s = dir.join("crt0_simd_live.s");
+    let crt0_o = dir.join("crt0_simd_live.o");
+    let stubs_s = dir.join("stubs_simd_live.s");
+    let stubs_o = dir.join("stubs_simd_live.o");
+    std::fs::write(&src, src_text).expect("写 probe_simd_live.rs");
+    std::fs::write(&crt0_s, CORE_CRT0_FP_S).expect("写 crt0_simd_live.s");
+    std::fs::write(&stubs_s, CORE_STUBS_S).expect("写 stubs_simd_live.s");
+    for (src_s, out_o, what) in [(&crt0_s, &crt0_o, "crt0"), (&stubs_s, &stubs_o, "stubs")] {
+        let out = run(Command::new(&clang).args([
+            "--target=aarch64-unknown-none",
+            "-c",
+            src_s.to_str().unwrap(),
+            "-o",
+            out_o.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("clang 汇编 simd-live {what}"));
+    }
+
+    for level in ["0", "1", "2"] {
+        let obj = dir.join(format!("probe_simd_live_o{level}.o"));
+        let elf = dir.join(format!("probe_simd_live_o{level}.elf"));
+        let out = run(Command::new(&rustc).current_dir(&dir).args([
+            format!("-Zcodegen-backend={}", dll.display()).as_str(),
+            "--target",
+            "aarch64-unknown-none",
+            "--edition",
+            "2021",
+            "--crate-type",
+            "lib",
+            "-C",
+            "panic=abort",
+            "-C",
+            &format!("opt-level={level}"),
+            "-C",
+            "debug-assertions=off",
+            "-C",
+            "overflow-checks=off",
+            "--emit=obj",
+            "--extern",
+            &format!("core={}", core.display()),
+            "--extern",
+            &format!("compiler_builtins={}", cb.display()),
+            src.to_str().unwrap(),
+            "-o",
+            obj.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("forge 编 simd-live 探针（-O{level}）"));
+        let out = run(Command::new(&ldlld).args([
+            "-m",
+            "aarch64elf",
+            "-Ttext=0x40000000",
+            "--entry=_start",
+            crt0_o.to_str().unwrap(),
+            stubs_o.to_str().unwrap(),
+            obj.to_str().unwrap(),
+            core.to_str().unwrap(),
+            cb.to_str().unwrap(),
+            "-o",
+            elf.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("ld.lld 链接 simd-live 探针（-O{level}）"));
+        let out = run(Command::new(&qemu).args([
+            "-M",
+            "virt",
+            "-cpu",
+            "cortex-a57",
+            "-kernel",
+            elf.to_str().unwrap(),
+            "-nographic",
+            "-semihosting-config",
+            "enable=on,target=native",
+            "-monitor",
+            "none",
+            "-serial",
+            "none",
+            "-no-reboot",
+        ]));
+        let code = out.status.code().unwrap_or_else(|| {
+            panic!(
+                "qemu 异常终止（simd-live 探针 -O{level}）：\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            )
+        });
+        assert_eq!(
+            code & 0xFF,
+            146,
+            "simd-live 探针 -O{level} 应返回 146（sum=46 且 r[0]=-10；got {code}；产物：{}）",
             dir.display()
         );
     }

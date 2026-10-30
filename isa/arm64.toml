@@ -5401,6 +5401,15 @@ insts = ["MOVX {out}, {0}"]
 [[lower.Icmp]]
 insts = ["MOVZW {g}, 1", "MOVZW {g1}, 0", "CMPREGX {0}, {1}", "CSELW {out}, {g}, {cc}, {g1}"]
 
+# **32 位操作数必须用 32 位比较**（v27 M6-145）：`Iconst` 对 i32 常量按 X 宽
+# **符号扩展**材料化（-10 → 0xFFFF_FFFF_FFFF_FFF6），而运行时 i32 值（如
+# `f32 as i32` 的结果）在寄存器里只有低 32 位有效（高半常为 0）。用 CMPREGX
+# 比较会把 `-10 != -10` 判成不等（实测 aarch64 SIMD 探针的 `r[0] as i32 != -10`）。
+# 32 位操作数走 CMPREGW（只比较 W 视图），语义与 IR 的 i32 比较一致。
+[[lower.Icmp]]
+when = { eq = ["rs1_width", 32] }
+insts = ["MOVZW {g}, 1", "MOVZW {g1}, 0", "CMPREGW {0}, {1}", "CSELW {out}, {g}, {cc}, {g1}"]
+
 # Select(cond, then, else)：i1 的 cond 与 0 比较 → `ne` 为真。
 [[lower.Select]]
 when = { eq = ["rd", 32] }
