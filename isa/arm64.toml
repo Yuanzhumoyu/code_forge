@@ -6404,3 +6404,76 @@ insts = ["LDRQ_ND {out}, [{0}]"]
 [[lower.Store]]
 when = { eq = ["rs1_width", 128] }
 insts = ["STRQ_ND {0}, [{1}]"]
+
+# NEON 扩展（v27 M6-135，第一步）：i32x4 减/乘 + splat（dup）。编码 clang oracle：
+#   sub.4s=0x6EA28420  mul.4s=0x4EA29C20  dup.4s,w1=0x4E040C20  dup.2d,x1=0x4E080C20
+# f64x2 的 fadd/fsub/fmul **编码先落谱但暂不接 lowering**（elem 谓词在 f64 上待排查），
+# 保持 fail-closed；因此只加 inst，不加规则。
+[inst.ISUB4S_Q]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 1, vsize = 2, vec_c = 1, vec_d = 0x21 }
+asm = "sub.4s {dst:fprq:out}, {src:fprq}, {src2:fprq}"
+
+[inst.IMUL4S_Q]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 0x27 }
+asm = "mul.4s {dst:fprq:out}, {src:fprq}, {src2:fprq}"
+
+# splat：源是 GPR（R 槽），imm5 由固定 rm 钉住（4 = .4s，8 = .2d）。
+[inst.DUP4S_W]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 0, vec_c = 0, vec_d = 3, rm = 4 }
+asm = "dup.4s {dst:fprq:out}, {src:r32}"
+
+[inst.DUP2D_X]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 0, vec_c = 0, vec_d = 3, rm = 8 }
+asm = "dup.2d {dst:fprq:out}, {src:r64}"
+
+
+# NEON 扩展 lowering（v27 M6-135）：i32x4 减/乘与 splat（f32/i32 → dup.4s；
+# f64/i64 → dup.2d）。Vadd 的 i32x4 复用既有 VADD4S 规则（elem=3 那条在 M6-134 之后补）。
+[[lower.Vsub]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 3] }] }
+insts = ["ISUB4S_Q {out}, {0}, {1}"]
+
+[[lower.Vmul]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 3] }] }
+insts = ["IMUL4S_Q {out}, {0}, {1}"]
+
+[[lower.Vadd]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 3] }] }
+insts = ["VADD4S {out}, {0}, {1}"]
+
+[[lower.Vbroadcast]]
+when = { and = [{ eq = ["rd", 128] }, { in = ["elem", [1, 3]] }] }
+insts = ["DUP4S_W {out}, {0}"]
+
+[[lower.Vbroadcast]]
+when = { and = [{ eq = ["rd", 128] }, { in = ["elem", [2, 4]] }] }
+insts = ["DUP2D_X {out}, {0}"]
+
+# f64x2 浮点向量编码（v27 M6-135）：先落谱、暂不接 lowering（elem 谓词待排查，
+# 因此 V* 规则不存在 ⇒ 运行时仍 fail-closed）。oracle：fadd.2d=0x4E62D420、
+# fsub.2d=0x4EE2D420、fmul.2d=0x6E62DC20（全 v0 时为各自 -0x20020）。
+[inst.FADD2D]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 1, vec_c = 1, vec_d = 0x35 }
+asm = "fadd.2d {dst:fprq:out}, {src:fprq}, {src2:fprq}"
+
+[inst.FSUB2D]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 3, vec_c = 1, vec_d = 0x35 }
+asm = "fsub.2d {dst:fprq:out}, {src:fprq}, {src2:fprq}"
+
+[inst.FMUL2D]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 1, vsize = 1, vec_c = 1, vec_d = 0x37 }
+asm = "fmul.2d {dst:fprq:out}, {src:fprq}, {src2:fprq}"

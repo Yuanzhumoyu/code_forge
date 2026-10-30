@@ -433,3 +433,78 @@ fn lowering_arm64_neon_f32x4() {
         );
     }
 }
+
+/// **NEON 扩展守卫**（v27 M6-135）：i32x4 的加/减/乘与 splat。
+/// 编码全部来自 clang oracle（全 v0 操作数形态）：
+/// add.4s=0x4EA08400、sub.4s=0x6EA08400、mul.4s=0x4EA09C00、
+/// dup.4s,w0=0x4E040C00、dup.2d,x0=0x4E080C00。
+#[test]
+fn lowering_arm64_neon_i32x4_splat() {
+    use forge_codegen::prelude::{LowerCtx, Opcode};
+    use forge_ir::ir::types::TypeContext;
+
+    let tc = TypeContext::new();
+    let i32x4 = tc.vector_ty(forge_ir::TypeId::I32, 4);
+    let f64x2 = tc.vector_ty(forge_ir::TypeId::F64, 2);
+    let tm = forge_codegen::arm64::TargetMachine::new();
+    let mut ctx = LowerCtx::default();
+    ctx.type_store = Some(tc.borrow());
+
+    for (op, want, word) in [
+        (Opcode::Vadd, "Vadd4s", 0x4EA0_8400u32),
+        (Opcode::Vsub, "Isub4sQ", 0x6EA0_8400u32),
+        (Opcode::Vmul, "Imul4sQ", 0x4EA0_9C00u32),
+    ] {
+        let a = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        let b = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        let out = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        for x in [a, b, out] {
+            ctx.set_value_desc(x, i32x4);
+        }
+        let pack = tm
+            .lowering()
+            .lower_inst(&op, &[a, b], &[out], &mut ctx)
+            .unwrap_or_else(|e| panic!("{op:?} 应可降级：{e:?}"));
+        let got = format!("{:?}", pack.insts[0]);
+        assert!(got.starts_with(want), "{op:?} 应为 {want}，实际 {got}");
+        let mut sink = forge_codegen::CodeSink::default();
+        tm.encoder()
+            .encode(
+                &pack.insts[0],
+                &forge_codegen::AllocResult::new(),
+                &mut sink,
+            )
+            .expect("编码");
+        assert_eq!(sink.bytes(), &word.to_le_bytes(), "{op:?} 编码不符 oracle");
+    }
+
+    for (elem, vec_ty, want, word) in [
+        (forge_ir::TypeId::F32, i32x4, "Dup4sW", 0x4E04_0C00u32),
+        (forge_ir::TypeId::F64, f64x2, "Dup2dX", 0x4E08_0C00u32),
+    ] {
+        let src_cls = if elem == forge_ir::TypeId::F32 {
+            forge_ir::RegClass::GPR(32)
+        } else {
+            forge_ir::RegClass::GPR(64)
+        };
+        let scalar = ctx.alloc_xreg(src_cls);
+        ctx.set_value_desc(scalar, elem);
+        let out = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        ctx.set_value_desc(out, vec_ty);
+        let pack = tm
+            .lowering()
+            .lower_inst(&Opcode::Vbroadcast, &[scalar], &[out], &mut ctx)
+            .unwrap_or_else(|e| panic!("Vbroadcast {elem:?} 应可降级：{e:?}"));
+        let got = format!("{:?}", pack.insts[0]);
+        assert!(got.starts_with(want), "splat 应为 {want}，实际 {got}");
+        let mut sink = forge_codegen::CodeSink::default();
+        tm.encoder()
+            .encode(
+                &pack.insts[0],
+                &forge_codegen::AllocResult::new(),
+                &mut sink,
+            )
+            .expect("编码 splat");
+        assert_eq!(sink.bytes(), &word.to_le_bytes(), "splat 编码不符 oracle");
+    }
+}

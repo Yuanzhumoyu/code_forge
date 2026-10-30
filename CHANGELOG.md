@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-30) — arm64 NEON 扩展：i32x4 算术 + splat（M6-135）
+
++ 谱面新增（oracle 逐字核对）：`ISUB4S_Q`（sub.4s）、`IMUL4S_Q`（mul.4s）、
+  `DUP4S_W`（dup.4s,w）、`DUP2D_X`（dup.2d,x）；`FADD2D`/`FSUB2D`/`FMUL2D`
+  只落编码、**不接 lowering**（运行时仍 fail-closed）。
++ lowering：i32x4 的 `Vadd`/`Vsub`/`Vmul`；`Vbroadcast`（f32/i32 → `dup.4s w`，
+  f64/i64 → `dup.2d x`）。守卫 `lowering_arm64_neon_i32x4_splat`（降级+编码）。
++ 快照按实测更新：arm64 `op_gap = 64,6,9,39`（`Vbroadcast` 覆盖 +1）、
+  `unassigned_bits = 287`、`vary_candidates = 65`、`spec_totals arm64:639`、
+  `roundtrip.derived = 1550,624,2754`、`encoding.digest` arm64 更新；
+  §10.3 的 arm64 真缺口同步为 39。
+
 ### Added (2026-10-30) — arm64 NEON：V128 f32x4 算术 + Q 存取/搬运（KD-05 部分）
 
 + 谱面新增（编码全部用 `clang --target=aarch64-none-elf` + llvm-objdump 逐字核对）：

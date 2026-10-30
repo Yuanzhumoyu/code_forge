@@ -19,11 +19,14 @@
 
 ## KD-05：NEON 向量未全覆盖（f32x4 算术已接线）
 
-- **已接线（2026-10-30，M6-134）**：`V128` 的 **f32x4** 逐元素加/减/乘（`Vadd`/
-  `Vsub`/`Vmul` → `fadd.4s`/`fsub.4s`/`fmul.4s`，Q 视图 `fprq`）、Q 宽无位移
-  `ldr q`/`str q`（`Load`/`Store` rd/rs1_width=128）、以及 Q 搬运（`VORR16B`
-  `data_width=128`，作 move 别名）。编码全部用 clang oracle 逐字核对，守卫 =
-  `lowering_arm64_neon_f32x4`（降级 + 编码 + 三谓词）。
+- **已接线（2026-10-30，M6-134/135）**：`V128` 的 **f32x4** 与 **i32x4** 逐元素
+  加/减/乘（`Vadd`/`Vsub`/`Vmul` → `fadd.4s`/`fsub.4s`/`fmul.4s`、`add.4s`/`sub.4s`/
+  `mul.4s`，Q 视图 `fprq`）、**splat**（`Vbroadcast` → `dup.4s w` / `dup.2d x`）、
+  Q 宽无位移 `ldr q`/`str q`（`Load`/`Store` rd/rs1_width=128）、Q 搬运
+  （`VORR16B` `data_width=128` 作 move 别名）。编码全部用 clang oracle 逐字核对；
+  守卫 = `lowering_arm64_neon_f32x4`、`lowering_arm64_neon_i32x4_splat`。
+- **仅落编码、未接 lowering**：`f64x2` 的 `fadd.2d`/`fsub.2d`/`fmul.2d`
+  （谱里已有 inst，运行时仍 fail-closed；elem 谓词在 f64 向量上的取值待排查）。
 - **仍未接线**：其它排列/元素（f64x2、i32x4 整数 add/sub/mul、i8/i16…）、
   `Vbroadcast`（splat）、`Vextract`/`Vinsert`、向量比较/位运算的 lowering；
   这些 IR 形态仍 fail-closed。

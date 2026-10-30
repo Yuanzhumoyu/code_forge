@@ -2377,7 +2377,7 @@ RV32 投影后的帧件是空的（本谱没写 LW/SW 版本），因此它不�
   `GetElementPtr`/`LandingPad`）也不是谱侧缺口；
 - 剩下才是真缺口（口径以 `crates/tools/forge-tests/asm/ratchet/pins.txt` 的
   `lint.op_gap.*` 为准，2026-10-30 实测）：x86 **3**（`AddrSpaceCast`/`Resume`/`VaArg`，
-  宿主与谱都没有）、riscv64 **36**、arm64 **40**（后两者是各自的谱侧工作量）。
+  宿主与谱都没有）、riscv64 **36**、arm64 **39**（后两者是各自的谱侧工作量）。
   宿主 op 表是**宿主自己的数据**（DSL 侧不留第二份会漂移的清单），因此换宿主就换一份表。
 
 ### 字段值的按变体分派（`fields_variant`）
