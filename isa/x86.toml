@@ -2787,6 +2787,10 @@ effect = ["Pure"]
 
 [inst.PMULLD]
 opsize = 64
+# **强制 66 前缀**（v27 M6-144）：PMULLD = 66 0F 38 40 /r（SSE4.1）。旧定义漏了
+# 66，实际发出 `0F 38 40`（REX 后无前缀）⇒ CPU 按 #UD 处理（运行期 0xC000001D）。
+# 该指令此前没有用例走到（JIT 矩阵的整数向量乘是跳过/未覆盖），所以一直没暴露。
+prefix = "0x66"
 segments = [{ kind = "escape", bytes = ["0x0F", "0x38"] }]
 opcode = 0x40
 match = { w = 0 }
@@ -4243,15 +4247,25 @@ insts = ["MOVAPS {out}, {0}", "MOVSD {out}, {1}"]
 # ── Vbroadcast（标量广播）──
 
 [[lower.Vbroadcast]]
-when = { and = [{ eq = ["rd", 256] }, { in = ["elem", [1, 3]] }] }
+when = { and = [{ eq = ["rd", 256] }, { eq = ["elem", 1] }] }
 insts = ["VBROADCASTSS {out}, {0}"]
 
 [[lower.Vbroadcast]]
-when = { and = [{ le = ["rd", 128] }, { in = ["elem", [1, 3]] }] }
+when = { and = [{ le = ["rd", 128] }, { eq = ["elem", 1] }] }
 insts = ["MOVSS {out}, {0}", "PUNPCKLDQ {out}, {out}", "PUNPCKLDQ {out}, {out}"]
 
+# **整数广播**（v27 M6-144）：源在 GPR，不能喂给 MOVSS/VBROADCASTSS（那是
+# XMM/m 形式，GPR 编码非法 ⇒ 运行期 #UD）。先用 MOVD/MOVQ 把位型搬进 XMM。
 [[lower.Vbroadcast]]
-when = { and = [{ eq = ["rd", 256] }, { in = ["elem", [2, 4]] }] }
+when = { and = [{ le = ["rd", 128] }, { eq = ["elem", 3] }] }
+insts = ["MOVD_FREG_IREG {out}, {0}", "PUNPCKLDQ {out}, {out}", "PUNPCKLDQ {out}, {out}"]
+
+[[lower.Vbroadcast]]
+when = { and = [{ le = ["rd", 128] }, { eq = ["elem", 4] }] }
+insts = ["MOVQ_XMM_R64 {out}, {0}", "PUNPCKLQDQ {out}, {out}"]
+
+[[lower.Vbroadcast]]
+when = { and = [{ eq = ["rd", 256] }, { eq = ["elem", 2] }] }
 insts = ["VBROADCASTSD {out}, {0}"]
 
 [[lower.Vbroadcast]]

@@ -361,6 +361,27 @@ impl TypeStore {
             TypeKey::Vector(store.f32_ty, 8),
         );
 
+        // 索引 16-28（v27 M6-144）：常见整数/双精度向量形状的**固定** id。
+        // 每个函数的 TypeContext 都按这个顺序预注册 ⇒ 同一个 `<4 x i32>` 在所有
+        // 函数里 id 相同（跨函数 ABI 的前提）；`vector_ty(elem, len)` 命中去重表。
+        for (elem, len) in [
+            (store.i32_ty, 4), // 16 V128_I32
+            (store.f64_ty, 2), // 17 V128_F64
+            (store.i16_ty, 8), // 18 V128_I16
+            (store.i8_ty, 16), // 19 V128_I8
+            (store.i64_ty, 2), // 20 V128_I64
+            (store.i32_ty, 2), // 21 V64_I32
+            (store.i64_ty, 1), // 22 V64_I64
+            (store.f64_ty, 1), // 23 V64_F64
+            (store.i32_ty, 8), // 24 V256_I32
+            (store.f64_ty, 4), // 25 V256_F64
+            (store.i64_ty, 4), // 26 V256_I64
+            (store.i16_ty, 4), // 27 V64_I16
+            (store.i8_ty, 8),  // 28 V64_I8
+        ] {
+            store.raw_insert(TypeEntry::Vector { elem, len }, TypeKey::Vector(elem, len));
+        }
+
         // 验证 TypeId 常量与 lib.rs 中的硬编码预设一致
         debug_assert_eq!(store.void_ty, TypeId::VOID, "void_ty mismatch");
         debug_assert_eq!(store.bool_ty, TypeId::BOOL, "bool_ty mismatch");
@@ -406,6 +427,30 @@ impl TypeStore {
             matches!(store.get(TypeId::V256), TypeEntry::Vector { len: 8, .. }),
             "index 15 must be V256 (<8 x f32>)"
         );
+        // 索引 16-28 的固定向量形状（顺序与 entity/mod.rs 的常量一致）。
+        for (id, elem, len) in [
+            (TypeId::V128_I32, TypeId::I32, 4u32),
+            (TypeId::V128_F64, TypeId::F64, 2),
+            (TypeId::V128_I16, TypeId::I16, 8),
+            (TypeId::V128_I8, TypeId::I8, 16),
+            (TypeId::V128_I64, TypeId::I64, 2),
+            (TypeId::V64_I32, TypeId::I32, 2),
+            (TypeId::V64_I64, TypeId::I64, 1),
+            (TypeId::V64_F64, TypeId::F64, 1),
+            (TypeId::V256_I32, TypeId::I32, 8),
+            (TypeId::V256_F64, TypeId::F64, 4),
+            (TypeId::V256_I64, TypeId::I64, 4),
+            (TypeId::V64_I16, TypeId::I16, 4),
+            (TypeId::V64_I8, TypeId::I8, 8),
+        ] {
+            debug_assert!(
+                matches!(
+                    store.get(id),
+                    TypeEntry::Vector { elem: e, len: l } if *e == elem && *l == len
+                ),
+                "fixed vector id must match its (elem, len)"
+            );
+        }
 
         store
     }

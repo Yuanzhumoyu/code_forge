@@ -1171,6 +1171,36 @@ const CASES: &[Case] = &[
         phase: "B3 simd",
         reason: "v27 M6-139：向量逐元素 add/sub/mul/div/neg 端到端",
     },
+    // v27 M6-144：**整数 SIMD** 端到端。此前 types.rs 只映射 f32×2/4/8，`Simd<i32,4>`
+    // 编译期 Unsupported；现在整数/双精度向量用 forge-ir 预注册的固定 TypeId
+    // （跨函数一致）参与 ABI。断言逐 lane 数值，避免只测"能编译"。
+    Case {
+        name: "simd_i32x4_arith",
+        body: "{ fn h(v: core::simd::Simd::<i32,4>) -> i32 { v[2] } let a = core::simd::Simd::<i32,4>::from_array([1,2,3,4]); let b = core::simd::Simd::<i32,4>::splat(10); let c = ((a + b) * b) - b; if c[0] != 100 || c[1] != 110 || c[2] != 120 || c[3] != 130 { 1 } else { 460 + h(c) } }",
+        expected: 580, // 460 + 跨函数按值传 i32x4 后取 lane2 = 120
+        extra: "#![feature(portable_simd)]\n",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "B3 simd",
+        reason: "v27 M6-144：整数 SIMD 固定跨函数 TypeId + i32x4 算术",
+    },
+    // v27 M6-144：双精度 SIMD（`Simd<f64,2>`）此前同样被 f32-only 映射拦住。
+    Case {
+        name: "simd_f64x2_arith",
+        body: "{ let a = core::simd::Simd::<f64,2>::from_array([1.5, 2.5]); let b = core::simd::Simd::<f64,2>::splat(2.0); let c = (a + b) * b; ((c[0] + c[1]) * 100.0) as i32 }",
+        expected: 1600, // (1.5+2)*2 = 7, (2.5+2)*2 = 9 → 16*100 = 1600
+        extra: "#![feature(portable_simd)]\n",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "B3 simd",
+        reason: "v27 M6-144：f64x2 算术端到端",
+    },
     // ── D 组 intrinsics（2026-09 转正）：rotate/cttz/ctlz/bitreverse/volatile。
     //    主库修复：lzcnt/tzcnt/popcnt 32 位变体（gpr32 类，否则 64 位
     //    lzcntq 对 u32 返回 63 非 31）；Bitreverse 32 位掩码 SWAR（64 位

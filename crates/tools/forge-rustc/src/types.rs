@@ -96,9 +96,24 @@ pub fn map_type<'tcx>(
                 (TypeId::F32, 2) => Ok(TypeId::V64),
                 (TypeId::F32, 4) => Ok(TypeId::V128),
                 (TypeId::F32, 8) => Ok(TypeId::V256),
+                // v27 M6-144：整数/双精度 SIMD 用**固定的跨函数 TypeId**（forge-ir
+                // 预注册，所有函数同一 id），才能参与形参/返回/调用 ABI。
+                (TypeId::F64, 1) => Ok(TypeId::V64_F64),
+                (TypeId::F64, 2) => Ok(TypeId::V128_F64),
+                (TypeId::F64, 4) => Ok(TypeId::V256_F64),
+                (TypeId::I8, 8) => Ok(TypeId::V64_I8),
+                (TypeId::I8, 16) => Ok(TypeId::V128_I8),
+                (TypeId::I16, 4) => Ok(TypeId::V64_I16),
+                (TypeId::I16, 8) => Ok(TypeId::V128_I16),
+                (TypeId::I32, 2) => Ok(TypeId::V64_I32),
+                (TypeId::I32, 4) => Ok(TypeId::V128_I32),
+                (TypeId::I32, 8) => Ok(TypeId::V256_I32),
+                (TypeId::I64, 1) => Ok(TypeId::V64_I64),
+                (TypeId::I64, 2) => Ok(TypeId::V128_I64),
+                (TypeId::I64, 4) => Ok(TypeId::V256_I64),
                 _ => Err(IrError::Unsupported(format!(
-                    "SIMD type <{n} x {elem}> (elem_ty={elem_ty:?}): only f32×2/4/8 \
-                     (V64/V128/V256) are supported by the x86 backend"
+                    "SIMD type <{n} x {elem}> (elem_ty={elem_ty:?}): unsupported shape \
+                     (supported: f32×2/4/8, f64×1/2/4, i8×8/16, i16×4/8, i32×2/4/8, i64×1/2/4)"
                 ))),
             }
         }

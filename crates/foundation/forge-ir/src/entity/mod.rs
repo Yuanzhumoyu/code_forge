@@ -87,6 +87,23 @@ impl TypeId {
     pub const V64: TypeId = TypeId(13);
     pub const V128: TypeId = TypeId(14);
     pub const V256: TypeId = TypeId(15);
+    // v27 M6-144：**常见整数/双精度向量形状的固定 TypeId**。每个函数的
+    // `TypeContext` 都按同一顺序预注册这些项，于是 `<4 x i32>` 之类的向量在
+    // **所有函数里是同一个 id**——这是跨函数 ABI（形参/返回/调用）能用的前提；
+    // 动态 `vector_ty(elem, len)` 命中去重表后也返回这些 id。
+    pub const V128_I32: TypeId = TypeId(16);
+    pub const V128_F64: TypeId = TypeId(17);
+    pub const V128_I16: TypeId = TypeId(18);
+    pub const V128_I8: TypeId = TypeId(19);
+    pub const V128_I64: TypeId = TypeId(20);
+    pub const V64_I32: TypeId = TypeId(21);
+    pub const V64_I64: TypeId = TypeId(22);
+    pub const V64_F64: TypeId = TypeId(23);
+    pub const V256_I32: TypeId = TypeId(24);
+    pub const V256_F64: TypeId = TypeId(25);
+    pub const V256_I64: TypeId = TypeId(26);
+    pub const V64_I16: TypeId = TypeId(27);
+    pub const V64_I8: TypeId = TypeId(28);
     // NOTE: All type construction must go through TypeStore methods.
 }
 
@@ -120,15 +137,26 @@ impl TypeId {
         })
     }
 
-    /// **内建**向量常量的总位宽（`V64`/`V128`/`V256` → 64/128/256）。
+    /// **内建**向量常量的总位宽（`V64`/`V128`/`V256` 与固定整数/双精度形状
+    /// → 64/128/256）。
     ///
     /// 与指针不同，这些是**静态事实**（类型名就写明了总位宽）；内部化的动态
     /// 向量（`<3 x f32>` 等）返回 `None`，需要问 `TypeStore`。
-    pub fn builtin_vector_bits(self) -> Option<u32> {
+    pub const fn builtin_vector_bits(self) -> Option<u32> {
         Some(match self {
-            TypeId::V64 => 64,
-            TypeId::V128 => 128,
-            TypeId::V256 => 256,
+            TypeId::V64
+            | TypeId::V64_I16
+            | TypeId::V64_I8
+            | TypeId::V64_I32
+            | TypeId::V64_I64
+            | TypeId::V64_F64 => 64,
+            TypeId::V128
+            | TypeId::V128_I32
+            | TypeId::V128_F64
+            | TypeId::V128_I16
+            | TypeId::V128_I8
+            | TypeId::V128_I64 => 128,
+            TypeId::V256 | TypeId::V256_I32 | TypeId::V256_F64 | TypeId::V256_I64 => 256,
             _ => return None,
         })
     }
@@ -168,7 +196,7 @@ impl TypeId {
 
     /// 是否为向量类型
     pub const fn is_vector(&self) -> bool {
-        matches!(*self, TypeId::V64 | TypeId::V128 | TypeId::V256)
+        self.builtin_vector_bits().is_some()
     }
 
     /// 是否为指针类型
@@ -602,10 +630,21 @@ impl RegClass {
             TypeId::I128 => Self::GPR(64),
             // F16, F128
             TypeId::F16 | TypeId::F128 => Self::FPR(64),
-            // V64, V128
-            TypeId::V64 | TypeId::V128 => Self::VEC(128),
-            // V256
-            TypeId::V256 => Self::VEC(256),
+            // V64 家族、V128 家族
+            TypeId::V64
+            | TypeId::V64_I16
+            | TypeId::V64_I8
+            | TypeId::V64_I32
+            | TypeId::V64_I64
+            | TypeId::V64_F64
+            | TypeId::V128
+            | TypeId::V128_I32
+            | TypeId::V128_F64
+            | TypeId::V128_I16
+            | TypeId::V128_I8
+            | TypeId::V128_I64 => Self::VEC(128),
+            // V256 家族
+            TypeId::V256 | TypeId::V256_I32 | TypeId::V256_F64 | TypeId::V256_I64 => Self::VEC(256),
             // void (0), composite (9, 16+), unknown → GPR fallback
             _ => Self::GPR(64),
         }
