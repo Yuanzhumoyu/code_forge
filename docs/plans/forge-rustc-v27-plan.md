@@ -715,12 +715,13 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
 | --- | --- | --- |
 | M1–M6、P1–P4、M2/M2.5/M3/M4 | ✅ 已落地 | 上表逐行；`cargo forge gate` 54/54 |
 | aarch64 DWARF CFI | ✅ M6-133 | `scan_arm64_prologue` → `.debug_frame`；守卫 `rustc_aarch64_debug_frame_cfi_present` |
-| NEON 向量 | ⚠️ **部分**（M6-134..138：f32x4/i32x4/f64x2 加/减/乘、f32/f64 除法、neg/abs、splat、i32 lane 提取、Q 宽 ldr/str、Q move） | 待补：i8/i16、f32 lane 提取与 Vinsert（解码 trie 与标量浮点前缀冲突）、Vconst/Vsplit/Vconcat、向量比较/位运算；端到端还需 rustc 侧 Simd 类型→IR V128 降级（x86 同样缺） |
-| LICM | ⚠️ **安全子集**（M6-132：只对“无 store、无 call”的循环外提，O2 默认开） | 跨调用完整外提需先修 arm64 发射/分配器的“长期活跃值”路径（KD-03 残留） |
-| 缺陷索引 | KD-05 唯一在册 | 即上两行 |
+| NEON 向量 | ✅ **ISA 面已完成（M6-134..M6-142）**：f32x4/f64x2/i32x4 算术、i8/i16/i64 整数 add/sub、i8/i16 mul、`Band/Bor/Bxor`、`Vbitcast`、`Vbroadcast`（FPR→GPR 桥）、`Vextract` f32/f64、`Vinsert` elem 1..4、`Vconst`（DSL 8 个分片占位符 + `MOVZ/MOVK+fmov+INS`）、Q 宽 ldr/str | 仅剩**整数 SIMD 类型层**（`Simd<i32,4>` 需要固定跨函数 TypeId，见 KD-05）与 rustc 端到端守卫（KD-09）；`Vsplit/Vconcat` 为 V256 专属，arm64 无此宽度——不做 |
+| LICM | ✅ **已完成（M6-141）**：根因是“块参数实参被外提”（不是 spill/发射）；`collect_terminator_args` 禁止外提块参数实参后，O2 对**所有循环**启用 LICM | 守卫：`forge-opt` 两条单测 + arm64 `rustc_aarch64_licm_sort_probe_runs_under_qemu`（O0/O1/O2）；`param_copies.rs` 别名路径的根因级兜底列为后续建议 |
+| 缺陷索引 | KD-05（整数 SIMD 类型层）、KD-09（aarch64 向量跨 lane 存活） | KD-11 已修（M6-143，含 SCCP 浮点常量修复）；KD-12 经复核是 SCCP 根因，已撤销 |
 
-⇒ **v27 尚未全部收口**：NEON 全排列与 LICM 跨调用两项未完成。归档本计划前，需二者
-完成（或明确移入下一版计划）——在此之前本页保持 `[progress]`。
+⇒ **v27 原定的两项收口判据（NEON 全排列 / LICM 跨调用）已达成**；新增的
+KD-05（整数 SIMD 类型层）、KD-09 与 aarch64 `core/std` 等继续作为
+独立缺陷/能力项（见 `docs/reference/known-defects.md`），不混入这两项的验收。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 
@@ -798,7 +799,19 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
 （rd=128∧elem=1 即 f32x4）与 `Load`/`Store`（128 位）。守卫
 `lowering_arm64_neon_f32x4`（降级+编码+谓词）。快照按实测更新：
 arm64 `op_gap = 63,6,9,40`、`unassigned_bits = 280`、`spec_totals arm64:632`、
-`roundtrip.derived = 1550,624,2740`。（M6-135..138 的逐轮记录见 `CHANGELOG.md`。）
+**M6-140（2026-10-31）——同宽标量 `transmute`**：`CastKind::Transmute` 此前落
+`_ => Ok(val)`（值保持源类型），aarch64 -O0 实测 `f32::to_bits()` 恒 0；现在同宽标量
+（int/uint/float/bool/指针、≤16B）用临时栈槽按位重解释，聚合/向量保持原行为。e2e
+`float_bits_transmute` 用运行期值做 to_bits/from_bits 往返。
+
+**M6-141（2026-10-31）——LICM 全面开启（KD-03 根因：块参数实参被外提）**：根因不在
+发射/分配——`forge-codegen` 的块参数**别名路径**让入边实参的寄存器兼任参数寄存器，
+实参的生产指令因此也是“每次进入内层循环的初始化器”；LICM 把它提到外层 preheader 后
+只执行一次 ⇒ 内层循环第二次进入时计数器带旧值（sort 的 memmove 少拷元素，arm64
+真执行 14/16 元素错、元素和 191 vs 120）。修法：`collect_terminator_args()` 让
+**块参数实参一律不外提**（窄而 sound），并撤掉“循环体无 store/无 call”的整段过滤。
+守卫：`forge-opt` 的两条单测 + `rustc_aarch64_licm_sort_probe_runs_under_qemu`
+（O0/O1/O2 三档真执行）。遗留建议：`param_copies.rs` 别名路径可做根因级兜底。
 
 **M6-139（2026-10-31）——`core::simd` 逐元素算术端到端**：降级层补齐 intrinsic 映射
 （`simd_add`/`simd_sub`/`simd_mul`/`simd_div` → `Vadd`/`Vsub`/`Vmul`/`Vdiv`、
@@ -807,3 +820,23 @@ arm64 `op_gap = 63,6,9,40`、`unassigned_bits = 280`、`spec_totals arm64:632`�
 splat/加/乘/减/除/取负六形态，逐 lane 数值断言 exit = 11234。边界：`simd_rem`
 无 IR/ISA 对应物 → 明确拒绝；整数 SIMD（`Simd<i32,4>`）仍被类型层“只映射
 f32×2/4/8”拦住（KD-05 剩余项）。
+
+**M6-142（2026-10-31）——arm64 NEON ISA 面收口（含 Vconst）**：补齐 i8/i16/i64 的
+add/sub、i8/i16 的 mul（i64 mul 无 NEON 指令，fail-closed）、位运算、`Vbitcast`、
+f32/f64 lane 提取、`Vinsert` elem 1..4；修 `Vbroadcast` 根因（SIMD/FP 与 GPR 是
+两个寄存器堆，W13≠S13 ⇒ 先 `fmov` 进 GPR 再 `dup`）。`Vconst` 落地：给 DSL 加
+8 个 ISA 无关分片占位符 `{vconst_lo_f0..f3}`/`{vconst_hi_f0..f3}`（内存序低/高
+64 位），arm64 用 `MOVZ/MOVK×4 + fmov d + INS d[1]` 材料化。验收：clang oracle
+4/4、integration 21/21、qemu NEON 3/3、`jit_matrix_arm64` **105 passed / 101 skipped
+/ 0 failed**（`vadd_i32_lane0`/`vextract_i32_lane1` Skip→Pass）。Vsplit/Vconcat 不做
+（V256 专属）。
+
+**M6-143（2026-10-31）——KD-11：浮点形参被 spill 后收参丢失**：
+`forge-isa-dsl` 的 `gen_arg_receive` 原先只给 GPR 的 spilled 形参写槽
+（`!class.is_fp()`），FPR/向量形参被 spill 后槽从未初始化 ⇒ `f(1.0)` 里
+`x` 跨调用后读 0（9.0 而非 10.0）。现在按类分派（FPR/向量走统一 spill 机制，
+模板/偏移与 emission 的 reload 同源），并把槽初始化移出 `!has_preg`。守卫：
+x86 e2e `float_param_live_across_call` + arm64 QEMU 三档。**同批修 SCCP 的浮点常量
+重写**：SCCP 会把已是常量的 `Fconst` 经整数 Big 通道改写（f32 位型 → 整数 → f64
+位型，arm64 材料化低 32 位为 0），`let x = a as f32; f(x)` 因此在 O2 错值；
+`sccp.rs` 不再重写已有 `Iconst/Fconst`（原误记的 KD-12 已撤销）。

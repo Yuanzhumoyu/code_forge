@@ -11,6 +11,63 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-31) — arm64 NEON 收口：整数/位运算/lane/INS/Vconst（M6-142）
+
++ 谱面新增（全部用本机 clang 逐字节 oracle 核对）：`add/sub.16b`、`add/sub.8h`、
+  `add/sub.2d`、`mul.16b/.8h`、`and/orr/eor.16b`、`umov x,v.d[i]`、
+  `mov v.s[i],w` / `mov v.d[i],x`（INS general）、`VADD2D/VSUB16B/VSUB8H/VSUB2D/VMUL16B/VMUL8H`。
++ lowering：Vadd/Vsub（i8/i16/i64）、Vmul（i8/i16；i64 无 NEON 指令 ⇒ fail-closed）、
+  Band/Bor/Bxor、Vbitcast、Vextract f32 lane 0..3 / f64 lane 0..1、Vinsert elem 1..4。
++ `Vbroadcast` 修根因：SIMD/FP 与通用寄存器是**两个寄存器堆**（W13 ≠ S13），旧模板
+  直接 `dup …, wN` 读到 0；现在先用 `fmov w/x, s/d` 把位型搬进 GPR 再 `dup`。
++ `Vconst`（V128）落地：DSL 新增 8 个 ISA 无关分片占位符
+  `{vconst_lo_f0..f3}`/`{vconst_hi_f0..f3}`（内存序低/高 64 位的 16 位片）；
+  arm64 用 `MOVZ/MOVK×4 → fmov d → INS d[1]` 装出 128 位常量。`Vsplit`/`Vconcat`
+  仍不做（V256 专属，arm64 无 256 位向量）。
++ 验证：`arm64_clang_oracle` 4/4、`integration_tests` 21/21、`qemu_aarch64_exec_neon`
+  3/3（含 Vconst 高位 lane）、`jit_matrix_arm64` **105 passed / 101 skipped / 0 failed**
+  （`vadd_i32_lane0`、`vextract_i32_lane1` 从 Skip 转 Pass）。
++ KD-05 更新：ISA 面只剩整数 SIMD 类型层（`Simd<i32,4>` 仍需固定跨函数 TypeId）。
+
+### Fixed (2026-10-31) — KD-11 浮点形参被 spill 后收参丢失
+
++ `forge-isa-dsl` 的 `gen_arg_receive`：spilled 寄存器形参收参原先只处理 GPR
+  （`!class.is_fp()`）；FPR/向量形参一旦被 regalloc spill 就**从不写 spill 槽**，
+  reload 读未初始化值（`fn f(x:f32){ let y=helper(); x+y }` 返回 9 而非 10）。
++ 现在按值的类分派：FPR/向量走统一 spill 机制（`emit_spill_store`，模板/偏移口径与
+  emission 的 reload 同源），缺模板时生成物 fail-closed；并把“槽初始化”移出
+  `!has_preg`（形参 spill 后被 reload 时，槽才是权威副本）。
++ 守卫：x86 e2e `float_param_live_across_call`、arm64 QEMU
+  `rustc_aarch64_float_param_live_across_call_runs_under_qemu`（O0/O1/O2）。
++ 同批修掉一个 O2 浮点常量误编译：`forge-opt` 的 SCCP 会把已是常量的 `Fconst` 经
+  整数 Big 通道重写（f32 位型 0x41200000 被当成整数 1092616192，再按 f64 位型
+  写回 ⇒ arm64 材料化后低 32 位为 0）。`sccp.rs` 现在不再重写已有 `Iconst/Fconst`。
+  由此 `let x = a as f32; f(x)` 在 aarch64 -O2 恢复正确（原先误报的 KD-12 已撤销）。
++ 说明：自然程序很难强制 FPR 形参 spill（分配器优先 callee-saved FPR），因此这条
+  守卫主要是防回归；frame.rs 的 FPR 分支建议后续补手搭 `AllocResult` 的 codegen 单测。
+
+### Fixed (2026-10-31) — LICM 全面开启（KD-03 根因：块参数实参被外提）
+
++ 根因不是 spill/发射：`forge-codegen` 的块参数**别名路径**把入边实参的寄存器直接当参数
+  寄存器，于是该实参的生产指令兼任“每次进入内层循环时的初始化器”；LICM 把它提到外层
+  preheader 后只执行一次 ⇒ 第二次进入时计数器带着上一轮的值（`ptr::copy_nonoverlapping`
+  少拷元素 ⇒ 排序元素重复/丢失；arm64 sort 探针 14/16 元素错、元素和 191）。
++ 修法（窄而 sound）：`licm.rs` 新增 `collect_terminator_args()`，**块参数实参一律不外提**；
+  同时撤掉“循环体无 store/无 call”的整段过滤 ⇒ O2 对所有循环启用 LICM。
++ 守卫：`forge-opt` 单测 `licm_hoists_invariant_across_call`、
+  `const_used_as_block_arg_is_not_hoisted`；arm64 真执行
+  `rustc_aarch64_licm_sort_probe_runs_under_qemu`（O0/O1/O2 三档，16 元乱序 sort 后逐元素校验）。
++ 实测：`forge-opt` 108 passed；`arm64_exec` 11 passed；x86 原生同 probe LICM/no-LICM 均正确。
+  遗留建议（未做）：`param_copies.rs` 的别名路径可做根因级兜底，属更大改动。
+
+### Fixed (2026-10-31) — 同宽标量 transmute（`f32::to_bits` 在 aarch64 -O0 返回 0）
+
++ `CastKind::Transmute` 旧实现落 `_ => Ok(val)` ⇒ 值保持源类型，随后按目标类型取数
+  会静默错值。aarch64 实测 `10.0f32.to_bits()` 在 -O0 返回 0（-O2 被常量折叠掩盖）。
++ 修法：同宽标量（int/uint/float/bool/指针，≤16 字节）用临时栈槽存源类型、读目标类型；
+  不同宽/聚合/向量保持原行为，不猜。
++ 新 e2e `float_bits_transmute`（`#[inline(never)]` 保证运行期值，to_bits/from_bits 往返）。
+
 ### Added (2026-10-31) — forge-rustc：`core::simd` 逐元素算术（M6-139）
 
 + 降级层新增 intrinsic 映射：`simd_add`/`simd_sub`/`simd_mul`/`simd_div` → IR 的
