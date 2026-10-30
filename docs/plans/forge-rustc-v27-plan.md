@@ -63,7 +63,7 @@
 | M3-② 真跑 `std` | ✅ **已跑通（2026-10-18，本机离线）**：`std` 由 LLVM 编、我们的 crate 由 forge 编；`println!` / `String` / `Vec` / `env::args` / `HashMap` 五档全绿 | `examples/forge-rustc-std-hello/run-offline.ps1` |
 | M4-T1 目标校验（不再静默回落） | ✅ 落地 | 台账 `TARGET`；§8 M4-T1 |
 | M4-T2 约定按目标选 | ✅ **实测已成立**（双向守卫） | `abi_target_real` 的 `abstract_c_…` |
-| M4-T3 目标相关对象层 / 链接层 | ❌ 未做（需交叉工具链验证） | §8 M4 施工图 |
+| M4-T3 目标相关对象层 / 链接层 | ✅ **已落地（2026-10-24，M6-92/M6-97/M6-98）**：对象级 = A64 编码逐字节对照 clang + ELF64 对象核对；执行级 = QEMU 直调/栈实参真跑；rustc --target aarch64-unknown-none 首光（M6-98） | §2.7；rm64_clang_oracle.rs、rm64_exec.rs、门禁 rm64-oracle/rm64-rustc-exec |
 | M4-T4 对象层根治（`WA-01`） | ✅ 首结论：**按设计关闭**；剩余项见 §8 | `WORKAROUNDS.md` `WA-01` |
 | M5 契约与门禁 | ✅ **已完成（2026-10-24）**：门禁/子集骨架、`i128`/`u128`、浮点比较语义（96 判定矩阵）、`sym`/`label` 全部闭环，`known_failure=0`；未覆盖形态一律用 `[cap:…]` 明确拒绝 | 下方清单 + 各里程碑记录 |
 | M6-① 清理 | ✅ **已完成（2026-10-18）**：`forge-rustc` clippy 清零并进全量门禁 | `gate` 的 `rustc-clippy` 步骤 |
@@ -704,15 +704,23 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   为尾端排除长度）。分片验证：`from_str("12345")` 在 O0/O1/O2 均得 57。
 - 顺带加固：`unpack_sp` 对 **宽度 1/2 的 pair 分量**按真实宽度掩码，去掉
   I32 槽带出的 pad 残留（`Result<i32, E>` 的 tag 在 offset 4、width 1）。
-- **仍在册（KD-06/KD-07）**：① 同一大函数里先跑多段迭代器代码、再调
-  `str::parse` 时返回 Err/错值（独立小函数/独立探针正确；疑似对象级常量/重定位
-  与调用状态相关）；② `parse::<i32>().ok() != Some(12345)` 的
-  `Option<i32>` 聚合常量比较在 -O0 失败。二者已登记 `docs/reference/known-defects.md`，
-  不作为本里程碑的验收项。
+- **已关闭的历史项（KD-06/KD-07）**：① 多段迭代器后调 `str::parse` 返回 Err/错值；
+  ② `Option<i32>` 聚合常量比较在 O0 失败。二者分别由 M6-127（Subslice 引用重算 len）、
+  M6-128（≥8B 聚合常量按字节物化）、M6-129（≤8B 枚举走单值载体）关闭，详见
+  `CHANGELOG.md`；缺陷索引已移除对应条目，当前只剩 KD-05。
 
-**仍未覆盖**：NEON 向量；LICM 跨调用外提（安全子集已启用，完整外提待后端分配修复）。
-aarch64 CFI 已接线（2026-10-30，M6-133：`scan_arm64_prologue` → `.debug_frame`，守卫
-`rustc_aarch64_debug_frame_cfi_present`）；缺陷索引当前只剩 KD-05（NEON）。
+**v27 收口判据（2026-10-30 核对）**：
+
+| 项 | 状态 | 关闭条件 / 证据 |
+| --- | --- | --- |
+| M1–M6、P1–P4、M2/M2.5/M3/M4 | ✅ 已落地 | 上表逐行；`cargo forge gate` 54/54 |
+| aarch64 DWARF CFI | ✅ M6-133 | `scan_arm64_prologue` → `.debug_frame`；守卫 `rustc_aarch64_debug_frame_cfi_present` |
+| NEON 向量 | ⚠️ **部分**（M6-134：f32x4 加/减/乘、Q 宽 `ldr/str`、Q move） | 待补：f64x2/i32x4/i8/i16 等排列、`Vbroadcast`/`Vextract`/`Vinsert`、向量比较与位运算 lowering；端到端还需 rustc 侧 Simd 类型→IR V128 降级（x86 同样缺） |
+| LICM | ⚠️ **安全子集**（M6-132：只对“无 store、无 call”的循环外提，O2 默认开） | 跨调用完整外提需先修 arm64 发射/分配器的“长期活跃值”路径（KD-03 残留） |
+| 缺陷索引 | KD-05 唯一在册 | 即上两行 |
+
+⇒ **v27 尚未全部收口**：NEON 全排列与 LICM 跨调用两项未完成。归档本计划前，需二者
+完成（或明确移入下一版计划）——在此之前本页保持 `[progress]`。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 
