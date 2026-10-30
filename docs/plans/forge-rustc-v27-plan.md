@@ -715,7 +715,7 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
 | --- | --- | --- |
 | M1–M6、P1–P4、M2/M2.5/M3/M4 | ✅ 已落地 | 上表逐行；`cargo forge gate` 54/54 |
 | aarch64 DWARF CFI | ✅ M6-133 | `scan_arm64_prologue` → `.debug_frame`；守卫 `rustc_aarch64_debug_frame_cfi_present` |
-| NEON 向量 | ⚠️ **部分**（M6-134/135：f32x4 与 i32x4 加/减/乘、Vbroadcast/splat、Q 宽 ldr/str、Q move；f64x2 编码已落谱但未接 lowering） | 待补：f64x2 lowering（elem 谓词待排查）、i8/i16、Vextract/Vinsert、向量比较与位运算；端到端还需 rustc 侧 Simd 类型→IR V128 降级（x86 同样缺） |
+| NEON 向量 | ⚠️ **部分**（M6-134/135/136：f32x4、i32x4、f64x2 加/减/乘、Vbroadcast/splat、Q 宽 ldr/str、Q move） | 待补：i8/i16、Vextract/Vinsert、向量比较与位运算；端到端还需 rustc 侧 Simd 类型→IR V128 降级（x86 同样缺） |
 | LICM | ⚠️ **安全子集**（M6-132：只对“无 store、无 call”的循环外提，O2 默认开） | 跨调用完整外提需先修 arm64 发射/分配器的“长期活跃值”路径（KD-03 残留） |
 | 缺陷索引 | KD-05 唯一在册 | 即上两行 |
 

@@ -6477,3 +6477,16 @@ form = "VEC3R"
 opcode = 0x0E
 match = { vq = 1, vu = 1, vsize = 1, vec_c = 1, vec_d = 0x37 }
 asm = "fmul.2d {dst:fprq:out}, {src:fprq}, {src2:fprq}"
+
+# f64x2 lowering（v27 M6-135）：elem=2、rd=128。
+[[lower.Vadd]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 2] }] }
+insts = ["FADD2D {out}, {0}, {1}"]
+
+[[lower.Vsub]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 2] }] }
+insts = ["FSUB2D {out}, {0}, {1}"]
+
+[[lower.Vmul]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 2] }] }
+insts = ["FMUL2D {out}, {0}, {1}"]

@@ -446,6 +446,7 @@ fn lowering_arm64_neon_i32x4_splat() {
     let tc = TypeContext::new();
     let i32x4 = tc.vector_ty(forge_ir::TypeId::I32, 4);
     let f64x2 = tc.vector_ty(forge_ir::TypeId::F64, 2);
+
     let tm = forge_codegen::arm64::TargetMachine::new();
     let mut ctx = LowerCtx::default();
     ctx.type_store = Some(tc.borrow());
@@ -478,6 +479,40 @@ fn lowering_arm64_neon_i32x4_splat() {
         assert_eq!(sink.bytes(), &word.to_le_bytes(), "{op:?} 编码不符 oracle");
     }
 
+    for (op, want, word) in [
+        (Opcode::Vadd, "Fadd2d", 0x4E60_D400u32),
+        (Opcode::Vsub, "Fsub2d", 0x4EE0_D400u32),
+        (Opcode::Vmul, "Fmul2d", 0x6E60_DC00u32),
+    ] {
+        let a = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        let b = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        let out = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        for x in [a, b, out] {
+            ctx.set_value_desc(x, f64x2);
+        }
+        let pack = tm
+            .lowering()
+            .lower_inst(&op, &[a, b], &[out], &mut ctx)
+            .unwrap_or_else(|e| panic!("f64x2 {op:?} 应可降级：{e:?}"));
+        let got = format!("{:?}", pack.insts[0]);
+        assert!(
+            got.starts_with(want),
+            "f64x2 {op:?} 应为 {want}，实际 {got}"
+        );
+        let mut sink = forge_codegen::CodeSink::default();
+        tm.encoder()
+            .encode(
+                &pack.insts[0],
+                &forge_codegen::AllocResult::new(),
+                &mut sink,
+            )
+            .expect("编码 f64x2");
+        assert_eq!(
+            sink.bytes(),
+            &word.to_le_bytes(),
+            "f64x2 {op:?} 编码不符 oracle"
+        );
+    }
     for (elem, vec_ty, want, word) in [
         (forge_ir::TypeId::F32, i32x4, "Dup4sW", 0x4E04_0C00u32),
         (forge_ir::TypeId::F64, f64x2, "Dup2dX", 0x4E08_0C00u32),

@@ -11,6 +11,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-30) — arm64 NEON：f64x2 算术接线（M6-136）
+
++ `Vadd`/`Vsub`/`Vmul` 的 f64x2 规则（`elem=2`、`rd=128` → `fadd.2d`/`fsub.2d`/
+  `fmul.2d`）。此前的 f64x2 编码早已落谱，本轮把 lowering 接通并用同一守卫验证：
+  降级变体 + 编码 0x4E60D400 / 0x4EE0D400 / 0x6E60DC00。
++ 守卫 `lowering_arm64_neon_i32x4_splat` 扩为覆盖 i32x4、f64x2 与 splat 三类；
+  KD-05 的“仅落编码”注记删除（已接线）。
+
 ### Added (2026-10-30) — arm64 NEON 扩展：i32x4 算术 + splat（M6-135）
 
 + 谱面新增（oracle 逐字核对）：`ISUB4S_Q`（sub.4s）、`IMUL4S_Q`（mul.4s）、
