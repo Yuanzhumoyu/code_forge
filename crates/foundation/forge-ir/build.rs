@@ -387,6 +387,7 @@ fn render(defs: &[OpDef]) -> String {
          /// 类型信息、常量、块引用等经 `Immediate` 传递；`Icmp`/`Fcmp` 的比较条件\n\
          /// 同样走 immediate 通道（`Immediate::IntCC`/`FloatCC`，见 `OpcodeInfo.cond`）。\n\
          #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]\n\
+         #[repr(u16)]\n\
          pub enum Opcode {\n",
     );
     // 分节注释里的条数：预聚合一次（O(n)），而不是每换一个分组就线性数一遍（O(n·c)）。

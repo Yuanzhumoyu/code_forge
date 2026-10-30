@@ -46,8 +46,9 @@ include!(concat!(env!("OUT_DIR"), "/opcode_gen.rs"));
 /// | `Ule` | `ule` | 无符号 `a <= b` |
 /// | `Uge` | `uge` | 无符号 `a >= b` |
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum IntCC {
-    Eq,
+    Eq = 1,
     Ne,
     Slt,
     Sgt,
@@ -85,35 +86,16 @@ impl IntCC {
     ///
     /// [`LowerCtx::current_immediates`]: 见 `forge-codegen` 的同名文档
     pub fn code(&self) -> u8 {
-        match self {
-            IntCC::Eq => 1,
-            IntCC::Ne => 2,
-            IntCC::Slt => 3,
-            IntCC::Sle => 4,
-            IntCC::Sgt => 5,
-            IntCC::Sge => 6,
-            IntCC::Ult => 7,
-            IntCC::Ule => 8,
-            IntCC::Ugt => 9,
-            IntCC::Uge => 10,
-        }
+        *self as u8
     }
 
     /// [`IntCC::code`] 的逆（未知码返回 `None`，不兜底）。
     pub fn from_code(code: u8) -> Option<IntCC> {
-        Some(match code {
-            1 => IntCC::Eq,
-            2 => IntCC::Ne,
-            3 => IntCC::Slt,
-            4 => IntCC::Sle,
-            5 => IntCC::Sgt,
-            6 => IntCC::Sge,
-            7 => IntCC::Ult,
-            8 => IntCC::Ule,
-            9 => IntCC::Ugt,
-            10 => IntCC::Uge,
-            _ => return None,
-        })
+        if matches!(code, 1..=10) {
+            Some(unsafe { std::mem::transmute::<u8, IntCC>(code) })
+        } else {
+            None
+        }
     }
 }
 
@@ -156,8 +138,9 @@ pub fn intcc_name(code: u8) -> Option<&'static str> {
 /// | `Ueq`/`Une`/`Ult`/`Ule`/`Ugt`/`Uge` | `ueq`… | 真 |
 /// | `False`/`True` | `false`/`true` | 常量 |
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum FloatCC {
-    Ord,
+    Ord = 1,
     Uno,
     Oeq,
     One,
@@ -202,48 +185,17 @@ impl FloatCC {
     ///
     /// 与 [`IntCC::code`] 同理：条件的唯一数字表示，宿主 lowering 用它喂
     /// `LowerCtx.current_immediates`；历史上是 forge-dsl 生成的 `fcmp_id`。
-    pub fn code(&self) -> u8 {
-        match self {
-            FloatCC::Ord => 1,
-            FloatCC::Uno => 2,
-            FloatCC::Oeq => 3,
-            FloatCC::One => 4,
-            FloatCC::Olt => 5,
-            FloatCC::Ole => 6,
-            FloatCC::Ogt => 7,
-            FloatCC::Oge => 8,
-            FloatCC::False => 9,
-            FloatCC::True => 10,
-            FloatCC::Ueq => 11,
-            FloatCC::Ugt => 12,
-            FloatCC::Uge => 13,
-            FloatCC::Ult => 14,
-            FloatCC::Ule => 15,
-            FloatCC::Une => 16,
-        }
+    pub const fn code(&self) -> u8 {
+        *self as u8
     }
 
     /// [`FloatCC::code`] 的逆（未知码返回 `None`，不兜底）。
-    pub fn from_code(code: u8) -> Option<FloatCC> {
-        Some(match code {
-            1 => FloatCC::Ord,
-            2 => FloatCC::Uno,
-            3 => FloatCC::Oeq,
-            4 => FloatCC::One,
-            5 => FloatCC::Olt,
-            6 => FloatCC::Ole,
-            7 => FloatCC::Ogt,
-            8 => FloatCC::Oge,
-            9 => FloatCC::False,
-            10 => FloatCC::True,
-            11 => FloatCC::Ueq,
-            12 => FloatCC::Ugt,
-            13 => FloatCC::Uge,
-            14 => FloatCC::Ult,
-            15 => FloatCC::Ule,
-            16 => FloatCC::Une,
-            _ => return None,
-        })
+    pub const fn from_code(code: u8) -> Option<FloatCC> {
+        if matches!(code, 1..=16) {
+            Some(unsafe { std::mem::transmute::<u8, FloatCC>(code) })
+        } else {
+            None
+        }
     }
 }
 
@@ -253,6 +205,7 @@ impl FloatCC {
 
 /// 内存序：从 `NotAtomic` 到 `SequentiallyConsistent` 的七档（数值越大越强）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
 pub enum Ordering {
     NotAtomic = 0,
     Unordered = 1,
@@ -283,6 +236,7 @@ impl Ordering {
 
 /// 原子读改写操作码（交换、加减、位运算等）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
 pub enum AtomicRmwOp {
     Xchg,
     Add,
