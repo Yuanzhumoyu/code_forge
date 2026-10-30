@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-31) — arm64 NEON：i32x4 lane 提取（M6-138）
+
++ 谱面新增 `UMOV4S_L0..L3`（`umov w, v.s[i]`，oracle：0x0E043C20/0x0E0C3C20/
+  0x0E143C20/0x0E1C3C20）。
++ lowering：`Vextract` 在 `elem=3`（i32）且 `imm0=lane` 时落到对应 UMOV；其余形态
+  fail-closed。
++ 守卫 `lowering_arm64_neon_vextract_i32x4`：逐 lane 断言变体 + 编码。
++ 记录一个构筑期结论：`mov s, v.s[i]`（f32 lane）与标量浮点的 11 位 opcode 前缀在
+  解码 trie 上冲突（构建期报 ambiguity）⇒ f32 lane 提取与 `Vinsert` 暂不接。
++ 快照按实测更新：arm64 `op_gap = 68,6,9,35`、`unassigned_bits = 299`、
+  `vary_candidates = 69`、`spec_totals arm64:651`、`roundtrip.derived = 1550,624,2778`、
+  `encoding.digest` arm64 更新。
+
 ### Added (2026-10-30) — arm64 NEON：div / neg / abs（M6-137）
 
 + 谱面新增（oracle 逐字核对）：`FDIV4S`/`FDIV2D`、`FNEG4S`/`FNEG2D`/`FABS4S`/

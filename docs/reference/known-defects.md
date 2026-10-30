@@ -30,6 +30,9 @@
   0x4E60D400 / 0x4EE0D400 / 0x6E60DC00）。
 - **div / neg / abs 也已接线（M6-137）**：`Vdiv`（f32x4/f64x2）、`Vneg`/`Vabs`
   （f32x4/f64x2/i32x4）；i32/i64 的 `Vdiv` 无 NEON 整数除法 ⇒ 保持 fail-closed。
+- **lane 提取已接线（M6-138）**：i32x4 的 `Vextract`（`umov w, v.s[i]`，lane 0..3）。
+  f32 lane 提取暂不接：`mov s, v.s[i]` 与标量浮点的 11 位 opcode 前缀在解码 trie 上
+  冲突（DSL 构建期即报 ambiguity），保持 fail-closed；`Vinsert` 同理未接。
 - **仍未接线**：其它排列/元素（i8/i16 等）、
   `Vbroadcast`（splat）、`Vextract`/`Vinsert`、向量比较/位运算的 lowering；
   这些 IR 形态仍 fail-closed。

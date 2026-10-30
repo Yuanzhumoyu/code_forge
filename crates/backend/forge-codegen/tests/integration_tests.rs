@@ -609,3 +609,54 @@ fn lowering_arm64_neon_div_neg_abs() {
         "i32x4 Vdiv 应 fail-closed"
     );
 }
+
+/// **NEON lane 提取守卫**（v27 M6-138）：i32x4 的 `vextract(v, i)` → `umov w, v.s[i]`。
+/// 编码（oracle）全 v0 形态：lane0..3 = 0x0E043C00 / 0x0E0C3C00 / 0x0E143C00 / 0x0E1C3C00。
+#[test]
+fn lowering_arm64_neon_vextract_i32x4() {
+    use forge_codegen::prelude::{LowerCtx, Opcode};
+    use forge_ir::ir::types::TypeContext;
+
+    let tc = TypeContext::new();
+    let i32x4 = tc.vector_ty(forge_ir::TypeId::I32, 4);
+    let tm = forge_codegen::arm64::TargetMachine::new();
+    let mut ctx = LowerCtx::default();
+    ctx.type_store = Some(tc.borrow());
+
+    for (lane, word) in [
+        (0u64, 0x0E04_3C00u32),
+        (1, 0x0E0C_3C00),
+        (2, 0x0E14_3C00),
+        (3, 0x0E1C_3C00),
+    ] {
+        let vec = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        ctx.set_value_desc(vec, i32x4);
+        let idx = ctx.alloc_xreg(forge_ir::RegClass::GPR(32));
+        ctx.set_value_desc(idx, forge_ir::TypeId::I32);
+        let out = ctx.alloc_xreg(forge_ir::RegClass::GPR(32));
+        ctx.set_value_desc(out, forge_ir::TypeId::I32);
+        ctx.current_immediates = smallvec::smallvec![lane];
+        let pack = tm
+            .lowering()
+            .lower_inst(&Opcode::Vextract, &[vec, idx], &[out], &mut ctx)
+            .unwrap_or_else(|e| panic!("Vextract lane {lane} 应可降级：{e:?}"));
+        let got = format!("{:?}", pack.insts[0]);
+        assert!(
+            got.starts_with("Umov4sL"),
+            "lane {lane} 应为 UMOV，实际 {got}"
+        );
+        let mut sink = forge_codegen::CodeSink::default();
+        tm.encoder()
+            .encode(
+                &pack.insts[0],
+                &forge_codegen::AllocResult::new(),
+                &mut sink,
+            )
+            .expect("编码");
+        assert_eq!(
+            sink.bytes(),
+            &word.to_le_bytes(),
+            "lane {lane} 编码不符 oracle"
+        );
+    }
+}

@@ -6576,3 +6576,49 @@ insts = ["FABS2D {out}, {0}"]
 [[lower.Vabs]]
 when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 3] }] }
 insts = ["IABS4S {out}, {0}"]
+# NEON lane 提取（v27 M6-138）：umov w, v.s[i]（i32x4）。oracle：
+#   umov w0,v1.s[0..3] = 0x0E043C20 / 0x0E0C3C20 / 0x0E143C20 / 0x0E1C3C20
+# （f32 lane 走 mov s, v.s[i] 会与标量浮点 11 位 opcode 前缀在解码 trie 上冲突，
+#  暂不接；i32 lane 提取已够用，f32 保持 fail-closed。）
+[inst.UMOV4S_L0]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 0, vu = 0, vsize = 0, vec_c = 0, vec_d = 0x0F, rm = 4 }
+asm = "umov {dst:r32:out}, {src:fprq}.s[0]"
+
+[inst.UMOV4S_L1]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 0, vu = 0, vsize = 0, vec_c = 0, vec_d = 0x0F, rm = 12 }
+asm = "umov {dst:r32:out}, {src:fprq}.s[1]"
+
+[inst.UMOV4S_L2]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 0, vu = 0, vsize = 0, vec_c = 0, vec_d = 0x0F, rm = 20 }
+asm = "umov {dst:r32:out}, {src:fprq}.s[2]"
+
+[inst.UMOV4S_L3]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 0, vu = 0, vsize = 0, vec_c = 0, vec_d = 0x0F, rm = 28 }
+asm = "umov {dst:r32:out}, {src:fprq}.s[3]"
+
+
+# lane 提取 lowering：imm0 = lane、elem = 结果标量类型（3=i32）。
+[[lower.Vextract]]
+when = { and = [{ eq = ["imm0", 0] }, { eq = ["elem", 3] }] }
+insts = ["UMOV4S_L0 {out}, {0}"]
+
+[[lower.Vextract]]
+when = { and = [{ eq = ["imm0", 1] }, { eq = ["elem", 3] }] }
+insts = ["UMOV4S_L1 {out}, {0}"]
+
+[[lower.Vextract]]
+when = { and = [{ eq = ["imm0", 2] }, { eq = ["elem", 3] }] }
+insts = ["UMOV4S_L2 {out}, {0}"]
+
+[[lower.Vextract]]
+when = { and = [{ eq = ["imm0", 3] }, { eq = ["elem", 3] }] }
+insts = ["UMOV4S_L3 {out}, {0}"]
+
