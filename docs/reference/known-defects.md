@@ -36,10 +36,10 @@
 - **仍未接线**：其它排列/元素（i8/i16 等）、
   `Vbroadcast`（splat）、`Vextract`/`Vinsert`、向量比较/位运算的 lowering；
   这些 IR 形态仍 fail-closed。
-- **端到端 SIMD 算术还缺一层（不在本缺陷范围）**：rustc 的 `core::simd::Simd`
-  是 `#[repr(simd)]` 聚合，`simd_add` 等 intrinsic 需要先有「Simd 类型 → IR V128
-  类型」的降级与本后端 intrinsic 映射；x86 目前同样没有（e2e 的 simd 用例只做
-  from_array + 取 lane，不做算术）。
+- **端到端浮点 SIMD 算术已关闭（2026-10-31，M6-139）**：`simd_add`/`simd_sub`/
+  `simd_mul`/`simd_div`/`simd_neg` 已映射到 IR 向量 op，e2e `simd_v128_arith`
+  真执行六种形态（exit 11234）。**剩余**：整数 SIMD（`Simd<i32,4>`）仍被类型层
+  “只映射 f32×2/4/8”限制，需要给动态整数向量固定跨函数 TypeId 才能接 ABI。
 - **aarch64 DWARF CFI 已接线（2026-10-30，M6-133）**：`scan_arm64_prologue` 扫描
   `sub sp`/存 x30·x29/`add x29` 序言并产出 CFA 行（CFA=x29、RA@CFA-8、x29@CFA-16、
   x19..x28 依次下移）；`.debug_frame` 由 `dwarf.rs` 写入对象。守卫 =

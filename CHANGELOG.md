@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-31) — forge-rustc：`core::simd` 逐元素算术（M6-139）
+
++ 降级层新增 intrinsic 映射：`simd_add`/`simd_sub`/`simd_mul`/`simd_div` → IR 的
+  `Vadd`/`Vsub`/`Vmul`/`Vdiv`，`simd_neg` → `Vneg`。此前它们全部落到
+  “unsupported intrinsic”，`Simd<f32, 4> + Simd<f32, 4>` 在 x86 上**根本编不过**。
++ 新 e2e `simd_v128_arith`：`Simd<f32,4>` 的 splat / 加 / 乘 / 减 / 除 / 取负六种形态
+  真执行，exit = 11234（结果按**逐 lane 数值**拼接断言，不是 truthy 抽样）。
++ 能力边界不变：`simd_rem`（向量取余）没有 IR/ISA 对应物，继续明确拒绝；
+  arm64 上同一条 intrinsic 路径落到谱面已有的 NEON 规则（f32x4/f64x2/i32x4）。
++ KD-05 更新：端到端 SIMD 算术（浮点向量）已关闭；整数 SIMD 仍受类型层
+  f32-only 映射限制。
+
 ### Added (2026-10-31) — arm64 NEON：i32x4 lane 提取（M6-138）
 
 + 谱面新增 `UMOV4S_L0..L3`（`umov w, v.s[i]`，oracle：0x0E043C20/0x0E0C3C20/

@@ -919,6 +919,29 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 let ok = self.builder.icmp(IntCC::Eq, old, cmp);
                 vec![old, ok]
             }
+            // SIMD 逐元素算术（v27 M6-139）：`core::simd` 的 `Add`/`Sub`/`Mul`/`Div`
+            // 落在这些 intrinsic 上。两操作数同型，结果类型由 IR 的 `vadd` 等按
+            // 操作数派生；目标谱缺对应向量规则时仍由 lowering fail-closed。
+            "simd_add" | "simd_sub" | "simd_mul" | "simd_div" => {
+                if args.len() >= 2 {
+                    let (a, b) = (args[0], args[1]);
+                    vec![match name {
+                        "simd_add" => self.builder.vadd(a, b),
+                        "simd_sub" => self.builder.vsub(a, b),
+                        "simd_mul" => self.builder.vmul(a, b),
+                        _ => self.builder.vdiv(a, b),
+                    }]
+                } else {
+                    vec![]
+                }
+            }
+            "simd_neg" => {
+                if let Some(&a) = args.first() {
+                    vec![self.builder.vneg(a)]
+                } else {
+                    vec![]
+                }
+            }
             // SIMD（B2）：simd_extract(vec, idx) -> elem、simd_insert(vec, idx, elem)。
             // `#[repr(simd)]` 的元素访问被 rustc 禁止直接投影（MCP#838），
             // 必须经这两个 intrinsic。vec 是向量值（V64/V128/V256），

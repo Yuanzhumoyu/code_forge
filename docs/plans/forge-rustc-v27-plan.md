@@ -798,5 +798,12 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
 （rd=128∧elem=1 即 f32x4）与 `Load`/`Store`（128 位）。守卫
 `lowering_arm64_neon_f32x4`（降级+编码+谓词）。快照按实测更新：
 arm64 `op_gap = 63,6,9,40`、`unassigned_bits = 280`、`spec_totals arm64:632`、
-`roundtrip.derived = 1550,624,2740`。端到端 `core::simd` 算术仍缺 rustc 侧
-Simd 类型/intrinsic 降级（x86 同缺，见 KD-05）。
+`roundtrip.derived = 1550,624,2740`。（M6-135..138 的逐轮记录见 `CHANGELOG.md`。）
+
+**M6-139（2026-10-31）——`core::simd` 逐元素算术端到端**：降级层补齐 intrinsic 映射
+（`simd_add`/`simd_sub`/`simd_mul`/`simd_div` → `Vadd`/`Vsub`/`Vmul`/`Vdiv`、
+`simd_neg` → `Vneg`）——修前这些名字落到 “unsupported intrinsic”，x86 上
+`Simd<f32,4> + Simd<f32,4>` 编译期即失败。e2e `simd_v128_arith` 真执行
+splat/加/乘/减/除/取负六形态，逐 lane 数值断言 exit = 11234。边界：`simd_rem`
+无 IR/ISA 对应物 → 明确拒绝；整数 SIMD（`Simd<i32,4>`）仍被类型层“只映射
+f32×2/4/8”拦住（KD-05 剩余项）。

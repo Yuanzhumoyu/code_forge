@@ -1119,6 +1119,22 @@ const CASES: &[Case] = &[
         phase: "B3 simd",
         reason: "V256 向量值基建转正（WA-37 D2）：SimdVector>16B→Indirect + CopyNonOverlapping 全宽",
     },
+    // v27 M6-139：`core::simd` 逐元素算术经 simd_add/sub/mul/div/neg 降级到 IR 的
+    // Vadd/Vsub/Vmul/Vdiv/Vneg（此前这些 intrinsic 落到 "unsupported intrinsic"，
+    // 向量算术在 forge 后端根本编不过）。断言用 as i32 累加，避免浮点近似掩盖错值。
+    Case {
+        name: "simd_v128_arith",
+        body: "let a = core::simd::Simd::<f32, 4>::from_array([1.0, 2.0, 3.0, 4.0]); let b = core::simd::Simd::<f32, 4>::splat(10.0); let c = a + b; let d = c * b; let e = d - b; let f = e / b; let g = -f; (f[0] as i32) * 1000 + (f[1] as i32) * 100 + (f[2] as i32) * 10 + (f[3] as i32) + (g[0] as i32 == -10) as i32",
+        expected: 11234, // f=(10,11,12,13) → 10*1000+11*100+12*10+13 = 11233；g[0]=-10 → +1
+        extra: "#![feature(portable_simd)]\nuse core::simd::Simd;\n",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "B3 simd",
+        reason: "v27 M6-139：向量逐元素 add/sub/mul/div/neg 端到端",
+    },
     // ── D 组 intrinsics（2026-09 转正）：rotate/cttz/ctlz/bitreverse/volatile。
     //    主库修复：lzcnt/tzcnt/popcnt 32 位变体（gpr32 类，否则 64 位
     //    lzcntq 对 u32 返回 63 非 31）；Bitreverse 32 位掩码 SWAR（64 位
