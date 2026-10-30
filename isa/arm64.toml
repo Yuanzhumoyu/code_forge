@@ -6490,3 +6490,89 @@ insts = ["FSUB2D {out}, {0}, {1}"]
 [[lower.Vmul]]
 when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 2] }] }
 insts = ["FMUL2D {out}, {0}, {1}"]
+
+# NEON：div / neg / abs（v27 M6-137）。oracle：
+#   fdiv.4s=0x6E22FC20 fdiv.2d=0x6E62FC20
+#   fneg.4s=0x6EA0F820 fneg.2d=0x6EE0F820 fabs.4s=0x4EA0F820 fabs.2d=0x4EE0F820
+#   neg.4s=0x6EA0B820 abs.4s=0x4EA0B820 neg.2d=0x6EE0B820
+[inst.FDIV4S]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 1, vsize = 0, vec_c = 1, vec_d = 0x3F }
+asm = "fdiv.4s {dst:fprq:out}, {src:fprq}, {src2:fprq}"
+
+[inst.FDIV2D]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 1, vsize = 1, vec_c = 1, vec_d = 0x3F }
+asm = "fdiv.2d {dst:fprq:out}, {src:fprq}, {src2:fprq}"
+
+[inst.FNEG4S]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 1, vsize = 2, vec_c = 1, vec_d = 0x3E, rm = 0 }
+asm = "fneg.4s {dst:fprq:out}, {src:fprq}"
+
+[inst.FNEG2D]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 1, vsize = 3, vec_c = 1, vec_d = 0x3E, rm = 0 }
+asm = "fneg.2d {dst:fprq:out}, {src:fprq}"
+
+[inst.FABS4S]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 0x3E, rm = 0 }
+asm = "fabs.4s {dst:fprq:out}, {src:fprq}"
+
+[inst.FABS2D]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 3, vec_c = 1, vec_d = 0x3E, rm = 0 }
+asm = "fabs.2d {dst:fprq:out}, {src:fprq}"
+
+[inst.INEG4S]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 1, vsize = 2, vec_c = 1, vec_d = 0x2E, rm = 0 }
+asm = "neg.4s {dst:fprq:out}, {src:fprq}"
+
+[inst.IABS4S]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 0x2E, rm = 0 }
+asm = "abs.4s {dst:fprq:out}, {src:fprq}"
+
+
+# NEON div/neg/abs lowering（v27 M6-137）：i32/i64 的 Vdiv 无 NEON 整数除法 ⇒ 无规则（fail-closed）。
+[[lower.Vdiv]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 1] }] }
+insts = ["FDIV4S {out}, {0}, {1}"]
+
+[[lower.Vdiv]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 2] }] }
+insts = ["FDIV2D {out}, {0}, {1}"]
+
+[[lower.Vneg]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 1] }] }
+insts = ["FNEG4S {out}, {0}"]
+
+[[lower.Vneg]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 2] }] }
+insts = ["FNEG2D {out}, {0}"]
+
+[[lower.Vneg]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 3] }] }
+insts = ["INEG4S {out}, {0}"]
+
+[[lower.Vabs]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 1] }] }
+insts = ["FABS4S {out}, {0}"]
+
+[[lower.Vabs]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 2] }] }
+insts = ["FABS2D {out}, {0}"]
+
+[[lower.Vabs]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 3] }] }
+insts = ["IABS4S {out}, {0}"]

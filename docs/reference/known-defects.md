@@ -28,6 +28,8 @@
 - **f64x2 也已接线（M6-135 续）**：`fadd.2d`/`fsub.2d`/`fmul.2d` 按 `elem=2` 命中；
   守卫 `lowering_arm64_neon_i32x4_splat` 同时覆盖 f64x2 三运算（降级 + 编码
   0x4E60D400 / 0x4EE0D400 / 0x6E60DC00）。
+- **div / neg / abs 也已接线（M6-137）**：`Vdiv`（f32x4/f64x2）、`Vneg`/`Vabs`
+  （f32x4/f64x2/i32x4）；i32/i64 的 `Vdiv` 无 NEON 整数除法 ⇒ 保持 fail-closed。
 - **仍未接线**：其它排列/元素（i8/i16 等）、
   `Vbroadcast`（splat）、`Vextract`/`Vinsert`、向量比较/位运算的 lowering；
   这些 IR 形态仍 fail-closed。

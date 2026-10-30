@@ -11,6 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-30) — arm64 NEON：div / neg / abs（M6-137）
+
++ 谱面新增（oracle 逐字核对）：`FDIV4S`/`FDIV2D`、`FNEG4S`/`FNEG2D`/`FABS4S`/
+  `FABS2D`、`INEG4S`/`IABS4S`。
++ lowering：`Vdiv`（f32x4/f64x2）、`Vneg`/`Vabs`（f32x4/f64x2/i32x4）；i32/i64 的
+  `Vdiv` 无 NEON 整数除法 ⇒ 守卫断言其 fail-closed。
++ 守卫 `lowering_arm64_neon_div_neg_abs`：逐条断言降级变体 + 编码。
++ 快照按实测更新：arm64 `op_gap = 67,6,9,36`（Vdiv/Vneg/Vabs 覆盖 +3）、
+  `unassigned_bits = 295`、`vary_candidates = 68`、`spec_totals arm64:647`、
+  `roundtrip.derived = 1550,624,2770`、`encoding.digest` arm64 更新。
+
 ### Added (2026-10-30) — arm64 NEON：f64x2 算术接线（M6-136）
 
 + `Vadd`/`Vsub`/`Vmul` 的 f64x2 规则（`elem=2`、`rd=128` → `fadd.2d`/`fsub.2d`/

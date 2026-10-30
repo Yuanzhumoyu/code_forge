@@ -543,3 +543,69 @@ fn lowering_arm64_neon_i32x4_splat() {
         assert_eq!(sink.bytes(), &word.to_le_bytes(), "splat 编码不符 oracle");
     }
 }
+
+/// **NEON div/neg/abs 守卫**（v27 M6-137）。编码全 v 形式（oracle 见 isa/arm64.toml）：
+/// fdiv.4s=0x6E20FC00、fdiv.2d=0x6E60FC00、fneg.4s=0x6EA0F800、fneg.2d=0x6EE0F800、
+/// fabs.4s=0x4EA0F800、fabs.2d=0x4EE0F800、neg.4s=0x6EA0B800、abs.4s=0x4EA0B800。
+#[test]
+fn lowering_arm64_neon_div_neg_abs() {
+    use forge_codegen::prelude::{LowerCtx, Opcode};
+    use forge_ir::ir::types::TypeContext;
+
+    let tc = TypeContext::new();
+    let f32x4 = tc.vector_ty(forge_ir::TypeId::F32, 4);
+    let f64x2 = tc.vector_ty(forge_ir::TypeId::F64, 2);
+    let i32x4 = tc.vector_ty(forge_ir::TypeId::I32, 4);
+    let tm = forge_codegen::arm64::TargetMachine::new();
+    let mut ctx = LowerCtx::default();
+    ctx.type_store = Some(tc.borrow());
+
+    // (op, ty, 操作数个数, 期望变体, 编码)
+    for (op, ty, arity, want, word) in [
+        (Opcode::Vdiv, f32x4, 2, "Fdiv4s", 0x6E20_FC00u32),
+        (Opcode::Vdiv, f64x2, 2, "Fdiv2d", 0x6E60_FC00u32),
+        (Opcode::Vneg, f32x4, 1, "Fneg4s", 0x6EA0_F800u32),
+        (Opcode::Vneg, f64x2, 1, "Fneg2d", 0x6EE0_F800u32),
+        (Opcode::Vneg, i32x4, 1, "Ineg4s", 0x6EA0_B800u32),
+        (Opcode::Vabs, f32x4, 1, "Fabs4s", 0x4EA0_F800u32),
+        (Opcode::Vabs, f64x2, 1, "Fabs2d", 0x4EE0_F800u32),
+        (Opcode::Vabs, i32x4, 1, "Iabs4s", 0x4EA0_B800u32),
+    ] {
+        let a = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        let b = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        let out = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        for x in [a, b, out] {
+            ctx.set_value_desc(x, ty);
+        }
+        let args: &[forge_ir::XReg] = if arity == 2 { &[a, b] } else { &[a] };
+        let pack = tm
+            .lowering()
+            .lower_inst(&op, args, &[out], &mut ctx)
+            .unwrap_or_else(|e| panic!("{op:?} 应可降级：{e:?}"));
+        let got = format!("{:?}", pack.insts[0]);
+        assert!(got.starts_with(want), "{op:?} 应为 {want}，实际 {got}");
+        let mut sink = forge_codegen::CodeSink::default();
+        tm.encoder()
+            .encode(
+                &pack.insts[0],
+                &forge_codegen::AllocResult::new(),
+                &mut sink,
+            )
+            .expect("编码");
+        assert_eq!(sink.bytes(), &word.to_le_bytes(), "{op:?} 编码不符 oracle");
+    }
+
+    // i32x4 的 Vdiv 没有 NEON 整数除法 ⇒ 必须 fail-closed（不是静默错值）。
+    let a = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+    let b = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+    let out = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+    for x in [a, b, out] {
+        ctx.set_value_desc(x, i32x4);
+    }
+    assert!(
+        tm.lowering()
+            .lower_inst(&Opcode::Vdiv, &[a, b], &[out], &mut ctx)
+            .is_err(),
+        "i32x4 Vdiv 应 fail-closed"
+    );
+}
