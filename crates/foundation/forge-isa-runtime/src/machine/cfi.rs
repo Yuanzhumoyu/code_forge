@@ -152,6 +152,122 @@ fn dw_col_for_x86_enc(enc: u8) -> Option<u8> {
     })
 }
 
+/// 扫描函数机器码开头是否 forge **arm64（AArch64）** 的 prologue，产出 CFI 行。
+///
+/// forge 的 arm64 序言形态（`frame_layout` 生成，实测样例见测试）：
+///
+/// ```text
+/// sub  sp, sp, #F          ; F = 帧大小（含 callee-saved 区）
+/// str  x30, [sp, #F-8]     ; 返回地址（LR）
+/// str  x29, [sp, #F-16]    ; 旧帧指针
+/// add  x29, sp, #F         ; fp = 旧 sp = CFA
+/// str  x19, [sp, #F-24]    ; 可选的 callee-saved（x19..x28，逐个下移 8）
+/// ...
+/// ```
+///
+/// CFA 语义：序言完成后 **CFA = x29 + 0**（x29 指向调用者的 sp）；返回地址在
+/// `CFA-8`、旧 x29 在 `CFA-16`、x19..x28 依次 `CFA-24`, `CFA-32`, …
+/// DWARF 列号采用 AArch64 约定：x0..x30 = 0..30（x29=fp、x30=LR）。
+///
+/// 前缀不符（非 forge 序言 / 被 NO_FRAME 跳过 / 截断）→ `None`（安全退化：
+/// 该函数不产 CFI 行，其余函数不受影响）。
+pub fn scan_arm64_prologue(code: &[u8]) -> Option<FunctionCfi> {
+    let word = |off: usize| -> Option<u32> {
+        let b = code.get(off..off + 4)?;
+        Some(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+    };
+
+    // `sub sp, sp, #imm12`（64 位、LSL #0）：0xD1000000 | imm12<<10 | 31<<5 | 31
+    let sub_sp = |w: u32| -> Option<u32> {
+        if (w & 0xFFC0_03FF) == 0xD100_03FF {
+            Some((w >> 10) & 0xFFF)
+        } else {
+            None
+        }
+    };
+    // `str xN, [sp, #imm12*8]`：0xF9000000 | imm12<<10 | 31<<5 | N
+    let str_sp = |w: u32| -> Option<(u32, u32)> {
+        if (w & 0xFFC0_0000) == 0xF900_0000 && ((w >> 5) & 31) == 31 {
+            Some((w & 31, ((w >> 10) & 0xFFF) * 8))
+        } else {
+            None
+        }
+    };
+    // `add x29, sp, #imm12`：0x91000000 | imm12<<10 | 31<<5 | 29
+    let add_fp = |w: u32| -> Option<u32> {
+        if (w & 0xFFC0_03FF) == 0x9100_03FD {
+            Some((w >> 10) & 0xFFF)
+        } else {
+            None
+        }
+    };
+
+    let mut cursor = 0usize;
+    let mut rows: Vec<(u32, Vec<CfiOp>)> = Vec::new();
+
+    // 1) 分配帧：CFA = sp + F
+    let frame = sub_sp(word(cursor)?)?;
+    cursor += 4;
+    rows.push((cursor as u32, vec![CfiOp::DefCfaOffset(frame)]));
+
+    // 2) 保存 LR / 旧 fp（顺序固定：先 x30 后 x29）
+    let (rt, off) = str_sp(word(cursor)?)?;
+    if rt != 30 || off != frame.checked_sub(8)? {
+        return None;
+    }
+    cursor += 4;
+    rows.push((
+        cursor as u32,
+        vec![CfiOp::SaveReg {
+            dw_reg: 30,
+            cfa_bytes: 8,
+        }],
+    ));
+    let (rt, off) = str_sp(word(cursor)?)?;
+    if rt != 29 || off != frame.checked_sub(16)? {
+        return None;
+    }
+    cursor += 4;
+    rows.push((
+        cursor as u32,
+        vec![CfiOp::SaveReg {
+            dw_reg: 29,
+            cfa_bytes: 16,
+        }],
+    ));
+
+    // 3) fp = 旧 sp；CFA 基准切到 x29、偏移归零
+    if add_fp(word(cursor)?)? != frame {
+        return None;
+    }
+    cursor += 4;
+    rows.push((
+        cursor as u32,
+        vec![CfiOp::DefCfaRegister(29), CfiOp::DefCfaOffset(0)],
+    ));
+
+    // 4) 可选的 callee-saved x19..x28：槽位从 CFA-24 起逐个下移 8
+    let mut cfa_bytes = 24u32;
+    while let Some((rt, off)) = word(cursor).and_then(str_sp) {
+        if !(19..=28).contains(&rt) {
+            break; // 非 callee-saved 的 str：序言已结束（不解析函数体）
+        }
+        if off != frame.checked_sub(cfa_bytes)? {
+            return None;
+        }
+        cursor += 4;
+        rows.push((
+            cursor as u32,
+            vec![CfiOp::SaveReg {
+                dw_reg: rt as u8,
+                cfa_bytes,
+            }],
+        ));
+        cfa_bytes += 8;
+    }
+
+    Some(FunctionCfi { rows })
+}
 // ============================================================
 // 按 ISA 名注册/查询的 prologue 扫描器（reloc_patcher 同款形态）
 // ============================================================
@@ -189,6 +305,10 @@ fn register_default_cfi_scanner(isa: &str) {
     // 安全退化；v1 仅 x86_64）。
     if matches!(isa, "x86_64" | "x86") {
         register_cfi_scanner(isa, scan_x86_prologue);
+    }
+    // arm64（AArch64）序言：`sub sp` + 存 x30/x29 + `add x29`（v27 M6-133）。
+    if matches!(isa, "arm64" | "aarch64") {
+        register_cfi_scanner(isa, scan_arm64_prologue);
     }
 }
 
@@ -366,5 +486,144 @@ mod tests {
         let want = scan_x86_prologue(&PROLOGUE).unwrap();
         assert!(cfi_scanner_for("probe_isa").is_some());
         assert_eq!(function_cfi_for("probe_isa", &PROLOGUE), Some(want));
+    }
+
+    // ---- arm64（AArch64）序言扫描（v27 M6-133） ----
+
+    /// 构造一条 `sub sp, sp, #imm12`。
+    fn a64_sub_sp(imm: u32) -> u32 {
+        0xD100_0000 | (imm << 10) | (31 << 5) | 31
+    }
+    /// 构造一条 `str xN, [sp, #imm12*8]`。
+    fn a64_str_sp(n: u32, off: u32) -> u32 {
+        0xF900_0000 | ((off / 8) << 10) | (31 << 5) | n
+    }
+    /// 构造一条 `add x29, sp, #imm12`。
+    fn a64_add_fp(imm: u32) -> u32 {
+        0x9100_0000 | (imm << 10) | (31 << 5) | 29
+    }
+
+    fn words(v: &[u32]) -> Vec<u8> {
+        v.iter().flat_map(|w| w.to_le_bytes()).collect()
+    }
+
+    /// 真实样例（forge 产出的 `forge_entry` 前 56 字节，帧 0x2e0 + 全部 x19..x28）。
+    const ARM64_ENTRY_PROLOGUE: [u32; 14] = [
+        0xD10B_83FF, // sub sp, sp, #0x2e0
+        0xF901_6FFE, // str x30, [sp, #0x2d8]
+        0xF901_6BFD, // str x29, [sp, #0x2d0]
+        0x910B_83FD, // add x29, sp, #0x2e0
+        0xF901_67F3, // str x19, [sp, #0x2c8]
+        0xF901_63F4, // str x20, [sp, #0x2c0]
+        0xF901_5FF5, // str x21, [sp, #0x2b8]
+        0xF901_5BF6, // str x22, [sp, #0x2b0]
+        0xF901_57F7, // str x23, [sp, #0x2a8]
+        0xF901_53F8, // str x24, [sp, #0x2a0]
+        0xF901_4FF9, // str x25, [sp, #0x298]
+        0xF901_4BFA, // str x26, [sp, #0x290]
+        0xF901_47FB, // str x27, [sp, #0x288]
+        0xF901_43FC, // str x28, [sp, #0x280]
+    ];
+
+    #[test]
+    fn arm64_prologue_rows_from_real_bytes() {
+        let code = words(&ARM64_ENTRY_PROLOGUE);
+        let cfi = scan_arm64_prologue(&code).expect("真实 arm64 序言应识别");
+        // rows：sub、x30、x29、add、x19..x28 —— 共 14 条，偏移单调递增到 56。
+        assert_eq!(cfi.rows.len(), 14);
+        assert_eq!(cfi.rows[0], (4, vec![CfiOp::DefCfaOffset(0x2e0)]));
+        assert_eq!(
+            cfi.rows[1],
+            (
+                8,
+                vec![CfiOp::SaveReg {
+                    dw_reg: 30,
+                    cfa_bytes: 8
+                }]
+            )
+        );
+        assert_eq!(
+            cfi.rows[2],
+            (
+                12,
+                vec![CfiOp::SaveReg {
+                    dw_reg: 29,
+                    cfa_bytes: 16
+                }]
+            )
+        );
+        assert_eq!(
+            cfi.rows[3],
+            (16, vec![CfiOp::DefCfaRegister(29), CfiOp::DefCfaOffset(0)])
+        );
+        assert_eq!(
+            cfi.rows[4],
+            (
+                20,
+                vec![CfiOp::SaveReg {
+                    dw_reg: 19,
+                    cfa_bytes: 24
+                }]
+            )
+        );
+        assert_eq!(
+            cfi.rows.last().unwrap(),
+            &(
+                56,
+                vec![CfiOp::SaveReg {
+                    dw_reg: 28,
+                    cfa_bytes: 96
+                }]
+            )
+        );
+        let offs: Vec<u32> = cfi.rows.iter().map(|(o, _)| *o).collect();
+        let mut sorted = offs.clone();
+        sorted.sort_unstable();
+        assert_eq!(offs, sorted, "rows ascending");
+    }
+
+    #[test]
+    fn arm64_prologue_without_callee_saved() {
+        // 最小帧：F=32，只存 x30/x29，没有 x19..x28。
+        let code = words(&[
+            a64_sub_sp(32),
+            a64_str_sp(30, 24),
+            a64_str_sp(29, 16),
+            a64_add_fp(32),
+            0xD65F03C0, // ret
+        ]);
+        let cfi = scan_arm64_prologue(&code).expect("无 callee-saved 也应识别");
+        assert_eq!(cfi.rows.len(), 4);
+    }
+
+    #[test]
+    fn arm64_prologue_rejects_foreign_or_broken() {
+        // 空 / 截断
+        assert_eq!(scan_arm64_prologue(&[]), None);
+        assert_eq!(scan_arm64_prologue(&words(&[a64_sub_sp(32)])), None);
+        // 非 forge 序言（x86 push rbp 前缀）
+        assert_eq!(scan_arm64_prologue(&PROLOGUE), None);
+        // x30 槽位错误（应为 F-8）
+        let code = words(&[a64_sub_sp(48), a64_str_sp(30, 32), a64_str_sp(29, 24)]);
+        assert_eq!(scan_arm64_prologue(&code), None);
+        // add x29 的立即数与帧不一致
+        let code = words(&[
+            a64_sub_sp(48),
+            a64_str_sp(30, 40),
+            a64_str_sp(29, 32),
+            a64_add_fp(32),
+        ]);
+        assert_eq!(scan_arm64_prologue(&code), None);
+    }
+
+    #[test]
+    fn arm64_dispatcher_isa_names() {
+        let code = words(&ARM64_ENTRY_PROLOGUE);
+        let want = scan_arm64_prologue(&code).unwrap();
+        for isa in ["arm64", "aarch64"] {
+            assert_eq!(function_cfi_for(isa, &code), Some(want.clone()), "{isa}");
+            // ISA 名命中但字节是 x86 序言 → 仍 None（扫描器自我校验）
+            assert_eq!(function_cfi_for(isa, &PROLOGUE), None, "{isa}");
+        }
     }
 }

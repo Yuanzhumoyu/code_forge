@@ -15,12 +15,17 @@
 
 | 编号 | 症状 | 位置 | 门禁可见性 |
 | --- | --- | --- | --- |
-| KD-05 | NEON 向量 / aarch64 DWARF-CFI 未覆盖 | `docs/plans/forge-rustc-v27-plan.md`、`docs/reference/backend-gaps.md` | 属能力缺口，fail-closed 或未接线 |
+| KD-05 | NEON 向量（V64/V128/V256 语义）未覆盖 | `docs/plans/forge-rustc-v27-plan.md`、`docs/reference/backend-gaps.md` | 属能力缺口，IR 层 fail-closed |
 
-## KD-05：NEON / aarch64 DWARF-CFI 未覆盖
+## KD-05：NEON 向量未覆盖（aarch64 CFI 已接线）
 
-- 向量（V64/V128/V256 的 NEON 语义）与 aarch64 的 `.eh_frame`/CFI 仍未接线；
-  IR 层遇到未支持形态会 fail-closed（`[cap:VECTOR]` 等），不是静默错值。
+- 向量（V64/V128/V256 的 NEON 语义）仍未接线；IR 层遇到未支持形态会 fail-closed
+  （`[cap:VECTOR]` 等），不是静默错值。
+- **aarch64 DWARF CFI 已接线（2026-10-30，M6-133）**：`scan_arm64_prologue` 扫描
+  `sub sp`/存 x30·x29/`add x29` 序言并产出 CFA 行（CFA=x29、RA@CFA-8、x29@CFA-16、
+  x19..x28 依次下移）；`.debug_frame` 由 `dwarf.rs` 写入对象。守卫 =
+  `rustc_aarch64_debug_frame_cfi_present`（对象里 `.debug_frame` 非空且含
+  `DW_CFA_def_cfa_register(29)`）+ `cfi.rs` 的 arm64 扫描器单测。
 - 权威清单见 [`backend-gaps.md`](backend-gaps.md)；进度与验收门槛见
   `docs/plans/forge-rustc-v27-plan.md` 的「仍未覆盖」段。
 

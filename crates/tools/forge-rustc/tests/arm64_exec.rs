@@ -1888,3 +1888,174 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
         );
     }
 }
+
+/// 解析 ELF64 的节表：返回 `(名字, 数据偏移, 大小)`（足够本文件的 `.debug_frame` 断言）。
+fn elf64_sections(bytes: &[u8]) -> Vec<(String, usize, usize)> {
+    let u16_at = |o: usize| u16::from_le_bytes([bytes[o], bytes[o + 1]]) as usize;
+    let u32_at = |o: usize| {
+        u32::from_le_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]]) as usize
+    };
+    let u64_at = |o: usize| {
+        u64::from_le_bytes([
+            bytes[o],
+            bytes[o + 1],
+            bytes[o + 2],
+            bytes[o + 3],
+            bytes[o + 4],
+            bytes[o + 5],
+            bytes[o + 6],
+            bytes[o + 7],
+        ]) as usize
+    };
+    if bytes.len() < 64 || &bytes[..4] != b"\x7fELF" || bytes[4] != 2 {
+        return Vec::new();
+    }
+    let shoff = u64_at(0x28);
+    let shentsize = u16_at(0x3A);
+    let shnum = u16_at(0x3C);
+    let shstrndx = u16_at(0x3E);
+    let mut out = Vec::new();
+    let str_base = shoff + shstrndx * shentsize;
+    let str_off = u64_at(str_base + 0x18);
+    for i in 0..shnum {
+        let h = shoff + i * shentsize;
+        if h + 64 > bytes.len() {
+            break;
+        }
+        let name_off = u32_at(h);
+        let off = u64_at(h + 0x18);
+        let size = u64_at(h + 0x20);
+        let start = str_off + name_off;
+        let end = bytes[start..]
+            .iter()
+            .position(|&b| b == 0)
+            .map_or(start, |n| start + n);
+        let name = String::from_utf8_lossy(&bytes[start..end]).into_owned();
+        out.push((name, off, size));
+    }
+    out
+}
+
+/// **aarch64 `.debug_frame` 接线守卫**（v27 M6-133）：带 `-C debuginfo=2` 编出的对象里
+/// 必须有非空 `.debug_frame`，且其中出现 `DW_CFA_def_cfa_register(29)`——CFA 以 x29
+/// （AArch64 帧指针）为基准。只靠 x86 的 CFI 单测覆盖不到"arm64 ISA 名 → 扫描器 →
+/// emission → dwarf.rs"这条线；缺任一段该断言就红。
+#[test]
+fn rustc_aarch64_debug_frame_cfi_present() {
+    let dll = backend_dll();
+    if !dll.is_file() {
+        eprintln!("SKIP: 后端 dylib 缺失（先 `cargo build -p forge-rustc`）");
+        return;
+    }
+    let rustc = std::env::var_os("RUSTC").map_or_else(|| "rustc".into(), PathBuf::from);
+    let sysroot = run(Command::new(&rustc).arg("--print").arg("sysroot"));
+    assert_ok(&sysroot, "rustc --print sysroot");
+    let sysroot = PathBuf::from(String::from_utf8_lossy(&sysroot.stdout).trim());
+    let lib_dir = sysroot.join("lib/rustlib/src/rust/library");
+    let core_src = lib_dir.join("core/src/lib.rs");
+    let cb_src = lib_dir.join("compiler-builtins/compiler-builtins/src/lib.rs");
+    if !core_src.is_file() || !cb_src.is_file() {
+        eprintln!("SKIP: 缺 rust-src（{}）", lib_dir.display());
+        return;
+    }
+    let dir = workspace_root()
+        .join("target")
+        .join("tmp")
+        .join("arm64-core-probe")
+        .join("debug_frame");
+    let sys = workspace_root()
+        .join("target")
+        .join("tmp")
+        .join("arm64-core-probe")
+        .join("sysroot");
+    std::fs::create_dir_all(&dir).expect("创建产物目录");
+    std::fs::create_dir_all(&sys).expect("创建 sysroot 目录");
+    let core = build_target_rlib(&rustc, &sys, "core", &core_src, &[]);
+    let cb = build_target_rlib(
+        &rustc,
+        &sys,
+        "compiler_builtins",
+        &cb_src,
+        &[
+            "--cfg",
+            r#"feature="mem""#,
+            "--cfg",
+            r#"feature="compiler-builtins""#,
+            "--extern",
+            &format!("core={}", core.display()),
+        ],
+    );
+    let src_text = r#"#![no_std]
+#![no_main]
+
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! { loop {} }
+
+#[inline(never)]
+pub extern "C" fn bump(x: i64) -> i64 { x * 3 + 1 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
+    (bump((a as i64) + (b as i64)) & 0xFF) as i32
+}
+"#;
+    let src = dir.join("probe_debug_frame.rs");
+    let obj = dir.join("probe_debug_frame.o");
+    std::fs::write(&src, src_text).expect("写 probe_debug_frame.rs");
+    let out = run(Command::new(&rustc).current_dir(&dir).args([
+        format!("-Zcodegen-backend={}", dll.display()).as_str(),
+        "--target",
+        "aarch64-unknown-none",
+        "--edition",
+        "2021",
+        "--crate-type",
+        "lib",
+        "-C",
+        "panic=abort",
+        "-C",
+        "opt-level=0",
+        "-C",
+        "debuginfo=2",
+        "--emit=obj",
+        "--extern",
+        &format!("core={}", core.display()),
+        "--extern",
+        &format!("compiler_builtins={}", cb.display()),
+        src.to_str().unwrap(),
+        "-o",
+        obj.to_str().unwrap(),
+    ]));
+    assert_ok(&out, "forge 编 debug_frame 探针");
+
+    let bytes = std::fs::read(&obj).expect("读对象");
+    let sections = elf64_sections(&bytes);
+    let df = sections
+        .iter()
+        .find(|(n, _, _)| n == ".debug_frame")
+        .unwrap_or_else(|| {
+            panic!(
+                "对象缺 .debug_frame（节：{:?}；产物：{}）",
+                sections
+                    .iter()
+                    .map(|(n, _, _)| n.as_str())
+                    .collect::<Vec<_>>(),
+                dir.display()
+            )
+        });
+    assert!(df.2 > 0, ".debug_frame 不应为空（产物：{}）", dir.display());
+    let body = &bytes[df.1..df.1 + df.2];
+    // DW_CFA_def_cfa_register = 0x0D，操作数 = uleb128(29) = 0x1D。
+    let mut cfa_on_fp = 0usize;
+    for w in body.windows(2) {
+        if w == [0x0D, 29] {
+            cfa_on_fp += 1;
+        }
+    }
+    assert!(
+        cfa_on_fp > 0,
+        ".debug_frame 里应出现 DW_CFA_def_cfa_register(29)（CFA=x29）：{cfa_on_fp} 处（产物：{}）",
+        dir.display()
+    );
+}

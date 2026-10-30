@@ -710,8 +710,9 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   `Option<i32>` 聚合常量比较在 -O0 失败。二者已登记 `docs/reference/known-defects.md`，
   不作为本里程碑的验收项。
 
-**仍未覆盖**：NEON 向量、DWARF/CFI、LICM 跨调用外提（安全子集已启用，完整外提待后端分配修复）、
-KD-06/KD-07（组合/常量比较，见缺陷索引）。
+**仍未覆盖**：NEON 向量；LICM 跨调用外提（安全子集已启用，完整外提待后端分配修复）。
+aarch64 CFI 已接线（2026-10-30，M6-133：`scan_arm64_prologue` → `.debug_frame`，守卫
+`rustc_aarch64_debug_frame_cfi_present`）；缺陷索引当前只剩 KD-05（NEON）。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 

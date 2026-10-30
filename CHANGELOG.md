@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-30) — aarch64 DWARF CFI（`.debug_frame`）接线
+
++ 新增 `scan_arm64_prologue`（`forge-isa-runtime/machine/cfi.rs`）：识别 forge 的
+  arm64 序言（`sub sp, sp, #F` → 存 x30/x29 → `add x29, sp, #F` → 可选 x19..x28），
+  产出 CFA 行：CFA = x29、返回地址 @CFA-8、旧 x29 @CFA-16、x19..x28 依次下移 8；
+  前缀不符/截断安全退化为“无 CFI”。
++ `register_default_cfi_scanner` 注册 `arm64`/`aarch64`；带 `-C debuginfo=2` 的
+  arm64 对象现在包含非空 `.debug_frame`（FDE 每函数一个，CFA 基准 x29）。
++ 守卫：`rustc_aarch64_debug_frame_cfi_present`（arm64 对象 `.debug_frame` 非空且含
+  `DW_CFA_def_cfa_register(29)`）+ `cfi.rs` 的 arm64 扫描器单测（真实字节/最小帧/
+  拒绝异形/ISA 名派发）。
++ KD-05 更新：aarch64 CFI 部分关闭，仅剩 NEON 向量未覆盖。
+
 ### Fixed (2026-10-30) — KD-03 LICM 转正（安全子集：只外提只读/无调用循环）
 
 + `-O2` 的 `core::slice::sort`、`binary_search` 在开启 LICM 时曾错值/挂起：根因是
