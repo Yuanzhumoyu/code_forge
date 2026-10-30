@@ -19,10 +19,7 @@ docs/
 │   ├── constants.md           # 常量层（v28：BitValue 比特值 / ConstId 四元枚举 / ConstantPool 四通道 / AsConst）
 │   └── imm_str.md             # ImmStr 类型设计（forge-ir 代码注释引用）
 ├── plans/                 # 进行中专项方案（活账本）[progress]
-│   ├── forge-rustc-v27-plan.md # **forge-rustc v27：完整 rustc 后端**（M1 正确性清零「把绕法换成
-│   │                          #   实现」/ M2 global_asm·asm!·unwind·TLS / M3 `std` 可用性 /
-│   │                          #   M4 第二目标 + 对象层根治 / M5 契约与门禁）
-│   └── （v26 已收口归档 → archive/project-v26-plan.md）
+│   └── （当前无进行中专项；v27 已收口 → archive/forge-rustc-v27-plan.md）
 ├── forge-ir/              # forge-ir 工作流 [active]
 │   ├── README.md              # 组说明（历轮计划已归档、如何继续）
 │   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）
@@ -543,7 +540,7 @@ base/disp/index/scale、`reg` 槽仅 `[base]`）。取代 v14 的六个魔法串
 
 `crates/tools/forge-rustc` 是**用 code-forge 当 rustc 后端的 dylib**（`-Zcodegen-backend=…`）。
 现状与边界**以代码与 e2e 为准**，方案见
-[`docs/plans/forge-rustc-v27-plan.md`](docs/plans/forge-rustc-v27-plan.md)：
+[`docs/archive/forge-rustc-v27-plan.md`](docs/archive/forge-rustc-v27-plan.md)（2026-10-31 收口归档）：
 
 ### 分层红线（2026-10-22 明确，改降级层前必读）
 

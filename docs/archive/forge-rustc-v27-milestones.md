@@ -3,7 +3,7 @@
 > ⚠️ ARCHIVED（2026-10-19）。本文是 **v27 方案的逐轮记录与旧施工图**，内容以记录时点为准、
 > **不代表代码现状**。现行入口：
 >
-> - 方案与**状态总表/未闭环清单** → [`docs/plans/forge-rustc-v27-plan.md`](../plans/forge-rustc-v27-plan.md)
+> - 方案与**状态总表/未闭环清单** → [`forge-rustc-v27-plan.md`](forge-rustc-v27-plan.md)（2026-10-31 已收口归档）
 > - 能力缺口的**决策**（21 条 `[cap:ID]`）→ [`docs/reference/backend-gaps.md`](../reference/backend-gaps.md)
 > - 后端现状与门禁 → [`crates/tools/forge-rustc/README.md`](../../crates/tools/forge-rustc/README.md)
 > - 用户可见变更 → [`CHANGELOG.md`](../../CHANGELOG.md)

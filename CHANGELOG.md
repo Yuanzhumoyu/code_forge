@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-31) — aarch64 i32 比较误用 64 位 CMPREGX（KD-09 根因）
+
++ `Icmp` 对 **i32 操作数**原先走 64 位 `CMPREGX`：`Iconst` 的 i32 常量按 X 宽
+  **符号扩展**（-10 → 0xFFFF_FFFF_FFFF_FFF6），而运行时 i32（如 `f32 as i32` 的
+  结果）只有低 32 位有效 ⇒ `-10 != -10` 恒真。SIMD 探针的
+  `if (r[0] as i32) != -10` 因此把正确结果判错（exit 150 而非 146）。
++ 修法（谱面数据）：`[[lower.Icmp]] when rs1_width == 32` 走 `CMPREGW`（32 位比较），
+  64 位仍走 `CMPREGX`。
++ 守卫：arm64 QEMU `rustc_aarch64_simd_live_vector_probe_runs_under_qemu`
+  （完整 splat→算术→lane 读取 + 负常量比较，O0/O1/O2 真执行 146）。
++ **KD-09 关闭**；缺陷索引当前无 open 项（KD-11 已修，保留观察）。
+
 ### Added (2026-10-31) — 整数/双精度 SIMD 端到端（M6-144，KD-05 关闭）
 
 + `forge-ir` 预注册 **13 个固定向量 TypeId**（`V128_I32`、`V128_F64`、`V128_I16`、

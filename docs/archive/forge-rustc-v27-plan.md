@@ -1,7 +1,14 @@
 # forge-rustc v27 方案：从"能跑的部分后端"到**完整 rustc 后端**
 
-> **状态：[progress]**（2026-10-11 立项）。本文是**活账本**：每个里程碑落地时在 §8 追加批次记录
-> （含实测数字、命令、偏差），任何"说得出但没做到"的东西必须如实写在这里。
+> ⚠️ **ARCHIVED（2026-10-31 收口）**：v27 原定两项收口判据（NEON 全排列 / LICM 跨调用）
+> 与后续发现的 KD-05（整数 SIMD 类型层）、KD-09（aarch64 i32 比较宽度）均已关闭，
+> 缺陷索引无 open 项；`cargo forge gate --subset rustc` 19/19。后续迭代请在新版计划
+> 里继续；本文只作历史记录。现行契约入口仍是
+> [`reference/backend-pipeline.md`](../reference/backend-pipeline.md) 与
+> [`reference/backend-gaps.md`](../reference/backend-gaps.md)。
+>
+> **状态：[archive]**（2026-10-11 立项，2026-10-31 收口）。本文原为**活账本**；现在
+> 记录到此为止，数字按各批次实测。
 > 基线 = v26 收口提交 `9b2cc124`；**行号随迭代漂移，以符号名为准**。
 > 上一轮方案（v26，已收口归档）见 [`docs/archive/project-v26-plan.md`](../archive/project-v26-plan.md)；
 > 后端契约 [`reference/backend-pipeline.md`](../reference/backend-pipeline.md)、
@@ -717,7 +724,7 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
 | aarch64 DWARF CFI | ✅ M6-133 | `scan_arm64_prologue` → `.debug_frame`；守卫 `rustc_aarch64_debug_frame_cfi_present` |
 | NEON 向量 | ✅ **已完成（M6-134..M6-144）**：f32x4/f64x2/i32x4 算术、i8/i16/i64 整数 add/sub、i8/i16 mul、`Band/Bor/Bxor`、`Vbitcast`、`Vbroadcast`（FPR→GPR 桥）、`Vextract` f32/f64、`Vinsert` 1..4、`Vconst`（DSL 分片占位符 + MOVZ/MOVK+fmov+INS）、Q ldr/str；整数/双精度 SIMD 用固定跨函数 TypeId 接通 ABI | 守卫：clang oracle 4/4、integration 21/21、qemu NEON 3/3、e2e `simd_i32x4_arith`/`simd_f64x2_arith`、jit_matrix 105 passed；KD-05 关闭。`Vsplit/Vconcat` 为 V256 专属（arm64 无此宽度），不做 |
 | LICM | ✅ **已完成（M6-141）**：根因是“块参数实参被外提”（不是 spill/发射）；`collect_terminator_args` 禁止外提块参数实参后，O2 对**所有循环**启用 LICM | 守卫：`forge-opt` 两条单测 + arm64 `rustc_aarch64_licm_sort_probe_runs_under_qemu`（O0/O1/O2）；`param_copies.rs` 别名路径的根因级兜底列为后续建议 |
-| 缺陷索引 | KD-09（aarch64 向量跨 lane 存活）唯一在册 | KD-05 已随 M6-144 关闭；KD-11 已修（M6-143） |
+| 缺陷索引 | **无 open 项**（KD-11 已修、保留观察） | KD-05/KD-09 均已随 M6-144/M6-145 关闭 |
 
 ⇒ **v27 原定的两项收口判据（NEON 全排列 / LICM 跨调用）已达成，NEON 的整数/双精度
 SIMD 类型层也随 M6-144 关闭**；剩余 KD-09（aarch64 向量跨 lane 存活）与
@@ -850,3 +857,9 @@ i64×1/2/4。e2e `simd_i32x4_arith`（逐 lane + **按值跨函数传 i32x4**，
 （运行期 `#UD`）；整数 `Vbroadcast` 的 GPR 源不能喂 `MOVSS/VBROADCASTSS`（改用 MOVD/MOVQ 桥）。
 验证：forge-ir 277 passed、e2e 214 cases、门禁 19/19；pins 的 x86 encoding digest 与
 vary 候选数按实测刷新。
+
+**M6-145（2026-10-31）——aarch64 i32 比较宽度（KD-09 关闭）**：`Icmp` 的 i32 操作数
+此前走 64 位 `CMPREGX`，而 i32 常量按 X 宽符号扩展、运行时 i32 只有低 32 位有效 ⇒
+`-10 != -10` 恒真（SIMD 探针 exit 150）。谱面新增 `when rs1_width == 32 → CMPREGW`。
+守卫 `rustc_aarch64_simd_live_vector_probe_runs_under_qemu`（完整 SIMD 链 + 负常量
+比较，O0/O1/O2 真执行 146）。至此 **v27 缺陷索引无 open 项**。

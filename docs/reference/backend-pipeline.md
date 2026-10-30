@@ -371,7 +371,7 @@ release 下警告一次并放弃写入）。下表与 `diagnostics::CHANNELS`、
 
 ## 13. v27 增量：宿主伪 op / 运行时注入 / 内联汇编
 
-v27（`docs/plans/forge-rustc-v27-plan.md`）往管线里加了三处**宿主侧**能力。它们都不是
+v27（[`docs/archive/forge-rustc-v27-plan.md`](../archive/forge-rustc-v27-plan.md)，已收口）往管线里加了三处**宿主侧**能力。它们都不是
 新的机器能力，而是"把编译期已经确定的东西变成 IR 或数据"——这里记契约，避免下次改它们时
 再摸一遍。
 

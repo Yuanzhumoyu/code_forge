@@ -436,7 +436,8 @@ unresolved_type_refs_fall_back_to_unspecified）为准。e2e `debuginfo_full` + 
 > 自诊 + M1 abbrev 字节 diff 直接命中发射侧 form 错误（收敛优先）。
 >
 > ⚠️ **2026-10-11 起：路线图不再是"无剩余开放项"**——v27 专项（
-> [`docs/plans/forge-rustc-v27-plan.md`](../../docs/plans/forge-rustc-v27-plan.md)）
+> [`docs/archive/forge-rustc-v27-plan.md`](../../docs/archive/forge-rustc-v27-plan.md)，
+> 2026-10-31 收口归档）
 > 重新定义了"什么算完整后端"，并把下面这些缺口**变成带 ID 的台账项**（见下一节）。
 
 ## v27 能力与缺口面（2026-10-11）

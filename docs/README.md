@@ -26,7 +26,7 @@
 
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
-| [`plans/forge-rustc-v27-plan.md`](plans/forge-rustc-v27-plan.md) | **forge-rustc v27：完整 rustc 后端**（M1 正确性清零 / M2 `global_asm`+`asm!`+unwind+TLS / M3 `std` 可用性 / M4 第二目标 + 对象层 / M5 契约与门禁）；含立项实测证据 E1–E11 | progress |
+| —（已归档） | forge-rustc v27 的账本已收口：见 [`archive/forge-rustc-v27-plan.md`](archive/forge-rustc-v27-plan.md)（NEON 全排列 / LICM 跨调用 / KD-05 / KD-09 全部落地；`cargo forge gate --subset rustc` 19/19） | archive |
 | —（已归档） | 项目 v26 的账本已收口：见 [`archive/project-v26-plan.md`](archive/project-v26-plan.md)（M1–M5 全部落地；现行入口 = `reference/backend-pipeline.md` + `reference/backend-gaps.md`） | archive |
 | ~~`plans/project-v26-plan.md`~~（原文，已移走） | **项目 v26：审查收口**（M1 诊断单一来源：DSL 错误码台账 + 双向守卫、事件 sink 下沉 `forge-isa-runtime::diagnostics`、开关台账归并 `forge-rustc`；M2 无消费者面清理：删 `forge-mem`/`isel_strategy`（`IR_FORMAT_VERSION` 3→4）/`asm_v11.lx`，前端线降级为 `examples/hir-demo`；M3 `cargo forge gate` 单命令门禁 + CI 补齐；M4 `[cap:SPEC_*]` 谱侧台账与能力补齐；M5 契约回写）；含审查证据、删除清单、守卫与判据 | progress |
 | —（已归档） | 后端 v25 的账本已收口：见 [`archive/backend-v25-plan.md`](archive/backend-v25-plan.md)（M1–M5 全部落地；现行入口 = `reference/backend-pipeline.md`） | archive |
@@ -65,7 +65,7 @@
 | 文件 | 内容（归档原因） |
 | --- | --- |
 | `archive/calling-convention-redesign-plan.md` | 调用约定重设计 v20 A1–A8（**2026-10-08 归档**：A1–A8 全部落地 —— A7 异域钩子 = `forge-abi/tests/exotic_hooks.rs`、A8 文档一致性收口；现行参考 = `reference/calling-conventions.md`） |
-| `archive/forge-rustc-v27-milestones.md` | forge-rustc v27 的**逐轮记录与旧施工图**（**2026-10-19 归档**：原活账本 3200+ 行，状态与历史混在一起 —— 状态留 `plans/forge-rustc-v27-plan.md`、决策留 `reference/backend-gaps.md`；本文只作历史证据） |
+| `archive/forge-rustc-v27-milestones.md` | forge-rustc v27 的**逐轮记录与旧施工图**（**2026-10-19 归档**：原活账本 3200+ 行，状态与历史混在一起 —— 状态留 [`archive/forge-rustc-v27-plan.md`](archive/forge-rustc-v27-plan.md)、决策留 `reference/backend-gaps.md`；本文只作历史证据） |
 | `archive/forge-rustc-vec_push-plan.md` | forge-rustc vec 族方案（**2026-10-11 归档**：§4 验收 4/4 达成 —— `e2e.rs` 103 条用例全部 `known_failure: false`、CI job `forge-rustc (e2e, Windows)` 绿；现行入口 = `tests/e2e.rs` 用例表 + 该 CI job） |
 | `archive/forge-ir-v3-plan.md` | forge-ir v3 改进方案（**2026-10-08 归档**：S1–S8 **全部收口** —— S3 三余项已落地、**S7 余项清零**、S8 经拍板只做二进制序列化且已落地；未关闭项在 `forge-ir/backlog.md`） |
 | `archive/isa-dsl-variant-field-values.md` | 按变体给字段值（**2026-10-08 归档**：工作**早已落地** —— 键名是 `fields_variant`、`rev8` 正在用；本文留设计取舍与教训） |
