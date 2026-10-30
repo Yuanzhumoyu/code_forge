@@ -15,8 +15,7 @@
 
 | 编号 | 症状 | 位置 | 门禁可见性 |
 | --- | --- | --- | --- |
-| KD-05 | NEON 向量未全覆盖（f32x4 算术已接线） | `docs/plans/forge-rustc-v27-plan.md`、`docs/reference/backend-gaps.md` | 属能力缺口，IR 层 fail-closed |
-| KD-09 | aarch64 端到端 `Simd<f32,4>` 在“向量值跨多次 lane 读取存活”时错值 | `crates/tools/forge-rustc` 的向量降级 / arm64 spill 路径 | **不可见**：arm64 JIT 矩阵的向量用例因缺 `Vconst` 规则被 Skip |
+| KD-09 | aarch64 端到端 `Simd<f32,4>` 在“向量值跨多次 lane 读取存活”时错值 | `crates/tools/forge-rustc` 的向量降级 / arm64 spill 路径 | **不可见**：arm64 JIT 矩阵的向量用例已能跑，但 rustc 端到端仍无守卫 |
 | KD-11 | 浮点形参（FPR）在函数内有调用时被 spill 后**收参丢失**（读成 0） | `forge-isa-dsl` 的 `gen_arg_receive`：spilled 寄存器参数收参只处理 GPR | 已修（M6-143）；守卫见 e2e/arm64，但自然程序难以强制 FPR spill |
 
 ## KD-09：aarch64 端到端 `Simd<f32,4>` 向量值跨 lane 读取存活时错值
@@ -53,24 +52,7 @@
   并加 x86 e2e + arm64 QEMU 真执行守卫。**已修（M6-143）**；该条目保留是因为自然程序
   很难强制 FPR 形参 spill，守卫更多是防回归，后续可补手搭 `AllocResult` 的 codegen 单测。
 
-## KD-05：NEON 向量未全覆盖（仅剩整数 SIMD 类型层与端到端守卫）
-
-- **已接线（M6-134..M6-142）**：V128 的 f32x4/f64x2/i32x4 算术（add/sub/mul/div/neg/abs）、
-  i8x16/i16x8/i64x2 的整数 add/sub、i8x16/i16x8 的 mul（i64 mul 无 NEON 指令 ⇒
-  fail-closed）、位运算 `Band/Bor/Bxor` → `and/orr/eor.16b`、`Vbitcast`（Q move）、
-  加载/存储 128 位、`Vbroadcast`（splat；浮点源经 `fmov` 桥进 GPR 再 `dup`）、
-  `Vextract` f32 lane 0..3 / f64 lane 0..1（`umov` → GPR → `fmov`）、
-  `Vinsert` elem 1/2/3/4 全 lane（Q 搬运 + INS general）。编码全部用本机 clang
-  逐字节 oracle 对拍；qemu 真执行守卫覆盖“splat+算术+多 lane”与“两向量同时活跃”。
-- **仍 blocked（需要 DSL 变更）**：`Vconst`（V128）。A64 没有 imm64 指令，DSL 也没有
-  向量常量的 16 位分片占位符（只有 `{vconst_lo}/{vconst_hi}` 的 64 位原值，且对
-  32 位元素是 x86 的 PUNPCK 交错序）；把 64 位值塞 imm16 会被 `imm_encode_checked`
-  硬拒绝。最小改法 = 给 DSL 加 `{vconst_lo_f0..f3}` / `{vconst_hi_f0..f3}` 分片
-  占位符（ISA 无关），再 `MOVZ/MOVK`×4 + `fmov d` + `INS d[1]`。
-- **不做**：`Vsplit`/`Vconcat` 只对 V256 有意义，arm64 没有 256 位向量。
-- **端到端浮点 SIMD 算术已关闭（M6-139）**：`simd_add/sub/mul/div/neg` 已映射；
-  e2e `simd_v128_arith` 真执行六种形态。整数 SIMD（`Simd<i32,4>`）仍受类型层
-  “只映射 f32×2/4/8”限制（需要固定跨函数 TypeId），另案。
+## 其它后端事实（非缺陷）
 
 - **aarch64 DWARF CFI 已接线（2026-10-30，M6-133）**：`scan_arm64_prologue` 扫描
   `sub sp`/存 x30·x29/`add x29` 序言并产出 CFA 行（CFA=x29、RA@CFA-8、x29@CFA-16、

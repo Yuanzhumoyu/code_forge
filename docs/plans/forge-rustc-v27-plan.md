@@ -715,13 +715,13 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
 | --- | --- | --- |
 | M1–M6、P1–P4、M2/M2.5/M3/M4 | ✅ 已落地 | 上表逐行；`cargo forge gate` 54/54 |
 | aarch64 DWARF CFI | ✅ M6-133 | `scan_arm64_prologue` → `.debug_frame`；守卫 `rustc_aarch64_debug_frame_cfi_present` |
-| NEON 向量 | ✅ **ISA 面已完成（M6-134..M6-142）**：f32x4/f64x2/i32x4 算术、i8/i16/i64 整数 add/sub、i8/i16 mul、`Band/Bor/Bxor`、`Vbitcast`、`Vbroadcast`（FPR→GPR 桥）、`Vextract` f32/f64、`Vinsert` elem 1..4、`Vconst`（DSL 8 个分片占位符 + `MOVZ/MOVK+fmov+INS`）、Q 宽 ldr/str | 仅剩**整数 SIMD 类型层**（`Simd<i32,4>` 需要固定跨函数 TypeId，见 KD-05）与 rustc 端到端守卫（KD-09）；`Vsplit/Vconcat` 为 V256 专属，arm64 无此宽度——不做 |
+| NEON 向量 | ✅ **已完成（M6-134..M6-144）**：f32x4/f64x2/i32x4 算术、i8/i16/i64 整数 add/sub、i8/i16 mul、`Band/Bor/Bxor`、`Vbitcast`、`Vbroadcast`（FPR→GPR 桥）、`Vextract` f32/f64、`Vinsert` 1..4、`Vconst`（DSL 分片占位符 + MOVZ/MOVK+fmov+INS）、Q ldr/str；整数/双精度 SIMD 用固定跨函数 TypeId 接通 ABI | 守卫：clang oracle 4/4、integration 21/21、qemu NEON 3/3、e2e `simd_i32x4_arith`/`simd_f64x2_arith`、jit_matrix 105 passed；KD-05 关闭。`Vsplit/Vconcat` 为 V256 专属（arm64 无此宽度），不做 |
 | LICM | ✅ **已完成（M6-141）**：根因是“块参数实参被外提”（不是 spill/发射）；`collect_terminator_args` 禁止外提块参数实参后，O2 对**所有循环**启用 LICM | 守卫：`forge-opt` 两条单测 + arm64 `rustc_aarch64_licm_sort_probe_runs_under_qemu`（O0/O1/O2）；`param_copies.rs` 别名路径的根因级兜底列为后续建议 |
-| 缺陷索引 | KD-05（整数 SIMD 类型层）、KD-09（aarch64 向量跨 lane 存活） | KD-11 已修（M6-143，含 SCCP 浮点常量修复）；KD-12 经复核是 SCCP 根因，已撤销 |
+| 缺陷索引 | KD-09（aarch64 向量跨 lane 存活）唯一在册 | KD-05 已随 M6-144 关闭；KD-11 已修（M6-143） |
 
-⇒ **v27 原定的两项收口判据（NEON 全排列 / LICM 跨调用）已达成**；新增的
-KD-05（整数 SIMD 类型层）、KD-09 与 aarch64 `core/std` 等继续作为
-独立缺陷/能力项（见 `docs/reference/known-defects.md`），不混入这两项的验收。
+⇒ **v27 原定的两项收口判据（NEON 全排列 / LICM 跨调用）已达成，NEON 的整数/双精度
+SIMD 类型层也随 M6-144 关闭**；剩余 KD-09（aarch64 向量跨 lane 存活）与
+aarch64 `core/std` 等继续作为独立缺陷/能力项（见 `docs/reference/known-defects.md`）。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
 
@@ -840,3 +840,13 @@ x86 e2e `float_param_live_across_call` + arm64 QEMU 三档。**同批修 SCCP �
 重写**：SCCP 会把已是常量的 `Fconst` 经整数 Big 通道改写（f32 位型 → 整数 → f64
 位型，arm64 材料化低 32 位为 0），`let x = a as f32; f(x)` 因此在 O2 错值；
 `sccp.rs` 不再重写已有 `Iconst/Fconst`（原误记的 KD-12 已撤销）。
+
+**M6-144（2026-10-31）——整数/双精度 SIMD 端到端（KD-05 关闭）**：`forge-ir` 预注册
+13 个固定向量 TypeId（`V128_I32/F64/I16/I8/I64`、`V64_I32/I64/F64/I16/I8`、
+`V256_I32/F64/I64`），所有函数的 `TypeContext` 同序预填充 ⇒ 同一 `<4 x i32>` 的 id
+跨函数一致（ABI 前提）。`map_type` 接受 f64×1/2/4、i8×8/16、i16×4/8、i32×2/4/8、
+i64×1/2/4。e2e `simd_i32x4_arith`（逐 lane + **按值跨函数传 i32x4**，exit 580）与
+`simd_f64x2_arith`（1600）。连带修两个 x86 缺陷：`PMULLD` 缺强制 66 前缀
+（运行期 `#UD`）；整数 `Vbroadcast` 的 GPR 源不能喂 `MOVSS/VBROADCASTSS`（改用 MOVD/MOVQ 桥）。
+验证：forge-ir 277 passed、e2e 214 cases、门禁 19/19；pins 的 x86 encoding digest 与
+vary 候选数按实测刷新。

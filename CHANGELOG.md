@@ -11,6 +11,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-31) — 整数/双精度 SIMD 端到端（M6-144，KD-05 关闭）
+
++ `forge-ir` 预注册 **13 个固定向量 TypeId**（`V128_I32`、`V128_F64`、`V128_I16`、
+  `V128_I8`、`V128_I64`、`V64_I32/I64/F64/I16/I8`、`V256_I32/F64/I64`）：
+  每个函数的 `TypeContext` 按同一顺序预填充，`vector_ty(elem,len)` 命中去重表 ⇒
+  **同一个 `<4 x i32>` 在所有函数里 id 相同**，跨函数形参/返回/调用 ABI 才成立。
++ `forge-rustc` 的 `map_type` 现接受 f64×1/2/4、i8×8/16、i16×4/8、i32×2/4/8、
+  i64×1/2/4；新增 e2e `simd_i32x4_arith`（逐 lane 断言 + **按值跨函数传 i32x4**）
+  与 `simd_f64x2_arith`。
++ 连带修两个 x86 编码/发射缺陷（此前没有用例走到）：
+  `PMULLD` 缺强制 **66 前缀**（实际发出 `0F 38 40` ⇒ 运行期 #UD）；整数
+  `Vbroadcast` 的源在 GPR，却喂给 `MOVSS/VBROADCASTSS`（GPR 形式非法 ⇒ #UD），
+  改为 `MOVD/MOVQ` 先搬进 XMM。
++ 验证：`forge-ir` 277 passed；e2e 214 cases（新增两条）全绿；门禁 19/19。
++ **KD-05 关闭**：NEON ISA 面与此前的整数 SIMD 类型层均已补齐；剩余向量问题
+  （aarch64 跨 lane 存活）单独记在 KD-09。
+
 ### Added (2026-10-31) — arm64 NEON 收口：整数/位运算/lane/INS/Vconst（M6-142）
 
 + 谱面新增（全部用本机 clang 逐字节 oracle 核对）：`add/sub.16b`、`add/sub.8h`、
