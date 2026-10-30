@@ -48,15 +48,18 @@ pub fn hoist_loop_invariants(func: &mut Function) -> Result<PassResult, IrError>
         // P1-2/P1-3：外提目标 = preheader（若有——header 唯一循环外 pred，
         // 每迭代只执行一次的真正不变量位置）；无 preheader 时回退 header
         //（旧行为；insert_preheader pass 正规化后可全量走 preheader）。
-        .map(|li| {
+        .filter_map(|li| {
             let body: HashSet<Block> = li.blocks.iter().copied().collect();
+            // **只对“无内存写、无调用”的循环外提**（v27 KD-03 收口的安全子集）：
+            // 循环体一旦含 store/call，外提值就要跨调用长期存活，而 arm64 发射/
+            // 寄存器分配在该形态下实测错值（`binary_search` 返回 1 而非 2；
+            // 连“只外提 StackAddr”也不可靠）。只读计算循环保留外提收益。
+            if body_has_mem_write(func, &body) {
+                return None;
+            }
+            let preheader = li.preheader?;
             let write_locs = collect_loop_writes(func, &body, &alias);
-            (
-                li.header,
-                li.preheader.unwrap_or(li.header),
-                body,
-                write_locs,
-            )
+            Some((li.header, preheader, body, write_locs))
         })
         .collect();
     if loops.is_empty() {
@@ -201,6 +204,7 @@ fn mark_invariants(
                 if inst.results.is_empty() {
                     continue;
                 }
+
                 // P1-5：load 在「地址不变 + 循环内无 may-alias 写」时可外提
                 // （每迭代读同一位置 → 提前到 preheader 只读一次等价）。
                 // volatile / 原子 load 保留可观察语义，不外提。
@@ -317,7 +321,20 @@ fn hoist_to_header(
         // 走 `Function::clone_inst_into`（不是 `dfg.clone_inst`）：它额外登记
         // use-list。漏了这步，外提后的指令在新块的 use-list 里查不到 ⇒
         // verifier 报 `UseListInconsistency`（v27 M5 实测）。
-        func.clone_inst_into(hd.inst_id, header, &mut val_remap);
+        let new_inst = func.clone_inst_into(hd.inst_id, header, &mut val_remap);
+        // **必须插到块首（且保持拓扑序）**：`clone_inst_into` 只保证落在终结符
+        // 之前，即“块尾”；若目标块（常见：preheader=entry）里原本就有使用该
+        // 不变量的指令，RAUW 后就会**块内 use-before-def**（v27 KD-03 实测：
+        // entry 的零初始化 store 引用了块尾才定义的常量 ⇒ binary_search 错值）。
+        // 第 k 条克隆放到前 k 条之后，既在最前、又不反转拓扑序。
+        {
+            let order = &mut func.dfg.block_mut(header).inst_order;
+            if let Some(pos) = order.iter().position(|&i| i == new_inst) {
+                order.remove(pos);
+            }
+            let at = count.min(order.len());
+            order.insert(at, new_inst);
+        }
         count += 1;
     }
 
@@ -615,7 +632,64 @@ mod tests {
     /// "外提真的发生"，端到端正确性由 e2e `opt_loop_call_inline`（O2 + 循环内调用）钉住。
     #[test]
     fn stack_addr_is_hoisted_by_default() {
-        // while (cond) { p = stack_addr(-8); store 1, p; }  —— 槽地址在循环体内
+        // while (cond) { p = stack_addr(-8); }  —— 只读循环（安全子集）
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
+        let preheader = b.create_block();
+        b.switch_to_block(preheader);
+        let zero = b.constant(0i32);
+        let header = b.create_block();
+        b.switch_to_block(preheader);
+        b.jump(header, &[]);
+        b.switch_to_block(header);
+        let n = b.constant(10i32);
+        let cond = b.icmp(IntCC::Slt, zero, n);
+        let body_blk = b.create_block();
+        let exit = b.create_block();
+        b.switch_to_block(header);
+        b.branch(cond, body_blk, &[], exit, &[]);
+        b.switch_to_block(body_blk);
+        // **不写内存、不调用**：安全子集内，StackAddr 应被外提。
+        let _p = b.stack_addr(-8);
+        b.jump(header, &[]);
+        b.switch_to_block(exit);
+        b.ret(&[]);
+        let mut func = b.finish().expect("build");
+
+        let pass = LicmPass::new();
+        let _ = pass.run_on_function(&mut func).unwrap();
+
+        // 断言：循环体里**没有** StackAddr（已被外提），preheader/header 里恰好一条。
+        let mut body_stack_addrs = 0usize;
+        let mut outside_stack_addrs = 0usize;
+        for bi in 0..func.dfg.block_count() {
+            let bid = Block::new(bi as u32);
+            for &inst_id in &func.dfg.block(bid).inst_order {
+                if !matches!(func.dfg.inst_data(inst_id).opcode, Opcode::StackAddr) {
+                    continue;
+                }
+                if bid == Block::new(2) {
+                    body_stack_addrs += 1;
+                } else {
+                    outside_stack_addrs += 1;
+                }
+            }
+        }
+        assert_eq!(
+            body_stack_addrs, 0,
+            "只读循环里 StackAddr 应当外提（v27 M6-95/KD-03 安全子集）"
+        );
+        assert_eq!(
+            outside_stack_addrs, 1,
+            "外提后的 StackAddr 应落在 preheader/header"
+        );
+    }
+
+    /// **KD-03 安全子集**：循环体含 `store`/`call` 时**整段不外提**（包括 StackAddr）。
+    /// 实测：这类循环里外提值要跨调用长期存活，arm64 发射/寄存器分配路径曾把
+    /// `binary_search` 编译成返回 1（正确 2），连“只外提 StackAddr”也不可靠。
+    #[test]
+    fn stack_addr_not_hoisted_from_write_loop() {
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let preheader = b.create_block();
@@ -643,26 +717,21 @@ mod tests {
         let pass = LicmPass::new();
         let _ = pass.run_on_function(&mut func).unwrap();
 
-        // 断言：循环体里**没有** StackAddr（已被外提），preheader/header 里恰好一条。
         let mut body_stack_addrs = 0usize;
-        let mut outside_stack_addrs = 0usize;
         for bi in 0..func.dfg.block_count() {
             let bid = Block::new(bi as u32);
+            if bid != Block::new(2) {
+                continue;
+            }
             for &inst_id in &func.dfg.block(bid).inst_order {
-                if !matches!(func.dfg.inst_data(inst_id).opcode, Opcode::StackAddr) {
-                    continue;
-                }
-                if bid == Block::new(2) {
+                if matches!(func.dfg.inst_data(inst_id).opcode, Opcode::StackAddr) {
                     body_stack_addrs += 1;
-                } else {
-                    outside_stack_addrs += 1;
                 }
             }
         }
-        assert_eq!(body_stack_addrs, 0, "StackAddr 默认应当外提（v27 M6-95）");
         assert_eq!(
-            outside_stack_addrs, 1,
-            "外提后的 StackAddr 应落在 preheader/header"
+            body_stack_addrs, 1,
+            "写内存的循环不得外提（KD-03 安全子集）"
         );
     }
 }

@@ -11,6 +11,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed (2026-10-30) — KD-03 LICM 转正（安全子集：只外提只读/无调用循环）
+
++ `-O2` 的 `core::slice::sort`、`binary_search` 在开启 LICM 时曾错值/挂起：根因是
+  外提把值带到 preheader 后要跨循环内调用长期存活，而 arm64 发射/寄存器分配在该
+  形态下不可靠（常量寄存器化 + 大量 spill；实测 `binary_search` 返回 1 而非 2）。
++ 现 LICM **只对“循环体内无 store、无 call”的循环外提**（这是可验证的安全子集）：
+  只读计算循环保留收益，其余不动。默认在 O2 启用；对照用 `FORGE_DISABLE_LICM=1`。
++ 修了外提克隆的**插入点**：从“终结符前（块尾）”改为“块首且保持拓扑序”，
+  避免目标块内已有指令对克隆的 use-before-def。
++ 验证：`binary_search` 探针 = 2、sortbs = 17、kitchen（from_str+sort+binary_search+
+  write!）O0/O1/O2 = 65；`forge-opt` 106 tests、arm64_exec 9/9、e2e 8/8；
+  KD-03 从缺陷索引移除。
+
 ### Fixed (2026-10-29) — JIT 溢出压力 + 调用两条 `#[ignore]` 转正（KD-01/KD-02 关闭）
 
 + `test_jit_spill_pressure_loop_with_call` 与 `jit_stack_param_loop_call_only_step`

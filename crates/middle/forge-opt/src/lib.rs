@@ -404,13 +404,12 @@ impl PassManager {
                 Box::new(crate::loops::insert_preheader::InsertPreheaderPass::new()),
                 PassRunMode::Once,
             );
-            // **LICM 暂时默认关闭**（v27 M6-123）：`-O2` 的
-            // `core::slice::sort` 在开启 LICM 时错值（`[1,9,14,14]`；
-            // `FORGE_OPT_SKIP=licm` 恢复正确），最窄复现是"只外提 Iconst"
-            // （`FORGE_LICM_ONLY=iconst`）。外提的支配性/插入位置条件目前
-            // 没有被证明，先以正确性优先；排查时用 `FORGE_ENABLE_LICM=1`
-            // 打开（`FORGE_LICM_ONLY` 仍可隔离指令类）。补全条件后转正。
-            if std::env::var_os("FORGE_ENABLE_LICM").is_some() {
+            // **LICM 默认开启（O2+，v27 M6-132）**：安全子集 = 只对“无内存写、
+            // 无调用”的循环外提（`hoist_loop_invariants` 里过滤）。此前的错值
+            // 形态（`binary_search`/sort 循环内含比较器调用）不再被外提 ⇒
+            // `-O2` 的 `core::slice::sort`、`binary_search` 探针全部恢复正确。
+            // 需要对照时用 `FORGE_DISABLE_LICM=1` 关掉（或 `FORGE_OPT_SKIP=licm`）。
+            if std::env::var_os("FORGE_DISABLE_LICM").is_none() {
                 pm.add_pass(
                     Box::new(crate::loops::licm::LicmPass::new()),
                     PassRunMode::Once,

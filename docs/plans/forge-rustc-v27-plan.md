@@ -629,11 +629,12 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   `codegen_crate` 在 CGU 分区编译后做 fixpoint：把"被引用但未发射"且
   `upstream_monomorphization(tcx).is_none()` 的实例补编进合成 `<on-demand>` CGU。
   修前 `-O1+` 的 sort 因 `CopyOnDrop::drop`/`revswap` 未进分区而缺符号。
-- **LICM 默认关闭**（`FORGE_ENABLE_LICM=1` 可打开）：`-O2` 的
-  `core::slice::sort` 在开启 LICM 时错值（`[1,9,14,14]`；`FORGE_OPT_SKIP=licm`
-  正常），最窄复现是"只外提 Iconst"（`FORGE_LICM_ONLY=iconst`）。外提的支配性/
-  插入位置/链依赖条件尚未证明，先以正确性优先；常量/地址计算留在原地成本极低。
-  补全条件后转正（loops/licm.rs）。
+- **LICM 已转正（2026-10-30，安全子集）**：只对**循环体内无 store、无 call** 的
+  循环外提；默认在 O2 启用（`FORGE_DISABLE_LICM=1` 可关）。此前错值的根因不是
+  不变性判定，而是**外提值要跨循环内调用长期存活**时的 arm64 发射/寄存器分配
+  路径（`binary_search` 返回 1 而非 2；常量寄存器化 + 大量 spill）。同时修正了
+  克隆插入点（块首、保拓扑序，消除目标块内 use-before-def）。跨调用的完整外提
+  仍待后端分配修复；守卫：`forge-opt` 106 tests、sort/kitchen 探针 O0/O1/O2。
 - 守卫 `rustc_aarch64_sort_probe_runs_under_qemu` 升格为 **-O0/O1/O2 全档**（16 元
   乱序 sort_unstable 后校验连续，返回值 15）；arm64_exec 9/9。
 
@@ -709,7 +710,7 @@ target 接线）——那是"用 rustc 编 aarch64 程序"的下一步，不是�
   `Option<i32>` 聚合常量比较在 -O0 失败。二者已登记 `docs/reference/known-defects.md`，
   不作为本里程碑的验收项。
 
-**仍未覆盖**：NEON 向量、DWARF/CFI、LICM 的错误外提（默认关闭、待修）、
+**仍未覆盖**：NEON 向量、DWARF/CFI、LICM 跨调用外提（安全子集已启用，完整外提待后端分配修复）、
 KD-06/KD-07（组合/常量比较，见缺陷索引）。
 
 ## 2.8 P1：128 位 C-ABI 跨后端兼容（✅ 2026-10-24 收口）
