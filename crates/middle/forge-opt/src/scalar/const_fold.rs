@@ -43,6 +43,14 @@ fn as_unsigned_big(value: &Big, ty: TypeId) -> Big {
     value.truncate_to_bits(bits)
 }
 
+/// 按位宽计算全 1 掩码。
+fn bit_mask(bits: u32) -> Big {
+    if bits == 0 {
+        return Big::U_ZERO;
+    }
+    Big::Unsigned((UBig::ONE << (bits as usize)) - UBig::ONE)
+}
+
 // ============================================================
 // 折叠 — 核心求值函数
 // ============================================================
@@ -226,7 +234,7 @@ pub fn fold_opcode(
                     if bits == 0 {
                         return Ok(Some(ConstValue::Int(Big::S_ZERO, ty)));
                     }
-                    let mask = Big::bit_mask(bits);
+                    let mask = bit_mask(bits);
                     let unsigned_val = v.truncate_to_bits(bits);
                     let result = mask ^ unsigned_val;
                     Ok(Some(ConstValue::Int(truncate_to_type(&result, ty), ty)))

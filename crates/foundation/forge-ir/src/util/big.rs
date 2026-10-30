@@ -71,14 +71,6 @@ impl Big {
 }
 
 impl Big {
-    /// 按位宽计算全 1 掩码。
-    pub fn bit_mask(bits: u32) -> Big {
-        if bits == 0 {
-            return Big::U_ZERO;
-        }
-        Big::Unsigned(Natural::ones(bits as usize))
-    }
-
     pub fn from_f64(value: f64) -> Option<Self> {
         // 处理特殊值
         if value.is_nan() {
