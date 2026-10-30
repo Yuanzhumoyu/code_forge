@@ -373,3 +373,63 @@ fn terminator_jump_packet() {
         other => panic!("expected JmpRel32, got {other:?}"),
     }
 }
+
+// ─────────────── NEON 向量 lowering（v27 M6-134）───────────────
+
+/// arm64 的 V128 f32x4 加/减/乘必须落到 FADD4S/FSUB4S/FMUL4S（Q 视图 fprq），
+/// 且编码与 clang oracle 一致：`fadd v0.4s, v0.4s, v0.4s` = 0x4E20D400。
+///
+/// 钉住三件事：① `[[lower.V*]]` 的 rd=128+elem=1 谓词命中；② 操作数是 fprq
+/// （fpr128）而非 D 视图；③ 编码器的 match 字段来自真实 oracle 解码。
+#[test]
+fn lowering_arm64_neon_f32x4() {
+    use forge_codegen::arm64::Inst;
+    use forge_codegen::prelude::{LowerCtx, Opcode};
+    use forge_ir::ir::types::TypeContext;
+
+    let tc = TypeContext::new();
+    let v128 = tc.vector_ty(forge_ir::TypeId::F32, 4);
+    let tm = forge_codegen::arm64::TargetMachine::new();
+    let mut ctx = LowerCtx::default();
+    ctx.type_store = Some(tc.borrow());
+
+    let mk = |ctx: &mut LowerCtx| {
+        let x = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        ctx.set_value_desc(x, v128);
+        x
+    };
+    let a = mk(&mut ctx);
+    let b = mk(&mut ctx);
+    let out = mk(&mut ctx);
+
+    for (op, want_word) in [
+        (Opcode::Vadd, 0x4E20_D400u32),
+        (Opcode::Vsub, 0x4EA0_D400u32),
+        (Opcode::Vmul, 0x6E20_DC00u32),
+    ] {
+        let pack = tm
+            .lowering()
+            .lower_inst(&op, &[a, b], &[out], &mut ctx)
+            .unwrap_or_else(|e| panic!("{op:?} 应可降级为 NEON 指令：{e:?}"));
+        assert_eq!(pack.insts.len(), 1, "{op:?} → 单条微指令");
+        match &pack.insts[0] {
+            Inst::Fadd4s { .. } => assert_eq!(op, Opcode::Vadd),
+            Inst::Fsub4s { .. } => assert_eq!(op, Opcode::Vsub),
+            Inst::Fmul4s { .. } => assert_eq!(op, Opcode::Vmul),
+            other => panic!("{op:?} 应落到 NEON 浮点指令，实际 {other:?}"),
+        }
+        let mut sink = forge_codegen::CodeSink::default();
+        tm.encoder()
+            .encode(
+                &pack.insts[0],
+                &forge_codegen::AllocResult::new(),
+                &mut sink,
+            )
+            .expect("编码 NEON 指令");
+        assert_eq!(
+            sink.bytes(),
+            &want_word.to_le_bytes(),
+            "{op:?} 编码须与 clang oracle 一致（v0.4s, v0.4s, v0.4s）"
+        );
+    }
+}

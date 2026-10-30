@@ -1134,6 +1134,29 @@ opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 33 }
 asm = "add.4s {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 
+# NEON 浮点（v27 M6-134）：编码以 clang --target=aarch64-none-elf + llvm-objdump 逐字核对：
+#   fadd v0.4s,v1.4s,v2.4s = 0x4E22D420  → vq=1 vu=0 vsize=0 vec_c=1 vec_d=0x35 opcode=0x0E
+#   fsub v0.4s,v1.4s,v2.4s = 0x4EA5D483  → vq=1 vu=0 vsize=2 vec_c=1 vec_d=0x35
+#   fmul v0.4s,v1.4s,v2.4s = 0x6E28DCE6  → vq=1 vu=1 vsize=0 vec_c=1 vec_d=0x37
+# 128 位排列用 Q 视图槽 `fprq`（fpr128）——与 V128 值类一致。
+[inst.FADD4S]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 0, vec_c = 1, vec_d = 0x35 }
+asm = "fadd.4s {dst:fprq:out}, {src:fprq}, {src2:fprq}"
+
+[inst.FSUB4S]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 0x35 }
+asm = "fsub.4s {dst:fprq:out}, {src:fprq}, {src2:fprq}"
+
+[inst.FMUL4S]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 1, vsize = 0, vec_c = 1, vec_d = 0x37 }
+asm = "fmul.4s {dst:fprq:out}, {src:fprq}, {src2:fprq}"
+
 # add????????????????
 # and????????????????
 [inst.VAND8B]
@@ -1224,6 +1247,16 @@ form = "VEC3R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 2, vec_c = 1, vec_d = 7 }
 asm = "orr.8b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
+
+# Q 视图的 16B 或运算（v27 M6-134）：`data_width = 128` 同时让它进入**搬运表**
+# （FPR←FPR 的 128 位 move 用 `orr dst, src, src`，即 move 的别名）。
+# 编码 oracle：`orr v0.16b,v1.16b,v2.16b` = 0x4EA21C20。
+[inst.VORR16B]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 7 }
+asm = "orr.16b {dst:fprq:out}, {src:fprq}, {src2:fprq}"
+data_width = 128
 
 # cnt: (U=0, c=1, [15:10]=22) ?? ??? .8b ?????????? Q/size
 [inst.CNT8B]
@@ -4940,6 +4973,20 @@ opcode = 0x3D
 match = { opc2 = 3 }
 asm = "ldr {dst:fprq:out}, [{base:r64}, #{imm:imm12fp16}]"
 
+# Q 无位移形态（`ldr q0,[x1]`）：Load rd=128 的 lowering 用它（基址已含偏移）。
+# 编码 oracle：0x3DC00020；STRQ 无位移：0x3D800020。
+[inst.LDRQ_ND]
+form = "LSUIND"
+opcode = 0x3D
+match = { opc2 = 3, imm12s = 0 }
+asm = "ldr {dst:fprq:out}, [{base:r64}]"
+
+[inst.STRQ_ND]
+form = "LSUIND"
+opcode = 0x3D
+match = { opc2 = 2, imm12s = 0 }
+asm = "str {src:fprq}, [{base:r64}]"
+
 [inst.LDURQ_FP]
 form = "LSUN"
 opcode = 0x3C
@@ -6332,3 +6379,28 @@ insts = [
   "SUBSREGX {out}, {0}, {1}",
   "CSELW {out2}, {g1}, 3, {g2}",
 ]
+
+# ── NEON 向量算术（v27 M6-134）：V128 的 f32x4 逐元素加/减/乘 ──
+# 只覆盖 **f32x4**（elem=1，rd=128）：f64x2 需要 `fadd.2d` 编码（尚无条目），
+# 整数 .4s 的 Vadd 目前也走这里以外（整数 VADD4S 未接 lowering，见 KD-05）。
+# 缺规则/缺宽度 ⇒ 仍是 `[cap:SPEC_LOWERING_RULE_MISSING]` fail-closed，不静默错值。
+[[lower.Vadd]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 1] }] }
+insts = ["FADD4S {out}, {0}, {1}"]
+
+[[lower.Vsub]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 1] }] }
+insts = ["FSUB4S {out}, {0}, {1}"]
+
+[[lower.Vmul]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 1] }] }
+insts = ["FMUL4S {out}, {0}, {1}"]
+
+# V128 的无位移访存（v27 M6-134）：rustc 的 SIMD 常量/临时走 `ldr q`/`str q`。
+[[lower.Load]]
+when = { eq = ["rd", 128] }
+insts = ["LDRQ_ND {out}, [{0}]"]
+
+[[lower.Store]]
+when = { eq = ["rs1_width", 128] }
+insts = ["STRQ_ND {0}, [{1}]"]

@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-10-30) — arm64 NEON：V128 f32x4 算术 + Q 存取/搬运（KD-05 部分）
+
++ 谱面新增（编码全部用 `clang --target=aarch64-none-elf` + llvm-objdump 逐字核对）：
+  `FADD4S`/`FSUB4S`/`FMUL4S`（`fadd/fsub/fmul .4s`，Q 视图 `fprq`）、`LDRQ_ND`/
+  `STRQ_ND`（`ldr q`/`str q` 无位移）、`VORR16B`（`data_width = 128`，兼作 Q 搬运）。
++ lowering：`Vadd`/`Vsub`/`Vmul` 在 `rd=128 ∧ elem=1`（f32x4）时落到上述浮点向量
+  指令；`Load`/`Store` 增加 rd/rs1_width=128 规则；其余形态仍 fail-closed。
++ 守卫 `lowering_arm64_neon_f32x4`：同时钉住 ① 谓词命中 ② 操作数是 fprq（不是 D
+  视图）③ 编码与 oracle 一致（`fadd v0.4s,v0.4s,v0.4s` = 0x4E20D400 等）。
++ KD-05 更新：f32x4 算术已接线；端到端 `core::simd` 算术还依赖 rustc 侧的
+  Simd 类型/intrinsic 降级（x86 同样缺，已记录）。
+
 ### Added (2026-10-30) — aarch64 DWARF CFI（`.debug_frame`）接线
 
 + 新增 `scan_arm64_prologue`（`forge-isa-runtime/machine/cfi.rs`）：识别 forge 的

@@ -15,12 +15,22 @@
 
 | 编号 | 症状 | 位置 | 门禁可见性 |
 | --- | --- | --- | --- |
-| KD-05 | NEON 向量（V64/V128/V256 语义）未覆盖 | `docs/plans/forge-rustc-v27-plan.md`、`docs/reference/backend-gaps.md` | 属能力缺口，IR 层 fail-closed |
+| KD-05 | NEON 向量未全覆盖（f32x4 算术已接线） | `docs/plans/forge-rustc-v27-plan.md`、`docs/reference/backend-gaps.md` | 属能力缺口，IR 层 fail-closed |
 
-## KD-05：NEON 向量未覆盖（aarch64 CFI 已接线）
+## KD-05：NEON 向量未全覆盖（f32x4 算术已接线）
 
-- 向量（V64/V128/V256 的 NEON 语义）仍未接线；IR 层遇到未支持形态会 fail-closed
-  （`[cap:VECTOR]` 等），不是静默错值。
+- **已接线（2026-10-30，M6-134）**：`V128` 的 **f32x4** 逐元素加/减/乘（`Vadd`/
+  `Vsub`/`Vmul` → `fadd.4s`/`fsub.4s`/`fmul.4s`，Q 视图 `fprq`）、Q 宽无位移
+  `ldr q`/`str q`（`Load`/`Store` rd/rs1_width=128）、以及 Q 搬运（`VORR16B`
+  `data_width=128`，作 move 别名）。编码全部用 clang oracle 逐字核对，守卫 =
+  `lowering_arm64_neon_f32x4`（降级 + 编码 + 三谓词）。
+- **仍未接线**：其它排列/元素（f64x2、i32x4 整数 add/sub/mul、i8/i16…）、
+  `Vbroadcast`（splat）、`Vextract`/`Vinsert`、向量比较/位运算的 lowering；
+  这些 IR 形态仍 fail-closed。
+- **端到端 SIMD 算术还缺一层（不在本缺陷范围）**：rustc 的 `core::simd::Simd`
+  是 `#[repr(simd)]` 聚合，`simd_add` 等 intrinsic 需要先有「Simd 类型 → IR V128
+  类型」的降级与本后端 intrinsic 映射；x86 目前同样没有（e2e 的 simd 用例只做
+  from_array + 取 lane，不做算术）。
 - **aarch64 DWARF CFI 已接线（2026-10-30，M6-133）**：`scan_arm64_prologue` 扫描
   `sub sp`/存 x30·x29/`add x29` 序言并产出 CFA 行（CFA=x29、RA@CFA-8、x29@CFA-16、
   x19..x28 依次下移）；`.debug_frame` 由 `dwarf.rs` 写入对象。守卫 =
