@@ -1111,6 +1111,31 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             u64::from_le_bytes(a) as i64
         }
 
+        /// 向量常量的**连续** 64 位半：`hi = false` → 字节 `[0, 8)`、`true` → 字节 `[8, 16)`。
+        ///
+        /// 与 `__vconst_half` 的分工：后者对 32 位元素返回 x86 `PUNPCK` 交错序
+        /// （`lane0|lane2<<32` / `lane1|lane3<<32`，SSE 拼装用）；这里是**内存序的
+        /// 连续 8 字节**，供 `{vconst_lo_f*}`/`{vconst_hi_f*}` 分片使用（A64 的
+        /// `fmov d` + `INS d[1]` 需要连续两半）。常量端序按池里记录的解释
+        /// （LE→from_le、BE→from_be，与 `__vconst_half` 同口径）。
+        fn __vconst_raw_half(
+            pool: Option<&forge_ir::ConstantPool>,
+            cid: u32,
+            hi: bool,
+        ) -> i64 {
+            let Some(p) = pool else { return 0 };
+            let Some(bytes) = p.vector(crate::prelude::ConstId::from_raw(cid)) else { return 0 };
+            let o = if hi { 8 } else { 0 };
+            if bytes.len() < o + 8 { return 0; }
+            let mut a = [0u8; 8];
+            a.copy_from_slice(&bytes[o..o + 8]);
+            let le = matches!(
+                p.vector_endian(crate::prelude::ConstId::from_raw(cid)),
+                None | Some(crate::prelude::Endianness::Little)
+            );
+            (if le { u64::from_le_bytes(a) } else { u64::from_be_bytes(a) }) as i64
+        }
+
         #(#pattern_statics)*
 
         #lowering_attrs

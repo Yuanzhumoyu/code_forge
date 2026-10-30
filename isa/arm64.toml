@@ -1255,7 +1255,7 @@ asm = "orr.8b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 form = "VEC3R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 2, vec_c = 1, vec_d = 7 }
-asm = "orr.16b {dst:fprq:out}, {src:fprq}, {src2:fprq}"
+asm = "orr.16b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
 data_width = 128
 
 # cnt: (U=0, c=1, [15:10]=22) ?? ??? .8b ?????????? Q/size
@@ -6426,13 +6426,26 @@ asm = "mul.4s {dst:fprq:out}, {src:fprq}, {src2:fprq}"
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 0, vec_c = 0, vec_d = 3, rm = 4 }
-asm = "dup.4s {dst:fprq:out}, {src:r32}"
+asm = "dup.4s {dst:fpr:out}, {src:r32}"
 
 [inst.DUP2D_X]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 1, vu = 0, vsize = 0, vec_c = 0, vec_d = 3, rm = 8 }
-asm = "dup.2d {dst:fprq:out}, {src:r64}"
+asm = "dup.2d {dst:fpr:out}, {src:r64}"
+
+# splat 的**源寄存器堆**（v27 KD-05 修正）：本谱把标量 f32/f64 映射到 **FPR** 值类
+# （`reg_class_for(f32) = FPR(32)`、f64 = FPR(64)），所以 splat 的源标量在
+# **SIMD/FP 寄存器堆**里；而 `dup …, wN`/`dup …, xN`（DUP (general)）读的是**通用**
+# 寄存器堆（W13 与 S13 是不同物理寄存器）⇒ 直接发 DUP (general) 拿到的是 0，
+# splat **静默全零**。实测端到端：`Simd::<f32,4>::splat(10.0)` 的机器码是
+# `str s14,[fp-184]; ldr s13,[fp-184]; dup v12.4s, w13` ⇒ lanes 全 0。
+#
+# 修法走**已有的两条桥**（Fconst/Fcopysign 就是这么做的），不新增指令：
+# `fmov w/x{g}, s/d{src}` 把位型搬进 GPR，再 `dup.4s/2d {out}, w/x{g}`。
+# 不用 DUP (element)（`dup vD.4s, vN.s[0]`）的原因：它的排列写在**寄存器**上，
+# 而本谱"排列写在助记符上"的模板族里，寄存器后的 `.4s` 段解析不回来
+# （asm/README「卡住的一步」那条既有缺口）——绕开它比修词法面划算。
 
 
 # NEON 扩展 lowering（v27 M6-135）：i32x4 减/乘与 splat（f32/i32 → dup.4s；
@@ -6449,12 +6462,26 @@ insts = ["IMUL4S_Q {out}, {0}, {1}"]
 when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 3] }] }
 insts = ["VADD4S {out}, {0}, {1}"]
 
+# splat 按**源操作数所在的寄存器堆**分派（v27 KD-05 修正；旧实现把 f32/f64 的
+# 源当成 GPR 送进 DUP (general)，端到端 splat 静默全零，实测见上方 inst.DUP4S_W 注释）：
+#   1 = f32 → FPR(32) → `fmov w{g}, s` + DUP (general)
+#   2 = f64 → FPR(64) → `fmov x{g}, d` + DUP (general)
+#   3 = i32 → GPR(32) → DUP4S_W（dup.4s vD, wN）
+#   4 = i64 → GPR(64) → DUP2D_X（dup.2d vD, xN）
 [[lower.Vbroadcast]]
-when = { and = [{ eq = ["rd", 128] }, { in = ["elem", [1, 3]] }] }
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 1] }] }
+insts = ["FMOV_W_FROM_S {g}, {0}", "DUP4S_W {out}, {g}"]
+
+[[lower.Vbroadcast]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 2] }] }
+insts = ["FMOV_X_FROM_D {g}, {0}", "DUP2D_X {out}, {g}"]
+
+[[lower.Vbroadcast]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 3] }] }
 insts = ["DUP4S_W {out}, {0}"]
 
 [[lower.Vbroadcast]]
-when = { and = [{ eq = ["rd", 128] }, { in = ["elem", [2, 4]] }] }
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 4] }] }
 insts = ["DUP2D_X {out}, {0}"]
 
 # f64x2 浮点向量编码（v27 M6-135）：先落谱、暂不接 lowering（elem 谓词待排查，
@@ -6584,25 +6611,25 @@ insts = ["IABS4S {out}, {0}"]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 0, vec_c = 0, vec_d = 0x0F, rm = 4 }
-asm = "umov {dst:r32:out}, {src:fprq}.s[0]"
+asm = "umov {dst:r32:out}, {src:fpr}.s[0]"
 
 [inst.UMOV4S_L1]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 0, vec_c = 0, vec_d = 0x0F, rm = 12 }
-asm = "umov {dst:r32:out}, {src:fprq}.s[1]"
+asm = "umov {dst:r32:out}, {src:fpr}.s[1]"
 
 [inst.UMOV4S_L2]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 0, vec_c = 0, vec_d = 0x0F, rm = 20 }
-asm = "umov {dst:r32:out}, {src:fprq}.s[2]"
+asm = "umov {dst:r32:out}, {src:fpr}.s[2]"
 
 [inst.UMOV4S_L3]
 form = "VEC2R"
 opcode = 0x0E
 match = { vq = 0, vu = 0, vsize = 0, vec_c = 0, vec_d = 0x0F, rm = 28 }
-asm = "umov {dst:r32:out}, {src:fprq}.s[3]"
+asm = "umov {dst:r32:out}, {src:fpr}.s[3]"
 
 
 # lane 提取 lowering：imm0 = lane、elem = 结果标量类型（3=i32）。
@@ -6621,4 +6648,283 @@ insts = ["UMOV4S_L2 {out}, {0}"]
 [[lower.Vextract]]
 when = { and = [{ eq = ["imm0", 3] }, { eq = ["elem", 3] }] }
 insts = ["UMOV4S_L3 {out}, {0}"]
+
+# ═══════ NEON 覆盖面补齐（v27 KD-05 剩余项：整数算术 / 位运算 / 位重解释 /
+# lane 提取（浮点）/ lane 插入）。**全部编码由 clang --target=aarch64-none-elf +
+# llvm-objdump 逐字核对**（oracle 表见每条上的注释；tests/arm64_clang_oracle.rs 会
+# 把同一批汇编文本再交给本机 clang 逐字节对拍）。
+# 文本面：这一批**全部用 D 视图槽 `fpr`**（`[reg.fpr64]` 的规范名就是 `V0..V31`），
+# 与"排列写在助记符上"的老族（VADD16B/VAND16B/VORR8B…）一致 ⇒ 汇编文本就是
+# clang/GAS 的 `add.16b v0, v0, v0` / `umov x0, v0.d[0]` / `mov v0.s[0], w0`
+# （M6-134..138 那批用的是 `fprq`，文本面渲染成 `q0`；两批并存，编码相同）。
+
+# ── A. 整数 add / sub / mul（V128）──
+# oracle（全 v0 操作数形态）：add.16b=0x4E208400、add.8h=0x4E608400、
+# add.2d=0x4EE08400；sub.16b=0x6E208400、sub.8h=0x6E608400、sub.2d=0x6EE08400；
+# mul.16b=0x4E209C00、mul.8h=0x4E609C00（NEON 没有 64 位 lane 的整数乘 ⇒ 无 mul.2d）。
+# add.16b/.8h（VADD16B/VADD8H）与 add.4s（VADD4S）早已在谱里，这里只补缺的。
+[inst.VADD2D]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 3, vec_c = 1, vec_d = 0x21 }
+asm = "add.2d {dst:fpr:out}, {src:fpr}, {src2:fpr}"
+
+[inst.VSUB16B]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 1, vsize = 0, vec_c = 1, vec_d = 0x21 }
+asm = "sub.16b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
+
+[inst.VSUB8H]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 1, vsize = 1, vec_c = 1, vec_d = 0x21 }
+asm = "sub.8h {dst:fpr:out}, {src:fpr}, {src2:fpr}"
+
+[inst.VSUB2D]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 1, vsize = 3, vec_c = 1, vec_d = 0x21 }
+asm = "sub.2d {dst:fpr:out}, {src:fpr}, {src2:fpr}"
+
+[inst.VMUL16B]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 0, vec_c = 1, vec_d = 0x27 }
+asm = "mul.16b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
+
+[inst.VMUL8H]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 1, vec_c = 1, vec_d = 0x27 }
+asm = "mul.8h {dst:fpr:out}, {src:fpr}, {src2:fpr}"
+
+# ── B. 向量位运算（V128）──
+# oracle：and.16b=0x4E201C00（VAND16B 已在谱里）、orr.16b=0x4EA01C00（VORR16B 已在谱里）、
+# eor.16b=0x6E201C00（本条新增）。
+[inst.VEOR16B]
+form = "VEC3R"
+opcode = 0x0E
+match = { vq = 1, vu = 1, vsize = 0, vec_c = 1, vec_d = 7 }
+asm = "eor.16b {dst:fpr:out}, {src:fpr}, {src2:fpr}"
+
+# ── D. lane 提取用的第二个视图：umov x, v.d[i]（f64x2 的 lane 0/1）──
+# oracle：umov x0,v0.d[0]=0x4E083C00、umov x0,v0.d[1]=0x4E183C00
+# （imm5 = 8/24；s 视图的 4/12/20/28 见上面的 UMOV4S_L*）。
+[inst.UMOV2D_L0]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 0, vec_c = 0, vec_d = 0x0F, rm = 8 }
+asm = "umov {dst:r64:out}, {src:fpr}.d[0]"
+
+[inst.UMOV2D_L1]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 0, vec_c = 0, vec_d = 0x0F, rm = 24 }
+asm = "umov {dst:r64:out}, {src:fpr}.d[1]"
+
+# ── E. lane 插入：INS（general）——`mov vD.s[i], wN` / `mov vD.d[i], xN` ──
+# oracle：mov v0.s[0..3], w0 = 0x4E041C00 / 0x4E0C1C00 / 0x4E141C00 / 0x4E1C1C00
+#         mov v0.d[0..1], x0 = 0x4E081C00 / 0x4E181C00
+# 与 M6-138 注释里说的"`mov s, v.s[i]` 解码 trie 冲突"**无关**：那是**读取**方向的
+# `ins`/`mov` 到标量 FPR（11 位 opcode 前缀与标量浮点族撞车）；这里写的是
+# INS (general) 的**写入**方向（vec←GPR，vq=1/vec_c=0/vec_d=7），trie 上无冲突。
+[inst.VINS4S_L0]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 0, vec_c = 0, vec_d = 7, rm = 4 }
+asm = "mov {dst:fpr:out}.s[0], {src:r32}"
+
+[inst.VINS4S_L1]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 0, vec_c = 0, vec_d = 7, rm = 12 }
+asm = "mov {dst:fpr:out}.s[1], {src:r32}"
+
+[inst.VINS4S_L2]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 0, vec_c = 0, vec_d = 7, rm = 20 }
+asm = "mov {dst:fpr:out}.s[2], {src:r32}"
+
+[inst.VINS4S_L3]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 0, vec_c = 0, vec_d = 7, rm = 28 }
+asm = "mov {dst:fpr:out}.s[3], {src:r32}"
+
+[inst.VINS2D_L0]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 0, vec_c = 0, vec_d = 7, rm = 8 }
+asm = "mov {dst:fpr:out}.d[0], {src:r64}"
+
+[inst.VINS2D_L1]
+form = "VEC2R"
+opcode = 0x0E
+match = { vq = 1, vu = 0, vsize = 0, vec_c = 0, vec_d = 7, rm = 24 }
+asm = "mov {dst:fpr:out}.d[1], {src:r64}"
+
+# ── A/B lowering（V128；elem 编号见 pattern.rs::scalar_elem_id：1=f32/2=f64/
+# 3=i32/4=i64/5=i8/6=i16）──
+# i64 的 Vmul **没有**规则（NEON 无 64 位 lane 整数乘）⇒ 保持 fail-closed。
+[[lower.Vadd]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 5] }] }
+insts = ["VADD16B {out}, {0}, {1}"]
+
+[[lower.Vadd]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 6] }] }
+insts = ["VADD8H {out}, {0}, {1}"]
+
+[[lower.Vadd]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 4] }] }
+insts = ["VADD2D {out}, {0}, {1}"]
+
+[[lower.Vsub]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 5] }] }
+insts = ["VSUB16B {out}, {0}, {1}"]
+
+[[lower.Vsub]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 6] }] }
+insts = ["VSUB8H {out}, {0}, {1}"]
+
+[[lower.Vsub]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 4] }] }
+insts = ["VSUB2D {out}, {0}, {1}"]
+
+[[lower.Vmul]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 5] }] }
+insts = ["VMUL16B {out}, {0}, {1}"]
+
+[[lower.Vmul]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 6] }] }
+insts = ["VMUL8H {out}, {0}, {1}"]
+
+# 位运算的向量形态：**比标量规则多一个谓词叶子**（rd + rs1_width 双 128），
+# 因此无论声明序都压过下面标量的 `elem = 2` 规则与无谓词的 W 兜底——
+# 否则 V128 的 Band 会落进 ANDREGW（GPR 指令、VEC 寄存器）而**静默错值**。
+[[lower.Band]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["rs1_width", 128] }] }
+insts = ["VAND16B {out}, {0}, {1}"]
+
+[[lower.Bor]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["rs1_width", 128] }] }
+insts = ["VORR16B {out}, {0}, {1}"]
+
+[[lower.Bxor]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["rs1_width", 128] }] }
+insts = ["VEOR16B {out}, {0}, {1}"]
+
+# ── C. Vbitcast（同宽位重解释）：`orr vD.16b, vN.16b, vN.16b` 即 128 位 move ──
+# （VORR16B 带 `data_width = 128`，同时是搬移表里的 Q 搬运；oracle：0x4EA11C20 = v0←v1）
+[[lower.Vbitcast]]
+when = { eq = ["rd", 128] }
+insts = ["VORR16B {out}, {0}, {0}"]
+
+# ── D. 浮点 lane 提取（f32 lane0..3 / f64 lane0..1）──
+# 两步走：`umov w/x, v.s[i]` 把**位型**搬进 GPR，再 `fmov s/d, w/x` 进标量 FPR 结果。
+# 这样绕开了 `mov s, v.s[i]`（标量 FPR 目标）与标量浮点 11 位 opcode 前缀的解码 trie 冲突；
+# 位型一路无损（NEON 里 f32/f64 lane 与 i32/i64 lane 同宽度）。
+[[lower.Vextract]]
+when = { and = [{ eq = ["imm0", 0] }, { eq = ["elem", 1] }] }
+insts = ["UMOV4S_L0 {g}, {0}", "FMOV_S_FROM_W {out}, {g}"]
+
+[[lower.Vextract]]
+when = { and = [{ eq = ["imm0", 1] }, { eq = ["elem", 1] }] }
+insts = ["UMOV4S_L1 {g}, {0}", "FMOV_S_FROM_W {out}, {g}"]
+
+[[lower.Vextract]]
+when = { and = [{ eq = ["imm0", 2] }, { eq = ["elem", 1] }] }
+insts = ["UMOV4S_L2 {g}, {0}", "FMOV_S_FROM_W {out}, {g}"]
+
+[[lower.Vextract]]
+when = { and = [{ eq = ["imm0", 3] }, { eq = ["elem", 1] }] }
+insts = ["UMOV4S_L3 {g}, {0}", "FMOV_S_FROM_W {out}, {g}"]
+
+[[lower.Vextract]]
+when = { and = [{ eq = ["imm0", 0] }, { eq = ["elem", 2] }] }
+insts = ["UMOV2D_L0 {g}, {0}", "FMOV_D_FROM_X {out}, {g}"]
+
+[[lower.Vextract]]
+when = { and = [{ eq = ["imm0", 1] }, { eq = ["elem", 2] }] }
+insts = ["UMOV2D_L1 {g}, {0}", "FMOV_D_FROM_X {out}, {g}"]
+
+# ── E. lane 插入（Vinsert，rd=128、imm0 = lane）──
+# 模板 = 先把源向量整体搬到 out（Q 搬运），再 INS 单 lane —— 其余 lane 保持不变。
+# elem 1(f32)/2(f64) 的标量操作数在 FPR 里 ⇒ 先 `fmov w/x, s/d` 取位型；
+# elem 3(i32)/4(i64) 本来就在 GPR ⇒ 直接 INS。
+[[lower.Vinsert]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 1] }, { eq = ["imm0", 0] }] }
+insts = ["VORR16B {out}, {0}, {0}", "FMOV_W_FROM_S {g}, {1}", "VINS4S_L0 {out}, {g}"]
+
+[[lower.Vinsert]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 1] }, { eq = ["imm0", 1] }] }
+insts = ["VORR16B {out}, {0}, {0}", "FMOV_W_FROM_S {g}, {1}", "VINS4S_L1 {out}, {g}"]
+
+[[lower.Vinsert]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 1] }, { eq = ["imm0", 2] }] }
+insts = ["VORR16B {out}, {0}, {0}", "FMOV_W_FROM_S {g}, {1}", "VINS4S_L2 {out}, {g}"]
+
+[[lower.Vinsert]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 1] }, { eq = ["imm0", 3] }] }
+insts = ["VORR16B {out}, {0}, {0}", "FMOV_W_FROM_S {g}, {1}", "VINS4S_L3 {out}, {g}"]
+
+[[lower.Vinsert]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 2] }, { eq = ["imm0", 0] }] }
+insts = ["VORR16B {out}, {0}, {0}", "FMOV_X_FROM_D {g}, {1}", "VINS2D_L0 {out}, {g}"]
+
+[[lower.Vinsert]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 2] }, { eq = ["imm0", 1] }] }
+insts = ["VORR16B {out}, {0}, {0}", "FMOV_X_FROM_D {g}, {1}", "VINS2D_L1 {out}, {g}"]
+
+[[lower.Vinsert]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 3] }, { eq = ["imm0", 0] }] }
+insts = ["VORR16B {out}, {0}, {0}", "VINS4S_L0 {out}, {1}"]
+
+[[lower.Vinsert]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 3] }, { eq = ["imm0", 1] }] }
+insts = ["VORR16B {out}, {0}, {0}", "VINS4S_L1 {out}, {1}"]
+
+[[lower.Vinsert]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 3] }, { eq = ["imm0", 2] }] }
+insts = ["VORR16B {out}, {0}, {0}", "VINS4S_L2 {out}, {1}"]
+
+[[lower.Vinsert]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 3] }, { eq = ["imm0", 3] }] }
+insts = ["VORR16B {out}, {0}, {0}", "VINS4S_L3 {out}, {1}"]
+
+[[lower.Vinsert]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 4] }, { eq = ["imm0", 0] }] }
+insts = ["VORR16B {out}, {0}, {0}", "VINS2D_L0 {out}, {1}"]
+
+[[lower.Vinsert]]
+when = { and = [{ eq = ["rd", 128] }, { eq = ["elem", 4] }, { eq = ["imm0", 1] }] }
+insts = ["VORR16B {out}, {0}, {0}", "VINS2D_L1 {out}, {1}"]
+
+# ── F. Vconst（V128）：把 128 位常量材料化到 Q 寄存器 ──
+# 走**同一套 MOVZ/MOVK 分片**（与 `[[lower.Iconst]]`/`[[lower.Fconst]]` 同口径），
+# 但分片来自 `{vconst_lo_f*}`/`{vconst_hi_f*}`（**内存序连续**两半，不是 x86 的
+# PUNPCK 交错序；见 DSL 占位符表里的语义注释）：
+#   ① 低 64 位 → 1×MOVZX3 + 3×MOVKX 装进 scratch GPR `{g}`，`FMOV_D_FROM_X` 送进
+#      `d{out}`（写 D 视图会把 Q 的高 64 位清零 ⇒ **必须先低后半**）；
+#   ② 高 64 位 → 同一个 `{g}` 再拼四片，`VINS2D_L1`（`mov v0.d[1], xN`）写进 lane 1。
+# 只需要 1 个 GPR scratch（`{g}`），不动 `[machine].scratch` 的三个。
+# 常量 [1.0,2.0,3.0,4.0] 的位型：lo = 0x40000000_3F800000、hi = 0x40800000_40400000
+# ⇒ 4 条 movz/movk + fmov d + 4 条 + ins；分片值与编码由
+# `a64_neon_encoding_matches_clang_oracle`（clang 逐字节）与
+# `lowering_arm64_neon_vconst`（降级+编码）双重钉住。
+[[lower.Vconst]]
+when = { eq = ["rd", 128] }
+insts = [
+  "MOVZX3 {g}, {vconst_lo_f3}",
+  "MOVKX2 {g}, {vconst_lo_f2}",
+  "MOVKX1 {g}, {vconst_lo_f1}",
+  "MOVKX {g}, {vconst_lo_f0}",
+  "FMOV_D_FROM_X {out}, {g}",
+  "MOVZX3 {g}, {vconst_hi_f3}",
+  "MOVKX2 {g}, {vconst_hi_f2}",
+  "MOVKX1 {g}, {vconst_hi_f1}",
+  "MOVKX {g}, {vconst_hi_f0}",
+  "VINS2D_L1 {out}, {g}",
+]
 

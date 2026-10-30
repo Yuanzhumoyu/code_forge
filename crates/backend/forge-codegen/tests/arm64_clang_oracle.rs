@@ -206,6 +206,200 @@ fn a64_encoding_table_matches_clang_oracle() {
     );
 }
 
+/// **NEON 编码 oracle**（v27 KD-05）：新增的 V128 NEON 指令逐条与本机 clang 对拍。
+///
+/// 表里的文本就是 **clang/GAS 语法**（`add.16b v0, v0, v0`、`umov x0, v0.d[0]`、
+/// `mov v0.s[0], w0`）——这批新指令的槽一律是 D 视图 `fpr`（`[reg.fpr64]` 的规范名
+/// 就是 `V0..V31`），所以同一行文本既喂本谱汇编器也喂 clang，比较的是**字节**：
+/// 任何一个 match/opcode 字段写错，这里立刻红。
+///
+/// 覆盖：整数加/减/乘（.16b/.8h/.2d）、位运算（and/orr/eor.16b）、Q 搬运、
+/// lane 提取（umov w/x）、lane 插入（INS general）、splat（DUP element/general）。
+#[test]
+fn a64_neon_encoding_matches_clang_oracle() {
+    use forge_codegen::arm64::assemble;
+    for tool in ["clang", "llvm-objcopy"] {
+        if !have(tool) {
+            eprintln!("SKIP arm64-neon-oracle: 缺 `{tool}`（独立 oracle 需要本机 LLVM 工具链）");
+            return;
+        }
+    }
+    // 期望字（all-zero 寄存器形态）写在每行上方注释。
+    let table: &[&str] = &[
+        // add.16b = 0x4E208400 / add.8h = 0x4E608400 / add.2d = 0x4EE08400
+        "add.16b v0, v0, v0",
+        "add.8h v0, v0, v0",
+        "add.2d v0, v0, v0",
+        // sub.16b = 0x6E208400 / sub.8h = 0x6E608400 / sub.2d = 0x6EE08400
+        "sub.16b v0, v0, v0",
+        "sub.8h v0, v0, v0",
+        "sub.2d v0, v0, v0",
+        // mul.16b = 0x4E209C00 / mul.8h = 0x4E609C00（无 64 位 lane 整数乘）
+        "mul.16b v0, v0, v0",
+        "mul.8h v0, v0, v0",
+        // and.16b = 0x4E201C00 / orr.16b = 0x4EA01C00 / eor.16b = 0x6E201C00
+        "and.16b v0, v0, v0",
+        "orr.16b v0, v0, v0",
+        "eor.16b v0, v0, v0",
+        // Q 搬运（Vbitcast / Vinsert 的整向量拷贝）= 0x4EA11C20（rd=0,rn=1,rm=1）
+        "orr v0.16b, v1.16b, v1.16b",
+        // lane 提取（umov w/x，随后由 fmov 进标量 FPR）：
+        // umov w0,v0.s[0..3] = 0x0E043C00/0x0E0C3C00/0x0E143C00/0x0E1C3C00
+        "umov w0, v0.s[0]",
+        "umov w0, v0.s[1]",
+        "umov w0, v0.s[2]",
+        "umov w0, v0.s[3]",
+        // umov x0,v0.d[0..1] = 0x4E083C00/0x4E183C00
+        "umov x0, v0.d[0]",
+        "umov x0, v0.d[1]",
+        // 标量 FPR ↔ GPR（M6-102；这里钉 NEON 浮点 lane 路径用到的四条）：
+        // fmov s0,w0 = 0x1E270000 / fmov d0,x0 = 0x9E670000 /
+        // fmov w0,s0 = 0x1E260000 / fmov x0,d0 = 0x9E660000
+        "fmov s0, w0",
+        "fmov d0, x0",
+        "fmov w0, s0",
+        "fmov x0, d0",
+        // lane 插入（INS general）：mov v0.s[0..3],w0 =
+        // 0x4E041C00/0x4E0C1C00/0x4E141C00/0x4E1C1C00；mov v0.d[0..1],x0 =
+        // 0x4E081C00/0x4E181C00
+        "mov v0.s[0], w0",
+        "mov v0.s[1], w0",
+        "mov v0.s[2], w0",
+        "mov v0.s[3], w0",
+        "mov v0.d[0], x0",
+        "mov v0.d[1], x0",
+        // splat：DUP (general) = dup v0.4s,w0 0x4E040C00 / dup v0.2d,x0 0x4E080C00
+        // （浮点 splat 由 `fmov w/x, s/d` + DUP (general) 两步构成，两条都在本表里）
+        "dup.4s v0, w0",
+        "dup.2d v0, x0",
+    ];
+    // 先确认本谱都收（失败点归"模板/表写错"，不是对照失败）。
+    for l in table {
+        if let Err(e) = assemble(l) {
+            panic!("neon oracle 表里的 `{l}` 不被本谱汇编器接受：{e}");
+        }
+    }
+    let dir = oracle_dir();
+    let clang_bytes =
+        clang_text_bytes(&dir, "neon_encoding_table", table).expect("clang/objcopy 齐备时应有产物");
+    let ours = our_encoding(table);
+    let mut off = 0usize;
+    for l in table {
+        let n = forge_codegen::arm64::encode(&assemble(l).expect("表已校验"))
+            .expect("encode")
+            .len();
+        let a = &ours[off..off + n];
+        let b = &clang_bytes[off..off + n];
+        let word = u32::from_le_bytes([a[0], a[1], a[2], a[3]]);
+        assert_eq!(
+            a,
+            b,
+            "NEON 编码与 clang oracle 不一致：`{l}`（ours={word:#010x}）\n  ours  = {a:02x?}\n  clang = {b:02x?}\n  dir={}",
+            dir.display()
+        );
+        off += n;
+    }
+    assert_eq!(ours.len(), clang_bytes.len(), "总字节数不一致");
+}
+
+/// **Vconst 材料化的整段字节 oracle**（v27 KD-05）：把 `[[lower.Vconst]]` 生成的
+/// 那 10 条指令文本同时交给本谱汇编器与本机 clang，**逐字节**比对。
+///
+/// 10 条 = 低半 4 片 + `fmov d` + 高半 4 片 + `INS d[1]`。两组常量：
+/// ① `[1.0f32, 2.0, 3.0, 4.0]`（lo = 0x40000000_3F800000、hi = 0x40800000_40400000）；
+/// ② 四片各不相同的 0x12345678_9ABCDEF0 / 0xFEDCBA98_76543210（分片错位会在②暴露）。
+/// 期望字（x0/v0 形态）都写在各自的数组里。
+#[test]
+fn a64_neon_vconst_materialization_matches_clang_oracle() {
+    use forge_codegen::arm64::assemble;
+    for tool in ["clang", "llvm-objcopy"] {
+        if !have(tool) {
+            eprintln!("SKIP arm64-neon-oracle: 缺 `{tool}`（独立 oracle 需要本机 LLVM 工具链）");
+            return;
+        }
+    }
+    let dir = oracle_dir();
+    let groups: &[(&[&str], [u32; 10])] = &[
+        (
+            &[
+                "movz x0, #0x4000, lsl #48",
+                "movk x0, #0x0000, lsl #32",
+                "movk x0, #0x3f80, lsl #16",
+                "movk x0, #0x0000",
+                "fmov d0, x0",
+                "movz x0, #0x4080, lsl #48",
+                "movk x0, #0x0000, lsl #32",
+                "movk x0, #0x4040, lsl #16",
+                "movk x0, #0x0000",
+                "mov v0.d[1], x0",
+            ],
+            [
+                0xD2E8_0000,
+                0xF2C0_0000,
+                0xF2A7_F000,
+                0xF280_0000,
+                0x9E67_0000,
+                0xD2E8_1000,
+                0xF2C0_0000,
+                0xF2A8_0800,
+                0xF280_0000,
+                0x4E18_1C00,
+            ],
+        ),
+        (
+            &[
+                "movz x0, #0x1234, lsl #48",
+                "movk x0, #0x5678, lsl #32",
+                "movk x0, #0x9abc, lsl #16",
+                "movk x0, #0xdef0",
+                "fmov d0, x0",
+                "movz x0, #0xfedc, lsl #48",
+                "movk x0, #0xba98, lsl #32",
+                "movk x0, #0x7654, lsl #16",
+                "movk x0, #0x3210",
+                "mov v0.d[1], x0",
+            ],
+            [
+                0xD2E2_4680,
+                0xF2CA_CF00,
+                0xF2B3_5780,
+                0xF29B_DE00,
+                0x9E67_0000,
+                0xD2FF_DB80,
+                0xF2D7_5300,
+                0xF2AE_CA80,
+                0xF286_4200,
+                0x4E18_1C00,
+            ],
+        ),
+    ];
+    for (g, (table, want)) in groups.iter().enumerate() {
+        for l in *table {
+            if let Err(e) = assemble(l) {
+                panic!("vconst 材料化序列 #{g} 里的 `{l}` 不被本谱汇编器接受：{e}");
+            }
+        }
+        let tag = format!("neon_vconst_table{g}");
+        let clang_bytes =
+            clang_text_bytes(&dir, &tag, table).expect("clang/objcopy 齐备时应有产物");
+        let ours = our_encoding(table);
+        for (i, l) in table.iter().enumerate() {
+            let a = &ours[i * 4..i * 4 + 4];
+            let b = &clang_bytes[i * 4..i * 4 + 4];
+            assert_eq!(
+                a, b,
+                "vconst 材料化 #{g} 第 {i} 条与 clang oracle 不一致：`{l}`\n  ours  = {a:02x?}\n  clang = {b:02x?}"
+            );
+            assert_eq!(
+                u32::from_le_bytes([a[0], a[1], a[2], a[3]]),
+                want[i],
+                "vconst 材料化 #{g} 第 {i} 条（`{l}`）编码与文档期望字不符"
+            );
+        }
+        assert_eq!(ours.len(), clang_bytes.len(), "总字节数不一致");
+    }
+}
+
 /// **对象级 oracle**：编译一个 arm64 函数 → 写真实 ELF 对象 → LLVM 工具核对。
 #[test]
 fn a64_object_matches_compiled_bytes_and_clang_toolchain() {

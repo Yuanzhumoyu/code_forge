@@ -734,6 +734,108 @@ pub(crate) fn placeholders() -> &'static [Ph] {
                 }
             }),
         },
+        // vector 常量的 **16 位分片**（v27 KD-05：A64 的 `movz/movk` 拼 64 位值）。
+        // 语义与 `{iconst_f*}`/`{fconst_f*}` 同序（f0 = 低 16 位），但取自
+        // `__vconst_raw_half`：**内存序的连续 8 字节**（lo = 字节 [0,8)、hi = 字节 [8,16)）。
+        // 与 `{vconst_lo}`/`{vconst_hi}` 的区别：后者按 `__vconst_half` 走 x86 的
+        // `PUNPCK` 交错序（32 位元素时是 lane0|lane2<<32），那是"SSE 拼装"的语义，
+        // A64 的 `fmov d + INS d[1]` 要的是**连续**两个 64 位半。既有语义一律不改。
+        Ph {
+            name: "{vconst_lo_f0}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! { (((__vconst_raw_half(ctx.constant_pool.as_ref(), ctx.current_const_index, false) as u64) >> 0) & 0xFFFF) as i64 }
+            }),
+        },
+        Ph {
+            name: "{vconst_lo_f1}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! { (((__vconst_raw_half(ctx.constant_pool.as_ref(), ctx.current_const_index, false) as u64) >> 16) & 0xFFFF) as i64 }
+            }),
+        },
+        Ph {
+            name: "{vconst_lo_f2}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! { (((__vconst_raw_half(ctx.constant_pool.as_ref(), ctx.current_const_index, false) as u64) >> 32) & 0xFFFF) as i64 }
+            }),
+        },
+        Ph {
+            name: "{vconst_lo_f3}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! { (((__vconst_raw_half(ctx.constant_pool.as_ref(), ctx.current_const_index, false) as u64) >> 48) & 0xFFFF) as i64 }
+            }),
+        },
+        Ph {
+            name: "{vconst_hi_f0}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! { (((__vconst_raw_half(ctx.constant_pool.as_ref(), ctx.current_const_index, true) as u64) >> 0) & 0xFFFF) as i64 }
+            }),
+        },
+        Ph {
+            name: "{vconst_hi_f1}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! { (((__vconst_raw_half(ctx.constant_pool.as_ref(), ctx.current_const_index, true) as u64) >> 16) & 0xFFFF) as i64 }
+            }),
+        },
+        Ph {
+            name: "{vconst_hi_f2}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! { (((__vconst_raw_half(ctx.constant_pool.as_ref(), ctx.current_const_index, true) as u64) >> 32) & 0xFFFF) as i64 }
+            }),
+        },
+        Ph {
+            name: "{vconst_hi_f3}",
+            kind: PhKind::Imm,
+            loose: false,
+            token_kind: "imm",
+            temp: None,
+            temp_class: None,
+            xreg: "0u32",
+            ctor: Some(|_| {
+                quote! { (((__vconst_raw_half(ctx.constant_pool.as_ref(), ctx.current_const_index, true) as u64) >> 48) & 0xFFFF) as i64 }
+            }),
+        },
         // ── 条件码 ──
         Ph {
             name: "{cc}",

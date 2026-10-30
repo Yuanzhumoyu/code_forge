@@ -634,4 +634,203 @@ mod tests {
             .unwrap_or_else(|e| panic!("exec_aarch64_module: {e}"));
         assert_eq!(r & 0xFF, 45, "sum9(1..9) 应返回 45；got {r:#x}");
     }
+
+    /// **NEON f32x4 端到端真执行**（v27 KD-05）：`Vbroadcast`（splat）
+    /// + `Vinsert` 组 lane + `Vadd`/`Vsub`/`Vmul`/`Vdiv` + `Vextract`（f32 lane）。
+    ///
+    /// 为什么必须有这一档：M6-134..138 的降级守卫只钉"落到哪条指令 + 编码字节"，
+    /// 而 `Vbroadcast` 的**源寄存器堆**选错（f32 标量在 FPR 值类里，规则却发
+    /// `dup vD.4s, wN` 读 GPR）只有真跑才暴露——实测端到端 splat 全零。
+    /// 这里把 4 个 lane 折成 `l0*1000 + l1*100 + l2*10 + l3 = 11233`（低 8 位 0xE1），
+    /// 任何一个 lane/运算/提取错位都会改变这个数。
+    #[test]
+    fn qemu_aarch64_exec_neon_f32x4_splat_arith() {
+        if qemu_aarch64_path().is_none() {
+            eprintln!("SKIP: qemu-system-aarch64 未安装");
+            return;
+        }
+        use code_forge::backend::CompileSession;
+        use code_forge::backend::arm64::TargetMachine;
+        use code_forge::prelude::*;
+
+        let f32c = |b: &mut FunctionBuilder, v: f32| b.const_float(v.to_bits(), TypeId::F32);
+        let mut b = FunctionBuilder::new(
+            "neon_f32x4",
+            TypeContext::new(),
+            FunctionSignature::new(&[], &[TypeId::I32]),
+        );
+        b.create_block_here();
+        let vt = b.type_ctx().vector_ty(TypeId::F32, 4);
+        let splat = |b: &mut FunctionBuilder, v: f32| {
+            let s = b.const_float(v.to_bits(), TypeId::F32);
+            b.vbroadcast(s, vt)
+        };
+
+        // ① splat(10) 起手（**这条正是旧实现的坑**），再逐 lane 插入 [1,2,3,4]。
+        let mut v = splat(&mut b, 10.0);
+        for (i, val) in [1.0f32, 2.0, 3.0, 4.0].into_iter().enumerate() {
+            let s = f32c(&mut b, val);
+            let idx = b.constant(i as i32);
+            v = b.vinsert(v, s, idx);
+        }
+        // ② [1,2,3,4] + 10 = [11,12,13,14]
+        let v10 = splat(&mut b, 10.0);
+        let added = b.vadd(v, v10);
+        // ③ -1 → [10,11,12,13]
+        let v1 = splat(&mut b, 1.0);
+        let subbed = b.vsub(added, v1);
+        // ④ *2 → [20,22,24,26]
+        let v2 = splat(&mut b, 2.0);
+        let muled = b.vmul(subbed, v2);
+        // ⑤ /2 → [10,11,12,13]（整除，无舍入）
+        let dived = b.vdiv(muled, v2);
+
+        // ⑥ 取 4 个 lane（f32 → i32），按 1000/100/10/1 折成 11233。
+        let mut total: Option<Value> = None;
+        for (lane, weight) in [(0i32, 1000i32), (1, 100), (2, 10), (3, 1)] {
+            let idx = b.constant(lane);
+            let l = b.vextract(dived, idx);
+            let i = b.fptosi(l, TypeId::I32);
+            let w = b.constant(weight);
+            let term = b.imul(i, w);
+            total = Some(match total {
+                None => term,
+                Some(acc) => b.iadd(acc, term),
+            });
+        }
+        b.ret(&[total.expect("至少一个 lane")]);
+        let func = b.finish().expect("build");
+        let compiled = CompileSession::new(TargetMachine::new())
+            .compile(&func)
+            .expect("arm64 NEON f32x4 应能编出（splat/insert/arith/extract 均已接线）");
+        let r = exec_aarch64(&compiled, &[]).unwrap_or_else(|e| panic!("exec_aarch64: {e}"));
+        assert_eq!(
+            r & 0xFF,
+            11233u64 & 0xFF,
+            "l0*1000+l1*100+l2*10+l3 应为 11233（低 8 位 0xE1）；got {r:#x}"
+        );
+    }
+
+    /// **NEON 向量值的活区间**（v27 KD-05 第二档）：一个向量要在**多次 lane 读取/另一
+    /// 个向量活跃值**之间保持存活——这正是 rustc 端到端探针（splat+add/mul/sub/div
+    /// 之后 `-q` 再读四次 `q[i]`）翻车的那种形态：孤立 splat/add 全对、组合起来错
+    /// ⇒ 指向**向量 spill/reload 或栈槽复用**，不是 NEON 指令编码。
+    ///
+    /// 这里构造两个**同时活跃**的 f32x4（`q` 与 `-q`），先读 `-q` 的四条 lane 再读
+    /// `q` 的四条 lane，折成 `11233 - (-11233) = 22466`（低 8 位 0xC2）。
+    /// 任何一个向量被 8 字节槽截断/槽位复用到别的活值上，这个数都会变。
+    #[test]
+    fn qemu_aarch64_exec_neon_vector_live_range() {
+        if qemu_aarch64_path().is_none() {
+            eprintln!("SKIP: qemu-system-aarch64 未安装");
+            return;
+        }
+        use code_forge::backend::CompileSession;
+        use code_forge::backend::arm64::TargetMachine;
+        use code_forge::prelude::*;
+
+        let mut b = FunctionBuilder::new(
+            "neon_f32x4_live",
+            TypeContext::new(),
+            FunctionSignature::new(&[], &[TypeId::I32]),
+        );
+        b.create_block_here();
+        let vt = b.type_ctx().vector_ty(TypeId::F32, 4);
+        let splat = |b: &mut FunctionBuilder, v: f32| {
+            let s = b.const_float(v.to_bits(), TypeId::F32);
+            b.vbroadcast(s, vt)
+        };
+        // q = [10,11,12,13]（与上一条守卫同一条链，splat 起手 + 逐 lane 插入）
+        let mut v = splat(&mut b, 10.0);
+        for (i, val) in [1.0f32, 2.0, 3.0, 4.0].into_iter().enumerate() {
+            let s = b.const_float(val.to_bits(), TypeId::F32);
+            let idx = b.constant(i as i32);
+            v = b.vinsert(v, s, idx);
+        }
+        let v10 = splat(&mut b, 10.0);
+        let added = b.vadd(v, v10);
+        let v1 = splat(&mut b, 1.0);
+        let subbed = b.vsub(added, v1);
+        let v2 = splat(&mut b, 2.0);
+        let muled = b.vmul(subbed, v2);
+        let q = b.vdiv(muled, v2); // [10,11,12,13]
+        // 同时存活的第二个向量：-q（**跨 q 的 lane 读取必须保活**）
+        let neg = b.vneg(q);
+
+        // 折叠：（-q 的 1000/100/10/1 加权和）+（q 的 1000/100/10/1 加权和）
+        let fold = |b: &mut FunctionBuilder, vec: Value| {
+            let mut acc: Option<Value> = None;
+            for (lane, weight) in [(0i32, 1000i32), (1, 100), (2, 10), (3, 1)] {
+                let idx = b.constant(lane);
+                let l = b.vextract(vec, idx);
+                let i = b.fptosi(l, TypeId::I32);
+                let w = b.constant(weight);
+                let term = b.imul(i, w);
+                acc = Some(match acc {
+                    None => term,
+                    Some(a) => b.iadd(a, term),
+                });
+            }
+            acc.expect("四条 lane")
+        };
+        let neg_sum = fold(&mut b, neg); // -11233
+        let pos_sum = fold(&mut b, q); // +11233
+        let total = b.isub(pos_sum, neg_sum); // 22466
+        b.ret(&[total]);
+        let func = b.finish().expect("build");
+        let compiled = CompileSession::new(TargetMachine::new())
+            .compile(&func)
+            .expect("两个同时活跃的 f32x4 应能编出（向量 spill 要按 16 字节搬）");
+        let r = exec_aarch64(&compiled, &[]).unwrap_or_else(|e| panic!("exec_aarch64: {e}"));
+        assert_eq!(
+            r & 0xFF,
+            22466u64 & 0xFF,
+            "11233 - (-11233) 应为 22466（低 8 位 0xC2）；got {r:#x}"
+        );
+    }
+
+    /// **Vconst 材料化真执行**（v27 KD-05）：128 位常量按 `movz/movk` 8 片、`fmov d`、
+    /// `INS d[1]` 三步落进 Q 寄存器后逐 lane 取值。**必须包含高位 lane**（lane2/lane3
+    /// 来自 hi 半，也就是 `INS d[1]` 写进去的那半）——低半装错或 hi 半没写都会改变结果：
+    /// `const_vector([1,2,3,4])` → `1000*l0 + 100*l1 + 10*l2 + l3 = 1234`（低 8 位 0xD2）。
+    #[test]
+    fn qemu_aarch64_exec_neon_vconst() {
+        if qemu_aarch64_path().is_none() {
+            eprintln!("SKIP: qemu-system-aarch64 未安装");
+            return;
+        }
+        use code_forge::backend::CompileSession;
+        use code_forge::backend::arm64::TargetMachine;
+        use code_forge::prelude::*;
+
+        let mut b = FunctionBuilder::new(
+            "neon_vconst",
+            TypeContext::new(),
+            FunctionSignature::new(&[], &[TypeId::I32]),
+        );
+        b.create_block_here();
+        let v = b.const_vector(vec![1i32, 2, 3, 4]);
+        let mut total = None;
+        for (lane, weight) in [(0i32, 1000i32), (1, 100), (2, 10), (3, 1)] {
+            let idx = b.constant(lane);
+            let l = b.vextract(v, idx);
+            let w = b.constant(weight);
+            let term = b.imul(l, w);
+            total = Some(match total {
+                None => term,
+                Some(acc) => b.iadd(acc, term),
+            });
+        }
+        b.ret(&[total.expect("四条 lane")]);
+        let func = b.finish().expect("build");
+        let compiled = CompileSession::new(TargetMachine::new())
+            .compile(&func)
+            .expect("Vconst(V128) 应能编出（材料化规则已接线）");
+        let r = exec_aarch64(&compiled, &[]).unwrap_or_else(|e| panic!("exec_aarch64: {e}"));
+        assert_eq!(
+            r & 0xFF,
+            1234u64 & 0xFF,
+            "1000+200+30+4 应为 1234（低 8 位 0xD2）；got {r:#x}"
+        );
+    }
 }

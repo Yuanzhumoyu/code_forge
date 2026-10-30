@@ -445,7 +445,9 @@ fn lowering_arm64_neon_i32x4_splat() {
 
     let tc = TypeContext::new();
     let i32x4 = tc.vector_ty(forge_ir::TypeId::I32, 4);
+    let f32x4 = tc.vector_ty(forge_ir::TypeId::F32, 4);
     let f64x2 = tc.vector_ty(forge_ir::TypeId::F64, 2);
+    let i64x2 = tc.vector_ty(forge_ir::TypeId::I64, 2);
 
     let tm = forge_codegen::arm64::TargetMachine::new();
     let mut ctx = LowerCtx::default();
@@ -513,15 +515,43 @@ fn lowering_arm64_neon_i32x4_splat() {
             "f64x2 {op:?} 编码不符 oracle"
         );
     }
-    for (elem, vec_ty, want, word) in [
-        (forge_ir::TypeId::F32, i32x4, "Dup4sW", 0x4E04_0C00u32),
-        (forge_ir::TypeId::F64, f64x2, "Dup2dX", 0x4E08_0C00u32),
+    // splat 的**源寄存器堆**按值类分派（v27 KD-05 修正）：本谱把标量 f32/f64 映射到
+    // FPR 值类（`reg_class_for`），所以浮点 splat 先 `fmov w/x, s/d` 把位型搬进 GPR，
+    // 再 DUP (general)；i32/i64 本来就在 GPR ⇒ 直接 DUP (general)。
+    // 旧规则把浮点源也当 GPR 送进 `dup …, wN` ⇒ 端到端 splat 静默全零
+    // （见 isa/arm64.toml 的 inst.DUP4S_W 注释）。
+    // oracle：fmov w0,s0=0x1E260000、fmov x0,d0=0x9E660000、
+    //         dup.4s v0,w0=0x4E040C00、dup.2d v0,x0=0x4E080C00。
+    for (elem, vec_ty, src_cls, want, words) in [
+        (
+            forge_ir::TypeId::F32,
+            f32x4,
+            forge_ir::RegClass::FPR(32),
+            "FmovWFromS",
+            &[0x1E26_0000u32, 0x4E04_0C00u32][..],
+        ),
+        (
+            forge_ir::TypeId::I32,
+            i32x4,
+            forge_ir::RegClass::GPR(32),
+            "Dup4sW",
+            &[0x4E04_0C00u32][..],
+        ),
+        (
+            forge_ir::TypeId::F64,
+            f64x2,
+            forge_ir::RegClass::FPR(64),
+            "FmovXFromD",
+            &[0x9E66_0000u32, 0x4E08_0C00u32][..],
+        ),
+        (
+            forge_ir::TypeId::I64,
+            i64x2,
+            forge_ir::RegClass::GPR(64),
+            "Dup2dX",
+            &[0x4E08_0C00u32][..],
+        ),
     ] {
-        let src_cls = if elem == forge_ir::TypeId::F32 {
-            forge_ir::RegClass::GPR(32)
-        } else {
-            forge_ir::RegClass::GPR(64)
-        };
         let scalar = ctx.alloc_xreg(src_cls);
         ctx.set_value_desc(scalar, elem);
         let out = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
@@ -530,17 +560,29 @@ fn lowering_arm64_neon_i32x4_splat() {
             .lowering()
             .lower_inst(&Opcode::Vbroadcast, &[scalar], &[out], &mut ctx)
             .unwrap_or_else(|e| panic!("Vbroadcast {elem:?} 应可降级：{e:?}"));
+        assert_eq!(
+            pack.insts.len(),
+            words.len(),
+            "splat {elem:?} 应为 {} 条指令",
+            words.len()
+        );
         let got = format!("{:?}", pack.insts[0]);
         assert!(got.starts_with(want), "splat 应为 {want}，实际 {got}");
-        let mut sink = forge_codegen::CodeSink::default();
-        tm.encoder()
-            .encode(
-                &pack.insts[0],
-                &forge_codegen::AllocResult::new(),
-                &mut sink,
-            )
-            .expect("编码 splat");
-        assert_eq!(sink.bytes(), &word.to_le_bytes(), "splat 编码不符 oracle");
+        for (i, word) in words.iter().enumerate() {
+            let mut sink = forge_codegen::CodeSink::default();
+            tm.encoder()
+                .encode(
+                    &pack.insts[i],
+                    &forge_codegen::AllocResult::new(),
+                    &mut sink,
+                )
+                .expect("编码 splat");
+            assert_eq!(
+                sink.bytes(),
+                &word.to_le_bytes(),
+                "splat {elem:?} 第 {i} 条编码不符 oracle"
+            );
+        }
     }
 }
 
@@ -659,4 +701,557 @@ fn lowering_arm64_neon_vextract_i32x4() {
             "lane {lane} 编码不符 oracle"
         );
     }
+}
+
+// ─────────── NEON 覆盖面补齐（v27 KD-05：整数算术 / 位运算 / 位重解释 /
+// 浮点 lane 提取 / lane 插入）───────────
+//
+// 这些守卫都钉三件事：① 规则的 `when` 谓词命中（rd=128 + elem/imm0）；
+// ② 落到**哪条**指令（名字前缀）；③ 编码与 clang oracle 逐字一致。
+// 期望字全部是"寄存器下标全 0"形态（`AllocResult::new()` 下未分配 vreg 编 0）。
+
+/// **A. V128 整数加/减/乘**（i8x16 / i16x8 / i64x2）。
+/// oracle（全 v0 形态）：add.16b=0x4E208400、add.8h=0x4E608400、add.2d=0x4EE08400、
+/// sub.16b=0x6E208400、sub.8h=0x6E608400、sub.2d=0x6EE08400、
+/// mul.16b=0x4E209C00、mul.8h=0x4E609C00。
+/// i64x2 的 `Vmul` 没有 NEON 指令（无 64 位 lane 整数乘）⇒ 必须 fail-closed。
+#[test]
+fn lowering_arm64_neon_int_v128() {
+    use forge_codegen::prelude::{LowerCtx, Opcode};
+    use forge_ir::ir::types::TypeContext;
+
+    let tc = TypeContext::new();
+    let i8x16 = tc.vector_ty(forge_ir::TypeId::I8, 16);
+    let i16x8 = tc.vector_ty(forge_ir::TypeId::I16, 8);
+    let i64x2 = tc.vector_ty(forge_ir::TypeId::I64, 2);
+    let tm = forge_codegen::arm64::TargetMachine::new();
+    let mut ctx = LowerCtx::default();
+    ctx.type_store = Some(tc.borrow());
+
+    for (op, ty, want, word) in [
+        (Opcode::Vadd, i8x16, "Vadd16b", 0x4E20_8400u32),
+        (Opcode::Vadd, i16x8, "Vadd8h", 0x4E60_8400u32),
+        (Opcode::Vadd, i64x2, "Vadd2d", 0x4EE0_8400u32),
+        (Opcode::Vsub, i8x16, "Vsub16b", 0x6E20_8400u32),
+        (Opcode::Vsub, i16x8, "Vsub8h", 0x6E60_8400u32),
+        (Opcode::Vsub, i64x2, "Vsub2d", 0x6EE0_8400u32),
+        (Opcode::Vmul, i8x16, "Vmul16b", 0x4E20_9C00u32),
+        (Opcode::Vmul, i16x8, "Vmul8h", 0x4E60_9C00u32),
+    ] {
+        let a = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        let b = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        let out = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        for x in [a, b, out] {
+            ctx.set_value_desc(x, ty);
+        }
+        let pack = tm
+            .lowering()
+            .lower_inst(&op, &[a, b], &[out], &mut ctx)
+            .unwrap_or_else(|e| panic!("{op:?} 应可降级：{e:?}"));
+        assert_eq!(pack.insts.len(), 1, "{op:?} → 单条微指令");
+        let got = format!("{:?}", pack.insts[0]);
+        assert!(got.starts_with(want), "{op:?} 应为 {want}，实际 {got}");
+        let mut sink = forge_codegen::CodeSink::default();
+        tm.encoder()
+            .encode(
+                &pack.insts[0],
+                &forge_codegen::AllocResult::new(),
+                &mut sink,
+            )
+            .expect("编码");
+        assert_eq!(sink.bytes(), &word.to_le_bytes(), "{op:?} 编码不符 oracle");
+    }
+
+    // i64x2 的 Vmul：NEON 无 64 位 lane 整数乘 ⇒ fail-closed（不是静默错值）。
+    let a = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+    let b = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+    let out = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+    for x in [a, b, out] {
+        ctx.set_value_desc(x, i64x2);
+    }
+    assert!(
+        tm.lowering()
+            .lower_inst(&Opcode::Vmul, &[a, b], &[out], &mut ctx)
+            .is_err(),
+        "i64x2 Vmul 应 fail-closed（NEON 没有 64 位 lane 整数乘）"
+    );
+}
+
+/// **B/C. 向量位运算 + 位重解释**（V128）。
+/// oracle：and.16b=0x4E201C00、orr.16b=0x4EA01C00、eor.16b=0x6E201C00；
+/// 位重解释用 `orr vD.16b, vN.16b, vN.16b`（128 位 move 别名）⇒ 同 orr.16b 编码。
+#[test]
+fn lowering_arm64_neon_bitwise_and_bitcast() {
+    use forge_codegen::prelude::{LowerCtx, Opcode};
+    use forge_ir::ir::types::TypeContext;
+
+    let tc = TypeContext::new();
+    let i32x4 = tc.vector_ty(forge_ir::TypeId::I32, 4);
+    let f32x4 = tc.vector_ty(forge_ir::TypeId::F32, 4);
+    let tm = forge_codegen::arm64::TargetMachine::new();
+    let mut ctx = LowerCtx::default();
+    ctx.type_store = Some(tc.borrow());
+
+    for (op, want, word) in [
+        (Opcode::Band, "Vand16b", 0x4E20_1C00u32),
+        (Opcode::Bor, "Vorr16b", 0x4EA0_1C00u32),
+        (Opcode::Bxor, "Veor16b", 0x6E20_1C00u32),
+    ] {
+        let a = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        let b = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        let out = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        for x in [a, b, out] {
+            ctx.set_value_desc(x, i32x4);
+        }
+        let pack = tm
+            .lowering()
+            .lower_inst(&op, &[a, b], &[out], &mut ctx)
+            .unwrap_or_else(|e| panic!("{op:?} 应可降级：{e:?}"));
+        assert_eq!(pack.insts.len(), 1, "{op:?} → 单条微指令");
+        let got = format!("{:?}", pack.insts[0]);
+        assert!(got.starts_with(want), "{op:?} 应为 {want}，实际 {got}");
+        let mut sink = forge_codegen::CodeSink::default();
+        tm.encoder()
+            .encode(
+                &pack.insts[0],
+                &forge_codegen::AllocResult::new(),
+                &mut sink,
+            )
+            .expect("编码");
+        assert_eq!(sink.bytes(), &word.to_le_bytes(), "{op:?} 编码不符 oracle");
+    }
+
+    // f32x4 的位运算同样走 and.16b（按位语义与元素类型无关）。
+    let a = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+    let b = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+    let out = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+    for x in [a, b, out] {
+        ctx.set_value_desc(x, f32x4);
+    }
+    let pack = tm
+        .lowering()
+        .lower_inst(&Opcode::Band, &[a, b], &[out], &mut ctx)
+        .expect("f32x4 Band 应可降级");
+    assert!(format!("{:?}", pack.insts[0]).starts_with("Vand16b"));
+
+    // C. Vbitcast：`orr vD.16b, vN.16b, vN.16b`（{0} 用两次 ⇒ rn=rm）。
+    let v = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+    let out = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+    for x in [v, out] {
+        ctx.set_value_desc(x, i32x4);
+    }
+    let pack = tm
+        .lowering()
+        .lower_inst(&Opcode::Vbitcast, &[v], &[out], &mut ctx)
+        .expect("Vbitcast 应可降级");
+    assert_eq!(pack.insts.len(), 1, "Vbitcast → 单条 Q 搬运");
+    let got = format!("{:?}", pack.insts[0]);
+    assert!(
+        got.starts_with("Vorr16b"),
+        "Vbitcast 应为 Vorr16b，实际 {got}"
+    );
+    let mut sink = forge_codegen::CodeSink::default();
+    tm.encoder()
+        .encode(
+            &pack.insts[0],
+            &forge_codegen::AllocResult::new(),
+            &mut sink,
+        )
+        .expect("编码 Vbitcast");
+    assert_eq!(
+        sink.bytes(),
+        &0x4EA0_1C00u32.to_le_bytes(),
+        "Vbitcast 编码不符 oracle（orr v0.16b,v0.16b,v0.16b）"
+    );
+}
+
+/// **D. 浮点 lane 提取**：`umov w/x, v.s/d[i]` 取位型 → `fmov s/d, w/x` 进标量 FPR。
+/// oracle：umov w0,v0.s[0..3]=0x0E043C00/0x0E0C3C00/0x0E143C00/0x0E1C3C00、
+/// umov x0,v0.d[0..1]=0x4E083C00/0x4E183C00、fmov s0,w0=0x1E270000、
+/// fmov d0,x0=0x9E670000。
+#[test]
+fn lowering_arm64_neon_vextract_f32_f64() {
+    use forge_codegen::prelude::{LowerCtx, Opcode};
+    use forge_ir::ir::types::TypeContext;
+
+    let tc = TypeContext::new();
+    let f32x4 = tc.vector_ty(forge_ir::TypeId::F32, 4);
+    let f64x2 = tc.vector_ty(forge_ir::TypeId::F64, 2);
+    let tm = forge_codegen::arm64::TargetMachine::new();
+    let mut ctx = LowerCtx::default();
+    ctx.type_store = Some(tc.borrow());
+
+    // (lane, 向量类型, 结果类型, 期望两条指令前缀, umov 编码, fmov 编码)
+    for (lane, vec_ty, out_ty, umov_prefix, umov_word, fmov_word) in [
+        (
+            0u64,
+            f32x4,
+            forge_ir::TypeId::F32,
+            "Umov4sL0",
+            0x0E04_3C00u32,
+            0x1E27_0000u32,
+        ),
+        (
+            1,
+            f32x4,
+            forge_ir::TypeId::F32,
+            "Umov4sL1",
+            0x0E0C_3C00,
+            0x1E27_0000,
+        ),
+        (
+            2,
+            f32x4,
+            forge_ir::TypeId::F32,
+            "Umov4sL2",
+            0x0E14_3C00,
+            0x1E27_0000,
+        ),
+        (
+            3,
+            f32x4,
+            forge_ir::TypeId::F32,
+            "Umov4sL3",
+            0x0E1C_3C00,
+            0x1E27_0000,
+        ),
+        (
+            0,
+            f64x2,
+            forge_ir::TypeId::F64,
+            "Umov2dL0",
+            0x4E08_3C00,
+            0x9E67_0000,
+        ),
+        (
+            1,
+            f64x2,
+            forge_ir::TypeId::F64,
+            "Umov2dL1",
+            0x4E18_3C00,
+            0x9E67_0000,
+        ),
+    ] {
+        let vec = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        ctx.set_value_desc(vec, vec_ty);
+        let idx = ctx.alloc_xreg(forge_ir::RegClass::GPR(32));
+        ctx.set_value_desc(idx, forge_ir::TypeId::I32);
+        // 浮点结果在 FPR 值类里（本谱 reg_class_for(f32)=FPR(32)、f64=FPR(64)）。
+        let out_cls = if out_ty == forge_ir::TypeId::F32 {
+            forge_ir::RegClass::FPR(32)
+        } else {
+            forge_ir::RegClass::FPR(64)
+        };
+        let out = ctx.alloc_xreg(out_cls);
+        ctx.set_value_desc(out, out_ty);
+        ctx.current_immediates = smallvec::smallvec![lane];
+        let pack = tm
+            .lowering()
+            .lower_inst(&Opcode::Vextract, &[vec, idx], &[out], &mut ctx)
+            .unwrap_or_else(|e| panic!("Vextract {out_ty:?} lane {lane} 应可降级：{e:?}"));
+        assert_eq!(pack.insts.len(), 2, "{out_ty:?} lane {lane} → umov + fmov");
+        let got0 = format!("{:?}", pack.insts[0]);
+        assert!(
+            got0.starts_with(umov_prefix),
+            "{out_ty:?} lane {lane} 应为 {umov_prefix}，实际 {got0}"
+        );
+        let mut sink = forge_codegen::CodeSink::default();
+        tm.encoder()
+            .encode(
+                &pack.insts[0],
+                &forge_codegen::AllocResult::new(),
+                &mut sink,
+            )
+            .expect("编码 umov");
+        assert_eq!(
+            sink.bytes(),
+            &umov_word.to_le_bytes(),
+            "{out_ty:?} lane {lane} umov 编码不符 oracle"
+        );
+        let mut sink2 = forge_codegen::CodeSink::default();
+        tm.encoder()
+            .encode(
+                &pack.insts[1],
+                &forge_codegen::AllocResult::new(),
+                &mut sink2,
+            )
+            .expect("编码 fmov");
+        assert_eq!(
+            sink2.bytes(),
+            &fmov_word.to_le_bytes(),
+            "{out_ty:?} lane {lane} fmov 编码不符 oracle"
+        );
+    }
+}
+
+/// **E. lane 插入**（Vinsert，rd=128）：先 Q 搬运整向量到 out，再 INS 单 lane。
+/// oracle：mov v0.s[0..3],w0 = 0x4E041C00/0x4E0C1C00/0x4E141C00/0x4E1C1C00、
+/// mov v0.d[0..1],x0 = 0x4E081C00/0x4E181C00；搬运 = orr v0.16b,v0.16b,v0.16b=0x4EA01C00；
+/// 浮点源先 `fmov w0,s0`=0x1E260000 / `fmov x0,d0`=0x9E660000。
+#[test]
+fn lowering_arm64_neon_vinsert() {
+    use forge_codegen::prelude::{LowerCtx, Opcode};
+    use forge_ir::ir::types::TypeContext;
+
+    let tc = TypeContext::new();
+    let f32x4 = tc.vector_ty(forge_ir::TypeId::F32, 4);
+    let f64x2 = tc.vector_ty(forge_ir::TypeId::F64, 2);
+    let i32x4 = tc.vector_ty(forge_ir::TypeId::I32, 4);
+    let i64x2 = tc.vector_ty(forge_ir::TypeId::I64, 2);
+    let tm = forge_codegen::arm64::TargetMachine::new();
+    let mut ctx = LowerCtx::default();
+    ctx.type_store = Some(tc.borrow());
+
+    // (lane, 向量类型, 标量类型/寄存器类, 期望指令序列前缀, INS 编码)
+    for (lane, vec_ty, elem_ty, elem_cls, want, ins_word) in [
+        (
+            0u64,
+            f32x4,
+            forge_ir::TypeId::F32,
+            forge_ir::RegClass::FPR(32),
+            vec!["Vorr16b", "FmovWFromS", "Vins4sL0"],
+            0x4E04_1C00u32,
+        ),
+        (
+            1,
+            f32x4,
+            forge_ir::TypeId::F32,
+            forge_ir::RegClass::FPR(32),
+            vec!["Vorr16b", "FmovWFromS", "Vins4sL1"],
+            0x4E0C_1C00,
+        ),
+        (
+            2,
+            f32x4,
+            forge_ir::TypeId::F32,
+            forge_ir::RegClass::FPR(32),
+            vec!["Vorr16b", "FmovWFromS", "Vins4sL2"],
+            0x4E14_1C00,
+        ),
+        (
+            3,
+            f32x4,
+            forge_ir::TypeId::F32,
+            forge_ir::RegClass::FPR(32),
+            vec!["Vorr16b", "FmovWFromS", "Vins4sL3"],
+            0x4E1C_1C00,
+        ),
+        (
+            0,
+            f64x2,
+            forge_ir::TypeId::F64,
+            forge_ir::RegClass::FPR(64),
+            vec!["Vorr16b", "FmovXFromD", "Vins2dL0"],
+            0x4E08_1C00,
+        ),
+        (
+            1,
+            f64x2,
+            forge_ir::TypeId::F64,
+            forge_ir::RegClass::FPR(64),
+            vec!["Vorr16b", "FmovXFromD", "Vins2dL1"],
+            0x4E18_1C00,
+        ),
+        (
+            0,
+            i32x4,
+            forge_ir::TypeId::I32,
+            forge_ir::RegClass::GPR(32),
+            vec!["Vorr16b", "Vins4sL0"],
+            0x4E04_1C00,
+        ),
+        (
+            3,
+            i32x4,
+            forge_ir::TypeId::I32,
+            forge_ir::RegClass::GPR(32),
+            vec!["Vorr16b", "Vins4sL3"],
+            0x4E1C_1C00,
+        ),
+        (
+            0,
+            i64x2,
+            forge_ir::TypeId::I64,
+            forge_ir::RegClass::GPR(64),
+            vec!["Vorr16b", "Vins2dL0"],
+            0x4E08_1C00,
+        ),
+        (
+            1,
+            i64x2,
+            forge_ir::TypeId::I64,
+            forge_ir::RegClass::GPR(64),
+            vec!["Vorr16b", "Vins2dL1"],
+            0x4E18_1C00,
+        ),
+    ] {
+        let vec = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        ctx.set_value_desc(vec, vec_ty);
+        let elem = ctx.alloc_xreg(elem_cls);
+        ctx.set_value_desc(elem, elem_ty);
+        let idx = ctx.alloc_xreg(forge_ir::RegClass::GPR(32));
+        ctx.set_value_desc(idx, forge_ir::TypeId::I32);
+        let out = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        ctx.set_value_desc(out, vec_ty);
+        ctx.current_immediates = smallvec::smallvec![lane];
+        let pack = tm
+            .lowering()
+            .lower_inst(&Opcode::Vinsert, &[vec, elem, idx], &[out], &mut ctx)
+            .unwrap_or_else(|e| panic!("Vinsert {vec_ty:?} lane {lane} 应可降级：{e:?}"));
+        assert_eq!(
+            pack.insts.len(),
+            want.len(),
+            "{vec_ty:?} lane {lane} 指令条数"
+        );
+        for (i, w) in want.iter().enumerate() {
+            let got = format!("{:?}", pack.insts[i]);
+            assert!(
+                got.starts_with(w),
+                "{vec_ty:?} lane {lane} 第 {i} 条应为 {w}，实际 {got}"
+            );
+        }
+        // 搬运（第 0 条）与 INS（最后一条）的编码都对照 oracle。
+        let mut sink = forge_codegen::CodeSink::default();
+        tm.encoder()
+            .encode(
+                &pack.insts[0],
+                &forge_codegen::AllocResult::new(),
+                &mut sink,
+            )
+            .expect("编码搬运");
+        assert_eq!(
+            sink.bytes(),
+            &0x4EA0_1C00u32.to_le_bytes(),
+            "Vinsert 的 Q 搬运应为 orr v0.16b,v0.16b,v0.16b"
+        );
+        let last = pack.insts.len() - 1;
+        let mut sink2 = forge_codegen::CodeSink::default();
+        tm.encoder()
+            .encode(
+                &pack.insts[last],
+                &forge_codegen::AllocResult::new(),
+                &mut sink2,
+            )
+            .expect("编码 INS");
+        assert_eq!(
+            sink2.bytes(),
+            &ins_word.to_le_bytes(),
+            "{vec_ty:?} lane {lane} INS 编码不符 oracle"
+        );
+    }
+}
+
+/// **F. Vconst 材料化**（v27 KD-05）：128 位常量 → `movz/movk` 拼低 64 位 → `fmov d`
+/// → 再拼高 64 位 → `INS d[1]`。钉住三件事：
+/// ① 10 条指令的**顺序**（先低半再高半——写 D 视图会清零 Q 的高半）；
+/// ② 分片立即数取**连续** 64 位半（不是 x86 `PUNPCK` 交错序）；
+/// ③ 每条的编码字节（clang oracle，x0/v0 形态）。
+///
+/// 两个常量：第一个是 [1.0f32, 2.0, 3.0, 4.0]（lo = 0x40000000_3F800000、
+/// hi = 0x40800000_40400000）；第二个**四片各不相同**
+/// （lo = 0x12345678_9ABCDEF0 → f3=0x1234/f2=0x5678/f1=0x9ABC/f0=0xDEF0、
+/// hi = 0xFEDCBA98_76543210 → f3=0xFEDC/f2=0xBA98/f1=0x7654/f0=0x3210）——
+/// 分片错位（f2 与 f1/f3 互换）在第一个常量上会被 0 掩盖，第二个不会。
+#[test]
+fn lowering_arm64_neon_vconst() {
+    use forge_codegen::prelude::{LowerCtx, Opcode};
+    use forge_ir::ir::types::TypeContext;
+
+    let tc = TypeContext::new();
+    let f32x4 = tc.vector_ty(forge_ir::TypeId::F32, 4);
+    let tm = forge_codegen::arm64::TargetMachine::new();
+    let mut ctx = LowerCtx::default();
+    ctx.type_store = Some(tc.borrow());
+
+    // (常量字节, 期望的 10 条（前缀, 编码）)
+    let case_a: Vec<u8> = [1.0f32, 2.0, 3.0, 4.0]
+        .iter()
+        .flat_map(|v| v.to_bits().to_le_bytes())
+        .collect();
+    let case_b: Vec<u8> = vec![
+        0xF0, 0xDE, 0xBC, 0x9A, 0x78, 0x56, 0x34, 0x12, // lo = 0x12345678_9ABCDEF0
+        0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE, // hi = 0xFEDCBA98_76543210
+    ];
+    let cases: [(&[u8], [(&str, u32); 10]); 2] = [
+        (
+            case_a.as_slice(),
+            [
+                ("Movzx3", 0xD2E8_0000),
+                ("Movkx2", 0xF2C0_0000),
+                ("Movkx1", 0xF2A7_F000),
+                ("Movkx", 0xF280_0000),
+                ("FmovDFromX", 0x9E67_0000),
+                ("Movzx3", 0xD2E8_1000),
+                ("Movkx2", 0xF2C0_0000),
+                ("Movkx1", 0xF2A8_0800),
+                ("Movkx", 0xF280_0000),
+                ("Vins2dL1", 0x4E18_1C00),
+            ],
+        ),
+        (
+            case_b.as_slice(),
+            [
+                ("Movzx3", 0xD2E2_4680),
+                ("Movkx2", 0xF2CA_CF00),
+                ("Movkx1", 0xF2B3_5780),
+                ("Movkx", 0xF29B_DE00),
+                ("FmovDFromX", 0x9E67_0000),
+                ("Movzx3", 0xD2FF_DB80),
+                ("Movkx2", 0xF2D7_5300),
+                ("Movkx1", 0xF2AE_CA80),
+                ("Movkx", 0xF286_4200),
+                ("Vins2dL1", 0x4E18_1C00),
+            ],
+        ),
+    ];
+
+    for (bytes, want) in cases {
+        let mut pool = forge_ir::ConstantPool::new();
+        let cid = pool.intern_vector(bytes, forge_ir::Endianness::Little);
+        ctx.constant_pool = Some(pool);
+        ctx.current_const_index = cid.raw();
+
+        let out = ctx.alloc_xreg(forge_ir::RegClass::VEC(128));
+        ctx.set_value_desc(out, f32x4);
+        let pack = tm
+            .lowering()
+            .lower_inst(&Opcode::Vconst, &[], &[out], &mut ctx)
+            .unwrap_or_else(|e| panic!("Vconst(V128) 应可降级：{e:?}"));
+        assert_eq!(
+            pack.insts.len(),
+            10,
+            "Vconst → movz/movk×4 + fmov + ×4 + ins"
+        );
+        for (i, (prefix, word)) in want.iter().enumerate() {
+            let got = format!("{:?}", pack.insts[i]);
+            assert!(
+                got.starts_with(prefix),
+                "Vconst 第 {i} 条应为 {prefix}，实际 {got}"
+            );
+            let mut sink = forge_codegen::CodeSink::default();
+            tm.encoder()
+                .encode(
+                    &pack.insts[i],
+                    &forge_codegen::AllocResult::new(),
+                    &mut sink,
+                )
+                .expect("编码 Vconst");
+            assert_eq!(
+                sink.bytes(),
+                &word.to_le_bytes(),
+                "Vconst 第 {i} 条编码不符 oracle（{prefix}）"
+            );
+        }
+    }
+
+    // 反向守卫：只接了 V128 ⇒ V64 的 Vconst 仍 fail-closed。
+    let out64 = ctx.alloc_xreg(forge_ir::RegClass::VEC(64));
+    let f32x2 = tc.vector_ty(forge_ir::TypeId::F32, 2);
+    ctx.set_value_desc(out64, f32x2);
+    assert!(
+        tm.lowering()
+            .lower_inst(&Opcode::Vconst, &[], &[out64], &mut ctx)
+            .is_err(),
+        "V64 的 Vconst 应 fail-closed"
+    );
 }
