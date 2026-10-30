@@ -337,6 +337,42 @@ const CASES: &[Case] = &[
         phase: "P5.1",
         reason: "",
     },
+    Case {
+        name: "float_param_live_across_call",
+        // **KD-11**：f32 形参在函数内有**调用**时必须跨调用存活。x86_64/arm64 的
+        // 浮点寄存器都是 caller-saved ⇒ regalloc 必然把形参 spill；收参阶段必须把
+        // ABI 的 FPR 落点写进该形参的 spill 槽。旧生成器只对 GPR 形参做这件事
+        // （`!class.is_fp()` 条件）⇒ 浮点形参的槽**从未写入**，reload 读未初始化值
+        // ⇒ `f(1.0) = 1.0 + 9.0` 得 9.0（期望 10.0）。helper 必须 `#[inline(never)]`
+        // 才能让"调用"真的存在（否则整个函数被折叠，缺陷被掩盖）。
+        body: "let x = core::hint::black_box(1.0f32); if f(x) == 10.0 { 10 } else { 9 }",
+        expected: 10,
+        extra: "#[inline(never)]\nfn helper() -> f32 { 9.0 }\n#[inline(never)]\nfn f(x: f32) -> f32 { let y = helper(); x + y }",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 KD-11",
+        reason: "f32 形参跨调用 spill 后收参不得丢失（ABI FPR → spill 槽）",
+    },
+    Case {
+        // 同一形状的 **-O2** 档：除 KD-11 外还钉住 SCCP 不得把已有 `Fconst` 走
+        // 整数 Big 通道重写（f32 位型 0x41200000 被当整数 1092616192 ⇒ arm64 材料化
+        // 成 f64(1092616192) 的位型、取低 32 位得 0，比较变成 `== 0.0`）。实测修复前
+        // 本用例返回 9、修复后 10。
+        name: "opt_float_param_live_across_call",
+        body: "let x = core::hint::black_box(1.0f32); if f(x) == 10.0 { 10 } else { 9 }",
+        expected: 10,
+        extra: "#[inline(never)]\nfn helper() -> f32 { 9.0 }\n#[inline(never)]\nfn f(x: f32) -> f32 { let y = helper(); x + y }",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "v27 KD-11",
+        reason: "-O2 下 f32 形参跨调用 spill 收参 + f32 常量位型都必须正确",
+    },
     // ── FFI 外部符号（Phase 2）：extern "C" → UNDEF 重定位 + 系统库链接 ──
     Case {
         name: "ffi_exit_process",
@@ -1151,6 +1187,23 @@ const CASES: &[Case] = &[
         known_failure: false,
         phase: "D intrinsics",
         reason: "",
+    },
+    // v27 M6-140：同宽标量 transmute（`CastKind::Transmute`）。旧实现落 `_ => Ok(val)`
+    // ⇒ 值保持源类型，随后按目标类型取数会静默错值（aarch64 -O0 实测
+    // `f32::to_bits()` 恒 0；x86 因值在 GPR/XMM 的布局差异不一定暴露）。
+    // 用 `#[inline(never)] one()` 保证值来自运行期，避免常量折叠掩盖缺陷。
+    Case {
+        name: "float_bits_transmute",
+        body: "{ #[inline(never)] fn one() -> i32 { 1 } let x = (one() as f32) + 9.0; let u = x.to_bits(); let y = f32::from_bits(u); if u != 0x4120_0000 || y != 10.0 { 1 } else { 0 } }",
+        expected: 0,
+        extra: "",
+        entry: "mainCRTStartup",
+        expect_compile_fail: false,
+        expect_compile_err: "",
+        expect_trap: false,
+        known_failure: false,
+        phase: "D intrinsics",
+        reason: "v27 M6-140：同宽标量 transmute 按位重解释（to_bits/from_bits）",
     },
     Case {
         name: "intrinsics_volatile",

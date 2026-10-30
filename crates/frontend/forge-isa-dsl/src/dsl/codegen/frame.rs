@@ -1554,11 +1554,15 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
         //（否则分支体引用不存在的 Reg/Inst 变体）。
         _ => quote! {},
     };
-    // spilled 的寄存器参数（位置 < n）收参到 spill 槽：需要 MOV 指令
-    //（派生的 GPR ← GPR 搬运——不再按 x86 指令名
-    // `MOV_RM8_R64` 探测）+ 角色 stack_arg_store（reg→mem）。
+    // spilled 的寄存器参数（位置 < n）收参到 spill 槽。按值的类分两条：
+    // - **GPR**：需要 MOV 指令（派生的 GPR ← GPR 搬运，不再按 x86 指令名
+    //   `MOV_RM8_R64` 探测）+ 角色 stack_arg_store（reg→mem）。旧实现只覆盖这条，
+    //   FPR/向量形参一旦被 regalloc spill 就**完全不写槽** ⇒ 后续 reload 读到
+    //   未初始化值（KD-11：`fn f(x: f32) { let y = helper(); x + y }` 返回 9 而非 10）。
+    // - **FPR/向量**：不做寄存器搬运，直接用统一 spill 机制把 ABI FPR 写进槽
+    //   （按**值的类**选模板与偏移口径，与 emission 的 reload 同源）。
     let has_mov_inst = true; // 上面的 moves.has(&gpr_want) 门控已经保证有搬运指令
-    let spilled_int_receive: TokenStream = match (
+    let spilled_reg_receive: TokenStream = match (
         has_stack_arg && has_mov_inst,
         store_shape.as_ref(),
     ) {
@@ -1583,7 +1587,42 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
             {
                 continue;
             }
-            if !__pv.class().is_fp()
+            if __pv.class().is_fp()
+                && __rm.is_spilled(__pv)
+            {
+                // **浮点/向量形参被 spill**（KD-11）：GPR 分支的"ABI 寄存器 →
+                // scratch → 槽"对 FPR 不成立（mov_vn 是 GPR 搬运），所以**直接用
+                // 统一 spill 机制**把布局给的 ABI FPR 写进该形参的 spill 槽：
+                // 模板按**值/槽的类**选（x86 MOVSD_MR / arm64 STRD_ND / 向量档
+                // MOVUPS/STRQ），偏移口径也按同一个类问 `spill_offset_from_sp`
+                // ——与 emission 的 reload 完全同源。类宽即整槽宽（f32 也搬 8 字节，
+                // 与 spill 机制一致）。没有对应 FPR 模板的 ISA 会在生成物里
+                // fail-closed（`emit_spill_store` 的掩码/缺档分支），不退回 GPR 搬运。
+                //
+                // 来源寄存器（FPR 号）仍由布局给：`ArgPlace::Reg`；拿不到 ⇒ fail-closed。
+                let __src_slot = match __rm
+                    .call_layout
+                    .as_ref()
+                    .and_then(|__cl| __cl.arg(__i as u32))
+                    .and_then(|__ca| __ca.place.as_reg())
+                {
+                    Some(__r) => __r.slot,
+                    None => {
+                        return Err(crate::IrError::capability("ABI_PLAN_UNAVAILABLE",
+                            "ISA-DSL move_args: spilled 浮点/向量参数需要布局给的寄存器落点\
+                             （调用布局缺失或落点不是寄存器）"
+                                ,
+                        ));
+                    }
+                };
+                let __cls = __pv.class();
+                let __sp_base = -(__frame_size as i64) - __cs_bytes + __rm.stack_arg_bytes as i64;
+                let __slot_off = __rm.spill_slot(__pv).offset as i64;
+                let __off_fp = __sp_base + __slot_off;
+                let __off_sp = __frame_size as i64 + __off_fp;
+                let __off_final = if self.spill_offset_from_sp(__cls) { __off_sp } else { __off_fp };
+                self.emit_spill_store(__src_slot, __off_final as i32, __cls.bytes(), __cls, __sink)?;
+            } else if !__pv.class().is_fp()
                 && __rm.is_spilled(__pv)
             {
                 let __src = match __rm
@@ -1622,6 +1661,33 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
             }
         }
         _ => quote! {},
+    };
+    // **槽权威初始化**是否可用：与 `spilled_reg_receive` 同一道生成期门控
+    //（有 stack_arg_load 角色 + 有写回能力）。不可用时保持旧行为（只处理"没寄存器"
+    // 的情形），避免在没有对应模板的 ISA 上把正常收参跳过。
+    //
+    // 为什么必须在 `!has_preg` **之外**判：形参被调用点 clobber 后 spill，之后在
+    // 使用处会 `reload_from_stack` 再拿一个寄存器 ⇒ 最终分配表里 has_preg = true，
+    // 但 emission/build_spill_edits 的口径是"有槽 ⇒ 所有绑定都从槽读" ⇒ 那个寄存器
+    // 根本不被读，**槽才是权威副本**。旧实现把写槽塞在 `!has_preg` 里，漏掉
+    // "spill 后又被 reload" 的形参（KD-11 的 `f(x: f32)` 正是这种）⇒ 槽从未写入，
+    // reload 读未初始化值（1.0 + 9.0 = 9.0）。GPR 与 FPR/向量两种形参走同一条门控。
+    let spilled_receive_supported = has_stack_arg && has_mov_inst && store_shape.is_some();
+    let spilled_slot_init: TokenStream = if spilled_receive_supported {
+        quote! {
+            if __rm.is_spilled(__pv)
+                && __rm
+                    .call_layout
+                    .as_ref()
+                    .and_then(|__cl| __cl.arg(__i as u32))
+                    .is_some_and(|__ca| __ca.place.as_reg().is_some())
+            {
+                #spilled_reg_receive
+                continue;
+            }
+        }
+    } else {
+        quote! {}
     };
     let stack_arg_prologue: TokenStream = if has_stack_arg {
         quote! {
@@ -1778,12 +1844,10 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
             // 位置（sret 时首槽被隐藏指针占用）
             let __pos = __i + if __rm.sret { 1usize } else { 0usize };
             #stack_arg_receive
+            // 槽是权威副本：形参一旦有溢出槽且 ABI 落点是**寄存器**，入口必须把槽
+            // 写对（见 `spilled_slot_init` 的说明；与最终表里有没有寄存器无关）。
+            #spilled_slot_init
             if !__rm.has_preg(__pv) {
-                // spilled 的寄存器参数（位置 < n，int 类）：move_args
-                // 必须把 ABI 寄存器值写入 spill 槽（否则 mod.rs 210 写
-                // 槽读垃圾 → l1/l2.size() 值错）。与栈参数中转同构：
-                // load ABI 寄存器 → scratch → store spill 槽。
-                #spilled_int_receive
                 continue;
             }
             let __dest = match __rm.preg(__pv) {

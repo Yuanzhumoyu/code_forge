@@ -292,6 +292,34 @@ _start:
     hlt #0xf000
 "#;
 
+/// crt0（**浮点版**）：与 [`CORE_CRT0_S`] 相同，但先打开 `CPACR_EL1.FPEN`。
+///
+/// QEMU `cortex-a57` 复位时 FP/SIMD 是**关**的：第一条 f32/f64/NEON 指令会 trap 到
+/// 异常向量（裸机没有向量表 ⇒ 死循环，症状是"qemu 不退出"而不是错值）。只有真正
+/// 执行浮点/向量指令的探针需要这一版；整数探针继续用 `CORE_CRT0_S`（不改它们）。
+const CORE_CRT0_FP_S: &str = r#"
+.text
+.global _start
+_start:
+    mrs x9, cpacr_el1
+    orr x9, x9, #0x300000
+    msr cpacr_el1, x9
+    isb
+    ldr x9, =0x40080000
+    mov sp, x9
+    mov x0, #1
+    mov x1, #2
+    bl forge_entry
+    sub sp, sp, #16
+    movz x2, #0x2, lsl #16
+    movk x2, #0x26
+    str x2, [sp]
+    str x0, [sp, #8]
+    mov x1, sp
+    mov x0, #0x18
+    hlt #0xf000
+"#;
+
 /// **core 链接所需的 mem* 兜底**（v27 M6-112）：带 debug-assertions 的 core 会把
 /// `escape_ascii`/`dec2flt` 这类"只编不跑"的代码也拉进来，它们引用 `memset/memcpy/
 /// memcmp/__udivti3`（`compiler_builtins` 的 mem feature 只覆盖 aarch64 的一部分）。
@@ -1494,6 +1522,368 @@ pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
             15,
             "sort 探针 -O{level} 结果应为 15（排序后连续 0..15，首尾和；got {code}；\
              产物：{}）",
+            dir.display()
+        );
+    }
+}
+
+/// **KD-03 残余守卫**（v27）：`slice::sort_unstable` 在 **O2（LICM 全开）**下真执行后
+/// 仍然有序。历史上 LICM 外提 `Iconst` 会把 `insert_tail` 的内层
+/// `ptr::copy_nonoverlapping` 拷贝循环的计数器初值提到外层 preheader ⇒ 第二次进入内层
+/// 循环时计数器带着上一轮的值 ⇒ 少拷贝元素，排序结果错（arm64 实测 14/16 元素错；
+/// O0/O1 不跑 LICM、x86 不复现）。根因是块参数别名路径让"实参的生产指令"兼任内层
+/// 循环的初始化器；修复 = 外提规则排除"块参数实参值"（见 forge-opt licm.rs）。
+///
+/// 断言：三档都 exit 0（不匹配元素个数 0；正确排序后 v[k] == k）。
+#[test]
+fn rustc_aarch64_licm_sort_probe_runs_under_qemu() {
+    let dll = backend_dll();
+    if !dll.is_file() {
+        eprintln!("SKIP: 后端 dylib 缺失（先 `cargo build -p forge-rustc`）");
+        return;
+    }
+    let (Some(clang), Some(ldlld)) = (tool("clang"), tool("ld.lld")) else {
+        eprintln!("SKIP: 缺 clang / ld.lld");
+        return;
+    };
+    let Some(qemu) = qemu_aarch64() else {
+        eprintln!("SKIP: qemu-system-aarch64 未安装");
+        return;
+    };
+    let rustc = std::env::var_os("RUSTC").map_or_else(|| "rustc".into(), PathBuf::from);
+    let sysroot = run(Command::new(&rustc).arg("--print").arg("sysroot"));
+    assert_ok(&sysroot, "rustc --print sysroot");
+    let sysroot = PathBuf::from(String::from_utf8_lossy(&sysroot.stdout).trim());
+    let lib_dir = sysroot.join("lib/rustlib/src/rust/library");
+    let core_src = lib_dir.join("core/src/lib.rs");
+    let cb_src = lib_dir.join("compiler-builtins/compiler-builtins/src/lib.rs");
+    if !core_src.is_file() || !cb_src.is_file() {
+        eprintln!("SKIP: 缺 rust-src（{}）", lib_dir.display());
+        return;
+    }
+
+    let dir = workspace_root()
+        .join("target")
+        .join("tmp")
+        .join("arm64-core-probe")
+        .join("licm_sort");
+    std::fs::create_dir_all(&dir).expect("创建产物目录");
+    // 复用 sort 探针的 sysroot 缓存（core/compiler_builtins 各 66MB，按目录各自重建太慢；
+    // build_target_rlib 本身按"存在即复用"设计，串行（--test-threads=1）下无竞争）。
+    let sort_sys = workspace_root()
+        .join("target")
+        .join("tmp")
+        .join("arm64-core-probe")
+        .join("sort")
+        .join("sysroot");
+    std::fs::create_dir_all(&sort_sys).expect("创建 sysroot 缓存目录");
+    let core = build_target_rlib(&rustc, &sort_sys, "core", &core_src, &[]);
+    let cb = build_target_rlib(
+        &rustc,
+        &sort_sys,
+        "compiler_builtins",
+        &cb_src,
+        &[
+            "--cfg",
+            r#"feature="mem""#,
+            "--cfg",
+            r#"feature="compiler-builtins""#,
+            "--extern",
+            &format!("core={}", core.display()),
+        ],
+    );
+
+    let src_text = r#"#![no_std]
+#![no_main]
+
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! { loop {} }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forge_entry(a: i32, b: i32) -> i32 {
+    let _ = (a, b);
+    let mut v: [i32; 16] = [9, 3, 14, 1, 7, 12, 5, 2, 15, 8, 6, 11, 4, 13, 10, 0];
+    v.sort_unstable();
+    let mut bad = 0i32;
+    let mut k = 0usize;
+    while k < 16 {
+        if v[k] != k as i32 { bad += 1; }
+        k += 1;
+    }
+    bad
+}
+"#;
+    let src = dir.join("probe_licm_sort.rs");
+    let crt0_s = dir.join("crt0_licm_sort.s");
+    let crt0_o = dir.join("crt0_licm_sort.o");
+    let stubs_s = dir.join("stubs_licm_sort.s");
+    let stubs_o = dir.join("stubs_licm_sort.o");
+    std::fs::write(&src, src_text).expect("写 probe_licm_sort.rs");
+    std::fs::write(&crt0_s, CORE_CRT0_S).expect("写 crt0_licm_sort.s");
+    std::fs::write(&stubs_s, CORE_STUBS_S).expect("写 stubs_licm_sort.s");
+    for (src_s, out_o, what) in [(&crt0_s, &crt0_o, "crt0"), (&stubs_s, &stubs_o, "stubs")] {
+        let out = run(Command::new(&clang).args([
+            "--target=aarch64-unknown-none",
+            "-c",
+            src_s.to_str().unwrap(),
+            "-o",
+            out_o.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("clang 汇编 licm-sort {what}"));
+    }
+
+    // O2 = LICM 全开（回归目标）；O0/O1 作对照（O1 不跑 LICM）。
+    for level in ["0", "1", "2"] {
+        let obj = dir.join(format!("probe_licm_sort_o{level}.o"));
+        let elf = dir.join(format!("probe_licm_sort_o{level}.elf"));
+        let out = run(Command::new(&rustc).current_dir(&dir).args([
+            format!("-Zcodegen-backend={}", dll.display()).as_str(),
+            "--target",
+            "aarch64-unknown-none",
+            "--edition",
+            "2021",
+            "--crate-type",
+            "lib",
+            "-C",
+            "panic=abort",
+            "-C",
+            &format!("opt-level={level}"),
+            "-C",
+            "debug-assertions=off",
+            "-C",
+            "overflow-checks=off",
+            "--emit=obj",
+            "--extern",
+            &format!("core={}", core.display()),
+            "--extern",
+            &format!("compiler_builtins={}", cb.display()),
+            src.to_str().unwrap(),
+            "-o",
+            obj.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("forge 编 licm-sort 探针（-O{level}）"));
+        let out = run(Command::new(&ldlld).args([
+            "-m",
+            "aarch64elf",
+            "-Ttext=0x40000000",
+            "--entry=_start",
+            crt0_o.to_str().unwrap(),
+            stubs_o.to_str().unwrap(),
+            obj.to_str().unwrap(),
+            core.to_str().unwrap(),
+            cb.to_str().unwrap(),
+            "-o",
+            elf.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("ld.lld 链接 licm-sort 探针（-O{level}）"));
+        let out = run(Command::new(&qemu).args([
+            "-M",
+            "virt",
+            "-cpu",
+            "cortex-a57",
+            "-kernel",
+            elf.to_str().unwrap(),
+            "-nographic",
+            "-semihosting-config",
+            "enable=on,target=native",
+            "-monitor",
+            "none",
+            "-serial",
+            "none",
+            "-no-reboot",
+        ]));
+        let code = out.status.code().unwrap_or_else(|| {
+            panic!(
+                "qemu 异常终止（licm-sort 探针 -O{level}）：\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            )
+        });
+        assert_eq!(
+            code & 0xFF,
+            0,
+            "licm-sort 探针 -O{level} 应返回 0（排序后 v[k]==k；got {code}；产物：{}）",
+            dir.display()
+        );
+    }
+}
+
+/// **KD-11 守卫**：`f32` 形参在函数内有调用（跨调用存活）时，收参必须把 ABI FPR
+/// 落点写进该形参的 spill 槽。x86_64/aarch64 的浮点寄存器都是 caller-saved ⇒
+/// regalloc 一定 spill；旧生成器只对 GPR 形参做"ABI 寄存器 → spill 槽"（条件
+/// `!class.is_fp()`），FPR 形参的槽从未写入 ⇒ reload 读未初始化值，`1.0 + 9.0` 得
+/// **9.0**（期望 10.0）。O0/O1/O2 三档都跑（O0 也必须有 call 才会触发 spill）。
+#[test]
+fn rustc_aarch64_float_param_live_across_call_runs_under_qemu() {
+    let dll = backend_dll();
+    if !dll.is_file() {
+        eprintln!("SKIP: 后端 dylib 缺失（先 `cargo build -p forge-rustc`）");
+        return;
+    }
+    let (Some(clang), Some(ldlld)) = (tool("clang"), tool("ld.lld")) else {
+        eprintln!("SKIP: 缺 clang / ld.lld");
+        return;
+    };
+    let Some(qemu) = qemu_aarch64() else {
+        eprintln!("SKIP: qemu-system-aarch64 未安装");
+        return;
+    };
+    let rustc = std::env::var_os("RUSTC").map_or_else(|| "rustc".into(), PathBuf::from);
+    let sysroot = run(Command::new(&rustc).arg("--print").arg("sysroot"));
+    assert_ok(&sysroot, "rustc --print sysroot");
+    let sysroot = PathBuf::from(String::from_utf8_lossy(&sysroot.stdout).trim());
+    let lib_dir = sysroot.join("lib/rustlib/src/rust/library");
+    let core_src = lib_dir.join("core/src/lib.rs");
+    let cb_src = lib_dir.join("compiler-builtins/compiler-builtins/src/lib.rs");
+    if !core_src.is_file() || !cb_src.is_file() {
+        eprintln!("SKIP: 缺 rust-src（{}）", lib_dir.display());
+        return;
+    }
+
+    let dir = workspace_root()
+        .join("target")
+        .join("tmp")
+        .join("arm64-core-probe")
+        .join("param_f32");
+    std::fs::create_dir_all(&dir).expect("创建产物目录");
+    // 复用 sort 探针的 core/compiler_builtins 缓存（66MB，避免按目录重建）。
+    let sort_sys = workspace_root()
+        .join("target")
+        .join("tmp")
+        .join("arm64-core-probe")
+        .join("sort")
+        .join("sysroot");
+    std::fs::create_dir_all(&sort_sys).expect("创建 sysroot 缓存目录");
+    let core = build_target_rlib(&rustc, &sort_sys, "core", &core_src, &[]);
+    let cb = build_target_rlib(
+        &rustc,
+        &sort_sys,
+        "compiler_builtins",
+        &cb_src,
+        &[
+            "--cfg",
+            r#"feature="mem""#,
+            "--cfg",
+            r#"feature="compiler-builtins""#,
+            "--extern",
+            &format!("core={}", core.display()),
+        ],
+    );
+
+    let src_text = r#"#![no_std]
+#![no_main]
+
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! { loop {} }
+
+#[inline(never)]
+fn helper() -> f32 { 9.0 }
+
+#[inline(never)]
+fn f(x: f32) -> f32 {
+    let y = helper();
+    x + y
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forge_entry(_a: i32, _b: i32) -> i32 {
+    // 只测 KD-11（f32 形参跨调用）。**不要**写成 `a as f32`：那条路径另有 O2
+    // 误编译（KD-12，`i32 → f32` 的取值在 O2 被替换，独立缺陷），会把本守卫带偏。
+    let x = 1.0f32;
+    if f(x) == 10.0 { 10 } else { 9 }
+}
+"#;
+    let src = dir.join("probe_float_param.rs");
+    let crt0_s = dir.join("crt0_float_param.s");
+    let crt0_o = dir.join("crt0_float_param.o");
+    let stubs_s = dir.join("stubs_float_param.s");
+    let stubs_o = dir.join("stubs_float_param.o");
+    std::fs::write(&src, src_text).expect("写 probe_float_param.rs");
+    std::fs::write(&crt0_s, CORE_CRT0_FP_S).expect("写 crt0_float_param.s");
+    std::fs::write(&stubs_s, CORE_STUBS_S).expect("写 stubs_float_param.s");
+    for (src_s, out_o, what) in [(&crt0_s, &crt0_o, "crt0"), (&stubs_s, &stubs_o, "stubs")] {
+        let out = run(Command::new(&clang).args([
+            "--target=aarch64-unknown-none",
+            "-c",
+            src_s.to_str().unwrap(),
+            "-o",
+            out_o.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("clang 汇编 float-param {what}"));
+    }
+
+    for level in ["0", "1", "2"] {
+        let obj = dir.join(format!("probe_float_param_o{level}.o"));
+        let elf = dir.join(format!("probe_float_param_o{level}.elf"));
+        let out = run(Command::new(&rustc).current_dir(&dir).args([
+            format!("-Zcodegen-backend={}", dll.display()).as_str(),
+            "--target",
+            "aarch64-unknown-none",
+            "--edition",
+            "2021",
+            "--crate-type",
+            "lib",
+            "-C",
+            "panic=abort",
+            "-C",
+            &format!("opt-level={level}"),
+            "-C",
+            "debug-assertions=off",
+            "-C",
+            "overflow-checks=off",
+            "--emit=obj",
+            "--extern",
+            &format!("core={}", core.display()),
+            "--extern",
+            &format!("compiler_builtins={}", cb.display()),
+            src.to_str().unwrap(),
+            "-o",
+            obj.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("forge 编 float-param 探针（-O{level}）"));
+        let out = run(Command::new(&ldlld).args([
+            "-m",
+            "aarch64elf",
+            "-Ttext=0x40000000",
+            "--entry=_start",
+            crt0_o.to_str().unwrap(),
+            stubs_o.to_str().unwrap(),
+            obj.to_str().unwrap(),
+            core.to_str().unwrap(),
+            cb.to_str().unwrap(),
+            "-o",
+            elf.to_str().unwrap(),
+        ]));
+        assert_ok(&out, &format!("ld.lld 链接 float-param 探针（-O{level}）"));
+        let out = run(Command::new(&qemu).args([
+            "-M",
+            "virt",
+            "-cpu",
+            "cortex-a57",
+            "-kernel",
+            elf.to_str().unwrap(),
+            "-nographic",
+            "-semihosting-config",
+            "enable=on,target=native",
+            "-monitor",
+            "none",
+            "-serial",
+            "none",
+            "-no-reboot",
+        ]));
+        let code = out.status.code().unwrap_or_else(|| {
+            panic!(
+                "qemu 异常终止（float-param 探针 -O{level}）：\n{}",
+                String::from_utf8_lossy(&out.stderr)
+            )
+        });
+        assert_eq!(
+            code & 0xFF,
+            10,
+            "float-param 探针 -O{level} 应返回 10（1.0 + 9.0；got {code}；产物：{}）",
             dir.display()
         );
     }

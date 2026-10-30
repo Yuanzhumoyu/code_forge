@@ -25,11 +25,16 @@ impl OptimizationPass for LicmPass {
         "Loop-invariant code motion"
     }
     fn run_on_function(&self, func: &mut Function) -> Result<PassResult, IrError> {
-        // v27 M6-95：本 pass **在 O1+ 流水线里**（见 `PassManager::for_level_with_table`）。
-        // 历史上它曾在"循环体内有调用 + 内联计算"的形状上产出错值/AV，根因不在 LICM
-        // 的搬移规则，而在发射侧：spill 槽 0 落在 `rsp - 8`，循环内的 `call` 把返回地址
-        // 压进该槽（详见 `emission.rs` 的 sp_base 注释）。根因修掉后 `StackAddr` 外提也
-        // 回归默认；端到端守卫 = e2e `opt_loop_call_inline`（O2、真执行 30）。
+        // v27 KD-03：本 pass 在 O2 流水线里（见 `PassManager::for_level_with_table`），
+        // **对所有循环**生效（不再有"循环体含 store/call 就整段跳过"的安全子集）。
+        //
+        // 历史上它曾在"循环体内有调用 + 内联计算"的形状上产出错值/AV，先后两个根因：
+        // ① **发射侧帧记账**（v27 M6-95）：spill 槽 0 落在 `rsp - 8`，循环内的 `call`
+        //    把返回地址压进该槽 ⇒ reload 当基址用（详见 `emission.rs` 的 sp_base 注释）；
+        // ② **块参数实参外提**（v27 KD-03 残余）：块参数别名路径让"实参的生产指令"兼任
+        //    内层循环每次进入的初始化器，外提到外层 preheader 后只执行一次 ⇒ 第二次进入
+        //    时参数带着上一轮的值（arm64 `slice::sort_unstable` 实测：14/16 元素错）。
+        //    现由 [`collect_terminator_args`] 的保守规则排除（实参值一律不外提）。
         hoist_loop_invariants(func)
     }
 }
@@ -50,13 +55,6 @@ pub fn hoist_loop_invariants(func: &mut Function) -> Result<PassResult, IrError>
         //（旧行为；insert_preheader pass 正规化后可全量走 preheader）。
         .filter_map(|li| {
             let body: HashSet<Block> = li.blocks.iter().copied().collect();
-            // **只对“无内存写、无调用”的循环外提**（v27 KD-03 收口的安全子集）：
-            // 循环体一旦含 store/call，外提值就要跨调用长期存活，而 arm64 发射/
-            // 寄存器分配在该形态下实测错值（`binary_search` 返回 1 而非 2；
-            // 连“只外提 StackAddr”也不可靠）。只读计算循环保留外提收益。
-            if body_has_mem_write(func, &body) {
-                return None;
-            }
             let preheader = li.preheader?;
             let write_locs = collect_loop_writes(func, &body, &alias);
             Some((li.header, preheader, body, write_locs))
@@ -66,9 +64,18 @@ pub fn hoist_loop_invariants(func: &mut Function) -> Result<PassResult, IrError>
         return Ok(result);
     }
 
+    // v27 KD-03 残余：**块参数实参不得外提**（详见 `collect_terminator_args` 的注释）。
+    let term_args = collect_terminator_args(func);
     for (_header, target, body, write_locs) in loops {
         let outside_values = collect_values_outside(func, &body);
-        let invariants = mark_invariants(func, &body, &outside_values, &alias, &write_locs);
+        let invariants = mark_invariants(
+            func,
+            &body,
+            &outside_values,
+            &alias,
+            &write_locs,
+            &term_args,
+        );
         if invariants.is_empty() {
             continue;
         }
@@ -112,6 +119,38 @@ fn collect_loop_writes(
         }
     }
     writes
+}
+
+/// 全函数**块参数实参**的值集合（Jump 目标参数 + Branch 两侧参数）。
+///
+/// **为什么这些值不许外提（v27 KD-03 残余的真正根因）**：
+/// `forge-codegen` 的块参数有两条落地路径（`param_copies.rs`）：① 独立参数寄存器 +
+/// 每入边显式拷贝；② **别名**——把入边实参的 XReg 直接当作参数寄存器（入边含
+/// `Branch` 时只能走这条）。路径 ② 会让"实参的生产指令"同时承担**内层循环每次
+/// 进入时的初始化器**角色：它的 XReg 就是参数寄存器本身，而循环体会改写该寄存器。
+///
+/// 于是把这类指令外提到**外层** preheader 就会让"初始化"只执行一次：第二次进入
+/// 内层循环时参数仍带着上一轮迭代的值。实测形态（arm64、O2、仅外提 Iconst 即可复现）：
+/// `slice::sort_unstable` 的 `insert_tail` 内层 `ptr::copy_nonoverlapping` 拷贝循环，
+/// 计数器初值被外提 ⇒ 第二次起拷贝次数错 ⇒ 排序后数组元素和 191（正确 120），
+/// `v.sort_unstable()` 后 14/16 个元素错位。x86 上同一 IR 不复现，因为该缺陷只在
+/// 别名路径 + 长寿命寄存器分配下显形（arm64 的压力/分配让它暴露）。
+///
+/// 保守规则：**凡是作为块参数实参出现的值，一律不外提**。这不会漏掉正确性——实参
+/// 生产指令留在原块里，每入边照旧执行一次；其余不变量照常外提。
+fn collect_terminator_args(func: &Function) -> HashSet<Value> {
+    let mut args: HashSet<Value> = HashSet::new();
+    for bi in 0..func.dfg.block_count() {
+        let bid = Block::new(bi as u32);
+        if let Some((_target, vals)) = func.dfg.term_jump(bid) {
+            args.extend(vals.iter().copied());
+        }
+        if let Some((_cond, _t, tvals, _f, fvals)) = func.dfg.term_branch(bid) {
+            args.extend(tvals.iter().copied());
+            args.extend(fvals.iter().copied());
+        }
+    }
+    args
 }
 
 /// 循环体内是否有**任何**内存写或调用（不依赖别名分析的完备性）。
@@ -166,6 +205,8 @@ fn mark_invariants(
     alias: &AliasAnalysis,
     // 保留形参：万一将来需要精确别名判定（当前保守规则不看它，见下）。
     _write_locs: &[MemoryLocation],
+    // 块参数实参（见 `collect_terminator_args`）：这些值**不许外提**。
+    term_args: &HashSet<Value>,
 ) -> HashSet<(Block, Inst)> {
     let mut inv_values: HashSet<Value> = HashSet::new();
     let mut inv_insts: HashSet<(Block, Inst)> = HashSet::new();
@@ -180,6 +221,7 @@ fn mark_invariants(
             let inst = &func.dfg.inst_data(inst_id);
             if matches!(inst.opcode, Opcode::Iconst | Opcode::Fconst)
                 && let Some(v) = inst.results.first().copied()
+                && !term_args.contains(&v)
             {
                 inv_values.insert(v);
                 inv_insts.insert((bid, inst_id));
@@ -243,6 +285,7 @@ fn mark_invariants(
                     .iter()
                     .all(|v| outside.contains(v) || inv_values.contains(v))
                     && let Some(v) = inst.results.first().copied()
+                    && !term_args.contains(&v)
                 {
                     inv_values.insert(v);
                     inv_insts.insert((bid, inst_id));
@@ -522,6 +565,60 @@ mod tests {
         );
     }
 
+    /// **跨调用外提正向守卫**（v27 KD-03 残余修复后）：循环体含 `call` 时，
+    /// 循环不变常量（且不是块参数实参）照样外提——断言 opcode 级"循环体里没有
+    /// Iconst/外提值在 header 或 preheader"。
+    #[test]
+    fn licm_hoists_invariant_across_call() {
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
+        let preheader = b.create_block();
+        b.switch_to_block(preheader);
+        let zero = b.constant(0i32);
+        let (header, params) = b.create_block_with_params(&[(TypeId::I32, "i")]);
+        b.switch_to_block(preheader);
+        b.jump(header, &[zero]);
+        b.switch_to_block(header);
+        let i = params[0];
+        let n = b.constant(10i32);
+        let cond = b.icmp(IntCC::Slt, i, n);
+        let body_blk = b.create_block();
+        let exit = b.create_block();
+        b.switch_to_block(header);
+        b.branch(cond, body_blk, &[], exit, &[]);
+        b.switch_to_block(body_blk);
+        // 调用（无返回值，仅制造"跨调用"形状）。
+        b.call(FuncRef::new(0), &[], &[]);
+        // 调用之后才用到的不变量常量：修复前"含 call 整段不外提"，现在应外提。
+        let k = b.constant(7i32);
+        let one = b.constant(1i32);
+        let _used_after_call = b.iadd(k, i);
+        let next = b.iadd(i, one);
+        b.jump(header, &[next]);
+        b.switch_to_block(exit);
+        b.ret(&[]);
+        let mut func = b.finish().expect("build");
+
+        let pass = LicmPass::new();
+        let r = pass.run_on_function(&mut func).unwrap();
+        assert!(r.changed, "含 call 的循环里不变量应被外提");
+
+        // 循环体里不应再有 Iconst（k/one 都应外提）；call 必须留在循环体。
+        let mut body_consts = 0usize;
+        let mut body_calls = 0usize;
+        for &inst_id in &func.dfg.block(body_blk).inst_order {
+            let op = func.dfg.inst_data(inst_id).opcode;
+            if matches!(op, Opcode::Iconst) {
+                body_consts += 1;
+            }
+            if matches!(op, Opcode::Call) {
+                body_calls += 1;
+            }
+        }
+        assert_eq!(body_consts, 0, "跨调用的不变常量应外提到循环外");
+        assert_eq!(body_calls, 1, "call 是副作用，必须留在循环体");
+    }
+
     /// P1-5 正向：循环体 load 栈槽（地址在外、循环内无 may-alias 写）→ 外提到
     /// preheader；循环体不再含 load。
     #[test]
@@ -685,11 +782,13 @@ mod tests {
         );
     }
 
-    /// **KD-03 安全子集**：循环体含 `store`/`call` 时**整段不外提**（包括 StackAddr）。
-    /// 实测：这类循环里外提值要跨调用长期存活，arm64 发射/寄存器分配路径曾把
-    /// `binary_search` 编译成返回 1（正确 2），连“只外提 StackAddr”也不可靠。
+    /// **写内存的循环同样外提**（v27 KD-03：`无 store/无 call` 的整段过滤已撤掉）。
+    ///
+    /// 该过滤当年是为绕开 arm64 发射/分配缺陷；缺陷的**真正根因**见
+    /// [`collect_terminator_args`]：块参数实参被外提会让内层循环的初始化只执行一次。
+    /// 去掉根因后，含 store 的循环（不含块参数实参形态）可安全外提。
     #[test]
-    fn stack_addr_not_hoisted_from_write_loop() {
+    fn stack_addr_is_hoisted_from_write_loop() {
         let sig = FunctionSignature::new(&[], &[TypeId::I32]);
         let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
         let preheader = b.create_block();
@@ -730,8 +829,55 @@ mod tests {
             }
         }
         assert_eq!(
-            body_stack_addrs, 1,
-            "写内存的循环不得外提（KD-03 安全子集）"
+            body_stack_addrs, 0,
+            "写内存的循环里 StackAddr 也应当外提（KD-03 残余已由块参数实参规则修掉）"
+        );
+    }
+
+    /// **块参数实参不许外提**（KD-03 残余的真正根因的回归守卫）。
+    ///
+    /// `forge-codegen` 的块参数别名路径会把入边实参的 XReg 当作参数寄存器；若该
+    /// 实参是循环体外提的常量，它的定义就同时是"内层循环每次进入时的初始化器"，
+    /// 外提到外层 preheader 后只执行一次 ⇒ 第二次进入时参数带着上一轮的值。
+    /// 本测试：循环体里的常量直接作为跳转实参，断言它**留在循环体**。
+    #[test]
+    fn const_used_as_block_arg_is_not_hoisted() {
+        let sig = FunctionSignature::new(&[], &[TypeId::I32]);
+        let mut b = FunctionBuilder::new("test", TypeContext::new(), sig);
+        let preheader = b.create_block();
+        b.switch_to_block(preheader);
+        let zero = b.constant(0i32);
+        let (header, params) = b.create_block_with_params(&[(TypeId::I32, "i")]);
+        b.switch_to_block(preheader);
+        b.jump(header, &[zero]);
+        b.switch_to_block(header);
+        let i = params[0];
+        let n = b.constant(10i32);
+        let cond = b.icmp(IntCC::Slt, i, n);
+        let body_blk = b.create_block();
+        let exit = b.create_block();
+        b.switch_to_block(header);
+        b.branch(cond, body_blk, &[], exit, &[]);
+        b.switch_to_block(body_blk);
+        // 该常量**只**作为 header 的块参数实参出现 → 不得外提。
+        let five = b.constant(5i32);
+        b.jump(header, &[five]);
+        b.switch_to_block(exit);
+        b.ret(&[]);
+        let mut func = b.finish().expect("build");
+
+        let pass = LicmPass::new();
+        let _ = pass.run_on_function(&mut func).unwrap();
+
+        let mut body_consts = 0usize;
+        for &inst_id in &func.dfg.block(body_blk).inst_order {
+            if matches!(func.dfg.inst_data(inst_id).opcode, Opcode::Iconst) {
+                body_consts += 1;
+            }
+        }
+        assert_eq!(
+            body_consts, 1,
+            "作为块参数实参的常量必须留在循环体（否则内部循环初始化只执行一次）"
         );
     }
 }

@@ -189,6 +189,16 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                     }
                     rustc_middle::mir::CastKind::PtrToPtr
                     | rustc_middle::mir::CastKind::FnPtrToPtr => Ok(val),
+                    // **同宽标量 transmute**（v27 M6-140）：`f32::to_bits` / `from_bits`、
+                    // `*const T as usize` 的变体等。旧实现落进 `_ => Ok(val)` ⇒ 值保持
+                    // **源类型**（例如 f32 位模式当 u32 用），后面的 `Store` 按目标宽度
+                    // 从 GPR 取数、而值其实在 FPR/别的偏移 ⇒ 静默 0（实测 aarch64
+                    // `10.0f32.to_bits()` 在 -O0 返回 0；-O2 只是被常量折叠掩盖）。
+                    // 语义上同宽标量按位重解释即可：用临时栈槽存源类型、读目标类型。
+                    // 不同宽/聚合/向量的 transmute 不在这里猜，保持原行为。
+                    rustc_middle::mir::CastKind::Transmute => {
+                        self.transmute_value(val, op_ty, *to_ty)
+                    }
                     _ => Ok(val),
                 }
             }
@@ -1088,6 +1098,48 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 Ok(self.builder.const_int(0, TypeId::I64))
             }
         }
+    }
+    /// **同宽标量按位重解释**（v27 M6-140）：`CastKind::Transmute` 与
+    /// `core::intrinsics::transmute` 两个入口共用。`core` 里的 `f32::to_bits` 是
+    /// `#[inline]` + `mem::transmute`，O0 下会被按需补编成 forge 实例；两条入口
+    /// 若只修一条，另一条仍会把 f32 值当 u32 取数（实测 x86 上 `to_bits()` 恒 0）。
+    ///
+    /// 只有“同宽、标量/指针、≤16 字节”的形态走临时栈槽；其余（聚合、向量、
+    /// 不同宽）保持调用方原有行为，交给后续验证/明确拒绝，不在这里猜。
+    pub(crate) fn transmute_value(
+        &mut self,
+        val: Value,
+        src: rustc_middle::ty::Ty<'tcx>,
+        dst: rustc_middle::ty::Ty<'tcx>,
+    ) -> Result<Value, ForgeError> {
+        let scalar = |t: rustc_middle::ty::Ty<'_>| {
+            matches!(
+                t.kind(),
+                rustc_middle::ty::TyKind::Int(_)
+                    | rustc_middle::ty::TyKind::Uint(_)
+                    | rustc_middle::ty::TyKind::Float(_)
+                    | rustc_middle::ty::TyKind::Bool
+                    | rustc_middle::ty::TyKind::Ref(..)
+                    | rustc_middle::ty::TyKind::RawPtr(..)
+                    | rustc_middle::ty::TyKind::FnPtr(..)
+            )
+        };
+        let src_sz = layout_bytes(self.tcx, src);
+        let dst_sz = layout_bytes(self.tcx, dst);
+        if src_sz != dst_sz || src_sz > 16 || !scalar(src) || !scalar(dst) {
+            return Ok(val);
+        }
+        let src_ir = map_type(src, self.tcx)?;
+        let dst_ir = map_type(dst, self.tcx)?;
+        if src_ir == dst_ir {
+            return Ok(val);
+        }
+        let Some(off) = self.temp_arg_off else {
+            return Ok(val);
+        };
+        let base = self.builder.stack_addr(off);
+        self.store_ty(val, base, src_ir);
+        Ok(self.load_ty(base, dst_ir))
     }
     pub(crate) fn load_ty(&mut self, addr: Value, ty: TypeId) -> Value {
         if ty == TypeId::BOOL {

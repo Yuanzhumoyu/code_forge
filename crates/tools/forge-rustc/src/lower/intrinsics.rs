@@ -263,11 +263,18 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                 };
                 vec![out]
             }
-            "transmute" => vec![
-                args.first()
-                    .copied()
-                    .unwrap_or_else(|| self.builder.const_int(0, TypeId::I64)),
-            ],
+            // `core::intrinsics::transmute`：**按位重解释**，不是“原值返回”。
+            // 旧实现直接 `args[0]` ⇒ 值保持源类型，随后按目标类型取数会静默错值
+            // （`core` 的 `f32::to_bits` 就是 `#[inline]` + `mem::transmute`，O0 下
+            // 被按需补编后恒返回 0）。与 `CastKind::Transmute` 共用同一实现。
+            "transmute" => match (args.first().copied(), arg_ops.first()) {
+                (Some(v), Some(op)) => {
+                    let src = op.ty(&self.body.local_decls, self.tcx);
+                    vec![self.transmute_value(v, src, fty)?]
+                }
+                (Some(v), None) => vec![v],
+                _ => vec![],
+            },
             // 冷路径标记（UB 检查）：不返回（!）
             "cold_path" => vec![],
             // UB 不变式断言（B2：core::simd 库内部调用）：编译器期检查，

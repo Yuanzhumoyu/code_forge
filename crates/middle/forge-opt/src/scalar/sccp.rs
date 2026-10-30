@@ -160,6 +160,18 @@ pub fn sccp(func: &mut Function) -> Result<PassResult, IrError> {
         let mut rewrites: Vec<(Inst, Opcode, crate::entity::ConstId)> = Vec::new();
         for inst_id in inst_ids {
             let inst = &func.dfg.inst_data(*inst_id);
+            // **已有常量指令不重写**（v27 KD-11 附带修复）：`Iconst`/`Fconst` 的
+            // 立即数已经是权威常量（Bits 通道，保留**浮点位型与值宽**）。lattice
+            // 走的是整数 `Big` 视图（初始化用 `as_big`：f32 0x41200000 ⇒ Big(1092616192)），
+            // 再用 `intern_big` 写回就把"f32 的位型"变成了"整数值 1092616192"的 Big；
+            // arm64 的 `Fconst` 降级用 `{fconst_f*}`（`as_f64_bits`，Big 走
+            // `to_f64().to_bits()`）⇒ 材料化 f64(1092616192) 的位型，`fmov s, w`
+            // 取低 32 位得 **0**。实测：`-C opt-level=2` 下
+            // `f(x) == 10.0f32` 变成"与 0.0 比较"（`1.0 + 9.0` 判不相等 ⇒ 返回 9）。
+            // 这两条指令本来就"已经是常量"，重写没有任何语义收益。
+            if matches!(inst.opcode, Opcode::Iconst | Opcode::Fconst) {
+                continue;
+            }
             if let Some(v) = inst.results.first().copied()
                 && let Some(LatticeValue::Constant(cv)) = lattice.get(v)
             {

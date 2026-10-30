@@ -404,10 +404,10 @@ impl PassManager {
                 Box::new(crate::loops::insert_preheader::InsertPreheaderPass::new()),
                 PassRunMode::Once,
             );
-            // **LICM 默认开启（O2+，v27 M6-132）**：安全子集 = 只对“无内存写、
-            // 无调用”的循环外提（`hoist_loop_invariants` 里过滤）。此前的错值
-            // 形态（`binary_search`/sort 循环内含比较器调用）不再被外提 ⇒
-            // `-O2` 的 `core::slice::sort`、`binary_search` 探针全部恢复正确。
+            // **LICM 默认开启（O2+）**：v27 KD-03 的两个根因都已修掉（发射侧帧记账
+            // M6-95、块参数实参外提），不再有"无内存写/无调用"的安全子集——对所有
+            // 循环外提。这两条历史错值形态（`slice::sort`/`binary_search` 循环内
+            // 含比较器调用）现在都有真执行守卫（arm64 sort 探针 O0/O1/O2）。
             // 需要对照时用 `FORGE_DISABLE_LICM=1` 关掉（或 `FORGE_OPT_SKIP=licm`）。
             if std::env::var_os("FORGE_DISABLE_LICM").is_none() {
                 pm.add_pass(
