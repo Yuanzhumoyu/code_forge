@@ -19,14 +19,14 @@
 - **icache**：写入后统一 `FlushInstructionCache`（Windows）/`mprotect` 后刷新；
   x86 为 no-op，ARM 必需。
 
-## 复用（页级 dual cache）
+## 块分配器（jit-allocator2 风格）
 
-`jit-allocator2` 用块分配器 + 位图管理子页；当前实现先做**页级**简化：
-
-- Windows dual mapping 释放后进入进程级缓存（上限 16 MiB），同尺寸再分配直接复用，
-  避免编译-释放循环反复 `CreateFileMapping`/`MapViewOfFile`。
-- 缓存只在锁内访问；跨线程移动用 `CachedDual` 的 `unsafe impl Send` 明确承担。
-- 超出上限或非 Windows 路径仍立即 unmap；没有子页/多池，也没有 `query`/`shrink`。
+- 64 KiB dual-mapped 块 + 64 B 子页位图；多个小函数共享同一块，`ExecutableMemory`
+  只持有块内偏移，不再每个函数一次 `VirtualAlloc`/`CreateFileMapping`。
+- 首次适配找连续空闲子页；释放只清位图，空块保留最多 4 个，超出即 unmap。
+- 分配时整个子页区间先填 `0xCC` 再写代码；`len()` 返回子页对齐后的分配长度。
+- guard page / `new_writable` 仍走整页独立映射（需要单独保护或改保护）。
+- 非 Windows 无 dual mapping，回退整页单映射；块分配器只在 Windows 启用。
 
 ## 与参考实现的对应
 
@@ -36,16 +36,19 @@
 | pager-lang `Protection`/`protect` | ⚠️ 内部 W^X 切换；未暴露通用 `Protection` API |
 | pager-lang 缓存 `page_size` | ✅ `OnceLock` 进程级缓存 |
 | jit-allocator2 dual mapping | ✅ Windows 默认优先，失败回退 |
-| jit-allocator2 block/pool、bitvector 子页 | ❌ 仅页级缓存；子页分配列为后续 |
-| jit-allocator2 fill pattern | ✅ `0xCC` 填充尾部；可配置未做 |
-| jit-allocator2 `reset`/`shrink`/`query` | ❌ 未做 |
+| jit-allocator2 block/pool、bitvector 子页 | ✅ 64 KiB 块 + 64 B 位图 + 首次适配 |
+| jit-allocator2 fill pattern | ✅ `0xCC` 填充子页；可配置未做 |
+| jit-allocator2 `reset`/`shrink`/`query` | ❌ 不做：当前无 `JitAllocator` 句柄 API |
 
 ## 测试
 
-- `cargo test -p forge-isa-runtime --lib mem`：分配/释放、真实执行、guard page、
-  dual mapping 强制、页级缓存复用。
+- `cargo test -p forge-isa-runtime --lib mem`：子页 64 B、同块共享、释放复用、
+  真实执行、guard page、dual mapping。
 - `cargo test -p forge-codegen --lib --all-features test_jit_compile_and_call_constant`：
-  JIT 路径经新分配器执行。
+  JIT 路径经块分配器执行。
 
-后续（若需要）：把页级 cache 升级为 `JitAllocator` 风格的块 + 位图分配器，
-补 `query/shrink/reset`，并评估 dual mapping 在非 Windows 的 memfd 实现。
+## 范围边界
+
+`query/shrink/reset` 需要把块分配器暴露成带句柄的 `JitAllocator` API；当前
+`ExecutableMemory` 是 RAII 句柄，未提供这些操作。它不是遗留 TODO，而是当前 API
+形态的取舍。

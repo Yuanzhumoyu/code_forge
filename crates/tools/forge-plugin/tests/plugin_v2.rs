@@ -102,6 +102,51 @@ fn non_plugin_dll_is_rejected() {
 }
 
 #[test]
+fn old_plugin_abi_version_is_rejected() {
+    // 用 rustc 直接造一个“旧 ABI”最小 cdylib：只导出编译符号 + 版本 1。
+    // 加载器应在调用任何函数前拒绝版本不匹配。
+    let dir = repo_root().join("target/tmp/old-plugin-abi");
+    std::fs::create_dir_all(&dir).expect("tmp dir");
+    let src = dir.join("old_plugin.rs");
+    std::fs::write(
+        &src,
+        r#"
+#[no_mangle]
+pub extern "C" fn __forge_plugin_abi_version() -> u32 { 1 }
+
+#[no_mangle]
+pub extern "C" fn __forge_isa_compile_raw() -> isize { -1 }
+"#,
+    )
+    .expect("write source");
+    let dll = dir.join(format!("old_plugin{}", std::env::consts::DLL_SUFFIX));
+    let out = Command::new("rustc")
+        .args([
+            "--crate-type",
+            "cdylib",
+            "--edition",
+            "2021",
+            src.to_str().unwrap(),
+            "-o",
+            dll.to_str().unwrap(),
+        ])
+        .output()
+        .expect("rustc");
+    assert!(
+        out.status.success(),
+        "rustc 造旧 ABI 夹具失败：\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let mut loader = PluginLoader::new();
+    let err = loader.load_plugin(&dll).expect_err("旧 ABI 必须被拒绝");
+    assert!(
+        err.contains("ABI 版本不匹配"),
+        "错误应明确指向 ABI 版本：{err}"
+    );
+}
+
+#[test]
 fn plugin_relocations_survive_the_c_abi() {
     let dll = fixture_dylib();
     let mut loader = PluginLoader::new();

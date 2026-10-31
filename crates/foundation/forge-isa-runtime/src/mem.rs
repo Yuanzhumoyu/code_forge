@@ -1,4 +1,4 @@
-﻿//! 可执行内存分配器 — JIT 编译核心工具（`forge-isa-runtime::mem`，v26 M2 从独立 crate
+//! 可执行内存分配器 — JIT 编译核心工具（`forge-isa-runtime::mem`，v26 M2 从独立 crate
 //! `forge-mem` 折叠进来：那个 crate 全仓只有 `jit.rs` 一处使用，`CpuFeatures` 更是零调用者）。
 //!
 //! 提供跨平台的可执行内存分配/释放功能，使编译后的机器码可以在运行时直接调用。
@@ -45,24 +45,161 @@ impl From<&str> for MemError {
     }
 }
 
+// ============================================================
+// JIT 块分配器（jit-allocator2 风格：块 + 位图 + 子页复用）
+// ============================================================
+
+/// 子页分配粒度：指令起点 16 字节对齐足够，64 字节给分支/常量留余量。
+const JIT_GRANULARITY: usize = 64;
+/// 每个块 64 KiB；多个小函数共享一个 dual-mapped 块。
+const JIT_BLOCK_SIZE: usize = 64 * 1024;
+/// 空闲块保留上限：超出则真正 unmap，避免只涨不缩。
+const JIT_MAX_EMPTY_BLOCKS: usize = 4;
+
+/// 一块 dual-mapped JIT 内存，用位图管理 `JIT_GRANULARITY` 子页。
+struct JitBlock {
+    rx: *mut u8,
+    rw: *mut u8,
+    size: usize,
+    used: std::sync::Mutex<Vec<bool>>,
+}
+
+// SAFETY：块只在锁内改位图；映射读写视图分离，跨线程共享安全。
+unsafe impl Send for JitBlock {}
+unsafe impl Sync for JitBlock {}
+
+impl JitBlock {
+    #[cfg(windows)]
+    fn new() -> Option<std::sync::Arc<Self>> {
+        let (rx, rw) = alloc_dual(JIT_BLOCK_SIZE).ok()?;
+        Some(std::sync::Arc::new(Self {
+            rx,
+            rw,
+            size: JIT_BLOCK_SIZE,
+            used: std::sync::Mutex::new(vec![false; JIT_BLOCK_SIZE / JIT_GRANULARITY]),
+        }))
+    }
+
+    #[cfg(not(windows))]
+    fn new() -> Option<std::sync::Arc<Self>> {
+        None
+    }
+
+    fn units(&self) -> usize {
+        self.size / JIT_GRANULARITY
+    }
+
+    /// 首次适配；返回字节偏移。
+    fn alloc(&self, units: usize) -> Option<usize> {
+        if units == 0 || units > self.units() {
+            return None;
+        }
+        let mut used = self.used.lock().ok()?;
+        let mut run = 0usize;
+        for i in 0..used.len() {
+            if used[i] {
+                run = 0;
+            } else {
+                run += 1;
+                if run == units {
+                    let start = i + 1 - units;
+                    for u in &mut used[start..=i] {
+                        *u = true;
+                    }
+                    return Some(start * JIT_GRANULARITY);
+                }
+            }
+        }
+        None
+    }
+
+    fn free(&self, offset: usize, size: usize) {
+        if let Ok(mut used) = self.used.lock() {
+            let start = offset / JIT_GRANULARITY;
+            let n = size.div_ceil(JIT_GRANULARITY);
+            for u in used.iter_mut().skip(start).take(n) {
+                *u = false;
+            }
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.used
+            .lock()
+            .map(|u| u.iter().all(|b| !b))
+            .unwrap_or(false)
+    }
+}
+
+impl Drop for JitBlock {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        unsafe {
+            free_dual(self.rx, self.rw);
+        }
+    }
+}
+
+fn jit_blocks() -> &'static std::sync::Mutex<Vec<std::sync::Arc<JitBlock>>> {
+    static B: std::sync::OnceLock<std::sync::Mutex<Vec<std::sync::Arc<JitBlock>>>> =
+        std::sync::OnceLock::new();
+    B.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+fn pool_alloc(size: usize) -> Option<(std::sync::Arc<JitBlock>, usize)> {
+    let units = size.div_ceil(JIT_GRANULARITY);
+    let mut blocks = jit_blocks().lock().ok()?;
+    for b in blocks.iter() {
+        if let Some(off) = b.alloc(units) {
+            return Some((b.clone(), off));
+        }
+    }
+    let b = JitBlock::new()?;
+    let off = b.alloc(units)?;
+    blocks.push(b.clone());
+    Some((b, off))
+}
+
+fn pool_release(block: &std::sync::Arc<JitBlock>) {
+    if !block.is_empty() {
+        return;
+    }
+    let Ok(mut blocks) = jit_blocks().lock() else {
+        return;
+    };
+    let empty = blocks.iter().filter(|b| b.is_empty()).count();
+    if empty > JIT_MAX_EMPTY_BLOCKS
+        && let Some(i) = blocks.iter().position(|b| std::sync::Arc::ptr_eq(b, block))
+    {
+        blocks.swap_remove(i);
+    }
+}
+
+enum Backing {
+    Pooled {
+        block: std::sync::Arc<JitBlock>,
+        offset: usize,
+    },
+    Mapping {
+        base: *mut u8,
+        total: usize,
+        dual: bool,
+    },
+}
+
 /// 一块包含已编译代码的可执行内存区域。
 ///
 /// 内存采用 W^X 模型：写入时代码在 RW 内存中，`seal()` 后切换为 RX。
 pub struct ExecutableMemory {
-    /// 可执行视图（dual mapping 时为 RX；单映射时与 `rw` 相同）。
+    /// 可执行视图。
     ptr: *mut u8,
-    /// 可写视图（dual mapping 时为 RW；单映射时与 `ptr` 相同）。
+    /// 可写视图（dual/pool 时与 `ptr` 不同；单映射时相同）。
     rw: *mut u8,
-    /// 映射基址（有 guard page 时 = 首个 guard 页；否则与 `ptr` 相同）。
-    mapping_base: *mut u8,
-    /// 映射总长（含 guard pages）。
-    mapping_size: usize,
-    /// 提供给调用者的代码区大小（不含 guard pages）。
+    /// 本次分配的大小（不含所属块的空闲部分）。
     size: usize,
     /// 内存是否已 seal（已切换为 RX，不可再写入）。
     is_sealed: bool,
-    /// Windows dual mapping：RX/RW 两个视图指向同一物理页。
-    dual: bool,
+    backing: Backing,
 }
 
 // ExecutableMemory 是线程安全的：内存标记为可执行后只读。
@@ -79,40 +216,44 @@ impl ExecutableMemory {
         }
 
         let size = code.len();
-        let page_size = page_size();
-        let alloc_size = (size + page_size - 1) & !(page_size - 1);
+        let alloc_size = size.div_ceil(JIT_GRANULARITY) * JIT_GRANULARITY;
 
-        // 1. 分配（优先 Windows dual mapping：RX/RW 两个视图，天然 W^X）
-        let (ptr, rw, mapping_base, mapping_size, dual) = alloc_code(alloc_size, false)?;
+        // 1. 优先从块分配器拿一个子页区间（Windows dual mapping）。
+        if let Some((block, offset)) = pool_alloc(alloc_size) {
+            let ptr = unsafe { block.rx.add(offset) };
+            let rw = unsafe { block.rw.add(offset) };
+            unsafe {
+                core::ptr::write_bytes(rw, 0xCC, alloc_size);
+                core::ptr::copy_nonoverlapping(code.as_ptr(), rw, size);
+            }
+            flush_icache(ptr, alloc_size);
+            return Ok(Self {
+                ptr,
+                rw,
+                size: alloc_size,
+                is_sealed: true,
+                backing: Backing::Pooled { block, offset },
+            });
+        }
 
-        // 2. 将代码拷贝到可写视图
+        // 2. 回退：整页独立映射（非 Windows 或块分配失败）。
+        let page = page_size();
+        let alloc_size = size.div_ceil(page) * page;
+        let (ptr, rw, base, total, dual) = alloc_code(alloc_size, false)?;
         unsafe {
+            core::ptr::write_bytes(rw, 0xCC, alloc_size);
             core::ptr::copy_nonoverlapping(code.as_ptr(), rw, size);
         }
-
-        // 用断点指令（0xCC）填充剩余字节（防止意外执行到填充区）
-        if alloc_size > size {
-            unsafe {
-                core::ptr::write_bytes(rw.add(size), 0xCC, alloc_size - size);
-            }
-        }
-
-        // 3. 刷新指令缓存（ARM 必需）
         flush_icache(ptr, alloc_size);
-
-        // 4. dual mapping 已是 RX；单映射才切换保护
         if !dual {
             make_executable(ptr, alloc_size)?;
         }
-
         Ok(Self {
             ptr,
             rw,
-            mapping_base,
-            mapping_size,
             size: alloc_size,
             is_sealed: true,
-            dual,
+            backing: Backing::Mapping { base, total, dual },
         })
     }
 
@@ -126,12 +267,10 @@ impl ExecutableMemory {
         let size = code.len();
         let page = page_size();
         let alloc_size = (size + page - 1) & !(page - 1);
-        let (ptr, rw, mapping_base, mapping_size, dual) = alloc_code(alloc_size, true)?;
+        let (ptr, rw, base, total, dual) = alloc_code(alloc_size, true)?;
         unsafe {
+            core::ptr::write_bytes(rw, 0xCC, alloc_size);
             core::ptr::copy_nonoverlapping(code.as_ptr(), rw, size);
-            if alloc_size > size {
-                core::ptr::write_bytes(rw.add(size), 0xCC, alloc_size - size);
-            }
         }
         flush_icache(ptr, alloc_size);
         if !dual {
@@ -140,11 +279,9 @@ impl ExecutableMemory {
         Ok(Self {
             ptr,
             rw,
-            mapping_base,
-            mapping_size,
             size: alloc_size,
             is_sealed: true,
-            dual,
+            backing: Backing::Mapping { base, total, dual },
         })
     }
 
@@ -175,11 +312,13 @@ impl ExecutableMemory {
         Ok(Self {
             ptr,
             rw: ptr,
-            mapping_base: ptr,
-            mapping_size: alloc_size,
             size: alloc_size,
             is_sealed: false,
-            dual: false,
+            backing: Backing::Mapping {
+                base: ptr,
+                total: alloc_size,
+                dual: false,
+            },
         })
     }
 
@@ -191,7 +330,8 @@ impl ExecutableMemory {
             return Ok(());
         }
         flush_icache(self.ptr, self.size);
-        if !self.dual {
+        let need_protect = matches!(self.backing, Backing::Mapping { dual: false, .. });
+        if need_protect {
             make_executable(self.ptr, self.size)?;
         }
         self.is_sealed = true;
@@ -208,7 +348,8 @@ impl ExecutableMemory {
         F: FnOnce(&mut [u8]),
     {
         if self.is_sealed {
-            if !self.dual {
+            let need_protect = matches!(self.backing, Backing::Mapping { dual: false, .. });
+            if need_protect {
                 make_writable(self.ptr, self.size)?;
             }
             self.is_sealed = false;
@@ -278,37 +419,41 @@ impl ExecutableMemory {
 
 impl Drop for ExecutableMemory {
     fn drop(&mut self) {
-        if !self.mapping_base.is_null() {
-            #[cfg(windows)]
-            unsafe {
-                if self.dual {
-                    if !put_cached_dual(self.ptr, self.rw, self.size) {
-                        free_dual(self.ptr, self.rw);
+        match &self.backing {
+            Backing::Pooled { block, offset } => {
+                block.free(*offset, self.size);
+                pool_release(block);
+            }
+            Backing::Mapping { base, total, dual } => {
+                if !base.is_null() {
+                    unsafe {
+                        if *dual {
+                            free_dual(self.ptr, self.rw);
+                        } else {
+                            free_executable(*base, *total);
+                        }
                     }
-                } else {
-                    free_executable(self.mapping_base, self.mapping_size);
                 }
             }
-            #[cfg(not(windows))]
-            unsafe {
-                free_executable(self.mapping_base, self.mapping_size);
-            }
-            self.ptr = core::ptr::null_mut();
-            self.rw = core::ptr::null_mut();
-            self.mapping_base = core::ptr::null_mut();
-            self.mapping_size = 0;
-            self.size = 0;
         }
+        self.ptr = core::ptr::null_mut();
+        self.rw = core::ptr::null_mut();
+        self.size = 0;
     }
 }
 
 impl core::fmt::Debug for ExecutableMemory {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let (kind, dual) = match &self.backing {
+            Backing::Pooled { .. } => ("pooled", true),
+            Backing::Mapping { dual, .. } => ("mapping", *dual),
+        };
         f.debug_struct("ExecutableMemory")
             .field("ptr", &self.ptr)
             .field("rw", &self.rw)
             .field("size", &self.size)
-            .field("dual", &self.dual)
+            .field("kind", &kind)
+            .field("dual", &dual)
             .field("is_sealed", &self.is_sealed)
             .finish()
     }
@@ -367,11 +512,6 @@ fn alloc_code(
 
 #[cfg(windows)]
 fn alloc_dual(size: usize) -> Result<(*mut u8, *mut u8), MemError> {
-    // 先复用已释放的 dual 映射（jit-allocator2 的块复用思路的页级简化版）：
-    // 避免编译-释放循环里反复 CreateFileMapping/MapViewOfFile。
-    if let Some(pair) = take_cached_dual(size) {
-        return Ok(pair);
-    }
     type Handle = *mut core::ffi::c_void;
     #[allow(unsafe_code)]
     unsafe extern "system" {
@@ -450,54 +590,6 @@ unsafe fn free_dual(rx: *mut u8, rw: *mut u8) {
 }
 
 // 页级 dual-mapping 缓存：最多保留 16 MiB，超出即真正 unmap。
-#[cfg(windows)]
-const DUAL_CACHE_MAX: usize = 16 * 1024 * 1024;
-
-#[cfg(windows)]
-#[derive(Clone, Copy)]
-struct CachedDual {
-    rx: *mut u8,
-    rw: *mut u8,
-    size: usize,
-}
-// SAFETY：缓存本身只在锁内访问；指针指向已映射的只读代码页，跨线程移动安全。
-#[cfg(windows)]
-unsafe impl Send for CachedDual {}
-
-#[cfg(windows)]
-fn dual_cache() -> &'static std::sync::Mutex<Vec<CachedDual>> {
-    static C: std::sync::OnceLock<std::sync::Mutex<Vec<CachedDual>>> = std::sync::OnceLock::new();
-    C.get_or_init(|| std::sync::Mutex::new(Vec::new()))
-}
-
-#[cfg(windows)]
-fn take_cached_dual(size: usize) -> Option<(*mut u8, *mut u8)> {
-    let mut c = dual_cache().lock().ok()?;
-    let i = c.iter().position(|e| e.size == size)?;
-    let e = c.swap_remove(i);
-    Some((e.rx, e.rw))
-}
-
-#[cfg(windows)]
-fn put_cached_dual(rx: *mut u8, rw: *mut u8, size: usize) -> bool {
-    let Ok(mut c) = dual_cache().lock() else {
-        return false;
-    };
-    let total: usize = c.iter().map(|e| e.size).sum();
-    if total + size > DUAL_CACHE_MAX {
-        return false;
-    }
-    c.push(CachedDual { rx, rw, size });
-    true
-}
-
-#[cfg(all(test, windows))]
-fn cached_dual_bytes() -> usize {
-    dual_cache()
-        .lock()
-        .map(|c| c.iter().map(|e| e.size).sum())
-        .unwrap_or(0)
-}
 
 #[cfg(windows)]
 fn protect_noaccess(ptr: *mut u8, size: usize) -> Result<(), MemError> {
@@ -1169,28 +1261,47 @@ mod tests {
     }
 
     #[test]
-    fn test_dual_mapping_or_fallback_executes() {
-        // Windows 上优先 dual mapping；其他平台走单映射。两者都必须可执行。
+    fn test_pool_or_fallback_executes() {
         let mem = ExecutableMemory::new(&[0xc3u8]).expect("map");
         assert!(!mem.is_empty());
         assert!(!mem.as_ptr().is_null());
         #[cfg(windows)]
-        assert!(mem.dual, "Windows 上应优先使用 RX/RW dual mapping");
+        assert!(
+            matches!(mem.backing, Backing::Pooled { .. }),
+            "Windows 上应优先使用块分配器 + dual mapping"
+        );
     }
 
     #[test]
     #[cfg(windows)]
-    fn test_dual_mapping_is_cached_and_reused() {
-        let before = cached_dual_bytes();
-        {
-            let _m = ExecutableMemory::new(&[0xc3u8]).expect("map");
-        }
+    fn test_pool_allocates_subpage_and_shares_block() {
+        let a = ExecutableMemory::new(&constant_code()).expect("a");
+        let b = ExecutableMemory::new(&constant_code()).expect("b");
+        assert_eq!(a.len(), 64, "小函数应按 64B 子页分配，而不是整页");
+        assert_eq!(b.len(), 64);
         assert!(
-            cached_dual_bytes() >= before,
-            "drop 后 dual mapping 应进入缓存"
+            matches!(a.backing, Backing::Pooled { .. })
+                && matches!(b.backing, Backing::Pooled { .. })
         );
-        let m = ExecutableMemory::new(&[0xc3u8]).expect("reuse");
-        assert!(m.dual, "复用后仍是 dual mapping");
+        let da = a.as_ptr() as usize;
+        let db = b.as_ptr() as usize;
+        assert!(
+            da.abs_diff(db) < JIT_BLOCK_SIZE,
+            "两个小函数应共享同一个 64KiB 块（{da:#x} vs {db:#x}）"
+        );
+        let fa: extern "C" fn() -> i32 = unsafe { a.get_fn(0).unwrap() };
+        let fb: extern "C" fn() -> i32 = unsafe { b.get_fn(0).unwrap() };
+        assert_eq!((fa(), fb()), (42, 42));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_pool_reuses_released_subpage() {
+        let a = ExecutableMemory::new(&constant_code()).expect("a");
+        let p = a.as_ptr() as usize;
+        drop(a);
+        let b = ExecutableMemory::new(&constant_code()).expect("b");
+        assert_eq!(b.as_ptr() as usize, p, "释放的 64B 子页应被下一次分配复用");
     }
 
     #[test]

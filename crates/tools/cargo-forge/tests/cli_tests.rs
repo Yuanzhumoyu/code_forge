@@ -1,4 +1,4 @@
-//! cargo-forge 集成测试（cli_tests）：临时目录真实调用 cargo-forge.exe，
+﻿//! cargo-forge 集成测试（cli_tests）：临时目录真实调用 cargo-forge.exe，
 //! 编译→运行 forge no_std 程序并校验退出码。
 //!
 //! 用例（规格 §tests/cli_tests.rs）：
@@ -279,6 +279,10 @@ fn run_with_timeout(cmd: &mut Command, timeout_s: u64) -> Output {
 /// `+nightly-2026-09-05`）；缺省不加参数 → 工具默认 `+nightly`。
 fn run_tool(args: &[&str], proj: Option<&Path>, timeout_s: u64) -> Output {
     let mut cmd = Command::new(tool());
+    // 测试必须用项目自己的 target/debug 产物；外层门禁的 CARGO_TARGET_DIR
+    // 若被继承会把产物写到别处，导致“构建成功但找不到 exe”。
+    cmd.env_remove("CARGO_TARGET_DIR")
+        .env_remove("CARGO_BUILD_TARGET_DIR");
     if let Ok(tc) = std::env::var("FORGE_CLI_TOOLCHAIN")
         && !tc.is_empty()
     {
@@ -570,7 +574,10 @@ fn cli_init_then_bare_cargo_build() {
     // 裸 `cargo build`：无 RUSTFLAGS/RUSTC_WRAPPER/env（仅 RUSTUP_HOME/CARGO_HOME 若需要）
     let mut cmd = Command::new("cargo");
     cmd.arg("build").current_dir(&dir);
-    cmd.env_remove("RUSTFLAGS").env_remove("RUSTC_WRAPPER");
+    cmd.env_remove("RUSTFLAGS")
+        .env_remove("RUSTC_WRAPPER")
+        .env_remove("CARGO_TARGET_DIR")
+        .env_remove("CARGO_BUILD_TARGET_DIR");
     ensure_rustup_home(&mut cmd);
     ensure_cargo_home(&mut cmd);
     let out = run_with_timeout(&mut cmd, 300);
