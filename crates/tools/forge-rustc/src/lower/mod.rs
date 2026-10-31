@@ -202,7 +202,13 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
             body,
             fn_name: name.clone(),
             sym_name,
-            builder: FunctionBuilder::new(name.as_str(), TypeContext::new(), sig),
+            // **必须按 rustc target 设置 IR DataLayout**（v28 M4）：此前恒为默认
+            // x86_64（PTR=64），32/16 位目标上指针/尺寸类型全错。
+            builder: {
+                let mut b = FunctionBuilder::new(name.as_str(), TypeContext::new(), sig);
+                b.set_data_layout(crate::types::ir_data_layout(tcx));
+                b
+            },
             locals,
             blocks: HashMap::new(),
             func_refs,

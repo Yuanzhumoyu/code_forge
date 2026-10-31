@@ -155,6 +155,15 @@ impl FunctionBuilder {
         &self.ctx
     }
 
+    /// 设置目标的 IR 数据布局（指针宽度/端序/对齐）。
+    ///
+    /// 必须在本函数构建指令**之前**调用：`TypeStore` 的 `PTR` 宽度、
+    /// `size_of/align_of` 都从这里派生。`forge-rustc` 按 rustc target 设置；
+    /// 32/16 位目标不再沿用默认 x86_64。
+    pub fn set_data_layout(&mut self, dl: crate::ir::data_layout::DataLayout) {
+        self.ctx.borrow_mut().set_data_layout(dl);
+    }
+
     /// 该类型是否为整数——**走 type store**，因此任意位宽（`i1`/`i3`/`i31`/`i1024`）都正确。
     ///
     /// 与 `TypeId::is_int()` 的区别：后者是内建类型枚举的固定表，看不到任意位宽类型。

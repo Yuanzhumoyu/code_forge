@@ -50,14 +50,14 @@
 - 三个后端守卫遍历 manifest。
 - 验收：新增玩具 ISA 只加 TOML + manifest 条目即可编译。
 
-### M3 插件零胶水
+### M3 插件零胶水（✅ 核心 2026-10-31：v2 ABI + 宿主适配器；fixture 待补）
 
 - 插件 ABI v2：`__forge_isa_register_v2` / `__forge_isa_targets` / `__forge_isa_name`。
 - `export_plugin!` 生成注册包；`PluginLoader` 记录 target→isa。
 - fixture 插件真加载、编译 const42 并 JIT 执行；宿主零 ISA 名。
 - 修 stale 文档。
 
-### M4 rustc 宽度泛化
+### M4 rustc 宽度泛化（✅ 核心 2026-10-31：DataLayout + 8/16/32/64 映射；demo16 待补）
 
 - `TargetProfile { ptr_bits, slot_bytes, int_widths, endian, mangling }` 从 rustc
   `TargetDataLayout` + ISA `TargetRegInfo` 构造。
@@ -67,7 +67,7 @@
 - `map_type` 支持 8/16 指针；`abi.rs` 用 slot/profile；demo16 编译测试。
 - 验收：16/32 profile 单测 + demo16；x86_64/aarch64 e2e 不变。
 
-### M5 动态产物链接
+### M5 动态产物链接（✅ fail-closed 2026-10-31：`DYNAMIC_OUTPUT`；PIC 对象待做）
 
 - `[cap:DYNAMIC_OUTPUT]` 明确拒绝未支持组合（cdylib/dylib/proc-macro/prefer-dynamic）。
 - `RelocKind::Plt32/GotPcRel` + 对象层映射；ELF `cdylib` 经 `ld.lld -shared` 验证

@@ -54,3 +54,63 @@ pub fn ensure_registered() {
     static ONCE: OnceLock<()> = OnceLock::new();
     ONCE.get_or_init(register_generated_backends);
 }
+
+/// 为**外部宿主/动态插件**注册一个已生成的后端（v28 M3）。
+///
+/// `machine` 是 `TargetMachine::new()`；本函数登记管线工厂 + 调用点布局钩子。
+/// 插件宏 `export_isa_plugin!` 与外部宿主都复用这一处，避免手写工厂闭包。
+pub fn register_generated_isa<M>(name: &'static str, machine: M)
+where
+    M: forge_isa_runtime::machine::target::TargetMachine + Clone + 'static,
+{
+    fn factory<M>(tm: &dyn Any) -> Option<Box<dyn FunctionPipeline>>
+    where
+        M: forge_isa_runtime::machine::target::TargetMachine + Clone + 'static,
+    {
+        let tm = tm.downcast_ref::<M>()?.clone();
+        Some(Box::new(Hook(CompileSession::new(tm))))
+    }
+    let f: &'static forge_isa_runtime::PipelineFactory =
+        Box::leak(Box::new(|tm: &dyn Any| factory::<M>(tm)));
+    forge_isa_runtime::register_pipeline(name, f);
+    crate::pipeline::abi_target::register_isa_call_planner(name, machine);
+}
+
+/// 插件/外部宿主的**一行导出**（v28 M3）。
+///
+/// 用法（插件 crate）：
+///
+/// ```ignore
+/// forge_dsl::isa_from_file!("isa/my.toml", name = "myisa");
+/// forge_codegen::export_isa_plugin!(myisa, targets = ["myisa64"]);
+/// ```
+///
+/// 展开出 C ABI 的 `__forge_isa_name` / `__forge_isa_targets` / `__forge_isa_compile`；
+/// `PluginLoader` 读取前两者、把 `__forge_isa_compile` 包成宿主侧的
+/// `ErasedTargetMachine` 注册进 Registry——**宿主零 ISA 代码**。
+#[macro_export]
+macro_rules! export_isa_plugin {
+    ($module:ident, targets = [$($t:expr),* $(,)?]) => {
+        /// ISA 名（NUL 结尾）。
+        #[unsafe(no_mangle)]
+        pub extern "C" fn __forge_isa_name() -> *const core::ffi::c_char {
+            concat!(stringify!($module), "\0").as_ptr() as *const core::ffi::c_char
+        }
+
+        /// 目标前缀表（分号分隔、NUL 结尾）。
+        #[unsafe(no_mangle)]
+        pub extern "C" fn __forge_isa_targets() -> *const core::ffi::c_char {
+            concat!($($t, ";"),*, "\0").as_ptr() as *const core::ffi::c_char
+        }
+
+        /// 插件侧编译入口；宿主只持有函数指针，不依赖插件内部类型。
+        #[allow(improper_ctypes_definitions)]
+        #[unsafe(no_mangle)]
+        pub extern "C" fn __forge_isa_compile(
+            func: &$crate::ir::Function,
+        ) -> Result<$crate::CompiledFunction, $crate::IrError> {
+            $crate::pipeline::compiler::CompileSession::new($module::TargetMachine::new())
+                .compile(func)
+        }
+    };
+}

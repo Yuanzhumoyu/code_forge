@@ -30,7 +30,8 @@ use forge_ir::*;
 pub use forge_isa_runtime::{
     AVX512_ENV_LOCK, AllocResult, CodeSink, CompiledFunction, LowerCtx, MemRef, Registry,
     RelocKind, Relocation, alloc_result, avx_available, avx2_available, avx512_available,
-    avx512_hardware_available, emit, machine, output_types, prelude, registry, vcode,
+    avx512_hardware_available, emit, machine, output_types, prelude, registry, target_registry,
+    vcode,
 };
 
 // ISA TOML 变更探针：build.rs 生成，内容含 isa/*.toml 的修改时间——

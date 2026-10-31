@@ -18,7 +18,41 @@
 use std::path::Path;
 
 #[cfg(feature = "plugins")]
-use {forge_codegen::Registry, libloading::Library};
+use {
+    forge_codegen::machine::target::ErasedTargetMachine,
+    forge_codegen::target_registry,
+    forge_codegen::{CompiledFunction, IrError, Registry},
+    libloading::Library,
+    std::ffi::CStr,
+    std::os::raw::c_char,
+    std::sync::Arc,
+};
+
+/// 插件侧编译入口的函数指针类型（`export_isa_plugin!` 生成）。
+#[allow(improper_ctypes_definitions)]
+#[cfg(feature = "plugins")]
+type PluginCompile =
+    unsafe extern "C" fn(&forge_codegen::ir::Function) -> Result<CompiledFunction, IrError>;
+
+/// 宿主侧 `ErasedTargetMachine` 适配器：把插件导出的函数包成 Registry 后端。
+#[cfg(feature = "plugins")]
+struct PluginBackend {
+    name: String,
+    compile: PluginCompile,
+}
+
+#[cfg(feature = "plugins")]
+impl ErasedTargetMachine for PluginBackend {
+    fn erased_name(&self) -> &str {
+        &self.name
+    }
+
+    fn compile(&self, func: &forge_codegen::ir::Function) -> Result<CompiledFunction, IrError> {
+        // SAFETY：函数指针来自已加载并保持存活的插件库；ABI 由
+        // `export_isa_plugin!` 固定（同一 rustc/forge 构建）。
+        unsafe { (self.compile)(func) }
+    }
+}
 
 /// 动态插件加载器 — 持有已加载的 Library 句柄，防止提前卸载。
 pub struct PluginLoader {
@@ -90,32 +124,70 @@ impl PluginLoader {
     #[cfg(not(feature = "plugins"))]
     fn load_directory(&mut self, _dir: &Path) {}
 
-    /// 加载单个插件文件并调用其 `__codegen_isa_register` 符号。
+    /// 加载单个插件文件（v2：`__forge_isa_compile` / `__forge_isa_name` /
+    /// `__forge_isa_targets`；v1 `__codegen_isa_register` 仍兼容）。
     #[cfg(feature = "plugins")]
     pub fn load_plugin(&mut self, path: &Path) -> Result<(), String> {
-        type RegisterFn = fn(&Registry);
-
         let lib = unsafe {
             Library::new(path)
                 .map_err(|e| format!("failed to load plugin '{}': {}", path.display(), e))?
         };
 
-        let register: libloading::Symbol<RegisterFn> = unsafe {
+        // v2：宿主侧注册适配器 + 目标前缀；不调用插件内部的 Registry（那个
+        // static 在 dylib 自己那份 runtime 里，宿主看不见）。
+        if let Ok(compile) = unsafe { lib.get::<PluginCompile>(b"__forge_isa_compile") } {
+            let name_fn =
+                unsafe { lib.get::<unsafe extern "C" fn() -> *const c_char>(b"__forge_isa_name") }
+                    .map_err(|e| {
+                        format!("plugin '{}' missing __forge_isa_name: {e}", path.display())
+                    })?;
+            let raw = unsafe { name_fn() };
+            if raw.is_null() {
+                return Err(format!(
+                    "plugin '{}' __forge_isa_name 返回空指针",
+                    path.display()
+                ));
+            }
+            let name = unsafe { CStr::from_ptr(raw) }
+                .to_string_lossy()
+                .into_owned();
+            let mut targets = Vec::new();
+            if let Ok(tf) = unsafe {
+                lib.get::<unsafe extern "C" fn() -> *const c_char>(b"__forge_isa_targets")
+            } {
+                let raw = unsafe { tf() };
+                if !raw.is_null() {
+                    let s = unsafe { CStr::from_ptr(raw) }.to_string_lossy();
+                    targets = s
+                        .split(';')
+                        .map(str::trim)
+                        .filter(|x| !x.is_empty())
+                        .map(str::to_string)
+                        .collect();
+                }
+            }
+            Registry::global().register_backend(Arc::new(PluginBackend {
+                name: name.clone(),
+                compile: *compile,
+            }));
+            let refs: Vec<&str> = targets.iter().map(String::as_str).collect();
+            target_registry::register(&name, &refs);
+            log::info!("Loaded ISA plugin v2: {} ({name})", path.display());
+            self.libraries.push(lib);
+            return Ok(());
+        }
+
+        // v1 兼容：插件自己接收 `&Registry` 并注册（旧文档写法）。
+        let register: libloading::Symbol<fn(&Registry)> = unsafe {
             lib.get(b"__codegen_isa_register").map_err(|e| {
                 format!(
-                    "plugin '{}' missing __codegen_isa_register: {}",
-                    path.display(),
-                    e
+                    "plugin '{}' missing __forge_isa_compile (v2) or __codegen_isa_register (v1): {e}",
+                    path.display()
                 )
             })?
         };
-
-        let registry = Registry::global();
-        register(registry);
-
-        log::info!("Loaded ISA plugin: {}", path.display());
-
-        // 保持 Library 存活 — 插件中的代码（如 Arc<dyn Compiler>）依赖它
+        register(Registry::global());
+        log::info!("Loaded ISA plugin v1: {}", path.display());
         self.libraries.push(lib);
         Ok(())
     }

@@ -333,10 +333,39 @@ impl CodegenBackend for CodegenLibBackend {
                 allocator_module: None,
             });
         }
-        // 1. 从环境变量加载外部 ISA 插件
-        let _plugin_loader = code_forge::forge_plugin::PluginLoader::load_from_env();
+        // v28 M5：动态产物（cdylib/dylib/proc-macro）需要 PIC/GOT/PLT/导入表与
+        // 动态段，对象层尚未建模 ⇒ **明确拒绝**，不产出坏对象（`prefer-dynamic`
+        // 在 `unsupported_codegen_option` 已拒）。
+        let dynamic_output = tcx.crate_types().iter().copied().find(|ct| {
+            matches!(
+                ct,
+                rustc_structures::CrateType::Cdylib
+                    | rustc_structures::CrateType::Dylib
+                    | rustc_structures::CrateType::ProcMacro
+            )
+        });
+        if let Some(ct) = dynamic_output {
+            tcx.dcx().err(format!(
+                "{}",
+                IrError::capability(
+                    "DYNAMIC_OUTPUT",
+                    format!(
+                        "crate-type `{ct:?}` 不支持：动态库需要 PIC/GOT/PLT/导入表与动态段，\
+                         对象层尚未建模。请用静态库/可执行文件（`--crate-type=lib/rlib/bin`）"
+                    )
+                )
+            ));
+            return Box::new(CompiledModules {
+                modules: Vec::new(),
+                allocator_module: None,
+            });
+        }
 
-        // 2. 根据目标三元组自动注册内置 ISA 后端
+        // 1. 从环境变量加载外部 ISA 插件。**必须保持 Library 存活**：Registry 里存的是
+        // 插件导出的函数指针，loader 一旦 drop 就会卸载 .dll/.so ⇒ 后续调用悬空。
+        let _plugin_loader = Box::leak(Box::new(
+            code_forge::forge_plugin::PluginLoader::load_from_env(),
+        ));
         let target_triple = format!("{}", tcx.sess.opts.target_triple);
         auto_register_isa_for_target(&target_triple);
 

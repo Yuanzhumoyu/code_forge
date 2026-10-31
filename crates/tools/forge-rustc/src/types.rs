@@ -9,6 +9,59 @@
 use crate::prelude::IrError;
 use crate::prelude::*;
 
+/// 整数位宽 → IR 整数类型（指针/`usize` 也走这里；8/16 位目标不再回落 I64）。
+pub fn int_ty_for_width(bits: u16) -> TypeId {
+    match bits {
+        0..=8 => TypeId::I8,
+        9..=16 => TypeId::I16,
+        17..=32 => TypeId::I32,
+        _ => TypeId::I64,
+    }
+}
+
+/// 构造目标 IR 数据布局（纯函数，单测可直接用）。
+pub fn data_layout_for(
+    pointer_bits: u16,
+    endianness: Endianness,
+    mangling: Mangling,
+) -> DataLayout {
+    let mut dl = DataLayout::default();
+    let bytes = u32::from(pointer_bits.max(8) / 8);
+    dl.endianness = endianness;
+    dl.mangling = mangling;
+    dl.pointer_layout.insert(0, (bytes, bytes));
+    let max = pointer_bits.max(32);
+    dl.native_integer_widths = [8u32, 16, 32, 64]
+        .into_iter()
+        .filter(|w| *w <= u32::from(max))
+        .collect();
+    dl
+}
+
+/// 按 rustc target 构造 IR 数据布局（v28 M4）。
+///
+/// 此前 `forge-rustc` 从不设置 DataLayout，`PTR` 恒为 64 位——32/16 位目标上
+/// 指针/尺寸类型全错。现在每个函数的 `FunctionBuilder` 在发指令前设置它。
+pub fn ir_data_layout(tcx: TyCtxt<'_>) -> DataLayout {
+    let bits = tcx.data_layout.pointer_size().bits() as u16;
+    let endianness = if tcx.data_layout.endian == rustc_abi::Endian::Big {
+        Endianness::Big
+    } else {
+        Endianness::Little
+    };
+    let mangling = if tcx.sess.target.is_like_windows {
+        Mangling::WindowsCoff
+    } else if matches!(
+        format!("{:?}", tcx.sess.target.os).as_str(),
+        "Macos" | "Ios" | "Tvos" | "Watchos"
+    ) {
+        Mangling::MachO
+    } else {
+        Mangling::Elf
+    };
+    data_layout_for(bits, endianness, mangling)
+}
+
 pub fn map_type<'tcx>(
     ty: rustc_middle::ty::Ty<'tcx>,
     tcx: TyCtxt<'tcx>,
@@ -19,20 +72,16 @@ pub fn map_type<'tcx>(
         ty::TyKind::Int(ty::IntTy::I16) => Ok(TypeId::I16),
         ty::TyKind::Int(ty::IntTy::I32) => Ok(TypeId::I32),
         ty::TyKind::Int(ty::IntTy::I64) => Ok(TypeId::I64),
-        ty::TyKind::Int(ty::IntTy::Isize) => match tcx.data_layout.pointer_size().bits() {
-            64 => Ok(TypeId::I64),
-            32 => Ok(TypeId::I32),
-            _ => Ok(TypeId::I64),
-        },
+        ty::TyKind::Int(ty::IntTy::Isize) => Ok(int_ty_for_width(
+            tcx.data_layout.pointer_size().bits() as u16,
+        )),
         ty::TyKind::Uint(ty::UintTy::U8) => Ok(TypeId::I8),
         ty::TyKind::Uint(ty::UintTy::U16) => Ok(TypeId::I16),
         ty::TyKind::Uint(ty::UintTy::U32) => Ok(TypeId::I32),
         ty::TyKind::Uint(ty::UintTy::U64) => Ok(TypeId::I64),
-        ty::TyKind::Uint(ty::UintTy::Usize) => match tcx.data_layout.pointer_size().bits() {
-            64 => Ok(TypeId::I64),
-            32 => Ok(TypeId::I32),
-            _ => Ok(TypeId::I64),
-        },
+        ty::TyKind::Uint(ty::UintTy::Usize) => Ok(int_ty_for_width(
+            tcx.data_layout.pointer_size().bits() as u16,
+        )),
         // **128 位整数仍 fail-closed**（v27 M5 · M-F P3 暂缓）：`wide_split` 的**常量/算术**
         // 路径已 JIT 验证（11 条），但"从内存 `load i128` 再运算"这条链路在 e2e 上仍不正确
         //（4 条用例：`u128_shift`/`u128_shift_var`/`u128_not`/`u128_neg`）⇒ 先回退，等
@@ -172,3 +221,43 @@ pub(crate) fn assert_assignable(actual: TypeId, expected: TypeId, ctx: &str) {
 }
 
 // ============================================================
+// 宽度泛化单测（v28 M4）
+// ============================================================
+
+#[cfg(test)]
+mod width_tests {
+    use super::*;
+
+    #[test]
+    fn int_ty_covers_8_16_32_64() {
+        assert_eq!(int_ty_for_width(8), TypeId::I8);
+        assert_eq!(int_ty_for_width(16), TypeId::I16);
+        assert_eq!(int_ty_for_width(32), TypeId::I32);
+        assert_eq!(int_ty_for_width(64), TypeId::I64);
+    }
+
+    #[test]
+    fn data_layout_pointer_width_and_native_widths() {
+        for (bits, bytes) in [(16u16, 2u32), (32, 4), (64, 8)] {
+            let dl = data_layout_for(bits, Endianness::Little, Mangling::Elf);
+            assert_eq!(dl.pointer_layout.get(&0), Some(&(bytes, bytes)));
+            assert!(
+                dl.native_integer_widths
+                    .iter()
+                    .all(|w| *w <= u32::from(bits.max(32))),
+                "{bits} 位布局含超宽整数"
+            );
+            assert!(
+                dl.native_integer_widths.contains(&(u32::from(bits))),
+                "{bits} 位布局应含本位宽"
+            );
+        }
+    }
+
+    #[test]
+    fn data_layout_endian_and_mangling_are_kept() {
+        let dl = data_layout_for(32, Endianness::Big, Mangling::WindowsCoff);
+        assert_eq!(dl.endianness, Endianness::Big);
+        assert_eq!(dl.mangling, Mangling::WindowsCoff);
+    }
+}

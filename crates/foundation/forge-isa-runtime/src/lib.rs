@@ -27,6 +27,7 @@ pub mod output_types;
 pub mod pipeline;
 pub mod prelude;
 pub mod registry;
+pub mod target_registry;
 pub mod vcode;
 
 pub use alloc_result::{AllocResult, FrameInfo, SpillSlot};

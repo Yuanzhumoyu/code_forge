@@ -1,4 +1,4 @@
-//! 编译入口：`lower_and_compile`（LowerCtxt → ISA 编译）与 ISA 后端选择。
+﻿//! 编译入口：`lower_and_compile`（LowerCtxt → ISA 编译）与 ISA 后端选择。
 //!
 //! `lower_and_compile` 被 backend.rs 的 codegen_crate 调用；
 //! `auto_register_isa_for_target` / `isa_name_for_target` 供 backend 与
@@ -112,7 +112,13 @@ pub fn auto_register_isa_for_target(_target_triple: &str) {
 /// v27 M4-T1：**不再回落 x86_64**。回落的后果是给 riscv64 之类的目标静默编出 x86
 /// 机器码—— 这正是仓库明令禁止的"静默降级"。调用方必须把 `None` 变成明确的诊断。
 pub fn isa_name_for_target(target_triple: &str) -> Option<&'static str> {
-    code_forge::backend::arch::isa_for_target(target_triple)
+    if let Some(name) = code_forge::backend::arch::isa_for_target(target_triple) {
+        return Some(name);
+    }
+    // v28 M3：动态插件声明的目标（`export_isa_plugin!`）。名字来自插件，量级很小；
+    // 泄漏成 'static 供既有 `&'static str` 调用面复用。
+    code_forge::backend::target_registry::isa_for_target(target_triple)
+        .map(|s| &*Box::leak(s.into_boxed_str()))
 }
 
 /// 使用指定名称的 ISA 后端编译函数。
