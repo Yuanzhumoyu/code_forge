@@ -15,8 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 + Windows 优先把代码页映射成 RX + RW 两个视图（W^X，无需临时改保护），失败回退 `VirtualAlloc` 单映射；`ExecutableMemory::with_guard_pages` 提供前后不可访问页。
 + 64 KiB dual-mapped 块 + 64 B 子页位图：多个小函数共享块、释放后子页复用；`page_size` 进程级缓存；`len()` 返回子页对齐长度。
-+ 参考 [pager-lang](https://github.com/jamesgober/pager-lang) 与 [jit-allocator2](https://github.com/tremwil/jit-allocator2)；`query/shrink/reset` 不提供（RAII 句柄形态的边界），见 [`docs/reference/jit-memory.md`](docs/reference/jit-memory.md)。
-+ 测试：`forge-isa-runtime` mem 12 条（含真实执行、guard page、dual、子页共享/复用）；JIT 基本用例通过。
++ 参考 [pager-lang](https://github.com/jamesgober/pager-lang) 与 [jit-allocator2](https://github.com/tremwil/jit-allocator2)；`query()`/`shrink()`/`reset_jit_memory()` 已提供（reset 只回收空闲块），见 [`docs/reference/jit-memory.md`](docs/reference/jit-memory.md)。
++ 测试：`forge-isa-runtime` mem 13 条（含真实执行、guard page、dual、子页共享/复用、query/shrink/reset）；JIT 基本用例通过。
 
 ### Changed (2026-10-31) — 插件硬化 v2.1（A1/A3/A4/A5）
 

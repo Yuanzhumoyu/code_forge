@@ -38,7 +38,7 @@
 | jit-allocator2 dual mapping | ✅ Windows 默认优先，失败回退 |
 | jit-allocator2 block/pool、bitvector 子页 | ✅ 64 KiB 块 + 64 B 位图 + 首次适配 |
 | jit-allocator2 fill pattern | ✅ `0xCC` 填充子页；可配置未做 |
-| jit-allocator2 `reset`/`shrink`/`query` | ❌ 不做：当前无 `JitAllocator` 句柄 API |
+| jit-allocator2 `reset`/`shrink`/`query` | ✅ `query()` / `shrink()` / `reset_jit_memory()`（reset 只回收空闲块，活跃句柄不失效） |
 
 ## 测试
 
@@ -49,6 +49,5 @@
 
 ## 范围边界
 
-`query/shrink/reset` 需要把块分配器暴露成带句柄的 `JitAllocator` API；当前
-`ExecutableMemory` 是 RAII 句柄，未提供这些操作。它不是遗留 TODO，而是当前 API
-形态的取舍。
+`shrink` 只支持块分配器（独立整页映射不能部分 unmap）；`reset_jit_memory()` 只回收
+空闲块，不会使活跃 `ExecutableMemory` 句柄失效——RAII 句柄没有“整池 reset”语义。

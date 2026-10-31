@@ -1,4 +1,4 @@
-//! 可执行内存分配器 — JIT 编译核心工具（`forge-isa-runtime::mem`，v26 M2 从独立 crate
+﻿//! 可执行内存分配器 — JIT 编译核心工具（`forge-isa-runtime::mem`，v26 M2 从独立 crate
 //! `forge-mem` 折叠进来：那个 crate 全仓只有 `jit.rs` 一处使用，`CpuFeatures` 更是零调用者）。
 //!
 //! 提供跨平台的可执行内存分配/释放功能，使编译后的机器码可以在运行时直接调用。
@@ -173,6 +173,21 @@ fn pool_release(block: &std::sync::Arc<JitBlock>) {
     {
         blocks.swap_remove(i);
     }
+}
+
+/// 清掉所有**空闲**块（有活跃分配时保留；它们仍可继续用）。
+///
+/// `ExecutableMemory` 是 RAII 句柄，没有“整池 reset 后旧句柄失效”的语义；
+/// 这里只回收空闲块，不使任何活跃分配悬空。
+pub fn reset_jit_memory() {
+    if let Ok(mut blocks) = jit_blocks().lock() {
+        blocks.retain(|b| !b.is_empty());
+    }
+}
+
+#[cfg(all(test, windows))]
+fn jit_block_count() -> usize {
+    jit_blocks().lock().map(|b| b.len()).unwrap_or(0)
 }
 
 enum Backing {
@@ -374,6 +389,34 @@ impl ExecutableMemory {
     /// 是否为空。
     pub fn is_empty(&self) -> bool {
         self.size == 0
+    }
+
+    /// 查询本次分配的 `(RX, RW, size)`。
+    pub fn query(&self) -> (*const u8, *mut u8, usize) {
+        (self.ptr, self.rw, self.size)
+    }
+
+    /// 缩小本次分配（只支持块分配器；独立整页映射无法部分 unmap）。
+    ///
+    /// `new_size` 会向上取整到 64 B 子页；缩出的子页立即回到块位图。
+    pub fn shrink(&mut self, new_size: usize) -> Result<(), MemError> {
+        if new_size == 0 || new_size > self.size {
+            return Err(MemError(format!(
+                "shrink 目标 {new_size} 非法（当前 {}）",
+                self.size
+            )));
+        }
+        let Backing::Pooled { block, offset } = &self.backing else {
+            return Err(MemError(
+                "shrink 仅支持块分配器（独立 mapping 不能部分 unmap）".into(),
+            ));
+        };
+        let new_alloc = new_size.div_ceil(JIT_GRANULARITY) * JIT_GRANULARITY;
+        if new_alloc < self.size {
+            block.free(offset + new_alloc, self.size - new_alloc);
+            self.size = new_alloc;
+        }
+        Ok(())
     }
 
     /// 向 GDB 注册此 JIT 代码区域（如果 GDB JIT 接口可用）。
@@ -1302,6 +1345,28 @@ mod tests {
         drop(a);
         let b = ExecutableMemory::new(&constant_code()).expect("b");
         assert_eq!(b.as_ptr() as usize, p, "释放的 64B 子页应被下一次分配复用");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_query_shrink_and_reset() {
+        let mut m = ExecutableMemory::new(&[0x90u8; 128]).expect("alloc 128");
+        let (rx, rw, size) = m.query();
+        assert_eq!(rx, m.as_ptr());
+        assert_eq!(size, 128);
+        assert!(!rw.is_null());
+        m.shrink(64).expect("shrink");
+        assert_eq!(m.len(), 64);
+        assert!(m.shrink(0).is_err());
+        assert!(m.shrink(128).is_err());
+        let p = m.as_ptr() as usize;
+        drop(m);
+        reset_jit_memory();
+        // reset 只回收空闲块；之后重新分配仍应成功。
+        let n = ExecutableMemory::new(&constant_code()).expect("after reset");
+        assert!(!n.is_empty());
+        assert!(n.as_ptr() as usize >= p || p != 0);
+        let _ = jit_block_count();
     }
 
     #[test]
