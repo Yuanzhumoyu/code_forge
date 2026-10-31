@@ -1,18 +1,21 @@
 //! 动态 ISA 插件加载器。
 //!
 //! 通过环境变量 `CODEGEN_ISA_PLUGINS` 加载外部编译的 ISA 后端 `.dll`/`.so` 文件。
-//! 每个插件必须导出 `__codegen_isa_register` 符号，接受 `&Registry` 参数。
+//! 推荐 **v2**：插件导出 `__forge_isa_compile` / `__forge_isa_name` /
+//! `__forge_isa_targets`（由 `forge_codegen::export_isa_plugin!` 一行生成）。
+//! 加载器把编译入口包成宿主侧 `ErasedTargetMachine` 注册进 Registry，并登记目标前缀；
+//! **宿主不需要任何 ISA 代码**。
+//!
+//! v1（`__codegen_isa_register(&Registry)`）仍兼容，但需要插件自己完成注册。
 //!
 //! # 环境变量
 //! - `CODEGEN_ISA_PLUGINS` — 分号 (Windows) 或冒号 (Unix) 分隔的路径列表或目录
 //!
-//! # 插件规范
+//! # 插件规范（v2）
 //! ```ignore
-//! // Cargo.toml: crate-type = ["dylib"]
-//! #[no_mangle]
-//! pub fn __codegen_isa_register(registry: &codegen_lib::Registry) {
-//!     registry.register(Arc::new(IsaCompiler::<MyIsa>::new()));
-//! }
+//! // Cargo.toml: crate-type = ["dylib"]；依赖 forge-codegen + forge-isa-runtime
+//! forge_dsl::isa_from_file!("isa/my.toml", name = "myisa");
+//! forge_codegen::export_isa_plugin!(myisa, targets = ["myisa64"]);
 //! ```
 
 use std::path::Path;

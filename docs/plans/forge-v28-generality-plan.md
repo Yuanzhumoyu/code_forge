@@ -93,7 +93,26 @@
   不做，保持 fail-closed。
 - 插件 ABI 只保证同一 rustc/forge 构建内兼容。
 
-## 4. 验证
+## 5. 当前状态（2026-10-31）
+
+已完成并落地：
+
+- M0 审计（`docs/reference/generality-audit.md`）。
+- M1 占位符数据化（三份谱字节不变；新谱内定义测试）。
+- M2 manifest 注册（arch 模块/管线/目标表/alloc 表全部生成；手写 arch 文件删除）。
+- M3 核心（v2 插件 ABI + 宿主适配器 + 目标表）。
+- M4 核心（IR DataLayout 注入 + 8/16/32/64 指针映射 + 单测）。
+- M5 fail-closed（`DYNAMIC_OUTPUT` 明确拒绝）。
+
+仍待补：
+
+- M3 真实 dylib fixture 的加载 + JIT 执行测试。
+- M4 demo16 谱与 16 位编译用例（当前只有 16/32/64 profile 单测）。
+- M5 最小 PIC 对象/共享库链接验证（当前只做负向拒绝）。
+- M6 GEN-06 分配器缺陷修复（两个 `#[ignore]` 仍未转正）。
+- M7 全量门禁复跑与文档收口。
+
+## 6. 验证
 
 ```bash
 cargo fmt --all -- --check

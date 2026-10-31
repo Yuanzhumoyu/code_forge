@@ -66,6 +66,10 @@
 - `crates/tools/forge-rustc/src/compile.rs:122-131` 的 `isa_name_for_target` 不认识
   插件声明的目标；插件也没有导出目标表的 ABI。
 - 全仓没有插件加载测试（`PluginLoader` 只有空加载/未设环境变量两条单测）。
+- **✅ 核心已修（2026-10-31，M3）**：v2 ABI（`__forge_isa_compile`/`__forge_isa_name`/
+  `__forge_isa_targets`）+ 宿主 `PluginBackend: ErasedTargetMachine` 适配器 + runtime
+  `target_registry`；`isa_name_for_target` 回落查询插件表；loader 用 `Box::leak` 保持
+  Library 存活。**仍缺**：真实 dylib fixture 的加载/JIT 测试（下一步）。
 
 ### GEN-04 rustc 的 64 位假设
 
