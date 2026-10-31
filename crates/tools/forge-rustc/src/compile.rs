@@ -96,39 +96,23 @@ pub(crate) fn lower_and_compile<'tcx, 'f>(
 // ISA 后端选择
 // ============================================================
 
-/// 根据目标三元组自动注册对应的 ISA 后端（x86_64/amd64 → x86；
-/// aarch64/arm64 → arm64）。
-///
-/// ⚠️ arm64 能力边界（2026-09 P3）：指令面 = 整数核心 P1 + 部分
-/// lowering；SIMD/浮点/系统寄存器/跨函数 Call 等缺口会以显式错误报出
-/// （不静默错码）。
-pub fn auto_register_isa_for_target(target_triple: &str) {
-    // 管线注册与目标无关（三后端一起注册，幂等且便宜）——与上面同一个理由：
-    // 只注册生成物、不注册管线 ⇒ 编译期 "未注册编译管线"。
+/// 根据目标三元组自动注册对应的 ISA 后端。v28 M2 起由 `isa/manifest.toml`
+/// 生成注册表：这里只做“全部注册”（幂等且便宜），不再写目标分支。
+pub fn auto_register_isa_for_target(_target_triple: &str) {
+    // 管线注册与目标无关（manifest 里的后端一起注册）——只注册生成物、不注册管线
+    // ⇒ 编译期 "未注册编译管线"。
     code_forge::backend::pipeline_hooks::ensure_registered();
-    if target_triple.contains("x86_64") || target_triple.contains("amd64") {
-        code_forge::backend::x86::ensure_registered();
-    } else if target_triple.contains("aarch64") || target_triple.contains("arm64") {
-        code_forge::backend::arm64::ensure_registered();
-    }
+    code_forge::backend::arch::ensure_all();
 }
 
-/// 从目标三元组确定 ISA 名称（Registry 注册名 = `[meta].name`）。
+/// 从目标三元组确定 ISA 名称（Registry 注册名 = manifest 的 `name`）。
 ///
 /// `None` = 本后端**没有**该目标的 ISA 后端。
 ///
 /// v27 M4-T1：**不再回落 x86_64**。回落的后果是给 riscv64 之类的目标静默编出 x86
 /// 机器码—— 这正是仓库明令禁止的"静默降级"。调用方必须把 `None` 变成明确的诊断。
 pub fn isa_name_for_target(target_triple: &str) -> Option<&'static str> {
-    if target_triple.contains("x86_64") || target_triple.contains("amd64") {
-        Some("x86_64")
-    } else if target_triple.contains("aarch64") || target_triple.contains("arm64") {
-        // ISA 与约定层已就绪（arm64.toml / aapcs64），但目标相关对象层（`.debug_frame`、
-        // PE 异常表、global_asm 的汇编器参数）还没接 ⇒ 见方案 M4-T2/T3。
-        Some("arm64")
-    } else {
-        None
-    }
+    code_forge::backend::arch::isa_for_target(target_triple)
 }
 
 /// 使用指定名称的 ISA 后端编译函数。

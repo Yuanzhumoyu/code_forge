@@ -12,12 +12,12 @@
 | 编号 | 问题 | 严重度 | 决策 |
 | --- | --- | --- | --- |
 | GEN-01 | 占位符注册表 66 行、每行一个 ISA 专用 ctor；新编码/分片就要改 Rust | 高（阻塞 DSL 作者） | ✅ 已修（M1）：数据化表达式引擎 + `[placeholder]` |
-| GEN-02 | 新 ISA 接入要改 4 处本体代码；生成的 `ensure_registered()` 不注册管线/call planner | 高（阻塞新 ISA） | M2 manifest + 生成注册 |
+| GEN-02 | 新 ISA 接入要改 4 处本体代码；生成的 `ensure_registered()` 不注册管线/call planner | 高（阻塞新 ISA） | ✅ 已修（M2）：`isa/manifest.toml` + 构建期生成注册 |
 | GEN-03 | 动态插件 API 与实现不符、未注册管线、无目标映射、无测试 | 高（功能不可用） | M3 插件 ABI v2 |
 | GEN-04 | `forge-rustc` 从不设置 IR `DataLayout`；`usize` 只认 32/64；lowering/alloc 大量 I64 假设 | 高（非 64 位 ISA 必错） | M4 TargetProfile + ptr_ty |
 | GEN-05 | 产物动态链接未建模：`prefer-dynamic` 拒绝、`RelocKind` 无 GOT/PLT、对象层无动态段 | 中（能力边界） | M5 最小 PIC/DLL + fail-closed |
 | GEN-06 | 两个 `#[ignore]` 是真实误编译（栈形参 + 循环 + 调用 ⇒ AV/死循环） | 高（已知错值） | M6 修复并转正 |
-| GEN-07 | 外部宿主 `parts=["tm"]` 没有零胶水路径；host demo 只覆盖 encode/decode/asm | 中（与 GEN-02 同源） | M2 一行 `include_backend!` |
+| GEN-07 | 外部宿主 `parts=["tm"]` 没有零胶水路径；host demo 只覆盖 encode/decode/asm | 中（与 GEN-02 同源） | ✅ 部分（M2）：manifest 侧零胶水；外部 tm 宿主仍待 helper |
 | GEN-08 | 文档/守卫腐化：plugin 文档 API 不存在、`TARGET` 仍写死两目标、guard 硬编码 3 个 ISA 名 | 低（误导） | 随 M2/M3 修 |
 
 ## 2. 证据与复现
@@ -48,6 +48,11 @@
 - `crates/tools/forge-rustc/src/alloc_runtime.rs:16`：`SUPPORTED_ARCHES = ["x86_64"]`。
 - `crates/frontend/forge-isa-dsl/src/dsl/codegen/integration.rs:991-1001`：生成的
   `ensure_registered()` 只做 `Registry::register_backend`，没有管线工厂与调用点钩子。
+- **✅ 已修（2026-10-31，M2）**：新增 `isa/manifest.toml`；`forge-codegen/build.rs`
+  读清单，逐条预生成并写 `OUT_DIR/arch_registry.rs`（模块 + 目标前缀表 +
+  `ensure_all` + alloc shim 表）与 `backend_hooks.rs`（管线工厂/调用点钩子）。
+  `arch/mod.rs` 只 `include!`，`pipeline_hooks.rs` 只调生成函数，`compile.rs` 查
+  目标表，`alloc_runtime::SUPPORTED_ARCHES` 删除。新增 ISA 只改 TOML + manifest 一条。
 
 ### GEN-03 动态插件不可用
 
@@ -111,7 +116,7 @@
 ## 3. 决策与去向
 
 - GEN-01 → ✅ M1 已落地（`[placeholder]` 表达式引擎；旧名数据化）。
-- GEN-02/GEN-07 → M2：`isa/manifest.toml` + 构建期生成注册 + 一行 `include_backend!`。
+- GEN-02/GEN-07 → ✅ M2 已落地（manifest 生成注册；外部 tm 宿主仍可复用同一生成函数）。
 - GEN-03 → M3：插件 ABI v2（注册包 + 目标表），fixture 真加载/真执行。
 - GEN-04 → M4：`TargetProfile` + `DataLayout` 注入 + `ptr_ty`；16/32 位 profile 与
   demo8/demo16 验证，不新增真实 32 位后端。

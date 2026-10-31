@@ -316,7 +316,9 @@ code-forge (root umbrella)
    依赖面与生成物文本级守卫在它的 `tests/host_surface.rs`，是 v19 V2 的 G1 证据）。
    `parts` 含 `tm` 时宿主须注册编译管线（`forge_isa_runtime::register_pipeline`，
    forge-codegen 的 `pipeline_hooks::ensure_registered` 已接好）。
-   库本体只有真实后端：`arch/{x86,arm64,riscv64}.rs`。
+   库本体的发行后端由 **`isa/manifest.toml`** 驱动：`forge-codegen/build.rs` 生成
+   `arch_registry.rs` / `backend_hooks.rs`，`arch/mod.rs` 只 `include!`。新增 ISA
+   只加谱 + manifest 一条，不改 `arch/*.rs`、`pipeline_hooks.rs`、`compile.rs`。
 
 2. **Assembler/JIT coupling 已解**（v19 V1）——`forge-isa-runtime` 持有生成物的全部 trait
    与数据型（`machine/*`、`LowerCtx`/`MemRef`、`AllocResult`/`CodeSink`/`CompiledFunction`），
@@ -377,11 +379,9 @@ code-forge (root umbrella)
 ### ISA Backend Pattern
 
 ```rust
-// 发行后端：crates/backend/forge-codegen/src/arch/my_isa.rs
-forge_dsl::isa_from_file!("isa/my_isa.toml");
-pub use self::my_isa::*; // 生成 TargetMachine / Inst / Reg 等全套组件
-// 注册由 DSL 生成的 ensure_registered() 完成（OnceLock 注册 Registry + reloc patcher），
-// 无需手写——见 arch/x86.rs 的实际形态。
+// 发行后端：在 isa/manifest.toml 加 [[isa]]（module/spec/targets），build.rs 生成
+// `arch_registry.rs`（pub mod <module> { isa_from_file!(…); }）与 `backend_hooks.rs`。
+// 不再手写 arch/my_isa.rs 或 pipeline_hooks 的工厂——见 arch/mod.rs。
 
 // 测试夹具（不发行）：crates/backend/forge-codegen/tests/common/mod.rs
 forge_dsl::isa_from_file!("tests/isa/demo.toml");

@@ -69,17 +69,30 @@ fn library_sources_do_not_reference_demo_isas() {
 /// `src/arch/mod.rs` 只登记真实后端；`src/lib.rs` 不 re-export demo。
 #[test]
 fn arch_module_lists_only_real_backends() {
+    // v28 M2：模块清单由 isa/manifest.toml 生成，不再手写 pub mod。
     let arch_mod = manifest_dir().join("src/arch/mod.rs");
     let text = std::fs::read_to_string(&arch_mod).expect("src/arch/mod.rs 必须存在");
-    let mods: Vec<&str> = text
+    assert!(
+        text.contains("arch_registry.rs"),
+        "arch/mod.rs 必须 include! 生成的 arch_registry.rs"
+    );
+
+    let manifest = manifest_dir().join("../../..").join("isa/manifest.toml");
+    let mtext = std::fs::read_to_string(&manifest).expect("isa/manifest.toml 必须存在");
+    let mut mods: Vec<String> = mtext
         .lines()
-        .map(str::trim)
-        .filter(|l| l.starts_with("pub mod "))
+        .filter_map(|l| l.trim().strip_prefix("module = "))
+        .map(|v| v.trim().trim_matches('"').to_string())
         .collect();
+    mods.sort();
     assert_eq!(
         mods,
-        vec!["pub mod arm64;", "pub mod riscv64;", "pub mod x86;",],
-        "arch 模块清单必须是真实后端（demo 谱在 tests/）"
+        vec![
+            "arm64".to_string(),
+            "riscv64".to_string(),
+            "x86".to_string()
+        ],
+        "manifest 模块清单必须是真实后端（demo 谱在 tests/）"
     );
 
     let lib = std::fs::read_to_string(manifest_dir().join("src/lib.rs")).expect("src/lib.rs");
@@ -108,6 +121,7 @@ fn repo_isa_dir_has_no_demo_specs() {
         names,
         vec![
             "arm64.toml".to_string(),
+            "manifest.toml".to_string(),
             "riscv64.toml".to_string(),
             "x86.toml".to_string(),
         ],

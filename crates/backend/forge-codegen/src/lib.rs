@@ -76,9 +76,7 @@ pub mod runtime;
 // （demo / demo8）是测试夹具，在 `tests/isa/` + `tests/common/mod.rs`
 // 里用 `isa_from_file!(…)` 生成——不进本 rlib。
 pub mod arch;
-pub use arch::arm64;
-pub use arch::riscv64;
-pub use arch::x86;
+pub use arch::*;
 
 // ============================================================
 // Module re-exports (for paths like code_forge::backend::pipeline::...)

@@ -40,9 +40,9 @@
 - 验收：三 ISA oracle/pins 不变；新谱只加一条 `[placeholder]` 即可生成/编码；
   `placeholder.rs` 无 ISA 名。
 
-### M2 ISA 接入零本体改动
+### M2 ISA 接入零本体改动（✅ 2026-10-31 落地）
 
-- `isa/manifest.toml`（name/spec/module/parts/targets/convention/features）。
+- `isa/manifest.toml`（name/spec/module/parts/targets/alloc_shim）。
 - `forge-codegen/build.rs` 读 manifest、预生成、写 `OUT_DIR/arch_registry.rs`；
   `arch/mod.rs` 只 include。
 - `forge_codegen::include_backend!` 一行完成注册（Registry + 管线 + call planner）。

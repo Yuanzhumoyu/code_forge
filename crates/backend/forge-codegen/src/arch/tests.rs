@@ -1,16 +1,7 @@
-//! x86-64 — ISA-DSL 唯一语法生成的变长 encode/decode/asm 自包含模块 +
-//! TargetMachine 集成层（MachineInst/Encoder/Decoder/ABI/FrameLowering/
-//! Lowering/TargetMachine）。v11 后端已删除；golden 见
-//! `tests/x86_tests.rs`、`tests/integration_tests.rs`。
-//!
-//! 模块名 = 文件 stem（约定）。
-
-forge_dsl::isa_from_file!("isa/x86.toml");
-pub use self::x86::*;
-
-#[cfg(test)]
+﻿#[cfg(test)]
+#[allow(clippy::module_inception)]
 mod tests {
-    use super::*;
+    use crate::arch::x86::*;
     use crate::pipeline::compiler::CompileSession;
     use forge_ir::{FunctionSignature, TypeContext, TypeId};
 

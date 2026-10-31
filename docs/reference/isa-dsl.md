@@ -335,6 +335,13 @@ fn main() {
 没接入时**编译期**就会明确报错（fail-closed，消息里给的是这两步），而不是悄悄让生成
 模块变空——空模块会让下游几十个文件报 "unresolved import"，更难查。
 
+**库内发行后端（v28 M2）**：`crates/backend/forge-codegen` 不再手写 `arch/*.rs`，而是由
+[`isa/manifest.toml`](../../isa/manifest.toml) 驱动：每条 `[[isa]]` 给出
+`name`/`module`/`spec`（可选 `parts`、`targets`、`alloc_shim`），`build.rs` 预生成后写
+`$OUT_DIR/arch_registry.rs`（模块 + 目标前缀表 + `ensure_all` + alloc shim 表）与
+`$OUT_DIR/backend_hooks.rs`（管线工厂 + 调用点钩子）。新增 ISA 只加谱 + 一条 manifest，
+不改 `arch/mod.rs`、`pipeline_hooks.rs`、`compile.rs`。
+
 **v19 V1b 起没有 `krate`**：生成物只依赖运行时 crate——`crate::…` 一律改写为
 `forge_isa_runtime::…`、`forge_ir::…` 改写为 `forge_isa_runtime::ir::…`。因此承载谱的
 crate 只需要依赖 `forge-isa-runtime`（+ build script 预生成），**不必**是 forge-codegen；

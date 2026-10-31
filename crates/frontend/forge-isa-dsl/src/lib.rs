@@ -21,6 +21,7 @@ mod dsl;
 pub mod gen_file;
 pub mod lint;
 pub mod loader;
+pub mod manifest;
 pub mod report;
 pub mod schema;
 /// **谱写法迁移**：旧写法（`ops` + `bind`）→ `asm` 内联声明（纯文本变换，语义零变化）。

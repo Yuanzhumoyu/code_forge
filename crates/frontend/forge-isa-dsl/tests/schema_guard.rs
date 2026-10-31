@@ -523,6 +523,10 @@ fn shipped_specs_only_use_schema_keys() {
     let mut specs: Vec<PathBuf> = Vec::new();
     for e in std::fs::read_dir(root.join("isa")).expect("读 isa/") {
         let p = e.expect("entry").path();
+        // v28 M2：manifest.toml 是**后端清单**，不是 ISA 谱（根键 `[[isa]]`）。
+        if p.file_name().is_some_and(|n| n == "manifest.toml") {
+            continue;
+        }
         if p.extension().is_some_and(|x| x == "toml") {
             specs.push(p);
         }

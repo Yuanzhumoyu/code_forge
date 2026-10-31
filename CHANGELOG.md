@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-31) — ISA 注册清单（v28 M2）
+
++ 新增 `isa/manifest.toml`：每条 `[[isa]]` 声明 name/module/spec/parts/targets/
+  alloc_shim。`forge-codegen/build.rs` 读清单，预生成每份谱并写
+  `$OUT_DIR/arch_registry.rs`（模块 + 目标前缀表 + `ensure_all` + alloc shim 表）与
+  `$OUT_DIR/backend_hooks.rs`（管线工厂 + 调用点布局钩子）。
++ `arch/mod.rs` 只 `include!` 生成注册表；`arch/{x86,arm64,riscv64}.rs` 与
+  `pipeline_hooks.rs` 的手写工厂、`compile.rs` 的目标分支、`alloc_runtime::SUPPORTED_ARCHES`
+  全部删除/改为数据驱动。新增 ISA 只加 TOML + 一条 manifest，不再改本体 Rust。
++ 守卫：manifest 校验重复名/模块/目标/部件；`shipped_manifest_entries_pregenerate`
+  断言仓库清单每条都能预生成；e2e 214 与 arm64 oracle 不变。
+
 ### Changed (2026-10-31) — 占位符数据化（v28 M1）
 
 + `dsl/codegen/placeholder.rs` 从 66 行 `Ph` 静态表 + ISA 专用 ctor 闭包改为**表达式引擎**：

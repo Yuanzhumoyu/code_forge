@@ -40,46 +40,17 @@ macro_rules! register_backend {
     };
 }
 
-register_backend!(x86_factory, crate::arch::x86::TargetMachine, "x86_64");
-register_backend!(
-    riscv_factory,
-    crate::arch::riscv64::TargetMachine,
-    "riscv64"
-);
-register_backend!(arm64_factory, crate::arch::arm64::TargetMachine, "arm64");
+// v28 M2：工厂/管线/调用点钩子全部由 build.rs 从 isa/manifest.toml 生成。
+include!(concat!(env!("OUT_DIR"), "/backend_hooks.rs"));
 
-/// 进程内注册一次（幂等）：把三个发行后端的管线工厂登记到 runtime 注册表。
+/// 进程内注册一次（幂等）：把 manifest 里每个发行后端的管线工厂登记到 runtime 注册表。
 ///
-/// 注册用 `Box::leak` 得到 `&'static`（进程生命周期，量级 = 3 个闭包 + 3 台机器）。
+/// 注册用 `Box::leak` 得到 `&'static`（进程生命周期，量级 = 闭包 + 机器）。
 ///
 /// 同时登记**调用点布局钩子**（v20 A5-3）：生成的 lowering 在调用点只有实参形状，
 /// 靠这个钩子拿"被调方"的落点（`machine::call_plan::plan_call`）。未注册 ⇒ 调用点
 /// **fail-closed**（不按谱面顺序猜落点）。
 pub fn ensure_registered() {
     static ONCE: OnceLock<()> = OnceLock::new();
-    ONCE.get_or_init(|| {
-        let x86: &'static forge_isa_runtime::PipelineFactory =
-            Box::leak(Box::new(|tm: &dyn Any| x86_factory(tm)));
-        let riscv: &'static forge_isa_runtime::PipelineFactory =
-            Box::leak(Box::new(|tm: &dyn Any| riscv_factory(tm)));
-        let arm64: &'static forge_isa_runtime::PipelineFactory =
-            Box::leak(Box::new(|tm: &dyn Any| arm64_factory(tm)));
-        forge_isa_runtime::register_pipeline("x86_64", x86);
-        forge_isa_runtime::register_pipeline("riscv64", riscv);
-        forge_isa_runtime::register_pipeline("arm64", arm64);
-
-        // 调用点布局钩子：`(约定名, 实参形状, 返回形状) → 被调方 CallLayout`。
-        crate::pipeline::abi_target::register_isa_call_planner(
-            "x86_64",
-            crate::arch::x86::TargetMachine::new(),
-        );
-        crate::pipeline::abi_target::register_isa_call_planner(
-            "riscv64",
-            crate::arch::riscv64::TargetMachine::new(),
-        );
-        crate::pipeline::abi_target::register_isa_call_planner(
-            "arm64",
-            crate::arch::arm64::TargetMachine::new(),
-        );
-    });
+    ONCE.get_or_init(register_generated_backends);
 }

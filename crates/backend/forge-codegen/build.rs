@@ -1,4 +1,5 @@
-//! 构建脚本：跟踪 `isa/*.toml` 变更 + **预生成 ISA 生成物**（v18 S10d）。
+﻿//! 构建脚本：跟踪 `isa/*.toml` 变更 + **预生成 ISA 生成物**（v18 S10d）+
+//! **由 `isa/manifest.toml` 生成后端注册表**（v28 M2）。
 //!
 //! 背景一（依赖跟踪）：`isa_from_file!` 是 proc-macro，运行时用 `std::fs::read_to_string`
 //! 读取 TOML——cargo 无法感知 proc-macro 内部读取的文件，修改 TOML 不会触发
@@ -13,14 +14,22 @@
 //! rust-analyzer 对"proc 宏展开出来的 1 MB token"会报假阳性语法错）。RA **只在分析开始前**
 //! 登记一次可加载文件，所以必须在这里预生成一遍——它自己会跑 build script。
 //!
-//! 顺序无关：宏侧仍会生成（内容相同则不落盘），因此本脚本缺席也能编译。
+//! 背景三（v28 M2）：发行后端不再手写在 `arch/mod.rs` / `pipeline_hooks.rs`。本脚本读
+//! `isa/manifest.toml`，生成：
+//!
+//! - `arch_registry.rs`：`pub mod <module>`（`isa_from_file!`）+ 目标前缀表 +
+//!   `ensure_all()` + `has_alloc_shim()`；
+//! - `backend_hooks.rs`：每个带 `tm` 的后端的管线工厂 + 调用点钩子注册。
+//!
+//! 新增 ISA 只改 TOML + manifest 一条，不再改 Rust。
 
 use std::path::PathBuf;
 
 fn main() {
-    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let manifest_dir = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
     // workspace 根：crates/backend/forge-codegen → 上三级
-    let isa_dir = manifest.join("../../..").join("isa");
+    let root = manifest_dir.join("../../..");
+    let isa_dir = root.join("isa");
     let tomls: Vec<PathBuf> = std::fs::read_dir(&isa_dir)
         .map(|rd| {
             rd.filter_map(|e| e.ok())
@@ -47,9 +56,41 @@ fn main() {
     let out = PathBuf::from(std::env::var("OUT_DIR").unwrap());
     std::fs::write(out.join("isa_probe.rs"), stamp).expect("write isa_probe.rs");
 
-    // v18 S10d：为库里每一处 `isa_from_file!` 预生成一份落盘件（含 rerun-if-changed）。
+    // v18 S10d：测试/夹具里的 `isa_from_file!` 仍由扫描预生成。
     match forge_isa_dsl::pregenerate_host() {
         Ok(n) => println!("cargo:warning=forge-codegen: 预生成 {n} 份 ISA 生成物到 OUT_DIR"),
         Err(e) => panic!("ISA 生成物预生成失败：{e}"),
     }
+
+    // v28 M2：发行后端清单 → 预生成 + 注册表。
+    let manifest_path = isa_dir.join("manifest.toml");
+    println!("cargo:rerun-if-changed={}", manifest_path.display());
+    let manifest = forge_isa_dsl::manifest::load(&manifest_path)
+        .unwrap_or_else(|e| panic!("读 isa/manifest.toml 失败：{e}"));
+    for e in &manifest.isa {
+        let args = e
+            .macro_args()
+            .unwrap_or_else(|err| panic!("manifest 条目 {} 参数无效：{err}", e.name));
+        match forge_isa_dsl::spec_source_files(&args.path) {
+            Ok(srcs) => {
+                for s in srcs {
+                    println!("cargo:rerun-if-changed={}", s.display());
+                }
+            }
+            Err(err) => panic!("manifest 条目 {} 的谱来源不可读：{err}", e.name),
+        }
+        forge_isa_dsl::gen_file::pregenerate(&args, &out)
+            .unwrap_or_else(|err| panic!("预生成 {} 失败：{err}", e.spec));
+    }
+
+    std::fs::write(
+        out.join("arch_registry.rs"),
+        forge_isa_dsl::manifest::render_arch_registry(&manifest),
+    )
+    .expect("write arch_registry.rs");
+    std::fs::write(
+        out.join("backend_hooks.rs"),
+        forge_isa_dsl::manifest::render_backend_hooks(&manifest),
+    )
+    .expect("write backend_hooks.rs");
 }

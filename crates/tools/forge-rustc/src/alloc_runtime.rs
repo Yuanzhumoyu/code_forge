@@ -3,7 +3,7 @@
 //! 使 no_std + `extern crate alloc` 的 Vec/Box/String 可运行）。
 //!
 //! **可用目标面**：本 shim 的实现是 Windows 的 `VirtualAlloc`/`VirtualFree` + Windows x64
-//! 调用约定 ⇒ 只在这类目标注入（[`SUPPORTED_ARCHES`] + `target.is_like_windows`）。
+//! 调用约定 ⇒ 只在这类目标注入（manifest 的 `alloc_shim` + `target.is_like_windows`）。
 //! 这是**这个运行时实现**的边界，不是"按 ISA 分派 codegen"——后端只问它"你支持吗"。
 
 use crate::compile::compile_with_isa;
@@ -11,9 +11,9 @@ use crate::error::ForgeError;
 use crate::func_ref::FuncRefTable;
 use crate::prelude::*;
 
-/// 本运行时实现支持的目标架构（与 `target.is_like_windows` 一起判定）。
-/// 依据：实现体是 `VirtualAlloc`/`VirtualFree`（kernel32）+ Windows x64 ABI。
-pub const SUPPORTED_ARCHES: &[&str] = &["x86_64"];
+// 依据：实现体是 `VirtualAlloc`/`VirtualFree`（kernel32）+ Windows x64 ABI。
+// v28 M2 起可用架构由 `isa/manifest.toml` 的 `alloc_shim` 声明（见
+// `backend::arch::has_alloc_shim`），本文件不再维护第二份清单。
 
 /// 构建 alloc 运行时：`__rust_alloc`/`__rust_dealloc`/`__rust_realloc`/`__rust_alloc_zeroed`。
 /// 通过 FFI 调用 kernel32 的 `VirtualAlloc`/`VirtualFree`（UNDEF 重定位）实现真实堆分配，

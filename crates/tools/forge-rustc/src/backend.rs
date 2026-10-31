@@ -982,11 +982,11 @@ impl CodegenBackend for CodegenLibBackend {
             // **目标门控**（v27 M6-98）：这个 shim 的实现是 Windows 的
             // `VirtualAlloc/VirtualFree`（x64 约定），对 aarch64/其它目标既编不出
             // （降级层 = 对应 ISA 的规则集）也没有意义 ⇒ 按**运行时自己声明的
-            // 可用面**（`alloc_runtime::SUPPORTED_ARCHES` + Windows）注入，
+            // 可用面**（manifest 的 `alloc_shim` + Windows）注入，
             // 而不是把 `arch == X86_64` 写进 codegen 后端（那等于给指令集开后门）。
             let target_arch = format!("{:?}", tcx.sess.target.arch).to_lowercase();
             let alloc_runtime_ok = tcx.sess.target.is_like_windows
-                && crate::alloc_runtime::SUPPORTED_ARCHES.contains(&target_arch.as_str());
+                && code_forge::backend::arch::has_alloc_shim(&target_arch);
             if pi == 0 && !links_std && alloc_runtime_ok {
                 match build_alloc_runtime(tcx, &mut func_ref_table, isa_name) {
                     Ok(runtime_fns) => {

@@ -1,0 +1,29 @@
+# 发行后端清单（v28 M2）
+#
+# 新增 ISA：把谱放进 isa/，在下面加一条 [[isa]]；不要改 arch/*.rs、
+# pipeline_hooks.rs、compile.rs。字段：
+#   name        = ISA 注册名（必须等于谱的 [meta].name）
+#   module      = Rust 模块名（生成 arch::<module>::<module>）
+#   spec        = 谱路径（相对 workspace 根）
+#   parts       = 可选部件（encode/decode/asm/tm；省略 = 全开）
+#   targets     = rustc 目标三元组**前缀**（`x86_64-pc-windows-msvc` 命中 `x86_64`）
+#   alloc_shim  = 是否允许 rustc 后端注入 alloc/mem shim（Windows x64 运行时）
+
+[[isa]]
+name = "x86_64"
+module = "x86"
+spec = "isa/x86.toml"
+targets = ["x86_64", "amd64"]
+alloc_shim = true
+
+[[isa]]
+name = "arm64"
+module = "arm64"
+spec = "isa/arm64.toml"
+targets = ["aarch64", "arm64"]
+
+[[isa]]
+name = "riscv64"
+module = "riscv64"
+spec = "isa/riscv64.toml"
+targets = ["riscv64"]
