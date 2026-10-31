@@ -311,6 +311,7 @@ lowering，实测 `[cap:SPEC_LOWERING_RULE_MISSING]`）。
 | `pipeline/regalloc_bt/` | `mod.rs` 分配器与 `Default`；`state.rs` `BtState` 状态机；`spill.rs` 溢出编辑；`tests.rs` / `clobber_map_tests.rs` 用例 |
 | `pipeline/va_expand/` | `mod.rs` `AbiSlots` 与模块文档；`slots.rs` ABI 槽规划；`expand.rs` 展开主体；`tests.rs` 用例 |
 | `pipeline/legalize/agg_call/` | `mod.rs` sret 形参入口；`args.rs` 实参展开；`results.rs` 结果拆段与宽聚合返回 |
+| `runtime/jit/` | `jit.rs` 装载器公开面与装载/重定位；`symbols.rs` 平台符号 + `__chkstk` 桩；`tests.rs` JIT 用例（`#[cfg(test)]`，不计棘轮） |
 
 两条纪律：
 
@@ -326,13 +327,14 @@ lowering，实测 `[cap:SPEC_LOWERING_RULE_MISSING]`）。
 | `pipeline/legalize/materialize.rs` | 657 | 物化相：按 IR 形态分段单遍改写，切开反而难对照 |
 | `pipeline/va_expand/expand.rs` | 621 | `expand_start`/`expand_arg` 共享局部不变量（游标推进次序） |
 | `pipeline/compiler/mod.rs` | 433 | 会话入口 + 模块编排（v30 M2 把前置门/合法化批次/命名计时外提；state 与测试已切出） |
-| `pipeline/compiler/alloc_integration_tests.rs` | 693 | 集成用例（测试长不构成阅读负担，与实现同源；+栈探测正反用例 v27 M6-78、+v30 M1 选项/错误迁移 3 行） |
 
-缺省上限 **700** 行；上表与守卫里的预算表由 `file_size_ratchet` 钉成**双向相等**（改动其一就红）。
+缺省上限 **700** 行，扫描面 = `src/pipeline/**` + `src/runtime/**`；上表与守卫里的预算表由
+`file_size_ratchet` 钉成**双向相等**（改动其一就红）。
 
 **测试专属模块的识别**（给两条扫描型守卫用）：`#[cfg(test)] mod X;` 声明出来的文件整份跳过——
 M4 把测试搬成独立文件后，文件内不再有 `#[cfg(test)]` 可供"截断扫描"。识别方式是**向上找声明它的
-`mod.rs`**，看那条 `mod X;` 是否带 `#[cfg(test)]`（比按文件名猜精确，也盖得住改名）。
+模块根**（同目录 `mod.rs`，或 `../<目录名>.rs`——如 `runtime/jit.rs`），看那条 `mod X;` 是否带
+`#[cfg(test)]`（比按文件名猜精确，也盖得住改名）。
 
 ## 11. 事件表（codegen 的机读出口）
 

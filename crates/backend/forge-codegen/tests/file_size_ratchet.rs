@@ -6,7 +6,9 @@
 //! `agg_call.rs` 690——**读改成本高、评审难**。M4 按职责把它们切成目录（模块名不变 ⇒ 调用点零改动），
 //! 并把"多大算大"变成**可执行的数字**：
 //!
-//! 1. `file_size_ratchet`：`src/pipeline/**` 的每个文件都必须 ≤ 签入的上限（缺省 700 行）；
+//! 1. `file_size_ratchet`：`src/pipeline/**` 与 `src/runtime/**` 的每个**生产**文件都必须
+//!    ≤ 签入的上限（缺省 700 行）；`#[cfg(test)] mod X;` 声明出来的测试文件整份跳过
+//!    （v30 M3：JIT 测试从 `runtime/jit.rs` 拆到 `runtime/jit/tests.rs` 后，生产文件才受约束）；
 //!    上限**只许按实测下调**（与 asm 计数棘轮同一纪律）——要放行更大的文件必须显式改表并给出理由；
 //! 2. `leaf_modules_do_not_depend_on_the_driver`：`legalize/**`、`va_expand/**`、`regalloc_bt/**`
 //!    是**叶子**（它们只提供 pass / 展开 / 分配），不得依赖编译会话 `compiler`/`session`。
@@ -35,10 +37,50 @@ fn rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
+/// 该文件是否由 `#[cfg(test)] mod X;` 声明（测试专属文件整份跳过规模棘轮）。
+///
+/// 判定方式：向上找声明它的模块根（同目录 `mod.rs` 或 `../<dir名>.rs`），
+/// 看那条 `mod <stem>;` 前最近的非空行是不是 `#[cfg(test)]`。
+fn is_cfg_test_module(path: &std::path::Path) -> bool {
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return false;
+    };
+    let Some(dir) = path.parent() else {
+        return false;
+    };
+    let decl_name = format!("mod {stem};");
+    let mut candidates = vec![dir.join("mod.rs")];
+    if let Some(parent_name) = dir.file_name() {
+        candidates.push(dir.with_file_name(format!("{}.rs", parent_name.to_string_lossy())));
+    }
+    for decl in candidates {
+        if decl == path {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&decl) else {
+            continue;
+        };
+        let lines: Vec<&str> = text.lines().collect();
+        for (i, line) in lines.iter().enumerate() {
+            if line.trim() != decl_name {
+                continue;
+            }
+            for prev in lines[..i].iter().rev() {
+                let p = prev.trim();
+                if p.is_empty() || p.starts_with("//") {
+                    continue;
+                }
+                return p == "#[cfg(test)]";
+            }
+        }
+    }
+    false
+}
+
 /// 超过缺省上限的文件（相对 `crates/backend/forge-codegen/src/`）：实测值即上限。
 ///
 /// 纪律：**只许下调**。要把某条上限调高，必须在这里写清"为什么这个文件必须长"。
-const BUDGETS: [(&str, usize); 6] = [
+const BUDGETS: [(&str, usize); 5] = [
     // 分配器状态机：`BtState` 的 13 个字段 + 17 个方法构成一台状态机，切开会把
     // "谁改了哪个字段"拆散（M4 只切出 spill/tests；再切需先把状态字段收敛成内聚子结构）。
     // 944 = 切分后实测（比初测 +3：跨模块可见性把 13 字段 / 17 方法标成 `pub(super)`）。
@@ -53,11 +95,6 @@ const BUDGETS: [(&str, usize); 6] = [
     ("pipeline/va_expand/expand.rs", 621),
     // 编译会话入口（v30 M2：前置门/合法化批次/命名计时已外提；433 = 外提后实测）。
     ("pipeline/compiler/mod.rs", 433),
-    // 会话测试体（测试长不构成阅读负担的同类问题，且与实现同源）。
-    // 栈探测的正反两面用例（v27 M6-78：大帧必须发 `mov rax,size; call __chkstk`，
-    // 小帧不得发）——同一形状的编译级断言放这里最省重复。
-    // +3（v30 M1）：`CompileOptions`/`CompileError` 迁移把两处调用链拉长；只增测试体。
-    ("pipeline/compiler/alloc_integration_tests.rs", 693),
 ];
 
 /// 缺省上限：新文件超过它就必须进 [`BUDGETS`] 并写明理由。
@@ -70,12 +107,16 @@ fn file_size_ratchet() {
     let base = root.join("crates/backend/forge-codegen/src");
     let mut files = Vec::new();
     rs_files(&base.join("pipeline"), &mut files);
+    rs_files(&base.join("runtime"), &mut files);
 
     let table: BTreeMap<&str, usize> = BUDGETS.into_iter().collect();
     let mut over: Vec<String> = Vec::new();
     let mut hit: BTreeMap<&str, bool> = table.keys().map(|k| (*k, false)).collect();
 
     for p in &files {
+        if is_cfg_test_module(p) {
+            continue;
+        }
         let rel = p
             .strip_prefix(&base)
             .unwrap_or(p)

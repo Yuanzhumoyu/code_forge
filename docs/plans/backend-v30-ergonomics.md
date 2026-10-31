@@ -81,7 +81,7 @@ impl<M: TargetMachine> JitLoader<M> {
 | M0 | 金标（golden bytes）+ 活账本 | 完成 |
 | M1 | `CompileOptions` / `CompileError` / `Arc<M>`，删除 `with_opt_level` | 完成 |
 | M2 | `Stage` 枚举 + 命名计时 + `precheck` / 合法化批次外提 | 完成 |
-| M3 | `runtime/jit.rs` 拆文件，棘轮扩到 `src/runtime/**` | 待做 |
+| M3 | `runtime/jit.rs` 拆文件，棘轮扩到 `src/runtime/**` | 完成 |
 | M4 | `JitSignatureInfo` + `JitSignature::get`，迁移 153 处调用点 | 待做 |
 | M5 | 契约文档/CHANGELOG/公开面守卫收口 + 全量门禁 | 待做 |
 
@@ -115,10 +115,12 @@ impl<M: TargetMachine> JitLoader<M> {
 
 ### M3 JIT 拆文件（纯搬移）
 
-- `runtime/jit/{mod,loader,symbols}.rs` + `runtime/jit/tests/*.rs`；
-  `mod.rs` 只留公开类型与 re-export。
-- `tests/file_size_ratchet.rs` 扫描面扩到 `src/runtime/**`（缺省 700；
-  测试模块按"向上找 `#[cfg(test)] mod`"规则跳过）。
+- 实际落点（模块路径不变）：`runtime/jit.rs`（装载器公开面与装载/重定位，385 行）+
+  `runtime/jit/symbols.rs`（平台符号 + `__chkstk` 桩，102 行）+
+  `runtime/jit/tests.rs`（5018 行 JIT 用例，`#[cfg(test)]` 声明 ⇒ 整份跳过棘轮）。
+- 棘轮扫描面扩到 `src/runtime/**`，并真正实现"`#[cfg(test)] mod X;` 声明的文件整份跳过"
+  （此前文档写了规则、`file_size_ratchet` 没实现；`alloc_integration_tests.rs` 的预算条目
+  随之删除——测试文件不再计入规模上限）。
 
 ### M4 类型安全 JIT 调用
 
@@ -162,5 +164,9 @@ impl<M: TargetMachine> JitLoader<M> {
   `Stage::ALL`；新增 `Stage::description`）；`pipeline/profile.rs` 用命名计时取代
   `_t1.._t7`/`_t2b`；`pipeline/precheck.rs` 外提值池/宽向量/异常三组门（带单测）；
   `legalize/schedule.rs` 外提合法化批次编排（只搬不改次序）。`compiler/mod.rs`
-  670 → 433 行（棘轮同步下调；`alloc_integration_tests.rs` 因 M1 迁移 +3 行，已在
-  棘轮表写明理由）。金标字节不变；`forge-codegen` lib 2982 条 + ratchet 守卫全绿。
+  670 → 433 行（棘轮同步下调）。金标字节不变；`forge-codegen` lib 2982 条 + ratchet 全绿。
+- **2026-11-01 M3**：`runtime/jit.rs`（5126 行，其中 5018 行是测试）拆成
+  `jit.rs`（385 行生产）+ `jit/symbols.rs`（102 行）+ `jit/tests.rs`（5018 行，测试）；
+  模块路径 `forge_codegen::runtime::jit::JitLoader` 不变。棘轮扫描面扩到 `src/runtime/**`，
+  并补上文档早已写明的"`#[cfg(test)] mod X;` 文件整份跳过"规则（`file_size_ratchet` 此前
+  未实现，`alloc_integration_tests.rs` 的预算条目因此删除）。lib 2982 条 + ratchet 全绿。
