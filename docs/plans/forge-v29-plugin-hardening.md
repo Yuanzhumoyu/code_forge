@@ -51,6 +51,13 @@
 - 版本不匹配/缺符号时加载失败信息明确。
 - `cargo forge gate` 全量绿。
 
+## 验证记录
+
+- 2026-10-31：`cargo forge gate` **54/54 全绿**（workspace 曾因环境 OOM 单独红一次，
+  清内存后重跑通过）。
+- 插件测试 3/3（加载执行、Call 重定位、非插件 DLL 拒绝）；`forge-isa-runtime`
+  41 tests + mem 11 tests；`forge-codegen` JIT 基本用例通过。
+
 ## 不做
 
 - 跨 rustc/forge 构建的 ABI 兼容（只保证同一构建，版本不匹配即拒绝）。
