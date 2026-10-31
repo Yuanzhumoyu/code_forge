@@ -17,6 +17,7 @@ docs/
 │   ├── backend-pipeline.md    # 后端编译管线契约（v23 M1：CompileSession/JitLoader/ModuleSigs）
 │   ├── backend-gaps.md        # 后端能力缺口台账（`[cap:ID]` + 决策 + 双向守卫；条数以台账为准）
 │   ├── generality-audit.md    # **v28 通用性审计**：写死/未接线问题 GEN-01…08（占位符、ISA 接入、插件、宽度、动态产物、分配器）
+│   ├── jit-memory.md          # JIT 可执行内存：W^X / dual mapping / guard / 64KiB 块+64B 子页 / query/shrink/reset
 │   ├── constants.md           # 常量层（v28：BitValue 比特值 / ConstId 四元枚举 / ConstantPool 四通道 / AsConst）
 │   └── imm_str.md             # ImmStr 类型设计（forge-ir 代码注释引用）
 ├── plans/                 # 进行中专项方案（当前为空）
@@ -49,6 +50,8 @@ docs/
     ├── varargs-plan.md / isa-dsl-variant-field-values.md # 变参（功能面已完成）/ 按变体给字段值（早已落地）
     ├── forge-ir-v3-plan.md      # forge-ir v3（S1–S8 全部收口；未关闭项移交 ../forge-ir/backlog.md）
     ├── forge-rustc-vec_push-plan.md # forge-rustc vec 族（2026-10-11 归档：验收 4/4 达成，e2e 103 条用例全绿）
+    ├── forge-v28-generality-plan.md # forge v28 通用性整治（2026-10-31 归档：M0–M7 全部收口）
+    ├── forge-v29-plugin-hardening.md # v29 插件硬化（2026-10-31 归档：A1–A6 全部收口）
     ├── project-v26-plan.md       # 项目 v26 里程碑 M1–M5（2026-10-11 归档：全部收口；现行入口 = reference/backend-pipeline.md + backend-gaps.md + guides/testing-notes.md + CHANGELOG）
     ├── backend-v23-plan.md     # 后端 v23 里程碑 M1–M6 + M7（2026-10-11 归档：全部收口；现行入口 = reference/backend-pipeline.md + CHANGELOG）
     ├── backend-v24-plan.md     # 后端 v24 里程碑 M1–M5（2026-10-11 归档：全部收口；现行入口 = reference/backend-pipeline.md + backend-gaps.md + CHANGELOG）

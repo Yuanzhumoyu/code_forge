@@ -46,19 +46,21 @@ src/
 ### 1. 定义 ISA
 
 在 `isa/` 下新建 TOML（如 `isa/my_isa.toml`），按 ISA-DSL 语法定义指令编码、
-寄存器、lowering 规则（见 `docs/reference/isa-dsl.md`）。在 forge-codegen 中注册 backend：
+寄存器、lowering 规则（见 `docs/reference/isa-dsl.md`）。**发行后端不再手写
+`arch/my_isa.rs`**：在 `isa/manifest.toml` 加一条：
 
-```rust
-// crates/backend/forge-codegen/src/arch/my_isa.rs
-forge_dsl::isa_from_file!("isa/my_isa.toml");
-pub use self::my_isa::*; // 生成 TargetMachine / Inst / Reg 等全套组件
-// 注册由 DSL 生成的 ensure_registered() 完成（Registry + reloc patcher OnceLock）
+```toml
+[[isa]]
+name = "my_isa"
+module = "my_isa"
+spec = "isa/my_isa.toml"
+targets = ["myisa64"]
 ```
 
-> 注：生成的顶层类型是 `TargetMachine`（组合 RegInfo/ABI/Lowering/Encoder/
-> FrameLowering/Disassembler/Assembler/Decoder 组件），不是 `Isa`；注册走
-> `Registry::global().register_backend(...)`（DSL 生成的 `ensure_registered()` 内），
-> 无 `register_backend!` 宏。
+`forge-codegen/build.rs` 生成 `arch_registry.rs` / `backend_hooks.rs`（模块、目标表、
+管线工厂、调用点钩子）；`arch/mod.rs` 只 `include!`。生成模块导出的顶层类型是
+`TargetMachine`（组合 RegInfo/ABI/Lowering/Encoder/FrameLowering/Disassembler/
+Assembler/Decoder），不是 `Isa`。
 
 ### 2. 接入测试
 

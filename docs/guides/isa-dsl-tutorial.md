@@ -104,11 +104,21 @@ fn main() {
 }
 ```
 
-```rust
-// src/arch/toy16.rs
-forge_dsl::isa_from_file!("isa/toy16.toml");
-pub use self::toy16::*;
+仓库内新增发行后端**不再手写 `src/arch/toy16.rs`**：把谱放进 `isa/`，在
+[`isa/manifest.toml`](../../isa/manifest.toml) 加一条：
+
+```toml
+[[isa]]
+name = "toy16"
+module = "toy16"
+spec = "isa/toy16.toml"
+targets = ["toy16"]
 ```
+
+`forge-codegen/build.rs` 会生成 `arch_registry.rs`（模块/目标表/ensure_all）与
+`backend_hooks.rs`（管线工厂/调用点钩子），`arch/mod.rs` 只 `include!`。外部宿主
+（不在本仓库）仍用自己的 build script + `isa_from_file!`，见
+[`examples/isa-host-demo`](../../examples/isa-host-demo/README.md)。
 
 为什么不让宏自己写文件：rust-analyzer 只在分析开始前加载一次文件集（宏写出的文件它
 看不见，会报几十条 "unresolved import"），而且 `TokenStream::to_string()` 在 proc 宏里
@@ -132,8 +142,8 @@ pub use self::toy16::*;
 
 1. **寄存器组名的数字是字节宽**：`gpr8` = 1 字节，`gpr64` = 8 字节。生成物里的类/宽度/栈槽全都由它派生，
    不需要在别处再写一遍"8 字节"。
-2. **位域名（`rd`/`rs1`/`imm`）不是生成的字段名**——它只决定"第 i 个操作数编到哪一段位"。生成的
-   `Inst` 字段名取 `ops` 里作者声明的名字（见第 3 步）。
+2. **位域名（`rd`/`rs1`/`imm`）不是生成的字段名**——它只决定"第 i 个操作数编到哪一段位"。
+   生成的 `Inst` 字段名取 `asm` 里 `{名字:槽[:角色]}` 的声明名（见第 3 步）。
 3. `[encoding].kind` 三态：`fixed`（全部同一字长）、`mixed`（`widths = [16, 32]` 逐指令选）、
    `prefix_scan`（x86 式前缀链）。定宽 ISA 写 `fixed` 即可。
 
@@ -229,12 +239,10 @@ doc = "{name}：把 {src.width} 位的 {src.slot} 相加写回 {dst.slot}（族 
 encode∘decode 字节稳定、汇编↔反汇编文本幂等、立即数边界等断言，随着 TOML 自动更新：
 
 ```rust
-// 发行后端：crates/backend/forge-codegen/src/arch/toy16.rs
+// 外部宿主：自己的 build script + 预生成
 forge_dsl::isa_from_file!("isa/toy16.toml");
-pub use self::toy16::*;
 
-// 任意普通 crate（生成物只依赖 forge-isa-runtime；v19 起没有 krate 参数）
-forge_dsl::isa_from_file!("tests/isa/toy16.toml");
+// 仓库内发行后端：只加 isa/manifest.toml 一条，不写 arch/*.rs
 ```
 
 最小可抄的**完整宿主** = [`examples/isa-host-demo`](../../examples/isa-host-demo/README.md)
