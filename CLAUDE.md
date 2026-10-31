@@ -16,10 +16,13 @@ docs/
 │   ├── aarch64-encoding-ref.md# A64 编码参考（arm64 后端/golden 依据）
 │   ├── backend-pipeline.md    # 后端编译管线契约（v23 M1：CompileSession/JitLoader/ModuleSigs）
 │   ├── backend-gaps.md        # 后端能力缺口台账（`[cap:ID]` + 决策 + 双向守卫；条数以台账为准）
+│   ├── generality-audit.md    # **v28 通用性审计**：写死/未接线问题 GEN-01…08（占位符、ISA 接入、插件、宽度、动态产物、分配器）
 │   ├── constants.md           # 常量层（v28：BitValue 比特值 / ConstId 四元枚举 / ConstantPool 四通道 / AsConst）
 │   └── imm_str.md             # ImmStr 类型设计（forge-ir 代码注释引用）
 ├── plans/                 # 进行中专项方案（活账本）[progress]
-│   └── （当前无进行中专项；v27 已收口 → archive/forge-rustc-v27-plan.md）
+│   └── forge-v28-generality-plan.md # **forge v28 通用性整治**（M0 审计 / M1 占位符数据化 /
+│                                    #   M2 ISA 接入零本体改动 / M3 插件零胶水 / M4 宽度泛化 /
+│                                    #   M5 动态产物 / M6 分配器缺陷 / M7 收口）
 ├── forge-ir/              # forge-ir 工作流 [active]
 │   ├── README.md              # 组说明（历轮计划已归档、如何继续）
 │   └── backlog.md             # 未关闭待办速览（出处指向 archive/forge-ir/）

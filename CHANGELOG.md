@@ -11,6 +11,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Docs (2026-10-31) — v28 通用性审计立项
+
++ 新增 [`docs/reference/generality-audit.md`](docs/reference/generality-audit.md)：
+  将“写死/未接线”的结构性问题编号为 GEN-01…GEN-08（占位符表、ISA 接入、插件 ABI、
+  rustc 宽度假设、动态产物、两个 `#[ignore]` 分配器缺陷、外部宿主 tm、文档腐化），
+  每条给文件:行证据与决策去向。
++ 新增 [`docs/plans/forge-v28-generality-plan.md`](docs/plans/forge-v28-generality-plan.md)：
+  M0 审计 → M1 占位符数据化 → M2 ISA 接入零本体改动 → M3 插件零胶水 →
+  M4 rustc 宽度泛化 → M5 动态产物最小 PIC/DLL → M6 分配器缺陷 → M7 收口。
+
 ### Fixed (2026-10-31) — aarch64 i32 比较误用 64 位 CMPREGX（KD-09 根因）
 
 + `Icmp` 对 **i32 操作数**原先走 64 位 `CMPREGX`：`Iconst` 的 i32 常量按 X 宽
