@@ -11,6 +11,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-31) — JIT 可执行内存：dual mapping / guard page / 页级复用
+
++ Windows 优先把代码页映射成 RX + RW 两个视图（W^X，无需临时改保护），失败回退 `VirtualAlloc` 单映射；`ExecutableMemory::with_guard_pages` 提供前后不可访问页。
++ `page_size` 改为进程级缓存；dual mapping 释放后进入 16 MiB 页级缓存，同尺寸复用。
++ 参考 [pager-lang](https://github.com/jamesgober/pager-lang) 与 [jit-allocator2](https://github.com/tremwil/jit-allocator2) 的安全/复用设计；子页块分配、`query/shrink/reset` 仍未做，见 [`docs/reference/jit-memory.md`](docs/reference/jit-memory.md)。
++ 测试：`forge-isa-runtime` mem 11 条（含真实执行、guard page、dual 强制、缓存复用）；JIT 基本用例仍通过。
+
 ### Changed (2026-10-31) — 插件硬化 v2.1（A1/A3/A4/A5）
 
 + 插件 ABI 升到 `PLUGIN_ABI_VERSION = 2` 并要求握手：导出

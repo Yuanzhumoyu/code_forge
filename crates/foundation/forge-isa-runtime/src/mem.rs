@@ -1,4 +1,4 @@
-//! 可执行内存分配器 — JIT 编译核心工具（`forge-isa-runtime::mem`，v26 M2 从独立 crate
+﻿//! 可执行内存分配器 — JIT 编译核心工具（`forge-isa-runtime::mem`，v26 M2 从独立 crate
 //! `forge-mem` 折叠进来：那个 crate 全仓只有 `jit.rs` 一处使用，`CpuFeatures` 更是零调用者）。
 //!
 //! 提供跨平台的可执行内存分配/释放功能，使编译后的机器码可以在运行时直接调用。
@@ -49,10 +49,20 @@ impl From<&str> for MemError {
 ///
 /// 内存采用 W^X 模型：写入时代码在 RW 内存中，`seal()` 后切换为 RX。
 pub struct ExecutableMemory {
+    /// 可执行视图（dual mapping 时为 RX；单映射时与 `rw` 相同）。
     ptr: *mut u8,
+    /// 可写视图（dual mapping 时为 RW；单映射时与 `ptr` 相同）。
+    rw: *mut u8,
+    /// 映射基址（有 guard page 时 = 首个 guard 页；否则与 `ptr` 相同）。
+    mapping_base: *mut u8,
+    /// 映射总长（含 guard pages）。
+    mapping_size: usize,
+    /// 提供给调用者的代码区大小（不含 guard pages）。
     size: usize,
     /// 内存是否已 seal（已切换为 RX，不可再写入）。
     is_sealed: bool,
+    /// Windows dual mapping：RX/RW 两个视图指向同一物理页。
+    dual: bool,
 }
 
 // ExecutableMemory 是线程安全的：内存标记为可执行后只读。
@@ -72,31 +82,69 @@ impl ExecutableMemory {
         let page_size = page_size();
         let alloc_size = (size + page_size - 1) & !(page_size - 1);
 
-        // 1. 分配 RW 内存（不可执行）
-        let ptr = alloc_rw(alloc_size)?;
+        // 1. 分配（优先 Windows dual mapping：RX/RW 两个视图，天然 W^X）
+        let (ptr, rw, mapping_base, mapping_size, dual) = alloc_code(alloc_size, false)?;
 
-        // 2. 将代码拷贝到内存中
+        // 2. 将代码拷贝到可写视图
         unsafe {
-            core::ptr::copy_nonoverlapping(code.as_ptr(), ptr, size);
+            core::ptr::copy_nonoverlapping(code.as_ptr(), rw, size);
         }
 
         // 用断点指令（0xCC）填充剩余字节（防止意外执行到填充区）
         if alloc_size > size {
             unsafe {
-                core::ptr::write_bytes(ptr.add(size), 0xCC, alloc_size - size);
+                core::ptr::write_bytes(rw.add(size), 0xCC, alloc_size - size);
             }
         }
 
         // 3. 刷新指令缓存（ARM 必需）
         flush_icache(ptr, alloc_size);
 
-        // 4. 切换为 RX（不可写）
-        make_executable(ptr, alloc_size)?;
+        // 4. dual mapping 已是 RX；单映射才切换保护
+        if !dual {
+            make_executable(ptr, alloc_size)?;
+        }
 
         Ok(Self {
             ptr,
+            rw,
+            mapping_base,
+            mapping_size,
             size: alloc_size,
             is_sealed: true,
+            dual,
+        })
+    }
+
+    /// 带 guard page 的分配：代码区前后各一页不可访问，越界立刻 fault。
+    ///
+    /// 与 [`Self::new`] 相同的 W^X 流程；guard pages 不属于可执行区。
+    pub fn with_guard_pages(code: &[u8]) -> Result<Self, MemError> {
+        if code.is_empty() {
+            return Err(MemError("empty code".into()));
+        }
+        let size = code.len();
+        let page = page_size();
+        let alloc_size = (size + page - 1) & !(page - 1);
+        let (ptr, rw, mapping_base, mapping_size, dual) = alloc_code(alloc_size, true)?;
+        unsafe {
+            core::ptr::copy_nonoverlapping(code.as_ptr(), rw, size);
+            if alloc_size > size {
+                core::ptr::write_bytes(rw.add(size), 0xCC, alloc_size - size);
+            }
+        }
+        flush_icache(ptr, alloc_size);
+        if !dual {
+            make_executable(ptr, alloc_size)?;
+        }
+        Ok(Self {
+            ptr,
+            rw,
+            mapping_base,
+            mapping_size,
+            size: alloc_size,
+            is_sealed: true,
+            dual,
         })
     }
 
@@ -126,8 +174,12 @@ impl ExecutableMemory {
 
         Ok(Self {
             ptr,
+            rw: ptr,
+            mapping_base: ptr,
+            mapping_size: alloc_size,
             size: alloc_size,
             is_sealed: false,
+            dual: false,
         })
     }
 
@@ -139,7 +191,9 @@ impl ExecutableMemory {
             return Ok(());
         }
         flush_icache(self.ptr, self.size);
-        make_executable(self.ptr, self.size)?;
+        if !self.dual {
+            make_executable(self.ptr, self.size)?;
+        }
         self.is_sealed = true;
         Ok(())
     }
@@ -154,11 +208,13 @@ impl ExecutableMemory {
         F: FnOnce(&mut [u8]),
     {
         if self.is_sealed {
-            make_writable(self.ptr, self.size)?;
+            if !self.dual {
+                make_writable(self.ptr, self.size)?;
+            }
             self.is_sealed = false;
         }
 
-        let slice = unsafe { core::slice::from_raw_parts_mut(self.ptr, self.size) };
+        let slice = unsafe { core::slice::from_raw_parts_mut(self.rw, self.size) };
         f(slice);
 
         self.seal()
@@ -222,11 +278,25 @@ impl ExecutableMemory {
 
 impl Drop for ExecutableMemory {
     fn drop(&mut self) {
-        if !self.ptr.is_null() {
+        if !self.mapping_base.is_null() {
+            #[cfg(windows)]
             unsafe {
-                free_executable(self.ptr, self.size);
+                if self.dual {
+                    if !put_cached_dual(self.ptr, self.rw, self.size) {
+                        free_dual(self.ptr, self.rw);
+                    }
+                } else {
+                    free_executable(self.mapping_base, self.mapping_size);
+                }
+            }
+            #[cfg(not(windows))]
+            unsafe {
+                free_executable(self.mapping_base, self.mapping_size);
             }
             self.ptr = core::ptr::null_mut();
+            self.rw = core::ptr::null_mut();
+            self.mapping_base = core::ptr::null_mut();
+            self.mapping_size = 0;
             self.size = 0;
         }
     }
@@ -236,7 +306,9 @@ impl core::fmt::Debug for ExecutableMemory {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ExecutableMemory")
             .field("ptr", &self.ptr)
+            .field("rw", &self.rw)
             .field("size", &self.size)
+            .field("dual", &self.dual)
             .field("is_sealed", &self.is_sealed)
             .finish()
     }
@@ -246,8 +318,271 @@ impl core::fmt::Debug for ExecutableMemory {
 // 平台特定实现
 // ============================================================
 
-/// 获取系统页大小。
+/// 分配代码区：返回 `(rx, rw, mapping_base, mapping_size, dual)`。
+///
+/// - Windows 优先 dual mapping：同一物理页的 RX/RW 两个视图，天然 W^X；
+///   失败则回落单映射。
+/// - `guard=true` 时前后各留一页不可访问（单映射路径）。
+fn alloc_code(
+    size: usize,
+    guard: bool,
+) -> Result<(*mut u8, *mut u8, *mut u8, usize, bool), MemError> {
+    #[cfg(windows)]
+    {
+        if !guard && let Ok((rx, rw)) = alloc_dual(size) {
+            return Ok((rx, rw, rx, size, true));
+        }
+        if guard {
+            let page = page_size();
+            let total = size + 2 * page;
+            let base = alloc_rw(total)?;
+            protect_noaccess(base, page)?;
+            protect_noaccess(unsafe { base.add(page + size) }, page)?;
+            let mid = unsafe { base.add(page) };
+            return Ok((mid, mid, base, total, false));
+        }
+        let ptr = alloc_rw(size)?;
+        Ok((ptr, ptr, ptr, size, false))
+    }
+
+    #[cfg(not(windows))]
+    {
+        if guard {
+            let page = page_size();
+            let total = size + 2 * page;
+            let base = mmap_prot(total, 0)?; // PROT_NONE
+            let mid = unsafe { base.add(page) };
+            if let Err(e) = mprotect_region(mid, size, true) {
+                unsafe {
+                    free_executable(base, total);
+                }
+                return Err(e);
+            }
+            return Ok((mid, mid, base, total, false));
+        }
+        let ptr = alloc_rw(size)?;
+        Ok((ptr, ptr, ptr, size, false))
+    }
+}
+
+#[cfg(windows)]
+fn alloc_dual(size: usize) -> Result<(*mut u8, *mut u8), MemError> {
+    // 先复用已释放的 dual 映射（jit-allocator2 的块复用思路的页级简化版）：
+    // 避免编译-释放循环里反复 CreateFileMapping/MapViewOfFile。
+    if let Some(pair) = take_cached_dual(size) {
+        return Ok(pair);
+    }
+    type Handle = *mut core::ffi::c_void;
+    #[allow(unsafe_code)]
+    unsafe extern "system" {
+        fn CreateFileMappingW(
+            hFile: Handle,
+            lpAttributes: *mut core::ffi::c_void,
+            flProtect: u32,
+            dwMaximumSizeHigh: u32,
+            dwMaximumSizeLow: u32,
+            lpName: *const u16,
+        ) -> Handle;
+        fn MapViewOfFile(
+            hFileMappingObject: Handle,
+            dwDesiredAccess: u32,
+            dwFileOffsetHigh: u32,
+            dwFileOffsetLow: u32,
+            dwNumberOfBytesToMap: usize,
+        ) -> *mut core::ffi::c_void;
+        fn CloseHandle(hObject: Handle) -> i32;
+        fn UnmapViewOfFile(lpBaseAddress: *const core::ffi::c_void) -> i32;
+    }
+    const INVALID_HANDLE_VALUE: Handle = -1isize as Handle;
+    const PAGE_EXECUTE_READWRITE: u32 = 0x40;
+    const FILE_MAP_WRITE: u32 = 0x0002;
+    const FILE_MAP_READ: u32 = 0x0004;
+    const FILE_MAP_EXECUTE: u32 = 0x0020;
+
+    let handle = unsafe {
+        CreateFileMappingW(
+            INVALID_HANDLE_VALUE,
+            core::ptr::null_mut(),
+            PAGE_EXECUTE_READWRITE,
+            (size as u64 >> 32) as u32,
+            (size as u64 & 0xFFFF_FFFF) as u32,
+            core::ptr::null(),
+        )
+    };
+    if handle.is_null() {
+        return Err(MemError(format!(
+            "CreateFileMappingW failed for {size} bytes"
+        )));
+    }
+    let rx =
+        unsafe { MapViewOfFile(handle, FILE_MAP_READ | FILE_MAP_EXECUTE, 0, 0, size) } as *mut u8;
+    let rw =
+        unsafe { MapViewOfFile(handle, FILE_MAP_READ | FILE_MAP_WRITE, 0, 0, size) } as *mut u8;
+    unsafe {
+        CloseHandle(handle);
+    }
+    if rx.is_null() || rw.is_null() {
+        unsafe {
+            if !rx.is_null() {
+                UnmapViewOfFile(rx as *const _);
+            }
+            if !rw.is_null() {
+                UnmapViewOfFile(rw as *const _);
+            }
+        }
+        return Err(MemError(format!("MapViewOfFile failed for {size} bytes")));
+    }
+    Ok((rx, rw))
+}
+
+#[cfg(windows)]
+unsafe fn free_dual(rx: *mut u8, rw: *mut u8) {
+    #[allow(unsafe_code)]
+    unsafe extern "system" {
+        fn UnmapViewOfFile(lpBaseAddress: *const core::ffi::c_void) -> i32;
+    }
+    unsafe {
+        UnmapViewOfFile(rx as *const _);
+        if rx != rw {
+            UnmapViewOfFile(rw as *const _);
+        }
+    }
+}
+
+// 页级 dual-mapping 缓存：最多保留 16 MiB，超出即真正 unmap。
+#[cfg(windows)]
+const DUAL_CACHE_MAX: usize = 16 * 1024 * 1024;
+
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+struct CachedDual {
+    rx: *mut u8,
+    rw: *mut u8,
+    size: usize,
+}
+// SAFETY：缓存本身只在锁内访问；指针指向已映射的只读代码页，跨线程移动安全。
+#[cfg(windows)]
+unsafe impl Send for CachedDual {}
+
+#[cfg(windows)]
+fn dual_cache() -> &'static std::sync::Mutex<Vec<CachedDual>> {
+    static C: std::sync::OnceLock<std::sync::Mutex<Vec<CachedDual>>> = std::sync::OnceLock::new();
+    C.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+#[cfg(windows)]
+fn take_cached_dual(size: usize) -> Option<(*mut u8, *mut u8)> {
+    let mut c = dual_cache().lock().ok()?;
+    let i = c.iter().position(|e| e.size == size)?;
+    let e = c.swap_remove(i);
+    Some((e.rx, e.rw))
+}
+
+#[cfg(windows)]
+fn put_cached_dual(rx: *mut u8, rw: *mut u8, size: usize) -> bool {
+    let Ok(mut c) = dual_cache().lock() else {
+        return false;
+    };
+    let total: usize = c.iter().map(|e| e.size).sum();
+    if total + size > DUAL_CACHE_MAX {
+        return false;
+    }
+    c.push(CachedDual { rx, rw, size });
+    true
+}
+
+#[cfg(all(test, windows))]
+fn cached_dual_bytes() -> usize {
+    dual_cache()
+        .lock()
+        .map(|c| c.iter().map(|e| e.size).sum())
+        .unwrap_or(0)
+}
+
+#[cfg(windows)]
+fn protect_noaccess(ptr: *mut u8, size: usize) -> Result<(), MemError> {
+    #[allow(unsafe_code)]
+    unsafe extern "system" {
+        fn VirtualProtect(
+            lpAddress: *mut core::ffi::c_void,
+            dwSize: usize,
+            flNewProtect: u32,
+            lpflOldProtect: *mut u32,
+        ) -> i32;
+    }
+    const PAGE_NOACCESS: u32 = 0x01;
+    let mut old = 0u32;
+    let ok =
+        unsafe { VirtualProtect(ptr as *mut core::ffi::c_void, size, PAGE_NOACCESS, &mut old) };
+    if ok == 0 {
+        return Err(MemError(format!(
+            "VirtualProtect(NOACCESS) failed for {size} bytes"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn mmap_prot(size: usize, prot: i32) -> Result<*mut u8, MemError> {
+    #[allow(unsafe_code)]
+    unsafe extern "C" {
+        fn mmap(
+            addr: *mut core::ffi::c_void,
+            length: usize,
+            prot: i32,
+            flags: i32,
+            fd: i32,
+            offset: i64,
+        ) -> *mut core::ffi::c_void;
+    }
+    const MAP_PRIVATE: i32 = 2;
+    #[cfg(target_os = "macos")]
+    const MAP_ANON: i32 = 0x1000;
+    #[cfg(not(target_os = "macos"))]
+    const MAP_ANON: i32 = 0x20;
+    let ptr = unsafe {
+        mmap(
+            core::ptr::null_mut(),
+            size,
+            prot,
+            MAP_PRIVATE | MAP_ANON,
+            -1,
+            0,
+        )
+    };
+    if ptr as usize == usize::MAX || ptr.is_null() {
+        return Err(MemError(format!("mmap failed for {size} bytes")));
+    }
+    Ok(ptr as *mut u8)
+}
+
+#[cfg(not(windows))]
+fn mprotect_region(ptr: *mut u8, size: usize, writable: bool) -> Result<(), MemError> {
+    #[allow(unsafe_code)]
+    unsafe extern "C" {
+        fn mprotect(addr: *mut core::ffi::c_void, len: usize, prot: i32) -> i32;
+    }
+    const PROT_READ: i32 = 1;
+    const PROT_WRITE: i32 = 2;
+    let prot = if writable {
+        PROT_READ | PROT_WRITE
+    } else {
+        PROT_READ
+    };
+    let ret = unsafe { mprotect(ptr as *mut core::ffi::c_void, size, prot) };
+    if ret != 0 {
+        return Err(MemError(format!("mprotect failed for {size} bytes")));
+    }
+    Ok(())
+}
+
+/// 获取系统页大小（进程级缓存；jit-allocator2/pager-lang 同样只查一次）。
 fn page_size() -> usize {
+    static PAGE_SIZE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *PAGE_SIZE.get_or_init(query_page_size)
+}
+
+fn query_page_size() -> usize {
     #[cfg(windows)]
     {
         #[repr(C)]
@@ -823,6 +1158,39 @@ mod tests {
             ExecutableMemory::exec_once::<extern "C" fn(i32, i32) -> i32, _>(&code, |add| add(7, 8))
         };
         assert_eq!(result.unwrap(), 15);
+    }
+
+    #[test]
+    #[cfg(all(target_arch = "x86_64", windows))]
+    fn test_guard_pages_execute() {
+        let mem = ExecutableMemory::with_guard_pages(&constant_code()).expect("guard map");
+        let get_answer: extern "C" fn() -> i32 = unsafe { mem.get_fn(0).unwrap() };
+        assert_eq!(get_answer(), 42, "guard page 不应影响正常代码执行");
+    }
+
+    #[test]
+    fn test_dual_mapping_or_fallback_executes() {
+        // Windows 上优先 dual mapping；其他平台走单映射。两者都必须可执行。
+        let mem = ExecutableMemory::new(&[0xc3u8]).expect("map");
+        assert!(!mem.is_empty());
+        assert!(!mem.as_ptr().is_null());
+        #[cfg(windows)]
+        assert!(mem.dual, "Windows 上应优先使用 RX/RW dual mapping");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn test_dual_mapping_is_cached_and_reused() {
+        let before = cached_dual_bytes();
+        {
+            let _m = ExecutableMemory::new(&[0xc3u8]).expect("map");
+        }
+        assert!(
+            cached_dual_bytes() >= before,
+            "drop 后 dual mapping 应进入缓存"
+        );
+        let m = ExecutableMemory::new(&[0xc3u8]).expect("reuse");
+        assert!(m.dual, "复用后仍是 dual mapping");
     }
 
     #[test]

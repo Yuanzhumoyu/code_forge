@@ -18,6 +18,7 @@
 | `reference/binary-format.md` | forge-ir 二进制格式（IR bitcode **v2**：段体压缩 + 段表 `raw_len`）规范：容器/段/原语/各段细节/压缩/确定性/版本策略/验证基线/消费者/已知限制 | active |
 | `reference/backend-pipeline.md` | **后端编译管线契约**（**v24 现行**）：编译入口（`CompileSession`/`CompiledModule`/`JitLoader`）、**管线阶段表**（由守卫与 `pipeline::STAGES` 集合相等钉住）、**合法化两相**（计划只读 + 物化单遍）与 pass 合并次序、聚合/变参表示契约、**值描述单一来源**、能力缺口与观测开关的台账指针 | active |
 | `reference/backend-gaps.md` | **后端能力缺口台账**（v24 M3 建）：逐行给出"谁在什么条件下撞到 / 决策（已实现·数据层·不做·待做）/ 钉住它的守卫或数据条件"（条数以台账本身为准）；失败信息带 `[cap:ID]`，守卫 `capability_gaps_guard` 与源码缺口集合**双向逐一相等** | active |
+| `reference/jit-memory.md` | **JIT 可执行内存**：W^X、Windows RX/RW dual mapping、guard pages、页级复用缓存、icache 刷新；参考 pager-lang / jit-allocator2，子页块分配仍列为后续 | active |
 | `reference/known-defects.md` | **已知缺陷索引（2026-10-28 建）**：把不会被门禁报红的失败项收口成 KD 条目（当前仅 KD-11 观察项；JIT 两条历史失败已在 v28 复核转正）、默认关闭的门禁豁免、无守卫的探针缺口 | active |
 | `reference/generality-audit.md` | **通用性审计（v28 M0）**：把“写死/未接线”的结构性问题编号（GEN-01…GEN-08），逐条给文件:行证据、严重度、决策与去向（占位符表、ISA 接入、插件、rustc 宽度、动态产物、分配器缺陷、文档腐化） | active |
 | `reference/ir-int-semantics.md` | **IR 整数/浮点位宽语义（v27 M5 建）**：整数是"无符号位图 + 任意位宽"（符号性由 opcode 表达）、逐运算语义（含移位量 ≥ 位宽的定值行为）、常量按位宽规范化、浮点按 **(阶码, 尾数)** 建模（符号恒 1 位，覆盖 f16/bf16/f8 变体/自定义格式）、**补位规则 R1–R4**（精确 → 就近升位 → 分字展开 → 死规则）与规模公式 | active |
