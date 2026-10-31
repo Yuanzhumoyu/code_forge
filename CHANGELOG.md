@@ -29,6 +29,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + 插件错误文字：`__forge_isa_last_error`，失败时宿主错误里带插件侧原因。
 + 端到端重定位测试：带 Call 的插件函数现在断言宿主收到非空 relocations；
 + `FuncRef::from_raw` 提供受控的测试构造入口。
++ A2：插件初始化时在自己的 runtime 注册调用点 planner（按 ISA 名）；非插件 DLL
++ 加载有拒绝测试。
 + 计划见 `docs/plans/forge-v29-plugin-hardening.md`；A2（调用点 planner）待评估，
 + ABI 版本不匹配负向夹具待补。
 

@@ -157,6 +157,16 @@ macro_rules! export_isa_plugin {
                 $crate::pipeline::conv_registry::register_binding_toml(binding)
                     .expect("插件 ABI binding 无效");
             }
+
+            // 调用点布局钩子也注册在**插件自己的** runtime：插件编译函数时的
+            // Call 降级按 ISA 名查全局 planner，宿主 static 看不见。
+            let tm = $module::TargetMachine::new();
+            let isa = <$module::TargetMachine as $crate::machine::target::TargetMachine>::isa_info(
+                &tm,
+            )
+            .name()
+            .to_string();
+            $crate::pipeline::abi_target::register_isa_call_planner(&isa, tm);
         }
 
         /// 最近一次编译失败的文字（NUL 结尾；仅供宿主在 -1 后立即读取，

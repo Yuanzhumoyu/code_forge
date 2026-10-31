@@ -89,6 +89,19 @@ fn v2_plugin_loads_compiles_and_runs() {
 }
 
 #[test]
+#[cfg(windows)]
+fn non_plugin_dll_is_rejected() {
+    let mut loader = PluginLoader::new();
+    let err = loader
+        .load_plugin(std::path::Path::new(r"C:\Windows\System32\kernel32.dll"))
+        .expect_err("非插件 DLL 必须被拒绝");
+    assert!(
+        err.contains("__forge_isa_compile_raw") || err.contains("__codegen_isa_register"),
+        "拒绝原因应指向缺失的插件符号：{err}"
+    );
+}
+
+#[test]
 fn plugin_relocations_survive_the_c_abi() {
     let dll = fixture_dylib();
     let mut loader = PluginLoader::new();

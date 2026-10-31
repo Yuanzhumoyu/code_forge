@@ -15,11 +15,12 @@
 - **未覆盖**：`line_entries`、`cfi`（不是链接正确性前提，后续按需补）。
 - 验收：`plugin_abi::roundtrip_relocations` 单测；插件夹具简单函数真执行。
 
-### A2 插件调用点布局钩子（待做）
+### A2 插件调用点布局钩子（✅ 2026-10-31）
 
-- 现在插件只注册 `ErasedTargetMachine`；跨函数调用点可能因宿主没有该 ISA 的
-  `call_planner` 而 fail-closed。
-- 方案：插件导出 planner 的 C ABI（输入 `CallRequest` 的可序列化形状），宿主注册。
+- 插件加载时 `__forge_isa_init_abi` 在**插件自己的** runtime 注册该 ISA 的
+  `call_planner`（按 `IsaInfo::name()`，不是模块名）。插件编译函数时的 Call 降级
+  因此能查到 plan；宿主不需要持有插件机器类型。
+- 宿主侧仍只注册 `ErasedTargetMachine`；跨 ISA 调用不属于本插件范围。
 
 ### A3 ABI 版本握手（✅ 2026-10-31）
 
@@ -41,7 +42,8 @@
 - ✅ 重定位编解码单测。
 - ✅ “带 Call 的插件函数”端到端测试：`FuncRef::from_raw` 构造外部引用，
   断言宿主收到非空 `CompiledFunction.relocations`（此前旧 ABI 会丢）。
-- ⏳ ABI 版本不匹配负向测试（需要第二个旧 ABI 夹具）。
+- ✅ 非插件 DLL（kernel32）加载被拒绝，错误指向缺失的插件符号。
+- ⏳ ABI 版本号不匹配的正向 fixture（需要第二个旧 ABI 构建）仍待补。
 
 ## 验收
 
