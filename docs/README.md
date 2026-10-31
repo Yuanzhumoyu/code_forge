@@ -27,7 +27,8 @@
 
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
-| [`plans/forge-v28-generality-plan.md`](plans/forge-v28-generality-plan.md) | **forge v28 通用性整治**：M0 审计 → M1 占位符数据化 → M2 ISA 接入零本体改动（manifest）→ M3 插件零胶水 → M4 rustc 宽度泛化 → M5 动态产物最小 PIC/DLL → M6 分配器缺陷 → M7 收口 | progress |
+| [`plans/forge-v28-generality-plan.md`](plans/forge-v28-generality-plan.md) | **forge v28 通用性整治**：M0–M7 全部收口（占位符数据化 / manifest / 插件 / 宽度 / 动态产物 / 分配器） | completed |
+| [`plans/forge-v29-plugin-hardening.md`](plans/forge-v29-plugin-hardening.md) | **v29 插件硬化**：跨 ABI 重定位、版本握手、可变缓冲、错误文本；A2 调用点 planner 与 Call 端到端待做 | progress |
 | —（已归档） | forge-rustc v27 的账本已收口：见 [`archive/forge-rustc-v27-plan.md`](archive/forge-rustc-v27-plan.md)（NEON 全排列 / LICM 跨调用 / KD-05 / KD-09 全部落地；`cargo forge gate --subset rustc` 19/19） | archive |
 | —（已归档） | 项目 v26 的账本已收口：见 [`archive/project-v26-plan.md`](archive/project-v26-plan.md)（M1–M5 全部落地；现行入口 = `reference/backend-pipeline.md` + `reference/backend-gaps.md`） | archive |
 | ~~`plans/project-v26-plan.md`~~（原文，已移走） | **项目 v26：审查收口**（M1 诊断单一来源：DSL 错误码台账 + 双向守卫、事件 sink 下沉 `forge-isa-runtime::diagnostics`、开关台账归并 `forge-rustc`；M2 无消费者面清理：删 `forge-mem`/`isel_strategy`（`IR_FORMAT_VERSION` 3→4）/`asm_v11.lx`，前端线降级为 `examples/hir-demo`；M3 `cargo forge gate` 单命令门禁 + CI 补齐；M4 `[cap:SPEC_*]` 谱侧台账与能力补齐；M5 契约回写）；含审查证据、删除清单、守卫与判据 | progress |

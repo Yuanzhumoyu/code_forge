@@ -1,0 +1,55 @@
+# v29 插件硬化计划（Plugins v2.1）
+
+> 状态：进行中（2026-10-31 起）· 上游：v28 M3 的“插件零胶水”收口
+> 目标：把插件从“能加载简单函数”提升到“能承载带重定位/外部调用的真实函数”，
+> 并让不兼容插件在加载期 fail-closed，而不是运行期未定义行为。
+
+## 范围
+
+### A1 编译产物跨 ABI（✅ 2026-10-31）
+
+- 机器码仍走原始字节 C ABI；重定位单独编码（`forge_codegen::plugin_abi`）：
+  offset/kind/width/adj/addend + reloc/symbol 名。
+- 插件导出 `__forge_isa_reloc_required` / `__forge_isa_reloc_copy`；宿主解码后重建
+  `CompiledFunction.relocations`。
+- **未覆盖**：`line_entries`、`cfi`（不是链接正确性前提，后续按需补）。
+- 验收：`plugin_abi::roundtrip_relocations` 单测；插件夹具简单函数真执行。
+
+### A2 插件调用点布局钩子（待做）
+
+- 现在插件只注册 `ErasedTargetMachine`；跨函数调用点可能因宿主没有该 ISA 的
+  `call_planner` 而 fail-closed。
+- 方案：插件导出 planner 的 C ABI（输入 `CallRequest` 的可序列化形状），宿主注册。
+
+### A3 ABI 版本握手（✅ 2026-10-31）
+
+- `PLUGIN_ABI_VERSION = 2`；插件导出 `__forge_plugin_abi_version`；加载器精确比对，
+  不匹配直接拒绝（不静默兼容）。
+
+### A4 可变缓冲区（✅ 2026-10-31）
+
+- 插件导出 `__forge_isa_compile_required`；宿主按精确大小分配，取消固定 1 MiB。
+
+### A5 插件错误文本（✅ 2026-10-31）
+
+- 插件线程局部错误槽 + `__forge_isa_last_error`；宿主在 `-1` 后立即拷贝，带进
+  `IrError::Unsupported`，不再只看到 `-1`。
+
+### A6 测试（部分）
+
+- ✅ 真 dylib 加载、编译、执行（`tests/plugin_v2.rs`）。
+- ✅ 重定位编解码单测。
+- ⏳ “带 Call/全局引用的插件函数”端到端测试：`FuncRef` 构造器目前在 forge-ir 私有，
+  需要先给一个受控的测试构造入口（或改用模块级编译 API）。
+- ⏳ ABI 版本不匹配负向测试（需要第二个旧 ABI 夹具）。
+
+## 验收
+
+- 插件函数含一次外部调用/全局引用时，`CompiledFunction.relocations` 非空且宿主可用。
+- 版本不匹配/缺符号时加载失败信息明确。
+- `cargo forge gate` 全量绿。
+
+## 不做
+
+- 跨 rustc/forge 构建的 ABI 兼容（只保证同一构建，版本不匹配即拒绝）。
+- 插件卸载/热替换生命周期管理。

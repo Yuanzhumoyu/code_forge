@@ -1,4 +1,4 @@
-//! v28 M3：真实 dylib 插件的加载 + 编译 + 执行（宿主零 ISA 代码）。
+﻿//! v28 M3：真实 dylib 插件的加载 + 编译 + 执行（宿主零 ISA 代码）。
 //!
 //! 夹具 `tests/fixtures/demo_plugin` 只做两件事：`isa_from_file!` + 一行
 //! `export_isa_plugin!`。本测试构建它、用 `PluginLoader` 加载，再通过

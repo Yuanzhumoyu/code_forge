@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-31) — 插件硬化 v2.1（A1/A3/A4/A5）
+
++ 插件 ABI 升到 `PLUGIN_ABI_VERSION = 2` 并要求握手：导出
+  `__forge_plugin_abi_version`，加载器精确比对，不兼容直接拒绝。
++ 编译产物不再固定 1 MiB：`__forge_isa_compile_required` 问精确大小，宿主按需分配。
++ 重定位跨 dylib：`__forge_isa_reloc_required` / `__forge_isa_reloc_copy` +
+  `forge_codegen::plugin_abi` 紧凑编码，宿主重建 `CompiledFunction.relocations`
+  （line/CFI 仍不传）。
++ 插件错误文字：`__forge_isa_last_error`，失败时宿主错误里带插件侧原因。
++ 计划见 `docs/plans/forge-v29-plugin-hardening.md`；A2（调用点 planner）与
+  带 Call 的端到端测试待做。
+
 ### Changed (2026-10-31) — 插件 ABI v2 / rustc 宽度 / 动态产物 fail-closed（M3–M5 核心）
 
 + **插件 ABI v2**：`forge_codegen::export_isa_plugin!` 导出

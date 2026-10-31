@@ -35,12 +35,40 @@ use {
 #[allow(improper_ctypes_definitions)]
 #[cfg(feature = "plugins")]
 type PluginCompile = unsafe extern "C" fn(&forge_codegen::ir::Function, *mut u8, usize) -> isize;
+#[cfg(feature = "plugins")]
+type PluginCompileRequired = unsafe extern "C" fn(&forge_codegen::ir::Function) -> isize;
+#[cfg(feature = "plugins")]
+type PluginRelocRequired = unsafe extern "C" fn(&forge_codegen::ir::Function) -> isize;
+#[cfg(feature = "plugins")]
+type PluginRelocCopy = unsafe extern "C" fn(&forge_codegen::ir::Function, *mut u8, usize) -> isize;
+#[cfg(feature = "plugins")]
+type PluginAbiVersion = unsafe extern "C" fn() -> u32;
+#[cfg(feature = "plugins")]
+type PluginLastError = unsafe extern "C" fn() -> *const c_char;
 
 /// 宿主侧 `ErasedTargetMachine` 适配器：把插件导出的函数包成 Registry 后端。
 #[cfg(feature = "plugins")]
 struct PluginBackend {
     name: String,
     compile: PluginCompile,
+    required: PluginCompileRequired,
+    reloc_required: PluginRelocRequired,
+    reloc_copy: PluginRelocCopy,
+    last_error: Option<PluginLastError>,
+}
+
+#[cfg(feature = "plugins")]
+impl PluginBackend {
+    fn error_text(&self) -> String {
+        let Some(f) = self.last_error else {
+            return String::new();
+        };
+        let p = unsafe { f() };
+        if p.is_null() {
+            return String::new();
+        }
+        unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+    }
 }
 
 #[cfg(feature = "plugins")]
@@ -50,21 +78,65 @@ impl ErasedTargetMachine for PluginBackend {
     }
 
     fn compile(&self, func: &forge_codegen::ir::Function) -> Result<CompiledFunction, IrError> {
-        // 宿主分配缓冲区，插件只拷机器码——避免 Vec/String 跨 dylib 由错误
-        // 分配器释放。1 MiB 对单函数足够；不足时返回 -2。
-        let mut buf = vec![0u8; 1 << 20];
+        // 先问精确大小，再让插件只拷机器码——避免固定 1 MiB，也避免
+        // Vec/String 跨 dylib 由错误分配器释放。
+        let need = unsafe { (self.required)(func) };
+        if need < 0 {
+            let detail = self.error_text();
+            return Err(IrError::Unsupported(format!(
+                "[cap:PLUGIN_COMPILE] 插件 `{}` 编译失败{}{}",
+                self.name,
+                if detail.is_empty() { "" } else { "：" },
+                detail
+            )));
+        }
+        let mut buf = vec![0u8; need as usize];
         let n = unsafe { (self.compile)(func, buf.as_mut_ptr(), buf.len()) };
         if n < 0 {
+            let detail = self.error_text();
             return Err(IrError::Unsupported(format!(
-                "[cap:PLUGIN_COMPILE] 插件 `{}` 编译失败（code {n}）",
-                self.name
+                "[cap:PLUGIN_COMPILE] 插件 `{}` 拷贝机器码失败（code {n}）{}{}",
+                self.name,
+                if detail.is_empty() { "" } else { "：" },
+                detail
             )));
         }
         buf.truncate(n as usize);
+        if buf.len() != need as usize {
+            return Err(IrError::Unsupported(format!(
+                "[cap:PLUGIN_COMPILE] 插件 `{}` 返回长度不一致（{} != {need}）",
+                self.name,
+                buf.len()
+            )));
+        }
+
+        // 重定位单独传：链接/JIT 需要符号名与 addend，不能丢。
+        let reloc_need = unsafe { (self.reloc_required)(func) };
+        if reloc_need < 0 {
+            let detail = self.error_text();
+            return Err(IrError::Unsupported(format!(
+                "[cap:PLUGIN_COMPILE] 插件 `{}` 重定位编码失败{}{}",
+                self.name,
+                if detail.is_empty() { "" } else { "：" },
+                detail
+            )));
+        }
+        let mut rbuf = vec![0u8; reloc_need as usize];
+        let rn = unsafe { (self.reloc_copy)(func, rbuf.as_mut_ptr(), rbuf.len()) };
+        if rn < 0 {
+            return Err(IrError::Unsupported(format!(
+                "[cap:PLUGIN_COMPILE] 插件 `{}` 重定位拷贝失败（code {rn}）",
+                self.name
+            )));
+        }
+        rbuf.truncate(rn as usize);
+        let relocations = forge_codegen::plugin_abi::decode_relocations(&rbuf)
+            .map_err(|e| IrError::Unsupported(format!("[cap:PLUGIN_COMPILE] {e}")))?;
+
         Ok(CompiledFunction {
             code_size: n as usize,
             code: buf,
-            relocations: Vec::new(),
+            relocations,
             line_entries: Vec::new(),
             cfi: None,
         })
@@ -153,6 +225,52 @@ impl PluginLoader {
         // v2：宿主侧注册适配器 + 目标前缀；不调用插件内部的 Registry（那个
         // static 在 dylib 自己那份 runtime 里，宿主看不见）。
         if let Ok(compile) = unsafe { lib.get::<PluginCompile>(b"__forge_isa_compile_raw") } {
+            let version = unsafe {
+                lib.get::<PluginAbiVersion>(b"__forge_plugin_abi_version")
+                    .map_err(|e| {
+                        format!(
+                            "plugin '{}' missing __forge_plugin_abi_version（需重新用当前 forge 构建）: {e}",
+                            path.display()
+                        )
+                    })?
+            };
+            if unsafe { version() } != forge_codegen::PLUGIN_ABI_VERSION {
+                return Err(format!(
+                    "plugin '{}' ABI 版本不匹配：插件 {}，宿主 {}",
+                    path.display(),
+                    unsafe { version() },
+                    forge_codegen::PLUGIN_ABI_VERSION
+                ));
+            }
+            let required = unsafe {
+                lib.get::<PluginCompileRequired>(b"__forge_isa_compile_required")
+                    .map_err(|e| {
+                        format!(
+                            "plugin '{}' missing __forge_isa_compile_required: {e}",
+                            path.display()
+                        )
+                    })?
+            };
+            let reloc_required = unsafe {
+                lib.get::<PluginRelocRequired>(b"__forge_isa_reloc_required")
+                    .map_err(|e| {
+                        format!(
+                            "plugin '{}' missing __forge_isa_reloc_required: {e}",
+                            path.display()
+                        )
+                    })?
+            };
+            let reloc_copy = unsafe {
+                lib.get::<PluginRelocCopy>(b"__forge_isa_reloc_copy")
+                    .map_err(|e| {
+                        format!(
+                            "plugin '{}' missing __forge_isa_reloc_copy: {e}",
+                            path.display()
+                        )
+                    })?
+            };
+            let last_error =
+                unsafe { lib.get::<PluginLastError>(b"__forge_isa_last_error").ok() }.map(|s| *s);
             let name_fn =
                 unsafe { lib.get::<unsafe extern "C" fn() -> *const c_char>(b"__forge_isa_name") }
                     .map_err(|e| {
@@ -186,6 +304,10 @@ impl PluginLoader {
             Registry::global().register_backend(Arc::new(PluginBackend {
                 name: name.clone(),
                 compile: *compile,
+                required: *required,
+                reloc_required: *reloc_required,
+                reloc_copy: *reloc_copy,
+                last_error,
             }));
             let refs: Vec<&str> = targets.iter().map(String::as_str).collect();
             target_registry::register(&name, &refs);

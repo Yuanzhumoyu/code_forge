@@ -94,6 +94,30 @@ macro_rules! export_isa_plugin {
         $crate::export_isa_plugin!($module, targets = [$($t),*], rules = "", binding = "");
     };
     ($module:ident, targets = [$($t:expr),* $(,)?], rules = $rules:literal, binding = $binding:literal) => {
+        std::thread_local! {
+            static __FORGE_LAST_ERROR: std::cell::RefCell<std::ffi::CString> =
+                std::cell::RefCell::new(std::ffi::CString::new("").unwrap());
+        }
+
+        fn __forge_set_error(msg: String) {
+            let msg = msg.replace('\0', " ");
+            let c = std::ffi::CString::new(msg).unwrap_or_default();
+            __FORGE_LAST_ERROR.with(|e| *e.borrow_mut() = c);
+        }
+
+        fn __forge_plugin_compile(
+            func: &$crate::ir::Function,
+        ) -> Result<$crate::CompiledFunction, $crate::IrError> {
+            $crate::pipeline::compiler::CompileSession::new($module::TargetMachine::new())
+                .compile(func)
+        }
+
+        /// C ABI 版本：加载器精确比对，不兼容直接拒绝。
+        #[unsafe(no_mangle)]
+        pub extern "C" fn __forge_plugin_abi_version() -> u32 {
+            $crate::PLUGIN_ABI_VERSION
+        }
+
         /// ISA 名（NUL 结尾）。
         #[unsafe(no_mangle)]
         pub extern "C" fn __forge_isa_name() -> *const core::ffi::c_char {
@@ -135,6 +159,66 @@ macro_rules! export_isa_plugin {
             }
         }
 
+        /// 最近一次编译失败的文字（NUL 结尾；仅供宿主在 -1 后立即读取，
+        /// 指针在下一次错误/同线程调用前有效）。
+        #[unsafe(no_mangle)]
+        pub extern "C" fn __forge_isa_last_error() -> *const core::ffi::c_char {
+            __FORGE_LAST_ERROR.with(|e| e.borrow().as_ptr())
+        }
+
+        /// 问“需要多大缓冲区”；返回 `>=0` = 字节数，`-1` = 编译失败。
+        /// 宿主据此分配精确缓冲区，再调 `__forge_isa_compile_raw`（避免固定 1 MiB）。
+        #[unsafe(no_mangle)]
+        pub extern "C" fn __forge_isa_compile_required(
+            func: &$crate::ir::Function,
+        ) -> isize {
+            match __forge_plugin_compile(func) {
+                Ok(c) => c.code.len() as isize,
+                Err(e) => {
+                    __forge_set_error(format!("{e}"));
+                    -1
+                }
+            }
+        }
+
+        /// 重定位流大小（编码格式见 `forge_codegen::plugin_abi`）；`-1` = 编译失败。
+        #[unsafe(no_mangle)]
+        pub extern "C" fn __forge_isa_reloc_required(
+            func: &$crate::ir::Function,
+        ) -> isize {
+            match __forge_plugin_compile(func) {
+                Ok(c) => $crate::plugin_abi::encode_relocations(&c).len() as isize,
+                Err(e) => {
+                    __forge_set_error(format!("{e}"));
+                    -1
+                }
+            }
+        }
+
+        /// 拷贝重定位流；`>=0` = 字节数，`-1` = 编译失败，`-2` = 缓冲区不足。
+        #[unsafe(no_mangle)]
+        pub extern "C" fn __forge_isa_reloc_copy(
+            func: &$crate::ir::Function,
+            out: *mut u8,
+            cap: usize,
+        ) -> isize {
+            let compiled = match __forge_plugin_compile(func) {
+                Ok(c) => c,
+                Err(e) => {
+                    __forge_set_error(format!("{e}"));
+                    return -1;
+                }
+            };
+            let bytes = $crate::plugin_abi::encode_relocations(&compiled);
+            if bytes.len() > cap || out.is_null() {
+                return -2;
+            }
+            unsafe {
+                core::ptr::copy_nonoverlapping(bytes.as_ptr(), out, bytes.len());
+            }
+            bytes.len() as isize
+        }
+
         /// 插件侧编译入口（**原始字节 C ABI**）：宿主传缓冲区，插件只拷机器码。
         /// 不返回 `CompiledFunction`/`Result`——Rust 容器跨 dylib 会带着插件的
         /// 分配器一起过界，宿主 drop 时可能 AV。
@@ -146,13 +230,13 @@ macro_rules! export_isa_plugin {
             out: *mut u8,
             cap: usize,
         ) -> isize {
-            let compiled =
-                match $crate::pipeline::compiler::CompileSession::new($module::TargetMachine::new())
-                    .compile(func)
-                {
-                    Ok(c) => c,
-                    Err(_) => return -1,
-                };
+            let compiled = match __forge_plugin_compile(func) {
+                Ok(c) => c,
+                Err(e) => {
+                    __forge_set_error(format!("{e}"));
+                    return -1;
+                }
+            };
             if compiled.code.len() > cap || out.is_null() {
                 return -2;
             }

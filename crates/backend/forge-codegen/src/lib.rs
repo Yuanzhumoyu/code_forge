@@ -27,6 +27,9 @@
 // （demo 夹具迁到 tests/ 正是踩到这一点）。
 pub use forge_ir::IrError;
 use forge_ir::*;
+/// 动态插件 C ABI 版本（v28 M3+）。影响 `export_isa_plugin!` 导出的符号/布局；
+/// 加载器要求精确相等，不做静默兼容。
+pub const PLUGIN_ABI_VERSION: u32 = 2;
 pub use forge_isa_runtime::{
     AVX512_ENV_LOCK, AllocResult, CodeSink, CompiledFunction, LowerCtx, MemRef, Registry,
     RelocKind, Relocation, alloc_result, avx_available, avx2_available, avx512_available,
@@ -64,6 +67,7 @@ pub use forge_ir as ir;
 // ============================================================
 pub mod pipeline;
 pub mod pipeline_hooks;
+pub mod plugin_abi;
 
 // ============================================================
 // JIT / 运行时 / 注册表
