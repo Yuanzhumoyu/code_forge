@@ -1771,6 +1771,14 @@ insts = ["MOV_RM8_R64 {out}, {0}"]
 [[lower.Freeze]]
 insts = ["MOV_RM8_R64 {out}, {0}"]
 
+# v31：指针 ↔ 整数是 64 位同宽直拷（GEP 展开/显式转换要用；此前只有 x86/arm64 有规则，
+# riscv64 在这条路径上直接 `[cap:SPEC_LOWERING_RULE_MISSING]`）。
+[[lower.Ptrtoint]]
+insts = ["MOV_RM8_R64 {out}, {0}"]
+
+[[lower.Inttoptr]]
+insts = ["MOV_RM8_R64 {out}, {0}"]
+
 [[lower.Band]]
 insts = ["AND {out}, {0}, {1}"]
 

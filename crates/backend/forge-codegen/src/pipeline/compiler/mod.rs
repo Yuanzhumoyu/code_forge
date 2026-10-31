@@ -196,6 +196,7 @@ impl<M: TargetMachine> CompileSession<M> {
             self.machine.as_ref(),
             func,
             self.module_sigs.clone(),
+            self.options().verify().enabled(),
         )?;
         // Stage 4+ 读取的 Function：有改写（pattern/聚合展开）时用副本。
         let func_ref: &Function = func_owned.as_ref().unwrap_or(func);

@@ -111,6 +111,13 @@ pass 清单与**合并次序**（下表与 `LegalizeDriver::with_aggregates().pa
   台账 §3.1 有实测与前置条件）。段值档的嵌套聚合字段没有地址 ⇒ 由
   `memoryize_from_segs` 开槽写入（`off % 8 != 0` 用移位拼接）。
 
+**合法化后的完整校验（v31）**：三批跑完后，`legalize::schedule` 按
+`CompileOptions::verify`（`VerifyLevel::{Auto, Off, On}`；`Auto` = debug 开、release 关）
+跑一次完整 `forge_ir::Verifier`。它取代 v23 的"只跑 use-lists"例外——GEP 展开的
+`add ptr, i64` 是 `type_rule = "binop_ptr_off"` 的**正式形状**（不是类型欠账）；失败 ⇒
+`IrError::Verify`（带函数名与错误明细，debug 下还打印合法化后的 IR 正文），
+不允许把坏 IR 交给 isel。见 §16。
+
 ## 4. 值描述：单一来源
 
 "值的类 / 位宽 / IR 类型"只有**一份描述** `forge_isa_runtime::ctx::ValDesc { class, bits, ty }`，
@@ -327,8 +334,8 @@ lowering，实测 `[cap:SPEC_LOWERING_RULE_MISSING]`）。
 | `pipeline/regalloc_bt/state.rs` | 951 | `BtState`：13 字段 + 17 方法构成一台状态机，切开会把"谁改了哪个字段"拆散（+压力峰值 `peak_active`，v27 M6-91；+`callee_saved_bytes` 初值，v27 M6-95） |
 | `pipeline/lowering.rs` | 835 | 生成物 lowering 的宿主侧辅助，与谱面规则一一对应 |
 | `pipeline/legalize/materialize.rs` | 657 | 物化相：按 IR 形态分段单遍改写，切开反而难对照 |
-| `pipeline/va_expand/expand.rs` | 621 | `expand_start`/`expand_arg` 共享局部不变量（游标推进次序） |
-| `pipeline/compiler/mod.rs` | 433 | 会话入口 + 模块编排（v30 M2 把前置门/合法化批次/命名计时外提；state 与测试已切出） |
+| `pipeline/va_expand/expand.rs` | 630 | `expand_start`/`expand_arg` 共享局部不变量（游标推进次序）；v31 +9：win64 cursor `Inttoptr` / `Icmp` BOOL / 聚合档提前返回 |
+| `pipeline/compiler/mod.rs` | 434 | 会话入口 + 模块编排（v30 M2 把前置门/合法化批次/命名计时外提；v31 +1 行传 verify 开关） |
 
 缺省上限 **700** 行，扫描面 = `src/pipeline/**` + `src/runtime/**`；上表与守卫里的预算表由
 `file_size_ratchet` 钉成**双向相等**（改动其一就红）。
@@ -444,3 +451,23 @@ v30（[`archive/backend-v30-ergonomics.md`](../archive/backend-v30-ergonomics.md
   ABI 降级**之前**的源码签名，by-ref/sret 与类型化面的形态不同。
 * `PTR` 与 `I64` 视为同一 64 位槽（IR 里地址常用 `i64` 表示，见 GEP/legalize 的既有约定）。
 * 类型化 `get` 失败归 `IrError::Semantic`（使用错误），**不进**能力缺口台账。
+
+## 16. v31：合法化后全量 IR 校验
+
+v31（[`plans/backend-v31-verification.md`](../plans/backend-v31-verification.md)）把
+"合法化后只跑 use-lists"升级为**完整 `Verifier`**，并修掉它首次开启时暴露的 25 条
+IR 不变量违例。要点：
+
+* **开关**：`CompileOptions::verify(VerifyLevel::{Auto, Off, On})`；`Auto` = debug 开、
+  release 关。校验失败返回 `IrError::Verify`（`CompileError::stage() == Legalize`），
+  debug 构建额外把合法化后的 IR 正文打到 stderr。
+* **GEP 不是例外**：`add ptr, i64` 是 `Iadd` 的 `binop_ptr_off` 族（`ops.toml`），
+  所以 `expand_geps` 的产物可以通过完整校验；"DSL 没有 Ptrtoint/Inttoptr"的旧说法
+  已过时（x86/arm64 早有规则，v31 补了 riscv64 的 `MOV_RM8_R64` 直拷）。
+* **修掉的违例类别**：墓碑形态（`LimbEmitter::kill` → `Function::tombstone_inst`）、
+  va 聚合档提前返回、win64 cursor 的 `Inttoptr`、va `Icmp` 的 `BOOL` 结果、
+  同宽 `sext/uext` 复用源值、sret 返回漏写缓冲（返回值被改写成 `ptr` 后旧的
+  ">8B 才收"判据会漏掉它）、以及 Verifier 对"活指令被清空结果后的死残值"
+  改为"仅仍被使用才报"（与墓碑/块参数同构）。
+* **守卫**：`tests/verify_after_legalize.rs`（GEP 正例 + 坏类型反例）与
+  `tests/verify_matrix.rs`（x86/arm64/riscv64 × 标量/GEP/i128，全部 `On`）。

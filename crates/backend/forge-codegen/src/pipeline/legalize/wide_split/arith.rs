@@ -182,17 +182,30 @@ pub(super) fn ext_from_narrow(
     bits: u32,
 ) -> Limbs {
     let ty = e.limb_ty(w);
-    let lo = e.emit_before(
-        anchor,
-        if signed {
-            Opcode::Sextend
-        } else {
-            Opcode::Uextend
-        },
-        &[x],
-        &[],
-        ty,
-    );
+    // v31：源值已经是 W 位（同宽）时**不要**再生成 `sext/uext`——Verifier 的
+    // `ConversionBitWidthMismatch` 要求 `src < dst`，而 `t5 → t5` 是无意义转换
+    //（它会成为一条真实指令，还会让校验失败）。直接复用源值。
+    let src_bits = e
+        .func
+        .types
+        .borrow()
+        .scalar_bits(e.func.dfg.value_type(x).unwrap_or(ty))
+        .unwrap_or(0);
+    let lo = if src_bits >= w {
+        x
+    } else {
+        e.emit_before(
+            anchor,
+            if signed {
+                Opcode::Sextend
+            } else {
+                Opcode::Uextend
+            },
+            &[x],
+            &[],
+            ty,
+        )
+    };
     let mut out = Limbs::new();
     out.push(lo);
     if n > 1 {

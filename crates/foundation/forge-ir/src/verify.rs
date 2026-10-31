@@ -1785,6 +1785,10 @@ impl Verifier {
     ///
     /// 已删除指令（Nop 墓碑）的残留值：仅当**仍被使用**时才是错误
     /// （`Function::kill_inst` 的正常结果是留下无使用者的 VOID 残留值）。
+    ///
+    /// 同一条"残留值只看是否仍被使用"的纪律也适用于**活指令被清空结果**的场景
+    /// （v31：聚合返回/va_arg 聚合档会把 call 的 results 清掉、把旧结果值登记成
+    /// "住在缓冲里"）——此时旧值已无使用者，它不再是可观察的 SSA 定义。
     fn check_value_defs(&mut self, func: &Function) {
         let dfg = &func.dfg;
         for (value, vd) in dfg.values() {
@@ -1809,17 +1813,22 @@ impl Verifier {
                             });
                         }
                     } else if result_idx as usize >= inst_data.results.len() {
-                        self.errors.push(VerifyError::ValueDefMismatch {
-                            value,
-                            expected_def: format!(
-                                "inst {} result {} (opcode {} produces {} results)",
-                                inst,
-                                result_idx,
-                                inst_data.opcode.mnemonic(),
-                                inst_data.results.len()
-                            ),
-                            found_def: "result index out of bounds".to_string(),
-                        });
+                        // 与墓碑/块参数同构：结果被清空的**旧值**若已无使用者，
+                        // 它是残留定义（不可观察），不是"活值定义错位"。
+                        if func.use_lists.use_count(value) > 0 {
+                            self.errors.push(VerifyError::ValueDefMismatch {
+                                value,
+                                expected_def: format!(
+                                    "inst {} result {} (opcode {} produces {} results)",
+                                    inst,
+                                    result_idx,
+                                    inst_data.opcode.mnemonic(),
+                                    inst_data.results.len()
+                                ),
+                                found_def: "result index out of bounds but value is still used"
+                                    .to_string(),
+                            });
+                        }
                     }
                 }
                 ValueDef::Param(block, param_idx) => {

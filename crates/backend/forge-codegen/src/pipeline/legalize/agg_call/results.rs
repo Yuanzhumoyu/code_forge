@@ -104,6 +104,8 @@ pub(crate) fn expand_large_agg_ret(
     func: &mut Function,
     agg_slots: &mut Places,
     sret_ptr: Option<Value>,
+    sret_size: Option<u32>,
+    shadow_agg: &forge_ir::entity::map::SecondaryMap<Value, TypeId>,
 ) -> Result<(), IrError> {
     // 取一次读锁（v3 S3 读路径纪律）：本函数只读类型，内部不再逐次取锁。
     // 先从 func.types clone 出 TypeContext（Arc，O(1)）再取锁——守卫借的是这个局部，
@@ -131,12 +133,13 @@ pub(crate) fn expand_large_agg_ret(
             continue;
         };
         for &v in values {
-            if let Some(ty) = func.dfg.value_type(v)
-                // 向量返回不按聚合拆段：≤16B 走 XMM（`bank = "vec"`），>16B 走 sret
-                // （签名已无返回）。拆成 i64 段会与"一个向量值"的签名冲突。
-                && !store.is_vector(ty)
-                && store.size_bytes(ty) > 8
-            {
+            let ty = func.dfg.value_type(v).unwrap_or(TypeId::VOID);
+            let is_large_agg = !store.is_vector(ty) && store.size_bytes(ty) > 8;
+            // sret 档：签名返回已被清空，返回实参可能被**重写成指针**（by-ref 形参 /
+            // sret call 结果）——按"值类型 >8B"筛会漏掉它们，留下 `ret ptr` 在 void
+            // 函数里（v31：`events_fixture` 实测）。sret 时收**所有**返回值，
+            // 大小由 `shadow_agg` / 计划里的 `Indirect { size }` 决定。
+            if sret || is_large_agg {
                 jobs.push(RetJob {
                     block: b,
                     val: v,
@@ -146,7 +149,21 @@ pub(crate) fn expand_large_agg_ret(
         }
     }
     for job in jobs {
-        let size = store.size_bytes(job.ty) as usize;
+        // 大小：by-ref 形参的 ptr 值在 `shadow_agg` 里有原聚合类型；sret call 结果的
+        // ptr 没有影子类型 ⇒ 用计划的 `Indirect { size }`；其余用值自身类型。
+        let shadow_ty = shadow_agg
+            .get(job.val)
+            .copied()
+            .filter(|t| *t != TypeId::VOID);
+        let size = if let Some(t) = shadow_ty {
+            store.size_bytes(t) as usize
+        } else if store.size_bytes(job.ty) > 8 && !store.is_vector(job.ty) {
+            store.size_bytes(job.ty) as usize
+        } else if let Some(sz) = sret_size {
+            sz as usize
+        } else {
+            store.size_bytes(job.ty) as usize
+        };
         if !sret && size > 16 {
             return Err(crate::IrError::capability(
                 "AGG_RET_STACK_UNSUPPORTED",
@@ -236,8 +253,10 @@ pub(crate) fn expand_large_agg_ret(
                 }
             }
             _ => {
-                // by-ref 档（值住在指针指向的内存）：从该地址逐段 load
-                let Some(addr) = mem_addr else {
+                // by-ref 档（值住在指针指向的内存）：从该地址逐段 load。
+                // 值本身是 PTR（被重写的 by-ref 形参 / sret call 结果）时，它**就是**地址。
+                let Some(addr) = mem_addr.or_else(|| (job.ty == TypeId::PTR).then_some(job.val))
+                else {
                     return Err(IrError::Internal(format!(
                         "聚合返回：值来源不支持（def {:?}）",
                         func.dfg.value_data(job.val).def

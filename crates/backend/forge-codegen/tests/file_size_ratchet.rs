@@ -92,9 +92,10 @@ const BUDGETS: [(&str, usize); 5] = [
     // 物化相：按指令序单遍改写，条目按 IR 形态分段，切开反而难对照。
     ("pipeline/legalize/materialize.rs", 657),
     // va 展开主体：`expand_start` + `expand_arg` 共享局部不变量（游标推进次序）。
-    ("pipeline/va_expand/expand.rs", 621),
-    // 编译会话入口（v30 M2：前置门/合法化批次/命名计时已外提；433 = 外提后实测）。
-    ("pipeline/compiler/mod.rs", 433),
+    // v31（+9）：win64 cursor 的 Inttoptr、Icmp 的 BOOL 结果、聚合档提前返回的说明。
+    ("pipeline/va_expand/expand.rs", 630),
+    // 编译会话入口（v30 M2：前置门/合法化批次/命名计时已外提；v31 +1 行传 verify 开关）。
+    ("pipeline/compiler/mod.rs", 434),
 ];
 
 /// 缺省上限：新文件超过它就必须进 [`BUDGETS`] 并写明理由。

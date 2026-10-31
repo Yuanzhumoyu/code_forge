@@ -78,6 +78,31 @@ impl Parallelism {
     }
 }
 
+/// IR 校验策略（v31）：**合法化之后**是否跑完整 `Verifier`。
+///
+/// `Auto` = debug 构建开、release 关（校验成本只在开发期付）；`On` 给 CI/探针
+/// 强制开；`Off` 给"极端编译速度"场景显式关（跳过的是校验，不是正确性检查）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VerifyLevel {
+    /// debug 构建开、release 关。
+    Auto,
+    /// 永不跑完整校验。
+    Off,
+    /// 总是跑完整校验。
+    On,
+}
+
+impl VerifyLevel {
+    /// 本轮编译是否跑完整 `Verifier`。
+    pub fn enabled(self) -> bool {
+        match self {
+            VerifyLevel::On => true,
+            VerifyLevel::Off => false,
+            VerifyLevel::Auto => cfg!(debug_assertions),
+        }
+    }
+}
+
 /// 一份编译选项（构造后不可变）。
 ///
 /// `#[non_exhaustive]`：只允许经构造器/`with_*` 生成，后续加字段不破坏调用点。
@@ -86,14 +111,16 @@ impl Parallelism {
 pub struct CompileOptions {
     opt_level: Option<OptimizationLevel>,
     parallel: Parallelism,
+    verify: VerifyLevel,
 }
 
 impl CompileOptions {
-    /// 进程级默认（[`default_opt_level`]）+ 自动并行。
+    /// 进程级默认（[`default_opt_level`]）+ 自动并行 + 自动校验。
     pub fn new() -> Self {
         Self {
             opt_level: default_opt_level(),
             parallel: Parallelism::Auto,
+            verify: VerifyLevel::Auto,
         }
     }
 
@@ -102,6 +129,7 @@ impl CompileOptions {
         Self {
             opt_level: None,
             parallel: Parallelism::Auto,
+            verify: VerifyLevel::Auto,
         }
     }
 
@@ -110,6 +138,7 @@ impl CompileOptions {
         Self {
             opt_level: Some(level),
             parallel: Parallelism::Auto,
+            verify: VerifyLevel::Auto,
         }
     }
 
@@ -125,6 +154,12 @@ impl CompileOptions {
         self
     }
 
+    /// 覆盖 IR 校验策略。
+    pub fn with_verify(mut self, verify: VerifyLevel) -> Self {
+        self.verify = verify;
+        self
+    }
+
     /// 当前优化级别（`None` = 不跑优化管线）。
     pub fn opt_level(&self) -> Option<OptimizationLevel> {
         self.opt_level
@@ -133,6 +168,11 @@ impl CompileOptions {
     /// 当前并行策略。
     pub fn parallel(&self) -> Parallelism {
         self.parallel
+    }
+
+    /// 当前校验策略。
+    pub fn verify(&self) -> VerifyLevel {
+        self.verify
     }
 }
 

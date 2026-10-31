@@ -90,3 +90,16 @@ ISA-DSL 尚无 `Ptrtoint`/`Inttoptr` 降级；codegen 侧的 use-list 断言因�
   更新本表状态列；
 - 验收纪律与命令速查见 archive/forge-ir/ 各档（iteration-checklist/remaining-* §4）与
   `docs/archive/forge-ir/README.md` 组说明。
+
+## 2026-11-01 复核记录（v31）
+
+- **GEP 类型债关闭**：`Iadd` 已于 2026-10-19 迁到 `type_rule = "binop_ptr_off"`
+  （`add ptr, i64` 是正式形状），`expand_geps` 的产物现在能通过完整 `Verifier`。
+  `compiler` 里"本阶段 verify 不跑"的注释已随 v31 删除；合法化后的完整校验由
+  `CompileOptions::verify`（`VerifyLevel::{Auto,Off,On}`）控制。
+- 首次开启完整校验暴露的 25 条 IR 不变量违例（宽值墓碑形态、va 聚合档墓碑后仍改
+  Copy、win64 va cursor 的 i64 直接当 Load 地址、va `Icmp` 结果为 I8、同宽
+  `sext/uext`、清空 call results 后的死残值）已全部修复；riscv64 的
+  `Ptrtoint`/`Inttoptr` lowering 规则同时补齐。
+- 守卫：`crates/backend/forge-codegen/tests/verify_after_legalize.rs` 与
+  `verify_matrix.rs`（x86/arm64/riscv64 × 标量/GEP/i128，全部 `VerifyLevel::On`）。

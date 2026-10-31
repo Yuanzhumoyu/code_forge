@@ -21,10 +21,15 @@ pub(crate) struct Output {
 }
 
 /// 跑完整合法化批次。
+///
+/// `verify` = 是否在合法化之后跑**完整** [`forge_ir::Verifier`]（v31：取代旧的
+/// "只跑 use-lists"——GEP 展开的 `add ptr, i64` 由 `type_rule = "binop_ptr_off"`
+/// 正式承认，不再需要"verify 不跑"的例外）。
 pub(crate) fn run<M: TargetMachine>(
     machine: &M,
     func: &Function,
     module_sigs: Option<Arc<ModuleSigs>>,
+    verify: bool,
 ) -> Result<Output, IrError> {
     // 可变的 IR 副本：聚合 store/参数展开（agg_expand）需要 &mut Function。
     // 展开后读取 func_ref（Stage 4+ 全部只读原函数；S6 的树型 树型匹配
@@ -124,21 +129,42 @@ pub(crate) fn run<M: TargetMachine>(
             );
         }
         // 聚合展开是**就地改写 IR**（墓碑化/改 Copy/重写操作数）——debug 构建下
-        // 立刻校验 **use-def 一致性**（2026-09-14 S6：这些站点此前只改字段、
-        // 不更新 use-lists，留下陈旧 use 项）。
-        //
-        // 这里只跑 use-lists 契约而不是完整 `Verifier`：本阶段会**有意**造出
-        // 类型不完全自洽的 IR —— `expand_geps` 的指针算术把 PTR 基址与 i64 偏移
-        // 放进同一条 `Iadd`（结果标 PTR；源码注释也写着"verify 不跑"），
-        // 而 DSL 后端没有 `Ptrtoint`/`Inttoptr` 的 lowering，无法用显式转换
-        // 表达同一语义。该类型模型欠账记在 `docs/archive/forge-ir-v3-plan.md`
-        // （S4/S5：指针算术的 typed 表示），不在本阶段用"放宽校验"掩盖。
+        // 先校验 **use-def 一致性**（2026-09-14 S6：这些站点此前只改字段、
+        // 不更新 use-lists，留下陈旧 use 项）；`verify` 打开时再跑**完整 Verifier**。
         #[cfg(debug_assertions)]
         {
             if let Err(errors) = f.use_lists.verify(&f.dfg) {
                 return Err(IrError::Internal(format!(
                     "聚合展开后 use-lists 不一致（fn {}）：{errors:?}",
                     f.name
+                )));
+            }
+        }
+        // **完整 IR 校验**（v31）：合法化是唯一会就地改写 IR 的阶段。
+        // 旧注释说"GEP 的 `add ptr, i64` 类型不自洽 ⇒ verify 不跑"——那笔欠账已由
+        // `Iadd` 迁到 `binop_ptr_off` 族（`add ptr, i64` 是正式形状）偿清；这里跑
+        // 全量校验，任何 pass 把类型改坏都当场 fail-closed。
+        if verify {
+            let mut verifier = forge_ir::Verifier::with_ctx(f.types.clone());
+            if let Err(errors) = verifier.verify(f) {
+                // 失败时把**合法化后的 IR** 打出来（只在 debug 构建、只在真失败时）——
+                // 这类不变量违例没有 IR 正文几乎无法定位（类型号/指令号是内部句柄）。
+                #[cfg(debug_assertions)]
+                eprintln!(
+                    "[forge] 合法化后 IR 校验失败：fn {}（{} 条）\n{}",
+                    f.name,
+                    errors.len(),
+                    forge_ir::text::display::function_to_string(f)
+                );
+                let detail = errors
+                    .iter()
+                    .map(|e| format!("{e:?}"))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return Err(IrError::Verify(format!(
+                    "合法化后 IR 校验失败（fn {}，{} 条）：{detail}",
+                    f.name,
+                    errors.len()
                 )));
             }
         }

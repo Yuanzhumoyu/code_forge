@@ -482,7 +482,17 @@ impl<M: TargetMachine> LegalizePass<M> for AggCallPass {
         }
         agg_call::expand_large_agg_call_results(func, edges, &mut ctx.agg_slots)?;
         agg_call::expand_agg_call_args(func, edges, &mut ctx.agg_slots, &ctx.shadow_agg)?;
-        agg_call::expand_large_agg_ret(func, &mut ctx.agg_slots, ctx.sret_ptr)?;
+        let sret_size = match edges.ret {
+            Some(forge_abi::RetLoc::Indirect { size, .. }) => Some(size),
+            _ => None,
+        };
+        agg_call::expand_large_agg_ret(
+            func,
+            &mut ctx.agg_slots,
+            ctx.sret_ptr,
+            sret_size,
+            &ctx.shadow_agg,
+        )?;
         Ok(IrSize::of(func).delta_to(before, !had_sret && ctx.sret_ptr.is_some()))
     }
 }

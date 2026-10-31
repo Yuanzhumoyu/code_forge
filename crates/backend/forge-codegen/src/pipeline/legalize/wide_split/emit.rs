@@ -102,16 +102,14 @@ impl<'a> LimbEmitter<'a> {
         self.func.refresh_inst_uses(inst);
     }
 
-    /// 把指令变成 `Nop` 并**清空结果**（调用方保证此时已无使用者）。
+    /// 把指令变成 `Nop` 墓碑（调用方保证此时已无使用者）。
+    ///
+    /// v31：必须走 [`Function::tombstone_inst`] 的**规范形态**（`tombstone` 标志 +
+    /// 清附件 + use-lists 重登记）。旧实现只改 opcode/清 results，`tombstone` 标志仍为
+    /// false，于是残留值在 Verifier 眼里是"活指令的结果越界"而不是"已删指令的死值"
+    /// （`ValueDefMismatch` / `TombstoneNotCanonical`）。
     pub(super) fn kill(&mut self, inst: Inst) {
-        {
-            let d = self.func.dfg.inst_mut(inst);
-            d.opcode = Opcode::Nop;
-            d.operands = smallvec::SmallVec::new();
-            d.immediates = smallvec::SmallVec::new();
-            d.results.clear();
-        }
-        self.func.refresh_inst_uses(inst);
+        self.func.tombstone_inst(inst);
     }
 
     /// `i<w>` 常量（走整数常量池，值的规范化由 `canonical_int` 负责）。

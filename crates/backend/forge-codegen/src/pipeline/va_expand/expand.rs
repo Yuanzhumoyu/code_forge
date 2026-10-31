@@ -424,7 +424,12 @@ pub(super) fn expand_arg(
             let base = mk_load(func, b, &mut out, base_addr, TypeId::PTR);
             mk_binop(func, b, &mut out, Opcode::Iadd, base, cur, TypeId::PTR)
         }
-        None => cur,
+        None => {
+            // 没有"保存区基址"字段时，游标字段本身就是**指针值**（win64 的
+            // overflow_arg_area）：按整数取出（字段宽度不定），再显式 inttoptr
+            // 作为地址用——直接把 i64 当 Load 地址会被 Verifier 拒（`LoadAddrNotPointer`）。
+            mk_unop(func, b, &mut out, Opcode::Inttoptr, cur, TypeId::PTR)
+        }
     };
     // ③ 取哪个地址（保存区里 / 溢出区）、两条游标各自怎么推进
     let p = match rule.overflow {
@@ -442,7 +447,7 @@ pub(super) fn expand_arg(
                     b,
                     smallvec::smallvec![cur, lim_v],
                     smallvec::smallvec![Immediate::IntCC(cc)],
-                    &[TypeId::I8],
+                    &[TypeId::BOOL],
                     InstFlags::NONE,
                 );
                 let r = func.dfg.inst_data(i).results[0];
@@ -514,6 +519,10 @@ pub(super) fn expand_arg(
         agg_slots.set(res, Place::Mem(slot));
         let _ = ty;
         move_new_before(func, b, pos, &out)?;
+        // 聚合档已经用"值住在槽里"替换了原指令（原 `va_arg` 墓碑化）⇒ **必须提前返回**。
+        // 旧实现继续往下走"原指令改 Copy"，会把已墓碑化的 `ii` 重新写成带操作数的
+        // Copy（`TombstoneNotCanonical`），并额外生成一条"聚合类型的 load"。
+        return Ok(());
     }
     let val = if is_f32 {
         let d = mk_fload(func, b, &mut out, p, TypeId::F64);
