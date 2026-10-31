@@ -26,10 +26,11 @@
 
 ## plans/ — 进行中的专项方案（活账本）
 
-当前没有进行中的专项方案。已收口的方案在 `archive/`：
+进行中的方案在 `plans/`，已收口的在 `archive/`：
 
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
+| `plans/backend-v30-ergonomics.md` | **后端 v30 人体工学重构**（破坏性 · 无兼容层）：`CompileOptions`/`CompileError`、`Stage` 枚举、JIT 拆文件与类型安全调用；硬判据 = 重构前后机器码逐字节相同 | progress |
 | —（已归档） | **forge v28 通用性整治**：M0–M7 全部收口；见 [`archive/forge-v28-generality-plan.md`](archive/forge-v28-generality-plan.md) | archive |
 | —（已归档） | **v29 插件硬化**：跨 ABI 重定位、版本握手、planner、Call/旧 ABI 测试；见 [`archive/forge-v29-plugin-hardening.md`](archive/forge-v29-plugin-hardening.md) | archive |
 | —（已归档） | forge-rustc v27 的账本已收口：见 [`archive/forge-rustc-v27-plan.md`](archive/forge-rustc-v27-plan.md)（NEON 全排列 / LICM 跨调用 / KD-05 / KD-09 全部落地；`cargo forge gate --subset rustc` 19/19） | archive |
