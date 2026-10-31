@@ -257,6 +257,19 @@ impl TypeId {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct FuncRef(pub(crate) u32);
 
+impl FuncRef {
+    /// 从原始索引构造（单函数编译/外部函数引用的测试与边界 API；模块内请用
+    /// `Module::add_function`）。
+    pub const fn from_raw(raw: u32) -> Self {
+        Self(raw)
+    }
+
+    /// 原始索引。
+    pub const fn raw(self) -> u32 {
+        self.0
+    }
+}
+
 /// 常量引用（在 `ConstantPool` 中解析）——**唯一常量句柄**（v28）。
 ///
 /// 四个变体恰好铺满 2 bit tag，因此 `raw()`/`from_raw()` 是**全域**函数：

@@ -1,4 +1,4 @@
-﻿//! v28 M3：真实 dylib 插件的加载 + 编译 + 执行（宿主零 ISA 代码）。
+//! v28 M3：真实 dylib 插件的加载 + 编译 + 执行（宿主零 ISA 代码）。
 //!
 //! 夹具 `tests/fixtures/demo_plugin` 只做两件事：`isa_from_file!` + 一行
 //! `export_isa_plugin!`。本测试构建它、用 `PluginLoader` 加载，再通过
@@ -21,6 +21,9 @@ fn repo_root() -> PathBuf {
 
 /// 构建夹具并返回 dylib 路径；已存在则直接复用。
 fn fixture_dylib() -> PathBuf {
+    // 两个测试会并发调本函数；cargo 构建很吃内存，必须串行。
+    static BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = BUILD_LOCK.lock().expect("fixture build lock");
     let fixture = repo_root().join("crates/tools/forge-plugin/tests/fixtures/demo_plugin");
     let target_dir = repo_root().join("target/plugin-fixture");
     let dll = target_dir.join("debug").join(format!(
@@ -83,4 +86,29 @@ fn v2_plugin_loads_compiles_and_runs() {
     let mem = ExecutableMemory::new(&cf.code).expect("可执行内存");
     let f: extern "C" fn() -> i64 = unsafe { mem.get_fn(0).expect("入口") };
     assert_eq!(f(), 42, "插件编出的函数必须真执行出 42");
+}
+
+#[test]
+fn plugin_relocations_survive_the_c_abi() {
+    let dll = fixture_dylib();
+    let mut loader = PluginLoader::new();
+    loader.load_plugin(&dll).expect("load plugin");
+    let backend = forge_isa_runtime::Registry::global()
+        .lookup("demoplugin")
+        .expect("plugin backend");
+
+    // 一个调用（FuncRef 0）会产生 Call 重定位；旧 ABI 会把它丢掉。
+    let sig = FunctionSignature::new(&[], &[TypeId::I64]);
+    let mut b = FunctionBuilder::new("caller", TypeContext::new(), sig);
+    let entry = b.create_block();
+    b.switch_to_block(entry);
+    let r = b.call(forge_codegen::ir::FuncRef::from_raw(0), &[], &[TypeId::I64]);
+    b.ret(&r);
+    let func = b.finish().expect("IR build");
+
+    let cf = backend.compile(&func).expect("plugin compile");
+    assert!(
+        !cf.relocations.is_empty(),
+        "插件编译的调用必须带回 Call 重定位，不能丢"
+    );
 }

@@ -20,8 +20,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `forge_codegen::plugin_abi` 紧凑编码，宿主重建 `CompiledFunction.relocations`
   （line/CFI 仍不传）。
 + 插件错误文字：`__forge_isa_last_error`，失败时宿主错误里带插件侧原因。
-+ 计划见 `docs/plans/forge-v29-plugin-hardening.md`；A2（调用点 planner）与
-  带 Call 的端到端测试待做。
++ 端到端重定位测试：带 Call 的插件函数现在断言宿主收到非空 relocations；
++ `FuncRef::from_raw` 提供受控的测试构造入口。
++ 计划见 `docs/plans/forge-v29-plugin-hardening.md`；A2（调用点 planner）待评估，
++ ABI 版本不匹配负向夹具待补。
 
 ### Changed (2026-10-31) — 插件 ABI v2 / rustc 宽度 / 动态产物 fail-closed（M3–M5 核心）
 

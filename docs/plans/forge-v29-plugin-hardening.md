@@ -35,12 +35,12 @@
 - 插件线程局部错误槽 + `__forge_isa_last_error`；宿主在 `-1` 后立即拷贝，带进
   `IrError::Unsupported`，不再只看到 `-1`。
 
-### A6 测试（部分）
+### A6 测试（✅ 2026-10-31 基本闭合）
 
 - ✅ 真 dylib 加载、编译、执行（`tests/plugin_v2.rs`）。
 - ✅ 重定位编解码单测。
-- ⏳ “带 Call/全局引用的插件函数”端到端测试：`FuncRef` 构造器目前在 forge-ir 私有，
-  需要先给一个受控的测试构造入口（或改用模块级编译 API）。
+- ✅ “带 Call 的插件函数”端到端测试：`FuncRef::from_raw` 构造外部引用，
+  断言宿主收到非空 `CompiledFunction.relocations`（此前旧 ABI 会丢）。
 - ⏳ ABI 版本不匹配负向测试（需要第二个旧 ABI 夹具）。
 
 ## 验收
