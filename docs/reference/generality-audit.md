@@ -11,7 +11,7 @@
 
 | 编号 | 问题 | 严重度 | 决策 |
 | --- | --- | --- | --- |
-| GEN-01 | 占位符注册表 66 行、每行一个 ISA 专用 ctor；新编码/分片就要改 Rust | 高（阻塞 DSL 作者） | M1 重构为数据化表达式引擎 |
+| GEN-01 | 占位符注册表 66 行、每行一个 ISA 专用 ctor；新编码/分片就要改 Rust | 高（阻塞 DSL 作者） | ✅ 已修（M1）：数据化表达式引擎 + `[placeholder]` |
 | GEN-02 | 新 ISA 接入要改 4 处本体代码；生成的 `ensure_registered()` 不注册管线/call planner | 高（阻塞新 ISA） | M2 manifest + 生成注册 |
 | GEN-03 | 动态插件 API 与实现不符、未注册管线、无目标映射、无测试 | 高（功能不可用） | M3 插件 ABI v2 |
 | GEN-04 | `forge-rustc` 从不设置 IR `DataLayout`；`usize` 只认 32/64；lowering/alloc 大量 I64 假设 | 高（非 64 位 ISA 必错） | M4 TargetProfile + ptr_ty |
@@ -32,6 +32,11 @@
   这张表；`validate.rs:2510` 的“未知占位符”判定也以它为唯一事实源。
 - 复现：`rg 'name: "\{' crates/frontend/forge-isa-dsl/src/dsl/codegen/placeholder.rs`
   得到 66 行；新增一个分片占位符必须改这个文件。
+- **✅ 已修（2026-10-31，M1）**：`placeholder.rs` 改为表达式引擎（整数/位运算 +
+  固定原语源/函数）；谱内 `[placeholder.<名>] expr = "…"` 即可定义新占位符。
+  旧 66 名迁到 `dsl/codegen/default_placeholders.toml`（数据文件），三份谱不改；
+  未知名字/成环/覆盖原语在加载期报错。新增测试 `spec_defined_placeholder_generates_without_rust_change`
+  与成环/未知名字负向用例；全门禁 54/54。
 
 ### GEN-02 新 ISA 要改本体
 
@@ -105,8 +110,7 @@
 
 ## 3. 决策与去向
 
-- GEN-01 → M1（本计划核心）：占位符改为 `[placeholder.<名>] expr = "…"`，Rust 只留
-  原语与表达式引擎；旧名由 `isa/placeholders.toml` 提供，生成字节必须不变。
+- GEN-01 → ✅ M1 已落地（`[placeholder]` 表达式引擎；旧名数据化）。
 - GEN-02/GEN-07 → M2：`isa/manifest.toml` + 构建期生成注册 + 一行 `include_backend!`。
 - GEN-03 → M3：插件 ABI v2（注册包 + 目标表），fixture 真加载/真执行。
 - GEN-04 → M4：`TargetProfile` + `DataLayout` 注入 + `ptr_ty`；16/32 位 profile 与

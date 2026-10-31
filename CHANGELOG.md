@@ -11,6 +11,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed (2026-10-31) — 占位符数据化（v28 M1）
+
++ `dsl/codegen/placeholder.rs` 从 66 行 `Ph` 静态表 + ISA 专用 ctor 闭包改为**表达式引擎**：
+  谱内 `[placeholder.<名>] expr = "…"` 定义占位符，支持整数/位运算与固定原语源
+  （`off`/`iconst`/`fconst`/`vconst`/`ret`/`sret` 等）和原语函数
+  （`bits`/`sext`/`zext`/`round`/`sat_sub`/`shufps`/`vconst_*`）。
++ 旧 66 个名字由 `dsl/codegen/default_placeholders.toml` 以同一语法提供（数据文件），
+  三份发行谱不需要改动；生成字节由 e2e/arm64 oracle 与 pins 守卫验证不变。
++ 未知名字/函数、参数越界、定义成环、覆盖原语名都在加载期报错；不再回退字面量 0。
++ 新增 `[placeholder]` 的 schema/文档键表；新增测试：谱内占位符不改 Rust 即可生成、
+  成环/未知名字负向用例。
+
 ### Docs (2026-10-31) — v28 通用性审计立项
 
 + 新增 [`docs/reference/generality-audit.md`](docs/reference/generality-audit.md)：

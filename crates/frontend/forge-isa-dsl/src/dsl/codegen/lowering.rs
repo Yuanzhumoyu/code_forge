@@ -48,6 +48,8 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         }
     }
     let name_to_vn = ref_to_infos;
+    // 占位符表（v28 M1）：谱内数据 + 内置旧名；下面所有模板生成共用这一份。
+    let ph = super::placeholder::PlaceholderTable::from_model(model)?;
 
     // **搬运表**（v20 V8）：一次派生、所有搬运点共用（返回/参数/变参元信息/类间位搬移/
     // 宽向量拷贝）。方向与寄存器族由操作数结构定，宽度由指令的 `data_width` 定——
@@ -107,16 +109,21 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         };
         for rule in rules.iter().rev() {
             // 展开 insts 模板 → 指令构造序列（符号化操作数 {out}/{0}/{1}）
-            let inst_toks =
-                gen_lowering_insts(&rule.insts, infos, &name_to_vn, lowering_width_hint(rule))?;
+            let inst_toks = gen_lowering_insts(
+                &rule.insts,
+                infos,
+                &name_to_vn,
+                lowering_width_hint(rule),
+                &ph,
+            )?;
             // 模板临时寄存器预声明：从占位符注册表收集（{g}/{gN} → GPR、
             // {f}/{fN} → FPR）。新增临时占位符只改 placeholder.rs。
             let mut t_binds: Vec<TokenStream> = Vec::new();
             let mut tf_binds: Vec<TokenStream> = Vec::new();
             // v21 W6：声明了 `temps` ⇒ 用显式集合（并校验无未声明临时）；否则沿用旧扫描。
             let rule_temps = match rule.temps.as_ref() {
-                Some(decl) => super::placeholder::explicit_temps(decl, &rule.insts)?,
-                None => super::placeholder::collect_temps(&rule.insts),
+                Some(decl) => super::placeholder::explicit_temps(&ph, decl, &rule.insts)?,
+                None => super::placeholder::collect_temps(&ph, &rule.insts),
             };
             for (var, cls) in rule_temps {
                 let vid = format_ident!("{var}");
@@ -476,24 +483,18 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
     };
     // 规则体：**只绑该规则真正用到的槽**（否则一条 fpr 规则会被 GPR 槽的 fail-closed 误伤）
     let ret_arm_body = |insts: &[String], seq: &[TokenStream]| -> TokenStream {
-        let uses_gpr = insts
-            .iter()
-            .any(|s| s.contains("{ret}") || s.contains("{ret_src}"));
-        let uses_fpr = insts
-            .iter()
-            .any(|s| s.contains("{retf}") || s.contains("{retf_src}"));
-        let uses_sret = insts.iter().any(|s| s.contains("{sret}"));
-        let g = if uses_gpr {
+        let m = super::placeholder::mentions(&ph, insts);
+        let g = if m.ret {
             quote! { let __ret_dst: Reg = #gpr_ret_dest; let __ret_src = val; }
         } else {
             quote! {}
         };
-        let f = if uses_fpr {
+        let f = if m.retf {
             quote! { let __retf_dst: Reg = #fpr_ret_dest; let __retf_src = val; }
         } else {
             quote! {}
         };
-        let s = if uses_sret {
+        let s = if m.sret {
             quote! { let __sret: Reg = #sret_dest; }
         } else {
             quote! {}
@@ -510,7 +511,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
             if tl.when.as_ref().is_some_and(|w| w.multi == Some(true)) {
                 continue;
             }
-            let seq = gen_lowering_insts(&tl.insts, infos, &name_to_vn, None)?;
+            let seq = gen_lowering_insts(&tl.insts, infos, &name_to_vn, None, &ph)?;
             let cond = match &tl.when {
                 Some(w) => ret_arm_cond(w)?,
                 None => quote! { true },
@@ -663,11 +664,11 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
                         None => quote! { true },
                     };
                     if let Some(seq) = &tl.r#move {
-                        let toks = gen_lowering_insts(seq, infos, &name_to_vn, None)?;
+                        let toks = gen_lowering_insts(seq, infos, &name_to_vn, None, &ph)?;
                         multi_int.push((cond.clone(), quote! { #(#toks)* }));
                     }
                     if let Some(seq) = &tl.movef {
-                        let toks = gen_lowering_insts(seq, infos, &name_to_vn, None)?;
+                        let toks = gen_lowering_insts(seq, infos, &name_to_vn, None, &ph)?;
                         multi_fpr.push((cond, quote! { #(#toks)* }));
                     }
                 }
@@ -806,7 +807,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         .and_then(|v| v.first())
     {
         Some(tl) => Some({
-            let seq = gen_lowering_insts(&tl.insts, infos, &name_to_vn, None)?;
+            let seq = gen_lowering_insts(&tl.insts, infos, &name_to_vn, None, &ph)?;
             quote! {
                 let __target_block = target.index() as i64;
                 #(#seq)*
@@ -851,7 +852,7 @@ pub(crate) fn gen_lowering(infos: &[InstInfo], model: &IsaModel) -> Result<Token
         .and_then(|v| v.first())
     {
         Some(tl) => Some({
-            let seq = gen_lowering_insts(&tl.insts, infos, &name_to_vn, None)?;
+            let seq = gen_lowering_insts(&tl.insts, infos, &name_to_vn, None, &ph)?;
             // 生成期（**在 `quote!` 之外**）算好条件码字面：`Br` 里 `test` 置 ZF ⇒ 条件码
             // 语义固定为本 ISA 的 `eq`/`ne`；谱面写 `{cc}`/`{cc_inv}` 时用它们。
             let cc_of = |ir: &str| -> u8 {
@@ -1366,6 +1367,7 @@ fn gen_patterns(
     if model.pattern.is_empty() {
         return Ok((Vec::new(), TokenStream::new()));
     }
+    let ph = super::placeholder::PlaceholderTable::from_model(model)?;
 
     let mut statics: Vec<TokenStream> = Vec::new();
     let mut emitted: Vec<PatternEmit> = Vec::new();
@@ -1479,11 +1481,12 @@ fn gen_patterns(
                 infos,
                 name_to_vn,
                 pattern_width_hint(&model.pattern[e.idx]),
+                &ph,
             )?;
             // 临时预声明 + clobber（与 lowering 规则 arm 同构）
             let mut t_binds: Vec<TokenStream> = Vec::new();
             let mut tf_binds: Vec<TokenStream> = Vec::new();
-            for (var, cls) in super::placeholder::collect_temps(&e.rewritten) {
+            for (var, cls) in super::placeholder::collect_temps(&ph, &e.rewritten) {
                 let vid = format_ident!("{var}");
                 match cls {
                     super::placeholder::PhTemp::Gpr => {
@@ -2985,6 +2988,7 @@ fn gen_lowering_insts(
     _infos: &[InstInfo],
     ref_to_infos: &std::collections::HashMap<&str, Vec<&InstInfo>>,
     width_hint: Option<u32>,
+    ph: &super::placeholder::PlaceholderTable,
 ) -> Result<Vec<TokenStream>, String> {
     let mut out = Vec::new();
     for t in templates {
@@ -3015,7 +3019,7 @@ fn gen_lowering_insts(
                 .collect()
         };
         // token 类型签名（reg/imm/mem/cond/label）
-        let tok_kinds: Vec<&str> = toks.iter().map(|op| lowering_token_kind(op)).collect();
+        let tok_kinds: Vec<&str> = toks.iter().map(|op| lowering_token_kind(op, ph)).collect();
         // 先按操作数签名匹配；若多候选再用字面段（模板 vs asm 的内存括号）
         // 过滤——单候选时字面段差异不阻塞（MemRef 槽指令的 asm 无字面 `[`，
         // 但 lowering 模板用 [base+off] 表达）
@@ -3138,17 +3142,13 @@ fn gen_lowering_insts(
                 } else {
                     op
                 };
-                // v21 W6：算术表达式占位符（`{imm0 - 4}` 之类）优先——ctor 由各操作数拼接。
-                let (ctor_expr, xreg_expr) = if let Some(e) =
-                    super::placeholder::expr_ctor(op, slot)
+                // 占位符（注册表/谱内表达式/`{N}`/`{gN}`）：ctor 与 xreg 由表达式引擎派生。
+                let (ctor_expr, xreg_expr) = if super::placeholder::kind_matches(ph, op, slot.kind)
                 {
-                    (e, quote! { 0u32 })
-                } else if super::placeholder::kind_matches(op, slot.kind) {
-                    // 注册表占位符（{out}/{iconst}/{g}…）：ctor 由注册表闭包
-                    // 构建，xreg 绑定来自注册表。新增占位符只改 placeholder.rs。
-                    let ctor = super::placeholder::ctor_for(op, slot)
-                        .expect("kind_matches 为真但 ctor_for 返回 None（注册表不一致）");
-                    let xreg = super::placeholder::xreg_for(op);
+                    let ctor = super::placeholder::ctor_for(ph, op, slot).ok_or_else(|| {
+                        format!("lowering 模板占位符 '{op}' 无法解析（行: {trimmed}）")
+                    })?;
+                    let xreg = super::placeholder::xreg_for(ph, op);
                     (ctor, xreg)
                 } else {
                     // 字面量 fallback（非占位符 token）：
@@ -3213,7 +3213,7 @@ fn gen_lowering_insts(
                         OperandKind::Mem => {
                             // 内存操作数：`{base}+{off}` → MemRef（base 物理寄存器 + 偏移）；
                             // v21 W7：偏移符号走**占位符注册表**（传真实 slot）⇒ 语义单点。
-                            let m = parse_mem_template(op, "lowering 模板", slot)?;
+                            let m = parse_mem_template(op, "lowering 模板", slot, ph)?;
                             (quote! { #m }, quote! { 0u32 })
                         }
                         OperandKind::Imm | OperandKind::Label => {

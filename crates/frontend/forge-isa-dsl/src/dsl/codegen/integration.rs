@@ -447,8 +447,11 @@ pub(crate) fn strip_placeholder_decls(asm: &str) -> String {
 
 /// lowering 模板操作数 token → 槽类型签名（形状消歧用）。
 /// 委托占位符注册表（placeholder.rs）——分类、临时、xreg、ctor 单一事实源。
-pub(crate) fn lowering_token_kind(op: &str) -> &'static str {
-    super::placeholder::token_kind(op)
+pub(crate) fn lowering_token_kind(
+    op: &str,
+    ph: &super::placeholder::PlaceholderTable,
+) -> &'static str {
+    super::placeholder::token_kind(ph, op)
 }
 
 fn gen_isa_info(model: &IsaModel, infos: &[InstInfo]) -> Result<TokenStream, String> {
@@ -1012,6 +1015,7 @@ pub(crate) fn parse_mem_template(
     text: &str,
     ctx: &str,
     slot: &crate::dsl::model::OperandSlot,
+    ph: &super::placeholder::PlaceholderTable,
 ) -> Result<TokenStream, String> {
     let t = text.trim().trim_start_matches('[').trim_end_matches(']');
     let (base_part, disp_part) = match t.split_once('+') {
@@ -1022,7 +1026,7 @@ pub(crate) fn parse_mem_template(
         },
     };
     // 占位符注册表是**唯一**的偏移符号语义来源（`{off}`/`{alloca}` 等）。
-    let sym = |name: &str| super::placeholder::ctor_for(name, slot);
+    let sym = |name: &str| super::placeholder::ctor_for(ph, name, slot);
     let base: TokenStream = if let Some(e) = sym(&base_part) {
         e
     } else {

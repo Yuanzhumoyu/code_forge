@@ -1952,24 +1952,25 @@ effect = ["Move"]
     assert!(inst.effect.contains(&crate::dsl::model::Effect::Move));
 }
 
-/// 占位符注册表唯一性：无重名 token、无重复临时变量（第三轮重构核心——
-/// 4 处消费（ctor/token_kind/临时声明/xreg 绑定）都从该表派生，表必须一致）。
+/// 占位符表唯一性/可解析性（v28 M1：数据化表达式引擎）。
 #[test]
 fn placeholder_registry_unique() {
-    super::codegen::placeholder::assert_unique().expect("占位符注册表必须唯一");
+    let table = super::codegen::placeholder::PlaceholderTable::default_table();
+    super::codegen::placeholder::assert_unique(&table).expect("内置占位符定义必须唯一且可解析");
 }
 
-/// 占位符注册表关键条目可查（防止重构误删符号寄存器/临时/常量 token）。
+/// 占位符关键条目可查（原语 + 内置旧名 + 编号操作数/临时）。
 #[test]
 fn placeholder_registry_lookup() {
-    use super::codegen::placeholder::{PhKind, PhTemp, lookup};
-    // 符号寄存器（静态表：out/out2；{N} 是动态编号操作数）
+    use super::codegen::placeholder::{PhKind, PhTemp, PlaceholderTable};
+    let table = PlaceholderTable::default_table();
     for name in ["{out}", "{out2}"] {
-        let p = lookup(name).unwrap_or_else(|| panic!("{name} 必须在注册表"));
+        let p = table
+            .resolve(name, None)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(p.token_kind, "reg", "{name} token_kind");
         assert!(p.loose, "{name} 应 loose（任何槽可用）");
     }
-    // 编号操作数 {N}：动态解析，任意上限（不只 {0}/{1}/{2}）
     for (name, idx) in [
         ("{0}", 0usize),
         ("{1}", 1),
@@ -1981,18 +1982,17 @@ fn placeholder_registry_lookup() {
             .unwrap_or_else(|| panic!("{name} 必须按编号操作数解析"));
         assert_eq!(n, idx, "{name} 编号");
         assert_eq!(
-            super::codegen::placeholder::token_kind(name),
+            super::codegen::placeholder::token_kind(&table, name),
             "reg",
             "{name} token_kind"
         );
     }
-    // 临时（静态表：{g}/{f}；编号 {gN}/{fN} 动态）
     for (name, var, cls) in [("{g}", "__g", PhTemp::Gpr), ("{f}", "__f", PhTemp::Fpr)] {
-        let p = lookup(name).unwrap_or_else(|| panic!("{name} 必须在注册表"));
-        assert_eq!(p.temp, Some(var), "{name} 临时变量名");
-        assert_eq!(p.temp_class, Some(cls), "{name} 临时类别");
+        let p = table
+            .resolve(name, None)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert_eq!(p.temps, vec![(var.to_string(), cls)], "{name} 临时");
     }
-    // 编号临时 {gN}/{fN}：动态解析，任意上限；g=GPR、f=FPR 与 PhTemp 对应
     for (name, var, cls) in [
         ("{g1}", "__g1", PhTemp::Gpr),
         ("{g5}", "__g5", PhTemp::Gpr),
@@ -2006,44 +2006,51 @@ fn placeholder_registry_lookup() {
         assert_eq!(v, var, "{name} 变量名");
         assert_eq!(c, cls, "{name} 类别");
     }
-    // 旧样式 {t}/{tN}/{t_f}/{t_fN} 已废弃：必须解析失败（防止误用回退）
     for name in ["{t}", "{t1}", "{t_f}", "{t_f1}"] {
         assert!(
-            super::codegen::placeholder::lookup(name).is_none(),
-            "{name} 旧样式必须不在静态表"
+            table.resolve(name, None).is_err(),
+            "{name} 旧样式必须解析失败"
         );
         assert!(
             super::codegen::placeholder::numbered_temp(name).is_none(),
             "{name} 旧样式必须不可按编号临时解析"
         );
     }
-    // 与既有占位符无前缀冲突：{g}≠{global}、{f}≠{fconst}（精确匹配）
     for name in ["{global}", "{fconst}", "{fconst_hi32_hi20}", "{iconst}"] {
         assert!(
-            super::codegen::placeholder::lookup(name).is_some(),
-            "{name} 静态条目必须仍在"
+            table.resolve(name, None).is_ok(),
+            "{name} 必须可解析（原语或内置别名）"
         );
     }
-    // 常量/立即数
     for name in [
         "{iconst}", "{fconst}", "{off}", "{alloca}", "{global}", "{imm0}",
     ] {
-        let p = lookup(name).unwrap_or_else(|| panic!("{name} 必须在注册表"));
+        let p = table
+            .resolve(name, None)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(p.kind, PhKind::Imm, "{name} 槽类别");
     }
-    let cc = lookup("{cc}").unwrap();
+    let cc = table.resolve("{cc}", None).unwrap();
     assert_eq!(cc.kind, PhKind::Cond, "cc 槽类别");
-    // token 分类委托
-    assert_eq!(super::codegen::placeholder::token_kind("{out}"), "reg");
     assert_eq!(
-        super::codegen::placeholder::token_kind("{iconst_hi20}"),
+        super::codegen::placeholder::token_kind(&table, "{out}"),
+        "reg"
+    );
+    assert_eq!(
+        super::codegen::placeholder::token_kind(&table, "{iconst_hi20}"),
         "imm"
     );
-    assert_eq!(super::codegen::placeholder::token_kind("{cc}"), "cond");
-    assert_eq!(super::codegen::placeholder::token_kind("RAX"), "reg");
-    assert_eq!(super::codegen::placeholder::token_kind("16"), "num");
     assert_eq!(
-        super::codegen::placeholder::token_kind("{0}+8"),
+        super::codegen::placeholder::token_kind(&table, "{cc}"),
+        "cond"
+    );
+    assert_eq!(
+        super::codegen::placeholder::token_kind(&table, "RAX"),
+        "reg"
+    );
+    assert_eq!(super::codegen::placeholder::token_kind(&table, "16"), "num");
+    assert_eq!(
+        super::codegen::placeholder::token_kind(&table, "{0}+8"),
         "mem",
         "内存表达式保持 mem"
     );
@@ -2107,6 +2114,57 @@ fn lowering_err(rule: &str) -> String {
 fn lowering_accepts_declared_name() {
     let doc = lowering_doc("[[lower.Copy]]\ninsts = [\"MOV {out}, {0}\"]");
     parse_and_validate(&doc).expect("已声明指令名 + 已知占位符必须通过");
+}
+
+/// v28 M1：谱内 `[placeholder.<名>] expr` 只写数据即可生成——不需要改 Rust。
+#[test]
+fn spec_defined_placeholder_generates_without_rust_change() {
+    let mut doc = lowering_doc("[[lower.Iconst]]\ninsts = [\"MOVI {out}, {nibble}\"]");
+    doc.push_str(
+        r#"
+[operand.i]
+kind = "imm"
+bits = 8
+[inst.MOVI]
+form = "RR"
+opcode = 2
+asm = "movi {dst:g:out}, {imm:i}"
+[placeholder.nibble]
+expr = "off >> 4 & 0xF"
+"#,
+    );
+    let m = parse_and_validate(&doc).expect("谱内占位符定义应通过校验");
+    super::codegen::generate(&m).expect("谱内占位符定义应能生成代码");
+}
+
+/// v28 M1：表达式成环必须在加载期报错（不是生成期死循环/静默）。
+#[test]
+fn spec_placeholder_cycle_is_rejected() {
+    let mut doc = lowering_doc("");
+    doc.push_str(
+        r#"
+[placeholder.a]
+expr = "b + 1"
+[placeholder.b]
+expr = "a + 1"
+"#,
+    );
+    let err = parse_and_validate(&doc).unwrap_err().to_string();
+    assert!(err.contains("成环") || err.contains("循环"), "err: {err}");
+}
+
+/// v28 M1：未知原语/函数必须在加载期报错。
+#[test]
+fn spec_placeholder_unknown_name_is_rejected() {
+    let mut doc = lowering_doc("");
+    doc.push_str(
+        r#"
+[placeholder.bad]
+expr = "no_such_source + 1"
+"#,
+    );
+    let err = parse_and_validate(&doc).unwrap_err().to_string();
+    assert!(err.contains("未知名字"), "err: {err}");
 }
 
 #[test]
@@ -4653,16 +4711,21 @@ fn unsupported_term_lowering_is_rejected() {
     }
 }
 
-/// v21 W6：**算术表达式占位符**（`{imm0 - 4}`、`{iconst >> 12 & 0xfffff}`）的认法与种类判定。
+/// v28 M1：算术表达式占位符由表达式引擎解析（不再依赖 `is_arith_expr` 特判）。
 #[test]
 fn arith_expr_placeholder_is_recognized() {
-    use super::codegen::placeholder::{first_operand_kind_of_test as kind_of, is_arith_expr};
-    assert!(is_arith_expr("{imm0 - 4}"));
-    assert!(is_arith_expr("{iconst >> 12 & 0xfffff}"));
-    assert!(!is_arith_expr("{imm0}"), "纯占位符不算表达式");
-    assert!(!is_arith_expr("imm0 - 4"), "没有外层花括号不算");
-    // 种类按**首个操作数** ⇒ `{imm0 - 4}` 是 imm
-    assert_eq!(kind_of("{imm0 - 4}"), kind_of("{imm0}"));
+    use super::codegen::placeholder::PlaceholderTable;
+    let table = PlaceholderTable::default_table();
+    assert!(table.resolve("{imm0 - 4}", None).is_ok());
+    assert!(table.resolve("{iconst >> 12 & 0xfffff}", None).is_ok());
+    assert!(table.resolve("{imm0}", None).is_ok());
+    assert!(
+        table.resolve("imm0 - 4", None).is_ok(),
+        "表达式本身就是模板 token 体，不带花括号也应可解析"
+    );
+    let a = table.resolve("{imm0 - 4}", None).unwrap();
+    let b = table.resolve("{imm0}", None).unwrap();
+    assert_eq!(a.kind, b.kind, "种类按首个操作数");
 }
 
 /// v21 W6：`temps = [...]` 显式临时寄存器 —— 声明了就必须显式（未声明即报错并点名）。

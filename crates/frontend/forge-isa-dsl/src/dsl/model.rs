@@ -364,6 +364,12 @@ pub struct IsaModel {
     /// **v21 W3 操作数声明**（`[operand.<名字>]`）：键名即槽名。
     #[serde(default, rename = "operand")]
     pub operands: BTreeMap<String, OperandDecl>,
+    /// **v28 M1 占位符定义**（`[placeholder.<名字>] expr = "…"`）。
+    ///
+    /// 表达式只能引用固定原语源/原语函数或其它定义；生成期求值，不写 Rust 代码。
+    /// 旧 66 个名字由 [`crate::dsl::codegen::placeholder`] 的内置数据文件提供。
+    #[serde(default, rename = "placeholder")]
+    pub placeholder_decls: BTreeMap<String, PlaceholderDecl>,
     /// **v21 W3b 命名取值表**（`[enum.<表名>]`）：统一原 `[enum.cond]` /
     /// `[conventions.bitsets.*]` / `[conventions.imm_names.*]` 三张表，由
     /// [`crate::dsl::enum_decl::lower_enum_layer`] 降级回内部三处。
@@ -1817,6 +1823,16 @@ impl ClassField {
             ClassField::Many(v) => v.clone(),
         }
     }
+}
+
+/// v28 M1：**占位符定义**（`[placeholder.<名字>]`）。
+///
+/// `expr` 是受限表达式（见 `codegen/placeholder.rs` 模块头）；表头名即模板里
+/// `{名字}` 的 token。旧 66 个名字由内置数据文件提供，谱内定义不得覆盖原语名。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlaceholderDecl {
+    pub expr: String,
 }
 
 /// v21 W3：**操作数声明**（`[operand.<名字>]`）。

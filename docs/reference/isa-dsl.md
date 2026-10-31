@@ -225,7 +225,7 @@ v22 是 v21 收口后的**人体工学改造**（破坏性重写：不保留兼�
 
 | 节 | 必填 | 可选（`†` = 编码键，可直接写在指令/form 上） | 说明 |
 | --- | --- | --- | --- |
-| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `operand` `enum` `form` `inst` `family` `lower` `asm` `pred` `machine` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
+| `<root>` | `meta` | `include` `override` `encoding` `reg` `conventions` `operand` `placeholder` `enum` `form` `inst` `family` `lower` `asm` `pred` `machine` `vectors` | ISA 谱根（`include`/`[[override]]` 为多文件组合键，由 loader 合并后才进模型） |
 | `[meta]` | `name` | `version` `variants` `endian` `mode` `case_insensitive_regs` `comment_char` `label_suffix` `mnemonic_case` `imm_prefix` `directive_prefix` `vector_tiers` | 元信息 + 文本约定（宽度只在 [reg.<名>] 表头里，见 [machine] 的类指针键） |
 | `[encoding]` | `kind` | `bits` `widths` `max_len` `default_opsize` | 指令宽度三态：fixed \| mixed \| prefix_scan |
 | `[reg.<name>]` | — | `names` `prefix` `base_index` `count` `alloc_count` `aliases` | 寄存器组；组名的数字 = **位**宽（`gpr64` = 64 位）；aliases = { 别名 = 组内下标 } |
@@ -238,6 +238,7 @@ v22 是 v21 收口后的**人体工学改造**（破坏性重写：不保留兼�
 | `[conventions.imm_names.<table>]` | — | — | 命名立即数表（kind = "imm" 的槽用 `names` 指名）：表名 → （名字 → 值）——一个名字 = 一个值；解析认名字也认数字，渲染时值在表里就写名字（允许额外键） |
 | `[conventions.mem]` | `templates` | — | 内存操作数文本模板列表（第 0 条 = 渲染形态，其余解析专用备选；占位符 base/index/scale/disp/size） |
 | `[enum.<表名>]` | — | `kind` `entries`† | 命名取值表：kind = value（名字 = 值；带 `ir` 的那张是条件码表）\| bits（名字拼接、按位或）（允许额外键） |
+| `[placeholder.<名字>]` | `expr` | — | 占位符表达式（v28 M1）：`{名字}` 在生成期求值，引用固定原语/函数 |
 | `[operand.<名字>]` | `kind` | `bits` `signed` `range` `unit` `value` `literal` `enum` `suffix` `symbol` `byte` `zero` `sp` `text` `size_words` `encode` `fields` `roles` `class` `cond_bank` | 操作数槽：kind = reg \| imm \| mem \| label \| cond |
 | `[form.<名字>]` | — | `fields` `segments` `doc` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 编码形式：可选的键预设（指令可逐键覆盖）；**表头即形式名**（不写 `name`） |
 | `[inst.<名字>]` | `asm` | `form` `opcode` `match` `fields` `segments` `when` `effect` `roles` `data_width` `word_size` `implicit_regs` `reloc` `width` `only_variants` `fields_variant` `doc` `group` `modrm`† `modrm_fixed`† `rex`† `vex`† `evex`† `prefix`† `opsize`† `rex_w`† `opcode_reg`† `imm`† `escape`† | 指令（**表头即指令名**，不写 `name`）：编码键可与 form 预设混用（指令优先）；width = 指令字长（位），data_width = 数据宽度（位，搬运族派生的唯一人写数据） |
@@ -918,6 +919,36 @@ asm = "{@[rm]:gprx}{dst:gprx:out}, {@reg:gprx}{src:gprx}"
   未声明的字段名报错，不静默回退。
 - 旧写法（`ops` + `bind` + `{名字}` 引用）**已删除**；迁移器 `spec_migrate`（`forge-isa migrate`）
   能把旧谱一键迁成内联写法，等价性由"迁移前后展开逐字节相同"守住（`tests/spec_migrate.rs`）。
+
+### lowering 占位符（v28 M1：数据化表达式）
+
+lowering 的 `insts` 里，除了操作数 `{N}`、临时 `{gN}`/`{fN}` 与固定原语，还可以用
+**谱内定义的占位符**——不再需要改 `placeholder.rs`：
+
+```toml
+[placeholder.nibble_off]
+expr = "off >> 4 & 0xF"
+
+[placeholder.movn_imm16]
+expr = "~iconst & 0xFFFF"
+```
+
+表达式语法：整数字面量（十进制/`0x`）、括号、一元 `- ~`、二元
+`+ - * / & | ^ << >>`；引用固定**原语源**（`out/out2/g/f/off/alloca/global/iconst/
+fconst/imm0/cc/cc_inv/cond/ret/ret_src/retf/retf_src/retN/retN_src/sret/true/false/
+target`）或其它定义；也可调用固定**原语函数**：`bits(v,shift,width)`、
+`sext(v,width)`、`zext(v,width)`、`round(v,shift)`、`sat_sub(a,b)`、`shufps(offset)`、
+`vconst_raw64()`、`vconst_raw_half(hi)`、`vconst_half(half,hi)`、`vconst_elem_bits()`、
+`mem(base)`。
+
+规则与失败模式：
+
+- 表达式只做纯整数/位运算；`Mem`/`Cond` 参与算术 ⇒ 生成期报错。
+- 未知名字、未知函数、参数越界、定义成环、覆盖原语名 ⇒ **加载期/生成期明确报错**，
+  不会回退成字面量 0。
+- 旧 66 个名字（`{off_f*}`、`{iconst_*}`、`{fconst_*}`、`{vconst_*}`、`{shufps_*}` 等）
+  已由 `crates/frontend/forge-isa-dsl/src/dsl/codegen/default_placeholders.toml`
+  以同一语法提供（数据，不是代码）；旧谱无需改动。
 
 ## `[operand.<名字>]` — 操作数声明
 

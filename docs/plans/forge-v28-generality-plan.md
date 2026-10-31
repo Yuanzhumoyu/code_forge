@@ -26,7 +26,7 @@
 - 能力缺口 ID 随各自里程碑加入（`capability_gaps` 守卫要求源码与台账双向相等，
   不能提前挂空行）。
 
-### M1 占位符表达式引擎
+### M1 占位符表达式引擎（✅ 2026-10-31 落地）
 
 - 谱内 `[placeholder.<名>] expr`；表达式支持字面量、运算符、原语源与原语函数。
 - 原语源：`out/out2/arg(n)/g(n)/f(n)/off/alloca/global/sret/ret(k)/ret_src(k)/
@@ -34,7 +34,8 @@
   true/false/target`。
 - 原语函数：`bits/sext/zext/round/sat_sub/vconst_raw64/vconst_half/
   vconst_elem_bits/shufps/mem`。
-- 旧 66 名迁到 `isa/placeholders.toml`，三份内置谱 `include`；生成字节必须不变。
+- 旧 66 名迁到 `crates/frontend/forge-isa-dsl/src/dsl/codegen/default_placeholders.toml`（数据文件），
+  三份内置谱不需要改动；生成字节由 e2e/arm64 oracle 与 pins 守卫验证不变。
 - 诊断：未知源/函数/元数、类型不匹配、循环定义，禁止回退 0。
 - 验收：三 ISA oracle/pins 不变；新谱只加一条 `[placeholder]` 即可生成/编码；
   `placeholder.rs` 无 ISA 名。

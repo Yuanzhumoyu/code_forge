@@ -59,6 +59,7 @@ pub const SECTIONS: &[Section] = &[
             "reg",
             "conventions",
             "operand",
+            "placeholder",
             "enum",
             "form",
             "inst",
@@ -201,6 +202,16 @@ pub const SECTIONS: &[Section] = &[
         flatten: &["entries"],
         additional: true,
         doc: "命名取值表：kind = value（名字 = 值；带 `ir` 的那张是条件码表）| bits（名字拼接、按位或）",
+    },
+    Section {
+        // v28 M1：占位符定义是**表**（键名即 token 名）——`[placeholder.<名字>]`。
+        path: "[placeholder.<名字>]",
+        model: "PlaceholderDecl",
+        required: &["expr"],
+        optional: &[],
+        flatten: &[],
+        additional: false,
+        doc: "占位符表达式（v28 M1）：`{名字}` 在生成期求值，引用固定原语/函数",
     },
     Section {
         // v21 W3：操作数声明是**表**（键名即槽名）——`[operand.<名字>]`。
@@ -660,6 +671,7 @@ pub fn schema_json() -> String {
         ("include", "", "free"),
         ("override", "[[override]]", "array"),
         ("conventions", "", "free"),
+        ("placeholder", "[placeholder.<名字>]", "named"),
         ("operand", "[operand.<名字>]", "named"),
         ("enum", "[enum.<表名>]", "named"),
         ("form", "[form.<名字>]", "named"),

@@ -1,0 +1,140 @@
+# 内置旧占位符别名（v28 M1 数据化迁移）。
+#
+# 这些名字是 x86/arm64/riscv64 三份谱在 2026-10 之前用到的；改为表达式后，
+# `placeholder.rs` 不再包含任何 ISA 专用行。新谱/新 ISA 请在**自己的谱**里写
+# `[placeholder.<名>] expr = "…"`，不要改本文件或 Rust 代码。
+#
+# 可用原语：out/out2/g/f/off/alloca/global/iconst/fconst/imm0/cc/cc_inv/cond/
+# ret/ret_src/retf/retf_src/retN/retN_src/sret/true/false/target；
+# 可用函数：bits(v,shift,width)/sext(v,width)/zext(v,width)/round(v,shift)/
+# sat_sub(a,b)/shufps(offset)/vconst_raw64()/vconst_raw_half(hi)/
+# vconst_half(half,hi)/vconst_elem_bits()/mem(base)。
+
+[placeholder.off_f0]
+expr = "bits(off, 0, 16)"
+
+[placeholder.off_f1]
+expr = "bits(off, 16, 16)"
+
+[placeholder.off_f2]
+expr = "bits(off, 32, 16)"
+
+[placeholder.off_f3]
+expr = "bits(off, 48, 16)"
+
+[placeholder.iconst_c16]
+expr = "~iconst & 0xFFFF"
+
+[placeholder.iconst_f0]
+expr = "bits(iconst, 0, 16)"
+
+[placeholder.iconst_f1]
+expr = "bits(iconst, 16, 16)"
+
+[placeholder.iconst_f2]
+expr = "bits(iconst, 32, 16)"
+
+[placeholder.iconst_f3]
+expr = "bits(iconst, 48, 16)"
+
+[placeholder.iconst_hi20]
+expr = "(iconst + 0x800) >> 12 & 0xFFFFF"
+
+[placeholder.iconst_lo12]
+expr = "sext(iconst, 12)"
+
+[placeholder.iconst_hi32_hi20]
+expr = "((iconst >> 32) + 0x800) >> 12 & 0xFFFFF"
+
+[placeholder.iconst_hi32_lo12]
+expr = "sext(iconst >> 32, 12)"
+
+[placeholder.iconst_lo32_hi20]
+expr = "((iconst & 0xFFFFFFFF) + 0x800) >> 12 & 0xFFFFF"
+
+[placeholder.iconst_lo32_lo12]
+expr = "sext(iconst & 0xFFFFFFFF, 12)"
+
+[placeholder.fconst_f0]
+expr = "bits(fconst, 0, 16)"
+
+[placeholder.fconst_f1]
+expr = "bits(fconst, 16, 16)"
+
+[placeholder.fconst_f2]
+expr = "bits(fconst, 32, 16)"
+
+[placeholder.fconst_f3]
+expr = "bits(fconst, 48, 16)"
+
+[placeholder.fconst_hi32_hi20]
+expr = "((fconst >> 32) + 0x800) >> 12 & 0xFFFFF"
+
+[placeholder.fconst_hi32_lo12]
+expr = "sext(fconst >> 32, 12)"
+
+[placeholder.fconst_lo32_hi20]
+expr = "((fconst & 0xFFFFFFFF) + 0x800) >> 12 & 0xFFFFF"
+
+[placeholder.fconst_lo32_lo12]
+expr = "sext(fconst & 0xFFFFFFFF, 12)"
+
+[placeholder.imm0_sub4]
+expr = "sat_sub(imm0, 4)"
+
+[placeholder.shufps_imm8]
+expr = "shufps(0)"
+
+[placeholder.shufps_imm8_hi]
+expr = "shufps(4)"
+
+[placeholder.vconst_lo2]
+expr = "vconst_raw64()"
+
+[placeholder.vconst_lo]
+expr = "vconst_half(0, 0)"
+
+[placeholder.vconst_hi]
+expr = "vconst_half(0, 1)"
+
+[placeholder.vconst_lo_hi]
+expr = "vconst_half(1, 0)"
+
+[placeholder.vconst_hi_hi]
+expr = "vconst_half(1, 1)"
+
+[placeholder.vconst_lo_h2]
+expr = "vconst_half(2, 0)"
+
+[placeholder.vconst_hi_h2]
+expr = "vconst_half(2, 1)"
+
+[placeholder.vconst_lo_h3]
+expr = "vconst_half(3, 0)"
+
+[placeholder.vconst_hi_h3]
+expr = "vconst_half(3, 1)"
+
+[placeholder.vconst_lo_f0]
+expr = "bits(vconst_raw_half(0), 0, 16)"
+
+[placeholder.vconst_lo_f1]
+expr = "bits(vconst_raw_half(0), 16, 16)"
+
+[placeholder.vconst_lo_f2]
+expr = "bits(vconst_raw_half(0), 32, 16)"
+
+[placeholder.vconst_lo_f3]
+expr = "bits(vconst_raw_half(0), 48, 16)"
+
+[placeholder.vconst_hi_f0]
+expr = "bits(vconst_raw_half(1), 0, 16)"
+
+[placeholder.vconst_hi_f1]
+expr = "bits(vconst_raw_half(1), 16, 16)"
+
+[placeholder.vconst_hi_f2]
+expr = "bits(vconst_raw_half(1), 32, 16)"
+
+[placeholder.vconst_hi_f3]
+expr = "bits(vconst_raw_half(1), 48, 16)"

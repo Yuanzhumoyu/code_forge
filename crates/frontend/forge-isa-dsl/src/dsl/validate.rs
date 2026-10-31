@@ -218,6 +218,11 @@ fn substitute_params(s: &str, params: &BTreeMap<String, i64>) -> String {
 
 /// 全部校验（收集式，一次报全）。
 pub fn validate_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags, opts: &ValidateOpts) {
+    // v28 M1：占位符定义先整体校验（表达式语法/未知名字/成环），即使没有规则引用。
+    if let Err(e) = crate::dsl::codegen::placeholder::PlaceholderTable::from_model(m) {
+        let path = "[placeholder]".to_string();
+        d.push_anchored(idx, &format!("{path}: {e}"));
+    }
     // 组合键（`include` / `[[override]]`）由 `forge_isa_dsl::loader` 在**合并阶段**
     // 消费；走到这里说明文本没经过 loader（裸文本入口），此时它们不生效——必须
     // 明确报错，否则"写了 include 却没被包含"会静默变成一个缺指令的谱。
@@ -2392,6 +2397,13 @@ fn validate_references(m: &IsaModel) -> Result<(), String> {
 /// 现在三类都在编译期拒绝，另加同 op 完全重复规则检测；S1 起**逐条收集**。
 fn validate_lowering_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
     let refs = declared_refs(m);
+    let ph = match crate::dsl::codegen::placeholder::PlaceholderTable::from_model(m) {
+        Ok(ph) => ph,
+        Err(e) => {
+            d.push_anchored(idx, &e);
+            return;
+        }
+    };
     // `when` 可用属性 = 核心属性 + `[pred.<名>]` 名（v18 S3f）
     let pred_attrs = m.pred_attr_names();
     // (op, 规范化 when, insts) → 首次出现的下标；用于重复检测
@@ -2409,7 +2421,7 @@ fn validate_lowering_all(m: &IsaModel, idx: &DeclIndex, d: &mut Diags) {
             d.push_anchored(idx, &format!("{path}: insts must not be empty"));
             continue;
         }
-        if let Err(msg) = validate_inst_lines(&path, &l.insts, &refs, &[]) {
+        if let Err(msg) = validate_inst_lines(&path, &l.insts, &refs, &[], &ph) {
             d.push_anchored(idx, &msg);
         }
         let when_key = match &l.when {
@@ -2492,6 +2504,7 @@ fn validate_inst_lines(
     insts: &[String],
     refs: &BTreeSet<String>,
     extra_known: &[String],
+    ph: &crate::dsl::codegen::placeholder::PlaceholderTable,
 ) -> Result<(), String> {
     for t in insts {
         let trimmed = t.trim();
@@ -2507,8 +2520,7 @@ fn validate_inst_lines(
             ));
         }
         for tok in placeholder_tokens(trimmed) {
-            let known = crate::dsl::codegen::placeholder::is_known(&tok)
-                || crate::dsl::codegen::placeholder::arith_expr_known(&tok)
+            let known = crate::dsl::codegen::placeholder::is_known(ph, &tok)
                 || extra_known.iter().any(|k| k == &tok);
             if !known {
                 return Err(format!("{path}: 未知占位符 '{tok}'（行: {trimmed}）"));
@@ -2524,6 +2536,7 @@ fn validate_inst_lines(
 /// 叶变量唯一 / insts 模板 / when 属性名。
 fn validate_patterns(m: &IsaModel) -> Result<(), String> {
     let refs = declared_refs(m);
+    let ph = crate::dsl::codegen::placeholder::PlaceholderTable::from_model(m)?;
     for p in m.pattern.iter() {
         let path = format!("[[lower.{}]]", p.name.as_deref().unwrap_or("<op>"));
         let tree =
@@ -2561,7 +2574,7 @@ fn validate_patterns(m: &IsaModel) -> Result<(), String> {
             return Err(format!("{path}: insts must not be empty"));
         }
         let extra: Vec<String> = vars.iter().map(|v| format!("{{{v}}}")).collect();
-        validate_inst_lines(&path, &p.insts, &refs, &extra)?;
+        validate_inst_lines(&path, &p.insts, &refs, &extra, &ph)?;
 
         // when 属性名 ∈ 核心属性 ∪ [pred.<名>]（与 lowering 一致——未知属性恒假，模式永不命中）。
         if let Some(w) = &p.when {
