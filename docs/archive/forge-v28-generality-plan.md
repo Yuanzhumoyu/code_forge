@@ -1,6 +1,10 @@
-# forge v28 通用性整治计划（progress）
+# forge v28 通用性整治计划（ARCHIVED）
 
-> 状态：`[progress]`（2026-10-31 立项；执行顺序 M0→M1→M2→M3→M4→M5→M6→M7）
+> ⚠️ ARCHIVED（2026-10-31）：计划已全部收口并归档。现行入口 =
+> [`../reference/generality-audit.md`](../reference/generality-audit.md) + `CHANGELOG.md`；
+> 本文只作历史记录，代码/测试为准。
+>
+> 状态：`[archive]`（2026-10-31 立项并完成；执行顺序 M0→M1→M2→M3→M4→M5→M6→M7）
 > 审计证据与缺陷编号见 [`../reference/generality-audit.md`](../reference/generality-audit.md)。
 > 现行规范入口：[`../reference/isa-dsl.md`](../reference/isa-dsl.md)、
 > [`../reference/backend-pipeline.md`](../reference/backend-pipeline.md)、

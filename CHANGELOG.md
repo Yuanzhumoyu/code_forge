@@ -1,4 +1,4 @@
-# CHANGELOG
+﻿# CHANGELOG
 
 <!-- markdownlint-configure-file { "MD013": { "line_length": 512, "code_block_line_length": 512, "heading_line_length": 512 }, "MD024": false } -->
 <!-- 文件级豁免原因：历史条目按单行记录（最长 ~440 列），且多年条目同置 [Unreleased] 下，
@@ -31,8 +31,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + `FuncRef::from_raw` 提供受控的测试构造入口。
 + A2：插件初始化时在自己的 runtime 注册调用点 planner（按 ISA 名）；非插件 DLL
 + 加载有拒绝测试。
-+ 计划见 `docs/plans/forge-v29-plugin-hardening.md`；A2（调用点 planner）待评估，
-+ ABI 版本不匹配负向夹具待补。
++ 计划已归档：`docs/archive/forge-v29-plugin-hardening.md`（A2 已完成；旧 ABI 拒绝测试已补）。
 
 ### Changed (2026-10-31) — 插件 ABI v2 / rustc 宽度 / 动态产物 fail-closed（M3–M5 核心）
 
@@ -84,7 +83,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   将“写死/未接线”的结构性问题编号为 GEN-01…GEN-08（占位符表、ISA 接入、插件 ABI、
   rustc 宽度假设、动态产物、两个 `#[ignore]` 分配器缺陷、外部宿主 tm、文档腐化），
   每条给文件:行证据与决策去向。
-+ 新增 [`docs/plans/forge-v28-generality-plan.md`](docs/plans/forge-v28-generality-plan.md)：
++ 新增 [`docs/archive/forge-v28-generality-plan.md`](docs/archive/forge-v28-generality-plan.md)：
   M0 审计 → M1 占位符数据化 → M2 ISA 接入零本体改动 → M3 插件零胶水 →
   M4 rustc 宽度泛化 → M5 动态产物最小 PIC/DLL → M6 分配器缺陷 → M7 收口。
 

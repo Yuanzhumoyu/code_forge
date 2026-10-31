@@ -1,4 +1,4 @@
-﻿# docs 文档索引
+# docs 文档索引
 
 仓库文档按**职能**分类存放。每篇文档头带状态标记；读前先确认其状态与你的目的匹配。
 
@@ -26,10 +26,12 @@
 
 ## plans/ — 进行中的专项方案（活账本）
 
+当前没有进行中的专项方案。已收口的方案在 `archive/`：
+
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
-| [`plans/forge-v28-generality-plan.md`](plans/forge-v28-generality-plan.md) | **forge v28 通用性整治**：M0–M7 全部收口（占位符数据化 / manifest / 插件 / 宽度 / 动态产物 / 分配器） | completed |
-| [`plans/forge-v29-plugin-hardening.md`](plans/forge-v29-plugin-hardening.md) | **v29 插件硬化**（已收口）：跨 ABI 重定位、版本握手、可变缓冲、错误文本、planner、Call/旧 ABI 测试 | completed |
+| —（已归档） | **forge v28 通用性整治**：M0–M7 全部收口；见 [`archive/forge-v28-generality-plan.md`](archive/forge-v28-generality-plan.md) | archive |
+| —（已归档） | **v29 插件硬化**：跨 ABI 重定位、版本握手、planner、Call/旧 ABI 测试；见 [`archive/forge-v29-plugin-hardening.md`](archive/forge-v29-plugin-hardening.md) | archive |
 | —（已归档） | forge-rustc v27 的账本已收口：见 [`archive/forge-rustc-v27-plan.md`](archive/forge-rustc-v27-plan.md)（NEON 全排列 / LICM 跨调用 / KD-05 / KD-09 全部落地；`cargo forge gate --subset rustc` 19/19） | archive |
 | —（已归档） | 项目 v26 的账本已收口：见 [`archive/project-v26-plan.md`](archive/project-v26-plan.md)（M1–M5 全部落地；现行入口 = `reference/backend-pipeline.md` + `reference/backend-gaps.md`） | archive |
 | ~~`plans/project-v26-plan.md`~~（原文，已移走） | **项目 v26：审查收口**（M1 诊断单一来源：DSL 错误码台账 + 双向守卫、事件 sink 下沉 `forge-isa-runtime::diagnostics`、开关台账归并 `forge-rustc`；M2 无消费者面清理：删 `forge-mem`/`isel_strategy`（`IR_FORMAT_VERSION` 3→4）/`asm_v11.lx`，前端线降级为 `examples/hir-demo`；M3 `cargo forge gate` 单命令门禁 + CI 补齐；M4 `[cap:SPEC_*]` 谱侧台账与能力补齐；M5 契约回写）；含审查证据、删除清单、守卫与判据 | progress |

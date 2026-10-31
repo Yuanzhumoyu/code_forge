@@ -1,6 +1,10 @@
-# v29 插件硬化计划（Plugins v2.1）
+# v29 插件硬化计划（Plugins v2.1，ARCHIVED）
 
-> 状态：完成（2026-10-31）· 上游：v28 M3 的“插件零胶水”收口
+> ⚠️ ARCHIVED（2026-10-31）：计划已全部收口并归档。现行入口 =
+> [`../reference/jit-memory.md`](../reference/jit-memory.md) +
+> `crates/backend/forge-codegen/src/pipeline_hooks.rs` / `plugin_abi.rs` + `CHANGELOG.md`。
+>
+> 状态：`[archive]`（2026-10-31 完成）· 上游：v28 M3 的“插件零胶水”收口
 > 目标：把插件从“能加载简单函数”提升到“能承载带重定位/外部调用的真实函数”，
 > 并让不兼容插件在加载期 fail-closed，而不是运行期未定义行为。
 
