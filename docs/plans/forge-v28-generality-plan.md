@@ -74,7 +74,7 @@
   导出符号、无 TEXTREL；Windows DLL 导出表检查；`prefer-dynamic` 仍拒绝。
 - 验收：至少一个共享对象/ DLL 链接与导出检查通过 + 负向用例。
 
-### M6 GEN-06 分配器缺陷
+### M6 GEN-06 分配器缺陷（✅ 2026-10-31 复核转正）
 
 - `test_jit_spill_pressure_loop_inline`（AV）与 `jit_stack_param_loop_call_only_step`
   （hang）确定性复现；修后取消 `#[ignore]` 进门禁；不能修则登记 KD。
@@ -103,13 +103,14 @@
 - M3 核心（v2 插件 ABI + 宿主适配器 + 目标表）。
 - M4 核心（IR DataLayout 注入 + 8/16/32/64 指针映射 + 单测）。
 - M5 fail-closed（`DYNAMIC_OUTPUT` 明确拒绝）。
+- M6 GEN-06 复核：两个历史失败测试（`test_jit_spill_pressure_loop_inline` /
+  `jit_stack_param_loop_call_only_step`）在 v28 实测均通过，已转正为回归；注释/索引同步。
 
 仍待补：
 
 - M3 真实 dylib fixture 的加载 + JIT 执行测试。
 - M4 demo16 谱与 16 位编译用例（当前只有 16/32/64 profile 单测）。
 - M5 最小 PIC 对象/共享库链接验证（当前只做负向拒绝）。
-- M6 GEN-06 分配器缺陷修复（两个 `#[ignore]` 仍未转正）。
 - M7 全量门禁复跑与文档收口。
 
 ## 6. 验证

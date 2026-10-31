@@ -16,7 +16,7 @@
 | GEN-03 | 动态插件 API 与实现不符、未注册管线、无目标映射、无测试 | 高（功能不可用） | ✅ 核心（M3）：v2 ABI + 宿主适配器 + 目标表；fixture 待补 |
 | GEN-04 | `forge-rustc` 从不设置 IR `DataLayout`；`usize` 只认 32/64；lowering/alloc 大量 I64 假设 | 高（非 64 位 ISA 必错） | ✅ 核心（M4）：DataLayout 注入 + 8/16/32/64 指针映射；demo16 待补 |
 | GEN-05 | 产物动态链接未建模：`prefer-dynamic` 拒绝、`RelocKind` 无 GOT/PLT、对象层无动态段 | 中（能力边界） | ✅ fail-closed（M5）：`DYNAMIC_OUTPUT` 明确拒绝；PIC 对象待做 |
-| GEN-06 | 两个 `#[ignore]` 是真实误编译（栈形参 + 循环 + 调用 ⇒ AV/死循环） | 高（已知错值） | M6 修复并转正 |
+| GEN-06 | 两个 `#[ignore]` 是真实误编译（栈形参 + 循环 + 调用 ⇒ AV/死循环） | 高（已知错值） | ✅ 已复核通过（M6）：v28 实测两条均通过；注释/索引已转正 |
 | GEN-07 | 外部宿主 `parts=["tm"]` 没有零胶水路径；host demo 只覆盖 encode/decode/asm | 中（与 GEN-02 同源） | ✅ 部分（M2）：manifest 侧零胶水；外部 tm 宿主仍待 helper |
 | GEN-08 | 文档/守卫腐化：plugin 文档 API 不存在、`TARGET` 仍写死两目标、guard 硬编码 3 个 ISA 名 | 低（误导） | 随 M2/M3 修 |
 
