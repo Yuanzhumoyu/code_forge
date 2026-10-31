@@ -51,15 +51,13 @@ const BUDGETS: [(&str, usize); 6] = [
     ("pipeline/legalize/materialize.rs", 657),
     // va 展开主体：`expand_start` + `expand_arg` 共享局部不变量（游标推进次序）。
     ("pipeline/va_expand/expand.rs", 621),
-    // 编译会话入口 + 模块编排（M4 已切出 state 与测试）。
-    // 宽值批的调用点 + 说明（v27 M6-84：ABI 编组次序）——比原上限多 4 行，理由在此。
-    // +溢出决策事件化（v27 M6-87，P4：逐值报 vreg/offset/size）——比上一档多 9 行。
-    // +逐指令编辑事件化（v27 M6-90：SPILL-EDIT 循环）+ 压力峰值字段（M6-91）——共 +30 行。
-    ("pipeline/compiler/mod.rs", 670),
-    // 会话测试体（613 行用例）：测试长不构成阅读负担的同类问题，且与实现同源。
+    // 编译会话入口（v30 M2：前置门/合法化批次/命名计时已外提；433 = 外提后实测）。
+    ("pipeline/compiler/mod.rs", 433),
+    // 会话测试体（测试长不构成阅读负担的同类问题，且与实现同源）。
     // 栈探测的正反两面用例（v27 M6-78：大帧必须发 `mov rax,size; call __chkstk`，
     // 小帧不得发）——同一形状的编译级断言放这里最省重复。
-    ("pipeline/compiler/alloc_integration_tests.rs", 690),
+    // +3（v30 M1）：`CompileOptions`/`CompileError` 迁移把两处调用链拉长；只增测试体。
+    ("pipeline/compiler/alloc_integration_tests.rs", 693),
 ];
 
 /// 缺省上限：新文件超过它就必须进 [`BUDGETS`] 并写明理由。

@@ -325,8 +325,8 @@ lowering，实测 `[cap:SPEC_LOWERING_RULE_MISSING]`）。
 | `pipeline/lowering.rs` | 835 | 生成物 lowering 的宿主侧辅助，与谱面规则一一对应 |
 | `pipeline/legalize/materialize.rs` | 657 | 物化相：按 IR 形态分段单遍改写，切开反而难对照 |
 | `pipeline/va_expand/expand.rs` | 621 | `expand_start`/`expand_arg` 共享局部不变量（游标推进次序） |
-| `pipeline/compiler/mod.rs` | 670 | 会话入口 + 模块编排（state 与测试已切出；+宽值批调用点 v27 M6-84、+溢出事件 v27 M6-87、+逐指令编辑/压力峰值 v27 M6-90/M6-91） |
-| `pipeline/compiler/alloc_integration_tests.rs` | 690 | 集成用例（测试长不构成阅读负担，与实现同源；+栈探测正反用例 v27 M6-78） |
+| `pipeline/compiler/mod.rs` | 433 | 会话入口 + 模块编排（v30 M2 把前置门/合法化批次/命名计时外提；state 与测试已切出） |
+| `pipeline/compiler/alloc_integration_tests.rs` | 693 | 集成用例（测试长不构成阅读负担，与实现同源；+栈探测正反用例 v27 M6-78、+v30 M1 选项/错误迁移 3 行） |
 
 缺省上限 **700** 行；上表与守卫里的预算表由 `file_size_ratchet` 钉成**双向相等**（改动其一就红）。
 

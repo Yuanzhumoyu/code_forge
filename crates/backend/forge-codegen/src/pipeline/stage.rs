@@ -50,4 +50,17 @@ impl Stage {
             Stage::Module => "module",
         }
     }
+
+    /// 一句话说明（契约文档阶段表的"做什么"列；`Module` 不属于管线阶段）。
+    pub const fn description(self) -> &'static str {
+        match self {
+            Stage::Legalize => "合法化（两相：计划相只读算计划 → 物化相按指令序单遍改写）",
+            Stage::ISel => "指令选择（lowering：生成物的 `lower_inst` + 宿主的辅助发射）",
+            Stage::RegAlloc => "寄存器分配（活跃区间 + 溢出与回填）",
+            Stage::Frame => "帧布局（槽位/对齐/帧尺寸/ABI 槽）",
+            Stage::Emit => "发射（序言 / 指令 / 尾声 / fixup 解析）",
+            Stage::Jit => "装载（JIT：可执行内存 + 符号解析）",
+            Stage::Module => "整模块编排（不属于管线阶段）",
+        }
+    }
 }

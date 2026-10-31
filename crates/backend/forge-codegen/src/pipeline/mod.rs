@@ -25,6 +25,10 @@ pub mod lowering;
 pub mod options;
 /// IR 视图 → 引擎视图（签名 + 参数属性；v20 A2b）。
 pub mod param_copies;
+/// 编译前置能力门（v30 M2：从 compiler 外提；值池/宽向量/异常）。
+pub(crate) mod precheck;
+/// 单函数编译的命名计时（v30 M2）。
+pub(crate) mod profile;
 pub mod regalloc_bt;
 /// 模块级编译编排：`CompiledModule` + 整模块/单函数入口（M1：唯一编译入口）。
 pub mod session;
@@ -36,25 +40,8 @@ pub mod stage;
 pub mod trace;
 pub mod va_expand;
 
-/// **管线阶段清单**（v24 M5 的契约锚点）。
-///
-/// 契约文档 `docs/reference/backend-pipeline.md` 的"管线阶段"表由守卫
-/// `pipeline_stages_match_doc` 与本表**集合相等**钉住：改了阶段就同时改表（多一个、
-/// 少一个都红）。id 用短名，说明写给"读契约的人"。
-pub const STAGES: &[(&str, &str)] = &[
-    (
-        "legalize",
-        "合法化（**两相**：计划相只读算计划 → 物化相按指令序单遍改写）",
-    ),
-    (
-        "isel",
-        "指令选择（lowering：生成物的 `lower_inst` + 宿主的辅助发射）",
-    ),
-    ("regalloc", "寄存器分配（活跃区间 + 溢出与回填）"),
-    ("frame", "帧布局（槽位/对齐/帧尺寸/ABI 槽）"),
-    ("emit", "发射（序言 / 指令 / 尾声 / fixup 解析）"),
-    ("jit", "装载（JIT：可执行内存 + 符号解析）"),
-];
+// 管线阶段清单的**唯一来源**是 [`stage::Stage::ALL`]（v30 M2：`STAGES` 常量已删除）；
+// 契约文档的"管线阶段"表由守卫 `pipeline_stages_match_doc` 与它集合相等钉住。
 
 pub use forge_isa_runtime::{alloc_result, emit, vcode};
 
@@ -110,18 +97,21 @@ mod stage_contract_tests {
         out
     }
 
-    /// **阶段表 ↔ 代码阶段清单**（`STAGES`）：双向相等（多一个少一个都红）。
+    /// **阶段表 ↔ 代码阶段清单**（`Stage::ALL`）：双向相等（多一个少一个都红）。
     #[test]
     fn pipeline_stages_match_doc() {
         let text = doc();
         let ids = table_ids(&section(&text, "管线阶段"));
-        let code: Vec<String> = STAGES.iter().map(|(id, _)| (*id).to_string()).collect();
-        assert!(!code.is_empty(), "`STAGES` 为空");
+        let code: Vec<String> = stage::Stage::ALL
+            .iter()
+            .map(|s| s.id().to_string())
+            .collect();
+        assert!(!code.is_empty(), "`Stage::ALL` 为空");
         let doc_set: std::collections::BTreeSet<&String> = ids.iter().collect();
         let code_set: std::collections::BTreeSet<&String> = code.iter().collect();
         assert_eq!(
             doc_set, code_set,
-            "契约文档的阶段表与 `pipeline::STAGES` 不一致：\n  文档 {ids:?}\n  代码 {code:?}"
+            "契约文档的阶段表与 `Stage::ALL` 不一致：\n  文档 {ids:?}\n  代码 {code:?}"
         );
     }
 

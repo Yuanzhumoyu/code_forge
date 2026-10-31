@@ -79,8 +79,8 @@ impl<M: TargetMachine> JitLoader<M> {
 | 里程碑 | 内容 | 状态 |
 | --- | --- | --- |
 | M0 | 金标（golden bytes）+ 活账本 | 完成 |
-| M1 | `CompileOptions` / `CompileError` / `Arc<M>`，删除 `with_opt_level` | **进行中** |
-| M2 | `Stage` 枚举 + 命名计时 + `precheck` / 合法化批次外提 | 待做 |
+| M1 | `CompileOptions` / `CompileError` / `Arc<M>`，删除 `with_opt_level` | 完成 |
+| M2 | `Stage` 枚举 + 命名计时 + `precheck` / 合法化批次外提 | 完成 |
 | M3 | `runtime/jit.rs` 拆文件，棘轮扩到 `src/runtime/**` | 待做 |
 | M4 | `JitSignatureInfo` + `JitSignature::get`，迁移 153 处调用点 | 待做 |
 | M5 | 契约文档/CHANGELOG/公开面守卫收口 + 全量门禁 | 待做 |
@@ -158,3 +158,9 @@ impl<M: TargetMachine> JitLoader<M> {
   两处对批准方案的细化：① `Stage` 增 `Module` 变体（整模块编排失败；**不进**管线阶段表
   与 `Stage::ALL`）；② `CompileError::gap_id()` 返回 `Option<String>`（`IrError::gap_id`
   本就是 String，避免返回临时值的引用）。金标字节不变；`compile_error_context` 绿。
+- **2026-11-01 M2**：`Stage` 成为阶段唯一来源（`pipeline::STAGES` 删除，文档守卫改读
+  `Stage::ALL`；新增 `Stage::description`）；`pipeline/profile.rs` 用命名计时取代
+  `_t1.._t7`/`_t2b`；`pipeline/precheck.rs` 外提值池/宽向量/异常三组门（带单测）；
+  `legalize/schedule.rs` 外提合法化批次编排（只搬不改次序）。`compiler/mod.rs`
+  670 → 433 行（棘轮同步下调；`alloc_integration_tests.rs` 因 M1 迁移 +3 行，已在
+  棘轮表写明理由）。金标字节不变；`forge-codegen` lib 2982 条 + ratchet 守卫全绿。

@@ -24,6 +24,8 @@ pub(crate) mod int_width;
 pub(crate) mod materialize;
 pub(crate) mod narrow_overflow;
 pub(crate) mod plan;
+/// 合法化批次编排（v30 M2：从 compiler 外提；只搬不改次序）。
+pub(crate) mod schedule;
 pub(crate) mod wide_div;
 pub(crate) mod wide_split;
 
