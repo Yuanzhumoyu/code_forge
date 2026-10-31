@@ -50,7 +50,7 @@
 - 三个后端守卫遍历 manifest。
 - 验收：新增玩具 ISA 只加 TOML + manifest 条目即可编译。
 
-### M3 插件零胶水（✅ 核心 2026-10-31：v2 ABI + 宿主适配器；fixture 待补）
+### M3 插件零胶水（✅ 2026-10-31：v2 ABI + 宿主适配器 + 真 dylib 加载/编译/执行）
 
 - 插件 ABI v2：`__forge_isa_register_v2` / `__forge_isa_targets` / `__forge_isa_name`。
 - `export_plugin!` 生成注册包；`PluginLoader` 记录 target→isa。
@@ -100,7 +100,7 @@
 - M0 审计（`docs/reference/generality-audit.md`）。
 - M1 占位符数据化（三份谱字节不变；新谱内定义测试）。
 - M2 manifest 注册（arch 模块/管线/目标表/alloc 表全部生成；手写 arch 文件删除）。
-- M3 核心（v2 插件 ABI + 宿主适配器 + 目标表）。
+- M3 插件 ABI v2 + 宿主适配器 + 真 dylib 夹具（加载 → 编译 → 本机执行）。
 - M4 核心（IR DataLayout 注入 + 8/16/32/64 指针映射 + 单测）。
 - M5 fail-closed（`DYNAMIC_OUTPUT` 明确拒绝）。
 - M6 GEN-06 复核：两个历史失败测试（`test_jit_spill_pressure_loop_inline` /
@@ -108,7 +108,6 @@
 
 仍待补：
 
-- M3 真实 dylib fixture 的加载 + JIT 执行测试。
 - M4 demo16 谱与 16 位编译用例（当前只有 16/32/64 profile 单测）。
 - M5 最小 PIC 对象/共享库链接验证（当前只做负向拒绝）。
 - M7 全量门禁复跑与文档收口。

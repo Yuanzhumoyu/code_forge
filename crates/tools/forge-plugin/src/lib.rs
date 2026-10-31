@@ -31,11 +31,10 @@ use {
     std::sync::Arc,
 };
 
-/// 插件侧编译入口的函数指针类型（`export_isa_plugin!` 生成）。
+/// 插件侧编译入口的函数指针类型（原始字节 C ABI）。
 #[allow(improper_ctypes_definitions)]
 #[cfg(feature = "plugins")]
-type PluginCompile =
-    unsafe extern "C" fn(&forge_codegen::ir::Function) -> Result<CompiledFunction, IrError>;
+type PluginCompile = unsafe extern "C" fn(&forge_codegen::ir::Function, *mut u8, usize) -> isize;
 
 /// 宿主侧 `ErasedTargetMachine` 适配器：把插件导出的函数包成 Registry 后端。
 #[cfg(feature = "plugins")]
@@ -51,9 +50,24 @@ impl ErasedTargetMachine for PluginBackend {
     }
 
     fn compile(&self, func: &forge_codegen::ir::Function) -> Result<CompiledFunction, IrError> {
-        // SAFETY：函数指针来自已加载并保持存活的插件库；ABI 由
-        // `export_isa_plugin!` 固定（同一 rustc/forge 构建）。
-        unsafe { (self.compile)(func) }
+        // 宿主分配缓冲区，插件只拷机器码——避免 Vec/String 跨 dylib 由错误
+        // 分配器释放。1 MiB 对单函数足够；不足时返回 -2。
+        let mut buf = vec![0u8; 1 << 20];
+        let n = unsafe { (self.compile)(func, buf.as_mut_ptr(), buf.len()) };
+        if n < 0 {
+            return Err(IrError::Unsupported(format!(
+                "[cap:PLUGIN_COMPILE] 插件 `{}` 编译失败（code {n}）",
+                self.name
+            )));
+        }
+        buf.truncate(n as usize);
+        Ok(CompiledFunction {
+            code_size: n as usize,
+            code: buf,
+            relocations: Vec::new(),
+            line_entries: Vec::new(),
+            cfi: None,
+        })
     }
 }
 
@@ -138,7 +152,7 @@ impl PluginLoader {
 
         // v2：宿主侧注册适配器 + 目标前缀；不调用插件内部的 Registry（那个
         // static 在 dylib 自己那份 runtime 里，宿主看不见）。
-        if let Ok(compile) = unsafe { lib.get::<PluginCompile>(b"__forge_isa_compile") } {
+        if let Ok(compile) = unsafe { lib.get::<PluginCompile>(b"__forge_isa_compile_raw") } {
             let name_fn =
                 unsafe { lib.get::<unsafe extern "C" fn() -> *const c_char>(b"__forge_isa_name") }
                     .map_err(|e| {
@@ -175,6 +189,42 @@ impl PluginLoader {
             }));
             let refs: Vec<&str> = targets.iter().map(String::as_str).collect();
             target_registry::register(&name, &refs);
+
+            // 先在插件自己的 registry 里注册 ABI 数据（编译入口在 dylib 内执行，
+            // 看不到宿主 static）；再在宿主注册一份，供宿主侧 plan/诊断使用。
+            if let Ok(init) = unsafe { lib.get::<unsafe extern "C" fn()>(b"__forge_isa_init_abi") }
+            {
+                unsafe { init() };
+            }
+            for (sym, what, register) in [
+                (
+                    b"__forge_isa_abi_rules".as_slice(),
+                    "ABI rules",
+                    forge_codegen::pipeline::conv_registry::register_rules_toml
+                        as fn(&str) -> Result<(), String>,
+                ),
+                (
+                    b"__forge_isa_abi_binding".as_slice(),
+                    "ABI binding",
+                    forge_codegen::pipeline::conv_registry::register_binding_toml
+                        as fn(&str) -> Result<(), String>,
+                ),
+            ] {
+                let Ok(f) = (unsafe { lib.get::<unsafe extern "C" fn() -> *const c_char>(sym) })
+                else {
+                    continue;
+                };
+                let raw = unsafe { f() };
+                if raw.is_null() {
+                    continue;
+                }
+                let text = unsafe { CStr::from_ptr(raw) }.to_string_lossy();
+                if text.trim().is_empty() {
+                    continue;
+                }
+                register(&text)
+                    .map_err(|e| format!("plugin '{}' {what} 注册失败：{e}", path.display()))?;
+            }
             log::info!("Loaded ISA plugin v2: {} ({name})", path.display());
             self.libraries.push(lib);
             return Ok(());

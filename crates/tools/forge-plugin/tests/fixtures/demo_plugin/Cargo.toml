@@ -1,0 +1,19 @@
+﻿[package]
+name = "forge-plugin-fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+crate-type = ["dylib"]
+
+[dependencies]
+forge-codegen = { path = "../../../../../backend/forge-codegen" }
+forge-dsl = { path = "../../../../../frontend/forge-dsl" }
+forge-isa-runtime = { path = "../../../../../foundation/forge-isa-runtime" }
+smallvec = "1.16.0"
+
+[build-dependencies]
+forge-isa-dsl = { path = "../../../../../frontend/forge-isa-dsl" }

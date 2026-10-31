@@ -695,6 +695,7 @@ name = "forge-plugin"
 version = "0.1.0"
 dependencies = [
  "forge-codegen",
+ "forge-isa-runtime",
  "libloading",
  "log",
 ]

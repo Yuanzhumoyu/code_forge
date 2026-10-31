@@ -1,0 +1,265 @@
+#:schema ../../../isa-dsl.schema.json
+# ============================================================
+# demo — 类型约束自动分发演示 ISA（定宽 32 位）
+# ============================================================
+#
+# 本文件证明 DSL 的核心新能力：**同一助记符的不同寄存器宽度版本由后端按
+# 操作数实际类型自动分发到不同编码**，用户无需手写 `mov16`/`mov32`/
+# `mov64` 等拆分名（[[operand_slots]] 多类型 + 类型签名特异性排序）。
+#
+# 演示要点：
+# - 三个宽度视图组 gpr16(16 位 W0-W7)/gpr32(32 位 R0-R7)/gpr64(64 位 X0-X7)
+#   共用物理编号 0-7（base_index=0）。
+# - `add`：三个 form（opcode 0x10/0x11/0x12），asm 助记符均为 "add"——
+#   `add w1, w2, w3` → ADD16、`add r1, r2, r3` → ADD32、`add x1, x2, x3` → ADD64。
+# - `mov`：同上（opcode 0x20/0x21/0x22）。
+# - `brz`：标签槽（label），支持数字偏移与符号引用（两遍布局）。
+# - NOP 用全字位域（word）避免与 ADD16 的 0x10 撞车。
+#
+# 验证：crates/backend/forge-codegen/tests/demo_tests.rs
+
+[meta]
+name = "demo"
+version = "13.0"
+endian = "little"
+mode = 64
+case_insensitive_regs = true
+comment_char = "#"
+label_suffix = ":"
+mnemonic_case = "insensitive"
+
+# ─────────────────────────── 寄存器组 ───────────────────────────
+[encoding]
+kind = "fixed"
+bits = 32
+
+[reg.gpr16]
+base_index = 0
+names = ["W0", "W1", "W2", "W3", "W4", "W5", "W6", "W7"]
+
+[reg.gpr32]
+base_index = 0
+names = ["R0", "R1", "R2", "R3", "R4", "R5", "R6", "R7"]
+
+[reg.gpr64]
+base_index = 0
+names = ["X0", "X1", "X2", "X3", "X4", "X5", "X6", "X7"]
+
+# ─────────────────── 类型 → 类（ISA 数据，可选）───────────────────
+# 软浮点演示：本 ISA 没有 FPR 组，但显式声明 f32/f64 走 64 位 GPR
+#（值池里就是 8 字节寄存器）——"非常规映射"是 ISA 数据，不是宿主代码。
+[machine.classes]
+f32 = "gpr64"
+f64 = "gpr64"
+
+# ─────────────────────── 命名位域 ───────────────────────
+[operand.r16]
+kind = "reg"
+class = "gpr16"
+roles = "inout"
+
+[operand.r32]
+kind = "reg"
+class = "gpr32"
+roles = "inout"
+
+[operand.r64]
+kind = "reg"
+class = "gpr64"
+roles = "inout"
+
+[operand.lab]
+kind = "label"
+signed = true
+bits = 16
+
+[operand.imm16]
+kind = "imm"
+signed = true
+bits = 16
+
+# ─────────────────────────── 编码形式 ───────────────────────────
+
+[form.R]
+doc = "R 型：三寄存器形态，操作数 {ops}（宽度由槽决定：{dst.slot}）"
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+  "u3[16:14]:rs2",
+]
+
+[form.RR]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+]
+
+[form.RI]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+  "u16[31:16]:imm16",
+]
+
+[form.B]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[13:11]:rs1",
+  "u16[31:16]:imm16",
+]
+
+[form.W]
+fields = [
+  "u32[31:0]:opcode",
+]
+
+# ─────────────────────────── 指令 ───────────────────────────
+
+# add：同一助记符，三宽度版本 → 按操作数实际类自动分发
+[inst.ADD16]
+group = "add"
+form = "R"
+opcode = 0x10
+asm = "add {dst:r16:out}, {src:r16}, {src2:r16}"
+
+[inst.ADD32]
+group = "add"
+form = "R"
+opcode = 0x11
+asm = "add {dst:r32:out}, {src:r32}, {src2:r32}"
+
+[inst.ADD64]
+group = "add"
+form = "R"
+opcode = 0x12
+asm = "add {dst:r64:out}, {src:r64}, {src2:r64}"
+
+# mov：同上，二操作数
+[inst.MOV16]
+group = "mov"
+form = "RR"
+opcode = 0x20
+asm = "mov {dst:r16:out}, {src:r16}"
+
+[inst.MOV32]
+group = "mov"
+form = "RR"
+opcode = 0x21
+asm = "mov {dst:r32:out}, {src:r32}"
+
+[inst.MOV64]
+group = "mov"
+data_width = 64
+form = "RR"
+opcode = 0x22
+asm = "mov {dst:r64:out}, {src:r64}"
+
+# mov 立即数（16 位常量；RI form rd = imm）
+[inst.MOV16_R_IMM16]
+group = "mov"
+form = "RI"
+opcode = 0x23
+asm = "mov {dst:r16:out}, {imm:imm16}"
+
+# 帧分配/释放（rd = rs1 ± imm8；B3 接入 TargetMachine 用）
+[inst.SUBI16]
+roles = ["frame_alloc"]
+form = "RI"
+opcode = 0x40
+asm = "subi {dst:r16:out}, {src:r16}, {imm:imm16}"
+
+[inst.ADDI16]
+roles = ["frame_free"]
+form = "RI"
+opcode = 0x41
+asm = "addi {dst:r16:out}, {src:r16}, {imm:imm16}"
+
+# 返回（全字位域；word = 0x01，与 NOP 的 0 区分）
+[inst.RET]
+roles = ["ret"]
+form = "W"
+opcode = 1
+effect = ["Ret"]
+asm = "ret"
+
+# 分支（标签槽）
+[inst.BRZ]
+form = "B"
+opcode = 0x30
+effect = ["Branch"]
+asm = "brz {src:r32}, {target:lab}"
+
+# 无操作数（全字位域，避免与 opcode 0x10 撞车）
+[inst.NOP]
+form = "W"
+opcode = 0
+asm = "nop"
+
+# ════════════════════════════════════════════════════════════
+# B3：接入 TargetMachine（调用约定 + 帧 + 序言/尾声 + lowering）
+# ════════════════════════════════════════════════════════════
+
+[machine.stack]
+slot = 64       # 位（= 8 字节）
+align = 64      # 位
+fp_save = 64    # 位
+
+# 收参/返回 mov 指令（demo 的 mov 是 dest=op0、src=op1 序；
+# 生成器按角色解析 src/dest，不依赖操作数序）
+
+# 参数寄存器：X0-X3（64 位视图，物理 0-3）
+
+[machine]
+# callee-saved 不再由谱面声明（v21 W9）：唯一来源 = 约定数据（本夹具的约定里也是空的）。
+
+[machine.frame]
+sp = "X7"          # demo 无专用 SP；X7 作栈指针（frame_size=0 时不发射）
+fp = "X6"          # 帧指针占位（B3 最小集不 push）
+fp_push_bytes = 0
+
+[machine.text]
+align_pad = 0
+# 独立尾声标签关闭：demo 无 JMP 指令，return block 直接 fall-through
+# 到函数末尾的尾声（RET）——仅单 return block 函数安全（B3 测试满足）。
+epilogue_label = false
+
+
+# Iadd：同一条模板字符串 "add {out}, {0}, {1}"，宽度由 when 谓词分发——
+# i16 → ADD16、i32 → ADD32、i64 → ADD64（后端按操作数实际宽度选变体，
+# 无需手写 add16/add32/add64 三条 lowering）。
+
+# ── 显式别名（S10e）：多态引用名 → 指令名列表 ──
+[[lower.Iadd]]
+vary = { rs1_width = [16, 32, 64] }
+insts = ["add {out}, {0}, {1}"]
+
+[[lower.Iconst]]
+insts = ["mov {out}, {iconst}"]
+
+[[lower.Copy]]
+insts = ["mov {out}, {0}"]
+
+# ── 伪指令（v21 W7：`[asm.pseudo.<名>]`，**表头即名字**）：名字与写法刻意不同，
+#    钉住"名字不参与匹配"；`emit` 行可以是**另一条伪指令**（展开时递归）。──
+
+[asm.pseudo.mv_alias]
+asm = "mv {dst}, {src}"
+emit = ["mov {dst}, {src}"]
+
+[asm.pseudo.mv_twice]
+asm = "mv2 {a}, {b}"
+emit = ["mv {a}, {b}", "mv {b}, {a}"]
+
+# ── 立即数修饰（谱声明的数据；夹具这里刻意演**非 RISC-V** 的拼写与语义）──
+# ARM 风格：前缀、**不带括号**，值语义是掩码/右移（不是 riscv 的进位补偿）。
+# 同一套机制、零代码改动——DSL 不认识任何修饰名。
+[asm.immfn.upper16]
+texts = [":upper16:{0}"]
+expr = "({0} >> 16) & 0xffff"
+
+[asm.immfn.lower16]
+texts = [":lower16:{0}"]
+expr = "{0} & 0xffff"

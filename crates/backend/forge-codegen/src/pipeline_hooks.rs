@@ -91,6 +91,9 @@ where
 #[macro_export]
 macro_rules! export_isa_plugin {
     ($module:ident, targets = [$($t:expr),* $(,)?]) => {
+        $crate::export_isa_plugin!($module, targets = [$($t),*], rules = "", binding = "");
+    };
+    ($module:ident, targets = [$($t:expr),* $(,)?], rules = $rules:literal, binding = $binding:literal) => {
         /// ISA 名（NUL 结尾）。
         #[unsafe(no_mangle)]
         pub extern "C" fn __forge_isa_name() -> *const core::ffi::c_char {
@@ -103,14 +106,60 @@ macro_rules! export_isa_plugin {
             concat!($($t, ";"),*, "\0").as_ptr() as *const core::ffi::c_char
         }
 
-        /// 插件侧编译入口；宿主只持有函数指针，不依赖插件内部类型。
-        #[allow(improper_ctypes_definitions)]
+        /// 可选的 ABI 规则 TOML（空串 = 不注册）；宿主加载时注册到自己的
+        /// `conv_registry`——插件内部的注册表宿主看不见（dylib 有独立 static）。
         #[unsafe(no_mangle)]
-        pub extern "C" fn __forge_isa_compile(
+        pub extern "C" fn __forge_isa_abi_rules() -> *const core::ffi::c_char {
+            concat!($rules, "\0").as_ptr() as *const core::ffi::c_char
+        }
+
+        /// 可选的 ABI 绑定 TOML（空串 = 不注册）。
+        #[unsafe(no_mangle)]
+        pub extern "C" fn __forge_isa_abi_binding() -> *const core::ffi::c_char {
+            concat!($binding, "\0").as_ptr() as *const core::ffi::c_char
+        }
+
+        /// 在**插件自己的** conv_registry 里注册 ABI 数据（宿主加载时调用）。
+        /// dylib 有独立的 static，宿主注册不会影响插件内的编译入口。
+        #[unsafe(no_mangle)]
+        pub extern "C" fn __forge_isa_init_abi() {
+            let rules = $rules;
+            if !rules.is_empty() {
+                $crate::pipeline::conv_registry::register_rules_toml(rules)
+                    .expect("插件 ABI rules 无效");
+            }
+            let binding = $binding;
+            if !binding.is_empty() {
+                $crate::pipeline::conv_registry::register_binding_toml(binding)
+                    .expect("插件 ABI binding 无效");
+            }
+        }
+
+        /// 插件侧编译入口（**原始字节 C ABI**）：宿主传缓冲区，插件只拷机器码。
+        /// 不返回 `CompiledFunction`/`Result`——Rust 容器跨 dylib 会带着插件的
+        /// 分配器一起过界，宿主 drop 时可能 AV。
+        ///
+        /// 返回码：`>=0` = 字节数；`-1` = 编译失败；`-2` = 缓冲区不足。
+        #[unsafe(no_mangle)]
+        pub extern "C" fn __forge_isa_compile_raw(
             func: &$crate::ir::Function,
-        ) -> Result<$crate::CompiledFunction, $crate::IrError> {
-            $crate::pipeline::compiler::CompileSession::new($module::TargetMachine::new())
-                .compile(func)
+            out: *mut u8,
+            cap: usize,
+        ) -> isize {
+            let compiled =
+                match $crate::pipeline::compiler::CompileSession::new($module::TargetMachine::new())
+                    .compile(func)
+                {
+                    Ok(c) => c,
+                    Err(_) => return -1,
+                };
+            if compiled.code.len() > cap || out.is_null() {
+                return -2;
+            }
+            unsafe {
+                core::ptr::copy_nonoverlapping(compiled.code.as_ptr(), out, compiled.code.len());
+            }
+            compiled.code.len() as isize
         }
     };
 }

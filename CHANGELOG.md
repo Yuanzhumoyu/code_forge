@@ -14,10 +14,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed (2026-10-31) — 插件 ABI v2 / rustc 宽度 / 动态产物 fail-closed（M3–M5 核心）
 
 + **插件 ABI v2**：`forge_codegen::export_isa_plugin!` 导出
-  `__forge_isa_name`/`__forge_isa_targets`/`__forge_isa_compile`；`PluginLoader` 读取后把
+  `__forge_isa_name`/`__forge_isa_targets`/`__forge_isa_init_abi`/
+  `__forge_isa_abi_rules|binding`/`__forge_isa_compile_raw`；`PluginLoader` 读取后把
   插件编译入口包成宿主侧 `ErasedTargetMachine` 注册进 Registry，并把目标前缀写入 runtime
   `target_registry`；`isa_name_for_target` 回落查询插件表。loader 用 `Box::leak` 保持
-  Library 存活（函数指针不能悬空）。
+  Library 存活（函数指针不能悬空）。编译走原始字节 C ABI（宿主分配缓冲区），避免
+  `CompiledFunction`/`Result` 跨 dylib 由错误分配器释放。真 dylib 夹具
+  `tests/fixtures/demo_plugin` + `tests/plugin_v2.rs` 已验证加载 → 编译 → 本机执行。
 + **rustc 宽度**：`FunctionBuilder::set_data_layout`；`forge-rustc` 每个函数按 rustc target
   注入 IR `DataLayout`（指针宽度/端序/mangling），`map_type` 的 `usize/isize` 支持
   8/16/32/64（不再 16 位回落 I64）；新增 `data_layout_for`/`int_ty_for_width` 与 16/32/64
