@@ -1,4 +1,4 @@
-//! `wide_split` 的语义测试（JIT 真执行，走完整管线）。
+﻿//! `wide_split` 的语义测试（JIT 真执行，走完整管线）。
 //!
 //! 每条测试都用 `JitLoader::compile_module`（会跑 `LegalizeDriver::scalar()`），因此同时验证
 //! "pass 真的被调用"——本会话最大的坑正是普通函数一度从不跑 legalize。
@@ -26,7 +26,7 @@ mod jit {
     fn compile_run(m: &Module, name: &str) -> i64 {
         let mut jit = crate::jit::JitLoader::new(TargetMachine::new());
         jit.compile_module(m).expect("module compile");
-        let f: extern "C" fn() -> i64 = jit.get_fn(name).expect("fn 存在");
+        let f: extern "C" fn() -> i64 = jit.get(name).expect("fn 存在");
         f()
     }
 
@@ -115,7 +115,7 @@ mod jit {
         .enumerate()
         {
             let name = format!("cmp{idx}");
-            let f: extern "C" fn() -> i64 = jit.get_fn(name.as_str()).expect("fn");
+            let f: extern "C" fn() -> i64 = jit.get(name.as_str()).expect("fn");
             assert_eq!(f(), want, "第 {idx} 个宽值比较不对");
         }
     }
@@ -247,8 +247,8 @@ mod jit {
         }
         let mut jit = crate::jit::JitLoader::new(TargetMachine::new());
         jit.compile_module(&m).expect("module compile");
-        let hi: extern "C" fn() -> i64 = jit.get_fn("mul_hi").expect("mul_hi");
-        let lo: extern "C" fn() -> i64 = jit.get_fn("mul_lo").expect("mul_lo");
+        let hi: extern "C" fn() -> i64 = jit.get("mul_hi").expect("mul_hi");
+        let lo: extern "C" fn() -> i64 = jit.get("mul_lo").expect("mul_lo");
         assert_eq!((hi(), lo()), (12, 35), "(2^64+5)*(2^64+7) 的高/低肢");
     }
 
@@ -299,7 +299,7 @@ mod jit {
         m.add_function(fb.finish().expect("build"));
         let mut jit = crate::jit::JitLoader::new(TargetMachine::new());
         jit.compile_module(&m).expect("module compile");
-        let f: extern "C" fn(*const u8) -> i64 = jit.get_fn("load_wide").expect("fn");
+        let f: extern "C" fn(*const u8) -> i64 = jit.get("load_wide").expect("fn");
         // 内存里放 `0x0000_0000_0000_0009_0000_0000_0000_0003`（低 64 位 = 3，高 64 位 = 9）
         let mut buf = [0u8; 16];
         buf[0..8].copy_from_slice(&3u64.to_le_bytes());
@@ -363,7 +363,7 @@ mod jit {
         let mut jit = crate::jit::JitLoader::new(TargetMachine::new());
         jit.compile_module(&m).expect("module compile");
         for (name, x, y, is_rem) in cases {
-            let f: extern "C" fn(i64, i64, i64) -> i64 = jit.get_fn(name.as_str()).expect("fn");
+            let f: extern "C" fn(i64, i64, i64) -> i64 = jit.get(name.as_str()).expect("fn");
             let got = f(x as i64, (x >> 64) as i64, y as i64) as u64 as u128;
             let want = if is_rem { x % y } else { x / y };
             assert_eq!(
@@ -511,7 +511,7 @@ mod jit {
         jit.compile_module(&m).expect("module compile");
         for (idx, (_, _, want)) in cases.iter().enumerate() {
             let name = format!("count{idx}");
-            let f: extern "C" fn() -> i64 = jit.get_fn(name.as_str()).expect("fn");
+            let f: extern "C" fn() -> i64 = jit.get(name.as_str()).expect("fn");
             assert_eq!(f(), *want, "第 {idx} 个位计数不对");
         }
     }

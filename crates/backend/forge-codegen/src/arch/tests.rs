@@ -75,7 +75,7 @@ mod tests {
         }
         let mut jit = crate::jit::JitLoader::new(TargetMachine::new());
         jit.compile_module(&m).expect("module compile");
-        let f: extern "C" fn() -> i64 = jit.get_fn("const42").expect("const42");
+        let f: extern "C" fn() -> i64 = jit.get("const42").expect("const42");
         assert_eq!(f(), 42, "ISA-DSL JIT 执行 const42 应返回 42");
     }
 
@@ -99,7 +99,7 @@ mod tests {
         }
         let mut jit = crate::jit::JitLoader::new(TargetMachine::new());
         jit.compile_module(&m).expect("module compile");
-        let f: extern "C" fn(i64, i64) -> i64 = jit.get_fn("add").expect("add");
+        let f: extern "C" fn(i64, i64) -> i64 = jit.get("add").expect("add");
         assert_eq!(f(2, 3), 5, "ISA-DSL JIT add(2,3) 应返回 5");
         assert_eq!(f(-7, 100), 93, "ISA-DSL JIT add(-7,100) 应返回 93");
     }

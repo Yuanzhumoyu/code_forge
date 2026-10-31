@@ -21,7 +21,7 @@
 //! })?;
 //!
 //! // 获取类型安全的函数指针
-//! let add: extern "C" fn(i32, i32) -> i32 = jit.get_fn("add")?;
+//! let add: extern "C" fn(i32, i32) -> i32 = jit.get("add")?;
 //! assert_eq!(add(3, 4), 7);
 //! ```
 
@@ -31,23 +31,93 @@ use crate::machine::target::TargetMachine;
 use crate::pipeline::compiler::CompileSession;
 use crate::pipeline::error::CompileError;
 use crate::pipeline::session::CompiledModule;
+use crate::pipeline::signature::JitSignatureInfo;
 use crate::{CompiledFunction, RelocKind, Relocation};
 use forge_ir::ImmStr;
-use forge_ir::{FuncSigEntry, FunctionBuilder, FunctionSignature, IrError, Module, ModuleSigs};
+use forge_ir::{
+    FuncSigEntry, FunctionBuilder, FunctionSignature, IrError, Module, ModuleSigs, TypeId,
+};
 use forge_isa_runtime::mem::{ExecutableMemory, MemError};
 
+mod signature;
 mod symbols;
 
+pub use signature::{JitParam, JitReturn, JitSignature};
 use symbols::{STACK_PROBE_SYMBOL, platform_symbol_lookup, stack_probe_addr};
 
 fn mem_to_compile_err(e: MemError) -> IrError {
     IrError::Emit(e.0)
 }
 
+/// 类型化 `get` 的签名校验（不匹配 = 使用错误，归 `Semantic`，不进缺口台账）。
+fn check_typed_call(
+    name: &str,
+    sig: &JitSignatureInfo,
+    params: Vec<TypeId>,
+    ret: Option<TypeId>,
+) -> Result<(), IrError> {
+    if sig.variadic {
+        return Err(IrError::Semantic(format!(
+            "JIT 函数 `{name}` 是变参：类型化 `get` 不表达 `...`，请用 `get_unchecked`"
+        )));
+    }
+    if !sig.conv.is_c() {
+        return Err(IrError::Semantic(format!(
+            "JIT 函数 `{name}` 的调用约定是 {:?}，类型化 `get` 只接受平台 C 约定（c）",
+            sig.conv
+        )));
+    }
+    if sig.params.len() != params.len()
+        || !sig
+            .params
+            .iter()
+            .zip(&params)
+            .all(|(a, b)| types_compatible(*a, *b))
+    {
+        return Err(IrError::Semantic(format!(
+            "JIT 函数 `{name}` 形参不匹配：产物 {:?}，请求 {:?}",
+            sig.params, params
+        )));
+    }
+    let want_ret: Vec<TypeId> = ret.into_iter().collect();
+    let ret_ok = match (sig.returns.as_slice(), want_ret.as_slice()) {
+        ([], []) => true,
+        ([a], [b]) => types_compatible(*a, *b),
+        _ => false,
+    };
+    if !ret_ok {
+        return Err(IrError::Semantic(format!(
+            "JIT 函数 `{name}` 返回不匹配：产物 {:?}，请求 {:?}",
+            sig.returns, want_ret
+        )));
+    }
+    Ok(())
+}
+
+/// 类型化调用里的**等价类型**：`PTR` 与 `I64` 同为一个 64 位槽。
+///
+/// 为什么允许：IR 里的地址常用 `i64` 表示（GEP/legalize 的既有约定），而 Rust 侧
+/// 写 `*mut T`；两者在 64 位 ABI 上是同一个槽。非 64 位目标不会走 JIT 类型化面
+/// （发行 JIT 后端只有 x86_64；`demo8` 等夹具没有 JIT 矩阵）。
+fn types_compatible(want: TypeId, got: TypeId) -> bool {
+    want == got
+        || matches!(
+            (want, got),
+            (TypeId::PTR, TypeId::I64) | (TypeId::I64, TypeId::PTR)
+        )
+}
+
 use std::collections::HashMap;
 
 /// 符号解析器 — 将符号名映射到绝对地址。
 pub type SymbolResolver<'a> = dyn Fn(&str) -> Option<u64> + 'a;
+
+/// 装载后的一项：机器码 + 可执行内存 + 源码签名（类型化调用校验用）。
+struct CompiledEntry {
+    function: CompiledFunction,
+    mem: ExecutableMemory,
+    sig: JitSignatureInfo,
+}
 
 /// JIT 装载器 — 把编译产物装进可执行内存，并管理符号解析与执行。
 ///
@@ -58,8 +128,8 @@ pub type SymbolResolver<'a> = dyn Fn(&str) -> Option<u64> + 'a;
 pub struct JitLoader<M: TargetMachine> {
     /// 目标机器（`Arc` 持有：编译会话按函数共享同一份机器，不再要求 `M: Clone`）。
     machine: Arc<M>,
-    /// 已编译函数的可执行内存（按名称索引）。
-    compiled: HashMap<ImmStr, (CompiledFunction, ExecutableMemory)>,
+    /// 已编译函数（可执行内存 + 机器码 + 源码签名，按名称索引）。
+    compiled: HashMap<ImmStr, CompiledEntry>,
     /// 符号表：函数名 → 入口地址（用于跨函数调用解析）。
     symbols: HashMap<ImmStr, u64>,
     /// 待应用的跨函数重定位。
@@ -122,6 +192,7 @@ impl<M: TargetMachine> JitLoader<M> {
         let compiled = session
             .add_function(name, signature, build_fn)
             .map_err(CompileError::into_ir)?;
+        let sig = JitSignatureInfo::from_signature(signature);
         // 记进累积表：本函数的 `FuncRef` 序即"第几个被 add_function 的函数"。
         self.sigs.push(FuncSigEntry {
             variadic: signature.variadic,
@@ -134,7 +205,7 @@ impl<M: TargetMachine> JitLoader<M> {
         // ⇒ 进程 AV（实测：JIT 里"先 add 被调方、再 add 调用方"必崩；
         // 单函数编译/直接调被调方都正常）。
         let func_ref = self.sigs.len() - 1;
-        self.load_function(ImmStr::from(name), compiled, Some(func_ref))?;
+        self.load_function(ImmStr::from(name), compiled, sig, Some(func_ref))?;
         // 重新解析之前未能解析的重定位
         self.resolve_pending()
     }
@@ -165,15 +236,15 @@ impl<M: TargetMachine> JitLoader<M> {
                 compiled.isa()
             )));
         }
-        let (functions, globals, data_segments) = compiled.into_parts();
+        let (units, globals, data_segments) = compiled.into_parts();
         // 全局先登记（`GlobalAddr` 的绝对重定位在逐函数应用时就要能解析）。
         for (name, ref_name, addr) in globals {
             self.symbols.insert(name, addr);
             self.symbols.insert(ref_name, addr);
         }
         self.data_segments.extend(data_segments);
-        for (i, (name, cf)) in functions.into_iter().enumerate() {
-            self.load_function(name, cf, Some(i))?;
+        for (i, unit) in units.into_iter().enumerate() {
+            self.load_function(unit.name, unit.function, unit.sig, Some(i))?;
         }
         Ok(())
     }
@@ -186,6 +257,7 @@ impl<M: TargetMachine> JitLoader<M> {
         &mut self,
         name: ImmStr,
         mut compiled: CompiledFunction,
+        sig: JitSignatureInfo,
         func_ref: Option<usize>,
     ) -> Result<(), IrError> {
         // 尝试解析已记录的跨函数重定位
@@ -197,7 +269,14 @@ impl<M: TargetMachine> JitLoader<M> {
             self.symbols
                 .insert(ImmStr::from(format!("@{i}")), entry_addr);
         }
-        self.compiled.insert(name, (compiled, mem));
+        self.compiled.insert(
+            name,
+            CompiledEntry {
+                function: compiled,
+                mem,
+                sig,
+            },
+        );
         Ok(())
     }
 
@@ -211,21 +290,44 @@ impl<M: TargetMachine> JitLoader<M> {
         self.resolve_pending()
     }
 
-    /// 获取已编译函数的类型安全函数指针。
+    /// 获取**类型化**函数指针（v30 M4）。
     ///
-    /// `F` 必须是匹配函数签名的 `extern "C" fn(...) -> ...` 类型。
+    /// `F` 必须是 `extern "C" fn(..) -> ..`（0–6 个标量/瘦指针参数）。装载期用
+    /// 产物携带的源码签名逐项校验：参数个数与类型、返回类型、非变参、平台 C 约定。
+    /// 不匹配 ⇒ `IrError::Semantic`（**不是**缺口，不进台账）。
     ///
-    /// # Panics
-    /// 如果找不到 `name` 对应的函数。
-    pub fn get_fn<F>(&self, name: &str) -> Result<F, IrError> {
-        let (_, mem) = self.compiled.get(name).ok_or_else(|| {
-            IrError::Internal(format!("function '{}' not found in JIT cache", name))
-        })?;
-        // SAFETY: `mem` is a valid `ExecutableMemory` allocation. The symbol lookup
-        // above guarantees the requested function exists at offset 0. The returned
-        // function pointer type `F` must match the compiled function's ABI — this is
-        // enforced by the `add_function` API which ties the signature to the name.
-        unsafe { mem.get_fn::<F>(0).map_err(mem_to_compile_err) }
+    /// 变参 / 向量 / 聚合 / `i128` 用 [`Self::get_unchecked`]（显式 unsafe）。
+    pub fn get<F: JitSignature>(&self, name: &str) -> Result<F, IrError> {
+        let entry = self.entry(name)?;
+        check_typed_call(name, &entry.sig, F::params(), F::ret())?;
+        // SAFETY: `entry.mem` 是有效可执行内存；签名已按产物事实逐项校验，且
+        // `JitSignature` 只由 `extern "C" fn` 实现（平台 C ABI 与产物一致）。
+        unsafe { entry.mem.get_fn::<F>(0).map_err(mem_to_compile_err) }
+    }
+
+    /// **逃生口**：不做签名校验，直接按 `F` 取指针。
+    ///
+    /// # Safety
+    /// 调用者必须保证 `F` 与产物 ABI 完全一致（变参/向量/聚合/`i128` 等）。
+    pub unsafe fn get_unchecked<F>(&self, name: &str) -> Result<F, IrError> {
+        let entry = self.entry(name)?;
+        unsafe { entry.mem.get_fn::<F>(0).map_err(mem_to_compile_err) }
+    }
+
+    /// 已编译函数的入口地址（不涉及类型；给需要裸地址的宿主）。
+    pub fn get_ptr(&self, name: &str) -> Option<*const u8> {
+        self.compiled.get(name).map(|e| e.mem.as_ptr())
+    }
+
+    /// 已编译函数的机器码/重定位（introspection 用；执行内存仍由本 loader 持有）。
+    pub fn function(&self, name: &str) -> Option<&CompiledFunction> {
+        self.compiled.get(name).map(|e| &e.function)
+    }
+
+    fn entry(&self, name: &str) -> Result<&CompiledEntry, IrError> {
+        self.compiled
+            .get(name)
+            .ok_or_else(|| IrError::Internal(format!("function '{name}' not found in JIT cache")))
     }
 
     /// 查找给定名称符号的地址（解析链）：
@@ -298,9 +400,10 @@ impl<M: TargetMachine> JitLoader<M> {
         let mut still_pending = Vec::new();
         for (func_name, reloc) in &self.pending_relocs {
             if let Some(&target_addr) = self.symbols.get(&reloc.symbol) {
-                if let Some((_, mem)) = self.compiled.get_mut(func_name.as_str())
+                if let Some(entry) = self.compiled.get_mut(func_name.as_str())
                     && !func_name.is_empty()
                 {
+                    let mem = &mut entry.mem;
                     let reloc_offset = reloc.offset;
                     let kind = reloc.kind;
                     let site_addr = mem.as_ptr() as u64 + reloc.offset as u64;
@@ -381,5 +484,7 @@ impl<M: TargetMachine + Clone + Default> Default for JitLoader<M> {
 // 测试
 // ============================================================
 
+#[cfg(test)]
+mod signature_tests;
 #[cfg(test)]
 mod tests;

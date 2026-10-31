@@ -7,6 +7,8 @@
 //!
 //! v30 M1：产物/入口改带 [`CompileError`]（阶段 + 函数）；并行策略由
 //! [`CompileSession::options`] 决定（`Parallelism::{Auto, Serial, Threads}`）。
+//! v30 M4：每个产物单元携带 [`JitSignatureInfo`]（JIT 类型化调用校验用），
+//! 变参事实来自模块自己的 [`ModuleSigs`]。
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -15,11 +17,22 @@ use crate::machine::target::TargetMachine;
 use crate::pipeline::compiler::CompileSession;
 use crate::pipeline::error::CompileError;
 use crate::pipeline::options::Parallelism;
+use crate::pipeline::signature::JitSignatureInfo;
 use crate::pipeline::stage::Stage;
 use crate::{CompiledFunction, IrError};
 use forge_ir::ir::function::Function;
 use forge_ir::ir::types::FunctionSignature;
 use forge_ir::{FuncRef, ImmStr, Module, ModuleSigs};
+
+/// 一个产物函数：机器码 + 源码签名（JIT 装载器按 `FuncRef` 序安装）。
+pub struct CompiledUnit {
+    /// 函数名（与 IR 一致）。
+    pub name: ImmStr,
+    /// 机器码与重定位。
+    pub function: CompiledFunction,
+    /// 源码签名（形参/返回/约定/变参）。
+    pub sig: JitSignatureInfo,
+}
 
 /// 一次整模块编译的产物（**纯数据**：机器码 + 符号 + 数据段，不含可执行内存）。
 ///
@@ -31,7 +44,7 @@ use forge_ir::{FuncRef, ImmStr, Module, ModuleSigs};
 /// 不该被 riscv 的装载器装进可执行内存）。
 pub struct CompiledModule {
     isa: ImmStr,
-    functions: Vec<(ImmStr, CompiledFunction)>,
+    functions: Vec<CompiledUnit>,
     /// `(源码名, `@N` 引用键, 数据段地址)`——每个全局两条符号名指向同一段。
     globals: Vec<(ImmStr, ImmStr, u64)>,
     /// 每全局一段堆分配（地址稳定；随本结构存活）。
@@ -49,17 +62,29 @@ impl CompiledModule {
         self.functions.len()
     }
 
-    /// 按名字取编译产物。
+    /// 按名字取产物单元（机器码 + 签名）。
+    pub fn unit(&self, name: &str) -> Option<&CompiledUnit> {
+        self.functions.iter().find(|u| u.name.as_str() == name)
+    }
+
+    /// 按名字取机器码。
     pub fn function(&self, name: &str) -> Option<&CompiledFunction> {
-        self.functions
-            .iter()
-            .find(|(n, _)| n.as_str() == name)
-            .map(|(_, cf)| cf)
+        self.unit(name).map(|u| &u.function)
+    }
+
+    /// 按名字取源码签名。
+    pub fn signature(&self, name: &str) -> Option<&JitSignatureInfo> {
+        self.unit(name).map(|u| &u.sig)
+    }
+
+    /// 逐单元遍历（`FuncRef` 序）。
+    pub fn iter_units(&self) -> impl Iterator<Item = &CompiledUnit> {
+        self.functions.iter()
     }
 
     /// 逐函数遍历（`FuncRef` 序）。
     pub fn iter_functions(&self) -> impl Iterator<Item = (&ImmStr, &CompiledFunction)> {
-        self.functions.iter().map(|(n, cf)| (n, cf))
+        self.functions.iter().map(|u| (&u.name, &u.function))
     }
 
     /// 全局变量的符号三元组。
@@ -76,7 +101,7 @@ impl CompiledModule {
     pub fn into_parts(
         self,
     ) -> (
-        Vec<(ImmStr, CompiledFunction)>,
+        Vec<CompiledUnit>,
         Vec<(ImmStr, ImmStr, u64)>,
         Vec<Box<[u8]>>,
     ) {
@@ -89,11 +114,16 @@ fn compile_one<M: TargetMachine>(
     machine: &Arc<M>,
     sigs: &Arc<ModuleSigs>,
     func: &Function,
-) -> Result<(ImmStr, CompiledFunction), CompileError> {
-    CompileSession::from_arc(Arc::clone(machine))
+    variadic: bool,
+) -> Result<CompiledUnit, CompileError> {
+    let function = CompileSession::from_arc(Arc::clone(machine))
         .with_module_sigs((**sigs).clone())
-        .compile(func)
-        .map(|cf| (func.name.clone(), cf))
+        .compile(func)?;
+    Ok(CompiledUnit {
+        name: func.name.clone(),
+        function,
+        sig: JitSignatureInfo::from_function(func, variadic),
+    })
 }
 
 /// 逐函数编译（串行或固定大小的 worker 池；结果按 `FuncRef` 序回收）。
@@ -105,17 +135,25 @@ fn compile_functions<M: TargetMachine>(
     sigs: &Arc<ModuleSigs>,
     module: &Module,
     parallel: Parallelism,
-) -> Result<Vec<(ImmStr, CompiledFunction)>, CompileError> {
+) -> Result<Vec<CompiledUnit>, CompileError> {
     let count = module.function_count();
+    let variadic_at = |i: usize| sigs.get(i).is_some_and(|e| e.variadic);
     let workers = parallel.worker_count(count);
     if workers <= 1 {
         return (0..count)
-            .map(|i| compile_one(machine, sigs, module.get_function(FuncRef::new(i as u32))))
+            .map(|i| {
+                compile_one(
+                    machine,
+                    sigs,
+                    module.get_function(FuncRef::new(i as u32)),
+                    variadic_at(i),
+                )
+            })
             .collect();
     }
 
     let next = AtomicUsize::new(0);
-    let slots: Mutex<Vec<Option<Result<(ImmStr, CompiledFunction), CompileError>>>> =
+    let slots: Mutex<Vec<Option<Result<CompiledUnit, CompileError>>>> =
         Mutex::new((0..count).map(|_| None).collect());
 
     std::thread::scope(|s| -> Result<(), CompileError> {
@@ -129,7 +167,12 @@ fn compile_functions<M: TargetMachine>(
                     if i >= count {
                         break;
                     }
-                    let r = compile_one(machine, sigs, module.get_function(FuncRef::new(i as u32)));
+                    let r = compile_one(
+                        machine,
+                        sigs,
+                        module.get_function(FuncRef::new(i as u32)),
+                        variadic_at(i),
+                    );
                     slots.lock().expect("compile slots poisoned")[i] = Some(r);
                 }
             }));
@@ -164,7 +207,7 @@ impl<M: TargetMachine> CompileSession<M> {
     /// → 按 `FuncRef` 序返回。
     ///
     /// 签名表由模块自己给出（[`Module::signature_table`]），**每条函数**都装同一份
-    /// （变参调用点的落点规划靠它）。
+    /// （变参调用点的落点规划靠它）；每个产物单元同时记下源码签名（JIT 校验用）。
     pub fn compile_module(&self, module: &Module) -> Result<CompiledModule, CompileError> {
         // ① 全局变量：每全局一段堆分配，登记源码名与 `@N` 两种符号名。
         //

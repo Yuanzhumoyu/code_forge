@@ -114,7 +114,8 @@ pub use pipeline::options::{
     CompileOptions, Parallelism, default_opt_level, set_default_opt_level,
 };
 pub use pipeline::regalloc_bt::BacktrackingAllocator;
-pub use pipeline::session::CompiledModule;
+pub use pipeline::session::{CompiledModule, CompiledUnit};
+pub use pipeline::signature::JitSignatureInfo;
 pub use pipeline::stage::Stage;
 
 // ============================================================

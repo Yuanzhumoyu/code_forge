@@ -43,7 +43,7 @@ fn jit_big_frame_probe_touches_stack() {
         b.ret(&[v]);
     })
     .expect("大帧 JIT 函数应能编译（绝对地址 thunk 无距离限制）");
-    let f: extern "C" fn() -> i32 = jit.get_fn("bigframe").expect("get_fn");
+    let f: extern "C" fn() -> i32 = jit.get("bigframe").expect("get_fn");
     assert_eq!(f(), 0);
 }
 
@@ -116,7 +116,7 @@ fn test_jit_compile_and_call_constant() {
     })
     .expect("compile");
 
-    let answer: extern "C" fn() -> i32 = jit.get_fn("answer").expect("get_fn");
+    let answer: extern "C" fn() -> i32 = jit.get("answer").expect("get_fn");
     assert_eq!(answer(), 42);
 }
 
@@ -142,11 +142,11 @@ fn test_jit_parallel_module_compile() {
     }
     let mut jit = JitLoader::new(x86::TargetMachine::new());
     jit.compile_module(&m).expect("parallel module compile");
-    let f0: extern "C" fn() -> i32 = jit.get_fn("f0").expect("f0");
+    let f0: extern "C" fn() -> i32 = jit.get("f0").expect("f0");
     assert_eq!(f0(), 10, "f0");
-    let f3: extern "C" fn() -> i32 = jit.get_fn("f3").expect("f3");
+    let f3: extern "C" fn() -> i32 = jit.get("f3").expect("f3");
     assert_eq!(f3(), 40, "f3");
-    let f7: extern "C" fn() -> i32 = jit.get_fn("f7").expect("f7");
+    let f7: extern "C" fn() -> i32 = jit.get("f7").expect("f7");
     assert_eq!(f7(), 80, "f7");
 }
 
@@ -166,7 +166,7 @@ fn test_jit_compile_and_call_add() {
     })
     .expect("compile");
 
-    let add: extern "C" fn(i32, i32) -> i32 = jit.get_fn("add").expect("get_fn");
+    let add: extern "C" fn(i32, i32) -> i32 = jit.get("add").expect("get_fn");
     assert_eq!(add(3, 4), 7);
     assert_eq!(add(100, 50), 150);
 }
@@ -203,10 +203,10 @@ fn test_jit_multiple_functions() {
 
     assert_eq!(jit.len(), 2);
 
-    let answer: extern "C" fn() -> i32 = jit.get_fn("answer").expect("get_fn");
+    let answer: extern "C" fn() -> i32 = jit.get("answer").expect("get_fn");
     assert_eq!(answer(), 99);
 
-    let double: extern "C" fn(i32) -> i32 = jit.get_fn("double").expect("get_fn");
+    let double: extern "C" fn(i32) -> i32 = jit.get("double").expect("get_fn");
     assert_eq!(double(21), 42);
 }
 
@@ -252,7 +252,7 @@ fn test_jit_multi_block_if_else() {
     })
     .expect("compile is_positive");
 
-    let is_positive: extern "C" fn(i32) -> i32 = jit.get_fn("is_positive").expect("get_fn");
+    let is_positive: extern "C" fn(i32) -> i32 = jit.get("is_positive").expect("get_fn");
     assert_eq!(is_positive(5), 1, "5 is positive");
     assert_eq!(is_positive(0), 0, "0 is not positive");
     assert_eq!(is_positive(-3), 0, "-3 is not positive");
@@ -305,7 +305,7 @@ fn test_jit_multi_block_cfg() {
     })
     .expect("compile choose");
 
-    let choose: extern "C" fn(i32, i32, i32) -> i32 = jit.get_fn("choose").expect("get_fn");
+    let choose: extern "C" fn(i32, i32, i32) -> i32 = jit.get("choose").expect("get_fn");
     assert_eq!(choose(1, 42, 99), 42, "flag=1 should return a=42");
     assert_eq!(choose(0, 42, 99), 99, "flag=0 should return b=99");
     assert_eq!(
@@ -352,7 +352,7 @@ fn test_jit_stack_frame_many_locals() {
     })
     .expect("compile compute");
 
-    let compute: extern "C" fn(i64, i64, i64) -> i64 = jit.get_fn("compute").expect("get_fn");
+    let compute: extern "C" fn(i64, i64, i64) -> i64 = jit.get("compute").expect("get_fn");
     // 1²+2²+3² = 1+4+9 = 14
     assert_eq!(compute(1, 2, 3), 14);
     // 3²+4²+5² = 9+16+25 = 50
@@ -382,7 +382,7 @@ fn test_jit_boundary_constants() {
     })
     .expect("compile max_i32");
 
-    let max_i32: extern "C" fn() -> i32 = jit.get_fn("max_i32").expect("get_fn");
+    let max_i32: extern "C" fn() -> i32 = jit.get("max_i32").expect("get_fn");
     assert_eq!(max_i32(), i32::MAX);
 
     // fn min_i32() -> i32 { i32::MIN }
@@ -394,7 +394,7 @@ fn test_jit_boundary_constants() {
     })
     .expect("compile min_i32");
 
-    let min_i32: extern "C" fn() -> i32 = jit.get_fn("min_i32").expect("get_fn");
+    let min_i32: extern "C" fn() -> i32 = jit.get("min_i32").expect("get_fn");
     assert_eq!(min_i32(), i32::MIN);
 
     // fn max_i64() -> i64 { i64::MAX }
@@ -407,7 +407,7 @@ fn test_jit_boundary_constants() {
     })
     .expect("compile max_i64");
 
-    let max_i64: extern "C" fn() -> i64 = jit.get_fn("max_i64").expect("get_fn");
+    let max_i64: extern "C" fn() -> i64 = jit.get("max_i64").expect("get_fn");
     assert_eq!(max_i64(), i64::MAX);
 }
 
@@ -464,7 +464,7 @@ fn test_jit_loop_countdown() {
     })
     .expect("compile countdown");
 
-    let countdown: extern "C" fn(i32) -> i32 = jit.get_fn("countdown").expect("get_fn");
+    let countdown: extern "C" fn(i32) -> i32 = jit.get("countdown").expect("get_fn");
     // For n=0: loop→done immediately → return 0
     assert_eq!(countdown(0), 0, "countdown(0) = 0");
     // For n=5: loop→body once → return 5-1 = 4
@@ -509,7 +509,8 @@ fn test_jit_v256_byref_param() {
         .expect("compile v256_first");
     // extern "C" fn(*const f32) -> i32：指针在 RCX（首个 GPR 参数槽），
     // 被调方 move_args 从 [RCX] load 32 字节到 YMM（vmovups 非对齐 load）。
-    let f: extern "C" fn(*const f32) -> i32 = jit.get_fn("v256_first").expect("get_fn");
+    let f: extern "C" fn(*const f32) -> i32 =
+        unsafe { jit.get_unchecked("v256_first") }.expect("get_fn");
     let data = [1.5f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
     let got = f(data.as_ptr());
     assert_eq!(got, 1, "lane0 f32 1.5 → fptosi → 1");
@@ -537,7 +538,8 @@ define i64 @agg_mid({i64, i64, i64} %s) {
 "#;
     let module = forge_ir::text::parse_module(src).expect("parse");
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn(*const u64) -> i64 = jit.get_fn("agg_mid").expect("get_fn");
+    let f: extern "C" fn(*const u64) -> i64 =
+        unsafe { jit.get_unchecked("agg_mid") }.expect("get_fn");
     let data = [11u64, 22, 33];
     assert_eq!(f(data.as_ptr()), 22, "按值聚合的第 1 个字段应原样返回");
 
@@ -560,7 +562,7 @@ define i64 @caller() {
     jit_caller
         .compile_module(&module_caller)
         .expect("compile module caller");
-    let g: extern "C" fn() -> i64 = jit_caller.get_fn("caller").expect("get_fn");
+    let g: extern "C" fn() -> i64 = jit_caller.get("caller").expect("get_fn");
     assert_eq!(g(), 22, "调用方按值聚合实参应原样传到被调方");
 }
 
@@ -600,7 +602,7 @@ define i64 @main() {
     let mut jit = JitLoader::new(x86::TargetMachine::new());
     jit.compile_module(&module)
         .expect("compile module (sysv64, StackByVal)");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn main");
+    let f: extern "C" fn() -> i64 = unsafe { jit.get_unchecked("main") }.expect("get_fn main");
     assert_eq!(f(), 22, "sysv64 按值聚合应整块进传出区并被被调方读到");
 }
 
@@ -641,7 +643,8 @@ define i64 @agg_second({i64, i64, i64} %s) {
     let mut jit = JitLoader::new(x86::TargetMachine::new());
     jit.compile_module(&module)
         .expect("compile module (sysv64)");
-    let f: extern "C" fn(Agg24) -> i64 = jit.get_fn("agg_second").expect("get_fn");
+    let f: extern "C" fn(Agg24) -> i64 =
+        unsafe { jit.get_unchecked("agg_second") }.expect("get_fn");
     // 平台 C ABI（sysv64）把 24 字节按值放进传出参数区 ⇒ 我们编的被调方要读到 22
     assert_eq!(
         f(Agg24 {
@@ -672,7 +675,7 @@ define {i64, i64, i64} @agg_make() {
     let mut jit = JitLoader::new(x86::TargetMachine::new());
     jit.compile_module(&module)
         .expect("compile module sret ret");
-    let f: extern "C" fn(*mut u64) = jit.get_fn("agg_make").expect("get_fn");
+    let f: extern "C" fn(*mut u64) = unsafe { jit.get_unchecked("agg_make") }.expect("get_fn");
     let mut out = [0u64; 3];
     f(out.as_mut_ptr());
     assert_eq!(out, [11, 22, 33], "sret 返回应写进调用方缓冲");
@@ -699,7 +702,7 @@ define i64 @main() {
     let m = forge_ir::text::parse_module(src_probe).expect("parse");
     let mut jit = JitLoader::new(x86::TargetMachine::new());
     jit.compile_module(&m).expect("compile probe");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn probe");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn probe");
     assert_eq!(f(), 0, "只调不取结果应先跑通");
 
     // 正例：调用后 extractvalue 取第 2 个字段
@@ -720,7 +723,7 @@ define i64 @main() {
     jit_caller
         .compile_module(&module_caller)
         .expect("compile module sret caller");
-    let g: extern "C" fn() -> i64 = jit_caller.get_fn("main").expect("get_fn main");
+    let g: extern "C" fn() -> i64 = jit_caller.get("main").expect("get_fn main");
     assert_eq!(g(), 33, "调用方应从自己的缓冲里取到第 2 个字段");
 }
 
@@ -758,7 +761,7 @@ fn test_jit_wide_vector_call_byref() {
     bm.ret(&r);
     module.add_function(bm.finish().expect("main"));
     jit.compile_module(&module).expect("编译 main+callee");
-    let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+    let f: extern "C" fn() -> i32 = jit.get("main").expect("get_fn main");
     let got = f();
     assert_eq!(got, 1, "lane0 f32 1.5 → fptosi → 1（by-ref 栈拷贝往返）");
 }
@@ -785,7 +788,7 @@ fn test_jit_v256_byref_return() {
     })
     .expect("compile v256_ret");
     // sret_ptr 在 RCX：extern "C" fn(*mut f32)，被调方 vmovups [rcx], ymm
-    let f: extern "C" fn(*mut f32) = jit.get_fn("v256_ret").expect("get_fn");
+    let f: extern "C" fn(*mut f32) = unsafe { jit.get_unchecked("v256_ret") }.expect("get_fn");
     let mut data = [0f32; 8];
     f(data.as_mut_ptr());
     assert_eq!(
@@ -829,7 +832,7 @@ fn test_jit_wide_vector_call_sret() {
     bm.ret(&[int]);
     module.add_function(bm.finish().expect("main"));
     jit.compile_module(&module).expect("编译 main+callee");
-    let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+    let f: extern "C" fn() -> i32 = jit.get("main").expect("get_fn main");
     let got = f();
     assert_eq!(got, 1, "sret 返回 lane0 f32 1.5 → fptosi → 1");
 }
@@ -864,7 +867,7 @@ fn test_jit_vec_mem_slot_roundtrip() {
         b.ret(&[int]);
     })
     .expect("compile v128_slot");
-    let f: extern "C" fn() -> i32 = jit.get_fn("v128_slot").expect("get_fn");
+    let f: extern "C" fn() -> i32 = jit.get("v128_slot").expect("get_fn");
     assert_eq!(f(), 7, "V128 store/load 栈槽全宽 lane3=7.5 → 7");
 
     // V64 槽往返（8B movsd 全宽低 64）
@@ -888,7 +891,7 @@ fn test_jit_vec_mem_slot_roundtrip() {
         b.ret(&[int]);
     })
     .expect("compile v64_slot");
-    let g: extern "C" fn() -> i32 = jit2.get_fn("v64_slot").expect("get_fn");
+    let g: extern "C" fn() -> i32 = jit2.get("v64_slot").expect("get_fn");
     assert_eq!(g(), 6, "V64 store/load 栈槽 lane1=6.5 → 6");
 }
 
@@ -928,7 +931,7 @@ fn test_jit_v256_slot_roundtrip() {
         b.ret(&[int]);
     })
     .expect("compile v256_slot");
-    let f: extern "C" fn() -> i32 = jit.get_fn("v256_slot").expect("get_fn");
+    let f: extern "C" fn() -> i32 = jit.get("v256_slot").expect("get_fn");
     assert_eq!(
         f(),
         16,
@@ -983,7 +986,7 @@ fn test_jit_v256_high_pressure_spill_evicts_live_values() {
     let mut jit = JitLoader::new(x86::TargetMachine::new());
     jit.compile_module(&module)
         .unwrap_or_else(|e| panic!("N={N} 个 32B 值应当靠驱逐活跃值编过（Belady）：{e}"));
-    let f: extern "C" fn() -> i32 = jit.get_fn("v256_spill").expect("get_fn");
+    let f: extern "C" fn() -> i32 = jit.get("v256_spill").expect("get_fn");
     assert_eq!(
         f(),
         -153,
@@ -1029,7 +1032,7 @@ fn test_jit_v128_byval_param_lane3() {
     bm.ret(&[s]);
     module.add_function(bm.finish().expect("main"));
     jit.compile_module(&module).expect("编译 main+callee");
-    let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+    let f: extern "C" fn() -> i32 = jit.get("main").expect("get_fn main");
     let got = f();
     assert_eq!(
         got, 17,
@@ -1068,7 +1071,7 @@ fn test_jit_v128_byval_return_lane3() {
     bm.ret(&[int]);
     module.add_function(bm.finish().expect("main"));
     jit.compile_module(&module).expect("编译 main+callee");
-    let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+    let f: extern "C" fn() -> i32 = jit.get("main").expect("get_fn main");
     let got = f();
     assert_eq!(got, 7, "V128 按值返回 lane3=7.5 → 7（返回 XMM0 全宽）");
 }
@@ -1105,7 +1108,7 @@ fn test_jit_v64_byval_param_lane1() {
     bm.ret(&r);
     module.add_function(bm.finish().expect("main"));
     jit.compile_module(&module).expect("编译 main+callee");
-    let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+    let f: extern "C" fn() -> i32 = jit.get("main").expect("get_fn main");
     let got = f();
     assert_eq!(got, 6, "V64 按值参数 lane1=6.5 → 6");
 }
@@ -1141,7 +1144,7 @@ fn test_jit_v64_byval_return_lane1() {
     bm.ret(&[int]);
     module.add_function(bm.finish().expect("main"));
     jit.compile_module(&module).expect("编译 main+callee");
-    let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+    let f: extern "C" fn() -> i32 = jit.get("main").expect("get_fn main");
     let got = f();
     assert_eq!(got, 8, "V64 按值返回 lane1=8.5 → 8");
 }
@@ -1183,7 +1186,7 @@ fn test_jit_v128_byval_mixed_int_pos() {
     bm.ret(&r);
     module.add_function(bm.finish().expect("main"));
     jit.compile_module(&module).expect("编译 main+callee");
-    let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+    let f: extern "C" fn() -> i32 = jit.get("main").expect("get_fn main");
     let got = f();
     assert_eq!(got, 13, "i32(位置0)+v128(位置1) lane2=3.5→3 → 13");
 }
@@ -1224,7 +1227,7 @@ fn test_jit_mixed_scalar_and_byref_args() {
     bm.ret(&r);
     module.add_function(bm.finish().expect("main"));
     jit.compile_module(&module).expect("编译 main+callee");
-    let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+    let f: extern "C" fn() -> i32 = jit.get("main").expect("get_fn main");
     let got = f();
     assert_eq!(got, 11, "标量 RCX + by-ref v256 RDX 混合槽位");
 }
@@ -1264,7 +1267,7 @@ fn test_jit_sret_with_byref_arg() {
     bm.ret(&[int]);
     module.add_function(bm.finish().expect("main"));
     jit.compile_module(&module).expect("编译 main+callee");
-    let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+    let f: extern "C" fn() -> i32 = jit.get("main").expect("get_fn main");
     let got = f();
     assert_eq!(
         got, 1,
@@ -1322,7 +1325,7 @@ fn test_jit_v512_byref_param() {
     bm.ret(&r);
     module.add_function(bm.finish().expect("main"));
     jit.compile_module(&module).expect("编译 main+callee");
-    let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+    let f: extern "C" fn() -> i32 = jit.get("main").expect("get_fn main");
     // 该缺陷**偶发**（CI 观察：同一提交多数 run 绿、少数红，~3/10；高半区/中间
     // lane 读到的是**残留**内容）。单次调用可能恰好正确 ⇒ **连测 8 次**并报告
     // 全部取值：既提高检出率，也让失败信息直接给出"是否每次不同"（区分
@@ -1375,7 +1378,7 @@ fn test_jit_v256_byref_high_lane() {
     bm.ret(&r);
     module.add_function(bm.finish().expect("v256_hi_main"));
     jit.compile_module(&module).expect("编译 v256_hi+main");
-    let f: extern "C" fn() -> i32 = jit.get_fn("v256_hi_main").expect("get_fn");
+    let f: extern "C" fn() -> i32 = jit.get("v256_hi_main").expect("get_fn");
     assert_eq!(
         f(),
         85,
@@ -1422,7 +1425,7 @@ fn test_jit_call_indirect_wide_vector_byref() {
     module.add_function(bm.finish().expect("ci_main"));
     jit.compile_module(&module).expect("编译 ci_callee+ci_main");
     let callee_addr = jit.lookup_symbol("ci_callee").expect("ci_callee 符号地址");
-    let f: extern "C" fn(u64) -> i32 = jit.get_fn("ci_main").expect("get_fn ci_main");
+    let f: extern "C" fn(u64) -> i32 = jit.get("ci_main").expect("get_fn ci_main");
     let got = f(callee_addr);
     assert_eq!(
         got, 1,
@@ -1587,7 +1590,7 @@ fn test_jit_call_indirect_wide_vector_sret_return() {
     let callee_addr = jit
         .lookup_symbol("ci_ret_callee")
         .expect("ci_ret_callee 符号地址");
-    let f: extern "C" fn(u64) -> i32 = jit.get_fn("ci_ret_main").expect("get_fn ci_ret_main");
+    let f: extern "C" fn(u64) -> i32 = jit.get("ci_ret_main").expect("get_fn ci_ret_main");
     let got = f(callee_addr);
     assert_eq!(
         got, 3,
@@ -1618,7 +1621,7 @@ fn test_jit_select_cmov_path() {
         b.ret(&[sel]);
     })
     .expect("compile sel_bool");
-    let f: extern "C" fn(i64) -> i64 = jit.get_fn("sel_bool").expect("get_fn");
+    let f: extern "C" fn(i64) -> i64 = jit.get("sel_bool").expect("get_fn");
     assert_eq!(f(1), 100, "cond=true（x≠0）→ then 臂 100");
     assert_eq!(f(0), 7, "cond=false（x==0）→ else 臂 7");
 
@@ -1635,7 +1638,7 @@ fn test_jit_select_cmov_path() {
         b.ret(&[sel]);
     })
     .expect("compile sel_i32");
-    let g: extern "C" fn(i32) -> i32 = jit.get_fn("sel_i32").expect("get_fn");
+    let g: extern "C" fn(i32) -> i32 = jit.get("sel_i32").expect("get_fn");
     assert_eq!(g(5), 42, "i32 cond=true → 42");
     assert_eq!(g(0), 9, "i32 cond=false → 9");
 }
@@ -1703,7 +1706,7 @@ fn test_jit_fib_recursive_call() {
     bm.ret(&r);
     module.add_function(bm.finish().expect("main"));
     jit.compile_module(&module).expect("compile fib module");
-    let f: extern "C" fn(i64) -> i64 = jit.get_fn("fib").expect("get_fn fib");
+    let f: extern "C" fn(i64) -> i64 = jit.get("fib").expect("get_fn fib");
     assert_eq!(f(10), 55, "fib(10) = 55（递归 call lowering）");
 }
 
@@ -1731,7 +1734,7 @@ fn test_jit_float_args_fcmp_branch() {
         b.ret(&[sel]);
     })
     .expect("compile float_gt");
-    let f: extern "C" fn(f64, f64) -> i32 = jit.get_fn("float_gt").expect("get_fn");
+    let f: extern "C" fn(f64, f64) -> i32 = jit.get("float_gt").expect("get_fn");
     assert_eq!(f(1.5, 2.0), 1, "1.5+2.0=3.5 > 3.0 → 1");
     assert_eq!(f(1.0, 1.0), 0, "1.0+1.0=2.0 ≤ 3.0 → 0");
 }
@@ -1821,7 +1824,7 @@ fn test_jit_fcmp_all_conditions_matrix() {
     let mut bad: Vec<String> = Vec::new();
     for (i, cc) in CCS.iter().enumerate() {
         let name = format!("fcmp_{i}");
-        let f: extern "C" fn(f64, f64) -> i32 = jit.get_fn(&name).expect("get_fn");
+        let f: extern "C" fn(f64, f64) -> i32 = jit.get(&name).expect("get_fn");
         for (a, b) in pairs {
             let got = f(a, b);
             let want = oracle(*cc, a, b);
@@ -1870,7 +1873,7 @@ fn test_jit_mixed_int_float_args() {
         b.ret(&[r]);
     })
     .expect("compile mixed");
-    let f: extern "C" fn(i32, f64, i32) -> i32 = jit.get_fn("mixed").expect("get_fn");
+    let f: extern "C" fn(i32, f64, i32) -> i32 = jit.get("mixed").expect("get_fn");
     assert_eq!(f(1, 1.0, 2), 13, "b=1.0>0.5 → 1+2+10（XMM1 位置槽读对）");
     assert_eq!(f(1, 0.1, 2), 3, "b=0.1≤0.5 → 1+2+0");
 }
@@ -1906,7 +1909,7 @@ fn test_jit_f64_const_arg_call() {
     bm.ret(&r);
     module.add_function(bm.finish().expect("main"));
     jit.compile_module(&module).expect("compile main+callee");
-    let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+    let f: extern "C" fn() -> i32 = jit.get("main").expect("get_fn main");
     assert_eq!(f(), 0, "callee(2.5)：2.5 ≤ 3.0 → 0（fconst 实参路径）");
 }
 
@@ -1939,7 +1942,7 @@ fn test_jit_fcmp_branch_if_else() {
         b.ret(&[c0]);
     })
     .expect("compile f_branch");
-    let f: extern "C" fn(f64, f64) -> i32 = jit.get_fn("f_branch").expect("get_fn");
+    let f: extern "C" fn(f64, f64) -> i32 = jit.get("f_branch").expect("get_fn");
     assert_eq!(f(1.5, 2.0), 1, "1.5+2.0=3.5 > 3.0 → 1（fcmp→branch）");
     assert_eq!(f(1.0, 1.0), 0, "1.0+1.0=2.0 ≤ 3.0 → 0");
 }
@@ -1983,7 +1986,7 @@ fn test_jit_fconst_args_branch_callee() {
     bm.ret(&r);
     module.add_function(bm.finish().expect("main"));
     jit.compile_module(&module).expect("compile main+callee");
-    let f: extern "C" fn() -> i32 = jit.get_fn("main").expect("get_fn main");
+    let f: extern "C" fn() -> i32 = jit.get("main").expect("get_fn main");
     assert_eq!(
         f(),
         1,
@@ -2023,7 +2026,7 @@ fn test_jit_f64_param_via_stack_slot() {
         b.ret(&[c0]);
     })
     .expect("compile f_slot");
-    let f: extern "C" fn(f64) -> i32 = jit.get_fn("f_slot").expect("get_fn");
+    let f: extern "C" fn(f64) -> i32 = jit.get("f_slot").expect("get_fn");
     assert_eq!(f(4.0), 1, "4.0 > 3.0 → 1（Fstore/Fload 栈槽中转）");
     assert_eq!(f(2.0), 0, "2.0 ≤ 3.0 → 0");
 }
@@ -2057,7 +2060,7 @@ fn test_jit_i64_const_arg_call() {
     bm.ret(&r);
     module.add_function(bm.finish().expect("main"));
     jit.compile_module(&module).expect("compile main+callee");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn main");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn main");
     assert_eq!(f(), 3000, "callee(5, 2995) = 3000（iconst 常量实参）");
 }
 
@@ -2085,7 +2088,7 @@ fn test_jit_i64_param_via_stack_slot() {
         b.ret(&[sum]);
     })
     .expect("compile i64_slot");
-    let f: extern "C" fn(i64, i64) -> i64 = jit.get_fn("i64_slot").expect("get_fn");
+    let f: extern "C" fn(i64, i64) -> i64 = jit.get("i64_slot").expect("get_fn");
     assert_eq!(f(1000, 2000), 3000, "i64 参数 Store/Load 栈槽中转");
 }
 
@@ -2106,7 +2109,7 @@ fn test_jit_uextend_i16() {
         b.ret(&[v]);
     })
     .expect("compile uext16");
-    let f: extern "C" fn(i64) -> i64 = jit.get_fn("uext16").expect("get_fn");
+    let f: extern "C" fn(i64) -> i64 = jit.get("uext16").expect("get_fn");
     let got = f(0xFFFFFFFFFFFF1234u64 as i64);
     assert_eq!(got, 0x1234, "movzx 16 位源应零扩展到 0x1234");
 }
@@ -2135,7 +2138,7 @@ fn test_jit_atomic_rmw_basic() {
     })
     .expect("compile");
 
-    let f: extern "C" fn(*mut i32) -> i32 = jit.get_fn("atomic_add").expect("get_fn");
+    let f: extern "C" fn(*mut i32) -> i32 = jit.get("atomic_add").expect("get_fn");
     let mut x: i32 = 5;
     let old = f(&mut x);
     assert_eq!(old, 5, "atomic_add returns old value");
@@ -2187,23 +2190,23 @@ fn test_jit_mem_width_i16_i32_i64_neighbor() {
     // 哨兵缓冲：两端填充 0x5A——越界写会破坏。
     let mut buf = [0x5Au8; 24];
     // u8（8 位独立 opcode 8A/88——gprx 排除 gpr1，按 rd/rs1_width==8 分派）
-    let store: extern "C" fn(*mut u8, i64) = jit.get_fn("sto_w1").expect("sto_w1");
-    let load: extern "C" fn(*const u8) -> i64 = jit.get_fn("lod_w1").expect("lod_w1");
+    let store: extern "C" fn(*mut u8, i64) = jit.get("sto_w1").expect("sto_w1");
+    let load: extern "C" fn(*const u8) -> i64 = jit.get("lod_w1").expect("lod_w1");
     store(buf[4..].as_mut_ptr(), 0xAB);
     assert_eq!(load(buf[4..].as_ptr()), 0xAB, "i8 roundtrip");
     assert_eq!(buf[5], 0x5A, "i8 store 1 字节不越界");
-    let store: extern "C" fn(*mut u8, i64) = jit.get_fn("sto_w2").expect("sto_w2");
-    let load: extern "C" fn(*const u8) -> i64 = jit.get_fn("lod_w2").expect("lod_w2");
+    let store: extern "C" fn(*mut u8, i64) = jit.get("sto_w2").expect("sto_w2");
+    let load: extern "C" fn(*const u8) -> i64 = jit.get("lod_w2").expect("lod_w2");
     store(buf[4..].as_mut_ptr(), 0x1234);
     assert_eq!(load(buf[4..].as_ptr()), 0x1234, "i16 roundtrip");
     assert_eq!(buf[6], 0x5A, "i16 store 2 字节不越界");
-    let store: extern "C" fn(*mut u8, i64) = jit.get_fn("sto_w4").expect("sto_w4");
-    let load: extern "C" fn(*const u8) -> i64 = jit.get_fn("lod_w4").expect("lod_w4");
+    let store: extern "C" fn(*mut u8, i64) = jit.get("sto_w4").expect("sto_w4");
+    let load: extern "C" fn(*const u8) -> i64 = jit.get("lod_w4").expect("lod_w4");
     store(buf[4..].as_mut_ptr(), 0x12345678);
     assert_eq!(load(buf[4..].as_ptr()), 0x12345678, "i32 roundtrip");
     assert_eq!(buf[8], 0x5A, "i32 store 4 字节不越界");
-    let store: extern "C" fn(*mut u8, i64) = jit.get_fn("sto_w8").expect("sto_w8");
-    let load: extern "C" fn(*const u8) -> i64 = jit.get_fn("lod_w8").expect("lod_w8");
+    let store: extern "C" fn(*mut u8, i64) = jit.get("sto_w8").expect("sto_w8");
+    let load: extern "C" fn(*const u8) -> i64 = jit.get("lod_w8").expect("lod_w8");
     store(buf[4..].as_mut_ptr(), 0x0123456789ABCDEF);
     assert_eq!(load(buf[4..].as_ptr()), 0x0123456789ABCDEF, "i64 roundtrip");
     assert_eq!(buf[12], 0x5A, "i64 store 8 字节不越界");
@@ -2243,7 +2246,7 @@ fn test_jit_cmpxchg_i8_loop() {
     })
     .expect("compile");
 
-    let f: extern "C" fn(*mut u8) -> u8 = jit.get_fn("cmpxchg_and8").expect("get_fn");
+    let f: extern "C" fn(*mut u8) -> u8 = jit.get("cmpxchg_and8").expect("get_fn");
     // 邻字节哨兵：越界写会破坏 buf[1]
     let mut buf = [12u8, 0xAA, 0xBB, 0xCC];
     let old = f(&mut buf[0]);
@@ -2352,7 +2355,7 @@ fn test_jit_cmpxchg_and_loop_i64() {
     })
     .expect("compile");
 
-    let f: extern "C" fn(*mut i64) -> i64 = jit.get_fn("cmpxchg_and64").expect("get_fn");
+    let f: extern "C" fn(*mut i64) -> i64 = jit.get("cmpxchg_and64").expect("get_fn");
     let mut x: i64 = 12;
     let old = f(&mut x);
     assert_eq!(old, 12, "fetch_and returns old value");
@@ -2393,7 +2396,7 @@ fn test_jit_cmpxchg_and_loop() {
     })
     .expect("compile");
 
-    let f: extern "C" fn(*mut i32) -> i32 = jit.get_fn("cmpxchg_and").expect("get_fn");
+    let f: extern "C" fn(*mut i32) -> i32 = jit.get("cmpxchg_and").expect("get_fn");
     // 邻字节哨兵：越界 64 位写会破坏 buf[1]
     let mut buf = [12i32, 0x55555555];
     let old = f(&mut buf[0]);
@@ -2435,7 +2438,7 @@ fn test_jit_cmpxchg_i32_param() {
     })
     .expect("compile");
 
-    let f: extern "C" fn(*mut i32, i32) -> i32 = jit.get_fn("cmpxchg_param32").expect("get_fn");
+    let f: extern "C" fn(*mut i32, i32) -> i32 = jit.get("cmpxchg_param32").expect("get_fn");
     let mut buf = [12i32, 0x55555555];
     let r = f(&mut buf[0], 0b1010);
     assert_eq!(r, 0, "compare 成功（12 → 12&10）");
@@ -2466,7 +2469,7 @@ fn test_jit_cmpxchg_i32_single() {
     })
     .expect("compile");
 
-    let f: extern "C" fn(*mut i32) -> i32 = jit.get_fn("cmpxchg_single32").expect("get_fn");
+    let f: extern "C" fn(*mut i32) -> i32 = jit.get("cmpxchg_single32").expect("get_fn");
     let mut buf = [12i32, 0x55555555];
     let old = f(&mut buf[0]);
     assert_eq!(old, 12, "cmpxchg returns old");
@@ -2502,7 +2505,7 @@ fn test_jit_cmpxchg_i32_single_load() {
     })
     .expect("compile");
 
-    let f: extern "C" fn(*mut i32) -> i32 = jit.get_fn("cmpxchg_single32l").expect("get_fn");
+    let f: extern "C" fn(*mut i32) -> i32 = jit.get("cmpxchg_single32l").expect("get_fn");
     let mut buf = [12i32, 0x55555555];
     let r = f(&mut buf[0]);
     assert_eq!(r, 0, "ok=1 → select(1→0): 比较应成功");
@@ -2541,7 +2544,7 @@ fn test_jit_atomic_rmw_spill_pressure() {
     })
     .expect("compile");
 
-    let f: extern "C" fn(*mut i32) -> i32 = jit.get_fn("atomic_spill").expect("get_fn");
+    let f: extern "C" fn(*mut i32) -> i32 = jit.get("atomic_spill").expect("get_fn");
     let mut x: i32 = 5;
     let r = f(&mut x);
     // old(5) + 0+1+...+9(45) = 50；x 应 = 8
@@ -2589,7 +2592,7 @@ fn test_jit_store_load_value_under_pressure() {
     })
     .expect("compile");
 
-    let f: extern "C" fn(*mut i64) -> i64 = jit.get_fn("store_spill").expect("get_fn");
+    let f: extern "C" fn(*mut i64) -> i64 = jit.get("store_spill").expect("get_fn");
     let mut x: i64 = 100;
     let r = f(&mut x);
     // val(100) + 0+1+...+9(45) + back(100) = 245
@@ -2643,7 +2646,7 @@ fn test_jit_cross_call_writeback() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn");
     let got = f();
     // a = 0（x=0 返回 0、写 1）、b = 1（x=1 返回 1、写 2）→ 0*100+1 = 1
     assert_eq!(
@@ -2742,7 +2745,7 @@ ret_int = ["RAX"]
 
     let mut jit = JitLoader::new(x86::TargetMachine::new());
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = unsafe { jit.get_unchecked("main") }.expect("get_fn");
     assert_eq!(
         f(),
         13,
@@ -2816,7 +2819,7 @@ fn test_jit_variadic_unnamed_args_go_to_stack() {
     // ③ JIT 真跑：按变参布局写传出区这条路径不崩、值对。
     let mut jit = JitLoader::new(machine);
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn");
     assert_eq!(f(), 3, "被调方只读命名参数（多余实参要 V2/V4 才能读）");
 }
 /// **变参 V3/V4：被调方真的读到未命名实参**（win64）——`va_start` **物化 `va_list`
@@ -2862,7 +2865,7 @@ fn test_jit_va_arg_reads_unnamed_stack_args() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn");
     assert_eq!(
         f(),
         47,
@@ -2917,7 +2920,7 @@ fn tmp_diag_va_agg_field0() {
         b: i64,
     }
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn(Agg16) -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn(Agg16) -> i64 = unsafe { jit.get_unchecked("main") }.expect("get_fn");
     let r = f(Agg16 { a: 4, b: 7 });
     println!("[diag] e0 = {r} (0x{r:x})");
 }
@@ -2986,7 +2989,7 @@ fn test_jit_va_arg_reads_unnamed_aggregate_arg() {
         b: i64,
     }
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn(Agg16) -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn(Agg16) -> i64 = unsafe { jit.get_unchecked("main") }.expect("get_fn");
     assert_eq!(
         f(Agg16 { a: 4, b: 7 }),
         11,
@@ -3036,7 +3039,7 @@ fn test_jit_va_arg_reads_unnamed_aggregate_arg() {
     let mut jit2 = JitLoader::new(x86::TargetMachine::new());
     jit2.compile_module(&module2)
         .expect("`insertvalue` 链作为聚合实参：v24 M1 两相物化之后必须能编");
-    let f2: extern "C" fn() -> i64 = jit2.get_fn("main_ins").expect("get_fn");
+    let f2: extern "C" fn() -> i64 = jit2.get("main_ins").expect("get_fn");
     assert_eq!(
         f2(),
         11,
@@ -3119,7 +3122,7 @@ fn test_jit_va_arg_reads_unnamed_aggregate_arg_sysv64() {
 
     jit.compile_module(&module)
         .expect("compile module (sysv64 变参聚合)");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = unsafe { jit.get_unchecked("main") }.expect("get_fn");
     assert_eq!(
         f(),
         22,
@@ -3169,7 +3172,7 @@ fn test_jit_va_arg_reads_unnamed_float_args() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn");
     assert_eq!(
         f(),
         11,
@@ -3219,7 +3222,7 @@ fn test_jit_va_arg_narrows_promoted_f32() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn");
     assert_eq!(
         f(),
         5,
@@ -3276,7 +3279,7 @@ fn test_jit_float_params_beyond_xmm_registers_come_from_the_stack() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn");
     assert_eq!(
         f(),
         7,
@@ -3336,7 +3339,7 @@ fn test_jit_stack_float_params_are_received_into_registers() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn");
     assert_eq!(
         f(),
         63,
@@ -3386,7 +3389,7 @@ fn test_jit_stack_float_param_is_received_into_a_register() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn");
     assert_eq!(f(), 9, "第 5 个浮点形参（栈上）必须按浮点直接收进寄存器");
 }
 
@@ -3462,7 +3465,7 @@ fn test_jit_va_start_materializes_the_sysv64_register_save_area() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = unsafe { jit.get_unchecked("main") }.expect("get_fn");
     assert_eq!(
         f(),
         47,
@@ -3517,7 +3520,7 @@ fn test_jit_sysv64_seventh_integer_arg_comes_from_the_stack() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = unsafe { jit.get_unchecked("main") }.expect("get_fn");
     assert_eq!(
         f(),
         7,
@@ -3568,7 +3571,7 @@ fn test_jit_va_arg_sysv64_reads_the_register_save_area() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = unsafe { jit.get_unchecked("main") }.expect("get_fn");
     assert_eq!(
         f(),
         47,
@@ -3617,7 +3620,7 @@ fn test_jit_va_arg_sysv64_overflows_to_the_stack_arg_area() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = unsafe { jit.get_unchecked("main") }.expect("get_fn");
     assert_eq!(
         f(),
         42,
@@ -3682,7 +3685,7 @@ fn test_jit_va_arg_sysv64_coexists_with_frontend_locals() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = unsafe { jit.get_unchecked("main") }.expect("get_fn");
     assert_eq!(
         f(),
         4 * 10 + 4 * 100 + 7,
@@ -3731,7 +3734,7 @@ fn test_jit_multi_value_return_is_read_back() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn");
     assert_eq!(
         f(),
         67,
@@ -3789,7 +3792,7 @@ fn test_jit_cross_call_writeback_two_level() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn");
     let got = f();
     // a = 0、b = 1 → 1
     assert_eq!(got, 1, "两层调用链跨调用写回");
@@ -3848,7 +3851,7 @@ fn test_jit_writeback_with_inner_call() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn");
     let got = f();
     // a = 0、b = 1 → 1（中间调用不得破坏跨调用写回）
     assert_eq!(got, 1, "内部中间调用后跨调用写回");
@@ -3913,7 +3916,7 @@ fn test_jit_double_deref_across_call() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn");
     let got = f();
     // a = 0、b = 1 → 1（中间调用前后两次 deref 必须一致）
     assert_eq!(got, 1, "中间调用前后两次 deref 一致性");
@@ -3991,7 +3994,7 @@ fn test_jit_param_slot_spill_across_call() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn");
     let got = f();
     // b 的 v1 必须 = a 的 v1 + 1（第二次调用读到第一次写入的新值）
     assert_eq!(got, 1, "参数槽中转 + spill 压力 + 中间调用后跨调用写回");
@@ -4061,7 +4064,7 @@ fn test_jit_two_inner_calls_param_slot() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn");
     let got = f();
     // b 的 v1 = a 的 v1 + 1（双中间调用 + 参数槽中转后写回仍生效）
     assert_eq!(got, 1, "双中间调用 + 参数槽中转跨调用写回");
@@ -4128,7 +4131,7 @@ fn test_jit_scalar_pair_narrow_field_no_clobber() {
     module.add_function(main_fn.finish().expect("main"));
 
     jit.compile_module(&module).expect("compile module");
-    let f: extern "C" fn() -> i64 = jit.get_fn("main").expect("get_fn");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get_fn");
     let got = f();
     // value 正确（v_i=1 → 4）+ guard 未破坏（g_i=1）→ 5
     assert_eq!(
@@ -4173,7 +4176,7 @@ fn test_jit_select_strict_matrix() {
         b.ret(&[sel]);
     })
     .expect("compile sel_var");
-    let f: extern "C" fn(i64, i64, i64) -> i64 = jit.get_fn("sel_var").expect("get_fn");
+    let f: extern "C" fn(i64, i64, i64) -> i64 = jit.get("sel_var").expect("get_fn");
     assert_eq!(f(100, 7, 1), 100, "cond=true → then（x）");
     assert_eq!(f(100, 7, 0), 7, "cond=false → else（y）");
     assert_eq!(f(100, 7, -1), 100, "cond=负值 → then（test 非零）");
@@ -4196,7 +4199,7 @@ fn test_jit_select_strict_matrix() {
         b.ret(&[sel]);
     })
     .expect("compile sel_i32v");
-    let g: extern "C" fn(i32, i32, i32) -> i32 = jit.get_fn("sel_i32v").expect("get_fn");
+    let g: extern "C" fn(i32, i32, i32) -> i32 = jit.get("sel_i32v").expect("get_fn");
     assert_eq!(g(42, 9, 5), 42, "i32 cond=true → then");
     assert_eq!(g(42, 9, 0), 9, "i32 cond=false → else");
 
@@ -4217,7 +4220,7 @@ fn test_jit_select_strict_matrix() {
         b.ret(&[outer]);
     })
     .expect("compile sel_chain");
-    let h: extern "C" fn(i64, i64) -> i64 = jit.get_fn("sel_chain").expect("get_fn");
+    let h: extern "C" fn(i64, i64) -> i64 = jit.get("sel_chain").expect("get_fn");
     assert_eq!(h(1, 1), 3, "a≠0,b≠0 → 3");
     assert_eq!(h(1, 0), 4, "a≠0,b==0 → 4");
     assert_eq!(h(0, 1), 5, "a==0 → 5（外层 else）");
@@ -4237,7 +4240,7 @@ fn test_jit_select_strict_matrix() {
         b.ret(&[sum]);
     })
     .expect("compile sel_arith");
-    let k: extern "C" fn(i64, i64) -> i64 = jit.get_fn("sel_arith").expect("get_fn");
+    let k: extern "C" fn(i64, i64) -> i64 = jit.get("sel_arith").expect("get_fn");
     assert_eq!(k(1, 1), 101, "100+1");
     assert_eq!(k(1, 0), 8, "7+1");
 
@@ -4264,7 +4267,7 @@ fn test_jit_select_strict_matrix() {
         b.ret(&[prod]);
     })
     .expect("compile sel_pressure");
-    let m: extern "C" fn(i64) -> i64 = jit.get_fn("sel_pressure").expect("get_fn");
+    let m: extern "C" fn(i64) -> i64 = jit.get("sel_pressure").expect("get_fn");
     // x=3: bit0=1 → 10；bit1=1 → 30 → 300
     assert_eq!(m(3), 300, "x=3 → 10*30");
     // x=1: bit0=1 → 10；bit1=0 → 40 → 400
@@ -4387,7 +4390,7 @@ fn test_jit_spill_pressure_loop_with_call() {
     .expect("compile stress");
 
     let f: extern "C" fn(i64, i64, i64, i64, i64, i64, i64, i64, i64) -> i64 =
-        jit.get_fn("sp_stress_call").expect("get_fn");
+        unsafe { jit.get_unchecked("sp_stress_call") }.expect("get_fn");
     for (a, n) in [
         ([1i64, 2, 3, 4, 5, 6, 7, 8], 0i64),
         ([1i64, 2, 3, 4, 5, 6, 7, 8], 1i64),
@@ -4502,7 +4505,7 @@ fn test_jit_spill_pressure_loop_inline() {
     .expect("compile stress");
 
     let f: extern "C" fn(i64, i64, i64, i64, i64, i64, i64, i64, i64) -> i64 =
-        jit.get_fn("sp_stress").expect("get_fn");
+        unsafe { jit.get_unchecked("sp_stress") }.expect("get_fn");
 
     // 多组输入：小/大、正负混合、n=0
     // 先只跑 n=0（零次迭代）：如果这里就崩，问题在**入口/收参**而不在循环体。
@@ -4588,7 +4591,7 @@ fn test_jit_block_param_alias_minimal() {
     })
     .expect("compile bisect5");
 
-    let f: extern "C" fn(i64, i64, i64, i64, i64) -> i64 = jit.get_fn("bisect5").expect("get_fn");
+    let f: extern "C" fn(i64, i64, i64, i64, i64) -> i64 = jit.get("bisect5").expect("get_fn");
     for (a, n) in [([10i64, 1, 100, 2], 1i64), ([10i64, 1, 100, 2], 3i64)] {
         let got = f(a[0], a[1], a[2], a[3], n);
         assert_eq!(got, expected(a, n), "5 形参版不符（a={a:?}, n={n}）");
@@ -4624,7 +4627,7 @@ fn jit_cross_function_call_with_arg() {
         b.ret(&[s]);
     })
     .expect("once");
-    let f: extern "C" fn(i64) -> i64 = jit.get_fn("a_once").expect("get_fn");
+    let f: extern "C" fn(i64) -> i64 = jit.get("a_once").expect("get_fn");
     assert_eq!(f(100), 122, "7*3+1 + 100");
 }
 
@@ -4652,7 +4655,7 @@ fn jit_cross_function_call_no_args() {
         b.ret(&[s]);
     })
     .expect("caller");
-    let f: extern "C" fn(i64) -> i64 = jit.get_fn("c0_caller").expect("get_fn");
+    let f: extern "C" fn(i64) -> i64 = jit.get("c0_caller").expect("get_fn");
     assert_eq!(f(100), 142);
 }
 
@@ -4704,7 +4707,7 @@ fn jit_stack_params_with_call() {
     .expect("caller");
 
     let f: extern "C" fn(i64, i64, i64, i64, i64, i64, i64, i64, i64) -> i64 =
-        jit.get_fn("sp_call_sum").expect("get_fn");
+        unsafe { jit.get_unchecked("sp_call_sum") }.expect("get_fn");
     // 1-2+3-4+5-6+7-8 = -4；step(10) = 31 ⇒ 27
     assert_eq!(f(1, 2, 3, 4, 5, 6, 7, 8, 10), 27, "栈形参 + 调用");
 }
@@ -4757,7 +4760,7 @@ fn jit_loop_with_call_register_params() {
     })
     .expect("caller");
 
-    let f: extern "C" fn(i64, i64) -> i64 = jit.get_fn("lp_stress").expect("get_fn");
+    let f: extern "C" fn(i64, i64) -> i64 = jit.get("lp_stress").expect("get_fn");
     // i=0,1,2 时 step=1,4,7 ⇒ 12；每轮再加 a=10 ⇒ 12+30=42
     assert_eq!(f(10, 3), 42, "循环携带值 × 调用（形参全在寄存器）");
 }
@@ -4817,7 +4820,7 @@ fn jit_stack_param_loop_const_bound_with_call() {
     })
     .expect("stress");
 
-    let f: extern "C" fn(i64, i64, i64, i64, i64) -> i64 = jit.get_fn("sb_stress").expect("get_fn");
+    let f: extern "C" fn(i64, i64, i64, i64, i64) -> i64 = jit.get("sb_stress").expect("get_fn");
     // step(0,1,2)=1,4,7 ⇒ 12；每轮再加 a=10 ⇒ 42
     assert_eq!(f(10, 1, 0, 0, 99), 42, "栈形参 + 循环 + 调用（常量上界）");
 }
@@ -4876,7 +4879,7 @@ fn jit_stack_param_loop_call_only_step() {
     })
     .expect("stress");
 
-    let f: extern "C" fn(i64, i64, i64, i64, i64) -> i64 = jit.get_fn("so_stress").expect("get_fn");
+    let f: extern "C" fn(i64, i64, i64, i64, i64) -> i64 = jit.get("so_stress").expect("get_fn");
     // i=0,1,2 ⇒ step=1,4,7 ⇒ 12
     assert_eq!(f(0, 0, 0, 0, 3), 12, "纯 step 累加（上界来自栈形参）");
 }
@@ -4930,7 +4933,7 @@ fn jit_wide_phi_splits_limbs() {
         b.ret(&[lo]);
     })
     .expect("widephi");
-    let f: extern "C" fn(i64) -> i64 = jit.get_fn("widephi").expect("get_fn");
+    let f: extern "C" fn(i64) -> i64 = jit.get("widephi").expect("get_fn");
     assert_eq!(f(1), 8, "分支 A：7+1");
     assert_eq!(f(-1), 9, "分支 B：9");
 }
@@ -4991,18 +4994,18 @@ fn jit_uadd_overflow_flag_is_correct() {
     })
     .expect("ovfs8");
 
-    let fs8: extern "C" fn(i64, i64) -> i64 = jit.get_fn("ovfs8").expect("get_fn ovfs8");
+    let fs8: extern "C" fn(i64, i64) -> i64 = jit.get("ovfs8").expect("get_fn ovfs8");
     // 有符号：100+100 = 200 超出 i8 ⇒ 值 200（零扩展），标志 1
     assert_eq!(
         fs8(100, 100),
         200 + 1000,
         "8 位 sadd_overflow：值 200 + 标志"
     );
-    let f8: extern "C" fn(i64, i64) -> i64 = jit.get_fn("ovf8").expect("get_fn ovf8");
+    let f8: extern "C" fn(i64, i64) -> i64 = jit.get("ovf8").expect("get_fn ovf8");
     // 200+100 = 300 ⇒ 截到 8 位 = 44，溢出标志应为 1 ⇒ 44 + 1000
     assert_eq!(f8(200, 100), 1044, "8 位 uadd_overflow：值 44 + 标志 1000");
     assert_eq!(f8(10, 20), 30, "8 位不溢出：值 30 + 标志 0");
-    let f32: extern "C" fn(i64, i64) -> i64 = jit.get_fn("ovf32").expect("get_fn ovf32");
+    let f32: extern "C" fn(i64, i64) -> i64 = jit.get("ovf32").expect("get_fn ovf32");
     // **无符号 32 位**：3e9 + 2e9 = 5e9 > `u32::MAX` ⇒ 值 = 5e9 - 2^32 = 705032704，标志 1。
     //（2e9+2e9 = 4e9 < 2^32 **不溢出**——一开始把期望写错在这里，白追了一轮。）
     assert_eq!(

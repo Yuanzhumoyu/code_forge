@@ -33,6 +33,8 @@ pub mod regalloc_bt;
 /// 模块级编译编排：`CompiledModule` + 整模块/单函数入口（M1：唯一编译入口）。
 pub mod session;
 pub mod sig_view;
+/// 产物签名（v30 M4）：`CompiledUnit` 携带的源码签名，JIT 类型化调用校验用。
+pub mod signature;
 pub mod spill_init;
 /// 编译阶段（v30 M1；M2 起是文档表/计时/事件的唯一来源）。
 pub mod stage;

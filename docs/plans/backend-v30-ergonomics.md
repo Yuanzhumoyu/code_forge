@@ -82,7 +82,7 @@ impl<M: TargetMachine> JitLoader<M> {
 | M1 | `CompileOptions` / `CompileError` / `Arc<M>`，删除 `with_opt_level` | 完成 |
 | M2 | `Stage` 枚举 + 命名计时 + `precheck` / 合法化批次外提 | 完成 |
 | M3 | `runtime/jit.rs` 拆文件，棘轮扩到 `src/runtime/**` | 完成 |
-| M4 | `JitSignatureInfo` + `JitSignature::get`，迁移 153 处调用点 | 待做 |
+| M4 | `JitSignatureInfo` + `JitSignature::get`，迁移 153 处调用点 | 完成 |
 | M5 | 契约文档/CHANGELOG/公开面守卫收口 + 全量门禁 | 待做 |
 
 ### M0 金标
@@ -170,3 +170,11 @@ impl<M: TargetMachine> JitLoader<M> {
   模块路径 `forge_codegen::runtime::jit::JitLoader` 不变。棘轮扫描面扩到 `src/runtime/**`，
   并补上文档早已写明的"`#[cfg(test)] mod X;` 文件整份跳过"规则（`file_size_ratchet` 此前
   未实现，`alloc_integration_tests.rs` 的预算条目因此删除）。lib 2982 条 + ratchet 全绿。
+- **2026-11-01 M4**：`CompiledUnit`/`JitSignatureInfo` 随产物携带源码签名
+  （`param_types`/`return_types`/`calling_convention` + 模块签名表的变参事实）；
+  `JitSignature`（`extern "C" fn` 0–6 个标量/瘦指针参数）落地，`JitLoader::get::<F>`
+  逐项校验（PTR↔I64 视为同一 64 位槽），失败 `Semantic` 并同时打印两侧类型；
+  `get_unchecked` 作显式逃生口，新增 `get_ptr`/`function`。123 处 `jit.get_fn` +
+  1 处 forge-tests 调用点迁到 `get`；12 处（向量 by-ref/sret、聚合、sysv64/自定义约定）
+  改走 `get_unchecked`（类型化面不表达 ABI 降级后的签名）。新增
+  `runtime/jit/signature_tests.rs`（6 条正/反例）。`--all-features` lib 3104 条全绿。

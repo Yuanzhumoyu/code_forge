@@ -518,8 +518,8 @@ fn run_module<M: TargetMachine + Clone>(
         .map_err(|e| format!("{name}: module compile: {e:?}"))?;
     let main_name = module.get_function(main_ref).name.clone();
     let f: extern "C" fn() -> i64 = jit
-        .get_fn(main_name.as_str())
-        .map_err(|e| format!("{name}: get_fn: {e:?}"))?;
+        .get(main_name.as_str())
+        .map_err(|e| format!("{name}: get: {e:?}"))?;
     Ok(f())
 }
 
