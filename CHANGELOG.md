@@ -1,4 +1,4 @@
-﻿# CHANGELOG
+# CHANGELOG
 
 <!-- markdownlint-configure-file { "MD013": { "line_length": 512, "code_block_line_length": 512, "heading_line_length": 512 }, "MD024": false } -->
 <!-- 文件级豁免原因：历史条目按单行记录（最长 ~440 列），且多年条目同置 [Unreleased] 下，
@@ -10,6 +10,16 @@ All notable changes to the `code-forge` project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
+
+### Changed (breaking) (2026-11-01) — 后端 v30 人体工学重构
+
++ `CompileSession` 的编译入口统一返回 `CompileError`（阶段 `Stage` + 函数名 + `gap_id()` 直通台账）；erased/插件边界用 `into_ir()` 折叠回 `IrError`。
++ 选项收成 `CompileOptions`（`off()` / `speed()` / `with_parallel`）；删除 `CompileSession::with_opt_level` 与 `pipeline::compiler::opt_default` 模块，进程级默认仍在 `pipeline::options`。
++ `pipeline::STAGES` 删除，阶段清单唯一来源 = `pipeline::stage::Stage::ALL`（6 个管线阶段；`Stage::Module` 是整模块编排，不属于管线）。
++ `CompileSession`/`JitLoader` 改持 `Arc<M>`：整模块/单函数入口不再要求 `M: Clone`；`Parallelism::{Auto, Serial, Threads(n)}` 控制整模块 worker 池。
++ `JitLoader::get_fn::<F>` 删除，改为 `get::<F: JitSignature>()`（`extern "C" fn`，0–6 个标量/瘦指针；装载期按产物签名逐项校验，失败 `IrError::Semantic`）+ `unsafe get_unchecked` + `get_ptr`/`function`；产物新增 `CompiledUnit`/`JitSignatureInfo` 携带源码签名。
++ 前置能力门 / 合法化批次 / 命名计时从 `pipeline/compiler/mod.rs` 外提到 `precheck.rs` / `legalize/schedule.rs` / `profile.rs`（`compiler/mod.rs` 670→433 行）；`runtime/jit.rs` 拆成 `jit.rs`（385 行生产）+ `jit/symbols.rs`（102）+ `jit/tests.rs`（测试）；规模棘轮扩到 `src/runtime/**` 并真正跳过 `#[cfg(test)] mod` 文件。
++ 新增金标守卫 `tests/golden_codegen.rs`（x86/arm64/riscv64 × 6 个标量用例逐字节比对）——本次重构的生成码逐字节不变。
 
 ### Changed (2026-10-31) — JIT 可执行内存：dual mapping / 块分配器 / guard page
 

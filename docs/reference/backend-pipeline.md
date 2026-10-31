@@ -46,8 +46,10 @@
 
 ## 2. 管线阶段
 
-下表由守卫 `pipeline_stages_match_doc` 与 `pipeline::STAGES` **集合相等**钉住
-（改了阶段就同时改表：多一个、少一个都红）。
+下表由守卫 `pipeline_stages_match_doc` 与 `pipeline::stage::Stage::ALL` **集合相等**钉住
+（v30 M2 起阶段清单的**唯一来源**是 `Stage` 枚举，`pipeline::STAGES` 常量已删除；
+改了阶段就同时改表：多一个、少一个都红）。`Stage::Module` 是整模块编排（线程 panic 等），
+**不属于**管线阶段、不进 `Stage::ALL`。
 
 | 阶段 | 做什么 |
 | --- | --- |
@@ -421,3 +423,24 @@ v27（[`docs/archive/forge-rustc-v27-plan.md`](../archive/forge-rustc-v27-plan.m
 * v25 逐批证据与删除清单：[`archive/backend-v25-plan.md`](../archive/backend-v25-plan.md)（已归档）。
 * v24 逐批证据：[`archive/backend-v24-plan.md`](../archive/backend-v24-plan.md)（已归档）；
   v23 收口记录：[`archive/backend-v23-plan.md`](../archive/backend-v23-plan.md)（已归档）。
+
+## 15. v30 人体工学（破坏性）
+
+v30（[`archive/backend-v30-ergonomics.md`](../archive/backend-v30-ergonomics.md)，2026-11-01 归档）
+只改"怎么用 / 怎么组织"，**不改生成码**——金标 `tests/golden_codegen.rs` 逐字节钉住。
+宿主面现在是：
+
+| 旧 | 新 |
+| --- | --- |
+| `CompileSession::with_opt_level(level)` | `with_options(CompileOptions::speed(level))`；`CompileOptions::off()` = 不跑优化 |
+| `compile* -> Result<_, IrError>` | `Result<_, CompileError>`（`stage()` / `function()` / `gap_id()`；erased/插件边界 `into_ir()`） |
+| `JitLoader::get_fn::<F>` | `get::<F: JitSignature>()`（`extern "C" fn`，0–6 个标量/瘦指针，装载期逐项校验）/ `unsafe get_unchecked` / `get_ptr` |
+| `pipeline::STAGES` | `Stage::ALL`（6 个管线阶段；`Stage::Module` 不属于管线） |
+| `M: TargetMachine + Clone`（管线/JIT） | 只要求 `M: TargetMachine`（会话持 `Arc<M>`） |
+
+三条边界：
+
+* 类型化 `get` 只覆盖标量/瘦指针；**变参、向量、聚合、`i128`** 用 `get_unchecked`——产物签名是
+  ABI 降级**之前**的源码签名，by-ref/sret 与类型化面的形态不同。
+* `PTR` 与 `I64` 视为同一 64 位槽（IR 里地址常用 `i64` 表示，见 GEP/legalize 的既有约定）。
+* 类型化 `get` 失败归 `IrError::Semantic`（使用错误），**不进**能力缺口台账。

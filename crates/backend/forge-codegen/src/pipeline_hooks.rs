@@ -110,6 +110,7 @@ macro_rules! export_isa_plugin {
         ) -> Result<$crate::CompiledFunction, $crate::IrError> {
             $crate::pipeline::compiler::CompileSession::new($module::TargetMachine::new())
                 .compile(func)
+                .map_err(|e| e.into_ir())
         }
 
         /// C ABI 版本：加载器精确比对，不兼容直接拒绝。

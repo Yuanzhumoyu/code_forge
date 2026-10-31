@@ -1,13 +1,17 @@
 # 后端 v30：人体工学重构（破坏性 · 无兼容层）
 
-> 状态：**[progress]**（2026-11-01 立项；本文件是活账本，随里程碑推进回写）
+> ⚠️ **ARCHIVED（2026-11-01）**：M0–M5 全部落地；现行入口 =
+> [`../reference/backend-pipeline.md`](../reference/backend-pipeline.md) §15（宿主面契约）+
+> 根 `CHANGELOG.md`（搜 `v30`）。本文件只作历史证据（施工顺序、取舍与踩坑）。
+>
+> 状态：**[archive]**（2026-11-01 立项并当日收口）
 >
 > 口径：**只改"怎么用"与"怎么组织"，不改"生成什么码"**。全部验收以
 > "重构前后机器码逐字节相同"为硬判据（M0 的金标守卫钉住）。
 >
-> 相关：[`reference/backend-pipeline.md`](../reference/backend-pipeline.md)（现行管线契约）、
-> [`reference/backend-gaps.md`](../reference/backend-gaps.md)（能力缺口台账）、
-> [`reference/known-defects.md`](../reference/known-defects.md)（已知缺陷索引）。
+> 相关：[`../reference/backend-pipeline.md`](../reference/backend-pipeline.md)（现行管线契约）、
+> [`../reference/backend-gaps.md`](../reference/backend-gaps.md)（能力缺口台账）、
+> [`../reference/known-defects.md`](../reference/known-defects.md)（已知缺陷索引）。
 
 ## 1. 为什么做
 
@@ -83,7 +87,7 @@ impl<M: TargetMachine> JitLoader<M> {
 | M2 | `Stage` 枚举 + 命名计时 + `precheck` / 合法化批次外提 | 完成 |
 | M3 | `runtime/jit.rs` 拆文件，棘轮扩到 `src/runtime/**` | 完成 |
 | M4 | `JitSignatureInfo` + `JitSignature::get`，迁移 153 处调用点 | 完成 |
-| M5 | 契约文档/CHANGELOG/公开面守卫收口 + 全量门禁 | 待做 |
+| M5 | 契约文档/CHANGELOG/公开面守卫收口 + 全量门禁 | 完成 |
 
 ### M0 金标
 
@@ -178,3 +182,7 @@ impl<M: TargetMachine> JitLoader<M> {
   1 处 forge-tests 调用点迁到 `get`；12 处（向量 by-ref/sret、聚合、sysv64/自定义约定）
   改走 `get_unchecked`（类型化面不表达 ABI 降级后的签名）。新增
   `runtime/jit/signature_tests.rs`（6 条正/反例）。`--all-features` lib 3104 条全绿。
+- **2026-11-01 M5**：契约文档 §1/§2/§10/§15 回写；`tests/public_surface.rs`
+  （根导出/旧符号回潮/`Stage` 六阶段）与 `tests/ergonomics.rs`（三步编译并调用）落地；
+  `CHANGELOG.md` 记 breaking；本计划归档到 `docs/archive/`。全量门禁
+  `cargo forge gate` **54/54 通过**（含 rustc e2e、jit-x86、jit-riscv64、docs）。

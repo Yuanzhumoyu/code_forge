@@ -71,7 +71,8 @@ const ALLOWED: &[(&str, &str, &str)] = &[
 /// 该文件是不是**测试专属模块**（声明它的 `mod` 带 `#[cfg(test)]`）？
 ///
 /// v25 M4 把 `#[cfg(test)] mod tests` 搬成独立文件后，文件内不再有 `#[cfg(test)]` 可截断；
-/// 于是改为向上找声明它的那份 `mod.rs`（同目录，或父目录——`foo/tests.rs` ⇒ `foo/mod.rs`）。
+/// 于是改为向上找声明它的模块根：同目录 `mod.rs`、父目录 `mod.rs`，或**目录模块根**
+/// `foo/tests.rs` ⇒ `foo.rs`（v30 M3 起 `runtime/jit.rs` 用这种布局）。
 fn is_test_only_module(path: &std::path::Path) -> bool {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
     if stem == "mod" || stem == "lib" {
@@ -80,6 +81,10 @@ fn is_test_only_module(path: &std::path::Path) -> bool {
     let mut cands: Vec<std::path::PathBuf> = Vec::new();
     if let Some(dir) = path.parent() {
         cands.push(dir.join("mod.rs"));
+        // 目录模块根：`runtime/jit/tests.rs` 由 `runtime/jit.rs` 里的 `mod tests;` 声明。
+        if let Some(dir_name) = dir.file_name() {
+            cands.push(dir.with_file_name(format!("{}.rs", dir_name.to_string_lossy())));
+        }
         if let Some(up) = dir.parent() {
             cands.push(up.join("mod.rs"));
         }

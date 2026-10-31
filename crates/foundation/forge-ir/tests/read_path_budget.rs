@@ -64,8 +64,13 @@ const BUDGETS: &[(&str, usize, &str)] = &[
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/compiler/mod.rs",
+        0,
+        "v30 M2：类型快照外提到 `precheck.rs`；0 = 回潮守卫（v23 M6 批次 2+3+4：20 → 13 → 4 → 3；v25 M4 切分后按文件记账）",
+    ),
+    (
+        "crates/backend/forge-codegen/src/pipeline/precheck.rs",
         1,
-        "读写交错短读段（v23 M6 批次 2+3+4：20 → 13 → 4 → 3；v25 M4 切分后按文件记账）",
+        "前置能力门：整个 pass 只取一次类型快照（v30 M2 从 compiler/mod.rs 外提）",
     ),
     (
         "crates/backend/forge-codegen/src/pipeline/compiler/state.rs",
