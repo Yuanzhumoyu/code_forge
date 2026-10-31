@@ -16,7 +16,12 @@
 //! 10. Epilogue              — TargetFrameLowering::emit_epilogue
 //! 11. Fixup Resolution      — CodeSink::finish()
 
+use std::sync::Arc;
+
 use crate::machine::target::TargetMachine;
+use crate::pipeline::error::CompileError;
+use crate::pipeline::options::CompileOptions;
+use crate::pipeline::stage::Stage;
 
 /// Map an `AtomicRmwOp` discriminant (as encoded by `builder.atomic_rmw` into
 /// `Immediate::Uint`) back to the enum. Defaults to `Add` on unknown values.
@@ -48,22 +53,26 @@ use forge_ir::*;
 /// 单函数：`new`/`for_module` → `compile`（或 `compile_with_alloc`）。
 /// 整模块：`for_module` → `compile_module`（见 `pipeline/session.rs` 的 `CompiledModule`）。
 pub struct CompileSession<M: TargetMachine> {
-    machine: M,
+    /// 目标机器（`Arc` 持有：整模块编排按函数克隆一份引用，不再要求 `M: Clone`）。
+    machine: Arc<M>,
     reg_alloc: BacktrackingAllocator,
-    /// IR 级优化级别（None = 不优化，直接编译）。Some(level) 时
-    /// `compile()`/`compile_with_alloc()` 先对函数克隆体跑对应 PassManager 管线再 lower。
-    /// P0-1：把 forge-opt 优化管线接入生产编译（此前 PassManager 是死代码）。
-    opt_level: Option<forge_opt::OptimizationLevel>,
+    /// 编译选项（v30 M1）：优化级别 + 并行策略。构造后不可变。
+    options: CompileOptions,
     /// **模块级签名表**（变参 D6）：`FuncRef::index()` → 签名事实。
     ///
     /// 编译**整个模块**的入口（或装过表的单函数入口）填它（[`Self::with_module_sigs`]）；
     /// 没装 ⇒ 调用点按非变参处理。
-    module_sigs: Option<std::sync::Arc<forge_ir::ModuleSigs>>,
+    module_sigs: Option<Arc<forge_ir::ModuleSigs>>,
 }
 
 impl<M: TargetMachine> CompileSession<M> {
     /// Create a new compiler with the default register allocator (backtracking).
     pub fn new(machine: M) -> Self {
+        Self::from_arc(Arc::new(machine))
+    }
+
+    /// 从已共享的机器构造（JIT 装载器持 `Arc<M>`，避免每个函数冷克隆整台机器）。
+    pub fn from_arc(machine: Arc<M>) -> Self {
         // 宿主级**一次**注册（幂等）：管线工厂 + **调用点布局钩子**（v20 A5-3）。
         // 生成物的 lowering 在调用点按 `(ISA, 约定, 实参形状)` 查后者拿被调方落点；
         // 没注册就 fail-closed——所以放在每个编译入口（OnceLock，热路径只是一次原子读）。
@@ -71,13 +80,18 @@ impl<M: TargetMachine> CompileSession<M> {
         Self {
             machine,
             reg_alloc: BacktrackingAllocator,
-            opt_level: opt_default::default_opt_level(),
+            options: CompileOptions::new(),
             module_sigs: None,
         }
     }
 
     /// 宿主机器（整模块编排要用它的克隆；会话自己持有它，不再外借）。
     pub(crate) fn machine(&self) -> &M {
+        self.machine.as_ref()
+    }
+
+    /// 共享机器句柄（整模块编排按函数分发 worker 用）。
+    pub(crate) fn machine_arc(&self) -> &Arc<M> {
         &self.machine
     }
 
@@ -85,8 +99,19 @@ impl<M: TargetMachine> CompileSession<M> {
     ///
     /// 表由 IR 模块自己给出（[`forge_ir::Module::signature_table`]）——别在宿主侧另抄一份。
     pub fn with_module_sigs(mut self, sigs: forge_ir::ModuleSigs) -> Self {
-        self.module_sigs = Some(std::sync::Arc::new(sigs));
+        self.module_sigs = Some(Arc::new(sigs));
         self
+    }
+
+    /// **装上编译选项**（v30 M1：取代 `with_opt_level` 的散装 setter）。
+    pub fn with_options(mut self, options: CompileOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// 当前编译选项。
+    pub fn options(&self) -> &CompileOptions {
+        &self.options
     }
 
     /// **编译"住在某个模块里的函数"**——从模块自己取签名表装上（变参 D6）。
@@ -97,19 +122,8 @@ impl<M: TargetMachine> CompileSession<M> {
         Self::new(machine).with_module_sigs(module.signature_table())
     }
 
-    /// 启用 IR 级优化（`compile`/`compile_with_alloc` 前跑对应 O 级别管线）。
-    pub fn with_opt_level(mut self, level: forge_opt::OptimizationLevel) -> Self {
-        self.opt_level = Some(level);
-        self
-    }
-
-    /// 当前优化级别（None = 未启用）。
-    pub fn opt_level(&self) -> Option<forge_opt::OptimizationLevel> {
-        self.opt_level
-    }
-
-    /// Compile an IR function (full pipeline，含 IR 级优化若已启用 `with_opt_level`)。
-    pub fn compile(&self, func: &Function) -> Result<CompiledFunction, IrError> {
+    /// Compile an IR function (full pipeline，含 IR 级优化若 `options` 指定了级别)。
+    pub fn compile(&self, func: &Function) -> Result<CompiledFunction, CompileError> {
         self.compile_with_alloc(func).map(|(cf, _)| cf)
     }
 
@@ -157,8 +171,8 @@ impl<M: TargetMachine> CompileSession<M> {
     pub fn compile_with_alloc(
         &self,
         func: &Function,
-    ) -> Result<(CompiledFunction, crate::AllocResult), IrError> {
-        // **机读出口**（v25 M3）：成功路径的事件在 `compile_with_alloc_inner` 里发
+    ) -> Result<(CompiledFunction, crate::AllocResult), CompileError> {
+        // **机读出口**（v25 M3）：成功路径的事件在 `compile_stages` 里发
         //（那里才有阶段耗时），这里只负责**失败路径**——缺口 ID 是 CI 最想按类分的字段。
         let r = self.compile_with_alloc_inner(func);
         if let Err(e) = &r {
@@ -174,16 +188,31 @@ impl<M: TargetMachine> CompileSession<M> {
         r
     }
 
+    /// 单函数管线入口：给错误补上**阶段 + 函数**（v30 M1）。
+    ///
+    /// 阶段标签由 `compile_stages` 随执行推进；出错时停在最后进入的阶段。
     fn compile_with_alloc_inner(
         &self,
         func: &Function,
+    ) -> Result<(CompiledFunction, crate::AllocResult), CompileError> {
+        let mut stage = Stage::Legalize;
+        let name = func.name.clone();
+        self.compile_stages(func, &mut stage)
+            .map_err(|e| CompileError::at(stage, &name, e))
+    }
+
+    fn compile_stages(
+        &self,
+        func: &Function,
+        stage: &mut Stage,
     ) -> Result<(CompiledFunction, crate::AllocResult), IrError> {
         // P0-1：IR 级优化管线接入——若启用，克隆函数跑对应 O 级别管线，
         // 用优化后的克隆体继续编译（原 func 不被修改；PassManager 需要
         // &mut Function）。未启用时不克隆（零开销）。
-        // 注：**没有**"绕过优化"的旁路入口——要优化就 `with_opt_level`，不要就默认。
+        // 注：**没有**"绕过优化"的旁路入口——要优化就 `with_options(CompileOptions::speed(..))`，
+        // 不要就用 `CompileOptions::off()`（或进程级默认）。
         let mut owned: Function;
-        let func: &Function = if let Some(level) = self.opt_level {
+        let func: &Function = if let Some(level) = self.options.opt_level() {
             owned = func.clone();
             let pm = forge_opt::PassManager::for_level(level);
             pm.run_on_function(&mut owned)?;
@@ -199,7 +228,7 @@ impl<M: TargetMachine> CompileSession<M> {
         // 类型都必须落在 ISA 值池内（`TargetRegInfo::class_for_type`）。1 字节
         // 寄存器 ISA 上出现 i16/i32/i64/指针 等宽类型时**编译期拒绝**，而不是
         // 静默按 8 字节池生成不存在的寄存器类（历史行为：生成成功但语义错误）。
-        Self::check_value_pools(&self.machine, func)?;
+        Self::check_value_pools(self.machine.as_ref(), func)?;
         // 宽向量参数/返回（>16 字节）ABI：
         // - 若 ISA 声明 `vector by-ref limit`（如 x86 limit=128 位）→ 宽向量按
         //   引用传参（调用方栈拷贝 + 传指针 GPR；被调方入口从 [ptr] 加载）。
@@ -352,13 +381,13 @@ impl<M: TargetMachine> CompileSession<M> {
         )> = None;
         if crate::pipeline::va_expand::has_va_op(func) {
             match crate::pipeline::va_expand::va_info_for_expansion(
-                &self.machine,
+                self.machine.as_ref(),
                 func,
                 self.module_sigs.clone(),
             )? {
                 Some((va, layout)) => {
                     let fl = crate::pipeline::frame_layout::frame_layout_info(
-                        &self.machine,
+                        self.machine.as_ref(),
                         Some(&layout),
                     );
                     va_pending = Some((va, i64::from(fl.stack_slot_shift)));
@@ -382,7 +411,11 @@ impl<M: TargetMachine> CompileSession<M> {
         // >8 字节聚合显式 Unsupported）。必须在 CompileState 创建**之前**
         // 执行：CompileState 克隆 func 的常量池，若先建 state 再展开，新常量
         // 只进 func_owned 副本的池，lowering 读 state 里旧池（idx 错位 → 0）。
-        crate::pipeline::legalize::ensure_scalar_owned(&self.machine, func, &mut func_owned);
+        crate::pipeline::legalize::ensure_scalar_owned(
+            self.machine.as_ref(),
+            func,
+            &mut func_owned,
+        );
         if let Some(f) = func_owned.as_mut() {
             // **合法化单一驱动**（v23 M6）：定序、依赖传递与"改了什么"都收在驱动里。
             // 与"改了什么"都收在 `legalize::LegalizeDriver` 里，调用点不再抄一份次序。
@@ -390,7 +423,8 @@ impl<M: TargetMachine> CompileSession<M> {
             // 副本 + 指针`、sysv64 `>16B ⇒ 传出参数区（未接）`。约定名解析失败 ⇒ fail-closed
             //（与 `abi_setup::setup_conv` 同口径）。
             let agg_conv = crate::pipeline::conv_registry::resolve(&f.calling_convention)?;
-            let mut lctx = crate::pipeline::legalize::LegalizeCtx::new(&self.machine, agg_conv);
+            let mut lctx =
+                crate::pipeline::legalize::LegalizeCtx::new(self.machine.as_ref(), agg_conv);
             let mut changes =
                 crate::pipeline::legalize::LegalizeDriver::scalar().run(f, &mut lctx)?;
             // ① 聚合族先跑（不含 va）：它新增 `Alloca` ⇒ 必须在 ABI 槽排布前落定。
@@ -407,8 +441,8 @@ impl<M: TargetMachine> CompileSession<M> {
                 let slots = crate::pipeline::va_expand::plan_abi_slots(
                     f,
                     &va,
-                    crate::machine::target::TargetMachine::reg_info(&self.machine).slot_bytes()
-                        as u32,
+                    crate::machine::target::TargetMachine::reg_info(self.machine.as_ref())
+                        .slot_bytes() as u32,
                     shift,
                 );
                 abi_slots = Some(slots);
@@ -453,8 +487,13 @@ impl<M: TargetMachine> CompileSession<M> {
         // Stage 4+ 读取的 Function：有改写（pattern/聚合展开）时用副本。
         let func_ref: &Function = func_owned.as_ref().unwrap_or(func);
 
-        let mut state =
-            CompileState::new(&self.machine, func_ref, self.module_sigs.clone(), abi_slots)?;
+        *stage = Stage::ISel;
+        let mut state = CompileState::new(
+            self.machine.as_ref(),
+            func_ref,
+            self.module_sigs.clone(),
+            abi_slots,
+        )?;
         let _t = std::time::Instant::now();
 
         // Stage 1: Block mapping
@@ -499,7 +538,8 @@ impl<M: TargetMachine> CompileSession<M> {
         let _t = std::time::Instant::now();
 
         // Stage 6: Register allocation
-        let alloc_result = state.run_regalloc(&self.reg_alloc, &self.machine)?;
+        *stage = Stage::RegAlloc;
+        let alloc_result = state.run_regalloc(&self.reg_alloc, self.machine.as_ref())?;
         let _t5 = _t.elapsed();
         // **溢出决策事件化**（v27 M6-87，P4）：逐值报出"谁被溢出、落在哪个槽"。
         // 只是可见性：`emit` 未设置出口环境变量时零开销（见 `pipeline::events` 契约）。
@@ -585,12 +625,13 @@ impl<M: TargetMachine> CompileSession<M> {
         let _t = std::time::Instant::now();
 
         // Stage 7: Frame layout
-        let frame_size = state.calculate_frame_size(&alloc_result, &self.machine);
+        let frame_size = state.calculate_frame_size(&alloc_result, self.machine.as_ref());
         let _t6 = _t.elapsed();
         let _t = std::time::Instant::now();
 
         // Stage 8-11: Emission
-        let result = state.emit_code(func_ref, &alloc_result, frame_size, &self.machine);
+        *stage = Stage::Emit;
+        let result = state.emit_code(func_ref, &alloc_result, frame_size, self.machine.as_ref());
         let _t7 = _t.elapsed();
         // **无条件**发（不受诊断开关影响）：CI 靠它判断"这一轮编了什么、快慢如何"。
         // 时间单位统一微秒（`as_micros()`），避免不同平台的 Debug 格式混进 JSON。
@@ -661,7 +702,6 @@ impl<M: TargetMachine> CompileSession<M> {
 // CompileState — mutable pipeline state
 // ============================================================
 
-pub mod opt_default;
 mod state;
 
 pub(crate) use state::CompileState;

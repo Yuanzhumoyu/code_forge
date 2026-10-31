@@ -246,7 +246,7 @@ impl CodegenBackend for CodegenLibBackend {
 
     fn codegen_crate<'tcx>(&self, tcx: TyCtxt<'tcx>) -> Box<dyn Any> {
         // **IR 优化管线（v27 M5/M6）**：此前 rustc 后端**从未**启用过 `forge-opt`
-        // （`CompileSession::with_opt_level` 只在测试里被调用）⇒ 所有 MIR 局部都留在栈槽、
+        // （`CompileSession` 的优化级别只在测试里被设置）⇒ 所有 MIR 局部都留在栈槽、
         // `-C opt-level` 对产物几乎没有影响。现在按 `-C opt-level` 映射到 `forge-opt` 档位，
         // 与 rustc 的语义对齐（0 = 不跑优化；1/2/3 = O1/O2/O3；s/z = O2）。
         //
@@ -270,7 +270,7 @@ impl CodegenBackend for CodegenLibBackend {
                 },
             };
             code_forge::backend::pipeline_hooks::ensure_registered();
-            code_forge::backend::pipeline::compiler::opt_default::set_default_opt_level(level);
+            code_forge::backend::set_default_opt_level(level);
         }
         crate::trace::install_panic_hook();
 

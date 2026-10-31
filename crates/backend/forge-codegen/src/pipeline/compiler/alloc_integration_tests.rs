@@ -195,7 +195,7 @@ fn test_div_clobber_alloc_integrity() {
     }
 }
 
-/// P0-1 集成：`with_opt_level` 编译常量折叠函数——O1 管线把
+/// P0-1 集成：`CompileOptions::speed(O1)` 编译常量折叠函数——O1 管线把
 /// `iconst(21)*iconst(2)` 折叠为常量，编译产物仍正确（此前优化管线
 /// 在生产路径是死代码）。
 #[test]
@@ -220,7 +220,9 @@ fn p0_compile_with_opt_level() {
         .expect("compile 无优化");
     // O1 优化编译（常量折叠 21*2 → 42）
     let (cf1, _) = CompileSession::new(machine.clone())
-        .with_opt_level(forge_opt::OptimizationLevel::O1)
+        .with_options(crate::CompileOptions::speed(
+            forge_opt::OptimizationLevel::O1,
+        ))
         .compile_with_alloc(&func)
         .expect("compile 带 O1");
     assert!(!cf0.code.is_empty(), "无优化产物非空");
@@ -368,7 +370,9 @@ fn compile_wide_slot_roundtrip(lanes: usize) -> Result<CompiledFunction, IrError
     let int = b.fptosi(wide, TypeId::I32);
     b.ret(&[int]);
     let func = b.finish().expect("build wide vector slot roundtrip");
-    CompileSession::new(x86::TargetMachine::new()).compile(&func)
+    CompileSession::new(x86::TargetMachine::new())
+        .compile(&func)
+        .map_err(Into::into)
 }
 
 /// **栈探测**（v27 M6-78）：帧超过阈值时序言必须先 `mov rax, 帧大小` + `call __chkstk`

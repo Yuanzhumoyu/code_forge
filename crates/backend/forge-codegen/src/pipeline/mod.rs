@@ -9,6 +9,8 @@ pub mod compiler;
 /// 宿主调用约定注册表（IR 的 `CallConvId` → 注册名；未注册即 fail-closed）。
 pub mod conv_registry;
 pub mod emission;
+/// 宿主面编译错误：阶段 + 函数 + 原始 `IrError`（v30 M1）。
+pub mod error;
 pub mod events;
 pub mod field_check;
 pub mod frame_layout;
@@ -19,6 +21,8 @@ pub mod inline_asm;
 pub mod legalize;
 pub mod liverange;
 pub mod lowering;
+/// 编译选项（v30 M1）：`CompileOptions` / `Parallelism` + 进程级默认优化级别。
+pub mod options;
 /// IR 视图 → 引擎视图（签名 + 参数属性；v20 A2b）。
 pub mod param_copies;
 pub mod regalloc_bt;
@@ -26,6 +30,8 @@ pub mod regalloc_bt;
 pub mod session;
 pub mod sig_view;
 pub mod spill_init;
+/// 编译阶段（v30 M1；M2 起是文档表/计时/事件的唯一来源）。
+pub mod stage;
 /// **观测开关台账**（v24 M4）：诊断开关不可能静默失效（见模块文档）。
 pub mod trace;
 pub mod va_expand;

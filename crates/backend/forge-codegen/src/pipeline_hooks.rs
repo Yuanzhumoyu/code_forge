@@ -19,7 +19,7 @@ struct Hook<M: forge_isa_runtime::machine::target::TargetMachine + Clone>(Compil
 
 impl<M: forge_isa_runtime::machine::target::TargetMachine + Clone> FunctionPipeline for Hook<M> {
     fn compile(&self, func: &forge_ir::Function) -> Result<CompiledFunction, IrError> {
-        self.0.compile(func)
+        self.0.compile(func).map_err(Into::into)
     }
 }
 

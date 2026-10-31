@@ -1,16 +1,25 @@
 //! 模块级编译编排 —— [`CompiledModule`] 与 [`CompileSession`] 的整模块/单函数入口。
 //!
-//! 分工：`compiler.rs` 是**单函数**管线（IR → 机器码），本文件是**宿主面**——
+//! 分工：`compiler/` 是**单函数**管线（IR → 机器码），本文件是**宿主面**——
 //! 把"一个模块怎么编译"（数据段、符号、并按 `FuncRef` 序逐个编译）唯一地实现一次。
 //! JIT（`runtime/jit.rs`）与对象文件出口（`forge-object`）都从这里取产物，
 //! 不再各自重抄一遍"并行/串行 + 签名表 + 符号名"的编排。
+//!
+//! v30 M1：产物/入口改带 [`CompileError`]（阶段 + 函数）；并行策略由
+//! [`CompileSession::options`] 决定（`Parallelism::{Auto, Serial, Threads}`）。
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::machine::target::TargetMachine;
 use crate::pipeline::compiler::CompileSession;
+use crate::pipeline::error::CompileError;
+use crate::pipeline::options::Parallelism;
+use crate::pipeline::stage::Stage;
 use crate::{CompiledFunction, IrError};
 use forge_ir::ir::function::Function;
 use forge_ir::ir::types::FunctionSignature;
-use forge_ir::{FuncRef, ImmStr, Module};
+use forge_ir::{FuncRef, ImmStr, Module, ModuleSigs};
 
 /// 一次整模块编译的产物（**纯数据**：机器码 + 符号 + 数据段，不含可执行内存）。
 ///
@@ -76,24 +85,87 @@ impl CompiledModule {
 }
 
 /// 编译模块里的一个函数（串行/并行两条路径共用；会话只是"机器 + 签名表"的搬运工）。
-fn compile_one<M: TargetMachine + Clone>(
-    machine: &M,
-    sigs: &std::sync::Arc<forge_ir::ModuleSigs>,
+fn compile_one<M: TargetMachine>(
+    machine: &Arc<M>,
+    sigs: &Arc<ModuleSigs>,
     func: &Function,
-) -> Result<(ImmStr, CompiledFunction), IrError> {
-    CompileSession::new(machine.clone())
+) -> Result<(ImmStr, CompiledFunction), CompileError> {
+    CompileSession::from_arc(Arc::clone(machine))
         .with_module_sigs((**sigs).clone())
         .compile(func)
         .map(|cf| (func.name.clone(), cf))
 }
 
-impl<M: TargetMachine + Clone> CompileSession<M> {
+/// 逐函数编译（串行或固定大小的 worker 池；结果按 `FuncRef` 序回收）。
+///
+/// `Parallelism::Auto` 保持历史行为：函数数 ≥ 8 时**每函数一个** scoped 线程；
+/// `Threads(n)` 起 n 个 worker 从共享下标取活（并发度 = min(n, 函数数)）。
+fn compile_functions<M: TargetMachine>(
+    machine: &Arc<M>,
+    sigs: &Arc<ModuleSigs>,
+    module: &Module,
+    parallel: Parallelism,
+) -> Result<Vec<(ImmStr, CompiledFunction)>, CompileError> {
+    let count = module.function_count();
+    let workers = parallel.worker_count(count);
+    if workers <= 1 {
+        return (0..count)
+            .map(|i| compile_one(machine, sigs, module.get_function(FuncRef::new(i as u32))))
+            .collect();
+    }
+
+    let next = AtomicUsize::new(0);
+    let slots: Mutex<Vec<Option<Result<(ImmStr, CompiledFunction), CompileError>>>> =
+        Mutex::new((0..count).map(|_| None).collect());
+
+    std::thread::scope(|s| -> Result<(), CompileError> {
+        let mut handles = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            let next = &next;
+            let slots = &slots;
+            handles.push(s.spawn(move || {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    if i >= count {
+                        break;
+                    }
+                    let r = compile_one(machine, sigs, module.get_function(FuncRef::new(i as u32)));
+                    slots.lock().expect("compile slots poisoned")[i] = Some(r);
+                }
+            }));
+        }
+        for handle in handles {
+            if handle.join().is_err() {
+                return Err(CompileError::module(IrError::Internal(
+                    "compile thread panicked".into(),
+                )));
+            }
+        }
+        Ok(())
+    })?;
+
+    slots
+        .into_inner()
+        .expect("compile slots poisoned")
+        .into_iter()
+        .enumerate()
+        .map(|(i, slot)| {
+            slot.unwrap_or_else(|| {
+                Err(CompileError::module(IrError::Internal(format!(
+                    "compile worker 未产出函数 {i}"
+                ))))
+            })
+        })
+        .collect()
+}
+
+impl<M: TargetMachine> CompileSession<M> {
     /// **整模块编译**（唯一实现）：登记全局数据段与符号 → 逐函数编译（大模块并行）
     /// → 按 `FuncRef` 序返回。
     ///
     /// 签名表由模块自己给出（[`Module::signature_table`]），**每条函数**都装同一份
     /// （变参调用点的落点规划靠它）。
-    pub fn compile_module(&self, module: &Module) -> Result<CompiledModule, IrError> {
+    pub fn compile_module(&self, module: &Module) -> Result<CompiledModule, CompileError> {
         // ① 全局变量：每全局一段堆分配，登记源码名与 `@N` 两种符号名。
         //
         // init 字节缺失（如 `zeroinitializer` 文本层 init=None）时按类型大小生成零段——
@@ -118,43 +190,10 @@ impl<M: TargetMachine + Clone> CompileSession<M> {
             data_segments.push(seg);
         }
 
-        // ② 签名表与逐函数编译（≥8 个函数走 scoped 并行：各函数互不共享可变状态）。
-        let sigs = std::sync::Arc::new(module.signature_table());
-        let func_count = module.function_count();
-        let functions: Vec<(ImmStr, CompiledFunction)> = if func_count >= 8 {
-            std::thread::scope(|s| {
-                let handles: Vec<_> = (0..func_count)
-                    .map(|i| {
-                        let machine = self.machine().clone();
-                        let sigs = sigs.clone();
-                        s.spawn(move || {
-                            compile_one(
-                                &machine,
-                                &sigs,
-                                module.get_function(FuncRef::new(i as u32)),
-                            )
-                        })
-                    })
-                    .collect();
-                handles
-                    .into_iter()
-                    .map(|h| {
-                        h.join()
-                            .map_err(|_| IrError::Internal("compile thread panicked".into()))?
-                    })
-                    .collect::<Result<Vec<_>, IrError>>()
-            })?
-        } else {
-            (0..func_count)
-                .map(|i| {
-                    compile_one(
-                        self.machine(),
-                        &sigs,
-                        module.get_function(FuncRef::new(i as u32)),
-                    )
-                })
-                .collect::<Result<_, _>>()?
-        };
+        // ② 签名表与逐函数编译（并行策略由选项决定；各函数互不共享可变状态）。
+        let sigs = Arc::new(module.signature_table());
+        let functions =
+            compile_functions(self.machine_arc(), &sigs, module, self.options().parallel())?;
 
         Ok(CompiledModule {
             isa: ImmStr::from(TargetMachine::isa_info(self.machine()).name()),
@@ -173,12 +212,14 @@ impl<M: TargetMachine + Clone> CompileSession<M> {
         name: &str,
         signature: &FunctionSignature,
         build_fn: impl FnOnce(&mut forge_ir::ir::builder::FunctionBuilder),
-    ) -> Result<CompiledFunction, IrError> {
+    ) -> Result<CompiledFunction, CompileError> {
         let store = forge_ir::ir::types::TypeContext::new();
         let mut builder =
             forge_ir::ir::builder::FunctionBuilder::new(name, store, signature.clone());
         build_fn(&mut builder);
-        let func: Function = builder.finish()?;
+        let func: Function = builder
+            .finish()
+            .map_err(|e| CompileError::at(Stage::ISel, &ImmStr::from(name), e))?;
         self.compile(&func)
     }
 }

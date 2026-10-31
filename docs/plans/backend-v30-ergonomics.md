@@ -78,8 +78,8 @@ impl<M: TargetMachine> JitLoader<M> {
 
 | 里程碑 | 内容 | 状态 |
 | --- | --- | --- |
-| M0 | 金标（golden bytes）+ 活账本 | **进行中** |
-| M1 | `CompileOptions` / `CompileError` / `Arc<M>`，删除 `with_opt_level` | 待做 |
+| M0 | 金标（golden bytes）+ 活账本 | 完成 |
+| M1 | `CompileOptions` / `CompileError` / `Arc<M>`，删除 `with_opt_level` | **进行中** |
 | M2 | `Stage` 枚举 + 命名计时 + `precheck` / 合法化批次外提 | 待做 |
 | M3 | `runtime/jit.rs` 拆文件，棘轮扩到 `src/runtime/**` | 待做 |
 | M4 | `JitSignatureInfo` + `JitSignature::get`，迁移 153 处调用点 | 待做 |
@@ -148,6 +148,13 @@ impl<M: TargetMachine> JitLoader<M> {
 
 ## 6. 进度记录
 
-- **2026-11-01**：立项；M0 金标测试与夹具落地中。
+- **2026-11-01**：立项；M0 金标测试与夹具落地（三 ISA × 六用例，重构前采集）。
   本机 `target/debug` 里的旧 proc-macro DLL 被外部进程占用（重建时报 `LNK1104`），
   本轮验证改用 `CARGO_TARGET_DIR=target/v30`（仓库约定：实验产物进 `target/<名字>`）。
+- **2026-11-01 M1**：`CompileOptions`/`Parallelism` 落地（`pipeline/options.rs`，
+  吸收并删除 `compiler/opt_default.rs`）；`CompileError` 落地（`pipeline/error.rs`）；
+  `CompileSession`/`JitLoader` 改持 `Arc<M>`，`compile_module` 不再要求 `M: Clone`；
+  `Parallelism::Threads(n)` 用固定大小 worker 池（`min(n, 函数数)`），`Auto` 保持历史行为。
+  两处对批准方案的细化：① `Stage` 增 `Module` 变体（整模块编排失败；**不进**管线阶段表
+  与 `Stage::ALL`）；② `CompileError::gap_id()` 返回 `Option<String>`（`IrError::gap_id`
+  本就是 String，避免返回临时值的引用）。金标字节不变；`compile_error_context` 绿。

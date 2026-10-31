@@ -282,8 +282,9 @@ fn compile_i8_function_with_opt_level_skips_tombstoned_values() {
     let func = b.finish().expect("build");
 
     common::ensure_demo_conventions();
-    let compiler =
-        CompileSession::new(TargetMachine::new()).with_opt_level(forge_opt::OptimizationLevel::O1);
+    let compiler = CompileSession::new(TargetMachine::new()).with_options(
+        forge_codegen::CompileOptions::speed(forge_opt::OptimizationLevel::O1),
+    );
     let cf = compiler
         .compile(&func)
         .expect("开启 O1 后 i8 函数必须仍可编译（墓碑值不得触发值池门）");

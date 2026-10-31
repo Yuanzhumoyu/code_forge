@@ -25,9 +25,13 @@
 | `CompileSession::new(machine)` | 单函数 | `compile(&Function)` / `compile_with_alloc(&Function)` |
 | `CompileSession::for_module(machine, &Module)` | 单函数或整模块 | 从模块取签名表装上（§6） |
 | `CompileSession::with_module_sigs(ModuleSigs)` | 显式装表 | 表由 `Module::signature_table()` 给出 |
-| `CompileSession::with_opt_level(level)` | 前置 IR 优化 | 不设置 = 不优化；**没有**"绕过优化"的旁路入口 |
+| `CompileSession::with_options(CompileOptions)` | 编译选项（优化级别 + 并行策略，v30 M1） | 不设置 = 进程级默认；**没有**"绕过优化"的旁路入口 |
 | `CompileSession::add_function(name, sig, build_fn)` | 单函数便捷 | 与 `compile` 同源，认会话上的签名表 |
-| `CompileSession::compile_module(&Module)` | 整模块 | 返回 `CompiledModule`：全局数据段与双符号 + 逐函数（≥8 个函数走 scoped 并行）；函数按 `FuncRef` 序 |
+| `CompileSession::compile_module(&Module)` | 整模块 | 返回 `CompiledModule`：全局数据段与双符号 + 逐函数（并行策略由选项决定）；函数按 `FuncRef` 序 |
+
+所有编译入口返回 `Result<_, CompileError>`（v30 M1）：`CompileError` 在 `IrError` 外补
+**阶段**（`Stage`）与**函数名**，`gap_id()` 直通缺口台账；erased/插件边界用
+`CompileError::into_ir()` 折叠回 `IrError`。
 
 `CompiledModule` 是**纯数据且类型无关**（机器码 + 符号 + 数据段，不含机器实例、不含可执行内存）：
 `isa()` / `function_count` / `function(name)` / `iter_functions` / `globals` / `data_segments` /

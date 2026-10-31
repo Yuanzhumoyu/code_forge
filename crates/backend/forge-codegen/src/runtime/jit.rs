@@ -25,8 +25,11 @@
 //! assert_eq!(add(3, 4), 7);
 //! ```
 
+use std::sync::Arc;
+
 use crate::machine::target::TargetMachine;
 use crate::pipeline::compiler::CompileSession;
+use crate::pipeline::error::CompileError;
 use crate::pipeline::session::CompiledModule;
 use crate::{CompiledFunction, RelocKind, Relocation};
 use forge_ir::ImmStr;
@@ -102,8 +105,8 @@ pub type SymbolResolver<'a> = dyn Fn(&str) -> Option<u64> + 'a;
 /// **编译不在本类型里**：`add_function` / `compile_module` 是薄委托——都转调
 /// [`CompileSession`]（唯一编译实现），再走 [`Self::install`] 装载。
 pub struct JitLoader<M: TargetMachine> {
-    /// 目标机器（构造 `CompileSession` 用）。
-    machine: M,
+    /// 目标机器（`Arc` 持有：编译会话按函数共享同一份机器，不再要求 `M: Clone`）。
+    machine: Arc<M>,
     /// 已编译函数的可执行内存（按名称索引）。
     compiled: HashMap<ImmStr, (CompiledFunction, ExecutableMemory)>,
     /// 符号表：函数名 → 入口地址（用于跨函数调用解析）。
@@ -165,7 +168,7 @@ fn stack_probe_addr() -> u64 {
     }
 }
 
-impl<M: TargetMachine + Clone> JitLoader<M> {
+impl<M: TargetMachine> JitLoader<M> {
     /// 创建新的 JIT 装载器。
     pub fn new(machine: M) -> Self {
         let mut symbols: HashMap<ImmStr, u64> = HashMap::new();
@@ -174,7 +177,7 @@ impl<M: TargetMachine + Clone> JitLoader<M> {
         // ⇒ 必须在这里注册，否则那条重定位解析不到、调用会跳进垃圾地址。
         symbols.insert(ImmStr::from(STACK_PROBE_SYMBOL), stack_probe_addr());
         Self {
-            machine,
+            machine: Arc::new(machine),
             compiled: HashMap::new(),
             symbols,
             pending_relocs: Vec::new(),
@@ -204,8 +207,11 @@ impl<M: TargetMachine + Clone> JitLoader<M> {
         signature: &FunctionSignature,
         build_fn: impl FnOnce(&mut FunctionBuilder),
     ) -> Result<(), IrError> {
-        let session = CompileSession::new(self.machine.clone()).with_module_sigs(self.sigs.clone());
-        let compiled = session.add_function(name, signature, build_fn)?;
+        let session =
+            CompileSession::from_arc(Arc::clone(&self.machine)).with_module_sigs(self.sigs.clone());
+        let compiled = session
+            .add_function(name, signature, build_fn)
+            .map_err(CompileError::into_ir)?;
         // 记进累积表：本函数的 `FuncRef` 序即"第几个被 add_function 的函数"。
         self.sigs.push(FuncSigEntry {
             variadic: signature.variadic,
@@ -228,8 +234,10 @@ impl<M: TargetMachine + Clone> JitLoader<M> {
     /// 编译由 [`CompileSession::compile_module`] 完成（大模块并行）；
     /// 装载串行进行（`FuncRef` 序），保证跨函数 `Call` 的符号可见性。
     pub fn compile_module(&mut self, module: &Module) -> Result<(), IrError> {
-        let session = CompileSession::for_module(self.machine.clone(), module);
-        let compiled = session.compile_module(module)?;
+        let session = CompileSession::from_arc(Arc::clone(&self.machine));
+        let compiled = session
+            .compile_module(module)
+            .map_err(CompileError::into_ir)?;
         self.install(compiled)?;
         self.resolve_pending()
     }
