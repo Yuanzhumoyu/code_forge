@@ -115,6 +115,11 @@
 
 ## 6. 验证
 
+- 2026-10-31 全量门禁：`cargo run -p cargo-forge -- gate` **54/54 全绿**
+  （`rustc-e2e` 214、arm64 oracle/exec、jit-x86/riscv64、clippy、workspace、docs）。
+  本机需 `CARGO_BUILD_JOBS=1` 防内存耗尽；arm64 探针偶发环境性失败，单独复跑 13/13、
+  LICM 探针 10/10 通过。
+
 ```bash
 cargo fmt --all -- --check
 cargo test -p forge-isa-dsl
