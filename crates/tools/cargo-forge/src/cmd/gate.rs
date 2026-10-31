@@ -543,7 +543,15 @@ fn build_steps(a: &Args) -> Vec<Step> {
         "arm64-rustc-exec",
         "rustc→aarch64 首光（ELF 对象 + crt0/ld.lld + QEMU 真执行）",
         Scope::Windows,
-        &["test", "-p", "forge-rustc", "--test", "arm64_exec"],
+        &[
+            "test",
+            "-p",
+            "forge-rustc",
+            "--test",
+            "arm64_exec",
+            "--",
+            "--test-threads=1",
+        ],
     ));
 
     // ── 守卫注册表 ────────────────────────────────────────────────────

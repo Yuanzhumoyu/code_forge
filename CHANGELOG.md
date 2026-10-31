@@ -24,9 +24,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + **rustc 宽度**：`FunctionBuilder::set_data_layout`；`forge-rustc` 每个函数按 rustc target
   注入 IR `DataLayout`（指针宽度/端序/mangling），`map_type` 的 `usize/isize` 支持
   8/16/32/64（不再 16 位回落 I64）；新增 `data_layout_for`/`int_ty_for_width` 与 16/32/64
-  单测。
+  单测；新增 demo16（2 字节寄存器/槽）夹具与 i16 编译、i32 fail-closed 测试。
 + **动态产物**：新增 `[cap:DYNAMIC_OUTPUT]`，`cdylib/dylib/proc-macro` 编译期明确拒绝
-  （不产出非 PIC/缺动态段的坏对象）；`prefer-dynamic` 仍由 `CODEGEN_OPTS` 拒绝。
+  （不产出非 PIC/缺动态段的坏对象）；新增对象层最小 DLL 链接/导出测试
+  （`tests/dll_link.rs`，`lld-link /DLL` + `llvm-readobj --coff-exports`）；
+  `prefer-dynamic` 仍由 `CODEGEN_OPTS` 拒绝。
 + e2e `simd_i32x4_arith` 仍通过；cdylib 负向探针得到 `[cap:DYNAMIC_OUTPUT]`。
 
 ### Changed (2026-10-31) — ISA 注册清单（v28 M2）

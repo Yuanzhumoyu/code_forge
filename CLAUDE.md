@@ -398,9 +398,10 @@ forge_dsl::isa_from_file!("tests/isa/demo.toml");
 > 注：生成模块导出的是 `TargetMachine`（组合 IsaInfo/RegInfo/ABI/Lowering/Encoder/
 > FrameLowering/Disassembler/Assembler/**Decoder**），**没有 `Isa` 类型**；
 > 无 `register_backend!` 宏。v11 后端（x86_64/aarch64/riscv64/wasm32/minimal_sd）
-> 已随 v11 语法层删除——现为 `arch/x86.rs`、`arch/arm64.rs`、
-> `arch/riscv64.rs`（三者均已接 TargetMachine；riscv 定宽试点有 QEMU 真执行
-> 矩阵）。示例/夹具谱（`demo`、`demo8`、`demo_inst{8,12,100}`）**不在库里**，见
+> 已随 v11 语法层删除——现由 `isa/manifest.toml` 生成
+> `arch/{x86,arm64,riscv64}`（`arch/mod.rs` 只 `include!` 注册表；三者均已接
+> TargetMachine；riscv 定宽试点有 QEMU 真执行矩阵）。
+> 示例/夹具谱（`demo`、`demo8`、`demo16`、`demo_inst{8,12,100}`）**不在库里**，见
 > `crates/backend/forge-codegen/tests/isa/README.md`。
 
 ### Frontend Pipeline (forge-grammar v21)

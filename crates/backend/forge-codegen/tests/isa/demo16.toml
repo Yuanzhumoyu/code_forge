@@ -1,0 +1,223 @@
+#:schema ../../../isa-dsl.schema.json
+# ============================================================
+# demo16 — 2 字节（16 位）寄存器 ISA（v28 M4 宽度回归夹具）
+# ============================================================
+#
+# 目的：证明 16 位原始寄存器/栈槽/值池路径能走通（M4 的 demo16 验收）。
+# 本 ISA 只有一个 2 字节 GPR 组 `[reg.gpr16]`，没有 32/64 位组。
+# 16 位值（i16）可编译；i32/i64/f32 等超过值池宽度的类型被值池门拒绝。
+#
+# 栈槽单位 / 帧指针保存槽 = 2 字节；指令字仍保持 32 位（另一条轴）。
+# 验证：crates/backend/forge-codegen/tests/demo16_tests.rs
+
+[meta]
+name = "demo16"
+version = "15.0"
+endian = "little"
+mode = 16
+# 位（= 生成代码里 __opsize 的 1 字节）
+case_insensitive_regs = true
+comment_char = "#"
+label_suffix = ":"
+mnemonic_case = "insensitive"
+
+# ─────────────────────────── 寄存器组（唯一，1 字节）───────────────────────────
+[encoding]
+kind = "fixed"
+bits = 32
+default_opsize = 16
+
+[reg.gpr16]
+base_index = 0
+names = ["A0", "A1", "A2", "A3", "A4", "A5", "A6", "A7"]
+
+# ─────────────────────── 命名位域 ───────────────────────
+
+[machine.classes]
+ptr = "gpr16"
+
+[operand.a16]
+kind = "reg"
+class = "gpr16"
+roles = "inout"
+bits = 16
+
+[operand.lab]
+kind = "label"
+signed = true
+bits = 8
+
+[operand.imm8]
+kind = "imm"
+signed = true
+bits = 8
+
+# ─────────────────────────── 编码形式 ───────────────────────────
+
+[form.R]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+  "u3[16:14]:rs2",
+]
+
+[form.RR]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+]
+
+[form.RI]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u3[13:11]:rs1",
+  "u8[23:16]:imm8",
+]
+
+[form.RI2]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[10:8]:rd",
+  "u8[23:16]:imm8",
+]
+
+[form.B]
+fields = [
+  "u8[7:0]:opcode",
+  "u3[13:11]:rs1",
+  "u8[23:16]:imm8",
+]
+
+[form.W]
+fields = [
+  "u32[31:0]:opcode",
+]
+
+# ─────────────────────────── 指令 ───────────────────────────
+
+[inst.ADD16]
+group = "add"
+form = "R"
+opcode = 0x10
+asm = "add {dst:a16:out}, {src:a16}, {src2:a16}"
+
+[inst.SUB16]
+group = "sub"
+form = "R"
+opcode = 0x11
+asm = "sub {dst:a16:out}, {src:a16}, {src2:a16}"
+
+[inst.MOV16]
+group = "mov"
+data_width = 16
+form = "RR"
+opcode = 0x20
+asm = "mov {dst:a16:out}, {src:a16}"
+
+[inst.MOV16_R_IMM8]
+group = "mov"
+form = "RI2"
+opcode = 0x21
+asm = "mov {dst:a16:out}, {imm:imm8}"
+
+# 加载/存储（地址 = 基址寄存器 + 8 位偏移；不做独立 mem 槽，与 riscv 同形）
+[inst.LD16]
+form = "RI"
+opcode = 0x30
+asm = "ld {dst:a16:out}, {base:a16}, {imm:imm8}"
+
+[inst.ST16]
+form = "RI"
+opcode = 0x31
+asm = "st {src:a16}, {base:a16}, {imm:imm8}"
+
+# 帧分配/释放（rd = rs1 ± imm8）
+[inst.SUBI16]
+roles = ["frame_alloc"]
+form = "RI"
+opcode = 0x40
+asm = "subi {dst:a16:out}, {src:a16}, {imm:imm8}"
+
+[inst.ADDI16]
+roles = ["frame_free"]
+form = "RI"
+opcode = 0x41
+asm = "addi {dst:a16:out}, {src:a16}, {imm:imm8}"
+
+# 返回（全字位域；word = 1，与 NOP 的 0 区分）
+[inst.RET]
+roles = ["ret"]
+form = "W"
+opcode = 1
+effect = ["Ret"]
+asm = "ret"
+
+# 分支（标签槽）
+[inst.BRZ]
+form = "B"
+opcode = 0x50
+effect = ["Branch"]
+asm = "brz {src:a16}, {target:lab}"
+
+# 无操作数（全字位域，避免与 opcode 0x10 撞车）
+[inst.NOP]
+form = "W"
+opcode = 0
+asm = "nop"
+
+# ════════════════════════════════════════════════════════════
+# TargetMachine 接入：调用约定 + 帧 + 序言/尾声 + lowering
+# ════════════════════════════════════════════════════════════
+
+[machine.stack]
+# 2 字节寄存器 → 槽单位 / 栈对齐 / 帧保存槽全 = 16 位（不写死 x86 的 64/128）
+slot = 16
+align = 16
+fp_save = 16
+
+# 返回寄存器 A0；Return/调用方返回值移动目标
+
+
+[machine]
+addr = "gpr16"
+value_gpr = "gpr16"
+# 机器事实（v20 A5-3 起是正式位置，旧 `[abi]` 同名键已删除）：
+# spill 搬运临时寄存器（regalloc 不可分配）+ A6/A7 是 fp/sp（已在 RegInfo 排除；
+# 显式列出以验证名字解析）；callee-saved 不再声明（v21 W9：唯一来源 = 约定数据）。
+scratch = ["A4", "A5"]
+fixed = ["A6", "A7"]
+
+[machine.frame]
+sp = "A7"
+fp = "A6"
+# fp 保存槽 = 2 字节（不是 x86 的 8）
+fp_push_bytes = 2
+
+[machine.text]
+align_pad = 0
+# 无 JMP 指令：return block 直接 fall-through 到函数末尾的尾声（单 return 安全）
+epilogue_label = false
+
+
+# 溢出模板（基址 = A6 帧指针；LD16/ST16 = Reg + Reg + imm8）
+[machine.spill.gpr]
+class = "gpr16"
+load = "LD16 {0}, A6, {1}"
+store = "ST16 {0}, A6, {1}"
+base = "A6"
+
+# ── 显式别名（多态引用名 → 指令名列表）──
+[[lower.Iadd]]
+insts = ["add {out}, {0}, {1}"]
+
+[[lower.Isub]]
+insts = ["sub {out}, {0}, {1}"]
+
+[[lower.Iconst]]
+insts = ["mov {out}, {iconst}"]
+
+[[lower.Copy]]
+insts = ["mov {out}, {0}"]

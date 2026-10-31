@@ -57,7 +57,7 @@
 - fixture 插件真加载、编译 const42 并 JIT 执行；宿主零 ISA 名。
 - 修 stale 文档。
 
-### M4 rustc 宽度泛化（✅ 核心 2026-10-31：DataLayout + 8/16/32/64 映射；demo16 待补）
+### M4 rustc 宽度泛化（✅ 2026-10-31：DataLayout + 8/16/32/64 映射 + demo16）
 
 - `TargetProfile { ptr_bits, slot_bytes, int_widths, endian, mangling }` 从 rustc
   `TargetDataLayout` + ISA `TargetRegInfo` 构造。
@@ -67,7 +67,7 @@
 - `map_type` 支持 8/16 指针；`abi.rs` 用 slot/profile；demo16 编译测试。
 - 验收：16/32 profile 单测 + demo16；x86_64/aarch64 e2e 不变。
 
-### M5 动态产物链接（✅ fail-closed 2026-10-31：`DYNAMIC_OUTPUT`；PIC 对象待做）
+### M5 动态产物链接（✅ 2026-10-31：`DYNAMIC_OUTPUT` fail-closed + 对象层最小 DLL 链接/导出）
 
 - `[cap:DYNAMIC_OUTPUT]` 明确拒绝未支持组合（cdylib/dylib/proc-macro/prefer-dynamic）。
 - `RelocKind::Plt32/GotPcRel` + 对象层映射；ELF `cdylib` 经 `ld.lld -shared` 验证
@@ -93,7 +93,7 @@
   不做，保持 fail-closed。
 - 插件 ABI 只保证同一 rustc/forge 构建内兼容。
 
-## 5. 当前状态（2026-10-31）
+## 5. 当前状态（2026-10-31，M0–M7 收口）
 
 已完成并落地：
 
@@ -101,16 +101,16 @@
 - M1 占位符数据化（三份谱字节不变；新谱内定义测试）。
 - M2 manifest 注册（arch 模块/管线/目标表/alloc 表全部生成；手写 arch 文件删除）。
 - M3 插件 ABI v2 + 宿主适配器 + 真 dylib 夹具（加载 → 编译 → 本机执行）。
-- M4 核心（IR DataLayout 注入 + 8/16/32/64 指针映射 + 单测）。
-- M5 fail-closed（`DYNAMIC_OUTPUT` 明确拒绝）。
-- M6 GEN-06 复核：两个历史失败测试（`test_jit_spill_pressure_loop_inline` /
-  `jit_stack_param_loop_call_only_step`）在 v28 实测均通过，已转正为回归；注释/索引同步。
+- M4（IR DataLayout 注入 + 8/16/32/64 指针映射 + demo16 编译/拒绝测试）。
+- M5（`DYNAMIC_OUTPUT` 明确拒绝 + 对象层最小 DLL 链接与导出检查）。
+- M6 GEN-06 复核：两个历史失败测试在 v28 实测均通过，已转正为回归。
+- M7 全量门禁 54/54；审计页回写。
 
-仍待补：
+边界/后续（已在审计页登记）：
 
-- M4 demo16 谱与 16 位编译用例（当前只有 16/32/64 profile 单测）。
-- M5 最小 PIC 对象/共享库链接验证（当前只做负向拒绝）。
-- M7 全量门禁复跑与文档收口。
+- 真实 riscv32/i686 后端、完整 GOT/PLT/TLS 动态链接、`std` 动态运行时不做。
+- 守卫仍逐个列 3 个发行 ISA；新增 ISA 时需同步守卫（测试代码，不是本体）。
+- 插件 ABI 只保证同一 rustc/forge 构建内兼容。
 
 ## 6. 验证
 

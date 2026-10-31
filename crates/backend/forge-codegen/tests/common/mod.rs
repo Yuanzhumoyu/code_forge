@@ -20,6 +20,8 @@
 
 forge_dsl::isa_from_file!("tests/isa/demo.toml", spec_tests = false);
 forge_dsl::isa_from_file!("tests/isa/demo8.toml", spec_tests = false);
+// v28 M4：16 位寄存器夹具（2 字节池），验证宽度机制的上一档。
+forge_dsl::isa_from_file!("tests/isa/demo16.toml", spec_tests = false);
 forge_dsl::isa_from_file!("tests/isa/demo_inst8.toml", spec_tests = false);
 forge_dsl::isa_from_file!("tests/isa/demo_inst12.toml", spec_tests = false);
 forge_dsl::isa_from_file!("tests/isa/demo_inst100.toml", spec_tests = false);
@@ -109,6 +111,33 @@ int = ["A0", "A1", "A2", "A3"]
 ret_int = ["A0"]
 "#;
 
+/// `demo16`（2 字节寄存器）的测试本地约定。
+const DEMO16_RULES: &str = r#"
+name = "demo16"
+position = "by_class"
+int_pool = "int"
+stack_align = 2
+stack = { slot_bytes = 2, first_offset_slots = 0 }
+aliases = ["c"]
+classify = [
+  { when = { kind = "scalar" }, do = { direct = { pool = "int" } } },
+]
+ret_classify = [
+  { when = { kind = "scalar" }, do = { direct = { pool = "ret_int" } } },
+]
+fallback = { stack = {} }
+note = "v28 M4 demo16：2 字节寄存器的标量参数/返回"
+"#;
+
+/// `demo16` 的绑定。
+const DEMO16_BINDING: &str = r#"
+isa = "demo16"
+conv = "demo16"
+[pools]
+int = ["A0", "A1", "A2", "A3"]
+ret_int = ["A0"]
+"#;
+
 /// 幂等注册两份 demo 夹具的测试本地约定（编译夹具函数的测试先调它）。
 ///
 /// 为什么必须显式调：注册表是进程级的、且**夹具谱里没有约定数据**——不注册的话
@@ -122,5 +151,7 @@ pub fn ensure_demo_conventions() {
         register_binding_toml(DEMO_BINDING).expect("demo 夹具的绑定应能注册");
         register_rules_toml(DEMO8_RULES).expect("demo8 夹具的规则应能注册");
         register_binding_toml(DEMO8_BINDING).expect("demo8 夹具的绑定应能注册");
+        register_rules_toml(DEMO16_RULES).expect("demo16 夹具的规则应能注册");
+        register_binding_toml(DEMO16_BINDING).expect("demo16 夹具的绑定应能注册");
     });
 }
