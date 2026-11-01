@@ -55,7 +55,7 @@ const SYM_BINDING: &str = r#"
 isa = "sym_copy"
 conv = "sym_copy"
 [pools]
-int = ["r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r11"]
+int = ["r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8"]
 ret_int = ["r1"]
 "#;
 
@@ -319,4 +319,105 @@ fn spill_pressure_round_trip_computes_correctly() {
     let got = m.run(&insts);
     // 8*5 + (1+2+…+8) = 40 + 36
     assert_eq!(got, 76, "溢出往返后结果错了：{got}\n{}", lines.join("\n"));
+}
+
+/// 从 `st rX, r13, OFF` / `ld rX, r13, OFF` 里取槽偏移。
+fn slot_off(line: &str) -> Option<&str> {
+    let (head, _) = line.split_once(", r13, ")?;
+    if head.starts_with("st ") || head.starts_with("ld ") {
+        line.split_once(", r13, ").map(|(_, off)| off)
+    } else {
+        None
+    }
+}
+
+/// **形参溢出后入口必须把槽写对**（M1 的回归）。
+///
+/// 缺陷形态（`frame.rs` 的 `spilled_receive_supported` 把入口写槽挂在
+/// `roles = ["stack_arg_load"]` 上）：没有栈形参的 ISA 里，形参一旦被 allocate 阶段
+/// spill，收参就**只写寄存器、不写槽**；而发射侧对"有槽"的值一律从槽读 ⇒ reload 读到
+/// 未初始化栈。实测 9 形参 / 9 可分配寄存器：只发出 4 条收参 mov + 4 条 ld，全函数
+/// 0 条 st。
+///
+/// **形参只取 3 个**，是为了让 ABI 源寄存器（r1..r3）与分配器的 home（`pop_free`
+/// 从最大号开始取：r8/r7/r6）**不相交**——收参顺序缺陷（另一个独立缺陷：home 落在
+/// 后续形参的 ABI 源上时，先收的 mov 会踩掉后收的源）会掩盖本用例要证的东西。
+///
+/// 断言两层：① 每条 `ld …, r13, OFF` 之前必须出现过同一 OFF 的 `st`（槽先写后读，
+/// 线性成立——入口写槽都在序言）；② 解释执行结果正确。
+#[test]
+fn spilled_incoming_params_are_stored_into_their_slots() {
+    ensure_convention();
+    let i = TypeId::I32;
+    let names = ["a", "b", "c"];
+    let sig = FunctionSignature::new(&names.iter().map(|nm| (i, *nm)).collect::<Vec<_>>(), &[i]);
+    let mut b = FunctionBuilder::new("spill_params", TypeContext::new(), sig);
+    let (entry, args) =
+        b.create_block_with_params(&names.iter().map(|nm| (i, *nm)).collect::<Vec<_>>());
+    b.switch_to_block(entry);
+    // 8 个派生值同时活着（全部活到求和）+ 3 个形参 ⇒ 远超 8 个可分配寄存器，
+    // 形参因此被 spill（home 与 ABI 源不相交，收参不会互相踩）。
+    let mut vals = Vec::new();
+    for k in 1..=8u64 {
+        let c = b.const_int(k, i);
+        vals.push(b.iadd(args[0], c));
+    }
+    let mut sum = vals[0];
+    for v in &vals[1..] {
+        sum = b.iadd(sum, *v);
+    }
+    sum = b.iadd(sum, args[1]);
+    sum = b.iadd(sum, args[2]);
+    b.ret(&[sum]);
+    let func = b.finish().expect("build spill_params");
+
+    let cf = CompileSession::new(TargetMachine::new())
+        .compile(&func)
+        .expect("形参溢出必须可编译（本夹具声明了溢出模板）");
+    let lines = disasm(&cf.code);
+    let stores = lines.iter().filter(|l| l.starts_with("st ")).count();
+    assert!(
+        stores > 0,
+        "本用例必须真的溢出形参（否则不再覆盖入口写槽）：st={stores}\n{lines:#?}"
+    );
+
+    // ① **每个被读的槽都至少被写过一次**。
+    //
+    // 不能要求"线性先写后读"：发射侧对纯 def 的溢出值也会先发一条 Reload（"纯 def 的
+    // 值也装，无害"），那条 ld 出现在 st 之前是设计如此。真正要钉的是"这个槽有没有
+    // 人写"——M1 的缺陷正是**整段写槽代码没生成**，于是 ld 读的是未初始化栈。
+    let mut written: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut read: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for line in &lines {
+        if let Some(off) = slot_off(line) {
+            if line.starts_with("st ") {
+                written.insert(off.to_string());
+            } else if line.starts_with("ld ") {
+                read.insert(off.to_string());
+            }
+        }
+    }
+    let never_written: Vec<&String> = read.difference(&written).collect();
+    assert!(
+        never_written.is_empty(),
+        "这些溢出槽被读却从未写过（形参溢出后入口没写槽）：{never_written:?}——反汇编：\n{}",
+        lines.join("\n")
+    );
+
+    // ② 语义：8*1 + (1+2+…+8) + 2 + 3 = 8 + 36 + 5 = 49。
+    let insts = decode_all(&cf.code);
+    let ret_pc = (insts.len() * 4) as u32;
+    let mut m = Machine::new(ret_pc);
+    // ABI：int 池 = r1..r8，3 个形参依次落在 r1..r3。
+    for (idx, v) in [1u32, 2, 3].iter().enumerate() {
+        m.set(idx as u32 + 1, *v);
+    }
+    m.set(12, ret_pc);
+    let got = m.run(&insts);
+    assert_eq!(
+        got,
+        49,
+        "形参溢出往返后结果错了：{got}（应为 8*1+36+2+3）\n{}",
+        lines.join("\n")
+    );
 }

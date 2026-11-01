@@ -1555,20 +1555,23 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
         _ => quote! {},
     };
     // spilled 的寄存器参数（位置 < n）收参到 spill 槽。按值的类分两条：
-    // - **GPR**：需要 MOV 指令（派生的 GPR ← GPR 搬运，不再按 x86 指令名
-    //   `MOV_RM8_R64` 探测）+ 角色 stack_arg_store（reg→mem）。旧实现只覆盖这条，
-    //   FPR/向量形参一旦被 regalloc spill 就**完全不写槽** ⇒ 后续 reload 读到
-    //   未初始化值（KD-11：`fn f(x: f32) { let y = helper(); x + y }` 返回 9 而非 10）。
+    // - **GPR**：ABI 寄存器 → scratch（派生的 GPR ← GPR 搬运）→ spill 槽（统一 spill 机制）。
     // - **FPR/向量**：不做寄存器搬运，直接用统一 spill 机制把 ABI FPR 写进槽
     //   （按**值的类**选模板与偏移口径，与 emission 的 reload 同源）。
+    //
+    // **门控只看"搬得动"**（2026-11-01 重构）：入口写槽需要 ① 一条 GPR←GPR 搬运、
+    // ② 一个 scratch 寄存器、③ 本类有溢出模板（`emit_spill_store` 自己 fail-closed）。
+    // 过去这里还要求 `has_stack_arg`（= ISA 声明了 `roles = ["stack_arg_load"]`）与
+    // `store_shape.is_some()`（= 声明了 `stack_arg_store`）——那是**写回栈参数**的能力，
+    // 与"把 spill 槽初始化"毫无关系。后果：**没有栈形参的 ISA 只要形参被 spill，
+    // 写槽代码就整段不生成** ⇒ 槽里是未初始化栈、reload 读到垃圾（静默错值）。
+    // 实测：9 个 i32 形参 / 9 个可分配寄存器的夹具上，只发出 4 条收参 mov、4 条 ld，
+    // 全函数 0 条 st。
     let has_mov_inst = true; // 上面的 moves.has(&gpr_want) 门控已经保证有搬运指令
-    let spilled_reg_receive: TokenStream = match (
-        has_stack_arg && has_mov_inst,
-        store_shape.as_ref(),
-    ) {
-        (true, Some(s)) => {
-            // 同上：写回槽走统一 spill 机制（s 只用于「本 ISA 有写回能力」的门控）。
-            let _ = &s;
+    let scratch_declared = model.machine_scratch().first().is_some();
+    let spilled_receive_supported = has_mov_inst && scratch_declared;
+    let spilled_reg_receive: TokenStream = if spilled_receive_supported {
+        {
             quote! {
             // spilled 的**寄存器**参数：load 被调方 ABI 寄存器 → scratch
             // → spill 槽（mod.rs 210 写槽依赖 entry vreg 值正确）。
@@ -1660,11 +1663,11 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
             }
             }
         }
-        _ => quote! {},
+    } else {
+        quote! {}
     };
-    // **槽权威初始化**是否可用：与 `spilled_reg_receive` 同一道生成期门控
-    //（有 stack_arg_load 角色 + 有写回能力）。不可用时保持旧行为（只处理"没寄存器"
-    // 的情形），避免在没有对应模板的 ISA 上把正常收参跳过。
+    // **槽权威初始化**是否可用：与 `spilled_reg_receive` **同一道门控**（同为
+    // `spilled_receive_supported`：有搬运 + 有 scratch），不再掺 `stack_arg_*` 角色。
     //
     // 为什么必须在 `!has_preg` **之外**判：形参被调用点 clobber 后 spill，之后在
     // 使用处会 `reload_from_stack` 再拿一个寄存器 ⇒ 最终分配表里 has_preg = true，
@@ -1672,7 +1675,6 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
     // 根本不被读，**槽才是权威副本**。旧实现把写槽塞在 `!has_preg` 里，漏掉
     // "spill 后又被 reload" 的形参（KD-11 的 `f(x: f32)` 正是这种）⇒ 槽从未写入，
     // reload 读未初始化值（1.0 + 9.0 = 9.0）。GPR 与 FPR/向量两种形参走同一条门控。
-    let spilled_receive_supported = has_stack_arg && has_mov_inst && store_shape.is_some();
     let spilled_slot_init: TokenStream = if spilled_receive_supported {
         quote! {
             if __rm.is_spilled(__pv)
@@ -1689,9 +1691,20 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
     } else {
         quote! {}
     };
-    let stack_arg_prologue: TokenStream = if has_stack_arg {
+    // 入口需要的两个局部：`__scratch0`（中转）与 `__cs_bytes`（算 spill 基址）。
+    // **哪个机制要它们就为哪个绑定**：栈参数收参（`has_stack_arg`）与形参溢出写槽
+    // （`spilled_receive_supported`）互相独立。过去两者都挂在 `has_stack_arg` 上，
+    // 于是"没有栈形参"的 ISA 一旦形参 spill，写槽代码引用不到 `__scratch0` 也就
+    // 整段被跳过（见上面门控处的说明）。
+    let needs_frame_base = has_stack_arg || spilled_receive_supported;
+    let stack_arg_prologue: TokenStream = if needs_frame_base {
+        let scratch_let = if scratch_declared {
+            quote! { let __scratch0 = Reg::#scratch0; }
+        } else {
+            quote! {}
+        };
         quote! {
-            let __scratch0 = Reg::#scratch0;
+            #scratch_let
             let __cs_bytes = #cs_bytes;
         }
     } else {

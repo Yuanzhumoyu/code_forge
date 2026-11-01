@@ -188,8 +188,10 @@ gpr = "gpr32"
 addr = "gpr32"
 value_gpr = "gpr32"
 link = "r12"
-scratch = ["r9", "r10"]
-fixed = ["zr", "sp", "flags", "r12", "r9", "r10"]
+# 3 个 scratch：`ADD {out}, {b}, {c}` 的三个操作数同时被 spill 时要 3 个临时寄存器
+# （allocator 目前不把 scratch 当稀缺资源来规划——夹具按最坏情况给足）。
+scratch = ["r9", "r10", "r11"]
+fixed = ["zr", "sp", "flags", "r12"]
 reg_move = "MOV"
 
 [machine.classes]
