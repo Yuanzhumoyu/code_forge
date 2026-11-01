@@ -54,3 +54,30 @@ fn i128_entry_by_ref_runs() {
     assert_eq!(got, 5, "by-ref i128 形参应读到 2+3 的低 64 位");
     println!("i128_by_ref_add(2,3)={got}");
 }
+
+/// 128 位返回尚未实现：聚合返回展开已不再把 i128 当聚合污染 IR；
+/// 直接 IR 现在必须是明确的 WIDE_INT_SHAPE fail-closed，而不是坏 IR。
+#[test]
+fn i128_return_fail_closed() {
+    x86::ensure_registered();
+    let i128 = TypeId::I128;
+    let i64 = TypeId::I64;
+    let sig = FunctionSignature::new(&[(i64, "a")], &[i128]);
+    let mut b = FunctionBuilder::new("widen", TypeContext::new(), sig);
+    let (entry, p) = b.create_block_with_params(&[(i64, "a")]);
+    b.switch_to_block(entry);
+    let wide = b.uextend(p[0], i128);
+    b.ret(&[wide]);
+    let f = b.finish().expect("build");
+    match CompileSession::new(x86::TargetMachine::new()).compile(&f) {
+        Ok(_) => panic!("i128 直接返回尚未实现，应 fail-closed"),
+        Err(e) => {
+            let msg = format!("{e}");
+            println!("i128 return fail-closed: {msg}");
+            assert!(
+                msg.contains("WIDE_INT_SHAPE"),
+                "应为明确的 WIDE_INT_SHAPE（不是坏 IR/panic）: {msg}"
+            );
+        }
+    }
+}

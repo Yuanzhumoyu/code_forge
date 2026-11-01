@@ -264,7 +264,16 @@ fn is_fully_supported(
     w: u32,
 ) -> Result<(), Opcode> {
     let store = types_ctx.borrow();
-    for (_, bd) in func.dfg.blocks() {
+    for (b, bd) in func.dfg.blocks() {
+        // `ret` 的宽操作数不在 `inst.operands`（终结符单独存），必须单独看，
+        // 否则会绕过可行性判断、直到泄漏守卫才报（M1b 实测）。
+        if let Some(vals) = func.dfg.term_return_values(b)
+            && vals
+                .iter()
+                .any(|v| is_wide_int(&store, func.dfg.value_type(*v).unwrap_or(TypeId::VOID), w))
+        {
+            return Err(Opcode::Ret);
+        }
         for &ii in bd.inst_order.iter() {
             let d = func.dfg.inst_data(ii);
             let touches =

@@ -117,7 +117,11 @@ pub(crate) fn expand_large_agg_ret(
     let rets = func.return_types();
     // **按大小**判（v27 M6-83）：16 字节标量的返回在 Win64 上走 XMM0，
     // 与聚合一样需要物化相参与，不能因为"不是聚合"就跳过。
-    let has_large = rets.iter().any(|t| store.size_bytes(*t) > 8);
+    // 但 i128 是**标量**：它的 XMM0 返回由 wide_split 打包 V128，不能按聚合
+    // 走 `agg_slots`/materialize（否则会生成 `load i64, i64 %a` 这种坏 IR）。
+    let has_large = rets
+        .iter()
+        .any(|t| *t != TypeId::I128 && store.size_bytes(*t) > 8);
     if !has_large && !sret {
         return Ok(());
     }
@@ -134,7 +138,8 @@ pub(crate) fn expand_large_agg_ret(
         };
         for &v in values {
             let ty = func.dfg.value_type(v).unwrap_or(TypeId::VOID);
-            let is_large_agg = !store.is_vector(ty) && store.size_bytes(ty) > 8;
+            let is_large_agg =
+                !store.is_vector(ty) && ty != TypeId::I128 && store.size_bytes(ty) > 8;
             // sret 档：签名返回已被清空，返回实参可能被**重写成指针**（by-ref 形参 /
             // sret call 结果）——按"值类型 >8B"筛会漏掉它们，留下 `ret ptr` 在 void
             // 函数里（v31：`events_fixture` 实测）。sret 时收**所有**返回值，
