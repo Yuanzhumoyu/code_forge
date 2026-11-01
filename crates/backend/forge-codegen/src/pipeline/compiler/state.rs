@@ -5,6 +5,7 @@ use crate::pipeline::alloc_config::{ClassConfig, RegAllocConfig as NewRegAllocCo
 use crate::pipeline::alloc_result::AllocResult;
 use crate::pipeline::regalloc_bt::BacktrackingAllocator;
 use crate::{IrError, LowerCtx, MachineInst, VBlockId, VCode};
+use forge_abi::RegRef;
 use forge_ir::entity::map::SecondaryMap;
 use forge_ir::*;
 use std::collections::HashMap;
@@ -308,6 +309,8 @@ impl<I: MachineInst + 'static> CompileState<I> {
             // 收参是一串 `mov home, abi_src`（home 是运行期值），若某个 home 恰好是
             // 后面某个形参的 abi_src，先收的 mov 会踩掉后收的源——生成期排不出安全
             // 顺序，所以在分配期回避（见 `RegAllocConfig::entry_arg_srcs`）。
+            // **带类**：GPR 与 FPR 的编号空间独立，混在一起会互相拉黑。
+            // 用 `PReg`（号 + 类）表达这对事实，而不是裸元组。
             entry_arg_srcs: self
                 .ctx
                 .conv
@@ -315,7 +318,7 @@ impl<I: MachineInst + 'static> CompileState<I> {
                 .map(|cl| {
                     cl.args
                         .iter()
-                        .filter_map(|a| a.place.as_reg().map(|r| r.slot))
+                        .filter_map(|a| a.place.as_reg().map(RegRef::preg))
                         .collect()
                 })
                 .unwrap_or_default(),

@@ -120,6 +120,12 @@ impl BacktrackingAllocator {
                 // 回避不开（池里只剩这些号）⇒ **这个形参直接走 spill**：它的槽是权威
                 // 副本，入口写槽由 `move_args` 的 spilled-slot 初始化负责（M1）；
                 // 绝不能退回"随便挑一个号"——那正好会踩掉后面形参还没收的源寄存器。
+                //
+                // **不在这里筛类**：把整张入口源表交给 `pop_free_avoiding`，由它用
+                // `RegClass::overlaps` 逐个候选判定（同号 = 同一物理寄存器文件）。
+                // 这里按 `is_fp()` 预过滤是错的：GPR/FPR/KReg 是三个文件，而
+                // GPR(4)/GPR(8)、FPR(32)/VEC(128) 各自同文件——筛错会漏掉该回避的号
+                // （踩掉入口源）或多回避无关号（压力上升）。
                 let preg = match state.pop_free_avoiding(class, &config.entry_arg_srcs) {
                     Some(p) => {
                         state.assignments.insert(vreg, p);
