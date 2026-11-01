@@ -1,0 +1,242 @@
+# sym_copy.toml — "Symphony 形状"夹具：块参数两阶段并行拷贝的回归谱
+#
+# 为什么需要它：仓库里其它夹具都**没有** `[machine] reg_move`，于是它们全部走
+# "块参数别名"路径。只有本谱走 `param_copies.rs` 的"独立参数 + 两阶段显式拷贝"
+# 路径，且寄存器极窄（16 个里 7 个固定/scratch，只剩 r1..r8,r11 = 9 个可分配），
+# 是该路径在压力下的唯一覆盖。
+#
+# 依据：`[BUG-block-param-copy]` 报告里的 Turing Complete "Symphony" 架构（32 位定宽、
+# 跳转目标 = 相对字节位移、flags = r15）。验证：`tests/sym_copy_repro.rs`。
+[meta]
+name = "sym_copy"
+endian = "little"
+mode = 32
+
+[encoding]
+kind = "fixed"
+bits = 32
+
+[reg.gpr32]
+names = ["zr", "r1", "r2", "r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "r12", "r13", "sp", "flags"]
+
+[operand.r]
+kind = "reg"
+class = "gpr32"
+
+[operand.u16]
+kind = "imm"
+bits = 16
+signed = false
+
+# 有符号 16 位立即数（溢出槽偏移相对帧指针向下 = 负）
+[operand.i16]
+kind = "imm"
+bits = 16
+signed = true
+
+# 跳转目标：以本指令地址为基准的字节位移
+[operand.addr]
+kind = "label"
+bits = 16
+signed = false
+unit = 1
+
+# ── 编码形式（未声明的位一律 0）─────────────────────────────────────
+[form.OP8]
+fields = ["u8[31:24]:opcode"]
+
+[form.A8F]
+fields = ["u8[31:24]:opcode", "u4[23:20]:f", "u4[11:8]:a"]
+
+[form.I16F]
+fields = ["u8[31:24]:opcode", "u4[23:20]:f", "u16[15:0]:imm"]
+
+[form.A20B8]
+fields = ["u8[31:24]:opcode", "u4[23:20]:a", "u4[11:8]:b"]
+
+[form.A20I16]
+fields = ["u8[31:24]:opcode", "u4[23:20]:a", "u16[15:0]:imm"]
+
+[form.RRR]
+fields = ["u8[31:24]:opcode", "u4[23:20]:a", "u4[19:16]:b", "u4[11:8]:c"]
+
+[form.RRI]
+fields = ["u8[31:24]:opcode", "u4[23:20]:a", "u4[19:16]:b", "u16[15:0]:imm"]
+
+[form.CMPR]
+fields = ["u8[31:24]:opcode", "u4[23:20]:f", "u4[19:16]:a", "u4[11:8]:b"]
+
+# ── 指令 ───────────────────────────────────────────────────────────
+[inst.NOP]
+form = "OP8"
+opcode = 0x00
+asm = "nop"
+effect = ["Pure"]
+
+[inst.MOV]
+form = "A20B8"
+data_width = 32
+opcode = 0x21
+asm = "mov {a:r:out}, {b:r}"
+effect = ["Move"]
+
+[inst.MOVI]
+form = "A20I16"
+opcode = 0x31
+asm = "movi {a:r:out}, {imm:u16}"
+effect = ["Move"]
+
+[inst.ADD]
+form = "RRR"
+opcode = 0x24
+asm = "add {a:r:out}, {b:r}, {c:r}"
+effect = ["Pure"]
+
+[inst.SUB]
+form = "RRR"
+opcode = 0x25
+asm = "sub {a:r:out}, {b:r}, {c:r}"
+effect = ["Pure"]
+
+[inst.SUBI]
+form = "RRI"
+opcode = 0x35
+roles = ["frame_alloc"]
+asm = "subi {a:r:out}, {b:r}, {imm:u16}"
+effect = ["Pure"]
+
+[inst.ADDI]
+form = "RRI"
+opcode = 0x34
+roles = ["frame_free"]
+asm = "addi {a:r:out}, {b:r}, {imm:u16}"
+effect = ["Pure"]
+
+[inst.ANDI]
+form = "RRI"
+opcode = 0x36
+asm = "andi {a:r:out}, {b:r}, {imm:u16}"
+effect = ["Pure"]
+
+[inst.LSRI]
+form = "RRI"
+opcode = 0x37
+asm = "lsri {a:r:out}, {b:r}, {imm:u16}"
+effect = ["Pure"]
+
+[inst.LD]
+form = "RRI"
+opcode = 0x38
+asm = "ld {a:r:out}, {b:r}, {imm:i16}"
+effect = ["Read"]
+
+[inst.ST]
+form = "RRI"
+opcode = 0x39
+asm = "st {a:r}, {b:r}, {imm:i16}"
+effect = ["Write"]
+
+[inst.CMP]
+form = "CMPR"
+opcode = 0x2A
+match = { f = 15 }
+asm = "cmp {a:r}, {b:r}"
+effect = ["Pure"]
+
+[inst.JMP]
+form = "A8F"
+opcode = 0x48
+match = { f = 15 }
+asm = "jmp {a:r}"
+effect = ["Jump"]
+
+[inst.JMPI]
+form = "I16F"
+opcode = 0x58
+match = { f = 15 }
+asm = "jmpi {imm:addr}"
+effect = ["Jump"]
+
+[inst.JE]
+form = "I16F"
+opcode = 0x51
+match = { f = 15 }
+asm = "je {imm:addr}"
+effect = ["Branch"]
+
+[inst.JNE]
+form = "I16F"
+opcode = 0x59
+match = { f = 15 }
+asm = "jne {imm:addr}"
+effect = ["Branch"]
+
+# 返回 = `jmp r12`（链接寄存器），单独命名以便 roles = ["ret"]
+[inst.RET]
+form = "A8F"
+opcode = 0x48
+match = { f = 15, a = 12 }
+roles = ["ret"]
+effect = ["Ret"]
+asm = "ret"
+
+# ════════════════════════════════════════════════════════════
+# TargetMachine 接入
+# ════════════════════════════════════════════════════════════
+[machine]
+gpr = "gpr32"
+addr = "gpr32"
+value_gpr = "gpr32"
+link = "r12"
+scratch = ["r9", "r10"]
+fixed = ["zr", "sp", "flags", "r12", "r9", "r10"]
+reg_move = "MOV"
+
+[machine.classes]
+bool = "gpr32"
+
+[machine.stack]
+slot = 32
+align = 32
+fp_save = 32
+
+[machine.frame]
+sp = "sp"
+fp = "r13"
+fp_push_bytes = 0
+
+[machine.text]
+align_pad = 0
+epilogue_label = false
+
+# 溢出模板（基址 = 帧指针 r13）。**没有它就没有指令能把溢出值写进/读出槽**——
+# 分配器一旦溢出，编译必须报 `[cap:SPEC_FRAME_OP_MISSING]`（见
+# `crates/frontend/forge-isa-dsl/tests/spill_needs_template.rs`），不许静默错值。
+[machine.spill.gpr]
+class = "gpr32"
+load = "LD {0}, r13, {1}"
+store = "ST {0}, r13, {1}"
+base = "r13"
+
+# ── lowering ───────────────────────────────────────────────────────
+[[lower.Iadd]]
+insts = ["ADD {out}, {0}, {1}"]
+
+[[lower.Isub]]
+insts = ["SUB {out}, {0}, {1}"]
+
+[[lower.Iconst]]
+insts = ["MOVI {out}, {iconst}"]
+
+[[lower.Copy]]
+insts = ["MOV {out}, {0}"]
+
+[[lower.Icmp]]
+when = { eq = ["cond", 3] }
+insts = ["CMP {0}, {1}", "MOV {out}, flags", "LSRI {out}, {out}, 2", "ANDI {out}, {out}, 1"]
+
+[[lower.Jmp]]
+insts = ["JMPI {target}"]
+
+[[lower.Br]]
+insts = ["CMP {cond}, zr", "JNE {true}", "JMPI {false}"]

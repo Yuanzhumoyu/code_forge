@@ -1985,8 +1985,15 @@ fn gen_fpr_spill_dispatch(
         .max_by_key(|(_, _, w)| *w)
         .map(|(_, t, _)| *t);
     let Some(default_tpl) = default_tpl else {
+        // 与 GPR 侧同一条纪律（见 `gen_spill_stmt`）：**没覆盖 ≠ 什么都不用发**。
+        // 过去这里保持 no-op，靠"这些谱不会溢出浮点值"的运气；一旦真的溢出，
+        // 机器码里就没有 ld/st ⇒ 静默错值。改成能力缺口，需要时响亮失败。
         return Ok(quote! {
-            let _ = (__dst, __off);
+            return Err(crate::IrError::capability(
+                "SPEC_FRAME_OP_MISSING",
+                "spill: 本 ISA 没有覆盖浮点/向量值类的 `[machine.spill.<名>]` 模板——\
+                 分配器已经决定溢出，但没有指令能把值写进/读出槽（过去是静默 no-op）",
+            ));
         });
     };
     let scalar = gen_spill_stmt(infos, Some(default_tpl), is_load, default_base)?;
@@ -2038,8 +2045,24 @@ fn gen_spill_stmt(
     default_base: &str,
 ) -> Result<TokenStream, String> {
     let Some(t) = tpl else {
+        // **fail-closed（BUG-block-param-copy 的根因）**：谱里没有覆盖这一类的
+        // `[machine.spill.<名>]` 时，这里过去生成 `let _ = (__dst, __off);`——即
+        // "编译成功、机器码里一条 ld/st 都没有"。分配器只要**真的**溢出过某个值，
+        // 该值的槽就没人写，后续 use 从空槽（或干脆从 scratch 里的垃圾）读到旧值：
+        // 静默错值，且所有自检都看不见（`verify_no_overlap` 跳过有槽的 vreg、
+        // `field_check` 认为"字段来自本指令的 Bind 编辑"就合法）。
+        //
+        // 与 `TargetFrameLowering::emit_spill_load/store` 的**trait 缺省实现**同口径：
+        // 没覆盖这个帧操作 = 能力缺口（`IrError::capability`，进台账、可搜索），
+        // 而不是"未实现"。注意这条只在**真的发生溢出**时才触发：不溢出的谱不受影响。
         return Ok(quote! {
-            let _ = (__dst, __off);
+            return Err(crate::IrError::capability(
+                "SPEC_FRAME_OP_MISSING",
+                "spill: 本 ISA 没有覆盖该寄存器类的 `[machine.spill.<名>]` 模板——\
+                 分配器已经决定溢出（栈帧里有溢出槽），但没有指令能把值写进/读出槽。\
+                 过去这里是静默 no-op ⇒ 槽里是垃圾、use 读到别人的值。请给该值类补 \
+                 `[machine.spill.<名>]`（`class`/`load`/`store`），或让该函数不溢出",
+            ));
         });
     };
     let template = if is_load { &t.load } else { &t.store };
