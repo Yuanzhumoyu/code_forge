@@ -139,6 +139,11 @@ impl<M: TargetMachine> JitLoader<M> {
   `extern "C" fn(*const i128,*const i128)->i64` 真执行，`2+3=5`。
 - 仍待：128 位**返回**（win64 XMM0）、sysv64 整数对/by-value、`JitSig` 的
   i128 ABI 投影（当前 `to_abi` 仍是 `UnsupportedAbi`，测试用 `bind_raw`）。
+- **返回尝试的结论（2026-11-01）**：在 `wide_split` 末端把 `ret i128` 打包成
+  V128 会在 Verifier 处失败（`LoadAddrNotPointer` / `ReturnTypeMismatch`）——
+  i128 返回在 `AggCall`/ABI 计划层已先被当成宽聚合/sret 改写，末端补丁看不到真实
+  返回形状。正解必须在 `plan_abi_edges`/`AbiPlan` 把 win64 i128 返回分类为
+  **FPR128（XMM0）**，再由 lowering 发射；不能靠 wide_split 事后补。
 
 ## 5. 未完成（M1b / M2 / M3）
 
