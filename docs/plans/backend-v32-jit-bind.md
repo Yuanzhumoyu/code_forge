@@ -104,7 +104,13 @@ impl<M: TargetMachine> JitLoader<M> {
 - `JitLoader::bind_variadic`：校验产物为变参 + 固定前缀 ABI，返回 `JitFn`；
   非变参 `bind` 继续拒绝并提示。
 - demo：`vsum(i64, ...)` 返回常量 7，`raw()(1,2,3)` → `variadic_sum(1,2,3)=7`。
-  真实 `va_arg` 求和（后端 `VaStart/VaArg` 已支持）作为 M3 剩余项。
+- **截止契约（M3-b）**：C/Rust 的 `...` 本身**没有计数**；IR 的 `VaArg` 只取一个值，
+  无法从 ABI 推断调用者传了几个。必须由固定参数 `n`、sentinel 或 format 约定；
+  demo `vsum_n(n, ...)` 用 `n` 驱动 IR 循环，`vsum_n(3,10,20,30)=60`（模块路径，
+  非编译期固定 3 次）。
+- **已知问题**：host 直接 `add_function` 一个变参函数再 `raw()` 调用，`va_arg`
+  目前读到垃圾（模块路径正常）；这是 `add_function` 的变参 ABI 装配缺口，
+  不能把 `bind_variadic` 的宣传当成“直接调用已支持”。
 
 ## 5. 未完成（M1b / M2 / M3）
 
@@ -112,7 +118,7 @@ impl<M: TargetMachine> JitLoader<M> {
 | --- | --- | --- |
 | M1b | 128 位入口/返回 ABI：`wide_split` 入口拆分、返回配对/sret；`plan_jit_abi` 初版；`rustc-abi-cross` 对拍 | i128/u128 by-value 真执行；三 ISA 编译 |
 | M2 | `#[derive(JitValue)]`、聚合/数组/向量、`ByVal`/`ByRef`/`Out`、sret/by-ref；完整 `plan_jit_abi`；转换 12 处 unchecked 指针站点 | win64/sysv64 聚合真执行；三 ISA；demo 聚合 |
-| M3 | ~~`bind_variadic`~~（已落地，固定前缀 + `raw()`）、`va_arg` 真求和 demo、`jit_rust_abi` 的 Bevy `Reflect` 适配器（Rust ABI ↔ C 线格式）、函数指针 JIT 回调 demo、跨目标 bind/call 测试、错误文档 | 变参 demo；带字段枚举/union 真执行；错误带下标；54/54 |
+| M3 | ~~`bind_variadic`~~（已落地）、~~counted loop~~（已落地，`n` 驱动循环）、sentinel/format 截止约定、`add_function` 直接变参调用修复、`jit_rust_abi` 的 Bevy `Reflect` 适配器、函数指针 JIT 回调 demo、跨目标 bind/call 测试、错误文档 | 变参 demo；带字段枚举/union 真执行；错误带下标；54/54 |
 
 ## 6. 边界
 

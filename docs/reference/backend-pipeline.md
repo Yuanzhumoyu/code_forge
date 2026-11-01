@@ -492,4 +492,7 @@ v32（[`plans/backend-v32-jit-bind.md`](../plans/backend-v32-jit-bind.md)）把 
 * M1 已落地（标量/`bool`/函数指针类型、`bind`/`JitFn`）；128 位 by-value（M1b）、
   聚合/向量/`plan_jit_abi`（M2）按下表推进；`bind_variadic` 已落地（M3-a）。
 * 演示：`tests/jit_bind_demo.rs`（`add(2,3)=5`、`not(true)=false`、
-  `variadic_sum(1,2,3)=7`）。
+  `variadic_sum(1,2,3)=7`、`variadic_counted(3,10,20,30)=60`）。
+* **变参截止**：C/Rust 的 `...` 没有自动计数；IR `VaArg` 只取一个值，必须由固定
+  参数 `n`/sentinel/format 约定。counted loop demo 用 `n` 驱动循环；host 直接
+  `add_function` 变参函数再 `raw()` 的路径仍有 ABI 装配缺口（模块路径正常）。
