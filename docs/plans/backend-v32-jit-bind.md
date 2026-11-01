@@ -105,7 +105,9 @@ impl<M: TargetMachine> JitLoader<M> {
   `JitFn`；非变参 `bind` 继续拒绝并提示。安全性：当前后端只支持 **JIT 生成 caller**
   的变参保存区契约，callee 的 `va_start` 不保存外部调用者的参数寄存器；host 直接
   调用会 `va_arg` 的变参 JIT 函数会读垃圾。修复 callee 保存前只能 `unsafe` 使用。
-- demo：`vsum(i64, ...)` 返回常量 7，`raw()(1,2,3)` → `variadic_sum(1,2,3)=7`。
+- demo：`vsum(i64, ...)` 返回常量 7，`raw()(1,2,3)` → `variadic_sum(1,2,3)=7`；
+  `vsum_n(n, ...)` 用 `n` 驱动循环 → `variadic_counted(3,10,20,30)=60`；
+  哨兵版扫描到 0 → `variadic_sentinel(10,20,30,0)=60`。
 - **截止契约（M3-b）**：C/Rust 的 `...` 本身**没有计数**；IR 的 `VaArg` 只取一个值，
   无法从 ABI 推断调用者传了几个。必须由固定参数 `n`、sentinel 或 format 约定；
   demo `vsum_n(n, ...)` 用 `n` 驱动 IR 循环，`vsum_n(3,10,20,30)=60`（模块路径，

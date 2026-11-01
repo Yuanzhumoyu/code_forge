@@ -439,6 +439,11 @@ impl<M: TargetMachine> JitLoader<M> {
     ///
     /// `Counted { param }` 会校验固定前缀第 `param` 个形参是整数；`Sentinel`/`Format`
     /// 只记录契约，由 callee 实现。长度怎么处理由调用者选择，而不是 ABI 自动猜。
+    ///
+    /// # Safety
+    /// 与 [`Self::bind_variadic`] 相同：当前后端只支持 JIT 生成 caller 的变参保存区
+    /// 契约；host 直接调用会 `va_arg` 的外部 C 变参被调方仍可能读到垃圾。调用者
+    /// 必须保证目标函数的外部 C 变参 ABI 已满足。
     #[allow(clippy::result_large_err)]
     pub unsafe fn bind_variadic_with_termination<F: JitCallSignature>(
         &self,

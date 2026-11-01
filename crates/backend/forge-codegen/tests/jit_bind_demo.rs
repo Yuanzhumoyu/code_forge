@@ -7,6 +7,7 @@
 //! not(true)=false
 //! variadic_sum(1,2,3)=7
 //! variadic_counted(3,10,20,30)=60
+//! variadic_sentinel(10,20,30,0)=60
 //! slice_sum(10,20,30)=60
 //! slice_fill(4)=[7, 7, 7, 7]
 //! ```
@@ -158,6 +159,55 @@ fn variadic_counted_loop() {
     let f: extern "C" fn() -> i64 = jit.get("main").expect("get main");
     assert_eq!(f(), 60, "n=3 决定读取 10+20+30，而不是编译期固定个数");
     println!("variadic_counted(3,10,20,30)=60");
+}
+
+/// 哨兵截止：callee 扫描到 0 停止；模块路径（JIT caller 保存区完整）。
+#[test]
+fn variadic_sentinel_loop() {
+    x86::ensure_registered();
+    let mut jit = JitLoader::new(x86::TargetMachine::new());
+
+    let sig = FunctionSignature::new(&[(TypeId::I64, "fmt")], &[TypeId::I64]).with_variadic(true);
+    let mut c = FunctionBuilder::new("callee", TypeContext::new(), sig);
+    let (entry, _ep) = c.create_block_with_params(&[(TypeId::I64, "fmt")]);
+    c.switch_to_block(entry);
+    let ap = c.va_start();
+    let (loop_b, lp) = c.create_block_with_params(&[(TypeId::I64, "acc")]);
+    let (body, _bp) = c.create_block_with_params(&[]);
+    let (exit, xp) = c.create_block_with_params(&[(TypeId::I64, "acc")]);
+    c.switch_to_block(entry);
+    let zero = c.const_int(0i64, TypeId::I64);
+    c.jump(loop_b, &[zero]);
+    c.switch_to_block(loop_b);
+    let v = c.va_arg(ap, TypeId::I64);
+    let more = c.icmp(IntCC::Ne, v, zero);
+    c.branch(more, body, &[], exit, &[lp[0]]);
+    c.switch_to_block(body);
+    let acc = c.iadd(lp[0], v);
+    c.jump(loop_b, &[acc]);
+    c.switch_to_block(exit);
+    c.ret(&[xp[0]]);
+
+    let mut module = Module::new();
+    let cref = module.add_function(c.finish().expect("callee"));
+
+    let sm = FunctionSignature::new(&[], &[TypeId::I64]);
+    let mut m = FunctionBuilder::new("main", TypeContext::new(), sm);
+    let (me, _) = m.create_block_with_params(&[]);
+    m.switch_to_block(me);
+    let fmt = m.const_int(0i64, TypeId::I64);
+    let a = m.const_int(10i64, TypeId::I64);
+    let b = m.const_int(20i64, TypeId::I64);
+    let d = m.const_int(30i64, TypeId::I64);
+    let sentinel = m.const_int(0i64, TypeId::I64);
+    let got = m.call(cref, &[fmt, a, b, d, sentinel], &[TypeId::I64])[0];
+    m.ret(&[got]);
+    module.add_function(m.finish().expect("main"));
+
+    jit.compile_module(&module).expect("compile module");
+    let f: extern "C" fn() -> i64 = jit.get("main").expect("get main");
+    assert_eq!(f(), 60, "哨兵 0 之前的 10+20+30 应求和");
+    println!("variadic_sentinel(10,20,30,0)=60");
 }
 
 /// 安全版“变参”：`(ptr, len)` ABI，Rust 侧传 `&[T]`，长度显式且运行时可变。
