@@ -44,6 +44,20 @@ pub(crate) fn expand_large_agg_params(
     let mut agg_stack_shift = 0i32;
     let mut has_large = false;
     for (i, t) in old_params.iter().enumerate() {
+        // 宽整数（i128/u128）不是聚合：入口拆肢归 `wide_split`，这里不能把它当聚合
+        // 拆成 i64 段——否则 Iadd 的结果仍是 i128、操作数却已被换成肢，wide_split
+        // 会看到"宽结果 + 非宽操作数"的混形（M1b 探针实际 panic 过）。
+        if func
+            .types
+            .borrow()
+            .scalar_bits(*t)
+            .is_some_and(|bits| bits > 64)
+        {
+            seg_map.push(1);
+            by_ref.push(false);
+            keep_param.push(true);
+            continue;
+        }
         // 非宽聚合（`≤8B` 或非聚合：约定可能仍走寄存器档，C ABI 强制）⇒ 原样保留。
         let Some(loc) = edges.param_of(i) else {
             seg_map.push(1);

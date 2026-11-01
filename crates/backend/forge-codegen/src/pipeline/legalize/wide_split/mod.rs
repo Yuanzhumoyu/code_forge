@@ -393,6 +393,11 @@ fn rewrite_one(
             let Some(r) = wide_results.first().copied() else {
                 return Ok(false);
             };
+            if wide_operands.len() < 2 {
+                return Err(wide_shape_unsupported(
+                    "宽值 Iadd/Isub 的操作数不是宽值（ABI 拆分后的混形，不在 wide_split 覆盖内）",
+                ));
+            }
             let (a, b) = (reg(parts, wide_operands[0]), reg(parts, wide_operands[1]));
             let bits = store.scalar_bits(ty_of(r)).unwrap_or(0);
             let ls = add_sub(e, ii, &a, &b, w, bits, d.opcode == Opcode::Iadd);
@@ -404,6 +409,11 @@ fn rewrite_one(
             let Some(r) = wide_results.first().copied() else {
                 return Ok(false);
             };
+            if wide_operands.len() < 2 {
+                return Err(wide_shape_unsupported(
+                    "宽值位运算的操作数不是宽值（ABI 拆分后的混形，不在 wide_split 覆盖内）",
+                ));
+            }
             let (a, b) = (reg(parts, wide_operands[0]), reg(parts, wide_operands[1]));
             let bits = store.scalar_bits(ty_of(r)).unwrap_or(0);
             let ls = bitwise(e, ii, &a, &b, w, bits, d.opcode);
