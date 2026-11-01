@@ -8,6 +8,7 @@
 //! variadic_sum(1,2,3)=7
 //! variadic_counted(3,10,20,30)=60
 //! slice_sum(10,20,30)=60
+//! slice_fill(4)=[7, 7, 7, 7]
 //! ```
 
 #![cfg(all(feature = "jit", target_arch = "x86_64"))]
@@ -185,4 +186,47 @@ fn slice_ptr_len_safe() {
     let got = s.call(&[10, 20, 30]);
     assert_eq!(got, 60, "ptr+len 安全切片应求和 10+20+30");
     println!("slice_sum(10,20,30)={got}");
+}
+
+/// 安全可变切片：`(ptr, len)` ABI，原地写回。
+#[test]
+fn slice_mut_ptr_len_safe() {
+    x86::ensure_registered();
+    let mut jit = JitLoader::new(x86::TargetMachine::new());
+
+    let sig = FunctionSignature::new(&[(TypeId::PTR, "p"), (TypeId::I64, "n")], &[TypeId::I64]);
+    let mut f = FunctionBuilder::new("fill_slice", TypeContext::new(), sig);
+    let (entry, ep) = f.create_block_with_params(&[(TypeId::PTR, "p"), (TypeId::I64, "n")]);
+    f.switch_to_block(entry);
+    let (loop_b, lp) = f.create_block_with_params(&[(TypeId::I64, "i")]);
+    let (body, _bp) = f.create_block_with_params(&[]);
+    let (exit, _xp) = f.create_block_with_params(&[]);
+    f.switch_to_block(entry);
+    let zero = f.const_int(0i64, TypeId::I64);
+    f.jump(loop_b, &[zero]);
+    f.switch_to_block(loop_b);
+    let cond = f.icmp(IntCC::Slt, lp[0], ep[1]);
+    f.branch(cond, body, &[], exit, &[]);
+    f.switch_to_block(body);
+    let addr = f.gep(ep[0], &[lp[0]], TypeId::I64);
+    let seven = f.const_int(7i64, TypeId::I64);
+    f.store(seven, addr);
+    let one = f.const_int(1i64, TypeId::I64);
+    let i2 = f.iadd(lp[0], one);
+    f.jump(loop_b, &[i2]);
+    f.switch_to_block(exit);
+    f.ret(&[ep[1]]);
+
+    let mut module = Module::new();
+    module.add_function(f.finish().expect("fill_slice"));
+    jit.compile_module(&module).expect("compile module");
+
+    let s = jit
+        .bind_slice_mut::<i64, i64>("fill_slice")
+        .expect("bind_slice_mut fill_slice");
+    let mut buf = [0i64; 4];
+    let n = s.call(&mut buf);
+    assert_eq!(n, 4);
+    assert_eq!(buf, [7i64; 4], "原地写回应全部为 7");
+    println!("slice_fill(4)={buf:?}");
 }

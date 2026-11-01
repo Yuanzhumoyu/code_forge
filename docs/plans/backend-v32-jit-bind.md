@@ -120,7 +120,8 @@ impl<M: TargetMachine> JitLoader<M> {
   的 JIT 函数，返回 `JitSliceFn`；`call(&[T])` 安全、长度运行时可变。
 - 这是“用户决定长度怎么处理”的安全形态：显式 `len`，不依赖 C `...` 自动计数，
   也没有外部 C 变参保存区问题。
-- demo：`sum_slice(ptr, n)` 循环读切片，`slice_sum(10,20,30)=60`。
+- demo：`sum_slice(ptr, n)` 循环读切片，`slice_sum(10,20,30)=60`；
+  `bind_slice_mut` 原地写回，`slice_fill(4)=[7,7,7,7]`。
 - C `...` 仍保留 `bind_variadic`（unsafe）；真正动态 C 变参需要 libffi 或
   callee 保存参数寄存器，不在本切片里伪装成安全。
 

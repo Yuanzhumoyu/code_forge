@@ -234,6 +234,26 @@ impl<T, R> JitSliceFn<'_, T, R> {
     }
 }
 
+/// 安全版“变参”替代（可变切片）：JIT 函数签名为 `(ptr: *mut T, len: usize) -> R`。
+pub struct JitSliceMutFn<'a, T, R> {
+    inner: JitFn<'a, extern "C" fn(*mut T, usize) -> R>,
+}
+
+impl<T, R> JitSliceMutFn<'_, T, R> {
+    /// 调 JIT：`f(slice.as_mut_ptr(), slice.len())`。
+    pub fn call(&self, args: &mut [T]) -> R {
+        self.inner.call(args.as_mut_ptr(), args.len())
+    }
+
+    pub fn is_host_compatible(&self) -> bool {
+        self.inner.is_host_compatible()
+    }
+
+    pub fn abi(&self) -> Option<&JitSigShape> {
+        self.inner.abi()
+    }
+}
+
 impl<M: TargetMachine> JitLoader<M> {
     /// v32：安全版变参——绑定 `(ptr, len)` ABI 的 JIT 函数，调用传 `&[T]`。
     ///
@@ -245,6 +265,16 @@ impl<M: TargetMachine> JitLoader<M> {
     ) -> Result<JitSliceFn<'_, T, R>, JitBindError> {
         let inner = self.bind::<extern "C" fn(*const T, usize) -> R>(name)?;
         Ok(JitSliceFn { inner })
+    }
+
+    /// v32：安全版变参（可变切片）——绑定 `(ptr: *mut T, len)` ABI。
+    #[allow(clippy::result_large_err)]
+    pub fn bind_slice_mut<T: 'static, R: JitValue>(
+        &self,
+        name: &str,
+    ) -> Result<JitSliceMutFn<'_, T, R>, JitBindError> {
+        let inner = self.bind::<extern "C" fn(*mut T, usize) -> R>(name)?;
+        Ok(JitSliceMutFn { inner })
     }
 
     /// v32：按**产物 ABI 签名**绑定类型化函数句柄。

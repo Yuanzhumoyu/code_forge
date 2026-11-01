@@ -498,4 +498,5 @@ v32（[`plans/backend-v32-jit-bind.md`](../plans/backend-v32-jit-bind.md)）把 
   `add_function` 变参函数再 `raw()` 的路径仍有 ABI 装配缺口（模块路径正常），
   因此 `bind_variadic` 是 **unsafe**：callee 的 `va_start` 不保存外部调用者的参数寄存器。
 * **安全替代**：`bind_slice::<T,R>` 绑定 `(ptr, len)` ABI，`JitSliceFn::call(&[T])`
-  安全、长度运行时可变；demo `slice_sum(10,20,30)=60`。这是 C `...` 之外的显式长度契约。
+  安全、长度运行时可变；`bind_slice_mut` 支持原地写回。demo `slice_sum(10,20,30)=60`、
+  `slice_fill(4)=[7,7,7,7]`。这是 C `...` 之外的显式长度契约。
