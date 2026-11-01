@@ -144,8 +144,12 @@ impl<M: TargetMachine> JitLoader<M> {
   `agg_call::expand_large_agg_ret` 把 i128 当成 >8B 聚合去物化。修复后 i128 不再
   走聚合返回展开；`wide_split::is_fully_supported` 单独检查终结符宽返回，直接 IR
   现在明确 `WIDE_INT_SHAPE: Ret`（guard `i128_return_fail_closed`），不再产出坏 IR。
-- **返回支持仍待**：需要在允许 Ret 的路径里用 `set_return_values` 正确重写终结符
-  并打包 V128；只改 `inst.operands` 会留下 use-list 泄漏。
+- **返回支持仍待**：`set_return_values` 已由 regression test 证明可用
+  （`0619e0dd`）；打包路径也能清掉旧 use。新的阻塞在 **x86 `Vinsert` 的 lowering**：
+  `rd≤128` 只有 `MOVAPS out, vec; MOVSD out, scalar`（恒写低 lane，忽略 lane
+  立即数）；插高肢会覆盖低肢，`uextend` 返回实测为 0。下一步：
+  - 修 `Vinsert` lane1 规则（`MOVQ scalar→XMM` + `PUNPCKLQDQ`），或
+  - 用 16B 栈缓冲 `store low/high` + 向量 `load` 打包（不经 Vinsert）。
 
 ## 5. 未完成（M1b / M2 / M3）
 
