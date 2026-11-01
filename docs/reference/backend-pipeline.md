@@ -335,7 +335,7 @@ lowering，实测 `[cap:SPEC_LOWERING_RULE_MISSING]`）。
 | `pipeline/lowering.rs` | 835 | 生成物 lowering 的宿主侧辅助，与谱面规则一一对应 |
 | `pipeline/legalize/materialize.rs` | 657 | 物化相：按 IR 形态分段单遍改写，切开反而难对照 |
 | `pipeline/va_expand/expand.rs` | 630 | `expand_start`/`expand_arg` 共享局部不变量（游标推进次序）；v31 +9：win64 cursor `Inttoptr` / `Icmp` BOOL / 聚合档提前返回 |
-| `pipeline/compiler/mod.rs` | 434 | 会话入口 + 模块编排（v30 M2 把前置门/合法化批次/命名计时外提；v31 +1 行传 verify 开关） |
+| `pipeline/compiler/mod.rs` | 456 | 会话入口 + 模块编排（v30 M2 把前置门/合法化批次/命名计时外提；v31 +1 行传 verify 开关；v32 M1 +22：`compile_with_jit_sig` + ABI 签名捕获） |
 
 缺省上限 **700** 行，扫描面 = `src/pipeline/**` + `src/runtime/**`；上表与守卫里的预算表由
 `file_size_ratchet` 钉成**双向相等**（改动其一就红）。
@@ -472,3 +472,20 @@ IR 不变量违例。要点：
 * **守卫**：`tests/verify_after_legalize.rs`（GEP 正例 + 坏类型反例）与
   `tests/verify_matrix.rs`（x86/arm64/riscv64 × 标量/GEP/i128，全部 `On`；同时覆盖
   O1/O2/O3，优化产物进入 legalize 也被校验）。
+
+## 17. v32：JIT 调用绑定
+
+v32（[`plans/backend-v32-jit-bind.md`](../plans/backend-v32-jit-bind.md)）把 JIT 的
+类型化调用从“宿主常量 `TypeId` 表”改成**目标感知的绑定层**：
+
+* `JitSig` 随 `CompiledUnit` 走：`source`（IR 语义）+ `abi`（合法化后真实接口）+
+  `JitTarget`（产物自己的 `pointer_bits`/`endian`/ISA）。`JitType` 覆盖
+  `Bool/Int/Float/Ptr/Function/Struct/Array/Vector/Unsupported`，不携带 `TypeId`。
+* `JitLoader::bind::<F>` 按 **ABI 签名**校验并返回 `JitFn`（0–16 元数）；
+  `bind_source` 只校验源码；`bind_raw` 是显式逃生口。`bind` **不**做宿主/目标
+  一致性拒绝；`JitFn::call` 在跨目标时 panic（fail-closed），`raw()` 自担。
+* `usize`/`isize`/指针由 `JitTarget.pointer_bits` 解析，**没有** `cfg(target_pointer_width)`；
+  `bool` 源码为 `Bool`、ABI 为 `Int8`；函数指针源码为 `Function`、ABI 为 `Ptr`。
+* M1 已落地（标量/`bool`/函数指针类型、`bind`/`JitFn`）；128 位 by-value（M1b）、
+  聚合/向量/`plan_jit_abi`（M2）、变参 `bind_variadic`（M3）按下表推进。
+* 演示：`tests/jit_bind_demo.rs`（`add(2,3)=5`、`not(true)=false`）。

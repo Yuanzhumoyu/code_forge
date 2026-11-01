@@ -45,6 +45,7 @@ pub(crate) fn atomic_op_from_u64(v: u64) -> AtomicRmwOp {
 }
 use crate::pipeline::events;
 use crate::pipeline::regalloc_bt::BacktrackingAllocator;
+use crate::pipeline::signature::JitSig;
 use crate::{CompiledFunction, IrError};
 use forge_ir::*;
 
@@ -134,6 +135,24 @@ impl<M: TargetMachine> CompileSession<M> {
         &self,
         func: &Function,
     ) -> Result<(CompiledFunction, crate::AllocResult), CompileError> {
+        self.compile_checked(func)
+            .map(|(cf, alloc, _sig)| (cf, alloc))
+    }
+
+    /// Compile an IR function，额外返回 **v32 自包含签名**（source + ABI + target）。
+    pub fn compile_with_jit_sig(
+        &self,
+        func: &Function,
+    ) -> Result<(CompiledFunction, JitSig), CompileError> {
+        self.compile_checked(func)
+            .map(|(cf, _alloc, sig)| (cf, sig))
+    }
+
+    /// 公共失败出口：发 `CAPABILITY-GAP`，成功/失败都由这里收口。
+    fn compile_checked(
+        &self,
+        func: &Function,
+    ) -> Result<(CompiledFunction, crate::AllocResult, JitSig), CompileError> {
         // **机读出口**（v25 M3）：成功路径的事件在 `compile_stages` 里发
         //（那里才有阶段耗时），这里只负责**失败路径**——缺口 ID 是 CI 最想按类分的字段。
         let r = self.compile_with_alloc_inner(func);
@@ -156,7 +175,7 @@ impl<M: TargetMachine> CompileSession<M> {
     fn compile_with_alloc_inner(
         &self,
         func: &Function,
-    ) -> Result<(CompiledFunction, crate::AllocResult), CompileError> {
+    ) -> Result<(CompiledFunction, crate::AllocResult, JitSig), CompileError> {
         let mut stage = Stage::Legalize;
         let name = func.name.clone();
         self.compile_stages(func, &mut stage)
@@ -167,7 +186,7 @@ impl<M: TargetMachine> CompileSession<M> {
         &self,
         func: &Function,
         stage: &mut Stage,
-    ) -> Result<(CompiledFunction, crate::AllocResult), IrError> {
+    ) -> Result<(CompiledFunction, crate::AllocResult, JitSig), IrError> {
         // P0-1：IR 级优化管线接入——若启用，克隆函数跑对应 O 级别管线，
         // 用优化后的克隆体继续编译（原 func 不被修改；PassManager 需要
         // &mut Function）。未启用时不克隆（零开销）。
@@ -200,6 +219,9 @@ impl<M: TargetMachine> CompileSession<M> {
         )?;
         // Stage 4+ 读取的 Function：有改写（pattern/聚合展开）时用副本。
         let func_ref: &Function = func_owned.as_ref().unwrap_or(func);
+        // v32：源签名取原始函数，ABI 签名取合法化后的 `func_ref`；目标事实同时捕获。
+        // 变参标志与类型快照都在 `JitSig::from_functions` 内部一次取好（读路径预算 0）。
+        let jit_sig = JitSig::from_functions(func, func_ref, self.machine.as_ref());
 
         *stage = Stage::ISel;
         let mut state = CompileState::new(
@@ -418,7 +440,7 @@ impl<M: TargetMachine> CompileSession<M> {
                 eprintln!("[codegen] fn={} head={hex}", func_ref.name);
             }
         }
-        Ok((result?, alloc_result))
+        Ok((result?, alloc_result, jit_sig))
     }
 }
 

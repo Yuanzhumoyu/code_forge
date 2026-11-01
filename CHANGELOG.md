@@ -11,6 +11,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added (2026-11-01) — v32 JIT 调用绑定（M1）
+
++ `JitSig`（source + 合法化后 ABI + `JitTarget`）随 `CompiledUnit` 交付；`JitType` 覆盖 `Bool/Int/Float/Ptr/Function/Struct/Array/Vector/Unsupported`，`usize`/指针按产物 `pointer_bits` 解析，删除宿主 `cfg(target_pointer_width)`。
++ `JitLoader::bind/bind_source/bind_raw` + `JitFn`（0–16 元数）+ `JitBindError`（形参下标/hint）；`bind` 按 ABI 校验，`bind_source` 只校验源码，`bind_raw` 显式逃生。
++ `JitValue`/`JitCallSignature` 覆盖整数/浮点/`bool`/`char`/`usize`/`isize`/指针/可空指针/`NonNull`/函数指针/`i128`/`u128`（类型层）。
++ 演示 `tests/jit_bind_demo.rs`：`add(2,3)=5`、`not(true)=false`；32/64 位布局、函数指针、`i128` ABI `Unsupported` 单测。
++ 破坏性：`CompiledUnit` 新增 `jit_sig` 字段；旧 `get`/`get_unchecked` 保留为 V1 源码路径。
++ 未完成（M1b/M2/M3）：128 位 by-value ABI、聚合/向量 `plan_jit_abi`、变参 `bind_variadic`。
+
 ### Changed (2026-11-01) — v31 合法化后全量 IR 校验
 
 + `CompileOptions::verify(VerifyLevel::{Auto,Off,On})`：合法化三批跑完后跑完整 `forge_ir::Verifier`（`Auto` = debug 开、release 关）；失败返回 `IrError::Verify`，debug 构建额外打印合法化后的 IR 正文。

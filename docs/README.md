@@ -31,6 +31,7 @@
 | 文件 | 内容 | 状态 |
 | --- | --- | --- |
 | `plans/backend-v31-verification.md` | **后端 v31 合法化后全量 IR 校验**：`CompileOptions::verify`、合法化后完整 `Verifier`、25 条不变量违例清零、三 ISA 校验矩阵 | progress |
+| `plans/backend-v32-jit-bind.md` | **后端 v32 JIT 调用绑定**：`JitType`/`JitTarget`、`bind`/`bind_source`/`bind_raw`、`JitFn` 0–16；M1 已落地，M1b/M2/M3（128 位/聚合/变参）进行中 | progress |
 | [`archive/backend-v30-ergonomics.md`](archive/backend-v30-ergonomics.md) | **后端 v30 人体工学重构**（破坏性 · 无兼容层）：`CompileOptions`/`CompileError`、`Stage` 枚举、JIT 拆文件与类型安全调用；硬判据 = 重构前后机器码逐字节相同 | archive |
 | —（已归档） | **forge v28 通用性整治**：M0–M7 全部收口；见 [`archive/forge-v28-generality-plan.md`](archive/forge-v28-generality-plan.md) | archive |
 | —（已归档） | **v29 插件硬化**：跨 ABI 重定位、版本握手、planner、Call/旧 ABI 测试；见 [`archive/forge-v29-plugin-hardening.md`](archive/forge-v29-plugin-hardening.md) | archive |

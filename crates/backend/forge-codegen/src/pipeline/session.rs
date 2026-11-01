@@ -17,7 +17,7 @@ use crate::machine::target::TargetMachine;
 use crate::pipeline::compiler::CompileSession;
 use crate::pipeline::error::CompileError;
 use crate::pipeline::options::Parallelism;
-use crate::pipeline::signature::JitSignatureInfo;
+use crate::pipeline::signature::{JitSig, JitSignatureInfo};
 use crate::pipeline::stage::Stage;
 use crate::{CompiledFunction, IrError};
 use forge_ir::ir::function::Function;
@@ -32,6 +32,8 @@ pub struct CompiledUnit {
     pub function: CompiledFunction,
     /// 源码签名（形参/返回/约定/变参）。
     pub sig: JitSignatureInfo,
+    /// v32 自包含签名（源码 + 合法化后 ABI + 目标事实）。
+    pub jit_sig: JitSig,
 }
 
 /// 一次整模块编译的产物（**纯数据**：机器码 + 符号 + 数据段，不含可执行内存）。
@@ -116,13 +118,14 @@ fn compile_one<M: TargetMachine>(
     func: &Function,
     variadic: bool,
 ) -> Result<CompiledUnit, CompileError> {
-    let function = CompileSession::from_arc(Arc::clone(machine))
+    let (function, jit_sig) = CompileSession::from_arc(Arc::clone(machine))
         .with_module_sigs((**sigs).clone())
-        .compile(func)?;
+        .compile_with_jit_sig(func)?;
     Ok(CompiledUnit {
         name: func.name.clone(),
         function,
         sig: JitSignatureInfo::from_function(func, variadic),
+        jit_sig,
     })
 }
 
@@ -256,6 +259,17 @@ impl<M: TargetMachine> CompileSession<M> {
         signature: &FunctionSignature,
         build_fn: impl FnOnce(&mut forge_ir::ir::builder::FunctionBuilder),
     ) -> Result<CompiledFunction, CompileError> {
+        self.add_function_with_jit_sig(name, signature, build_fn)
+            .map(|(cf, _sig)| cf)
+    }
+
+    /// 与 [`Self::add_function`] 相同，额外交付 v32 自包含签名。
+    pub fn add_function_with_jit_sig(
+        &self,
+        name: &str,
+        signature: &FunctionSignature,
+        build_fn: impl FnOnce(&mut forge_ir::ir::builder::FunctionBuilder),
+    ) -> Result<(CompiledFunction, JitSig), CompileError> {
         let store = forge_ir::ir::types::TypeContext::new();
         let mut builder =
             forge_ir::ir::builder::FunctionBuilder::new(name, store, signature.clone());
@@ -263,6 +277,6 @@ impl<M: TargetMachine> CompileSession<M> {
         let func: Function = builder
             .finish()
             .map_err(|e| CompileError::at(Stage::ISel, &ImmStr::from(name), e))?;
-        self.compile(&func)
+        self.compile_with_jit_sig(&func)
     }
 }

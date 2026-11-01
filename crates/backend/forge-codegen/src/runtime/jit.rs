@@ -31,6 +31,7 @@ use crate::machine::target::TargetMachine;
 use crate::pipeline::compiler::CompileSession;
 use crate::pipeline::error::CompileError;
 use crate::pipeline::session::CompiledModule;
+use crate::pipeline::signature::JitSig;
 use crate::pipeline::signature::JitSignatureInfo;
 use crate::{CompiledFunction, RelocKind, Relocation};
 use forge_ir::ImmStr;
@@ -39,10 +40,12 @@ use forge_ir::{
 };
 use forge_isa_runtime::mem::{ExecutableMemory, MemError};
 
+mod binding;
 mod signature;
 mod symbols;
 
-pub use signature::{JitParam, JitReturn, JitSignature};
+pub use binding::{JitBindError, JitFn};
+pub use signature::{JitCallSignature, JitParam, JitReturn, JitSignature, JitValue};
 use symbols::{STACK_PROBE_SYMBOL, platform_symbol_lookup, stack_probe_addr};
 
 fn mem_to_compile_err(e: MemError) -> IrError {
@@ -117,6 +120,8 @@ struct CompiledEntry {
     function: CompiledFunction,
     mem: ExecutableMemory,
     sig: JitSignatureInfo,
+    /// v32 自包含签名（源码 + ABI + 目标事实）。
+    jit_sig: JitSig,
 }
 
 /// JIT 装载器 — 把编译产物装进可执行内存，并管理符号解析与执行。
@@ -189,8 +194,8 @@ impl<M: TargetMachine> JitLoader<M> {
     ) -> Result<(), IrError> {
         let session =
             CompileSession::from_arc(Arc::clone(&self.machine)).with_module_sigs(self.sigs.clone());
-        let compiled = session
-            .add_function(name, signature, build_fn)
+        let (compiled, jit_sig) = session
+            .add_function_with_jit_sig(name, signature, build_fn)
             .map_err(CompileError::into_ir)?;
         let sig = JitSignatureInfo::from_signature(signature);
         // 记进累积表：本函数的 `FuncRef` 序即"第几个被 add_function 的函数"。
@@ -205,7 +210,7 @@ impl<M: TargetMachine> JitLoader<M> {
         // ⇒ 进程 AV（实测：JIT 里"先 add 被调方、再 add 调用方"必崩；
         // 单函数编译/直接调被调方都正常）。
         let func_ref = self.sigs.len() - 1;
-        self.load_function(ImmStr::from(name), compiled, sig, Some(func_ref))?;
+        self.load_function(ImmStr::from(name), compiled, sig, jit_sig, Some(func_ref))?;
         // 重新解析之前未能解析的重定位
         self.resolve_pending()
     }
@@ -244,7 +249,7 @@ impl<M: TargetMachine> JitLoader<M> {
         }
         self.data_segments.extend(data_segments);
         for (i, unit) in units.into_iter().enumerate() {
-            self.load_function(unit.name, unit.function, unit.sig, Some(i))?;
+            self.load_function(unit.name, unit.function, unit.sig, unit.jit_sig, Some(i))?;
         }
         Ok(())
     }
@@ -258,6 +263,7 @@ impl<M: TargetMachine> JitLoader<M> {
         name: ImmStr,
         mut compiled: CompiledFunction,
         sig: JitSignatureInfo,
+        jit_sig: JitSig,
         func_ref: Option<usize>,
     ) -> Result<(), IrError> {
         // 尝试解析已记录的跨函数重定位
@@ -275,6 +281,7 @@ impl<M: TargetMachine> JitLoader<M> {
                 function: compiled,
                 mem,
                 sig,
+                jit_sig,
             },
         );
         Ok(())

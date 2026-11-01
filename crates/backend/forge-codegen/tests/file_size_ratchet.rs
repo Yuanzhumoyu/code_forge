@@ -95,7 +95,8 @@ const BUDGETS: [(&str, usize); 5] = [
     // v31（+9）：win64 cursor 的 Inttoptr、Icmp 的 BOOL 结果、聚合档提前返回的说明。
     ("pipeline/va_expand/expand.rs", 630),
     // 编译会话入口（v30 M2：前置门/合法化批次/命名计时已外提；v31 +1 行传 verify 开关）。
-    ("pipeline/compiler/mod.rs", 434),
+    // v32 M1（+22）：`compile_with_jit_sig` 公共出口 + 合法化后 ABI 签名捕获。
+    ("pipeline/compiler/mod.rs", 456),
 ];
 
 /// 缺省上限：新文件超过它就必须进 [`BUDGETS`] 并写明理由。
