@@ -130,32 +130,26 @@ impl<M: TargetMachine> JitLoader<M> {
 - C `...` 仍保留 `bind_variadic`（unsafe）；真正动态 C 变参需要 libffi 或
   callee 保存参数寄存器，不在本切片里伪装成安全。
 
-## 4.4 M1b-partial：i128 by-ref 入口（2026-11-01）
+## 4.4 M1b：i128 by-ref 入口 + XMM0 返回（2026-11-01）
 
 - win64 C ABI 的 `i128` 形参是**按引用**传（`cross_abi.rs` 已由 LLVM 对拍证实：
   `mov 0x8(%rcx),%rax`，返回走 XMM0）。`agg_param` 现在识别 `TypeId::I128` 的
   `ByRef` 落点：签名改 `ptr`，入口发 `load i128 [ptr]`，再交给 `wide_split` 拆肢。
 - `tests/i128_entry_by_ref.rs`：直接 IR `(i128,i128)->i64` 先编译、再以
   `extern "C" fn(*const i128,*const i128)->i64` 真执行，`2+3=5`。
-- 仍待：128 位**返回**（win64 XMM0）、sysv64 整数对/by-value、`JitSig` 的
-  i128 ABI 投影（当前 `to_abi` 仍是 `UnsupportedAbi`，测试用 `bind_raw`）。
-- **返回失败的根因（2026-11-01 修正）**：`edges.ret` 早已是
-  `Reg { FPR(128), XMM0 }`；坏 IR `load i64, i64 %a` 来自
-  `agg_call::expand_large_agg_ret` 把 i128 当成 >8B 聚合去物化。修复后 i128 不再
-  走聚合返回展开；`wide_split::is_fully_supported` 单独检查终结符宽返回，直接 IR
-  现在明确 `WIDE_INT_SHAPE: Ret`（guard `i128_return_fail_closed`），不再产出坏 IR。
-- **返回支持仍待**：`set_return_values` 已由 regression test 证明可用
-  （`0619e0dd`）；打包路径也能清掉旧 use。新的阻塞在 **x86 `Vinsert` 的 lowering**：
-  `rd≤128` 只有 `MOVAPS out, vec; MOVSD out, scalar`（恒写低 lane，忽略 lane
-  立即数）；插高肢会覆盖低肢，`uextend` 返回实测为 0。下一步：
-  - 修 `Vinsert` lane1 规则（`MOVQ scalar→XMM` + `PUNPCKLQDQ`），或
-  - 用 16B 栈缓冲 `store low/high` + 向量 `load` 打包（不经 Vinsert）。
+- **128 位返回已打通**：`wide_split` 把两个肢 `store` 进 16B 栈缓冲，再
+  `load <2 x i64>`、`set_return_values` 重写终结符、签名返回改向量；
+  测试 `widen(i64)->i128` 以 `extern "C" fn(i64)->i128` 真执行，`7→7`（经 XMM0）。
+- 为什么不用 `Vinsert`：x86 `rd≤128` 的 lowering 只有 `MOVAPS+MOVSD`（恒写低
+  lane，忽略 lane 立即数），插高肢会覆盖低肢；栈缓冲绕开这条缺陷。
+- 仍待：sysv64 的整数对/by-value、`JitSig` 的 i128 ABI 投影（当前 `to_abi` 仍是
+  `UnsupportedAbi`，测试用 `bind_raw`）。
 
 ## 5. 未完成（M1b / M2 / M3）
 
 | 里程碑 | 内容 | 验收 |
 | --- | --- | --- |
-| M1b | 128 位入口/返回 ABI：`wide_split` 入口拆分、返回配对/sret；`plan_jit_abi` 初版；`rustc-abi-cross` 对拍 | i128/u128 by-value 真执行；三 ISA 编译。**进展**：win64 by-ref `i128` 形参已编译+真执行（`2+3=5`）；128 位返回 XMM0、sysv64 整数对、`JitSig` ABI 投影仍待做 |
+| M1b | 128 位入口/返回 ABI：`wide_split` 入口拆分、返回配对/sret；`plan_jit_abi` 初版；`rustc-abi-cross` 对拍 | i128/u128 by-value 真执行；三 ISA 编译。**进展**：win64 by-ref `i128` 形参 + XMM0 返回已真执行（`2+3=5`、`7→7`）；sysv64 整数对、`JitSig` ABI 投影仍待做 |
 | M2 | `#[derive(JitValue)]`、聚合/数组/向量、`ByVal`/`ByRef`/`Out`、sret/by-ref；完整 `plan_jit_abi`；转换 12 处 unchecked 指针站点 | win64/sysv64 聚合真执行；三 ISA；demo 聚合 |
 | M3 | ~~`bind_variadic`~~（已落地）、~~counted loop~~（已落地，`n` 驱动循环）、sentinel/format 截止约定、`add_function` 直接变参调用修复、`jit_rust_abi` 的 Bevy `Reflect` 适配器、函数指针 JIT 回调 demo、跨目标 bind/call 测试、错误文档 | 变参 demo；带字段枚举/union 真执行；错误带下标；54/54 |
 

@@ -106,8 +106,15 @@ impl<M: TargetMachine> LegalizePass<M> for WideSplitPass {
             return Ok(ChangeSet::default());
         }
 
+        let ret_xmm = ctx.edges.as_ref().is_some_and(|e| {
+            matches!(
+                &e.ret,
+                Some(forge_abi::RetLoc::Reg { reg })
+                    if matches!(reg.class, forge_ir::RegClass::FPR(128))
+            )
+        });
         // ② 可行性：本 pass 不覆盖的形态**明确失败**（绝不静默把宽值留给 isel）
-        if let Err(op) = is_fully_supported(func, &types_ctx, w) {
+        if let Err(op) = is_fully_supported(func, &types_ctx, w, ret_xmm) {
             return Err(wide_shape_unsupported(&format!(
                 "宽值指令形态 {op:?} 未覆盖（操作数或结果是宽整数）"
             )));
@@ -194,6 +201,107 @@ impl<M: TargetMachine> LegalizePass<M> for WideSplitPass {
             }
         }
 
+        // ③.6 win64 i128 返回：用 16B 栈缓冲打包（store low/high + vector load），
+        // 不依赖 x86 Vinsert 的 lane1 lowering。
+        if ret_xmm {
+            let mut jobs: Vec<(Block, Value)> = Vec::new();
+            for (b, _bd) in e.func.dfg.blocks() {
+                if let Some(vals) = e.func.dfg.term_return_values(b) {
+                    for &v in vals {
+                        if e.func.dfg.value_type(v) == Some(TypeId::I128) {
+                            jobs.push((b, v));
+                        }
+                    }
+                }
+            }
+            if !jobs.is_empty() {
+                let vec_ty = e.func.types.vector_ty(TypeId::I64, 2);
+                let entry = e.func.entry();
+                let alloc = e.func.make_inst(
+                    Opcode::Alloca,
+                    entry,
+                    smallvec::smallvec![],
+                    smallvec::smallvec![Immediate::Type(TypeId::I64), Immediate::Uint(2)],
+                    &[TypeId::PTR],
+                    InstFlags::NONE,
+                );
+                let buf = e.func.dfg.inst_data(alloc).results[0];
+                // make_inst 已把 alloca 追加到块序；移到入口开头保证支配所有使用。
+                {
+                    let order = &mut e.func.dfg.block_mut(entry).inst_order;
+                    let ni = order.pop().expect("刚 push 的 alloca");
+                    order.insert(0, ni);
+                }
+                e.created += 1;
+                for (b, old) in jobs {
+                    let limbs = parts.get(old).cloned().unwrap_or_default();
+                    if limbs.len() != 2 {
+                        return Err(wide_shape_unsupported(
+                            "win64 i128 返回：宽值未拆成两个肢，无法打包向量",
+                        ));
+                    }
+                    let one = e.func.make_inst(
+                        Opcode::Iconst,
+                        b,
+                        smallvec::smallvec![],
+                        smallvec::smallvec![Immediate::Int(1)],
+                        &[TypeId::I64],
+                        InstFlags::NONE,
+                    );
+                    let one_v = e.func.dfg.inst_data(one).results[0];
+                    let hi = e.func.make_inst(
+                        Opcode::GetElementPtr,
+                        b,
+                        smallvec::smallvec![buf, one_v],
+                        smallvec::smallvec![Immediate::Type(TypeId::I64)],
+                        &[TypeId::PTR],
+                        InstFlags::NONE,
+                    );
+                    let hi_v = e.func.dfg.inst_data(hi).results[0];
+                    let _st_lo = e.func.make_inst(
+                        Opcode::Store,
+                        b,
+                        smallvec::smallvec![limbs[0], buf],
+                        smallvec::smallvec![],
+                        &[],
+                        InstFlags::SIDE_EFFECT,
+                    );
+                    let _st_hi = e.func.make_inst(
+                        Opcode::Store,
+                        b,
+                        smallvec::smallvec![limbs[1], hi_v],
+                        smallvec::smallvec![],
+                        &[],
+                        InstFlags::SIDE_EFFECT,
+                    );
+                    let load = e.func.make_inst(
+                        Opcode::Load,
+                        b,
+                        smallvec::smallvec![buf],
+                        smallvec::smallvec![],
+                        &[vec_ty],
+                        InstFlags::NONE,
+                    );
+                    let vec = e.func.dfg.inst_data(load).results[0];
+                    e.created += 5;
+                    e.func.set_return_values(b, [vec]);
+                }
+                let old_sig = e
+                    .func
+                    .types
+                    .borrow()
+                    .get_signature(e.func.signature)
+                    .clone();
+                let new_sig = FunctionSignature {
+                    params: old_sig.params.clone(),
+                    returns: vec![vec_ty],
+                    calling_convention: old_sig.calling_convention,
+                    variadic: old_sig.variadic,
+                };
+                e.func.signature = e.func.types.borrow_mut().register_signature(new_sig);
+            }
+        }
+
         // ④ 清理原宽指令（此时已无使用者），再跑泄漏守卫
         for ii in kills {
             e.kill(ii);
@@ -262,12 +370,14 @@ fn is_fully_supported(
     func: &Function,
     types_ctx: &forge_ir::ir::types::TypeContext,
     w: u32,
+    ret_xmm: bool,
 ) -> Result<(), Opcode> {
     let store = types_ctx.borrow();
     for (b, bd) in func.dfg.blocks() {
         // `ret` 的宽操作数不在 `inst.operands`（终结符单独存），必须单独看，
         // 否则会绕过可行性判断、直到泄漏守卫才报（M1b 实测）。
-        if let Some(vals) = func.dfg.term_return_values(b)
+        if !ret_xmm
+            && let Some(vals) = func.dfg.term_return_values(b)
             && vals
                 .iter()
                 .any(|v| is_wide_int(&store, func.dfg.value_type(*v).unwrap_or(TypeId::VOID), w))
@@ -304,7 +414,10 @@ fn is_fully_supported(
                 | Opcode::Imul => true,
                 // 移位：常量与运行期移位量都支持
                 Opcode::Ishl | Opcode::Ushr | Opcode::Sshr => true,
-                _ => false, // Div/Rem/Call/Ret/… ⇒ 回退
+                // 返回打包用栈缓冲（Alloca/Store/Load），不依赖 Vinsert lane 规则
+                Opcode::Alloca => true,
+                Opcode::Ret => ret_xmm,
+                _ => false, // Div/Rem/Call/… ⇒ 回退
             };
             if !ok {
                 // 返回**具体 opcode**：失败消息里点名它，比"存在未覆盖的宽值指令形态"
