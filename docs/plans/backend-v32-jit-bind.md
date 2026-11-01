@@ -142,8 +142,10 @@ impl<M: TargetMachine> JitLoader<M> {
   测试 `widen(i64)->i128` 以 `extern "C" fn(i64)->i128` 真执行，`7→7`（经 XMM0）。
 - 为什么不用 `Vinsert`：x86 `rd≤128` 的 lowering 只有 `MOVAPS+MOVSD`（恒写低
   lane，忽略 lane 立即数），插高肢会覆盖低肢；栈缓冲绕开这条缺陷。
-- 仍待：sysv64 的整数对/by-value、`JitSig` 的 i128 ABI 投影（当前 `to_abi` 仍是
-  `UnsupportedAbi`，测试用 `bind_raw`）。
+- **安全 bind**：by-ref 形参可用 `bind::<extern "C" fn(*const i128,*const i128)->i64>`
+  （ABI 就是 ptr）；返回路径仍走 `bind_raw`，因为 `JitSig::to_abi` 对 i128 还是
+  `UnsupportedAbi`，需要按目标/约定补 ABI 投影。
+- 仍待：sysv64 的整数对/by-value、`JitSig` 的 i128 ABI 投影。
 
 ## 5. 未完成（M1b / M2 / M3）
 
