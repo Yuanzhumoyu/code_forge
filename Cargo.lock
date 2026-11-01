@@ -401,9 +401,9 @@ dependencies = [
 
 [[package]]
 name = "dashu"
-version = "0.6.0"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d2731e5dcfa29119f6d3281bdadbbe2822a4741a963756cfbc0958a094d5945c"
+checksum = "31f6dc24668cbbc8bf423317d90978fdab0eef54130db10eaf01acd20ca74d23"
 dependencies = [
  "dashu-base",
  "dashu-cmplx",
@@ -415,18 +415,18 @@ dependencies = [
 
 [[package]]
 name = "dashu-base"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd9f3ef1b2d76f10fbc6a48d7b04e3dd8966242827ffcd987f3437c5e04ade21"
+checksum = "861a614e79388a4c72aa66b0bdabc91e3a4f30d53e0c8d962953e207d75884d0"
 dependencies = [
  "num-modular",
 ]
 
 [[package]]
 name = "dashu-cmplx"
-version = "0.6.0"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73e3be86c3e4be6d6168229261aa526cb23f0c4e1ef4f89272e118a469807192"
+checksum = "afb1039d10a717fa2584d8428596cf23d9be49be743362d7478b5b2637ca8cb5"
 dependencies = [
  "dashu-base",
  "dashu-float",
@@ -437,9 +437,9 @@ dependencies = [
 
 [[package]]
 name = "dashu-float"
-version = "0.6.0"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "542f7e260ebc9c95bec696d5a948238bbcf5f7c5eb621160531841d585958ef1"
+checksum = "4be5a53987dee3a7e9e874aad24cd42cf074f0aa1e6b4d1230189837ea672a49"
 dependencies = [
  "dashu-base",
  "dashu-int",
@@ -450,9 +450,9 @@ dependencies = [
 
 [[package]]
 name = "dashu-int"
-version = "0.6.0"
+version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87a89c01d9f8414897a573ab98d3bbb6b82be12017bb3c67920eb79830bcc620"
+checksum = "64a0490b40a6a3f6427970035f17f76fd59c01d3cd9f9140809672863a0d64c8"
 dependencies = [
  "cfg-if",
  "dashu-base",
@@ -463,9 +463,9 @@ dependencies = [
 
 [[package]]
 name = "dashu-macros"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "149a0eeef7227b954175b890ae17a93464938725c063a3888b5a72fa98f3048f"
+checksum = "91bcbb4860c5b0c8a953b07b2fbb9dec68f7b286938f6670058867d2a38af166"
 dependencies = [
  "dashu-base",
  "dashu-cmplx",
@@ -479,9 +479,9 @@ dependencies = [
 
 [[package]]
 name = "dashu-ratio"
-version = "0.6.0"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8636f5d52aa726fb8478f3f7a2be0bb617f1f110cf9669dba75a6a683900e8dc"
+checksum = "eb0b7e2610ae7f28b2ab8b09229afedc9cbc7a32e7c647b916a3a49ca00123c1"
 dependencies = [
  "dashu-base",
  "dashu-float",
