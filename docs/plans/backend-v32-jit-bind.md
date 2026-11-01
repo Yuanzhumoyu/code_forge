@@ -130,11 +130,21 @@ impl<M: TargetMachine> JitLoader<M> {
 - C `...` 仍保留 `bind_variadic`（unsafe）；真正动态 C 变参需要 libffi 或
   callee 保存参数寄存器，不在本切片里伪装成安全。
 
+## 4.4 M1b-partial：i128 by-ref 入口（2026-11-01）
+
+- win64 C ABI 的 `i128` 形参是**按引用**传（`cross_abi.rs` 已由 LLVM 对拍证实：
+  `mov 0x8(%rcx),%rax`，返回走 XMM0）。`agg_param` 现在识别 `TypeId::I128` 的
+  `ByRef` 落点：签名改 `ptr`，入口发 `load i128 [ptr]`，再交给 `wide_split` 拆肢。
+- `tests/i128_entry_by_ref.rs`：直接 IR `(i128,i128)->i64` 先编译、再以
+  `extern "C" fn(*const i128,*const i128)->i64` 真执行，`2+3=5`。
+- 仍待：128 位**返回**（win64 XMM0）、sysv64 整数对/by-value、`JitSig` 的
+  i128 ABI 投影（当前 `to_abi` 仍是 `UnsupportedAbi`，测试用 `bind_raw`）。
+
 ## 5. 未完成（M1b / M2 / M3）
 
 | 里程碑 | 内容 | 验收 |
 | --- | --- | --- |
-| M1b | 128 位入口/返回 ABI：`wide_split` 入口拆分、返回配对/sret；`plan_jit_abi` 初版；`rustc-abi-cross` 对拍 | i128/u128 by-value 真执行；三 ISA 编译。**当前**：直接 IR 的 i128 入口参数已明确 `WIDE_INT_SHAPE` fail-closed（guard `i128_entry_fail_closed`），不再 panic；支持仍待做 |
+| M1b | 128 位入口/返回 ABI：`wide_split` 入口拆分、返回配对/sret；`plan_jit_abi` 初版；`rustc-abi-cross` 对拍 | i128/u128 by-value 真执行；三 ISA 编译。**进展**：win64 by-ref `i128` 形参已编译+真执行（`2+3=5`）；128 位返回 XMM0、sysv64 整数对、`JitSig` ABI 投影仍待做 |
 | M2 | `#[derive(JitValue)]`、聚合/数组/向量、`ByVal`/`ByRef`/`Out`、sret/by-ref；完整 `plan_jit_abi`；转换 12 处 unchecked 指针站点 | win64/sysv64 聚合真执行；三 ISA；demo 聚合 |
 | M3 | ~~`bind_variadic`~~（已落地）、~~counted loop~~（已落地，`n` 驱动循环）、sentinel/format 截止约定、`add_function` 直接变参调用修复、`jit_rust_abi` 的 Bevy `Reflect` 适配器、函数指针 JIT 回调 demo、跨目标 bind/call 测试、错误文档 | 变参 demo；带字段枚举/union 真执行；错误带下标；54/54 |
 

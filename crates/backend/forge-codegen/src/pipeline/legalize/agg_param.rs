@@ -40,17 +40,25 @@ pub(crate) fn expand_large_agg_params(
     // 只是把"值住在 [fp + offset]"登记进 agg_slots。
     let mut keep_param: Vec<bool> = Vec::with_capacity(old_params.len());
     let mut stack_agg: Vec<(usize, i32, TypeId)> = Vec::new();
+    // i128 的 by-ref 落点（win64 C ABI：形参是指针，值从内存 load）
+    let mut i128_byref: Vec<(Value, Value)> = Vec::new();
     // 按值栈档的 callee-saved 区平移（每个形参探针给出的都是同一个函数级事实）
     let mut agg_stack_shift = 0i32;
     let mut has_large = false;
     for (i, t) in old_params.iter().enumerate() {
-        // 宽整数（i128；IR 只有这一个 >64 位整型）不是聚合：入口拆肢归
-        // `wide_split`，这里不能把它当聚合拆成 i64 段——否则 Iadd 的结果仍是 i128、
-        // 操作数却已被换成肢，wide_split 会看到"宽结果 + 非宽操作数"的混形。
+        // 宽整数（i128；IR 只有这一个 >64 位整型）不是聚合：按引用落点时走
+        // 下面的专用 ptr+load；寄存器落点仍交给 `wide_split` 拆肢。
         if *t == TypeId::I128 {
-            seg_map.push(1);
-            by_ref.push(false);
-            keep_param.push(true);
+            if edges.param_of(i).is_some_and(|loc| is_by_ref(&loc.place)) {
+                seg_map.push(0);
+                by_ref.push(true);
+                keep_param.push(false);
+                has_large = true;
+            } else {
+                seg_map.push(1);
+                by_ref.push(false);
+                keep_param.push(true);
+            }
             continue;
         }
         // 非宽聚合（`≤8B` 或非聚合：约定可能仍走寄存器档，C ABI 强制）⇒ 原样保留。
@@ -142,8 +150,14 @@ pub(crate) fn expand_large_agg_params(
                 .make_value(TypeId::PTR, ValueDef::Param(entry, new_bvals.len() as u16));
             new_bvals.push(v);
             new_bparams.push(TypeId::PTR);
-            rewrite.insert(old_v, vec![v]);
-            byref_info.push((old_v, v, *t));
+            if *t == TypeId::I128 {
+                // 专用标量 by-ref：稍后发 `load i128 [ptr]`，不要走聚合 materialize。
+                i128_byref.push((old_v, v));
+                rewrite.insert(old_v, vec![v]);
+            } else {
+                rewrite.insert(old_v, vec![v]);
+                byref_info.push((old_v, v, *t));
+            }
             continue;
         }
         let segs = seg_map.get(i).copied().unwrap_or(1);
@@ -164,6 +178,21 @@ pub(crate) fn expand_large_agg_params(
     let bd = func.dfg.block_mut(entry);
     bd.params = smallvec::SmallVec::from_iter(new_bparams);
     bd.param_values = smallvec::SmallVec::from_iter(new_bvals);
+    // i128 by-ref：入口处 `load i128 [ptr]`，旧值使用处改为这个宽值；
+    // 后续 `wide_split` 再把 load/算术拆成肢。
+    for (old_v, ptr_v) in i128_byref {
+        let li = func.make_inst(
+            Opcode::Load,
+            entry,
+            smallvec::smallvec![ptr_v],
+            smallvec::smallvec![],
+            &[TypeId::I128],
+            InstFlags::NONE,
+        );
+        let v = func.dfg.inst_data(li).results[0];
+        func.dfg.block_mut(entry).inst_order.insert(0, li);
+        rewrite.insert(old_v, vec![v]);
+    }
     // 按值进传出区档（sysv64）：形参保留（布局/偏移由它决定），但值**不占寄存器**——
     // 把"该聚合住在 `[fp + offset]`"登记进 `agg_slots`，使用处按地址读。
     // `StackAddr` 的 lea 位移 = 立即数 − callee-saved 区平移（`lowering.rs` 的
