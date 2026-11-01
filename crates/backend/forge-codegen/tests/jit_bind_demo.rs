@@ -64,6 +64,26 @@ fn bind_scalar_and_bool() {
     jit.bind_source::<extern "C" fn(bool) -> bool>("not")
         .expect("bool 源码签名应匹配 i1");
 
+    // 变参：固定前缀类型化校验，`...` 由 Rust 变参指针调用（M3 切片）。
+    let mut variadic_sig = FunctionSignature::new(&[(TypeId::I64, "x")], &[TypeId::I64]);
+    variadic_sig.variadic = true;
+    jit.add_function("vsum", &variadic_sig, |b| {
+        let (entry, _p) = b.create_block_with_params(&[(TypeId::I64, "x")]);
+        b.switch_to_block(entry);
+        let seven = b.const_int(7i64, TypeId::I64);
+        b.ret(&[seven]);
+    })
+    .expect("vsum");
+
+    // 非变参 bind 必须拒绝；变参 bind 校验固定前缀后返回 raw 指针。
+    assert!(jit.bind::<extern "C" fn(i64) -> i64>("vsum").is_err());
+    let vsum = jit
+        .bind_variadic::<unsafe extern "C" fn(i64, ...) -> i64>("vsum")
+        .expect("bind_variadic vsum");
+    let r = unsafe { (vsum.raw())(1i64, 2i64, 3i64) };
+    assert_eq!(r, 7, "变参函数固定前缀 + 额外实参应正常调用");
+    println!("variadic_sum(1,2,3)={r}");
+
     // 让编译器知道 `Opcode` 被引用（早期探针保留的导入）。
     let _ = Opcode::Nop;
 }

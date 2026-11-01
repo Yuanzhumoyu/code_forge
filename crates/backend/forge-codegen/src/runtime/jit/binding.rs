@@ -19,6 +19,9 @@ pub enum JitBindError {
     Variadic {
         name: String,
     },
+    NotVariadic {
+        name: String,
+    },
     ParamCount {
         expected: usize,
         found: usize,
@@ -50,8 +53,11 @@ impl std::fmt::Display for JitBindError {
             }
             JitBindError::Variadic { name } => write!(
                 f,
-                "JIT 函数 `{name}` 是变参：请用 bind_variadic（M3）或 bind_raw，bind 不表达 `...`"
+                "JIT 函数 `{name}` 是变参：请用 bind_variadic 或 bind_raw，bind 不表达 `...`"
             ),
+            JitBindError::NotVariadic { name } => {
+                write!(f, "JIT 函数 `{name}` 不是变参，不能 bind_variadic")
+            }
             JitBindError::ParamCount { expected, found } => {
                 write!(f, "JIT 形参个数不匹配：请求 {expected}，产物 {found}")
             }
@@ -265,6 +271,54 @@ impl<M: TargetMachine> JitLoader<M> {
         let expected = F::source(&entry.jit_sig.target);
         compare_shape(&expected, &entry.jit_sig.source, "源码")?;
         Ok(expected)
+    }
+
+    /// v32：绑定 C 变参函数——校验固定前缀与 `variadic`，调用用 `raw()`。
+    ///
+    /// Rust 1.99 的 `...` 类型让“固定前缀”可以类型化；`...` 部分由调用者与
+    /// Rust 变参类型保证（语言边界，泛型 `call` 无法表达）。
+    #[allow(clippy::result_large_err)]
+    pub fn bind_variadic<F: JitCallSignature>(
+        &self,
+        name: &str,
+    ) -> Result<JitFn<'_, F>, JitBindError> {
+        let entry = self
+            .entry(name)
+            .map_err(|e| JitBindError::Lookup(e.to_string()))?;
+        if !entry.jit_sig.conv.is_c() {
+            return Err(JitBindError::NotC {
+                conv: entry.jit_sig.conv.clone(),
+            });
+        }
+        if !entry.jit_sig.variadic {
+            return Err(JitBindError::NotVariadic {
+                name: name.to_string(),
+            });
+        }
+        let expected = F::abi(&entry.jit_sig.target);
+        if !expected.variadic {
+            return Err(JitBindError::NotVariadic {
+                name: format!("{name}（请求的 Rust 类型不是变参）"),
+            });
+        }
+        let abi = entry
+            .jit_sig
+            .abi
+            .as_ref()
+            .ok_or_else(|| JitBindError::UnsupportedAbi {
+                reason: "产物没有可用的 ABI 签名（含 M2 未展开形态）".to_string(),
+            })?;
+        compare_shape(&expected, abi, "ABI(变参固定前缀)")?;
+        let host = entry.jit_sig.target.is_host_compatible();
+        let ptr = unsafe { entry.mem.get_fn::<F>(0) }
+            .map_err(|e| JitBindError::Memory(format!("{e:?}")))?;
+        Ok(JitFn {
+            ptr,
+            abi: Some(abi.clone()),
+            source: Some(entry.jit_sig.source.clone()),
+            host,
+            _marker: std::marker::PhantomData,
+        })
     }
 
     /// v32 逃生口：不做签名校验；`call` 的宿主检查仍然生效。

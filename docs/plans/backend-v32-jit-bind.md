@@ -96,13 +96,23 @@ impl<M: TargetMachine> JitLoader<M> {
 - 目标：Rust 类型不必 `repr(C)`，反射读取字段/变体后生成 tag+payload 线格式 +
   `extern "C"` shim，实现 Rust ABI ↔ C ABI；官方反射稳定后只换反射来源。
 
+## 4.2 M3-a：变参绑定（2026-11-01）
+
+- `JitCallSignature`/`JitValue` 增加 `unsafe extern "C" fn(fixed..., ...) -> R`
+  实现（固定前缀 0–16，`variadic: true`）；`JitFn` 不生成泛型 `call`（varargs
+  无法泛型表达），调用走 `raw()`。
+- `JitLoader::bind_variadic`：校验产物为变参 + 固定前缀 ABI，返回 `JitFn`；
+  非变参 `bind` 继续拒绝并提示。
+- demo：`vsum(i64, ...)` 返回常量 7，`raw()(1,2,3)` → `variadic_sum(1,2,3)=7`。
+  真实 `va_arg` 求和（后端 `VaStart/VaArg` 已支持）作为 M3 剩余项。
+
 ## 5. 未完成（M1b / M2 / M3）
 
 | 里程碑 | 内容 | 验收 |
 | --- | --- | --- |
 | M1b | 128 位入口/返回 ABI：`wide_split` 入口拆分、返回配对/sret；`plan_jit_abi` 初版；`rustc-abi-cross` 对拍 | i128/u128 by-value 真执行；三 ISA 编译 |
 | M2 | `#[derive(JitValue)]`、聚合/数组/向量、`ByVal`/`ByRef`/`Out`、sret/by-ref；完整 `plan_jit_abi`；转换 12 处 unchecked 指针站点 | win64/sysv64 聚合真执行；三 ISA；demo 聚合 |
-| M3 | `bind_variadic`（固定前缀 + `raw()` 调用）、`jit_rust_abi` 的 Bevy `Reflect` 适配器（Rust ABI ↔ C 线格式）、函数指针 JIT 回调 demo、跨目标 bind/call 测试、错误文档 | 变参 demo；带字段枚举/union 真执行；错误带下标；54/54 |
+| M3 | ~~`bind_variadic`~~（已落地，固定前缀 + `raw()`）、`va_arg` 真求和 demo、`jit_rust_abi` 的 Bevy `Reflect` 适配器（Rust ABI ↔ C 线格式）、函数指针 JIT 回调 demo、跨目标 bind/call 测试、错误文档 | 变参 demo；带字段枚举/union 真执行；错误带下标；54/54 |
 
 ## 6. 边界
 

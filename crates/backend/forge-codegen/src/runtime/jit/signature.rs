@@ -302,6 +302,127 @@ call_signature!(A, B, C, D, E, F, G, H, I, J, K, L, M, N);
 call_signature!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O);
 call_signature!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P);
 
+// v32 M3：C 变参函数指针（Rust 1.99 稳定的 `...` 类型）。
+// 固定前缀参与 source/ABI 校验；`...` 由调用者与 Rust 变参类型保证。
+
+unsafe impl<R: JitValue> JitValue for unsafe extern "C" fn(...) -> R {
+    fn jit_type(target: &JitTarget) -> JitType {
+        let mut rets = Vec::new();
+        if !matches!(R::jit_type(target), JitType::Void) {
+            rets.push(R::jit_type(target));
+        }
+        JitType::Function {
+            params: Vec::new(),
+            rets,
+            variadic: true,
+        }
+    }
+}
+
+macro_rules! variadic_value {
+    ($($p:ident),*) => {
+        unsafe impl<$($p: JitValue,)* R: JitValue> JitValue
+            for unsafe extern "C" fn($($p),*, ...) -> R
+        {
+            fn jit_type(target: &JitTarget) -> JitType {
+                let mut rets = Vec::new();
+                if !matches!(R::jit_type(target), JitType::Void) {
+                    rets.push(R::jit_type(target));
+                }
+                JitType::Function {
+                    params: vec![$($p::jit_type(target)),*],
+                    rets,
+                    variadic: true,
+                }
+            }
+        }
+    };
+}
+
+variadic_value!(A);
+variadic_value!(A, B);
+variadic_value!(A, B, C);
+variadic_value!(A, B, C, D);
+variadic_value!(A, B, C, D, E);
+variadic_value!(A, B, C, D, E, F);
+variadic_value!(A, B, C, D, E, F, G);
+variadic_value!(A, B, C, D, E, F, G, H);
+variadic_value!(A, B, C, D, E, F, G, H, I);
+variadic_value!(A, B, C, D, E, F, G, H, I, J);
+variadic_value!(A, B, C, D, E, F, G, H, I, J, K);
+variadic_value!(A, B, C, D, E, F, G, H, I, J, K, L);
+variadic_value!(A, B, C, D, E, F, G, H, I, J, K, L, M);
+variadic_value!(A, B, C, D, E, F, G, H, I, J, K, L, M, N);
+variadic_value!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O);
+
+unsafe impl<R: JitValue> JitCallSignature for unsafe extern "C" fn(...) -> R {
+    fn source(target: &JitTarget) -> JitSigShape {
+        let mut returns = Vec::new();
+        if !matches!(R::jit_type(target), JitType::Void) {
+            returns.push(R::jit_type(target));
+        }
+        JitSigShape {
+            params: Vec::new(),
+            returns,
+            variadic: true,
+        }
+    }
+
+    fn abi(target: &JitTarget) -> JitSigShape {
+        let src = Self::source(target);
+        JitSigShape {
+            params: src.params.into_iter().map(JitType::to_abi).collect(),
+            returns: src.returns.into_iter().map(JitType::to_abi).collect(),
+            variadic: true,
+        }
+    }
+}
+
+macro_rules! variadic_call_signature {
+    ($($p:ident),*) => {
+        unsafe impl<$($p: JitValue,)* R: JitValue> JitCallSignature
+            for unsafe extern "C" fn($($p),*, ...) -> R
+        {
+            fn source(target: &JitTarget) -> JitSigShape {
+                let mut returns = Vec::new();
+                if !matches!(R::jit_type(target), JitType::Void) {
+                    returns.push(R::jit_type(target));
+                }
+                JitSigShape {
+                    params: vec![$($p::jit_type(target)),*],
+                    returns,
+                    variadic: true,
+                }
+            }
+
+            fn abi(target: &JitTarget) -> JitSigShape {
+                let src = Self::source(target);
+                JitSigShape {
+                    params: src.params.into_iter().map(JitType::to_abi).collect(),
+                    returns: src.returns.into_iter().map(JitType::to_abi).collect(),
+                    variadic: true,
+                }
+            }
+        }
+    };
+}
+
+variadic_call_signature!(A);
+variadic_call_signature!(A, B);
+variadic_call_signature!(A, B, C);
+variadic_call_signature!(A, B, C, D);
+variadic_call_signature!(A, B, C, D, E);
+variadic_call_signature!(A, B, C, D, E, F);
+variadic_call_signature!(A, B, C, D, E, F, G);
+variadic_call_signature!(A, B, C, D, E, F, G, H);
+variadic_call_signature!(A, B, C, D, E, F, G, H, I);
+variadic_call_signature!(A, B, C, D, E, F, G, H, I, J);
+variadic_call_signature!(A, B, C, D, E, F, G, H, I, J, K);
+variadic_call_signature!(A, B, C, D, E, F, G, H, I, J, K, L);
+variadic_call_signature!(A, B, C, D, E, F, G, H, I, J, K, L, M);
+variadic_call_signature!(A, B, C, D, E, F, G, H, I, J, K, L, M, N);
+variadic_call_signature!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O);
+
 #[cfg(test)]
 mod v32_tests {
     use super::*;

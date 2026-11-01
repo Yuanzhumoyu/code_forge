@@ -484,10 +484,12 @@ v32（[`plans/backend-v32-jit-bind.md`](../plans/backend-v32-jit-bind.md)）把 
   不携带 `TypeId`。无字段枚举按 `repr` 整数进 C ABI；带字段枚举/union 按值需要
   M2 的 `plan_jit_abi`，`jit_rust_abi` feature 的反射桥（M3）负责 Rust ABI ↔ C ABI。
 * `JitLoader::bind::<F>` 按 **ABI 签名**校验并返回 `JitFn`（0–16 元数）；
-  `bind_source` 只校验源码；`bind_raw` 是显式逃生口。`bind` **不**做宿主/目标
+  `bind_source` 只校验源码；`bind_variadic` 校验变参固定前缀并返回 `JitFn`
+  （`...` 调用走 `raw()`）；`bind_raw` 是显式逃生口。`bind` **不**做宿主/目标
   一致性拒绝；`JitFn::call` 在跨目标时 panic（fail-closed），`raw()` 自担。
 * `usize`/`isize`/指针由 `JitTarget.pointer_bits` 解析，**没有** `cfg(target_pointer_width)`；
   `bool` 源码为 `Bool`、ABI 为 `Int8`；函数指针源码为 `Function`、ABI 为 `Ptr`。
 * M1 已落地（标量/`bool`/函数指针类型、`bind`/`JitFn`）；128 位 by-value（M1b）、
-  聚合/向量/`plan_jit_abi`（M2）、变参 `bind_variadic`（M3）按下表推进。
-* 演示：`tests/jit_bind_demo.rs`（`add(2,3)=5`、`not(true)=false`）。
+  聚合/向量/`plan_jit_abi`（M2）按下表推进；`bind_variadic` 已落地（M3-a）。
+* 演示：`tests/jit_bind_demo.rs`（`add(2,3)=5`、`not(true)=false`、
+  `variadic_sum(1,2,3)=7`）。
