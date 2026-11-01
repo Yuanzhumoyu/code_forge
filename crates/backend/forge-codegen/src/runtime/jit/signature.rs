@@ -358,4 +358,45 @@ mod v32_tests {
             "i128 入口 ABI 在 M1b 前必须显式 Unsupported：{abi:?}"
         );
     }
+
+    #[test]
+    fn fieldless_enum_abi_is_its_repr() {
+        use crate::pipeline::signature::JitEnumVariant;
+        let e = JitType::Enum {
+            repr: Box::new(JitType::Int { bits: 8 }),
+            variants: vec![
+                JitEnumVariant {
+                    name: "A".into(),
+                    discriminant: 0,
+                    fields: Vec::new(),
+                },
+                JitEnumVariant {
+                    name: "B".into(),
+                    discriminant: 1,
+                    fields: Vec::new(),
+                },
+            ],
+        };
+        assert_eq!(e.to_abi(), JitType::Int { bits: 8 });
+    }
+
+    #[test]
+    fn data_enum_and_union_are_explicitly_unsupported_by_value() {
+        use crate::pipeline::signature::JitEnumVariant;
+        let data = JitType::Enum {
+            repr: Box::new(JitType::Int { bits: 8 }),
+            variants: vec![JitEnumVariant {
+                name: "A".into(),
+                discriminant: 0,
+                fields: vec![JitType::Int { bits: 32 }],
+            }],
+        };
+        assert!(matches!(data.to_abi(), JitType::UnsupportedAbi(_)));
+        let union = JitType::Union {
+            size: 8,
+            align: 8,
+            fields: vec![JitType::Int { bits: 64 }, JitType::Float { bits: 64 }],
+        };
+        assert!(matches!(union.to_abi(), JitType::UnsupportedAbi(_)));
+    }
 }

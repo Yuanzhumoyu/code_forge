@@ -32,9 +32,11 @@ pub enum JitType {
     Ptr { addr_space: u32 },
     Function { params: Vec<JitType>, rets: Vec<JitType>, variadic: bool },
     Struct { size: u32, align: u16, packed: bool, fields: Vec<JitType> },
+    Enum { repr: Box<JitType>, variants: Vec<JitEnumVariant> },
+    Union { size: u32, align: u16, fields: Vec<JitType> },
     Array { elem: Box<JitType>, len: u64 },
     Vector { elem: Box<JitType>, lanes: u32 },
-    Unsupported(&'static str),
+    UnsupportedAbi(&'static str),
 }
 ```
 
@@ -79,7 +81,20 @@ impl<M: TargetMachine> JitLoader<M> {
 
   并验证 `u8` 对 `i1` 源码签名必须失败、`bool` 源码签名通过。
 - 单测：32 位 `JitTarget` 下 `usize→Int32`、函数指针 `JitType::Function`、
-  `i128` ABI 显式 `Unsupported`；lib 3107 条、guards、clippy 绿。
+  `i128` ABI 显式 `UnsupportedAbi`；`Enum`/`Union` 的 C ABI 投影（无字段枚举→repr、
+  带字段枚举/union 按值显式 `UnsupportedAbi`）；lib 3109 条、guards、clippy 绿。
+
+## 4.1 M1.5：Enum/Union 与 `jit_rust_abi` 边界（2026-11-01）
+
+- `JitType` 新增 `Enum { repr, variants }` 与 `Union { size, align, fields }`；
+  无字段枚举按 `repr.to_abi()`（C 无字段枚举就是整数）；带字段枚举/union 按值
+  返回 `UnsupportedAbi`（M2 planner / M3 反射桥），不静默猜布局。
+- `forge-codegen` 增加 Cargo feature `jit_rust_abi`（默认关，不另建 crate）；
+  `runtime/jit/rust_abi.rs` 固定 `JitReflect` 边界。当前 registry 未 vendor
+  `bevy_reflect`，因此**先稳定 C ABI**，Bevy 适配器在依赖可用时实现同一 trait；
+  不在核心 crate 硬编码 Bevy。
+- 目标：Rust 类型不必 `repr(C)`，反射读取字段/变体后生成 tag+payload 线格式 +
+  `extern "C"` shim，实现 Rust ABI ↔ C ABI；官方反射稳定后只换反射来源。
 
 ## 5. 未完成（M1b / M2 / M3）
 
@@ -87,10 +102,30 @@ impl<M: TargetMachine> JitLoader<M> {
 | --- | --- | --- |
 | M1b | 128 位入口/返回 ABI：`wide_split` 入口拆分、返回配对/sret；`plan_jit_abi` 初版；`rustc-abi-cross` 对拍 | i128/u128 by-value 真执行；三 ISA 编译 |
 | M2 | `#[derive(JitValue)]`、聚合/数组/向量、`ByVal`/`ByRef`/`Out`、sret/by-ref；完整 `plan_jit_abi`；转换 12 处 unchecked 指针站点 | win64/sysv64 聚合真执行；三 ISA；demo 聚合 |
-| M3 | `bind_variadic`（固定前缀 + `raw()` 调用）、函数指针 JIT 回调 demo、跨目标 bind/call 测试、错误文档 | 变参 demo；错误带下标；54/54 |
+| M3 | `bind_variadic`（固定前缀 + `raw()` 调用）、`jit_rust_abi` 的 Bevy `Reflect` 适配器（Rust ABI ↔ C 线格式）、函数指针 JIT 回调 demo、跨目标 bind/call 测试、错误文档 | 变参 demo；带字段枚举/union 真执行；错误带下标；54/54 |
 
 ## 6. 边界
 
 - 跨目标执行不在本方案（`bind` 允许检查，`call` panic，`raw()` 自担）。
 - 变参的 `...` 部分由 Rust 变参类型与调用者保证；泛型安全调用无法表达，`raw()` 是语言边界内的正确形态。
 - 聚合 by-value 的 Rust/C ABI 与 JIT 后端必须一致；M2 的 `plan_jit_abi` 是单一事实源，不一致 fail-closed。
+
+## 7. Rust ABI 反射桥（`jit_rust_abi` feature）
+
+> 目标：Rust 类型**不必** `#[repr(C)]`，由反射读取逻辑布局（字段/变体/判别值），
+> 生成 **C ABI 线格式 + 适配器**，在 Rust ABI 与 JIT 的 C ABI 之间无缝转换；
+> 官方反射稳定后只替换反射来源，不动 `JitType`/`bind`。
+
+- **不另建 crate**：`forge-codegen` 的 Cargo feature `jit_rust_abi`（默认关）启用
+  `bevy_reflect` 适配层；核心 `JitType`/`bind` 不依赖 Bevy。
+- 类型映射：`ReflectKind::Struct/TupleStruct` → `Struct`；`ReflectKind::Enum`
+  → `Enum`（字段变体保留 payload）；union 由 `Reflect` 的 opaque/bytes + 手工
+  `JitReflect` 提供 `Union` 描述（Bevy 没有 union kind）；`Value` 标量按位宽映射。
+- **C ABI 先稳定**：无字段枚举按 `repr` 整数传值；`Union` 先按引用；带字段枚举/
+  union 的按值走 M2 的 `plan_jit_abi`，M3 的反射桥生成 tag+payload 线布局 +
+  `extern "C"` shim（把 Rust 值展开成线布局、调用、再收回来），Rust 侧无需 C 布局。
+- **交换格式**：反射桥只产出 `JitType::Enum/Union` 与 ABI 槽，`bind`/`JitFn`
+  不感知 Bevy；后续官方反射通过同一 `JitReflect` trait 接入。
+- **当前环境**：registry 未 vendor `bevy_reflect`，所以先落地 Enum/Union 描述与
+  C ABI 规则（fieldless enum、union by-ref），feature 骨架与依赖在可用时接入；
+  不把未编译的反射 API 伪装成已支持。

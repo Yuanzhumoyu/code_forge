@@ -93,6 +93,19 @@ pub enum JitType {
         packed: bool,
         fields: Vec<JitType>,
     },
+    /// 枚举：C 无字段枚举（`#[repr(u8)]` 等）的 ABI 就是 repr 整数；
+    /// 带字段的 Rust 枚举需要 `jit_rust_abi` 的反射桥（M3）。
+    Enum {
+        repr: Box<JitType>,
+        variants: Vec<JitEnumVariant>,
+    },
+    /// 共用体：C ABI 的按值分类依赖成员（SysV 的 INTEGER/SSE 合并），
+    /// 由 `plan_jit_abi`（M2）处理；M1 只允许按引用使用。
+    Union {
+        size: u32,
+        align: u16,
+        fields: Vec<JitType>,
+    },
     Array {
         elem: Box<JitType>,
         len: u64,
@@ -105,6 +118,14 @@ pub enum JitType {
     UnsupportedAbi(&'static str),
 }
 
+/// 枚举变体描述（反射桥生成；C 无字段枚举只需 discriminant）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct JitEnumVariant {
+    pub name: String,
+    pub discriminant: i128,
+    pub fields: Vec<JitType>,
+}
+
 impl JitType {
     /// ABI 槽投影：`bool` → 8 位整数，函数指针 → 指针，其余标量/指针不变。
     /// 聚合/向量/128 位在 M2 由 ABI planner 展开；M1 明确报 Unsupported。
@@ -112,6 +133,16 @@ impl JitType {
         match self {
             JitType::Bool => JitType::Int { bits: 8 },
             JitType::Function { .. } => JitType::Ptr { addr_space: 0 },
+            JitType::Enum { repr, variants } => {
+                if variants.iter().all(|v| v.fields.is_empty()) {
+                    repr.to_abi()
+                } else {
+                    JitType::UnsupportedAbi("带字段枚举需 jit_rust_abi 反射桥（M3）")
+                }
+            }
+            JitType::Union { .. } => {
+                JitType::UnsupportedAbi("union 按值需 plan_jit_abi（M2）；按引用用 ByRef")
+            }
             JitType::Struct { .. } | JitType::Array { .. } | JitType::Vector { .. } => {
                 JitType::UnsupportedAbi("聚合/向量的 ABI 展开需 plan_jit_abi（M2）")
             }

@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + `JitSig`（source + 合法化后 ABI + `JitTarget`）随 `CompiledUnit` 交付；`JitType` 覆盖 `Bool/Int/Float/Ptr/Function/Struct/Array/Vector/Unsupported`，`usize`/指针按产物 `pointer_bits` 解析，删除宿主 `cfg(target_pointer_width)`。
 + `JitLoader::bind/bind_source/bind_raw` + `JitFn`（0–16 元数）+ `JitBindError`（形参下标/hint）；`bind` 按 ABI 校验，`bind_source` 只校验源码，`bind_raw` 显式逃生。
 + `JitValue`/`JitCallSignature` 覆盖整数/浮点/`bool`/`char`/`usize`/`isize`/指针/可空指针/`NonNull`/函数指针/`i128`/`u128`（类型层）。
++ `JitType` 新增 `Enum`/`Union`：无字段枚举按 `repr` 整数进 C ABI；带字段枚举/union 按值显式 `UnsupportedAbi`（M2 planner / M3 `jit_rust_abi` 反射桥），不静默猜布局。
++ Cargo feature `jit_rust_abi`（默认关，不另建 crate）固定 `JitReflect` 边界：Rust 类型无需 `repr(C)`，反射生成 tag+payload 线格式与 C ABI shim；当前 registry 未 vendor `bevy_reflect`，先稳定 C ABI。
 + 演示 `tests/jit_bind_demo.rs`：`add(2,3)=5`、`not(true)=false`；32/64 位布局、函数指针、`i128` ABI `Unsupported` 单测。
 + 破坏性：`CompiledUnit` 新增 `jit_sig` 字段；旧 `get`/`get_unchecked` 保留为 V1 源码路径。
 + 未完成（M1b/M2/M3）：128 位 by-value ABI、聚合/向量 `plan_jit_abi`、变参 `bind_variadic`。

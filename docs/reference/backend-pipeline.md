@@ -480,7 +480,9 @@ v32（[`plans/backend-v32-jit-bind.md`](../plans/backend-v32-jit-bind.md)）把 
 
 * `JitSig` 随 `CompiledUnit` 走：`source`（IR 语义）+ `abi`（合法化后真实接口）+
   `JitTarget`（产物自己的 `pointer_bits`/`endian`/ISA）。`JitType` 覆盖
-  `Bool/Int/Float/Ptr/Function/Struct/Array/Vector/Unsupported`，不携带 `TypeId`。
+  `Bool/Int/Float/Ptr/Function/Struct/Enum/Union/Array/Vector/UnsupportedAbi`，
+  不携带 `TypeId`。无字段枚举按 `repr` 整数进 C ABI；带字段枚举/union 按值需要
+  M2 的 `plan_jit_abi`，`jit_rust_abi` feature 的反射桥（M3）负责 Rust ABI ↔ C ABI。
 * `JitLoader::bind::<F>` 按 **ABI 签名**校验并返回 `JitFn`（0–16 元数）；
   `bind_source` 只校验源码；`bind_raw` 是显式逃生口。`bind` **不**做宿主/目标
   一致性拒绝；`JitFn::call` 在跨目标时 panic（fail-closed），`raw()` 自担。

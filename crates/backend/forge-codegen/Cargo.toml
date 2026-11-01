@@ -31,6 +31,9 @@ default = []
 parallel = ["dep:rayon", "forge-opt/parallel"]
 # JIT 运行时（JitCompiler + 符号解析）——关闭时仅剩 compile_raw 静态编译路径
 jit = []
+# v32 §7：Rust ABI 反射桥（Bevy Reflect 适配层）。核心 JitType/bind 不依赖反射库；
+# 当前 registry 未 vendor bevy_reflect，本 feature 先固定 `JitReflect` 边界。
+jit_rust_abi = []
 
 # build script 预生成 ISA 生成物（v18 S10d）：扫 src/tests/benches/examples 里的
 # `isa_from_file!` 调用，把生成物写进 $OUT_DIR，供 `include!` 在**分析开始前**就能加载

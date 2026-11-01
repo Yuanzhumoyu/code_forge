@@ -41,6 +41,8 @@ use forge_ir::{
 use forge_isa_runtime::mem::{ExecutableMemory, MemError};
 
 mod binding;
+#[cfg(feature = "jit_rust_abi")]
+pub mod rust_abi;
 mod signature;
 mod symbols;
 
