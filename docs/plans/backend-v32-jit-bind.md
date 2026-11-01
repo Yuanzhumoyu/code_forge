@@ -114,6 +114,16 @@ impl<M: TargetMachine> JitLoader<M> {
   目前读到垃圾（模块路径正常）；这是 `add_function` 的变参 ABI 装配缺口，
   不能把 `bind_variadic` 的宣传当成“直接调用已支持”。
 
+## 4.3 M3-d：安全 `ptr+len` 变参替代（2026-11-01）
+
+- `JitLoader::bind_slice::<T, R>(name)` 绑定 ABI 为 `(ptr: *const T, len: usize) -> R`
+  的 JIT 函数，返回 `JitSliceFn`；`call(&[T])` 安全、长度运行时可变。
+- 这是“用户决定长度怎么处理”的安全形态：显式 `len`，不依赖 C `...` 自动计数，
+  也没有外部 C 变参保存区问题。
+- demo：`sum_slice(ptr, n)` 循环读切片，`slice_sum(10,20,30)=60`。
+- C `...` 仍保留 `bind_variadic`（unsafe）；真正动态 C 变参需要 libffi 或
+  callee 保存参数寄存器，不在本切片里伪装成安全。
+
 ## 5. 未完成（M1b / M2 / M3）
 
 | 里程碑 | 内容 | 验收 |

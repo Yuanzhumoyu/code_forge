@@ -4,7 +4,7 @@
 //! 绑定与错误面独立成文）。子模块可访问 `jit` 的私有 `entry`/`CompiledEntry`。
 
 use super::JitLoader;
-use super::signature::JitCallSignature;
+use super::signature::{JitCallSignature, JitValue};
 use crate::IrError;
 use crate::machine::target::TargetMachine;
 use crate::pipeline::signature::{JitSigShape, JitType};
@@ -209,7 +209,44 @@ jit_fn_call!(A, B, C, D, E, F, G, H, I, J, K, L, M, N);
 jit_fn_call!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O);
 jit_fn_call!(A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P);
 
+/// 安全版“变参”替代：**指针 + 长度** ABI（不是 C `...`）。
+///
+/// JIT 函数签名为 `(ptr: *const T, len: usize) -> R`；Rust 侧传 `&[T]`，
+/// 长度由 `len` 明示，不依赖 ABI 自动计数，也没有外部 C 变参保存区问题。
+pub struct JitSliceFn<'a, T, R> {
+    inner: JitFn<'a, extern "C" fn(*const T, usize) -> R>,
+}
+
+impl<T, R> JitSliceFn<'_, T, R> {
+    /// 调 JIT：`f(slice.as_ptr(), slice.len())`。
+    pub fn call(&self, args: &[T]) -> R {
+        self.inner.call(args.as_ptr(), args.len())
+    }
+
+    /// 产物目标是否与宿主一致（`call` 会检查）。
+    pub fn is_host_compatible(&self) -> bool {
+        self.inner.is_host_compatible()
+    }
+
+    /// 绑定时的 ABI 签名。
+    pub fn abi(&self) -> Option<&JitSigShape> {
+        self.inner.abi()
+    }
+}
+
 impl<M: TargetMachine> JitLoader<M> {
+    /// v32：安全版变参——绑定 `(ptr, len)` ABI 的 JIT 函数，调用传 `&[T]`。
+    ///
+    /// 这是“用户决定长度怎么处理”的安全形态：长度显式、运行时可变，不需要 C `...`。
+    #[allow(clippy::result_large_err)]
+    pub fn bind_slice<T: 'static, R: JitValue>(
+        &self,
+        name: &str,
+    ) -> Result<JitSliceFn<'_, T, R>, JitBindError> {
+        let inner = self.bind::<extern "C" fn(*const T, usize) -> R>(name)?;
+        Ok(JitSliceFn { inner })
+    }
+
     /// v32：按**产物 ABI 签名**绑定类型化函数句柄。
     ///
     /// 不比较宿主与目标（绑定只做签名校验）；跨目标时 `call` 会 panic，`raw()` 自担。

@@ -7,6 +7,7 @@
 //! not(true)=false
 //! variadic_sum(1,2,3)=7
 //! variadic_counted(3,10,20,30)=60
+//! slice_sum(10,20,30)=60
 //! ```
 
 #![cfg(all(feature = "jit", target_arch = "x86_64"))]
@@ -143,4 +144,45 @@ fn variadic_counted_loop() {
     let f: extern "C" fn() -> i64 = jit.get("main").expect("get main");
     assert_eq!(f(), 60, "n=3 决定读取 10+20+30，而不是编译期固定个数");
     println!("variadic_counted(3,10,20,30)=60");
+}
+
+/// 安全版“变参”：`(ptr, len)` ABI，Rust 侧传 `&[T]`，长度显式且运行时可变。
+#[test]
+fn slice_ptr_len_safe() {
+    x86::ensure_registered();
+    let mut jit = JitLoader::new(x86::TargetMachine::new());
+
+    let sig = FunctionSignature::new(&[(TypeId::PTR, "p"), (TypeId::I64, "n")], &[TypeId::I64]);
+    let mut f = FunctionBuilder::new("sum_slice", TypeContext::new(), sig);
+    let (entry, ep) = f.create_block_with_params(&[(TypeId::PTR, "p"), (TypeId::I64, "n")]);
+    f.switch_to_block(entry);
+    let (loop_b, lp) = f.create_block_with_params(&[(TypeId::I64, "i"), (TypeId::I64, "acc")]);
+    let (body, _bp) = f.create_block_with_params(&[]);
+    let (exit, xp) = f.create_block_with_params(&[(TypeId::I64, "acc")]);
+    f.switch_to_block(entry);
+    let zero = f.const_int(0i64, TypeId::I64);
+    f.jump(loop_b, &[zero, zero]);
+    f.switch_to_block(loop_b);
+    let cond = f.icmp(IntCC::Slt, lp[0], ep[1]);
+    f.branch(cond, body, &[], exit, &[lp[1]]);
+    f.switch_to_block(body);
+    let addr = f.gep(ep[0], &[lp[0]], TypeId::I64);
+    let v = f.load(addr, TypeId::I64);
+    let sum = f.iadd(lp[1], v);
+    let one = f.const_int(1i64, TypeId::I64);
+    let i2 = f.iadd(lp[0], one);
+    f.jump(loop_b, &[i2, sum]);
+    f.switch_to_block(exit);
+    f.ret(&[xp[0]]);
+
+    let mut module = Module::new();
+    module.add_function(f.finish().expect("sum_slice"));
+    jit.compile_module(&module).expect("compile module");
+
+    let s = jit
+        .bind_slice::<i64, i64>("sum_slice")
+        .expect("bind_slice sum_slice");
+    let got = s.call(&[10, 20, 30]);
+    assert_eq!(got, 60, "ptr+len 安全切片应求和 10+20+30");
+    println!("slice_sum(10,20,30)={got}");
 }
