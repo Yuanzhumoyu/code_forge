@@ -13,7 +13,7 @@
 
 #![cfg(all(feature = "jit", target_arch = "x86_64"))]
 
-use forge_codegen::jit::JitLoader;
+use forge_codegen::jit::{JitLoader, VariadicTermination};
 use forge_codegen::x86;
 use forge_ir::IntCC;
 use forge_ir::ir::builder::FunctionBuilder;
@@ -89,6 +89,19 @@ fn bind_scalar_and_bool() {
     let r = unsafe { (vsum.raw())(1i64, 2i64, 3i64) };
     assert_eq!(r, 7, "变参函数固定前缀 + 额外实参应正常调用");
     println!("variadic_sum(1,2,3)={r}");
+
+    // 显式长度契约：Counted 校验固定前缀第 0 个形参是整数。
+    let counted = unsafe {
+        jit.bind_variadic_with_termination::<unsafe extern "C" fn(i64, ...) -> i64>(
+            "vsum",
+            VariadicTermination::Counted { param: 0 },
+        )
+    }
+    .expect("Counted termination");
+    assert_eq!(
+        counted.termination(),
+        VariadicTermination::Counted { param: 0 }
+    );
 
     // 让编译器知道 `Opcode` 被引用（早期探针保留的导入）。
     let _ = Opcode::Nop;

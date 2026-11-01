@@ -46,7 +46,7 @@ pub mod rust_abi;
 mod signature;
 mod symbols;
 
-pub use binding::{JitBindError, JitFn};
+pub use binding::{JitBindError, JitFn, JitVariadicFn, VariadicTermination};
 pub use signature::{JitCallSignature, JitParam, JitReturn, JitSignature, JitValue};
 use symbols::{STACK_PROBE_SYMBOL, platform_symbol_lookup, stack_probe_addr};
 

@@ -90,6 +90,19 @@ impl From<JitBindError> for IrError {
     }
 }
 
+/// 变参“长度怎么处理”的显式契约（只是绑定期元数据；callee 侧仍需实现）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VariadicTermination {
+    /// 调用者自行保证（最弱；`bind_variadic` 的默认）。
+    Unspecified,
+    /// 固定前缀第 `param` 个参数是计数；绑定期校验它是整数。
+    Counted { param: usize },
+    /// 末位哨兵；callee 扫描到哨兵停止。
+    Sentinel,
+    /// printf 风格格式串；由 callee 解析。
+    Format,
+}
+
 #[allow(clippy::result_large_err)]
 fn compare_shape(
     expected: &JitSigShape,
@@ -172,6 +185,32 @@ impl<F> JitFn<'_, F> {
     /// 产物目标是否与宿主一致（只影响 `call`；`raw()` 不受限）。
     pub fn is_host_compatible(&self) -> bool {
         self.host
+    }
+}
+
+/// 带长度契约的变参句柄（`bind_variadic_with_termination`）。
+pub struct JitVariadicFn<'a, F> {
+    inner: JitFn<'a, F>,
+    termination: VariadicTermination,
+}
+
+impl<F: Copy> JitVariadicFn<'_, F> {
+    pub fn raw(&self) -> F {
+        self.inner.raw()
+    }
+}
+
+impl<F> JitVariadicFn<'_, F> {
+    pub fn termination(&self) -> VariadicTermination {
+        self.termination
+    }
+
+    pub fn is_host_compatible(&self) -> bool {
+        self.inner.is_host_compatible()
+    }
+
+    pub fn abi(&self) -> Option<&JitSigShape> {
+        self.inner.abi()
     }
 }
 
@@ -394,6 +433,42 @@ impl<M: TargetMachine> JitLoader<M> {
             host,
             _marker: std::marker::PhantomData,
         })
+    }
+
+    /// v32：带显式长度契约的变参绑定（仍 unsafe，原因同 [`Self::bind_variadic`]）。
+    ///
+    /// `Counted { param }` 会校验固定前缀第 `param` 个形参是整数；`Sentinel`/`Format`
+    /// 只记录契约，由 callee 实现。长度怎么处理由调用者选择，而不是 ABI 自动猜。
+    #[allow(clippy::result_large_err)]
+    pub unsafe fn bind_variadic_with_termination<F: JitCallSignature>(
+        &self,
+        name: &str,
+        termination: VariadicTermination,
+    ) -> Result<JitVariadicFn<'_, F>, JitBindError> {
+        let inner = unsafe { self.bind_variadic::<F>(name)? };
+        if let VariadicTermination::Counted { param } = termination {
+            let Some(abi) = inner.abi() else {
+                return Err(JitBindError::UnsupportedAbi {
+                    reason: "产物没有可用的 ABI 签名，无法校验 Counted 计数参数".to_string(),
+                });
+            };
+            let Some(ty) = abi.params.get(param) else {
+                return Err(JitBindError::ParamCount {
+                    expected: param + 1,
+                    found: abi.params.len(),
+                });
+            };
+            if !matches!(ty, JitType::Int { .. } | JitType::Bool) {
+                return Err(JitBindError::ParamType {
+                    kind: "变参计数",
+                    index: param,
+                    expected: JitType::Int { bits: 64 },
+                    found: ty.clone(),
+                    hint: "Counted 的 param 必须是整数形参",
+                });
+            }
+        }
+        Ok(JitVariadicFn { inner, termination })
     }
 
     /// v32 逃生口：不做签名校验；`call` 的宿主检查仍然生效。

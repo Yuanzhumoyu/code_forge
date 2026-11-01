@@ -110,6 +110,9 @@ impl<M: TargetMachine> JitLoader<M> {
   无法从 ABI 推断调用者传了几个。必须由固定参数 `n`、sentinel 或 format 约定；
   demo `vsum_n(n, ...)` 用 `n` 驱动 IR 循环，`vsum_n(3,10,20,30)=60`（模块路径，
   非编译期固定 3 次）。
+- **长度契约 API**：`VariadicTermination::{Unspecified, Counted{param}, Sentinel, Format}`；
+  `bind_variadic_with_termination` 在绑定期校验 `Counted` 的固定参数是整数。
+  `Sentinel`/`Format` 只记录契约，callee 负责扫描/解析；不假装 ABI 能自动计数。
 - **已知问题**：host 直接 `add_function` 一个变参函数再 `raw()` 调用，`va_arg`
   目前读到垃圾（模块路径正常）；这是 `add_function` 的变参 ABI 装配缺口，
   不能把 `bind_variadic` 的宣传当成“直接调用已支持”。

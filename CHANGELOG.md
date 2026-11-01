@@ -20,6 +20,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + Cargo feature `jit_rust_abi`（默认关，不另建 crate）固定 `JitReflect` 边界：Rust 类型无需 `repr(C)`，反射生成 tag+payload 线格式与 C ABI shim；当前 registry 未 vendor `bevy_reflect`，先稳定 C ABI。
 + `bind_variadic::<unsafe extern "C" fn(fixed..., ...) -> R>`（**unsafe**）：校验固定前缀与变参标志，`raw()` 调用；demo `variadic_sum(1,2,3)=7`。当前 callee 不保存外部调用者参数寄存器，host 直接 `va_arg` 仍不支持（模块/JIT caller 路径正常）。
 + 变参截止契约演示：`vsum_n(n, ...)` 用 `n` 驱动 IR 循环，`variadic_counted(3,10,20,30)=60`；C `...` 无自动计数，必须由 n/sentinel/format 约定（host 直接 `add_function` 变参调用仍有已知 ABI 缺口）。
++ `VariadicTermination::{Unspecified, Counted{param}, Sentinel, Format}` + `bind_variadic_with_termination`（unsafe）：把“长度怎么处理”显式化，`Counted` 在绑定期校验计数形参是整数。
 + 安全变参替代 `bind_slice::<T,R>`：JIT 函数按 `(ptr, len)` 收参，`JitSliceFn::call(&[T])` 安全且长度运行时可变；demo `slice_sum(10,20,30)=60`。`bind_slice_mut` 支持原地写回，demo `slice_fill(4)=[7,7,7,7]`。
 + 演示 `tests/jit_bind_demo.rs`：`add(2,3)=5`、`not(true)=false`；32/64 位布局、函数指针、`i128` ABI `Unsupported` 单测。
 + 破坏性：`CompiledUnit` 新增 `jit_sig` 字段；旧 `get`/`get_unchecked` 保留为 V1 源码路径。

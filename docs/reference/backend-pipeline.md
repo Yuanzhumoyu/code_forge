@@ -494,9 +494,9 @@ v32（[`plans/backend-v32-jit-bind.md`](../plans/backend-v32-jit-bind.md)）把 
 * 演示：`tests/jit_bind_demo.rs`（`add(2,3)=5`、`not(true)=false`、
   `variadic_sum(1,2,3)=7`、`variadic_counted(3,10,20,30)=60`）。
 * **变参截止**：C/Rust 的 `...` 没有自动计数；IR `VaArg` 只取一个值，必须由固定
-  参数 `n`/sentinel/format 约定。counted loop demo 用 `n` 驱动循环；host 直接
-  `add_function` 变参函数再 `raw()` 的路径仍有 ABI 装配缺口（模块路径正常），
-  因此 `bind_variadic` 是 **unsafe**：callee 的 `va_start` 不保存外部调用者的参数寄存器。
+  参数 `n`/sentinel/format 约定。`VariadicTermination` 把策略显式化（`Counted` 校验
+  计数形参）；counted loop demo 用 `n` 驱动循环；host 直接 `add_function` 变参函数再
+  `raw()` 的路径仍有 ABI 装配缺口（模块路径正常），因此 `bind_variadic` 是 **unsafe**。
 * **安全替代**：`bind_slice::<T,R>` 绑定 `(ptr, len)` ABI，`JitSliceFn::call(&[T])`
   安全、长度运行时可变；`bind_slice_mut` 支持原地写回。demo `slice_sum(10,20,30)=60`、
   `slice_fill(4)=[7,7,7,7]`。这是 C `...` 之外的显式长度契约。
