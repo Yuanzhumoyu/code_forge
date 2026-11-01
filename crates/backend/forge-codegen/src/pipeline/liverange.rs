@@ -154,22 +154,44 @@ impl LiveInterval {
     ///
     /// 约束：`start`/`end` 必须来自**同一个块**（调用方保证）。跨块的"活进活出"
     /// 由 `live_in`/`live_out` 那一步按整块扩展，不靠这里。
+    ///
+    /// **实现必须合并跨度**（2026-11-01 修）：旧实现先 `cover(start)`，再从后往前找
+    /// 第一段"起点 ≤ end"的段并只改它的 `end`。而调用方通常**先** `cover(use_point)`，
+    /// 于是最后一段恰好 `start == use > start`，只被"延长"到原处（等于没动），
+    /// `[start, use)` 这段**根本没进模型**——正是本函数文档说要消灭的空洞。后果是
+    /// `verify_no_overlap` 看不见 def→use 之间的重叠（守卫说"不重叠"、实际重叠）。
     pub fn cover_range(&mut self, start: ProgPoint, end: ProgPoint) {
         if end < start {
             return;
         }
-        self.cover(start);
-        let end_after = end.after();
-        // 从后往前找第一段"起点在 end 之前"的段，把它延到 end_after。
-        // 段始终按扫描序升序（`cover` 只往后 push），所以这里取到的是正确的那一段。
-        for seg in self.segments.iter_mut().rev() {
-            if seg.start <= end {
-                if seg.end < end_after {
-                    seg.end = end_after;
+        let mut merged = LiveSegment::new(start, end.after());
+        let mut out: Vec<LiveSegment> = Vec::with_capacity(self.segments.len() + 1);
+        let mut placed = false;
+        for seg in self.segments.drain(..) {
+            // 半开区间：**相交或首尾相接**都并进来（同一段跨度内部不留缝）。
+            if seg.start <= merged.end && merged.start <= seg.end {
+                if seg.start < merged.start {
+                    merged.start = seg.start;
                 }
-                return;
+                if seg.end > merged.end {
+                    merged.end = seg.end;
+                }
+                continue;
             }
+            if !placed && seg.start > merged.end {
+                out.push(merged);
+                placed = true;
+            }
+            out.push(seg);
         }
+        if !placed {
+            out.push(merged);
+        }
+        debug_assert!(
+            out.windows(2).all(|w| w[0].end <= w[1].start),
+            "LiveInterval::segments 必须保持升序且互不重叠：{out:?}"
+        );
+        self.segments = out;
     }
 
     /// 在 point 之后的第一个使用点（用于 spill 启发式）。
@@ -260,29 +282,47 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
             // 该 XReg 当作"指令执行前已活跃"，与同指令 use 的 XReg 冲突
             // （lea/load 链中 load 的 dest 与 base 被分配同一寄存器）。
             if let Some(slot) = inst_ops.get(global_inst) {
-                for bind in slot.iter() {
+                // **先 use 后 def**（同一条 in-place 指令 `LSRI {out},{out},1` 是先读
+                // 旧值再写新值），并按此顺序维护每块的 uses/defs：
+                //
+                // `block_uses[B]` 只收 **upward-exposed use**（本块内**先**被读、之前
+                // 没被本块写过的 vreg）。数据流公式是
+                // `live_in[B] = uses[B] ∪ (live_out[B] − defs[B])`——把"块内先定义
+                // 后使用"的值也算 live_in，会让下游/循环块里每个定义过的值都变成
+                // "从块首就是活的"，一路放大到所有前驱（2026-11-01 实测：一个 16 条
+                // 指令的 entry 块里，head 的 `icmp` 结果被算成 `[0,20)` 活的，与真正
+                // 在该段活着的值重叠；压力也凭空翻倍）。
+                for bind in slot
+                    .iter()
+                    .filter(|b| b.role != crate::machine::inst::OperandRole::Def)
+                {
                     let xreg = bind.vreg;
-                    let is_def = bind.role == crate::machine::inst::OperandRole::Def;
-                    // 同一趟里把"每块的局部 uses/defs"也填了（原来另起一趟扫同一批指令）。
-                    block_uses[block_idx].insert(xreg);
-                    if is_def {
-                        block_defs[block_idx].insert(xreg);
+                    // 本块此前没写过它 ⇒ 这条读是"从块外带进来的"。
+                    if !block_defs[block_idx].contains(&xreg) {
+                        block_uses[block_idx].insert(xreg);
                     }
                     let interval = intervals
                         .entry(xreg)
                         .or_insert_with(|| LiveInterval::new(xreg, xreg.class()));
-                    if is_def {
-                        interval.add_def(def_point);
-                        interval.cover(def_point);
-                        block_first_def.entry(xreg).or_insert(def_point);
-                    } else {
-                        interval.add_use(use_point);
-                        interval.cover(use_point);
-                        // 同块内已有定义 ⇒ 把 `[首次定义, 使用]` 整段标活。
-                        if let Some(&dp) = block_first_def.get(&xreg) {
-                            interval.cover_range(dp, use_point);
-                        }
+                    interval.add_use(use_point);
+                    interval.cover(use_point);
+                    // 同块内已有定义 ⇒ 把 `[首次定义, 使用]` 整段标活。
+                    if let Some(&dp) = block_first_def.get(&xreg) {
+                        interval.cover_range(dp, use_point);
                     }
+                }
+                for bind in slot
+                    .iter()
+                    .filter(|b| b.role == crate::machine::inst::OperandRole::Def)
+                {
+                    let xreg = bind.vreg;
+                    block_defs[block_idx].insert(xreg);
+                    let interval = intervals
+                        .entry(xreg)
+                        .or_insert_with(|| LiveInterval::new(xreg, xreg.class()));
+                    interval.add_def(def_point);
+                    interval.cover(def_point);
+                    block_first_def.entry(xreg).or_insert(def_point);
                 }
             }
             global_inst += 1;
@@ -417,9 +457,24 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
             let block_start = ProgPoint::new(block_u32, 0);
             let block_end = ProgPoint::inst_end(block_u32, last_inst);
 
-            // 传递到后继块 ⇒ 从块首（或本块内首次定义之后）到块尾都活着。
+            // 传递到后继块 ⇒ 从**本块最后一次定义**（本块没有定义才从块首）到块尾活着。
+            //
+            // 为什么不能无条件从块首起（2026-11-01 修）：本块内定义的值（常量、算术
+            // 结果、块参数拷贝的目标）在"定义之前"根本不占寄存器，从块首算会造出假
+            // 区间，与真正在该段活着的值重叠——实测同一函数里一个第 3 条指令才定义的
+            // 值被算成 `[0,20)`，自检因此报它与 `[1,7)` 的值同寄存器（其实不冲突）。
+            // 假区间同时把寄存器压力凭空抬高。
             if live_out[block_idx].contains(vreg) {
-                interval.cover_range(block_start, block_end);
+                // `rev().find(..)` 而不是 `filter(..).next_back()`（后者会被 clippy
+                // 判为 DoubleEndedIterator 误用：语义对但可读性差）。
+                let lo = interval
+                    .defs
+                    .iter()
+                    .rev()
+                    .copied()
+                    .find(|p| *p >= block_start && *p <= block_end)
+                    .unwrap_or(block_start);
+                interval.cover_range(lo, block_end);
             }
 
             // 来自前驱块（未在本块定义）⇒ 块首到块尾都活着。
@@ -484,5 +539,42 @@ mod tests {
         assert_eq!(interval.segments.len(), 2);
         assert!(!interval.contains(ProgPoint(8))); // in the hole
         assert!(interval.contains(ProgPoint(10)));
+    }
+
+    /// `cover_range` 必须**真的把整段**盖住——即使更靠后的段已经存在。
+    ///
+    /// 这是调用方的真实顺序：liveness 先 `cover(use_point)` 再 `cover_range(def, use)`。
+    /// 旧实现"从后往前找第一段起点 ≤ end 的段、只延长它的 end"在这种顺序下等于什么都没做
+    /// ⇒ `[def, use)` 是空洞 ⇒ `verify_no_overlap` 看不见 def→use 之间的重叠。
+    #[test]
+    fn test_cover_range_fills_the_whole_span_even_when_a_later_segment_exists() {
+        let mut interval = LiveInterval::new(xgpr(0), RegClass::GPR(64));
+        interval.cover(ProgPoint(19));
+        interval.cover(ProgPoint(20)); // 使用点段：先于 cover_range 存在
+        interval.cover_range(ProgPoint(5), ProgPoint(20));
+
+        assert_eq!(
+            interval.segments.len(),
+            1,
+            "跨度应合并成一段：{:?}",
+            interval.segments
+        );
+        for p in [5u64, 12, 19, 20] {
+            assert!(interval.contains(ProgPoint(p)), "点 {p} 应被覆盖");
+        }
+        assert_eq!(interval.end_point(), ProgPoint(21));
+    }
+
+    /// 跨度外的段不受影响（合并只发生在与 `[start, end]` 相交/相接的段上）。
+    #[test]
+    fn test_cover_range_keeps_disjoint_segments() {
+        let mut interval = LiveInterval::new(xgpr(0), RegClass::GPR(64));
+        interval.cover(ProgPoint(1));
+        interval.cover(ProgPoint(30));
+        interval.cover_range(ProgPoint(10), ProgPoint(12));
+
+        assert_eq!(interval.segments.len(), 3, "{:?}", interval.segments);
+        assert!(interval.contains(ProgPoint(10)));
+        assert!(!interval.contains(ProgPoint(5)), "5 仍在两个段之间（真洞）");
     }
 }

@@ -44,6 +44,16 @@ pub(super) struct BtState<'a> {
     pub(super) current_point: ProgPoint,
     /// 当前指令点的写死物理寄存器（来自 clobber_map）：本点内分配必须避开。
     pub(super) current_clobbers: smallvec::SmallVec<[PReg; 4]>,
+
+    /// **区间起点表**（按 `(起点, vreg 号)` 升序）：`(start_point, vreg)`。
+    ///
+    /// 用途是把"模型说的活跃区间"变成"分配器真的占住寄存器"（**预约**）。
+    /// 没有它时分配器只在**首次遇到**某个 vreg 的指令处才占寄存器，而模型可能说
+    /// 它从块首（甚至函数入口）就活着——两者之间的缺口让 `pop_free` 把同一寄存器
+    /// 再分给别人，`verify_no_overlap` 于是报"两个活值同寄存器"（2026-11-01 实测）。
+    pub(super) starts: Vec<(ProgPoint, XReg)>,
+    /// `starts` 的扫描游标（每条指令只前进，总代价 O(区间数)）。
+    pub(super) next_start: usize,
 }
 
 impl<'a> BtState<'a> {
@@ -90,6 +100,13 @@ impl<'a> BtState<'a> {
             free_regs.insert(*class, pool);
         }
 
+        // 区间起点表（预约用）：按起点升序 + vreg 号做确定性 tie-breaker。
+        let mut starts: Vec<(ProgPoint, XReg)> = intervals
+            .iter()
+            .map(|(v, iv)| (iv.start_point(), *v))
+            .collect();
+        starts.sort_by_key(|(p, v)| (*p, v.index()));
+
         Self {
             config,
             intervals,
@@ -105,6 +122,8 @@ impl<'a> BtState<'a> {
             current_uses: smallvec::SmallVec::new(),
             current_defs: smallvec::SmallVec::new(),
             current_clobbers: smallvec::SmallVec::new(),
+            starts,
+            next_start: 0,
         }
     }
 
@@ -175,6 +194,11 @@ impl<'a> BtState<'a> {
 
             // 1. 释放已死亡的 XReg（hole-aware，见 Bug 1 修复）
             self.expire_dead(use_point);
+
+            // 1.2 **预约**：模型说"此刻已经活着"的值先占住寄存器（模型驱动，
+            //     见 `starts`/`reserve_starting`）。必须在 expire 之后（先回收再占），
+            //     在按操作数分配之前（live-in 值不该等"首次出现"才占寄存器）。
+            self.reserve_starting(use_point)?;
 
             // 1.5 处理 clobber 约束：溢出被写死物理寄存器占用处破坏的活跃 XReg
             // 规则级（clobber_map：insts 显式物理寄存器自动推导）+ 指令级

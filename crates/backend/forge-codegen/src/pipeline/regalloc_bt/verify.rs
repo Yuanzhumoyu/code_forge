@@ -28,9 +28,12 @@ pub(super) fn verify_no_overlap(
     spill_slots: &HashMap<XReg, SpillSlot>,
     intervals: &HashMap<XReg, liverange::LiveInterval>,
 ) -> Result<(), IrError> {
-    // (preg, class) → [(start, end, vreg_idx)]
-    // 位置用 `u64`（`ProgPoint` 现为 u64：块步长 2^32，见 `liverange.rs` 的说明）。
-    let mut by_reg: HashMap<(u32, RegClass), Vec<(u64, u64, u32)>> = HashMap::new();
+    // **按物理寄存器编号分组，不按 (num, class) 分组**（2026-11-01 修）：
+    // GPR(4)/GPR(8)/GPR(16) 的同一个编号是**同一个物理寄存器**（`RegClass::overlaps`
+    // 就是这条语义），而旧实现把 (num, class) 当键 ⇒ 一个 i32 值（GPR(4)）与一个
+    // i64 值（GPR(8)）即使被分到同一号也永远落在两个不同的组里、**永不比较**。
+    // 这是"跨宽度类同寄存器"最直接的漏检点。
+    let mut by_reg: HashMap<u32, Vec<(RegClass, u64, u64, u32)>> = HashMap::new();
     for (vreg, preg) in assignments {
         if spill_slots.contains_key(vreg) {
             continue;
@@ -39,7 +42,8 @@ pub(super) fn verify_no_overlap(
             continue;
         };
         for seg in &iv.segments {
-            by_reg.entry((preg.num, preg.class)).or_default().push((
+            by_reg.entry(preg.num).or_default().push((
+                preg.class,
                 seg.start.raw(),
                 seg.end.raw(),
                 vreg.index(),
@@ -57,15 +61,20 @@ pub(super) fn verify_no_overlap(
         );
     }
 
-    for ((preg, class), mut segs) in by_reg {
-        segs.sort();
+    for (preg, mut segs) in by_reg {
+        segs.sort_by_key(|&(_, s, e, v)| (s, e, v));
         for i in 0..segs.len() {
             for j in (i + 1)..segs.len() {
-                let (s1, e1, v1) = segs[i];
-                let (s2, e2, v2) = segs[j];
+                let (c1, s1, e1, v1) = segs[i];
+                let (c2, s2, e2, v2) = segs[j];
+                // 同号但**不同寄存器文件**（GPR vs FPR/VEC vs KReg）才是两个寄存器；
+                // 同文件不同宽度（GPR(4) vs GPR(8)）是同一个。
+                if !c1.overlaps(c2) {
+                    continue;
+                }
                 if s1 < e2 && s2 < e1 {
                     return Err(IrError::Internal(format!(
-                        "寄存器分配自检失败：物理寄存器 {preg}（{class:?}）上 v{v1} [{s1},{e1}) 与 \
+                        "寄存器分配自检失败：物理寄存器 {preg}（{c1:?}）上 v{v1} [{s1},{e1}) 与 \
                          v{v2} [{s2},{e2}) 的活跃区间重叠——两个同时活着的值被分到同一寄存器，\
                          机器码会静默错值（见 regalloc_bt/verify.rs 的说明）"
                     )));
@@ -112,4 +121,56 @@ pub(super) fn trace_evict(vreg: XReg, point: super::liverange::ProgPoint) {
 /// `FORGE_TRACE_ALLOC/SPILL`：溢出值 reload 拿到寄存器。
 pub(super) fn trace_reload(vreg: XReg, preg: PReg, point: super::liverange::ProgPoint) {
     eprintln!("[reload] v{} at {point:?} -> {preg}", vreg.index());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pipeline::liverange::{LiveInterval, LiveSegment, ProgPoint};
+    use forge_ir::{RegClass, XReg};
+
+    fn iv(vreg: XReg, lo: u32, hi: u32) -> LiveInterval {
+        let mut iv = LiveInterval::new(vreg, vreg.class());
+        // `ProgPoint` 的构造器是私有的：用 `new(block, inst)`（内部 ×2）造有序点。
+        iv.segments.push(LiveSegment::new(
+            ProgPoint::new(0, lo),
+            ProgPoint::new(0, hi),
+        ));
+        iv
+    }
+
+    /// **跨宽度类同号必须比较**：GPR(4)/GPR(8) 的同一个编号是同一个物理寄存器。
+    /// 旧实现按 `(num, class)` 分组 ⇒ 这两者永远不在同一组、永不比较（最直接的漏检点）。
+    #[test]
+    fn cross_width_classes_on_the_same_number_are_compared() {
+        let a = XReg::new(1, RegClass::GPR(4));
+        let b = XReg::new(2, RegClass::GPR(8));
+        let mut assignments = HashMap::new();
+        assignments.insert(a, PReg::new(5, RegClass::GPR(4)));
+        assignments.insert(b, PReg::new(5, RegClass::GPR(8)));
+        let mut intervals = HashMap::new();
+        intervals.insert(a, iv(a, 0, 10));
+        intervals.insert(b, iv(b, 5, 15));
+
+        let err = verify_no_overlap(&assignments, &HashMap::new(), &intervals)
+            .expect_err("跨宽度类同号 + 区间重叠必须报错");
+        let msg = format!("{err}");
+        assert!(msg.contains("重叠"), "{msg}");
+    }
+
+    /// 不同寄存器文件（GPR vs FPR）同号是**两个**物理寄存器——不能误报。
+    #[test]
+    fn different_register_files_on_the_same_number_do_not_conflict() {
+        let a = XReg::new(1, RegClass::GPR(8));
+        let b = XReg::new(2, RegClass::FPR(8));
+        let mut assignments = HashMap::new();
+        assignments.insert(a, PReg::new(5, RegClass::GPR(8)));
+        assignments.insert(b, PReg::new(5, RegClass::FPR(8)));
+        let mut intervals = HashMap::new();
+        intervals.insert(a, iv(a, 0, 10));
+        intervals.insert(b, iv(b, 5, 15));
+
+        verify_no_overlap(&assignments, &HashMap::new(), &intervals)
+            .expect("GPR 与 FPR 同号不该报冲突");
+    }
 }

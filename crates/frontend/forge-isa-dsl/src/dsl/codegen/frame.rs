@@ -1568,7 +1568,7 @@ fn gen_arg_receive(infos: &[InstInfo], model: &IsaModel) -> Result<TokenStream, 
     // 实测：9 个 i32 形参 / 9 个可分配寄存器的夹具上，只发出 4 条收参 mov、4 条 ld，
     // 全函数 0 条 st。
     let has_mov_inst = true; // 上面的 moves.has(&gpr_want) 门控已经保证有搬运指令
-    let scratch_declared = model.machine_scratch().first().is_some();
+    let scratch_declared = !model.machine_scratch().is_empty();
     let spilled_receive_supported = has_mov_inst && scratch_declared;
     let spilled_reg_receive: TokenStream = if spilled_receive_supported {
         {
