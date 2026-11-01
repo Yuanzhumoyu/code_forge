@@ -1,4 +1,4 @@
-﻿//! 合法化 pass：**宽值的多寄存器表示**（v27 M5 · M-F）。
+//! 合法化 pass：**宽值的多寄存器表示**（v27 M5 · M-F）。
 //!
 //! 一个宽整数（`bits > int_widths().max()`）在 IR 里不再是一个值，而是 **n 个原生宽 SSA 值**
 //!（肢，`n = ceil(bits / W)`，下标 0 = 最低肢）。这样 isel 永远只看到原生宽度。
@@ -72,6 +72,8 @@ impl<M: TargetMachine> LegalizePass<M> for WideSplitPass {
         let mut wide: Vec<Value> = Vec::new();
         // 宽值**块参数**（phi）：先记下来，稍后两阶段拆肢（见下面的 ③.5）。
         let mut wide_phis: Vec<(Block, usize, Value)> = Vec::new();
+        // 入口宽值参数：sysv64 的 i128 是整数对，必须拆成两个原生宽形参。
+        let mut entry_wide: Vec<(usize, Value, TypeId)> = Vec::new();
         {
             let store = types_ctx.borrow();
             let entry = func.entry();
@@ -80,11 +82,9 @@ impl<M: TargetMachine> LegalizePass<M> for WideSplitPass {
                     if !is_wide_int(&store, func.dfg.value_type(pv).unwrap_or(TypeId::VOID), w) {
                         continue;
                     }
-                    // **入口块的宽值参数不拆**：那是函数 ABI 边界（签名按 `i128` 声明、
-                    // 收参由约定层负责），拆了会让"IR 签名"与"块参数"两套说法打架。
-                    // 非入口的 phi 才是纯 SSA 汇合点，拆肢是安全的。
                     if b == entry {
-                        return Err(wide_shape_unsupported("入口块的宽值参数（函数 ABI 边界）"));
+                        entry_wide.push((idx, pv, func.dfg.value_type(pv).unwrap_or(TypeId::VOID)));
+                        continue;
                     }
                     wide_phis.push((b, idx, pv));
                 }
@@ -103,7 +103,7 @@ impl<M: TargetMachine> LegalizePass<M> for WideSplitPass {
                 }
             }
         }
-        if wide.is_empty() && wide_phis.is_empty() {
+        if wide.is_empty() && wide_phis.is_empty() && entry_wide.is_empty() {
             return Ok(ChangeSet::default());
         }
 
@@ -126,6 +126,52 @@ impl<M: TargetMachine> LegalizePass<M> for WideSplitPass {
             forge_ir::entity::map::SecondaryMap::new();
         let mut e = LimbEmitter::new(func);
         let mut kills: Vec<Inst> = Vec::new();
+        // ③.4 **入口宽值参数拆肢**：sysv64 的 i128 形参就是两个整数寄存器
+        //（win64 by-ref 已在 agg_param 变成 ptr，不会走到这里）。签名与 entry
+        // 块参数一起换成 n 个原生宽形参；旧值 → 肢。
+        if !entry_wide.is_empty() {
+            let entry = e.func.entry();
+            let limb_ty = e.limb_ty(w);
+            entry_wide.sort_by_key(|(idx, _, _)| std::cmp::Reverse(*idx));
+            let mut wide_n: std::collections::BTreeMap<usize, usize> =
+                std::collections::BTreeMap::new();
+            for (idx, pv, ty) in entry_wide.iter().copied() {
+                let bits = types_ctx.borrow().scalar_bits(ty).unwrap_or(0);
+                let n = limb_count(bits, w);
+                let tys: Vec<TypeId> = std::iter::repeat_n(limb_ty, n).collect();
+                let limbs = e.func.split_block_param_shallow(entry, idx, &tys);
+                if limbs.len() != n {
+                    return Err(wide_shape_unsupported("入口宽值参数拆肢失败"));
+                }
+                wide_n.insert(idx, n);
+                parts.insert(pv, limbs.iter().copied().collect());
+            }
+            let old_sig = e
+                .func
+                .types
+                .borrow()
+                .get_signature(e.func.signature)
+                .clone();
+            let mut new_params = Vec::new();
+            let mut new_attrs = Vec::new();
+            for (i, (t, name)) in old_sig.params.iter().enumerate() {
+                let attrs = e.func.param_attrs.get(i).cloned().unwrap_or_default();
+                let n = wide_n.get(&i).copied().unwrap_or(1);
+                for _ in 0..n {
+                    let ty = if n > 1 { limb_ty } else { *t };
+                    new_params.push((ty, name.clone()));
+                    new_attrs.push(attrs.clone());
+                }
+            }
+            let new_sig = FunctionSignature {
+                params: new_params,
+                returns: old_sig.returns.clone(),
+                calling_convention: old_sig.calling_convention,
+                variadic: old_sig.variadic,
+            };
+            e.func.signature = e.func.types.borrow_mut().register_signature(new_sig);
+            e.func.param_attrs = new_attrs;
+        }
         // ③.5(a) **宽值块参数（phi）拆肢——前半**（v27 M6-74）。
         //
         // 为什么必须先于不动点循环：使用点在循环里通过 `reg(parts, v)` 取肢，而它对未知值

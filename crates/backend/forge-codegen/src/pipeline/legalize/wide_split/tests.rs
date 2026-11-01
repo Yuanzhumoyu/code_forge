@@ -1,4 +1,4 @@
-﻿//! `wide_split` 的语义测试（JIT 真执行，走完整管线）。
+//! `wide_split` 的语义测试（JIT 真执行，走完整管线）。
 //!
 //! 每条测试都用 `JitLoader::compile_module`（会跑 `LegalizeDriver::scalar()`），因此同时验证
 //! "pass 真的被调用"——本会话最大的坑正是普通函数一度从不跑 legalize。
@@ -252,9 +252,9 @@ mod jit {
         assert_eq!((hi(), lo()), (12, 35), "(2^64+5)*(2^64+7) 的高/低肢");
     }
 
-    /// **宽值形参必须 fail-closed**（isel 没有"一个值占两个寄存器"；前端边界用指针）。
+    /// **sysv64 宽值形参拆成两个原生宽形参**（i128 整数对）。
     #[test]
-    fn wide_param_fails_closed() {
+    fn wide_param_splits_into_limbs() {
         let tc = TypeContext::new();
         let sig = FunctionSignature::new(&[(TypeId::I128, "a")], &[TypeId::I64]);
         let mut fb = FunctionBuilder::new("wide_param", tc, sig);
@@ -264,14 +264,15 @@ mod jit {
         fb.ret(&[z]);
         let mut func = fb.finish().expect("build");
         let machine = crate::arch::x86::TargetMachine::new();
-        let mut lctx = LegalizeCtx::new(&machine, "win64".to_string());
-        // v27 M6-84：`wide_split` 现在排在聚合批**之后**（跨界宽值先由 ABI 改写成指针/缓冲），
-        // 所以它**自己**跑时仍然 fail-closed —— 这条不变式保留（它变不出指针）。
-        let err = LegalizeDriver::wide()
+        let mut lctx = LegalizeCtx::new(&machine, "sysv64".to_string());
+        LegalizeDriver::wide()
             .run(&mut func, &mut lctx)
-            .expect_err("单独跑 wide_split 时入口宽值必须被拒绝");
-        let msg = format!("{err:?}");
-        assert!(msg.contains("WIDE_INT_SHAPE"), "应带缺口 ID，实测：{msg}");
+            .expect("sysv64 入口 i128 应拆成两个 i64");
+        assert_eq!(
+            func.param_types(),
+            vec![TypeId::I64, TypeId::I64],
+            "入口 i128 形参应拆成两个原生宽形参"
+        );
     }
 
     /// **从指针读宽值**（ABI 按引用传参的形态）：`fn(ptr) -> i64 { load i128 }`。

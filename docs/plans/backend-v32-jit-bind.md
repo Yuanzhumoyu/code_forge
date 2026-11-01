@@ -147,14 +147,17 @@ impl<M: TargetMachine> JitLoader<M> {
   `bind::<extern "C" fn(i128,i128)->i64>` 与 `bind::<extern "C" fn(i64)->i128>`
   都能直接绑定；测试不再需要 `bind_raw`。`JitType::to_abi` 的 Vector 分支改为
   identity（≤16B 向量就是 ABI 形态；>16B 的合法化函数已变成 ptr）。
-- 仍待：sysv64 的整数对/by-value；`JitType::Int{128}.to_abi` 直接调用仍是
+- 仍待：sysv64 的**返回**整数对；`JitType::Int{128}.to_abi` 直接调用仍是
   `UnsupportedAbi`（复杂入口仍应走函数指针投影）。
+- **sysv64 入口已编译**：`wide_split` 对非 by-ref 的入口宽值拆分 entry 块参数 +
+  函数签名（i128 → 两个 i64），`tests/i128_sysv_entry.rs` 编译通过（仅编译验证，
+  宿主是 win64，不能直接以 sysv ABI 调用）。
 
 ## 5. 未完成（M1b / M2 / M3）
 
 | 里程碑 | 内容 | 验收 |
 | --- | --- | --- |
-| M1b | 128 位入口/返回 ABI：`wide_split` 入口拆分、返回配对/sret；`plan_jit_abi` 初版；`rustc-abi-cross` 对拍 | i128/u128 by-value 真执行；三 ISA 编译。**进展**：win64 by-ref `i128` 形参 + XMM0 返回已真执行（`2+3=5`、`7→7`），安全 bind 双向可用；sysv64 整数对仍待做 |
+| M1b | 128 位入口/返回 ABI：`wide_split` 入口拆分、返回配对/sret；`plan_jit_abi` 初版；`rustc-abi-cross` 对拍 | i128/u128 by-value 真执行；三 ISA 编译。**进展**：win64 by-ref `i128` 形参 + XMM0 返回已真执行（`2+3=5`、`7→7`），安全 bind 双向可用；sysv64 入口整数对已编译，返回配对仍待做 |
 | M2 | `#[derive(JitValue)]`、聚合/数组/向量、`ByVal`/`ByRef`/`Out`、sret/by-ref；完整 `plan_jit_abi`；转换 12 处 unchecked 指针站点 | win64/sysv64 聚合真执行；三 ISA；demo 聚合 |
 | M3 | ~~`bind_variadic`~~（已落地）、~~counted loop~~（已落地，`n` 驱动循环）、sentinel/format 截止约定、`add_function` 直接变参调用修复、`jit_rust_abi` 的 Bevy `Reflect` 适配器、函数指针 JIT 回调 demo、跨目标 bind/call 测试、错误文档 | 变参 demo；带字段枚举/union 真执行；错误带下标；54/54 |
 
