@@ -169,6 +169,7 @@ impl Default for BacktrackingAllocator {
 // ============================================================
 
 mod dump;
+mod reload;
 mod spill;
 mod state;
 mod verify;

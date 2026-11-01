@@ -245,15 +245,6 @@ fn run_fib(n: u32) -> (u32, Vec<String>, u64) {
         .expect("fib 循环必须可编译");
 
     let lines = disasm(&cf.code);
-    // 守卫：本用例必须**真的**溢出过（否则它不再覆盖"缺溢出模板"那类缺陷）。
-    let loads = lines.iter().filter(|l| l.starts_with("ld ")).count();
-    let stores = lines.iter().filter(|l| l.starts_with("st ")).count();
-    assert!(
-        loads >= 2 && stores >= 2,
-        "回归形状变了：n={n} 的产物里没有溢出搬运（ld={loads}, st={stores}）——\
-         本用例的价值就在「寄存器压力 ⇒ 溢出」这条路径。\n{lines:#?}"
-    );
-
     let insts = decode_all(&cf.code);
     let ret_pc = (insts.len() * 4) as u32;
     let mut m = Machine::new(ret_pc);
@@ -276,4 +267,56 @@ fn block_param_copy_loop_computes_fib() {
             lines.join("\n")
         );
     }
+}
+
+/// **溢出路径的端到端守卫**：9 个可分配寄存器、8 个派生值同时活着 ⇒ 必然溢出。
+///
+/// 这条与上一条分开，因为两件事要分开证：① 两阶段拷贝在**不溢出**时算对；
+/// ② 真溢出时 `[machine.spill.<名>]` 的 ld/st 真的把值搬进/搬出槽——没有它，
+/// 溢出槽就是垃圾（`[BUG-block-param-copy]` 的错值正是这条）。
+///
+/// 只用**函数内算出来的值**做压力（不用形参）：形参溢出后的入口写槽是另一个
+/// 独立缺陷（`frame.rs` 的 `spilled_receive_supported` 把入口写槽挂在
+/// `roles = ["stack_arg_load"]` 上 ⇒ 没有栈参数形参的 ISA 完全不写槽），
+/// 单独立案，不在本用例里混测。
+#[test]
+fn spill_pressure_round_trip_computes_correctly() {
+    ensure_convention();
+    let i = TypeId::I32;
+    let sig = FunctionSignature::new(&[(i, "n")], &[i]);
+    let mut b = FunctionBuilder::new("spill8", TypeContext::new(), sig);
+    let (entry, args) = b.create_block_with_params(&[(i, "n")]);
+    b.switch_to_block(entry);
+    // 先把 8 个派生值都算出来（全部活到后面的求和）⇒ 峰值远超 9 个可分配寄存器。
+    let mut vals = Vec::new();
+    for k in 1..=8u64 {
+        let c = b.const_int(k, i);
+        vals.push(b.iadd(args[0], c));
+    }
+    let mut sum = vals[0];
+    for v in &vals[1..] {
+        sum = b.iadd(sum, *v);
+    }
+    b.ret(&[sum]);
+    let func = b.finish().expect("build spill8");
+
+    let cf = CompileSession::new(TargetMachine::new())
+        .compile(&func)
+        .expect("压力函数必须可编译（本夹具声明了溢出模板）");
+    let lines = disasm(&cf.code);
+    let loads = lines.iter().filter(|l| l.starts_with("ld ")).count();
+    let stores = lines.iter().filter(|l| l.starts_with("st ")).count();
+    assert!(
+        loads >= 1 && stores >= 1,
+        "本用例必须真的溢出（否则它不再覆盖溢出搬运路径）：ld={loads}, st={stores}\n{lines:#?}"
+    );
+
+    let insts = decode_all(&cf.code);
+    let ret_pc = (insts.len() * 4) as u32;
+    let mut m = Machine::new(ret_pc);
+    m.set(1, 5); // ABI：唯一的 int 形参 n = 5
+    m.set(12, ret_pc);
+    let got = m.run(&insts);
+    // 8*5 + (1+2+…+8) = 40 + 36
+    assert_eq!(got, 76, "溢出往返后结果错了：{got}\n{}", lines.join("\n"));
 }

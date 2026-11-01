@@ -439,7 +439,20 @@ impl<'a> BtState<'a> {
                     .get(&v)
                     .and_then(|iv| iv.next_use_after(current_point))
                     .unwrap_or(ProgPoint::MAX);
-                (next_use, v, p)
+                // **以 `assignments` 为准**（2026-11-01）：`active` 只是"当前占用"的
+                // 视图，一旦两者分叉，按 `active` 的编号去释放/授予会把一个**仍被
+                // 别人占着**的寄存器交给新 vreg（两个活值同寄存器 ⇒ 静默错值）。
+                // 正常流程两者恒等，所以这里是断言 + 取权威表，不是猜测。
+                let authoritative = self.assignments.get(&v).copied().unwrap_or(p);
+                debug_assert_eq!(
+                    authoritative,
+                    p,
+                    "active 与 assignments 分叉：v{} 在 active={:?}、assignments={:?}",
+                    v.index(),
+                    p,
+                    authoritative
+                );
+                (next_use, v, authoritative)
             })
             .collect();
         // **真正的 Belady**（v23 M5 第五步）：死值（`next_use == MAX`）优先，其次是"下次使用
@@ -611,50 +624,6 @@ impl<'a> BtState<'a> {
         }
 
         self.active.remove(&vreg);
-        Ok(())
-    }
-
-    pub(super) fn reload_from_stack(
-        &mut self,
-        vreg: XReg,
-        constraint: OperandConstraint,
-    ) -> Result<(), IrError> {
-        // 为 spilled XReg 分配一个寄存器（实际 load 在 emit 阶段完成）。
-        // 尊重约束：Fixed 约束必须使用指定寄存器。
-        let class = self.vreg_class(vreg);
-        let trace = crate::pipeline::trace::knob("FORGE_TRACE_ALLOC")
-            || crate::pipeline::trace::knob("FORGE_TRACE_SPILL");
-        match constraint {
-            OperandConstraint::Fixed(required_preg) => {
-                // 如果目标寄存器被占用（含跨宽度类重叠，如 GPR(4) 与 GPR(8) 同编号），
-                // 驱逐占用者
-                if let Some(occupant) = self.phys_owner(required_preg)
-                    && occupant != vreg
-                {
-                    self.spill_vreg(occupant)?;
-                }
-                if trace {
-                    eprintln!(
-                        "[reload] v{} at {:?} -> fixed {}",
-                        vreg.index(),
-                        self.current_point,
-                        required_preg
-                    );
-                }
-                self.assignments.insert(vreg, required_preg);
-                self.set_reg_owner(required_preg, vreg);
-            }
-            _ => {
-                // 任意空闲寄存器即可
-                if let Some(preg) = self.pop_free(class) {
-                    if trace {
-                        super::verify::trace_reload(vreg, preg, self.current_point);
-                    }
-                    self.assignments.insert(vreg, preg);
-                    self.set_reg_owner(preg, vreg);
-                }
-            }
-        }
         Ok(())
     }
 
