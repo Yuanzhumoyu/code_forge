@@ -44,15 +44,10 @@ pub(crate) fn expand_large_agg_params(
     let mut agg_stack_shift = 0i32;
     let mut has_large = false;
     for (i, t) in old_params.iter().enumerate() {
-        // 宽整数（i128/u128）不是聚合：入口拆肢归 `wide_split`，这里不能把它当聚合
-        // 拆成 i64 段——否则 Iadd 的结果仍是 i128、操作数却已被换成肢，wide_split
-        // 会看到"宽结果 + 非宽操作数"的混形（M1b 探针实际 panic 过）。
-        if func
-            .types
-            .borrow()
-            .scalar_bits(*t)
-            .is_some_and(|bits| bits > 64)
-        {
+        // 宽整数（i128；IR 只有这一个 >64 位整型）不是聚合：入口拆肢归
+        // `wide_split`，这里不能把它当聚合拆成 i64 段——否则 Iadd 的结果仍是 i128、
+        // 操作数却已被换成肢，wide_split 会看到"宽结果 + 非宽操作数"的混形。
+        if *t == TypeId::I128 {
             seg_map.push(1);
             by_ref.push(false);
             keep_param.push(true);
