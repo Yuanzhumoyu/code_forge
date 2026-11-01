@@ -143,8 +143,12 @@ impl JitType {
             JitType::Union { .. } => {
                 JitType::UnsupportedAbi("union 按值需 plan_jit_abi（M2）；按引用用 ByRef")
             }
-            JitType::Struct { .. } | JitType::Array { .. } | JitType::Vector { .. } => {
-                JitType::UnsupportedAbi("聚合/向量的 ABI 展开需 plan_jit_abi（M2）")
+            // 向量在 ABI 里就是向量（≤16B 寄存器槽；>16B 的合法化函数已经变成 ptr）。
+            // 这里不再把 Vector 一律标 Unsupported——否则合法化后的 `<2 x i64>` 返回
+            // 会让整个 ABI 签名变成 None（i128 XMM0 返回无法 bind）。
+            JitType::Vector { elem, lanes } => JitType::Vector { elem, lanes },
+            JitType::Struct { .. } | JitType::Array { .. } => {
+                JitType::UnsupportedAbi("聚合/数组的 ABI 展开需 plan_jit_abi（M2）")
             }
             JitType::Int { bits } if bits > 64 => {
                 JitType::UnsupportedAbi("128 位入口 ABI 需 M1b（wide_split 拆分/重组）")

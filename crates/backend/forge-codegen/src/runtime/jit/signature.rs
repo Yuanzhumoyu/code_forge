@@ -257,6 +257,27 @@ pub unsafe trait JitCallSignature: Copy + 'static {
     fn abi(target: &JitTarget) -> JitSigShape;
 }
 
+/// 形参 ABI：win64 的 i128 按引用传（ptr）；其余沿用 `to_abi`。
+fn abi_param(t: JitType) -> JitType {
+    if matches!(t, JitType::Int { bits: 128 }) {
+        JitType::Ptr { addr_space: 0 }
+    } else {
+        t.to_abi()
+    }
+}
+
+/// 返回 ABI：win64 的 i128 走 XMM0（`<2 x i64>` 向量）；其余沿用 `to_abi`。
+fn abi_return(t: JitType) -> JitType {
+    if matches!(t, JitType::Int { bits: 128 }) {
+        JitType::Vector {
+            elem: Box::new(JitType::Int { bits: 64 }),
+            lanes: 2,
+        }
+    } else {
+        t.to_abi()
+    }
+}
+
 macro_rules! call_signature {
     ($($p:ident),*) => {
         unsafe impl<$($p: JitValue,)* R: JitValue> JitCallSignature for extern "C" fn($($p),*) -> R {
@@ -275,8 +296,8 @@ macro_rules! call_signature {
             fn abi(target: &JitTarget) -> JitSigShape {
                 let src = Self::source(target);
                 JitSigShape {
-                    params: src.params.into_iter().map(JitType::to_abi).collect(),
-                    returns: src.returns.into_iter().map(JitType::to_abi).collect(),
+                    params: src.params.into_iter().map(abi_param).collect(),
+                    returns: src.returns.into_iter().map(abi_return).collect(),
                     variadic: false,
                 }
             }
@@ -371,8 +392,8 @@ unsafe impl<R: JitValue> JitCallSignature for unsafe extern "C" fn(...) -> R {
     fn abi(target: &JitTarget) -> JitSigShape {
         let src = Self::source(target);
         JitSigShape {
-            params: src.params.into_iter().map(JitType::to_abi).collect(),
-            returns: src.returns.into_iter().map(JitType::to_abi).collect(),
+            params: src.params.into_iter().map(abi_param).collect(),
+            returns: src.returns.into_iter().map(abi_return).collect(),
             variadic: true,
         }
     }
@@ -398,8 +419,8 @@ macro_rules! variadic_call_signature {
             fn abi(target: &JitTarget) -> JitSigShape {
                 let src = Self::source(target);
                 JitSigShape {
-                    params: src.params.into_iter().map(JitType::to_abi).collect(),
-                    returns: src.returns.into_iter().map(JitType::to_abi).collect(),
+                    params: src.params.into_iter().map(abi_param).collect(),
+                    returns: src.returns.into_iter().map(abi_return).collect(),
                     variadic: true,
                 }
             }
@@ -470,13 +491,15 @@ mod v32_tests {
     }
 
     #[test]
-    fn i128_abi_is_explicitly_unsupported_until_m1b() {
+    fn i128_abi_projects_byref_param_and_xmm_return() {
         let abi = <extern "C" fn(i128) -> i128 as JitCallSignature>::abi(&t32());
-        assert!(
-            abi.params
-                .iter()
-                .any(|t| matches!(t, JitType::UnsupportedAbi(_))),
-            "i128 入口 ABI 在 M1b 前必须显式 Unsupported：{abi:?}"
+        assert_eq!(abi.params, vec![JitType::Ptr { addr_space: 0 }]);
+        assert_eq!(
+            abi.returns,
+            vec![JitType::Vector {
+                elem: Box::new(JitType::Int { bits: 64 }),
+                lanes: 2,
+            }]
         );
     }
 

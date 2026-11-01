@@ -45,13 +45,13 @@ fn i128_entry_by_ref_runs() {
     })
     .expect("add128");
 
-    // 生成的 ABI 是 `(ptr, ptr) -> i64`（win64 i128 形参 by-ref）；用**安全 bind**
-    // 以指针签名绑定，调用者传 `&i128`。这证明 by-ref 形参不需要 bind_raw。
+    // 生成的 ABI 是 `(ptr, ptr) -> i64`（win64 i128 形参 by-ref）；JitCallSignature
+    // 的 ABI 投影把 i128 形参映射成 ptr，所以这里可以直接用 i128 签名安全 bind。
     let f = jit
-        .bind::<extern "C" fn(*const i128, *const i128) -> i64>("add128")
+        .bind::<extern "C" fn(i128, i128) -> i64>("add128")
         .expect("bind add128");
     let (a, b) = (2i128, 3i128);
-    let got = (f.raw())(&a, &b);
+    let got = (f.raw())(a, b);
     assert_eq!(got, 5, "by-ref i128 形参应读到 2+3 的低 64 位");
     println!("i128_by_ref_add(2,3)={got}");
 }
@@ -72,7 +72,9 @@ fn i128_return_xmm0() {
     })
     .expect("widen");
 
-    let f = unsafe { jit.bind_raw::<extern "C" fn(i64) -> i128>("widen") }.expect("bind_raw widen");
+    let f = jit
+        .bind::<extern "C" fn(i64) -> i128>("widen")
+        .expect("bind widen");
     let got = (f.raw())(7i64);
     assert_eq!(got, 7i128, "i64→i128 返回应经 XMM0 完整回传");
     println!("i128_return_xmm0(7)={got}");

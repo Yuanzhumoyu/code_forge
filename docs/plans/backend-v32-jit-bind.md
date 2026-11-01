@@ -142,16 +142,19 @@ impl<M: TargetMachine> JitLoader<M> {
   测试 `widen(i64)->i128` 以 `extern "C" fn(i64)->i128` 真执行，`7→7`（经 XMM0）。
 - 为什么不用 `Vinsert`：x86 `rd≤128` 的 lowering 只有 `MOVAPS+MOVSD`（恒写低
   lane，忽略 lane 立即数），插高肢会覆盖低肢；栈缓冲绕开这条缺陷。
-- **安全 bind**：by-ref 形参可用 `bind::<extern "C" fn(*const i128,*const i128)->i64>`
-  （ABI 就是 ptr）；返回路径仍走 `bind_raw`，因为 `JitSig::to_abi` 对 i128 还是
-  `UnsupportedAbi`，需要按目标/约定补 ABI 投影。
-- 仍待：sysv64 的整数对/by-value、`JitSig` 的 i128 ABI 投影。
+- **安全 bind 双向可用**：`JitCallSignature::abi` 对 i128 做目标投影
+  （形参 → `Ptr`，返回 → `<2 x i64>` 向量），所以
+  `bind::<extern "C" fn(i128,i128)->i64>` 与 `bind::<extern "C" fn(i64)->i128>`
+  都能直接绑定；测试不再需要 `bind_raw`。`JitType::to_abi` 的 Vector 分支改为
+  identity（≤16B 向量就是 ABI 形态；>16B 的合法化函数已变成 ptr）。
+- 仍待：sysv64 的整数对/by-value；`JitType::Int{128}.to_abi` 直接调用仍是
+  `UnsupportedAbi`（复杂入口仍应走函数指针投影）。
 
 ## 5. 未完成（M1b / M2 / M3）
 
 | 里程碑 | 内容 | 验收 |
 | --- | --- | --- |
-| M1b | 128 位入口/返回 ABI：`wide_split` 入口拆分、返回配对/sret；`plan_jit_abi` 初版；`rustc-abi-cross` 对拍 | i128/u128 by-value 真执行；三 ISA 编译。**进展**：win64 by-ref `i128` 形参 + XMM0 返回已真执行（`2+3=5`、`7→7`）；sysv64 整数对、`JitSig` ABI 投影仍待做 |
+| M1b | 128 位入口/返回 ABI：`wide_split` 入口拆分、返回配对/sret；`plan_jit_abi` 初版；`rustc-abi-cross` 对拍 | i128/u128 by-value 真执行；三 ISA 编译。**进展**：win64 by-ref `i128` 形参 + XMM0 返回已真执行（`2+3=5`、`7→7`），安全 bind 双向可用；sysv64 整数对仍待做 |
 | M2 | `#[derive(JitValue)]`、聚合/数组/向量、`ByVal`/`ByRef`/`Out`、sret/by-ref；完整 `plan_jit_abi`；转换 12 处 unchecked 指针站点 | win64/sysv64 聚合真执行；三 ISA；demo 聚合 |
 | M3 | ~~`bind_variadic`~~（已落地）、~~counted loop~~（已落地，`n` 驱动循环）、sentinel/format 截止约定、`add_function` 直接变参调用修复、`jit_rust_abi` 的 Bevy `Reflect` 适配器、函数指针 JIT 回调 demo、跨目标 bind/call 测试、错误文档 | 变参 demo；带字段枚举/union 真执行；错误带下标；54/54 |
 
