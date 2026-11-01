@@ -14,7 +14,7 @@
 
 #![cfg(all(feature = "jit", target_arch = "x86_64"))]
 
-use forge_codegen::jit::{JitLoader, VariadicTermination};
+use forge_codegen::jit::{JitBindError, JitLoader, VariadicTermination};
 use forge_codegen::x86;
 use forge_ir::IntCC;
 use forge_ir::ir::builder::FunctionBuilder;
@@ -103,6 +103,27 @@ fn bind_scalar_and_bool() {
         counted.termination(),
         VariadicTermination::Counted { param: 0 }
     );
+
+    // Sentinel/Format 只记录契约；越界的 Counted 形参必须 ParamCount。
+    for term in [VariadicTermination::Sentinel, VariadicTermination::Format] {
+        let f = unsafe {
+            jit.bind_variadic_with_termination::<unsafe extern "C" fn(i64, ...) -> i64>(
+                "vsum", term,
+            )
+        }
+        .expect("sentinel/format termination");
+        assert_eq!(f.termination(), term);
+    }
+    let bad = match unsafe {
+        jit.bind_variadic_with_termination::<unsafe extern "C" fn(i64, ...) -> i64>(
+            "vsum",
+            VariadicTermination::Counted { param: 1 },
+        )
+    } {
+        Err(e) => e,
+        Ok(_) => panic!("越界计数形参应拒绝"),
+    };
+    assert!(matches!(bad, JitBindError::ParamCount { .. }), "{bad:?}");
 
     // 让编译器知道 `Opcode` 被引用（早期探针保留的导入）。
     let _ = Opcode::Nop;
