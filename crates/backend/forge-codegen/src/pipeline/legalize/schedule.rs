@@ -45,6 +45,7 @@ pub(crate) fn run<M: TargetMachine>(
             func.name,
             forge_ir::text::display::function_to_string(func)
         );
+        dump_non_pointer_mem_ops("合法化前", func);
     }
     let needs_agg_expand = crate::pipeline::agg_expand::needs_agg_expand(func);
     let mut func_owned: Option<Function> = needs_agg_expand.then(|| func.clone());
@@ -162,13 +163,16 @@ pub(crate) fn run<M: TargetMachine>(
                 // 失败时把**合法化后的 IR** 打出来（只在 debug 构建、只在真失败时）——
                 // 这类不变量违例没有 IR 正文几乎无法定位（类型号/指令号是内部句柄）。
                 #[cfg(debug_assertions)]
-                eprintln!(
-                    "[forge] 合法化后 IR 校验失败：fn {}（{} 条）\n{}\n[forge] 违例明细：{:#?}",
-                    f.name,
-                    errors.len(),
-                    forge_ir::text::display::function_to_string(f),
-                    errors
-                );
+                {
+                    eprintln!(
+                        "[forge] 合法化后 IR 校验失败：fn {}（{} 条）\n{}\n[forge] 违例明细：{:#?}",
+                        f.name,
+                        errors.len(),
+                        forge_ir::text::display::function_to_string(f),
+                        errors
+                    );
+                    dump_non_pointer_mem_ops("合法化后", f);
+                }
                 let detail = errors
                     .iter()
                     .map(|e| format!("{e:?}"))
@@ -187,4 +191,36 @@ pub(crate) fn run<M: TargetMachine>(
         func: func_owned,
         abi_slots,
     })
+}
+
+/// 把 `Load`/`CallIndirect` 逐条打出来（**带每个操作数的类型**）。
+///
+/// 用途：verifier 只给 `Inst(n)` 句柄，而 IR 正文不带指令号——`LoadAddrNotPointer`
+/// /`CallInvalidTarget` 这类违例因此只能看到"某处类型不对"。合法化前后各打一次，
+/// 就能二分"是前端就错、还是某个 pass 改坏"，并直接看到坏在哪条指令的哪个操作数。
+#[cfg(debug_assertions)]
+fn dump_non_pointer_mem_ops(tag: &str, f: &Function) {
+    use forge_ir::Opcode;
+    for (b, _) in f.dfg.blocks() {
+        for ii in f.dfg.block(b).inst_order.clone() {
+            let inst = f.dfg.inst_data(ii);
+            if !matches!(inst.opcode, Opcode::Load | Opcode::CallIndirect) {
+                continue;
+            }
+            let ops: Vec<String> = inst
+                .operands
+                .iter()
+                .map(|v| {
+                    let ty = f.dfg.value_type(*v);
+                    format!("{v:?}:{ty:?}")
+                })
+                .collect();
+            eprintln!(
+                "[forge] {tag} 访存/间接调用：{:?} {:?} ops=[{}]",
+                ii,
+                inst.opcode,
+                ops.join(", ")
+            );
+        }
+    }
 }

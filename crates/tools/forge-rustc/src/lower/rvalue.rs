@@ -1141,7 +1141,24 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         self.store_ty(val, base, src_ir);
         Ok(self.load_ty(base, dst_ir))
     }
+    /// 把"整数形式的指针值"转成 IR 的 `ptr`。
+    ///
+    /// **为什么需要**：本后端的既定约定是"指针值在寄存器/槽里按整数宽度走"
+    ///（`map_type` 对指针给 I64，便于统一 ABI 打包），但 IR 的**地址操作数**
+    /// 必须是 `ptr`——verifier 的 `LoadAddrNotPointer`/`StoreAddrNotPointer`/
+    /// `CallInvalidTarget` 就是这条不变量。凡是"拿一个值当地址/被调者"的地方
+    /// 都必须过这里，否则 `&dyn T` 的 vtable 槽（读出来是 i64）再加偏移去 `load`
+    /// 就是**非法 IR**（2026-11-02 `dyn_u128` 实证：`add i64 %vt, 24` + `load i64, i64`）。
+    pub(crate) fn ptr_operand(&mut self, v: Value) -> Value {
+        if self.builder.value_type(v) == Some(TypeId::PTR) {
+            v
+        } else {
+            self.builder.inttoptr(v, TypeId::PTR)
+        }
+    }
     pub(crate) fn load_ty(&mut self, addr: Value, ty: TypeId) -> Value {
+        // 地址统一按 `ptr` 处理（见 `ptr_operand` 的说明）。
+        let addr = self.ptr_operand(addr);
         if ty == TypeId::BOOL {
             // WA-22 读侧对称：主库对 BOOL 的 Load 无窄规则（TOML 仅 32/64
             // 两档，BOOL bits=1 走默认 64 位 mov_mem）——聚合内字段（如
@@ -1166,6 +1183,8 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
         if ty == TypeId::VOID {
             return;
         }
+        // 地址统一按 `ptr` 处理（见 `ptr_operand` 的说明）。
+        let addr = self.ptr_operand(addr);
         if ty.is_float() {
             self.builder.fstore(val, addr)
         } else {

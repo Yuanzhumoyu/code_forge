@@ -1088,12 +1088,20 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                         .get(1)
                                         .copied()
                                         .unwrap_or_else(|| self.builder.const_int(0, TypeId::I64));
+                                    // **vtable 是地址**（2026-11-02 修）：指针值在本后端按
+                                    // 整数宽度走（`map_type` 给 I64），但拿它**当地址**用
+                                    // 之前必须转成 `ptr`——否则 `add i64` + `load i64, i64`
+                                    // 就是非法 IR（verifier：`LoadAddrNotPointer` +
+                                    // `CallInvalidTarget`；实测 `dyn_u128` 编译失败）。
+                                    let vtable = self.ptr_operand(vtable);
                                     // vtable 槽：rustc 的 idx 是绝对索引（含
                                     // drop_in_place/size/align 公共槽偏移），直接用
                                     let slot_v =
                                         self.builder.const_int(idx as i64 * 8, TypeId::I64);
                                     let slot_addr = self.builder.iadd(vtable, slot_v);
-                                    let fn_ptr = self.builder.load(slot_addr, TypeId::I64);
+                                    // 方法指针**本身是地址** ⇒ 按 `ptr` 读；按 i64 读会让
+                                    // 间接调用的 callee 不是指针（`CallInvalidTarget`）。
+                                    let fn_ptr = self.builder.load(slot_addr, TypeId::PTR);
                                     // 方法只收 receiver（data 指针）——vtable 是 fat
                                     // pointer 元数据，不传给方法；**但显式实参必须带上**
                                     // （此前只传 args[0] ⇒ 带参数的虚方法会把实参丢掉、
@@ -1151,14 +1159,20 @@ impl<'tcx, 'f> LowerCtxt<'tcx, 'f> {
                                 Some(v) => v,
                                 None => self.lower_operand(func)?,
                             };
-                            self.builder.call_indirect(func_val, &args, &ret_tys)
+                            // 被调者是**地址**：IR 要求 `ptr`（verifier `CallInvalidTarget`）。
+                            // 指针值在本后端按整数宽度走（见 `LowerCtx::ptr_operand`），
+                            // `&dyn T` 的方法指针正是从 vtable 槽 `load i64` 出来的。
+                            let callee = self.ptr_operand(func_val);
+                            self.builder.call_indirect(callee, &args, &ret_tys)
                         }
                     } else {
                         let func_val = match self.fn_item_addr_operand(func, body)? {
                             Some(v) => v,
                             None => self.lower_operand(func)?,
                         };
-                        self.builder.call_indirect(func_val, &args, &ret_tys)
+                        // 同上：间接调用前把被调者转成 `ptr`。
+                        let callee = self.ptr_operand(func_val);
+                        self.builder.call_indirect(callee, &args, &ret_tys)
                     };
 
                     if !results.is_empty() {
