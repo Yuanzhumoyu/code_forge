@@ -45,6 +45,18 @@ pub struct RegAllocConfig {
     /// 强制 spill 到栈槽，避免参数占满寄存器导致函数体无寄存器可驱逐
     ///（grow_impl_runtime 7 参数 regalloc 失败）。0 = 全部按普通值处理。
     pub param_reg_count: usize,
+
+    /// **入口实参寄存器**（约定给的物理寄存器号，按 ABI 布局顺序）。
+    ///
+    /// 用途：形参的 home **不能**落在这些号上（预分配阶段回避）。原因：被调方
+    /// 收参是一串 `mov home, abi_src`，若某个 home 恰好是**后面**某个形参的
+    /// `abi_src`，先收的那条 mov 就把后收的源踩掉了——生成器在**运行期**才知道
+    /// home（`__rm.preg`），无法在生成期排出安全顺序。把"入口实参寄存器"当作
+    /// 分配约束（标准做法：入口 live-in 寄存器先占住）就把这件事从生成期挪到
+    /// 分配期，从根上消掉顺序依赖（2026-11-01）。
+    ///
+    /// 空 = 不知道/不需要（无调用布局的谱、只做编码试点的夹具）。
+    pub entry_arg_srcs: Vec<u32>,
 }
 
 /// 单个寄存器类的配置。
@@ -81,10 +93,11 @@ impl RegAllocConfig {
             callee_saved: Vec::new(),
             // 空池：真正的后端由 TargetRegInfo::scratch_regs() 填（这里有值就是写死类，
             // 会撞「宿主生产代码不得出现写死寄存器类」守卫）。测试若要走溢出编辑，在测试
-            // 模块里自己塞一个（见 egalloc_bt.rs 的 make_config）。
+            // 模块里自己塞一个（见 egalloc_bt.rs 的 make_config）。
             scratch_regs: Vec::new(),
             param_xregs: Vec::new(),
             param_reg_count: 0,
+            entry_arg_srcs: Vec::new(),
             main_gpr_class: RegClass::GPR64,
             main_fpr_class: RegClass::FPR64,
         }

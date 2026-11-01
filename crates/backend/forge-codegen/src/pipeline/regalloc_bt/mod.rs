@@ -33,7 +33,7 @@
 
 use self::spill::build_spill_edits;
 use crate::IrError;
-use crate::machine::inst::{MachineInst, OperandConstraint};
+use crate::machine::inst::MachineInst;
 use crate::pipeline::alloc_config::RegAllocConfig;
 use crate::pipeline::alloc_result::AllocResult;
 use crate::pipeline::liverange;
@@ -113,9 +113,24 @@ impl BacktrackingAllocator {
                 if is_dead {
                     continue;
                 }
-                let constraint = OperandConstraint::Any;
                 let class = state.vreg_class(vreg);
-                let preg = state.assign_reg(vreg, constraint, class, &[], true)?;
+                // **形参 home 回避入口实参寄存器**（2026-11-01）：收参是
+                // `mov home, abi_src` 一串直线 mov，home 是运行期值，生成期排不出
+                // 安全顺序；把入口实参寄存器当约束就消除了顺序依赖。
+                // 回避不开（池里只剩这些号）⇒ **这个形参直接走 spill**：它的槽是权威
+                // 副本，入口写槽由 `move_args` 的 spilled-slot 初始化负责（M1）；
+                // 绝不能退回"随便挑一个号"——那正好会踩掉后面形参还没收的源寄存器。
+                let preg = match state.pop_free_avoiding(class, &config.entry_arg_srcs) {
+                    Some(p) => {
+                        state.assignments.insert(vreg, p);
+                        state.set_reg_owner(p, vreg);
+                        p
+                    }
+                    None => {
+                        state.spill_vreg(vreg)?;
+                        continue;
+                    }
+                };
                 state.active.insert(vreg, preg); // 将预分配的参数 XReg 添加到 active 列表中
                 state.peak_active = state.peak_active.max(state.active.len());
                 if crate::pipeline::trace::knob("FORGE_TRACE_REGALLOC") {
@@ -169,6 +184,7 @@ impl Default for BacktrackingAllocator {
 // ============================================================
 
 mod dump;
+mod freepool;
 mod reload;
 mod reserve;
 mod spill;

@@ -421,3 +421,133 @@ fn spilled_incoming_params_are_stored_into_their_slots() {
         lines.join("\n")
     );
 }
+
+/// 收参是"一串 `mov home, abi_src`"，而 home 是运行期值 ⇒ 若某形参的 home 恰好是
+/// **后面**某个形参的 abi_src，先收的 mov 会踩掉后收的源（2026-11-01 实测：
+/// 6 个形参加上"池按最大号优先"的取号顺序 ⇒ home 落进 r1..r6 的源区间，
+/// `b`/`e` 被覆盖）。
+///
+/// 修法：分配期把入口实参寄存器当约束——形参 home 回避它们（标准做法：入口 live-in
+/// 寄存器先占住），从根上消除顺序依赖；回避不开的形参走 spill，入口写槽由 M1 保证。
+#[test]
+fn six_params_receive_without_clobbering_abi_sources() {
+    ensure_convention();
+    let i = TypeId::I32;
+    let names = ["a", "b", "c", "d", "e", "f"];
+    let sig = FunctionSignature::new(&names.iter().map(|nm| (i, *nm)).collect::<Vec<_>>(), &[i]);
+    let mut b = FunctionBuilder::new("recv6", TypeContext::new(), sig);
+    let (entry, args) =
+        b.create_block_with_params(&names.iter().map(|nm| (i, *nm)).collect::<Vec<_>>());
+    b.switch_to_block(entry);
+    let mut sum = args[0];
+    for arg in &args[1..] {
+        sum = b.iadd(sum, *arg);
+    }
+    b.ret(&[sum]);
+    let func = b.finish().expect("build recv6");
+
+    let cf = CompileSession::new(TargetMachine::new())
+        .compile(&func)
+        .expect("6 个形参必须可编译");
+    let lines = disasm(&cf.code);
+    let insts = decode_all(&cf.code);
+    let ret_pc = (insts.len() * 4) as u32;
+    let mut m = Machine::new(ret_pc);
+    for (idx, v) in [1u32, 2, 3, 4, 5, 6].iter().enumerate() {
+        m.set(idx as u32 + 1, *v);
+    }
+    m.set(12, ret_pc);
+    let got = m.run(&insts);
+    assert_eq!(
+        got,
+        21,
+        "收参被后续形参的源寄存器覆盖了：{got}（应为 1+2+3+4+5+6）\n{}",
+        lines.join("\n")
+    );
+}
+
+/// **函数体自身压力**下的正确性守卫（9 个派生值同时活着 ⇒ 必然驱逐/溢出）。
+///
+/// 注意它**不**单独保证"一条指令 3 个操作数全溢出"——那个形状由
+/// `regalloc_bt::spill::tests::three_spilled_operands_share_two_scratch_slots` 直接钉住
+/// （构造精确、不依赖分配器决策）；本用例只保证压力下的语义仍然对。
+#[test]
+fn single_instruction_with_three_spilled_operands_needs_two_scratch() {
+    ensure_convention();
+    let i = TypeId::I32;
+    let sig = FunctionSignature::new(&[(i, "n")], &[i]);
+    let mut b = FunctionBuilder::new("three_spilled", TypeContext::new(), sig);
+    let (entry, args) = b.create_block_with_params(&[(i, "n")]);
+    b.switch_to_block(entry);
+    // 9 个派生值都活到最后的求和 ⇒ 峰值 10 个值 > 8 个可分配寄存器。
+    let mut vals = Vec::new();
+    for k in 1..=9u64 {
+        let c = b.const_int(k, i);
+        vals.push(b.iadd(args[0], c));
+    }
+    let mut sum = vals[0];
+    for v in &vals[1..] {
+        sum = b.iadd(sum, *v);
+    }
+    b.ret(&[sum]);
+    let func = b.finish().expect("build three_spilled");
+
+    let cf = CompileSession::new(TargetMachine::new())
+        .compile(&func)
+        .expect("三个操作数同时溢出时 2 个 scratch 必须够（def 与 use 共用槽）");
+    let lines = disasm(&cf.code);
+    let insts = decode_all(&cf.code);
+    let ret_pc = (insts.len() * 4) as u32;
+    let mut m = Machine::new(ret_pc);
+    m.set(1, 1); // n = 1
+    m.set(12, ret_pc);
+    let got = m.run(&insts);
+    // 9*1 + (1+…+9) = 9 + 45
+    assert_eq!(
+        got,
+        54,
+        "结果错了：{got}（应为 9+45）\n{}",
+        lines.join("\n")
+    );
+}
+
+/// 三操作数 ALU 的三个操作数**全部**溢出：2 个 scratch 就够（def 与一个 use 共用槽，
+/// 指令先读后写）。旧实现给每个 spilled vreg 各分一个槽，于是要 3 个 ⇒ 在 2 个 scratch
+/// 的谱上直接编译失败（`第 N 条指令需要 3 个 scratch 寄存器…`）。
+#[test]
+fn eight_all_spilled_params_fit_in_two_scratch_registers() {
+    ensure_convention();
+    let i = TypeId::I32;
+    let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+    let sig = FunctionSignature::new(&names.iter().map(|nm| (i, *nm)).collect::<Vec<_>>(), &[i]);
+    let mut b = FunctionBuilder::new("recv8", TypeContext::new(), sig);
+    let (entry, args) =
+        b.create_block_with_params(&names.iter().map(|nm| (i, *nm)).collect::<Vec<_>>());
+    b.switch_to_block(entry);
+    let mut sum = args[0];
+    for arg in &args[1..] {
+        sum = b.iadd(sum, *arg);
+    }
+    b.ret(&[sum]);
+    let func = b.finish().expect("build recv8");
+
+    // 8 个形参 = ABI 池的全部 8 个寄存器，而它们又都是入口源寄存器 ⇒ 全溢出。
+    let cf = CompileSession::new(TargetMachine::new())
+        .compile(&func)
+        .expect("全溢出时 2 个 scratch 必须够（def 与 use 共用槽）");
+    let lines = disasm(&cf.code);
+    let insts = decode_all(&cf.code);
+    let ret_pc = (insts.len() * 4) as u32;
+    let mut m = Machine::new(ret_pc);
+    for (idx, v) in [1u32, 2, 3, 4, 5, 6, 7, 8].iter().enumerate() {
+        m.set(idx as u32 + 1, *v);
+    }
+    m.set(12, ret_pc);
+    let got = m.run(&insts);
+    assert_eq!(
+        got,
+        36,
+        "8 个全溢出形参求和错了：{got}（应为 36）\n{}",
+        lines.join("\n")
+    );
+}

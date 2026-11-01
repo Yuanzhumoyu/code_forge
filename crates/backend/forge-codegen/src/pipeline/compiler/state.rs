@@ -304,6 +304,21 @@ impl<I: MachineInst + 'static> CompileState<I> {
                         .count()
                 })
                 .unwrap_or(0),
+            // **入口实参寄存器**：把这些物理号告诉分配器，让形参的 home 回避它们。
+            // 收参是一串 `mov home, abi_src`（home 是运行期值），若某个 home 恰好是
+            // 后面某个形参的 abi_src，先收的 mov 会踩掉后收的源——生成期排不出安全
+            // 顺序，所以在分配期回避（见 `RegAllocConfig::entry_arg_srcs`）。
+            entry_arg_srcs: self
+                .ctx
+                .conv
+                .layout()
+                .map(|cl| {
+                    cl.args
+                        .iter()
+                        .filter_map(|a| a.place.as_reg().map(|r| r.slot))
+                        .collect()
+                })
+                .unwrap_or_default(),
         };
 
         // **折入绑定表：把值的描述类折进 `OperandBind` 一次（v24 M2 起描述已单一来源）。**
