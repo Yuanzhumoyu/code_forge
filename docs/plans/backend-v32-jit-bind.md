@@ -144,6 +144,11 @@ impl<M: TargetMachine> JitLoader<M> {
   i128 返回在 `AggCall`/ABI 计划层已先被当成宽聚合/sret 改写，末端补丁看不到真实
   返回形状。正解必须在 `plan_abi_edges`/`AbiPlan` 把 win64 i128 返回分类为
   **FPR128（XMM0）**，再由 lowering 发射；不能靠 wide_split 事后补。
+- **二次尝试（同日）**：在 `Classifier::ret_place` 对 win64 i128 改用 V128 形状问
+  FPR128，并配合 wide_split 打包——Verifier 仍报同一组错误（`load i64, i64 %a`）。
+  说明仅改 `ret_place` 不足以让 `AggCall` 停止 sret 改写；需继续查
+  `plan_abi_edges` 的 `edges.ret` 与 `expand_sret_return` 的实际选择，不能继续在
+  末端猜。两次尝试都未提交，补丁仅在 `target/v32/` 留档。
 
 ## 5. 未完成（M1b / M2 / M3）
 
