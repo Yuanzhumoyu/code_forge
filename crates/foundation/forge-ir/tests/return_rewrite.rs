@@ -27,7 +27,7 @@ fn set_return_values_clears_old_use() {
     );
     let new_v = f.dfg.inst_data(new).results[0];
     f.dfg.block_mut(e).inst_order.insert(0, new);
-    f.set_return_values(e, &[new_v]);
+    f.set_return_values(e, [new_v]);
     assert!(!f.use_lists.has_uses(wide), "旧返回值仍被使用");
     assert!(f.use_lists.has_uses(new_v), "新返回值没有使用");
 }

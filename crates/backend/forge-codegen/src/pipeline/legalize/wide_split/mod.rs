@@ -1,4 +1,4 @@
-//! 合法化 pass：**宽值的多寄存器表示**（v27 M5 · M-F）。
+﻿//! 合法化 pass：**宽值的多寄存器表示**（v27 M5 · M-F）。
 //!
 //! 一个宽整数（`bits > int_widths().max()`）在 IR 里不再是一个值，而是 **n 个原生宽 SSA 值**
 //!（肢，`n = ceil(bits / W)`，下标 0 = 最低肢）。这样 isel 永远只看到原生宽度。
@@ -24,6 +24,7 @@ mod cmp;
 mod emit;
 mod mem;
 mod mul;
+mod ret_pack;
 mod shift;
 #[cfg(test)]
 mod tests;
@@ -201,107 +202,7 @@ impl<M: TargetMachine> LegalizePass<M> for WideSplitPass {
             }
         }
 
-        // ③.6 win64 i128 返回：用 16B 栈缓冲打包（store low/high + vector load），
-        // 不依赖 x86 Vinsert 的 lane1 lowering。
-        if ret_xmm {
-            let mut jobs: Vec<(Block, Value)> = Vec::new();
-            for (b, _bd) in e.func.dfg.blocks() {
-                if let Some(vals) = e.func.dfg.term_return_values(b) {
-                    for &v in vals {
-                        if e.func.dfg.value_type(v) == Some(TypeId::I128) {
-                            jobs.push((b, v));
-                        }
-                    }
-                }
-            }
-            if !jobs.is_empty() {
-                let vec_ty = e.func.types.vector_ty(TypeId::I64, 2);
-                let entry = e.func.entry();
-                let alloc = e.func.make_inst(
-                    Opcode::Alloca,
-                    entry,
-                    smallvec::smallvec![],
-                    smallvec::smallvec![Immediate::Type(TypeId::I64), Immediate::Uint(2)],
-                    &[TypeId::PTR],
-                    InstFlags::NONE,
-                );
-                let buf = e.func.dfg.inst_data(alloc).results[0];
-                // make_inst 已把 alloca 追加到块序；移到入口开头保证支配所有使用。
-                {
-                    let order = &mut e.func.dfg.block_mut(entry).inst_order;
-                    let ni = order.pop().expect("刚 push 的 alloca");
-                    order.insert(0, ni);
-                }
-                e.created += 1;
-                for (b, old) in jobs {
-                    let limbs = parts.get(old).cloned().unwrap_or_default();
-                    if limbs.len() != 2 {
-                        return Err(wide_shape_unsupported(
-                            "win64 i128 返回：宽值未拆成两个肢，无法打包向量",
-                        ));
-                    }
-                    let one = e.func.make_inst(
-                        Opcode::Iconst,
-                        b,
-                        smallvec::smallvec![],
-                        smallvec::smallvec![Immediate::Int(1)],
-                        &[TypeId::I64],
-                        InstFlags::NONE,
-                    );
-                    let one_v = e.func.dfg.inst_data(one).results[0];
-                    let hi = e.func.make_inst(
-                        Opcode::GetElementPtr,
-                        b,
-                        smallvec::smallvec![buf, one_v],
-                        smallvec::smallvec![Immediate::Type(TypeId::I64)],
-                        &[TypeId::PTR],
-                        InstFlags::NONE,
-                    );
-                    let hi_v = e.func.dfg.inst_data(hi).results[0];
-                    let _st_lo = e.func.make_inst(
-                        Opcode::Store,
-                        b,
-                        smallvec::smallvec![limbs[0], buf],
-                        smallvec::smallvec![],
-                        &[],
-                        InstFlags::SIDE_EFFECT,
-                    );
-                    let _st_hi = e.func.make_inst(
-                        Opcode::Store,
-                        b,
-                        smallvec::smallvec![limbs[1], hi_v],
-                        smallvec::smallvec![],
-                        &[],
-                        InstFlags::SIDE_EFFECT,
-                    );
-                    let load = e.func.make_inst(
-                        Opcode::Load,
-                        b,
-                        smallvec::smallvec![buf],
-                        smallvec::smallvec![],
-                        &[vec_ty],
-                        InstFlags::NONE,
-                    );
-                    let vec = e.func.dfg.inst_data(load).results[0];
-                    e.created += 5;
-                    e.func.set_return_values(b, [vec]);
-                }
-                let old_sig = e
-                    .func
-                    .types
-                    .borrow()
-                    .get_signature(e.func.signature)
-                    .clone();
-                let new_sig = FunctionSignature {
-                    params: old_sig.params.clone(),
-                    returns: vec![vec_ty],
-                    calling_convention: old_sig.calling_convention,
-                    variadic: old_sig.variadic,
-                };
-                e.func.signature = e.func.types.borrow_mut().register_signature(new_sig);
-            }
-        }
-
+        ret_pack::pack_win64_i128_return(&mut e, &parts, ret_xmm)?;
         // ④ 清理原宽指令（此时已无使用者），再跑泄漏守卫
         for ii in kills {
             e.kill(ii);
