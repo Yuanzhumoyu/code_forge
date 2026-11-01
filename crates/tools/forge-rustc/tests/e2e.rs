@@ -3425,6 +3425,35 @@ fn run_case(case: &Case, workdir: &Path) -> Result<i32, String> {
     run_case_with(case, workdir, &[], &[])
 }
 
+/// 编译失败时打印给用户的 stderr 摘要。
+///
+/// **为什么不再固定 10 行**（2026-11-02）：后端的诊断顺序是「`[forge]` 头部 +
+/// 失败函数的 IR dump + 违例明细」，固定截到前 10 行时**违例明细恰好被切掉**——
+/// 排查 `dyn_u128` 时表现为"看到的永远只有条数、没有内容"，还以为诊断没生效。
+/// 现在超长时**头尾各取**（后端的结论在末尾，只看头等于看不到）；截断处明确标注。
+fn stderr_excerpt(stderr: &str) -> String {
+    const HEAD: usize = 20;
+    const TAIL: usize = 20;
+    let lines: Vec<&str> = stderr.lines().collect();
+    // `FORGE_E2E_VERBOSE=1`：**一行不省**（调试后端诊断时必需——合法化前/后的 IR
+    // dump 都在中段，头尾摘录会把要找的东西切掉）。
+    if std::env::var_os("FORGE_E2E_VERBOSE").is_some() {
+        return lines.join("\n");
+    }
+    if lines.len() <= HEAD + TAIL {
+        return lines.join("\n");
+    }
+    let mut out = lines[..HEAD].join("\n");
+    out.push_str(&format!(
+        "\n…（stderr 共 {} 行，此处省略中间 {} 行；\
+         完整内容看 workdir 里的 stderr，或给该用例加 FORGE_TRACE_* 重跑）…\n",
+        lines.len(),
+        lines.len() - HEAD - TAIL
+    ));
+    out.push_str(&lines[lines.len() - TAIL..].join("\n"));
+    out
+}
+
 /// run_case 的可注入变体（M4：真并行池验证用）：
 /// - `extra_rustc_args`：追加到 rustc 命令行（如 `["-Z", "threads=2"]`）；
 /// - `extra_envs`：追加到 rustc 子进程环境（如 `FORGE_CODEGEN_THREADS=4`）。
@@ -3532,7 +3561,7 @@ fn run_case_with(
                 return Err(format!(
                     "compile failed but stderr lacks expected error {:?}:\n{}",
                     want,
-                    stderr.lines().take(10).collect::<Vec<_>>().join("\n")
+                    stderr_excerpt(&stderr)
                 ));
             }
             return Err("__EXPECTED_COMPILE_FAIL__".to_string());
@@ -3540,7 +3569,7 @@ fn run_case_with(
         return Err(format!(
             "compile failed: {}\n{}",
             compile.status,
-            stderr.lines().take(10).collect::<Vec<_>>().join("\n")
+            stderr_excerpt(&stderr)
         ));
     }
     if case.expect_compile_fail {
@@ -3720,6 +3749,25 @@ fn run_exe_with_timeout(exe: &Path) -> Result<i32, String> {
 /// ② 新加用例又写 `known_failure: true` ⇒ 套件照绿，容忍名单悄悄长回来；
 /// ③ `expect_trap` 用例的 `expected` 不是 trap 码（如又被写成 `i32::MIN`）⇒ 与"静默回绕"
 ///    撞车，用例形同虚设（v27 M1 第一次就踩过这个坑）。
+#[test]
+fn stderr_excerpt_keeps_head_and_tail() {
+    // 后端把结论放在 stderr **末尾**（`[forge] 违例明细` / `error:`），只有头尾摘录
+    // 才看得到；固定取前 10 行会把它切掉（2026-11-02 `dyn_u128` 实测）。
+    let mut s = String::new();
+    for i in 0..100 {
+        s.push_str(&format!("line{i}\n"));
+    }
+    let out = stderr_excerpt(&s);
+    assert!(out.contains("line0"), "必须保留头部：{out}");
+    assert!(out.contains("line99"), "必须保留尾部（结论在末尾）：{out}");
+    assert!(!out.contains("line50"), "中段应被省略：{out}");
+    assert!(out.contains("共 100 行"), "省略处必须写明总行数：{out}");
+
+    // 短输出不省略
+    let short = "a\nb\nc";
+    assert_eq!(stderr_excerpt(short), short);
+}
+
 #[test]
 fn e2e_trap_semantics_invariants() {
     let src = include_str!("e2e.rs");

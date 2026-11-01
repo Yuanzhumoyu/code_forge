@@ -34,6 +34,18 @@ pub(crate) fn run<M: TargetMachine>(
     // 可变的 IR 副本：聚合 store/参数展开（agg_expand）需要 &mut Function。
     // 展开后读取 func_ref（Stage 4+ 全部只读原函数；S6 的树型 树型匹配
     // 匹配发生在 lowering 驱动内逐块预扫，不需要在编译期克隆整个 Function）。
+    //
+    // **合法化前的 IR dump**（`FORGE_TRACE_IR=1`）：verifier 只在合法化**之后**跑，
+    // 出了违例时"是前端就错、还是某个 pass 改坏"完全看不出来——两段都打出来才能二分
+    // （2026-11-02：`dyn_u128` 的 `LoadAddrNotPointer`/`CallInvalidTarget` 就靠它定位）。
+    // 注：开关名必须用 `diagnostics::KNOBS` 里**已登记**的（未登记会 panic）。
+    if crate::pipeline::trace::knob("FORGE_TRACE_IR") {
+        eprintln!(
+            "[forge] 合法化前 IR：fn {}\n{}",
+            func.name,
+            forge_ir::text::display::function_to_string(func)
+        );
+    }
     let needs_agg_expand = crate::pipeline::agg_expand::needs_agg_expand(func);
     let mut func_owned: Option<Function> = needs_agg_expand.then(|| func.clone());
 
@@ -151,10 +163,11 @@ pub(crate) fn run<M: TargetMachine>(
                 // 这类不变量违例没有 IR 正文几乎无法定位（类型号/指令号是内部句柄）。
                 #[cfg(debug_assertions)]
                 eprintln!(
-                    "[forge] 合法化后 IR 校验失败：fn {}（{} 条）\n{}",
+                    "[forge] 合法化后 IR 校验失败：fn {}（{} 条）\n{}\n[forge] 违例明细：{:#?}",
                     f.name,
                     errors.len(),
-                    forge_ir::text::display::function_to_string(f)
+                    forge_ir::text::display::function_to_string(f),
+                    errors
                 );
                 let detail = errors
                     .iter()
