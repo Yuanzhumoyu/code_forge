@@ -16,7 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 + `CompileOptions::verify(VerifyLevel::{Auto,Off,On})`：合法化三批跑完后跑完整 `forge_ir::Verifier`（`Auto` = debug 开、release 关）；失败返回 `IrError::Verify`，debug 构建额外打印合法化后的 IR 正文。
 + 修复首次开启暴露的 25 条 IR 不变量违例：宽值墓碑未走规范 `tombstone_inst` / va 聚合档墓碑后仍改 Copy / win64 va cursor 的 i64 直接当 Load 地址 / va `Icmp` 结果写成 I8 / 同宽 `sext/uext` / 清空 call results 后的死残值（Verifier 改为"仅仍被使用才报"，与墓碑/块参数同构）。
 + riscv64 补 `Ptrtoint`/`Inttoptr` lowering 规则（`MOV_RM8_R64`）；GEP 展开的 `add ptr, i64` 明确为 `binop_ptr_off` 正式形状（旧"verify 不跑"的类型债关闭）。
-+ 新增守卫 `tests/verify_after_legalize.rs`、`tests/verify_matrix.rs`（x86/arm64/riscv64 × 标量/GEP/i128）。
++ 新增守卫 `tests/verify_after_legalize.rs`、`tests/verify_matrix.rs`（x86/arm64/riscv64 × 标量/GEP/i128；后者同时覆盖 O1/O2/O3，debug/release 均绿）。
 
 ### Changed (breaking) (2026-11-01) — 后端 v30 人体工学重构
 

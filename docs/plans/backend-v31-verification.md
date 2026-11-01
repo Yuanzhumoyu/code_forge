@@ -35,11 +35,16 @@
 - [`tests/verify_after_legalize.rs`](../../crates/backend/forge-codegen/tests/verify_after_legalize.rs)：
   GEP 展开必须通过完整校验；坏类型必须报 `IrError::Verify` 且点名函数。
 - [`tests/verify_matrix.rs`](../../crates/backend/forge-codegen/tests/verify_matrix.rs)：
-  x86/arm64/riscv64 × 标量/GEP/i128 三形态，全部 `VerifyLevel::On`。
+  x86/arm64/riscv64 × 标量/GEP/i128 三形态，全部 `VerifyLevel::On`；**并覆盖 O1/O2/O3**
+  （优化产物进入 legalize 的路径）。
 - 默认 `CompileOptions::verify` = `Auto`（debug 开）；全量 JIT 矩阵即回归网。
+- release 探针（手动，见 §4）：`cargo test --release -p forge-codegen --test verify_matrix`
+  ——release 下 `forge-opt` 的逐 pass 校验关闭，末尾合法化校验是最后一道闸。
 
 ## 4. 进度
 
 - **2026-11-01 M1**：`VerifyLevel` + 合法化后 Verifier 落地；上表 8 类违例全部修复；
   `--all-features` lib 3104 条、forge-ir 全量、三 ISA 校验矩阵绿；**全量 `cargo forge gate`
   54/54 通过**（含 rustc e2e / jit-x86 / jit-riscv64 / docs）。
+- **2026-11-01 M2**：校验矩阵扩到 **O1/O2/O3 × 三 ISA × 三形态**：debug（逐 pass 校验开）
+  与 release（逐 pass 校验关，末尾合法化校验兜底）均 3/3 绿；未发现新的 opt/legalize 配合违例。

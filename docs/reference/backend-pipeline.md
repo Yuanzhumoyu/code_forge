@@ -470,4 +470,5 @@ IR 不变量违例。要点：
   ">8B 才收"判据会漏掉它）、以及 Verifier 对"活指令被清空结果后的死残值"
   改为"仅仍被使用才报"（与墓碑/块参数同构）。
 * **守卫**：`tests/verify_after_legalize.rs`（GEP 正例 + 坏类型反例）与
-  `tests/verify_matrix.rs`（x86/arm64/riscv64 × 标量/GEP/i128，全部 `On`）。
+  `tests/verify_matrix.rs`（x86/arm64/riscv64 × 标量/GEP/i128，全部 `On`；同时覆盖
+  O1/O2/O3，优化产物进入 legalize 也被校验）。

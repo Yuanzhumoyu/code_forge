@@ -13,6 +13,7 @@ use forge_codegen::machine::target::TargetMachine;
 use forge_ir::ir::builder::FunctionBuilder;
 use forge_ir::ir::types::{FunctionSignature, TypeContext};
 use forge_ir::{Function, TypeId};
+use forge_opt::OptimizationLevel;
 
 fn options() -> CompileOptions {
     CompileOptions::off().with_verify(VerifyLevel::On)
@@ -58,17 +59,40 @@ fn wide_fn() -> Function {
     b.finish().expect("build wide_add")
 }
 
-fn check_all<M: TargetMachine + Clone>(tm: M, isa: &str) {
-    for (name, func) in [
+fn corpus() -> [(&'static str, Function); 3] {
+    [
         ("scalar", scalar_fn()),
         ("gep", gep_fn()),
         ("wide", wide_fn()),
-    ] {
+    ]
+}
+
+fn check<M: TargetMachine + Clone>(tm: &M, opts: CompileOptions, isa: &str, tag: &str) {
+    for (name, func) in corpus() {
         let cf = CompileSession::new(tm.clone())
-            .with_options(options())
+            .with_options(opts.clone())
             .compile(&func)
-            .unwrap_or_else(|e| panic!("[{isa}/{name}] 合法化后校验失败：{e}"));
-        assert!(!cf.code.is_empty(), "[{isa}/{name}] 产物为空");
+            .unwrap_or_else(|e| panic!("[{isa}/{tag}/{name}] 编译/校验失败：{e}"));
+        assert!(!cf.code.is_empty(), "[{isa}/{tag}/{name}] 产物为空");
+    }
+}
+
+fn check_all<M: TargetMachine + Clone>(tm: M, isa: &str) {
+    // 不优化档：legalize 后完整校验。
+    check(&tm, options(), isa, "legalize");
+    // 优化档：`forge-opt` 每 pass 的 debug 校验 + legalize 后完整校验一起覆盖
+    //（v31 M2：优化产物进入 legalize 的路径此前没有专门的校验矩阵）。
+    for (level, label) in [
+        (OptimizationLevel::O1, "O1"),
+        (OptimizationLevel::O2, "O2"),
+        (OptimizationLevel::O3, "O3"),
+    ] {
+        check(
+            &tm,
+            CompileOptions::speed(level).with_verify(VerifyLevel::On),
+            isa,
+            label,
+        );
     }
 }
 
