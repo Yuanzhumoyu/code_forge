@@ -511,6 +511,43 @@ fn single_instruction_with_three_spilled_operands_needs_two_scratch() {
     );
 }
 
+/// 事件化：形参因"回避入口实参寄存器"而溢出时必须发 `PARAM-SPILLED`（可见性，不报错）。
+///
+/// 放在这个**独立测试二进制**里：`set_var` 是进程级副作用（Rust 2024 起为 `unsafe`），
+/// 这里没有别的线程依赖该变量，写完立即恢复。
+#[test]
+fn param_spilling_at_entry_emits_an_event() {
+    ensure_convention();
+    let log_path = std::env::temp_dir().join("forge_param_spilled_event.log");
+    let _ = std::fs::remove_file(&log_path);
+    // SAFETY：本测试二进制里没有别的线程读 `FORGE_CODEGEN_EVENTS`；设完→编译→立刻清。
+    unsafe { std::env::set_var("FORGE_CODEGEN_EVENTS", &log_path) };
+
+    let i = TypeId::I32;
+    let names = ["a", "b", "c", "d", "e", "f", "g", "h"];
+    let sig = FunctionSignature::new(&names.iter().map(|nm| (i, *nm)).collect::<Vec<_>>(), &[i]);
+    let mut b = FunctionBuilder::new("evt_params", TypeContext::new(), sig);
+    let (entry, args) =
+        b.create_block_with_params(&names.iter().map(|nm| (i, *nm)).collect::<Vec<_>>());
+    b.switch_to_block(entry);
+    let sum = b.iadd(args[0], args[1]);
+    b.ret(&[sum]);
+    let func = b.finish().expect("build evt_params");
+    let _ = CompileSession::new(TargetMachine::new()).compile(&func);
+
+    unsafe { std::env::remove_var("FORGE_CODEGEN_EVENTS") };
+    let log = std::fs::read_to_string(&log_path).unwrap_or_default();
+    let _ = std::fs::remove_file(&log_path);
+    assert!(
+        log.contains("PARAM-SPILLED"),
+        "8 个形参占满 ABI 池 ⇒ 全部因回避入口源寄存器而溢出，必须发 PARAM-SPILLED：{log}"
+    );
+    assert!(
+        log.contains("entry-src-reserved"),
+        "reason 字段应说明原因：{log}"
+    );
+}
+
 /// 三操作数 ALU 的三个操作数**全部**溢出：2 个 scratch 就够（def 与一个 use 共用槽，
 /// 指令先读后写）。旧实现给每个 spilled vreg 各分一个槽，于是要 3 个 ⇒ 在 2 个 scratch
 /// 的谱上直接编译失败（`第 N 条指令需要 3 个 scratch 寄存器…`）。

@@ -34,7 +34,7 @@ pub struct EventSpec {
 }
 
 /// **事件台账**（唯一登记处；守卫与文档表双向相等）。
-pub static EVENTS: [EventSpec; 8] = [
+pub static EVENTS: [EventSpec; 9] = [
     EventSpec {
         name: "COMPILE-START",
         what: "开始编译一个函数（`fn`）",
@@ -66,6 +66,12 @@ pub static EVENTS: [EventSpec; 8] = [
     EventSpec {
         name: "EMIT-SUMMARY",
         what: "发射完成：`code_bytes`、`relocs` = 重定位条数",
+    },
+    EventSpec {
+        name: "PARAM-SPILLED",
+        what: "形参在函数入口被溢出：`fn` + `param`（形参序号）+ `reason` = \
+               原因（`entry-src-reserved` = 回避入口实参寄存器后池里没有可用号）\
+               ——正确但慢的取舍，需要可见（2026-11-01）",
     },
 ];
 

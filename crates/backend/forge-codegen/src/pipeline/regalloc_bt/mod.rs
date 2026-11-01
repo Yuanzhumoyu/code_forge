@@ -127,6 +127,20 @@ impl BacktrackingAllocator {
                         p
                     }
                     None => {
+                        // **可见性**（2026-11-01）：这是"正确但慢"的取舍——形参数
+                        // ≥ 可分配寄存器数时形参一律溢出。事件化而不是报错：它不是
+                        // 能力缺口，但用户应该能看见"我的函数为什么全是 ld/st"。
+                        crate::pipeline::events::emit(
+                            "PARAM-SPILLED",
+                            &[
+                                ("fn", crate::pipeline::events::Field::Str(func_name)),
+                                ("param", crate::pipeline::events::Field::Usize(pi)),
+                                (
+                                    "reason",
+                                    crate::pipeline::events::Field::Str("entry-src-reserved"),
+                                ),
+                            ],
+                        );
                         state.spill_vreg(vreg)?;
                         continue;
                     }

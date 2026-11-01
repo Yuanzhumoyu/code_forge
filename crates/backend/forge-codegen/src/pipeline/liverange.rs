@@ -122,16 +122,35 @@ impl LiveInterval {
     }
 
     /// 扩展当前段或开始新段以覆盖 point。
+    ///
+    /// **顺序无关**（2026-11-01 修）：旧实现在 `last.end > point` 时**无条件**早退，
+    /// 于是"point 落在最后一段**之前**"（典型：stage-1.5 对形参 `cover(func_start)`，
+    /// 之后的段都在函数体里）根本不覆盖——那句话成了空操作，形参的区间起点永远不是
+    /// 函数入口。现在只有"确实已被某段覆盖"才早退，其余交给 [`Self::cover_range`]
+    /// （它负责插入 + 合并 + 保序）。
+    ///
+    /// 快路径（升序追加，占全部调用）保持原样，包括把 `last.end == point.before()`
+    /// 这种 1 点微间隙桥接掉——`inst_end(2i+1)` 与下一条 `inst_start(2i+2)` 差 1，
+    /// 不桥接就会让"def → 紧随其后的 use"退化成两段。
     pub fn cover(&mut self, point: ProgPoint) {
         let point_after = point.after();
-        if let Some(last) = self.segments.last_mut() {
-            if last.end > point {
-                // 已在范围内 (end > point, start <= point)
+        // 先把最后一段的边界取出来（值拷贝），免得同时借用 `self`。
+        if let Some((last_start, last_end)) = self.segments.last().map(|s| (s.start, s.end)) {
+            if last_end > point {
+                // 已被覆盖（start <= point < end）才什么都不用做。
+                if last_start <= point {
+                    return;
+                }
+                // point 在最后一段**之前**：插入 + 合并（冷路径，只在 stage-1.5 之类
+                // 把区间起点提前的场景出现）。`cover_range` 负责保序与合并。
+                self.cover_range(point, point);
                 return;
             }
-            if last.end == point || last.end == point.before() {
+            if last_end == point || last_end == point.before() {
                 // 相邻或刚好在段末 — 合并扩展，消除 ProgPoint 的 1-point 微间隙
-                last.end = point_after;
+                if let Some(last) = self.segments.last_mut() {
+                    last.end = point_after;
+                }
                 return;
             }
         }
@@ -369,9 +388,18 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
             }
         }
 
-        // 如果不是返回块且不是最后一块，添加 fallthrough 以建立完整 CFG
-        // 这对于跨块 liveness 数据流至块重要
-        if !block.is_return_block && block_idx + 1 < num_blocks {
+        // **顺序落下的边只在"可能落下"时加**（2026-11-01 修）：末指令是无条件跳转时，
+        // 下一条机器指令根本不会被执行，多出来这条边只会让 `live_out` 变大 ⇒ 区间跨到
+        // 本不该覆盖的块 ⇒ 压力凭空升高（"只多不少"是安全的，但会把值逼进溢出）。
+        //
+        // 判据来自 `MachineInst::is_unconditional_branch`（缺省 false＝保守假设可能落下）：
+        // 反过来漏加会**少一条控制流边**、把活值判死 ⇒ 静默错值，所以缺省必须是"加"。
+        let falls_through = match block.instructions.last() {
+            // 没有指令的块：按"可能落下"处理（保守）。
+            None => true,
+            Some(last) => !last.is_unconditional_branch(),
+        };
+        if falls_through && !block.is_return_block && block_idx + 1 < num_blocks {
             block_succs[block_idx].push(block_idx + 1);
         }
         // 去重
@@ -540,41 +568,10 @@ mod tests {
         assert!(!interval.contains(ProgPoint(8))); // in the hole
         assert!(interval.contains(ProgPoint(10)));
     }
-
-    /// `cover_range` 必须**真的把整段**盖住——即使更靠后的段已经存在。
-    ///
-    /// 这是调用方的真实顺序：liveness 先 `cover(use_point)` 再 `cover_range(def, use)`。
-    /// 旧实现"从后往前找第一段起点 ≤ end 的段、只延长它的 end"在这种顺序下等于什么都没做
-    /// ⇒ `[def, use)` 是空洞 ⇒ `verify_no_overlap` 看不见 def→use 之间的重叠。
-    #[test]
-    fn test_cover_range_fills_the_whole_span_even_when_a_later_segment_exists() {
-        let mut interval = LiveInterval::new(xgpr(0), RegClass::GPR(64));
-        interval.cover(ProgPoint(19));
-        interval.cover(ProgPoint(20)); // 使用点段：先于 cover_range 存在
-        interval.cover_range(ProgPoint(5), ProgPoint(20));
-
-        assert_eq!(
-            interval.segments.len(),
-            1,
-            "跨度应合并成一段：{:?}",
-            interval.segments
-        );
-        for p in [5u64, 12, 19, 20] {
-            assert!(interval.contains(ProgPoint(p)), "点 {p} 应被覆盖");
-        }
-        assert_eq!(interval.end_point(), ProgPoint(21));
-    }
-
-    /// 跨度外的段不受影响（合并只发生在与 `[start, end]` 相交/相接的段上）。
-    #[test]
-    fn test_cover_range_keeps_disjoint_segments() {
-        let mut interval = LiveInterval::new(xgpr(0), RegClass::GPR(64));
-        interval.cover(ProgPoint(1));
-        interval.cover(ProgPoint(30));
-        interval.cover_range(ProgPoint(10), ProgPoint(12));
-
-        assert_eq!(interval.segments.len(), 3, "{:?}", interval.segments);
-        assert!(interval.contains(ProgPoint(10)));
-        assert!(!interval.contains(ProgPoint(5)), "5 仍在两个段之间（真洞）");
-    }
 }
+
+/// 新增守卫（`cover` 顺序无关、无条件跳转不产生 fallthrough 边）拆到独立文件：
+/// `liverange.rs` 撞 700 行规模棘轮（见 `tests/file_size_ratchet.rs`）。
+#[cfg(test)]
+#[path = "liverange_tests.rs"]
+mod tests_extra;

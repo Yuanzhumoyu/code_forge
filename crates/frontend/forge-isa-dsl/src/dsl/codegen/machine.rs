@@ -217,6 +217,8 @@ pub(crate) fn gen_machine_inst(
     let mut effect_sets: Vec<TokenStream> = Vec::new();
     let mut effect_set_texts: Vec<String> = Vec::new();
     let mut branch_arms = Vec::new();
+    // `is_unconditional_branch`：effects 含 `Jump` **且不含** `Branch` 的指令。
+    let mut uncond_arms: Vec<TokenStream> = Vec::new();
     let mut call_arms = Vec::new();
     let mut ret_arms = Vec::new();
     let mut move_arms = Vec::new();
@@ -396,6 +398,11 @@ pub(crate) fn gen_machine_inst(
         if eff.iter().any(|e| is_jumpy(&e)) {
             branch_arms.push(quote! { Inst::#vn { .. } => true });
         }
+        // 无条件跳转 = 含 `Jump`、不含 `Branch`。跨块 CFG 用它决定要不要加
+        // "顺序落下"的边（见 `MachineInst::is_unconditional_branch` 的说明）。
+        if eff.contains(&Effect::Jump) && !eff.contains(&Effect::Branch) {
+            uncond_arms.push(quote! { Inst::#vn { .. } => true });
+        }
         if eff.contains(&Effect::Call) {
             call_arms.push(quote! { Inst::#vn { .. } => true });
         }
@@ -515,6 +522,12 @@ pub(crate) fn gen_machine_inst(
             }
             fn is_branch(&self) -> bool {
                 match self { #(#branch_arms,)* _ => false }
+            }
+            /// **无条件跳转**（`effect = ["Jump"]` 且不含 `Branch`）：执行后一定不顺序
+            /// 落到下一条指令。跨块 CFG 据此决定要不要加 fallthrough 边（漏加会少一条
+            /// 控制流边 ⇒ 活值被判死；所以缺省实现是 `false`＝保守假设可能落下）。
+            fn is_unconditional_branch(&self) -> bool {
+                match self { #(#uncond_arms,)* _ => false }
             }
             fn branch_targets(&self) -> smallvec::SmallVec<[crate::prelude::Block; 2]> {
                 match self { #(#branch_targets_arms,)* _ => smallvec::smallvec![] }

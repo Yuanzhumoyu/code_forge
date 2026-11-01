@@ -182,6 +182,18 @@ pub trait MachineInst: Clone + std::fmt::Debug + Send + Sync + Hash + Eq {
     /// Branch target blocks.
     fn branch_targets(&self) -> SmallVec<[Block; 2]>;
 
+    /// **是否无条件跳转**（执行后**一定**不顺序落到下一条指令）。
+    ///
+    /// 用途：跨块活跃区间分析里的 CFG 构造——顺序落下的边（fallthrough）只在
+    /// **可能**落到下一块时才加。这不是优化：把"一定不落下"的边也加上只会让区间变大
+    /// （安全但费寄存器）；反过来漏加会**少一条控制流边**、把活值判死 ⇒ 静默错值。
+    ///
+    /// 缺省 `false` = **保守假设"可能顺序落下"**（多一条边、不会错）。谱里声明
+    /// `effect = ["Jump"]`（且不含 `Branch`）的指令由 DSL 生成 `true`。
+    fn is_unconditional_branch(&self) -> bool {
+        false
+    }
+
     /// Whether this is a call instruction.
     fn is_call(&self) -> bool;
 
