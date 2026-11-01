@@ -82,8 +82,7 @@ fn bind_scalar_and_bool() {
 
     // 非变参 bind 必须拒绝；变参 bind 校验固定前缀后返回 raw 指针。
     assert!(jit.bind::<extern "C" fn(i64) -> i64>("vsum").is_err());
-    let vsum = jit
-        .bind_variadic::<unsafe extern "C" fn(i64, ...) -> i64>("vsum")
+    let vsum = unsafe { jit.bind_variadic::<unsafe extern "C" fn(i64, ...) -> i64>("vsum") }
         .expect("bind_variadic vsum");
     let r = unsafe { (vsum.raw())(1i64, 2i64, 3i64) };
     assert_eq!(r, 7, "变参函数固定前缀 + 额外实参应正常调用");

@@ -273,12 +273,20 @@ impl<M: TargetMachine> JitLoader<M> {
         Ok(expected)
     }
 
-    /// v32：绑定 C 变参函数——校验固定前缀与 `variadic`，调用用 `raw()`。
+    /// v32：绑定 C 变参函数——只校验固定前缀与 `variadic`；调用用 `raw()`。
     ///
     /// Rust 1.99 的 `...` 类型让“固定前缀”可以类型化；`...` 部分由调用者与
     /// Rust 变参类型保证（语言边界，泛型 `call` 无法表达）。
+    ///
+    /// # Safety
+    ///
+    /// **当前后端只支持 JIT 生成 caller 的变参保存区契约**：callee 的 `va_start`
+    /// 只初始化 `va_list` 对象，不保存外部调用者的参数寄存器。因此 **host 直接
+    /// 调用一个会 `va_arg` 的变参 JIT 函数会读到垃圾**（模块路径 / JIT caller 正常）。
+    /// 调用者必须保证目标函数不会从外部 C 变参调用中读取未命名实参，或使用
+    /// `bind_raw` 并自行承担 ABI 责任。该缺口修复前不提供安全版 `bind_variadic`。
     #[allow(clippy::result_large_err)]
-    pub fn bind_variadic<F: JitCallSignature>(
+    pub unsafe fn bind_variadic<F: JitCallSignature>(
         &self,
         name: &str,
     ) -> Result<JitFn<'_, F>, JitBindError> {

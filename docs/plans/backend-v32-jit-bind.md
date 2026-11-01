@@ -101,8 +101,10 @@ impl<M: TargetMachine> JitLoader<M> {
 - `JitCallSignature`/`JitValue` 增加 `unsafe extern "C" fn(fixed..., ...) -> R`
   实现（固定前缀 0–16，`variadic: true`）；`JitFn` 不生成泛型 `call`（varargs
   无法泛型表达），调用走 `raw()`。
-- `JitLoader::bind_variadic`：校验产物为变参 + 固定前缀 ABI，返回 `JitFn`；
-  非变参 `bind` 继续拒绝并提示。
+- `JitLoader::bind_variadic`（**unsafe**）：校验产物为变参 + 固定前缀 ABI，返回
+  `JitFn`；非变参 `bind` 继续拒绝并提示。安全性：当前后端只支持 **JIT 生成 caller**
+  的变参保存区契约，callee 的 `va_start` 不保存外部调用者的参数寄存器；host 直接
+  调用会 `va_arg` 的变参 JIT 函数会读垃圾。修复 callee 保存前只能 `unsafe` 使用。
 - demo：`vsum(i64, ...)` 返回常量 7，`raw()(1,2,3)` → `variadic_sum(1,2,3)=7`。
 - **截止契约（M3-b）**：C/Rust 的 `...` 本身**没有计数**；IR 的 `VaArg` 只取一个值，
   无法从 ABI 推断调用者传了几个。必须由固定参数 `n`、sentinel 或 format 约定；
