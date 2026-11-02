@@ -238,8 +238,8 @@ mod tests {
             .collect();
 
         // 3 个 scratch ⇒ 每个绑定各占一个，互不共用。
-        let edits = build_spill_edits(&vcode, &inst_ops, &[], &slots, &cfg(3))
-            .expect("3 个 scratch 够");
+        let edits =
+            build_spill_edits(&vcode, &inst_ops, &[], &slots, &cfg(3)).expect("3 个 scratch 够");
         let mut used: Vec<u32> = edits[0]
             .iter()
             .filter_map(|e| match e {

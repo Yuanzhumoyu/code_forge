@@ -3,11 +3,12 @@
 //! 管线不再"自己知道约定"：它按 plan 发射调用点、入口、序/尾声（A3–A4）。
 //! plan 是确定性的，`to_text()` 用作**快照**（防漂移），也是 `forge-isa abi dump` 的输出。
 
+use forge_ir::PReg;
 use serde::{Deserialize, Serialize};
 
 // 只有 TOML 面的 CalleeSaveMechanism 保留 serde 派生（它是 AbiRules 的字段类型）。
 // 其余**产物**类型不需要——实测没有任何 serde 消费者（v23 M2），而 RegRef.class`r
-// 是 orge_ir::RegClass，本来也不该被序列化口径绑住。
+// 是 forge_ir::RegClass，本来也不该被序列化口径绑住。
 use crate::rules_pod::PositionRule;
 use crate::ty::TyView;
 
@@ -42,6 +43,10 @@ impl RegRef {
             class,
             name: name.into(),
         }
+    }
+
+    pub const fn preg(&self) -> PReg {
+        PReg::new(self.slot, self.class)
     }
 }
 

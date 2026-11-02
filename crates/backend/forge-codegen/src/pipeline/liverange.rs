@@ -485,24 +485,16 @@ pub fn compute_live_intervals<I: crate::MachineInst>(
             let block_start = ProgPoint::new(block_u32, 0);
             let block_end = ProgPoint::inst_end(block_u32, last_inst);
 
-            // 传递到后继块 ⇒ 从**本块最后一次定义**（本块没有定义才从块首）到块尾活着。
+            // 传递到后继块 ⇒ **整块**（块首到块尾）都算活着。
             //
-            // 为什么不能无条件从块首起（2026-11-01 修）：本块内定义的值（常量、算术
-            // 结果、块参数拷贝的目标）在"定义之前"根本不占寄存器，从块首算会造出假
-            // 区间，与真正在该段活着的值重叠——实测同一函数里一个第 3 条指令才定义的
-            // 值被算成 `[0,20)`，自检因此报它与 `[1,7)` 的值同寄存器（其实不冲突）。
-            // 假区间同时把寄存器压力凭空抬高。
+            // **为什么从块首起，而不是"本块最后一次定义"**（2026-11-02 修，实测
+            // `thread_local_roundtrip`）：`defs` 只有定义点，而同一块内**先读后写**的
+            // 形状是存在的（in-place 指令 `LSRI {out},{out},1`、块参数的原地覆盖、
+            // legalize 改写过的非严格 SSA）。从"最后一次定义"起会让这些前置的读
+            // **落在区间之外**——少算即错值（实测：TLS 程序直接 panic，换成更保守的
+            // 写法立刻通过）。多算只是多溢出几个值，少算不是。
             if live_out[block_idx].contains(vreg) {
-                // `rev().find(..)` 而不是 `filter(..).next_back()`（后者会被 clippy
-                // 判为 DoubleEndedIterator 误用：语义对但可读性差）。
-                let lo = interval
-                    .defs
-                    .iter()
-                    .rev()
-                    .copied()
-                    .find(|p| *p >= block_start && *p <= block_end)
-                    .unwrap_or(block_start);
-                interval.cover_range(lo, block_end);
+                interval.cover_range(block_start, block_end);
             }
 
             // 来自前驱块（未在本块定义）⇒ 块首到块尾都活着。

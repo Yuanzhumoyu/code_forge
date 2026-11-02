@@ -3710,11 +3710,22 @@ fn run_exe_with_timeout(exe: &Path) -> Result<i32, String> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(15);
-    let mut child = Command::new(exe)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map_err(|e| format!("failed to spawn {}: {e}", exe.display()))?;
+    // **产物 stderr 落盘**（2026-11-02）：此前这里是 `Stdio::null()`，于是"程序自己
+    // panic 了"只表现为一个退出码（`exit=101`），panic 文本（`called Option::unwrap
+    // on None`、`index out of bounds` 之类）完全看不到——排查 `thread_local_roundtrip`
+    // 时只能靠猜。现在写到 exe 旁边的 `<exe>.stderr.txt`，非零退出时打前 20 行。
+    let err_path = exe.with_extension("stderr.txt");
+    let mut child = match std::fs::File::create(&err_path) {
+        Ok(f) => Command::new(exe)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::from(f))
+            .spawn(),
+        Err(_) => Command::new(exe)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn(),
+    }
+    .map_err(|e| format!("failed to spawn {}: {e}", exe.display()))?;
     let mut settled: Option<Option<i32>> = None;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
     while std::time::Instant::now() < deadline {
@@ -3730,7 +3741,18 @@ fn run_exe_with_timeout(exe: &Path) -> Result<i32, String> {
         // ⇒ 本函数不在这里分类"正常/trap"，把码原样交给 `run_case_with`
         // （它按 [`is_trap_code`] 的 NTSTATUS 语义判，并被 `expect_trap` 归一）。
         // 此前这里把"异常终止"与"超时"混在一个分支 ⇒ **trap 被误报成挂起**。
-        Some(Some(c)) => Ok(c),
+        Some(Some(c)) => {
+            if c != 0 {
+                // 只有失败才打，正常路径零噪音。
+                if let Ok(text) = std::fs::read_to_string(&err_path) {
+                    let shown: Vec<&str> = text.lines().take(20).collect();
+                    if !shown.is_empty() {
+                        eprintln!("--- {} 的 stderr ---\n{}", exe.display(), shown.join("\n"));
+                    }
+                }
+            }
+            Ok(c)
+        }
         // 已终止但拿不到码 = 被宿主强行结束（也是异常终止）⇒ 用通用 trap 码哨兵。
         Some(None) => Ok(TRAP_EXIT),
         None => {
@@ -4429,6 +4451,23 @@ fn e2e_cargo_template_workflow() {
             let _ = std::fs::remove_dir_all(&target_dir);
             println!(
                 "SKIP cargo_template_workflow: network unavailable for build-std deps\n{}",
+                err.lines().take(4).collect::<Vec<_>>().join("\n")
+            );
+            return;
+        }
+        // **rustup 的临时目录不可写**（2026-11-02）：`cargo +<toolchain>`/`syncing
+        // channel updates` 会在 `$RUSTUP_HOME/tmp` 建临时文件；受限环境（沙箱、
+        // 只读 HOME）里必然 `os error 5 拒绝访问`。这与后端无关，且**无法在代码里
+        // 修**（换 RUSTUP_HOME 就等于换工具链）。检测到该特征就 SKIP 并说明原因，
+        // 不伪装成通过、也不误报成回归。
+        let rustup_tmp_denied = err.contains(".rustup")
+            && (err.contains("拒绝访问")
+                || err.contains("os error 5")
+                || err.contains("Permission denied"));
+        if rustup_tmp_denied {
+            let _ = std::fs::remove_dir_all(&target_dir);
+            println!(
+                "SKIP cargo_template_workflow: RUSTUP_HOME 不可写（受限环境）\n{}",
                 err.lines().take(4).collect::<Vec<_>>().join("\n")
             );
             return;
