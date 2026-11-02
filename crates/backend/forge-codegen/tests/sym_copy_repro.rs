@@ -469,10 +469,10 @@ fn six_params_receive_without_clobbering_abi_sources() {
 /// **函数体自身压力**下的正确性守卫（9 个派生值同时活着 ⇒ 必然驱逐/溢出）。
 ///
 /// 注意它**不**单独保证"一条指令 3 个操作数全溢出"——那个形状由
-/// `regalloc_bt::spill::tests::three_spilled_operands_share_two_scratch_slots` 直接钉住
+/// `regalloc_bt::spill::tests::three_spilled_operands_need_three_scratch_slots` 直接钉住
 /// （构造精确、不依赖分配器决策）；本用例只保证压力下的语义仍然对。
 #[test]
-fn single_instruction_with_three_spilled_operands_needs_two_scratch() {
+fn spill_pressure_with_many_live_values_keeps_semantics() {
     ensure_convention();
     let i = TypeId::I32;
     let sig = FunctionSignature::new(&[(i, "n")], &[i]);

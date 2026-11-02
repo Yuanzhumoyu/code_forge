@@ -54,26 +54,23 @@ pub(super) fn build_spill_edits<I: crate::machine::inst::MachineInst>(
                     }
                 }
                 if !spilled.is_empty() {
-                    // ── scratch 规划（2026-11-01 重写）──
+                    // ── scratch 规划 ──
                     //
-                    // 一个 scratch **可以同时承载本指令的一个 use 与 def**：指令先读完
-                    // 所有输入、再写输出，所以 `add s1, s1, s2`（def 与 b 共用 s1）与
-                    // 三条不同的 scratch 等价。旧实现给每个 spilled vreg 各分一个槽，
-                    // 于是"三操作数 ALU 三个操作数全溢出"要 **3** 个 scratch——只声明
-                    // 2 个的谱（Symphony 就是）直接编译失败，而它其实只需要 2 个。
+                    // 规则：**同一个 vreg** 的 use 与 def 共用一个 scratch（指令先读后写，
+                    // 安全）；**不同 vreg 绝不共用**。
                     //
-                    // 唯一不能共用的是**同一字段既是输入又是输出**（x86 两地址指令
-                    // `add dst, src`：dst 的 scratch 必须持有旧值）——判据取自指令的
-                    // 操作数表（同字段既有非 Def 项）。
-                    let inplace_field = |f: u8| {
-                        inst.operands().iter().any(|o| {
-                            o.field == f && o.role != crate::machine::inst::OperandRole::Def
-                        })
-                    };
+                    // 为什么不能跨 vreg 共用（2026-11-02 回退，实测 `dyn`/KD-11）：
+                    // x86 的两地址形式 `addss dst, src` 里 `dst` 是**读改写**——把 def
+                    // （dst 的值）与 use（src 的值）塞进同一个 scratch，指令就变成
+                    // `addss s, s`（= src+src），静默算错。判据"同字段是否也有非 Def 项"
+                    // 看不出来：dst/src 是两个不同字段，但 ISA 语义仍要读 dst。
+                    // 症状：`float_param_live_across_call` 期望 10.0 得到 9.0。
+                    //
+                    // 代价：一条指令同时活跃 N 个溢出操作数就要 N 个 scratch；超出谱声明
+                    // 时**明确失败**（绝不偷偷共用）。
                     let mut slot_of_v: HashMap<XReg, usize> = HashMap::new();
-                    let mut use_slots: smallvec::SmallVec<[usize; 4]> = smallvec::SmallVec::new();
                     let mut next_slot = 0usize;
-                    // ① 先把 use 各自占一个槽（两条 use 的值必须同时在寄存器里）。
+                    // ① 非 Def 的各占一个槽（它们的值必须同时在寄存器里）。
                     for b in binds
                         .iter()
                         .filter(|b| b.role != crate::machine::inst::OperandRole::Def)
@@ -82,12 +79,9 @@ pub(super) fn build_spill_edits<I: crate::machine::inst::MachineInst>(
                             continue;
                         }
                         slot_of_v.insert(b.vreg, next_slot);
-                        use_slots.push(next_slot);
                         next_slot += 1;
                     }
-                    // ② def：同值（in-place 的同一 vreg）沿用它的 use 槽；不同值且字段
-                    //    不是 in-place ⇒ 复用一个 use 槽（先读后写，安全）；否则新槽。
-                    let mut pure_def_ord = 0usize;
+                    // ② Def：同一个 vreg 已经占过槽（它就是本指令的 use）⇒ 沿用；否则新占。
                     for b in binds
                         .iter()
                         .filter(|b| b.role == crate::machine::inst::OperandRole::Def)
@@ -95,16 +89,8 @@ pub(super) fn build_spill_edits<I: crate::machine::inst::MachineInst>(
                         if slot_of(b.vreg).is_none() || slot_of_v.contains_key(&b.vreg) {
                             continue;
                         }
-                        let idx = if !inplace_field(b.field) && pure_def_ord < use_slots.len() {
-                            let s = use_slots[pure_def_ord];
-                            pure_def_ord += 1;
-                            s
-                        } else {
-                            let s = next_slot;
-                            next_slot += 1;
-                            s
-                        };
-                        slot_of_v.insert(b.vreg, idx);
+                        slot_of_v.insert(b.vreg, next_slot);
+                        next_slot += 1;
                     }
                     if next_slot > config.scratch_regs.len() {
                         return Err(IrError::RegAlloc(format!(
@@ -221,10 +207,10 @@ mod tests {
         c
     }
 
-    /// 一条指令的 3 个操作数**全部**溢出 ⇒ 2 个 scratch 够：def 与一个 use 共用槽
-    /// （指令先读完输入再写输出）。旧实现要 3 个 ⇒ 2 scratch 的谱直接编译失败。
+    /// 一条指令的 3 个操作数**全部**溢出 ⇒ 需要 3 个 scratch（不同值不能共用：两地址
+    /// ISA 的 `add dst, src` 里 dst 是读改写，共用会算成 `add s, s`）；不足必须 fail-closed。
     #[test]
-    fn three_spilled_operands_share_two_scratch_slots() {
+    fn three_spilled_operands_need_three_scratch_slots() {
         let mut vcode: crate::VCode<ThreeOp> = crate::VCode::new();
         let b = vcode.create_block(Block::new(0));
         vcode.switch_to_block(b);
@@ -251,8 +237,9 @@ mod tests {
             })
             .collect();
 
-        let edits = build_spill_edits(&vcode, &inst_ops, &[], &slots, &cfg(2))
-            .expect("3 个操作数全溢出时 2 个 scratch 必须够");
+        // 3 个 scratch ⇒ 每个绑定各占一个，互不共用。
+        let edits = build_spill_edits(&vcode, &inst_ops, &[], &slots, &cfg(3))
+            .expect("3 个 scratch 够");
         let mut used: Vec<u32> = edits[0]
             .iter()
             .filter_map(|e| match e {
@@ -262,15 +249,18 @@ mod tests {
             .collect();
         used.sort_unstable();
         used.dedup();
-        assert_eq!(used.len(), 2, "三个绑定只能占 2 个 scratch：{used:?}");
+        assert_eq!(used.len(), 3, "三个不同的值必须各占一个 scratch：{used:?}");
 
-        // 只给 1 个 scratch ⇒ 必须 fail-closed（两条 use 的值必须同时可读）。
-        let err = build_spill_edits(&vcode, &inst_ops, &[], &slots, &cfg(1))
-            .expect_err("1 个 scratch 装不下两条 use");
-        assert!(
-            format!("{err}").contains("scratch"),
-            "错误信息应点明 scratch 不够：{err}"
-        );
+        // 只给 1/2 个 ⇒ 必须 fail-closed，且错误信息点明需要几个、声明了几个。
+        for n in [1usize, 2] {
+            let err = build_spill_edits(&vcode, &inst_ops, &[], &slots, &cfg(n))
+                .expect_err("不同值的溢出操作数不能共用 scratch");
+            let msg = format!("{err}");
+            assert!(
+                msg.contains("scratch") && msg.contains('3'),
+                "错误信息应点明需要 3 个 scratch：{msg}"
+            );
+        }
     }
 
     /// in-place 字段（`add dst, src`：dst 既读又写）**不能**与另一个 use 共用槽——
